@@ -126,9 +126,13 @@ export function AssinaturasTab({
     const docId = solicitacaoId.slice(0, 8);
     const geradoEm = fmtDataHora(new Date().toISOString());
 
+    const NAVY: [number, number, number] = [21, 49, 105];
+    const NAVY_SUAVE: [number, number, number] = [110, 130, 165];
+    const VERDE: [number, number, number] = [27, 145, 84];
+
     const cabecalho = () => {
       doc.setFontSize(8);
-      doc.setTextColor(140);
+      doc.setTextColor(...NAVY_SUAVE);
       doc.text("Datas e horários em GMT -03:00 Brasília", margemDireita, 14, { align: "right" });
       doc.text(`PDF gerado em ${geradoEm}`, margemDireita, 18.5, { align: "right" });
 
@@ -138,93 +142,107 @@ export function AssinaturasTab({
       doc.text(titulo, margemX, 16);
       doc.setFont("helvetica", "normal");
       doc.setFontSize(8);
-      doc.setTextColor(140);
+      doc.setTextColor(...NAVY_SUAVE);
       doc.text(`Documento número #${docId}`, margemX, 21);
-    };
 
-    // H1 da etapa + label "Assinaturas" — devolve onde a lista começa (y) e
-    // onde a caixa com borda em volta da seção deve começar (boxStartY).
-    const abrirSecaoEtapa = (etapaLabel: string) => {
-      let y = 42;
-      doc.setFont("helvetica", "bold");
-      doc.setFontSize(24);
-      doc.setTextColor(20);
-      doc.text(etapaLabel, margemX, y);
-      y += 14;
-
-      const boxStartY = y - 6;
-      doc.setFont("helvetica", "bold");
-      doc.setFontSize(11);
-      doc.setTextColor(60);
-      doc.text("Assinaturas", margemX, y);
-      y += 8;
-      return { y, boxStartY };
+      doc.setDrawColor(...NAVY);
+      doc.setLineWidth(0.7);
+      doc.line(margemX - 4, 25.5, margemDireita, 25.5);
     };
 
     const desenharBox = (boxStartY: number, fimY: number) => {
-      doc.setDrawColor(200);
+      doc.setDrawColor(214, 221, 232);
       doc.setLineWidth(0.4);
       doc.roundedRect(margemX - 4, boxStartY, 172, fimY - boxStartY, 2, 2);
+
+      doc.setFillColor(...NAVY);
+      doc.roundedRect(margemX - 4, boxStartY, 1.6, fimY - boxStartY, 0.8, 0.8, "F");
     };
 
-    const renderEtapa = (etapaLabel: string, lista: Assinatura[]) => {
-      cabecalho();
-      let { y, boxStartY } = abrirSecaoEtapa(etapaLabel);
+    // Círculo preenchido com check branco — igual ao ícone da tela
+    // (CheckCircle2), não o glifo unicode ✓ (não existe nas fontes do jsPDF).
+    const desenharCheckCirculo = (cx: number, cy: number) => {
+      doc.setFillColor(...VERDE);
+      doc.circle(cx, cy, 1.8, "F");
+      doc.setDrawColor(255, 255, 255);
+      doc.setLineWidth(0.45);
+      doc.line(cx - 0.9, cy, cx - 0.2, cy + 0.7);
+      doc.line(cx - 0.2, cy + 0.7, cx + 1, cy - 0.9);
+    };
 
-      lista.forEach((a) => {
-        if (y > 250) {
-          desenharBox(boxStartY, y + 3);
-          doc.addPage();
-          cabecalho();
-          ({ y, boxStartY } = abrirSecaoEtapa(etapaLabel));
-        }
-        const nome = nomeUsuario(usuarios, a.user_id) ?? "Usuário";
+    let y = 38;
+    const novaPagina = () => { doc.addPage(); cabecalho(); y = 38; };
 
-        // Desenha o "check" como vetor — o glifo unicode ✓ não existe nas
-        // fontes base do jsPDF (helvetica/WinAnsi) e sairia em branco no PDF.
-        doc.setDrawColor(34, 153, 84);
-        doc.setLineWidth(0.5);
-        doc.line(margemX, y - 1.3, margemX + 1, y - 0.2);
-        doc.line(margemX + 1, y - 0.2, margemX + 3, y - 3);
+    cabecalho();
 
-        doc.setFont("helvetica", "bold");
-        doc.setFontSize(10.5);
-        doc.setTextColor(20);
-        doc.text(nome, margemX + 6, y);
-        y += 5;
-
-        doc.setFont("helvetica", "normal");
-        doc.setFontSize(9);
-        doc.setTextColor(120);
-        doc.text(`Assinou em ${fmtDataHora(a.created_at)}`, margemX + 6, y);
-        y += 9;
-      });
-
-      desenharBox(boxStartY, y + 3);
-
-      doc.setFontSize(7.5);
-      doc.setTextColor(160);
-      doc.text(`#${docId}`, margemX, 287);
-      doc.text(`Etapa: ${etapaLabel}`, 105, 287, { align: "center" });
+    // "Assinaturas - Coluna: {etapa}" numa linha só, dentro da caixa — igual
+    // ao cabeçalho de cada card na tela. Devolve onde a caixa começa.
+    const abrirSecaoEtapa = (etapaLabel: string) => {
+      const boxStartY = y - 5;
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(11);
+      doc.setTextColor(...NAVY);
+      doc.text("Assinaturas", margemX, y);
+      const largura = doc.getTextWidth("Assinaturas");
+      doc.setTextColor(...NAVY_SUAVE);
+      doc.text(` - Coluna: ${etapaLabel}`, margemX + largura, y);
+      y += 9;
+      return boxStartY;
     };
 
     if (etapasComAssinatura.length === 0) {
-      cabecalho();
       doc.setFontSize(10);
       doc.setTextColor(100);
-      doc.text("Nenhuma assinatura registrada.", margemX, 40);
+      doc.text("Nenhuma assinatura registrada.", margemX, y);
     } else {
+      // Seções uma depois da outra, sem forçar página por etapa — só quebra
+      // página quando o conteúdo de fato não cabe mais.
       etapasComAssinatura.forEach((etapa, i) => {
-        if (i > 0) doc.addPage();
-        renderEtapa(etapa.label, porEtapa.get(etapa.key)!);
+        const lista = porEtapa.get(etapa.key)!;
+
+        if (i > 0) y += 4;
+        if (y > 250) novaPagina();
+
+        let boxStartY = abrirSecaoEtapa(etapa.label);
+
+        lista.forEach((a) => {
+          if (y > 250) {
+            desenharBox(boxStartY, y + 4);
+            novaPagina();
+            boxStartY = abrirSecaoEtapa(etapa.label);
+          }
+          const nome = nomeUsuario(usuarios, a.user_id) ?? "Usuário";
+
+          desenharCheckCirculo(margemX + 1.8, y - 1.6);
+
+          doc.setFont("helvetica", "bold");
+          doc.setFontSize(10.5);
+          doc.setTextColor(20);
+          doc.text(nome, margemX + 6, y);
+          y += 5;
+
+          doc.setFont("helvetica", "normal");
+          doc.setFontSize(9);
+          doc.setTextColor(120);
+          doc.text(`Assinou em ${fmtDataHora(a.created_at)}`, margemX + 6, y);
+          y += 8;
+        });
+
+        y += 2;
+        desenharBox(boxStartY, y + 3);
+        y += 11;
       });
     }
 
     const total = doc.getNumberOfPages();
     for (let p = 1; p <= total; p++) {
       doc.setPage(p);
+      doc.setDrawColor(...NAVY_SUAVE);
+      doc.setLineWidth(0.2);
+      doc.line(margemX - 4, 283, margemDireita, 283);
       doc.setFontSize(7.5);
-      doc.setTextColor(160);
+      doc.setTextColor(...NAVY_SUAVE);
+      doc.text(`#${docId}`, margemX, 287);
       doc.text(`Página ${p} de ${total}`, margemDireita, 287, { align: "right" });
     }
 
