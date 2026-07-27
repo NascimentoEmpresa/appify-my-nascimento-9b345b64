@@ -145,6 +145,12 @@ import AjudaTopico from "./pages/ajuda/AjudaTopico";
 import InboxAprovacoes from "./pages/aprovacoes/Inbox";
 import SolicitacoesErp from "./pages/sistemas/SolicitacoesErp";
 import CentralServicos from "./pages/central-servicos/CentralServicos";
+import MeusChamados from "./pages/chamados/MeusChamados";
+import AbrirChamado from "./pages/chamados/AbrirChamado";
+import PainelDistribuicaoChamados from "./pages/chamados/PainelDistribuicao";
+import CoordenarChamado from "./pages/chamados/CoordenarChamado";
+import PainelDesenvolvedorChamados from "./pages/chamados/PainelDesenvolvedor";
+import ExecutarChamado from "./pages/chamados/ExecutarChamado";
 import Reunioes from "./pages/central-servicos/reunioes/Reunioes";
 import ReuniaoDetalhe from "./pages/central-servicos/reunioes/ReuniaoDetalhe";
 import ConducaoReuniao from "./pages/central-servicos/reunioes/ConducaoReuniao";
@@ -181,8 +187,18 @@ const App = () => (
             <Route path="encarregados/minhas-solicitacoes" element={<MinhasSolicitacoes />} />
             {/* Sistemas */}
             <Route path="sistemas/solicitacoes-erp" element={<SolicitacoesErp />} />
+            {/* Chamados de Sistemas (help desk) — telas de abrir/meus chamados também
+                aparecem na Central de Serviços; gestão fica só aqui em Sistemas. */}
+            <Route path="sistemas/chamados" element={<MeusChamados base="/app/sistemas/chamados" />} />
+            <Route path="sistemas/chamados/novo" element={<AbrirChamado base="/app/sistemas/chamados" />} />
+            <Route path="sistemas/chamados/painel" element={<PainelDistribuicaoChamados />} />
+            <Route path="sistemas/chamados/dev" element={<PainelDesenvolvedorChamados />} />
+            <Route path="sistemas/chamados/:id/coordenar" element={<CoordenarChamado />} />
+            <Route path="sistemas/chamados/:id" element={<ExecutarChamado />} />
             {/* Central de Serviços */}
             <Route path="central-servicos" element={<CentralServicos />} />
+            <Route path="central-servicos/chamados" element={<MeusChamados base="/app/central-servicos/chamados" />} />
+            <Route path="central-servicos/chamados/novo" element={<AbrirChamado base="/app/central-servicos/chamados" />} />
             <Route path="central-servicos/reunioes" element={<Reunioes />} />
             <Route path="central-servicos/reunioes/painel-gerencial" element={<PainelGerencial />} />
             <Route path="central-servicos/reunioes/:id" element={<ReuniaoDetalhe />} />
