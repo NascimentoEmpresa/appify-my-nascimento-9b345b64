@@ -76,6 +76,7 @@ import ContasReceber from "./pages/financeiro/ContasReceber";
 import Cobrancas from "./pages/cobrancas/Cobrancas";
 import RelatorioServicos from "./pages/financeiro/RelatorioServicos";
 import FluxoCaixa from "./pages/financeiro/FluxoCaixa";
+import ContaGarantida from "./pages/financeiro/ContaGarantida";
 import FluxoCaixaDiario from "./pages/financeiro/FluxoCaixaDiario";
 import CapitalGiro from "./pages/financeiro/CapitalGiro";
 import ConciliacaoFluxoCaixa from "./pages/financeiro/ConciliacaoFluxoCaixa";
@@ -268,6 +269,7 @@ const App = () => (
             <Route path="financeiro/contas-receber" element={<ContasReceber />} />
             <Route path="cobrancas" element={<Cobrancas />} />
             <Route path="financeiro/relatorio-servicos" element={<RelatorioServicos />} />
+            <Route path="financeiro/conta-garantida" element={<ContaGarantida />} />
             <Route path="financeiro/fluxo-caixa" element={<FluxoCaixa />} />
             <Route path="financeiro/fluxo-caixa-diario" element={<FluxoCaixaDiario />} />
             <Route path="financeiro/capital-giro" element={<CapitalGiro />} />
