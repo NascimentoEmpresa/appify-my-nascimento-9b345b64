@@ -258,6 +258,18 @@ export default function PlanoAcaoDetalhe() {
         variant: "destructive",
       });
     }
+    // "Atrasada" só é definida pelo cron — se a ação já estava atrasada e a
+    // pessoa empurrou a Data de conclusão pra frente, precisa escolher um
+    // status novo antes de salvar (não existe reversão automática).
+    if (!isNew && data?.status_normalizado === "atrasada"
+        && form.data_fim_planejado !== data?.data_fim_planejado
+        && form.status_normalizado === "atrasada") {
+      return toast({
+        title: "Atualize o Status",
+        description: "Atualize o Status antes de alterar a Data de conclusão de uma ação atrasada.",
+        variant: "destructive",
+      });
+    }
     if (isNew) {
       // Para visibilidade específica garante que o criador está na lista,
       // caso contrário ele mesmo perderá acesso ao plano após salvar.
@@ -463,7 +475,12 @@ export default function PlanoAcaoDetalhe() {
               <Label>Status</Label>
               <Select value={form.status_normalizado} disabled={!podeEdit} onValueChange={v => set("status_normalizado", v)}>
                 <SelectTrigger><SelectValue /></SelectTrigger>
-                <SelectContent>{STATUS_ORDEM.map(s => <SelectItem key={s} value={s}>{STATUS_LABELS[s]}</SelectItem>)}</SelectContent>
+                <SelectContent>
+                  {/* "Atrasada" só é definida automaticamente (cron) — não é selecionável,
+                      exceto pra continuar mostrando o valor atual quando já é esse o status. */}
+                  {STATUS_ORDEM.filter(s => s !== "atrasada" || form.status_normalizado === "atrasada")
+                    .map(s => <SelectItem key={s} value={s}>{STATUS_LABELS[s]}</SelectItem>)}
+                </SelectContent>
               </Select>
             </div>
             <div>
