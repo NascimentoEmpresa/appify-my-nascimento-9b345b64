@@ -443,10 +443,28 @@ export interface Usuario {
   id: string;
   display_name: string;
   avatar_url: string | null;
+  setor: string | null;
 }
 
 export function nomeUsuario(usuarios: Usuario[], id: string | null): string | null {
   return usuarios.find((u) => u.id === id)?.display_name ?? null;
+}
+
+export interface Comite {
+  id: "administrativo" | "operacional";
+  label: string;
+  setores: string[];
+}
+
+export const COMITES: Comite[] = [
+  { id: "administrativo", label: "Administrativo", setores: ["FINANCEIRO", "RH", "SST", "TREINAMENTOS", "JURIDICO"] },
+  { id: "operacional", label: "Operacional", setores: ["COMPRAS", "LICITACAO", "OPERACIONAL"] },
+];
+
+/** IDs dos usuários cujo setor (Setor_ERP, via listar_usuarios_ativos) está na lista dada — comparação sem distinguir maiúscula/acento. */
+export function membrosComite(usuarios: Usuario[], setores: string[]): string[] {
+  const alvo = setores.map((s) => s.trim().toLowerCase());
+  return usuarios.filter((u) => u.setor && alvo.includes(u.setor.trim().toLowerCase())).map((u) => u.id);
 }
 
 export type StatusPresenca = "confirmada" | "pendente" | "recusada";
