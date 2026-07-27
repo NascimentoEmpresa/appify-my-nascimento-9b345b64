@@ -89,7 +89,7 @@ function RespostaDecisaoItem({
 
 export function PautaConducao({
   pauta, respostas, decisoesAcoes, usuarios, setorPadrao,
-  onAtualizarNatureza, onSalvarChecklist, onSalvarResposta, onCriarDecisaoAcao, onCriarAcaoPlanoAcao, onAtualizarDecisaoAcao, onRemoverDecisaoAcao,
+  onAtualizarNatureza, onAtualizarPrazo, onSalvarChecklist, onSalvarResposta, onCriarDecisaoAcao, onCriarAcaoPlanoAcao, onAtualizarDecisaoAcao, onRemoverDecisaoAcao,
 }: {
   pauta: ReuniaoPauta[];
   respostas: ReuniaoResposta[];
@@ -97,6 +97,7 @@ export function PautaConducao({
   usuarios: Usuario[];
   setorPadrao?: string | null;
   onAtualizarNatureza: (pautaId: string, natureza: NaturezaItem) => Promise<boolean>;
+  onAtualizarPrazo: (pautaId: string, prazo: string | null) => Promise<boolean>;
   onSalvarChecklist: (pautaId: string, checklist: Record<string, RespostaConducaoItem>) => Promise<boolean>;
   onSalvarResposta: (pautaId: string, texto: string, encaminhamento: string) => Promise<boolean>;
   onCriarDecisaoAcao: (dados: {
@@ -140,16 +141,27 @@ export function PautaConducao({
         </p>
       </div>
 
-      <div className="space-y-1.5">
-        <Label>Natureza do item</Label>
-        <Select value={item.natureza ?? ""} onValueChange={(v) => onAtualizarNatureza(item.id, v as NaturezaItem)}>
-          <SelectTrigger className="w-64"><SelectValue placeholder="Selecione" /></SelectTrigger>
-          <SelectContent>
-            {(Object.keys(NATUREZA_ITEM_LABEL) as NaturezaItem[]).map((n) => (
-              <SelectItem key={n} value={n}>{NATUREZA_ITEM_LABEL[n]}</SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
+      <div className="flex flex-wrap gap-4">
+        <div className="space-y-1.5">
+          <Label>Natureza do item</Label>
+          <Select value={item.natureza ?? ""} onValueChange={(v) => onAtualizarNatureza(item.id, v as NaturezaItem)}>
+            <SelectTrigger className="w-64"><SelectValue placeholder="Selecione" /></SelectTrigger>
+            <SelectContent>
+              {(Object.keys(NATUREZA_ITEM_LABEL) as NaturezaItem[]).map((n) => (
+                <SelectItem key={n} value={n}>{NATUREZA_ITEM_LABEL[n]}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+        <div className="space-y-1.5">
+          <Label>Prazo</Label>
+          <Input
+            type="date"
+            className="w-44"
+            value={item.prazo ?? ""}
+            onChange={(e) => onAtualizarPrazo(item.id, e.target.value || null)}
+          />
+        </div>
       </div>
 
       <RespostaDecisaoItem
