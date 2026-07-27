@@ -91,7 +91,7 @@ export default function ExecutarChamado() {
     const { error } = await (supabase as any).from("CHAMADO_SISTEMA").update({ status }).eq("id", id);
     if (error) { toast({ title: "Erro", description: error.message, variant: "destructive" }); return; }
     await (supabase as any).from("CHAMADO_SISTEMA_EVENTO").insert({ chamado_id: id, tipo: "evento", texto });
-    supabase.functions.invoke("enviar-notificacao-push-chamado", { body: { chamado_id: id, evento } }).catch(() => {});
+    supabase.functions.invoke("enviar-notificacao-push", { body: { chamado_id: id, evento } }).catch(() => {});
     toast({ title: texto });
     invalidar();
   };
@@ -124,7 +124,7 @@ export default function ExecutarChamado() {
     const { error } = await (supabase as any).from("CHAMADO_SISTEMA").update({ status: "reprovado", motivo_reprovacao: motivo.trim() }).eq("id", id);
     if (error) { toast({ title: "Erro ao reprovar", description: error.message, variant: "destructive" }); return; }
     await (supabase as any).from("CHAMADO_SISTEMA_EVENTO").insert({ chamado_id: id, tipo: "evento", texto: "Chamado reprovado: " + motivo.trim() });
-    supabase.functions.invoke("enviar-notificacao-push-chamado", { body: { chamado_id: id, evento: "reprovado" } }).catch(() => {});
+    supabase.functions.invoke("enviar-notificacao-push", { body: { chamado_id: id, evento: "reprovado" } }).catch(() => {});
     toast({ title: "Chamado reprovado" });
     setReprovando(false); setMotivo("");
     invalidar();

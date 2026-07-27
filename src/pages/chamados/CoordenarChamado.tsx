@@ -124,7 +124,7 @@ export default function CoordenarChamado() {
     await (supabase as any).from("CHAMADO_SISTEMA_EVENTO").insert({
       chamado_id: id, tipo: "evento", texto: `Chamado direcionado a ${nomeDev}${tarefas.length ? ` com ${tarefas.length} tarefa(s)` : ""}`,
     });
-    supabase.functions.invoke("enviar-notificacao-push-chamado", { body: { chamado_id: id, evento: "atribuido" } }).catch(() => {});
+    supabase.functions.invoke("enviar-notificacao-push", { body: { chamado_id: id, evento: "atribuido" } }).catch(() => {});
     setSalvando(false);
     toast({ title: "Chamado direcionado", description: `Responsável: ${nomeDev}` });
     invalidar();
@@ -140,7 +140,7 @@ export default function CoordenarChamado() {
     await (supabase as any).from("CHAMADO_SISTEMA_EVENTO").insert({
       chamado_id: id, tipo: "evento", texto: "Chamado reprovado: " + motivo.trim(),
     });
-    supabase.functions.invoke("enviar-notificacao-push-chamado", { body: { chamado_id: id, evento: "reprovado" } }).catch(() => {});
+    supabase.functions.invoke("enviar-notificacao-push", { body: { chamado_id: id, evento: "reprovado" } }).catch(() => {});
     toast({ title: "Chamado reprovado" });
     setReprovando(false); setMotivo("");
     nav("/app/sistemas/chamados/painel");

@@ -117,7 +117,7 @@ export default function PainelDistribuicao() {
     await (supabase as any).from("CHAMADO_SISTEMA_EVENTO").insert({
       chamado_id: atribChamado, tipo: "evento", texto: `Chamado atribuído a ${nomeDe(atribDev)}`,
     });
-    supabase.functions.invoke("enviar-notificacao-push-chamado", { body: { chamado_id: atribChamado, evento: "atribuido" } }).catch(() => {});
+    supabase.functions.invoke("enviar-notificacao-push", { body: { chamado_id: atribChamado, evento: "atribuido" } }).catch(() => {});
     toast({ title: "Chamado atribuído" });
     setAtribChamado(null); setAtribDev(null);
     qc.invalidateQueries({ queryKey: ["chamados-todos"] });
