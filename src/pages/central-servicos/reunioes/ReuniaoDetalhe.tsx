@@ -1,10 +1,11 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import {
@@ -19,8 +20,8 @@ import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { SearchableSelect } from "@/components/ui/searchable-select";
 import {
-  ArrowLeft, Bell, BellRing, CalendarDays, CalendarPlus, Download, FileDown, MapPin, Pencil, Play,
-  Trash2, UserPlus, Users, Video, X,
+  ArrowLeft, Bell, BellRing, CalendarDays, CalendarPlus, CheckCircle2, Clock, Download, FileDown, MapPin, Pencil, Play,
+  Trash2, UserPlus, Users, Video, X, XCircle,
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/hooks/useAuth";
@@ -29,6 +30,7 @@ import { useReuniaoDetalhe } from "./useReuniaoDetalhe";
 import { useUsuariosAtivos, useEditarSerieRecorrente, useExcluirReunioesEmMassa, verificarConflitoSala, verificarConflitoParticipante } from "./useReunioes";
 import { PautaTabela } from "./componentes/PautaTabela";
 import { EditarDiaHorarioDialog } from "./componentes/EditarDiaHorarioDialog";
+import { PresencaBadge } from "./componentes/PresencaBadge";
 import { AssinaturasPanel } from "./componentes/AssinaturasPanel";
 import { AnexosPainel } from "./componentes/AnexosPainel";
 import { ComentariosPainel } from "./componentes/ComentariosPainel";
@@ -37,6 +39,10 @@ import { exportarConvocacaoPdf } from "./pdf/convocacaoPdf";
 import { exportarAtaFinalPdf } from "./pdf/ataFinalPdf";
 import { buildGoogleCalendarUrl, baixarIcs } from "@/lib/calendarExport";
 import { ETAPA_COR, ETAPA_LABEL, nomeUsuario, SALAS_PRESENCIAIS, TIPO_REUNIAO_LABEL, type TipoLocalReuniao } from "./types";
+
+function iniciaisUsuario(nome: string): string {
+  return nome.split(/\s+/).filter(Boolean).slice(0, 2).map((p) => p[0]?.toUpperCase()).join("");
+}
 
 function CampoEditavel({
   icon, label, valor, editavel, editor,
@@ -192,8 +198,14 @@ export default function ReuniaoDetalhe() {
     cancelarReuniao, excluirReuniao, encerrarReuniao, atualizarCampos,
     salvarPautaItem, atualizarPautaItem, reordenarPauta, removerPautaItem, salvarResposta,
     uploadAnexo, removerAnexo, downloadAnexo, uploadPautaAnexo, removerPautaAnexo,
-    adicionarConvidado, removerConvidado, adicionarComentario, removerComentario, salvarAssinatura,
+    adicionarConvidado, removerConvidado, marcarPresenca, adicionarComentario, removerComentario, salvarAssinatura,
   } = useReuniaoDetalhe(id);
+
+  const confirmacoes = useMemo(() => ({
+    confirmados: convidados.filter((c) => c.presente === true).length,
+    pendentes: convidados.filter((c) => c.presente === null).length,
+    naoPoderao: convidados.filter((c) => c.presente === false).length,
+  }), [convidados]);
 
   if (isLoading) return <div className="p-6 text-sm text-muted-foreground">Carregando reunião…</div>;
   if (!reuniao) {
@@ -396,6 +408,7 @@ export default function ReuniaoDetalhe() {
         )}
       </div>
 
+      <div className="grid gap-4 lg:grid-cols-[1fr_260px]">
       <Card className="grid gap-4 p-4 sm:grid-cols-2 lg:grid-cols-4">
         <CampoEditavel
           icon={<CalendarDays className="h-4 w-4" />}
@@ -513,6 +526,26 @@ export default function ReuniaoDetalhe() {
         />
       </Card>
 
+      <Card className="space-y-2 p-4">
+        <p className="text-sm font-semibold">Confirmações</p>
+        <div className="flex items-center gap-2 text-sm">
+          <CheckCircle2 className="h-4 w-4 text-emerald-600 dark:text-emerald-400" />
+          <span className="flex-1 text-muted-foreground">Confirmados</span>
+          <span className="font-semibold text-emerald-700 dark:text-emerald-400">{confirmacoes.confirmados}</span>
+        </div>
+        <div className="flex items-center gap-2 text-sm">
+          <Clock className="h-4 w-4 text-amber-600 dark:text-amber-400" />
+          <span className="flex-1 text-muted-foreground">Pendentes</span>
+          <span className="font-semibold text-amber-700 dark:text-amber-400">{confirmacoes.pendentes}</span>
+        </div>
+        <div className="flex items-center gap-2 text-sm">
+          <XCircle className="h-4 w-4 text-destructive" />
+          <span className="flex-1 text-muted-foreground">Não poderão</span>
+          <span className="font-semibold text-destructive">{confirmacoes.naoPoderao}</span>
+        </div>
+      </Card>
+      </div>
+
       {reuniao.etapa === "cancelada" && reuniao.motivo_cancelamento && (
         <p className="rounded-md border border-destructive/30 bg-destructive/5 p-3 text-sm text-destructive">
           Motivo do cancelamento: {reuniao.motivo_cancelamento}
@@ -596,27 +629,53 @@ export default function ReuniaoDetalhe() {
       <Dialog open={participantesOpen} onOpenChange={setParticipantesOpen}>
         <DialogContent>
           <DialogHeader><DialogTitle>Participantes</DialogTitle></DialogHeader>
-          <div className="space-y-1">
-            {convidados.map((c) => (
-              <div key={c.id} className="flex items-center justify-between rounded border border-border px-2 py-1 text-sm">
-                <span className="flex flex-wrap items-center gap-2">
-                  {nomeUsuario(usuarios, c.user_id) ?? c.user_id}
-                  <Badge variant="outline" className="text-[10px]">{c.papel === "observador" ? "Observador" : "Convidado"}</Badge>
-                  {c.presente === true && <Badge variant="outline" className="border-emerald-500/30 bg-emerald-500/10 text-[10px] text-emerald-700 dark:text-emerald-400">Presente</Badge>}
-                  {c.presente === false && <Badge variant="outline" className="border-destructive/30 bg-destructive/10 text-[10px] text-destructive">Ausente</Badge>}
-                  {c.presente_marcado_em && (
-                    <span className="text-[10px] text-muted-foreground">
-                      {new Date(c.presente_marcado_em).toLocaleString("pt-BR", { dateStyle: "short", timeStyle: "short" })}
+          <div className="space-y-2">
+            {convidados.map((c) => {
+              const nome = nomeUsuario(usuarios, c.user_id) ?? c.user_id;
+              const avatarUrl = usuarios.find((u) => u.id === c.user_id)?.avatar_url ?? null;
+              const podeConfirmar = c.user_id === user?.id || (podeGerenciar && !reuniaoEncerrada);
+              return (
+                <div key={c.id} className="space-y-1.5 rounded border border-border px-2 py-1.5 text-sm">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="flex min-w-0 flex-wrap items-center gap-2">
+                      <Avatar className="h-6 w-6 shrink-0">
+                        {avatarUrl && <AvatarImage src={avatarUrl} alt={nome} />}
+                        <AvatarFallback className="text-[9px]">{iniciaisUsuario(nome) || "?"}</AvatarFallback>
+                      </Avatar>
+                      <span className="truncate">{nome}</span>
+                      <Badge variant="outline" className="text-[10px]">{c.papel === "observador" ? "Observador" : "Convidado"}</Badge>
+                      <PresencaBadge presente={c.presente} />
+                      {c.presente_marcado_em && (
+                        <span className="text-[10px] text-muted-foreground">
+                          {new Date(c.presente_marcado_em).toLocaleString("pt-BR", { dateStyle: "short", timeStyle: "short" })}
+                        </span>
+                      )}
                     </span>
+                    {podeGerenciar && !reuniaoEncerrada && (
+                      <Button size="icon" variant="ghost" className="h-6 w-6 shrink-0" onClick={() => removerConvidado(c.id, nome)}>
+                        <X className="h-3.5 w-3.5" />
+                      </Button>
+                    )}
+                  </div>
+                  {podeConfirmar && (
+                    <div className="flex gap-1.5 pl-8">
+                      <Button
+                        type="button" size="sm" variant={c.presente === true ? "default" : "outline"} className="h-6 px-2 text-[10px]"
+                        onClick={() => marcarPresenca(c.id, true, nome)}
+                      >
+                        Confirmar presença
+                      </Button>
+                      <Button
+                        type="button" size="sm" variant={c.presente === false ? "destructive" : "outline"} className="h-6 px-2 text-[10px]"
+                        onClick={() => marcarPresenca(c.id, false, nome)}
+                      >
+                        Não poderei comparecer
+                      </Button>
+                    </div>
                   )}
-                </span>
-                {podeGerenciar && !reuniaoEncerrada && (
-                  <Button size="icon" variant="ghost" className="h-6 w-6" onClick={() => removerConvidado(c.id, nomeUsuario(usuarios, c.user_id) ?? undefined)}>
-                    <X className="h-3.5 w-3.5" />
-                  </Button>
-                )}
-              </div>
-            ))}
+                </div>
+              );
+            })}
             {convidados.length === 0 && <p className="text-xs text-muted-foreground">Nenhum participante adicionado.</p>}
           </div>
           {podeGerenciar && !reuniaoEncerrada && (

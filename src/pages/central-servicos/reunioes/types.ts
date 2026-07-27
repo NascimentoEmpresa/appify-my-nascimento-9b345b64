@@ -442,8 +442,21 @@ export function descreverBloqueioResumo(b: BloqueioAgenda): string {
 export interface Usuario {
   id: string;
   display_name: string;
+  avatar_url: string | null;
 }
 
 export function nomeUsuario(usuarios: Usuario[], id: string | null): string | null {
   return usuarios.find((u) => u.id === id)?.display_name ?? null;
 }
+
+export type StatusPresenca = "confirmada" | "pendente" | "recusada";
+
+export function statusPresenca(presente: boolean | null): StatusPresenca {
+  return presente === true ? "confirmada" : presente === false ? "recusada" : "pendente";
+}
+
+export const STATUS_PRESENCA_LABEL: Record<StatusPresenca, string> = {
+  confirmada: "Presença confirmada",
+  pendente: "Presença pendente",
+  recusada: "Não poderá comparecer",
+};
