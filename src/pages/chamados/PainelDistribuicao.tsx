@@ -86,7 +86,7 @@ export default function PainelDistribuicao() {
     enabled: gestor,
     queryFn: async () => {
       const { data, error } = await (supabase as any)
-        .from("chamado_sistema").select("*").order("created_at", { ascending: false });
+        .from("CHAMADO_SISTEMA").select("*").order("created_at", { ascending: false });
       if (error) throw error;
       return (data ?? []) as Chamado[];
     },
@@ -111,10 +111,10 @@ export default function PainelDistribuicao() {
 
   const atribuir = async () => {
     if (!atribChamado || !atribDev) return;
-    const { error } = await (supabase as any).from("chamado_sistema")
+    const { error } = await (supabase as any).from("CHAMADO_SISTEMA")
       .update({ responsavel_id: atribDev, status: "em_andamento" }).eq("id", atribChamado);
     if (error) { toast({ title: "Erro ao atribuir", description: error.message, variant: "destructive" }); return; }
-    await (supabase as any).from("chamado_sistema_evento").insert({
+    await (supabase as any).from("CHAMADO_SISTEMA_EVENTO").insert({
       chamado_id: atribChamado, tipo: "evento", texto: `Chamado atribuído a ${nomeDe(atribDev)}`,
     });
     supabase.functions.invoke("enviar-notificacao-push-chamado", { body: { chamado_id: atribChamado, evento: "atribuido" } }).catch(() => {});

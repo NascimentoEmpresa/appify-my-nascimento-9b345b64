@@ -54,7 +54,7 @@ export default function CoordenarChamado() {
     queryKey: ["chamado", id],
     enabled: !!id && gestor,
     queryFn: async () => {
-      const { data, error } = await (supabase as any).from("chamado_sistema").select("*").eq("id", id).single();
+      const { data, error } = await (supabase as any).from("CHAMADO_SISTEMA").select("*").eq("id", id).single();
       if (error) throw error;
       const c = data as Chamado;
       setResponsavel((cur) => cur ?? c.responsavel_id ?? null);
@@ -67,7 +67,7 @@ export default function CoordenarChamado() {
     queryKey: ["chamado-tarefas", id],
     enabled: !!id && gestor,
     queryFn: async () => {
-      const { data, error } = await (supabase as any).from("chamado_sistema_tarefa")
+      const { data, error } = await (supabase as any).from("CHAMADO_SISTEMA_TAREFA")
         .select("*").eq("chamado_id", id).order("ordem", { ascending: true });
       if (error) throw error;
       return (data ?? []) as Tarefa[];
@@ -85,9 +85,9 @@ export default function CoordenarChamado() {
     const pos = novaPos === "inicio" ? 1 : novaPos === "fim" ? tarefas.length + 1 : Number(novaPos);
     // Reordena as existentes >= pos.
     for (const t of tarefas.filter((t) => t.ordem >= pos)) {
-      await (supabase as any).from("chamado_sistema_tarefa").update({ ordem: t.ordem + 1 }).eq("id", t.id);
+      await (supabase as any).from("CHAMADO_SISTEMA_TAREFA").update({ ordem: t.ordem + 1 }).eq("id", t.id);
     }
-    const { error } = await (supabase as any).from("chamado_sistema_tarefa").insert({
+    const { error } = await (supabase as any).from("CHAMADO_SISTEMA_TAREFA").insert({
       chamado_id: id, titulo: novoTitulo.trim(), descricao: novaDescricao.trim() || null,
       prioridade: novaPrioridade, ordem: pos, responsavel_id: responsavel,
     });
@@ -99,13 +99,13 @@ export default function CoordenarChamado() {
   const mover = async (t: Tarefa, dir: -1 | 1) => {
     const vizinho = tarefas.find((o) => o.ordem === t.ordem + dir);
     if (!vizinho) return;
-    await (supabase as any).from("chamado_sistema_tarefa").update({ ordem: vizinho.ordem }).eq("id", t.id);
-    await (supabase as any).from("chamado_sistema_tarefa").update({ ordem: t.ordem }).eq("id", vizinho.id);
+    await (supabase as any).from("CHAMADO_SISTEMA_TAREFA").update({ ordem: vizinho.ordem }).eq("id", t.id);
+    await (supabase as any).from("CHAMADO_SISTEMA_TAREFA").update({ ordem: t.ordem }).eq("id", vizinho.id);
     invalidar();
   };
 
   const removerTarefa = async (t: Tarefa) => {
-    await (supabase as any).from("chamado_sistema_tarefa").delete().eq("id", t.id);
+    await (supabase as any).from("CHAMADO_SISTEMA_TAREFA").delete().eq("id", t.id);
     invalidar();
   };
 
@@ -113,15 +113,15 @@ export default function CoordenarChamado() {
     if (!responsavel) { toast({ title: "Escolha o responsável pela execução.", variant: "destructive" }); return; }
     setSalvando(true);
     const nomeDev = devs.find((d) => d.id === responsavel)?.display_name ?? "";
-    const { error } = await (supabase as any).from("chamado_sistema").update({
+    const { error } = await (supabase as any).from("CHAMADO_SISTEMA").update({
       responsavel_id: responsavel, status: "em_andamento", observacao_gerente: observacao.trim() || null,
     }).eq("id", id);
     if (error) { setSalvando(false); toast({ title: "Erro ao atribuir", description: error.message, variant: "destructive" }); return; }
     // Garante que as tarefas fiquem com o responsável escolhido.
     for (const t of tarefas.filter((t) => t.responsavel_id !== responsavel)) {
-      await (supabase as any).from("chamado_sistema_tarefa").update({ responsavel_id: responsavel }).eq("id", t.id);
+      await (supabase as any).from("CHAMADO_SISTEMA_TAREFA").update({ responsavel_id: responsavel }).eq("id", t.id);
     }
-    await (supabase as any).from("chamado_sistema_evento").insert({
+    await (supabase as any).from("CHAMADO_SISTEMA_EVENTO").insert({
       chamado_id: id, tipo: "evento", texto: `Chamado direcionado a ${nomeDev}${tarefas.length ? ` com ${tarefas.length} tarefa(s)` : ""}`,
     });
     supabase.functions.invoke("enviar-notificacao-push-chamado", { body: { chamado_id: id, evento: "atribuido" } }).catch(() => {});
@@ -133,11 +133,11 @@ export default function CoordenarChamado() {
 
   const reprovar = async () => {
     if (!motivo.trim()) { toast({ title: "Informe o motivo da reprovação.", variant: "destructive" }); return; }
-    const { error } = await (supabase as any).from("chamado_sistema").update({
+    const { error } = await (supabase as any).from("CHAMADO_SISTEMA").update({
       status: "reprovado", motivo_reprovacao: motivo.trim(),
     }).eq("id", id);
     if (error) { toast({ title: "Erro ao reprovar", description: error.message, variant: "destructive" }); return; }
-    await (supabase as any).from("chamado_sistema_evento").insert({
+    await (supabase as any).from("CHAMADO_SISTEMA_EVENTO").insert({
       chamado_id: id, tipo: "evento", texto: "Chamado reprovado: " + motivo.trim(),
     });
     supabase.functions.invoke("enviar-notificacao-push-chamado", { body: { chamado_id: id, evento: "reprovado" } }).catch(() => {});

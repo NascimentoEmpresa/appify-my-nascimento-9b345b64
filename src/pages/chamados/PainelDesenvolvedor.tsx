@@ -15,7 +15,7 @@ import {
   StatCard, PrioridadeBadge, TarefaStatusBadge, STATUS_TAREFA, fmtData, type Tarefa,
 } from "./types";
 
-type TarefaJoin = Tarefa & { chamado_sistema: { numero: string; assunto: string; solicitante_nome: string | null; setor: string | null; status: string } | null };
+type TarefaJoin = Tarefa & { chamado: { numero: string; assunto: string; solicitante_nome: string | null; setor: string | null; status: string } | null };
 
 const DONUT: Record<string, string> = {
   em_andamento: "hsl(var(--info))", aguardando_informacoes: "hsl(var(--primary))",
@@ -33,8 +33,8 @@ export default function PainelDesenvolvedor() {
     queryKey: ["chamados-minhas-tarefas", user?.id],
     enabled: !!user?.id && dev,
     queryFn: async () => {
-      const { data, error } = await (supabase as any).from("chamado_sistema_tarefa")
-        .select("*, chamado_sistema(numero,assunto,solicitante_nome,setor,status)")
+      const { data, error } = await (supabase as any).from("CHAMADO_SISTEMA_TAREFA")
+        .select("*, chamado:CHAMADO_SISTEMA(numero,assunto,solicitante_nome,setor,status)")
         .eq("responsavel_id", user!.id)
         .order("ordem", { ascending: true });
       if (error) throw error;
@@ -121,10 +121,10 @@ export default function PainelDesenvolvedor() {
                       <TableRow key={t.id} className="cursor-pointer" onClick={() => nav(`/app/sistemas/chamados/${t.chamado_id}`)}>
                         <TableCell className="text-center text-xs text-muted-foreground">{i + 1}</TableCell>
                         <TableCell>
-                          <p className="font-mono text-[11px] font-semibold">#{t.chamado_sistema?.numero}</p>
+                          <p className="font-mono text-[11px] font-semibold">#{t.chamado?.numero}</p>
                           <p className="text-xs">{t.titulo}</p>
                         </TableCell>
-                        <TableCell className="text-xs">{t.chamado_sistema?.solicitante_nome || "—"}<div className="text-[10px] text-muted-foreground">{t.chamado_sistema?.setor}</div></TableCell>
+                        <TableCell className="text-xs">{t.chamado?.solicitante_nome || "—"}<div className="text-[10px] text-muted-foreground">{t.chamado?.setor}</div></TableCell>
                         <TableCell><PrioridadeBadge prioridade={t.prioridade} /></TableCell>
                         <TableCell><TarefaStatusBadge status={t.status} /></TableCell>
                         <TableCell className={`whitespace-nowrap text-xs ${atrasada ? "font-semibold text-destructive" : ""}`}>{fmtData(t.prazo)}{atrasada ? " · atrasado" : ""}</TableCell>
@@ -171,7 +171,7 @@ export default function PainelDesenvolvedor() {
             <div className="space-y-2">
               {proximos.map((t) => (
                 <button key={t.id} onClick={() => nav(`/app/sistemas/chamados/${t.chamado_id}`)} className="block w-full rounded border border-border px-2.5 py-1.5 text-left hover:border-primary/40">
-                  <p className="text-xs font-medium">{fmtData(t.prazo)} — #{t.chamado_sistema?.numero}</p>
+                  <p className="text-xs font-medium">{fmtData(t.prazo)} — #{t.chamado?.numero}</p>
                   <p className="truncate text-[11px] text-muted-foreground">{t.titulo}</p>
                 </button>
               ))}

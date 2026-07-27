@@ -46,7 +46,7 @@ export default function ExecutarChamado() {
     queryKey: ["chamado", id],
     enabled: !!id,
     queryFn: async () => {
-      const { data, error } = await (supabase as any).from("chamado_sistema").select("*").eq("id", id).single();
+      const { data, error } = await (supabase as any).from("CHAMADO_SISTEMA").select("*").eq("id", id).single();
       if (error) throw error;
       return data as Chamado;
     },
@@ -56,7 +56,7 @@ export default function ExecutarChamado() {
     queryKey: ["chamado-tarefas", id],
     enabled: !!id,
     queryFn: async () => {
-      const { data } = await (supabase as any).from("chamado_sistema_tarefa").select("*").eq("chamado_id", id).order("ordem");
+      const { data } = await (supabase as any).from("CHAMADO_SISTEMA_TAREFA").select("*").eq("chamado_id", id).order("ordem");
       return (data ?? []) as Tarefa[];
     },
   });
@@ -65,7 +65,7 @@ export default function ExecutarChamado() {
     queryKey: ["chamado-anexos", id],
     enabled: !!id,
     queryFn: async () => {
-      const { data } = await (supabase as any).from("chamado_sistema_anexo").select("*").eq("chamado_id", id).order("created_at");
+      const { data } = await (supabase as any).from("CHAMADO_SISTEMA_ANEXO").select("*").eq("chamado_id", id).order("created_at");
       return (data ?? []) as Anexo[];
     },
   });
@@ -74,7 +74,7 @@ export default function ExecutarChamado() {
     queryKey: ["chamado-eventos", id],
     enabled: !!id,
     queryFn: async () => {
-      const { data } = await (supabase as any).from("chamado_sistema_evento").select("*").eq("chamado_id", id).order("created_at", { ascending: false });
+      const { data } = await (supabase as any).from("CHAMADO_SISTEMA_EVENTO").select("*").eq("chamado_id", id).order("created_at", { ascending: false });
       return (data ?? []) as Evento[];
     },
   });
@@ -88,22 +88,22 @@ export default function ExecutarChamado() {
   };
 
   const mudarStatus = async (status: string, texto: string, evento: string) => {
-    const { error } = await (supabase as any).from("chamado_sistema").update({ status }).eq("id", id);
+    const { error } = await (supabase as any).from("CHAMADO_SISTEMA").update({ status }).eq("id", id);
     if (error) { toast({ title: "Erro", description: error.message, variant: "destructive" }); return; }
-    await (supabase as any).from("chamado_sistema_evento").insert({ chamado_id: id, tipo: "evento", texto });
+    await (supabase as any).from("CHAMADO_SISTEMA_EVENTO").insert({ chamado_id: id, tipo: "evento", texto });
     supabase.functions.invoke("enviar-notificacao-push-chamado", { body: { chamado_id: id, evento } }).catch(() => {});
     toast({ title: texto });
     invalidar();
   };
 
   const salvarPrazo = async (prazo: string) => {
-    const { error } = await (supabase as any).from("chamado_sistema").update({ prazo_previsto: prazo || null }).eq("id", id);
+    const { error } = await (supabase as any).from("CHAMADO_SISTEMA").update({ prazo_previsto: prazo || null }).eq("id", id);
     if (error) { toast({ title: "Erro ao salvar prazo", description: error.message, variant: "destructive" }); return; }
     invalidar();
   };
 
   const mudarStatusTarefa = async (t: Tarefa, status: string) => {
-    const { error } = await (supabase as any).from("chamado_sistema_tarefa").update({ status }).eq("id", t.id);
+    const { error } = await (supabase as any).from("CHAMADO_SISTEMA_TAREFA").update({ status }).eq("id", t.id);
     if (error) { toast({ title: "Erro na tarefa", description: error.message, variant: "destructive" }); return; }
     qc.invalidateQueries({ queryKey: ["chamado-tarefas", id] });
     qc.invalidateQueries({ queryKey: ["chamados-minhas-tarefas", user?.id] });
@@ -111,7 +111,7 @@ export default function ExecutarChamado() {
 
   const salvarObs = async () => {
     if (!obsInterna.trim()) return;
-    const { error } = await (supabase as any).from("chamado_sistema_evento").insert({
+    const { error } = await (supabase as any).from("CHAMADO_SISTEMA_EVENTO").insert({
       chamado_id: id, tipo: "observacao_interna", texto: obsInterna.trim(),
     });
     if (error) { toast({ title: "Erro ao salvar observação", description: error.message, variant: "destructive" }); return; }
@@ -121,9 +121,9 @@ export default function ExecutarChamado() {
 
   const reprovar = async () => {
     if (!motivo.trim()) { toast({ title: "Informe o motivo.", variant: "destructive" }); return; }
-    const { error } = await (supabase as any).from("chamado_sistema").update({ status: "reprovado", motivo_reprovacao: motivo.trim() }).eq("id", id);
+    const { error } = await (supabase as any).from("CHAMADO_SISTEMA").update({ status: "reprovado", motivo_reprovacao: motivo.trim() }).eq("id", id);
     if (error) { toast({ title: "Erro ao reprovar", description: error.message, variant: "destructive" }); return; }
-    await (supabase as any).from("chamado_sistema_evento").insert({ chamado_id: id, tipo: "evento", texto: "Chamado reprovado: " + motivo.trim() });
+    await (supabase as any).from("CHAMADO_SISTEMA_EVENTO").insert({ chamado_id: id, tipo: "evento", texto: "Chamado reprovado: " + motivo.trim() });
     supabase.functions.invoke("enviar-notificacao-push-chamado", { body: { chamado_id: id, evento: "reprovado" } }).catch(() => {});
     toast({ title: "Chamado reprovado" });
     setReprovando(false); setMotivo("");

@@ -160,7 +160,7 @@ Deno.serve(async (req) => {
     const admin = createClient(SUPABASE_URL, SERVICE_ROLE, { auth: { persistSession: false } });
 
     const { data: chamado, error: cErr } = await admin
-      .from("chamado_sistema")
+      .from("CHAMADO_SISTEMA")
       .select("numero, assunto, solicitante_id, responsavel_id")
       .eq("id", chamadoId)
       .maybeSingle();

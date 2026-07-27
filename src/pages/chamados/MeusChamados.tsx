@@ -44,7 +44,7 @@ export default function MeusChamados({ base = "/app/central-servicos/chamados" }
     enabled: !!user?.id,
     queryFn: async () => {
       const { data, error } = await (supabase as any)
-        .from("chamado_sistema")
+        .from("CHAMADO_SISTEMA")
         .select("*")
         .eq("solicitante_id", user!.id)
         .order("created_at", { ascending: false });

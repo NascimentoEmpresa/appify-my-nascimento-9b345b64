@@ -12,6 +12,7 @@
 --   chamados_sistemas_aprovar    → aprovar / reprovar / encerrar
 --   chamados_sistemas_dev        → desenvolvedor: Painel do Dev + executar tarefas
 -- "Gestor" (para RLS) = tem painel OU coordenar OU aprovar.
+-- Tabelas em MAIÚSCULAS/citadas: "CHAMADO_SISTEMA*".
 -- =====================================================================
 
 -- 1) Registrar as novas capacidades (rota NULL = só permissão) ----------
@@ -56,86 +57,86 @@ REVOKE ALL ON FUNCTION public.chamado_pode_abrir() FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION public.chamado_pode_abrir() TO authenticated;
 
 -- 3) RLS refeita por capacidade -----------------------------------------
--- chamado_sistema
-DROP POLICY IF EXISTS chamado_sistema_select ON public.chamado_sistema;
-CREATE POLICY chamado_sistema_select ON public.chamado_sistema
+-- CHAMADO_SISTEMA
+DROP POLICY IF EXISTS chamado_sistema_select ON public."CHAMADO_SISTEMA";
+CREATE POLICY chamado_sistema_select ON public."CHAMADO_SISTEMA"
   FOR SELECT TO authenticated
   USING (
     solicitante_id = auth.uid()
     OR responsavel_id = auth.uid()
     OR public.chamado_sistema_gestor()
-    OR EXISTS (SELECT 1 FROM public.chamado_sistema_tarefa t
-               WHERE t.chamado_id = chamado_sistema.id AND t.responsavel_id = auth.uid())
+    OR EXISTS (SELECT 1 FROM public."CHAMADO_SISTEMA_TAREFA" t
+               WHERE t.chamado_id = "CHAMADO_SISTEMA".id AND t.responsavel_id = auth.uid())
   );
 
-DROP POLICY IF EXISTS chamado_sistema_insert ON public.chamado_sistema;
-CREATE POLICY chamado_sistema_insert ON public.chamado_sistema
+DROP POLICY IF EXISTS chamado_sistema_insert ON public."CHAMADO_SISTEMA";
+CREATE POLICY chamado_sistema_insert ON public."CHAMADO_SISTEMA"
   FOR INSERT TO authenticated
   WITH CHECK (
     public.chamado_pode_abrir()
     AND solicitante_id = auth.uid() AND status = 'aberto' AND responsavel_id IS NULL
   );
 
-DROP POLICY IF EXISTS chamado_sistema_update ON public.chamado_sistema;
-CREATE POLICY chamado_sistema_update ON public.chamado_sistema
+DROP POLICY IF EXISTS chamado_sistema_update ON public."CHAMADO_SISTEMA";
+CREATE POLICY chamado_sistema_update ON public."CHAMADO_SISTEMA"
   FOR UPDATE TO authenticated
   USING (public.chamado_sistema_gestor() OR responsavel_id = auth.uid())
   WITH CHECK (public.chamado_sistema_gestor() OR responsavel_id = auth.uid());
 
--- chamado_sistema_tarefa
-DROP POLICY IF EXISTS chamado_sistema_tarefa_select ON public.chamado_sistema_tarefa;
-CREATE POLICY chamado_sistema_tarefa_select ON public.chamado_sistema_tarefa
+-- CHAMADO_SISTEMA_TAREFA
+DROP POLICY IF EXISTS chamado_sistema_tarefa_select ON public."CHAMADO_SISTEMA_TAREFA";
+CREATE POLICY chamado_sistema_tarefa_select ON public."CHAMADO_SISTEMA_TAREFA"
   FOR SELECT TO authenticated
   USING (public.chamado_sistema_gestor() OR responsavel_id = auth.uid());
 
-DROP POLICY IF EXISTS chamado_sistema_tarefa_insert ON public.chamado_sistema_tarefa;
-CREATE POLICY chamado_sistema_tarefa_insert ON public.chamado_sistema_tarefa
+DROP POLICY IF EXISTS chamado_sistema_tarefa_insert ON public."CHAMADO_SISTEMA_TAREFA";
+CREATE POLICY chamado_sistema_tarefa_insert ON public."CHAMADO_SISTEMA_TAREFA"
   FOR INSERT TO authenticated
   WITH CHECK (public.tem_acesso_menu('chamados_sistemas_coordenar'));
 
-DROP POLICY IF EXISTS chamado_sistema_tarefa_update ON public.chamado_sistema_tarefa;
-CREATE POLICY chamado_sistema_tarefa_update ON public.chamado_sistema_tarefa
+DROP POLICY IF EXISTS chamado_sistema_tarefa_update ON public."CHAMADO_SISTEMA_TAREFA";
+CREATE POLICY chamado_sistema_tarefa_update ON public."CHAMADO_SISTEMA_TAREFA"
   FOR UPDATE TO authenticated
   USING (public.tem_acesso_menu('chamados_sistemas_coordenar') OR responsavel_id = auth.uid())
   WITH CHECK (public.tem_acesso_menu('chamados_sistemas_coordenar') OR responsavel_id = auth.uid());
 
-DROP POLICY IF EXISTS chamado_sistema_tarefa_delete ON public.chamado_sistema_tarefa;
-CREATE POLICY chamado_sistema_tarefa_delete ON public.chamado_sistema_tarefa
+DROP POLICY IF EXISTS chamado_sistema_tarefa_delete ON public."CHAMADO_SISTEMA_TAREFA";
+CREATE POLICY chamado_sistema_tarefa_delete ON public."CHAMADO_SISTEMA_TAREFA"
   FOR DELETE TO authenticated
   USING (public.tem_acesso_menu('chamados_sistemas_coordenar'));
 
--- chamado_sistema_anexo
-DROP POLICY IF EXISTS chamado_sistema_anexo_select ON public.chamado_sistema_anexo;
-CREATE POLICY chamado_sistema_anexo_select ON public.chamado_sistema_anexo
+-- CHAMADO_SISTEMA_ANEXO
+DROP POLICY IF EXISTS chamado_sistema_anexo_select ON public."CHAMADO_SISTEMA_ANEXO";
+CREATE POLICY chamado_sistema_anexo_select ON public."CHAMADO_SISTEMA_ANEXO"
   FOR SELECT TO authenticated
-  USING (EXISTS (SELECT 1 FROM public.chamado_sistema c WHERE c.id = chamado_id
+  USING (EXISTS (SELECT 1 FROM public."CHAMADO_SISTEMA" c WHERE c.id = chamado_id
                  AND (c.solicitante_id = auth.uid() OR c.responsavel_id = auth.uid()
                       OR public.chamado_sistema_gestor())));
 
-DROP POLICY IF EXISTS chamado_sistema_anexo_insert ON public.chamado_sistema_anexo;
-CREATE POLICY chamado_sistema_anexo_insert ON public.chamado_sistema_anexo
+DROP POLICY IF EXISTS chamado_sistema_anexo_insert ON public."CHAMADO_SISTEMA_ANEXO";
+CREATE POLICY chamado_sistema_anexo_insert ON public."CHAMADO_SISTEMA_ANEXO"
   FOR INSERT TO authenticated
   WITH CHECK (autor_id = auth.uid() AND EXISTS (
-    SELECT 1 FROM public.chamado_sistema c WHERE c.id = chamado_id
+    SELECT 1 FROM public."CHAMADO_SISTEMA" c WHERE c.id = chamado_id
     AND (c.solicitante_id = auth.uid() OR c.responsavel_id = auth.uid()
          OR public.chamado_sistema_gestor())));
 
--- chamado_sistema_evento
-DROP POLICY IF EXISTS chamado_sistema_evento_select ON public.chamado_sistema_evento;
-CREATE POLICY chamado_sistema_evento_select ON public.chamado_sistema_evento
+-- CHAMADO_SISTEMA_EVENTO
+DROP POLICY IF EXISTS chamado_sistema_evento_select ON public."CHAMADO_SISTEMA_EVENTO";
+CREATE POLICY chamado_sistema_evento_select ON public."CHAMADO_SISTEMA_EVENTO"
   FOR SELECT TO authenticated
   USING (
     public.chamado_sistema_gestor()
-    OR EXISTS (SELECT 1 FROM public.chamado_sistema c WHERE c.id = chamado_id
+    OR EXISTS (SELECT 1 FROM public."CHAMADO_SISTEMA" c WHERE c.id = chamado_id
                AND (c.responsavel_id = auth.uid()
                     OR (c.solicitante_id = auth.uid() AND tipo <> 'observacao_interna')))
   );
 
-DROP POLICY IF EXISTS chamado_sistema_evento_insert ON public.chamado_sistema_evento;
-CREATE POLICY chamado_sistema_evento_insert ON public.chamado_sistema_evento
+DROP POLICY IF EXISTS chamado_sistema_evento_insert ON public."CHAMADO_SISTEMA_EVENTO";
+CREATE POLICY chamado_sistema_evento_insert ON public."CHAMADO_SISTEMA_EVENTO"
   FOR INSERT TO authenticated
   WITH CHECK (autor_id = auth.uid() AND EXISTS (
-    SELECT 1 FROM public.chamado_sistema c WHERE c.id = chamado_id
+    SELECT 1 FROM public."CHAMADO_SISTEMA" c WHERE c.id = chamado_id
     AND (public.chamado_sistema_gestor()
          OR c.responsavel_id = auth.uid()
          OR (c.solicitante_id = auth.uid() AND tipo IN ('comentario')))));
@@ -222,7 +223,7 @@ AS $$
                      AND concluido_em >= date_trunc('month', now()))::int,
     count(*) FILTER (WHERE prazo_previsto < current_date
                      AND status NOT IN ('concluido','reprovado'))::int
-  FROM public.chamado_sistema
+  FROM public."CHAMADO_SISTEMA"
   WHERE public.chamado_sistema_gestor();
 $$;
 REVOKE ALL ON FUNCTION public.chamados_painel_stats() FROM PUBLIC;
@@ -233,9 +234,9 @@ RETURNS TABLE(id uuid, display_name text, em_andamento int, abertos int)
 LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public, pg_temp
 AS $$
   SELECT p.id, p.display_name,
-    (SELECT count(*) FROM public.chamado_sistema c
+    (SELECT count(*) FROM public."CHAMADO_SISTEMA" c
        WHERE c.responsavel_id = p.id AND c.status = 'em_andamento')::int,
-    (SELECT count(*) FROM public.chamado_sistema c
+    (SELECT count(*) FROM public."CHAMADO_SISTEMA" c
        WHERE c.responsavel_id = p.id
          AND c.status IN ('aberto','em_andamento','aguardando_retorno'))::int
   FROM public.profiles p

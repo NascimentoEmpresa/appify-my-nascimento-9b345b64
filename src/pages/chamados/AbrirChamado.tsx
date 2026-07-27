@@ -69,7 +69,7 @@ export default function AbrirChamado({ base = "/app/central-servicos/chamados" }
   const enviar = async () => {
     if (!podeEnviar) { toast({ title: "Preencha os campos obrigatórios (*)", variant: "destructive" }); return; }
     setSalvando(true);
-    const { data, error } = await (supabase as any).from("chamado_sistema").insert({
+    const { data, error } = await (supabase as any).from("CHAMADO_SISTEMA").insert({
       assunto: assunto.trim(),
       categorias,
       tipo_solicitacao: tipo,
@@ -93,7 +93,7 @@ export default function AbrirChamado({ base = "/app/central-servicos/chamados" }
       const path = `${data.id}/${Date.now()}-${sanitizeNome(file.name)}`;
       const up = await supabase.storage.from(BUCKET_CHAMADOS).upload(path, file, { contentType: file.type });
       if (up.error) { falhas.push(file.name); continue; }
-      await (supabase as any).from("chamado_sistema_anexo").insert({
+      await (supabase as any).from("CHAMADO_SISTEMA_ANEXO").insert({
         chamado_id: data.id, storage_path: path, nome_arquivo: file.name,
         mime_type: file.type || null, tamanho_bytes: file.size, campo: "abertura",
       });
