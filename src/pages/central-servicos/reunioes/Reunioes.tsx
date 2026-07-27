@@ -101,7 +101,7 @@ export default function Reunioes() {
         <KpiTile icon={<CalendarDays className="h-5 w-5" />} label="Reuniões no mês" valor={kpis.noMes} sub="Total agendadas" cor="bg-blue-100 text-blue-700" />
         <KpiTile icon={<Clock className="h-5 w-5" />} label="Esta semana" valor={kpis.naSemana} sub="Próximas reuniões" cor="bg-violet-100 text-violet-700" />
         <KpiTile icon={<CalendarDays className="h-5 w-5" />} label="Hoje" valor={kpis.hoje} sub="Reuniões hoje" cor="bg-amber-100 text-amber-700" />
-        <KpiTile icon={<AlertTriangle className="h-5 w-5" />} label="Atrasadas" valor={kpis.atrasadas} sub="Reuniões pendentes" cor="bg-red-100 text-red-700" />
+        <KpiTile icon={<AlertTriangle className="h-5 w-5" />} label="Atrasadas/Canceladas" valor={kpis.atrasadas} sub="Reuniões pendentes" cor="bg-red-100 text-red-700" />
       </div>
 
       <div className="flex flex-wrap items-center gap-2">
