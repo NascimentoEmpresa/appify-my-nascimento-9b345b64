@@ -1,6 +1,6 @@
 import { PageHeader } from "@/components/layout/PageHeader";
 import { Card } from "@/components/ui/card";
-import { BookOpen, ShieldAlert, ClipboardList, CalendarRange, ArrowRight, type LucideIcon } from "lucide-react";
+import { BookOpen, ShieldAlert, ClipboardList, CalendarRange, Headset, ArrowRight, type LucideIcon } from "lucide-react";
 import { Link } from "react-router-dom";
 
 interface Servico {
@@ -29,6 +29,12 @@ const servicos: Servico[] = [
     icon: ClipboardList,
     title: "Nascimento Formulários",
     desc: "Crie formulários e pesquisas com vários tipos de pergunta e imagens, publique numa URL com prazo definido e acompanhe as respostas.",
+  },
+  {
+    to: "/app/central-servicos/chamados",
+    icon: Headset,
+    title: "Chamados de Sistemas",
+    desc: "Abra chamados de ajuste, correção ou dúvida sobre os sistemas do ERP e acompanhe o andamento. O time de Sistemas distribui e resolve.",
   },
   {
     to: "/app/central-servicos/reunioes",

@@ -419,6 +419,15 @@ const sistemasModule: ModuleDef = {
         { label: "Solicitações ERP", to: "/app/sistemas/solicitacoes-erp", icon: Laptop2 },
       ],
     },
+    {
+      label: "Chamados de Sistemas",
+      defaultOpen: true,
+      items: [
+        { label: "Chamados de Sistemas", to: "/app/sistemas/chamados", icon: Headset },
+        { label: "Painel de Distribuição", to: "/app/sistemas/chamados/painel", icon: BarChart3 },
+        { label: "Painel do Desenvolvedor", to: "/app/sistemas/chamados/dev", icon: ClipboardList },
+      ],
+    },
   ],
 };
 
@@ -439,6 +448,7 @@ const centralServicosModule: ModuleDef = {
         { label: "Orientações Jurídicas", to: "/app/central-servicos/orientacoes-juridicas", icon: BookOpen },
         { label: "Denúncias (Canal de Ética)", to: "/app/central-servicos/denuncias", icon: ShieldAlert },
         { label: "Nascimento Formulários", to: "/app/central-servicos/formularios", icon: ClipboardList },
+        { label: "Chamados de Sistemas", to: "/app/central-servicos/chamados", icon: Headset },
         { label: "Agenda de Reunião", to: "/app/central-servicos/reunioes", icon: CalendarRange },
       ],
     },
