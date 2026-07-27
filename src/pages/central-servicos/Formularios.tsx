@@ -4,6 +4,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
 import { parseSurveyMonkey, ImportResultado } from "@/utils/surveyMonkeyImporter";
 import { useFormPerms } from "@/hooks/useFormPerms";
+import QRCode from "qrcode";
 
 // =====================================================================
 // CENTRAL DE SERVIÇOS - Nascimento Formulários (gestão)
@@ -101,6 +102,8 @@ export default function Formularios() {
   const [importando, setImportando] = useState(false);
   const [excluindo, setExcluindo] = useState<Formulario | null>(null);  // modal "digite CONFIRMAR"
   const [confirmTxt, setConfirmTxt] = useState("");
+  const [qrForm, setQrForm] = useState<Formulario | null>(null);  // modal do QR Code
+  const [qrPng, setQrPng] = useState<string>("");                 // data URL do PNG gerado
   const [lixeiraAberta, setLixeiraAberta] = useState(false);
   const [lixeira, setLixeira] = useState<Formulario[]>([]);
   const [lixeiraLoading, setLixeiraLoading] = useState(false);
@@ -122,6 +125,24 @@ export default function Formularios() {
     setContagens(cont);
   }, []);
   useEffect(() => { load(); }, [load]);
+
+  // Gera o PNG do QR Code (512px, margem folgada) sempre que abrir o modal.
+  useEffect(() => {
+    if (!qrForm) { setQrPng(""); return; }
+    let vivo = true;
+    QRCode.toDataURL(urlPublica(qrForm.slug), { width: 512, margin: 2, errorCorrectionLevel: "M" })
+      .then(url => { if (vivo) setQrPng(url); })
+      .catch(() => { if (vivo) { setQrPng(""); toast("Não foi possível gerar o QR Code.", "err"); } });
+    return () => { vivo = false; };
+  }, [qrForm]);
+
+  const baixarQr = () => {
+    if (!qrForm || !qrPng) return;
+    const a = document.createElement("a");
+    a.href = qrPng;
+    a.download = `qrcode-${qrForm.slug}.png`;
+    document.body.appendChild(a); a.click(); a.remove();
+  };
 
   // Criador SÓ de setor (sem editar_criar amplo) tem que escolher/carimbar o
   // setor-dono; criador amplo pode deixar em branco (formulário geral).
@@ -363,6 +384,7 @@ export default function Formularios() {
                       {podeEncerrar(f) && f.status !== "publicado" && <button onClick={() => mudarStatus(f, "publicado")} style={btn("#16a34a")}>Publicar</button>}
                       {f.status === "publicado" && <>
                         <button onClick={() => copiarUrl(f)} style={btn("#fff", "#475569", "1px solid #e2e8f0")}>🔗 Copiar URL</button>
+                        <button onClick={() => setQrForm(f)} style={btn("#fff", "#475569", "1px solid #e2e8f0")}>⬛ QR Code</button>
                         {podeEncerrar(f) && <button onClick={() => mudarStatus(f, "encerrado")} style={btn("rgba(220,38,38,.08)", "#dc2626", "1px solid rgba(220,38,38,.25)")}>Encerrar</button>}
                       </>}
                       {podeEncerrar(f) && f.status === "encerrado" && <button onClick={() => mudarStatus(f, "publicado")} style={btn("#16a34a")}>Reabrir</button>}
@@ -465,6 +487,29 @@ export default function Formularios() {
                 style={{ ...btn(confirmTxt.trim().toUpperCase() === "CONFIRMAR" ? "#dc2626" : "#fca5a5"), cursor: confirmTxt.trim().toUpperCase() === "CONFIRMAR" ? "pointer" : "not-allowed" }}>
                 Excluir
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal: QR Code do formulário (link público → PNG exportável) */}
+      {qrForm && (
+        <div style={{ position: "fixed", inset: 0, background: "rgba(15,23,42,.45)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 900, padding: 16 }} onClick={() => setQrForm(null)}>
+          <div style={{ background: "#fff", borderRadius: 16, padding: 22, width: 380, maxWidth: "92vw", position: "relative", textAlign: "center" }} onClick={e => e.stopPropagation()}>
+            <div style={{ fontSize: 16, fontWeight: 800, marginBottom: 4 }}>QR Code do formulário</div>
+            <div style={{ fontSize: 12.5, color: "#64748b", marginBottom: 14 }}>Aponte a câmera para abrir <b style={{ color: "#0f172a" }}>{qrForm.titulo}</b>.</div>
+            <div style={{ display: "flex", justifyContent: "center", marginBottom: 12 }}>
+              {qrPng
+                ? <img src={qrPng} alt={`QR Code de ${qrForm.titulo}`} style={{ width: 240, height: 240, border: "1px solid #e2e8f0", borderRadius: 12, padding: 8, background: "#fff" }} />
+                : <div style={{ width: 240, height: 240, display: "flex", alignItems: "center", justifyContent: "center", color: "#94a3b8", border: "1px dashed #cbd5e1", borderRadius: 12 }}>Gerando…</div>}
+            </div>
+            <div style={{ fontSize: 11.5, color: "#94a3b8", wordBreak: "break-all", marginBottom: 14 }}>{urlPublica(qrForm.slug)}</div>
+            <div style={{ display: "flex", gap: 8, justifyContent: "center" }}>
+              <button onClick={() => copiarUrl(qrForm)} style={btn("#fff", "#475569", "1px solid #e2e8f0")}>🔗 Copiar URL</button>
+              <button onClick={baixarQr} disabled={!qrPng} style={btn(qrPng ? "#0f3171" : "#94a3b8")}>⬇ Baixar PNG</button>
+            </div>
+            <div style={{ marginTop: 12 }}>
+              <button onClick={() => setQrForm(null)} style={btn("transparent", "#94a3b8")}>Fechar</button>
             </div>
           </div>
         </div>
