@@ -25,9 +25,3 @@ dist-ssr
 .env
 docs
 worker
-
-# Adicionados a pedido. ATENCAO: como estes arquivos JA estao versionados,
-# esta linha nao os remove do repo nem os esconde - eles continuam visiveis.
-# Nao rodar `git rm --cached` neles: quebra o build em producao.
-package.json
-package-lock.json
