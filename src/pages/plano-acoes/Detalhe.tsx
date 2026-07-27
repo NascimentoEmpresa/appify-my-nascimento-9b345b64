@@ -249,6 +249,13 @@ export default function PlanoAcaoDetalhe() {
         variant: "destructive",
       });
     }
+    if (isNew && !form.area) {
+      return toast({
+        title: "Setor é obrigatório",
+        description: "Selecione o setor para criar a ação.",
+        variant: "destructive",
+      });
+    }
     if (isNew) {
       // Para visibilidade específica garante que o criador está na lista,
       // caso contrário ele mesmo perderá acesso ao plano após salvar.
@@ -382,7 +389,7 @@ export default function PlanoAcaoDetalhe() {
                 {can("aprovar") ? "Validar conclusão" : "Marcar como concluída"}
               </Button>
             )}
-            {podeEdit && <Button size="sm" onClick={salvar} disabled={isNew && !form.responsavel_profile_id}>Salvar</Button>}
+            {podeEdit && <Button size="sm" onClick={salvar} disabled={isNew && (!form.responsavel_profile_id || !form.area)}>Salvar</Button>}
             {!isNew && can("excluir") && (
               <Button size="sm" variant="destructive" onClick={excluir}><Trash2 className="mr-1 h-3.5 w-3.5" />Excluir</Button>
             )}
@@ -440,7 +447,7 @@ export default function PlanoAcaoDetalhe() {
               </Select>
             </div>
             <div>
-              <Label>Setor</Label>
+              <Label>Setor {isNew && <span className="text-destructive">*</span>}</Label>
               <Select value={form.area || "__none"} disabled={!podeEdit} onValueChange={handleSetorChange}>
                 <SelectTrigger><SelectValue placeholder="Selecione o setor" /></SelectTrigger>
                 <SelectContent>
