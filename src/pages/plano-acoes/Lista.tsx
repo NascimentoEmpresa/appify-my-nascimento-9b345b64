@@ -209,6 +209,7 @@ export default function PlanoAcoesLista() {
                 <th className="p-2">Comitê / Setor</th>
                 <th className="p-2">Título / Problema</th>
                 <th className="p-2">Responsável</th>
+                <th className="p-2">Criada em</th>
                 <th className="p-2">Prior.</th>
                 <th className="p-2">Status</th>
                 <th className="p-2">Pend.</th>
@@ -227,16 +228,16 @@ export default function PlanoAcoesLista() {
             </thead>
             <tbody>
               {isLoading && (
-                <tr><td colSpan={8} className="p-6 text-center text-muted-foreground">Carregando...</td></tr>
+                <tr><td colSpan={9} className="p-6 text-center text-muted-foreground">Carregando...</td></tr>
               )}
               {!isLoading && filtered.length === 0 && rows.length === 0 && (
-                <tr><td colSpan={8} className="p-6 text-center text-muted-foreground">
+                <tr><td colSpan={9} className="p-6 text-center text-muted-foreground">
                   Você ainda não tem planos de ação visíveis nesta empresa.<br />
                   <span className="text-xs">A visibilidade segue a hierarquia: você vê os planos sob sua responsabilidade, da sua equipe (setor/área/comitê que lidera ou gerencia) ou de toda a empresa, conforme suas permissões. Solicite ao administrador (Erica, Yuri ou Helena) se faltar acesso.</span>
                 </td></tr>
               )}
               {!isLoading && filtered.length === 0 && rows.length > 0 && (
-                <tr><td colSpan={8} className="p-6 text-center text-muted-foreground">Nenhuma ação encontrada com os filtros atuais.</td></tr>
+                <tr><td colSpan={9} className="p-6 text-center text-muted-foreground">Nenhuma ação encontrada com os filtros atuais.</td></tr>
               )}
               {filtered.map(r => (
                 <tr key={r.id} className="border-t border-border hover:bg-muted/40">
@@ -258,6 +259,7 @@ export default function PlanoAcoesLista() {
                     <div>{r.responsavel_nome_origem ?? "—"}</div>
                     {r.lider_comite_nome_origem && <div className="text-[11px] text-muted-foreground">Comitê: {r.lider_comite_nome_origem}</div>}
                   </td>
+                  <td className="p-2 text-xs text-muted-foreground">{fmtDate(r.created_at)}</td>
                   <td className="p-2">
                     {r.prioridade_normalizada && (
                       <Badge variant="outline" className={`text-[10px] ${PRIORIDADE_COR[r.prioridade_normalizada] ?? ""}`}>
