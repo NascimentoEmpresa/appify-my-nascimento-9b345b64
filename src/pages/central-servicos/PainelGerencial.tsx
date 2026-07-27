@@ -14,6 +14,7 @@ import PainelCumprimento from "./PainelCumprimento";
 import VisaoExecutiva from "./VisaoExecutiva";
 import { useFormPerms } from "@/hooks/useFormPerms";
 import { useVinculoEmpregado } from "@/hooks/useVinculoEmpregado";
+import { useAuth } from "@/hooks/useAuth";
 
 // =====================================================================
 // PAINEL GERENCIAL — Nascimento Formulários (feedbacks)
@@ -295,6 +296,7 @@ export default function PainelGerencial() {
   // 'ver_tudo' fica preso aos setores que pode ver — o Painel trava o filtro.
   const { can: canForm, setoresVer, setoresCriar, loading: permsLoading } = useFormPerms();
   const { empregado: meuEmpregado } = useVinculoEmpregado();  // p/ saber os setores que EU lidero
+  const { user: authUser } = useAuth();                        // p/ casar "minhas respostas" (criado_por)
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -352,8 +354,47 @@ export default function PainelGerencial() {
   const salvarMapa = (m: Mapa) => { setMapa(m); if (form) try { localStorage.setItem("painel_map_" + form.id, JSON.stringify(m)); } catch { /* ignore */ } };
   const pq = (key: string) => pergs.find(p => p.id === mapa[key]);
 
-  // respostas do formulário + filtros (setor/respondente/período aplicam a tudo)
-  const respsForm = useMemo(() => resps.filter(r => r.formulario_id === formSel), [resps, formSel]);
+  // Setores que EU lidero/dirijo (toggles "Gerente de X" / "Diretor de X"),
+  // lidos dos mapas do cadastro cruzando com o meu nome. Chaves já normalizadas.
+  const meuNome = normNome(meuEmpregado?.nome);
+  const setoresQueLidero = useMemo(() => {
+    const s = new Set<string>();
+    if (!meuNome) return s;
+    liderSetor.forEach((nome, setorK) => { if (normNome(nome) === meuNome) s.add(setorK); });
+    diretorSetor.forEach((nome, setorK) => { if (normNome(nome) === meuNome) s.add(setorK); });
+    return s;
+  }, [liderSetor, diretorSetor, meuNome]);
+
+  // Escopo de setores do usuário. null = vê tudo (papel 'ver_tudo') OU nenhum
+  // setor concedido (ex.: só 'ver_proprias'). Base SÓ nas permissões concedidas
+  // + setores que lidera — NUNCA no que o servidor devolveu. Ao carregar, não trava.
+  const escopoSetores = useMemo(() => {
+    if (permsLoading || canForm("ver_tudo")) return null;
+    const s = new Set<string>();
+    [...setoresVer, ...setoresCriar].forEach(x => { const k = normSetor(x); if (k) s.add(k); });
+    setoresQueLidero.forEach(k => s.add(k));
+    return s.size ? s : null;
+  }, [permsLoading, canForm, setoresVer, setoresCriar, setoresQueLidero]);
+
+  // Visibilidade por resposta — espelha a RLS cs_form_resp_select, como defesa
+  // em profundidade (a RLS é a autoridade; a tela mostra só o permitido mesmo
+  // que a RLS devolva mais). ver_tudo → tudo; senão UNE "minhas" (ver_proprias:
+  // criado_por meu OU eu sou o respondente pelo nome) com os setores do escopo
+  // (ver_setor/criar_setor/liderança). Enquanto carrega, não restringe.
+  const podeVer = useCallback((r: Resp) => {
+    if (permsLoading || canForm("ver_tudo")) return true;
+    const ehMinha = canForm("ver_proprias") && (
+      (!!r.criado_por && r.criado_por === authUser?.id) ||
+      (!!meuNome && normNome(r.respondente_nome) === meuNome)
+    );
+    const noSetor = !!escopoSetores && escopoSetores.has(normSetor(r.setor));
+    return ehMinha || noSetor;
+  }, [permsLoading, canForm, authUser, meuNome, escopoSetores]);
+
+  // respostas do formulário que o usuário PODE ver — fonte ÚNICA já recortada
+  // pela permissão (podeVer), então TODAS as abas herdam (dashboards, planos,
+  // opções de filtro). Os filtros de tela (setor/período/etc.) vêm depois.
+  const respsForm = useMemo(() => resps.filter(r => r.formulario_id === formSel && podeVer(r)), [resps, formSel, podeVer]);
   // Nomes que já responderam este formulário — alimentam o autocomplete de
   // colaborador/liderança ao cadastrar um plano (um por pessoa, não por resposta).
   const pessoasForm = useMemo(() => {
@@ -410,34 +451,8 @@ export default function PainelGerencial() {
     return empresaPorNome.get(normNome(r.respondente_nome)) ?? "";
   }, [empresaPorUid, empresaPorNome]);
 
-  // Setores que EU lidero/dirijo (toggles "Gerente de X" / "Diretor de X"),
-  // lidos dos mapas do cadastro cruzando com o meu nome. Chaves já normalizadas.
-  const meuNome = normNome(meuEmpregado?.nome);
-  const setoresQueLidero = useMemo(() => {
-    const s = new Set<string>();
-    if (!meuNome) return s;
-    liderSetor.forEach((nome, setorK) => { if (normNome(nome) === meuNome) s.add(setorK); });
-    diretorSetor.forEach((nome, setorK) => { if (normNome(nome) === meuNome) s.add(setorK); });
-    return s;
-  }, [liderSetor, diretorSetor, meuNome]);
-
-  // Escopo de setores do usuário. null = vê tudo (papel 'ver_tudo') OU nenhum
-  // setor concedido (ex.: só 'ver_proprias' — aí não travamos por setor, quem
-  // recorta é a RLS). Base SÓ nas permissões concedidas + setores que lidera —
-  // NUNCA no que o servidor devolveu (senão um servidor que devolve tudo zeraria
-  // a trava). Enquanto as permissões carregam, não trava.
-  const escopoSetores = useMemo(() => {
-    if (permsLoading || canForm("ver_tudo")) return null;
-    const s = new Set<string>();
-    [...setoresVer, ...setoresCriar].forEach(x => { const k = normSetor(x); if (k) s.add(k); });
-    setoresQueLidero.forEach(k => s.add(k));
-    return s.size ? s : null;
-  }, [permsLoading, canForm, setoresVer, setoresCriar, setoresQueLidero]);
-
   const base = useMemo(() => {
     let rs = respsForm;
-    // Trava por permissão: quem não vê tudo só enxerga os setores do seu escopo.
-    if (escopoSetores) rs = rs.filter(r => escopoSetores.has(normSetor(r.setor)));
     const dias = periodo === "todos" ? 0 : Number(periodo);
     if (dias) { const corte = Date.now() - dias * 86400000; rs = rs.filter(r => +new Date(r.enviado_em) >= corte); }
     if (fSetor) rs = rs.filter(r => normSetor(r.setor) === normSetor(fSetor));
@@ -455,7 +470,7 @@ export default function PainelGerencial() {
     const q = fResp.trim().toLowerCase();
     if (q) rs = rs.filter(r => avaliadoDaResposta(r).toLowerCase().includes(q) || (r.respondente_nome ?? "").toLowerCase().includes(q));
     return rs;
-  }, [respsForm, escopoSetores, periodo, fSetor, fDiretoria, fLider, fEmpresas, fResp, liderSetor, avaliadoDaResposta, empresaDe]);
+  }, [respsForm, periodo, fSetor, fDiretoria, fLider, fEmpresas, fResp, liderSetor, avaliadoDaResposta, empresaDe]);
   // recorte final também respeita situação/necessidade (filtros específicos)
   const filtradas = useMemo(() => {
     let rs = base;

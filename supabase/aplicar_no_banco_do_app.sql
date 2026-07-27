@@ -5299,3 +5299,41 @@ GRANT EXECUTE ON FUNCTION public.rh_colaboradores_lista(int, int, text, text, te
 DROP VIEW IF EXISTS public.v_rh_colaboradores;
 
 NOTIFY pgrst, 'reload schema';
+
+-- ===== 20260801000004_cs_form_cap_sem_bypass_admin =====
+-- Crava cs_form_cap SEM bypass de admin: capacidades (CS_FORM_ACESSOS) governam
+-- tudo, inclusive admin. Sem has_role. (ultima palavra sobre cs_form_cap)
+CREATE OR REPLACE FUNCTION public.cs_form_cap(_cap text)
+RETURNS boolean LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public AS $$
+  SELECT _cap = 'responder'
+      OR EXISTS (SELECT 1 FROM public."CS_FORM_ACESSOS" a
+                  WHERE a.papel = _cap AND a.user_id = auth.uid());
+$$;
+REVOKE EXECUTE ON FUNCTION public.cs_form_cap(text) FROM PUBLIC, anon;
+GRANT  EXECUTE ON FUNCTION public.cs_form_cap(text) TO authenticated;
+
+NOTIFY pgrst, 'reload schema';
+
+-- ===== 20260801000005_cs_form_setores_catalogo =====
+-- Catálogo de setores (nomes) p/ a tela de permissões, sem depender de ler
+-- CS_FORM_RESPOSTAS via RLS. Devolve EMPREGADOS.Setor_ERP ∪ CS_FORM_RESPOSTAS.setor
+-- (só rótulos, dedup por caixa alta). SECURITY DEFINER, restrita a admin.
+CREATE OR REPLACE FUNCTION public.cs_form_setores_catalogo()
+RETURNS TABLE(setor text) LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public AS $$
+  SELECT rotulo FROM (
+    SELECT DISTINCT ON (upper(s)) btrim(s) AS rotulo
+      FROM (
+        SELECT "Setor_ERP" AS s FROM public."EMPREGADOS"
+        UNION ALL
+        SELECT setor        AS s FROM public."CS_FORM_RESPOSTAS"
+      ) u
+     WHERE btrim(coalesce(s, '')) <> ''
+       AND public.has_role(auth.uid(), 'admin')
+     ORDER BY upper(s), btrim(s)
+  ) d
+  ORDER BY rotulo;
+$$;
+REVOKE EXECUTE ON FUNCTION public.cs_form_setores_catalogo() FROM PUBLIC, anon;
+GRANT  EXECUTE ON FUNCTION public.cs_form_setores_catalogo() TO authenticated;
+
+NOTIFY pgrst, 'reload schema';
