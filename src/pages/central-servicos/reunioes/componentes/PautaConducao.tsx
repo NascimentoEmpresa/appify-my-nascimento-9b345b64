@@ -17,6 +17,8 @@ function LinhaPerguntaConducao({
   valor: RespostaConducaoItem | undefined;
   onChange: (v: RespostaConducaoItem) => void;
 }) {
+  const [observacao, setObservacao] = useState(valor?.observacao ?? "");
+
   return (
     <div className="space-y-1.5 rounded border border-border p-2">
       <div className="flex flex-wrap items-center justify-between gap-2">
@@ -37,17 +39,57 @@ function LinhaPerguntaConducao({
       </div>
       <Input
         placeholder="Observação (opcional)"
-        value={valor?.observacao ?? ""}
-        onChange={(e) => onChange({ resposta: valor?.resposta ?? "", observacao: e.target.value })}
+        value={observacao}
+        onChange={(e) => setObservacao(e.target.value)}
+        onBlur={() => onChange({ resposta: valor?.resposta ?? "", observacao })}
         className="h-7 text-xs"
       />
     </div>
   );
 }
 
+function RespostaDecisaoItem({
+  respostaTexto, respostaEncaminhamento, onSalvar,
+}: {
+  respostaTexto: string;
+  respostaEncaminhamento: string;
+  onSalvar: (texto: string, encaminhamento: string) => void;
+}) {
+  const [texto, setTexto] = useState(respostaTexto);
+  const [encaminhamento, setEncaminhamento] = useState(respostaEncaminhamento);
+
+  return (
+    <div className="space-y-2">
+      <p className="text-sm font-semibold">Resposta / Decisão do item</p>
+      <div className="grid gap-2 sm:grid-cols-2">
+        <div className="space-y-1">
+          <Label className="text-xs font-normal">Resposta / Decisão</Label>
+          <Input
+            placeholder="Resposta / decisão"
+            value={texto}
+            onChange={(e) => setTexto(e.target.value)}
+            onBlur={() => onSalvar(texto, encaminhamento)}
+            className="h-8 text-xs"
+          />
+        </div>
+        <div className="space-y-1">
+          <Label className="text-xs font-normal">Observações</Label>
+          <Input
+            placeholder="Observações"
+            value={encaminhamento}
+            onChange={(e) => setEncaminhamento(e.target.value)}
+            onBlur={() => onSalvar(texto, encaminhamento)}
+            className="h-8 text-xs"
+          />
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export function PautaConducao({
   pauta, respostas, decisoesAcoes, usuarios, setorPadrao,
-  onAtualizarNatureza, onSalvarChecklist, onCriarDecisaoAcao, onCriarAcaoPlanoAcao, onAtualizarDecisaoAcao, onRemoverDecisaoAcao,
+  onAtualizarNatureza, onSalvarChecklist, onSalvarResposta, onCriarDecisaoAcao, onCriarAcaoPlanoAcao, onAtualizarDecisaoAcao, onRemoverDecisaoAcao,
 }: {
   pauta: ReuniaoPauta[];
   respostas: ReuniaoResposta[];
@@ -56,6 +98,7 @@ export function PautaConducao({
   setorPadrao?: string | null;
   onAtualizarNatureza: (pautaId: string, natureza: NaturezaItem) => Promise<boolean>;
   onSalvarChecklist: (pautaId: string, checklist: Record<string, RespostaConducaoItem>) => Promise<boolean>;
+  onSalvarResposta: (pautaId: string, texto: string, encaminhamento: string) => Promise<boolean>;
   onCriarDecisaoAcao: (dados: {
     pauta_id: string; tipo: "decisao"; texto: string; responsavel_user_id?: string | null; prazo?: string | null;
     prioridade?: PrioridadeDecisaoAcao; necessita_comprovacao?: boolean; setor_impactado?: string | null;
@@ -109,11 +152,18 @@ export function PautaConducao({
         </Select>
       </div>
 
+      <RespostaDecisaoItem
+        key={item.id}
+        respostaTexto={resposta?.texto_resposta ?? ""}
+        respostaEncaminhamento={resposta?.encaminhamento ?? ""}
+        onSalvar={(texto, encaminhamento) => onSalvarResposta(item.id, texto, encaminhamento)}
+      />
+
       <div className="space-y-2">
         <p className="text-sm font-semibold">Condução do item</p>
         {PERGUNTAS_CONDUCAO_ITEM.map((p) => (
           <LinhaPerguntaConducao
-            key={p.id}
+            key={`${item.id}_${p.id}`}
             pergunta={p}
             valor={checklistAtual[p.id]}
             onChange={(v) => {
