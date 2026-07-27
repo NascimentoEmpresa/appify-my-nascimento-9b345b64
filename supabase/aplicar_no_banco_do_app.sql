@@ -5317,21 +5317,29 @@ NOTIFY pgrst, 'reload schema';
 -- ===== 20260801000005_cs_form_setores_catalogo =====
 -- Catálogo de setores (nomes) p/ a tela de permissões, sem depender de ler
 -- CS_FORM_RESPOSTAS via RLS. Devolve EMPREGADOS.Setor_ERP ∪ CS_FORM_RESPOSTAS.setor
--- (só rótulos, dedup por caixa alta). SECURITY DEFINER, restrita a admin.
+-- (só rótulos). SECURITY DEFINER, restrita a admin. Dedup SEM acento/caixa
+-- (JURIDICO == JURÍDICO), preferindo a grafia da RESPOSTA (é nela que ver_setor
+-- casa); fora o placeholder PADRAO (= "sem setor", não é setor concedível).
 CREATE OR REPLACE FUNCTION public.cs_form_setores_catalogo()
 RETURNS TABLE(setor text) LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public AS $$
-  SELECT rotulo FROM (
-    SELECT DISTINCT ON (upper(s)) btrim(s) AS rotulo
-      FROM (
-        SELECT "Setor_ERP" AS s FROM public."EMPREGADOS"
-        UNION ALL
-        SELECT setor        AS s FROM public."CS_FORM_RESPOSTAS"
-      ) u
+  WITH fonte AS (
+    SELECT setor        AS s, 0 AS ordem FROM public."CS_FORM_RESPOSTAS"
+    UNION ALL
+    SELECT "Setor_ERP" AS s, 1 AS ordem FROM public."EMPREGADOS"
+  ),
+  norm AS (
+    SELECT btrim(s) AS rotulo, ordem,
+           upper(translate(btrim(s),
+             'áàâãäéèêëíìîïóòôõöúùûüçÁÀÂÃÄÉÈÊËÍÌÎÏÓÒÔÕÖÚÙÛÜÇ',
+             'aaaaaeeeeiiiiooooouuuucAAAAAEEEEIIIIOOOOOUUUUC')) AS chave
+      FROM fonte
      WHERE btrim(coalesce(s, '')) <> ''
-       AND public.has_role(auth.uid(), 'admin')
-     ORDER BY upper(s), btrim(s)
-  ) d
-  ORDER BY rotulo;
+  )
+  SELECT DISTINCT ON (chave) rotulo
+    FROM norm
+   WHERE chave <> 'PADRAO'
+     AND public.has_role(auth.uid(), 'admin')
+   ORDER BY chave, ordem, rotulo;
 $$;
 REVOKE EXECUTE ON FUNCTION public.cs_form_setores_catalogo() FROM PUBLIC, anon;
 GRANT  EXECUTE ON FUNCTION public.cs_form_setores_catalogo() TO authenticated;

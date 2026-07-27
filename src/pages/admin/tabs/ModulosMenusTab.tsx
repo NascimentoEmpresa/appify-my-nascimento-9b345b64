@@ -656,8 +656,12 @@ function FormPermsUsuario({ userId, onToast }: { userId: string; onToast: (m: st
   useEffect(() => {
     (async () => {
       const { data } = await (supabase as any).rpc("cs_form_setores_catalogo");
-      const porChave = new Map<string, string>();  // CHAVE(upper) → rótulo de exibição
-      (data ?? []).forEach((r: any) => { const l = String(r.setor ?? "").trim(); if (!l) return; const k = l.toUpperCase(); if (!porChave.has(k)) porChave.set(k, l); });
+      // Dedup SEM acento/caixa (JURIDICO == JURÍDICO) e fora o placeholder PADRAO
+      // (= "sem setor"). A RPC já faz isso; aqui é rede de segurança e mantém a
+      // 1ª grafia que veio (a RPC devolve a da resposta primeiro).
+      const norm = (s: string) => s.normalize("NFD").replace(/[̀-ͯ]/g, "").toUpperCase().trim();
+      const porChave = new Map<string, string>();  // CHAVE(sem acento) → rótulo de exibição
+      (data ?? []).forEach((r: any) => { const l = String(r.setor ?? "").trim(); if (!l) return; const k = norm(l); if (k === "PADRAO" || porChave.has(k)) return; porChave.set(k, l); });
       setSetoresErp([...porChave.values()].sort((a, b) => a.localeCompare(b, "pt-BR")));
     })();
   }, []);
