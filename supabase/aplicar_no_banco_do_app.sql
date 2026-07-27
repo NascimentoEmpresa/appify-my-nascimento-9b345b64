@@ -6001,3 +6001,71 @@ REVOKE ALL ON FUNCTION public.listar_desenvolvedores_chamados() FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION public.listar_desenvolvedores_chamados() TO authenticated;
 
 NOTIFY pgrst, 'reload schema';
+
+
+-- =====================================================================
+-- migration 20260802000003_chamados_devs_inclui_capacidade_desenvolvedores
+-- =====================================================================
+-- =====================================================================
+-- CHAMADOS DE SISTEMAS â€” a "AtribuiÃ§Ã£o rÃ¡pida" do Painel de DistribuiÃ§Ã£o
+-- nÃ£o achava ninguÃ©m pra destinar o chamado.
+--
+-- listar_desenvolvedores_chamados exigia o cÃ³digo NOVO (chamados_sistemas_dev)
+-- e ainda por cima sÃ³ olhava a tabela de exceÃ§Ãµes por usuÃ¡rio, ignorando quem
+-- recebe a capacidade por perfil de acesso. Quem estÃ¡ marcado como
+-- "Desenvolvedores" (sistemas_desenvolvedores) no Acesso por UsuÃ¡rio â€” que Ã©
+-- o cÃ³digo que a equipe usa hoje â€” nunca entrava na lista.
+--
+-- Agora a prÃ³pria funÃ§Ã£o resolve os dois cÃ³digos do mesmo jeito que
+-- has_screen_access resolve qualquer tela: exceÃ§Ã£o individual mais recente
+-- vence, senÃ£o vale a uniÃ£o dos perfis de acesso. Perfil "concede tudo" nÃ£o
+-- entra â€” senÃ£o todo admin viraria opÃ§Ã£o de responsÃ¡vel na fila.
+-- =====================================================================
+
+CREATE OR REPLACE FUNCTION public.listar_desenvolvedores_chamados()
+RETURNS TABLE(id uuid, display_name text, em_andamento int, abertos int)
+LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public, pg_temp
+AS $$
+  SELECT p.id, p.display_name,
+    (SELECT count(*) FROM public."CHAMADO_SISTEMA" c
+       WHERE c.responsavel_id = p.id AND c.status = 'em_andamento')::int,
+    (SELECT count(*) FROM public."CHAMADO_SISTEMA" c
+       WHERE c.responsavel_id = p.id
+         AND c.status IN ('aberto','em_andamento','aguardando_retorno'))::int
+  FROM public.profiles p
+  WHERE p.ativo = true
+    AND public.chamado_sistema_gestor()
+    AND EXISTS (
+      SELECT 1
+        FROM unnest(ARRAY['chamados_sistemas_dev','sistemas_desenvolvedores']) AS cod
+       WHERE COALESCE(
+               -- exceÃ§Ã£o individual (Acesso por UsuÃ¡rio), a mais recente vence
+               (SELECT s.allow
+                  FROM public.screen_permission_user s
+                 WHERE s.user_id = p.id
+                   AND s.menu_codigo = cod
+                   AND s.acao = 'visualizar'::public.app_acao
+                 ORDER BY s.updated_at DESC
+                 LIMIT 1),
+               -- senÃ£o, uniÃ£o dos perfis de acesso do usuÃ¡rio
+               EXISTS (SELECT 1
+                         FROM public.usuario_perfil_acesso upa
+                         JOIN public.perfil_acesso pa
+                           ON pa.id = upa.perfil_id AND pa.ativo = true
+                         JOIN public.perfil_acesso_permissao pap
+                           ON pap.perfil_id = pa.id AND pap.allow = true
+                        WHERE upa.user_id = p.id
+                          AND pap.menu_codigo = cod
+                          AND pap.acao = 'visualizar'::public.app_acao)
+             ) IS TRUE
+    )
+  ORDER BY p.display_name;
+$$;
+REVOKE ALL ON FUNCTION public.listar_desenvolvedores_chamados() FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.listar_desenvolvedores_chamados() TO authenticated;
+
+-- Limpeza: versÃ£o anterior deste arquivo criava uma funÃ§Ã£o auxiliar separada.
+DROP FUNCTION IF EXISTS public.chamado_dev_liberado(uuid);
+
+NOTIFY pgrst, 'reload schema';
+
