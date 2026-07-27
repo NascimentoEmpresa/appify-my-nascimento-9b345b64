@@ -124,6 +124,7 @@ export default function ConducaoReuniao() {
               usuarios={usuarios}
               setorPadrao={reuniao.setor_responsavel}
               onAtualizarNatureza={(pautaId, natureza) => atualizarPautaItem(pautaId, { natureza })}
+              onAtualizarPrazo={(pautaId, prazo) => atualizarPautaItem(pautaId, { prazo })}
               onSalvarChecklist={salvarChecklistConducaoItem}
               onSalvarResposta={salvarResposta}
               onCriarDecisaoAcao={criarDecisaoAcao}
