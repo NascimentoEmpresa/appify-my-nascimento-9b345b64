@@ -583,7 +583,7 @@ export function ReuniaoFormCriar({ open, onOpenChange }: { open: boolean; onOpen
                       </DropdownMenuTrigger>
                       <DropdownMenuContent align="end">
                         {COMITES.map((comite) => {
-                          const membros = membrosComite(usuarios, comite.setores).filter((id) => !form.observadores.includes(id));
+                          const membros = membrosComite(usuarios, comite.membros).filter((id) => !form.observadores.includes(id));
                           const todosDentro = membros.length > 0 && membros.every((id) => form.convidados.includes(id));
                           return (
                             <DropdownMenuCheckboxItem

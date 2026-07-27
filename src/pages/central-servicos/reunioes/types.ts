@@ -453,18 +453,36 @@ export function nomeUsuario(usuarios: Usuario[], id: string | null): string | nu
 export interface Comite {
   id: "administrativo" | "operacional";
   label: string;
-  setores: string[];
+  membros: string[];
 }
 
 export const COMITES: Comite[] = [
-  { id: "administrativo", label: "Administrativo", setores: ["FINANCEIRO", "RH", "SST", "TREINAMENTOS", "JURIDICO"] },
-  { id: "operacional", label: "Operacional", setores: ["COMPRAS", "LICITACAO", "OPERACIONAL"] },
+  {
+    id: "administrativo",
+    label: "Administrativo",
+    membros: [
+      "8a03a976-1287-453e-9c86-d78163ac2e2e", // Caroline Prisco Lopes
+      "a240e3b5-3cda-4913-bebb-edcfa1035c7a", // Alessandra Aparecida de Vargas
+      "eeb3ce16-f0f3-4bba-85ee-41ce0b43d299", // Milena da Cunha Castro
+      "cb0a7a80-84f6-4707-a3be-90c2380736b4", // Francieli Silva do Nascimento
+      "392cd6af-41c7-4730-a100-69bdd81b5d96", // Natália Taborda
+    ],
+  },
+  {
+    id: "operacional",
+    label: "Operacional",
+    membros: [
+      "7cffae0b-2cfe-4e9f-8876-dde9b3c07e50", // Daison Tavares Rodrigues
+      "2d49fd95-6d74-4b97-98a8-4ecaf969bd99", // Cassio Raphaelli Camargo Duarte
+      "1116752d-09b2-49c1-951d-753b72c70276", // Lucas de Jesus Silva
+    ],
+  },
 ];
 
-/** IDs dos usuários cujo setor (Setor_ERP, via listar_usuarios_ativos) está na lista dada — comparação sem distinguir maiúscula/acento. */
-export function membrosComite(usuarios: Usuario[], setores: string[]): string[] {
-  const alvo = setores.map((s) => s.trim().toLowerCase());
-  return usuarios.filter((u) => u.setor && alvo.includes(u.setor.trim().toLowerCase())).map((u) => u.id);
+/** Membros de um comitê que ainda estão ativos (presentes na lista já carregada de usuários ativos). */
+export function membrosComite(usuarios: Usuario[], membros: string[]): string[] {
+  const ativos = new Set(usuarios.map((u) => u.id));
+  return membros.filter((id) => ativos.has(id));
 }
 
 export type StatusPresenca = "confirmada" | "pendente" | "recusada";
