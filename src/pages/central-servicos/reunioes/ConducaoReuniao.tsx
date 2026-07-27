@@ -27,7 +27,7 @@ export default function ConducaoReuniao() {
 
   const {
     reuniao, isLoading, pauta, respostas, convidados, decisoesAcoes, assuntosForaPauta,
-    iniciarReuniao, encerrarReuniao, atualizarPautaItem, salvarChecklistConducaoItem,
+    iniciarReuniao, encerrarReuniao, atualizarPautaItem, salvarChecklistConducaoItem, salvarResposta,
     marcarPresenca, criarDecisaoAcao, criarAcaoPlanoAcao, atualizarDecisaoAcao, removerDecisaoAcao, criarAssuntoForaPauta,
     marcarAssuntoForaPautaConcluido,
   } = useReuniaoDetalhe(id);
@@ -125,6 +125,7 @@ export default function ConducaoReuniao() {
               setorPadrao={reuniao.setor_responsavel}
               onAtualizarNatureza={(pautaId, natureza) => atualizarPautaItem(pautaId, { natureza })}
               onSalvarChecklist={salvarChecklistConducaoItem}
+              onSalvarResposta={salvarResposta}
               onCriarDecisaoAcao={criarDecisaoAcao}
               onCriarAcaoPlanoAcao={criarAcaoPlanoAcao}
               onAtualizarDecisaoAcao={atualizarDecisaoAcao}
