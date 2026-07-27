@@ -175,9 +175,11 @@ export default function PlanoAcaoDetalhe() {
       const next = { ...f, area: novoSetor };
       const mapeado = SETOR_RESPONSAVEL_MAP[normalizeSetorNome(novoSetor)];
       if (mapeado) {
-        const achado = usuariosOptions.find((o) => o.value === mapeado.profileId);
-        next.responsavel_profile_id = mapeado.profileId;
-        next.responsavel_nome_origem = achado?.label ?? mapeado.nome;
+        const achado = acharUsuarioPorNome(usuariosOptions, mapeado.nome);
+        if (achado) {
+          next.responsavel_profile_id = achado.value;
+          next.responsavel_nome_origem = achado.label;
+        }
       }
       return next;
     });
