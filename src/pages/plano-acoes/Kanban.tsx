@@ -59,6 +59,11 @@ export default function PlanoAcoesKanban() {
     e.preventDefault();
     const id = e.dataTransfer.getData("text/plain");
     if (!id || !can("editar")) return;
+    // "Atrasada" só é definida automaticamente (cron), nunca por drag-and-drop.
+    if (novoStatus === "atrasada") {
+      toast({ title: "Não permitido", description: "O status Atrasada é definido automaticamente pelo sistema, não pode ser escolhido manualmente.", variant: "destructive" });
+      return;
+    }
     // Regra: ao concluir, vai para aguardando_validacao; só pode_aprovar valida.
     let statusFinal = novoStatus;
     if (novoStatus === "concluida_validada" && !can("aprovar")) {
