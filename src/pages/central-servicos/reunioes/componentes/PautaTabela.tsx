@@ -37,7 +37,7 @@ interface Props {
   onRemoverPautaAnexo: (id: string) => Promise<boolean>;
 }
 
-function AnexoPautaCelula({
+export function AnexoPautaCelula({
   pautaId, anexos, podeEditar, onUpload, onDownload, onRemover,
 }: {
   pautaId: string;

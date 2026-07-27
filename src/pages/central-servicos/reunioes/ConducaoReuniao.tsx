@@ -26,8 +26,9 @@ export default function ConducaoReuniao() {
   const [encerrando, setEncerrando] = useState(false);
 
   const {
-    reuniao, isLoading, pauta, respostas, convidados, decisoesAcoes, assuntosForaPauta,
+    reuniao, isLoading, pauta, respostas, convidados, decisoesAcoes, assuntosForaPauta, pautaAnexos,
     iniciarReuniao, encerrarReuniao, atualizarPautaItem, salvarChecklistConducaoItem, salvarResposta,
+    uploadPautaAnexo, downloadAnexo, removerPautaAnexo,
     marcarPresenca, criarDecisaoAcao, criarAcaoPlanoAcao, atualizarDecisaoAcao, removerDecisaoAcao, criarAssuntoForaPauta,
     marcarAssuntoForaPautaConcluido,
   } = useReuniaoDetalhe(id);
@@ -125,6 +126,10 @@ export default function ConducaoReuniao() {
               setorPadrao={reuniao.setor_responsavel}
               onAtualizarNatureza={(pautaId, natureza) => atualizarPautaItem(pautaId, { natureza })}
               onAtualizarPrazo={(pautaId, prazo) => atualizarPautaItem(pautaId, { prazo })}
+              pautaAnexos={pautaAnexos}
+              onUploadPautaAnexo={uploadPautaAnexo}
+              onDownloadAnexo={downloadAnexo}
+              onRemoverPautaAnexo={removerPautaAnexo}
               onSalvarChecklist={salvarChecklistConducaoItem}
               onSalvarResposta={salvarResposta}
               onCriarDecisaoAcao={criarDecisaoAcao}

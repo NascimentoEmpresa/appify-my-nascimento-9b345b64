@@ -4,9 +4,10 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { DecisoesAcoesPainel } from "./DecisoesAcoesPainel";
+import { AnexoPautaCelula } from "./PautaTabela";
 import {
   NATUREZA_ITEM_LABEL, PERGUNTAS_CONDUCAO_ITEM, nomeUsuario,
-  type NaturezaItem, type PerguntaChecklist, type ReuniaoDecisaoAcao, type ReuniaoPauta, type ReuniaoResposta,
+  type NaturezaItem, type PerguntaChecklist, type ReuniaoDecisaoAcao, type ReuniaoPauta, type ReuniaoPautaAnexo, type ReuniaoResposta,
   type RespostaConducaoItem, type PrioridadeDecisaoAcao, type StatusDecisaoAcao, type Usuario,
 } from "../types";
 
@@ -88,18 +89,23 @@ function RespostaDecisaoItem({
 }
 
 export function PautaConducao({
-  pauta, respostas, decisoesAcoes, usuarios, setorPadrao,
+  pauta, respostas, decisoesAcoes, usuarios, setorPadrao, pautaAnexos,
   onAtualizarNatureza, onAtualizarPrazo, onSalvarChecklist, onSalvarResposta, onCriarDecisaoAcao, onCriarAcaoPlanoAcao, onAtualizarDecisaoAcao, onRemoverDecisaoAcao,
+  onUploadPautaAnexo, onDownloadAnexo, onRemoverPautaAnexo,
 }: {
   pauta: ReuniaoPauta[];
   respostas: ReuniaoResposta[];
   decisoesAcoes: ReuniaoDecisaoAcao[];
   usuarios: Usuario[];
   setorPadrao?: string | null;
+  pautaAnexos: ReuniaoPautaAnexo[];
   onAtualizarNatureza: (pautaId: string, natureza: NaturezaItem) => Promise<boolean>;
   onAtualizarPrazo: (pautaId: string, prazo: string | null) => Promise<boolean>;
   onSalvarChecklist: (pautaId: string, checklist: Record<string, RespostaConducaoItem>) => Promise<boolean>;
   onSalvarResposta: (pautaId: string, texto: string, encaminhamento: string) => Promise<boolean>;
+  onUploadPautaAnexo: (pautaId: string, file: File) => Promise<boolean>;
+  onDownloadAnexo: (path: string) => void;
+  onRemoverPautaAnexo: (id: string) => Promise<boolean>;
   onCriarDecisaoAcao: (dados: {
     pauta_id: string; tipo: "decisao"; texto: string; responsavel_user_id?: string | null; prazo?: string | null;
     prioridade?: PrioridadeDecisaoAcao; necessita_comprovacao?: boolean; setor_impactado?: string | null;
@@ -160,6 +166,17 @@ export function PautaConducao({
             className="w-44"
             value={item.prazo ?? ""}
             onChange={(e) => onAtualizarPrazo(item.id, e.target.value || null)}
+          />
+        </div>
+        <div className="space-y-1.5">
+          <Label>Anexos do item</Label>
+          <AnexoPautaCelula
+            pautaId={item.id}
+            anexos={pautaAnexos.filter((a) => a.pauta_id === item.id)}
+            podeEditar
+            onUpload={onUploadPautaAnexo}
+            onDownload={onDownloadAnexo}
+            onRemover={onRemoverPautaAnexo}
           />
         </div>
       </div>
