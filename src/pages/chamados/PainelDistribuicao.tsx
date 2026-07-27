@@ -238,7 +238,7 @@ export default function PainelDistribuicao() {
                   </div>
                 </div>
               ))}
-              {devs.length === 0 && <p className="text-xs text-muted-foreground">Nenhum desenvolvedor liberado ainda (código <b>chamados_sistemas_dev</b>).</p>}
+              {devs.length === 0 && <p className="text-xs text-muted-foreground">Nenhum desenvolvedor liberado ainda (código <b>chamados_sistemas_dev</b> ou <b>sistemas_desenvolvedores</b>).</p>}
             </div>
           </Card>
 

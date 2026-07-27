@@ -189,7 +189,7 @@ export default function CoordenarChamado() {
                   <p className="text-[10px] text-muted-foreground">Chamados abertos: {d.abertos}</p>
                 </button>
               ))}
-              {devs.length === 0 && <p className="text-xs text-muted-foreground">Nenhum desenvolvedor liberado (código <b>chamados_sistemas_dev</b>).</p>}
+              {devs.length === 0 && <p className="text-xs text-muted-foreground">Nenhum desenvolvedor liberado (código <b>chamados_sistemas_dev</b> ou <b>sistemas_desenvolvedores</b>).</p>}
             </div>
           </Card>
 
