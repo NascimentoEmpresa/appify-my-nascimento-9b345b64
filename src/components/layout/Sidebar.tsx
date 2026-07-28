@@ -663,14 +663,25 @@ export function Sidebar({ collapsed, mobileOpen = false, onMobileClose }: Sideba
     const resolvedDot = (notif: NavItem["notif"]) =>
       notif === "meus" ? chamadosNotif.meus : notif === "dev" ? chamadosNotif.dev : false;
 
-    return base.map((mod) => ({
-      ...mod,
-      badge: resolvedBadge(mod.badge),
-      groups: mod.groups?.map((g) => ({
-        ...g,
-        items: g.items.map((item) => ({ ...item, badge: resolvedBadge(item.badge), dot: resolvedDot(item.notif) })),
-      })),
-    }));
+    // Ordem alfabética (pt-BR, ignorando acentos) em todos os níveis: módulos,
+    // grupos e itens (submódulos). Ajuste apenas visual.
+    const porNome = (a: { label: string }, b: { label: string }) =>
+      a.label.localeCompare(b.label, "pt-BR", { sensitivity: "base" });
+
+    return base
+      .map((mod) => ({
+        ...mod,
+        badge: resolvedBadge(mod.badge),
+        groups: mod.groups
+          ?.map((g) => ({
+            ...g,
+            items: g.items
+              .map((item) => ({ ...item, badge: resolvedBadge(item.badge), dot: resolvedDot(item.notif) }))
+              .sort(porNome),
+          }))
+          .sort(porNome),
+      }))
+      .sort(porNome);
   }, [allModules, canSee, gradeAtivaCount, chamadosNotif.meus, chamadosNotif.dev]);
 
   // Módulo ativo = aquele cujo ITEM (link real) casa com a rota atual.
