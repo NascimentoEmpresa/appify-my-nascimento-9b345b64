@@ -152,6 +152,8 @@ import CoordenarChamado from "./pages/chamados/CoordenarChamado";
 import PainelDesenvolvedorChamados from "./pages/chamados/PainelDesenvolvedor";
 import ExecutarChamado from "./pages/chamados/ExecutarChamado";
 import AcompanharChamado from "./pages/chamados/AcompanharChamado";
+import WhatsAppInbox from "./pages/whatsapp/WhatsAppInbox";
+import WhatsAppChatbot from "./pages/whatsapp/WhatsAppChatbot";
 import Reunioes from "./pages/central-servicos/reunioes/Reunioes";
 import ReuniaoDetalhe from "./pages/central-servicos/reunioes/ReuniaoDetalhe";
 import ConducaoReuniao from "./pages/central-servicos/reunioes/ConducaoReuniao";
@@ -202,6 +204,9 @@ const App = () => (
             <Route path="central-servicos/chamados" element={<MeusChamados base="/app/central-servicos/chamados" />} />
             <Route path="central-servicos/chamados/novo" element={<AbrirChamado base="/app/central-servicos/chamados" />} />
             <Route path="central-servicos/chamados/:id/acompanhar" element={<AcompanharChamado base="/app/central-servicos/chamados" />} />
+            {/* WhatsApp — Chatbot */}
+            <Route path="whatsapp" element={<WhatsAppInbox />} />
+            <Route path="whatsapp/chatbot" element={<WhatsAppChatbot />} />
             <Route path="central-servicos/reunioes" element={<Reunioes />} />
             <Route path="central-servicos/reunioes/painel-gerencial" element={<PainelGerencial />} />
             <Route path="central-servicos/reunioes/:id" element={<ReuniaoDetalhe />} />
