@@ -12,7 +12,7 @@ import { Button } from "@/components/ui/button";
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table";
-import { Plus, ClipboardList, CheckCircle2, Clock, RotateCcw, CalendarClock, Info, MessageSquarePlus, XCircle, Lightbulb, ChevronLeft, ChevronRight } from "lucide-react";
+import { Plus, ClipboardList, CheckCircle2, Clock, RotateCcw, CalendarClock, Info, MessageSquarePlus, XCircle, Lightbulb, ChevronLeft, ChevronRight, Star } from "lucide-react";
 import {
   StatCard, StatusBadge, PrioridadeBadge, fmtData, fmtDataHora, moduloLabel, type Chamado,
 } from "./types";
@@ -37,6 +37,14 @@ export default function MeusChamados({ base = "/app/central-servicos/chamados" }
 
   // Abriu "Meus chamados" → zera a bolinha de novidades do solicitante.
   useEffect(() => { chamadosMarkSeen(user?.id, "meus"); }, [user?.id]);
+
+  const { data: avaliacoesPendentes = [] } = useQuery({
+    queryKey: ["chamados-avaliacoes-pendentes"],
+    queryFn: async () => {
+      const { data } = await (supabase as any).rpc("chamados_meus_avaliacoes_pendentes");
+      return (data ?? []) as Array<{ id: string; numero: string; assunto: string }>;
+    },
+  });
 
   const [pagina, setPagina] = useState(1);
 
@@ -104,6 +112,22 @@ export default function MeusChamados({ base = "/app/central-servicos/chamados" }
           </ul>
         </div>
       </Card>
+
+      {avaliacoesPendentes.length > 0 && (
+        <Card className="mb-4 space-y-2 border-warning/40 bg-warning/5 p-4">
+          <p className="flex items-center gap-1.5 text-sm font-semibold text-warning">
+            <Star className="h-4 w-4" /> Você tem {avaliacoesPendentes.length} avaliação(ões) pendente(s) — avalie para poder abrir novos chamados.
+          </p>
+          <div className="flex flex-wrap gap-1.5">
+            {avaliacoesPendentes.map((p) => (
+              <button key={p.id} onClick={() => nav(`${base}/${p.id}/acompanhar`)}
+                className="flex items-center gap-1 rounded border border-warning/40 bg-background px-2 py-1 text-xs hover:border-warning">
+                <Star className="h-3 w-3 text-warning" /> <span className="font-mono font-semibold">#{p.numero}</span> avaliar
+              </button>
+            ))}
+          </div>
+        </Card>
+      )}
 
       <div className="mb-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
         <StatCard icon={ClipboardList} tone="primary" label="Total de solicitações" value={stats?.meus ?? 0} hint="Meus chamados" />

@@ -9,11 +9,11 @@ import { PageHeader } from "@/components/layout/PageHeader";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
-import { ArrowLeft, MessageSquarePlus, Paperclip, Send, RotateCcw } from "lucide-react";
+import { ArrowLeft, MessageSquarePlus, Paperclip, Send, RotateCcw, Star } from "lucide-react";
 import {
-  StatusBadge, PrioridadeBadge,
+  StatusBadge, PrioridadeBadge, Estrelas,
   CATEGORIAS, TIPOS, IMPACTOS, URGENCIAS, AMBIENTES, labelDe, moduloLabel, fmtData, fmtDataHora,
-  BUCKET_CHAMADOS, type Chamado, type Anexo, type Evento,
+  BUCKET_CHAMADOS, type Chamado, type Anexo, type Evento, type AvaliacaoChamado,
 } from "./types";
 
 // Tela do SOLICITANTE: acompanha o próprio chamado e, quando o time pede mais
@@ -28,6 +28,10 @@ export default function AcompanharChamado({ base = "/app/central-servicos/chamad
 
   const [texto, setTexto] = useState("");
   const [enviando, setEnviando] = useState(false);
+  const [estrelas, setEstrelas] = useState(0);
+  const [hoverEstrela, setHoverEstrela] = useState(0);
+  const [comentarioAval, setComentarioAval] = useState("");
+  const [avaliando, setAvaliando] = useState(false);
 
   // Abriu o chamado → o solicitante viu a novidade.
   useEffect(() => { chamadosMarkSeen(user?.id, "meus"); }, [user?.id]);
@@ -70,11 +74,33 @@ export default function AcompanharChamado({ base = "/app/central-servicos/chamad
     },
   });
 
+  const { data: avaliacao } = useQuery({
+    queryKey: ["chamado-avaliacao", id],
+    enabled: !!id,
+    queryFn: async () => {
+      const { data } = await (supabase as any).from("CHAMADO_SISTEMA_AVALIACAO").select("*").eq("chamado_id", id).maybeSingle();
+      return (data ?? null) as AvaliacaoChamado | null;
+    },
+  });
+
   const invalidar = () => {
     qc.invalidateQueries({ queryKey: ["chamado", id] });
     qc.invalidateQueries({ queryKey: ["chamado-eventos", id] });
     qc.invalidateQueries({ queryKey: ["chamados-meus", user?.id] });
     qc.invalidateQueries({ queryKey: ["chamados-meus-stats"] });
+  };
+
+  const enviarAvaliacao = async () => {
+    if (estrelas < 1 || avaliando) return;
+    setAvaliando(true);
+    const { error } = await (supabase as any).from("CHAMADO_SISTEMA_AVALIACAO").insert({
+      chamado_id: id, estrelas, comentario: comentarioAval.trim() || null,
+    });
+    setAvaliando(false);
+    if (error) { toast({ title: "Erro ao enviar avaliação", description: error.message, variant: "destructive" }); return; }
+    toast({ title: "Avaliação enviada", description: "Obrigado pelo retorno!" });
+    qc.invalidateQueries({ queryKey: ["chamado-avaliacao", id] });
+    qc.invalidateQueries({ queryKey: ["chamados-avaliacoes-pendentes"] });
   };
 
   const enviarInfo = async () => {
@@ -234,6 +260,35 @@ export default function AcompanharChamado({ base = "/app/central-servicos/chamad
                 <Send className="h-4 w-4" /> {enviando ? "Enviando…" : "Enviar informações"}
               </Button>
             </Card>
+          )}
+
+          {/* Avaliação — só em chamados concluídos */}
+          {chamado.status === "concluido" && (
+            avaliacao ? (
+              <Card className="space-y-2 p-4">
+                <p className="flex items-center gap-1.5 text-sm font-bold"><Star className="h-4 w-4 text-warning" /> Sua avaliação</p>
+                <Estrelas valor={avaliacao.estrelas} size={22} />
+                {avaliacao.comentario && <p className="whitespace-pre-wrap text-xs text-muted-foreground">{avaliacao.comentario}</p>}
+                <p className="text-[11px] text-muted-foreground">Enviada em {fmtDataHora(avaliacao.created_at)}</p>
+              </Card>
+            ) : ehSolicitante ? (
+              <Card className="space-y-3 border-warning/40 bg-warning/5 p-4">
+                <p className="flex items-center gap-1.5 text-sm font-bold"><Star className="h-4 w-4 text-warning" /> Avaliar atendimento</p>
+                <p className="text-xs text-muted-foreground">Chamado concluído. Dê de 1 a 5 estrelas — o comentário é opcional.</p>
+                <div className="flex items-center gap-1" onMouseLeave={() => setHoverEstrela(0)}>
+                  {[1, 2, 3, 4, 5].map((n) => (
+                    <button key={n} type="button" aria-label={`${n} estrela(s)`} className="p-0.5"
+                      onMouseEnter={() => setHoverEstrela(n)} onClick={() => setEstrelas(n)}>
+                      <Star className={`h-7 w-7 transition-colors ${n <= (hoverEstrela || estrelas) ? "fill-warning text-warning" : "text-muted-foreground/40"}`} />
+                    </button>
+                  ))}
+                </div>
+                <Textarea rows={3} maxLength={1000} placeholder="Comentário (opcional)…" value={comentarioAval} onChange={(e) => setComentarioAval(e.target.value)} />
+                <Button className="w-full gap-2" onClick={enviarAvaliacao} disabled={estrelas < 1 || avaliando}>
+                  <Star className="h-4 w-4" /> {avaliando ? "Enviando…" : "Enviar avaliação"}
+                </Button>
+              </Card>
+            ) : null
           )}
 
           {encerrado && (
