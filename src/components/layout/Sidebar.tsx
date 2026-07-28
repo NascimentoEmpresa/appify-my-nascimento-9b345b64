@@ -45,6 +45,8 @@ import {
   ShieldAlert,
   ClipboardList,
   Bell,
+  MessageCircle,
+  Bot,
   ShieldCheck,
 } from "lucide-react";
 import { useTemAlcada } from "@/hooks/useTemAlcada";
@@ -459,6 +461,26 @@ const centralServicosModule: ModuleDef = {
   ],
 };
 
+// WhatsApp — Chatbot (integração Meta Cloud API)
+const whatsappModule: ModuleDef = {
+  id: "whatsapp",
+  label: "WhatsApp",
+  description: "Atendimento e chatbot",
+  icon: MessageCircle,
+  basePath: "/app/whatsapp",
+  status: "active",
+  groups: [
+    {
+      label: "WhatsApp",
+      defaultOpen: true,
+      items: [
+        { label: "Caixa de Entrada", to: "/app/whatsapp", icon: MessageCircle },
+        { label: "Chatbot", to: "/app/whatsapp/chatbot", icon: Bot },
+      ],
+    },
+  ],
+};
+
 // Jurídico — Gestão Patrimonial e Obrigações
 const juridicoModule: ModuleDef = {
   id: "juridico",
@@ -604,6 +626,7 @@ const erpModules: ModuleDef[] = [
   juridicoModule,
   sstModule,
   centralServicosModule,
+  whatsappModule,
   biModule,
 ];
 

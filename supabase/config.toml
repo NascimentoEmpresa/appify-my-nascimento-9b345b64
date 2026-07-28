@@ -29,3 +29,11 @@ verify_jwt = true
 
 [functions.sync-denuncias-contato-seguro]
 verify_jwt = true
+
+# Webhook público da Meta — chamado sem JWT (a validação é pela assinatura
+# X-Hub-Signature-256 com o WHATSAPP_APP_SECRET).
+[functions.whatsapp-webhook]
+verify_jwt = false
+
+[functions.whatsapp-enviar]
+verify_jwt = true
