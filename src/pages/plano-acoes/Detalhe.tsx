@@ -204,7 +204,7 @@ export default function PlanoAcaoDetalhe() {
     ((errUsuarios as any)?.code === "42501" ||
       String((errUsuarios as any)?.message ?? "").includes("sem_permissao_para_listar_usuarios_empresa"));
 
-  const uploadFile = async (file: File, planId: string) => {
+  const uploadFile = async (file: File, planId: string, empresaIdDoAnexo: string) => {
     const { data: u } = await supabase.auth.getUser();
     const timestamp = Date.now();
     // A key do storage não aceita acentos/espaços ("Invalid key") —
@@ -212,11 +212,11 @@ export default function PlanoAcaoDetalhe() {
     const nomeSanitizado = file.name
       .normalize("NFD").replace(/[̀-ͯ]/g, "")
       .replace(/[^a-zA-Z0-9._-]/g, "_");
-    const path = `${empresaId}/${planId}/${timestamp}_${nomeSanitizado}`;
+    const path = `${empresaIdDoAnexo}/${planId}/${timestamp}_${nomeSanitizado}`;
     const { error: uploadError } = await supabase.storage.from("anexos").upload(path, file);
     if (uploadError) throw uploadError;
     const { error: dbErr } = await supabase.from("plano_acao_anexo").insert({
-      empresa_id: empresaId,
+      empresa_id: empresaIdDoAnexo,
       plano_acao_id: planId,
       bucket: "anexos",
       storage_path: path,
@@ -232,7 +232,11 @@ export default function PlanoAcaoDetalhe() {
     if (!pendingFile || isNew || !id || !empresaId) return;
     setUploading(true);
     try {
-      await uploadFile(pendingFile, id);
+      // Empresa da própria ação, não a empresa ativa no seletor — a tela
+      // carrega a ação só pelo id, sem filtrar por empresa, então quem
+      // estiver com outra empresa ativa enquanto vê essa ação teria o
+      // anexo gravado com empresa_id errado e a RLS rejeitaria o INSERT.
+      await uploadFile(pendingFile, id, form.empresa_id ?? empresaId);
       setPendingFile(null);
       await loadExtras(id);
       toast({ title: "Arquivo anexado com sucesso" });
@@ -303,7 +307,7 @@ export default function PlanoAcaoDetalhe() {
       if (error) return toast({ title: "Erro", description: error.message, variant: "destructive" });
       const ins = { id: novoId as string };
       if (pendingFile) {
-        try { await uploadFile(pendingFile, ins.id); } catch {}
+        try { await uploadFile(pendingFile, ins.id, empresaId); } catch {}
         setPendingFile(null);
       }
       toast({ title: "Ação criada" });
@@ -341,7 +345,7 @@ export default function PlanoAcaoDetalhe() {
           await (supabase as any).from("plano_acao_visibilidade_usuario").insert(
             usuariosComCriador.map((uid) => ({
               plano_acao_id: id!,
-              empresa_id: empresaId,
+              empresa_id: form.empresa_id ?? empresaId,
               profile_id: uid,
             }))
           );
@@ -376,7 +380,7 @@ export default function PlanoAcaoDetalhe() {
     if (!novoComent.trim() || isNew || !empresaId) return;
     const { data: u } = await supabase.auth.getUser();
     const { error } = await supabase.from("plano_acao_comentario").insert({
-      empresa_id: empresaId, plano_acao_id: id!, comentario: novoComent.trim(), criado_por: u.user?.id,
+      empresa_id: form.empresa_id ?? empresaId, plano_acao_id: id!, comentario: novoComent.trim(), criado_por: u.user?.id,
     });
     if (error) toast({ title: "Erro", description: error.message, variant: "destructive" });
     else { setNovoComent(""); await loadExtras(id!); }
