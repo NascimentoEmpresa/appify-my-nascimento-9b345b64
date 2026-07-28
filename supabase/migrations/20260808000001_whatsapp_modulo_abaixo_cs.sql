@@ -8,8 +8,8 @@
 -- 1) Garante o módulo "WhatsApp" (posição = logo abaixo de Central de Serviços)
 INSERT INTO public.app_modulo (codigo, nome, descricao, icone, ordem)
 SELECT 'whatsapp', 'WhatsApp', 'Atendimento e chatbot',
-       COALESCE((SELECT ordem FROM public.app_modulo WHERE codigo = 'central_servicos'), 200) + 1,
-       'MessageCircle'
+       'MessageCircle',
+       COALESCE((SELECT ordem FROM public.app_modulo WHERE codigo = 'central_servicos'), 200) + 1
 WHERE NOT EXISTS (SELECT 1 FROM public.app_modulo WHERE codigo = 'whatsapp');
 
 -- 2) Reposiciona logo abaixo de Central de Serviços (mesmo se o módulo já existia)

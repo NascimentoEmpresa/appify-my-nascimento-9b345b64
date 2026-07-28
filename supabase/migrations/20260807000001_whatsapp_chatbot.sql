@@ -20,7 +20,8 @@
 -- Acesso por Usuário, espelhando o módulo da sidebar).
 INSERT INTO public.app_modulo (codigo, nome, descricao, icone, ordem)
 SELECT 'whatsapp', 'WhatsApp', 'Atendimento e chatbot',
-       COALESCE((SELECT max(ordem) FROM public.app_modulo), 200) + 5, 'MessageCircle'
+       'MessageCircle',
+       COALESCE((SELECT max(ordem) FROM public.app_modulo), 200) + 5
 WHERE NOT EXISTS (SELECT 1 FROM public.app_modulo WHERE codigo = 'whatsapp');
 
 INSERT INTO public.app_menu (modulo_id, codigo, nome, rota, ordem)
