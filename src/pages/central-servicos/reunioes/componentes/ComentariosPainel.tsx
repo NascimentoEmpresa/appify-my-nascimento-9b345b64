@@ -34,7 +34,7 @@ export function ComentariosPainel({
   return (
     <div className="flex h-[420px] min-h-0 min-w-0 flex-col">
       <p className="mb-2 shrink-0 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-        Comentários (não entram no PDF)
+        Encaminhamentos (não entram no PDF)
       </p>
       <div className="min-h-0 flex-1 space-y-3 overflow-y-auto pr-1">
         {comentarios.map((c) => {
