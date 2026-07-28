@@ -618,7 +618,6 @@ export function Sidebar({ collapsed, mobileOpen = false, onMobileClose }: Sideba
   const { temAlcada, pendentes } = useTemAlcada();
   const { data: access } = useAccessibleMenus("visualizar");
   const empresaCtx = useContext(EmpresaAtivaContext);
-  const empresaCtx = useContext(EmpresaAtivaContext);
   // Antes do EmpresaAtivaContext carregar a empresa real do banco, empresa.id
   // é o placeholder estático de src/data/controladoria.ts (ex: "HAGG" — um
   // código curto, não um uuid) — passar isso pra uma coluna uuid derruba a
