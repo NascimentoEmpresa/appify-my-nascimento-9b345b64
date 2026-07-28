@@ -1,8 +1,9 @@
-import { useMemo } from "react";
+import { useEffect, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
+import { chamadosMarkSeen } from "@/hooks/useChamadosNotif";
 import { useAccessibleMenus } from "@/hooks/useAccessibleMenus";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { Card } from "@/components/ui/card";
@@ -29,6 +30,9 @@ export default function PainelDesenvolvedor() {
   const { data: access } = useAccessibleMenus("visualizar");
   const dev = access?.codes.has("chamados_sistemas_dev") ?? false;
   const nome = (user?.user_metadata as any)?.nome || user?.email || "";
+
+  // Abriu o Painel do Desenvolvedor → zera a bolinha de novidades do dev.
+  useEffect(() => { chamadosMarkSeen(user?.id, "dev"); }, [user?.id]);
 
   const { data: chamados = [], isLoading } = useQuery({
     queryKey: ["chamados-meus-atribuidos", user?.id],

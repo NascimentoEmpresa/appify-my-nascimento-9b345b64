@@ -51,6 +51,7 @@ import { useTemAlcada } from "@/hooks/useTemAlcada";
 import { useAccessibleMenus, matchMenuCode } from "@/hooks/useAccessibleMenus";
 import { ACESSO_ABERTO_SEM_PERMISSOES, MENUS_SEMPRE_RESTRITOS } from "@/lib/acesso";
 import { useGradeAtivaCount } from "@/hooks/useGradeAtivaCount";
+import { useChamadosNotif } from "@/hooks/useChamadosNotif";
 import { EmpresaAtivaContext } from "@/context/EmpresaAtivaContext";
 import { Inbox } from "lucide-react";
 import { Target } from "lucide-react";
@@ -63,6 +64,9 @@ interface NavItem {
   to: string;
   icon: any;
   badge?: string;
+  // Bolinha de notificação (novidade). Resolvida em runtime pelo useChamadosNotif.
+  notif?: "meus" | "dev";
+  dot?: boolean;
 }
 interface NavGroup {
   label: string;
@@ -423,9 +427,9 @@ const sistemasModule: ModuleDef = {
       label: "Chamados de Sistemas",
       defaultOpen: true,
       items: [
-        { label: "Chamados de Sistemas", to: "/app/sistemas/chamados", icon: Headset },
+        { label: "Chamados de Sistemas", to: "/app/sistemas/chamados", icon: Headset, notif: "meus" },
         { label: "Painel de Distribuição", to: "/app/sistemas/chamados/painel", icon: BarChart3 },
-        { label: "Painel do Desenvolvedor", to: "/app/sistemas/chamados/dev", icon: ClipboardList },
+        { label: "Painel do Desenvolvedor", to: "/app/sistemas/chamados/dev", icon: ClipboardList, notif: "dev" },
       ],
     },
   ],
@@ -448,7 +452,7 @@ const centralServicosModule: ModuleDef = {
         { label: "Orientações Jurídicas", to: "/app/central-servicos/orientacoes-juridicas", icon: BookOpen },
         { label: "Denúncias (Canal de Ética)", to: "/app/central-servicos/denuncias", icon: ShieldAlert },
         { label: "Nascimento Formulários", to: "/app/central-servicos/formularios", icon: ClipboardList },
-        { label: "Chamados de Sistemas", to: "/app/central-servicos/chamados", icon: Headset },
+        { label: "Chamados de Sistemas", to: "/app/central-servicos/chamados", icon: Headset, notif: "meus" },
         { label: "Agenda de Reunião", to: "/app/central-servicos/reunioes", icon: CalendarRange },
       ],
     },
@@ -615,6 +619,7 @@ export function Sidebar({ collapsed, mobileOpen = false, onMobileClose }: Sideba
   const { data: access } = useAccessibleMenus("visualizar");
   const empresaCtx = useContext(EmpresaAtivaContext);
   const { data: gradeAtivaCount } = useGradeAtivaCount(empresaCtx?.empresa?.id ?? null);
+  const chamadosNotif = useChamadosNotif();
 
   const allModules = [...erpModules, buildPlanoAcoesModule(false), integracaoModule];
 
@@ -654,16 +659,19 @@ export function Sidebar({ collapsed, mobileOpen = false, onMobileClose }: Sideba
       })
       .filter((mod) => !mod.groups || mod.groups.length > 0);
 
-    // Resolve sentinels de badge dinâmico
+    // Resolve sentinels de badge dinâmico + bolinha de notificação (notif → dot).
+    const resolvedDot = (notif: NavItem["notif"]) =>
+      notif === "meus" ? chamadosNotif.meus : notif === "dev" ? chamadosNotif.dev : false;
+
     return base.map((mod) => ({
       ...mod,
       badge: resolvedBadge(mod.badge),
       groups: mod.groups?.map((g) => ({
         ...g,
-        items: g.items.map((item) => ({ ...item, badge: resolvedBadge(item.badge) })),
+        items: g.items.map((item) => ({ ...item, badge: resolvedBadge(item.badge), dot: resolvedDot(item.notif) })),
       })),
     }));
-  }, [allModules, canSee, gradeAtivaCount]);
+  }, [allModules, canSee, gradeAtivaCount, chamadosNotif.meus, chamadosNotif.dev]);
 
   // Módulo ativo = aquele cujo ITEM (link real) casa com a rota atual.
   // Detecção por basePath não serve porque o Licitações usa basePath "/app"
@@ -872,6 +880,9 @@ function ModuleEntry({
   const Icon = mod.icon;
   const disabled = mod.status === "soon";
   const navigate = useNavigate();
+  // Bolinha no cabeçalho quando algum item do módulo tem novidade (visível mesmo
+  // com a sidebar colapsada ou o submenu recolhido).
+  const modDot = !disabled && !!mod.groups?.some((g) => g.items.some((i) => i.dot));
 
   return (
     <div className="mb-1">
@@ -891,10 +902,18 @@ function ModuleEntry({
         title={collapsed ? mod.label : undefined}
       >
         {isActiveModule && <span className="absolute left-0 top-1.5 bottom-1.5 w-0.5 rounded-r bg-accent" />}
-        <Icon className={cn("h-4 w-4 shrink-0", isActiveModule && "text-accent", disabled && "opacity-60")} />
+        <span className="relative shrink-0">
+          <Icon className={cn("h-4 w-4", isActiveModule && "text-accent", disabled && "opacity-60")} />
+          {modDot && collapsed && (
+            <span className="absolute -right-1 -top-1 h-2 w-2 rounded-full bg-red-500 ring-2 ring-sidebar" />
+          )}
+        </span>
         {!collapsed && (
           <>
             <span className="flex-1 truncate">{mod.label}</span>
+            {modDot && (
+              <span className="h-2 w-2 shrink-0 rounded-full bg-red-500" title="Novidades" />
+            )}
             {mod.badge && !disabled && (
               <span className="rounded-md bg-white/10 px-1.5 py-0.5 text-[10px] font-semibold text-sidebar-foreground/70">
                 {mod.badge}
@@ -968,6 +987,9 @@ function SidebarGroup({ group }: { group: NavGroup }) {
                     {isActive && <span className="absolute left-0 top-1.5 bottom-1.5 w-0.5 rounded-r bg-accent" />}
                     <item.icon className={cn("h-3.5 w-3.5 shrink-0", isActive ? "text-accent" : "")} />
                     <span className="flex-1 truncate">{item.label}</span>
+                    {item.dot && (
+                      <span className="h-2 w-2 shrink-0 rounded-full bg-red-500" title="Novidades" />
+                    )}
                     {item.badge && (
                       <span className="rounded-md bg-white/10 px-1.5 py-0.5 text-[10px] font-semibold text-sidebar-foreground/70">
                         {item.badge}

@@ -6083,8 +6083,73 @@ CREATE POLICY chamado_sistema_select ON public."CHAMADO_SISTEMA"
     OR public.chamado_sistema_gestor()
   );
 
-DROP TABLE IF EXISTS public."CHAMADO_SISTEMA_TAREFA" CASCADE;
+DO $$
+DECLARE r regclass;
+BEGIN
+  SELECT c.oid::regclass INTO r
+    FROM pg_class c
+    JOIN pg_namespace n ON n.oid = c.relnamespace
+   WHERE n.nspname = 'public'
+     AND lower(c.relname) = 'chamado_sistema_tarefa'
+     AND c.relkind = 'r';
+  IF r IS NOT NULL THEN
+    EXECUTE 'DROP TABLE ' || r::text || ' CASCADE';
+  END IF;
+END $$;
 
-DROP FUNCTION IF EXISTS public.chamado_sistema_tarefa_guard();
+DROP FUNCTION IF EXISTS public.chamado_sistema_tarefa_guard() CASCADE;
+
+NOTIFY pgrst, 'reload schema';
+
+
+-- ===== 20260804000001_chamados_adicionar_informacao =====
+-- Solicitante responde ao "Solicitar mais informações": grava no histórico e
+-- devolve o chamado ao time. RPC SECURITY DEFINER (RLS não deixa o solicitante
+-- mexer no status nem inserir evento != 'comentario').
+CREATE OR REPLACE FUNCTION public.chamado_adicionar_informacao(
+  p_chamado_id uuid,
+  p_texto      text
+)
+RETURNS void
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp
+AS $$
+DECLARE
+  v_solicitante uuid;
+  v_status      text;
+  v_responsavel uuid;
+BEGIN
+  IF p_texto IS NULL OR btrim(p_texto) = '' THEN
+    RAISE EXCEPTION 'Informe o texto com as informações.';
+  END IF;
+
+  SELECT solicitante_id, status, responsavel_id
+    INTO v_solicitante, v_status, v_responsavel
+    FROM public."CHAMADO_SISTEMA"
+   WHERE id = p_chamado_id;
+
+  IF v_solicitante IS NULL THEN
+    RAISE EXCEPTION 'Chamado não encontrado.';
+  END IF;
+  IF v_solicitante <> auth.uid() THEN
+    RAISE EXCEPTION 'Apenas o solicitante pode adicionar informações a este chamado.';
+  END IF;
+  IF v_status IN ('concluido', 'reprovado') THEN
+    RAISE EXCEPTION 'Chamado encerrado — não é possível adicionar informações.';
+  END IF;
+
+  INSERT INTO public."CHAMADO_SISTEMA_EVENTO" (chamado_id, autor_id, tipo, texto)
+  VALUES (p_chamado_id, auth.uid(), 'comentario', btrim(p_texto));
+
+  IF v_status = 'aguardando_retorno' THEN
+    UPDATE public."CHAMADO_SISTEMA"
+       SET status = CASE WHEN v_responsavel IS NOT NULL THEN 'em_andamento' ELSE 'aberto' END
+     WHERE id = p_chamado_id;
+  END IF;
+END;
+$$;
+
+REVOKE ALL ON FUNCTION public.chamado_adicionar_informacao(uuid, text) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.chamado_adicionar_informacao(uuid, text) FROM anon;
+GRANT EXECUTE ON FUNCTION public.chamado_adicionar_informacao(uuid, text) TO authenticated;
 
 NOTIFY pgrst, 'reload schema';
