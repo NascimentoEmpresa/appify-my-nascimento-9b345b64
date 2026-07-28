@@ -17,7 +17,7 @@ import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table";
 import {
-  DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator,
+  DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem,
 } from "@/components/ui/dropdown-menu";
 import { PieChart, Pie, Cell, ResponsiveContainer } from "recharts";
 import { ClipboardList, Clock, Users, CheckCircle2, AlertTriangle, ShieldAlert, MoreHorizontal, ChevronLeft, ChevronRight, Eye, UserCog, Trash2 } from "lucide-react";
@@ -250,7 +250,7 @@ export default function PainelDistribuicao() {
                     <TableHead>Abertura</TableHead>
                     <TableHead>Status</TableHead>
                     <TableHead>Responsável</TableHead>
-                    <TableHead className="w-10"></TableHead>
+                    <TableHead className="w-16 text-right">Ações</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -265,27 +265,31 @@ export default function PainelDistribuicao() {
                       <TableCell><StatusBadge status={c.status} /></TableCell>
                       <TableCell className="text-xs">{nomeDe(c.responsavel_id)}</TableCell>
                       <TableCell onClick={(e) => e.stopPropagation()}>
-                        <DropdownMenu>
-                          <DropdownMenuTrigger className="rounded p-1 text-muted-foreground hover:bg-muted hover:text-foreground">
-                            <MoreHorizontal className="h-4 w-4" />
-                          </DropdownMenuTrigger>
-                          <DropdownMenuContent align="end">
-                            <DropdownMenuItem onClick={() => nav(`/app/sistemas/chamados/${c.id}/coordenar`)}>
-                              <UserCog className="mr-2 h-4 w-4" /> Coordenar / atribuir
-                            </DropdownMenuItem>
-                            <DropdownMenuItem onClick={() => nav(`/app/sistemas/chamados/${c.id}`)}>
-                              <Eye className="mr-2 h-4 w-4" /> Ver detalhe
-                            </DropdownMenuItem>
-                            {canExcluir && (
-                              <>
-                                <DropdownMenuSeparator />
-                                <DropdownMenuItem className="text-destructive focus:text-destructive" onClick={() => setExcluir({ id: c.id, numero: c.numero })}>
-                                  <Trash2 className="mr-2 h-4 w-4" /> Excluir chamado
-                                </DropdownMenuItem>
-                              </>
-                            )}
-                          </DropdownMenuContent>
-                        </DropdownMenu>
+                        <div className="flex items-center justify-end gap-0.5">
+                          {canExcluir && (
+                            <Button
+                              variant="ghost" size="sm"
+                              className="h-7 w-7 p-0 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
+                              title="Excluir chamado"
+                              onClick={() => setExcluir({ id: c.id, numero: c.numero })}
+                            >
+                              <Trash2 className="h-4 w-4" />
+                            </Button>
+                          )}
+                          <DropdownMenu>
+                            <DropdownMenuTrigger className="rounded p-1 text-muted-foreground hover:bg-muted hover:text-foreground">
+                              <MoreHorizontal className="h-4 w-4" />
+                            </DropdownMenuTrigger>
+                            <DropdownMenuContent align="end">
+                              <DropdownMenuItem onClick={() => nav(`/app/sistemas/chamados/${c.id}/coordenar`)}>
+                                <UserCog className="mr-2 h-4 w-4" /> Coordenar / atribuir
+                              </DropdownMenuItem>
+                              <DropdownMenuItem onClick={() => nav(`/app/sistemas/chamados/${c.id}`)}>
+                                <Eye className="mr-2 h-4 w-4" /> Ver detalhe
+                              </DropdownMenuItem>
+                            </DropdownMenuContent>
+                          </DropdownMenu>
+                        </div>
                       </TableCell>
                     </TableRow>
                   ))}
