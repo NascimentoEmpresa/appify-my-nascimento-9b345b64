@@ -592,7 +592,7 @@ export default function ReuniaoDetalhe() {
                 <Button size="sm" variant="outline" className="gap-1.5" onClick={() => exportarConvocacaoPdf(reuniao, pauta)}>
                   <FileDown className="h-3.5 w-3.5" /> PDF de convocação
                 </Button>
-                <Button size="sm" variant="outline" className="gap-1.5" onClick={() => exportarAtaFinalPdf(reuniao, pauta, respostas, assinaturas, usuarios)}>
+                <Button size="sm" variant="outline" className="gap-1.5" onClick={() => exportarAtaFinalPdf(reuniao, pauta, respostas, assinaturas, usuarios, comentarios)}>
                   <FileDown className="h-3.5 w-3.5" /> PDF final da ata
                 </Button>
               </div>

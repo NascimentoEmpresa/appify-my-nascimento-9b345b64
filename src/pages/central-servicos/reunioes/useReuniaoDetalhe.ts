@@ -245,7 +245,7 @@ export function useReuniaoDetalhe(id: string | undefined) {
   const encerrarReuniao = async (usuarios: Usuario[], checklistEncerramento?: Record<string, string>): Promise<boolean> => {
     if (!id || !reuniao) return false;
     try {
-      const blob = gerarAtaFinalPdfBlob(reuniao, pauta, respostas, assinaturas, usuarios);
+      const blob = gerarAtaFinalPdfBlob(reuniao, pauta, respostas, assinaturas, usuarios, comentarios);
       const path = `${id}/ata-final.pdf`;
       const up = await supabase.storage.from(BUCKET).upload(path, blob, {
         contentType: "application/pdf",
