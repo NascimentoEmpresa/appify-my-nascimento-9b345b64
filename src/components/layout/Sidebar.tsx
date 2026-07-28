@@ -618,7 +618,12 @@ export function Sidebar({ collapsed, mobileOpen = false, onMobileClose }: Sideba
   const { temAlcada, pendentes } = useTemAlcada();
   const { data: access } = useAccessibleMenus("visualizar");
   const empresaCtx = useContext(EmpresaAtivaContext);
-  const { data: gradeAtivaCount } = useGradeAtivaCount(empresaCtx?.empresa?.id ?? null);
+  const empresaCtx = useContext(EmpresaAtivaContext);
+  // Antes do EmpresaAtivaContext carregar a empresa real do banco, empresa.id
+  // é o placeholder estático de src/data/controladoria.ts (ex: "HAGG" — um
+  // código curto, não um uuid) — passar isso pra uma coluna uuid derruba a
+  // query com 400. Só busca depois que o contexto termina de carregar.
+  const { data: gradeAtivaCount } = useGradeAtivaCount(!empresaCtx?.loading ? empresaCtx?.empresa?.id ?? null : null);
   const chamadosNotif = useChamadosNotif();
 
   const allModules = [...erpModules, buildPlanoAcoesModule(false), integracaoModule];
