@@ -99,7 +99,7 @@ export function ReuniaoFormCriar({ open, onOpenChange }: { open: boolean; onOpen
   const criarRecorrentes = useCriarReunioesRecorrentes();
   const { data: setoresDisponiveis = [] } = useSetoresEmpresa();
 
-  const opcoesUsuarios = usuarios.map((u) => ({ value: u.id, label: u.display_name }));
+  const opcoesUsuarios = usuarios.map((u) => ({ value: u.id, label: u.display_name ?? "—" }));
 
   // Aviso ao vivo de agenda bloqueada — junta todo mundo envolvido até agora
   // (organizador, responsável, convidados, observadores) e busca o bloqueio

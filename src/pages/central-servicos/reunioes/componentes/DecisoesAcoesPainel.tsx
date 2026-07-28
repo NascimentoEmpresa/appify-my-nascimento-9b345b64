@@ -98,7 +98,7 @@ export function DecisoesAcoesPainel({
   const [acaoComentarios, setAcaoComentarios] = useState("");
   const [salvandoAcao, setSalvandoAcao] = useState(false);
 
-  const opcoesUsuarios = usuarios.map((u) => ({ value: u.id, label: u.display_name }));
+  const opcoesUsuarios = usuarios.map((u) => ({ value: u.id, label: u.display_name ?? "—" }));
 
   const { data: comitesMap = {} } = useComitesMap();
   const comitesReais = useMemo(() => Object.keys(comitesMap).sort((a, b) => a.localeCompare(b, "pt-BR")), [comitesMap]);

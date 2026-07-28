@@ -72,7 +72,7 @@ export default function PainelGerencial() {
   const [dataFim, setDataFim] = useState("");
   const [filtroStatus, setFiltroStatus] = useState<ReuniaoEtapa | "">("");
 
-  const opcoesUsuarios = usuarios.map((u) => ({ value: u.id, label: u.display_name }));
+  const opcoesUsuarios = usuarios.map((u) => ({ value: u.id, label: u.display_name ?? "—" }));
   const setoresDisponiveis = useMemo(
     () => Array.from(new Set(reunioes.map((r) => r.setor_responsavel).filter((s): s is string => !!s))).sort(),
     [reunioes],

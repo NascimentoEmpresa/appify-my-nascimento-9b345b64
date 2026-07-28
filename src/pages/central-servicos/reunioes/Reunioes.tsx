@@ -48,7 +48,7 @@ export default function Reunioes() {
   const { data: bloqueios = [] } = useBloqueiosAgendaPorUsuarios([filtroPessoa || user?.id].filter((v): v is string => !!v));
   const bloqueioDoDiaSelecionado = useMemo(() => bloqueioDoDia(diaSelecionado, bloqueios), [diaSelecionado, bloqueios]);
 
-  const opcoesResponsaveis = usuarios.map((u) => ({ value: u.id, label: u.display_name }));
+  const opcoesResponsaveis = usuarios.map((u) => ({ value: u.id, label: u.display_name ?? "—" }));
   const opcoesSalas = SALAS_PRESENCIAIS.map((s) => ({ value: s, label: s }));
 
   const reunioesFiltradas = useMemo(

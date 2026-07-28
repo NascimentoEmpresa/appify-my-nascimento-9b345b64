@@ -35,7 +35,7 @@ export function AssuntoForaPautaModal({
 }) {
   const [form, setForm] = useState(VAZIO);
   const [salvando, setSalvando] = useState(false);
-  const opcoesUsuarios = usuarios.map((u) => ({ value: u.id, label: u.display_name }));
+  const opcoesUsuarios = usuarios.map((u) => ({ value: u.id, label: u.display_name ?? "—" }));
 
   const precisaEstacionamento = form.tratativa === "estacionar";
   const valido = form.surgiu && form.classificacao && form.tratativa

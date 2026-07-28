@@ -224,8 +224,8 @@ export default function ReuniaoDetalhe() {
   const reuniaoEncerrada = reuniao.etapa === "concluida" || reuniao.etapa === "cancelada";
   const opcoesConvidaveis = usuarios
     .filter((u) => !convidados.some((c) => c.user_id === u.id))
-    .map((u) => ({ value: u.id, label: u.display_name }));
-  const opcoesUsuarios = usuarios.map((u) => ({ value: u.id, label: u.display_name }));
+    .map((u) => ({ value: u.id, label: u.display_name ?? "—" }));
+  const opcoesUsuarios = usuarios.map((u) => ({ value: u.id, label: u.display_name ?? "—" }));
 
   const cancelar = async () => {
     if (!motivoCancelamento.trim()) return;
