@@ -20,6 +20,7 @@ export interface PlanoAcaoFilterOptions {
   areas: SearchableOption[];
   setores: SearchableOption[];
   responsaveis: SearchableOption[];
+  empresas: SearchableOption[];
 }
 
 const cmp = (a: SearchableOption, b: SearchableOption) =>
@@ -61,6 +62,18 @@ export function usePlanoAcaoFilterOptions(rows: PlanoAcaoRow[]): PlanoAcaoFilter
     const areas = uniqText(rows, (r) => r.area);
     const setores = uniqText(rows, (r) => r.setor);
 
+    // Empresa: value = empresa_id (não o código), pra não colidir se dois
+    // códigos coincidirem por acaso.
+    const empresasMap = new Map<string, string>();
+    rows.forEach((r) => {
+      if (r.empresa_id && !empresasMap.has(r.empresa_id)) {
+        empresasMap.set(r.empresa_id, r.empresas?.codigo ?? r.empresa_id);
+      }
+    });
+    const empresas: SearchableOption[] = Array.from(empresasMap.entries())
+      .map(([value, label]) => ({ value, label }))
+      .sort(cmp);
+
     // Responsável: canônico (profile_id) preferencial; agrupar por id.
     const canonicos = new Map<string, string>(); // profile_id -> label
     const legados = new Set<string>();
@@ -87,7 +100,7 @@ export function usePlanoAcaoFilterOptions(rows: PlanoAcaoRow[]): PlanoAcaoFilter
       })),
     ].sort(cmp);
 
-    return { comites, areas, setores, responsaveis };
+    return { comites, areas, setores, responsaveis, empresas };
   }, [rows, profileNames]);
 }
 

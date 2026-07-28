@@ -28,22 +28,25 @@ export default function PlanoAcoesKanban() {
   const [fArea, setFArea] = useState<string>("__all");
   const [fSetor, setFSetor] = useState<string>("__all");
   const [fResp, setFResp] = useState<string>("__all");
-  const { comites, areas, setores, responsaveis } = usePlanoAcaoFilterOptions(rows);
+  const [fEmpresa, setFEmpresa] = useState<string>("__all");
+  const { comites, areas, setores, responsaveis, empresas } = usePlanoAcaoFilterOptions(rows);
 
   useEffect(() => {
     if (fComite !== "__all" && !comites.some(o => o.value === fComite)) setFComite("__all");
     if (fArea !== "__all" && !areas.some(o => o.value === fArea)) setFArea("__all");
     if (fSetor !== "__all" && !setores.some(o => o.value === fSetor)) setFSetor("__all");
     if (fResp !== "__all" && !responsaveis.some(o => o.value === fResp)) setFResp("__all");
-  }, [comites, areas, setores, responsaveis, fComite, fArea, fSetor, fResp]);
+    if (fEmpresa !== "__all" && !empresas.some(o => o.value === fEmpresa)) setFEmpresa("__all");
+  }, [comites, areas, setores, responsaveis, empresas, fComite, fArea, fSetor, fResp, fEmpresa]);
 
   const filteredRows = useMemo(() => rows.filter(r => {
     if (fComite !== "__all" && r.comite !== fComite) return false;
     if (fArea !== "__all" && r.area !== fArea) return false;
     if (fSetor !== "__all" && r.setor !== fSetor) return false;
     if (!matchResponsavel(r, fResp)) return false;
+    if (fEmpresa !== "__all" && r.empresa_id !== fEmpresa) return false;
     return true;
-  }), [rows, fComite, fArea, fSetor, fResp]);
+  }), [rows, fComite, fArea, fSetor, fResp, fEmpresa]);
 
   const grouped = useMemo(() => {
     const m = new Map<string, PlanoAcaoRow[]>();
@@ -101,6 +104,7 @@ export default function PlanoAcoesKanban() {
           <SearchableSelect value={fArea === "__all" ? "" : fArea} onChange={v => setFArea(v || "__all")} options={areas} placeholder="Todas as áreas" searchPlaceholder="Buscar área..." allowClear />
           <SearchableSelect value={fSetor === "__all" ? "" : fSetor} onChange={v => setFSetor(v || "__all")} options={setores} placeholder="Todos os setores" searchPlaceholder="Buscar setor..." allowClear />
           <SearchableSelect value={fResp === "__all" ? "" : fResp} onChange={v => setFResp(v || "__all")} options={responsaveis} placeholder="Todos os responsáveis" searchPlaceholder="Buscar responsável..." allowClear />
+          <SearchableSelect value={fEmpresa === "__all" ? "" : fEmpresa} onChange={v => setFEmpresa(v || "__all")} options={empresas} placeholder="Todas as empresas" searchPlaceholder="Buscar empresa..." allowClear />
         </div>
         <p className="mt-2 text-[11px] text-muted-foreground">{filteredRows.length} de {rows.length} ações</p>
       </Card>
