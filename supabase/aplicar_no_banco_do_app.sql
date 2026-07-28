@@ -6153,3 +6153,11 @@ REVOKE ALL ON FUNCTION public.chamado_adicionar_informacao(uuid, text) FROM anon
 GRANT EXECUTE ON FUNCTION public.chamado_adicionar_informacao(uuid, text) TO authenticated;
 
 NOTIFY pgrst, 'reload schema';
+
+
+-- ===== 20260805000001_chamados_observacoes_solicitante =====
+-- Campo "Observações do solicitante" na abertura do chamado (opcional).
+ALTER TABLE public."CHAMADO_SISTEMA"
+  ADD COLUMN IF NOT EXISTS observacoes_solicitante text;
+
+NOTIFY pgrst, 'reload schema';

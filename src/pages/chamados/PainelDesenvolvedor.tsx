@@ -11,9 +11,10 @@ import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table";
 import { PieChart, Pie, Cell, ResponsiveContainer } from "recharts";
-import { ListChecks, Clock, MessageSquare, CheckCircle2, AlertTriangle, ShieldAlert, CalendarClock } from "lucide-react";
+import { ListChecks, Clock, MessageSquare, CheckCircle2, AlertTriangle, ShieldAlert, CalendarClock, RotateCw, ArrowUpRight, Plus, BookOpen, ClipboardCheck, Sparkles, FileText, Zap } from "lucide-react";
+import { FeedAtualizacoes } from "./FeedAtualizacoes";
 import {
-  StatCard, PrioridadeBadge, StatusBadge, STATUS_CHAMADO, fmtData, type Chamado,
+  StatCard, PrioridadeBadge, StatusBadge, STATUS_CHAMADO, fmtData, fmtDataHora, type Chamado,
 } from "./types";
 
 const DONUT: Record<string, string> = {
@@ -34,7 +35,7 @@ export default function PainelDesenvolvedor() {
   // Abriu o Painel do Desenvolvedor → zera a bolinha de novidades do dev.
   useEffect(() => { chamadosMarkSeen(user?.id, "dev"); }, [user?.id]);
 
-  const { data: chamados = [], isLoading } = useQuery({
+  const { data: chamados = [], isLoading, refetch } = useQuery({
     queryKey: ["chamados-meus-atribuidos", user?.id],
     enabled: !!user?.id && dev,
     queryFn: async () => {
@@ -71,6 +72,17 @@ export default function PainelDesenvolvedor() {
     () => chamados.filter((c) => ATIVO(c.status) && c.prazo_previsto).sort((a, b) => +new Date(a.prazo_previsto!) - +new Date(b.prazo_previsto!)).slice(0, 5),
     [chamados],
   );
+
+  // Chamado alvo dos atalhos = o mais urgente ativo (por prazo), senão o primeiro ativo.
+  const chamadoAlvo = proximos[0]?.id ?? chamados.find((c) => ATIVO(c.status))?.id ?? null;
+  const filaPrioridade = useMemo(() => {
+    const ativos = chamados.filter((c) => ATIVO(c.status));
+    return {
+      alta: ativos.filter((c) => c.prioridade === "alta").length,
+      media: ativos.filter((c) => c.prioridade === "media").length,
+      baixa: ativos.filter((c) => c.prioridade === "baixa").length,
+    };
+  }, [chamados]);
 
   if (!dev) {
     return (
@@ -117,6 +129,7 @@ export default function PainelDesenvolvedor() {
                     <TableHead>Prioridade</TableHead>
                     <TableHead>Status</TableHead>
                     <TableHead>Prazo</TableHead>
+                    <TableHead>Atualização</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -133,11 +146,12 @@ export default function PainelDesenvolvedor() {
                         <TableCell><PrioridadeBadge prioridade={c.prioridade} /></TableCell>
                         <TableCell><StatusBadge status={c.status} /></TableCell>
                         <TableCell className={`whitespace-nowrap text-xs ${atrasado ? "font-semibold text-destructive" : ""}`}>{fmtData(c.prazo_previsto)}{atrasado ? " · atrasado" : ""}</TableCell>
+                        <TableCell className="whitespace-nowrap text-xs text-muted-foreground">{fmtDataHora(c.updated_at)}</TableCell>
                       </TableRow>
                     );
                   })}
                   {chamados.length === 0 && (
-                    <TableRow><TableCell colSpan={6} className="py-6 text-center text-sm text-muted-foreground">Nenhum chamado atribuído.</TableCell></TableRow>
+                    <TableRow><TableCell colSpan={7} className="py-6 text-center text-sm text-muted-foreground">Nenhum chamado atribuído.</TableCell></TableRow>
                   )}
                 </TableBody>
               </Table>
@@ -183,7 +197,64 @@ export default function PainelDesenvolvedor() {
               {proximos.length === 0 && <p className="text-xs text-muted-foreground">Nenhum prazo próximo.</p>}
             </div>
           </Card>
+
+          <FeedAtualizacoes buildHref={(cid) => `/app/sistemas/chamados/${cid}`} />
         </div>
+      </div>
+
+      {/* Rodapé: fila por prioridade, atalhos e referências */}
+      <div className="mt-4 grid gap-4 lg:grid-cols-3">
+        <Card className="p-4">
+          <p className="mb-2 text-sm font-bold">Fila de chamados por prioridade</p>
+          <div className="space-y-1.5">
+            {([
+              ["Alta", filaPrioridade.alta, "text-destructive"],
+              ["Média", filaPrioridade.media, "text-warning"],
+              ["Baixa", filaPrioridade.baixa, "text-success"],
+            ] as const).map(([label, n, cor]) => (
+              <div key={label} className="flex items-center justify-between text-xs">
+                <span className={`font-semibold ${cor}`}>{label}</span>
+                <span className="font-medium">{n}</span>
+              </div>
+            ))}
+          </div>
+        </Card>
+
+        <Card className="p-4">
+          <p className="mb-2 text-sm font-bold">Atalhos rápidos</p>
+          <div className="grid grid-cols-2 gap-2">
+            <button disabled={!chamadoAlvo} onClick={() => chamadoAlvo && nav(`/app/sistemas/chamados/${chamadoAlvo}`)} className="flex flex-col items-center gap-1 rounded-lg border border-border p-3 text-center text-[11px] font-medium hover:border-primary/40 disabled:opacity-50">
+              <ArrowUpRight className="h-4 w-4 text-primary" /> Chamado mais urgente
+            </button>
+            <button onClick={() => refetch()} className="flex flex-col items-center gap-1 rounded-lg border border-border p-3 text-center text-[11px] font-medium hover:border-primary/40">
+              <RotateCw className="h-4 w-4 text-info" /> Atualizar lista
+            </button>
+            <button disabled={!chamadoAlvo} onClick={() => chamadoAlvo && nav(`/app/sistemas/chamados/${chamadoAlvo}`)} className="flex flex-col items-center gap-1 rounded-lg border border-border p-3 text-center text-[11px] font-medium hover:border-primary/40 disabled:opacity-50">
+              <MessageSquare className="h-4 w-4 text-warning" /> Solicitar informação
+            </button>
+            <button onClick={() => nav("/app/sistemas/chamados/novo")} className="flex flex-col items-center gap-1 rounded-lg border border-border p-3 text-center text-[11px] font-medium hover:border-primary/40">
+              <Plus className="h-4 w-4 text-success" /> Abrir novo chamado
+            </button>
+          </div>
+        </Card>
+
+        <Card className="p-4">
+          <p className="mb-2 text-sm font-bold">Documentos e referências</p>
+          <div className="space-y-1.5">
+            {[
+              { icon: BookOpen, label: "Padrão de desenvolvimento" },
+              { icon: ClipboardCheck, label: "Checklist de testes" },
+              { icon: Sparkles, label: "Boas práticas — ERP" },
+              { icon: FileText, label: "Documentação técnica" },
+            ].map((d) => (
+              <div key={d.label} className="flex items-center gap-2 rounded border border-border/60 px-2.5 py-1.5 text-xs">
+                <d.icon className="h-3.5 w-3.5 text-primary" />
+                <span className="flex-1">{d.label}</span>
+                <Zap className="h-3 w-3 text-muted-foreground/60" />
+              </div>
+            ))}
+          </div>
+        </Card>
       </div>
     </div>
   );

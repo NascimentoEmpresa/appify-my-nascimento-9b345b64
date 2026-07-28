@@ -158,6 +158,7 @@ export default function ExecutarChamado() {
               <Campo label="Módulo / Sistema">{moduloLabel(chamado)}</Campo>
               <Campo label="Impacto">{labelDe(IMPACTOS, chamado.impacto_trabalho)}</Campo>
               <Campo label="Abertura">{fmtDataHora(chamado.created_at)}</Campo>
+              <Campo label="Última atualização">{fmtDataHora(chamado.updated_at)}{eventos[0] ? ` · por ${nomeDe(eventos[0].autor_id)}` : ""}</Campo>
               <Campo label="Solicitante">{chamado.solicitante_nome || "—"} <span className="text-xs text-muted-foreground">({chamado.setor || "—"})</span></Campo>
               <Campo label="Afeta usuários">{chamado.afeta_usuarios ?? "—"}</Campo>
               <Campo label="Urgência informada">{labelDe(URGENCIAS, chamado.urgencia)}</Campo>
@@ -183,6 +184,12 @@ export default function ExecutarChamado() {
               <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Descrição detalhada</p>
               <p className="whitespace-pre-wrap text-sm">{chamado.descricao || "—"}</p>
             </div>
+            {chamado.observacoes_solicitante && (
+              <div>
+                <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Observações do solicitante</p>
+                <p className="whitespace-pre-wrap text-sm">{chamado.observacoes_solicitante}</p>
+              </div>
+            )}
             <div>
               <p className="mb-1 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Anexos da abertura ({anexos.length})</p>
               <div className="space-y-1">
