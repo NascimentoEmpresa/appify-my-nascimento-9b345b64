@@ -12,12 +12,15 @@ import { STATUS_LABELS, STATUS_COR, STATUS_ORDEM, PRIORIDADE_COR, PRIORIDADE_LAB
 import { ForbiddenCard } from "./Lista";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
+import { useAuth } from "@/hooks/useAuth";
+import { podeValidarPlanoAcao } from "@/lib/podeValidarPlanoAcao";
 
 const COLUNAS = STATUS_ORDEM;
 
 export default function PlanoAcoesKanban() {
   const { data: rows = [], isLoading } = usePlanoAcoes();
   const { can, loading } = usePlanoAcaoPermissao();
+  const { user } = useAuth();
   const qc = useQueryClient();
   const { toast } = useToast();
 
@@ -64,10 +67,14 @@ export default function PlanoAcoesKanban() {
       toast({ title: "Não permitido", description: "O status Atrasada é definido automaticamente pelo sistema, não pode ser escolhido manualmente.", variant: "destructive" });
       return;
     }
-    // Regra: ao concluir, vai para aguardando_validacao; só pode_aprovar valida.
+    // Regra: ao concluir, vai para aguardando_validacao; só quem criou a
+    // ação (ou o Responsável, se legada) valida de fato.
     let statusFinal = novoStatus;
-    if (novoStatus === "concluida_validada" && !can("aprovar")) {
-      statusFinal = "aguardando_validacao";
+    if (novoStatus === "concluida_validada") {
+      const row = rows.find(r => r.id === id);
+      if (!row || !podeValidarPlanoAcao(row, user?.id)) {
+        statusFinal = "aguardando_validacao";
+      }
     }
     const { error } = await supabase.from("plano_acao").update({ status_normalizado: statusFinal }).eq("id", id);
     if (error) {

@@ -13,10 +13,13 @@ import { usePlanoAcaoFilterOptions, matchResponsavel } from "@/hooks/usePlanoAca
 import { ForbiddenCard } from "./Lista";
 import { STATUS_LABELS, STATUS_COR } from "@/types/planoAcao";
 import { useToast } from "@/hooks/use-toast";
+import { useAuth } from "@/hooks/useAuth";
+import { podeValidarPlanoAcao } from "@/lib/podeValidarPlanoAcao";
 
 export default function PlanoAcoesAprovacoes() {
   const { data: rows = [] } = usePlanoAcoes();
   const { can, loading } = usePlanoAcaoPermissao();
+  const { user } = useAuth();
   const qc = useQueryClient();
   const { toast } = useToast();
 
@@ -74,10 +77,12 @@ export default function PlanoAcoesAprovacoes() {
                 {STATUS_LABELS[r.status_normalizado]}
               </Badge>
             </div>
-            {mostrarBotoes && can("aprovar") && (
+            {mostrarBotoes && (can("aprovar") || podeValidarPlanoAcao(r, user?.id)) && (
               <div className="flex gap-2">
-                <Button size="sm" variant="outline" onClick={() => devolver(r.id)}>Devolver</Button>
-                <Button size="sm" onClick={() => validar(r.id)}>Validar</Button>
+                {can("aprovar") && <Button size="sm" variant="outline" onClick={() => devolver(r.id)}>Devolver</Button>}
+                {/* "Validar" (Concluída — Validada) só quem criou a ação, ou o
+                    Responsável em ações legadas sem criado_por registrado. */}
+                {podeValidarPlanoAcao(r, user?.id) && <Button size="sm" onClick={() => validar(r.id)}>Validar</Button>}
               </div>
             )}
           </div>
