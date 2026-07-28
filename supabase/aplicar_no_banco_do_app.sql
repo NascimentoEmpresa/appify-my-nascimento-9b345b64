@@ -6202,14 +6202,19 @@ NOTIFY pgrst, 'reload schema';
 -- sessão do usuário, limitado pela RLS por capacidade.
 -- =====================================================================
 
--- 1) Menus / capacidades ------------------------------------------------
+-- 1) Módulo + menus / capacidades ---------------------------------------
+INSERT INTO public.app_modulo (codigo, nome, descricao, icone, ordem)
+SELECT 'whatsapp', 'WhatsApp', 'Atendimento e chatbot',
+       COALESCE((SELECT max(ordem) FROM public.app_modulo), 200) + 5, 'MessageCircle'
+WHERE NOT EXISTS (SELECT 1 FROM public.app_modulo WHERE codigo = 'whatsapp');
+
 INSERT INTO public.app_menu (modulo_id, codigo, nome, rota, ordem)
 SELECT m.id, x.codigo, x.nome, x.rota, x.ordem
   FROM (VALUES
-    ('whatsapp',         'WhatsApp — Caixa de Entrada', '/app/whatsapp',         70),
-    ('whatsapp_chatbot', 'WhatsApp — Chatbot',          '/app/whatsapp/chatbot', 71)
+    ('whatsapp',         'WhatsApp — Caixa de Entrada', '/app/whatsapp',         1),
+    ('whatsapp_chatbot', 'WhatsApp — Chatbot',          '/app/whatsapp/chatbot', 2)
   ) AS x(codigo, nome, rota, ordem)
-  JOIN public.app_modulo m ON m.codigo = 'central_servicos'
+  JOIN public.app_modulo m ON m.codigo = 'whatsapp'
 ON CONFLICT (modulo_id, codigo) DO NOTHING;
 
 -- 2) Tabelas ------------------------------------------------------------
