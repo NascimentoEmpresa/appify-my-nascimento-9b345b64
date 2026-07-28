@@ -647,17 +647,21 @@ function FormPermsUsuario({ userId, onToast }: { userId: string; onToast: (m: st
   // (CS_FORM_RESPOSTAS). As permissões por setor recortam justamente pelo setor
   // da resposta (cs_form_cap_setor), então setores que só aparecem em respostas
   // (ex.: COMPRAS, LICITAÇÃO, TREINAMENTOS, JURÍDICO — sem colaborador com esse
-  // Setor_ERP) precisam ser concedíveis também. Dedup por caixa alta.
+  // Setor_ERP) precisam ser concedíveis também.
+  //
+  // Vem da RPC cs_form_setores_catalogo (SECURITY DEFINER, só nomes): ler
+  // CS_FORM_RESPOSTAS direto não serve mais porque a RLS não tem bypass de admin
+  // — sem 'ver_tudo' o admin não enxergaria as respostas e os setores só-de-
+  // resposta sumiriam da lista. A RPC devolve os nomes sem expor conteúdo.
   useEffect(() => {
     (async () => {
-      const [empRes, respRes] = await Promise.all([
-        (supabase as any).from("EMPREGADOS").select('"Setor_ERP"').limit(20000),
-        (supabase as any).from("CS_FORM_RESPOSTAS").select("setor").not("setor", "is", null).limit(20000),
-      ]);
-      const porChave = new Map<string, string>();  // CHAVE(upper) → rótulo de exibição
-      const add = (v: any) => { const l = String(v ?? "").trim(); if (!l) return; const k = l.toUpperCase(); if (!porChave.has(k)) porChave.set(k, l); };
-      (empRes.data ?? []).forEach((r: any) => add(r["Setor_ERP"]));
-      (respRes.data ?? []).forEach((r: any) => add(r.setor));
+      const { data } = await (supabase as any).rpc("cs_form_setores_catalogo");
+      // Dedup SEM acento/caixa (JURIDICO == JURÍDICO) e fora o placeholder PADRAO
+      // (= "sem setor"). A RPC já faz isso; aqui é rede de segurança e mantém a
+      // 1ª grafia que veio (a RPC devolve a da resposta primeiro).
+      const norm = (s: string) => s.normalize("NFD").replace(/[̀-ͯ]/g, "").toUpperCase().trim();
+      const porChave = new Map<string, string>();  // CHAVE(sem acento) → rótulo de exibição
+      (data ?? []).forEach((r: any) => { const l = String(r.setor ?? "").trim(); if (!l) return; const k = norm(l); if (k === "PADRAO" || porChave.has(k)) return; porChave.set(k, l); });
       setSetoresErp([...porChave.values()].sort((a, b) => a.localeCompare(b, "pt-BR")));
     })();
   }, []);

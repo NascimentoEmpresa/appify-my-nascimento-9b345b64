@@ -5299,3 +5299,886 @@ GRANT EXECUTE ON FUNCTION public.rh_colaboradores_lista(int, int, text, text, te
 DROP VIEW IF EXISTS public.v_rh_colaboradores;
 
 NOTIFY pgrst, 'reload schema';
+
+-- ===== 20260801000004_cs_form_cap_sem_bypass_admin =====
+-- Crava cs_form_cap SEM bypass de admin: capacidades (CS_FORM_ACESSOS) governam
+-- tudo, inclusive admin. Sem has_role. (ultima palavra sobre cs_form_cap)
+CREATE OR REPLACE FUNCTION public.cs_form_cap(_cap text)
+RETURNS boolean LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public AS $$
+  SELECT _cap = 'responder'
+      OR EXISTS (SELECT 1 FROM public."CS_FORM_ACESSOS" a
+                  WHERE a.papel = _cap AND a.user_id = auth.uid());
+$$;
+REVOKE EXECUTE ON FUNCTION public.cs_form_cap(text) FROM PUBLIC, anon;
+GRANT  EXECUTE ON FUNCTION public.cs_form_cap(text) TO authenticated;
+
+NOTIFY pgrst, 'reload schema';
+
+-- ===== 20260801000005_cs_form_setores_catalogo =====
+-- Catálogo de setores (nomes) p/ a tela de permissões, sem depender de ler
+-- CS_FORM_RESPOSTAS via RLS. Devolve EMPREGADOS.Setor_ERP ∪ CS_FORM_RESPOSTAS.setor
+-- (só rótulos). SECURITY DEFINER, restrita a admin. Dedup SEM acento/caixa
+-- (JURIDICO == JURÍDICO), preferindo a grafia da RESPOSTA (é nela que ver_setor
+-- casa); fora o placeholder PADRAO (= "sem setor", não é setor concedível).
+CREATE OR REPLACE FUNCTION public.cs_form_setores_catalogo()
+RETURNS TABLE(setor text) LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public AS $$
+  WITH fonte AS (
+    SELECT setor        AS s, 0 AS ordem FROM public."CS_FORM_RESPOSTAS"
+    UNION ALL
+    SELECT "Setor_ERP" AS s, 1 AS ordem FROM public."EMPREGADOS"
+  ),
+  norm AS (
+    SELECT btrim(s) AS rotulo, ordem,
+           upper(translate(btrim(s),
+             'áàâãäéèêëíìîïóòôõöúùûüçÁÀÂÃÄÉÈÊËÍÌÎÏÓÒÔÕÖÚÙÛÜÇ',
+             'aaaaaeeeeiiiiooooouuuucAAAAAEEEEIIIIOOOOOUUUUC')) AS chave
+      FROM fonte
+     WHERE btrim(coalesce(s, '')) <> ''
+  )
+  SELECT DISTINCT ON (chave) rotulo
+    FROM norm
+   WHERE chave <> 'PADRAO'
+     AND public.has_role(auth.uid(), 'admin')
+   ORDER BY chave, ordem, rotulo;
+$$;
+REVOKE EXECUTE ON FUNCTION public.cs_form_setores_catalogo() FROM PUBLIC, anon;
+GRANT  EXECUTE ON FUNCTION public.cs_form_setores_catalogo() TO authenticated;
+
+NOTIFY pgrst, 'reload schema';
+
+
+
+-- =========================================================================
+-- ===== 20260802000001_chamados_sistemas =====
+-- =========================================================================
+-- =====================================================================
+-- CHAMADOS DE SISTEMAS — help desk leve do módulo Sistemas.
+-- Qualquer usuário logado abre um chamado (setor/nome puxados de EMPREGADOS
+-- via meu_empregado). O Gerente de Sistemas distribui para um Desenvolvedor
+-- com fila de tarefas priorizadas; o dev executa e conclui. Histórico + push.
+--
+-- Tabelas em MAIÚSCULAS/citadas (padrão dos módulos: EMPREGADOS, CS_FORMULARIOS…):
+--   "CHAMADO_SISTEMA", "CHAMADO_SISTEMA_TAREFA", "CHAMADO_SISTEMA_ANEXO",
+--   "CHAMADO_SISTEMA_EVENTO". Funções/triggers/índices/policies seguem em
+--   minúsculo (não são tabelas).
+--
+-- Permissão por usuário (mesma base de Solicitações ERP): app_menu +
+-- screen_permission_user + tem_acesso_menu(). Abrir/ver os PRÓPRIOS chamados
+-- é aberto a todos (menu com rota mas sem permissão configurada = visível);
+-- a GESTÃO é restrita pelos códigos de rota, que também valem como capacidade:
+--   chamados_sistemas_painel → Gerente de Sistemas (coordena/distribui/reprova)
+--   chamados_sistemas_dev    → Desenvolvedor (executa tarefas)
+-- Esses dois entram em MENUS_SEMPRE_RESTRITOS (front) p/ ficarem ocultos até
+-- serem liberados em "Acesso por Usuário".
+-- =====================================================================
+
+-- 1) Menus / permissões -------------------------------------------------
+INSERT INTO public.app_menu (modulo_id, codigo, nome, rota, ordem)
+SELECT m.id, x.codigo, x.nome, x.rota, x.ordem
+  FROM (VALUES
+    ('chamados_sistemas',        'Chamados de Sistemas',                 '/app/sistemas/chamados',        15),
+    ('chamados_sistemas_painel', 'Chamados — Painel de Distribuição',    '/app/sistemas/chamados/painel', 16),
+    ('chamados_sistemas_dev',    'Chamados — Painel do Desenvolvedor',   '/app/sistemas/chamados/dev',    17)
+  ) AS x(codigo, nome, rota, ordem)
+  JOIN public.app_modulo m ON m.codigo = 'sistemas'
+ON CONFLICT (modulo_id, codigo) DO NOTHING;
+
+-- Mirror do "abrir/meus chamados" no menu da Central de Serviços (mesma tela).
+INSERT INTO public.app_menu (modulo_id, codigo, nome, rota, ordem)
+SELECT m.id, 'central_servicos_chamados', 'Chamados de Sistemas', '/app/central-servicos/chamados', 60
+  FROM public.app_modulo m WHERE m.codigo = 'central_servicos'
+ON CONFLICT (modulo_id, codigo) DO NOTHING;
+
+-- 2) Tabelas ------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS public."CHAMADO_SISTEMA" (
+  id                   uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  numero               text,
+  assunto              text NOT NULL,
+  categorias           text[] NOT NULL DEFAULT '{}',
+  tipo_solicitacao     text,      -- ajuste | correcao | melhoria | duvida | outro
+  prioridade           text NOT NULL DEFAULT 'media' CHECK (prioridade IN ('alta','media','baixa')),
+  descricao            text,
+  impacto_trabalho     text,      -- impede | atraso_significativo | atraso_leve | nao_impacta
+  urgencia             text,      -- ate_1h | ate_1d | ate_3d | ate_5d | mais_5d
+  modulo_sistema       text,      -- código do módulo do ERP ou 'outro'
+  modulo_sistema_outro text,
+  ambiente             text NOT NULL DEFAULT 'producao',  -- producao | homologacao | teste
+  afeta_usuarios       integer,
+  solicitante_id       uuid NOT NULL DEFAULT auth.uid() REFERENCES auth.users(id),
+  solicitante_nome     text,
+  setor                text,
+  status               text NOT NULL DEFAULT 'aberto'
+                         CHECK (status IN ('aberto','em_andamento','aguardando_retorno','concluido','reprovado')),
+  responsavel_id       uuid REFERENCES auth.users(id),
+  prazo_previsto       date,
+  observacao_gerente   text,
+  comentario_gerente   text,
+  motivo_reprovacao    text,
+  concluido_em         timestamptz,
+  created_at           timestamptz NOT NULL DEFAULT now(),
+  updated_at           timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_chamado_sistema_solicitante ON public."CHAMADO_SISTEMA"(solicitante_id);
+CREATE INDEX IF NOT EXISTS idx_chamado_sistema_responsavel ON public."CHAMADO_SISTEMA"(responsavel_id);
+CREATE INDEX IF NOT EXISTS idx_chamado_sistema_status      ON public."CHAMADO_SISTEMA"(status);
+
+CREATE TABLE IF NOT EXISTS public."CHAMADO_SISTEMA_TAREFA" (
+  id             uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  chamado_id     uuid NOT NULL REFERENCES public."CHAMADO_SISTEMA"(id) ON DELETE CASCADE,
+  ordem          integer NOT NULL DEFAULT 1,
+  titulo         text NOT NULL,
+  descricao      text,
+  prioridade     text NOT NULL DEFAULT 'media' CHECK (prioridade IN ('alta','media','baixa')),
+  status         text NOT NULL DEFAULT 'pendente'
+                   CHECK (status IN ('pendente','em_andamento','aguardando_informacoes','concluida')),
+  responsavel_id uuid REFERENCES auth.users(id),
+  prazo          date,
+  created_at     timestamptz NOT NULL DEFAULT now(),
+  updated_at     timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_chamado_sistema_tarefa_chamado     ON public."CHAMADO_SISTEMA_TAREFA"(chamado_id);
+CREATE INDEX IF NOT EXISTS idx_chamado_sistema_tarefa_responsavel ON public."CHAMADO_SISTEMA_TAREFA"(responsavel_id);
+
+CREATE TABLE IF NOT EXISTS public."CHAMADO_SISTEMA_ANEXO" (
+  id            uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  chamado_id    uuid NOT NULL REFERENCES public."CHAMADO_SISTEMA"(id) ON DELETE CASCADE,
+  storage_path  text NOT NULL,
+  nome_arquivo  text NOT NULL,
+  mime_type     text,
+  tamanho_bytes bigint,
+  campo         text NOT NULL DEFAULT 'abertura',  -- abertura | interno
+  autor_id      uuid NOT NULL DEFAULT auth.uid() REFERENCES auth.users(id),
+  created_at    timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_chamado_sistema_anexo_chamado ON public."CHAMADO_SISTEMA_ANEXO"(chamado_id);
+
+CREATE TABLE IF NOT EXISTS public."CHAMADO_SISTEMA_EVENTO" (
+  id          uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  chamado_id  uuid NOT NULL REFERENCES public."CHAMADO_SISTEMA"(id) ON DELETE CASCADE,
+  autor_id    uuid NOT NULL DEFAULT auth.uid() REFERENCES auth.users(id),
+  tipo        text NOT NULL DEFAULT 'evento',  -- evento | comentario | observacao_interna | solicitar_info
+  texto       text,
+  meta        jsonb,
+  created_at  timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_chamado_sistema_evento_chamado ON public."CHAMADO_SISTEMA_EVENTO"(chamado_id);
+
+-- 3) Numeração automática (SIS-AAAA-0000) -------------------------------
+CREATE SEQUENCE IF NOT EXISTS public.chamado_sistema_numero_seq;
+
+CREATE OR REPLACE FUNCTION public.gerar_numero_chamado_sistema()
+RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp
+AS $$
+BEGIN
+  IF NEW.numero IS NULL THEN
+    NEW.numero := 'SIS-' || to_char(now(), 'YYYY') || '-' ||
+                  lpad(nextval('public.chamado_sistema_numero_seq')::text, 4, '0');
+  END IF;
+  RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS trg_chamado_sistema_numero ON public."CHAMADO_SISTEMA";
+CREATE TRIGGER trg_chamado_sistema_numero
+  BEFORE INSERT ON public."CHAMADO_SISTEMA"
+  FOR EACH ROW EXECUTE FUNCTION public.gerar_numero_chamado_sistema();
+
+-- Evento de abertura gravado por trigger (SECURITY DEFINER): a RLS de
+-- "CHAMADO_SISTEMA_EVENTO" não deixa o solicitante inserir tipo 'evento',
+-- então o registro de "Chamado aberto" é criado aqui, no servidor.
+CREATE OR REPLACE FUNCTION public.chamado_sistema_evento_abertura()
+RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp
+AS $$
+BEGIN
+  INSERT INTO public."CHAMADO_SISTEMA_EVENTO" (chamado_id, autor_id, tipo, texto)
+  VALUES (NEW.id, NEW.solicitante_id, 'evento', 'Chamado aberto');
+  RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS trg_chamado_sistema_abertura ON public."CHAMADO_SISTEMA";
+CREATE TRIGGER trg_chamado_sistema_abertura
+  AFTER INSERT ON public."CHAMADO_SISTEMA"
+  FOR EACH ROW EXECUTE FUNCTION public.chamado_sistema_evento_abertura();
+
+-- 4) Guard de UPDATE: quem NÃO é gerente (o dev responsável) só mexe em
+--    status/prazo/motivo; nunca em campos de abertura ou de gestão. -------
+CREATE OR REPLACE FUNCTION public.chamado_sistema_guard()
+RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp
+AS $$
+DECLARE v_gerente boolean := public.tem_acesso_menu('chamados_sistemas_painel');
+BEGIN
+  IF NOT v_gerente THEN
+    IF NEW.assunto              IS DISTINCT FROM OLD.assunto
+    OR NEW.categorias           IS DISTINCT FROM OLD.categorias
+    OR NEW.tipo_solicitacao     IS DISTINCT FROM OLD.tipo_solicitacao
+    OR NEW.prioridade           IS DISTINCT FROM OLD.prioridade
+    OR NEW.descricao            IS DISTINCT FROM OLD.descricao
+    OR NEW.impacto_trabalho     IS DISTINCT FROM OLD.impacto_trabalho
+    OR NEW.urgencia             IS DISTINCT FROM OLD.urgencia
+    OR NEW.modulo_sistema       IS DISTINCT FROM OLD.modulo_sistema
+    OR NEW.modulo_sistema_outro IS DISTINCT FROM OLD.modulo_sistema_outro
+    OR NEW.afeta_usuarios       IS DISTINCT FROM OLD.afeta_usuarios
+    OR NEW.solicitante_id       IS DISTINCT FROM OLD.solicitante_id
+    OR NEW.solicitante_nome     IS DISTINCT FROM OLD.solicitante_nome
+    OR NEW.setor                IS DISTINCT FROM OLD.setor
+    OR NEW.responsavel_id       IS DISTINCT FROM OLD.responsavel_id
+    OR NEW.observacao_gerente   IS DISTINCT FROM OLD.observacao_gerente
+    OR NEW.comentario_gerente   IS DISTINCT FROM OLD.comentario_gerente THEN
+      RAISE EXCEPTION 'Sem permissão para alterar estes campos do chamado.';
+    END IF;
+  END IF;
+
+  -- concluido_em coerente com o status.
+  IF NEW.status = 'concluido' AND NEW.concluido_em IS NULL THEN NEW.concluido_em := now(); END IF;
+  IF NEW.status <> 'concluido' THEN NEW.concluido_em := NULL; END IF;
+
+  RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS trg_chamado_sistema_guard ON public."CHAMADO_SISTEMA";
+CREATE TRIGGER trg_chamado_sistema_guard
+  BEFORE UPDATE ON public."CHAMADO_SISTEMA"
+  FOR EACH ROW EXECUTE FUNCTION public.chamado_sistema_guard();
+
+DROP TRIGGER IF EXISTS trg_chamado_sistema_updated ON public."CHAMADO_SISTEMA";
+CREATE TRIGGER trg_chamado_sistema_updated
+  BEFORE UPDATE ON public."CHAMADO_SISTEMA"
+  FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
+
+-- Tarefa: dev só muda o status da própria; gerente muda tudo.
+CREATE OR REPLACE FUNCTION public.chamado_sistema_tarefa_guard()
+RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp
+AS $$
+DECLARE v_gerente boolean := public.tem_acesso_menu('chamados_sistemas_painel');
+BEGIN
+  IF NOT v_gerente THEN
+    IF NEW.titulo      IS DISTINCT FROM OLD.titulo
+    OR NEW.descricao   IS DISTINCT FROM OLD.descricao
+    OR NEW.prioridade  IS DISTINCT FROM OLD.prioridade
+    OR NEW.ordem       IS DISTINCT FROM OLD.ordem
+    OR NEW.responsavel_id IS DISTINCT FROM OLD.responsavel_id
+    OR NEW.prazo       IS DISTINCT FROM OLD.prazo THEN
+      RAISE EXCEPTION 'Sem permissão para alterar esta tarefa (apenas o status).';
+    END IF;
+  END IF;
+  RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS trg_chamado_sistema_tarefa_guard ON public."CHAMADO_SISTEMA_TAREFA";
+CREATE TRIGGER trg_chamado_sistema_tarefa_guard
+  BEFORE UPDATE ON public."CHAMADO_SISTEMA_TAREFA"
+  FOR EACH ROW EXECUTE FUNCTION public.chamado_sistema_tarefa_guard();
+
+DROP TRIGGER IF EXISTS trg_chamado_sistema_tarefa_updated ON public."CHAMADO_SISTEMA_TAREFA";
+CREATE TRIGGER trg_chamado_sistema_tarefa_updated
+  BEFORE UPDATE ON public."CHAMADO_SISTEMA_TAREFA"
+  FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
+
+-- 5) RLS ----------------------------------------------------------------
+ALTER TABLE public."CHAMADO_SISTEMA"        ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public."CHAMADO_SISTEMA_TAREFA" ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public."CHAMADO_SISTEMA_ANEXO"  ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public."CHAMADO_SISTEMA_EVENTO" ENABLE ROW LEVEL SECURITY;
+
+-- CHAMADO_SISTEMA
+DROP POLICY IF EXISTS chamado_sistema_select ON public."CHAMADO_SISTEMA";
+CREATE POLICY chamado_sistema_select ON public."CHAMADO_SISTEMA"
+  FOR SELECT TO authenticated
+  USING (
+    solicitante_id = auth.uid()
+    OR responsavel_id = auth.uid()
+    OR public.tem_acesso_menu('chamados_sistemas_painel')
+    OR EXISTS (SELECT 1 FROM public."CHAMADO_SISTEMA_TAREFA" t
+               WHERE t.chamado_id = "CHAMADO_SISTEMA".id AND t.responsavel_id = auth.uid())
+  );
+
+DROP POLICY IF EXISTS chamado_sistema_insert ON public."CHAMADO_SISTEMA";
+CREATE POLICY chamado_sistema_insert ON public."CHAMADO_SISTEMA"
+  FOR INSERT TO authenticated
+  WITH CHECK (solicitante_id = auth.uid() AND status = 'aberto' AND responsavel_id IS NULL);
+
+DROP POLICY IF EXISTS chamado_sistema_update ON public."CHAMADO_SISTEMA";
+CREATE POLICY chamado_sistema_update ON public."CHAMADO_SISTEMA"
+  FOR UPDATE TO authenticated
+  USING (public.tem_acesso_menu('chamados_sistemas_painel') OR responsavel_id = auth.uid())
+  WITH CHECK (public.tem_acesso_menu('chamados_sistemas_painel') OR responsavel_id = auth.uid());
+
+-- CHAMADO_SISTEMA_TAREFA
+DROP POLICY IF EXISTS chamado_sistema_tarefa_select ON public."CHAMADO_SISTEMA_TAREFA";
+CREATE POLICY chamado_sistema_tarefa_select ON public."CHAMADO_SISTEMA_TAREFA"
+  FOR SELECT TO authenticated
+  USING (public.tem_acesso_menu('chamados_sistemas_painel') OR responsavel_id = auth.uid());
+
+DROP POLICY IF EXISTS chamado_sistema_tarefa_insert ON public."CHAMADO_SISTEMA_TAREFA";
+CREATE POLICY chamado_sistema_tarefa_insert ON public."CHAMADO_SISTEMA_TAREFA"
+  FOR INSERT TO authenticated
+  WITH CHECK (public.tem_acesso_menu('chamados_sistemas_painel'));
+
+DROP POLICY IF EXISTS chamado_sistema_tarefa_update ON public."CHAMADO_SISTEMA_TAREFA";
+CREATE POLICY chamado_sistema_tarefa_update ON public."CHAMADO_SISTEMA_TAREFA"
+  FOR UPDATE TO authenticated
+  USING (public.tem_acesso_menu('chamados_sistemas_painel') OR responsavel_id = auth.uid())
+  WITH CHECK (public.tem_acesso_menu('chamados_sistemas_painel') OR responsavel_id = auth.uid());
+
+DROP POLICY IF EXISTS chamado_sistema_tarefa_delete ON public."CHAMADO_SISTEMA_TAREFA";
+CREATE POLICY chamado_sistema_tarefa_delete ON public."CHAMADO_SISTEMA_TAREFA"
+  FOR DELETE TO authenticated
+  USING (public.tem_acesso_menu('chamados_sistemas_painel'));
+
+-- CHAMADO_SISTEMA_ANEXO
+DROP POLICY IF EXISTS chamado_sistema_anexo_select ON public."CHAMADO_SISTEMA_ANEXO";
+CREATE POLICY chamado_sistema_anexo_select ON public."CHAMADO_SISTEMA_ANEXO"
+  FOR SELECT TO authenticated
+  USING (EXISTS (SELECT 1 FROM public."CHAMADO_SISTEMA" c WHERE c.id = chamado_id
+                 AND (c.solicitante_id = auth.uid() OR c.responsavel_id = auth.uid()
+                      OR public.tem_acesso_menu('chamados_sistemas_painel'))));
+
+DROP POLICY IF EXISTS chamado_sistema_anexo_insert ON public."CHAMADO_SISTEMA_ANEXO";
+CREATE POLICY chamado_sistema_anexo_insert ON public."CHAMADO_SISTEMA_ANEXO"
+  FOR INSERT TO authenticated
+  WITH CHECK (autor_id = auth.uid() AND EXISTS (
+    SELECT 1 FROM public."CHAMADO_SISTEMA" c WHERE c.id = chamado_id
+    AND (c.solicitante_id = auth.uid() OR c.responsavel_id = auth.uid()
+         OR public.tem_acesso_menu('chamados_sistemas_painel'))));
+
+-- CHAMADO_SISTEMA_EVENTO
+DROP POLICY IF EXISTS chamado_sistema_evento_select ON public."CHAMADO_SISTEMA_EVENTO";
+CREATE POLICY chamado_sistema_evento_select ON public."CHAMADO_SISTEMA_EVENTO"
+  FOR SELECT TO authenticated
+  USING (
+    public.tem_acesso_menu('chamados_sistemas_painel')
+    OR EXISTS (SELECT 1 FROM public."CHAMADO_SISTEMA" c WHERE c.id = chamado_id
+               AND (c.responsavel_id = auth.uid()
+                    OR (c.solicitante_id = auth.uid() AND tipo <> 'observacao_interna')))
+  );
+
+DROP POLICY IF EXISTS chamado_sistema_evento_insert ON public."CHAMADO_SISTEMA_EVENTO";
+CREATE POLICY chamado_sistema_evento_insert ON public."CHAMADO_SISTEMA_EVENTO"
+  FOR INSERT TO authenticated
+  WITH CHECK (autor_id = auth.uid() AND EXISTS (
+    SELECT 1 FROM public."CHAMADO_SISTEMA" c WHERE c.id = chamado_id
+    AND (public.tem_acesso_menu('chamados_sistemas_painel')
+         OR c.responsavel_id = auth.uid()
+         OR (c.solicitante_id = auth.uid() AND tipo IN ('comentario')))));
+
+-- 6) Storage bucket -----------------------------------------------------
+INSERT INTO storage.buckets (id, name, public, file_size_limit)
+VALUES ('chamados-sistemas', 'chamados-sistemas', false, 20971520) -- 20 MB
+ON CONFLICT (id) DO NOTHING;
+
+DROP POLICY IF EXISTS "chamados sistemas anexo select" ON storage.objects;
+CREATE POLICY "chamados sistemas anexo select"
+  ON storage.objects FOR SELECT TO authenticated
+  USING (bucket_id = 'chamados-sistemas');
+
+DROP POLICY IF EXISTS "chamados sistemas anexo insert" ON storage.objects;
+CREATE POLICY "chamados sistemas anexo insert"
+  ON storage.objects FOR INSERT TO authenticated
+  WITH CHECK (bucket_id = 'chamados-sistemas');
+
+-- 7) RPCs ---------------------------------------------------------------
+-- Estatísticas do solicitante (para os cards de "Meus chamados").
+CREATE OR REPLACE FUNCTION public.chamados_meus_stats()
+RETURNS TABLE(meus int, concluidos int, em_atendimento int, aguardando_acao int, tempo_medio numeric)
+LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public, pg_temp
+AS $$
+  SELECT
+    count(*)::int,
+    count(*) FILTER (WHERE status = 'concluido')::int,
+    count(*) FILTER (WHERE status IN ('aberto','em_andamento'))::int,
+    count(*) FILTER (WHERE status = 'aguardando_retorno')::int,
+    round((avg(extract(epoch FROM (concluido_em - created_at)) / 86400.0)
+           FILTER (WHERE concluido_em IS NOT NULL))::numeric, 1)
+  FROM public."CHAMADO_SISTEMA"
+  WHERE solicitante_id = auth.uid();
+$$;
+REVOKE ALL ON FUNCTION public.chamados_meus_stats() FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.chamados_meus_stats() TO authenticated;
+
+-- Estatísticas do painel do gerente (0 se não for gerente).
+CREATE OR REPLACE FUNCTION public.chamados_painel_stats()
+RETURNS TABLE(total int, abertos int, em_andamento int, concluidos_mes int, atrasados int)
+LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public, pg_temp
+AS $$
+  SELECT
+    count(*)::int,
+    count(*) FILTER (WHERE status = 'aberto')::int,
+    count(*) FILTER (WHERE status = 'em_andamento')::int,
+    count(*) FILTER (WHERE status = 'concluido'
+                     AND concluido_em >= date_trunc('month', now()))::int,
+    count(*) FILTER (WHERE prazo_previsto < current_date
+                     AND status NOT IN ('concluido','reprovado'))::int
+  FROM public."CHAMADO_SISTEMA"
+  WHERE public.tem_acesso_menu('chamados_sistemas_painel');
+$$;
+REVOKE ALL ON FUNCTION public.chamados_painel_stats() FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.chamados_painel_stats() TO authenticated;
+
+-- Desenvolvedores (quem tem chamados_sistemas_dev liberado por usuário) +
+-- contagem de carga. Só devolve algo para o gerente.
+CREATE OR REPLACE FUNCTION public.listar_desenvolvedores_chamados()
+RETURNS TABLE(id uuid, display_name text, em_andamento int, abertos int)
+LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public, pg_temp
+AS $$
+  SELECT p.id, p.display_name,
+    (SELECT count(*) FROM public."CHAMADO_SISTEMA" c
+       WHERE c.responsavel_id = p.id AND c.status = 'em_andamento')::int,
+    (SELECT count(*) FROM public."CHAMADO_SISTEMA" c
+       WHERE c.responsavel_id = p.id
+         AND c.status IN ('aberto','em_andamento','aguardando_retorno'))::int
+  FROM public.profiles p
+  WHERE p.ativo = true
+    AND public.tem_acesso_menu('chamados_sistemas_painel')
+    AND EXISTS (SELECT 1 FROM public.screen_permission_user s
+                WHERE s.user_id = p.id AND s.menu_codigo = 'chamados_sistemas_dev'
+                  AND s.acao = 'visualizar'::public.app_acao AND s.allow = true
+                  AND s.empresa_id IS NULL)
+  ORDER BY p.display_name;
+$$;
+REVOKE ALL ON FUNCTION public.listar_desenvolvedores_chamados() FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.listar_desenvolvedores_chamados() TO authenticated;
+
+NOTIFY pgrst, 'reload schema';
+
+
+-- =========================================================================
+-- ===== 20260802000002_chamados_sistemas_permissoes =====
+-- =========================================================================
+-- =====================================================================
+-- CHAMADOS DE SISTEMAS — matriz de permissões granular por usuário.
+-- Registra cada AÇÃO como um código em app_menu (aparece em Administração →
+-- Módulos & Menus → "Acesso por Usuário", um switch por ação) e amarra a RLS
+-- + os guards a esses códigos. Capacidades:
+--   chamados_sistemas_abrir      → solicitar (abrir chamado). ABERTO a todos
+--                                  por padrão; vira restrito quando alguém é
+--                                  configurado (mesma regra do resto do ERP).
+--   chamados_sistemas_painel     → ver TODOS os chamados / Painel de Distribuição
+--   chamados_sistemas_coordenar  → distribuir, atribuir responsável, editar o
+--                                  chamado e gerenciar as tarefas
+--   chamados_sistemas_aprovar    → aprovar / reprovar / encerrar
+--   chamados_sistemas_dev        → desenvolvedor: Painel do Dev + executar tarefas
+-- "Gestor" (para RLS) = tem painel OU coordenar OU aprovar.
+-- Tabelas em MAIÚSCULAS/citadas: "CHAMADO_SISTEMA*".
+-- =====================================================================
+
+-- 1) Registrar as novas capacidades (rota NULL = só permissão) ----------
+INSERT INTO public.app_menu (modulo_id, codigo, nome, rota, ordem)
+SELECT m.id, x.codigo, x.nome, NULL, x.ordem
+  FROM (VALUES
+    ('chamados_sistemas_abrir',     'Chamados — Abrir chamado (solicitar)',                 18),
+    ('chamados_sistemas_coordenar', 'Chamados — Coordenar / distribuir / editar / tarefas',  19),
+    ('chamados_sistemas_aprovar',   'Chamados — Aprovar / reprovar / encerrar',              20)
+  ) AS x(codigo, nome, ordem)
+  JOIN public.app_modulo m ON m.codigo = 'sistemas'
+ON CONFLICT (modulo_id, codigo) DO NOTHING;
+
+-- Rótulos mais claros nas capacidades que já existiam (idempotente).
+UPDATE public.app_menu SET nome = 'Chamados — Painel de Distribuição (ver todos)'
+  WHERE codigo = 'chamados_sistemas_painel';
+UPDATE public.app_menu SET nome = 'Chamados — Painel do Desenvolvedor (executar)'
+  WHERE codigo = 'chamados_sistemas_dev';
+
+-- 2) Helpers ------------------------------------------------------------
+-- "Gestor" do chamado = qualquer papel de gestão.
+CREATE OR REPLACE FUNCTION public.chamado_sistema_gestor()
+RETURNS boolean LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public, pg_temp
+AS $$
+  SELECT public.tem_acesso_menu('chamados_sistemas_painel')
+      OR public.tem_acesso_menu('chamados_sistemas_coordenar')
+      OR public.tem_acesso_menu('chamados_sistemas_aprovar');
+$$;
+REVOKE ALL ON FUNCTION public.chamado_sistema_gestor() FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.chamado_sistema_gestor() TO authenticated;
+
+-- "Pode abrir" = liberado explicitamente OU ninguém configurou o código ainda
+-- (aberto por padrão, como as demais telas sem regra definida).
+CREATE OR REPLACE FUNCTION public.chamado_pode_abrir()
+RETURNS boolean LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public, pg_temp
+AS $$
+  SELECT public.tem_acesso_menu('chamados_sistemas_abrir')
+      OR NOT EXISTS (SELECT 1 FROM public.list_configured_menu_codes()
+                     WHERE menu_codigo = 'chamados_sistemas_abrir');
+$$;
+REVOKE ALL ON FUNCTION public.chamado_pode_abrir() FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.chamado_pode_abrir() TO authenticated;
+
+-- 3) RLS refeita por capacidade -----------------------------------------
+-- CHAMADO_SISTEMA
+DROP POLICY IF EXISTS chamado_sistema_select ON public."CHAMADO_SISTEMA";
+CREATE POLICY chamado_sistema_select ON public."CHAMADO_SISTEMA"
+  FOR SELECT TO authenticated
+  USING (
+    solicitante_id = auth.uid()
+    OR responsavel_id = auth.uid()
+    OR public.chamado_sistema_gestor()
+    OR EXISTS (SELECT 1 FROM public."CHAMADO_SISTEMA_TAREFA" t
+               WHERE t.chamado_id = "CHAMADO_SISTEMA".id AND t.responsavel_id = auth.uid())
+  );
+
+DROP POLICY IF EXISTS chamado_sistema_insert ON public."CHAMADO_SISTEMA";
+CREATE POLICY chamado_sistema_insert ON public."CHAMADO_SISTEMA"
+  FOR INSERT TO authenticated
+  WITH CHECK (
+    public.chamado_pode_abrir()
+    AND solicitante_id = auth.uid() AND status = 'aberto' AND responsavel_id IS NULL
+  );
+
+DROP POLICY IF EXISTS chamado_sistema_update ON public."CHAMADO_SISTEMA";
+CREATE POLICY chamado_sistema_update ON public."CHAMADO_SISTEMA"
+  FOR UPDATE TO authenticated
+  USING (public.chamado_sistema_gestor() OR responsavel_id = auth.uid())
+  WITH CHECK (public.chamado_sistema_gestor() OR responsavel_id = auth.uid());
+
+-- CHAMADO_SISTEMA_TAREFA
+DROP POLICY IF EXISTS chamado_sistema_tarefa_select ON public."CHAMADO_SISTEMA_TAREFA";
+CREATE POLICY chamado_sistema_tarefa_select ON public."CHAMADO_SISTEMA_TAREFA"
+  FOR SELECT TO authenticated
+  USING (public.chamado_sistema_gestor() OR responsavel_id = auth.uid());
+
+DROP POLICY IF EXISTS chamado_sistema_tarefa_insert ON public."CHAMADO_SISTEMA_TAREFA";
+CREATE POLICY chamado_sistema_tarefa_insert ON public."CHAMADO_SISTEMA_TAREFA"
+  FOR INSERT TO authenticated
+  WITH CHECK (public.tem_acesso_menu('chamados_sistemas_coordenar'));
+
+DROP POLICY IF EXISTS chamado_sistema_tarefa_update ON public."CHAMADO_SISTEMA_TAREFA";
+CREATE POLICY chamado_sistema_tarefa_update ON public."CHAMADO_SISTEMA_TAREFA"
+  FOR UPDATE TO authenticated
+  USING (public.tem_acesso_menu('chamados_sistemas_coordenar') OR responsavel_id = auth.uid())
+  WITH CHECK (public.tem_acesso_menu('chamados_sistemas_coordenar') OR responsavel_id = auth.uid());
+
+DROP POLICY IF EXISTS chamado_sistema_tarefa_delete ON public."CHAMADO_SISTEMA_TAREFA";
+CREATE POLICY chamado_sistema_tarefa_delete ON public."CHAMADO_SISTEMA_TAREFA"
+  FOR DELETE TO authenticated
+  USING (public.tem_acesso_menu('chamados_sistemas_coordenar'));
+
+-- CHAMADO_SISTEMA_ANEXO
+DROP POLICY IF EXISTS chamado_sistema_anexo_select ON public."CHAMADO_SISTEMA_ANEXO";
+CREATE POLICY chamado_sistema_anexo_select ON public."CHAMADO_SISTEMA_ANEXO"
+  FOR SELECT TO authenticated
+  USING (EXISTS (SELECT 1 FROM public."CHAMADO_SISTEMA" c WHERE c.id = chamado_id
+                 AND (c.solicitante_id = auth.uid() OR c.responsavel_id = auth.uid()
+                      OR public.chamado_sistema_gestor())));
+
+DROP POLICY IF EXISTS chamado_sistema_anexo_insert ON public."CHAMADO_SISTEMA_ANEXO";
+CREATE POLICY chamado_sistema_anexo_insert ON public."CHAMADO_SISTEMA_ANEXO"
+  FOR INSERT TO authenticated
+  WITH CHECK (autor_id = auth.uid() AND EXISTS (
+    SELECT 1 FROM public."CHAMADO_SISTEMA" c WHERE c.id = chamado_id
+    AND (c.solicitante_id = auth.uid() OR c.responsavel_id = auth.uid()
+         OR public.chamado_sistema_gestor())));
+
+-- CHAMADO_SISTEMA_EVENTO
+DROP POLICY IF EXISTS chamado_sistema_evento_select ON public."CHAMADO_SISTEMA_EVENTO";
+CREATE POLICY chamado_sistema_evento_select ON public."CHAMADO_SISTEMA_EVENTO"
+  FOR SELECT TO authenticated
+  USING (
+    public.chamado_sistema_gestor()
+    OR EXISTS (SELECT 1 FROM public."CHAMADO_SISTEMA" c WHERE c.id = chamado_id
+               AND (c.responsavel_id = auth.uid()
+                    OR (c.solicitante_id = auth.uid() AND tipo <> 'observacao_interna')))
+  );
+
+DROP POLICY IF EXISTS chamado_sistema_evento_insert ON public."CHAMADO_SISTEMA_EVENTO";
+CREATE POLICY chamado_sistema_evento_insert ON public."CHAMADO_SISTEMA_EVENTO"
+  FOR INSERT TO authenticated
+  WITH CHECK (autor_id = auth.uid() AND EXISTS (
+    SELECT 1 FROM public."CHAMADO_SISTEMA" c WHERE c.id = chamado_id
+    AND (public.chamado_sistema_gestor()
+         OR c.responsavel_id = auth.uid()
+         OR (c.solicitante_id = auth.uid() AND tipo IN ('comentario')))));
+
+-- 4) Guards refeitos por capacidade -------------------------------------
+CREATE OR REPLACE FUNCTION public.chamado_sistema_guard()
+RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp
+AS $$
+DECLARE
+  v_coord boolean := public.tem_acesso_menu('chamados_sistemas_coordenar');
+  v_aprov boolean := public.tem_acesso_menu('chamados_sistemas_aprovar');
+  v_resp  boolean := COALESCE(OLD.responsavel_id = auth.uid(), false);
+BEGIN
+  -- Campos de abertura + coordenação só mudam com "coordenar".
+  IF NOT v_coord THEN
+    IF NEW.assunto              IS DISTINCT FROM OLD.assunto
+    OR NEW.categorias           IS DISTINCT FROM OLD.categorias
+    OR NEW.tipo_solicitacao     IS DISTINCT FROM OLD.tipo_solicitacao
+    OR NEW.prioridade           IS DISTINCT FROM OLD.prioridade
+    OR NEW.descricao            IS DISTINCT FROM OLD.descricao
+    OR NEW.impacto_trabalho     IS DISTINCT FROM OLD.impacto_trabalho
+    OR NEW.urgencia             IS DISTINCT FROM OLD.urgencia
+    OR NEW.modulo_sistema       IS DISTINCT FROM OLD.modulo_sistema
+    OR NEW.modulo_sistema_outro IS DISTINCT FROM OLD.modulo_sistema_outro
+    OR NEW.afeta_usuarios       IS DISTINCT FROM OLD.afeta_usuarios
+    OR NEW.solicitante_id       IS DISTINCT FROM OLD.solicitante_id
+    OR NEW.solicitante_nome     IS DISTINCT FROM OLD.solicitante_nome
+    OR NEW.setor                IS DISTINCT FROM OLD.setor
+    OR NEW.responsavel_id       IS DISTINCT FROM OLD.responsavel_id
+    OR NEW.observacao_gerente   IS DISTINCT FROM OLD.observacao_gerente
+    OR NEW.comentario_gerente   IS DISTINCT FROM OLD.comentario_gerente THEN
+      RAISE EXCEPTION 'Sem permissão para coordenar/editar este chamado.';
+    END IF;
+  END IF;
+
+  -- Reprovar/motivo só com "aprovar".
+  IF (NEW.status = 'reprovado' AND OLD.status <> 'reprovado') AND NOT v_aprov THEN
+    RAISE EXCEPTION 'Sem permissão para reprovar chamados.';
+  END IF;
+  IF NEW.motivo_reprovacao IS DISTINCT FROM OLD.motivo_reprovacao AND NOT v_aprov THEN
+    RAISE EXCEPTION 'Sem permissão para reprovar chamados.';
+  END IF;
+
+  -- Demais mudanças de status: coordenar, aprovar OU o dev responsável.
+  IF NEW.status IS DISTINCT FROM OLD.status AND NOT (v_coord OR v_aprov OR v_resp) THEN
+    RAISE EXCEPTION 'Sem permissão para alterar o status do chamado.';
+  END IF;
+
+  IF NEW.status = 'concluido' AND NEW.concluido_em IS NULL THEN NEW.concluido_em := now(); END IF;
+  IF NEW.status <> 'concluido' THEN NEW.concluido_em := NULL; END IF;
+  RETURN NEW;
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION public.chamado_sistema_tarefa_guard()
+RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp
+AS $$
+DECLARE v_coord boolean := public.tem_acesso_menu('chamados_sistemas_coordenar');
+BEGIN
+  IF NOT v_coord THEN
+    IF NEW.titulo         IS DISTINCT FROM OLD.titulo
+    OR NEW.descricao      IS DISTINCT FROM OLD.descricao
+    OR NEW.prioridade     IS DISTINCT FROM OLD.prioridade
+    OR NEW.ordem          IS DISTINCT FROM OLD.ordem
+    OR NEW.responsavel_id IS DISTINCT FROM OLD.responsavel_id
+    OR NEW.prazo          IS DISTINCT FROM OLD.prazo THEN
+      RAISE EXCEPTION 'Sem permissão para alterar esta tarefa (apenas o status).';
+    END IF;
+  END IF;
+  RETURN NEW;
+END;
+$$;
+
+-- 5) RPCs de gestão passam a liberar para qualquer GESTOR (não só painel) ---
+CREATE OR REPLACE FUNCTION public.chamados_painel_stats()
+RETURNS TABLE(total int, abertos int, em_andamento int, concluidos_mes int, atrasados int)
+LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public, pg_temp
+AS $$
+  SELECT
+    count(*)::int,
+    count(*) FILTER (WHERE status = 'aberto')::int,
+    count(*) FILTER (WHERE status = 'em_andamento')::int,
+    count(*) FILTER (WHERE status = 'concluido'
+                     AND concluido_em >= date_trunc('month', now()))::int,
+    count(*) FILTER (WHERE prazo_previsto < current_date
+                     AND status NOT IN ('concluido','reprovado'))::int
+  FROM public."CHAMADO_SISTEMA"
+  WHERE public.chamado_sistema_gestor();
+$$;
+REVOKE ALL ON FUNCTION public.chamados_painel_stats() FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.chamados_painel_stats() TO authenticated;
+
+CREATE OR REPLACE FUNCTION public.listar_desenvolvedores_chamados()
+RETURNS TABLE(id uuid, display_name text, em_andamento int, abertos int)
+LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public, pg_temp
+AS $$
+  SELECT p.id, p.display_name,
+    (SELECT count(*) FROM public."CHAMADO_SISTEMA" c
+       WHERE c.responsavel_id = p.id AND c.status = 'em_andamento')::int,
+    (SELECT count(*) FROM public."CHAMADO_SISTEMA" c
+       WHERE c.responsavel_id = p.id
+         AND c.status IN ('aberto','em_andamento','aguardando_retorno'))::int
+  FROM public.profiles p
+  WHERE p.ativo = true
+    AND public.chamado_sistema_gestor()
+    AND EXISTS (SELECT 1 FROM public.screen_permission_user s
+                WHERE s.user_id = p.id AND s.menu_codigo = 'chamados_sistemas_dev'
+                  AND s.acao = 'visualizar'::public.app_acao AND s.allow = true
+                  AND s.empresa_id IS NULL)
+  ORDER BY p.display_name;
+$$;
+REVOKE ALL ON FUNCTION public.listar_desenvolvedores_chamados() FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.listar_desenvolvedores_chamados() TO authenticated;
+
+NOTIFY pgrst, 'reload schema';
+
+
+-- =====================================================================
+-- migration 20260802000003_chamados_devs_inclui_capacidade_desenvolvedores
+-- =====================================================================
+-- =====================================================================
+-- CHAMADOS DE SISTEMAS â€” a "AtribuiÃ§Ã£o rÃ¡pida" do Painel de DistribuiÃ§Ã£o
+-- nÃ£o achava ninguÃ©m pra destinar o chamado.
+--
+-- listar_desenvolvedores_chamados exigia o cÃ³digo NOVO (chamados_sistemas_dev)
+-- e ainda por cima sÃ³ olhava a tabela de exceÃ§Ãµes por usuÃ¡rio, ignorando quem
+-- recebe a capacidade por perfil de acesso. Quem estÃ¡ marcado como
+-- "Desenvolvedores" (sistemas_desenvolvedores) no Acesso por UsuÃ¡rio â€” que Ã©
+-- o cÃ³digo que a equipe usa hoje â€” nunca entrava na lista.
+--
+-- Agora a prÃ³pria funÃ§Ã£o resolve os dois cÃ³digos do mesmo jeito que
+-- has_screen_access resolve qualquer tela: exceÃ§Ã£o individual mais recente
+-- vence, senÃ£o vale a uniÃ£o dos perfis de acesso. Perfil "concede tudo" nÃ£o
+-- entra â€” senÃ£o todo admin viraria opÃ§Ã£o de responsÃ¡vel na fila.
+-- =====================================================================
+
+CREATE OR REPLACE FUNCTION public.listar_desenvolvedores_chamados()
+RETURNS TABLE(id uuid, display_name text, em_andamento int, abertos int)
+LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public, pg_temp
+AS $$
+  SELECT p.id, p.display_name,
+    (SELECT count(*) FROM public."CHAMADO_SISTEMA" c
+       WHERE c.responsavel_id = p.id AND c.status = 'em_andamento')::int,
+    (SELECT count(*) FROM public."CHAMADO_SISTEMA" c
+       WHERE c.responsavel_id = p.id
+         AND c.status IN ('aberto','em_andamento','aguardando_retorno'))::int
+  FROM public.profiles p
+  WHERE p.ativo = true
+    AND public.chamado_sistema_gestor()
+    AND EXISTS (
+      SELECT 1
+        FROM unnest(ARRAY['chamados_sistemas_dev','sistemas_desenvolvedores']) AS cod
+       WHERE COALESCE(
+               -- exceÃ§Ã£o individual (Acesso por UsuÃ¡rio), a mais recente vence
+               (SELECT s.allow
+                  FROM public.screen_permission_user s
+                 WHERE s.user_id = p.id
+                   AND s.menu_codigo = cod
+                   AND s.acao = 'visualizar'::public.app_acao
+                 ORDER BY s.updated_at DESC
+                 LIMIT 1),
+               -- senÃ£o, uniÃ£o dos perfis de acesso do usuÃ¡rio
+               EXISTS (SELECT 1
+                         FROM public.usuario_perfil_acesso upa
+                         JOIN public.perfil_acesso pa
+                           ON pa.id = upa.perfil_id AND pa.ativo = true
+                         JOIN public.perfil_acesso_permissao pap
+                           ON pap.perfil_id = pa.id AND pap.allow = true
+                        WHERE upa.user_id = p.id
+                          AND pap.menu_codigo = cod
+                          AND pap.acao = 'visualizar'::public.app_acao)
+             ) IS TRUE
+    )
+  ORDER BY p.display_name;
+$$;
+REVOKE ALL ON FUNCTION public.listar_desenvolvedores_chamados() FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.listar_desenvolvedores_chamados() TO authenticated;
+
+-- Limpeza: versÃ£o anterior deste arquivo criava uma funÃ§Ã£o auxiliar separada.
+DROP FUNCTION IF EXISTS public.chamado_dev_liberado(uuid);
+
+NOTIFY pgrst, 'reload schema';
+
+
+-- ===== 20260803000001_chamados_remove_tarefas =====
+-- Remove o recurso de Tarefas dos Chamados de Sistemas.
+-- Recria a SELECT de CHAMADO_SISTEMA sem depender de TAREFA, dropa a tabela
+-- (policies/triggers/índices via CASCADE) e a função guard exclusiva.
+DROP POLICY IF EXISTS chamado_sistema_select ON public."CHAMADO_SISTEMA";
+CREATE POLICY chamado_sistema_select ON public."CHAMADO_SISTEMA"
+  FOR SELECT TO authenticated
+  USING (
+    solicitante_id = auth.uid()
+    OR responsavel_id = auth.uid()
+    OR public.chamado_sistema_gestor()
+  );
+
+DO $$
+DECLARE r regclass;
+BEGIN
+  SELECT c.oid::regclass INTO r
+    FROM pg_class c
+    JOIN pg_namespace n ON n.oid = c.relnamespace
+   WHERE n.nspname = 'public'
+     AND lower(c.relname) = 'chamado_sistema_tarefa'
+     AND c.relkind = 'r';
+  IF r IS NOT NULL THEN
+    EXECUTE 'DROP TABLE ' || r::text || ' CASCADE';
+  END IF;
+END $$;
+
+DROP FUNCTION IF EXISTS public.chamado_sistema_tarefa_guard() CASCADE;
+
+NOTIFY pgrst, 'reload schema';
+
+
+-- ===== 20260804000001_chamados_adicionar_informacao =====
+-- Solicitante responde ao "Solicitar mais informações": grava no histórico e
+-- devolve o chamado ao time. RPC SECURITY DEFINER (RLS não deixa o solicitante
+-- mexer no status nem inserir evento != 'comentario').
+CREATE OR REPLACE FUNCTION public.chamado_adicionar_informacao(
+  p_chamado_id uuid,
+  p_texto      text
+)
+RETURNS void
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp
+AS $$
+DECLARE
+  v_solicitante uuid;
+  v_status      text;
+  v_responsavel uuid;
+BEGIN
+  IF p_texto IS NULL OR btrim(p_texto) = '' THEN
+    RAISE EXCEPTION 'Informe o texto com as informações.';
+  END IF;
+
+  SELECT solicitante_id, status, responsavel_id
+    INTO v_solicitante, v_status, v_responsavel
+    FROM public."CHAMADO_SISTEMA"
+   WHERE id = p_chamado_id;
+
+  IF v_solicitante IS NULL THEN
+    RAISE EXCEPTION 'Chamado não encontrado.';
+  END IF;
+  IF v_solicitante <> auth.uid() THEN
+    RAISE EXCEPTION 'Apenas o solicitante pode adicionar informações a este chamado.';
+  END IF;
+  IF v_status IN ('concluido', 'reprovado') THEN
+    RAISE EXCEPTION 'Chamado encerrado — não é possível adicionar informações.';
+  END IF;
+
+  INSERT INTO public."CHAMADO_SISTEMA_EVENTO" (chamado_id, autor_id, tipo, texto)
+  VALUES (p_chamado_id, auth.uid(), 'comentario', btrim(p_texto));
+
+  IF v_status = 'aguardando_retorno' THEN
+    UPDATE public."CHAMADO_SISTEMA"
+       SET status = CASE WHEN v_responsavel IS NOT NULL THEN 'em_andamento' ELSE 'aberto' END
+     WHERE id = p_chamado_id;
+  END IF;
+END;
+$$;
+
+REVOKE ALL ON FUNCTION public.chamado_adicionar_informacao(uuid, text) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.chamado_adicionar_informacao(uuid, text) FROM anon;
+GRANT EXECUTE ON FUNCTION public.chamado_adicionar_informacao(uuid, text) TO authenticated;
+
+NOTIFY pgrst, 'reload schema';
+
+
+-- ===== 20260805000001_chamados_observacoes_solicitante =====
+-- Campo "Observações do solicitante" na abertura do chamado (opcional).
+ALTER TABLE public."CHAMADO_SISTEMA"
+  ADD COLUMN IF NOT EXISTS observacoes_solicitante text;
+
+NOTIFY pgrst, 'reload schema';
+
+
+-- ===== 20260806000001_chamados_excluir_permissao =====
+-- Excluir chamado: capacidade "chamados_sistemas_excluir" (fechada por padrão)
+-- + RLS de DELETE (chamado com cascata p/ eventos e anexos) + DELETE no storage.
+INSERT INTO public.app_menu (modulo_id, codigo, nome, rota, ordem)
+SELECT m.id, 'chamados_sistemas_excluir', 'Chamados — Excluir chamado (apagar)', NULL, 21
+  FROM public.app_modulo m WHERE m.codigo = 'sistemas'
+ON CONFLICT (modulo_id, codigo) DO NOTHING;
+
+DROP POLICY IF EXISTS chamado_sistema_delete ON public."CHAMADO_SISTEMA";
+CREATE POLICY chamado_sistema_delete ON public."CHAMADO_SISTEMA"
+  FOR DELETE TO authenticated
+  USING (public.tem_acesso_menu('chamados_sistemas_excluir'));
+
+DROP POLICY IF EXISTS "chamados sistemas anexo delete" ON storage.objects;
+CREATE POLICY "chamados sistemas anexo delete"
+  ON storage.objects FOR DELETE TO authenticated
+  USING (bucket_id = 'chamados-sistemas' AND public.tem_acesso_menu('chamados_sistemas_excluir'));
+
+NOTIFY pgrst, 'reload schema';

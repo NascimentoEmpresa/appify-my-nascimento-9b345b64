@@ -44,8 +44,24 @@ const ETAPA_LABEL: Record<string, string> = {
 };
 
 interface Body {
-  solicitacao_id: string;
-  etapa_nova: string;
+  // Solicitações ERP (comportamento original)
+  solicitacao_id?: string;
+  etapa_nova?: string;
+  // Chamados de Sistemas
+  chamado_id?: string;
+  evento?: string; // atribuido | status | concluido | reprovado | solicitar_info | info_adicionada
+}
+
+// Título/corpo do push de um Chamado de Sistemas, conforme o evento.
+function mensagemChamado(evento: string | undefined, numero: string, assunto: string): { title: string; body: string } {
+  switch (evento) {
+    case "atribuido":      return { title: "Chamado atribuído",      body: `#${numero} — ${assunto}` };
+    case "concluido":      return { title: "Chamado concluído",      body: `#${numero} foi concluído.` };
+    case "reprovado":      return { title: "Chamado reprovado",      body: `#${numero} — ${assunto}` };
+    case "solicitar_info": return { title: "Aguardando seu retorno", body: `#${numero}: o time pediu mais informações.` };
+    case "info_adicionada":return { title: "Novas informações no chamado", body: `#${numero}: o solicitante adicionou informações.` };
+    default:               return { title: "Chamado atualizado",     body: `#${numero} — ${assunto}` };
+  }
 }
 
 function jsonResponse(body: unknown, status = 200) {
@@ -215,35 +231,56 @@ Deno.serve(async (req) => {
       return jsonResponse({ error: "JSON inválido" }, 400);
     }
 
-    const solicitacaoId = typeof body.solicitacao_id === "string" ? body.solicitacao_id : "";
-    const etapaNova = typeof body.etapa_nova === "string" ? body.etapa_nova : "";
-    if (!solicitacaoId || !etapaNova) {
-      return jsonResponse({ error: "solicitacao_id e etapa_nova são obrigatórios" }, 400);
-    }
-
     const admin = createClient(SUPABASE_URL, SERVICE_ROLE, { auth: { persistSession: false } });
 
-    const { data: card, error: cardErr } = await admin
-      .from("sistema_solicitacao")
-      .select("titulo, criado_por, responsavel_user_id")
-      .eq("id", solicitacaoId)
-      .maybeSingle();
-
-    if (cardErr) return jsonResponse({ error: cardErr.message }, 500);
-    if (!card) return jsonResponse({ error: "Solicitação não encontrada" }, 404);
-
-    const { data: convidados } = await admin
-      .from("sistema_solicitacao_convidado")
-      .select("user_id")
-      .eq("solicitacao_id", solicitacaoId);
-
+    // Reúne os destinatários e a mensagem conforme o tipo de origem.
     const userIds = new Set<string>();
-    if (card.criado_por) userIds.add(card.criado_por as string);
-    if (card.responsavel_user_id) userIds.add(card.responsavel_user_id as string);
-    for (const c of convidados ?? []) userIds.add((c as { user_id: string }).user_id);
+    let payload: { title: string; body: string };
+
+    if (typeof body.chamado_id === "string" && body.chamado_id) {
+      // ---- Chamados de Sistemas ----
+      const { data: chamado, error: chErr } = await admin
+        .from("CHAMADO_SISTEMA")
+        .select("numero, assunto, solicitante_id, responsavel_id")
+        .eq("id", body.chamado_id)
+        .maybeSingle();
+      if (chErr) return jsonResponse({ error: chErr.message }, 500);
+      if (!chamado) return jsonResponse({ error: "Chamado não encontrado" }, 404);
+
+      if (chamado.solicitante_id) userIds.add(chamado.solicitante_id as string);
+      if (chamado.responsavel_id) userIds.add(chamado.responsavel_id as string);
+      payload = mensagemChamado(body.evento, chamado.numero as string, chamado.assunto as string);
+    } else {
+      // ---- Solicitações ERP (comportamento original) ----
+      const solicitacaoId = typeof body.solicitacao_id === "string" ? body.solicitacao_id : "";
+      const etapaNova = typeof body.etapa_nova === "string" ? body.etapa_nova : "";
+      if (!solicitacaoId || !etapaNova) {
+        return jsonResponse({ error: "solicitacao_id e etapa_nova (ou chamado_id) são obrigatórios" }, 400);
+      }
+
+      const { data: card, error: cardErr } = await admin
+        .from("sistema_solicitacao")
+        .select("titulo, criado_por, responsavel_user_id")
+        .eq("id", solicitacaoId)
+        .maybeSingle();
+      if (cardErr) return jsonResponse({ error: cardErr.message }, 500);
+      if (!card) return jsonResponse({ error: "Solicitação não encontrada" }, 404);
+
+      const { data: convidados } = await admin
+        .from("sistema_solicitacao_convidado")
+        .select("user_id")
+        .eq("solicitacao_id", solicitacaoId);
+
+      if (card.criado_por) userIds.add(card.criado_por as string);
+      if (card.responsavel_user_id) userIds.add(card.responsavel_user_id as string);
+      for (const c of convidados ?? []) userIds.add((c as { user_id: string }).user_id);
+
+      const etapaLabel = ETAPA_LABEL[etapaNova] ?? etapaNova;
+      payload = { title: "Card movido", body: `O card "${card.titulo}" foi movido para ${etapaLabel}.` };
+    }
 
     if (userIds.size === 0) {
-      return jsonResponse({ ok: true, enviados: 0, motivo: "Sem usuários ligados ao card" });
+      return jsonResponse({ ok: true, enviados: 0, motivo: "Sem usuários ligados" });
     }
 
     const { data: subs, error: subsErr } = await admin
@@ -257,8 +294,6 @@ Deno.serve(async (req) => {
     }
 
     const vapidPrivateKey = await importVapidPrivateKey(VAPID_PRIVATE_KEY, VAPID_PUBLIC_KEY);
-    const etapaLabel = ETAPA_LABEL[etapaNova] ?? etapaNova;
-    const payload = { title: "Card movido", body: `O card "${card.titulo}" foi movido para ${etapaLabel}.` };
 
     let enviados = 0;
     const expirados: string[] = [];
