@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
@@ -16,11 +16,18 @@ import {
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table";
-import { PieChart, Pie, Cell, ResponsiveContainer } from "recharts";
-import { ClipboardList, Clock, Users, CheckCircle2, AlertTriangle, ShieldAlert } from "lucide-react";
 import {
-  StatCard, StatusBadge, PrioridadeBadge, STATUS_CHAMADO, CATEGORIAS, moduloLabel, iniciais, fmtData, fmtDataHora, type Chamado,
+  DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator,
+} from "@/components/ui/dropdown-menu";
+import { PieChart, Pie, Cell, ResponsiveContainer } from "recharts";
+import { ClipboardList, Clock, Users, CheckCircle2, AlertTriangle, ShieldAlert, MoreHorizontal, ChevronLeft, ChevronRight, Eye, UserCog, Trash2 } from "lucide-react";
+import { FeedAtualizacoes } from "./FeedAtualizacoes";
+import { ExcluirChamadoDialog } from "./ExcluirChamadoDialog";
+import {
+  StatCard, StatusBadge, PrioridadeBadge, STATUS_CHAMADO, CATEGORIAS, labelDe, moduloLabel, iniciais, fmtData, fmtDataHora, type Chamado,
 } from "./types";
+
+const POR_PAGINA = 8;
 
 interface PainelStats { total: number; abertos: number; em_andamento: number; concluidos_mes: number; atrasados: number; }
 interface Dev { id: string; display_name: string; em_andamento: number; abertos: number; }
@@ -43,14 +50,18 @@ export default function PainelDistribuicao() {
   const nav = useNavigate();
   const qc = useQueryClient();
   const { toast } = useToast();
-  const { gestor, canCoordenar } = useChamadoPerms();
+  const { gestor, canCoordenar, canExcluir } = useChamadoPerms();
 
   const [aba, setAba] = useState<string>("todos");
   const [busca, setBusca] = useState("");
   const [fCategoria, setFCategoria] = useState("todas");
   const [fPrioridade, setFPrioridade] = useState("todas");
+  const [fDe, setFDe] = useState("");
+  const [fAte, setFAte] = useState("");
+  const [pagina, setPagina] = useState(1);
   const [atribChamado, setAtribChamado] = useState<string | null>(null);
   const [atribDev, setAtribDev] = useState<string | null>(null);
+  const [excluir, setExcluir] = useState<{ id: string; numero: string } | null>(null);
 
   const { data: usuarios = [] } = useQuery({
     queryKey: ["chamados-usuarios"],
@@ -94,14 +105,43 @@ export default function PainelDistribuicao() {
 
   const filtrados = useMemo(() => {
     const t = busca.trim().toLowerCase();
+    const deTs = fDe ? new Date(fDe + "T00:00:00").getTime() : null;
+    const ateTs = fAte ? new Date(fAte + "T23:59:59").getTime() : null;
     return chamados.filter((c) => {
       if (aba !== "todos" && c.status !== aba) return false;
       if (fCategoria !== "todas" && !c.categorias.includes(fCategoria)) return false;
       if (fPrioridade !== "todas" && c.prioridade !== fPrioridade) return false;
+      const ts = new Date(c.created_at).getTime();
+      if (deTs != null && ts < deTs) return false;
+      if (ateTs != null && ts > ateTs) return false;
       if (t && ![c.numero, c.assunto, c.solicitante_nome, c.setor].some((v) => String(v ?? "").toLowerCase().includes(t))) return false;
       return true;
     });
-  }, [chamados, aba, fCategoria, fPrioridade, busca]);
+  }, [chamados, aba, fCategoria, fPrioridade, fDe, fAte, busca]);
+
+  // Volta pra página 1 sempre que os filtros mudam.
+  useEffect(() => { setPagina(1); }, [aba, fCategoria, fPrioridade, fDe, fAte, busca]);
+
+  const totalPaginas = Math.max(1, Math.ceil(filtrados.length / POR_PAGINA));
+  const paginaAtual = Math.min(pagina, totalPaginas);
+  const visiveis = useMemo(
+    () => filtrados.slice((paginaAtual - 1) * POR_PAGINA, paginaAtual * POR_PAGINA),
+    [filtrados, paginaAtual],
+  );
+  const de = filtrados.length === 0 ? 0 : (paginaAtual - 1) * POR_PAGINA + 1;
+  const ate = Math.min(paginaAtual * POR_PAGINA, filtrados.length);
+
+  // Fila por prioridade (chamados ativos) para o rodapé.
+  const filaPorPrioridade = useMemo(() => {
+    const ativos = chamados.filter((c) => c.status !== "concluido" && c.status !== "reprovado");
+    return {
+      alta: ativos.filter((c) => c.prioridade === "alta"),
+      media: ativos.filter((c) => c.prioridade === "media"),
+      baixa: ativos.filter((c) => c.prioridade === "baixa"),
+      aguardando: chamados.filter((c) => c.status === "aguardando_retorno"),
+    };
+  }, [chamados]);
+  const cargaMax = useMemo(() => Math.max(1, ...devs.map((d) => d.em_andamento + d.abertos)), [devs]);
 
   const donutData = useMemo(() => {
     const m: Record<string, number> = {};
@@ -184,6 +224,15 @@ export default function PainelDistribuicao() {
                 <SelectItem value="baixa">Baixa</SelectItem>
               </SelectContent>
             </Select>
+            <div className="flex items-center gap-1">
+              <span className="text-[11px] text-muted-foreground">Período</span>
+              <Input type="date" className="h-8 w-36 text-xs" value={fDe} max={fAte || undefined} onChange={(e) => setFDe(e.target.value)} />
+              <span className="text-xs text-muted-foreground">até</span>
+              <Input type="date" className="h-8 w-36 text-xs" value={fAte} min={fDe || undefined} onChange={(e) => setFAte(e.target.value)} />
+              {(fDe || fAte) && (
+                <Button variant="ghost" size="sm" className="h-8 px-2 text-xs" onClick={() => { setFDe(""); setFAte(""); }}>Limpar</Button>
+              )}
+            </div>
           </div>
 
           {isLoading ? (
@@ -195,33 +244,72 @@ export default function PainelDistribuicao() {
                   <TableRow>
                     <TableHead>ID</TableHead>
                     <TableHead>Assunto</TableHead>
+                    <TableHead>Categoria</TableHead>
                     <TableHead>Prioridade</TableHead>
                     <TableHead>Solicitante</TableHead>
                     <TableHead>Abertura</TableHead>
                     <TableHead>Status</TableHead>
                     <TableHead>Responsável</TableHead>
+                    <TableHead className="w-10"></TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {filtrados.map((c) => (
+                  {visiveis.map((c) => (
                     <TableRow key={c.id} className="cursor-pointer" onClick={() => nav(`/app/sistemas/chamados/${c.id}/coordenar`)}>
                       <TableCell className="whitespace-nowrap font-mono text-xs font-semibold">#{c.numero}</TableCell>
                       <TableCell className="max-w-[200px] truncate text-sm" title={c.assunto}>{c.assunto}</TableCell>
+                      <TableCell className="text-xs text-muted-foreground">{c.categorias.map((x) => labelDe(CATEGORIAS, x)).join(", ") || "—"}</TableCell>
                       <TableCell><PrioridadeBadge prioridade={c.prioridade} /></TableCell>
                       <TableCell className="text-xs">{c.solicitante_nome || "—"}<div className="text-[10px] text-muted-foreground">{c.setor}</div></TableCell>
                       <TableCell className="whitespace-nowrap text-xs text-muted-foreground">{fmtDataHora(c.created_at)}</TableCell>
                       <TableCell><StatusBadge status={c.status} /></TableCell>
                       <TableCell className="text-xs">{nomeDe(c.responsavel_id)}</TableCell>
+                      <TableCell onClick={(e) => e.stopPropagation()}>
+                        <DropdownMenu>
+                          <DropdownMenuTrigger className="rounded p-1 text-muted-foreground hover:bg-muted hover:text-foreground">
+                            <MoreHorizontal className="h-4 w-4" />
+                          </DropdownMenuTrigger>
+                          <DropdownMenuContent align="end">
+                            <DropdownMenuItem onClick={() => nav(`/app/sistemas/chamados/${c.id}/coordenar`)}>
+                              <UserCog className="mr-2 h-4 w-4" /> Coordenar / atribuir
+                            </DropdownMenuItem>
+                            <DropdownMenuItem onClick={() => nav(`/app/sistemas/chamados/${c.id}`)}>
+                              <Eye className="mr-2 h-4 w-4" /> Ver detalhe
+                            </DropdownMenuItem>
+                            {canExcluir && (
+                              <>
+                                <DropdownMenuSeparator />
+                                <DropdownMenuItem className="text-destructive focus:text-destructive" onClick={() => setExcluir({ id: c.id, numero: c.numero })}>
+                                  <Trash2 className="mr-2 h-4 w-4" /> Excluir chamado
+                                </DropdownMenuItem>
+                              </>
+                            )}
+                          </DropdownMenuContent>
+                        </DropdownMenu>
+                      </TableCell>
                     </TableRow>
                   ))}
                   {filtrados.length === 0 && (
-                    <TableRow><TableCell colSpan={7} className="py-6 text-center text-sm text-muted-foreground">Nenhum chamado.</TableCell></TableRow>
+                    <TableRow><TableCell colSpan={9} className="py-6 text-center text-sm text-muted-foreground">Nenhum chamado.</TableCell></TableRow>
                   )}
                 </TableBody>
               </Table>
             </div>
           )}
-          <p className="mt-2 text-xs text-muted-foreground">Mostrando {filtrados.length} de {chamados.length} chamados</p>
+          <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
+            <p className="text-xs text-muted-foreground">Mostrando {de} a {ate} de {filtrados.length} chamados</p>
+            {totalPaginas > 1 && (
+              <div className="flex items-center gap-1">
+                <Button variant="outline" size="sm" className="h-8 px-2" disabled={paginaAtual <= 1} onClick={() => setPagina((p) => Math.max(1, p - 1))}>
+                  <ChevronLeft className="h-4 w-4" />
+                </Button>
+                <span className="px-2 text-xs text-muted-foreground">Página {paginaAtual} de {totalPaginas}</span>
+                <Button variant="outline" size="sm" className="h-8 px-2" disabled={paginaAtual >= totalPaginas} onClick={() => setPagina((p) => Math.min(totalPaginas, p + 1))}>
+                  <ChevronRight className="h-4 w-4" />
+                </Button>
+              </div>
+            )}
+          </div>
         </Card>
 
         {/* Coluna direita */}
@@ -233,13 +321,19 @@ export default function PainelDistribuicao() {
                 <div key={d.id} className="flex items-center gap-2">
                   <Avatar className="h-8 w-8"><AvatarFallback className="text-[10px]">{iniciais(d.display_name)}</AvatarFallback></Avatar>
                   <div className="min-w-0 flex-1">
-                    <p className="truncate text-xs font-medium">{d.display_name}</p>
-                    <p className="text-[10px] text-muted-foreground">Em andamento {d.em_andamento} · Abertos {d.abertos}</p>
+                    <div className="flex items-center justify-between gap-2">
+                      <p className="truncate text-xs font-medium">{d.display_name}</p>
+                      <p className="shrink-0 text-[10px] text-muted-foreground">{d.em_andamento} · {d.abertos}</p>
+                    </div>
+                    <div className="mt-1 h-1.5 w-full overflow-hidden rounded-full bg-muted">
+                      <div className="h-full rounded-full bg-primary" style={{ width: `${Math.min(100, Math.round(((d.em_andamento + d.abertos) / cargaMax) * 100))}%` }} />
+                    </div>
                   </div>
                 </div>
               ))}
               {devs.length === 0 && <p className="text-xs text-muted-foreground">Nenhum desenvolvedor liberado ainda (código <b>chamados_sistemas_dev</b> ou <b>sistemas_desenvolvedores</b>).</p>}
             </div>
+            <p className="mt-2 text-[10px] text-muted-foreground">Em andamento · Abertos (barra = carga total relativa)</p>
           </Card>
 
           {canCoordenar && <Card className="space-y-2 p-4">
@@ -286,8 +380,49 @@ export default function PainelDistribuicao() {
               ))}
             </div>
           </Card>
+
+          <FeedAtualizacoes buildHref={(cid) => `/app/sistemas/chamados/${cid}/coordenar`} />
         </div>
       </div>
+
+      {/* Fila de chamados por prioridade */}
+      <Card className="mt-4 p-4">
+        <p className="mb-3 text-sm font-bold">Fila de chamados por prioridade</p>
+        <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+          {([
+            ["Alta prioridade", filaPorPrioridade.alta, "text-destructive"],
+            ["Média prioridade", filaPorPrioridade.media, "text-warning"],
+            ["Baixa prioridade", filaPorPrioridade.baixa, "text-success"],
+            ["Aguardando retorno", filaPorPrioridade.aguardando, "text-primary"],
+          ] as const).map(([titulo, lista, cor]) => (
+            <div key={titulo}>
+              <p className={`mb-2 text-xs font-bold ${cor}`}>{titulo} ({lista.length})</p>
+              <div className="space-y-1">
+                {lista.slice(0, 4).map((c) => (
+                  <button key={c.id} onClick={() => nav(`/app/sistemas/chamados/${c.id}/coordenar`)} className="block w-full truncate rounded border border-border/60 px-2 py-1 text-left text-[11px] hover:border-primary/40">
+                    <span className="font-mono font-semibold">#{c.numero}</span> <span className="text-muted-foreground">{c.assunto}</span>
+                  </button>
+                ))}
+                {lista.length === 0 && <p className="text-[11px] text-muted-foreground">—</p>}
+              </div>
+            </div>
+          ))}
+        </div>
+      </Card>
+
+      <ExcluirChamadoDialog
+        open={!!excluir}
+        onOpenChange={(v) => { if (!v) setExcluir(null); }}
+        chamadoId={excluir?.id ?? null}
+        numero={excluir?.numero}
+        onExcluido={() => {
+          setExcluir(null);
+          qc.invalidateQueries({ queryKey: ["chamados-todos"] });
+          qc.invalidateQueries({ queryKey: ["chamados-painel-stats"] });
+          qc.invalidateQueries({ queryKey: ["chamados-devs"] });
+          qc.invalidateQueries({ queryKey: ["chamados-feed"] });
+        }}
+      />
     </div>
   );
 }

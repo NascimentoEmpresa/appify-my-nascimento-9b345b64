@@ -15,7 +15,8 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { CheckCircle2, MessageSquare, XCircle, Paperclip, ArrowLeft } from "lucide-react";
+import { CheckCircle2, MessageSquare, XCircle, Paperclip, ArrowLeft, Trash2 } from "lucide-react";
+import { ExcluirChamadoDialog } from "./ExcluirChamadoDialog";
 import {
   StatusBadge, PrioridadeBadge, STATUS_CHAMADO,
   CATEGORIAS, TIPOS, IMPACTOS, URGENCIAS, AMBIENTES, labelDe, moduloLabel, fmtData, fmtDataHora,
@@ -28,11 +29,12 @@ export default function ExecutarChamado() {
   const qc = useQueryClient();
   const { toast } = useToast();
   const { user } = useAuth();
-  const { canCoordenar, canAprovar, canDev } = useChamadoPerms();
+  const { canCoordenar, canAprovar, canDev, canExcluir, gestor } = useChamadoPerms();
 
   const [obsInterna, setObsInterna] = useState("");
   const [reprovando, setReprovando] = useState(false);
   const [motivo, setMotivo] = useState("");
+  const [excluindoOpen, setExcluindoOpen] = useState(false);
 
   const { data: usuarios = [] } = useQuery({
     queryKey: ["chamados-usuarios"],
@@ -158,6 +160,7 @@ export default function ExecutarChamado() {
               <Campo label="Módulo / Sistema">{moduloLabel(chamado)}</Campo>
               <Campo label="Impacto">{labelDe(IMPACTOS, chamado.impacto_trabalho)}</Campo>
               <Campo label="Abertura">{fmtDataHora(chamado.created_at)}</Campo>
+              <Campo label="Última atualização">{fmtDataHora(chamado.updated_at)}{eventos[0] ? ` · por ${nomeDe(eventos[0].autor_id)}` : ""}</Campo>
               <Campo label="Solicitante">{chamado.solicitante_nome || "—"} <span className="text-xs text-muted-foreground">({chamado.setor || "—"})</span></Campo>
               <Campo label="Afeta usuários">{chamado.afeta_usuarios ?? "—"}</Campo>
               <Campo label="Urgência informada">{labelDe(URGENCIAS, chamado.urgencia)}</Campo>
@@ -183,6 +186,12 @@ export default function ExecutarChamado() {
               <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Descrição detalhada</p>
               <p className="whitespace-pre-wrap text-sm">{chamado.descricao || "—"}</p>
             </div>
+            {chamado.observacoes_solicitante && (
+              <div>
+                <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Observações do solicitante</p>
+                <p className="whitespace-pre-wrap text-sm">{chamado.observacoes_solicitante}</p>
+              </div>
+            )}
             <div>
               <p className="mb-1 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Anexos da abertura ({anexos.length})</p>
               <div className="space-y-1">
@@ -271,6 +280,16 @@ export default function ExecutarChamado() {
               )}
             </Card>
           )}
+
+          {canExcluir && (
+            <Card className="space-y-2 p-4">
+              <p className="text-sm font-bold text-destructive">Zona de risco</p>
+              <Button variant="outline" className="w-full justify-start gap-2 text-destructive" onClick={() => setExcluindoOpen(true)}>
+                <Trash2 className="h-4 w-4" /> Excluir chamado
+              </Button>
+              <p className="text-[11px] text-muted-foreground">Remove o chamado, histórico e anexos. Pede a senha da conta.</p>
+            </Card>
+          )}
         </div>
       </div>
 
@@ -284,6 +303,14 @@ export default function ExecutarChamado() {
           </div>
         </DialogContent>
       </Dialog>
+
+      <ExcluirChamadoDialog
+        open={excluindoOpen}
+        onOpenChange={setExcluindoOpen}
+        chamadoId={id ?? null}
+        numero={chamado.numero}
+        onExcluido={() => nav(gestor ? "/app/sistemas/chamados/painel" : "/app/sistemas/chamados/dev")}
+      />
     </div>
   );
 }

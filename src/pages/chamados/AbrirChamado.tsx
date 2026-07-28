@@ -43,6 +43,7 @@ export default function AbrirChamado({ base = "/app/central-servicos/chamados" }
   const [tipo, setTipo] = useState("");
   const [prioridade, setPrioridade] = useState("");
   const [descricao, setDescricao] = useState("");
+  const [observacoes, setObservacoes] = useState("");
   const [impacto, setImpacto] = useState("");
   const [urgencia, setUrgencia] = useState("");
   const [modulo, setModulo] = useState("");
@@ -61,7 +62,7 @@ export default function AbrirChamado({ base = "/app/central-servicos/chamados" }
   );
 
   const limpar = () => {
-    setAssunto(""); setCategorias([]); setTipo(""); setPrioridade(""); setDescricao("");
+    setAssunto(""); setCategorias([]); setTipo(""); setPrioridade(""); setDescricao(""); setObservacoes("");
     setImpacto(""); setUrgencia(""); setModulo(""); setModuloOutro(""); setAmbiente("producao");
     setAfetaUsuarios(""); setArquivos([]);
   };
@@ -75,6 +76,7 @@ export default function AbrirChamado({ base = "/app/central-servicos/chamados" }
       tipo_solicitacao: tipo,
       prioridade,
       descricao: descricao.trim(),
+      observacoes_solicitante: observacoes.trim() || null,
       impacto_trabalho: impacto,
       urgencia,
       modulo_sistema: modulo,
@@ -226,6 +228,16 @@ export default function AbrirChamado({ base = "/app/central-servicos/chamados" }
                 value={descricao} onChange={(e) => setDescricao(e.target.value)}
               />
               <p className="mt-1 text-right text-[11px] text-muted-foreground">{descricao.length}/4000 caracteres</p>
+            </div>
+
+            <div>
+              <Label className="mb-1.5 block text-xs font-semibold">Observações do solicitante <span className="font-normal text-muted-foreground">(opcional)</span></Label>
+              <Textarea
+                rows={3} maxLength={2000}
+                placeholder="Contexto adicional, resultado esperado, horários em que ocorre, exemplos…"
+                value={observacoes} onChange={(e) => setObservacoes(e.target.value)}
+              />
+              <p className="mt-1 text-right text-[11px] text-muted-foreground">{observacoes.length}/2000 caracteres</p>
             </div>
 
             <div className="grid gap-4 md:grid-cols-2">

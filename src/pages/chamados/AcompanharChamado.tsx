@@ -164,6 +164,12 @@ export default function AcompanharChamado({ base = "/app/central-servicos/chamad
               <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Descrição detalhada</p>
               <p className="whitespace-pre-wrap text-sm">{chamado.descricao || "—"}</p>
             </div>
+            {chamado.observacoes_solicitante && (
+              <div>
+                <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Observações do solicitante</p>
+                <p className="whitespace-pre-wrap text-sm">{chamado.observacoes_solicitante}</p>
+              </div>
+            )}
             <div>
               <p className="mb-1 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Anexos da abertura ({anexos.length})</p>
               <div className="space-y-1">

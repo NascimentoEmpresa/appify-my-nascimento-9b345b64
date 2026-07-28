@@ -6153,3 +6153,32 @@ REVOKE ALL ON FUNCTION public.chamado_adicionar_informacao(uuid, text) FROM anon
 GRANT EXECUTE ON FUNCTION public.chamado_adicionar_informacao(uuid, text) TO authenticated;
 
 NOTIFY pgrst, 'reload schema';
+
+
+-- ===== 20260805000001_chamados_observacoes_solicitante =====
+-- Campo "Observações do solicitante" na abertura do chamado (opcional).
+ALTER TABLE public."CHAMADO_SISTEMA"
+  ADD COLUMN IF NOT EXISTS observacoes_solicitante text;
+
+NOTIFY pgrst, 'reload schema';
+
+
+-- ===== 20260806000001_chamados_excluir_permissao =====
+-- Excluir chamado: capacidade "chamados_sistemas_excluir" (fechada por padrão)
+-- + RLS de DELETE (chamado com cascata p/ eventos e anexos) + DELETE no storage.
+INSERT INTO public.app_menu (modulo_id, codigo, nome, rota, ordem)
+SELECT m.id, 'chamados_sistemas_excluir', 'Chamados — Excluir chamado (apagar)', NULL, 21
+  FROM public.app_modulo m WHERE m.codigo = 'sistemas'
+ON CONFLICT (modulo_id, codigo) DO NOTHING;
+
+DROP POLICY IF EXISTS chamado_sistema_delete ON public."CHAMADO_SISTEMA";
+CREATE POLICY chamado_sistema_delete ON public."CHAMADO_SISTEMA"
+  FOR DELETE TO authenticated
+  USING (public.tem_acesso_menu('chamados_sistemas_excluir'));
+
+DROP POLICY IF EXISTS "chamados sistemas anexo delete" ON storage.objects;
+CREATE POLICY "chamados sistemas anexo delete"
+  ON storage.objects FOR DELETE TO authenticated
+  USING (bucket_id = 'chamados-sistemas' AND public.tem_acesso_menu('chamados_sistemas_excluir'));
+
+NOTIFY pgrst, 'reload schema';

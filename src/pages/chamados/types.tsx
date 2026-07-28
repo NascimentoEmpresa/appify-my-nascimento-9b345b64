@@ -104,6 +104,7 @@ export interface Chamado {
   modulo_sistema_outro: string | null;
   ambiente: string;
   afeta_usuarios: number | null;
+  observacoes_solicitante: string | null;
   solicitante_id: string;
   solicitante_nome: string | null;
   setor: string | null;
