@@ -20,6 +20,7 @@ import {
   useNfsEmissao,
   useItensNfEmissao,
   useRegistrarPagamentoNf,
+  TIPOS_NOTA,
 } from "@/hooks/useNfEmissao";
 import { calcularItem, calcularTotaisNf, ItemCalculado } from "@/pages/financeiro/nf-emissao/calculos";
 import { fmtMoney, fmtDate } from "@/pages/financeiro/nf-emissao/shared";
@@ -197,11 +198,23 @@ function NfPagamentoDialog({ nf, onClose }: { nf: NfEmissaoRow | null; onClose: 
   const [valorPago, setValorPago] = useState("");
   const [dataPagamento, setDataPagamento] = useState("");
   const [confirmandoRemocao, setConfirmandoRemocao] = useState(false);
+  const [situacaoSitePmt, setSituacaoSitePmt] = useState("");
+  const [situacaoDominio, setSituacaoDominio] = useState("");
+  const [descontoContaVinculada, setDescontoContaVinculada] = useState("0");
+  const [recebimentoExtra, setRecebimentoExtra] = useState("0");
+  const [faltaReceber, setFaltaReceber] = useState("0");
+  const [pagoAMais, setPagoAMais] = useState("0");
 
   useEffect(() => {
     if (!nf) return;
     setValorPago(String(nf.valor_pago ?? nf.vlr_liquido_total ?? 0));
     setDataPagamento(nf.data_pagamento ?? new Date().toISOString().slice(0, 10));
+    setSituacaoSitePmt(nf.situacao_site_pmt ?? "");
+    setSituacaoDominio(nf.situacao_dominio ?? "");
+    setDescontoContaVinculada(String(nf.desconto_conta_vinculada ?? 0));
+    setRecebimentoExtra(String(nf.recebimento_extra ?? 0));
+    setFaltaReceber(String(nf.falta_receber ?? 0));
+    setPagoAMais(String(nf.pago_a_mais ?? 0));
   }, [nf?.id]);
 
   const itens: ItemForm[] = useMemo(() => itensExistentes.map(itemRowParaForm), [itensExistentes]);
@@ -238,6 +251,27 @@ function NfPagamentoDialog({ nf, onClose }: { nf: NfEmissaoRow | null; onClose: 
       toast.success("Pagamento registrado.");
     } catch (e: any) {
       toast.error(e.message ?? "Erro ao registrar pagamento.");
+    }
+  }
+
+  async function handleSalvarReconciliacao() {
+    if (!nf) return;
+    try {
+      await registrarPagamento.mutateAsync({
+        id: nf.id,
+        data_pagamento: nf.data_pagamento,
+        valor_pago: nf.valor_pago,
+        situacao_site_pmt: situacaoSitePmt.trim() || null,
+        situacao_dominio: situacaoDominio.trim() || null,
+        desconto_conta_vinculada: Number(descontoContaVinculada) || 0,
+        recebimento_extra: Number(recebimentoExtra) || 0,
+        falta_receber: Number(faltaReceber) || 0,
+        pago_a_mais: Number(pagoAMais) || 0,
+      });
+      await registrarLogNf(nf.id, "reconciliacao_atualizada", "Reconciliação de pagamento atualizada");
+      toast.success("Reconciliação salva.");
+    } catch (e: any) {
+      toast.error(e.message ?? "Erro ao salvar reconciliação.");
     }
   }
 
@@ -280,6 +314,12 @@ function NfPagamentoDialog({ nf, onClose }: { nf: NfEmissaoRow | null; onClose: 
                 <Label className="text-xs">Nº NF</Label>
                 <div className="flex h-10 items-center rounded-md border border-input bg-muted px-3 text-sm">
                   {nf.numero_nf ?? "-"}
+                </div>
+              </div>
+              <div>
+                <Label className="text-xs">Tipo de Nota</Label>
+                <div className="flex h-10 items-center rounded-md border border-input bg-muted px-3 text-sm">
+                  {TIPOS_NOTA[nf.tipo_nota]}
                 </div>
               </div>
             </div>
@@ -328,6 +368,43 @@ function NfPagamentoDialog({ nf, onClose }: { nf: NfEmissaoRow | null; onClose: 
                   Remover registro
                 </Button>
               )}
+            </div>
+          </section>
+        )}
+
+        {nf && (
+          <section className="rounded-xl border bg-card p-3 space-y-3">
+            <div className="text-sm font-semibold">Reconciliação</div>
+            <div className="grid grid-cols-4 gap-3">
+              <div>
+                <Label className="text-xs">Situação site P.M.T.</Label>
+                <Input value={situacaoSitePmt} onChange={(e) => setSituacaoSitePmt(e.target.value)} placeholder="Ex: Normal" />
+              </div>
+              <div>
+                <Label className="text-xs">Situa Domínio</Label>
+                <Input value={situacaoDominio} onChange={(e) => setSituacaoDominio(e.target.value)} placeholder="Ex: Normal" />
+              </div>
+              <div>
+                <Label className="text-xs">Desconto de conta vinculada</Label>
+                <Input type="number" step="0.01" value={descontoContaVinculada} onChange={(e) => setDescontoContaVinculada(e.target.value)} />
+              </div>
+              <div>
+                <Label className="text-xs">Recebimento extra</Label>
+                <Input type="number" step="0.01" value={recebimentoExtra} onChange={(e) => setRecebimentoExtra(e.target.value)} />
+              </div>
+              <div>
+                <Label className="text-xs">Falta receber</Label>
+                <Input type="number" step="0.01" value={faltaReceber} onChange={(e) => setFaltaReceber(e.target.value)} />
+              </div>
+              <div>
+                <Label className="text-xs">Pago a mais</Label>
+                <Input type="number" step="0.01" value={pagoAMais} onChange={(e) => setPagoAMais(e.target.value)} />
+              </div>
+              <div className="col-span-2 flex items-end">
+                <Button variant="outline" onClick={handleSalvarReconciliacao} disabled={registrarPagamento.isPending}>
+                  Salvar reconciliação
+                </Button>
+              </div>
             </div>
           </section>
         )}
