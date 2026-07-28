@@ -631,7 +631,7 @@ export default function ReuniaoDetalhe() {
           <DialogHeader><DialogTitle>Participantes</DialogTitle></DialogHeader>
           <div className="space-y-2">
             {convidados.map((c) => {
-              const nome = nomeUsuario(usuarios, c.user_id) ?? c.user_id;
+              const nome = nomeUsuario(usuarios, c.user_id) ?? c.user_id ?? "Usuário";
               const avatarUrl = usuarios.find((u) => u.id === c.user_id)?.avatar_url ?? null;
               const podeConfirmar = c.user_id === user?.id || (podeGerenciar && !reuniaoEncerrada);
               return (

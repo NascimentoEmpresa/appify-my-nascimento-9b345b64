@@ -19,7 +19,7 @@ export function PresencaConducaoPainel({
       <p className="text-xs text-muted-foreground">Presentes: {presentes} · Ausentes: {ausentes}</p>
       <div className="space-y-1">
         {convidados.map((c) => {
-          const nome = nomeUsuario(usuarios, c.user_id) ?? c.user_id;
+          const nome = nomeUsuario(usuarios, c.user_id) ?? c.user_id ?? "Usuário";
           const podeMarcar = podeGerenciar || c.user_id === userId;
           return (
             <div key={c.id} className="flex items-center justify-between gap-2 rounded border border-border px-2 py-1.5 text-sm">
