@@ -6083,8 +6083,20 @@ CREATE POLICY chamado_sistema_select ON public."CHAMADO_SISTEMA"
     OR public.chamado_sistema_gestor()
   );
 
-DROP TABLE IF EXISTS public."CHAMADO_SISTEMA_TAREFA" CASCADE;
+DO $$
+DECLARE r regclass;
+BEGIN
+  SELECT c.oid::regclass INTO r
+    FROM pg_class c
+    JOIN pg_namespace n ON n.oid = c.relnamespace
+   WHERE n.nspname = 'public'
+     AND lower(c.relname) = 'chamado_sistema_tarefa'
+     AND c.relkind = 'r';
+  IF r IS NOT NULL THEN
+    EXECUTE 'DROP TABLE ' || r::text || ' CASCADE';
+  END IF;
+END $$;
 
-DROP FUNCTION IF EXISTS public.chamado_sistema_tarefa_guard();
+DROP FUNCTION IF EXISTS public.chamado_sistema_tarefa_guard() CASCADE;
 
 NOTIFY pgrst, 'reload schema';

@@ -23,10 +23,24 @@ CREATE POLICY chamado_sistema_select ON public."CHAMADO_SISTEMA"
   );
 
 -- 2) Remove a tabela (policies, triggers e índices caem via CASCADE) -----
-DROP TABLE IF EXISTS public."CHAMADO_SISTEMA_TAREFA" CASCADE;
+-- Busca no catálogo independente do case do nome (em bancos onde a tabela
+-- ficou como chamado_sistema_tarefa minúsculo, o DROP com aspas não bate).
+DO $$
+DECLARE r regclass;
+BEGIN
+  SELECT c.oid::regclass INTO r
+    FROM pg_class c
+    JOIN pg_namespace n ON n.oid = c.relnamespace
+   WHERE n.nspname = 'public'
+     AND lower(c.relname) = 'chamado_sistema_tarefa'
+     AND c.relkind = 'r';
+  IF r IS NOT NULL THEN
+    EXECUTE 'DROP TABLE ' || r::text || ' CASCADE';
+  END IF;
+END $$;
 
--- 3) Função de guard era exclusiva das tarefas --------------------------
-DROP FUNCTION IF EXISTS public.chamado_sistema_tarefa_guard();
+-- 3) Função de guard era exclusiva das tarefas (CASCADE remove trigger órfão)
+DROP FUNCTION IF EXISTS public.chamado_sistema_tarefa_guard() CASCADE;
 
 -- 4) Recarrega o schema no PostgREST ------------------------------------
 NOTIFY pgrst, 'reload schema';
