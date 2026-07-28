@@ -1,8 +1,9 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
+import { chamadosMarkSeen } from "@/hooks/useChamadosNotif";
 import { useChamadoPerms } from "./useChamadoPerms";
 import { useToast } from "@/hooks/use-toast";
 import { PageHeader } from "@/components/layout/PageHeader";
@@ -72,6 +73,9 @@ export default function ExecutarChamado() {
 
   const ehResponsavel = !!chamado && chamado.responsavel_id === user?.id;
   const podeAgir = canCoordenar || canAprovar || (canDev && ehResponsavel);
+
+  // Dev responsável abriu o chamado → zera a bolinha de novidades do dev.
+  useEffect(() => { if (ehResponsavel) chamadosMarkSeen(user?.id, "dev"); }, [ehResponsavel, user?.id]);
   const invalidar = () => {
     qc.invalidateQueries({ queryKey: ["chamado", id] });
     qc.invalidateQueries({ queryKey: ["chamado-eventos", id] });
@@ -210,6 +214,8 @@ export default function ExecutarChamado() {
                     <span className="font-medium text-foreground">{nomeDe(e.autor_id)}</span>
                     {e.tipo === "observacao_interna" && <span className="rounded bg-muted px-1.5 text-[9px] font-semibold uppercase">interna</span>}
                     {e.tipo === "evento" && <span className="rounded bg-info/10 px-1.5 text-[9px] font-semibold uppercase text-info">evento</span>}
+                    {e.tipo === "comentario" && e.autor_id === chamado.solicitante_id && <span className="rounded bg-primary/10 px-1.5 text-[9px] font-semibold uppercase text-primary">solicitante</span>}
+                    {e.tipo === "comentario" && e.autor_id !== chamado.solicitante_id && <span className="rounded bg-info/10 px-1.5 text-[9px] font-semibold uppercase text-info">comentário</span>}
                     <span>{fmtDataHora(e.created_at)}</span>
                   </p>
                   {e.texto && <p className="whitespace-pre-wrap text-xs">{e.texto}</p>}

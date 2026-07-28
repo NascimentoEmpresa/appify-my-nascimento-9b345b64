@@ -49,7 +49,7 @@ interface Body {
   etapa_nova?: string;
   // Chamados de Sistemas
   chamado_id?: string;
-  evento?: string; // atribuido | status | concluido | reprovado | solicitar_info
+  evento?: string; // atribuido | status | concluido | reprovado | solicitar_info | info_adicionada
 }
 
 // Título/corpo do push de um Chamado de Sistemas, conforme o evento.
@@ -59,6 +59,7 @@ function mensagemChamado(evento: string | undefined, numero: string, assunto: st
     case "concluido":      return { title: "Chamado concluído",      body: `#${numero} foi concluído.` };
     case "reprovado":      return { title: "Chamado reprovado",      body: `#${numero} — ${assunto}` };
     case "solicitar_info": return { title: "Aguardando seu retorno", body: `#${numero}: o time pediu mais informações.` };
+    case "info_adicionada":return { title: "Novas informações no chamado", body: `#${numero}: o solicitante adicionou informações.` };
     default:               return { title: "Chamado atualizado",     body: `#${numero} — ${assunto}` };
   }
 }

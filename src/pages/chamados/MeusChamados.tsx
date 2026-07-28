@@ -1,7 +1,9 @@
+import { useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
+import { chamadosMarkSeen } from "@/hooks/useChamadosNotif";
 import { useChamadoPerms } from "./useChamadoPerms";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { Card } from "@/components/ui/card";
@@ -9,7 +11,7 @@ import { Button } from "@/components/ui/button";
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table";
-import { Plus, ClipboardList, CheckCircle2, Clock, RotateCcw, CalendarClock, Info } from "lucide-react";
+import { Plus, ClipboardList, CheckCircle2, Clock, RotateCcw, CalendarClock, Info, MessageSquarePlus } from "lucide-react";
 import {
   StatCard, StatusBadge, PrioridadeBadge, fmtData, fmtDataHora, moduloLabel, type Chamado,
 } from "./types";
@@ -29,6 +31,9 @@ export default function MeusChamados({ base = "/app/central-servicos/chamados" }
     },
   });
   const nomeDe = (id: string | null) => (id ? usuarios.find((u) => u.id === id)?.display_name ?? "—" : "—");
+
+  // Abriu "Meus chamados" → zera a bolinha de novidades do solicitante.
+  useEffect(() => { chamadosMarkSeen(user?.id, "meus"); }, [user?.id]);
 
   const { data: stats } = useQuery({
     queryKey: ["chamados-meus-stats"],
@@ -102,11 +107,24 @@ export default function MeusChamados({ base = "/app/central-servicos/chamados" }
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {chamados.map((c, i) => (
-                  <TableRow key={c.id}>
+                {chamados.map((c, i) => {
+                  const aguardando = c.status === "aguardando_retorno";
+                  return (
+                  <TableRow
+                    key={c.id}
+                    className={`cursor-pointer ${aguardando ? "bg-primary/5 hover:bg-primary/10" : ""}`}
+                    onClick={() => nav(`${base}/${c.id}/acompanhar`)}
+                  >
                     <TableCell className="text-center text-xs text-muted-foreground">{i + 1}</TableCell>
                     <TableCell className="whitespace-nowrap font-mono text-xs font-semibold">#{c.numero}</TableCell>
-                    <TableCell className="max-w-[220px] truncate text-sm" title={c.assunto}>{c.assunto}</TableCell>
+                    <TableCell className="max-w-[220px] truncate text-sm" title={c.assunto}>
+                      {c.assunto}
+                      {aguardando && (
+                        <span className="mt-0.5 flex items-center gap-1 text-[11px] font-medium text-primary">
+                          <MessageSquarePlus className="h-3 w-3" /> Adicionar mais informações
+                        </span>
+                      )}
+                    </TableCell>
                     <TableCell className="text-xs">{moduloLabel(c)}</TableCell>
                     <TableCell><PrioridadeBadge prioridade={c.prioridade} /></TableCell>
                     <TableCell><StatusBadge status={c.status} /></TableCell>
@@ -117,7 +135,8 @@ export default function MeusChamados({ base = "/app/central-servicos/chamados" }
                       {c.observacao_gerente || (c.status === "reprovado" && c.motivo_reprovacao ? c.motivo_reprovacao : "—")}
                     </TableCell>
                   </TableRow>
-                ))}
+                  );
+                })}
               </TableBody>
             </Table>
           </div>
