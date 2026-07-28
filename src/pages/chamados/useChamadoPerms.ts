@@ -15,7 +15,8 @@ export function useChamadoPerms() {
   const canCoordenar = has("chamados_sistemas_coordenar");
   const canAprovar = has("chamados_sistemas_aprovar");
   const canDev = has("chamados_sistemas_dev");
+  const canExcluir = has("chamados_sistemas_excluir");
   const gestor = canPainel || canCoordenar || canAprovar;
 
-  return { canAbrir, canPainel, canCoordenar, canAprovar, canDev, gestor, loading: isLoading || !access };
+  return { canAbrir, canPainel, canCoordenar, canAprovar, canDev, canExcluir, gestor, loading: isLoading || !access };
 }

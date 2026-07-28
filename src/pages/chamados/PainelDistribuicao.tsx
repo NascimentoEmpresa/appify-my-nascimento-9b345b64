@@ -17,11 +17,12 @@ import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table";
 import {
-  DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem,
+  DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator,
 } from "@/components/ui/dropdown-menu";
 import { PieChart, Pie, Cell, ResponsiveContainer } from "recharts";
-import { ClipboardList, Clock, Users, CheckCircle2, AlertTriangle, ShieldAlert, MoreHorizontal, ChevronLeft, ChevronRight, Eye, UserCog } from "lucide-react";
+import { ClipboardList, Clock, Users, CheckCircle2, AlertTriangle, ShieldAlert, MoreHorizontal, ChevronLeft, ChevronRight, Eye, UserCog, Trash2 } from "lucide-react";
 import { FeedAtualizacoes } from "./FeedAtualizacoes";
+import { ExcluirChamadoDialog } from "./ExcluirChamadoDialog";
 import {
   StatCard, StatusBadge, PrioridadeBadge, STATUS_CHAMADO, CATEGORIAS, labelDe, moduloLabel, iniciais, fmtData, fmtDataHora, type Chamado,
 } from "./types";
@@ -49,7 +50,7 @@ export default function PainelDistribuicao() {
   const nav = useNavigate();
   const qc = useQueryClient();
   const { toast } = useToast();
-  const { gestor, canCoordenar } = useChamadoPerms();
+  const { gestor, canCoordenar, canExcluir } = useChamadoPerms();
 
   const [aba, setAba] = useState<string>("todos");
   const [busca, setBusca] = useState("");
@@ -60,6 +61,7 @@ export default function PainelDistribuicao() {
   const [pagina, setPagina] = useState(1);
   const [atribChamado, setAtribChamado] = useState<string | null>(null);
   const [atribDev, setAtribDev] = useState<string | null>(null);
+  const [excluir, setExcluir] = useState<{ id: string; numero: string } | null>(null);
 
   const { data: usuarios = [] } = useQuery({
     queryKey: ["chamados-usuarios"],
@@ -274,6 +276,14 @@ export default function PainelDistribuicao() {
                             <DropdownMenuItem onClick={() => nav(`/app/sistemas/chamados/${c.id}`)}>
                               <Eye className="mr-2 h-4 w-4" /> Ver detalhe
                             </DropdownMenuItem>
+                            {canExcluir && (
+                              <>
+                                <DropdownMenuSeparator />
+                                <DropdownMenuItem className="text-destructive focus:text-destructive" onClick={() => setExcluir({ id: c.id, numero: c.numero })}>
+                                  <Trash2 className="mr-2 h-4 w-4" /> Excluir chamado
+                                </DropdownMenuItem>
+                              </>
+                            )}
                           </DropdownMenuContent>
                         </DropdownMenu>
                       </TableCell>
@@ -399,6 +409,20 @@ export default function PainelDistribuicao() {
           ))}
         </div>
       </Card>
+
+      <ExcluirChamadoDialog
+        open={!!excluir}
+        onOpenChange={(v) => { if (!v) setExcluir(null); }}
+        chamadoId={excluir?.id ?? null}
+        numero={excluir?.numero}
+        onExcluido={() => {
+          setExcluir(null);
+          qc.invalidateQueries({ queryKey: ["chamados-todos"] });
+          qc.invalidateQueries({ queryKey: ["chamados-painel-stats"] });
+          qc.invalidateQueries({ queryKey: ["chamados-devs"] });
+          qc.invalidateQueries({ queryKey: ["chamados-feed"] });
+        }}
+      />
     </div>
   );
 }

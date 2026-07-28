@@ -15,7 +15,8 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { CheckCircle2, MessageSquare, XCircle, Paperclip, ArrowLeft } from "lucide-react";
+import { CheckCircle2, MessageSquare, XCircle, Paperclip, ArrowLeft, Trash2 } from "lucide-react";
+import { ExcluirChamadoDialog } from "./ExcluirChamadoDialog";
 import {
   StatusBadge, PrioridadeBadge, STATUS_CHAMADO,
   CATEGORIAS, TIPOS, IMPACTOS, URGENCIAS, AMBIENTES, labelDe, moduloLabel, fmtData, fmtDataHora,
@@ -28,11 +29,12 @@ export default function ExecutarChamado() {
   const qc = useQueryClient();
   const { toast } = useToast();
   const { user } = useAuth();
-  const { canCoordenar, canAprovar, canDev } = useChamadoPerms();
+  const { canCoordenar, canAprovar, canDev, canExcluir, gestor } = useChamadoPerms();
 
   const [obsInterna, setObsInterna] = useState("");
   const [reprovando, setReprovando] = useState(false);
   const [motivo, setMotivo] = useState("");
+  const [excluindoOpen, setExcluindoOpen] = useState(false);
 
   const { data: usuarios = [] } = useQuery({
     queryKey: ["chamados-usuarios"],
@@ -278,6 +280,16 @@ export default function ExecutarChamado() {
               )}
             </Card>
           )}
+
+          {canExcluir && (
+            <Card className="space-y-2 p-4">
+              <p className="text-sm font-bold text-destructive">Zona de risco</p>
+              <Button variant="outline" className="w-full justify-start gap-2 text-destructive" onClick={() => setExcluindoOpen(true)}>
+                <Trash2 className="h-4 w-4" /> Excluir chamado
+              </Button>
+              <p className="text-[11px] text-muted-foreground">Remove o chamado, histórico e anexos. Pede a senha da conta.</p>
+            </Card>
+          )}
         </div>
       </div>
 
@@ -291,6 +303,14 @@ export default function ExecutarChamado() {
           </div>
         </DialogContent>
       </Dialog>
+
+      <ExcluirChamadoDialog
+        open={excluindoOpen}
+        onOpenChange={setExcluindoOpen}
+        chamadoId={id ?? null}
+        numero={chamado.numero}
+        onExcluido={() => nav(gestor ? "/app/sistemas/chamados/painel" : "/app/sistemas/chamados/dev")}
+      />
     </div>
   );
 }
