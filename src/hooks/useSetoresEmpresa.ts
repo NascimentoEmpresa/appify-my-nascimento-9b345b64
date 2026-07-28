@@ -24,14 +24,9 @@ export function useSetoresEmpresa() {
       }
 
       const doEmpregados: string[] = [];
-      let from = 0;
-      const chunk = 1000;
-      for (;;) {
-        const { data, error } = await (supabase as any).from("EMPREGADOS").select('"Setor_ERP"').range(from, from + chunk - 1);
-        if (error || !data) break;
-        doEmpregados.push(...data.map((r: any) => String(r["Setor_ERP"] ?? "").trim()).filter(Boolean));
-        if (data.length < chunk || from > 60000) break;
-        from += chunk;
+      const emp = await (supabase as any).rpc("listar_setores_empregados");
+      if (!emp.error && Array.isArray(emp.data)) {
+        doEmpregados.push(...emp.data.map((r: any) => String(r.setor ?? "").trim()).filter(Boolean));
       }
 
       return [...new Set(["PADRAO", ...doCatalogo, ...doEmpregados])].sort((a, b) => a.localeCompare(b, "pt-BR"));
