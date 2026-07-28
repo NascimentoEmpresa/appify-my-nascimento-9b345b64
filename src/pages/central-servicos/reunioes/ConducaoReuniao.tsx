@@ -26,8 +26,9 @@ export default function ConducaoReuniao() {
   const [encerrando, setEncerrando] = useState(false);
 
   const {
-    reuniao, isLoading, pauta, respostas, convidados, decisoesAcoes, assuntosForaPauta,
-    iniciarReuniao, encerrarReuniao, atualizarPautaItem, salvarChecklistConducaoItem,
+    reuniao, isLoading, pauta, respostas, convidados, decisoesAcoes, assuntosForaPauta, pautaAnexos,
+    iniciarReuniao, encerrarReuniao, atualizarPautaItem, salvarChecklistConducaoItem, salvarResposta,
+    uploadPautaAnexo, downloadAnexo, removerPautaAnexo,
     marcarPresenca, criarDecisaoAcao, criarAcaoPlanoAcao, atualizarDecisaoAcao, removerDecisaoAcao, criarAssuntoForaPauta,
     marcarAssuntoForaPautaConcluido,
   } = useReuniaoDetalhe(id);
@@ -51,6 +52,11 @@ export default function ConducaoReuniao() {
   }
 
   const podeGerenciar = user?.id === reuniao.criado_por || user?.id === reuniao.responsavel_preenchimento_user_id || user?.id === reuniao.organizador_user_id;
+  const souParticipante = podeGerenciar || convidados.some((c) => c.user_id === user?.id);
+
+  if (!souParticipante) {
+    return <Navigate to={`/app/central-servicos/reunioes/${id}`} replace />;
+  }
 
   return (
     <div className="space-y-6">
@@ -92,7 +98,7 @@ export default function ConducaoReuniao() {
         </Card>
       </div>
 
-      {reuniao.etapa === "agendada" && (
+      {podeGerenciar && reuniao.etapa === "agendada" && (
         <ChecklistPreInicio
           iniciando={iniciando}
           onIniciar={async (checklist) => {
@@ -103,7 +109,13 @@ export default function ConducaoReuniao() {
         />
       )}
 
-      {reuniao.etapa === "em_andamento" && (
+      {reuniao.etapa === "em_andamento" && !podeGerenciar && (
+        <Card className="mx-auto max-w-md p-4">
+          <PresencaConducaoPainel convidados={convidados} usuarios={usuarios} userId={user?.id} podeGerenciar={podeGerenciar} onMarcar={marcarPresenca} />
+        </Card>
+      )}
+
+      {reuniao.etapa === "em_andamento" && podeGerenciar && (
         <div className="grid gap-6 lg:grid-cols-[1fr_420px]">
           <Card className="min-w-0 space-y-6 p-4">
             <PautaConducao
@@ -113,7 +125,13 @@ export default function ConducaoReuniao() {
               usuarios={usuarios}
               setorPadrao={reuniao.setor_responsavel}
               onAtualizarNatureza={(pautaId, natureza) => atualizarPautaItem(pautaId, { natureza })}
+              onAtualizarPrazo={(pautaId, prazo) => atualizarPautaItem(pautaId, { prazo })}
+              pautaAnexos={pautaAnexos}
+              onUploadPautaAnexo={uploadPautaAnexo}
+              onDownloadAnexo={downloadAnexo}
+              onRemoverPautaAnexo={removerPautaAnexo}
               onSalvarChecklist={salvarChecklistConducaoItem}
+              onSalvarResposta={salvarResposta}
               onCriarDecisaoAcao={criarDecisaoAcao}
               onCriarAcaoPlanoAcao={criarAcaoPlanoAcao}
               onAtualizarDecisaoAcao={atualizarDecisaoAcao}
@@ -157,23 +175,23 @@ export default function ConducaoReuniao() {
               </Button>
             </Card>
 
-            {podeGerenciar && (
-              <ChecklistEncerramento
-                horaInicioReal={reuniao.hora_inicio_real}
-                encerrando={encerrando}
-                onEncerrar={async (checklist) => {
-                  setEncerrando(true);
-                  const ok = await encerrarReuniao(usuarios, checklist);
-                  setEncerrando(false);
-                  if (ok) navigate(`/app/central-servicos/reunioes/${id}`);
-                }}
-              />
-            )}
+            <ChecklistEncerramento
+              horaInicioReal={reuniao.hora_inicio_real}
+              encerrando={encerrando}
+              onEncerrar={async (checklist) => {
+                setEncerrando(true);
+                const ok = await encerrarReuniao(usuarios, checklist);
+                setEncerrando(false);
+                if (ok) navigate(`/app/central-servicos/reunioes/${id}`);
+              }}
+            />
           </div>
         </div>
       )}
 
-      <AssuntoForaPautaModal open={assuntoOpen} onOpenChange={setAssuntoOpen} usuarios={usuarios} onSalvar={criarAssuntoForaPauta} />
+      {podeGerenciar && (
+        <AssuntoForaPautaModal open={assuntoOpen} onOpenChange={setAssuntoOpen} usuarios={usuarios} onSalvar={criarAssuntoForaPauta} />
+      )}
     </div>
   );
 }

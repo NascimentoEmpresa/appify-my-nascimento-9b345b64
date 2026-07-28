@@ -489,7 +489,7 @@ function CapaCard({
 // ── Sheet form ─────────────────────────────────────────────────────────────
 
 const EMPTY: Partial<CapaEdital> = {
-  cidade: "", uf: "", objeto: "", modalidade: "", local: "", forma_julgamento: "",
+  cidade: "", uf: "", cliente: "", objeto: "", modalidade: "", local: "", forma_julgamento: "",
   atestado_cap_tecnica: "", escritorio: "", abertura: "", prazo_impugnacao: "",
   prazo_recurso: "", validade_proposta: "", prazo_contrato: "", visita_tecnica: "",
   data_inicio: "", qtd_postos: null, carga_horaria: "", valor_estimado: "",
@@ -566,6 +566,7 @@ function CapaSheet({
                   placeholder={!f.uf ? "Selecione a UF" : ibgeLoading ? "Carregando…" : "Buscar cidade…"}
                 />
               </F>
+              <F label="Cliente / Órgão">{txt("cliente")}</F>
               <F label="Modalidade">{txt("modalidade")}</F>
               <F label="Responsável *">
                 {usuarios.length > 0 ? (
@@ -784,6 +785,7 @@ function ViewModal({ capa, onClose }: { capa: CapaEdital; onClose: () => void })
           <div className="grid grid-cols-2 gap-x-4 gap-y-2">
             {[
               ["Cidade", capa.cidade],
+              ["Cliente / Órgão", capa.cliente],
               ["Modalidade", capa.modalidade],
               ["Abertura", capa.abertura],
               ["Data início", capa.data_inicio],

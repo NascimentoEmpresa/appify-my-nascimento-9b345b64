@@ -126,6 +126,49 @@ export type PlanilhaCustoInsert = Omit<PlanilhaCustoRow, "id" | "created_at" | "
 export const formatBRL = (v: number | null | undefined) =>
   (v ?? 0).toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
 
+export interface PostoVigente {
+  posto: string;
+  valorTotal: number;
+  valorUnitario: number;
+  qtdColaboradores: number;
+}
+
+// Postos vigentes de um contrato (mesma lógica de "data de vigência mais
+// recente <= hoje" usada em ContratosERP.tsx, mas agrupando por posto em vez
+// de somar tudo no total do contrato).
+export function resolverPostosVigentes(rows: PlanilhaCustoRow[], contratoId: string): PostoVigente[] {
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const doContrato = rows.filter((r) => r.contrato_id === contratoId && r.orexec === "EXECUTADO" && !r.encerrado && r.data_vigencia);
+
+  const datasPorPosto = new Map<string, Date[]>();
+  for (const r of doContrato) {
+    const d = new Date(r.data_vigencia + "T00:00:00");
+    const arr = datasPorPosto.get(r.posto) ?? [];
+    arr.push(d);
+    datasPorPosto.set(r.posto, arr);
+  }
+  const vigentePorPosto = new Map<string, Date | null>();
+  datasPorPosto.forEach((dates, posto) => {
+    const passadas = dates.filter((d) => d <= today).sort((a, b) => b.getTime() - a.getTime());
+    vigentePorPosto.set(posto, passadas[0] ?? null);
+  });
+
+  const resultado: PostoVigente[] = [];
+  for (const r of doContrato) {
+    const rowDate = new Date(r.data_vigencia + "T00:00:00");
+    const vigente = vigentePorPosto.get(r.posto) ?? null;
+    if (!vigente || rowDate.getTime() !== vigente.getTime()) continue;
+    resultado.push({
+      posto: r.posto,
+      valorTotal: (r.total_por_empregado ?? 0) * (r.qt_postos || 1),
+      valorUnitario: r.total_por_empregado ?? 0,
+      qtdColaboradores: r.qt_postos || 0,
+    });
+  }
+  return resultado;
+}
+
 export function usePlanilhaCustos(filtros?: { cliente?: string; contrato?: string; q?: string }) {
   const { empresa } = useEmpresaAtiva();
   return useQuery({

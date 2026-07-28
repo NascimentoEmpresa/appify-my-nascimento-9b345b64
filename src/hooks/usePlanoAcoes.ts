@@ -18,6 +18,7 @@ export interface PlanoAcaoRow {
   acao: string | null;
   responsavel_profile_id: string | null;
   responsavel_nome_origem: string | null;
+  criado_por: string | null;
   lider_comite_nome_origem: string | null;
   lider_setor_nome_origem: string | null;
   data_inicio_planejado_original: string | null;

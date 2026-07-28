@@ -7,7 +7,7 @@ import { ptBR } from "date-fns/locale";
 import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { cn } from "@/lib/utils";
-import { ETAPA_COR, nomeUsuario, salaResumo, type ReuniaoCalendario, type Usuario } from "../types";
+import { ETAPA_COR, descreverBloqueioResumo, motivoBloqueioLabel, nomeUsuario, salaResumo, type BloqueioAgenda, type ReuniaoCalendario, type Usuario } from "../types";
 
 const DIAS_SEMANA = ["DOM", "SEG", "TER", "QUA", "QUI", "SEX", "SAB"];
 
@@ -15,8 +15,13 @@ function iniciais(nome: string): string {
   return nome.split(/\s+/).filter(Boolean).slice(0, 2).map((p) => p[0]?.toUpperCase()).join("");
 }
 
+export function bloqueioDoDia(dia: Date, bloqueios: BloqueioAgenda[]): BloqueioAgenda | undefined {
+  const diaStr = format(dia, "yyyy-MM-dd");
+  return bloqueios.find((b) => diaStr >= b.data_inicio && diaStr <= b.data_fim);
+}
+
 export function CalendarioMes({
-  mesAtual, onMudarMes, diaSelecionado, onSelecionarDia, reunioes, usuarios,
+  mesAtual, onMudarMes, diaSelecionado, onSelecionarDia, reunioes, usuarios, bloqueios = [],
 }: {
   mesAtual: Date;
   onMudarMes: (data: Date) => void;
@@ -24,6 +29,8 @@ export function CalendarioMes({
   onSelecionarDia: (data: Date) => void;
   reunioes: ReuniaoCalendario[];
   usuarios: Usuario[];
+  /** Bloqueios de agenda a exibir (os próprios por padrão, ou de quem estiver filtrado) — motivo visível pra quem tem acesso à Agenda de Reunião. Pinta o dia de vermelho. */
+  bloqueios?: BloqueioAgenda[];
 }) {
   const navigate = useNavigate();
 
@@ -47,6 +54,7 @@ export function CalendarioMes({
           const doDia = reunioesPorDia(dia);
           const foraDoMes = !isSameMonth(dia, mesAtual);
           const selecionado = isSameDay(dia, diaSelecionado);
+          const bloqueio = bloqueioDoDia(dia, bloqueios);
           return (
             <button
               key={dia.toISOString()}
@@ -55,15 +63,26 @@ export function CalendarioMes({
               className={cn(
                 "flex min-h-28 flex-col items-stretch gap-1 border-b border-r border-border p-1.5 text-left align-top last:border-r-0",
                 foraDoMes && "bg-muted/20 text-muted-foreground",
+                bloqueio && "bg-destructive/10",
                 selecionado && "bg-accent",
               )}
             >
-              <span className={cn(
-                "self-start rounded-full px-1.5 text-xs",
-                isToday(dia) && "bg-primary font-bold text-primary-foreground",
-              )}>
-                {format(dia, "d")}
-              </span>
+              <div className="flex items-center justify-between gap-1">
+                <span className={cn(
+                  "self-start rounded-full px-1.5 text-xs",
+                  isToday(dia) && "bg-primary font-bold text-primary-foreground",
+                )}>
+                  {format(dia, "d")}
+                </span>
+                {bloqueio && (
+                  <span
+                    className="truncate rounded border border-destructive/30 bg-destructive/10 px-1 py-0.5 text-[9px] font-medium text-destructive"
+                    title={motivoBloqueioLabel(bloqueio)}
+                  >
+                    {descreverBloqueioResumo(bloqueio)}
+                  </span>
+                )}
+              </div>
               <div className="flex flex-col gap-1">
                 {doDia.slice(0, 2).map((r) => {
                   const nome = nomeUsuario(usuarios, r.responsavel_preenchimento_user_id);

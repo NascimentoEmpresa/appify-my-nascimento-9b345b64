@@ -37,7 +37,7 @@ interface Props {
   onRemoverPautaAnexo: (id: string) => Promise<boolean>;
 }
 
-function AnexoPautaCelula({
+export function AnexoPautaCelula({
   pautaId, anexos, podeEditar, onUpload, onDownload, onRemover,
 }: {
   pautaId: string;
@@ -291,7 +291,7 @@ export function PautaTabela({
   const [novoResponsavel, setNovoResponsavel] = useState("");
 
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 4 } }));
-  const opcoesUsuarios = usuarios.map((u) => ({ value: u.id, label: u.display_name }));
+  const opcoesUsuarios = usuarios.map((u) => ({ value: u.id, label: u.display_name ?? "—" }));
 
   const filtrada = useMemo(() => {
     const buscaLc = busca.trim().toLowerCase();

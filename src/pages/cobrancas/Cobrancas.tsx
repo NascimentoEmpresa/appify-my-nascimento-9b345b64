@@ -6,7 +6,7 @@ export default function Cobrancas() {
     <div className="space-y-6">
       <PageHeader
         module="Financeiro"
-        breadcrumb={["Cobranças"]}
+        breadcrumb={["Controle de Notas", "Cobranças"]}
         title="Cobranças"
         subtitle="Notas em aberto para cobrança."
       />

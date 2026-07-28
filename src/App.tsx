@@ -76,6 +76,7 @@ import ContasReceber from "./pages/financeiro/ContasReceber";
 import Cobrancas from "./pages/cobrancas/Cobrancas";
 import RelatorioServicos from "./pages/financeiro/RelatorioServicos";
 import FluxoCaixa from "./pages/financeiro/FluxoCaixa";
+import ContaGarantida from "./pages/financeiro/ContaGarantida";
 import FluxoCaixaDiario from "./pages/financeiro/FluxoCaixaDiario";
 import CapitalGiro from "./pages/financeiro/CapitalGiro";
 import ConciliacaoFluxoCaixa from "./pages/financeiro/ConciliacaoFluxoCaixa";
@@ -92,6 +93,8 @@ import ValidacaoPosPagamento from "./pages/financeiro/ValidacaoPosPagamento";
 import ConciliacaoBancaria from "./pages/financeiro/ConciliacaoBancaria";
 import CadastroOrcamentos from "./pages/financeiro/orcamento/CadastroOrcamentos";
 import ClassificacoesOrcamento from "./pages/financeiro/orcamento/ClassificacoesOrcamento";
+import EmissaoNF from "./pages/financeiro/nf-emissao/EmissaoNF";
+import ControleNotas from "./pages/financeiro/controle-notas/ControleNotas";
 import Lancamentos from "./pages/contabil/Lancamentos";
 import PlanoContas from "./pages/contabil/PlanoContas";
 import AprovacaoContas from "./pages/contabil/AprovacaoContas";
@@ -290,6 +293,7 @@ const App = () => (
             <Route path="financeiro/contas-receber" element={<ContasReceber />} />
             <Route path="cobrancas" element={<Cobrancas />} />
             <Route path="financeiro/relatorio-servicos" element={<RelatorioServicos />} />
+            <Route path="financeiro/conta-garantida" element={<ContaGarantida />} />
             <Route path="financeiro/fluxo-caixa" element={<FluxoCaixa />} />
             <Route path="financeiro/fluxo-caixa-diario" element={<FluxoCaixaDiario />} />
             <Route path="financeiro/capital-giro" element={<CapitalGiro />} />
@@ -303,6 +307,8 @@ const App = () => (
             <Route path="financeiro/conciliacao-bancaria" element={<ConciliacaoBancaria />} />
             <Route path="financeiro/planejamento-orcamentario/cadastro" element={<CadastroOrcamentos />} />
             <Route path="financeiro/planejamento-orcamentario/classificacoes" element={<ClassificacoesOrcamento />} />
+            <Route path="financeiro/emissao-nf/cadastro" element={<EmissaoNF />} />
+            <Route path="financeiro/emissao-nf/controle-notas" element={<ControleNotas />} />
             {/* Fiscal */}
             <Route path="fiscal" element={<Fiscal />} />
             {/* Contábil */}

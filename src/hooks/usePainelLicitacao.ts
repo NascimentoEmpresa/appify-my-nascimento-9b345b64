@@ -84,8 +84,12 @@ export function usePainelLicitacao(filters?: PainelFilters) {
     function buildRespMap(source: typeof items) {
       const m = new Map<string, { responsavel: string; qtd: number; valor: number; vitorias: number; perdidas: number }>();
       source.forEach((i) => {
-        const key = i.responsavel || "Sem responsável";
-        const cur = m.get(key) ?? { responsavel: key, qtd: 0, valor: 0, vitorias: 0, perdidas: 0 };
+        const raw = i.responsavel;
+        const label = raw ? raw.toUpperCase() : "Sem responsável";
+        const key = raw
+          ? raw.toUpperCase().normalize("NFD").replace(/[̀-ͯ]/g, "")
+          : "Sem responsável";
+        const cur = m.get(key) ?? { responsavel: label, qtd: 0, valor: 0, vitorias: 0, perdidas: 0 };
         cur.qtd++;
         cur.valor += parseValor(i.valor_global);
         if (i.fase === "Finalizada" && i.posicao === 1) cur.vitorias++;

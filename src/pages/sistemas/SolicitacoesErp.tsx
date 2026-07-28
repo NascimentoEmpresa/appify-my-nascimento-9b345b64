@@ -955,7 +955,7 @@ export default function SolicitacoesErp() {
                   </div>
 
                   <div className="flex h-[420px] min-h-0 min-w-0 flex-col border-l border-border pl-4">
-                    <p className="mb-2 shrink-0 text-xs font-semibold uppercase tracking-wider text-muted-foreground">Comentários</p>
+                    <p className="mb-2 shrink-0 text-xs font-semibold uppercase tracking-wider text-muted-foreground">Encaminhamentos</p>
                     <div className="min-h-0 flex-1 space-y-3 overflow-y-auto pr-1">
                       {comentariosGerais.map((c) => {
                         const nome = nomeUsuario(usuarios, c.autor_id) ?? "Usuário";

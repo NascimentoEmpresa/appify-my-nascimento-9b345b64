@@ -420,11 +420,79 @@ export interface BloqueioAgenda {
   created_at: string;
 }
 
+/** "08:00:00" -> "8h" | "08:30:00" -> "8h30" */
+export function formatarHoraBloqueio(hora: string): string {
+  const [h, m] = hora.split(":");
+  const hNum = Number(h);
+  return m && m !== "00" ? `${hNum}h${m}` : `${hNum}h`;
+}
+
+export function motivoBloqueioLabel(b: BloqueioAgenda): string {
+  return b.motivo === "outro" ? (b.motivo_outro ?? "Outro") : MOTIVO_BLOQUEIO_LABEL[b.motivo];
+}
+
+/** Descrição curta pro badge do dia no calendário: horário específico quando não é dia inteiro, motivo quando é. */
+export function descreverBloqueioResumo(b: BloqueioAgenda): string {
+  if (!b.dia_inteiro && b.hora_inicio && b.hora_fim) {
+    return `Agenda bloqueada ${formatarHoraBloqueio(b.hora_inicio)}-${formatarHoraBloqueio(b.hora_fim)}`;
+  }
+  return `Bloqueado: ${motivoBloqueioLabel(b)}`;
+}
+
 export interface Usuario {
   id: string;
   display_name: string;
+  avatar_url: string | null;
+  setor: string | null;
 }
 
 export function nomeUsuario(usuarios: Usuario[], id: string | null): string | null {
   return usuarios.find((u) => u.id === id)?.display_name ?? null;
 }
+
+export interface Comite {
+  id: "administrativo" | "operacional";
+  label: string;
+  membros: string[];
+}
+
+export const COMITES: Comite[] = [
+  {
+    id: "administrativo",
+    label: "Administrativo",
+    membros: [
+      "8a03a976-1287-453e-9c86-d78163ac2e2e", // Caroline Prisco Lopes
+      "a240e3b5-3cda-4913-bebb-edcfa1035c7a", // Alessandra Aparecida de Vargas
+      "eeb3ce16-f0f3-4bba-85ee-41ce0b43d299", // Milena da Cunha Castro
+      "cb0a7a80-84f6-4707-a3be-90c2380736b4", // Francieli Silva do Nascimento
+      "392cd6af-41c7-4730-a100-69bdd81b5d96", // Natália Taborda
+    ],
+  },
+  {
+    id: "operacional",
+    label: "Operacional",
+    membros: [
+      "7cffae0b-2cfe-4e9f-8876-dde9b3c07e50", // Daison Tavares Rodrigues
+      "2d49fd95-6d74-4b97-98a8-4ecaf969bd99", // Cassio Raphaelli Camargo Duarte
+      "1116752d-09b2-49c1-951d-753b72c70276", // Lucas de Jesus Silva
+    ],
+  },
+];
+
+/** Membros de um comitê que ainda estão ativos (presentes na lista já carregada de usuários ativos). */
+export function membrosComite(usuarios: Usuario[], membros: string[]): string[] {
+  const ativos = new Set(usuarios.map((u) => u.id));
+  return membros.filter((id) => ativos.has(id));
+}
+
+export type StatusPresenca = "confirmada" | "pendente" | "recusada";
+
+export function statusPresenca(presente: boolean | null): StatusPresenca {
+  return presente === true ? "confirmada" : presente === false ? "recusada" : "pendente";
+}
+
+export const STATUS_PRESENCA_LABEL: Record<StatusPresenca, string> = {
+  confirmada: "Presença confirmada",
+  pendente: "Presença pendente",
+  recusada: "Não poderá comparecer",
+};

@@ -213,9 +213,16 @@ export function useReuniaoDetalhe(id: string | undefined) {
     if (paths.length > 0) {
       await supabase.storage.from(BUCKET).remove(paths);
     }
-    const { error } = await (supabase as any).from("reuniao").delete().eq("id", id);
+    // .select("id") depois do delete é o que permite detectar exclusão bloqueada por RLS:
+    // sem RLS permissiva, o Postgres não erra, só apaga zero linhas — sem o .select(),
+    // "data" viria vazio de qualquer forma e passaria como sucesso silencioso.
+    const { data, error } = await (supabase as any).from("reuniao").delete().eq("id", id).select("id");
     if (error) {
       toast({ title: "Erro ao excluir reunião", description: error.message, variant: "destructive" });
+      return false;
+    }
+    if (!data || data.length === 0) {
+      toast({ title: "Não foi possível excluir", description: "Nenhuma linha foi removida — você pode não ter permissão para excluir esta reunião.", variant: "destructive" });
       return false;
     }
     qc.invalidateQueries({ queryKey: ["reuniao-calendario"] });
@@ -238,7 +245,7 @@ export function useReuniaoDetalhe(id: string | undefined) {
   const encerrarReuniao = async (usuarios: Usuario[], checklistEncerramento?: Record<string, string>): Promise<boolean> => {
     if (!id || !reuniao) return false;
     try {
-      const blob = gerarAtaFinalPdfBlob(reuniao, pauta, respostas, assinaturas, usuarios);
+      const blob = gerarAtaFinalPdfBlob(reuniao, pauta, respostas, assinaturas, usuarios, comentarios);
       const path = `${id}/ata-final.pdf`;
       const up = await supabase.storage.from(BUCKET).upload(path, blob, {
         contentType: "application/pdf",
@@ -498,12 +505,17 @@ export function useReuniaoDetalhe(id: string | undefined) {
   };
 
   const marcarPresenca = async (convidadoId: string, presente: boolean, nomeParticipante?: string): Promise<boolean> => {
-    const { error } = await (supabase as any)
+    const { data, error } = await (supabase as any)
       .from("reuniao_convidado")
       .update({ presente, presente_marcado_em: new Date().toISOString() })
-      .eq("id", convidadoId);
+      .eq("id", convidadoId)
+      .select("id");
     if (error) {
       toast({ title: "Erro ao marcar presença", description: error.message, variant: "destructive" });
+      return false;
+    }
+    if (!data || data.length === 0) {
+      toast({ title: "Erro ao marcar presença", description: "Sem permissão pra marcar a presença deste participante.", variant: "destructive" });
       return false;
     }
     qc.invalidateQueries({ queryKey: ["reuniao_convidado", id] });

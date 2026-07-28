@@ -1,4 +1,5 @@
 import React, { useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import { toast } from "sonner";
 import { PageHeader } from "@/components/layout/PageHeader";
 import {
@@ -12,11 +13,12 @@ import {
   type DocTipo, type ContratoDocConfig,
 } from "@/hooks/useDocumentos";
 import { usePlanilhaCustos } from "@/hooks/usePlanilhaCusto";
+import { useContratosERP } from "@/hooks/useContratosERP";
 
 const PERIODICIDADES = ["mensal", "trimestral", "semestral", "implantação", "implantação + recorrência"] as const;
 const RECORRENCIAS = ["mensal", "trimestral", "semestral", "anual"] as const;
 
-const BADGE: Record<string, string> = {
+export const BADGE: Record<string, string> = {
   mensal: "bg-info-soft text-info",
   trimestral: "bg-primary/10 text-primary",
   semestral: "bg-warning/15 text-warning-foreground",
@@ -24,7 +26,7 @@ const BADGE: Record<string, string> = {
   "implantação + recorrência": "bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-400",
 };
 
-function periodLabel(d: ContratoDocConfig) {
+export function periodLabel(d: Pick<ContratoDocConfig, "periodicidade" | "recorrencia">) {
   if (!d.periodicidade) return null;
   if (d.periodicidade === "implantação + recorrência" && d.recorrencia)
     return `impl. + ${d.recorrencia}`;
@@ -186,29 +188,26 @@ function TipoForm({ initial, onSave, onCancel, saving }: {
 // ─── Aba Por Contrato ─────────────────────────────────────────────────────────
 
 function ContratosTab() {
+  const [searchParams] = useSearchParams();
+  const { data: contratosErp = [] } = useContratosERP();
   const { data: planilhaRows = [] } = usePlanilhaCustos();
   const { data: configs = [] } = useContratoDocsConfig();
   const [search, setSearch] = useState("");
-  const [contratoSel, setContratoSel] = useState<string | null>(null);
+  const [contratoSel, setContratoSel] = useState<string | null>(() => searchParams.get("contrato"));
 
   const contratos = React.useMemo(() => {
-    const seen = new Set<string>();
-    return planilhaRows
-      .filter((r) => r.orexec === "EXECUTADO")
-      .filter((r) => {
-        if (seen.has(r.contrato)) return false;
-        seen.add(r.contrato);
-        return true;
-      })
-      .filter((r) =>
-        r.contrato.toLowerCase().includes(search.toLowerCase()) ||
-        r.cliente.toLowerCase().includes(search.toLowerCase())
+    return contratosErp
+      .filter((c) =>
+        c.nome.toLowerCase().includes(search.toLowerCase()) ||
+        c.cliente.toLowerCase().includes(search.toLowerCase())
       )
-      .sort((a, b) => a.contrato.localeCompare(b.contrato));
-  }, [planilhaRows, search]);
+      .sort((a, b) => a.nome.localeCompare(b.nome));
+  }, [contratosErp, search]);
+
+  const contratoAtual = contratosErp.find((c) => c.id === contratoSel) ?? null;
 
   const configsContrato = React.useMemo(
-    () => configs.filter((c) => c.contrato === contratoSel),
+    () => configs.filter((c) => c.contrato_id === contratoSel),
     [configs, contratoSel]
   );
 
@@ -216,13 +215,11 @@ function ContratosTab() {
     if (!contratoSel) return [];
     const seen = new Set<string>();
     return planilhaRows
-      .filter((r) => r.orexec === "EXECUTADO" && r.contrato === contratoSel && r.posto)
+      .filter((r) => r.orexec === "EXECUTADO" && r.contrato_id === contratoSel && r.posto)
       .filter((r) => { if (seen.has(r.posto)) return false; seen.add(r.posto); return true; })
       .map((r) => r.posto)
       .sort();
   }, [planilhaRows, contratoSel]);
-
-  const clienteSel = planilhaRows.find((r) => r.contrato === contratoSel)?.cliente ?? "";
 
   return (
     <div className="grid grid-cols-5 gap-4 min-h-[600px]">
@@ -238,13 +235,13 @@ function ContratosTab() {
         <div className="overflow-y-auto flex-1">
           {contratos.length === 0 && <p className="px-4 py-6 text-center text-xs text-muted-foreground">Nenhum contrato encontrado.</p>}
           {contratos.map((c) => {
-            const qtd = configs.filter((cfg) => cfg.contrato === c.contrato).length;
-            const ativo = contratoSel === c.contrato;
+            const qtd = configs.filter((cfg) => cfg.contrato_id === c.id).length;
+            const ativo = contratoSel === c.id;
             return (
-              <button key={c.contrato} onClick={() => setContratoSel(c.contrato)}
+              <button key={c.id} onClick={() => setContratoSel(c.id)}
                 className={`flex w-full items-center justify-between gap-2 border-b border-border px-4 py-3 text-left transition-colors hover:bg-muted/30 ${ativo ? "bg-primary/5 border-l-2 border-l-primary" : ""}`}>
                 <div className="min-w-0">
-                  <p className="text-xs font-semibold truncate">{c.contrato}</p>
+                  <p className="text-xs font-semibold truncate">{c.nome}</p>
                   <p className="text-[11px] text-muted-foreground truncate">{c.cliente}</p>
                 </div>
                 <div className="flex shrink-0 items-center gap-1.5">
@@ -259,7 +256,7 @@ function ContratosTab() {
 
       {/* Detalhe do contrato */}
       <div className="col-span-3 card-elevated flex flex-col overflow-hidden">
-        {!contratoSel ? (
+        {!contratoAtual ? (
           <div className="flex h-full items-center justify-center py-20">
             <div className="text-center">
               <FileText className="mx-auto mb-3 h-10 w-10 text-muted-foreground/30" />
@@ -268,8 +265,9 @@ function ContratosTab() {
           </div>
         ) : (
           <ContratoDetail
-            contrato={contratoSel}
-            cliente={clienteSel}
+            contratoId={contratoAtual.id}
+            contratoNome={contratoAtual.nome}
+            cliente={contratoAtual.cliente}
             postos={postosDoPlanilha}
             configs={configsContrato}
           />
@@ -281,8 +279,9 @@ function ContratosTab() {
 
 // ─── Detalhe do Contrato ──────────────────────────────────────────────────────
 
-function ContratoDetail({ contrato, cliente, postos, configs }: {
-  contrato: string;
+function ContratoDetail({ contratoId, contratoNome, cliente, postos, configs }: {
+  contratoId: string;
+  contratoNome: string;
   cliente: string;
   postos: string[];
   configs: ContratoDocConfig[];
@@ -321,7 +320,7 @@ function ContratoDetail({ contrato, cliente, postos, configs }: {
       <div className="border-b border-border px-4 py-3">
         <div className="flex items-start justify-between gap-3">
           <div>
-            <p className="text-sm font-semibold">{contrato}</p>
+            <p className="text-sm font-semibold">{contratoNome}</p>
             <p className="text-xs text-muted-foreground">{cliente}</p>
           </div>
           <button
@@ -404,7 +403,7 @@ function ContratoDetail({ contrato, cliente, postos, configs }: {
               tipos={tipos}
               jaAdicionados={configs.filter((c) => c.posto === addModal.posto).map((c) => c.doc_tipo_id)}
               onSave={async (payload) => {
-                await save.mutateAsync({ contrato, posto: addModal.posto, ...payload });
+                await save.mutateAsync({ contrato_id: contratoId, posto: addModal.posto, ...payload });
                 setAddModal(null);
               }}
               onCancel={() => setAddModal(null)}
@@ -426,7 +425,7 @@ function ContratoDetail({ contrato, cliente, postos, configs }: {
               jaAdicionados={[]}
               initial={editModal}
               onSave={async (payload) => {
-                await save.mutateAsync({ id: editModal.id, contrato, posto: editModal.posto, ...payload });
+                await save.mutateAsync({ id: editModal.id, contrato_id: contratoId, posto: editModal.posto, ...payload });
                 setEditModal(null);
               }}
               onCancel={() => setEditModal(null)}

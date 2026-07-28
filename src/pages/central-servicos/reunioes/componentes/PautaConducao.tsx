@@ -4,9 +4,10 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { DecisoesAcoesPainel } from "./DecisoesAcoesPainel";
+import { AnexoPautaCelula } from "./PautaTabela";
 import {
   NATUREZA_ITEM_LABEL, PERGUNTAS_CONDUCAO_ITEM, nomeUsuario,
-  type NaturezaItem, type PerguntaChecklist, type ReuniaoDecisaoAcao, type ReuniaoPauta, type ReuniaoResposta,
+  type NaturezaItem, type PerguntaChecklist, type ReuniaoDecisaoAcao, type ReuniaoPauta, type ReuniaoPautaAnexo, type ReuniaoResposta,
   type RespostaConducaoItem, type PrioridadeDecisaoAcao, type StatusDecisaoAcao, type Usuario,
 } from "../types";
 
@@ -17,6 +18,8 @@ function LinhaPerguntaConducao({
   valor: RespostaConducaoItem | undefined;
   onChange: (v: RespostaConducaoItem) => void;
 }) {
+  const [observacao, setObservacao] = useState(valor?.observacao ?? "");
+
   return (
     <div className="space-y-1.5 rounded border border-border p-2">
       <div className="flex flex-wrap items-center justify-between gap-2">
@@ -37,25 +40,72 @@ function LinhaPerguntaConducao({
       </div>
       <Input
         placeholder="Observação (opcional)"
-        value={valor?.observacao ?? ""}
-        onChange={(e) => onChange({ resposta: valor?.resposta ?? "", observacao: e.target.value })}
+        value={observacao}
+        onChange={(e) => setObservacao(e.target.value)}
+        onBlur={() => onChange({ resposta: valor?.resposta ?? "", observacao })}
         className="h-7 text-xs"
       />
     </div>
   );
 }
 
+function RespostaDecisaoItem({
+  respostaTexto, respostaEncaminhamento, onSalvar,
+}: {
+  respostaTexto: string;
+  respostaEncaminhamento: string;
+  onSalvar: (texto: string, encaminhamento: string) => void;
+}) {
+  const [texto, setTexto] = useState(respostaTexto);
+  const [encaminhamento, setEncaminhamento] = useState(respostaEncaminhamento);
+
+  return (
+    <div className="space-y-2">
+      <p className="text-sm font-semibold">Resposta / Decisão do item</p>
+      <div className="grid gap-2 sm:grid-cols-2">
+        <div className="space-y-1">
+          <Label className="text-xs font-normal">Resposta / Decisão</Label>
+          <Input
+            placeholder="Resposta / decisão"
+            value={texto}
+            onChange={(e) => setTexto(e.target.value)}
+            onBlur={() => onSalvar(texto, encaminhamento)}
+            className="h-8 text-xs"
+          />
+        </div>
+        <div className="space-y-1">
+          <Label className="text-xs font-normal">Observações</Label>
+          <Input
+            placeholder="Observações"
+            value={encaminhamento}
+            onChange={(e) => setEncaminhamento(e.target.value)}
+            onBlur={() => onSalvar(texto, encaminhamento)}
+            className="h-8 text-xs"
+          />
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export function PautaConducao({
-  pauta, respostas, decisoesAcoes, usuarios, setorPadrao,
-  onAtualizarNatureza, onSalvarChecklist, onCriarDecisaoAcao, onCriarAcaoPlanoAcao, onAtualizarDecisaoAcao, onRemoverDecisaoAcao,
+  pauta, respostas, decisoesAcoes, usuarios, setorPadrao, pautaAnexos,
+  onAtualizarNatureza, onAtualizarPrazo, onSalvarChecklist, onSalvarResposta, onCriarDecisaoAcao, onCriarAcaoPlanoAcao, onAtualizarDecisaoAcao, onRemoverDecisaoAcao,
+  onUploadPautaAnexo, onDownloadAnexo, onRemoverPautaAnexo,
 }: {
   pauta: ReuniaoPauta[];
   respostas: ReuniaoResposta[];
   decisoesAcoes: ReuniaoDecisaoAcao[];
   usuarios: Usuario[];
   setorPadrao?: string | null;
+  pautaAnexos: ReuniaoPautaAnexo[];
   onAtualizarNatureza: (pautaId: string, natureza: NaturezaItem) => Promise<boolean>;
+  onAtualizarPrazo: (pautaId: string, prazo: string | null) => Promise<boolean>;
   onSalvarChecklist: (pautaId: string, checklist: Record<string, RespostaConducaoItem>) => Promise<boolean>;
+  onSalvarResposta: (pautaId: string, texto: string, encaminhamento: string) => Promise<boolean>;
+  onUploadPautaAnexo: (pautaId: string, file: File) => Promise<boolean>;
+  onDownloadAnexo: (path: string) => void;
+  onRemoverPautaAnexo: (id: string) => Promise<boolean>;
   onCriarDecisaoAcao: (dados: {
     pauta_id: string; tipo: "decisao"; texto: string; responsavel_user_id?: string | null; prazo?: string | null;
     prioridade?: PrioridadeDecisaoAcao; necessita_comprovacao?: boolean; setor_impactado?: string | null;
@@ -97,23 +147,52 @@ export function PautaConducao({
         </p>
       </div>
 
-      <div className="space-y-1.5">
-        <Label>Natureza do item</Label>
-        <Select value={item.natureza ?? ""} onValueChange={(v) => onAtualizarNatureza(item.id, v as NaturezaItem)}>
-          <SelectTrigger className="w-64"><SelectValue placeholder="Selecione" /></SelectTrigger>
-          <SelectContent>
-            {(Object.keys(NATUREZA_ITEM_LABEL) as NaturezaItem[]).map((n) => (
-              <SelectItem key={n} value={n}>{NATUREZA_ITEM_LABEL[n]}</SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
+      <div className="flex flex-wrap gap-4">
+        <div className="space-y-1.5">
+          <Label>Natureza do item</Label>
+          <Select value={item.natureza ?? ""} onValueChange={(v) => onAtualizarNatureza(item.id, v as NaturezaItem)}>
+            <SelectTrigger className="w-64"><SelectValue placeholder="Selecione" /></SelectTrigger>
+            <SelectContent>
+              {(Object.keys(NATUREZA_ITEM_LABEL) as NaturezaItem[]).map((n) => (
+                <SelectItem key={n} value={n}>{NATUREZA_ITEM_LABEL[n]}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+        <div className="space-y-1.5">
+          <Label>Prazo</Label>
+          <Input
+            type="date"
+            className="w-44"
+            value={item.prazo ?? ""}
+            onChange={(e) => onAtualizarPrazo(item.id, e.target.value || null)}
+          />
+        </div>
+        <div className="space-y-1.5">
+          <Label>Anexos do item</Label>
+          <AnexoPautaCelula
+            pautaId={item.id}
+            anexos={pautaAnexos.filter((a) => a.pauta_id === item.id)}
+            podeEditar
+            onUpload={onUploadPautaAnexo}
+            onDownload={onDownloadAnexo}
+            onRemover={onRemoverPautaAnexo}
+          />
+        </div>
       </div>
+
+      <RespostaDecisaoItem
+        key={item.id}
+        respostaTexto={resposta?.texto_resposta ?? ""}
+        respostaEncaminhamento={resposta?.encaminhamento ?? ""}
+        onSalvar={(texto, encaminhamento) => onSalvarResposta(item.id, texto, encaminhamento)}
+      />
 
       <div className="space-y-2">
         <p className="text-sm font-semibold">Condução do item</p>
         {PERGUNTAS_CONDUCAO_ITEM.map((p) => (
           <LinhaPerguntaConducao
-            key={p.id}
+            key={`${item.id}_${p.id}`}
             pergunta={p}
             valor={checklistAtual[p.id]}
             onChange={(v) => {

@@ -140,7 +140,7 @@ export default function NotasAbertoTab() {
                   <tr><td colSpan={10} className="px-2 py-6 text-center text-muted-foreground">Carregando...</td></tr>
                 )}
                 {!isLoading && notasVisiveis.length === 0 && (
-                  <tr><td colSpan={10} className="px-2 py-6 text-center text-muted-foreground">Nenhuma nota em aberto. Importe o Relatório de Serviços em Financeiro → Relatório de Serviços.</td></tr>
+                  <tr><td colSpan={10} className="px-2 py-6 text-center text-muted-foreground">Nenhuma nota em aberto.</td></tr>
                 )}
                 {notasVisiveis.map((n) => {
                   const mostrarSubtotal = n.cliente_contrato !== clienteAnterior;

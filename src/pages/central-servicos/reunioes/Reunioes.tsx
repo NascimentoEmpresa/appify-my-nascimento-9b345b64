@@ -8,12 +8,14 @@ import { Button } from "@/components/ui/button";
 import { SearchableSelect } from "@/components/ui/searchable-select";
 import { AlertTriangle, CalendarDays, Clock, LayoutDashboard, List, Lock, Plus } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { useAuth } from "@/hooks/useAuth";
 import { useAccessibleMenus } from "@/hooks/useAccessibleMenus";
 import { useReunioes, useUsuariosAtivos } from "./useReunioes";
-import { CalendarioMes } from "./componentes/CalendarioMes";
+import { useBloqueiosAgendaPorUsuarios } from "./useBloqueioAgenda";
+import { CalendarioMes, bloqueioDoDia } from "./componentes/CalendarioMes";
 import { ReuniaoFormCriar } from "./ReuniaoFormCriar";
 import { BloquearAgendaModal } from "./componentes/BloquearAgendaModal";
-import { ETAPA_COR, ETAPA_LABEL, nomeUsuario, salaResumo, SALAS_PRESENCIAIS } from "./types";
+import { ETAPA_COR, ETAPA_LABEL, formatarHoraBloqueio, motivoBloqueioLabel, nomeUsuario, salaResumo, SALAS_PRESENCIAIS } from "./types";
 
 function KpiTile({ icon, label, valor, sub, cor }: { icon: React.ReactNode; label: string; valor: number; sub: string; cor: string }) {
   return (
@@ -30,6 +32,7 @@ function KpiTile({ icon, label, valor, sub, cor }: { icon: React.ReactNode; labe
 
 export default function Reunioes() {
   const navigate = useNavigate();
+  const { user } = useAuth();
   const { data: reunioes = [], isLoading } = useReunioes();
   const { data: usuarios = [] } = useUsuariosAtivos();
   const { data: access } = useAccessibleMenus("visualizar");
@@ -41,13 +44,16 @@ export default function Reunioes() {
   const [diaSelecionado, setDiaSelecionado] = useState(() => new Date());
   const [filtroPessoa, setFiltroPessoa] = useState("");
   const [filtroSala, setFiltroSala] = useState("");
+  // Sem filtro de pessoa, mostra os próprios bloqueios; filtrando por alguém, mostra os dela (motivo incluso — visível pra quem tem acesso à Agenda de Reunião).
+  const { data: bloqueios = [] } = useBloqueiosAgendaPorUsuarios([filtroPessoa || user?.id].filter((v): v is string => !!v));
+  const bloqueioDoDiaSelecionado = useMemo(() => bloqueioDoDia(diaSelecionado, bloqueios), [diaSelecionado, bloqueios]);
 
-  const opcoesResponsaveis = usuarios.map((u) => ({ value: u.id, label: u.display_name }));
+  const opcoesResponsaveis = usuarios.map((u) => ({ value: u.id, label: u.display_name ?? "—" }));
   const opcoesSalas = SALAS_PRESENCIAIS.map((s) => ({ value: s, label: s }));
 
   const reunioesFiltradas = useMemo(
     () => reunioes.filter((r) =>
-      (!filtroPessoa || [r.criado_por, r.responsavel_preenchimento_user_id, ...r.convidados].includes(filtroPessoa))
+      (!filtroPessoa || [r.criado_por, r.organizador_user_id, r.responsavel_preenchimento_user_id, ...r.convidados].includes(filtroPessoa))
       && (!filtroSala || salaResumo(r) === filtroSala),
     ),
     [reunioes, filtroPessoa, filtroSala],
@@ -95,7 +101,7 @@ export default function Reunioes() {
         <KpiTile icon={<CalendarDays className="h-5 w-5" />} label="Reuniões no mês" valor={kpis.noMes} sub="Total agendadas" cor="bg-blue-100 text-blue-700" />
         <KpiTile icon={<Clock className="h-5 w-5" />} label="Esta semana" valor={kpis.naSemana} sub="Próximas reuniões" cor="bg-violet-100 text-violet-700" />
         <KpiTile icon={<CalendarDays className="h-5 w-5" />} label="Hoje" valor={kpis.hoje} sub="Reuniões hoje" cor="bg-amber-100 text-amber-700" />
-        <KpiTile icon={<AlertTriangle className="h-5 w-5" />} label="Atrasadas" valor={kpis.atrasadas} sub="Reuniões pendentes" cor="bg-red-100 text-red-700" />
+        <KpiTile icon={<AlertTriangle className="h-5 w-5" />} label="Atrasadas/Canceladas" valor={kpis.atrasadas} sub="Reuniões pendentes" cor="bg-red-100 text-red-700" />
       </div>
 
       <div className="flex flex-wrap items-center gap-2">
@@ -138,12 +144,24 @@ export default function Reunioes() {
             onSelecionarDia={setDiaSelecionado}
             reunioes={reunioesFiltradas}
             usuarios={usuarios}
+            bloqueios={bloqueios}
           />
           <Card className="p-4">
             <p className="text-sm font-semibold">Reuniões do dia</p>
             <p className="mb-3 text-xs capitalize text-muted-foreground">
               {diaSelecionado.toLocaleDateString("pt-BR", { day: "2-digit", month: "long", year: "numeric" })}
             </p>
+            {bloqueioDoDiaSelecionado && (
+              <div className="mb-3 rounded border border-destructive/30 bg-destructive/10 p-2 text-xs text-destructive">
+                <p className="font-medium">Agenda bloqueada</p>
+                <p>Motivo: {motivoBloqueioLabel(bloqueioDoDiaSelecionado)}</p>
+                {!bloqueioDoDiaSelecionado.dia_inteiro && bloqueioDoDiaSelecionado.hora_inicio && bloqueioDoDiaSelecionado.hora_fim && (
+                  <p>
+                    Horário: {formatarHoraBloqueio(bloqueioDoDiaSelecionado.hora_inicio)} - {formatarHoraBloqueio(bloqueioDoDiaSelecionado.hora_fim)}
+                  </p>
+                )}
+              </div>
+            )}
             <div className="space-y-2">
               {reunioesDoDia.map((r) => (
                 <button
@@ -181,13 +199,15 @@ export default function Reunioes() {
               className="flex cursor-pointer items-center justify-between gap-4 p-4 transition-colors hover:bg-accent/40"
               onClick={() => navigate(`/app/central-servicos/reunioes/${r.id}`)}
             >
-              <div className="min-w-0">
-                <p className="truncate font-semibold">{r.titulo}</p>
-                <p className="text-xs text-muted-foreground">
-                  {r.numero}
-                  {" · "}{new Date(r.data_hora).toLocaleString("pt-BR", { dateStyle: "short", timeStyle: "short" })}
-                  {" · "}{r.tipo_local === "presencial" ? "Presencial" : r.tipo_local === "hibrido" ? "Híbrido" : "Online"}
-                </p>
+              <div className="flex min-w-0 items-center gap-3">
+                <div className="min-w-0">
+                  <p className="truncate font-semibold">{r.titulo}</p>
+                  <p className="text-xs text-muted-foreground">
+                    {r.numero}
+                    {" · "}{new Date(r.data_hora).toLocaleString("pt-BR", { dateStyle: "short", timeStyle: "short" })}
+                    {" · "}{r.tipo_local === "presencial" ? "Presencial" : r.tipo_local === "hibrido" ? "Híbrido" : "Online"}
+                  </p>
+                </div>
               </div>
               <Badge variant="outline" className={ETAPA_COR[r.etapa]}>{ETAPA_LABEL[r.etapa]}</Badge>
             </Card>

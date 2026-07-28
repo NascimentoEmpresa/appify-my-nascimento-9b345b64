@@ -21,6 +21,7 @@ import { useComitesMap } from "@/hooks/useComitesMap";
 import { useSetoresEmpresa } from "@/hooks/useSetoresEmpresa";
 import { acharUsuarioPorNome } from "@/lib/acharUsuarioPorNome";
 import { SETOR_RESPONSAVEL_MAP, normalizeSetorNome } from "@/data/planoAcaoSetorResponsavel";
+import { podeValidarPlanoAcao } from "@/lib/podeValidarPlanoAcao";
 import { SearchableSelect } from "@/components/ui/searchable-select";
 import { SearchableMultiSelect } from "@/components/ui/searchable-multi-select";
 import { useUsuariosEmpresa } from "@/hooks/useUsuariosEmpresa";
@@ -175,9 +176,11 @@ export default function PlanoAcaoDetalhe() {
       const next = { ...f, area: novoSetor };
       const mapeado = SETOR_RESPONSAVEL_MAP[normalizeSetorNome(novoSetor)];
       if (mapeado) {
-        const achado = usuariosOptions.find((o) => o.value === mapeado.profileId);
-        next.responsavel_profile_id = mapeado.profileId;
-        next.responsavel_nome_origem = achado?.label ?? mapeado.nome;
+        const achado = acharUsuarioPorNome(usuariosOptions, mapeado.nome);
+        if (achado) {
+          next.responsavel_profile_id = achado.value;
+          next.responsavel_nome_origem = achado.label;
+        }
       }
       return next;
     });
@@ -246,6 +249,25 @@ export default function PlanoAcaoDetalhe() {
       return toast({
         title: "Responsável é obrigatório",
         description: "Selecione um responsável para criar a ação.",
+        variant: "destructive",
+      });
+    }
+    if (isNew && !form.area) {
+      return toast({
+        title: "Setor é obrigatório",
+        description: "Selecione o setor para criar a ação.",
+        variant: "destructive",
+      });
+    }
+    // "Atrasada" só é definida pelo cron — se a ação já estava atrasada e a
+    // pessoa empurrou a Data de conclusão pra frente, precisa escolher um
+    // status novo antes de salvar (não existe reversão automática).
+    if (!isNew && data?.status_normalizado === "atrasada"
+        && form.data_fim_planejado !== data?.data_fim_planejado
+        && form.status_normalizado === "atrasada") {
+      return toast({
+        title: "Atualize o Status",
+        description: "Atualize o Status antes de alterar a Data de conclusão de uma ação atrasada.",
         variant: "destructive",
       });
     }
@@ -334,7 +356,9 @@ export default function PlanoAcaoDetalhe() {
 
   const concluir = async () => {
     if (!can("editar") || isNew) return;
-    const novo = can("aprovar") ? "concluida_validada" : "aguardando_validacao";
+    // "Concluída — Validada" só quem criou a ação (ou o Responsável, se a
+    // ação for legada e não tiver criado_por registrado) — ver podeValidarPlanoAcao.
+    const novo = podeValidarPlanoAcao(form, user?.id) ? "concluida_validada" : "aguardando_validacao";
     const { error } = await supabase.from("plano_acao").update({ status_normalizado: novo, atualizado_por: user?.id ?? null }).eq("id", id!);
     if (error) toast({ title: "Erro", description: error.message, variant: "destructive" });
     else { toast({ title: STATUS_LABELS[novo] }); qc.invalidateQueries({ queryKey: ["plano_acao_one", id] }); }
@@ -367,6 +391,18 @@ export default function PlanoAcaoDetalhe() {
     window.open(data.signedUrl, "_blank", "noopener,noreferrer");
   };
 
+  const handleExcluirAnexo = async (anexo: any) => {
+    if (!confirm(`Excluir o anexo "${anexo.nome_arquivo}"?`)) return;
+    const { error: storageErr } = await supabase.storage.from("anexos").remove([anexo.storage_path]);
+    if (storageErr) {
+      toast({ title: "Erro ao excluir anexo", description: storageErr.message, variant: "destructive" });
+      return;
+    }
+    const { error } = await supabase.from("plano_acao_anexo").delete().eq("id", anexo.id);
+    if (error) toast({ title: "Erro ao excluir anexo", description: error.message, variant: "destructive" });
+    else { toast({ title: "Anexo excluído" }); await loadExtras(id!); }
+  };
+
   return (
     <div>
       <PageHeader
@@ -379,10 +415,10 @@ export default function PlanoAcaoDetalhe() {
             <Button variant="outline" size="sm" onClick={() => nav(backUrl)}>← Lista</Button>
             {!isNew && can("editar") && form.status_normalizado !== "concluida_validada" && (
               <Button size="sm" variant="secondary" onClick={concluir}>
-                {can("aprovar") ? "Validar conclusão" : "Marcar como concluída"}
+                {podeValidarPlanoAcao(form, user?.id) ? "Validar conclusão" : "Marcar como concluída"}
               </Button>
             )}
-            {podeEdit && <Button size="sm" onClick={salvar} disabled={isNew && !form.responsavel_profile_id}>Salvar</Button>}
+            {podeEdit && <Button size="sm" onClick={salvar} disabled={isNew && (!form.responsavel_profile_id || !form.area)}>Salvar</Button>}
             {!isNew && can("excluir") && (
               <Button size="sm" variant="destructive" onClick={excluir}><Trash2 className="mr-1 h-3.5 w-3.5" />Excluir</Button>
             )}
@@ -440,7 +476,7 @@ export default function PlanoAcaoDetalhe() {
               </Select>
             </div>
             <div>
-              <Label>Setor</Label>
+              <Label>Setor {isNew && <span className="text-destructive">*</span>}</Label>
               <Select value={form.area || "__none"} disabled={!podeEdit} onValueChange={handleSetorChange}>
                 <SelectTrigger><SelectValue placeholder="Selecione o setor" /></SelectTrigger>
                 <SelectContent>
@@ -454,7 +490,12 @@ export default function PlanoAcaoDetalhe() {
               <Label>Status</Label>
               <Select value={form.status_normalizado} disabled={!podeEdit} onValueChange={v => set("status_normalizado", v)}>
                 <SelectTrigger><SelectValue /></SelectTrigger>
-                <SelectContent>{STATUS_ORDEM.map(s => <SelectItem key={s} value={s}>{STATUS_LABELS[s]}</SelectItem>)}</SelectContent>
+                <SelectContent>
+                  {/* "Atrasada" só é definida automaticamente (cron) — não é selecionável,
+                      exceto pra continuar mostrando o valor atual quando já é esse o status. */}
+                  {STATUS_ORDEM.filter(s => s !== "atrasada" || form.status_normalizado === "atrasada")
+                    .map(s => <SelectItem key={s} value={s}>{STATUS_LABELS[s]}</SelectItem>)}
+                </SelectContent>
               </Select>
             </div>
             <div>
@@ -599,9 +640,16 @@ export default function PlanoAcaoDetalhe() {
                 {anexos.map(ax => (
                   <div key={ax.id} className="flex items-center justify-between rounded border border-border px-2 py-1.5 text-xs">
                     <span className="truncate max-w-[160px]" title={ax.nome_arquivo}>{ax.nome_arquivo}</span>
-                    <button type="button" onClick={() => handleDownloadAnexo(ax.storage_path)} className="ml-2 shrink-0 text-primary hover:underline">
-                      <Download className="h-3.5 w-3.5" />
-                    </button>
+                    <div className="ml-2 flex shrink-0 items-center gap-2">
+                      <button type="button" onClick={() => handleDownloadAnexo(ax.storage_path)} className="text-primary hover:underline">
+                        <Download className="h-3.5 w-3.5" />
+                      </button>
+                      {podeEdit && (
+                        <button type="button" onClick={() => handleExcluirAnexo(ax)} className="text-destructive hover:underline">
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </button>
+                      )}
+                    </div>
                   </div>
                 ))}
                 {anexos.length === 0 && <p className="text-xs text-muted-foreground">Sem anexos.</p>}

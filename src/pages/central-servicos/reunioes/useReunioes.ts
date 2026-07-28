@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
-import type { Finalidade, NotificarPor, Reuniao, ReuniaoCalendario, ResultadoEsperado, TipoLocalReuniao, TipoReuniao, Usuario } from "./types";
+import type { BloqueioAgenda, Finalidade, NotificarPor, Reuniao, ReuniaoCalendario, ResultadoEsperado, TipoLocalReuniao, TipoReuniao, Usuario } from "./types";
 import { registrarLog } from "./registrarLog";
 
 const REUNIAO_COLUNAS =
@@ -100,6 +100,45 @@ export async function verificarConflitoParticipante(params: {
     const outroFim = new Date(outroInicio.getTime() + (r.duracao_minutos ?? 60) * 60_000);
     return inicio < outroFim && outroInicio < fim;
   });
+  return conflito ?? null;
+}
+
+/**
+ * Sobreposição pura entre um bloqueio já carregado e uma janela de
+ * data/hora — mesma lógica usada pelo trigger pessoa_tem_bloqueio_agenda
+ * no banco (inclusive a mesma particularidade de bloqueio parcial de
+ * horário usar sempre data_inicio como referência de dia, não data_fim).
+ * Sem I/O — pra reaproveitar sobre bloqueios já buscados (aviso ao vivo no
+ * formulário), sem uma query nova a cada tecla.
+ */
+export function bloqueioSobrepoe(b: BloqueioAgenda, dataHoraIso: string, duracaoMinutos: number): boolean {
+  const inicio = new Date(dataHoraIso);
+  const fim = new Date(inicio.getTime() + duracaoMinutos * 60_000);
+  const bInicio = b.dia_inteiro ? new Date(`${b.data_inicio}T00:00:00`) : new Date(`${b.data_inicio}T${b.hora_inicio}`);
+  const bFim = b.dia_inteiro
+    ? new Date(new Date(`${b.data_fim}T00:00:00`).getTime() + 24 * 60 * 60_000)
+    : new Date(`${b.data_inicio}T${b.hora_fim}`);
+  return inicio < bFim && bInicio < fim;
+}
+
+/**
+ * Busca do banco + checa sobreposição de bloqueio de agenda de uma pessoa.
+ * A RLS de reuniao_bloqueio_agenda agora é visível pra qualquer um com
+ * acesso à Agenda de Reunião (não só o dono) — funciona pra checar
+ * qualquer pessoa envolvida na reunião, não só quem está logado.
+ */
+export async function verificarBloqueioAgenda(params: {
+  userId: string;
+  dataHoraIso: string;
+  duracaoMinutos: number;
+}): Promise<BloqueioAgenda | null> {
+  const { data, error } = await (supabase as any)
+    .from("reuniao_bloqueio_agenda")
+    .select("id, user_id, tipo, data_inicio, data_fim, dia_inteiro, hora_inicio, hora_fim, motivo, motivo_outro, created_at")
+    .eq("user_id", params.userId);
+  if (error) throw error;
+
+  const conflito = ((data ?? []) as BloqueioAgenda[]).find((b) => bloqueioSobrepoe(b, params.dataHoraIso, params.duracaoMinutos));
   return conflito ?? null;
 }
 
@@ -311,10 +350,66 @@ interface ResultadoEdicaoSerie {
   puladas: { titulo: string; motivo: string }[];
 }
 
-/** Edita dia da semana + horário de todas as ocorrências futuras "agendada" de uma série recorrente — passadas/em andamento/concluídas/canceladas ficam intocadas, e cada ocorrência com conflito no novo horário é pulada individualmente (mesma regra da criação recorrente). */
+/** Núcleo compartilhado: edita dia da semana + horário de uma lista de reuniões já carregadas — cada uma com conflito no novo horário é pulada individualmente (mesma regra da criação recorrente), sem afetar as demais. Usado tanto pra "Editar série" (busca por serie_recorrencia_id) quanto pra edição em massa por seleção manual na lista. */
+async function editarReunioesEmLote(reunioes: Reuniao[], novoDiaSemana: number, novoHorario: string): Promise<ResultadoEdicaoSerie> {
+  const resultado: ResultadoEdicaoSerie = { atualizadas: 0, puladas: [] };
+  for (const r of reunioes) {
+    const novaDataHora = aplicarNovoDiaHorario(r.data_hora, novoDiaSemana, novoHorario);
+    try {
+      if (r.tipo_local === "presencial" || r.tipo_local === "hibrido") {
+        const conflitoSala = await verificarConflitoSala({
+          local: r.local_ou_link, dataHoraIso: novaDataHora, duracaoMinutos: r.duracao_minutos, reuniaoIdIgnorar: r.id,
+        });
+        if (conflitoSala) throw new Error(`"${r.local_ou_link}" já está reservada nesse horário (reunião "${conflitoSala.titulo}").`);
+      }
+
+      const { data: convidados } = await (supabase as any)
+        .from("reuniao_convidado")
+        .select("user_id")
+        .eq("reuniao_id", r.id);
+      const pessoas = [
+        r.organizador_user_id,
+        r.responsavel_preenchimento_user_id,
+        ...((convidados ?? []) as { user_id: string }[]).map((c) => c.user_id),
+      ];
+      for (const userId of new Set(pessoas)) {
+        const conflitoPessoa = await verificarConflitoParticipante({
+          userId, dataHoraIso: novaDataHora, duracaoMinutos: r.duracao_minutos, reuniaoIdIgnorar: r.id,
+        });
+        if (conflitoPessoa) throw new Error(`Um dos participantes já está em outra reunião nesse horário (reunião "${conflitoPessoa.titulo}").`);
+      }
+
+      const { error: updErr } = await (supabase as any).from("reuniao").update({ data_hora: novaDataHora }).eq("id", r.id);
+      if (updErr) throw updErr;
+      registrarLog(r.id, "horario_alterado_serie", `Horário alterado em massa para ${new Date(novaDataHora).toLocaleString("pt-BR", { dateStyle: "short", timeStyle: "short" })}`);
+      resultado.atualizadas += 1;
+    } catch (e) {
+      resultado.puladas.push({ titulo: r.titulo, motivo: e instanceof Error ? e.message : String(e) });
+    }
+  }
+  return resultado;
+}
+
+function useResultadoEdicaoToast() {
+  const { toast } = useToast();
+  return (resultado: ResultadoEdicaoSerie, tituloBase: string) => {
+    if (resultado.puladas.length === 0) {
+      toast({ title: `${resultado.atualizadas} ${tituloBase}` });
+      return;
+    }
+    toast({
+      title: `${resultado.atualizadas} atualizadas, ${resultado.puladas.length} pulada(s) por conflito`,
+      description: resultado.puladas.map((p) => `${p.titulo}: ${p.motivo}`).join(" · "),
+      variant: resultado.atualizadas === 0 ? "destructive" : undefined,
+    });
+  };
+}
+
+/** Edita dia da semana + horário de todas as ocorrências futuras "agendada" de uma série recorrente — passadas/em andamento/concluídas/canceladas ficam intocadas. */
 export function useEditarSerieRecorrente() {
   const qc = useQueryClient();
   const { toast } = useToast();
+  const mostrarResultado = useResultadoEdicaoToast();
 
   return useMutation({
     mutationFn: async ({ serieId, novoDiaSemana, novoHorario }: { serieId: string; novoDiaSemana: number; novoHorario: string }): Promise<ResultadoEdicaoSerie> => {
@@ -325,40 +420,59 @@ export function useEditarSerieRecorrente() {
         .eq("etapa", "agendada")
         .gt("data_hora", new Date().toISOString());
       if (error) throw error;
+      return editarReunioesEmLote((reunioes ?? []) as Reuniao[], novoDiaSemana, novoHorario);
+    },
+    onSuccess: (resultado) => {
+      qc.invalidateQueries({ queryKey: ["reuniao-calendario"] });
+      qc.invalidateQueries({ queryKey: ["reuniao-minhas"] });
+      qc.invalidateQueries({ queryKey: ["reuniao"] });
+      mostrarResultado(resultado, "reuniões da série atualizadas");
+    },
+    onError: (error: any) => {
+      toast({ title: "Erro ao editar série", description: error.message, variant: "destructive" });
+    },
+  });
+}
 
-      const resultado: ResultadoEdicaoSerie = { atualizadas: 0, puladas: [] };
-      for (const r of (reunioes ?? []) as Reuniao[]) {
-        const novaDataHora = aplicarNovoDiaHorario(r.data_hora, novoDiaSemana, novoHorario);
+interface ResultadoExclusaoLote {
+  excluidas: number;
+  puladas: { titulo: string; motivo: string }[];
+}
+
+const ANEXOS_BUCKET_REUNIAO = "reunioes";
+
+/** Exclui uma lista de reuniões (mesma regra do "Excluir reunião" individual — remove anexos do Storage antes, e confirma que a linha foi de fato removida em vez de assumir sucesso). Usado por "Excluir série" e pela seleção manual na lista. */
+export function useExcluirReunioesEmMassa() {
+  const qc = useQueryClient();
+  const { toast } = useToast();
+
+  return useMutation({
+    mutationFn: async (reuniaoIds: string[]): Promise<ResultadoExclusaoLote> => {
+      const resultado: ResultadoExclusaoLote = { excluidas: 0, puladas: [] };
+      for (const id of reuniaoIds) {
+        const { data: reuniaoRow } = await (supabase as any).from("reuniao").select("titulo").eq("id", id).maybeSingle();
+        const titulo = reuniaoRow?.titulo ?? id;
         try {
-          if (r.tipo_local === "presencial" || r.tipo_local === "hibrido") {
-            const conflitoSala = await verificarConflitoSala({
-              local: r.local_ou_link, dataHoraIso: novaDataHora, duracaoMinutos: r.duracao_minutos, reuniaoIdIgnorar: r.id,
-            });
-            if (conflitoSala) throw new Error(`"${r.local_ou_link}" já está reservada nesse horário (reunião "${conflitoSala.titulo}").`);
-          }
-
-          const { data: convidados } = await (supabase as any)
-            .from("reuniao_convidado")
-            .select("user_id")
-            .eq("reuniao_id", r.id);
-          const pessoas = [
-            r.organizador_user_id,
-            r.responsavel_preenchimento_user_id,
-            ...((convidados ?? []) as { user_id: string }[]).map((c) => c.user_id),
+          const [{ data: anexos }, { data: pautas }] = await Promise.all([
+            (supabase as any).from("reuniao_anexo").select("storage_path").eq("reuniao_id", id),
+            (supabase as any).from("reuniao_pauta").select("id").eq("reuniao_id", id),
+          ]);
+          const pautaIds = ((pautas ?? []) as { id: string }[]).map((p) => p.id);
+          const { data: pautaAnexos } = pautaIds.length > 0
+            ? await (supabase as any).from("reuniao_pauta_anexo").select("storage_path").in("pauta_id", pautaIds)
+            : { data: [] };
+          const paths = [
+            ...((anexos ?? []) as { storage_path: string }[]).map((a) => a.storage_path),
+            ...((pautaAnexos ?? []) as { storage_path: string }[]).map((a) => a.storage_path),
           ];
-          for (const userId of new Set(pessoas)) {
-            const conflitoPessoa = await verificarConflitoParticipante({
-              userId, dataHoraIso: novaDataHora, duracaoMinutos: r.duracao_minutos, reuniaoIdIgnorar: r.id,
-            });
-            if (conflitoPessoa) throw new Error(`Um dos participantes já está em outra reunião nesse horário (reunião "${conflitoPessoa.titulo}").`);
-          }
+          if (paths.length > 0) await supabase.storage.from(ANEXOS_BUCKET_REUNIAO).remove(paths);
 
-          const { error: updErr } = await (supabase as any).from("reuniao").update({ data_hora: novaDataHora }).eq("id", r.id);
-          if (updErr) throw updErr;
-          registrarLog(r.id, "horario_alterado_serie", `Horário alterado em massa (edição de série) para ${new Date(novaDataHora).toLocaleString("pt-BR", { dateStyle: "short", timeStyle: "short" })}`);
-          resultado.atualizadas += 1;
+          const { data, error } = await (supabase as any).from("reuniao").delete().eq("id", id).select("id");
+          if (error) throw error;
+          if (!data || data.length === 0) throw new Error("Sem permissão pra excluir esta reunião.");
+          resultado.excluidas += 1;
         } catch (e) {
-          resultado.puladas.push({ titulo: r.titulo, motivo: e instanceof Error ? e.message : String(e) });
+          resultado.puladas.push({ titulo, motivo: e instanceof Error ? e.message : String(e) });
         }
       }
       return resultado;
@@ -366,19 +480,18 @@ export function useEditarSerieRecorrente() {
     onSuccess: (resultado) => {
       qc.invalidateQueries({ queryKey: ["reuniao-calendario"] });
       qc.invalidateQueries({ queryKey: ["reuniao-minhas"] });
-      qc.invalidateQueries({ queryKey: ["reuniao"] });
       if (resultado.puladas.length === 0) {
-        toast({ title: `${resultado.atualizadas} reuniões da série atualizadas` });
+        toast({ title: `${resultado.excluidas} reuniões excluídas` });
         return;
       }
       toast({
-        title: `${resultado.atualizadas} atualizadas, ${resultado.puladas.length} pulada(s) por conflito`,
+        title: `${resultado.excluidas} excluídas, ${resultado.puladas.length} pulada(s)`,
         description: resultado.puladas.map((p) => `${p.titulo}: ${p.motivo}`).join(" · "),
-        variant: resultado.atualizadas === 0 ? "destructive" : undefined,
+        variant: resultado.excluidas === 0 ? "destructive" : undefined,
       });
     },
     onError: (error: any) => {
-      toast({ title: "Erro ao editar série", description: error.message, variant: "destructive" });
+      toast({ title: "Erro ao excluir em massa", description: error.message, variant: "destructive" });
     },
   });
 }

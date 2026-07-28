@@ -47,6 +47,7 @@ import {
   Bell,
   MessageCircle,
   Bot,
+  ShieldCheck,
 } from "lucide-react";
 import { useTemAlcada } from "@/hooks/useTemAlcada";
 import { useAccessibleMenus, matchMenuCode } from "@/hooks/useAccessibleMenus";
@@ -257,6 +258,16 @@ const financeiroModule: ModuleDef = {
   status: "active",
   groups: [
     {
+      label: "Controle de Notas",
+      defaultOpen: true,
+      items: [
+        { label: "Emissão de NF", to: "/app/financeiro/emissao-nf/cadastro", icon: FileText },
+        { label: "Validação de Notas", to: "/app/financeiro/emissao-nf/controle-notas", icon: ClipboardCheck },
+        { label: "Relatório de Serviços", to: "/app/financeiro/relatorio-servicos", icon: TableProperties },
+        { label: "Cobranças", to: "/app/cobrancas", icon: Bell },
+      ],
+    },
+    {
       label: "Operação Financeira",
       defaultOpen: true,
       items: [
@@ -265,8 +276,7 @@ const financeiroModule: ModuleDef = {
         { label: "Programação de Pagamentos", to: "/app/financeiro/programacao-pagamentos", icon: Wallet },
         { label: "Validação Pós-Pagamento", to: "/app/financeiro/validacao-pos-pagamento", icon: Receipt },
         { label: "Contas a Receber", to: "/app/financeiro/contas-receber", icon: Receipt },
-        { label: "Cobranças", to: "/app/cobrancas", icon: Bell },
-        { label: "Relatório de Serviços", to: "/app/financeiro/relatorio-servicos", icon: TableProperties },
+        { label: "Conta Garantida", to: "/app/financeiro/conta-garantida", icon: ShieldCheck },
         { label: "Fluxo de Caixa", to: "/app/financeiro/fluxo-caixa", icon: TrendingUp },
         { label: "Fluxo de Caixa Diário", to: "/app/financeiro/fluxo-caixa-diario", icon: TrendingUp },
         { label: "Conciliação Fluxo Caixa", to: "/app/financeiro/conciliacao-fluxo-caixa", icon: Receipt },
@@ -631,7 +641,11 @@ export function Sidebar({ collapsed, mobileOpen = false, onMobileClose }: Sideba
   const { temAlcada, pendentes } = useTemAlcada();
   const { data: access } = useAccessibleMenus("visualizar");
   const empresaCtx = useContext(EmpresaAtivaContext);
-  const { data: gradeAtivaCount } = useGradeAtivaCount(empresaCtx?.empresa?.id ?? null);
+  // Antes do EmpresaAtivaContext carregar a empresa real do banco, empresa.id
+  // é o placeholder estático de src/data/controladoria.ts (ex: "HAGG" — um
+  // código curto, não um uuid) — passar isso pra uma coluna uuid derruba a
+  // query com 400. Só busca depois que o contexto termina de carregar.
+  const { data: gradeAtivaCount } = useGradeAtivaCount(!empresaCtx?.loading ? empresaCtx?.empresa?.id ?? null : null);
   const chamadosNotif = useChamadosNotif();
 
   const allModules = [...erpModules, buildPlanoAcoesModule(false), integracaoModule];

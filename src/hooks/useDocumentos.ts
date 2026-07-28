@@ -14,7 +14,7 @@ export interface DocTipo {
 export interface ContratoDocConfig {
   id: string;
   empresa_id: string;
-  contrato: string;
+  contrato_id: string;
   posto: string; // '' = nível contrato, string = posto específico
   doc_tipo_id: string;
   periodicidade: "mensal" | "trimestral" | "semestral" | "implantação" | "implantação + recorrência" | null;
@@ -87,6 +87,23 @@ export function useDocTipoDelete() {
 
 // ─── Contrato Docs Config ─────────────────────────────────────────────────────
 
+export function useContratoDocsPorContrato(contratoId: string | null | undefined) {
+  return useQuery({
+    queryKey: ["contrato_docs_config", "por_contrato", contratoId],
+    enabled: !!contratoId,
+    queryFn: async () => {
+      const { data, error } = await (supabase as any)
+        .from("contrato_docs_config")
+        .select("*, doc_tipos(nome)")
+        .eq("contrato_id", contratoId)
+        .order("posto")
+        .order("created_at");
+      if (error) throw error;
+      return (data ?? []) as (ContratoDocConfig & { doc_tipos: { nome: string } | null })[];
+    },
+  });
+}
+
 export function useContratoDocsConfig() {
   const { empresa } = useEmpresaAtiva();
   return useQuery({
@@ -111,7 +128,7 @@ export function useContratoDocSave() {
   return useMutation({
     mutationFn: async (payload: {
       id?: string;
-      contrato: string;
+      contrato_id: string;
       posto: string;
       doc_tipo_id: string;
       periodicidade: string | null;

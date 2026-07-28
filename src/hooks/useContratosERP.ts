@@ -14,6 +14,17 @@ export interface ContratoERP {
   status: "ativo" | "encerrado" | "suspenso";
   grade_id: string | null;
   capa_id: string | null;
+  issqn_pct: number;
+  ir_pct: number;
+  cofins_pct: number;
+  pis_pct: number;
+  csll_pct: number;
+  prazo_pagamento: string | null;
+  codigo_servico_lc116: string | null;
+  codigo_servico_municipal_cnae: string | null;
+  conta_pagamento: string | null;
+  email_envio_nf: string | null;
+  instrucoes_envio: string | null;
   created_at: string;
   updated_at: string;
 }

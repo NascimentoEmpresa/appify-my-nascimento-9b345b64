@@ -2,7 +2,7 @@
 // pauta + respostas de cada tópico, com as assinaturas (livres/opcionais) no
 // rodapé do documento.
 import { PdfDocumento, fmtDataHoraPdf } from "@/lib/pdf/PdfDocumento";
-import type { Reuniao, ReuniaoAssinatura, ReuniaoPauta, ReuniaoResposta, Usuario } from "../types";
+import type { Reuniao, ReuniaoAssinatura, ReuniaoComentario, ReuniaoPauta, ReuniaoResposta, Usuario } from "../types";
 import { nomeUsuario } from "../types";
 
 function montarAtaFinalPdf(
@@ -11,6 +11,7 @@ function montarAtaFinalPdf(
   respostas: ReuniaoResposta[],
   assinaturas: ReuniaoAssinatura[],
   usuarios: Usuario[],
+  comentarios: ReuniaoComentario[],
 ): PdfDocumento {
   const pdf = new PdfDocumento(reuniao.titulo, reuniao.id);
   pdf.tituloSecao("Ata de Reunião", 18);
@@ -44,6 +45,18 @@ function montarAtaFinalPdf(
     });
   }
 
+  pdf.y += 3;
+  pdf.tituloSecao("Encaminhamentos", 13);
+  if (comentarios.length === 0) {
+    pdf.paragrafo("Nenhum encaminhamento registrado.", { tamanho: 9.5 });
+  } else {
+    comentarios.forEach((c) => {
+      pdf.garantirEspaco(14);
+      pdf.paragrafo(`${nomeUsuario(usuarios, c.autor_id) ?? "Usuário"} — ${fmtDataHoraPdf(c.created_at)}`, { negrito: true, tamanho: 9, espacoDepois: 1 });
+      pdf.paragrafo(c.texto, { tamanho: 9.5, espacoDepois: 2 });
+    });
+  }
+
   pdf.y += 4;
   pdf.blocoAssinaturasColuna(
     "Diretoria e demais participantes",
@@ -59,8 +72,9 @@ export function exportarAtaFinalPdf(
   respostas: ReuniaoResposta[],
   assinaturas: ReuniaoAssinatura[],
   usuarios: Usuario[],
+  comentarios: ReuniaoComentario[],
 ) {
-  const pdf = montarAtaFinalPdf(reuniao, pauta, respostas, assinaturas, usuarios);
+  const pdf = montarAtaFinalPdf(reuniao, pauta, respostas, assinaturas, usuarios, comentarios);
   pdf.salvar(`Ata-${reuniao.titulo.replace(/[^a-zA-Z0-9]+/g, "_")}.pdf`);
 }
 
@@ -73,7 +87,8 @@ export function gerarAtaFinalPdfBlob(
   respostas: ReuniaoResposta[],
   assinaturas: ReuniaoAssinatura[],
   usuarios: Usuario[],
+  comentarios: ReuniaoComentario[],
 ): Blob {
-  const pdf = montarAtaFinalPdf(reuniao, pauta, respostas, assinaturas, usuarios);
+  const pdf = montarAtaFinalPdf(reuniao, pauta, respostas, assinaturas, usuarios, comentarios);
   return pdf.doc.output("blob");
 }

@@ -48,6 +48,22 @@ function dentroPeriodoInclusao(createdAt: string | null, periodo: FiltroInclusao
   return true;
 }
 
+type SortKey = "atualizada" | "comite" | "responsavel";
+type SortState = { key: SortKey; dir: "asc" | "desc" } | null;
+
+// "atualizada" mantém o comportamento já existente (1º clique = mais
+// recentes primeiro); as colunas de texto começam em ordem alfabética A→Z.
+const SORT_DEFAULT_DIR: Record<SortKey, "asc" | "desc"> = { atualizada: "desc", comite: "asc", responsavel: "asc" };
+
+const cmpTexto = (a: string | null, b: string | null, dirMul: number): number => {
+  // Vazio sempre por último, independente da direção.
+  const aVazio = !a, bVazio = !b;
+  if (aVazio && bVazio) return 0;
+  if (aVazio) return 1;
+  if (bVazio) return -1;
+  return a!.localeCompare(b!, "pt-BR", { sensitivity: "base" }) * dirMul;
+};
+
 export default function PlanoAcoesLista() {
   const { data: rows = [], isLoading } = usePlanoAcoes();
   const { can, loading: lp } = usePlanoAcaoPermissao();
@@ -65,7 +81,10 @@ export default function PlanoAcoesLista() {
   const fPeriodo = (searchParams.get("periodo") as FiltroInclusao | null) ?? "todos";
   const fDataIni = searchParams.get("dataIni") ?? "";
   const fDataFim = searchParams.get("dataFim") ?? "";
-  const [dateSort, setDateSort] = useState<"recent" | "oldest" | null>(null);
+  const [sort, setSort] = useState<SortState>(null);
+  const toggleSort = (key: SortKey) => setSort(prev =>
+    !prev || prev.key !== key ? { key, dir: SORT_DEFAULT_DIR[key] } : { key, dir: prev.dir === "asc" ? "desc" : "asc" }
+  );
 
   const setFilter = (key: string, value: string) => {
     setSearchParams(prev => {
@@ -115,15 +134,23 @@ export default function PlanoAcoesLista() {
       return [r.titulo, r.problema, r.acao, r.responsavel_nome_origem, r.id_importacao]
         .filter(Boolean).some(s => (s as string).toLowerCase().includes(q));
     });
-    if (!dateSort) return base;
+    if (!sort) return base;
     const sorted = [...base];
+    const dirMul = sort.dir === "asc" ? 1 : -1;
     sorted.sort((a, b) => {
-      const ta = a.updated_at ? new Date(a.updated_at).getTime() : 0;
-      const tb = b.updated_at ? new Date(b.updated_at).getTime() : 0;
-      return dateSort === "recent" ? tb - ta : ta - tb;
+      if (sort.key === "atualizada") {
+        const ta = a.updated_at ? new Date(a.updated_at).getTime() : 0;
+        const tb = b.updated_at ? new Date(b.updated_at).getTime() : 0;
+        return (ta - tb) * dirMul;
+      }
+      if (sort.key === "comite") {
+        const cCmp = cmpTexto(a.comite, b.comite, dirMul);
+        return cCmp !== 0 ? cCmp : cmpTexto(a.area, b.area, dirMul);
+      }
+      return cmpTexto(a.responsavel_nome_origem, b.responsavel_nome_origem, dirMul);
     });
     return sorted;
-  }, [rows, busca, fStatus, fPrior, fComite, fArea, fResp, fPeriodo, fDataIni, fDataFim, dateSort]);
+  }, [rows, busca, fStatus, fPrior, fComite, fArea, fResp, fPeriodo, fDataIni, fDataFim, sort]);
 
   if (lp) return null;
   if (!can("visualizar")) return <ForbiddenCard />;
@@ -206,37 +233,58 @@ export default function PlanoAcoesLista() {
             <thead className="sticky top-0 z-10 bg-muted/50 backdrop-blur">
               <tr className="text-left text-xs uppercase tracking-wider text-muted-foreground">
                 <th className="p-2 px-3">ID</th>
-                <th className="p-2">Comitê / Setor</th>
+                <th className="p-2">
+                  <button
+                    type="button"
+                    onClick={() => toggleSort("comite")}
+                    className="flex items-center gap-1 hover:text-foreground"
+                    title="Ordenar por Comitê / Setor"
+                  >
+                    Comitê / Setor
+                    {sort?.key === "comite" && sort.dir === "desc" ? <ArrowDown className="h-3 w-3" /> : <ArrowUp className="h-3 w-3" />}
+                  </button>
+                </th>
                 <th className="p-2">Título / Problema</th>
-                <th className="p-2">Responsável</th>
+                <th className="p-2">
+                  <button
+                    type="button"
+                    onClick={() => toggleSort("responsavel")}
+                    className="flex items-center gap-1 hover:text-foreground"
+                    title="Ordenar por Responsável"
+                  >
+                    Responsável
+                    {sort?.key === "responsavel" && sort.dir === "desc" ? <ArrowDown className="h-3 w-3" /> : <ArrowUp className="h-3 w-3" />}
+                  </button>
+                </th>
+                <th className="p-2">Criada em</th>
                 <th className="p-2">Prior.</th>
                 <th className="p-2">Status</th>
                 <th className="p-2">Pend.</th>
                 <th className="p-2">
                   <button
                     type="button"
-                    onClick={() => setDateSort(d => d === "recent" ? "oldest" : "recent")}
+                    onClick={() => toggleSort("atualizada")}
                     className="flex items-center gap-1 hover:text-foreground"
-                    title={dateSort === "recent" ? "Mostrando mais recentes — clique para mais antigas" : "Mostrando mais antigas — clique para mais recentes"}
+                    title={sort?.key === "atualizada" && sort.dir === "desc" ? "Mostrando mais recentes — clique para mais antigas" : "Mostrando mais antigas — clique para mais recentes"}
                   >
                     Atualizada
-                    {dateSort === "recent" ? <ArrowDown className="h-3 w-3" /> : <ArrowUp className="h-3 w-3" />}
+                    {sort?.key === "atualizada" && sort.dir === "desc" ? <ArrowDown className="h-3 w-3" /> : <ArrowUp className="h-3 w-3" />}
                   </button>
                 </th>
               </tr>
             </thead>
             <tbody>
               {isLoading && (
-                <tr><td colSpan={8} className="p-6 text-center text-muted-foreground">Carregando...</td></tr>
+                <tr><td colSpan={9} className="p-6 text-center text-muted-foreground">Carregando...</td></tr>
               )}
               {!isLoading && filtered.length === 0 && rows.length === 0 && (
-                <tr><td colSpan={8} className="p-6 text-center text-muted-foreground">
+                <tr><td colSpan={9} className="p-6 text-center text-muted-foreground">
                   Você ainda não tem planos de ação visíveis nesta empresa.<br />
                   <span className="text-xs">A visibilidade segue a hierarquia: você vê os planos sob sua responsabilidade, da sua equipe (setor/área/comitê que lidera ou gerencia) ou de toda a empresa, conforme suas permissões. Solicite ao administrador (Erica, Yuri ou Helena) se faltar acesso.</span>
                 </td></tr>
               )}
               {!isLoading && filtered.length === 0 && rows.length > 0 && (
-                <tr><td colSpan={8} className="p-6 text-center text-muted-foreground">Nenhuma ação encontrada com os filtros atuais.</td></tr>
+                <tr><td colSpan={9} className="p-6 text-center text-muted-foreground">Nenhuma ação encontrada com os filtros atuais.</td></tr>
               )}
               {filtered.map(r => (
                 <tr key={r.id} className="border-t border-border hover:bg-muted/40">
@@ -258,6 +306,7 @@ export default function PlanoAcoesLista() {
                     <div>{r.responsavel_nome_origem ?? "—"}</div>
                     {r.lider_comite_nome_origem && <div className="text-[11px] text-muted-foreground">Comitê: {r.lider_comite_nome_origem}</div>}
                   </td>
+                  <td className="p-2 text-xs text-muted-foreground">{fmtDate(r.created_at)}</td>
                   <td className="p-2">
                     {r.prioridade_normalizada && (
                       <Badge variant="outline" className={`text-[10px] ${PRIORIDADE_COR[r.prioridade_normalizada] ?? ""}`}>

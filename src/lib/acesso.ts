@@ -22,5 +22,5 @@ export const ACESSO_ABERTO_SEM_PERMISSOES = false;
  * perfil_acesso_permissao/screen_permission_user porque nunca precisaram de
  * granularidade por perfil comum, não porque foram esquecidas.
  */
-export const MENUS_SEMPRE_RESTRITOS = new Set(["administracao", "integracao", "integracao-aliases", "whatsapp", "whatsapp_chatbot"]);
+export const MENUS_SEMPRE_RESTRITOS = new Set(["administracao", "integracao", "integracao-aliases"]);
 

@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -10,13 +10,15 @@ import { SearchableSelect } from "@/components/ui/searchable-select";
 import { SearchableMultiSelect } from "@/components/ui/searchable-multi-select";
 import { Switch } from "@/components/ui/switch";
 import { Checkbox } from "@/components/ui/checkbox";
+import { DropdownMenu, DropdownMenuCheckboxItem, DropdownMenuContent, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Plus, Trash2, Paperclip, Info } from "lucide-react";
 import { useVinculoEmpregado } from "@/hooks/useVinculoEmpregado";
 import { useSetoresEmpresa } from "@/hooks/useSetoresEmpresa";
-import { useCriarReuniao, useCriarReunioesRecorrentes, useUsuariosAtivos, verificarConflitoSala, verificarConflitoParticipante } from "./useReunioes";
+import { useBloqueiosAgendaPorUsuarios } from "./useBloqueioAgenda";
+import { useCriarReuniao, useCriarReunioesRecorrentes, useUsuariosAtivos, bloqueioSobrepoe, verificarBloqueioAgenda, verificarConflitoSala, verificarConflitoParticipante } from "./useReunioes";
 import {
-  ETAPA_COR, ETAPA_LABEL, FINALIDADE_LABEL, NOTIFICAR_POR_LABEL, RESULTADO_ESPERADO_LABEL, SALAS_PRESENCIAIS,
-  TIPO_REUNIAO_DURACAO_PADRAO, TIPO_REUNIAO_LABEL, TIPO_REUNIAO_OPCOES_CRIACAO, nomeUsuario,
+  COMITES, ETAPA_COR, ETAPA_LABEL, FINALIDADE_LABEL, MOTIVO_BLOQUEIO_LABEL, NOTIFICAR_POR_LABEL, RESULTADO_ESPERADO_LABEL, SALAS_PRESENCIAIS,
+  TIPO_REUNIAO_DURACAO_PADRAO, TIPO_REUNIAO_LABEL, TIPO_REUNIAO_OPCOES_CRIACAO, membrosComite, nomeUsuario,
   type Finalidade, type NotificarPor, type ResultadoEsperado, type TipoLocalReuniao, type TipoReuniao,
 } from "./types";
 
@@ -97,7 +99,29 @@ export function ReuniaoFormCriar({ open, onOpenChange }: { open: boolean; onOpen
   const criarRecorrentes = useCriarReunioesRecorrentes();
   const { data: setoresDisponiveis = [] } = useSetoresEmpresa();
 
-  const opcoesUsuarios = usuarios.map((u) => ({ value: u.id, label: u.display_name }));
+  const opcoesUsuarios = usuarios.map((u) => ({ value: u.id, label: u.display_name ?? "—" }));
+
+  // Aviso ao vivo de agenda bloqueada — junta todo mundo envolvido até agora
+  // (organizador, responsável, convidados, observadores) e busca o bloqueio
+  // deles de uma vez, recalculando sempre que pessoa ou data/horário mudam.
+  const idsRelevantes = useMemo(
+    () => [...new Set([form.organizador, form.responsavel, ...form.convidados, ...form.observadores].filter(Boolean))],
+    [form.organizador, form.responsavel, form.convidados, form.observadores],
+  );
+  const { data: bloqueiosRelevantes = [] } = useBloqueiosAgendaPorUsuarios(idsRelevantes);
+  const avisosBloqueio = useMemo(() => {
+    if (!form.data || !form.hora || form.duracao_minutos <= 0) return [];
+    const dataHoraIso = new Date(`${form.data}T${form.hora}:00`).toISOString();
+    const avisos: string[] = [];
+    for (const id of idsRelevantes) {
+      const bloqueio = bloqueiosRelevantes.find((b) => b.user_id === id && bloqueioSobrepoe(b, dataHoraIso, form.duracao_minutos));
+      if (bloqueio) {
+        const nome = opcoesUsuarios.find((o) => o.value === id)?.label ?? "Alguém";
+        avisos.push(`${nome} está com a agenda bloqueada nesse período (${MOTIVO_BLOQUEIO_LABEL[bloqueio.motivo]}).`);
+      }
+    }
+    return avisos;
+  }, [idsRelevantes, bloqueiosRelevantes, form.data, form.hora, form.duracao_minutos, opcoesUsuarios]);
 
   // Pré-seleciona o setor do usuário logado quando carrega, mas continua editável.
   useEffect(() => {
@@ -231,6 +255,16 @@ export function ReuniaoFormCriar({ open, onOpenChange }: { open: boolean; onOpen
         ...form.observadores.map((id) => ({ userId: id, rotulo: opcoesUsuarios.find((o) => o.value === id)?.label ?? "Um observador" })),
       ];
       for (const pessoa of pessoasAChecar) {
+        const bloqueio = await verificarBloqueioAgenda({
+          userId: pessoa.userId,
+          dataHoraIso: dataHora,
+          duracaoMinutos: form.duracao_minutos,
+        });
+        if (bloqueio) {
+          setErroConflito(`${pessoa.rotulo} está com a agenda bloqueada nesse horário (${MOTIVO_BLOQUEIO_LABEL[bloqueio.motivo]}).`);
+          return;
+        }
+
         const conflito = await verificarConflitoParticipante({
           userId: pessoa.userId,
           dataHoraIso: dataHora,
@@ -542,19 +576,46 @@ export function ReuniaoFormCriar({ open, onOpenChange }: { open: boolean; onOpen
               <div className="space-y-1.5">
                 <div className="flex items-center justify-between">
                   <Label>Convidados *</Label>
-                  <button
-                    type="button"
-                    className="text-xs text-primary hover:underline"
-                    onClick={() => setForm((f) => {
-                      const todos = opcoesUsuarios.filter((o) => !f.observadores.includes(o.value)).map((o) => o.value);
-                      const jaTemTodos = todos.length > 0 && todos.every((v) => f.convidados.includes(v));
-                      return { ...f, convidados: jaTemTodos ? [] : todos };
-                    })}
-                  >
-                    {opcoesUsuarios.filter((o) => !form.observadores.includes(o.value)).every((o) => form.convidados.includes(o.value)) && form.convidados.length > 0
-                      ? "Limpar seleção"
-                      : "Selecionar todos"}
-                  </button>
+                  <div className="flex items-center gap-3">
+                    <DropdownMenu>
+                      <DropdownMenuTrigger asChild>
+                        <button type="button" className="text-xs text-primary hover:underline">Selecionar Comitês</button>
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent align="end">
+                        {COMITES.map((comite) => {
+                          const membros = membrosComite(usuarios, comite.membros).filter((id) => !form.observadores.includes(id));
+                          const todosDentro = membros.length > 0 && membros.every((id) => form.convidados.includes(id));
+                          return (
+                            <DropdownMenuCheckboxItem
+                              key={comite.id}
+                              checked={todosDentro}
+                              onCheckedChange={() => setForm((f) => ({
+                                ...f,
+                                convidados: todosDentro
+                                  ? f.convidados.filter((id) => !membros.includes(id))
+                                  : [...new Set([...f.convidados, ...membros])],
+                              }))}
+                            >
+                              {comite.label} ({membros.length})
+                            </DropdownMenuCheckboxItem>
+                          );
+                        })}
+                      </DropdownMenuContent>
+                    </DropdownMenu>
+                    <button
+                      type="button"
+                      className="text-xs text-primary hover:underline"
+                      onClick={() => setForm((f) => {
+                        const todos = opcoesUsuarios.filter((o) => !f.observadores.includes(o.value)).map((o) => o.value);
+                        const jaTemTodos = todos.length > 0 && todos.every((v) => f.convidados.includes(v));
+                        return { ...f, convidados: jaTemTodos ? [] : todos };
+                      })}
+                    >
+                      {opcoesUsuarios.filter((o) => !form.observadores.includes(o.value)).every((o) => form.convidados.includes(o.value)) && form.convidados.length > 0
+                        ? "Limpar seleção"
+                        : "Selecionar todos"}
+                    </button>
+                  </div>
                 </div>
                 <SearchableMultiSelect
                   value={form.convidados}
@@ -586,6 +647,12 @@ export function ReuniaoFormCriar({ open, onOpenChange }: { open: boolean; onOpen
                 ))}
               </div>
             </div>
+
+            {avisosBloqueio.length > 0 && (
+              <div className="space-y-1 rounded-md border border-amber-500/30 bg-amber-500/10 p-2.5 text-xs text-amber-800 dark:text-amber-300">
+                {avisosBloqueio.map((aviso, i) => <p key={i}>⚠️ {aviso}</p>)}
+              </div>
+            )}
           </div>
 
           {/* 5. Pauta */}

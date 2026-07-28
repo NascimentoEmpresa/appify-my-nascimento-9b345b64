@@ -13,6 +13,7 @@ export interface CapaEdital {
 
   cidade: string | null;
   uf: string | null;
+  cliente: string | null;
   objeto: string | null;
   modalidade: string | null;
   local: string | null;
@@ -208,6 +209,7 @@ export function useCapaPromover(empresaId: string) {
     }) => {
       if (capa.status !== "Ganhamos") throw new Error("Apenas licitações ganhas podem ser promovidas.");
       if (capa.contrato_id) throw new Error("Já possui contrato vinculado.");
+      if (!capa.cliente?.trim()) throw new Error("Preencha o campo Cliente / Órgão na Capa antes de promover.");
 
       const nome = [capa.cidade, capa.objeto].filter(Boolean).join(" — ").trim() || "Contrato sem nome";
 
@@ -227,6 +229,20 @@ export function useCapaPromover(empresaId: string) {
         .single();
       if (cErr) throw cErr;
 
+      // Cria também o contrato oficial (public.contratos, plural) — é o que
+      // Financeiro/NF/Cobrança usam. Aditivo: não altera nada do fluxo de
+      // Implantação acima, só acrescenta esse insert.
+      const { error: pcErr } = await (supabase as any).from("contratos").insert({
+        empresa_id: empresaId,
+        nome,
+        cliente: capa.cliente.trim(),
+        data_inicio: capa.data_inicio,
+        status: "ativo",
+        capa_id: capa.id,
+        grade_id: capa.grade_id,
+      });
+      if (pcErr) throw pcErr;
+
       const now = new Date().toLocaleString("pt-BR");
       const historico = [...(capa.historico ?? [])];
       historico.push({ ts: now, campo: "Reunião de alinhamento", de: "—", para: reuniaoAlinhamento });
@@ -242,7 +258,8 @@ export function useCapaPromover(empresaId: string) {
     onSuccess: (contrato) => {
       qc.invalidateQueries({ queryKey: QK(empresaId) });
       qc.invalidateQueries({ queryKey: ["implantacao", empresaId] });
-      toast({ title: `Contrato "${contrato.nome}" criado no módulo de Implantação!` });
+      qc.invalidateQueries({ queryKey: ["contratos_erp", empresaId] });
+      toast({ title: `Contrato "${contrato.nome}" criado no módulo de Implantação e em Contratos!` });
     },
     onError: (e: Error) => toast({ title: "Erro", description: e.message, variant: "destructive" }),
   });

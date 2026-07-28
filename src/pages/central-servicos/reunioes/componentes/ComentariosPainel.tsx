@@ -9,7 +9,7 @@ function iniciais(nome: string): string {
   return nome.split(/\s+/).filter(Boolean).slice(0, 2).map((p) => p[0]?.toUpperCase()).join("");
 }
 
-// Comentário lateral — só visual na solicitação, nunca entra no PDF gerado.
+// Comentário lateral — entra na seção "Encaminhamentos" do PDF final da ata.
 export function ComentariosPainel({
   comentarios, usuarios, userId, podeGerenciar, onComentar, onRemoverComentario,
 }: {
@@ -34,7 +34,7 @@ export function ComentariosPainel({
   return (
     <div className="flex h-[420px] min-h-0 min-w-0 flex-col">
       <p className="mb-2 shrink-0 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-        Comentários (não entram no PDF)
+        Encaminhamentos
       </p>
       <div className="min-h-0 flex-1 space-y-3 overflow-y-auto pr-1">
         {comentarios.map((c) => {

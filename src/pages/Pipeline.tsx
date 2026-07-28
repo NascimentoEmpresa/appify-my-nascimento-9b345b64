@@ -1,7 +1,4 @@
 import { useState, useMemo, useEffect } from "react";
-
-const normName = (s: string) =>
-  s.toUpperCase().normalize("NFD").replace(/[̀-ͯ]/g, "");
 import { PageHeader } from "@/components/layout/PageHeader";
 import { useEmpresaAtiva } from "@/context/EmpresaAtivaContext";
 import { usePermissoes } from "@/context/PermissoesContext";
@@ -49,6 +46,9 @@ import {
 } from "@/components/ui/select";
 import { Plus, Pencil, Trash2, FileText, Eye, History, Upload, CheckCircle2, XCircle, Trophy } from "lucide-react";
 import * as XLSX from "xlsx";
+
+const normName = (s: string) =>
+  s.toUpperCase().normalize("NFD").replace(/[̀-ͯ]/g, "");
 
 // ── Constantes ─────────────────────────────────────────────────────────────
 
