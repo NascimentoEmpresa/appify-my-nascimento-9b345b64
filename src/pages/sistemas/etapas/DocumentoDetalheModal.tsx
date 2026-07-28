@@ -212,7 +212,7 @@ export function DocumentoDetalheModal({
 
   return (
     <Dialog open onOpenChange={(o) => !o && onClose()}>
-      <DialogContent className="max-w-2xl max-h-[85vh] overflow-y-auto">
+      <DialogContent className="max-w-[90vw] max-h-[92vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>Anexo {documento.numero} – {documento.nome} ({documento.sigla})</DialogTitle>
         </DialogHeader>
