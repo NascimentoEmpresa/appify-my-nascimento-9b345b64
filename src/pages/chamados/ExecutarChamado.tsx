@@ -15,12 +15,12 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { CheckCircle2, MessageSquare, XCircle, Paperclip, ArrowLeft, Trash2 } from "lucide-react";
+import { CheckCircle2, MessageSquare, XCircle, Paperclip, ArrowLeft, Trash2, Star } from "lucide-react";
 import { ExcluirChamadoDialog } from "./ExcluirChamadoDialog";
 import {
-  StatusBadge, PrioridadeBadge, STATUS_CHAMADO,
+  StatusBadge, PrioridadeBadge, STATUS_CHAMADO, Estrelas,
   CATEGORIAS, TIPOS, IMPACTOS, URGENCIAS, AMBIENTES, labelDe, moduloLabel, fmtData, fmtDataHora,
-  BUCKET_CHAMADOS, type Chamado, type Anexo, type Evento,
+  BUCKET_CHAMADOS, type Chamado, type Anexo, type Evento, type AvaliacaoChamado,
 } from "./types";
 
 export default function ExecutarChamado() {
@@ -70,6 +70,15 @@ export default function ExecutarChamado() {
     queryFn: async () => {
       const { data } = await (supabase as any).from("CHAMADO_SISTEMA_EVENTO").select("*").eq("chamado_id", id).order("created_at", { ascending: false });
       return (data ?? []) as Evento[];
+    },
+  });
+
+  const { data: avaliacao } = useQuery({
+    queryKey: ["chamado-avaliacao", id],
+    enabled: !!id,
+    queryFn: async () => {
+      const { data } = await (supabase as any).from("CHAMADO_SISTEMA_AVALIACAO").select("*").eq("chamado_id", id).maybeSingle();
+      return (data ?? null) as AvaliacaoChamado | null;
     },
   });
 
@@ -177,6 +186,15 @@ export default function ExecutarChamado() {
             <Card className="space-y-1 p-4">
               <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Observação do gerente</p>
               <p className="whitespace-pre-wrap text-sm">{chamado.observacao_gerente}</p>
+            </Card>
+          )}
+
+          {avaliacao && (
+            <Card className="space-y-1.5 border-warning/30 bg-warning/5 p-4">
+              <p className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wider text-warning"><Star className="h-3.5 w-3.5" /> Avaliação do solicitante</p>
+              <Estrelas valor={avaliacao.estrelas} size={20} />
+              {avaliacao.comentario && <p className="whitespace-pre-wrap text-sm">{avaliacao.comentario}</p>}
+              <p className="text-[11px] text-muted-foreground">{fmtDataHora(avaliacao.created_at)}</p>
             </Card>
           )}
 

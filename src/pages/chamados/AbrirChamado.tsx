@@ -1,5 +1,6 @@
 import { useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
+import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
 import { useVinculoEmpregado } from "@/hooks/useVinculoEmpregado";
@@ -15,7 +16,7 @@ import { Label } from "@/components/ui/label";
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
-import { Flag, UploadCloud, Info, XCircle, CheckCircle2, Lightbulb, Clock, X } from "lucide-react";
+import { Flag, UploadCloud, Info, XCircle, CheckCircle2, Lightbulb, Clock, X, Star } from "lucide-react";
 import {
   CATEGORIAS, TIPOS, IMPACTOS, URGENCIAS, MODULOS_ERP, AMBIENTES, PRIORIDADES, BUCKET_CHAMADOS,
 } from "./types";
@@ -34,6 +35,16 @@ export default function AbrirChamado({ base = "/app/central-servicos/chamados" }
   const { empregado } = useVinculoEmpregado();
   const { canAbrir, loading: permLoading } = useChamadoPerms();
   const { toast } = useToast();
+
+  // Avaliações pendentes: não pode abrir novo chamado enquanto houver chamado
+  // concluído sem avaliação (regra também enforçada por trigger no banco).
+  const { data: avaliacoesPendentes = [] } = useQuery({
+    queryKey: ["chamados-avaliacoes-pendentes"],
+    queryFn: async () => {
+      const { data } = await (supabase as any).rpc("chamados_meus_avaliacoes_pendentes");
+      return (data ?? []) as Array<{ id: string; numero: string; assunto: string }>;
+    },
+  });
 
   const nome = empregado?.nome || (user?.user_metadata as any)?.nome || user?.email || "—";
   const setor = empregado?.setor || "—";
@@ -116,6 +127,29 @@ export default function AbrirChamado({ base = "/app/central-servicos/chamados" }
         <Card className="p-6 text-sm text-muted-foreground">
           Você não tem permissão para abrir chamados. Fale com o administrador para liberar
           <b> Chamados — Abrir chamado (solicitar)</b> em Acesso por Usuário.
+        </Card>
+      </div>
+    );
+  }
+
+  if (avaliacoesPendentes.length > 0) {
+    return (
+      <div>
+        <PageHeader title="Abrir Novo Chamado" module="Central de Serviços" breadcrumb={["Chamados de Sistemas", "Abrir Novo Chamado"]} />
+        <Card className="space-y-3 border-warning/40 bg-warning/5 p-6">
+          <p className="flex items-center gap-1.5 text-sm font-bold text-warning"><Star className="h-4 w-4" /> Você tem avaliação(ões) pendente(s)</p>
+          <p className="text-sm text-muted-foreground">
+            Antes de abrir um novo chamado, avalie {avaliacoesPendentes.length === 1 ? "o chamado concluído" : `os ${avaliacoesPendentes.length} chamados concluídos`} abaixo:
+          </p>
+          <div className="space-y-1.5">
+            {avaliacoesPendentes.map((p) => (
+              <button key={p.id} onClick={() => nav(`${base}/${p.id}/acompanhar`)}
+                className="flex w-full items-center justify-between gap-2 rounded border border-border px-3 py-2 text-left text-sm hover:border-warning/50">
+                <span className="min-w-0 flex-1 truncate"><span className="font-mono text-xs font-semibold">#{p.numero}</span> {p.assunto}</span>
+                <span className="flex shrink-0 items-center gap-1 text-warning"><Star className="h-4 w-4" /> Avaliar</span>
+              </button>
+            ))}
+          </div>
         </Card>
       </div>
     );

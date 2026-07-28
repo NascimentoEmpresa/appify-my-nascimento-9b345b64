@@ -5,7 +5,7 @@
 // =====================================================================
 import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
-import type { LucideIcon } from "lucide-react";
+import { Star, type LucideIcon } from "lucide-react";
 
 // ---- Opções (options de select / checkbox) --------------------------
 export const CATEGORIAS = [
@@ -141,6 +141,15 @@ export interface Evento {
   created_at: string;
 }
 
+export interface AvaliacaoChamado {
+  id: string;
+  chamado_id: string;
+  solicitante_id: string;
+  estrelas: number;
+  comentario: string | null;
+  created_at: string;
+}
+
 export const BUCKET_CHAMADOS = "chamados-sistemas";
 
 // ---- Helpers de data ------------------------------------------------
@@ -197,5 +206,17 @@ export function StatusBadge({ status }: { status: string }) {
 export function PrioridadeBadge({ prioridade }: { prioridade: string }) {
   const p = PRIORIDADES[prioridade] ?? { label: prioridade, cls: "" };
   return <Badge variant="outline" className={`text-[10px] font-semibold ${p.cls}`}>{p.label}</Badge>;
+}
+
+/** Estrelas somente-leitura (1..5). */
+export function Estrelas({ valor, size = 16 }: { valor: number; size?: number }) {
+  return (
+    <span className="inline-flex items-center gap-0.5">
+      {[1, 2, 3, 4, 5].map((n) => (
+        <Star key={n} style={{ width: size, height: size }}
+          className={n <= valor ? "fill-warning text-warning" : "text-muted-foreground/40"} />
+      ))}
+    </span>
+  );
 }
 
