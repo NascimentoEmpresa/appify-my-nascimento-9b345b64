@@ -1,6 +1,6 @@
 // =====================================================================
 // CHAMADOS DE SISTEMAS — tipos, enums/labels e componentes compartilhados
-// entre as 6 telas (abrir, meus chamados, painel de distribuição,
+// entre as telas (abrir, meus chamados, painel de distribuição,
 // coordenação, painel do dev, execução).
 // =====================================================================
 import { Badge } from "@/components/ui/badge";
@@ -86,13 +86,6 @@ export const STATUS_CHAMADO: Record<string, { label: string; cls: string }> = {
   reprovado:          { label: "Reprovado",          cls: "border-destructive/30 bg-destructive/10 text-destructive" },
 };
 
-export const STATUS_TAREFA: Record<string, { label: string; cls: string }> = {
-  pendente:                { label: "Pendente",                cls: "border-warning/30 bg-warning/10 text-warning" },
-  em_andamento:            { label: "Em andamento",            cls: "border-info/30 bg-info/10 text-info" },
-  aguardando_informacoes:  { label: "Aguardando informações",  cls: "border-primary/30 bg-primary/10 text-primary" },
-  concluida:               { label: "Concluída",               cls: "border-success/30 bg-success/10 text-success" },
-};
-
 export const labelDe = (opts: readonly { value: string; label: string }[], v?: string | null) =>
   opts.find((o) => o.value === v)?.label ?? (v ?? "—");
 
@@ -121,20 +114,6 @@ export interface Chamado {
   comentario_gerente: string | null;
   motivo_reprovacao: string | null;
   concluido_em: string | null;
-  created_at: string;
-  updated_at: string;
-}
-
-export interface Tarefa {
-  id: string;
-  chamado_id: string;
-  ordem: number;
-  titulo: string;
-  descricao: string | null;
-  prioridade: string;
-  status: string;
-  responsavel_id: string | null;
-  prazo: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -219,7 +198,3 @@ export function PrioridadeBadge({ prioridade }: { prioridade: string }) {
   return <Badge variant="outline" className={`text-[10px] font-semibold ${p.cls}`}>{p.label}</Badge>;
 }
 
-export function TarefaStatusBadge({ status }: { status: string }) {
-  const s = STATUS_TAREFA[status] ?? { label: status, cls: "" };
-  return <Badge variant="outline" className={`text-[10px] font-semibold ${s.cls}`}>{s.label}</Badge>;
-}

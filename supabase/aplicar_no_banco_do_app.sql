@@ -6069,3 +6069,22 @@ DROP FUNCTION IF EXISTS public.chamado_dev_liberado(uuid);
 
 NOTIFY pgrst, 'reload schema';
 
+
+-- ===== 20260803000001_chamados_remove_tarefas =====
+-- Remove o recurso de Tarefas dos Chamados de Sistemas.
+-- Recria a SELECT de CHAMADO_SISTEMA sem depender de TAREFA, dropa a tabela
+-- (policies/triggers/índices via CASCADE) e a função guard exclusiva.
+DROP POLICY IF EXISTS chamado_sistema_select ON public."CHAMADO_SISTEMA";
+CREATE POLICY chamado_sistema_select ON public."CHAMADO_SISTEMA"
+  FOR SELECT TO authenticated
+  USING (
+    solicitante_id = auth.uid()
+    OR responsavel_id = auth.uid()
+    OR public.chamado_sistema_gestor()
+  );
+
+DROP TABLE IF EXISTS public."CHAMADO_SISTEMA_TAREFA" CASCADE;
+
+DROP FUNCTION IF EXISTS public.chamado_sistema_tarefa_guard();
+
+NOTIFY pgrst, 'reload schema';

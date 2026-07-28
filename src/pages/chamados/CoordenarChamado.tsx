@@ -7,19 +7,12 @@ import { useToast } from "@/hooks/use-toast";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
-import {
-  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
-} from "@/components/ui/select";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Send, ShieldAlert, XCircle, CheckCircle2 } from "lucide-react";
 import {
-  Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
-} from "@/components/ui/table";
-import { ArrowUp, ArrowDown, Trash2, Plus, Send, ShieldAlert, XCircle, CheckCircle2 } from "lucide-react";
-import {
-  StatusBadge, PrioridadeBadge, TarefaStatusBadge, PRIORIDADES, iniciais, fmtDataHora, moduloLabel, type Chamado, type Tarefa,
+  StatusBadge, PrioridadeBadge, iniciais, fmtDataHora, moduloLabel, type Chamado,
 } from "./types";
 
 interface Dev { id: string; display_name: string; em_andamento: number; abertos: number; }
@@ -33,10 +26,6 @@ export default function CoordenarChamado() {
 
   const [responsavel, setResponsavel] = useState<string | null>(null);
   const [observacao, setObservacao] = useState("");
-  const [novoTitulo, setNovoTitulo] = useState("");
-  const [novaDescricao, setNovaDescricao] = useState("");
-  const [novaPrioridade, setNovaPrioridade] = useState("media");
-  const [novaPos, setNovaPos] = useState("fim");
   const [reprovando, setReprovando] = useState(false);
   const [motivo, setMotivo] = useState("");
   const [salvando, setSalvando] = useState(false);
@@ -63,50 +52,9 @@ export default function CoordenarChamado() {
     },
   });
 
-  const { data: tarefas = [] } = useQuery({
-    queryKey: ["chamado-tarefas", id],
-    enabled: !!id && gestor,
-    queryFn: async () => {
-      const { data, error } = await (supabase as any).from("CHAMADO_SISTEMA_TAREFA")
-        .select("*").eq("chamado_id", id).order("ordem", { ascending: true });
-      if (error) throw error;
-      return (data ?? []) as Tarefa[];
-    },
-  });
-
   const invalidar = () => {
-    qc.invalidateQueries({ queryKey: ["chamado-tarefas", id] });
     qc.invalidateQueries({ queryKey: ["chamado", id] });
     qc.invalidateQueries({ queryKey: ["chamados-todos"] });
-  };
-
-  const addTarefa = async () => {
-    if (!novoTitulo.trim()) { toast({ title: "Dê um título à tarefa.", variant: "destructive" }); return; }
-    const pos = novaPos === "inicio" ? 1 : novaPos === "fim" ? tarefas.length + 1 : Number(novaPos);
-    // Reordena as existentes >= pos.
-    for (const t of tarefas.filter((t) => t.ordem >= pos)) {
-      await (supabase as any).from("CHAMADO_SISTEMA_TAREFA").update({ ordem: t.ordem + 1 }).eq("id", t.id);
-    }
-    const { error } = await (supabase as any).from("CHAMADO_SISTEMA_TAREFA").insert({
-      chamado_id: id, titulo: novoTitulo.trim(), descricao: novaDescricao.trim() || null,
-      prioridade: novaPrioridade, ordem: pos, responsavel_id: responsavel,
-    });
-    if (error) { toast({ title: "Erro ao criar tarefa", description: error.message, variant: "destructive" }); return; }
-    setNovoTitulo(""); setNovaDescricao(""); setNovaPrioridade("media"); setNovaPos("fim");
-    invalidar();
-  };
-
-  const mover = async (t: Tarefa, dir: -1 | 1) => {
-    const vizinho = tarefas.find((o) => o.ordem === t.ordem + dir);
-    if (!vizinho) return;
-    await (supabase as any).from("CHAMADO_SISTEMA_TAREFA").update({ ordem: vizinho.ordem }).eq("id", t.id);
-    await (supabase as any).from("CHAMADO_SISTEMA_TAREFA").update({ ordem: t.ordem }).eq("id", vizinho.id);
-    invalidar();
-  };
-
-  const removerTarefa = async (t: Tarefa) => {
-    await (supabase as any).from("CHAMADO_SISTEMA_TAREFA").delete().eq("id", t.id);
-    invalidar();
   };
 
   const atribuir = async () => {
@@ -117,12 +65,8 @@ export default function CoordenarChamado() {
       responsavel_id: responsavel, status: "em_andamento", observacao_gerente: observacao.trim() || null,
     }).eq("id", id);
     if (error) { setSalvando(false); toast({ title: "Erro ao atribuir", description: error.message, variant: "destructive" }); return; }
-    // Garante que as tarefas fiquem com o responsável escolhido.
-    for (const t of tarefas.filter((t) => t.responsavel_id !== responsavel)) {
-      await (supabase as any).from("CHAMADO_SISTEMA_TAREFA").update({ responsavel_id: responsavel }).eq("id", t.id);
-    }
     await (supabase as any).from("CHAMADO_SISTEMA_EVENTO").insert({
-      chamado_id: id, tipo: "evento", texto: `Chamado direcionado a ${nomeDev}${tarefas.length ? ` com ${tarefas.length} tarefa(s)` : ""}`,
+      chamado_id: id, tipo: "evento", texto: `Chamado direcionado a ${nomeDev}`,
     });
     supabase.functions.invoke("enviar-notificacao-push", { body: { chamado_id: id, evento: "atribuido" } }).catch(() => {});
     setSalvando(false);
@@ -193,82 +137,15 @@ export default function CoordenarChamado() {
             </div>
           </Card>
 
-          {/* 2. Tarefas */}
-          <Card className="p-4">
-            <p className="mb-3 text-sm font-bold">2. Tarefas do responsável <span className="text-muted-foreground">— fila por prioridade</span></p>
-            <div className="overflow-x-auto">
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead className="w-24">Ordem</TableHead>
-                    <TableHead>Tarefa</TableHead>
-                    <TableHead>Prioridade</TableHead>
-                    <TableHead>Status</TableHead>
-                    <TableHead className="w-10" />
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {tarefas.map((t, i) => (
-                    <TableRow key={t.id}>
-                      <TableCell>
-                        <div className="flex items-center gap-1">
-                          <span className="text-xs font-semibold">{t.ordem}</span>
-                          <button disabled={i === 0} onClick={() => mover(t, -1)} className="text-muted-foreground disabled:opacity-30"><ArrowUp className="h-3.5 w-3.5" /></button>
-                          <button disabled={i === tarefas.length - 1} onClick={() => mover(t, 1)} className="text-muted-foreground disabled:opacity-30"><ArrowDown className="h-3.5 w-3.5" /></button>
-                        </div>
-                      </TableCell>
-                      <TableCell>
-                        <p className="text-sm font-medium">{t.titulo}</p>
-                        {t.descricao && <p className="text-[11px] text-muted-foreground">{t.descricao}</p>}
-                      </TableCell>
-                      <TableCell><PrioridadeBadge prioridade={t.prioridade} /></TableCell>
-                      <TableCell><TarefaStatusBadge status={t.status} /></TableCell>
-                      <TableCell>
-                        <button onClick={() => removerTarefa(t)} className="text-muted-foreground hover:text-destructive"><Trash2 className="h-3.5 w-3.5" /></button>
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                  {tarefas.length === 0 && (
-                    <TableRow><TableCell colSpan={5} className="py-4 text-center text-xs text-muted-foreground">Nenhuma tarefa ainda.</TableCell></TableRow>
-                  )}
-                </TableBody>
-              </Table>
-            </div>
-
-            {/* Nova tarefa */}
-            {canCoordenar && <div className="mt-3 space-y-2 rounded-lg border border-dashed border-border p-3">
-              <p className="text-xs font-semibold">Nova tarefa</p>
-              <Input placeholder="Título da tarefa" value={novoTitulo} onChange={(e) => setNovoTitulo(e.target.value)} />
-              <Textarea rows={2} placeholder="Descrição (opcional)" value={novaDescricao} onChange={(e) => setNovaDescricao(e.target.value)} />
-              <div className="flex flex-wrap items-center gap-2">
-                <Select value={novaPrioridade} onValueChange={setNovaPrioridade}>
-                  <SelectTrigger className="h-8 w-32 text-xs"><SelectValue /></SelectTrigger>
-                  <SelectContent>
-                    {Object.entries(PRIORIDADES).map(([v, p]) => <SelectItem key={v} value={v}>{p.label}</SelectItem>)}
-                  </SelectContent>
-                </Select>
-                <Select value={novaPos} onValueChange={setNovaPos}>
-                  <SelectTrigger className="h-8 w-40 text-xs"><SelectValue /></SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="inicio">1º lugar</SelectItem>
-                    {tarefas.map((_, i) => <SelectItem key={i} value={String(i + 2)}>{i + 2}º lugar</SelectItem>)}
-                    <SelectItem value="fim">No fim da fila</SelectItem>
-                  </SelectContent>
-                </Select>
-                <Button size="sm" className="gap-1.5" onClick={addTarefa}><Plus className="h-3.5 w-3.5" /> Adicionar</Button>
-              </div>
-            </div>}
-          </Card>
-
-          {/* 3. Observação + ações */}
+          {/* 2. Observação + ações */}
           <Card className="space-y-3 p-4">
-            <p className="text-sm font-bold">3. Observação para o responsável <span className="font-normal text-muted-foreground">(opcional)</span></p>
+            <p className="text-sm font-bold">2. Observação para o responsável <span className="font-normal text-muted-foreground">(opcional)</span></p>
             <Textarea rows={3} maxLength={1000} placeholder="Informe orientações, contexto ou observações importantes…" value={observacao} onChange={(e) => setObservacao(e.target.value)} />
             <div className="flex items-center justify-between">
               {canAprovar
                 ? <Button variant="outline" className="gap-1.5 text-destructive" onClick={() => setReprovando(true)}><XCircle className="h-4 w-4" /> Reprovar chamado</Button>
                 : <span />}
-              {canCoordenar && <Button className="gap-1.5" disabled={salvando} onClick={atribuir}><Send className="h-4 w-4" /> Atribuir tarefas e direcionar chamado</Button>}
+              {canCoordenar && <Button className="gap-1.5" disabled={salvando} onClick={atribuir}><Send className="h-4 w-4" /> Direcionar chamado</Button>}
             </div>
           </Card>
         </div>

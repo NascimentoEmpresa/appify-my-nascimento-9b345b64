@@ -16,9 +16,9 @@ import {
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { CheckCircle2, MessageSquare, XCircle, Paperclip, ArrowLeft } from "lucide-react";
 import {
-  StatusBadge, PrioridadeBadge, TarefaStatusBadge, STATUS_CHAMADO, STATUS_TAREFA,
+  StatusBadge, PrioridadeBadge, STATUS_CHAMADO,
   CATEGORIAS, TIPOS, IMPACTOS, URGENCIAS, AMBIENTES, labelDe, moduloLabel, fmtData, fmtDataHora,
-  BUCKET_CHAMADOS, type Chamado, type Tarefa, type Anexo, type Evento,
+  BUCKET_CHAMADOS, type Chamado, type Anexo, type Evento,
 } from "./types";
 
 export default function ExecutarChamado() {
@@ -52,15 +52,6 @@ export default function ExecutarChamado() {
     },
   });
 
-  const { data: tarefas = [] } = useQuery({
-    queryKey: ["chamado-tarefas", id],
-    enabled: !!id,
-    queryFn: async () => {
-      const { data } = await (supabase as any).from("CHAMADO_SISTEMA_TAREFA").select("*").eq("chamado_id", id).order("ordem");
-      return (data ?? []) as Tarefa[];
-    },
-  });
-
   const { data: anexos = [] } = useQuery({
     queryKey: ["chamado-anexos", id],
     enabled: !!id,
@@ -84,7 +75,7 @@ export default function ExecutarChamado() {
   const invalidar = () => {
     qc.invalidateQueries({ queryKey: ["chamado", id] });
     qc.invalidateQueries({ queryKey: ["chamado-eventos", id] });
-    qc.invalidateQueries({ queryKey: ["chamados-minhas-tarefas", user?.id] });
+    qc.invalidateQueries({ queryKey: ["chamados-meus-atribuidos", user?.id] });
   };
 
   const mudarStatus = async (status: string, texto: string, evento: string) => {
@@ -100,13 +91,6 @@ export default function ExecutarChamado() {
     const { error } = await (supabase as any).from("CHAMADO_SISTEMA").update({ prazo_previsto: prazo || null }).eq("id", id);
     if (error) { toast({ title: "Erro ao salvar prazo", description: error.message, variant: "destructive" }); return; }
     invalidar();
-  };
-
-  const mudarStatusTarefa = async (t: Tarefa, status: string) => {
-    const { error } = await (supabase as any).from("CHAMADO_SISTEMA_TAREFA").update({ status }).eq("id", t.id);
-    if (error) { toast({ title: "Erro na tarefa", description: error.message, variant: "destructive" }); return; }
-    qc.invalidateQueries({ queryKey: ["chamado-tarefas", id] });
-    qc.invalidateQueries({ queryKey: ["chamados-minhas-tarefas", user?.id] });
   };
 
   const salvarObs = async () => {
@@ -152,7 +136,7 @@ export default function ExecutarChamado() {
         subtitle={chamado.assunto}
         module="Sistemas"
         breadcrumb={["Chamados de Sistemas", `#${chamado.numero}`]}
-        actions={<Button variant="outline" className="gap-1.5" onClick={() => nav("/app/sistemas/chamados/dev")}><ArrowLeft className="h-4 w-4" /> Minhas tarefas</Button>}
+        actions={<Button variant="outline" className="gap-1.5" onClick={() => nav("/app/sistemas/chamados/dev")}><ArrowLeft className="h-4 w-4" /> Meus chamados</Button>}
       />
 
       <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_300px]">
@@ -210,31 +194,6 @@ export default function ExecutarChamado() {
             </div>
           </Card>
 
-          {/* Minhas tarefas neste chamado */}
-          {tarefas.length > 0 && (
-            <Card className="space-y-2 p-4">
-              <p className="text-sm font-bold">Tarefas deste chamado</p>
-              {tarefas.map((t) => (
-                <div key={t.id} className="flex items-center gap-2 rounded border border-border px-2.5 py-2">
-                  <span className="text-xs font-semibold text-muted-foreground">{t.ordem}</span>
-                  <div className="min-w-0 flex-1">
-                    <p className="text-sm font-medium">{t.titulo}</p>
-                    {t.descricao && <p className="text-[11px] text-muted-foreground">{t.descricao}</p>}
-                  </div>
-                  <PrioridadeBadge prioridade={t.prioridade} />
-                  {podeAgir && t.responsavel_id === user?.id ? (
-                    <Select value={t.status} onValueChange={(v) => mudarStatusTarefa(t, v)}>
-                      <SelectTrigger className="h-8 w-44 text-xs"><SelectValue /></SelectTrigger>
-                      <SelectContent>
-                        {Object.entries(STATUS_TAREFA).map(([v, s]) => <SelectItem key={v} value={v}>{s.label}</SelectItem>)}
-                      </SelectContent>
-                    </Select>
-                  ) : <TarefaStatusBadge status={t.status} />}
-                </div>
-              ))}
-            </Card>
-          )}
-
           {/* Observações internas */}
           <Card className="space-y-2 p-4">
             <p className="text-sm font-bold">Observações internas <span className="font-normal text-muted-foreground">(visíveis só à equipe)</span></p>
@@ -264,7 +223,7 @@ export default function ExecutarChamado() {
         {/* Coluna de execução */}
         <div className="space-y-4">
           <Card className="space-y-3 p-4">
-            <p className="text-sm font-bold">Execução da tarefa</p>
+            <p className="text-sm font-bold">Execução do chamado</p>
             <div>
               <p className="mb-1 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Status atual</p>
               {podeAgir ? (
