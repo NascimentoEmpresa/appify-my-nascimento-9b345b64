@@ -162,7 +162,7 @@ export default function EmissaoNF() {
         }
       />
 
-      <div className="grid grid-cols-5 gap-4 min-h-[600px]">
+      <div className="grid grid-cols-5 gap-4 h-[calc(100vh-220px)] min-h-[480px]">
         {/* Lista de contratos */}
         <div className="col-span-2 card-elevated flex flex-col overflow-hidden">
           <div className="border-b border-border p-3">
@@ -742,29 +742,27 @@ function NovaNfDialog({ open, onOpenChange, empresaId, contratos, nfParaEditar, 
                   {contratoSelecionado?.nome ?? nfParaEditar?.contrato?.nome ?? "-"}
                 </div>
               ) : (
-                <>
-                  <Select value={contratoId} onValueChange={setContratoId}>
-                    <SelectTrigger>
-                      <SelectValue placeholder="Selecione o contrato" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {contratos.map((c) => (
-                        <SelectItem key={c.id} value={c.id}>
-                          {c.nome}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                  {contratoId && !dadosFiscais && (
-                    <p className="mt-1 text-xs text-destructive">
-                      Contrato sem Dados Fiscais cadastrados.{" "}
-                      <Link to="/app/licitacoes/contratos" className="underline">
-                        Cadastrar agora
-                      </Link>
-                      .
-                    </p>
-                  )}
-                </>
+                <Select value={contratoId} onValueChange={setContratoId}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="Selecione o contrato" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {contratos.map((c) => (
+                      <SelectItem key={c.id} value={c.id}>
+                        {c.nome}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              )}
+              {contratoId && !dadosFiscais && (
+                <p className="mt-1 text-xs text-destructive">
+                  Contrato sem Dados Fiscais cadastrados — por isso Vlr Bruto/Líquido não aparecem abaixo.{" "}
+                  <Link to="/app/licitacoes/contratos" className="underline">
+                    Cadastrar agora
+                  </Link>
+                  .
+                </p>
               )}
             </div>
             <div>
