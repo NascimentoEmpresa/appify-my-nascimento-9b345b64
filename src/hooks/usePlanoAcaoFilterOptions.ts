@@ -21,6 +21,8 @@ export interface PlanoAcaoFilterOptions {
   setores: SearchableOption[];
   responsaveis: SearchableOption[];
   empresas: SearchableOption[];
+  /** empresa_id -> código, pra exibir na coluna Empresa da Lista. */
+  empresaLabelById: Record<string, string>;
 }
 
 const cmp = (a: SearchableOption, b: SearchableOption) =>
@@ -40,6 +42,26 @@ export function usePlanoAcaoFilterOptions(rows: PlanoAcaoRow[]): PlanoAcaoFilter
     () => Array.from(new Set(rows.map((r) => r.responsavel_profile_id).filter((id): id is string => !!id))),
     [rows],
   );
+
+  const empresaIds = useMemo(
+    () => Array.from(new Set(rows.map((r) => r.empresa_id).filter((id): id is string => !!id))),
+    [rows],
+  );
+
+  // Nome/código da empresa buscado à parte, sem embed do PostgREST — não há
+  // FK declarada de plano_acao.empresa_id para empresas(id), então
+  // "empresas:empresa_id(...)" no select do usePlanoAcoes dava 400 em toda
+  // a query (derrubava a tela inteira, não só o filtro de Empresa).
+  const { data: empresaLabels = {} } = useQuery({
+    queryKey: ["plano_acao_filter_empresas", empresaIds],
+    enabled: empresaIds.length > 0,
+    queryFn: async (): Promise<Record<string, string>> => {
+      const { data } = await supabase.from("empresas").select("id, codigo, razao_social").in("id", empresaIds);
+      const map: Record<string, string> = {};
+      (data ?? []).forEach((e: any) => { map[e.id] = e.codigo ?? e.razao_social ?? e.id; });
+      return map;
+    },
+  });
 
   // Nome do responsável resolvido direto de profiles (fonte viva) — nunca do
   // texto congelado em responsavel_nome_origem, que é só um snapshot salvo
@@ -64,14 +86,9 @@ export function usePlanoAcaoFilterOptions(rows: PlanoAcaoRow[]): PlanoAcaoFilter
 
     // Empresa: value = empresa_id (não o código), pra não colidir se dois
     // códigos coincidirem por acaso.
-    const empresasMap = new Map<string, string>();
-    rows.forEach((r) => {
-      if (r.empresa_id && !empresasMap.has(r.empresa_id)) {
-        empresasMap.set(r.empresa_id, r.empresas?.codigo ?? r.empresa_id);
-      }
-    });
-    const empresas: SearchableOption[] = Array.from(empresasMap.entries())
-      .map(([value, label]) => ({ value, label }))
+    const empresaIdsUnicos = Array.from(new Set(rows.map((r) => r.empresa_id).filter(Boolean)));
+    const empresas: SearchableOption[] = empresaIdsUnicos
+      .map((id) => ({ value: id, label: empresaLabels[id] ?? id }))
       .sort(cmp);
 
     // Responsável: canônico (profile_id) preferencial; agrupar por id.
@@ -100,8 +117,8 @@ export function usePlanoAcaoFilterOptions(rows: PlanoAcaoRow[]): PlanoAcaoFilter
       })),
     ].sort(cmp);
 
-    return { comites, areas, setores, responsaveis, empresas };
-  }, [rows, profileNames]);
+    return { comites, areas, setores, responsaveis, empresas, empresaLabelById: empresaLabels };
+  }, [rows, profileNames, empresaLabels]);
 }
 
 /**
