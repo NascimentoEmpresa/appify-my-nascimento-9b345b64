@@ -10,9 +10,11 @@ import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { ArrowLeft, MessageSquarePlus, Paperclip, Send, RotateCcw, Star } from "lucide-react";
+import { AvaliarChamadoDialog } from "./AvaliarChamadoDialog";
 import {
   StatusBadge, PrioridadeBadge, Estrelas,
-  CATEGORIAS, TIPOS, IMPACTOS, URGENCIAS, AMBIENTES, labelDe, moduloLabel, fmtData, fmtDataHora,
+  CATEGORIAS, TIPOS, IMPACTOS, URGENCIAS, AMBIENTES, CRITERIOS_AVALIACAO, mediaAvaliacao,
+  labelDe, moduloLabel, fmtData, fmtDataHora,
   BUCKET_CHAMADOS, type Chamado, type Anexo, type Evento, type AvaliacaoChamado,
 } from "./types";
 
@@ -28,10 +30,7 @@ export default function AcompanharChamado({ base = "/app/central-servicos/chamad
 
   const [texto, setTexto] = useState("");
   const [enviando, setEnviando] = useState(false);
-  const [estrelas, setEstrelas] = useState(0);
-  const [hoverEstrela, setHoverEstrela] = useState(0);
-  const [comentarioAval, setComentarioAval] = useState("");
-  const [avaliando, setAvaliando] = useState(false);
+  const [avaliarAberto, setAvaliarAberto] = useState(false);
 
   // Abriu o chamado → o solicitante viu a novidade.
   useEffect(() => { chamadosMarkSeen(user?.id, "meus"); }, [user?.id]);
@@ -88,19 +87,6 @@ export default function AcompanharChamado({ base = "/app/central-servicos/chamad
     qc.invalidateQueries({ queryKey: ["chamado-eventos", id] });
     qc.invalidateQueries({ queryKey: ["chamados-meus", user?.id] });
     qc.invalidateQueries({ queryKey: ["chamados-meus-stats"] });
-  };
-
-  const enviarAvaliacao = async () => {
-    if (estrelas < 1 || avaliando) return;
-    setAvaliando(true);
-    const { error } = await (supabase as any).from("CHAMADO_SISTEMA_AVALIACAO").insert({
-      chamado_id: id, estrelas, comentario: comentarioAval.trim() || null,
-    });
-    setAvaliando(false);
-    if (error) { toast({ title: "Erro ao enviar avaliação", description: error.message, variant: "destructive" }); return; }
-    toast({ title: "Avaliação enviada", description: "Obrigado pelo retorno!" });
-    qc.invalidateQueries({ queryKey: ["chamado-avaliacao", id] });
-    qc.invalidateQueries({ queryKey: ["chamados-avaliacoes-pendentes"] });
   };
 
   const enviarInfo = async () => {
@@ -265,27 +251,31 @@ export default function AcompanharChamado({ base = "/app/central-servicos/chamad
           {/* Avaliação — só em chamados concluídos */}
           {chamado.status === "concluido" && (
             avaliacao ? (
-              <Card className="space-y-2 p-4">
-                <p className="flex items-center gap-1.5 text-sm font-bold"><Star className="h-4 w-4 text-warning" /> Sua avaliação</p>
-                <Estrelas valor={avaliacao.estrelas} size={22} />
-                {avaliacao.comentario && <p className="whitespace-pre-wrap text-xs text-muted-foreground">{avaliacao.comentario}</p>}
+              <Card className="animate-rise-in space-y-3 p-4">
+                <div className="flex items-center justify-between">
+                  <p className="flex items-center gap-1.5 text-sm font-bold"><Star className="h-4 w-4 text-warning" /> Sua avaliação</p>
+                  <div className="flex items-center gap-1.5">
+                    <Estrelas valor={mediaAvaliacao(avaliacao)} size={16} />
+                    <span className="text-xs font-semibold text-muted-foreground">{mediaAvaliacao(avaliacao).toFixed(1).replace(".", ",")}</span>
+                  </div>
+                </div>
+                <div className="space-y-1.5">
+                  {CRITERIOS_AVALIACAO.map((c) => (
+                    <div key={c.key} className="flex items-center justify-between gap-2 text-xs">
+                      <span className="text-muted-foreground">{c.titulo}</span>
+                      <Estrelas valor={avaliacao[c.key]} size={13} />
+                    </div>
+                  ))}
+                </div>
+                {avaliacao.comentario && <p className="whitespace-pre-wrap border-t border-border/60 pt-2 text-xs text-muted-foreground">{avaliacao.comentario}</p>}
                 <p className="text-[11px] text-muted-foreground">Enviada em {fmtDataHora(avaliacao.created_at)}</p>
               </Card>
             ) : ehSolicitante ? (
-              <Card className="space-y-3 border-warning/40 bg-warning/5 p-4">
-                <p className="flex items-center gap-1.5 text-sm font-bold"><Star className="h-4 w-4 text-warning" /> Avaliar atendimento</p>
-                <p className="text-xs text-muted-foreground">Chamado concluído. Dê de 1 a 5 estrelas — o comentário é opcional.</p>
-                <div className="flex items-center gap-1" onMouseLeave={() => setHoverEstrela(0)}>
-                  {[1, 2, 3, 4, 5].map((n) => (
-                    <button key={n} type="button" aria-label={`${n} estrela(s)`} className="p-0.5"
-                      onMouseEnter={() => setHoverEstrela(n)} onClick={() => setEstrelas(n)}>
-                      <Star className={`h-7 w-7 transition-colors ${n <= (hoverEstrela || estrelas) ? "fill-warning text-warning" : "text-muted-foreground/40"}`} />
-                    </button>
-                  ))}
-                </div>
-                <Textarea rows={3} maxLength={1000} placeholder="Comentário (opcional)…" value={comentarioAval} onChange={(e) => setComentarioAval(e.target.value)} />
-                <Button className="w-full gap-2" onClick={enviarAvaliacao} disabled={estrelas < 1 || avaliando}>
-                  <Star className="h-4 w-4" /> {avaliando ? "Enviando…" : "Enviar avaliação"}
+              <Card className="animate-rise-in space-y-3 border-warning/40 bg-warning/5 p-4">
+                <p className="flex items-center gap-1.5 text-sm font-bold"><Star className="h-4 w-4 text-warning animate-pulse-soft" /> Avaliar atendimento</p>
+                <p className="text-xs text-muted-foreground">Chamado concluído. Avalie o atendimento em 5 critérios — o comentário é opcional.</p>
+                <Button className="w-full gap-2 transition-transform active:scale-95" onClick={() => setAvaliarAberto(true)}>
+                  <Star className="h-4 w-4" /> Avaliar chamado
                 </Button>
               </Card>
             ) : null
@@ -298,6 +288,12 @@ export default function AcompanharChamado({ base = "/app/central-servicos/chamad
           )}
         </div>
       </div>
+
+      <AvaliarChamadoDialog
+        open={avaliarAberto}
+        onOpenChange={setAvaliarAberto}
+        chamado={{ id: chamado.id, numero: chamado.numero }}
+      />
     </div>
   );
 }
