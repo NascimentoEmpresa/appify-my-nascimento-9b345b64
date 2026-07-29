@@ -215,7 +215,9 @@ export default function PainelDesenvolvedor() {
         <StatCard icon={AlertTriangle} tone="destructive" label="Atrasados" value={stats.atrasados} />
       </div>
 
-      <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_300px]">
+      {/* items-start: cada coluna com a altura do próprio conteúdo (evita o
+          vão branco embaixo da tabela quando a lista é curta). */}
+      <div className="grid items-start gap-4 lg:grid-cols-[minmax(0,1fr)_300px]">
         <Card className="p-4">
           <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
             <p className="text-sm font-bold">Meus chamados atribuídos</p>
@@ -234,7 +236,8 @@ export default function PainelDesenvolvedor() {
             <p className="py-8 text-center text-sm text-muted-foreground">Carregando…</p>
           ) : (
             <div className="overflow-x-auto">
-              <Table>
+              {/* Mesmas células compactas do Painel de Distribuição. */}
+              <Table className="[&_td]:px-2 [&_td]:py-2.5 [&_th]:h-9 [&_th]:px-2">
                 <TableHeader>
                   <TableRow>
                     <TableHead className="w-16 text-center">Fila</TableHead>

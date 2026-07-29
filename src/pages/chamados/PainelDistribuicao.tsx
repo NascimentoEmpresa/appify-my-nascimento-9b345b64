@@ -222,7 +222,9 @@ export default function PainelDistribuicao() {
         <StatCard icon={AlertTriangle} tone="destructive" label="Atrasados" value={stats?.atrasados ?? 0} />
       </div>
 
-      <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_300px]">
+      {/* items-start: cada coluna fica com a altura do próprio conteúdo (sem o
+          card da esquerda esticar até a altura da coluna da direita). */}
+      <div className="grid items-start gap-4 lg:grid-cols-[minmax(0,1fr)_300px]">
         <Card className="p-4">
           {/* Abas */}
           <div className="mb-3 flex flex-wrap gap-1 border-b border-border pb-2">
@@ -267,7 +269,9 @@ export default function PainelDistribuicao() {
             <p className="py-8 text-center text-sm text-muted-foreground">Carregando…</p>
           ) : (
             <div className="overflow-x-auto">
-              <Table>
+              {/* Células compactas: com o padding padrão (p-4) as 10 colunas
+                  estouram a largura do card e a tabela ganha scroll lateral. */}
+              <Table className="[&_td]:px-2 [&_td]:py-2.5 [&_th]:h-9 [&_th]:px-2">
                 <TableHeader>
                   <TableRow>
                     <TableHead className="w-24 text-center" title="Posição na fila geral e, entre parênteses, a posição na fila do responsável">
@@ -314,7 +318,9 @@ export default function PainelDistribuicao() {
                         )}
                       </TableCell>
                       <TableCell className="whitespace-nowrap font-mono text-xs font-semibold">#{c.numero}</TableCell>
-                      <TableCell className="max-w-[200px] truncate text-sm" title={c.assunto}>{c.assunto}</TableCell>
+                      <TableCell className="min-w-[150px] max-w-[240px] text-sm" title={c.assunto}>
+                        <span className="line-clamp-2">{c.assunto}</span>
+                      </TableCell>
                       <TableCell className="text-xs text-muted-foreground">{c.categorias.map((x) => labelDe(CATEGORIAS, x)).join(", ") || "—"}</TableCell>
                       <TableCell onClick={(e) => e.stopPropagation()}>
                         {c.status !== "concluido" && c.status !== "reprovado" ? (
