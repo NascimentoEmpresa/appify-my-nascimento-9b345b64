@@ -1,16 +1,19 @@
 import { useQuery } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
+import { useAuth } from "@/hooks/useAuth";
 import { Card } from "@/components/ui/card";
 import { History } from "lucide-react";
 import { fmtDataHora } from "./types";
 
-// Feed "Atualizações recentes" compartilhado pelos três painéis (solicitante,
-// gestor e desenvolvedor). Lê os últimos eventos de CHAMADO_SISTEMA_EVENTO — a
-// RLS já recorta o que cada papel pode ver:
-//   - gestor       → eventos de todos os chamados
-//   - responsável  → eventos dos chamados atribuídos a ele
-//   - solicitante  → eventos dos próprios chamados (sem observações internas)
+// Feed "Atualizações recentes" compartilhado pelos três painéis. O recorte NÃO
+// depende só da RLS (que é ampla para quem tem o painel/coordenação): cada tela
+// passa um `scope` que filtra explicitamente pelos chamados do usuário.
+//   - "all"         → coordenação: todos os chamados (RLS recorta).
+//   - "involved"    → desenvolvedor: só os chamados em que ele é solicitante ou
+//                     responsável (os que abriu + os direcionados a ele).
+//   - "solicitante" → abrir chamado: só os chamados que ELE abriu (sem
+//                     observações internas).
 // Atualiza sozinho a cada 60s.
 
 interface FeedEvento {
@@ -22,6 +25,8 @@ interface FeedEvento {
   created_at: string;
 }
 
+type ChamadoLabel = { numero: string; assunto: string; responsavel_id?: string | null };
+
 const DOT: Record<string, string> = {
   evento: "bg-info",
   comentario: "bg-primary",
@@ -31,14 +36,19 @@ const DOT: Record<string, string> = {
 export function FeedAtualizacoes({
   title = "Atualizações recentes",
   limit = 12,
+  scope = "all",
   buildHref,
 }: {
   title?: string;
   limit?: number;
+  /** Recorte do feed por envolvimento do usuário. Ver comentário no topo. */
+  scope?: "all" | "involved" | "solicitante";
   /** Se informado, cada item vira link para o chamado. */
   buildHref?: (chamadoId: string) => string;
 }) {
   const nav = useNavigate();
+  const { user } = useAuth();
+  const uid = user?.id ?? null;
 
   const { data: usuarios = [] } = useQuery({
     queryKey: ["chamados-usuarios"],
@@ -50,24 +60,57 @@ export function FeedAtualizacoes({
   const nomeDe = (uid: string | null) => (uid ? usuarios.find((u) => u.id === uid)?.display_name ?? "—" : "—");
 
   const { data: feed = { eventos: [], chamados: {} } } = useQuery({
-    queryKey: ["chamados-feed", limit],
+    queryKey: ["chamados-feed", scope, uid, limit],
+    enabled: scope === "all" || !!uid,
     refetchInterval: 60_000,
     staleTime: 30_000,
     queryFn: async () => {
-      const { data: evs } = await (supabase as any)
+      const chamados: Record<string, ChamadoLabel> = {};
+
+      // Recorte por envolvimento: descobre os chamados do usuário e usa como
+      // filtro explícito dos eventos (a RLS sozinha liberaria tudo p/ quem tem
+      // o painel). Já aproveita para montar os rótulos (número/assunto).
+      let ids: string[] | null = null;
+      if (scope !== "all") {
+        let q = (supabase as any)
+          .from("CHAMADO_SISTEMA")
+          .select("id, numero, assunto, solicitante_id, responsavel_id");
+        q = scope === "solicitante"
+          ? q.eq("solicitante_id", uid)
+          : q.or(`solicitante_id.eq.${uid},responsavel_id.eq.${uid}`);
+        const { data: chs } = await q;
+        ids = (chs ?? []).map((c: any) => c.id);
+        for (const c of chs ?? []) chamados[c.id] = { numero: c.numero, assunto: c.assunto, responsavel_id: c.responsavel_id };
+        if (ids.length === 0) return { eventos: [] as FeedEvento[], chamados };
+      }
+
+      let eq = (supabase as any)
         .from("CHAMADO_SISTEMA_EVENTO")
         .select("id, chamado_id, autor_id, tipo, texto, created_at")
         .order("created_at", { ascending: false })
-        .limit(limit);
-      const eventos = (evs ?? []) as FeedEvento[];
-      const ids = [...new Set(eventos.map((e) => e.chamado_id))];
-      const chamados: Record<string, { numero: string; assunto: string }> = {};
-      if (ids.length) {
-        const { data: chs } = await (supabase as any)
-          .from("CHAMADO_SISTEMA")
-          .select("id, numero, assunto")
-          .in("id", ids);
-        for (const c of chs ?? []) chamados[c.id] = { numero: c.numero, assunto: c.assunto };
+        // scope recortado pode descartar observações internas no filtro JS, então
+        // busca uma folga para não exibir menos itens que o limite.
+        .limit(scope === "all" ? limit : limit * 3);
+      if (ids) eq = eq.in("chamado_id", ids);
+      if (scope === "solicitante") eq = eq.neq("tipo", "observacao_interna");
+      const { data: evs } = await eq;
+      let eventos = (evs ?? []) as FeedEvento[];
+
+      // No painel do dev, observação interna só aparece nos chamados atribuídos
+      // a ele — não nos que ele apenas abriu como solicitante.
+      if (scope === "involved") {
+        eventos = eventos.filter((e) => e.tipo !== "observacao_interna" || chamados[e.chamado_id]?.responsavel_id === uid);
+      }
+      eventos = eventos.slice(0, limit);
+
+      // scope "all": busca os rótulos dos chamados dos eventos exibidos.
+      if (scope === "all") {
+        const eids = [...new Set(eventos.map((e) => e.chamado_id))];
+        if (eids.length) {
+          const { data: chs } = await (supabase as any)
+            .from("CHAMADO_SISTEMA").select("id, numero, assunto").in("id", eids);
+          for (const c of chs ?? []) chamados[c.id] = { numero: c.numero, assunto: c.assunto };
+        }
       }
       return { eventos, chamados };
     },

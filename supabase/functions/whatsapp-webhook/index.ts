@@ -179,9 +179,13 @@ Deno.serve(async (req) => {
           : msg.type === "interactive" ? (msg.interactive?.button_reply?.title ?? msg.interactive?.list_reply?.title ?? null)
           : null;
 
-        // contato (upsert por wa_id)
+        // contato (upsert por wa_id). Só grava o nome quando a Meta mandou o
+        // profile.name; se vier sem contacts (comum em mensagens seguintes),
+        // preserva o nome já salvo em vez de sobrescrever com null.
+        const contatoUpsert: Record<string, unknown> = { wa_id: from, telefone: from };
+        if (nomeContato) contatoUpsert.nome = nomeContato;
         await admin.from("WA_CONTATO").upsert(
-          { wa_id: from, nome: nomeContato, telefone: from },
+          contatoUpsert,
           { onConflict: "wa_id", ignoreDuplicates: false },
         );
         const { data: contato } = await admin.from("WA_CONTATO").select("id").eq("wa_id", from).maybeSingle();
@@ -202,7 +206,7 @@ Deno.serve(async (req) => {
         }).select("id").maybeSingle();
         if (!nova) continue; // já existia (reentrega da Meta)
 
-        await admin.rpc("wa_incrementar_nao_lidas", { p_conversa: conversa.id }).catch(() => {});
+        try { await admin.rpc("wa_incrementar_nao_lidas", { p_conversa: conversa.id }); } catch { /* best-effort */ }
         await admin.from("WA_CONVERSA").update({
           ultima_mensagem_em: new Date().toISOString(),
           ultima_mensagem_preview: (texto ?? `[${msg.type}]`).slice(0, 120),

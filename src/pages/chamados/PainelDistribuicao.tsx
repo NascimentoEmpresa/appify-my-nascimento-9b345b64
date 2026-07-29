@@ -20,11 +20,11 @@ import {
   DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem,
 } from "@/components/ui/dropdown-menu";
 import { PieChart, Pie, Cell, ResponsiveContainer } from "recharts";
-import { ClipboardList, Clock, Users, CheckCircle2, AlertTriangle, ShieldAlert, MoreHorizontal, ChevronLeft, ChevronRight, Eye, UserCog, Trash2 } from "lucide-react";
+import { ClipboardList, Clock, Users, CheckCircle2, AlertTriangle, ShieldAlert, MoreHorizontal, ChevronLeft, ChevronRight, Eye, UserCog, Trash2, Trophy } from "lucide-react";
 import { FeedAtualizacoes } from "./FeedAtualizacoes";
 import { ExcluirChamadoDialog } from "./ExcluirChamadoDialog";
 import {
-  StatCard, StatusBadge, PrioridadeBadge, STATUS_CHAMADO, PRIORIDADES, CATEGORIAS, labelDe, moduloLabel, iniciais, fmtData, fmtDataHora,
+  StatCard, StatusBadge, PrioridadeBadge, STATUS_CHAMADO, PRIORIDADES, CATEGORIAS, labelDe, moduloLabel, iniciais, Estrelas, fmtData, fmtDataHora,
   chamadoAtivo, posicoesFilaGlobal, posicoesFilaDev, type Chamado,
 } from "./types";
 
@@ -94,6 +94,20 @@ export default function PainelDistribuicao() {
       const { data, error } = await (supabase as any).rpc("listar_desenvolvedores_chamados");
       if (error) throw error;
       return (data ?? []) as Dev[];
+    },
+  });
+
+  // Ranking de satisfação da equipe: médias dos 5 critérios por responsável
+  // (mesma RPC do Painel do Desenvolvedor, que lá só mostra a linha do próprio).
+  const { data: ranking = [] } = useQuery({
+    queryKey: ["chamados-ranking-satisfacao"],
+    enabled: gestor,
+    queryFn: async () => {
+      const { data } = await (supabase as any).rpc("chamados_ranking_satisfacao");
+      return (data ?? []) as Array<{
+        responsavel_id: string; avaliacoes: number; media: number;
+        atendimento: number; tempo: number; solucao: number; clareza: number; satisfacao: number;
+      }>;
     },
   });
 
@@ -470,6 +484,68 @@ export default function PainelDistribuicao() {
           <FeedAtualizacoes buildHref={(cid) => `/app/sistemas/chamados/${cid}/coordenar`} />
         </div>
       </div>
+
+      {/* Ranking de satisfação da equipe (todos os desenvolvedores) */}
+      <Card className="mt-4 p-4">
+        <div className="mb-3 flex items-center justify-between">
+          <p className="flex items-center gap-1.5 text-sm font-bold">
+            <Trophy className="h-4 w-4 text-warning" /> Ranking de satisfação da equipe
+          </p>
+          <span className="text-[11px] text-muted-foreground">Média dos 5 critérios avaliados por chamado concluído</span>
+        </div>
+        <div className="overflow-x-auto">
+          <Table className="[&_td]:px-2 [&_td]:py-2.5 [&_th]:h-9 [&_th]:px-2">
+            <TableHeader>
+              <TableRow>
+                <TableHead className="w-12 text-center">#</TableHead>
+                <TableHead>Desenvolvedor</TableHead>
+                <TableHead className="text-center">Avaliações</TableHead>
+                <TableHead className="text-center">Atendimento</TableHead>
+                <TableHead className="text-center">Tempo</TableHead>
+                <TableHead className="text-center">Solução</TableHead>
+                <TableHead className="text-center">Clareza</TableHead>
+                <TableHead className="text-center">Satisfação</TableHead>
+                <TableHead className="text-right">Média</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {ranking.map((r, i) => (
+                <TableRow key={r.responsavel_id}>
+                  <TableCell className="text-center">
+                    <span className={`inline-flex h-7 w-7 items-center justify-center rounded-full text-xs font-bold ${
+                      i === 0 ? "bg-warning/20 text-warning"
+                      : i === 1 ? "bg-muted-foreground/20 text-muted-foreground"
+                      : i === 2 ? "bg-orange-500/20 text-orange-600"
+                      : "bg-muted text-muted-foreground"
+                    }`}>{i + 1}º</span>
+                  </TableCell>
+                  <TableCell>
+                    <div className="flex items-center gap-2">
+                      <Avatar className="h-7 w-7"><AvatarFallback className="text-[10px]">{iniciais(nomeDe(r.responsavel_id))}</AvatarFallback></Avatar>
+                      <span className="truncate text-xs font-medium">{nomeDe(r.responsavel_id)}</span>
+                    </div>
+                  </TableCell>
+                  <TableCell className="text-center text-xs text-muted-foreground">{Number(r.avaliacoes)}</TableCell>
+                  <TableCell className="text-center text-xs">{Number(r.atendimento).toFixed(1).replace(".", ",")}</TableCell>
+                  <TableCell className="text-center text-xs">{Number(r.tempo).toFixed(1).replace(".", ",")}</TableCell>
+                  <TableCell className="text-center text-xs">{Number(r.solucao).toFixed(1).replace(".", ",")}</TableCell>
+                  <TableCell className="text-center text-xs">{Number(r.clareza).toFixed(1).replace(".", ",")}</TableCell>
+                  <TableCell className="text-center text-xs">{Number(r.satisfacao).toFixed(1).replace(".", ",")}</TableCell>
+                  <TableCell className="text-right">
+                    <div className="flex items-center justify-end gap-1.5">
+                      <Estrelas valor={Number(r.media)} size={13} />
+                      <span className="text-sm font-bold">{Number(r.media).toFixed(1).replace(".", ",")}</span>
+                    </div>
+                  </TableCell>
+                </TableRow>
+              ))}
+              {ranking.length === 0 && (
+                <TableRow><TableCell colSpan={9} className="py-6 text-center text-sm text-muted-foreground">Nenhuma avaliação recebida ainda.</TableCell></TableRow>
+              )}
+            </TableBody>
+          </Table>
+        </div>
+      </Card>
 
       {/* Fila de chamados por prioridade */}
       <Card className="mt-4 p-4">

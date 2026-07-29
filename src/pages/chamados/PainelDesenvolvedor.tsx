@@ -357,7 +357,7 @@ export default function PainelDesenvolvedor() {
             </div>
           </Card>
 
-          <FeedAtualizacoes buildHref={(cid) => `/app/sistemas/chamados/${cid}`} />
+          <FeedAtualizacoes scope="involved" buildHref={(cid) => `/app/sistemas/chamados/${cid}`} />
         </div>
       </div>
 

@@ -277,7 +277,7 @@ export default function MeusChamados({ base = "/app/central-servicos/chamados" }
             <p className="text-xs text-muted-foreground">Chamados fora do horário serão avaliados no próximo dia útil.</p>
           </Card>
         </div>
-        <FeedAtualizacoes buildHref={(cid) => `${base}/${cid}/acompanhar`} />
+        <FeedAtualizacoes scope="solicitante" buildHref={(cid) => `${base}/${cid}/acompanhar`} />
       </div>
 
       <AvaliarChamadoDialog
