@@ -47,9 +47,28 @@ interface VariacaoForm {
   variacao: string;
   ordem: string;
   ativo: boolean;
+  issqnPct: string;
+  irPct: string;
+  cofinsPct: string;
+  pisPct: string;
+  csllPct: string;
 }
 
-const EMPTY_VARIACAO: VariacaoForm = { variacao: "", ordem: "1", ativo: true };
+const EMPTY_VARIACAO: VariacaoForm = {
+  variacao: "",
+  ordem: "1",
+  ativo: true,
+  issqnPct: "",
+  irPct: "",
+  cofinsPct: "",
+  pisPct: "",
+  csllPct: "",
+};
+
+// Retenção do modelo é opcional (nulo = usa o padrão do contrato), então "%"
+// aqui é sempre string editável, convertida pra fração só na hora de salvar.
+const pctToStr = (v: number | null | undefined) => (v ? String(v * 100) : "");
+const pctToNum = (v: string) => (v.trim() ? Number(v) / 100 : null);
 
 export function ModeloNfDialog({
   open,
@@ -76,7 +95,18 @@ export function ModeloNfDialog({
   const [colarTexto, setColarTexto] = useState("");
   const [buscaModelo, setBuscaModelo] = useState("");
   const [importando, setImportando] = useState(false);
-  const [importPreview, setImportPreview] = useState<(VariacaoImportada & { posto: string; percentual: string })[] | null>(null);
+  const [importPreview, setImportPreview] = useState<
+    | (VariacaoImportada & {
+        posto: string;
+        percentual: string;
+        issqnPctStr: string;
+        irPctStr: string;
+        cofinsPctStr: string;
+        pisPctStr: string;
+        csllPctStr: string;
+      })[]
+    | null
+  >(null);
 
   const modelosFiltrados = useMemo(() => {
     const termo = buscaModelo.trim().toLowerCase();
@@ -109,7 +139,17 @@ export function ModeloNfDialog({
   }, [form.id, itensExistentes]);
 
   function editar(m: NfEmissaoModeloRow) {
-    setForm({ id: m.id, variacao: m.variacao ?? "", ordem: String(m.ordem), ativo: m.ativo });
+    setForm({
+      id: m.id,
+      variacao: m.variacao ?? "",
+      ordem: String(m.ordem),
+      ativo: m.ativo,
+      issqnPct: pctToStr(m.issqn_pct),
+      irPct: pctToStr(m.ir_pct),
+      cofinsPct: pctToStr(m.cofins_pct),
+      pisPct: pctToStr(m.pis_pct),
+      csllPct: pctToStr(m.csll_pct),
+    });
   }
 
   function novaVariacao() {
@@ -152,7 +192,18 @@ export function ModeloNfDialog({
         toast.error("Nenhuma variação encontrada nessa planilha.");
         return;
       }
-      setImportPreview(linhas.map((l) => ({ ...l, posto: l.postoSugerido ?? SEM_POSTO, percentual: "100" })));
+      setImportPreview(
+        linhas.map((l) => ({
+          ...l,
+          posto: l.postoSugerido ?? SEM_POSTO,
+          percentual: "100",
+          issqnPctStr: pctToStr(l.issqnPct),
+          irPctStr: pctToStr(l.irPct),
+          cofinsPctStr: pctToStr(l.cofinsPct),
+          pisPctStr: pctToStr(l.pisPct),
+          csllPctStr: pctToStr(l.csllPct),
+        }))
+      );
       setColarOpen(false);
     } catch (err: any) {
       toast.error(err.message ?? "Erro ao ler a planilha.");
@@ -161,7 +212,18 @@ export function ModeloNfDialog({
     }
   }
 
-  function updatePreviewRow(i: number, patch: Partial<{ posto: string; percentual: string }>) {
+  function updatePreviewRow(
+    i: number,
+    patch: Partial<{
+      posto: string;
+      percentual: string;
+      issqnPctStr: string;
+      irPctStr: string;
+      cofinsPctStr: string;
+      pisPctStr: string;
+      csllPctStr: string;
+    }>
+  ) {
     setImportPreview((arr) => (arr ? arr.map((r, k) => (k === i ? { ...r, ...patch } : r)) : arr));
   }
 
@@ -177,6 +239,11 @@ export function ModeloNfDialog({
           posto: r.posto === SEM_POSTO ? null : r.posto,
           percentual: Number(r.percentual) || 100,
           valorReferencia: r.valorReferencia,
+          issqnPct: pctToNum(r.issqnPctStr),
+          irPct: pctToNum(r.irPctStr),
+          cofinsPct: pctToNum(r.cofinsPctStr),
+          pisPct: pctToNum(r.pisPctStr),
+          csllPct: pctToNum(r.csllPctStr),
         })),
       });
       toast.success(`${qtd} variação(ões) importada(s). Confira os postos vinculados.`);
@@ -209,6 +276,11 @@ export function ModeloNfDialog({
         variacao: form.variacao.trim(),
         ordem: Number(form.ordem) || 1,
         ativo: form.ativo,
+        issqn_pct: pctToNum(form.issqnPct),
+        ir_pct: pctToNum(form.irPct),
+        cofins_pct: pctToNum(form.cofinsPct),
+        pis_pct: pctToNum(form.pisPct),
+        csll_pct: pctToNum(form.csllPct),
       });
       await salvarItens.mutateAsync({
         modeloId,
@@ -288,16 +360,21 @@ export function ModeloNfDialog({
           {importPreview && (
             <div className="space-y-2">
               <p className="text-xs text-muted-foreground">
-                Confira antes de criar: o valor é só uma referência (foto do que estava na planilha), e o posto é uma
-                sugestão — ajuste ou deixe "Nenhum (manual)" onde não fizer sentido.
+                Confira antes de criar: valor, posto e retenções são sugestões (foto do que estava na planilha) —
+                ajuste ou deixe em branco/"Nenhum (manual)" onde não fizer sentido.
               </p>
-              <div className="max-h-[35vh] overflow-y-auto rounded-lg border">
+              <div className="max-h-[35vh] overflow-auto rounded-lg border">
                 <Table>
                   <TableHeader>
                     <TableRow>
                       <TableHead>Variação</TableHead>
                       <TableHead>Valor de referência</TableHead>
-                      <TableHead>Posto sugerido</TableHead>
+                      <TableHead className="min-w-[160px]">Posto sugerido</TableHead>
+                      <TableHead className="min-w-[80px]">ISSQN %</TableHead>
+                      <TableHead className="min-w-[80px]">IR %</TableHead>
+                      <TableHead className="min-w-[80px]">COFINS %</TableHead>
+                      <TableHead className="min-w-[80px]">PIS %</TableHead>
+                      <TableHead className="min-w-[80px]">CSLL %</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -323,6 +400,21 @@ export function ModeloNfDialog({
                               ))}
                             </SelectContent>
                           </Select>
+                        </TableCell>
+                        <TableCell>
+                          <Input className="h-8 w-16 text-xs" type="number" step="0.01" placeholder="padrão" value={r.issqnPctStr} onChange={(e) => updatePreviewRow(i, { issqnPctStr: e.target.value })} />
+                        </TableCell>
+                        <TableCell>
+                          <Input className="h-8 w-16 text-xs" type="number" step="0.01" placeholder="padrão" value={r.irPctStr} onChange={(e) => updatePreviewRow(i, { irPctStr: e.target.value })} />
+                        </TableCell>
+                        <TableCell>
+                          <Input className="h-8 w-16 text-xs" type="number" step="0.01" placeholder="padrão" value={r.cofinsPctStr} onChange={(e) => updatePreviewRow(i, { cofinsPctStr: e.target.value })} />
+                        </TableCell>
+                        <TableCell>
+                          <Input className="h-8 w-16 text-xs" type="number" step="0.01" placeholder="padrão" value={r.pisPctStr} onChange={(e) => updatePreviewRow(i, { pisPctStr: e.target.value })} />
+                        </TableCell>
+                        <TableCell>
+                          <Input className="h-8 w-16 text-xs" type="number" step="0.01" placeholder="padrão" value={r.csllPctStr} onChange={(e) => updatePreviewRow(i, { csllPctStr: e.target.value })} />
                         </TableCell>
                       </TableRow>
                     ))}
@@ -367,6 +459,34 @@ export function ModeloNfDialog({
             <div className="flex items-end gap-2 pb-1.5">
               <Switch checked={form.ativo} onCheckedChange={(v) => setForm((f) => ({ ...f, ativo: v }))} />
               <Label className="text-xs">Ativo</Label>
+            </div>
+          </div>
+
+          <div className="space-y-1.5 rounded-lg border bg-muted/20 p-2">
+            <Label className="text-xs">
+              Retenção fiscal desta nota <span className="font-normal text-muted-foreground">(opcional — em branco usa o padrão do contrato)</span>
+            </Label>
+            <div className="grid grid-cols-5 gap-2">
+              <div>
+                <Label className="text-[10px] text-muted-foreground">ISSQN (%)</Label>
+                <Input className="h-8 text-xs" type="number" step="0.01" placeholder="padrão" value={form.issqnPct} onChange={(e) => setForm((f) => ({ ...f, issqnPct: e.target.value }))} />
+              </div>
+              <div>
+                <Label className="text-[10px] text-muted-foreground">IR (%)</Label>
+                <Input className="h-8 text-xs" type="number" step="0.01" placeholder="padrão" value={form.irPct} onChange={(e) => setForm((f) => ({ ...f, irPct: e.target.value }))} />
+              </div>
+              <div>
+                <Label className="text-[10px] text-muted-foreground">COFINS (%)</Label>
+                <Input className="h-8 text-xs" type="number" step="0.01" placeholder="padrão" value={form.cofinsPct} onChange={(e) => setForm((f) => ({ ...f, cofinsPct: e.target.value }))} />
+              </div>
+              <div>
+                <Label className="text-[10px] text-muted-foreground">PIS (%)</Label>
+                <Input className="h-8 text-xs" type="number" step="0.01" placeholder="padrão" value={form.pisPct} onChange={(e) => setForm((f) => ({ ...f, pisPct: e.target.value }))} />
+              </div>
+              <div>
+                <Label className="text-[10px] text-muted-foreground">CSLL (%)</Label>
+                <Input className="h-8 text-xs" type="number" step="0.01" placeholder="padrão" value={form.csllPct} onChange={(e) => setForm((f) => ({ ...f, csllPct: e.target.value }))} />
+              </div>
             </div>
           </div>
 
@@ -510,6 +630,11 @@ export function ModeloNfDialog({
                           variacao: m.variacao,
                           ordem: m.ordem,
                           ativo: v,
+                          issqn_pct: m.issqn_pct,
+                          ir_pct: m.ir_pct,
+                          cofins_pct: m.cofins_pct,
+                          pis_pct: m.pis_pct,
+                          csll_pct: m.csll_pct,
                         })
                       }
                     />

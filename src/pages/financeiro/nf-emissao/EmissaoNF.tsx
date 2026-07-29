@@ -35,7 +35,7 @@ import {
 import { useContratosERP, ContratoERP } from "@/hooks/useContratosERP";
 import { usePlanilhaCustos, resolverPostosVigentes, PostoVigente } from "@/hooks/usePlanilhaCusto";
 import { useModelosNf, buscarItensModeloNf, NfEmissaoModeloRow } from "@/hooks/useNfEmissaoModelo";
-import { calcularItem, calcularTotaisNf, ItemInput, ItemCalculado, INSS_CATEGORIAS } from "./calculos";
+import { calcularItem, calcularTotaisNf, ItemInput, ItemCalculado, INSS_CATEGORIAS, PercentuaisFiscais } from "./calculos";
 import { fmtMoney, fmtPct, fmtDate, STATUS_LABEL, STATUS_CLASS, Linha, itemVazio } from "./shared";
 import { ItensNfEditor } from "./ItensNfEditor";
 import { ModeloNfDialog } from "./ModeloNfDialog";
@@ -47,6 +47,14 @@ interface NovaNfSeed {
   variacao: string;
   itens: (ItemInput & { identificacao: string })[];
   unitarios: (number | null)[];
+  pctFiscais: PercentuaisFiscais | null;
+}
+
+function pctFiscaisDoContrato(c: Pick<ContratoERP, "issqn_pct" | "ir_pct" | "cofins_pct" | "pis_pct" | "csll_pct">): PercentuaisFiscais | null {
+  const configurado = c.issqn_pct !== 0 || c.ir_pct !== 0 || c.cofins_pct !== 0 || c.pis_pct !== 0 || c.csll_pct !== 0;
+  return configurado
+    ? { issqn_pct: c.issqn_pct, ir_pct: c.ir_pct, cofins_pct: c.cofins_pct, pis_pct: c.pis_pct, csll_pct: c.csll_pct }
+    : null;
 }
 
 export default function EmissaoNF() {
@@ -127,7 +135,17 @@ export default function EmissaoNF() {
     if (faltantes.length > 0) {
       toast.error(`Posto(s) não encontrado(s) na planilha vigente: ${faltantes.join(", ")}. Preencha manualmente.`);
     }
-    setSeedNovaNf({ modeloId: modelo.id, variacao: modelo.variacao ?? "", itens, unitarios });
+    const pctFiscaisContrato = contratoAtual ? pctFiscaisDoContrato(contratoAtual) : null;
+    const pctFiscais: PercentuaisFiscais | null = pctFiscaisContrato
+      ? {
+          issqn_pct: modelo.issqn_pct ?? pctFiscaisContrato.issqn_pct,
+          ir_pct: modelo.ir_pct ?? pctFiscaisContrato.ir_pct,
+          cofins_pct: modelo.cofins_pct ?? pctFiscaisContrato.cofins_pct,
+          pis_pct: modelo.pis_pct ?? pctFiscaisContrato.pis_pct,
+          csll_pct: modelo.csll_pct ?? pctFiscaisContrato.csll_pct,
+        }
+      : null;
+    setSeedNovaNf({ modeloId: modelo.id, variacao: modelo.variacao ?? "", itens, unitarios, pctFiscais });
     setNovaNfContratoId(contratoSel);
     setModalOpen(true);
   }
@@ -493,6 +511,7 @@ function NovaNfDialog({ open, onOpenChange, empresaId, contratos, nfParaEditar, 
   const [expandidos, setExpandidos] = useState<Set<number>>(new Set([0]));
   const [unitariosPorItem, setUnitariosPorItem] = useState<(number | null)[]>([null]);
   const [modeloIdOrigem, setModeloIdOrigem] = useState<string | null>(null);
+  const [pctFiscais, setPctFiscais] = useState<PercentuaisFiscais | null>(null);
 
   useEffect(() => {
     if (!open) return;
@@ -505,6 +524,13 @@ function NovaNfDialog({ open, onOpenChange, empresaId, contratos, nfParaEditar, 
       setDescricao(nfParaEditar.descricao ?? "");
       setObservacoes(nfParaEditar.observacoes ?? "");
       setAnexosParaRemover(new Set());
+      setPctFiscais({
+        issqn_pct: nfParaEditar.issqn_pct,
+        ir_pct: nfParaEditar.ir_pct,
+        cofins_pct: nfParaEditar.cofins_pct,
+        pis_pct: nfParaEditar.pis_pct,
+        csll_pct: nfParaEditar.csll_pct,
+      });
     } else if (seed) {
       setContratoId(contratoIdInicial ?? "");
       setVariacao(seed.variacao);
@@ -512,8 +538,11 @@ function NovaNfDialog({ open, onOpenChange, empresaId, contratos, nfParaEditar, 
       setUnitariosPorItem(seed.unitarios);
       setExpandidos(new Set());
       setModeloIdOrigem(seed.modeloId);
+      setPctFiscais(seed.pctFiscais);
     } else if (contratoIdInicial) {
       setContratoId(contratoIdInicial);
+      const c = contratos.find((x) => x.id === contratoIdInicial);
+      setPctFiscais(c ? pctFiscaisDoContrato(c) : null);
     }
   }, [open, nfParaEditar?.id, contratoIdInicial, seed]);
 
@@ -543,22 +572,6 @@ function NovaNfDialog({ open, onOpenChange, empresaId, contratos, nfParaEditar, 
   }, [open, nfParaEditar?.id, itensExistentes]);
 
   const contratoSelecionado = contratos.find((c) => c.id === contratoId) ?? null;
-  const fiscalConfigurado =
-    !!contratoSelecionado &&
-    (contratoSelecionado.issqn_pct !== 0 ||
-      contratoSelecionado.ir_pct !== 0 ||
-      contratoSelecionado.cofins_pct !== 0 ||
-      contratoSelecionado.pis_pct !== 0 ||
-      contratoSelecionado.csll_pct !== 0);
-  const dadosFiscais = fiscalConfigurado
-    ? {
-        issqn_pct: contratoSelecionado!.issqn_pct,
-        ir_pct: contratoSelecionado!.ir_pct,
-        cofins_pct: contratoSelecionado!.cofins_pct,
-        pis_pct: contratoSelecionado!.pis_pct,
-        csll_pct: contratoSelecionado!.csll_pct,
-      }
-    : null;
 
   const postosVigentes = useMemo(
     () => (contratoId ? resolverPostosVigentes(planilha, contratoId) : []),
@@ -566,17 +579,9 @@ function NovaNfDialog({ open, onOpenChange, empresaId, contratos, nfParaEditar, 
   );
 
   const itensCalculados: ItemCalculado[] = useMemo(() => {
-    if (!dadosFiscais) return [];
-    return itens.map((it) =>
-      calcularItem(it, {
-        issqn_pct: dadosFiscais.issqn_pct,
-        ir_pct: dadosFiscais.ir_pct,
-        cofins_pct: dadosFiscais.cofins_pct,
-        pis_pct: dadosFiscais.pis_pct,
-        csll_pct: dadosFiscais.csll_pct,
-      })
-    );
-  }, [itens, dadosFiscais]);
+    if (!pctFiscais) return [];
+    return itens.map((it) => calcularItem(it, pctFiscais));
+  }, [itens, pctFiscais]);
 
   const totais = useMemo(() => calcularTotaisNf(itensCalculados), [itensCalculados]);
 
@@ -633,6 +638,7 @@ function NovaNfDialog({ open, onOpenChange, empresaId, contratos, nfParaEditar, 
     setExpandidos(new Set([0]));
     setUnitariosPorItem([null]);
     setModeloIdOrigem(null);
+    setPctFiscais(null);
   }
 
   function handleClose(v: boolean) {
@@ -643,7 +649,7 @@ function NovaNfDialog({ open, onOpenChange, empresaId, contratos, nfParaEditar, 
   function validar(): string | null {
     if (!empresaId) return "Empresa não identificada.";
     if (!contratoId) return "Selecione o Contrato.";
-    if (!dadosFiscais) return "Este contrato ainda não tem Dados Fiscais cadastrados — cadastre antes de emitir a NF.";
+    if (!pctFiscais) return "Este contrato ainda não tem Dados Fiscais cadastrados — cadastre antes de emitir a NF.";
     if (!competencia) return "Informe a Competência.";
     if (itensCalculados.length === 0) return "Adicione ao menos um item.";
     return null;
@@ -655,13 +661,7 @@ function NovaNfDialog({ open, onOpenChange, empresaId, contratos, nfParaEditar, 
       toast.error(erro);
       return;
     }
-    const pctFiscais = {
-      issqn_pct: dadosFiscais!.issqn_pct,
-      ir_pct: dadosFiscais!.ir_pct,
-      cofins_pct: dadosFiscais!.cofins_pct,
-      pis_pct: dadosFiscais!.pis_pct,
-      csll_pct: dadosFiscais!.csll_pct,
-    };
+    const pctFiscaisParaSalvar: PercentuaisFiscais = pctFiscais!;
     try {
       if (editando && nfParaEditar) {
         await atualizar.mutateAsync({
@@ -676,7 +676,7 @@ function NovaNfDialog({ open, onOpenChange, empresaId, contratos, nfParaEditar, 
           observacoes: observacoes || null,
           itens: itensCalculados,
           totais,
-          pctFiscais,
+          pctFiscais: pctFiscaisParaSalvar,
           anexosNovos: anexos.map((file) => ({ file })),
           anexosParaRemover: anexosExistentes
             .filter((a: any) => anexosParaRemover.has(a.id))
@@ -698,7 +698,7 @@ function NovaNfDialog({ open, onOpenChange, empresaId, contratos, nfParaEditar, 
           observacoes: observacoes || null,
           itens: itensCalculados,
           totais,
-          pctFiscais,
+          pctFiscais: pctFiscaisParaSalvar,
           anexos: anexos.map((file) => ({ file })),
           status: "rascunho",
           nf_emissao_modelo_id: modeloIdOrigem,
@@ -742,7 +742,14 @@ function NovaNfDialog({ open, onOpenChange, empresaId, contratos, nfParaEditar, 
                   {contratoSelecionado?.nome ?? nfParaEditar?.contrato?.nome ?? "-"}
                 </div>
               ) : (
-                <Select value={contratoId} onValueChange={setContratoId}>
+                <Select
+                  value={contratoId}
+                  onValueChange={(v) => {
+                    setContratoId(v);
+                    const c = contratos.find((x) => x.id === v);
+                    setPctFiscais(c ? pctFiscaisDoContrato(c) : null);
+                  }}
+                >
                   <SelectTrigger>
                     <SelectValue placeholder="Selecione o contrato" />
                   </SelectTrigger>
@@ -755,7 +762,7 @@ function NovaNfDialog({ open, onOpenChange, empresaId, contratos, nfParaEditar, 
                   </SelectContent>
                 </Select>
               )}
-              {contratoId && !dadosFiscais && (
+              {contratoId && !pctFiscais && (
                 <p className="mt-1 text-xs text-destructive">
                   Contrato sem Dados Fiscais cadastrados — por isso Vlr Bruto/Líquido não aparecem abaixo.{" "}
                   <Link to="/app/licitacoes/contratos" className="underline">
@@ -799,13 +806,46 @@ function NovaNfDialog({ open, onOpenChange, empresaId, contratos, nfParaEditar, 
               <Textarea rows={1} value={descricao} onChange={(e) => setDescricao(e.target.value)} />
             </div>
           </div>
+
+          {pctFiscais && (
+            <div className="space-y-1.5 rounded-lg border bg-muted/20 p-2">
+              <Label className="text-xs">
+                Retenção fiscal desta nota{" "}
+                <span className="font-normal text-muted-foreground">(pré-preenchida pelo contrato/modelo — pode ajustar)</span>
+              </Label>
+              <div className="grid grid-cols-5 gap-2">
+                {(
+                  [
+                    ["issqn_pct", "ISSQN (%)"],
+                    ["ir_pct", "IR (%)"],
+                    ["cofins_pct", "COFINS (%)"],
+                    ["pis_pct", "PIS (%)"],
+                    ["csll_pct", "CSLL (%)"],
+                  ] as const
+                ).map(([campo, label]) => (
+                  <div key={campo}>
+                    <Label className="text-[10px] text-muted-foreground">{label}</Label>
+                    <Input
+                      className="h-8 text-xs"
+                      type="number"
+                      step="0.01"
+                      value={pctFiscais[campo] ? pctFiscais[campo] * 100 : ""}
+                      onChange={(e) =>
+                        setPctFiscais((p) => (p ? { ...p, [campo]: e.target.value.trim() ? Number(e.target.value) / 100 : 0 } : p))
+                      }
+                    />
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
         </section>
 
         <ItensNfEditor
           itens={itens}
           itensCalculados={itensCalculados}
           totais={totais}
-          pctFiscais={dadosFiscais}
+          pctFiscais={pctFiscais}
           postosVigentes={postosVigentes}
           contratoId={contratoId}
           expandidos={expandidos}
