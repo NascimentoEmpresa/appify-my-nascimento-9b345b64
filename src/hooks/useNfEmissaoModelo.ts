@@ -12,6 +12,11 @@ export interface NfEmissaoModeloRow {
   variacao: string | null;
   ordem: number;
   ativo: boolean;
+  issqn_pct: number | null;
+  ir_pct: number | null;
+  cofins_pct: number | null;
+  pis_pct: number | null;
+  csll_pct: number | null;
 }
 
 export interface NfEmissaoModeloItemRow {
@@ -75,6 +80,11 @@ interface SalvarModeloNfInput {
   variacao: string | null;
   ordem: number;
   ativo: boolean;
+  issqn_pct?: number | null;
+  ir_pct?: number | null;
+  cofins_pct?: number | null;
+  pis_pct?: number | null;
+  csll_pct?: number | null;
 }
 
 export function useSalvarModeloNf() {
@@ -82,6 +92,13 @@ export function useSalvarModeloNf() {
   return useMutation({
     mutationFn: async (input: SalvarModeloNfInput) => {
       const userId = (await supabase.auth.getUser()).data.user?.id ?? null;
+      const retencoes = {
+        issqn_pct: input.issqn_pct ?? null,
+        ir_pct: input.ir_pct ?? null,
+        cofins_pct: input.cofins_pct ?? null,
+        pis_pct: input.pis_pct ?? null,
+        csll_pct: input.csll_pct ?? null,
+      };
       if (input.id) {
         const { error } = await (supabase as any)
           .from("nf_emissao_modelo")
@@ -90,6 +107,7 @@ export function useSalvarModeloNf() {
             ordem: input.ordem,
             ativo: input.ativo,
             updated_by: userId,
+            ...retencoes,
           })
           .eq("id", input.id);
         if (error) throw error;
@@ -105,6 +123,7 @@ export function useSalvarModeloNf() {
           ativo: input.ativo,
           created_by: userId,
           updated_by: userId,
+          ...retencoes,
         })
         .select("id")
         .single();
@@ -203,6 +222,11 @@ interface LinhaImportada {
   posto: string | null;
   percentual: number;
   valorReferencia: number | null;
+  issqnPct: number | null;
+  irPct: number | null;
+  cofinsPct: number | null;
+  pisPct: number | null;
+  csllPct: number | null;
 }
 
 interface ImportarVariacoesInput {
@@ -226,6 +250,11 @@ export function useImportarVariacoesDoExcel() {
         ativo: true,
         created_by: userId,
         updated_by: userId,
+        issqn_pct: l.issqnPct,
+        ir_pct: l.irPct,
+        cofins_pct: l.cofinsPct,
+        pis_pct: l.pisPct,
+        csll_pct: l.csllPct,
       }));
       const { data: modelosCriados, error } = await (supabase as any)
         .from("nf_emissao_modelo")
