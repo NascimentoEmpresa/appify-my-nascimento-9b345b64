@@ -14,6 +14,11 @@ export interface VariacaoImportada {
   variacao: string;
   valorReferencia: number | null;
   postoSugerido: string | null;
+  issqnPct: number | null;
+  irPct: number | null;
+  cofinsPct: number | null;
+  pisPct: number | null;
+  csllPct: number | null;
 }
 
 export async function parseModeloExcel(arquivo: File, postosVigentes: PostoVigente[]): Promise<VariacaoImportada[]> {
@@ -49,15 +54,25 @@ export async function parseModeloExcel(arquivo: File, postosVigentes: PostoVigen
 
     let valorReferencia: number | null = null;
     let postoSugerido: string | null = null;
+    let issqnPct: number | null = null;
+    let irPct: number | null = null;
+    let cofinsPct: number | null = null;
+    let pisPct: number | null = null;
+    let csllPct: number | null = null;
 
     const abaDetalhe = encontrarAbaDetalhe(wb.SheetNames, notaNome);
     if (abaDetalhe) {
       const detalhe = extrairDetalheNota(wb.Sheets[abaDetalhe], postosVigentes);
       valorReferencia = detalhe.valor;
       postoSugerido = detalhe.posto;
+      issqnPct = detalhe.issqnPct;
+      irPct = detalhe.irPct;
+      cofinsPct = detalhe.cofinsPct;
+      pisPct = detalhe.pisPct;
+      csllPct = detalhe.csllPct;
     }
 
-    resultado.push({ variacao, valorReferencia, postoSugerido });
+    resultado.push({ variacao, valorReferencia, postoSugerido, issqnPct, irPct, cofinsPct, pisPct, csllPct });
   }
   return resultado;
 }
@@ -74,8 +89,50 @@ function encontrarAbaDetalhe(sheetNames: string[], notaNome: string): string | n
   return parecido ?? null;
 }
 
-function extrairDetalheNota(ws: XLSX.WorkSheet, postosVigentes: PostoVigente[]): { valor: number | null; posto: string | null } {
+interface RetencoesExtraidas {
+  issqnPct: number | null;
+  irPct: number | null;
+  cofinsPct: number | null;
+  pisPct: number | null;
+  csllPct: number | null;
+}
+
+// A planilha traz um bloco "Retenção de impostos" (rótulo na coluna, valor na
+// coluna seguinte, ex. M11="ISSQN" / N11=0.02) — a mesma aba também reusa
+// esses rótulos como cabeçalho de uma tabela de totais mais abaixo (rótulo ao
+// lado de outro rótulo, não de número), por isso só aceitamos o par se o
+// vizinho for de fato uma fração de imposto plausível (0 a 1).
+const RETENCAO_LABELS: Record<string, keyof RetencoesExtraidas> = {
+  ISSQN: "issqnPct",
+  IR: "irPct",
+  COFINS: "cofinsPct",
+  COFIS: "cofinsPct", // typo recorrente nas planilhas do Financeiro
+  PIS: "pisPct",
+  CSLL: "csllPct",
+};
+
+function extrairRetencoes(linhas: unknown[][]): RetencoesExtraidas {
+  const result: RetencoesExtraidas = { issqnPct: null, irPct: null, cofinsPct: null, pisPct: null, csllPct: null };
+  for (const linha of linhas) {
+    if (!linha) continue;
+    for (let c = 0; c < linha.length; c++) {
+      const campo = RETENCAO_LABELS[String(linha[c] ?? "").trim().toUpperCase()];
+      if (!campo || result[campo] != null) continue;
+      const vizinho = linha[c + 1];
+      if (typeof vizinho === "number" && vizinho >= 0 && vizinho < 1) {
+        result[campo] = vizinho;
+      }
+    }
+  }
+  return result;
+}
+
+function extrairDetalheNota(
+  ws: XLSX.WorkSheet,
+  postosVigentes: PostoVigente[]
+): { valor: number | null; posto: string | null } & RetencoesExtraidas {
   const linhas: unknown[][] = XLSX.utils.sheet_to_json(ws, { header: 1, raw: true, defval: "" });
+  const retencoes = extrairRetencoes(linhas);
   for (let i = 0; i < linhas.length - 1; i++) {
     const linha = (linhas[i] ?? []).map((c) => String(c ?? "").trim().toUpperCase());
     const colDesc = linha.indexOf("DESCRIÇÃO DOS SERVIÇOS");
@@ -85,7 +142,7 @@ function extrairDetalheNota(ws: XLSX.WorkSheet, postosVigentes: PostoVigente[]):
     const descricao = String(proxima[colDesc] ?? "").toUpperCase();
     const valorBruto = colValor >= 0 ? Number(proxima[colValor]) : NaN;
     const posto = postosVigentes.find((p) => descricao.includes(p.posto.toUpperCase()))?.posto ?? null;
-    return { valor: !isNaN(valorBruto) ? valorBruto : null, posto };
+    return { valor: !isNaN(valorBruto) ? valorBruto : null, posto, ...retencoes };
   }
-  return { valor: null, posto: null };
+  return { valor: null, posto: null, ...retencoes };
 }
