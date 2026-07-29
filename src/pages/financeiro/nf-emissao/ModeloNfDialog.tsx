@@ -312,7 +312,7 @@ export function ModeloNfDialog({
 
   return (
     <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
-      <DialogContent className="max-w-5xl max-h-[85vh] overflow-y-auto">
+      <DialogContent className="max-w-4xl max-h-[85vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>Modelo de NFs — {contrato.nome}</DialogTitle>
           <DialogDescription>
@@ -363,31 +363,26 @@ export function ModeloNfDialog({
                 Confira antes de criar: valor, posto e retenções são sugestões (foto do que estava na planilha) —
                 ajuste ou deixe em branco/"Nenhum (manual)" onde não fizer sentido.
               </p>
-              <div className="max-h-[35vh] overflow-auto rounded-lg border">
-                <div className="min-w-[860px]">
+              <div className="max-h-[45vh] overflow-y-auto rounded-lg border">
                 <Table>
                   <TableHeader>
                     <TableRow>
-                      <TableHead className="min-w-[140px]">Variação</TableHead>
-                      <TableHead className="min-w-[110px]">Valor de referência</TableHead>
-                      <TableHead className="min-w-[160px]">Posto sugerido</TableHead>
-                      <TableHead className="min-w-[80px]">ISSQN %</TableHead>
-                      <TableHead className="min-w-[80px]">IR %</TableHead>
-                      <TableHead className="min-w-[80px]">COFINS %</TableHead>
-                      <TableHead className="min-w-[80px]">PIS %</TableHead>
-                      <TableHead className="min-w-[80px]">CSLL %</TableHead>
+                      <TableHead>Variação</TableHead>
+                      <TableHead>Valor de referência</TableHead>
+                      <TableHead className="w-40">Posto sugerido</TableHead>
+                      <TableHead>Retenções (% — em branco usa o padrão do contrato)</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
                     {importPreview.map((r, i) => (
                       <TableRow key={i}>
-                        <TableCell className="text-xs font-medium">{r.variacao}</TableCell>
-                        <TableCell className="text-xs">
+                        <TableCell className="text-xs font-medium align-top pt-2.5">{r.variacao}</TableCell>
+                        <TableCell className="text-xs align-top pt-2.5">
                           {r.valorReferencia != null
                             ? new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(r.valorReferencia)
                             : "—"}
                         </TableCell>
-                        <TableCell>
+                        <TableCell className="align-top">
                           <Select value={r.posto} onValueChange={(v) => updatePreviewRow(i, { posto: v })}>
                             <SelectTrigger className="h-8 text-xs">
                               <SelectValue />
@@ -402,26 +397,35 @@ export function ModeloNfDialog({
                             </SelectContent>
                           </Select>
                         </TableCell>
-                        <TableCell>
-                          <Input className="h-8 w-20 text-xs" type="number" step="0.01" placeholder="padrão" value={r.issqnPctStr} onChange={(e) => updatePreviewRow(i, { issqnPctStr: e.target.value })} />
-                        </TableCell>
-                        <TableCell>
-                          <Input className="h-8 w-20 text-xs" type="number" step="0.01" placeholder="padrão" value={r.irPctStr} onChange={(e) => updatePreviewRow(i, { irPctStr: e.target.value })} />
-                        </TableCell>
-                        <TableCell>
-                          <Input className="h-8 w-20 text-xs" type="number" step="0.01" placeholder="padrão" value={r.cofinsPctStr} onChange={(e) => updatePreviewRow(i, { cofinsPctStr: e.target.value })} />
-                        </TableCell>
-                        <TableCell>
-                          <Input className="h-8 w-20 text-xs" type="number" step="0.01" placeholder="padrão" value={r.pisPctStr} onChange={(e) => updatePreviewRow(i, { pisPctStr: e.target.value })} />
-                        </TableCell>
-                        <TableCell>
-                          <Input className="h-8 w-20 text-xs" type="number" step="0.01" placeholder="padrão" value={r.csllPctStr} onChange={(e) => updatePreviewRow(i, { csllPctStr: e.target.value })} />
+                        <TableCell className="align-top">
+                          <div className="flex flex-wrap gap-1.5">
+                            {(
+                              [
+                                ["ISSQN", "issqnPctStr"],
+                                ["IR", "irPctStr"],
+                                ["COFINS", "cofinsPctStr"],
+                                ["PIS", "pisPctStr"],
+                                ["CSLL", "csllPctStr"],
+                              ] as const
+                            ).map(([label, campo]) => (
+                              <div key={campo} className="w-14">
+                                <span className="block text-[9px] leading-tight text-muted-foreground">{label}</span>
+                                <Input
+                                  className="h-7 px-1.5 text-xs"
+                                  type="number"
+                                  step="0.01"
+                                  placeholder="—"
+                                  value={r[campo]}
+                                  onChange={(e) => updatePreviewRow(i, { [campo]: e.target.value })}
+                                />
+                              </div>
+                            ))}
+                          </div>
                         </TableCell>
                       </TableRow>
                     ))}
                   </TableBody>
                 </Table>
-                </div>
               </div>
               <div className="flex gap-2">
                 <Button size="sm" onClick={handleConfirmarImport} disabled={importarExcel.isPending}>
