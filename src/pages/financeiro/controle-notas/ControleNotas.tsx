@@ -20,6 +20,7 @@ import {
   useNfsEmissao,
   useItensNfEmissao,
   useValidarNfEmissao,
+  TIPOS_NOTA,
 } from "@/hooks/useNfEmissao";
 import { usePlanilhaCustos, resolverPostosVigentes } from "@/hooks/usePlanilhaCusto";
 import { calcularItem, calcularTotaisNf, ItemCalculado } from "@/pages/financeiro/nf-emissao/calculos";
@@ -290,6 +291,18 @@ function ValidarNfDialog({ nf, onClose }: { nf: NfEmissaoRow | null; onClose: ()
               <div>
                 <Label>Data de Emissão</Label>
                 <Input type="date" value={dataEmissao} onChange={(e) => setDataEmissao(e.target.value)} disabled={readOnly} />
+              </div>
+              <div>
+                <Label className="text-xs">Tipo de Nota</Label>
+                <div className="flex h-10 items-center rounded-md border border-input bg-muted px-3 text-sm">
+                  {TIPOS_NOTA[nf.tipo_nota]}
+                </div>
+              </div>
+              <div className="col-span-2">
+                <Label className="text-xs">Descrição</Label>
+                <div className="flex min-h-10 items-center rounded-md border border-input bg-muted px-3 py-2 text-sm">
+                  {nf.descricao || "-"}
+                </div>
               </div>
               <div className="col-span-2">
                 <Label className="text-xs">Observações do Analista</Label>

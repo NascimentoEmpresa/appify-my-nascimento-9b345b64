@@ -15,7 +15,8 @@ import {
   AlertDialogHeader, AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import { Plus, Trash2, FileText, Building2, Calculator, ChevronRight, Search } from "lucide-react";
+import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList, CommandSeparator } from "@/components/ui/command";
+import { Plus, Trash2, FileText, Building2, Calculator, ChevronRight, Search, Settings, ChevronDown } from "lucide-react";
 import { toast } from "sonner";
 import { useEmpresaAtiva } from "@/context/EmpresaAtivaContext";
 import {
@@ -28,14 +29,25 @@ import {
   useItensNfEmissao,
   useAnexosNfEmissao,
   baixarAnexoNfEmissao,
+  TIPOS_NOTA,
+  TipoNota,
 } from "@/hooks/useNfEmissao";
 import { useContratosERP, ContratoERP } from "@/hooks/useContratosERP";
-import { usePlanilhaCustos, resolverPostosVigentes } from "@/hooks/usePlanilhaCusto";
+import { usePlanilhaCustos, resolverPostosVigentes, PostoVigente } from "@/hooks/usePlanilhaCusto";
+import { useModelosNf, buscarItensModeloNf, NfEmissaoModeloRow } from "@/hooks/useNfEmissaoModelo";
 import { calcularItem, calcularTotaisNf, ItemInput, ItemCalculado, INSS_CATEGORIAS } from "./calculos";
 import { fmtMoney, fmtPct, fmtDate, STATUS_LABEL, STATUS_CLASS, Linha, itemVazio } from "./shared";
 import { ItensNfEditor } from "./ItensNfEditor";
+import { ModeloNfDialog } from "./ModeloNfDialog";
 import { registrarLogNf } from "./registrarLogNf";
 import { HistoricoNfPainel } from "./HistoricoNfPainel";
+
+interface NovaNfSeed {
+  modeloId: string;
+  variacao: string;
+  itens: (ItemInput & { identificacao: string })[];
+  unitarios: (number | null)[];
+}
 
 export default function EmissaoNF() {
   const { empresa } = useEmpresaAtiva();
@@ -49,6 +61,12 @@ export default function EmissaoNF() {
   const [novaNfContratoId, setNovaNfContratoId] = useState<string | null>(null);
   const [nfSelecionada, setNfSelecionada] = useState<NfEmissaoRow | null>(null);
   const [nfEmEdicao, setNfEmEdicao] = useState<NfEmissaoRow | null>(null);
+  const [modeloConfigOpen, setModeloConfigOpen] = useState(false);
+  const [seedNovaNf, setSeedNovaNf] = useState<NovaNfSeed | null>(null);
+
+  const { data: planilha = [] } = usePlanilhaCustos();
+  const { data: modelosContratoSel = [] } = useModelosNf(contratoSel);
+  const modelosAtivos = useMemo(() => modelosContratoSel.filter((m) => m.ativo), [modelosContratoSel]);
 
   const contratosFiltrados = useMemo(() => {
     return contratos
@@ -60,6 +78,59 @@ export default function EmissaoNF() {
 
   const contratoAtual = contratos.find((c) => c.id === contratoSel) ?? null;
   const nfsDoContrato = useMemo(() => nfs.filter((n) => n.contrato_id === contratoSel), [nfs, contratoSel]);
+  const postosVigentesContratoSel: PostoVigente[] = useMemo(
+    () => (contratoSel ? resolverPostosVigentes(planilha, contratoSel) : []),
+    [planilha, contratoSel]
+  );
+
+  function ultimaCompetenciaVariacao(variacao: string | null) {
+    const nf = nfsDoContrato
+      .filter((n) => (n.variacao ?? "") === (variacao ?? ""))
+      .sort((a, b) => b.competencia.localeCompare(a.competencia))[0];
+    return nf ? nf.competencia.slice(0, 7) : null;
+  }
+
+  async function abrirVariacaoModelo(modelo: NfEmissaoModeloRow) {
+    const itensModelo = await buscarItensModeloNf(modelo.id);
+    if (itensModelo.length === 0) {
+      toast.error('Este modelo não tem itens cadastrados. Configure em "Modelo de NFs".');
+      return;
+    }
+    const faltantes: string[] = [];
+    const itens: (ItemInput & { identificacao: string })[] = [];
+    const unitarios: (number | null)[] = [];
+    itensModelo.forEach((mi, idx) => {
+      const pct = mi.percentual / 100;
+      const p = mi.posto ? postosVigentesContratoSel.find((pv) => pv.posto === mi.posto) : undefined;
+      if (mi.posto && !p) faltantes.push(mi.posto);
+      const rotulo =
+        mi.identificacao_padrao || (mi.posto ? (mi.percentual !== 100 ? `${mi.posto} (${mi.percentual}%)` : mi.posto) : `Item ${idx + 1}`);
+      if (p) {
+        itens.push({
+          ...itemVazio(idx + 1),
+          identificacao: rotulo,
+          valor_contrato_exec: Math.round(p.valorTotal * pct * 100) / 100,
+          qtd_colaboradores: Math.round(p.qtdColaboradores * pct),
+          inss_categoria: mi.inss_categoria,
+        });
+        unitarios.push(p.valorUnitario * pct);
+      } else {
+        itens.push({
+          ...itemVazio(idx + 1),
+          identificacao: rotulo,
+          valor_contrato_exec: mi.ultimo_valor_unitario ?? 0,
+          inss_categoria: mi.inss_categoria,
+        });
+        unitarios.push(null);
+      }
+    });
+    if (faltantes.length > 0) {
+      toast.error(`Posto(s) não encontrado(s) na planilha vigente: ${faltantes.join(", ")}. Preencha manualmente.`);
+    }
+    setSeedNovaNf({ modeloId: modelo.id, variacao: modelo.variacao ?? "", itens, unitarios });
+    setNovaNfContratoId(contratoSel);
+    setModalOpen(true);
+  }
 
   return (
     <div className="space-y-6 p-6">
@@ -150,10 +221,15 @@ export default function EmissaoNF() {
               contrato={contratoAtual}
               nfs={nfsDoContrato}
               isLoading={isLoading}
+              modelosAtivos={modelosAtivos}
               onNovaNf={() => {
+                setSeedNovaNf(null);
                 setNovaNfContratoId(contratoAtual.id);
                 setModalOpen(true);
               }}
+              onNovaVariacao={abrirVariacaoModelo}
+              ultimaCompetenciaVariacao={ultimaCompetenciaVariacao}
+              onConfigurarModelo={() => setModeloConfigOpen(true)}
               onSelecionar={setNfSelecionada}
             />
           )}
@@ -167,13 +243,24 @@ export default function EmissaoNF() {
             setModalOpen(false);
             setNfEmEdicao(null);
             setNovaNfContratoId(null);
+            setSeedNovaNf(null);
           }
         }}
         empresaId={empresaId}
         contratos={contratos}
         nfParaEditar={nfEmEdicao}
         contratoIdInicial={novaNfContratoId}
+        seed={seedNovaNf}
       />
+
+      {contratoAtual && (
+        <ModeloNfDialog
+          open={modeloConfigOpen}
+          onClose={() => setModeloConfigOpen(false)}
+          contrato={contratoAtual}
+          postosVigentes={postosVigentesContratoSel}
+        />
+      )}
 
       <DetalhesNfDialog
         nf={nfSelecionada}
@@ -191,27 +278,136 @@ function ContratoNfsPanel({
   contrato,
   nfs,
   isLoading,
+  modelosAtivos,
   onNovaNf,
+  onNovaVariacao,
+  ultimaCompetenciaVariacao,
+  onConfigurarModelo,
   onSelecionar,
 }: {
   contrato: ContratoERP;
   nfs: NfEmissaoRow[];
   isLoading: boolean;
+  modelosAtivos: NfEmissaoModeloRow[];
   onNovaNf: () => void;
+  onNovaVariacao: (modelo: NfEmissaoModeloRow) => void;
+  ultimaCompetenciaVariacao: (variacao: string | null) => string | null;
+  onConfigurarModelo: () => void;
   onSelecionar: (nf: NfEmissaoRow) => void;
 }) {
+  const [popoverOpen, setPopoverOpen] = useState(false);
+  const [buscaNf, setBuscaNf] = useState("");
+  const [filtroCompetencia, setFiltroCompetencia] = useState("TODAS");
+
+  const competencias = useMemo(
+    () => ["TODAS", ...new Set(nfs.map((n) => n.competencia.slice(0, 7)))].sort().reverse(),
+    [nfs]
+  );
+
+  const nfsFiltradas = useMemo(() => {
+    const termo = buscaNf.trim().toLowerCase();
+    return nfs
+      .filter((n) => filtroCompetencia === "TODAS" || n.competencia.slice(0, 7) === filtroCompetencia)
+      .filter((n) => !termo || (n.variacao ?? "").toLowerCase().includes(termo) || (n.numero_nf ?? "").toLowerCase().includes(termo));
+  }, [nfs, buscaNf, filtroCompetencia]);
+
   return (
     <>
-      <div className="border-b border-border px-4 py-3">
+      <div className="border-b border-border px-4 py-3 space-y-3">
         <div className="flex items-start justify-between gap-3">
           <div>
             <p className="text-sm font-semibold">{contrato.nome}</p>
             <p className="text-xs text-muted-foreground">{contrato.cliente}</p>
           </div>
-          <Button size="sm" onClick={onNovaNf} className="shrink-0">
-            <Plus className="h-4 w-4 mr-1" /> Nova NF
-          </Button>
+          <div className="flex shrink-0 items-center gap-2">
+            <Button size="sm" variant="outline" onClick={onConfigurarModelo}>
+              <Settings className="h-4 w-4 mr-1" /> Modelo de NFs
+            </Button>
+            {modelosAtivos.length > 0 ? (
+              <Popover open={popoverOpen} onOpenChange={setPopoverOpen}>
+                <PopoverTrigger asChild>
+                  <Button size="sm">
+                    <Plus className="h-4 w-4 mr-1" /> Nova NF <ChevronDown className="h-3.5 w-3.5 ml-1" />
+                  </Button>
+                </PopoverTrigger>
+                <PopoverContent align="end" className="w-80 p-0">
+                  <Command
+                    filter={(itemValue, search) => (itemValue.toLowerCase().includes(search.toLowerCase()) ? 1 : 0)}
+                  >
+                    <CommandInput placeholder="Buscar variação..." />
+                    <CommandList>
+                      <CommandEmpty>Nenhuma variação encontrada.</CommandEmpty>
+                      <CommandGroup heading={`${modelosAtivos.length} variação(ões) do modelo`}>
+                        {modelosAtivos.map((m) => {
+                          const ultima = ultimaCompetenciaVariacao(m.variacao);
+                          return (
+                            <CommandItem
+                              key={m.id}
+                              value={m.variacao || "(sem nome)"}
+                              onSelect={() => {
+                                setPopoverOpen(false);
+                                onNovaVariacao(m);
+                              }}
+                            >
+                              <div className="flex min-w-0 flex-col">
+                                <span className="truncate font-medium">{m.variacao || "(sem nome)"}</span>
+                                {ultima && (
+                                  <span className="truncate text-[11px] text-muted-foreground">Última competência: {ultima}</span>
+                                )}
+                              </div>
+                            </CommandItem>
+                          );
+                        })}
+                      </CommandGroup>
+                      <CommandSeparator />
+                      <CommandGroup>
+                        <CommandItem
+                          value="Nota avulsa (sem modelo)"
+                          onSelect={() => {
+                            setPopoverOpen(false);
+                            onNovaNf();
+                          }}
+                        >
+                          <span className="text-muted-foreground">Nota avulsa (sem modelo)</span>
+                        </CommandItem>
+                      </CommandGroup>
+                    </CommandList>
+                  </Command>
+                </PopoverContent>
+              </Popover>
+            ) : (
+              <Button size="sm" onClick={onNovaNf}>
+                <Plus className="h-4 w-4 mr-1" /> Nova NF
+              </Button>
+            )}
+          </div>
         </div>
+
+        {nfs.length > 8 && (
+          <div className="flex items-center gap-2">
+            <div className="relative flex-1">
+              <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+              <input
+                value={buscaNf}
+                onChange={(e) => setBuscaNf(e.target.value)}
+                placeholder="Buscar por variação ou nº da nota…"
+                className="h-8 w-full rounded border border-border bg-background pl-8 pr-3 text-xs outline-none focus:border-primary"
+              />
+            </div>
+            <Select value={filtroCompetencia} onValueChange={setFiltroCompetencia}>
+              <SelectTrigger className="h-8 w-36 text-xs">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {competencias.map((c) => (
+                  <SelectItem key={c} value={c}>
+                    {c === "TODAS" ? "Toda competência" : c}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+        )}
       </div>
 
       <div className="overflow-auto flex-1">
@@ -235,14 +431,14 @@ function ContratoNfsPanel({
                 </TableCell>
               </TableRow>
             )}
-            {!isLoading && nfs.length === 0 && (
+            {!isLoading && nfsFiltradas.length === 0 && (
               <TableRow>
                 <TableCell colSpan={7} className="text-center text-muted-foreground py-8">
-                  Nenhuma NF cadastrada para este contrato.
+                  {nfs.length === 0 ? "Nenhuma NF cadastrada para este contrato." : "Nenhuma NF encontrada com esse filtro."}
                 </TableCell>
               </TableRow>
             )}
-            {nfs.map((nf) => (
+            {nfsFiltradas.map((nf) => (
               <TableRow key={nf.id} className="cursor-pointer hover:bg-muted/50" onClick={() => onSelecionar(nf)}>
                 <TableCell>{nf.variacao ?? "-"}</TableCell>
                 <TableCell>
@@ -271,9 +467,10 @@ interface NovaNfDialogProps {
   contratos: ContratoERP[];
   nfParaEditar?: NfEmissaoRow | null;
   contratoIdInicial?: string | null;
+  seed?: NovaNfSeed | null;
 }
 
-function NovaNfDialog({ open, onOpenChange, empresaId, contratos, nfParaEditar, contratoIdInicial }: NovaNfDialogProps) {
+function NovaNfDialog({ open, onOpenChange, empresaId, contratos, nfParaEditar, contratoIdInicial, seed }: NovaNfDialogProps) {
   const editando = !!nfParaEditar;
   const contratoTravado = editando || !!contratoIdInicial;
   const salvar = useSalvarNfEmissao();
@@ -287,12 +484,15 @@ function NovaNfDialog({ open, onOpenChange, empresaId, contratos, nfParaEditar, 
   const [variacao, setVariacao] = useState("");
   const [competencia, setCompetencia] = useState("");
   const [dataEmissao, setDataEmissao] = useState("");
+  const [tipoNota, setTipoNota] = useState<TipoNota>("N");
+  const [descricao, setDescricao] = useState("");
   const [observacoes, setObservacoes] = useState("");
   const [itens, setItens] = useState<(ItemInput & { identificacao: string })[]>([itemVazio(1)]);
   const [anexos, setAnexos] = useState<File[]>([]);
   const [anexosParaRemover, setAnexosParaRemover] = useState<Set<string>>(new Set());
   const [expandidos, setExpandidos] = useState<Set<number>>(new Set([0]));
   const [unitariosPorItem, setUnitariosPorItem] = useState<(number | null)[]>([null]);
+  const [modeloIdOrigem, setModeloIdOrigem] = useState<string | null>(null);
 
   useEffect(() => {
     if (!open) return;
@@ -301,12 +501,21 @@ function NovaNfDialog({ open, onOpenChange, empresaId, contratos, nfParaEditar, 
       setVariacao(nfParaEditar.variacao ?? "");
       setCompetencia(nfParaEditar.competencia);
       setDataEmissao(nfParaEditar.data_emissao ?? "");
+      setTipoNota(nfParaEditar.tipo_nota);
+      setDescricao(nfParaEditar.descricao ?? "");
       setObservacoes(nfParaEditar.observacoes ?? "");
       setAnexosParaRemover(new Set());
+    } else if (seed) {
+      setContratoId(contratoIdInicial ?? "");
+      setVariacao(seed.variacao);
+      setItens(seed.itens);
+      setUnitariosPorItem(seed.unitarios);
+      setExpandidos(new Set());
+      setModeloIdOrigem(seed.modeloId);
     } else if (contratoIdInicial) {
       setContratoId(contratoIdInicial);
     }
-  }, [open, nfParaEditar?.id, contratoIdInicial]);
+  }, [open, nfParaEditar?.id, contratoIdInicial, seed]);
 
   useEffect(() => {
     if (!open || !nfParaEditar || itensExistentes.length === 0) return;
@@ -415,12 +624,15 @@ function NovaNfDialog({ open, onOpenChange, empresaId, contratos, nfParaEditar, 
     setVariacao("");
     setCompetencia("");
     setDataEmissao("");
+    setTipoNota("N");
+    setDescricao("");
     setObservacoes("");
     setItens([itemVazio(1)]);
     setAnexos([]);
     setAnexosParaRemover(new Set());
     setExpandidos(new Set([0]));
     setUnitariosPorItem([null]);
+    setModeloIdOrigem(null);
   }
 
   function handleClose(v: boolean) {
@@ -459,6 +671,8 @@ function NovaNfDialog({ open, onOpenChange, empresaId, contratos, nfParaEditar, 
           variacao: variacao || null,
           competencia,
           data_emissao: dataEmissao || null,
+          tipo_nota: tipoNota,
+          descricao: descricao || null,
           observacoes: observacoes || null,
           itens: itensCalculados,
           totais,
@@ -479,12 +693,15 @@ function NovaNfDialog({ open, onOpenChange, empresaId, contratos, nfParaEditar, 
           competencia,
           data_emissao: dataEmissao || null,
           numero_nf: null,
+          tipo_nota: tipoNota,
+          descricao: descricao || null,
           observacoes: observacoes || null,
           itens: itensCalculados,
           totais,
           pctFiscais,
           anexos: anexos.map((file) => ({ file })),
           status: "rascunho",
+          nf_emissao_modelo_id: modeloIdOrigem,
         });
         if (status === "enviada") {
           await enviar.mutateAsync(nfId);
@@ -564,9 +781,24 @@ function NovaNfDialog({ open, onOpenChange, empresaId, contratos, nfParaEditar, 
               <Label>Data de Emissão</Label>
               <Input type="date" value={dataEmissao} onChange={(e) => setDataEmissao(e.target.value)} />
             </div>
-            <div className="col-span-3">
-              <Label>Observações</Label>
-              <Textarea rows={1} value={observacoes} onChange={(e) => setObservacoes(e.target.value)} />
+            <div>
+              <Label>Tipo de Nota</Label>
+              <Select value={tipoNota} onValueChange={(v) => setTipoNota(v as TipoNota)}>
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {Object.entries(TIPOS_NOTA).map(([k, label]) => (
+                    <SelectItem key={k} value={k}>
+                      {label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="col-span-2">
+              <Label>Descrição</Label>
+              <Textarea rows={1} value={descricao} onChange={(e) => setDescricao(e.target.value)} />
             </div>
           </div>
         </section>
@@ -586,6 +818,16 @@ function NovaNfDialog({ open, onOpenChange, empresaId, contratos, nfParaEditar, 
           onSelecionarPosto={selecionarPosto}
           onQtdColaboradoresChange={qtdColaboradoresChange}
         />
+
+        <section className="rounded-xl border bg-card p-3 space-y-2">
+          <Label>Observações</Label>
+          <Textarea
+            rows={2}
+            placeholder="Anotações internas, não entra na nota."
+            value={observacoes}
+            onChange={(e) => setObservacoes(e.target.value)}
+          />
+        </section>
 
         <section className="rounded-xl border bg-card p-3 space-y-3">
           <div className="flex items-center justify-between">
@@ -759,6 +1001,16 @@ function DetalhesNfDialog({
                   <p className="text-xs text-muted-foreground">Nº NF</p>
                   <p className="font-medium">{nf.numero_nf ?? "-"}</p>
                 </div>
+                <div>
+                  <p className="text-xs text-muted-foreground">Tipo de Nota</p>
+                  <p className="font-medium">{TIPOS_NOTA[nf.tipo_nota]}</p>
+                </div>
+                {nf.descricao && (
+                  <div className="col-span-4">
+                    <p className="text-xs text-muted-foreground">Descrição</p>
+                    <p>{nf.descricao}</p>
+                  </div>
+                )}
                 {nf.observacoes && (
                   <div className="col-span-4">
                     <p className="text-xs text-muted-foreground">Observações</p>

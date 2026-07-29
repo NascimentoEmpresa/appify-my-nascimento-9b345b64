@@ -19,6 +19,7 @@ import {
 } from "./conta-garantida/calculos";
 import { ImportarFluxoDialog } from "./conta-garantida/ImportarFluxoDialog";
 import { BancosConfigDialog } from "./conta-garantida/BancosConfigDialog";
+import { CdiHistoricoDialog } from "./conta-garantida/CdiHistoricoDialog";
 
 const fmtMoney = (n: number) => new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(n || 0);
 const CORES = ["#FF6B35", "#d9534f", "#0275d8", "#00d68f", "#ffc107", "#9c27b0"];
@@ -31,6 +32,7 @@ export default function ContaGarantida() {
 
   const [importarOpen, setImportarOpen] = useState(false);
   const [configOpen, setConfigOpen] = useState(false);
+  const [cdiHistOpen, setCdiHistOpen] = useState(false);
   const [filtroBanco, setFiltroBanco] = useState("TODOS");
   const [filtroPeriodo, setFiltroPeriodo] = useState("TODOS");
   const [busca, setBusca] = useState("");
@@ -80,6 +82,11 @@ export default function ContaGarantida() {
     [bancos]
   );
 
+  const cdiAtual = useMemo(() => {
+    const datas = Object.keys(cdiHistorico).sort().reverse();
+    return datas.length > 0 ? { data: datas[0], valor: cdiHistorico[datas[0]] } : null;
+  }, [cdiHistorico]);
+
   const dadosDias = useMemo(() => diasNoChequePorMes(registrosFiltrados), [registrosFiltrados]);
   const dadosCurva = useMemo(() => dividaVsAplicadoPorData(registrosFiltrados), [registrosFiltrados]);
   const dadosBancos = useMemo(() => distribuicaoPorBanco(registrosFiltrados), [registrosFiltrados]);
@@ -103,6 +110,12 @@ export default function ContaGarantida() {
         subtitle="Cheque especial e rendimento de aplicação por banco, indexado ao CDI real do Bacen. Alimentado por upload manual do Fluxo de Caixa (quebra-galho até virar dado nativo)."
         actions={
           <>
+            <Button variant="ghost" size="sm" onClick={() => setCdiHistOpen(true)} className="text-xs text-muted-foreground">
+              CDI atual:{" "}
+              {cdiAtual
+                ? `${(cdiAtual.valor * 100).toLocaleString("pt-BR", { minimumFractionDigits: 4, maximumFractionDigits: 4 })}% (${new Date(cdiAtual.data + "T00:00:00").toLocaleDateString("pt-BR")})`
+                : "não atualizado"}
+            </Button>
             <Button variant="outline" onClick={handleAtualizarCdi} disabled={atualizarCdi.isPending}>
               <RefreshCw className="h-4 w-4 mr-2" /> Atualizar CDI
             </Button>
@@ -280,6 +293,7 @@ export default function ContaGarantida() {
 
       <ImportarFluxoDialog open={importarOpen} onClose={() => setImportarOpen(false)} />
       <BancosConfigDialog open={configOpen} onClose={() => setConfigOpen(false)} />
+      <CdiHistoricoDialog open={cdiHistOpen} onClose={() => setCdiHistOpen(false)} historico={cdiHistorico} />
     </div>
   );
 }

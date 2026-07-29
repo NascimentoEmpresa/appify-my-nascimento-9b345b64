@@ -6,6 +6,14 @@ const BUCKET = "nf-emissao";
 
 const NF_EMISSAO_KEY = "nf_emissao";
 
+export const TIPOS_NOTA = {
+  N: "Normal",
+  R: "Repactuação",
+  M: "Materiais",
+  DH: "Diárias e horas extras",
+} as const;
+export type TipoNota = keyof typeof TIPOS_NOTA;
+
 export interface NfEmissaoRow {
   id: string;
   empresa_id: string;
@@ -15,10 +23,18 @@ export interface NfEmissaoRow {
   data_emissao: string | null;
   numero_nf: string | null;
   status: "rascunho" | "enviada" | "concluida" | "cancelada";
+  tipo_nota: TipoNota;
+  descricao: string | null;
   observacoes: string | null;
   observacoes_financeiro: string | null;
   data_pagamento: string | null;
   valor_pago: number | null;
+  situacao_site_pmt: string | null;
+  situacao_dominio: string | null;
+  desconto_conta_vinculada: number;
+  recebimento_extra: number;
+  falta_receber: number;
+  pago_a_mais: number;
   valor_contrato_exec_total: number;
   vlr_bruto_total: number;
   vlr_liquido_total: number;
@@ -34,6 +50,7 @@ export interface NfEmissaoRow {
   pis_pct: number;
   csll_pct: number;
   created_at: string;
+  nf_emissao_modelo_id: string | null;
   contrato: { id: string; nome: string; cliente: string } | null;
 }
 
@@ -64,12 +81,15 @@ interface SalvarNfEmissaoInput {
   competencia: string;
   data_emissao: string | null;
   numero_nf: string | null;
+  tipo_nota: TipoNota;
+  descricao: string | null;
   observacoes: string | null;
   itens: ItemCalculado[];
   totais: TotaisNf;
   pctFiscais: PercentuaisFiscais;
   anexos: AnexoParaEnviar[];
   status: "rascunho" | "enviada";
+  nf_emissao_modelo_id?: string | null;
 }
 
 export function useSalvarNfEmissao() {
@@ -87,8 +107,11 @@ export function useSalvarNfEmissao() {
           competencia: input.competencia,
           data_emissao: input.data_emissao,
           numero_nf: input.numero_nf,
+          tipo_nota: input.tipo_nota,
+          descricao: input.descricao,
           observacoes: input.observacoes,
           status: input.status,
+          nf_emissao_modelo_id: input.nf_emissao_modelo_id ?? null,
           ...input.totais,
           ...input.pctFiscais,
           created_by: userId,
@@ -142,6 +165,8 @@ interface AtualizarNfEmissaoInput {
   variacao: string | null;
   competencia: string;
   data_emissao: string | null;
+  tipo_nota: TipoNota;
+  descricao: string | null;
   observacoes: string | null;
   itens: ItemCalculado[];
   totais: TotaisNf;
@@ -149,6 +174,7 @@ interface AtualizarNfEmissaoInput {
   anexosNovos: AnexoParaEnviar[];
   anexosParaRemover: { id: string; storage_path: string }[];
   status: "rascunho" | "enviada";
+  nf_emissao_modelo_id?: string | null;
 }
 
 export function useAtualizarNfEmissao() {
@@ -164,8 +190,11 @@ export function useAtualizarNfEmissao() {
           variacao: input.variacao,
           competencia: input.competencia,
           data_emissao: input.data_emissao,
+          tipo_nota: input.tipo_nota,
+          descricao: input.descricao,
           observacoes: input.observacoes,
           status: input.status,
+          ...(input.nf_emissao_modelo_id !== undefined ? { nf_emissao_modelo_id: input.nf_emissao_modelo_id } : {}),
           ...input.totais,
           ...input.pctFiscais,
           updated_by: userId,
@@ -278,6 +307,12 @@ interface RegistrarPagamentoNfInput {
   id: string;
   data_pagamento: string | null;
   valor_pago: number | null;
+  situacao_site_pmt?: string | null;
+  situacao_dominio?: string | null;
+  desconto_conta_vinculada?: number;
+  recebimento_extra?: number;
+  falta_receber?: number;
+  pago_a_mais?: number;
 }
 
 export function useRegistrarPagamentoNf() {
@@ -286,7 +321,16 @@ export function useRegistrarPagamentoNf() {
     mutationFn: async (input: RegistrarPagamentoNfInput) => {
       const { error } = await (supabase as any)
         .from("nf_emissao")
-        .update({ data_pagamento: input.data_pagamento, valor_pago: input.valor_pago })
+        .update({
+          data_pagamento: input.data_pagamento,
+          valor_pago: input.valor_pago,
+          ...(input.situacao_site_pmt !== undefined ? { situacao_site_pmt: input.situacao_site_pmt } : {}),
+          ...(input.situacao_dominio !== undefined ? { situacao_dominio: input.situacao_dominio } : {}),
+          ...(input.desconto_conta_vinculada !== undefined ? { desconto_conta_vinculada: input.desconto_conta_vinculada } : {}),
+          ...(input.recebimento_extra !== undefined ? { recebimento_extra: input.recebimento_extra } : {}),
+          ...(input.falta_receber !== undefined ? { falta_receber: input.falta_receber } : {}),
+          ...(input.pago_a_mais !== undefined ? { pago_a_mais: input.pago_a_mais } : {}),
+        })
         .eq("id", input.id);
       if (error) throw error;
       return input.id;
