@@ -1,20 +1,26 @@
-import { useEffect, useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
 import { chamadosMarkSeen } from "@/hooks/useChamadosNotif";
 import { useAccessibleMenus } from "@/hooks/useAccessibleMenus";
+import { useChamadoPerms } from "./useChamadoPerms";
+import { useToast } from "@/hooks/use-toast";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { Card } from "@/components/ui/card";
+import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import {
+  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
+} from "@/components/ui/select";
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table";
 import { PieChart, Pie, Cell, ResponsiveContainer } from "recharts";
-import { ListChecks, Clock, MessageSquare, CheckCircle2, AlertTriangle, ShieldAlert, CalendarClock, RotateCw, ArrowUpRight, Plus, BookOpen, ClipboardCheck, Sparkles, FileText, Zap } from "lucide-react";
+import { ListChecks, Clock, MessageSquare, CheckCircle2, AlertTriangle, ShieldAlert, CalendarClock, RotateCw, ArrowUpRight, Plus, BookOpen, ClipboardCheck, Sparkles, FileText, Zap, Star, Trophy } from "lucide-react";
 import { FeedAtualizacoes } from "./FeedAtualizacoes";
 import {
-  StatCard, PrioridadeBadge, StatusBadge, STATUS_CHAMADO, fmtData, fmtDataHora, type Chamado,
+  StatCard, PrioridadeBadge, StatusBadge, STATUS_CHAMADO, PRIORIDADES, Estrelas, iniciais, fmtData, fmtDataHora, type Chamado,
 } from "./types";
 
 const DONUT: Record<string, string> = {
@@ -27,10 +33,16 @@ const ATIVO = (s: string) => s !== "concluido" && s !== "reprovado";
 
 export default function PainelDesenvolvedor() {
   const nav = useNavigate();
+  const qc = useQueryClient();
+  const { toast } = useToast();
   const { user } = useAuth();
   const { data: access } = useAccessibleMenus("visualizar");
+  const { canCoordenar, gestor } = useChamadoPerms();
   const dev = access?.codes.has("chamados_sistemas_dev") ?? false;
   const nome = (user?.user_metadata as any)?.nome || user?.email || "";
+  const podeEditarPrioridade = canCoordenar || gestor; // gerência troca a prioridade na fila
+
+  const [flashPrioridade, setFlashPrioridade] = useState<string | null>(null);
 
   // Abriu o Painel do Desenvolvedor → zera a bolinha de novidades do dev.
   useEffect(() => { chamadosMarkSeen(user?.id, "dev"); }, [user?.id]);
@@ -47,6 +59,70 @@ export default function PainelDesenvolvedor() {
       return (data ?? []) as Chamado[];
     },
   });
+
+  // Posição na fila global (FIFO) dos chamados atribuídos a este dev.
+  const { data: posicoes = {} } = useQuery({
+    queryKey: ["chamados-posicao-fila", user?.id],
+    enabled: !!user?.id && dev,
+    queryFn: async () => {
+      const { data } = await (supabase as any).rpc("chamados_posicao_fila");
+      const m: Record<string, number> = {};
+      (data ?? []).forEach((r: { chamado_id: string; posicao: number }) => { m[r.chamado_id] = r.posicao; });
+      return m;
+    },
+  });
+
+  const { data: usuarios = [] } = useQuery({
+    queryKey: ["chamados-usuarios"],
+    queryFn: async () => {
+      const { data } = await (supabase as any).rpc("listar_usuarios_ativos");
+      return (data ?? []) as Array<{ id: string; display_name: string }>;
+    },
+  });
+  const nomeDe = (uid: string | null) => (uid ? usuarios.find((u) => u.id === uid)?.display_name ?? "—" : "—");
+
+  // Ranking de satisfação da equipe (médias dos 5 critérios por responsável).
+  const { data: ranking = [] } = useQuery({
+    queryKey: ["chamados-ranking-satisfacao"],
+    enabled: dev,
+    queryFn: async () => {
+      const { data } = await (supabase as any).rpc("chamados_ranking_satisfacao");
+      return (data ?? []) as Array<{
+        responsavel_id: string; avaliacoes: number; media: number;
+        atendimento: number; tempo: number; solucao: number; clareza: number; satisfacao: number;
+      }>;
+    },
+  });
+
+  // Média geral e por item = média ponderada pelo nº de avaliações de cada dev.
+  const satisfacao = useMemo(() => {
+    const total = ranking.reduce((s, r) => s + Number(r.avaliacoes), 0);
+    if (!total) return null;
+    const w = (k: "media" | "atendimento" | "tempo" | "solucao" | "clareza" | "satisfacao") =>
+      ranking.reduce((s, r) => s + Number(r[k]) * Number(r.avaliacoes), 0) / total;
+    return {
+      total,
+      media: w("media"),
+      itens: [
+        { label: "Atendimento do analista", v: w("atendimento") },
+        { label: "Tempo de atendimento", v: w("tempo") },
+        { label: "Solução apresentada", v: w("solucao") },
+        { label: "Clareza das informações", v: w("clareza") },
+        { label: "Satisfação geral", v: w("satisfacao") },
+      ],
+    };
+  }, [ranking]);
+
+  const mudarPrioridade = async (id: string, prioridade: string, numero: string) => {
+    const { error } = await (supabase as any).from("CHAMADO_SISTEMA").update({ prioridade }).eq("id", id);
+    if (error) { toast({ title: "Erro ao alterar prioridade", description: error.message, variant: "destructive" }); return; }
+    await (supabase as any).from("CHAMADO_SISTEMA_EVENTO").insert({
+      chamado_id: id, tipo: "evento", texto: `Prioridade alterada para ${PRIORIDADES[prioridade]?.label ?? prioridade}`,
+    });
+    setFlashPrioridade(id); setTimeout(() => setFlashPrioridade(null), 500);
+    toast({ title: `Prioridade do #${numero} → ${PRIORIDADES[prioridade]?.label ?? prioridade}` });
+    qc.invalidateQueries({ queryKey: ["chamados-meus-atribuidos", user?.id] });
+  };
 
   const hoje = new Date(); hoje.setHours(0, 0, 0, 0);
   const stats = useMemo(() => {
@@ -123,7 +199,7 @@ export default function PainelDesenvolvedor() {
               <Table>
                 <TableHeader>
                   <TableRow>
-                    <TableHead className="w-10">#</TableHead>
+                    <TableHead className="w-16 text-center">Fila</TableHead>
                     <TableHead>Chamado / Assunto</TableHead>
                     <TableHead>Solicitante / Setor</TableHead>
                     <TableHead>Prioridade</TableHead>
@@ -133,17 +209,47 @@ export default function PainelDesenvolvedor() {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {chamados.map((c, i) => {
+                  {chamados.map((c) => {
                     const atrasado = c.prazo_previsto && ATIVO(c.status) && new Date(c.prazo_previsto) < hoje;
                     return (
                       <TableRow key={c.id} className="cursor-pointer" onClick={() => nav(`/app/sistemas/chamados/${c.id}`)}>
-                        <TableCell className="text-center text-xs text-muted-foreground">{i + 1}</TableCell>
+                        <TableCell className="text-center">
+                          {posicoes[c.id] ? (
+                            <span
+                              className={`inline-flex h-7 w-7 items-center justify-center rounded-full text-xs font-bold ${
+                                c.prioridade === "alta" ? "bg-destructive/15 text-destructive"
+                                : c.prioridade === "media" ? "bg-warning/15 text-warning"
+                                : "bg-success/15 text-success"
+                              }`}
+                              title="Posição na fila por ordem de abertura"
+                            >
+                              {posicoes[c.id]}
+                            </span>
+                          ) : (
+                            <span className="text-xs text-muted-foreground">—</span>
+                          )}
+                        </TableCell>
                         <TableCell>
                           <p className="font-mono text-[11px] font-semibold">#{c.numero}</p>
                           <p className="text-xs">{c.assunto}</p>
                         </TableCell>
                         <TableCell className="text-xs">{c.solicitante_nome || "—"}<div className="text-[10px] text-muted-foreground">{c.setor}</div></TableCell>
-                        <TableCell><PrioridadeBadge prioridade={c.prioridade} /></TableCell>
+                        <TableCell onClick={(e) => e.stopPropagation()}>
+                          {podeEditarPrioridade && ATIVO(c.status) ? (
+                            <div className={flashPrioridade === c.id ? "animate-pop" : ""}>
+                              <Select value={c.prioridade} onValueChange={(v) => mudarPrioridade(c.id, v, c.numero)}>
+                                <SelectTrigger className="h-7 w-[92px] text-xs"><SelectValue /></SelectTrigger>
+                                <SelectContent>
+                                  <SelectItem value="alta">Alta</SelectItem>
+                                  <SelectItem value="media">Média</SelectItem>
+                                  <SelectItem value="baixa">Baixa</SelectItem>
+                                </SelectContent>
+                              </Select>
+                            </div>
+                          ) : (
+                            <PrioridadeBadge prioridade={c.prioridade} />
+                          )}
+                        </TableCell>
                         <TableCell><StatusBadge status={c.status} /></TableCell>
                         <TableCell className={`whitespace-nowrap text-xs ${atrasado ? "font-semibold text-destructive" : ""}`}>{fmtData(c.prazo_previsto)}{atrasado ? " · atrasado" : ""}</TableCell>
                         <TableCell className="whitespace-nowrap text-xs text-muted-foreground">{fmtDataHora(c.updated_at)}</TableCell>
@@ -200,6 +306,56 @@ export default function PainelDesenvolvedor() {
 
           <FeedAtualizacoes buildHref={(cid) => `/app/sistemas/chamados/${cid}`} />
         </div>
+      </div>
+
+      {/* Satisfação — ranking da equipe + médias por item avaliado */}
+      <div className="mt-4 grid gap-4 lg:grid-cols-2">
+        <Card className="p-4">
+          <div className="mb-3 flex items-center justify-between">
+            <p className="flex items-center gap-1.5 text-sm font-bold"><Trophy className="h-4 w-4 text-warning" /> Ranking de satisfação</p>
+            {satisfacao && (
+              <div className="flex items-center gap-1.5">
+                <Estrelas valor={satisfacao.media} size={15} />
+                <span className="text-sm font-bold">{satisfacao.media.toFixed(1).replace(".", ",")}</span>
+                <span className="text-[11px] text-muted-foreground">({satisfacao.total})</span>
+              </div>
+            )}
+          </div>
+          <div className="space-y-2">
+            {ranking.map((r, i) => (
+              <div key={r.responsavel_id} className="flex items-center gap-2.5">
+                <span className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-[11px] font-bold ${
+                  i === 0 ? "bg-warning/20 text-warning"
+                  : i === 1 ? "bg-muted-foreground/20 text-muted-foreground"
+                  : i === 2 ? "bg-orange-500/20 text-orange-600"
+                  : "bg-muted text-muted-foreground"
+                }`}>{i + 1}</span>
+                <Avatar className="h-7 w-7"><AvatarFallback className="text-[10px]">{iniciais(nomeDe(r.responsavel_id))}</AvatarFallback></Avatar>
+                <p className="min-w-0 flex-1 truncate text-xs font-medium">{nomeDe(r.responsavel_id)}</p>
+                <Estrelas valor={Number(r.media)} size={13} />
+                <span className="w-7 text-right text-xs font-semibold">{Number(r.media).toFixed(1).replace(".", ",")}</span>
+                <span className="w-8 text-right text-[10px] text-muted-foreground">({r.avaliacoes})</span>
+              </div>
+            ))}
+            {ranking.length === 0 && <p className="py-4 text-center text-xs text-muted-foreground">Ainda não há avaliações de chamados concluídos.</p>}
+          </div>
+        </Card>
+
+        <Card className="p-4">
+          <p className="mb-3 flex items-center gap-1.5 text-sm font-bold"><Star className="h-4 w-4 text-warning" /> Média de satisfação por item avaliado</p>
+          <div className="space-y-2.5">
+            {satisfacao ? satisfacao.itens.map((it) => (
+              <div key={it.label} className="flex items-center gap-2 text-xs">
+                <span className="min-w-0 flex-1 truncate">{it.label}</span>
+                <Estrelas valor={it.v} size={13} />
+                <span className="w-7 text-right font-semibold">{it.v.toFixed(1).replace(".", ",")}</span>
+                <span className="w-8 text-right text-[10px] text-muted-foreground">({satisfacao.total})</span>
+              </div>
+            )) : (
+              <p className="py-4 text-center text-xs text-muted-foreground">Sem avaliações ainda.</p>
+            )}
+          </div>
+        </Card>
       </div>
 
       {/* Rodapé: fila por prioridade, atalhos e referências */}

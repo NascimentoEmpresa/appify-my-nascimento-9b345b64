@@ -15,7 +15,7 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { CheckCircle2, MessageSquare, XCircle, Paperclip, ArrowLeft, Trash2, Star } from "lucide-react";
+import { CheckCircle2, MessageSquare, XCircle, Paperclip, ArrowLeft, Trash2, Star, Send, UploadCloud, X, RotateCcw, Reply } from "lucide-react";
 import { ExcluirChamadoDialog } from "./ExcluirChamadoDialog";
 import {
   StatusBadge, PrioridadeBadge, STATUS_CHAMADO, Estrelas,
@@ -38,6 +38,9 @@ export default function ExecutarChamado() {
   const [excluindoOpen, setExcluindoOpen] = useState(false);
   const [agindo, setAgindo] = useState<string | null>(null); // ação em curso (trava cliques repetidos)
   const [flash, setFlash] = useState(false);                 // pisca o selo de status ao mudar
+  const [resposta, setResposta] = useState("");              // resposta pública ao solicitante
+  const [respArquivos, setRespArquivos] = useState<File[]>([]);
+  const [enviandoResp, setEnviandoResp] = useState(false);
 
   const { data: usuarios = [] } = useQuery({
     queryKey: ["chamados-usuarios"],
@@ -129,6 +132,45 @@ export default function ExecutarChamado() {
     qc.invalidateQueries({ queryKey: ["chamado-eventos", id] });
   };
 
+  // Resposta PÚBLICA ao solicitante (aparece no histórico dele) + anexos.
+  const sanitizeNome = (nome: string) =>
+    nome.normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/[^a-zA-Z0-9._-]/g, "_");
+
+  const responderSolicitante = async () => {
+    if ((!resposta.trim() && respArquivos.length === 0) || enviandoResp) return;
+    setEnviandoResp(true);
+
+    // 1) Comentário visível ao solicitante (só grava se houver texto).
+    if (resposta.trim()) {
+      const { error } = await (supabase as any).from("CHAMADO_SISTEMA_EVENTO").insert({
+        chamado_id: id, tipo: "comentario", texto: resposta.trim(),
+      });
+      if (error) { setEnviandoResp(false); toast({ title: "Erro ao enviar resposta", description: error.message, variant: "destructive" }); return; }
+    }
+
+    // 2) Anexos da resposta (best-effort), marcados com campo 'resposta'.
+    const falhas: string[] = [];
+    for (const file of respArquivos) {
+      const path = `${id}/${Date.now()}-${sanitizeNome(file.name)}`;
+      const up = await supabase.storage.from(BUCKET_CHAMADOS).upload(path, file, { contentType: file.type });
+      if (up.error) { falhas.push(file.name); continue; }
+      await (supabase as any).from("CHAMADO_SISTEMA_ANEXO").insert({
+        chamado_id: id, storage_path: path, nome_arquivo: file.name,
+        mime_type: file.type || null, tamanho_bytes: file.size, campo: "resposta",
+      });
+    }
+
+    supabase.functions.invoke("enviar-notificacao-push", { body: { chamado_id: id, evento: "resposta_time" } }).catch(() => {});
+    setResposta(""); setRespArquivos([]);
+    setEnviandoResp(false);
+    toast({
+      title: "Resposta enviada ao solicitante",
+      description: falhas.length ? `Anexos com falha: ${falhas.join(", ")}` : undefined,
+    });
+    qc.invalidateQueries({ queryKey: ["chamado-eventos", id] });
+    qc.invalidateQueries({ queryKey: ["chamado-anexos", id] });
+  };
+
   const reprovar = async () => {
     if (!motivo.trim()) { toast({ title: "Informe o motivo.", variant: "destructive" }); return; }
     const { error } = await (supabase as any).from("CHAMADO_SISTEMA").update({ status: "reprovado", motivo_reprovacao: motivo.trim() }).eq("id", id);
@@ -147,6 +189,10 @@ export default function ExecutarChamado() {
   };
 
   if (!chamado) return <p className="p-6 text-sm text-muted-foreground">Carregando…</p>;
+
+  const anexosAbertura = anexos.filter((a) => (a.campo ?? "abertura") === "abertura");
+  const anexosResposta = anexos.filter((a) => a.campo && a.campo !== "abertura");
+  const encerrado = chamado.status === "concluido" || chamado.status === "reprovado";
 
   const Campo = ({ label, children }: { label: string; children: React.ReactNode }) => (
     <div>
@@ -237,19 +283,74 @@ export default function ExecutarChamado() {
               </div>
             )}
             <div>
-              <p className="mb-1 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Anexos da abertura ({anexos.length})</p>
+              <p className="mb-1 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Anexos da abertura ({anexosAbertura.length})</p>
               <div className="space-y-1">
-                {anexos.map((a) => (
+                {anexosAbertura.map((a) => (
                   <button key={a.id} onClick={() => baixarAnexo(a.storage_path)} className="flex w-full items-center gap-2 rounded border border-border px-2.5 py-1.5 text-left text-xs hover:border-primary/40">
                     <Paperclip className="h-3.5 w-3.5 text-muted-foreground" />
                     <span className="flex-1 truncate">{a.nome_arquivo}</span>
                     {a.tamanho_bytes != null && <span className="text-[10px] text-muted-foreground">{Math.round(a.tamanho_bytes / 1024)} KB</span>}
                   </button>
                 ))}
-                {anexos.length === 0 && <p className="text-xs text-muted-foreground">Nenhum anexo.</p>}
+                {anexosAbertura.length === 0 && <p className="text-xs text-muted-foreground">Nenhum anexo.</p>}
               </div>
             </div>
           </Card>
+
+          {/* Responder ao solicitante (visível a ele) + anexos */}
+          {podeAgir && !encerrado && (
+            <Card className="animate-rise-in space-y-3 border-primary/30 p-4">
+              <p className="flex items-center gap-1.5 text-sm font-bold"><Reply className="h-4 w-4 text-primary" /> Responder ao solicitante <span className="font-normal text-muted-foreground">(o solicitante recebe e vê no histórico)</span></p>
+              <Textarea
+                rows={3} maxLength={4000}
+                placeholder="Escreva a resposta, uma dúvida ou o retorno da entrega para o solicitante…"
+                value={resposta} onChange={(e) => setResposta(e.target.value)}
+              />
+              <label className="flex cursor-pointer items-center justify-center gap-2 rounded-lg border border-dashed border-border px-3 py-2.5 text-center text-xs text-muted-foreground hover:border-primary/40">
+                <UploadCloud className="h-4 w-4" /> Anexar arquivos (imagens, PDF, planilhas…)
+                <input
+                  type="file" multiple className="hidden"
+                  accept=".pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.csv,.zip,image/*"
+                  onChange={(e) => { setRespArquivos((cur) => [...cur, ...Array.from(e.target.files ?? [])]); e.target.value = ""; }}
+                />
+              </label>
+              {respArquivos.length > 0 && (
+                <div className="space-y-1">
+                  {respArquivos.map((f, i) => (
+                    <div key={i} className="flex items-center justify-between rounded border border-border px-2.5 py-1.5 text-xs">
+                      <span className="truncate">{f.name}</span>
+                      <button type="button" onClick={() => setRespArquivos((cur) => cur.filter((_, j) => j !== i))} className="ml-2 text-muted-foreground hover:text-destructive">
+                        <X className="h-3.5 w-3.5" />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+              <Button
+                className="w-full gap-2 transition-transform active:scale-95"
+                onClick={responderSolicitante}
+                disabled={enviandoResp || (!resposta.trim() && respArquivos.length === 0)}
+              >
+                <Send className="h-4 w-4" /> {enviandoResp ? "Enviando…" : "Enviar resposta"}
+              </Button>
+            </Card>
+          )}
+
+          {anexosResposta.length > 0 && (
+            <Card className="space-y-2 p-4">
+              <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Anexos enviados nas respostas ({anexosResposta.length})</p>
+              <div className="space-y-1">
+                {anexosResposta.map((a) => (
+                  <button key={a.id} onClick={() => baixarAnexo(a.storage_path)} className="flex w-full items-center gap-2 rounded border border-border px-2.5 py-1.5 text-left text-xs hover:border-primary/40">
+                    <Paperclip className="h-3.5 w-3.5 text-muted-foreground" />
+                    <span className="flex-1 truncate">{a.nome_arquivo}</span>
+                    <span className="text-[10px] text-muted-foreground">{nomeDe(a.autor_id)}</span>
+                    {a.tamanho_bytes != null && <span className="text-[10px] text-muted-foreground">{Math.round(a.tamanho_bytes / 1024)} KB</span>}
+                  </button>
+                ))}
+              </div>
+            </Card>
+          )}
 
           {/* Observações internas */}
           <Card className="space-y-2 p-4">
@@ -333,6 +434,17 @@ export default function ExecutarChamado() {
                 <MessageSquare className="h-4 w-4" />
                 {agindo === "solicitar_info" ? "Solicitando…" : chamado.status === "aguardando_retorno" ? "Aguardando retorno do solicitante" : "Solicitar mais informações"}
               </Button>
+              {chamado.status === "aguardando_retorno" && (
+                <Button
+                  variant="outline"
+                  className="w-full justify-start gap-2 transition-transform active:scale-95 disabled:opacity-60"
+                  disabled={!!agindo}
+                  onClick={() => mudarStatus("em_andamento", "Solicitação de informações cancelada — chamado retomado", "cancelar_info")}
+                >
+                  <RotateCcw className="h-4 w-4 text-primary" />
+                  {agindo === "cancelar_info" ? "Cancelando…" : "Cancelar solicitação de informações"}
+                </Button>
+              )}
               {canAprovar && chamado.status !== "concluido" && chamado.status !== "reprovado" && (
                 <Button variant="outline" className="w-full justify-start gap-2 text-destructive transition-transform active:scale-95" onClick={() => setReprovando(true)}>
                   <XCircle className="h-4 w-4" /> Reprovar chamado

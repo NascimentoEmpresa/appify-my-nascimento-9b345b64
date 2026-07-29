@@ -47,6 +47,18 @@ export default function MeusChamados({ base = "/app/central-servicos/chamados" }
     },
   });
 
+  // Posição na fila (FIFO): o chamado ATIVO mais antigo aberto é o nº 1.
+  const { data: posicoes = {} } = useQuery({
+    queryKey: ["chamados-posicao-fila", user?.id],
+    enabled: !!user?.id,
+    queryFn: async () => {
+      const { data } = await (supabase as any).rpc("chamados_posicao_fila");
+      const m: Record<string, number> = {};
+      (data ?? []).forEach((r: { chamado_id: string; posicao: number }) => { m[r.chamado_id] = r.posicao; });
+      return m;
+    },
+  });
+
   const pendentesIds = useMemo(() => new Set(avaliacoesPendentes.map((p) => p.id)), [avaliacoesPendentes]);
   const [avaliarAlvo, setAvaliarAlvo] = useState<{ id: string; numero: string } | null>(null);
   const [pagina, setPagina] = useState(1);
@@ -151,7 +163,7 @@ export default function MeusChamados({ base = "/app/central-servicos/chamados" }
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead className="w-10">Fila</TableHead>
+                  <TableHead className="w-24 text-center">Posição na fila</TableHead>
                   <TableHead>Nº do chamado</TableHead>
                   <TableHead>Assunto</TableHead>
                   <TableHead>Módulo / Sistema</TableHead>
@@ -165,7 +177,7 @@ export default function MeusChamados({ base = "/app/central-servicos/chamados" }
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {visiveis.map((c, i) => {
+                {visiveis.map((c) => {
                   const aguardando = c.status === "aguardando_retorno";
                   return (
                   <TableRow
@@ -173,7 +185,22 @@ export default function MeusChamados({ base = "/app/central-servicos/chamados" }
                     className={`cursor-pointer ${aguardando ? "bg-primary/5 hover:bg-primary/10" : ""}`}
                     onClick={() => nav(`${base}/${c.id}/acompanhar`)}
                   >
-                    <TableCell className="text-center text-xs text-muted-foreground">{de + i}</TableCell>
+                    <TableCell className="text-center">
+                      {posicoes[c.id] ? (
+                        <span
+                          className={`inline-flex h-7 w-7 items-center justify-center rounded-full text-xs font-bold ${
+                            c.prioridade === "alta" ? "bg-destructive/15 text-destructive"
+                            : c.prioridade === "media" ? "bg-warning/15 text-warning"
+                            : "bg-success/15 text-success"
+                          }`}
+                          title={`Fila por ordem de abertura · prioridade ${c.prioridade}`}
+                        >
+                          {posicoes[c.id]}
+                        </span>
+                      ) : (
+                        <span className="text-xs text-muted-foreground">—</span>
+                      )}
+                    </TableCell>
                     <TableCell className="whitespace-nowrap font-mono text-xs font-semibold">#{c.numero}</TableCell>
                     <TableCell className="max-w-[220px] truncate text-sm" title={c.assunto}>
                       {c.assunto}
