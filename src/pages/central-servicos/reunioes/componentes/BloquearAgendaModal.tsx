@@ -7,7 +7,7 @@ import { Label } from "@/components/ui/label";
 import { Checkbox } from "@/components/ui/checkbox";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Pencil, Trash2 } from "lucide-react";
+import { ChevronDown, ChevronRight, Pencil, Trash2, X } from "lucide-react";
 import {
   useCriarBloqueioAgenda, useCriarBloqueiosRecorrentes, useEditarSerieBloqueio,
   useExcluirSerieBloqueio, useMeusBloqueiosAgenda, useRemoverBloqueioAgenda,
@@ -38,6 +38,12 @@ function descreverBloqueio(b: { tipo: TipoBloqueioAgenda; data_inicio: string; d
   return `${periodo} · ${horario} · ${MOTIVO_BLOQUEIO_LABEL[b.motivo]}`;
 }
 
+function formatarOcorrencia(b: BloqueioAgenda): string {
+  const fmt = new Date(`${b.data_inicio}T00:00:00`).toLocaleDateString("pt-BR", { weekday: "short", day: "2-digit", month: "2-digit", year: "numeric" });
+  const horario = b.dia_inteiro ? "dia inteiro" : `${b.hora_inicio?.slice(0, 5)}–${b.hora_fim?.slice(0, 5)}`;
+  return `${fmt} · ${horario}`;
+}
+
 function descreverSerie(itens: BloqueioAgenda[]): string {
   const primeiro = itens[0];
   const diaSemana = new Date(`${primeiro.data_inicio}T00:00:00`).getDay();
@@ -51,6 +57,7 @@ function descreverSerie(itens: BloqueioAgenda[]): string {
 export function BloquearAgendaModal({ open, onOpenChange }: { open: boolean; onOpenChange: (open: boolean) => void }) {
   const [form, setForm] = useState(VAZIO);
   const [serieEditando, setSerieEditando] = useState<string | null>(null);
+  const [serieExpandida, setSerieExpandida] = useState<string | null>(null);
   const { data: bloqueios = [] } = useMeusBloqueiosAgenda();
   const criar = useCriarBloqueioAgenda();
   const criarRecorrente = useCriarBloqueiosRecorrentes();
@@ -268,19 +275,44 @@ export function BloquearAgendaModal({ open, onOpenChange }: { open: boolean; onO
             <div className="space-y-1.5">
               <Label>Meus bloqueios</Label>
               <div className="space-y-1">
-                {series.map(({ serieId, itens }) => (
-                  <div key={serieId} className="flex items-center justify-between rounded border border-border px-2.5 py-1.5 text-xs">
-                    <span>{descreverSerie(itens)}</span>
-                    <span className="flex shrink-0 gap-1">
-                      <Button size="icon" variant="ghost" className="h-6 w-6" onClick={() => setSerieEditando(serieId)}>
-                        <Pencil className="h-3.5 w-3.5" />
-                      </Button>
-                      <Button size="icon" variant="ghost" className="h-6 w-6" onClick={() => excluirSerie.mutate(serieId)}>
-                        <Trash2 className="h-3.5 w-3.5" />
-                      </Button>
-                    </span>
-                  </div>
-                ))}
+                {series.map(({ serieId, itens }) => {
+                  const expandida = serieExpandida === serieId;
+                  return (
+                    <div key={serieId} className="rounded border border-border text-xs">
+                      <div className="flex items-center justify-between px-2.5 py-1.5">
+                        <button
+                          type="button"
+                          className="flex min-w-0 flex-1 items-center gap-1.5 text-left"
+                          onClick={() => setSerieExpandida(expandida ? null : serieId)}
+                        >
+                          {expandida ? <ChevronDown className="h-3.5 w-3.5 shrink-0" /> : <ChevronRight className="h-3.5 w-3.5 shrink-0" />}
+                          <span className="truncate">{descreverSerie(itens)}</span>
+                        </button>
+                        <span className="flex shrink-0 gap-1">
+                          <Button size="icon" variant="ghost" className="h-6 w-6" onClick={() => setSerieEditando(serieId)}>
+                            <Pencil className="h-3.5 w-3.5" />
+                          </Button>
+                          <Button size="icon" variant="ghost" className="h-6 w-6" onClick={() => excluirSerie.mutate(serieId)}>
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </Button>
+                        </span>
+                      </div>
+                      {expandida && (
+                        <div className="space-y-1 border-t border-border px-2.5 py-1.5">
+                          <p className="text-[10px] text-muted-foreground">Desbloquear só uma data específica, sem mexer no resto da série:</p>
+                          {itens.map((item) => (
+                            <div key={item.id} className="flex items-center justify-between rounded bg-muted/40 px-2 py-1">
+                              <span>{formatarOcorrencia(item)}</span>
+                              <Button size="icon" variant="ghost" className="h-5 w-5" onClick={() => remover.mutate(item.id)}>
+                                <X className="h-3 w-3" />
+                              </Button>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
                 {avulsos.map((b) => (
                   <div key={b.id} className="flex items-center justify-between rounded border border-border px-2.5 py-1.5 text-xs">
                     <span>{descreverBloqueio(b)}</span>
