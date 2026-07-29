@@ -290,7 +290,7 @@ export default function AcompanharChamado({ base = "/app/central-servicos/chamad
             ) : ehSolicitante ? (
               <Card className="animate-rise-in space-y-3 border-warning/40 bg-warning/5 p-4">
                 <p className="flex items-center gap-1.5 text-sm font-bold"><Star className="h-4 w-4 text-warning animate-pulse-soft" /> Avaliar atendimento</p>
-                <p className="text-xs text-muted-foreground">Chamado concluído. Avalie o atendimento em 5 critérios — o comentário é opcional.</p>
+                <p className="text-xs text-muted-foreground">Chamado concluído. Avalie o atendimento em 6 critérios — o comentário é opcional.</p>
                 <Button className="w-full gap-2 transition-transform active:scale-95" onClick={() => setAvaliarAberto(true)}>
                   <Star className="h-4 w-4" /> Avaliar chamado
                 </Button>

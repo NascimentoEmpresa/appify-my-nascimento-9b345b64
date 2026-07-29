@@ -148,29 +148,34 @@ export interface AvaliacaoChamado {
   id: string;
   chamado_id: string;
   solicitante_id: string;
-  atendimento: number;
-  tempo: number;
-  solucao: number;
+  qualidade: number;
+  prazo: number;
+  comunicacao: number;
   clareza: number;
+  facilidade: number;
   satisfacao: number;
   comentario: string | null;
   created_at: string;
 }
 
-// Critérios da avaliação multi-item (1..5 cada). A ordem aqui é a ordem do modal.
+// Critérios da avaliação multi-item (1..5 cada) com o PESO de cada um na nota
+// final. A ordem aqui é a ordem do modal. Os pesos somam 1,00:
+//   Qualidade 0,30 · Prazo 0,20 · Comunicação 0,15 · Clareza 0,10 ·
+//   Facilidade 0,10 · Satisfação 0,15.
 export const CRITERIOS_AVALIACAO = [
-  { key: "atendimento", titulo: "Atendimento do analista", descricao: "Avalie a cordialidade, disposição e qualidade do atendimento." },
-  { key: "tempo",       titulo: "Tempo de atendimento",   descricao: "Avalie o tempo que levou para seu chamado ser atendido." },
-  { key: "solucao",     titulo: "Solução apresentada",    descricao: "Avalie se a solução atendeu corretamente ao seu problema." },
-  { key: "clareza",     titulo: "Clareza das informações", descricao: "Avalie a clareza e objetividade das informações fornecidas." },
-  { key: "satisfacao",  titulo: "Satisfação geral",       descricao: "Avalie sua satisfação geral com o atendimento." },
+  { key: "qualidade",   titulo: "Qualidade",   peso: 0.30, descricao: "Avalie a qualidade da solução entregue." },
+  { key: "prazo",       titulo: "Prazo",       peso: 0.20, descricao: "Avalie se o chamado foi resolvido dentro do prazo." },
+  { key: "comunicacao", titulo: "Comunicação", peso: 0.15, descricao: "Avalie a cordialidade e a comunicação durante o atendimento." },
+  { key: "clareza",     titulo: "Clareza",     peso: 0.10, descricao: "Avalie a clareza e objetividade das informações." },
+  { key: "facilidade",  titulo: "Facilidade",  peso: 0.10, descricao: "Avalie o quão fácil foi resolver sua solicitação." },
+  { key: "satisfacao",  titulo: "Satisfação",  peso: 0.15, descricao: "Avalie sua satisfação geral com o atendimento." },
 ] as const;
 
 export type CriterioKey = (typeof CRITERIOS_AVALIACAO)[number]["key"];
 
-/** Média (0..5) dos 5 critérios de uma avaliação. */
+/** Nota final (0..5) = média PONDERADA dos critérios pelos pesos acima. */
 export const mediaAvaliacao = (a: Pick<AvaliacaoChamado, CriterioKey>) =>
-  (a.atendimento + a.tempo + a.solucao + a.clareza + a.satisfacao) / 5;
+  CRITERIOS_AVALIACAO.reduce((s, c) => s + (a[c.key] ?? 0) * c.peso, 0);
 
 export const BUCKET_CHAMADOS = "chamados-sistemas";
 
