@@ -3,7 +3,7 @@ import { Outlet, useLocation } from "react-router-dom";
 import { Sidebar } from "./Sidebar";
 import { Topbar } from "./Topbar";
 import { DemoBanner } from "./DemoBanner";
-import { HelpFab } from "@/components/ajuda/HelpFab";
+import { ChamadoFab } from "@/components/chamados/ChamadoFab";
 import { RouteGuard } from "@/components/auth/RouteGuard";
 import { VinculoGate } from "@/components/auth/VinculoEmpregado";
 
@@ -53,7 +53,7 @@ export function AppShell() {
           </RouteGuard>
         </main>
       </div>
-      <HelpFab />
+      <ChamadoFab />
       <VinculoGate />
     </div>
   );

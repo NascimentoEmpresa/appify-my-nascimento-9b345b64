@@ -6820,3 +6820,62 @@ REVOKE ALL ON FUNCTION public.chamado_reordenar_fila_dev(uuid, uuid[]) FROM anon
 GRANT EXECUTE ON FUNCTION public.chamado_reordenar_fila_dev(uuid, uuid[]) TO authenticated;
 
 NOTIFY pgrst, 'reload schema';
+
+-- =====================================================================
+-- 20260814000001_whatsapp_mensagem_interativa
+-- WhatsApp: coluna payload em WA_MENSAGEM (botoes enviados / clique recebido)
+-- =====================================================================
+ALTER TABLE public."WA_MENSAGEM" ADD COLUMN IF NOT EXISTS payload jsonb;
+
+NOTIFY pgrst, 'reload schema';
+
+-- =====================================================================
+-- 20260814000002_whatsapp_bot_menu
+-- WhatsApp: coluna menu (jsonb) em WA_BOT_CONFIG (menu automatico do bot)
+-- =====================================================================
+ALTER TABLE public."WA_BOT_CONFIG" ADD COLUMN IF NOT EXISTS menu jsonb;
+
+NOTIFY pgrst, 'reload schema';
+
+-- =====================================================================
+-- 20260814000003_chamados_avaliacao_pesos
+-- Chamados: nota final PONDERADA (6 criterios) + ranking ponderado
+-- =====================================================================
+DROP FUNCTION IF EXISTS public.chamados_ranking_satisfacao();
+
+TRUNCATE public."CHAMADO_SISTEMA_AVALIACAO";
+
+ALTER TABLE public."CHAMADO_SISTEMA_AVALIACAO"
+  DROP COLUMN IF EXISTS atendimento,
+  DROP COLUMN IF EXISTS tempo,
+  DROP COLUMN IF EXISTS solucao,
+  ADD COLUMN IF NOT EXISTS qualidade   smallint NOT NULL CHECK (qualidade   BETWEEN 1 AND 5),
+  ADD COLUMN IF NOT EXISTS prazo       smallint NOT NULL CHECK (prazo       BETWEEN 1 AND 5),
+  ADD COLUMN IF NOT EXISTS comunicacao smallint NOT NULL CHECK (comunicacao BETWEEN 1 AND 5),
+  ADD COLUMN IF NOT EXISTS facilidade  smallint NOT NULL CHECK (facilidade  BETWEEN 1 AND 5);
+
+CREATE FUNCTION public.chamados_ranking_satisfacao()
+RETURNS TABLE(
+  responsavel_id uuid, avaliacoes bigint, media numeric,
+  qualidade numeric, prazo numeric, comunicacao numeric,
+  clareza numeric, facilidade numeric, satisfacao numeric
+)
+LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public, pg_temp
+AS $$
+  SELECT c.responsavel_id,
+         count(*)::bigint,
+         avg(a.qualidade * 0.30 + a.prazo * 0.20 + a.comunicacao * 0.15
+             + a.clareza * 0.10 + a.facilidade * 0.10 + a.satisfacao * 0.15)::numeric,
+         avg(a.qualidade)::numeric, avg(a.prazo)::numeric, avg(a.comunicacao)::numeric,
+         avg(a.clareza)::numeric, avg(a.facilidade)::numeric, avg(a.satisfacao)::numeric
+    FROM public."CHAMADO_SISTEMA_AVALIACAO" a
+    JOIN public."CHAMADO_SISTEMA" c ON c.id = a.chamado_id
+   WHERE c.responsavel_id IS NOT NULL
+   GROUP BY c.responsavel_id
+   ORDER BY 3 DESC NULLS LAST, 2 DESC;
+$$;
+REVOKE ALL ON FUNCTION public.chamados_ranking_satisfacao() FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.chamados_ranking_satisfacao() FROM anon;
+GRANT EXECUTE ON FUNCTION public.chamados_ranking_satisfacao() TO authenticated;
+
+NOTIFY pgrst, 'reload schema';

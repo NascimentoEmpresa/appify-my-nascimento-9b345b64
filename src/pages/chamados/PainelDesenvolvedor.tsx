@@ -21,7 +21,7 @@ import { ListChecks, Clock, MessageSquare, CheckCircle2, AlertTriangle, ShieldAl
 import { FeedAtualizacoes } from "./FeedAtualizacoes";
 import {
   StatCard, PrioridadeBadge, StatusBadge, STATUS_CHAMADO, PRIORIDADES, Estrelas, iniciais, fmtData, fmtDataHora,
-  chamadoAtivo, posicoesFilaDev, type Chamado,
+  chamadoAtivo, posicoesFilaDev, CRITERIOS_AVALIACAO, type Chamado,
 } from "./types";
 
 const DONUT: Record<string, string> = {
@@ -90,7 +90,7 @@ export default function PainelDesenvolvedor() {
   });
   const nomeDe = (uid: string | null) => (uid ? usuarios.find((u) => u.id === uid)?.display_name ?? "—" : "—");
 
-  // Ranking de satisfação da equipe (médias dos 5 critérios por responsável).
+  // Ranking de satisfação da equipe (nota final ponderada + médias por critério).
   const { data: ranking = [] } = useQuery({
     queryKey: ["chamados-ranking-satisfacao"],
     enabled: dev,
@@ -98,7 +98,7 @@ export default function PainelDesenvolvedor() {
       const { data } = await (supabase as any).rpc("chamados_ranking_satisfacao");
       return (data ?? []) as Array<{
         responsavel_id: string; avaliacoes: number; media: number;
-        atendimento: number; tempo: number; solucao: number; clareza: number; satisfacao: number;
+        qualidade: number; prazo: number; comunicacao: number; clareza: number; facilidade: number; satisfacao: number;
       }>;
     },
   });
@@ -113,13 +113,7 @@ export default function PainelDesenvolvedor() {
       devs: ranking.length,
       total: Number(r.avaliacoes),
       media: Number(r.media),
-      itens: [
-        { label: "Atendimento do analista", v: Number(r.atendimento) },
-        { label: "Tempo de atendimento", v: Number(r.tempo) },
-        { label: "Solução apresentada", v: Number(r.solucao) },
-        { label: "Clareza das informações", v: Number(r.clareza) },
-        { label: "Satisfação geral", v: Number(r.satisfacao) },
-      ],
+      itens: CRITERIOS_AVALIACAO.map((c) => ({ label: c.titulo, v: Number((r as any)[c.key]) })),
     };
   }, [ranking, user?.id]);
 

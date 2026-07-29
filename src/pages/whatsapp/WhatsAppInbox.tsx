@@ -11,7 +11,7 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
-import { Bot, Send, Search, ShieldAlert, Settings, User, MessageCircle } from "lucide-react";
+import { Bot, Send, Search, ShieldAlert, Settings, User, MessageCircle, Plus, X, MousePointerClick } from "lucide-react";
 import {
   fmtHora, fmtTelefone, iniciais, type WaConversa, type WaContato, type WaMensagem,
 } from "./types";
@@ -27,6 +27,7 @@ export default function WhatsAppInbox() {
   const [selId, setSelId] = useState<string | null>(null);
   const [busca, setBusca] = useState("");
   const [texto, setTexto] = useState("");
+  const [botoes, setBotoes] = useState<string[]>([]); // títulos dos botões de resposta (0–3)
   const [enviando, setEnviando] = useState(false);
   const fimRef = useRef<HTMLDivElement>(null);
 
@@ -84,12 +85,18 @@ export default function WhatsAppInbox() {
   const enviar = async () => {
     if (!sel || !texto.trim() || enviando) return;
     setEnviando(true);
+    const btns = botoes.map((t) => t.trim()).filter(Boolean).slice(0, 3);
     const { error } = await supabase.functions.invoke("whatsapp-enviar", {
-      body: { conversa_id: sel.id, texto: texto.trim() },
+      body: {
+        conversa_id: sel.id,
+        texto: texto.trim(),
+        ...(btns.length ? { botoes: btns.map((titulo, i) => ({ id: `opt_${i + 1}`, titulo })) } : {}),
+      },
     });
     setEnviando(false);
     if (error) { toast({ title: "Falha ao enviar", description: String(error.message ?? error), variant: "destructive" }); return; }
     setTexto("");
+    setBotoes([]);
     qc.invalidateQueries({ queryKey: ["wa-mensagens", sel.id] });
     qc.invalidateQueries({ queryKey: ["wa-conversas"] });
   };
@@ -193,7 +200,19 @@ export default function WhatsAppInbox() {
                   <div key={m.id} className={`flex ${saida ? "justify-end" : "justify-start"}`}>
                     <div className={`max-w-[75%] rounded-lg px-3 py-1.5 text-sm shadow-sm ${saida ? "bg-success/90 text-success-foreground" : "bg-card"}`}>
                       {m.origem === "bot" && <p className="mb-0.5 flex items-center gap-1 text-[10px] font-semibold uppercase opacity-80"><Bot className="h-3 w-3" /> bot</p>}
+                      {!saida && m.payload?.reply_id && (
+                        <p className="mb-0.5 flex items-center gap-1 text-[10px] font-semibold uppercase opacity-70"><MousePointerClick className="h-3 w-3" /> resposta</p>
+                      )}
                       <p className="whitespace-pre-wrap break-words">{m.texto}</p>
+                      {m.payload?.botoes?.length ? (
+                        <div className="mt-1.5 space-y-1 border-t border-current/15 pt-1.5">
+                          {m.payload.botoes.map((b) => (
+                            <div key={b.id} className={`flex items-center justify-center gap-1 rounded-md px-2 py-1 text-xs font-medium ${saida ? "bg-success-foreground/15" : "bg-muted"}`}>
+                              <MousePointerClick className="h-3 w-3 opacity-70" /> {b.titulo}
+                            </div>
+                          ))}
+                        </div>
+                      ) : null}
                       <p className={`mt-0.5 text-right text-[10px] ${saida ? "opacity-80" : "text-muted-foreground"}`}>
                         {fmtHora(m.criada_em)}{saida && m.status ? ` · ${m.status}` : ""}
                       </p>
@@ -206,16 +225,47 @@ export default function WhatsAppInbox() {
             </div>
 
             {/* Composer */}
-            <div className="flex items-end gap-2 border-t border-border p-3">
-              <Textarea
-                rows={1} className="max-h-32 min-h-[40px] resize-none"
-                placeholder="Digite uma mensagem…"
-                value={texto} onChange={(e) => setTexto(e.target.value)}
-                onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); enviar(); } }}
-              />
-              <Button className="gap-1.5 bg-success text-success-foreground hover:bg-success/90" onClick={enviar} disabled={!texto.trim() || enviando}>
-                <Send className="h-4 w-4" /> {enviando ? "…" : "Enviar"}
-              </Button>
+            <div className="border-t border-border p-3">
+              {/* Editor de botões de resposta (0–3). Cada um vira um botão que o
+                  cliente pode tocar; a resposta volta na própria conversa. */}
+              {botoes.length > 0 && (
+                <div className="mb-2 space-y-1.5">
+                  {botoes.map((b, i) => (
+                    <div key={i} className="flex items-center gap-2">
+                      <MousePointerClick className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                      <Input
+                        className="h-8 max-w-xs text-sm"
+                        maxLength={20}
+                        placeholder={`Botão ${i + 1} (até 20 caracteres)`}
+                        value={b}
+                        onChange={(e) => setBotoes((arr) => arr.map((x, j) => (j === i ? e.target.value : x)))}
+                      />
+                      <span className="w-10 text-[10px] text-muted-foreground">{b.length}/20</span>
+                      <Button variant="ghost" size="sm" className="h-8 w-8 p-0 text-muted-foreground" onClick={() => setBotoes((arr) => arr.filter((_, j) => j !== i))} title="Remover botão">
+                        <X className="h-4 w-4" />
+                      </Button>
+                    </div>
+                  ))}
+                </div>
+              )}
+              <div className="flex items-end gap-2">
+                <Textarea
+                  rows={1} className="max-h-32 min-h-[40px] resize-none"
+                  placeholder="Digite uma mensagem…"
+                  value={texto} onChange={(e) => setTexto(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); enviar(); } }}
+                />
+                <div className="flex flex-col gap-1">
+                  {botoes.length < 3 && (
+                    <Button variant="outline" size="sm" className="h-8 gap-1 text-xs" onClick={() => setBotoes((arr) => [...arr, ""])} title="Adicionar botão de resposta">
+                      <Plus className="h-3.5 w-3.5" /> Botão
+                    </Button>
+                  )}
+                  <Button className="gap-1.5 bg-success text-success-foreground hover:bg-success/90" onClick={enviar} disabled={!texto.trim() || enviando}>
+                    <Send className="h-4 w-4" /> {enviando ? "…" : "Enviar"}
+                  </Button>
+                </div>
+              </div>
             </div>
             {sel.bot_ativo && (
               <p className="border-t border-border/50 bg-warning/5 px-3 py-1 text-[11px] text-muted-foreground">

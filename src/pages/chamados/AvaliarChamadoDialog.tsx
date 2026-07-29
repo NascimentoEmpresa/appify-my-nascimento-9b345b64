@@ -9,8 +9,8 @@ import { Textarea } from "@/components/ui/textarea";
 import { Star, Send, PartyPopper } from "lucide-react";
 import { CRITERIOS_AVALIACAO, type CriterioKey } from "./types";
 
-// Modal de avaliação multi-critério do solicitante (5 itens de 1 a 5 + comentário).
-// Só grava quando os 5 critérios estão preenchidos. Reaproveitado na lista
+// Modal de avaliação multi-critério do solicitante (6 itens de 1 a 5 + comentário).
+// Só grava quando os 6 critérios estão preenchidos. Reaproveitado na lista
 // "Meus chamados" e na tela de acompanhamento.
 export function AvaliarChamadoDialog({
   open,
@@ -62,11 +62,7 @@ export function AvaliarChamadoDialog({
     const { error } = await (supabase as any).from("CHAMADO_SISTEMA_AVALIACAO").insert({
       chamado_id: chamado.id,
       solicitante_id: user?.id,
-      atendimento: notas.atendimento,
-      tempo: notas.tempo,
-      solucao: notas.solucao,
-      clareza: notas.clareza,
-      satisfacao: notas.satisfacao,
+      ...Object.fromEntries(CRITERIOS_AVALIACAO.map((c) => [c.key, notas[c.key]])),
       comentario: comentario.trim() || null,
     });
     setEnviando(false);

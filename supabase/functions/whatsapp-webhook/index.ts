@@ -72,16 +72,8 @@ function dentroDoHorario(cfg: any): boolean {
 }
 
 // ---------- resposta do bot (IA) ----------
-async function responderComBot(conversaId: string, contatoId: string, to: string) {
-  const { data: cfg } = await admin.from("WA_BOT_CONFIG").select("*").limit(1).maybeSingle();
-  if (!cfg || !cfg.ativo) return;
-
-  // Fora do horário: manda o aviso e para.
-  if (!dentroDoHorario(cfg)) {
-    if (cfg.fora_horario_msg) await registrarSaida(conversaId, contatoId, to, cfg.fora_horario_msg, "bot");
-    return;
-  }
-
+// Recebe o cfg já carregado por processarBot (que valida ativo/horário).
+async function responderComBot(conversaId: string, contatoId: string, to: string, cfg: any) {
   // Histórico recente (limite pra caber no contexto).
   const { data: hist } = await admin.from("WA_MENSAGEM")
     .select("direcao, texto").eq("conversa_id", conversaId)
@@ -138,6 +130,103 @@ async function registrarSaida(conversaId: string, contatoId: string, to: string,
   }).eq("id", conversaId);
 }
 
+// ---------- roteamento do bot (menu automático + IA) ----------
+// Decide o que o bot faz a cada mensagem: clique no menu → ação; primeira
+// mensagem → apresenta o menu; conversa livre → responde com a IA.
+async function processarBot(
+  conversaId: string, contatoId: string, to: string,
+  msgType: string, texto: string | null, replyId: string | null,
+) {
+  const { data: cfg } = await admin.from("WA_BOT_CONFIG").select("*").limit(1).maybeSingle();
+  if (!cfg || !cfg.ativo) return;
+
+  // Fora do horário: manda o aviso e para.
+  if (!dentroDoHorario(cfg)) {
+    if (cfg.fora_horario_msg) await registrarSaida(conversaId, contatoId, to, cfg.fora_horario_msg, "bot");
+    return;
+  }
+
+  const menu = cfg.menu && cfg.menu.ativo && Array.isArray(cfg.menu.opcoes) && cfg.menu.opcoes.length
+    ? cfg.menu : null;
+
+  // 1) Clique numa opção do menu → executa a ação configurada.
+  if (replyId && menu) {
+    const opt = menu.opcoes.find((o: any) => String(o.id) === replyId);
+    if (opt) { await executarAcaoMenu(conversaId, contatoId, to, opt); return; }
+  }
+
+  // 2) Primeira mensagem da conversa → apresenta o menu.
+  if (menu) {
+    const { count } = await admin.from("WA_MENSAGEM")
+      .select("id", { count: "exact", head: true })
+      .eq("conversa_id", conversaId).eq("direcao", "entrada");
+    if ((count ?? 0) <= 1) { await enviarMenu(conversaId, contatoId, to, menu); return; }
+  }
+
+  // 3) Conversa livre → responde com a IA (só texto).
+  if (msgType === "text" && texto) await responderComBot(conversaId, contatoId, to, cfg);
+}
+
+// Executa a ação de uma opção do menu clicada.
+async function executarAcaoMenu(conversaId: string, contatoId: string, to: string, opt: any) {
+  const valor = typeof opt.valor === "string" ? opt.valor.trim() : "";
+  if (opt.acao === "humano") {
+    // Passa a conversa para atendimento humano (desliga o bot) e avisa o cliente.
+    await admin.from("WA_CONVERSA").update({ bot_ativo: false }).eq("id", conversaId);
+    if (valor) await registrarSaida(conversaId, contatoId, to, valor, "bot");
+    return;
+  }
+  if (opt.acao === "texto") {
+    await registrarSaida(conversaId, contatoId, to, valor || String(opt.titulo ?? "…"), "bot");
+    return;
+  }
+  // acao "ia": manda um aviso opcional; as próximas mensagens caem na IA.
+  if (valor) await registrarSaida(conversaId, contatoId, to, valor, "bot");
+}
+
+// Envia uma mensagem interativa (botões/lista) pela Graph API.
+async function enviarInterativo(to: string, interactive: any): Promise<string | null> {
+  const res = await fetch(`${GRAPH}/${PHONE_NUMBER_ID}/messages`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${WA_TOKEN}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ messaging_product: "whatsapp", to, type: "interactive", interactive }),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) { console.error("Falha ao enviar interativo:", JSON.stringify(data)); return null; }
+  return data?.messages?.[0]?.id ?? null;
+}
+
+// Monta e envia o menu: até 3 opções viram botões; 4–10 viram lista.
+async function enviarMenu(conversaId: string, contatoId: string, to: string, menu: any) {
+  const opcoes = (menu.opcoes as any[]).slice(0, 10);
+  const corpo: string = (menu.titulo && String(menu.titulo).trim()) || "Como posso te ajudar?";
+  const interactive = opcoes.length <= 3
+    ? {
+        type: "button",
+        body: { text: corpo },
+        action: { buttons: opcoes.map((o) => ({ type: "reply", reply: { id: String(o.id), title: String(o.titulo).slice(0, 20) } })) },
+      }
+    : {
+        type: "list",
+        body: { text: corpo },
+        action: {
+          button: "Ver opções",
+          sections: [{ title: "Opções", rows: opcoes.map((o) => ({ id: String(o.id), title: String(o.titulo).slice(0, 24) })) }],
+        },
+      };
+  const waId = await enviarInterativo(to, interactive);
+  await admin.from("WA_MENSAGEM").insert({
+    conversa_id: conversaId, contato_id: contatoId, direcao: "saida", tipo: "interactive",
+    texto: corpo, wa_message_id: waId, status: waId ? "enviada" : "erro", origem: "bot",
+    payload: { tipo: opcoes.length <= 3 ? "button" : "list", botoes: opcoes.map((o) => ({ id: String(o.id), titulo: String(o.titulo) })) },
+  });
+  await admin.from("WA_CONVERSA").update({
+    ultima_mensagem_em: new Date().toISOString(),
+    ultima_mensagem_preview: corpo.slice(0, 120),
+    ultima_direcao: "saida",
+  }).eq("id", conversaId);
+}
+
 // ---------- handler ----------
 Deno.serve(async (req) => {
   const url = new URL(req.url);
@@ -178,6 +267,8 @@ Deno.serve(async (req) => {
           : msg.type === "button" ? msg.button?.text ?? null
           : msg.type === "interactive" ? (msg.interactive?.button_reply?.title ?? msg.interactive?.list_reply?.title ?? null)
           : null;
+        // id do botão/opção clicado (payload da resposta interativa).
+        const replyId: string | null = msg.interactive?.button_reply?.id ?? msg.interactive?.list_reply?.id ?? null;
 
         // contato (upsert por wa_id). Só grava o nome quando a Meta mandou o
         // profile.name; se vier sem contacts (comum em mensagens seguintes),
@@ -198,12 +289,15 @@ Deno.serve(async (req) => {
         const { data: conversa } = await admin.from("WA_CONVERSA").select("id, bot_ativo").eq("contato_id", contato.id).maybeSingle();
         if (!conversa) continue;
 
-        // dedupe: só processa se a mensagem é nova
-        const { data: nova } = await admin.from("WA_MENSAGEM").insert({
+        // dedupe: só processa se a mensagem é nova. Só inclui `payload` quando
+        // há clique de botão, para não depender da coluna antes da migration.
+        const entradaRow: Record<string, unknown> = {
           conversa_id: conversa.id, contato_id: contato.id, direcao: "entrada",
           tipo: msg.type ?? "text", texto: texto ?? `[${msg.type}]`,
           wa_message_id: msg.id, status: "recebida", origem: "contato",
-        }).select("id").maybeSingle();
+        };
+        if (replyId) entradaRow.payload = { reply_id: replyId };
+        const { data: nova } = await admin.from("WA_MENSAGEM").insert(entradaRow).select("id").maybeSingle();
         if (!nova) continue; // já existia (reentrega da Meta)
 
         try { await admin.rpc("wa_incrementar_nao_lidas", { p_conversa: conversa.id }); } catch { /* best-effort */ }
@@ -213,9 +307,10 @@ Deno.serve(async (req) => {
           ultima_direcao: "entrada",
         }).eq("id", conversa.id);
 
-        // resposta do bot em segundo plano (não segura o 200)
-        if (conversa.bot_ativo && msg.type === "text" && texto) {
-          tarefas.push(responderComBot(conversa.id, contato.id, from));
+        // resposta do bot em segundo plano (não segura o 200). Trata texto livre
+        // e clique em botão/lista (menu automático).
+        if (conversa.bot_ativo && ((msg.type === "text" && texto) || (msg.type === "interactive" && replyId))) {
+          tarefas.push(processarBot(conversa.id, contato.id, from, msg.type, texto, replyId));
         }
       }
 
