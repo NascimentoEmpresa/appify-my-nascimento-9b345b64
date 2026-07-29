@@ -6611,3 +6611,367 @@ REVOKE ALL ON FUNCTION public.chamados_ranking_satisfacao() FROM anon;
 GRANT EXECUTE ON FUNCTION public.chamados_ranking_satisfacao() TO authenticated;
 
 NOTIFY pgrst, 'reload schema';
+
+
+-- ===== 20260812000001_canal_denuncias =====
+-- =====================================================================
+-- CANAL DE ÉTICA E DENÚNCIAS — recebimento de denúncias anônimas.
+--
+-- O site do canal (hospedado em domínio próprio) usa a chave ANON e registra
+-- as denúncias por uma RPC SECURITY DEFINER (denuncia_registrar). O anon NÃO
+-- lê nem escreve na tabela diretamente — só executa a RPC, que gera protocolo
+-- e senha de acompanhamento. O painel interno (futuro) lê a tabela via RLS,
+-- liberado pela capacidade de tela 'canal_denuncias'.
+--
+-- Privacidade: por padrão ninguém enxerga as denúncias pelo client até que a
+-- tela 'canal_denuncias' seja liberada a alguém em Acesso por Usuário.
+-- Idempotente.
+-- =====================================================================
+
+CREATE SEQUENCE IF NOT EXISTS public.denuncia_protocolo_seq;
+
+CREATE TABLE IF NOT EXISTS public."DENUNCIA" (
+  id                   uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  protocolo            text NOT NULL UNIQUE,
+  senha_acompanhamento text NOT NULL,
+
+  -- Identificação (opcional — denúncia pode ser 100% anônima)
+  identificado         boolean NOT NULL DEFAULT false,
+  nome_completo        text,
+  cpf                  text,
+  email                text,
+  data_nascimento      date,
+  telefone_fixo        text,
+  celular              text,
+
+  -- Classificação
+  relacao              text,   -- relação com o Grupo Nascimento
+  tipo_denuncia        text,   -- tipo/enquadramento do fato
+  local_ocorrencia     text,   -- empresa/unidade/setor
+  como_soube           text,   -- como tomou conhecimento
+  lideranca_ciente     text,   -- sim / nao / nao_sei
+  lideranca_envolvida  text,   -- sim / nao / nao_sei
+  lideranca_ocultou    text,   -- sim / nao / nao_sei
+
+  -- Relato
+  descricao            text NOT NULL,
+  testemunhas          text,
+  evidencias           text,
+  valor_financeiro     text,
+  sugestao             text,
+
+  -- Termo e tratativa interna
+  concordou_termo      boolean NOT NULL DEFAULT false,
+  status               text NOT NULL DEFAULT 'recebida',  -- recebida / em_analise / concluida / arquivada
+  created_at           timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_denuncia_created_at ON public."DENUNCIA" (created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_denuncia_status     ON public."DENUNCIA" (status);
+
+ALTER TABLE public."DENUNCIA" ENABLE ROW LEVEL SECURITY;
+
+-- Leitura: só quem tem a tela 'canal_denuncias' liberada (painel interno).
+-- Enquanto ninguém tiver, ninguém lê — protege o anonimato.
+DROP POLICY IF EXISTS denuncia_select ON public."DENUNCIA";
+CREATE POLICY denuncia_select ON public."DENUNCIA"
+  FOR SELECT TO authenticated
+  USING (public.has_screen_access(auth.uid(), 'canal_denuncias', 'visualizar'::public.app_acao));
+
+-- Atualizar status: mesma capacidade (para o painel de tratativas).
+DROP POLICY IF EXISTS denuncia_update ON public."DENUNCIA";
+CREATE POLICY denuncia_update ON public."DENUNCIA"
+  FOR UPDATE TO authenticated
+  USING (public.has_screen_access(auth.uid(), 'canal_denuncias', 'visualizar'::public.app_acao))
+  WITH CHECK (public.has_screen_access(auth.uid(), 'canal_denuncias', 'visualizar'::public.app_acao));
+
+-- NÃO existe policy de INSERT: o registro só entra pela RPC SECURITY DEFINER.
+
+GRANT SELECT, UPDATE ON public."DENUNCIA" TO authenticated;
+
+-- ---------------------------------------------------------------------
+-- RPC pública de registro: recebe um JSON com o formulário, gera protocolo
+-- e senha, grava e devolve { protocolo, senha } para o denunciante guardar.
+-- ---------------------------------------------------------------------
+CREATE OR REPLACE FUNCTION public.denuncia_registrar(payload jsonb)
+RETURNS jsonb
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp
+AS $$
+DECLARE
+  v_protocolo text;
+  v_senha     text;
+BEGIN
+  IF coalesce(btrim(payload->>'descricao'), '') = '' THEN
+    RAISE EXCEPTION 'Descreva o que você quer denunciar.';
+  END IF;
+  IF (payload->>'concordou_termo') IS DISTINCT FROM 'true' THEN
+    RAISE EXCEPTION 'É necessário aceitar o termo para registrar a denúncia.';
+  END IF;
+
+  v_protocolo := 'DEN-' || to_char(now(), 'YYYY') || '-'
+                 || lpad(nextval('public.denuncia_protocolo_seq')::text, 5, '0');
+  v_senha := upper(substr(md5(random()::text || clock_timestamp()::text), 1, 8));
+
+  INSERT INTO public."DENUNCIA" (
+    protocolo, senha_acompanhamento, identificado,
+    nome_completo, cpf, email, data_nascimento, telefone_fixo, celular,
+    relacao, tipo_denuncia, local_ocorrencia, como_soube,
+    lideranca_ciente, lideranca_envolvida, lideranca_ocultou,
+    descricao, testemunhas, evidencias, valor_financeiro, sugestao,
+    concordou_termo
+  ) VALUES (
+    v_protocolo, v_senha, coalesce((payload->>'identificado')::boolean, false),
+    nullif(btrim(payload->>'nome_completo'), ''), nullif(btrim(payload->>'cpf'), ''),
+    nullif(btrim(payload->>'email'), ''), nullif(btrim(payload->>'data_nascimento'), '')::date,
+    nullif(btrim(payload->>'telefone_fixo'), ''), nullif(btrim(payload->>'celular'), ''),
+    nullif(btrim(payload->>'relacao'), ''), nullif(btrim(payload->>'tipo_denuncia'), ''),
+    nullif(btrim(payload->>'local_ocorrencia'), ''), nullif(btrim(payload->>'como_soube'), ''),
+    nullif(btrim(payload->>'lideranca_ciente'), ''), nullif(btrim(payload->>'lideranca_envolvida'), ''),
+    nullif(btrim(payload->>'lideranca_ocultou'), ''),
+    btrim(payload->>'descricao'), nullif(btrim(payload->>'testemunhas'), ''),
+    nullif(btrim(payload->>'evidencias'), ''), nullif(btrim(payload->>'valor_financeiro'), ''),
+    nullif(btrim(payload->>'sugestao'), ''), true
+  );
+
+  RETURN jsonb_build_object('protocolo', v_protocolo, 'senha', v_senha);
+END;
+$$;
+
+REVOKE ALL ON FUNCTION public.denuncia_registrar(jsonb) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.denuncia_registrar(jsonb) TO anon, authenticated;
+
+-- ---------------------------------------------------------------------
+-- Acompanhamento anônimo: com protocolo + senha, devolve status e datas
+-- (sem reexpor o conteúdo sensível). Usado no futuro "acompanhar denúncia".
+-- ---------------------------------------------------------------------
+CREATE OR REPLACE FUNCTION public.denuncia_consultar(p_protocolo text, p_senha text)
+RETURNS jsonb
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp
+AS $$
+DECLARE
+  v jsonb;
+BEGIN
+  SELECT jsonb_build_object('protocolo', d.protocolo, 'status', d.status, 'aberta_em', d.created_at)
+    INTO v
+    FROM public."DENUNCIA" d
+   WHERE d.protocolo = btrim(p_protocolo)
+     AND d.senha_acompanhamento = upper(btrim(p_senha));
+  IF v IS NULL THEN
+    RAISE EXCEPTION 'Protocolo ou senha inválidos.';
+  END IF;
+  RETURN v;
+END;
+$$;
+REVOKE ALL ON FUNCTION public.denuncia_consultar(text, text) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.denuncia_consultar(text, text) TO anon, authenticated;
+
+NOTIFY pgrst, 'reload schema';
+
+
+-- ===== 20260813000001_chamados_fila_por_dev =====
+-- =====================================================================
+-- CHAMADOS DE SISTEMAS — fila POR DESENVOLVEDOR (posição de execução).
+--
+-- A fila global (ordem de chegada) continua existindo, mas cada dev passa a
+-- ter a SUA própria ordem: o chamado que é o nº 3 da fila global pode ser o
+-- nº 1 do Pablo, se for a única tarefa pendente dele. Essa ordem fica em
+-- "CHAMADO_SISTEMA".posicao_dev e é definida na tela de coordenação
+-- ("Definir posição da nova tarefa na fila" + arrastar a fila do responsável).
+--
+-- Regras garantidas por trigger/RPC:
+--   * chamado concluído/reprovado NÃO tem posição (posicao_dev = NULL);
+--   * chamado ativo COM responsável sempre tem posição (entra no fim da fila
+--     quando ninguém escolheu uma — ex.: atribuição rápida do painel);
+--   * a fila de cada dev é normalizada para 1..n a cada direcionamento,
+--     reordenação ou troca de responsável.
+--
+-- Idempotente. Aplicar DEPOIS de 20260811000001_chamados_fila_satisfacao.sql.
+-- =====================================================================
+
+-- 1) Coluna + índice ----------------------------------------------------
+ALTER TABLE public."CHAMADO_SISTEMA"
+  ADD COLUMN IF NOT EXISTS posicao_dev integer;
+
+CREATE INDEX IF NOT EXISTS idx_chamado_sistema_posicao_dev
+  ON public."CHAMADO_SISTEMA"(responsavel_id, posicao_dev);
+
+-- 2) Normalizador da fila de um dev (1..n, só ativos) -------------------
+-- Interno: chamado pelas RPCs abaixo. Não recebe GRANT para authenticated.
+CREATE OR REPLACE FUNCTION public.chamado_normalizar_fila_dev(p_responsavel_id uuid)
+RETURNS void
+LANGUAGE sql SECURITY DEFINER SET search_path = public, pg_temp
+AS $$
+  UPDATE public."CHAMADO_SISTEMA" c
+     SET posicao_dev = f.rn
+    FROM (
+      SELECT id, row_number() OVER (ORDER BY posicao_dev NULLS LAST, created_at, id) AS rn
+        FROM public."CHAMADO_SISTEMA"
+       WHERE responsavel_id = p_responsavel_id
+         AND status NOT IN ('concluido', 'reprovado')
+    ) f
+   WHERE c.id = f.id
+     AND c.posicao_dev IS DISTINCT FROM f.rn::int;
+$$;
+REVOKE ALL ON FUNCTION public.chamado_normalizar_fila_dev(uuid) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.chamado_normalizar_fila_dev(uuid) FROM anon;
+
+-- 3) Coerência da posição (trigger) -------------------------------------
+-- Concluiu/reprovou ou ficou sem responsável → some da fila.
+-- Ativo com responsável e sem posição (ou trocou de dev sem posição nova)
+-- → entra no fim da fila do responsável.
+CREATE OR REPLACE FUNCTION public.chamado_sistema_fila_dev()
+RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp
+AS $$
+BEGIN
+  IF NEW.status IN ('concluido', 'reprovado') OR NEW.responsavel_id IS NULL THEN
+    NEW.posicao_dev := NULL;
+  ELSIF NEW.posicao_dev IS NULL
+     OR (TG_OP = 'UPDATE'
+         AND NEW.responsavel_id IS DISTINCT FROM OLD.responsavel_id
+         AND NEW.posicao_dev IS NOT DISTINCT FROM OLD.posicao_dev) THEN
+    SELECT COALESCE(max(posicao_dev), 0) + 1 INTO NEW.posicao_dev
+      FROM public."CHAMADO_SISTEMA"
+     WHERE responsavel_id = NEW.responsavel_id
+       AND status NOT IN ('concluido', 'reprovado')
+       AND id <> NEW.id;
+  END IF;
+  RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS trg_chamado_sistema_fila_dev ON public."CHAMADO_SISTEMA";
+CREATE TRIGGER trg_chamado_sistema_fila_dev
+  BEFORE INSERT OR UPDATE ON public."CHAMADO_SISTEMA"
+  FOR EACH ROW EXECUTE FUNCTION public.chamado_sistema_fila_dev();
+
+-- 4) Backfill dos chamados já atribuídos --------------------------------
+UPDATE public."CHAMADO_SISTEMA" c
+   SET posicao_dev = f.rn
+  FROM (
+    SELECT id, row_number() OVER (PARTITION BY responsavel_id ORDER BY created_at, id) AS rn
+      FROM public."CHAMADO_SISTEMA"
+     WHERE responsavel_id IS NOT NULL
+       AND status NOT IN ('concluido', 'reprovado')
+  ) f
+ WHERE c.id = f.id AND c.posicao_dev IS NULL;
+
+UPDATE public."CHAMADO_SISTEMA"
+   SET posicao_dev = NULL
+ WHERE posicao_dev IS NOT NULL
+   AND (status IN ('concluido', 'reprovado') OR responsavel_id IS NULL);
+
+-- 5) Direcionar o chamado (tela de coordenação) -------------------------
+-- Atribui o responsável, define em que posição da fila DELE a solicitação
+-- entra (empurrando as demais para baixo) e registra o evento no histórico.
+CREATE OR REPLACE FUNCTION public.chamado_direcionar(
+  p_chamado_id     uuid,
+  p_responsavel_id uuid,
+  p_posicao        int  DEFAULT NULL,
+  p_observacao     text DEFAULT NULL
+)
+RETURNS void
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp
+AS $$
+DECLARE
+  v_numero    text;
+  v_status    text;
+  v_anterior  uuid;
+  v_total     int;
+  v_pos       int;
+  v_nome      text;
+BEGIN
+  IF NOT public.tem_acesso_menu('chamados_sistemas_coordenar') THEN
+    RAISE EXCEPTION 'Sem permissão para direcionar chamados.';
+  END IF;
+  IF p_responsavel_id IS NULL THEN
+    RAISE EXCEPTION 'Escolha o responsável pela execução.';
+  END IF;
+
+  SELECT numero, status, responsavel_id
+    INTO v_numero, v_status, v_anterior
+    FROM public."CHAMADO_SISTEMA"
+   WHERE id = p_chamado_id
+     FOR UPDATE;
+
+  IF v_numero IS NULL THEN
+    RAISE EXCEPTION 'Chamado não encontrado.';
+  END IF;
+  IF v_status IN ('concluido', 'reprovado') THEN
+    RAISE EXCEPTION 'Chamado encerrado — não é possível direcionar.';
+  END IF;
+
+  -- Tamanho da fila de destino (sem contar o próprio chamado).
+  SELECT count(*)::int INTO v_total
+    FROM public."CHAMADO_SISTEMA"
+   WHERE responsavel_id = p_responsavel_id
+     AND status NOT IN ('concluido', 'reprovado')
+     AND id <> p_chamado_id;
+
+  v_pos := LEAST(GREATEST(COALESCE(p_posicao, v_total + 1), 1), v_total + 1);
+
+  -- Abre espaço na posição escolhida.
+  UPDATE public."CHAMADO_SISTEMA"
+     SET posicao_dev = posicao_dev + 1
+   WHERE responsavel_id = p_responsavel_id
+     AND status NOT IN ('concluido', 'reprovado')
+     AND id <> p_chamado_id
+     AND posicao_dev >= v_pos;
+
+  -- Responsável + status + observação (a posição vem no UPDATE seguinte,
+  -- senão o trigger de coerência jogaria o chamado para o fim da fila).
+  UPDATE public."CHAMADO_SISTEMA"
+     SET responsavel_id     = p_responsavel_id,
+         status             = CASE WHEN status = 'aberto' THEN 'em_andamento' ELSE status END,
+         observacao_gerente = COALESCE(NULLIF(btrim(COALESCE(p_observacao, '')), ''), observacao_gerente)
+   WHERE id = p_chamado_id;
+
+  UPDATE public."CHAMADO_SISTEMA" SET posicao_dev = v_pos WHERE id = p_chamado_id;
+
+  PERFORM public.chamado_normalizar_fila_dev(p_responsavel_id);
+  IF v_anterior IS NOT NULL AND v_anterior <> p_responsavel_id THEN
+    PERFORM public.chamado_normalizar_fila_dev(v_anterior);
+  END IF;
+
+  SELECT display_name INTO v_nome FROM public.profiles WHERE id = p_responsavel_id;
+
+  INSERT INTO public."CHAMADO_SISTEMA_EVENTO" (chamado_id, autor_id, tipo, texto)
+  VALUES (p_chamado_id, auth.uid(), 'evento',
+          format('Chamado direcionado a %s — %sº lugar na fila do responsável',
+                 COALESCE(v_nome, 'responsável'), v_pos));
+END;
+$$;
+REVOKE ALL ON FUNCTION public.chamado_direcionar(uuid, uuid, int, text) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.chamado_direcionar(uuid, uuid, int, text) FROM anon;
+GRANT EXECUTE ON FUNCTION public.chamado_direcionar(uuid, uuid, int, text) TO authenticated;
+
+-- 6) Reordenar a fila de um dev (arrastar as tarefas) -------------------
+-- Quem coordena reordena a fila de qualquer dev; o dev reordena a própria.
+CREATE OR REPLACE FUNCTION public.chamado_reordenar_fila_dev(
+  p_responsavel_id uuid,
+  p_ordem          uuid[]
+)
+RETURNS void
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp
+AS $$
+BEGIN
+  IF NOT (public.tem_acesso_menu('chamados_sistemas_coordenar')
+          OR p_responsavel_id = auth.uid()) THEN
+    RAISE EXCEPTION 'Sem permissão para reordenar a fila deste responsável.';
+  END IF;
+
+  UPDATE public."CHAMADO_SISTEMA" c
+     SET posicao_dev = x.ord
+    FROM (SELECT unnest(p_ordem) AS id, generate_subscripts(p_ordem, 1) AS ord) x
+   WHERE c.id = x.id
+     AND c.responsavel_id = p_responsavel_id
+     AND c.status NOT IN ('concluido', 'reprovado')
+     AND c.posicao_dev IS DISTINCT FROM x.ord;
+
+  PERFORM public.chamado_normalizar_fila_dev(p_responsavel_id);
+END;
+$$;
+REVOKE ALL ON FUNCTION public.chamado_reordenar_fila_dev(uuid, uuid[]) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.chamado_reordenar_fila_dev(uuid, uuid[]) FROM anon;
+GRANT EXECUTE ON FUNCTION public.chamado_reordenar_fila_dev(uuid, uuid[]) TO authenticated;
+
+NOTIFY pgrst, 'reload schema';
