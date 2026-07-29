@@ -246,7 +246,7 @@ export default function MeusChamados({ base = "/app/central-servicos/chamados" }
           </Card>
           <Card className="space-y-1 p-4">
             <p className="flex items-center gap-1.5 text-sm font-bold"><Clock className="h-4 w-4 text-info" /> Horário de atendimento</p>
-            <p className="text-xs font-medium">Segunda a Sexta-feira · 8h às 18h</p>
+            <p className="text-xs font-medium">Segunda a Sexta-feira · 8h às 12h e 13h às 17h</p>
             <p className="text-xs text-muted-foreground">Chamados fora do horário serão avaliados no próximo dia útil.</p>
           </Card>
         </div>

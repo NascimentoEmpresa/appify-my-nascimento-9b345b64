@@ -67,10 +67,28 @@ export default function AbrirChamado({ base = "/app/central-servicos/chamados" }
   const toggleCategoria = (v: string) =>
     setCategorias((cur) => (cur.includes(v) ? cur.filter((x) => x !== v) : [...cur, v]));
 
-  const podeEnviar = useMemo(
-    () => assunto.trim() && categorias.length > 0 && tipo && prioridade && descricao.trim() && impacto && urgencia && modulo,
-    [assunto, categorias, tipo, prioridade, descricao, impacto, urgencia, modulo],
-  );
+  const [erroValidacao, setErroValidacao] = useState(false);
+
+  // Campos obrigatórios (na ordem do formulário). Serve para dizer EXATAMENTE
+  // o que falta preencher quando o usuário tenta enviar — em vez de só travar.
+  const faltando = useMemo(() => {
+    const req = [
+      { id: "campo-assunto",     label: "Assunto",              ok: !!assunto.trim() },
+      { id: "campo-categorias",  label: "Categorias",           ok: categorias.length > 0 },
+      { id: "campo-tipo",        label: "Tipo de solicitação",  ok: !!tipo },
+      { id: "campo-modulo",      label: "Módulo / Sistema",     ok: !!modulo },
+      { id: "campo-modulo",      label: "Qual sistema (Outro)", ok: modulo !== "outro" || !!moduloOutro.trim() },
+      { id: "campo-prioridade",  label: "Prioridade",           ok: !!prioridade },
+      { id: "campo-descricao",   label: "Descrição detalhada",  ok: !!descricao.trim() },
+      { id: "campo-impacto",     label: "Impacto no trabalho",  ok: !!impacto },
+      { id: "campo-urgencia",    label: "Urgência",             ok: !!urgencia },
+    ];
+    return req.filter((c) => !c.ok);
+  }, [assunto, categorias, tipo, modulo, moduloOutro, prioridade, descricao, impacto, urgencia]);
+  const podeEnviar = faltando.length === 0;
+
+  const irParaCampo = (campoId: string) =>
+    document.getElementById(campoId)?.scrollIntoView({ behavior: "smooth", block: "center" });
 
   const limpar = () => {
     setAssunto(""); setCategorias([]); setTipo(""); setPrioridade(""); setDescricao(""); setObservacoes("");
@@ -79,7 +97,17 @@ export default function AbrirChamado({ base = "/app/central-servicos/chamados" }
   };
 
   const enviar = async () => {
-    if (!podeEnviar) { toast({ title: "Preencha os campos obrigatórios (*)", variant: "destructive" }); return; }
+    if (!podeEnviar) {
+      setErroValidacao(true);
+      setTimeout(() => setErroValidacao(false), 600);
+      irParaCampo(faltando[0].id);
+      toast({
+        title: `Faltam ${faltando.length} ${faltando.length === 1 ? "campo" : "campos"} para enviar`,
+        description: faltando.map((f) => f.label).join(" · "),
+        variant: "destructive",
+      });
+      return;
+    }
     setSalvando(true);
     const { data, error } = await (supabase as any).from("CHAMADO_SISTEMA").insert({
       assunto: assunto.trim(),
@@ -187,11 +215,11 @@ export default function AbrirChamado({ base = "/app/central-servicos/chamados" }
             <p className="text-sm font-bold text-foreground">1. Informações do chamado</p>
 
             <div className="grid gap-4 md:grid-cols-2">
-              <div>
+              <div id="campo-assunto" className="scroll-mt-24">
                 <Label className="mb-1.5 block text-xs font-semibold">Assunto <span className="text-destructive">*</span></Label>
                 <Input placeholder="Ex.: Erro ao gerar relatório de comissões" value={assunto} onChange={(e) => setAssunto(e.target.value)} />
               </div>
-              <div>
+              <div id="campo-categorias" className="scroll-mt-24">
                 <Label className="mb-1.5 block text-xs font-semibold">Categorias <span className="text-destructive">*</span> <span className="font-normal text-muted-foreground">(uma ou mais)</span></Label>
                 <div className="grid grid-cols-2 gap-1.5">
                   {CATEGORIAS.map((c) => (
@@ -205,7 +233,7 @@ export default function AbrirChamado({ base = "/app/central-servicos/chamados" }
             </div>
 
             <div className="grid gap-4 md:grid-cols-2">
-              <div>
+              <div id="campo-tipo" className="scroll-mt-24">
                 <Label className="mb-1.5 block text-xs font-semibold">Tipo de solicitação <span className="text-destructive">*</span></Label>
                 <div className="flex flex-wrap gap-x-4 gap-y-1.5">
                   {TIPOS.map((t) => (
@@ -216,7 +244,7 @@ export default function AbrirChamado({ base = "/app/central-servicos/chamados" }
                   ))}
                 </div>
               </div>
-              <div>
+              <div id="campo-modulo" className="scroll-mt-24">
                 <Label className="mb-1.5 block text-xs font-semibold">Módulo / Sistema <span className="text-destructive">*</span></Label>
                 <Select value={modulo} onValueChange={setModulo}>
                   <SelectTrigger><SelectValue placeholder="Selecione o sistema…" /></SelectTrigger>
@@ -230,7 +258,7 @@ export default function AbrirChamado({ base = "/app/central-servicos/chamados" }
               </div>
             </div>
 
-            <div>
+            <div id="campo-prioridade" className="scroll-mt-24">
               <Label className="mb-1.5 block text-xs font-semibold">Prioridade <span className="text-destructive">*</span></Label>
               <div className="grid gap-2 sm:grid-cols-3">
                 {(["alta", "media", "baixa"] as const).map((p) => (
@@ -254,7 +282,7 @@ export default function AbrirChamado({ base = "/app/central-servicos/chamados" }
               </div>
             </div>
 
-            <div>
+            <div id="campo-descricao" className="scroll-mt-24">
               <Label className="mb-1.5 block text-xs font-semibold">Descrição detalhada <span className="text-destructive">*</span></Label>
               <Textarea
                 rows={5} maxLength={4000}
@@ -275,7 +303,7 @@ export default function AbrirChamado({ base = "/app/central-servicos/chamados" }
             </div>
 
             <div className="grid gap-4 md:grid-cols-2">
-              <div>
+              <div id="campo-impacto" className="scroll-mt-24">
                 <Label className="mb-1.5 block text-xs font-semibold">Impacto no trabalho <span className="text-destructive">*</span></Label>
                 <div className="flex flex-wrap gap-x-4 gap-y-1.5">
                   {IMPACTOS.map((i) => (
@@ -286,7 +314,7 @@ export default function AbrirChamado({ base = "/app/central-servicos/chamados" }
                   ))}
                 </div>
               </div>
-              <div>
+              <div id="campo-urgencia" className="scroll-mt-24">
                 <Label className="mb-1.5 block text-xs font-semibold">Urgência <span className="text-destructive">*</span> <span className="font-normal text-muted-foreground">(prazo que precisa)</span></Label>
                 <div className="flex flex-wrap gap-x-4 gap-y-1.5">
                   {URGENCIAS.map((u) => (
@@ -343,12 +371,36 @@ export default function AbrirChamado({ base = "/app/central-servicos/chamados" }
             )}
           </Card>
 
+          {faltando.length > 0 && (
+            <Card className={`border-warning/40 bg-warning/5 p-3 ${erroValidacao ? "animate-shake" : ""}`}>
+              <p className="flex items-center gap-1.5 text-xs font-semibold text-warning">
+                <Info className="h-3.5 w-3.5" /> Faltam {faltando.length} {faltando.length === 1 ? "campo obrigatório" : "campos obrigatórios"}. Clique para ir até ele:
+              </p>
+              <div className="mt-2 flex flex-wrap gap-1.5">
+                {faltando.map((f) => (
+                  <button
+                    key={f.label}
+                    type="button"
+                    onClick={() => irParaCampo(f.id)}
+                    className="flex items-center gap-1.5 rounded-full border border-warning/50 bg-background px-2.5 py-1 text-[11px] font-medium transition-transform hover:border-warning hover:bg-warning/10 active:scale-90"
+                  >
+                    <span className="h-1.5 w-1.5 rounded-full bg-warning" /> {f.label}
+                  </button>
+                ))}
+              </div>
+            </Card>
+          )}
+
           <div className="flex items-center justify-between">
             <Button variant="outline" onClick={() => nav(base)}>Cancelar</Button>
             <div className="flex gap-2">
               <Button variant="ghost" onClick={limpar}>Limpar</Button>
-              <Button onClick={enviar} disabled={!podeEnviar || salvando} className="gap-1.5">
-                {salvando ? "Enviando…" : "Enviar chamado"}
+              <Button
+                onClick={enviar}
+                disabled={salvando}
+                className={`gap-1.5 transition-transform active:scale-95 ${erroValidacao ? "animate-shake" : ""} ${!podeEnviar ? "bg-muted text-muted-foreground hover:bg-muted" : ""}`}
+              >
+                {salvando ? "Enviando…" : podeEnviar ? "Enviar chamado" : `Enviar chamado — faltam ${faltando.length}`}
               </Button>
             </div>
           </div>
@@ -387,7 +439,7 @@ export default function AbrirChamado({ base = "/app/central-servicos/chamados" }
           </Card>
           <Card className="space-y-1 p-4">
             <p className="flex items-center gap-1.5 text-sm font-semibold"><Clock className="h-4 w-4 text-primary" /> Horário de atendimento</p>
-            <p className="text-xs text-muted-foreground">Segunda a Sexta-feira | 8h às 18h</p>
+            <p className="text-xs text-muted-foreground">Segunda a Sexta-feira | 8h às 12h e 13h às 17h</p>
             <p className="text-[11px] text-muted-foreground/70">Chamados fora do horário serão avaliados no próximo dia útil.</p>
           </Card>
         </div>
