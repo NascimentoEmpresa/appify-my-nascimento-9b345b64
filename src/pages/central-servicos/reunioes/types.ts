@@ -418,6 +418,7 @@ export interface BloqueioAgenda {
   motivo: MotivoBloqueioAgenda;
   motivo_outro: string | null;
   created_at: string;
+  serie_bloqueio_id: string | null;
 }
 
 /** "08:00:00" -> "8h" | "08:30:00" -> "8h30" */
