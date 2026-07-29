@@ -145,10 +145,29 @@ export interface AvaliacaoChamado {
   id: string;
   chamado_id: string;
   solicitante_id: string;
-  estrelas: number;
+  atendimento: number;
+  tempo: number;
+  solucao: number;
+  clareza: number;
+  satisfacao: number;
   comentario: string | null;
   created_at: string;
 }
+
+// Critérios da avaliação multi-item (1..5 cada). A ordem aqui é a ordem do modal.
+export const CRITERIOS_AVALIACAO = [
+  { key: "atendimento", titulo: "Atendimento do analista", descricao: "Avalie a cordialidade, disposição e qualidade do atendimento." },
+  { key: "tempo",       titulo: "Tempo de atendimento",   descricao: "Avalie o tempo que levou para seu chamado ser atendido." },
+  { key: "solucao",     titulo: "Solução apresentada",    descricao: "Avalie se a solução atendeu corretamente ao seu problema." },
+  { key: "clareza",     titulo: "Clareza das informações", descricao: "Avalie a clareza e objetividade das informações fornecidas." },
+  { key: "satisfacao",  titulo: "Satisfação geral",       descricao: "Avalie sua satisfação geral com o atendimento." },
+] as const;
+
+export type CriterioKey = (typeof CRITERIOS_AVALIACAO)[number]["key"];
+
+/** Média (0..5) dos 5 critérios de uma avaliação. */
+export const mediaAvaliacao = (a: Pick<AvaliacaoChamado, CriterioKey>) =>
+  (a.atendimento + a.tempo + a.solucao + a.clareza + a.satisfacao) / 5;
 
 export const BUCKET_CHAMADOS = "chamados-sistemas";
 
@@ -208,14 +227,23 @@ export function PrioridadeBadge({ prioridade }: { prioridade: string }) {
   return <Badge variant="outline" className={`text-[10px] font-semibold ${p.cls}`}>{p.label}</Badge>;
 }
 
-/** Estrelas somente-leitura (1..5). */
+/** Estrelas somente-leitura (1..5), aceita valor fracionário (ex.: média 4,2). */
 export function Estrelas({ valor, size = 16 }: { valor: number; size?: number }) {
   return (
     <span className="inline-flex items-center gap-0.5">
-      {[1, 2, 3, 4, 5].map((n) => (
-        <Star key={n} style={{ width: size, height: size }}
-          className={n <= valor ? "fill-warning text-warning" : "text-muted-foreground/40"} />
-      ))}
+      {[1, 2, 3, 4, 5].map((n) => {
+        const preenchido = Math.min(1, Math.max(0, valor - (n - 1))); // 0..1 desta estrela
+        return (
+          <span key={n} className="relative inline-block" style={{ width: size, height: size }}>
+            <Star style={{ width: size, height: size }} className="absolute inset-0 text-muted-foreground/30" />
+            {preenchido > 0 && (
+              <span className="absolute inset-0 overflow-hidden" style={{ width: `${preenchido * 100}%` }}>
+                <Star style={{ width: size, height: size }} className="fill-warning text-warning" />
+              </span>
+            )}
+          </span>
+        );
+      })}
     </span>
   );
 }

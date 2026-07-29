@@ -19,7 +19,8 @@ import { CheckCircle2, MessageSquare, XCircle, Paperclip, ArrowLeft, Trash2, Sta
 import { ExcluirChamadoDialog } from "./ExcluirChamadoDialog";
 import {
   StatusBadge, PrioridadeBadge, STATUS_CHAMADO, Estrelas,
-  CATEGORIAS, TIPOS, IMPACTOS, URGENCIAS, AMBIENTES, labelDe, moduloLabel, fmtData, fmtDataHora,
+  CATEGORIAS, TIPOS, IMPACTOS, URGENCIAS, AMBIENTES, CRITERIOS_AVALIACAO, mediaAvaliacao,
+  labelDe, moduloLabel, fmtData, fmtDataHora,
   BUCKET_CHAMADOS, type Chamado, type Anexo, type Evento, type AvaliacaoChamado,
 } from "./types";
 
@@ -35,6 +36,8 @@ export default function ExecutarChamado() {
   const [reprovando, setReprovando] = useState(false);
   const [motivo, setMotivo] = useState("");
   const [excluindoOpen, setExcluindoOpen] = useState(false);
+  const [agindo, setAgindo] = useState<string | null>(null); // ação em curso (trava cliques repetidos)
+  const [flash, setFlash] = useState(false);                 // pisca o selo de status ao mudar
 
   const { data: usuarios = [] } = useQuery({
     queryKey: ["chamados-usuarios"],
@@ -94,11 +97,19 @@ export default function ExecutarChamado() {
   };
 
   const mudarStatus = async (status: string, texto: string, evento: string) => {
+    if (agindo) return;                                   // já tem ação rodando
+    if (chamado?.status === status) {                     // já está nesse status → não repete
+      toast({ title: `O chamado já está "${STATUS_CHAMADO[status]?.label ?? status}".` });
+      return;
+    }
+    setAgindo(evento);
     const { error } = await (supabase as any).from("CHAMADO_SISTEMA").update({ status }).eq("id", id);
-    if (error) { toast({ title: "Erro", description: error.message, variant: "destructive" }); return; }
+    if (error) { setAgindo(null); toast({ title: "Erro", description: error.message, variant: "destructive" }); return; }
     await (supabase as any).from("CHAMADO_SISTEMA_EVENTO").insert({ chamado_id: id, tipo: "evento", texto });
     supabase.functions.invoke("enviar-notificacao-push", { body: { chamado_id: id, evento } }).catch(() => {});
     toast({ title: texto });
+    setFlash(true); setTimeout(() => setFlash(false), 700);
+    setAgindo(null);
     invalidar();
   };
 
@@ -159,7 +170,9 @@ export default function ExecutarChamado() {
           <Card className="space-y-4 p-4">
             <div className="flex items-center justify-between">
               <p className="text-sm font-bold">Informações do chamado</p>
-              <StatusBadge status={chamado.status} />
+              <span className={`rounded-full ${flash ? "animate-status-flash" : ""}`}>
+                <StatusBadge status={chamado.status} />
+              </span>
             </div>
             <div className="grid gap-4 sm:grid-cols-3">
               <Campo label="Categorias">{chamado.categorias.map((c) => labelDe(CATEGORIAS, c)).join(", ")}</Campo>
@@ -190,10 +203,23 @@ export default function ExecutarChamado() {
           )}
 
           {avaliacao && (
-            <Card className="space-y-1.5 border-warning/30 bg-warning/5 p-4">
-              <p className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wider text-warning"><Star className="h-3.5 w-3.5" /> Avaliação do solicitante</p>
-              <Estrelas valor={avaliacao.estrelas} size={20} />
-              {avaliacao.comentario && <p className="whitespace-pre-wrap text-sm">{avaliacao.comentario}</p>}
+            <Card className="animate-rise-in space-y-2 border-warning/30 bg-warning/5 p-4">
+              <div className="flex items-center justify-between">
+                <p className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wider text-warning"><Star className="h-3.5 w-3.5" /> Avaliação do solicitante</p>
+                <div className="flex items-center gap-1.5">
+                  <Estrelas valor={mediaAvaliacao(avaliacao)} size={18} />
+                  <span className="text-xs font-semibold text-muted-foreground">{mediaAvaliacao(avaliacao).toFixed(1).replace(".", ",")}</span>
+                </div>
+              </div>
+              <div className="grid gap-1 sm:grid-cols-2">
+                {CRITERIOS_AVALIACAO.map((c) => (
+                  <div key={c.key} className="flex items-center justify-between gap-2 text-xs">
+                    <span className="text-muted-foreground">{c.titulo}</span>
+                    <Estrelas valor={avaliacao[c.key]} size={12} />
+                  </div>
+                ))}
+              </div>
+              {avaliacao.comentario && <p className="whitespace-pre-wrap border-t border-warning/20 pt-2 text-sm">{avaliacao.comentario}</p>}
               <p className="text-[11px] text-muted-foreground">{fmtDataHora(avaliacao.created_at)}</p>
             </Card>
           )}
@@ -285,14 +311,30 @@ export default function ExecutarChamado() {
           {podeAgir && (
             <Card className="space-y-2 p-4">
               <p className="text-sm font-bold">Ações rápidas</p>
-              <Button className="w-full justify-start gap-2 bg-success text-success-foreground hover:bg-success/90" onClick={() => mudarStatus("concluido", "Chamado concluído", "concluido")}>
-                <CheckCircle2 className="h-4 w-4" /> Concluir chamado
+              {chamado.status === "concluido" ? (
+                <div className="flex items-center gap-2 rounded-md border border-success/40 bg-success/10 px-3 py-2 text-sm font-semibold text-success">
+                  <CheckCircle2 className="h-4 w-4 animate-check-pop" /> Chamado concluído
+                </div>
+              ) : (
+                <Button
+                  className="w-full justify-start gap-2 bg-success text-success-foreground transition-transform hover:bg-success/90 active:scale-95 disabled:opacity-60"
+                  disabled={!!agindo}
+                  onClick={() => mudarStatus("concluido", "Chamado concluído", "concluido")}
+                >
+                  <CheckCircle2 className="h-4 w-4" /> {agindo === "concluido" ? "Concluindo…" : "Concluir chamado"}
+                </Button>
+              )}
+              <Button
+                variant="outline"
+                className="w-full justify-start gap-2 transition-transform active:scale-95 disabled:opacity-60"
+                disabled={!!agindo || chamado.status === "aguardando_retorno"}
+                onClick={() => mudarStatus("aguardando_retorno", "Solicitadas mais informações ao solicitante", "solicitar_info")}
+              >
+                <MessageSquare className="h-4 w-4" />
+                {agindo === "solicitar_info" ? "Solicitando…" : chamado.status === "aguardando_retorno" ? "Aguardando retorno do solicitante" : "Solicitar mais informações"}
               </Button>
-              <Button variant="outline" className="w-full justify-start gap-2" onClick={() => mudarStatus("aguardando_retorno", "Solicitadas mais informações ao solicitante", "solicitar_info")}>
-                <MessageSquare className="h-4 w-4" /> Solicitar mais informações
-              </Button>
-              {canAprovar && (
-                <Button variant="outline" className="w-full justify-start gap-2 text-destructive" onClick={() => setReprovando(true)}>
+              {canAprovar && chamado.status !== "concluido" && chamado.status !== "reprovado" && (
+                <Button variant="outline" className="w-full justify-start gap-2 text-destructive transition-transform active:scale-95" onClick={() => setReprovando(true)}>
                   <XCircle className="h-4 w-4" /> Reprovar chamado
                 </Button>
               )}

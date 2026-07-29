@@ -6,13 +6,14 @@ import { useAuth } from "@/hooks/useAuth";
 import { chamadosMarkSeen } from "@/hooks/useChamadosNotif";
 import { useChamadoPerms } from "./useChamadoPerms";
 import { FeedAtualizacoes } from "./FeedAtualizacoes";
+import { AvaliarChamadoDialog } from "./AvaliarChamadoDialog";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table";
-import { Plus, ClipboardList, CheckCircle2, Clock, RotateCcw, CalendarClock, Info, MessageSquarePlus, XCircle, Lightbulb, ChevronLeft, ChevronRight, Star } from "lucide-react";
+import { Plus, ClipboardList, CheckCircle2, Clock, RotateCcw, CalendarClock, Info, MessageSquarePlus, XCircle, Lightbulb, ChevronLeft, ChevronRight, Star, Lock } from "lucide-react";
 import {
   StatCard, StatusBadge, PrioridadeBadge, fmtData, fmtDataHora, moduloLabel, type Chamado,
 } from "./types";
@@ -46,6 +47,8 @@ export default function MeusChamados({ base = "/app/central-servicos/chamados" }
     },
   });
 
+  const pendentesIds = useMemo(() => new Set(avaliacoesPendentes.map((p) => p.id)), [avaliacoesPendentes]);
+  const [avaliarAlvo, setAvaliarAlvo] = useState<{ id: string; numero: string } | null>(null);
   const [pagina, setPagina] = useState(1);
 
   const { data: stats } = useQuery({
@@ -120,8 +123,8 @@ export default function MeusChamados({ base = "/app/central-servicos/chamados" }
           </p>
           <div className="flex flex-wrap gap-1.5">
             {avaliacoesPendentes.map((p) => (
-              <button key={p.id} onClick={() => nav(`${base}/${p.id}/acompanhar`)}
-                className="flex items-center gap-1 rounded border border-warning/40 bg-background px-2 py-1 text-xs hover:border-warning">
+              <button key={p.id} onClick={() => setAvaliarAlvo({ id: p.id, numero: p.numero })}
+                className="flex items-center gap-1 rounded border border-warning/40 bg-background px-2 py-1 text-xs transition-transform hover:border-warning hover:bg-warning/5 active:scale-90">
                 <Star className="h-3 w-3 text-warning" /> <span className="font-mono font-semibold">#{p.numero}</span> avaliar
               </button>
             ))}
@@ -132,8 +135,8 @@ export default function MeusChamados({ base = "/app/central-servicos/chamados" }
       <div className="mb-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
         <StatCard icon={ClipboardList} tone="primary" label="Total de solicitações" value={stats?.meus ?? 0} hint="Meus chamados" />
         <StatCard icon={CheckCircle2} tone="success" label="Chamados finalizados" value={stats?.concluidos ?? 0} hint="Concluídos" />
-        <StatCard icon={Clock} tone="warning" label="Em análise ou execução" value={stats?.em_atendimento ?? 0} hint="Em atendimento" />
         <StatCard icon={RotateCcw} tone="primary" label="Necessita de retorno" value={stats?.aguardando_acao ?? 0} hint="Aguardando sua ação" />
+        <StatCard icon={Star} tone="warning" label="Concluídos sem avaliação" value={avaliacoesPendentes.length} hint="Necessitam avaliação" />
         <StatCard icon={CalendarClock} tone="muted" label="Prazo médio de conclusão" value={stats?.tempo_medio != null ? `${stats.tempo_medio} dias` : "—"} hint="Tempo médio" />
       </div>
 
@@ -158,6 +161,7 @@ export default function MeusChamados({ base = "/app/central-servicos/chamados" }
                   <TableHead>Prazo previsto</TableHead>
                   <TableHead>Abertura</TableHead>
                   <TableHead>Observação do gerente</TableHead>
+                  <TableHead className="text-right">Ações</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -187,6 +191,26 @@ export default function MeusChamados({ base = "/app/central-servicos/chamados" }
                     <TableCell className="whitespace-nowrap text-xs text-muted-foreground">{fmtDataHora(c.created_at)}</TableCell>
                     <TableCell className="max-w-[200px] truncate text-xs text-muted-foreground" title={c.observacao_gerente ?? ""}>
                       {c.observacao_gerente || (c.status === "reprovado" && c.motivo_reprovacao ? c.motivo_reprovacao : "—")}
+                    </TableCell>
+                    <TableCell className="text-right" onClick={(e) => e.stopPropagation()}>
+                      {c.status !== "concluido" ? (
+                        <Button variant="ghost" size="sm" disabled className="h-8 cursor-not-allowed gap-1.5 text-muted-foreground/60">
+                          <Lock className="h-3.5 w-3.5" /> Avaliar
+                        </Button>
+                      ) : pendentesIds.has(c.id) ? (
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => setAvaliarAlvo({ id: c.id, numero: c.numero })}
+                          className="h-8 gap-1.5 border-warning/50 text-warning transition-transform hover:bg-warning/10 active:scale-90"
+                        >
+                          <Star className="h-3.5 w-3.5" /> Avaliar
+                        </Button>
+                      ) : (
+                        <span className="inline-flex h-8 items-center gap-1.5 rounded-md px-2 text-xs font-semibold text-success">
+                          <CheckCircle2 className="h-3.5 w-3.5" /> Avaliado
+                        </span>
+                      )}
                     </TableCell>
                   </TableRow>
                   );
@@ -228,6 +252,12 @@ export default function MeusChamados({ base = "/app/central-servicos/chamados" }
         </div>
         <FeedAtualizacoes buildHref={(cid) => `${base}/${cid}/acompanhar`} />
       </div>
+
+      <AvaliarChamadoDialog
+        open={!!avaliarAlvo}
+        onOpenChange={(v) => { if (!v) setAvaliarAlvo(null); }}
+        chamado={avaliarAlvo}
+      />
     </div>
   );
 }
