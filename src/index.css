@@ -168,6 +168,17 @@
     max-width: 100%;
     overflow-x: hidden;
   }
+  /* Reserva sempre o espaço da barra de rolagem: sem isso a página "encolhe e
+     volta" toda vez que um select/dialog/popover trava o scroll do body. */
+  html { scrollbar-gutter: stable; }
+  /* O Radix (react-remove-scroll) ainda compensa a barra com margin/padding no
+     body travado — com o espaço já reservado, essa compensação é o pulo em si.
+     Especificidade maior que a regra injetada em runtime para anular só o
+     deslocamento, mantendo a trava de scroll dela. */
+  html body[data-scroll-locked] {
+    margin-right: 0 !important;
+    padding-right: 0 !important;
+  }
   body {
     @apply bg-background text-foreground antialiased;
     font-feature-settings: "cv02", "cv03", "cv04", "cv11", "ss01";

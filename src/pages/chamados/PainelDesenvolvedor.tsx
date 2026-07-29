@@ -20,7 +20,8 @@ import { PieChart, Pie, Cell, ResponsiveContainer } from "recharts";
 import { ListChecks, Clock, MessageSquare, CheckCircle2, AlertTriangle, ShieldAlert, CalendarClock, RotateCw, ArrowUpRight, Plus, BookOpen, ClipboardCheck, Sparkles, FileText, Zap, Star, Trophy } from "lucide-react";
 import { FeedAtualizacoes } from "./FeedAtualizacoes";
 import {
-  StatCard, PrioridadeBadge, StatusBadge, STATUS_CHAMADO, PRIORIDADES, Estrelas, iniciais, fmtData, fmtDataHora, type Chamado,
+  StatCard, PrioridadeBadge, StatusBadge, STATUS_CHAMADO, PRIORIDADES, Estrelas, iniciais, fmtData, fmtDataHora,
+  chamadoAtivo, posicoesFilaDev, type Chamado,
 } from "./types";
 
 const DONUT: Record<string, string> = {
@@ -29,7 +30,14 @@ const DONUT: Record<string, string> = {
   reprovado: "hsl(var(--destructive))",
 };
 
-const ATIVO = (s: string) => s !== "concluido" && s !== "reprovado";
+const ATIVO = (s: string) => chamadoAtivo(s);
+
+// Por padrão a lista mostra só o que está na fila; concluídos são opcionais.
+const VISOES = [
+  { key: "ativos", label: "Na minha fila" },
+  { key: "concluidos", label: "Concluídos" },
+  { key: "todos", label: "Todos" },
+] as const;
 
 export default function PainelDesenvolvedor() {
   const nav = useNavigate();
@@ -43,6 +51,7 @@ export default function PainelDesenvolvedor() {
   const podeEditarPrioridade = canCoordenar || gestor; // gerência troca a prioridade na fila
 
   const [flashPrioridade, setFlashPrioridade] = useState<string | null>(null);
+  const [visao, setVisao] = useState<string>("ativos");
 
   // Abriu o Painel do Desenvolvedor → zera a bolinha de novidades do dev.
   useEffect(() => { chamadosMarkSeen(user?.id, "dev"); }, [user?.id]);
@@ -94,24 +103,41 @@ export default function PainelDesenvolvedor() {
     },
   });
 
-  // Média geral e por item = média ponderada pelo nº de avaliações de cada dev.
-  const satisfacao = useMemo(() => {
-    const total = ranking.reduce((s, r) => s + Number(r.avaliacoes), 0);
-    if (!total) return null;
-    const w = (k: "media" | "atendimento" | "tempo" | "solucao" | "clareza" | "satisfacao") =>
-      ranking.reduce((s, r) => s + Number(r[k]) * Number(r.avaliacoes), 0) / total;
+  // Só o MEU ranking aparece: minha colocação na equipe + as minhas médias.
+  const minhaSatisfacao = useMemo(() => {
+    const i = ranking.findIndex((r) => r.responsavel_id === user?.id);
+    if (i === -1) return null;
+    const r = ranking[i];
     return {
-      total,
-      media: w("media"),
+      posicao: i + 1,
+      devs: ranking.length,
+      total: Number(r.avaliacoes),
+      media: Number(r.media),
       itens: [
-        { label: "Atendimento do analista", v: w("atendimento") },
-        { label: "Tempo de atendimento", v: w("tempo") },
-        { label: "Solução apresentada", v: w("solucao") },
-        { label: "Clareza das informações", v: w("clareza") },
-        { label: "Satisfação geral", v: w("satisfacao") },
+        { label: "Atendimento do analista", v: Number(r.atendimento) },
+        { label: "Tempo de atendimento", v: Number(r.tempo) },
+        { label: "Solução apresentada", v: Number(r.solucao) },
+        { label: "Clareza das informações", v: Number(r.clareza) },
+        { label: "Satisfação geral", v: Number(r.satisfacao) },
       ],
     };
-  }, [ranking]);
+  }, [ranking, user?.id]);
+
+  // Posição na MINHA fila (1 = próximo a executar) + lista conforme a visão.
+  const posicaoMinhaFila = useMemo(() => posicoesFilaDev(chamados), [chamados]);
+  const visiveis = useMemo(() => {
+    const lista = chamados.filter((c) =>
+      visao === "ativos" ? ATIVO(c.status)
+      : visao === "concluidos" ? !ATIVO(c.status)
+      : true);
+    return lista.sort((a, b) => {
+      const pa = posicaoMinhaFila[a.id], pb = posicaoMinhaFila[b.id];
+      if (pa && pb) return pa - pb;
+      if (pa) return -1;
+      if (pb) return 1;
+      return +new Date(b.updated_at) - +new Date(a.updated_at);
+    });
+  }, [chamados, visao, posicaoMinhaFila]);
 
   const mudarPrioridade = async (id: string, prioridade: string, numero: string) => {
     const { error } = await (supabase as any).from("CHAMADO_SISTEMA").update({ prioridade }).eq("id", id);
@@ -189,14 +215,29 @@ export default function PainelDesenvolvedor() {
         <StatCard icon={AlertTriangle} tone="destructive" label="Atrasados" value={stats.atrasados} />
       </div>
 
-      <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_300px]">
+      {/* items-start: cada coluna com a altura do próprio conteúdo (evita o
+          vão branco embaixo da tabela quando a lista é curta). */}
+      <div className="grid items-start gap-4 lg:grid-cols-[minmax(0,1fr)_300px]">
         <Card className="p-4">
-          <p className="mb-3 text-sm font-bold">Meus chamados atribuídos</p>
+          <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+            <p className="text-sm font-bold">Meus chamados atribuídos</p>
+            <div className="flex gap-1 rounded-lg bg-muted p-0.5">
+              {VISOES.map((v) => (
+                <button
+                  key={v.key} onClick={() => setVisao(v.key)}
+                  className={`rounded-md px-2.5 py-1 text-[11px] font-medium ${visao === v.key ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"}`}
+                >
+                  {v.label}
+                </button>
+              ))}
+            </div>
+          </div>
           {isLoading ? (
             <p className="py-8 text-center text-sm text-muted-foreground">Carregando…</p>
           ) : (
             <div className="overflow-x-auto">
-              <Table>
+              {/* Mesmas células compactas do Painel de Distribuição. */}
+              <Table className="[&_td]:px-2 [&_td]:py-2.5 [&_th]:h-9 [&_th]:px-2">
                 <TableHeader>
                   <TableRow>
                     <TableHead className="w-16 text-center">Fila</TableHead>
@@ -209,21 +250,28 @@ export default function PainelDesenvolvedor() {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {chamados.map((c) => {
+                  {visiveis.map((c) => {
                     const atrasado = c.prazo_previsto && ATIVO(c.status) && new Date(c.prazo_previsto) < hoje;
                     return (
                       <TableRow key={c.id} className="cursor-pointer" onClick={() => nav(`/app/sistemas/chamados/${c.id}`)}>
                         <TableCell className="text-center">
-                          {posicoes[c.id] ? (
-                            <span
-                              className={`inline-flex h-7 w-7 items-center justify-center rounded-full text-xs font-bold ${
-                                c.prioridade === "alta" ? "bg-destructive/15 text-destructive"
-                                : c.prioridade === "media" ? "bg-warning/15 text-warning"
-                                : "bg-success/15 text-success"
-                              }`}
-                              title="Posição na fila por ordem de abertura"
-                            >
-                              {posicoes[c.id]}
+                          {posicaoMinhaFila[c.id] ? (
+                            <span className="inline-flex items-center gap-1">
+                              <span
+                                className={`inline-flex h-7 w-7 items-center justify-center rounded-full text-xs font-bold ${
+                                  c.prioridade === "alta" ? "bg-destructive/15 text-destructive"
+                                  : c.prioridade === "media" ? "bg-warning/15 text-warning"
+                                  : "bg-success/15 text-success"
+                                }`}
+                                title="Posição na minha fila de execução"
+                              >
+                                {posicaoMinhaFila[c.id]}
+                              </span>
+                              {posicoes[c.id] && (
+                                <span className="text-[10px] font-semibold text-muted-foreground" title={`${posicoes[c.id]}º na fila geral (ordem de chegada)`}>
+                                  ({posicoes[c.id]})
+                                </span>
+                              )}
                             </span>
                           ) : (
                             <span className="text-xs text-muted-foreground">—</span>
@@ -256,11 +304,16 @@ export default function PainelDesenvolvedor() {
                       </TableRow>
                     );
                   })}
-                  {chamados.length === 0 && (
-                    <TableRow><TableCell colSpan={7} className="py-6 text-center text-sm text-muted-foreground">Nenhum chamado atribuído.</TableCell></TableRow>
+                  {visiveis.length === 0 && (
+                    <TableRow><TableCell colSpan={7} className="py-6 text-center text-sm text-muted-foreground">
+                      {visao === "concluidos" ? "Nenhum chamado concluído." : "Nenhum chamado na sua fila."}
+                    </TableCell></TableRow>
                   )}
                 </TableBody>
               </Table>
+              <p className="mt-2 text-[11px] text-muted-foreground">
+                Fila = a sua ordem de execução (1 = próximo a fazer), definida pela coordenação. Entre parênteses, a posição na fila geral.
+              </p>
             </div>
           )}
         </Card>
@@ -308,48 +361,45 @@ export default function PainelDesenvolvedor() {
         </div>
       </div>
 
-      {/* Satisfação — ranking da equipe + médias por item avaliado */}
+      {/* Satisfação — só a MINHA nota (colocação + médias por item avaliado) */}
       <div className="mt-4 grid gap-4 lg:grid-cols-2">
         <Card className="p-4">
           <div className="mb-3 flex items-center justify-between">
-            <p className="flex items-center gap-1.5 text-sm font-bold"><Trophy className="h-4 w-4 text-warning" /> Ranking de satisfação</p>
-            {satisfacao && (
-              <div className="flex items-center gap-1.5">
-                <Estrelas valor={satisfacao.media} size={15} />
-                <span className="text-sm font-bold">{satisfacao.media.toFixed(1).replace(".", ",")}</span>
-                <span className="text-[11px] text-muted-foreground">({satisfacao.total})</span>
-              </div>
+            <p className="flex items-center gap-1.5 text-sm font-bold"><Trophy className="h-4 w-4 text-warning" /> Minha satisfação</p>
+            {minhaSatisfacao && (
+              <span className="text-[11px] text-muted-foreground">{minhaSatisfacao.posicao}º de {minhaSatisfacao.devs} na equipe</span>
             )}
           </div>
-          <div className="space-y-2">
-            {ranking.map((r, i) => (
-              <div key={r.responsavel_id} className="flex items-center gap-2.5">
-                <span className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-[11px] font-bold ${
-                  i === 0 ? "bg-warning/20 text-warning"
-                  : i === 1 ? "bg-muted-foreground/20 text-muted-foreground"
-                  : i === 2 ? "bg-orange-500/20 text-orange-600"
-                  : "bg-muted text-muted-foreground"
-                }`}>{i + 1}</span>
-                <Avatar className="h-7 w-7"><AvatarFallback className="text-[10px]">{iniciais(nomeDe(r.responsavel_id))}</AvatarFallback></Avatar>
-                <p className="min-w-0 flex-1 truncate text-xs font-medium">{nomeDe(r.responsavel_id)}</p>
-                <Estrelas valor={Number(r.media)} size={13} />
-                <span className="w-7 text-right text-xs font-semibold">{Number(r.media).toFixed(1).replace(".", ",")}</span>
-                <span className="w-8 text-right text-[10px] text-muted-foreground">({r.avaliacoes})</span>
+          {minhaSatisfacao ? (
+            <div className="flex items-center gap-2.5">
+              <span className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-xs font-bold ${
+                minhaSatisfacao.posicao === 1 ? "bg-warning/20 text-warning"
+                : minhaSatisfacao.posicao === 2 ? "bg-muted-foreground/20 text-muted-foreground"
+                : minhaSatisfacao.posicao === 3 ? "bg-orange-500/20 text-orange-600"
+                : "bg-muted text-muted-foreground"
+              }`}>{minhaSatisfacao.posicao}º</span>
+              <Avatar className="h-8 w-8"><AvatarFallback className="text-[10px]">{iniciais(nomeDe(user?.id ?? null))}</AvatarFallback></Avatar>
+              <div className="min-w-0 flex-1">
+                <p className="truncate text-xs font-medium">{nomeDe(user?.id ?? null)}</p>
+                <p className="text-[10px] text-muted-foreground">{minhaSatisfacao.total} avaliação(ões) recebida(s)</p>
               </div>
-            ))}
-            {ranking.length === 0 && <p className="py-4 text-center text-xs text-muted-foreground">Ainda não há avaliações de chamados concluídos.</p>}
-          </div>
+              <Estrelas valor={minhaSatisfacao.media} size={15} />
+              <span className="text-sm font-bold">{minhaSatisfacao.media.toFixed(1).replace(".", ",")}</span>
+            </div>
+          ) : (
+            <p className="py-4 text-center text-xs text-muted-foreground">Você ainda não recebeu avaliações de chamados concluídos.</p>
+          )}
         </Card>
 
         <Card className="p-4">
-          <p className="mb-3 flex items-center gap-1.5 text-sm font-bold"><Star className="h-4 w-4 text-warning" /> Média de satisfação por item avaliado</p>
+          <p className="mb-3 flex items-center gap-1.5 text-sm font-bold"><Star className="h-4 w-4 text-warning" /> Minha média por item avaliado</p>
           <div className="space-y-2.5">
-            {satisfacao ? satisfacao.itens.map((it) => (
+            {minhaSatisfacao ? minhaSatisfacao.itens.map((it) => (
               <div key={it.label} className="flex items-center gap-2 text-xs">
                 <span className="min-w-0 flex-1 truncate">{it.label}</span>
                 <Estrelas valor={it.v} size={13} />
                 <span className="w-7 text-right font-semibold">{it.v.toFixed(1).replace(".", ",")}</span>
-                <span className="w-8 text-right text-[10px] text-muted-foreground">({satisfacao.total})</span>
+                <span className="w-8 text-right text-[10px] text-muted-foreground">({minhaSatisfacao.total})</span>
               </div>
             )) : (
               <p className="py-4 text-center text-xs text-muted-foreground">Sem avaliações ainda.</p>

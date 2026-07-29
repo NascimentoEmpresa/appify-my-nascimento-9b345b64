@@ -24,7 +24,8 @@ import { ClipboardList, Clock, Users, CheckCircle2, AlertTriangle, ShieldAlert, 
 import { FeedAtualizacoes } from "./FeedAtualizacoes";
 import { ExcluirChamadoDialog } from "./ExcluirChamadoDialog";
 import {
-  StatCard, StatusBadge, PrioridadeBadge, STATUS_CHAMADO, CATEGORIAS, labelDe, moduloLabel, iniciais, fmtData, fmtDataHora, type Chamado,
+  StatCard, StatusBadge, PrioridadeBadge, STATUS_CHAMADO, PRIORIDADES, CATEGORIAS, labelDe, moduloLabel, iniciais, fmtData, fmtDataHora,
+  chamadoAtivo, posicoesFilaGlobal, posicoesFilaDev, type Chamado,
 } from "./types";
 
 const POR_PAGINA = 8;
@@ -32,12 +33,15 @@ const POR_PAGINA = 8;
 interface PainelStats { total: number; abertos: number; em_andamento: number; concluidos_mes: number; atrasados: number; }
 interface Dev { id: string; display_name: string; em_andamento: number; abertos: number; }
 
+// A fila mostra só quem ainda está na fila (posição 1 pra baixo). Chamados
+// concluídos/reprovados não têm posição e aparecem nas próprias abas.
 const ABAS = [
-  { key: "todos", label: "Todos os chamados" },
+  { key: "fila", label: "Fila de chamados" },
   { key: "aberto", label: "Abertos" },
   { key: "em_andamento", label: "Em andamento" },
   { key: "aguardando_retorno", label: "Aguardando retorno" },
   { key: "concluido", label: "Concluídos" },
+  { key: "reprovado", label: "Reprovados" },
 ] as const;
 
 const DONUT = {
@@ -52,7 +56,7 @@ export default function PainelDistribuicao() {
   const { toast } = useToast();
   const { gestor, canCoordenar, canExcluir } = useChamadoPerms();
 
-  const [aba, setAba] = useState<string>("todos");
+  const [aba, setAba] = useState<string>("fila");
   const [busca, setBusca] = useState("");
   const [fCategoria, setFCategoria] = useState("todas");
   const [fPrioridade, setFPrioridade] = useState("todas");
@@ -62,6 +66,7 @@ export default function PainelDistribuicao() {
   const [atribChamado, setAtribChamado] = useState<string | null>(null);
   const [atribDev, setAtribDev] = useState<string | null>(null);
   const [excluir, setExcluir] = useState<{ id: string; numero: string } | null>(null);
+  const [flashPrioridade, setFlashPrioridade] = useState<string | null>(null);
 
   const { data: usuarios = [] } = useQuery({
     queryKey: ["chamados-usuarios"],
@@ -103,12 +108,16 @@ export default function PainelDistribuicao() {
     },
   });
 
+  // Posição na fila global (ordem de chegada) e posição na fila de cada dev.
+  const posicaoFila = useMemo(() => posicoesFilaGlobal(chamados), [chamados]);
+  const posicaoDev = useMemo(() => posicoesFilaDev(chamados), [chamados]);
+
   const filtrados = useMemo(() => {
     const t = busca.trim().toLowerCase();
     const deTs = fDe ? new Date(fDe + "T00:00:00").getTime() : null;
     const ateTs = fAte ? new Date(fAte + "T23:59:59").getTime() : null;
-    return chamados.filter((c) => {
-      if (aba !== "todos" && c.status !== aba) return false;
+    const lista = chamados.filter((c) => {
+      if (aba === "fila" ? !chamadoAtivo(c.status) : c.status !== aba) return false;
       if (fCategoria !== "todas" && !c.categorias.includes(fCategoria)) return false;
       if (fPrioridade !== "todas" && c.prioridade !== fPrioridade) return false;
       const ts = new Date(c.created_at).getTime();
@@ -117,7 +126,15 @@ export default function PainelDistribuicao() {
       if (t && ![c.numero, c.assunto, c.solicitante_nome, c.setor].some((v) => String(v ?? "").toLowerCase().includes(t))) return false;
       return true;
     });
-  }, [chamados, aba, fCategoria, fPrioridade, fDe, fAte, busca]);
+    // Quem está na fila vem da posição 1 pra baixo; encerrados, do mais recente.
+    return lista.sort((a, b) => {
+      const pa = posicaoFila[a.id], pb = posicaoFila[b.id];
+      if (pa && pb) return pa - pb;
+      if (pa) return -1;
+      if (pb) return 1;
+      return +new Date(b.created_at) - +new Date(a.created_at);
+    });
+  }, [chamados, aba, fCategoria, fPrioridade, fDe, fAte, busca, posicaoFila]);
 
   // Volta pra página 1 sempre que os filtros mudam.
   useEffect(() => { setPagina(1); }, [aba, fCategoria, fPrioridade, fDe, fAte, busca]);
@@ -143,20 +160,31 @@ export default function PainelDistribuicao() {
   }, [chamados]);
   const cargaMax = useMemo(() => Math.max(1, ...devs.map((d) => d.em_andamento + d.abertos)), [devs]);
 
+  // Quem tem acesso ao Painel de Distribuição pode alterar a prioridade.
+  const mudarPrioridade = async (id: string, prioridade: string, numero: string) => {
+    const { error } = await (supabase as any).from("CHAMADO_SISTEMA").update({ prioridade }).eq("id", id);
+    if (error) { toast({ title: "Erro ao alterar prioridade", description: error.message, variant: "destructive" }); return; }
+    await (supabase as any).from("CHAMADO_SISTEMA_EVENTO").insert({
+      chamado_id: id, tipo: "evento", texto: `Prioridade alterada para ${PRIORIDADES[prioridade]?.label ?? prioridade}`,
+    });
+    setFlashPrioridade(id); setTimeout(() => setFlashPrioridade(null), 500);
+    toast({ title: `Prioridade do #${numero} → ${PRIORIDADES[prioridade]?.label ?? prioridade}` });
+    qc.invalidateQueries({ queryKey: ["chamados-todos"] });
+  };
+
   const donutData = useMemo(() => {
     const m: Record<string, number> = {};
     chamados.forEach((c) => { m[c.status] = (m[c.status] ?? 0) + 1; });
     return Object.entries(m).map(([status, value]) => ({ status, value }));
   }, [chamados]);
 
+  // Atribuição rápida: entra no FIM da fila do dev (posição = último lugar).
   const atribuir = async () => {
     if (!atribChamado || !atribDev) return;
-    const { error } = await (supabase as any).from("CHAMADO_SISTEMA")
-      .update({ responsavel_id: atribDev, status: "em_andamento" }).eq("id", atribChamado);
-    if (error) { toast({ title: "Erro ao atribuir", description: error.message, variant: "destructive" }); return; }
-    await (supabase as any).from("CHAMADO_SISTEMA_EVENTO").insert({
-      chamado_id: atribChamado, tipo: "evento", texto: `Chamado atribuído a ${nomeDe(atribDev)}`,
+    const { error } = await (supabase as any).rpc("chamado_direcionar", {
+      p_chamado_id: atribChamado, p_responsavel_id: atribDev, p_posicao: null, p_observacao: null,
     });
+    if (error) { toast({ title: "Erro ao atribuir", description: error.message, variant: "destructive" }); return; }
     supabase.functions.invoke("enviar-notificacao-push", { body: { chamado_id: atribChamado, evento: "atribuido" } }).catch(() => {});
     toast({ title: "Chamado atribuído" });
     setAtribChamado(null); setAtribDev(null);
@@ -194,7 +222,9 @@ export default function PainelDistribuicao() {
         <StatCard icon={AlertTriangle} tone="destructive" label="Atrasados" value={stats?.atrasados ?? 0} />
       </div>
 
-      <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_300px]">
+      {/* items-start: cada coluna fica com a altura do próprio conteúdo (sem o
+          card da esquerda esticar até a altura da coluna da direita). */}
+      <div className="grid items-start gap-4 lg:grid-cols-[minmax(0,1fr)_300px]">
         <Card className="p-4">
           {/* Abas */}
           <div className="mb-3 flex flex-wrap gap-1 border-b border-border pb-2">
@@ -239,9 +269,14 @@ export default function PainelDistribuicao() {
             <p className="py-8 text-center text-sm text-muted-foreground">Carregando…</p>
           ) : (
             <div className="overflow-x-auto">
-              <Table>
+              {/* Células compactas: com o padding padrão (p-4) as 10 colunas
+                  estouram a largura do card e a tabela ganha scroll lateral. */}
+              <Table className="[&_td]:px-2 [&_td]:py-2.5 [&_th]:h-9 [&_th]:px-2">
                 <TableHeader>
                   <TableRow>
+                    <TableHead className="w-24 text-center" title="Posição na fila geral e, entre parênteses, a posição na fila do responsável">
+                      Posição <span className="font-normal text-muted-foreground">(dev)</span>
+                    </TableHead>
                     <TableHead>ID</TableHead>
                     <TableHead>Assunto</TableHead>
                     <TableHead>Categoria</TableHead>
@@ -256,10 +291,53 @@ export default function PainelDistribuicao() {
                 <TableBody>
                   {visiveis.map((c) => (
                     <TableRow key={c.id} className="cursor-pointer" onClick={() => nav(`/app/sistemas/chamados/${c.id}/coordenar`)}>
+                      <TableCell className="text-center">
+                        {posicaoFila[c.id] ? (
+                          <span className="inline-flex items-center gap-1">
+                            <span
+                              className={`inline-flex h-7 w-7 items-center justify-center rounded-full text-xs font-bold ${
+                                c.prioridade === "alta" ? "bg-destructive/15 text-destructive"
+                                : c.prioridade === "media" ? "bg-warning/15 text-warning"
+                                : "bg-success/15 text-success"
+                              }`}
+                              title="Posição na fila geral (ordem de chegada)"
+                            >
+                              {posicaoFila[c.id]}
+                            </span>
+                            {posicaoDev[c.id] && (
+                              <span
+                                className="text-[10px] font-semibold text-muted-foreground"
+                                title={`${posicaoDev[c.id]}º na fila de ${nomeDe(c.responsavel_id)}`}
+                              >
+                                ({posicaoDev[c.id]})
+                              </span>
+                            )}
+                          </span>
+                        ) : (
+                          <span className="text-xs text-muted-foreground">—</span>
+                        )}
+                      </TableCell>
                       <TableCell className="whitespace-nowrap font-mono text-xs font-semibold">#{c.numero}</TableCell>
-                      <TableCell className="max-w-[200px] truncate text-sm" title={c.assunto}>{c.assunto}</TableCell>
+                      <TableCell className="min-w-[150px] max-w-[240px] text-sm" title={c.assunto}>
+                        <span className="line-clamp-2">{c.assunto}</span>
+                      </TableCell>
                       <TableCell className="text-xs text-muted-foreground">{c.categorias.map((x) => labelDe(CATEGORIAS, x)).join(", ") || "—"}</TableCell>
-                      <TableCell><PrioridadeBadge prioridade={c.prioridade} /></TableCell>
+                      <TableCell onClick={(e) => e.stopPropagation()}>
+                        {c.status !== "concluido" && c.status !== "reprovado" ? (
+                          <div className={flashPrioridade === c.id ? "animate-pop" : ""}>
+                            <Select value={c.prioridade} onValueChange={(v) => mudarPrioridade(c.id, v, c.numero)}>
+                              <SelectTrigger className="h-7 w-[92px] text-xs"><SelectValue /></SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="alta">Alta</SelectItem>
+                                <SelectItem value="media">Média</SelectItem>
+                                <SelectItem value="baixa">Baixa</SelectItem>
+                              </SelectContent>
+                            </Select>
+                          </div>
+                        ) : (
+                          <PrioridadeBadge prioridade={c.prioridade} />
+                        )}
+                      </TableCell>
                       <TableCell className="text-xs">{c.solicitante_nome || "—"}<div className="text-[10px] text-muted-foreground">{c.setor}</div></TableCell>
                       <TableCell className="whitespace-nowrap text-xs text-muted-foreground">{fmtDataHora(c.created_at)}</TableCell>
                       <TableCell><StatusBadge status={c.status} /></TableCell>
@@ -294,10 +372,14 @@ export default function PainelDistribuicao() {
                     </TableRow>
                   ))}
                   {filtrados.length === 0 && (
-                    <TableRow><TableCell colSpan={9} className="py-6 text-center text-sm text-muted-foreground">Nenhum chamado.</TableCell></TableRow>
+                    <TableRow><TableCell colSpan={10} className="py-6 text-center text-sm text-muted-foreground">Nenhum chamado.</TableCell></TableRow>
                   )}
                 </TableBody>
               </Table>
+              <p className="mt-2 text-[11px] text-muted-foreground">
+                Posição = ordem de chegada na fila geral. Entre parênteses, a posição do chamado na fila do próprio responsável
+                (definida ao direcionar o chamado). Concluídos e reprovados saem da fila e ficam nas abas correspondentes.
+              </p>
             </div>
           )}
           <div className="mt-3 flex flex-wrap items-center justify-between gap-2">

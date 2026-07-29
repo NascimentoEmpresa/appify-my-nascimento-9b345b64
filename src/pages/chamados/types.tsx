@@ -110,6 +110,9 @@ export interface Chamado {
   setor: string | null;
   status: string;
   responsavel_id: string | null;
+  /** Posição na fila DO RESPONSÁVEL (1 = próximo a executar). NULL quando
+   *  concluído/reprovado ou ainda sem responsável. */
+  posicao_dev: number | null;
   prazo_previsto: string | null;
   observacao_gerente: string | null;
   comentario_gerente: string | null;
@@ -170,6 +173,44 @@ export const mediaAvaliacao = (a: Pick<AvaliacaoChamado, CriterioKey>) =>
   (a.atendimento + a.tempo + a.solucao + a.clareza + a.satisfacao) / 5;
 
 export const BUCKET_CHAMADOS = "chamados-sistemas";
+
+/** Chamado ativo = ainda está na fila (não foi concluído nem reprovado). */
+export const chamadoAtivo = (status: string) => status !== "concluido" && status !== "reprovado";
+
+/**
+ * Posição na fila GLOBAL (ordem de chegada): entre os chamados ativos, o mais
+ * antigo é o nº 1. Concluídos/reprovados ficam de fora (não têm posição).
+ */
+export function posicoesFilaGlobal(chamados: Chamado[]): Record<string, number> {
+  const m: Record<string, number> = {};
+  chamados
+    .filter((c) => chamadoAtivo(c.status))
+    .sort((a, b) => +new Date(a.created_at) - +new Date(b.created_at))
+    .forEach((c, i) => { m[c.id] = i + 1; });
+  return m;
+}
+
+/**
+ * Posição na fila DE CADA RESPONSÁVEL (1..n por dev), lida de posicao_dev.
+ * Ex.: o chamado nº 3 da fila global pode ser o nº 1 do Pablo, quando é a
+ * única solicitação pendente dele.
+ */
+export function posicoesFilaDev(chamados: Chamado[]): Record<string, number> {
+  const porDev: Record<string, Chamado[]> = {};
+  chamados
+    .filter((c) => chamadoAtivo(c.status) && c.responsavel_id)
+    .forEach((c) => { (porDev[c.responsavel_id!] ??= []).push(c); });
+
+  const m: Record<string, number> = {};
+  Object.values(porDev).forEach((lista) => {
+    lista
+      .sort((a, b) =>
+        (a.posicao_dev ?? Number.MAX_SAFE_INTEGER) - (b.posicao_dev ?? Number.MAX_SAFE_INTEGER)
+        || +new Date(a.created_at) - +new Date(b.created_at))
+      .forEach((c, i) => { m[c.id] = i + 1; });
+  });
+  return m;
+}
 
 // ---- Helpers de data ------------------------------------------------
 export const fmtData = (s?: string | null) => {
