@@ -96,7 +96,7 @@ export default function PlanoAcoesLista() {
     }, { replace: true });
   };
 
-  const { comites, areas, responsaveis, empresas } = usePlanoAcaoFilterOptions(rows);
+  const { comites, areas, responsaveis, empresas, empresaLabelById } = usePlanoAcaoFilterOptions(rows);
 
   // Na montagem: se a URL não tem filtros, tenta restaurar do sessionStorage
   // Isso garante persistência mesmo ao navegar pelo Sidebar (que não passa params)
@@ -294,7 +294,7 @@ export default function PlanoAcoesLista() {
               {filtered.map(r => (
                 <tr key={r.id} className="border-t border-border hover:bg-muted/40">
                   <td className="p-2 px-3 font-mono text-xs text-muted-foreground">{r.id_importacao ?? r.id.slice(0,8)}</td>
-                  <td className="p-2 text-xs">{r.empresas?.codigo ?? "—"}</td>
+                  <td className="p-2 text-xs">{empresaLabelById[r.empresa_id] ?? "—"}</td>
                   <td className="p-2">
                     <div className="text-xs font-medium">{r.comite ?? "—"}</div>
                     <div className="text-[11px] text-muted-foreground">{r.area ?? "—"}</div>

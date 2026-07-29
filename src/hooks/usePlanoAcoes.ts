@@ -5,7 +5,6 @@ import { useAuth } from "@/hooks/useAuth";
 export interface PlanoAcaoRow {
   id: string;
   empresa_id: string;
-  empresas: { codigo: string | null; razao_social: string | null } | null;
   id_importacao: string | null;
   ordem: number | null;
   tipo_acao: string;
@@ -49,9 +48,12 @@ export function usePlanoAcoes() {
       // Empresa ativa não filtra mais o Plano de Ações — traz as ações de
       // todas as empresas do usuário de uma vez (RLS decide o que ele pode
       // ver, não o seletor de empresa do topo).
+      // Sem embed de empresas: plano_acao.empresa_id não tem FK declarada
+      // para empresas(id), então o PostgREST não resolve
+      // "empresas:empresa_id(...)" e retorna 400 em toda a query.
       const { data, error } = await supabase
         .from("plano_acao")
-        .select("*, empresas:empresa_id(codigo, razao_social)")
+        .select("*")
         .is("deleted_at", null)
         .order("ordem", { ascending: true, nullsFirst: false })
         .limit(500);
