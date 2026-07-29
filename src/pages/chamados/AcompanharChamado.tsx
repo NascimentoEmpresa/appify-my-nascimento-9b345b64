@@ -118,6 +118,8 @@ export default function AcompanharChamado({ base = "/app/central-servicos/chamad
   const ehSolicitante = chamado.solicitante_id === user?.id;
   const encerrado = chamado.status === "concluido" || chamado.status === "reprovado";
   const aguardandoRetorno = chamado.status === "aguardando_retorno";
+  const anexosAbertura = anexos.filter((a) => (a.campo ?? "abertura") === "abertura");
+  const anexosResposta = anexos.filter((a) => a.campo && a.campo !== "abertura");
 
   const Campo = ({ label, children }: { label: string; children: React.ReactNode }) => (
     <div>
@@ -183,19 +185,34 @@ export default function AcompanharChamado({ base = "/app/central-servicos/chamad
               </div>
             )}
             <div>
-              <p className="mb-1 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Anexos da abertura ({anexos.length})</p>
+              <p className="mb-1 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Anexos da abertura ({anexosAbertura.length})</p>
               <div className="space-y-1">
-                {anexos.map((a) => (
+                {anexosAbertura.map((a) => (
                   <button key={a.id} onClick={() => baixarAnexo(a.storage_path)} className="flex w-full items-center gap-2 rounded border border-border px-2.5 py-1.5 text-left text-xs hover:border-primary/40">
                     <Paperclip className="h-3.5 w-3.5 text-muted-foreground" />
                     <span className="flex-1 truncate">{a.nome_arquivo}</span>
                     {a.tamanho_bytes != null && <span className="text-[10px] text-muted-foreground">{Math.round(a.tamanho_bytes / 1024)} KB</span>}
                   </button>
                 ))}
-                {anexos.length === 0 && <p className="text-xs text-muted-foreground">Nenhum anexo.</p>}
+                {anexosAbertura.length === 0 && <p className="text-xs text-muted-foreground">Nenhum anexo.</p>}
               </div>
             </div>
           </Card>
+
+          {anexosResposta.length > 0 && (
+            <Card className="animate-rise-in space-y-2 border-info/30 bg-info/5 p-4">
+              <p className="flex items-center gap-1.5 text-sm font-bold text-info"><Paperclip className="h-4 w-4" /> Anexos enviados pelo time ({anexosResposta.length})</p>
+              <div className="space-y-1">
+                {anexosResposta.map((a) => (
+                  <button key={a.id} onClick={() => baixarAnexo(a.storage_path)} className="flex w-full items-center gap-2 rounded border border-border bg-background px-2.5 py-1.5 text-left text-xs hover:border-info/40">
+                    <Paperclip className="h-3.5 w-3.5 text-muted-foreground" />
+                    <span className="flex-1 truncate">{a.nome_arquivo}</span>
+                    {a.tamanho_bytes != null && <span className="text-[10px] text-muted-foreground">{Math.round(a.tamanho_bytes / 1024)} KB</span>}
+                  </button>
+                ))}
+              </div>
+            </Card>
+          )}
 
           {/* Histórico do chamado (visível ao solicitante) */}
           <Card className="space-y-2 p-4">

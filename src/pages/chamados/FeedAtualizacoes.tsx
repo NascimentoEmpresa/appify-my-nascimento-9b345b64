@@ -79,7 +79,8 @@ export function FeedAtualizacoes({
       <p className="mb-2 flex items-center gap-1.5 text-sm font-bold">
         <History className="h-4 w-4 text-primary" /> {title}
       </p>
-      <div className="space-y-2">
+      {/* Janela rolável: o feed não empurra o layout nem deixa vão branco. */}
+      <div className="max-h-[22rem] space-y-2 overflow-y-auto pr-1">
         {eventos.map((e) => {
           const ch = chamados[e.chamado_id];
           return (
