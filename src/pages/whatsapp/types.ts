@@ -33,6 +33,14 @@ export interface WaMensagem {
   origem: "contato" | "bot" | "atendente";
   autor_id: string | null;
   criada_em: string;
+  // Mensagens interativas: botões enviados (saída) ou id do botão clicado (entrada).
+  payload?: WaPayload | null;
+}
+
+export interface WaPayload {
+  tipo?: string;
+  botoes?: Array<{ id: string; titulo: string }>;
+  reply_id?: string;
 }
 
 export interface WaBotConfig {

@@ -6820,3 +6820,11 @@ REVOKE ALL ON FUNCTION public.chamado_reordenar_fila_dev(uuid, uuid[]) FROM anon
 GRANT EXECUTE ON FUNCTION public.chamado_reordenar_fila_dev(uuid, uuid[]) TO authenticated;
 
 NOTIFY pgrst, 'reload schema';
+
+-- =====================================================================
+-- 20260814000001_whatsapp_mensagem_interativa
+-- WhatsApp: coluna payload em WA_MENSAGEM (botoes enviados / clique recebido)
+-- =====================================================================
+ALTER TABLE public."WA_MENSAGEM" ADD COLUMN IF NOT EXISTS payload jsonb;
+
+NOTIFY pgrst, 'reload schema';

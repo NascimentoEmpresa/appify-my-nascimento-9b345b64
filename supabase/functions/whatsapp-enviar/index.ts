@@ -36,11 +36,20 @@ Deno.serve(async (req) => {
   const { data: userData, error: userErr } = await db.auth.getUser();
   if (userErr || !userData?.user) return json({ error: "sessão inválida" }, 401);
 
-  let body: { conversa_id?: string; texto?: string };
+  let body: { conversa_id?: string; texto?: string; botoes?: Array<{ id?: string; titulo?: string }> };
   try { body = await req.json(); } catch { return json({ error: "json inválido" }, 400); }
   const conversaId = body.conversa_id;
   const texto = (body.texto ?? "").trim();
   if (!conversaId || !texto) return json({ error: "conversa_id e texto são obrigatórios" }, 400);
+
+  // Botões de resposta (opcional): até 3, título ≤ 20 caracteres (limite da Meta).
+  const botoes = Array.isArray(body.botoes)
+    ? body.botoes
+        .filter((b) => b && typeof b.titulo === "string" && b.titulo.trim())
+        .slice(0, 3)
+        .map((b, i) => ({ id: String(b.id ?? `opt_${i + 1}`).slice(0, 256), titulo: b.titulo!.trim().slice(0, 20) }))
+    : [];
+  const temBotoes = botoes.length > 0;
 
   // Carrega a conversa + contato pela sessão do usuário (RLS autoriza quem tem 'whatsapp').
   const { data: conversa } = await db.from("WA_CONVERSA").select("id, contato_id").eq("id", conversaId).maybeSingle();
@@ -48,23 +57,40 @@ Deno.serve(async (req) => {
   const { data: contato } = await db.from("WA_CONTATO").select("wa_id").eq("id", conversa.contato_id).maybeSingle();
   if (!contato) return json({ error: "contato não encontrado" }, 404);
 
-  // Envia pela Graph API (token do servidor).
+  // Envia pela Graph API (token do servidor). Com botões vira mensagem
+  // interativa (type "interactive"); sem botões, texto simples.
+  const mensagemGraph = temBotoes
+    ? {
+        messaging_product: "whatsapp", to: contato.wa_id, type: "interactive",
+        interactive: {
+          type: "button",
+          body: { text: texto },
+          action: { buttons: botoes.map((b) => ({ type: "reply", reply: { id: b.id, title: b.titulo } })) },
+        },
+      }
+    : { messaging_product: "whatsapp", to: contato.wa_id, type: "text", text: { body: texto } };
+
   let waId: string | null = null;
   const res = await fetch(`${GRAPH}/${PHONE_NUMBER_ID}/messages`, {
     method: "POST",
     headers: { Authorization: `Bearer ${WA_TOKEN}`, "Content-Type": "application/json" },
-    body: JSON.stringify({ messaging_product: "whatsapp", to: contato.wa_id, type: "text", text: { body: texto } }),
+    body: JSON.stringify(mensagemGraph),
   });
   const data = await res.json().catch(() => ({}));
   if (!res.ok) return json({ error: "falha ao enviar", detalhe: data }, 502);
   waId = data?.messages?.[0]?.id ?? null;
 
   // Registra a mensagem e atualiza a conversa (RLS pela sessão do usuário).
-  await db.from("WA_MENSAGEM").insert({
-    conversa_id: conversa.id, contato_id: conversa.contato_id, direcao: "saida", tipo: "text",
+  // Só inclui `payload` quando há botões, para não depender da coluna nova
+  // enquanto a migration não roda (envio de texto puro segue funcionando).
+  const row: Record<string, unknown> = {
+    conversa_id: conversa.id, contato_id: conversa.contato_id, direcao: "saida",
+    tipo: temBotoes ? "interactive" : "text",
     texto, wa_message_id: waId, status: waId ? "enviada" : "erro",
     origem: "atendente", autor_id: userData.user.id,
-  });
+  };
+  if (temBotoes) row.payload = { tipo: "button", botoes };
+  await db.from("WA_MENSAGEM").insert(row);
   await db.from("WA_CONVERSA").update({
     ultima_mensagem_em: new Date().toISOString(),
     ultima_mensagem_preview: texto.slice(0, 120),

@@ -178,6 +178,8 @@ Deno.serve(async (req) => {
           : msg.type === "button" ? msg.button?.text ?? null
           : msg.type === "interactive" ? (msg.interactive?.button_reply?.title ?? msg.interactive?.list_reply?.title ?? null)
           : null;
+        // id do botão/opção clicado (payload da resposta interativa).
+        const replyId: string | null = msg.interactive?.button_reply?.id ?? msg.interactive?.list_reply?.id ?? null;
 
         // contato (upsert por wa_id). Só grava o nome quando a Meta mandou o
         // profile.name; se vier sem contacts (comum em mensagens seguintes),
@@ -198,12 +200,15 @@ Deno.serve(async (req) => {
         const { data: conversa } = await admin.from("WA_CONVERSA").select("id, bot_ativo").eq("contato_id", contato.id).maybeSingle();
         if (!conversa) continue;
 
-        // dedupe: só processa se a mensagem é nova
-        const { data: nova } = await admin.from("WA_MENSAGEM").insert({
+        // dedupe: só processa se a mensagem é nova. Só inclui `payload` quando
+        // há clique de botão, para não depender da coluna antes da migration.
+        const entradaRow: Record<string, unknown> = {
           conversa_id: conversa.id, contato_id: contato.id, direcao: "entrada",
           tipo: msg.type ?? "text", texto: texto ?? `[${msg.type}]`,
           wa_message_id: msg.id, status: "recebida", origem: "contato",
-        }).select("id").maybeSingle();
+        };
+        if (replyId) entradaRow.payload = { reply_id: replyId };
+        const { data: nova } = await admin.from("WA_MENSAGEM").insert(entradaRow).select("id").maybeSingle();
         if (!nova) continue; // já existia (reentrega da Meta)
 
         try { await admin.rpc("wa_incrementar_nao_lidas", { p_conversa: conversa.id }); } catch { /* best-effort */ }
