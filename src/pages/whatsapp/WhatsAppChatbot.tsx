@@ -13,8 +13,8 @@ import { Label } from "@/components/ui/label";
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
-import { Bot, ShieldAlert, Plus, Trash2, Save, Power, Inbox, Info } from "lucide-react";
-import { MODELOS, DIAS, type WaBotConfig, type WaConhecimento } from "./types";
+import { Bot, ShieldAlert, Plus, Trash2, Save, Power, Inbox, Info, MousePointerClick } from "lucide-react";
+import { MODELOS, DIAS, MENU_ACOES, type WaBotConfig, type WaConhecimento, type WaMenu, type WaMenuOpcao, type WaMenuAcao } from "./types";
 
 const WEBHOOK_URL = "https://fwmzeaztjxrxxzxzxmgc.supabase.co/functions/v1/whatsapp-webhook";
 const SECRETS = ["WHATSAPP_VERIFY_TOKEN", "WHATSAPP_APP_SECRET", "WHATSAPP_TOKEN", "WHATSAPP_PHONE_NUMBER_ID", "ANTHROPIC_API_KEY"];
@@ -50,6 +50,17 @@ export default function WhatsAppChatbot() {
 
   const set = <K extends keyof WaBotConfig>(k: K, v: WaBotConfig[K]) => setCfg((c) => (c ? { ...c, [k]: v } : c));
 
+  // Menu automático do bot (editável). Quando null, começa desligado e vazio.
+  const menu: WaMenu = cfg?.menu ?? { ativo: false, titulo: "", opcoes: [] };
+  const setMenu = (m: WaMenu) => set("menu", m);
+  const addOpcao = () => {
+    if (menu.opcoes.length >= 10) return;
+    setMenu({ ...menu, opcoes: [...menu.opcoes, { id: `o_${Math.random().toString(36).slice(2, 8)}`, titulo: "", acao: "ia", valor: "" }] });
+  };
+  const setOpcao = (i: number, patch: Partial<WaMenuOpcao>) =>
+    setMenu({ ...menu, opcoes: menu.opcoes.map((o, j) => (j === i ? { ...o, ...patch } : o)) });
+  const removeOpcao = (i: number) => setMenu({ ...menu, opcoes: menu.opcoes.filter((_, j) => j !== i) });
+
   const salvar = async () => {
     if (!cfg || salvando) return;
     setSalvando(true);
@@ -57,6 +68,7 @@ export default function WhatsAppChatbot() {
       ativo: cfg.ativo, persona: cfg.persona, saudacao: cfg.saudacao || null, fallback: cfg.fallback,
       horario_inicio: cfg.horario_inicio, horario_fim: cfg.horario_fim, dias_semana: cfg.dias_semana,
       fora_horario_msg: cfg.fora_horario_msg, modelo: cfg.modelo, max_tokens: cfg.max_tokens,
+      menu: cfg.menu ?? null,
     }).eq("id", true);
     setSalvando(false);
     if (error) { toast({ title: "Erro ao salvar", description: error.message, variant: "destructive" }); return; }
@@ -166,6 +178,64 @@ export default function WhatsAppChatbot() {
                 <Input type="number" min={128} max={4096} value={cfg.max_tokens} onChange={(e) => set("max_tokens", Number(e.target.value) || 1024)} />
               </div>
             </div>
+          </Card>
+
+          {/* Menu automático (botões/lista) */}
+          <Card className="space-y-3 p-4">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <p className="flex items-center gap-1.5 text-sm font-bold"><MousePointerClick className="h-4 w-4 text-primary" /> Menu de opções</p>
+                <p className="text-xs text-muted-foreground">O bot apresenta essas opções na primeira mensagem. Até 3 viram botões; 4–10 viram lista.</p>
+              </div>
+              <label className="flex shrink-0 items-center gap-2 text-xs font-medium">
+                <input type="checkbox" className="h-4 w-4 accent-primary" checked={menu.ativo} onChange={(e) => setMenu({ ...menu, ativo: e.target.checked })} />
+                Ativo
+              </label>
+            </div>
+
+            {menu.ativo && (
+              <>
+                <div>
+                  <Label className="mb-1.5 block text-xs font-semibold">Texto do menu</Label>
+                  <Textarea rows={2} value={menu.titulo} onChange={(e) => setMenu({ ...menu, titulo: e.target.value })} placeholder="Ex.: Olá! Como posso te ajudar?" />
+                </div>
+                <div className="space-y-2">
+                  {menu.opcoes.map((o, i) => {
+                    const ajuda = MENU_ACOES.find((a) => a.value === o.acao)?.ajuda ?? "";
+                    return (
+                      <div key={o.id} className="space-y-2 rounded border border-border/60 p-2.5">
+                        <div className="flex items-center gap-2">
+                          <span className="w-4 shrink-0 text-center text-[10px] font-semibold text-muted-foreground">{i + 1}</span>
+                          <Input className="h-8 flex-1 text-sm" maxLength={20} placeholder="Título do botão (ex.: Recrutamento)" value={o.titulo} onChange={(e) => setOpcao(i, { titulo: e.target.value })} />
+                          <Select value={o.acao} onValueChange={(v) => setOpcao(i, { acao: v as WaMenuAcao })}>
+                            <SelectTrigger className="h-8 w-48 shrink-0 text-xs"><SelectValue /></SelectTrigger>
+                            <SelectContent>
+                              {MENU_ACOES.map((a) => <SelectItem key={a.value} value={a.value}>{a.label}</SelectItem>)}
+                            </SelectContent>
+                          </Select>
+                          <Button variant="ghost" size="sm" className="h-8 w-8 shrink-0 p-0 text-muted-foreground hover:text-destructive" onClick={() => removeOpcao(i)}><Trash2 className="h-4 w-4" /></Button>
+                        </div>
+                        <Textarea
+                          rows={2}
+                          value={o.valor ?? ""}
+                          onChange={(e) => setOpcao(i, { valor: e.target.value })}
+                          placeholder={
+                            o.acao === "texto" ? "Resposta que o bot envia ao escolher esta opção"
+                            : o.acao === "humano" ? "Aviso ao cliente (ex.: Um atendente vai te responder em instantes)"
+                            : "Aviso opcional antes de continuar com a IA (pode deixar em branco)"
+                          }
+                        />
+                        <p className="text-[11px] text-muted-foreground">{ajuda}</p>
+                      </div>
+                    );
+                  })}
+                  {menu.opcoes.length === 0 && <p className="text-xs text-muted-foreground">Nenhuma opção ainda.</p>}
+                </div>
+                {menu.opcoes.length < 10 && (
+                  <Button size="sm" variant="outline" className="gap-1.5" onClick={addOpcao}><Plus className="h-4 w-4" /> Adicionar opção</Button>
+                )}
+              </>
+            )}
           </Card>
 
           {/* Horário */}

@@ -43,6 +43,21 @@ export interface WaPayload {
   reply_id?: string;
 }
 
+export type WaMenuAcao = "texto" | "ia" | "humano";
+
+export interface WaMenuOpcao {
+  id: string;
+  titulo: string;
+  acao: WaMenuAcao;
+  valor?: string; // texto da resposta (acao "texto"/"humano") ou aviso (acao "ia")
+}
+
+export interface WaMenu {
+  ativo: boolean;
+  titulo: string; // corpo da mensagem do menu
+  opcoes: WaMenuOpcao[];
+}
+
 export interface WaBotConfig {
   id: boolean;
   ativo: boolean;
@@ -55,7 +70,14 @@ export interface WaBotConfig {
   fora_horario_msg: string;
   modelo: string;
   max_tokens: number;
+  menu?: WaMenu | null;
 }
+
+export const MENU_ACOES: Array<{ value: WaMenuAcao; label: string; ajuda: string }> = [
+  { value: "texto", label: "Responder um texto", ajuda: "O bot envia uma resposta pronta." },
+  { value: "ia", label: "Continuar com a IA", ajuda: "O cliente escreve à vontade e a IA responde." },
+  { value: "humano", label: "Falar com atendente", ajuda: "Desliga o bot e passa para atendimento humano." },
+];
 
 export interface WaConhecimento {
   id: string;

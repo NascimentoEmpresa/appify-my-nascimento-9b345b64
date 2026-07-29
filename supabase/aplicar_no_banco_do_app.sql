@@ -6828,3 +6828,11 @@ NOTIFY pgrst, 'reload schema';
 ALTER TABLE public."WA_MENSAGEM" ADD COLUMN IF NOT EXISTS payload jsonb;
 
 NOTIFY pgrst, 'reload schema';
+
+-- =====================================================================
+-- 20260814000002_whatsapp_bot_menu
+-- WhatsApp: coluna menu (jsonb) em WA_BOT_CONFIG (menu automatico do bot)
+-- =====================================================================
+ALTER TABLE public."WA_BOT_CONFIG" ADD COLUMN IF NOT EXISTS menu jsonb;
+
+NOTIFY pgrst, 'reload schema';
