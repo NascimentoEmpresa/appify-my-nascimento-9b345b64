@@ -26,9 +26,7 @@ import {
   FileSpreadsheet,
 } from "lucide-react";
 
-const SUPABASE_URL = "https://fwmzeaztjxrxxzxzxmgc.supabase.co";
-const ANON_KEY =
-  "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImZ3bXplYXp0anhyeHh6eHp4bWdjIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzY2MDc0NTAsImV4cCI6MjA5MjE4MzQ1MH0.i08oF2-9N6w-CxDVy8ink29-ydHTJEc-eQBZDYRxGwI";
+import { SUPABASE_URL, SUPABASE_ANON_KEY as ANON_KEY } from "@/integrations/supabase/env";
 
 type Empresa = { id: string; nome: string };
 

@@ -11,6 +11,7 @@ import { Upload, Play, RefreshCw, PlayCircle, CheckCircle2, AlertTriangle, Clock
 import { PageHeader } from "@/components/layout/PageHeader";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import MigracaoFcr from "./MigracaoFcr";
+import { SUPABASE_URL, SUPABASE_ANON_KEY } from "@/integrations/supabase/env";
 
 type Status = {
   id: string;
@@ -25,7 +26,6 @@ type Status = {
   migration_batch_id: string | null;
 };
 
-const SUPABASE_URL = "https://fwmzeaztjxrxxzxzxmgc.supabase.co";
 const LARGE_UPLOAD_LIMIT = 45 * 1024 * 1024;
 const LOAD_TIMEOUT_MS = 75_000;
 
@@ -73,7 +73,7 @@ export default function MigracaoZero() {
         removeFingerprintOnSuccess: true,
         headers: {
           authorization: `Bearer ${token}`,
-          apikey: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImZ3bXplYXp0anhyeHh6eHp4bWdjIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzY2MDc0NTAsImV4cCI6MjA5MjE4MzQ1MH0.i08oF2-9N6w-CxDVy8ink29-ydHTJEc-eQBZDYRxGwI",
+          apikey: SUPABASE_ANON_KEY,
           "x-upsert": "true",
         },
         metadata: {
