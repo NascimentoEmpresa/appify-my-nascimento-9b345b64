@@ -80,6 +80,8 @@ export interface Solicitacao {
   dfd_dados: DfdDados | null;
   // Análise Técnica — formulário PTV completo (JSONB)
   ptv_dados: PtvDados | null;
+  // Aprovação e Priorização — formulário AAP completo (JSONB)
+  aap_dados: AapDados | null;
 }
 
 export interface DfdEtapa {
@@ -185,6 +187,27 @@ export interface PtvDados {
   // Seção 6 — Parecer técnico final
   parecer_final?: string[];
   observacoes_justificativas?: string;
+}
+
+export interface AapDados {
+  // Seção 3 — Condição da Demanda para Deliberação
+  demanda_apta?: string;           // "sim" | "sim_ressalvas" | "nao"
+  situacao_fsd?: string;           // "aprovado" | "pendente" | "retornado"
+  situacao_dfd?: string;           // "aprovado" | "aprovado_ressalvas" | "retornado"
+  situacao_ptv?: string;           // "viavel" | "viavel_ressalvas" | "inviavel" | "pendente"
+  motivos_nao_apta?: string[];
+
+  // Seção 4 — Deliberação da Demanda
+  decisao_instancia?: string;
+  motivos_decisao?: string[];
+  observacao_deliberacao?: string;
+
+  // Seção 5 — Priorização Aprovada
+  classificacao_execucao?: string;
+  data_inicio_previsto?: string;
+  data_conclusao_prevista?: string;
+  prazo_diferente?: string;        // "sim" | "nao"
+  motivos_prazo_diferente?: string[];
 }
 
 export interface Anexo {

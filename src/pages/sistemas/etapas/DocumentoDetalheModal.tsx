@@ -9,7 +9,7 @@ import {
   PESQUISA_PODE_ENCERRAR_OPCOES, PESQUISA_PODE_ENCERRAR_PERGUNTA, TIPO_SOLICITACAO_LABEL, nomeUsuario,
   type Anexo, type Assinatura, type Comentario, type Convidado, type Solicitacao, type Usuario,
 } from "./types";
-import { RESUMOS, AnexoIFSDCompleto, AnexoIIDFDCompleto, AnexoIIIPTVCompleto, temDadoResumo } from "./Resumos";
+import { RESUMOS, AnexoIFSDCompleto, AnexoIIDFDCompleto, AnexoIIIPTVCompleto, AnexoIVAAPCompleto, temDadoResumo } from "./Resumos";
 import { Historico } from "./Historico";
 import { PdfDocumento, fmtDataHoraPdf } from "@/lib/pdf/PdfDocumento";
 import type { DocumentoOficial } from "./documentos";
@@ -271,6 +271,11 @@ export function DocumentoDetalheModal({
                 <>
                   <AnexoIIIPTVCompleto card={card} anexos={anexos} usuarios={usuarios} />
                   <BlocoAssinaturasColuna etapaLabel={ETAPA_LABEL["analise_tecnica"]} assinaturas={assinaturasDaEtapa("analise_tecnica")} usuarios={usuarios} />
+                </>
+              ) : documento.sigla === "AAP" ? (
+                <>
+                  <AnexoIVAAPCompleto card={card} />
+                  <BlocoAssinaturasColuna etapaLabel={ETAPA_LABEL["aprovacao_priorizacao"]} assinaturas={assinaturasDaEtapa("aprovacao_priorizacao")} usuarios={usuarios} />
                 </>
               ) : (
                 <>

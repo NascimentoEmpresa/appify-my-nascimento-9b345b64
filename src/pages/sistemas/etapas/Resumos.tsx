@@ -12,6 +12,7 @@ import {
 } from "./types";
 import { DfdDocumento } from "./DfdDocumento";
 import { PtvDocumento } from "./PtvDocumento";
+import { AapDocumento } from "./AapDocumento";
 
 const ETAPA_LABEL: Record<string, string> = Object.fromEntries(ETAPAS.map((e) => [e.key, e.label]));
 
@@ -686,4 +687,8 @@ interface PtvAnexoProps {
 
 export function AnexoIIIPTVCompleto({ card }: PtvAnexoProps) {
   return <PtvDocumento dados={card.ptv_dados ?? {}} card={card} isReadOnly={true} />;
+}
+
+export function AnexoIVAAPCompleto({ card }: { card: Solicitacao }) {
+  return <AapDocumento dados={card.aap_dados ?? {}} card={card} isReadOnly={true} />;
 }
