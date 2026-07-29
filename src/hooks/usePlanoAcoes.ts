@@ -1,10 +1,11 @@
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
-import { useEmpresaAtiva } from "@/context/EmpresaAtivaContext";
+import { useAuth } from "@/hooks/useAuth";
 
 export interface PlanoAcaoRow {
   id: string;
   empresa_id: string;
+  empresas: { codigo: string | null; razao_social: string | null } | null;
   id_importacao: string | null;
   ordem: number | null;
   tipo_acao: string;
@@ -40,16 +41,17 @@ export interface PlanoAcaoRow {
 }
 
 export function usePlanoAcoes() {
-  const { empresa, loading } = useEmpresaAtiva();
-  const empresaId = empresa?.id ?? null;
+  const { user, loading } = useAuth();
   return useQuery({
-    queryKey: ["plano_acoes", empresaId],
-    enabled: !loading && !!empresaId,
+    queryKey: ["plano_acoes"],
+    enabled: !loading && !!user,
     queryFn: async (): Promise<PlanoAcaoRow[]> => {
+      // Empresa ativa não filtra mais o Plano de Ações — traz as ações de
+      // todas as empresas do usuário de uma vez (RLS decide o que ele pode
+      // ver, não o seletor de empresa do topo).
       const { data, error } = await supabase
         .from("plano_acao")
-        .select("*")
-        .eq("empresa_id", empresaId!)
+        .select("*, empresas:empresa_id(codigo, razao_social)")
         .is("deleted_at", null)
         .order("ordem", { ascending: true, nullsFirst: false })
         .limit(500);

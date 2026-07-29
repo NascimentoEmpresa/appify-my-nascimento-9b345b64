@@ -78,6 +78,7 @@ export default function PlanoAcoesLista() {
   const fComite = searchParams.get("comite") ?? "__all";
   const fArea   = searchParams.get("area")   ?? "__all";
   const fResp   = searchParams.get("resp")   ?? "__all";
+  const fEmpresa = searchParams.get("empresa") ?? "__all";
   const fPeriodo = (searchParams.get("periodo") as FiltroInclusao | null) ?? "todos";
   const fDataIni = searchParams.get("dataIni") ?? "";
   const fDataFim = searchParams.get("dataFim") ?? "";
@@ -95,7 +96,7 @@ export default function PlanoAcoesLista() {
     }, { replace: true });
   };
 
-  const { comites, areas, responsaveis } = usePlanoAcaoFilterOptions(rows);
+  const { comites, areas, responsaveis, empresas } = usePlanoAcaoFilterOptions(rows);
 
   // Na montagem: se a URL não tem filtros, tenta restaurar do sessionStorage
   // Isso garante persistência mesmo ao navegar pelo Sidebar (que não passa params)
@@ -119,7 +120,8 @@ export default function PlanoAcoesLista() {
     if (fComite !== "__all" && !comites.some(o => o.value === fComite)) setFilter("comite", "__all");
     if (fArea   !== "__all" && !areas.some(o => o.value === fArea))     setFilter("area",   "__all");
     if (fResp   !== "__all" && !responsaveis.some(o => o.value === fResp)) setFilter("resp", "__all");
-  }, [comites, areas, responsaveis, isLoading, rows.length]);
+    if (fEmpresa !== "__all" && !empresas.some(o => o.value === fEmpresa)) setFilter("empresa", "__all");
+  }, [comites, areas, responsaveis, empresas, isLoading, rows.length]);
 
   const filtered = useMemo(() => {
     const q = busca.trim().toLowerCase();
@@ -129,6 +131,7 @@ export default function PlanoAcoesLista() {
       if (fComite !== "__all" && r.comite !== fComite) return false;
       if (fArea   !== "__all" && r.area !== fArea) return false;
       if (!matchResponsavel(r, fResp)) return false;
+      if (fEmpresa !== "__all" && r.empresa_id !== fEmpresa) return false;
       if (!dentroPeriodoInclusao(r.created_at, fPeriodo, fDataIni, fDataFim)) return false;
       if (!q) return true;
       return [r.titulo, r.problema, r.acao, r.responsavel_nome_origem, r.id_importacao]
@@ -150,7 +153,7 @@ export default function PlanoAcoesLista() {
       return cmpTexto(a.responsavel_nome_origem, b.responsavel_nome_origem, dirMul);
     });
     return sorted;
-  }, [rows, busca, fStatus, fPrior, fComite, fArea, fResp, fPeriodo, fDataIni, fDataFim, sort]);
+  }, [rows, busca, fStatus, fPrior, fComite, fArea, fResp, fEmpresa, fPeriodo, fDataIni, fDataFim, sort]);
 
   if (lp) return null;
   if (!can("visualizar")) return <ForbiddenCard />;
@@ -200,6 +203,7 @@ export default function PlanoAcoesLista() {
           <SearchableSelect value={fComite === "__all" ? "" : fComite} onChange={v => setFilter("comite", v || "__all")} options={comites} placeholder="Todos os comitês" searchPlaceholder="Buscar comitê..." allowClear />
           <SearchableSelect value={fArea === "__all" ? "" : fArea}     onChange={v => setFilter("area",   v || "__all")} options={areas}   placeholder="Todos os setores"  searchPlaceholder="Buscar setor..."  allowClear />
           <SearchableSelect value={fResp  === "__all" ? "" : fResp}    onChange={v => setFilter("resp",   v || "__all")} options={responsaveis} placeholder="Todos os responsáveis" searchPlaceholder="Buscar responsável..." allowClear />
+          <SearchableSelect value={fEmpresa === "__all" ? "" : fEmpresa} onChange={v => setFilter("empresa", v || "__all")} options={empresas} placeholder="Todas as empresas" searchPlaceholder="Buscar empresa..." allowClear />
           <Select value={fPeriodo} onValueChange={v => setFilter("periodo", v === "todos" ? "" : v)}>
             <SelectTrigger><SelectValue placeholder="Data de inclusão" /></SelectTrigger>
             <SelectContent>
@@ -233,6 +237,7 @@ export default function PlanoAcoesLista() {
             <thead className="sticky top-0 z-10 bg-muted/50 backdrop-blur">
               <tr className="text-left text-xs uppercase tracking-wider text-muted-foreground">
                 <th className="p-2 px-3">ID</th>
+                <th className="p-2">Empresa</th>
                 <th className="p-2">
                   <button
                     type="button"
@@ -275,20 +280,21 @@ export default function PlanoAcoesLista() {
             </thead>
             <tbody>
               {isLoading && (
-                <tr><td colSpan={9} className="p-6 text-center text-muted-foreground">Carregando...</td></tr>
+                <tr><td colSpan={10} className="p-6 text-center text-muted-foreground">Carregando...</td></tr>
               )}
               {!isLoading && filtered.length === 0 && rows.length === 0 && (
-                <tr><td colSpan={9} className="p-6 text-center text-muted-foreground">
+                <tr><td colSpan={10} className="p-6 text-center text-muted-foreground">
                   Você ainda não tem planos de ação visíveis nesta empresa.<br />
                   <span className="text-xs">A visibilidade segue a hierarquia: você vê os planos sob sua responsabilidade, da sua equipe (setor/área/comitê que lidera ou gerencia) ou de toda a empresa, conforme suas permissões. Solicite ao administrador (Erica, Yuri ou Helena) se faltar acesso.</span>
                 </td></tr>
               )}
               {!isLoading && filtered.length === 0 && rows.length > 0 && (
-                <tr><td colSpan={9} className="p-6 text-center text-muted-foreground">Nenhuma ação encontrada com os filtros atuais.</td></tr>
+                <tr><td colSpan={10} className="p-6 text-center text-muted-foreground">Nenhuma ação encontrada com os filtros atuais.</td></tr>
               )}
               {filtered.map(r => (
                 <tr key={r.id} className="border-t border-border hover:bg-muted/40">
                   <td className="p-2 px-3 font-mono text-xs text-muted-foreground">{r.id_importacao ?? r.id.slice(0,8)}</td>
+                  <td className="p-2 text-xs">{r.empresas?.codigo ?? "—"}</td>
                   <td className="p-2">
                     <div className="text-xs font-medium">{r.comite ?? "—"}</div>
                     <div className="text-[11px] text-muted-foreground">{r.area ?? "—"}</div>
