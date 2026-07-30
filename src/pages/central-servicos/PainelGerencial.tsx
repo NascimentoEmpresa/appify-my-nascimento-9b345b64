@@ -972,6 +972,8 @@ export default function PainelGerencial() {
             temPrazoMapeado={!!mapa.prazoPlano && mapa.prazoPlano !== mapa.acaoPlano}
             planos={planosAcao.planos} carregando={planosAcao.carregando}
             erro={planosAcao.erro} recarregar={planosAcao.recarregar}
+            podeEditarTudo={canForm("ver_tudo")}
+            lideraSetor={(setor) => { const k = normSetor(setor ?? ""); return !!k && setoresQueLidero.has(k); }}
             filtros={{ periodo, setor: fSetor, colaborador: fResp, situacao: fSitPlano, prioridade: fPrioridade, origem: fOrigem }} />
         ) : tab === "Histórico Individual" ? (
           <HistoricoIndividual
