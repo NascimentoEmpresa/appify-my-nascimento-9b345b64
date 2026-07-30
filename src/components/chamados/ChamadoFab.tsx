@@ -12,7 +12,7 @@ export function ChamadoFab() {
 
   return (
     <button
-      onClick={() => nav("/app/central-servicos/chamados/novo")}
+      onClick={() => nav("/app/central-servicos/chamados")}
       className="fixed bottom-6 right-6 z-40 flex h-12 w-12 items-center justify-center rounded-full bg-primary text-primary-foreground shadow-lg transition hover:scale-105 hover:shadow-xl"
       aria-label="Abrir chamado"
       title="Abrir chamado"

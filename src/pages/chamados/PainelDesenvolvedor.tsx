@@ -18,10 +18,11 @@ import {
 } from "@/components/ui/table";
 import { PieChart, Pie, Cell, ResponsiveContainer } from "recharts";
 import { ListChecks, Clock, MessageSquare, CheckCircle2, AlertTriangle, ShieldAlert, CalendarClock, RotateCw, ArrowUpRight, Plus, BookOpen, ClipboardCheck, Sparkles, FileText, Zap, Star, Trophy } from "lucide-react";
+import { HoverCard, HoverCardTrigger, HoverCardContent } from "@/components/ui/hover-card";
 import { FeedAtualizacoes } from "./FeedAtualizacoes";
 import {
   StatCard, PrioridadeBadge, StatusBadge, STATUS_CHAMADO, PRIORIDADES, Estrelas, iniciais, fmtData, fmtDataHora,
-  chamadoAtivo, posicoesFilaDev, CRITERIOS_AVALIACAO, type Chamado,
+  chamadoAtivo, posicoesFilaDev, CRITERIOS_AVALIACAO, mediaAvaliacao, type Chamado,
 } from "./types";
 
 const DONUT: Record<string, string> = {
@@ -99,6 +100,25 @@ export default function PainelDesenvolvedor() {
       return (data ?? []) as Array<{
         responsavel_id: string; avaliacoes: number; media: number;
         qualidade: number; prazo: number; comunicacao: number; clareza: number; facilidade: number; satisfacao: number;
+      }>;
+    },
+  });
+
+  // Avaliações individuais recebidas por este dev (quem avaliou + as notas),
+  // para o card que aparece ao passar o mouse sobre "Minha satisfação".
+  const { data: minhasAvaliacoes = [] } = useQuery({
+    queryKey: ["chamados-minhas-avaliacoes", user?.id],
+    enabled: !!user?.id && dev,
+    queryFn: async () => {
+      const { data } = await (supabase as any)
+        .from("CHAMADO_SISTEMA_AVALIACAO")
+        .select("qualidade,prazo,comunicacao,clareza,facilidade,satisfacao,comentario,created_at,CHAMADO_SISTEMA!inner(numero,solicitante_id,responsavel_id)")
+        .eq("CHAMADO_SISTEMA.responsavel_id", user!.id)
+        .order("created_at", { ascending: false });
+      return (data ?? []) as Array<{
+        qualidade: number; prazo: number; comunicacao: number; clareza: number; facilidade: number; satisfacao: number;
+        comentario: string | null; created_at: string;
+        CHAMADO_SISTEMA: { numero: string; solicitante_id: string } | null;
       }>;
     },
   });
@@ -357,9 +377,11 @@ export default function PainelDesenvolvedor() {
 
       {/* Satisfação — só a MINHA nota (colocação + médias por item avaliado) */}
       <div className="mt-4 grid gap-4 lg:grid-cols-2">
-        <Card className="p-4">
+        <HoverCard openDelay={100}>
+        <HoverCardTrigger asChild>
+        <Card className="cursor-help p-4">
           <div className="mb-3 flex items-center justify-between">
-            <p className="flex items-center gap-1.5 text-sm font-bold"><Trophy className="h-4 w-4 text-warning" /> Minha satisfação</p>
+            <p className="flex items-center gap-1.5 text-sm font-bold"><Trophy className="h-4 w-4 text-warning" /> Minha satisfação <span className="text-[10px] font-normal text-muted-foreground">(passe o mouse)</span></p>
             {minhaSatisfacao && (
               <span className="text-[11px] text-muted-foreground">{minhaSatisfacao.posicao}º de {minhaSatisfacao.devs} na equipe</span>
             )}
@@ -384,6 +406,37 @@ export default function PainelDesenvolvedor() {
             <p className="py-4 text-center text-xs text-muted-foreground">Você ainda não recebeu avaliações de chamados concluídos.</p>
           )}
         </Card>
+        </HoverCardTrigger>
+        <HoverCardContent align="start" className="max-h-96 w-96 overflow-y-auto p-3">
+          <p className="mb-2 text-xs font-bold">Quem avaliou</p>
+          {minhasAvaliacoes.length === 0 ? (
+            <p className="text-xs text-muted-foreground">Nenhuma avaliação recebida ainda.</p>
+          ) : (
+            <div className="space-y-2">
+              {minhasAvaliacoes.map((a, i) => (
+                <div key={i} className="rounded border border-border/60 p-2">
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="min-w-0">
+                      <p className="truncate text-xs font-medium">{nomeDe(a.CHAMADO_SISTEMA?.solicitante_id ?? null)}</p>
+                      <p className="text-[10px] text-muted-foreground">#{a.CHAMADO_SISTEMA?.numero ?? "—"} · {fmtData(a.created_at)}</p>
+                    </div>
+                    <div className="flex shrink-0 items-center gap-1">
+                      <Estrelas valor={mediaAvaliacao(a)} size={12} />
+                      <span className="text-xs font-bold">{mediaAvaliacao(a).toFixed(1).replace(".", ",")}</span>
+                    </div>
+                  </div>
+                  <div className="mt-1 grid grid-cols-2 gap-x-3 text-[10px] text-muted-foreground">
+                    {CRITERIOS_AVALIACAO.map((c) => (
+                      <span key={c.key} className="flex justify-between gap-1"><span className="truncate">{c.titulo}</span><span className="font-semibold text-foreground">{Number((a as any)[c.key])}</span></span>
+                    ))}
+                  </div>
+                  {a.comentario && <p className="mt-1 border-t border-border/50 pt-1 text-[10px] italic text-muted-foreground">"{a.comentario}"</p>}
+                </div>
+              ))}
+            </div>
+          )}
+        </HoverCardContent>
+        </HoverCard>
 
         <Card className="p-4">
           <p className="mb-3 flex items-center gap-1.5 text-sm font-bold"><Star className="h-4 w-4 text-warning" /> Minha média por item avaliado</p>
