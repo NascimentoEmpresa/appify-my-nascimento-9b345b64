@@ -165,25 +165,21 @@ const STATUS_PROCESSO = [
 // ── Componente Principal ───────────────────────────────────────────
 export default function Recrutamento() {
   const { user } = useAuth();
-  const { roles } = usePermissoes();
+  const { roles, can } = usePermissoes();
 
-  const isAdmin       = roles.includes("admin");
-  const isTreinamento = roles.includes("treinamentos");
-  const isOperacional = roles.includes("operacional");
-  const isJuridico    = roles.includes("juridico");
-  const isSst         = roles.includes("sst");
-  const isComprador   = roles.includes("comprador") || roles.includes("almoxarife");
-  const isRH          = roles.includes("rh") && !isAdmin && !isTreinamento;
+  const isTreinamento = roles.includes("treinamentos"); // só rótulo da mensagem no chat, não é gate
 
-  // Recrutamento = quem conduz o processo (treinamentos) + admin.
-  const podeRecrutar = isTreinamento || isAdmin;
+  // Recrutamento = quem tem alterar em recrutamento_gestao (conduz o processo).
+  const podeRecrutar = can("alterar", undefined, "recrutamento_gestao");
+  // Visibilidade ampla (dashboard "Todas as Solicitações") sem rodar o processo.
+  const podeVerTudo = can("visualizar", undefined, "recrutamento_gestao");
+  const isRH = podeVerTudo && !podeRecrutar;
   // Operacional aprova a etapa 1 (Pendente Operacional → Pendente Recrutamento).
-  const podeAprovarOperacional = isOperacional || isAdmin;
-
-  // Para isAnalista: qualquer usuário que pode ver itens atribuídos a ele
-  // Na prática, qualquer usuário não-RH, não-Treinamento, não-Admin é solicitante
-  // Admin e Treinamento têm poderes especiais
-  const isAnalista = isAdmin; // Analistas são gerenciados no banco; admin vê tudo
+  const podeAprovarOperacional = can("aprovar", undefined, "recrutamento_gestao");
+  // Quem pode mover o candidato pra fora de cada etapa específica do kanban.
+  const podeMoverJuridico = can("aprovar", undefined, "recrutamento_etapa_juridico");
+  const podeMoverSst      = can("aprovar", undefined, "recrutamento_etapa_sst");
+  const podeMoverCompras  = can("aprovar", undefined, "recrutamento_etapa_compras");
 
   // ── Estado ─────────────────────────────────────────────────────
   const [view, setView]               = useState<"tabela" | "kanban">("tabela");
@@ -285,7 +281,7 @@ export default function Recrutamento() {
   // ── Tabs por perfil ───────────────────────────────────────────
   const tabs = isRH
     ? [{ label: "Todas as Solicitações", tab: "todas" }]
-    : isAdmin || isTreinamento
+    : podeRecrutar
     ? [
         { label: "Todas", tab: "todas" },
         { label: "Pendente Operacional", tab: "analista" },
@@ -293,7 +289,7 @@ export default function Recrutamento() {
       ]
     : [{ label: "Minhas Solicitações", tab: "minha" }];
 
-  useEffect(() => { setTab(tabs[0].tab); }, [isRH, isAdmin, isTreinamento]);
+  useEffect(() => { setTab(tabs[0].tab); }, [isRH, podeRecrutar]);
 
   // ── Carregar Stats ────────────────────────────────────────────
   const loadStats = useCallback(async () => {
@@ -722,10 +718,9 @@ export default function Recrutamento() {
   // ── Candidatos: selecionar e mover no kanban interno ──────────
   // Quem pode mover o candidato a partir de cada etapa.
   const podeMoverCand = (etapa?: string | null) => {
-    if (isAdmin) return true;
-    if (etapa === "JURÍDICO")  return isJuridico;
-    if (etapa === "EXAME SST") return isSst;
-    if (etapa === "COMPRAS")   return isComprador; // confirma → DOCUMENTAÇÃO
+    if (etapa === "JURÍDICO")  return podeMoverJuridico || podeRecrutar;
+    if (etapa === "EXAME SST") return podeMoverSst || podeRecrutar;
+    if (etapa === "COMPRAS")   return podeMoverCompras || podeRecrutar; // confirma → DOCUMENTAÇÃO
     return podeRecrutar; // ENTRADA, TRIAGEM, ENTREVISTA, ENT. GESTOR, APROVADOS, DOCUMENTAÇÃO
   };
   // Próxima etapa linear (TRIAGEM e ENTREVISTA ramificam → tratadas no card).
@@ -1397,7 +1392,7 @@ export default function Recrutamento() {
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "16px 22px", margin: "18px 24px 0", border: "1px solid #e2e8f0", borderRadius: 18, background: "linear-gradient(135deg,#fff 0%,#f8fbff 100%)", boxShadow: "0 8px 24px rgba(15,23,42,.06)", flexShrink: 0, gap: 14, flexWrap: "wrap" }}>
         <div style={{ fontSize: 19, fontWeight: 800, color: "#0f3171" }}>🎯 Seleção e Recrutamento</div>
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-          {(isAdmin || isTreinamento) && (
+          {podeRecrutar && (
             <button onClick={copiarLinkPortal} title="Copia o link público (/vagas) para os candidatos escolherem a cidade e enviarem o currículo" style={{ display: "inline-flex", alignItems: "center", gap: 5, padding: "7px 14px", borderRadius: 10, border: "1px solid #f97316", background: "rgba(249,115,22,.10)", color: "#ea580c", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>
               🔗 {portalCopiado ? "Link copiado!" : "Copiar link de candidatura"}
             </button>

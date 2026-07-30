@@ -74,9 +74,6 @@ const COLS_MZ_CAIXA = [
   "created_at",
 ].join(",");
 
-const ALLOWED_ROLES = ["admin", "controladoria", "presidencia"] as const;
-type AllowedRole = typeof ALLOWED_ROLES[number];
-
 function json(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), {
     status,
@@ -210,14 +207,15 @@ Deno.serve(async (req) => {
     // 3. service_role só agora — exclusivamente para autorização e dados autorizados.
     const admin = createClient(SUPABASE_URL, SERVICE_ROLE);
 
-    // 4. Validação de role: admin OR controladoria OR presidencia.
-    const roleChecks = await Promise.all(
-      ALLOWED_ROLES.map((role) =>
-        admin.rpc("has_role", { _user_id: callerId, _role: role })
-      ),
-    );
-    const roleErrs = roleChecks.find((r) => r.error);
-    if (roleErrs?.error) {
+    // 4. Validação de acesso: menu dedicado (não o "fluxo-caixa-diario" da tela
+    // normal, que financeiro também usa) — este endpoint sempre foi restrito a
+    // admin/controladoria/presidencia, nunca financeiro. Admin também define o
+    // escopo global abaixo, verificado à parte via 'administracao'/alterar.
+    const [exportCheck, adminCheck] = await Promise.all([
+      admin.rpc("can_access", { _user: callerId, _menu: "caixa-export-consolidado", _acao: "exportar" }),
+      admin.rpc("can_access", { _user: callerId, _menu: "administracao", _acao: "alterar" }),
+    ]);
+    if (exportCheck.error || adminCheck.error) {
       safeLog({
         ts: Date.now(),
         mode,
@@ -227,10 +225,8 @@ Deno.serve(async (req) => {
       });
       return json({ error: "internal_error" }, 500);
     }
-    const grantedRoles: AllowedRole[] = ALLOWED_ROLES.filter(
-      (_, i) => roleChecks[i].data === true,
-    );
-    if (grantedRoles.length === 0) {
+    const isAdmin = adminCheck.data === true;
+    if (exportCheck.data !== true && !isAdmin) {
       safeLog({
         ts: Date.now(),
         mode,
@@ -240,7 +236,6 @@ Deno.serve(async (req) => {
       });
       return json({ error: "forbidden" }, 403);
     }
-    const isAdmin = grantedRoles.includes("admin");
 
     // 5. Resolução de escopo multiempresa.
     const scope = await resolveScope(admin, callerId, isAdmin);
@@ -261,7 +256,7 @@ Deno.serve(async (req) => {
       callerId,
       status: 200,
       n_empresas_escopo: scope.global ? "global" : scope.empresaIds.length,
-      roles: grantedRoles,
+      is_admin: isAdmin,
     });
 
     // 6. Dados — só após autorização e escopo resolvidos.

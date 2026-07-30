@@ -52,12 +52,13 @@ Deno.serve(async (req) => {
 
     const admin = createClient(SUPABASE_URL, SERVICE_ROLE);
 
-    const { data: isAdmin, error: roleErr } = await admin.rpc("has_role", {
-      _user_id: callerId,
-      _role: "admin",
+    const { data: podeResetar, error: roleErr } = await admin.rpc("can_access", {
+      _user: callerId,
+      _menu: "administracao",
+      _acao: "alterar",
     });
     if (roleErr) return jsonResponse({ error: roleErr.message }, 500);
-    if (!isAdmin) return jsonResponse({ error: "Apenas administradores podem resetar senhas." }, 403);
+    if (!podeResetar) return jsonResponse({ error: "Apenas administradores podem resetar senhas." }, 403);
 
     let body: { user_id?: string };
     try { body = await req.json(); }

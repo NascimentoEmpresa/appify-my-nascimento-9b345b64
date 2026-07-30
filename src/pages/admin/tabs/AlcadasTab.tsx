@@ -32,8 +32,8 @@ const TIPO_PARECER_LABEL: Record<string, { label: string; tone: string }> = {
 
 export function AlcadasTab() {
   const qc = useQueryClient();
-  const { roles, empresaId } = usePermissoes();
-  const isAdmin = roles.includes("admin");
+  const { can, empresaId } = usePermissoes();
+  const podeGerenciar = can("alterar", undefined, "administracao");
   const [empresaSel, setEmpresaSel] = useState<string>("");
 
   const empresasQ = useQuery({
@@ -78,15 +78,15 @@ export function AlcadasTab() {
         </TabsList>
 
         <TabsContent value="fluxos" className="mt-4">
-          {eid && <FluxosPanel empresaId={eid} isAdmin={isAdmin} empresa={(empresasQ.data ?? []).find((e: any) => e.id === eid)} />}
+          {eid && <FluxosPanel empresaId={eid} podeGerenciar={podeGerenciar} empresa={(empresasQ.data ?? []).find((e: any) => e.id === eid)} />}
         </TabsContent>
 
         <TabsContent value="gestores-cc" className="mt-4">
-          {eid && <GestoresCCPanel empresaId={eid} isAdmin={isAdmin} empresa={(empresasQ.data ?? []).find((e: any) => e.id === eid)} />}
+          {eid && <GestoresCCPanel empresaId={eid} podeGerenciar={podeGerenciar} empresa={(empresasQ.data ?? []).find((e: any) => e.id === eid)} />}
         </TabsContent>
 
         <TabsContent value="reguas" className="mt-4">
-          <ReguasPanel isAdmin={isAdmin} />
+          <ReguasPanel podeGerenciar={podeGerenciar} />
         </TabsContent>
 
         <TabsContent value="saude" className="mt-4">
@@ -104,7 +104,7 @@ export function AlcadasTab() {
 // ============================================================
 // FLUXOS
 // ============================================================
-function FluxosPanel({ empresaId, isAdmin, empresa }: { empresaId: string; isAdmin: boolean; empresa: any }) {
+function FluxosPanel({ empresaId, podeGerenciar, empresa }: { empresaId: string; podeGerenciar: boolean; empresa: any }) {
   const qc = useQueryClient();
 
   const fluxosQ = useQuery({
@@ -147,7 +147,7 @@ function FluxosPanel({ empresaId, isAdmin, empresa }: { empresaId: string; isAdm
                 Quando ativa, etapas com regra <code className="text-[10px]">orcamento_cc</code> em <strong>Pedido de compra</strong> são aprovadas automaticamente se houver saldo no CC dentro da vigência.
               </p>
             </div>
-            <Button size="sm" variant={empresa.auto_aprovar_orcamento_cc ? "default" : "outline"} onClick={() => toggleAutoOrc(!empresa.auto_aprovar_orcamento_cc)} disabled={!isAdmin}>
+            <Button size="sm" variant={empresa.auto_aprovar_orcamento_cc ? "default" : "outline"} onClick={() => toggleAutoOrc(!empresa.auto_aprovar_orcamento_cc)} disabled={!podeGerenciar}>
               {empresa.auto_aprovar_orcamento_cc ? "Ativa" : "Inativa"}
             </Button>
           </div>
@@ -164,7 +164,7 @@ function FluxosPanel({ empresaId, isAdmin, empresa }: { empresaId: string; isAdm
                 Quando ativo, requisições que <strong>estouram o orçamento do CC</strong> exigem uma 2ª etapa de aprovação ("ultrapassar orçamento"). Pode ser sobrescrito por CC (Controladoria → Centros de Custo) ou por etapa (campo <code className="text-[10px]">regra_auto.vincular_orcamento</code>).
               </p>
             </div>
-            <Button size="sm" variant={empresa.vincular_orcamento_padrao ? "default" : "outline"} onClick={() => toggleVincOrc(!empresa.vincular_orcamento_padrao)} disabled={!isAdmin}>
+            <Button size="sm" variant={empresa.vincular_orcamento_padrao ? "default" : "outline"} onClick={() => toggleVincOrc(!empresa.vincular_orcamento_padrao)} disabled={!podeGerenciar}>
               {empresa.vincular_orcamento_padrao ? "Ativo" : "Inativo"}
             </Button>
           </div>
@@ -173,7 +173,7 @@ function FluxosPanel({ empresaId, isAdmin, empresa }: { empresaId: string; isAdm
 
       <div className="flex items-center justify-between">
         <h3 className="text-sm font-bold">Fluxos cadastrados</h3>
-        {isAdmin && <NovoFluxo empresaId={empresaId} onSaved={() => qc.invalidateQueries({ queryKey: ["sup_aprov_fluxo", empresaId] })} />}
+        {podeGerenciar && <NovoFluxo empresaId={empresaId} onSaved={() => qc.invalidateQueries({ queryKey: ["sup_aprov_fluxo", empresaId] })} />}
       </div>
 
       {fluxosQ.isLoading && <p className="text-xs text-muted-foreground">Carregando…</p>}
@@ -183,14 +183,14 @@ function FluxosPanel({ empresaId, isAdmin, empresa }: { empresaId: string; isAdm
 
       <div className="space-y-3">
         {(fluxosQ.data ?? []).map((f: any) => (
-          <FluxoCard key={f.id} fluxo={f} isAdmin={isAdmin} onChanged={() => qc.invalidateQueries({ queryKey: ["sup_aprov_fluxo", empresaId] })} />
+          <FluxoCard key={f.id} fluxo={f} podeGerenciar={podeGerenciar} onChanged={() => qc.invalidateQueries({ queryKey: ["sup_aprov_fluxo", empresaId] })} />
         ))}
       </div>
     </div>
   );
 }
 
-function FluxoCard({ fluxo, isAdmin, onChanged }: { fluxo: any; isAdmin: boolean; onChanged: () => void }) {
+function FluxoCard({ fluxo, podeGerenciar, onChanged }: { fluxo: any; podeGerenciar: boolean; onChanged: () => void }) {
   const qc = useQueryClient();
   const etapasQ = useQuery({
     queryKey: ["sup_aprov_etapa-template", fluxo.id],
@@ -224,8 +224,8 @@ function FluxoCard({ fluxo, isAdmin, onChanged }: { fluxo: any; isAdmin: boolean
           </div>
         </div>
         <div className="flex items-center gap-2">
-          {isAdmin && <NovaEtapa fluxoId={fluxo.id} proximaOrdem={(etapasQ.data?.length ?? 0) + 1} onSaved={() => qc.invalidateQueries({ queryKey: ["sup_aprov_etapa-template", fluxo.id] })} />}
-          {isAdmin && fluxo.ativo && (
+          {podeGerenciar && <NovaEtapa fluxoId={fluxo.id} proximaOrdem={(etapasQ.data?.length ?? 0) + 1} onSaved={() => qc.invalidateQueries({ queryKey: ["sup_aprov_etapa-template", fluxo.id] })} />}
+          {podeGerenciar && fluxo.ativo && (
             <Button size="sm" variant="ghost" className="text-destructive" onClick={removerFluxo}><Trash2 className="h-3.5 w-3.5" /></Button>
           )}
         </div>
@@ -258,7 +258,7 @@ function FluxoCard({ fluxo, isAdmin, onChanged }: { fluxo: any; isAdmin: boolean
                 <td className="px-3 py-2">{e.prazo_horas ?? "—"}</td>
                 <td className="px-3 py-2"><code className="text-[10px]">{e.regra_auto?.tipo ?? "—"}</code></td>
                 <td className="px-3 py-2 text-right">
-                  {isAdmin && (
+                  {podeGerenciar && (
                     <Button size="sm" variant="ghost" className="text-destructive h-7 w-7 p-0" onClick={async () => {
                       if (!confirm(`Excluir etapa "${e.nome}"?`)) return;
                       const { error } = await (supabase as any).from("sup_aprov_etapa").delete().eq("id", e.id);
@@ -422,7 +422,7 @@ function NovaEtapa({ fluxoId, proximaOrdem, onSaved }: { fluxoId: string; proxim
 // ============================================================
 // RÉGUAS DE ESCALONAMENTO
 // ============================================================
-function ReguasPanel({ isAdmin }: { isAdmin: boolean }) {
+function ReguasPanel({ podeGerenciar }: { podeGerenciar: boolean }) {
   const reguasQ = useQuery({
     queryKey: ["sup_aprov_regua"],
     queryFn: async () => {

@@ -19,8 +19,8 @@ interface AuditRow {
 
 export function AuditoriaTab() {
   const qc = useQueryClient();
-  const { roles } = usePermissoes();
-  const canSee = roles.includes("admin") || roles.includes("controladoria");
+  const { can } = usePermissoes();
+  const canSee = can("visualizar", undefined, "administracao");
 
   const [tabela, setTabela] = useState("");
 

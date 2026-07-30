@@ -214,8 +214,8 @@ function useUsuarios() {
 
 function PermissoesPorPerfil() {
   const queryClient = useQueryClient();
-  const { roles: currentUserRoles } = usePermissoes();
-  const isAdmin = currentUserRoles.includes("admin");
+  const { can } = usePermissoes();
+  const podeGerenciar = can("alterar", undefined, "administracao");
   const catalogoQ = useCatalogoPermissoes();
   const perfisQ = usePerfis();
 
@@ -309,7 +309,7 @@ function PermissoesPorPerfil() {
   };
 
   const toggle = (modulo: string, menu: string | null, acao: Acao) => {
-    if (!isAdmin) return;
+    if (!podeGerenciar) return;
 
     const key = permissionKey(modulo, menu, acao);
     const currentlyChecked = isChecked(modulo, menu, acao);
@@ -397,7 +397,7 @@ function PermissoesPorPerfil() {
   };
 
   const salvar = async () => {
-    if (!isAdmin || pending.size === 0) return;
+    if (!podeGerenciar || pending.size === 0) return;
     setSaving(true);
 
     const changes = Array.from(pending.values());
@@ -520,7 +520,7 @@ function PermissoesPorPerfil() {
                           type="checkbox"
                           checked={isChecked(modulo.codigo, null, acao)}
                           onChange={() => toggle(modulo.codigo, null, acao)}
-                          disabled={!isAdmin || saving}
+                          disabled={!podeGerenciar || saving}
                           className="h-4 w-4 rounded border-border accent-primary"
                           title={`${acao} no módulo inteiro`}
                         />
@@ -550,7 +550,7 @@ function PermissoesPorPerfil() {
                             type="checkbox"
                             checked={isChecked(menu.modulo_codigo, menu.codigo, acao)}
                             onChange={() => toggle(menu.modulo_codigo, menu.codigo, acao)}
-                            disabled={!isAdmin || saving}
+                            disabled={!podeGerenciar || saving}
                             className="h-4 w-4 rounded border-border accent-primary"
                             title={`${acao} em ${menu.nome}`}
                           />
@@ -569,7 +569,7 @@ function PermissoesPorPerfil() {
         <p className="text-muted-foreground">
           {pending.size} alteração(ões) pendente(s). A RLS no banco continuará sendo a autoridade final.
         </p>
-        <Button size="sm" onClick={salvar} disabled={!isAdmin || pending.size === 0 || saving}>
+        <Button size="sm" onClick={salvar} disabled={!podeGerenciar || pending.size === 0 || saving}>
           {saving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
           Salvar matriz
         </Button>
@@ -580,8 +580,8 @@ function PermissoesPorPerfil() {
 
 function OverridesPorPessoa() {
   const queryClient = useQueryClient();
-  const { roles: currentUserRoles } = usePermissoes();
-  const isAdmin = currentUserRoles.includes("admin");
+  const { can } = usePermissoes();
+  const podeGerenciar = can("alterar", undefined, "administracao");
   const catalogoQ = useCatalogoPermissoes();
   const usuariosQ = useUsuarios();
 
@@ -728,7 +728,7 @@ function OverridesPorPessoa() {
   };
 
   const setOverride = (menu: string, acao: Acao, value: "inherit" | "allow" | "deny") => {
-    if (!userId || !isAdmin) return;
+    if (!userId || !podeGerenciar) return;
 
     const key = userPermissionKey(userId, menu, acao, null);
     const existing = overrideMap.get(key);
@@ -751,7 +751,7 @@ function OverridesPorPessoa() {
   };
 
   const salvar = async () => {
-    if (!isAdmin || !userId || pending.size === 0) return;
+    if (!podeGerenciar || !userId || pending.size === 0) return;
 
     setSaving(true);
 
@@ -939,7 +939,7 @@ function OverridesPorPessoa() {
                               <Select
                                 value={value}
                                 onValueChange={(next) => setOverride(menu.codigo, acao, next as "inherit" | "allow" | "deny")}
-                                disabled={!isAdmin || saving}
+                                disabled={!podeGerenciar || saving}
                               >
                                 <SelectTrigger className="mx-auto h-8 w-36 text-xs">
                                   <SelectValue />
@@ -969,7 +969,7 @@ function OverridesPorPessoa() {
         <p className="text-muted-foreground">
           {pending.size} alteração(ões) pendente(s). Override individual tem precedência sobre perfil.
         </p>
-        <Button size="sm" onClick={salvar} disabled={!isAdmin || !userId || pending.size === 0 || saving}>
+        <Button size="sm" onClick={salvar} disabled={!podeGerenciar || !userId || pending.size === 0 || saving}>
           {saving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
           Salvar exceções
         </Button>

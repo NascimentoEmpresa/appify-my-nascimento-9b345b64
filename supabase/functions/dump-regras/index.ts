@@ -44,11 +44,12 @@ Deno.serve(async (req) => {
     const userId = userData.user.id;
 
     // 2) Server-side admin check via SECURITY DEFINER RPC
-    const { data: isAdmin, error: roleErr } = await anon.rpc("has_role", {
-      _user_id: userId,
-      _role: "admin",
+    const { data: podeVer, error: roleErr } = await anon.rpc("can_access", {
+      _user: userId,
+      _menu: "administracao",
+      _acao: "visualizar",
     });
-    if (roleErr || isAdmin !== true) {
+    if (roleErr || podeVer !== true) {
       return jsonResponse({ error: "forbidden" }, 403);
     }
 

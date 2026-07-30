@@ -13,8 +13,8 @@ interface Param { id: string; empresa_id: string; chave: string; valor: string |
 
 export function ParametrosTab() {
   const qc = useQueryClient();
-  const { roles, empresaId } = usePermissoes();
-  const isAdmin = roles.includes("admin");
+  const { can, empresaId } = usePermissoes();
+  const podeGerenciar = can("alterar", undefined, "administracao");
 
   const empresasQ = useQuery({
     queryKey: ["empresas-all"],
@@ -56,7 +56,7 @@ export function ParametrosTab() {
           <select value={eid} onChange={(e) => setEmpresaSel(e.target.value)} className="h-9 rounded-md border border-border bg-card px-3 text-xs">
             {(empresasQ.data ?? []).map((e: any) => <option key={e.id} value={e.id}>{e.codigo} — {e.razao_social}</option>)}
           </select>
-          {isAdmin && eid && <ParamDialog empresaId={eid} onSaved={() => qc.invalidateQueries({ queryKey: ["parametro_geral", eid] })} />}
+          {podeGerenciar && eid && <ParamDialog empresaId={eid} onSaved={() => qc.invalidateQueries({ queryKey: ["parametro_geral", eid] })} />}
         </div>
       </header>
       <table className="w-full text-sm">
@@ -81,7 +81,7 @@ export function ParametrosTab() {
               <td className="px-3 py-3 text-sm font-medium">{p.valor ?? "—"}</td>
               <td className="px-3 py-3 text-xs text-muted-foreground">{p.descricao ?? "—"}</td>
               <td className="px-5 py-3 text-right">
-                {isAdmin && (
+                {podeGerenciar && (
                   <div className="flex justify-end gap-1">
                     <ParamDialog empresaId={eid} param={p} onSaved={() => qc.invalidateQueries({ queryKey: ["parametro_geral", eid] })} />
                     <Button size="sm" variant="ghost" onClick={() => remover(p.id)} className="text-destructive"><Trash2 className="h-3.5 w-3.5" /></Button>

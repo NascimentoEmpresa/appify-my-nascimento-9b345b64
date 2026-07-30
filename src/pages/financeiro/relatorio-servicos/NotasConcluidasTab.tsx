@@ -28,6 +28,17 @@ import { ItensNfEditor, ItemForm } from "@/pages/financeiro/nf-emissao/ItensNfEd
 import { registrarLogNf } from "@/pages/financeiro/nf-emissao/registrarLogNf";
 import { HistoricoNfPainel } from "@/pages/financeiro/nf-emissao/HistoricoNfPainel";
 
+// "Situação site P.M.T."/"Situa Domínio" vêm da planilha legada com um desses
+// 3 valores — NORMAL é o caso comum; SUBSTITUIDA/CANCELADA são notas que
+// nunca vão ter pagamento (foram trocadas/anuladas), então não contam como
+// "pendente" nem devem parecer que estão esperando pagamento.
+function situacaoEspecial(n: NfEmissaoRow): "SUBSTITUIDA" | "CANCELADA" | null {
+  const valores = [n.situacao_site_pmt?.toUpperCase(), n.situacao_dominio?.toUpperCase()];
+  if (valores.includes("CANCELADA")) return "CANCELADA";
+  if (valores.includes("SUBSTITUIDA")) return "SUBSTITUIDA";
+  return null;
+}
+
 function itemRowParaForm(r: NfEmissaoItemRow): ItemForm {
   return {
     identificacao: r.identificacao ?? "",
@@ -76,7 +87,7 @@ export default function NotasConcluidasTab() {
   const nfsDoContrato = useMemo(() => concluidas.filter((n) => n.contrato_id === contratoSel), [concluidas, contratoSel]);
 
   return (
-    <div className="grid grid-cols-5 gap-4 min-h-[600px]">
+    <div className="grid grid-cols-5 gap-4 h-[calc(100vh-220px)] min-h-[480px]">
       <div className="col-span-2 card-elevated flex flex-col overflow-hidden">
         <div className="border-b border-border p-3">
           <div className="relative">
@@ -96,7 +107,7 @@ export default function NotasConcluidasTab() {
             </p>
           )}
           {contratosComNotas.map(({ contrato: c, notas }) => {
-            const pendentes = notas.filter((n) => !n.data_pagamento).length;
+            const pendentes = notas.filter((n) => !n.data_pagamento && !situacaoEspecial(n)).length;
             const ativo = contratoSel === c.id;
             return (
               <button
@@ -169,6 +180,14 @@ export default function NotasConcluidasTab() {
                         {nf.data_pagamento ? (
                           <Badge className="bg-emerald-500/15 text-emerald-700 dark:text-emerald-400">
                             Pago em {fmtDate(nf.data_pagamento)}
+                          </Badge>
+                        ) : situacaoEspecial(nf) === "CANCELADA" ? (
+                          <Badge variant="outline" className="border-destructive/40 text-destructive">
+                            Cancelada
+                          </Badge>
+                        ) : situacaoEspecial(nf) === "SUBSTITUIDA" ? (
+                          <Badge variant="outline" className="border-muted-foreground/30 text-muted-foreground">
+                            Substituída
                           </Badge>
                         ) : (
                           <Badge variant="outline" className="border-amber-500/40 text-amber-700 dark:text-amber-400">

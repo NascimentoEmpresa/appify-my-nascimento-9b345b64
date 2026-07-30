@@ -110,9 +110,9 @@ const TIPO_CFG: Record<AliasTipo, {
 };
 
 export default function Aliases() {
-  const { empresaId, roles } = usePermissoes();
+  const { empresaId, can } = usePermissoes();
   const { toast } = useToast();
-  const isAdmin = roles.includes("admin");
+  const podeGerenciar = can("alterar", undefined, "integracao-aliases");
 
   const [tipo, setTipo] = useState<AliasTipo>("contratos");
   const [rows, setRows] = useState<AliasRow[]>([]);
@@ -168,7 +168,7 @@ export default function Aliases() {
     else { toast({ title: "Alias vinculado" }); load(); }
   };
 
-  if (!isAdmin) {
+  if (!podeGerenciar) {
     return (
       <div className="p-6 text-sm text-muted-foreground">
         Apenas administradores podem gerenciar aliases.

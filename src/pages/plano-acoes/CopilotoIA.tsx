@@ -52,8 +52,8 @@ function DraftField({ label, value, onChange, type = "text", placeholder }: { la
 
 export default function CopilotoIA() {
   const navigate = useNavigate();
-  const { roles, loading } = usePermissoes();
-  const allowed = roles.includes("admin") || roles.includes("presidencia");
+  const { can, loading } = usePermissoes();
+  const allowed = can("visualizar", undefined, "plano_acoes_copiloto");
 
   const { messages, draft, pronto, thinking, transcribing, error, send, transcribe, criar, reset, updateDraft } = useCopilotoChat();
   const analise = useCopilotoAnalise();

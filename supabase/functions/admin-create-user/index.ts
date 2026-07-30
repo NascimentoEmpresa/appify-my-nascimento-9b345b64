@@ -95,13 +95,14 @@ Deno.serve(async (req) => {
       auth: { persistSession: false },
     });
 
-    const { data: isAdmin, error: roleErr } = await admin.rpc("has_role", {
-      _user_id: callerId,
-      _role: "admin",
+    const { data: podeCriar, error: roleErr } = await admin.rpc("can_access", {
+      _user: callerId,
+      _menu: "administracao",
+      _acao: "incluir",
     });
 
     if (roleErr) return jsonResponse({ error: roleErr.message }, 500);
-    if (!isAdmin) {
+    if (!podeCriar) {
       return jsonResponse({ error: "Apenas administradores podem criar usuários." }, 403);
     }
 

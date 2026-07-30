@@ -41,7 +41,7 @@ const statusVariant: Record<BatchStatus, { label: string; className: string }> =
 
 export default function IntegracaoBatches() {
   const { user } = useAuth();
-  const { empresaId, roles } = usePermissoes();
+  const { empresaId, can } = usePermissoes();
   const { toast } = useToast();
   const nav = useNavigate();
   const [rows, setRows] = useState<BatchRow[]>([]);
@@ -50,7 +50,7 @@ export default function IntegracaoBatches() {
   const [search, setSearch] = useState("");
   const [creating, setCreating] = useState(false);
 
-  const isAdmin = roles.includes("admin");
+  const podeGerenciar = can("alterar", undefined, "integracao");
 
   const load = async () => {
     setLoading(true);
@@ -130,7 +130,7 @@ export default function IntegracaoBatches() {
               <RefreshCw className={`h-4 w-4 ${loading ? "animate-spin" : ""}`} />
               Atualizar
             </Button>
-            {isAdmin && (
+            {podeGerenciar && (
               <Button size="sm" onClick={createBatch} disabled={creating}>
                 <Plus className="h-4 w-4" />
                 Novo lote
@@ -190,7 +190,7 @@ export default function IntegracaoBatches() {
               {!loading && filtered.length === 0 && (
                 <TableRow>
                   <TableCell colSpan={7} className="text-center text-muted-foreground py-12">
-                    Nenhum lote encontrado. {isAdmin && "Clique em Novo lote para começar."}
+                    Nenhum lote encontrado. {podeGerenciar && "Clique em Novo lote para começar."}
                   </TableCell>
                 </TableRow>
               )}

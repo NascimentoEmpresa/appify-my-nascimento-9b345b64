@@ -28,7 +28,7 @@ interface NotaAberta {
 }
 
 export default function NotasAbertoTab() {
-  const { roles } = usePermissoes();
+  const { can } = usePermissoes();
   const [busca, setBusca] = useState("");
   const [empresaFiltro, setEmpresaFiltro] = useState("TODAS");
   const [selecionadas, setSelecionadas] = useState<Set<string>>(new Set());
@@ -44,11 +44,16 @@ export default function NotasAbertoTab() {
     },
   });
 
-  // Mesma regra de visibilidade por setor do sistema antigo: Jurídico só vê a partir
-  // da Laranja (atraso real > 30 dias), setor comercial/licitação só a partir da
-  // Vermelha (> 60 dias). Financeiro/Controladoria/Admin veem tudo.
-  const isJuridico = roles.includes("juridico") && !roles.includes("admin") && !roles.includes("financeiro");
-  const isComercial = roles.includes("comercial") && !roles.includes("admin") && !roles.includes("financeiro");
+  // Mesma regra de visibilidade por setor do sistema antigo, agora via Acesso por
+  // Usuário em vez de cargo. "cobrancas"/alterar = vê tudo (Financeiro/Controladoria/
+  // Admin); "cobrancas"/aprovar = restrito a partir da Laranja (atraso real > 30
+  // dias, equivalente ao Jurídico); "cobrancas"/visualizar = restrito a partir da
+  // Vermelha (> 60 dias, equivalente ao Comercial). Sem nenhuma dessas marcações
+  // específicas, a pessoa vê tudo (mesmo padrão de hoje para quem não é
+  // Jurídico/Comercial) — as restrições são opt-in via perfil, não o contrário.
+  const podeVerTudo = can("alterar", undefined, "cobrancas");
+  const restritoA30Dias = can("aprovar", undefined, "cobrancas");
+  const restritoA60Dias = can("visualizar", undefined, "cobrancas");
 
   const empresas = useMemo(() => Array.from(new Set(notas.map((n) => n.empresa_codigo))).sort(), [notas]);
 
@@ -56,15 +61,16 @@ export default function NotasAbertoTab() {
     const termo = busca.trim().toUpperCase();
     return notas
       .filter((n) => {
+        if (podeVerTudo) return true;
         const diasAtrasoReal = n.dias_atraso - 30;
-        if (isJuridico && diasAtrasoReal <= 30) return false;
-        if (isComercial && diasAtrasoReal <= 60) return false;
+        if (restritoA30Dias) return diasAtrasoReal > 30;
+        if (restritoA60Dias) return diasAtrasoReal > 60;
         return true;
       })
       .filter((n) => empresaFiltro === "TODAS" || n.empresa_codigo === empresaFiltro)
       .filter((n) => !termo || n.cliente_contrato.toUpperCase().includes(termo) || n.nota.includes(termo) || n.faixa.toUpperCase().includes(termo))
       .sort((a, b) => a.cliente_contrato.localeCompare(b.cliente_contrato) || b.dias_atraso - a.dias_atraso);
-  }, [notas, busca, empresaFiltro, isJuridico, isComercial]);
+  }, [notas, busca, empresaFiltro, podeVerTudo, restritoA30Dias, restritoA60Dias]);
 
   const totalPorCliente = useMemo(() => {
     const mapa = new Map<string, number>();

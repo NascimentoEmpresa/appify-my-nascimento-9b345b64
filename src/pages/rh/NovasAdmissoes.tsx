@@ -36,8 +36,8 @@ const CAMPOS: { key: string; label: string; type?: string }[] = [
 
 export default function NovasAdmissoes() {
   const { user } = useAuth();
-  const { roles } = usePermissoes();
-  const podeAgir = roles.includes("rh") || roles.includes("admin");
+  const { can } = usePermissoes();
+  const podeAgir = can("alterar", undefined, "colaboradores");
   const nome = user?.user_metadata?.nome ?? user?.email ?? "";
 
   const [rows, setRows] = useState<any[]>([]);

@@ -20,8 +20,8 @@ interface Identidade {
 
 export function IdentidadeTab() {
   const qc = useQueryClient();
-  const { roles, empresaId } = usePermissoes();
-  const isAdmin = roles.includes("admin");
+  const { can, empresaId } = usePermissoes();
+  const podeGerenciar = can("alterar", undefined, "administracao");
 
   const empresasQ = useQuery({
     queryKey: ["empresas-all"],
@@ -109,7 +109,7 @@ export function IdentidadeTab() {
               ? <img src={logoUrl} alt="Logotipo" className="h-20 w-20 object-contain" />
               : <p className="text-xs text-muted-foreground">Nenhum logotipo carregado.</p>}
           </div>
-          {isAdmin && (
+          {podeGerenciar && (
             <label className="mt-3 inline-flex h-9 cursor-pointer items-center gap-2 rounded-md border border-border bg-card px-3 text-xs hover:bg-secondary">
               <Upload className="h-3.5 w-3.5" /> Carregar logotipo
               <input type="file" accept="image/*" className="hidden" onChange={(e) => e.target.files?.[0] && upload(e.target.files[0])} />
@@ -121,11 +121,11 @@ export function IdentidadeTab() {
         <div className="rounded-lg border border-border bg-card p-4 space-y-3">
           <div>
             <Label>Nome empresarial</Label>
-            <Input value={form.nome_empresarial ?? ""} onChange={(e) => setForm({ ...form, nome_empresarial: e.target.value })} disabled={!isAdmin} />
+            <Input value={form.nome_empresarial ?? ""} onChange={(e) => setForm({ ...form, nome_empresarial: e.target.value })} disabled={!podeGerenciar} />
           </div>
           <div>
             <Label>Subtítulo institucional</Label>
-            <Input value={form.subtitulo ?? ""} onChange={(e) => setForm({ ...form, subtitulo: e.target.value })} disabled={!isAdmin} />
+            <Input value={form.subtitulo ?? ""} onChange={(e) => setForm({ ...form, subtitulo: e.target.value })} disabled={!podeGerenciar} />
           </div>
           <div className="grid grid-cols-3 gap-2">
             {(["cor_primaria", "cor_secundaria", "cor_destaque"] as const).map((c) => (
@@ -136,17 +136,17 @@ export function IdentidadeTab() {
                     type="color"
                     value={(form as any)[c] ?? "#000000"}
                     onChange={(e) => setForm({ ...form, [c]: e.target.value } as any)}
-                    disabled={!isAdmin}
+                    disabled={!podeGerenciar}
                     className="h-9 w-9 rounded border border-border"
                   />
-                  <Input value={(form as any)[c] ?? ""} onChange={(e) => setForm({ ...form, [c]: e.target.value } as any)} disabled={!isAdmin} className="h-9 text-xs" />
+                  <Input value={(form as any)[c] ?? ""} onChange={(e) => setForm({ ...form, [c]: e.target.value } as any)} disabled={!podeGerenciar} className="h-9 text-xs" />
                 </div>
               </div>
             ))}
           </div>
         </div>
       </div>
-      {isAdmin && (
+      {podeGerenciar && (
         <div className="flex justify-end">
           <Button onClick={salvar}>Salvar identidade</Button>
         </div>
