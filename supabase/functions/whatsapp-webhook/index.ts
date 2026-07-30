@@ -17,7 +17,7 @@
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
 import {
-  dentroDoHorario, menuAtivo, montarBase, montarSystem, gerarResposta,
+  dentroDoHorario, montarBase, montarSystem, gerarResposta,
   rotearBot, inferirModo, type Msg,
 } from "../_shared/whatsapp-bot.ts";
 
@@ -132,14 +132,16 @@ async function processarBot(
   });
 
   switch (rota.tipo) {
+    case "nada":
+      // Sem menu configurado o bot não responde nada — nem IA, nem fallback.
+      return;
     case "fora_horario":
       if (cfg.fora_horario_msg) await registrarSaida(conversaId, contatoId, to, cfg.fora_horario_msg, "bot");
       return;
-    case "menu": {
-      const menu = menuAtivo(cfg as any);
-      if (menu) await enviarMenu(conversaId, contatoId, to, menu);
+    case "menu":
+      // rota.menu já é o nível certo da cascata (raiz ou submenu clicado).
+      await enviarMenu(conversaId, contatoId, to, rota.menu);
       return;
-    }
     case "texto":
       await registrarSaida(conversaId, contatoId, to, rota.texto, "bot");
       return;
@@ -266,10 +268,16 @@ Deno.serve(async (req) => {
     for (const change of entry.changes ?? []) {
       const value = change.value ?? {};
       const nomeContato = value.contacts?.[0]?.profile?.name ?? null;
+      // Número do próprio negócio (vem no metadata do webhook). Usado para
+      // ignorar "echo": mensagem enviada pelo próprio número que a Meta
+      // devolve no webhook — sem este filtro ela seria gravada como se fosse
+      // o CONTATO falando (mensagem duplicada na caixa de entrada).
+      const numeroProprio = String(value.metadata?.display_phone_number ?? "").replace(/\D/g, "");
 
       // Mensagens recebidas.
       for (const msg of value.messages ?? []) {
         const from: string = msg.from;
+        if (numeroProprio && String(from ?? "").replace(/\D/g, "") === numeroProprio) continue;
         const texto: string | null =
           msg.type === "text" ? msg.text?.body ?? null
           : msg.type === "button" ? msg.button?.text ?? null
@@ -322,8 +330,16 @@ Deno.serve(async (req) => {
           wa_message_id: msg.id, status: "recebida", origem: "contato",
         };
         if (Object.keys(payloadEntrada).length) entradaRow.payload = payloadEntrada;
-        const { data: nova } = await admin.from("WA_MENSAGEM").insert(entradaRow).select("id").maybeSingle();
-        if (!nova) continue; // já existia (reentrega da Meta)
+        const { data: nova, error: insErr } = await admin.from("WA_MENSAGEM").insert(entradaRow).select("id").maybeSingle();
+        if (!nova) {
+          // 23505 = wa_message_id repetido (reentrega da Meta) → ignorar é certo.
+          // Qualquer OUTRO erro era engolido aqui e a mensagem sumia sem rastro
+          // (sintoma: "mandei um PDF e não chegou"). Agora fica no log.
+          if (insErr && insErr.code !== "23505") {
+            console.error("Mensagem recebida NÃO gravada:", JSON.stringify(insErr), "| tipo:", msg.type, "| wa_message_id:", msg.id);
+          }
+          continue;
+        }
 
         // Baixa o arquivo em segundo plano e atualiza a mensagem com o caminho.
         if (midia) tarefas.push(processarMidia(nova.id, midia));

@@ -118,20 +118,28 @@ Deno.serve(async (req) => {
   });
 
   switch (rota.tipo) {
-    case "fora_horario":
-      return json({ tipo: "fora_horario", resposta: cfg.fora_horario_msg, modo: rota.modo, diagnostico });
-
-    case "menu": {
-      const menuAtual = menu ?? { titulo: "", opcoes: [] };
+    case "nada":
       return json({
-        tipo: "menu",
-        resposta: (menuAtual.titulo && menuAtual.titulo.trim()) || TITULO_MENU_PADRAO,
-        botoes: menuAtual.opcoes.slice(0, 10).map((o) => ({ id: String(o.id), titulo: String(o.titulo) })),
-        formato: menuAtual.opcoes.length <= 3 ? "button" : "list",
+        tipo: "nada",
+        resposta: null,
+        nota: "Nenhum menu configurado — o bot não responde nada. A IA só atende quando uma opção do menu leva a ela.",
         modo: rota.modo,
         diagnostico,
       });
-    }
+
+    case "fora_horario":
+      return json({ tipo: "fora_horario", resposta: cfg.fora_horario_msg, modo: rota.modo, diagnostico });
+
+    case "menu":
+      // rota.menu já é o nível certo da cascata (raiz ou o submenu clicado).
+      return json({
+        tipo: "menu",
+        resposta: (rota.menu.titulo && rota.menu.titulo.trim()) || TITULO_MENU_PADRAO,
+        botoes: rota.menu.opcoes.slice(0, 10).map((o) => ({ id: String(o.id), titulo: String(o.titulo) })),
+        formato: rota.menu.opcoes.length <= 3 ? "button" : "list",
+        modo: rota.modo,
+        diagnostico,
+      });
 
     case "texto":
       return json({ tipo: "menu_texto", resposta: rota.texto, modo: rota.modo, diagnostico });

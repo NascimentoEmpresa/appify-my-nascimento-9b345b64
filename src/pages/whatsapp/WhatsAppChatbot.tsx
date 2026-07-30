@@ -19,8 +19,90 @@ import { MODELOS, PROVEDORES, DIAS, MENU_ACOES, type WaBotConfig, type WaConheci
 const WEBHOOK_URL = "https://fwmzeaztjxrxxzxzxmgc.supabase.co/functions/v1/whatsapp-webhook";
 const SECRETS_META = ["WHATSAPP_VERIFY_TOKEN", "WHATSAPP_APP_SECRET", "WHATSAPP_TOKEN", "WHATSAPP_PHONE_NUMBER_ID"];
 
-// Precisa de ao menos uma opção que leve à IA para o botão "Atendimento por I.A"
-// existir no menu; usamos isso só para um aviso suave na tela.
+const novoIdOpcao = () => `o_${Math.random().toString(36).slice(2, 8)}`;
+
+// A IA só atende quando alguma opção (em qualquer nível) leva a ela — este
+// helper alimenta a nota informativa da tela.
+const temOpcaoIA = (opcoes: WaMenuOpcao[]): boolean =>
+  opcoes.some((o) => o.acao === "ia" || (o.acao === "submenu" && temOpcaoIA(o.submenu?.opcoes ?? [])));
+
+// ---- Editor recursivo do menu em cascata -----------------------------------
+// Cada opção pode responder um texto, abrir MAIS opções (submenu), encaminhar
+// pra IA ou pra atendente. Os componentes se chamam mutuamente para desenhar a
+// árvore em qualquer profundidade; cada nível tem os mesmos limites do
+// WhatsApp (até 3 opções viram botões; 4–10 viram lista).
+function OpcoesEditor({ opcoes, nivel, onChange }: {
+  opcoes: WaMenuOpcao[]; nivel: number; onChange: (ops: WaMenuOpcao[]) => void;
+}) {
+  const setAt = (i: number, nova: WaMenuOpcao) => onChange(opcoes.map((o, j) => (j === i ? nova : o)));
+  const removeAt = (i: number) => onChange(opcoes.filter((_, j) => j !== i));
+  const add = () => {
+    if (opcoes.length >= 10) return;
+    onChange([...opcoes, { id: novoIdOpcao(), titulo: "", acao: "texto", valor: "" }]);
+  };
+  return (
+    <div className="space-y-2">
+      {opcoes.map((o, i) => (
+        <OpcaoEditor key={o.id} opcao={o} indice={i} nivel={nivel} onChange={(nova) => setAt(i, nova)} onRemove={() => removeAt(i)} />
+      ))}
+      {opcoes.length === 0 && (
+        <p className="text-xs text-muted-foreground">{nivel === 0 ? "Nenhuma opção ainda." : "Nenhuma sub-opção ainda."}</p>
+      )}
+      {opcoes.length < 10 && (
+        <Button size="sm" variant="outline" className="gap-1.5" onClick={add}>
+          <Plus className="h-4 w-4" /> {nivel === 0 ? "Adicionar opção" : "Adicionar sub-opção"}
+        </Button>
+      )}
+    </div>
+  );
+}
+
+function OpcaoEditor({ opcao: o, indice, nivel, onChange, onRemove }: {
+  opcao: WaMenuOpcao; indice: number; nivel: number;
+  onChange: (nova: WaMenuOpcao) => void; onRemove: () => void;
+}) {
+  const ajuda = MENU_ACOES.find((a) => a.value === o.acao)?.ajuda ?? "";
+  const sub: WaMenu = o.submenu ?? { titulo: "", opcoes: [] };
+  return (
+    <div className={`space-y-2 rounded border border-border/60 p-2.5 ${nivel > 0 ? "bg-muted/30" : ""}`}>
+      <div className="flex items-center gap-2">
+        <span className="w-4 shrink-0 text-center text-[10px] font-semibold text-muted-foreground">{indice + 1}</span>
+        <Input className="h-8 flex-1 text-sm" maxLength={20} placeholder="Título do botão (ex.: Vagas Disponíveis)" value={o.titulo} onChange={(e) => onChange({ ...o, titulo: e.target.value })} />
+        <Select value={o.acao} onValueChange={(v) => onChange({ ...o, acao: v as WaMenuAcao })}>
+          <SelectTrigger className="h-8 w-48 shrink-0 text-xs"><SelectValue /></SelectTrigger>
+          <SelectContent>
+            {MENU_ACOES.map((a) => <SelectItem key={a.value} value={a.value}>{a.label}</SelectItem>)}
+          </SelectContent>
+        </Select>
+        <Button variant="ghost" size="sm" className="h-8 w-8 shrink-0 p-0 text-muted-foreground hover:text-destructive" onClick={onRemove}><Trash2 className="h-4 w-4" /></Button>
+      </div>
+      {o.acao !== "submenu" && (
+        <Textarea
+          rows={2}
+          value={o.valor ?? ""}
+          onChange={(e) => onChange({ ...o, valor: e.target.value })}
+          placeholder={
+            o.acao === "texto" ? "Resposta que o bot envia ao escolher esta opção"
+            : o.acao === "humano" ? "Aviso ao cliente (ex.: Um atendente vai te responder em instantes)"
+            : "Aviso ao entrar na IA (ex.: Perfeito! Me conta como posso te ajudar). Pode deixar em branco."
+          }
+        />
+      )}
+      <p className="text-[11px] text-muted-foreground">{ajuda}</p>
+      {o.acao === "submenu" && (
+        <div className="ml-4 space-y-2 border-l-2 border-primary/25 pl-3">
+          <div>
+            <Label className="mb-1.5 block text-xs font-semibold">Mensagem deste submenu</Label>
+            <Textarea rows={2} value={sub.titulo} onChange={(e) => onChange({ ...o, submenu: { ...sub, titulo: e.target.value } })}
+              placeholder={`Ex.: ${o.titulo.trim() || "…"} — selecione uma opção:`} />
+          </div>
+          <OpcoesEditor opcoes={sub.opcoes} nivel={nivel + 1} onChange={(ops) => onChange({ ...o, submenu: { ...sub, opcoes: ops } })} />
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function WhatsAppChatbot() {
   const nav = useNavigate();
   const qc = useQueryClient();
@@ -63,15 +145,6 @@ export default function WhatsAppChatbot() {
   // Menu de atendimento — é o fluxo único do bot: toda conversa começa aqui.
   const menu: WaMenu = cfg?.menu ?? { titulo: "", opcoes: [] };
   const setMenu = (m: WaMenu) => set("menu", m);
-  const addOpcao = () => {
-    if (menu.opcoes.length >= 10) return;
-    setMenu({ ...menu, opcoes: [...menu.opcoes, { id: `o_${Math.random().toString(36).slice(2, 8)}`, titulo: "", acao: "ia", valor: "" }] });
-  };
-  const setOpcao = (i: number, patch: Partial<WaMenuOpcao>) =>
-    setMenu({ ...menu, opcoes: menu.opcoes.map((o, j) => (j === i ? { ...o, ...patch } : o)) });
-  const removeOpcao = (i: number) => setMenu({ ...menu, opcoes: menu.opcoes.filter((_, j) => j !== i) });
-
-  const temOpcaoIA = menu.opcoes.some((o) => o.acao === "ia");
 
   const salvar = async () => {
     if (!cfg || salvando) return;
@@ -163,54 +236,23 @@ export default function WhatsAppChatbot() {
             <div>
               <p className="flex items-center gap-1.5 text-sm font-bold"><MousePointerClick className="h-4 w-4 text-primary" /> Menu de atendimento</p>
               <p className="text-xs text-muted-foreground">
-                Toda conversa começa aqui: o bot manda esta mensagem com os botões. Cada botão segue um caminho.
-                Até 3 opções viram botões; 4–10 viram lista.
+                Toda conversa começa aqui: o bot manda esta mensagem com os botões e <b>só responde o que estiver configurado</b>.
+                Uma opção pode responder um texto, abrir mais opções (cascata), encaminhar pra IA ou pra um atendente.
+                Em cada nível, até 3 opções viram botões; 4–10 viram lista.
               </p>
             </div>
             <div>
               <Label className="mb-1.5 block text-xs font-semibold">Mensagem de abertura</Label>
               <Textarea rows={2} value={menu.titulo} onChange={(e) => setMenu({ ...menu, titulo: e.target.value })} placeholder="Ex.: Olá! Somos da Empresa Nascimento. Selecione a opção desejada:" />
             </div>
-            <div className="space-y-2">
-              {menu.opcoes.map((o, i) => {
-                const ajuda = MENU_ACOES.find((a) => a.value === o.acao)?.ajuda ?? "";
-                return (
-                  <div key={o.id} className="space-y-2 rounded border border-border/60 p-2.5">
-                    <div className="flex items-center gap-2">
-                      <span className="w-4 shrink-0 text-center text-[10px] font-semibold text-muted-foreground">{i + 1}</span>
-                      <Input className="h-8 flex-1 text-sm" maxLength={20} placeholder="Título do botão (ex.: Vagas Disponíveis)" value={o.titulo} onChange={(e) => setOpcao(i, { titulo: e.target.value })} />
-                      <Select value={o.acao} onValueChange={(v) => setOpcao(i, { acao: v as WaMenuAcao })}>
-                        <SelectTrigger className="h-8 w-48 shrink-0 text-xs"><SelectValue /></SelectTrigger>
-                        <SelectContent>
-                          {MENU_ACOES.map((a) => <SelectItem key={a.value} value={a.value}>{a.label}</SelectItem>)}
-                        </SelectContent>
-                      </Select>
-                      <Button variant="ghost" size="sm" className="h-8 w-8 shrink-0 p-0 text-muted-foreground hover:text-destructive" onClick={() => removeOpcao(i)}><Trash2 className="h-4 w-4" /></Button>
-                    </div>
-                    <Textarea
-                      rows={2}
-                      value={o.valor ?? ""}
-                      onChange={(e) => setOpcao(i, { valor: e.target.value })}
-                      placeholder={
-                        o.acao === "texto" ? "Resposta que o bot envia ao escolher esta opção"
-                        : o.acao === "humano" ? "Aviso ao cliente (ex.: Um atendente vai te responder em instantes)"
-                        : "Aviso ao entrar na IA (ex.: Perfeito! Me conta como posso te ajudar). Pode deixar em branco."
-                      }
-                    />
-                    <p className="text-[11px] text-muted-foreground">{ajuda}</p>
-                  </div>
-                );
-              })}
-              {menu.opcoes.length === 0 && (
-                <p className="text-xs text-muted-foreground">Nenhuma opção ainda. Adicione ao menos uma (ex.: “Atendimento por I.A”).</p>
-              )}
-            </div>
-            {menu.opcoes.length < 10 && (
-              <Button size="sm" variant="outline" className="gap-1.5" onClick={addOpcao}><Plus className="h-4 w-4" /> Adicionar opção</Button>
-            )}
-            {menu.opcoes.length > 0 && !temOpcaoIA && (
+            <OpcoesEditor opcoes={menu.opcoes} nivel={0} onChange={(ops) => setMenu({ ...menu, opcoes: ops })} />
+            {menu.opcoes.length === 0 ? (
               <p className="rounded border border-warning/40 bg-warning/5 px-3 py-2 text-[11px] text-muted-foreground">
-                Nenhuma opção leva à IA. Sem um botão de <b>Atendimento por I.A</b>, quem escrever fora dos botões só recebe o menu de novo.
+                Sem opções configuradas o bot <b>não responde nada</b> — nem a IA. Adicione ao menos uma opção.
+              </p>
+            ) : !temOpcaoIA(menu.opcoes) && (
+              <p className="text-[11px] text-muted-foreground">
+                Nenhuma opção leva à IA — quem escrever fora dos botões recebe o menu de novo. A IA só atende se você criar uma opção de <b>Atendimento por I.A</b>.
               </p>
             )}
           </Card>

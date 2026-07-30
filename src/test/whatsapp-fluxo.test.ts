@@ -3,9 +3,9 @@ import {
   rotearBot, inferirModo, type BotConfig,
 } from "../../supabase/functions/_shared/whatsapp-bot.ts";
 
-// Config mínima do bot com um menu de 3 opções (texto / ia / humano). O reducer
-// e o inferidor de modo são puros, então dá para exercitar o fluxo inteiro sem
-// banco, sem WhatsApp e sem IA.
+// Config mínima do bot com um menu em CASCATA (texto / submenu / ia / humano).
+// O reducer e o inferidor de modo são puros, então dá para exercitar o fluxo
+// inteiro sem banco, sem WhatsApp e sem IA.
 const cfg = (menu: BotConfig["menu"]): BotConfig => ({
   ativo: true,
   persona: "p",
@@ -22,34 +22,61 @@ const cfg = (menu: BotConfig["menu"]): BotConfig => ({
 });
 
 const MENU = {
-  titulo: "Selecione uma opção",
+  titulo: "Olá! Selecione a opção que deseja:",
   opcoes: [
     { id: "vagas", titulo: "Vagas", acao: "texto" as const, valor: "acesse o site" },
-    { id: "ia", titulo: "Atendimento por I.A", acao: "ia" as const, valor: "" },
+    {
+      id: "rh", titulo: "RH", acao: "submenu" as const, valor: "",
+      submenu: {
+        titulo: "RH — escolha uma opção:",
+        opcoes: [
+          { id: "rh_ia", titulo: "Atendimento por I.A", acao: "ia" as const, valor: "" },
+          { id: "rh_doc", titulo: "Documentos", acao: "texto" as const, valor: "mande o documento" },
+        ],
+      },
+    },
     { id: "humano", titulo: "Falar com atendente", acao: "humano" as const, valor: "" },
   ],
 };
 
 const base = cfg(MENU);
 
-describe("rotearBot — fluxo único guiado por menu", () => {
+describe("rotearBot — fluxo único guiado por menu em cascata", () => {
   it("fora do horário responde o aviso e para", () => {
     const r = rotearBot(base, { modo: "menu", texto: "oi", replyId: null, dentroHorario: false });
     expect(r.tipo).toBe("fora_horario");
   });
 
-  it("texto livre em modo menu só reapresenta o menu (nunca cai direto na IA)", () => {
+  it("texto livre em modo menu apresenta o menu RAIZ (nunca cai direto na IA)", () => {
     const r = rotearBot(base, { modo: "menu", texto: "tem vaga?", replyId: null, dentroHorario: true });
-    expect(r).toMatchObject({ tipo: "menu", modo: "menu" });
+    expect(r.tipo).toBe("menu");
+    if (r.tipo === "menu") {
+      expect(r.menu.titulo).toBe(MENU.titulo);
+      expect(r.menu.opcoes.map((o) => o.id)).toEqual(["vagas", "rh", "humano"]);
+    }
   });
 
-  it("clique numa opção de texto envia a resposta pronta e mantém o modo menu", () => {
+  it("clique numa opção de texto envia a resposta pronta", () => {
     const r = rotearBot(base, { modo: "menu", texto: null, replyId: "vagas", dentroHorario: true });
     expect(r).toMatchObject({ tipo: "texto", texto: "acesse o site", modo: "menu" });
   });
 
-  it("clique na opção de IA entra na IA com um aviso e muda o modo", () => {
-    const r = rotearBot(base, { modo: "menu", texto: null, replyId: "ia", dentroHorario: true });
+  it("clique numa opção de submenu desce a cascata (mostra as sub-opções)", () => {
+    const r = rotearBot(base, { modo: "menu", texto: null, replyId: "rh", dentroHorario: true });
+    expect(r.tipo).toBe("menu");
+    if (r.tipo === "menu") {
+      expect(r.menu.titulo).toBe("RH — escolha uma opção:");
+      expect(r.menu.opcoes.map((o) => o.id)).toEqual(["rh_ia", "rh_doc"]);
+    }
+  });
+
+  it("clique numa sub-opção de texto (2º nível) responde o texto dela", () => {
+    const r = rotearBot(base, { modo: "menu", texto: null, replyId: "rh_doc", dentroHorario: true });
+    expect(r).toMatchObject({ tipo: "texto", texto: "mande o documento", modo: "menu" });
+  });
+
+  it("clique na opção de IA dentro do submenu entra na IA", () => {
+    const r = rotearBot(base, { modo: "menu", texto: null, replyId: "rh_ia", dentroHorario: true });
     expect(r.tipo).toBe("ia_intro");
     expect(r.modo).toBe("ia");
   });
@@ -65,19 +92,33 @@ describe("rotearBot — fluxo único guiado por menu", () => {
     expect(r).toMatchObject({ tipo: "ia", modo: "ia" });
   });
 
-  it('digitar "menu" em modo IA volta para o menu', () => {
+  it('digitar "menu" em modo IA volta para o menu raiz', () => {
     const r = rotearBot(base, { modo: "ia", texto: "menu", replyId: null, dentroHorario: true });
-    expect(r).toMatchObject({ tipo: "menu", modo: "menu" });
+    expect(r.tipo).toBe("menu");
+    if (r.tipo === "menu") expect(r.menu.titulo).toBe(MENU.titulo);
   });
 
-  it("sem menu configurado a IA atende direto (não deixa a conversa muda)", () => {
+  it("sem menu configurado o bot NÃO responde nada (a IA nunca atende por conta própria)", () => {
     const r = rotearBot(cfg({ titulo: "", opcoes: [] }), { modo: "menu", texto: "oi", replyId: null, dentroHorario: true });
-    expect(r.tipo).toBe("ia");
+    expect(r.tipo).toBe("nada");
+    const r2 = rotearBot(cfg(null), { modo: "menu", texto: "oi", replyId: null, dentroHorario: true });
+    expect(r2.tipo).toBe("nada");
   });
 
-  it("opção que não existe mais reapresenta o menu", () => {
+  it("opção que não existe mais reapresenta o menu raiz", () => {
     const r = rotearBot(base, { modo: "menu", texto: null, replyId: "inexistente", dentroHorario: true });
     expect(r.tipo).toBe("menu");
+    if (r.tipo === "menu") expect(r.menu.titulo).toBe(MENU.titulo);
+  });
+
+  it("submenu sem opções (config pela metade) volta ao menu raiz", () => {
+    const comVazio = cfg({
+      titulo: "raiz",
+      opcoes: [{ id: "s", titulo: "Setores", acao: "submenu", valor: "", submenu: { titulo: "vazio", opcoes: [] } }],
+    });
+    const r = rotearBot(comVazio, { modo: "menu", texto: null, replyId: "s", dentroHorario: true });
+    expect(r.tipo).toBe("menu");
+    if (r.tipo === "menu") expect(r.menu.titulo).toBe("raiz");
   });
 });
 
@@ -86,20 +127,29 @@ describe("inferirModo — reconstrói o modo a partir do histórico", () => {
     expect(inferirModo(base, [{ direcao: "entrada", texto: "oi", payload: null }])).toBe("menu");
   });
 
-  it("depois de clicar na opção de IA a conversa está em modo IA", () => {
+  it("clique na opção de IA DENTRO do submenu deixa a conversa em modo IA", () => {
     const hist = [
       { direcao: "entrada", texto: "oi", payload: null },
-      { direcao: "saida", texto: "Selecione uma opção", payload: null },
-      { direcao: "entrada", texto: "Atendimento por I.A", payload: { reply_id: "ia" } },
+      { direcao: "saida", texto: MENU.titulo, payload: null },
+      { direcao: "entrada", texto: "RH", payload: { reply_id: "rh" } },
+      { direcao: "saida", texto: "RH — escolha uma opção:", payload: null },
+      { direcao: "entrada", texto: "Atendimento por I.A", payload: { reply_id: "rh_ia" } },
       { direcao: "saida", texto: "Perfeito!", payload: null },
       { direcao: "entrada", texto: "tem vaga?", payload: null },
     ];
     expect(inferirModo(base, hist)).toBe("ia");
   });
 
+  it("clique num submenu NÃO muda o modo (continua no menu)", () => {
+    const hist = [
+      { direcao: "entrada", texto: "RH", payload: { reply_id: "rh" } },
+    ];
+    expect(inferirModo(base, hist)).toBe("menu");
+  });
+
   it('digitar "menu" depois do clique de IA volta o modo para menu', () => {
     const hist = [
-      { direcao: "entrada", texto: "Atendimento por I.A", payload: { reply_id: "ia" } },
+      { direcao: "entrada", texto: "Atendimento por I.A", payload: { reply_id: "rh_ia" } },
       { direcao: "entrada", texto: "menu", payload: null },
     ];
     expect(inferirModo(base, hist)).toBe("menu");
@@ -107,9 +157,13 @@ describe("inferirModo — reconstrói o modo a partir do histórico", () => {
 
   it("um clique em opção de texto mantém o modo menu", () => {
     const hist = [
-      { direcao: "entrada", texto: "Atendimento por I.A", payload: { reply_id: "ia" } },
-      { direcao: "entrada", texto: "Vagas", payload: { reply_id: "vagas" } },
+      { direcao: "entrada", texto: "Atendimento por I.A", payload: { reply_id: "rh_ia" } },
+      { direcao: "entrada", texto: "Documentos", payload: { reply_id: "rh_doc" } },
     ];
     expect(inferirModo(base, hist)).toBe("menu");
+  });
+
+  it("sem menu configurado o modo é menu (bot mudo)", () => {
+    expect(inferirModo(cfg(null), [{ direcao: "entrada", texto: "oi", payload: null }])).toBe("menu");
   });
 });
