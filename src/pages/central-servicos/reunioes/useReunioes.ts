@@ -153,6 +153,18 @@ export function useUsuariosAtivos() {
   });
 }
 
+/** Quem está marcado pra entrar automaticamente como observador em reuniões de Comitê/Gerencial/Diretoria (configurado em Acesso por Usuário) — só pra mostrar o aviso no formulário, a regra de verdade roda no banco (trigger). */
+export function useObservadoresAutomaticos() {
+  return useQuery({
+    queryKey: ["reuniao-observadores-automaticos"],
+    queryFn: async () => {
+      const { data, error } = await (supabase as any).rpc("listar_observadores_automaticos");
+      if (error) throw error;
+      return (data ?? []) as { user_id: string; display_name: string }[];
+    },
+  });
+}
+
 interface NovaPauta {
   titulo_topico: string;
   descricao: string;
