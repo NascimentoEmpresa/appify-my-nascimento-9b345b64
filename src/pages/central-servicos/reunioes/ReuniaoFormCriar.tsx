@@ -15,7 +15,10 @@ import { Plus, Trash2, Paperclip, Info } from "lucide-react";
 import { useVinculoEmpregado } from "@/hooks/useVinculoEmpregado";
 import { useSetoresEmpresa } from "@/hooks/useSetoresEmpresa";
 import { useBloqueiosAgendaPorUsuarios } from "./useBloqueioAgenda";
-import { useCriarReuniao, useCriarReunioesRecorrentes, useUsuariosAtivos, bloqueioSobrepoe, verificarBloqueioAgenda, verificarConflitoSala, verificarConflitoParticipante } from "./useReunioes";
+import {
+  useCriarReuniao, useCriarReunioesRecorrentes, useObservadoresAutomaticos, useUsuariosAtivos,
+  bloqueioSobrepoe, verificarBloqueioAgenda, verificarConflitoSala, verificarConflitoParticipante,
+} from "./useReunioes";
 import {
   COMITES, ETAPA_COR, ETAPA_LABEL, FINALIDADE_LABEL, MOTIVO_BLOQUEIO_LABEL, NOTIFICAR_POR_LABEL, RESULTADO_ESPERADO_LABEL, SALAS_PRESENCIAIS,
   TIPO_REUNIAO_DURACAO_PADRAO, TIPO_REUNIAO_LABEL, TIPO_REUNIAO_OPCOES_CRIACAO, membrosComite, nomeUsuario,
@@ -122,6 +125,20 @@ export function ReuniaoFormCriar({ open, onOpenChange }: { open: boolean; onOpen
     }
     return avisos;
   }, [idsRelevantes, bloqueiosRelevantes, form.data, form.hora, form.duracao_minutos, opcoesUsuarios]);
+
+  // Aviso de observador automático — não aparece pra escolher em lugar nenhum
+  // do formulário (a regra roda no banco, depois de salvar), então avisa aqui
+  // pra não confundir quem tá criando. Não conta quem já é organizador/responsável
+  // (a regra do banco também não adiciona esses).
+  const { data: observadoresAutomaticos = [] } = useObservadoresAutomaticos();
+  const TIPOS_COM_OBSERVADOR_AUTOMATICO: TipoReuniao[] = ["comite", "gerencial", "diretoria"];
+  const avisoObservadorAutomatico = useMemo(() => {
+    if (!form.tipo_reuniao || !TIPOS_COM_OBSERVADOR_AUTOMATICO.includes(form.tipo_reuniao)) return [];
+    return observadoresAutomaticos
+      .filter((o) => o.user_id !== form.organizador && o.user_id !== form.responsavel)
+      .map((o) => o.display_name);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [form.tipo_reuniao, form.organizador, form.responsavel, observadoresAutomaticos]);
 
   // Pré-seleciona o setor do usuário logado quando carrega, mas continua editável.
   useEffect(() => {
@@ -651,6 +668,15 @@ export function ReuniaoFormCriar({ open, onOpenChange }: { open: boolean; onOpen
             {avisosBloqueio.length > 0 && (
               <div className="space-y-1 rounded-md border border-amber-500/30 bg-amber-500/10 p-2.5 text-xs text-amber-800 dark:text-amber-300">
                 {avisosBloqueio.map((aviso, i) => <p key={i}>⚠️ {aviso}</p>)}
+              </div>
+            )}
+
+            {avisoObservadorAutomatico.length > 0 && (
+              <div className="rounded-md border border-blue-500/30 bg-blue-500/10 p-2.5 text-xs text-blue-800 dark:text-blue-300">
+                <p>
+                  ℹ️ {avisoObservadorAutomatico.join(", ")} {avisoObservadorAutomatico.length > 1 ? "serão adicionados(as)" : "será adicionado(a)"} automaticamente
+                  {" "}como observador(a) — regra pra reuniões desse tipo. Não precisa selecionar manualmente.
+                </p>
               </div>
             )}
           </div>
