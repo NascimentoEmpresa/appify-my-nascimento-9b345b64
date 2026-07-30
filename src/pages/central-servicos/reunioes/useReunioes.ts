@@ -239,7 +239,13 @@ async function criarUmaReuniao(nova: NovaReuniao): Promise<string> {
     ...observadoresSemDuplicata.map((userId) => ({ reuniao_id: reuniaoId, user_id: userId, papel: "observador" })),
   ];
   if (participantes.length > 0) {
-    const { error: convidadosErr } = await (supabase as any).from("reuniao_convidado").insert(participantes);
+    // upsert com ignoreDuplicates (não insert puro): reuniões de Comitê/Gerencial/Diretoria
+    // já podem ter ganhado observador automático via trigger (ver reuniao_observador_automatico)
+    // antes desse insert rodar — sem isso, escolher a mesma pessoa aqui de novo quebraria por
+    // violar o UNIQUE (reuniao_id, user_id).
+    const { error: convidadosErr } = await (supabase as any)
+      .from("reuniao_convidado")
+      .upsert(participantes, { onConflict: "reuniao_id,user_id", ignoreDuplicates: true });
     if (convidadosErr) throw convidadosErr;
   }
 

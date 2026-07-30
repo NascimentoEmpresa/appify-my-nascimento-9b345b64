@@ -12,6 +12,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import type { FormCap } from "@/hooks/useFormPerms";
 
 const FORM_MENU_CODIGO = "central_servicos_formularios";
+const REUNIOES_MENU_CODIGO = "central_servicos_reunioes";
 
 interface Modulo { id: string; codigo: string; nome: string; ordem: number; ativo: boolean; icone: string | null }
 interface Menu { id: string; modulo_id: string; codigo: string; nome: string; rota: string | null; ordem: number; ativo: boolean }
@@ -484,12 +485,13 @@ function UserAccessPanel({ podeGerenciar, modulos, menus }: { podeGerenciar: boo
                       const menuAccess = hasAccess(mn.codigo);
                       const isPending = pending.has(mn.codigo);
                       const isForm = mn.codigo === FORM_MENU_CODIGO;
+                      const isReunioes = mn.codigo === REUNIOES_MENU_CODIGO;
                       const capsOpen = expanded.has(mn.id);
                       return (
                         <div key={mn.id}>
                           <div className={cn("flex items-center gap-2 px-12 py-2.5 hover:bg-muted/40", isPending && "bg-amber-50/50 dark:bg-amber-950/20")}>
-                            {isForm && podeGerenciar ? (
-                              <button onClick={() => toggleExpand(mn.id)} className="text-muted-foreground" title="Permissões do usuário nos formulários">
+                            {(isForm || isReunioes) && podeGerenciar ? (
+                              <button onClick={() => toggleExpand(mn.id)} className="text-muted-foreground" title="Permissões do usuário neste menu">
                                 {capsOpen ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
                               </button>
                             ) : (
@@ -511,6 +513,11 @@ function UserAccessPanel({ podeGerenciar, modulos, menus }: { podeGerenciar: boo
                               <FormPermsUsuario userId={selectedUserId} onToast={(m, t) => toast({ title: m, variant: t === "err" ? "destructive" : "default" })} />
                             </div>
                           )}
+                          {isReunioes && podeGerenciar && capsOpen && (
+                            <div className="border-t border-border/60 bg-background px-12 py-2">
+                              <ObservadorAutomaticoReuniao userId={selectedUserId} onToast={(m, t) => toast({ title: m, variant: t === "err" ? "destructive" : "default" })} />
+                            </div>
+                          )}
                         </div>
                       );
                     })}
@@ -521,6 +528,51 @@ function UserAccessPanel({ podeGerenciar, modulos, menus }: { podeGerenciar: boo
           })}
         </div>
       )}
+    </div>
+  );
+}
+
+// ─── Observador automático em reuniões de Comitê/Gerencial/Diretoria ───────────
+// Presença de uma linha em reuniao_observador_automatico = flag ligada pra
+// aquele usuário (mesmo padrão de CS_FORM_ACESSOS abaixo). Aplicado via
+// trigger no banco (adicionar_observadores_automaticos_reuniao), não aqui —
+// esse painel só liga/desliga a flag.
+function ObservadorAutomaticoReuniao({ userId, onToast }: { userId: string; onToast: (m: string, t?: string) => void }) {
+  const [ativo, setAtivo] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const erroPerm = (m: string) => /row-level|permission|policy/i.test(m) ? "Só administradores alteram permissões." : "Erro: " + m;
+
+  useEffect(() => {
+    setLoading(true);
+    (supabase as any)
+      .from("reuniao_observador_automatico")
+      .select("id")
+      .eq("user_id", userId)
+      .maybeSingle()
+      .then(({ data }: any) => { setAtivo(!!data); setLoading(false); });
+  }, [userId]);
+
+  const toggle = async () => {
+    if (ativo) {
+      const { error } = await (supabase as any).from("reuniao_observador_automatico").delete().eq("user_id", userId);
+      if (error) { onToast(erroPerm(error.message), "err"); return; }
+    } else {
+      const { error } = await (supabase as any).from("reuniao_observador_automatico").insert({ user_id: userId });
+      if (error) { onToast(erroPerm(error.message), "err"); return; }
+    }
+    setAtivo((v) => !v);
+  };
+
+  return (
+    <div className="flex items-center gap-3 py-2.5">
+      <div className="flex-1">
+        <p className="text-sm">Observadora automática em reuniões de Comitê, Gerencial ou Diretoria</p>
+        <p className="text-[11px] text-muted-foreground">
+          Ao criar uma reunião desses tipos, esta pessoa é adicionada como observadora automaticamente —
+          a não ser que ela seja a criadora/organizadora/responsável, ou já esteja convidada.
+        </p>
+      </div>
+      <Switch checked={ativo} disabled={loading} onCheckedChange={toggle} aria-label="Observadora automática em reuniões de Comitê, Gerencial ou Diretoria" />
     </div>
   );
 }
