@@ -10,7 +10,16 @@
 
 DROP FUNCTION IF EXISTS public.chamados_ranking_satisfacao();
 
-TRUNCATE public."CHAMADO_SISTEMA_AVALIACAO";
+-- Limpa as avaliações antigas SÓ na primeira execução (quando o schema antigo
+-- ainda existe). Assim re-rodar a migration não apaga avaliações novas.
+DO $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM information_schema.columns
+             WHERE table_schema = 'public' AND table_name = 'CHAMADO_SISTEMA_AVALIACAO'
+               AND column_name = 'atendimento') THEN
+    TRUNCATE public."CHAMADO_SISTEMA_AVALIACAO";
+  END IF;
+END $$;
 
 ALTER TABLE public."CHAMADO_SISTEMA_AVALIACAO"
   DROP COLUMN IF EXISTS atendimento,
