@@ -12,6 +12,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Search, FileCheck, CircleDollarSign } from "lucide-react";
 import { toast } from "sonner";
+import { cn } from "@/lib/utils";
 import { useEmpresaAtiva } from "@/context/EmpresaAtivaContext";
 import { useContratosERP } from "@/hooks/useContratosERP";
 import {
@@ -37,6 +38,53 @@ function situacaoEspecial(n: NfEmissaoRow): "SUBSTITUIDA" | "CANCELADA" | null {
   if (valores.includes("CANCELADA")) return "CANCELADA";
   if (valores.includes("SUBSTITUIDA")) return "SUBSTITUIDA";
   return null;
+}
+
+type StatusFiltro = "todos" | "pendente" | "pago" | "substituida" | "cancelada";
+
+const STATUS_FILTRO_LABEL: Record<StatusFiltro, string> = {
+  todos: "Todos",
+  pendente: "Pendente",
+  pago: "Pago",
+  substituida: "Substituída",
+  cancelada: "Cancelada",
+};
+
+function statusDaNota(n: NfEmissaoRow): Exclude<StatusFiltro, "todos"> {
+  const esp = situacaoEspecial(n);
+  if (esp === "CANCELADA") return "cancelada";
+  if (esp === "SUBSTITUIDA") return "substituida";
+  return n.data_pagamento ? "pago" : "pendente";
+}
+
+function PagamentoBadge({ nf }: { nf: NfEmissaoRow }) {
+  if (nf.data_pagamento) {
+    return (
+      <Badge className="bg-emerald-500/15 text-emerald-700 dark:text-emerald-400">
+        Pago em {fmtDate(nf.data_pagamento)}
+      </Badge>
+    );
+  }
+  const especial = situacaoEspecial(nf);
+  if (especial === "CANCELADA") {
+    return (
+      <Badge variant="outline" className="border-destructive/40 text-destructive">
+        Cancelada
+      </Badge>
+    );
+  }
+  if (especial === "SUBSTITUIDA") {
+    return (
+      <Badge variant="outline" className="border-muted-foreground/30 text-muted-foreground">
+        Substituída
+      </Badge>
+    );
+  }
+  return (
+    <Badge variant="outline" className="border-amber-500/40 text-amber-700 dark:text-amber-400">
+      Pendente
+    </Badge>
+  );
 }
 
 function itemRowParaForm(r: NfEmissaoItemRow): ItemForm {
@@ -68,8 +116,10 @@ export default function NotasConcluidasTab() {
   const [busca, setBusca] = useState("");
   const [contratoSel, setContratoSel] = useState<string | null>(null);
   const [nfSelecionada, setNfSelecionada] = useState<NfEmissaoRow | null>(null);
+  const [filtroStatus, setFiltroStatus] = useState<StatusFiltro>("todos");
 
   const concluidas = useMemo(() => nfs.filter((n) => n.status === "concluida"), [nfs]);
+  const contratoPorId = useMemo(() => new Map(contratos.map((c) => [c.id, c])), [contratos]);
 
   const contratosComNotas = useMemo(() => {
     const termo = busca.trim().toLowerCase();
@@ -84,7 +134,19 @@ export default function NotasConcluidasTab() {
   }, [contratos, concluidas, busca]);
 
   const contratoAtual = contratos.find((c) => c.id === contratoSel) ?? null;
-  const nfsDoContrato = useMemo(() => concluidas.filter((n) => n.contrato_id === contratoSel), [concluidas, contratoSel]);
+  const nfsDoContrato = useMemo(
+    () =>
+      concluidas.filter(
+        (n) => n.contrato_id === contratoSel && (filtroStatus === "todos" || statusDaNota(n) === filtroStatus)
+      ),
+    [concluidas, contratoSel, filtroStatus]
+  );
+  // Sem contrato selecionado, mas com filtro de status ativo: lista achatada
+  // cruzando todos os contratos (ex: "me mostra todas as canceladas").
+  const nfsFlatFiltradas = useMemo(() => {
+    if (contratoSel || filtroStatus === "todos") return [];
+    return concluidas.filter((n) => statusDaNota(n) === filtroStatus).sort((a, b) => b.competencia.localeCompare(a.competencia));
+  }, [concluidas, contratoSel, filtroStatus]);
 
   return (
     <div className="grid grid-cols-5 gap-4 h-[calc(100vh-220px)] min-h-[480px]">
@@ -136,14 +198,25 @@ export default function NotasConcluidasTab() {
       </div>
 
       <div className="col-span-3 card-elevated flex flex-col overflow-hidden">
-        {!contratoAtual ? (
-          <div className="flex h-full items-center justify-center py-20">
-            <div className="text-center">
-              <FileCheck className="mx-auto mb-3 h-10 w-10 text-muted-foreground/30" />
-              <p className="text-sm text-muted-foreground">Selecione um contrato</p>
-            </div>
-          </div>
-        ) : (
+        <div className="border-b border-border px-4 py-3 flex items-center gap-2 flex-wrap">
+          <span className="text-xs font-medium text-muted-foreground mr-1">Status:</span>
+          {(Object.keys(STATUS_FILTRO_LABEL) as StatusFiltro[]).map((s) => (
+            <button
+              key={s}
+              onClick={() => setFiltroStatus(s)}
+              className={cn(
+                "px-3 py-1 rounded-full text-xs font-medium border transition-colors",
+                filtroStatus === s
+                  ? "bg-primary text-primary-foreground border-primary"
+                  : "bg-background border-border text-muted-foreground hover:border-primary/50"
+              )}
+            >
+              {STATUS_FILTRO_LABEL[s]}
+            </button>
+          ))}
+        </div>
+
+        {contratoAtual ? (
           <>
             <div className="border-b border-border px-4 py-3">
               <p className="text-sm font-semibold">{contratoAtual.nome}</p>
@@ -164,7 +237,7 @@ export default function NotasConcluidasTab() {
                   {nfsDoContrato.length === 0 && (
                     <TableRow>
                       <TableCell colSpan={5} className="text-center text-muted-foreground py-8">
-                        Nenhuma NF concluída para este contrato.
+                        Nenhuma NF {filtroStatus === "todos" ? "concluída" : STATUS_FILTRO_LABEL[filtroStatus].toLowerCase()} para este contrato.
                       </TableCell>
                     </TableRow>
                   )}
@@ -177,23 +250,7 @@ export default function NotasConcluidasTab() {
                       <TableCell>{nf.numero_nf ?? "-"}</TableCell>
                       <TableCell>{fmtMoney(nf.vlr_liquido_total)}</TableCell>
                       <TableCell>
-                        {nf.data_pagamento ? (
-                          <Badge className="bg-emerald-500/15 text-emerald-700 dark:text-emerald-400">
-                            Pago em {fmtDate(nf.data_pagamento)}
-                          </Badge>
-                        ) : situacaoEspecial(nf) === "CANCELADA" ? (
-                          <Badge variant="outline" className="border-destructive/40 text-destructive">
-                            Cancelada
-                          </Badge>
-                        ) : situacaoEspecial(nf) === "SUBSTITUIDA" ? (
-                          <Badge variant="outline" className="border-muted-foreground/30 text-muted-foreground">
-                            Substituída
-                          </Badge>
-                        ) : (
-                          <Badge variant="outline" className="border-amber-500/40 text-amber-700 dark:text-amber-400">
-                            Pendente
-                          </Badge>
-                        )}
+                        <PagamentoBadge nf={nf} />
                       </TableCell>
                     </TableRow>
                   ))}
@@ -201,6 +258,51 @@ export default function NotasConcluidasTab() {
               </Table>
             </div>
           </>
+        ) : filtroStatus !== "todos" ? (
+          <div className="overflow-auto flex-1">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Contrato</TableHead>
+                  <TableHead>Competência</TableHead>
+                  <TableHead>Variação</TableHead>
+                  <TableHead>Nº NF</TableHead>
+                  <TableHead>Valor Líquido</TableHead>
+                  <TableHead>Pagamento</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {nfsFlatFiltradas.length === 0 && (
+                  <TableRow>
+                    <TableCell colSpan={6} className="text-center text-muted-foreground py-8">
+                      Nenhuma NF {STATUS_FILTRO_LABEL[filtroStatus].toLowerCase()} em nenhum contrato.
+                    </TableCell>
+                  </TableRow>
+                )}
+                {nfsFlatFiltradas.map((nf) => (
+                  <TableRow key={nf.id} className="cursor-pointer hover:bg-muted/50" onClick={() => setNfSelecionada(nf)}>
+                    <TableCell className="max-w-[220px] truncate">{contratoPorId.get(nf.contrato_id)?.nome ?? "-"}</TableCell>
+                    <TableCell>
+                      {new Date(nf.competencia + "T00:00:00").toLocaleDateString("pt-BR", { month: "2-digit", year: "numeric" })}
+                    </TableCell>
+                    <TableCell>{nf.variacao ?? "-"}</TableCell>
+                    <TableCell>{nf.numero_nf ?? "-"}</TableCell>
+                    <TableCell>{fmtMoney(nf.vlr_liquido_total)}</TableCell>
+                    <TableCell>
+                      <PagamentoBadge nf={nf} />
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </div>
+        ) : (
+          <div className="flex h-full items-center justify-center py-20">
+            <div className="text-center">
+              <FileCheck className="mx-auto mb-3 h-10 w-10 text-muted-foreground/30" />
+              <p className="text-sm text-muted-foreground">Selecione um contrato ou um status pra ver todas as notas</p>
+            </div>
+          </div>
         )}
       </div>
 
