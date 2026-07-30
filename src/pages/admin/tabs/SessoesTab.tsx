@@ -14,11 +14,11 @@ interface Sessao {
 
 export function SessoesTab() {
   const qc = useQueryClient();
-  const { roles } = usePermissoes();
-  const isAdmin = roles.includes("admin");
+  const { can } = usePermissoes();
+  const podeGerenciar = can("alterar", undefined, "administracao");
 
   const sessoesQ = useQuery({
-    enabled: isAdmin,
+    enabled: podeGerenciar,
     queryKey: ["admin_active_sessions"],
     queryFn: async () => {
       const { data, error } = await supabase.rpc("admin_list_active_sessions");
@@ -38,7 +38,7 @@ export function SessoesTab() {
     qc.invalidateQueries({ queryKey: ["admin_active_sessions"] });
   };
 
-  if (!isAdmin) {
+  if (!podeGerenciar) {
     return <section className="card-elevated p-6 text-sm text-muted-foreground">Apenas administradores podem visualizar sessões ativas.</section>;
   }
 

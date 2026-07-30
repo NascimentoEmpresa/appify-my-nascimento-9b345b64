@@ -80,8 +80,8 @@ Deno.serve(async (req) => {
     if (!u?.user) return json({ error: "Sessão inválida" }, 401);
 
     const admin = createClient(SUPABASE_URL, SERVICE);
-    const { data: isAdmin } = await admin.rpc("has_role", { _user_id: u.user.id, _role: "admin" });
-    if (!isAdmin) return json({ error: "Apenas administradores" }, 403);
+    const { data: podeCarregar } = await admin.rpc("can_access", { _user: u.user.id, _menu: "administracao", _acao: "alterar" });
+    if (!podeCarregar) return json({ error: "Apenas administradores" }, 403);
 
     const body = await req.json().catch(() => ({}));
     const arquivo: string = body.arquivo;

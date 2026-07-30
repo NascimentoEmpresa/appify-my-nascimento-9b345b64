@@ -45,8 +45,8 @@ import { Label } from "@/components/ui/label";
 export default function Implantacao() {
   const { empresa } = useEmpresaAtiva();
   const empresaAtivaId = empresa.id;
-  const { roles } = usePermissoes();
-  const isAdmin = roles.includes("admin");
+  const { can } = usePermissoes();
+  const podeExcluir = can("excluir", undefined, "implantacao");
   const { data: contratos = [], isLoading, error } = useImplantacaoContratos(empresaAtivaId);
   const { data: checklistItems = [] } = useChecklistItems();
 
@@ -165,7 +165,7 @@ export default function Implantacao() {
                 {" · "}Abertura: <span className="font-medium text-foreground">{contrato.abertura ?? "—"}</span>
               </div>
             )}
-            {isAdmin && contrato && (
+            {podeExcluir && contrato && (
               <Button variant="ghost" size="icon" className="ml-auto text-destructive hover:text-destructive hover:bg-destructive/10" onClick={() => setDeleteTarget(contrato)}>
                 <Trash2 className="h-4 w-4" />
               </Button>

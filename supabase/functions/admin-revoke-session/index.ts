@@ -39,12 +39,13 @@ Deno.serve(async (req) => {
     if (userErr || !userData?.user) return jsonResponse({ error: "Sessão inválida" }, 401);
 
     const admin = createClient(SUPABASE_URL, SERVICE_ROLE);
-    const { data: isAdmin, error: roleErr } = await admin.rpc("has_role", {
-      _user_id: userData.user.id,
-      _role: "admin",
+    const { data: podeEncerrar, error: roleErr } = await admin.rpc("can_access", {
+      _user: userData.user.id,
+      _menu: "administracao",
+      _acao: "alterar",
     });
     if (roleErr) return jsonResponse({ error: roleErr.message }, 500);
-    if (!isAdmin) return jsonResponse({ error: "Apenas administradores." }, 403);
+    if (!podeEncerrar) return jsonResponse({ error: "Apenas administradores." }, 403);
 
     let body: { user_id?: string };
     try { body = await req.json(); } catch { return jsonResponse({ error: "JSON inválido" }, 400); }

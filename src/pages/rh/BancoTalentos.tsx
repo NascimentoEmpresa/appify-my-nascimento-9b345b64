@@ -50,8 +50,8 @@ function agruparPessoas(list: any[]): any[][] {
 
 export default function BancoTalentos() {
   const { user } = useAuth();
-  const { roles } = usePermissoes();
-  const podeAgir = roles.includes("treinamentos") || roles.includes("admin");
+  const { can } = usePermissoes();
+  const podeAgir = can("alterar", undefined, "recrutamento_gestao");
   const nome = user?.user_metadata?.nome ?? user?.email ?? "";
 
   const [aba, setAba] = useState<Aba>("banco");

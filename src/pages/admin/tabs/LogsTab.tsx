@@ -13,11 +13,11 @@ interface LogEntry {
 
 export function LogsTab() {
   const qc = useQueryClient();
-  const { roles } = usePermissoes();
-  const isAdmin = roles.includes("admin");
+  const { can } = usePermissoes();
+  const podeVer = can("visualizar", undefined, "administracao");
 
   const logsQ = useQuery({
-    enabled: isAdmin,
+    enabled: podeVer,
     queryKey: ["admin_auth_logs"],
     queryFn: async () => {
       const { data, error } = await supabase.rpc("admin_list_auth_logs", { _limit: 200 });
@@ -26,7 +26,7 @@ export function LogsTab() {
     },
   });
 
-  if (!isAdmin) {
+  if (!podeVer) {
     return <section className="card-elevated p-6 text-sm text-muted-foreground">Apenas administradores podem visualizar logs de acesso.</section>;
   }
 

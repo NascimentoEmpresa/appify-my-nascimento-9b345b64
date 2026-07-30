@@ -37,8 +37,8 @@ interface PerfilAcesso { id: string; nome: string; descricao: string | null; con
 
 export function ModulosMenusTab() {
   const qc = useQueryClient();
-  const { roles } = usePermissoes();
-  const isAdmin = roles.includes("admin");
+  const { can } = usePermissoes();
+  const podeGerenciar = can("alterar", undefined, "administracao");
   const [view, setView] = useState<View>("catalogo");
   const [showAddForm, setShowAddForm] = useState(false);
 
@@ -68,7 +68,7 @@ export function ModulosMenusTab() {
           <p className="text-xs text-muted-foreground">Catálogo do ERP e controle de acesso por usuário.</p>
         </div>
 
-        {isAdmin && view === "catalogo" && (
+        {podeGerenciar && view === "catalogo" && (
           <Button
             size="sm"
             variant={showAddForm ? "secondary" : "default"}
@@ -106,7 +106,7 @@ export function ModulosMenusTab() {
 
       {view === "catalogo" && (
         <CatalogoView
-          isAdmin={isAdmin}
+          podeGerenciar={podeGerenciar}
           modulosQ={modulosQ}
           menusQ={menusQ}
           showAddForm={showAddForm}
@@ -118,7 +118,7 @@ export function ModulosMenusTab() {
 
       {view === "acesso" && (
         <UserAccessPanel
-          isAdmin={isAdmin}
+          podeGerenciar={podeGerenciar}
           modulos={modulosQ.data ?? []}
           menus={menusQ.data ?? []}
         />
@@ -129,8 +129,8 @@ export function ModulosMenusTab() {
 
 // ─── View: Catálogo ────────────────────────────────────────────────────────────
 
-function CatalogoView({ isAdmin, modulosQ, menusQ, showAddForm, onAddFormClose, onModuloChange, onMenuChange }: {
-  isAdmin: boolean;
+function CatalogoView({ podeGerenciar, modulosQ, menusQ, showAddForm, onAddFormClose, onModuloChange, onMenuChange }: {
+  podeGerenciar: boolean;
   modulosQ: any;
   menusQ: any;
   showAddForm: boolean;
@@ -171,7 +171,7 @@ function CatalogoView({ isAdmin, modulosQ, menusQ, showAddForm, onAddFormClose, 
 
   return (
     <>
-      {isAdmin && showAddForm && (
+      {podeGerenciar && showAddForm && (
         <div className="grid gap-2 border-b border-border bg-muted/30 px-5 py-3 sm:grid-cols-[1fr_1fr_180px_auto]">
           <Input placeholder="Código (ex: financeiro)" value={novoModulo.codigo} onChange={(e) => setNovoModulo({ ...novoModulo, codigo: e.target.value })} />
           <Input placeholder="Nome" value={novoModulo.nome} onChange={(e) => setNovoModulo({ ...novoModulo, nome: e.target.value })} />
@@ -194,12 +194,12 @@ function CatalogoView({ isAdmin, modulosQ, menusQ, showAddForm, onAddFormClose, 
                   <p className="text-sm font-medium">{m.nome}</p>
                   <p className="text-[11px] font-mono text-muted-foreground">{m.codigo} · ordem {m.ordem} · {menus.length} menu(s)</p>
                 </div>
-                {isAdmin && (
+                {podeGerenciar && (
                   <Button size="sm" variant="ghost" onClick={() => removerModulo(m.id)} className="text-destructive hover:text-destructive"><Trash2 className="h-3.5 w-3.5" /></Button>
                 )}
               </div>
               {open && (
-                <MenusEditor moduloId={m.id} menus={menus} isAdmin={isAdmin} onChange={onMenuChange} />
+                <MenusEditor moduloId={m.id} menus={menus} podeGerenciar={podeGerenciar} onChange={onMenuChange} />
               )}
             </div>
           );
@@ -209,7 +209,7 @@ function CatalogoView({ isAdmin, modulosQ, menusQ, showAddForm, onAddFormClose, 
   );
 }
 
-function MenusEditor({ moduloId, menus, isAdmin, onChange }: { moduloId: string; menus: Menu[]; isAdmin: boolean; onChange: () => void }) {
+function MenusEditor({ moduloId, menus, podeGerenciar, onChange }: { moduloId: string; menus: Menu[]; podeGerenciar: boolean; onChange: () => void }) {
   const [novo, setNovo] = useState({ codigo: "", nome: "", rota: "" });
 
   const add = async () => {
@@ -245,14 +245,14 @@ function MenusEditor({ moduloId, menus, isAdmin, onChange }: { moduloId: string;
               <td className="py-2 text-[11px] font-mono text-muted-foreground">{mn.codigo}</td>
               <td className="py-2 text-[11px] font-mono text-muted-foreground">{mn.rota ?? "-"}</td>
               <td className="py-2 text-right">
-                {isAdmin && <Button size="sm" variant="ghost" onClick={() => remover(mn.id)}><Trash2 className="h-3 w-3" /></Button>}
+                {podeGerenciar && <Button size="sm" variant="ghost" onClick={() => remover(mn.id)}><Trash2 className="h-3 w-3" /></Button>}
               </td>
             </tr>
           ))}
         </tbody>
       </table>
 
-      {isAdmin && (
+      {podeGerenciar && (
         <div className="mt-2 grid gap-2 sm:grid-cols-[1fr_1fr_1fr_auto]">
           <Input placeholder="código" value={novo.codigo} onChange={(e) => setNovo({ ...novo, codigo: e.target.value })} className="h-8 text-xs" />
           <Input placeholder="nome" value={novo.nome} onChange={(e) => setNovo({ ...novo, nome: e.target.value })} className="h-8 text-xs" />
@@ -266,7 +266,7 @@ function MenusEditor({ moduloId, menus, isAdmin, onChange }: { moduloId: string;
 
 // ─── View: Acesso por Usuário ──────────────────────────────────────────────────
 
-function UserAccessPanel({ isAdmin, modulos, menus }: { isAdmin: boolean; modulos: Modulo[]; menus: Menu[] }) {
+function UserAccessPanel({ podeGerenciar, modulos, menus }: { podeGerenciar: boolean; modulos: Modulo[]; menus: Menu[] }) {
   const [selectedUserId, setSelectedUserId] = useState<string>("");
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   // Map of menu_codigo → desired allow value (staged, not yet saved)
@@ -338,7 +338,7 @@ function UserAccessPanel({ isAdmin, modulos, menus }: { isAdmin: boolean; modulo
   };
 
   const handleSave = async () => {
-    if (!selectedUserId || !isAdmin || pending.size === 0) return;
+    if (!selectedUserId || !podeGerenciar || pending.size === 0) return;
     setIsSaving(true);
     try {
       for (const [codigo, allow] of pending) {
@@ -403,7 +403,7 @@ function UserAccessPanel({ isAdmin, modulos, menus }: { isAdmin: boolean; modulo
             </Button>
           )}
 
-          {!isAdmin && (
+          {!podeGerenciar && (
             <p className="text-xs text-muted-foreground">Apenas administradores podem alterar permissões.</p>
           )}
         </div>
@@ -423,7 +423,7 @@ function UserAccessPanel({ isAdmin, modulos, menus }: { isAdmin: boolean; modulo
         <div className="divide-y divide-border">
           <PerfisAtribuidosSection
             userId={selectedUserId}
-            isAdmin={isAdmin}
+            podeGerenciar={podeGerenciar}
             expanded={expanded.has("__perfis__")}
             onToggleExpand={() => toggleExpand("__perfis__")}
           />
@@ -452,7 +452,7 @@ function UserAccessPanel({ isAdmin, modulos, menus }: { isAdmin: boolean; modulo
                     {modMenus.length === 0 && (
                       <Switch
                         checked={moduloAccess}
-                        disabled={!isAdmin}
+                        disabled={!podeGerenciar}
                         onCheckedChange={() => stageChange(m.codigo, !moduloAccess)}
                         aria-label={`Acesso ao módulo ${m.nome}`}
                       />
@@ -467,7 +467,7 @@ function UserAccessPanel({ isAdmin, modulos, menus }: { isAdmin: boolean; modulo
 
                 {open && modMenus.length > 0 && (
                   <div className="bg-muted/20 divide-y divide-border/60">
-                    {isAdmin && (
+                    {podeGerenciar && (
                       <div className="flex items-center justify-end px-12 py-1.5">
                         <Button
                           size="sm"
@@ -488,7 +488,7 @@ function UserAccessPanel({ isAdmin, modulos, menus }: { isAdmin: boolean; modulo
                       return (
                         <div key={mn.id}>
                           <div className={cn("flex items-center gap-2 px-12 py-2.5 hover:bg-muted/40", isPending && "bg-amber-50/50 dark:bg-amber-950/20")}>
-                            {isForm && isAdmin ? (
+                            {isForm && podeGerenciar ? (
                               <button onClick={() => toggleExpand(mn.id)} className="text-muted-foreground" title="Permissões do usuário nos formulários">
                                 {capsOpen ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
                               </button>
@@ -501,12 +501,12 @@ function UserAccessPanel({ isAdmin, modulos, menus }: { isAdmin: boolean; modulo
                             </div>
                             <Switch
                               checked={menuAccess}
-                              disabled={!isAdmin}
+                              disabled={!podeGerenciar}
                               onCheckedChange={() => stageChange(mn.codigo, !menuAccess)}
                               aria-label={`Acesso ao menu ${mn.nome}`}
                             />
                           </div>
-                          {isForm && isAdmin && capsOpen && (
+                          {isForm && podeGerenciar && capsOpen && (
                             <div className="border-t border-border/60 bg-background px-12 py-2">
                               <FormPermsUsuario userId={selectedUserId} onToast={(m, t) => toast({ title: m, variant: t === "err" ? "destructive" : "default" })} />
                             </div>
@@ -792,8 +792,8 @@ function FormPermsUsuario({ userId, onToast }: { userId: string; onToast: (m: st
 // Os switches dos módulos abaixo continuam mostrando o acesso EFETIVO
 // (perfil(is) + exceções) — mexer num switch individual de módulo/menu cria
 // uma exceção só pra esta pessoa, sem tirar ela do(s) perfil(is).
-function PerfisAtribuidosSection({ userId, isAdmin, expanded, onToggleExpand }: {
-  userId: string; isAdmin: boolean; expanded: boolean; onToggleExpand: () => void;
+function PerfisAtribuidosSection({ userId, podeGerenciar, expanded, onToggleExpand }: {
+  userId: string; podeGerenciar: boolean; expanded: boolean; onToggleExpand: () => void;
 }) {
   const qc = useQueryClient();
   const [saving, setSaving] = useState<string | null>(null);
@@ -817,7 +817,7 @@ function PerfisAtribuidosSection({ userId, isAdmin, expanded, onToggleExpand }: 
   });
 
   const toggle = async (perfilId: string, atribuido: boolean) => {
-    if (!isAdmin) return;
+    if (!podeGerenciar) return;
     setSaving(perfilId);
     try {
       if (atribuido) {
@@ -876,7 +876,7 @@ function PerfisAtribuidosSection({ userId, isAdmin, expanded, onToggleExpand }: 
                 </div>
                 <Switch
                   checked={on}
-                  disabled={!isAdmin || saving === p.id}
+                  disabled={!podeGerenciar || saving === p.id}
                   onCheckedChange={() => toggle(p.id, on)}
                   aria-label={`Perfil ${p.nome}`}
                 />
