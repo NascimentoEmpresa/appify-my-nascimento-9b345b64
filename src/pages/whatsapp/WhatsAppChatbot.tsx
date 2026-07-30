@@ -14,10 +14,10 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
 import { Bot, ShieldAlert, Plus, Trash2, Save, Power, Inbox, Info, MousePointerClick } from "lucide-react";
-import { MODELOS, DIAS, MENU_ACOES, type WaBotConfig, type WaConhecimento, type WaMenu, type WaMenuOpcao, type WaMenuAcao } from "./types";
+import { MODELOS, PROVEDORES, DIAS, MENU_ACOES, type WaBotConfig, type WaConhecimento, type WaMenu, type WaMenuOpcao, type WaMenuAcao, type WaProvedor } from "./types";
 
 const WEBHOOK_URL = "https://fwmzeaztjxrxxzxzxmgc.supabase.co/functions/v1/whatsapp-webhook";
-const SECRETS = ["WHATSAPP_VERIFY_TOKEN", "WHATSAPP_APP_SECRET", "WHATSAPP_TOKEN", "WHATSAPP_PHONE_NUMBER_ID", "ANTHROPIC_API_KEY"];
+const SECRETS_META = ["WHATSAPP_VERIFY_TOKEN", "WHATSAPP_APP_SECRET", "WHATSAPP_TOKEN", "WHATSAPP_PHONE_NUMBER_ID"];
 
 export default function WhatsAppChatbot() {
   const nav = useNavigate();
@@ -50,6 +50,14 @@ export default function WhatsAppChatbot() {
 
   const set = <K extends keyof WaBotConfig>(k: K, v: WaBotConfig[K]) => setCfg((c) => (c ? { ...c, [k]: v } : c));
 
+  // Provedor de IA. Trocar o provedor troca a lista de modelos, então o modelo
+  // atual (de outro provedor) é substituído pelo primeiro da nova lista.
+  const provedor: WaProvedor = cfg?.provedor ?? "groq";
+  const modelos = MODELOS[provedor] ?? MODELOS.groq;
+  const provedorMeta = PROVEDORES.find((p) => p.value === provedor);
+  const trocarProvedor = (v: WaProvedor) =>
+    setCfg((c) => (c ? { ...c, provedor: v, modelo: MODELOS[v][0].value } : c));
+
   // Menu automático do bot (editável). Quando null, começa desligado e vazio.
   const menu: WaMenu = cfg?.menu ?? { ativo: false, titulo: "", opcoes: [] };
   const setMenu = (m: WaMenu) => set("menu", m);
@@ -67,7 +75,8 @@ export default function WhatsAppChatbot() {
     const { error } = await (supabase as any).from("WA_BOT_CONFIG").update({
       ativo: cfg.ativo, persona: cfg.persona, saudacao: cfg.saudacao || null, fallback: cfg.fallback,
       horario_inicio: cfg.horario_inicio, horario_fim: cfg.horario_fim, dias_semana: cfg.dias_semana,
-      fora_horario_msg: cfg.fora_horario_msg, modelo: cfg.modelo, max_tokens: cfg.max_tokens,
+      fora_horario_msg: cfg.fora_horario_msg,
+      provedor: cfg.provedor, modelo: cfg.modelo, max_tokens: cfg.max_tokens,
       menu: cfg.menu ?? null,
     }).eq("id", true);
     setSalvando(false);
@@ -163,13 +172,22 @@ export default function WhatsAppChatbot() {
                 <Textarea rows={2} value={cfg.saudacao ?? ""} onChange={(e) => set("saudacao", e.target.value)} placeholder="Primeira resposta a um contato novo" />
               </div>
             </div>
-            <div className="grid gap-4 md:grid-cols-2">
+            <div className="grid gap-4 md:grid-cols-3">
+              <div>
+                <Label className="mb-1.5 block text-xs font-semibold">Provedor de IA</Label>
+                <Select value={provedor} onValueChange={(v) => trocarProvedor(v as WaProvedor)}>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    {PROVEDORES.map((p) => <SelectItem key={p.value} value={p.value}>{p.label}</SelectItem>)}
+                  </SelectContent>
+                </Select>
+              </div>
               <div>
                 <Label className="mb-1.5 block text-xs font-semibold">Modelo</Label>
                 <Select value={cfg.modelo} onValueChange={(v) => set("modelo", v)}>
                   <SelectTrigger><SelectValue /></SelectTrigger>
                   <SelectContent>
-                    {MODELOS.map((m) => <SelectItem key={m.value} value={m.value}>{m.label}</SelectItem>)}
+                    {modelos.map((m) => <SelectItem key={m.value} value={m.value}>{m.label}</SelectItem>)}
                   </SelectContent>
                 </Select>
               </div>
@@ -178,6 +196,11 @@ export default function WhatsAppChatbot() {
                 <Input type="number" min={128} max={4096} value={cfg.max_tokens} onChange={(e) => set("max_tokens", Number(e.target.value) || 1024)} />
               </div>
             </div>
+            {provedorMeta && (
+              <p className="text-[11px] text-muted-foreground">
+                {provedorMeta.ajuda} Guarde a chave no secret <code className="rounded bg-muted px-1.5">{provedorMeta.secret}</code>.
+              </p>
+            )}
           </Card>
 
           {/* Menu automático (botões/lista) */}
@@ -309,7 +332,9 @@ export default function WhatsAppChatbot() {
             <div>
               <Label className="mb-1 block text-[11px] font-semibold uppercase text-muted-foreground">Secrets (Supabase → Edge Functions)</Label>
               <ul className="space-y-0.5">
-                {SECRETS.map((s) => <li key={s} className="flex items-center gap-1.5 text-[11px]"><code className="rounded bg-muted px-1.5">{s}</code></li>)}
+                {[...SECRETS_META, ...(provedorMeta ? [provedorMeta.secret] : [])].map((s) => (
+                  <li key={s} className="flex items-center gap-1.5 text-[11px]"><code className="rounded bg-muted px-1.5">{s}</code></li>
+                ))}
               </ul>
             </div>
             <p className="text-[11px] text-muted-foreground">As Edge Functions <code>whatsapp-webhook</code> e <code>whatsapp-enviar</code> precisam estar deployadas.</p>
