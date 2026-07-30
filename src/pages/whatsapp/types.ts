@@ -82,11 +82,53 @@ export interface WaBotConfig {
   horario_fim: string;
   dias_semana: number[];
   fora_horario_msg: string;
+  atende_24h: boolean;
   provedor: WaProvedor;
   modelo: string;
   max_tokens: number;
   menu?: WaMenu | null;
 }
+
+// ---- Simulador (submódulo Testes) ----
+// Espelha o retorno da edge function whatsapp-testar.
+export type WaTesteTipo =
+  | "ia" | "fallback" | "menu" | "menu_texto" | "menu_ia" | "menu_humano" | "fora_horario" | "ping";
+
+export interface WaTesteDiagnostico {
+  bot_ativo: boolean;
+  provedor: string;
+  modelo: string;
+  secret_esperado: string;
+  atende_24h: boolean;
+  dentro_horario: boolean;
+  menu_ativo: boolean;
+  base_itens: number;
+  ms: number;
+  erro: string | null;
+}
+
+export interface WaTesteResposta {
+  tipo: WaTesteTipo;
+  ok?: boolean;
+  resposta: string | null;
+  nota?: string;
+  system?: string;
+  botoes?: Array<{ id: string; titulo: string }>;
+  formato?: "button" | "list";
+  diagnostico: WaTesteDiagnostico;
+}
+
+// Rótulo do que aconteceu, para o painel de diagnóstico do simulador.
+export const TESTE_TIPO_LABEL: Record<WaTesteTipo, string> = {
+  ia: "Resposta da IA",
+  fallback: "Fallback (a IA falhou)",
+  menu: "Menu de opções",
+  menu_texto: "Resposta pronta do menu",
+  menu_ia: "Menu encaminhou para a IA",
+  menu_humano: "Menu encaminhou para atendente",
+  fora_horario: "Fora do horário de atendimento",
+  ping: "Teste de conexão",
+};
 
 export const MENU_ACOES: Array<{ value: WaMenuAcao; label: string; ajuda: string }> = [
   { value: "texto", label: "Responder um texto", ajuda: "O bot envia uma resposta pronta." },

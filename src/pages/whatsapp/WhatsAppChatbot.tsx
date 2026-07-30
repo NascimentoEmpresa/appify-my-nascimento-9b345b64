@@ -75,7 +75,7 @@ export default function WhatsAppChatbot() {
     const { error } = await (supabase as any).from("WA_BOT_CONFIG").update({
       ativo: cfg.ativo, persona: cfg.persona, saudacao: cfg.saudacao || null, fallback: cfg.fallback,
       horario_inicio: cfg.horario_inicio, horario_fim: cfg.horario_fim, dias_semana: cfg.dias_semana,
-      fora_horario_msg: cfg.fora_horario_msg,
+      fora_horario_msg: cfg.fora_horario_msg, atende_24h: cfg.atende_24h ?? false,
       provedor: cfg.provedor, modelo: cfg.modelo, max_tokens: cfg.max_tokens,
       menu: cfg.menu ?? null,
     }).eq("id", true);
@@ -263,32 +263,52 @@ export default function WhatsAppChatbot() {
 
           {/* Horário */}
           <Card className="space-y-3 p-4">
-            <p className="text-sm font-bold">Horário de atendimento do bot</p>
-            <div className="flex flex-wrap items-end gap-4">
-              <div>
-                <Label className="mb-1.5 block text-xs font-semibold">Início</Label>
-                <Input type="time" className="w-32" value={cfg.horario_inicio?.slice(0, 5)} onChange={(e) => set("horario_inicio", e.target.value)} />
-              </div>
-              <div>
-                <Label className="mb-1.5 block text-xs font-semibold">Fim</Label>
-                <Input type="time" className="w-32" value={cfg.horario_fim?.slice(0, 5)} onChange={(e) => set("horario_fim", e.target.value)} />
-              </div>
-              <div className="min-w-0">
-                <Label className="mb-1.5 block text-xs font-semibold">Dias</Label>
-                <div className="flex flex-wrap gap-1">
-                  {DIAS.map((d) => (
-                    <button key={d.v} type="button" onClick={() => toggleDia(d.v)}
-                      className={`rounded-md border px-2 py-1 text-xs ${cfg.dias_semana.includes(d.v) ? "border-primary bg-primary/10 text-primary" : "border-border text-muted-foreground"}`}>
-                      {d.l}
-                    </button>
-                  ))}
+            <div className="flex items-start justify-between gap-3">
+              <p className="text-sm font-bold">Horário de atendimento do bot</p>
+              <label className="flex shrink-0 items-center gap-2 text-xs font-medium">
+                <input
+                  type="checkbox" className="h-4 w-4 accent-primary"
+                  checked={cfg.atende_24h ?? false}
+                  onChange={(e) => set("atende_24h", e.target.checked)}
+                />
+                Atender 24h, todos os dias
+              </label>
+            </div>
+
+            {cfg.atende_24h ? (
+              <p className="rounded border border-success/30 bg-success/5 px-3 py-2 text-xs text-muted-foreground">
+                O bot responde a qualquer hora, em qualquer dia. A faixa de horário e a mensagem de fora do
+                expediente ficam sem efeito enquanto esta opção estiver ligada.
+              </p>
+            ) : (
+              <>
+              <div className="flex flex-wrap items-end gap-4">
+                <div>
+                  <Label className="mb-1.5 block text-xs font-semibold">Início</Label>
+                  <Input type="time" className="w-32" value={cfg.horario_inicio?.slice(0, 5)} onChange={(e) => set("horario_inicio", e.target.value)} />
+                </div>
+                <div>
+                  <Label className="mb-1.5 block text-xs font-semibold">Fim</Label>
+                  <Input type="time" className="w-32" value={cfg.horario_fim?.slice(0, 5)} onChange={(e) => set("horario_fim", e.target.value)} />
+                </div>
+                <div className="min-w-0">
+                  <Label className="mb-1.5 block text-xs font-semibold">Dias</Label>
+                  <div className="flex flex-wrap gap-1">
+                    {DIAS.map((d) => (
+                      <button key={d.v} type="button" onClick={() => toggleDia(d.v)}
+                        className={`rounded-md border px-2 py-1 text-xs ${cfg.dias_semana.includes(d.v) ? "border-primary bg-primary/10 text-primary" : "border-border text-muted-foreground"}`}>
+                        {d.l}
+                      </button>
+                    ))}
+                  </div>
                 </div>
               </div>
-            </div>
-            <div>
-              <Label className="mb-1.5 block text-xs font-semibold">Mensagem fora do horário</Label>
-              <Textarea rows={2} value={cfg.fora_horario_msg} onChange={(e) => set("fora_horario_msg", e.target.value)} />
-            </div>
+              <div>
+                <Label className="mb-1.5 block text-xs font-semibold">Mensagem fora do horário</Label>
+                <Textarea rows={2} value={cfg.fora_horario_msg} onChange={(e) => set("fora_horario_msg", e.target.value)} />
+              </div>
+              </>
+            )}
           </Card>
 
           {/* Base de conhecimento */}
