@@ -68,14 +68,7 @@ const btn = (bg: string, c = "#fff", border = "none"): React.CSSProperties =>
   ({ padding: "7px 13px", borderRadius: 9, border, background: bg, color: c, fontSize: 12.5, fontWeight: 700, cursor: "pointer" });
 const inp: React.CSSProperties = { border: "1px solid #e2e8f0", borderRadius: 9, padding: "8px 10px", fontSize: 13, outline: "none", background: "#fff", width: "100%", color: "#0f172a", boxSizing: "border-box" };
 const lbl: React.CSSProperties = { display: "block", fontSize: 10, fontWeight: 800, color: "#94a3b8", textTransform: "uppercase", letterSpacing: ".5px", marginBottom: 4 };
-const sumVal: React.CSSProperties = { fontSize: 13, color: "#0f172a", fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis" };
 const cardBox: React.CSSProperties = { background: "#fff", border: "1px solid #e2e8f0", borderRadius: 14, padding: "14px 16px", boxShadow: "0 8px 24px rgba(15,23,42,.05)" };
-
-// Papel do usuário sobre um plano, que decide o que o modal mostra:
-//  editor  = quem vê tudo (ver_tudo): modal completo (editar/excluir).
-//  lider   = líder do setor do plano: só conclui + descreve.
-//  leitura = enxerga mas não pode gravar.
-export type PapelPlano = "editor" | "lider" | "leitura";
 
 const hojeISO = () => new Date().toISOString().slice(0, 10);
 const dias = (de: string, ate: string) => Math.round((+new Date(ate + "T00:00:00") - +new Date(de + "T00:00:00")) / 864e5);
@@ -312,10 +305,9 @@ function ResumoItem({ icone, cor, rotulo, valor, sub }: { icone: string; cor: st
 }
 
 // ── Modal de cadastro/edição ─────────────────────────────────────────
-function ModalPlano({ plano, fonte, formId, respostas, papel, onFechar, onSalvo }: {
+function ModalPlano({ plano, fonte, formId, respostas, onFechar, onSalvo }: {
   plano: Plano; fonte: FontePlano | undefined; formId: string;
   respostas: { id: string; nome: string; setor: string }[];
-  papel: PapelPlano;
   onFechar: () => void; onSalvo: () => void;
 }) {
   const [f, setF] = useState<Plano>(plano);
@@ -336,6 +328,9 @@ function ModalPlano({ plano, fonte, formId, respostas, papel, onFechar, onSalvo 
     if (!String(f.acao ?? "").trim()) { setErro("Descreva a ação."); return; }
     if (!doForm && !f.prazo) { setErro("Informe o prazo."); return; }
     if (f.status === "Concluído" && !f.concluido_em) { setErro("Informe a data de conclusão."); return; }
+    // Concluir exige contar O QUE foi feito — sem isso o painel vira um "ok"
+    // sem história e ninguém consegue auditar a conclusão depois.
+    if (f.status === "Concluído" && !String(f.detalhe ?? "").trim()) { setErro("Descreva a conclusão nas observações do acompanhamento."); return; }
     setSalvando(true); setErro(null);
 
     const prazoFonte = fonte ? parsePrazo(fonte.prazoBruto) : null;
@@ -380,52 +375,21 @@ function ModalPlano({ plano, fonte, formId, respostas, papel, onFechar, onSalvo 
     onSalvo(); onFechar();
   };
 
-  // Conclusão pelo líder do setor: grava SÓ status/conclusão/descrição — ação,
-  // prazo e demais campos continuam vindo da resposta (não são tocados). Na 1ª
-  // conclusão de um plano do formulário, cria a linha de acompanhamento.
-  const salvarLider = async () => {
-    const desc = (f.detalhe ?? "").trim();
-    const concluir = f.status === "Concluído";
-    if (concluir && !desc) { setErro("Descreva o que foi feito para concluir o plano."); return; }
-    if (concluir && !f.concluido_em) { setErro("Informe a data de conclusão."); return; }
-    setSalvando(true); setErro(null);
-    const dados: any = {
-      formulario_id: formId,
-      resposta_id: f.resposta_id,
-      detalhe: desc || null,
-      status: concluir ? "Concluído" : "Em andamento",
-      concluido_em: concluir ? f.concluido_em : null,
-    };
-    const { error } = f.acompId
-      ? await (supabase as any).from("CS_FORM_PLANOS_ACAO").update(dados).eq("id", f.acompId)
-      : await (supabase as any).from("CS_FORM_PLANOS_ACAO").insert(dados);
-    setSalvando(false);
-    if (error) { setErro(error.message); return; }
-    onSalvo(); onFechar();
-  };
-
   return (
     <div onClick={e => { if (e.target === e.currentTarget) onFechar(); }}
       style={{ position: "fixed", inset: 0, zIndex: 950, background: "rgba(15,23,42,.5)", display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
       <div style={{ background: "#fff", borderRadius: 16, width: 620, maxWidth: "95vw", maxHeight: "92vh", display: "flex", flexDirection: "column", overflow: "hidden" }}>
         <div style={{ padding: "18px 22px 12px", borderBottom: "1px solid #eef2f7" }}>
           <div style={{ fontSize: 16, fontWeight: 800, color: "#0f3171" }}>
-            {papel === "lider" ? "Concluir plano de ação"
-              : papel === "leitura" ? "Plano de ação"
-              : doForm ? "Acompanhar plano de ação" : (f.acompId ? "Editar plano avulso" : "Novo plano de ação")}
+            {doForm ? "Acompanhar plano de ação" : (f.acompId ? "Editar plano avulso" : "Novo plano de ação")}
           </div>
           <div style={{ fontSize: 11.5, color: "#94a3b8" }}>
-            {papel === "lider"
-              ? "Marque como concluído e descreva o que foi feito. Você lidera este setor."
-              : papel === "leitura"
-              ? "Você tem acesso de leitura a este plano."
-              : doForm
+            {doForm
               ? <>Ação e prazo vêm da resposta de <b>{fonte?.colaborador || "—"}</b>. Editar aqui sobrescreve só o que você mudar.</>
               : "Plano registrado direto no painel, sem resposta de origem."}
           </div>
         </div>
 
-        {papel === "editor" ? (<>
         <div style={{ padding: "14px 22px", overflowY: "auto", display: "grid", gridTemplateColumns: "1fr 1fr", gap: 11 }}>
           {erro && <div style={{ gridColumn: "1/-1", background: "#fef2f2", border: "1px solid #fecaca", color: "#b91c1c", borderRadius: 9, padding: "8px 11px", fontSize: 12 }}>{erro}</div>}
 
@@ -433,9 +397,10 @@ function ModalPlano({ plano, fonte, formId, respostas, papel, onFechar, onSalvo 
             <textarea value={f.acao ?? ""} onChange={e => set("acao", e.target.value)} rows={doForm ? 5 : 2}
               placeholder="Ex.: Melhorar comunicação com a equipe" style={{ ...inp, resize: "vertical", fontFamily: "inherit" }} /></div>
 
-          <div style={{ gridColumn: "1/-1" }}><label style={lbl}>Observações do acompanhamento</label>
+          <div style={{ gridColumn: "1/-1" }}><label style={lbl}>Observações do acompanhamento{f.status === "Concluído" ? " *" : ""}</label>
             <textarea value={f.detalhe ?? ""} onChange={e => set("detalhe", e.target.value)} rows={2}
-              placeholder="O que andou desde então…" style={{ ...inp, resize: "vertical", fontFamily: "inherit" }} /></div>
+              placeholder={f.status === "Concluído" ? "Descreva o que foi feito para concluir este plano…" : "O que andou desde então…"}
+              style={{ ...inp, resize: "vertical", fontFamily: "inherit" }} /></div>
 
           <div><label style={lbl}>Colaborador</label>
             <input list="pa-colabs" value={f.colaborador ?? ""} onChange={e => set("colaborador", e.target.value)} style={inp} />
@@ -493,60 +458,6 @@ function ModalPlano({ plano, fonte, formId, respostas, papel, onFechar, onSalvo 
             <button onClick={salvar} disabled={salvando} style={btn("#0f3171")}>{salvando ? "Salvando…" : "Salvar"}</button>
           </div>
         </div>
-        </>) : (<>
-          {/* Líder do setor (só conclui) ou acesso de leitura: resumo + conclusão */}
-          <div style={{ padding: "16px 22px", overflowY: "auto", display: "flex", flexDirection: "column", gap: 14 }}>
-            {erro && <div style={{ background: "#fef2f2", border: "1px solid #fecaca", color: "#b91c1c", borderRadius: 9, padding: "8px 11px", fontSize: 12 }}>{erro}</div>}
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-              <div style={{ gridColumn: "1/-1" }}><div style={lbl}>Ação definida</div>
-                <div style={{ fontSize: 13.5, color: "#0f172a", lineHeight: 1.4, whiteSpace: "pre-wrap" }}>{f.acao || "—"}</div></div>
-              <div><div style={lbl}>Colaborador</div><div style={sumVal} title={f.colaborador || "—"}>{f.colaborador || "—"}</div></div>
-              <div><div style={lbl}>Setor</div><div style={sumVal} title={f.setor || "—"}>{f.setor || "—"}</div></div>
-              <div><div style={lbl}>Prazo</div><div style={sumVal}>{fmtD(f.prazo)}</div></div>
-              <div><div style={lbl}>Situação atual</div><div style={sumVal}>{situacaoDe(f)}</div></div>
-            </div>
-
-            {papel === "lider" ? (
-              <>
-                <label style={{ display: "flex", alignItems: "center", gap: 9, fontSize: 13.5, fontWeight: 700, color: "#0f172a", cursor: "pointer" }}>
-                  <input type="checkbox" checked={f.status === "Concluído"}
-                    onChange={e => setF(x => ({ ...x, status: e.target.checked ? "Concluído" : "Em andamento", concluido_em: e.target.checked ? (x.concluido_em ?? hojeISO()) : null }))}
-                    style={{ width: 17, height: 17, accentColor: "#16a34a" }} />
-                  Marcar este plano como concluído
-                </label>
-                {f.status === "Concluído" && (
-                  <>
-                    <div><label style={lbl}>Concluído em *</label>
-                      <input type="date" value={f.concluido_em ?? hojeISO()} onChange={e => set("concluido_em", e.target.value)} style={{ ...inp, maxWidth: 220 }} /></div>
-                    <div><label style={lbl}>Descrição da conclusão *</label>
-                      <textarea value={f.detalhe ?? ""} onChange={e => set("detalhe", e.target.value)} rows={4}
-                        placeholder="Descreva o que foi feito para concluir este plano…" style={{ ...inp, resize: "vertical", fontFamily: "inherit" }} /></div>
-                    {f.prazo && f.concluido_em && (
-                      <div style={{ fontSize: 11.5, color: (f.concluido_em <= f.prazo) ? "#15803d" : "#b45309" }}>
-                        {f.concluido_em <= f.prazo ? "✓ Será contabilizado como concluído no prazo."
-                          : `⚠ ${dias(f.prazo, f.concluido_em)} dia(s) após o prazo — entra como "concluído com atraso".`}
-                      </div>
-                    )}
-                  </>
-                )}
-              </>
-            ) : (
-              (f.detalhe ?? "").trim() ? (
-                <div><div style={lbl}>Observações do acompanhamento</div>
-                  <div style={{ fontSize: 12.5, color: "#475569", whiteSpace: "pre-wrap" }}>{f.detalhe}</div></div>
-              ) : null
-            )}
-          </div>
-
-          <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, padding: "12px 22px", borderTop: "1px solid #eef2f7" }}>
-            <button onClick={onFechar} style={btn("#fff", "#475569", "1px solid #e2e8f0")}>{papel === "lider" ? "Cancelar" : "Fechar"}</button>
-            {papel === "lider" && (
-              <button onClick={salvarLider} disabled={salvando} style={btn("#16a34a")}>
-                {salvando ? "Salvando…" : (f.status === "Concluído" ? "Salvar conclusão" : "Salvar")}
-              </button>
-            )}
-          </div>
-        </>)}
       </div>
     </div>
   );
@@ -621,7 +532,7 @@ export function usePlanosAcao(formId: string, fontes: FontePlano[]) {
   return { planos, carregando, erro, recarregar };
 }
 
-export default function PainelPlanosAcao({ formId, filtros, ultima, respostas, fontes, temMapa, temPrazoMapeado, onAbrirMapa, planos, carregando, erro, recarregar, podeEditarTudo = false, lideraSetor }: {
+export default function PainelPlanosAcao({ formId, filtros, ultima, respostas, fontes, temMapa, temPrazoMapeado, onAbrirMapa, planos, carregando, erro, recarregar }: {
   formId: string; filtros: FiltrosPlano; ultima: string;
   respostas: { id: string; nome: string; setor: string }[];
   fontes: FontePlano[];            // respostas que preencheram a pergunta da ação
@@ -629,13 +540,8 @@ export default function PainelPlanosAcao({ formId, filtros, ultima, respostas, f
   temPrazoMapeado: boolean;        // … e a do prazo, apontada e diferente dela?
   onAbrirMapa: () => void;
   planos: Plano[]; carregando: boolean; erro: string | null; recarregar: () => void;
-  podeEditarTudo?: boolean;                          // ver_tudo → modal completo
-  lideraSetor?: (setor: string | null) => boolean;   // líder do setor do plano → só conclui
 }) {
   const [editando, setEditando] = useState<Plano | null>(null);
-  // Papel do usuário sobre um plano, para o modal saber o que oferecer.
-  const papelDoPlano = (p: Plano): PapelPlano =>
-    podeEditarTudo ? "editor" : (lideraSetor?.(p.setor) ? "lider" : "leitura");
   const [lista, setLista] = useState<{ titulo: string; planos: Plano[] } | null>(null);  // "ver todos"
   const hoje = hojeISO();
 
@@ -773,7 +679,7 @@ export default function PainelPlanosAcao({ formId, filtros, ultima, respostas, f
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
           <div style={{ fontSize: 10.5, color: "#94a3b8", textAlign: "right", lineHeight: 1.4 }}>Última atualização<br /><b style={{ color: "#475569" }}>{ultima}</b></div>
-          {podeEditarTudo && <button onClick={() => setEditando(novoPlano())} style={btn("#0f3171")}>＋ Novo plano</button>}
+          <button onClick={() => setEditando(novoPlano())} style={btn("#0f3171")}>＋ Novo plano</button>
           <button onClick={exportar} style={btn("#fff", "#0f3171", "1px solid #0f3171")}>⬇ Exportar relatório</button>
         </div>
       </div>
@@ -794,9 +700,9 @@ export default function PainelPlanosAcao({ formId, filtros, ultima, respostas, f
           <div style={{ fontSize: 15, fontWeight: 800, color: "#0f172a", marginBottom: 6 }}>Nenhum plano de ação ainda</div>
           <div style={{ fontSize: 12.5, color: "#64748b", maxWidth: 520, margin: "0 auto 14px" }}>
             Nenhuma resposta deste formulário preencheu a pergunta da ação definida.
-            Assim que alguém preencher, o plano aparece aqui{podeEditarTudo ? " — ou registre um avulso." : "."}
+            Assim que alguém preencher, o plano aparece aqui — ou registre um avulso.
           </div>
-          {podeEditarTudo && <button onClick={() => setEditando(novoPlano())} style={btn("#0f3171")}>＋ Criar plano avulso</button>}
+          <button onClick={() => setEditando(novoPlano())} style={btn("#0f3171")}>＋ Criar plano avulso</button>
         </div>
       ) : (
         <>
@@ -1008,7 +914,6 @@ export default function PainelPlanosAcao({ formId, filtros, ultima, respostas, f
       {editando && (
         <ModalPlano plano={editando} formId={formId} respostas={respostas}
           fonte={fontes.find(f => f.resposta_id === editando.resposta_id)}
-          papel={editando.id === "" ? "editor" : papelDoPlano(editando)}
           onFechar={() => setEditando(null)} onSalvo={recarregar} />
       )}
 
