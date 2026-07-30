@@ -46,6 +46,7 @@ import {
   ClipboardList,
   Bell,
   MessageCircle,
+  FlaskConical,
   Bot,
   ShieldCheck,
 } from "lucide-react";
@@ -476,6 +477,7 @@ const whatsappModule: ModuleDef = {
       items: [
         { label: "Caixa de Entrada", to: "/app/whatsapp", icon: MessageCircle },
         { label: "Chatbot", to: "/app/whatsapp/chatbot", icon: Bot },
+        { label: "Testes", to: "/app/whatsapp/testes", icon: FlaskConical },
       ],
     },
   ],

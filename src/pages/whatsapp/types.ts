@@ -65,10 +65,13 @@ export interface WaMenuOpcao {
 }
 
 export interface WaMenu {
-  ativo: boolean;
-  titulo: string; // corpo da mensagem do menu
+  titulo: string; // mensagem de abertura do menu (é também a saudação)
   opcoes: WaMenuOpcao[];
 }
+
+// Modo da conversa: o menu abre tudo; a IA só assume via a opção de atendimento
+// por IA. O simulador guarda isto no estado; o webhook reconstrói do histórico.
+export type WaModo = "menu" | "ia";
 
 export type WaProvedor = "groq" | "gemini" | "openrouter" | "anthropic";
 
@@ -76,21 +79,63 @@ export interface WaBotConfig {
   id: boolean;
   ativo: boolean;
   persona: string;
-  saudacao: string | null;
   fallback: string;
   horario_inicio: string;
   horario_fim: string;
   dias_semana: number[];
   fora_horario_msg: string;
+  atende_24h: boolean;
   provedor: WaProvedor;
   modelo: string;
   max_tokens: number;
   menu?: WaMenu | null;
 }
 
+// ---- Simulador (submódulo Testes) ----
+// Espelha o retorno da edge function whatsapp-testar.
+export type WaTesteTipo =
+  | "ia" | "fallback" | "menu" | "menu_texto" | "menu_ia" | "menu_humano" | "fora_horario" | "ping";
+
+export interface WaTesteDiagnostico {
+  bot_ativo: boolean;
+  provedor: string;
+  modelo: string;
+  secret_esperado: string;
+  atende_24h: boolean;
+  dentro_horario: boolean;
+  menu_ativo: boolean;
+  base_itens: number;
+  ms: number;
+  erro: string | null;
+}
+
+export interface WaTesteResposta {
+  tipo: WaTesteTipo;
+  ok?: boolean;
+  resposta: string | null;
+  nota?: string;
+  system?: string;
+  botoes?: Array<{ id: string; titulo: string }>;
+  formato?: "button" | "list";
+  modo?: WaModo;               // modo da conversa depois desta mensagem
+  diagnostico: WaTesteDiagnostico;
+}
+
+// Rótulo do que aconteceu, para o painel de diagnóstico do simulador.
+export const TESTE_TIPO_LABEL: Record<WaTesteTipo, string> = {
+  ia: "Resposta da IA",
+  fallback: "Fallback (a IA falhou)",
+  menu: "Menu de opções",
+  menu_texto: "Resposta pronta do menu",
+  menu_ia: "Menu encaminhou para a IA",
+  menu_humano: "Menu encaminhou para atendente",
+  fora_horario: "Fora do horário de atendimento",
+  ping: "Teste de conexão",
+};
+
 export const MENU_ACOES: Array<{ value: WaMenuAcao; label: string; ajuda: string }> = [
-  { value: "texto", label: "Responder um texto", ajuda: "O bot envia uma resposta pronta." },
-  { value: "ia", label: "Continuar com a IA", ajuda: "O cliente escreve à vontade e a IA responde." },
+  { value: "texto", label: "Responder um texto", ajuda: "O bot envia uma resposta pronta (ex.: link das vagas) e volta ao menu." },
+  { value: "ia", label: "Atendimento por I.A", ajuda: "Encaminha para a IA: a pessoa passa a conversar livre e a IA responde." },
   { value: "humano", label: "Falar com atendente", ajuda: "Desliga o bot e passa para atendimento humano." },
 ];
 

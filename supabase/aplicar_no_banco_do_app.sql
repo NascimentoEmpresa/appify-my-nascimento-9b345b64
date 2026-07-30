@@ -6959,3 +6959,166 @@ UPDATE public."WA_BOT_CONFIG"
  WHERE fallback = 'Não consegui entender agora. Um atendente vai te responder em breve.';
 
 NOTIFY pgrst, 'reload schema';
+-- =====================================================================
+-- 20260815000003_whatsapp_testes_e_24h
+-- =====================================================================
+-- WhatsApp — atendimento 24h e submódulo de Testes.
+--
+-- 1) atende_24h: quando ligado, o bot responde sempre, ignorando dias da semana
+--    e faixa de horário. Antes só dava para chegar perto disso marcando os 7
+--    dias e 00:00–23:59, o que ainda deixava uma janela morta e era confuso.
+--
+-- 2) Menu 'whatsapp_testes': simulador que roda a mesma lógica do atendimento
+--    real sem enviar nada pelo WhatsApp e sem gravar na Caixa de Entrada.
+--    Fechado por padrão, como o resto do módulo.
+
+-- 1) Atendimento 24 horas -------------------------------------------------
+ALTER TABLE public."WA_BOT_CONFIG"
+  ADD COLUMN IF NOT EXISTS atende_24h boolean NOT NULL DEFAULT false;
+
+-- 2) Menu do submódulo de Testes ------------------------------------------
+INSERT INTO public.app_menu (modulo_id, codigo, nome, rota, ordem)
+SELECT m.id, 'whatsapp_testes', 'WhatsApp — Testes', '/app/whatsapp/testes', 3
+  FROM public.app_modulo m
+ WHERE m.codigo = 'whatsapp'
+ON CONFLICT (modulo_id, codigo) DO NOTHING;
+
+-- 3) RLS: quem tem 'whatsapp_testes' precisa ler a config e a base de
+--    conhecimento para o simulador funcionar (somente leitura).
+DROP POLICY IF EXISTS wa_bot_config_select ON public."WA_BOT_CONFIG";
+CREATE POLICY wa_bot_config_select ON public."WA_BOT_CONFIG" FOR SELECT TO authenticated
+  USING (
+    public.tem_acesso_menu('whatsapp')
+    OR public.tem_acesso_menu('whatsapp_chatbot')
+    OR public.tem_acesso_menu('whatsapp_testes')
+  );
+
+DROP POLICY IF EXISTS wa_bot_conh_select ON public."WA_BOT_CONHECIMENTO";
+CREATE POLICY wa_bot_conh_select ON public."WA_BOT_CONHECIMENTO" FOR SELECT TO authenticated
+  USING (
+    public.tem_acesso_menu('whatsapp')
+    OR public.tem_acesso_menu('whatsapp_chatbot')
+    OR public.tem_acesso_menu('whatsapp_testes')
+  );
+
+NOTIFY pgrst, 'reload schema';
+
+-- ===== 20260816000001_whatsapp_bot_fluxo_menu =====
+-- WhatsApp — fluxo único guiado por menu.
+-- Toda conversa começa pelo menu; a IA só entra pela opção de atendimento por
+-- IA. Remove dois restos que deixaram de ter efeito:
+--   1) saudacao (o bot não a usava mais — quem abre é a mensagem do menu);
+--   2) menu.ativo dentro do JSON (o menu não é mais opcional).
+-- Idempotente.
+
+ALTER TABLE public."WA_BOT_CONFIG" DROP COLUMN IF EXISTS saudacao;
+
+UPDATE public."WA_BOT_CONFIG"
+   SET menu = menu - 'ativo'
+ WHERE menu ? 'ativo';
+
+NOTIFY pgrst, 'reload schema';
+
+-- ===== 20260816000002_formularios_planos_lideranca_concluir =====
+-- Líder de setor pode concluir plano de ação do seu setor.
+-- Estende a RLS de CS_FORM_PLANOS_ACAO com o ramo cs_form_lidera_setor
+-- (setor efetivo = setor da resposta de origem, senão o próprio). DELETE
+-- continua só 'ver_tudo'. Autossuficiente: recria a dependência
+-- cs_form_lidera_setor + tabelas antes de usá-la. Idempotente.
+
+-- Dependência (idempotente): líder por setor
+CREATE TABLE IF NOT EXISTS public."CS_LIDERES_SETOR" (
+  setor              text PRIMARY KEY,
+  empregado_id       bigint NOT NULL,
+  empregado_nome     text,
+  observacao         text,
+  definido_por       uuid DEFAULT auth.uid(),
+  definido_por_nome  text,
+  created_at         timestamptz NOT NULL DEFAULT now(),
+  updated_at         timestamptz NOT NULL DEFAULT now()
+);
+ALTER TABLE public."CS_LIDERES_SETOR" ENABLE ROW LEVEL SECURITY;
+REVOKE ALL ON public."CS_LIDERES_SETOR" FROM PUBLIC, anon;
+GRANT SELECT, INSERT, UPDATE, DELETE ON public."CS_LIDERES_SETOR" TO authenticated;
+DROP POLICY IF EXISTS cs_lideres_select ON public."CS_LIDERES_SETOR";
+CREATE POLICY cs_lideres_select ON public."CS_LIDERES_SETOR"
+  FOR SELECT TO authenticated USING (public.cs_form_cap('ver_tudo') OR public.cs_form_cap('ver_proprias'));
+DROP POLICY IF EXISTS cs_lideres_ins ON public."CS_LIDERES_SETOR";
+CREATE POLICY cs_lideres_ins ON public."CS_LIDERES_SETOR"
+  FOR INSERT TO authenticated WITH CHECK (public.cs_form_cap('ver_tudo'));
+DROP POLICY IF EXISTS cs_lideres_upd ON public."CS_LIDERES_SETOR";
+CREATE POLICY cs_lideres_upd ON public."CS_LIDERES_SETOR"
+  FOR UPDATE TO authenticated USING (public.cs_form_cap('ver_tudo'));
+DROP POLICY IF EXISTS cs_lideres_del ON public."CS_LIDERES_SETOR";
+CREATE POLICY cs_lideres_del ON public."CS_LIDERES_SETOR"
+  FOR DELETE TO authenticated USING (public.cs_form_cap('ver_tudo'));
+
+CREATE TABLE IF NOT EXISTS public."RH_SETOR_DIRETOR" (
+  setor          text PRIMARY KEY,
+  diretor_id     bigint NOT NULL,
+  diretor_nome   text,
+  definido_por   uuid DEFAULT auth.uid(),
+  created_at     timestamptz NOT NULL DEFAULT now(),
+  updated_at     timestamptz NOT NULL DEFAULT now()
+);
+ALTER TABLE public."RH_SETOR_DIRETOR" ENABLE ROW LEVEL SECURITY;
+REVOKE ALL ON public."RH_SETOR_DIRETOR" FROM PUBLIC, anon;
+GRANT SELECT, INSERT, UPDATE, DELETE ON public."RH_SETOR_DIRETOR" TO authenticated;
+DROP POLICY IF EXISTS rh_setor_diretor_all ON public."RH_SETOR_DIRETOR";
+CREATE POLICY rh_setor_diretor_all ON public."RH_SETOR_DIRETOR"
+  FOR ALL TO authenticated USING (true) WITH CHECK (true);
+
+CREATE OR REPLACE FUNCTION public.cs_form_lidera_setor(_setor text)
+RETURNS boolean LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public AS $$
+  SELECT _setor IS NOT NULL AND EXISTS (
+    SELECT 1 FROM public."EMPREGADOS" e
+     WHERE e.auth_user_id = auth.uid()
+       AND (
+         EXISTS (SELECT 1 FROM public."CS_LIDERES_SETOR" l
+                  WHERE l.empregado_id = e."ID"
+                    AND upper(btrim(l.setor)) = upper(btrim(_setor)))
+      OR EXISTS (SELECT 1 FROM public."RH_SETOR_DIRETOR" d
+                  WHERE d.diretor_id = e."ID"
+                    AND upper(btrim(d.setor)) = upper(btrim(_setor)))
+       ));
+$$;
+REVOKE EXECUTE ON FUNCTION public.cs_form_lidera_setor(text) FROM PUBLIC, anon;
+GRANT  EXECUTE ON FUNCTION public.cs_form_lidera_setor(text) TO authenticated;
+
+-- Feature: setor efetivo do plano + políticas
+CREATE OR REPLACE FUNCTION public.cs_form_plano_setor(_setor text, _resposta_id uuid)
+RETURNS text LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public AS $$
+  SELECT COALESCE(
+    (SELECT r.setor FROM public."CS_FORM_RESPOSTAS" r WHERE r.id = _resposta_id),
+    NULLIF(btrim(_setor), '')
+  );
+$$;
+REVOKE EXECUTE ON FUNCTION public.cs_form_plano_setor(text, uuid) FROM PUBLIC, anon;
+GRANT  EXECUTE ON FUNCTION public.cs_form_plano_setor(text, uuid) TO authenticated;
+
+DROP POLICY IF EXISTS cs_planos_select ON public."CS_FORM_PLANOS_ACAO";
+CREATE POLICY cs_planos_select ON public."CS_FORM_PLANOS_ACAO"
+  FOR SELECT TO authenticated USING (
+    public.cs_form_cap('ver_tudo')
+    OR (public.cs_form_cap('ver_proprias') AND criado_por = auth.uid())
+    OR public.cs_form_lidera_setor(public.cs_form_plano_setor(setor, resposta_id)));
+
+DROP POLICY IF EXISTS cs_planos_insert ON public."CS_FORM_PLANOS_ACAO";
+CREATE POLICY cs_planos_insert ON public."CS_FORM_PLANOS_ACAO"
+  FOR INSERT TO authenticated WITH CHECK (
+    public.cs_form_cap('ver_tudo') OR public.cs_form_cap('ver_proprias')
+    OR public.cs_form_lidera_setor(public.cs_form_plano_setor(setor, resposta_id)));
+
+DROP POLICY IF EXISTS cs_planos_update ON public."CS_FORM_PLANOS_ACAO";
+CREATE POLICY cs_planos_update ON public."CS_FORM_PLANOS_ACAO"
+  FOR UPDATE TO authenticated
+  USING (
+    public.cs_form_cap('ver_tudo')
+    OR (public.cs_form_cap('ver_proprias') AND criado_por = auth.uid())
+    OR public.cs_form_lidera_setor(public.cs_form_plano_setor(setor, resposta_id)))
+  WITH CHECK (
+    public.cs_form_cap('ver_tudo')
+    OR (public.cs_form_cap('ver_proprias') AND criado_por = auth.uid())
+    OR public.cs_form_lidera_setor(public.cs_form_plano_setor(setor, resposta_id)));
+
+NOTIFY pgrst, 'reload schema';

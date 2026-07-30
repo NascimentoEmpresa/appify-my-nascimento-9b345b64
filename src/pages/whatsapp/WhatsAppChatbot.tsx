@@ -19,6 +19,8 @@ import { MODELOS, PROVEDORES, DIAS, MENU_ACOES, type WaBotConfig, type WaConheci
 const WEBHOOK_URL = "https://fwmzeaztjxrxxzxzxmgc.supabase.co/functions/v1/whatsapp-webhook";
 const SECRETS_META = ["WHATSAPP_VERIFY_TOKEN", "WHATSAPP_APP_SECRET", "WHATSAPP_TOKEN", "WHATSAPP_PHONE_NUMBER_ID"];
 
+// Precisa de ao menos uma opção que leve à IA para o botão "Atendimento por I.A"
+// existir no menu; usamos isso só para um aviso suave na tela.
 export default function WhatsAppChatbot() {
   const nav = useNavigate();
   const qc = useQueryClient();
@@ -58,8 +60,8 @@ export default function WhatsAppChatbot() {
   const trocarProvedor = (v: WaProvedor) =>
     setCfg((c) => (c ? { ...c, provedor: v, modelo: MODELOS[v][0].value } : c));
 
-  // Menu automático do bot (editável). Quando null, começa desligado e vazio.
-  const menu: WaMenu = cfg?.menu ?? { ativo: false, titulo: "", opcoes: [] };
+  // Menu de atendimento — é o fluxo único do bot: toda conversa começa aqui.
+  const menu: WaMenu = cfg?.menu ?? { titulo: "", opcoes: [] };
   const setMenu = (m: WaMenu) => set("menu", m);
   const addOpcao = () => {
     if (menu.opcoes.length >= 10) return;
@@ -69,15 +71,17 @@ export default function WhatsAppChatbot() {
     setMenu({ ...menu, opcoes: menu.opcoes.map((o, j) => (j === i ? { ...o, ...patch } : o)) });
   const removeOpcao = (i: number) => setMenu({ ...menu, opcoes: menu.opcoes.filter((_, j) => j !== i) });
 
+  const temOpcaoIA = menu.opcoes.some((o) => o.acao === "ia");
+
   const salvar = async () => {
     if (!cfg || salvando) return;
     setSalvando(true);
     const { error } = await (supabase as any).from("WA_BOT_CONFIG").update({
-      ativo: cfg.ativo, persona: cfg.persona, saudacao: cfg.saudacao || null, fallback: cfg.fallback,
+      ativo: cfg.ativo, persona: cfg.persona, fallback: cfg.fallback,
       horario_inicio: cfg.horario_inicio, horario_fim: cfg.horario_fim, dias_semana: cfg.dias_semana,
-      fora_horario_msg: cfg.fora_horario_msg,
+      fora_horario_msg: cfg.fora_horario_msg, atende_24h: cfg.atende_24h ?? false,
       provedor: cfg.provedor, modelo: cfg.modelo, max_tokens: cfg.max_tokens,
-      menu: cfg.menu ?? null,
+      menu: { titulo: menu.titulo, opcoes: menu.opcoes },
     }).eq("id", true);
     setSalvando(false);
     if (error) { toast({ title: "Erro ao salvar", description: error.message, variant: "destructive" }); return; }
@@ -132,7 +136,7 @@ export default function WhatsAppChatbot() {
     <div>
       <PageHeader
         title="WhatsApp — Chatbot"
-        subtitle="Configure a persona da IA, os horários e a base de conhecimento."
+        subtitle="Toda conversa começa pelo menu de atendimento. Configure as opções, a IA e os horários."
         module="Central de Serviços"
         breadcrumb={["WhatsApp", "Chatbot"]}
         actions={<Button variant="outline" className="gap-1.5" onClick={() => nav("/app/whatsapp")}><Inbox className="h-4 w-4" /> Caixa de Entrada</Button>}
@@ -154,23 +158,77 @@ export default function WhatsAppChatbot() {
             </Button>
           </Card>
 
-          {/* Persona e mensagens */}
+          {/* Menu de atendimento — o fluxo único do bot */}
+          <Card className="space-y-3 p-4">
+            <div>
+              <p className="flex items-center gap-1.5 text-sm font-bold"><MousePointerClick className="h-4 w-4 text-primary" /> Menu de atendimento</p>
+              <p className="text-xs text-muted-foreground">
+                Toda conversa começa aqui: o bot manda esta mensagem com os botões. Cada botão segue um caminho.
+                Até 3 opções viram botões; 4–10 viram lista.
+              </p>
+            </div>
+            <div>
+              <Label className="mb-1.5 block text-xs font-semibold">Mensagem de abertura</Label>
+              <Textarea rows={2} value={menu.titulo} onChange={(e) => setMenu({ ...menu, titulo: e.target.value })} placeholder="Ex.: Olá! Somos da Empresa Nascimento. Selecione a opção desejada:" />
+            </div>
+            <div className="space-y-2">
+              {menu.opcoes.map((o, i) => {
+                const ajuda = MENU_ACOES.find((a) => a.value === o.acao)?.ajuda ?? "";
+                return (
+                  <div key={o.id} className="space-y-2 rounded border border-border/60 p-2.5">
+                    <div className="flex items-center gap-2">
+                      <span className="w-4 shrink-0 text-center text-[10px] font-semibold text-muted-foreground">{i + 1}</span>
+                      <Input className="h-8 flex-1 text-sm" maxLength={20} placeholder="Título do botão (ex.: Vagas Disponíveis)" value={o.titulo} onChange={(e) => setOpcao(i, { titulo: e.target.value })} />
+                      <Select value={o.acao} onValueChange={(v) => setOpcao(i, { acao: v as WaMenuAcao })}>
+                        <SelectTrigger className="h-8 w-48 shrink-0 text-xs"><SelectValue /></SelectTrigger>
+                        <SelectContent>
+                          {MENU_ACOES.map((a) => <SelectItem key={a.value} value={a.value}>{a.label}</SelectItem>)}
+                        </SelectContent>
+                      </Select>
+                      <Button variant="ghost" size="sm" className="h-8 w-8 shrink-0 p-0 text-muted-foreground hover:text-destructive" onClick={() => removeOpcao(i)}><Trash2 className="h-4 w-4" /></Button>
+                    </div>
+                    <Textarea
+                      rows={2}
+                      value={o.valor ?? ""}
+                      onChange={(e) => setOpcao(i, { valor: e.target.value })}
+                      placeholder={
+                        o.acao === "texto" ? "Resposta que o bot envia ao escolher esta opção"
+                        : o.acao === "humano" ? "Aviso ao cliente (ex.: Um atendente vai te responder em instantes)"
+                        : "Aviso ao entrar na IA (ex.: Perfeito! Me conta como posso te ajudar). Pode deixar em branco."
+                      }
+                    />
+                    <p className="text-[11px] text-muted-foreground">{ajuda}</p>
+                  </div>
+                );
+              })}
+              {menu.opcoes.length === 0 && (
+                <p className="text-xs text-muted-foreground">Nenhuma opção ainda. Adicione ao menos uma (ex.: “Atendimento por I.A”).</p>
+              )}
+            </div>
+            {menu.opcoes.length < 10 && (
+              <Button size="sm" variant="outline" className="gap-1.5" onClick={addOpcao}><Plus className="h-4 w-4" /> Adicionar opção</Button>
+            )}
+            {menu.opcoes.length > 0 && !temOpcaoIA && (
+              <p className="rounded border border-warning/40 bg-warning/5 px-3 py-2 text-[11px] text-muted-foreground">
+                Nenhuma opção leva à IA. Sem um botão de <b>Atendimento por I.A</b>, quem escrever fora dos botões só recebe o menu de novo.
+              </p>
+            )}
+          </Card>
+
+          {/* Comportamento da IA (usado pela opção de atendimento por IA) */}
           <Card className="space-y-4 p-4">
-            <p className="text-sm font-bold">Comportamento da IA</p>
+            <div>
+              <p className="text-sm font-bold">Atendimento por I.A</p>
+              <p className="text-xs text-muted-foreground">Vale quando um botão encaminha para a IA: a partir daí a pessoa conversa livre e a IA responde.</p>
+            </div>
             <div>
               <Label className="mb-1.5 block text-xs font-semibold">Persona / instruções do sistema</Label>
               <Textarea rows={5} value={cfg.persona} onChange={(e) => set("persona", e.target.value)} />
               <p className="mt-1 text-[11px] text-muted-foreground">Define o tom e as regras. A base de conhecimento abaixo é injetada junto.</p>
             </div>
-            <div className="grid gap-4 md:grid-cols-2">
-              <div>
-                <Label className="mb-1.5 block text-xs font-semibold">Mensagem de fallback</Label>
-                <Textarea rows={2} value={cfg.fallback} onChange={(e) => set("fallback", e.target.value)} placeholder="Quando a IA não conseguir responder" />
-              </div>
-              <div>
-                <Label className="mb-1.5 block text-xs font-semibold">Saudação (opcional)</Label>
-                <Textarea rows={2} value={cfg.saudacao ?? ""} onChange={(e) => set("saudacao", e.target.value)} placeholder="Primeira resposta a um contato novo" />
-              </div>
+            <div>
+              <Label className="mb-1.5 block text-xs font-semibold">Mensagem de fallback</Label>
+              <Textarea rows={2} value={cfg.fallback} onChange={(e) => set("fallback", e.target.value)} placeholder="Enviada quando a IA não conseguir responder" />
             </div>
             <div className="grid gap-4 md:grid-cols-3">
               <div>
@@ -203,98 +261,10 @@ export default function WhatsAppChatbot() {
             )}
           </Card>
 
-          {/* Menu automático (botões/lista) */}
-          <Card className="space-y-3 p-4">
-            <div className="flex items-start justify-between gap-3">
-              <div>
-                <p className="flex items-center gap-1.5 text-sm font-bold"><MousePointerClick className="h-4 w-4 text-primary" /> Menu de opções</p>
-                <p className="text-xs text-muted-foreground">O bot apresenta essas opções na primeira mensagem. Até 3 viram botões; 4–10 viram lista.</p>
-              </div>
-              <label className="flex shrink-0 items-center gap-2 text-xs font-medium">
-                <input type="checkbox" className="h-4 w-4 accent-primary" checked={menu.ativo} onChange={(e) => setMenu({ ...menu, ativo: e.target.checked })} />
-                Ativo
-              </label>
-            </div>
-
-            {menu.ativo && (
-              <>
-                <div>
-                  <Label className="mb-1.5 block text-xs font-semibold">Texto do menu</Label>
-                  <Textarea rows={2} value={menu.titulo} onChange={(e) => setMenu({ ...menu, titulo: e.target.value })} placeholder="Ex.: Olá! Como posso te ajudar?" />
-                </div>
-                <div className="space-y-2">
-                  {menu.opcoes.map((o, i) => {
-                    const ajuda = MENU_ACOES.find((a) => a.value === o.acao)?.ajuda ?? "";
-                    return (
-                      <div key={o.id} className="space-y-2 rounded border border-border/60 p-2.5">
-                        <div className="flex items-center gap-2">
-                          <span className="w-4 shrink-0 text-center text-[10px] font-semibold text-muted-foreground">{i + 1}</span>
-                          <Input className="h-8 flex-1 text-sm" maxLength={20} placeholder="Título do botão (ex.: Recrutamento)" value={o.titulo} onChange={(e) => setOpcao(i, { titulo: e.target.value })} />
-                          <Select value={o.acao} onValueChange={(v) => setOpcao(i, { acao: v as WaMenuAcao })}>
-                            <SelectTrigger className="h-8 w-48 shrink-0 text-xs"><SelectValue /></SelectTrigger>
-                            <SelectContent>
-                              {MENU_ACOES.map((a) => <SelectItem key={a.value} value={a.value}>{a.label}</SelectItem>)}
-                            </SelectContent>
-                          </Select>
-                          <Button variant="ghost" size="sm" className="h-8 w-8 shrink-0 p-0 text-muted-foreground hover:text-destructive" onClick={() => removeOpcao(i)}><Trash2 className="h-4 w-4" /></Button>
-                        </div>
-                        <Textarea
-                          rows={2}
-                          value={o.valor ?? ""}
-                          onChange={(e) => setOpcao(i, { valor: e.target.value })}
-                          placeholder={
-                            o.acao === "texto" ? "Resposta que o bot envia ao escolher esta opção"
-                            : o.acao === "humano" ? "Aviso ao cliente (ex.: Um atendente vai te responder em instantes)"
-                            : "Aviso opcional antes de continuar com a IA (pode deixar em branco)"
-                          }
-                        />
-                        <p className="text-[11px] text-muted-foreground">{ajuda}</p>
-                      </div>
-                    );
-                  })}
-                  {menu.opcoes.length === 0 && <p className="text-xs text-muted-foreground">Nenhuma opção ainda.</p>}
-                </div>
-                {menu.opcoes.length < 10 && (
-                  <Button size="sm" variant="outline" className="gap-1.5" onClick={addOpcao}><Plus className="h-4 w-4" /> Adicionar opção</Button>
-                )}
-              </>
-            )}
-          </Card>
-
-          {/* Horário */}
-          <Card className="space-y-3 p-4">
-            <p className="text-sm font-bold">Horário de atendimento do bot</p>
-            <div className="flex flex-wrap items-end gap-4">
-              <div>
-                <Label className="mb-1.5 block text-xs font-semibold">Início</Label>
-                <Input type="time" className="w-32" value={cfg.horario_inicio?.slice(0, 5)} onChange={(e) => set("horario_inicio", e.target.value)} />
-              </div>
-              <div>
-                <Label className="mb-1.5 block text-xs font-semibold">Fim</Label>
-                <Input type="time" className="w-32" value={cfg.horario_fim?.slice(0, 5)} onChange={(e) => set("horario_fim", e.target.value)} />
-              </div>
-              <div className="min-w-0">
-                <Label className="mb-1.5 block text-xs font-semibold">Dias</Label>
-                <div className="flex flex-wrap gap-1">
-                  {DIAS.map((d) => (
-                    <button key={d.v} type="button" onClick={() => toggleDia(d.v)}
-                      className={`rounded-md border px-2 py-1 text-xs ${cfg.dias_semana.includes(d.v) ? "border-primary bg-primary/10 text-primary" : "border-border text-muted-foreground"}`}>
-                      {d.l}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            </div>
-            <div>
-              <Label className="mb-1.5 block text-xs font-semibold">Mensagem fora do horário</Label>
-              <Textarea rows={2} value={cfg.fora_horario_msg} onChange={(e) => set("fora_horario_msg", e.target.value)} />
-            </div>
-          </Card>
-
           {/* Base de conhecimento */}
           <Card className="space-y-3 p-4">
             <p className="text-sm font-bold">Base de conhecimento <span className="font-normal text-muted-foreground">({base.length})</span></p>
-            <p className="text-xs text-muted-foreground">Blocos de FAQ/contexto que a IA usa para responder (preços, procedimentos, políticas…).</p>
+            <p className="text-xs text-muted-foreground">Blocos de FAQ/contexto que a IA usa para responder (vagas, procedimentos, políticas…).</p>
             <div className="space-y-2">
               {base.map((k) => (
                 <div key={k.id} className="flex items-start gap-2 rounded border border-border/60 p-2.5">
@@ -308,10 +278,60 @@ export default function WhatsAppChatbot() {
               {base.length === 0 && <p className="text-xs text-muted-foreground">Nenhum item ainda.</p>}
             </div>
             <div className="space-y-2 rounded border border-dashed border-border p-2.5">
-              <Input placeholder="Título (ex.: Horário de funcionamento)" value={novoTitulo} onChange={(e) => setNovoTitulo(e.target.value)} />
+              <Input placeholder="Título (ex.: Vagas disponíveis)" value={novoTitulo} onChange={(e) => setNovoTitulo(e.target.value)} />
               <Textarea rows={2} placeholder="Conteúdo…" value={novoConteudo} onChange={(e) => setNovoConteudo(e.target.value)} />
               <Button size="sm" className="gap-1.5" onClick={addConhecimento} disabled={!novoTitulo.trim() || !novoConteudo.trim()}><Plus className="h-4 w-4" /> Adicionar</Button>
             </div>
+          </Card>
+
+          {/* Horário */}
+          <Card className="space-y-3 p-4">
+            <div className="flex items-start justify-between gap-3">
+              <p className="text-sm font-bold">Horário de atendimento do bot</p>
+              <label className="flex shrink-0 items-center gap-2 text-xs font-medium">
+                <input
+                  type="checkbox" className="h-4 w-4 accent-primary"
+                  checked={cfg.atende_24h ?? false}
+                  onChange={(e) => set("atende_24h", e.target.checked)}
+                />
+                Atender 24h, todos os dias
+              </label>
+            </div>
+
+            {cfg.atende_24h ? (
+              <p className="rounded border border-success/30 bg-success/5 px-3 py-2 text-xs text-muted-foreground">
+                O bot responde a qualquer hora, em qualquer dia. A faixa de horário e a mensagem de fora do
+                expediente ficam sem efeito enquanto esta opção estiver ligada.
+              </p>
+            ) : (
+              <>
+              <div className="flex flex-wrap items-end gap-4">
+                <div>
+                  <Label className="mb-1.5 block text-xs font-semibold">Início</Label>
+                  <Input type="time" className="w-32" value={cfg.horario_inicio?.slice(0, 5)} onChange={(e) => set("horario_inicio", e.target.value)} />
+                </div>
+                <div>
+                  <Label className="mb-1.5 block text-xs font-semibold">Fim</Label>
+                  <Input type="time" className="w-32" value={cfg.horario_fim?.slice(0, 5)} onChange={(e) => set("horario_fim", e.target.value)} />
+                </div>
+                <div className="min-w-0">
+                  <Label className="mb-1.5 block text-xs font-semibold">Dias</Label>
+                  <div className="flex flex-wrap gap-1">
+                    {DIAS.map((d) => (
+                      <button key={d.v} type="button" onClick={() => toggleDia(d.v)}
+                        className={`rounded-md border px-2 py-1 text-xs ${cfg.dias_semana.includes(d.v) ? "border-primary bg-primary/10 text-primary" : "border-border text-muted-foreground"}`}>
+                        {d.l}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </div>
+              <div>
+                <Label className="mb-1.5 block text-xs font-semibold">Mensagem fora do horário</Label>
+                <Textarea rows={2} value={cfg.fora_horario_msg} onChange={(e) => set("fora_horario_msg", e.target.value)} />
+              </div>
+              </>
+            )}
           </Card>
 
           <div className="flex justify-end">
