@@ -48,13 +48,14 @@ Deno.serve(async (req) => {
       auth: { persistSession: false },
     });
 
-    // Verifica se chamador é admin
-    const { data: isAdmin, error: roleErr } = await admin.rpc("has_role", {
-      _user_id: callerId,
-      _role: "admin",
+    // Verifica se chamador pode excluir usuários
+    const { data: podeExcluir, error: roleErr } = await admin.rpc("can_access", {
+      _user: callerId,
+      _menu: "administracao",
+      _acao: "excluir",
     });
     if (roleErr) return jsonResponse({ error: roleErr.message }, 500);
-    if (!isAdmin) {
+    if (!podeExcluir) {
       return jsonResponse({ error: "Apenas administradores podem excluir usuários." }, 403);
     }
 

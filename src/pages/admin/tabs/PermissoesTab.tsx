@@ -18,8 +18,8 @@ interface MenuRow { id: string; modulo_id: string; codigo: string; nome: string;
 
 export function PermissoesTab() {
   const qc = useQueryClient();
-  const { roles: myRoles } = usePermissoes();
-  const isAdmin = myRoles.includes("admin");
+  const { can } = usePermissoes();
+  const podeGerenciar = can("alterar", undefined, "administracao");
 
   const perfisQ = useQuery({
     queryKey: ["perfil_metadata"],
@@ -84,7 +84,7 @@ export function PermissoesTab() {
   };
 
   const toggle = (modulo: string, menu: string | null, acao: Acao) => {
-    if (!isAdmin) return;
+    if (!podeGerenciar) return;
     const key = keyOf(modulo, menu, acao);
     const cur = isChecked(key);
     const next = new Map(pending);
@@ -184,7 +184,7 @@ export function PermissoesTab() {
                           type="checkbox"
                           checked={isChecked(keyOf(m.codigo, null, a))}
                           onChange={() => toggle(m.codigo, null, a)}
-                          disabled={!isAdmin}
+                          disabled={!podeGerenciar}
                           className="h-4 w-4 rounded border-border accent-primary"
                           title={`${a} no módulo inteiro`}
                         />
@@ -206,7 +206,7 @@ export function PermissoesTab() {
                             type="checkbox"
                             checked={isChecked(keyOf(m.codigo, mn.codigo, a))}
                             onChange={() => toggle(m.codigo, mn.codigo, a)}
-                            disabled={!isAdmin}
+                            disabled={!podeGerenciar}
                             className="h-4 w-4 rounded border-border accent-primary"
                             title={`${a} apenas em ${mn.nome}`}
                           />
@@ -224,7 +224,7 @@ export function PermissoesTab() {
         <p className="text-muted-foreground">
           {pending.size} alteração(ões) pendente(s). · Permissão no módulo cobre todas as telas; libere telas individuais quando o perfil tiver acesso restrito.
         </p>
-        <Button size="sm" onClick={salvar} disabled={!isAdmin || pending.size === 0}>Salvar matriz</Button>
+        <Button size="sm" onClick={salvar} disabled={!podeGerenciar || pending.size === 0}>Salvar matriz</Button>
       </div>
     </section>
   );

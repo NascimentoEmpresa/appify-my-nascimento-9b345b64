@@ -14,8 +14,8 @@ import { CandidatoInfo, baixarCurriculoCand, Modal, Campo, Acoes, Toasts, btnSty
 
 export default function AsoCandidatos() {
   const { user } = useAuth();
-  const { roles } = usePermissoes();
-  const podeAgir = roles.includes("sst") || roles.includes("admin");
+  const { can } = usePermissoes();
+  const podeAgir = can("alterar", undefined, "sst_aso");
   const nome = user?.user_metadata?.nome ?? user?.email ?? "";
 
   const [rows, setRows] = useState<any[]>([]);

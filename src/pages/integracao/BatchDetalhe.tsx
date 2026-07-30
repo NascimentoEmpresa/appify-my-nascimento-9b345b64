@@ -74,9 +74,9 @@ export default function BatchDetalhe() {
   const { id } = useParams<{ id: string }>();
   const nav = useNavigate();
   const { user } = useAuth();
-  const { empresaId, roles } = usePermissoes();
+  const { empresaId, can } = usePermissoes();
   const { toast } = useToast();
-  const isAdmin = roles.includes("admin");
+  const podeGerenciar = can("alterar", undefined, "integracao");
 
   const [batch, setBatch] = useState<BatchRecord | null>(null);
   const [files, setFiles] = useState<BatchFile[]>([]);
@@ -339,7 +339,7 @@ export default function BatchDetalhe() {
             <Button variant="outline" size="sm" onClick={() => nav("/app/integracao")}>
               <ArrowLeft className="h-4 w-4" /> Voltar
             </Button>
-            {isAdmin && (batch.status === "validado_ok" || batch.status === "validado_com_erros") && (
+            {podeGerenciar && (batch.status === "validado_ok" || batch.status === "validado_com_erros") && (
               <>
                 <Button
                   size="sm"
@@ -360,7 +360,7 @@ export default function BatchDetalhe() {
                 </Button>
               </>
             )}
-            {isAdmin && batch.status === "aprovado" && (
+            {podeGerenciar && batch.status === "aprovado" && (
               <Button
                 size="sm"
                 variant="default"
@@ -371,7 +371,7 @@ export default function BatchDetalhe() {
                 Promover para tabelas finais
               </Button>
             )}
-            {isAdmin && (
+            {podeGerenciar && (
               <Button asChild size="sm" variant="outline">
                 <Link to="/app/integracao/aliases"><Link2 className="h-4 w-4" /> Aliases</Link>
               </Button>
@@ -395,13 +395,13 @@ export default function BatchDetalhe() {
           <div className="space-y-3">
             <div>
               <label className="text-xs font-medium text-muted-foreground">Descrição</label>
-              <Input value={editDesc} onChange={(e) => setEditDesc(e.target.value)} disabled={!isAdmin} />
+              <Input value={editDesc} onChange={(e) => setEditDesc(e.target.value)} disabled={!podeGerenciar} />
             </div>
             <div>
               <label className="text-xs font-medium text-muted-foreground">Observações</label>
-              <Textarea rows={4} value={editObs} onChange={(e) => setEditObs(e.target.value)} disabled={!isAdmin} />
+              <Textarea rows={4} value={editObs} onChange={(e) => setEditObs(e.target.value)} disabled={!podeGerenciar} />
             </div>
-            {isAdmin && (
+            {podeGerenciar && (
               <Button size="sm" onClick={saveBatch}>Salvar</Button>
             )}
           </div>
@@ -409,7 +409,7 @@ export default function BatchDetalhe() {
 
         {/* Direita: upload + arquivos */}
         <div className="space-y-4 lg:col-span-2">
-          {isAdmin && (
+          {podeGerenciar && (
             <Card className="p-4">
               <h3 className="mb-3 text-sm font-semibold">Upload de planilhas</h3>
               <div
@@ -506,7 +506,7 @@ export default function BatchDetalhe() {
                         </TableCell>
                         <TableCell>
                           <div className="flex items-center justify-end gap-1">
-                            {isAdmin && lay && (
+                            {podeGerenciar && lay && (
                               <Button
                                 variant="outline"
                                 size="sm"
@@ -522,7 +522,7 @@ export default function BatchDetalhe() {
                                 {isMaterialized ? "Re-materializar" : "Materializar"}
                               </Button>
                             )}
-                            {isAdmin && (
+                            {podeGerenciar && (
                               <Button variant="ghost" size="sm" onClick={() => removeFile(f)}>
                                 <Trash2 className="h-4 w-4 text-destructive" />
                               </Button>

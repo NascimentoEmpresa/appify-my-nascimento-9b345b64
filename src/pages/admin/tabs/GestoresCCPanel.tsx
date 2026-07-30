@@ -24,7 +24,7 @@ type Empresa = { id: string; codigo: string; razao_social: string };
 
 const PAGE_SIZE = 50;
 
-export function GestoresCCPanel({ empresaId, isAdmin, empresa }: { empresaId: string; isAdmin: boolean; empresa?: Empresa }) {
+export function GestoresCCPanel({ empresaId, podeGerenciar, empresa }: { empresaId: string; podeGerenciar: boolean; empresa?: Empresa }) {
   const qc = useQueryClient();
   const [page, setPage] = useState(0);
   const [busca, setBusca] = useState("");
@@ -239,7 +239,7 @@ export function GestoresCCPanel({ empresaId, isAdmin, empresa }: { empresaId: st
                 if (f) onPickFile(f);
               }}
             />
-            <Button size="sm" onClick={() => fileRef.current?.click()} disabled={!isAdmin || !empresaId}>
+            <Button size="sm" onClick={() => fileRef.current?.click()} disabled={!podeGerenciar || !empresaId}>
               <Upload className="h-3.5 w-3.5 mr-1.5" /> Importar planilha
             </Button>
           </div>
@@ -300,7 +300,7 @@ export function GestoresCCPanel({ empresaId, isAdmin, empresa }: { empresaId: st
                     <Select
                       value={current ?? "__none__"}
                       onValueChange={(v) => onSelectGestor(cc.id, v)}
-                      disabled={!isAdmin}
+                      disabled={!podeGerenciar}
                     >
                       <SelectTrigger className="h-8 text-xs"><SelectValue placeholder="Selecionar gestor" /></SelectTrigger>
                       <SelectContent className="max-h-80">

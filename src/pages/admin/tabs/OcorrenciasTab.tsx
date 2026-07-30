@@ -19,8 +19,8 @@ interface Ocorr {
 
 export function OcorrenciasTab() {
   const qc = useQueryClient();
-  const { roles } = usePermissoes();
-  const isAdmin = roles.includes("admin");
+  const { can } = usePermissoes();
+  const podeGerenciar = can("alterar", undefined, "administracao");
 
   const ocorrQ = useQuery({
     queryKey: ["ocorrencia_operacional"],
@@ -48,7 +48,7 @@ export function OcorrenciasTab() {
           <h2 className="font-display text-sm font-bold">Ocorrências de operação</h2>
           <p className="text-xs text-muted-foreground">{ocorrQ.data?.length ?? 0} ocorrência(s) registrada(s).</p>
         </div>
-        {isAdmin && <NovaOcorrenciaDialog onSaved={() => qc.invalidateQueries({ queryKey: ["ocorrencia_operacional"] })} />}
+        {podeGerenciar && <NovaOcorrenciaDialog onSaved={() => qc.invalidateQueries({ queryKey: ["ocorrencia_operacional"] })} />}
       </header>
       <ul className="divide-y divide-border">
         {ocorrQ.isLoading && <li className="px-5 py-6 text-center text-sm text-muted-foreground">Carregando…</li>}
@@ -69,7 +69,7 @@ export function OcorrenciasTab() {
               </div>
               {o.resolvida ? (
                 <span className="chip border border-success/30 bg-success-soft text-success"><Check className="h-3 w-3" /> Resolvida</span>
-              ) : isAdmin ? (
+              ) : podeGerenciar ? (
                 <Button size="sm" variant="ghost" onClick={() => resolver(o.id)} className="gap-1.5"><Check className="h-3.5 w-3.5" /> Resolver</Button>
               ) : null}
             </li>

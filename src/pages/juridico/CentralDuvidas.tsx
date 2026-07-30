@@ -34,10 +34,10 @@ const ASK_RESET = { titulo: "", categoria: "", pergunta: "" };
 export default function CentralDuvidas() {
   const { user } = useAuth();
   const { empregado } = useVinculoEmpregado();
-  const { roles } = usePermissoes();
+  const { can } = usePermissoes();
   const autor = empregado?.nome || user?.user_metadata?.nome || user?.email || "Usuário";
   const trabalhando = empregado?.situacao === "Trabalhando";
-  const isAdmin = roles.includes("admin");
+  const podeGerenciar = can("alterar", undefined, "duvidas");
 
   const [duvidas, setDuvidas] = useState<Duvida[]>([]);
   const [aprovadores, setAprovadores] = useState<Aprovador[]>([]);
@@ -189,7 +189,7 @@ export default function CentralDuvidas() {
           <div style={{ fontSize: 12.5, color: "#64748b", marginTop: 2 }}>Aprovação das dúvidas e respostas do Jurídico. Respondidas viram a biblioteca pública (Central de Serviços).</div>
         </div>
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-          {isAdmin && <button className="jd-btn" onClick={() => { setAdminModal(true); setEmpSearch(""); setEmpResults([]); }} style={{ background: "#eef4ff", color: "#0f3171" }}>⚙️ Quem aprova/responde</button>}
+          {podeGerenciar && <button className="jd-btn" onClick={() => { setAdminModal(true); setEmpSearch(""); setEmpResults([]); }} style={{ background: "#eef4ff", color: "#0f3171" }}>⚙️ Quem aprova/responde</button>}
           <button className="jd-btn" onClick={() => { setAsk({ ...ASK_RESET }); setAskModal(true); }} style={{ background: "#0f3171", color: "#fff", boxShadow: "0 10px 22px rgba(15,49,113,.18)" }}>+ Nova dúvida</button>
         </div>
       </div>
@@ -259,7 +259,7 @@ export default function CentralDuvidas() {
                       </>}
                       {d.status === "Aprovada" && podeResponder && <button className="jd-btn" onClick={() => abrirResponder(d)} style={{ background: "#7c3aed", color: "#fff", padding: "6px 12px" }}>✓ Responder</button>}
                       {d.status === "Respondida" && podeResponder && <button className="jd-btn" onClick={() => abrirResponder(d)} style={{ background: "#f1f5f9", color: "#475569", padding: "6px 12px" }}>Editar resposta</button>}
-                      {(podeResponder || isAdmin) && <button className="jd-btn" onClick={() => excluir(d)} style={{ background: "none", color: "#dc2626", padding: "6px 8px" }}>Excluir</button>}
+                      {(podeResponder || podeGerenciar) && <button className="jd-btn" onClick={() => excluir(d)} style={{ background: "none", color: "#dc2626", padding: "6px 8px" }}>Excluir</button>}
                     </div>
                   </div>
                 </div>

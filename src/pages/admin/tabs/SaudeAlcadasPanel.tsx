@@ -14,9 +14,9 @@ import { ShieldCheck, AlertTriangle, Trash2, Plus, Users, Workflow, Clock } from
  * permite conceder/revogar a permissão especial "alterar_empresa_cc".
  */
 export function SaudeAlcadasPanel() {
-  const { roles } = usePermissoes();
-  const podeVer = roles.some((r) => ["admin", "presidencia", "controladoria"].includes(r));
-  const isAdmin = roles.includes("admin");
+  const { can } = usePermissoes();
+  const podeVer = can("visualizar", undefined, "administracao");
+  const podeGerenciar = can("alterar", undefined, "administracao");
 
   if (!podeVer) {
     return (
@@ -29,7 +29,7 @@ export function SaudeAlcadasPanel() {
   return (
     <div className="space-y-6">
       <KpisSaude />
-      <PermissoesEspeciaisPanel isAdmin={isAdmin} />
+      <PermissoesEspeciaisPanel podeGerenciar={podeGerenciar} />
     </div>
   );
 }
@@ -173,7 +173,7 @@ function KpiCard({
 // ============================================================
 // Permissões especiais (item 7)
 // ============================================================
-function PermissoesEspeciaisPanel({ isAdmin }: { isAdmin: boolean }) {
+function PermissoesEspeciaisPanel({ podeGerenciar }: { podeGerenciar: boolean }) {
   const qc = useQueryClient();
   const [email, setEmail] = useState("");
   const [motivo, setMotivo] = useState("");
@@ -240,7 +240,7 @@ function PermissoesEspeciaisPanel({ isAdmin }: { isAdmin: boolean }) {
         Ação registrada em <code>centros_custo_empresa_log</code>.
       </p>
 
-      {isAdmin && (
+      {podeGerenciar && (
         <div className="mb-4 grid grid-cols-1 gap-2 rounded-lg border border-border bg-muted/20 p-3 md:grid-cols-[1fr_2fr_auto]">
           <Input placeholder="E-mail do usuário" value={email} onChange={(e) => setEmail(e.target.value)} className="h-9 text-xs" />
           <Input placeholder="Motivo (auditoria)" value={motivo} onChange={(e) => setMotivo(e.target.value)} className="h-9 text-xs" />
@@ -272,7 +272,7 @@ function PermissoesEspeciaisPanel({ isAdmin }: { isAdmin: boolean }) {
                 <td className="px-3 py-2">{new Date(r.concedido_em).toLocaleString("pt-BR")}</td>
                 <td className="px-3 py-2 italic text-muted-foreground">{r.motivo || "—"}</td>
                 <td className="px-3 py-2 text-right">
-                  {isAdmin && (
+                  {podeGerenciar && (
                     <Button size="sm" variant="ghost" onClick={() => revogar(r.id)}>
                       <Trash2 className="h-3 w-3" />
                     </Button>

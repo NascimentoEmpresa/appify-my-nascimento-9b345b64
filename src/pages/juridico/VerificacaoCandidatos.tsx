@@ -17,8 +17,8 @@ const digitsOf = (s?: string) => String(s ?? "").replace(/\D/g, "");
 
 export default function VerificacaoCandidatos() {
   const { user } = useAuth();
-  const { roles } = usePermissoes();
-  const podeAgir = roles.includes("juridico") || roles.includes("admin");
+  const { can } = usePermissoes();
+  const podeAgir = can("alterar", undefined, "candidatos");
   const nome = user?.user_metadata?.nome ?? user?.email ?? "";
 
   const [rows, setRows] = useState<any[]>([]);

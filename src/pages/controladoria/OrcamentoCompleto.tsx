@@ -48,8 +48,8 @@ type Row = {
 type Patch = Partial<Pick<Row, "valor_previsto" | "centro_custo_id" | "dre_linha_id" | "conta_contabil_id" | "memoria_calculo" | "competencia">>;
 
 export default function OrcamentoCompleto() {
-  const { roles } = usePermissoes();
-  const canEdit = roles.includes("admin") || roles.includes("controladoria") || roles.includes("presidencia");
+  const { can } = usePermissoes();
+  const canEdit = can("alterar", undefined, "orcamento");
 
   const [ano, setAno] = useState<number>(new Date().getFullYear());
   const [empresaId, setEmpresaId] = useState<string | undefined>();

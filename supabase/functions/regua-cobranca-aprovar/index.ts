@@ -99,13 +99,13 @@ Deno.serve(async (req) => {
       });
     }
 
-    // Só quem tem admin, controladoria, financeiro ou juridico pode aprovar/rejeitar
-    const papeisPermitidos = ["admin", "controladoria", "financeiro", "juridico"];
-    let autorizado = false;
-    for (const papel of papeisPermitidos) {
-      const { data: temPapel } = await admin.rpc("has_role", { _user_id: userData.user.id, _role: papel });
-      if (temPapel) { autorizado = true; break; }
-    }
+    // Só quem tem acesso a cobrancas (alterar = vê tudo, aprovar = restrito a
+    // 30 dias/Jurídico) pode aprovar/rejeitar — ver Lote 8d/8e.
+    const [alterarCheck, aprovarCheck] = await Promise.all([
+      admin.rpc("can_access", { _user: userData.user.id, _menu: "cobrancas", _acao: "alterar" }),
+      admin.rpc("can_access", { _user: userData.user.id, _menu: "cobrancas", _acao: "aprovar" }),
+    ]);
+    const autorizado = alterarCheck.data === true || aprovarCheck.data === true;
     if (!autorizado) {
       return new Response(JSON.stringify({ ok: false, error: "Sem permissão pra aprovar cobranças." }), {
         status: 403,

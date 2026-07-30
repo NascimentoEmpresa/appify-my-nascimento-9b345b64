@@ -50,9 +50,9 @@ Deno.serve(async (req) => {
     if (!u?.user) return json({ error: "Sessão inválida" }, 401);
 
     const admin = createClient(SUPABASE_URL, SERVICE);
-    const { data: isAdmin, error: roleErr } = await admin.rpc("has_role", { _user_id: u.user.id, _role: "admin" });
+    const { data: podeCarregar, error: roleErr } = await admin.rpc("can_access", { _user: u.user.id, _menu: "administracao", _acao: "alterar" });
     if (roleErr) return json({ error: roleErr.message }, 500);
-    if (!isAdmin) return json({ error: "Apenas administradores" }, 403);
+    if (!podeCarregar) return json({ error: "Apenas administradores" }, 403);
 
     const results: Record<string, { ok: boolean; error?: string }> = {};
     for (const step of STEPS) {
