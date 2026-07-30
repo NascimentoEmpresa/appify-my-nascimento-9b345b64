@@ -24,3 +24,12 @@ export const ACESSO_ABERTO_SEM_PERMISSOES = false;
  */
 export const MENUS_SEMPRE_RESTRITOS = new Set(["administracao", "integracao", "integracao-aliases"]);
 
+/**
+ * Menus SEMPRE ABERTOS: liberados a todo usuário autenticado por padrão, MESMO
+ * que exista configuração de acesso para eles (o inverso de
+ * MENUS_SEMPRE_RESTRITOS). São telas de uso geral que todo mundo precisa —
+ * abrir e acompanhar chamados — para não ter que habilitar usuário por usuário
+ * em "Acesso por Usuário".
+ */
+export const MENUS_SEMPRE_ABERTOS = new Set(["central_servicos_chamados", "chamados_sistemas_abrir"]);
+

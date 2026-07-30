@@ -5,7 +5,7 @@ import { useAccessibleMenus, matchMenuCode } from "@/hooks/useAccessibleMenus";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
 import { useFeatureFlag } from "@/lib/featureFlags";
-import { ACESSO_ABERTO_SEM_PERMISSOES, MENUS_SEMPRE_RESTRITOS } from "@/lib/acesso";
+import { ACESSO_ABERTO_SEM_PERMISSOES, MENUS_SEMPRE_RESTRITOS, MENUS_SEMPRE_ABERTOS } from "@/lib/acesso";
 
 /**
  * Bloco V3 — Rotas governadas por feature flag soberana de fase.
@@ -52,6 +52,7 @@ export function RouteGuard({ children }: { children: ReactNode }) {
     (ACESSO_ABERTO_SEM_PERMISSOES ||
       !access ||
       !menuCode ||
+      MENUS_SEMPRE_ABERTOS.has(menuCode) ||
       (!access.configuredCodes.has(menuCode) && !MENUS_SEMPRE_RESTRITOS.has(menuCode)) ||
       access.codes.has(menuCode));
 

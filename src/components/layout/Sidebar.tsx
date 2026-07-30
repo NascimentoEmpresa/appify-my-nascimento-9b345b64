@@ -51,7 +51,7 @@ import {
 } from "lucide-react";
 import { useTemAlcada } from "@/hooks/useTemAlcada";
 import { useAccessibleMenus, matchMenuCode } from "@/hooks/useAccessibleMenus";
-import { ACESSO_ABERTO_SEM_PERMISSOES, MENUS_SEMPRE_RESTRITOS } from "@/lib/acesso";
+import { ACESSO_ABERTO_SEM_PERMISSOES, MENUS_SEMPRE_RESTRITOS, MENUS_SEMPRE_ABERTOS } from "@/lib/acesso";
 import { useGradeAtivaCount } from "@/hooks/useGradeAtivaCount";
 import { useChamadosNotif } from "@/hooks/useChamadosNotif";
 import { EmpresaAtivaContext } from "@/context/EmpresaAtivaContext";
@@ -662,6 +662,8 @@ export function Sidebar({ collapsed, mobileOpen = false, onMobileClose }: Sideba
     // perfil, então continua sempre visível (não é regressão esconder algo
     // que nunca teve controle de acesso definido).
     if (!code) return true;
+    // Menus sempre abertos (chamados) ficam visíveis a todos por padrão.
+    if (MENUS_SEMPRE_ABERTOS.has(code)) return true;
     // Menu existe, mas ninguém nunca configurou nada pra ele no
     // gerenciamento de acesso (nenhuma linha em perfil_acesso_permissao
     // ou screen_permission_user) — fica aberto até alguém decidir algo lá.

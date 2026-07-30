@@ -7,12 +7,12 @@ export function ChamadoFab() {
   const { pathname } = useLocation();
   const nav = useNavigate();
 
-  // Não aparece na própria tela de abrir chamado.
-  if (pathname.endsWith("/chamados/novo")) return null;
+  // Não aparece nas próprias telas de chamados.
+  if (pathname.includes("/chamados")) return null;
 
   return (
     <button
-      onClick={() => nav("/app/sistemas/chamados/novo")}
+      onClick={() => nav("/app/central-servicos/chamados/novo")}
       className="fixed bottom-6 right-6 z-40 flex h-12 w-12 items-center justify-center rounded-full bg-primary text-primary-foreground shadow-lg transition hover:scale-105 hover:shadow-xl"
       aria-label="Abrir chamado"
       title="Abrir chamado"
