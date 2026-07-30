@@ -65,10 +65,13 @@ export interface WaMenuOpcao {
 }
 
 export interface WaMenu {
-  ativo: boolean;
-  titulo: string; // corpo da mensagem do menu
+  titulo: string; // mensagem de abertura do menu (é também a saudação)
   opcoes: WaMenuOpcao[];
 }
+
+// Modo da conversa: o menu abre tudo; a IA só assume via a opção de atendimento
+// por IA. O simulador guarda isto no estado; o webhook reconstrói do histórico.
+export type WaModo = "menu" | "ia";
 
 export type WaProvedor = "groq" | "gemini" | "openrouter" | "anthropic";
 
@@ -76,7 +79,6 @@ export interface WaBotConfig {
   id: boolean;
   ativo: boolean;
   persona: string;
-  saudacao: string | null;
   fallback: string;
   horario_inicio: string;
   horario_fim: string;
@@ -115,6 +117,7 @@ export interface WaTesteResposta {
   system?: string;
   botoes?: Array<{ id: string; titulo: string }>;
   formato?: "button" | "list";
+  modo?: WaModo;               // modo da conversa depois desta mensagem
   diagnostico: WaTesteDiagnostico;
 }
 
@@ -131,8 +134,8 @@ export const TESTE_TIPO_LABEL: Record<WaTesteTipo, string> = {
 };
 
 export const MENU_ACOES: Array<{ value: WaMenuAcao; label: string; ajuda: string }> = [
-  { value: "texto", label: "Responder um texto", ajuda: "O bot envia uma resposta pronta." },
-  { value: "ia", label: "Continuar com a IA", ajuda: "O cliente escreve à vontade e a IA responde." },
+  { value: "texto", label: "Responder um texto", ajuda: "O bot envia uma resposta pronta (ex.: link das vagas) e volta ao menu." },
+  { value: "ia", label: "Atendimento por I.A", ajuda: "Encaminha para a IA: a pessoa passa a conversar livre e a IA responde." },
   { value: "humano", label: "Falar com atendente", ajuda: "Desliga o bot e passa para atendimento humano." },
 ];
 

@@ -12,7 +12,7 @@ import {
   Bot, ShieldAlert, Send, RotateCcw, Plug, Inbox, Settings, FlaskConical,
   MousePointerClick, AlertTriangle, CheckCircle2, Clock, Code2,
 } from "lucide-react";
-import { TESTE_TIPO_LABEL, type WaTesteDiagnostico, type WaTesteResposta } from "./types";
+import { TESTE_TIPO_LABEL, type WaModo, type WaTesteDiagnostico, type WaTesteResposta } from "./types";
 
 // Uma bolha da conversa simulada. `botoes` aparece quando o bot apresentaria o
 // menu — dá para clicar e seguir o fluxo como o cliente faria no celular.
@@ -38,6 +38,9 @@ export default function WhatsAppTestes() {
   const [diag, setDiag] = useState<WaTesteDiagnostico | null>(null);
   const [ultimoSystem, setUltimoSystem] = useState<string | null>(null);
   const [verSystem, setVerSystem] = useState(false);
+  // Modo da conversa simulada: o webhook reconstrói do histórico; aqui a gente
+  // guarda no estado e devolve a cada chamada, para o fluxo bater com o real.
+  const [modo, setModo] = useState<WaModo>("menu");
   const fimRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => { fimRef.current?.scrollIntoView({ behavior: "smooth" }); }, [bolhas]);
@@ -49,7 +52,7 @@ export default function WhatsAppTestes() {
 
   const chamar = async (corpo: Record<string, unknown>) => {
     const { data, error } = await supabase.functions.invoke("whatsapp-testar", {
-      body: { ignorar_horario: ignorarHorario, historico, ...corpo },
+      body: { ignorar_horario: ignorarHorario, historico, modo, ...corpo },
     });
     if (error) throw new Error(String((error as { message?: string }).message ?? error));
     const r = data as WaTesteResposta & { error?: string };
@@ -67,6 +70,7 @@ export default function WhatsAppTestes() {
       const r = await chamar({ mensagem: msg || "(opção do menu)", reply_id: replyId ?? null });
       setDiag(r.diagnostico);
       setUltimoSystem(r.system ?? null);
+      if (r.modo) setModo(r.modo);
       setBolhas((b) => [...b, {
         autor: "bot",
         texto: r.resposta ?? "",
@@ -101,7 +105,7 @@ export default function WhatsAppTestes() {
     }
   };
 
-  const reiniciar = () => { setBolhas([]); setDiag(null); setUltimoSystem(null); };
+  const reiniciar = () => { setBolhas([]); setDiag(null); setUltimoSystem(null); setModo("menu"); };
 
   if (!podeTestar) {
     return (
@@ -149,7 +153,9 @@ export default function WhatsAppTestes() {
             <div className="flex items-center gap-2">
               <Bot className="h-4 w-4 text-success" />
               <p className="text-sm font-semibold">Conversa simulada</p>
-              {bolhas.length === 0 && <Badge variant="outline" className="text-[10px]">primeiro contato</Badge>}
+              {bolhas.length === 0
+                ? <Badge variant="outline" className="text-[10px]">primeiro contato</Badge>
+                : <Badge variant="outline" className="text-[10px]">{modo === "ia" ? "atendimento por I.A" : "no menu"}</Badge>}
             </div>
             <div className="flex items-center gap-2">
               <label className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
@@ -259,7 +265,7 @@ export default function WhatsAppTestes() {
                   <Linha rotulo="Provedor" valor={diag.provedor} />
                   <Linha rotulo="Modelo" valor={diag.modelo} />
                   <Linha rotulo="Base de conhecimento" valor={`${diag.base_itens} ${diag.base_itens === 1 ? "item" : "itens"}`} />
-                  <Linha rotulo="Menu de opções" valor={diag.menu_ativo ? "ativo" : "desligado"} />
+                  <Linha rotulo="Menu de atendimento" valor={diag.menu_ativo ? "configurado" : "sem opções (IA direta)"} />
                   <Linha
                     rotulo="Horário"
                     valor={diag.atende_24h ? "24h, todos os dias" : diag.dentro_horario ? "dentro da janela" : "fora da janela"}

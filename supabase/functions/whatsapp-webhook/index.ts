@@ -17,7 +17,8 @@
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
 import {
-  dentroDoHorario, menuAtivo, montarBase, montarSystem, gerarResposta, type Msg,
+  dentroDoHorario, menuAtivo, montarBase, montarSystem, gerarResposta,
+  rotearBot, inferirModo, type Msg,
 } from "../_shared/whatsapp-bot.ts";
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
@@ -62,26 +63,22 @@ async function enviarTexto(to: string, body: string): Promise<string | null> {
 }
 
 // ---------- resposta do bot (IA) ----------
-// Recebe o cfg já carregado por processarBot (que valida ativo/horário).
-async function responderComBot(conversaId: string, contatoId: string, to: string, cfg: any) {
-  // Histórico recente (limite pra caber no contexto).
-  const { data: hist } = await admin.from("WA_MENSAGEM")
-    .select("direcao, texto").eq("conversa_id", conversaId)
-    .order("criada_em", { ascending: false }).limit(20);
-  const historico = (hist ?? []).reverse().filter((m: any) => m.texto);
-
+// Recebe o cfg e o histórico já carregados por processarBot.
+async function responderComBot(
+  conversaId: string, contatoId: string, to: string, cfg: any,
+  mensagens: Array<{ direcao: string; texto: string | null }>,
+) {
   // Base de conhecimento.
   const { data: conh } = await admin.from("WA_BOT_CONHECIMENTO")
     .select("titulo, conteudo").eq("ativo", true).order("ordem");
 
-  // Primeiro contato = o bot ainda não falou nada nesta conversa. Nesse caso a
-  // saudação configurada entra como abertura sugerida — mas como instrução, não
-  // como mensagem pronta: se a pessoa já chegou com um assunto, a IA cumprimenta
-  // e responde o assunto na mesma mensagem, em vez de mandar um "olá" solto.
-  const primeiroContato = !historico.some((m: any) => m.direcao === "saida");
-  const system = montarSystem(cfg, montarBase(conh ?? []), primeiroContato);
+  const historico = mensagens.filter((m) => m.texto);
+  // No fluxo normal a IA entra numa conversa que o menu já abriu, então não
+  // cumprimenta de novo. `primeiraFala` só vale no caso de borda de menu vazio.
+  const primeiraFala = !historico.some((m) => m.direcao === "saida");
+  const system = montarSystem(cfg, montarBase(conh ?? []), primeiraFala);
 
-  const messages: Msg[] = historico.map((m: any) => ({
+  const messages: Msg[] = historico.map((m) => ({
     role: m.direcao === "entrada" ? "user" : "assistant",
     content: m.texto as string,
   }));
@@ -107,9 +104,11 @@ async function registrarSaida(conversaId: string, contatoId: string, to: string,
   }).eq("id", conversaId);
 }
 
-// ---------- roteamento do bot (menu automático + IA) ----------
-// Decide o que o bot faz a cada mensagem: clique no menu → ação; primeira
-// mensagem → apresenta o menu; conversa livre → responde com a IA.
+// ---------- roteamento do bot (fluxo único guiado por menu) ----------
+// Um único ponto de decisão por mensagem, via rotearBot: o menu abre toda
+// conversa; a IA só assume depois que a pessoa clica na opção de atendimento por
+// IA. O modo da conversa é reconstruído do histórico (inferirModo), então não
+// precisa de coluna nova no banco.
 async function processarBot(
   conversaId: string, contatoId: string, to: string,
   msgType: string, texto: string | null, replyId: string | null,
@@ -117,47 +116,46 @@ async function processarBot(
   const { data: cfg } = await admin.from("WA_BOT_CONFIG").select("*").limit(1).maybeSingle();
   if (!cfg || !cfg.ativo) return;
 
-  // Fora do horário: manda o aviso e para.
-  if (!dentroDoHorario(cfg)) {
-    if (cfg.fora_horario_msg) await registrarSaida(conversaId, contatoId, to, cfg.fora_horario_msg, "bot");
-    return;
-  }
+  // Histórico recente com payload — o payload guarda o reply_id de cada clique,
+  // que é o que inferirModo usa para saber se a conversa já está na IA.
+  const { data: hist } = await admin.from("WA_MENSAGEM")
+    .select("direcao, texto, payload").eq("conversa_id", conversaId)
+    .order("criada_em", { ascending: false }).limit(20);
+  const mensagens = (hist ?? []).reverse();
 
-  const menu = menuAtivo(cfg);
+  const modo = inferirModo(cfg as any, mensagens as any);
+  const rota = rotearBot(cfg as any, {
+    modo,
+    texto: msgType === "text" ? texto : null,
+    replyId,
+    dentroHorario: dentroDoHorario(cfg as any),
+  });
 
-  // 1) Clique numa opção do menu → executa a ação configurada.
-  if (replyId && menu) {
-    const opt = menu.opcoes.find((o: any) => String(o.id) === replyId);
-    if (opt) { await executarAcaoMenu(conversaId, contatoId, to, opt); return; }
+  switch (rota.tipo) {
+    case "fora_horario":
+      if (cfg.fora_horario_msg) await registrarSaida(conversaId, contatoId, to, cfg.fora_horario_msg, "bot");
+      return;
+    case "menu": {
+      const menu = menuAtivo(cfg as any);
+      if (menu) await enviarMenu(conversaId, contatoId, to, menu);
+      return;
+    }
+    case "texto":
+      await registrarSaida(conversaId, contatoId, to, rota.texto, "bot");
+      return;
+    case "humano":
+      // Passa a conversa para atendimento humano (desliga o bot) e avisa.
+      await admin.from("WA_CONVERSA").update({ bot_ativo: false }).eq("id", conversaId);
+      await registrarSaida(conversaId, contatoId, to, rota.aviso, "bot");
+      return;
+    case "ia_intro":
+      // Entrou na IA: manda o aviso; as próximas mensagens caem na IA.
+      await registrarSaida(conversaId, contatoId, to, rota.aviso, "bot");
+      return;
+    case "ia":
+      await responderComBot(conversaId, contatoId, to, cfg, mensagens);
+      return;
   }
-
-  // 2) Primeira mensagem da conversa → apresenta o menu.
-  if (menu) {
-    const { count } = await admin.from("WA_MENSAGEM")
-      .select("id", { count: "exact", head: true })
-      .eq("conversa_id", conversaId).eq("direcao", "entrada");
-    if ((count ?? 0) <= 1) { await enviarMenu(conversaId, contatoId, to, menu); return; }
-  }
-
-  // 3) Conversa livre → responde com a IA (só texto).
-  if (msgType === "text" && texto) await responderComBot(conversaId, contatoId, to, cfg);
-}
-
-// Executa a ação de uma opção do menu clicada.
-async function executarAcaoMenu(conversaId: string, contatoId: string, to: string, opt: any) {
-  const valor = typeof opt.valor === "string" ? opt.valor.trim() : "";
-  if (opt.acao === "humano") {
-    // Passa a conversa para atendimento humano (desliga o bot) e avisa o cliente.
-    await admin.from("WA_CONVERSA").update({ bot_ativo: false }).eq("id", conversaId);
-    if (valor) await registrarSaida(conversaId, contatoId, to, valor, "bot");
-    return;
-  }
-  if (opt.acao === "texto") {
-    await registrarSaida(conversaId, contatoId, to, valor || String(opt.titulo ?? "…"), "bot");
-    return;
-  }
-  // acao "ia": manda um aviso opcional; as próximas mensagens caem na IA.
-  if (valor) await registrarSaida(conversaId, contatoId, to, valor, "bot");
 }
 
 // Envia uma mensagem interativa (botões/lista) pela Graph API.
