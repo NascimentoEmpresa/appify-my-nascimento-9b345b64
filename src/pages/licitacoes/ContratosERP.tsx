@@ -188,12 +188,12 @@ export default function ContratosERP() {
 
       // Agrupa por contrato só as linhas EXECUTADO EM VIGÊNCIA ou A INICIAR
       const ativos = planilha.filter((r) => r.orexec === "EXECUTADO" && emVigencia.has(r.id));
-      const porContrato = new Map<string, { cliente: string; valorMensal: number; dataInicio: string | null }>();
+      const porContrato = new Map<string, { cliente: string; dataInicio: string | null }>();
       for (const r of ativos) {
         const key = r.contrato;
-        const cur = porContrato.get(key) ?? { cliente: r.cliente, valorMensal: 0, dataInicio: r.data_vigencia ?? null };
-        cur.valorMensal += (r.total_por_empregado ?? 0) * (r.qt_postos || 1);
-        porContrato.set(key, cur);
+        if (!porContrato.has(key)) {
+          porContrato.set(key, { cliente: r.cliente, dataInicio: r.data_vigencia ?? null });
+        }
       }
 
       // Filtra os que já existem
@@ -209,13 +209,26 @@ export default function ContratosERP() {
         empresa_id: empresa.id,
         nome,
         cliente: v.cliente,
-        valor_mensal: Math.round(v.valorMensal * 100) / 100,
         data_inicio: v.dataInicio,
         status: "ativo" as const,
       }));
 
-      const { error } = await (supabase as any).from("contratos").insert(inserts);
+      const { data: criados, error } = await (supabase as any).from("contratos").insert(inserts).select("id, nome");
       if (error) throw error;
+
+      // Vincula de volta as linhas da planilha de custo ao contrato recém-criado
+      // (senão "Vlr. Mensal" e o autopreenchimento de Nova NF ficam sem valor,
+      // já que dependem de planilha_custo.contrato_id, não do nome em texto).
+      await Promise.all(
+        (criados ?? []).map((c: { id: string; nome: string }) =>
+          (supabase as any)
+            .from("planilha_custo")
+            .update({ contrato_id: c.id })
+            .eq("empresa_id", empresa.id)
+            .eq("contrato", c.nome)
+            .is("contrato_id", null)
+        )
+      );
 
       toast({ title: `${novos.length} contrato(s) importado(s) com sucesso!` });
       // Força refetch

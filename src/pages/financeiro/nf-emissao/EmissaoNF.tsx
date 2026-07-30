@@ -61,7 +61,13 @@ export default function EmissaoNF() {
   const { empresa } = useEmpresaAtiva();
   const empresaId = empresa?.id ?? null;
   const { data: nfs = [], isLoading } = useNfsEmissao(empresaId);
-  const { data: contratos = [] } = useContratosERP();
+  const { data: contratosTodos = [] } = useContratosERP();
+  // Esconde contratos encerrados/suspensos do fluxo operacional — a não ser
+  // que já tenham NF emitida aqui, pra não sumir com histórico existente.
+  const contratos = useMemo(() => {
+    const idsComNf = new Set(nfs.map((n) => n.contrato_id));
+    return contratosTodos.filter((c) => c.status === "ativo" || idsComNf.has(c.id));
+  }, [contratosTodos, nfs]);
 
   const [busca, setBusca] = useState("");
   const [contratoSel, setContratoSel] = useState<string | null>(null);
