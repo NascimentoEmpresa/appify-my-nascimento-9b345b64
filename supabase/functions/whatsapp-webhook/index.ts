@@ -227,6 +227,40 @@ async function enviarMenu(conversaId: string, contatoId: string, to: string, men
   }).eq("id", conversaId);
 }
 
+// ---------- mídia recebida ----------
+// Baixa uma mídia da Cloud API (via media id) e sobe pro bucket privado
+// 'whatsapp-midia'. Retorna o caminho salvo + mime + tamanho.
+async function salvarMidiaWhatsApp(
+  mediaId: string, mimeHint: string | null,
+): Promise<{ storage_path: string; mime_type: string; tamanho: number | null } | null> {
+  // 1) URL temporária da mídia.
+  const metaRes = await fetch(`${GRAPH}/${mediaId}`, { headers: { Authorization: `Bearer ${WA_TOKEN}` } });
+  const meta: any = await metaRes.json().catch(() => ({}));
+  if (!metaRes.ok || !meta?.url) { console.error("Falha ao obter URL da mídia:", JSON.stringify(meta)); return null; }
+  // 2) baixa o binário (a URL da Graph exige o token).
+  const fileRes = await fetch(meta.url, { headers: { Authorization: `Bearer ${WA_TOKEN}` } });
+  if (!fileRes.ok) { console.error("Falha ao baixar mídia:", fileRes.status); return null; }
+  const bytes = new Uint8Array(await fileRes.arrayBuffer());
+  const mime = meta.mime_type || mimeHint || "application/octet-stream";
+  const path = `wa/${mediaId}`;
+  // 3) sobe pro Storage (service_role bypassa RLS).
+  const { error } = await admin.storage.from("whatsapp-midia").upload(path, bytes, { contentType: mime, upsert: true });
+  if (error) { console.error("Falha ao subir mídia:", error.message); return null; }
+  return { storage_path: path, mime_type: mime, tamanho: meta.file_size ? Number(meta.file_size) : bytes.length };
+}
+
+// Baixa a mídia e atualiza o payload da mensagem (status pronto/erro),
+// preservando o que já estava no payload.
+async function processarMidia(mensagemId: string, midia: any) {
+  const salvo = await salvarMidiaWhatsApp(midia.media_id, midia.mime_type);
+  const midiaAtualizada = salvo
+    ? { ...midia, storage_path: salvo.storage_path, mime_type: salvo.mime_type, tamanho: salvo.tamanho, status: "pronto" }
+    : { ...midia, status: "erro" };
+  const { data: atual } = await admin.from("WA_MENSAGEM").select("payload").eq("id", mensagemId).maybeSingle();
+  const merged = { ...((atual?.payload as Record<string, unknown>) ?? {}), midia: midiaAtualizada };
+  await admin.from("WA_MENSAGEM").update({ payload: merged }).eq("id", mensagemId);
+}
+
 // ---------- handler ----------
 Deno.serve(async (req) => {
   const url = new URL(req.url);
@@ -270,6 +304,19 @@ Deno.serve(async (req) => {
         // id do botão/opção clicado (payload da resposta interativa).
         const replyId: string | null = msg.interactive?.button_reply?.id ?? msg.interactive?.list_reply?.id ?? null;
 
+        // Mídia recebida (documento/imagem/áudio/vídeo/sticker): guarda os
+        // metadados; o arquivo é baixado em segundo plano e salvo no Storage.
+        const MIDIA_TIPOS = ["image", "document", "audio", "video", "sticker"];
+        const midiaMsg = MIDIA_TIPOS.includes(msg.type) ? (msg[msg.type] ?? {}) : null;
+        const midia = midiaMsg && midiaMsg.id ? {
+          tipo: String(msg.type),
+          media_id: String(midiaMsg.id),
+          filename: midiaMsg.filename ?? null,
+          mime_type: midiaMsg.mime_type ?? null,
+          caption: midiaMsg.caption ?? null,
+          status: "baixando",
+        } : null;
+
         // contato (upsert por wa_id). Só grava o nome quando a Meta mandou o
         // profile.name; se vier sem contacts (comum em mensagens seguintes),
         // preserva o nome já salvo em vez de sobrescrever com null.
@@ -291,19 +338,26 @@ Deno.serve(async (req) => {
 
         // dedupe: só processa se a mensagem é nova. Só inclui `payload` quando
         // há clique de botão, para não depender da coluna antes da migration.
+        const textoFinal = texto ?? midia?.caption ?? `[${msg.type}]`;
+        const payloadEntrada: Record<string, unknown> = {};
+        if (replyId) payloadEntrada.reply_id = replyId;
+        if (midia) payloadEntrada.midia = midia;
         const entradaRow: Record<string, unknown> = {
           conversa_id: conversa.id, contato_id: contato.id, direcao: "entrada",
-          tipo: msg.type ?? "text", texto: texto ?? `[${msg.type}]`,
+          tipo: msg.type ?? "text", texto: textoFinal,
           wa_message_id: msg.id, status: "recebida", origem: "contato",
         };
-        if (replyId) entradaRow.payload = { reply_id: replyId };
+        if (Object.keys(payloadEntrada).length) entradaRow.payload = payloadEntrada;
         const { data: nova } = await admin.from("WA_MENSAGEM").insert(entradaRow).select("id").maybeSingle();
         if (!nova) continue; // já existia (reentrega da Meta)
+
+        // Baixa o arquivo em segundo plano e atualiza a mensagem com o caminho.
+        if (midia) tarefas.push(processarMidia(nova.id, midia));
 
         try { await admin.rpc("wa_incrementar_nao_lidas", { p_conversa: conversa.id }); } catch { /* best-effort */ }
         await admin.from("WA_CONVERSA").update({
           ultima_mensagem_em: new Date().toISOString(),
-          ultima_mensagem_preview: (texto ?? `[${msg.type}]`).slice(0, 120),
+          ultima_mensagem_preview: textoFinal.slice(0, 120),
           ultima_direcao: "entrada",
         }).eq("id", conversa.id);
 

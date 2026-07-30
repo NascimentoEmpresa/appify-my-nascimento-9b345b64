@@ -37,10 +37,22 @@ export interface WaMensagem {
   payload?: WaPayload | null;
 }
 
+export interface WaMidia {
+  tipo: string;                // image | document | audio | video | sticker
+  media_id?: string;
+  filename?: string | null;
+  mime_type?: string | null;
+  caption?: string | null;
+  storage_path?: string;
+  tamanho?: number | null;
+  status?: "baixando" | "pronto" | "erro";
+}
+
 export interface WaPayload {
   tipo?: string;
   botoes?: Array<{ id: string; titulo: string }>;
   reply_id?: string;
+  midia?: WaMidia;
 }
 
 export type WaMenuAcao = "texto" | "ia" | "humano";

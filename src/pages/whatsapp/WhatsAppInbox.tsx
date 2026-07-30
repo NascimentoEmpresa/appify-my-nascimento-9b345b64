@@ -11,9 +11,9 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
-import { Bot, Send, Search, ShieldAlert, Settings, User, MessageCircle, Plus, X, MousePointerClick } from "lucide-react";
+import { Bot, Send, Search, ShieldAlert, Settings, User, MessageCircle, Plus, X, MousePointerClick, FileText } from "lucide-react";
 import {
-  fmtHora, fmtTelefone, iniciais, type WaConversa, type WaContato, type WaMensagem,
+  fmtHora, fmtTelefone, iniciais, type WaConversa, type WaContato, type WaMensagem, type WaMidia,
 } from "./types";
 
 export default function WhatsAppInbox() {
@@ -203,7 +203,10 @@ export default function WhatsAppInbox() {
                       {!saida && m.payload?.reply_id && (
                         <p className="mb-0.5 flex items-center gap-1 text-[10px] font-semibold uppercase opacity-70"><MousePointerClick className="h-3 w-3" /> resposta</p>
                       )}
-                      <p className="whitespace-pre-wrap break-words">{m.texto}</p>
+                      {m.payload?.midia && <div className="mb-1"><MidiaAnexo midia={m.payload.midia} /></div>}
+                      {m.texto && !(m.payload?.midia && /^\[[a-z]+\]$/i.test(m.texto)) && (
+                        <p className="whitespace-pre-wrap break-words">{m.texto}</p>
+                      )}
                       {m.payload?.botoes?.length ? (
                         <div className="mt-1.5 space-y-1 border-t border-current/15 pt-1.5">
                           {m.payload.botoes.map((b) => (
@@ -276,5 +279,44 @@ export default function WhatsAppInbox() {
         )}
       </Card>
     </div>
+  );
+}
+
+// Anexo de mídia recebida: gera uma URL assinada do bucket privado e renderiza
+// conforme o tipo (imagem/vídeo/áudio inline; documento e demais como download).
+function MidiaAnexo({ midia }: { midia: WaMidia }) {
+  const pronto = midia.status === "pronto" && !!midia.storage_path;
+  const { data: url } = useQuery({
+    queryKey: ["wa-midia", midia.storage_path],
+    enabled: pronto,
+    staleTime: 50 * 60 * 1000, // a URL assinada dura 1h; revalida bem antes
+    queryFn: async () => {
+      const { data } = await supabase.storage.from("whatsapp-midia").createSignedUrl(midia.storage_path!, 3600);
+      return data?.signedUrl ?? null;
+    },
+  });
+
+  if (midia.status === "baixando") return <p className="text-[11px] italic opacity-80">Recebendo arquivo…</p>;
+  if (midia.status === "erro") return <p className="text-[11px] italic text-destructive">Falha ao baixar o arquivo.</p>;
+  if (!url) return <p className="text-[11px] italic opacity-80">Carregando…</p>;
+
+  const mime = midia.mime_type ?? "";
+  if (midia.tipo === "image" || midia.tipo === "sticker" || mime.startsWith("image/")) {
+    return <a href={url} target="_blank" rel="noreferrer"><img src={url} alt={midia.filename ?? "imagem"} className="max-h-60 max-w-full rounded-md" /></a>;
+  }
+  if (midia.tipo === "video" || mime.startsWith("video/")) {
+    return <video src={url} controls className="max-h-60 max-w-full rounded-md" />;
+  }
+  if (midia.tipo === "audio" || mime.startsWith("audio/")) {
+    return <audio src={url} controls className="w-full" />;
+  }
+  return (
+    <a
+      href={url} target="_blank" rel="noreferrer" download={midia.filename ?? undefined}
+      className="flex items-center gap-2 rounded-md border border-current/25 px-2 py-1.5 text-xs hover:underline"
+    >
+      <FileText className="h-4 w-4 shrink-0" />
+      <span className="truncate">{midia.filename ?? "documento"}</span>
+    </a>
   );
 }
