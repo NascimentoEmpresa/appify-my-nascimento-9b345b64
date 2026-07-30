@@ -70,6 +70,8 @@ export interface WaMenu {
   opcoes: WaMenuOpcao[];
 }
 
+export type WaProvedor = "groq" | "gemini" | "openrouter" | "anthropic";
+
 export interface WaBotConfig {
   id: boolean;
   ativo: boolean;
@@ -80,6 +82,7 @@ export interface WaBotConfig {
   horario_fim: string;
   dias_semana: number[];
   fora_horario_msg: string;
+  provedor: WaProvedor;
   modelo: string;
   max_tokens: number;
   menu?: WaMenu | null;
@@ -99,11 +102,49 @@ export interface WaConhecimento {
   ordem: number;
 }
 
-export const MODELOS = [
-  { value: "claude-opus-5", label: "Claude Opus 5 (mais capaz)" },
-  { value: "claude-sonnet-5", label: "Claude Sonnet 5 (equilíbrio)" },
-  { value: "claude-haiku-4-5", label: "Claude Haiku 4.5 (rápido/econômico)" },
-] as const;
+// Provedores de IA. O secret é a chave que precisa existir em
+// Supabase → Edge Functions → Secrets para o provedor funcionar.
+export const PROVEDORES: Array<{ value: WaProvedor; label: string; secret: string; ajuda: string }> = [
+  {
+    value: "groq", label: "Groq — grátis", secret: "GROQ_API_KEY",
+    ajuda: "Chave em console.groq.com (sem cartão). Respostas quase instantâneas e limite alto — melhor opção para atendimento.",
+  },
+  {
+    value: "gemini", label: "Google Gemini — grátis", secret: "GEMINI_API_KEY",
+    ajuda: "Chave em aistudio.google.com (sem cartão). Melhor português entre os gratuitos, mas o limite diário é baixo.",
+  },
+  {
+    value: "openrouter", label: "OpenRouter — grátis", secret: "OPENROUTER_API_KEY",
+    ajuda: "Chave em openrouter.ai. Vários modelos :free com uma chave só; limite diário baixo sem créditos.",
+  },
+  {
+    value: "anthropic", label: "Claude — pago", secret: "ANTHROPIC_API_KEY",
+    ajuda: "Chave em console.anthropic.com. Melhor qualidade de resposta, cobrado por uso.",
+  },
+];
+
+export const MODELOS: Record<WaProvedor, Array<{ value: string; label: string }>> = {
+  groq: [
+    { value: "llama-3.3-70b-versatile", label: "Llama 3.3 70B (recomendado)" },
+    { value: "openai/gpt-oss-120b", label: "GPT-OSS 120B (mais capaz)" },
+    { value: "llama-3.1-8b-instant", label: "Llama 3.1 8B (mais rápido)" },
+  ],
+  gemini: [
+    { value: "gemini-2.5-flash", label: "Gemini 2.5 Flash (recomendado)" },
+    { value: "gemini-2.0-flash", label: "Gemini 2.0 Flash (limite maior)" },
+    { value: "gemini-2.5-flash-lite", label: "Gemini 2.5 Flash Lite (mais rápido)" },
+  ],
+  openrouter: [
+    { value: "meta-llama/llama-3.3-70b-instruct:free", label: "Llama 3.3 70B (free)" },
+    { value: "deepseek/deepseek-chat-v3-0324:free", label: "DeepSeek V3 (free)" },
+    { value: "google/gemma-3-27b-it:free", label: "Gemma 3 27B (free)" },
+  ],
+  anthropic: [
+    { value: "claude-opus-5", label: "Claude Opus 5 (mais capaz)" },
+    { value: "claude-sonnet-5", label: "Claude Sonnet 5 (equilíbrio)" },
+    { value: "claude-haiku-4-5", label: "Claude Haiku 4.5 (rápido/econômico)" },
+  ],
+};
 
 export const DIAS = [
   { v: 0, l: "Dom" }, { v: 1, l: "Seg" }, { v: 2, l: "Ter" }, { v: 3, l: "Qua" },

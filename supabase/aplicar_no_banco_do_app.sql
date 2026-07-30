@@ -6890,14 +6890,72 @@ NOTIFY pgrst, 'reload schema';
 -- =====================================================================
 -- 20260814000004_whatsapp_midia
 -- WhatsApp: bucket privado p/ arquivos recebidos (documento/imagem/audio/video)
+--
+-- ATENCAO: rode os dois blocos abaixo SEPARADAMENTE (execucoes distintas no
+-- SQL Editor). Juntos eles pegam lock em storage.buckets e depois pedem
+-- AccessExclusiveLock em storage.objects, na ordem inversa da que o servico de
+-- Storage usa => deadlock (40P01). Se o bloco 2 estourar lock_timeout, repita.
 -- =====================================================================
+
+-- bloco 1 (sozinho)
 insert into storage.buckets (id, name, public, file_size_limit)
 values ('whatsapp-midia', 'whatsapp-midia', false, 104857600)
 on conflict (id) do nothing;
 
+-- bloco 2 (sozinho)
+set lock_timeout = '5s';
 drop policy if exists "wa midia select" on storage.objects;
 create policy "wa midia select" on storage.objects
   for select to authenticated
   using (bucket_id = 'whatsapp-midia' and public.tem_acesso_menu('whatsapp'));
+reset lock_timeout;
 
 notify pgrst, 'reload schema';
+
+-- =====================================================================
+-- 20260815000001_whatsapp_bot_provedor
+-- WhatsApp: provedor de IA configuravel (groq/gemini/openrouter/anthropic)
+-- =====================================================================
+ALTER TABLE public."WA_BOT_CONFIG"
+  ADD COLUMN IF NOT EXISTS provedor text NOT NULL DEFAULT 'groq';
+
+ALTER TABLE public."WA_BOT_CONFIG" DROP CONSTRAINT IF EXISTS wa_bot_config_provedor_check;
+ALTER TABLE public."WA_BOT_CONFIG"
+  ADD CONSTRAINT wa_bot_config_provedor_check
+  CHECK (provedor IN ('groq', 'gemini', 'openrouter', 'anthropic'));
+
+ALTER TABLE public."WA_BOT_CONFIG" ALTER COLUMN modelo SET DEFAULT 'llama-3.3-70b-versatile';
+
+UPDATE public."WA_BOT_CONFIG"
+   SET modelo = 'llama-3.3-70b-versatile'
+ WHERE provedor = 'groq' AND modelo LIKE 'claude%';
+
+NOTIFY pgrst, 'reload schema';
+
+-- =====================================================================
+-- 20260815000002_whatsapp_bot_persona_humana
+-- WhatsApp: persona/saudacao/fallback com cara de atendimento humano.
+-- Os UPDATEs so tocam a linha se ela ainda estiver com o texto de fabrica.
+-- =====================================================================
+ALTER TABLE public."WA_BOT_CONFIG" ALTER COLUMN persona SET DEFAULT
+  'Você é atendente do Grupo Nascimento no WhatsApp. Fale como um atendente humano de verdade: cordial, próximo e objetivo, sem formalidade excessiva. Entenda o que a pessoa precisa antes de responder e ajude do jeito mais direto possível. Quando o assunto exigir alguém da equipe, avise com naturalidade que vai encaminhar para um atendente.';
+
+ALTER TABLE public."WA_BOT_CONFIG" ALTER COLUMN saudacao SET DEFAULT
+  'Olá! Aqui é do Grupo Nascimento. Como posso te ajudar?';
+
+ALTER TABLE public."WA_BOT_CONFIG" ALTER COLUMN fallback SET DEFAULT
+  'Opa, tive um problema para te responder agora. Já estou chamando um atendente para te ajudar, tudo bem?';
+
+UPDATE public."WA_BOT_CONFIG"
+   SET persona = 'Você é atendente do Grupo Nascimento no WhatsApp. Fale como um atendente humano de verdade: cordial, próximo e objetivo, sem formalidade excessiva. Entenda o que a pessoa precisa antes de responder e ajude do jeito mais direto possível. Quando o assunto exigir alguém da equipe, avise com naturalidade que vai encaminhar para um atendente.'
+ WHERE persona = 'Você é o assistente virtual do Grupo Nascimento no WhatsApp. Seja cordial, direto e útil. Responda em português do Brasil. Se não souber ou o assunto exigir um humano, diga que vai encaminhar para um atendente.';
+
+UPDATE public."WA_BOT_CONFIG"
+   SET saudacao = 'Olá! Aqui é do Grupo Nascimento. Como posso te ajudar?'
+ WHERE saudacao IS NULL OR btrim(saudacao) = '';
+
+UPDATE public."WA_BOT_CONFIG"
+   SET fallback = 'Opa, tive um problema para te responder agora. Já estou chamando um atendente para te ajudar, tudo bem?'
+ WHERE fallback = 'Não consegui entender agora. Um atendente vai te responder em breve.';
+
+NOTIFY pgrst, 'reload schema';
