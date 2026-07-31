@@ -77,7 +77,10 @@ export interface WaMenuOpcao {
   titulo: string;
   acao: WaMenuAcao;
   valor?: string; // texto da resposta (acao "texto"/"humano") ou aviso (acao "ia"/"transferir")
-  // acao "submenu": esta opção abre outro conjunto de opções (cascata).
+  // Botões pendurados nesta opção. Em "submenu" são o próprio destino; em
+  // "texto" são os próximos passos oferecidos JUNTO com a resposta (a resposta
+  // vira o corpo da mensagem e eles os botões). Como cada botão é uma opção
+  // comum, a resposta dele também pode ter botões — a árvore não tem limite.
   submenu?: WaMenu | null;
   // acao "transferir": código da pasta (WA_PASTA.codigo) que recebe a conversa.
   pasta?: string | null;
@@ -156,7 +159,7 @@ export const TESTE_TIPO_LABEL: Record<WaTesteTipo, string> = {
 };
 
 export const MENU_ACOES: Array<{ value: WaMenuAcao; label: string; ajuda: string }> = [
-  { value: "texto", label: "Responder um texto", ajuda: "O bot envia uma resposta pronta (ex.: link das vagas)." },
+  { value: "texto", label: "Responder um texto", ajuda: "O bot envia uma resposta pronta (ex.: link das vagas). A resposta pode terminar com botões para os próximos passos." },
   { value: "submenu", label: "Abrir mais opções", ajuda: "Mostra outro conjunto de botões dentro desta opção (fluxo em cascata)." },
   { value: "transferir", label: "Transferir para…", ajuda: "Manda a conversa para a pasta do setor e desliga o bot. Só quem tem acesso à pasta atende." },
   { value: "ia", label: "Atendimento por I.A", ajuda: "Encaminha para a IA: a pessoa passa a conversar livre e a IA responde." },

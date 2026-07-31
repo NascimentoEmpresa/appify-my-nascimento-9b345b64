@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import {
-  rotearBot, inferirModo, AVISO_TRANSFERIR_PADRAO, type BotConfig,
+  rotearBot, inferirModo, acharOpcao, AVISO_TRANSFERIR_PADRAO, type BotConfig,
 } from "../../supabase/functions/_shared/whatsapp-bot.ts";
 
 // Config mínima do bot com um menu em CASCATA (texto / submenu / ia / humano).
@@ -165,6 +165,79 @@ describe("inferirModo — reconstrói o modo a partir do histórico", () => {
 
   it("sem menu configurado o modo é menu (bot mudo)", () => {
     expect(inferirModo(cfg(null), [{ direcao: "entrada", texto: "oi", payload: null }])).toBe("menu");
+  });
+});
+
+// Resposta com botões: o texto vira o corpo da mensagem e os botões os próximos
+// passos. Como cada botão é uma opção comum, isso se repete em profundidade.
+describe("rotearBot — resposta com botões", () => {
+  const MENU_B = {
+    titulo: "Selecione:",
+    opcoes: [
+      {
+        id: "vagas", titulo: "Vagas", acao: "texto" as const, valor: "Acesse o site: exemplo.com",
+        submenu: {
+          titulo: "",
+          opcoes: [
+            {
+              id: "vagas_como", titulo: "Como me candidato?", acao: "texto" as const, valor: "É só preencher o formulário.",
+              submenu: {
+                titulo: "",
+                opcoes: [{ id: "vagas_prazo", titulo: "Qual o prazo?", acao: "texto" as const, valor: "Até dia 30." }],
+              },
+            },
+            { id: "vagas_humano", titulo: "Falar com alguém", acao: "humano" as const, valor: "Já te transfiro!" },
+          ],
+        },
+      },
+      { id: "simples", titulo: "Simples", acao: "texto" as const, valor: "resposta sem botão" },
+    ],
+  };
+  const bb = cfg(MENU_B);
+
+  it("resposta SEM botões continua sendo texto puro", () => {
+    const r = rotearBot(bb, { modo: "menu", texto: null, replyId: "simples", dentroHorario: true });
+    expect(r.tipo).toBe("texto");
+    if (r.tipo === "texto") expect(r.texto).toBe("resposta sem botão");
+  });
+
+  it("resposta COM botões vira uma mensagem só: texto no corpo + botões", () => {
+    const r = rotearBot(bb, { modo: "menu", texto: null, replyId: "vagas", dentroHorario: true });
+    expect(r.tipo).toBe("menu");
+    if (r.tipo === "menu") {
+      expect(r.menu.titulo).toBe("Acesse o site: exemplo.com");
+      expect(r.menu.opcoes.map((o) => o.id)).toEqual(["vagas_como", "vagas_humano"]);
+    }
+  });
+
+  // O ponto do pedido: a resposta da resposta também tem botões.
+  it("o botão de uma resposta abre outra resposta com botões", () => {
+    const r = rotearBot(bb, { modo: "menu", texto: null, replyId: "vagas_como", dentroHorario: true });
+    expect(r.tipo).toBe("menu");
+    if (r.tipo === "menu") {
+      expect(r.menu.titulo).toBe("É só preencher o formulário.");
+      expect(r.menu.opcoes.map((o) => o.id)).toEqual(["vagas_prazo"]);
+    }
+  });
+
+  it("no terceiro nível, sem mais botões, volta a ser texto puro", () => {
+    const r = rotearBot(bb, { modo: "menu", texto: null, replyId: "vagas_prazo", dentroHorario: true });
+    expect(r.tipo).toBe("texto");
+    if (r.tipo === "texto") expect(r.texto).toBe("Até dia 30.");
+  });
+
+  // Sem isto o clique num botão pendurado numa RESPOSTA não seria encontrado
+  // (a busca só descia por opção de ação "submenu") e o bot devolveria o menu raiz.
+  it("acha opção de qualquer ação em qualquer profundidade", () => {
+    expect(acharOpcao(MENU_B, "vagas_prazo")?.titulo).toBe("Qual o prazo?");
+    expect(acharOpcao(MENU_B, "vagas_humano")?.acao).toBe("humano");
+    expect(acharOpcao(MENU_B, "nao_existe")).toBeNull();
+  });
+
+  it("botão de atendente dentro de uma resposta continua transferindo", () => {
+    const r = rotearBot(bb, { modo: "menu", texto: null, replyId: "vagas_humano", dentroHorario: true });
+    expect(r.tipo).toBe("humano");
+    if (r.tipo === "humano") expect(r.aviso).toBe("Já te transfiro!");
   });
 });
 

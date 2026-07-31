@@ -115,6 +115,28 @@ function OpcaoEditor({ opcao: o, indice, nivel, pastas, onChange, onRemove }: {
           <OpcoesEditor opcoes={sub.opcoes} nivel={nivel + 1} pastas={pastas} onChange={(ops) => onChange({ ...o, submenu: { ...sub, opcoes: ops } })} />
         </div>
       )}
+      {/* Botões DA RESPOSTA. A resposta e os botões saem numa mensagem só (o
+          texto vira o corpo), e cada botão é uma opção comum — então a resposta
+          dele também pode ter botões, sem limite de profundidade. */}
+      {o.acao === "texto" && (
+        <div className="ml-4 space-y-2 border-l-2 border-success/30 pl-3">
+          <div className="flex items-center justify-between gap-2">
+            <Label className="text-xs font-semibold">Botões desta resposta <span className="font-normal text-muted-foreground">(opcional)</span></Label>
+            {sub.opcoes.length > 0 && (
+              <span className="text-[10px] text-muted-foreground">{sub.opcoes.length <= 3 ? "vira botões" : "vira lista"}</span>
+            )}
+          </div>
+          {sub.opcoes.length === 0 ? (
+            <Button size="sm" variant="outline" className="gap-1.5"
+              onClick={() => onChange({ ...o, submenu: { titulo: "", opcoes: [{ id: novoIdOpcao(), titulo: "", acao: "texto", valor: "" }] } })}>
+              <Plus className="h-4 w-4" /> Adicionar botão à resposta
+            </Button>
+          ) : (
+            <OpcoesEditor opcoes={sub.opcoes} nivel={nivel + 1} pastas={pastas}
+              onChange={(ops) => onChange({ ...o, submenu: { ...sub, opcoes: ops } })} />
+          )}
+        </div>
+      )}
     </div>
   );
 }
@@ -326,7 +348,8 @@ export default function WhatsAppChatbot() {
               <p className="text-xs text-muted-foreground">
                 Toda conversa começa aqui: o bot manda esta mensagem com os botões e <b>só responde o que estiver configurado</b>.
                 Uma opção pode responder um texto, abrir mais opções (cascata), transferir para a pasta de um setor,
-                encaminhar pra IA ou pra um atendente. Em cada nível, até 3 opções viram botões; 4–10 viram lista.
+                encaminhar pra IA ou pra um atendente. <b>Toda resposta pode terminar com botões</b>, e a resposta
+                desses botões também — sem limite de profundidade. Em cada nível, até 3 opções viram botões; 4–10 viram lista.
               </p>
             </div>
             <div>

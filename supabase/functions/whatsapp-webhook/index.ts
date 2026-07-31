@@ -188,7 +188,10 @@ async function enviarInterativo(to: string, interactive: any): Promise<string | 
 // Monta e envia o menu: até 3 opções viram botões; 4–10 viram lista.
 async function enviarMenu(conversaId: string, contatoId: string, to: string, menu: any) {
   const opcoes = (menu.opcoes as any[]).slice(0, 10);
-  const corpo: string = (menu.titulo && String(menu.titulo).trim()) || "Como posso te ajudar?";
+  // O corpo pode ser a RESPOSTA de uma opção (resposta com botões), não só o
+  // título de um menu — e resposta é texto livre. A Cloud API recusa body acima
+  // de 1024 caracteres, e a recusa derrubaria a mensagem inteira.
+  const corpo: string = ((menu.titulo && String(menu.titulo).trim()) || "Como posso te ajudar?").slice(0, 1024);
   const interactive = opcoes.length <= 3
     ? {
         type: "button",

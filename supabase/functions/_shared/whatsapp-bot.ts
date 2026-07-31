@@ -28,14 +28,24 @@ export interface BotMenu {
   opcoes: MenuOpcao[];
 }
 
-// Procura uma opção pelo id na árvore inteira (menu raiz + submenus). Os ids
-// são únicos na árvore, então o clique num botão de qualquer nível resolve
-// sem precisar rastrear "onde" a pessoa estava.
+// Botões pendurados numa opção. Vale para "submenu" (só navegação) e também
+// para "texto": uma resposta pode terminar oferecendo os próximos passos, e
+// esses passos podem ter resposta com botões de novo, sem limite de profundidade.
+export const opcoesFilhas = (o: MenuOpcao): MenuOpcao[] =>
+  Array.isArray(o.submenu?.opcoes) ? o.submenu!.opcoes : [];
+
+// Procura uma opção pelo id na árvore inteira (menu raiz + qualquer nível de
+// botões). Os ids são únicos na árvore, então o clique num botão de qualquer
+// nível resolve sem precisar rastrear "onde" a pessoa estava.
 export function acharOpcao(menu: BotMenu, id: string): MenuOpcao | null {
   for (const o of menu.opcoes ?? []) {
     if (String(o.id) === id) return o;
-    if (o.acao === "submenu" && o.submenu) {
-      const achou = acharOpcao(o.submenu, id);
+    // Percorre os filhos de QUALQUER opção que os tenha — não só a de ação
+    // "submenu". Sem isso, clicar num botão pendurado numa resposta de texto
+    // não encontraria a opção e o bot só reapresentaria o menu raiz.
+    const filhas = opcoesFilhas(o);
+    if (filhas.length) {
+      const achou = acharOpcao({ titulo: "", opcoes: filhas }, id);
       if (achou) return achou;
     }
   }
@@ -151,7 +161,17 @@ export function rotearBot(cfg: BotConfig, e: EntradaBot): RotaBot {
         ? { tipo: "transferir", pasta, aviso, modo: "menu" }
         : { tipo: "humano", aviso, modo: "menu" };
     }
-    if (opt?.acao === "texto") return { tipo: "texto", texto: valorOpcao(opt) || String(opt.titulo ?? "…"), modo: "menu" };
+    if (opt?.acao === "texto") {
+      const resposta = valorOpcao(opt) || String(opt.titulo ?? "…");
+      // Resposta COM botões vira uma mensagem interativa só: o texto é o corpo
+      // e os botões são os próximos passos. Como cada um desses botões é uma
+      // opção comum, ele pode ter a própria resposta com botões — a árvore
+      // continua descendo sem tratamento especial.
+      const filhas = opcoesFilhas(opt);
+      return filhas.length
+        ? { tipo: "menu", menu: { titulo: resposta, opcoes: filhas }, modo: "menu" }
+        : { tipo: "texto", texto: resposta, modo: "menu" };
+    }
     if (opt?.acao === "ia") return { tipo: "ia_intro", aviso: valorOpcao(opt) || AVISO_IA_PADRAO, modo: "ia" };
     if (opt?.acao === "submenu") {
       const sub = opt.submenu;
