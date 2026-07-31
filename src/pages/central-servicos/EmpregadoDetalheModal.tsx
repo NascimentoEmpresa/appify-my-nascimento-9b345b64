@@ -212,40 +212,29 @@ export async function nomesDoCadastro(): Promise<Map<string, NomeCad>> {
 export const invalidarCadastro = () => { cadCache = null; };
 
 /**
- * Nome citado numa resposta → pessoa do cadastro, em memória.
+ * Nome citado numa resposta → pessoa do cadastro, em memória. IGUALDADE EXATA
+ * (só ignora acento, caixa e espaço repetido).
  *
- * Exato primeiro; depois nome CONTIDO — "Mileny de Oliveira" é a mesma
- * "MILENY DE OLIVEIRA DA ROSA", e exigir igualdade jogaria meio mundo para o
- * botão "Vincular".
- *
- * `ambiguo` existe porque nome curto casa com muita gente ("ANA" cai em toda
- * Ana Paula do cadastro). Nesse caso a LISTA continua pedindo vínculo manual
- * (não dá para chutar um nome em negrito), enquanto a FICHA ainda mostra o
- * melhor palpite — lá existe o botão "Não é essa pessoa?" para corrigir.
+ * Já houve aqui um casamento por nome CONTIDO, com desempate pelo tamanho mais
+ * próximo. Ele acertava "Mileny de Oliveira" → "MILENY DE OLIVEIRA DA ROSA", mas
+ * pescava qualquer coisa: uma resposta "N" casava com o primeiro empregado cujo
+ * nome contivesse "N" e era exibida como aquela pessoa, em negrito. Palpite de
+ * identidade não vale o estrago — nome que não bate exatamente agora depende de
+ * vínculo manual (CS_FORM_VINCULOS), feito nesta ficha.
  *
  * Requer o cache já carregado (`await nomesDoCadastro()`); sem ele devolve vazio.
  */
-export function resolveCadastro(nome: string): { hit: NomeCad | null; ambiguo: boolean } {
+export function resolveCadastro(nome: string): NomeCad | null {
   const alvo = normNome(nome);
-  if (!alvo || !cadCache) return { hit: null, ambiguo: false };
-  const exato = cadCache.get(alvo);
-  if (exato) return { hit: exato, ambiguo: false };
-  const parciais: NomeCad[] = [];
-  cadCache.forEach((v, k) => { if (k.includes(alvo) || alvo.includes(k)) parciais.push(v); });
-  if (!parciais.length) return { hit: null, ambiguo: false };
-  const ativos = parciais.filter(p => p.ativo);
-  const pool = ativos.length ? ativos : parciais;
-  // Melhor palpite: o nome mais próximo em tamanho do texto citado.
-  const melhor = [...pool].sort((a, b) =>
-    Math.abs(normNome(a.nome).length - alvo.length) - Math.abs(normNome(b.nome).length - alvo.length))[0];
-  return { hit: melhor, ambiguo: pool.length > 1 };
+  if (!alvo || !cadCache) return null;
+  return cadCache.get(alvo) ?? null;
 }
 
 // Linha completa da EMPREGADOS da pessoa resolvida. Só ela vai ao banco, pela
 // chave primária.
 const buscaEmpregado = async (n: string) => {
   await nomesDoCadastro();
-  const { hit } = resolveCadastro(n);
+  const hit = resolveCadastro(n);
   if (!hit) return null;
   const { data } = await (supabase as any).from("EMPREGADOS").select("*").eq("ID", hit.id).maybeSingle();
   return data ?? null;
