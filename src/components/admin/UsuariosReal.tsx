@@ -11,7 +11,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
-import { Search, Pencil, ShieldCheck, Building2, UserPlus, Eye, EyeOff, KeyRound, Copy, AlertTriangle, Upload, Trash2, Link2, Link2Off, Loader2, IdCard, Plus } from "lucide-react";
+import { Search, Pencil, ShieldCheck, Building2, UserPlus, Eye, EyeOff, KeyRound, Copy, AlertTriangle, Upload, Trash2, Link2, Link2Off, Loader2, IdCard } from "lucide-react";
 
 // Situações de desligamento (mesma regra das RPCs de vínculo): nunca vincula
 // nem aparece na busca.
@@ -28,20 +28,18 @@ interface EmpregadoVinc {
 }
 
 // Setor é só um rótulo descritivo (departamento da pessoa) — não define
-// nenhuma permissão. Catálogo = todos os valores já usados por alguém, pra
-// facilitar reaproveitar o mesmo nome em vez de digitar variações.
+// nenhuma permissão. Catálogo vem de setor_catalogo (criar/renomear/excluir
+// setor é feito em Administração → Setores, não aqui).
 function useSetoresDisponiveis() {
   const q = useQuery({
     queryKey: ["setores_catalogo"],
     queryFn: async () => {
       const { data, error } = await supabase
-        .from("user_setor")
-        .select("setor");
+        .from("setor_catalogo")
+        .select("nome")
+        .order("nome");
       if (error) throw error;
-      const unicos = Array.from(new Set((data ?? []).map((r: any) => r.setor as string))).sort((a, b) =>
-        a.localeCompare(b, "pt-BR"),
-      );
-      return unicos;
+      return (data ?? []).map((r: any) => r.nome as string);
     },
   });
   return q.data ?? [];
@@ -296,7 +294,6 @@ function EditarUsuarioDialog({
   const [telefone, setTelefone] = useState(maskFone(profile.telefone?.replace(/^55/, "") ?? ""));
   const [empresaId, setEmpresaId] = useState<string>(profile.empresa_id ?? "_none");
   const [selectedSetores, setSelectedSetores] = useState<string[]>(currentSetores);
-  const [novoSetor, setNovoSetor] = useState("");
   const [acessaTodas, setAcessaTodas] = useState<boolean>(false);
   const [empresasAtua, setEmpresasAtua] = useState<Set<string>>(new Set());
   const [saving, setSaving] = useState(false);
@@ -336,13 +333,6 @@ function EditarUsuarioDialog({
 
   const toggleSetor = (s: string) => {
     setSelectedSetores((prev) => prev.includes(s) ? prev.filter((x) => x !== s) : [...prev, s]);
-  };
-
-  const adicionarNovoSetor = () => {
-    const s = novoSetor.trim();
-    if (!s) return;
-    if (!selectedSetores.includes(s)) setSelectedSetores((prev) => [...prev, s]);
-    setNovoSetor("");
   };
 
   const toggleEmpresaAtua = (id: string) => {
@@ -513,28 +503,20 @@ function EditarUsuarioDialog({
           <div>
             <Label>Setor</Label>
             <p className="text-[11px] text-muted-foreground mb-2">
-              Só um rótulo informativo (departamento da pessoa) — não concede nenhum acesso. Permissões são configuradas em Administração → Módulos e Menus → Acesso por Usuário.
+              Só um rótulo informativo (departamento da pessoa) — não concede nenhum acesso. Pra criar, renomear ou excluir um setor, use Administração → Setores.
             </p>
-            <div className="mt-2 grid grid-cols-2 gap-2">
-              {catalogoExibido.map((s) => (
-                <label key={s} className="flex items-start gap-2 rounded-md border border-border bg-card px-2.5 py-1.5 text-xs cursor-pointer hover:bg-muted/50">
-                  <Checkbox className="mt-0.5" checked={selectedSetores.includes(s)} onCheckedChange={() => toggleSetor(s)} />
-                  <span className="font-medium">{s}</span>
-                </label>
-              ))}
-            </div>
-            <div className="mt-2 flex gap-2">
-              <Input
-                value={novoSetor}
-                onChange={(e) => setNovoSetor(e.target.value)}
-                onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); adicionarNovoSetor(); } }}
-                placeholder="Novo setor (ex.: Manutenção)"
-                className="h-8 text-xs"
-              />
-              <Button type="button" size="sm" variant="outline" className="h-8 gap-1" onClick={adicionarNovoSetor}>
-                <Plus className="h-3.5 w-3.5" /> Adicionar
-              </Button>
-            </div>
+            {catalogoExibido.length === 0 ? (
+              <p className="text-xs text-muted-foreground">Nenhum setor cadastrado ainda — crie um em Administração → Setores.</p>
+            ) : (
+              <div className="mt-2 grid grid-cols-2 gap-2">
+                {catalogoExibido.map((s) => (
+                  <label key={s} className="flex items-start gap-2 rounded-md border border-border bg-card px-2.5 py-1.5 text-xs cursor-pointer hover:bg-muted/50">
+                    <Checkbox className="mt-0.5" checked={selectedSetores.includes(s)} onCheckedChange={() => toggleSetor(s)} />
+                    <span className="font-medium">{s}</span>
+                  </label>
+                ))}
+              </div>
+            )}
           </div>
 
           <div className="rounded-lg border border-border bg-muted/30 p-3">
@@ -765,7 +747,6 @@ function NovoUsuarioDialog({
   const [telefone, setTelefone] = useState("");
   const [empresaId, setEmpresaId] = useState<string>("_none");
   const [selectedSetores, setSelectedSetores] = useState<string[]>([]);
-  const [novoSetor, setNovoSetor] = useState("");
   const [saving, setSaving] = useState(false);
   const catalogoExibido = useMemo(() => {
     const set = new Set([...setoresCatalogo, ...selectedSetores]);
@@ -779,18 +760,11 @@ function NovoUsuarioDialog({
 
   const reset = () => {
     setDisplayName(""); setEmail(""); setPassword(""); setTelefone("");
-    setEmpresaId("_none"); setSelectedSetores([]); setNovoSetor(""); setShowPwd(false);
+    setEmpresaId("_none"); setSelectedSetores([]); setShowPwd(false);
   };
 
   const toggleSetor = (s: string) => {
     setSelectedSetores((prev) => prev.includes(s) ? prev.filter((x) => x !== s) : [...prev, s]);
-  };
-
-  const adicionarNovoSetor = () => {
-    const s = novoSetor.trim();
-    if (!s) return;
-    if (!selectedSetores.includes(s)) setSelectedSetores((prev) => [...prev, s]);
-    setNovoSetor("");
   };
 
   const gerarSenha = () => {
@@ -934,28 +908,20 @@ function NovoUsuarioDialog({
             <div>
               <Label>Setor</Label>
               <p className="text-[11px] text-muted-foreground mb-2">
-                Só um rótulo informativo (departamento da pessoa) — não concede nenhum acesso. Permissões são configuradas depois, em Administração → Módulos e Menus → Acesso por Usuário.
+                Só um rótulo informativo (departamento da pessoa) — não concede nenhum acesso. Pra criar, renomear ou excluir um setor, use Administração → Setores.
               </p>
-              <div className="mt-2 grid grid-cols-2 gap-2">
-                {catalogoExibido.map((s) => (
-                  <label key={s} className="flex items-start gap-2 rounded-md border border-border bg-card px-2.5 py-1.5 text-xs cursor-pointer hover:bg-muted/50">
-                    <Checkbox className="mt-0.5" checked={selectedSetores.includes(s)} onCheckedChange={() => toggleSetor(s)} />
-                    <span className="font-medium">{s}</span>
-                  </label>
-                ))}
-              </div>
-              <div className="mt-2 flex gap-2">
-                <Input
-                  value={novoSetor}
-                  onChange={(e) => setNovoSetor(e.target.value)}
-                  onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); adicionarNovoSetor(); } }}
-                  placeholder="Novo setor (ex.: Manutenção)"
-                  className="h-8 text-xs"
-                />
-                <Button type="button" size="sm" variant="outline" className="h-8 gap-1" onClick={adicionarNovoSetor}>
-                  <Plus className="h-3.5 w-3.5" /> Adicionar
-                </Button>
-              </div>
+              {catalogoExibido.length === 0 ? (
+                <p className="text-xs text-muted-foreground">Nenhum setor cadastrado ainda — crie um em Administração → Setores.</p>
+              ) : (
+                <div className="mt-2 grid grid-cols-2 gap-2">
+                  {catalogoExibido.map((s) => (
+                    <label key={s} className="flex items-start gap-2 rounded-md border border-border bg-card px-2.5 py-1.5 text-xs cursor-pointer hover:bg-muted/50">
+                      <Checkbox className="mt-0.5" checked={selectedSetores.includes(s)} onCheckedChange={() => toggleSetor(s)} />
+                      <span className="font-medium">{s}</span>
+                    </label>
+                  ))}
+                </div>
+              )}
             </div>
           </div>
           <DialogFooter>
