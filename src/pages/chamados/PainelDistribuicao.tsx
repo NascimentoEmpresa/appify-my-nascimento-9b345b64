@@ -60,6 +60,7 @@ export default function PainelDistribuicao() {
   const [busca, setBusca] = useState("");
   const [fCategoria, setFCategoria] = useState("todas");
   const [fPrioridade, setFPrioridade] = useState("todas");
+  const [fResponsavel, setFResponsavel] = useState("todos");
   const [fDe, setFDe] = useState("");
   const [fAte, setFAte] = useState("");
   const [pagina, setPagina] = useState(1);
@@ -122,6 +123,15 @@ export default function PainelDistribuicao() {
     },
   });
 
+  // Opções do filtro de responsável: os devs liberados + quem já é responsável
+  // por algum chamado (alguém pode ter perdido a capacidade depois de assumir).
+  const responsaveis = useMemo(() => {
+    const m = new Map<string, string>();
+    devs.forEach((d) => m.set(d.id, d.display_name));
+    chamados.forEach((c) => { if (c.responsavel_id && !m.has(c.responsavel_id)) m.set(c.responsavel_id, nomeDe(c.responsavel_id)); });
+    return [...m].map(([id, nome]) => ({ id, nome })).sort((a, b) => a.nome.localeCompare(b.nome, "pt-BR"));
+  }, [devs, chamados, usuarios]);
+
   // Posição na fila global (ordem de chegada) e posição na fila de cada dev.
   const posicaoFila = useMemo(() => posicoesFilaGlobal(chamados), [chamados]);
   const posicaoDev = useMemo(() => posicoesFilaDev(chamados), [chamados]);
@@ -134,6 +144,7 @@ export default function PainelDistribuicao() {
       if (aba === "fila" ? !chamadoAtivo(c.status) : c.status !== aba) return false;
       if (fCategoria !== "todas" && !c.categorias.includes(fCategoria)) return false;
       if (fPrioridade !== "todas" && c.prioridade !== fPrioridade) return false;
+      if (fResponsavel === "sem" ? !!c.responsavel_id : fResponsavel !== "todos" && c.responsavel_id !== fResponsavel) return false;
       const ts = new Date(c.created_at).getTime();
       if (deTs != null && ts < deTs) return false;
       if (ateTs != null && ts > ateTs) return false;
@@ -148,10 +159,10 @@ export default function PainelDistribuicao() {
       if (pb) return 1;
       return +new Date(b.created_at) - +new Date(a.created_at);
     });
-  }, [chamados, aba, fCategoria, fPrioridade, fDe, fAte, busca, posicaoFila]);
+  }, [chamados, aba, fCategoria, fPrioridade, fResponsavel, fDe, fAte, busca, posicaoFila]);
 
   // Volta pra página 1 sempre que os filtros mudam.
-  useEffect(() => { setPagina(1); }, [aba, fCategoria, fPrioridade, fDe, fAte, busca]);
+  useEffect(() => { setPagina(1); }, [aba, fCategoria, fPrioridade, fResponsavel, fDe, fAte, busca]);
 
   const totalPaginas = Math.max(1, Math.ceil(filtrados.length / POR_PAGINA));
   const paginaAtual = Math.min(pagina, totalPaginas);
@@ -266,6 +277,14 @@ export default function PainelDistribuicao() {
                 <SelectItem value="alta">Alta</SelectItem>
                 <SelectItem value="media">Média</SelectItem>
                 <SelectItem value="baixa">Baixa</SelectItem>
+              </SelectContent>
+            </Select>
+            <Select value={fResponsavel} onValueChange={setFResponsavel}>
+              <SelectTrigger className="h-8 w-48 text-xs"><SelectValue placeholder="Responsável" /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="todos">Todos os responsáveis</SelectItem>
+                <SelectItem value="sem">Sem responsável</SelectItem>
+                {responsaveis.map((r) => <SelectItem key={r.id} value={r.id}>{r.nome}</SelectItem>)}
               </SelectContent>
             </Select>
             <div className="flex items-center gap-1">

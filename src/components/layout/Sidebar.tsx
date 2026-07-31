@@ -432,6 +432,7 @@ const sistemasModule: ModuleDef = {
       items: [
         { label: "Chamados de Sistemas", to: "/app/sistemas/chamados", icon: Headset, notif: "meus" },
         { label: "Painel de Distribuição", to: "/app/sistemas/chamados/painel", icon: BarChart3 },
+        { label: "Dashboard de Chamados", to: "/app/sistemas/chamados/dashboard-tv", icon: LayoutDashboard },
         { label: "Painel do Desenvolvedor", to: "/app/sistemas/chamados/dev", icon: ClipboardList, notif: "dev" },
       ],
     },
