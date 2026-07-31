@@ -6934,14 +6934,14 @@ NOTIFY pgrst, 'reload schema';
 
 -- =====================================================================
 -- 20260815000002_whatsapp_bot_persona_humana
--- WhatsApp: persona/saudacao/fallback com cara de atendimento humano.
+-- WhatsApp: persona/fallback com cara de atendimento humano.
 -- Os UPDATEs so tocam a linha se ela ainda estiver com o texto de fabrica.
+-- (As instrucoes de saudacao que existiam aqui foram removidas: a coluna
+--  saudacao foi dropada pelo bloco 20260816000001 mais abaixo, e mante-las
+--  quebrava a reexecucao do arquivo com "column saudacao does not exist".)
 -- =====================================================================
 ALTER TABLE public."WA_BOT_CONFIG" ALTER COLUMN persona SET DEFAULT
   'Você é atendente do Grupo Nascimento no WhatsApp. Fale como um atendente humano de verdade: cordial, próximo e objetivo, sem formalidade excessiva. Entenda o que a pessoa precisa antes de responder e ajude do jeito mais direto possível. Quando o assunto exigir alguém da equipe, avise com naturalidade que vai encaminhar para um atendente.';
-
-ALTER TABLE public."WA_BOT_CONFIG" ALTER COLUMN saudacao SET DEFAULT
-  'Olá! Aqui é do Grupo Nascimento. Como posso te ajudar?';
 
 ALTER TABLE public."WA_BOT_CONFIG" ALTER COLUMN fallback SET DEFAULT
   'Opa, tive um problema para te responder agora. Já estou chamando um atendente para te ajudar, tudo bem?';
@@ -6949,10 +6949,6 @@ ALTER TABLE public."WA_BOT_CONFIG" ALTER COLUMN fallback SET DEFAULT
 UPDATE public."WA_BOT_CONFIG"
    SET persona = 'Você é atendente do Grupo Nascimento no WhatsApp. Fale como um atendente humano de verdade: cordial, próximo e objetivo, sem formalidade excessiva. Entenda o que a pessoa precisa antes de responder e ajude do jeito mais direto possível. Quando o assunto exigir alguém da equipe, avise com naturalidade que vai encaminhar para um atendente.'
  WHERE persona = 'Você é o assistente virtual do Grupo Nascimento no WhatsApp. Seja cordial, direto e útil. Responda em português do Brasil. Se não souber ou o assunto exigir um humano, diga que vai encaminhar para um atendente.';
-
-UPDATE public."WA_BOT_CONFIG"
-   SET saudacao = 'Olá! Aqui é do Grupo Nascimento. Como posso te ajudar?'
- WHERE saudacao IS NULL OR btrim(saudacao) = '';
 
 UPDATE public."WA_BOT_CONFIG"
    SET fallback = 'Opa, tive um problema para te responder agora. Já estou chamando um atendente para te ajudar, tudo bem?'

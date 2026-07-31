@@ -13,13 +13,30 @@ export type Msg = { role: "user" | "assistant"; content: string };
 export interface MenuOpcao {
   id: string;
   titulo: string;
-  acao: "texto" | "ia" | "humano";
+  acao: "texto" | "submenu" | "ia" | "humano";
   valor?: string;
+  // acao "submenu": esta opção abre OUTRO conjunto de opções (fluxo em
+  // cascata). A árvore pode ter quantos níveis a config quiser.
+  submenu?: BotMenu | null;
 }
 
 export interface BotMenu {
   titulo: string;
   opcoes: MenuOpcao[];
+}
+
+// Procura uma opção pelo id na árvore inteira (menu raiz + submenus). Os ids
+// são únicos na árvore, então o clique num botão de qualquer nível resolve
+// sem precisar rastrear "onde" a pessoa estava.
+export function acharOpcao(menu: BotMenu, id: string): MenuOpcao | null {
+  for (const o of menu.opcoes ?? []) {
+    if (String(o.id) === id) return o;
+    if (o.acao === "submenu" && o.submenu) {
+      const achou = acharOpcao(o.submenu, id);
+      if (achou) return achou;
+    }
+  }
+  return null;
 }
 
 // Modo da conversa. O menu é sempre o fluxo de entrada; a IA só assume depois
@@ -64,9 +81,9 @@ export function dentroDoHorario(cfg: BotConfig, agora = new Date()): boolean {
   return hhmm >= hi * 60 + mi && hhmm <= hf * 60 + mf;
 }
 
-// O menu é o fluxo de entrada do bot, então basta ter opção configurada. Sem
-// nenhuma opção não há menu para apresentar e a IA atende direto — assim uma
-// configuração pela metade não deixa a conversa sem resposta.
+// O menu é o fluxo de entrada do bot: basta ter opção configurada. Sem nenhuma
+// opção o bot fica MUDO (rota "nada") — decisão do usuário: o bot só responde
+// exatamente o que foi configurado, e a IA nunca atende por conta própria.
 export function menuAtivo(cfg: BotConfig): BotMenu | null {
   const m = cfg.menu;
   return m && Array.isArray(m.opcoes) && m.opcoes.length ? m : null;
@@ -94,10 +111,12 @@ export interface EntradaBot {
 
 // A rota decidida — sem efeito colateral. `modo` é o modo da conversa DEPOIS
 // desta mensagem, que o chamador persiste (histórico no webhook, estado no
-// simulador).
+// simulador). A rota "menu" já carrega O QUE enviar: o menu raiz ou o submenu
+// da opção clicada — o chamador não precisa decidir nada.
 export type RotaBot =
+  | { tipo: "nada"; modo: ModoConversa }               // sem menu configurado: bot mudo
   | { tipo: "fora_horario"; modo: ModoConversa }
-  | { tipo: "menu"; modo: "menu" }
+  | { tipo: "menu"; menu: BotMenu; modo: "menu" }      // apresenta menu raiz ou submenu
   | { tipo: "texto"; texto: string; modo: "menu" }
   | { tipo: "humano"; aviso: string; modo: "menu" }
   | { tipo: "ia_intro"; aviso: string; modo: "ia" }
@@ -109,25 +128,34 @@ export function rotearBot(cfg: BotConfig, e: EntradaBot): RotaBot {
   if (!e.dentroHorario) return { tipo: "fora_horario", modo: e.modo };
 
   const menu = menuAtivo(cfg);
-  // Sem menu configurado a IA atende direto — uma config pela metade não deixa
-  // a conversa muda.
-  if (!menu) return { tipo: "ia", modo: "ia" };
+  // Sem menu configurado o bot NÃO responde nada. A IA só existe quando uma
+  // opção do menu leva a ela — nunca por conta própria.
+  if (!menu) return { tipo: "nada", modo: "menu" };
 
-  // 1) Clique numa opção → executa a ação dela.
+  // 1) Clique numa opção (de qualquer nível da árvore) → executa a ação dela.
   if (e.replyId) {
-    const opt = menu.opcoes.find((o) => String(o.id) === e.replyId);
+    const opt = acharOpcao(menu, e.replyId);
     if (opt?.acao === "humano") return { tipo: "humano", aviso: valorOpcao(opt) || AVISO_HUMANO_PADRAO, modo: "menu" };
     if (opt?.acao === "texto") return { tipo: "texto", texto: valorOpcao(opt) || String(opt.titulo ?? "…"), modo: "menu" };
     if (opt?.acao === "ia") return { tipo: "ia_intro", aviso: valorOpcao(opt) || AVISO_IA_PADRAO, modo: "ia" };
-    // opção que não existe mais → reapresenta o menu
-    return { tipo: "menu", modo: "menu" };
+    if (opt?.acao === "submenu") {
+      const sub = opt.submenu;
+      if (sub && Array.isArray(sub.opcoes) && sub.opcoes.length) {
+        // Desce um nível na cascata: apresenta as opções deste submenu.
+        return { tipo: "menu", menu: { titulo: (sub.titulo ?? "").trim() || String(opt.titulo ?? ""), opcoes: sub.opcoes }, modo: "menu" };
+      }
+      // Submenu sem opções (config pela metade) → volta ao menu raiz.
+      return { tipo: "menu", menu, modo: "menu" };
+    }
+    // opção que não existe mais → reapresenta o menu raiz
+    return { tipo: "menu", menu, modo: "menu" };
   }
 
   // 2) Texto livre.
-  if (pediuMenu(e.texto ?? "")) return { tipo: "menu", modo: "menu" };
+  if (pediuMenu(e.texto ?? "")) return { tipo: "menu", menu, modo: "menu" };
   if (e.modo === "ia") return { tipo: "ia", modo: "ia" };
-  // Em modo menu, qualquer texto solto só reapresenta o menu.
-  return { tipo: "menu", modo: "menu" };
+  // Em modo menu, qualquer texto solto só reapresenta o menu raiz.
+  return { tipo: "menu", menu, modo: "menu" };
 }
 
 // Reconstrói o modo atual a partir do histórico — o webhook não guarda o modo
@@ -139,16 +167,16 @@ export function inferirModo(
   mensagens: Array<{ direcao: string; texto: string | null; payload?: { reply_id?: string | null } | null }>,
 ): ModoConversa {
   const menu = menuAtivo(cfg);
-  if (!menu) return "ia";
+  if (!menu) return "menu"; // sem menu o bot é mudo — modo irrelevante
   for (let i = mensagens.length - 1; i >= 0; i--) {
     const m = mensagens[i];
     if (m.direcao !== "entrada") continue;
     const rid = m.payload?.reply_id;
     if (rid) {
-      const opt = menu.opcoes.find((o) => String(o.id) === String(rid));
+      const opt = acharOpcao(menu, String(rid));
       if (opt?.acao === "ia") return "ia";
       if (opt?.acao === "texto" || opt?.acao === "humano") return "menu";
-      continue; // opção desconhecida não define o modo
+      continue; // submenu/opção desconhecida não define o modo
     }
     if (m.texto && pediuMenu(m.texto)) return "menu";
   }

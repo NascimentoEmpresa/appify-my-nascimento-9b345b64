@@ -55,13 +55,15 @@ export interface WaPayload {
   midia?: WaMidia;
 }
 
-export type WaMenuAcao = "texto" | "ia" | "humano";
+export type WaMenuAcao = "texto" | "submenu" | "ia" | "humano";
 
 export interface WaMenuOpcao {
   id: string;
   titulo: string;
   acao: WaMenuAcao;
   valor?: string; // texto da resposta (acao "texto"/"humano") ou aviso (acao "ia")
+  // acao "submenu": esta opção abre outro conjunto de opções (cascata).
+  submenu?: WaMenu | null;
 }
 
 export interface WaMenu {
@@ -94,7 +96,7 @@ export interface WaBotConfig {
 // ---- Simulador (submódulo Testes) ----
 // Espelha o retorno da edge function whatsapp-testar.
 export type WaTesteTipo =
-  | "ia" | "fallback" | "menu" | "menu_texto" | "menu_ia" | "menu_humano" | "fora_horario" | "ping";
+  | "ia" | "fallback" | "menu" | "menu_texto" | "menu_ia" | "menu_humano" | "fora_horario" | "nada" | "ping";
 
 export interface WaTesteDiagnostico {
   bot_ativo: boolean;
@@ -130,11 +132,13 @@ export const TESTE_TIPO_LABEL: Record<WaTesteTipo, string> = {
   menu_ia: "Menu encaminhou para a IA",
   menu_humano: "Menu encaminhou para atendente",
   fora_horario: "Fora do horário de atendimento",
+  nada: "Sem resposta (menu não configurado)",
   ping: "Teste de conexão",
 };
 
 export const MENU_ACOES: Array<{ value: WaMenuAcao; label: string; ajuda: string }> = [
-  { value: "texto", label: "Responder um texto", ajuda: "O bot envia uma resposta pronta (ex.: link das vagas) e volta ao menu." },
+  { value: "texto", label: "Responder um texto", ajuda: "O bot envia uma resposta pronta (ex.: link das vagas)." },
+  { value: "submenu", label: "Abrir mais opções", ajuda: "Mostra outro conjunto de botões dentro desta opção (fluxo em cascata)." },
   { value: "ia", label: "Atendimento por I.A", ajuda: "Encaminha para a IA: a pessoa passa a conversar livre e a IA responde." },
   { value: "humano", label: "Falar com atendente", ajuda: "Desliga o bot e passa para atendimento humano." },
 ];
