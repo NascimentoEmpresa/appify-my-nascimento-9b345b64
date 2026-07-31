@@ -1,4 +1,4 @@
-import { Bell, Search, PanelLeft, ChevronDown, Building2, HelpCircle, Settings, LogOut, ShieldAlert, Check, ExternalLink, User as UserIcon, Monitor, ShieldCheck } from "lucide-react";
+import { Bell, Search, PanelLeft, ChevronDown, Building2, HelpCircle, Settings, LogOut, ShieldAlert, Check, ExternalLink, User as UserIcon, Monitor, ShieldCheck, Contact } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { cn } from "@/lib/utils";
@@ -10,6 +10,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { formatDistanceToNow } from "date-fns";
 import { ptBR } from "date-fns/locale";
+import { AgendaCorporativaSheet } from "./AgendaCorporativaSheet";
 
 type Notif = {
   id: string;
@@ -37,6 +38,7 @@ export function Topbar({ onToggleSidebar, onOpenMobile }: { onToggleSidebar: () 
   const [openHelp, setOpenHelp] = useState(false);
   const [openSettings, setOpenSettings] = useState(false);
   const [openProfile, setOpenProfile] = useState(false);
+  const [openAgenda, setOpenAgenda] = useState(false);
   const navigate = useNavigate();
   const { disableDemo } = useDemoMode();
   const { user, signOut } = useAuth();
@@ -113,7 +115,7 @@ export function Topbar({ onToggleSidebar, onOpenMobile }: { onToggleSidebar: () 
   const iniciais = nomeExibido.split(/\s+/).filter(Boolean).slice(0, 2).map((p) => p[0]?.toUpperCase()).join("") || "U";
   const roleLabel = isAdmin ? "Admin Master" : (roles?.[0] ? roles[0].replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase()) : "Usuário");
 
-  const fecharTodos = () => { setOpenSelector(false); setOpenNotif(false); setOpenHelp(false); setOpenSettings(false); setOpenProfile(false); };
+  const fecharTodos = () => { setOpenSelector(false); setOpenNotif(false); setOpenHelp(false); setOpenSettings(false); setOpenProfile(false); setOpenAgenda(false); };
 
   return (
     <header className="sticky top-0 z-20 flex h-16 items-center gap-2 border-b border-border/70 bg-surface/80 px-3 backdrop-blur-md sm:gap-4 sm:px-4 lg:px-6">
@@ -302,6 +304,11 @@ export function Topbar({ onToggleSidebar, onOpenMobile }: { onToggleSidebar: () 
           )}
         </div>
 
+        {/* Agenda Corporativa */}
+        <IconBtn aria-label="Agenda Corporativa" onClick={() => { fecharTodos(); setOpenAgenda((o) => !o); }}>
+          <Contact className="h-4 w-4" />
+        </IconBtn>
+
         <div className="mx-1 h-8 w-px bg-border" />
 
         {/* Perfil/Sessões */}
@@ -378,6 +385,8 @@ export function Topbar({ onToggleSidebar, onOpenMobile }: { onToggleSidebar: () 
           <span className="hidden sm:inline">Sair</span>
         </button>
       </div>
+
+      <AgendaCorporativaSheet open={openAgenda} onOpenChange={setOpenAgenda} userId={user?.id} />
     </header>
   );
 }
