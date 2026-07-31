@@ -40,8 +40,8 @@ interface AuditRow {
 
 export default function SmokeTestHelena() {
   const qc = useQueryClient();
-  const { roles } = usePermissoes();
-  const canSee = roles.includes("admin") || roles.includes("controladoria");
+  const { can } = usePermissoes();
+  const canSee = can("visualizar", undefined, "administracao");
 
   const [empresaAtual, setEmpresaAtual] = useState<string>(EMPRESAS[0]);
   const [filtroUserEmail, setFiltroUserEmail] = useState("helena");

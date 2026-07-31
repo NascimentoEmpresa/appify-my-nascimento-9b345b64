@@ -134,7 +134,6 @@ import IntegracaoBatches from "./pages/integracao/Batches";
 import BatchDetalhe from "./pages/integracao/BatchDetalhe";
 import IntegracaoAliases from "./pages/integracao/Aliases";
 import MigracaoZero from "./pages/admin/MigracaoZero";
-// AcessosPermissoes / PlanoAcoesConfiguracoes agora são abas em /app/administracao (Administracao.tsx).
 import PlanoAcoesLista from "./pages/plano-acoes/Lista";
 import PlanoAcoesDashboard from "./pages/plano-acoes/Dashboard";
 import PlanoAcoesKanban from "./pages/plano-acoes/Kanban";

@@ -70,12 +70,12 @@ interface Solicitacao {
 
 export default function PlanoContas() {
   const { user } = useAuth();
-  const { roles } = usePermissoes();
+  const { can } = usePermissoes();
   const { data: empresaId } = useEmpresaId();
   const qc = useQueryClient();
   const [tab, setTab] = useState("plano");
 
-  const podeAprovar = (roles ?? []).some((r: string) => ["admin", "controladoria", "diretor_adm"].includes(r));
+  const podeAprovar = can("alterar", undefined, "administracao");
 
   const contasQ = useQuery({
     queryKey: ["conta_contabil", empresaId],

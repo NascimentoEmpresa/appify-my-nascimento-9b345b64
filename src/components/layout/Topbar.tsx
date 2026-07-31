@@ -40,11 +40,11 @@ export function Topbar({ onToggleSidebar, onOpenMobile }: { onToggleSidebar: () 
   const navigate = useNavigate();
   const { disableDemo } = useDemoMode();
   const { user, signOut } = useAuth();
-  const { roles } = usePermissoes();
+  const { roles, can } = usePermissoes();
   const [displayName, setDisplayName] = useState<string>("");
   const qc = useQueryClient();
 
-  const isAdmin = (roles ?? []).includes("admin");
+  const isAdmin = can("alterar", undefined, "administracao");
 
   useEffect(() => {
     if (!user?.id) { setDisplayName(""); return; }

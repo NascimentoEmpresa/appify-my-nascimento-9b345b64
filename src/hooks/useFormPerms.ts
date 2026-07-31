@@ -1,7 +1,6 @@
 import { useEffect, useState, useCallback } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
-import { usePermissoes } from "@/context/PermissoesContext";
 import { useVinculoEmpregado } from "@/hooks/useVinculoEmpregado";
 
 // =====================================================================
@@ -20,10 +19,8 @@ const VIEW_CAPS: FormCap[] = ["ver_tudo", "ver_proprias"];
 
 export function useFormPerms() {
   const { user } = useAuth();
-  const { roles } = usePermissoes();
   const { empregado } = useVinculoEmpregado();
   const setor = empregado?.setor || null;  // usado por Formularios (setores_acesso), nao por permissao
-  const isAdmin = roles.includes("admin");
   const [caps, setCaps] = useState<Set<string>>(new Set());
   // Setores cujas respostas o usuario pode ver (papel 'ver_setor'), normalizados.
   const [setoresVer, setSetoresVer] = useState<Set<string>>(new Set());
@@ -61,5 +58,5 @@ export function useFormPerms() {
   // Espelha public.cs_form_pode_criar_setor: dono do setor do formulario.
   const canCriarSetor = (s?: string | null) =>
     !!s && setoresCriar.has(String(s).trim().toUpperCase());
-  return { isAdmin, can, canVerAlguma, soProprias, canVerSetor, canCriarSetor, setoresVer, setoresCriar, setor, loading, reload: carregar };
+  return { can, canVerAlguma, soProprias, canVerSetor, canCriarSetor, setoresVer, setoresCriar, setor, loading, reload: carregar };
 }
