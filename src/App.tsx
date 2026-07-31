@@ -200,7 +200,7 @@ const App = () => (
             <Route path="sistemas/chamados" element={<MeusChamados base="/app/sistemas/chamados" />} />
             <Route path="sistemas/chamados/novo" element={<AbrirChamado base="/app/sistemas/chamados" />} />
             <Route path="sistemas/chamados/painel" element={<PainelDistribuicaoChamados />} />
-            <Route path="sistemas/chamados/dashboard" element={<DashboardChamados />} />
+            <Route path="sistemas/chamados/dashboard-tv" element={<DashboardChamados />} />
             <Route path="sistemas/chamados/dev" element={<PainelDesenvolvedorChamados />} />
             <Route path="sistemas/chamados/:id/coordenar" element={<CoordenarChamado />} />
             <Route path="sistemas/chamados/:id/acompanhar" element={<AcompanharChamado base="/app/sistemas/chamados" />} />
