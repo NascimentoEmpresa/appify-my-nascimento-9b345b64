@@ -21,6 +21,7 @@ interface Body {
   email: string;
   password: string;
   display_name?: string | null;
+  cargo?: string | null;
   empresa_id?: string | null;
   roles?: string[];
   telefone?: string | null;
@@ -116,6 +117,7 @@ Deno.serve(async (req) => {
     const email = normalizeEmail(body.email);
     const password = typeof body.password === "string" ? body.password : "";
     const display_name = normalizeTextOrNull(body.display_name);
+    const cargo = normalizeTextOrNull(body.cargo);
     const telefone = normalizeTelefone(body.telefone);
     const empresa_id = normalizeTextOrNull(body.empresa_id);
     const requestedRoles = uniqueStrings(body.roles);
@@ -233,6 +235,7 @@ Deno.serve(async (req) => {
         id: newUserId,
         email,
         display_name,
+        cargo,
         empresa_id,
         empresa_atual_id: empresa_id,
         telefone,
