@@ -27,11 +27,6 @@ const MODOS = [
   { value: "quorum", label: "Quórum mínimo" },
 ];
 
-const ROLES = [
-  "admin", "controladoria", "comercial", "operacional", "juridico", "sst",
-  "diretor_adm", "diretor_op", "comprador", "almoxarife", "gestor_cc", "fiscal_recebedor",
-];
-
 export default function AprovacoesCompras() {
   const qc = useQueryClient();
   const [tab, setTab] = useState("instancias");
@@ -103,42 +98,6 @@ export default function AprovacoesCompras() {
     },
     onSuccess: () => qc.invalidateQueries({ queryKey: ["sup_aprov_etapa", fluxoSel?.id] }),
     onError: (e: any) => toast.error(e.message),
-  });
-
-  // Aprovadores por etapa
-  const [etapaSel, setEtapaSel] = useState<any>(null);
-  const { data: aprovadores = [] } = useQuery<any[]>({
-    queryKey: ["sup_aprov_aprovador", etapaSel?.id],
-    queryFn: async () => {
-      if (!etapaSel?.id) return [];
-      const { data, error } = await (supabase as any).from("sup_aprov_aprovador").select("*").eq("etapa_id", etapaSel.id);
-      if (error) throw error;
-      return data ?? [];
-    },
-    enabled: !!etapaSel?.id,
-  });
-
-  const [novoApr, setNovoApr] = useState<any>({ tipo: "role", role: "comprador", user_id: "" });
-  const addAprovador = useMutation({
-    mutationFn: async () => {
-      const p: any = { etapa_id: etapaSel.id };
-      if (novoApr.tipo === "role") p.role = novoApr.role;
-      else p.user_id = novoApr.user_id;
-      const { error } = await (supabase as any).from("sup_aprov_aprovador").insert([p]);
-      if (error) throw error;
-    },
-    onSuccess: () => {
-      toast.success("Aprovador adicionado");
-      qc.invalidateQueries({ queryKey: ["sup_aprov_aprovador", etapaSel?.id] });
-    },
-    onError: (e: any) => toast.error(e.message),
-  });
-  const delAprovador = useMutation({
-    mutationFn: async (id: string) => {
-      const { error } = await (supabase as any).from("sup_aprov_aprovador").delete().eq("id", id);
-      if (error) throw error;
-    },
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["sup_aprov_aprovador", etapaSel?.id] }),
   });
 
   // ========== Instâncias ==========
@@ -370,58 +329,17 @@ export default function AprovacoesCompras() {
                   <TableHeader><TableRow><TableHead>#</TableHead><TableHead>Nome</TableHead><TableHead>Modo</TableHead><TableHead></TableHead></TableRow></TableHeader>
                   <TableBody>
                     {etapas.map((e) => (
-                      <TableRow key={e.id} className={etapaSel?.id === e.id ? "bg-muted/50" : ""}>
+                      <TableRow key={e.id}>
                         <TableCell>{e.ordem}</TableCell>
                         <TableCell className="font-medium">{e.nome}</TableCell>
                         <TableCell><Badge variant="outline">{e.modo}{e.modo === "quorum" ? ` (${e.quorum_minimo})` : ""}</Badge></TableCell>
                         <TableCell className="space-x-1">
-                          <Button size="sm" variant="outline" onClick={() => setEtapaSel(e)}>Aprovadores</Button>
                           <Button size="sm" variant="ghost" onClick={() => delEtapa.mutate(e.id)}><Trash2 className="h-4 w-4" /></Button>
                         </TableCell>
                       </TableRow>
                     ))}
                   </TableBody>
                 </Table>
-
-                {etapaSel && (
-                  <Card>
-                    <CardHeader><CardTitle className="text-base">Aprovadores da etapa "{etapaSel.nome}"</CardTitle></CardHeader>
-                    <CardContent className="space-y-3">
-                      <div className="grid grid-cols-12 gap-2 items-end">
-                        <div className="col-span-3">
-                          <Label>Tipo</Label>
-                          <Select value={novoApr.tipo} onValueChange={(v) => setNovoApr({ ...novoApr, tipo: v })}>
-                            <SelectTrigger><SelectValue /></SelectTrigger>
-                            <SelectContent><SelectItem value="role">Por Role</SelectItem><SelectItem value="user">Por Usuário</SelectItem></SelectContent>
-                          </Select>
-                        </div>
-                        {novoApr.tipo === "role" ? (
-                          <div className="col-span-7">
-                            <Label>Role</Label>
-                            <Select value={novoApr.role} onValueChange={(v) => setNovoApr({ ...novoApr, role: v })}>
-                              <SelectTrigger><SelectValue /></SelectTrigger>
-                              <SelectContent>{ROLES.map((r) => <SelectItem key={r} value={r}>{r}</SelectItem>)}</SelectContent>
-                            </Select>
-                          </div>
-                        ) : (
-                          <div className="col-span-7"><Label>User ID (UUID)</Label><Input value={novoApr.user_id} onChange={(e) => setNovoApr({ ...novoApr, user_id: e.target.value })} /></div>
-                        )}
-                        <div className="col-span-2"><Button onClick={() => addAprovador.mutate()}><Plus className="h-4 w-4 mr-1" />Add</Button></div>
-                      </div>
-
-                      <Table>
-                        <TableBody>
-                          {aprovadores.map((a) => (
-                            <TableRow key={a.id}>
-                              <TableCell>{a.role ? <Badge>{a.role}</Badge> : <span className="font-mono text-xs">{a.user_id?.slice(0, 8)}</span>}</TableCell>
-                              <TableCell className="text-right"><Button size="sm" variant="ghost" onClick={() => delAprovador.mutate(a.id)}><Trash2 className="h-4 w-4" /></Button></TableCell>
-                            </TableRow>
-                          ))}
-                        </TableBody>
-                      </Table>
-                    </CardContent>
-                  </Card>
-                )}
               </div>
             </DialogContent>
           </Dialog>

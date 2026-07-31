@@ -8,6 +8,7 @@ import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle, DialogT
 import { Badge } from "@/components/ui/badge";
 import { ShieldCheck, Pencil } from "lucide-react";
 import { toast } from "@/hooks/use-toast";
+import { usePermissoes } from "@/context/PermissoesContext";
 import type { Database } from "@/integrations/supabase/types";
 
 type Role = Database["public"]["Enums"]["app_role"];
@@ -30,6 +31,8 @@ const displayNome = (m: Pick<Meta, "role" | "nome">) =>
 
 export function PerfisTab() {
   const qc = useQueryClient();
+  const { can } = usePermissoes();
+  const podeGerenciar = can("alterar", undefined, "administracao");
   const metaQ = useQuery({
     queryKey: ["perfil_metadata"],
     queryFn: async () => {
@@ -48,6 +51,10 @@ export function PerfisTab() {
       return m;
     },
   });
+
+  if (!podeGerenciar) {
+    return <section className="card-elevated p-6 text-sm text-muted-foreground">Apenas administradores podem gerenciar perfis.</section>;
+  }
 
   return (
     <section className="card-elevated">
