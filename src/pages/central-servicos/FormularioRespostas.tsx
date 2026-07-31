@@ -5,7 +5,7 @@ import { useAuth } from "@/hooks/useAuth";
 import { useFormPerms } from "@/hooks/useFormPerms";
 import { useVinculoEmpregado } from "@/hooks/useVinculoEmpregado";
 import { Formulario, Pergunta, fmtDt, situacao, normalizaPerguntas } from "./Formularios";
-import EmpregadoDetalheModal, { normNome, carregarVinculos, prewarmFichas, invalidarFichas, nomesDoCadastro, resolveCadastro } from "./EmpregadoDetalheModal";
+import EmpregadoDetalheModal, { normNome, carregarVinculos, prewarmFichas, invalidarFichas } from "./EmpregadoDetalheModal";
 
 // =====================================================================
 // NASCIMENTO FORMULÁRIOS - Respostas
@@ -67,25 +67,28 @@ const SEM_PESSOA = (v: any): Pessoa => { const t = valorTexto(v); return { ehPes
 //   • a que diz QUEM respondeu → identidade da PRÓPRIA resposta. Quem envia
 //     logado já chega carimbado com o cadastro (respondente_cadastro), então
 //     não há o que adivinhar pelo texto digitado;
-//   • tipo "colaborador" → o nome citado é de terceiro, e aí só resta casar com
-//     o cadastro. Abre a ficha mesmo sem casar: é de lá que se corrige o nome;
+//   • tipo "colaborador" → nome de terceiro, resolvido só pelo vínculo manual;
 //   • qualquer outra → texto puro, sem tratamento de gente.
-const resolverDaPergunta = (p: Pergunta, perguntaNomeId: string | null, ident: Resolver, cadastro: Resolver): Resolver =>
-  p.id === perguntaNomeId ? ident
-    : p.tipo === "colaborador" ? (v => ({ ...cadastro(v), podeAbrirFicha: true }))
-      : SEM_PESSOA;
+// Nas duas primeiras o texto abre a ficha mesmo sem estar vinculado: é de lá
+// que se faz o vínculo à mão, o único jeito de amarrar um nome solto agora.
+const resolverDaPergunta = (p: Pergunta, perguntaNomeId: string | null, ident: Resolver, vinculo: Resolver): Resolver => {
+  const base = p.id === perguntaNomeId ? ident : p.tipo === "colaborador" ? vinculo : null;
+  return base ? (v => ({ ...base(v), podeAbrirFicha: true })) : SEM_PESSOA;
+};
 
-// Nome de empregado citado numa resposta: vira link p/ a ficha (👤). Quem não é
-// gente (ou não dá p/ afirmar que é) fica texto normal, sem nada clicável.
+// Nome de empregado numa resposta. Vinculado de verdade (identidade da resposta
+// ou de-para manual) aparece com 👤 e em caixa alta — é uma afirmação de que
+// aquilo é aquela pessoa. Sem vínculo, fica o texto como foi digitado: continua
+// clicável p/ abrir a ficha e vincular à mão, mas sem fingir que reconheceu.
 function NomeLink({ texto, resolve, onPessoa }: { texto: string; resolve: Resolver; onPessoa: (n: string) => void }) {
   const { ehPessoa, exibir, original, podeAbrirFicha } = resolve(texto);
   if (!ehPessoa && !podeAbrirFicha) return <span style={valorFonte}>{texto}</span>;
   return (
     <button onClick={() => onPessoa(original)}
-      title={!ehPessoa ? "Não encontrado no cadastro — abrir para conferir/vincular"
+      title={!ehPessoa ? "Sem vínculo com o cadastro — abrir para vincular à mão"
         : exibir !== original ? `Respondeu "${original}" — vinculado a ${exibir}` : "Ver ficha do colaborador"}
       style={{ ...(ehPessoa ? nomeFonte : valorFonte), background: "none", border: "none", padding: 0, cursor: "pointer", textAlign: "left", textDecoration: "underline", textDecorationStyle: "dotted", textUnderlineOffset: 2 }}>
-      👤 {exibir}
+      {ehPessoa ? `👤 ${exibir}` : exibir}
     </button>
   );
 }
@@ -231,7 +234,6 @@ export default function FormularioRespostas() {
   const [fAte, setFAte] = useState("");
   const [detalhe, setDetalhe] = useState<Resposta | null>(null);  // modal "Detalhes" do cadastro
   const [pessoa, setPessoa] = useState<string | null>(null);      // modal ficha do empregado (nome citado)
-  const [nomesProntos, setNomesProntos] = useState(false);          // cadastro já veio inteiro? (antes disso não dá p/ dizer "Vincular")
   const [vinculos, setVinculos] = useState<Map<string, string>>(new Map()); // apelido -> nome do empregado (CS_FORM_VINCULOS)
 
   const load = useCallback(async () => {
@@ -252,19 +254,11 @@ export default function FormularioRespostas() {
   // esta tela vai clicar em nome — quando clicar, não deve haver nada a esperar.
   useEffect(() => { prewarmFichas(); }, []);
 
-  // Nomes do cadastro só para saber quais valores de resposta são pessoas de
-  // verdade (viram link p/ a ficha). Best-effort: se falhar, ninguém fica
-  // clicável, mas a tela abre.
-  //
-  // Vem do MESMO cache que a ficha usa (`nomesDoCadastro`, via RPC). Antes esta
-  // tela varria a EMPREGADOS inteira pelo PostgREST em blocos de 1000 — pagando
-  // RLS por linha —, e era isso que deixava a lista inteira em "Verificando…"
-  // por muito tempo, competindo com a consulta da própria ficha.
+  // De-para dos vínculos feitos à mão (CS_FORM_VINCULOS). É a ÚNICA fonte que
+  // transforma um texto solto em pessoa — o cadastro inteiro não é mais lido
+  // aqui, porque não há mais busca por semelhança para alimentar.
   const carregarNomes = useCallback(async () => {
-    setNomesProntos(false);
-    const [, vincs] = await Promise.all([nomesDoCadastro(), carregarVinculos()]);
-    setVinculos(vincs);
-    setNomesProntos(true);
+    setVinculos(await carregarVinculos());
   }, []);
   useEffect(() => { carregarNomes(); }, [carregarNomes]);
 
@@ -272,11 +266,11 @@ export default function FormularioRespostas() {
   // O vínculo manual manda no nome exibido: quem vinculou "Gerência Sistemas" a
   // IURY DE JESUS SILVA quer ver o nome dele, não o texto que veio na resposta.
   //
-  // O casamento usa a MESMA regra da ficha (`resolveCadastro`), incluindo nome
-  // contido: "Mileny de oliveira" é a MILENY DE OLIVEIRA DA ROSA — a lista
-  // exigia igualdade exata e a ficha não. Nome ambíguo (casa com várias
-  // pessoas) não é afirmado: melhor não decidir do que pôr o nome errado em
-  // negrito; a ficha, aberta pelo texto, mostra o palpite e deixa corrigir.
+  // NÃO existe mais casamento automático por semelhança de nome. A regra do
+  // "nome contido" pescava qualquer coisa no cadastro — uma resposta "N" virava
+  // um empregado de verdade, em negrito, como se estivesse identificada. Nome
+  // que ninguém vinculou fica como veio, texto puro: melhor não afirmar nada do
+  // que afirmar errado.
   //
   // Isto vale p/ nome de TERCEIRO citado numa resposta. Quem RESPONDEU não
   // passa por aqui: a identidade vem carimbada na resposta (ver `identidades`).
@@ -285,12 +279,8 @@ export default function FormularioRespostas() {
     const n = normNome(v);
     const vinculado = n ? vinculos.get(n) : undefined;
     if (vinculado !== undefined) return { ehPessoa: true, exibir: vinculado || original, original };
-    if (n && nomesProntos) {
-      const { hit, ambiguo } = resolveCadastro(n);
-      if (hit && !ambiguo) return { ehPessoa: true, exibir: hit.nome, original };
-    }
     return { ehPessoa: false, exibir: original, original };
-  }, [vinculos, nomesProntos]);
+  }, [vinculos]);
 
   // Qual pergunta diz QUEM respondeu. A config do formulário manda; sem ela,
   // deduz pelo TÍTULO primeiro e só depois pelo tipo: um formulário costuma ter
