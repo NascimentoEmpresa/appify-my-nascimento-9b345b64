@@ -15,6 +15,21 @@ export const STATUS_CLASS: Record<string, string> = {
   cancelada: "bg-slate-200 text-slate-600 hover:bg-slate-200",
 };
 
+// "Situação site P.M.T."/"Situa Domínio" vêm da planilha legada com um desses
+// 3 valores — NORMAL é o caso comum; SUBSTITUIDA/CANCELADA são notas que
+// nunca vão ter pagamento (foram trocadas/anuladas por fora do fluxo do app),
+// mas ainda ficam com status='concluida' no banco (o import não tem outro
+// status pra elas), então quem exibe a nota precisa checar isso à parte.
+export function situacaoEspecial(n: {
+  situacao_site_pmt?: string | null;
+  situacao_dominio?: string | null;
+}): "SUBSTITUIDA" | "CANCELADA" | null {
+  const valores = [n.situacao_site_pmt?.toUpperCase(), n.situacao_dominio?.toUpperCase()];
+  if (valores.includes("CANCELADA")) return "CANCELADA";
+  if (valores.includes("SUBSTITUIDA")) return "SUBSTITUIDA";
+  return null;
+}
+
 export function itemVazio(ordem: number) {
   return {
     identificacao: `Item ${ordem}`,
