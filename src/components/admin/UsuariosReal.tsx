@@ -538,6 +538,10 @@ function EditarUsuarioDialog({
           </div>
 
           <div className="rounded-lg border border-border bg-muted/30 p-3">
+            <AlterarEmailSection userId={profile.id} emailAtual={profile.email ?? ""} />
+          </div>
+
+          <div className="rounded-lg border border-border bg-muted/30 p-3">
             <ResetSenhaSection userId={profile.id} email={profile.email ?? ""} />
           </div>
         </div>
@@ -573,6 +577,78 @@ function EditarUsuarioDialog({
     </Dialog>
   );
 
+}
+
+function AlterarEmailSection({ userId, emailAtual }: { userId: string; emailAtual: string }) {
+  const qc = useQueryClient();
+  const [novoEmail, setNovoEmail] = useState(emailAtual);
+  const [confirmando, setConfirmando] = useState(false);
+  const [salvando, setSalvando] = useState(false);
+
+  useEffect(() => { setNovoEmail(emailAtual); }, [emailAtual]);
+
+  const mudou = novoEmail.trim().toLowerCase() !== emailAtual.trim().toLowerCase();
+
+  const salvar = async () => {
+    setSalvando(true);
+    try {
+      const { data, error } = await supabase.functions.invoke("admin-update-email", {
+        body: { user_id: userId, new_email: novoEmail.trim() },
+      });
+      if (error) {
+        const ctx = (error as any).context;
+        let msg = error.message;
+        try { if (ctx && typeof ctx.json === "function") { const j = await ctx.json(); if (j?.error) msg = j.error; } } catch { /* */ }
+        throw new Error(msg);
+      }
+      if ((data as any)?.error) throw new Error((data as any).error);
+      toast({ title: "E-mail atualizado", description: "O usuário deve usar o novo e-mail para fazer login." });
+      qc.invalidateQueries({ queryKey: ["admin-profiles"] });
+      setConfirmando(false);
+    } catch (e: any) {
+      toast({
+        title: /already|registered|exists|duplic/i.test(e?.message ?? "") ? "E-mail já usado por outro usuário" : "Erro ao atualizar e-mail",
+        description: e?.message,
+        variant: "destructive",
+      });
+    } finally {
+      setSalvando(false);
+    }
+  };
+
+  return (
+    <div className="space-y-2">
+      <p className="flex items-center gap-1.5 text-xs font-semibold">E-mail de login</p>
+      <p className="text-[11px] text-muted-foreground">
+        É o e-mail usado pra entrar no sistema. Alterar aqui muda o login imediatamente — avise o usuário.
+      </p>
+      <Input
+        type="email"
+        value={novoEmail}
+        onChange={(e) => { setNovoEmail(e.target.value); setConfirmando(false); }}
+        placeholder="novo@empresa.com.br"
+      />
+      {mudou && !confirmando && (
+        <div className="flex justify-end">
+          <Button size="sm" variant="outline" onClick={() => setConfirmando(true)} disabled={salvando}>
+            Salvar novo e-mail
+          </Button>
+        </div>
+      )}
+      {mudou && confirmando && (
+        <div className="rounded-md border border-warning/40 bg-warning/10 p-2.5 text-xs">
+          <p className="flex items-start gap-1.5">
+            <AlertTriangle className="mt-0.5 h-3.5 w-3.5 text-warning" />
+            Confirma trocar o login de <strong>{emailAtual}</strong> para <strong>{novoEmail.trim()}</strong>?
+          </p>
+          <div className="mt-2 flex justify-end gap-2">
+            <Button size="sm" variant="ghost" onClick={() => setConfirmando(false)} disabled={salvando}>Cancelar</Button>
+            <Button size="sm" onClick={salvar} disabled={salvando}>{salvando ? "Salvando…" : "Confirmar troca"}</Button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
 }
 
 function ResetSenhaSection({ userId, email }: { userId: string; email: string }) {
