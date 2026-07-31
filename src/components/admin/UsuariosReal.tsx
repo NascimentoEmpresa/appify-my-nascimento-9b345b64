@@ -54,6 +54,7 @@ interface ProfileRow {
   empresa_id: string | null;
   avatar_url: string | null;
   telefone: string | null;
+  cargo: string | null;
 }
 
 // Máscara local de telefone BR — mesmo padrão inline já usado em
@@ -77,7 +78,7 @@ export function UsuariosReal() {
     queryFn: async () => {
       const { data, error } = await supabase
         .from("profiles")
-        .select("id,email,display_name,empresa_id,avatar_url,telefone")
+        .select("id,email,display_name,empresa_id,avatar_url,telefone,cargo")
         .order("display_name");
       if (error) throw error;
       return (data ?? []) as ProfileRow[];
@@ -226,6 +227,7 @@ export function UsuariosReal() {
                         {vinc && <span className="ml-1.5 inline-flex items-center gap-0.5 text-[10px] font-semibold text-success align-middle"><Link2 className="h-3 w-3" /> vinculado</span>}
                       </p>
                       <p className="text-[11px] text-muted-foreground">{u.email}</p>
+                      {u.cargo && <p className="text-[11px] text-muted-foreground">{u.cargo}</p>}
                     </div>
                   </div>
                 </td>
@@ -291,6 +293,7 @@ function EditarUsuarioDialog({
 }) {
   const [open, setOpen] = useState(false);
   const [displayName, setDisplayName] = useState(profile.display_name ?? "");
+  const [cargo, setCargo] = useState(profile.cargo ?? "");
   const [telefone, setTelefone] = useState(maskFone(profile.telefone?.replace(/^55/, "") ?? ""));
   const [empresaId, setEmpresaId] = useState<string>(profile.empresa_id ?? "_none");
   const [selectedSetores, setSelectedSetores] = useState<string[]>(currentSetores);
@@ -351,6 +354,7 @@ function EditarUsuarioDialog({
         .from("profiles")
         .update({
           display_name: displayName || null,
+          cargo: cargo.trim() || null,
           empresa_id: empresaId === "_none" ? null : empresaId,
           acessa_todas_empresas: acessaTodas,
           telefone: telefone.replace(/\D/g, "") ? `55${telefone.replace(/\D/g, "")}` : null,
@@ -449,6 +453,10 @@ function EditarUsuarioDialog({
           <div>
             <Label>Nome de exibição</Label>
             <Input value={displayName} onChange={(e) => setDisplayName(e.target.value)} placeholder="Ex.: Messias Souza" />
+          </div>
+          <div>
+            <Label>Cargo</Label>
+            <Input value={cargo} onChange={(e) => setCargo(e.target.value)} placeholder="Ex.: Analista Financeiro II" />
           </div>
           <div>
             <Label>Telefone</Label>
@@ -741,6 +749,7 @@ function NovoUsuarioDialog({
 }) {
   const [open, setOpen] = useState(false);
   const [displayName, setDisplayName] = useState("");
+  const [cargo, setCargo] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [showPwd, setShowPwd] = useState(false);
@@ -759,7 +768,7 @@ function NovoUsuarioDialog({
   } | null>(null);
 
   const reset = () => {
-    setDisplayName(""); setEmail(""); setPassword(""); setTelefone("");
+    setDisplayName(""); setCargo(""); setEmail(""); setPassword(""); setTelefone("");
     setEmpresaId("_none"); setSelectedSetores([]); setShowPwd(false);
   };
 
@@ -791,6 +800,7 @@ function NovoUsuarioDialog({
           email: email.trim(),
           password,
           display_name: displayName.trim() || null,
+          cargo: cargo.trim() || null,
           empresa_id: empresaId === "_none" ? null : empresaId,
           telefone: telefone.trim() || null,
         },
@@ -860,6 +870,10 @@ function NovoUsuarioDialog({
             <div>
               <Label>Nome completo</Label>
               <Input value={displayName} onChange={(e) => setDisplayName(e.target.value)} placeholder="Ex.: Messias Souza" />
+            </div>
+            <div>
+              <Label>Cargo</Label>
+              <Input value={cargo} onChange={(e) => setCargo(e.target.value)} placeholder="Ex.: Analista Financeiro II" />
             </div>
             <div>
               <Label>E-mail corporativo *</Label>
