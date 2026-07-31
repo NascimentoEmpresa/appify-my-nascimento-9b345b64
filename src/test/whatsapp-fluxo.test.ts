@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import {
-  rotearBot, inferirModo, type BotConfig,
+  rotearBot, inferirModo, AVISO_TRANSFERIR_PADRAO, type BotConfig,
 } from "../../supabase/functions/_shared/whatsapp-bot.ts";
 
 // Config mínima do bot com um menu em CASCATA (texto / submenu / ia / humano).
@@ -165,5 +165,62 @@ describe("inferirModo — reconstrói o modo a partir do histórico", () => {
 
   it("sem menu configurado o modo é menu (bot mudo)", () => {
     expect(inferirModo(cfg(null), [{ direcao: "entrada", texto: "oi", payload: null }])).toBe("menu");
+  });
+});
+
+// Transferir para pasta (fila de setor). A conversa sai do bot e passa a
+// pertencer a uma pasta; só quem tem acesso àquela pasta enxerga.
+describe("rotearBot — transferir para pasta", () => {
+  const MENU_T = {
+    titulo: "Selecione:",
+    opcoes: [
+      { id: "t_rh", titulo: "Suporte RH", acao: "transferir" as const, valor: "Encaminhei pro RH!", pasta: "rh" },
+      { id: "t_sem", titulo: "Sem pasta", acao: "transferir" as const, valor: "" },
+      {
+        id: "setores", titulo: "Setores", acao: "submenu" as const, valor: "",
+        submenu: {
+          titulo: "Qual setor?",
+          opcoes: [{ id: "t_jur", titulo: "Jurídico", acao: "transferir" as const, valor: "", pasta: "juridico" }],
+        },
+      },
+    ],
+  };
+  const bt = cfg(MENU_T);
+
+  it("clicar na opção manda para a pasta configurada, com o aviso escolhido", () => {
+    const r = rotearBot(bt, { modo: "menu", texto: null, replyId: "t_rh", dentroHorario: true });
+    expect(r.tipo).toBe("transferir");
+    if (r.tipo === "transferir") {
+      expect(r.pasta).toBe("rh");
+      expect(r.aviso).toBe("Encaminhei pro RH!");
+    }
+  });
+
+  it("transferir sem aviso configurado usa o texto padrão", () => {
+    const r = rotearBot(cfg({
+      titulo: "t",
+      opcoes: [{ id: "x", titulo: "X", acao: "transferir" as const, valor: "", pasta: "sst" }],
+    }), { modo: "menu", texto: null, replyId: "x", dentroHorario: true });
+    expect(r.tipo).toBe("transferir");
+    if (r.tipo === "transferir") expect(r.aviso).toBe(AVISO_TRANSFERIR_PADRAO);
+  });
+
+  // Config pela metade não pode largar a conversa num limbo: sem pasta ela vira
+  // atendimento humano comum, que pelo menos aparece para quem vê "todas".
+  it("transferir SEM pasta escolhida vira atendimento humano", () => {
+    const r = rotearBot(bt, { modo: "menu", texto: null, replyId: "t_sem", dentroHorario: true });
+    expect(r.tipo).toBe("humano");
+  });
+
+  it("transferir funciona em qualquer nível da cascata", () => {
+    const r = rotearBot(bt, { modo: "menu", texto: null, replyId: "t_jur", dentroHorario: true });
+    expect(r.tipo).toBe("transferir");
+    if (r.tipo === "transferir") expect(r.pasta).toBe("juridico");
+  });
+
+  it("clique em transferir mantém o modo menu (não entrega a conversa à IA)", () => {
+    expect(inferirModo(bt, [
+      { direcao: "entrada", texto: "Suporte RH", payload: { reply_id: "t_rh" } },
+    ])).toBe("menu");
   });
 });

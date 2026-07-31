@@ -150,6 +150,19 @@ async function processarBot(
       await admin.from("WA_CONVERSA").update({ bot_ativo: false }).eq("id", conversaId);
       await registrarSaida(conversaId, contatoId, to, rota.aviso, "bot");
       return;
+    case "transferir": {
+      // Direciona para a fila do setor e passa para humano. A pasta é validada
+      // contra WA_PASTA: config apontando para pasta apagada não pode largar a
+      // conversa num limbo (fila inexistente + bot desligado = ninguém atende).
+      const { data: pasta } = await admin.from("WA_PASTA")
+        .select("codigo").eq("codigo", rota.pasta).eq("ativo", true).maybeSingle();
+      await admin.from("WA_CONVERSA")
+        .update({ bot_ativo: false, pasta_codigo: pasta?.codigo ?? null })
+        .eq("id", conversaId);
+      if (!pasta) console.error("Opção do menu aponta para pasta inexistente:", rota.pasta);
+      await registrarSaida(conversaId, contatoId, to, rota.aviso, "bot");
+      return;
+    }
     case "ia_intro":
       // Entrou na IA: manda o aviso; as próximas mensagens caem na IA.
       await registrarSaida(conversaId, contatoId, to, rota.aviso, "bot");

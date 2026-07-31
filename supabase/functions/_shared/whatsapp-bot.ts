@@ -13,11 +13,14 @@ export type Msg = { role: "user" | "assistant"; content: string };
 export interface MenuOpcao {
   id: string;
   titulo: string;
-  acao: "texto" | "submenu" | "ia" | "humano";
+  acao: "texto" | "submenu" | "ia" | "humano" | "transferir";
   valor?: string;
   // acao "submenu": esta opção abre OUTRO conjunto de opções (fluxo em
   // cascata). A árvore pode ter quantos níveis a config quiser.
   submenu?: BotMenu | null;
+  // acao "transferir": código da pasta (WA_PASTA.codigo) que recebe a conversa.
+  // O `valor` continua sendo o aviso enviado a quem escolheu a opção.
+  pasta?: string | null;
 }
 
 export interface BotMenu {
@@ -96,6 +99,7 @@ export function menuAtivo(cfg: BotConfig): BotMenu | null {
 // só reapresenta o menu — nunca cai direto na IA.
 export const AVISO_IA_PADRAO = "Perfeito! Me conta como posso te ajudar.";
 export const AVISO_HUMANO_PADRAO = "Certo! Já estou te transferindo para um atendente.";
+export const AVISO_TRANSFERIR_PADRAO = "Certo! Já encaminhei para a equipe responsável, em breve alguém te responde.";
 export const TITULO_MENU_PADRAO = "Como posso te ajudar?";
 
 const valorOpcao = (o: MenuOpcao): string => (typeof o.valor === "string" ? o.valor.trim() : "");
@@ -119,6 +123,8 @@ export type RotaBot =
   | { tipo: "menu"; menu: BotMenu; modo: "menu" }      // apresenta menu raiz ou submenu
   | { tipo: "texto"; texto: string; modo: "menu" }
   | { tipo: "humano"; aviso: string; modo: "menu" }
+  // manda a conversa para uma pasta (fila de um setor) e passa para humano
+  | { tipo: "transferir"; pasta: string; aviso: string; modo: "menu" }
   | { tipo: "ia_intro"; aviso: string; modo: "ia" }
   | { tipo: "ia"; modo: "ia" };
 
@@ -136,6 +142,15 @@ export function rotearBot(cfg: BotConfig, e: EntradaBot): RotaBot {
   if (e.replyId) {
     const opt = acharOpcao(menu, e.replyId);
     if (opt?.acao === "humano") return { tipo: "humano", aviso: valorOpcao(opt) || AVISO_HUMANO_PADRAO, modo: "menu" };
+    // Transferir só vale com pasta escolhida; sem ela a opção viraria um buraco
+    // (conversa sem fila e sem bot). Nesse caso trata como atendente genérico.
+    if (opt?.acao === "transferir") {
+      const pasta = String(opt.pasta ?? "").trim();
+      const aviso = valorOpcao(opt) || AVISO_TRANSFERIR_PADRAO;
+      return pasta
+        ? { tipo: "transferir", pasta, aviso, modo: "menu" }
+        : { tipo: "humano", aviso, modo: "menu" };
+    }
     if (opt?.acao === "texto") return { tipo: "texto", texto: valorOpcao(opt) || String(opt.titulo ?? "…"), modo: "menu" };
     if (opt?.acao === "ia") return { tipo: "ia_intro", aviso: valorOpcao(opt) || AVISO_IA_PADRAO, modo: "ia" };
     if (opt?.acao === "submenu") {
@@ -175,7 +190,7 @@ export function inferirModo(
     if (rid) {
       const opt = acharOpcao(menu, String(rid));
       if (opt?.acao === "ia") return "ia";
-      if (opt?.acao === "texto" || opt?.acao === "humano") return "menu";
+      if (opt?.acao === "texto" || opt?.acao === "humano" || opt?.acao === "transferir") return "menu";
       continue; // submenu/opção desconhecida não define o modo
     }
     if (m.texto && pediuMenu(m.texto)) return "menu";

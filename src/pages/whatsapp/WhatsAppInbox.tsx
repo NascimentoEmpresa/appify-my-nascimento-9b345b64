@@ -11,10 +11,17 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
-import { Bot, Send, Search, ShieldAlert, Settings, User, MessageCircle, MousePointerClick, FileText } from "lucide-react";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Bot, Send, Search, ShieldAlert, Settings, User, MessageCircle, MousePointerClick, FileText, Inbox } from "lucide-react";
 import {
-  fmtHora, fmtTelefone, iniciais, type WaConversa, type WaContato, type WaMensagem, type WaMidia,
+  fmtHora, fmtTelefone, iniciais, MENU_TODAS,
+  type WaConversa, type WaContato, type WaMensagem, type WaMidia, type WaPasta,
 } from "./types";
+
+// Pseudo-pastas da barra lateral. "todas" é a visão completa (exige a permissão
+// whatsapp_todas); "sem_pasta" é a triagem — o que o bot ainda não direcionou.
+const TODAS = "todas";
+const SEM_PASTA = "sem_pasta";
 
 export default function WhatsAppInbox() {
   const nav = useNavigate();
@@ -23,12 +30,31 @@ export default function WhatsAppInbox() {
   const { data: access } = useAccessibleMenus("visualizar");
   const podeVer = access?.codes.has("whatsapp") ?? false;
   const podeConfig = access?.codes.has("whatsapp_chatbot") ?? false;
+  const podeTodas = access?.codes.has(MENU_TODAS) ?? false;
 
   const [selId, setSelId] = useState<string | null>(null);
   const [busca, setBusca] = useState("");
   const [texto, setTexto] = useState("");
   const [enviando, setEnviando] = useState(false);
+  // Pasta aberta. Começa vazio e é resolvido assim que as pastas carregam: quem
+  // tem "todas as conversas" abre nela; quem não tem, abre na primeira pasta
+  // liberada — senão a tela abriria vazia sem explicar por quê.
+  const [pastaSel, setPastaSel] = useState<string>("");
   const fimRef = useRef<HTMLDivElement>(null);
+
+  // Catálogo de pastas, recortado pelo que a pessoa pode ver. A RLS já filtra as
+  // CONVERSAS; aqui é só para não desenhar aba de pasta que ela não acessa.
+  const { data: pastas = [] } = useQuery({
+    queryKey: ["wa-pastas"],
+    enabled: podeVer,
+    queryFn: async () => {
+      const { data } = await (supabase as any).from("WA_PASTA").select("*").eq("ativo", true).order("ordem");
+      return (data ?? []) as WaPasta[];
+    },
+  });
+  const pastasVisiveis = useMemo(
+    () => pastas.filter((p) => podeTodas || (access?.codes.has(p.menu_codigo) ?? false)),
+    [pastas, podeTodas, access]);
 
   // Conversas (com contato) — poll leve.
   const { data: conversas = [] } = useQuery({
@@ -49,7 +75,41 @@ export default function WhatsAppInbox() {
     },
   });
 
+  // Resolve a pasta inicial uma única vez (o `!pastaSel` evita voltar para a
+  // inicial a cada refetch das pastas).
+  useEffect(() => {
+    if (pastaSel) return;
+    if (podeTodas) { setPastaSel(TODAS); return; }
+    if (pastasVisiveis.length) setPastaSel(pastasVisiveis[0].codigo);
+  }, [pastaSel, podeTodas, pastasVisiveis]);
+
   const sel = useMemo(() => conversas.find((c) => c.id === selId) ?? null, [conversas, selId]);
+
+  // Conversas de cada pasta — a contagem das abas e a lista saem daqui.
+  const daPasta = (codigo: string) =>
+    codigo === TODAS ? conversas
+      : codigo === SEM_PASTA ? conversas.filter((c) => !c.pasta_codigo)
+        : conversas.filter((c) => c.pasta_codigo === codigo);
+
+  // Abas: "Todas as conversas" e a triagem só para quem enxerga tudo.
+  const abas = useMemo(() => [
+    ...(podeTodas ? [{ codigo: TODAS, nome: "Todas as conversas" }, { codigo: SEM_PASTA, nome: "Sem pasta" }] : []),
+    ...pastasVisiveis.map((p) => ({ codigo: p.codigo, nome: p.nome })),
+  ], [podeTodas, pastasVisiveis]);
+
+  // Mover a conversa de pasta à mão (o bot direciona sozinho, mas o atendente
+  // precisa poder corrigir/encaminhar).
+  const moverPara = async (codigo: string) => {
+    if (!sel) return;
+    const destino = codigo === SEM_PASTA ? null : codigo;
+    const { error } = await (supabase as any).from("WA_CONVERSA").update({ pasta_codigo: destino }).eq("id", sel.id);
+    if (error) { toast({ title: "Não deu para mover", description: error.message, variant: "destructive" }); return; }
+    // Sem acesso ao destino a conversa sai de vista na hora (a RLS deixa de
+    // devolvê-la) — fechar a thread evita um painel preso num registro sumido.
+    const aindaVejo = podeTodas || pastasVisiveis.some((p) => p.codigo === destino);
+    if (!aindaVejo) setSelId(null);
+    qc.invalidateQueries({ queryKey: ["wa-conversas"] });
+  };
 
   // Mensagens da conversa selecionada — poll mais rápido.
   const { data: mensagens = [] } = useQuery({
@@ -95,11 +155,12 @@ export default function WhatsAppInbox() {
   };
 
   const filtradas = useMemo(() => {
+    const base = pastaSel ? daPasta(pastaSel) : [];
     const t = busca.trim().toLowerCase();
-    if (!t) return conversas;
-    return conversas.filter((c) =>
+    if (!t) return base;
+    return base.filter((c) =>
       [c.contato?.nome, c.contato?.wa_id, c.ultima_mensagem_preview].some((v) => String(v ?? "").toLowerCase().includes(t)));
-  }, [conversas, busca]);
+  }, [conversas, busca, pastaSel]); // eslint-disable-line react-hooks/exhaustive-deps
 
   if (!podeVer) {
     return (
@@ -126,6 +187,33 @@ export default function WhatsAppInbox() {
       <Card className="grid h-[calc(100vh-220px)] min-h-[480px] grid-cols-[320px_minmax(0,1fr)] overflow-hidden p-0">
         {/* Lista de conversas */}
         <div className="flex min-h-0 flex-col border-r border-border">
+          {/* Pastas. A lista só mostra a pasta aberta — "Todas as conversas" é
+              uma opção, não o padrão de todo mundo. */}
+          <div className="flex flex-wrap gap-1 border-b border-border p-2">
+            {abas.map((a) => {
+              const n = daPasta(a.codigo).reduce((s, c) => s + (c.nao_lidas || 0), 0);
+              const ativa = pastaSel === a.codigo;
+              return (
+                <button
+                  key={a.codigo}
+                  onClick={() => { setPastaSel(a.codigo); setSelId(null); }}
+                  className={`flex items-center gap-1 rounded-full px-2.5 py-1 text-[11px] font-medium transition-colors ${
+                    ativa ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground hover:bg-muted/70"}`}
+                >
+                  {a.codigo === TODAS && <Inbox className="h-3 w-3" />}
+                  {a.nome}
+                  {n > 0 && (
+                    <span className={`rounded-full px-1 text-[10px] font-bold ${ativa ? "bg-primary-foreground/25" : "bg-success text-success-foreground"}`}>{n}</span>
+                  )}
+                </button>
+              );
+            })}
+            {abas.length === 0 && (
+              <p className="p-1 text-[11px] text-muted-foreground">
+                Nenhuma pasta liberada para você. Peça acesso em Administração › Acesso por Usuário.
+              </p>
+            )}
+          </div>
           <div className="border-b border-border p-2">
             <div className="relative">
               <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
@@ -179,13 +267,22 @@ export default function WhatsAppInbox() {
                   <p className="text-[11px] text-muted-foreground">{fmtTelefone(sel.contato?.wa_id)}</p>
                 </div>
               </div>
-              <Button
-                variant="outline" size="sm"
-                className={`gap-1.5 ${sel.bot_ativo ? "border-success/40 text-success" : "border-info/40 text-info"}`}
-                onClick={alternarBot}
-              >
-                {sel.bot_ativo ? <><Bot className="h-4 w-4" /> Bot ativo</> : <><User className="h-4 w-4" /> Atendimento humano</>}
-              </Button>
+              <div className="flex items-center gap-2">
+                <Select value={sel.pasta_codigo ?? SEM_PASTA} onValueChange={moverPara}>
+                  <SelectTrigger className="h-8 w-44 text-xs"><SelectValue placeholder="Pasta" /></SelectTrigger>
+                  <SelectContent>
+                    {podeTodas && <SelectItem value={SEM_PASTA}>Sem pasta</SelectItem>}
+                    {pastasVisiveis.map((p) => <SelectItem key={p.codigo} value={p.codigo}>{p.nome}</SelectItem>)}
+                  </SelectContent>
+                </Select>
+                <Button
+                  variant="outline" size="sm"
+                  className={`gap-1.5 ${sel.bot_ativo ? "border-success/40 text-success" : "border-info/40 text-info"}`}
+                  onClick={alternarBot}
+                >
+                  {sel.bot_ativo ? <><Bot className="h-4 w-4" /> Bot ativo</> : <><User className="h-4 w-4" /> Atendimento humano</>}
+                </Button>
+              </div>
             </div>
 
             {/* Mensagens */}

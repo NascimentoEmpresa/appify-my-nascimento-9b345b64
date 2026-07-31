@@ -153,6 +153,18 @@ Deno.serve(async (req) => {
         diagnostico,
       });
 
+    case "transferir": {
+      // Só consulta o nome da pasta para a nota ficar legível; nada é gravado.
+      const { data: p } = await db.from("WA_PASTA").select("nome").eq("codigo", rota.pasta).maybeSingle();
+      return json({
+        tipo: "menu_transferir",
+        resposta: rota.aviso,
+        nota: `A conversa iria para a pasta ${p?.nome ?? rota.pasta} e o bot seria desligado — quem tem acesso a essa pasta assume o atendimento.`,
+        modo: rota.modo,
+        diagnostico,
+      });
+    }
+
     case "ia_intro":
       return json({
         tipo: "menu_ia",
