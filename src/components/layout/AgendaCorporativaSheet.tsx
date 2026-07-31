@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { Mail, Phone, MessageCircle, Search, Star } from "lucide-react";
+import { Mail, MessageCircle, Search, Star } from "lucide-react";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Input } from "@/components/ui/input";
@@ -14,6 +14,12 @@ function maskFone(v: string): string {
   const d = v.replace(/\D/g, "").slice(0, 11);
   if (d.length <= 10) return d.replace(/(\d{2})(\d)/, "($1) $2").replace(/(\d{4})(\d)/, "$1-$2");
   return d.replace(/(\d{2})(\d)/, "($1) $2").replace(/(\d{5})(\d)/, "$1-$2");
+}
+
+function mailtoLinkDe(email: string, nome: string | null): string {
+  const primeiroNome = (nome ?? "").trim().split(/\s+/)[0] || "";
+  const corpo = primeiroNome ? `Olá ${primeiroNome}, tudo bem?` : "Olá, tudo bem?";
+  return `mailto:${email}?body=${encodeURIComponent(corpo)}`;
 }
 
 function waLinkDe(telefone: string, nome: string | null): string | null {
@@ -170,20 +176,11 @@ function ContatoCard({
           <div className="mt-2 flex items-center gap-1.5">
             {contato.email && (
               <a
-                href={`mailto:${contato.email}`}
+                href={mailtoLinkDe(contato.email, contato.display_name)}
                 title="Enviar e-mail"
                 className="grid h-7 w-7 place-items-center rounded-md text-muted-foreground hover:bg-secondary hover:text-foreground"
               >
                 <Mail className="h-3.5 w-3.5" />
-              </a>
-            )}
-            {contato.telefone && (
-              <a
-                href={`tel:+${contato.telefone.replace(/\D/g, "")}`}
-                title="Ligar"
-                className="grid h-7 w-7 place-items-center rounded-md text-muted-foreground hover:bg-secondary hover:text-foreground"
-              >
-                <Phone className="h-3.5 w-3.5" />
               </a>
             )}
             {waLink && (
