@@ -52,9 +52,9 @@ const selFiltro: React.CSSProperties = { width: "100%", border: "1px solid #e2e8
 // resposta pelo nome completo do empregado ("Gerência Sistemas" vira
 // "IURY DE JESUS SILVA"); `original` é sempre o que veio na resposta e é ele
 // que abre a ficha (a ficha resolve o vínculo pelo texto original).
-// `pendente`: o cadastro ainda está carregando, então NÃO dá p/ afirmar que o
-// texto não é gente - a tela mostra "Verificando…" no lugar de "Vincular".
-interface Pessoa { ehPessoa: boolean; exibir: string; original: string; pendente?: boolean }
+// `podeAbrirFicha`: a pergunta declara que ali vai nome de gente, então o texto
+// abre a ficha mesmo sem casar com o cadastro - é de lá que se corrige o nome.
+interface Pessoa { ehPessoa: boolean; exibir: string; original: string; podeAbrirFicha?: boolean }
 type Resolver = (v: any) => Pessoa;
 
 // Só a pergunta de IDENTIFICAÇÃO traz gente na resposta. Em toda outra, o que
@@ -62,18 +62,29 @@ type Resolver = (v: any) => Pessoa;
 // fazia alternativa virar link de ficha e, pior, casar com lixo do cadastro
 // (nomes de uma letra), trocando o rótulo da opção pelo nome de um empregado.
 const SEM_PESSOA = (v: any): Pessoa => { const t = valorTexto(v); return { ehPessoa: false, exibir: t, original: t }; };
-const resolverDaPergunta = (p: Pergunta, resolve: Resolver): Resolver =>
-  p.tipo === "colaborador" ? resolve : SEM_PESSOA;
 
-// Nome de empregado citado numa resposta: vira link p/ a ficha (👤). Se não
-// bater com o cadastro, renderiza texto normal (mesma fonte).
+// Qual resolvedor vale em cada pergunta:
+//   • a que diz QUEM respondeu → identidade da PRÓPRIA resposta. Quem envia
+//     logado já chega carimbado com o cadastro (respondente_cadastro), então
+//     não há o que adivinhar pelo texto digitado;
+//   • tipo "colaborador" → o nome citado é de terceiro, e aí só resta casar com
+//     o cadastro. Abre a ficha mesmo sem casar: é de lá que se corrige o nome;
+//   • qualquer outra → texto puro, sem tratamento de gente.
+const resolverDaPergunta = (p: Pergunta, perguntaNomeId: string | null, ident: Resolver, cadastro: Resolver): Resolver =>
+  p.id === perguntaNomeId ? ident
+    : p.tipo === "colaborador" ? (v => ({ ...cadastro(v), podeAbrirFicha: true }))
+      : SEM_PESSOA;
+
+// Nome de empregado citado numa resposta: vira link p/ a ficha (👤). Quem não é
+// gente (ou não dá p/ afirmar que é) fica texto normal, sem nada clicável.
 function NomeLink({ texto, resolve, onPessoa }: { texto: string; resolve: Resolver; onPessoa: (n: string) => void }) {
-  const { ehPessoa, exibir, original } = resolve(texto);
-  if (!ehPessoa) return <span style={valorFonte}>{texto}</span>;
+  const { ehPessoa, exibir, original, podeAbrirFicha } = resolve(texto);
+  if (!ehPessoa && !podeAbrirFicha) return <span style={valorFonte}>{texto}</span>;
   return (
     <button onClick={() => onPessoa(original)}
-      title={exibir !== original ? `Respondeu "${original}" — vinculado a ${exibir}` : "Ver ficha do colaborador"}
-      style={{ ...nomeFonte, background: "none", border: "none", padding: 0, cursor: "pointer", textAlign: "left", textDecoration: "underline", textDecorationStyle: "dotted", textUnderlineOffset: 2 }}>
+      title={!ehPessoa ? "Não encontrado no cadastro — abrir para conferir/vincular"
+        : exibir !== original ? `Respondeu "${original}" — vinculado a ${exibir}` : "Ver ficha do colaborador"}
+      style={{ ...(ehPessoa ? nomeFonte : valorFonte), background: "none", border: "none", padding: 0, cursor: "pointer", textAlign: "left", textDecoration: "underline", textDecorationStyle: "dotted", textUnderlineOffset: 2 }}>
       👤 {exibir}
     </button>
   );
@@ -102,41 +113,18 @@ function BlocoResposta({ titulo, valor, resolve, onPessoa }: {
   );
 }
 
-// Ação da linha: "Detalhes" abre a ficha de quem já casa com o cadastro;
-// "Vincular" abre a mesma ficha no modo de amarrar o texto a um empregado
-// (nome incompleto, grafia diferente...). Enquanto o cadastro não terminou de
-// carregar não existe "não é gente": aí o rótulo é "Verificando…" — antes a
-// tela abria dizendo "Vincular" p/ todo mundo e só corrigia depois do clique.
-function BotaoFicha({ p, onPessoa }: { p: Pessoa; onPessoa: (n: string) => void }) {
-  const rotulo = p.pendente ? "Verificando…" : p.ehPessoa ? "Detalhes" : "Vincular";
-  return (
-    <button onClick={() => onPessoa(p.original)}
-      title={p.pendente ? "Conferindo o cadastro de empregados…" : p.ehPessoa ? "Ver ficha completa" : "Vincular este nome a um empregado"}
-      style={p.ehPessoa
-        ? btnMini("rgba(15,49,113,.08)", "#0f3171", "1px solid rgba(15,49,113,.2)")
-        : btnMini("#fff", "#94a3b8", "1px solid #e2e8f0")}>
-      {rotulo}
-    </button>
-  );
-}
-
-function LinhaValor({ texto, resolve, onPessoa }: { texto: string; resolve: Resolver; onPessoa: (n: string) => void }) {
-  return (
-    <div style={{ display: "flex", alignItems: "center", gap: 8, background: "#f8fafc", border: "1px solid #f1f5f9", borderRadius: 8, padding: "6px 10px" }}>
-      <div style={{ flex: 1, minWidth: 0, wordBreak: "break-word" }}>
-        <NomeLink texto={texto} resolve={resolve} onPessoa={onPessoa} />
-      </div>
-      <BotaoFicha p={resolve(texto)} onPessoa={onPessoa} />
-    </div>
-  );
-}
+// O botão "Vincular"/"Detalhes" que ficava em cada linha SAIU. Ele aparecia em
+// toda resposta de texto (e-mail, "creio que não"...) oferecendo amarrar aquilo
+// a um empregado — ruído em 99% das linhas. Quem respondeu logado já vem
+// identificado pela própria resposta, e nome de terceiro continua clicável no
+// próprio texto (NomeLink), que é por onde se chega à ficha e ao vínculo.
 
 // Um valor do resumo já agrupado: o mesmo nome citado por N respostas vira uma
 // linha só com "(N respostas)". "Ver todos" abre as ocorrências mostrando QUEM
 // respondeu e quando - o texto é igual, o que muda é a origem.
-function GrupoValor({ texto, itens, resolve, onPessoa, quem, onVerRespostas }: {
+function GrupoValor({ texto, itens, resolve, resolveQuem, onPessoa, quem, onVerRespostas }: {
   texto: string; itens: { v: any; r: Resposta }[];
-  resolve: Resolver; onPessoa: (n: string) => void; quem: (r: Resposta) => string;
+  resolve: Resolver; resolveQuem: Resolver; onPessoa: (n: string) => void; quem: (r: Resposta) => string;
   onVerRespostas: (nome: string) => void;
 }) {
   const [aberto, setAberto] = useState(false);
@@ -153,7 +141,6 @@ function GrupoValor({ texto, itens, resolve, onPessoa, quem, onVerRespostas }: {
             {aberto ? "Ocultar" : "Ver todos"}
           </button>
         )}
-        <BotaoFicha p={resolve(texto)} onPessoa={onPessoa} />
       </div>
       {aberto && (
         <div style={{ display: "flex", flexDirection: "column", gap: 3, paddingLeft: 12 }}>
@@ -161,9 +148,11 @@ function GrupoValor({ texto, itens, resolve, onPessoa, quem, onVerRespostas }: {
             const nomeQuem = quem(o.r);
             return (
               <div key={oi} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 11.5, color: "#64748b", background: "#fff", border: "1px solid #f1f5f9", borderRadius: 7, padding: "4px 9px" }}>
-                {/* resolve: apelido vinculado ("Gerência X") vira o nome da pessoa e o link da ficha */}
+                {/* resolveQuem, não `resolve`: aqui o texto é o NOME DE QUEM RESPONDEU,
+                    que nada tem a ver com o tipo da pergunta — usando o resolvedor da
+                    pergunta, quem respondeu a uma pergunta de texto virava texto cru. */}
                 <div style={{ flex: 1, minWidth: 0, display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-                  <NomeLink texto={nomeQuem} resolve={resolve} onPessoa={onPessoa} />
+                  <NomeLink texto={nomeQuem} resolve={resolveQuem} onPessoa={onPessoa} />
                   <span style={{ color: "#94a3b8" }}>{fmtDt(o.r.enviado_em)}</span>
                 </div>
                 {nomeQuem !== "Anônimo" && (
@@ -228,7 +217,11 @@ export default function FormularioRespostas() {
   const { can, canVerSetor, canCriarSetor, soProprias, loading: permsLoading } = useFormPerms();
   const { empregado, loading: vincLoading } = useVinculoEmpregado();
   const [form, setForm] = useState<Formulario | null>(null);
-  const [pergs, setPergs] = useState<Pergunta[]>([]);
+  // Todas as perguntas como estão hoje no formulário (inclusive os blocos de
+  // texto). `pergs` é a lista que a tela percorre; `pergsTodas` existe p/ saber
+  // quais chaves de `itens` ainda TÊM pergunta — o resto é resposta órfã.
+  const [pergsTodas, setPergsTodas] = useState<Pergunta[]>([]);
+  const pergs = useMemo(() => pergsTodas.filter(p => p.tipo !== "texto_info"), [pergsTodas]);
   const [resps, setResps] = useState<Resposta[]>([]);
   const [loading, setLoading] = useState(true);
   const [aba, setAba] = useState<"resumo" | "individuais">("resumo");
@@ -250,7 +243,7 @@ export default function FormularioRespostas() {
     setLoading(false);
     if (fRes.error) { nav("/app/central-servicos/formularios"); return; }
     setForm(fRes.data);
-    setPergs(normalizaPerguntas(fRes.data.perguntas).filter(p => p.tipo !== "texto_info"));  // blocos de texto não são perguntas
+    setPergsTodas(normalizaPerguntas(fRes.data.perguntas));
     setResps((rRes.data ?? []).map((r: any) => ({ ...r, itens: r.itens ?? {} })));
   }, [id, nav]);
   useEffect(() => { load(); }, [load]);
@@ -280,10 +273,13 @@ export default function FormularioRespostas() {
   // IURY DE JESUS SILVA quer ver o nome dele, não o texto que veio na resposta.
   //
   // O casamento usa a MESMA regra da ficha (`resolveCadastro`), incluindo nome
-  // contido: "Mileny de oliveira" aparecia como "Vincular" na lista e abria a
-  // ficha da MILENY DE OLIVEIRA DA ROSA — a lista exigia igualdade exata e a
-  // ficha não. Nome ambíguo (casa com várias pessoas) continua pedindo vínculo
-  // manual: melhor perguntar do que pôr em negrito o nome errado.
+  // contido: "Mileny de oliveira" é a MILENY DE OLIVEIRA DA ROSA — a lista
+  // exigia igualdade exata e a ficha não. Nome ambíguo (casa com várias
+  // pessoas) não é afirmado: melhor não decidir do que pôr o nome errado em
+  // negrito; a ficha, aberta pelo texto, mostra o palpite e deixa corrigir.
+  //
+  // Isto vale p/ nome de TERCEIRO citado numa resposta. Quem RESPONDEU não
+  // passa por aqui: a identidade vem carimbada na resposta (ver `identidades`).
   const resolve = useCallback((v: any): Pessoa => {
     const original = v == null ? "" : String(v);
     const n = normNome(v);
@@ -293,7 +289,7 @@ export default function FormularioRespostas() {
       const { hit, ambiguo } = resolveCadastro(n);
       if (hit && !ambiguo) return { ehPessoa: true, exibir: hit.nome, original };
     }
-    return { ehPessoa: false, exibir: original, original, pendente: !nomesProntos };
+    return { ehPessoa: false, exibir: original, original };
   }, [vinculos, nomesProntos]);
 
   // Qual pergunta diz QUEM respondeu. A config do formulário manda; sem ela,
@@ -318,6 +314,43 @@ export default function FormularioRespostas() {
     const txt = Array.isArray(v) ? (v[0] != null ? String(v[0]) : "") : (v != null ? String(v) : "");
     return txt.trim() || "Anônimo";
   }, [perguntaNomeId]);
+
+  // Identidade oficial de quem respondeu. Ela vem da PRÓPRIA resposta: quem
+  // envia logado chega carimbado com o cadastro (respondente_cadastro), então
+  // não há nada a adivinhar. Este de-para leva do texto digitado na pergunta de
+  // identificação até o nome oficial — era a falta dele que fazia a tela
+  // oferecer "Vincular" para nome que já estava perfeitamente identificado.
+  // Resposta vinda do link público (sem login) não entra: ali não existe
+  // identidade a afirmar, só o texto que a pessoa digitou.
+  const identidades = useMemo(() => {
+    const m = new Map<string, string>();
+    resps.forEach(r => {
+      const oficial = String(r.respondente_cadastro?.nome ?? r.respondente_nome ?? "").trim();
+      if (!oficial) return;
+      m.set(normNome(oficial), oficial);
+      const v = perguntaNomeId ? r.itens[perguntaNomeId] : null;
+      const digitado = normNome(Array.isArray(v) ? v[0] : v);
+      if (digitado) m.set(digitado, oficial);
+    });
+    return m;
+  }, [resps, perguntaNomeId]);
+
+  // Nome de quem respondeu: identidade primeiro; sem ela (link público), cai no
+  // casamento com o cadastro, que continua valendo p/ as respostas anônimas.
+  const resolveQuem = useCallback((v: unknown): Pessoa => {
+    const original = v == null ? "" : String(v);
+    const oficial = identidades.get(normNome(original));
+    if (oficial) return { ehPessoa: true, exibir: oficial, original };
+    return resolve(v);
+  }, [identidades, resolve]);
+
+  // Chaves de `itens` que não têm mais pergunta: a pergunta foi apagada do
+  // formulário DEPOIS das respostas. O dado continua gravado, mas sumia da tela
+  // — 81 das 98 respostas do Feedback Guiado tinham resposta invisível assim.
+  const idsPerguntas = useMemo(() => new Set(pergsTodas.map(p => p.id)), [pergsTodas]);
+  const orfasDe = useCallback((r: Resposta) => Object.entries(r.itens ?? {}).filter(([k, v]) =>
+    !idsPerguntas.has(k) && !k.includes("__anexo") &&
+    v != null && v !== "" && !(Array.isArray(v) && v.length === 0)), [idsPerguntas]);
 
   // Nome do empregado vinculado ao login. É por ele que "só as próprias" casa as
   // MINHAS respostas: elas vêm do link público (sem criado_por), então quem
@@ -431,10 +464,13 @@ export default function FormularioRespostas() {
               Nenhuma resposta bate com o filtro. <button onClick={limparFiltros} style={{ background: "none", border: "none", color: "#2563eb", fontWeight: 700, cursor: "pointer", fontSize: 12.5 }}>Limpar filtros</button>
             </div>
           ) : aba === "resumo" ? (
-            // resolverDaPergunta: só pergunta do tipo "colaborador" vira nome do
-            // cadastro. Sem isso, rótulos curtos de opção casavam com empregado
-            // ("Bom" virava "NATALEN SOARES BOM…", "N" virava gente).
-            pergs.map((p, i) => <ResumoPergunta key={p.id} p={p} i={i} resps={respsFiltradas} resolve={resolverDaPergunta(p, resolve)} onPessoa={setPessoa} quem={nomeRespondente}
+            // resolverDaPergunta: só a pergunta de identificação e as do tipo
+            // "colaborador" tratam o texto como gente. Sem isso, rótulos curtos
+            // de opção casavam com empregado ("Bom" virava "NATALEN SOARES
+            // BOM…", "N" virava gente).
+            pergs.map((p, i) => <ResumoPergunta key={p.id} p={p} i={i} resps={respsFiltradas}
+              resolve={resolverDaPergunta(p, perguntaNomeId, resolveQuem, resolve)} resolveQuem={resolveQuem}
+              onPessoa={setPessoa} quem={nomeRespondente}
               onVerRespostas={(n) => { setFResp(n); setAba("individuais"); }} />)
           ) : (
             respsFiltradas.map(r => {
@@ -443,8 +479,8 @@ export default function FormularioRespostas() {
               <div key={r.id} style={card}>
                 <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10, flexWrap: "wrap" }}>
                   <span style={{ fontSize: 12.5, fontWeight: 800, color: "#0f172a" }}>
-                    {quem !== "Anônimo" && resolve(quem).ehPessoa
-                      ? <NomeLink texto={quem} resolve={resolve} onPessoa={setPessoa} />
+                    {quem !== "Anônimo" && resolveQuem(quem).ehPessoa
+                      ? <NomeLink texto={quem} resolve={resolveQuem} onPessoa={setPessoa} />
                       : quem}
                   </span>
                   {r.respondente_email && <span style={{ fontSize: 11.5, color: "#64748b" }}>{r.respondente_email}</span>}
@@ -460,13 +496,24 @@ export default function FormularioRespostas() {
                     const anexo = r.itens[`${p.id}__anexo`];
                     return (
                       <div key={p.id} style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-                        <BlocoResposta titulo={p.titulo} valor={r.itens[p.id]} resolve={resolverDaPergunta(p, resolve)} onPessoa={setPessoa} />
+                        <BlocoResposta titulo={p.titulo} valor={r.itens[p.id]} resolve={resolverDaPergunta(p, perguntaNomeId, resolveQuem, resolve)} onPessoa={setPessoa} />
                         {anexo && (
                           <a href={anexo} target="_blank" rel="noopener noreferrer" style={{ alignSelf: "flex-start", display: "inline-flex", alignItems: "center", gap: 6, fontSize: 11.5, fontWeight: 700, color: "#0369a1", textDecoration: "none", background: "#f0f7ff", border: "1px solid #dbeafe", borderRadius: 8, padding: "5px 10px" }}>📎 Baixar anexo{r.itens[`${p.id}__anexo_nome`] ? ` — ${r.itens[`${p.id}__anexo_nome`]}` : ""}</a>
                         )}
                       </div>
                     );
                   })}
+                  {/* Respostas de perguntas apagadas do formulário. Sem isto o
+                      dado continua no banco mas some da tela, e a resposta
+                      aparece incompleta sem explicar por quê. */}
+                  {orfasDe(r).map(([k, v]) => (
+                    <div key={k} style={{ background: "#fffbeb", border: "1px solid #fde68a", borderRadius: 10, padding: "9px 12px" }}>
+                      <div style={{ fontSize: 11, fontWeight: 700, color: "#b45309", lineHeight: 1.45, marginBottom: 4 }}>
+                        Pergunta removida do formulário
+                      </div>
+                      <span style={valorFonte}>{valorTexto(v)}</span>
+                    </div>
+                  ))}
                 </div>
               </div>
               );
@@ -510,7 +557,44 @@ export default function FormularioRespostas() {
   );
 }
 
-function ResumoPergunta({ p, i, resps, resolve, onPessoa, quem, onVerRespostas }: { p: Pergunta; i: number; resps: Resposta[]; resolve: Resolver; onPessoa: (n: string) => void; quem: (r: Resposta) => string; onVerRespostas: (nome: string) => void }) {
+// Uma opção do gráfico. A contagem responde "quantos"; a pergunta seguinte de
+// quem lê é sempre "quem?" — daí o card no hover, com os nomes de quem escolheu
+// aquela opção (clicáveis, cada um abre a ficha).
+function BarraOpcao({ rotulo, n, pct, pessoas, resolve, resolveQuem, onPessoa }: {
+  rotulo: string; n: number; pct: number; pessoas: string[];
+  resolve: Resolver; resolveQuem: Resolver; onPessoa: (nome: string) => void;
+}) {
+  const [aberto, setAberto] = useState(false);
+  const mostrar = aberto && pessoas.length > 0;
+  return (
+    <div onMouseEnter={() => setAberto(true)} onMouseLeave={() => setAberto(false)}
+      style={{ display: "flex", alignItems: "center", gap: 10, position: "relative", borderRadius: 9, background: mostrar ? "#f8fafc" : "transparent" }}>
+      <span style={{ fontSize: 12.5, color: "#0f172a", width: 180, flexShrink: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={rotulo}>
+        <NomeLink texto={rotulo} resolve={resolve} onPessoa={onPessoa} />
+      </span>
+      <div style={{ flex: 1, height: 18, background: "#f1f5f9", borderRadius: 9, overflow: "hidden" }}>
+        <div style={{ width: `${pct}%`, height: "100%", background: mostrar ? "#1d4ed8" : "#0f3171", borderRadius: 9, transition: "width .3s, background .15s" }} />
+      </div>
+      <span style={{ fontSize: 12, color: "#64748b", width: 76, textAlign: "right", flexShrink: 0 }}>{n} ({pct}%)</span>
+      {mostrar && (
+        <div style={{ position: "absolute", top: "calc(100% + 4px)", right: 0, zIndex: 60, minWidth: 240, maxWidth: 340, maxHeight: 240, overflowY: "auto", background: "#fff", border: "1px solid #e2e8f0", borderRadius: 12, boxShadow: "0 12px 30px rgba(15,23,42,.16)", padding: "9px 12px" }}>
+          <div style={{ fontSize: 10.5, fontWeight: 800, color: "#94a3b8", textTransform: "uppercase", letterSpacing: ".4px", marginBottom: 6 }}>
+            {pessoas.length} {pessoas.length === 1 ? "pessoa escolheu" : "pessoas escolheram"} “{rotulo}”
+          </div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
+            {pessoas.map((nome, idx) => (
+              <div key={idx} style={{ fontSize: 11.5, color: "#0f172a", lineHeight: 1.5 }}>
+                <NomeLink texto={nome} resolve={resolveQuem} onPessoa={onPessoa} />
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ResumoPergunta({ p, i, resps, resolve, resolveQuem, onPessoa, quem, onVerRespostas }: { p: Pergunta; i: number; resps: Resposta[]; resolve: Resolver; resolveQuem: Resolver; onPessoa: (n: string) => void; quem: (r: Resposta) => string; onVerRespostas: (nome: string) => void }) {
   const valores = useMemo(() => resps.map(r => r.itens[p.id]).filter(v => v != null && v !== "" && !(Array.isArray(v) && v.length === 0)), [resps, p.id]);
 
   // Ocorrências com a resposta de origem (o valor sozinho perde "quem disse").
@@ -541,6 +625,22 @@ function ResumoPergunta({ p, i, resps, resolve, onPessoa, quem, onVerRespostas }
     return [...m.values()];
   }, [ocorrencias, resolve]);
 
+  // Quem escolheu cada opção — sai das ocorrências, que ainda sabem de qual
+  // resposta cada valor veio. Nomes repetidos (caixas de seleção respondidas
+  // duas vezes pela mesma pessoa) contam uma vez só no card.
+  const pessoasPorOpcao = useMemo(() => {
+    const m = new Map<string, string[]>();
+    ocorrencias.forEach(o => {
+      const k = String(o.v);
+      const nome = quem(o.r);
+      const lista = m.get(k) ?? [];
+      if (!lista.includes(nome)) lista.push(nome);
+      m.set(k, lista);
+    });
+    m.forEach(lista => lista.sort((a, b) => a.localeCompare(b, "pt-BR")));
+    return m;
+  }, [ocorrencias, quem]);
+
   const conteudo = useMemo(() => {
     if (["multipla_escolha", "caixas_selecao", "lista_suspensa", "escala"].includes(p.tipo)) {
       const cont: Record<string, number> = {};
@@ -560,15 +660,8 @@ function ResumoPergunta({ p, i, resps, resolve, onPessoa, quem, onVerRespostas }
             const n = cont[k] || 0;
             const pct = total ? Math.round((n / total) * 100) : 0;
             return (
-              <div key={k} style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                <span style={{ fontSize: 12.5, color: "#0f172a", width: 180, flexShrink: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={k}>
-                  <NomeLink texto={k} resolve={resolve} onPessoa={onPessoa} />
-                </span>
-                <div style={{ flex: 1, height: 18, background: "#f1f5f9", borderRadius: 9, overflow: "hidden" }}>
-                  <div style={{ width: `${pct}%`, height: "100%", background: "#0f3171", borderRadius: 9, transition: "width .3s" }} />
-                </div>
-                <span style={{ fontSize: 12, color: "#64748b", width: 76, textAlign: "right", flexShrink: 0 }}>{n} ({pct}%)</span>
-              </div>
+              <BarraOpcao key={k} rotulo={k} n={n} pct={pct} pessoas={pessoasPorOpcao.get(k) ?? []}
+                resolve={resolve} resolveQuem={resolveQuem} onPessoa={onPessoa} />
             );
           })}
         </div>
@@ -584,11 +677,11 @@ function ResumoPergunta({ p, i, resps, resolve, onPessoa, quem, onVerRespostas }
     return (
       <div style={{ display: "flex", flexDirection: "column", gap: 5, maxHeight: 300, overflowY: "auto" }}>
         {grupos.map((g, gi) => (
-          <GrupoValor key={gi} texto={g.texto} itens={g.itens} resolve={resolve} onPessoa={onPessoa} quem={quem} onVerRespostas={onVerRespostas} />
+          <GrupoValor key={gi} texto={g.texto} itens={g.itens} resolve={resolve} resolveQuem={resolveQuem} onPessoa={onPessoa} quem={quem} onVerRespostas={onVerRespostas} />
         ))}
       </div>
     );
-  }, [p, valores, grupos, resolve, onPessoa, quem, onVerRespostas]);
+  }, [p, valores, grupos, pessoasPorOpcao, resolve, resolveQuem, onPessoa, quem, onVerRespostas]);
 
   return (
     <div style={card}>
