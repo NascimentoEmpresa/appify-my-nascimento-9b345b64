@@ -13,8 +13,8 @@ import { Label } from "@/components/ui/label";
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
-import { Bot, ShieldAlert, Plus, Trash2, Save, Power, Inbox, Info, MousePointerClick } from "lucide-react";
-import { MODELOS, PROVEDORES, DIAS, MENU_ACOES, type WaBotConfig, type WaConhecimento, type WaMenu, type WaMenuOpcao, type WaMenuAcao, type WaProvedor } from "./types";
+import { Bot, ShieldAlert, Plus, Trash2, Save, Power, Inbox, Info, MousePointerClick, FolderTree } from "lucide-react";
+import { MODELOS, PROVEDORES, DIAS, MENU_ACOES, type WaBotConfig, type WaConhecimento, type WaMenu, type WaMenuOpcao, type WaMenuAcao, type WaPasta, type WaProvedor } from "./types";
 
 const WEBHOOK_URL = "https://fwmzeaztjxrxxzxzxmgc.supabase.co/functions/v1/whatsapp-webhook";
 const SECRETS_META = ["WHATSAPP_VERIFY_TOKEN", "WHATSAPP_APP_SECRET", "WHATSAPP_TOKEN", "WHATSAPP_PHONE_NUMBER_ID"];
@@ -31,8 +31,8 @@ const temOpcaoIA = (opcoes: WaMenuOpcao[]): boolean =>
 // pra IA ou pra atendente. Os componentes se chamam mutuamente para desenhar a
 // árvore em qualquer profundidade; cada nível tem os mesmos limites do
 // WhatsApp (até 3 opções viram botões; 4–10 viram lista).
-function OpcoesEditor({ opcoes, nivel, onChange }: {
-  opcoes: WaMenuOpcao[]; nivel: number; onChange: (ops: WaMenuOpcao[]) => void;
+function OpcoesEditor({ opcoes, nivel, pastas, onChange }: {
+  opcoes: WaMenuOpcao[]; nivel: number; pastas: WaPasta[]; onChange: (ops: WaMenuOpcao[]) => void;
 }) {
   const setAt = (i: number, nova: WaMenuOpcao) => onChange(opcoes.map((o, j) => (j === i ? nova : o)));
   const removeAt = (i: number) => onChange(opcoes.filter((_, j) => j !== i));
@@ -43,7 +43,7 @@ function OpcoesEditor({ opcoes, nivel, onChange }: {
   return (
     <div className="space-y-2">
       {opcoes.map((o, i) => (
-        <OpcaoEditor key={o.id} opcao={o} indice={i} nivel={nivel} onChange={(nova) => setAt(i, nova)} onRemove={() => removeAt(i)} />
+        <OpcaoEditor key={o.id} opcao={o} indice={i} nivel={nivel} pastas={pastas} onChange={(nova) => setAt(i, nova)} onRemove={() => removeAt(i)} />
       ))}
       {opcoes.length === 0 && (
         <p className="text-xs text-muted-foreground">{nivel === 0 ? "Nenhuma opção ainda." : "Nenhuma sub-opção ainda."}</p>
@@ -57,8 +57,8 @@ function OpcoesEditor({ opcoes, nivel, onChange }: {
   );
 }
 
-function OpcaoEditor({ opcao: o, indice, nivel, onChange, onRemove }: {
-  opcao: WaMenuOpcao; indice: number; nivel: number;
+function OpcaoEditor({ opcao: o, indice, nivel, pastas, onChange, onRemove }: {
+  opcao: WaMenuOpcao; indice: number; nivel: number; pastas: WaPasta[];
   onChange: (nova: WaMenuOpcao) => void; onRemove: () => void;
 }) {
   const ajuda = MENU_ACOES.find((a) => a.value === o.acao)?.ajuda ?? "";
@@ -76,6 +76,21 @@ function OpcaoEditor({ opcao: o, indice, nivel, onChange, onRemove }: {
         </Select>
         <Button variant="ghost" size="sm" className="h-8 w-8 shrink-0 p-0 text-muted-foreground hover:text-destructive" onClick={onRemove}><Trash2 className="h-4 w-4" /></Button>
       </div>
+      {/* Para onde a conversa vai. Sem pasta escolhida a opção viraria um buraco
+          (bot desligado, ninguém dono), então o bot trata como atendente comum e
+          a tela avisa aqui. */}
+      {o.acao === "transferir" && (
+        <div className="flex flex-wrap items-center gap-2">
+          <Label className="text-xs font-semibold">Transferir para:</Label>
+          <Select value={o.pasta ?? ""} onValueChange={(v) => onChange({ ...o, pasta: v })}>
+            <SelectTrigger className="h-8 w-56 text-xs"><SelectValue placeholder="Escolha a pasta…" /></SelectTrigger>
+            <SelectContent>
+              {pastas.map((p) => <SelectItem key={p.codigo} value={p.codigo}>{p.nome}</SelectItem>)}
+            </SelectContent>
+          </Select>
+          {!o.pasta && <span className="text-[11px] text-warning">Escolha uma pasta, senão a conversa fica sem fila.</span>}
+        </div>
+      )}
       {o.acao !== "submenu" && (
         <Textarea
           rows={2}
@@ -84,6 +99,7 @@ function OpcaoEditor({ opcao: o, indice, nivel, onChange, onRemove }: {
           placeholder={
             o.acao === "texto" ? "Resposta que o bot envia ao escolher esta opção"
             : o.acao === "humano" ? "Aviso ao cliente (ex.: Um atendente vai te responder em instantes)"
+            : o.acao === "transferir" ? "Aviso ao cliente ao ser transferido. Pode deixar em branco."
             : "Aviso ao entrar na IA (ex.: Perfeito! Me conta como posso te ajudar). Pode deixar em branco."
           }
         />
@@ -96,10 +112,94 @@ function OpcaoEditor({ opcao: o, indice, nivel, onChange, onRemove }: {
             <Textarea rows={2} value={sub.titulo} onChange={(e) => onChange({ ...o, submenu: { ...sub, titulo: e.target.value } })}
               placeholder={`Ex.: ${o.titulo.trim() || "…"} — selecione uma opção:`} />
           </div>
-          <OpcoesEditor opcoes={sub.opcoes} nivel={nivel + 1} onChange={(ops) => onChange({ ...o, submenu: { ...sub, opcoes: ops } })} />
+          <OpcoesEditor opcoes={sub.opcoes} nivel={nivel + 1} pastas={pastas} onChange={(ops) => onChange({ ...o, submenu: { ...sub, opcoes: ops } })} />
+        </div>
+      )}
+      {/* Botões DA RESPOSTA. A resposta e os botões saem numa mensagem só (o
+          texto vira o corpo), e cada botão é uma opção comum — então a resposta
+          dele também pode ter botões, sem limite de profundidade. */}
+      {o.acao === "texto" && (
+        <div className="ml-4 space-y-2 border-l-2 border-success/30 pl-3">
+          <div className="flex items-center justify-between gap-2">
+            <Label className="text-xs font-semibold">Botões desta resposta <span className="font-normal text-muted-foreground">(opcional)</span></Label>
+            {sub.opcoes.length > 0 && (
+              <span className="text-[10px] text-muted-foreground">{sub.opcoes.length <= 3 ? "vira botões" : "vira lista"}</span>
+            )}
+          </div>
+          {sub.opcoes.length === 0 ? (
+            <Button size="sm" variant="outline" className="gap-1.5"
+              onClick={() => onChange({ ...o, submenu: { titulo: "", opcoes: [{ id: novoIdOpcao(), titulo: "", acao: "texto", valor: "" }] } })}>
+              <Plus className="h-4 w-4" /> Adicionar botão à resposta
+            </Button>
+          ) : (
+            <OpcoesEditor opcoes={sub.opcoes} nivel={nivel + 1} pastas={pastas}
+              onChange={(ops) => onChange({ ...o, submenu: { ...sub, opcoes: ops } })} />
+          )}
         </div>
       )}
     </div>
+  );
+}
+
+// Pastas de atendimento. Criar uma pasta cria junto a permissão que a governa
+// (uma linha em app_menu sob o WhatsApp), então ela já aparece na cascata de
+// Administração › Acesso por Usuário — não existe tela de permissão aqui.
+function PastasCard({ pastas }: { pastas: WaPasta[] }) {
+  const qc = useQueryClient();
+  const { toast } = useToast();
+  const [nova, setNova] = useState("");
+  const [salvando, setSalvando] = useState(false);
+
+  const criar = async () => {
+    const nome = nova.trim();
+    if (!nome || salvando) return;
+    setSalvando(true);
+    const { error } = await (supabase as any).rpc("wa_pasta_criar", { _nome: nome });
+    setSalvando(false);
+    if (error) { toast({ title: "Não deu para criar", description: error.message, variant: "destructive" }); return; }
+    setNova("");
+    qc.invalidateQueries({ queryKey: ["wa-pastas"] });
+    toast({ title: "Pasta criada", description: `Libere quem enxerga "${nome}" em Administração › Acesso por Usuário.` });
+  };
+
+  const remover = async (p: WaPasta) => {
+    if (!confirm(`Remover a pasta "${p.nome}"? As conversas dela voltam para a triagem e a permissão é apagada.`)) return;
+    const { error } = await (supabase as any).rpc("wa_pasta_remover", { _codigo: p.codigo });
+    if (error) { toast({ title: "Não deu para remover", description: error.message, variant: "destructive" }); return; }
+    qc.invalidateQueries({ queryKey: ["wa-pastas"] });
+  };
+
+  return (
+    <Card className="space-y-3 p-4">
+      <div>
+        <p className="flex items-center gap-1.5 text-sm font-bold"><FolderTree className="h-4 w-4 text-primary" /> Pastas de atendimento</p>
+        <p className="text-xs text-muted-foreground">
+          Filas por setor. A opção <b>Transferir para…</b> do menu joga a conversa numa pasta e desliga o bot;
+          só quem tem acesso àquela pasta enxerga a conversa. Quem vê o quê é liberado em{" "}
+          <b>Administração › Acesso por Usuário</b>, na cascata abaixo do WhatsApp.
+        </p>
+      </div>
+      <div className="space-y-1.5">
+        {pastas.map((p) => (
+          <div key={p.codigo} className="flex items-center gap-2 rounded border border-border/60 px-2.5 py-1.5">
+            <span className="flex-1 text-sm font-medium">{p.nome}</span>
+            <code className="shrink-0 rounded bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground">{p.menu_codigo}</code>
+            <Button variant="ghost" size="sm" className="h-7 w-7 shrink-0 p-0 text-muted-foreground hover:text-destructive" onClick={() => remover(p)}>
+              <Trash2 className="h-4 w-4" />
+            </Button>
+          </div>
+        ))}
+        {pastas.length === 0 && <p className="text-xs text-muted-foreground">Nenhuma pasta ainda.</p>}
+      </div>
+      <div className="flex items-center gap-2">
+        <Input className="h-8 flex-1 text-sm" placeholder="Nome da nova pasta (ex.: Financeiro)" value={nova}
+          onChange={(e) => setNova(e.target.value)}
+          onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); criar(); } }} />
+        <Button size="sm" variant="outline" className="gap-1.5" onClick={criar} disabled={!nova.trim() || salvando}>
+          <Plus className="h-4 w-4" /> Criar pasta
+        </Button>
+      </div>
+    </Card>
   );
 }
 
@@ -129,6 +229,16 @@ export default function WhatsAppChatbot() {
     queryFn: async () => {
       const { data } = await (supabase as any).from("WA_BOT_CONHECIMENTO").select("*").order("ordem");
       return (data ?? []) as WaConhecimento[];
+    },
+  });
+
+  // Pastas de atendimento — alimentam a ação "Transferir para…" e o card de
+  // gestão. Quem vê cada pasta é decidido em Administração › Acesso por Usuário.
+  const { data: pastas = [] } = useQuery({
+    queryKey: ["wa-pastas"],
+    queryFn: async () => {
+      const { data } = await (supabase as any).from("WA_PASTA").select("*").eq("ativo", true).order("ordem");
+      return (data ?? []) as WaPasta[];
     },
   });
 
@@ -237,15 +347,16 @@ export default function WhatsAppChatbot() {
               <p className="flex items-center gap-1.5 text-sm font-bold"><MousePointerClick className="h-4 w-4 text-primary" /> Menu de atendimento</p>
               <p className="text-xs text-muted-foreground">
                 Toda conversa começa aqui: o bot manda esta mensagem com os botões e <b>só responde o que estiver configurado</b>.
-                Uma opção pode responder um texto, abrir mais opções (cascata), encaminhar pra IA ou pra um atendente.
-                Em cada nível, até 3 opções viram botões; 4–10 viram lista.
+                Uma opção pode responder um texto, abrir mais opções (cascata), transferir para a pasta de um setor,
+                encaminhar pra IA ou pra um atendente. <b>Toda resposta pode terminar com botões</b>, e a resposta
+                desses botões também — sem limite de profundidade. Em cada nível, até 3 opções viram botões; 4–10 viram lista.
               </p>
             </div>
             <div>
               <Label className="mb-1.5 block text-xs font-semibold">Mensagem de abertura</Label>
               <Textarea rows={2} value={menu.titulo} onChange={(e) => setMenu({ ...menu, titulo: e.target.value })} placeholder="Ex.: Olá! Somos da Empresa Nascimento. Selecione a opção desejada:" />
             </div>
-            <OpcoesEditor opcoes={menu.opcoes} nivel={0} onChange={(ops) => setMenu({ ...menu, opcoes: ops })} />
+            <OpcoesEditor opcoes={menu.opcoes} nivel={0} pastas={pastas} onChange={(ops) => setMenu({ ...menu, opcoes: ops })} />
             {menu.opcoes.length === 0 ? (
               <p className="rounded border border-warning/40 bg-warning/5 px-3 py-2 text-[11px] text-muted-foreground">
                 Sem opções configuradas o bot <b>não responde nada</b> — nem a IA. Adicione ao menos uma opção.
@@ -256,6 +367,9 @@ export default function WhatsAppChatbot() {
               </p>
             )}
           </Card>
+
+          <PastasCard pastas={pastas} />
+
 
           {/* Comportamento da IA (usado pela opção de atendimento por IA) */}
           <Card className="space-y-4 p-4">

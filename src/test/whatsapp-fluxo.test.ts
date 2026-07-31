@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import {
-  rotearBot, inferirModo, type BotConfig,
+  rotearBot, inferirModo, acharOpcao, AVISO_TRANSFERIR_PADRAO, type BotConfig,
 } from "../../supabase/functions/_shared/whatsapp-bot.ts";
 
 // Config mínima do bot com um menu em CASCATA (texto / submenu / ia / humano).
@@ -165,5 +165,135 @@ describe("inferirModo — reconstrói o modo a partir do histórico", () => {
 
   it("sem menu configurado o modo é menu (bot mudo)", () => {
     expect(inferirModo(cfg(null), [{ direcao: "entrada", texto: "oi", payload: null }])).toBe("menu");
+  });
+});
+
+// Resposta com botões: o texto vira o corpo da mensagem e os botões os próximos
+// passos. Como cada botão é uma opção comum, isso se repete em profundidade.
+describe("rotearBot — resposta com botões", () => {
+  const MENU_B = {
+    titulo: "Selecione:",
+    opcoes: [
+      {
+        id: "vagas", titulo: "Vagas", acao: "texto" as const, valor: "Acesse o site: exemplo.com",
+        submenu: {
+          titulo: "",
+          opcoes: [
+            {
+              id: "vagas_como", titulo: "Como me candidato?", acao: "texto" as const, valor: "É só preencher o formulário.",
+              submenu: {
+                titulo: "",
+                opcoes: [{ id: "vagas_prazo", titulo: "Qual o prazo?", acao: "texto" as const, valor: "Até dia 30." }],
+              },
+            },
+            { id: "vagas_humano", titulo: "Falar com alguém", acao: "humano" as const, valor: "Já te transfiro!" },
+          ],
+        },
+      },
+      { id: "simples", titulo: "Simples", acao: "texto" as const, valor: "resposta sem botão" },
+    ],
+  };
+  const bb = cfg(MENU_B);
+
+  it("resposta SEM botões continua sendo texto puro", () => {
+    const r = rotearBot(bb, { modo: "menu", texto: null, replyId: "simples", dentroHorario: true });
+    expect(r.tipo).toBe("texto");
+    if (r.tipo === "texto") expect(r.texto).toBe("resposta sem botão");
+  });
+
+  it("resposta COM botões vira uma mensagem só: texto no corpo + botões", () => {
+    const r = rotearBot(bb, { modo: "menu", texto: null, replyId: "vagas", dentroHorario: true });
+    expect(r.tipo).toBe("menu");
+    if (r.tipo === "menu") {
+      expect(r.menu.titulo).toBe("Acesse o site: exemplo.com");
+      expect(r.menu.opcoes.map((o) => o.id)).toEqual(["vagas_como", "vagas_humano"]);
+    }
+  });
+
+  // O ponto do pedido: a resposta da resposta também tem botões.
+  it("o botão de uma resposta abre outra resposta com botões", () => {
+    const r = rotearBot(bb, { modo: "menu", texto: null, replyId: "vagas_como", dentroHorario: true });
+    expect(r.tipo).toBe("menu");
+    if (r.tipo === "menu") {
+      expect(r.menu.titulo).toBe("É só preencher o formulário.");
+      expect(r.menu.opcoes.map((o) => o.id)).toEqual(["vagas_prazo"]);
+    }
+  });
+
+  it("no terceiro nível, sem mais botões, volta a ser texto puro", () => {
+    const r = rotearBot(bb, { modo: "menu", texto: null, replyId: "vagas_prazo", dentroHorario: true });
+    expect(r.tipo).toBe("texto");
+    if (r.tipo === "texto") expect(r.texto).toBe("Até dia 30.");
+  });
+
+  // Sem isto o clique num botão pendurado numa RESPOSTA não seria encontrado
+  // (a busca só descia por opção de ação "submenu") e o bot devolveria o menu raiz.
+  it("acha opção de qualquer ação em qualquer profundidade", () => {
+    expect(acharOpcao(MENU_B, "vagas_prazo")?.titulo).toBe("Qual o prazo?");
+    expect(acharOpcao(MENU_B, "vagas_humano")?.acao).toBe("humano");
+    expect(acharOpcao(MENU_B, "nao_existe")).toBeNull();
+  });
+
+  it("botão de atendente dentro de uma resposta continua transferindo", () => {
+    const r = rotearBot(bb, { modo: "menu", texto: null, replyId: "vagas_humano", dentroHorario: true });
+    expect(r.tipo).toBe("humano");
+    if (r.tipo === "humano") expect(r.aviso).toBe("Já te transfiro!");
+  });
+});
+
+// Transferir para pasta (fila de setor). A conversa sai do bot e passa a
+// pertencer a uma pasta; só quem tem acesso àquela pasta enxerga.
+describe("rotearBot — transferir para pasta", () => {
+  const MENU_T = {
+    titulo: "Selecione:",
+    opcoes: [
+      { id: "t_rh", titulo: "Suporte RH", acao: "transferir" as const, valor: "Encaminhei pro RH!", pasta: "rh" },
+      { id: "t_sem", titulo: "Sem pasta", acao: "transferir" as const, valor: "" },
+      {
+        id: "setores", titulo: "Setores", acao: "submenu" as const, valor: "",
+        submenu: {
+          titulo: "Qual setor?",
+          opcoes: [{ id: "t_jur", titulo: "Jurídico", acao: "transferir" as const, valor: "", pasta: "juridico" }],
+        },
+      },
+    ],
+  };
+  const bt = cfg(MENU_T);
+
+  it("clicar na opção manda para a pasta configurada, com o aviso escolhido", () => {
+    const r = rotearBot(bt, { modo: "menu", texto: null, replyId: "t_rh", dentroHorario: true });
+    expect(r.tipo).toBe("transferir");
+    if (r.tipo === "transferir") {
+      expect(r.pasta).toBe("rh");
+      expect(r.aviso).toBe("Encaminhei pro RH!");
+    }
+  });
+
+  it("transferir sem aviso configurado usa o texto padrão", () => {
+    const r = rotearBot(cfg({
+      titulo: "t",
+      opcoes: [{ id: "x", titulo: "X", acao: "transferir" as const, valor: "", pasta: "sst" }],
+    }), { modo: "menu", texto: null, replyId: "x", dentroHorario: true });
+    expect(r.tipo).toBe("transferir");
+    if (r.tipo === "transferir") expect(r.aviso).toBe(AVISO_TRANSFERIR_PADRAO);
+  });
+
+  // Config pela metade não pode largar a conversa num limbo: sem pasta ela vira
+  // atendimento humano comum, que pelo menos aparece para quem vê "todas".
+  it("transferir SEM pasta escolhida vira atendimento humano", () => {
+    const r = rotearBot(bt, { modo: "menu", texto: null, replyId: "t_sem", dentroHorario: true });
+    expect(r.tipo).toBe("humano");
+  });
+
+  it("transferir funciona em qualquer nível da cascata", () => {
+    const r = rotearBot(bt, { modo: "menu", texto: null, replyId: "t_jur", dentroHorario: true });
+    expect(r.tipo).toBe("transferir");
+    if (r.tipo === "transferir") expect(r.pasta).toBe("juridico");
+  });
+
+  it("clique em transferir mantém o modo menu (não entrega a conversa à IA)", () => {
+    expect(inferirModo(bt, [
+      { direcao: "entrada", texto: "Suporte RH", payload: { reply_id: "t_rh" } },
+    ])).toBe("menu");
   });
 });

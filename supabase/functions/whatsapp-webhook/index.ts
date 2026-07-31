@@ -150,6 +150,19 @@ async function processarBot(
       await admin.from("WA_CONVERSA").update({ bot_ativo: false }).eq("id", conversaId);
       await registrarSaida(conversaId, contatoId, to, rota.aviso, "bot");
       return;
+    case "transferir": {
+      // Direciona para a fila do setor e passa para humano. A pasta é validada
+      // contra WA_PASTA: config apontando para pasta apagada não pode largar a
+      // conversa num limbo (fila inexistente + bot desligado = ninguém atende).
+      const { data: pasta } = await admin.from("WA_PASTA")
+        .select("codigo").eq("codigo", rota.pasta).eq("ativo", true).maybeSingle();
+      await admin.from("WA_CONVERSA")
+        .update({ bot_ativo: false, pasta_codigo: pasta?.codigo ?? null })
+        .eq("id", conversaId);
+      if (!pasta) console.error("Opção do menu aponta para pasta inexistente:", rota.pasta);
+      await registrarSaida(conversaId, contatoId, to, rota.aviso, "bot");
+      return;
+    }
     case "ia_intro":
       // Entrou na IA: manda o aviso; as próximas mensagens caem na IA.
       await registrarSaida(conversaId, contatoId, to, rota.aviso, "bot");
@@ -175,7 +188,10 @@ async function enviarInterativo(to: string, interactive: any): Promise<string | 
 // Monta e envia o menu: até 3 opções viram botões; 4–10 viram lista.
 async function enviarMenu(conversaId: string, contatoId: string, to: string, menu: any) {
   const opcoes = (menu.opcoes as any[]).slice(0, 10);
-  const corpo: string = (menu.titulo && String(menu.titulo).trim()) || "Como posso te ajudar?";
+  // O corpo pode ser a RESPOSTA de uma opção (resposta com botões), não só o
+  // título de um menu — e resposta é texto livre. A Cloud API recusa body acima
+  // de 1024 caracteres, e a recusa derrubaria a mensagem inteira.
+  const corpo: string = ((menu.titulo && String(menu.titulo).trim()) || "Como posso te ajudar?").slice(0, 1024);
   const interactive = opcoes.length <= 3
     ? {
         type: "button",
