@@ -236,6 +236,7 @@ export default function CoordenarChamado() {
     setSalvando(false);
     if (error) { toast({ title: "Erro ao direcionar", description: error.message, variant: "destructive" }); return; }
     supabase.functions.invoke("enviar-notificacao-push", { body: { chamado_id: id, evento: "atribuido" } }).catch(() => {});
+    supabase.functions.invoke("notificar-chamado-whatsapp", { body: { chamado_id: id, evento: "atribuido" } }).catch(() => {});
     toast({
       title: jaDesignado ? "Tarefa designada atualizada" : "Chamado direcionado",
       description: `${nomeResponsavel} — ${novaPosicao}º lugar na fila`,

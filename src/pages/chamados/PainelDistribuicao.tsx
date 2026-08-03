@@ -200,6 +200,7 @@ export default function PainelDistribuicao() {
     });
     if (error) { toast({ title: "Erro ao atribuir", description: error.message, variant: "destructive" }); return; }
     supabase.functions.invoke("enviar-notificacao-push", { body: { chamado_id: atribChamado, evento: "atribuido" } }).catch(() => {});
+    supabase.functions.invoke("notificar-chamado-whatsapp", { body: { chamado_id: atribChamado, evento: "atribuido" } }).catch(() => {});
     toast({ title: "Chamado atribuído" });
     setAtribChamado(null); setAtribDev(null);
     qc.invalidateQueries({ queryKey: ["chamados-todos"] });
