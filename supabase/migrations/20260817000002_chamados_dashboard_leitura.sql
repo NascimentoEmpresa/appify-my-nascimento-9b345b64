@@ -31,6 +31,10 @@ REVOKE ALL ON FUNCTION public.chamado_sistema_pode_ver_todos() FROM anon;
 GRANT EXECUTE ON FUNCTION public.chamado_sistema_pode_ver_todos() TO authenticated;
 
 -- 2) SELECT dos chamados (só o SELECT; update/delete seguem com gestor) --
+-- Mantém a policy que já existia, trocando SÓ o predicado de gestão. Uma versão
+-- anterior deste arquivo tinha um EXISTS em "CHAMADO_SISTEMA_TAREFA": essa
+-- tabela não existe (as de chamados são ANEXO, AVALIACAO e EVENTO) e o
+-- CREATE POLICY quebrava inteiro com 42P01.
 DROP POLICY IF EXISTS chamado_sistema_select ON public."CHAMADO_SISTEMA";
 CREATE POLICY chamado_sistema_select ON public."CHAMADO_SISTEMA"
   FOR SELECT TO authenticated
@@ -38,8 +42,6 @@ CREATE POLICY chamado_sistema_select ON public."CHAMADO_SISTEMA"
     solicitante_id = auth.uid()
     OR responsavel_id = auth.uid()
     OR public.chamado_sistema_pode_ver_todos()
-    OR EXISTS (SELECT 1 FROM public."CHAMADO_SISTEMA_TAREFA" t
-               WHERE t.chamado_id = "CHAMADO_SISTEMA".id AND t.responsavel_id = auth.uid())
   );
 
 -- 3) SELECT das avaliações (o painel mostra a média em estrelas) ---------
