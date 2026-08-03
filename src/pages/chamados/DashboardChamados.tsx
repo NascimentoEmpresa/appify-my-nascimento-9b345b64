@@ -304,7 +304,7 @@ function CardGraficos({ chamados, upx }: { chamados: Chamado[]; upx: number }) {
 }
 
 export default function DashboardChamados() {
-  const { gestor } = useChamadoPerms();
+  const { podeVerTodos } = useChamadoPerms();
   const [tv, setTv] = useState(false);
   const [pagina, setPagina] = useState(0);
   const [agora, setAgora] = useState(() => new Date());
@@ -376,7 +376,7 @@ export default function DashboardChamados() {
 
   const { data: devs = [] } = useQuery({
     queryKey: ["chamados-devs"],
-    enabled: gestor,
+    enabled: podeVerTodos,
     refetchInterval: 60_000,
     queryFn: async () => {
       const { data, error } = await (supabase as any).rpc("listar_desenvolvedores_chamados");
@@ -387,7 +387,7 @@ export default function DashboardChamados() {
 
   const { data: chamados = [], isLoading } = useQuery({
     queryKey: ["chamados-todos"],
-    enabled: gestor,
+    enabled: podeVerTodos,
     refetchInterval: 60_000,
     queryFn: async () => {
       const { data, error } = await (supabase as any)
@@ -400,7 +400,7 @@ export default function DashboardChamados() {
   // Avaliações: aqui só interessam as estrelas (média ponderada por dev).
   const { data: avaliacoes = [] } = useQuery({
     queryKey: ["chamados-avaliacoes-todas"],
-    enabled: gestor,
+    enabled: podeVerTodos,
     refetchInterval: 300_000,
     queryFn: async () => {
       const { data, error } = await (supabase as any)
@@ -490,7 +490,7 @@ export default function DashboardChamados() {
 
   const cargaMax = Math.max(1, ...resumos.map((r) => r.fila));
 
-  if (!gestor) {
+  if (!podeVerTodos) {
     return (
       <div>
         <PageHeader title="Dashboard de Chamados" module="Sistemas" breadcrumb={["Chamados de Sistemas", "Dashboard de Chamados"]} />

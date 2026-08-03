@@ -16,7 +16,15 @@ export function useChamadoPerms() {
   const canAprovar = has("chamados_sistemas_aprovar");
   const canDev = has("chamados_sistemas_dev");
   const canExcluir = has("chamados_sistemas_excluir");
+  const canDashboard = has("chamados_sistemas_dashboard");
   const gestor = canPainel || canCoordenar || canAprovar;
+  // Ver TODOS os chamados (só leitura) — quem coordena e também quem tem só o
+  // painel de TV. Espelha chamado_sistema_pode_ver_todos() na RLS: o dashboard
+  // enxerga tudo, mas não escreve nada.
+  const podeVerTodos = gestor || canDashboard;
 
-  return { canAbrir, canPainel, canCoordenar, canAprovar, canDev, canExcluir, gestor, loading: isLoading || !access };
+  return {
+    canAbrir, canPainel, canCoordenar, canAprovar, canDev, canExcluir, canDashboard,
+    gestor, podeVerTodos, loading: isLoading || !access,
+  };
 }
