@@ -12,9 +12,9 @@ import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Bot, Send, Search, ShieldAlert, Settings, User, MessageCircle, MousePointerClick, FileText, Inbox } from "lucide-react";
+import { Bot, Send, Search, ShieldAlert, Settings, User, MessageCircle, MousePointerClick, FileText, Inbox, AlertTriangle, Loader2 } from "lucide-react";
 import {
-  fmtHora, fmtTelefone, iniciais, MENU_TODAS,
+  fmtHora, fmtTelefone, iniciais, motivoFalha, MENU_TODAS,
   type WaConversa, type WaContato, type WaMensagem, type WaMidia, type WaPasta,
 } from "./types";
 
@@ -298,7 +298,7 @@ export default function WhatsAppInbox() {
                       )}
                       {m.payload?.midia && <div className="mb-1"><MidiaAnexo midia={m.payload.midia} /></div>}
                       {m.texto && !(m.payload?.midia && /^\[[a-z]+\]$/i.test(m.texto)) && (
-                        <p className="whitespace-pre-wrap break-words">{m.texto}</p>
+                        <TextoComLinks texto={m.texto} />
                       )}
                       {m.payload?.botoes?.length ? (
                         <div className="mt-1.5 space-y-1 border-t border-current/15 pt-1.5">
@@ -309,6 +309,12 @@ export default function WhatsAppInbox() {
                           ))}
                         </div>
                       ) : null}
+                      {m.status === "erro" && motivoFalha(m.payload?.erro) && (
+                        <p className="mt-1 flex items-start gap-1 rounded bg-destructive/15 px-1.5 py-1 text-[10px] leading-snug text-destructive-foreground/90">
+                          <AlertTriangle className="mt-px h-3 w-3 shrink-0" />
+                          <span>{motivoFalha(m.payload?.erro)}</span>
+                        </p>
+                      )}
                       <p className={`mt-0.5 text-right text-[10px] ${saida ? "opacity-80" : "text-muted-foreground"}`}>
                         {fmtHora(m.criada_em)}{saida && m.status ? ` · ${m.status}` : ""}
                       </p>
@@ -331,7 +337,9 @@ export default function WhatsAppInbox() {
                   onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); enviar(); } }}
                 />
                 <Button className="shrink-0 gap-1.5 bg-success text-success-foreground hover:bg-success/90" onClick={enviar} disabled={!texto.trim() || enviando}>
-                  <Send className="h-4 w-4" /> {enviando ? "…" : "Enviar"}
+                  {enviando
+                    ? <><Loader2 className="h-4 w-4 animate-spin" /> Enviando…</>
+                    : <><Send className="h-4 w-4" /> Enviar</>}
                 </Button>
               </div>
             </div>
@@ -344,6 +352,39 @@ export default function WhatsAppInbox() {
         )}
       </Card>
     </div>
+  );
+}
+
+// Texto da mensagem como o WhatsApp mostra: link clicável (convite de grupo,
+// link de vaga — renderizar cru obrigava a copiar na mão) e *negrito*, que é
+// como sai a assinatura do atendente. Link abre em aba nova, sem referrer.
+const URL_NA_MENSAGEM = /(https?:\/\/[^\s<]+)/g;
+const NEGRITO_WHATSAPP = /\*([^*\n]+)\*/g;
+
+function ComNegrito({ trecho }: { trecho: string }) {
+  const partes = trecho.split(NEGRITO_WHATSAPP);
+  return <>{partes.map((p, i) => (i % 2 === 0 ? p : <strong key={i}>{p}</strong>))}</>;
+}
+
+function TextoComLinks({ texto }: { texto: string }) {
+  const partes = texto.split(URL_NA_MENSAGEM);
+  return (
+    <p className="whitespace-pre-wrap break-words">
+      {partes.map((parte, i) => {
+        if (i % 2 === 0) return <ComNegrito key={i} trecho={parte} />;
+        // Pontuação colada no fim ("...acesse https://x.com.") não é do link.
+        const limpa = parte.replace(/[.,;:!?)\]}>'"]+$/, "");
+        const sobra = parte.slice(limpa.length);
+        return (
+          <span key={i}>
+            <a href={limpa} target="_blank" rel="noopener noreferrer" className="underline underline-offset-2 hover:opacity-80">
+              {limpa}
+            </a>
+            {sobra}
+          </span>
+        );
+      })}
+    </p>
   );
 }
 

@@ -127,6 +127,15 @@ Deno.serve(async (req) => {
         diagnostico,
       });
 
+    case "silencio":
+      return json({
+        tipo: "silencio",
+        resposta: null,
+        nota: "O menu já foi apresentado há pouco nesta conversa — o bot fica quieto em vez de repetir a saudação. Ajustável em 'Não repetir o menu por'.",
+        modo: rota.modo,
+        diagnostico,
+      });
+
     case "fora_horario":
       return json({ tipo: "fora_horario", resposta: cfg.fora_horario_msg, modo: rota.modo, diagnostico });
 

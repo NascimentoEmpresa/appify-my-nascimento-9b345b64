@@ -51,6 +51,19 @@ Deno.serve(async (req) => {
     : [];
   const temBotoes = botoes.length > 0;
 
+  // Assinatura do atendente: "*Nome Completo | Setor*" numa linha, a mensagem
+  // embaixo. O nome oficial e o setor vêm de EMPREGADOS (vínculo Senior); sem
+  // vínculo, cai pro display_name do profile e a assinatura sai só com o nome.
+  const [{ data: perfil }, { data: empregado }] = await Promise.all([
+    db.from("profiles").select("display_name").eq("id", userData.user.id).maybeSingle(),
+    db.from("EMPREGADOS").select('"Nome","Setor_ERP"').eq("auth_user_id", userData.user.id).maybeSingle(),
+  ]);
+  const nome = (empregado?.["Nome"] ?? perfil?.display_name ?? "").trim();
+  const setor = (empregado?.["Setor_ERP"] ?? "").trim();
+  const assinatura = [nome, setor].filter(Boolean).join(" | ");
+  // Asteriscos = negrito no WhatsApp. Sem nome nenhum, envia o texto puro.
+  const textoEnviado = assinatura ? `*${assinatura}*\n${texto}` : texto;
+
   // Carrega a conversa + contato pela sessão do usuário (RLS autoriza quem tem 'whatsapp').
   const { data: conversa } = await db.from("WA_CONVERSA").select("id, contato_id").eq("id", conversaId).maybeSingle();
   if (!conversa) return json({ error: "conversa não encontrada ou sem acesso" }, 403);
@@ -64,11 +77,11 @@ Deno.serve(async (req) => {
         messaging_product: "whatsapp", to: contato.wa_id, type: "interactive",
         interactive: {
           type: "button",
-          body: { text: texto },
+          body: { text: textoEnviado },
           action: { buttons: botoes.map((b) => ({ type: "reply", reply: { id: b.id, title: b.titulo } })) },
         },
       }
-    : { messaging_product: "whatsapp", to: contato.wa_id, type: "text", text: { body: texto } };
+    : { messaging_product: "whatsapp", to: contato.wa_id, type: "text", text: { body: textoEnviado } };
 
   let waId: string | null = null;
   const res = await fetch(`${GRAPH}/${PHONE_NUMBER_ID}/messages`, {
@@ -86,7 +99,7 @@ Deno.serve(async (req) => {
   const row: Record<string, unknown> = {
     conversa_id: conversa.id, contato_id: conversa.contato_id, direcao: "saida",
     tipo: temBotoes ? "interactive" : "text",
-    texto, wa_message_id: waId, status: waId ? "enviada" : "erro",
+    texto: textoEnviado, wa_message_id: waId, status: waId ? "enviada" : "erro",
     origem: "atendente", autor_id: userData.user.id,
   };
   if (temBotoes) row.payload = { tipo: "button", botoes };

@@ -68,7 +68,21 @@ export interface WaPayload {
   botoes?: Array<{ id: string; titulo: string }>;
   reply_id?: string;
   midia?: WaMidia;
+  // Preenchido pelo webhook quando a Meta devolve status "failed".
+  erro?: { codigo?: number | null; titulo?: string | null; detalhe?: string | null };
 }
+
+// Motivo da falha em português. O 131047 é o caso do dia a dia: passou das 24h
+// desde a última mensagem do contato, então só template é aceito.
+export const motivoFalha = (erro?: WaPayload["erro"]) => {
+  if (!erro) return "";
+  if (erro.codigo === 131047 || erro.codigo === 131051) {
+    return "Fora da janela de 24h: o contato precisa escrever primeiro para você poder responder.";
+  }
+  if (erro.codigo === 131026) return "Número não recebe mensagens no WhatsApp.";
+  if (erro.codigo === 131049 || erro.codigo === 130472) return "A Meta limitou a entrega para este contato.";
+  return erro.detalhe || erro.titulo || `Erro ${erro.codigo ?? ""}`.trim();
+};
 
 export type WaMenuAcao = "texto" | "submenu" | "ia" | "humano" | "transferir";
 
@@ -84,7 +98,21 @@ export interface WaMenuOpcao {
   submenu?: WaMenu | null;
   // acao "transferir": código da pasta (WA_PASTA.codigo) que recebe a conversa.
   pasta?: string | null;
+  // Cutucada desta opção: sem resposta em `minutos`, o bot manda `mensagem`
+  // sozinho. Teto de 24h — acima disso a Meta recusa (erro 131047).
+  retomada?: { minutos: number; mensagem: string } | null;
 }
+
+export const RETOMADA_MAX_MIN = 1440; // 24h
+
+// Minutos → "2h30", "45min". Usado nos rótulos da configuração.
+export const fmtMinutos = (min: number) => {
+  const m = Math.max(0, Math.trunc(min));
+  const h = Math.floor(m / 60);
+  const r = m % 60;
+  if (!h) return `${r}min`;
+  return r ? `${h}h${String(r).padStart(2, "0")}` : `${h}h`;
+};
 
 export interface WaMenu {
   titulo: string; // mensagem de abertura do menu (é também a saudação)
@@ -107,6 +135,8 @@ export interface WaBotConfig {
   dias_semana: number[];
   fora_horario_msg: string;
   atende_24h: boolean;
+  // Minutos em que o menu/saudação não se repete na mesma conversa. 0 = repete sempre.
+  nao_repetir_menu_min: number;
   provedor: WaProvedor;
   modelo: string;
   max_tokens: number;
@@ -117,7 +147,7 @@ export interface WaBotConfig {
 // Espelha o retorno da edge function whatsapp-testar.
 export type WaTesteTipo =
   | "ia" | "fallback" | "menu" | "menu_texto" | "menu_ia" | "menu_humano" | "menu_transferir"
-  | "fora_horario" | "nada" | "ping";
+  | "fora_horario" | "nada" | "silencio" | "ping";
 
 export interface WaTesteDiagnostico {
   bot_ativo: boolean;
@@ -155,6 +185,7 @@ export const TESTE_TIPO_LABEL: Record<WaTesteTipo, string> = {
   menu_transferir: "Menu transferiu para uma pasta",
   fora_horario: "Fora do horário de atendimento",
   nada: "Sem resposta (menu não configurado)",
+  silencio: "Menu não repetido (enviado há pouco)",
   ping: "Teste de conexão",
 };
 

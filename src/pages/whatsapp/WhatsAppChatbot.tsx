@@ -14,7 +14,7 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
 import { Bot, ShieldAlert, Plus, Trash2, Save, Power, Inbox, Info, MousePointerClick, FolderTree } from "lucide-react";
-import { MODELOS, PROVEDORES, DIAS, MENU_ACOES, type WaBotConfig, type WaConhecimento, type WaMenu, type WaMenuOpcao, type WaMenuAcao, type WaPasta, type WaProvedor } from "./types";
+import { MODELOS, PROVEDORES, DIAS, MENU_ACOES, RETOMADA_MAX_MIN, fmtMinutos, type WaBotConfig, type WaConhecimento, type WaMenu, type WaMenuOpcao, type WaMenuAcao, type WaPasta, type WaProvedor } from "./types";
 
 const WEBHOOK_URL = "https://fwmzeaztjxrxxzxzxmgc.supabase.co/functions/v1/whatsapp-webhook";
 const SECRETS_META = ["WHATSAPP_VERIFY_TOKEN", "WHATSAPP_APP_SECRET", "WHATSAPP_TOKEN", "WHATSAPP_PHONE_NUMBER_ID"];
@@ -52,6 +52,57 @@ function OpcoesEditor({ opcoes, nivel, pastas, onChange }: {
         <Button size="sm" variant="outline" className="gap-1.5" onClick={add}>
           <Plus className="h-4 w-4" /> {nivel === 0 ? "Adicionar opção" : "Adicionar sub-opção"}
         </Button>
+      )}
+    </div>
+  );
+}
+
+// Cutucada da opção: "sem resposta em X, mande isto". Desligada por padrão —
+// bot que fala sozinho sem alguém ter pedido é o tipo de coisa que precisa ser
+// escolhida, nunca herdada.
+function RetomadaEditor({ opcao: o, onChange }: {
+  opcao: WaMenuOpcao; onChange: (nova: WaMenuOpcao) => void;
+}) {
+  const r = o.retomada ?? null;
+  const ligada = !!r;
+  const minutos = r?.minutos ?? 60;
+
+  const setR = (patch: Partial<{ minutos: number; mensagem: string }>) =>
+    onChange({ ...o, retomada: { minutos, mensagem: r?.mensagem ?? "", ...patch } });
+
+  return (
+    <div className="rounded border border-border/60 bg-muted/20 p-2">
+      <label className="flex cursor-pointer items-center gap-2">
+        <input
+          type="checkbox" className="h-3.5 w-3.5 accent-primary" checked={ligada}
+          onChange={(e) => onChange({ ...o, retomada: e.target.checked ? { minutos: 60, mensagem: "" } : null })}
+        />
+        <span className="text-xs font-semibold">Cutucar se não responder</span>
+      </label>
+      {ligada && (
+        <div className="mt-2 space-y-2 pl-5">
+          <div className="flex flex-wrap items-center gap-2">
+            <Label className="text-xs">Esperar</Label>
+            <Input
+              type="number" min={1} max={RETOMADA_MAX_MIN} className="h-8 w-24 text-xs"
+              value={minutos}
+              onChange={(e) => setR({ minutos: Math.min(RETOMADA_MAX_MIN, Math.max(1, Number(e.target.value) || 1)) })}
+            />
+            <span className="text-xs text-muted-foreground">minutos ({fmtMinutos(minutos)})</span>
+          </div>
+          <Textarea
+            rows={2} value={r?.mensagem ?? ""} onChange={(e) => setR({ mensagem: e.target.value })}
+            placeholder="Ex.: Vi que você não respondeu. Ainda quer seguir com a candidatura?"
+          />
+          {!r?.mensagem?.trim() && (
+            <p className="text-[11px] text-warning">Escreva a mensagem, senão a cutucada não é agendada.</p>
+          )}
+          <p className="text-[11px] text-muted-foreground">
+            Cancelada automaticamente se a pessoa responder ou se um atendente assumir.
+            O máximo é {fmtMinutos(RETOMADA_MAX_MIN)}: acima disso a Meta bloqueia mensagem
+            que não seja template.
+          </p>
+        </div>
       )}
     </div>
   );
@@ -105,6 +156,10 @@ function OpcaoEditor({ opcao: o, indice, nivel, pastas, onChange, onRemove }: {
         />
       )}
       <p className="text-[11px] text-muted-foreground">{ajuda}</p>
+      {/* Cutucada desta opção. Fica por opção porque o assunto muda a cada
+          ponto do fluxo: quem não respondeu sobre vaga precisa de um lembrete
+          diferente de quem não respondeu sobre documento. */}
+      {o.acao !== "submenu" && <RetomadaEditor opcao={o} onChange={onChange} />}
       {o.acao === "submenu" && (
         <div className="ml-4 space-y-2 border-l-2 border-primary/25 pl-3">
           <div>
@@ -263,6 +318,7 @@ export default function WhatsAppChatbot() {
       ativo: cfg.ativo, persona: cfg.persona, fallback: cfg.fallback,
       horario_inicio: cfg.horario_inicio, horario_fim: cfg.horario_fim, dias_semana: cfg.dias_semana,
       fora_horario_msg: cfg.fora_horario_msg, atende_24h: cfg.atende_24h ?? false,
+      nao_repetir_menu_min: cfg.nao_repetir_menu_min ?? 0,
       provedor: cfg.provedor, modelo: cfg.modelo, max_tokens: cfg.max_tokens,
       menu: { titulo: menu.titulo, opcoes: menu.opcoes },
     }).eq("id", true);
@@ -488,6 +544,28 @@ export default function WhatsAppChatbot() {
               </div>
               </>
             )}
+          </Card>
+
+          {/* Anti-repetição. O bot reapresentava o menu a cada texto solto, então
+              quem escrevia três vezes recebia a saudação três vezes. */}
+          <Card className="space-y-2 p-4">
+            <p className="text-sm font-bold">Não repetir o menu</p>
+            <div className="flex flex-wrap items-center gap-2">
+              <Label className="text-xs">Depois de apresentar o menu, não repetir por</Label>
+              <Input
+                type="number" min={0} className="h-8 w-24 text-xs"
+                value={cfg.nao_repetir_menu_min ?? 0}
+                onChange={(e) => set("nao_repetir_menu_min", Math.max(0, Number(e.target.value) || 0))}
+              />
+              <span className="text-xs text-muted-foreground">
+                minutos {(cfg.nao_repetir_menu_min ?? 0) > 0 ? `(${fmtMinutos(cfg.nao_repetir_menu_min)})` : ""}
+              </span>
+            </div>
+            <p className="text-[11px] text-muted-foreground">
+              Dentro desse tempo, texto solto não faz o bot reapresentar a saudação — ele fica quieto.
+              Clicar num botão e digitar <b>menu</b> continuam funcionando sempre. <b>0</b> volta ao
+              comportamento antigo (repete toda vez).
+            </p>
           </Card>
 
           <div className="flex justify-end">

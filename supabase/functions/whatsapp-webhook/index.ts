@@ -18,7 +18,8 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
 import {
   dentroDoHorario, montarBase, montarSystem, gerarResposta,
-  rotearBot, inferirModo, type Msg,
+  rotearBot, inferirModo, acharOpcao, menuAtivo, retomadaDe,
+  type Msg, type MenuOpcao,
 } from "../_shared/whatsapp-bot.ts";
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
@@ -104,6 +105,37 @@ async function registrarSaida(conversaId: string, contatoId: string, to: string,
   }).eq("id", conversaId);
 }
 
+// O menu já saiu dentro da janela de nao_repetir_menu_min? Olha só as saídas
+// do bot que FORAM menu (tipo interactive ou payload com botões) — resposta de
+// texto comum não conta, senão qualquer conversa ativa silenciaria o menu.
+function menuEnviadoRecente(cfg: { nao_repetir_menu_min?: number | null }, hist: any[]): boolean {
+  const min = Number(cfg.nao_repetir_menu_min ?? 0);
+  if (!Number.isFinite(min) || min <= 0) return false; // 0 = pode repetir sempre
+  const limite = Date.now() - min * 60_000;
+  return (hist ?? []).some((m) =>
+    m.direcao === "saida" && m.origem !== "atendente" &&
+    (m.tipo === "interactive" || Array.isArray(m.payload?.botoes)) &&
+    new Date(m.criada_em).getTime() >= limite);
+}
+
+// Agenda a cutucada da opção clicada. Uma pendente por conversa: a mais nova
+// substitui a anterior, senão o fluxo em cascata empilharia várias.
+async function agendarRetomada(
+  conversaId: string, contatoId: string, opcao: MenuOpcao | null | undefined,
+) {
+  const r = retomadaDe(opcao);
+  if (!r) return;
+  const agora = new Date().toISOString();
+  await admin.from("WA_RETOMADA")
+    .update({ status: "cancelada", detalhe: "substituída por retomada mais nova", processada_em: agora })
+    .eq("conversa_id", conversaId).eq("status", "pendente");
+  await admin.from("WA_RETOMADA").insert({
+    conversa_id: conversaId, contato_id: contatoId,
+    opcao_id: opcao?.id ?? null, mensagem: r.mensagem,
+    enviar_em: new Date(Date.now() + r.minutos * 60_000).toISOString(),
+  });
+}
+
 // ---------- roteamento do bot (fluxo único guiado por menu) ----------
 // Um único ponto de decisão por mensagem, via rotearBot: o menu abre toda
 // conversa; a IA só assume depois que a pessoa clica na opção de atendimento por
@@ -116,10 +148,15 @@ async function processarBot(
   const { data: cfg } = await admin.from("WA_BOT_CONFIG").select("*").limit(1).maybeSingle();
   if (!cfg || !cfg.ativo) return;
 
+  // A pessoa respondeu: qualquer cutucada agendada perde o sentido.
+  await admin.from("WA_RETOMADA")
+    .update({ status: "cancelada", detalhe: "contato respondeu", processada_em: new Date().toISOString() })
+    .eq("conversa_id", conversaId).eq("status", "pendente");
+
   // Histórico recente com payload — o payload guarda o reply_id de cada clique,
   // que é o que inferirModo usa para saber se a conversa já está na IA.
   const { data: hist } = await admin.from("WA_MENSAGEM")
-    .select("direcao, texto, payload").eq("conversa_id", conversaId)
+    .select("direcao, texto, payload, tipo, criada_em").eq("conversa_id", conversaId)
     .order("criada_em", { ascending: false }).limit(20);
   const mensagens = (hist ?? []).reverse();
 
@@ -129,11 +166,21 @@ async function processarBot(
     texto: msgType === "text" ? texto : null,
     replyId,
     dentroHorario: dentroDoHorario(cfg as any),
+    menuRecente: menuEnviadoRecente(cfg as any, hist ?? []),
   });
+
+  // Opção que a pessoa acabou de clicar — é dela que sai a cutucada. Só faz
+  // sentido enquanto o bot conduz: em "humano"/"transferir" um atendente
+  // assume, e aí quem responde é gente.
+  const menuCfg = menuAtivo(cfg as any);
+  const opcaoClicada = replyId && menuCfg ? acharOpcao(menuCfg, replyId) : null;
 
   switch (rota.tipo) {
     case "nada":
       // Sem menu configurado o bot não responde nada — nem IA, nem fallback.
+      return;
+    case "silencio":
+      // Menu já apresentado há pouco: não repete a saudação.
       return;
     case "fora_horario":
       if (cfg.fora_horario_msg) await registrarSaida(conversaId, contatoId, to, cfg.fora_horario_msg, "bot");
@@ -141,9 +188,11 @@ async function processarBot(
     case "menu":
       // rota.menu já é o nível certo da cascata (raiz ou submenu clicado).
       await enviarMenu(conversaId, contatoId, to, rota.menu);
+      await agendarRetomada(conversaId, contatoId, opcaoClicada);
       return;
     case "texto":
       await registrarSaida(conversaId, contatoId, to, rota.texto, "bot");
+      await agendarRetomada(conversaId, contatoId, opcaoClicada);
       return;
     case "humano":
       // Passa a conversa para atendimento humano (desliga o bot) e avisa.
@@ -374,13 +423,30 @@ Deno.serve(async (req) => {
         }
       }
 
-      // Status de mensagens enviadas.
+      // Status de mensagens enviadas. Em `failed` a Meta diz POR QUE falhou em
+      // st.errors — quase sempre a janela de 24h (código 131047: só template
+      // fora dela). Guardar isso no payload é o que separa um "erro" mudo de
+      // uma explicação acionável na Caixa de Entrada.
       for (const st of value.statuses ?? []) {
         const mapa: Record<string, string> = { sent: "enviada", delivered: "entregue", read: "lida", failed: "erro" };
         const novo = mapa[st.status];
-        if (novo && st.id) {
-          await admin.from("WA_MENSAGEM").update({ status: novo }).eq("wa_message_id", st.id);
+        if (!novo || !st.id) continue;
+
+        const patch: Record<string, unknown> = { status: novo };
+        const err = Array.isArray(st.errors) ? st.errors[0] : null;
+        if (novo === "erro" && err) {
+          const { data: atual } = await admin.from("WA_MENSAGEM")
+            .select("payload").eq("wa_message_id", st.id).maybeSingle();
+          patch.payload = {
+            ...(atual?.payload ?? {}),
+            erro: {
+              codigo: err.code ?? null,
+              titulo: err.title ?? null,
+              detalhe: err.error_data?.details ?? err.message ?? null,
+            },
+          };
         }
+        await admin.from("WA_MENSAGEM").update(patch).eq("wa_message_id", st.id);
       }
     }
   }

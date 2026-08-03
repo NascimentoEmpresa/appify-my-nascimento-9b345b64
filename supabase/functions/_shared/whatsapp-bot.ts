@@ -21,6 +21,22 @@ export interface MenuOpcao {
   // acao "transferir": código da pasta (WA_PASTA.codigo) que recebe a conversa.
   // O `valor` continua sendo o aviso enviado a quem escolheu a opção.
   pasta?: string | null;
+  // Cutucada: passado `minutos` sem resposta A ESTA opção, o bot manda
+  // `mensagem` sozinho. Cada opção tem o seu porque o assunto é outro em cada
+  // ponto do fluxo. Teto de 24h — acima disso a Meta recusa (131047).
+  retomada?: { minutos: number; mensagem: string } | null;
+}
+
+export const RETOMADA_MAX_MIN = 1440; // 24h — limite da janela da Meta
+
+// Config válida de cutucada, já com os limites aplicados. null = não agenda.
+export function retomadaDe(o: MenuOpcao | null | undefined): { minutos: number; mensagem: string } | null {
+  const r = o?.retomada;
+  if (!r) return null;
+  const minutos = Math.trunc(Number(r.minutos));
+  const mensagem = String(r.mensagem ?? "").trim();
+  if (!Number.isFinite(minutos) || minutos <= 0 || !mensagem) return null;
+  return { minutos: Math.min(minutos, RETOMADA_MAX_MIN), mensagem };
 }
 
 export interface BotMenu {
@@ -121,6 +137,11 @@ export interface EntradaBot {
   texto: string | null;
   replyId: string | null;
   dentroHorario: boolean;
+  // O menu já foi apresentado dentro da janela de nao_repetir_menu_min? Só
+  // vale para texto solto: clicar num botão e digitar "menu" são pedidos
+  // explícitos e sempre respondem. O chamador calcula (o webhook olha o
+  // histórico; o simulador, o estado da simulação).
+  menuRecente?: boolean;
 }
 
 // A rota decidida — sem efeito colateral. `modo` é o modo da conversa DEPOIS
@@ -129,6 +150,8 @@ export interface EntradaBot {
 // da opção clicada — o chamador não precisa decidir nada.
 export type RotaBot =
   | { tipo: "nada"; modo: ModoConversa }               // sem menu configurado: bot mudo
+  // menu já apresentado há pouco: cala a boca em vez de repetir a saudação
+  | { tipo: "silencio"; modo: "menu" }
   | { tipo: "fora_horario"; modo: ModoConversa }
   | { tipo: "menu"; menu: BotMenu; modo: "menu" }      // apresenta menu raiz ou submenu
   | { tipo: "texto"; texto: string; modo: "menu" }
@@ -187,9 +210,13 @@ export function rotearBot(cfg: BotConfig, e: EntradaBot): RotaBot {
   }
 
   // 2) Texto livre.
+  // Digitar "menu" é pedido explícito: sempre responde, mesmo recém-enviado.
   if (pediuMenu(e.texto ?? "")) return { tipo: "menu", menu, modo: "menu" };
   if (e.modo === "ia") return { tipo: "ia", modo: "ia" };
-  // Em modo menu, qualquer texto solto só reapresenta o menu raiz.
+  // Em modo menu, texto solto reapresenta o menu — mas só se ele já não tiver
+  // sido mandado há pouco. Sem isso, três mensagens seguidas da pessoa viram
+  // três saudações completas.
+  if (e.menuRecente) return { tipo: "silencio", modo: "menu" };
   return { tipo: "menu", menu, modo: "menu" };
 }
 
