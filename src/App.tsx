@@ -158,6 +158,7 @@ import AcompanharChamado from "./pages/chamados/AcompanharChamado";
 import WhatsAppInbox from "./pages/whatsapp/WhatsAppInbox";
 import WhatsAppChatbot from "./pages/whatsapp/WhatsAppChatbot";
 import WhatsAppTestes from "./pages/whatsapp/WhatsAppTestes";
+import WhatsAppDashboard from "./pages/whatsapp/WhatsAppDashboard";
 import Reunioes from "./pages/central-servicos/reunioes/Reunioes";
 import ReuniaoDetalhe from "./pages/central-servicos/reunioes/ReuniaoDetalhe";
 import ConducaoReuniao from "./pages/central-servicos/reunioes/ConducaoReuniao";
@@ -213,6 +214,7 @@ const App = () => (
             <Route path="whatsapp" element={<WhatsAppInbox />} />
             <Route path="whatsapp/chatbot" element={<WhatsAppChatbot />} />
             <Route path="whatsapp/testes" element={<WhatsAppTestes />} />
+            <Route path="whatsapp/dashboard" element={<WhatsAppDashboard />} />
             <Route path="central-servicos/reunioes" element={<Reunioes />} />
             <Route path="central-servicos/reunioes/painel-gerencial" element={<PainelGerencial />} />
             <Route path="central-servicos/reunioes/:id" element={<ReuniaoDetalhe />} />
