@@ -125,8 +125,8 @@ function ResumoItem({
 
 export function FornecedorDialog({ open, onOpenChange, fornecedor, onSaved, readOnly = false }: Props) {
   const { data: empresaId } = useEmpresaId();
-  const { roles, can } = usePermissoes();
-  const canSetGlobal = roles.some((r) => ["admin", "controladoria", "diretor_adm"].includes(r));
+  const { can } = usePermissoes();
+  const canSetGlobal = can("excluir", "suprimentos", "fornecedor");
   const canEdit = !readOnly && can(fornecedor ? "alterar" : "incluir", "suprimentos", "fornecedor");
   const isLocked = readOnly || !canEdit;
 

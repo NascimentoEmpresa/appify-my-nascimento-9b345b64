@@ -12,7 +12,10 @@ import {
   AlertDialogContent, AlertDialogDescription, AlertDialogFooter,
   AlertDialogHeader, AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Search } from "lucide-react";
 import { toast } from "sonner";
+import { cn } from "@/lib/utils";
 import { useEmpresaAtiva } from "@/context/EmpresaAtivaContext";
 import {
   NfEmissaoRow,
@@ -24,10 +27,33 @@ import {
 } from "@/hooks/useNfEmissao";
 import { usePlanilhaCustos, resolverPostosVigentes } from "@/hooks/usePlanilhaCusto";
 import { calcularItem, calcularTotaisNf, ItemCalculado } from "@/pages/financeiro/nf-emissao/calculos";
-import { fmtMoney, fmtDate, STATUS_LABEL, STATUS_CLASS, itemVazio } from "@/pages/financeiro/nf-emissao/shared";
+import { fmtMoney, fmtDate, STATUS_LABEL, STATUS_CLASS, itemVazio, situacaoEspecial } from "@/pages/financeiro/nf-emissao/shared";
 import { ItensNfEditor, ItemForm } from "@/pages/financeiro/nf-emissao/ItensNfEditor";
 import { registrarLogNf } from "@/pages/financeiro/nf-emissao/registrarLogNf";
 import { HistoricoNfPainel } from "@/pages/financeiro/nf-emissao/HistoricoNfPainel";
+
+// "concluida" no banco cobre tanto a validação normal quanto notas do
+// relatório legado que na origem já constavam SUBSTITUIDA/CANCELADA (o
+// enum de status não distingue isso). Sem esse badge, elas aparecem como
+// "Concluída" com valores zerados, o que parece erro.
+function StatusBadge({ nf }: { nf: NfEmissaoRow }) {
+  const esp = nf.status === "concluida" ? situacaoEspecial(nf) : null;
+  if (esp === "CANCELADA") {
+    return (
+      <Badge variant="outline" className="border-destructive/40 text-destructive">
+        Cancelada
+      </Badge>
+    );
+  }
+  if (esp === "SUBSTITUIDA") {
+    return (
+      <Badge variant="outline" className="border-muted-foreground/30 text-muted-foreground">
+        Substituída
+      </Badge>
+    );
+  }
+  return <Badge className={STATUS_CLASS[nf.status]}>{STATUS_LABEL[nf.status]}</Badge>;
+}
 
 export default function ControleNotas() {
   const { empresa } = useEmpresaAtiva();
@@ -36,10 +62,32 @@ export default function ControleNotas() {
 
   const [aba, setAba] = useState<"pendentes" | "historico">("pendentes");
   const [nfSelecionada, setNfSelecionada] = useState<NfEmissaoRow | null>(null);
+  const [busca, setBusca] = useState("");
+  const [filtroStatus, setFiltroStatus] = useState<"todos" | "concluida" | "cancelada">("todos");
+  const [filtroCompetencia, setFiltroCompetencia] = useState("todas");
 
   const pendentes = useMemo(() => nfs.filter((n) => n.status === "enviada"), [nfs]);
   const historico = useMemo(() => nfs.filter((n) => n.status === "concluida" || n.status === "cancelada"), [nfs]);
-  const lista = aba === "pendentes" ? pendentes : historico;
+  const listaBase = aba === "pendentes" ? pendentes : historico;
+
+  const competenciasDisponiveis = useMemo(() => {
+    const set = new Set(historico.map((n) => n.competencia));
+    return Array.from(set).sort((a, b) => b.localeCompare(a));
+  }, [historico]);
+
+  const lista = useMemo(() => {
+    const termo = busca.trim().toLowerCase();
+    return listaBase.filter((n) => {
+      if (aba === "historico" && filtroStatus !== "todos" && n.status !== filtroStatus) return false;
+      if (aba === "historico" && filtroCompetencia !== "todas" && n.competencia !== filtroCompetencia) return false;
+      if (!termo) return true;
+      return (
+        (n.contrato?.nome ?? "").toLowerCase().includes(termo) ||
+        (n.variacao ?? "").toLowerCase().includes(termo) ||
+        (n.numero_nf ?? "").toLowerCase().includes(termo)
+      );
+    });
+  }, [listaBase, busca, filtroStatus, filtroCompetencia, aba]);
 
   return (
     <div className="space-y-6 p-6">
@@ -59,9 +107,52 @@ export default function ControleNotas() {
               aba === t ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"
             }`}
           >
-            {t === "pendentes" ? `Pendentes (${pendentes.length})` : "Concluídas / Canceladas"}
+            {t === "pendentes" ? `Pendentes (${pendentes.length})` : `Concluídas / Canceladas (${historico.length})`}
           </button>
         ))}
+      </div>
+
+      <div className="flex flex-wrap items-center gap-2">
+        <div className="relative w-72">
+          <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+          <input
+            value={busca}
+            onChange={(e) => setBusca(e.target.value)}
+            placeholder="Buscar por contrato, variação ou nº da nota…"
+            className="h-9 w-full rounded-md border border-border bg-background pl-9 pr-3 text-sm outline-none focus:border-primary"
+          />
+        </div>
+        {aba === "historico" && (
+          <>
+            {(["todos", "concluida", "cancelada"] as const).map((s) => (
+              <button
+                key={s}
+                onClick={() => setFiltroStatus(s)}
+                className={cn(
+                  "px-3 py-1.5 rounded-full text-xs font-medium border transition-colors",
+                  filtroStatus === s
+                    ? "bg-primary text-primary-foreground border-primary"
+                    : "bg-background border-border text-muted-foreground hover:border-primary/50"
+                )}
+              >
+                {s === "todos" ? "Todos" : STATUS_LABEL[s]}
+              </button>
+            ))}
+            <Select value={filtroCompetencia} onValueChange={setFiltroCompetencia}>
+              <SelectTrigger className="h-9 w-40 text-xs">
+                <SelectValue placeholder="Competência" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="todas">Todas competências</SelectItem>
+                {competenciasDisponiveis.map((c) => (
+                  <SelectItem key={c} value={c}>
+                    {new Date(c + "T00:00:00").toLocaleDateString("pt-BR", { month: "2-digit", year: "numeric" })}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </>
+        )}
       </div>
 
       <div className="card-elevated overflow-hidden">
@@ -70,6 +161,7 @@ export default function ControleNotas() {
             <TableRow>
               <TableHead>Contrato</TableHead>
               <TableHead>Variação</TableHead>
+              <TableHead>Nº NF</TableHead>
               <TableHead>Competência</TableHead>
               <TableHead>Valor Bruto</TableHead>
               <TableHead>Valor Líquido</TableHead>
@@ -79,15 +171,19 @@ export default function ControleNotas() {
           <TableBody>
             {isLoading && (
               <TableRow>
-                <TableCell colSpan={6} className="text-center text-muted-foreground py-8">
+                <TableCell colSpan={7} className="text-center text-muted-foreground py-8">
                   Carregando...
                 </TableCell>
               </TableRow>
             )}
             {!isLoading && lista.length === 0 && (
               <TableRow>
-                <TableCell colSpan={6} className="text-center text-muted-foreground py-8">
-                  {aba === "pendentes" ? "Nenhuma NF pendente de validação." : "Nenhuma NF concluída ou cancelada ainda."}
+                <TableCell colSpan={7} className="text-center text-muted-foreground py-8">
+                  {listaBase.length > 0
+                    ? "Nenhuma NF encontrada com esses filtros."
+                    : aba === "pendentes"
+                      ? "Nenhuma NF pendente de validação."
+                      : "Nenhuma NF concluída ou cancelada ainda."}
                 </TableCell>
               </TableRow>
             )}
@@ -95,13 +191,14 @@ export default function ControleNotas() {
               <TableRow key={nf.id} className="cursor-pointer hover:bg-muted/50" onClick={() => setNfSelecionada(nf)}>
                 <TableCell className="font-medium">{nf.contrato?.nome ?? "-"}</TableCell>
                 <TableCell>{nf.variacao ?? "-"}</TableCell>
+                <TableCell>{nf.numero_nf ?? "-"}</TableCell>
                 <TableCell>
                   {new Date(nf.competencia + "T00:00:00").toLocaleDateString("pt-BR", { month: "2-digit", year: "numeric" })}
                 </TableCell>
                 <TableCell>{fmtMoney(nf.vlr_bruto_total)}</TableCell>
                 <TableCell>{fmtMoney(nf.vlr_liquido_total)}</TableCell>
                 <TableCell>
-                  <Badge className={STATUS_CLASS[nf.status]}>{STATUS_LABEL[nf.status]}</Badge>
+                  <StatusBadge nf={nf} />
                 </TableCell>
               </TableRow>
             ))}

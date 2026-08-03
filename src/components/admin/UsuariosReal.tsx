@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
-import { usePermissoes, type Role } from "@/context/PermissoesContext";
+import { usePermissoes } from "@/context/PermissoesContext";
 import { toast } from "@/hooks/use-toast";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -27,31 +27,24 @@ interface EmpregadoVinc {
   Setor_ERP: string | null;
 }
 
-const FALLBACK_ROLES: Role[] = ["admin","controladoria","comercial","operacional","juridico","sst","diretor_adm","diretor_op","presidencia","usuario","visitante","comprador","almoxarife","gestor_cc","fiscal_recebedor","financeiro","fiscal","rh","sistemas","treinamentos"];
-
-function usePerfisDisponiveis() {
+// Setor é só um rótulo descritivo (departamento da pessoa) — não define
+// nenhuma permissão. Catálogo vem de setor_catalogo (criar/renomear/excluir
+// setor é feito em Administração → Setores, não aqui).
+function useSetoresDisponiveis() {
   const q = useQuery({
-    queryKey: ["perfil_metadata_dropdown"],
+    queryKey: ["setores_catalogo"],
     queryFn: async () => {
       const { data, error } = await supabase
-        .from("perfil_metadata")
-        .select("role, descricao, nome")
-        .order("role");
+        .from("setor_catalogo")
+        .select("nome")
+        .order("nome");
       if (error) throw error;
-      return (data ?? []) as { role: Role; descricao: string | null; nome: string | null }[];
+      return (data ?? []).map((r: any) => r.nome as string);
     },
   });
-  const perfis = (q.data && q.data.length > 0)
-    ? q.data
-    : FALLBACK_ROLES.map((r) => ({ role: r, descricao: null, nome: null }));
-  return perfis;
+  return q.data ?? [];
 }
 
-function roleLabel(role: Role, nome?: string | null) {
-  return nome && nome.trim().length > 0 ? nome : role;
-}
-
-const ROLES: Role[] = FALLBACK_ROLES;
 const LINK_ACESSO = `${window.location.origin}/login`;
 
 interface ProfileRow {
@@ -61,6 +54,7 @@ interface ProfileRow {
   empresa_id: string | null;
   avatar_url: string | null;
   telefone: string | null;
+  cargo: string | null;
 }
 
 // Máscara local de telefone BR — mesmo padrão inline já usado em
@@ -73,23 +67,18 @@ function maskFone(v: string): string {
 
 export function UsuariosReal() {
   const { user } = useAuth();
-  const { roles: myRoles } = usePermissoes();
-  const podeEditar = (myRoles ?? []).includes("admin");
+  const { can } = usePermissoes();
+  const podeEditar = can("alterar", undefined, "administracao");
   const qc = useQueryClient();
   const [busca, setBusca] = useState("");
-  const perfis = usePerfisDisponiveis();
-  const nomeByRole = useMemo(() => {
-    const m = new Map<Role, string | null>();
-    perfis.forEach(({ role: r, nome }) => m.set(r, nome));
-    return m;
-  }, [perfis]);
+  const setoresCatalogo = useSetoresDisponiveis();
 
   const profilesQ = useQuery({
     queryKey: ["admin-profiles"],
     queryFn: async () => {
       const { data, error } = await supabase
         .from("profiles")
-        .select("id,email,display_name,empresa_id,avatar_url,telefone")
+        .select("id,email,display_name,empresa_id,avatar_url,telefone,cargo")
         .order("display_name");
       if (error) throw error;
       return (data ?? []) as ProfileRow[];
@@ -105,10 +94,10 @@ export function UsuariosReal() {
     },
   });
 
-  const rolesQ = useQuery({
-    queryKey: ["all-user-roles"],
+  const setoresQ = useQuery({
+    queryKey: ["all-user-setores"],
     queryFn: async () => {
-      const { data, error } = await supabase.from("user_roles").select("user_id,role");
+      const { data, error } = await supabase.from("user_setor").select("user_id,setor");
       if (error) throw error;
       return data ?? [];
     },
@@ -139,15 +128,15 @@ export function UsuariosReal() {
     qc.invalidateQueries({ queryKey: ["admin-empregados-vinculados"] });
   };
 
-  const rolesByUser = useMemo(() => {
-    const m = new Map<string, Role[]>();
-    (rolesQ.data ?? []).forEach((r: any) => {
+  const setoresByUser = useMemo(() => {
+    const m = new Map<string, string[]>();
+    (setoresQ.data ?? []).forEach((r: any) => {
       const arr = m.get(r.user_id) ?? [];
-      arr.push(r.role as Role);
+      arr.push(r.setor as string);
       m.set(r.user_id, arr);
     });
     return m;
-  }, [rolesQ.data]);
+  }, [setoresQ.data]);
 
   const empresasById = useMemo(() => {
     const m = new Map<string, { codigo: string; razao_social: string }>();
@@ -176,9 +165,11 @@ export function UsuariosReal() {
         {podeEditar && (
           <NovoUsuarioDialog
             empresas={empresasQ.data ?? []}
+            setoresCatalogo={setoresCatalogo}
             onCreated={() => {
               qc.invalidateQueries({ queryKey: ["admin-profiles"] });
-              qc.invalidateQueries({ queryKey: ["all-user-roles"] });
+              qc.invalidateQueries({ queryKey: ["all-user-setores"] });
+              qc.invalidateQueries({ queryKey: ["setores_catalogo"] });
             }}
           />
         )}
@@ -200,7 +191,7 @@ export function UsuariosReal() {
         <thead className="bg-muted/40 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
           <tr>
             <th className="px-5 py-3 text-left">Usuário</th>
-            <th className="px-3 py-3 text-left">Perfis (roles)</th>
+            <th className="px-3 py-3 text-left">Setor</th>
             <th className="px-3 py-3 text-left">Empresa</th>
             <th className="px-5 py-3 text-right">Ações</th>
           </tr>
@@ -213,7 +204,7 @@ export function UsuariosReal() {
             <tr><td colSpan={4} className="px-5 py-6 text-center text-muted-foreground">Nenhum usuário.</td></tr>
           )}
           {filtrados.map((u) => {
-            const userRoles = rolesByUser.get(u.id) ?? [];
+            const userSetores = setoresByUser.get(u.id) ?? [];
             const emp = u.empresa_id ? empresasById.get(u.empresa_id) : null;
             const ehVoce = u.id === user?.id;
             const vinc = vincByUser.get(u.id);
@@ -236,16 +227,16 @@ export function UsuariosReal() {
                         {vinc && <span className="ml-1.5 inline-flex items-center gap-0.5 text-[10px] font-semibold text-success align-middle"><Link2 className="h-3 w-3" /> vinculado</span>}
                       </p>
                       <p className="text-[11px] text-muted-foreground">{u.email}</p>
+                      {u.cargo && <p className="text-[11px] text-muted-foreground">{u.cargo}</p>}
                     </div>
                   </div>
                 </td>
                 <td className="px-3 py-3">
                   <div className="flex flex-wrap gap-1">
-                    {userRoles.length === 0 && <span className="text-xs text-muted-foreground">—</span>}
-                    {userRoles.map((r) => (
-                      <Badge key={r} variant={r === "admin" ? "default" : "secondary"} className="text-[10px]">
-                        {r === "admin" && <ShieldCheck className="mr-1 h-3 w-3" />}
-                        {roleLabel(r, nomeByRole.get(r))}
+                    {userSetores.length === 0 && <span className="text-xs text-muted-foreground">—</span>}
+                    {userSetores.map((s) => (
+                      <Badge key={s} variant="secondary" className="text-[10px]">
+                        {s}
                       </Badge>
                     ))}
                   </div>
@@ -267,10 +258,12 @@ export function UsuariosReal() {
                           key="edit"
                           profile={u}
                           empresas={empresasQ.data ?? []}
-                          currentRoles={userRoles}
+                          currentSetores={userSetores}
+                          setoresCatalogo={setoresCatalogo}
                           onSaved={() => {
                             qc.invalidateQueries({ queryKey: ["admin-profiles"] });
-                            qc.invalidateQueries({ queryKey: ["all-user-roles"] });
+                            qc.invalidateQueries({ queryKey: ["all-user-setores"] });
+                            qc.invalidateQueries({ queryKey: ["setores_catalogo"] });
                           }}
                         />
                       ),
@@ -290,24 +283,29 @@ export function UsuariosReal() {
 }
 
 function EditarUsuarioDialog({
-  profile, empresas, currentRoles, onSaved,
+  profile, empresas, currentSetores, setoresCatalogo, onSaved,
 }: {
   profile: ProfileRow;
   empresas: { id: string; codigo: string; razao_social: string }[];
-  currentRoles: Role[];
+  currentSetores: string[];
+  setoresCatalogo: string[];
   onSaved: () => void;
 }) {
   const [open, setOpen] = useState(false);
   const [displayName, setDisplayName] = useState(profile.display_name ?? "");
+  const [cargo, setCargo] = useState(profile.cargo ?? "");
   const [telefone, setTelefone] = useState(maskFone(profile.telefone?.replace(/^55/, "") ?? ""));
   const [empresaId, setEmpresaId] = useState<string>(profile.empresa_id ?? "_none");
-  const [selectedRoles, setSelectedRoles] = useState<Role[]>(currentRoles);
+  const [selectedSetores, setSelectedSetores] = useState<string[]>(currentSetores);
   const [acessaTodas, setAcessaTodas] = useState<boolean>(false);
   const [empresasAtua, setEmpresasAtua] = useState<Set<string>>(new Set());
   const [saving, setSaving] = useState(false);
   const [deletando, setDeletando] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
-  const perfis = usePerfisDisponiveis();
+  const catalogoExibido = useMemo(() => {
+    const set = new Set([...setoresCatalogo, ...selectedSetores]);
+    return Array.from(set).sort((a, b) => a.localeCompare(b, "pt-BR"));
+  }, [setoresCatalogo, selectedSetores]);
 
   // Carrega flag acessa_todas_empresas e vínculos user_empresa quando o dialog abre.
   useEffect(() => {
@@ -330,14 +328,14 @@ function EditarUsuarioDialog({
     return () => { cancel = true; };
   }, [open, profile.id]);
 
-  // Re-sincroniza com currentRoles quando o cache de roles atualiza após abrir o dialog.
+  // Re-sincroniza com currentSetores quando o cache atualiza após abrir o dialog.
   useEffect(() => {
-    setSelectedRoles(currentRoles);
+    setSelectedSetores(currentSetores);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [currentRoles.join("|")]);
+  }, [currentSetores.join("|")]);
 
-  const toggleRole = (r: Role) => {
-    setSelectedRoles((prev) => prev.includes(r) ? prev.filter((x) => x !== r) : [...prev, r]);
+  const toggleSetor = (s: string) => {
+    setSelectedSetores((prev) => prev.includes(s) ? prev.filter((x) => x !== s) : [...prev, s]);
   };
 
   const toggleEmpresaAtua = (id: string) => {
@@ -356,6 +354,7 @@ function EditarUsuarioDialog({
         .from("profiles")
         .update({
           display_name: displayName || null,
+          cargo: cargo.trim() || null,
           empresa_id: empresaId === "_none" ? null : empresaId,
           acessa_todas_empresas: acessaTodas,
           telefone: telefone.replace(/\D/g, "") ? `55${telefone.replace(/\D/g, "")}` : null,
@@ -363,25 +362,20 @@ function EditarUsuarioDialog({
         .eq("id", profile.id);
       if (pErr) throw pErr;
 
-      // 2) roles — diff
-      if (selectedRoles.length === 0) {
-        toast({ title: "Selecione ao menos um perfil", variant: "destructive" });
-        setSaving(false);
-        return;
-      }
-      const toAdd = selectedRoles.filter((r) => !currentRoles.includes(r));
-      const toRemove = currentRoles.filter((r) => !selectedRoles.includes(r));
+      // 2) setor — diff (rótulo puramente descritivo, sem efeito em permissão)
+      const toAdd = selectedSetores.filter((s) => !currentSetores.includes(s));
+      const toRemove = currentSetores.filter((s) => !selectedSetores.includes(s));
 
       if (toRemove.length > 0) {
         const { error: dErr } = await supabase
-          .from("user_roles").delete()
-          .eq("user_id", profile.id).in("role", toRemove);
+          .from("user_setor").delete()
+          .eq("user_id", profile.id).in("setor", toRemove);
         if (dErr) throw dErr;
       }
       if (toAdd.length > 0) {
         const { error: iErr } = await supabase
-          .from("user_roles")
-          .insert(toAdd.map((r) => ({ user_id: profile.id, role: r })));
+          .from("user_setor")
+          .insert(toAdd.map((s) => ({ user_id: profile.id, setor: s })));
         if (iErr) throw iErr;
       }
 
@@ -461,6 +455,10 @@ function EditarUsuarioDialog({
             <Input value={displayName} onChange={(e) => setDisplayName(e.target.value)} placeholder="Ex.: Messias Souza" />
           </div>
           <div>
+            <Label>Cargo</Label>
+            <Input value={cargo} onChange={(e) => setCargo(e.target.value)} placeholder="Ex.: Analista Financeiro II" />
+          </div>
+          <div>
             <Label>Telefone</Label>
             <Input value={telefone} onChange={(e) => setTelefone(maskFone(e.target.value))} placeholder="(51) 99659-4681" />
           </div>
@@ -511,19 +509,26 @@ function EditarUsuarioDialog({
           </div>
 
           <div>
-            <Label>Perfis (roles)</Label>
-            <p className="text-[11px] text-muted-foreground mb-2">Marque um ou mais perfis. Acessos finos por tela serão configurados em Configurações › Acessos & Permissões.</p>
-            <div className="mt-2 grid grid-cols-2 gap-2">
-              {perfis.map(({ role: r, descricao, nome }) => (
-                <label key={r} title={descricao ?? ""} className="flex items-start gap-2 rounded-md border border-border bg-card px-2.5 py-1.5 text-xs cursor-pointer hover:bg-muted/50">
-                  <Checkbox className="mt-0.5" checked={selectedRoles.includes(r)} onCheckedChange={() => toggleRole(r)} />
-                  <span className="flex flex-col">
-                    <span className="font-medium">{roleLabel(r, nome)}</span>
-                    {descricao && <span className="text-[10px] text-muted-foreground leading-tight">{descricao}</span>}
-                  </span>
-                </label>
-              ))}
-            </div>
+            <Label>Setor</Label>
+            <p className="text-[11px] text-muted-foreground mb-2">
+              Só um rótulo informativo (departamento da pessoa) — não concede nenhum acesso. Pra criar, renomear ou excluir um setor, use Administração → Setores.
+            </p>
+            {catalogoExibido.length === 0 ? (
+              <p className="text-xs text-muted-foreground">Nenhum setor cadastrado ainda — crie um em Administração → Setores.</p>
+            ) : (
+              <div className="mt-2 grid grid-cols-2 gap-2">
+                {catalogoExibido.map((s) => (
+                  <label key={s} className="flex items-start gap-2 rounded-md border border-border bg-card px-2.5 py-1.5 text-xs cursor-pointer hover:bg-muted/50">
+                    <Checkbox className="mt-0.5" checked={selectedSetores.includes(s)} onCheckedChange={() => toggleSetor(s)} />
+                    <span className="font-medium">{s}</span>
+                  </label>
+                ))}
+              </div>
+            )}
+          </div>
+
+          <div className="rounded-lg border border-border bg-muted/30 p-3">
+            <AlterarEmailSection userId={profile.id} emailAtual={profile.email ?? ""} />
           </div>
 
           <div className="rounded-lg border border-border bg-muted/30 p-3">
@@ -562,6 +567,78 @@ function EditarUsuarioDialog({
     </Dialog>
   );
 
+}
+
+function AlterarEmailSection({ userId, emailAtual }: { userId: string; emailAtual: string }) {
+  const qc = useQueryClient();
+  const [novoEmail, setNovoEmail] = useState(emailAtual);
+  const [confirmando, setConfirmando] = useState(false);
+  const [salvando, setSalvando] = useState(false);
+
+  useEffect(() => { setNovoEmail(emailAtual); }, [emailAtual]);
+
+  const mudou = novoEmail.trim().toLowerCase() !== emailAtual.trim().toLowerCase();
+
+  const salvar = async () => {
+    setSalvando(true);
+    try {
+      const { data, error } = await supabase.functions.invoke("admin-update-email", {
+        body: { user_id: userId, new_email: novoEmail.trim() },
+      });
+      if (error) {
+        const ctx = (error as any).context;
+        let msg = error.message;
+        try { if (ctx && typeof ctx.json === "function") { const j = await ctx.json(); if (j?.error) msg = j.error; } } catch { /* */ }
+        throw new Error(msg);
+      }
+      if ((data as any)?.error) throw new Error((data as any).error);
+      toast({ title: "E-mail atualizado", description: "O usuário deve usar o novo e-mail para fazer login." });
+      qc.invalidateQueries({ queryKey: ["admin-profiles"] });
+      setConfirmando(false);
+    } catch (e: any) {
+      toast({
+        title: /already|registered|exists|duplic/i.test(e?.message ?? "") ? "E-mail já usado por outro usuário" : "Erro ao atualizar e-mail",
+        description: e?.message,
+        variant: "destructive",
+      });
+    } finally {
+      setSalvando(false);
+    }
+  };
+
+  return (
+    <div className="space-y-2">
+      <p className="flex items-center gap-1.5 text-xs font-semibold">E-mail de login</p>
+      <p className="text-[11px] text-muted-foreground">
+        É o e-mail usado pra entrar no sistema. Alterar aqui muda o login imediatamente — avise o usuário.
+      </p>
+      <Input
+        type="email"
+        value={novoEmail}
+        onChange={(e) => { setNovoEmail(e.target.value); setConfirmando(false); }}
+        placeholder="novo@empresa.com.br"
+      />
+      {mudou && !confirmando && (
+        <div className="flex justify-end">
+          <Button size="sm" variant="outline" onClick={() => setConfirmando(true)} disabled={salvando}>
+            Salvar novo e-mail
+          </Button>
+        </div>
+      )}
+      {mudou && confirmando && (
+        <div className="rounded-md border border-warning/40 bg-warning/10 p-2.5 text-xs">
+          <p className="flex items-start gap-1.5">
+            <AlertTriangle className="mt-0.5 h-3.5 w-3.5 text-warning" />
+            Confirma trocar o login de <strong>{emailAtual}</strong> para <strong>{novoEmail.trim()}</strong>?
+          </p>
+          <div className="mt-2 flex justify-end gap-2">
+            <Button size="sm" variant="ghost" onClick={() => setConfirmando(false)} disabled={salvando}>Cancelar</Button>
+            <Button size="sm" onClick={salvar} disabled={salvando}>{salvando ? "Salvando…" : "Confirmar troca"}</Button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
 }
 
 function ResetSenhaSection({ userId, email }: { userId: string; email: string }) {
@@ -664,21 +741,26 @@ function ResetSenhaSection({ userId, email }: { userId: string; email: string })
 }
 
 function NovoUsuarioDialog({
-  empresas, onCreated,
+  empresas, setoresCatalogo, onCreated,
 }: {
   empresas: { id: string; codigo: string; razao_social: string }[];
+  setoresCatalogo: string[];
   onCreated: () => void;
 }) {
   const [open, setOpen] = useState(false);
   const [displayName, setDisplayName] = useState("");
+  const [cargo, setCargo] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [showPwd, setShowPwd] = useState(false);
   const [telefone, setTelefone] = useState("");
   const [empresaId, setEmpresaId] = useState<string>("_none");
-  const [selectedRoles, setSelectedRoles] = useState<Role[]>([]);
+  const [selectedSetores, setSelectedSetores] = useState<string[]>([]);
   const [saving, setSaving] = useState(false);
-  const perfis = usePerfisDisponiveis();
+  const catalogoExibido = useMemo(() => {
+    const set = new Set([...setoresCatalogo, ...selectedSetores]);
+    return Array.from(set).sort((a, b) => a.localeCompare(b, "pt-BR"));
+  }, [setoresCatalogo, selectedSetores]);
 
   // Credenciais geradas após criação (mostrado em modal flutuante)
   const [credenciaisCriadas, setCredenciaisCriadas] = useState<{
@@ -686,12 +768,12 @@ function NovoUsuarioDialog({
   } | null>(null);
 
   const reset = () => {
-    setDisplayName(""); setEmail(""); setPassword(""); setTelefone("");
-    setEmpresaId("_none"); setSelectedRoles([]); setShowPwd(false);
+    setDisplayName(""); setCargo(""); setEmail(""); setPassword(""); setTelefone("");
+    setEmpresaId("_none"); setSelectedSetores([]); setShowPwd(false);
   };
 
-  const toggleRole = (r: Role) => {
-    setSelectedRoles((prev) => prev.includes(r) ? prev.filter((x) => x !== r) : [...prev, r]);
+  const toggleSetor = (s: string) => {
+    setSelectedSetores((prev) => prev.includes(s) ? prev.filter((x) => x !== s) : [...prev, s]);
   };
 
   const gerarSenha = () => {
@@ -718,8 +800,8 @@ function NovoUsuarioDialog({
           email: email.trim(),
           password,
           display_name: displayName.trim() || null,
+          cargo: cargo.trim() || null,
           empresa_id: empresaId === "_none" ? null : empresaId,
-          roles: selectedRoles,
           telefone: telefone.trim() || null,
         },
       });
@@ -735,6 +817,18 @@ function NovoUsuarioDialog({
         throw new Error(msg);
       }
       if ((data as any)?.error) throw new Error((data as any).error);
+
+      // Setor é só rótulo — gravado à parte, depois que o usuário já existe
+      // (user_setor referencia auth.users, não dá pra gravar antes de criar).
+      const newUserId = (data as any)?.user_id as string | undefined;
+      if (newUserId && selectedSetores.length > 0) {
+        const { error: setorErr } = await supabase
+          .from("user_setor")
+          .insert(selectedSetores.map((s) => ({ user_id: newUserId, setor: s })));
+        if (setorErr) {
+          toast({ title: "Usuário criado, mas houve erro ao gravar o setor", description: setorErr.message, variant: "destructive" });
+        }
+      }
 
       // Mostra modal de credenciais e fecha o de criação
       setCredenciaisCriadas({
@@ -769,13 +863,17 @@ function NovoUsuarioDialog({
           <DialogHeader>
             <DialogTitle>Novo usuário</DialogTitle>
             <DialogDescription>
-              Cria o acesso e vincula perfil(is) e empresa. Apenas administradores.
+              Cria o acesso e vincula setor e empresa. Apenas administradores.
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-4">
             <div>
               <Label>Nome completo</Label>
               <Input value={displayName} onChange={(e) => setDisplayName(e.target.value)} placeholder="Ex.: Messias Souza" />
+            </div>
+            <div>
+              <Label>Cargo</Label>
+              <Input value={cargo} onChange={(e) => setCargo(e.target.value)} placeholder="Ex.: Analista Financeiro II" />
             </div>
             <div>
               <Label>E-mail corporativo *</Label>
@@ -822,19 +920,22 @@ function NovoUsuarioDialog({
               <Input value={telefone} onChange={(e) => setTelefone(maskFone(e.target.value))} placeholder="(51) 99659-4681" />
             </div>
             <div>
-              <Label>Perfis (roles)</Label>
-              <p className="text-[11px] text-muted-foreground mb-2">Marque um ou mais perfis. Acessos finos por tela serão configurados em Configurações › Acessos & Permissões.</p>
-              <div className="mt-2 grid grid-cols-2 gap-2">
-                {perfis.map(({ role: r, descricao, nome }) => (
-                  <label key={r} title={descricao ?? ""} className="flex items-start gap-2 rounded-md border border-border bg-card px-2.5 py-1.5 text-xs cursor-pointer hover:bg-muted/50">
-                    <Checkbox className="mt-0.5" checked={selectedRoles.includes(r)} onCheckedChange={() => toggleRole(r)} />
-                    <span className="flex flex-col">
-                      <span className="font-medium">{roleLabel(r, nome)}</span>
-                      {descricao && <span className="text-[10px] text-muted-foreground leading-tight">{descricao}</span>}
-                    </span>
-                  </label>
-                ))}
-              </div>
+              <Label>Setor</Label>
+              <p className="text-[11px] text-muted-foreground mb-2">
+                Só um rótulo informativo (departamento da pessoa) — não concede nenhum acesso. Pra criar, renomear ou excluir um setor, use Administração → Setores.
+              </p>
+              {catalogoExibido.length === 0 ? (
+                <p className="text-xs text-muted-foreground">Nenhum setor cadastrado ainda — crie um em Administração → Setores.</p>
+              ) : (
+                <div className="mt-2 grid grid-cols-2 gap-2">
+                  {catalogoExibido.map((s) => (
+                    <label key={s} className="flex items-start gap-2 rounded-md border border-border bg-card px-2.5 py-1.5 text-xs cursor-pointer hover:bg-muted/50">
+                      <Checkbox className="mt-0.5" checked={selectedSetores.includes(s)} onCheckedChange={() => toggleSetor(s)} />
+                      <span className="font-medium">{s}</span>
+                    </label>
+                  ))}
+                </div>
+              )}
             </div>
           </div>
           <DialogFooter>

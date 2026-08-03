@@ -18,6 +18,7 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList, CommandSeparator } from "@/components/ui/command";
 import { Plus, Trash2, FileText, Building2, Calculator, ChevronRight, Search, Settings, ChevronDown } from "lucide-react";
 import { toast } from "sonner";
+import { cn } from "@/lib/utils";
 import { useEmpresaAtiva } from "@/context/EmpresaAtivaContext";
 import {
   NfEmissaoRow,
@@ -207,17 +208,27 @@ export default function EmissaoNF() {
             {contratosFiltrados.map((c) => {
               const qtd = nfs.filter((n) => n.contrato_id === c.id).length;
               const ativo = contratoSel === c.id;
+              const encerrado = c.status === "encerrado";
               return (
                 <button
                   key={c.id}
                   onClick={() => setContratoSel(c.id)}
-                  className={`flex w-full items-center justify-between gap-2 border-b border-border px-4 py-3 text-left transition-colors hover:bg-muted/30 ${ativo ? "bg-primary/5 border-l-2 border-l-primary" : ""}`}
+                  className={cn(
+                    "flex w-full items-center justify-between gap-2 border-b border-border px-4 py-3 text-left transition-colors hover:bg-muted/30",
+                    ativo && "bg-primary/5 border-l-2 border-l-primary",
+                    encerrado && !ativo && "bg-muted/40 opacity-70"
+                  )}
                 >
                   <div className="min-w-0">
-                    <p className="text-xs font-semibold truncate">{c.nome}</p>
+                    <p className={cn("text-xs font-semibold truncate", encerrado && "text-muted-foreground")}>{c.nome}</p>
                     <p className="text-[11px] text-muted-foreground truncate">{c.cliente}</p>
                   </div>
                   <div className="flex shrink-0 items-center gap-1.5">
+                    {encerrado && (
+                      <span className="inline-flex rounded-full bg-slate-200 dark:bg-slate-700 px-2 py-0.5 text-[10px] font-medium text-slate-500 dark:text-slate-400">
+                        Encerrado
+                      </span>
+                    )}
                     {qtd > 0 && (
                       <span className="inline-flex rounded-full bg-primary/10 px-2 py-0.5 text-[10px] font-semibold text-primary">
                         {qtd}

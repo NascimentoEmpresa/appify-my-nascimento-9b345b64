@@ -24,21 +24,10 @@ import {
   TIPOS_NOTA,
 } from "@/hooks/useNfEmissao";
 import { calcularItem, calcularTotaisNf, ItemCalculado } from "@/pages/financeiro/nf-emissao/calculos";
-import { fmtMoney, fmtDate } from "@/pages/financeiro/nf-emissao/shared";
+import { fmtMoney, fmtDate, situacaoEspecial } from "@/pages/financeiro/nf-emissao/shared";
 import { ItensNfEditor, ItemForm } from "@/pages/financeiro/nf-emissao/ItensNfEditor";
 import { registrarLogNf } from "@/pages/financeiro/nf-emissao/registrarLogNf";
 import { HistoricoNfPainel } from "@/pages/financeiro/nf-emissao/HistoricoNfPainel";
-
-// "Situação site P.M.T."/"Situa Domínio" vêm da planilha legada com um desses
-// 3 valores — NORMAL é o caso comum; SUBSTITUIDA/CANCELADA são notas que
-// nunca vão ter pagamento (foram trocadas/anuladas), então não contam como
-// "pendente" nem devem parecer que estão esperando pagamento.
-function situacaoEspecial(n: NfEmissaoRow): "SUBSTITUIDA" | "CANCELADA" | null {
-  const valores = [n.situacao_site_pmt?.toUpperCase(), n.situacao_dominio?.toUpperCase()];
-  if (valores.includes("CANCELADA")) return "CANCELADA";
-  if (valores.includes("SUBSTITUIDA")) return "SUBSTITUIDA";
-  return null;
-}
 
 type StatusFiltro = "todos" | "pendente" | "pago" | "substituida" | "cancelada";
 
@@ -117,6 +106,7 @@ export default function NotasConcluidasTab() {
   const [contratoSel, setContratoSel] = useState<string | null>(null);
   const [nfSelecionada, setNfSelecionada] = useState<NfEmissaoRow | null>(null);
   const [filtroStatus, setFiltroStatus] = useState<StatusFiltro>("todos");
+  const [buscaNf, setBuscaNf] = useState("");
 
   const concluidas = useMemo(() => nfs.filter((n) => n.status === "concluida"), [nfs]);
   const contratoPorId = useMemo(() => new Map(contratos.map((c) => [c.id, c])), [contratos]);
@@ -134,19 +124,33 @@ export default function NotasConcluidasTab() {
   }, [contratos, concluidas, busca]);
 
   const contratoAtual = contratos.find((c) => c.id === contratoSel) ?? null;
-  const nfsDoContrato = useMemo(
-    () =>
-      concluidas.filter(
-        (n) => n.contrato_id === contratoSel && (filtroStatus === "todos" || statusDaNota(n) === filtroStatus)
-      ),
-    [concluidas, contratoSel, filtroStatus]
-  );
-  // Sem contrato selecionado, mas com filtro de status ativo: lista achatada
-  // cruzando todos os contratos (ex: "me mostra todas as canceladas").
+
+  function bateBuscaNf(n: NfEmissaoRow, termo: string) {
+    if (!termo) return true;
+    return (n.variacao ?? "").toLowerCase().includes(termo) || (n.numero_nf ?? "").toLowerCase().includes(termo);
+  }
+
+  const nfsDoContrato = useMemo(() => {
+    const termo = buscaNf.trim().toLowerCase();
+    return concluidas.filter(
+      (n) =>
+        n.contrato_id === contratoSel &&
+        (filtroStatus === "todos" || statusDaNota(n) === filtroStatus) &&
+        bateBuscaNf(n, termo)
+    );
+  }, [concluidas, contratoSel, filtroStatus, buscaNf]);
+
+  // Sem contrato selecionado, mas com filtro de status e/ou busca de NF ativos:
+  // lista achatada cruzando todos os contratos (ex: "me mostra todas as
+  // canceladas", ou achar rápido uma variação/nº de nota, útil pra contratos
+  // com muitas notas por competência tipo Veranópolis).
   const nfsFlatFiltradas = useMemo(() => {
-    if (contratoSel || filtroStatus === "todos") return [];
-    return concluidas.filter((n) => statusDaNota(n) === filtroStatus).sort((a, b) => b.competencia.localeCompare(a.competencia));
-  }, [concluidas, contratoSel, filtroStatus]);
+    if (contratoSel || (filtroStatus === "todos" && !buscaNf.trim())) return [];
+    const termo = buscaNf.trim().toLowerCase();
+    return concluidas
+      .filter((n) => (filtroStatus === "todos" || statusDaNota(n) === filtroStatus) && bateBuscaNf(n, termo))
+      .sort((a, b) => b.competencia.localeCompare(a.competencia));
+  }, [concluidas, contratoSel, filtroStatus, buscaNf]);
 
   return (
     <div className="grid grid-cols-5 gap-4 h-[calc(100vh-220px)] min-h-[480px]">
@@ -171,17 +175,27 @@ export default function NotasConcluidasTab() {
           {contratosComNotas.map(({ contrato: c, notas }) => {
             const pendentes = notas.filter((n) => !n.data_pagamento && !situacaoEspecial(n)).length;
             const ativo = contratoSel === c.id;
+            const encerrado = c.status === "encerrado";
             return (
               <button
                 key={c.id}
                 onClick={() => setContratoSel(c.id)}
-                className={`flex w-full items-center justify-between gap-2 border-b border-border px-4 py-3 text-left transition-colors hover:bg-muted/30 ${ativo ? "bg-primary/5 border-l-2 border-l-primary" : ""}`}
+                className={cn(
+                  "flex w-full items-center justify-between gap-2 border-b border-border px-4 py-3 text-left transition-colors hover:bg-muted/30",
+                  ativo && "bg-primary/5 border-l-2 border-l-primary",
+                  encerrado && !ativo && "bg-muted/40 opacity-70"
+                )}
               >
                 <div className="min-w-0">
-                  <p className="text-xs font-semibold truncate">{c.nome}</p>
+                  <p className={cn("text-xs font-semibold truncate", encerrado && "text-muted-foreground")}>{c.nome}</p>
                   <p className="text-[11px] text-muted-foreground truncate">{c.cliente}</p>
                 </div>
                 <div className="flex shrink-0 items-center gap-1.5">
+                  {encerrado && (
+                    <span className="inline-flex rounded-full bg-slate-200 dark:bg-slate-700 px-2 py-0.5 text-[10px] font-medium text-slate-500 dark:text-slate-400">
+                      Encerrado
+                    </span>
+                  )}
                   <span className="inline-flex rounded-full bg-primary/10 px-2 py-0.5 text-[10px] font-semibold text-primary">
                     {notas.length}
                   </span>
@@ -214,6 +228,15 @@ export default function NotasConcluidasTab() {
               {STATUS_FILTRO_LABEL[s]}
             </button>
           ))}
+          <div className="relative ml-auto w-64">
+            <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+            <input
+              value={buscaNf}
+              onChange={(e) => setBuscaNf(e.target.value)}
+              placeholder="Buscar variação ou nº da NF…"
+              className="h-8 w-full rounded border border-border bg-background pl-8 pr-3 text-xs outline-none focus:border-primary"
+            />
+          </div>
         </div>
 
         {contratoAtual ? (
@@ -229,6 +252,7 @@ export default function NotasConcluidasTab() {
                     <TableHead>Competência</TableHead>
                     <TableHead>Variação</TableHead>
                     <TableHead>Nº NF</TableHead>
+                    <TableHead>Valor Bruto</TableHead>
                     <TableHead>Valor Líquido</TableHead>
                     <TableHead>Pagamento</TableHead>
                   </TableRow>
@@ -236,8 +260,8 @@ export default function NotasConcluidasTab() {
                 <TableBody>
                   {nfsDoContrato.length === 0 && (
                     <TableRow>
-                      <TableCell colSpan={5} className="text-center text-muted-foreground py-8">
-                        Nenhuma NF {filtroStatus === "todos" ? "concluída" : STATUS_FILTRO_LABEL[filtroStatus].toLowerCase()} para este contrato.
+                      <TableCell colSpan={6} className="text-center text-muted-foreground py-8">
+                        Nenhuma NF {filtroStatus === "todos" ? "concluída" : STATUS_FILTRO_LABEL[filtroStatus].toLowerCase()} para este contrato{buscaNf.trim() ? " com essa busca" : ""}.
                       </TableCell>
                     </TableRow>
                   )}
@@ -248,6 +272,7 @@ export default function NotasConcluidasTab() {
                       </TableCell>
                       <TableCell>{nf.variacao ?? "-"}</TableCell>
                       <TableCell>{nf.numero_nf ?? "-"}</TableCell>
+                      <TableCell>{fmtMoney(nf.vlr_bruto_total)}</TableCell>
                       <TableCell>{fmtMoney(nf.vlr_liquido_total)}</TableCell>
                       <TableCell>
                         <PagamentoBadge nf={nf} />
@@ -258,7 +283,7 @@ export default function NotasConcluidasTab() {
               </Table>
             </div>
           </>
-        ) : filtroStatus !== "todos" ? (
+        ) : filtroStatus !== "todos" || buscaNf.trim() ? (
           <div className="overflow-auto flex-1">
             <Table>
               <TableHeader>
@@ -267,6 +292,7 @@ export default function NotasConcluidasTab() {
                   <TableHead>Competência</TableHead>
                   <TableHead>Variação</TableHead>
                   <TableHead>Nº NF</TableHead>
+                  <TableHead>Valor Bruto</TableHead>
                   <TableHead>Valor Líquido</TableHead>
                   <TableHead>Pagamento</TableHead>
                 </TableRow>
@@ -274,8 +300,8 @@ export default function NotasConcluidasTab() {
               <TableBody>
                 {nfsFlatFiltradas.length === 0 && (
                   <TableRow>
-                    <TableCell colSpan={6} className="text-center text-muted-foreground py-8">
-                      Nenhuma NF {STATUS_FILTRO_LABEL[filtroStatus].toLowerCase()} em nenhum contrato.
+                    <TableCell colSpan={7} className="text-center text-muted-foreground py-8">
+                      Nenhuma NF encontrada com esse filtro/busca.
                     </TableCell>
                   </TableRow>
                 )}
@@ -287,6 +313,7 @@ export default function NotasConcluidasTab() {
                     </TableCell>
                     <TableCell>{nf.variacao ?? "-"}</TableCell>
                     <TableCell>{nf.numero_nf ?? "-"}</TableCell>
+                    <TableCell>{fmtMoney(nf.vlr_bruto_total)}</TableCell>
                     <TableCell>{fmtMoney(nf.vlr_liquido_total)}</TableCell>
                     <TableCell>
                       <PagamentoBadge nf={nf} />
