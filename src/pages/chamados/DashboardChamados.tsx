@@ -2,11 +2,8 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
-import { useChamadoPerms } from "./useChamadoPerms";
-import { PageHeader } from "@/components/layout/PageHeader";
-import { Card } from "@/components/ui/card";
 import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Cell } from "recharts";
-import { Maximize2, Minimize2, ShieldAlert, Star } from "lucide-react";
+import { Maximize2, Minimize2, Star } from "lucide-react";
 import {
   STATUS_CHAMADO, CATEGORIAS, labelDe, chamadoAtivo, posicoesFilaGlobal, posicoesFilaDev, mediaAvaliacao, iniciais,
   type Chamado,
@@ -303,8 +300,9 @@ function CardGraficos({ chamados, upx }: { chamados: Chamado[]; upx: number }) {
   );
 }
 
+// Quem chega aqui já passou pelo RouteGuard (menu de Acesso por Usuário) e o
+// que cada um enxerga é decidido pela RLS — a tela não filtra permissão.
 export default function DashboardChamados() {
-  const { podeVerTodos } = useChamadoPerms();
   const [tv, setTv] = useState(false);
   const [pagina, setPagina] = useState(0);
   const [agora, setAgora] = useState(() => new Date());
@@ -376,7 +374,6 @@ export default function DashboardChamados() {
 
   const { data: devs = [] } = useQuery({
     queryKey: ["chamados-devs"],
-    enabled: podeVerTodos,
     refetchInterval: 60_000,
     queryFn: async () => {
       const { data, error } = await (supabase as any).rpc("listar_desenvolvedores_chamados");
@@ -387,7 +384,6 @@ export default function DashboardChamados() {
 
   const { data: chamados = [], isLoading } = useQuery({
     queryKey: ["chamados-todos"],
-    enabled: podeVerTodos,
     refetchInterval: 60_000,
     queryFn: async () => {
       const { data, error } = await (supabase as any)
@@ -400,7 +396,6 @@ export default function DashboardChamados() {
   // Avaliações: aqui só interessam as estrelas (média ponderada por dev).
   const { data: avaliacoes = [] } = useQuery({
     queryKey: ["chamados-avaliacoes-todas"],
-    enabled: podeVerTodos,
     refetchInterval: 300_000,
     queryFn: async () => {
       const { data, error } = await (supabase as any)
@@ -489,18 +484,6 @@ export default function DashboardChamados() {
   }, [chamados]);
 
   const cargaMax = Math.max(1, ...resumos.map((r) => r.fila));
-
-  if (!podeVerTodos) {
-    return (
-      <div>
-        <PageHeader title="Dashboard de Chamados" module="Sistemas" breadcrumb={["Chamados de Sistemas", "Dashboard de Chamados"]} />
-        <Card className="flex items-center gap-3 p-6 text-sm text-muted-foreground">
-          <ShieldAlert className="h-5 w-5 text-warning" />
-          Você não tem acesso ao painel de gestão. Peça a liberação de <b>Chamados — Painel de Distribuição</b>, <b>Coordenar</b> ou <b>Aprovar</b> em Acesso por Usuário.
-        </Card>
-      </div>
-    );
-  }
 
   const hora = agora.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" });
   const segundos = agora.toLocaleTimeString("pt-BR", { second: "2-digit" }).padStart(2, "0");
