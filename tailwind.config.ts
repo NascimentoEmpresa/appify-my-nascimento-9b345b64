@@ -121,6 +121,13 @@ export default {
         "shake": { "0%,100%": { transform: "translateX(0)" }, "20%,60%": { transform: "translateX(-5px)" }, "40%,80%": { transform: "translateX(5px)" } },
         "status-flash": { "0%": { boxShadow: "0 0 0 0 hsl(var(--primary) / 0.55)" }, "100%": { boxShadow: "0 0 0 10px hsl(var(--primary) / 0)" } },
         "rise-in": { "0%": { opacity: "0", transform: "translateY(10px) scale(0.98)" }, "100%": { opacity: "1", transform: "translateY(0) scale(1)" } },
+        // — painéis de TV (Dashboard de Chamados): animações ambientes, que
+        //   rodam sozinhas em loop porque não existe mouse na frente da tela —
+        "orb-drift": { "0%, 100%": { transform: "translate(0, 0) scale(1)" }, "50%": { transform: "translate(-26px, 24px) scale(1.08)" } },
+        "shine": { "0%": { backgroundPosition: "190% 0" }, "55%, 100%": { backgroundPosition: "-90% 0" } },
+        "float-soft": { "0%, 100%": { transform: "translateY(0)" }, "50%": { transform: "translateY(-6px)" } },
+        "ring-pulse": { "0%, 100%": { transform: "scale(1)", opacity: "0.7" }, "50%": { transform: "scale(1.06)", opacity: "1" } },
+        "progress-fill": { "0%": { width: "0%" }, "100%": { width: "100%" } },
       },
       animation: {
         "accordion-down": "accordion-down 0.2s ease-out",
@@ -134,6 +141,12 @@ export default {
         "shake": "shake 0.4s ease-in-out",
         "status-flash": "status-flash 0.7s ease-out",
         "rise-in": "rise-in 0.4s cubic-bezier(0.16, 1, 0.3, 1) both",
+        "orb-drift": "orb-drift 22s ease-in-out infinite",
+        "shine": "shine 7s cubic-bezier(0.16, 1, 0.3, 1) infinite",
+        "float-soft": "float-soft 5s ease-in-out infinite",
+        "ring-pulse": "ring-pulse 3.5s ease-in-out infinite",
+        // 15s = ROTACAO_MS do Dashboard de Chamados (mantenha os dois iguais).
+        "progress-fill": "progress-fill 15s linear forwards",
       },
     },
   },
