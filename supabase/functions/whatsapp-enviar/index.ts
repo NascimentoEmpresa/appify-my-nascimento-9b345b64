@@ -130,6 +130,18 @@ Deno.serve(async (req) => {
         },
       }).eq("id", alvo.id);
     }
+    // Reação não passa por WA_CONVERSA, então o trigger de histórico não vê:
+    // o registro de quem reagiu tem que ser explícito. service_role porque a
+    // tabela é só-leitura para o usuário — histórico editável não é histórico.
+    const admin = createClient(SUPABASE_URL, SERVICE_KEY, { auth: { persistSession: false } });
+    const { data: quem } = await db.from("profiles").select("display_name").eq("id", userData.user.id).maybeSingle();
+    const nome = (quem?.display_name ?? "").trim() || "Um atendente";
+    await admin.from("WA_EVENTO").insert({
+      conversa_id: conversa.id, tipo: "reacao", ator_id: userData.user.id,
+      descricao: emoji ? `${nome} reagiu com ${emoji}` : `${nome} removeu a reação`,
+      detalhe: { emoji: emoji || null, wa_message_id: reagirA },
+    });
+
     return json({ ok: true, reagiu: true, emoji });
   }
 

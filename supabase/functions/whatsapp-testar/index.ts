@@ -174,6 +174,15 @@ Deno.serve(async (req) => {
       });
     }
 
+    case "concluir":
+      return json({
+        tipo: "menu_concluir",
+        resposta: rota.aviso,
+        nota: "A conversa iria para a pasta Atendimento Concluído e o histórico registraria que foi o próprio contato quem encerrou.",
+        modo: rota.modo,
+        diagnostico,
+      });
+
     case "ia_intro":
       return json({
         tipo: "menu_ia",

@@ -4,6 +4,8 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { useAccessibleMenus } from "@/hooks/useAccessibleMenus";
 import { useToast } from "@/hooks/use-toast";
+import { novoUuid } from "@/lib/utils";
+import { HistoricoConversa } from "./HistoricoConversa";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -12,7 +14,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Bot, Send, Search, ShieldAlert, Settings, User, MessageCircle, MousePointerClick, FileText, Inbox, AlertTriangle, Loader2, Check, CheckCheck, Paperclip, X, SmilePlus } from "lucide-react";
+import { Bot, Send, Search, ShieldAlert, Settings, User, MessageCircle, MousePointerClick, FileText, Inbox, AlertTriangle, Loader2, Check, CheckCheck, Paperclip, X, SmilePlus, CheckCircle2, History } from "lucide-react";
 import {
   fmtHora, fmtTelefone, iniciais, motivoFalha, MENU_TODAS, EMOJIS_REACAO,
   type WaConversa, type WaContato, type WaMensagem, type WaMidia, type WaPasta,
@@ -37,6 +39,7 @@ export default function WhatsAppInbox() {
   const [texto, setTexto] = useState("");
   const [enviando, setEnviando] = useState(false);
   const [anexo, setAnexo] = useState<File | null>(null);
+  const [historico, setHistorico] = useState(false);
   const inputArquivo = useRef<HTMLInputElement>(null);
   // Pasta aberta. Começa vazio e é resolvido assim que as pastas carregam: quem
   // tem "todas as conversas" abre nela; quem não tem, abre na primeira pasta
@@ -186,7 +189,7 @@ export default function WhatsAppInbox() {
         // Sobe direto pro bucket: base64 dentro do JSON estouraria o limite de
         // corpo da edge function num print grande.
         const nome = anexo.name || `colado-${Date.now()}.png`;
-        const caminho = `saida/${sel.id}/${crypto.randomUUID()}-${nome}`.slice(0, 400);
+        const caminho = `saida/${sel.id}/${novoUuid()}-${nome}`.slice(0, 400);
         const { error: erroUp } = await supabase.storage.from("whatsapp-midia")
           .upload(caminho, anexo, { contentType: anexo.type || "application/octet-stream" });
         if (erroUp) throw new Error(`Falha ao subir o arquivo: ${erroUp.message}`);
@@ -335,13 +338,36 @@ export default function WhatsAppInbox() {
                 >
                   {sel.bot_ativo ? <><Bot className="h-4 w-4" /> Bot ativo</> : <><User className="h-4 w-4" /> Atendimento humano</>}
                 </Button>
+                <Button variant="outline" size="sm" className="gap-1.5" onClick={() => setHistorico(true)}>
+                  <History className="h-4 w-4" /> Histórico
+                </Button>
               </div>
             </div>
+
+            <HistoricoConversa
+              conversaId={sel.id}
+              nomeContato={sel.contato?.nome || fmtTelefone(sel.contato?.wa_id)}
+              aberto={historico}
+              onFechar={() => setHistorico(false)}
+            />
 
             {/* Mensagens */}
             <div className="min-h-0 flex-1 space-y-2 overflow-y-auto bg-muted/30 p-4">
               {mensagens.map((m) => {
                 const saida = m.direcao === "saida";
+                // Evento da conversa (conclusão/reabertura): não foi enviado a
+                // ninguém, então não é bolha — vai centralizado, como marco.
+                if (m.origem === "sistema") {
+                  return (
+                    <div key={m.id} className="flex justify-center py-1">
+                      <span className="flex items-center gap-1.5 rounded-full border border-border bg-card px-3 py-1 text-[11px] text-muted-foreground shadow-sm">
+                        <CheckCircle2 className="h-3.5 w-3.5 text-success" />
+                        {m.texto}
+                        <span className="opacity-60">· {fmtHora(m.criada_em)}</span>
+                      </span>
+                    </div>
+                  );
+                }
                 return (
                   <div key={m.id} className={`group flex items-center gap-1 ${saida ? "justify-end" : "justify-start"}`}>
                     {/* Seletor de reação: aparece no hover, do lado de fora da

@@ -19,8 +19,18 @@ interface Metricas {
   por_hora: Array<{ hora: number; mensagens: number }>;
 }
 
-const hoje = () => new Date().toISOString().slice(0, 10);
-const diasAtras = (n: number) => new Date(Date.now() - n * 86400000).toISOString().slice(0, 10);
+// Filtro por mês: é assim que a operação pensa ("como foi julho?"), e evita a
+// dança de escolher duas datas para responder a pergunta mais comum.
+const mesAtual = () => new Date().toISOString().slice(0, 7);           // AAAA-MM
+const primeiroDia = (mes: string) => `${mes}-01`;
+const ultimoDia = (mes: string) => {
+  const [a, m] = mes.split("-").map(Number);
+  return new Date(a, m, 0).toISOString().slice(0, 10); // dia 0 do mês seguinte
+};
+const rotuloMes = (mes: string) => {
+  const [a, m] = mes.split("-").map(Number);
+  return new Date(a, m - 1, 1).toLocaleDateString("pt-BR", { month: "long", year: "numeric" });
+};
 
 function Indicador({ icone: Icone, rotulo, valor, detalhe, tom = "primary" }: {
   icone: any; rotulo: string; valor: string | number; detalhe?: string; tom?: string;
@@ -43,8 +53,9 @@ export default function WhatsAppDashboard() {
   const { data: access } = useAccessibleMenus("visualizar");
   const podeVer = (access?.codes.has("whatsapp_dashboard") ?? false) || (access?.codes.has("whatsapp") ?? false);
 
-  const [de, setDe] = useState(diasAtras(30));
-  const [ate, setAte] = useState(hoje());
+  const [mes, setMes] = useState(mesAtual());
+  const de = primeiroDia(mes);
+  const ate = ultimoDia(mes);
 
   const { data: m, isLoading } = useQuery({
     queryKey: ["wa-dashboard", de, ate],
@@ -85,15 +96,16 @@ export default function WhatsAppDashboard() {
 
       <Card className="mb-4 flex flex-wrap items-end gap-3 p-3">
         <div>
-          <Label className="mb-1 block text-xs font-semibold">De</Label>
-          <Input type="date" className="h-8 w-40 text-xs" value={de} onChange={(e) => setDe(e.target.value)} />
+          <Label className="mb-1 block text-xs font-semibold">Mês</Label>
+          <Input type="month" className="h-8 w-44 text-xs" value={mes} onChange={(e) => setMes(e.target.value || mesAtual())} />
         </div>
-        <div>
-          <Label className="mb-1 block text-xs font-semibold">Até</Label>
-          <Input type="date" className="h-8 w-40 text-xs" value={ate} onChange={(e) => setAte(e.target.value)} />
-        </div>
+        {mes !== mesAtual() && (
+          <Button variant="outline" size="sm" className="h-8 text-xs" onClick={() => setMes(mesAtual())}>
+            Voltar ao mês atual
+          </Button>
+        )}
         <p className="ml-auto text-[11px] text-muted-foreground">
-          O período filtra pelas mensagens; uma conversa entra na conta se teve mensagem no intervalo.
+          Mostrando <b>{rotuloMes(mes)}</b>. Uma conversa entra na conta se teve mensagem no mês.
         </p>
       </Card>
 
@@ -124,7 +136,23 @@ export default function WhatsAppDashboard() {
             <p className="mb-3 flex items-center gap-1.5 text-sm font-bold">
               <FolderTree className="h-4 w-4 text-primary" /> Atendimentos por pasta (setor)
             </p>
-            <div className="overflow-x-auto">
+            {/* Barras horizontais: nome de setor é comprido e no eixo X ficaria
+                cortado ou na diagonal. Concluídas empilham sobre o total para
+                dar, na mesma barra, volume e quanto já foi encerrado. */}
+            {m.por_pasta.length > 0 && (
+              <ResponsiveContainer width="100%" height={Math.max(140, m.por_pasta.length * 46)}>
+                <BarChart data={m.por_pasta} layout="vertical" margin={{ left: 8, right: 16 }}>
+                  <CartesianGrid strokeDasharray="3 3" className="opacity-30" horizontal={false} />
+                  <XAxis type="number" fontSize={11} allowDecimals={false} />
+                  <YAxis type="category" dataKey="nome" fontSize={11} width={150} />
+                  <Tooltip />
+                  <Legend wrapperStyle={{ fontSize: 11 }} />
+                  <Bar dataKey="conversas" name="Conversas" fill="hsl(var(--primary))" radius={[0, 3, 3, 0]} />
+                  <Bar dataKey="concluidas" name="Concluídas" fill="hsl(var(--success))" radius={[0, 3, 3, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            )}
+            <div className="mt-3 overflow-x-auto">
               <table className="w-full text-sm">
                 <thead>
                   <tr className="border-b border-border text-xs text-muted-foreground">

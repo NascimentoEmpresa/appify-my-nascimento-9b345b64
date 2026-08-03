@@ -45,7 +45,7 @@ export interface WaMensagem {
   texto: string | null;
   wa_message_id: string | null;
   status: string;
-  origem: "contato" | "bot" | "atendente";
+  origem: "contato" | "bot" | "atendente" | "sistema";
   autor_id: string | null;
   criada_em: string;
   // Mensagens interativas: botões enviados (saída) ou id do botão clicado (entrada).
@@ -92,7 +92,7 @@ export const motivoFalha = (erro?: WaPayload["erro"]) => {
   return erro.detalhe || erro.titulo || `Erro ${erro.codigo ?? ""}`.trim();
 };
 
-export type WaMenuAcao = "texto" | "submenu" | "ia" | "humano" | "transferir";
+export type WaMenuAcao = "texto" | "submenu" | "ia" | "humano" | "transferir" | "concluir";
 
 export interface WaMenuOpcao {
   id: string;
@@ -155,7 +155,7 @@ export interface WaBotConfig {
 // Espelha o retorno da edge function whatsapp-testar.
 export type WaTesteTipo =
   | "ia" | "fallback" | "menu" | "menu_texto" | "menu_ia" | "menu_humano" | "menu_transferir"
-  | "fora_horario" | "nada" | "silencio" | "ping";
+  | "fora_horario" | "nada" | "silencio" | "menu_concluir" | "ping";
 
 export interface WaTesteDiagnostico {
   bot_ativo: boolean;
@@ -194,6 +194,7 @@ export const TESTE_TIPO_LABEL: Record<WaTesteTipo, string> = {
   fora_horario: "Fora do horário de atendimento",
   nada: "Sem resposta (menu não configurado)",
   silencio: "Menu não repetido (enviado há pouco)",
+  menu_concluir: "Contato encerrou o atendimento",
   ping: "Teste de conexão",
 };
 
@@ -202,6 +203,7 @@ export const MENU_ACOES: Array<{ value: WaMenuAcao; label: string; ajuda: string
   { value: "submenu", label: "Abrir mais opções", ajuda: "Mostra outro conjunto de botões dentro desta opção (fluxo em cascata)." },
   { value: "transferir", label: "Transferir para…", ajuda: "Manda a conversa para a pasta do setor e desliga o bot. Só quem tem acesso à pasta atende." },
   { value: "ia", label: "Atendimento por I.A", ajuda: "Encaminha para a IA: a pessoa passa a conversar livre e a IA responde." },
+  { value: "concluir", label: "Encerrar atendimento", ajuda: "A pessoa encerra o atendimento sozinha: a conversa vai para a pasta Atendimento Concluído e fica registrado no histórico que foi ela quem encerrou." },
   { value: "humano", label: "Falar com atendente", ajuda: "Desliga o bot e passa para atendimento humano, sem pasta." },
 ];
 

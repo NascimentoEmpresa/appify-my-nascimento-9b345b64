@@ -4,6 +4,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { useAccessibleMenus } from "@/hooks/useAccessibleMenus";
 import { useToast } from "@/hooks/use-toast";
+import { novoUuid } from "@/lib/utils";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -151,6 +152,7 @@ function OpcaoEditor({ opcao: o, indice, nivel, pastas, onChange, onRemove }: {
             o.acao === "texto" ? "Resposta que o bot envia ao escolher esta opção"
             : o.acao === "humano" ? "Aviso ao cliente (ex.: Um atendente vai te responder em instantes)"
             : o.acao === "transferir" ? "Aviso ao cliente ao ser transferido. Pode deixar em branco."
+            : o.acao === "concluir" ? "Despedida ao encerrar (ex.: Atendimento encerrado, obrigado!). Pode deixar em branco."
             : "Aviso ao entrar na IA (ex.: Perfeito! Me conta como posso te ajudar). Pode deixar em branco."
           }
         />
@@ -193,6 +195,190 @@ function OpcaoEditor({ opcao: o, indice, nivel, pastas, onChange, onRemove }: {
         </div>
       )}
     </div>
+  );
+}
+
+// Perfil do NOSSO número — é o que o contato vê ao abrir a conversa. Não tem
+// nada a ver com a foto dos contatos: a Cloud API não expõe avatar de usuário
+// (só o profile.name), então do outro lado continuam as iniciais.
+// "Não informar" precisa de um valor sentinela: o Radix Select reserva a string
+// vazia para "sem seleção" e lança exceção se um item usar ela — o que derruba
+// a página inteira (tela branca). Vira "" de novo na hora de enviar à Meta.
+const SEM_RAMO = "__sem_ramo";
+const VERTICAIS: Array<{ v: string; l: string }> = [
+  { v: SEM_RAMO, l: "Não informar" },
+  { v: "PROF_SERVICES", l: "Serviços profissionais" },
+  { v: "OTHER", l: "Outro" },
+  { v: "EDU", l: "Educação" },
+  { v: "HEALTH", l: "Saúde" },
+  { v: "FINANCE", l: "Financeiro" },
+  { v: "GOVT", l: "Governo" },
+  { v: "NONPROFIT", l: "Sem fins lucrativos" },
+  { v: "RETAIL", l: "Varejo" },
+  { v: "NOT_A_BIZ", l: "Não é empresa" },
+];
+
+interface PerfilNegocio {
+  about?: string; description?: string; address?: string; email?: string;
+  vertical?: string; websites?: string[]; profile_picture_url?: string;
+}
+
+/**
+ * A Meta só aceita foto de perfil em JPG quadrado, até 640px de lado. Recusar
+ * PNG obrigaria a pessoa a sair do ERP e converter a imagem à mão, então o
+ * navegador faz isso: recorta o centro no quadrado e exporta em JPEG 640x640.
+ */
+async function prepararFotoPerfil(arquivo: File): Promise<File> {
+  const bitmap = await createImageBitmap(arquivo);
+  const lado = Math.min(bitmap.width, bitmap.height);   // recorte quadrado central
+  const dx = (bitmap.width - lado) / 2;
+  const dy = (bitmap.height - lado) / 2;
+
+  const canvas = document.createElement("canvas");
+  canvas.width = 640;
+  canvas.height = 640;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) throw new Error("Não consegui processar a imagem neste navegador.");
+  // JPEG não tem transparência: fundo branco evita PNG transparente virar preto.
+  ctx.fillStyle = "#ffffff";
+  ctx.fillRect(0, 0, 640, 640);
+  ctx.drawImage(bitmap, dx, dy, lado, lado, 0, 0, 640, 640);
+
+  const blob: Blob | null = await new Promise((r) => canvas.toBlob(r, "image/jpeg", 0.92));
+  if (!blob) throw new Error("Não consegui converter a imagem para JPG.");
+  return new File([blob], arquivo.name.replace(/\.[^.]+$/, "") + ".jpg", { type: "image/jpeg" });
+}
+
+function PerfilNegocioCard() {
+  const { toast } = useToast();
+  const qc = useQueryClient();
+  const [rascunho, setRascunho] = useState<PerfilNegocio | null>(null);
+  const [foto, setFoto] = useState<File | null>(null);
+  const [salvando, setSalvando] = useState(false);
+
+  const { data: perfil, isLoading } = useQuery({
+    queryKey: ["wa-perfil-negocio"],
+    queryFn: async () => {
+      const { data, error } = await supabase.functions.invoke("whatsapp-perfil", { body: { acao: "ler" } });
+      if (error) throw error;
+      return (data as any)?.perfil as PerfilNegocio;
+    },
+  });
+
+  const p = rascunho ?? perfil ?? {};
+  const set = (k: keyof PerfilNegocio, v: any) => setRascunho({ ...p, [k]: v });
+
+  const salvar = async () => {
+    if (salvando) return;
+    setSalvando(true);
+    try {
+      let fotoRef: { storage_path: string; mime_type: string } | undefined;
+      if (foto) {
+        // Converte pro formato que a Meta aceita ANTES de subir: PNG, imagem
+        // retangular ou gigante entrariam e só falhariam lá na frente.
+        const jpg = await prepararFotoPerfil(foto);
+        // Mesmo caminho dos anexos: sobe pro bucket e manda só o caminho.
+        const caminho = `saida/perfil/${novoUuid()}-${jpg.name}`;
+        const { error: erroUp } = await supabase.storage.from("whatsapp-midia")
+          .upload(caminho, jpg, { contentType: "image/jpeg" });
+        if (erroUp) throw new Error(`Falha ao subir a imagem: ${erroUp.message}`);
+        fotoRef = { storage_path: caminho, mime_type: "image/jpeg" };
+      }
+      const { data, error } = await supabase.functions.invoke("whatsapp-perfil", {
+        body: { acao: "salvar", perfil: p, ...(fotoRef ? { foto: fotoRef } : {}) },
+      });
+      if (error) throw new Error(String((error as any)?.message ?? error));
+      if ((data as any)?.error) throw new Error(String((data as any).error));
+      setRascunho(null);
+      setFoto(null);
+      qc.invalidateQueries({ queryKey: ["wa-perfil-negocio"] });
+      toast({ title: "Perfil atualizado", description: "Os contatos já veem as mudanças." });
+    } catch (e: any) {
+      toast({ title: "Não deu para salvar", description: String(e?.message ?? e), variant: "destructive" });
+    } finally {
+      setSalvando(false);
+    }
+  };
+
+  return (
+    <Card className="space-y-3 p-4">
+      <div>
+        <p className="flex items-center gap-1.5 text-sm font-bold"><Bot className="h-4 w-4 text-primary" /> Perfil do nosso WhatsApp</p>
+        <p className="text-xs text-muted-foreground">
+          O que a pessoa vê ao abrir a conversa com o número da empresa.
+        </p>
+      </div>
+
+      {isLoading && <p className="text-xs text-muted-foreground">Carregando o perfil…</p>}
+
+      <div className="flex flex-wrap items-center gap-3">
+        {perfil?.profile_picture_url
+          ? <img src={perfil.profile_picture_url} alt="" className="h-16 w-16 rounded-full object-cover" />
+          : <div className="flex h-16 w-16 items-center justify-center rounded-full bg-muted text-xs text-muted-foreground">sem foto</div>}
+        <div>
+          <Input
+            type="file" accept="image/*" className="h-8 w-64 text-xs"
+            onChange={(e) => setFoto(e.target.files?.[0] ?? null)}
+          />
+          <p className="mt-1 text-[11px] text-muted-foreground">
+            Pode ser PNG ou JPG: a imagem é recortada no quadrado e convertida pra JPG 640×640 automaticamente.
+          </p>
+        </div>
+      </div>
+
+      <div className="grid gap-3 sm:grid-cols-2">
+        <div>
+          <Label className="mb-1 block text-xs font-semibold">Recado (aparece abaixo do nome)</Label>
+          <Input className="h-8 text-sm" maxLength={139} value={p.about ?? ""} onChange={(e) => set("about", e.target.value)} />
+        </div>
+        <div>
+          <Label className="mb-1 block text-xs font-semibold">E-mail</Label>
+          <Input className="h-8 text-sm" maxLength={128} value={p.email ?? ""} onChange={(e) => set("email", e.target.value)} />
+        </div>
+        <div className="sm:col-span-2">
+          <Label className="mb-1 block text-xs font-semibold">Descrição</Label>
+          <Textarea rows={2} maxLength={512} value={p.description ?? ""} onChange={(e) => set("description", e.target.value)} />
+        </div>
+        <div>
+          <Label className="mb-1 block text-xs font-semibold">Endereço</Label>
+          <Input className="h-8 text-sm" maxLength={256} value={p.address ?? ""} onChange={(e) => set("address", e.target.value)} />
+        </div>
+        <div>
+          <Label className="mb-1 block text-xs font-semibold">Ramo</Label>
+          <Select
+            value={p.vertical || SEM_RAMO}
+            onValueChange={(v) => set("vertical", v === SEM_RAMO ? "" : v)}
+          >
+            <SelectTrigger className="h-8 text-xs"><SelectValue placeholder="Escolha…" /></SelectTrigger>
+            <SelectContent>
+              {VERTICAIS.map((v) => <SelectItem key={v.v} value={v.v}>{v.l}</SelectItem>)}
+            </SelectContent>
+          </Select>
+        </div>
+        <div className="sm:col-span-2">
+          <Label className="mb-1 block text-xs font-semibold">Sites <span className="font-normal text-muted-foreground">(até 2)</span></Label>
+          <div className="flex flex-wrap gap-2">
+            {[0, 1].map((i) => (
+              <Input
+                key={i} className="h-8 flex-1 text-sm" placeholder="https://…"
+                value={p.websites?.[i] ?? ""}
+                onChange={(e) => {
+                  const atuais = [...(p.websites ?? [])];
+                  atuais[i] = e.target.value;
+                  set("websites", atuais);
+                }}
+              />
+            ))}
+          </div>
+        </div>
+      </div>
+
+      <div className="flex justify-end">
+        <Button size="sm" className="gap-1.5" onClick={salvar} disabled={salvando}>
+          <Save className="h-4 w-4" /> {salvando ? "Salvando…" : "Salvar perfil"}
+        </Button>
+      </div>
+    </Card>
   );
 }
 
@@ -425,6 +611,8 @@ export default function WhatsAppChatbot() {
           </Card>
 
           <PastasCard pastas={pastas} />
+
+          <PerfilNegocioCard />
 
 
           {/* Comportamento da IA (usado pela opção de atendimento por IA) */}

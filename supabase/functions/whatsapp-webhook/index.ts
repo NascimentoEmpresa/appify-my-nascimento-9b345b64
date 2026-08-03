@@ -212,6 +212,16 @@ async function processarBot(
       await registrarSaida(conversaId, contatoId, to, rota.aviso, "bot");
       return;
     }
+    case "concluir": {
+      // A própria pessoa encerrou. `concluida_por_contato` é o que diz ao
+      // trigger que NÃO foi atendente: aqui roda com service_role, então
+      // auth.uid() é null e sozinho isso não distinguiria de um UPDATE manual.
+      await admin.from("WA_CONVERSA")
+        .update({ pasta_codigo: "atendimento_concluido", concluida_por_contato: true, bot_ativo: true })
+        .eq("id", conversaId);
+      await registrarSaida(conversaId, contatoId, to, rota.aviso, "bot");
+      return;
+    }
     case "ia_intro":
       // Entrou na IA: manda o aviso; as próximas mensagens caem na IA.
       await registrarSaida(conversaId, contatoId, to, rota.aviso, "bot");

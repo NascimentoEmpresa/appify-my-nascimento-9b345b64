@@ -13,7 +13,7 @@ export type Msg = { role: "user" | "assistant"; content: string };
 export interface MenuOpcao {
   id: string;
   titulo: string;
-  acao: "texto" | "submenu" | "ia" | "humano" | "transferir";
+  acao: "texto" | "submenu" | "ia" | "humano" | "transferir" | "concluir";
   valor?: string;
   // acao "submenu": esta opção abre OUTRO conjunto de opções (fluxo em
   // cascata). A árvore pode ter quantos níveis a config quiser.
@@ -127,6 +127,7 @@ export const AVISO_IA_PADRAO = "Perfeito! Me conta como posso te ajudar.";
 export const AVISO_HUMANO_PADRAO = "Certo! Já estou te transferindo para um atendente.";
 export const AVISO_TRANSFERIR_PADRAO = "Certo! Já encaminhei para a equipe responsável, em breve alguém te responde.";
 export const TITULO_MENU_PADRAO = "Como posso te ajudar?";
+export const AVISO_CONCLUIR_PADRAO = "Atendimento encerrado. Se precisar de algo, é só chamar de novo!";
 
 const valorOpcao = (o: MenuOpcao): string => (typeof o.valor === "string" ? o.valor.trim() : "");
 
@@ -158,6 +159,8 @@ export type RotaBot =
   | { tipo: "humano"; aviso: string; modo: "menu" }
   // manda a conversa para uma pasta (fila de um setor) e passa para humano
   | { tipo: "transferir"; pasta: string; aviso: string; modo: "menu" }
+  // a propria pessoa encerrou o atendimento pelo menu
+  | { tipo: "concluir"; aviso: string; modo: "menu" }
   | { tipo: "ia_intro"; aviso: string; modo: "ia" }
   | { tipo: "ia"; modo: "ia" };
 
@@ -195,6 +198,7 @@ export function rotearBot(cfg: BotConfig, e: EntradaBot): RotaBot {
         ? { tipo: "menu", menu: { titulo: resposta, opcoes: filhas }, modo: "menu" }
         : { tipo: "texto", texto: resposta, modo: "menu" };
     }
+    if (opt?.acao === "concluir") return { tipo: "concluir", aviso: valorOpcao(opt) || AVISO_CONCLUIR_PADRAO, modo: "menu" };
     if (opt?.acao === "ia") return { tipo: "ia_intro", aviso: valorOpcao(opt) || AVISO_IA_PADRAO, modo: "ia" };
     if (opt?.acao === "submenu") {
       const sub = opt.submenu;
