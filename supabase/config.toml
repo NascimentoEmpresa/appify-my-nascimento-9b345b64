@@ -37,3 +37,6 @@ verify_jwt = false
 
 [functions.whatsapp-enviar]
 verify_jwt = true
+
+[functions.notificar-chamado-whatsapp]
+verify_jwt = true

@@ -128,6 +128,8 @@ export default function AbrirChamado({ base = "/app/central-servicos/chamados" }
 
     if (error) { setSalvando(false); toast({ title: "Erro ao abrir chamado", description: error.message, variant: "destructive" }); return; }
 
+    supabase.functions.invoke("notificar-chamado-whatsapp", { body: { chamado_id: data.id, evento: "criado" } }).catch(() => {});
+
     // Anexos (best-effort). O evento de "Chamado aberto" é gravado por trigger.
     const falhas: string[] = [];
     for (const file of arquivos) {
