@@ -36,7 +36,7 @@ import {
 import { useContratosERP, ContratoERP } from "@/hooks/useContratosERP";
 import { usePlanilhaCustos, resolverPostosVigentes, PostoVigente } from "@/hooks/usePlanilhaCusto";
 import { useModelosNf, buscarItensModeloNf, NfEmissaoModeloRow } from "@/hooks/useNfEmissaoModelo";
-import { calcularItem, calcularTotaisNf, ItemInput, ItemCalculado, INSS_CATEGORIAS, PercentuaisFiscais } from "./calculos";
+import { calcularItem, calcularTotaisNf, pctEfetivo, ItemInput, ItemCalculado, INSS_CATEGORIAS, PercentuaisFiscais } from "./calculos";
 import { fmtMoney, fmtPct, fmtDate, STATUS_LABEL, STATUS_CLASS, Linha, itemVazio } from "./shared";
 import { ItensNfEditor } from "./ItensNfEditor";
 import { ModeloNfDialog } from "./ModeloNfDialog";
@@ -49,6 +49,7 @@ interface NovaNfSeed {
   itens: (ItemInput & { identificacao: string })[];
   unitarios: (number | null)[];
   pctFiscais: PercentuaisFiscais | null;
+  descricao: string;
 }
 
 function pctFiscaisDoContrato(c: Pick<ContratoERP, "issqn_pct" | "ir_pct" | "cofins_pct" | "pis_pct" | "csll_pct">): PercentuaisFiscais | null {
@@ -116,25 +117,47 @@ export default function EmissaoNF() {
     const unitarios: (number | null)[] = [];
     itensModelo.forEach((mi, idx) => {
       const pct = mi.percentual / 100;
-      const p = mi.posto ? postosVigentesContratoSel.find((pv) => pv.posto === mi.posto) : undefined;
-      if (mi.posto && !p) faltantes.push(mi.posto);
+      // Um item do modelo pode juntar mais de um posto (ex: UFFS — "Limpeza
+      // e Jardinagem" viram 1 item só, com valor somado).
+      const nomesPostos = mi.postos && mi.postos.length > 0 ? mi.postos : mi.posto ? [mi.posto] : [];
+      const encontrados = nomesPostos
+        .map((nome) => postosVigentesContratoSel.find((pv) => pv.posto === nome))
+        .filter((p): p is PostoVigente => !!p);
+      nomesPostos.forEach((nome) => {
+        if (!encontrados.some((p) => p.posto === nome)) faltantes.push(nome);
+      });
+      const rotuloPostos = nomesPostos.length > 0 ? nomesPostos.join(" + ") : null;
       const rotulo =
-        mi.identificacao_padrao || (mi.posto ? (mi.percentual !== 100 ? `${mi.posto} (${mi.percentual}%)` : mi.posto) : `Item ${idx + 1}`);
-      if (p) {
+        mi.identificacao_padrao || (rotuloPostos ? (mi.percentual !== 100 ? `${rotuloPostos} (${mi.percentual}%)` : rotuloPostos) : `Item ${idx + 1}`);
+      // Override de retenção próprio do item (ex: UFFS mistura postos com IR
+      // diferente na mesma nota) — nulo continua usando o padrão da nota.
+      const retencaoItem = {
+        issqn_pct: mi.issqn_pct,
+        ir_pct: mi.ir_pct,
+        cofins_pct: mi.cofins_pct,
+        pis_pct: mi.pis_pct,
+        csll_pct: mi.csll_pct,
+      };
+      if (encontrados.length > 0) {
+        const valorTotal = encontrados.reduce((s, p) => s + p.valorTotal, 0);
+        const qtdTotal = encontrados.reduce((s, p) => s + p.qtdColaboradores, 0);
         itens.push({
           ...itemVazio(idx + 1),
           identificacao: rotulo,
-          valor_contrato_exec: Math.round(p.valorTotal * pct * 100) / 100,
-          qtd_colaboradores: Math.round(p.qtdColaboradores * pct),
+          valor_contrato_exec: Math.round(valorTotal * pct * 100) / 100,
+          qtd_colaboradores: Math.round(qtdTotal * pct),
           inss_categoria: mi.inss_categoria,
+          ...retencaoItem,
         });
-        unitarios.push(p.valorUnitario * pct);
+        // Com mais de um posto não tem um único valor unitário pra travar.
+        unitarios.push(encontrados.length === 1 ? encontrados[0].valorUnitario * pct : null);
       } else {
         itens.push({
           ...itemVazio(idx + 1),
           identificacao: rotulo,
           valor_contrato_exec: mi.ultimo_valor_unitario ?? 0,
           inss_categoria: mi.inss_categoria,
+          ...retencaoItem,
         });
         unitarios.push(null);
       }
@@ -152,7 +175,14 @@ export default function EmissaoNF() {
           csll_pct: modelo.csll_pct ?? pctFiscaisContrato.csll_pct,
         }
       : null;
-    setSeedNovaNf({ modeloId: modelo.id, variacao: modelo.variacao ?? "", itens, unitarios, pctFiscais });
+    setSeedNovaNf({
+      modeloId: modelo.id,
+      variacao: modelo.variacao ?? "",
+      itens,
+      unitarios,
+      pctFiscais,
+      descricao: modelo.descricao_padrao ?? "",
+    });
     setNovaNfContratoId(contratoSel);
     setModalOpen(true);
   }
@@ -556,6 +586,7 @@ function NovaNfDialog({ open, onOpenChange, empresaId, contratos, nfParaEditar, 
       setExpandidos(new Set());
       setModeloIdOrigem(seed.modeloId);
       setPctFiscais(seed.pctFiscais);
+      setDescricao(seed.descricao);
     } else if (contratoIdInicial) {
       setContratoId(contratoIdInicial);
       const c = contratos.find((x) => x.id === contratoIdInicial);
@@ -597,7 +628,7 @@ function NovaNfDialog({ open, onOpenChange, empresaId, contratos, nfParaEditar, 
 
   const itensCalculados: ItemCalculado[] = useMemo(() => {
     if (!pctFiscais) return [];
-    return itens.map((it) => calcularItem(it, pctFiscais));
+    return itens.map((it) => calcularItem(it, pctEfetivo(it, pctFiscais)));
   }, [itens, pctFiscais]);
 
   const totais = useMemo(() => calcularTotaisNf(itensCalculados), [itensCalculados]);
@@ -626,11 +657,22 @@ function NovaNfDialog({ open, onOpenChange, empresaId, contratos, nfParaEditar, 
       return n;
     });
   }
-  function selecionarPosto(i: number, posto: string) {
-    const p = postosVigentes.find((pv) => pv.posto === posto);
-    if (!p) return;
-    updateItem(i, { identificacao: p.posto, valor_contrato_exec: p.valorTotal, qtd_colaboradores: p.qtdColaboradores });
-    setUnitariosPorItem((arr) => arr.map((u, k) => (k === i ? p.valorUnitario : u)));
+  function selecionarPostos(i: number, postos: string[]) {
+    const encontrados = postos
+      .map((nome) => postosVigentes.find((pv) => pv.posto === nome))
+      .filter((p): p is PostoVigente => !!p);
+    if (encontrados.length === 0) return;
+    const valorTotal = encontrados.reduce((s, p) => s + p.valorTotal, 0);
+    const qtdTotal = encontrados.reduce((s, p) => s + p.qtdColaboradores, 0);
+    updateItem(i, {
+      identificacao: encontrados.map((p) => p.posto).join(" + "),
+      valor_contrato_exec: valorTotal,
+      qtd_colaboradores: qtdTotal,
+    });
+    // Com mais de um posto não tem um único valor unitário pra recalcular a
+    // partir da quantidade — o analista ajusta o total à mão se precisar.
+    const unitario = encontrados.length === 1 ? encontrados[0].valorUnitario : null;
+    setUnitariosPorItem((arr) => arr.map((u, k) => (k === i ? unitario : u)));
   }
   function qtdColaboradoresChange(i: number, novaQtd: number) {
     const unit = unitariosPorItem[i];
@@ -870,7 +912,7 @@ function NovaNfDialog({ open, onOpenChange, empresaId, contratos, nfParaEditar, 
           onAddItem={addItem}
           onRemoveItem={removeItem}
           onToggleExpandido={toggleExpandido}
-          onSelecionarPosto={selecionarPosto}
+          onSelecionarPostos={selecionarPostos}
           onQtdColaboradoresChange={qtdColaboradoresChange}
         />
 

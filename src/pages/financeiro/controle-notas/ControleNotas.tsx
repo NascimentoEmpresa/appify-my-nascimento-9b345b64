@@ -25,8 +25,8 @@ import {
   useValidarNfEmissao,
   TIPOS_NOTA,
 } from "@/hooks/useNfEmissao";
-import { usePlanilhaCustos, resolverPostosVigentes } from "@/hooks/usePlanilhaCusto";
-import { calcularItem, calcularTotaisNf, ItemCalculado } from "@/pages/financeiro/nf-emissao/calculos";
+import { usePlanilhaCustos, resolverPostosVigentes, PostoVigente } from "@/hooks/usePlanilhaCusto";
+import { calcularItem, calcularTotaisNf, pctEfetivo, ItemCalculado } from "@/pages/financeiro/nf-emissao/calculos";
 import { fmtMoney, fmtDate, STATUS_LABEL, STATUS_CLASS, itemVazio, situacaoEspecial } from "@/pages/financeiro/nf-emissao/shared";
 import { ItensNfEditor, ItemForm } from "@/pages/financeiro/nf-emissao/ItensNfEditor";
 import { registrarLogNf } from "@/pages/financeiro/nf-emissao/registrarLogNf";
@@ -228,6 +228,11 @@ function itemRowParaForm(r: NfEmissaoItemRow): ItemForm {
     outros_descontos_pos_emissao: r.outros_descontos_pos_emissao,
     qtd_colaboradores: r.qtd_colaboradores,
     inss_categoria: r.inss_categoria,
+    issqn_pct: r.issqn_pct,
+    ir_pct: r.ir_pct,
+    cofins_pct: r.cofins_pct,
+    pis_pct: r.pis_pct,
+    csll_pct: r.csll_pct,
   };
 }
 
@@ -271,7 +276,7 @@ function ValidarNfDialog({ nf, onClose }: { nf: NfEmissaoRow | null; onClose: ()
 
   const itensCalculados: ItemCalculado[] = useMemo(() => {
     if (!pctFiscais) return [];
-    return itens.map((it) => calcularItem(it, pctFiscais));
+    return itens.map((it) => calcularItem(it, pctEfetivo(it, pctFiscais)));
   }, [itens, pctFiscais]);
 
   const totais = useMemo(() => calcularTotaisNf(itensCalculados), [itensCalculados]);
@@ -300,11 +305,20 @@ function ValidarNfDialog({ nf, onClose }: { nf: NfEmissaoRow | null; onClose: ()
       return n;
     });
   }
-  function selecionarPosto(i: number, posto: string) {
-    const p = postosVigentes.find((pv) => pv.posto === posto);
-    if (!p) return;
-    updateItem(i, { identificacao: p.posto, valor_contrato_exec: p.valorTotal, qtd_colaboradores: p.qtdColaboradores });
-    setUnitariosPorItem((arr) => arr.map((u, k) => (k === i ? p.valorUnitario : u)));
+  function selecionarPostos(i: number, postos: string[]) {
+    const encontrados = postos
+      .map((nome) => postosVigentes.find((pv) => pv.posto === nome))
+      .filter((p): p is PostoVigente => !!p);
+    if (encontrados.length === 0) return;
+    const valorTotal = encontrados.reduce((s, p) => s + p.valorTotal, 0);
+    const qtdTotal = encontrados.reduce((s, p) => s + p.qtdColaboradores, 0);
+    updateItem(i, {
+      identificacao: encontrados.map((p) => p.posto).join(" + "),
+      valor_contrato_exec: valorTotal,
+      qtd_colaboradores: qtdTotal,
+    });
+    const unitario = encontrados.length === 1 ? encontrados[0].valorUnitario : null;
+    setUnitariosPorItem((arr) => arr.map((u, k) => (k === i ? unitario : u)));
   }
   function qtdColaboradoresChange(i: number, novaQtd: number) {
     const unit = unitariosPorItem[i];
@@ -436,7 +450,7 @@ function ValidarNfDialog({ nf, onClose }: { nf: NfEmissaoRow | null; onClose: ()
             onAddItem={addItem}
             onRemoveItem={removeItem}
             onToggleExpandido={toggleExpandido}
-            onSelecionarPosto={selecionarPosto}
+            onSelecionarPostos={selecionarPostos}
             onQtdColaboradoresChange={qtdColaboradoresChange}
           />
         )}

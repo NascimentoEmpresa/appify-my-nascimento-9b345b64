@@ -393,6 +393,11 @@ export interface NfEmissaoItemRow {
   pis: number;
   csll: number;
   inss_categoria: InssCategoria;
+  issqn_pct: number | null;
+  ir_pct: number | null;
+  cofins_pct: number | null;
+  pis_pct: number | null;
+  csll_pct: number | null;
 }
 
 export function useItensNfEmissao(nfEmissaoId: string | null | undefined) {
