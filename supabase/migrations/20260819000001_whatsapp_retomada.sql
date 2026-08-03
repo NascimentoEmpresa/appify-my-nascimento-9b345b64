@@ -74,9 +74,21 @@ CREATE POLICY wa_retomada_rw ON public."WA_RETOMADA" FOR ALL TO authenticated
   );
 
 -- 4) Cron a cada 5 min ---------------------------------------------------
--- Mesmo padrão de plano-acao-marcar-atrasadas: net.http_post na edge function
--- (service_role lá dentro), com apikey E Authorization — só apikey devolve
--- 401 UNAUTHORIZED_NO_AUTH_HEADER no gateway.
+-- Nada de chave literal aqui. Os outros crons do projeto colam a anon key no
+-- comando; ela é publicável (já vai no bundle do front), mas repetida em
+-- várias migrations vira dívida: rotacionar exigiria caçar todas, e o valor
+-- fica no histórico do git para sempre — num repositório público, ainda por
+-- cima. Aqui o comando lê do Vault.
+--
+-- Além disso o tick exige `x-tick-secret`. A anon key NÃO serve de tranca:
+-- qualquer pessoa a tem, então sem esse cabeçalho qualquer um poderia forçar
+-- o processamento da fila de cutucadas. O mesmo segredo está nos secrets da
+-- edge function (WHATSAPP_TICK_SECRET).
+--
+-- Pré-requisito (uma vez, fora do versionamento — são segredos):
+--   SELECT vault.create_secret('<anon key>', 'anon_key', '...');
+--   SELECT vault.create_secret('<aleatorio>', 'whatsapp_tick_secret', '...');
+--   supabase secrets set WHATSAPP_TICK_SECRET=<o mesmo aleatorio>
 DO $$
 BEGIN
   PERFORM cron.unschedule('whatsapp-retomada-tick');
@@ -89,7 +101,12 @@ SELECT cron.schedule(
   $$
   SELECT net.http_post(
     url := 'https://fwmzeaztjxrxxzxzxmgc.supabase.co/functions/v1/whatsapp-retomada-tick',
-    headers := '{"Content-Type":"application/json","apikey":"eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImZ3bXplYXp0anhyeHh6eHp4bWdjIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzY2MDc0NTAsImV4cCI6MjA5MjE4MzQ1MH0.i08oF2-9N6w-CxDVy8ink29-ydHTJEc-eQBZDYRxGwI","Authorization":"Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImZ3bXplYXp0anhyeHh6eHp4bWdjIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzY2MDc0NTAsImV4cCI6MjA5MjE4MzQ1MH0.i08oF2-9N6w-CxDVy8ink29-ydHTJEc-eQBZDYRxGwI"}'::jsonb,
+    headers := jsonb_build_object(
+      'Content-Type', 'application/json',
+      'apikey',        (SELECT decrypted_secret FROM vault.decrypted_secrets WHERE name = 'anon_key'),
+      'Authorization', 'Bearer ' || (SELECT decrypted_secret FROM vault.decrypted_secrets WHERE name = 'anon_key'),
+      'x-tick-secret', (SELECT decrypted_secret FROM vault.decrypted_secrets WHERE name = 'whatsapp_tick_secret')
+    ),
     body := jsonb_build_object('tick_at', now())
   );
   $$

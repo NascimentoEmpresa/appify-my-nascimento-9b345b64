@@ -25,7 +25,16 @@ const admin = createClient(SUPABASE_URL, SERVICE_KEY, { auth: { persistSession: 
 const json = (b: unknown, status = 200) =>
   new Response(JSON.stringify(b), { status, headers: { "Content-Type": "application/json" } });
 
-Deno.serve(async () => {
+Deno.serve(async (req) => {
+  // Só o cron dispara isto. A anon key não serve de tranca: ela é publicável e
+  // está no bundle do front, então qualquer pessoa conseguiria chamar a função
+  // e forçar o processamento da fila. O segredo fica no Vault (lado do cron) e
+  // nos secrets da function (aqui) — nunca no repositório.
+  const esperado = Deno.env.get("WHATSAPP_TICK_SECRET") ?? "";
+  if (!esperado || req.headers.get("x-tick-secret") !== esperado) {
+    return json({ error: "não autorizado" }, 401);
+  }
+
   const agora = new Date();
   const { data: pendentes, error } = await admin.from("WA_RETOMADA")
     .select("id, conversa_id, contato_id, mensagem")
