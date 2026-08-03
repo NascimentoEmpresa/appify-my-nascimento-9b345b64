@@ -477,6 +477,7 @@ const whatsappModule: ModuleDef = {
       defaultOpen: true,
       items: [
         { label: "Caixa de Entrada", to: "/app/whatsapp", icon: MessageCircle },
+        { label: "Dashboard", to: "/app/whatsapp/dashboard", icon: BarChart3 },
         { label: "Chatbot", to: "/app/whatsapp/chatbot", icon: Bot },
         { label: "Testes", to: "/app/whatsapp/testes", icon: FlaskConical },
       ],

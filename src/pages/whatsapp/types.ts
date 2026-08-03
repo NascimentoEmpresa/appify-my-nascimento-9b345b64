@@ -45,7 +45,7 @@ export interface WaMensagem {
   texto: string | null;
   wa_message_id: string | null;
   status: string;
-  origem: "contato" | "bot" | "atendente";
+  origem: "contato" | "bot" | "atendente" | "sistema";
   autor_id: string | null;
   criada_em: string;
   // Mensagens interativas: botões enviados (saída) ou id do botão clicado (entrada).
@@ -68,9 +68,31 @@ export interface WaPayload {
   botoes?: Array<{ id: string; titulo: string }>;
   reply_id?: string;
   midia?: WaMidia;
+  // Preenchido pelo webhook quando a Meta devolve status "failed".
+  erro?: { codigo?: number | null; titulo?: string | null; detalhe?: string | null };
+  // Reações à mensagem. O WhatsApp permite uma por pessoa, então são dois
+  // slots: a do contato e a nossa. String vazia/ausente = sem reação.
+  reacoes?: { deles?: string | null; nossa?: string | null };
 }
 
-export type WaMenuAcao = "texto" | "submenu" | "ia" | "humano" | "transferir";
+// Paleta do seletor. O WhatsApp aceita qualquer emoji, mas uma lista curta
+// resolve o caso real (concordar, agradecer, registrar que viu) sem abrir um
+// seletor completo dentro da bolha.
+export const EMOJIS_REACAO = ["👍", "❤️", "😂", "😮", "😢", "🙏"];
+
+// Motivo da falha em português. O 131047 é o caso do dia a dia: passou das 24h
+// desde a última mensagem do contato, então só template é aceito.
+export const motivoFalha = (erro?: WaPayload["erro"]) => {
+  if (!erro) return "";
+  if (erro.codigo === 131047 || erro.codigo === 131051) {
+    return "Fora da janela de 24h: o contato precisa escrever primeiro para você poder responder.";
+  }
+  if (erro.codigo === 131026) return "Número não recebe mensagens no WhatsApp.";
+  if (erro.codigo === 131049 || erro.codigo === 130472) return "A Meta limitou a entrega para este contato.";
+  return erro.detalhe || erro.titulo || `Erro ${erro.codigo ?? ""}`.trim();
+};
+
+export type WaMenuAcao = "texto" | "submenu" | "ia" | "humano" | "transferir" | "concluir";
 
 export interface WaMenuOpcao {
   id: string;
@@ -84,7 +106,21 @@ export interface WaMenuOpcao {
   submenu?: WaMenu | null;
   // acao "transferir": código da pasta (WA_PASTA.codigo) que recebe a conversa.
   pasta?: string | null;
+  // Cutucada desta opção: sem resposta em `minutos`, o bot manda `mensagem`
+  // sozinho. Teto de 24h — acima disso a Meta recusa (erro 131047).
+  retomada?: { minutos: number; mensagem: string } | null;
 }
+
+export const RETOMADA_MAX_MIN = 1440; // 24h
+
+// Minutos → "2h30", "45min". Usado nos rótulos da configuração.
+export const fmtMinutos = (min: number) => {
+  const m = Math.max(0, Math.trunc(min));
+  const h = Math.floor(m / 60);
+  const r = m % 60;
+  if (!h) return `${r}min`;
+  return r ? `${h}h${String(r).padStart(2, "0")}` : `${h}h`;
+};
 
 export interface WaMenu {
   titulo: string; // mensagem de abertura do menu (é também a saudação)
@@ -107,6 +143,8 @@ export interface WaBotConfig {
   dias_semana: number[];
   fora_horario_msg: string;
   atende_24h: boolean;
+  // Minutos em que o menu/saudação não se repete na mesma conversa. 0 = repete sempre.
+  nao_repetir_menu_min: number;
   provedor: WaProvedor;
   modelo: string;
   max_tokens: number;
@@ -117,7 +155,7 @@ export interface WaBotConfig {
 // Espelha o retorno da edge function whatsapp-testar.
 export type WaTesteTipo =
   | "ia" | "fallback" | "menu" | "menu_texto" | "menu_ia" | "menu_humano" | "menu_transferir"
-  | "fora_horario" | "nada" | "ping";
+  | "fora_horario" | "nada" | "silencio" | "menu_concluir" | "ping";
 
 export interface WaTesteDiagnostico {
   bot_ativo: boolean;
@@ -155,6 +193,8 @@ export const TESTE_TIPO_LABEL: Record<WaTesteTipo, string> = {
   menu_transferir: "Menu transferiu para uma pasta",
   fora_horario: "Fora do horário de atendimento",
   nada: "Sem resposta (menu não configurado)",
+  silencio: "Menu não repetido (enviado há pouco)",
+  menu_concluir: "Contato encerrou o atendimento",
   ping: "Teste de conexão",
 };
 
@@ -163,6 +203,7 @@ export const MENU_ACOES: Array<{ value: WaMenuAcao; label: string; ajuda: string
   { value: "submenu", label: "Abrir mais opções", ajuda: "Mostra outro conjunto de botões dentro desta opção (fluxo em cascata)." },
   { value: "transferir", label: "Transferir para…", ajuda: "Manda a conversa para a pasta do setor e desliga o bot. Só quem tem acesso à pasta atende." },
   { value: "ia", label: "Atendimento por I.A", ajuda: "Encaminha para a IA: a pessoa passa a conversar livre e a IA responde." },
+  { value: "concluir", label: "Encerrar atendimento", ajuda: "A pessoa encerra o atendimento sozinha: a conversa vai para a pasta Atendimento Concluído e fica registrado no histórico que foi ela quem encerrou." },
   { value: "humano", label: "Falar com atendente", ajuda: "Desliga o bot e passa para atendimento humano, sem pasta." },
 ];
 

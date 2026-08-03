@@ -7395,8 +7395,6 @@ CREATE POLICY chamado_sistema_select ON public."CHAMADO_SISTEMA"
     solicitante_id = auth.uid()
     OR responsavel_id = auth.uid()
     OR public.chamado_sistema_pode_ver_todos()
-    OR EXISTS (SELECT 1 FROM public."CHAMADO_SISTEMA_TAREFA" t
-               WHERE t.chamado_id = "CHAMADO_SISTEMA".id AND t.responsavel_id = auth.uid())
   );
 
 -- 3) SELECT das avaliações (o painel mostra a média em estrelas) ---------
@@ -7451,5 +7449,516 @@ $$;
 REVOKE ALL ON FUNCTION public.listar_desenvolvedores_chamados() FROM PUBLIC;
 REVOKE ALL ON FUNCTION public.listar_desenvolvedores_chamados() FROM anon;
 GRANT EXECUTE ON FUNCTION public.listar_desenvolvedores_chamados() TO authenticated;
+
+NOTIFY pgrst, 'reload schema';
+
+
+-- ===== 20260819000001_whatsapp_retomada =====
+-- =====================================================================
+-- WHATSAPP — retomada (cutucar quem não respondeu) + anti-repetição
+--
+-- Dois problemas do bot hoje:
+--
+-- 1) REPETIÇÃO: em modo menu, QUALQUER texto solto reapresenta o menu raiz
+--    (whatsapp-bot.ts, rota "menu"). Quem escreve três vezes seguidas recebe
+--    a saudação inteira três vezes. Passa a existir uma janela em minutos
+--    (WA_BOT_CONFIG.nao_repetir_menu_min): dentro dela o menu não se repete.
+--
+-- 2) SILÊNCIO: não havia como cutucar quem parou de responder. Cada opção do
+--    menu ganha um `retomada` no próprio jsonb ({minutos, mensagem}) e o que
+--    for agendado cai nesta fila, processada pelo cron.
+--
+-- Por que uma tabela em vez de calcular na hora: a cutucada é um evento
+-- ÚNICO por resposta, precisa sobreviver a reinício e não pode disparar duas
+-- vezes. Estado explícito com status é o que dá idempotência.
+--
+-- ⚠ Janela de 24h: cutucada é mensagem iniciada pelo negócio. Fora das 24h da
+-- última mensagem do contato a Meta recusa (erro 131047), então o tick marca
+-- 'expirada' em vez de enfileirar uma falha. Por isso o teto de 1440 min.
+--
+-- Idempotente.
+-- ROLLBACK:
+--   SELECT cron.unschedule('whatsapp-retomada-tick');
+--   DROP TABLE IF EXISTS public."WA_RETOMADA";
+--   ALTER TABLE public."WA_BOT_CONFIG" DROP COLUMN IF EXISTS nao_repetir_menu_min;
+-- =====================================================================
+
+-- 1) Anti-repetição do menu ---------------------------------------------
+-- 0 = desligado (repete sempre, comportamento antigo). Padrão 720 = 12h.
+ALTER TABLE public."WA_BOT_CONFIG"
+  ADD COLUMN IF NOT EXISTS nao_repetir_menu_min int NOT NULL DEFAULT 720;
+
+COMMENT ON COLUMN public."WA_BOT_CONFIG".nao_repetir_menu_min IS
+  'Minutos em que o menu/saudação não se repete para a mesma conversa. 0 desliga.';
+
+-- 2) Fila de retomadas ---------------------------------------------------
+CREATE TABLE IF NOT EXISTS public."WA_RETOMADA" (
+  id           uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  conversa_id  uuid NOT NULL REFERENCES public."WA_CONVERSA"(id) ON DELETE CASCADE,
+  contato_id   uuid NOT NULL REFERENCES public."WA_CONTATO"(id) ON DELETE CASCADE,
+  opcao_id     text,                      -- opção do menu que agendou (rastro)
+  mensagem     text NOT NULL,
+  enviar_em    timestamptz NOT NULL,
+  -- pendente → enviada | cancelada (a pessoa respondeu / humano assumiu)
+  --                    | expirada  (passou das 24h, a Meta recusaria)
+  status       text NOT NULL DEFAULT 'pendente',
+  detalhe      text,
+  criada_em    timestamptz NOT NULL DEFAULT now(),
+  processada_em timestamptz
+);
+
+-- O tick varre por (status, enviar_em); o cancelamento varre por conversa.
+CREATE INDEX IF NOT EXISTS wa_retomada_fila_idx
+  ON public."WA_RETOMADA" (status, enviar_em) WHERE status = 'pendente';
+CREATE INDEX IF NOT EXISTS wa_retomada_conversa_idx
+  ON public."WA_RETOMADA" (conversa_id) WHERE status = 'pendente';
+
+-- 3) RLS: mesma regra da conversa (quem enxerga a pasta enxerga a fila) ---
+ALTER TABLE public."WA_RETOMADA" ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS wa_retomada_rw ON public."WA_RETOMADA";
+CREATE POLICY wa_retomada_rw ON public."WA_RETOMADA" FOR ALL TO authenticated
+  USING (
+    public.tem_acesso_menu('whatsapp')
+    AND EXISTS (SELECT 1 FROM public."WA_CONVERSA" c
+                 WHERE c.id = conversa_id AND public.wa_pode_ver_pasta(c.pasta_codigo))
+  )
+  WITH CHECK (
+    public.tem_acesso_menu('whatsapp')
+    AND EXISTS (SELECT 1 FROM public."WA_CONVERSA" c
+                 WHERE c.id = conversa_id AND public.wa_pode_ver_pasta(c.pasta_codigo))
+  );
+
+-- 4) Cron a cada 5 min ---------------------------------------------------
+-- Nada de chave literal aqui. Os outros crons do projeto colam a anon key no
+-- comando; ela é publicável (já vai no bundle do front), mas repetida em
+-- várias migrations vira dívida: rotacionar exigiria caçar todas, e o valor
+-- fica no histórico do git para sempre — num repositório público, ainda por
+-- cima. Aqui o comando lê do Vault.
+--
+-- Além disso o tick exige `x-tick-secret`. A anon key NÃO serve de tranca:
+-- qualquer pessoa a tem, então sem esse cabeçalho qualquer um poderia forçar
+-- o processamento da fila de cutucadas. O mesmo segredo está nos secrets da
+-- edge function (WHATSAPP_TICK_SECRET).
+--
+-- Pré-requisito (uma vez, fora do versionamento — são segredos):
+--   SELECT vault.create_secret('<anon key>', 'anon_key', '...');
+--   SELECT vault.create_secret('<aleatorio>', 'whatsapp_tick_secret', '...');
+--   supabase secrets set WHATSAPP_TICK_SECRET=<o mesmo aleatorio>
+DO $$
+BEGIN
+  PERFORM cron.unschedule('whatsapp-retomada-tick');
+EXCEPTION WHEN OTHERS THEN NULL;
+END $$;
+
+SELECT cron.schedule(
+  'whatsapp-retomada-tick',
+  '*/5 * * * *',
+  $$
+  SELECT net.http_post(
+    url := 'https://fwmzeaztjxrxxzxzxmgc.supabase.co/functions/v1/whatsapp-retomada-tick',
+    headers := jsonb_build_object(
+      'Content-Type', 'application/json',
+      'apikey',        (SELECT decrypted_secret FROM vault.decrypted_secrets WHERE name = 'anon_key'),
+      'Authorization', 'Bearer ' || (SELECT decrypted_secret FROM vault.decrypted_secrets WHERE name = 'anon_key'),
+      'x-tick-secret', (SELECT decrypted_secret FROM vault.decrypted_secrets WHERE name = 'whatsapp_tick_secret')
+    ),
+    body := jsonb_build_object('tick_at', now())
+  );
+  $$
+);
+
+NOTIFY pgrst, 'reload schema';
+
+
+-- ===== 20260819000002_whatsapp_midia_saida =====
+-- =====================================================================
+-- WHATSAPP — anexos ENVIADOS pelo atendente (print colado, arquivo)
+--
+-- O bucket whatsapp-midia só tinha policy de SELECT ("wa midia select"):
+-- servia pra mostrar a mídia RECEBIDA, que quem grava é o webhook com
+-- service_role. Para o atendente enviar, o navegador precisa escrever no
+-- bucket — daí a policy de INSERT.
+--
+-- Por que o navegador sobe direto em vez de mandar o arquivo pra edge
+-- function: base64 dentro do JSON incha ~33% e estoura o limite de corpo da
+-- requisição num print grande. O front sobe pro storage, manda só o caminho,
+-- e a function (service_role) baixa e repassa pra Graph API.
+--
+-- Mesma regra da leitura: quem tem o menu 'whatsapp' pode escrever. O caminho
+-- é sempre 'saida/<conversa_id>/...', separado da mídia recebida.
+--
+-- Idempotente.
+-- ROLLBACK: DROP POLICY IF EXISTS "wa midia insert" ON storage.objects;
+-- =====================================================================
+
+DROP POLICY IF EXISTS "wa midia insert" ON storage.objects;
+CREATE POLICY "wa midia insert" ON storage.objects
+  FOR INSERT TO authenticated
+  WITH CHECK (
+    bucket_id = 'whatsapp-midia'
+    AND public.tem_acesso_menu('whatsapp')
+    AND (storage.foldername(name))[1] = 'saida'
+  );
+
+NOTIFY pgrst, 'reload schema';
+
+
+-- ===== 20260819000003_whatsapp_dashboard =====
+-- =====================================================================
+-- WHATSAPP — pasta "Atendimento Concluído" + Dashboard do chatbot
+--
+-- 1) A pasta é criada direto (e não por wa_pasta_criar): aquela RPC exige
+--    has_role(auth.uid(),'admin') e no SQL Editor auth.uid() é NULL, então
+--    ela sempre falharia aqui. O efeito é o mesmo: pasta + menu que a governa.
+--
+-- 2) WA_CONVERSA.concluida_em: sem um marco de "terminou", não existe tempo
+--    de atendimento para medir. Preenchido por trigger quando a conversa cai
+--    na pasta de concluídos, e zerado se ela sair de lá (reabertura) — assim
+--    o número não depende de ninguém lembrar de marcar nada.
+--
+-- 3) wa_dashboard_metricas(): tudo agregado no banco numa chamada só. Fazer
+--    isso no front exigiria baixar a tabela inteira de mensagens.
+--
+-- Idempotente.
+-- ROLLBACK:
+--   DROP FUNCTION IF EXISTS public.wa_dashboard_metricas(date, date);
+--   DROP TRIGGER IF EXISTS trg_wa_conversa_concluida ON public."WA_CONVERSA";
+--   DROP FUNCTION IF EXISTS public.wa_marca_conclusao();
+--   ALTER TABLE public."WA_CONVERSA" DROP COLUMN IF EXISTS concluida_em;
+--   (a pasta sai por Chatbot › Pastas de atendimento)
+-- =====================================================================
+
+-- 1) Pasta de concluídos + permissão -------------------------------------
+INSERT INTO public."WA_PASTA" (codigo, nome, menu_codigo, ordem)
+SELECT 'atendimento_concluido', 'Atendimento Concluído',
+       'whatsapp_pasta_atendimento_concluido',
+       coalesce((SELECT max(ordem) FROM public."WA_PASTA"), 15) + 1
+WHERE NOT EXISTS (SELECT 1 FROM public."WA_PASTA" WHERE codigo = 'atendimento_concluido');
+
+INSERT INTO public.app_menu (modulo_id, codigo, nome, rota, ordem)
+SELECT m.id, 'whatsapp_pasta_atendimento_concluido',
+       'WhatsApp — Pasta Atendimento Concluído', NULL,
+       coalesce((SELECT max(ordem) FROM public."WA_PASTA"), 16)
+  FROM public.app_modulo m WHERE m.codigo = 'whatsapp'
+ON CONFLICT (modulo_id, codigo) DO NOTHING;
+
+-- Menu da tela nova de dashboard.
+INSERT INTO public.app_menu (modulo_id, codigo, nome, rota, ordem)
+SELECT m.id, 'whatsapp_dashboard', 'WhatsApp — Dashboard',
+       '/app/whatsapp/dashboard', 5
+  FROM public.app_modulo m WHERE m.codigo = 'whatsapp'
+ON CONFLICT (modulo_id, codigo) DO UPDATE
+   SET rota = EXCLUDED.rota, nome = EXCLUDED.nome;
+
+-- 2) Marco de conclusão ---------------------------------------------------
+ALTER TABLE public."WA_CONVERSA"
+  ADD COLUMN IF NOT EXISTS concluida_em timestamptz;
+
+CREATE OR REPLACE FUNCTION public.wa_marca_conclusao()
+RETURNS trigger LANGUAGE plpgsql SET search_path = public, pg_temp AS $$
+BEGIN
+  IF NEW.pasta_codigo IS DISTINCT FROM OLD.pasta_codigo THEN
+    IF NEW.pasta_codigo = 'atendimento_concluido' THEN
+      NEW.concluida_em := coalesce(NEW.concluida_em, now());
+    ELSE
+      -- Saiu dos concluídos: voltou a ser atendimento aberto.
+      NEW.concluida_em := NULL;
+    END IF;
+  END IF;
+  RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS trg_wa_conversa_concluida ON public."WA_CONVERSA";
+CREATE TRIGGER trg_wa_conversa_concluida
+  BEFORE UPDATE ON public."WA_CONVERSA"
+  FOR EACH ROW EXECUTE FUNCTION public.wa_marca_conclusao();
+
+-- 3) Métricas -------------------------------------------------------------
+-- SECURITY DEFINER porque agrega TODAS as conversas: a RLS por pasta faria o
+-- número mudar conforme quem olha, e um indicador que muda por espectador não
+-- serve para nada. O acesso é decidido pelo menu do dashboard.
+CREATE OR REPLACE FUNCTION public.wa_dashboard_metricas(_de date DEFAULT NULL, _ate date DEFAULT NULL)
+RETURNS jsonb
+LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = public, pg_temp
+AS $$
+DECLARE
+  v_de  timestamptz := coalesce(_de, (now() - interval '30 days')::date);
+  v_ate timestamptz := coalesce(_ate::timestamptz + interval '1 day', now() + interval '1 day');
+  v_res jsonb;
+BEGIN
+  IF NOT public.tem_acesso_menu('whatsapp_dashboard') AND NOT public.tem_acesso_menu('whatsapp') THEN
+    RAISE EXCEPTION 'Sem acesso ao dashboard do WhatsApp.';
+  END IF;
+
+  WITH msg AS (
+    SELECT * FROM public."WA_MENSAGEM" WHERE criada_em >= v_de AND criada_em < v_ate
+  ),
+  -- Primeira mensagem do contato e primeira resposta nossa, por conversa.
+  ciclo AS (
+    SELECT c.id, c.pasta_codigo, c.concluida_em,
+           (SELECT min(m.criada_em) FROM msg m WHERE m.conversa_id = c.id AND m.direcao = 'entrada') AS inicio,
+           (SELECT min(m.criada_em) FROM msg m WHERE m.conversa_id = c.id AND m.direcao = 'saida'
+              AND m.origem = 'atendente') AS primeira_humana
+      FROM public."WA_CONVERSA" c
+     WHERE EXISTS (SELECT 1 FROM msg m WHERE m.conversa_id = c.id)
+  )
+  SELECT jsonb_build_object(
+    'pessoas',           (SELECT count(DISTINCT contato_id) FROM msg WHERE direcao = 'entrada'),
+    'conversas',         (SELECT count(*) FROM ciclo),
+    'concluidas',        (SELECT count(*) FROM ciclo WHERE concluida_em IS NOT NULL),
+    'recebidas',         (SELECT count(*) FROM msg WHERE direcao = 'entrada'),
+    'enviadas_bot',      (SELECT count(*) FROM msg WHERE direcao = 'saida' AND origem = 'bot'),
+    'enviadas_humano',   (SELECT count(*) FROM msg WHERE direcao = 'saida' AND origem = 'atendente'),
+    'falhas',            (SELECT count(*) FROM msg WHERE status = 'erro'),
+    -- Minutos entre a primeira mensagem da pessoa e a conclusão.
+    'tempo_medio_min',   (SELECT round(avg(EXTRACT(epoch FROM (concluida_em - inicio)) / 60)::numeric, 1)
+                            FROM ciclo WHERE concluida_em IS NOT NULL AND inicio IS NOT NULL
+                                         AND concluida_em > inicio),
+    -- Quanto a pessoa espera até um humano falar (o bot responde na hora).
+    'primeira_resposta_min', (SELECT round(avg(EXTRACT(epoch FROM (primeira_humana - inicio)) / 60)::numeric, 1)
+                            FROM ciclo WHERE primeira_humana IS NOT NULL AND inicio IS NOT NULL
+                                         AND primeira_humana > inicio),
+    'atendidas_por_humano', (SELECT count(*) FROM ciclo WHERE primeira_humana IS NOT NULL),
+    'por_pasta', coalesce((
+      SELECT jsonb_agg(x ORDER BY x->>'nome')
+        FROM (
+          SELECT jsonb_build_object(
+                   'codigo', coalesce(ci.pasta_codigo, '(sem pasta)'),
+                   'nome',   coalesce(p.nome, 'Sem pasta — triagem'),
+                   'conversas', count(*),
+                   'concluidas', count(*) FILTER (WHERE ci.concluida_em IS NOT NULL),
+                   'tempo_medio_min', round(avg(EXTRACT(epoch FROM (ci.concluida_em - ci.inicio)) / 60)
+                                            FILTER (WHERE ci.concluida_em IS NOT NULL AND ci.inicio IS NOT NULL)::numeric, 1)
+                 ) AS x
+            FROM ciclo ci
+            LEFT JOIN public."WA_PASTA" p ON p.codigo = ci.pasta_codigo
+           GROUP BY ci.pasta_codigo, p.nome
+        ) t), '[]'::jsonb),
+    'por_dia', coalesce((
+      SELECT jsonb_agg(x ORDER BY x->>'dia')
+        FROM (
+          SELECT jsonb_build_object(
+                   'dia', to_char(date_trunc('day', criada_em), 'YYYY-MM-DD'),
+                   'recebidas', count(*) FILTER (WHERE direcao = 'entrada'),
+                   'enviadas',  count(*) FILTER (WHERE direcao = 'saida')
+                 ) AS x
+            FROM msg GROUP BY date_trunc('day', criada_em)
+        ) t), '[]'::jsonb),
+    'por_hora', coalesce((
+      SELECT jsonb_agg(x ORDER BY (x->>'hora')::int)
+        FROM (
+          SELECT jsonb_build_object(
+                   'hora', EXTRACT(hour FROM criada_em)::int,
+                   'mensagens', count(*)
+                 ) AS x
+            FROM msg WHERE direcao = 'entrada'
+           GROUP BY EXTRACT(hour FROM criada_em)
+        ) t), '[]'::jsonb)
+  ) INTO v_res;
+
+  RETURN v_res;
+END;
+$$;
+REVOKE ALL ON FUNCTION public.wa_dashboard_metricas(date, date) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.wa_dashboard_metricas(date, date) FROM anon;
+GRANT EXECUTE ON FUNCTION public.wa_dashboard_metricas(date, date) TO authenticated;
+
+NOTIFY pgrst, 'reload schema';
+
+
+-- ===== 20260819000004_whatsapp_conclusao_historico =====
+-- =====================================================================
+-- WHATSAPP — quem concluiu o atendimento fica no histórico da conversa
+--
+-- "Concluído" hoje é só a conversa mudar de pasta: some da fila e ninguém
+-- sabe quem encerrou nem quando. Passa a existir um registro no meio da
+-- própria thread, que é onde a pergunta aparece ("por que isso foi fechado?").
+--
+-- Duas origens possíveis, e a distinção importa:
+--   - ATENDENTE: alguém moveu a conversa para a pasta pela Caixa de Entrada;
+--   - CONTATO: a própria pessoa clicou numa opção "concluir" no menu do bot.
+--
+-- Como o trigger sabe qual é qual: pela Caixa de Entrada existe auth.uid()
+-- (sessão do atendente); pelo webhook não existe (roda com service_role), e
+-- por isso o webhook marca `concluida_por_contato` explicitamente em vez de
+-- deixar o trigger adivinhar pela ausência de sessão — ausência de sessão
+-- também aconteceria num UPDATE manual pelo SQL Editor.
+--
+-- Idempotente.
+-- ROLLBACK:
+--   ALTER TABLE public."WA_CONVERSA" DROP COLUMN IF EXISTS concluida_por,
+--     DROP COLUMN IF EXISTS concluida_por_contato;
+--   (recriar wa_marca_conclusao da 20260819000003)
+-- =====================================================================
+
+-- 1) Mensagem de sistema no histórico ------------------------------------
+-- A thread só aceitava contato/bot/atendente. O registro de conclusão não é
+-- nenhum dos três: não foi enviado a ninguém, é um evento da conversa.
+ALTER TABLE public."WA_MENSAGEM" DROP CONSTRAINT IF EXISTS "WA_MENSAGEM_origem_check";
+ALTER TABLE public."WA_MENSAGEM"
+  ADD CONSTRAINT "WA_MENSAGEM_origem_check"
+  CHECK (origem IN ('contato','bot','atendente','sistema'));
+
+-- 2) Quem concluiu --------------------------------------------------------
+ALTER TABLE public."WA_CONVERSA"
+  ADD COLUMN IF NOT EXISTS concluida_por uuid REFERENCES auth.users(id),
+  ADD COLUMN IF NOT EXISTS concluida_por_contato boolean NOT NULL DEFAULT false;
+
+-- 3) Trigger: carimba o marco e escreve a linha no histórico ---------------
+CREATE OR REPLACE FUNCTION public.wa_marca_conclusao()
+RETURNS trigger LANGUAGE plpgsql SET search_path = public, pg_temp AS $$
+DECLARE
+  v_uid   uuid := auth.uid();
+  v_nome  text;
+  v_texto text;
+BEGIN
+  IF NEW.pasta_codigo IS NOT DISTINCT FROM OLD.pasta_codigo THEN
+    RETURN NEW;
+  END IF;
+
+  IF NEW.pasta_codigo = 'atendimento_concluido' THEN
+    NEW.concluida_em := coalesce(NEW.concluida_em, now());
+    NEW.concluida_por := CASE WHEN NEW.concluida_por_contato THEN NULL ELSE v_uid END;
+
+    IF NEW.concluida_por_contato THEN
+      v_texto := 'Atendimento concluído pelo próprio contato.';
+    ELSIF v_uid IS NOT NULL THEN
+      SELECT display_name INTO v_nome FROM public.profiles WHERE id = v_uid;
+      v_texto := 'Atendimento concluído por ' || coalesce(nullif(btrim(v_nome), ''), 'um atendente') || '.';
+    ELSE
+      v_texto := 'Atendimento concluído.';
+    END IF;
+  ELSE
+    -- Saiu dos concluídos: voltou a ser atendimento aberto.
+    IF OLD.pasta_codigo = 'atendimento_concluido' THEN
+      SELECT display_name INTO v_nome FROM public.profiles WHERE id = v_uid;
+      v_texto := 'Atendimento reaberto'
+                 || coalesce(' por ' || nullif(btrim(v_nome), ''), '') || '.';
+    END IF;
+    NEW.concluida_em := NULL;
+    NEW.concluida_por := NULL;
+    NEW.concluida_por_contato := false;
+  END IF;
+
+  IF v_texto IS NOT NULL THEN
+    -- direcao 'saida' porque a coluna não aceita neutro; o que define o
+    -- desenho na tela é origem='sistema', que a Caixa de Entrada centraliza.
+    INSERT INTO public."WA_MENSAGEM"
+      (conversa_id, contato_id, direcao, tipo, texto, status, origem, autor_id)
+    VALUES
+      (NEW.id, NEW.contato_id, 'saida', 'sistema', v_texto, 'enviada', 'sistema', v_uid);
+  END IF;
+
+  RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS trg_wa_conversa_concluida ON public."WA_CONVERSA";
+CREATE TRIGGER trg_wa_conversa_concluida
+  BEFORE UPDATE ON public."WA_CONVERSA"
+  FOR EACH ROW EXECUTE FUNCTION public.wa_marca_conclusao();
+
+NOTIFY pgrst, 'reload schema';
+
+
+-- ===== 20260819000005_whatsapp_historico =====
+-- =====================================================================
+-- WHATSAPP — histórico de interações da conversa
+--
+-- Hoje só sobra rastro do que virou mensagem. Mover de pasta, ligar/desligar
+-- o bot e reagir não deixam registro nenhum: a conversa muda de fila e não há
+-- como saber quem fez, nem quando. Esta migration cria o livro-caixa.
+--
+-- O que NÃO entra aqui: as mensagens. Elas já estão em WA_MENSAGEM com autor,
+-- e duplicá-las como evento criaria duas versões da mesma verdade, que
+-- divergem no primeiro apagamento. A tela junta as duas fontes na hora.
+--
+-- Idempotente.
+-- ROLLBACK:
+--   DROP TRIGGER IF EXISTS trg_wa_conversa_evento ON public."WA_CONVERSA";
+--   DROP FUNCTION IF EXISTS public.wa_registra_evento();
+--   DROP TABLE IF EXISTS public."WA_EVENTO";
+-- =====================================================================
+
+CREATE TABLE IF NOT EXISTS public."WA_EVENTO" (
+  id          uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  conversa_id uuid NOT NULL REFERENCES public."WA_CONVERSA"(id) ON DELETE CASCADE,
+  -- pasta | bot | conclusao | reabertura | reacao | atendente
+  tipo        text NOT NULL,
+  ator_id     uuid REFERENCES auth.users(id),   -- null = bot/contato/automação
+  -- Texto já pronto para leitura. Guardar montado evita a tela ter que
+  -- reconstruir frase a partir de códigos que podem deixar de existir (uma
+  -- pasta apagada continua legível no histórico).
+  descricao   text NOT NULL,
+  detalhe     jsonb,
+  criada_em   timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS wa_evento_conversa_idx
+  ON public."WA_EVENTO" (conversa_id, criada_em DESC);
+
+ALTER TABLE public."WA_EVENTO" ENABLE ROW LEVEL SECURITY;
+
+-- Mesma regra da conversa: quem enxerga a pasta enxerga o histórico dela.
+DROP POLICY IF EXISTS wa_evento_select ON public."WA_EVENTO";
+CREATE POLICY wa_evento_select ON public."WA_EVENTO" FOR SELECT TO authenticated
+  USING (
+    public.tem_acesso_menu('whatsapp')
+    AND EXISTS (SELECT 1 FROM public."WA_CONVERSA" c
+                 WHERE c.id = conversa_id AND public.wa_pode_ver_pasta(c.pasta_codigo))
+  );
+
+-- Escrita só pelo trigger/service_role: histórico que o usuário pode editar
+-- não serve como histórico.
+DROP POLICY IF EXISTS wa_evento_insert ON public."WA_EVENTO";
+CREATE POLICY wa_evento_insert ON public."WA_EVENTO" FOR INSERT TO authenticated
+  WITH CHECK (false);
+
+-- Trigger: registra o que mudou na conversa -------------------------------
+CREATE OR REPLACE FUNCTION public.wa_registra_evento()
+RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp AS $$
+DECLARE
+  v_uid  uuid := auth.uid();
+  v_nome text;
+  v_de   text;
+  v_para text;
+BEGIN
+  SELECT nullif(btrim(display_name), '') INTO v_nome FROM public.profiles WHERE id = v_uid;
+  v_nome := coalesce(v_nome, 'Sistema');
+
+  IF NEW.pasta_codigo IS DISTINCT FROM OLD.pasta_codigo THEN
+    SELECT nome INTO v_de   FROM public."WA_PASTA" WHERE codigo = OLD.pasta_codigo;
+    SELECT nome INTO v_para FROM public."WA_PASTA" WHERE codigo = NEW.pasta_codigo;
+    v_de   := coalesce(v_de, 'Sem pasta');
+    v_para := coalesce(v_para, 'Sem pasta');
+
+    -- Conclusão e reabertura NÃO viram evento: a 20260819000004 já grava uma
+    -- mensagem de sistema para elas, que aparece dentro da conversa E no
+    -- histórico. Duplicar aqui mostraria a mesma coisa duas vezes, com
+    -- palavras diferentes e o mesmo horário.
+    IF NEW.pasta_codigo IS DISTINCT FROM 'atendimento_concluido'
+       AND OLD.pasta_codigo IS DISTINCT FROM 'atendimento_concluido' THEN
+      INSERT INTO public."WA_EVENTO" (conversa_id, tipo, ator_id, descricao, detalhe)
+      VALUES (NEW.id, 'pasta', v_uid, v_nome || ' moveu de "' || v_de || '" para "' || v_para || '"',
+              jsonb_build_object('de', v_de, 'para', v_para));
+    END IF;
+  END IF;
+
+  IF NEW.bot_ativo IS DISTINCT FROM OLD.bot_ativo THEN
+    INSERT INTO public."WA_EVENTO" (conversa_id, tipo, ator_id, descricao)
+    VALUES (NEW.id, 'bot', v_uid,
+            v_nome || CASE WHEN NEW.bot_ativo THEN ' religou o bot' ELSE ' assumiu o atendimento (bot desligado)' END);
+  END IF;
+
+  RETURN NULL; -- AFTER trigger
+END;
+$$;
+
+DROP TRIGGER IF EXISTS trg_wa_conversa_evento ON public."WA_CONVERSA";
+CREATE TRIGGER trg_wa_conversa_evento
+  AFTER UPDATE ON public."WA_CONVERSA"
+  FOR EACH ROW EXECUTE FUNCTION public.wa_registra_evento();
 
 NOTIFY pgrst, 'reload schema';

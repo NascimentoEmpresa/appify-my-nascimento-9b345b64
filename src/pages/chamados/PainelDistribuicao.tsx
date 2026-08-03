@@ -20,7 +20,7 @@ import {
   DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem,
 } from "@/components/ui/dropdown-menu";
 import { PieChart, Pie, Cell, ResponsiveContainer } from "recharts";
-import { ClipboardList, Clock, Users, CheckCircle2, AlertTriangle, ShieldAlert, MoreHorizontal, ChevronLeft, ChevronRight, Eye, UserCog, Trash2, Trophy } from "lucide-react";
+import { ClipboardList, Clock, Users, CheckCircle2, AlertTriangle, ShieldAlert, MoreHorizontal, ChevronLeft, ChevronRight, Eye, UserCog, Trash2, Info } from "lucide-react";
 import { FeedAtualizacoes } from "./FeedAtualizacoes";
 import { ExcluirChamadoDialog } from "./ExcluirChamadoDialog";
 import {
@@ -98,8 +98,9 @@ export default function PainelDistribuicao() {
     },
   });
 
-  // Ranking de satisfação da equipe: nota final ponderada + médias por critério
+  // Satisfação por integrante: nota final ponderada + médias por critério
   // (mesma RPC do Painel do Desenvolvedor, que lá só mostra a linha do próprio).
+  // A RPC devolve ordenado por nota; a tela reordena por nome — ver abaixo.
   const { data: ranking = [] } = useQuery({
     queryKey: ["chamados-ranking-satisfacao"],
     enabled: gestor,
@@ -122,6 +123,13 @@ export default function PainelDistribuicao() {
       return (data ?? []) as Chamado[];
     },
   });
+
+  // Ordem alfabética por nome. Não é ranking: a posição na tabela não quer
+  // dizer nada, então ordenar por nota daria uma hierarquia que não existe.
+  const rankingAlfabetico = useMemo(
+    () => [...ranking].sort((a, b) => nomeDe(a.responsavel_id).localeCompare(nomeDe(b.responsavel_id), "pt-BR")),
+    [ranking, usuarios], // eslint-disable-line react-hooks/exhaustive-deps
+  );
 
   // Opções do filtro de responsável: os devs liberados + quem já é responsável
   // por algum chamado (alguém pode ter perdido a capacidade depois de assumir).
@@ -505,11 +513,12 @@ export default function PainelDistribuicao() {
         </div>
       </div>
 
-      {/* Ranking de satisfação da equipe (todos os desenvolvedores) */}
+      {/* Satisfação por integrante. Não é ranking: sem posição e em ordem
+          alfabética — a leitura é "como cada um está", não "quem ganhou". */}
       <Card className="mt-4 p-4">
         <div className="mb-3 flex items-center justify-between">
           <p className="flex items-center gap-1.5 text-sm font-bold">
-            <Trophy className="h-4 w-4 text-warning" /> Ranking de satisfação da equipe
+            <Users className="h-4 w-4 text-warning" /> Satisfação por integrante
           </p>
           <span className="text-[11px] text-muted-foreground">Nota final ponderada (Qualidade 30% · Prazo 20% · Comunicação 15% · Satisfação 15% · Clareza 10% · Facilidade 10%)</span>
         </div>
@@ -517,26 +526,23 @@ export default function PainelDistribuicao() {
           <Table className="[&_td]:px-2 [&_td]:py-2.5 [&_th]:h-9 [&_th]:px-2">
             <TableHeader>
               <TableRow>
-                <TableHead className="w-12 text-center">#</TableHead>
-                <TableHead>Desenvolvedor</TableHead>
+                <TableHead>Integrante</TableHead>
                 <TableHead className="text-center">Avaliações</TableHead>
                 {CRITERIOS_AVALIACAO.map((c) => (
-                  <TableHead key={c.key} className="text-center" title={`Peso ${(c.peso * 100).toFixed(0)}%`}>{c.titulo}</TableHead>
+                  <TableHead key={c.key} className="text-center">
+                    {c.titulo}
+                    <span className="block text-[10px] font-normal text-muted-foreground">({(c.peso * 100).toFixed(0)}%)</span>
+                  </TableHead>
                 ))}
-                <TableHead className="text-right">Nota final</TableHead>
+                <TableHead className="text-right">
+                  Nota final
+                  <span className="block text-[10px] font-normal text-muted-foreground">(100%)</span>
+                </TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
-              {ranking.map((r, i) => (
+              {rankingAlfabetico.map((r) => (
                 <TableRow key={r.responsavel_id}>
-                  <TableCell className="text-center">
-                    <span className={`inline-flex h-7 w-7 items-center justify-center rounded-full text-xs font-bold ${
-                      i === 0 ? "bg-warning/20 text-warning"
-                      : i === 1 ? "bg-muted-foreground/20 text-muted-foreground"
-                      : i === 2 ? "bg-orange-500/20 text-orange-600"
-                      : "bg-muted text-muted-foreground"
-                    }`}>{i + 1}º</span>
-                  </TableCell>
                   <TableCell>
                     <div className="flex items-center gap-2">
                       <Avatar className="h-7 w-7"><AvatarFallback className="text-[10px]">{iniciais(nomeDe(r.responsavel_id))}</AvatarFallback></Avatar>
@@ -555,12 +561,15 @@ export default function PainelDistribuicao() {
                   </TableCell>
                 </TableRow>
               ))}
-              {ranking.length === 0 && (
-                <TableRow><TableCell colSpan={10} className="py-6 text-center text-sm text-muted-foreground">Nenhuma avaliação recebida ainda.</TableCell></TableRow>
+              {rankingAlfabetico.length === 0 && (
+                <TableRow><TableCell colSpan={9} className="py-6 text-center text-sm text-muted-foreground">Nenhuma avaliação recebida ainda.</TableCell></TableRow>
               )}
             </TableBody>
           </Table>
         </div>
+        <p className="mt-3 flex items-center justify-center gap-1.5 border-t border-border/60 pt-3 text-[11px] text-muted-foreground">
+          <Info className="h-3.5 w-3.5" /> A nota final é calculada com base na média ponderada dos critérios avaliados.
+        </p>
       </Card>
 
       {/* Fila de chamados por prioridade */}
