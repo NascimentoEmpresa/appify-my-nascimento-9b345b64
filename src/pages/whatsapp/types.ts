@@ -70,7 +70,15 @@ export interface WaPayload {
   midia?: WaMidia;
   // Preenchido pelo webhook quando a Meta devolve status "failed".
   erro?: { codigo?: number | null; titulo?: string | null; detalhe?: string | null };
+  // Reações à mensagem. O WhatsApp permite uma por pessoa, então são dois
+  // slots: a do contato e a nossa. String vazia/ausente = sem reação.
+  reacoes?: { deles?: string | null; nossa?: string | null };
 }
+
+// Paleta do seletor. O WhatsApp aceita qualquer emoji, mas uma lista curta
+// resolve o caso real (concordar, agradecer, registrar que viu) sem abrir um
+// seletor completo dentro da bolha.
+export const EMOJIS_REACAO = ["👍", "❤️", "😂", "😮", "😢", "🙏"];
 
 // Motivo da falha em português. O 131047 é o caso do dia a dia: passou das 24h
 // desde a última mensagem do contato, então só template é aceito.

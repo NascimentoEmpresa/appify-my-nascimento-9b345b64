@@ -343,6 +343,29 @@ Deno.serve(async (req) => {
       for (const msg of value.messages ?? []) {
         const from: string = msg.from;
         if (numeroProprio && String(from ?? "").replace(/\D/g, "") === numeroProprio) continue;
+
+        // Reação: não é mensagem nova, é um adorno na mensagem existente. Sem
+        // este desvio ela cairia no insert genérico como bolha sem texto.
+        // Emoji vazio = a pessoa removeu a reação.
+        if (msg.type === "reaction") {
+          const alvo = String(msg.reaction?.message_id ?? "");
+          const emoji = String(msg.reaction?.emoji ?? "").trim();
+          if (alvo) {
+            const { data: alvoMsg } = await admin.from("WA_MENSAGEM")
+              .select("id, payload").eq("wa_message_id", alvo).maybeSingle();
+            if (alvoMsg) {
+              await admin.from("WA_MENSAGEM").update({
+                payload: {
+                  ...(alvoMsg.payload ?? {}),
+                  reacoes: { ...(alvoMsg.payload?.reacoes ?? {}), deles: emoji || null },
+                },
+              }).eq("id", alvoMsg.id);
+            } else {
+              console.error("Reação para mensagem desconhecida:", alvo);
+            }
+          }
+          continue;
+        }
         const texto: string | null =
           msg.type === "text" ? msg.text?.body ?? null
           : msg.type === "button" ? msg.button?.text ?? null

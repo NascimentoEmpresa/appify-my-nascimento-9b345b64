@@ -12,9 +12,9 @@ import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Bot, Send, Search, ShieldAlert, Settings, User, MessageCircle, MousePointerClick, FileText, Inbox, AlertTriangle, Loader2 } from "lucide-react";
+import { Bot, Send, Search, ShieldAlert, Settings, User, MessageCircle, MousePointerClick, FileText, Inbox, AlertTriangle, Loader2, Check, CheckCheck, Paperclip, X, SmilePlus } from "lucide-react";
 import {
-  fmtHora, fmtTelefone, iniciais, motivoFalha, MENU_TODAS,
+  fmtHora, fmtTelefone, iniciais, motivoFalha, MENU_TODAS, EMOJIS_REACAO,
   type WaConversa, type WaContato, type WaMensagem, type WaMidia, type WaPasta,
 } from "./types";
 
@@ -36,6 +36,8 @@ export default function WhatsAppInbox() {
   const [busca, setBusca] = useState("");
   const [texto, setTexto] = useState("");
   const [enviando, setEnviando] = useState(false);
+  const [anexo, setAnexo] = useState<File | null>(null);
+  const inputArquivo = useRef<HTMLInputElement>(null);
   // Pasta aberta. Começa vazio e é resolvido assim que as pastas carregam: quem
   // tem "todas as conversas" abre nela; quem não tem, abre na primeira pasta
   // liberada — senão a tela abriria vazia sem explicar por quê.
@@ -141,17 +143,68 @@ export default function WhatsAppInbox() {
     qc.invalidateQueries({ queryKey: ["wa-conversas"] });
   };
 
-  const enviar = async () => {
-    if (!sel || !texto.trim() || enviando) return;
-    setEnviando(true);
+  // Reagir/desreagir. Clicar no emoji que já está marcado remove (a Meta usa
+  // emoji vazio pra isso). Só vale pra mensagem que já tem wamid.
+  const reagir = async (m: WaMensagem, emoji: string) => {
+    if (!sel || !m.wa_message_id) return;
+    const atual = m.payload?.reacoes?.nossa ?? null;
     const { error } = await supabase.functions.invoke("whatsapp-enviar", {
-      body: { conversa_id: sel.id, texto: texto.trim() },
+      body: { conversa_id: sel.id, reagir: { wa_message_id: m.wa_message_id, emoji: atual === emoji ? "" : emoji } },
     });
-    setEnviando(false);
-    if (error) { toast({ title: "Falha ao enviar", description: String(error.message ?? error), variant: "destructive" }); return; }
-    setTexto("");
+    if (error) { toast({ title: "Não deu para reagir", description: String(error.message ?? error), variant: "destructive" }); return; }
     qc.invalidateQueries({ queryKey: ["wa-mensagens", sel.id] });
-    qc.invalidateQueries({ queryKey: ["wa-conversas"] });
+  };
+
+  // Anexo pendente: escolhido/colado, ainda não enviado. Fica aqui e não no
+  // envio direto pra dar tempo de conferir o print e escrever uma legenda.
+  const anexar = (arquivo: File | null | undefined) => {
+    if (!arquivo) return;
+    const limite = arquivo.type.startsWith("image/") ? 5 : arquivo.type.startsWith("video/") || arquivo.type.startsWith("audio/") ? 16 : 100;
+    if (arquivo.size > limite * 1024 * 1024) {
+      toast({ title: "Arquivo grande demais", description: `O WhatsApp aceita até ${limite} MB para esse tipo.`, variant: "destructive" });
+      return;
+    }
+    setAnexo(arquivo);
+  };
+
+  // Ctrl+V com print na área de transferência: o navegador entrega o PNG como
+  // item de arquivo do evento de colar. Texto copiado segue colando normal.
+  const aoColar = (e: React.ClipboardEvent) => {
+    const arquivo = Array.from(e.clipboardData.files)[0];
+    if (!arquivo) return;
+    e.preventDefault();
+    anexar(arquivo);
+  };
+
+  const enviar = async () => {
+    if (!sel || enviando) return;
+    if (!texto.trim() && !anexo) return;
+    setEnviando(true);
+    try {
+      let midia: { storage_path: string; mime_type: string; filename: string } | undefined;
+      if (anexo) {
+        // Sobe direto pro bucket: base64 dentro do JSON estouraria o limite de
+        // corpo da edge function num print grande.
+        const nome = anexo.name || `colado-${Date.now()}.png`;
+        const caminho = `saida/${sel.id}/${crypto.randomUUID()}-${nome}`.slice(0, 400);
+        const { error: erroUp } = await supabase.storage.from("whatsapp-midia")
+          .upload(caminho, anexo, { contentType: anexo.type || "application/octet-stream" });
+        if (erroUp) throw new Error(`Falha ao subir o arquivo: ${erroUp.message}`);
+        midia = { storage_path: caminho, mime_type: anexo.type || "application/octet-stream", filename: nome };
+      }
+      const { error } = await supabase.functions.invoke("whatsapp-enviar", {
+        body: { conversa_id: sel.id, texto: texto.trim(), ...(midia ? { midia } : {}) },
+      });
+      if (error) throw new Error(String(error.message ?? error));
+      setTexto("");
+      setAnexo(null);
+      qc.invalidateQueries({ queryKey: ["wa-mensagens", sel.id] });
+      qc.invalidateQueries({ queryKey: ["wa-conversas"] });
+    } catch (e: any) {
+      toast({ title: "Falha ao enviar", description: String(e?.message ?? e), variant: "destructive" });
+    } finally {
+      setEnviando(false);
+    }
   };
 
   const filtradas = useMemo(() => {
@@ -290,8 +343,11 @@ export default function WhatsAppInbox() {
               {mensagens.map((m) => {
                 const saida = m.direcao === "saida";
                 return (
-                  <div key={m.id} className={`flex ${saida ? "justify-end" : "justify-start"}`}>
-                    <div className={`max-w-[75%] rounded-lg px-3 py-1.5 text-sm shadow-sm ${saida ? "bg-success/90 text-success-foreground" : "bg-card"}`}>
+                  <div key={m.id} className={`group flex items-center gap-1 ${saida ? "justify-end" : "justify-start"}`}>
+                    {/* Seletor de reação: aparece no hover, do lado de fora da
+                        bolha, para não empurrar o texto nem cobrir o conteúdo. */}
+                    {saida && m.wa_message_id && <SeletorReacao onEscolher={(e) => reagir(m, e)} atual={m.payload?.reacoes?.nossa} />}
+                    <div className={`relative max-w-[75%] rounded-lg px-3 py-1.5 text-sm shadow-sm ${saida ? "bg-success/90 text-success-foreground" : "bg-card"}`}>
                       {m.origem === "bot" && <p className="mb-0.5 flex items-center gap-1 text-[10px] font-semibold uppercase opacity-80"><Bot className="h-3 w-3" /> bot</p>}
                       {!saida && m.payload?.reply_id && (
                         <p className="mb-0.5 flex items-center gap-1 text-[10px] font-semibold uppercase opacity-70"><MousePointerClick className="h-3 w-3" /> resposta</p>
@@ -315,10 +371,28 @@ export default function WhatsAppInbox() {
                           <span>{motivoFalha(m.payload?.erro)}</span>
                         </p>
                       )}
-                      <p className={`mt-0.5 text-right text-[10px] ${saida ? "opacity-80" : "text-muted-foreground"}`}>
-                        {fmtHora(m.criada_em)}{saida && m.status ? ` · ${m.status}` : ""}
+                      <p className={`mt-0.5 flex items-center justify-end gap-1 text-right text-[10px] ${saida ? "opacity-80" : "text-muted-foreground"}`}>
+                        {fmtHora(m.criada_em)}
+                        {saida && <TiqueStatus status={m.status} />}
                       </p>
+                      {/* Chips das reações, "pendurados" na borda de baixo da
+                          bolha como no WhatsApp. */}
+                      {(m.payload?.reacoes?.deles || m.payload?.reacoes?.nossa) && (
+                        <div className={`absolute -bottom-2.5 flex gap-0.5 ${saida ? "left-2" : "right-2"}`}>
+                          {m.payload?.reacoes?.deles && (
+                            <span className="rounded-full border border-border bg-card px-1 text-[11px] shadow-sm" title="Reação do contato">
+                              {m.payload.reacoes.deles}
+                            </span>
+                          )}
+                          {m.payload?.reacoes?.nossa && (
+                            <span className="rounded-full border border-border bg-card px-1 text-[11px] shadow-sm" title="Sua reação">
+                              {m.payload.reacoes.nossa}
+                            </span>
+                          )}
+                        </div>
+                      )}
                     </div>
+                    {!saida && m.wa_message_id && <SeletorReacao onEscolher={(e) => reagir(m, e)} atual={m.payload?.reacoes?.nossa} />}
                   </div>
                 );
               })}
@@ -327,16 +401,34 @@ export default function WhatsAppInbox() {
             </div>
 
             {/* Composer. Menus de botões são configurados no Chatbot e enviados
-                pelo bot; aqui o atendente só escreve texto. */}
-            <div className="shrink-0 border-t border-border p-3">
+                pelo bot; aqui o atendente escreve texto e pode anexar arquivo
+                (clipe, arrastar ou Ctrl+V com print na área de transferência). */}
+            <div
+              className="shrink-0 border-t border-border p-3"
+              onDragOver={(e) => e.preventDefault()}
+              onDrop={(e) => { e.preventDefault(); anexar(e.dataTransfer.files?.[0]); }}
+            >
+              {anexo && <PreviaAnexo arquivo={anexo} onRemover={() => setAnexo(null)} />}
               <div className="flex items-end gap-2">
+                <input
+                  ref={inputArquivo} type="file" className="hidden"
+                  onChange={(e) => { anexar(e.target.files?.[0]); e.target.value = ""; }}
+                />
+                <Button
+                  variant="outline" size="icon" className="h-10 w-10 shrink-0"
+                  title="Anexar arquivo (ou cole um print com Ctrl+V)"
+                  onClick={() => inputArquivo.current?.click()} disabled={enviando}
+                >
+                  <Paperclip className="h-4 w-4" />
+                </Button>
                 <Textarea
                   rows={1} className="max-h-32 min-h-[40px] resize-none"
-                  placeholder="Digite uma mensagem…"
+                  placeholder={anexo ? "Legenda (opcional)…" : "Digite uma mensagem…"}
                   value={texto} onChange={(e) => setTexto(e.target.value)}
+                  onPaste={aoColar}
                   onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); enviar(); } }}
                 />
-                <Button className="shrink-0 gap-1.5 bg-success text-success-foreground hover:bg-success/90" onClick={enviar} disabled={!texto.trim() || enviando}>
+                <Button className="shrink-0 gap-1.5 bg-success text-success-foreground hover:bg-success/90" onClick={enviar} disabled={(!texto.trim() && !anexo) || enviando}>
                   {enviando
                     ? <><Loader2 className="h-4 w-4 animate-spin" /> Enviando…</>
                     : <><Send className="h-4 w-4" /> Enviar</>}
@@ -352,6 +444,93 @@ export default function WhatsAppInbox() {
         )}
       </Card>
     </div>
+  );
+}
+
+// Seletor de reação. Fica invisível até passar o mouse na linha da mensagem
+// (group-hover) para não poluir a conversa com seis emojis por bolha.
+function SeletorReacao({ onEscolher, atual }: { onEscolher: (emoji: string) => void; atual?: string | null }) {
+  const [aberto, setAberto] = useState(false);
+  return (
+    <div className="relative shrink-0">
+      <button
+        type="button"
+        onClick={() => setAberto((v) => !v)}
+        className={`rounded-full p-1 text-muted-foreground transition hover:bg-muted ${aberto ? "opacity-100" : "opacity-0 group-hover:opacity-100"}`}
+        title="Reagir"
+      >
+        <SmilePlus className="h-4 w-4" />
+      </button>
+      {aberto && (
+        <>
+          {/* Camada de fora fecha ao clicar em qualquer lugar. */}
+          <div className="fixed inset-0 z-10" onClick={() => setAberto(false)} />
+          <div className="absolute bottom-full z-20 mb-1 flex gap-0.5 rounded-full border border-border bg-popover p-1 shadow-md">
+            {EMOJIS_REACAO.map((e) => (
+              <button
+                key={e} type="button"
+                onClick={() => { onEscolher(e); setAberto(false); }}
+                className={`rounded-full px-1 text-base leading-none transition hover:scale-125 ${atual === e ? "bg-muted" : ""}`}
+                title={atual === e ? "Remover reação" : `Reagir com ${e}`}
+              >
+                {e}
+              </button>
+            ))}
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+// Prévia do que vai ser enviado. Print colado sem isso vira envio às cegas —
+// a pessoa só descobriria o que mandou depois que o contato recebeu.
+function PreviaAnexo({ arquivo, onRemover }: { arquivo: File; onRemover: () => void }) {
+  const [url, setUrl] = useState<string | null>(null);
+  useEffect(() => {
+    if (!arquivo.type.startsWith("image/")) { setUrl(null); return; }
+    const u = URL.createObjectURL(arquivo);
+    setUrl(u);
+    return () => URL.revokeObjectURL(u); // sem isso o blob vaza a cada print colado
+  }, [arquivo]);
+
+  const kb = arquivo.size / 1024;
+  const tamanho = kb >= 1024 ? `${(kb / 1024).toFixed(1)} MB` : `${Math.max(1, Math.round(kb))} KB`;
+  return (
+    <div className="mb-2 flex items-center gap-3 rounded border border-border bg-muted/30 p-2">
+      {url
+        ? <img src={url} alt="" className="h-14 w-14 rounded object-cover" />
+        : <FileText className="h-8 w-8 shrink-0 text-muted-foreground" />}
+      <div className="min-w-0 flex-1">
+        <p className="truncate text-xs font-medium">{arquivo.name || "print colado"}</p>
+        <p className="text-[11px] text-muted-foreground">{tamanho}</p>
+      </div>
+      <Button variant="ghost" size="sm" className="h-8 w-8 shrink-0 p-0" onClick={onRemover} title="Remover anexo">
+        <X className="h-4 w-4" />
+      </Button>
+    </div>
+  );
+}
+
+// Tiques de entrega, como no WhatsApp. Os estados vêm do webhook de status da
+// Meta (sent/delivered/read), que já eram gravados — só não apareciam como
+// ícone. "lida" só chega se o contato mantém a confirmação de leitura ligada;
+// com ela desligada a mensagem para em "entregue" para sempre.
+const TIQUES: Record<string, { icone: typeof Check; classe: string; titulo: string }> = {
+  enviada:  { icone: Check,      classe: "opacity-70",     titulo: "Enviada — a Meta aceitou" },
+  entregue: { icone: CheckCheck, classe: "opacity-70",     titulo: "Entregue no aparelho" },
+  lida:     { icone: CheckCheck, classe: "text-info",      titulo: "Visualizada" },
+  erro:     { icone: AlertTriangle, classe: "text-destructive", titulo: "Falhou — não foi entregue" },
+};
+
+function TiqueStatus({ status }: { status: string }) {
+  const t = TIQUES[status];
+  if (!t) return null;
+  const Icone = t.icone;
+  return (
+    <span title={t.titulo} aria-label={t.titulo} className="inline-flex">
+      <Icone className={`h-3.5 w-3.5 shrink-0 ${t.classe}`} />
+    </span>
   );
 }
 
