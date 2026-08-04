@@ -312,6 +312,42 @@ export default function Pipeline() {
         )}
       </div>
 
+      {/* Resumo contextual de filtros */}
+      {(mesAtivo !== null || anoAtivo !== null || responsavelFiltro !== "Todos") && filtered.length > 0 && (() => {
+        const periodo = [
+          mesAtivo !== null ? MESES[mesAtivo] : null,
+          anoAtivo !== null ? String(anoAtivo) : null,
+        ].filter(Boolean).join("/");
+
+        if (responsavelFiltro !== "Todos") {
+          const porFase: Record<string, number> = {};
+          for (const i of filtered) {
+            porFase[i.fase] = (porFase[i.fase] ?? 0) + 1;
+          }
+          const ganhos = filtered.filter((i) => i.fase === "Finalizada" && i.posicao === 1).length;
+          const finalizados = porFase["Finalizada"] ?? 0;
+          const taxa = finalizados > 0 ? Math.round((ganhos / finalizados) * 100) : null;
+          const partes = Object.entries(porFase).map(([fase, qtd]) => `${qtd} ${fase}`);
+          return (
+            <p className="text-xs text-muted-foreground">
+              <span className="font-semibold text-foreground">{responsavelFiltro}</span>
+              {periodo ? ` em ${periodo}` : ""}: {partes.join(" · ")}
+              {taxa !== null && (
+                <span className="ml-2 text-emerald-600 font-semibold">{taxa}% vitória</span>
+              )}
+            </p>
+          );
+        }
+
+        return (
+          <p className="text-xs text-muted-foreground">
+            <span className="font-semibold text-foreground tabular-nums">{filtered.length}</span>
+            {` edital${filtered.length !== 1 ? "is" : ""}`}
+            {periodo ? ` em ${periodo}` : ""}
+          </p>
+        );
+      })()}
+
       {/* Conteúdo */}
       {!empresaAtivaId ? (
         <EmptyState title="Selecione uma empresa" message="Escolha uma empresa para visualizar a grade de licitações." />
