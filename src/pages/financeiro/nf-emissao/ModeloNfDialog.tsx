@@ -97,6 +97,10 @@ const EMPTY_VARIACAO: VariacaoForm = {
 // aqui é sempre string editável, convertida pra fração só na hora de salvar.
 const pctToStr = (v: number | null | undefined) => (v ? String(v * 100) : "");
 const pctToNum = (v: string) => (v.trim() ? Number(v) / 100 : null);
+// Placeholder mostra o valor que vai valer de fato (herdado do nível acima),
+// não a palavra genérica "padrão" — assim o usuário vê o número sem precisar
+// entender a cascata contrato → nota → item.
+const placeholderPct = (v: number | null) => (v == null ? "padrão" : String(v * 100));
 
 export function ModeloNfDialog({
   open,
@@ -110,6 +114,18 @@ export function ModeloNfDialog({
   postosVigentes: PostoVigente[];
 }) {
   const { data: modelos = [] } = useModelosNf(contrato.id);
+  // "0" no contrato é indistinguível de "nunca configurado" hoje (mesma
+  // regra usada em EmissaoNF.tsx) — se todos os 5 campos forem 0, tratamos
+  // como não configurado, senão usamos os valores reais pra cascata.
+  const contratoConfigurado =
+    contrato.issqn_pct !== 0 ||
+    contrato.ir_pct !== 0 ||
+    contrato.cofins_pct !== 0 ||
+    contrato.pis_pct !== 0 ||
+    contrato.csll_pct !== 0;
+  function pctContrato(campo: "issqn_pct" | "ir_pct" | "cofins_pct" | "pis_pct" | "csll_pct"): number | null {
+    return contratoConfigurado ? contrato[campo] : null;
+  }
   const salvarModelo = useSalvarModeloNf();
   const salvarItens = useSalvarModeloItens();
   const excluirModelo = useExcluirModeloNf();
@@ -522,31 +538,38 @@ export function ModeloNfDialog({
             </div>
           </div>
 
-          <div className="space-y-1.5 rounded-lg border bg-muted/20 p-2">
+          <div className="space-y-1.5 rounded-lg border border-l-4 border-l-sky-400 bg-muted/20 p-2">
             <Label className="text-xs">
-              Retenção fiscal desta nota <span className="font-normal text-muted-foreground">(opcional — em branco usa o padrão do contrato)</span>
+              <span className="mr-1.5 rounded bg-sky-100 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-sky-700">
+                Nota
+              </span>
+              Retenção fiscal desta nota{" "}
+              <span className="font-normal text-muted-foreground">
+                (opcional — em branco usa o do contrato, mostrado como sugestão abaixo)
+              </span>
             </Label>
             <div className="grid grid-cols-5 gap-2">
-              <div>
-                <Label className="text-[10px] text-muted-foreground">ISSQN (%)</Label>
-                <Input className="h-8 text-xs" type="number" step="0.01" placeholder="padrão" value={form.issqnPct} onChange={(e) => setForm((f) => ({ ...f, issqnPct: e.target.value }))} />
-              </div>
-              <div>
-                <Label className="text-[10px] text-muted-foreground">IR (%)</Label>
-                <Input className="h-8 text-xs" type="number" step="0.01" placeholder="padrão" value={form.irPct} onChange={(e) => setForm((f) => ({ ...f, irPct: e.target.value }))} />
-              </div>
-              <div>
-                <Label className="text-[10px] text-muted-foreground">COFINS (%)</Label>
-                <Input className="h-8 text-xs" type="number" step="0.01" placeholder="padrão" value={form.cofinsPct} onChange={(e) => setForm((f) => ({ ...f, cofinsPct: e.target.value }))} />
-              </div>
-              <div>
-                <Label className="text-[10px] text-muted-foreground">PIS (%)</Label>
-                <Input className="h-8 text-xs" type="number" step="0.01" placeholder="padrão" value={form.pisPct} onChange={(e) => setForm((f) => ({ ...f, pisPct: e.target.value }))} />
-              </div>
-              <div>
-                <Label className="text-[10px] text-muted-foreground">CSLL (%)</Label>
-                <Input className="h-8 text-xs" type="number" step="0.01" placeholder="padrão" value={form.csllPct} onChange={(e) => setForm((f) => ({ ...f, csllPct: e.target.value }))} />
-              </div>
+              {(
+                [
+                  ["ISSQN", "issqnPct", "issqn_pct"],
+                  ["IR", "irPct", "ir_pct"],
+                  ["COFINS", "cofinsPct", "cofins_pct"],
+                  ["PIS", "pisPct", "pis_pct"],
+                  ["CSLL", "csllPct", "csll_pct"],
+                ] as const
+              ).map(([label, campo, campoContrato]) => (
+                <div key={campo}>
+                  <Label className="text-[10px] text-muted-foreground">{label} (%)</Label>
+                  <Input
+                    className="h-8 text-xs"
+                    type="number"
+                    step="0.01"
+                    placeholder={placeholderPct(pctContrato(campoContrato))}
+                    value={form[campo]}
+                    onChange={(e) => setForm((f) => ({ ...f, [campo]: e.target.value }))}
+                  />
+                </div>
+              ))}
             </div>
           </div>
 
@@ -569,7 +592,18 @@ export function ModeloNfDialog({
                 <Plus className="h-3.5 w-3.5 mr-1" /> Item
               </Button>
             </div>
-            {itensForm.map((it, i) => (
+            {(() => {
+              // Efetivo da nota pra cada tributo: override da nota, senão o
+              // do contrato — é o que os campos de item abaixo vão herdar
+              // quando deixados em branco.
+              const notaEfetivoPct: Record<"issqn_pct" | "ir_pct" | "cofins_pct" | "pis_pct" | "csll_pct", number | null> = {
+                issqn_pct: pctToNum(form.issqnPct) ?? pctContrato("issqn_pct"),
+                ir_pct: pctToNum(form.irPct) ?? pctContrato("ir_pct"),
+                cofins_pct: pctToNum(form.cofinsPct) ?? pctContrato("cofins_pct"),
+                pis_pct: pctToNum(form.pisPct) ?? pctContrato("pis_pct"),
+                csll_pct: pctToNum(form.csllPct) ?? pctContrato("csll_pct"),
+              };
+              return itensForm.map((it, i) => (
               <div key={i} className="space-y-2 rounded-lg border p-2">
               <div className="grid grid-cols-12 gap-2 items-end">
                 <div className="col-span-3">
@@ -635,27 +669,30 @@ export function ModeloNfDialog({
                 </div>
               </div>
 
-              <div className="space-y-1">
+              <div className="ml-4 space-y-1 rounded-md border-l-4 border-l-amber-300 bg-amber-50/40 py-1 pl-2">
                 <Label className="text-[10px] text-muted-foreground">
-                  Retenção própria deste item (opcional — em branco usa o padrão da nota; use quando esse posto tem IR/ISSQN diferente dos demais)
+                  <span className="mr-1.5 rounded bg-amber-100 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-amber-700">
+                    Item
+                  </span>
+                  Retenção própria deste item (opcional — em branco usa o da nota; use quando esse posto tem IR/ISSQN diferente dos demais)
                 </Label>
                 <div className="flex flex-wrap gap-2">
                   {(
                     [
-                      ["ISSQN", "issqnPct"],
-                      ["IR", "irPct"],
-                      ["COFINS", "cofinsPct"],
-                      ["PIS", "pisPct"],
-                      ["CSLL", "csllPct"],
+                      ["ISSQN", "issqnPct", "issqn_pct"],
+                      ["IR", "irPct", "ir_pct"],
+                      ["COFINS", "cofinsPct", "cofins_pct"],
+                      ["PIS", "pisPct", "pis_pct"],
+                      ["CSLL", "csllPct", "csll_pct"],
                     ] as const
-                  ).map(([label, campo]) => (
+                  ).map(([label, campo, campoNota]) => (
                     <div key={campo} className="w-16">
                       <span className="block text-[9px] leading-tight text-muted-foreground">{label} (%)</span>
                       <Input
                         className="h-7 px-1.5 text-xs"
                         type="number"
                         step="0.01"
-                        placeholder="padrão"
+                        placeholder={placeholderPct(notaEfetivoPct[campoNota])}
                         value={it[campo]}
                         onChange={(e) => updateItem(i, { [campo]: e.target.value })}
                       />
@@ -664,7 +701,8 @@ export function ModeloNfDialog({
                 </div>
               </div>
               </div>
-            ))}
+              ));
+            })()}
           </div>
 
           <div className="flex gap-2">

@@ -125,7 +125,11 @@ export default function NotasConcluidasTab() {
         if (!termo) return true;
         return contrato.nome.toLowerCase().includes(termo) || contrato.cliente.toLowerCase().includes(termo);
       })
-      .sort((a, b) => a.contrato.nome.localeCompare(b.contrato.nome));
+      .sort((a, b) => {
+        const encerradoA = a.contrato.status === "encerrado" ? 1 : 0;
+        const encerradoB = b.contrato.status === "encerrado" ? 1 : 0;
+        return encerradoA !== encerradoB ? encerradoA - encerradoB : a.contrato.nome.localeCompare(b.contrato.nome);
+      });
   }, [contratos, concluidas, busca]);
 
   const contratoAtual = contratos.find((c) => c.id === contratoSel) ?? null;

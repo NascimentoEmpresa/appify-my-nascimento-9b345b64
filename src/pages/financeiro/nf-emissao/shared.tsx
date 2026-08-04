@@ -1,6 +1,24 @@
 export const fmtMoney = (n: number) => new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(n || 0);
 export const fmtPct = (n: number) => `${(n * 100).toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}%`;
 export const fmtDate = (d: string | null) => (d ? new Date(d + "T00:00:00").toLocaleDateString("pt-BR") : "-");
+// "2026-07" -> "07/2026" (competência já vem truncada em YYYY-MM em vários lugares)
+export const fmtCompetenciaCurta = (c: string) => `${c.slice(5, 7)}/${c.slice(0, 4)}`;
+// "2026-07" -> "2026-08" (mês seguinte, ainda em YYYY-MM)
+export function proximaCompetencia(c: string): string {
+  const ano = Number(c.slice(0, 4));
+  const mes = Number(c.slice(5, 7));
+  const proxMes = mes === 12 ? 1 : mes + 1;
+  const proxAno = mes === 12 ? ano + 1 : ano;
+  return `${proxAno}-${String(proxMes).padStart(2, "0")}`;
+}
+// "2026-07" -> "2026-06" (mês anterior, ainda em YYYY-MM)
+export function competenciaAnterior(c: string): string {
+  const ano = Number(c.slice(0, 4));
+  const mes = Number(c.slice(5, 7));
+  const antMes = mes === 1 ? 12 : mes - 1;
+  const antAno = mes === 1 ? ano - 1 : ano;
+  return `${antAno}-${String(antMes).padStart(2, "0")}`;
+}
 
 export const STATUS_LABEL: Record<string, string> = {
   rascunho: "Rascunho",
