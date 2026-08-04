@@ -47,6 +47,11 @@ export function itemVazio(ordem: number) {
     outros_descontos_pos_emissao: 0,
     qtd_colaboradores: 0,
     inss_categoria: "normais" as const,
+    issqn_pct: null,
+    ir_pct: null,
+    cofins_pct: null,
+    pis_pct: null,
+    csll_pct: null,
   };
 }
 

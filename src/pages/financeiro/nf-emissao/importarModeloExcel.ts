@@ -10,10 +10,15 @@ import { PostoVigente } from "@/hooks/usePlanilhaCusto";
 // levemente diferente do nome da aba) — por isso ficam null quando não
 // encontrados, em vez de quebrar a importação inteira.
 
+export interface ItemImportado {
+  valor: number | null;
+  posto: string | null;
+}
+
 export interface VariacaoImportada {
   variacao: string;
-  valorReferencia: number | null;
-  postoSugerido: string | null;
+  itens: ItemImportado[];
+  descricaoSugerida: string | null;
   issqnPct: number | null;
   irPct: number | null;
   cofinsPct: number | null;
@@ -52,8 +57,8 @@ export async function parseModeloExcel(arquivo: File, postosVigentes: PostoVigen
     if (!variacao) continue;
     const notaNome = String(row[1] ?? "").trim();
 
-    let valorReferencia: number | null = null;
-    let postoSugerido: string | null = null;
+    let itens: ItemImportado[] = [{ valor: null, posto: null }];
+    let descricaoSugerida: string | null = null;
     let issqnPct: number | null = null;
     let irPct: number | null = null;
     let cofinsPct: number | null = null;
@@ -63,8 +68,8 @@ export async function parseModeloExcel(arquivo: File, postosVigentes: PostoVigen
     const abaDetalhe = encontrarAbaDetalhe(wb.SheetNames, notaNome);
     if (abaDetalhe) {
       const detalhe = extrairDetalheNota(wb.Sheets[abaDetalhe], postosVigentes);
-      valorReferencia = detalhe.valor;
-      postoSugerido = detalhe.posto;
+      if (detalhe.itens.length > 0) itens = detalhe.itens;
+      descricaoSugerida = detalhe.descricaoServico;
       issqnPct = detalhe.issqnPct;
       irPct = detalhe.irPct;
       cofinsPct = detalhe.cofinsPct;
@@ -72,15 +77,51 @@ export async function parseModeloExcel(arquivo: File, postosVigentes: PostoVigen
       csllPct = detalhe.csllPct;
     }
 
-    resultado.push({ variacao, valorReferencia, postoSugerido, issqnPct, irPct, cofinsPct, pisPct, csllPct });
+    resultado.push({ variacao, itens, descricaoSugerida, issqnPct, irPct, cofinsPct, pisPct, csllPct });
   }
   return resultado;
 }
 
+const STOPWORDS_ABA = new Set(["NF", "COPA", "DE"]);
+
+function tokensAba(s: string): Set<string> {
+  const normalizado = s
+    .trim()
+    .toUpperCase()
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/\s+/g, " ");
+  return new Set(normalizado.split(" ").filter((t) => t && !STOPWORDS_ABA.has(t)));
+}
+
+// O nome da nota na "Lista NFs" às vezes não bate exatamente com o nome da
+// aba de detalhe (ex: "NF copa ELDORADO" na lista vs. aba "NF Eldorado" —
+// confirmado na planilha real da UFRGS Copa e Cozinha, onde essa palavra a
+// mais fazia o match por substring falhar e a nota ficar sem valor/posto).
+// Por isso comparamos por sobreposição de palavras significativas (ignorando
+// "NF"/"copa"/"de"), não por substring exata.
 function encontrarAbaDetalhe(sheetNames: string[], notaNome: string): string | null {
   if (!notaNome) return null;
   const exato = sheetNames.find((n) => n.trim().toLowerCase() === notaNome.toLowerCase());
   if (exato) return exato;
+
+  const alvoTokens = tokensAba(notaNome);
+  let melhor: string | null = null;
+  let melhorScore = 0;
+  for (const n of sheetNames) {
+    const candTokens = tokensAba(n);
+    if (candTokens.size === 0) continue;
+    const intersecao = [...candTokens].filter((t) => alvoTokens.has(t)).length;
+    const score = intersecao / candTokens.size;
+    if (score > melhorScore) {
+      melhorScore = score;
+      melhor = n;
+    }
+  }
+  if (melhorScore >= 0.6) return melhor;
+
+  // fallback: substring bruta (cobre casos como "PRÉDIO I" cujo nome já é
+  // simples o bastante pra não precisar de tokenização)
   const alvo = notaNome.toLowerCase().replace(/\s+/g, " ");
   const parecido = sheetNames.find((n) => {
     const cand = n.trim().toLowerCase().replace(/\s+/g, " ");
@@ -127,22 +168,62 @@ function extrairRetencoes(linhas: unknown[][]): RetencoesExtraidas {
   return result;
 }
 
+// Uma nota pode ser composta por vários postos/unidades (ex: Veranópolis tem
+// notas com até 6 "Valor contrato exec. N" numa mesma aba — um por
+// escola/prédio) — o cabeçalho repete o rótulo com sufixo numérico por
+// coluna, e a linha seguinte traz os valores na mesma posição. Inspecionado
+// direto na planilha real (VERANÓPOLIS 01.2021.xlsm): a maioria das notas só
+// usa a coluna 1, mas várias têm 2 a 6 colunas populadas de uma vez — pegar
+// só a primeira (como o código fazia antes) subestimava o valor da nota.
 function extrairDetalheNota(
   ws: XLSX.WorkSheet,
   postosVigentes: PostoVigente[]
-): { valor: number | null; posto: string | null } & RetencoesExtraidas {
+): { itens: ItemImportado[]; descricaoServico: string | null } & RetencoesExtraidas {
   const linhas: unknown[][] = XLSX.utils.sheet_to_json(ws, { header: 1, raw: true, defval: "" });
   const retencoes = extrairRetencoes(linhas);
   for (let i = 0; i < linhas.length - 1; i++) {
     const linha = (linhas[i] ?? []).map((c) => String(c ?? "").trim().toUpperCase());
     const colDesc = linha.indexOf("DESCRIÇÃO DOS SERVIÇOS");
     if (colDesc === -1) continue;
-    const colValor = linha.findIndex((c) => (c ?? "").startsWith("VALOR CONTRATO EXEC"));
+
+    // O template só vem com 6 slots de "Valor contrato exec. N" prontos —
+    // quando uma nota precisa de mais (ex: Veranópolis com 7 unidades numa
+    // nota só), o analista estende manualmente a coluna reaproveitando o
+    // rótulo "Vlr bruto item N" (sem "- desc") na mesma linha de cabeçalho,
+    // em vez de criar "Valor contrato exec. 7". Confirmado na planilha real
+    // (VERANÓPOLIS 01.2021.xlsm, aba "NF 1 Limpeza Saúde", linha 28).
+    const colsValor: number[] = [];
+    linha.forEach((c, idx) => {
+      if (c.startsWith("VALOR CONTRATO EXEC") || /^VLR BRUTO ITEM \d+$/.test(c)) colsValor.push(idx);
+    });
+
     const proxima = linhas[i + 1] ?? [];
-    const descricao = String(proxima[colDesc] ?? "").toUpperCase();
-    const valorBruto = colValor >= 0 ? Number(proxima[colValor]) : NaN;
-    const posto = postosVigentes.find((p) => descricao.includes(p.posto.toUpperCase()))?.posto ?? null;
-    return { valor: !isNaN(valorBruto) ? valorBruto : null, posto, ...retencoes };
+    const descricaoOriginal = String(proxima[colDesc] ?? "").trim();
+    const descricaoUpper = descricaoOriginal.toUpperCase();
+
+    const itensPopulados = colsValor
+      .map((col) => Number(proxima[col]))
+      .filter((v) => !isNaN(v) && v !== 0);
+
+    if (itensPopulados.length === 0) {
+      return { itens: [], descricaoServico: descricaoOriginal || null, ...retencoes };
+    }
+
+    // Tenta casar os postos vigentes citados no texto (na ordem em que
+    // aparecem) com as colunas de valor populadas. Só atribui posto quando a
+    // contagem bate exatamente — senão fica null pra não vincular errado.
+    const postosNoTexto = postosVigentes
+      .map((p) => ({ posto: p.posto, idx: descricaoUpper.indexOf(p.posto.toUpperCase()) }))
+      .filter((p) => p.idx >= 0)
+      .sort((a, b) => a.idx - b.idx);
+    const postosParaZip = postosNoTexto.length === itensPopulados.length ? postosNoTexto.map((p) => p.posto) : null;
+
+    const itens: ItemImportado[] = itensPopulados.map((valor, idx) => ({
+      valor,
+      posto: postosParaZip ? postosParaZip[idx] : null,
+    }));
+
+    return { itens, descricaoServico: descricaoOriginal || null, ...retencoes };
   }
-  return { valor: null, posto: null, ...retencoes };
+  return { itens: [], descricaoServico: null, ...retencoes };
 }

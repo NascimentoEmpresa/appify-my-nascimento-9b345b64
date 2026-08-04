@@ -23,7 +23,7 @@ import {
   useRegistrarPagamentoNf,
   TIPOS_NOTA,
 } from "@/hooks/useNfEmissao";
-import { calcularItem, calcularTotaisNf, ItemCalculado } from "@/pages/financeiro/nf-emissao/calculos";
+import { calcularItem, calcularTotaisNf, pctEfetivo, ItemCalculado } from "@/pages/financeiro/nf-emissao/calculos";
 import { fmtMoney, fmtDate, situacaoEspecial } from "@/pages/financeiro/nf-emissao/shared";
 import { ItensNfEditor, ItemForm } from "@/pages/financeiro/nf-emissao/ItensNfEditor";
 import { registrarLogNf } from "@/pages/financeiro/nf-emissao/registrarLogNf";
@@ -93,6 +93,11 @@ function itemRowParaForm(r: NfEmissaoItemRow): ItemForm {
     outros_descontos_pos_emissao: r.outros_descontos_pos_emissao,
     qtd_colaboradores: r.qtd_colaboradores,
     inss_categoria: r.inss_categoria,
+    issqn_pct: r.issqn_pct,
+    ir_pct: r.ir_pct,
+    cofins_pct: r.cofins_pct,
+    pis_pct: r.pis_pct,
+    csll_pct: r.csll_pct,
   };
 }
 
@@ -373,7 +378,7 @@ function NfPagamentoDialog({ nf, onClose }: { nf: NfEmissaoRow | null; onClose: 
 
   const itensCalculados: ItemCalculado[] = useMemo(() => {
     if (!pctFiscais) return [];
-    return itens.map((it) => calcularItem(it, pctFiscais));
+    return itens.map((it) => calcularItem(it, pctEfetivo(it, pctFiscais)));
   }, [itens, pctFiscais]);
 
   const totais = useMemo(() => calcularTotaisNf(itensCalculados), [itensCalculados]);
@@ -489,7 +494,7 @@ function NfPagamentoDialog({ nf, onClose }: { nf: NfEmissaoRow | null; onClose: 
             onAddItem={() => {}}
             onRemoveItem={() => {}}
             onToggleExpandido={toggleExpandido}
-            onSelecionarPosto={() => {}}
+            onSelecionarPostos={() => {}}
             onQtdColaboradoresChange={() => {}}
           />
         )}

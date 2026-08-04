@@ -22,24 +22,50 @@ import {
   useImportarVariacoesDoExcel,
 } from "@/hooks/useNfEmissaoModelo";
 import { INSS_CATEGORIAS, InssCategoria } from "./calculos";
-import { parseModeloExcel, VariacaoImportada } from "./importarModeloExcel";
+import { parseModeloExcel } from "./importarModeloExcel";
+import { PostoMultiSelect } from "./PostoMultiSelect";
 
-const SEM_POSTO = "__manual__";
+interface PreviewItemRow {
+  valor: number | null;
+  postos: string[];
+  percentual: string;
+}
+
+interface PreviewRow {
+  variacao: string;
+  itens: PreviewItemRow[];
+  descricao: string;
+  issqnPctStr: string;
+  irPctStr: string;
+  cofinsPctStr: string;
+  pisPctStr: string;
+  csllPctStr: string;
+}
 
 interface ItemFormRow {
-  posto: string;
+  postos: string[];
   percentual: string;
   identificacao_padrao: string;
   inss_categoria: InssCategoria;
   valorReferencia: string;
+  issqnPct: string;
+  irPct: string;
+  cofinsPct: string;
+  pisPct: string;
+  csllPct: string;
 }
 
 const ITEM_VAZIO: ItemFormRow = {
-  posto: SEM_POSTO,
+  postos: [],
   percentual: "100",
   identificacao_padrao: "",
   inss_categoria: "normais",
   valorReferencia: "",
+  issqnPct: "",
+  irPct: "",
+  cofinsPct: "",
+  pisPct: "",
+  csllPct: "",
 };
 
 interface VariacaoForm {
@@ -52,6 +78,7 @@ interface VariacaoForm {
   cofinsPct: string;
   pisPct: string;
   csllPct: string;
+  descricao: string;
 }
 
 const EMPTY_VARIACAO: VariacaoForm = {
@@ -63,6 +90,7 @@ const EMPTY_VARIACAO: VariacaoForm = {
   cofinsPct: "",
   pisPct: "",
   csllPct: "",
+  descricao: "",
 };
 
 // Retenção do modelo é opcional (nulo = usa o padrão do contrato), então "%"
@@ -95,18 +123,7 @@ export function ModeloNfDialog({
   const [colarTexto, setColarTexto] = useState("");
   const [buscaModelo, setBuscaModelo] = useState("");
   const [importando, setImportando] = useState(false);
-  const [importPreview, setImportPreview] = useState<
-    | (VariacaoImportada & {
-        posto: string;
-        percentual: string;
-        issqnPctStr: string;
-        irPctStr: string;
-        cofinsPctStr: string;
-        pisPctStr: string;
-        csllPctStr: string;
-      })[]
-    | null
-  >(null);
+  const [importPreview, setImportPreview] = useState<PreviewRow[] | null>(null);
 
   const modelosFiltrados = useMemo(() => {
     const termo = buscaModelo.trim().toLowerCase();
@@ -129,11 +146,16 @@ export function ModeloNfDialog({
     if (itensExistentes.length === 0) return;
     setItensForm(
       itensExistentes.map((it) => ({
-        posto: it.posto ?? SEM_POSTO,
+        postos: it.postos && it.postos.length > 0 ? it.postos : it.posto ? [it.posto] : [],
         percentual: String(it.percentual),
         identificacao_padrao: it.identificacao_padrao ?? "",
         inss_categoria: it.inss_categoria,
         valorReferencia: it.ultimo_valor_unitario != null ? String(it.ultimo_valor_unitario) : "",
+        issqnPct: pctToStr(it.issqn_pct),
+        irPct: pctToStr(it.ir_pct),
+        cofinsPct: pctToStr(it.cofins_pct),
+        pisPct: pctToStr(it.pis_pct),
+        csllPct: pctToStr(it.csll_pct),
       }))
     );
   }, [form.id, itensExistentes]);
@@ -149,6 +171,7 @@ export function ModeloNfDialog({
       cofinsPct: pctToStr(m.cofins_pct),
       pisPct: pctToStr(m.pis_pct),
       csllPct: pctToStr(m.csll_pct),
+      descricao: m.descricao_padrao ?? "",
     });
   }
 
@@ -194,9 +217,11 @@ export function ModeloNfDialog({
       }
       setImportPreview(
         linhas.map((l) => ({
-          ...l,
-          posto: l.postoSugerido ?? SEM_POSTO,
-          percentual: "100",
+          variacao: l.variacao,
+          // Uma nota pode juntar vários postos/unidades (ex: Veranópolis) —
+          // cada item do Excel vira uma linha própria pra revisão.
+          itens: l.itens.map((it) => ({ valor: it.valor, postos: it.posto ? [it.posto] : [], percentual: "100" })),
+          descricao: l.descricaoSugerida ?? "",
           issqnPctStr: pctToStr(l.issqnPct),
           irPctStr: pctToStr(l.irPct),
           cofinsPctStr: pctToStr(l.cofinsPct),
@@ -215,8 +240,7 @@ export function ModeloNfDialog({
   function updatePreviewRow(
     i: number,
     patch: Partial<{
-      posto: string;
-      percentual: string;
+      descricao: string;
       issqnPctStr: string;
       irPctStr: string;
       cofinsPctStr: string;
@@ -225,6 +249,16 @@ export function ModeloNfDialog({
     }>
   ) {
     setImportPreview((arr) => (arr ? arr.map((r, k) => (k === i ? { ...r, ...patch } : r)) : arr));
+  }
+
+  function updatePreviewItem(rowIdx: number, itemIdx: number, patch: Partial<PreviewItemRow>) {
+    setImportPreview((arr) =>
+      arr
+        ? arr.map((r, k) =>
+            k === rowIdx ? { ...r, itens: r.itens.map((it, ik) => (ik === itemIdx ? { ...it, ...patch } : it)) } : r
+          )
+        : arr
+    );
   }
 
   async function handleConfirmarImport() {
@@ -236,9 +270,13 @@ export function ModeloNfDialog({
         ordemInicial: modelos.length + 1,
         linhas: importPreview.map((r) => ({
           variacao: r.variacao,
-          posto: r.posto === SEM_POSTO ? null : r.posto,
-          percentual: Number(r.percentual) || 100,
-          valorReferencia: r.valorReferencia,
+          itens: r.itens.map((it) => ({
+            posto: it.postos[0] ?? null,
+            postos: it.postos.length > 0 ? it.postos : null,
+            percentual: Number(it.percentual) || 100,
+            valorReferencia: it.valor,
+          })),
+          descricao: r.descricao.trim() || null,
           issqnPct: pctToNum(r.issqnPctStr),
           irPct: pctToNum(r.irPctStr),
           cofinsPct: pctToNum(r.cofinsPctStr),
@@ -281,15 +319,22 @@ export function ModeloNfDialog({
         cofins_pct: pctToNum(form.cofinsPct),
         pis_pct: pctToNum(form.pisPct),
         csll_pct: pctToNum(form.csllPct),
+        descricao_padrao: form.descricao.trim() || null,
       });
       await salvarItens.mutateAsync({
         modeloId,
         itens: itensForm.map((it) => ({
-          posto: it.posto === SEM_POSTO ? null : it.posto,
+          posto: it.postos[0] ?? null,
+          postos: it.postos.length > 0 ? it.postos : null,
           percentual: Number(it.percentual) || 100,
           identificacao_padrao: it.identificacao_padrao.trim() || null,
           inss_categoria: it.inss_categoria,
           ultimo_valor_unitario: it.valorReferencia.trim() ? Number(it.valorReferencia) : null,
+          issqn_pct: pctToNum(it.issqnPct),
+          ir_pct: pctToNum(it.irPct),
+          cofins_pct: pctToNum(it.cofinsPct),
+          pis_pct: pctToNum(it.pisPct),
+          csll_pct: pctToNum(it.csllPct),
         })),
       });
       toast.success("Modelo salvo.");
@@ -312,7 +357,7 @@ export function ModeloNfDialog({
 
   return (
     <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
-      <DialogContent className="max-w-4xl max-h-[85vh] overflow-y-auto">
+      <DialogContent className="max-w-5xl max-h-[85vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>Modelo de NFs — {contrato.nome}</DialogTitle>
           <DialogDescription>
@@ -368,8 +413,10 @@ export function ModeloNfDialog({
                   <TableHeader>
                     <TableRow>
                       <TableHead>Variação</TableHead>
-                      <TableHead>Valor de referência</TableHead>
-                      <TableHead className="w-40">Posto sugerido</TableHead>
+                      <TableHead className="w-64">
+                        Itens (valor + posto) <span className="font-normal text-muted-foreground">— uma nota pode ter mais de um</span>
+                      </TableHead>
+                      <TableHead className="w-48">Descrição</TableHead>
                       <TableHead>Retenções (% — em branco usa o padrão do contrato)</TableHead>
                     </TableRow>
                   </TableHeader>
@@ -377,25 +424,32 @@ export function ModeloNfDialog({
                     {importPreview.map((r, i) => (
                       <TableRow key={i}>
                         <TableCell className="text-xs font-medium align-top pt-2.5">{r.variacao}</TableCell>
-                        <TableCell className="text-xs align-top pt-2.5">
-                          {r.valorReferencia != null
-                            ? new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(r.valorReferencia)
-                            : "—"}
+                        <TableCell className="align-top">
+                          <div className="space-y-1.5">
+                            {r.itens.map((it, itemIdx) => (
+                              <div key={itemIdx} className="flex items-center gap-1.5">
+                                <span className="w-20 shrink-0 text-xs">
+                                  {it.valor != null
+                                    ? new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(it.valor)
+                                    : "—"}
+                                </span>
+                                <PostoMultiSelect
+                                  postosVigentes={postosVigentes}
+                                  value={it.postos}
+                                  onChange={(postos) => updatePreviewItem(i, itemIdx, { postos })}
+                                  placeholder="Nenhum (manual)"
+                                />
+                              </div>
+                            ))}
+                          </div>
                         </TableCell>
                         <TableCell className="align-top">
-                          <Select value={r.posto} onValueChange={(v) => updatePreviewRow(i, { posto: v })}>
-                            <SelectTrigger className="h-8 text-xs">
-                              <SelectValue />
-                            </SelectTrigger>
-                            <SelectContent>
-                              <SelectItem value={SEM_POSTO}>Nenhum (manual)</SelectItem>
-                              {postosVigentes.map((p) => (
-                                <SelectItem key={p.posto} value={p.posto}>
-                                  {p.posto}
-                                </SelectItem>
-                              ))}
-                            </SelectContent>
-                          </Select>
+                          <Textarea
+                            className="h-16 text-xs"
+                            placeholder="—"
+                            value={r.descricao}
+                            onChange={(e) => updatePreviewRow(i, { descricao: e.target.value })}
+                          />
                         </TableCell>
                         <TableCell className="align-top">
                           <div className="flex flex-wrap gap-1.5">
@@ -496,6 +550,18 @@ export function ModeloNfDialog({
             </div>
           </div>
 
+          <div>
+            <Label className="text-xs">
+              Descrição <span className="font-normal text-muted-foreground">(opcional — pré-preenche o campo Descrição da NF ao abrir esta variação)</span>
+            </Label>
+            <Textarea
+              rows={3}
+              placeholder="Ex: Prestação de serviços de limpeza, conforme contrato nº..."
+              value={form.descricao}
+              onChange={(e) => setForm((f) => ({ ...f, descricao: e.target.value }))}
+            />
+          </div>
+
           <div className="space-y-2">
             <div className="flex items-center justify-between">
               <Label className="text-xs">Itens (postos que compõem esta nota)</Label>
@@ -504,22 +570,16 @@ export function ModeloNfDialog({
               </Button>
             </div>
             {itensForm.map((it, i) => (
-              <div key={i} className="grid grid-cols-12 gap-2 items-end rounded-lg border p-2">
+              <div key={i} className="space-y-2 rounded-lg border p-2">
+              <div className="grid grid-cols-12 gap-2 items-end">
                 <div className="col-span-3">
-                  <Label className="text-[10px] text-muted-foreground">Posto</Label>
-                  <Select value={it.posto} onValueChange={(v) => updateItem(i, { posto: v })}>
-                    <SelectTrigger className="h-8 text-xs">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value={SEM_POSTO}>Nenhum (manual)</SelectItem>
-                      {postosVigentes.map((p) => (
-                        <SelectItem key={p.posto} value={p.posto}>
-                          {p.posto}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+                  <Label className="text-[10px] text-muted-foreground">Posto(s) — pode juntar mais de um</Label>
+                  <PostoMultiSelect
+                    postosVigentes={postosVigentes}
+                    value={it.postos}
+                    onChange={(postos) => updateItem(i, { postos })}
+                    placeholder="Nenhum (manual)"
+                  />
                 </div>
                 <div className="col-span-2">
                   <Label className="text-[10px] text-muted-foreground">% do posto</Label>
@@ -548,7 +608,7 @@ export function ModeloNfDialog({
                   <Label className="text-[10px] text-muted-foreground">Rótulo (opcional)</Label>
                   <Input
                     className="h-8 text-xs"
-                    placeholder={it.posto !== SEM_POSTO ? it.posto : "Descrição do item"}
+                    placeholder={it.postos.length > 0 ? it.postos.join(" + ") : "Descrição do item"}
                     value={it.identificacao_padrao}
                     onChange={(e) => updateItem(i, { identificacao_padrao: e.target.value })}
                   />
@@ -573,6 +633,36 @@ export function ModeloNfDialog({
                     <Trash2 className="h-3.5 w-3.5 text-destructive" />
                   </Button>
                 </div>
+              </div>
+
+              <div className="space-y-1">
+                <Label className="text-[10px] text-muted-foreground">
+                  Retenção própria deste item (opcional — em branco usa o padrão da nota; use quando esse posto tem IR/ISSQN diferente dos demais)
+                </Label>
+                <div className="flex flex-wrap gap-2">
+                  {(
+                    [
+                      ["ISSQN", "issqnPct"],
+                      ["IR", "irPct"],
+                      ["COFINS", "cofinsPct"],
+                      ["PIS", "pisPct"],
+                      ["CSLL", "csllPct"],
+                    ] as const
+                  ).map(([label, campo]) => (
+                    <div key={campo} className="w-16">
+                      <span className="block text-[9px] leading-tight text-muted-foreground">{label} (%)</span>
+                      <Input
+                        className="h-7 px-1.5 text-xs"
+                        type="number"
+                        step="0.01"
+                        placeholder="padrão"
+                        value={it[campo]}
+                        onChange={(e) => updateItem(i, { [campo]: e.target.value })}
+                      />
+                    </div>
+                  ))}
+                </div>
+              </div>
               </div>
             ))}
           </div>
@@ -641,6 +731,7 @@ export function ModeloNfDialog({
                           cofins_pct: m.cofins_pct,
                           pis_pct: m.pis_pct,
                           csll_pct: m.csll_pct,
+                          descricao_padrao: m.descricao_padrao,
                         })
                       }
                     />

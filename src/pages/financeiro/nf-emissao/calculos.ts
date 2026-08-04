@@ -22,6 +22,15 @@ export interface ItemInput {
   outros_descontos_pos_emissao: number;
   qtd_colaboradores: number;
   inss_categoria: InssCategoria;
+  // Override opcional de retenção por item (ex: UFFS mistura postos com IR
+  // diferente na mesma nota — Limpeza/Jardinagem num código de receita,
+  // Motorista/Serviços Gerais/Intérprete/Encarregado noutro). Nulo/ausente =
+  // usa o percentual padrão da nota (comportamento de sempre).
+  issqn_pct?: number | null;
+  ir_pct?: number | null;
+  cofins_pct?: number | null;
+  pis_pct?: number | null;
+  csll_pct?: number | null;
 }
 
 export interface ItemCalculado extends ItemInput {
@@ -43,6 +52,21 @@ export interface PercentuaisFiscais {
   cofins_pct: number;
   pis_pct: number;
   csll_pct: number;
+}
+
+// Resolve o percentual que vale pra este item: override do item, se houver,
+// senão o padrão da nota/contrato.
+export function pctEfetivo(
+  item: Pick<ItemInput, "issqn_pct" | "ir_pct" | "cofins_pct" | "pis_pct" | "csll_pct">,
+  padrao: PercentuaisFiscais
+): PercentuaisFiscais {
+  return {
+    issqn_pct: item.issqn_pct ?? padrao.issqn_pct,
+    ir_pct: item.ir_pct ?? padrao.ir_pct,
+    cofins_pct: item.cofins_pct ?? padrao.cofins_pct,
+    pis_pct: item.pis_pct ?? padrao.pis_pct,
+    csll_pct: item.csll_pct ?? padrao.csll_pct,
+  };
 }
 
 // Reproduz o cálculo real da planilha "Modelo" (SAMU.xlsm / TJRS.xlsm):
