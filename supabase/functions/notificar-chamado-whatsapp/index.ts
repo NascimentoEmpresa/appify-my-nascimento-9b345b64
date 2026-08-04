@@ -1,7 +1,6 @@
 // Arquivo: supabase/functions/notificar-chamado-whatsapp/index.ts
-// Notifica por WhatsApp quando um Chamado de Sistemas é aberto ou atribuído a
-// um dev. O modo de envio (template aprovado vs texto livre) é controlado
-// pela flag USAR_TEMPLATE_APROVADO abaixo — ver comentário ali.
+// Notifica por WhatsApp (Cloud API, mensagem de Template aprovada — "chamados_devs_interno")
+// quando um Chamado de Sistemas é aberto ou atribuído a um dev.
 // Chamado pelo front-end logo depois do INSERT/RPC bem sucedido, no mesmo
 // padrão fire-and-forget de enviar-notificacao-push — não confia em nada que
 // vier no corpo além de chamado_id/evento, busca tudo direto no banco.
@@ -26,14 +25,6 @@ const GERENTE_SISTEMAS_ID = "d1dbc8d4-bf9b-4125-a6b1-11b6195155a4";
 // entre os dois eventos é só o parâmetro de situação (último), não o nome do
 // template (evita manter 2 templates aprovados pra praticamente o mesmo corpo).
 const TEMPLATE_NAME = "chamados_devs_interno";
-
-// TEMPORÁRIO — remover assim que "chamados_devs_interno" estiver APPROVED no
-// WhatsApp Manager (só checar de novo via Graph API). Enquanto o template não
-// é aprovado, manda texto livre: só chega se o destinatário (gerente ou dev)
-// tiver mandado mensagem pro número nas últimas 24h. Combinado com o usuário:
-// só os 4 destinatários fixos desta feature vão receber, então tudo bem pedir
-// pra cada um mandar um "oi" pro WhatsApp enquanto isso.
-const USAR_TEMPLATE_APROVADO = false;
 
 const cors = {
   "Access-Control-Allow-Origin": "*",
@@ -118,31 +109,17 @@ Deno.serve(async (req) => {
     : sanitizeParam(`Atribuído a: ${destinatario.display_name ?? "—"}`, 120);
 
   const parametros = [numero, assunto, descricao, solicitante, dataHora, situacao];
-  const modoEnvio = USAR_TEMPLATE_APROVADO ? TEMPLATE_NAME : "texto-livre-temporario";
 
-  const mensagemGraph = USAR_TEMPLATE_APROVADO
-    ? {
-        messaging_product: "whatsapp",
-        to: destinatario.telefone,
-        type: "template",
-        template: {
-          name: TEMPLATE_NAME,
-          language: { code: "pt_BR" },
-          components: [{ type: "body", parameters: parametros.map((p) => ({ type: "text", text: p })) }],
-        },
-      }
-    : {
-        messaging_product: "whatsapp",
-        to: destinatario.telefone,
-        type: "text",
-        text: {
-          body: `🔔 Um novo chamado de sistemas foi registrado no ERP, com o número de protocolo ${numero}.\n\n`
-            + `Assunto informado: ${assunto}\n`
-            + `Descrição detalhada pelo solicitante: ${descricao}\n\n`
-            + `Este chamado foi aberto por ${solicitante}, no dia ${dataHora}.\n\n`
-            + `Situação atual do chamado: ${situacao}`,
-        },
-      };
+  const mensagemGraph = {
+    messaging_product: "whatsapp",
+    to: destinatario.telefone,
+    type: "template",
+    template: {
+      name: TEMPLATE_NAME,
+      language: { code: "pt_BR" },
+      components: [{ type: "body", parameters: parametros.map((p) => ({ type: "text", text: p })) }],
+    },
+  };
 
   let waId: string | null = null;
   let enviado = false;
@@ -164,13 +141,17 @@ Deno.serve(async (req) => {
   // Log só-de-staff (RLS já esconde 'observacao_interna' do solicitante).
   // autor_id é NOT NULL com FK pra auth.users — como este insert roda com o
   // client admin (sem sessão, auth.uid() nulo), atribui ao chamador da function.
-  await admin.from("CHAMADO_SISTEMA_EVENTO").insert({
-    chamado_id: chamado.id,
-    autor_id: userData.user.id,
-    tipo: "observacao_interna",
-    texto: enviado ? `WhatsApp enviado (${modoEnvio})` : `Falha ao enviar WhatsApp (${modoEnvio}): ${erro ?? "sem detalhe"}`,
-    meta: { canal: "whatsapp", modo: modoEnvio, evento, destinatario_id: destinatarioId, sucesso: enviado, wa_message_id: waId, erro },
-  }).catch(() => {});
+  // O builder do PostgREST não implementa .catch() como método (só .then()),
+  // então precisa envolver em try/catch em vez de encadear .catch() nele.
+  try {
+    await admin.from("CHAMADO_SISTEMA_EVENTO").insert({
+      chamado_id: chamado.id,
+      autor_id: userData.user.id,
+      tipo: "observacao_interna",
+      texto: enviado ? `WhatsApp enviado (${TEMPLATE_NAME})` : `Falha ao enviar WhatsApp (${TEMPLATE_NAME}): ${erro ?? "sem detalhe"}`,
+      meta: { canal: "whatsapp", modo: TEMPLATE_NAME, evento, destinatario_id: destinatarioId, sucesso: enviado, wa_message_id: waId, erro },
+    });
+  } catch { /* log é best-effort, não pode derrubar a resposta da function */ }
 
   return json({ ok: true, enviado, wa_message_id: waId, erro });
 });
