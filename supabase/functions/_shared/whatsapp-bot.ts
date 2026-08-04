@@ -273,7 +273,7 @@ export const ESTILO_WHATSAPP = [
 // A IA quase nunca abre a conversa — quem cumprimenta é o menu. `primeiraFala`
 // só é verdade num caso de borda (menu sem opções): aí a IA cumprimenta uma vez.
 // No fluxo normal ela pega a conversa já em andamento e não repete saudação.
-export function montarSystem(cfg: BotConfig, base: string, primeiraFala: boolean): string {
+export function montarSystem(cfg: BotConfig, base: string, primeiraFala: boolean, vagas = ""): string {
   return [
     cfg.persona,
     ESTILO_WHATSAPP,
@@ -281,7 +281,52 @@ export function montarSystem(cfg: BotConfig, base: string, primeiraFala: boolean
       ? "É a primeira coisa que você diz nesta conversa. Cumprimente de forma breve e natural e já ajude no que a pessoa trouxe, em vez de só cumprimentar."
       : "Vocês já estão conversando: não cumprimente nem se apresente, apenas continue o atendimento.",
     base ? `\nBase de conhecimento (use quando pertinente):\n${base}` : "",
+    vagas,
   ].filter(Boolean).join("\n\n");
+}
+
+// Vagas abertas, lidas do banco a cada resposta. A instrução é explícita
+// contra invenção: um modelo que "acha" que existe vaga de motorista faz o
+// candidato perder viagem, e o prejuízo é dele, não nosso.
+export function montarVagas(
+  vagas: Array<Record<string, unknown>>,
+): string {
+  if (!vagas?.length) {
+    return [
+      "VAGAS ABERTAS AGORA: nenhuma.",
+      "Não invente vagas. Se perguntarem, diga que no momento não há vagas abertas e ofereça cadastrar o currículo para futuras oportunidades.",
+    ].join("\n");
+  }
+  const linhas = vagas.map((v) => {
+    const local = [v.cidade, v.estado].filter(Boolean).join("/");
+    const partes = [
+      `- ${v.cargo ?? "(sem cargo)"}`,
+      local && `local: ${local}`,
+      v.local_trabalho && `onde trabalha: ${v.local_trabalho}`,
+      v.quantidade_vagas && `vagas: ${v.quantidade_vagas}`,
+      v.escala && `escala: ${v.escala}`,
+      v.horario && `horário: ${v.horario}`,
+      v.salario && `salário: ${v.salario}`,
+      v.insalubridade && `insalubridade: ${v.insalubridade}`,
+      v.beneficios && `benefícios: ${v.beneficios}`,
+      v.requisitos && `requisitos obrigatórios: ${v.requisitos}`,
+      v.desejaveis && `desejáveis: ${v.desejaveis}`,
+      v.experiencia && `experiência: ${v.experiencia}`,
+      v.inicio_previsto && `início previsto: ${v.inicio_previsto}`,
+    ].filter(Boolean);
+    return partes.join(" · ");
+  });
+  return [
+    `VAGAS ABERTAS AGORA (${vagas.length}) — esta é a lista real e atual:`,
+    ...linhas,
+    "",
+    "Use SOMENTE estas vagas. Não invente cargo, cidade, salário nem requisito que não esteja acima.",
+    "Se perguntarem por algo que não está na lista, diga que no momento não há vaga aberta para isso.",
+    // Perguntar pela própria cidade é o caso mais comum, e é onde um "não"
+    // errado custa caro: a pessoa desiste achando que não há nada.
+    "Se a pessoa perguntar pela cidade dela, compare com o campo 'local' das vagas. Se não houver na cidade exata, diga isso e ofereça as vagas mais próximas que existirem na lista, sempre nomeando a cidade real da vaga.",
+    "Nunca diga que não há vagas sem antes conferir a lista acima inteira.",
+  ].join("\n");
 }
 
 // Monta o texto da base de conhecimento a partir das linhas ativas.

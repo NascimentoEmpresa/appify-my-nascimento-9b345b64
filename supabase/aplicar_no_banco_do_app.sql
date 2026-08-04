@@ -7962,3 +7962,118 @@ CREATE TRIGGER trg_wa_conversa_evento
   FOR EACH ROW EXECUTE FUNCTION public.wa_registra_evento();
 
 NOTIFY pgrst, 'reload schema';
+
+
+-- ===== 20260819000006_whatsapp_menu_atomico =====
+-- =====================================================================
+-- WHATSAPP — anti-repetição do menu à prova de mensagens simultâneas
+--
+-- O anti-repetição olhava o histórico ("já mandei o menu nos últimos X
+-- minutos?") e só depois decidia. Isso é seguro com uma mensagem por vez, e
+-- errado com várias: quem escreve três frases seguidas dispara três execuções
+-- concorrentes do webhook, todas leem o histórico ANTES de qualquer menu ser
+-- gravado, todas concluem "ainda não mandei" e todas mandam.
+--
+-- Caso real: 3 mensagens em 36 ms -> o menu saiu 2x.
+--
+-- A correção é o banco decidir, não a função. `menu_enviado_em` vira um
+-- carimbo disputado por um UPDATE condicional: quem consegue atualizar ganhou
+-- o direito de enviar; os concorrentes não atualizam nada e ficam quietos.
+-- Um UPDATE é atômico, então não existe janela entre "ler" e "decidir".
+--
+-- Idempotente.
+-- ROLLBACK: ALTER TABLE public."WA_CONVERSA" DROP COLUMN IF EXISTS menu_enviado_em;
+-- =====================================================================
+
+ALTER TABLE public."WA_CONVERSA"
+  ADD COLUMN IF NOT EXISTS menu_enviado_em timestamptz;
+
+COMMENT ON COLUMN public."WA_CONVERSA".menu_enviado_em IS
+  'Quando o menu foi apresentado pela última vez. Usado como trava atômica do anti-repeticao (WA_BOT_CONFIG.nao_repetir_menu_min).';
+
+-- Conversas que já receberam o menu antes desta migration não têm carimbo.
+-- Semear com a última saída interativa evita o menu sair de novo logo após o
+-- deploy, para todo mundo ao mesmo tempo.
+UPDATE public."WA_CONVERSA" c
+   SET menu_enviado_em = u.ultima
+  FROM (
+    SELECT conversa_id, max(criada_em) AS ultima
+      FROM public."WA_MENSAGEM"
+     WHERE direcao = 'saida' AND tipo = 'interactive'
+     GROUP BY conversa_id
+  ) u
+ WHERE u.conversa_id = c.id AND c.menu_enviado_em IS NULL;
+
+NOTIFY pgrst, 'reload schema';
+
+
+-- ===== 20260819000007_whatsapp_vagas_ia =====
+-- =====================================================================
+-- WHATSAPP — a IA responde sobre as vagas REAIS do banco
+--
+-- Hoje o bot só sabe mandar o link do portal. Para responder "tem vaga de
+-- porteiro em Porto Alegre?" ela precisa das vagas na mão — e precisa que
+-- venham do banco a cada conversa, não da memória do modelo: vaga fechada
+-- ontem não pode ser oferecida hoje.
+--
+-- A RPC devolve SÓ o que pode ser dito a um candidato. A tabela guarda muita
+-- coisa interna (CPF do solicitante, motivo da saída de quem estava na vaga,
+-- motivo de reprovação, nome do substituído); nada disso sai daqui, senão a
+-- IA poderia repetir ao candidato o que leu no contexto.
+--
+-- Status: 'Vaga aberta - Seleção de Currículos' é o mesmo que o portal de
+-- candidaturas usa (BancoTalentos). Qualquer outro status é etapa interna.
+--
+-- Idempotente.
+-- ROLLBACK: DROP FUNCTION IF EXISTS public.wa_vagas_abertas();
+-- =====================================================================
+
+-- O que SAI (o candidato pode/deve saber): cargo, local, quantidade, escala,
+-- horário, salário, benefícios, insalubridade, requisitos, experiência e
+-- início previsto.
+--
+-- O que NÃO sai, e por quê:
+--   contrato              → nome do cliente, informação comercial
+--   alta_rotatividade     → julgamento interno; afastaria candidato
+--   grau_urgencia         → interno, e vira pressão de negociação
+--   motivos_saida         → fala de quem saiu da vaga
+--   nome_substituido      → pessoa identificável
+--   observacao_importante → campo livre do RH, sem garantia de ser público
+--   solicitante_*         → dados de quem abriu a requisição
+CREATE OR REPLACE FUNCTION public.wa_vagas_abertas()
+RETURNS TABLE(
+  id bigint, cargo text, cidade text, estado text, escala text,
+  horario text, salario text, beneficios text, quantidade_vagas integer,
+  requisitos text, desejaveis text, experiencia text,
+  insalubridade text, local_trabalho text, inicio_previsto text
+)
+LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public, pg_temp
+AS $$
+  SELECT r.id, r.cargo, r.cidade, r.estado, r.escala,
+         r.horario, r.salario, r.beneficios, r.quantidade_vagas,
+         r.req_obrigatorios,
+         r.req_desejaveis,
+         -- "Sim" sozinho não diz nada ao candidato; junta com o "qual".
+         CASE WHEN lower(coalesce(r.exp_minima, '')) LIKE 'sim%'
+              THEN coalesce(nullif(btrim(r.exp_minima_qual), ''), 'sim')
+              ELSE 'não exige' END,
+         CASE WHEN lower(coalesce(r.insalubridade_recebe, '')) LIKE 'sim%'
+              THEN coalesce(nullif(btrim(r.insalubridade_quanto), ''), 'sim')
+              ELSE NULL END,
+         r.local_exato,
+         r.data_inicio_prevista
+    FROM public."SISTEMA_RECRUTAMENTO" r
+   WHERE r.status = 'Vaga aberta - Seleção de Currículos'
+   ORDER BY r.created_at DESC
+   -- Teto alto de propósito: se a lista fosse cortada, a IA responderia "não
+   -- temos vaga na sua cidade" com base numa lista incompleta — e essa é a
+   -- pergunta mais comum. Hoje são poucas vagas; 200 dá folga de sobra.
+   LIMIT 200;
+$$;
+
+-- O bot chama com service_role; authenticated pode ler para conferir na tela.
+REVOKE ALL ON FUNCTION public.wa_vagas_abertas() FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.wa_vagas_abertas() FROM anon;
+GRANT EXECUTE ON FUNCTION public.wa_vagas_abertas() TO authenticated;
+
+NOTIFY pgrst, 'reload schema';
