@@ -8077,3 +8077,26 @@ REVOKE ALL ON FUNCTION public.wa_vagas_abertas() FROM anon;
 GRANT EXECUTE ON FUNCTION public.wa_vagas_abertas() TO authenticated;
 
 NOTIFY pgrst, 'reload schema';
+
+-- ============================================================
+-- 20260804000001_jur_processos_hora_local_pericia
+-- (JÁ APLICADO no banco do app em 04/08/2026, junto com a carga
+--  de 1058 linhas / 390 processos vinda do SISTEMA_JURIDICORT)
+-- ============================================================
+ALTER TABLE public."JUR_PROCESSOS" ADD COLUMN IF NOT EXISTS "primeira_audiencia_hora" text;
+ALTER TABLE public."JUR_PROCESSOS" ADD COLUMN IF NOT EXISTS "local_pericia" text;
+ALTER TABLE public."JUR_PROCESSOS" ADD COLUMN IF NOT EXISTS "hora_pericia" text;
+
+NOTIFY pgrst, 'reload schema';
+
+-- ============================================================
+-- 20260804000002_jur_processos_id_sequencial
+-- (JÁ APLICADO no banco do app em 04/08/2026)
+-- Nº sequencial de chegada por processo: 1 = mais antigo, 390 = mais recente.
+-- Ver o arquivo da migration para o backfill cronológico completo.
+-- ============================================================
+ALTER TABLE public."JUR_PROCESSOS" ADD COLUMN IF NOT EXISTS "id_sequencial" bigint;
+CREATE INDEX IF NOT EXISTS jur_processos_id_sequencial_idx
+    ON public."JUR_PROCESSOS" (id_sequencial DESC);
+
+NOTIFY pgrst, 'reload schema';

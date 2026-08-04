@@ -16,7 +16,8 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
 import {
   dentroDoHorario, menuAtivo, montarBase, montarSystem, gerarResposta,
   rotearBot, TITULO_MENU_PADRAO, SECRET_DO_PROVEDOR,
-  type BotConfig, type Msg, type ModoConversa,
+  montarVagas, montarPastas, extrairTransferencia, AVISO_TRANSFERIDO_IA,
+  type BotConfig, type Msg, type ModoConversa, type PastaBot,
 } from "../_shared/whatsapp-bot.ts";
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
@@ -194,15 +195,31 @@ Deno.serve(async (req) => {
 
     case "ia": {
       const primeiraFala = !historico.some((m) => m.role === "assistant");
-      const system = montarSystem(cfg, base, primeiraFala);
+      // Mesmas vagas e mesmas pastas que o atendimento real recebe — sem isso o
+      // Testes aprovaria um prompt que na prática responde sobre vagas no escuro.
+      const { data: vagas } = await db.rpc("wa_vagas_abertas");
+      const { data: pastas } = await db.from("WA_PASTA")
+        .select("codigo, nome").eq("ativo", true).neq("codigo", "atendimento_concluido").order("ordem");
+      const pastasBot = (pastas ?? []) as PastaBot[];
+      const system = montarSystem(
+        cfg, base, primeiraFala,
+        montarVagas((vagas ?? []) as any[]), montarPastas(pastasBot),
+      );
       const messages: Msg[] = [...historico, { role: "user", content: mensagem }];
       const r = await gerarResposta(cfg, system, messages);
+      // O simulador NÃO move pasta nenhuma (é simulação): só tira a marca do
+      // texto e conta, na nota, para onde a conversa real teria ido.
+      const { pasta, texto: limpo } = extrairTransferencia(
+        r.texto ?? (cfg.fallback as string), pastasBot.map((p) => p.codigo),
+      );
+      const nomePasta = pastasBot.find((p) => p.codigo === pasta)?.nome ?? pasta;
       return json({
         tipo: r.erro ? "fallback" : "ia",
-        resposta: r.texto ?? cfg.fallback,
+        resposta: (pasta ? (limpo || AVISO_TRANSFERIDO_IA) : limpo) || cfg.fallback,
+        nota: pasta ? `No atendimento real a conversa iria para a pasta "${nomePasta}" e o bot seria desligado.` : undefined,
         system,                                   // prompt final, para inspeção
         modo: rota.modo,
-        diagnostico: { ...diagnostico, ms: r.ms, erro: r.erro },
+        diagnostico: { ...diagnostico, ms: r.ms, erro: r.erro, vagas: (vagas ?? []).length },
       });
     }
   }

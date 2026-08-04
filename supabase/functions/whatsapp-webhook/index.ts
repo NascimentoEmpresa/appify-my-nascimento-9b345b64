@@ -19,7 +19,8 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
 import {
   dentroDoHorario, montarBase, montarSystem, gerarResposta,
   rotearBot, inferirModo, acharOpcao, menuAtivo, retomadaDe, montarVagas,
-  type Msg, type MenuOpcao,
+  montarPastas, extrairTransferencia, AVISO_TRANSFERIDO_IA,
+  type Msg, type MenuOpcao, type PastaBot,
 } from "../_shared/whatsapp-bot.ts";
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
@@ -76,13 +77,27 @@ async function responderComBot(
   // Vagas abertas, lidas AGORA. Ficar na base de conhecimento não serviria:
   // aquilo é texto que alguém escreve à mão e envelhece; vaga fechada ontem
   // seria oferecida hoje.
-  const { data: vagas } = await admin.rpc("wa_vagas_abertas");
+  // O erro NÃO pode ser engolido: sem a lista a IA responde sobre vagas no
+  // escuro e inventa cargo e salário — foi exatamente o que aconteceu quando
+  // esta função rodou numa versão que ainda não buscava as vagas.
+  const { data: vagas, error: erroVagas } = await admin.rpc("wa_vagas_abertas");
+  if (erroVagas) console.error("Falha ao ler as vagas abertas:", erroVagas.message);
+
+  // Pastas para onde a IA pode encaminhar. "atendimento_concluido" fica de fora
+  // de propósito: encerrar não é transferir, e quem encerra é a pessoa pelo menu.
+  const { data: pastas, error: erroPastas } = await admin.from("WA_PASTA")
+    .select("codigo, nome").eq("ativo", true).neq("codigo", "atendimento_concluido").order("ordem");
+  if (erroPastas) console.error("Falha ao ler as pastas:", erroPastas.message);
+  const pastasBot = (pastas ?? []) as PastaBot[];
 
   const historico = mensagens.filter((m) => m.texto);
   // No fluxo normal a IA entra numa conversa que o menu já abriu, então não
   // cumprimenta de novo. `primeiraFala` só vale no caso de borda de menu vazio.
   const primeiraFala = !historico.some((m) => m.direcao === "saida");
-  const system = montarSystem(cfg, montarBase(conh ?? []), primeiraFala, montarVagas((vagas ?? []) as any[]));
+  const system = montarSystem(
+    cfg, montarBase(conh ?? []), primeiraFala,
+    montarVagas((vagas ?? []) as any[]), montarPastas(pastasBot),
+  );
 
   const messages: Msg[] = historico.map((m) => ({
     role: m.direcao === "entrada" ? "user" : "assistant",
@@ -93,7 +108,29 @@ async function responderComBot(
   const r = await gerarResposta(cfg, system, messages);
   if (r.erro) console.error(`Erro na IA (${r.provedor}/${r.modelo}):`, r.erro);
 
-  await registrarSaida(conversaId, contatoId, to, r.texto ?? (cfg.fallback as string), "bot");
+  // A IA pediu transferência? A marca sai do texto SEMPRE (mesmo com código
+  // inválido, para a pessoa nunca lê-la) e a pasta só vem preenchida se existir.
+  const { pasta, texto: limpo } = extrairTransferencia(
+    r.texto ?? (cfg.fallback as string),
+    pastasBot.map((p) => p.codigo),
+  );
+
+  if (!pasta) {
+    await registrarSaida(conversaId, contatoId, to, limpo || (cfg.fallback as string), "bot");
+    return;
+  }
+
+  // Move a conversa e desliga o bot: daqui em diante quem responde é gente.
+  // Grava ANTES de avisar — se a mensagem falhar, a conversa já está na fila
+  // certa; o contrário deixaria a pessoa achando que foi transferida sem ter ido.
+  const { error: erroMover } = await admin.from("WA_CONVERSA")
+    .update({ bot_ativo: false, pasta_codigo: pasta }).eq("id", conversaId);
+  if (erroMover) {
+    console.error("Falha ao mover a conversa de pasta:", erroMover.message);
+    await registrarSaida(conversaId, contatoId, to, limpo || (cfg.fallback as string), "bot");
+    return;
+  }
+  await registrarSaida(conversaId, contatoId, to, limpo || AVISO_TRANSFERIDO_IA, "bot");
 }
 
 // Envia e registra uma mensagem de saída (bot/atendente).

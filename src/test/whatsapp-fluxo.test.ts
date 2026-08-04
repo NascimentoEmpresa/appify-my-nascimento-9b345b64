@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   rotearBot, inferirModo, acharOpcao, AVISO_TRANSFERIR_PADRAO, type BotConfig,
+  extrairTransferencia, montarPastas, montarVagas,
 } from "../../supabase/functions/_shared/whatsapp-bot.ts";
 
 // Config mínima do bot com um menu em CASCATA (texto / submenu / ia / humano).
@@ -295,5 +296,85 @@ describe("rotearBot — transferir para pasta", () => {
     expect(inferirModo(bt, [
       { direcao: "entrada", texto: "Suporte RH", payload: { reply_id: "t_rh" } },
     ])).toBe("menu");
+  });
+});
+
+// ── Transferência pedida pela IA ────────────────────────────────────────
+// A IA não move nada sozinha: ela escreve uma marca e o webhook decide. O que
+// se protege aqui é o contrato dessa marca — principalmente que ela NUNCA
+// sobre para o WhatsApp, mesmo quando o código não existe.
+describe("extrairTransferencia", () => {
+  const PASTAS = ["recrutamento", "rh", "juridico"];
+
+  it("sem marca devolve o texto intacto e nenhuma pasta", () => {
+    const r = extrairTransferencia("Posso te ajudar com mais alguma coisa?", PASTAS);
+    expect(r.pasta).toBeNull();
+    expect(r.texto).toBe("Posso te ajudar com mais alguma coisa?");
+  });
+
+  it("extrai a pasta e tira a marca do texto", () => {
+    const r = extrairTransferencia("Beleza, já encaminhei!\n[[TRANSFERIR:recrutamento]]", PASTAS);
+    expect(r.pasta).toBe("recrutamento");
+    expect(r.texto).toBe("Beleza, já encaminhei!");
+  });
+
+  it("código inexistente não transfere, mas a marca some do texto", () => {
+    const r = extrairTransferencia("Já encaminhei!\n[[TRANSFERIR:financeiro]]", PASTAS);
+    expect(r.pasta).toBeNull();
+    expect(r.texto).toBe("Já encaminhei!");
+  });
+
+  it("aceita espaços e maiúsculas na marca", () => {
+    expect(extrairTransferencia("ok [[ transferir : RH ]]", PASTAS).pasta).toBe("rh");
+  });
+
+  // O modelo às vezes responde só com a marca. Sem tratar, o bot enviaria uma
+  // mensagem vazia justamente no fim do atendimento.
+  it("marca sozinha deixa o texto vazio para o chamador usar a despedida padrão", () => {
+    const r = extrairTransferencia("[[TRANSFERIR:rh]]", PASTAS);
+    expect(r.pasta).toBe("rh");
+    expect(r.texto).toBe("");
+  });
+
+  it("remove todas as marcas, não só a primeira", () => {
+    const r = extrairTransferencia("[[TRANSFERIR:xx]] tchau [[TRANSFERIR:rh]]", PASTAS);
+    expect(r.pasta).toBe("rh");
+    expect(r.texto).toBe("tchau");
+  });
+});
+
+describe("montarPastas", () => {
+  it("sem pastas não gera bloco nenhum no prompt", () => {
+    expect(montarPastas([])).toBe("");
+  });
+
+  it("lista os códigos disponíveis e exige confirmação antes de transferir", () => {
+    const txt = montarPastas([{ codigo: "recrutamento", nome: "Recrutamento" }]);
+    expect(txt).toContain("recrutamento — Recrutamento");
+    expect(txt).toMatch(/PERGUNTE antes/);
+    expect(txt).toContain("[[TRANSFERIR:codigo]]");
+  });
+});
+
+// A lista de vagas é o que impede a IA de inventar cargo e salário.
+describe("montarVagas", () => {
+  it("sem vagas manda dizer que não há e proíbe inventar", () => {
+    const txt = montarVagas([]);
+    expect(txt).toContain("nenhuma");
+    expect(txt).toMatch(/Não invente vagas/);
+  });
+
+  // Valores propositalmente fictícios: o que se testa aqui é o FORMATO do
+  // bloco, não o conteúdo. Ler do banco deixaria o teste quebrar sozinho toda
+  // vez que o RH abrisse ou fechasse uma vaga.
+  //
+  // Existe por causa de um caso real: a IA respondeu "não temos vagas na sua
+  // cidade" para a cidade que tinha a única vaga aberta. O campo `local` é o
+  // que ela usa para comparar, então ele não pode sumir do prompt.
+  it("descreve a vaga com cidade para a IA não negar a cidade certa", () => {
+    const txt = montarVagas([{ cargo: "CARGO DE EXEMPLO", cidade: "Cidade Exemplo", estado: "XX", salario: "1234,56" }]);
+    expect(txt).toContain("CARGO DE EXEMPLO");
+    expect(txt).toContain("local: Cidade Exemplo/XX");
+    expect(txt).toContain("salário: 1234,56");
   });
 });
