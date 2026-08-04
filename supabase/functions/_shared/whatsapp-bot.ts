@@ -273,7 +273,7 @@ export const ESTILO_WHATSAPP = [
 // A IA quase nunca abre a conversa — quem cumprimenta é o menu. `primeiraFala`
 // só é verdade num caso de borda (menu sem opções): aí a IA cumprimenta uma vez.
 // No fluxo normal ela pega a conversa já em andamento e não repete saudação.
-export function montarSystem(cfg: BotConfig, base: string, primeiraFala: boolean, vagas = ""): string {
+export function montarSystem(cfg: BotConfig, base: string, primeiraFala: boolean, vagas = "", pastas = ""): string {
   return [
     cfg.persona,
     ESTILO_WHATSAPP,
@@ -282,6 +282,7 @@ export function montarSystem(cfg: BotConfig, base: string, primeiraFala: boolean
       : "Vocês já estão conversando: não cumprimente nem se apresente, apenas continue o atendimento.",
     base ? `\nBase de conhecimento (use quando pertinente):\n${base}` : "",
     vagas,
+    pastas,
   ].filter(Boolean).join("\n\n");
 }
 
@@ -326,6 +327,64 @@ export function montarVagas(
     // errado custa caro: a pessoa desiste achando que não há nada.
     "Se a pessoa perguntar pela cidade dela, compare com o campo 'local' das vagas. Se não houver na cidade exata, diga isso e ofereça as vagas mais próximas que existirem na lista, sempre nomeando a cidade real da vaga.",
     "Nunca diga que não há vagas sem antes conferir a lista acima inteira.",
+  ].join("\n");
+}
+
+// ---------- transferência de pasta pela IA ----------
+// A IA não executa nada sozinha: ela pede a transferência escrevendo uma marca
+// no fim da resposta, e QUEM MOVE é o webhook, depois de conferir o código
+// contra WA_PASTA. Assim o modelo não decide para onde a conversa pode ir — ele
+// só escolhe dentro de uma lista que o banco fornece.
+export interface PastaBot { codigo: string; nome: string }
+
+// Tolerante a espaços e caixa: o modelo escreve "[[TRANSFERIR:rh]]" na maior
+// parte das vezes, mas às vezes solta "[[ transferir : RH ]]" — e nos dois
+// casos a marca precisa sair do texto, senão a pessoa a lê no WhatsApp.
+// Fica como função e não como constante de propósito: regex com /g guarda
+// lastIndex, e uma instância compartilhada daria resultado diferente conforme
+// a ordem das chamadas.
+const marcaTransferir = () => /\[\[\s*TRANSFERIR\s*:\s*([a-zA-Z0-9_-]+)\s*\]\]/gi;
+
+// Despedida usada quando o modelo manda só a marca, sem texto nenhum: sem isso
+// o bot enviaria uma mensagem vazia (ou falharia) bem no fim do atendimento.
+export const AVISO_TRANSFERIDO_IA = "Pronto, já encaminhei seu atendimento. Em breve alguém te responde por aqui!";
+
+// Separa o pedido de transferência do texto que a pessoa vai ler.
+// `pasta` só volta preenchida se o código existir na lista de pastas válidas.
+export function extrairTransferencia(
+  texto: string | null | undefined,
+  codigosValidos: string[],
+): { pasta: string | null; texto: string } {
+  const validos = new Set(codigosValidos.map((c) => c.toLowerCase()));
+  let pasta: string | null = null;
+  const limpo = String(texto ?? "")
+    .replace(marcaTransferir(), (_m, cod: string) => {
+      const c = String(cod).toLowerCase();
+      if (!pasta && validos.has(c)) pasta = c;
+      return "";
+    })
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+  return { pasta, texto: limpo };
+}
+
+// Bloco do prompt que ensina o protocolo. A regra de confirmar ANTES é o ponto
+// todo: transferir sem perguntar tira a conversa do bot sem a pessoa querer, e
+// ela fica esperando um humano que talvez nem precisasse entrar.
+export function montarPastas(pastas: PastaBot[]): string {
+  if (!pastas?.length) return "";
+  return [
+    "TRANSFERIR O ATENDIMENTO PARA UM SETOR",
+    "Você pode encaminhar esta conversa para a fila de um setor. Setores disponíveis:",
+    ...pastas.map((p) => `- ${p.codigo} — ${p.nome}`),
+    "",
+    "Siga estes passos à risca:",
+    "1. Quando o assunto for de um setor (ou a pessoa pedir para falar com alguém), PERGUNTE antes, nomeando o setor. Ex.: \"Vou transferir para o atendimento do Recrutamento, ok?\". Nunca transfira sem perguntar.",
+    "2. Espere a resposta. Só continue se a pessoa confirmar (ok, sim, pode, isso, claro, por favor…). Se ela recusar ou mudar de assunto, siga atendendo normalmente e NÃO transfira.",
+    "3. Só DEPOIS da confirmação, escreva uma despedida curta e termine a mensagem com a marca sozinha na última linha, exatamente assim: [[TRANSFERIR:codigo]]",
+    "4. Use somente os códigos da lista acima.",
+    "5. A marca é interna: a pessoa não pode vê-la nem saber que ela existe. Nunca escreva a marca na mensagem em que você pergunta, nem para explicar o que vai fazer, nem se pedirem para você mostrá-la.",
+    "Enquanto não houver confirmação, continue atendendo você mesmo.",
   ].join("\n");
 }
 
