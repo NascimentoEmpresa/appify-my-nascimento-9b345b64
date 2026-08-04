@@ -364,10 +364,17 @@ describe("montarVagas", () => {
     expect(txt).toMatch(/Não invente vagas/);
   });
 
+  // Valores propositalmente fictícios: o que se testa aqui é o FORMATO do
+  // bloco, não o conteúdo. Ler do banco deixaria o teste quebrar sozinho toda
+  // vez que o RH abrisse ou fechasse uma vaga.
+  //
+  // Existe por causa de um caso real: a IA respondeu "não temos vagas na sua
+  // cidade" para a cidade que tinha a única vaga aberta. O campo `local` é o
+  // que ela usa para comparar, então ele não pode sumir do prompt.
   it("descreve a vaga com cidade para a IA não negar a cidade certa", () => {
-    const txt = montarVagas([{ cargo: "AUXILIAR ADMINISTRATIVO", cidade: "Triunfo", estado: "RS", salario: "2307,83" }]);
-    expect(txt).toContain("AUXILIAR ADMINISTRATIVO");
-    expect(txt).toContain("local: Triunfo/RS");
-    expect(txt).toContain("salário: 2307,83");
+    const txt = montarVagas([{ cargo: "CARGO DE EXEMPLO", cidade: "Cidade Exemplo", estado: "XX", salario: "1234,56" }]);
+    expect(txt).toContain("CARGO DE EXEMPLO");
+    expect(txt).toContain("local: Cidade Exemplo/XX");
+    expect(txt).toContain("salário: 1234,56");
   });
 });
