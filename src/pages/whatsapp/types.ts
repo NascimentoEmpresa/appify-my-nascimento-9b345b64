@@ -109,6 +109,9 @@ export interface WaMenuOpcao {
   // Cutucada desta opção: sem resposta em `minutos`, o bot manda `mensagem`
   // sozinho. Teto de 24h — acima disso a Meta recusa (erro 131047).
   retomada?: { minutos: number; mensagem: string } | null;
+  // Imagem que acompanha a resposta desta opção (passo a passo, print). Fica
+  // no bucket; o envio gera URL assinada e a Meta busca de lá.
+  imagem?: { storage_path: string; mime_type?: string; filename?: string } | null;
 }
 
 export const RETOMADA_MAX_MIN = 1440; // 24h

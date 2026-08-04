@@ -49,8 +49,11 @@ Deno.serve(async (req) => {
 
   // Mexer no perfil é configuração do bot, não atendimento: exige o menu do
   // Chatbot, o mesmo que governa o resto das configurações.
-  const { data: pode } = await db.rpc("tem_acesso_menu", { _codigo: "whatsapp_chatbot" });
-  if (pode !== true) return json({ error: "sem permissão para editar o perfil" }, 403);
+  // O parâmetro chama-se _menu_codigo (o _acao tem default 'visualizar').
+  // Com o nome errado a RPC falha, `pode` vem null e todo mundo levava 403.
+  const { data: pode, error: erroPerm } = await db.rpc("tem_acesso_menu", { _menu_codigo: "whatsapp_chatbot" });
+  if (erroPerm) return json({ error: "não consegui verificar sua permissão", detalhe: erroPerm.message }, 500);
+  if (pode !== true) return json({ error: "sem permissão para editar o perfil (menu Chatbot)" }, 403);
 
   let body: {
     acao?: "ler" | "salvar";
@@ -72,14 +75,33 @@ Deno.serve(async (req) => {
   // ---- salvar ----------------------------------------------------------
   const patch: Record<string, unknown> = { messaging_product: "whatsapp" };
   const p = body.perfil ?? {};
-  // Limites da Meta. Estourar devolve erro cru; cortar aqui é mais gentil.
-  if (typeof p.about === "string") patch.about = p.about.slice(0, 139);
-  if (typeof p.description === "string") patch.description = p.description.slice(0, 512);
-  if (typeof p.address === "string") patch.address = p.address.slice(0, 256);
-  if (typeof p.email === "string") patch.email = p.email.slice(0, 128);
-  if (typeof p.vertical === "string" && p.vertical) patch.vertical = p.vertical;
+
+  // Campo VAZIO não pode ir: a Graph responde 131000 "Something went wrong" e
+  // derruba a chamada inteira — inclusive os campos que estavam preenchidos.
+  // Por isso só entra no patch o que tem conteúdo. Limites da Meta aplicados
+  // aqui, porque estourar devolve o mesmo erro genérico.
+  const texto = (v: unknown, max: number) => {
+    const s = typeof v === "string" ? v.trim() : "";
+    return s ? s.slice(0, max) : null;
+  };
+  const about = texto(p.about, 139);
+  const description = texto(p.description, 512);
+  const address = texto(p.address, 256);
+  const email = texto(p.email, 128);
+  const vertical = texto(p.vertical, 40);
+  if (about) patch.about = about;
+  if (description) patch.description = description;
+  if (address) patch.address = address;
+  if (email) patch.email = email;
+  if (vertical) patch.vertical = vertical;
   if (Array.isArray(p.websites)) {
-    patch.websites = p.websites.map((s) => String(s).trim()).filter(Boolean).slice(0, 2);
+    const sites = p.websites.map((s) => String(s).trim()).filter(Boolean).slice(0, 2);
+    if (sites.length) patch.websites = sites;
+  }
+
+  // Nada além do messaging_product e sem foto: não há o que salvar.
+  if (Object.keys(patch).length === 1 && !body.foto?.storage_path) {
+    return json({ error: "Preencha ao menos um campo antes de salvar." }, 400);
   }
 
   // Foto: o front já subiu o arquivo pro bucket; aqui ela sobe pra Meta.

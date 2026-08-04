@@ -1,10 +1,10 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { useAccessibleMenus } from "@/hooks/useAccessibleMenus";
 import { useToast } from "@/hooks/use-toast";
-import { novoUuid } from "@/lib/utils";
+import { novoUuid, erroDaFunction } from "@/lib/utils";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -14,7 +14,7 @@ import { Label } from "@/components/ui/label";
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
-import { Bot, ShieldAlert, Plus, Trash2, Save, Power, Inbox, Info, MousePointerClick, FolderTree } from "lucide-react";
+import { Bot, ShieldAlert, Plus, Trash2, Save, Power, Inbox, Info, MousePointerClick, FolderTree, Image as ImageIcon } from "lucide-react";
 import { MODELOS, PROVEDORES, DIAS, MENU_ACOES, RETOMADA_MAX_MIN, fmtMinutos, type WaBotConfig, type WaConhecimento, type WaMenu, type WaMenuOpcao, type WaMenuAcao, type WaPasta, type WaProvedor } from "./types";
 
 const WEBHOOK_URL = "https://fwmzeaztjxrxxzxzxmgc.supabase.co/functions/v1/whatsapp-webhook";
@@ -109,6 +109,81 @@ function RetomadaEditor({ opcao: o, onChange }: {
   );
 }
 
+// Imagem da resposta: colar (Ctrl+V), arrastar ou escolher arquivo. Sobe pro
+// bucket na hora — guardar o arquivo dentro da config do menu (base64) faria
+// o jsonb inchar e ser lido inteiro a cada mensagem que o bot responde.
+function ImagemDaResposta({ opcao: o, onChange }: {
+  opcao: WaMenuOpcao; onChange: (nova: WaMenuOpcao) => void;
+}) {
+  const { toast } = useToast();
+  const [subindo, setSubindo] = useState(false);
+  const [previa, setPrevia] = useState<string | null>(null);
+  const input = useRef<HTMLInputElement>(null);
+
+  // A prévia vem do bucket (a config guarda só o caminho).
+  useEffect(() => {
+    let vivo = true;
+    if (!o.imagem?.storage_path) { setPrevia(null); return; }
+    supabase.storage.from("whatsapp-midia").createSignedUrl(o.imagem.storage_path, 3600)
+      .then(({ data }) => { if (vivo) setPrevia(data?.signedUrl ?? null); });
+    return () => { vivo = false; };
+  }, [o.imagem?.storage_path]);
+
+  const subir = async (arquivo: File | null | undefined) => {
+    if (!arquivo || subindo) return;
+    if (!arquivo.type.startsWith("image/")) {
+      toast({ title: "Só imagem", description: "O bot envia imagem nesta opção; para documento, use um link na resposta.", variant: "destructive" });
+      return;
+    }
+    if (arquivo.size > 5 * 1024 * 1024) {
+      toast({ title: "Imagem grande demais", description: "O WhatsApp aceita até 5 MB.", variant: "destructive" });
+      return;
+    }
+    setSubindo(true);
+    const caminho = `saida/chatbot/${novoUuid()}-${arquivo.name || "colada.png"}`;
+    const { error } = await supabase.storage.from("whatsapp-midia")
+      .upload(caminho, arquivo, { contentType: arquivo.type });
+    setSubindo(false);
+    if (error) { toast({ title: "Não deu para subir", description: error.message, variant: "destructive" }); return; }
+    onChange({ ...o, imagem: { storage_path: caminho, mime_type: arquivo.type, filename: arquivo.name } });
+    toast({ title: "Imagem anexada", description: "Salve a configuração para valer." });
+  };
+
+  return (
+    <div
+      className="rounded border border-border/60 bg-muted/20 p-2"
+      onPaste={(e) => { const f = Array.from(e.clipboardData.files)[0]; if (f) { e.preventDefault(); subir(f); } }}
+      onDragOver={(e) => e.preventDefault()}
+      onDrop={(e) => { e.preventDefault(); subir(e.dataTransfer.files?.[0]); }}
+      tabIndex={0}
+    >
+      <div className="flex items-center gap-2">
+        <ImageIcon className="h-4 w-4 shrink-0 text-muted-foreground" />
+        <span className="text-xs font-semibold">Imagem da resposta</span>
+        <span className="text-[11px] text-muted-foreground">(opcional)</span>
+      </div>
+      <div className="mt-2 flex flex-wrap items-center gap-3">
+        {previa && <img src={previa} alt="" className="h-16 w-16 rounded object-cover" />}
+        <input ref={input} type="file" accept="image/*" className="hidden"
+          onChange={(e) => { subir(e.target.files?.[0]); e.target.value = ""; }} />
+        <Button size="sm" variant="outline" className="gap-1.5" onClick={() => input.current?.click()} disabled={subindo}>
+          <ImageIcon className="h-4 w-4" /> {subindo ? "Subindo…" : o.imagem ? "Trocar imagem" : "Escolher imagem"}
+        </Button>
+        {o.imagem && (
+          <Button size="sm" variant="ghost" className="text-muted-foreground hover:text-destructive"
+            onClick={() => onChange({ ...o, imagem: null })}>
+            Remover
+          </Button>
+        )}
+      </div>
+      <p className="mt-1.5 text-[11px] text-muted-foreground">
+        Clique aqui e use <b>Ctrl+V</b> para colar um print, ou arraste o arquivo.
+        A imagem vai junto com o texto acima: o texto vira a legenda.
+      </p>
+    </div>
+  );
+}
+
 function OpcaoEditor({ opcao: o, indice, nivel, pastas, onChange, onRemove }: {
   opcao: WaMenuOpcao; indice: number; nivel: number; pastas: WaPasta[];
   onChange: (nova: WaMenuOpcao) => void; onRemove: () => void;
@@ -161,6 +236,7 @@ function OpcaoEditor({ opcao: o, indice, nivel, pastas, onChange, onRemove }: {
       {/* Cutucada desta opção. Fica por opção porque o assunto muda a cada
           ponto do fluxo: quem não respondeu sobre vaga precisa de um lembrete
           diferente de quem não respondeu sobre documento. */}
+      {o.acao === "texto" && <ImagemDaResposta opcao={o} onChange={onChange} />}
       {o.acao !== "submenu" && <RetomadaEditor opcao={o} onChange={onChange} />}
       {o.acao === "submenu" && (
         <div className="ml-4 space-y-2 border-l-2 border-primary/25 pl-3">
@@ -287,7 +363,7 @@ function PerfilNegocioCard() {
       const { data, error } = await supabase.functions.invoke("whatsapp-perfil", {
         body: { acao: "salvar", perfil: p, ...(fotoRef ? { foto: fotoRef } : {}) },
       });
-      if (error) throw new Error(String((error as any)?.message ?? error));
+      if (error) throw new Error(await erroDaFunction(error));
       if ((data as any)?.error) throw new Error(String((data as any).error));
       setRascunho(null);
       setFoto(null);

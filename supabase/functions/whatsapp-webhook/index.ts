@@ -187,13 +187,20 @@ async function processarBot(
       return;
     case "menu":
       // rota.menu já é o nível certo da cascata (raiz ou submenu clicado).
-      await enviarMenu(conversaId, contatoId, to, rota.menu);
+      await enviarMenu(conversaId, contatoId, to, rota.menu, rota.imagem);
       await agendarRetomada(conversaId, contatoId, opcaoClicada);
       return;
-    case "texto":
-      await registrarSaida(conversaId, contatoId, to, rota.texto, "bot");
+    case "texto": {
+      // Com imagem configurada, vira mensagem de mídia com o texto na legenda
+      // (é assim que um passo a passo aparece no WhatsApp). Se o envio da
+      // imagem falhar, cai no texto puro em vez de perder a resposta.
+      const comImagem = rota.imagem
+        ? await enviarImagemComLegenda(conversaId, contatoId, to, rota.texto, rota.imagem)
+        : false;
+      if (!comImagem) await registrarSaida(conversaId, contatoId, to, rota.texto, "bot");
       await agendarRetomada(conversaId, contatoId, opcaoClicada);
       return;
+    }
     case "humano":
       // Passa a conversa para atendimento humano (desliga o bot) e avisa.
       await admin.from("WA_CONVERSA").update({ bot_ativo: false }).eq("id", conversaId);
@@ -245,15 +252,65 @@ async function enviarInterativo(to: string, interactive: any): Promise<string | 
 }
 
 // Monta e envia o menu: até 3 opções viram botões; 4–10 viram lista.
-async function enviarMenu(conversaId: string, contatoId: string, to: string, menu: any) {
+// URL temporária da imagem configurada no menu. A Meta busca o arquivo na
+// hora do envio, então não precisa subir mídia a cada mensagem — e o bucket
+// continua privado, porque a URL assinada expira sozinha.
+async function urlDaImagem(imagem: any): Promise<string | null> {
+  const caminho = String(imagem?.storage_path ?? "").trim();
+  if (!caminho) return null;
+  const { data } = await admin.storage.from("whatsapp-midia").createSignedUrl(caminho, 600);
+  return data?.signedUrl ?? null;
+}
+
+// Resposta de texto com imagem: a imagem vai como mensagem de mídia e o texto
+// como legenda, numa mensagem só (é como o WhatsApp mostra um passo a passo).
+async function enviarImagemComLegenda(
+  conversaId: string, contatoId: string, to: string, legenda: string, imagem: any,
+): Promise<boolean> {
+  const link = await urlDaImagem(imagem);
+  if (!link) return false;
+  const res = await fetch(`${GRAPH}/${PHONE_NUMBER_ID}/messages`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${WA_TOKEN}`, "Content-Type": "application/json" },
+    body: JSON.stringify({
+      messaging_product: "whatsapp", to, type: "image",
+      image: { link, ...(legenda ? { caption: legenda.slice(0, 1024) } : {}) },
+    }),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) { console.error("Falha ao enviar imagem do menu:", JSON.stringify(data)); return false; }
+  const waId = data?.messages?.[0]?.id ?? null;
+
+  await admin.from("WA_MENSAGEM").insert({
+    conversa_id: conversaId, contato_id: contatoId, direcao: "saida", tipo: "image",
+    texto: legenda, wa_message_id: waId, status: waId ? "enviada" : "erro", origem: "bot",
+    payload: { midia: { tipo: "image", storage_path: imagem.storage_path, mime_type: imagem.mime_type ?? "image/jpeg", status: "pronto" } },
+  });
+  await admin.from("WA_CONVERSA").update({
+    ultima_mensagem_em: new Date().toISOString(),
+    ultima_mensagem_preview: (legenda || "[imagem]").slice(0, 120),
+    ultima_direcao: "saida",
+  }).eq("id", conversaId);
+  return true;
+}
+
+async function enviarMenu(conversaId: string, contatoId: string, to: string, menu: any, imagem?: any) {
   const opcoes = (menu.opcoes as any[]).slice(0, 10);
   // O corpo pode ser a RESPOSTA de uma opção (resposta com botões), não só o
   // título de um menu — e resposta é texto livre. A Cloud API recusa body acima
   // de 1024 caracteres, e a recusa derrubaria a mensagem inteira.
   const corpo: string = ((menu.titulo && String(menu.titulo).trim()) || "Como posso te ajudar?").slice(0, 1024);
+  // Imagem só cabe como cabeçalho no formato de BOTÕES; a lista não aceita
+  // header de mídia. Com lista, a imagem vai antes, em mensagem separada.
+  const linkImagem = imagem ? await urlDaImagem(imagem) : null;
+  if (linkImagem && opcoes.length > 3) {
+    await enviarImagemComLegenda(conversaId, contatoId, to, "", imagem);
+  }
+
   const interactive = opcoes.length <= 3
     ? {
         type: "button",
+        ...(linkImagem ? { header: { type: "image", image: { link: linkImagem } } } : {}),
         body: { text: corpo },
         action: { buttons: opcoes.map((o) => ({ type: "reply", reply: { id: String(o.id), title: String(o.titulo).slice(0, 20) } })) },
       }
