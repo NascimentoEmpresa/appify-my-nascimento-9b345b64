@@ -18,7 +18,7 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
 import {
   dentroDoHorario, montarBase, montarSystem, gerarResposta,
-  rotearBot, inferirModo, acharOpcao, menuAtivo, retomadaDe,
+  rotearBot, inferirModo, acharOpcao, menuAtivo, retomadaDe, montarVagas,
   type Msg, type MenuOpcao,
 } from "../_shared/whatsapp-bot.ts";
 
@@ -73,11 +73,16 @@ async function responderComBot(
   const { data: conh } = await admin.from("WA_BOT_CONHECIMENTO")
     .select("titulo, conteudo").eq("ativo", true).order("ordem");
 
+  // Vagas abertas, lidas AGORA. Ficar na base de conhecimento não serviria:
+  // aquilo é texto que alguém escreve à mão e envelhece; vaga fechada ontem
+  // seria oferecida hoje.
+  const { data: vagas } = await admin.rpc("wa_vagas_abertas");
+
   const historico = mensagens.filter((m) => m.texto);
   // No fluxo normal a IA entra numa conversa que o menu já abriu, então não
   // cumprimenta de novo. `primeiraFala` só vale no caso de borda de menu vazio.
   const primeiraFala = !historico.some((m) => m.direcao === "saida");
-  const system = montarSystem(cfg, montarBase(conh ?? []), primeiraFala);
+  const system = montarSystem(cfg, montarBase(conh ?? []), primeiraFala, montarVagas((vagas ?? []) as any[]));
 
   const messages: Msg[] = historico.map((m) => ({
     role: m.direcao === "entrada" ? "user" : "assistant",
@@ -105,17 +110,33 @@ async function registrarSaida(conversaId: string, contatoId: string, to: string,
   }).eq("id", conversaId);
 }
 
-// O menu já saiu dentro da janela de nao_repetir_menu_min? Olha só as saídas
-// do bot que FORAM menu (tipo interactive ou payload com botões) — resposta de
-// texto comum não conta, senão qualquer conversa ativa silenciaria o menu.
-function menuEnviadoRecente(cfg: { nao_repetir_menu_min?: number | null }, hist: any[]): boolean {
+// Tenta RESERVAR o direito de apresentar o menu agora.
+//
+// Não pergunta "já mandei?" — carimba. O UPDATE só altera a linha se o último
+// menu for antigo (ou inexistente), e um UPDATE é atômico: entre mensagens
+// simultâneas, exatamente uma consegue atualizar e as outras voltam vazias.
+// Perguntar antes e decidir depois é o que fazia o menu sair duas vezes
+// quando alguém mandava três frases seguidas.
+//
+// Devolve true = pode enviar; false = alguém acabou de enviar (ou está
+// enviando), então esta execução fica quieta.
+async function reservarEnvioDoMenu(
+  conversaId: string, cfg: { nao_repetir_menu_min?: number | null },
+): Promise<boolean> {
   const min = Number(cfg.nao_repetir_menu_min ?? 0);
-  if (!Number.isFinite(min) || min <= 0) return false; // 0 = pode repetir sempre
-  const limite = Date.now() - min * 60_000;
-  return (hist ?? []).some((m) =>
-    m.direcao === "saida" && m.origem !== "atendente" &&
-    (m.tipo === "interactive" || Array.isArray(m.payload?.botoes)) &&
-    new Date(m.criada_em).getTime() >= limite);
+  const agora = new Date().toISOString();
+  if (!Number.isFinite(min) || min <= 0) {
+    // Anti-repetição desligado: sempre envia, mas mantém o carimbo em dia.
+    await admin.from("WA_CONVERSA").update({ menu_enviado_em: agora }).eq("id", conversaId);
+    return true;
+  }
+  const limite = new Date(Date.now() - min * 60_000).toISOString();
+  const { data } = await admin.from("WA_CONVERSA")
+    .update({ menu_enviado_em: agora })
+    .eq("id", conversaId)
+    .or(`menu_enviado_em.is.null,menu_enviado_em.lt.${limite}`)
+    .select("id");
+  return (data ?? []).length > 0;
 }
 
 // Agenda a cutucada da opção clicada. Uma pendente por conversa: a mais nova
@@ -166,7 +187,10 @@ async function processarBot(
     texto: msgType === "text" ? texto : null,
     replyId,
     dentroHorario: dentroDoHorario(cfg as any),
-    menuRecente: menuEnviadoRecente(cfg as any, hist ?? []),
+    // Sempre false aqui: quem decide se o menu se repete é a RESERVA atômica
+    // no banco, logo abaixo. Este campo continua existindo para o simulador,
+    // que roda sem concorrência e não tem banco para disputar.
+    menuRecente: false,
   });
 
   // Opção que a pessoa acabou de clicar — é dela que sai a cutucada. Só faz
@@ -186,6 +210,10 @@ async function processarBot(
       if (cfg.fora_horario_msg) await registrarSaida(conversaId, contatoId, to, cfg.fora_horario_msg, "bot");
       return;
     case "menu":
+      // Menu vindo de TEXTO SOLTO passa pela reserva: se a pessoa mandou
+      // várias frases seguidas, só a primeira execução envia. Clique em botão
+      // é pedido explícito e sempre responde — inclusive submenu.
+      if (!replyId && !(await reservarEnvioDoMenu(conversaId, cfg as any))) return;
       // rota.menu já é o nível certo da cascata (raiz ou submenu clicado).
       await enviarMenu(conversaId, contatoId, to, rota.menu, rota.imagem);
       await agendarRetomada(conversaId, contatoId, opcaoClicada);
