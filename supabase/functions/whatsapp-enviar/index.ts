@@ -60,6 +60,8 @@ Deno.serve(async (req) => {
     midia?: { storage_path?: string; mime_type?: string; filename?: string };
     // Reagir a uma mensagem existente. Emoji vazio remove a reação.
     reagir?: { wa_message_id?: string; emoji?: string };
+    // Mover de pasta avisando o contato. pasta_codigo null = volta à triagem.
+    mover?: { pasta_codigo?: string | null };
   };
   try { body = await req.json(); } catch { return json({ error: "json inválido" }, 400); }
   const conversaId = body.conversa_id;

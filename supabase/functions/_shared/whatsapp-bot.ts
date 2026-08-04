@@ -25,6 +25,9 @@ export interface MenuOpcao {
   // `mensagem` sozinho. Cada opção tem o seu porque o assunto é outro em cada
   // ponto do fluxo. Teto de 24h — acima disso a Meta recusa (131047).
   retomada?: { minutos: number; mensagem: string } | null;
+  // Imagem que acompanha a resposta desta opcao (passo a passo, print). Fica
+  // no bucket; o envio gera uma URL assinada e a Meta busca de la.
+  imagem?: { storage_path: string; mime_type?: string; filename?: string } | null;
 }
 
 export const RETOMADA_MAX_MIN = 1440; // 24h — limite da janela da Meta
@@ -154,8 +157,8 @@ export type RotaBot =
   // menu já apresentado há pouco: cala a boca em vez de repetir a saudação
   | { tipo: "silencio"; modo: "menu" }
   | { tipo: "fora_horario"; modo: ModoConversa }
-  | { tipo: "menu"; menu: BotMenu; modo: "menu" }      // apresenta menu raiz ou submenu
-  | { tipo: "texto"; texto: string; modo: "menu" }
+  | { tipo: "menu"; menu: BotMenu; imagem?: MenuOpcao["imagem"]; modo: "menu" }
+  | { tipo: "texto"; texto: string; imagem?: MenuOpcao["imagem"]; modo: "menu" }
   | { tipo: "humano"; aviso: string; modo: "menu" }
   // manda a conversa para uma pasta (fila de um setor) e passa para humano
   | { tipo: "transferir"; pasta: string; aviso: string; modo: "menu" }
@@ -194,9 +197,11 @@ export function rotearBot(cfg: BotConfig, e: EntradaBot): RotaBot {
       // opção comum, ele pode ter a própria resposta com botões — a árvore
       // continua descendo sem tratamento especial.
       const filhas = opcoesFilhas(opt);
+      // A imagem acompanha a resposta nos dois formatos: sozinha vira legenda,
+      // com botões vira o cabeçalho da mensagem interativa.
       return filhas.length
-        ? { tipo: "menu", menu: { titulo: resposta, opcoes: filhas }, modo: "menu" }
-        : { tipo: "texto", texto: resposta, modo: "menu" };
+        ? { tipo: "menu", menu: { titulo: resposta, opcoes: filhas }, imagem: opt.imagem ?? null, modo: "menu" }
+        : { tipo: "texto", texto: resposta, imagem: opt.imagem ?? null, modo: "menu" };
     }
     if (opt?.acao === "concluir") return { tipo: "concluir", aviso: valorOpcao(opt) || AVISO_CONCLUIR_PADRAO, modo: "menu" };
     if (opt?.acao === "ia") return { tipo: "ia_intro", aviso: valorOpcao(opt) || AVISO_IA_PADRAO, modo: "ia" };

@@ -6,6 +6,28 @@ export function cn(...inputs: ClassValue[]) {
 }
 
 /**
+ * Mensagem de verdade de uma edge function que falhou.
+ *
+ * `supabase.functions.invoke` devolve só "Edge Function returned a non-2xx
+ * status code" e joga fora o corpo — que é justamente onde a função explica o
+ * que houve. O corpo fica em `error.context`, um Response ainda não lido.
+ */
+export async function erroDaFunction(error: any): Promise<string> {
+  const generico = String(error?.message ?? error ?? "Falha desconhecida");
+  try {
+    const resp = error?.context;
+    if (resp && typeof resp.json === "function") {
+      const corpo = await resp.clone().json();
+      const detalhe = corpo?.detalhe?.error?.message ?? corpo?.detalhe?.message ?? null;
+      if (corpo?.error) return detalhe ? `${corpo.error} — ${detalhe}` : String(corpo.error);
+    }
+  } catch {
+    // corpo não era JSON: fica o genérico mesmo
+  }
+  return generico;
+}
+
+/**
  * UUID que funciona fora de contexto seguro.
  *
  * `crypto.randomUUID` só existe em HTTPS ou localhost, e a produção é acessada

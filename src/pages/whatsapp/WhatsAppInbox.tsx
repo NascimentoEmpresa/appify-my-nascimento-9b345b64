@@ -4,7 +4,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { useAccessibleMenus } from "@/hooks/useAccessibleMenus";
 import { useToast } from "@/hooks/use-toast";
-import { novoUuid } from "@/lib/utils";
+import { novoUuid, erroDaFunction } from "@/lib/utils";
 import { HistoricoConversa } from "./HistoricoConversa";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { Card } from "@/components/ui/card";
@@ -104,16 +104,33 @@ export default function WhatsAppInbox() {
 
   // Mover a conversa de pasta à mão (o bot direciona sozinho, mas o atendente
   // precisa poder corrigir/encaminhar).
+  // Passa pela edge function em vez de dar UPDATE direto: além de mover, ela
+  // avisa o contato pelo WhatsApp ("transferido para o setor X" / "marcado
+  // como Concluído"), e mandar mensagem exige o token do servidor.
   const moverPara = async (codigo: string) => {
     if (!sel) return;
     const destino = codigo === SEM_PASTA ? null : codigo;
-    const { error } = await (supabase as any).from("WA_CONVERSA").update({ pasta_codigo: destino }).eq("id", sel.id);
-    if (error) { toast({ title: "Não deu para mover", description: error.message, variant: "destructive" }); return; }
+    const { data, error } = await supabase.functions.invoke("whatsapp-mover-pasta", {
+      body: { conversa_id: sel.id, pasta_codigo: destino },
+    });
+    if (error) { toast({ title: "Não deu para mover", description: await erroDaFunction(error), variant: "destructive" }); return; }
+
+    // Mover funcionou mesmo se o aviso falhou (fora da janela de 24h, por
+    // exemplo) — avisar disso evita a impressão de que nada aconteceu.
+    const r = data as any;
+    if (destino && r?.avisado === false) {
+      toast({
+        title: "Conversa movida, mas o contato não foi avisado",
+        description: r?.motivo ?? "A mensagem automática não pôde ser entregue — veja o motivo na conversa.",
+      });
+    }
+
     // Sem acesso ao destino a conversa sai de vista na hora (a RLS deixa de
     // devolvê-la) — fechar a thread evita um painel preso num registro sumido.
     const aindaVejo = podeTodas || pastasVisiveis.some((p) => p.codigo === destino);
     if (!aindaVejo) setSelId(null);
     qc.invalidateQueries({ queryKey: ["wa-conversas"] });
+    qc.invalidateQueries({ queryKey: ["wa-mensagens", sel.id] });
   };
 
   // Mensagens da conversa selecionada — poll mais rápido.
@@ -154,7 +171,7 @@ export default function WhatsAppInbox() {
     const { error } = await supabase.functions.invoke("whatsapp-enviar", {
       body: { conversa_id: sel.id, reagir: { wa_message_id: m.wa_message_id, emoji: atual === emoji ? "" : emoji } },
     });
-    if (error) { toast({ title: "Não deu para reagir", description: String(error.message ?? error), variant: "destructive" }); return; }
+    if (error) { toast({ title: "Não deu para reagir", description: await erroDaFunction(error), variant: "destructive" }); return; }
     qc.invalidateQueries({ queryKey: ["wa-mensagens", sel.id] });
   };
 
@@ -198,7 +215,7 @@ export default function WhatsAppInbox() {
       const { error } = await supabase.functions.invoke("whatsapp-enviar", {
         body: { conversa_id: sel.id, texto: texto.trim(), ...(midia ? { midia } : {}) },
       });
-      if (error) throw new Error(String(error.message ?? error));
+      if (error) throw new Error(await erroDaFunction(error));
       setTexto("");
       setAnexo(null);
       qc.invalidateQueries({ queryKey: ["wa-mensagens", sel.id] });
