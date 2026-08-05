@@ -46,6 +46,7 @@ import {
   ClipboardList,
   Bell,
   MessageCircle,
+  FlaskConical,
   Bot,
   ShieldCheck,
   Shirt,
@@ -63,6 +64,7 @@ import { EmpresaAtivaContext } from "@/context/EmpresaAtivaContext";
 import { Inbox } from "lucide-react";
 import { Target } from "lucide-react";
 import { GitBranch, GitMerge } from "lucide-react";
+import { MessageSquare } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useCallback, useEffect, useMemo, useState, useContext } from "react";
 
@@ -119,6 +121,7 @@ const licitacoesModule: ModuleDef = {
         { label: "Implantação de Contratos", to: "/app/licitacoes/implantacao", icon: ListChecks },
         { label: "Planilha de Custo", to: "/app/licitacoes/planilha-custo", icon: TableProperties },
         { label: "Contratos", to: "/app/licitacoes/contratos", icon: Building2 },
+        { label: "Cotações", to: "/app/licitacoes/cotacoes", icon: MessageSquare },
         { label: "Documentos", to: "/app/documentos", icon: ScrollText },
         // B2: "Triagem & IA" removida do menu (rota /app/triagem segue existindo,
         // mas controlada pelo RouteGuard + matriz de permissões do ERP).
@@ -403,11 +406,37 @@ const encarregadosModule: ModuleDef = {
   icon: HardHat,
   basePath: "/app/encarregados/minhas-solicitacoes",
   status: "active",
+  // Agrupado pelo submódulo de ORIGEM de cada solicitação, como nos demais
+  // módulos — o encarregado pensa "preciso de uma vaga", não "preciso abrir
+  // uma solicitação". Todos os itens caem na mesma tela de Minhas
+  // Solicitações; muda só o formulário que já vem aberto.
   groups: [
     {
-      label: "Solicitações",
+      label: "Recrutamento e Seleção",
       defaultOpen: true,
       items: [
+        { label: "Solicitar Vaga", to: "/app/encarregados/solicitar-vaga", icon: UserCog },
+      ],
+    },
+    {
+      label: "Recursos Humanos",
+      defaultOpen: true,
+      items: [
+        { label: "Solicitar Férias", to: "/app/encarregados/solicitar-ferias", icon: CalendarRange },
+      ],
+    },
+    {
+      label: "Jurídico",
+      defaultOpen: true,
+      items: [
+        { label: "Advertência", to: "/app/encarregados/advertencia", icon: ShieldAlert },
+      ],
+    },
+    {
+      label: "Acompanhamento",
+      defaultOpen: true,
+      items: [
+        // Continua existindo: é a visão com TODAS as opções e o histórico.
         { label: "Minhas Solicitações", to: "/app/encarregados/minhas-solicitacoes", icon: ClipboardCheck },
         { label: "Solicitar Materiais", to: "/app/encarregados/solicitar-materiais", icon: Shirt },
         { label: "Meus Pedidos", to: "/app/encarregados/meus-pedidos", icon: Truck },
@@ -438,6 +467,7 @@ const sistemasModule: ModuleDef = {
       items: [
         { label: "Chamados de Sistemas", to: "/app/sistemas/chamados", icon: Headset, notif: "meus" },
         { label: "Painel de Distribuição", to: "/app/sistemas/chamados/painel", icon: BarChart3 },
+        { label: "Dashboard de Chamados", to: "/app/sistemas/chamados/dashboard-tv", icon: LayoutDashboard },
         { label: "Painel do Desenvolvedor", to: "/app/sistemas/chamados/dev", icon: ClipboardList, notif: "dev" },
       ],
     },
@@ -482,7 +512,9 @@ const whatsappModule: ModuleDef = {
       defaultOpen: true,
       items: [
         { label: "Caixa de Entrada", to: "/app/whatsapp", icon: MessageCircle },
+        { label: "Dashboard", to: "/app/whatsapp/dashboard", icon: BarChart3 },
         { label: "Chatbot", to: "/app/whatsapp/chatbot", icon: Bot },
+        { label: "Testes", to: "/app/whatsapp/testes", icon: FlaskConical },
       ],
     },
   ],

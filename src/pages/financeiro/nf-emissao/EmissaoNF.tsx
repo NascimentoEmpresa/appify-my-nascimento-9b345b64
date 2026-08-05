@@ -16,8 +16,21 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList, CommandSeparator } from "@/components/ui/command";
-import { Plus, Trash2, FileText, Building2, Calculator, ChevronRight, Search, Settings, ChevronDown } from "lucide-react";
+import {
+  Plus,
+  Trash2,
+  FileText,
+  Building2,
+  Calculator,
+  ChevronRight,
+  ChevronLeft,
+  Search,
+  Settings,
+  ChevronDown,
+  CheckCircle2,
+} from "lucide-react";
 import { toast } from "sonner";
+import { cn } from "@/lib/utils";
 import { useEmpresaAtiva } from "@/context/EmpresaAtivaContext";
 import {
   NfEmissaoRow,
@@ -35,8 +48,19 @@ import {
 import { useContratosERP, ContratoERP } from "@/hooks/useContratosERP";
 import { usePlanilhaCustos, resolverPostosVigentes, PostoVigente } from "@/hooks/usePlanilhaCusto";
 import { useModelosNf, buscarItensModeloNf, NfEmissaoModeloRow } from "@/hooks/useNfEmissaoModelo";
-import { calcularItem, calcularTotaisNf, ItemInput, ItemCalculado, INSS_CATEGORIAS, PercentuaisFiscais } from "./calculos";
-import { fmtMoney, fmtPct, fmtDate, STATUS_LABEL, STATUS_CLASS, Linha, itemVazio } from "./shared";
+import { calcularItem, calcularTotaisNf, pctEfetivo, ItemInput, ItemCalculado, INSS_CATEGORIAS, PercentuaisFiscais } from "./calculos";
+import {
+  fmtMoney,
+  fmtPct,
+  fmtDate,
+  fmtCompetenciaCurta,
+  proximaCompetencia,
+  competenciaAnterior,
+  STATUS_LABEL,
+  STATUS_CLASS,
+  Linha,
+  itemVazio,
+} from "./shared";
 import { ItensNfEditor } from "./ItensNfEditor";
 import { ModeloNfDialog } from "./ModeloNfDialog";
 import { registrarLogNf } from "./registrarLogNf";
@@ -47,14 +71,31 @@ interface NovaNfSeed {
   variacao: string;
   itens: (ItemInput & { identificacao: string })[];
   unitarios: (number | null)[];
-  pctFiscais: PercentuaisFiscais | null;
+  pctFiscais: PercentuaisFiscais;
+  pctFiscaisConfigurado: boolean;
+  descricao: string;
 }
+
+const PCT_FISCAIS_ZERO: PercentuaisFiscais = { issqn_pct: 0, ir_pct: 0, cofins_pct: 0, pis_pct: 0, csll_pct: 0 };
 
 function pctFiscaisDoContrato(c: Pick<ContratoERP, "issqn_pct" | "ir_pct" | "cofins_pct" | "pis_pct" | "csll_pct">): PercentuaisFiscais | null {
   const configurado = c.issqn_pct !== 0 || c.ir_pct !== 0 || c.cofins_pct !== 0 || c.pis_pct !== 0 || c.csll_pct !== 0;
   return configurado
     ? { issqn_pct: c.issqn_pct, ir_pct: c.ir_pct, cofins_pct: c.cofins_pct, pis_pct: c.pis_pct, csll_pct: c.csll_pct }
     : null;
+}
+
+// Um item tem retenção própria se qualquer um dos 5 campos foi explicitamente
+// definido (override de nota ou de item) — usado tanto pra decidir se a NF
+// pode ser emitida sem retenção no contrato/nota, quanto pro aviso na tela.
+function temRetencaoPropria(x: {
+  issqn_pct?: number | null;
+  ir_pct?: number | null;
+  cofins_pct?: number | null;
+  pis_pct?: number | null;
+  csll_pct?: number | null;
+}): boolean {
+  return x.issqn_pct != null || x.ir_pct != null || x.cofins_pct != null || x.pis_pct != null || x.csll_pct != null;
 }
 
 export default function EmissaoNF() {
@@ -87,7 +128,11 @@ export default function EmissaoNF() {
       .filter(
         (c) => c.nome.toLowerCase().includes(busca.toLowerCase()) || c.cliente.toLowerCase().includes(busca.toLowerCase())
       )
-      .sort((a, b) => a.nome.localeCompare(b.nome));
+      .sort((a, b) => {
+        const encerradoA = a.status === "encerrado" ? 1 : 0;
+        const encerradoB = b.status === "encerrado" ? 1 : 0;
+        return encerradoA !== encerradoB ? encerradoA - encerradoB : a.nome.localeCompare(b.nome);
+      });
   }, [contratos, busca]);
 
   const contratoAtual = contratos.find((c) => c.id === contratoSel) ?? null;
@@ -115,25 +160,47 @@ export default function EmissaoNF() {
     const unitarios: (number | null)[] = [];
     itensModelo.forEach((mi, idx) => {
       const pct = mi.percentual / 100;
-      const p = mi.posto ? postosVigentesContratoSel.find((pv) => pv.posto === mi.posto) : undefined;
-      if (mi.posto && !p) faltantes.push(mi.posto);
+      // Um item do modelo pode juntar mais de um posto (ex: UFFS — "Limpeza
+      // e Jardinagem" viram 1 item só, com valor somado).
+      const nomesPostos = mi.postos && mi.postos.length > 0 ? mi.postos : mi.posto ? [mi.posto] : [];
+      const encontrados = nomesPostos
+        .map((nome) => postosVigentesContratoSel.find((pv) => pv.posto === nome))
+        .filter((p): p is PostoVigente => !!p);
+      nomesPostos.forEach((nome) => {
+        if (!encontrados.some((p) => p.posto === nome)) faltantes.push(nome);
+      });
+      const rotuloPostos = nomesPostos.length > 0 ? nomesPostos.join(" + ") : null;
       const rotulo =
-        mi.identificacao_padrao || (mi.posto ? (mi.percentual !== 100 ? `${mi.posto} (${mi.percentual}%)` : mi.posto) : `Item ${idx + 1}`);
-      if (p) {
+        mi.identificacao_padrao || (rotuloPostos ? (mi.percentual !== 100 ? `${rotuloPostos} (${mi.percentual}%)` : rotuloPostos) : `Item ${idx + 1}`);
+      // Override de retenção próprio do item (ex: UFFS mistura postos com IR
+      // diferente na mesma nota) — nulo continua usando o padrão da nota.
+      const retencaoItem = {
+        issqn_pct: mi.issqn_pct,
+        ir_pct: mi.ir_pct,
+        cofins_pct: mi.cofins_pct,
+        pis_pct: mi.pis_pct,
+        csll_pct: mi.csll_pct,
+      };
+      if (encontrados.length > 0) {
+        const valorTotal = encontrados.reduce((s, p) => s + p.valorTotal, 0);
+        const qtdTotal = encontrados.reduce((s, p) => s + p.qtdColaboradores, 0);
         itens.push({
           ...itemVazio(idx + 1),
           identificacao: rotulo,
-          valor_contrato_exec: Math.round(p.valorTotal * pct * 100) / 100,
-          qtd_colaboradores: Math.round(p.qtdColaboradores * pct),
+          valor_contrato_exec: Math.round(valorTotal * pct * 100) / 100,
+          qtd_colaboradores: Math.round(qtdTotal * pct),
           inss_categoria: mi.inss_categoria,
+          ...retencaoItem,
         });
-        unitarios.push(p.valorUnitario * pct);
+        // Com mais de um posto não tem um único valor unitário pra travar.
+        unitarios.push(encontrados.length === 1 ? encontrados[0].valorUnitario * pct : null);
       } else {
         itens.push({
           ...itemVazio(idx + 1),
           identificacao: rotulo,
           valor_contrato_exec: mi.ultimo_valor_unitario ?? 0,
           inss_categoria: mi.inss_categoria,
+          ...retencaoItem,
         });
         unitarios.push(null);
       }
@@ -141,17 +208,29 @@ export default function EmissaoNF() {
     if (faltantes.length > 0) {
       toast.error(`Posto(s) não encontrado(s) na planilha vigente: ${faltantes.join(", ")}. Preencha manualmente.`);
     }
+    // Retenção do contrato não é mais pré-requisito: se a nota (modelo) já
+    // define seus próprios percentuais, isso já basta pra emitir — o
+    // contrato só entra como fallback de cada campo que a nota deixou em
+    // branco. "pctFiscaisConfigurado" só marca se veio de alguma fonte real
+    // (contrato ou nota), pra decidir se ainda vale mostrar o aviso.
     const pctFiscaisContrato = contratoAtual ? pctFiscaisDoContrato(contratoAtual) : null;
-    const pctFiscais: PercentuaisFiscais | null = pctFiscaisContrato
-      ? {
-          issqn_pct: modelo.issqn_pct ?? pctFiscaisContrato.issqn_pct,
-          ir_pct: modelo.ir_pct ?? pctFiscaisContrato.ir_pct,
-          cofins_pct: modelo.cofins_pct ?? pctFiscaisContrato.cofins_pct,
-          pis_pct: modelo.pis_pct ?? pctFiscaisContrato.pis_pct,
-          csll_pct: modelo.csll_pct ?? pctFiscaisContrato.csll_pct,
-        }
-      : null;
-    setSeedNovaNf({ modeloId: modelo.id, variacao: modelo.variacao ?? "", itens, unitarios, pctFiscais });
+    const notaTemRetencaoPropria = temRetencaoPropria(modelo);
+    const pctFiscais: PercentuaisFiscais = {
+      issqn_pct: modelo.issqn_pct ?? pctFiscaisContrato?.issqn_pct ?? 0,
+      ir_pct: modelo.ir_pct ?? pctFiscaisContrato?.ir_pct ?? 0,
+      cofins_pct: modelo.cofins_pct ?? pctFiscaisContrato?.cofins_pct ?? 0,
+      pis_pct: modelo.pis_pct ?? pctFiscaisContrato?.pis_pct ?? 0,
+      csll_pct: modelo.csll_pct ?? pctFiscaisContrato?.csll_pct ?? 0,
+    };
+    setSeedNovaNf({
+      modeloId: modelo.id,
+      variacao: modelo.variacao ?? "",
+      itens,
+      unitarios,
+      pctFiscais,
+      pctFiscaisConfigurado: !!pctFiscaisContrato || notaTemRetencaoPropria,
+      descricao: modelo.descricao_padrao ?? "",
+    });
     setNovaNfContratoId(contratoSel);
     setModalOpen(true);
   }
@@ -207,17 +286,27 @@ export default function EmissaoNF() {
             {contratosFiltrados.map((c) => {
               const qtd = nfs.filter((n) => n.contrato_id === c.id).length;
               const ativo = contratoSel === c.id;
+              const encerrado = c.status === "encerrado";
               return (
                 <button
                   key={c.id}
                   onClick={() => setContratoSel(c.id)}
-                  className={`flex w-full items-center justify-between gap-2 border-b border-border px-4 py-3 text-left transition-colors hover:bg-muted/30 ${ativo ? "bg-primary/5 border-l-2 border-l-primary" : ""}`}
+                  className={cn(
+                    "flex w-full items-center justify-between gap-2 border-b border-border px-4 py-3 text-left transition-colors hover:bg-muted/30",
+                    ativo && "bg-primary/5 border-l-2 border-l-primary",
+                    encerrado && !ativo && "bg-muted/40 opacity-70"
+                  )}
                 >
                   <div className="min-w-0">
-                    <p className="text-xs font-semibold truncate">{c.nome}</p>
+                    <p className={cn("text-xs font-semibold truncate", encerrado && "text-muted-foreground")}>{c.nome}</p>
                     <p className="text-[11px] text-muted-foreground truncate">{c.cliente}</p>
                   </div>
                   <div className="flex shrink-0 items-center gap-1.5">
+                    {encerrado && (
+                      <span className="inline-flex rounded-full bg-slate-200 dark:bg-slate-700 px-2 py-0.5 text-[10px] font-medium text-slate-500 dark:text-slate-400">
+                        Encerrado
+                      </span>
+                    )}
                     {qtd > 0 && (
                       <span className="inline-flex rounded-full bg-primary/10 px-2 py-0.5 text-[10px] font-semibold text-primary">
                         {qtd}
@@ -322,6 +411,38 @@ function ContratoNfsPanel({
   const [popoverOpen, setPopoverOpen] = useState(false);
   const [buscaNf, setBuscaNf] = useState("");
   const [filtroCompetencia, setFiltroCompetencia] = useState("TODAS");
+  const [competenciaOverride, setCompetenciaOverride] = useState<string | null>(null);
+
+  // Sugestão inicial de rodada: a competência mais recente já emitida neste
+  // contrato (qualquer variação). Se essa rodada já está completa (todas as
+  // variações do modelo já emitidas nela), sugere a próxima — senão o
+  // checklist mostraria uma rodada já fechada como se ainda fosse a atual.
+  // Contratos com variações em competências bem diferentes entre si podem
+  // fazer essa sugestão errar, por isso o analista pode navegar manualmente
+  // (setinhas) pra qualquer outra competência, inclusive voltando no tempo.
+  const competenciaSugerida = useMemo(() => {
+    if (nfs.length === 0) {
+      const hoje = new Date();
+      return `${hoje.getFullYear()}-${String(hoje.getMonth() + 1).padStart(2, "0")}`;
+    }
+    const maisRecente = nfs.map((n) => n.competencia.slice(0, 7)).sort().at(-1)!;
+    const rodadaCompleta = modelosAtivos.every((m) =>
+      nfs.some((n) => (n.variacao ?? "") === (m.variacao ?? "") && n.competencia.slice(0, 7) === maisRecente)
+    );
+    return rodadaCompleta ? proximaCompetencia(maisRecente) : maisRecente;
+  }, [nfs, modelosAtivos]);
+
+  const competenciaExibida = competenciaOverride ?? competenciaSugerida;
+
+  // Sempre reabre na sugestão automática, não onde o analista deixou da
+  // última vez — cada abertura é potencialmente um contrato diferente.
+  useEffect(() => {
+    if (popoverOpen) setCompetenciaOverride(null);
+  }, [popoverOpen]);
+
+  function variacaoJaEmitidaNaCompetencia(variacao: string | null): boolean {
+    return nfs.some((n) => (n.variacao ?? "") === (variacao ?? "") && n.competencia.slice(0, 7) === competenciaExibida);
+  }
 
   const competencias = useMemo(
     () => ["TODAS", ...new Set(nfs.map((n) => n.competencia.slice(0, 7)))].sort().reverse(),
@@ -359,11 +480,34 @@ function ContratoNfsPanel({
                     filter={(itemValue, search) => (itemValue.toLowerCase().includes(search.toLowerCase()) ? 1 : 0)}
                   >
                     <CommandInput placeholder="Buscar variação..." />
+                    <div className="flex items-center justify-between border-b border-border px-2 py-1.5">
+                      <span className="text-xs font-medium text-muted-foreground">Rodada</span>
+                      <div className="flex items-center gap-0.5">
+                        <button
+                          type="button"
+                          className="rounded p-0.5 hover:bg-muted"
+                          onClick={() => setCompetenciaOverride(competenciaAnterior(competenciaExibida))}
+                        >
+                          <ChevronLeft className="h-3.5 w-3.5" />
+                        </button>
+                        <span className="w-16 text-center text-xs font-semibold tabular-nums">
+                          {fmtCompetenciaCurta(competenciaExibida)}
+                        </span>
+                        <button
+                          type="button"
+                          className="rounded p-0.5 hover:bg-muted"
+                          onClick={() => setCompetenciaOverride(proximaCompetencia(competenciaExibida))}
+                        >
+                          <ChevronRight className="h-3.5 w-3.5" />
+                        </button>
+                      </div>
+                    </div>
                     <CommandList>
                       <CommandEmpty>Nenhuma variação encontrada.</CommandEmpty>
                       <CommandGroup heading={`${modelosAtivos.length} variação(ões) do modelo`}>
                         {modelosAtivos.map((m) => {
                           const ultima = ultimaCompetenciaVariacao(m.variacao);
+                          const jaEmitida = variacaoJaEmitidaNaCompetencia(m.variacao);
                           return (
                             <CommandItem
                               key={m.id}
@@ -372,11 +516,23 @@ function ContratoNfsPanel({
                                 setPopoverOpen(false);
                                 onNovaVariacao(m);
                               }}
+                              className={cn(jaEmitida && "opacity-60")}
                             >
+                              {jaEmitida ? (
+                                <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-600" />
+                              ) : (
+                                <span className="h-4 w-4 shrink-0" />
+                              )}
                               <div className="flex min-w-0 flex-col">
                                 <span className="truncate font-medium">{m.variacao || "(sem nome)"}</span>
-                                {ultima && (
-                                  <span className="truncate text-[11px] text-muted-foreground">Última competência: {ultima}</span>
+                                {jaEmitida ? (
+                                  <span className="truncate text-[11px] text-emerald-700">
+                                    Já emitida — {fmtCompetenciaCurta(competenciaExibida)}
+                                  </span>
+                                ) : (
+                                  ultima && (
+                                    <span className="truncate text-[11px] text-muted-foreground">Última competência: {ultima}</span>
+                                  )
                                 )}
                               </div>
                             </CommandItem>
@@ -517,7 +673,10 @@ function NovaNfDialog({ open, onOpenChange, empresaId, contratos, nfParaEditar, 
   const [expandidos, setExpandidos] = useState<Set<number>>(new Set([0]));
   const [unitariosPorItem, setUnitariosPorItem] = useState<(number | null)[]>([null]);
   const [modeloIdOrigem, setModeloIdOrigem] = useState<string | null>(null);
-  const [pctFiscais, setPctFiscais] = useState<PercentuaisFiscais | null>(null);
+  const [pctFiscais, setPctFiscais] = useState<PercentuaisFiscais>(PCT_FISCAIS_ZERO);
+  // Só pra decidir se ainda vale mostrar o aviso de "contrato sem dados
+  // fiscais" — não bloqueia mais o cálculo/emissão sozinho (ver validar()).
+  const [pctFiscaisConfigurado, setPctFiscaisConfigurado] = useState(false);
 
   useEffect(() => {
     if (!open) return;
@@ -537,6 +696,9 @@ function NovaNfDialog({ open, onOpenChange, empresaId, contratos, nfParaEditar, 
         pis_pct: nfParaEditar.pis_pct,
         csll_pct: nfParaEditar.csll_pct,
       });
+      // NF já emitida — os percentuais gravados são a fonte, não importa se
+      // o contrato tem dados fiscais hoje.
+      setPctFiscaisConfigurado(true);
     } else if (seed) {
       setContratoId(contratoIdInicial ?? "");
       setVariacao(seed.variacao);
@@ -545,10 +707,14 @@ function NovaNfDialog({ open, onOpenChange, empresaId, contratos, nfParaEditar, 
       setExpandidos(new Set());
       setModeloIdOrigem(seed.modeloId);
       setPctFiscais(seed.pctFiscais);
+      setPctFiscaisConfigurado(seed.pctFiscaisConfigurado);
+      setDescricao(seed.descricao);
     } else if (contratoIdInicial) {
       setContratoId(contratoIdInicial);
       const c = contratos.find((x) => x.id === contratoIdInicial);
-      setPctFiscais(c ? pctFiscaisDoContrato(c) : null);
+      const pctContrato = c ? pctFiscaisDoContrato(c) : null;
+      setPctFiscais(pctContrato ?? PCT_FISCAIS_ZERO);
+      setPctFiscaisConfigurado(!!pctContrato);
     }
   }, [open, nfParaEditar?.id, contratoIdInicial, seed]);
 
@@ -585,8 +751,7 @@ function NovaNfDialog({ open, onOpenChange, empresaId, contratos, nfParaEditar, 
   );
 
   const itensCalculados: ItemCalculado[] = useMemo(() => {
-    if (!pctFiscais) return [];
-    return itens.map((it) => calcularItem(it, pctFiscais));
+    return itens.map((it) => calcularItem(it, pctEfetivo(it, pctFiscais)));
   }, [itens, pctFiscais]);
 
   const totais = useMemo(() => calcularTotaisNf(itensCalculados), [itensCalculados]);
@@ -615,11 +780,22 @@ function NovaNfDialog({ open, onOpenChange, empresaId, contratos, nfParaEditar, 
       return n;
     });
   }
-  function selecionarPosto(i: number, posto: string) {
-    const p = postosVigentes.find((pv) => pv.posto === posto);
-    if (!p) return;
-    updateItem(i, { identificacao: p.posto, valor_contrato_exec: p.valorTotal, qtd_colaboradores: p.qtdColaboradores });
-    setUnitariosPorItem((arr) => arr.map((u, k) => (k === i ? p.valorUnitario : u)));
+  function selecionarPostos(i: number, postos: string[]) {
+    const encontrados = postos
+      .map((nome) => postosVigentes.find((pv) => pv.posto === nome))
+      .filter((p): p is PostoVigente => !!p);
+    if (encontrados.length === 0) return;
+    const valorTotal = encontrados.reduce((s, p) => s + p.valorTotal, 0);
+    const qtdTotal = encontrados.reduce((s, p) => s + p.qtdColaboradores, 0);
+    updateItem(i, {
+      identificacao: encontrados.map((p) => p.posto).join(" + "),
+      valor_contrato_exec: valorTotal,
+      qtd_colaboradores: qtdTotal,
+    });
+    // Com mais de um posto não tem um único valor unitário pra recalcular a
+    // partir da quantidade — o analista ajusta o total à mão se precisar.
+    const unitario = encontrados.length === 1 ? encontrados[0].valorUnitario : null;
+    setUnitariosPorItem((arr) => arr.map((u, k) => (k === i ? unitario : u)));
   }
   function qtdColaboradoresChange(i: number, novaQtd: number) {
     const unit = unitariosPorItem[i];
@@ -644,7 +820,8 @@ function NovaNfDialog({ open, onOpenChange, empresaId, contratos, nfParaEditar, 
     setExpandidos(new Set([0]));
     setUnitariosPorItem([null]);
     setModeloIdOrigem(null);
-    setPctFiscais(null);
+    setPctFiscais(PCT_FISCAIS_ZERO);
+    setPctFiscaisConfigurado(false);
   }
 
   function handleClose(v: boolean) {
@@ -655,7 +832,14 @@ function NovaNfDialog({ open, onOpenChange, empresaId, contratos, nfParaEditar, 
   function validar(): string | null {
     if (!empresaId) return "Empresa não identificada.";
     if (!contratoId) return "Selecione o Contrato.";
-    if (!pctFiscais) return "Este contrato ainda não tem Dados Fiscais cadastrados — cadastre antes de emitir a NF.";
+    // Retenção do contrato não é mais pré-requisito — se a nota ou pelo
+    // menos um item já define seus próprios percentuais, isso já cobre a
+    // emissão. Só bloqueia quando não existe fonte nenhuma (nem contrato,
+    // nem nota, nem item), pra não deixar uma NF sair com retenção 0% por
+    // esquecimento de cadastro.
+    if (!pctFiscaisConfigurado && !itens.some(temRetencaoPropria)) {
+      return "Nenhuma retenção fiscal configurada (nem no contrato, nem na nota, nem nos itens) — cadastre em pelo menos um desses níveis antes de emitir.";
+    }
     if (!competencia) return "Informe a Competência.";
     if (itensCalculados.length === 0) return "Adicione ao menos um item.";
     return null;
@@ -667,7 +851,7 @@ function NovaNfDialog({ open, onOpenChange, empresaId, contratos, nfParaEditar, 
       toast.error(erro);
       return;
     }
-    const pctFiscaisParaSalvar: PercentuaisFiscais = pctFiscais!;
+    const pctFiscaisParaSalvar: PercentuaisFiscais = pctFiscais;
     try {
       if (editando && nfParaEditar) {
         await atualizar.mutateAsync({
@@ -753,7 +937,9 @@ function NovaNfDialog({ open, onOpenChange, empresaId, contratos, nfParaEditar, 
                   onValueChange={(v) => {
                     setContratoId(v);
                     const c = contratos.find((x) => x.id === v);
-                    setPctFiscais(c ? pctFiscaisDoContrato(c) : null);
+                    const pctContrato = c ? pctFiscaisDoContrato(c) : null;
+                    setPctFiscais(pctContrato ?? PCT_FISCAIS_ZERO);
+                    setPctFiscaisConfigurado(!!pctContrato);
                   }}
                 >
                   <SelectTrigger>
@@ -768,15 +954,22 @@ function NovaNfDialog({ open, onOpenChange, empresaId, contratos, nfParaEditar, 
                   </SelectContent>
                 </Select>
               )}
-              {contratoId && !pctFiscais && (
-                <p className="mt-1 text-xs text-destructive">
-                  Contrato sem Dados Fiscais cadastrados — por isso Vlr Bruto/Líquido não aparecem abaixo.{" "}
-                  <Link to="/app/licitacoes/contratos" className="underline">
-                    Cadastrar agora
-                  </Link>
-                  .
-                </p>
-              )}
+              {contratoId &&
+                !pctFiscaisConfigurado &&
+                (itens.some(temRetencaoPropria) ? (
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    Contrato sem Dados Fiscais cadastrados — usando a retenção definida nos itens desta nota.
+                  </p>
+                ) : (
+                  <p className="mt-1 text-xs text-destructive">
+                    Contrato sem Dados Fiscais cadastrados — cadastre no contrato ou defina a retenção em algum item
+                    abaixo antes de emitir.{" "}
+                    <Link to="/app/licitacoes/contratos" className="underline">
+                      Cadastrar no contrato
+                    </Link>
+                    .
+                  </p>
+                ))}
             </div>
             <div>
               <Label>Variação</Label>
@@ -836,9 +1029,10 @@ function NovaNfDialog({ open, onOpenChange, empresaId, contratos, nfParaEditar, 
                       type="number"
                       step="0.01"
                       value={pctFiscais[campo] ? pctFiscais[campo] * 100 : ""}
-                      onChange={(e) =>
-                        setPctFiscais((p) => (p ? { ...p, [campo]: e.target.value.trim() ? Number(e.target.value) / 100 : 0 } : p))
-                      }
+                      onChange={(e) => {
+                        setPctFiscais((p) => ({ ...p, [campo]: e.target.value.trim() ? Number(e.target.value) / 100 : 0 }));
+                        setPctFiscaisConfigurado(true);
+                      }}
                     />
                   </div>
                 ))}
@@ -859,7 +1053,7 @@ function NovaNfDialog({ open, onOpenChange, empresaId, contratos, nfParaEditar, 
           onAddItem={addItem}
           onRemoveItem={removeItem}
           onToggleExpandido={toggleExpandido}
-          onSelecionarPosto={selecionarPosto}
+          onSelecionarPostos={selecionarPostos}
           onQtdColaboradoresChange={qtdColaboradoresChange}
         />
 

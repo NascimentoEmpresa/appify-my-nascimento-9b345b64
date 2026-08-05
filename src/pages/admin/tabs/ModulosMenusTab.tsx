@@ -267,6 +267,28 @@ function MenusEditor({ moduloId, menus, podeGerenciar, onChange }: { moduloId: s
 
 // ─── View: Acesso por Usuário ──────────────────────────────────────────────────
 
+// Menus do Recrutamento e Seleção. Só eles: nos outros módulos o toggle
+// continua significando apenas "enxerga a tela", e as demais ações vêm do
+// perfil de acesso — mexer nisso daria escrita a 81 usuários em 155 telas de
+// uma vez.
+//
+// Por que o Recrutamento é diferente: a tela decide quem conduz o processo por
+// `can("alterar", …, "recrutamento_gestao")` e o RLS das 6 tabelas do módulo
+// exige incluir/alterar. Concedendo só "visualizar", liberar o menu aqui
+// mostrava o botão de abrir vaga e o banco recusava o INSERT — era o erro
+// "new row violates row-level security policy for SISTEMA_RECRUTAMENTO".
+const MENUS_RECRUTAMENTO = new Set([
+  "recrutamento_gestao",
+  "recrutamento_etapa_juridico",
+  "recrutamento_etapa_sst",
+  "recrutamento_etapa_compras",
+  "encarregados_minhas_solicitacoes",
+]);
+// "excluir" fica de fora de propósito: liberar a tela não é autorizar apagar.
+const ACOES_RECRUTAMENTO = ["visualizar", "incluir", "alterar", "aprovar", "exportar"] as const;
+const ACOES_DO_TOGGLE = (codigo: string): string[] =>
+  MENUS_RECRUTAMENTO.has(codigo) ? [...ACOES_RECRUTAMENTO] : ["visualizar"];
+
 function UserAccessPanel({ podeGerenciar, modulos, menus }: { podeGerenciar: boolean; modulos: Modulo[]; menus: Menu[] }) {
   const [selectedUserId, setSelectedUserId] = useState<string>("");
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
@@ -343,14 +365,19 @@ function UserAccessPanel({ podeGerenciar, modulos, menus }: { podeGerenciar: boo
     setIsSaving(true);
     try {
       for (const [codigo, allow] of pending) {
+        // No Recrutamento o toggle vale por todas as ações, não só "ver".
+        // Nos demais módulos as ações continuam vindo do perfil de acesso.
+        const acoes = ACOES_DO_TOGGLE(codigo);
         const { error: delErr } = await supabase.from("screen_permission_user").delete()
           .eq("user_id", selectedUserId).eq("menu_codigo", codigo)
-          .eq("acao", "visualizar").is("empresa_id", null);
+          .in("acao", acoes).is("empresa_id", null);
         if (delErr) console.warn("delete perm error", delErr);
 
-        const { error } = await supabase.from("screen_permission_user").insert({
-          user_id: selectedUserId, menu_codigo: codigo, acao: "visualizar", allow, empresa_id: null,
-        });
+        const { error } = await supabase.from("screen_permission_user").insert(
+          acoes.map((acao) => ({
+            user_id: selectedUserId, menu_codigo: codigo, acao, allow, empresa_id: null,
+          })),
+        );
         if (error) throw error;
       }
       // refetchQueries aguarda o re-fetch completar antes de limpar pending,

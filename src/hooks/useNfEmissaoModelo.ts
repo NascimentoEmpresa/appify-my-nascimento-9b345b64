@@ -17,6 +17,7 @@ export interface NfEmissaoModeloRow {
   cofins_pct: number | null;
   pis_pct: number | null;
   csll_pct: number | null;
+  descricao_padrao: string | null;
 }
 
 export interface NfEmissaoModeloItemRow {
@@ -24,11 +25,17 @@ export interface NfEmissaoModeloItemRow {
   nf_emissao_modelo_id: string;
   ordem: number;
   posto: string | null;
+  postos: string[] | null;
   percentual: number;
   identificacao_padrao: string | null;
   inss_categoria: InssCategoria;
   ultimo_valor_unitario: number | null;
   ultimo_visto_em: string | null;
+  issqn_pct: number | null;
+  ir_pct: number | null;
+  cofins_pct: number | null;
+  pis_pct: number | null;
+  csll_pct: number | null;
 }
 
 export function useModelosNf(contratoId: string | null | undefined) {
@@ -85,6 +92,7 @@ interface SalvarModeloNfInput {
   cofins_pct?: number | null;
   pis_pct?: number | null;
   csll_pct?: number | null;
+  descricao_padrao?: string | null;
 }
 
 export function useSalvarModeloNf() {
@@ -106,6 +114,7 @@ export function useSalvarModeloNf() {
             variacao: input.variacao,
             ordem: input.ordem,
             ativo: input.ativo,
+            descricao_padrao: input.descricao_padrao ?? null,
             updated_by: userId,
             ...retencoes,
           })
@@ -121,6 +130,7 @@ export function useSalvarModeloNf() {
           variacao: input.variacao,
           ordem: input.ordem,
           ativo: input.ativo,
+          descricao_padrao: input.descricao_padrao ?? null,
           created_by: userId,
           updated_by: userId,
           ...retencoes,
@@ -136,10 +146,16 @@ export function useSalvarModeloNf() {
 
 interface ModeloItemInput {
   posto: string | null;
+  postos?: string[] | null;
   percentual: number;
   identificacao_padrao: string | null;
   inss_categoria: InssCategoria;
   ultimo_valor_unitario: number | null;
+  issqn_pct?: number | null;
+  ir_pct?: number | null;
+  cofins_pct?: number | null;
+  pis_pct?: number | null;
+  csll_pct?: number | null;
 }
 
 export function useSalvarModeloItens() {
@@ -217,11 +233,17 @@ export function useCriarVariacoesEmLote() {
   });
 }
 
-interface LinhaImportada {
-  variacao: string;
+interface ItemLinhaImportada {
   posto: string | null;
+  postos?: string[] | null;
   percentual: number;
   valorReferencia: number | null;
+}
+
+interface LinhaImportada {
+  variacao: string;
+  itens: ItemLinhaImportada[];
+  descricao: string | null;
   issqnPct: number | null;
   irPct: number | null;
   cofinsPct: number | null;
@@ -248,6 +270,7 @@ export function useImportarVariacoesDoExcel() {
         variacao: l.variacao,
         ordem: input.ordemInicial + idx,
         ativo: true,
+        descricao_padrao: l.descricao,
         created_by: userId,
         updated_by: userId,
         issqn_pct: l.issqnPct,
@@ -262,18 +285,22 @@ export function useImportarVariacoesDoExcel() {
         .select("id");
       if (error) throw error;
 
-      const payloadItens = (modelosCriados ?? []).map((m: { id: string }, idx: number) => {
+      // Uma variação pode ter mais de um item (ex: Veranópolis tem notas que
+      // somam vários postos/unidades) — cria um nf_emissao_modelo_item por
+      // item da linha, não 1 fixo por variação.
+      const payloadItens = (modelosCriados ?? []).flatMap((m: { id: string }, idx: number) => {
         const l = input.linhas[idx];
-        return {
+        return l.itens.map((it, itemIdx) => ({
           nf_emissao_modelo_id: m.id,
-          ordem: 1,
-          posto: l.posto,
-          percentual: l.percentual,
+          ordem: itemIdx + 1,
+          posto: it.posto,
+          postos: it.postos ?? null,
+          percentual: it.percentual,
           identificacao_padrao: null,
           inss_categoria: "normais",
-          ultimo_valor_unitario: l.valorReferencia,
-          ultimo_visto_em: l.valorReferencia != null ? new Date().toISOString() : null,
-        };
+          ultimo_valor_unitario: it.valorReferencia,
+          ultimo_visto_em: it.valorReferencia != null ? new Date().toISOString() : null,
+        }));
       });
       if (payloadItens.length > 0) {
         const { error: eItens } = await (supabase as any).from("nf_emissao_modelo_item").insert(payloadItens);

@@ -12,6 +12,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Search, FileCheck, CircleDollarSign } from "lucide-react";
 import { toast } from "sonner";
+import { cn } from "@/lib/utils";
 import { useEmpresaAtiva } from "@/context/EmpresaAtivaContext";
 import { useContratosERP } from "@/hooks/useContratosERP";
 import {
@@ -22,21 +23,57 @@ import {
   useRegistrarPagamentoNf,
   TIPOS_NOTA,
 } from "@/hooks/useNfEmissao";
-import { calcularItem, calcularTotaisNf, ItemCalculado } from "@/pages/financeiro/nf-emissao/calculos";
-import { fmtMoney, fmtDate } from "@/pages/financeiro/nf-emissao/shared";
+import { calcularItem, calcularTotaisNf, pctEfetivo, ItemCalculado } from "@/pages/financeiro/nf-emissao/calculos";
+import { fmtMoney, fmtDate, situacaoEspecial } from "@/pages/financeiro/nf-emissao/shared";
 import { ItensNfEditor, ItemForm } from "@/pages/financeiro/nf-emissao/ItensNfEditor";
 import { registrarLogNf } from "@/pages/financeiro/nf-emissao/registrarLogNf";
 import { HistoricoNfPainel } from "@/pages/financeiro/nf-emissao/HistoricoNfPainel";
 
-// "Situação site P.M.T."/"Situa Domínio" vêm da planilha legada com um desses
-// 3 valores — NORMAL é o caso comum; SUBSTITUIDA/CANCELADA são notas que
-// nunca vão ter pagamento (foram trocadas/anuladas), então não contam como
-// "pendente" nem devem parecer que estão esperando pagamento.
-function situacaoEspecial(n: NfEmissaoRow): "SUBSTITUIDA" | "CANCELADA" | null {
-  const valores = [n.situacao_site_pmt?.toUpperCase(), n.situacao_dominio?.toUpperCase()];
-  if (valores.includes("CANCELADA")) return "CANCELADA";
-  if (valores.includes("SUBSTITUIDA")) return "SUBSTITUIDA";
-  return null;
+type StatusFiltro = "todos" | "pendente" | "pago" | "substituida" | "cancelada";
+
+const STATUS_FILTRO_LABEL: Record<StatusFiltro, string> = {
+  todos: "Todos",
+  pendente: "Pendente",
+  pago: "Pago",
+  substituida: "Substituída",
+  cancelada: "Cancelada",
+};
+
+function statusDaNota(n: NfEmissaoRow): Exclude<StatusFiltro, "todos"> {
+  const esp = situacaoEspecial(n);
+  if (esp === "CANCELADA") return "cancelada";
+  if (esp === "SUBSTITUIDA") return "substituida";
+  return n.data_pagamento ? "pago" : "pendente";
+}
+
+function PagamentoBadge({ nf }: { nf: NfEmissaoRow }) {
+  if (nf.data_pagamento) {
+    return (
+      <Badge className="bg-emerald-500/15 text-emerald-700 dark:text-emerald-400">
+        Pago em {fmtDate(nf.data_pagamento)}
+      </Badge>
+    );
+  }
+  const especial = situacaoEspecial(nf);
+  if (especial === "CANCELADA") {
+    return (
+      <Badge variant="outline" className="border-destructive/40 text-destructive">
+        Cancelada
+      </Badge>
+    );
+  }
+  if (especial === "SUBSTITUIDA") {
+    return (
+      <Badge variant="outline" className="border-muted-foreground/30 text-muted-foreground">
+        Substituída
+      </Badge>
+    );
+  }
+  return (
+    <Badge variant="outline" className="border-amber-500/40 text-amber-700 dark:text-amber-400">
+      Pendente
+    </Badge>
+  );
 }
 
 function itemRowParaForm(r: NfEmissaoItemRow): ItemForm {
@@ -56,6 +93,11 @@ function itemRowParaForm(r: NfEmissaoItemRow): ItemForm {
     outros_descontos_pos_emissao: r.outros_descontos_pos_emissao,
     qtd_colaboradores: r.qtd_colaboradores,
     inss_categoria: r.inss_categoria,
+    issqn_pct: r.issqn_pct,
+    ir_pct: r.ir_pct,
+    cofins_pct: r.cofins_pct,
+    pis_pct: r.pis_pct,
+    csll_pct: r.csll_pct,
   };
 }
 
@@ -68,8 +110,11 @@ export default function NotasConcluidasTab() {
   const [busca, setBusca] = useState("");
   const [contratoSel, setContratoSel] = useState<string | null>(null);
   const [nfSelecionada, setNfSelecionada] = useState<NfEmissaoRow | null>(null);
+  const [filtroStatus, setFiltroStatus] = useState<StatusFiltro>("todos");
+  const [buscaNf, setBuscaNf] = useState("");
 
   const concluidas = useMemo(() => nfs.filter((n) => n.status === "concluida"), [nfs]);
+  const contratoPorId = useMemo(() => new Map(contratos.map((c) => [c.id, c])), [contratos]);
 
   const contratosComNotas = useMemo(() => {
     const termo = busca.trim().toLowerCase();
@@ -80,11 +125,41 @@ export default function NotasConcluidasTab() {
         if (!termo) return true;
         return contrato.nome.toLowerCase().includes(termo) || contrato.cliente.toLowerCase().includes(termo);
       })
-      .sort((a, b) => a.contrato.nome.localeCompare(b.contrato.nome));
+      .sort((a, b) => {
+        const encerradoA = a.contrato.status === "encerrado" ? 1 : 0;
+        const encerradoB = b.contrato.status === "encerrado" ? 1 : 0;
+        return encerradoA !== encerradoB ? encerradoA - encerradoB : a.contrato.nome.localeCompare(b.contrato.nome);
+      });
   }, [contratos, concluidas, busca]);
 
   const contratoAtual = contratos.find((c) => c.id === contratoSel) ?? null;
-  const nfsDoContrato = useMemo(() => concluidas.filter((n) => n.contrato_id === contratoSel), [concluidas, contratoSel]);
+
+  function bateBuscaNf(n: NfEmissaoRow, termo: string) {
+    if (!termo) return true;
+    return (n.variacao ?? "").toLowerCase().includes(termo) || (n.numero_nf ?? "").toLowerCase().includes(termo);
+  }
+
+  const nfsDoContrato = useMemo(() => {
+    const termo = buscaNf.trim().toLowerCase();
+    return concluidas.filter(
+      (n) =>
+        n.contrato_id === contratoSel &&
+        (filtroStatus === "todos" || statusDaNota(n) === filtroStatus) &&
+        bateBuscaNf(n, termo)
+    );
+  }, [concluidas, contratoSel, filtroStatus, buscaNf]);
+
+  // Sem contrato selecionado, mas com filtro de status e/ou busca de NF ativos:
+  // lista achatada cruzando todos os contratos (ex: "me mostra todas as
+  // canceladas", ou achar rápido uma variação/nº de nota, útil pra contratos
+  // com muitas notas por competência tipo Veranópolis).
+  const nfsFlatFiltradas = useMemo(() => {
+    if (contratoSel || (filtroStatus === "todos" && !buscaNf.trim())) return [];
+    const termo = buscaNf.trim().toLowerCase();
+    return concluidas
+      .filter((n) => (filtroStatus === "todos" || statusDaNota(n) === filtroStatus) && bateBuscaNf(n, termo))
+      .sort((a, b) => b.competencia.localeCompare(a.competencia));
+  }, [concluidas, contratoSel, filtroStatus, buscaNf]);
 
   return (
     <div className="grid grid-cols-5 gap-4 h-[calc(100vh-220px)] min-h-[480px]">
@@ -109,17 +184,27 @@ export default function NotasConcluidasTab() {
           {contratosComNotas.map(({ contrato: c, notas }) => {
             const pendentes = notas.filter((n) => !n.data_pagamento && !situacaoEspecial(n)).length;
             const ativo = contratoSel === c.id;
+            const encerrado = c.status === "encerrado";
             return (
               <button
                 key={c.id}
                 onClick={() => setContratoSel(c.id)}
-                className={`flex w-full items-center justify-between gap-2 border-b border-border px-4 py-3 text-left transition-colors hover:bg-muted/30 ${ativo ? "bg-primary/5 border-l-2 border-l-primary" : ""}`}
+                className={cn(
+                  "flex w-full items-center justify-between gap-2 border-b border-border px-4 py-3 text-left transition-colors hover:bg-muted/30",
+                  ativo && "bg-primary/5 border-l-2 border-l-primary",
+                  encerrado && !ativo && "bg-muted/40 opacity-70"
+                )}
               >
                 <div className="min-w-0">
-                  <p className="text-xs font-semibold truncate">{c.nome}</p>
+                  <p className={cn("text-xs font-semibold truncate", encerrado && "text-muted-foreground")}>{c.nome}</p>
                   <p className="text-[11px] text-muted-foreground truncate">{c.cliente}</p>
                 </div>
                 <div className="flex shrink-0 items-center gap-1.5">
+                  {encerrado && (
+                    <span className="inline-flex rounded-full bg-slate-200 dark:bg-slate-700 px-2 py-0.5 text-[10px] font-medium text-slate-500 dark:text-slate-400">
+                      Encerrado
+                    </span>
+                  )}
                   <span className="inline-flex rounded-full bg-primary/10 px-2 py-0.5 text-[10px] font-semibold text-primary">
                     {notas.length}
                   </span>
@@ -136,14 +221,34 @@ export default function NotasConcluidasTab() {
       </div>
 
       <div className="col-span-3 card-elevated flex flex-col overflow-hidden">
-        {!contratoAtual ? (
-          <div className="flex h-full items-center justify-center py-20">
-            <div className="text-center">
-              <FileCheck className="mx-auto mb-3 h-10 w-10 text-muted-foreground/30" />
-              <p className="text-sm text-muted-foreground">Selecione um contrato</p>
-            </div>
+        <div className="border-b border-border px-4 py-3 flex items-center gap-2 flex-wrap">
+          <span className="text-xs font-medium text-muted-foreground mr-1">Status:</span>
+          {(Object.keys(STATUS_FILTRO_LABEL) as StatusFiltro[]).map((s) => (
+            <button
+              key={s}
+              onClick={() => setFiltroStatus(s)}
+              className={cn(
+                "px-3 py-1 rounded-full text-xs font-medium border transition-colors",
+                filtroStatus === s
+                  ? "bg-primary text-primary-foreground border-primary"
+                  : "bg-background border-border text-muted-foreground hover:border-primary/50"
+              )}
+            >
+              {STATUS_FILTRO_LABEL[s]}
+            </button>
+          ))}
+          <div className="relative ml-auto w-64">
+            <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+            <input
+              value={buscaNf}
+              onChange={(e) => setBuscaNf(e.target.value)}
+              placeholder="Buscar variação ou nº da NF…"
+              className="h-8 w-full rounded border border-border bg-background pl-8 pr-3 text-xs outline-none focus:border-primary"
+            />
           </div>
-        ) : (
+        </div>
+
+        {contratoAtual ? (
           <>
             <div className="border-b border-border px-4 py-3">
               <p className="text-sm font-semibold">{contratoAtual.nome}</p>
@@ -156,6 +261,7 @@ export default function NotasConcluidasTab() {
                     <TableHead>Competência</TableHead>
                     <TableHead>Variação</TableHead>
                     <TableHead>Nº NF</TableHead>
+                    <TableHead>Valor Bruto</TableHead>
                     <TableHead>Valor Líquido</TableHead>
                     <TableHead>Pagamento</TableHead>
                   </TableRow>
@@ -163,8 +269,8 @@ export default function NotasConcluidasTab() {
                 <TableBody>
                   {nfsDoContrato.length === 0 && (
                     <TableRow>
-                      <TableCell colSpan={5} className="text-center text-muted-foreground py-8">
-                        Nenhuma NF concluída para este contrato.
+                      <TableCell colSpan={6} className="text-center text-muted-foreground py-8">
+                        Nenhuma NF {filtroStatus === "todos" ? "concluída" : STATUS_FILTRO_LABEL[filtroStatus].toLowerCase()} para este contrato{buscaNf.trim() ? " com essa busca" : ""}.
                       </TableCell>
                     </TableRow>
                   )}
@@ -175,25 +281,10 @@ export default function NotasConcluidasTab() {
                       </TableCell>
                       <TableCell>{nf.variacao ?? "-"}</TableCell>
                       <TableCell>{nf.numero_nf ?? "-"}</TableCell>
+                      <TableCell>{fmtMoney(nf.vlr_bruto_total)}</TableCell>
                       <TableCell>{fmtMoney(nf.vlr_liquido_total)}</TableCell>
                       <TableCell>
-                        {nf.data_pagamento ? (
-                          <Badge className="bg-emerald-500/15 text-emerald-700 dark:text-emerald-400">
-                            Pago em {fmtDate(nf.data_pagamento)}
-                          </Badge>
-                        ) : situacaoEspecial(nf) === "CANCELADA" ? (
-                          <Badge variant="outline" className="border-destructive/40 text-destructive">
-                            Cancelada
-                          </Badge>
-                        ) : situacaoEspecial(nf) === "SUBSTITUIDA" ? (
-                          <Badge variant="outline" className="border-muted-foreground/30 text-muted-foreground">
-                            Substituída
-                          </Badge>
-                        ) : (
-                          <Badge variant="outline" className="border-amber-500/40 text-amber-700 dark:text-amber-400">
-                            Pendente
-                          </Badge>
-                        )}
+                        <PagamentoBadge nf={nf} />
                       </TableCell>
                     </TableRow>
                   ))}
@@ -201,6 +292,53 @@ export default function NotasConcluidasTab() {
               </Table>
             </div>
           </>
+        ) : filtroStatus !== "todos" || buscaNf.trim() ? (
+          <div className="overflow-auto flex-1">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Contrato</TableHead>
+                  <TableHead>Competência</TableHead>
+                  <TableHead>Variação</TableHead>
+                  <TableHead>Nº NF</TableHead>
+                  <TableHead>Valor Bruto</TableHead>
+                  <TableHead>Valor Líquido</TableHead>
+                  <TableHead>Pagamento</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {nfsFlatFiltradas.length === 0 && (
+                  <TableRow>
+                    <TableCell colSpan={7} className="text-center text-muted-foreground py-8">
+                      Nenhuma NF encontrada com esse filtro/busca.
+                    </TableCell>
+                  </TableRow>
+                )}
+                {nfsFlatFiltradas.map((nf) => (
+                  <TableRow key={nf.id} className="cursor-pointer hover:bg-muted/50" onClick={() => setNfSelecionada(nf)}>
+                    <TableCell className="max-w-[220px] truncate">{contratoPorId.get(nf.contrato_id)?.nome ?? "-"}</TableCell>
+                    <TableCell>
+                      {new Date(nf.competencia + "T00:00:00").toLocaleDateString("pt-BR", { month: "2-digit", year: "numeric" })}
+                    </TableCell>
+                    <TableCell>{nf.variacao ?? "-"}</TableCell>
+                    <TableCell>{nf.numero_nf ?? "-"}</TableCell>
+                    <TableCell>{fmtMoney(nf.vlr_bruto_total)}</TableCell>
+                    <TableCell>{fmtMoney(nf.vlr_liquido_total)}</TableCell>
+                    <TableCell>
+                      <PagamentoBadge nf={nf} />
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </div>
+        ) : (
+          <div className="flex h-full items-center justify-center py-20">
+            <div className="text-center">
+              <FileCheck className="mx-auto mb-3 h-10 w-10 text-muted-foreground/30" />
+              <p className="text-sm text-muted-foreground">Selecione um contrato ou um status pra ver todas as notas</p>
+            </div>
+          </div>
         )}
       </div>
 
@@ -244,7 +382,7 @@ function NfPagamentoDialog({ nf, onClose }: { nf: NfEmissaoRow | null; onClose: 
 
   const itensCalculados: ItemCalculado[] = useMemo(() => {
     if (!pctFiscais) return [];
-    return itens.map((it) => calcularItem(it, pctFiscais));
+    return itens.map((it) => calcularItem(it, pctEfetivo(it, pctFiscais)));
   }, [itens, pctFiscais]);
 
   const totais = useMemo(() => calcularTotaisNf(itensCalculados), [itensCalculados]);
@@ -360,7 +498,7 @@ function NfPagamentoDialog({ nf, onClose }: { nf: NfEmissaoRow | null; onClose: 
             onAddItem={() => {}}
             onRemoveItem={() => {}}
             onToggleExpandido={toggleExpandido}
-            onSelecionarPosto={() => {}}
+            onSelecionarPostos={() => {}}
             onQtdColaboradoresChange={() => {}}
           />
         )}

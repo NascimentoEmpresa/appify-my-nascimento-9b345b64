@@ -1,4 +1,4 @@
-import { Fragment } from "react";
+import { Fragment, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -7,8 +7,9 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Plus, Trash2, Calculator, ChevronDown, ChevronRight } from "lucide-react";
 import type { PostoVigente } from "@/hooks/usePlanilhaCusto";
-import { ItemInput, ItemCalculado, TotaisNf, PercentuaisFiscais, INSS_CATEGORIAS, InssCategoria } from "./calculos";
+import { ItemInput, ItemCalculado, TotaisNf, PercentuaisFiscais, INSS_CATEGORIAS, InssCategoria, pctEfetivo } from "./calculos";
 import { fmtMoney, fmtPct, Linha } from "./shared";
+import { PostoMultiSelect } from "./PostoMultiSelect";
 
 export type ItemForm = ItemInput & { identificacao: string };
 
@@ -26,7 +27,7 @@ interface ItensNfEditorProps {
   onAddItem: () => void;
   onRemoveItem: (i: number) => void;
   onToggleExpandido: (i: number) => void;
-  onSelecionarPosto: (i: number, posto: string) => void;
+  onSelecionarPostos: (i: number, postos: string[]) => void;
   onQtdColaboradoresChange: (i: number, novaQtd: number) => void;
 }
 
@@ -63,10 +64,14 @@ export function ItensNfEditor({
   onAddItem,
   onRemoveItem,
   onToggleExpandido,
-  onSelecionarPosto,
+  onSelecionarPostos,
   onQtdColaboradoresChange,
 }: ItensNfEditorProps) {
   const campos = mostrarPosEmissao ? [...CAMPOS_BASE, ...CAMPOS_POS_EMISSAO] : CAMPOS_BASE;
+  // Postos marcados no seletor de cada item, só pra manter os checkboxes
+  // marcados enquanto o popover está aberto — o vínculo em si não é
+  // persistido no item, só o valor já somado que ele preenche.
+  const [postosSelecionados, setPostosSelecionados] = useState<Record<number, string[]>>({});
 
   return (
     <section className="rounded-xl border bg-card p-3 space-y-3">
@@ -96,6 +101,8 @@ export function ItensNfEditor({
             {itens.map((it, i) => {
               const calc = itensCalculados[i];
               const expandido = expandidos.has(i);
+              const efetivo = pctFiscais ? pctEfetivo(it, pctFiscais) : null;
+              const temOverride = it.issqn_pct != null || it.ir_pct != null || it.cofins_pct != null || it.pis_pct != null || it.csll_pct != null;
               return (
                 <Fragment key={i}>
                   <TableRow>
@@ -104,12 +111,19 @@ export function ItensNfEditor({
                         {expandido ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
                       </Button>
                     </TableCell>
-                    <TableCell className="px-2 py-1 text-sm font-medium">{it.identificacao}</TableCell>
+                    <TableCell className="px-2 py-1 text-sm font-medium">
+                      {it.identificacao}
+                      {temOverride && (
+                        <span className="ml-1.5 inline-flex rounded-full bg-amber-500/10 px-1.5 py-0.5 text-[9px] font-medium text-amber-700 dark:text-amber-400 align-middle">
+                          retenção própria
+                        </span>
+                      )}
+                    </TableCell>
                     <TableCell className="px-2 py-1 text-sm">{fmtMoney(it.valor_contrato_exec)}</TableCell>
                     <TableCell className="px-2 py-1 text-sm">{calc ? fmtMoney(calc.vlr_bruto) : "-"}</TableCell>
                     <TableCell className="px-2 py-1 text-sm font-medium">{calc ? fmtMoney(calc.vlr_liquido) : "-"}</TableCell>
                     <TableCell className="px-1 py-1">
-                      {calc && pctFiscais && (
+                      {calc && efetivo && (
                         <Popover>
                           <PopoverTrigger asChild>
                             <Button type="button" variant="ghost" size="icon" className="h-8 w-8" title="Ver cálculo">
@@ -118,20 +132,23 @@ export function ItensNfEditor({
                           </PopoverTrigger>
                           <PopoverContent className="w-80 text-sm space-y-1.5">
                             <p className="font-semibold mb-1">Detalhamento — {it.identificacao}</p>
+                            {temOverride && (
+                              <p className="text-xs text-amber-700 dark:text-amber-400">Este item usa retenção própria, diferente do padrão da nota.</p>
+                            )}
                             <Linha label="Vlr Contrato Exec." valor={calc.valor_contrato_exec} />
                             <Linha label="Total Descontos" valor={-calc.total_descontos} />
                             <Linha label="Vlr Bruto" valor={calc.vlr_bruto} destaque />
                             <Linha label="Vlr Mão de Obra" valor={calc.vlr_mao_obra} />
                             <div className="border-t pt-1.5 space-y-1">
-                              <Linha label={`ISSQN (${fmtPct(pctFiscais.issqn_pct)} s/ bruto)`} valor={-calc.issqn} />
+                              <Linha label={`ISSQN (${fmtPct(efetivo.issqn_pct)} s/ bruto)`} valor={-calc.issqn} />
                               <Linha
                                 label={`INSS (${INSS_CATEGORIAS[it.inss_categoria].label}, ${fmtPct(INSS_CATEGORIAS[it.inss_categoria].pct)} s/ mão de obra)`}
                                 valor={-calc.inss}
                               />
-                              <Linha label={`IR (${fmtPct(pctFiscais.ir_pct)} s/ bruto)`} valor={-calc.ir} />
-                              <Linha label={`COFINS (${fmtPct(pctFiscais.cofins_pct)} s/ bruto)`} valor={-calc.cofins} />
-                              <Linha label={`PIS (${fmtPct(pctFiscais.pis_pct)} s/ bruto)`} valor={-calc.pis} />
-                              <Linha label={`CSLL (${fmtPct(pctFiscais.csll_pct)} s/ bruto)`} valor={-calc.csll} />
+                              <Linha label={`IR (${fmtPct(efetivo.ir_pct)} s/ bruto)`} valor={-calc.ir} />
+                              <Linha label={`COFINS (${fmtPct(efetivo.cofins_pct)} s/ bruto)`} valor={-calc.cofins} />
+                              <Linha label={`PIS (${fmtPct(efetivo.pis_pct)} s/ bruto)`} valor={-calc.pis} />
+                              <Linha label={`CSLL (${fmtPct(efetivo.csll_pct)} s/ bruto)`} valor={-calc.csll} />
                             </div>
                             <Linha label="Vlr Líquido" valor={calc.vlr_liquido} destaque />
                           </PopoverContent>
@@ -151,19 +168,20 @@ export function ItensNfEditor({
                       <TableCell colSpan={7} className="bg-muted/20 px-4 py-3">
                         <div className="grid grid-cols-4 gap-3">
                           <div className="col-span-2">
-                            <Label className="text-xs">Posto (Planilha de Custo)</Label>
-                            <Select value="" onValueChange={(v) => onSelecionarPosto(i, v)} disabled={readOnly || !contratoId || postosVigentes.length === 0}>
-                              <SelectTrigger className="h-8">
-                                <SelectValue placeholder={contratoId ? "Selecionar posto para autopreencher" : "Selecione o contrato primeiro"} />
-                              </SelectTrigger>
-                              <SelectContent>
-                                {postosVigentes.map((p) => (
-                                  <SelectItem key={p.posto} value={p.posto}>
-                                    {p.posto} — {fmtMoney(p.valorTotal)}
-                                  </SelectItem>
-                                ))}
-                              </SelectContent>
-                            </Select>
+                            <Label className="text-xs">
+                              Posto(s) (Planilha de Custo){" "}
+                              <span className="font-normal text-muted-foreground">— pode juntar mais de um</span>
+                            </Label>
+                            <PostoMultiSelect
+                              postosVigentes={postosVigentes}
+                              value={postosSelecionados[i] ?? []}
+                              onChange={(postos) => {
+                                setPostosSelecionados((s) => ({ ...s, [i]: postos }));
+                                onSelecionarPostos(i, postos);
+                              }}
+                              placeholder={contratoId ? "Selecionar posto(s) para autopreencher" : "Selecione o contrato primeiro"}
+                              disabled={readOnly || !contratoId || postosVigentes.length === 0}
+                            />
                           </div>
                           <div className="col-span-2">
                             <Label className="text-xs">Identificação</Label>
@@ -209,6 +227,41 @@ export function ItensNfEditor({
                                 ))}
                               </SelectContent>
                             </Select>
+                          </div>
+                        </div>
+
+                        <div className="mt-3 space-y-1.5 rounded-lg border bg-background p-2">
+                          <Label className="text-xs">
+                            Retenção própria deste item{" "}
+                            <span className="font-normal text-muted-foreground">
+                              (opcional — em branco usa o padrão da nota; use quando esse posto tem IR/ISSQN diferente dos demais, ex: contratos com mais de um código de retenção)
+                            </span>
+                          </Label>
+                          <div className="flex flex-wrap gap-2">
+                            {(
+                              [
+                                ["ISSQN", "issqn_pct"],
+                                ["IR", "ir_pct"],
+                                ["COFINS", "cofins_pct"],
+                                ["PIS", "pis_pct"],
+                                ["CSLL", "csll_pct"],
+                              ] as const
+                            ).map(([label, campo]) => (
+                              <div key={campo} className="w-16">
+                                <span className="block text-[10px] leading-tight text-muted-foreground">{label} (%)</span>
+                                <Input
+                                  className="h-7 px-1.5 text-xs"
+                                  type="number"
+                                  step="0.01"
+                                  placeholder="padrão"
+                                  value={it[campo] != null ? String(it[campo]! * 100) : ""}
+                                  onChange={(e) =>
+                                    onUpdateItem(i, { [campo]: e.target.value.trim() ? Number(e.target.value) / 100 : null } as any)
+                                  }
+                                  disabled={readOnly}
+                                />
+                              </div>
+                            ))}
                           </div>
                         </div>
                       </TableCell>

@@ -328,6 +328,9 @@ function ModalPlano({ plano, fonte, formId, respostas, onFechar, onSalvo }: {
     if (!String(f.acao ?? "").trim()) { setErro("Descreva a ação."); return; }
     if (!doForm && !f.prazo) { setErro("Informe o prazo."); return; }
     if (f.status === "Concluído" && !f.concluido_em) { setErro("Informe a data de conclusão."); return; }
+    // Concluir exige contar O QUE foi feito — sem isso o painel vira um "ok"
+    // sem história e ninguém consegue auditar a conclusão depois.
+    if (f.status === "Concluído" && !String(f.detalhe ?? "").trim()) { setErro("Descreva a conclusão nas observações do acompanhamento."); return; }
     setSalvando(true); setErro(null);
 
     const prazoFonte = fonte ? parsePrazo(fonte.prazoBruto) : null;
@@ -394,9 +397,10 @@ function ModalPlano({ plano, fonte, formId, respostas, onFechar, onSalvo }: {
             <textarea value={f.acao ?? ""} onChange={e => set("acao", e.target.value)} rows={doForm ? 5 : 2}
               placeholder="Ex.: Melhorar comunicação com a equipe" style={{ ...inp, resize: "vertical", fontFamily: "inherit" }} /></div>
 
-          <div style={{ gridColumn: "1/-1" }}><label style={lbl}>Observações do acompanhamento</label>
+          <div style={{ gridColumn: "1/-1" }}><label style={lbl}>Observações do acompanhamento{f.status === "Concluído" ? " *" : ""}</label>
             <textarea value={f.detalhe ?? ""} onChange={e => set("detalhe", e.target.value)} rows={2}
-              placeholder="O que andou desde então…" style={{ ...inp, resize: "vertical", fontFamily: "inherit" }} /></div>
+              placeholder={f.status === "Concluído" ? "Descreva o que foi feito para concluir este plano…" : "O que andou desde então…"}
+              style={{ ...inp, resize: "vertical", fontFamily: "inherit" }} /></div>
 
           <div><label style={lbl}>Colaborador</label>
             <input list="pa-colabs" value={f.colaborador ?? ""} onChange={e => set("colaborador", e.target.value)} style={inp} />
@@ -446,7 +450,7 @@ function ModalPlano({ plano, fonte, formId, respostas, onFechar, onSalvo }: {
         </div>
 
         <div style={{ display: "flex", justifyContent: "space-between", gap: 8, padding: "12px 22px", borderTop: "1px solid #eef2f7" }}>
-          {editando
+          {(doForm || f.acompId)
             ? <button onClick={excluir} disabled={salvando} style={{ background: "none", border: "none", color: "#dc2626", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>Excluir</button>
             : <span />}
           <div style={{ display: "flex", gap: 8 }}>

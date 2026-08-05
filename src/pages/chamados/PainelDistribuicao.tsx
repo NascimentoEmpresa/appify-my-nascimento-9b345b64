@@ -20,7 +20,7 @@ import {
   DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem,
 } from "@/components/ui/dropdown-menu";
 import { PieChart, Pie, Cell, ResponsiveContainer } from "recharts";
-import { ClipboardList, Clock, Users, CheckCircle2, AlertTriangle, ShieldAlert, MoreHorizontal, ChevronLeft, ChevronRight, Eye, UserCog, Trash2, Trophy } from "lucide-react";
+import { ClipboardList, Clock, Users, CheckCircle2, AlertTriangle, ShieldAlert, MoreHorizontal, ChevronLeft, ChevronRight, Eye, UserCog, Trash2, Info } from "lucide-react";
 import { FeedAtualizacoes } from "./FeedAtualizacoes";
 import { ExcluirChamadoDialog } from "./ExcluirChamadoDialog";
 import {
@@ -60,6 +60,7 @@ export default function PainelDistribuicao() {
   const [busca, setBusca] = useState("");
   const [fCategoria, setFCategoria] = useState("todas");
   const [fPrioridade, setFPrioridade] = useState("todas");
+  const [fResponsavel, setFResponsavel] = useState("todos");
   const [fDe, setFDe] = useState("");
   const [fAte, setFAte] = useState("");
   const [pagina, setPagina] = useState(1);
@@ -97,8 +98,9 @@ export default function PainelDistribuicao() {
     },
   });
 
-  // Ranking de satisfação da equipe: nota final ponderada + médias por critério
+  // Satisfação por integrante: nota final ponderada + médias por critério
   // (mesma RPC do Painel do Desenvolvedor, que lá só mostra a linha do próprio).
+  // A RPC devolve ordenado por nota; a tela reordena por nome — ver abaixo.
   const { data: ranking = [] } = useQuery({
     queryKey: ["chamados-ranking-satisfacao"],
     enabled: gestor,
@@ -122,6 +124,22 @@ export default function PainelDistribuicao() {
     },
   });
 
+  // Ordem alfabética por nome. Não é ranking: a posição na tabela não quer
+  // dizer nada, então ordenar por nota daria uma hierarquia que não existe.
+  const rankingAlfabetico = useMemo(
+    () => [...ranking].sort((a, b) => nomeDe(a.responsavel_id).localeCompare(nomeDe(b.responsavel_id), "pt-BR")),
+    [ranking, usuarios], // eslint-disable-line react-hooks/exhaustive-deps
+  );
+
+  // Opções do filtro de responsável: os devs liberados + quem já é responsável
+  // por algum chamado (alguém pode ter perdido a capacidade depois de assumir).
+  const responsaveis = useMemo(() => {
+    const m = new Map<string, string>();
+    devs.forEach((d) => m.set(d.id, d.display_name));
+    chamados.forEach((c) => { if (c.responsavel_id && !m.has(c.responsavel_id)) m.set(c.responsavel_id, nomeDe(c.responsavel_id)); });
+    return [...m].map(([id, nome]) => ({ id, nome })).sort((a, b) => a.nome.localeCompare(b.nome, "pt-BR"));
+  }, [devs, chamados, usuarios]);
+
   // Posição na fila global (ordem de chegada) e posição na fila de cada dev.
   const posicaoFila = useMemo(() => posicoesFilaGlobal(chamados), [chamados]);
   const posicaoDev = useMemo(() => posicoesFilaDev(chamados), [chamados]);
@@ -134,6 +152,7 @@ export default function PainelDistribuicao() {
       if (aba === "fila" ? !chamadoAtivo(c.status) : c.status !== aba) return false;
       if (fCategoria !== "todas" && !c.categorias.includes(fCategoria)) return false;
       if (fPrioridade !== "todas" && c.prioridade !== fPrioridade) return false;
+      if (fResponsavel === "sem" ? !!c.responsavel_id : fResponsavel !== "todos" && c.responsavel_id !== fResponsavel) return false;
       const ts = new Date(c.created_at).getTime();
       if (deTs != null && ts < deTs) return false;
       if (ateTs != null && ts > ateTs) return false;
@@ -148,10 +167,10 @@ export default function PainelDistribuicao() {
       if (pb) return 1;
       return +new Date(b.created_at) - +new Date(a.created_at);
     });
-  }, [chamados, aba, fCategoria, fPrioridade, fDe, fAte, busca, posicaoFila]);
+  }, [chamados, aba, fCategoria, fPrioridade, fResponsavel, fDe, fAte, busca, posicaoFila]);
 
   // Volta pra página 1 sempre que os filtros mudam.
-  useEffect(() => { setPagina(1); }, [aba, fCategoria, fPrioridade, fDe, fAte, busca]);
+  useEffect(() => { setPagina(1); }, [aba, fCategoria, fPrioridade, fResponsavel, fDe, fAte, busca]);
 
   const totalPaginas = Math.max(1, Math.ceil(filtrados.length / POR_PAGINA));
   const paginaAtual = Math.min(pagina, totalPaginas);
@@ -267,6 +286,14 @@ export default function PainelDistribuicao() {
                 <SelectItem value="alta">Alta</SelectItem>
                 <SelectItem value="media">Média</SelectItem>
                 <SelectItem value="baixa">Baixa</SelectItem>
+              </SelectContent>
+            </Select>
+            <Select value={fResponsavel} onValueChange={setFResponsavel}>
+              <SelectTrigger className="h-8 w-48 text-xs"><SelectValue placeholder="Responsável" /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="todos">Todos os responsáveis</SelectItem>
+                <SelectItem value="sem">Sem responsável</SelectItem>
+                {responsaveis.map((r) => <SelectItem key={r.id} value={r.id}>{r.nome}</SelectItem>)}
               </SelectContent>
             </Select>
             <div className="flex items-center gap-1">
@@ -486,11 +513,12 @@ export default function PainelDistribuicao() {
         </div>
       </div>
 
-      {/* Ranking de satisfação da equipe (todos os desenvolvedores) */}
+      {/* Satisfação por integrante. Não é ranking: sem posição e em ordem
+          alfabética — a leitura é "como cada um está", não "quem ganhou". */}
       <Card className="mt-4 p-4">
         <div className="mb-3 flex items-center justify-between">
           <p className="flex items-center gap-1.5 text-sm font-bold">
-            <Trophy className="h-4 w-4 text-warning" /> Ranking de satisfação da equipe
+            <Users className="h-4 w-4 text-warning" /> Satisfação por integrante
           </p>
           <span className="text-[11px] text-muted-foreground">Nota final ponderada (Qualidade 30% · Prazo 20% · Comunicação 15% · Satisfação 15% · Clareza 10% · Facilidade 10%)</span>
         </div>
@@ -498,26 +526,23 @@ export default function PainelDistribuicao() {
           <Table className="[&_td]:px-2 [&_td]:py-2.5 [&_th]:h-9 [&_th]:px-2">
             <TableHeader>
               <TableRow>
-                <TableHead className="w-12 text-center">#</TableHead>
-                <TableHead>Desenvolvedor</TableHead>
+                <TableHead>Integrante</TableHead>
                 <TableHead className="text-center">Avaliações</TableHead>
                 {CRITERIOS_AVALIACAO.map((c) => (
-                  <TableHead key={c.key} className="text-center" title={`Peso ${(c.peso * 100).toFixed(0)}%`}>{c.titulo}</TableHead>
+                  <TableHead key={c.key} className="text-center">
+                    {c.titulo}
+                    <span className="block text-[10px] font-normal text-muted-foreground">({(c.peso * 100).toFixed(0)}%)</span>
+                  </TableHead>
                 ))}
-                <TableHead className="text-right">Nota final</TableHead>
+                <TableHead className="text-right">
+                  Nota final
+                  <span className="block text-[10px] font-normal text-muted-foreground">(100%)</span>
+                </TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
-              {ranking.map((r, i) => (
+              {rankingAlfabetico.map((r) => (
                 <TableRow key={r.responsavel_id}>
-                  <TableCell className="text-center">
-                    <span className={`inline-flex h-7 w-7 items-center justify-center rounded-full text-xs font-bold ${
-                      i === 0 ? "bg-warning/20 text-warning"
-                      : i === 1 ? "bg-muted-foreground/20 text-muted-foreground"
-                      : i === 2 ? "bg-orange-500/20 text-orange-600"
-                      : "bg-muted text-muted-foreground"
-                    }`}>{i + 1}º</span>
-                  </TableCell>
                   <TableCell>
                     <div className="flex items-center gap-2">
                       <Avatar className="h-7 w-7"><AvatarFallback className="text-[10px]">{iniciais(nomeDe(r.responsavel_id))}</AvatarFallback></Avatar>
@@ -536,12 +561,15 @@ export default function PainelDistribuicao() {
                   </TableCell>
                 </TableRow>
               ))}
-              {ranking.length === 0 && (
-                <TableRow><TableCell colSpan={10} className="py-6 text-center text-sm text-muted-foreground">Nenhuma avaliação recebida ainda.</TableCell></TableRow>
+              {rankingAlfabetico.length === 0 && (
+                <TableRow><TableCell colSpan={9} className="py-6 text-center text-sm text-muted-foreground">Nenhuma avaliação recebida ainda.</TableCell></TableRow>
               )}
             </TableBody>
           </Table>
         </div>
+        <p className="mt-3 flex items-center justify-center gap-1.5 border-t border-border/60 pt-3 text-[11px] text-muted-foreground">
+          <Info className="h-3.5 w-3.5" /> A nota final é calculada com base na média ponderada dos critérios avaliados.
+        </p>
       </Card>
 
       {/* Fila de chamados por prioridade */}

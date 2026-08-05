@@ -40,6 +40,7 @@ import ParecerDiretorAdministrativo from "./pages/pareceres/ParecerDiretorAdmini
 import Implantacao from "./pages/contratos/Implantacao";
 import PlanilhaCusto from "./pages/licitacoes/PlanilhaCusto";
 import ContratosERP from "./pages/licitacoes/ContratosERP";
+import CotacoesLicitacao from "./pages/licitacoes/CotacoesLicitacao";
 import ContratosAtivos from "./pages/contratos/Ativos";
 import Empenhos from "./pages/contratos/Empenhos";
 import Postos from "./pages/contratos/Postos";
@@ -158,12 +159,15 @@ import CentralServicos from "./pages/central-servicos/CentralServicos";
 import MeusChamados from "./pages/chamados/MeusChamados";
 import AbrirChamado from "./pages/chamados/AbrirChamado";
 import PainelDistribuicaoChamados from "./pages/chamados/PainelDistribuicao";
+import DashboardChamados from "./pages/chamados/DashboardChamados";
 import CoordenarChamado from "./pages/chamados/CoordenarChamado";
 import PainelDesenvolvedorChamados from "./pages/chamados/PainelDesenvolvedor";
 import ExecutarChamado from "./pages/chamados/ExecutarChamado";
 import AcompanharChamado from "./pages/chamados/AcompanharChamado";
 import WhatsAppInbox from "./pages/whatsapp/WhatsAppInbox";
 import WhatsAppChatbot from "./pages/whatsapp/WhatsAppChatbot";
+import WhatsAppTestes from "./pages/whatsapp/WhatsAppTestes";
+import WhatsAppDashboard from "./pages/whatsapp/WhatsAppDashboard";
 import Reunioes from "./pages/central-servicos/reunioes/Reunioes";
 import ReuniaoDetalhe from "./pages/central-servicos/reunioes/ReuniaoDetalhe";
 import ConducaoReuniao from "./pages/central-servicos/reunioes/ConducaoReuniao";
@@ -198,6 +202,12 @@ const App = () => (
             <Route index element={<Inicio />} />
             <Route path="encarregados" element={<Navigate to="/app/encarregados/minhas-solicitacoes" replace />} />
             <Route path="encarregados/minhas-solicitacoes" element={<MinhasSolicitacoes />} />
+            {/* Um item de sidebar por submódulo de origem (Recrutamento, RH,
+                Jurídico). É a mesma tela de Minhas Solicitações, já com o
+                formulário aberto — não há formulário duplicado. */}
+            <Route path="encarregados/solicitar-vaga" element={<MinhasSolicitacoes abrir="vaga" />} />
+            <Route path="encarregados/solicitar-ferias" element={<MinhasSolicitacoes abrir="ferias" />} />
+            <Route path="encarregados/advertencia" element={<MinhasSolicitacoes abrir="advertencia" />} />
             {/* Supply — solicitação de materiais. Também é a única área que o
                 usuário externo (sessão anônima) enxerga; ver useModoExterno. */}
             <Route path="encarregados/solicitar-materiais" element={<SolicitarMateriais />} />
@@ -209,6 +219,7 @@ const App = () => (
             <Route path="sistemas/chamados" element={<MeusChamados base="/app/sistemas/chamados" />} />
             <Route path="sistemas/chamados/novo" element={<AbrirChamado base="/app/sistemas/chamados" />} />
             <Route path="sistemas/chamados/painel" element={<PainelDistribuicaoChamados />} />
+            <Route path="sistemas/chamados/dashboard-tv" element={<DashboardChamados />} />
             <Route path="sistemas/chamados/dev" element={<PainelDesenvolvedorChamados />} />
             <Route path="sistemas/chamados/:id/coordenar" element={<CoordenarChamado />} />
             <Route path="sistemas/chamados/:id/acompanhar" element={<AcompanharChamado base="/app/sistemas/chamados" />} />
@@ -221,6 +232,8 @@ const App = () => (
             {/* WhatsApp — Chatbot */}
             <Route path="whatsapp" element={<WhatsAppInbox />} />
             <Route path="whatsapp/chatbot" element={<WhatsAppChatbot />} />
+            <Route path="whatsapp/testes" element={<WhatsAppTestes />} />
+            <Route path="whatsapp/dashboard" element={<WhatsAppDashboard />} />
             <Route path="central-servicos/reunioes" element={<Reunioes />} />
             <Route path="central-servicos/reunioes/painel-gerencial" element={<PainelGerencial />} />
             <Route path="central-servicos/reunioes/:id" element={<ReuniaoDetalhe />} />
@@ -262,6 +275,7 @@ const App = () => (
             <Route path="licitacoes/planilha-custo" element={<PlanilhaCusto />} />
             <Route path="licitacoes/implantacao" element={<Implantacao />} />
             <Route path="licitacoes/contratos" element={<ContratosERP />} />
+            <Route path="licitacoes/cotacoes" element={<CotacoesLicitacao />} />
             <Route path="contratos/ativos" element={<ContratosAtivos />} />
             <Route path="contratos/empenhos" element={<Empenhos />} />
             <Route path="contratos/postos" element={<Postos />} />

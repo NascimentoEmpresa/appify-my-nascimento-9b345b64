@@ -43,7 +43,10 @@ const ALIAS: Record<string, string> = {
 };
 
 // Colunas que são do ERP (não da folha): a importação nunca escreve nelas.
-const COLS_ERP = new Set([
+// Exportado para o teste conseguir travar isso — "Configurações extras (ERP)"
+// (Setor_ERP / LIDER / Perfil_ERP) é configuração feita à mão na tela, e uma
+// planilha da folha não pode desfazer.
+export const COLS_ERP = new Set([
   "ID", "Contrato", "TIPO DE CONTRATO", "LIDER", "Ativo_ERP", "Perfil_ERP", "Setor_ERP",
   "Senha", "chave_secreta", "email", "permissoes_compras", "classificacoes_responsavel",
   "aprovar_cotacao_classif", "permissoes_malote", "auth_user_id", "tipo_acesso",
@@ -64,7 +67,7 @@ const COL = { cpf: "CPF", nome: "Nome", situ: "Descrição (Situação)" } as co
 // Colunas onde o "tipo de contrato" pode aparecer (varia entre exports; a
 // primeira é a da própria EMPREGADOS). Regra: MEI não é tocado.
 const COLS_TIPO_CONTRATO = ["TIPO DE CONTRATO", "Descrição (T. Contrato)", "Descrição (Tipo)", "Descrição (Categoria Contribuinte)", "Descrição (Cat. eSocial)", "Descrição (Categoria Sefip)"];
-const ehMEI = (r: any): boolean =>
+export const ehMEI = (r: any): boolean =>
   COLS_TIPO_CONTRATO.some(c => { const v = r?.[c]; return typeof v === "string" && (/\bMEI\b/i.test(v) || /MICROEMPREEND/i.test(v)); });
 
 // Ranking de "atual" para consolidar múltiplas linhas do mesmo CPF.
@@ -173,7 +176,7 @@ const colunaCulpada = (msg: string, dados: Record<string, any>): string | null =
 // Mapa EMPREGADOS ← planilha: só colunas que existem dos dois lados e que não
 // são do ERP. É o que faz o import trazer Cadastro, Escala, Posto, Banco etc.
 type Mapa = { col: string; origem: string };
-const montarMapa = (colsBanco: string[], colsPlanilha: Set<string>): Mapa[] =>
+export const montarMapa = (colsBanco: string[], colsPlanilha: Set<string>): Mapa[] =>
   colsBanco
     .filter(c => !COLS_ERP.has(c) && colsPlanilha.has(ALIAS[c] ?? c))
     .map(c => ({ col: c, origem: ALIAS[c] ?? c }));
