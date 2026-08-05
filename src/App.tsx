@@ -71,7 +71,15 @@ import MovimentosEstoque from "./pages/suprimentos/MovimentosEstoque";
 import NFEntrada from "./pages/suprimentos/NFEntrada";
 import AprovacoesCompras from "./pages/suprimentos/AprovacoesCompras";
 import Recebimentos from "./pages/suprimentos/Recebimentos";
-import Cotacoes from "./pages/suprimentos/Cotacoes";
+import CotacoesCompras from "./pages/suprimentos/CotacoesCompras";
+import CatalogoMateriais from "./pages/suprimentos/CatalogoMateriais";
+import CatalogoAprovacoes from "./pages/suprimentos/CatalogoAprovacoes";
+import PedidosMateriais from "./pages/suprimentos/PedidosMateriais";
+import EstoqueEtiquetas from "./pages/suprimentos/EstoqueEtiquetas";
+import Patrimonio from "./pages/suprimentos/Patrimonio";
+import PainelManutencoes from "./pages/suprimentos/PainelManutencoes";
+import SolicitarMateriais from "./pages/encarregados/SolicitarMateriais";
+import MeusPedidos from "./pages/encarregados/MeusPedidos";
 import ContasPagar from "./pages/financeiro/ContasPagar";
 import ContasReceber from "./pages/financeiro/ContasReceber";
 import Cobrancas from "./pages/cobrancas/Cobrancas";
@@ -200,6 +208,10 @@ const App = () => (
             <Route path="encarregados/solicitar-vaga" element={<MinhasSolicitacoes abrir="vaga" />} />
             <Route path="encarregados/solicitar-ferias" element={<MinhasSolicitacoes abrir="ferias" />} />
             <Route path="encarregados/advertencia" element={<MinhasSolicitacoes abrir="advertencia" />} />
+            {/* Supply — solicitação de materiais. Também é a única área que o
+                usuário externo (sessão anônima) enxerga; ver useModoExterno. */}
+            <Route path="encarregados/solicitar-materiais" element={<SolicitarMateriais />} />
+            <Route path="encarregados/meus-pedidos" element={<MeusPedidos />} />
             {/* Sistemas */}
             <Route path="sistemas/solicitacoes-erp" element={<SolicitacoesErp />} />
             {/* Chamados de Sistemas (help desk) — telas de abrir/meus chamados também
@@ -302,7 +314,19 @@ const App = () => (
             <Route path="suprimentos/pedidos" element={<PedidosCompra />} />
             <Route path="suprimentos/aprovacoes" element={<AprovacoesCompras />} />
             <Route path="suprimentos/recebimentos" element={<Recebimentos />} />
-            <Route path="suprimentos/cotacoes" element={<Cotacoes />} />
+            {/* Espelho de /app/licitacoes/cotacoes visto pelo lado de Compras.
+                Substitui a tela de RFQ do Suprimentos antigo, aposentada na
+                20260821000001 — o arquivo Cotacoes.tsx segue no repo, sem rota. */}
+            <Route path="suprimentos/cotacoes" element={<CotacoesCompras />} />
+            {/* Supply/Compras — catálogo em cascata (Contrato → Posto → Função → enxoval).
+                Rota mais específica primeiro: matchMenuCode resolve por prefixo mais longo,
+                mas o React Router casa na ordem declarada. */}
+            <Route path="suprimentos/catalogo/aprovacoes" element={<CatalogoAprovacoes />} />
+            <Route path="suprimentos/catalogo" element={<CatalogoMateriais />} />
+            <Route path="suprimentos/pedidos-materiais" element={<PedidosMateriais />} />
+            <Route path="suprimentos/estoque-etiquetas" element={<EstoqueEtiquetas />} />
+            <Route path="suprimentos/patrimonio" element={<Patrimonio />} />
+            <Route path="suprimentos/manutencao" element={<PainelManutencoes />} />
             {/* Financeiro */}
             <Route path="financeiro/contas-pagar" element={<ContasPagar />} />
             <Route path="financeiro/contas-receber" element={<ContasReceber />} />

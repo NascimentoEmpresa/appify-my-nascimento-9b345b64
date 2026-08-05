@@ -14,7 +14,8 @@ import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { Plus, Paperclip, Download, Pencil, Trash2, ChevronDown, ChevronRight, Clock, Eye, CheckCircle2 } from "lucide-react";
+import { Plus, Paperclip, Pencil, Trash2, ChevronDown, ChevronRight, Clock, Eye, CheckCircle2 } from "lucide-react";
+import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/hooks/useAuth";
 import {
@@ -24,38 +25,17 @@ import {
   useCotacaoDelete,
   useCotacaoMarcarRespostaVista,
   type CotacaoLicitacao,
-  type CotacaoStatus,
 } from "@/hooks/useCotacoesLicitacao";
 import { usePermissoes } from "@/context/PermissoesContext";
+// Paleta, badge, formatação e agrupamento moram em um só lugar: esta tela e a
+// de Compras (/app/suprimentos/cotacoes) mostram a MESMA linha do banco, e
+// divergir na aparência confundiria os dois setores sobre o mesmo item.
+import {
+  MESES, STATUS_CONFIG, StatusBadge, LinkArquivo, fmtDatetime, iniciais,
+  agruparPorAnoMes, recusaArquivo, EXTENSOES_ACEITAS,
+} from "@/components/cotacoes/comum";
 
 const TIPOS = ["Cotação", "Outro"];
-
-const MESES = [
-  "Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho",
-  "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro",
-];
-
-const STATUS_CONFIG: Record<CotacaoStatus, { label: string; icon: React.ElementType; bg: string; text: string; border: string; headerBg: string; headerText: string; accent: string }> = {
-  pendente:    { label: "Pendente",    icon: Clock,        bg: "bg-red-500/15",    text: "text-red-600",    border: "border-red-400/40",    headerBg: "bg-red-500/10",    headerText: "text-red-700 dark:text-red-400",    accent: "border-l-red-500" },
-  visualizado: { label: "Visualizado", icon: Eye,          bg: "bg-yellow-500/15", text: "text-yellow-600", border: "border-yellow-400/40", headerBg: "bg-yellow-500/10", headerText: "text-yellow-700 dark:text-yellow-400", accent: "border-l-yellow-500" },
-  respondido:  { label: "Respondido",  icon: CheckCircle2, bg: "bg-emerald-500/15",text: "text-emerald-600",border: "border-emerald-400/40",headerBg: "bg-emerald-500/10",headerText: "text-emerald-700 dark:text-emerald-400",accent: "border-l-emerald-500" },
-};
-
-function StatusBadge({ status }: { status: CotacaoStatus }) {
-  const cfg = STATUS_CONFIG[status];
-  const Icon = cfg.icon;
-  return (
-    <span className={cn("inline-flex items-center gap-1 rounded-full border px-2.5 py-0.5 text-[11px] font-semibold", cfg.bg, cfg.text, cfg.border)}>
-      <Icon className="h-3 w-3" /> {cfg.label}
-    </span>
-  );
-}
-
-function fmtDatetime(iso: string | null) {
-  if (!iso) return "";
-  const d = new Date(iso);
-  return d.toLocaleDateString("pt-BR") + " " + d.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" });
-}
 
 // ── Card de cotação ───────────────────────────────────────────────────────────
 function CotacaoCard({
@@ -79,8 +59,7 @@ function CotacaoCard({
 
   const cfg = STATUS_CONFIG[cotacao.status];
 
-  const initials = (cotacao.remetente_nome ?? "?")
-    .split(" ").slice(0, 2).map((w) => w[0]).join("").toUpperCase();
+  const initials = iniciais(cotacao.remetente_nome);
 
   return (
     <div className={cn("rounded-lg border bg-card overflow-hidden transition-shadow border-l-4", cfg.border, cfg.accent, open && "shadow-md")}>
@@ -123,14 +102,7 @@ function CotacaoCard({
               <div className="absolute -left-[13px] top-1.5 h-2.5 w-2.5 rounded-full border-2 border-background bg-muted-foreground/50" />
               <div className="space-y-2">
                 <p className="text-sm whitespace-pre-wrap leading-relaxed">{cotacao.comentario}</p>
-                {cotacao.arquivo_url && (
-                  <a href={cotacao.arquivo_url} target="_blank" rel="noreferrer"
-                    className="inline-flex items-center gap-1.5 rounded-md border border-border bg-muted/50 px-2.5 py-1 text-xs text-foreground hover:bg-muted transition-colors">
-                    <Paperclip className="h-3.5 w-3.5 text-muted-foreground" />
-                    {cotacao.arquivo_nome ?? "Arquivo"}
-                    <Download className="h-3 w-3 text-muted-foreground" />
-                  </a>
-                )}
+                <LinkArquivo caminho={cotacao.arquivo_url} nome={cotacao.arquivo_nome} />
                 {cotacao.visualizado_por_nome && (
                   <p className="text-xs text-muted-foreground italic flex items-center gap-1">
                     <Eye className="h-3 w-3" /> Visualizado por Compras em {fmtDatetime(cotacao.visualizado_em)}
@@ -153,14 +125,8 @@ function CotacaoCard({
                     <CheckCircle2 className="h-3.5 w-3.5" /> Resposta de Compras
                   </p>
                   <p className="text-sm whitespace-pre-wrap leading-relaxed">{cotacao.resposta_comentario}</p>
-                  {cotacao.resposta_arquivo_url && (
-                    <a href={cotacao.resposta_arquivo_url} target="_blank" rel="noreferrer"
-                      className="inline-flex items-center gap-1.5 rounded-md border border-emerald-400/30 bg-emerald-500/10 px-2.5 py-1 text-xs text-emerald-700 hover:bg-emerald-500/20 transition-colors">
-                      <Paperclip className="h-3.5 w-3.5" />
-                      {cotacao.resposta_arquivo_nome ?? "Arquivo"}
-                      <Download className="h-3 w-3" />
-                    </a>
-                  )}
+                  <LinkArquivo caminho={cotacao.resposta_arquivo_url}
+                               nome={cotacao.resposta_arquivo_nome} tom="resposta" />
                   <p className="text-xs text-muted-foreground">{cotacao.respondente_nome} · {fmtDatetime(cotacao.data_resposta)}</p>
                   {cotacao.resposta_visualizada_em && (
                     <p className="text-xs text-muted-foreground italic flex items-center gap-1">
@@ -219,14 +185,30 @@ function CotacaoModal({
 
   const loading = insert.isPending || update.isPending;
 
+  // O bucket recusa acima de 10 MB (§7.2); avisar aqui evita o usuário esperar
+  // o upload inteiro para receber um erro cru do storage.
+  function escolher(f: File | null) {
+    const recusa = recusaArquivo(f);
+    if (recusa) {
+      toast.error("Arquivo não aceito", { description: recusa });
+      if (fileRef.current) fileRef.current.value = "";
+      return;
+    }
+    setArquivo(f);
+  }
+
   async function handleSave() {
     if (!comentario.trim()) return;
-    if (editing) {
-      await update.mutateAsync({ id: editing.id, comentario, arquivo, editado_por_nome: remetenteNome, editado_por_id: remetenteId });
-    } else {
-      await insert.mutateAsync({ tipo, comentario, arquivo, remetente_nome: remetenteNome });
+    try {
+      if (editing) {
+        await update.mutateAsync({ id: editing.id, comentario, arquivo, editado_por_nome: remetenteNome, editado_por_id: remetenteId });
+      } else {
+        await insert.mutateAsync({ tipo, comentario, arquivo, remetente_nome: remetenteNome });
+      }
+      onClose();
+    } catch (e) {
+      toast.error("Não foi possível enviar", { description: (e as Error).message });
     }
-    onClose();
   }
 
   return (
@@ -262,9 +244,9 @@ function CotacaoModal({
               <input
                 ref={fileRef}
                 type="file"
-                accept=".pdf,.xlsx,.xls,.doc,.docx,.zip"
+                accept={EXTENSOES_ACEITAS}
                 className="hidden"
-                onChange={(e) => setArquivo(e.target.files?.[0] ?? null)}
+                onChange={(e) => escolher(e.target.files?.[0] ?? null)}
               />
               <Button type="button" variant="outline" className="h-9 text-xs" onClick={() => fileRef.current?.click()}>
                 <Paperclip className="h-3.5 w-3.5 mr-1.5" />
@@ -308,27 +290,7 @@ export default function CotacoesLicitacao() {
   ]));
 
   // Agrupar por ano → mês
-  const grouped = useMemo(() => {
-    const byYear = new Map<number, Map<number, CotacaoLicitacao[]>>();
-    for (const c of cotacoes) {
-      const d = new Date(c.created_at);
-      const year = d.getFullYear();
-      const month = d.getMonth();
-      if (!byYear.has(year)) byYear.set(year, new Map());
-      const byMonth = byYear.get(year)!;
-      if (!byMonth.has(month)) byMonth.set(month, []);
-      byMonth.get(month)!.push(c);
-    }
-    return Array.from(byYear.entries())
-      .sort((a, b) => b[0] - a[0])
-      .map(([year, months]) => ({
-        year,
-        total: Array.from(months.values()).reduce((s, arr) => s + arr.length, 0),
-        months: Array.from(months.entries())
-          .sort((a, b) => b[0] - a[0])
-          .map(([month, items]) => ({ month, items })),
-      }));
-  }, [cotacoes]);
+  const grouped = useMemo(() => agruparPorAnoMes(cotacoes), [cotacoes]);
 
   const pendentesNaoVistas = cotacoes.filter(
     (c) => c.status === "respondido" && !c.resposta_visualizada_em
@@ -467,7 +429,12 @@ export default function CotacoesLicitacao() {
               <AlertDialogAction
                 className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
                 onClick={async () => {
-                  await deleteMutation.mutateAsync(deleteTarget.id);
+                  try {
+                    await deleteMutation.mutateAsync(deleteTarget.id);
+                    toast.success("Cotação excluída.");
+                  } catch (e) {
+                    toast.error("Não foi possível excluir", { description: (e as Error).message });
+                  }
                   setDeleteTarget(null);
                 }}
               >
