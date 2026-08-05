@@ -15,6 +15,17 @@ const CONTRATOS = [
   "CHARQUEADAS - 168/2021",
   "DMAE - 895/0",
   "EMBRAPA - 2021/93",
+  // As 10 linhas reais da UFRGS: é onde o desempate importa de verdade.
+  "FURG JARDINAGEM  - 049/2022",
+  "UFRGS - AUX DE SAÚDE BUCAL - 033/2021",
+  "UFRGS - CARREGADORES - 095/2024",
+  "UFRGS - COPA E COZINHA - 025/2025",
+  "UFRGS - INTERPRETE DE LIBRAS - 009.2026",
+  "UFRGS - JARDINAGEM - 062/2025",
+  "UFRGS - LIMPEZA - 020/2022",
+  "UFRGS - LIMPEZA GERAL - 047/2022",
+  "UFRGS - MOTORISTAS - 034/2022",
+  "UFRGS ALMOXARIFES",
 ];
 
 describe("sugerirContrato", () => {
@@ -56,5 +67,32 @@ describe("sugerirContrato", () => {
   // Palavra curta sozinha não pode virar match ("DE" casaria com "CAMARA DE...").
   it("palavra curta nao dispara sugestao", () => {
     expect(sugerirContrato("DE", CONTRATOS)).toBe("");
+  });
+});
+
+// O campo "Município de origem" guarda, na prática, descrição de posto —
+// "UFRGS - JARDINAGEM CAMPUS SAUDE TRI". Achar o contrato certo aqui é achar a
+// ÚNICA linha da UFRGS cujo nome inteiro aparece nesse texto.
+describe("sugerirContrato — municipio que na verdade descreve o posto", () => {
+  it("acha a linha certa entre as 10 da UFRGS", () => {
+    expect(sugerirContrato("UFRGS - JARDINAGEM CAMPUS SAUDE TRI", CONTRATOS))
+      .toBe("UFRGS - JARDINAGEM - 062/2025");
+  });
+
+  it("nao confunde com a outra jardinagem, que e de outro cliente", () => {
+    // FURG também tem jardinagem: quem decide é o UFRGS junto.
+    expect(sugerirContrato("FURG JARDINAGEM PREDIO 3", CONTRATOS))
+      .toBe("FURG JARDINAGEM  - 049/2022");
+  });
+
+  it("distingue LIMPEZA de LIMPEZA GERAL na mesma instituicao", () => {
+    expect(sugerirContrato("UFRGS LIMPEZA GERAL BLOCO B", CONTRATOS))
+      .toBe("UFRGS - LIMPEZA GERAL - 047/2022");
+  });
+
+  // Texto que só diz a instituição não escolhe entre 10 contratos: melhor
+  // deixar em branco para a pessoa decidir do que chutar.
+  it("texto ambiguo demais nao sugere nada", () => {
+    expect(sugerirContrato("UFRGS - CAMPUS SAUDE 5D TRI", CONTRATOS)).toBe("");
   });
 });

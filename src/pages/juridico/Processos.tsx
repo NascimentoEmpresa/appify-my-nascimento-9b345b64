@@ -51,28 +51,42 @@ const semAcento = (s: string) =>
 const PALAVRA_CURTA = new Set(["DE", "DA", "DO", "DOS", "DAS", "E", "-"]);
 const tokens = (s: string) => semAcento(s).split(/[^A-Z0-9]+/).filter(t => t.length > 1 && !PALAVRA_CURTA.has(t));
 
-// Pontua o quanto um nome de contrato "casa" com o município digitado.
-// Começar pela cidade vale mais que citá-la no meio, que vale mais que
-// coincidir palavras soltas — é o que separa "CHARQUEADAS - 005.2021" de
-// "CAMARA DE RIO GRANDE-LIMPEZA" quando se digita "RIO GRANDE".
+// O número do contrato ("062/2025", "95.2026") não identifica nada: é o que
+// sobra depois dele que diz de qual contrato se trata.
+const tokensNome = (s: string) => tokens(s).filter(t => !/^\d+$/.test(t));
+
+// Pontua o quanto um nome de contrato "casa" com o texto do município.
+//
+// O campo guarda duas coisas na prática: cidade ("CHARQUEADAS") e descrição de
+// posto ("UFRGS - JARDINAGEM CAMPUS SAUDE TRI"). Por isso a comparação olha
+// nos DOIS sentidos e fica com o mais forte:
+//   • quanto do MUNICÍPIO aparece no contrato — resolve "RIO GRANDE" →
+//     "CAMARA DE RIO GRANDE-LIMPEZA";
+//   • quanto do CONTRATO é explicado pelo município — resolve
+//     "UFRGS - JARDINAGEM CAMPUS SAUDE TRI" → "UFRGS - JARDINAGEM - 062/2025",
+//     que só ganha das outras 9 linhas da UFRGS porque é a única cujo nome
+//     inteiro (UFRGS + JARDINAGEM) está no texto.
+// Exigir os dois lados altos rejeitaria o primeiro caso; exigir só um lado
+// baixo aceitaria "SANTA MARIA" como "SANTA CRUZ".
 function pontuarContrato(municipio: string, nomeContrato: string): number {
   const m = semAcento(municipio), c = semAcento(nomeContrato);
   if (!m || !c) return 0;
   // Sem nenhuma palavra significativa não há o que casar. Fica ANTES das
   // comparações de texto: "DE" casaria por substring com "CAMARA DE RIO
   // GRANDE" e sugeriria um contrato sem nada a ver.
-  const tm = tokens(municipio);
-  if (!tm.length) return 0;
+  const tm = tokensNome(municipio), tc = tokensNome(nomeContrato);
+  if (!tm.length || !tc.length) return 0;
   if (c === m) return 1000;
-  if (c.startsWith(m)) return 900 - c.length;          // prefixo: o mais curto ganha
-  if (c.includes(m)) return 700 - c.length;
-  const tc = new Set(tokens(nomeContrato));
-  const casados = tm.filter(t => tc.has(t)).length;
-  if (!casados) return 0;
-  // Exige que a maior parte do município apareça no contrato: "SANTA MARIA"
-  // não pode casar com "SANTA CRUZ" só pelo "SANTA".
-  const cobertura = casados / tm.length;
-  return cobertura < 0.6 ? 0 : Math.round(cobertura * 400) - c.length / 100;
+  if (c.startsWith(m)) return 900 - c.length / 100;     // prefixo: o mais curto ganha
+  if (c.includes(m)) return 800 - c.length / 100;
+
+  const sm = new Set(tm), sc = new Set(tc);
+  const covMunicipio = [...sm].filter(t => sc.has(t)).length / sm.size;
+  const covContrato  = [...sc].filter(t => sm.has(t)).length / sc.size;
+  const forte = Math.max(covMunicipio, covContrato);
+  if (forte < 0.6) return 0;
+  // Cobertura forte manda; a outra desempata; nome curto desempata por último.
+  return forte * 500 + Math.min(covMunicipio, covContrato) * 100 - c.length / 100;
 }
 
 export function sugerirContrato(municipio: string, contratos: string[]): string {
