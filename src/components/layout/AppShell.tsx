@@ -6,8 +6,12 @@ import { DemoBanner } from "./DemoBanner";
 import { ChamadoFab } from "@/components/chamados/ChamadoFab";
 import { RouteGuard } from "@/components/auth/RouteGuard";
 import { VinculoGate } from "@/components/auth/VinculoEmpregado";
+import { useModoExterno } from "@/hooks/useModoExterno";
 
 export function AppShell() {
+  // Encarregado externo (sessão anônima) não tem cadastro em EMPREGADOS para
+  // vincular nem abre chamado de sistemas — os dois gates só atrapalhariam.
+  const externo = useModoExterno();
   const [collapsed, setCollapsed] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
   const location = useLocation();
@@ -53,8 +57,8 @@ export function AppShell() {
           </RouteGuard>
         </main>
       </div>
-      <ChamadoFab />
-      <VinculoGate />
+      {!externo && <ChamadoFab />}
+      {!externo && <VinculoGate />}
     </div>
   );
 }

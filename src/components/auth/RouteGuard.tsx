@@ -6,6 +6,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
 import { useFeatureFlag } from "@/lib/featureFlags";
 import { ACESSO_ABERTO_SEM_PERMISSOES, MENUS_SEMPRE_RESTRITOS } from "@/lib/acesso";
+import { useModoExterno, rotaPermitidaExterno } from "@/hooks/useModoExterno";
 
 /**
  * Bloco V3 — Rotas governadas por feature flag soberana de fase.
@@ -37,6 +38,12 @@ export function RouteGuard({ children }: { children: ReactNode }) {
 
   const menuCode = access ? matchMenuCode(pathname, access.routes) : null;
 
+  // Encarregado externo: allowlist estrita, avaliada ANTES de qualquer outra
+  // regra. Ele não tem perfil de acesso nenhum, então cairia no ramo "menu
+  // ainda não configurado → aberto" e enxergaria telas internas. Este ramo
+  // só restringe: nunca libera nada que as regras abaixo negariam.
+  const externo = useModoExterno();
+
   // Acesso determinado pelo gerenciamento de acesso ("Acesso por Usuário"):
   // - rota sem entrada em app_menu -> nunca foi migrada pro controle por
   //   perfil, continua sempre aberta;
@@ -47,16 +54,19 @@ export function RouteGuard({ children }: { children: ReactNode }) {
   //   concede_tudo, nunca "esquecido");
   // - menu configurado -> vale o resolvido por list_accessible_menus pra
   //   este usuário (perfil comum, concede_tudo ou exceção individual).
-  const allowed =
-    phaseFlagEnabled &&
-    (ACESSO_ABERTO_SEM_PERMISSOES ||
-      !access ||
-      !menuCode ||
-      (!access.configuredCodes.has(menuCode) && !MENUS_SEMPRE_RESTRITOS.has(menuCode)) ||
-      access.codes.has(menuCode));
+  const allowed = externo
+    ? rotaPermitidaExterno(pathname)
+    : phaseFlagEnabled &&
+      (ACESSO_ABERTO_SEM_PERMISSOES ||
+        !access ||
+        !menuCode ||
+        (!access.configuredCodes.has(menuCode) && !MENUS_SEMPRE_RESTRITOS.has(menuCode)) ||
+        access.codes.has(menuCode));
 
   useEffect(() => {
-    if (isLoading || allowed) return;
+    // Externo não tem grant em access_audit_log e o bloqueio dele não é um
+    // evento de permissão a auditar — é a allowlist funcionando.
+    if (isLoading || allowed || externo) return;
     const key = `${pathname}|${menuCode}`;
     if (loggedRef.current === key) return;
     loggedRef.current = key;
@@ -74,11 +84,13 @@ export function RouteGuard({ children }: { children: ReactNode }) {
           : "route_guard_block",
       });
     })();
-  }, [isLoading, allowed, pathname, menuCode, phaseFlagEnabled, phaseFlagged]);
+  }, [isLoading, allowed, externo, pathname, menuCode, phaseFlagEnabled, phaseFlagged]);
 
   // Só bloqueia o render na primeira carga (sem dados ainda). Com dados em
   // cache (staleTime 30s), mantém children montado entre navegações.
-  if (!ACESSO_ABERTO_SEM_PERMISSOES && !access) return null;
+  // Externo não depende de list_accessible_menus — a decisão dele é a
+  // allowlist, então esperar essa query só atrasaria a tela.
+  if (!externo && !ACESSO_ABERTO_SEM_PERMISSOES && !access) return null;
   if (allowed) return <>{children}</>;
 
   return (
@@ -88,14 +100,24 @@ export function RouteGuard({ children }: { children: ReactNode }) {
       </div>
       <h1 className="text-2xl font-semibold">Acesso negado</h1>
       <p className="max-w-md text-sm text-muted-foreground">
-        Você não tem permissão para visualizar esta tela. Caso precise de acesso,
-        solicite ao administrador em <strong>Configurações do ERP &gt; Acesso por Usuário</strong>.
+        {externo ? (
+          <>Esta área não faz parte do acesso externo. Você pode solicitar materiais e acompanhar seus pedidos.</>
+        ) : (
+          <>
+            Você não tem permissão para visualizar esta tela. Caso precise de acesso,
+            solicite ao administrador em <strong>Configurações do ERP &gt; Acesso por Usuário</strong>.
+          </>
+        )}
       </p>
-      <p className="text-xs text-muted-foreground">
-        Tela: <code>{menuCode}</code> · Rota: <code>{pathname}</code>
-      </p>
+      {!externo && (
+        <p className="text-xs text-muted-foreground">
+          Tela: <code>{menuCode}</code> · Rota: <code>{pathname}</code>
+        </p>
+      )}
       <Button asChild>
-        <Link to="/app/painel-executivo">Voltar ao início</Link>
+        <Link to={externo ? "/app/encarregados/solicitar-materiais" : "/app/painel-executivo"}>
+          Voltar ao início
+        </Link>
       </Button>
     </div>
   );
