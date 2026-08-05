@@ -72,14 +72,49 @@ export function useAccessibleMenus(acao: string = "visualizar") {
 }
 
 /** Best-effort match of a pathname to an app_menu code (longest-prefix). */
-export function matchMenuCode(pathname: string, routes: MenuRoute[]): string | null {
-  let best: { code: string; len: number } | null = null;
+// TODOS os menus que respondem por esta rota, não só um.
+//
+// Sete rotas do ERP têm dois menus apontando para elas (um código legado e o
+// atual): /app/rh/recrutamento é `recrutamento` e `recrutamento_gestao`, e o
+// mesmo vale para cinco telas do Jurídico e uma do Financeiro. Como os dois
+// têm exatamente o mesmo comprimento de rota, o desempate "mais longa vence"
+// caía no primeiro que o banco devolvesse — ordem arbitrária.
+//
+// O efeito era invisível e cruel: a tela de Acesso por Usuário liberava
+// `recrutamento_gestao`, a sidebar cobrava `recrutamento`, e o usuário ficava
+// sem ver nada sem que ninguém conseguisse explicar por quê.
+export function matchMenuCodes(pathname: string, routes: MenuRoute[]): string[] {
+  let melhor = -1;
+  let codigos: string[] = [];
   for (const { codigo, rota } of routes) {
     // Normalize dynamic segments like /:id by comparing only up to the first ":"
     const base = rota.split("/:")[0];
     if (pathname === rota || pathname === base || pathname.startsWith(base + "/")) {
-      if (!best || base.length > best.len) best = { code: codigo, len: base.length };
+      if (base.length > melhor) { melhor = base.length; codigos = [codigo]; }
+      else if (base.length === melhor && !codigos.includes(codigo)) codigos.push(codigo);
     }
   }
-  return best?.code ?? null;
+  return codigos;
+}
+
+// Decide o acesso a uma rota considerando todos os códigos que respondem por
+// ela. Liberado em QUALQUER um deles basta — nunca tira acesso de quem já
+// tinha, e resolve o legado sem precisar mexer nas 53 exceções já gravadas no
+// código antigo.
+export function rotaLiberada(
+  pathname: string,
+  access: { routes: MenuRoute[]; codes: Set<string>; configuredCodes: Set<string> },
+  sempreRestritos: Set<string>,
+): boolean {
+  const codigos = matchMenuCodes(pathname, access.routes);
+  // Rota sem entrada em app_menu: nunca foi migrada pro controle por perfil.
+  if (!codigos.length) return true;
+  if (codigos.some((c) => access.codes.has(c))) return true;
+  // Nenhum liberado: só esconde se ALGUM dos códigos estiver configurado no
+  // gerenciamento de acesso. Menu que ninguém nunca configurou segue aberto.
+  return !codigos.some((c) => access.configuredCodes.has(c) || sempreRestritos.has(c));
+}
+
+export function matchMenuCode(pathname: string, routes: MenuRoute[]): string | null {
+  return matchMenuCodes(pathname, routes)[0] ?? null;
 }
