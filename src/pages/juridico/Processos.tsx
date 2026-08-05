@@ -116,17 +116,26 @@ function MoedaInput({ value, onChange }: { value: number; onChange: (n: number) 
     onBlur={() => { focused.current = false; setTxt(fmt(value)); }} />;
 }
 
-// Combobox "select-only": dá pra digitar para PESQUISAR, mas só escolher um motivo
-// já existente (evita digitar qualquer coisa / criar duplicados). Para um motivo
-// realmente novo, há o botão deliberado "Criar novo motivo".
-function MotivoSelect({ value, options, onChange }: { value: string; options: string[]; onChange: (v: string) => void }) {
+// Combobox "select-only": dá pra digitar para PESQUISAR, mas só escolher um
+// item já existente (evita digitar qualquer coisa / criar duplicados).
+//
+// `aoCriarNovo` é opcional de propósito. Motivo pode ganhar um valor novo (é
+// texto livre do jurídico); CONTRATO não — ele vem da tabela CONTRATOS, e
+// deixar digitar à mão traria de volta exatamente o problema que estamos
+// consertando (nome que não casa com contrato nenhum).
+function ComboSelect({ value, options, onChange, placeholder, vazio, aoCriarNovo, rotuloCriar, limpavel }: {
+  value: string; options: string[]; onChange: (v: string) => void;
+  placeholder: string; vazio: string;
+  aoCriarNovo?: () => string | null | undefined; rotuloCriar?: string; limpavel?: boolean;
+}) {
   const [open, setOpen] = useState(false);
   const [q, setQ] = useState("");
   const filtered = q.trim() ? options.filter(o => o.toLowerCase().includes(q.trim().toLowerCase())) : options;
+  const escolher = (v: string) => { onChange(v); setOpen(false); setQ(""); };
   return (
     <div style={{ position: "relative", flex: 1, minWidth: 0 }} onBlur={e => { if (!e.currentTarget.contains(e.relatedTarget as Node)) { setOpen(false); setQ(""); } }}>
       <button type="button" className="jpr-fi" onClick={() => setOpen(o => !o)} style={{ width: "100%", textAlign: "left", cursor: "pointer", display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, background: "#fff" }}>
-        <span style={{ color: value ? "#0f172a" : "#94a3b8", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{value || "Selecione o motivo…"}</span>
+        <span style={{ color: value ? "#0f172a" : "#94a3b8", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{value || placeholder}</span>
         <span style={{ color: "#94a3b8", fontSize: 11 }}>▼</span>
       </button>
       {open && (
@@ -136,15 +145,31 @@ function MotivoSelect({ value, options, onChange }: { value: string; options: st
           </div>
           <div style={{ maxHeight: 220, overflowY: "auto" }}>
             {filtered.length === 0
-              ? <div style={{ padding: "10px 12px", fontSize: 12, color: "#94a3b8" }}>Nenhum motivo encontrado.</div>
+              ? <div style={{ padding: "10px 12px", fontSize: 12, color: "#94a3b8" }}>{vazio}</div>
               : filtered.map(o => (
-                <button type="button" key={o} onClick={() => { onChange(o); setOpen(false); setQ(""); }} style={{ display: "block", width: "100%", textAlign: "left", padding: "8px 12px", border: "none", background: o === value ? "#eef4ff" : "#fff", color: "#0f172a", fontSize: 12.5, cursor: "pointer" }} onMouseEnter={e => (e.currentTarget.style.background = "#f8fbff")} onMouseLeave={e => (e.currentTarget.style.background = o === value ? "#eef4ff" : "#fff")}>{o}</button>
+                <button type="button" key={o} onClick={() => escolher(o)} style={{ display: "block", width: "100%", textAlign: "left", padding: "8px 12px", border: "none", background: o === value ? "#eef4ff" : "#fff", color: "#0f172a", fontSize: 12.5, cursor: "pointer" }} onMouseEnter={e => (e.currentTarget.style.background = "#f8fbff")} onMouseLeave={e => (e.currentTarget.style.background = o === value ? "#eef4ff" : "#fff")}>{o}</button>
               ))}
           </div>
-          <button type="button" onClick={() => { const v = window.prompt("Novo motivo (use o nome correto — vira opção para todos):")?.trim(); if (v) { onChange(v); setOpen(false); setQ(""); } }} style={{ display: "block", width: "100%", textAlign: "left", padding: "9px 12px", border: "none", borderTop: "1px solid #f1f5f9", background: "#fff", color: "#0f3171", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>➕ Criar novo motivo…</button>
+          {limpavel && value && (
+            <button type="button" onClick={() => escolher("")} style={{ display: "block", width: "100%", textAlign: "left", padding: "9px 12px", border: "none", borderTop: "1px solid #f1f5f9", background: "#fff", color: "#dc2626", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>✕ Limpar seleção</button>
+          )}
+          {aoCriarNovo && (
+            <button type="button" onClick={() => { const v = aoCriarNovo()?.trim(); if (v) escolher(v); }} style={{ display: "block", width: "100%", textAlign: "left", padding: "9px 12px", border: "none", borderTop: "1px solid #f1f5f9", background: "#fff", color: "#0f3171", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>{rotuloCriar}</button>
+          )}
         </div>
       )}
     </div>
+  );
+}
+
+function MotivoSelect({ value, options, onChange }: { value: string; options: string[]; onChange: (v: string) => void }) {
+  return (
+    <ComboSelect
+      value={value} options={options} onChange={onChange}
+      placeholder="Selecione o motivo…" vazio="Nenhum motivo encontrado."
+      rotuloCriar="➕ Criar novo motivo…"
+      aoCriarNovo={() => window.prompt("Novo motivo (use o nome correto — vira opção para todos):")}
+    />
   );
 }
 
@@ -939,10 +964,21 @@ export default function Processos({ view = "processos" }: { view?: "dashboard" |
               <div className="jpr-fg"><label>Data de entrada</label><input className="jpr-fi" type="date" value={form.data_entrada_reclamatoria} onChange={e => setForm(v => ({ ...v, data_entrada_reclamatoria: e.target.value }))} /></div>
               <div className="jpr-fg">
                 <label>Contrato</label>
-                <input className="jpr-fi" list="jpr-contratos" value={form.contrato}
-                  onChange={e => { contratoManual.current = true; setForm(v => ({ ...v, contrato: e.target.value })); }}
-                  placeholder="Preenche sozinho pelo município" />
-                <datalist id="jpr-contratos">{contratosNomes.map(c => <option key={c} value={c} />)}</datalist>
+                {/* Select-only: o contrato TEM que existir na CONTRATOS. Deixar
+                    digitar livre traria de volta o problema que estamos
+                    consertando — texto que não corresponde a contrato nenhum.
+                    Se o valor salvo não estiver mais na lista de ativos, entra
+                    como opção mesmo assim, senão editar o processo o apagaria. */}
+                <div style={{ display: "flex" }}>
+                  <ComboSelect
+                    value={form.contrato}
+                    options={form.contrato && !contratosNomes.includes(form.contrato) ? [form.contrato, ...contratosNomes] : contratosNomes}
+                    onChange={v => { contratoManual.current = true; setForm(f => ({ ...f, contrato: v })); }}
+                    placeholder="Selecione o contrato…"
+                    vazio="Nenhum contrato encontrado."
+                    limpavel
+                  />
+                </div>
                 {sugestaoContrato && sugestaoContrato !== form.contrato && (
                   <button type="button" className="jpr-btn" onClick={() => { contratoManual.current = false; setForm(v => ({ ...v, contrato: sugestaoContrato })); }}
                     style={{ background: "#eef4ff", color: "#0f3171", padding: "4px 9px", marginTop: 4, fontSize: 11 }}>
