@@ -193,6 +193,12 @@ const App = () => (
             <Route index element={<Inicio />} />
             <Route path="encarregados" element={<Navigate to="/app/encarregados/minhas-solicitacoes" replace />} />
             <Route path="encarregados/minhas-solicitacoes" element={<MinhasSolicitacoes />} />
+            {/* Um item de sidebar por submódulo de origem (Recrutamento, RH,
+                Jurídico). É a mesma tela de Minhas Solicitações, já com o
+                formulário aberto — não há formulário duplicado. */}
+            <Route path="encarregados/solicitar-vaga" element={<MinhasSolicitacoes abrir="vaga" />} />
+            <Route path="encarregados/solicitar-ferias" element={<MinhasSolicitacoes abrir="ferias" />} />
+            <Route path="encarregados/advertencia" element={<MinhasSolicitacoes abrir="advertencia" />} />
             {/* Sistemas */}
             <Route path="sistemas/solicitacoes-erp" element={<SolicitacoesErp />} />
             {/* Chamados de Sistemas (help desk) — telas de abrir/meus chamados também

@@ -399,11 +399,37 @@ const encarregadosModule: ModuleDef = {
   icon: HardHat,
   basePath: "/app/encarregados/minhas-solicitacoes",
   status: "active",
+  // Agrupado pelo submódulo de ORIGEM de cada solicitação, como nos demais
+  // módulos — o encarregado pensa "preciso de uma vaga", não "preciso abrir
+  // uma solicitação". Todos os itens caem na mesma tela de Minhas
+  // Solicitações; muda só o formulário que já vem aberto.
   groups: [
     {
-      label: "Solicitações",
+      label: "Recrutamento e Seleção",
       defaultOpen: true,
       items: [
+        { label: "Solicitar Vaga", to: "/app/encarregados/solicitar-vaga", icon: UserCog },
+      ],
+    },
+    {
+      label: "Recursos Humanos",
+      defaultOpen: true,
+      items: [
+        { label: "Solicitar Férias", to: "/app/encarregados/solicitar-ferias", icon: CalendarRange },
+      ],
+    },
+    {
+      label: "Jurídico",
+      defaultOpen: true,
+      items: [
+        { label: "Advertência", to: "/app/encarregados/advertencia", icon: ShieldAlert },
+      ],
+    },
+    {
+      label: "Acompanhamento",
+      defaultOpen: true,
+      items: [
+        // Continua existindo: é a visão com TODAS as opções e o histórico.
         { label: "Minhas Solicitações", to: "/app/encarregados/minhas-solicitacoes", icon: ClipboardCheck },
       ],
     },
