@@ -197,6 +197,8 @@ const controladoriaOrcModule: ModuleDef = {
         { label: "OBZ — Versões", to: "/app/controladoria/obz-versoes", icon: Calculator },
         { label: "DRE Gerencial", to: "/app/controladoria/dre-gerencial", icon: TrendingUp },
         { label: "Orçamento Completo", to: "/app/controladoria/orcamento-completo", icon: Calculator },
+        { label: "Orçamento Administrativo", to: "/app/controladoria/orcamento-administrativo", icon: ClipboardList },
+        { label: "Cadastro de Classificação", to: "/app/controladoria/cadastro-classificacao", icon: ListChecks },
       ],
     },
     {
@@ -286,13 +288,6 @@ const financeiroModule: ModuleDef = {
         { label: "Análise de Capital de Giro", to: "/app/financeiro/capital-giro", icon: TrendingUp },
         { label: "Movimentos Bancários", to: "/app/financeiro/movimentos", icon: Wallet },
         { label: "Integração Bancária", to: "/app/financeiro/integracao-bancaria", icon: Wallet },
-      ],
-    },
-    {
-      label: "Orçamento",
-      defaultOpen: true,
-      items: [
-        { label: "Cadastro de Orçamentos", to: "/app/financeiro/planejamento-orcamentario/cadastro", icon: ClipboardList },
       ],
     },
     {
