@@ -83,7 +83,13 @@ interface SolItem {
   substituido?: string; motivo?: string; qtdVagas?: number; statusDesde?: string; excecao?: boolean;
 }
 
-export default function MinhasSolicitacoes() {
+// `abrir` vem das rotas dedicadas da sidebar (Solicitar Vaga / Férias /
+// Advertência): é a MESMA tela, só que já com o formulário aberto. Assim cada
+// submódulo tem seu item no menu sem duplicar formulário nenhum, e fechar o
+// modal deixa a pessoa no histórico, que é o resto da página.
+export type SolicitacaoInicial = "vaga" | "ferias" | "advertencia";
+
+export default function MinhasSolicitacoes({ abrir }: { abrir?: SolicitacaoInicial }) {
   const { user } = useAuth();
   const [displayName, setDisplayName] = useState("");
 
@@ -308,6 +314,19 @@ export default function MinhasSolicitacoes() {
     setModalAdv(true); setAdv({ ...ADV_RESET }); setEmpSearch(""); setShowEmpDrop(false); setEmpregados([]); setAdvHistorico([]);
     if (!contratos.length) carregarContratos();
   };
+
+  // Abre o formulário pedido pela rota. Guarda o último valor atendido em vez
+  // de um "já abri": sem isso, ir de Solicitar Vaga para Solicitar Férias pela
+  // sidebar não reabriria nada (o componente não remonta, só troca a prop) — e
+  // fechar o modal não pode reabri-lo sozinho.
+  const ultimoAbrir = useRef<SolicitacaoInicial | null>(null);
+  useEffect(() => {
+    if (!abrir || ultimoAbrir.current === abrir) return;
+    ultimoAbrir.current = abrir;
+    if (abrir === "vaga") abrirModalVaga();
+    else if (abrir === "ferias") abrirModalFerias();
+    else if (abrir === "advertencia") abrirModalAdv();
+  }, [abrir]);
 
   // Trava: grau Baixo exige advertência verbal antes da escrita.
   const advBloqueada = adv.grau === "Baixo" && adv.advertencia_verbal_dada === "Não";

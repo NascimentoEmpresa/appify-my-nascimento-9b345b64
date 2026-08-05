@@ -168,11 +168,41 @@ async function reservarEnvioDoMenu(
     return true;
   }
   const limite = new Date(Date.now() - min * 60_000).toISOString();
-  const { data } = await admin.from("WA_CONVERSA")
+  const { data, error } = await admin.from("WA_CONVERSA")
     .update({ menu_enviado_em: agora })
     .eq("id", conversaId)
     .or(`menu_enviado_em.is.null,menu_enviado_em.lt.${limite}`)
     .select("id");
+  // FALHA ABERTA. Quando a coluna menu_enviado_em não existia no banco, este
+  // UPDATE dava erro, a função devolvia false e o bot ficava MUDO: 11 pessoas
+  // escreveram e ninguém foi respondido. Repetir uma mensagem incomoda; não
+  // responder um candidato é perder o candidato.
+  if (error) { console.error("Reserva do menu falhou, enviando assim mesmo:", error.message); return true; }
+  return (data ?? []).length > 0;
+}
+
+// Janela em que o MESMO botão clicado de novo é tratado como repetição. Dois
+// toques acidentais acontecem em menos de 2 s; 10 s dá folga sem impedir quem
+// realmente quer a resposta outra vez.
+const JANELA_CLIQUE_S = 10;
+
+// Mesma ideia da reserva do menu, para clique em opção. Sem isso, dois toques
+// no mesmo botão viram duas mensagens distintas da Meta (wa_message_id
+// diferente, então o dedupe por id não pega) e o bot responde duas vezes —
+// inclusive executando duas vezes ações com efeito colateral, como transferir
+// de pasta ou concluir o atendimento.
+async function reservarCliqueDaOpcao(conversaId: string, replyId: string): Promise<boolean> {
+  // O id vai cru num filtro do PostgREST; se vier fora do formato dos nossos
+  // ids de menu, não arrisca a sintaxe do filtro — responde e segue.
+  if (!/^[A-Za-z0-9_-]{1,64}$/.test(replyId)) return true;
+  const agora = new Date().toISOString();
+  const limite = new Date(Date.now() - JANELA_CLIQUE_S * 1000).toISOString();
+  const { data, error } = await admin.from("WA_CONVERSA")
+    .update({ ultima_opcao_id: replyId, ultima_opcao_em: agora })
+    .eq("id", conversaId)
+    .or(`ultima_opcao_id.is.null,ultima_opcao_id.neq.${replyId},ultima_opcao_em.is.null,ultima_opcao_em.lt.${limite}`)
+    .select("id");
+  if (error) { console.error("Reserva do clique falhou, respondendo assim mesmo:", error.message); return true; }
   return (data ?? []).length > 0;
 }
 
@@ -235,6 +265,12 @@ async function processarBot(
   // assume, e aí quem responde é gente.
   const menuCfg = menuAtivo(cfg as any);
   const opcaoClicada = replyId && menuCfg ? acharOpcao(menuCfg, replyId) : null;
+
+  // Clique repetido no mesmo botão: uma execução atende, as outras calam.
+  // Fica ANTES do switch para valer também para "humano", "transferir" e
+  // "concluir" — repetir esses não é só uma mensagem a mais, é executar a
+  // ação duas vezes.
+  if (replyId && !(await reservarCliqueDaOpcao(conversaId, replyId))) return;
 
   switch (rota.tipo) {
     case "nada":
