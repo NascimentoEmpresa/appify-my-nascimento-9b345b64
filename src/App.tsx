@@ -92,6 +92,8 @@ import ConciliacaoFluxoCaixa from "./pages/financeiro/ConciliacaoFluxoCaixa";
 import OBZVersoes from "./pages/controladoria/OBZVersoes";
 import DREGerencial from "./pages/controladoria/DREGerencial";
 import OrcamentoCompleto from "./pages/controladoria/OrcamentoCompleto";
+import CadastroOrcamentos from "./pages/controladoria/orcamento/CadastroOrcamentos";
+import ClassificacoesOrcamento from "./pages/controladoria/orcamento/ClassificacoesOrcamento";
 import GeradorPops from "./pages/controladoria/GeradorPops";
 import MovimentosBancarios from "./pages/financeiro/MovimentosBancarios";
 import ContasBancariasEmpresa from "./pages/financeiro/ContasBancariasEmpresa";
@@ -100,8 +102,6 @@ import IntegracaoBancariaBuilder from "./pages/financeiro/IntegracaoBancariaBuil
 import ProgramacaoPagamentos from "./pages/financeiro/ProgramacaoPagamentos";
 import ValidacaoPosPagamento from "./pages/financeiro/ValidacaoPosPagamento";
 import ConciliacaoBancaria from "./pages/financeiro/ConciliacaoBancaria";
-import CadastroOrcamentos from "./pages/financeiro/orcamento/CadastroOrcamentos";
-import ClassificacoesOrcamento from "./pages/financeiro/orcamento/ClassificacoesOrcamento";
 import EmissaoNF from "./pages/financeiro/nf-emissao/EmissaoNF";
 import ControleNotas from "./pages/financeiro/controle-notas/ControleNotas";
 import Lancamentos from "./pages/contabil/Lancamentos";
@@ -297,6 +297,8 @@ const App = () => (
             <Route path="controladoria/obz-versoes" element={<OBZVersoes />} />
             <Route path="controladoria/dre-gerencial" element={<DREGerencial />} />
             <Route path="controladoria/orcamento-completo" element={<OrcamentoCompleto />} />
+            <Route path="controladoria/orcamento-administrativo" element={<CadastroOrcamentos />} />
+            <Route path="controladoria/cadastro-classificacao" element={<ClassificacoesOrcamento />} />
             <Route path="controladoria/gerador-pops" element={<GeradorPops />} />
             <Route path="orcamento" element={<Orcamento />} />
             {/* Suprimentos */}
@@ -342,8 +344,6 @@ const App = () => (
             <Route path="financeiro/programacao-pagamentos" element={<ProgramacaoPagamentos />} />
             <Route path="financeiro/validacao-pos-pagamento" element={<ValidacaoPosPagamento />} />
             <Route path="financeiro/conciliacao-bancaria" element={<ConciliacaoBancaria />} />
-            <Route path="financeiro/planejamento-orcamentario/cadastro" element={<CadastroOrcamentos />} />
-            <Route path="financeiro/planejamento-orcamentario/classificacoes" element={<ClassificacoesOrcamento />} />
             <Route path="financeiro/emissao-nf/cadastro" element={<EmissaoNF />} />
             <Route path="financeiro/emissao-nf/controle-notas" element={<ControleNotas />} />
             {/* Fiscal */}

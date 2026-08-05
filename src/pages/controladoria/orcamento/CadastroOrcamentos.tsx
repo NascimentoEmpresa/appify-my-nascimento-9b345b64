@@ -79,14 +79,14 @@ export default function CadastroOrcamentos() {
   return (
     <div className="space-y-6 p-6">
       <PageHeader
-        title="Orçamentos"
+        title="Orçamento Administrativo"
         subtitle="Visualize e gerencie todos os orçamentos cadastrados."
-        module="Financeiro"
-        breadcrumb={["Planejamento Orçamentário", "Cadastro de Orçamentos"]}
+        module="Controladoria & Orçamento"
+        breadcrumb={["Orçamento", "Orçamento Administrativo"]}
         actions={
           <>
             <Button variant="outline" asChild>
-              <Link to="/app/financeiro/planejamento-orcamentario/classificacoes">
+              <Link to="/app/controladoria/cadastro-classificacao">
                 <Settings2 className="h-4 w-4 mr-2" />
                 Classificações
               </Link>

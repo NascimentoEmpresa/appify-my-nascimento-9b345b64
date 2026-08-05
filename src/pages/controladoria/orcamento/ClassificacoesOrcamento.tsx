@@ -53,14 +53,14 @@ export default function ClassificacoesOrcamento() {
   return (
     <div className="space-y-6 p-6">
       <PageHeader
-        title="Classificações do Orçamento"
+        title="Cadastro de Classificação"
         subtitle="Lista de classificações usadas no Planejamento Orçamentário — compartilhada entre todas as empresas do grupo."
-        module="Financeiro"
-        breadcrumb={["Planejamento Orçamentário", "Classificações"]}
+        module="Controladoria & Orçamento"
+        breadcrumb={["Orçamento", "Cadastro de Classificação"]}
         actions={
           <>
             <Button asChild variant="outline" size="sm">
-              <Link to="/app/financeiro/planejamento-orcamentario/cadastro">
+              <Link to="/app/controladoria/orcamento-administrativo">
                 <ArrowLeft className="mr-1 h-4 w-4" /> Voltar
               </Link>
             </Button>

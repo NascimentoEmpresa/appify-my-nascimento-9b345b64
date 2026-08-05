@@ -76,3 +76,9 @@ create policy cotacoes_delete on public.cotacoes_licitacao
 create trigger trg_cotacoes_updated
   before update on public.cotacoes_licitacao
   for each row execute function public.set_updated_at();
+
+-- Registra no gerenciador de acesso (/app/administracao)
+insert into public.app_menu (modulo_id, codigo, nome, rota, ordem)
+select m.id, 'cotacoes-licitacao', 'Cotações', '/app/licitacoes/cotacoes', 118
+from public.app_modulo m where m.codigo = 'licitacoes'
+on conflict (modulo_id, codigo) do nothing;
