@@ -314,12 +314,18 @@ Deno.serve(async (req) => {
         }
       }
 
-      // Status de mensagens enviadas.
+      // Status de mensagens enviadas. Em falha, guarda o motivo que a Meta
+      // manda (st.errors) em meta — sem isso só sabíamos que falhou, não por quê.
       for (const st of value.statuses ?? []) {
         const mapa: Record<string, string> = { sent: "enviada", delivered: "entregue", read: "lida", failed: "erro" };
         const novo = mapa[st.status];
         if (novo && st.id) {
-          await admin.from("WA_MENSAGEM").update({ status: novo }).eq("wa_message_id", st.id);
+          const update: Record<string, unknown> = { status: novo };
+          if (st.status === "failed" && st.errors) {
+            update.meta = { falha_webhook: st.errors };
+            console.error("Status 'failed' recebido da Meta:", JSON.stringify(st));
+          }
+          await admin.from("WA_MENSAGEM").update(update).eq("wa_message_id", st.id);
         }
       }
     }
