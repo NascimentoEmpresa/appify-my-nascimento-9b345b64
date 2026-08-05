@@ -597,17 +597,17 @@ const FASE_COLOR: Record<string, string> = {
 };
 
 function SlideFunil({ stats }: { stats: ReturnType<typeof usePainelLicitacao>["stats"] }) {
-  const maxQtd = Math.max(...stats.porFase.map((f) => f.qtd), 1);
-  const total  = stats.porFase.reduce((s, f) => s + f.qtd, 0);
+  const maxQtd = Math.max(...stats.porFase.map((f) => f.value), 1);
+  const total  = stats.porFase.reduce((s, f) => s + f.value, 0);
 
   return (
     <div className="h-full flex flex-col">
       <div className="flex-1 flex flex-col justify-evenly px-4">
         {stats.porFase.map((fase) => {
-          const cor = FASE_COLOR[fase.etapa] ?? N.cyan;
+          const cor = FASE_COLOR[fase.name] ?? N.cyan;
           return (
-            <GlassBar key={fase.etapa} label={fase.etapa} value={String(fase.qtd)}
-              pct={(fase.qtd / maxQtd) * 100} cor={cor} />
+            <GlassBar key={fase.name} label={fase.name} value={String(fase.value)}
+              pct={(fase.value / maxQtd) * 100} cor={cor} />
           );
         })}
       </div>
