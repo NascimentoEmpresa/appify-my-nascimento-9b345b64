@@ -40,6 +40,49 @@ const moneyShort = (v: number) => { const a = Math.abs(v); if (a >= 1e6) return 
 const fmtDt = (s?: string) => { if (!s) return "—"; const d = new Date(String(s).length <= 10 ? s + "T12:00:00" : s); return isNaN(+d) ? String(s) : d.toLocaleDateString("pt-BR"); };
 const hojeISO = () => new Date().toISOString().slice(0, 10);
 const anoDoNumero = (n: string) => { const m = String(n || "").match(/\.(\d{4})\.\d\.\d{2}\./); return m ? Number(m[1]) : null; };
+
+// ── Contrato a partir do município ─────────────────────────────────
+// Os nomes em CONTRATOS."NOME CONTRATO" quase sempre começam pela cidade
+// ("CHARQUEADAS - 005.2021", "BENTO GONÇALVES - LIMPEZA - 048.2026"), então
+// dá para sugerir o contrato a partir do município digitado. É sugestão: o
+// campo continua editável, e a mesma cidade pode ter vários contratos.
+const semAcento = (s: string) =>
+  String(s || "").normalize("NFD").replace(/[̀-ͯ]/g, "").toUpperCase().trim();
+const PALAVRA_CURTA = new Set(["DE", "DA", "DO", "DOS", "DAS", "E", "-"]);
+const tokens = (s: string) => semAcento(s).split(/[^A-Z0-9]+/).filter(t => t.length > 1 && !PALAVRA_CURTA.has(t));
+
+// Pontua o quanto um nome de contrato "casa" com o município digitado.
+// Começar pela cidade vale mais que citá-la no meio, que vale mais que
+// coincidir palavras soltas — é o que separa "CHARQUEADAS - 005.2021" de
+// "CAMARA DE RIO GRANDE-LIMPEZA" quando se digita "RIO GRANDE".
+function pontuarContrato(municipio: string, nomeContrato: string): number {
+  const m = semAcento(municipio), c = semAcento(nomeContrato);
+  if (!m || !c) return 0;
+  // Sem nenhuma palavra significativa não há o que casar. Fica ANTES das
+  // comparações de texto: "DE" casaria por substring com "CAMARA DE RIO
+  // GRANDE" e sugeriria um contrato sem nada a ver.
+  const tm = tokens(municipio);
+  if (!tm.length) return 0;
+  if (c === m) return 1000;
+  if (c.startsWith(m)) return 900 - c.length;          // prefixo: o mais curto ganha
+  if (c.includes(m)) return 700 - c.length;
+  const tc = new Set(tokens(nomeContrato));
+  const casados = tm.filter(t => tc.has(t)).length;
+  if (!casados) return 0;
+  // Exige que a maior parte do município apareça no contrato: "SANTA MARIA"
+  // não pode casar com "SANTA CRUZ" só pelo "SANTA".
+  const cobertura = casados / tm.length;
+  return cobertura < 0.6 ? 0 : Math.round(cobertura * 400) - c.length / 100;
+}
+
+export function sugerirContrato(municipio: string, contratos: string[]): string {
+  let melhor = "", pontos = 0;
+  for (const c of contratos) {
+    const p = pontuarContrato(municipio, c);
+    if (p > pontos) { pontos = p; melhor = c; }
+  }
+  return pontos > 0 ? melhor : "";
+}
 const custoTotal = (p: any) => p.valor_final > 0 ? p.valor_final : p.valor_acordo + p.valor_sentenca + p.valor_outros_custos + p.valor_deposito_recursal + p.valor_custas_processuais;
 const motivoTotal = (i: MotivoItem) => VAL_FIELDS.reduce((s, k) => s + toFloat(i[k]), 0);
 
@@ -204,6 +247,10 @@ export default function Processos({ view = "processos" }: { view?: "dashboard" |
   const [empLoading, setEmpLoading] = useState(false);
   const [empSelKey, setEmpSelKey] = useState<string | null>(null);
   const [detalheEmp, setDetalheEmp] = useState<any | null>(null);
+  // Contratos ativos, para sugerir o Contrato a partir do município.
+  const [contratosNomes, setContratosNomes] = useState<string[]>([]);
+  // Assim que alguém mexe no Contrato à mão, a sugestão para de sobrescrever.
+  const contratoManual = useRef(false);
 
   const toast = (msg: string, t = "info") => { const id = Date.now() + Math.random(); setToasts(x => [...x, { id, msg, t }]); setTimeout(() => setToasts(x => x.filter(i => i.id !== id)), 3600); };
 
@@ -218,6 +265,18 @@ export default function Processos({ view = "processos" }: { view?: "dashboard" |
     setRows(all); setLoading(false);
   }, []);
   useEffect(() => { load(); }, [load]);
+
+  // Só os ATIVOS: sugerir contrato encerrado só daria retrabalho. A tabela tem
+  // nomes repetidos (mesma linha em anos diferentes), então deduplica.
+  useEffect(() => {
+    (async () => {
+      const { data, error } = await (supabase as any).from("CONTRATOS")
+        .select('"NOME CONTRATO"').eq("ATIVO", "SIM");
+      if (error) { console.warn("CONTRATOS:", error.message); return; }
+      const nomes = [...new Set((data ?? []).map((c: any) => String(c["NOME CONTRATO"] ?? "").trim()).filter(Boolean))] as string[];
+      setContratosNomes(nomes.sort());
+    })();
+  }, []);
 
   const processos = useMemo(() => agrupar(rows), [rows]);
   const resumo = useMemo(() => {
@@ -344,13 +403,17 @@ export default function Processos({ view = "processos" }: { view?: "dashboard" |
   };
   const confirmarVinculo = async (emp: any) => {
     const cpf = emp["CPF"] || "";
+    // "Descrição do Local" do cadastro é o CONTRATO, não a cidade — era isso
+    // que enchia "Município de origem" com nome de contrato. Agora vai para o
+    // campo certo, e o município fica livre para a cidade.
     const local = emp["Descrição do Local"] || "";
-    setForm(v => ({ ...v, reclamante_vinculado_cpf: cpf, municipio_origem: local || v.municipio_origem }));
+    if (local) contratoManual.current = true;
+    setForm(v => ({ ...v, reclamante_vinculado_cpf: cpf, contrato: local || v.contrato }));
     setEmpResultados([]); setEmpSelKey(null);
     // Processo já existente: grava o vínculo na hora (não depende do "Salvar processo").
     if (editNumero) {
       const patch: any = { reclamante_vinculado_cpf: cpf || null };
-      if (local) patch.municipio_origem = local;
+      if (local) patch.contrato = local;
       const { error } = await (supabase as any).from("JUR_PROCESSOS").update(patch).eq("numero_processo", editNumero);
       if (error) { toast("Erro ao salvar vínculo: " + error.message, "err"); return; }
       await load();
@@ -369,9 +432,12 @@ export default function Processos({ view = "processos" }: { view?: "dashboard" |
   };
 
   // ── CRUD ───────────────────────────────────────────────────────
-  const abrirNovo = () => { setEditNumero(null); setForm(FORM_RESET()); setMotivos([MOTIVO_RESET()]); setAuds([]); setEmpBusca(""); setEmpResultados([]); setEmpSelKey(null); setModal(true); };
+  const abrirNovo = () => { setEditNumero(null); contratoManual.current = false; setForm(FORM_RESET()); setMotivos([MOTIVO_RESET()]); setAuds([]); setEmpBusca(""); setEmpResultados([]); setEmpSelKey(null); setModal(true); };
   const abrirEditar = (p: Processo) => {
     setEditNumero(p.numero_processo);
+    // Processo que já tem contrato salvo: a sugestão não pode sobrescrever o
+    // que alguém escolheu antes. Sem contrato, volta a sugerir.
+    contratoManual.current = !!String(p.contrato ?? "").trim();
     setForm({ numero_processo: p.numero_processo, reclamante: p.reclamante, reclamada: p.reclamada, status: p.status, comarca: p.comarca, municipio_origem: p.municipio_origem, data_entrada_reclamatoria: (p.data_entrada_reclamatoria || "").slice(0, 10), contrato: p.contrato, reclamante_vinculado_cpf: p.reclamante_vinculado_cpf || "", status_sentenca: p.status_sentenca || "", status_recursos: p.status_recursos || "", houve_acordo: p.houve_acordo || "Não", motivo_acordo: p.motivo_acordo || "", havera_pericia: p.havera_pericia || "Não", motivos_outros_custos: p.motivos_outros_custos || "" });
     setMotivos(p.motivo_items.length ? p.motivo_items.map(m => ({ ...m })) : [MOTIVO_RESET()]);
     setAuds(p.audiencias.map(a => ({ ...a, propostas: (a.propostas || []).map(pr => ({ ...pr })) })));
@@ -420,6 +486,22 @@ export default function Processos({ view = "processos" }: { view?: "dashboard" |
     if (error) { toast("Erro ao excluir: " + error.message, "err"); return; }
     setSel(null); toast("Processo excluído.", "ok"); load();
   };
+  // Sugestão de contrato para o município atual (vazia quando nada casa).
+  const sugestaoContrato = useMemo(
+    () => sugerirContrato(form.municipio_origem, contratosNomes),
+    [form.municipio_origem, contratosNomes],
+  );
+  // Digitar o município preenche o Contrato — mas nunca por cima do que a
+  // pessoa escreveu à mão, nem de um contrato que já veio salvo no processo.
+  const setMunicipio = (v: string) => setForm(f => {
+    const prox = { ...f, municipio_origem: v };
+    if (!contratoManual.current) {
+      const s = sugerirContrato(v, contratosNomes);
+      if (s) prox.contrato = s;
+    }
+    return prox;
+  });
+
   const setMotivo = (i: number, patch: Partial<MotivoItem>) => setMotivos(ms => ms.map((m, idx) => idx === i ? { ...m, ...patch } : m));
   const setAud = (i: number, patch: Partial<Audiencia>) => setAuds(as => as.map((a, idx) => idx === i ? { ...a, ...patch } : a));
   // Propostas sempre por updater funcional: digitar rápido no valor/descrição não
@@ -839,9 +921,21 @@ export default function Processos({ view = "processos" }: { view?: "dashboard" |
               <div className="jpr-fg"><label>Reclamante *</label><input className="jpr-fi" value={form.reclamante} onChange={e => setForm(v => ({ ...v, reclamante: e.target.value }))} /></div>
               <div className="jpr-fg"><label>Reclamada</label><input className="jpr-fi" list="jpr-reclamadas-form" value={form.reclamada} onChange={e => setForm(v => ({ ...v, reclamada: e.target.value }))} placeholder="Empresa" /><datalist id="jpr-reclamadas-form">{reclamadasDistintas.map(r => <option key={r} value={r} />)}</datalist></div>
               <div className="jpr-fg"><label>Comarca</label><input className="jpr-fi" value={form.comarca} onChange={e => setForm(v => ({ ...v, comarca: e.target.value }))} /></div>
-              <div className="jpr-fg"><label>Município de origem</label><input className="jpr-fi" value={form.municipio_origem} onChange={e => setForm(v => ({ ...v, municipio_origem: e.target.value }))} /></div>
+              <div className="jpr-fg"><label>Município de origem</label><input className="jpr-fi" value={form.municipio_origem} onChange={e => setMunicipio(e.target.value)} placeholder="Cidade do contrato" /></div>
               <div className="jpr-fg"><label>Data de entrada</label><input className="jpr-fi" type="date" value={form.data_entrada_reclamatoria} onChange={e => setForm(v => ({ ...v, data_entrada_reclamatoria: e.target.value }))} /></div>
-              <div className="jpr-fg"><label>Contrato</label><input className="jpr-fi" value={form.contrato} onChange={e => setForm(v => ({ ...v, contrato: e.target.value }))} /></div>
+              <div className="jpr-fg">
+                <label>Contrato</label>
+                <input className="jpr-fi" list="jpr-contratos" value={form.contrato}
+                  onChange={e => { contratoManual.current = true; setForm(v => ({ ...v, contrato: e.target.value })); }}
+                  placeholder="Preenche sozinho pelo município" />
+                <datalist id="jpr-contratos">{contratosNomes.map(c => <option key={c} value={c} />)}</datalist>
+                {sugestaoContrato && sugestaoContrato !== form.contrato && (
+                  <button type="button" className="jpr-btn" onClick={() => { contratoManual.current = false; setForm(v => ({ ...v, contrato: sugestaoContrato })); }}
+                    style={{ background: "#eef4ff", color: "#0f3171", padding: "4px 9px", marginTop: 4, fontSize: 11 }}>
+                    Usar “{sugestaoContrato}”
+                  </button>
+                )}
+              </div>
             </div>
 
             {/* Dados jurídicos do processo */}
