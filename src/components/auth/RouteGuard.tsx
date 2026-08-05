@@ -1,7 +1,7 @@
 import { ReactNode, useEffect, useRef } from "react";
 import { useLocation, Link } from "react-router-dom";
 import { ShieldAlert } from "lucide-react";
-import { useAccessibleMenus, matchMenuCode, rotaLiberada } from "@/hooks/useAccessibleMenus";
+import { useAccessibleMenus, matchMenuCode } from "@/hooks/useAccessibleMenus";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
 import { useFeatureFlag } from "@/lib/featureFlags";
@@ -47,14 +47,13 @@ export function RouteGuard({ children }: { children: ReactNode }) {
   //   concede_tudo, nunca "esquecido");
   // - menu configurado -> vale o resolvido por list_accessible_menus pra
   //   este usuário (perfil comum, concede_tudo ou exceção individual).
-  // rotaLiberada considera TODOS os menus que respondem pela rota — sete delas
-  // têm um código legado além do atual, e eleger um só escondia tela de quem
-  // tinha o outro liberado.
   const allowed =
     phaseFlagEnabled &&
     (ACESSO_ABERTO_SEM_PERMISSOES ||
       !access ||
-      rotaLiberada(pathname, access, MENUS_SEMPRE_RESTRITOS));
+      !menuCode ||
+      (!access.configuredCodes.has(menuCode) && !MENUS_SEMPRE_RESTRITOS.has(menuCode)) ||
+      access.codes.has(menuCode));
 
   useEffect(() => {
     if (isLoading || allowed) return;

@@ -51,7 +51,7 @@ import {
   ShieldCheck,
 } from "lucide-react";
 import { useTemAlcada } from "@/hooks/useTemAlcada";
-import { useAccessibleMenus, rotaLiberada } from "@/hooks/useAccessibleMenus";
+import { useAccessibleMenus, matchMenuCode } from "@/hooks/useAccessibleMenus";
 import { ACESSO_ABERTO_SEM_PERMISSOES, MENUS_SEMPRE_RESTRITOS } from "@/lib/acesso";
 import { useGradeAtivaCount } from "@/hooks/useGradeAtivaCount";
 import { useChamadosNotif } from "@/hooks/useChamadosNotif";
@@ -685,13 +685,19 @@ export function Sidebar({ collapsed, mobileOpen = false, onMobileClose }: Sideba
   // Ações passou a usar o mesmo filtro que todo o resto (antes tinha exceção
   // própria via usePlanoAcaoPermissao — removida a pedido do usuário, pra
   // "Acesso por Usuário" ser a única autoridade em qualquer módulo).
-  // Sete rotas têm DOIS menus (código legado + atual). Por isso a decisão passa
-  // por rotaLiberada, que olha todos os códigos da rota em vez de eleger um:
-  // liberar `recrutamento_gestao` na tela de acesso não pode ser anulado pelo
-  // `recrutamento` legado, que é o mesmo destino.
   const canSee = useCallback((to: string) => {
     if (ACESSO_ABERTO_SEM_PERMISSOES || !access) return true;
-    return rotaLiberada(to, access, MENUS_SEMPRE_RESTRITOS);
+    const code = matchMenuCode(to, access.routes);
+    // Rota sem entrada em app_menu: nunca foi migrada pro controle por
+    // perfil, então continua sempre visível (não é regressão esconder algo
+    // que nunca teve controle de acesso definido).
+    if (!code) return true;
+    // Menu existe, mas ninguém nunca configurou nada pra ele no
+    // gerenciamento de acesso (nenhuma linha em perfil_acesso_permissao
+    // ou screen_permission_user) — fica aberto até alguém decidir algo lá.
+    // Exceção: administracao/integracao nunca caem aqui, ver MENUS_SEMPRE_RESTRITOS.
+    if (!access.configuredCodes.has(code) && !MENUS_SEMPRE_RESTRITOS.has(code)) return true;
+    return access.codes.has(code);
   }, [access]);
 
   const visibleModules = useMemo(() => {
