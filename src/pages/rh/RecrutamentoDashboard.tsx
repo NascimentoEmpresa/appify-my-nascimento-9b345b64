@@ -122,11 +122,12 @@ export default function RecrutamentoDashboard() {
   ].filter(x => x.value > 0);
 
   // Candidatos por etapa do kanban (funil do processo)
-  const CAND_ETAPAS = ["ENTRADA", "TRIAGEM", "JURÍDICO", "ENTREVISTA", "ENTREVISTA GESTOR", "APROVADOS", "EXAME SST", "COMPRAS", "DOCUMENTAÇÃO", "Reprovado"];
+  // Mesma ordem do kanban em Recrutamento.tsx — o funil aqui é a leitura dele.
+  const CAND_ETAPAS = ["ENTRADA", "TRIAGEM", "JURÍDICO", "ENTREVISTA", "ENTREVISTA GESTOR", "APROVADO", "DOCUMENTAÇÃO", "EXAME SST", "COMPRAS", "ADMISSÃO", "Reprovado"];
   const etapaCor: Record<string, string> = {
     ENTRADA: "#64748b", TRIAGEM: "#3b82f6", "JURÍDICO": "#8b5cf6", ENTREVISTA: "#0ea5e9",
-    "ENTREVISTA GESTOR": "#6366f1", APROVADOS: "#14b8a6", "EXAME SST": "#f59e0b",
-    COMPRAS: "#f97316", "DOCUMENTAÇÃO": "#16a34a", Reprovado: "#dc2626",
+    "ENTREVISTA GESTOR": "#6366f1", APROVADO: "#14b8a6", "DOCUMENTAÇÃO": "#0891b2",
+    "EXAME SST": "#f59e0b", COMPRAS: "#f97316", "ADMISSÃO": "#16a34a", Reprovado: "#dc2626",
   };
   const etapaData = CAND_ETAPAS
     .map(e => ({ etapa: e, qtd: cursF.filter(c => c.etapa_processo === e).length }))
