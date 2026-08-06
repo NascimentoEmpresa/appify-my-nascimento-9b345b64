@@ -44,11 +44,15 @@ function primeiroNomeDe(nome: string): string {
   return p ? p.charAt(0).toUpperCase() + p.slice(1).toLowerCase() : "";
 }
 
-// 11 dígitos viram 55 + DDD + número. Quem já vem com 55 fica como está.
-function waIdDe(telefone: string): string | null {
-  const d = String(telefone ?? "").replace(/\D/g, "");
-  if (d.length < 10) return null;
-  return d.startsWith("55") && d.length >= 12 ? d : "55" + d;
+// Telefone utilizável? Só o comprimento — quem resolve o wa_id é a RPC
+// recrutamento_abrir_conversa, no banco.
+//
+// Não montamos o wa_id aqui de propósito: a Cloud API guarda o número
+// brasileiro na forma legada, sem o 9º dígito (55 + DDD + 8), e montar o
+// E.164 completo faria a função falar com um contato que não existe,
+// duplicando a conversa que a pessoa já tem. Uma implementação só, no banco.
+function temTelefone(telefone: string): boolean {
+  return String(telefone ?? "").replace(/\D/g, "").length >= 10;
 }
 
 Deno.serve(async (req) => {
@@ -95,8 +99,7 @@ Deno.serve(async (req) => {
     .select("id, nome, telefone, vaga_id").eq("id", candidatoId).maybeSingle();
   if (!cand) return json({ error: "candidato não encontrado" }, 404);
 
-  const waId = waIdDe(cand.telefone ?? "");
-  if (!waId) {
+  if (!temTelefone(cand.telefone ?? "")) {
     await logar({ status: "sem_telefone", telefone: cand.telefone ?? null });
     return json({ ok: true, enviado: false, motivo: "sem_telefone" });
   }
@@ -122,18 +125,24 @@ Deno.serve(async (req) => {
   const valores = parametros.map((p) => VARS[String(p)] || "-");
 
   // ── Contato e conversa (a mensagem tem que aparecer na Caixa) ─────
-  await admin.from("WA_CONTATO").upsert(
-    { wa_id: waId, nome: String(cand.nome ?? "").trim() || null, telefone: cand.telefone ?? null },
-    { onConflict: "wa_id", ignoreDuplicates: false },
-  );
-  const { data: contato } = await admin.from("WA_CONTATO").select("id").eq("wa_id", waId).maybeSingle();
-  if (!contato) return json({ error: "não consegui registrar o contato" }, 500);
+  // A RPC acha o contato existente pelo trecho estável do número (país +
+  // DDD + 8 últimos dígitos) e só cria se não houver. Ela também não
+  // nomeia o contato: nome de contato vem do profile.name da Meta.
+  const { data: conversaId, error: erroConversa } =
+    await admin.rpc("recrutamento_abrir_conversa", { p_candidato_id: candidatoId });
+  if (erroConversa || !conversaId) {
+    await logar({ status: "erro", telefone: cand.telefone ?? null, erro: erroConversa?.message ?? "conversa não resolvida" });
+    return json({ ok: false, enviado: false, motivo: "sem_conversa", detalhe: erroConversa?.message }, 200);
+  }
 
-  await admin.from("WA_CONVERSA").upsert(
-    { contato_id: contato.id }, { onConflict: "contato_id", ignoreDuplicates: true },
-  );
-  const { data: conversa } = await admin.from("WA_CONVERSA").select("id").eq("contato_id", contato.id).maybeSingle();
+  const { data: conversa } = await admin.from("WA_CONVERSA")
+    .select("id, contato_id").eq("id", conversaId).maybeSingle();
   if (!conversa) return json({ error: "não consegui abrir a conversa" }, 500);
+  const { data: contato } = await admin.from("WA_CONTATO")
+    .select("id, wa_id").eq("id", conversa.contato_id).maybeSingle();
+  if (!contato?.wa_id) return json({ error: "contato sem wa_id" }, 500);
+  // Manda para o wa_id que o WhatsApp de fato usa, não para um montado aqui.
+  const waId = contato.wa_id;
 
   // ── Envio ─────────────────────────────────────────────────────────
   const componentes = valores.length
