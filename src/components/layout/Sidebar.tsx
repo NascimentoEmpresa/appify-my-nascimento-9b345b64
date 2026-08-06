@@ -53,6 +53,8 @@ import {
   Truck,
   Boxes,
   Car,
+  Package,
+  PlusCircle,
 } from "lucide-react";
 import { useTemAlcada } from "@/hooks/useTemAlcada";
 import { useAccessibleMenus, matchMenuCode } from "@/hooks/useAccessibleMenus";
@@ -310,6 +312,30 @@ const financeiroModule: ModuleDef = {
       defaultOpen: true,
       items: [
         { label: "Conciliação Bancária", to: "/app/financeiro/conciliacao-bancaria", icon: GitMerge },
+      ],
+    },
+  ],
+};
+
+// Malote — módulo próprio (SIS-2026-0081), separado de Financeiro/
+// Controladoria. Itens em ordem alfabética a pedido do usuário.
+const maloteModule: ModuleDef = {
+  id: "malote",
+  label: "Malote",
+  description: "Despesas e aprovações",
+  icon: Package,
+  basePath: "/app/malote",
+  status: "active",
+  groups: [
+    {
+      label: "Itens do Malote",
+      defaultOpen: true,
+      items: [
+        { label: "Aprovações do Malote", to: "/app/malote/aprovacoes", icon: CheckCircle2 },
+        { label: "Configurações", to: "/app/malote/configuracoes", icon: Settings },
+        { label: "Criar Despesa", to: "/app/malote/criar-despesa", icon: PlusCircle },
+        { label: "Dashboard", to: "/app/malote/dashboard", icon: BarChart3 },
+        { label: "Meus Itens", to: "/app/malote/meus-itens", icon: ListChecks },
       ],
     },
   ],
@@ -661,6 +687,7 @@ const erpModules: ModuleDef[] = [
   controladoriaOrcModule,
   suprimentosModule,
   financeiroModule,
+  maloteModule,
   fiscalModule,
   contabilModule,
   rhModule,
