@@ -95,6 +95,11 @@ import OrcamentoCompleto from "./pages/controladoria/OrcamentoCompleto";
 import CadastroOrcamentos from "./pages/controladoria/orcamento/CadastroOrcamentos";
 import ClassificacoesOrcamento from "./pages/controladoria/orcamento/ClassificacoesOrcamento";
 import GeradorPops from "./pages/controladoria/GeradorPops";
+import MaloteAprovacoes from "./pages/malote/Aprovacoes";
+import MaloteConfiguracoes from "./pages/malote/Configuracoes";
+import MaloteCriarDespesa from "./pages/malote/CriarDespesa";
+import MaloteDashboard from "./pages/malote/Dashboard";
+import MaloteMeusItens from "./pages/malote/MeusItens";
 import MovimentosBancarios from "./pages/financeiro/MovimentosBancarios";
 import ContasBancariasEmpresa from "./pages/financeiro/ContasBancariasEmpresa";
 import IntegracaoBancaria from "./pages/financeiro/IntegracaoBancaria";
@@ -300,6 +305,12 @@ const App = () => (
             <Route path="controladoria/orcamento-administrativo" element={<CadastroOrcamentos />} />
             <Route path="controladoria/cadastro-classificacao" element={<ClassificacoesOrcamento />} />
             <Route path="controladoria/gerador-pops" element={<GeradorPops />} />
+            {/* Malote */}
+            <Route path="malote/aprovacoes" element={<MaloteAprovacoes />} />
+            <Route path="malote/configuracoes" element={<MaloteConfiguracoes />} />
+            <Route path="malote/criar-despesa" element={<MaloteCriarDespesa />} />
+            <Route path="malote/dashboard" element={<MaloteDashboard />} />
+            <Route path="malote/meus-itens" element={<MaloteMeusItens />} />
             <Route path="orcamento" element={<Orcamento />} />
             {/* Suprimentos */}
             <Route path="suprimentos/fornecedores" element={<Fornecedores />} />
