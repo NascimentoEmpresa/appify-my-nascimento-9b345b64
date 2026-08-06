@@ -257,10 +257,22 @@ export default function WhatsAppInbox() {
   const filtradas = useMemo(() => {
     const base = pastaSel ? daPasta(pastaSel) : [];
     const t = busca.trim().toLowerCase();
-    if (!t) return base;
-    return base.filter((c) =>
+    const lista = !t ? base : base.filter((c) =>
       [c.contato?.nome, c.contato?.wa_id, c.ultima_mensagem_preview].some((v) => String(v ?? "").toLowerCase().includes(t)));
-  }, [conversas, busca, pastaSel]); // eslint-disable-line react-hooks/exhaustive-deps
+
+    // Não lidas sempre no topo. Quem espera resposta não pode ficar soterrado
+    // por conversa que já foi respondida só porque a resposta é mais recente.
+    //
+    // A conversa aberta conta como "topo" mesmo depois de zerar as não lidas:
+    // abrir uma conversa zera o contador, e sem isso ela despencaria da lista
+    // no instante do clique, com o quadro se remontando embaixo do cursor.
+    //
+    // Dentro de cada grupo, mais recente primeiro; conversa sem mensagem
+    // (criada pelo recrutamento, por exemplo) tem data nula e vai para o fim.
+    const noTopo = (c: WaConversa) => (c.nao_lidas > 0 || c.id === selId ? 0 : 1);
+    const quando = (c: WaConversa) => (c.ultima_mensagem_em ? Date.parse(c.ultima_mensagem_em) : -Infinity);
+    return [...lista].sort((a, b) => noTopo(a) - noTopo(b) || quando(b) - quando(a));
+  }, [conversas, busca, pastaSel, selId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   if (!podeVer) {
     return (
