@@ -7,12 +7,36 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
-import { Pencil, Plus, Settings2 } from "lucide-react";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { Pencil, Plus, Settings2, Info } from "lucide-react";
 import { Link } from "react-router-dom";
 import { useEmpresaId } from "@/hooks/useEmpresaId";
-import { useClassificacoesOrcamento, usePlanejamentosOrcamento } from "@/hooks/usePlanejamentoOrcamentario";
+import { useClassificacoesOrcamento, usePlanejamentosOrcamento, TipoClassificacaoOrcamento } from "@/hooks/usePlanejamentoOrcamentario";
 import { getStatusVigencia, STATUS_LABEL, STATUS_BADGE_CLASS, fmtMoney, fmtDate, OrcamentoComStatus } from "./utils";
 import { OrcamentoFormModal } from "./OrcamentoFormModal";
+
+const ORIGEM_LABEL: Record<TipoClassificacaoOrcamento, string> = {
+  contrato: "Contrato",
+  administrativo: "Administrativo",
+};
+
+function fmtAprovador(nome: string | null | undefined, limitePct: number | null | undefined) {
+  if (!nome) return "—";
+  return limitePct != null ? `${nome} — até ${limitePct}%` : nome;
+}
+
+function AprovadorHeadTooltip() {
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <Info className="h-3.5 w-3.5 text-muted-foreground cursor-help" />
+      </TooltipTrigger>
+      <TooltipContent className="max-w-64">
+        O percentual é o limite da alçada de aprovação desse aprovador sobre o valor do orçamento.
+      </TooltipContent>
+    </Tooltip>
+  );
+}
 
 export default function CadastroOrcamentos() {
   const { data: empresaId } = useEmpresaId();
@@ -20,10 +44,17 @@ export default function CadastroOrcamentos() {
   const { data: orcamentos = [], isLoading } = usePlanejamentosOrcamento(empresaId);
 
   const [filtroClassificacao, setFiltroClassificacao] = useState("todas");
+  const [filtroOrigem, setFiltroOrigem] = useState("todas");
+  const [filtroResponsavel, setFiltroResponsavel] = useState("todos");
   const [filtroStatus, setFiltroStatus] = useState("todos");
   const [filtroInicio, setFiltroInicio] = useState("");
   const [filtroFim, setFiltroFim] = useState("");
   const [busca, setBusca] = useState("");
+
+  const responsaveis = useMemo(
+    () => [...new Set(classificacoes.map((c) => c.setor_responsavel).filter(Boolean) as string[])].sort((a, b) => a.localeCompare(b, "pt-BR")),
+    [classificacoes]
+  );
 
   const [modalOpen, setModalOpen] = useState(false);
   const [editando, setEditando] = useState<OrcamentoComStatus | null>(null);
@@ -46,6 +77,8 @@ export default function CadastroOrcamentos() {
     return comStatus
       .filter((o) => {
         if (filtroClassificacao !== "todas" && o.classificacao_id !== filtroClassificacao) return false;
+        if (filtroOrigem !== "todas" && o.classificacao?.tipo !== filtroOrigem) return false;
+        if (filtroResponsavel !== "todos" && o.classificacao?.setor_responsavel !== filtroResponsavel) return false;
         if (filtroStatus !== "todos" && o.status !== filtroStatus) return false;
         if (filtroInicio && o.fim_vigencia < filtroInicio) return false;
         if (filtroFim && o.inicio_vigencia > filtroFim) return false;
@@ -56,7 +89,7 @@ export default function CadastroOrcamentos() {
         return true;
       })
       .sort((a, b) => b.inicio_vigencia.localeCompare(a.inicio_vigencia));
-  }, [comStatus, filtroClassificacao, filtroStatus, filtroInicio, filtroFim, busca]);
+  }, [comStatus, filtroClassificacao, filtroOrigem, filtroResponsavel, filtroStatus, filtroInicio, filtroFim, busca]);
 
   function abrirNovo() {
     setEditando(null);
@@ -70,6 +103,8 @@ export default function CadastroOrcamentos() {
 
   function limparFiltros() {
     setFiltroClassificacao("todas");
+    setFiltroOrigem("todas");
+    setFiltroResponsavel("todos");
     setFiltroStatus("todos");
     setFiltroInicio("");
     setFiltroFim("");
@@ -139,7 +174,7 @@ export default function CadastroOrcamentos() {
             Limpar filtros
           </Button>
         </CardHeader>
-        <CardContent className="grid grid-cols-1 md:grid-cols-5 gap-3">
+        <CardContent className="grid grid-cols-1 md:grid-cols-4 xl:grid-cols-7 gap-3">
           <div>
             <Label className="text-xs">Classificação</Label>
             <Select value={filtroClassificacao} onValueChange={setFiltroClassificacao}>
@@ -151,6 +186,35 @@ export default function CadastroOrcamentos() {
                 {classificacoes.map((c) => (
                   <SelectItem key={c.id} value={c.id}>
                     {c.nome}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          <div>
+            <Label className="text-xs">Origem</Label>
+            <Select value={filtroOrigem} onValueChange={setFiltroOrigem}>
+              <SelectTrigger>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="todas">Todas</SelectItem>
+                <SelectItem value="contrato">Contrato</SelectItem>
+                <SelectItem value="administrativo">Administrativo</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+          <div>
+            <Label className="text-xs">Responsável</Label>
+            <Select value={filtroResponsavel} onValueChange={setFiltroResponsavel}>
+              <SelectTrigger>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="todos">Todos</SelectItem>
+                {responsaveis.map((r) => (
+                  <SelectItem key={r} value={r}>
+                    {r}
                   </SelectItem>
                 ))}
               </SelectContent>
@@ -199,9 +263,26 @@ export default function CadastroOrcamentos() {
               <TableRow>
                 <TableHead>Classificação</TableHead>
                 <TableHead>Detalhe</TableHead>
-                <TableHead>Início da Vigência</TableHead>
-                <TableHead>Fim da Vigência</TableHead>
-                <TableHead>Valor do Orçamento</TableHead>
+                <TableHead>Solicitação?</TableHead>
+                <TableHead>Origem</TableHead>
+                <TableHead>Responsável</TableHead>
+                <TableHead>
+                  <span className="inline-flex items-center gap-1">
+                    Aprovador 1 <AprovadorHeadTooltip />
+                  </span>
+                </TableHead>
+                <TableHead>
+                  <span className="inline-flex items-center gap-1">
+                    Aprovador 2 <AprovadorHeadTooltip />
+                  </span>
+                </TableHead>
+                <TableHead>
+                  <span className="inline-flex items-center gap-1">
+                    Aprovador 3 <AprovadorHeadTooltip />
+                  </span>
+                </TableHead>
+                <TableHead>Vigência</TableHead>
+                <TableHead>Valor</TableHead>
                 <TableHead>Status</TableHead>
                 <TableHead className="text-right">Ações</TableHead>
               </TableRow>
@@ -209,14 +290,14 @@ export default function CadastroOrcamentos() {
             <TableBody>
               {isLoading && (
                 <TableRow>
-                  <TableCell colSpan={7} className="text-center text-muted-foreground py-8">
+                  <TableCell colSpan={12} className="text-center text-muted-foreground py-8">
                     Carregando...
                   </TableCell>
                 </TableRow>
               )}
               {!isLoading && filtrados.length === 0 && (
                 <TableRow>
-                  <TableCell colSpan={7} className="text-center text-muted-foreground py-8">
+                  <TableCell colSpan={12} className="text-center text-muted-foreground py-8">
                     Nenhum orçamento encontrado.
                   </TableCell>
                 </TableRow>
@@ -225,8 +306,25 @@ export default function CadastroOrcamentos() {
                 <TableRow key={o.id}>
                   <TableCell className="font-medium">{o.classificacao?.nome ?? "-"}</TableCell>
                   <TableCell>{o.detalhe}</TableCell>
-                  <TableCell>{fmtDate(o.inicio_vigencia)}</TableCell>
-                  <TableCell>{fmtDate(o.fim_vigencia)}</TableCell>
+                  <TableCell>
+                    <Badge variant={o.classificacao?.requer_solicitacao ? "default" : "outline"}>
+                      {o.classificacao?.requer_solicitacao ? "Sim" : "Não"}
+                    </Badge>
+                  </TableCell>
+                  <TableCell>{o.classificacao?.tipo ? ORIGEM_LABEL[o.classificacao.tipo] : "—"}</TableCell>
+                  <TableCell>{o.classificacao?.setor_responsavel ?? "—"}</TableCell>
+                  <TableCell className="whitespace-nowrap">
+                    {fmtAprovador(o.classificacao?.aprovador1_nome, o.classificacao?.aprovador1_limite_pct)}
+                  </TableCell>
+                  <TableCell className="whitespace-nowrap">
+                    {fmtAprovador(o.classificacao?.aprovador2_nome, o.classificacao?.aprovador2_limite_pct)}
+                  </TableCell>
+                  <TableCell className="whitespace-nowrap">
+                    {fmtAprovador(o.classificacao?.aprovador3_nome, o.classificacao?.aprovador3_limite_pct)}
+                  </TableCell>
+                  <TableCell className="whitespace-nowrap">
+                    {fmtDate(o.inicio_vigencia)} – {fmtDate(o.fim_vigencia)}
+                  </TableCell>
                   <TableCell>{fmtMoney(o.valor)}</TableCell>
                   <TableCell>
                     <Badge className={STATUS_BADGE_CLASS[o.status]}>{STATUS_LABEL[o.status]}</Badge>
