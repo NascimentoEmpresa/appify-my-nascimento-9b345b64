@@ -223,18 +223,18 @@ function CardCotacao({ cotacao: c, podeResponder }: { cotacao: CotacaoLicitacao;
               {c.status === "respondido" ? (
                 <div className="space-y-2 rounded-md border border-emerald-400/30 bg-emerald-500/10 p-3">
                   <p className="flex items-center gap-1 text-xs font-semibold uppercase tracking-wide text-emerald-600">
-                    <CheckCircle2 className="h-3.5 w-3.5" /> Sua resposta
+                    {/* Nome de quem respondeu, não "Sua resposta": mais de uma
+                        pessoa atende esta fila, e o card é lido pelos dois setores. */}
+                    <CheckCircle2 className="h-3.5 w-3.5" /> Resposta de {c.respondente_nome}
                   </p>
                   <p className="whitespace-pre-wrap text-sm leading-relaxed">{c.resposta_comentario}</p>
                   <ListaAnexos anexos={c.anexosResposta} tom="resposta" />
-                  <p className="text-xs text-muted-foreground">
-                    {c.respondente_nome} · {fmtDatetime(c.data_resposta)}
-                  </p>
+                  <p className="text-xs text-muted-foreground">{fmtDatetime(c.data_resposta)}</p>
                   <p className="flex items-center gap-1 text-xs italic text-muted-foreground">
                     <Eye className="h-3 w-3" />
                     {c.resposta_visualizada_em
-                      ? `Licitação leu em ${fmtDatetime(c.resposta_visualizada_em)}`
-                      : "Licitação ainda não leu esta resposta."}
+                      ? `Lido por ${c.resposta_visualizada_por_nome} em ${fmtDatetime(c.resposta_visualizada_em)}`
+                      : "Ninguém leu esta resposta ainda."}
                   </p>
                 </div>
               ) : podeResponder ? (

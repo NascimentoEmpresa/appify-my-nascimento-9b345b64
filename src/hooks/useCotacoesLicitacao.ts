@@ -34,6 +34,7 @@ export type CotacaoLicitacao = {
   respondente_nome: string | null;
   data_resposta: string | null;
   resposta_visualizada_por_id: string | null;
+  resposta_visualizada_por_nome: string | null;
   resposta_visualizada_em: string | null;
   editado_por_id: string | null;
   editado_por_nome: string | null;
@@ -284,21 +285,21 @@ export function useCotacaoResponder() {
   });
 }
 
+/**
+ * Lado da Licitação — carimba quem leu a resposta.
+ *
+ * Passou a ser RPC (20260827000001) pelo mesmo motivo do lado de Compras: o
+ * nome sai de `profiles`, não do cliente. Antes era um UPDATE cru que mandava
+ * o id do próprio usuário — e não gravava nome nenhum, o que obrigava a tela
+ * a dizer "visualizado por você" em vez de nomear quem realmente abriu.
+ *
+ * Só a PRIMEIRA leitura conta, então quem abriu antes é quem fica registrado.
+ */
 export function useCotacaoMarcarRespostaVista() {
   const qc = useQueryClient();
-  const { user } = useAuth();
-
   return useMutation({
     mutationFn: async (id: string) => {
-      const { error } = await sb
-        .from("cotacoes_licitacao")
-        .update({
-          resposta_visualizada_por_id: user?.id ?? null,
-          resposta_visualizada_em: new Date().toISOString(),
-        })
-        .eq("id", id)
-        .eq("status", "respondido")
-        .is("resposta_visualizada_por_id", null);
+      const { error } = await sb.rpc("sup_cot_marcar_resposta_lida", { p_id: id });
       if (error) throw error;
     },
     onSuccess: () => qc.invalidateQueries({ queryKey: ["cotacoes_licitacao"] }),

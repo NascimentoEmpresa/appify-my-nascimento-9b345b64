@@ -113,7 +113,9 @@ function CotacaoCard({
                 />
                 {cotacao.visualizado_por_nome && (
                   <p className="text-xs text-muted-foreground italic flex items-center gap-1">
-                    <Eye className="h-3 w-3" /> Visualizado por Compras em {fmtDatetime(cotacao.visualizado_em)}
+                    {/* PESSOA, nunca setor: é assim que se enxerga alguém
+                        indevido olhando a cotação. */}
+                    <Eye className="h-3 w-3" /> Lido por {cotacao.visualizado_por_nome} em {fmtDatetime(cotacao.visualizado_em)}
                   </p>
                 )}
                 {cotacao.editado_em && (
@@ -130,14 +132,16 @@ function CotacaoCard({
                 <div className="absolute -left-[13px] top-1.5 h-2.5 w-2.5 rounded-full border-2 border-background bg-emerald-500" />
                 <div className="rounded-md border border-emerald-400/30 bg-emerald-500/10 p-3 space-y-2">
                   <p className="text-xs font-semibold text-emerald-600 uppercase tracking-wide flex items-center gap-1">
-                    <CheckCircle2 className="h-3.5 w-3.5" /> Resposta de Compras
+                    <CheckCircle2 className="h-3.5 w-3.5" /> Resposta de {cotacao.respondente_nome}
                   </p>
                   <p className="text-sm whitespace-pre-wrap leading-relaxed">{cotacao.resposta_comentario}</p>
                   <ListaAnexos anexos={cotacao.anexosResposta} tom="resposta" />
-                  <p className="text-xs text-muted-foreground">{cotacao.respondente_nome} · {fmtDatetime(cotacao.data_resposta)}</p>
+                  <p className="text-xs text-muted-foreground">{fmtDatetime(cotacao.data_resposta)}</p>
                   {cotacao.resposta_visualizada_em && (
                     <p className="text-xs text-muted-foreground italic flex items-center gap-1">
-                      <Eye className="h-3 w-3" /> Visualizado por você em {fmtDatetime(cotacao.resposta_visualizada_em)}
+                      {/* Nome de quem leu, não "você": quem abre este card pode
+                          não ser quem leu primeiro, e é isso que se quer ver. */}
+                      <Eye className="h-3 w-3" /> Lido por {cotacao.resposta_visualizada_por_nome} em {fmtDatetime(cotacao.resposta_visualizada_em)}
                     </p>
                   )}
                 </div>
