@@ -4,14 +4,25 @@ import { useEmpresaAtiva } from "@/context/EmpresaAtivaContext";
 import { useAuth } from "@/hooks/useAuth";
 
 export type CotacaoStatus = "pendente" | "visualizado" | "respondido";
+export type LadoCotacao = "solicitacao" | "resposta";
+
+/** Anexo em `cotacoes_licitacao_arquivo` — N por lado (20260826000001). */
+export type AnexoCotacao = {
+  id: string;
+  cotacao_id: string;
+  lado: LadoCotacao;
+  caminho: string;
+  nome: string;
+  tamanho: number | null;
+  enviado_por_nome: string | null;
+  created_at: string;
+};
 
 export type CotacaoLicitacao = {
   id: string;
   empresa_id: string;
   tipo: string;
   comentario: string;
-  arquivo_url: string | null;
-  arquivo_nome: string | null;
   remetente_id: string | null;
   remetente_nome: string | null;
   status: CotacaoStatus;
@@ -19,8 +30,6 @@ export type CotacaoLicitacao = {
   visualizado_por_nome: string | null;
   visualizado_em: string | null;
   resposta_comentario: string | null;
-  resposta_arquivo_url: string | null;
-  resposta_arquivo_nome: string | null;
   respondente_id: string | null;
   respondente_nome: string | null;
   data_resposta: string | null;
@@ -31,6 +40,9 @@ export type CotacaoLicitacao = {
   editado_em: string | null;
   created_at: string;
   updated_at: string;
+  /** Anexos já separados por lado; vêm resolvidos na própria query da lista. */
+  anexosSolicitacao: AnexoCotacao[];
+  anexosResposta: AnexoCotacao[];
 };
 
 // `cotacoes_licitacao` e as RPCs sup_cot_* ainda não constam de
@@ -43,33 +55,50 @@ const sb = supabase as any;
 const BUCKET = "cotacoes-arquivos";
 
 /**
- * As colunas `arquivo_url` guardam o CAMINHO no storage, não uma URL — o
- * bucket é privado (20260825000001) porque planilha de cotação traz preço de
- * fornecedor. Linhas antigas guardavam a URL pública inteira; a migration
- * converteu as que existiam, e este helper cobre qualquer sobra.
+ * Link temporário de download.
+ *
+ * Sempre com `download`, nunca abrindo na aba: o canal aceita QUALQUER
+ * extensão, e um .html ou .svg renderizado a partir do storage executaria
+ * script no navegador de quem clicou. Forçar o download tira essa
+ * possibilidade sem limitar o que o usuário pode anexar — e de quebra o
+ * arquivo chega com o nome original em vez do caminho aleatório.
  */
-export function caminhoNoBucket(valor: string | null): string | null {
-  if (!valor) return null;
-  const marca = `/object/public/${BUCKET}/`;
-  const i = valor.indexOf(marca);
-  return i >= 0 ? valor.slice(i + marca.length) : valor;
-}
-
-/** Link temporário de download. Devolve null se o arquivo sumiu do storage. */
-export async function urlAssinada(valor: string | null): Promise<string | null> {
-  const path = caminhoNoBucket(valor);
-  if (!path) return null;
-  const { data, error } = await supabase.storage.from(BUCKET).createSignedUrl(path, 3600);
+export async function urlAssinada(caminho: string, nome?: string): Promise<string | null> {
+  if (!caminho) return null;
+  const { data, error } = await supabase.storage
+    .from(BUCKET)
+    .createSignedUrl(caminho, 3600, { download: nome || true });
   if (error) return null;
   return data.signedUrl;
 }
 
-async function uploadArquivo(file: File, empresaId: string): Promise<{ path: string; nome: string }> {
-  const ext = file.name.split(".").pop();
-  const path = `${empresaId}/${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`;
-  const { error } = await supabase.storage.from(BUCKET).upload(path, file);
+/** Sobe os arquivos e devolve o que gravar em `cotacoes_licitacao_arquivo`. */
+export async function uploadArquivos(files: File[], empresaId: string) {
+  const subidos: { caminho: string; nome: string; tamanho: number }[] = [];
+  for (const file of files) {
+    const ext = file.name.includes(".") ? "." + file.name.split(".").pop() : "";
+    const caminho = `${empresaId}/${Date.now()}-${Math.random().toString(36).slice(2)}${ext}`;
+    const { error } = await supabase.storage.from(BUCKET).upload(caminho, file);
+    if (error) throw error;
+    subidos.push({ caminho, nome: file.name, tamanho: file.size });
+  }
+  return subidos;
+}
+
+async function gravarAnexos(
+  cotacaoId: string, lado: LadoCotacao,
+  arquivos: { caminho: string; nome: string; tamanho: number }[],
+  userId: string | null, userNome: string | null,
+) {
+  if (!arquivos.length) return;
+  const { error } = await sb.from("cotacoes_licitacao_arquivo").insert(
+    arquivos.map((a) => ({
+      cotacao_id: cotacaoId, lado,
+      caminho: a.caminho, nome: a.nome, tamanho: a.tamanho,
+      enviado_por: userId, enviado_por_nome: userNome,
+    })),
+  );
   if (error) throw error;
-  return { path, nome: file.name };
 }
 
 export function useCotacoesLicitacao() {
@@ -87,7 +116,33 @@ export function useCotacoesLicitacao() {
         .eq("empresa_id", empresaId!)
         .order("created_at", { ascending: false });
       if (error) throw error;
-      return (data ?? []) as CotacaoLicitacao[];
+
+      const cotacoes = (data ?? []) as CotacaoLicitacao[];
+      if (!cotacoes.length) return [];
+
+      // Uma query só para todos os anexos da página, agrupada no cliente —
+      // evita N+1 conforme o histórico cresce.
+      const { data: anexos, error: erroAnexos } = await sb
+        .from("cotacoes_licitacao_arquivo")
+        .select("*")
+        .in("cotacao_id", cotacoes.map((c) => c.id))
+        .order("created_at", { ascending: true });
+      if (erroAnexos) throw erroAnexos;
+
+      const porCotacao = new Map<string, AnexoCotacao[]>();
+      for (const a of (anexos ?? []) as AnexoCotacao[]) {
+        if (!porCotacao.has(a.cotacao_id)) porCotacao.set(a.cotacao_id, []);
+        porCotacao.get(a.cotacao_id)!.push(a);
+      }
+
+      return cotacoes.map((c) => {
+        const lista = porCotacao.get(c.id) ?? [];
+        return {
+          ...c,
+          anexosSolicitacao: lista.filter((a) => a.lado === "solicitacao"),
+          anexosResposta: lista.filter((a) => a.lado === "resposta"),
+        };
+      });
     },
   });
 }
@@ -101,27 +156,20 @@ export function useCotacaoInsert() {
     mutationFn: async (payload: {
       tipo: string;
       comentario: string;
-      arquivo: File | null;
+      arquivos: File[];
       remetente_nome: string;
     }) => {
-      let arquivo_url: string | null = null;
-      let arquivo_nome: string | null = null;
-      if (payload.arquivo) {
-        const up = await uploadArquivo(payload.arquivo, empresa.id);
-        arquivo_url = up.path;
-        arquivo_nome = up.nome;
-      }
-      const { error } = await sb.from("cotacoes_licitacao").insert({
+      const subidos = await uploadArquivos(payload.arquivos, empresa.id);
+      const { data, error } = await sb.from("cotacoes_licitacao").insert({
         empresa_id: empresa.id,
         tipo: payload.tipo,
         comentario: payload.comentario,
-        arquivo_url,
-        arquivo_nome,
         remetente_id: user?.id ?? null,
         remetente_nome: payload.remetente_nome,
         status: "pendente",
-      });
+      }).select("id").single();
       if (error) throw error;
+      await gravarAnexos(data.id, "solicitacao", subidos, user?.id ?? null, payload.remetente_nome);
     },
     onSuccess: () => qc.invalidateQueries({ queryKey: ["cotacoes_licitacao"] }),
   });
@@ -135,15 +183,11 @@ export function useCotacaoUpdate() {
     mutationFn: async (payload: {
       id: string;
       comentario: string;
-      arquivo: File | null;
+      arquivos: File[];
       editado_por_nome: string;
       editado_por_id: string;
     }) => {
-      let extra: Record<string, unknown> = {};
-      if (payload.arquivo) {
-        const up = await uploadArquivo(payload.arquivo, empresa.id);
-        extra = { arquivo_url: up.path, arquivo_nome: up.nome };
-      }
+      const subidos = await uploadArquivos(payload.arquivos, empresa.id);
       const { error } = await sb
         .from("cotacoes_licitacao")
         .update({
@@ -156,10 +200,10 @@ export function useCotacaoUpdate() {
           visualizado_por_nome: null,
           visualizado_em: null,
           status: "pendente",
-          ...extra,
         })
         .eq("id", payload.id);
       if (error) throw error;
+      await gravarAnexos(payload.id, "solicitacao", subidos, payload.editado_por_id, payload.editado_por_nome);
     },
     onSuccess: () => qc.invalidateQueries({ queryKey: ["cotacoes_licitacao"] }),
   });
@@ -177,6 +221,20 @@ export function useCotacaoDelete() {
       if (!data?.length) {
         throw new Error("Você não tem permissão para excluir esta cotação.");
       }
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["cotacoes_licitacao"] }),
+  });
+}
+
+/** Tira um anexo já gravado. A RLS só deixa mexer no anexo do próprio lado. */
+export function useCotacaoRemoverAnexo() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (anexoId: string) => {
+      const { data, error } = await sb
+        .from("cotacoes_licitacao_arquivo").delete().eq("id", anexoId).select("id");
+      if (error) throw error;
+      if (!data?.length) throw new Error("Você não tem permissão para remover este anexo.");
     },
     onSuccess: () => qc.invalidateQueries({ queryKey: ["cotacoes_licitacao"] }),
   });
@@ -202,8 +260,9 @@ export function useCotacaoMarcarVisualizada() {
 }
 
 /**
- * Lado de Compras — a resposta. Comentário e arquivo são obrigatórios (§7.2):
- * não existe resposta sem o documento que a Licitação vai anexar ao processo.
+ * Lado de Compras — a resposta. Comentário e ao menos um arquivo são
+ * obrigatórios (§7.2): não existe resposta sem o documento que a Licitação vai
+ * anexar ao processo.
  *
  * O nome do respondente sai de `profiles` dentro da RPC, nunca daqui.
  */
@@ -212,13 +271,12 @@ export function useCotacaoResponder() {
   const { empresa } = useEmpresaAtiva();
 
   return useMutation({
-    mutationFn: async (payload: { id: string; comentario: string; arquivo: File }) => {
-      const up = await uploadArquivo(payload.arquivo, empresa.id);
+    mutationFn: async (payload: { id: string; comentario: string; arquivos: File[] }) => {
+      const subidos = await uploadArquivos(payload.arquivos, empresa.id);
       const { error } = await sb.rpc("sup_cot_responder", {
         p_id: payload.id,
         p_comentario: payload.comentario,
-        p_arquivo_path: up.path,
-        p_arquivo_nome: up.nome,
+        p_arquivos: subidos,
       });
       if (error) throw error;
     },
