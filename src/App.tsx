@@ -221,13 +221,21 @@ const App = () => (
             <Route path="sistemas/solicitacoes-erp" element={<SolicitacoesErp />} />
             {/* Chamados de Sistemas (help desk) — telas de abrir/meus chamados também
                 aparecem na Central de Serviços; gestão fica só aqui em Sistemas. */}
-            <Route path="sistemas/chamados" element={<MeusChamados base="/app/sistemas/chamados" />} />
-            <Route path="sistemas/chamados/novo" element={<AbrirChamado base="/app/sistemas/chamados" />} />
+            {/* A tela do solicitante mora na Central de Serviços. Estas duas
+                rotas viraram redirect em vez de sumir: link antigo e favorito
+                continuam funcionando, e — mais importante — rota sem entrada em
+                app_menu passa direto pelo RouteGuard (`!menuCode` libera), então
+                deixá-las vivas sem menu abriria a tela para qualquer um. */}
+            <Route path="sistemas/chamados" element={<Navigate to="/app/central-servicos/chamados" replace />} />
+            <Route path="sistemas/chamados/novo" element={<Navigate to="/app/central-servicos/chamados/novo" replace />} />
             <Route path="sistemas/chamados/painel" element={<PainelDistribuicaoChamados />} />
             <Route path="sistemas/chamados/dashboard-tv" element={<DashboardChamados />} />
             <Route path="sistemas/chamados/dev" element={<PainelDesenvolvedorChamados />} />
             <Route path="sistemas/chamados/:id/coordenar" element={<CoordenarChamado />} />
-            <Route path="sistemas/chamados/:id/acompanhar" element={<AcompanharChamado base="/app/sistemas/chamados" />} />
+            {/* Não vira redirect por causa do :id, que o Navigate não interpola.
+                Renderiza a mesma tela, mas com o "voltar" apontando para a
+                Central — o solicitante não tem mais nada em /app/sistemas. */}
+            <Route path="sistemas/chamados/:id/acompanhar" element={<AcompanharChamado base="/app/central-servicos/chamados" />} />
             <Route path="sistemas/chamados/:id" element={<ExecutarChamado />} />
             {/* Central de Serviços */}
             <Route path="central-servicos" element={<CentralServicos />} />

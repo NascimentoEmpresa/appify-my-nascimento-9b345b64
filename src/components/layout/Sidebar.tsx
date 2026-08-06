@@ -496,7 +496,8 @@ const sistemasModule: ModuleDef = {
       label: "Chamados de Sistemas",
       defaultOpen: true,
       items: [
-        { label: "Chamados de Sistemas", to: "/app/sistemas/chamados", icon: Headset, notif: "meus" },
+        // "Chamados de Sistemas" (a tela do solicitante) vive só na Central de
+        // Serviços. Aqui ficam as telas de quem ATENDE o chamado.
         { label: "Painel de Distribuição", to: "/app/sistemas/chamados/painel", icon: BarChart3 },
         { label: "Dashboard de Chamados", to: "/app/sistemas/chamados/dashboard-tv", icon: LayoutDashboard },
         { label: "Painel do Desenvolvedor", to: "/app/sistemas/chamados/dev", icon: ClipboardList, notif: "dev" },
