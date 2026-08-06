@@ -49,9 +49,14 @@ import {
   FlaskConical,
   Bot,
   ShieldCheck,
+  Shirt,
+  Truck,
+  Boxes,
+  Car,
 } from "lucide-react";
 import { useTemAlcada } from "@/hooks/useTemAlcada";
 import { useAccessibleMenus, matchMenuCode } from "@/hooks/useAccessibleMenus";
+import { useModoExterno, ROTAS_EXTERNO } from "@/hooks/useModoExterno";
 import { ACESSO_ABERTO_SEM_PERMISSOES, MENUS_SEMPRE_RESTRITOS } from "@/lib/acesso";
 import { useGradeAtivaCount } from "@/hooks/useGradeAtivaCount";
 import { useChamadosNotif } from "@/hooks/useChamadosNotif";
@@ -215,39 +220,49 @@ const controladoriaOrcModule: ModuleDef = {
 const suprimentosModule: ModuleDef = {
   id: "suprimentos",
   label: "Suprimentos",
-  description: "Compras, estoque, requisições",
+  description: "Materiais, catálogo e estoque por etiqueta",
   icon: ShoppingCart,
   basePath: "/app/suprimentos",
   status: "active",
   groups: [
     {
+      label: "Materiais & Catálogo",
+      defaultOpen: true,
+      items: [
+        { label: "Catálogo de Materiais", to: "/app/suprimentos/catalogo", icon: Shirt },
+        { label: "Aprovação de Catálogo", to: "/app/suprimentos/catalogo/aprovacoes", icon: ClipboardCheck },
+        { label: "Pedidos de Materiais", to: "/app/suprimentos/pedidos-materiais", icon: PackageCheck },
+        { label: "Estoque & Etiquetas", to: "/app/suprimentos/estoque-etiquetas", icon: Boxes },
+      ],
+    },
+    {
+      label: "Licitação",
+      defaultOpen: true,
+      items: [
+        // Mesma linha de cotacoes_licitacao que a Licitação vê em
+        // /app/licitacoes/cotacoes, pelo lado de quem responde. Ícone igual ao
+        // de lá de propósito: é um canal só, visto de dois lugares.
+        { label: "Cotações", to: "/app/suprimentos/cotacoes", icon: MessageSquare },
+      ],
+    },
+    {
+      label: "Patrimônio & Manutenção",
+      defaultOpen: true,
+      items: [
+        { label: "Patrimônio", to: "/app/suprimentos/patrimonio", icon: Car },
+        { label: "Painel de Manutenções", to: "/app/suprimentos/manutencao", icon: Wrench },
+      ],
+    },
+    {
       label: "Cadastros",
       defaultOpen: true,
       items: [
+        // Almoxarifado permanece: é onde o Estoque & Etiquetas guarda cada item
+        // (sup_estoque_item.almoxarifado_id). As demais telas do módulo antigo
+        // saíram da navegação em 20260821000001 — as rotas seguem existindo por
+        // enquanto, alcançáveis só por URL direta, até removermos os arquivos.
         { label: "Fornecedores", to: "/app/suprimentos/fornecedores", icon: Building2 },
-        { label: "Catálogo de Produtos", to: "/app/suprimentos/produtos", icon: PackageCheck },
-        { label: "Categorias", to: "/app/suprimentos/categorias", icon: FolderKanban },
         { label: "Almoxarifados", to: "/app/suprimentos/almoxarifados", icon: Home },
-      ],
-    },
-    {
-      label: "Estoque",
-      defaultOpen: true,
-      items: [
-        { label: "Saldos & Alertas", to: "/app/suprimentos/estoque", icon: PackageCheck },
-        { label: "Movimentações", to: "/app/suprimentos/movimentos", icon: History },
-      ],
-    },
-    {
-      label: "Compras",
-      defaultOpen: true,
-      items: [
-        { label: "Requisições", to: "/app/suprimentos/requisicoes", icon: ListChecks },
-        { label: "Cotações (RFQ)", to: "/app/suprimentos/cotacoes", icon: Calculator },
-        { label: "Pedidos de Compra", to: "/app/suprimentos/pedidos", icon: ShoppingCart },
-        { label: "NF de Entrada (XML/Manual)", to: "/app/suprimentos/nf-entrada", icon: FileText },
-        { label: "Recebimento Físico", to: "/app/suprimentos/recebimentos", icon: ClipboardCheck },
-        { label: "Aprovações (RC/PC)", to: "/app/suprimentos/aprovacoes", icon: CheckCircle2 },
       ],
     },
   ],
@@ -428,6 +443,8 @@ const encarregadosModule: ModuleDef = {
       items: [
         // Continua existindo: é a visão com TODAS as opções e o histórico.
         { label: "Minhas Solicitações", to: "/app/encarregados/minhas-solicitacoes", icon: ClipboardCheck },
+        { label: "Solicitar Materiais", to: "/app/encarregados/solicitar-materiais", icon: Shirt },
+        { label: "Meus Pedidos", to: "/app/encarregados/meus-pedidos", icon: Truck },
       ],
     },
   ],
@@ -667,6 +684,7 @@ export function Sidebar({ collapsed, mobileOpen = false, onMobileClose }: Sideba
   const location = useLocation();
   const { temAlcada, pendentes } = useTemAlcada();
   const { data: access } = useAccessibleMenus("visualizar");
+  const externo = useModoExterno();
   const empresaCtx = useContext(EmpresaAtivaContext);
   // Antes do EmpresaAtivaContext carregar a empresa real do banco, empresa.id
   // é o placeholder estático de src/data/controladoria.ts (ex: "HAGG" — um
@@ -683,6 +701,11 @@ export function Sidebar({ collapsed, mobileOpen = false, onMobileClose }: Sideba
   // própria via usePlanoAcaoPermissao — removida a pedido do usuário, pra
   // "Acesso por Usuário" ser a única autoridade em qualquer módulo).
   const canSee = useCallback((to: string) => {
+    // Encarregado externo: só a allowlist dele. Precisa vir ANTES de tudo —
+    // ele não tem perfil de acesso, então cairia no ramo "menu ainda não
+    // configurado → visível" e enxergaria o ERP inteiro no menu. Este ramo
+    // apenas restringe; quem decide de verdade é a RLS do banco.
+    if (externo) return ROTAS_EXTERNO.some((r) => to === r || to.startsWith(r + "/"));
     if (ACESSO_ABERTO_SEM_PERMISSOES || !access) return true;
     const code = matchMenuCode(to, access.routes);
     // Rota sem entrada em app_menu: nunca foi migrada pro controle por
@@ -695,7 +718,7 @@ export function Sidebar({ collapsed, mobileOpen = false, onMobileClose }: Sideba
     // Exceção: administracao/integracao nunca caem aqui, ver MENUS_SEMPRE_RESTRITOS.
     if (!access.configuredCodes.has(code) && !MENUS_SEMPRE_RESTRITOS.has(code)) return true;
     return access.codes.has(code);
-  }, [access]);
+  }, [access, externo]);
 
   const visibleModules = useMemo(() => {
     const resolvedBadge = (badge: string | undefined) => {

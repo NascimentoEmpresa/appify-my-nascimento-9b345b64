@@ -46,6 +46,9 @@ interface Props {
   headerExtra?: ReactNode;
 }
 
+/** Substitui o value "" das opções do tipo "— nenhum —", que o Radix proíbe. */
+const SEM_VALOR = "__sem_valor__";
+
 export function EntityCrudPage({
   table, title, description, fields, columns, orderBy, ascending, filter, defaults = {}, headerExtra,
 }: Props) {
@@ -72,6 +75,11 @@ export function EntityCrudPage({
 
   const save = async () => {
     const payload: any = { ...editing };
+    // O sentinela nunca chega ao banco: vira null, que é o que "— nenhum —"
+    // significa numa FK opcional.
+    for (const f of fields) {
+      if (f.type === "select" && payload[f.key] === SEM_VALOR) payload[f.key] = null;
+    }
     if (!payload.id && !payload.empresa_id && empresaId) payload.empresa_id = empresaId;
     if (!payload.id) Object.assign(payload, defaults);
     await upsert.mutateAsync(payload);
@@ -98,10 +106,24 @@ export function EntityCrudPage({
                     {f.type === "textarea" ? (
                       <Textarea id={f.key} value={editing?.[f.key] ?? ""} onChange={(e) => setEditing({ ...editing, [f.key]: e.target.value })} />
                     ) : f.type === "select" ? (
-                      <Select value={editing?.[f.key] ?? ""} onValueChange={(v) => setEditing({ ...editing, [f.key]: v })}>
+                      // Radix lança exceção se algum SelectItem tiver value=""
+                      // ("must have a value prop that is not an empty string"),
+                      // porque string vazia é o que ele usa para limpar a
+                      // seleção. Várias telas declaram uma opção "— nenhum —"
+                      // com value "" e derrubavam o app inteiro para tela
+                      // branca ao abrir o formulário. Aqui a opção vazia vira
+                      // um sentinela, convertido de volta para null ao salvar.
+                      <Select
+                        value={editing?.[f.key] ? String(editing[f.key]) : SEM_VALOR}
+                        onValueChange={(v) => setEditing({ ...editing, [f.key]: v === SEM_VALOR ? null : v })}
+                      >
                         <SelectTrigger><SelectValue placeholder="Selecione..." /></SelectTrigger>
                         <SelectContent>
-                          {f.options?.map((o) => <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>)}
+                          {f.options?.map((o) => (
+                            <SelectItem key={o.value || SEM_VALOR} value={o.value || SEM_VALOR}>
+                              {o.label}
+                            </SelectItem>
+                          ))}
                         </SelectContent>
                       </Select>
                     ) : f.type === "boolean" ? (

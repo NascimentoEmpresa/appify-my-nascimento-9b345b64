@@ -25,8 +25,10 @@ export function ProtectedRoute({ children }: { children: React.ReactNode }) {
     return <Navigate to="/login" replace />;
   }
 
-  // Usuário real precisa trocar a senha (reset feito por admin)
-  if (user && !isDemo && !mcLoading && mustChange && location.pathname !== "/trocar-senha") {
+  // Usuário real precisa trocar a senha (reset feito por admin).
+  // Sessão anônima (encarregado externo) não tem senha para trocar — e nem
+  // linha em profiles com must_change_password —, então nunca cai aqui.
+  if (user && !user.is_anonymous && !isDemo && !mcLoading && mustChange && location.pathname !== "/trocar-senha") {
     return <Navigate to="/trocar-senha" replace />;
   }
 
