@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from "react";
+import { useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
 import { usePermissoes } from "@/context/PermissoesContext";
@@ -176,6 +177,7 @@ const STATUS_PROCESSO = [
 export default function Recrutamento() {
   const { user } = useAuth();
   const { roles, can } = usePermissoes();
+  const navigate = useNavigate();
 
   const isTreinamento = roles.includes("treinamentos"); // só rótulo da mensagem no chat, não é gate
 
@@ -686,15 +688,20 @@ export default function Recrutamento() {
     }
   };
 
-  // Link do WhatsApp do candidato com mensagem já preenchida com o nome dele.
-  const waLinkDe = (c: any): string | null => {
-    const d = String(c.telefone ?? "").replace(/\D/g, "");
-    if (d.length < 10) return null;
-    const num = d.startsWith("55") && d.length >= 12 ? d : "55" + d;
-    const pn = String(c.nome ?? "").trim().split(/\s+/)[0] || "";
-    const primeiroNome = pn.charAt(0).toUpperCase() + pn.slice(1).toLowerCase(); // "PABLO" → "Pablo"
-    const msg = `Olá ${primeiroNome}, tudo bem? Estamos entrando em contato sobre o seu processo seletivo.`;
-    return `https://wa.me/${num}?text=${encodeURIComponent(msg)}`;
+  // O candidato tem WhatsApp utilizável? (só valida o telefone; a conversa em
+  // si é resolvida no clique)
+  const temWhatsApp = (c: any): boolean =>
+    String(c.telefone ?? "").replace(/\D/g, "").length >= 10;
+
+  // Abre a conversa do candidato na NOSSA Caixa de Entrada.
+  // Antes isso apontava para wa.me e tirava o recrutador do sistema: a conversa
+  // ficava no celular dele, fora do histórico e invisível para o próximo
+  // atendente. A RPC acha (ou cria) a conversa e a Caixa abre já nela.
+  const abrirWhatsAppInterno = async (c: any) => {
+    if (!temWhatsApp(c)) { toast("Candidato sem telefone válido.", "err"); return; }
+    const { data, error } = await (supabase as any).rpc("recrutamento_abrir_conversa", { p_candidato_id: c.id });
+    if (error || !data) { toast("Não consegui abrir a conversa: " + (error?.message ?? "conversa não encontrada"), "err"); return; }
+    navigate(`/app/whatsapp?conversa=${data}`);
   };
 
   // Download do currículo: signed URL temporária no bucket privado 'curriculos'.
@@ -1451,13 +1458,13 @@ export default function Recrutamento() {
                             {c.telefone && (
                               <div style={{ fontSize: 10, color: "#475569", display: "flex", alignItems: "center", gap: 5 }}>
                                 <span>📞 {c.telefone}</span>
-                                {waLinkDe(c) && (
-                                  <a href={waLinkDe(c)!} target="_blank" rel="noopener noreferrer" title="Chamar no WhatsApp"
-                                    style={{ flexShrink: 0, width: 17, height: 17, borderRadius: "50%", background: "#25d366", display: "inline-flex", alignItems: "center", justifyContent: "center" }}>
+                                {temWhatsApp(c) && (
+                                  <button onClick={() => abrirWhatsAppInterno(c)} title="Abrir a conversa na Caixa de Entrada do WhatsApp"
+                                    style={{ flexShrink: 0, width: 17, height: 17, padding: 0, border: "none", cursor: "pointer", borderRadius: "50%", background: "#25d366", display: "inline-flex", alignItems: "center", justifyContent: "center" }}>
                                     <svg width="10" height="10" viewBox="0 0 24 24" fill="#fff" aria-hidden>
                                       <path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 005.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 00-3.48-8.413Z"/>
                                     </svg>
-                                  </a>
+                                  </button>
                                 )}
                               </div>
                             )}

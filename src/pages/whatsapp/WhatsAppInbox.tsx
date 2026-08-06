@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { useAccessibleMenus } from "@/hooks/useAccessibleMenus";
@@ -33,6 +33,11 @@ export default function WhatsAppInbox() {
   const podeVer = access?.codes.has("whatsapp") ?? false;
   const podeConfig = access?.codes.has("whatsapp_chatbot") ?? false;
   const podeTodas = access?.codes.has(MENU_TODAS) ?? false;
+
+  // ?conversa=<uuid> abre direto naquela conversa. É como o Recrutamento manda
+  // o atendente para o candidato certo sem ele ter que caçar na lista.
+  const [searchParams, setSearchParams] = useSearchParams();
+  const conversaDaUrl = searchParams.get("conversa");
 
   const [selId, setSelId] = useState<string | null>(null);
   const [busca, setBusca] = useState("");
@@ -89,6 +94,28 @@ export default function WhatsAppInbox() {
   }, [pastaSel, podeTodas, pastasVisiveis]);
 
   const sel = useMemo(() => conversas.find((c) => c.id === selId) ?? null, [conversas, selId]);
+
+  // Abre a conversa pedida pela URL assim que a lista chega. Também alinha a
+  // aba de pasta: sem isso a thread abriria certa, mas a lista ao lado estaria
+  // noutra pasta e pareceria que nada foi selecionado. Consome o parâmetro
+  // depois de usar, senão clicar noutra conversa voltaria para esta.
+  useEffect(() => {
+    if (!conversaDaUrl || !conversas.length) return;
+    const alvo = conversas.find((c) => c.id === conversaDaUrl);
+    if (alvo) {
+      setSelId(alvo.id);
+      const destino = alvo.pasta_codigo ?? SEM_PASTA;
+      if (podeTodas) setPastaSel(destino);
+      else if (alvo.pasta_codigo && pastasVisiveis.some((p) => p.codigo === alvo.pasta_codigo)) setPastaSel(alvo.pasta_codigo);
+    } else {
+      // Existe no banco mas a RLS não devolveu: é falta de acesso à pasta, não
+      // conversa inexistente — dizer isso evita o atendente procurar na lista.
+      toast({ title: "Conversa fora do seu acesso", description: "Você não tem permissão para a pasta onde ela está." });
+    }
+    searchParams.delete("conversa");
+    setSearchParams(searchParams, { replace: true });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [conversaDaUrl, conversas]);
 
   // Conversas de cada pasta — a contagem das abas e a lista saem daqui.
   const daPasta = (codigo: string) =>
