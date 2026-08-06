@@ -165,6 +165,19 @@ const PAPEL_ETAPA: Record<string, string> = {
 const ETAPAS_COM_MENSAGEM = ["TRIAGEM", "ENTREVISTA", "ENTREVISTA GESTOR", "APROVADO"];
 // Variáveis que o RH pode usar nos {{n}} do template aprovado na Meta.
 const MSG_VARIAVEIS = ["primeiro_nome", "nome", "cargo", "cidade", "contrato", "empresa"];
+
+// Nome de template da Meta: só minúsculas, números e underscore. "Entrevista
+// Gestor" é recusado lá com erro 132001, e o envio automático falharia calado
+// a cada card movido — melhor barrar aqui, na hora de configurar.
+const RE_TEMPLATE = /^[a-z0-9_]+$/;
+const nomeTemplateInvalido = (n?: string | null) => {
+  const v = String(n ?? "").trim();
+  return v.length > 0 && !RE_TEMPLATE.test(v);
+};
+const sugerirNomeTemplate = (n?: string | null) =>
+  String(n ?? "").trim().toLowerCase()
+    .normalize("NFD").replace(/[̀-ͯ]/g, "")   // "Aprovação" → "aprovacao"
+    .replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "");
 // Status da Solicitação dirigidos pelo candidato (etapas 3–10).
 const STATUS_PROCESSO = [
   "Vaga aberta - Seleção de Currículos", "Em análise jurídica", "Entrevista e Avaliação",
@@ -265,6 +278,9 @@ export default function Recrutamento() {
   const [msgModal, setMsgModal]             = useState(false);
   const [msgCfgs, setMsgCfgs]               = useState<any[]>([]);
   const [msgSalvando, setMsgSalvando]       = useState(false);
+  // Status de cada template na Meta (APPROVED / PENDING / REJECTED / NAO_CRIADO)
+  const [msgStatus, setMsgStatus]           = useState<Record<string, any>>({});
+  const [msgMetaBusy, setMsgMetaBusy]       = useState(false);
 
   // Wizard nova vaga
   const [vaga, setVaga] = useState({
@@ -905,8 +921,45 @@ export default function Recrutamento() {
       parametros: ["primeiro_nome", "cargo"], texto_previa: "",
     }));
     setMsgModal(true);
+    consultarTemplates();
+  };
+
+  // ── Templates na Meta ──────────────────────────────────────────
+  // O texto real mora lá e precisa passar por revisão. Saber o status aqui
+  // evita o RH ligar a etapa e descobrir pelo silêncio que nada é enviado.
+  const consultarTemplates = async () => {
+    try {
+      const { data, error } = await supabase.functions.invoke("whatsapp-templates", { body: { acao: "listar" } });
+      if (error) return; // sem WhatsApp configurado ou sem permissão: a tela segue utilizável
+      const mapa: Record<string, any> = {};
+      ((data as any)?.templates ?? []).forEach((t: any) => { mapa[t.etapa] = t; });
+      setMsgStatus(mapa);
+    } catch { /* consulta é informativa; falha nela não trava a configuração */ }
+  };
+
+  const criarTemplates = async () => {
+    if (!confirm("Enviar os textos para aprovação da Meta?\n\nEles passam por revisão e ficam registrados na conta da empresa. Isso não liga o envio automático — depois de aprovados, você ainda marca \"Enviar automaticamente\" na etapa.")) return;
+    setMsgMetaBusy(true);
+    try {
+      const { data, error } = await supabase.functions.invoke("whatsapp-templates", { body: { acao: "criar" } });
+      if (error) { toast("Não consegui falar com a Meta: " + (error.message ?? ""), "err"); return; }
+      const r = (data as any)?.resultado ?? [];
+      const criados = r.filter((x: any) => x.acao === "criado").length;
+      const jaExistiam = r.filter((x: any) => x.acao === "ja_existia").length;
+      const erros = r.filter((x: any) => x.acao === "erro");
+      if (erros.length) toast(`${erros.length} template(s) recusado(s): ${erros.map((e: any) => `${e.etapa} — ${e.erro}`).join(" | ")}`, "err");
+      else toast(`${criados} enviado(s) para aprovação${jaExistiam ? `, ${jaExistiam} já existia(m)` : ""}. A revisão da Meta costuma levar de minutos a algumas horas.`, "ok");
+      await consultarTemplates();
+    } finally { setMsgMetaBusy(false); }
   };
   const salvarMsgConfig = async () => {
+    // Nome fora do padrão da Meta só se descobre quando a mensagem não chega —
+    // e aí o candidato já ficou sem retorno. Barra antes de salvar.
+    const invalidos = msgCfgs.filter(c => nomeTemplateInvalido(c.template_nome));
+    if (invalidos.length) {
+      toast(`Nome de template inválido em ${invalidos.map(c => c.etapa).join(", ")}. Use só minúsculas, números e underscore.`, "err");
+      return;
+    }
     setMsgSalvando(true);
     const nome = user?.user_metadata?.nome ?? user?.email ?? "";
     const rows = msgCfgs.map(c => ({
@@ -922,9 +975,13 @@ export default function Recrutamento() {
     const { error } = await (supabase as any).from("RECRUTAMENTO_MENSAGENS").upsert(rows, { onConflict: "etapa" });
     setMsgSalvando(false);
     if (error) { toast("Erro ao salvar: " + error.message, "err"); return; }
+    // "Salvo" sozinho já enganou: dá a entender que passou a enviar, quando o
+    // que foi salvo pode ser quatro etapas desligadas. O aviso diz o que vale.
     const ligadasSemTemplate = msgCfgs.filter(c => c.ativo && !String(c.template_nome ?? "").trim());
+    const ligadas = rows.filter(r => r.ativo);
     if (ligadasSemTemplate.length) toast(`Sem nome do template, ${ligadasSemTemplate.map(c => c.etapa).join(" e ")} ficou(aram) desligada(s).`, "info");
-    else toast("Mensagens automáticas salvas.", "ok");
+    else if (!ligadas.length) toast("Salvo — mas nenhuma etapa está enviando. Marque \"Enviar automaticamente\" na etapa desejada.", "info");
+    else toast(`Salvo. Enviando automaticamente em: ${ligadas.map(r => r.etapa).join(", ")}.`, "ok");
     setMsgModal(false);
   };
 
@@ -1987,15 +2044,41 @@ export default function Recrutamento() {
                 const rotulo = c.etapa === "ENTREVISTA GESTOR" ? "ENTREVISTA GESTOR (segunda entrevista — opcional)" : c.etapa;
                 return (
                   <div key={c.etapa} style={{ border: "1px solid #e2e8f0", borderRadius: 10, padding: "12px 13px", background: c.ativo ? "#f7fdf9" : "#fcfdff" }}>
+                    {/* O estado ligado/desligado tem que ser lido de relance: preencher
+                        o template e esquecer o check faz a etapa continuar muda, e o
+                        envio desligado é silencioso de propósito. */}
                     <div style={{ display: "flex", alignItems: "center", gap: 9, marginBottom: 9 }}>
-                      <input type="checkbox" checked={!!c.ativo} onChange={e => upd("ativo", e.target.checked)} style={{ width: 15, height: 15, cursor: "pointer" }} />
                       <span style={{ fontSize: 13, fontWeight: 800, color: "#0f172a", flex: 1 }}>{rotulo}</span>
+                      {(() => {
+                        // Status na Meta: sem APPROVED, marcar o check não faz a
+                        // mensagem sair — e o RH tem que ver isso antes de marcar.
+                        const st = msgStatus[c.etapa]?.status;
+                        if (!st) return null;
+                        const cor = st === "APPROVED" ? { bg: "#dcfce7", fg: "#15803d", txt: "aprovado na Meta" }
+                          : st === "PENDING" ? { bg: "#fef3c7", fg: "#b45309", txt: "em revisão na Meta" }
+                          : st === "REJECTED" ? { bg: "#fee2e2", fg: "#b91c1c", txt: "reprovado na Meta" }
+                          : { bg: "#f1f5f9", fg: "#64748b", txt: "não enviado à Meta" };
+                        return <span title={msgStatus[c.etapa]?.motivo || ""} style={{ fontSize: 10, fontWeight: 800, padding: "2px 8px", borderRadius: 20, background: cor.bg, color: cor.fg }}>{cor.txt}</span>;
+                      })()}
+                      <label style={{ display: "inline-flex", alignItems: "center", gap: 6, cursor: "pointer", userSelect: "none" }}>
+                        <input type="checkbox" checked={!!c.ativo} onChange={e => upd("ativo", e.target.checked)} style={{ width: 15, height: 15, cursor: "pointer" }} />
+                        <span style={{ fontSize: 11.5, fontWeight: 800, color: c.ativo ? "#15803d" : "#94a3b8" }}>
+                          {c.ativo ? "Enviando automaticamente" : "Desligada — não envia nada"}
+                        </span>
+                      </label>
                     </div>
                     <div style={{ display: "flex", gap: 9, flexWrap: "wrap" }}>
                       <div style={{ flex: "2 1 220px" }}>
                         <label style={{ fontSize: 11, fontWeight: 800, color: "#475569" }}>Nome do template na Meta *</label>
                         <input value={c.template_nome ?? ""} onChange={e => upd("template_nome", e.target.value)} placeholder="ex.: recrutamento_triagem"
-                          style={{ width: "100%", marginTop: 4, height: 32, border: "1px solid #e2e8f0", borderRadius: 8, padding: "0 9px", fontSize: 12.5, outline: "none" }} />
+                          style={{ width: "100%", marginTop: 4, height: 32, borderRadius: 8, padding: "0 9px", fontSize: 12.5, outline: "none",
+                            border: `1px solid ${nomeTemplateInvalido(c.template_nome) ? "#fca5a5" : "#e2e8f0"}` }} />
+                        {nomeTemplateInvalido(c.template_nome) && (
+                          <div style={{ fontSize: 10.5, color: "#b91c1c", marginTop: 3, lineHeight: 1.4 }}>
+                            A Meta só aceita minúsculas, números e underscore. Use <b>{sugerirNomeTemplate(c.template_nome)}</b>
+                            {" "}— e confira se é exatamente esse o nome lá no Business Manager.
+                          </div>
+                        )}
                       </div>
                       <div style={{ flex: "1 1 110px" }}>
                         <label style={{ fontSize: 11, fontWeight: 800, color: "#475569" }}>Idioma</label>
@@ -2031,9 +2114,16 @@ export default function Recrutamento() {
               })}
             </div>
 
-            <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 16 }}>
-              <button onClick={() => setMsgModal(false)} style={{ padding: "7px 14px", borderRadius: 10, border: "1px solid #e2e8f0", background: "#fff", color: "#475569", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>Cancelar</button>
-              <button onClick={salvarMsgConfig} disabled={msgSalvando} style={{ padding: "7px 14px", borderRadius: 10, border: "none", background: msgSalvando ? "#94a3b8" : "#0f3171", color: "#fff", fontSize: 12, fontWeight: 700, cursor: msgSalvando ? "default" : "pointer" }}>{msgSalvando ? "Salvando…" : "Salvar"}</button>
+            <div style={{ display: "flex", gap: 8, justifyContent: "space-between", alignItems: "center", marginTop: 16, flexWrap: "wrap" }}>
+              <button onClick={criarTemplates} disabled={msgMetaBusy}
+                title="Cria os textos na conta da empresa na Meta e os põe em revisão"
+                style={{ padding: "7px 14px", borderRadius: 10, border: "1px solid rgba(37,211,102,.35)", background: msgMetaBusy ? "#f1f5f9" : "rgba(37,211,102,.1)", color: "#128c7e", fontSize: 12, fontWeight: 700, cursor: msgMetaBusy ? "default" : "pointer" }}>
+                {msgMetaBusy ? "Enviando…" : "↑ Enviar textos para aprovação da Meta"}
+              </button>
+              <div style={{ display: "flex", gap: 8 }}>
+                <button onClick={() => setMsgModal(false)} style={{ padding: "7px 14px", borderRadius: 10, border: "1px solid #e2e8f0", background: "#fff", color: "#475569", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>Cancelar</button>
+                <button onClick={salvarMsgConfig} disabled={msgSalvando} style={{ padding: "7px 14px", borderRadius: 10, border: "none", background: msgSalvando ? "#94a3b8" : "#0f3171", color: "#fff", fontSize: 12, fontWeight: 700, cursor: msgSalvando ? "default" : "pointer" }}>{msgSalvando ? "Salvando…" : "Salvar"}</button>
+              </div>
             </div>
           </div>
         </div>
