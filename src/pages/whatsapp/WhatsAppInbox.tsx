@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { useAccessibleMenus } from "@/hooks/useAccessibleMenus";
@@ -33,6 +33,11 @@ export default function WhatsAppInbox() {
   const podeVer = access?.codes.has("whatsapp") ?? false;
   const podeConfig = access?.codes.has("whatsapp_chatbot") ?? false;
   const podeTodas = access?.codes.has(MENU_TODAS) ?? false;
+
+  // ?conversa=<uuid> abre direto naquela conversa. É como o Recrutamento manda
+  // o atendente para o candidato certo sem ele ter que caçar na lista.
+  const [searchParams, setSearchParams] = useSearchParams();
+  const conversaDaUrl = searchParams.get("conversa");
 
   const [selId, setSelId] = useState<string | null>(null);
   const [busca, setBusca] = useState("");
@@ -89,6 +94,28 @@ export default function WhatsAppInbox() {
   }, [pastaSel, podeTodas, pastasVisiveis]);
 
   const sel = useMemo(() => conversas.find((c) => c.id === selId) ?? null, [conversas, selId]);
+
+  // Abre a conversa pedida pela URL assim que a lista chega. Também alinha a
+  // aba de pasta: sem isso a thread abriria certa, mas a lista ao lado estaria
+  // noutra pasta e pareceria que nada foi selecionado. Consome o parâmetro
+  // depois de usar, senão clicar noutra conversa voltaria para esta.
+  useEffect(() => {
+    if (!conversaDaUrl || !conversas.length) return;
+    const alvo = conversas.find((c) => c.id === conversaDaUrl);
+    if (alvo) {
+      setSelId(alvo.id);
+      const destino = alvo.pasta_codigo ?? SEM_PASTA;
+      if (podeTodas) setPastaSel(destino);
+      else if (alvo.pasta_codigo && pastasVisiveis.some((p) => p.codigo === alvo.pasta_codigo)) setPastaSel(alvo.pasta_codigo);
+    } else {
+      // Existe no banco mas a RLS não devolveu: é falta de acesso à pasta, não
+      // conversa inexistente — dizer isso evita o atendente procurar na lista.
+      toast({ title: "Conversa fora do seu acesso", description: "Você não tem permissão para a pasta onde ela está." });
+    }
+    searchParams.delete("conversa");
+    setSearchParams(searchParams, { replace: true });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [conversaDaUrl, conversas]);
 
   // Conversas de cada pasta — a contagem das abas e a lista saem daqui.
   const daPasta = (codigo: string) =>
@@ -230,10 +257,22 @@ export default function WhatsAppInbox() {
   const filtradas = useMemo(() => {
     const base = pastaSel ? daPasta(pastaSel) : [];
     const t = busca.trim().toLowerCase();
-    if (!t) return base;
-    return base.filter((c) =>
+    const lista = !t ? base : base.filter((c) =>
       [c.contato?.nome, c.contato?.wa_id, c.ultima_mensagem_preview].some((v) => String(v ?? "").toLowerCase().includes(t)));
-  }, [conversas, busca, pastaSel]); // eslint-disable-line react-hooks/exhaustive-deps
+
+    // Não lidas sempre no topo. Quem espera resposta não pode ficar soterrado
+    // por conversa que já foi respondida só porque a resposta é mais recente.
+    //
+    // A conversa aberta conta como "topo" mesmo depois de zerar as não lidas:
+    // abrir uma conversa zera o contador, e sem isso ela despencaria da lista
+    // no instante do clique, com o quadro se remontando embaixo do cursor.
+    //
+    // Dentro de cada grupo, mais recente primeiro; conversa sem mensagem
+    // (criada pelo recrutamento, por exemplo) tem data nula e vai para o fim.
+    const noTopo = (c: WaConversa) => (c.nao_lidas > 0 || c.id === selId ? 0 : 1);
+    const quando = (c: WaConversa) => (c.ultima_mensagem_em ? Date.parse(c.ultima_mensagem_em) : -Infinity);
+    return [...lista].sort((a, b) => noTopo(a) - noTopo(b) || quando(b) - quando(a));
+  }, [conversas, busca, pastaSel, selId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   if (!podeVer) {
     return (
