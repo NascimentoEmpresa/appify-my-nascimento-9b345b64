@@ -52,6 +52,7 @@ import {
   Shirt,
   Truck,
   Boxes,
+  FileClock,
   Car,
   Package,
   PlusCircle,
@@ -235,6 +236,7 @@ const suprimentosModule: ModuleDef = {
         { label: "Aprovação de Catálogo", to: "/app/suprimentos/catalogo/aprovacoes", icon: ClipboardCheck },
         { label: "Pedidos de Materiais", to: "/app/suprimentos/pedidos-materiais", icon: PackageCheck },
         { label: "Estoque & Etiquetas", to: "/app/suprimentos/estoque-etiquetas", icon: Boxes },
+        { label: "Cotações do Malote", to: "/app/suprimentos/cotacoes-malote", icon: FileClock },
       ],
     },
     {
@@ -244,7 +246,7 @@ const suprimentosModule: ModuleDef = {
         // Mesma linha de cotacoes_licitacao que a Licitação vê em
         // /app/licitacoes/cotacoes, pelo lado de quem responde. Ícone igual ao
         // de lá de propósito: é um canal só, visto de dois lugares.
-        { label: "Cotações", to: "/app/suprimentos/cotacoes", icon: MessageSquare },
+        { label: "Cotações para a Licitação", to: "/app/suprimentos/cotacoes", icon: MessageSquare },
       ],
     },
     {

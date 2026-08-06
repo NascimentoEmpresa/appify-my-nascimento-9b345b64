@@ -72,6 +72,7 @@ import NFEntrada from "./pages/suprimentos/NFEntrada";
 import AprovacoesCompras from "./pages/suprimentos/AprovacoesCompras";
 import Recebimentos from "./pages/suprimentos/Recebimentos";
 import CotacoesCompras from "./pages/suprimentos/CotacoesCompras";
+import CotacoesMalote from "./pages/suprimentos/CotacoesMalote";
 import CatalogoMateriais from "./pages/suprimentos/CatalogoMateriais";
 import CatalogoAprovacoes from "./pages/suprimentos/CatalogoAprovacoes";
 import PedidosMateriais from "./pages/suprimentos/PedidosMateriais";
@@ -329,6 +330,9 @@ const App = () => (
                 Substitui a tela de RFQ do Suprimentos antigo, aposentada na
                 20260821000001 — o arquivo Cotacoes.tsx segue no repo, sem rota. */}
             <Route path="suprimentos/cotacoes" element={<CotacoesCompras />} />
+            {/* Reservada: a tela ainda não foi desenvolvida, mas a rota existe
+                para o menu sup_cotacoes_malote poder ser liberado. */}
+            <Route path="suprimentos/cotacoes-malote" element={<CotacoesMalote />} />
             {/* Supply/Compras — catálogo em cascata (Contrato → Posto → Função → enxoval).
                 Rota mais específica primeiro: matchMenuCode resolve por prefixo mais longo,
                 mas o React Router casa na ordem declarada. */}

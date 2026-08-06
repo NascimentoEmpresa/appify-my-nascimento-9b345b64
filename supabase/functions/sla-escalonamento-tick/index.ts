@@ -89,7 +89,7 @@ Deno.serve(async (req) => {
             titulo: `Aprovação em atraso — ${inst.referencia_codigo ?? ""}`.trim(),
             mensagem: `Etapa "${etapa.nome}" ultrapassou ${Math.round(pctPrazo * 100)}% do prazo.`,
             tipo: "aprovacao_sla",
-            link: `/aprovacoes/inbox`,
+            link: `/app/aprovacoes/inbox?ref=${inst.id}`,
             lida: false,
           }));
           await supabase.from("notificacoes").insert(rows);
