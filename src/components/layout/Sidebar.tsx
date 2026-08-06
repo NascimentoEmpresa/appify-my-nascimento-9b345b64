@@ -236,6 +236,16 @@ const suprimentosModule: ModuleDef = {
       ],
     },
     {
+      label: "Licitação",
+      defaultOpen: true,
+      items: [
+        // Mesma linha de cotacoes_licitacao que a Licitação vê em
+        // /app/licitacoes/cotacoes, pelo lado de quem responde. Ícone igual ao
+        // de lá de propósito: é um canal só, visto de dois lugares.
+        { label: "Cotações", to: "/app/suprimentos/cotacoes", icon: MessageSquare },
+      ],
+    },
+    {
       label: "Patrimônio & Manutenção",
       defaultOpen: true,
       items: [
