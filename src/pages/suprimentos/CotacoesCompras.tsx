@@ -55,8 +55,11 @@ export default function CotacoesCompras() {
   return (
     <div className="space-y-6">
       <PageHeader
-        title="Cotações"
-        breadcrumb={["Suprimentos", "Cotações"]}
+        title="Cotações para a Licitação"
+        // `module` default do PageHeader é "Licitações": sem passar, o
+        // breadcrumb desta tela dizia "ERP › Licitações › Suprimentos".
+        module="Suprimentos"
+        breadcrumb={["Licitação", "Cotações para a Licitação"]}
         subtitle="Solicitações que o setor de Licitação enviou para Compras."
         actions={
           naoLidas > 0 ? (
