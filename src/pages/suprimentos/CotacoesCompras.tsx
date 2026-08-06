@@ -1,10 +1,10 @@
-import { useMemo, useRef, useState } from "react";
+import { useMemo, useState } from "react";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import {
-  ChevronDown, ChevronRight, Clock, Eye, CheckCircle2, Paperclip, Send, Inbox, ShieldAlert,
+  ChevronDown, ChevronRight, Clock, Eye, CheckCircle2, Send, Inbox, ShieldAlert,
 } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
@@ -16,8 +16,8 @@ import {
   type CotacaoLicitacao,
 } from "@/hooks/useCotacoesLicitacao";
 import {
-  MESES, STATUS_CONFIG, StatusBadge, LinkArquivo, fmtDatetime, iniciais,
-  agruparPorAnoMes, aberturaInicial, recusaArquivo, EXTENSOES_ACEITAS,
+  MESES, STATUS_CONFIG, StatusBadge, ListaAnexos, SeletorArquivos,
+  fmtDatetime, iniciais, agruparPorAnoMes, aberturaInicial,
 } from "@/components/cotacoes/comum";
 
 /**
@@ -200,7 +200,7 @@ function CardCotacao({ cotacao: c, podeResponder }: { cotacao: CotacaoLicitacao;
               <div className="absolute -left-[13px] top-1.5 h-2.5 w-2.5 rounded-full border-2 border-background bg-muted-foreground/50" />
               <div className="space-y-2">
                 <p className="whitespace-pre-wrap text-sm leading-relaxed">{c.comentario}</p>
-                <LinkArquivo caminho={c.arquivo_url} nome={c.arquivo_nome} />
+                <ListaAnexos anexos={c.anexosSolicitacao} />
                 {c.editado_em && (
                   <p className="text-xs italic text-muted-foreground">
                     Editado por {c.editado_por_nome} em {fmtDatetime(c.editado_em)} — releia antes de responder.
@@ -226,7 +226,7 @@ function CardCotacao({ cotacao: c, podeResponder }: { cotacao: CotacaoLicitacao;
                     <CheckCircle2 className="h-3.5 w-3.5" /> Sua resposta
                   </p>
                   <p className="whitespace-pre-wrap text-sm leading-relaxed">{c.resposta_comentario}</p>
-                  <LinkArquivo caminho={c.resposta_arquivo_url} nome={c.resposta_arquivo_nome} tom="resposta" />
+                  <ListaAnexos anexos={c.anexosResposta} tom="resposta" />
                   <p className="text-xs text-muted-foreground">
                     {c.respondente_nome} · {fmtDatetime(c.data_resposta)}
                   </p>
@@ -258,31 +258,24 @@ function CardCotacao({ cotacao: c, podeResponder }: { cotacao: CotacaoLicitacao;
  */
 function FormularioResposta({ cotacao }: { cotacao: CotacaoLicitacao }) {
   const responder = useCotacaoResponder();
-  const inputRef = useRef<HTMLInputElement>(null);
   const [comentario, setComentario] = useState("");
-  const [arquivo, setArquivo] = useState<File | null>(null);
-
-  function escolher(f: File | null) {
-    const recusa = recusaArquivo(f);
-    if (recusa) {
-      toast.error("Arquivo não aceito", { description: recusa });
-      if (inputRef.current) inputRef.current.value = "";
-      return;
-    }
-    setArquivo(f);
-  }
+  const [arquivos, setArquivos] = useState<File[]>([]);
 
   async function enviar() {
-    if (!comentario.trim() || !arquivo) return;
+    if (!comentario.trim() || !arquivos.length) return;
     try {
-      await responder.mutateAsync({ id: cotacao.id, comentario, arquivo });
-      toast.success("Resposta enviada para a Licitação.");
+      await responder.mutateAsync({ id: cotacao.id, comentario, arquivos });
+      toast.success(
+        arquivos.length === 1
+          ? "Resposta enviada para a Licitação."
+          : `Resposta enviada com ${arquivos.length} anexos.`,
+      );
     } catch (e) {
       toast.error("Não foi possível responder", { description: (e as Error).message });
     }
   }
 
-  const pronto = !!comentario.trim() && !!arquivo && !responder.isPending;
+  const pronto = !!comentario.trim() && arquivos.length > 0 && !responder.isPending;
 
   return (
     <div className="space-y-3 rounded-md border border-yellow-400/30 bg-yellow-500/5 p-3">
@@ -301,29 +294,15 @@ function FormularioResposta({ cotacao }: { cotacao: CotacaoLicitacao }) {
       </div>
 
       <div className="space-y-1.5">
-        <Label className="text-xs">Arquivo * (PDF, Excel, Word ou ZIP, até 10 MB)</Label>
-        <div className="flex flex-wrap items-center gap-2">
-          <input
-            ref={inputRef}
-            type="file"
-            accept={EXTENSOES_ACEITAS}
-            className="hidden"
-            onChange={(e) => escolher(e.target.files?.[0] ?? null)}
-          />
-          <Button type="button" variant="outline" size="sm" className="h-8 text-xs"
-                  onClick={() => inputRef.current?.click()}>
-            <Paperclip className="mr-1.5 h-3.5 w-3.5" />
-            {arquivo ? "Trocar arquivo" : "Escolher arquivo"}
-          </Button>
-          {arquivo && (
-            <span className="max-w-[220px] truncate text-xs text-muted-foreground">{arquivo.name}</span>
-          )}
-        </div>
+        <Label className="text-xs">Anexos * (qualquer formato, até 10 MB cada)</Label>
+        <SeletorArquivos arquivos={arquivos} onChange={setArquivos} />
       </div>
 
       <Button size="sm" className="h-8 gap-1.5 text-xs" onClick={enviar} disabled={!pronto}>
         <Send className="h-3.5 w-3.5" />
-        {responder.isPending ? "Enviando…" : "Enviar resposta"}
+        {responder.isPending
+          ? `Enviando ${arquivos.length} arquivo${arquivos.length > 1 ? "s" : ""}…`
+          : "Enviar resposta"}
       </Button>
     </div>
   );

@@ -1,4 +1,4 @@
-import { useState, useMemo, useRef } from "react";
+import { useState, useMemo } from "react";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -14,7 +14,7 @@ import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { Plus, Paperclip, Pencil, Trash2, ChevronDown, ChevronRight, Clock, Eye, CheckCircle2 } from "lucide-react";
+import { Plus, Pencil, Trash2, ChevronDown, ChevronRight, Clock, Eye, CheckCircle2 } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/hooks/useAuth";
@@ -24,6 +24,7 @@ import {
   useCotacaoUpdate,
   useCotacaoDelete,
   useCotacaoMarcarRespostaVista,
+  useCotacaoRemoverAnexo,
   type CotacaoLicitacao,
 } from "@/hooks/useCotacoesLicitacao";
 import { usePermissoes } from "@/context/PermissoesContext";
@@ -31,8 +32,8 @@ import { usePermissoes } from "@/context/PermissoesContext";
 // de Compras (/app/suprimentos/cotacoes) mostram a MESMA linha do banco, e
 // divergir na aparência confundiria os dois setores sobre o mesmo item.
 import {
-  MESES, STATUS_CONFIG, StatusBadge, LinkArquivo, fmtDatetime, iniciais,
-  agruparPorAnoMes, recusaArquivo, EXTENSOES_ACEITAS,
+  MESES, STATUS_CONFIG, StatusBadge, ListaAnexos, SeletorArquivos,
+  fmtDatetime, iniciais, agruparPorAnoMes,
 } from "@/components/cotacoes/comum";
 
 const TIPOS = ["Cotação", "Outro"];
@@ -47,6 +48,7 @@ function CotacaoCard({
   onDelete: (c: CotacaoLicitacao) => void;
 }) {
   const marcarVista = useCotacaoMarcarRespostaVista();
+  const removerAnexo = useCotacaoRemoverAnexo();
   const [open, setOpen] = useState(false);
 
   function toggle() {
@@ -102,7 +104,13 @@ function CotacaoCard({
               <div className="absolute -left-[13px] top-1.5 h-2.5 w-2.5 rounded-full border-2 border-background bg-muted-foreground/50" />
               <div className="space-y-2">
                 <p className="text-sm whitespace-pre-wrap leading-relaxed">{cotacao.comentario}</p>
-                <LinkArquivo caminho={cotacao.arquivo_url} nome={cotacao.arquivo_nome} />
+                <ListaAnexos
+                  anexos={cotacao.anexosSolicitacao}
+                  // Tirar anexo só faz sentido enquanto Compras ainda não respondeu.
+                  onRemover={canEditar && cotacao.status !== "respondido"
+                    ? (a) => removerAnexo.mutate(a.id)
+                    : undefined}
+                />
                 {cotacao.visualizado_por_nome && (
                   <p className="text-xs text-muted-foreground italic flex items-center gap-1">
                     <Eye className="h-3 w-3" /> Visualizado por Compras em {fmtDatetime(cotacao.visualizado_em)}
@@ -125,8 +133,7 @@ function CotacaoCard({
                     <CheckCircle2 className="h-3.5 w-3.5" /> Resposta de Compras
                   </p>
                   <p className="text-sm whitespace-pre-wrap leading-relaxed">{cotacao.resposta_comentario}</p>
-                  <LinkArquivo caminho={cotacao.resposta_arquivo_url}
-                               nome={cotacao.resposta_arquivo_nome} tom="resposta" />
+                  <ListaAnexos anexos={cotacao.anexosResposta} tom="resposta" />
                   <p className="text-xs text-muted-foreground">{cotacao.respondente_nome} · {fmtDatetime(cotacao.data_resposta)}</p>
                   {cotacao.resposta_visualizada_em && (
                     <p className="text-xs text-muted-foreground italic flex items-center gap-1">
@@ -178,32 +185,24 @@ function CotacaoModal({
 }) {
   const insert = useCotacaoInsert();
   const update = useCotacaoUpdate();
-  const fileRef = useRef<HTMLInputElement>(null);
   const [tipo, setTipo] = useState(editing?.tipo ?? "Cotação");
   const [comentario, setComentario] = useState(editing?.comentario ?? "");
-  const [arquivo, setArquivo] = useState<File | null>(null);
+  const [arquivos, setArquivos] = useState<File[]>([]);
 
   const loading = insert.isPending || update.isPending;
 
-  // O bucket recusa acima de 10 MB (§7.2); avisar aqui evita o usuário esperar
-  // o upload inteiro para receber um erro cru do storage.
-  function escolher(f: File | null) {
-    const recusa = recusaArquivo(f);
-    if (recusa) {
-      toast.error("Arquivo não aceito", { description: recusa });
-      if (fileRef.current) fileRef.current.value = "";
-      return;
-    }
-    setArquivo(f);
-  }
+  // Ao editar, os anexos já enviados continuam lá (dá para removê-los pelo
+  // card); aqui só se ACRESCENTA. Por isso o obrigatório vale só na criação.
+  const jaTemAnexo = (editing?.anexosSolicitacao.length ?? 0) > 0;
+  const pronto = !!comentario.trim() && (arquivos.length > 0 || jaTemAnexo) && !loading;
 
   async function handleSave() {
-    if (!comentario.trim()) return;
+    if (!pronto) return;
     try {
       if (editing) {
-        await update.mutateAsync({ id: editing.id, comentario, arquivo, editado_por_nome: remetenteNome, editado_por_id: remetenteId });
+        await update.mutateAsync({ id: editing.id, comentario, arquivos, editado_por_nome: remetenteNome, editado_por_id: remetenteId });
       } else {
-        await insert.mutateAsync({ tipo, comentario, arquivo, remetente_nome: remetenteNome });
+        await insert.mutateAsync({ tipo, comentario, arquivos, remetente_nome: remetenteNome });
       }
       onClose();
     } catch (e) {
@@ -239,21 +238,14 @@ function CotacaoModal({
             />
           </div>
           <div className="space-y-1.5">
-            <Label>Arquivo (PDF, Excel, Word, ZIP){!editing && " *"}</Label>
-            <div className="flex items-center gap-2">
-              <input
-                ref={fileRef}
-                type="file"
-                accept={EXTENSOES_ACEITAS}
-                className="hidden"
-                onChange={(e) => escolher(e.target.files?.[0] ?? null)}
-              />
-              <Button type="button" variant="outline" className="h-9 text-xs" onClick={() => fileRef.current?.click()}>
-                <Paperclip className="h-3.5 w-3.5 mr-1.5" />
-                {arquivo ? arquivo.name : editing?.arquivo_nome ?? "Escolher arquivo"}
-              </Button>
-              {arquivo && <span className="text-xs text-muted-foreground truncate max-w-[180px]">{arquivo.name}</span>}
-            </div>
+            <Label>Anexos * (qualquer formato, até 10 MB cada)</Label>
+            {jaTemAnexo && (
+              <p className="text-xs text-muted-foreground">
+                {editing!.anexosSolicitacao.length} arquivo(s) já enviado(s). O que você escolher
+                aqui será acrescentado; para tirar algum, use o X no card.
+              </p>
+            )}
+            <SeletorArquivos arquivos={arquivos} onChange={setArquivos} />
           </div>
           <div className="space-y-1.5">
             <Label>Remetente</Label>
@@ -262,7 +254,7 @@ function CotacaoModal({
         </div>
         <DialogFooter>
           <Button variant="outline" onClick={onClose} disabled={loading}>Cancelar</Button>
-          <Button onClick={handleSave} disabled={loading || !comentario.trim()}>
+          <Button onClick={handleSave} disabled={!pronto}>
             {loading ? "Enviando…" : "Enviar Solicitação"}
           </Button>
         </DialogFooter>
