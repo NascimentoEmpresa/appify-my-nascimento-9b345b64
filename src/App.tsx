@@ -178,6 +178,7 @@ import Reunioes from "./pages/central-servicos/reunioes/Reunioes";
 import ReuniaoDetalhe from "./pages/central-servicos/reunioes/ReuniaoDetalhe";
 import ConducaoReuniao from "./pages/central-servicos/reunioes/ConducaoReuniao";
 import PainelGerencial from "./pages/central-servicos/reunioes/PainelGerencial";
+import AgendamentoVeiculos from "./pages/central-servicos/veiculos/AgendamentoVeiculos";
 
 const queryClient = new QueryClient();
 
@@ -248,6 +249,7 @@ const App = () => (
             <Route path="whatsapp/chatbot" element={<WhatsAppChatbot />} />
             <Route path="whatsapp/testes" element={<WhatsAppTestes />} />
             <Route path="whatsapp/dashboard" element={<WhatsAppDashboard />} />
+            <Route path="central-servicos/veiculos" element={<AgendamentoVeiculos />} />
             <Route path="central-servicos/reunioes" element={<Reunioes />} />
             <Route path="central-servicos/reunioes/painel-gerencial" element={<PainelGerencial />} />
             <Route path="central-servicos/reunioes/:id" element={<ReuniaoDetalhe />} />
