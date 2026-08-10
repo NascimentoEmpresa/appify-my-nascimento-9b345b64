@@ -58,12 +58,7 @@ Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
 
   try {
-    if (!CLIENT_ID || !CLIENT_SECRET) {
-      return json({
-        error:
-          "Integração com o Discord ainda não configurada. Falta definir DISCORD_CLIENT_ID e DISCORD_CLIENT_SECRET.",
-      }, 503);
-    }
+    const configurado = !!CLIENT_ID && !!CLIENT_SECRET && REDIRECT_URIS.length > 0;
 
     // Quem está falando? O JWT do próprio usuário decide — nunca um id vindo
     // do corpo da requisição.
@@ -78,6 +73,19 @@ Deno.serve(async (req) => {
     const body = await req.json().catch(() => ({}));
     const action = String(body.action ?? "");
     const redirectUri = String(body.redirect_uri ?? "");
+
+    // ── status ───────────────────────────────────────────────────────
+    // Responde antes de qualquer exigência de configuração: é o que o convite
+    // automático consulta para não abrir um modal pedindo algo que ainda não
+    // funciona. Diz apenas sim ou não — nenhum segredo sai daqui.
+    if (action === "status") return json({ configurado });
+
+    if (!configurado) {
+      return json({
+        error:
+          "Integração com o Discord ainda não configurada. Falta definir DISCORD_CLIENT_ID, DISCORD_CLIENT_SECRET e DISCORD_REDIRECT_URIS.",
+      }, 503);
+    }
 
     if (!REDIRECT_URIS.includes(redirectUri)) {
       return json({
