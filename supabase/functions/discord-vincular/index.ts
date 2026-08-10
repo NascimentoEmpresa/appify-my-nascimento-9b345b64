@@ -95,7 +95,11 @@ Deno.serve(async (req) => {
 
     // ── iniciar ──────────────────────────────────────────────────────
     if (action === "iniciar") {
-      await admin.rpc("usuario_discord_limpar_states").catch(() => {});
+      // O builder do PostgREST não implementa .catch() como método (só .then()),
+      // então precisa envolver em try/catch em vez de encadear .catch() nele.
+      try {
+        await admin.rpc("usuario_discord_limpar_states");
+      } catch { /* faxina de states vencidos é best-effort, não trava o vínculo */ }
 
       const state = crypto.randomUUID() + "." + crypto.randomUUID();
       const { error } = await admin
