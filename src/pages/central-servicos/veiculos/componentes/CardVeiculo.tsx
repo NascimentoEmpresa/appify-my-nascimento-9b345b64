@@ -78,38 +78,40 @@ export function CardVeiculo({ veiculo, disponibilidade, selecionado, indice, onS
         </span>
       )}
 
-      {/* Bolinha de status, canto superior direito. */}
-      <span
-        aria-hidden
-        className={cn(
-          "absolute right-4 top-4 h-2.5 w-2.5 rounded-full transition-colors",
-          livre ? "bg-emerald-500 shadow-[0_0_0_3px_hsl(var(--background))]" : "bg-destructive",
-          livre && !selecionado && "animate-pulse-soft",
-        )}
-      />
-
-      {/* Marca de escolhido. */}
-      {selecionado && (
-        <span className="absolute right-3 top-3 flex h-6 w-6 animate-check-pop items-center justify-center rounded-full bg-primary text-primary-foreground">
-          <Check className="h-3.5 w-3.5" strokeWidth={3} />
-        </span>
-      )}
-
-      {/* Informação à esquerda, foto à direita ocupando o espaço que sobrava.
-          Sem foto, a coluna da esquerda toma o card inteiro — hoje nenhum
-          veículo tem imagem, então este é o estado normal, não a exceção. */}
+      {/* Informação à esquerda, foto à direita.
+          O status (bolinha e "check") fica grudado no ÍCONE, não no canto do
+          card: ali ele disputava o mesmo pixel com a foto e ficava por baixo
+          dela. Assim o lado direito inteiro pertence à imagem, que pode
+          crescer sem esbarrar em nada.
+          Sem foto, a coluna da esquerda toma o card inteiro. */}
       <div className={cn("flex w-full items-start gap-3", !livre && "mt-3")}>
         <div className="flex min-w-0 flex-1 flex-col gap-3">
-          <div
-            className={cn(
-              "flex h-14 w-14 items-center justify-center rounded-2xl transition-all duration-300",
-              !livre && "bg-muted text-muted-foreground",
-              livre && !selecionado &&
-                "bg-primary/10 text-primary group-hover:animate-float-soft group-hover:bg-primary/15",
-              selecionado && "animate-pop bg-primary text-primary-foreground",
+          <div className="relative w-fit">
+            <div
+              className={cn(
+                "flex h-14 w-14 items-center justify-center rounded-2xl transition-all duration-300",
+                !livre && "bg-muted text-muted-foreground",
+                livre && !selecionado &&
+                  "bg-primary/10 text-primary group-hover:animate-float-soft group-hover:bg-primary/15",
+                selecionado && "animate-pop bg-primary text-primary-foreground",
+              )}
+            >
+              <Car className="h-7 w-7" />
+            </div>
+
+            {selecionado ? (
+              <span className="absolute -right-1.5 -top-1.5 flex h-6 w-6 animate-check-pop items-center justify-center rounded-full bg-primary text-primary-foreground ring-2 ring-card">
+                <Check className="h-3.5 w-3.5" strokeWidth={3} />
+              </span>
+            ) : (
+              <span
+                aria-hidden
+                className={cn(
+                  "absolute -right-0.5 -top-0.5 h-3 w-3 rounded-full ring-2 ring-card transition-colors",
+                  livre ? "bg-emerald-500 animate-pulse-soft" : "bg-destructive",
+                )}
+              />
             )}
-          >
-            <Car className="h-7 w-7" />
           </div>
 
           <div className="min-w-0">
@@ -147,7 +149,10 @@ export function CardVeiculo({ veiculo, disponibilidade, selecionado, indice, onS
         {fotoUrl && !fotoQuebrada && (
           <div
             className={cn(
-              "h-28 w-28 shrink-0 overflow-hidden rounded-xl border border-border bg-muted transition-all duration-300",
+              // Largura proporcional em vez de quadrado fixo: além de render a
+              // foto maior, ela passa a COMEÇAR mais à esquerda, encostada no
+              // texto, em vez de ficar espremida na borda direita.
+              "h-32 w-[46%] shrink-0 overflow-hidden rounded-xl border border-border bg-muted transition-all duration-300",
               !livre && "opacity-60 grayscale",
               selecionado && "border-primary/50 ring-1 ring-primary/30",
             )}
