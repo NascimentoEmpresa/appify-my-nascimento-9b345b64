@@ -14,6 +14,7 @@ import {
   useRascunhos, useCatalogoMutations, OPCOES_PREDEFINIDAS, LABEL_TIPO_ITEM,
   type TipoItem, type Item,
 } from "@/hooks/useSupCatalogo";
+import { AutorAlteracao } from "@/components/suprimentos/HistoricoLote";
 import {
   Plus, Pencil, Trash2, Settings2, Send, ChevronRight, Building2, MapPin,
   Briefcase, Shirt, Info, ClipboardCheck,
@@ -242,13 +243,25 @@ export default function CatalogoMateriais() {
       {rascunhos.length > 0 && (
         <div className="flex items-start gap-3 rounded-lg border border-amber-400/40 bg-amber-50/60 p-3 text-sm dark:bg-amber-950/20">
           <Info className="mt-0.5 h-4 w-4 shrink-0 text-amber-600" />
-          <div>
+          <div className="min-w-0 flex-1">
             <p className="font-medium text-amber-900 dark:text-amber-200">
               {rascunhos.length} alteraç{rascunhos.length === 1 ? "ão" : "ões"} em rascunho
             </p>
             <p className="text-amber-800/80 dark:text-amber-200/70">
               Nada disso aparece para o encarregado ainda. Envie para aprovação para que passe a valer.
             </p>
+
+            {/* Quem fez o quê antes de virar lote. O rascunho é compartilhado
+                pela empresa: você pode acabar enviando alteração de outra
+                pessoa para aprovação sem perceber. */}
+            <ul className="mt-2 space-y-1 border-t border-amber-400/30 pt-2">
+              {rascunhos.map((r) => (
+                <li key={r.id} className="flex flex-wrap items-baseline gap-x-2 text-xs">
+                  <span className="text-amber-900 dark:text-amber-200">{r.descricao}</span>
+                  <AutorAlteracao nome={r.criado_por_nome} quando={r.created_at} />
+                </li>
+              ))}
+            </ul>
           </div>
         </div>
       )}

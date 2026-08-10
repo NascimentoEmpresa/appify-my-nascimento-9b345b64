@@ -11,6 +11,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { PageHeader } from "@/components/layout/PageHeader";
 import { useEmpresaId } from "@/hooks/useEmpresaId";
 import type { Alteracao } from "@/hooks/useSupCatalogo";
+import { HistoricoLote, AutorAlteracao } from "@/components/suprimentos/HistoricoLote";
 import { CheckCircle2, XCircle, ChevronDown, ChevronRight, Inbox, PackageCheck } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
@@ -192,15 +193,12 @@ export default function CatalogoAprovacoes() {
                     )}
                   </div>
 
+                  {/* Resumo de uma linha para o card fechado; a trilha completa
+                      (com quem decidiu e o comentário) fica no rodapé do lote
+                      aberto, em <HistoricoLote>. */}
                   <p className="pl-6 text-xs text-muted-foreground">
-                    Enviado por {lote.criado_por_nome ?? "—"} em {fmtData(lote.data_envio)}
-                    {lote.data_resposta && (
-                      <> · Decidido por {lote.decidido_por_nome ?? "—"} em {fmtData(lote.data_resposta)}</>
-                    )}
+                    Enviado por {lote.criado_por_nome ?? "Usuário sem nome"} em {fmtData(lote.data_envio)}
                   </p>
-                  {lote.comentario && (
-                    <p className="pl-6 text-xs italic text-muted-foreground">"{lote.comentario}"</p>
-                  )}
                 </CardHeader>
 
                 {expandido && (
@@ -218,6 +216,9 @@ export default function CatalogoAprovacoes() {
                               {[a.contexto?.contrato, a.contexto?.posto, a.contexto?.funcao]
                                 .filter(Boolean).join(" · ") || "—"}
                             </p>
+                            {/* O catálogo é editado por várias mãos e quem envia o
+                                lote não é necessariamente quem fez cada alteração. */}
+                            <AutorAlteracao nome={a.criado_por_nome} quando={a.created_at} />
                           </div>
                         </div>
                       ))}
@@ -225,6 +226,8 @@ export default function CatalogoAprovacoes() {
                         <p className="py-4 text-center text-xs text-muted-foreground">Carregando alterações…</p>
                       )}
                     </div>
+
+                    <HistoricoLote lote={lote} />
                   </CardContent>
                 )}
               </Card>
