@@ -13,7 +13,7 @@ import { useEmpresaId } from "@/hooks/useEmpresaId";
 import { useContratosCatalogo } from "@/hooks/useSupCatalogo";
 import { ModalManutencao } from "@/components/suprimentos/ModalManutencao";
 import {
-  useBens, useSalvarBem, useExcluirBem, usePostosDoContrato,
+  useBens, useSalvarBem, useExcluirBem, usePostosDoContrato, useFotosDosBens,
   LABEL_CATEGORIA, SEM_CONTRATO, type Bem, type Categoria,
 } from "@/hooks/useSupPatrimonio";
 import {
@@ -43,6 +43,9 @@ interface NoContrato { chave: string; nome: string; postos: NoPosto[] }
 export default function Patrimonio() {
   const { data: empresaId } = useEmpresaId();
   const { data: bens = [], isLoading, error } = useBens(empresaId ?? null);
+  // Bucket privado: as fotos da grade são assinadas em UMA chamada, não uma
+  // por card. Mapa caminho → URL temporária.
+  const { data: fotos = {} } = useFotosDosBens(bens);
   const [busca, setBusca] = useState("");
   const [modoEdicao, setModoEdicao] = useState(false);
   const [abertos, setAbertos] = useState<Record<string, boolean>>({});
@@ -234,6 +237,7 @@ export default function Patrimonio() {
                                             key={b.id}
                                             bem={b}
                                             modoEdicao={modoEdicao}
+                                            fotoUrl={b.foto_path ? fotos[b.foto_path] : undefined}
                                             onAbrir={() => setManutencaoDe(b)}
                                             onEditar={() => setEditando(b)}
                                           />
@@ -269,8 +273,11 @@ export default function Patrimonio() {
 /** Card do bem. O identificador vem em destaque porque é o que distingue
  *  duas unidades do mesmo modelo — há 3 "ROÇADEIRA STHIL FS 220" na base. */
 function CardBem({
-  bem, modoEdicao, onAbrir, onEditar,
-}: { bem: Bem; modoEdicao: boolean; onAbrir: () => void; onEditar: () => void }) {
+  bem, modoEdicao, onAbrir, onEditar, fotoUrl,
+}: {
+  bem: Bem; modoEdicao: boolean; onAbrir: () => void; onEditar: () => void;
+  fotoUrl?: string;
+}) {
   const Icone = bem.categoria === "veiculo" ? Car : Wrench;
   return (
     <div className="relative">
@@ -282,7 +289,18 @@ function CardBem({
           bem.em_manutencao && "border-amber-400/60 bg-amber-50/50 dark:bg-amber-950/20",
         )}
       >
-        <Icone className={cn("h-5 w-5", bem.em_manutencao ? "text-amber-600" : "text-muted-foreground")} />
+        {/* A foto ocupa o lugar do ícone: boa parte da frota entrou sem placa
+            ou nº de série, e "MONTANA" ao lado de "ONIX" não diz qual é. */}
+        {fotoUrl ? (
+          <img
+            src={fotoUrl}
+            alt={`Foto de ${bem.nome}`}
+            loading="lazy"
+            className="mb-1 h-20 w-full rounded object-cover"
+          />
+        ) : (
+          <Icone className={cn("h-5 w-5", bem.em_manutencao ? "text-amber-600" : "text-muted-foreground")} />
+        )}
         <span className="line-clamp-2 text-sm font-medium">{bem.nome}</span>
         <span className="line-clamp-1 font-mono text-[11px] text-muted-foreground">
           {bem.identificador ?? "sem identificador"}

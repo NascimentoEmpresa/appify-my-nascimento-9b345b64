@@ -35,6 +35,8 @@ export interface Bem {
   data_previsao_fim: string | null;
   ativo: boolean;
   observacoes: string | null;
+  /** Caminho no bucket privado. UMA foto por bem, como foto de perfil. */
+  foto_path: string | null;
   contrato: { id: string; nome: string } | null;
   posto: { id: string; nome: string } | null;
 }
@@ -265,4 +267,87 @@ export function useRemoverArquivo() {
 export async function urlDoArquivo(caminho: string): Promise<string | null> {
   const { data } = await supabase.storage.from("sup-patrimonio").createSignedUrl(caminho, 300);
   return data?.signedUrl ?? null;
+}
+
+// ── Foto do bem ──────────────────────────────────────────────────────
+
+const FOTO_MAX = 5 * 1024 * 1024;
+
+/**
+ * Troca a foto do bem. Sobe a nova, aponta a coluna e só então apaga a
+ * antiga — nessa ordem, uma falha no meio deixa o bem com a foto velha
+ * funcionando, em vez de sem foto nenhuma.
+ */
+export function useSalvarFoto() {
+  const invalidar = useInvalidar();
+  return useMutation({
+    mutationFn: async (v: { bem: Bem; arquivo: File }) => {
+      if (!v.arquivo.type.startsWith("image/")) {
+        throw new Error("Escolha uma imagem (JPG, PNG ou WEBP).");
+      }
+      if (v.arquivo.size > FOTO_MAX) {
+        throw new Error(`A imagem tem ${(v.arquivo.size / 1024 / 1024).toFixed(1)} MB. O limite é 5 MB.`);
+      }
+      const ext = (v.arquivo.name.split(".").pop() || "jpg").toLowerCase();
+      const caminho = `fotos/${v.bem.id}/${crypto.randomUUID()}.${ext}`;
+
+      const { error: upErr } = await supabase.storage
+        .from("sup-patrimonio").upload(caminho, v.arquivo);
+      if (upErr) throw upErr;
+
+      const { error } = await sb.from("sup_patrimonio")
+        .update({ foto_path: caminho }).eq("id", v.bem.id);
+      if (error) throw error;
+
+      if (v.bem.foto_path) {
+        await supabase.storage.from("sup-patrimonio").remove([v.bem.foto_path]);
+      }
+    },
+    onSuccess: () => { invalidar(); toast.success("Foto atualizada."); },
+    onError: (e: any) => toast.error(e?.message ?? "Não foi possível salvar a foto."),
+  });
+}
+
+export function useRemoverFoto() {
+  const invalidar = useInvalidar();
+  return useMutation({
+    mutationFn: async (bem: Bem) => {
+      const { error } = await sb.from("sup_patrimonio")
+        .update({ foto_path: null }).eq("id", bem.id);
+      if (error) throw error;
+      if (bem.foto_path) {
+        await supabase.storage.from("sup-patrimonio").remove([bem.foto_path]);
+      }
+    },
+    onSuccess: () => { invalidar(); toast.success("Foto removida."); },
+    onError: (e: any) => toast.error(e?.message ?? "Não foi possível remover a foto."),
+  });
+}
+
+/**
+ * URLs assinadas das fotos, em UMA chamada.
+ *
+ * O bucket é privado, então cada foto precisa de link assinado — e a tela
+ * mostra 129 cards. Uma chamada por card seriam 129 requisições a cada
+ * abertura; `createSignedUrls` (plural) resolve tudo de uma vez.
+ */
+export function useFotosDosBens(bens: Bem[]) {
+  const caminhos = bens.map((b) => b.foto_path).filter(Boolean) as string[];
+  const chave = caminhos.slice().sort().join("|");
+
+  return useQuery({
+    queryKey: ["sup_patrimonio_fotos", chave],
+    enabled: caminhos.length > 0,
+    staleTime: 50 * 60_000,   // o link vale 1h; renova antes de expirar
+    queryFn: async (): Promise<Record<string, string>> => {
+      const { data, error } = await supabase.storage
+        .from("sup-patrimonio").createSignedUrls(caminhos, 3600);
+      if (error) throw error;
+      const mapa: Record<string, string> = {};
+      for (const r of data ?? []) {
+        if (r.signedUrl && r.path) mapa[r.path] = r.signedUrl;
+      }
+      return mapa;
+    },
+  });
 }
