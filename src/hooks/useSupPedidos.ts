@@ -55,7 +55,7 @@ export interface PedidoItem {
 export interface MeuPedido {
   id: string; pedido_id: string; status: string; data_solicitacao: string;
   contrato_nome: string; posto_nome: string; funcao_nome: string;
-  nome_colaborador: string; matricula_colaborador: string;
+  nome_colaborador: string; matricula_colaborador: string | null;
   tipo_pedido: string; observacoes_solicitante: string | null; observacao: string | null;
   data_despachado: string | null; created_at: string;
   itens: PedidoItem[];
@@ -157,8 +157,14 @@ export interface NovoPedido {
   contrato_id: string;
   posto_id: string;
   funcao_id: string;
-  nome_colaborador?: string;
-  matricula_colaborador?: string;
+  /**
+   * EMPREGADOS."ID" do colaborador escolhido na lista. A RPC resolve nome e
+   * matrícula a partir dele NO SERVIDOR e ignora o que vier nos campos de
+   * texto — é o que impede inventar colaborador.
+   */
+  colaborador_empregado_id?: number | null;
+  /** Só vale quando `admissao` é true: a pessoa ainda não está na folha. */
+  nome_colaborador?: string | null;
   admissao?: boolean;
   tipo_admissao?: string | null;
   data_admissao?: string | null;

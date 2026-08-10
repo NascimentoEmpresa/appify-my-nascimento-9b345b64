@@ -45,7 +45,8 @@ interface Pedido {
   id: string; pedido_id: string; status: string; data_solicitacao: string;
   contrato_nome: string; posto_nome: string; funcao_nome: string;
   solicitante_login: string; solicitante_nome: string | null;
-  nome_colaborador: string; matricula_colaborador: string;
+  nome_colaborador: string; matricula_colaborador: string | null;
+  colaborador_empregado_id: number | null; colaborador_digitado: boolean;
   admissao: boolean; tipo_admissao: string | null; data_admissao: string | null;
   tipo_pedido: string; observacoes_solicitante: string | null; observacao: string | null;
   imagem_cracha_path: string | null;
@@ -341,8 +342,27 @@ function CardPedido({
 
       <CardContent className="flex-1 space-y-3 text-sm">
         <dl className="grid grid-cols-[6.5rem_1fr] gap-x-3 gap-y-1">
-          {p.nome_colaborador && (<><dt className="text-muted-foreground">Colaborador</dt><dd className="truncate">{p.nome_colaborador}</dd></>)}
-          {p.matricula_colaborador && (<><dt className="text-muted-foreground">Matrícula</dt><dd>{p.matricula_colaborador}</dd></>)}
+          {p.nome_colaborador && (
+            <>
+              <dt className="text-muted-foreground">Colaborador</dt>
+              <dd className="truncate">
+                {p.nome_colaborador}
+                {/* Nome digitado à mão só acontece em admissão, quando a pessoa
+                    ainda não está na folha — e é justamente o que o Supply
+                    precisa conferir com o RH antes de entregar. */}
+                {p.colaborador_digitado && (
+                  <span className="ml-1.5 rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-medium text-amber-800 dark:bg-amber-950/50 dark:text-amber-300">
+                    digitado
+                  </span>
+                )}
+              </dd>
+            </>
+          )}
+          {p.matricula_colaborador
+            ? (<><dt className="text-muted-foreground">Matrícula</dt><dd>{p.matricula_colaborador}</dd></>)
+            : p.admissao
+              ? (<><dt className="text-muted-foreground">Matrícula</dt><dd className="text-muted-foreground">ainda não tem</dd></>)
+              : null}
           <dt className="text-muted-foreground">Solicitante</dt><dd className="truncate">{p.solicitante_nome ?? p.solicitante_login}</dd>
           <dt className="text-muted-foreground">Contrato</dt><dd className="truncate">{p.contrato_nome}</dd>
           <dt className="text-muted-foreground">Posto</dt><dd className="truncate">{p.posto_nome}</dd>
