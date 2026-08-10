@@ -30,6 +30,7 @@ import Historico from "./pages/Historico";
 import Administracao from "./pages/Administracao";
 import SmokeTestHelena from "./pages/admin/SmokeTestHelena";
 import MeuPerfil from "./pages/MeuPerfil";
+import DiscordCallback from "./pages/DiscordCallback";
 import Composicao from "./pages/Composicao";
 import CustosBDI from "./pages/CustosBDI";
 import ParecerSST from "./pages/pareceres/ParecerSST";
@@ -219,6 +220,13 @@ const App = () => (
                 usuário externo (sessão anônima) enxerga; ver useModoExterno. */}
             <Route path="encarregados/solicitar-materiais" element={<SolicitarMateriais />} />
             <Route path="encarregados/meus-pedidos" element={<MeusPedidos />} />
+            {/* Chamados de Sistemas para o encarregado. São as MESMAS telas da
+                Central de Serviços — o prop `base` já existia para isto —, só
+                que ancoradas no módulo dele, para não obrigar quem vive em
+                Encarregados a caçar a tela em outro menu. */}
+            <Route path="encarregados/chamados" element={<MeusChamados base="/app/encarregados/chamados" />} />
+            <Route path="encarregados/chamados/novo" element={<AbrirChamado base="/app/encarregados/chamados" />} />
+            <Route path="encarregados/chamados/:id/acompanhar" element={<AcompanharChamado base="/app/encarregados/chamados" />} />
             {/* Sistemas */}
             <Route path="sistemas/solicitacoes-erp" element={<SolicitacoesErp />} />
             {/* Chamados de Sistemas (help desk) — telas de abrir/meus chamados também
@@ -304,6 +312,9 @@ const App = () => (
             <Route path="administracao" element={<Administracao />} />
             <Route path="admin/smoke-helena" element={<SmokeTestHelena />} />
             <Route path="meu-perfil" element={<MeuPerfil />} />
+            {/* URL de retorno do OAuth do Discord. Precisa ser fixa: o Discord
+                só aceita redirecionar para endereços registrados no app. */}
+            <Route path="meu-perfil/discord" element={<DiscordCallback />} />
             <Route path="controladoria/empresas" element={<Empresas />} />
             <Route path="controladoria/centros-custo" element={<CentrosCusto />} />
             <Route path="controladoria/estrutura-organizacional" element={<EstruturaOrganizacional />} />

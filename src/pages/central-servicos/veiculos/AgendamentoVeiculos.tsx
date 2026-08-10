@@ -184,6 +184,9 @@ export default function AgendamentoVeiculos() {
                     )}
 
                     {!frota.isLoading && !frota.isError && listaFrota.length === 0 && (
+                      // Desde a 20260828000007 a frota é do grupo inteiro, sem
+                      // filtro por empresa: chegar aqui significa mesmo que não
+                      // há veículo ativo cadastrado.
                       <div className="rounded-xl border border-dashed border-border p-10 text-center">
                         <Car className="mx-auto mb-3 h-10 w-10 text-muted-foreground/50" />
                         <p className="font-medium text-foreground">Nenhum veículo cadastrado</p>
