@@ -40,6 +40,8 @@ export interface VeiculoFrota {
   identificador: string | null;
   lotacao: string | null;
   contrato_nome: string | null;
+  /** Preenchida pelo módulo de Patrimônio. Aqui só é lida. */
+  foto_path: string | null;
   em_manutencao: boolean;
   data_inicio_manutencao: string | null;
   data_previsao_fim: string | null;
@@ -89,6 +91,54 @@ export interface NovoAgendamento {
   motivo?: string | null;
   observacoes?: string | null;
   contratos: { id: string | null; nome: string }[];
+}
+
+// ── Foto do veículo ──────────────────────────────────────────────────
+
+/**
+ * A foto do veículo mora no bucket do Patrimônio, sob o prefixo `fotos/` —
+ * é lá que aquele módulo grava. O bucket é privado (guarda as notas fiscais
+ * de manutenção), então a imagem só abre por signed URL; a policy que
+ * autoriza isso libera SÓ o prefixo `fotos/`, ver migration 20260828000005.
+ */
+const BUCKET_FOTO_VEICULO = "sup-patrimonio";
+
+/** Quanto tempo o link assinado da foto vale, em segundos. Uma hora. */
+const VALIDADE_LINK_S = 3600;
+
+/**
+ * Folga para renovar o link antes de ele morrer. Com 10 min, o react-query
+ * busca um link novo aos 50 min — se a folga fosse zero, uma aba aberta há
+ * exatamente uma hora mostraria foto quebrada até alguém recarregar.
+ */
+const FOLGA_RENOVACAO_S = 600;
+
+/**
+ * Link temporário para a foto do veículo.
+ *
+ * Tolera URL inteira além de caminho de bucket porque a coluna é preenchida
+ * por outro módulo e não dá para garantir o formato daqui — melhor tolerar do
+ * que quebrar o card. Sem foto ou sem permissão, devolve null e o card fica
+ * só com o ícone.
+ */
+export function useFotoVeiculo(fotoPath: string | null | undefined) {
+  const caminho = fotoPath?.trim() || null;
+
+  return useQuery({
+    queryKey: ["foto_veiculo", caminho],
+    enabled: !!caminho,
+    staleTime: (VALIDADE_LINK_S - FOLGA_RENOVACAO_S) * 1000,
+    retry: false,
+    queryFn: async (): Promise<string | null> => {
+      if (!caminho) return null;
+      if (/^https?:\/\//i.test(caminho)) return caminho;
+      const { data, error } = await supabase.storage
+        .from(BUCKET_FOTO_VEICULO)
+        .createSignedUrl(caminho, VALIDADE_LINK_S);
+      if (error) return null;
+      return data?.signedUrl ?? null;
+    },
+  });
 }
 
 // ── Disponibilidade ──────────────────────────────────────────────────
