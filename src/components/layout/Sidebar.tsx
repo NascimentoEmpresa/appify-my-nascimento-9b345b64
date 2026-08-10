@@ -466,14 +466,17 @@ const encarregadosModule: ModuleDef = {
       ],
     },
     {
-      label: "Acompanhamento",
+      label: "Suprimentos",
       defaultOpen: true,
       items: [
         // "Minhas Solicitações" saiu do menu a pedido: cada solicitação já tem
         // seu próprio item acima, e a rota continua de pé (o Início e os
         // redirecionamentos do Jurídico ainda apontam para ela).
         { label: "Solicitar Materiais", to: "/app/encarregados/solicitar-materiais", icon: Shirt },
-        { label: "Meus Pedidos", to: "/app/encarregados/meus-pedidos", icon: Truck },
+        // "Meus Pedidos" era ambíguo ao lado de "Minhas Solicitações": o
+        // encarregado não distingue pedido de solicitação. O rótulo agora diz
+        // de que são.
+        { label: "Minhas Solicitações de Materiais", to: "/app/encarregados/meus-pedidos", icon: Truck },
       ],
     },
   ],
@@ -1105,8 +1108,11 @@ function SidebarGroup({ group }: { group: NavGroup }) {
                 {({ isActive }) => (
                   <>
                     {isActive && <span className="absolute left-0 top-1.5 bottom-1.5 w-0.5 rounded-r bg-accent" />}
-                    <item.icon className={cn("h-3.5 w-3.5 shrink-0", isActive ? "text-accent" : "")} />
-                    <span className="flex-1 truncate">{item.label}</span>
+                    <item.icon className={cn("mt-0.5 h-3.5 w-3.5 shrink-0 self-start", isActive ? "text-accent" : "")} />
+                    {/* Quebra em duas linhas em vez de cortar com reticências:
+                        "Minhas Solicitações de Ma…" esconde justamente a
+                        palavra que distingue um item do outro. */}
+                    <span className="min-w-0 flex-1 leading-snug [overflow-wrap:anywhere]">{item.label}</span>
                     {item.dot && (
                       <span className="h-2 w-2 shrink-0 rounded-full bg-red-500" title="Novidades" />
                     )}

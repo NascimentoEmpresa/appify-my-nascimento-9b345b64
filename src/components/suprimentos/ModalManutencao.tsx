@@ -11,6 +11,7 @@ import {
   useRemoverArquivo, urlDoArquivo, mascaraBRL, brlParaNumero,
   type Bem, type ArquivoBem,
 } from "@/hooks/useSupPatrimonio";
+import { FotoDoBem } from "@/components/suprimentos/FotoDoBem";
 import { Upload, Trash2, FileText, Wrench, Loader2, ExternalLink } from "lucide-react";
 import { toast } from "sonner";
 
@@ -81,6 +82,11 @@ export function ModalManutencao({ bem, onFechar }: { bem: Bem | null; onFechar: 
         </DialogHeader>
 
         <div className="min-w-0 space-y-5 py-1">
+          {/* Foto — mesma lógica de foto de perfil: uma só, trocável no lugar.
+              Fica no topo porque é o que identifica o bem de relance, ainda
+              mais nos que entraram sem placa/nº de série. */}
+          {bem && <FotoDoBem bem={bem} />}
+
           {/* Onde está */}
           <div className="rounded-md border bg-muted/40 p-3 text-sm">
             <span className="text-muted-foreground">Local: </span>
