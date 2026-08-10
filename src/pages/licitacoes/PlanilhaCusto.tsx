@@ -470,8 +470,8 @@ export default function PlanilhaCusto() {
 
       {/* Modal de migração em lote */}
       <Dialog open={migracaoOpen} onOpenChange={(o) => !o && setMigracaoOpen(false)}>
-        <DialogContent className="max-w-lg p-0">
-          {migracaoOpen && <MigracaoModal onClose={() => setMigracaoOpen(false)} />}
+        <DialogContent className="max-w-2xl p-0">
+          {migracaoOpen && <MigracaoModal rows={rows} onClose={() => setMigracaoOpen(false)} />}
         </DialogContent>
       </Dialog>
 
@@ -1259,7 +1259,7 @@ function ContratosModal({ rows, statusMap }: { rows: PlanilhaCustoRow[]; statusM
       c.contrato.toLowerCase().includes(search.toLowerCase()) ||
       c.cliente.toLowerCase().includes(search.toLowerCase())
     )
-    .sort((a, b) => (b.executado || b.orcado) - (a.executado || a.orcado));
+    .sort((a, b) => a.contrato.localeCompare(b.contrato, "pt-BR", { sensitivity: "base" }));
 
   const totalOrcado = lista.reduce((s, c) => s + c.orcado, 0);
   const totalExecutado = lista.reduce((s, c) => s + c.executado, 0);
@@ -2655,7 +2655,7 @@ function parseExcelRows(aoa: unknown[][]): { empresa: string; row: any }[] {
   return results;
 }
 
-function MigracaoModal({ onClose }: { onClose: () => void }) {
+function MigracaoModal({ rows: erpRows, onClose }: { rows: PlanilhaCustoRow[]; onClose: () => void }) {
   const bulk = useBulkInsertPlanilhaCusto();
   const { empresa } = useEmpresaAtiva();
   const fileRef = useRef<HTMLInputElement>(null);
@@ -2664,9 +2664,22 @@ function MigracaoModal({ onClose }: { onClose: () => void }) {
   const [filtroEmpresa, setFiltroEmpresa] = useState<string>("TODOS");
   const [loading, setLoading] = useState(false);
 
-  const pendingRows = filtroEmpresa === "TODOS"
-    ? allParsed.map((r) => r.row)
-    : allParsed.filter((r) => r.empresa === filtroEmpresa).map((r) => r.row);
+  // Chaves dos registros já existentes no ERP: "contrato||posto||data_vigencia"
+  const erpKeys = React.useMemo(() => {
+    const s = new Set<string>();
+    for (const r of erpRows) {
+      const key = `${r.contrato.trim().toLowerCase()}||${r.posto.trim().toLowerCase()}||${r.data_vigencia ?? ""}`;
+      s.add(key);
+    }
+    return s;
+  }, [erpRows]);
+
+  const filtrados = filtroEmpresa === "TODOS"
+    ? allParsed
+    : allParsed.filter((r) => r.empresa === filtroEmpresa);
+
+  const jaNoERP   = filtrados.filter((r) => erpKeys.has(`${String(r.row.contrato ?? "").trim().toLowerCase()}||${String(r.row.posto ?? "").trim().toLowerCase()}||${r.row.data_vigencia ?? ""}`));
+  const pendingRows = filtrados.filter((r) => !erpKeys.has(`${String(r.row.contrato ?? "").trim().toLowerCase()}||${String(r.row.posto ?? "").trim().toLowerCase()}||${r.row.data_vigencia ?? ""}`)).map((r) => r.row);
 
   async function handleFile(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
@@ -2710,8 +2723,6 @@ function MigracaoModal({ onClose }: { onClose: () => void }) {
       toast.error("Erro na importação: " + err.message);
     }
   }
-
-  const sample = pendingRows.slice(0, 5);
 
   return (
     <div>
@@ -2765,21 +2776,38 @@ function MigracaoModal({ onClose }: { onClose: () => void }) {
                   </select>
                 </div>
 
-                <div className="rounded-lg border border-border p-4 space-y-2">
-                  <span className="inline-flex h-6 items-center rounded-full bg-success-soft px-2.5 text-xs font-semibold text-success">
-                    {pendingRows.length} registros para importar
-                  </span>
-                  <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground mt-2">
-                    Prévia (primeiros 5):
-                  </p>
-                  <ul className="space-y-1">
-                    {sample.map((r, i) => (
-                      <li key={i} className="text-xs text-muted-foreground truncate">
-                        · {r.cliente} · {r.contrato} · {r.posto}
-                      </li>
-                    ))}
-                  </ul>
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="rounded-lg border border-success/30 bg-success-soft px-4 py-3 text-center">
+                    <p className="text-2xl font-bold text-success">{pendingRows.length}</p>
+                    <p className="text-xs text-success/80">faltando no ERP (serão importados)</p>
+                  </div>
+                  <div className="rounded-lg border border-border bg-muted/30 px-4 py-3 text-center">
+                    <p className="text-2xl font-bold text-muted-foreground">{jaNoERP.length}</p>
+                    <p className="text-xs text-muted-foreground">já no ERP (ignorados)</p>
+                  </div>
                 </div>
+
+                {pendingRows.length > 0 && (
+                  <div className="rounded-lg border border-border p-4 space-y-2">
+                    <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+                      Prévia — faltando (primeiros 5):
+                    </p>
+                    <ul className="space-y-1">
+                      {pendingRows.slice(0, 5).map((r: any, i: number) => (
+                        <li key={i} className="text-xs text-muted-foreground break-words">
+                          · {r.cliente} · {r.contrato} · {r.posto}
+                          {r.data_vigencia ? ` · ${r.data_vigencia}` : ""}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+
+                {jaNoERP.length > 0 && pendingRows.length === 0 && (
+                  <div className="rounded-lg border border-success/30 bg-success-soft px-4 py-3 text-xs text-success">
+                    Todos os registros do Excel já constam no ERP. Nada a importar.
+                  </div>
+                )}
               </div>
             )}
           </div>
