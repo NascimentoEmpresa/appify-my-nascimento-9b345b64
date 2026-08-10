@@ -8669,3 +8669,155 @@ DELETE FROM public.app_menu                WHERE codigo      = 'central_servicos
 SELECT codigo, nome, rota FROM public.app_menu WHERE codigo LIKE 'central_servicos_veiculos%';
 
 NOTIFY pgrst, 'reload schema';
+
+
+-- ===== 20260828000004_veiculos_foto =====
+-- =====================================================================
+-- AGENDAMENTO DE VEÍCULOS — a foto do carro no card
+--
+-- `sup_patrimonio.foto_path` já existe e será preenchida pelo módulo de
+-- Patrimônio. Aqui só se LÊ: a coluna entra no retorno da RPC da frota.
+--
+-- POR QUE UM BUCKET NOVO, E NÃO O `sup-patrimonio`
+--
+--   O bucket `sup-patrimonio` é privado e guarda as NOTAS FISCAIS de
+--   manutenção — a 20260824000001 é explícita: "nota fiscal de manutenção
+--   não é documento público". A policy de leitura dele exige
+--   can_access('sup_patrimonio'|'sup_manutencao'), que o colaborador comum
+--   não tem.
+--
+--   Para a foto aparecer no card do agendamento haveria duas saídas:
+--   liberar leitura naquele bucket (o que exporia as notas fiscais junto —
+--   regressão de privacidade), ou dar à foto um lugar próprio. É a segunda.
+--   Foto de carro não é documento sigiloso; nota fiscal é. Bucket separado
+--   mantém as duas coisas com a visibilidade que cada uma merece.
+--
+--   ESCREVER continua restrito a quem administra o Patrimônio. Só a LEITURA
+--   é aberta, e só das fotos.
+--
+-- ROLLBACK:
+--   DELETE FROM storage.buckets WHERE id = 'sup-veiculo-foto';
+--   (e reaplicar a RPC da 20260828000002, sem foto_path)
+-- =====================================================================
+
+-- ── 1. Bucket público só de fotos de veículo ─────────────────────────
+INSERT INTO storage.buckets (id, name, public)
+VALUES ('sup-veiculo-foto', 'sup-veiculo-foto', true)
+ON CONFLICT (id) DO UPDATE SET public = true;
+
+-- Leitura: o bucket é público, então o <img> do card funciona para qualquer
+-- colaborador, sem signed URL e sem depender de permissão de Patrimônio.
+-- Escrita: só quem administra o Patrimônio, que é quem cadastra o bem.
+DROP POLICY IF EXISTS sup_veic_foto_insert ON storage.objects;
+CREATE POLICY sup_veic_foto_insert ON storage.objects FOR INSERT TO authenticated
+  WITH CHECK (bucket_id = 'sup-veiculo-foto'
+    AND public.can_access(auth.uid(), 'sup_patrimonio', 'alterar'));
+
+DROP POLICY IF EXISTS sup_veic_foto_update ON storage.objects;
+CREATE POLICY sup_veic_foto_update ON storage.objects FOR UPDATE TO authenticated
+  USING (bucket_id = 'sup-veiculo-foto'
+    AND public.can_access(auth.uid(), 'sup_patrimonio', 'alterar'));
+
+DROP POLICY IF EXISTS sup_veic_foto_delete ON storage.objects;
+CREATE POLICY sup_veic_foto_delete ON storage.objects FOR DELETE TO authenticated
+  USING (bucket_id = 'sup-veiculo-foto'
+    AND public.can_access(auth.uid(), 'sup_patrimonio', 'alterar'));
+
+-- ── 2. A RPC passa a devolver a foto ─────────────────────────────────
+DROP FUNCTION IF EXISTS public.cs_veiculos_frota();
+
+CREATE OR REPLACE FUNCTION public.cs_veiculos_frota()
+RETURNS TABLE (
+  id                     uuid,
+  empresa_id             uuid,
+  nome                   text,
+  identificador          text,
+  lotacao                text,
+  contrato_nome          text,
+  foto_path              text,
+  em_manutencao          boolean,
+  data_inicio_manutencao date,
+  data_previsao_fim      date
+)
+LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public, pg_temp
+AS $$
+  SELECT p.id, p.empresa_id, p.nome, p.identificador, p.lotacao, c.nome,
+         p.foto_path,
+         p.em_manutencao, p.data_inicio_manutencao, p.data_previsao_fim
+    FROM public.sup_patrimonio p
+    LEFT JOIN public.contratos c ON c.id = p.contrato_id
+   WHERE p.categoria = 'veiculo'
+     AND p.ativo
+     AND public.tem_acesso_menu('central_servicos_veiculos')
+     AND p.empresa_id IN (
+       SELECT ue.empresa_id FROM public.user_empresa ue WHERE ue.user_id = auth.uid()
+     )
+   ORDER BY p.nome;
+$$;
+REVOKE ALL ON FUNCTION public.cs_veiculos_frota() FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.cs_veiculos_frota() TO authenticated;
+
+NOTIFY pgrst, 'reload schema';
+
+
+-- ===== 20260828000005_veiculos_foto_bucket_correto =====
+-- =====================================================================
+-- AGENDAMENTO DE VEÍCULOS — a foto está no bucket do Patrimônio
+--
+-- A 20260828000004 apostou que a foto do veículo iria para um bucket novo
+-- (`sup-veiculo-foto`). Não foi: o módulo de Patrimônio já grava em
+-- `sup-patrimonio`, sob o prefixo `fotos/`. Adaptar-se a onde o arquivo
+-- realmente está é mais barato do que mover arquivo e reescrever o outro
+-- módulo — então o bucket novo, que nasceu vazio, é removido aqui.
+--
+-- O PROBLEMA E A SOLUÇÃO CIRÚRGICA
+--
+--   `sup-patrimonio` é privado porque guarda as NOTAS FISCAIS de manutenção,
+--   e a policy de leitura exige can_access('sup_patrimonio'|'sup_manutencao').
+--   O colaborador que só agenda carro não tem isso.
+--
+--   Liberar o bucket inteiro exporia as notas junto. Mas os dois tipos de
+--   arquivo moram em prefixos diferentes, e isso resolve:
+--
+--     foto  → fotos/<patrimonio_id>/<uuid>.ext
+--     nota  → <patrimonio_id>/<uuid>.ext      (useSupPatrimonio.ts:208)
+--
+--   Então a policy nova concede leitura APENAS de `fotos/%`, e apenas a quem
+--   tem a tela de agendamento. Nota fiscal continua exatamente tão privada
+--   quanto era — nenhuma policy existente foi alterada, só somou-se uma.
+--
+-- ROLLBACK:
+--   DROP POLICY IF EXISTS sup_patrim_storage_select_foto ON storage.objects;
+-- =====================================================================
+
+-- ── 1. Leitura só das fotos, só para quem agenda ─────────────────────
+-- Policies de SELECT em storage.objects são somadas (OR): esta não afrouxa
+-- nem substitui a `sup_patrim_storage_select` do Patrimônio, que segue
+-- valendo para quem tem aquele módulo.
+DROP POLICY IF EXISTS sup_patrim_storage_select_foto ON storage.objects;
+CREATE POLICY sup_patrim_storage_select_foto ON storage.objects FOR SELECT TO authenticated
+  USING (
+    bucket_id = 'sup-patrimonio'
+    AND name LIKE 'fotos/%'
+    AND public.tem_acesso_menu('central_servicos_veiculos')
+  );
+
+-- ── 2. Desarma o bucket que a aposta errada criou ────────────────────
+-- As policies de escrita saem, então nada mais consegue gravar nele. O
+-- bucket em si NÃO é apagado aqui: o Supabase barra DELETE direto em
+-- storage.buckets (storage.protect_delete), só a Storage API remove. Ele
+-- nasceu vazio e fica inerte — sem policy de escrita, ninguém usa por
+-- engano. Remover a casca vazia é um clique no painel de Storage.
+DROP POLICY IF EXISTS sup_veic_foto_insert ON storage.objects;
+DROP POLICY IF EXISTS sup_veic_foto_update ON storage.objects;
+DROP POLICY IF EXISTS sup_veic_foto_delete ON storage.objects;
+
+-- Deixa de ser público, para não passar a impressão de que ainda serve.
+UPDATE storage.buckets SET public = false WHERE id = 'sup-veiculo-foto';
+
+-- ── 3. Conferência ───────────────────────────────────────────────────
+SELECT
+  (SELECT count(*) FROM pg_policy WHERE polname = 'sup_patrim_storage_select_foto') AS policy_foto_deve_ser_1,
+  (SELECT count(*) FROM pg_policy WHERE polname LIKE 'sup_veic_foto%')              AS policies_orfas_deve_ser_0;
+
+NOTIFY pgrst, 'reload schema';

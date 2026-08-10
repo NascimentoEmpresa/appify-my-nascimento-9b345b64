@@ -1,7 +1,7 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Car, Check, Wrench, CalendarClock } from "lucide-react";
 import { cn } from "@/lib/utils";
-import type { Disponibilidade, VeiculoFrota } from "@/hooks/useAgendamentoVeiculos";
+import { useFotoVeiculo, type Disponibilidade, type VeiculoFrota } from "@/hooks/useAgendamentoVeiculos";
 
 interface Props {
   veiculo: VeiculoFrota;
@@ -27,7 +27,12 @@ interface Props {
  */
 export function CardVeiculo({ veiculo, disponibilidade, selecionado, indice, onSelecionar }: Props) {
   const [recusando, setRecusando] = useState(false);
+  const [fotoQuebrada, setFotoQuebrada] = useState(false);
   const livre = disponibilidade.disponivel;
+  const { data: fotoUrl } = useFotoVeiculo(veiculo.foto_path);
+
+  // Trocou a foto no Patrimônio: dá outra chance de carregar.
+  useEffect(() => setFotoQuebrada(false), [fotoUrl]);
 
   const clicar = () => {
     if (!livre) {
@@ -90,41 +95,72 @@ export function CardVeiculo({ veiculo, disponibilidade, selecionado, indice, onS
         </span>
       )}
 
-      <div
-        className={cn(
-          "flex h-14 w-14 items-center justify-center rounded-2xl transition-all duration-300",
-          // O selo "Indisponível" ocupa o topo do card, então o ícone desce.
-          !livre && "mt-3 bg-muted text-muted-foreground",
-          livre && !selecionado && "bg-primary/10 text-primary group-hover:animate-float-soft group-hover:bg-primary/15",
-          selecionado && "animate-pop bg-primary text-primary-foreground",
-        )}
-      >
-        <Car className="h-7 w-7" />
-      </div>
-
-      <div className="w-full">
-        <div className={cn("font-semibold leading-tight", livre ? "text-foreground" : "text-muted-foreground")}>
-          {veiculo.nome}
-        </div>
-        {veiculo.identificador && (
-          <div className="mt-1.5 inline-block rounded-md border border-border bg-muted/60 px-2 py-0.5 font-mono text-xs tracking-wider text-muted-foreground">
-            {veiculo.identificador}
-          </div>
-        )}
-        {(veiculo.contrato_nome || veiculo.lotacao) && (
-          <div className="mt-1.5 truncate text-xs text-muted-foreground">
-            {veiculo.contrato_nome ?? veiculo.lotacao}
-          </div>
-        )}
-        {disponibilidade.detalhe && (
+      {/* Informação à esquerda, foto à direita ocupando o espaço que sobrava.
+          Sem foto, a coluna da esquerda toma o card inteiro — hoje nenhum
+          veículo tem imagem, então este é o estado normal, não a exceção. */}
+      <div className={cn("flex w-full items-start gap-3", !livre && "mt-3")}>
+        <div className="flex min-w-0 flex-1 flex-col gap-3">
           <div
             className={cn(
-              "mt-2 flex items-start gap-1.5 text-xs",
-              livre ? "text-emerald-600 dark:text-emerald-400" : "text-amber-600 dark:text-amber-400",
+              "flex h-14 w-14 items-center justify-center rounded-2xl transition-all duration-300",
+              !livre && "bg-muted text-muted-foreground",
+              livre && !selecionado &&
+                "bg-primary/10 text-primary group-hover:animate-float-soft group-hover:bg-primary/15",
+              selecionado && "animate-pop bg-primary text-primary-foreground",
             )}
           >
-            {livre ? <CalendarClock className="mt-0.5 h-3 w-3 shrink-0" /> : <Wrench className="mt-0.5 h-3 w-3 shrink-0" />}
-            <span>{disponibilidade.detalhe}</span>
+            <Car className="h-7 w-7" />
+          </div>
+
+          <div className="min-w-0">
+            <div className={cn("font-semibold leading-tight", livre ? "text-foreground" : "text-muted-foreground")}>
+              {veiculo.nome}
+            </div>
+            {veiculo.identificador && (
+              <div className="mt-1.5 inline-block rounded-md border border-border bg-muted/60 px-2 py-0.5 font-mono text-xs tracking-wider text-muted-foreground">
+                {veiculo.identificador}
+              </div>
+            )}
+            {(veiculo.contrato_nome || veiculo.lotacao) && (
+              <div className="mt-1.5 truncate text-xs text-muted-foreground">
+                {veiculo.contrato_nome ?? veiculo.lotacao}
+              </div>
+            )}
+            {disponibilidade.detalhe && (
+              <div
+                className={cn(
+                  "mt-2 flex items-start gap-1.5 text-xs",
+                  livre ? "text-emerald-600 dark:text-emerald-400" : "text-amber-600 dark:text-amber-400",
+                )}
+              >
+                {livre ? (
+                  <CalendarClock className="mt-0.5 h-3 w-3 shrink-0" />
+                ) : (
+                  <Wrench className="mt-0.5 h-3 w-3 shrink-0" />
+                )}
+                <span>{disponibilidade.detalhe}</span>
+              </div>
+            )}
+          </div>
+        </div>
+
+        {fotoUrl && !fotoQuebrada && (
+          <div
+            className={cn(
+              "h-28 w-28 shrink-0 overflow-hidden rounded-xl border border-border bg-muted transition-all duration-300",
+              !livre && "opacity-60 grayscale",
+              selecionado && "border-primary/50 ring-1 ring-primary/30",
+            )}
+          >
+            <img
+              src={fotoUrl}
+              alt={`Foto do ${veiculo.nome}`}
+              loading="lazy"
+              // Caminho inválido ou bucket privado: some a moldura e o card
+              // volta a ser só ícone, em vez de mostrar imagem quebrada.
+              onError={() => setFotoQuebrada(true)}
+              className="h-full w-full object-cover transition-transform duration-500 ease-out group-hover:scale-105"
+            />
           </div>
         )}
       </div>
