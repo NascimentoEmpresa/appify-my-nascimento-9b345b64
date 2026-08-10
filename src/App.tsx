@@ -30,6 +30,7 @@ import Historico from "./pages/Historico";
 import Administracao from "./pages/Administracao";
 import SmokeTestHelena from "./pages/admin/SmokeTestHelena";
 import MeuPerfil from "./pages/MeuPerfil";
+import DiscordCallback from "./pages/DiscordCallback";
 import Composicao from "./pages/Composicao";
 import CustosBDI from "./pages/CustosBDI";
 import ParecerSST from "./pages/pareceres/ParecerSST";
@@ -99,6 +100,7 @@ import GeradorPops from "./pages/controladoria/GeradorPops";
 import MaloteAprovacoes from "./pages/malote/Aprovacoes";
 import MaloteConfiguracoes from "./pages/malote/Configuracoes";
 import MaloteCriarDespesa from "./pages/malote/CriarDespesa";
+import MaloteRatearClassificacao from "./pages/malote/RatearClassificacao";
 import MaloteDashboard from "./pages/malote/Dashboard";
 import MaloteMeusItens from "./pages/malote/MeusItens";
 import MovimentosBancarios from "./pages/financeiro/MovimentosBancarios";
@@ -178,6 +180,7 @@ import Reunioes from "./pages/central-servicos/reunioes/Reunioes";
 import ReuniaoDetalhe from "./pages/central-servicos/reunioes/ReuniaoDetalhe";
 import ConducaoReuniao from "./pages/central-servicos/reunioes/ConducaoReuniao";
 import PainelGerencial from "./pages/central-servicos/reunioes/PainelGerencial";
+import AgendamentoVeiculos from "./pages/central-servicos/veiculos/AgendamentoVeiculos";
 
 const queryClient = new QueryClient();
 
@@ -218,17 +221,32 @@ const App = () => (
                 usuário externo (sessão anônima) enxerga; ver useModoExterno. */}
             <Route path="encarregados/solicitar-materiais" element={<SolicitarMateriais />} />
             <Route path="encarregados/meus-pedidos" element={<MeusPedidos />} />
+            {/* Chamados de Sistemas para o encarregado. São as MESMAS telas da
+                Central de Serviços — o prop `base` já existia para isto —, só
+                que ancoradas no módulo dele, para não obrigar quem vive em
+                Encarregados a caçar a tela em outro menu. */}
+            <Route path="encarregados/chamados" element={<MeusChamados base="/app/encarregados/chamados" />} />
+            <Route path="encarregados/chamados/novo" element={<AbrirChamado base="/app/encarregados/chamados" />} />
+            <Route path="encarregados/chamados/:id/acompanhar" element={<AcompanharChamado base="/app/encarregados/chamados" />} />
             {/* Sistemas */}
             <Route path="sistemas/solicitacoes-erp" element={<SolicitacoesErp />} />
             {/* Chamados de Sistemas (help desk) — telas de abrir/meus chamados também
                 aparecem na Central de Serviços; gestão fica só aqui em Sistemas. */}
-            <Route path="sistemas/chamados" element={<MeusChamados base="/app/sistemas/chamados" />} />
-            <Route path="sistemas/chamados/novo" element={<AbrirChamado base="/app/sistemas/chamados" />} />
+            {/* A tela do solicitante mora na Central de Serviços. Estas duas
+                rotas viraram redirect em vez de sumir: link antigo e favorito
+                continuam funcionando, e — mais importante — rota sem entrada em
+                app_menu passa direto pelo RouteGuard (`!menuCode` libera), então
+                deixá-las vivas sem menu abriria a tela para qualquer um. */}
+            <Route path="sistemas/chamados" element={<Navigate to="/app/central-servicos/chamados" replace />} />
+            <Route path="sistemas/chamados/novo" element={<Navigate to="/app/central-servicos/chamados/novo" replace />} />
             <Route path="sistemas/chamados/painel" element={<PainelDistribuicaoChamados />} />
             <Route path="sistemas/chamados/dashboard-tv" element={<DashboardChamados />} />
             <Route path="sistemas/chamados/dev" element={<PainelDesenvolvedorChamados />} />
             <Route path="sistemas/chamados/:id/coordenar" element={<CoordenarChamado />} />
-            <Route path="sistemas/chamados/:id/acompanhar" element={<AcompanharChamado base="/app/sistemas/chamados" />} />
+            {/* Não vira redirect por causa do :id, que o Navigate não interpola.
+                Renderiza a mesma tela, mas com o "voltar" apontando para a
+                Central — o solicitante não tem mais nada em /app/sistemas. */}
+            <Route path="sistemas/chamados/:id/acompanhar" element={<AcompanharChamado base="/app/central-servicos/chamados" />} />
             <Route path="sistemas/chamados/:id" element={<ExecutarChamado />} />
             {/* Central de Serviços */}
             <Route path="central-servicos" element={<CentralServicos />} />
@@ -240,6 +258,7 @@ const App = () => (
             <Route path="whatsapp/chatbot" element={<WhatsAppChatbot />} />
             <Route path="whatsapp/testes" element={<WhatsAppTestes />} />
             <Route path="whatsapp/dashboard" element={<WhatsAppDashboard />} />
+            <Route path="central-servicos/veiculos" element={<AgendamentoVeiculos />} />
             <Route path="central-servicos/reunioes" element={<Reunioes />} />
             <Route path="central-servicos/reunioes/painel-gerencial" element={<PainelGerencial />} />
             <Route path="central-servicos/reunioes/:id" element={<ReuniaoDetalhe />} />
@@ -294,6 +313,9 @@ const App = () => (
             <Route path="administracao" element={<Administracao />} />
             <Route path="admin/smoke-helena" element={<SmokeTestHelena />} />
             <Route path="meu-perfil" element={<MeuPerfil />} />
+            {/* URL de retorno do OAuth do Discord. Precisa ser fixa: o Discord
+                só aceita redirecionar para endereços registrados no app. */}
+            <Route path="meu-perfil/discord" element={<DiscordCallback />} />
             <Route path="controladoria/empresas" element={<Empresas />} />
             <Route path="controladoria/centros-custo" element={<CentrosCusto />} />
             <Route path="controladoria/estrutura-organizacional" element={<EstruturaOrganizacional />} />
@@ -310,6 +332,7 @@ const App = () => (
             <Route path="malote/aprovacoes" element={<MaloteAprovacoes />} />
             <Route path="malote/configuracoes" element={<MaloteConfiguracoes />} />
             <Route path="malote/criar-despesa" element={<MaloteCriarDespesa />} />
+            <Route path="malote/ratear-classificacao" element={<MaloteRatearClassificacao />} />
             <Route path="malote/dashboard" element={<MaloteDashboard />} />
             <Route path="malote/meus-itens" element={<MaloteMeusItens />} />
             <Route path="orcamento" element={<Orcamento />} />

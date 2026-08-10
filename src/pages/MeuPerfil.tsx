@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
+import { VinculoDiscordCard } from "@/components/perfil/VinculoDiscordCard";
 import { toast } from "sonner";
 
 type Prefs = { sininho_ativo: boolean; email_ativo: boolean; push_ativo: boolean };
@@ -96,6 +97,8 @@ export default function MeuPerfil() {
             </div>
           </CardContent>
         </Card>
+
+        <VinculoDiscordCard />
 
         <Card>
           <CardHeader>

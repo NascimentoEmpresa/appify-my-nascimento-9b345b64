@@ -437,12 +437,12 @@ const encarregadosModule: ModuleDef = {
   label: "Encarregados",
   description: "Solicitações e históricos",
   icon: HardHat,
-  basePath: "/app/encarregados/minhas-solicitacoes",
+  basePath: "/app/encarregados",
   status: "active",
   // Agrupado pelo submódulo de ORIGEM de cada solicitação, como nos demais
   // módulos — o encarregado pensa "preciso de uma vaga", não "preciso abrir
-  // uma solicitação". Todos os itens caem na mesma tela de Minhas
-  // Solicitações; muda só o formulário que já vem aberto.
+  // uma solicitação". Os itens de solicitação caem na mesma tela; muda só o
+  // formulário que já vem aberto.
   groups: [
     {
       label: "Recrutamento e Seleção",
@@ -466,11 +466,21 @@ const encarregadosModule: ModuleDef = {
       ],
     },
     {
+      label: "Sistemas",
+      defaultOpen: true,
+      items: [
+        // Mesma tela da Central de Serviços, ancorada aqui: o encarregado
+        // também abre chamado, e não deveria ter que sair do módulo dele.
+        { label: "Chamados de Sistemas", to: "/app/encarregados/chamados", icon: Headset, notif: "meus" },
+      ],
+    },
+    {
       label: "Suprimentos",
       defaultOpen: true,
       items: [
-        // Continua existindo: é a visão com TODAS as opções e o histórico.
-        { label: "Minhas Solicitações", to: "/app/encarregados/minhas-solicitacoes", icon: ClipboardCheck },
+        // "Minhas Solicitações" saiu do menu a pedido: cada solicitação já tem
+        // seu próprio item acima, e a rota continua de pé (o Início e os
+        // redirecionamentos do Jurídico ainda apontam para ela).
         { label: "Solicitar Materiais", to: "/app/encarregados/solicitar-materiais", icon: Shirt },
         // "Meus Pedidos" era ambíguo ao lado de "Minhas Solicitações": o
         // encarregado não distingue pedido de solicitação. O rótulo agora diz
@@ -501,7 +511,8 @@ const sistemasModule: ModuleDef = {
       label: "Chamados de Sistemas",
       defaultOpen: true,
       items: [
-        { label: "Chamados de Sistemas", to: "/app/sistemas/chamados", icon: Headset, notif: "meus" },
+        // "Chamados de Sistemas" (a tela do solicitante) vive só na Central de
+        // Serviços. Aqui ficam as telas de quem ATENDE o chamado.
         { label: "Painel de Distribuição", to: "/app/sistemas/chamados/painel", icon: BarChart3 },
         { label: "Dashboard de Chamados", to: "/app/sistemas/chamados/dashboard-tv", icon: LayoutDashboard },
         { label: "Painel do Desenvolvedor", to: "/app/sistemas/chamados/dev", icon: ClipboardList, notif: "dev" },
@@ -529,6 +540,7 @@ const centralServicosModule: ModuleDef = {
         { label: "Nascimento Formulários", to: "/app/central-servicos/formularios", icon: ClipboardList },
         { label: "Chamados de Sistemas", to: "/app/central-servicos/chamados", icon: Headset, notif: "meus" },
         { label: "Agenda de Reunião", to: "/app/central-servicos/reunioes", icon: CalendarRange },
+        { label: "Agendamento de Veículos", to: "/app/central-servicos/veiculos", icon: Car },
       ],
     },
   ],

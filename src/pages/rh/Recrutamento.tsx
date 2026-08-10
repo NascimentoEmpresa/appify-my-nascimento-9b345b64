@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from "react";
+import { useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
 import { usePermissoes } from "@/context/PermissoesContext";
@@ -131,10 +132,13 @@ const KB_COL_COLORS: Record<string, { dot: string; label: string; accent: string
   Reprovada:               { dot: "#dc2626", label: "#b91c1c", accent: "#dc2626" },
 };
 
-// Kanban interno (Status do Candidato) — 9 colunas + Reprovado.
+// Kanban interno (Status do Candidato) — 10 colunas + Reprovado.
+// DOCUMENTAÇÃO vem antes do EXAME SST (o laboratório já precisa dos dados do
+// candidato) e ADMISSÃO é a coluna final, onde ele é efetivado no RH.
+// APROVADO no singular: é uma vaga, um aprovado.
 const CAND_ETAPAS = [
   "ENTRADA", "TRIAGEM", "JURÍDICO", "ENTREVISTA", "ENTREVISTA GESTOR",
-  "APROVADOS", "EXAME SST", "COMPRAS", "DOCUMENTAÇÃO", "Reprovado",
+  "APROVADO", "DOCUMENTAÇÃO", "EXAME SST", "COMPRAS", "ADMISSÃO", "Reprovado",
 ];
 const CAND_COL_COLORS: Record<string, { dot: string; label: string; accent: string }> = {
   ENTRADA:            { dot: "#64748b", label: "#475569", accent: "#64748b" },
@@ -142,18 +146,38 @@ const CAND_COL_COLORS: Record<string, { dot: string; label: string; accent: stri
   "JURÍDICO":         { dot: "#8b5cf6", label: "#7c3aed", accent: "#8b5cf6" },
   ENTREVISTA:         { dot: "#0ea5e9", label: "#0369a1", accent: "#0ea5e9" },
   "ENTREVISTA GESTOR":{ dot: "#6366f1", label: "#4f46e5", accent: "#6366f1" },
-  APROVADOS:          { dot: "#14b8a6", label: "#0f766e", accent: "#14b8a6" },
+  APROVADO:           { dot: "#14b8a6", label: "#0f766e", accent: "#14b8a6" },
+  "DOCUMENTAÇÃO":     { dot: "#0891b2", label: "#0e7490", accent: "#0891b2" },
   "EXAME SST":        { dot: "#f59e0b", label: "#b45309", accent: "#f59e0b" },
   COMPRAS:            { dot: "#f97316", label: "#ea580c", accent: "#f97316" },
-  "DOCUMENTAÇÃO":     { dot: "#16a34a", label: "#15803d", accent: "#16a34a" },
+  "ADMISSÃO":         { dot: "#16a34a", label: "#15803d", accent: "#16a34a" },
   Reprovado:          { dot: "#dc2626", label: "#b91c1c", accent: "#dc2626" },
 };
 // Papel responsável por completar cada etapa.
 const PAPEL_ETAPA: Record<string, string> = {
   ENTRADA: "Recrutamento", TRIAGEM: "Recrutamento", "JURÍDICO": "Jurídico",
-  ENTREVISTA: "Recrutamento", "ENTREVISTA GESTOR": "Recrutamento", APROVADOS: "Recrutamento",
-  "EXAME SST": "SST", COMPRAS: "Suprimentos", "DOCUMENTAÇÃO": "Recrutamento",
+  ENTREVISTA: "Recrutamento", "ENTREVISTA GESTOR": "Recrutamento", APROVADO: "Recrutamento",
+  "DOCUMENTAÇÃO": "Recrutamento", "EXAME SST": "SST", COMPRAS: "Suprimentos",
+  "ADMISSÃO": "Recrutamento",
 };
+// Etapas que disparam WhatsApp automático (o texto vem de RECRUTAMENTO_MENSAGENS).
+// "ENTREVISTA GESTOR" é a segunda entrevista, opcional no fluxo.
+const ETAPAS_COM_MENSAGEM = ["TRIAGEM", "ENTREVISTA", "ENTREVISTA GESTOR", "APROVADO"];
+// Variáveis que o RH pode usar nos {{n}} do template aprovado na Meta.
+const MSG_VARIAVEIS = ["primeiro_nome", "nome", "cargo", "cidade", "contrato", "empresa"];
+
+// Nome de template da Meta: só minúsculas, números e underscore. "Entrevista
+// Gestor" é recusado lá com erro 132001, e o envio automático falharia calado
+// a cada card movido — melhor barrar aqui, na hora de configurar.
+const RE_TEMPLATE = /^[a-z0-9_]+$/;
+const nomeTemplateInvalido = (n?: string | null) => {
+  const v = String(n ?? "").trim();
+  return v.length > 0 && !RE_TEMPLATE.test(v);
+};
+const sugerirNomeTemplate = (n?: string | null) =>
+  String(n ?? "").trim().toLowerCase()
+    .normalize("NFD").replace(/[̀-ͯ]/g, "")   // "Aprovação" → "aprovacao"
+    .replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "");
 // Status da Solicitação dirigidos pelo candidato (etapas 3–10).
 const STATUS_PROCESSO = [
   "Vaga aberta - Seleção de Currículos", "Em análise jurídica", "Entrevista e Avaliação",
@@ -166,6 +190,7 @@ const STATUS_PROCESSO = [
 export default function Recrutamento() {
   const { user } = useAuth();
   const { roles, can } = usePermissoes();
+  const navigate = useNavigate();
 
   const isTreinamento = roles.includes("treinamentos"); // só rótulo da mensagem no chat, não é gate
 
@@ -242,6 +267,20 @@ export default function Recrutamento() {
   // Roteiro de entrevista (ENTREVISTA / ENTREVISTA GESTOR)
   const [roteiroModal, setRoteiroModal]     = useState<{ id: number; nome: string; etapa: string } | null>(null);
   const [roteiroRows, setRoteiroRows]       = useState<{ pergunta: string; resposta: string }[]>([]);
+  // Documentos do candidato (etapa DOCUMENTAÇÃO)
+  const [docsModal, setDocsModal]           = useState<{ id: number; nome: string } | null>(null);
+  const [docs, setDocs]                     = useState<any[]>([]);
+  const [docsCount, setDocsCount]           = useState<Record<number, number>>({}); // p/ o contador no card
+  const [docTitulo, setDocTitulo]           = useState("");
+  const [docFile, setDocFile]               = useState<File | null>(null);
+  const [docSubindo, setDocSubindo]         = useState(false);
+  // Configuração das mensagens automáticas de WhatsApp
+  const [msgModal, setMsgModal]             = useState(false);
+  const [msgCfgs, setMsgCfgs]               = useState<any[]>([]);
+  const [msgSalvando, setMsgSalvando]       = useState(false);
+  // Status de cada template na Meta (APPROVED / PENDING / REJECTED / NAO_CRIADO)
+  const [msgStatus, setMsgStatus]           = useState<Record<string, any>>({});
+  const [msgMetaBusy, setMsgMetaBusy]       = useState(false);
 
   // Wizard nova vaga
   const [vaga, setVaga] = useState({
@@ -422,7 +461,18 @@ export default function Recrutamento() {
       .eq("vaga_id", vagaId)
       .not("etapa_processo", "is", null)
       .order("etapa_changed_at", { ascending: false });
-    setCandidatos((data ?? []).map(mapCurriculo));
+    const lista = (data ?? []).map(mapCurriculo);
+    setCandidatos(lista);
+    // Contador de documentos no card: uma consulta só para todos os candidatos
+    // do quadro, senão seriam N chamadas a cada render do kanban.
+    const ids = lista.map((c: Curriculo) => c.id);
+    if (!ids.length) { setDocsCount({}); return; }
+    const { data: arqs } = await (supabase as any)
+      .from("RECRUTAMENTO_CANDIDATO_ARQUIVOS")
+      .select("candidato_id").in("candidato_id", ids).eq("tipo", "documento");
+    const cont: Record<number, number> = {};
+    (arqs ?? []).forEach((a: any) => { cont[a.candidato_id] = (cont[a.candidato_id] ?? 0) + 1; });
+    setDocsCount(cont);
   }, []);
 
   // ── Histórico de movimentações ────────────────────────────────
@@ -654,15 +704,20 @@ export default function Recrutamento() {
     }
   };
 
-  // Link do WhatsApp do candidato com mensagem já preenchida com o nome dele.
-  const waLinkDe = (c: any): string | null => {
-    const d = String(c.telefone ?? "").replace(/\D/g, "");
-    if (d.length < 10) return null;
-    const num = d.startsWith("55") && d.length >= 12 ? d : "55" + d;
-    const pn = String(c.nome ?? "").trim().split(/\s+/)[0] || "";
-    const primeiroNome = pn.charAt(0).toUpperCase() + pn.slice(1).toLowerCase(); // "PABLO" → "Pablo"
-    const msg = `Olá ${primeiroNome}, tudo bem? Estamos entrando em contato sobre o seu processo seletivo.`;
-    return `https://wa.me/${num}?text=${encodeURIComponent(msg)}`;
+  // O candidato tem WhatsApp utilizável? (só valida o telefone; a conversa em
+  // si é resolvida no clique)
+  const temWhatsApp = (c: any): boolean =>
+    String(c.telefone ?? "").replace(/\D/g, "").length >= 10;
+
+  // Abre a conversa do candidato na NOSSA Caixa de Entrada.
+  // Antes isso apontava para wa.me e tirava o recrutador do sistema: a conversa
+  // ficava no celular dele, fora do histórico e invisível para o próximo
+  // atendente. A RPC acha (ou cria) a conversa e a Caixa abre já nela.
+  const abrirWhatsAppInterno = async (c: any) => {
+    if (!temWhatsApp(c)) { toast("Candidato sem telefone válido.", "err"); return; }
+    const { data, error } = await (supabase as any).rpc("recrutamento_abrir_conversa", { p_candidato_id: c.id });
+    if (error || !data) { toast("Não consegui abrir a conversa: " + (error?.message ?? "conversa não encontrada"), "err"); return; }
+    navigate(`/app/whatsapp?conversa=${data}`);
   };
 
   // Download do currículo: signed URL temporária no bucket privado 'curriculos'.
@@ -720,28 +775,30 @@ export default function Recrutamento() {
   const podeMoverCand = (etapa?: string | null) => {
     if (etapa === "JURÍDICO")  return podeMoverJuridico || podeRecrutar;
     if (etapa === "EXAME SST") return podeMoverSst || podeRecrutar;
-    if (etapa === "COMPRAS")   return podeMoverCompras || podeRecrutar; // confirma → DOCUMENTAÇÃO
-    return podeRecrutar; // ENTRADA, TRIAGEM, ENTREVISTA, ENT. GESTOR, APROVADOS, DOCUMENTAÇÃO
+    if (etapa === "COMPRAS")   return podeMoverCompras || podeRecrutar; // confirma → ADMISSÃO
+    return podeRecrutar; // ENTRADA, TRIAGEM, ENTREVISTA, ENT. GESTOR, APROVADO, DOCUMENTAÇÃO
   };
   // Próxima etapa linear (TRIAGEM e ENTREVISTA ramificam → tratadas no card).
   const CAND_PROX: Record<string, string> = {
     ENTRADA: "TRIAGEM",
     "JURÍDICO": "ENTREVISTA",
-    "ENTREVISTA GESTOR": "APROVADOS",
-    APROVADOS: "EXAME SST",
+    "ENTREVISTA GESTOR": "APROVADO",
+    APROVADO: "DOCUMENTAÇÃO",
+    "DOCUMENTAÇÃO": "EXAME SST",
     "EXAME SST": "COMPRAS",
-    COMPRAS: "DOCUMENTAÇÃO",
+    COMPRAS: "ADMISSÃO",
   };
   const labelProx = (etapa: string) => ({
     ENTRADA: "→ Triagem",
     "JURÍDICO": "Liberar → Entrevista",
-    "ENTREVISTA GESTOR": "→ Aprovados",
-    APROVADOS: "→ Exame SST",
+    "ENTREVISTA GESTOR": "→ Aprovado",
+    APROVADO: "→ Documentação",
+    "DOCUMENTAÇÃO": "→ Exame SST",
     "EXAME SST": "→ Compras",
-    COMPRAS: "Confirmar → Documentação",
+    COMPRAS: "Confirmar → Admissão",
   } as Record<string, string>)[etapa] || "Avançar";
 
-  // DOCUMENTAÇÃO → envia o candidato para a Admissão (RH).
+  // ADMISSÃO → efetiva o candidato no módulo de Admissão (RH).
   const enviarAdmissao = async (cv: Curriculo) => {
     if (!confirm(`Contratar ${cv.nome || "o candidato"}? Ele será enviado à Admissão (RH) e a vaga fica como "Contratado".`)) return;
     const nowIso = new Date().toISOString();
@@ -795,6 +852,139 @@ export default function Recrutamento() {
     setRoteiroModal(null); setRoteiroRows([]);
   };
 
+  // ── Documentos do candidato (etapa DOCUMENTAÇÃO) ───────────────
+  // Ficam presos ao candidato, não ao empregado: aqui o cadastro em EMPREGADOS
+  // ainda não existe — ele só nasce na Admissão. Quando nascer, o vínculo
+  // WA_CURRICULOS.empregado_id faz esses anexos aparecerem no cadastro dele.
+  const loadDocs = async (candidatoId: number) => {
+    const { data } = await (supabase as any)
+      .from("RECRUTAMENTO_CANDIDATO_ARQUIVOS")
+      .select("*").eq("candidato_id", candidatoId).eq("tipo", "documento")
+      .order("created_at", { ascending: false });
+    setDocs(data ?? []);
+  };
+  const abrirDocs = async (cv: Curriculo) => {
+    setDocTitulo(""); setDocFile(null);
+    setDocsModal({ id: cv.id, nome: cv.nome || "Candidato" });
+    await loadDocs(cv.id);
+  };
+  const anexarDoc = async () => {
+    if (!docsModal) return;
+    if (!docTitulo.trim()) { toast("Informe o título do documento.", "err"); return; }
+    if (!docFile) { toast("Escolha o arquivo.", "err"); return; }
+    setDocSubindo(true);
+    // Nome no bucket é gerado: título com acento/barra quebraria o storage, e
+    // dois arquivos com o mesmo nome se sobrescreveriam.
+    const ext = docFile.name.includes(".") ? docFile.name.split(".").pop() : "";
+    const path = `documentos/${docsModal.id}/${Date.now()}${ext ? "." + ext : ""}`;
+    const { error: upErr } = await supabase.storage.from("curriculos").upload(path, docFile);
+    if (upErr) { toast("Erro ao subir o arquivo: " + upErr.message, "err"); setDocSubindo(false); return; }
+    const { error } = await (supabase as any).from("RECRUTAMENTO_CANDIDATO_ARQUIVOS").insert({
+      candidato_id: docsModal.id, tipo: "documento", etapa: "DOCUMENTAÇÃO",
+      titulo: docTitulo.trim(), nome: docFile.name, storage_path: path,
+      enviado_por: user?.user_metadata?.nome ?? user?.email ?? "",
+    });
+    setDocSubindo(false);
+    if (error) { toast("Erro ao registrar o documento: " + error.message, "err"); return; }
+    if (drawerId) await logHistorico(drawerId, `Documento anexado: ${docTitulo.trim()}`, {
+      papel: "Recrutamento", candidatoId: docsModal.id, candidatoNome: docsModal.nome,
+    });
+    toast("Documento anexado.", "ok");
+    setDocTitulo(""); setDocFile(null);
+    await loadDocs(docsModal.id);
+    setDocsCount(p => ({ ...p, [docsModal.id]: (p[docsModal.id] ?? 0) + 1 }));
+  };
+  const baixarDoc = async (d: any) => {
+    const { data, error } = await supabase.storage.from("curriculos").createSignedUrl(d.storage_path, 3600);
+    if (error || !data?.signedUrl) { toast("Não foi possível abrir o arquivo.", "err"); return; }
+    window.open(data.signedUrl, "_blank", "noopener");
+  };
+  const removerDoc = async (d: any) => {
+    if (!confirm(`Remover o documento "${d.titulo || d.nome}"?`)) return;
+    const { error } = await (supabase as any).from("RECRUTAMENTO_CANDIDATO_ARQUIVOS").delete().eq("id", d.id);
+    if (error) { toast("Erro ao remover: " + error.message, "err"); return; }
+    await supabase.storage.from("curriculos").remove([d.storage_path]);
+    toast("Documento removido.", "ok");
+    if (docsModal) {
+      await loadDocs(docsModal.id);
+      setDocsCount(p => ({ ...p, [docsModal.id]: Math.max(0, (p[docsModal.id] ?? 1) - 1) }));
+    }
+  };
+
+  // ── Configuração das mensagens automáticas ─────────────────────
+  const abrirMsgConfig = async () => {
+    const { data } = await (supabase as any).from("RECRUTAMENTO_MENSAGENS").select("*");
+    // Ordena pela ordem do funil, não alfabética — é assim que o RH lê o fluxo.
+    const porEtapa = new Map((data ?? []).map((r: any) => [r.etapa, r]));
+    setMsgCfgs(ETAPAS_COM_MENSAGEM.map(e => porEtapa.get(e) ?? {
+      etapa: e, ativo: false, template_nome: "", template_idioma: "pt_BR",
+      parametros: ["primeiro_nome", "cargo"], texto_previa: "",
+    }));
+    setMsgModal(true);
+    consultarTemplates();
+  };
+
+  // ── Templates na Meta ──────────────────────────────────────────
+  // O texto real mora lá e precisa passar por revisão. Saber o status aqui
+  // evita o RH ligar a etapa e descobrir pelo silêncio que nada é enviado.
+  const consultarTemplates = async () => {
+    try {
+      const { data, error } = await supabase.functions.invoke("whatsapp-templates", { body: { acao: "listar" } });
+      if (error) return; // sem WhatsApp configurado ou sem permissão: a tela segue utilizável
+      const mapa: Record<string, any> = {};
+      ((data as any)?.templates ?? []).forEach((t: any) => { mapa[t.etapa] = t; });
+      setMsgStatus(mapa);
+    } catch { /* consulta é informativa; falha nela não trava a configuração */ }
+  };
+
+  const criarTemplates = async () => {
+    if (!confirm("Enviar os textos para aprovação da Meta?\n\nEles passam por revisão e ficam registrados na conta da empresa. Isso não liga o envio automático — depois de aprovados, você ainda marca \"Enviar automaticamente\" na etapa.")) return;
+    setMsgMetaBusy(true);
+    try {
+      const { data, error } = await supabase.functions.invoke("whatsapp-templates", { body: { acao: "criar" } });
+      if (error) { toast("Não consegui falar com a Meta: " + (error.message ?? ""), "err"); return; }
+      const r = (data as any)?.resultado ?? [];
+      const criados = r.filter((x: any) => x.acao === "criado").length;
+      const jaExistiam = r.filter((x: any) => x.acao === "ja_existia").length;
+      const erros = r.filter((x: any) => x.acao === "erro");
+      if (erros.length) toast(`${erros.length} template(s) recusado(s): ${erros.map((e: any) => `${e.etapa} — ${e.erro}`).join(" | ")}`, "err");
+      else toast(`${criados} enviado(s) para aprovação${jaExistiam ? `, ${jaExistiam} já existia(m)` : ""}. A revisão da Meta costuma levar de minutos a algumas horas.`, "ok");
+      await consultarTemplates();
+    } finally { setMsgMetaBusy(false); }
+  };
+  const salvarMsgConfig = async () => {
+    // Nome fora do padrão da Meta só se descobre quando a mensagem não chega —
+    // e aí o candidato já ficou sem retorno. Barra antes de salvar.
+    const invalidos = msgCfgs.filter(c => nomeTemplateInvalido(c.template_nome));
+    if (invalidos.length) {
+      toast(`Nome de template inválido em ${invalidos.map(c => c.etapa).join(", ")}. Use só minúsculas, números e underscore.`, "err");
+      return;
+    }
+    setMsgSalvando(true);
+    const nome = user?.user_metadata?.nome ?? user?.email ?? "";
+    const rows = msgCfgs.map(c => ({
+      etapa: c.etapa,
+      // Ligar sem template só produziria erro de envio a cada card movido.
+      ativo: !!c.ativo && !!String(c.template_nome ?? "").trim(),
+      template_nome: String(c.template_nome ?? "").trim() || null,
+      template_idioma: String(c.template_idioma ?? "").trim() || "pt_BR",
+      parametros: Array.isArray(c.parametros) ? c.parametros : [],
+      texto_previa: String(c.texto_previa ?? "").trim() || null,
+      updated_at: new Date().toISOString(), updated_por: nome,
+    }));
+    const { error } = await (supabase as any).from("RECRUTAMENTO_MENSAGENS").upsert(rows, { onConflict: "etapa" });
+    setMsgSalvando(false);
+    if (error) { toast("Erro ao salvar: " + error.message, "err"); return; }
+    // "Salvo" sozinho já enganou: dá a entender que passou a enviar, quando o
+    // que foi salvo pode ser quatro etapas desligadas. O aviso diz o que vale.
+    const ligadasSemTemplate = msgCfgs.filter(c => c.ativo && !String(c.template_nome ?? "").trim());
+    const ligadas = rows.filter(r => r.ativo);
+    if (ligadasSemTemplate.length) toast(`Sem nome do template, ${ligadasSemTemplate.map(c => c.etapa).join(" e ")} ficou(aram) desligada(s).`, "info");
+    else if (!ligadas.length) toast("Salvo — mas nenhuma etapa está enviando. Marque \"Enviar automaticamente\" na etapa desejada.", "info");
+    else toast(`Salvo. Enviando automaticamente em: ${ligadas.map(r => r.etapa).join(", ")}.`, "ok");
+    setMsgModal(false);
+  };
+
   // Seleciona um currículo para o processo (entra no kanban como "ENTRADA").
   const selecionarCandidato = async (cv: Curriculo) => {
     if (cv.etapa_processo) { toast("Candidato já está no processo.", "info"); return; }
@@ -846,10 +1036,11 @@ export default function Recrutamento() {
       "JURÍDICO": "Enviado ao Jurídico",
       ENTREVISTA: origem === "JURÍDICO" ? "Liberado pelo Jurídico → Entrevista" : "Liberado para Entrevista",
       "ENTREVISTA GESTOR": "Enviado à Entrevista com Gestor",
-      APROVADOS: "Aprovado nas entrevistas",
-      "EXAME SST": "Encaminhado ao SST (ASO)",
+      APROVADO: "Aprovado nas entrevistas",
+      "DOCUMENTAÇÃO": "Aprovado → Documentação",
+      "EXAME SST": "Documentação OK → Exame SST",
       COMPRAS: "Exame OK → Compras",
-      "DOCUMENTAÇÃO": "Compras OK → Documentação",
+      "ADMISSÃO": "Compras OK → Admissão",
       Reprovado: "Candidato reprovado",
     };
     if (drawerId) await logHistorico(drawerId, eventoTxt[novaEtapa] || `Movido para ${novaEtapa}`, {
@@ -858,7 +1049,33 @@ export default function Recrutamento() {
       detalhe: extra.motivo_reprovacao || extra.juridico_obs || extra.sst_obs || undefined,
     });
     toast(`Candidato movido para "${novaEtapa}".`, "ok");
+    if (!reprovado) await dispararMensagemEtapa(id, novaEtapa, cand?.nome);
     if (drawerId) loadCandidatos(drawerId);
+  };
+
+  // ── WhatsApp automático da etapa ──────────────────────────────────
+  // O envio é um efeito da movimentação, não uma condição dela: se a Meta
+  // recusar (template não aprovado, número inválido), o candidato já mudou de
+  // etapa e o RH precisa saber para chamar na mão — daí o toast de aviso e o
+  // registro em RECRUTAMENTO_MENSAGENS_LOG.
+  const dispararMensagemEtapa = async (candidatoId: number, etapa: string, nome?: string) => {
+    if (!ETAPAS_COM_MENSAGEM.includes(etapa)) return;
+    try {
+      const { data, error } = await supabase.functions.invoke("recrutamento-mensagem", {
+        body: { candidato_id: candidatoId, etapa },
+      });
+      if (error) { toast(`WhatsApp de "${etapa}" não saiu — chame ${nome || "o candidato"} pelo ícone do WhatsApp.`, "err"); return; }
+      const r = data as { enviado?: boolean; motivo?: string; detalhe?: string };
+      if (r?.enviado) { toast(`WhatsApp de "${etapa}" enviado ao candidato.`, "ok"); return; }
+      // "desligado" é escolha do RH nas Configurações — não é falha, não avisa.
+      if (r?.motivo === "desligado" || r?.motivo === "etapa_sem_mensagem") return;
+      const porque = r?.motivo === "sem_telefone" ? "candidato sem telefone"
+        : r?.motivo === "sem_template" ? "template não configurado"
+        : r?.detalhe || "falha no envio";
+      toast(`WhatsApp de "${etapa}" não saiu (${porque}). Chame pelo ícone do WhatsApp.`, "err");
+    } catch {
+      toast(`WhatsApp de "${etapa}" não saiu. Chame pelo ícone do WhatsApp.`, "err");
+    }
   };
 
   const confirmarMoverCand = async () => {
@@ -1250,13 +1467,17 @@ export default function Recrutamento() {
               style={{ height: 30, width: 240, border: "1px solid #e2e8f0", borderRadius: 8, padding: "0 10px", fontSize: 12, outline: "none", background: "#fff", color: "#0f172a" }} />
             {q && <button onClick={() => setBuscaCand("")} style={{ height: 30, padding: "0 10px", borderRadius: 8, border: "1px solid #e2e8f0", background: "#f8fafc", color: "#475569", fontSize: 11.5, fontWeight: 700, cursor: "pointer" }}>Limpar</button>}
             {podeRecrutar && (
+              <button onClick={abrirMsgConfig} title="Definir a mensagem de WhatsApp que o sistema envia em cada etapa"
+                style={{ padding: "5px 12px", borderRadius: 8, border: "1px solid rgba(37,211,102,.3)", background: "rgba(37,211,102,.1)", color: "#128c7e", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>⚙️ Mensagens automáticas</button>
+            )}
+            {podeRecrutar && (
               <button onClick={abrirCurriculos} style={{ padding: "5px 12px", borderRadius: 8, border: "1px solid rgba(34,197,94,.25)", background: "rgba(34,197,94,.1)", color: "#22c55e", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>+ Selecionar dos currículos</button>
             )}
           </div>
         </div>
         {candidatos.length === 0 ? (
           <div style={{ border: "1px dashed #cbd5e1", borderRadius: 12, padding: "26px 16px", textAlign: "center", color: "#94a3b8", fontSize: 12.5 }}>
-            Nenhum candidato selecionado ainda. Abra <b>Currículos</b> e clique em <b>Selecionar candidato</b> para iniciar o processo (Triagem → Jurídico → Entrevistas → Exame SST → Compras → Documentação).
+            Nenhum candidato selecionado ainda. Abra <b>Currículos</b> e clique em <b>Selecionar candidato</b> para iniciar o processo (Triagem → Jurídico → Entrevistas → Aprovado → Documentação → Exame SST → Compras → Admissão).
           </div>
         ) : (
           <div style={{ display: "flex", gap: 6, flex: 1, minHeight: 0, paddingBottom: 4, alignItems: "stretch" }}>
@@ -1294,36 +1515,39 @@ export default function Recrutamento() {
                             {c.telefone && (
                               <div style={{ fontSize: 10, color: "#475569", display: "flex", alignItems: "center", gap: 5 }}>
                                 <span>📞 {c.telefone}</span>
-                                {waLinkDe(c) && (
-                                  <a href={waLinkDe(c)!} target="_blank" rel="noopener noreferrer" title="Chamar no WhatsApp"
-                                    style={{ flexShrink: 0, width: 17, height: 17, borderRadius: "50%", background: "#25d366", display: "inline-flex", alignItems: "center", justifyContent: "center" }}>
+                                {temWhatsApp(c) && (
+                                  <button onClick={() => abrirWhatsAppInterno(c)} title="Abrir a conversa na Caixa de Entrada do WhatsApp"
+                                    style={{ flexShrink: 0, width: 17, height: 17, padding: 0, border: "none", cursor: "pointer", borderRadius: "50%", background: "#25d366", display: "inline-flex", alignItems: "center", justifyContent: "center" }}>
                                     <svg width="10" height="10" viewBox="0 0 24 24" fill="#fff" aria-hidden>
                                       <path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 005.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 00-3.48-8.413Z"/>
                                     </svg>
-                                  </a>
+                                  </button>
                                 )}
                               </div>
                             )}
                             {c.juridico_ok === true && <div style={{ fontSize: 9.5, color: "#15803d", marginTop: 3, fontWeight: 700 }}>✓ Jurídico aprovado</div>}
                             {c.juridico_ok === false && <div style={{ fontSize: 9.5, color: "#b91c1c", marginTop: 3, fontWeight: 700 }}>⛔ Restrito (Jurídico)</div>}
                             {etapa === "Reprovado" && c.motivo_reprovacao && <div style={{ fontSize: 10.5, color: "#b91c1c", marginTop: 4 }}>Motivo: {c.motivo_reprovacao}</div>}
-                            {etapa === "DOCUMENTAÇÃO" && (c as any).enviado_admissao_em && <div style={{ fontSize: 9.5, color: "#15803d", marginTop: 4, fontWeight: 700 }}>✓ Contratado — na Admissão (RH)</div>}
+                            {etapa === "DOCUMENTAÇÃO" && (docsCount[c.id] ?? 0) > 0 && <div style={{ fontSize: 9.5, color: "#0e7490", marginTop: 4, fontWeight: 700 }}>📎 {docsCount[c.id]} documento{docsCount[c.id] > 1 ? "s" : ""}</div>}
+                            {etapa === "ADMISSÃO" && (c as any).enviado_admissao_em && <div style={{ fontSize: 9.5, color: "#15803d", marginTop: 4, fontWeight: 700 }}>✓ Contratado — na Admissão (RH)</div>}
                             <div style={{ display: "flex", flexDirection: "column", gap: 5, marginTop: 10 }}>
                               {/* ENTREVISTA/GESTOR: roteiro de entrevista */}
                               {(etapa === "ENTREVISTA" || etapa === "ENTREVISTA GESTOR") && podeRecrutar && <button onClick={() => abrirRoteiro(c, etapa)} style={{ ...bFull, background: "rgba(59,130,246,.1)", color: "#2563eb", border: "1px solid rgba(59,130,246,.3)" }}>📋 Roteiro de entrevista</button>}
+                              {/* DOCUMENTAÇÃO: anexos do candidato (vários, cada um com título) */}
+                              {etapa === "DOCUMENTAÇÃO" && podeRecrutar && <button onClick={() => abrirDocs(c)} style={{ ...bFull, background: "rgba(8,145,178,.1)", color: "#0e7490", border: "1px solid rgba(8,145,178,.3)" }}>📎 Documentos ({docsCount[c.id] ?? 0})</button>}
                               {/* Avançar — com ramificação em TRIAGEM e ENTREVISTA */}
                               {etapa === "TRIAGEM" && podeAqui ? (<>
                                 <button onClick={() => pedirMoverCand(c, "JURÍDICO")} style={{ ...avancaBtn, background: "#8b5cf6" }}>Enviar ao Jurídico</button>
                                 <button onClick={() => pedirMoverCand(c, "ENTREVISTA")} style={bSkip}>Pular Jurídico →</button>
                               </>) : etapa === "ENTREVISTA" && podeAqui ? (<>
                                 <button onClick={() => pedirMoverCand(c, "ENTREVISTA GESTOR")} style={{ ...avancaBtn, background: "#6366f1" }}>Entrevista c/ Gestor</button>
-                                <button onClick={() => pedirMoverCand(c, "APROVADOS")} style={bSkip}>Pular Gestor →</button>
-                              </>) : etapa === "DOCUMENTAÇÃO" ? (
+                                <button onClick={() => pedirMoverCand(c, "APROVADO")} style={bSkip}>Pular Gestor →</button>
+                              </>) : etapa === "ADMISSÃO" ? (
                                 podeRecrutar && !(c as any).enviado_admissao_em && <button onClick={() => enviarAdmissao(c)} style={{ ...avancaBtn, background: "#16a34a" }}>✓ Contratar (enviar à Admissão)</button>
                               ) : (CAND_PROX[etapa] && podeAqui && (
                                 <button onClick={() => pedirMoverCand(c, CAND_PROX[etapa])} style={{ ...avancaBtn, background: "#16a34a" }}>{labelProx(etapa)}</button>
                               ))}
-                              {etapa !== "DOCUMENTAÇÃO" && etapa !== "Reprovado" && podeAqui && <button onClick={() => pedirMoverCand(c, "Reprovado")} style={{ width: "100%", fontSize: 10.5, fontWeight: 700, padding: "4px", borderRadius: 7, background: "transparent", border: "none", color: "#94a3b8", cursor: "pointer" }}>Reprovar</button>}
+                              {etapa !== "ADMISSÃO" && etapa !== "Reprovado" && podeAqui && <button onClick={() => pedirMoverCand(c, "Reprovado")} style={{ width: "100%", fontSize: 10.5, fontWeight: 700, padding: "4px", borderRadius: 7, background: "transparent", border: "none", color: "#94a3b8", cursor: "pointer" }}>Reprovar</button>}
                             </div>
                           </div>
                         </div>
@@ -1743,6 +1967,163 @@ export default function Recrutamento() {
             <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 16 }}>
               <button onClick={() => { setRoteiroModal(null); setRoteiroRows([]); }} style={{ padding: "7px 14px", borderRadius: 10, border: "1px solid #e2e8f0", background: "#fff", color: "#475569", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>Cancelar</button>
               <button onClick={salvarRoteiro} style={{ padding: "7px 14px", borderRadius: 10, border: "none", background: "#0f3171", color: "#fff", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>Salvar roteiro</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Modal: Documentos do candidato (etapa DOCUMENTAÇÃO) ── */}
+      {docsModal && (
+        <div className="rec-modal-ov" style={{ zIndex: 860 }}>
+          <div className="rec-modal" style={{ maxWidth: 660 }}>
+            <button onClick={() => { setDocsModal(null); setDocs([]); }} style={{ position: "absolute", top: 14, right: 14, background: "none", border: "none", color: "#94a3b8", fontSize: 20, cursor: "pointer" }}>✕</button>
+            <div style={{ fontSize: 17, fontWeight: 800, marginBottom: 4 }}>📎 Documentos do candidato</div>
+            <div style={{ fontSize: 12, color: "#94a3b8", marginBottom: 14 }}>
+              {docsModal.nome} · os anexos seguem com ele para o cadastro de empregado na Admissão
+            </div>
+
+            {/* Anexar: título é obrigatório — sem ele a lista vira um monte de
+                "documento (1).pdf" e ninguém sabe o que é cada arquivo. */}
+            <div style={{ border: "1px solid #e2e8f0", borderRadius: 10, padding: "12px 13px", background: "#fcfdff" }}>
+              <label style={{ fontSize: 11.5, fontWeight: 800, color: "#475569" }}>Título do documento *</label>
+              <input value={docTitulo} onChange={e => setDocTitulo(e.target.value)} placeholder="Ex.: RG, CPF, Comprovante de residência, CTPS…"
+                style={{ width: "100%", marginTop: 5, height: 34, border: "1px solid #e2e8f0", borderRadius: 8, padding: "0 10px", fontSize: 13, outline: "none" }} />
+              <input type="file" onChange={e => setDocFile(e.target.files?.[0] ?? null)}
+                style={{ width: "100%", marginTop: 9, fontSize: 12.5, color: "#475569" }} />
+              <button onClick={anexarDoc} disabled={docSubindo}
+                style={{ marginTop: 10, padding: "7px 14px", borderRadius: 9, border: "none", background: docSubindo ? "#94a3b8" : "#0891b2", color: "#fff", fontSize: 12, fontWeight: 700, cursor: docSubindo ? "default" : "pointer" }}>
+                {docSubindo ? "Anexando…" : "+ Anexar documento"}
+              </button>
+            </div>
+
+            <div style={{ marginTop: 14, display: "flex", flexDirection: "column", gap: 7, maxHeight: "42vh", overflowY: "auto" }}>
+              {docs.length === 0 ? (
+                <div style={{ textAlign: "center", color: "#94a3b8", fontSize: 12.5, padding: "18px 8px" }}>Nenhum documento anexado ainda.</div>
+              ) : docs.map(d => (
+                <div key={d.id} style={{ display: "flex", alignItems: "center", gap: 10, border: "1px solid #e2e8f0", borderRadius: 9, padding: "8px 11px" }}>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontSize: 13, fontWeight: 800, color: "#0f172a" }}>{d.titulo || "(sem título)"}</div>
+                    <div style={{ fontSize: 11, color: "#94a3b8", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                      {d.nome}{d.enviado_por ? ` · ${d.enviado_por}` : ""} · {fmtDt(d.created_at)}
+                    </div>
+                  </div>
+                  <button onClick={() => baixarDoc(d)} style={{ padding: "5px 10px", borderRadius: 7, border: "1px solid #e2e8f0", background: "#f8fafc", color: "#0f3171", fontSize: 11.5, fontWeight: 700, cursor: "pointer" }}>Abrir</button>
+                  {podeRecrutar && <button onClick={() => removerDoc(d)} title="Remover" style={{ background: "none", border: "none", color: "#dc2626", cursor: "pointer", fontSize: 14 }}>✕</button>}
+                </div>
+              ))}
+            </div>
+
+            <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 16 }}>
+              <button onClick={() => { setDocsModal(null); setDocs([]); }} style={{ padding: "7px 14px", borderRadius: 10, border: "1px solid #e2e8f0", background: "#fff", color: "#475569", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>Fechar</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Modal: Mensagens automáticas de WhatsApp por etapa ── */}
+      {msgModal && (
+        <div className="rec-modal-ov" style={{ zIndex: 870 }}>
+          <div className="rec-modal" style={{ maxWidth: 780 }}>
+            <button onClick={() => setMsgModal(false)} style={{ position: "absolute", top: 14, right: 14, background: "none", border: "none", color: "#94a3b8", fontSize: 20, cursor: "pointer" }}>✕</button>
+            <div style={{ fontSize: 17, fontWeight: 800, marginBottom: 4 }}>⚙️ Mensagens automáticas (WhatsApp)</div>
+            <div style={{ fontSize: 12, color: "#94a3b8", marginBottom: 12 }}>
+              Enviadas ao candidato quando ele é movido para a etapa.
+            </div>
+            {/* O RH precisa entender por que o texto não é livre aqui, senão
+                digita a mensagem no campo errado e nada é enviado. */}
+            <div style={{ fontSize: 11.5, color: "#92400e", background: "#fffbeb", border: "1px solid #fde68a", borderRadius: 9, padding: "9px 11px", marginBottom: 14, lineHeight: 1.5 }}>
+              O WhatsApp só deixa iniciar conversa com <b>template aprovado pela Meta</b>. Cadastre a mensagem no
+              Meta Business Manager, aguarde a aprovação e coloque aqui o <b>nome do template</b>. O texto abaixo é
+              só a prévia que aparece na Caixa de Entrada — mudar ela não muda o que o candidato recebe.
+            </div>
+
+            <div style={{ display: "flex", flexDirection: "column", gap: 12, maxHeight: "52vh", overflowY: "auto" }}>
+              {msgCfgs.map((c, i) => {
+                const upd = (k: string, v: any) => setMsgCfgs(cs => cs.map((x, j) => j === i ? { ...x, [k]: v } : x));
+                const params: string[] = Array.isArray(c.parametros) ? c.parametros : [];
+                const rotulo = c.etapa === "ENTREVISTA GESTOR" ? "ENTREVISTA GESTOR (segunda entrevista — opcional)" : c.etapa;
+                return (
+                  <div key={c.etapa} style={{ border: "1px solid #e2e8f0", borderRadius: 10, padding: "12px 13px", background: c.ativo ? "#f7fdf9" : "#fcfdff" }}>
+                    {/* O estado ligado/desligado tem que ser lido de relance: preencher
+                        o template e esquecer o check faz a etapa continuar muda, e o
+                        envio desligado é silencioso de propósito. */}
+                    <div style={{ display: "flex", alignItems: "center", gap: 9, marginBottom: 9 }}>
+                      <span style={{ fontSize: 13, fontWeight: 800, color: "#0f172a", flex: 1 }}>{rotulo}</span>
+                      {(() => {
+                        // Status na Meta: sem APPROVED, marcar o check não faz a
+                        // mensagem sair — e o RH tem que ver isso antes de marcar.
+                        const st = msgStatus[c.etapa]?.status;
+                        if (!st) return null;
+                        const cor = st === "APPROVED" ? { bg: "#dcfce7", fg: "#15803d", txt: "aprovado na Meta" }
+                          : st === "PENDING" ? { bg: "#fef3c7", fg: "#b45309", txt: "em revisão na Meta" }
+                          : st === "REJECTED" ? { bg: "#fee2e2", fg: "#b91c1c", txt: "reprovado na Meta" }
+                          : { bg: "#f1f5f9", fg: "#64748b", txt: "não enviado à Meta" };
+                        return <span title={msgStatus[c.etapa]?.motivo || ""} style={{ fontSize: 10, fontWeight: 800, padding: "2px 8px", borderRadius: 20, background: cor.bg, color: cor.fg }}>{cor.txt}</span>;
+                      })()}
+                      <label style={{ display: "inline-flex", alignItems: "center", gap: 6, cursor: "pointer", userSelect: "none" }}>
+                        <input type="checkbox" checked={!!c.ativo} onChange={e => upd("ativo", e.target.checked)} style={{ width: 15, height: 15, cursor: "pointer" }} />
+                        <span style={{ fontSize: 11.5, fontWeight: 800, color: c.ativo ? "#15803d" : "#94a3b8" }}>
+                          {c.ativo ? "Enviando automaticamente" : "Desligada — não envia nada"}
+                        </span>
+                      </label>
+                    </div>
+                    <div style={{ display: "flex", gap: 9, flexWrap: "wrap" }}>
+                      <div style={{ flex: "2 1 220px" }}>
+                        <label style={{ fontSize: 11, fontWeight: 800, color: "#475569" }}>Nome do template na Meta *</label>
+                        <input value={c.template_nome ?? ""} onChange={e => upd("template_nome", e.target.value)} placeholder="ex.: recrutamento_triagem"
+                          style={{ width: "100%", marginTop: 4, height: 32, borderRadius: 8, padding: "0 9px", fontSize: 12.5, outline: "none",
+                            border: `1px solid ${nomeTemplateInvalido(c.template_nome) ? "#fca5a5" : "#e2e8f0"}` }} />
+                        {nomeTemplateInvalido(c.template_nome) && (
+                          <div style={{ fontSize: 10.5, color: "#b91c1c", marginTop: 3, lineHeight: 1.4 }}>
+                            A Meta só aceita minúsculas, números e underscore. Use <b>{sugerirNomeTemplate(c.template_nome)}</b>
+                            {" "}— e confira se é exatamente esse o nome lá no Business Manager.
+                          </div>
+                        )}
+                      </div>
+                      <div style={{ flex: "1 1 110px" }}>
+                        <label style={{ fontSize: 11, fontWeight: 800, color: "#475569" }}>Idioma</label>
+                        <input value={c.template_idioma ?? "pt_BR"} onChange={e => upd("template_idioma", e.target.value)}
+                          style={{ width: "100%", marginTop: 4, height: 32, border: "1px solid #e2e8f0", borderRadius: 8, padding: "0 9px", fontSize: 12.5, outline: "none" }} />
+                      </div>
+                    </div>
+                    <div style={{ marginTop: 9 }}>
+                      <label style={{ fontSize: 11, fontWeight: 800, color: "#475569" }}>
+                        Variáveis, na ordem dos {"{{1}}, {{2}}…"} do template
+                      </label>
+                      <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 5 }}>
+                        {params.map((p, pi) => (
+                          <span key={pi} style={{ display: "inline-flex", alignItems: "center", gap: 5, fontSize: 11, fontWeight: 700, background: "#eef4ff", border: "1px solid #dbe4f0", borderRadius: 20, padding: "3px 5px 3px 9px", color: "#0f3171" }}>
+                            {`{{${pi + 1}}}`} = {p}
+                            <button onClick={() => upd("parametros", params.filter((_, j) => j !== pi))} style={{ background: "none", border: "none", color: "#94a3b8", cursor: "pointer", fontSize: 12, lineHeight: 1 }}>✕</button>
+                          </span>
+                        ))}
+                        <select value="" onChange={e => { if (e.target.value) upd("parametros", [...params, e.target.value]); }}
+                          style={{ height: 25, border: "1px dashed #cbd5e1", borderRadius: 20, padding: "0 8px", fontSize: 11, color: "#0f3171", background: "#fff", cursor: "pointer" }}>
+                          <option value="">+ variável</option>
+                          {MSG_VARIAVEIS.map(v => <option key={v} value={v}>{v}</option>)}
+                        </select>
+                      </div>
+                    </div>
+                    <div style={{ marginTop: 9 }}>
+                      <label style={{ fontSize: 11, fontWeight: 800, color: "#475569" }}>Prévia (espelho do template, só para leitura interna)</label>
+                      <textarea value={c.texto_previa ?? ""} onChange={e => upd("texto_previa", e.target.value)} rows={2}
+                        style={{ width: "100%", marginTop: 4, border: "1px solid #e2e8f0", borderRadius: 8, padding: "7px 9px", fontSize: 12.5, outline: "none", fontFamily: "inherit", resize: "vertical" }} />
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+
+            <div style={{ display: "flex", gap: 8, justifyContent: "space-between", alignItems: "center", marginTop: 16, flexWrap: "wrap" }}>
+              <button onClick={criarTemplates} disabled={msgMetaBusy}
+                title="Cria os textos na conta da empresa na Meta e os põe em revisão"
+                style={{ padding: "7px 14px", borderRadius: 10, border: "1px solid rgba(37,211,102,.35)", background: msgMetaBusy ? "#f1f5f9" : "rgba(37,211,102,.1)", color: "#128c7e", fontSize: 12, fontWeight: 700, cursor: msgMetaBusy ? "default" : "pointer" }}>
+                {msgMetaBusy ? "Enviando…" : "↑ Enviar textos para aprovação da Meta"}
+              </button>
+              <div style={{ display: "flex", gap: 8 }}>
+                <button onClick={() => setMsgModal(false)} style={{ padding: "7px 14px", borderRadius: 10, border: "1px solid #e2e8f0", background: "#fff", color: "#475569", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>Cancelar</button>
+                <button onClick={salvarMsgConfig} disabled={msgSalvando} style={{ padding: "7px 14px", borderRadius: 10, border: "none", background: msgSalvando ? "#94a3b8" : "#0f3171", color: "#fff", fontSize: 12, fontWeight: 700, cursor: msgSalvando ? "default" : "pointer" }}>{msgSalvando ? "Salvando…" : "Salvar"}</button>
+              </div>
             </div>
           </div>
         </div>

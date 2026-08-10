@@ -1,6 +1,6 @@
 import { PageHeader } from "@/components/layout/PageHeader";
 import { Card } from "@/components/ui/card";
-import { BookOpen, ShieldAlert, ClipboardList, CalendarRange, Headset, ArrowRight, type LucideIcon } from "lucide-react";
+import { BookOpen, ShieldAlert, ClipboardList, CalendarRange, Headset, Car, ArrowRight, type LucideIcon } from "lucide-react";
 import { Link } from "react-router-dom";
 
 interface Servico {
@@ -41,6 +41,12 @@ const servicos: Servico[] = [
     icon: CalendarRange,
     title: "Agenda de Reunião",
     desc: "Agende reuniões, registre atas com anexos e assinaturas e exporte para o calendário ou em PDF.",
+  },
+  {
+    to: "/app/central-servicos/veiculos",
+    icon: Car,
+    title: "Agendamento de Veículos",
+    desc: "Reserve um carro da frota por data e turno, veja quem está com cada veículo e quais estão em manutenção. A frota vem do módulo de Patrimônio.",
   },
 ];
 
