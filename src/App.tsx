@@ -30,6 +30,7 @@ import Historico from "./pages/Historico";
 import Administracao from "./pages/Administracao";
 import SmokeTestHelena from "./pages/admin/SmokeTestHelena";
 import MeuPerfil from "./pages/MeuPerfil";
+import DiscordCallback from "./pages/DiscordCallback";
 import Composicao from "./pages/Composicao";
 import CustosBDI from "./pages/CustosBDI";
 import ParecerSST from "./pages/pareceres/ParecerSST";
@@ -311,6 +312,9 @@ const App = () => (
             <Route path="administracao" element={<Administracao />} />
             <Route path="admin/smoke-helena" element={<SmokeTestHelena />} />
             <Route path="meu-perfil" element={<MeuPerfil />} />
+            {/* URL de retorno do OAuth do Discord. Precisa ser fixa: o Discord
+                só aceita redirecionar para endereços registrados no app. */}
+            <Route path="meu-perfil/discord" element={<DiscordCallback />} />
             <Route path="controladoria/empresas" element={<Empresas />} />
             <Route path="controladoria/centros-custo" element={<CentrosCusto />} />
             <Route path="controladoria/estrutura-organizacional" element={<EstruturaOrganizacional />} />
