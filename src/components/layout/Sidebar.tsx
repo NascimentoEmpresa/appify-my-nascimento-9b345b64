@@ -466,13 +466,16 @@ const encarregadosModule: ModuleDef = {
       ],
     },
     {
-      label: "Acompanhamento",
+      label: "Suprimentos",
       defaultOpen: true,
       items: [
         // Continua existindo: é a visão com TODAS as opções e o histórico.
         { label: "Minhas Solicitações", to: "/app/encarregados/minhas-solicitacoes", icon: ClipboardCheck },
         { label: "Solicitar Materiais", to: "/app/encarregados/solicitar-materiais", icon: Shirt },
-        { label: "Meus Pedidos", to: "/app/encarregados/meus-pedidos", icon: Truck },
+        // "Meus Pedidos" era ambíguo ao lado de "Minhas Solicitações": o
+        // encarregado não distingue pedido de solicitação. O rótulo agora diz
+        // de que são.
+        { label: "Minhas Solicitações de Materiais", to: "/app/encarregados/meus-pedidos", icon: Truck },
       ],
     },
   ],
