@@ -6,6 +6,7 @@ import { DemoBanner } from "./DemoBanner";
 import { ChamadoFab } from "@/components/chamados/ChamadoFab";
 import { RouteGuard } from "@/components/auth/RouteGuard";
 import { VinculoGate } from "@/components/auth/VinculoEmpregado";
+import { VinculoDiscordGate } from "@/components/auth/VinculoDiscordGate";
 import { useModoExterno } from "@/hooks/useModoExterno";
 
 export function AppShell() {
@@ -59,6 +60,9 @@ export function AppShell() {
       </div>
       {!externo && <ChamadoFab />}
       {!externo && <VinculoGate />}
+      {/* Entra depois do VinculoGate de propósito: ele só aparece quando o
+          vínculo Senior já está resolvido, para não empilhar dois modais. */}
+      {!externo && <VinculoDiscordGate />}
     </div>
   );
 }

@@ -26,6 +26,7 @@ import { Passos, type IndicePasso } from "./componentes/Passos";
 import { PassoConfirmar } from "./componentes/PassoConfirmar";
 import { PassoContratos } from "./componentes/PassoContratos";
 import { PassoDataTurno } from "./componentes/PassoDataTurno";
+import { PainelFrota } from "./componentes/PainelFrota";
 import { ProximosAgendamentos } from "./componentes/ProximosAgendamentos";
 import { StatusRapido } from "./componentes/StatusRapido";
 
@@ -285,6 +286,12 @@ export default function AgendamentoVeiculos() {
                 </div>
               )}
             </Card>
+
+            {/* O card do assistente é mais baixo que a coluna da direita, e
+                sobrava um vazio grande embaixo. Preenche com o uso real da
+                frota — que só existe porque o histórico foi importado; sem
+                dado, o painel se esconde em vez de mostrar caixas zeradas. */}
+            <PainelFrota agendamentos={agendamentos} frota={listaFrota} />
           </TabsContent>
 
           <TabsContent value="meus">

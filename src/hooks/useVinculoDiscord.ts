@@ -53,6 +53,27 @@ export function useMeuDiscord() {
   });
 }
 
+/**
+ * A integração já tem credenciais?
+ *
+ * O convite automático consulta isto antes de aparecer: incomodar todo mundo
+ * para vincular algo que responderia 503 seria pior do que não convidar.
+ */
+export function useDiscordConfigurado() {
+  return useQuery({
+    queryKey: ["discord_configurado"],
+    staleTime: 5 * 60_000,
+    retry: false,
+    queryFn: async (): Promise<boolean> => {
+      const { data, error } = await supabase.functions.invoke("discord-vincular", {
+        body: { action: "status" },
+      });
+      if (error) return false;
+      return !!data?.configurado;
+    },
+  });
+}
+
 function useInvalidar() {
   const qc = useQueryClient();
   return () => qc.invalidateQueries({ queryKey: ["usuario_discord"] });
