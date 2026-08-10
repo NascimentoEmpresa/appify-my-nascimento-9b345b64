@@ -52,6 +52,7 @@ import {
   Shirt,
   Truck,
   Boxes,
+  FileClock,
   Car,
   Package,
   PlusCircle,
@@ -235,6 +236,7 @@ const suprimentosModule: ModuleDef = {
         { label: "Aprovação de Catálogo", to: "/app/suprimentos/catalogo/aprovacoes", icon: ClipboardCheck },
         { label: "Pedidos de Materiais", to: "/app/suprimentos/pedidos-materiais", icon: PackageCheck },
         { label: "Estoque & Etiquetas", to: "/app/suprimentos/estoque-etiquetas", icon: Boxes },
+        { label: "Cotações do Malote", to: "/app/suprimentos/cotacoes-malote", icon: FileClock },
       ],
     },
     {
@@ -244,7 +246,7 @@ const suprimentosModule: ModuleDef = {
         // Mesma linha de cotacoes_licitacao que a Licitação vê em
         // /app/licitacoes/cotacoes, pelo lado de quem responde. Ícone igual ao
         // de lá de propósito: é um canal só, visto de dois lugares.
-        { label: "Cotações", to: "/app/suprimentos/cotacoes", icon: MessageSquare },
+        { label: "Cotações para a Licitação", to: "/app/suprimentos/cotacoes", icon: MessageSquare },
       ],
     },
     {
@@ -464,14 +466,17 @@ const encarregadosModule: ModuleDef = {
       ],
     },
     {
-      label: "Acompanhamento",
+      label: "Suprimentos",
       defaultOpen: true,
       items: [
         // "Minhas Solicitações" saiu do menu a pedido: cada solicitação já tem
         // seu próprio item acima, e a rota continua de pé (o Início e os
         // redirecionamentos do Jurídico ainda apontam para ela).
         { label: "Solicitar Materiais", to: "/app/encarregados/solicitar-materiais", icon: Shirt },
-        { label: "Meus Pedidos", to: "/app/encarregados/meus-pedidos", icon: Truck },
+        // "Meus Pedidos" era ambíguo ao lado de "Minhas Solicitações": o
+        // encarregado não distingue pedido de solicitação. O rótulo agora diz
+        // de que são.
+        { label: "Minhas Solicitações de Materiais", to: "/app/encarregados/meus-pedidos", icon: Truck },
       ],
     },
   ],
@@ -1103,8 +1108,11 @@ function SidebarGroup({ group }: { group: NavGroup }) {
                 {({ isActive }) => (
                   <>
                     {isActive && <span className="absolute left-0 top-1.5 bottom-1.5 w-0.5 rounded-r bg-accent" />}
-                    <item.icon className={cn("h-3.5 w-3.5 shrink-0", isActive ? "text-accent" : "")} />
-                    <span className="flex-1 truncate">{item.label}</span>
+                    <item.icon className={cn("mt-0.5 h-3.5 w-3.5 shrink-0 self-start", isActive ? "text-accent" : "")} />
+                    {/* Quebra em duas linhas em vez de cortar com reticências:
+                        "Minhas Solicitações de Ma…" esconde justamente a
+                        palavra que distingue um item do outro. */}
+                    <span className="min-w-0 flex-1 leading-snug [overflow-wrap:anywhere]">{item.label}</span>
                     {item.dot && (
                       <span className="h-2 w-2 shrink-0 rounded-full bg-red-500" title="Novidades" />
                     )}

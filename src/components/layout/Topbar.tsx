@@ -11,6 +11,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { formatDistanceToNow } from "date-fns";
 import { ptBR } from "date-fns/locale";
 import { AgendaCorporativaSheet } from "./AgendaCorporativaSheet";
+import { resolverLinkNotificacao } from "@/lib/notificacaoLink";
 
 type Notif = {
   id: string;
@@ -109,6 +110,17 @@ export function Topbar({ onToggleSidebar, onOpenMobile }: { onToggleSidebar: () 
   const marcarTodasLidas = async () => {
     await supabase.from("notificacoes" as any).update({ lida: true } as any).eq("user_id", user!.id).eq("lida", false);
     qc.invalidateQueries({ queryKey: ["notificacoes", user?.id] });
+  };
+
+  // Clicar na notificação leva para a tela do registro que a originou (o destino
+  // vem de `notificacoes.link`, normalizado em resolverLinkNotificacao).
+  const abrirNotificacao = (n: Notif) => {
+    const destino = resolverLinkNotificacao(n);
+    if (!n.lida) marcarLida(n.id);
+    if (!destino) return;
+    setOpenNotif(false);
+    if (/^https?:\/\//i.test(destino)) window.open(destino, "_blank", "noopener");
+    else navigate(destino);
   };
 
   const nomeExibido = displayName || user?.email?.split("@")[0] || "Usuário";
@@ -280,24 +292,43 @@ export function Topbar({ onToggleSidebar, onOpenMobile }: { onToggleSidebar: () 
                   {!notifQ.isLoading && (notifQ.data ?? []).length === 0 && (
                     <li className="p-6 text-center text-xs text-muted-foreground">Nenhuma notificação.</li>
                   )}
-                  {(notifQ.data ?? []).map((n) => (
-                    <li key={n.id} className={cn("flex items-start gap-2.5 px-3 py-2.5 hover:bg-secondary/60", !n.lida && "bg-primary-soft/40")}>
-                      <span className={cn("mt-1.5 h-2 w-2 shrink-0 rounded-full",
-                        n.tipo === "success" ? "bg-success" : n.tipo === "warning" ? "bg-warning" : n.tipo === "error" ? "bg-destructive" : "bg-primary")} />
-                      <div className="min-w-0 flex-1">
-                        <p className="text-sm font-medium leading-tight">{n.titulo}</p>
-                        {n.mensagem && <p className="mt-0.5 text-xs text-muted-foreground">{n.mensagem}</p>}
-                        <p className="mt-1 text-[10px] text-muted-foreground">
-                          {formatDistanceToNow(new Date(n.created_at), { addSuffix: true, locale: ptBR })}
-                        </p>
-                      </div>
-                      {!n.lida && (
-                        <button onClick={() => marcarLida(n.id)} className="grid h-6 w-6 place-items-center rounded text-muted-foreground hover:bg-muted" title="Marcar como lida">
-                          <Check className="h-3.5 w-3.5" />
-                        </button>
-                      )}
-                    </li>
-                  ))}
+                  {(notifQ.data ?? []).map((n) => {
+                    const destino = resolverLinkNotificacao(n);
+                    const conteudo = (
+                      <>
+                        <span className={cn("mt-1.5 h-2 w-2 shrink-0 rounded-full",
+                          n.tipo === "success" ? "bg-success" : n.tipo === "warning" ? "bg-warning" : n.tipo === "error" ? "bg-destructive" : "bg-primary")} />
+                        <div className="min-w-0 flex-1">
+                          <p className="text-sm font-medium leading-tight">{n.titulo}</p>
+                          {n.mensagem && <p className="mt-0.5 text-xs text-muted-foreground">{n.mensagem}</p>}
+                          <p className="mt-1 text-[10px] text-muted-foreground">
+                            {formatDistanceToNow(new Date(n.created_at), { addSuffix: true, locale: ptBR })}
+                          </p>
+                        </div>
+                      </>
+                    );
+                    return (
+                      <li key={n.id} className={cn("flex items-start gap-1 pr-2 hover:bg-secondary/60", !n.lida && "bg-primary-soft/40")}>
+                        {destino ? (
+                          <button
+                            type="button"
+                            onClick={() => abrirNotificacao(n)}
+                            title={`Abrir: ${n.titulo}`}
+                            className="flex min-w-0 flex-1 cursor-pointer items-start gap-2.5 px-3 py-2.5 text-left"
+                          >
+                            {conteudo}
+                          </button>
+                        ) : (
+                          <div className="flex min-w-0 flex-1 items-start gap-2.5 px-3 py-2.5">{conteudo}</div>
+                        )}
+                        {!n.lida && (
+                          <button onClick={() => marcarLida(n.id)} className="mt-2.5 grid h-6 w-6 shrink-0 place-items-center rounded text-muted-foreground hover:bg-muted" title="Marcar como lida">
+                            <Check className="h-3.5 w-3.5" />
+                          </button>
+                        )}
+                      </li>
+                    );
+                  })}
                 </ul>
               </div>
             </>
