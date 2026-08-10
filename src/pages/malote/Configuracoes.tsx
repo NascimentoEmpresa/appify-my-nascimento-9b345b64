@@ -9,6 +9,7 @@ import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Save, Shield, Lock, FileText, Plus, Pencil, Trash2, AlertTriangle, Download, Calendar } from "lucide-react";
 import { toast } from "sonner";
 import { usePermissoes } from "@/context/PermissoesContext";
@@ -27,6 +28,7 @@ import {
   PrazoPagamentoUnidade,
   BloqueioRegra,
 } from "@/hooks/useMaloteConfig";
+import { LigacaoLicitacaoClassificacao } from "./LigacaoLicitacaoClassificacao";
 
 const DIAS_UTEIS_OPCOES = Array.from({ length: 15 }, (_, i) => i + 1);
 const ANO_ATUAL = new Date().getFullYear();
@@ -40,6 +42,7 @@ export default function Configuracoes() {
   const salvar = useSalvarMaloteConfig();
 
   const [form, setForm] = useState<MaloteConfig | null>(null);
+  const [aba, setAba] = useState("config");
 
   useEffect(() => {
     if (config) setForm(config);
@@ -63,6 +66,7 @@ export default function Configuracoes() {
         module="Malote"
         breadcrumb={["Malote", "Configurações"]}
         actions={
+          aba === "config" &&
           podeEditar && (
             <Button onClick={handleSalvar} disabled={!form || salvar.isPending}>
               <Save className="h-4 w-4 mr-2" />
@@ -72,10 +76,17 @@ export default function Configuracoes() {
         }
       />
 
-      {isLoading && <p className="text-sm text-muted-foreground">Carregando configurações...</p>}
+      <Tabs value={aba} onValueChange={setAba}>
+        <TabsList>
+          <TabsTrigger value="config">Configurações do Malote</TabsTrigger>
+          <TabsTrigger value="ligacoes">Ligação de Licitações e Classificações</TabsTrigger>
+        </TabsList>
 
-      {form && (
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <TabsContent value="config" className="space-y-6 mt-4">
+          {isLoading && <p className="text-sm text-muted-foreground">Carregando configurações...</p>}
+
+          {form && (
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
           <Card>
             <CardHeader>
               <div className="flex items-start gap-2">
@@ -290,8 +301,14 @@ export default function Configuracoes() {
               </div>
             </CardContent>
           </Card>
-        </div>
-      )}
+            </div>
+          )}
+        </TabsContent>
+
+        <TabsContent value="ligacoes" className="mt-4">
+          <LigacaoLicitacaoClassificacao podeEditar={podeEditar} />
+        </TabsContent>
+      </Tabs>
     </div>
   );
 }
