@@ -145,10 +145,26 @@ export function CalendarioGeral({ agendamentos, frota }: Props) {
             <ul className="space-y-2">
               {agendamentosDoDiaAberto.map((a) => (
                 <li key={a.id} className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-border p-2.5">
-                  <div className="min-w-0">
-                    <span className="text-sm font-medium text-foreground">{a.veiculo_nome}</span>
-                    <span className="ml-2 text-xs text-muted-foreground">{a.solicitante_nome ?? "—"}</span>
-                    {a.destino && <span className="ml-2 text-xs text-muted-foreground">· {a.destino}</span>}
+                  <div className="flex min-w-0 flex-1 items-baseline gap-2">
+                    <span className="shrink-0 text-sm font-medium text-foreground">{a.veiculo_nome}</span>
+                    <span className="shrink-0 text-xs text-muted-foreground">
+                      {a.solicitante_nome ?? "—"}
+                    </span>
+                    {/* Ao lado do nome, como pedido. Uma viagem costuma atender
+                        vários contratos — o histórico chega a ter dez numa só —,
+                        então só este trecho encolhe: o veículo e a pessoa nunca
+                        são cortados, e o texto inteiro fica no title. */}
+                    {a.contratos?.length > 0 && (
+                      <span
+                        className="truncate text-xs text-muted-foreground/80"
+                        title={a.contratos.map((c) => c.contrato_nome).join(", ")}
+                      >
+                        · {a.contratos.map((c) => c.contrato_nome).join(", ")}
+                      </span>
+                    )}
+                    {a.destino && (
+                      <span className="shrink-0 text-xs text-muted-foreground">· {a.destino}</span>
+                    )}
                   </div>
                   <span className="rounded-md bg-muted px-2 py-0.5 text-xs text-muted-foreground">
                     {LABEL_TURNO[a.turno]}
