@@ -1105,8 +1105,11 @@ function SidebarGroup({ group }: { group: NavGroup }) {
                 {({ isActive }) => (
                   <>
                     {isActive && <span className="absolute left-0 top-1.5 bottom-1.5 w-0.5 rounded-r bg-accent" />}
-                    <item.icon className={cn("h-3.5 w-3.5 shrink-0", isActive ? "text-accent" : "")} />
-                    <span className="flex-1 truncate">{item.label}</span>
+                    <item.icon className={cn("mt-0.5 h-3.5 w-3.5 shrink-0 self-start", isActive ? "text-accent" : "")} />
+                    {/* Quebra em duas linhas em vez de cortar com reticências:
+                        "Minhas Solicitações de Ma…" esconde justamente a
+                        palavra que distingue um item do outro. */}
+                    <span className="min-w-0 flex-1 leading-snug [overflow-wrap:anywhere]">{item.label}</span>
                     {item.dot && (
                       <span className="h-2 w-2 shrink-0 rounded-full bg-red-500" title="Novidades" />
                     )}
