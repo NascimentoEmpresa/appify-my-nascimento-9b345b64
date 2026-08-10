@@ -219,6 +219,13 @@ const App = () => (
                 usuário externo (sessão anônima) enxerga; ver useModoExterno. */}
             <Route path="encarregados/solicitar-materiais" element={<SolicitarMateriais />} />
             <Route path="encarregados/meus-pedidos" element={<MeusPedidos />} />
+            {/* Chamados de Sistemas para o encarregado. São as MESMAS telas da
+                Central de Serviços — o prop `base` já existia para isto —, só
+                que ancoradas no módulo dele, para não obrigar quem vive em
+                Encarregados a caçar a tela em outro menu. */}
+            <Route path="encarregados/chamados" element={<MeusChamados base="/app/encarregados/chamados" />} />
+            <Route path="encarregados/chamados/novo" element={<AbrirChamado base="/app/encarregados/chamados" />} />
+            <Route path="encarregados/chamados/:id/acompanhar" element={<AcompanharChamado base="/app/encarregados/chamados" />} />
             {/* Sistemas */}
             <Route path="sistemas/solicitacoes-erp" element={<SolicitacoesErp />} />
             {/* Chamados de Sistemas (help desk) — telas de abrir/meus chamados também

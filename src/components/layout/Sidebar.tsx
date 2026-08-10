@@ -466,6 +466,15 @@ const encarregadosModule: ModuleDef = {
       ],
     },
     {
+      label: "Sistemas",
+      defaultOpen: true,
+      items: [
+        // Mesma tela da Central de Serviços, ancorada aqui: o encarregado
+        // também abre chamado, e não deveria ter que sair do módulo dele.
+        { label: "Chamados de Sistemas", to: "/app/encarregados/chamados", icon: Headset, notif: "meus" },
+      ],
+    },
+    {
       label: "Suprimentos",
       defaultOpen: true,
       items: [
