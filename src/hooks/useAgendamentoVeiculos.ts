@@ -103,8 +103,15 @@ export interface NovoAgendamento {
  */
 const BUCKET_FOTO_VEICULO = "sup-patrimonio";
 
-/** Meia hora. O link vale 1h, então a troca acontece antes de expirar. */
+/** Quanto tempo o link assinado da foto vale, em segundos. Uma hora. */
 const VALIDADE_LINK_S = 3600;
+
+/**
+ * Folga para renovar o link antes de ele morrer. Com 10 min, o react-query
+ * busca um link novo aos 50 min — se a folga fosse zero, uma aba aberta há
+ * exatamente uma hora mostraria foto quebrada até alguém recarregar.
+ */
+const FOLGA_RENOVACAO_S = 600;
 
 /**
  * Link temporário para a foto do veículo.
@@ -120,8 +127,7 @@ export function useFotoVeiculo(fotoPath: string | null | undefined) {
   return useQuery({
     queryKey: ["foto_veiculo", caminho],
     enabled: !!caminho,
-    // Renova antes de o link de 1h expirar, sem refazer a cada re-render.
-    staleTime: (VALIDADE_LINK_S - 600) * 1000,
+    staleTime: (VALIDADE_LINK_S - FOLGA_RENOVACAO_S) * 1000,
     retry: false,
     queryFn: async (): Promise<string | null> => {
       if (!caminho) return null;
