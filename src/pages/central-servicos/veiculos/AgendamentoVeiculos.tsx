@@ -184,17 +184,14 @@ export default function AgendamentoVeiculos() {
                     )}
 
                     {!frota.isLoading && !frota.isError && listaFrota.length === 0 && (
-                      // Duas causas levam à lista vazia e o usuário não tem
-                      // como distinguir: não há carro cadastrado, ou há, mas
-                      // pertence a uma empresa à qual ele não está vinculado.
-                      // A segunda é a comum, então o texto cita as duas.
+                      // Desde a 20260828000007 a frota é do grupo inteiro, sem
+                      // filtro por empresa: chegar aqui significa mesmo que não
+                      // há veículo ativo cadastrado.
                       <div className="rounded-xl border border-dashed border-border p-10 text-center">
                         <Car className="mx-auto mb-3 h-10 w-10 text-muted-foreground/50" />
-                        <p className="font-medium text-foreground">Nenhum veículo disponível para você</p>
-                        <p className="mx-auto mt-1 max-w-md text-sm text-muted-foreground">
-                          A frota vem do módulo de Patrimônio e só aparece para quem está vinculado à
-                          empresa dona dos veículos. Se você deveria enxergar a frota, peça ao
-                          administrador para conferir seu vínculo de empresa.
+                        <p className="font-medium text-foreground">Nenhum veículo cadastrado</p>
+                        <p className="mt-1 text-sm text-muted-foreground">
+                          A frota vem do módulo de Patrimônio — cadastre os veículos por lá.
                         </p>
                       </div>
                     )}
