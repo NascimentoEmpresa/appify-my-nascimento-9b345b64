@@ -9446,4 +9446,3 @@ COMMENT ON COLUMN public.profiles.bio IS
   'Descrição livre escrita pelo próprio usuário em Meu Perfil. Opcional.';
 
 NOTIFY pgrst, 'reload schema';
-
