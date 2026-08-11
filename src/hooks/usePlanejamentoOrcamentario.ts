@@ -5,9 +5,9 @@ export type TipoClassificacaoOrcamento = "contrato" | "administrativo";
 
 const CLASSIFICACAO_COLUMNS =
   "id, nome, ativo, tipo, setor_responsavel, requer_solicitacao, " +
-  "aprovador1_user_id, aprovador1_nome, aprovador1_limite_pct, " +
-  "aprovador2_user_id, aprovador2_nome, aprovador2_limite_pct, " +
-  "aprovador3_user_id, aprovador3_nome, aprovador3_limite_pct";
+  "aprovador1_user_id, aprovador1_nome, aprovador1_limite_pct, aprovador1_sem_limite, " +
+  "aprovador2_user_id, aprovador2_nome, aprovador2_limite_pct, aprovador2_sem_limite, " +
+  "aprovador3_user_id, aprovador3_nome, aprovador3_limite_pct, aprovador3_sem_limite";
 
 export interface ClassificacaoOrcamento {
   id: string;
@@ -19,12 +19,15 @@ export interface ClassificacaoOrcamento {
   aprovador1_user_id: string | null;
   aprovador1_nome: string | null;
   aprovador1_limite_pct: number | null;
+  aprovador1_sem_limite: boolean;
   aprovador2_user_id: string | null;
   aprovador2_nome: string | null;
   aprovador2_limite_pct: number | null;
+  aprovador2_sem_limite: boolean;
   aprovador3_user_id: string | null;
   aprovador3_nome: string | null;
   aprovador3_limite_pct: number | null;
+  aprovador3_sem_limite: boolean;
 }
 
 export interface AprovadorDisponivel {
@@ -144,13 +147,16 @@ interface SalvarClassificacaoInput {
   requer_solicitacao: boolean;
   aprovador1_user_id: string;
   aprovador1_nome: string;
-  aprovador1_limite_pct: number;
+  aprovador1_limite_pct: number | null;
+  aprovador1_sem_limite: boolean;
   aprovador2_user_id: string | null;
   aprovador2_nome: string | null;
   aprovador2_limite_pct: number | null;
+  aprovador2_sem_limite: boolean;
   aprovador3_user_id: string | null;
   aprovador3_nome: string | null;
   aprovador3_limite_pct: number | null;
+  aprovador3_sem_limite: boolean;
 }
 
 export function useSalvarClassificacaoOrcamento() {

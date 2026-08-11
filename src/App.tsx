@@ -103,6 +103,8 @@ import MaloteCriarDespesa from "./pages/malote/CriarDespesa";
 import MaloteRatearClassificacao from "./pages/malote/RatearClassificacao";
 import MaloteDashboard from "./pages/malote/Dashboard";
 import MaloteMeusItens from "./pages/malote/MeusItens";
+import MaloteDespesaVisualizar from "./pages/malote/DespesaVisualizar";
+import MaloteSolicitacaoVisualizar from "./pages/malote/SolicitacaoVisualizar";
 import MovimentosBancarios from "./pages/financeiro/MovimentosBancarios";
 import ContasBancariasEmpresa from "./pages/financeiro/ContasBancariasEmpresa";
 import IntegracaoBancaria from "./pages/financeiro/IntegracaoBancaria";
@@ -335,6 +337,8 @@ const App = () => (
             <Route path="malote/ratear-classificacao" element={<MaloteRatearClassificacao />} />
             <Route path="malote/dashboard" element={<MaloteDashboard />} />
             <Route path="malote/meus-itens" element={<MaloteMeusItens />} />
+            <Route path="malote/despesa/:id" element={<MaloteDespesaVisualizar />} />
+            <Route path="malote/solicitacao/:id" element={<MaloteSolicitacaoVisualizar />} />
             <Route path="orcamento" element={<Orcamento />} />
             {/* Suprimentos */}
             <Route path="suprimentos/fornecedores" element={<Fornecedores />} />
