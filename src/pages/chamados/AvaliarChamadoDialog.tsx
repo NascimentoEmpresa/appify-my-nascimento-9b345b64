@@ -6,7 +6,7 @@ import { useToast } from "@/hooks/use-toast";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
-import { Star, Send, PartyPopper } from "lucide-react";
+import { Star, Send, PartyPopper, MessageSquareWarning } from "lucide-react";
 import { CRITERIOS_AVALIACAO, type CriterioKey } from "./types";
 
 // Modal de avaliação multi-critério do solicitante (6 itens de 1 a 5 + comentário).
@@ -45,6 +45,16 @@ export function AvaliarChamadoDialog({
 
   const completo = CRITERIOS_AVALIACAO.every((c) => notas[c.key] >= 1);
 
+  // Nota cheia dispensa explicação. Qualquer critério abaixo de 5 exige o
+  // comentário: é dele que sai "onde temos que melhorar" — sem isso a nota
+  // baixa chega sem dizer o que fazer. Mesma regra está no CHECK do banco
+  // (migration 20260831000004), então não adianta contornar a tela.
+  const MIN_COMENTARIO = 10;
+  const notaCheia = completo && CRITERIOS_AVALIACAO.every((c) => notas[c.key] === 5);
+  const precisaComentario = completo && !notaCheia;
+  const comentarioOk = !precisaComentario || comentario.trim().length >= MIN_COMENTARIO;
+  const abaixoDe5 = CRITERIOS_AVALIACAO.filter((c) => notas[c.key] >= 1 && notas[c.key] < 5);
+
   const fechar = (v: boolean) => {
     if (enviando) return;
     onOpenChange(v);
@@ -58,6 +68,16 @@ export function AvaliarChamadoDialog({
       toast({ title: "Avalie todos os itens", description: "Dê de 1 a 5 estrelas em cada critério.", variant: "destructive" });
       return;
     }
+    if (!comentarioOk) {
+      setErroFalta(true);
+      setTimeout(() => setErroFalta(false), 500);
+      toast({
+        title: "Conte o que faltou",
+        description: `Você deu menos de 5 em ${abaixoDe5.map((c) => c.titulo.toLowerCase()).join(", ")}. Escreva ao menos ${MIN_COMENTARIO} caracteres explicando o que melhorar.`,
+        variant: "destructive",
+      });
+      return;
+    }
     setEnviando(true);
     const { error } = await (supabase as any).from("CHAMADO_SISTEMA_AVALIACAO").insert({
       chamado_id: chamado.id,
@@ -67,7 +87,15 @@ export function AvaliarChamadoDialog({
     });
     setEnviando(false);
     if (error) {
-      toast({ title: "Erro ao enviar avaliação", description: error.message, variant: "destructive" });
+      // O CHECK do banco é a última barreira; traduz pra não vazar SQL na tela.
+      const violouComentario = error.message?.includes("chamado_avaliacao_comentario_obrigatorio");
+      toast({
+        title: violouComentario ? "Conte o que faltou" : "Erro ao enviar avaliação",
+        description: violouComentario
+          ? `Notas abaixo de 5 exigem um comentário de pelo menos ${MIN_COMENTARIO} caracteres.`
+          : error.message,
+        variant: "destructive",
+      });
       return;
     }
     setSucesso(true);
@@ -151,15 +179,36 @@ export function AvaliarChamadoDialog({
               })}
 
               <div className="animate-rise-in space-y-1" style={{ animationDelay: "240ms" }}>
-                <p className="text-sm font-semibold">Comentário adicional <span className="font-normal text-muted-foreground">(opcional)</span></p>
+                <p className="text-sm font-semibold">
+                  Comentário{" "}
+                  {precisaComentario
+                    ? <span className="font-semibold text-destructive">(obrigatório)</span>
+                    : <span className="font-normal text-muted-foreground">(opcional)</span>}
+                </p>
+                {precisaComentario && (
+                  <p className="flex items-start gap-1.5 rounded-md border border-destructive/30 bg-destructive/5 px-2.5 py-2 text-xs text-destructive">
+                    <MessageSquareWarning className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                    <span>
+                      Você deu menos de 5 em <b>{abaixoDe5.map((c) => c.titulo).join(", ")}</b>.
+                      Conte o que faltou — é assim que a equipe sabe onde melhorar.
+                    </span>
+                  </p>
+                )}
                 <Textarea
                   rows={3}
                   maxLength={500}
-                  placeholder="Deixe aqui sua opinião ou sugestão para melhorarmos ainda mais…"
+                  placeholder={precisaComentario
+                    ? "O que precisa melhorar? Ex.: demorou para dar retorno, a solução resolveu pela metade…"
+                    : "Deixe aqui sua opinião ou sugestão para melhorarmos ainda mais…"}
                   value={comentario}
                   onChange={(e) => setComentario(e.target.value)}
+                  className={precisaComentario && !comentarioOk ? "border-destructive/50 focus-visible:ring-destructive/30" : ""}
                 />
-                <p className="text-right text-[11px] text-muted-foreground">{comentario.length}/500</p>
+                <p className={`text-right text-[11px] ${precisaComentario && !comentarioOk ? "font-semibold text-destructive" : "text-muted-foreground"}`}>
+                  {precisaComentario && !comentarioOk
+                    ? `Faltam ${MIN_COMENTARIO - comentario.trim().length} caracteres`
+                    : `${comentario.length}/500`}
+                </p>
               </div>
             </div>
 
@@ -168,7 +217,7 @@ export function AvaliarChamadoDialog({
               <Button
                 onClick={enviar}
                 disabled={enviando}
-                className={`gap-2 transition-transform active:scale-95 ${completo ? "animate-pop" : ""}`}
+                className={`gap-2 transition-transform active:scale-95 ${completo && comentarioOk ? "animate-pop" : ""}`}
               >
                 <Send className="h-4 w-4" /> {enviando ? "Enviando…" : "Enviar avaliação"}
               </Button>

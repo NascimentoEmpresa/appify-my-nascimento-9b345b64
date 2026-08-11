@@ -7,6 +7,7 @@ import { chamadosMarkSeen } from "@/hooks/useChamadosNotif";
 import { useChamadoPerms } from "./useChamadoPerms";
 import { FeedAtualizacoes } from "./FeedAtualizacoes";
 import { AvaliarChamadoDialog } from "./AvaliarChamadoDialog";
+import { BotaoChatChamado, useChamadosNaoLidos } from "./BotaoChatChamado";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -58,6 +59,8 @@ export default function MeusChamados({ base = "/app/central-servicos/chamados" }
       return m;
     },
   });
+
+  const { data: naoLidos = {} } = useChamadosNaoLidos();
 
   const pendentesIds = useMemo(() => new Set(avaliacoesPendentes.map((p) => p.id)), [avaliacoesPendentes]);
   const [avaliarAlvo, setAvaliarAlvo] = useState<{ id: string; numero: string } | null>(null);
@@ -220,6 +223,13 @@ export default function MeusChamados({ base = "/app/central-servicos/chamados" }
                       {c.observacao_gerente || (c.status === "reprovado" && c.motivo_reprovacao ? c.motivo_reprovacao : "—")}
                     </TableCell>
                     <TableCell className="text-right" onClick={(e) => e.stopPropagation()}>
+                      <div className="flex items-center justify-end gap-1.5">
+                      <BotaoChatChamado
+                        chamado={c}
+                        perfil="solicitante"
+                        naoLidos={naoLidos[c.id] ?? 0}
+                        responsavelNome={nomeDe(c.responsavel_id)}
+                      />
                       {c.status !== "concluido" ? (
                         <Button variant="ghost" size="sm" disabled className="h-8 cursor-not-allowed gap-1.5 text-muted-foreground/60">
                           <Lock className="h-3.5 w-3.5" /> Avaliar
@@ -238,6 +248,7 @@ export default function MeusChamados({ base = "/app/central-servicos/chamados" }
                           <CheckCircle2 className="h-3.5 w-3.5" /> Avaliado
                         </span>
                       )}
+                      </div>
                     </TableCell>
                   </TableRow>
                   );

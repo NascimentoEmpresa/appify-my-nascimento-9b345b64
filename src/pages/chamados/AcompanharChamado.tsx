@@ -8,14 +8,14 @@ import { useToast } from "@/hooks/use-toast";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Textarea } from "@/components/ui/textarea";
-import { ArrowLeft, MessageSquarePlus, Paperclip, Send, RotateCcw, Star } from "lucide-react";
+import { ArrowLeft, MessageSquarePlus, Paperclip, RotateCcw, Star } from "lucide-react";
 import { AvaliarChamadoDialog } from "./AvaliarChamadoDialog";
+import { ChatChamado } from "./ChatChamado";
 import {
   StatusBadge, PrioridadeBadge, Estrelas,
   CATEGORIAS, TIPOS, IMPACTOS, URGENCIAS, AMBIENTES, CRITERIOS_AVALIACAO, mediaAvaliacao,
   labelDe, moduloLabel, fmtData, fmtDataHora,
-  BUCKET_CHAMADOS, type Chamado, type Anexo, type Evento, type AvaliacaoChamado,
+  BUCKET_CHAMADOS, type Chamado, type Anexo, type AvaliacaoChamado,
 } from "./types";
 
 // Tela do SOLICITANTE: acompanha o próprio chamado e, quando o time pede mais
@@ -28,8 +28,6 @@ export default function AcompanharChamado({ base = "/app/central-servicos/chamad
   const { toast } = useToast();
   const { user } = useAuth();
 
-  const [texto, setTexto] = useState("");
-  const [enviando, setEnviando] = useState(false);
   const [avaliarAberto, setAvaliarAberto] = useState(false);
 
   // Abriu o chamado → o solicitante viu a novidade.
@@ -63,16 +61,6 @@ export default function AcompanharChamado({ base = "/app/central-servicos/chamad
     },
   });
 
-  // O solicitante só enxerga eventos não-internos (a RLS filtra 'observacao_interna').
-  const { data: eventos = [] } = useQuery({
-    queryKey: ["chamado-eventos", id],
-    enabled: !!id,
-    queryFn: async () => {
-      const { data } = await (supabase as any).from("CHAMADO_SISTEMA_EVENTO").select("*").eq("chamado_id", id).order("created_at", { ascending: false });
-      return (data ?? []) as Evento[];
-    },
-  });
-
   const { data: avaliacao } = useQuery({
     queryKey: ["chamado-avaliacao", id],
     enabled: !!id,
@@ -89,24 +77,6 @@ export default function AcompanharChamado({ base = "/app/central-servicos/chamad
     qc.invalidateQueries({ queryKey: ["chamados-meus-stats"] });
   };
 
-  const enviarInfo = async () => {
-    if (!texto.trim() || enviando) return;
-    setEnviando(true);
-    const { error } = await (supabase as any).rpc("chamado_adicionar_informacao", {
-      p_chamado_id: id, p_texto: texto.trim(),
-    });
-    if (error) {
-      toast({ title: "Erro ao adicionar informações", description: error.message, variant: "destructive" });
-      setEnviando(false);
-      return;
-    }
-    supabase.functions.invoke("enviar-notificacao-push", { body: { chamado_id: id, evento: "info_adicionada" } }).catch(() => {});
-    setTexto("");
-    setEnviando(false);
-    toast({ title: "Informações enviadas", description: "O chamado voltou para o time." });
-    invalidar();
-  };
-
   const baixarAnexo = async (path: string) => {
     const { data, error } = await supabase.storage.from(BUCKET_CHAMADOS).createSignedUrl(path, 3600);
     if (error || !data?.signedUrl) { toast({ title: "Erro ao abrir anexo", variant: "destructive" }); return; }
@@ -119,7 +89,8 @@ export default function AcompanharChamado({ base = "/app/central-servicos/chamad
   const encerrado = chamado.status === "concluido" || chamado.status === "reprovado";
   const aguardandoRetorno = chamado.status === "aguardando_retorno";
   const anexosAbertura = anexos.filter((a) => (a.campo ?? "abertura") === "abertura");
-  const anexosResposta = anexos.filter((a) => a.campo && a.campo !== "abertura");
+  // Anexos anteriores ao chat: sem mensagem dona, ficam listados à parte.
+  const anexosLegado = anexos.filter((a) => a.campo && a.campo !== "abertura" && !a.evento_id);
 
   const Campo = ({ label, children }: { label: string; children: React.ReactNode }) => (
     <div>
@@ -199,11 +170,11 @@ export default function AcompanharChamado({ base = "/app/central-servicos/chamad
             </div>
           </Card>
 
-          {anexosResposta.length > 0 && (
+          {anexosLegado.length > 0 && (
             <Card className="animate-rise-in space-y-2 border-info/30 bg-info/5 p-4">
-              <p className="flex items-center gap-1.5 text-sm font-bold text-info"><Paperclip className="h-4 w-4" /> Anexos enviados pelo time ({anexosResposta.length})</p>
+              <p className="flex items-center gap-1.5 text-sm font-bold text-info"><Paperclip className="h-4 w-4" /> Anexos enviados pelo time ({anexosLegado.length})</p>
               <div className="space-y-1">
-                {anexosResposta.map((a) => (
+                {anexosLegado.map((a) => (
                   <button key={a.id} onClick={() => baixarAnexo(a.storage_path)} className="flex w-full items-center gap-2 rounded border border-border bg-background px-2.5 py-1.5 text-left text-xs hover:border-info/40">
                     <Paperclip className="h-3.5 w-3.5 text-muted-foreground" />
                     <span className="flex-1 truncate">{a.nome_arquivo}</span>
@@ -214,54 +185,33 @@ export default function AcompanharChamado({ base = "/app/central-servicos/chamad
             </Card>
           )}
 
-          {/* Histórico do chamado (visível ao solicitante) */}
-          <Card className="space-y-2 p-4">
-            <p className="text-sm font-bold">Histórico do chamado</p>
-            <div className="space-y-2 pt-1">
-              {eventos.map((e) => (
-                <div key={e.id} className="rounded border border-border/60 px-2.5 py-1.5">
-                  <p className="flex flex-wrap items-center gap-2 text-[11px] text-muted-foreground">
-                    <span className="font-medium text-foreground">{nomeDe(e.autor_id)}</span>
-                    {e.tipo === "comentario" && e.autor_id === chamado.solicitante_id && (
-                      <span className="rounded bg-primary/10 px-1.5 text-[9px] font-semibold uppercase text-primary">informação adicionada</span>
-                    )}
-                    {e.tipo === "comentario" && e.autor_id !== chamado.solicitante_id && (
-                      <span className="rounded bg-info/10 px-1.5 text-[9px] font-semibold uppercase text-info">comentário</span>
-                    )}
-                    {e.tipo === "evento" && <span className="rounded bg-muted px-1.5 text-[9px] font-semibold uppercase">evento</span>}
-                    <span>{fmtDataHora(e.created_at)}</span>
-                  </p>
-                  {e.texto && <p className="whitespace-pre-wrap text-xs">{e.texto}</p>}
-                </div>
-              ))}
-              {eventos.length === 0 && <p className="text-xs text-muted-foreground">Sem histórico ainda.</p>}
-            </div>
-          </Card>
+          {/* Conversa do chamado — o solicitante fala com o time por aqui */}
+          <ChatChamado
+            chamadoId={chamado.id}
+            solicitanteId={chamado.solicitante_id}
+            perfil="solicitante"
+            encerrado={encerrado}
+            somenteLeitura={!ehSolicitante}
+          />
         </div>
 
         {/* Coluna de ação do solicitante */}
         <div className="space-y-4">
           {ehSolicitante && !encerrado && (
-            <Card className={`space-y-3 p-4 ${aguardandoRetorno ? "border-primary/40 bg-primary/5" : ""}`}>
+            <Card className={`space-y-2 p-4 ${aguardandoRetorno ? "border-primary/40 bg-primary/5" : ""}`}>
               <p className="flex items-center gap-1.5 text-sm font-bold">
-                <MessageSquarePlus className="h-4 w-4 text-primary" /> Adicionar mais informações
+                <MessageSquarePlus className="h-4 w-4 text-primary" /> Falar com o time
               </p>
               {aguardandoRetorno ? (
                 <p className="flex items-start gap-1.5 rounded bg-primary/10 px-2.5 py-2 text-xs text-primary">
                   <RotateCcw className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-                  O time pediu mais informações. Descreva abaixo e o chamado volta para atendimento.
+                  O time pediu mais informações. Responda na <b>conversa do chamado</b> e ele volta para atendimento.
                 </p>
               ) : (
-                <p className="text-xs text-muted-foreground">Precisa complementar algo? Adicione aqui — fica registrado no histórico.</p>
+                <p className="text-xs text-muted-foreground">
+                  Use a <b>conversa do chamado</b>, ao lado: dá para escrever, anexar arquivos e colar prints com Ctrl+V.
+                </p>
               )}
-              <Textarea
-                rows={5} maxLength={2000}
-                placeholder="Descreva as informações solicitadas…"
-                value={texto} onChange={(e) => setTexto(e.target.value)}
-              />
-              <Button className="w-full gap-2" onClick={enviarInfo} disabled={!texto.trim() || enviando}>
-                <Send className="h-4 w-4" /> {enviando ? "Enviando…" : "Enviar informações"}
-              </Button>
             </Card>
           )}
 

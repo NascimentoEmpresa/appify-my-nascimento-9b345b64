@@ -125,10 +125,14 @@ export interface Chamado {
 export interface Anexo {
   id: string;
   chamado_id: string;
+  /** Mensagem do chat a que o anexo pertence. NULL = anexo da abertura (ou
+   *  anexo antigo, de antes do chat). */
+  evento_id: string | null;
   storage_path: string;
   nome_arquivo: string;
   mime_type: string | null;
   tamanho_bytes: number | null;
+  /** abertura | chat | interno | resposta (legado). */
   campo: string;
   autor_id: string;
   created_at: string;
