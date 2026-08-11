@@ -49,7 +49,7 @@ interface Body {
   etapa_nova?: string;
   // Chamados de Sistemas
   chamado_id?: string;
-  evento?: string; // atribuido | status | concluido | reprovado | solicitar_info | info_adicionada
+  evento?: string; // atribuido | status | concluido | reprovado | solicitar_info | info_adicionada | mensagem
 }
 
 // Título/corpo do push de um Chamado de Sistemas, conforme o evento.
@@ -60,6 +60,9 @@ function mensagemChamado(evento: string | undefined, numero: string, assunto: st
     case "reprovado":      return { title: "Chamado reprovado",      body: `#${numero} — ${assunto}` };
     case "solicitar_info": return { title: "Aguardando seu retorno", body: `#${numero}: o time pediu mais informações.` };
     case "info_adicionada":return { title: "Novas informações no chamado", body: `#${numero}: o solicitante adicionou informações.` };
+    // Mensagem do time na conversa do chamado. Interna não passa por aqui — a
+    // tela só chama esta função quando a mensagem é do grupo.
+    case "mensagem":       return { title: "Nova mensagem no chamado",      body: `#${numero} — ${assunto}` };
     default:               return { title: "Chamado atualizado",     body: `#${numero} — ${assunto}` };
   }
 }

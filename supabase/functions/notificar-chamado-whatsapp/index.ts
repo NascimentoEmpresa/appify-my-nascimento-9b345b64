@@ -148,7 +148,10 @@ Deno.serve(async (req) => {
       chamado_id: chamado.id,
       autor_id: userData.user.id,
       tipo: "observacao_interna",
-      texto: enviado ? `WhatsApp enviado (${TEMPLATE_NAME})` : `Falha ao enviar WhatsApp (${TEMPLATE_NAME}): ${erro ?? "sem detalhe"}`,
+      // Texto em português de gente: é o que a conversa do chamado mostra.
+      // (A tela também traduz o formato antigo, pelo meta.canal — chamados
+      // anteriores a esta versão continuam legíveis.)
+      texto: enviado ? "Notificação enviada por WhatsApp" : `Falha ao enviar a notificação por WhatsApp: ${erro ?? "sem detalhe"}`,
       meta: { canal: "whatsapp", modo: TEMPLATE_NAME, evento, destinatario_id: destinatarioId, sucesso: enviado, wa_message_id: waId, erro },
     });
   } catch { /* log é best-effort, não pode derrubar a resposta da function */ }
