@@ -1,6 +1,4 @@
-# ERP Grupo Nascimento
-
-React + Vite + TypeScript + Supabase.
+main
 
 ## Gerenciamento de acessos — convenção para telas novas
 
