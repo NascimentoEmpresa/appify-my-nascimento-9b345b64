@@ -140,16 +140,17 @@ function SuccessScreen() {
 // Pergunta "contrato": escolhe um contrato ativo, ou vários quando a pergunta
 // foi marcada com `config.multiplos`.
 //
-// A lista vem da VW_CONTRATOS_BASICO, não da tabela CONTRATOS: a tabela tem
-// RLS que só atende usuário logado com um de quatro menus de RH/Jurídico, e
-// esta página roda como anon. A view expõe só nome do contrato e empresa, e
-// apenas os ativos (migration 20260831000001).
+// A lista vem da VW_CONTRATOS_BASICO, e não de public.contratos direto: a
+// tabela tem RLS que só atende logado E ainda recorta pelas empresas do
+// usuário (user_empresa). Esta página roda como anon, e mesmo no formulário
+// interno quem responde pode não ter a empresa daquele contrato. A view expõe
+// só nome e cliente, apenas dos ativos (migration 20260831000001).
 //
 // Valor gravado = o NOME do contrato (lista de nomes quando múltiplo), igual
 // ao que a pergunta "colaborador" faz — mantém Respostas e painéis legíveis
 // sem precisar resolver id.
 function ContratoSelect({ value, multiplos, onChange }: { value: any; multiplos: boolean; onChange: (v: any) => void }) {
-  const [contratos, setContratos] = useState<{ id: number; nome: string; empresa: string | null }[]>([]);
+  const [contratos, setContratos] = useState<{ id: string; nome: string; cliente: string | null }[]>([]);
   const [estado, setEstado] = useState<"carregando" | "ok" | "erro">("carregando");
   const [busca, setBusca] = useState("");
 
@@ -157,11 +158,11 @@ function ContratoSelect({ value, multiplos, onChange }: { value: any; multiplos:
     (async () => {
       const { data, error } = await (supabase as any)
         .from("VW_CONTRATOS_BASICO")
-        .select("id,nome_contrato,nome_empresa")
-        .order("nome_contrato");
+        .select("id,nome,cliente")
+        .order("nome");
       if (error) { setEstado("erro"); return; }
       setContratos((data ?? [])
-        .map((r: any) => ({ id: r.id, nome: String(r.nome_contrato ?? "").trim(), empresa: r.nome_empresa ?? null }))
+        .map((r: any) => ({ id: String(r.id), nome: String(r.nome ?? "").trim(), cliente: r.cliente ?? null }))
         .filter((c: any) => c.nome));
       setEstado("ok");
     })();
@@ -177,14 +178,14 @@ function ContratoSelect({ value, multiplos, onChange }: { value: any; multiplos:
     return (
       <select value={value ?? ""} onChange={e => onChange(e.target.value)} style={{ ...inp, maxWidth: 420 }}>
         <option value="">Selecione o contrato…</option>
-        {contratos.map(c => <option key={c.id} value={c.nome}>{c.empresa ? `${c.nome} · ${c.empresa}` : c.nome}</option>)}
+        {contratos.map(c => <option key={c.id} value={c.nome}>{c.cliente ? `${c.nome} · ${c.cliente}` : c.nome}</option>)}
       </select>
     );
   }
 
   const sel: string[] = Array.isArray(value) ? value : [];
   const termo = busca.trim().toLowerCase();
-  const lista = termo ? contratos.filter(c => `${c.nome} ${c.empresa ?? ""}`.toLowerCase().includes(termo)) : contratos;
+  const lista = termo ? contratos.filter(c => `${c.nome} ${c.cliente ?? ""}`.toLowerCase().includes(termo)) : contratos;
   const alterna = (nome: string) =>
     onChange(sel.includes(nome) ? sel.filter(x => x !== nome) : [...sel, nome]);
 
@@ -209,7 +210,7 @@ function ContratoSelect({ value, multiplos, onChange }: { value: any; multiplos:
             <input type="checkbox" checked={sel.includes(c.nome)} onChange={() => alterna(c.nome)} style={{ width: 15, height: 15, flexShrink: 0 }} />
             <span style={{ minWidth: 0 }}>
               <span style={{ fontWeight: 700, color: "#0f172a" }}>{c.nome}</span>
-              {c.empresa && <span style={{ color: "#94a3b8" }}> · {c.empresa}</span>}
+              {c.cliente && <span style={{ color: "#94a3b8" }}> · {c.cliente}</span>}
             </span>
           </label>
         ))}

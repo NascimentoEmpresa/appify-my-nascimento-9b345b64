@@ -1,50 +1,53 @@
 -- VW_CONTRATOS_BASICO — lista de contratos para a pergunta "Selecionar
 -- contrato" do Nascimento Formulários.
 --
--- Por que uma view, e não a tabela: CONTRATOS tem RLS ligada e uma única
--- policy de SELECT (contratos_gate), só para {authenticated} e ainda assim
--- exigindo um de quatro menus (recrutamento_gestao, colaboradores,
--- encarregados_minhas_solicitacoes, advertencias). O formulário público roda
--- como anon quando não há sessão — leria zero linhas. E mesmo o formulário
--- interno seria respondido por gente de qualquer setor, que não tem nenhum
--- desses menus.
+-- A fonte é public.contratos (minúscula) — o cadastro de contratos do ERP,
+-- com nome e cliente. NÃO é a "CONTRATOS" maiúscula, que é outra tabela
+-- (cadastro no formato da Senior, por filial); as duas coexistem no schema e
+-- o nome parecido engana.
+--
+-- Por que uma view, e não a tabela direto: contratos tem RLS e a policy de
+-- SELECT é só para {authenticated} E ainda recorta por empresa
+-- (empresa_id IN (select empresa_id from user_empresa where user_id =
+-- auth.uid())). O formulário público roda como anon — leria zero linhas. E
+-- mesmo logado, quem responde pode não ter a empresa daquele contrato em
+-- user_empresa, então a lista viria furada.
 --
 -- Mesmo desenho da VW_EMPREGADOS_BASICO (migration 20260724000002): view sem
 -- security_invoker, portanto roda com privilégio do dono e enxerga a tabela
 -- ignorando a RLS — expondo APENAS as colunas do SELECT abaixo. Fica de fora
--- tudo que não é preciso para escolher um contrato, em especial PAGAMENTOS
--- (valor), Endereço, CEP e Número Inscrição.
+-- tudo que é fiscal/financeiro (issqn_pct, ir_pct, conta_pagamento,
+-- email_envio_nf e afins).
 --
--- Só os ativos: quem responde um formulário não deve poder escolher contrato
--- encerrado. É o mesmo filtro que a tela de Colaboradores já aplica. Como o
--- corte está na view, e não na consulta da tela, nem anon nem authenticated
--- alcançam os encerrados por aqui.
+-- Só os ativos: quem responde não deve poder escolher contrato encerrado.
+-- Hoje são 51 de 62.
+--
+-- DROP antes do CREATE porque a versão anterior desta view lia a "CONTRATOS"
+-- maiúscula e tinha outros tipos de coluna (id bigint, não uuid) — CREATE OR
+-- REPLACE não consegue trocar tipo nem nome de coluna.
 
--- DISTINCT ON pelo nome: hoje existem duas linhas ativas "LIMPEZA FURG", da
--- mesma empresa (ids 182 e 183) — indistinguíveis na tela. Como a resposta
--- gravada é o NOME do contrato, as duas produziriam exatamente a mesma
--- resposta; o que a duplicata causaria é linha repetida na lista e, na
--- seleção múltipla, marcar uma deixaria as duas marcadas (a comparação é por
--- nome). Deduplicar aqui resolve para as duas telas de uma vez.
-CREATE OR REPLACE VIEW public."VW_CONTRATOS_BASICO" AS
-SELECT DISTINCT ON (btrim(c."NOME CONTRATO"))
+DROP VIEW IF EXISTS public."VW_CONTRATOS_BASICO";
+
+-- DISTINCT ON pelo nome: hoje não há nomes repetidos em contratos, mas a
+-- resposta gravada é o NOME do contrato e a tela compara por nome — se um dia
+-- surgir repetido, na seleção múltipla marcar um marcaria os dois. De quebra,
+-- o DISTINCT torna a view não-gravável, o que fecha a porta de escrita por
+-- tabela interposta.
+CREATE VIEW public."VW_CONTRATOS_BASICO" AS
+SELECT DISTINCT ON (btrim(c.nome))
   c.id,
-  btrim(c."NOME CONTRATO") AS nome_contrato,
-  c."NOME EMPRESA"         AS nome_empresa
-FROM public."CONTRATOS" c
-WHERE upper(btrim(coalesce(c."ATIVO", ''))) = 'SIM'
-  AND btrim(coalesce(c."NOME CONTRATO", '')) <> ''
-ORDER BY btrim(c."NOME CONTRATO"), c.id;
+  btrim(c.nome)    AS nome,
+  btrim(c.cliente) AS cliente
+FROM public.contratos c
+WHERE lower(btrim(coalesce(c.status, ''))) = 'ativo'
+  AND btrim(coalesce(c.nome, '')) <> ''
+ORDER BY btrim(c.nome), c.id;
 
 COMMENT ON VIEW public."VW_CONTRATOS_BASICO" IS
-  'Contratos ativos (nome e empresa) para a pergunta "Selecionar contrato" do Nascimento Formulários. Sem colunas financeiras.';
+  'Contratos ativos (nome e cliente) de public.contratos, para a pergunta "Selecionar contrato" do Nascimento Formulários. Sem colunas fiscais/financeiras.';
 
 -- Só leitura, e explicitamente. As default privileges do schema public deste
--- projeto entregam INSERT/UPDATE/DELETE a anon em todo objeto novo — hoje
--- inertes aqui, porque o DISTINCT ON torna a view não-gravável. O REVOKE é
--- para o dia em que alguém tirar o DISTINCT: sem ele, a view voltaria a ser
--- auto-atualizável e viraria escrita de anon na CONTRATOS por tabela
--- interposta.
+-- projeto entregam INSERT/UPDATE/DELETE a anon em todo objeto novo.
 REVOKE ALL ON public."VW_CONTRATOS_BASICO" FROM anon, authenticated;
 GRANT SELECT ON public."VW_CONTRATOS_BASICO" TO anon, authenticated;
 
