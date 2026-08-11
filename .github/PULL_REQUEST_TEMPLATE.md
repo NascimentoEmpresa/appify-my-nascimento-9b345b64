@@ -13,8 +13,3 @@ conteúdo entre os marcadores — a próxima sincronização sobrescreve.
 <!-- chamado:auto:start -->
 <!-- chamado:auto:end -->
 
-## O que mudou
-
-
-## Como testar
-
