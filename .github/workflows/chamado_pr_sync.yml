@@ -57,6 +57,16 @@ jobs:
             exit 0
           fi
 
+          # HTTP diferente de 200 é problema NOSSO (function com erro, "Verify
+          # JWT" ligado no Supabase, secret divergente) — não "chamado não
+          # existe". Falha com uma mensagem que aponta pra causa certa, em vez
+          # de confundir com um número de chamado inválido.
+          if [ "$HTTP_CODE" != "200" ]; then
+            echo "::error::chamado-info respondeu HTTP $HTTP_CODE (esperado 200): $BODY"
+            echo "::error::Verifique se 'Verify JWT' está DESLIGADO na function chamado-info (Supabase → Edge Functions → chamado-info → Settings) e se CHAMADOS_CI_SECRET é idêntico no GitHub e no Supabase."
+            exit 1
+          fi
+
           ENCONTRADO=$(echo "$BODY" | jq -r '.encontrado // false')
           if [ "$ENCONTRADO" != "true" ]; then
             echo "::error::Chamado $NUMERO não foi encontrado no sistema."
@@ -88,7 +98,10 @@ jobs:
             const infoRes = await fetch(`${FUNCS}/chamado-info?numero=${encodeURIComponent(numero)}`, {
               headers: { Authorization: `Bearer ${secret}` },
             });
-            if (!infoRes.ok) { core.warning(`chamado-info respondeu ${infoRes.status} — não sincronizando.`); return; }
+            if (!infoRes.ok) {
+              core.warning(`chamado-info respondeu ${infoRes.status} (esperado 200) — não sincronizando. Se for 401, confira 'Verify JWT' desligado na function e o CHAMADOS_CI_SECRET.`);
+              return;
+            }
             const info = await infoRes.json();
             if (!info.encontrado) { core.info(`Chamado ${numero} não encontrado — nada a sincronizar.`); return; }
 
