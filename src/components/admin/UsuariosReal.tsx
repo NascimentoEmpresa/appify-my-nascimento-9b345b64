@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
+import { CartaoPerfil } from "@/components/perfil/CartaoPerfil";
 import { useAuth } from "@/hooks/useAuth";
 import { usePermissoes } from "@/context/PermissoesContext";
 import { toast } from "@/hooks/use-toast";
@@ -15,7 +16,6 @@ import { Search, Pencil, ShieldCheck, Building2, UserPlus, Eye, EyeOff, KeyRound
 
 // Situações de desligamento (mesma regra das RPCs de vínculo): nunca vincula
 // nem aparece na busca.
-const ehDesligado = (s?: string | null) => /DEMITID|RESCIS|DESLIGAD/i.test(s ?? "");
 
 // Cadastro EMPREGADOS ligado a um login (colunas leves p/ a lista).
 interface EmpregadoVinc {
@@ -250,9 +250,15 @@ export function UsuariosReal() {
                   {(() => {
                     // Compõe por capacidade: Detalhes/Vincular delegáveis; Editar só admin.
                     const acoes = [
-                      podeEditar && (vinc
-                        ? <ColaboradorDetalheDialog key="det" empregadoId={vinc.ID} userId={u.id} podeDesvincular={podeEditar} onChanged={invalidarVinculo} />
-                        : <VincularColaboradorDialog key="vin" userId={u.id} nomeUsuario={u.display_name ?? u.email ?? ""} onLinked={invalidarVinculo} />),
+                      // A ficha vale para todo mundo: sem cadastro da Senior
+                      // ela ainda mostra conta, foto e Discord. Antes só quem
+                      // era vinculado tinha "Detalhes", e o resto ficava opaco.
+                      podeEditar && (
+                        <ColaboradorDetalheDialog key="det" empregadoId={vinc?.ID ?? null} userId={u.id} podeDesvincular={podeEditar && !!vinc} onChanged={invalidarVinculo} />
+                      ),
+                      podeEditar && !vinc && (
+                        <VincularColaboradorDialog key="vin" userId={u.id} nomeUsuario={u.display_name ?? u.email ?? ""} onLinked={invalidarVinculo} />
+                      ),
                       podeEditar && (
                         <EditarUsuarioDialog
                           key="edit"
@@ -1145,20 +1151,13 @@ function AvatarUploadSection({ profile }: { profile: ProfileRow }) {
   );
 }
 
-// ─── Detalhes do colaborador vinculado (ficha completa da Senior) ───────────
-const CAMPOS_EMP: { k: string; label: string }[] = [
-  { k: "Nome", label: "Nome" }, { k: "CPF", label: "CPF" },
-  { k: "Título do Cargo", label: "Cargo" },
-  { k: "Setor_ERP", label: "Setor" }, { k: "Perfil_ERP", label: "Perfil" },
-  { k: "LIDER", label: "Líder" }, { k: "Situação", label: "Situação" },
-  { k: "Admissão", label: "Admissão" }, { k: "Nascimento", label: "Nascimento" },
-  { k: "Nome da Empresa", label: "Empresa" }, { k: "Nome Filial", label: "Filial" },
-  { k: "email", label: "E-mail" },
-];
+// ─── Ficha do usuário (conta + cadastro da Senior + Discord) ───────────────
 
-function ColaboradorDetalheDialog({ empregadoId, userId, podeDesvincular, onChanged }: { empregadoId: number; userId: string; podeDesvincular: boolean; onChanged: () => void }) {
+function ColaboradorDetalheDialog({ empregadoId, userId, podeDesvincular, onChanged }: { empregadoId: number | null; userId: string; podeDesvincular: boolean; onChanged: () => void }) {
   const [open, setOpen] = useState(false);
   const [emp, setEmp] = useState<Record<string, any> | null>(null);
+  const [perfil, setPerfil] = useState<Record<string, any> | null>(null);
+  const [discord, setDiscord] = useState<any | null>(null);
   const [loading, setLoading] = useState(false);
   const [desvinculando, setDesvinculando] = useState(false);
   const [confirmar, setConfirmar] = useState(false);
@@ -1168,11 +1167,25 @@ function ColaboradorDetalheDialog({ empregadoId, userId, podeDesvincular, onChan
     let cancel = false;
     (async () => {
       setLoading(true);
-      const { data } = await (supabase as any).from("EMPREGADOS").select("*").eq("ID", empregadoId).maybeSingle();
-      if (!cancel) { setEmp(data ?? null); setLoading(false); }
+      // Os três blocos em paralelo: são independentes, e em série a ficha
+      // demoraria a soma de três idas ao banco em vez da mais lenta delas.
+      // `select("*")` no perfil traz a descrição sem quebrar caso o banco
+      // ainda não tenha a coluna — nomear coluna ausente derruba a consulta.
+      const [rEmp, rPerfil, rDiscord] = await Promise.all([
+        empregadoId
+          ? (supabase as any).from("EMPREGADOS").select("*").eq("ID", empregadoId).maybeSingle()
+          : Promise.resolve({ data: null }),
+        (supabase as any).from("profiles").select("*").eq("id", userId).maybeSingle(),
+        (supabase as any).from("usuario_discord").select("*").eq("user_id", userId).maybeSingle(),
+      ]);
+      if (cancel) return;
+      setEmp(rEmp?.data ?? null);
+      setPerfil(rPerfil?.data ?? null);
+      setDiscord(rDiscord?.data ?? null);
+      setLoading(false);
     })();
     return () => { cancel = true; };
-  }, [open, empregadoId]);
+  }, [open, empregadoId, userId]);
 
   const desvincular = async () => {
     setDesvinculando(true);
@@ -1196,29 +1209,41 @@ function ColaboradorDetalheDialog({ empregadoId, userId, podeDesvincular, onChan
       <DialogTrigger asChild>
         <Button size="sm" variant="ghost" className="h-7 gap-1.5"><IdCard className="h-3.5 w-3.5" />Detalhes</Button>
       </DialogTrigger>
-      <DialogContent className="max-w-lg max-h-[85vh] overflow-y-auto">
+      <DialogContent className="max-w-2xl max-h-[85vh] overflow-y-auto">
         <DialogHeader>
-          <DialogTitle>Ficha do colaborador</DialogTitle>
-          <DialogDescription>Dados do cadastro (Senior) vinculado a este login.</DialogDescription>
+          <DialogTitle>Ficha do usuário</DialogTitle>
+          <DialogDescription>
+            Conta no ERP, cadastro da Senior e vínculo do Discord.
+          </DialogDescription>
         </DialogHeader>
         {loading ? (
           <div className="py-8 text-center text-sm text-muted-foreground"><Loader2 className="mx-auto h-5 w-5 animate-spin" /></div>
-        ) : !emp ? (
-          <p className="py-6 text-center text-sm text-muted-foreground">Cadastro não encontrado.</p>
         ) : (
-          <div className="grid grid-cols-2 gap-2">
-            {CAMPOS_EMP.map(({ k, label }) => {
-              const v = emp[k];
-              if (v == null || String(v).trim() === "") return null;
-              const desligado = k === "Situação" && ehDesligado(String(v));
-              return (
-                <div key={k} className="rounded-md border border-border bg-muted/20 px-3 py-2">
-                  <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">{label}</p>
-                  <p className={`text-sm font-medium ${desligado ? "text-destructive" : ""}`}>{String(v)}</p>
-                </div>
-              );
-            })}
-          </div>
+          <CartaoPerfil
+            conta={{
+              // O nome oficial da Senior manda sobre o display_name digitado —
+              // mesma regra da listagem, para a ficha não contradizer a linha.
+              nome: (emp?.["Nome"] as string)?.trim() || perfil?.display_name || null,
+              email: perfil?.email ?? null,
+              avatarUrl: perfil?.avatar_url ?? null,
+              cargo: perfil?.cargo ?? null,
+              telefone: perfil?.telefone ?? null,
+              bio: perfil?.bio ?? null,
+            }}
+            empregado={emp ? {
+              nome: emp["Nome"], cpf: emp["CPF"], cargo: emp["Título do Cargo"],
+              setor: emp["Setor_ERP"], perfil: emp["Perfil_ERP"], lider: emp["LIDER"],
+              situacao: emp["Situação"], admissao: emp["Admissão"],
+              nascimento: emp["Nascimento"], empresa: emp["Nome da Empresa"],
+              filial: emp["Nome Filial"], email: emp["email"],
+            } : null}
+            discord={discord}
+          />
+        )}
+        {!loading && !emp && (
+          <p className="text-center text-xs text-muted-foreground">
+            Este login ainda não está vinculado a um cadastro da Senior.
+          </p>
         )}
         <DialogFooter className="sm:justify-between">
           {podeDesvincular ? (
