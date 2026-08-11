@@ -167,6 +167,13 @@ Deno.serve(async (req) => {
 
       if (!me?.id) return json({ error: "O Discord não devolveu o identificador da conta." }, 400);
 
+      // `global_name` é o nome de exibição — o que a pessoa reconhece como seu.
+      // `username` é o handle, e em conta criada a partir do e-mail corporativo
+      // o Discord o gera do próprio e-mail ("joaovictorcontroladoria_49009").
+      // Guardar o handle fazia o perfil parecer que o ERP trocou o nome da
+      // pessoa pelo e-mail dela. Só cai no handle quando não há nome de exibição.
+      const nomeDiscord = me.global_name ?? me.username ?? null;
+
       // Conta de Discord já usada por OUTRA pessoa do ERP: barra com mensagem
       // clara em vez de deixar o UNIQUE estourar em erro cru.
       const { data: jaUsado } = await admin
@@ -183,7 +190,7 @@ Deno.serve(async (req) => {
       const { error: upErr } = await admin.from("usuario_discord").upsert({
         user_id: userId,
         discord_id: me.id,
-        discord_username: me.username ?? null,
+        discord_username: nomeDiscord,
         discord_email: me.email ?? null,
         discord_avatar: me.avatar
           ? `https://cdn.discordapp.com/avatars/${me.id}/${me.avatar}.png`
@@ -196,7 +203,7 @@ Deno.serve(async (req) => {
       return json({
         ok: true,
         discord_id: me.id,
-        discord_username: me.username ?? null,
+        discord_username: nomeDiscord,
         discord_email: me.email ?? null,
       });
     }
