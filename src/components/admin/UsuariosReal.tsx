@@ -11,6 +11,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
+import { maskFone } from "@/lib/telefone";
 import { Search, Pencil, ShieldCheck, Building2, UserPlus, Eye, EyeOff, KeyRound, Copy, AlertTriangle, Upload, Trash2, Link2, Link2Off, Loader2, IdCard } from "lucide-react";
 
 // Situações de desligamento (mesma regra das RPCs de vínculo): nunca vincula
@@ -55,14 +56,6 @@ interface ProfileRow {
   avatar_url: string | null;
   telefone: string | null;
   cargo: string | null;
-}
-
-// Máscara local de telefone BR — mesmo padrão inline já usado em
-// src/pages/publico/Vagas.tsx (não existe componente de máscara compartilhado).
-function maskFone(v: string): string {
-  const d = v.replace(/\D/g, "").slice(0, 11);
-  if (d.length <= 10) return d.replace(/(\d{2})(\d)/, "($1) $2").replace(/(\d{4})(\d)/, "$1-$2");
-  return d.replace(/(\d{2})(\d)/, "($1) $2").replace(/(\d{5})(\d)/, "$1-$2");
 }
 
 export function UsuariosReal() {
@@ -294,7 +287,7 @@ function EditarUsuarioDialog({
   const [open, setOpen] = useState(false);
   const [displayName, setDisplayName] = useState(profile.display_name ?? "");
   const [cargo, setCargo] = useState(profile.cargo ?? "");
-  const [telefone, setTelefone] = useState(maskFone(profile.telefone?.replace(/^55/, "") ?? ""));
+  const [telefone, setTelefone] = useState(maskFone(profile.telefone ?? ""));
   const [empresaId, setEmpresaId] = useState<string>(profile.empresa_id ?? "_none");
   const [selectedSetores, setSelectedSetores] = useState<string[]>(currentSetores);
   const [acessaTodas, setAcessaTodas] = useState<boolean>(false);
