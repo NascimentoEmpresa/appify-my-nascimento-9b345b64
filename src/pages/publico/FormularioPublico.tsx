@@ -140,11 +140,14 @@ function SuccessScreen() {
 // Pergunta "contrato": escolhe um contrato ativo, ou vários quando a pergunta
 // foi marcada com `config.multiplos`.
 //
-// A lista vem da VW_CONTRATOS_BASICO, e não de public.contratos direto: a
-// tabela tem RLS que só atende logado E ainda recorta pelas empresas do
-// usuário (user_empresa). Esta página roda como anon, e mesmo no formulário
-// interno quem responde pode não ter a empresa daquele contrato. A view expõe
-// só nome e cliente, apenas dos ativos (migration 20260831000001).
+// Lê public.contratos direto, pedindo só id/nome/cliente — o PostgREST faz a
+// projeção no servidor, então as colunas fiscais (issqn_pct, conta_pagamento,
+// email_envio_nf...) não chegam ao navegador.
+//
+// A RLS da tabela manda no resto: SELECT só para authenticated e ainda
+// recortado por empresa_id ∈ user_empresa do usuário. Consequência a conhecer
+// — no formulário PÚBLICO (anon) a lista vem vazia, e um usuário sem empresa
+// vinculada também não vê nada. Não é erro de consulta; é a policy.
 //
 // Valor gravado = o NOME do contrato (lista de nomes quando múltiplo), igual
 // ao que a pergunta "colaborador" faz — mantém Respostas e painéis legíveis
@@ -157,20 +160,24 @@ function ContratoSelect({ value, multiplos, onChange }: { value: any; multiplos:
   useEffect(() => {
     (async () => {
       const { data, error } = await (supabase as any)
-        .from("VW_CONTRATOS_BASICO")
+        .from("contratos")
         .select("id,nome,cliente")
+        .eq("status", "ativo")
         .order("nome");
       if (error) { setEstado("erro"); return; }
+      // Deduplica por nome: a resposta gravada é o nome e a marcação compara
+      // por nome, então dois contratos homônimos ficariam marcados juntos.
+      const vistos = new Set<string>();
       setContratos((data ?? [])
         .map((r: any) => ({ id: String(r.id), nome: String(r.nome ?? "").trim(), cliente: r.cliente ?? null }))
-        .filter((c: any) => c.nome));
+        .filter((c: any) => c.nome && !vistos.has(c.nome) && vistos.add(c.nome)));
       setEstado("ok");
     })();
   }, []);
 
   if (estado === "carregando") return <div style={{ fontSize: 13, color: "#94a3b8" }}>Carregando contratos…</div>;
   if (estado === "erro") return <div style={{ fontSize: 13, color: "#dc2626", fontWeight: 700 }}>Não foi possível carregar os contratos.</div>;
-  if (contratos.length === 0) return <div style={{ fontSize: 13, color: "#94a3b8" }}>Nenhum contrato ativo cadastrado.</div>;
+  if (contratos.length === 0) return <div style={{ fontSize: 13, color: "#94a3b8" }}>Nenhum contrato disponível para o seu acesso.</div>;
 
   // Um só: select nativo. São poucas dezenas de contratos ativos, então não
   // precisa de busca — e o nativo já é acessível e funciona bem no celular.

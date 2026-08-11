@@ -9447,35 +9447,3 @@ COMMENT ON COLUMN public.profiles.bio IS
 
 NOTIFY pgrst, 'reload schema';
 
--- ═══════════════════════════════════════════════════════════════════════
--- Contratos para o Nascimento Formulários — migration 20260831000001
---
--- Fonte: public.contratos (MINÚSCULA), o cadastro de contratos do ERP. Não
--- confundir com a "CONTRATOS" maiúscula, que é outra tabela (formato Senior,
--- por filial) — as duas coexistem no schema.
---
--- Precisa de view porque contratos tem RLS: SELECT só para authenticated e
--- ainda recortado pelas empresas do usuário (user_empresa). O formulário
--- público é anon, e mesmo logado quem responde pode não ter aquela empresa.
--- A view expõe só nome e cliente, apenas dos ativos — nada fiscal.
--- ═══════════════════════════════════════════════════════════════════════
-DROP VIEW IF EXISTS public."VW_CONTRATOS_BASICO";
-
-CREATE VIEW public."VW_CONTRATOS_BASICO" AS
-SELECT DISTINCT ON (btrim(c.nome))
-  c.id,
-  btrim(c.nome)    AS nome,
-  btrim(c.cliente) AS cliente
-FROM public.contratos c
-WHERE lower(btrim(coalesce(c.status, ''))) = 'ativo'
-  AND btrim(coalesce(c.nome, '')) <> ''
-ORDER BY btrim(c.nome), c.id;
-
-COMMENT ON VIEW public."VW_CONTRATOS_BASICO" IS
-  'Contratos ativos (nome e cliente) de public.contratos, para a pergunta "Selecionar contrato" do Nascimento Formulários. Sem colunas fiscais/financeiras.';
-
--- Só leitura: as default privileges do schema dão escrita a anon em objeto novo.
-REVOKE ALL ON public."VW_CONTRATOS_BASICO" FROM anon, authenticated;
-GRANT SELECT ON public."VW_CONTRATOS_BASICO" TO anon, authenticated;
-
-NOTIFY pgrst, 'reload schema';
