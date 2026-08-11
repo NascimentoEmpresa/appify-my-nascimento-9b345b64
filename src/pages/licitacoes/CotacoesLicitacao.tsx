@@ -27,7 +27,7 @@ import {
   useCotacaoRemoverAnexo,
   type CotacaoLicitacao,
 } from "@/hooks/useCotacoesLicitacao";
-import { usePermissoes } from "@/context/PermissoesContext";
+import { useAccessibleMenus } from "@/hooks/useAccessibleMenus";
 // Paleta, badge, formatação e agrupamento moram em um só lugar: esta tela e a
 // de Compras (/app/suprimentos/cotacoes) mostram a MESMA linha do banco, e
 // divergir na aparência confundiria os dois setores sobre o mesmo item.
@@ -270,12 +270,15 @@ function CotacaoModal({
 // ── Componente principal ──────────────────────────────────────────────────────
 export default function CotacoesLicitacao() {
   const { user } = useAuth();
-  const { can } = usePermissoes();
+  const { data: access } = useAccessibleMenus("visualizar");
+  const has = (c: string) => access?.codes.has(c) ?? false;
+  const configurado = (c: string) => access?.configuredCodes.has(c) ?? false;
   const { data: cotacoes = [], isLoading } = useCotacoesLicitacao();
   const deleteMutation = useCotacaoDelete();
 
-  const canIncluir = can("incluir", "licitacoes", "cotacoes-licitacao");
-  const canAlterar = can("alterar", "licitacoes", "cotacoes-licitacao");
+  // Aberto por padrão enquanto ninguém for configurado explicitamente
+  const canIncluir = has("cotacoes-licitacao-nova") || !configurado("cotacoes-licitacao-nova");
+  const canAlterar = canIncluir;
 
   const [modalOpen, setModalOpen] = useState(false);
   const [editing, setEditing] = useState<CotacaoLicitacao | null>(null);
