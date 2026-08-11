@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { sugerirContrato } from "@/pages/juridico/Processos";
+import { sugerirContrato, cidadeDoContrato } from "@/pages/juridico/Processos";
 
 // Nomes reais da CONTRATOS (coluna "NOME CONTRATO"): quase sempre começam
 // pela cidade, mas nem sempre — daí a necessidade de pontuar em vez de só
@@ -94,5 +94,57 @@ describe("sugerirContrato — municipio que na verdade descreve o posto", () => 
   // deixar em branco para a pessoa decidir do que chutar.
   it("texto ambiguo demais nao sugere nada", () => {
     expect(sugerirContrato("UFRGS - CAMPUS SAUDE 5D TRI", CONTRATOS)).toBe("");
+  });
+});
+
+// Caminho inverso: escolhido o contrato, o Município de origem é a cidade DELE.
+// A CONTRATOS não tem coluna de cidade, então ela sai do nome do contrato.
+//
+// `noInicio` é o que separa preencher sozinho de só sugerir: nomes reais da
+// base, tirados dos 57 contratos ativos.
+describe("cidadeDoContrato", () => {
+  it("cidade que abre o nome do contrato preenche sozinha", () => {
+    for (const [contrato, cidade] of [
+      ["CAXIAS DO SUL - 2026/95", "Caxias do Sul"],
+      ["BENTO GONÇALVES LIMPEZA - 048/2026", "Bento Gonçalves"],
+      ["CHARQUEADAS - 249 /2020", "Charqueadas"],
+      ["GUAPORÉ LIMPEZA SMED EMERGENCIAL - 063/2026", "Guaporé"],
+      ["TRIUNFO OP. MÁQUINA - 19.2026", "Triunfo"],
+      ["PENHA LIMPEZA - 039/2025", "Penha"],
+    ] as const) {
+      expect(cidadeDoContrato(contrato)).toEqual({ cidade, noInicio: true });
+    }
+  });
+
+  // O nome mais longo ganha: "SALTO" e "VERANO" sozinhos dariam outra coisa.
+  it("pega o trecho mais longo, e acento/caixa nao atrapalham", () => {
+    expect(cidadeDoContrato("SALTO DO JACUI - 722/2021")).toEqual({ cidade: "Salto do Jacuí", noInicio: true });
+    expect(cidadeDoContrato("VERANOPOLIS   -  001/2021")).toEqual({ cidade: "Veranópolis", noInicio: true });
+  });
+
+  // Casou no meio do nome: continua valendo, mas só como sugestão de um clique.
+  it("cidade no meio do nome nao preenche sozinha", () => {
+    expect(cidadeDoContrato("UFFS CHAPECO - 041/2021")).toEqual({ cidade: "Chapecó", noInicio: false });
+    expect(cidadeDoContrato("HUSM SANTA MARIA - LAVANDERIA   -  020/2021")).toEqual({ cidade: "Santa Maria", noInicio: false });
+    expect(cidadeDoContrato("CAMARA DE RIO GRANDE - LIMPEZA 001/2023")).toEqual({ cidade: "Rio Grande", noInicio: false });
+  });
+
+  // O falso positivo que a regra do `noInicio` existe para conter: "Saúde" é
+  // município de SC e apareceria em "AUXILIAR DE SAÚDE BUCAL". Preenchido
+  // sozinho viraria erro silencioso; como sugestão, é só um botão ignorado.
+  it("palavra comum que por acaso e municipio nunca preenche sozinha", () => {
+    expect(cidadeDoContrato("UFRGS - AUXILIAR DE SAÚDE BUCAL - 033/2021")).toEqual({ cidade: "Saúde", noInicio: false });
+  });
+
+  it("contrato sem cidade no nome fica em branco", () => {
+    for (const c of ["UFRGS - JARDINAGEM - 062/2025", "SEMAE - 3038/2020", "HCPA - MENSAGEIROS - 1249781/2024", "TJRS - 023/2025", ""]) {
+      expect(cidadeDoContrato(c).cidade).toBe("");
+    }
+  });
+
+  // Nomes de 3 letras ("Ipê", "Iuiú") ficam fora do índice: casariam com
+  // qualquer sigla solta no nome do contrato.
+  it("nome curto demais nao entra no indice", () => {
+    expect(cidadeDoContrato("LIMPEZA IPE - 001/2020").cidade).toBe("");
   });
 });

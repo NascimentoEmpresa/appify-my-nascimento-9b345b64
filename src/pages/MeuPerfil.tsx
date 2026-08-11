@@ -1,13 +1,19 @@
 import { useEffect, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { Bell, Mail, Smartphone, Save, User as UserIcon } from "lucide-react";
+import { Bell, Mail, Pencil, Smartphone, Save } from "lucide-react";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Switch } from "@/components/ui/switch";
 import { Button } from "@/components/ui/button";
-import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
+import {
+  Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle,
+} from "@/components/ui/dialog";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
+import { useVinculoEmpregado } from "@/hooks/useVinculoEmpregado";
+import { useMeuDiscord } from "@/hooks/useVinculoDiscord";
+import { CartaoPerfil } from "@/components/perfil/CartaoPerfil";
 import { VinculoDiscordCard } from "@/components/perfil/VinculoDiscordCard";
 import { toast } from "sonner";
 
@@ -15,23 +21,33 @@ type Prefs = { sininho_ativo: boolean; email_ativo: boolean; push_ativo: boolean
 
 const DEFAULTS: Prefs = { sininho_ativo: true, email_ativo: true, push_ativo: false };
 
+const LIMITE_BIO = 500;
+
 export default function MeuPerfil() {
   const { user } = useAuth();
   const qc = useQueryClient();
   const [prefs, setPrefs] = useState<Prefs>(DEFAULTS);
+  const [editandoBio, setEditandoBio] = useState(false);
+  const [rascunhoBio, setRascunhoBio] = useState("");
 
   const perfilQ = useQuery({
     queryKey: ["meu-perfil", user?.id],
     enabled: !!user?.id,
     queryFn: async () => {
+      // `*` em vez de listar colunas: a descrição (`bio`) é recente e, se o
+      // banco ainda não tiver recebido a migration, nomear a coluna derrubaria
+      // a consulta inteira e a ficha apareceria vazia. Assim o que existe vem.
       const { data } = await supabase
         .from("profiles")
-        .select("display_name,email")
+        .select("*")
         .eq("id", user!.id)
         .maybeSingle();
-      return data;
+      return data as Record<string, any> | null;
     },
   });
+
+  const { empregado } = useVinculoEmpregado();
+  const discordQ = useMeuDiscord();
 
   const prefsQ = useQuery({
     queryKey: ["sup_aprov_notif_pref", user?.id],
@@ -71,33 +87,60 @@ export default function MeuPerfil() {
     onError: (e: any) => toast.error(e.message ?? "Falha ao salvar"),
   });
 
+  const salvarBio = useMutation({
+    mutationFn: async () => {
+      if (!user?.id) throw new Error("Sem usuário");
+      const texto = rascunhoBio.trim();
+      const { error } = await (supabase as any)
+        .from("profiles")
+        .update({ bio: texto || null })
+        .eq("id", user.id);
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      setEditandoBio(false);
+      toast.success("Descrição atualizada.");
+      qc.invalidateQueries({ queryKey: ["meu-perfil"] });
+    },
+    onError: (e: any) => toast.error(e?.message ?? "Não foi possível salvar a descrição."),
+  });
+
+  const perfil = perfilQ.data;
+  const bioAtual: string = perfil?.bio ?? "";
+
   return (
     <div className="space-y-6">
       <PageHeader
         title="Meu perfil"
         breadcrumb={["Meu perfil"]}
-        subtitle="Dados da conta e preferências de notificação."
+        subtitle="Seus dados no ERP, o cadastro da Senior e as preferências de notificação."
       />
 
-      <div className="grid gap-5 lg:grid-cols-[320px_1fr]">
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2 text-base">
-              <UserIcon className="h-4 w-4" /> Conta
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-2 text-sm">
-            <div>
-              <Label className="text-xs text-muted-foreground">Nome</Label>
-              <p className="font-medium">{perfilQ.data?.display_name ?? "—"}</p>
-            </div>
-            <div>
-              <Label className="text-xs text-muted-foreground">E-mail</Label>
-              <p className="truncate font-medium">{perfilQ.data?.email ?? user?.email ?? "—"}</p>
-            </div>
-          </CardContent>
-        </Card>
+      <CartaoPerfil
+        conta={{
+          nome: perfil?.display_name ?? null,
+          email: perfil?.email ?? user?.email ?? null,
+          avatarUrl: perfil?.avatar_url ?? null,
+          cargo: perfil?.cargo ?? null,
+          telefone: perfil?.telefone ?? null,
+          bio: bioAtual || null,
+        }}
+        empregado={empregado}
+        discord={discordQ.data}
+        acoes={
+          <Button
+            size="sm"
+            variant="outline"
+            className="gap-1.5"
+            onClick={() => { setRascunhoBio(bioAtual); setEditandoBio(true); }}
+          >
+            <Pencil className="h-3.5 w-3.5" />
+            {bioAtual ? "Editar descrição" : "Adicionar descrição"}
+          </Button>
+        }
+      />
 
+      <div className="grid gap-5 lg:grid-cols-2">
         <VinculoDiscordCard />
 
         <Card>
@@ -141,6 +184,38 @@ export default function MeuPerfil() {
           </CardContent>
         </Card>
       </div>
+
+      <Dialog open={editandoBio} onOpenChange={setEditandoBio}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Descrição do perfil</DialogTitle>
+            <DialogDescription>
+              Opcional. Serve para dizer o que o cadastro não diz — no que você está
+              trabalhando, como prefere ser chamado, em que horário costuma responder.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-1.5">
+            <Textarea
+              rows={5}
+              maxLength={LIMITE_BIO}
+              value={rascunhoBio}
+              onChange={(e) => setRascunhoBio(e.target.value)}
+              placeholder="Ex.: Cuido dos contratos da regional sul. Respondo melhor pela manhã."
+            />
+            <p className="text-right text-xs text-muted-foreground">
+              {rascunhoBio.length}/{LIMITE_BIO}
+            </p>
+          </div>
+
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setEditandoBio(false)}>Cancelar</Button>
+            <Button onClick={() => salvarBio.mutate()} disabled={salvarBio.isPending}>
+              {salvarBio.isPending ? "Salvando…" : "Salvar"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

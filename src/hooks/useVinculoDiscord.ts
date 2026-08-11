@@ -155,6 +155,34 @@ export function useVincularDiscordManual() {
   });
 }
 
+/**
+ * Usa a foto do Discord como foto de perfil do ERP.
+ *
+ * Quem não tinha foto já recebe a do Discord no momento do vínculo. Este
+ * caminho é para quem JÁ tinha uma e quer trocar de propósito — por isso é
+ * botão, e não automático.
+ */
+export function useUsarFotoDoDiscord() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async () => {
+      const { data, error } = await supabase.functions.invoke("discord-vincular", {
+        body: { action: "usar_foto" },
+      });
+      if (error) throw new Error(await mensagemDaFuncao(error));
+      if (data?.error) throw new Error(data.error);
+    },
+    onSuccess: () => {
+      // A foto aparece em várias telas; invalida todas que leem profiles.
+      for (const k of ["meu-perfil", "usuario_discord", "admin-profiles", "agenda-corporativa"]) {
+        qc.invalidateQueries({ queryKey: [k] });
+      }
+      toast.success("Foto do perfil atualizada com a do Discord.");
+    },
+    onError: (e: any) => toast.error(e?.message ?? "Não foi possível trazer a foto."),
+  });
+}
+
 export function useDesvincularDiscord() {
   const invalidar = useInvalidar();
   const { user } = useAuth();

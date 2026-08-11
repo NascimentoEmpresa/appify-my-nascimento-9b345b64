@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { BadgeCheck, CircleAlert, Link2, Loader2, Trash2, TriangleAlert } from "lucide-react";
+import { BadgeCheck, CircleAlert, ImageDown, Link2, Loader2, Trash2, TriangleAlert } from "lucide-react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -11,6 +11,7 @@ import {
   useDesvincularDiscord,
   useIniciarVinculoDiscord,
   useMeuDiscord,
+  useUsarFotoDoDiscord,
   useVincularDiscordManual,
 } from "@/hooks/useVinculoDiscord";
 
@@ -36,6 +37,7 @@ export function VinculoDiscordCard() {
   const iniciar = useIniciarVinculoDiscord();
   const manual = useVincularDiscordManual();
   const desvincular = useDesvincularDiscord();
+  const usarFoto = useUsarFotoDoDiscord();
 
   const [abertoManual, setAbertoManual] = useState(false);
   const [id, setId] = useState("");
@@ -173,6 +175,18 @@ export function VinculoDiscordCard() {
             </div>
 
             <div className="flex flex-wrap gap-2">
+              {v.discord_avatar && (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="gap-1.5"
+                  onClick={() => usarFoto.mutate()}
+                  disabled={usarFoto.isPending}
+                >
+                  <ImageDown className="h-3.5 w-3.5" />
+                  {usarFoto.isPending ? "Trazendo..." : "Usar como foto do perfil"}
+                </Button>
+              )}
               {!v.verificado && (
                 <Button
                   size="sm"
