@@ -17,7 +17,7 @@ import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table";
 import { PieChart, Pie, Cell, ResponsiveContainer } from "recharts";
-import { ListChecks, Clock, MessageSquare, CheckCircle2, AlertTriangle, ShieldAlert, CalendarClock, RotateCw, ArrowUpRight, Plus, BookOpen, ClipboardCheck, Sparkles, FileText, Zap, Star, Trophy } from "lucide-react";
+import { ListChecks, Clock, MessageSquare, CheckCircle2, AlertTriangle, ShieldAlert, CalendarClock, RotateCw, ArrowUpRight, Plus, BookOpen, ClipboardCheck, Sparkles, FileText, Zap, Star, Trophy, GitPullRequest } from "lucide-react";
 import { HoverCard, HoverCardTrigger, HoverCardContent } from "@/components/ui/hover-card";
 import { FeedAtualizacoes } from "./FeedAtualizacoes";
 import {
@@ -32,6 +32,36 @@ const DONUT: Record<string, string> = {
 };
 
 const ATIVO = (s: string) => chamadoAtivo(s);
+
+const GITHUB_REPO = "haggltda/appify-my-nascimento-9b345b64";
+const DESCRICAO_MAX_URL = 3000; // evita estourar limite prático de tamanho de URL
+
+// Abre a tela de criação de PR do GitHub já com título e corpo preenchidos
+// (prefixo do chamado + assunto + descrição), pra ninguém precisar copiar o
+// número do chamado na mão. O dev só escolhe a branch e clica em criar.
+function abrirPrGithub(c: Chamado, e: React.MouseEvent) {
+  e.stopPropagation();
+  const titulo = `${c.numero}: ${c.assunto}`;
+  const descricaoBruta = c.descricao ?? "";
+  const descricao = descricaoBruta.length > DESCRICAO_MAX_URL
+    ? `${descricaoBruta.slice(0, DESCRICAO_MAX_URL)}\n\n…(descrição truncada — veja o restante no chamado)`
+    : descricaoBruta;
+  const corpo = [
+    "<!-- chamado:auto:start -->",
+    `**Chamado:** ${c.numero} — ${c.assunto}`,
+    "",
+    `**Descrição:** ${descricao || "—"}`,
+    "<!-- chamado:auto:end -->",
+    "",
+    "## O que mudou",
+    "",
+    "## Como testar",
+    "",
+  ].join("\n");
+  const url = `https://github.com/${GITHUB_REPO}/compare/main?quick_pull=1&expand=1`
+    + `&title=${encodeURIComponent(titulo)}&body=${encodeURIComponent(corpo)}`;
+  window.open(url, "_blank", "noopener,noreferrer");
+}
 
 // Por padrão a lista mostra só o que está na fila; concluídos são opcionais.
 const VISOES = [
@@ -294,6 +324,13 @@ export default function PainelDesenvolvedor() {
                         <TableCell>
                           <p className="font-mono text-[11px] font-semibold">#{c.numero}</p>
                           <p className="text-xs">{c.assunto}</p>
+                          <button
+                            onClick={(e) => abrirPrGithub(c, e)}
+                            className="mt-1 inline-flex items-center gap-1 text-[10px] text-muted-foreground hover:text-primary"
+                            title="Abrir PR no GitHub já preenchida com os dados deste chamado"
+                          >
+                            <GitPullRequest className="h-3 w-3" /> Abrir PR
+                          </button>
                         </TableCell>
                         <TableCell className="text-xs">{c.solicitante_nome || "—"}<div className="text-[10px] text-muted-foreground">{c.setor}</div></TableCell>
                         <TableCell onClick={(e) => e.stopPropagation()}>

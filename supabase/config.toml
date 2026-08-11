@@ -40,3 +40,11 @@ verify_jwt = true
 
 [functions.notificar-chamado-whatsapp]
 verify_jwt = true
+
+# Chamadas pelo GitHub Actions (CI), não por usuário logado — autenticação
+# própria por secret compartilhado (CHAMADOS_CI_SECRET), não JWT da Supabase.
+[functions.chamado-info]
+verify_jwt = false
+
+[functions.chamado-vincular-pr]
+verify_jwt = false
