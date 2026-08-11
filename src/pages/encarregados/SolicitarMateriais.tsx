@@ -12,6 +12,7 @@ import { PageHeader } from "@/components/layout/PageHeader";
 import { useEmpresaId } from "@/hooks/useEmpresaId";
 import { useModoExterno } from "@/hooks/useModoExterno";
 import { useContratosCatalogo } from "@/hooks/useSupCatalogo";
+import { ColaboradorCombobox, type Colaborador } from "@/components/encarregados/ColaboradorCombobox";
 import {
   useSessaoExterna, usePostosPedido, useFuncoesPedido, useItensEnxoval,
   useCriarPedido, enviarFotoCracha, hojeISO, fmtDataBR, useContratosExternos,
@@ -50,8 +51,10 @@ export default function SolicitarMateriais() {
   const [postoId, setPostoId] = useState<string | null>(null);
   const [funcaoId, setFuncaoId] = useState<string | null>(null);
 
+  // Fora de admissão o colaborador é ESCOLHIDO da lista; `nomeColaborador` só
+  // é usado quando a pessoa ainda não existe na folha (admissão).
+  const [colaborador, setColaborador] = useState<Colaborador | null>(null);
   const [nomeColaborador, setNomeColaborador] = useState("");
-  const [matricula, setMatricula] = useState("");
   const [admissao, setAdmissao] = useState(false);
   const [tipoAdmissao, setTipoAdmissao] = useState("substituicao");
   const [dataAdmissao, setDataAdmissao] = useState("");
@@ -112,6 +115,9 @@ export default function SolicitarMateriais() {
     return true;
   };
 
+  // Duas portas, uma de cada vez: escolheu da lista, ou é admissão e digitou.
+  const colaboradorDefinido = admissao ? !!nomeColaborador.trim() : !!colaborador;
+
   const podeAvancar = (() => {
     if (passo === 0) {
       if (!contratoEfetivo) return false;
@@ -123,7 +129,7 @@ export default function SolicitarMateriais() {
     if (passo === 2) {
       if (marcados.length === 0) return false;
       if (!marcados.every(itemCompleto)) return false;
-      if (tipoPedido !== "insumos" && (!nomeColaborador.trim() || !matricula.trim())) return false;
+      if (tipoPedido !== "insumos" && !colaboradorDefinido) return false;
       return true;
     }
     return true;
@@ -147,8 +153,11 @@ export default function SolicitarMateriais() {
       contrato_id: contratoEfetivo,
       posto_id: postoId,
       funcao_id: funcaoId,
-      nome_colaborador: nomeColaborador.trim(),
-      matricula_colaborador: matricula.trim(),
+      // Escolhido da lista: só o id vai: nome e matrícula a RPC resolve no
+      // servidor, e ignora o que vier destes campos. Admissão é o único caso
+      // em que o nome digitado vale.
+      colaborador_empregado_id: colaborador?.empregado_id ?? null,
+      nome_colaborador: admissao ? nomeColaborador.trim() : null,
       admissao,
       tipo_admissao: admissao ? tipoAdmissao : null,
       data_admissao: admissao && dataAdmissao ? dataAdmissao : null,
@@ -186,7 +195,7 @@ export default function SolicitarMateriais() {
         <div className="flex justify-center gap-2">
           <Button variant="outline" onClick={() => {
             setProtocolo(null); setPasso(0); setPostoId(null); setFuncaoId(null);
-            setSelecionados({}); setNomeColaborador(""); setMatricula("");
+            setSelecionados({}); setNomeColaborador(""); setColaborador(null);
             setAdmissao(false); setDataAdmissao(""); setCracha(null); setObservacoes("");
           }}>
             Fazer outro pedido
@@ -267,30 +276,55 @@ export default function SolicitarMateriais() {
                 )}
               </div>
 
-              <div className="grid gap-4 sm:grid-cols-2">
-                <div>
-                  <Label>Nome do colaborador</Label>
-                  <Input value={nomeColaborador} onChange={(e) => setNomeColaborador(e.target.value)} placeholder="Nome completo" />
-                </div>
-                <div>
-                  <Label>Matrícula</Label>
-                  <Input
-                    value={matricula}
-                    onChange={(e) => setMatricula(e.target.value.replace(/\D/g, ""))}
-                    placeholder="Somente números"
-                    inputMode="numeric"
-                  />
-                </div>
-              </div>
-              <p className="-mt-2 text-xs text-muted-foreground">
-                Obrigatórios, exceto quando o pedido for só de insumos.
-              </p>
-
+              {/* A caixa vem ANTES do nome porque é ela que decide o modo de
+                  entrada: pessoa que já existe se escolhe da lista; pessoa nova
+                  ainda não está na folha, então só resta digitar. */}
               <div className="rounded-md border p-3">
                 <label className="flex cursor-pointer items-center gap-2">
-                  <Checkbox checked={admissao} onCheckedChange={(v) => setAdmissao(!!v)} />
-                  <span className="text-sm font-medium">É admissão</span>
+                  <Checkbox
+                    checked={admissao}
+                    onCheckedChange={(v) => {
+                      setAdmissao(!!v);
+                      // Trocar de modo limpa o outro lado, senão sobra dado do
+                      // modo anterior e vai junto no pedido.
+                      setColaborador(null);
+                      setNomeColaborador("");
+                    }}
+                  />
+                  <span className="text-sm font-medium">É admissão (colaborador novo)</span>
                 </label>
+
+                <div className="mt-3">
+                  {admissao ? (
+                    <>
+                      <Label>Nome do novo colaborador *</Label>
+                      <Input
+                        className="mt-1"
+                        value={nomeColaborador}
+                        onChange={(e) => setNomeColaborador(e.target.value)}
+                        placeholder="Nome completo, como vai no cadastro"
+                      />
+                      <p className="mt-1 text-xs text-muted-foreground">
+                        Sem matrícula: a pessoa ainda não está na folha.
+                      </p>
+                    </>
+                  ) : (
+                    <>
+                      <Label>Colaborador {tipoPedido !== "insumos" && "*"}</Label>
+                      <ColaboradorCombobox
+                        valor={colaborador}
+                        onEscolher={setColaborador}
+                        contratoId={contratoEfetivo}
+                      />
+                      <p className="mt-1 text-xs text-muted-foreground">
+                        {colaborador
+                          ? `Matrícula ${colaborador.matricula ?? "—"} — preenchida pelo cadastro.`
+                          : "Escolha da lista; a matrícula vem junto."}
+                      </p>
+                    </>
+                  )}
+                </div>
+
                 {admissao && (
                   <div className="mt-3 grid gap-4 sm:grid-cols-3">
                     <div>
@@ -394,9 +428,10 @@ export default function SolicitarMateriais() {
                 <p className="mt-1 text-right text-[11px] text-muted-foreground">{observacoes.length}/500</p>
               </div>
 
-              {marcados.length > 0 && tipoPedido !== "insumos" && (!nomeColaborador.trim() || !matricula.trim()) && (
+              {marcados.length > 0 && tipoPedido !== "insumos" && !colaboradorDefinido && (
                 <p className="text-sm text-destructive">
-                  Pedido com uniforme exige nome e matrícula do colaborador — volte ao passo 1.
+                  Pedido com uniforme exige o colaborador — volte ao passo 1 e escolha da lista,
+                  ou marque "É admissão" se a pessoa é nova.
                 </p>
               )}
             </>
@@ -407,8 +442,8 @@ export default function SolicitarMateriais() {
             <div className="space-y-4 text-sm">
               <Resumo rotulo="Posto" valor={postos.find((p) => p.id === postoId)?.nome ?? "—"} />
               <Resumo rotulo="Função" valor={funcoes.find((f) => f.id === funcaoId)?.nome ?? "—"} />
-              <Resumo rotulo="Colaborador" valor={nomeColaborador || "—"} />
-              <Resumo rotulo="Matrícula" valor={matricula || "—"} />
+              <Resumo rotulo="Colaborador" valor={colaborador?.nome || nomeColaborador || "—"} />
+              <Resumo rotulo="Matrícula" valor={colaborador?.matricula || (admissao ? "— (admissão)" : "—")} />
               <Resumo rotulo="Admissão" valor={admissao ? `Sim · ${tipoAdmissao} · ${fmtDataBR(dataAdmissao)}` : "Não"} />
               <Resumo rotulo="Data da solicitação" valor={fmtDataBR(hojeISO())} />
               {observacoes && <Resumo rotulo="Observação" valor={observacoes} />}
