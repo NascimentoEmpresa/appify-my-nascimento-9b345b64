@@ -25,6 +25,7 @@ export const TIPOS: { valor: string; rotulo: string; temOpcoes: boolean }[] = [
   { valor: "texto_longo",      rotulo: "Texto longo (parágrafo)",  temOpcoes: false },
   { valor: "texto_info",       rotulo: "Texto informativo (só leitura)", temOpcoes: false },
   { valor: "colaborador",      rotulo: "Selecionar colaborador (cadastro)", temOpcoes: false },
+  { valor: "contrato",         rotulo: "Selecionar contrato (cadastro)", temOpcoes: false },
   { valor: "escala_trabalho",  rotulo: "Escala de trabalho (turno)", temOpcoes: false },
   { valor: "multipla_escolha", rotulo: "Múltipla escolha (1 opção)", temOpcoes: true },
   { valor: "caixas_selecao",   rotulo: "Caixas de seleção (várias)", temOpcoes: true },
@@ -595,7 +596,7 @@ function PerguntaCard({ p, i, total, muda, move, remove, upload, setores, usuari
       </div>
 
       {/* Tipo de gráfico do painel (opcional) — só para perguntas que viram gráfico */}
-      {["multipla_escolha", "caixas_selecao", "lista_suspensa", "escala", "escala_trabalho"].includes(p.tipo) && (
+      {["multipla_escolha", "caixas_selecao", "lista_suspensa", "escala", "escala_trabalho", "contrato"].includes(p.tipo) && (
         <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
           <span style={{ fontSize: 11.5, fontWeight: 700, color: "#64748b" }}>📊 Gráfico no painel</span>
           <select value={p.config.grafico ?? "barras"} onChange={e => muda(i, { config: { ...p.config, grafico: e.target.value } })}
@@ -607,6 +608,18 @@ function PerguntaCard({ p, i, total, muda, move, remove, upload, setores, usuari
           </select>
           <span style={{ fontSize: 10.5, color: "#cbd5e1" }}>(opcional)</span>
         </div>
+      )}
+
+      {/* Um contrato ou vários. Desligado = escolhe um só, que é o caso comum;
+          ligado, a resposta vira lista e o painel conta cada contrato. */}
+      {p.tipo === "contrato" && (
+        <label style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10, cursor: "pointer" }}>
+          <input type="checkbox" checked={!!p.config.multiplos}
+            onChange={e => muda(i, { config: { ...p.config, multiplos: e.target.checked || undefined } })}
+            style={{ width: 15, height: 15 }} />
+          <span style={{ fontSize: 12, fontWeight: 700, color: "#334155" }}>Permitir selecionar mais de um contrato</span>
+          <span style={{ fontSize: 10.5, color: "#cbd5e1" }}>(a lista mostra só contratos ativos)</span>
+        </label>
       )}
 
       {p.tipo === "texto_info" ? (

@@ -9446,3 +9446,33 @@ COMMENT ON COLUMN public.profiles.bio IS
   'Descrição livre escrita pelo próprio usuário em Meu Perfil. Opcional.';
 
 NOTIFY pgrst, 'reload schema';
+
+-- ═══════════════════════════════════════════════════════════════════════
+-- Contratos para o Nascimento Formulários — migration 20260831000001
+--
+-- A pergunta "Selecionar contrato" precisa listar contratos para quem
+-- responde: no formulário público isso é anon, e no interno é gente de
+-- qualquer setor. A tabela CONTRATOS tem RLS que só atende logado com um de
+-- quatro menus de RH/Jurídico, então nenhum dos dois enxergaria a lista.
+-- A view expõe só nome e empresa, e apenas os ATIVOS (sem PAGAMENTOS,
+-- endereço, CEP ou inscrição).
+-- ═══════════════════════════════════════════════════════════════════════
+-- DISTINCT ON pelo nome: existem duas linhas ativas "LIMPEZA FURG" da mesma
+-- empresa (ids 182/183). Como a resposta gravada é o nome, elas dariam a
+-- mesma resposta — e na seleção múltipla marcar uma marcaria as duas.
+CREATE OR REPLACE VIEW public."VW_CONTRATOS_BASICO" AS
+SELECT DISTINCT ON (btrim(c."NOME CONTRATO"))
+  c.id,
+  btrim(c."NOME CONTRATO") AS nome_contrato,
+  c."NOME EMPRESA"         AS nome_empresa
+FROM public."CONTRATOS" c
+WHERE upper(btrim(coalesce(c."ATIVO", ''))) = 'SIM'
+  AND btrim(coalesce(c."NOME CONTRATO", '')) <> ''
+ORDER BY btrim(c."NOME CONTRATO"), c.id;
+
+COMMENT ON VIEW public."VW_CONTRATOS_BASICO" IS
+  'Contratos ativos (nome e empresa) para a pergunta "Selecionar contrato" do Nascimento Formulários. Sem colunas financeiras.';
+
+GRANT SELECT ON public."VW_CONTRATOS_BASICO" TO anon, authenticated;
+
+NOTIFY pgrst, 'reload schema';
