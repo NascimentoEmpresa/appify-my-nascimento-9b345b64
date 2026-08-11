@@ -140,6 +140,35 @@ Deno.serve(async (req) => {
       }, 503);
     }
 
+    // ── usar_foto ────────────────────────────────────────────────────
+    // O caminho deliberado: quem JÁ tem foto no ERP e quer trocar pela do
+    // Discord. Sai da URL guardada no vínculo, sem precisar do token do
+    // Discord — que é usado uma vez e descartado, de propósito.
+    //
+    // Fica ACIMA da conferência de redirect_uri: esta ação não redireciona
+    // para lugar nenhum e não manda redirect_uri. Embaixo da conferência ela
+    // era barrada com "URL de retorno não autorizada" — erro que não tinha
+    // nada a ver com o que a pessoa clicou.
+    if (action === "usar_foto") {
+      const { data: v } = await admin
+        .from("usuario_discord")
+        .select("discord_avatar")
+        .eq("user_id", userId)
+        .maybeSingle();
+      if (!v?.discord_avatar) {
+        return json({ error: "Não há foto do Discord guardada no seu vínculo." }, 400);
+      }
+      const r = await importarFoto(admin, userId, v.discord_avatar, true);
+      if (r !== "importada") {
+        return json({ error: "Não foi possível trazer a foto do Discord." }, 502);
+      }
+      return json({ ok: true });
+    }
+
+    // Daqui para baixo só ficam as ações que REDIRECIONAM para o Discord
+    // (`iniciar`) ou voltam dele (`concluir`). Só elas mandam redirect_uri, e
+    // só elas precisam desta trava — sem ela o parâmetro viraria redirect
+    // aberto. Ação que não redireciona não deve ser conferida por aqui.
     if (!REDIRECT_URIS.includes(redirectUri)) {
       return json({
         error: "URL de retorno não autorizada. Confira DISCORD_REDIRECT_URIS.",
@@ -265,26 +294,6 @@ Deno.serve(async (req) => {
         discord_email: me.email ?? null,
         foto_importada: foto === "importada",
       });
-    }
-
-    // ── usar_foto ────────────────────────────────────────────────────
-    // O caminho deliberado: quem JÁ tem foto no ERP e quer trocar pela do
-    // Discord. Sai da URL guardada no vínculo, sem precisar do token do
-    // Discord — que é usado uma vez e descartado, de propósito.
-    if (action === "usar_foto") {
-      const { data: v } = await admin
-        .from("usuario_discord")
-        .select("discord_avatar")
-        .eq("user_id", userId)
-        .maybeSingle();
-      if (!v?.discord_avatar) {
-        return json({ error: "Não há foto do Discord guardada no seu vínculo." }, 400);
-      }
-      const r = await importarFoto(admin, userId, v.discord_avatar, true);
-      if (r !== "importada") {
-        return json({ error: "Não foi possível trazer a foto do Discord." }, 502);
-      }
-      return json({ ok: true });
     }
 
     return json({ error: "Ação desconhecida." }, 400);
