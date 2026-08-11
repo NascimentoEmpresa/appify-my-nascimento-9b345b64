@@ -1153,6 +1153,14 @@ function AvatarUploadSection({ profile }: { profile: ProfileRow }) {
 
 // ─── Ficha do usuário (conta + cadastro da Senior + Discord) ───────────────
 
+/**
+ * As colunas da Senior que a ficha mostra — as mesmas doze do `CartaoPerfil`,
+ * mais "Nascimento". Espelha o recorte do useVinculoEmpregado: as duas telas
+ * montam o mesmo cartão e não faz sentido pedirem coisas diferentes.
+ */
+const COLS_FICHA_EMPREGADO =
+  '"ID","Nome","CPF","Título do Cargo","Setor_ERP","Perfil_ERP","LIDER","Situação","Admissão","Nascimento","Nome da Empresa","Nome Filial","email"';
+
 function ColaboradorDetalheDialog({ empregadoId, userId, podeDesvincular, onChanged }: { empregadoId: number | null; userId: string; podeDesvincular: boolean; onChanged: () => void }) {
   const [open, setOpen] = useState(false);
   const [emp, setEmp] = useState<Record<string, any> | null>(null);
@@ -1171,9 +1179,17 @@ function ColaboradorDetalheDialog({ empregadoId, userId, podeDesvincular, onChan
       // demoraria a soma de três idas ao banco em vez da mais lenta delas.
       // `select("*")` no perfil traz a descrição sem quebrar caso o banco
       // ainda não tenha a coluna — nomear coluna ausente derruba a consulta.
+      // Na EMPREGADOS é o contrário: nada é novo ali, e `*` traria as 148
+      // colunas da folha — salário e PIS inclusive — pra montar uma ficha de
+      // doze campos. A RLS filtra linha, não coluna (ver a migration
+      // 20260717190010), então o recorte tem que sair daqui.
       const [rEmp, rPerfil, rDiscord] = await Promise.all([
         empregadoId
-          ? (supabase as any).from("EMPREGADOS").select("*").eq("ID", empregadoId).maybeSingle()
+          ? (supabase as any)
+              .from("EMPREGADOS")
+              .select(COLS_FICHA_EMPREGADO)
+              .eq("ID", empregadoId)
+              .maybeSingle()
           : Promise.resolve({ data: null }),
         (supabase as any).from("profiles").select("*").eq("id", userId).maybeSingle(),
         (supabase as any).from("usuario_discord").select("*").eq("user_id", userId).maybeSingle(),
