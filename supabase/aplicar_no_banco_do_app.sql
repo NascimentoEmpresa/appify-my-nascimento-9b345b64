@@ -9430,3 +9430,19 @@ GRANT EXECUTE ON FUNCTION public.usuarios_sem_discord() TO authenticated;
 SELECT count(*) AS vinculos FROM public.usuario_discord;
 
 NOTIFY pgrst, 'reload schema';
+
+-- ═══════════════════════════════════════════════════════════════════════
+-- Descrição do perfil ("sobre mim") — migration 20260829000002
+-- ═══════════════════════════════════════════════════════════════════════
+ALTER TABLE public.profiles
+  ADD COLUMN IF NOT EXISTS bio text;
+
+ALTER TABLE public.profiles
+  DROP CONSTRAINT IF EXISTS profiles_bio_tamanho;
+ALTER TABLE public.profiles
+  ADD CONSTRAINT profiles_bio_tamanho CHECK (bio IS NULL OR length(bio) <= 500);
+
+COMMENT ON COLUMN public.profiles.bio IS
+  'Descrição livre escrita pelo próprio usuário em Meu Perfil. Opcional.';
+
+NOTIFY pgrst, 'reload schema';

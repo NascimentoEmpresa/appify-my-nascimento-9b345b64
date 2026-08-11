@@ -44,16 +44,24 @@ export function Topbar({ onToggleSidebar, onOpenMobile }: { onToggleSidebar: () 
   const { disableDemo } = useDemoMode();
   const { user, signOut } = useAuth();
   const { roles, can } = usePermissoes();
-  const [displayName, setDisplayName] = useState<string>("");
   const qc = useQueryClient();
 
   const isAdmin = can("alterar", undefined, "administracao");
 
-  useEffect(() => {
-    if (!user?.id) { setDisplayName(""); return; }
-    supabase.from("profiles").select("display_name,email").eq("id", user.id).maybeSingle()
-      .then(({ data }) => setDisplayName(data?.display_name || data?.email || user.email || ""));
-  }, [user?.id, user?.email]);
+  // Mesma chave que Meu Perfil usa: trocar a foto lá, ou importar a do
+  // Discord, invalida ["meu-perfil"] — e o chip acompanha sem precisar de F5.
+  // Com o useEffect solto que existia aqui a foto só mudava recarregando a
+  // página, porque o Topbar fica montado a navegação inteira.
+  const perfilQ = useQuery({
+    queryKey: ["meu-perfil", user?.id],
+    enabled: !!user?.id,
+    queryFn: async () => {
+      const { data } = await supabase.from("profiles").select("*").eq("id", user!.id).maybeSingle();
+      return data as Record<string, any> | null;
+    },
+  });
+  const displayName = perfilQ.data?.display_name || perfilQ.data?.email || user?.email || "";
+  const avatarUrl: string | null = perfilQ.data?.avatar_url ?? null;
 
   // Notificações
   const notifQ = useQuery({
@@ -348,9 +356,16 @@ export function Topbar({ onToggleSidebar, onOpenMobile }: { onToggleSidebar: () 
             onClick={() => { fecharTodos(); setOpenProfile((o) => !o); }}
             className="flex items-center gap-2.5 rounded-lg px-2 py-1 hover:bg-secondary" title={user?.email ?? ""}
           >
-            <div className="grid h-9 w-9 place-items-center rounded-full bg-gradient-primary text-sm font-semibold text-primary-foreground">
-              {iniciais}
-            </div>
+            {/* A foto do perfil, quando existe. Sem ela ficam as iniciais, que
+                era o único estado possível antes — o chip nunca chegou a
+                mostrar avatar, nem para quem já tinha um em profiles. */}
+            {avatarUrl ? (
+              <img src={avatarUrl} alt="" className="h-9 w-9 shrink-0 rounded-full object-cover" />
+            ) : (
+              <div className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-gradient-primary text-sm font-semibold text-primary-foreground">
+                {iniciais}
+              </div>
+            )}
             <div className="hidden text-left lg:block">
               <p className="text-xs font-semibold leading-tight">{nomeExibido}</p>
               <p className="text-[10px] text-muted-foreground">

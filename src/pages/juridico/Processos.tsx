@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
 import { useVinculoEmpregado } from "@/hooks/useVinculoEmpregado";
+import { MUNICIPIOS_POR_UF } from "@/data/municipios-brasil";
 import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip, Cell, PieChart, Pie, Legend, CartesianGrid } from "recharts";
 
 // =====================================================================
@@ -26,6 +27,7 @@ interface Processo {
   valor_final: number; valor_outros_custos: number; valor_deposito_recursal: number; valor_custas_processuais: number;
   motivos: string; motivo_items: MotivoItem[]; houve_acordo: string; status_sentenca: string;
   status_recursos: string; havera_pericia: string; motivo_acordo: string; motivos_outros_custos: string;
+  local_pericia: string; data_pericia: string; hora_pericia: string;
   data_entrada_reclamatoria: string; tipo_audiencia: string; modalidade_audiencia: string; audiencias: Audiencia[];
 }
 interface Comentario { id: number; entidade_id?: string; autor_nome?: string; texto: string; created_at?: string; }
@@ -97,6 +99,55 @@ export function sugerirContrato(municipio: string, contratos: string[]): string 
   }
   return pontos > 0 ? melhor : "";
 }
+
+// ── Município a partir do contrato ─────────────────────────────────
+// O caminho inverso do de cima, e o que a tela usa hoje: o contrato vem da
+// Sênior (CONTRATOS) e o município tem que ser a cidade DAQUELE contrato.
+//
+// A CONTRATOS não tem coluna de cidade — só "Endereço" (logradouro) e "CEP" —,
+// então a cidade sai do próprio nome do contrato, casando-o contra a lista de
+// municípios do IBGE. Quando nada casa, o campo fica em branco e a validação do
+// Salvar cobra o preenchimento (é obrigatório).
+const partesNome = (s: string) => semAcento(s).split(/[^A-Z0-9']+/).filter(Boolean);
+
+// Índice nome-normalizado → nome com acento. Ignora nomes com menos de 4 letras
+// ("Ipê", "Iuiú"): curtos demais para casar sem falso positivo. Montado uma vez.
+let MUN_IDX: Map<string, string> | null = null;
+function municipiosIndexados(): Map<string, string> {
+  if (!MUN_IDX) {
+    MUN_IDX = new Map();
+    for (const lista of Object.values(MUNICIPIOS_POR_UF))
+      for (const nome of lista) {
+        const chave = partesNome(nome).join(" ");
+        if (chave.replace(/[^A-Z]/g, "").length >= 4 && !MUN_IDX.has(chave)) MUN_IDX.set(chave, nome);
+      }
+  }
+  return MUN_IDX;
+}
+
+/**
+ * Procura um município dentro do nome do contrato, do trecho mais longo para o
+ * mais curto ("SALTO DO JACUI" antes de "SALTO").
+ *
+ * `noInicio` diz se a cidade ABRE o nome ("CAXIAS DO SUL - 2026/95"). Só nesse
+ * caso a tela preenche o município sozinha: aí a cidade é a identidade do
+ * contrato, e nos 57 contratos ativos os 8 casos assim estão todos certos.
+ * Casado no meio do nome, vira sugestão de um clique — acerta "UFFS CHAPECO" e
+ * "HUSM SANTA MARIA", mas também tira "Saúde" (município de SC) de "UFRGS -
+ * AUXILIAR DE SAÚDE BUCAL". Gravar esse chute sozinho seria erro silencioso:
+ * ninguém desconfia de campo já preenchido.
+ */
+export function cidadeDoContrato(nomeContrato: string): { cidade: string; noInicio: boolean } {
+  const idx = municipiosIndexados();
+  const t = partesNome(nomeContrato);
+  for (let n = Math.min(5, t.length); n >= 1; n--)
+    for (let i = 0; i + n <= t.length; i++) {
+      const m = idx.get(t.slice(i, i + n).join(" "));
+      if (m) return { cidade: m, noInicio: i === 0 };
+    }
+  return { cidade: "", noInicio: false };
+}
+
 const custoTotal = (p: any) => p.valor_final > 0 ? p.valor_final : p.valor_acordo + p.valor_sentenca + p.valor_outros_custos + p.valor_deposito_recursal + p.valor_custas_processuais;
 const motivoTotal = (i: MotivoItem) => VAL_FIELDS.reduce((s, k) => s + toFloat(i[k]), 0);
 
@@ -219,6 +270,7 @@ function agrupar(rows: any[]): Processo[] {
       motivos: rs.map(r => String(r.motivos ?? "").trim() || "Sem motivo").join(" • "), motivo_items,
       houve_acordo: first("houve_acordo"), status_sentenca: first("status_sentenca"), data_entrada_reclamatoria: first("data_entrada_reclamatoria"),
       status_recursos: first("status_recursos"), havera_pericia: first("havera_pericia"), motivo_acordo: first("motivo_acordo"), motivos_outros_custos: first("motivos_outros_custos"),
+      local_pericia: first("local_pericia"), data_pericia: first("data_pericia"), hora_pericia: first("hora_pericia"),
       tipo_audiencia: first("tipo_audiencia"), modalidade_audiencia: first("modalidade_audiencia"), audiencias: parseAudiencias(rs),
     });
   }
@@ -229,7 +281,7 @@ function agrupar(rows: any[]): Processo[] {
 }
 
 const ativo = (p: Processo) => p.status !== "ARQUIVADO";
-const FORM_RESET = () => ({ numero_processo: "", reclamante: "", reclamada: "", status: "EM ANDAMENTO", comarca: "", municipio_origem: "", data_entrada_reclamatoria: "", contrato: "", reclamante_vinculado_cpf: "", status_sentenca: "", status_recursos: "", houve_acordo: "Não", motivo_acordo: "", havera_pericia: "Não", motivos_outros_custos: "" });
+const FORM_RESET = () => ({ numero_processo: "", reclamante: "", reclamada: "", status: "EM ANDAMENTO", comarca: "", municipio_origem: "", data_entrada_reclamatoria: "", contrato: "", reclamante_vinculado_cpf: "", status_sentenca: "", status_recursos: "", houve_acordo: "Não", motivo_acordo: "", havera_pericia: "Não", local_pericia: "", data_pericia: "", hora_pericia: "", motivos_outros_custos: "" });
 const STATUS_SENTENCA_OPC = ["", "PROCEDENTE", "IMPROCEDENTE", "PARCIALMENTE PROCEDENTE", "EM ANDAMENTO", "ACORDO", "EXTINTO", "ARQUIVADO"];
 const STATUS_RECURSO_OPC = ["", "SEM RECURSO", "EM ANDAMENTO", "PROVIDO", "IMPROVIDO", "ARQUIVADO"];
 // Salário vem de EMPREGADOS como texto pt-BR ("2.002,6900"): normaliza e devolve número.
@@ -447,12 +499,20 @@ export default function Processos({ view = "processos" }: { view?: "dashboard" |
     // campo certo, e o município fica livre para a cidade.
     const local = emp["Descrição do Local"] || "";
     if (local) contratoManual.current = true;
-    setForm(v => ({ ...v, reclamante_vinculado_cpf: cpf, contrato: local || v.contrato }));
+    // Mesmo critério do campo Contrato: só preenche a cidade sozinha quando ela
+    // abre o nome do contrato e o município ainda está vazio.
+    const { cidade, noInicio } = cidadeDoContrato(local);
+    const cidadeNova = noInicio && cidade && !form.municipio_origem.trim() ? cidade : "";
+    setForm(v => ({
+      ...v, reclamante_vinculado_cpf: cpf, contrato: local || v.contrato,
+      municipio_origem: cidadeNova || v.municipio_origem,
+    }));
     setEmpResultados([]); setEmpSelKey(null);
     // Processo já existente: grava o vínculo na hora (não depende do "Salvar processo").
     if (editNumero) {
       const patch: any = { reclamante_vinculado_cpf: cpf || null };
       if (local) patch.contrato = local;
+      if (cidadeNova) patch.municipio_origem = cidadeNova;
       const { error } = await (supabase as any).from("JUR_PROCESSOS").update(patch).eq("numero_processo", editNumero);
       if (error) { toast("Erro ao salvar vínculo: " + error.message, "err"); return; }
       await load();
@@ -477,7 +537,7 @@ export default function Processos({ view = "processos" }: { view?: "dashboard" |
     // Processo que já tem contrato salvo: a sugestão não pode sobrescrever o
     // que alguém escolheu antes. Sem contrato, volta a sugerir.
     contratoManual.current = !!String(p.contrato ?? "").trim();
-    setForm({ numero_processo: p.numero_processo, reclamante: p.reclamante, reclamada: p.reclamada, status: p.status, comarca: p.comarca, municipio_origem: p.municipio_origem, data_entrada_reclamatoria: (p.data_entrada_reclamatoria || "").slice(0, 10), contrato: p.contrato, reclamante_vinculado_cpf: p.reclamante_vinculado_cpf || "", status_sentenca: p.status_sentenca || "", status_recursos: p.status_recursos || "", houve_acordo: p.houve_acordo || "Não", motivo_acordo: p.motivo_acordo || "", havera_pericia: p.havera_pericia || "Não", motivos_outros_custos: p.motivos_outros_custos || "" });
+    setForm({ numero_processo: p.numero_processo, reclamante: p.reclamante, reclamada: p.reclamada, status: p.status, comarca: p.comarca, municipio_origem: p.municipio_origem, data_entrada_reclamatoria: (p.data_entrada_reclamatoria || "").slice(0, 10), contrato: p.contrato, reclamante_vinculado_cpf: p.reclamante_vinculado_cpf || "", status_sentenca: p.status_sentenca || "", status_recursos: p.status_recursos || "", houve_acordo: p.houve_acordo || "Não", motivo_acordo: p.motivo_acordo || "", havera_pericia: p.havera_pericia || "Não", local_pericia: p.local_pericia || "", data_pericia: (p.data_pericia || "").slice(0, 10), hora_pericia: (p.hora_pericia || "").slice(0, 5), motivos_outros_custos: p.motivos_outros_custos || "" });
     setMotivos(p.motivo_items.length ? p.motivo_items.map(m => ({ ...m })) : [MOTIVO_RESET()]);
     setAuds(p.audiencias.map(a => ({ ...a, propostas: (a.propostas || []).map(pr => ({ ...pr })) })));
     setEmpBusca(p.reclamante || ""); setEmpResultados([]); setEmpSelKey(null); setModal(true);
@@ -486,6 +546,9 @@ export default function Processos({ view = "processos" }: { view?: "dashboard" |
     const numero = form.numero_processo.replace(/\s+/g, "").trim();
     if (!numero) { toast("Informe o número do processo.", "err"); return; }
     if (!form.reclamante.trim()) { toast("Informe o reclamante.", "err"); return; }
+    // Obrigatório: a CONTRATOS não tem a cidade, então quando o nome do contrato
+    // não entrega o município ninguém mais preenche isso depois.
+    if (!form.municipio_origem.trim()) { toast("Informe o município de origem (a cidade do contrato).", "err"); return; }
     const dataEntrada = form.data_entrada_reclamatoria || null;
     const ano = (dataEntrada ? Number(dataEntrada.slice(0, 4)) : null) || anoDoNumero(numero) || null;
     const audsJson = auds.length ? JSON.stringify(auds.map((a, i) => ({ ordem: i + 1, data: a.data, tipo_audiencia: a.tipo_audiencia || "Instrução", modalidade_audiencia: a.modalidade_audiencia, horario: a.horario || null, propostas: (a.propostas || []).filter(pr => pr.descricao.trim() || pr.valor).map(pr => ({ valor: pr.valor || 0, descricao: pr.descricao.trim() })) }))) : null;
@@ -510,6 +573,7 @@ export default function Processos({ view = "processos" }: { view?: "dashboard" |
       reclamante_vinculado_cpf: form.reclamante_vinculado_cpf || null,
       status_sentenca: form.status_sentenca || null, status_recursos: form.status_recursos || null,
       motivo_acordo: form.motivo_acordo.trim() || null, havera_pericia: form.havera_pericia || null, motivos_outros_custos: form.motivos_outros_custos.trim() || null,
+      local_pericia: form.local_pericia.trim() || null, data_pericia: form.data_pericia || null, hora_pericia: form.hora_pericia || null,
       audiencias_json: audsJson, tipo_audiencia: auds[0]?.tipo_audiencia || null, modalidade_audiencia: auds[0]?.modalidade_audiencia || null, updated_at: new Date().toISOString(),
     }));
     if (editNumero && editNumero !== numero && processos.some(p => p.numero_processo === numero)) { toast("Já existe outro processo com esse número.", "err"); return; }
@@ -540,6 +604,22 @@ export default function Processos({ view = "processos" }: { view?: "dashboard" |
     }
     return prox;
   });
+  // Caminho principal hoje: escolhido o contrato, o município é a cidade DELE.
+  // Preenche sozinho só quando a cidade abre o nome do contrato e o campo está
+  // vazio — nunca por cima do que já foi digitado ou salvo antes.
+  const escolherContrato = (v: string) => {
+    contratoManual.current = true;
+    setForm(f => {
+      const prox = { ...f, contrato: v };
+      const { cidade, noInicio } = cidadeDoContrato(v);
+      if (noInicio && cidade && !f.municipio_origem.trim()) prox.municipio_origem = cidade;
+      return prox;
+    });
+  };
+  // Cidade que o contrato atual entrega — vira botão de um clique quando não foi
+  // preenchida sozinha (casou no meio do nome, ou o campo já tinha outra coisa).
+  const sugestaoMunicipio = useMemo(() => cidadeDoContrato(form.contrato).cidade, [form.contrato]);
+  const temPericia = form.havera_pericia === "Sim" || !!(form.data_pericia || form.hora_pericia || form.local_pericia);
 
   const setMotivo = (i: number, patch: Partial<MotivoItem>) => setMotivos(ms => ms.map((m, idx) => idx === i ? { ...m, ...patch } : m));
   const setAud = (i: number, patch: Partial<Audiencia>) => setAuds(as => as.map((a, idx) => idx === i ? { ...a, ...patch } : a));
@@ -930,6 +1010,13 @@ export default function Processos({ view = "processos" }: { view?: "dashboard" |
                 </div>
               ))}</div>
             </>)}
+            {(sel.data_pericia || sel.hora_pericia || sel.local_pericia || sel.havera_pericia === "Sim") && (<>
+              <div style={{ fontSize: 11, fontWeight: 800, color: "#0f3171", textTransform: "uppercase", letterSpacing: ".4px", marginBottom: 6 }}>Perícia</div>
+              <div style={{ marginBottom: 14, fontSize: 12.5, color: "#334155" }}>
+                <div>🔬 <b>{sel.data_pericia ? fmtDt(sel.data_pericia) : "Data a definir"}</b>{sel.hora_pericia ? ` · ${sel.hora_pericia.slice(0, 5)}` : ""}</div>
+                {sel.local_pericia && <div style={{ marginTop: 3, marginLeft: 18, color: "#475569" }}>📍 {sel.local_pericia}</div>}
+              </div>
+            </>)}
             <div style={{ fontSize: 11, fontWeight: 800, color: "#0f3171", textTransform: "uppercase", letterSpacing: ".4px", marginBottom: 6 }}>Comentários</div>
             <div style={{ display: "flex", gap: 6, marginBottom: 10 }}>
               <input className="jpr-fi" placeholder="Escreva um comentário…" value={novoComent} onChange={e => setNovoComent(e.target.value)} onKeyDown={e => { if (e.key === "Enter") addComent(); }} />
@@ -960,7 +1047,19 @@ export default function Processos({ view = "processos" }: { view?: "dashboard" |
               <div className="jpr-fg"><label>Reclamante *</label><input className="jpr-fi" value={form.reclamante} onChange={e => setForm(v => ({ ...v, reclamante: e.target.value }))} /></div>
               <div className="jpr-fg"><label>Reclamada</label><input className="jpr-fi" list="jpr-reclamadas-form" value={form.reclamada} onChange={e => setForm(v => ({ ...v, reclamada: e.target.value }))} placeholder="Empresa" /><datalist id="jpr-reclamadas-form">{reclamadasDistintas.map(r => <option key={r} value={r} />)}</datalist></div>
               <div className="jpr-fg"><label>Comarca</label><input className="jpr-fi" value={form.comarca} onChange={e => setForm(v => ({ ...v, comarca: e.target.value }))} /></div>
-              <div className="jpr-fg"><label>Município de origem</label><input className="jpr-fi" value={form.municipio_origem} onChange={e => setMunicipio(e.target.value)} placeholder="Cidade do contrato" /></div>
+              <div className="jpr-fg">
+                <label>Município de origem *</label>
+                {/* A cidade do contrato. Vem preenchida quando dá para tirá-la
+                    do nome do contrato; quando não dá, fica em branco e o
+                    Salvar cobra — em branco é o estado que ninguém corrige. */}
+                <input className="jpr-fi" value={form.municipio_origem} onChange={e => setMunicipio(e.target.value)} placeholder="Cidade do contrato" />
+                {sugestaoMunicipio && sugestaoMunicipio !== form.municipio_origem && (
+                  <button type="button" className="jpr-btn" onClick={() => setForm(v => ({ ...v, municipio_origem: sugestaoMunicipio }))}
+                    style={{ background: "#eef4ff", color: "#0f3171", padding: "4px 9px", marginTop: 4, fontSize: 11 }}>
+                    Usar “{sugestaoMunicipio}”
+                  </button>
+                )}
+              </div>
               <div className="jpr-fg"><label>Data de entrada</label><input className="jpr-fi" type="date" value={form.data_entrada_reclamatoria} onChange={e => setForm(v => ({ ...v, data_entrada_reclamatoria: e.target.value }))} /></div>
               <div className="jpr-fg">
                 <label>Contrato</label>
@@ -973,7 +1072,7 @@ export default function Processos({ view = "processos" }: { view?: "dashboard" |
                   <ComboSelect
                     value={form.contrato}
                     options={form.contrato && !contratosNomes.includes(form.contrato) ? [form.contrato, ...contratosNomes] : contratosNomes}
-                    onChange={v => { contratoManual.current = true; setForm(f => ({ ...f, contrato: v })); }}
+                    onChange={escolherContrato}
                     placeholder="Selecione o contrato…"
                     vazio="Nenhum contrato encontrado."
                     limpavel
@@ -998,6 +1097,21 @@ export default function Processos({ view = "processos" }: { view?: "dashboard" |
               <div className="jpr-fg"><label>Haverá perícia?</label><select className="jpr-fi" value={form.havera_pericia} onChange={e => setForm(v => ({ ...v, havera_pericia: e.target.value }))}><option>Não</option><option>Sim</option></select></div>
               <div className="jpr-fg"><label>Motivo de outros custos</label><input className="jpr-fi" value={form.motivos_outros_custos} onChange={e => setForm(v => ({ ...v, motivos_outros_custos: e.target.value }))} placeholder="Ex.: Honorários" /></div>
             </div>
+
+            {/* Agendamento da perícia. Aparece com "Haverá perícia? = Sim" e
+                também quando o processo já traz esses dados (a carga do sistema
+                antigo veio com perícia marcada e o "Haverá perícia?" em branco):
+                escondê-los deixaria a data agendada invisível na tela. */}
+            {temPericia && (<>
+              <div style={{ fontSize: 11, fontWeight: 800, color: "#0f3171", textTransform: "uppercase", letterSpacing: ".4px", margin: "10px 0 6px" }}>Perícia</div>
+              <div className="jpr-grid2">
+                <div className="jpr-fg"><label>Data da perícia</label><input className="jpr-fi" type="date" value={form.data_pericia} onChange={e => setForm(v => ({ ...v, data_pericia: e.target.value }))} /></div>
+                <div className="jpr-fg"><label>Horário da perícia</label><input className="jpr-fi" type="time" value={form.hora_pericia} onChange={e => setForm(v => ({ ...v, hora_pericia: e.target.value }))} /></div>
+              </div>
+              {/* Textarea porque o local vem como endereço inteiro, com ponto de
+                  encontro junto ("…Rua Felizardo, 750 — recepção principal"). */}
+              <div className="jpr-fg"><label>Local da perícia</label><textarea className="jpr-fi" rows={2} style={{ resize: "vertical" }} value={form.local_pericia} onChange={e => setForm(v => ({ ...v, local_pericia: e.target.value }))} placeholder="Endereço e ponto de encontro" /></div>
+            </>)}
 
             {/* Vínculo do reclamante com EMPREGADOS */}
             <div style={{ border: "1px solid #e6eefc", background: "#f8fbff", borderRadius: 10, padding: 12, margin: "10px 0 6px" }}>

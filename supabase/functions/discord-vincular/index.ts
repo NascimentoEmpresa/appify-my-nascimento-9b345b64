@@ -54,6 +54,59 @@ function json(body: unknown, status = 200) {
   });
 }
 
+type ResultadoFoto = "importada" | "ja_tinha" | "sem_foto" | "falhou";
+
+/**
+ * Traz a foto do Discord para a foto de perfil do ERP.
+ *
+ * COPIA os bytes para o bucket `avatars` em vez de apontar para o CDN do
+ * Discord. A URL de lá embute o hash do avatar: no dia em que a pessoa troca a
+ * foto no Discord, aquele endereço vira 404 e o ERP perderia a imagem em
+ * silêncio. Copiar também evita que toda tela do ERP bata no CDN do Discord.
+ *
+ * Sem `forcar`, só preenche quem está sem foto — trocar sem pedir a imagem que
+ * alguém subiu à mão seria mexer no que não foi pedido. O botão em Meu Perfil
+ * passa `forcar`, porque aí a troca é o pedido.
+ *
+ * É best-effort no caminho automático: falha aqui não pode derrubar um vínculo
+ * que já foi gravado. O vínculo é o que importa; a foto é o bônus.
+ */
+async function importarFoto(
+  admin: any,
+  userId: string,
+  urlDiscord: string | null,
+  forcar: boolean,
+): Promise<ResultadoFoto> {
+  if (!urlDiscord) return "sem_foto";
+  try {
+    if (!forcar) {
+      const { data: perfil } = await admin
+        .from("profiles").select("avatar_url").eq("id", userId).maybeSingle();
+      if (perfil?.avatar_url) return "ja_tinha";
+    }
+
+    // 256px: o maior tamanho que as telas do ERP usam sem ficar pesado.
+    const resp = await fetch(`${urlDiscord}?size=256`);
+    if (!resp.ok) return "falhou";
+    const bytes = new Uint8Array(await resp.arrayBuffer());
+    const tipo = resp.headers.get("Content-Type") ?? "image/png";
+
+    const caminho = `${userId}/discord-${Date.now()}.png`;
+    const { error: upErr } = await admin.storage
+      .from("avatars").upload(caminho, bytes, { contentType: tipo, upsert: true });
+    if (upErr) return "falhou";
+
+    const url = `${SUPABASE_URL}/storage/v1/object/public/avatars/${caminho}`;
+    const { error: updErr } = await admin
+      .from("profiles").update({ avatar_url: url }).eq("id", userId);
+    if (updErr) return "falhou";
+
+    return "importada";
+  } catch {
+    return "falhou";
+  }
+}
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
 
@@ -87,6 +140,35 @@ Deno.serve(async (req) => {
       }, 503);
     }
 
+    // ── usar_foto ────────────────────────────────────────────────────
+    // O caminho deliberado: quem JÁ tem foto no ERP e quer trocar pela do
+    // Discord. Sai da URL guardada no vínculo, sem precisar do token do
+    // Discord — que é usado uma vez e descartado, de propósito.
+    //
+    // Fica ACIMA da conferência de redirect_uri: esta ação não redireciona
+    // para lugar nenhum e não manda redirect_uri. Embaixo da conferência ela
+    // era barrada com "URL de retorno não autorizada" — erro que não tinha
+    // nada a ver com o que a pessoa clicou.
+    if (action === "usar_foto") {
+      const { data: v } = await admin
+        .from("usuario_discord")
+        .select("discord_avatar")
+        .eq("user_id", userId)
+        .maybeSingle();
+      if (!v?.discord_avatar) {
+        return json({ error: "Não há foto do Discord guardada no seu vínculo." }, 400);
+      }
+      const r = await importarFoto(admin, userId, v.discord_avatar, true);
+      if (r !== "importada") {
+        return json({ error: "Não foi possível trazer a foto do Discord." }, 502);
+      }
+      return json({ ok: true });
+    }
+
+    // Daqui para baixo só ficam as ações que REDIRECIONAM para o Discord
+    // (`iniciar`) ou voltam dele (`concluir`). Só elas mandam redirect_uri, e
+    // só elas precisam desta trava — sem ela o parâmetro viraria redirect
+    // aberto. Ação que não redireciona não deve ser conferida por aqui.
     if (!REDIRECT_URIS.includes(redirectUri)) {
       return json({
         error: "URL de retorno não autorizada. Confira DISCORD_REDIRECT_URIS.",
@@ -167,6 +249,13 @@ Deno.serve(async (req) => {
 
       if (!me?.id) return json({ error: "O Discord não devolveu o identificador da conta." }, 400);
 
+      // `global_name` é o nome de exibição — o que a pessoa reconhece como seu.
+      // `username` é o handle, e em conta criada a partir do e-mail corporativo
+      // o Discord o gera do próprio e-mail ("joaovictorcontroladoria_49009").
+      // Guardar o handle fazia o perfil parecer que o ERP trocou o nome da
+      // pessoa pelo e-mail dela. Só cai no handle quando não há nome de exibição.
+      const nomeDiscord = me.global_name ?? me.username ?? null;
+
       // Conta de Discord já usada por OUTRA pessoa do ERP: barra com mensagem
       // clara em vez de deixar o UNIQUE estourar em erro cru.
       const { data: jaUsado } = await admin
@@ -180,24 +269,30 @@ Deno.serve(async (req) => {
         }, 409);
       }
 
+      const avatarDiscord = me.avatar
+        ? `https://cdn.discordapp.com/avatars/${me.id}/${me.avatar}.png`
+        : null;
+
       const { error: upErr } = await admin.from("usuario_discord").upsert({
         user_id: userId,
         discord_id: me.id,
-        discord_username: me.username ?? null,
+        discord_username: nomeDiscord,
         discord_email: me.email ?? null,
-        discord_avatar: me.avatar
-          ? `https://cdn.discordapp.com/avatars/${me.id}/${me.avatar}.png`
-          : null,
+        discord_avatar: avatarDiscord,
         verificado: true,
         vinculado_em: new Date().toISOString(),
       }, { onConflict: "user_id" });
       if (upErr) return json({ error: "Não foi possível gravar o vínculo." }, 500);
 
+      // Aproveita a foto só para quem ainda não tem — ver importarFoto().
+      const foto = await importarFoto(admin, userId, avatarDiscord, false);
+
       return json({
         ok: true,
         discord_id: me.id,
-        discord_username: me.username ?? null,
+        discord_username: nomeDiscord,
         discord_email: me.email ?? null,
+        foto_importada: foto === "importada",
       });
     }
 

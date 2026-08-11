@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -7,12 +7,26 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
-import { LayoutGrid, Package, Lock, ShoppingCart, FileEdit } from "lucide-react";
+import { SearchableSelect } from "@/components/ui/searchable-select";
+import { LayoutGrid, Package, Lock, ShoppingCart, FileEdit, ArrowLeft } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { useEmpresaId } from "@/hooks/useEmpresaId";
 import { useClassificacoesOrcamento } from "@/hooks/usePlanejamentoOrcamentario";
-import { useSalvarDespesa, uploadAnexoMalote, gerarParcelas, RateioLinha } from "@/hooks/useMaloteDespesa";
+import {
+  useSalvarDespesa,
+  useConverterSolicitacaoEmDespesa,
+  useDespesa,
+  useEmpresasGrupo,
+  useContratosAtivos,
+  uploadAnexoMalote,
+  registrarEventoDespesa,
+  gerarParcelas,
+  RateioLinha,
+  OrigemDespesa,
+  TipoSolicitacao,
+  STATUS_LABEL,
+} from "@/hooks/useMaloteDespesa";
 import { RateioGrid, DimensoesRateio } from "./RateioGrid";
 import { AnexosField } from "./AnexosField";
 
@@ -20,6 +34,20 @@ const DIAS_MES = Array.from({ length: 28 }, (_, i) => i + 1);
 const QUANTIDADE_PARCELAS = Array.from({ length: 24 }, (_, i) => i + 2);
 
 export default function CriarDespesa() {
+  const [searchParams] = useSearchParams();
+  const solicitacaoId = searchParams.get("solicitacaoId");
+
+  if (solicitacaoId) {
+    return <ConverterSolicitacaoEmDespesa solicitacaoId={solicitacaoId} />;
+  }
+
+  return <CriarDespesaNova />;
+}
+
+// ============================================================================
+// Fluxo normal: escolher classificação e preencher Solicitação OU Despesa
+// ============================================================================
+function CriarDespesaNova() {
   const navigate = useNavigate();
   const { data: empresaId } = useEmpresaId();
   const { data: classificacoes = [] } = useClassificacoesOrcamento();
@@ -91,6 +119,139 @@ export default function CriarDespesa() {
   );
 }
 
+// ============================================================================
+// Fluxo de conversão: solicitação já cotada e aprovada pelo Suprimentos
+// (status='cotacao_aprovada') virando uma Despesa de verdade. Chega aqui a
+// partir de um clique em Meus Itens — ver abrirItem em MeusItens.tsx.
+// ============================================================================
+function ConverterSolicitacaoEmDespesa({ solicitacaoId }: { solicitacaoId: string }) {
+  const navigate = useNavigate();
+  const { data, isLoading } = useDespesa(solicitacaoId);
+  const { data: empresas = [] } = useEmpresasGrupo();
+  const { data: contratos = [] } = useContratosAtivos();
+  const solicitacao = data?.despesa;
+
+  if (isLoading) {
+    return <div className="p-6 text-muted-foreground">Carregando...</div>;
+  }
+  if (!solicitacao) {
+    return <div className="p-6 text-muted-foreground">Solicitação não encontrada.</div>;
+  }
+  if (solicitacao.status !== "cotacao_aprovada") {
+    return (
+      <div className="p-6 space-y-4">
+        <p className="text-muted-foreground">
+          Esta solicitação está com status "{STATUS_LABEL[solicitacao.status]}" — só é possível converter em despesa quando o status é "Cotação aprovada".
+        </p>
+        <Button variant="outline" onClick={() => navigate("/app/malote/meus-itens")}>
+          <ArrowLeft className="h-4 w-4 mr-2" /> Voltar pra Meus Itens
+        </Button>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-6 p-6">
+      <PageHeader
+        title="Criar Despesa"
+        subtitle="Solicitação já cotada e aprovada — complete os dados de pagamento e rateio para lançar a despesa no malote."
+        module="Malote"
+        breadcrumb={["Malote", "Criar Despesa"]}
+        actions={
+          <Button variant="outline" asChild>
+            <Link to="/app/malote/meus-itens">
+              <Package className="h-4 w-4 mr-2" /> Meus Itens
+            </Link>
+          </Button>
+        }
+      />
+
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <Card>
+          <CardContent className="p-6 space-y-4">
+            <PainelHeader
+              icon={<ShoppingCart className="h-4 w-4 mt-0.5 text-muted-foreground" />}
+              titulo="Solicitação de Despesa / Compra / Manutenção"
+              subtitulo="Preencha os dados para solicitar uma despesa, compra ou manutenção."
+              ativo
+            />
+            <div className="space-y-3 text-sm">
+              <div className="grid grid-cols-2 gap-4">
+                <Campo label="Nome da solicitação" valor={solicitacao.nome} />
+                <Campo label="Motivo" valor={solicitacao.motivo} />
+              </div>
+              <Campo label="Descrição" valor={solicitacao.descricao} />
+              <div className="grid grid-cols-2 gap-4">
+                <Campo label="Valor estimado" valor={Number(solicitacao.valor_total).toLocaleString("pt-BR", { style: "currency", currency: "BRL" })} />
+                <Campo label="Link(s)" valor={solicitacao.links} />
+              </div>
+              <div className="grid grid-cols-2 gap-4">
+                <Campo label="Tipo" valor={solicitacao.tipo ? TIPO_SOLICITACAO_LABEL[solicitacao.tipo] : null} />
+                <Campo label="Classificação de despesa" valor={solicitacao.classificacao?.nome} />
+              </div>
+              {solicitacao.tipo === "contrato" && (
+                <div className="grid grid-cols-2 gap-4">
+                  <Campo label="Empresa" valor={empresas.find((e) => e.id === solicitacao.empresa_id)?.nome} />
+                  <Campo label="Contrato" valor={contratos.find((c) => c.id === solicitacao.contrato_id)?.nome} />
+                </div>
+              )}
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <p className="text-xs text-muted-foreground">Status da solicitação</p>
+                  <span className="inline-flex items-center gap-1 text-emerald-700 dark:text-emerald-400 text-xs font-medium mt-0.5">
+                    <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" /> Solicitação aprovada
+                  </span>
+                </div>
+                <div>
+                  <p className="text-xs text-muted-foreground">Status da cotação</p>
+                  <span className="inline-flex items-center gap-1 text-emerald-700 dark:text-emerald-400 text-xs font-medium mt-0.5">
+                    <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" /> Cotação realizada
+                  </span>
+                </div>
+              </div>
+              {solicitacao.valor_aprovado_cotacao != null && (
+                <Campo
+                  label="Valor aprovado na cotação"
+                  valor={Number(solicitacao.valor_aprovado_cotacao).toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}
+                />
+              )}
+              {solicitacao.arquivos.length > 0 && (
+                <div>
+                  <p className="text-xs text-muted-foreground mb-1">Arquivos anexados</p>
+                  <p className="text-xs">{solicitacao.arquivos.length} arquivo(s)</p>
+                </div>
+              )}
+            </div>
+            <p className="text-xs text-muted-foreground border-t border-border pt-2">
+              Dados preenchidos pela solicitação e pela cotação (Suprimentos) — bloqueados, não podem ser alterados aqui.
+            </p>
+          </CardContent>
+        </Card>
+
+        <PainelDespesaMalote
+          classificacaoId={solicitacao.classificacao_id ?? ""}
+          empresaId={solicitacao.empresa_id}
+          ativo
+          despesaIdExistente={solicitacao.id}
+          origem="solicitacao"
+          nomeInicial={solicitacao.nome}
+          valorInicial={solicitacao.valor_aprovado_cotacao ?? solicitacao.valor_total}
+          onConvertida={() => navigate("/app/malote/meus-itens")}
+        />
+      </div>
+    </div>
+  );
+}
+
+function Campo({ label, valor }: { label: string; valor: string | null | undefined }) {
+  return (
+    <div>
+      <p className="text-xs text-muted-foreground">{label}</p>
+      <p>{valor || "—"}</p>
+    </div>
+  );
+}
+
 function PainelHeader({ icon, titulo, subtitulo, ativo }: { icon: React.ReactNode; titulo: string; subtitulo: string; ativo: boolean }) {
   return (
     <div className="flex items-start justify-between gap-2">
@@ -113,28 +274,48 @@ function PainelHeader({ icon, titulo, subtitulo, ativo }: { icon: React.ReactNod
 // ============================================================================
 // Painel: Solicitação de Despesa / Compra / Manutenção
 // ============================================================================
+const TIPO_SOLICITACAO_LABEL: Record<TipoSolicitacao, string> = {
+  administrativo: "Administrativo",
+  contrato: "Contrato",
+  dispensa_cotacao: "Dispensa de cotação",
+};
+
 function PainelSolicitacao({ classificacaoId, empresaId, ativo }: { classificacaoId: string; empresaId: string | null; ativo: boolean }) {
   const salvar = useSalvarDespesa();
+  const { data: empresas = [] } = useEmpresasGrupo();
+  const { data: contratos = [] } = useContratosAtivos();
   const [nome, setNome] = useState("");
   const [motivo, setMotivo] = useState("");
   const [descricao, setDescricao] = useState("");
   const [valorEstimado, setValorEstimado] = useState("");
   const [links, setLinks] = useState("");
-  const [tipo, setTipo] = useState<"entrada" | "saida">("saida");
+  const [tipo, setTipo] = useState<TipoSolicitacao | "">("");
+  const [empresaContratoId, setEmpresaContratoId] = useState("");
+  const [contratoId, setContratoId] = useState("");
   const [arquivos, setArquivos] = useState<File[]>([]);
   const [salvando, setSalvando] = useState<"rascunho" | "enviar" | null>(null);
+
+  const contratosDaEmpresa = contratos.filter((c) => !empresaContratoId || c.empresa_id === empresaContratoId);
 
   function validar(paraEnviar: boolean): string | null {
     if (!nome.trim()) return "Informe o nome da solicitação.";
     if (!motivo.trim()) return "Informe o motivo.";
     if (!descricao.trim()) return "Informe a descrição.";
     if (!valorEstimado || Number(valorEstimado) <= 0) return "Informe o valor estimado.";
+    if (!tipo) return "Selecione o tipo.";
+    if (tipo === "contrato" && !empresaContratoId) return "Selecione a empresa do contrato.";
+    if (tipo === "contrato" && !contratoId) return "Selecione o contrato.";
     if (paraEnviar && arquivos.length === 0) return "Anexe ao menos um arquivo.";
     return null;
   }
 
-  async function handleSalvar(status: "rascunho" | "pendente_aprovacao") {
-    const erro = validar(status === "pendente_aprovacao");
+  // Enviar aqui só manda a solicitação pra fila de cotação (Suprimentos,
+  // fora do Malote) — NÃO entra direto no fluxo de aprovação N1/N2/N3.
+  // Ela só vira uma Despesa de verdade depois que o Suprimentos aprovar a
+  // cotação (status='cotacao_aprovada') e o usuário converter em Criar
+  // Despesa (ver bloco de conversão mais abaixo neste arquivo).
+  async function handleSalvar(status: "rascunho" | "aguardando_cotacao") {
+    const erro = validar(status === "aguardando_cotacao");
     if (erro) {
       toast.error(erro);
       return;
@@ -145,8 +326,9 @@ function PainelSolicitacao({ classificacaoId, empresaId, ativo }: { classificaca
     }
     setSalvando(status === "rascunho" ? "rascunho" : "enviar");
     try {
+      const empresaFinal = tipo === "contrato" ? empresaContratoId : empresaId;
       const despesaId = await salvar.mutateAsync({
-        empresa_id: empresaId,
+        empresa_id: empresaFinal,
         classificacao_id: classificacaoId,
         origem: "solicitacao",
         status,
@@ -155,14 +337,16 @@ function PainelSolicitacao({ classificacaoId, empresaId, ativo }: { classificaca
         motivo: motivo.trim(),
         descricao: descricao.trim(),
         links: links.trim() || null,
-        tipo_movimento: tipo,
+        tipo: tipo || null,
+        contrato_id: tipo === "contrato" ? contratoId : null,
       });
       if (arquivos.length > 0) {
         const paths = await Promise.all(arquivos.map((f) => uploadAnexoMalote(f, despesaId)));
-        await salvar.mutateAsync({ id: despesaId, empresa_id: empresaId, classificacao_id: classificacaoId, origem: "solicitacao", status, nome: nome.trim(), valor_total: Number(valorEstimado), arquivos: paths });
+        await salvar.mutateAsync({ id: despesaId, empresa_id: empresaFinal, classificacao_id: classificacaoId, origem: "solicitacao", status, nome: nome.trim(), valor_total: Number(valorEstimado), arquivos: paths });
       }
-      toast.success(status === "rascunho" ? "Rascunho salvo." : "Solicitação enviada para aprovação.");
+      toast.success(status === "rascunho" ? "Rascunho salvo." : "Solicitação enviada para cotação.");
       setNome(""); setMotivo(""); setDescricao(""); setValorEstimado(""); setLinks(""); setArquivos([]);
+      setTipo(""); setEmpresaContratoId(""); setContratoId("");
     } catch (e: any) {
       toast.error(e.message ?? "Erro ao salvar solicitação.");
     } finally {
@@ -205,15 +389,57 @@ function PainelSolicitacao({ classificacaoId, empresaId, ativo }: { classificaca
 
           <div>
             <Label>Tipo *</Label>
-            <RadioGroup value={tipo} onValueChange={(v) => setTipo(v as "entrada" | "saida")} className="flex gap-6 mt-1">
-              <label className="flex items-center gap-1.5 text-sm cursor-pointer">
-                <RadioGroupItem value="saida" disabled={!ativo} /> Saída
-              </label>
-              <label className="flex items-center gap-1.5 text-sm cursor-pointer">
-                <RadioGroupItem value="entrada" disabled={!ativo} /> Entrada
-              </label>
-            </RadioGroup>
+            <Select
+              value={tipo}
+              onValueChange={(v) => {
+                setTipo(v as TipoSolicitacao);
+                if (v !== "contrato") {
+                  setEmpresaContratoId("");
+                  setContratoId("");
+                }
+              }}
+              disabled={!ativo}
+            >
+              <SelectTrigger>
+                <SelectValue placeholder="Selecione..." />
+              </SelectTrigger>
+              <SelectContent>
+                {(Object.entries(TIPO_SOLICITACAO_LABEL) as [TipoSolicitacao, string][]).map(([v, label]) => (
+                  <SelectItem key={v} value={v}>
+                    {label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           </div>
+
+          {tipo === "contrato" && (
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div>
+                <Label>Empresa *</Label>
+                <SearchableSelect
+                  value={empresaContratoId}
+                  onChange={(v) => {
+                    setEmpresaContratoId(v);
+                    setContratoId("");
+                  }}
+                  options={empresas.map((e) => ({ value: e.id, label: e.nome }))}
+                  placeholder="Selecione a empresa..."
+                  disabled={!ativo}
+                />
+              </div>
+              <div>
+                <Label>Contrato *</Label>
+                <SearchableSelect
+                  value={contratoId}
+                  onChange={setContratoId}
+                  options={contratosDaEmpresa.map((c) => ({ value: c.id, label: c.nome }))}
+                  placeholder="Selecione o contrato..."
+                  disabled={!ativo || !empresaContratoId}
+                />
+              </div>
+            </div>
+          )}
 
           <div>
             <Label>Arquivos anexados *</Label>
@@ -224,8 +450,8 @@ function PainelSolicitacao({ classificacaoId, empresaId, ativo }: { classificaca
             <Button variant="outline" onClick={() => handleSalvar("rascunho")} disabled={!ativo || salvando !== null}>
               {salvando === "rascunho" ? "Salvando..." : "Salvar rascunho"}
             </Button>
-            <Button onClick={() => handleSalvar("pendente_aprovacao")} disabled={!ativo || salvando !== null}>
-              {salvando === "enviar" ? "Enviando..." : "Enviar para aprovação"}
+            <Button onClick={() => handleSalvar("aguardando_cotacao")} disabled={!ativo || salvando !== null}>
+              {salvando === "enviar" ? "Enviando..." : "Enviar solicitação"}
             </Button>
           </div>
         </div>
@@ -237,10 +463,29 @@ function PainelSolicitacao({ classificacaoId, empresaId, ativo }: { classificaca
 // ============================================================================
 // Painel: Criar Despesa Malote (lançamento direto, sem solicitação)
 // ============================================================================
-function PainelDespesaMalote({ classificacaoId, empresaId, ativo }: { classificacaoId: string; empresaId: string | null; ativo: boolean }) {
+function PainelDespesaMalote({
+  classificacaoId,
+  empresaId,
+  ativo,
+  despesaIdExistente,
+  origem = "despesa_unica",
+  nomeInicial,
+  valorInicial,
+  onConvertida,
+}: {
+  classificacaoId: string;
+  empresaId: string | null;
+  ativo: boolean;
+  despesaIdExistente?: string;
+  origem?: OrigemDespesa;
+  nomeInicial?: string;
+  valorInicial?: number;
+  onConvertida?: () => void;
+}) {
   const salvar = useSalvarDespesa();
-  const [nome, setNome] = useState("");
-  const [totalMes, setTotalMes] = useState("");
+  const converter = useConverterSolicitacaoEmDespesa();
+  const [nome, setNome] = useState(nomeInicial ?? "");
+  const [totalMes, setTotalMes] = useState(valorInicial != null ? String(valorInicial) : "");
   const [dataPagamento, setDataPagamento] = useState("");
   const [competencia, setCompetencia] = useState("");
   const [formaPagamento, setFormaPagamento] = useState("");
@@ -273,8 +518,14 @@ function PainelDespesaMalote({ classificacaoId, empresaId, ativo }: { classifica
     return null;
   }
 
-  async function handleSalvar(status: "rascunho" | "pendente_aprovacao") {
-    const erro = validar(status === "pendente_aprovacao");
+  // Convertendo uma solicitação já aprovada (despesaIdExistente): "rascunho"
+  // aqui só atualiza os campos e mantém status='cotacao_aprovada' (a linha
+  // já existe, origem continua 'solicitacao'); "enviar" chama o conversor
+  // dedicado, que muda o status pra pendente_aprovacao N1 e registra o
+  // evento "despesa_criada" — SIS-2026-0104.
+  async function handleSalvar(acao: "rascunho" | "enviar") {
+    const paraEnviar = acao === "enviar";
+    const erro = validar(paraEnviar);
     if (erro) {
       toast.error(erro);
       return;
@@ -283,18 +534,18 @@ function PainelDespesaMalote({ classificacaoId, empresaId, ativo }: { classifica
       toast.error("Empresa não identificada.");
       return;
     }
-    setSalvando(status === "rascunho" ? "rascunho" : "enviar");
+    setSalvando(acao);
     try {
       const parcelas =
         parcelado === "sim" && diaDesconto && quantidadeParcelas
           ? gerarParcelas(Number(totalMes), Number(quantidadeParcelas), dataPagamento, Number(diaDesconto))
           : [];
 
-      const despesaId = await salvar.mutateAsync({
+      const payloadBase = {
+        id: despesaIdExistente,
         empresa_id: empresaId,
         classificacao_id: classificacaoId,
-        origem: "despesa_unica",
-        status,
+        origem,
         nome: nome.trim(),
         valor_total: Number(totalMes),
         data_pagamento: dataPagamento,
@@ -306,7 +557,16 @@ function PainelDespesaMalote({ classificacaoId, empresaId, ativo }: { classifica
         dia_desconto: parcelado === "sim" ? Number(diaDesconto) : null,
         rateio: linhasRateio,
         parcelas,
-      });
+      };
+
+      let despesaId: string;
+      if (paraEnviar && despesaIdExistente) {
+        despesaId = await converter.mutateAsync({ ...payloadBase, status: "pendente_aprovacao" });
+      } else if (paraEnviar) {
+        despesaId = await salvar.mutateAsync({ ...payloadBase, status: "pendente_aprovacao" });
+      } else {
+        despesaId = await salvar.mutateAsync({ ...payloadBase, status: despesaIdExistente ? "cotacao_aprovada" : "rascunho" });
+      }
 
       if (arquivos.length > 0) {
         const paths = await Promise.all(arquivos.map((f) => uploadAnexoMalote(f, despesaId)));
@@ -314,18 +574,30 @@ function PainelDespesaMalote({ classificacaoId, empresaId, ativo }: { classifica
           id: despesaId,
           empresa_id: empresaId,
           classificacao_id: classificacaoId,
-          origem: "despesa_unica",
-          status,
+          origem,
+          status: paraEnviar ? "pendente_aprovacao" : despesaIdExistente ? "cotacao_aprovada" : "rascunho",
           nome: nome.trim(),
           valor_total: Number(totalMes),
           arquivos: paths,
         });
       }
 
-      toast.success(status === "rascunho" ? "Rascunho salvo." : "Despesa enviada para aprovação.");
-      setNome(""); setTotalMes(""); setDataPagamento(""); setCompetencia(""); setFormaPagamento("");
-      setInformacoesPagamento(""); setLinhasRateio([]); setParcelado("nao"); setDiaDesconto("");
-      setQuantidadeParcelas(""); setArquivos([]);
+      if (paraEnviar && despesaIdExistente) {
+        toast.success("Despesa criada a partir da solicitação e enviada para aprovação.");
+        onConvertida?.();
+        return;
+      }
+
+      if (!paraEnviar && despesaIdExistente) {
+        await registrarEventoDespesa(despesaId, "edicao", "Dados da despesa atualizados antes do envio para aprovação.");
+      }
+
+      toast.success(acao === "rascunho" ? "Rascunho salvo." : "Despesa enviada para aprovação.");
+      if (!despesaIdExistente) {
+        setNome(""); setTotalMes(""); setDataPagamento(""); setCompetencia(""); setFormaPagamento("");
+        setInformacoesPagamento(""); setLinhasRateio([]); setParcelado("nao"); setDiaDesconto("");
+        setQuantidadeParcelas(""); setArquivos([]);
+      }
     } catch (e: any) {
       toast.error(e.message ?? "Erro ao salvar despesa.");
     } finally {
@@ -472,7 +744,7 @@ function PainelDespesaMalote({ classificacaoId, empresaId, ativo }: { classifica
             <Button variant="outline" onClick={() => handleSalvar("rascunho")} disabled={!ativo || salvando !== null}>
               {salvando === "rascunho" ? "Salvando..." : "Salvar rascunho"}
             </Button>
-            <Button onClick={() => handleSalvar("pendente_aprovacao")} disabled={!ativo || salvando !== null}>
+            <Button onClick={() => handleSalvar("enviar")} disabled={!ativo || salvando !== null}>
               {salvando === "enviar" ? "Enviando..." : "Enviar para aprovação"}
             </Button>
           </div>

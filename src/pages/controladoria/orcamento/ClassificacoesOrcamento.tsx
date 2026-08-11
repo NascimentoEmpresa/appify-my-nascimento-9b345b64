@@ -32,12 +32,15 @@ interface FormState {
   aprovador1UserId: string | null;
   aprovador1Nome: string | null;
   aprovador1LimitePct: string;
+  aprovador1SemLimite: boolean;
   aprovador2UserId: string | null;
   aprovador2Nome: string | null;
   aprovador2LimitePct: string;
+  aprovador2SemLimite: boolean;
   aprovador3UserId: string | null;
   aprovador3Nome: string | null;
   aprovador3LimitePct: string;
+  aprovador3SemLimite: boolean;
 }
 
 const VAZIO: FormState = {
@@ -49,12 +52,15 @@ const VAZIO: FormState = {
   aprovador1UserId: null,
   aprovador1Nome: null,
   aprovador1LimitePct: "",
+  aprovador1SemLimite: false,
   aprovador2UserId: null,
   aprovador2Nome: null,
   aprovador2LimitePct: "",
+  aprovador2SemLimite: false,
   aprovador3UserId: null,
   aprovador3Nome: null,
   aprovador3LimitePct: "",
+  aprovador3SemLimite: false,
 };
 
 function paraFormState(c: ClassificacaoOrcamento): FormState {
@@ -68,12 +74,15 @@ function paraFormState(c: ClassificacaoOrcamento): FormState {
     aprovador1UserId: c.aprovador1_user_id,
     aprovador1Nome: c.aprovador1_nome,
     aprovador1LimitePct: c.aprovador1_limite_pct != null ? String(c.aprovador1_limite_pct) : "",
+    aprovador1SemLimite: c.aprovador1_sem_limite,
     aprovador2UserId: c.aprovador2_user_id,
     aprovador2Nome: c.aprovador2_nome,
     aprovador2LimitePct: c.aprovador2_limite_pct != null ? String(c.aprovador2_limite_pct) : "",
+    aprovador2SemLimite: c.aprovador2_sem_limite,
     aprovador3UserId: c.aprovador3_user_id,
     aprovador3Nome: c.aprovador3_nome,
     aprovador3LimitePct: c.aprovador3_limite_pct != null ? String(c.aprovador3_limite_pct) : "",
+    aprovador3SemLimite: c.aprovador3_sem_limite,
   };
 }
 
@@ -163,26 +172,26 @@ export default function ClassificacoesOrcamento() {
       toast.error("Informe o Aprovador 1.");
       return;
     }
-    const limite1 = parsePct(editando.aprovador1LimitePct);
-    if (limite1 === null || limite1 < 0 || limite1 > 100) {
-      toast.error("Informe um limite de alçada válido (0 a 100%) para o Aprovador 1.");
+    const limite1 = editando.aprovador1SemLimite ? null : parsePct(editando.aprovador1LimitePct);
+    if (!editando.aprovador1SemLimite && (limite1 === null || limite1 < 0)) {
+      toast.error("Informe um limite de alçada válido (ou marque Alçada máxima) para o Aprovador 1.");
       return;
     }
-    const limite2 = parsePct(editando.aprovador2LimitePct);
-    if (editando.aprovador2UserId && limite2 === null) {
-      toast.error("Informe o limite de alçada do Aprovador 2.");
+    const limite2 = editando.aprovador2SemLimite ? null : parsePct(editando.aprovador2LimitePct);
+    if (editando.aprovador2UserId && !editando.aprovador2SemLimite && limite2 === null) {
+      toast.error("Informe o limite de alçada do Aprovador 2 (ou marque Alçada máxima).");
       return;
     }
-    if (limite2 !== null && limite2 <= limite1) {
+    if (limite1 !== null && limite2 !== null && limite2 <= limite1) {
       toast.error("O limite do Aprovador 2 deve ser maior que o do Aprovador 1.");
       return;
     }
-    const limite3 = parsePct(editando.aprovador3LimitePct);
-    if (editando.aprovador3UserId && limite3 === null) {
-      toast.error("Informe o limite de alçada do Aprovador 3.");
+    const limite3 = editando.aprovador3SemLimite ? null : parsePct(editando.aprovador3LimitePct);
+    if (editando.aprovador3UserId && !editando.aprovador3SemLimite && limite3 === null) {
+      toast.error("Informe o limite de alçada do Aprovador 3 (ou marque Alçada máxima).");
       return;
     }
-    if (limite3 !== null && limite2 !== null && limite3 <= limite2) {
+    if (limite2 !== null && limite3 !== null && limite3 <= limite2) {
       toast.error("O limite do Aprovador 3 deve ser maior que o do Aprovador 2.");
       return;
     }
@@ -198,12 +207,15 @@ export default function ClassificacoesOrcamento() {
         aprovador1_user_id: editando.aprovador1UserId,
         aprovador1_nome: editando.aprovador1Nome ?? "",
         aprovador1_limite_pct: limite1,
+        aprovador1_sem_limite: editando.aprovador1SemLimite,
         aprovador2_user_id: editando.aprovador2UserId,
         aprovador2_nome: editando.aprovador2Nome,
         aprovador2_limite_pct: limite2,
+        aprovador2_sem_limite: editando.aprovador2SemLimite,
         aprovador3_user_id: editando.aprovador3UserId,
         aprovador3_nome: editando.aprovador3Nome,
         aprovador3_limite_pct: limite3,
+        aprovador3_sem_limite: editando.aprovador3SemLimite,
       });
       toast.success("Classificação salva.");
       setOpen(false);
@@ -425,83 +437,116 @@ export default function ClassificacoesOrcamento() {
                 </div>
               </div>
 
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <Label>
-                    Aprovador 1 <span className="text-destructive">*</span>
-                  </Label>
-                  <p className="text-xs text-muted-foreground mb-1">Gerentes e supervisores.</p>
-                  <SearchableSelect
-                    value={editando?.aprovador1UserId ?? ""}
-                    onChange={(v) => setAprovador(1, v)}
-                    options={opcoesAprovador1}
-                    placeholder="Buscar aprovador..."
-                    searchPlaceholder="Buscar aprovador..."
-                  />
-                </div>
-                <div>
-                  <Label>
-                    Limite da alçada 1 (%) <span className="text-destructive">*</span>
-                  </Label>
-                  <Input
-                    type="number"
-                    min={0}
-                    max={100}
-                    step="0.01"
-                    placeholder="Ex.: 10,00"
-                    value={editando?.aprovador1LimitePct ?? ""}
-                    onChange={(e) => setEditando((v) => (v ? { ...v, aprovador1LimitePct: e.target.value } : v))}
-                  />
-                </div>
-
-                <div>
-                  <Label>Aprovador 2</Label>
-                  <p className="text-xs text-muted-foreground mb-1">Diretores.</p>
-                  <SearchableSelect
-                    value={editando?.aprovador2UserId ?? ""}
-                    onChange={(v) => setAprovador(2, v)}
-                    options={opcoesAprovador2}
-                    placeholder="Buscar aprovador..."
-                    searchPlaceholder="Buscar aprovador..."
-                    allowClear
-                  />
-                </div>
-                <div>
-                  <Label>Limite da alçada 2 (%)</Label>
-                  <Input
-                    type="number"
-                    min={0}
-                    max={100}
-                    step="0.01"
-                    placeholder="Ex.: 25,00"
-                    value={editando?.aprovador2LimitePct ?? ""}
-                    onChange={(e) => setEditando((v) => (v ? { ...v, aprovador2LimitePct: e.target.value } : v))}
-                  />
+              <div className="space-y-4">
+                <div className="space-y-2">
+                  <div>
+                    <Label>
+                      Aprovador 1 <span className="text-destructive">*</span>
+                    </Label>
+                    <p className="text-xs text-muted-foreground mb-1">Gerentes e supervisores.</p>
+                    <SearchableSelect
+                      value={editando?.aprovador1UserId ?? ""}
+                      onChange={(v) => setAprovador(1, v)}
+                      options={opcoesAprovador1}
+                      placeholder="Buscar aprovador..."
+                      searchPlaceholder="Buscar aprovador..."
+                    />
+                  </div>
+                  <div className="flex items-end gap-3">
+                    <div className="flex-1">
+                      <Label>
+                        Limite da alçada 1 (%) <span className="text-destructive">*</span>
+                      </Label>
+                      <Input
+                        type="number"
+                        min={0}
+                        step="0.01"
+                        placeholder="Ex.: 10,00"
+                        value={editando?.aprovador1LimitePct ?? ""}
+                        onChange={(e) => setEditando((v) => (v ? { ...v, aprovador1LimitePct: e.target.value } : v))}
+                        disabled={editando?.aprovador1SemLimite}
+                      />
+                    </div>
+                    <label className="flex items-center gap-1.5 text-xs text-muted-foreground cursor-pointer whitespace-nowrap pb-2.5">
+                      <Checkbox
+                        checked={editando?.aprovador1SemLimite ?? false}
+                        onCheckedChange={(c) => setEditando((v) => (v ? { ...v, aprovador1SemLimite: c === true } : v))}
+                      />
+                      Alçada máxima
+                    </label>
+                  </div>
                 </div>
 
-                <div>
-                  <Label>Aprovador 3</Label>
-                  <p className="text-xs text-muted-foreground mb-1">Presidência.</p>
-                  <SearchableSelect
-                    value={editando?.aprovador3UserId ?? ""}
-                    onChange={(v) => setAprovador(3, v)}
-                    options={opcoesAprovador3}
-                    placeholder="Buscar aprovador..."
-                    searchPlaceholder="Buscar aprovador..."
-                    allowClear
-                  />
+                <div className="space-y-2 border-t border-border pt-4">
+                  <div>
+                    <Label>Aprovador 2</Label>
+                    <p className="text-xs text-muted-foreground mb-1">Diretores.</p>
+                    <SearchableSelect
+                      value={editando?.aprovador2UserId ?? ""}
+                      onChange={(v) => setAprovador(2, v)}
+                      options={opcoesAprovador2}
+                      placeholder="Buscar aprovador..."
+                      searchPlaceholder="Buscar aprovador..."
+                      allowClear
+                    />
+                  </div>
+                  <div className="flex items-end gap-3">
+                    <div className="flex-1">
+                      <Label>Limite da alçada 2 (%)</Label>
+                      <Input
+                        type="number"
+                        min={0}
+                        step="0.01"
+                        placeholder="Ex.: 25,00"
+                        value={editando?.aprovador2LimitePct ?? ""}
+                        onChange={(e) => setEditando((v) => (v ? { ...v, aprovador2LimitePct: e.target.value } : v))}
+                        disabled={editando?.aprovador2SemLimite}
+                      />
+                    </div>
+                    <label className="flex items-center gap-1.5 text-xs text-muted-foreground cursor-pointer whitespace-nowrap pb-2.5">
+                      <Checkbox
+                        checked={editando?.aprovador2SemLimite ?? false}
+                        onCheckedChange={(c) => setEditando((v) => (v ? { ...v, aprovador2SemLimite: c === true } : v))}
+                      />
+                      Alçada máxima
+                    </label>
+                  </div>
                 </div>
-                <div>
-                  <Label>Limite da alçada 3 (%)</Label>
-                  <Input
-                    type="number"
-                    min={0}
-                    max={100}
-                    step="0.01"
-                    placeholder="Ex.: 50,00"
-                    value={editando?.aprovador3LimitePct ?? ""}
-                    onChange={(e) => setEditando((v) => (v ? { ...v, aprovador3LimitePct: e.target.value } : v))}
-                  />
+
+                <div className="space-y-2 border-t border-border pt-4">
+                  <div>
+                    <Label>Aprovador 3</Label>
+                    <p className="text-xs text-muted-foreground mb-1">Presidência.</p>
+                    <SearchableSelect
+                      value={editando?.aprovador3UserId ?? ""}
+                      onChange={(v) => setAprovador(3, v)}
+                      options={opcoesAprovador3}
+                      placeholder="Buscar aprovador..."
+                      searchPlaceholder="Buscar aprovador..."
+                      allowClear
+                    />
+                  </div>
+                  <div className="flex items-end gap-3">
+                    <div className="flex-1">
+                      <Label>Limite da alçada 3 (%)</Label>
+                      <Input
+                        type="number"
+                        min={0}
+                        step="0.01"
+                        placeholder="Ex.: 50,00"
+                        value={editando?.aprovador3LimitePct ?? ""}
+                        onChange={(e) => setEditando((v) => (v ? { ...v, aprovador3LimitePct: e.target.value } : v))}
+                        disabled={editando?.aprovador3SemLimite}
+                      />
+                    </div>
+                    <label className="flex items-center gap-1.5 text-xs text-muted-foreground cursor-pointer whitespace-nowrap pb-2.5">
+                      <Checkbox
+                        checked={editando?.aprovador3SemLimite ?? false}
+                        onCheckedChange={(c) => setEditando((v) => (v ? { ...v, aprovador3SemLimite: c === true } : v))}
+                      />
+                      Alçada máxima
+                    </label>
+                  </div>
                 </div>
               </div>
             </div>
