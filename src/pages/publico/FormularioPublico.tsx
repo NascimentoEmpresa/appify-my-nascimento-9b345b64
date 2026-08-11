@@ -137,6 +137,98 @@ function SuccessScreen() {
   );
 }
 
+// Pergunta "contrato": escolhe um contrato ativo, ou vários quando a pergunta
+// foi marcada com `config.multiplos`.
+//
+// Lê public.contratos direto, pedindo só id/nome/cliente — o PostgREST faz a
+// projeção no servidor, então as colunas fiscais (issqn_pct, conta_pagamento,
+// email_envio_nf...) não chegam ao navegador.
+//
+// A RLS da tabela manda no resto: SELECT só para authenticated e ainda
+// recortado por empresa_id ∈ user_empresa do usuário. Consequência a conhecer
+// — no formulário PÚBLICO (anon) a lista vem vazia, e um usuário sem empresa
+// vinculada também não vê nada. Não é erro de consulta; é a policy.
+//
+// Valor gravado = o NOME do contrato (lista de nomes quando múltiplo), igual
+// ao que a pergunta "colaborador" faz — mantém Respostas e painéis legíveis
+// sem precisar resolver id.
+function ContratoSelect({ value, multiplos, onChange }: { value: any; multiplos: boolean; onChange: (v: any) => void }) {
+  const [contratos, setContratos] = useState<{ id: string; nome: string; cliente: string | null }[]>([]);
+  const [estado, setEstado] = useState<"carregando" | "ok" | "erro">("carregando");
+  const [busca, setBusca] = useState("");
+
+  useEffect(() => {
+    (async () => {
+      const { data, error } = await (supabase as any)
+        .from("contratos")
+        .select("id,nome,cliente")
+        .eq("status", "ativo")
+        .order("nome");
+      if (error) { setEstado("erro"); return; }
+      // Deduplica por nome: a resposta gravada é o nome e a marcação compara
+      // por nome, então dois contratos homônimos ficariam marcados juntos.
+      const vistos = new Set<string>();
+      setContratos((data ?? [])
+        .map((r: any) => ({ id: String(r.id), nome: String(r.nome ?? "").trim(), cliente: r.cliente ?? null }))
+        .filter((c: any) => c.nome && !vistos.has(c.nome) && vistos.add(c.nome)));
+      setEstado("ok");
+    })();
+  }, []);
+
+  if (estado === "carregando") return <div style={{ fontSize: 13, color: "#94a3b8" }}>Carregando contratos…</div>;
+  if (estado === "erro") return <div style={{ fontSize: 13, color: "#dc2626", fontWeight: 700 }}>Não foi possível carregar os contratos.</div>;
+  if (contratos.length === 0) return <div style={{ fontSize: 13, color: "#94a3b8" }}>Nenhum contrato disponível para o seu acesso.</div>;
+
+  // Um só: select nativo. São poucas dezenas de contratos ativos, então não
+  // precisa de busca — e o nativo já é acessível e funciona bem no celular.
+  if (!multiplos) {
+    return (
+      <select value={value ?? ""} onChange={e => onChange(e.target.value)} style={{ ...inp, maxWidth: 420 }}>
+        <option value="">Selecione o contrato…</option>
+        {contratos.map(c => <option key={c.id} value={c.nome}>{c.cliente ? `${c.nome} · ${c.cliente}` : c.nome}</option>)}
+      </select>
+    );
+  }
+
+  const sel: string[] = Array.isArray(value) ? value : [];
+  const termo = busca.trim().toLowerCase();
+  const lista = termo ? contratos.filter(c => `${c.nome} ${c.cliente ?? ""}`.toLowerCase().includes(termo)) : contratos;
+  const alterna = (nome: string) =>
+    onChange(sel.includes(nome) ? sel.filter(x => x !== nome) : [...sel, nome]);
+
+  return (
+    <div style={{ maxWidth: 480 }}>
+      {sel.length > 0 && (
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 8 }}>
+          {sel.map(nome => (
+            <span key={nome} style={{ display: "inline-flex", alignItems: "center", gap: 6, background: "#eff6ff", border: "1px solid #dbeafe", color: "#1d4ed8", borderRadius: 999, padding: "4px 10px", fontSize: 12, fontWeight: 700 }}>
+              {nome}
+              <button type="button" onClick={() => alterna(nome)} aria-label={`Remover ${nome}`}
+                style={{ border: "none", background: "transparent", color: "#1d4ed8", cursor: "pointer", fontSize: 14, lineHeight: 1, padding: 0 }}>×</button>
+            </span>
+          ))}
+        </div>
+      )}
+      <input value={busca} onChange={e => setBusca(e.target.value)} placeholder="Filtrar contratos…" style={{ ...inp, marginBottom: 6 }} />
+      <div style={{ border: "1px solid #e2e8f0", borderRadius: 10, maxHeight: 240, overflowY: "auto", background: "#fff" }}>
+        {lista.length === 0 && <div style={{ padding: "8px 11px", fontSize: 12, color: "#94a3b8" }}>Nenhum contrato encontrado.</div>}
+        {lista.map(c => (
+          <label key={c.id} style={{ display: "flex", alignItems: "center", gap: 9, padding: "8px 11px", borderBottom: "1px solid #f1f5f9", cursor: "pointer", fontSize: 13 }}>
+            <input type="checkbox" checked={sel.includes(c.nome)} onChange={() => alterna(c.nome)} style={{ width: 15, height: 15, flexShrink: 0 }} />
+            <span style={{ minWidth: 0 }}>
+              <span style={{ fontWeight: 700, color: "#0f172a" }}>{c.nome}</span>
+              {c.cliente && <span style={{ color: "#94a3b8" }}> · {c.cliente}</span>}
+            </span>
+          </label>
+        ))}
+      </div>
+      <div style={{ fontSize: 11.5, color: "#94a3b8", marginTop: 5 }}>
+        {sel.length === 0 ? "Marque um ou mais contratos." : `${sel.length} contrato${sel.length > 1 ? "s" : ""} selecionado${sel.length > 1 ? "s" : ""}.`}
+      </div>
+    </div>
+  );
+}
+
 // Pergunta "colaborador": busca no EMPREGADOS por nome (acha qualquer um);
 // exclui SÓ quem tem Situacao demitido. Valor da resposta = o nome escolhido.
 function ColaboradorSelect({ value, onChange }: { value: string; onChange: (v: string) => void }) {
@@ -483,6 +575,13 @@ export default function FormularioPublico() {
               {p.tipo === "texto_curto" && <input value={valores[p.id] ?? ""} onChange={e => setVal(p.id, e.target.value)} style={inp} placeholder="Sua resposta" />}
               {p.tipo === "texto_longo" && <textarea value={valores[p.id] ?? ""} onChange={e => setVal(p.id, e.target.value)} rows={4} style={{ ...inp, resize: "vertical" }} placeholder="Sua resposta" />}
               {p.tipo === "colaborador" && <ColaboradorSelect value={valores[p.id] ?? ""} onChange={v => setVal(p.id, v)} />}
+              {p.tipo === "contrato" && (
+                <ContratoSelect
+                  value={valores[p.id] ?? (p.config?.multiplos ? [] : "")}
+                  multiplos={!!p.config?.multiplos}
+                  onChange={v => setVal(p.id, v)}
+                />
+              )}
               {p.tipo === "escala_trabalho" && (
                 <select value={valores[p.id] ?? ""} onChange={e => setVal(p.id, e.target.value)} style={{ ...inp, maxWidth: 300 }}>
                   <option value="">Selecione a escala…</option>
