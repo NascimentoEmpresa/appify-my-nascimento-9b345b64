@@ -60,7 +60,7 @@ export function Topbar({ onToggleSidebar, onOpenMobile }: { onToggleSidebar: () 
       return data as Record<string, any> | null;
     },
   });
-  const displayName = perfilQ.data?.display_name || perfilQ.data?.email || "";
+  const displayName = perfilQ.data?.display_name || perfilQ.data?.email || user?.email || "";
   const avatarUrl: string | null = perfilQ.data?.avatar_url ?? null;
 
   // Notificações
