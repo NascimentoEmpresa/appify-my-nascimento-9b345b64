@@ -39,6 +39,13 @@ ORDER BY btrim(c."NOME CONTRATO"), c.id;
 COMMENT ON VIEW public."VW_CONTRATOS_BASICO" IS
   'Contratos ativos (nome e empresa) para a pergunta "Selecionar contrato" do Nascimento Formulários. Sem colunas financeiras.';
 
+-- Só leitura, e explicitamente. As default privileges do schema public deste
+-- projeto entregam INSERT/UPDATE/DELETE a anon em todo objeto novo — hoje
+-- inertes aqui, porque o DISTINCT ON torna a view não-gravável. O REVOKE é
+-- para o dia em que alguém tirar o DISTINCT: sem ele, a view voltaria a ser
+-- auto-atualizável e viraria escrita de anon na CONTRATOS por tabela
+-- interposta.
+REVOKE ALL ON public."VW_CONTRATOS_BASICO" FROM anon, authenticated;
 GRANT SELECT ON public."VW_CONTRATOS_BASICO" TO anon, authenticated;
 
 -- Rollback: DROP VIEW public."VW_CONTRATOS_BASICO";

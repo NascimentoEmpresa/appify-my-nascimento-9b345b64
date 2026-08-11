@@ -9473,6 +9473,10 @@ ORDER BY btrim(c."NOME CONTRATO"), c.id;
 COMMENT ON VIEW public."VW_CONTRATOS_BASICO" IS
   'Contratos ativos (nome e empresa) para a pergunta "Selecionar contrato" do Nascimento Formulários. Sem colunas financeiras.';
 
+-- Só leitura: as default privileges do schema dão escrita a anon em objeto
+-- novo. Inerte enquanto houver DISTINCT ON (view não-gravável), mas o REVOKE
+-- evita que tirar o DISTINCT vire escrita de anon na CONTRATOS.
+REVOKE ALL ON public."VW_CONTRATOS_BASICO" FROM anon, authenticated;
 GRANT SELECT ON public."VW_CONTRATOS_BASICO" TO anon, authenticated;
 
 NOTIFY pgrst, 'reload schema';
