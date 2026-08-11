@@ -5,16 +5,8 @@ import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
+import { maskFone } from "@/lib/telefone";
 import { useAgendaCorporativa, useAgendaFavoritos, type AgendaContato } from "@/hooks/useAgendaCorporativa";
-
-// Máscara local de telefone BR — mesmo padrão inline já usado em
-// src/components/admin/UsuariosReal.tsx (não existe componente de máscara
-// compartilhado no projeto).
-function maskFone(v: string): string {
-  const d = v.replace(/\D/g, "").slice(0, 11);
-  if (d.length <= 10) return d.replace(/(\d{2})(\d)/, "($1) $2").replace(/(\d{4})(\d)/, "$1-$2");
-  return d.replace(/(\d{2})(\d)/, "($1) $2").replace(/(\d{5})(\d)/, "$1-$2");
-}
 
 function mailtoLinkDe(email: string, nome: string | null): string {
   const primeiroNome = (nome ?? "").trim().split(/\s+/)[0] || "";
