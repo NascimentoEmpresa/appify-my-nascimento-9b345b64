@@ -353,4 +353,3 @@ export function Estrelas({ valor, size = 16 }: { valor: number; size?: number })
     </span>
   );
 }
-
