@@ -7,7 +7,11 @@ name: Sincronizar Chamado ↔ PR
 # API, o que é seguro independente de quem abriu a PR.
 on:
   pull_request_target:
-    types: [opened, edited]
+    # synchronize = novo commit na PR (inclui "Update branch"/merge da base) —
+    # sem isso, o check obrigatório fica travado como "esperado" pra sempre
+    # depois de qualquer commit novo, mesmo já tendo passado antes.
+    # reopened = reabrir uma PR fechada, mesmo caso de opened na prática.
+    types: [opened, edited, synchronize, reopened]
 
 jobs:
   # Vira "required status check" na proteção de branch da main (configurado
