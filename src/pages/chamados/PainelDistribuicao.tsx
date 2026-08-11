@@ -20,18 +20,34 @@ import {
   DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem,
 } from "@/components/ui/dropdown-menu";
 import { PieChart, Pie, Cell, ResponsiveContainer } from "recharts";
-import { ClipboardList, Clock, Users, CheckCircle2, AlertTriangle, ShieldAlert, MoreHorizontal, ChevronLeft, ChevronRight, Eye, UserCog, Trash2, Info } from "lucide-react";
+import { ClipboardList, Clock, Users, CheckCircle2, AlertTriangle, ShieldAlert, MoreHorizontal, ChevronLeft, ChevronRight, Eye, UserCog, Trash2, Info, MessageSquareQuote } from "lucide-react";
 import { FeedAtualizacoes } from "./FeedAtualizacoes";
 import { ExcluirChamadoDialog } from "./ExcluirChamadoDialog";
 import {
   StatCard, StatusBadge, PrioridadeBadge, STATUS_CHAMADO, PRIORIDADES, CATEGORIAS, labelDe, moduloLabel, iniciais, Estrelas, fmtData, fmtDataHora,
-  chamadoAtivo, posicoesFilaGlobal, posicoesFilaDev, CRITERIOS_AVALIACAO, type Chamado,
+  chamadoAtivo, posicoesFilaGlobal, posicoesFilaDev, CRITERIOS_AVALIACAO, mediaAvaliacao, type Chamado,
 } from "./types";
 
 const POR_PAGINA = 8;
 
 interface PainelStats { total: number; abertos: number; em_andamento: number; concluidos_mes: number; atrasados: number; }
 interface Dev { id: string; display_name: string; em_andamento: number; abertos: number; }
+
+/** Uma avaliação individual: quem deu, em qual chamado, notas e comentário. */
+interface AvaliacaoDetalhe {
+  avaliacao_id: string;
+  chamado_id: string;
+  numero: string;
+  assunto: string;
+  responsavel_id: string | null;
+  avaliador_id: string;
+  avaliador_nome: string;
+  setor: string | null;
+  qualidade: number; prazo: number; comunicacao: number;
+  clareza: number; facilidade: number; satisfacao: number;
+  comentario: string | null;
+  created_at: string;
+}
 
 // A fila mostra só quem ainda está na fila (posição 1 pra baixo). Chamados
 // concluídos/reprovados não têm posição e aparecem nas próprias abas.
@@ -68,6 +84,8 @@ export default function PainelDistribuicao() {
   const [atribDev, setAtribDev] = useState<string | null>(null);
   const [excluir, setExcluir] = useState<{ id: string; numero: string } | null>(null);
   const [flashPrioridade, setFlashPrioridade] = useState<string | null>(null);
+  // Filtro do detalhamento de avaliações: "todos" ou o id do integrante.
+  const [fAvaliado, setFAvaliado] = useState("todos");
 
   const { data: usuarios = [] } = useQuery({
     queryKey: ["chamados-usuarios"],
@@ -113,6 +131,17 @@ export default function PainelDistribuicao() {
     },
   });
 
+  // As avaliações UMA A UMA. A média por integrante mostra que a nota caiu,
+  // mas não quem deu nem por quê — é aqui que sai "onde melhorar".
+  const { data: avaliacoes = [] } = useQuery({
+    queryKey: ["chamados-avaliacoes-detalhe"],
+    enabled: gestor,
+    queryFn: async () => {
+      const { data } = await (supabase as any).rpc("chamados_avaliacoes_detalhe");
+      return (data ?? []) as AvaliacaoDetalhe[];
+    },
+  });
+
   const { data: chamados = [], isLoading } = useQuery({
     queryKey: ["chamados-todos"],
     enabled: gestor,
@@ -129,6 +158,11 @@ export default function PainelDistribuicao() {
   const rankingAlfabetico = useMemo(
     () => [...ranking].sort((a, b) => nomeDe(a.responsavel_id).localeCompare(nomeDe(b.responsavel_id), "pt-BR")),
     [ranking, usuarios], // eslint-disable-line react-hooks/exhaustive-deps
+  );
+
+  const avaliacoesFiltradas = useMemo(
+    () => (fAvaliado === "todos" ? avaliacoes : avaliacoes.filter((a) => a.responsavel_id === fAvaliado)),
+    [avaliacoes, fAvaliado],
   );
 
   // Opções do filtro de responsável: os devs liberados + quem já é responsável
@@ -542,7 +576,12 @@ export default function PainelDistribuicao() {
             </TableHeader>
             <TableBody>
               {rankingAlfabetico.map((r) => (
-                <TableRow key={r.responsavel_id}>
+                <TableRow
+                  key={r.responsavel_id}
+                  className={`cursor-pointer ${fAvaliado === r.responsavel_id ? "bg-warning/5" : ""}`}
+                  title="Ver as notas e os comentários desta pessoa"
+                  onClick={() => setFAvaliado((cur) => (cur === r.responsavel_id ? "todos" : r.responsavel_id))}
+                >
                   <TableCell>
                     <div className="flex items-center gap-2">
                       <Avatar className="h-7 w-7"><AvatarFallback className="text-[10px]">{iniciais(nomeDe(r.responsavel_id))}</AvatarFallback></Avatar>
@@ -568,7 +607,107 @@ export default function PainelDistribuicao() {
           </Table>
         </div>
         <p className="mt-3 flex items-center justify-center gap-1.5 border-t border-border/60 pt-3 text-[11px] text-muted-foreground">
-          <Info className="h-3.5 w-3.5" /> A nota final é calculada com base na média ponderada dos critérios avaliados.
+          <Info className="h-3.5 w-3.5" /> A nota final é calculada com base na média ponderada dos critérios avaliados. Clique num integrante para ver as notas dele uma a uma.
+        </p>
+      </Card>
+
+      {/* Notas uma a uma: quem deu, em qual chamado e o que escreveu. */}
+      <Card className="mt-4 p-4">
+        <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+          <p className="flex items-center gap-1.5 text-sm font-bold">
+            <MessageSquareQuote className="h-4 w-4 text-warning" /> Notas e comentários por avaliação
+          </p>
+          <div className="flex items-center gap-2">
+            <span className="text-[11px] text-muted-foreground">Integrante avaliado</span>
+            <Select value={fAvaliado} onValueChange={setFAvaliado}>
+              <SelectTrigger className="h-8 w-[200px] text-xs"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="todos">Todos</SelectItem>
+                {rankingAlfabetico.map((r) => (
+                  <SelectItem key={r.responsavel_id} value={r.responsavel_id}>{nomeDe(r.responsavel_id)}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+        </div>
+
+        <div className="overflow-x-auto">
+          <Table className="[&_td]:px-2 [&_td]:py-2.5 [&_th]:h-9 [&_th]:px-2">
+            <TableHeader>
+              <TableRow>
+                <TableHead>Quem avaliou</TableHead>
+                <TableHead>Chamado</TableHead>
+                <TableHead>Integrante avaliado</TableHead>
+                {CRITERIOS_AVALIACAO.map((c) => (
+                  <TableHead key={c.key} className="text-center" title={c.titulo}>
+                    {c.titulo.slice(0, 4)}.
+                  </TableHead>
+                ))}
+                <TableHead className="text-center">Nota</TableHead>
+                <TableHead>Comentário</TableHead>
+                <TableHead className="whitespace-nowrap">Quando</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {avaliacoesFiltradas.map((a) => {
+                const nota = mediaAvaliacao(a);
+                return (
+                  <TableRow
+                    key={a.avaliacao_id}
+                    className="cursor-pointer"
+                    onClick={() => nav(`/app/sistemas/chamados/${a.chamado_id}/coordenar`)}
+                  >
+                    <TableCell>
+                      <p className="truncate text-xs font-medium">{a.avaliador_nome}</p>
+                      <p className="truncate text-[10px] text-muted-foreground">{a.setor || "—"}</p>
+                    </TableCell>
+                    <TableCell>
+                      <p className="font-mono text-[11px] font-semibold">#{a.numero}</p>
+                      <p className="max-w-[180px] truncate text-[11px] text-muted-foreground" title={a.assunto}>{a.assunto}</p>
+                    </TableCell>
+                    <TableCell className="text-xs">{nomeDe(a.responsavel_id)}</TableCell>
+                    {CRITERIOS_AVALIACAO.map((c) => {
+                      const v = a[c.key];
+                      return (
+                        <TableCell
+                          key={c.key}
+                          className={`text-center text-xs font-semibold ${
+                            v <= 2 ? "text-destructive" : v < 5 ? "text-warning" : "text-success"
+                          }`}
+                        >
+                          {v}
+                        </TableCell>
+                      );
+                    })}
+                    <TableCell className="text-center">
+                      <span className="inline-flex items-center gap-1">
+                        <Estrelas valor={nota} size={11} />
+                        <span className="text-xs font-bold">{nota.toFixed(1).replace(".", ",")}</span>
+                      </span>
+                    </TableCell>
+                    <TableCell className="max-w-[280px]">
+                      {a.comentario
+                        ? <p className="whitespace-pre-wrap text-[11px]">{a.comentario}</p>
+                        : <span className="text-[11px] text-muted-foreground">— nota cheia, sem comentário</span>}
+                    </TableCell>
+                    <TableCell className="whitespace-nowrap text-[11px] text-muted-foreground">{fmtDataHora(a.created_at)}</TableCell>
+                  </TableRow>
+                );
+              })}
+              {avaliacoesFiltradas.length === 0 && (
+                <TableRow>
+                  <TableCell colSpan={11} className="py-6 text-center text-sm text-muted-foreground">
+                    {avaliacoes.length === 0
+                      ? "Nenhuma avaliação recebida ainda."
+                      : "Este integrante ainda não recebeu avaliações."}
+                  </TableCell>
+                </TableRow>
+              )}
+            </TableBody>
+          </Table>
+        </div>
+        <p className="mt-3 flex items-center justify-center gap-1.5 border-t border-border/60 pt-3 text-[11px] text-muted-foreground">
+          <Info className="h-3.5 w-3.5" /> Desde 31/08/2026, nota abaixo de 5 em qualquer critério só é aceita com comentário — as avaliações anteriores a isso podem estar sem.
         </p>
       </Card>
 
