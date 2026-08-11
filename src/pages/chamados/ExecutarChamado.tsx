@@ -19,8 +19,8 @@ import { CheckCircle2, MessageSquare, XCircle, Paperclip, ArrowLeft, Trash2, Sta
 import { ExcluirChamadoDialog } from "./ExcluirChamadoDialog";
 import { ChatChamado } from "./ChatChamado";
 import {
-  StatusBadge, PrioridadeBadge, STATUS_CHAMADO, Estrelas,
-  CATEGORIAS, TIPOS, IMPACTOS, URGENCIAS, AMBIENTES, CRITERIOS_AVALIACAO, mediaAvaliacao,
+  StatusBadge, PrioridadeBadge, STATUS_CHAMADO, CardAvaliacao,
+  CATEGORIAS, TIPOS, IMPACTOS, URGENCIAS, AMBIENTES,
   labelDe, moduloLabel, fmtData, fmtDataHora,
   BUCKET_CHAMADOS, type Chamado, type Anexo, type Evento, type AvaliacaoChamado,
 } from "./types";
@@ -199,25 +199,7 @@ export default function ExecutarChamado() {
           )}
 
           {avaliacao && (
-            <Card className="animate-rise-in space-y-2 border-warning/30 bg-warning/5 p-4">
-              <div className="flex items-center justify-between">
-                <p className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wider text-warning"><Star className="h-3.5 w-3.5" /> Avaliação do solicitante</p>
-                <div className="flex items-center gap-1.5">
-                  <Estrelas valor={mediaAvaliacao(avaliacao)} size={18} />
-                  <span className="text-xs font-semibold text-muted-foreground">{mediaAvaliacao(avaliacao).toFixed(1).replace(".", ",")}</span>
-                </div>
-              </div>
-              <div className="grid gap-1 sm:grid-cols-2">
-                {CRITERIOS_AVALIACAO.map((c) => (
-                  <div key={c.key} className="flex items-center justify-between gap-2 text-xs">
-                    <span className="text-muted-foreground">{c.titulo}</span>
-                    <Estrelas valor={avaliacao[c.key]} size={12} />
-                  </div>
-                ))}
-              </div>
-              {avaliacao.comentario && <p className="whitespace-pre-wrap border-t border-warning/20 pt-2 text-sm">{avaliacao.comentario}</p>}
-              <p className="text-[11px] text-muted-foreground">{fmtDataHora(avaliacao.created_at)}</p>
-            </Card>
+            <CardAvaliacao avaliacao={avaliacao} titulo="Avaliação do solicitante" tone="warning" />
           )}
 
           <Card className="space-y-3 p-4">

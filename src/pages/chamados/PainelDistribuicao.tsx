@@ -687,7 +687,7 @@ export default function PainelDistribuicao() {
                     </TableCell>
                     <TableCell className="max-w-[280px]">
                       {a.comentario
-                        ? <p className="whitespace-pre-wrap text-[11px]">{a.comentario}</p>
+                        ? <p className="whitespace-pre-wrap break-words text-[11px] [overflow-wrap:anywhere]">{a.comentario}</p>
                         : <span className="text-[11px] text-muted-foreground">— nota cheia, sem comentário</span>}
                     </TableCell>
                     <TableCell className="whitespace-nowrap text-[11px] text-muted-foreground">{fmtDataHora(a.created_at)}</TableCell>
