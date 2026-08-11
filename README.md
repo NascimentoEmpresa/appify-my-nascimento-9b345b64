@@ -1,6 +1,7 @@
 # ERP Grupo Nascimento
 
 React + Vite + TypeScript + Supabase.
+<!-- teste: PR de producao apos sync do Lovable - 2026-08-11 -->
 
 ## Gerenciamento de acessos — convenção para telas novas
 
