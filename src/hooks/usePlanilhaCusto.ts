@@ -133,10 +133,12 @@ export interface PostoVigente {
   qtdColaboradores: number;
 }
 
-// Postos vigentes de um contrato (mesma lógica de "data de vigência mais
-// recente <= hoje" usada em ContratosERP.tsx, mas agrupando por posto em vez
-// de somar tudo no total do contrato).
-export function resolverPostosVigentes(rows: PlanilhaCustoRow[], contratoId: string): PostoVigente[] {
+// Linhas vigentes de um contrato: "data de vigência mais recente <= hoje,
+// por posto" (mesma lógica usada em ContratosERP.tsx). Compartilhada entre
+// resolverPostosVigentes (soma total_por_empregado) e resolverValorPorCampos
+// (soma rubricas específicas, ex.: EPI) — pra não duplicar a resolução de
+// vigência em dois lugares.
+export function resolverLinhasVigentes(rows: PlanilhaCustoRow[], contratoId: string): PlanilhaCustoRow[] {
   const today = new Date();
   today.setHours(0, 0, 0, 0);
   const doContrato = rows.filter((r) => r.contrato_id === contratoId && r.orexec === "EXECUTADO" && !r.encerrado && r.data_vigencia);
@@ -154,19 +156,41 @@ export function resolverPostosVigentes(rows: PlanilhaCustoRow[], contratoId: str
     vigentePorPosto.set(posto, passadas[0] ?? null);
   });
 
-  const resultado: PostoVigente[] = [];
-  for (const r of doContrato) {
+  return doContrato.filter((r) => {
     const rowDate = new Date(r.data_vigencia + "T00:00:00");
     const vigente = vigentePorPosto.get(r.posto) ?? null;
-    if (!vigente || rowDate.getTime() !== vigente.getTime()) continue;
-    resultado.push({
-      posto: r.posto,
-      valorTotal: (r.total_por_empregado ?? 0) * (r.qt_postos || 1),
-      valorUnitario: r.total_por_empregado ?? 0,
-      qtdColaboradores: r.qt_postos || 0,
-    });
-  }
-  return resultado;
+    return !!vigente && rowDate.getTime() === vigente.getTime();
+  });
+}
+
+// Postos vigentes de um contrato, agrupando por posto (total_por_empregado).
+export function resolverPostosVigentes(rows: PlanilhaCustoRow[], contratoId: string): PostoVigente[] {
+  return resolverLinhasVigentes(rows, contratoId).map((r) => ({
+    posto: r.posto,
+    valorTotal: (r.total_por_empregado ?? 0) * (r.qt_postos || 1),
+    valorUnitario: r.total_por_empregado ?? 0,
+    qtdColaboradores: r.qt_postos || 0,
+  }));
+}
+
+// Soma rubricas específicas (ex.: ["epi", "epc"]) das linhas vigentes de um
+// contrato — base do Orçamento de Contratos (SIS-2026-0125): cada
+// Classificação do Malote do tipo "contrato" é ligada a uma ou mais
+// rubricas fixas da planilha de custo (malote_licitacao_classificacao_link),
+// e o valor orçado é a soma dessas rubricas nas linhas vigentes.
+export function resolverValorPorCampos(rows: PlanilhaCustoRow[], contratoId: string, campos: string[]): number {
+  return somarCamposEmLinhas(resolverLinhasVigentes(rows, contratoId), campos);
+}
+
+// Mesma soma de resolverValorPorCampos, mas recebendo as linhas vigentes já
+// resolvidas — evita recalcular a resolução de vigência a cada rubrica
+// quando o chamador precisa somar várias rubricas do mesmo contrato (ex.:
+// useOrcamentoContratos, que soma ~80 rubricas por contrato).
+export function somarCamposEmLinhas(linhasVigentes: PlanilhaCustoRow[], campos: string[]): number {
+  return linhasVigentes.reduce((soma, r) => {
+    const valorLinha = campos.reduce((s, campo) => s + (Number((r as any)[campo]) || 0), 0);
+    return soma + valorLinha * (r.qt_postos || 1);
+  }, 0);
 }
 
 export function usePlanilhaCustos(filtros?: { cliente?: string; contrato?: string; q?: string }) {

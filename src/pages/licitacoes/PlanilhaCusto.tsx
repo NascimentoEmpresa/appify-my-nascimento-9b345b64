@@ -61,10 +61,13 @@ function computeVigenciaStatus(rows: PlanilhaCustoRow[]): Map<string, string> {
   const today = new Date();
   today.setHours(0, 0, 0, 0);
 
-  // Para cada (contrato + posto), coleta todas as datas
+  // Para cada (contrato + posto), coleta todas as datas — linhas encerradas
+  // ficam de fora do pool ANTES de escolher a vigente (não só depois, na
+  // atribuição por linha), senão uma linha encerrada com data mais recente
+  // "rouba" a vigência do grupo e a linha ativa de verdade some do cálculo.
   const groupDates = new Map<string, Date[]>();
   for (const r of rows) {
-    if (!r.data_vigencia) continue;
+    if (!r.data_vigencia || r.encerrado) continue;
     const key = `${r.contrato}||${r.posto}`;
     const d = new Date(r.data_vigencia + "T00:00:00");
     if (!groupDates.has(key)) groupDates.set(key, []);
