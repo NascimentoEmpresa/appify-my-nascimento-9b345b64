@@ -35,9 +35,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const nextUid = newSession?.user?.id ?? null;
       const trocouUsuario = uidRef.current !== nextUid;
       if (trocouUsuario) {
+        // Sessão expirou (refresh falhou) enquanto o usuário estava logado:
+        // redireciona para login com flag para exibir aviso.
+        if (uidRef.current !== null && nextUid === null && event === "SIGNED_OUT") {
+          queryClient.clear();
+          window.location.replace("/login?expired=1");
+          return;
+        }
         if (uidRef.current !== null) queryClient.clear();
         uidRef.current = nextUid;
       }
+
 
       // Token renovado com o MESMO usuário: as requisições que saíram enquanto o
       // access token estava vencido tomaram 401 e deixaram queries penduradas em
@@ -77,6 +85,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     return () => sub.subscription.unsubscribe();
   }, [queryClient]);
+
+  // Quando o usuário volta à aba após inatividade, força refresh do token
+  // antes que o React Query dispare queries com JWT potencialmente expirado.
+  useEffect(() => {
+    const onVisible = () => {
+      if (document.visibilityState === "visible") {
+        supabase.auth.refreshSession();
+      }
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => document.removeEventListener("visibilitychange", onVisible);
+  }, []);
 
   const signOut = useCallback(async () => {
     await supabase.auth.signOut();

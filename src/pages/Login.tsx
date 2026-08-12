@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Link, Navigate, useLocation, useNavigate } from "react-router-dom";
+import { Link, Navigate, useLocation, useNavigate, useSearchParams } from "react-router-dom";
 import { Lock, Mail, ShieldCheck, AlertCircle, ArrowRight, Eye, EyeOff, Briefcase, Wallet, BookOpen, ShoppingCart, Users2, Calculator, CheckCircle2 } from "lucide-react";
 import logoGN from "@/assets/logo-grupo-nascimento.png";
 import { useDemoMode } from "@/context/DemoModeContext";
@@ -40,6 +40,8 @@ export default function Login() {
   const [extContrato, setExtContrato] = useState("");
   const navigate = useNavigate();
   const location = useLocation();
+  const [searchParams] = useSearchParams();
+  const sessionExpired = searchParams.get("expired") === "1";
   const successMsg = (location.state as { successMsg?: string } | null)?.successMsg ?? null;
   const { disableDemo } = useDemoMode();
   const { user, loading: authLoading } = useAuth();
@@ -237,6 +239,13 @@ export default function Login() {
               </button>
             ))}
           </div>
+
+          {sessionExpired && (
+            <div className="mt-5 flex items-start gap-2 rounded-lg border border-amber-400/40 bg-amber-500/10 px-3 py-2.5 text-sm text-foreground">
+              <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-amber-600" />
+              <p><span className="font-semibold text-amber-700">Sessão expirada.</span> Por inatividade, sua sessão foi encerrada automaticamente. Faça login novamente para continuar.</p>
+            </div>
+          )}
 
           {successMsg && (
             <div className="mt-5 flex items-start gap-2 rounded-lg border border-success/30 bg-success/10 px-3 py-2.5 text-sm text-foreground">
