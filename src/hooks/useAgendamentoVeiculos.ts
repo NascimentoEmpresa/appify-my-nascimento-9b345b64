@@ -53,12 +53,15 @@ export interface ContratoDoAgendamento {
   contrato_nome: string;
 }
 
-/** Contrato ativo oferecido no passo 3, com o CNPJ a que pertence. */
+/** Contrato oferecido no passo 3, com o CNPJ a que pertence. */
 export interface ContratoOpcao {
   id: string;
   nome: string;
   cliente: string | null;
   empresa_codigo: string | null;
+  /** 'ativo' | 'encerrado'. Encerrado continua agendável (viagem de
+   *  encerramento, retirada de material), só vai marcado na lista. */
+  status: string | null;
 }
 
 export interface Agendamento {
@@ -256,7 +259,10 @@ export function useAgendamentos() {
 }
 
 /**
- * Contratos ativos para o passo 3 — do GRUPO INTEIRO, mesma regra da frota.
+ * Contratos para o passo 3 — do GRUPO INTEIRO, mesma regra da frota, e
+ * incluindo os ENCERRADOS: a frota continua rodando para contrato encerrado
+ * (viagem de encerramento, retirada de material, acerto de pendência). Sem
+ * eles na lista, a pessoa marcava um contrato errado só para fechar a reserva.
  *
  * Lia `contratos` direto, e aí a RLS da tabela (recorte por `user_empresa`)
  * entregava só os contratos do CNPJ do usuário: quem é da SN via 10 e não
@@ -278,6 +284,7 @@ export function useContratosParaAgendamento() {
         nome: c.nome,
         cliente: c.cliente,
         empresa_codigo: c.empresa_codigo ?? null,
+        status: c.status ?? null,
       }));
     },
     staleTime: 60_000,

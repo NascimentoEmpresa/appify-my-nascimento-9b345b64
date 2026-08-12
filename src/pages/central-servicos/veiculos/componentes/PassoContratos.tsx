@@ -69,7 +69,7 @@ export function PassoContratos({
         {carregando && <p className="py-6 text-center text-sm text-muted-foreground">Carregando contratos...</p>}
         {!carregando && filtrados.length === 0 && (
           <p className="py-6 text-center text-sm text-muted-foreground">
-            {busca ? "Nenhum contrato encontrado." : "Nenhum contrato ativo cadastrado."}
+            {busca ? "Nenhum contrato encontrado." : "Nenhum contrato cadastrado."}
           </p>
         )}
         {filtrados.map((c, i) => {
@@ -97,7 +97,17 @@ export function PassoContratos({
               </span>
               <FileText className={cn("h-4 w-4 shrink-0", marcado ? "text-primary" : "text-muted-foreground")} />
               <span className="min-w-0 flex-1">
-                <span className="block truncate text-sm font-medium text-foreground">{c.nome}</span>
+                <span className="flex items-center gap-1.5">
+                  <span className="truncate text-sm font-medium text-foreground">{c.nome}</span>
+                  {/* Encerrado continua agendável (viagem de encerramento,
+                      retirada de material), mas sem o selo dava para escolher
+                      um contrato morto sem perceber. */}
+                  {c.status === "encerrado" && (
+                    <span className="shrink-0 rounded border border-warning/40 bg-warning/10 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-warning">
+                      Encerrado
+                    </span>
+                  )}
+                </span>
                 {c.cliente && <span className="block truncate text-xs text-muted-foreground">{c.cliente}</span>}
               </span>
               {/* O grupo é multi-CNPJ e a frota é compartilhada: sem o código
