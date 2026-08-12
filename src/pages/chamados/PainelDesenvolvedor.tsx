@@ -72,11 +72,6 @@ function abrirPrGithub(
     "",
     `**Descrição:** ${descricao || "—"}`,
     "<!-- chamado:auto:end -->",
-    "",
-    "## O que mudou",
-    "",
-    "## Como testar",
-    "",
   ].join("\n");
   const params = `?quick_pull=1&expand=1&title=${encodeURIComponent(titulo)}&body=${encodeURIComponent(corpo)}`;
 

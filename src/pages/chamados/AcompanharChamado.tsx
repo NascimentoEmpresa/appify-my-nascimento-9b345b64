@@ -12,8 +12,8 @@ import { ArrowLeft, MessageSquarePlus, Paperclip, RotateCcw, Star } from "lucide
 import { AvaliarChamadoDialog } from "./AvaliarChamadoDialog";
 import { ChatChamado } from "./ChatChamado";
 import {
-  StatusBadge, PrioridadeBadge, Estrelas,
-  CATEGORIAS, TIPOS, IMPACTOS, URGENCIAS, AMBIENTES, CRITERIOS_AVALIACAO, mediaAvaliacao,
+  StatusBadge, PrioridadeBadge, CardAvaliacao,
+  CATEGORIAS, TIPOS, IMPACTOS, URGENCIAS, AMBIENTES,
   labelDe, moduloLabel, fmtData, fmtDataHora,
   BUCKET_CHAMADOS, type Chamado, type Anexo, type AvaliacaoChamado,
 } from "./types";
@@ -218,25 +218,7 @@ export default function AcompanharChamado({ base = "/app/central-servicos/chamad
           {/* Avaliação — só em chamados concluídos */}
           {chamado.status === "concluido" && (
             avaliacao ? (
-              <Card className="animate-rise-in space-y-3 p-4">
-                <div className="flex items-center justify-between">
-                  <p className="flex items-center gap-1.5 text-sm font-bold"><Star className="h-4 w-4 text-warning" /> Sua avaliação</p>
-                  <div className="flex items-center gap-1.5">
-                    <Estrelas valor={mediaAvaliacao(avaliacao)} size={16} />
-                    <span className="text-xs font-semibold text-muted-foreground">{mediaAvaliacao(avaliacao).toFixed(1).replace(".", ",")}</span>
-                  </div>
-                </div>
-                <div className="space-y-1.5">
-                  {CRITERIOS_AVALIACAO.map((c) => (
-                    <div key={c.key} className="flex items-center justify-between gap-2 text-xs">
-                      <span className="text-muted-foreground">{c.titulo}</span>
-                      <Estrelas valor={avaliacao[c.key]} size={13} />
-                    </div>
-                  ))}
-                </div>
-                {avaliacao.comentario && <p className="whitespace-pre-wrap border-t border-border/60 pt-2 text-xs text-muted-foreground">{avaliacao.comentario}</p>}
-                <p className="text-[11px] text-muted-foreground">Enviada em {fmtDataHora(avaliacao.created_at)}</p>
-              </Card>
+              <CardAvaliacao avaliacao={avaliacao} titulo="Sua avaliação" />
             ) : ehSolicitante ? (
               <Card className="animate-rise-in space-y-3 border-warning/40 bg-warning/5 p-4">
                 <p className="flex items-center gap-1.5 text-sm font-bold"><Star className="h-4 w-4 text-warning animate-pulse-soft" /> Avaliar atendimento</p>

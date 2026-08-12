@@ -277,6 +277,62 @@ export function PrioridadeBadge({ prioridade }: { prioridade: string }) {
   return <Badge variant="outline" className={`text-[10px] font-semibold ${p.cls}`}>{p.label}</Badge>;
 }
 
+/**
+ * Card da avaliação recebida (mesmo bloco na tela do solicitante e na do
+ * atendimento). Ficava duplicado nas duas telas e, nas duas, um comentário
+ * digitado sem espaço ("aaaa...") passava por cima da borda e estourava a
+ * coluna — daí a quebra forçada e o min-w-0 aqui, num lugar só.
+ */
+export function CardAvaliacao({
+  avaliacao, titulo, tone = "muted",
+}: {
+  avaliacao: Pick<AvaliacaoChamado, CriterioKey | "comentario" | "created_at">;
+  titulo: string;
+  tone?: "muted" | "warning";
+}) {
+  const nota = mediaAvaliacao(avaliacao);
+  return (
+    <Card className={`animate-rise-in min-w-0 space-y-3 overflow-hidden p-4 ${
+      tone === "warning" ? "border-warning/30 bg-warning/5" : ""
+    }`}>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <p className="flex items-center gap-1.5 text-sm font-bold">
+          <Star className="h-4 w-4 text-warning" /> {titulo}
+        </p>
+        <div className="flex items-center gap-1.5">
+          <Estrelas valor={nota} size={15} />
+          <span className="text-sm font-bold">{nota.toFixed(1).replace(".", ",")}</span>
+        </div>
+      </div>
+
+      <div className="grid gap-x-4 gap-y-1 sm:grid-cols-2">
+        {CRITERIOS_AVALIACAO.map((c) => {
+          const v = avaliacao[c.key];
+          return (
+            <div key={c.key} className="flex items-center justify-between gap-2 text-xs">
+              <span className="truncate text-muted-foreground">{c.titulo}</span>
+              <span className="flex shrink-0 items-center gap-1">
+                <Estrelas valor={v} size={12} />
+                {/* Número ao lado da estrela: 1 de 5 e 2 de 5 se confundem de relance. */}
+                <span className={`w-3 text-right font-semibold ${
+                  v <= 2 ? "text-destructive" : v < 5 ? "text-warning" : "text-success"
+                }`}>{v}</span>
+              </span>
+            </div>
+          );
+        })}
+      </div>
+
+      {avaliacao.comentario && (
+        <p className="min-w-0 whitespace-pre-wrap break-words rounded-md border-l-2 border-warning/50 bg-muted/40 px-2.5 py-2 text-xs [overflow-wrap:anywhere]">
+          {avaliacao.comentario}
+        </p>
+      )}
+      <p className="text-[11px] text-muted-foreground">Enviada em {fmtDataHora(avaliacao.created_at)}</p>
+    </Card>
+  );
+}
+
 /** Estrelas somente-leitura (1..5), aceita valor fracionário (ex.: média 4,2). */
 export function Estrelas({ valor, size = 16 }: { valor: number; size?: number }) {
   return (
@@ -297,4 +353,3 @@ export function Estrelas({ valor, size = 16 }: { valor: number; size?: number })
     </span>
   );
 }
-
