@@ -536,11 +536,31 @@ const centralServicosModule: ModuleDef = {
       items: [
         { label: "Central de Serviços", to: "/app/central-servicos", icon: Headset },
         { label: "Orientações Jurídicas", to: "/app/central-servicos/orientacoes-juridicas", icon: BookOpen },
-        { label: "Denúncias (Canal de Ética)", to: "/app/central-servicos/denuncias", icon: ShieldAlert },
         { label: "Nascimento Formulários", to: "/app/central-servicos/formularios", icon: ClipboardList },
         { label: "Chamados de Sistemas", to: "/app/central-servicos/chamados", icon: Headset, notif: "meus" },
         { label: "Agenda de Reunião", to: "/app/central-servicos/reunioes", icon: CalendarRange },
         { label: "Agendamento de Veículos", to: "/app/central-servicos/veiculos", icon: Car },
+      ],
+    },
+  ],
+};
+
+// Comitê de Ética — denúncias saíram da Central de Serviços porque não são
+// atendimento ao colaborador: são assunto de comitê, com acesso restrito.
+const comiteEticaModule: ModuleDef = {
+  id: "comite_etica",
+  label: "Comitê de Ética",
+  description: "Denúncias e apuração de conduta",
+  icon: ShieldAlert,
+  basePath: "/app/comite-etica",
+  status: "active",
+  groups: [
+    {
+      label: "Comitê de Ética",
+      defaultOpen: true,
+      items: [
+        { label: "Denúncias", to: "/app/comite-etica/denuncias", icon: ShieldAlert },
+        { label: "Denúncias (Contato Seguro)", to: "/app/comite-etica/denuncias-contato-seguro", icon: ShieldAlert },
       ],
     },
   ],
@@ -714,6 +734,7 @@ const erpModules: ModuleDef[] = [
   juridicoModule,
   sstModule,
   centralServicosModule,
+  comiteEticaModule,
   whatsappModule,
   biModule,
 ];

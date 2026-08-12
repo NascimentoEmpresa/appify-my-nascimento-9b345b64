@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import * as tus from "tus-js-client";
 import { supabase } from "@/integrations/supabase/client";
+import { SUPABASE_ANON_KEY, SUPABASE_URL } from "@/integrations/supabase/env";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
@@ -26,9 +27,7 @@ import {
   FileSpreadsheet,
 } from "lucide-react";
 
-const SUPABASE_URL = "https://fwmzeaztjxrxxzxzxmgc.supabase.co";
-const ANON_KEY =
-  "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImZ3bXplYXp0anhyeHh6eHp4bWdjIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzY2MDc0NTAsImV4cCI6MjA5MjE4MzQ1MH0.i08oF2-9N6w-CxDVy8ink29-ydHTJEc-eQBZDYRxGwI";
+const ANON_KEY = SUPABASE_ANON_KEY;
 
 type Empresa = { id: string; nome: string };
 
