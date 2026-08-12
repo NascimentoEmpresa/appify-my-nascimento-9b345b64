@@ -5,10 +5,12 @@ import { componentTagger } from "lovable-tagger";
 
 // https://vitejs.dev/config/
 export default defineConfig(({ mode }) => {
-  // As credenciais do Supabase vivem no .env (fora do versionamento). Sem
-  // elas o Vite embutiria `undefined` no bundle e o app subiria quebrado só
-  // na hora do primeiro request — falha silenciosa que só aparece em
-  // produção. Melhor parar o build aqui, com o nome da variável que faltou.
+  // As credenciais do front vivem no .env, que não é versionado — então toda
+  // máquina que builda precisa ter o arquivo. Faltando, o Vite embutiria
+  // `undefined` no bundle e o app subiria quebrado só no primeiro request:
+  // falha silenciosa que só aparece em produção, e foi assim que a produção
+  // ficou num bundle velho em 12/08/2026. Melhor parar aqui, dizendo o que
+  // faltou.
   const env = loadEnv(mode, process.cwd(), "");
   const faltando = ["VITE_SUPABASE_URL", "VITE_SUPABASE_ANON_KEY"].filter((k) => !env[k]);
   if (faltando.length) {
