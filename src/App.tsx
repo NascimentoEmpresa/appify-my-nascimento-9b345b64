@@ -3,6 +3,7 @@ import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
+import { isAuthExpiredError } from "@/lib/authErrors";
 import NotFound from "./pages/NotFound.tsx";
 import Login from "./pages/Login.tsx";
 import TrocarSenha from "./pages/TrocarSenha.tsx";
@@ -186,7 +187,28 @@ import ConducaoReuniao from "./pages/central-servicos/reunioes/ConducaoReuniao";
 import PainelGerencial from "./pages/central-servicos/reunioes/PainelGerencial";
 import AgendamentoVeiculos from "./pages/central-servicos/veiculos/AgendamentoVeiculos";
 
-const queryClient = new QueryClient();
+// Defaults só de `queries` — mutations seguem com retry 0, porque repetir um
+// insert/update às cegas duplicaria registro.
+//
+// Quando o token vence (aba em segundo plano, máquina que dormiu), o
+// refetchOnWindowFocus e os pollings de 60s disparam uma rajada de requests com
+// o token velho e tomam 401 em bloco. O backoff padrão (1s, 2s, 4s) queima as 3
+// tentativas dentro da própria janela de expiração e a query morre em `error` —
+// era isso que deixava a Grade presa em "Erro ao carregar: JWT expired" até o
+// usuário dar F5. Para esse caso, mais tentativas e mais espaçadas, dando tempo
+// do supabase-js concluir a renovação.
+const queryClient = new QueryClient({
+  defaultOptions: {
+    queries: {
+      retry: (failureCount, error) =>
+        isAuthExpiredError(error) ? failureCount < 5 : failureCount < 3,
+      retryDelay: (failureCount, error) =>
+        isAuthExpiredError(error)
+          ? 2_000
+          : Math.min(1_000 * 2 ** failureCount, 30_000),
+    },
+  },
+});
 
 const App = () => (
   <QueryClientProvider client={queryClient}>
