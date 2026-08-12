@@ -33,7 +33,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       // fresco — e o sintoma típico é tela vazia, não erro. Refresh de token
       // mantém o mesmo uid e NÃO limpa nada.
       const nextUid = newSession?.user?.id ?? null;
-      if (uidRef.current !== nextUid) {
+      const trocouUsuario = uidRef.current !== nextUid;
+      if (trocouUsuario) {
         // Sessão expirou (refresh falhou) enquanto o usuário estava logado:
         // redireciona para login com flag para exibir aviso.
         if (uidRef.current !== null && nextUid === null && event === "SIGNED_OUT") {
@@ -43,6 +44,20 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         }
         if (uidRef.current !== null) queryClient.clear();
         uidRef.current = nextUid;
+      }
+
+
+      // Token renovado com o MESMO usuário: as requisições que saíram enquanto o
+      // access token estava vencido tomaram 401 e deixaram queries penduradas em
+      // `error` (ou segurando dado velho, se o 401 foi num refetch de fundo).
+      // Nada as tirava de lá — o usuário só via a tela de erro sumir dando F5.
+      // Agora que o token novo chegou, refaz só o que falhou; refetch geral seria
+      // uma rajada desnecessária em cima de todo o ERP.
+      if (event === "TOKEN_REFRESHED" && !trocouUsuario) {
+        queryClient.refetchQueries({
+          type: "active",
+          predicate: (q) => q.state.status === "error" || q.state.fetchFailureCount > 0,
+        });
       }
 
       // Preserva a referência se o usuário é o mesmo — evita re-renders em contextos
