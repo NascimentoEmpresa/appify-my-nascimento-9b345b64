@@ -1,4 +1,4 @@
-name: Notify Eduardo on New PR (DM)
+name: Notify Eduardo e Chefe on New PR (DM)
 
 on:
   pull_request_target:
@@ -19,10 +19,10 @@ jobs:
       - name: Install dependencies
         run: npm install discord.js
 
-      - name: Send DM to Eduardo
+      - name: Send DM to Eduardo e Chefe
         env:
           DISCORD_TOKEN: ${{ secrets.DISCORD_TOKEN }}
-          USER_ID: "1384572666752663653"
+          USER_IDS: "1384572666752663653,1260583577528303730"
         run: |
           node -e "
           const { Client, GatewayIntentBits } = require('discord.js');
@@ -34,18 +34,22 @@ jobs:
             console.log('Bot conectado!');
             await new Promise(r => setTimeout(r, 8000)); // espera 8 segundos para garantir conexão
 
-            try {
-              const user = await client.users.fetch(process.env.USER_ID);
-              const pr = process.env.GITHUB_EVENT_PATH ? require(process.env.GITHUB_EVENT_PATH).pull_request : null;
-              const message = pr
-                ? \`🚀 Novo Pull Request criado!\nTítulo: \${pr.title}\nAutor: \${pr.user.login}\n🔗 \${pr.html_url}\`
-                : 'Novo PR detectado!';
-              await user.send(message);
-              console.log('Mensagem enviada com sucesso!');
-            } catch (error) {
-              console.error('Erro ao enviar DM:', error);
-            } finally {
-              client.destroy();
+            const pr = process.env.GITHUB_EVENT_PATH ? require(process.env.GITHUB_EVENT_PATH).pull_request : null;
+            const message = pr
+              ? \`🚀 Novo Pull Request criado!\nTítulo: \${pr.title}\nAutor: \${pr.user.login}\n🔗 \${pr.html_url}\`
+              : 'Novo PR detectado!';
+            const ids = process.env.USER_IDS.split(',').map(s => s.trim()).filter(Boolean);
+
+            for (const id of ids) {
+              try {
+                const user = await client.users.fetch(id);
+                await user.send(message);
+                console.log('Mensagem enviada para ' + id);
+              } catch (error) {
+                console.error('Erro ao enviar DM para ' + id + ':', error);
+              }
             }
+
+            client.destroy();
           });
           "
