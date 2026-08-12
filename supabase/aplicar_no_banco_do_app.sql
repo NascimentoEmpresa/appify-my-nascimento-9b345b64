@@ -9446,3 +9446,492 @@ COMMENT ON COLUMN public.profiles.bio IS
   'Descrição livre escrita pelo próprio usuário em Meu Perfil. Opcional.';
 
 NOTIFY pgrst, 'reload schema';
+
+-- ═══════════════════════════════════════════════════════════════════════
+-- CHAMADOS: a conversa vira CHAT DE GRUPO — migration 20260831000001
+-- ═══════════════════════════════════════════════════════════════════════
+-- ── 1. Anexo pertence à mensagem ─────────────────────────────────────
+ALTER TABLE public."CHAMADO_SISTEMA_ANEXO"
+  ADD COLUMN IF NOT EXISTS evento_id uuid
+    REFERENCES public."CHAMADO_SISTEMA_EVENTO"(id) ON DELETE CASCADE;
+
+CREATE INDEX IF NOT EXISTS idx_chamado_sistema_anexo_evento
+  ON public."CHAMADO_SISTEMA_ANEXO"(evento_id);
+
+COMMENT ON COLUMN public."CHAMADO_SISTEMA_ANEXO".evento_id IS
+  'Mensagem do chat à qual o anexo pertence. NULL = anexo de abertura ou anexo antigo, anterior ao chat.';
+COMMENT ON COLUMN public."CHAMADO_SISTEMA_ANEXO".campo IS
+  'abertura | chat (mensagem visível ao solicitante) | interno (mensagem só da equipe) | resposta (legado).';
+
+-- O solicitante NÃO pode ver anexo de mensagem interna — antes a policy só
+-- olhava o chamado, e um print colado numa observação interna vazaria pra ele.
+DROP POLICY IF EXISTS chamado_sistema_anexo_select ON public."CHAMADO_SISTEMA_ANEXO";
+CREATE POLICY chamado_sistema_anexo_select ON public."CHAMADO_SISTEMA_ANEXO"
+  FOR SELECT TO authenticated
+  USING (EXISTS (
+    SELECT 1 FROM public."CHAMADO_SISTEMA" c
+     WHERE c.id = chamado_id
+       AND (public.chamado_sistema_gestor()
+            OR c.responsavel_id = auth.uid()
+            OR (c.solicitante_id = auth.uid() AND campo <> 'interno'))
+  ));
+
+-- O bucket liberava SELECT a qualquer autenticado: quem soubesse o caminho
+-- baixava o arquivo. Com print colado em mensagem interna isso passa a doer, então
+-- o acesso ao objeto agora segue a linha do anexo — a subconsulta roda com a RLS
+-- de CHAMADO_SISTEMA_ANEXO aplicada, e o solicitante não acha o print interno.
+DROP POLICY IF EXISTS "chamados sistemas anexo select" ON storage.objects;
+CREATE POLICY "chamados sistemas anexo select"
+  ON storage.objects FOR SELECT TO authenticated
+  USING (bucket_id = 'chamados-sistemas' AND EXISTS (
+    SELECT 1 FROM public."CHAMADO_SISTEMA_ANEXO" a WHERE a.storage_path = name
+  ));
+
+-- ── 2. Quem enxerga a conversa ───────────────────────────────────────
+-- Versão de chamado_sistema_gestor() para um usuário QUALQUER (a original só
+-- responde sobre auth.uid()). Precisa disso para saber, de cada participante,
+-- se ele enxerga as mensagens internas.
+CREATE OR REPLACE FUNCTION public.chamado_sistema_gestor_uid(_uid uuid)
+RETURNS boolean LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public, pg_temp
+AS $$
+  SELECT EXISTS (
+    SELECT 1 FROM public.screen_permission_user s
+     WHERE s.user_id = _uid
+       AND s.menu_codigo IN ('chamados_sistemas_painel',
+                             'chamados_sistemas_coordenar',
+                             'chamados_sistemas_aprovar')
+       AND s.acao = 'visualizar'::public.app_acao
+       AND s.allow = true
+       AND s.empresa_id IS NULL
+  );
+$$;
+REVOKE ALL ON FUNCTION public.chamado_sistema_gestor_uid(uuid) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.chamado_sistema_gestor_uid(uuid) TO authenticated;
+
+-- Está no chat deste chamado? (solicitante, responsável ou gestão)
+CREATE OR REPLACE FUNCTION public.chamado_pode_conversar(p_chamado_id uuid)
+RETURNS boolean LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public, pg_temp
+AS $$
+  SELECT EXISTS (
+    SELECT 1 FROM public."CHAMADO_SISTEMA" c
+     WHERE c.id = p_chamado_id
+       AND (c.solicitante_id = auth.uid()
+            OR c.responsavel_id = auth.uid()
+            OR public.chamado_sistema_gestor())
+  );
+$$;
+REVOKE ALL ON FUNCTION public.chamado_pode_conversar(uuid) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.chamado_pode_conversar(uuid) TO authenticated;
+
+-- ── 3. Até quando cada um leu ────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS public."CHAMADO_SISTEMA_LEITURA" (
+  chamado_id uuid NOT NULL REFERENCES public."CHAMADO_SISTEMA"(id) ON DELETE CASCADE,
+  user_id    uuid NOT NULL DEFAULT auth.uid() REFERENCES auth.users(id) ON DELETE CASCADE,
+  lido_em    timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY (chamado_id, user_id)
+);
+COMMENT ON TABLE public."CHAMADO_SISTEMA_LEITURA" IS
+  'Carimbo de leitura do chat por pessoa. Mensagem com created_at <= lido_em já foi vista por ela.';
+
+ALTER TABLE public."CHAMADO_SISTEMA_LEITURA" ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS chamado_sistema_leitura_select ON public."CHAMADO_SISTEMA_LEITURA";
+CREATE POLICY chamado_sistema_leitura_select ON public."CHAMADO_SISTEMA_LEITURA"
+  FOR SELECT TO authenticated
+  USING (public.chamado_pode_conversar(chamado_id));
+
+-- Escrita só pela RPC (SECURITY DEFINER): ninguém carimba leitura alheia.
+DROP POLICY IF EXISTS chamado_sistema_leitura_upsert ON public."CHAMADO_SISTEMA_LEITURA";
+CREATE POLICY chamado_sistema_leitura_upsert ON public."CHAMADO_SISTEMA_LEITURA"
+  FOR INSERT TO authenticated
+  WITH CHECK (user_id = auth.uid() AND public.chamado_pode_conversar(chamado_id));
+
+DROP POLICY IF EXISTS chamado_sistema_leitura_update ON public."CHAMADO_SISTEMA_LEITURA";
+CREATE POLICY chamado_sistema_leitura_update ON public."CHAMADO_SISTEMA_LEITURA"
+  FOR UPDATE TO authenticated
+  USING (user_id = auth.uid())
+  WITH CHECK (user_id = auth.uid());
+
+CREATE OR REPLACE FUNCTION public.chamado_marcar_lido(p_chamado_id uuid)
+RETURNS timestamptz LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp
+AS $$
+DECLARE v_agora timestamptz := now();
+BEGIN
+  IF NOT public.chamado_pode_conversar(p_chamado_id) THEN
+    RAISE EXCEPTION 'Sem acesso a este chamado.' USING ERRCODE = '42501';
+  END IF;
+
+  INSERT INTO public."CHAMADO_SISTEMA_LEITURA" (chamado_id, user_id, lido_em)
+  VALUES (p_chamado_id, auth.uid(), v_agora)
+  ON CONFLICT (chamado_id, user_id)
+  -- Só avança: reabrir uma tela antiga não pode "desler" o que já foi lido.
+  DO UPDATE SET lido_em = GREATEST(public."CHAMADO_SISTEMA_LEITURA".lido_em, EXCLUDED.lido_em);
+
+  RETURN v_agora;
+END;
+$$;
+REVOKE ALL ON FUNCTION public.chamado_marcar_lido(uuid) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.chamado_marcar_lido(uuid) TO authenticated;
+
+-- ── 4. O grupo do chamado ────────────────────────────────────────────
+-- Participante = solicitante + responsável + quem já escreveu ou já abriu a
+-- conversa. Gestor que nunca entrou não conta: senão "lido por todos" nunca
+-- acenderia, porque dependeria de gente que nem sabe do chamado.
+CREATE OR REPLACE FUNCTION public.chamado_participantes(p_chamado_id uuid)
+RETURNS TABLE(
+  user_id     uuid,
+  nome        text,
+  papel       text,     -- solicitante | responsavel | equipe
+  ve_interno  boolean,
+  lido_em     timestamptz
+)
+LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public, pg_temp
+AS $$
+  WITH ch AS (
+    SELECT c.id, c.solicitante_id, c.responsavel_id
+      FROM public."CHAMADO_SISTEMA" c
+     WHERE c.id = p_chamado_id
+       AND public.chamado_pode_conversar(p_chamado_id)
+  ),
+  gente AS (
+    SELECT solicitante_id AS uid FROM ch
+    UNION
+    SELECT responsavel_id FROM ch WHERE responsavel_id IS NOT NULL
+    UNION
+    SELECT e.autor_id FROM public."CHAMADO_SISTEMA_EVENTO" e, ch
+     WHERE e.chamado_id = ch.id AND e.autor_id IS NOT NULL
+    UNION
+    SELECT l.user_id FROM public."CHAMADO_SISTEMA_LEITURA" l, ch
+     WHERE l.chamado_id = ch.id
+  )
+  SELECT g.uid,
+         COALESCE(NULLIF(btrim(p.display_name), ''), NULLIF(btrim(p.email), ''), 'Usuário'),
+         CASE WHEN g.uid = ch.solicitante_id THEN 'solicitante'
+              WHEN g.uid = ch.responsavel_id THEN 'responsavel'
+              ELSE 'equipe' END,
+         (g.uid = ch.responsavel_id) OR public.chamado_sistema_gestor_uid(g.uid),
+         l.lido_em
+    FROM gente g
+    CROSS JOIN ch
+    LEFT JOIN public.profiles p ON p.id = g.uid
+    LEFT JOIN public."CHAMADO_SISTEMA_LEITURA" l
+           ON l.chamado_id = ch.id AND l.user_id = g.uid
+   ORDER BY 3, 2;
+$$;
+REVOKE ALL ON FUNCTION public.chamado_participantes(uuid) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.chamado_participantes(uuid) TO authenticated;
+
+-- ── 5. Envio de mensagem (o único caminho do chat) ───────────────────
+CREATE OR REPLACE FUNCTION public.chamado_enviar_mensagem(
+  p_chamado_id uuid,
+  p_texto      text,
+  p_interno    boolean DEFAULT false,
+  p_tem_anexo  boolean DEFAULT false
+)
+RETURNS uuid LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp
+AS $$
+DECLARE
+  v_uid         uuid := auth.uid();
+  v_solicitante uuid;
+  v_responsavel uuid;
+  v_status      text;
+  v_equipe      boolean;
+  v_texto       text := NULLIF(btrim(COALESCE(p_texto, '')), '');
+  v_id          uuid;
+BEGIN
+  IF v_texto IS NULL AND NOT p_tem_anexo THEN
+    RAISE EXCEPTION 'Escreva uma mensagem ou anexe um arquivo.' USING ERRCODE = '22023';
+  END IF;
+
+  SELECT c.solicitante_id, c.responsavel_id, c.status
+    INTO v_solicitante, v_responsavel, v_status
+    FROM public."CHAMADO_SISTEMA" c WHERE c.id = p_chamado_id;
+
+  IF v_solicitante IS NULL THEN
+    RAISE EXCEPTION 'Chamado não encontrado.' USING ERRCODE = '42704';
+  END IF;
+
+  v_equipe := (v_responsavel = v_uid) OR public.chamado_sistema_gestor();
+
+  IF NOT (v_equipe OR v_solicitante = v_uid) THEN
+    RAISE EXCEPTION 'Sem acesso à conversa deste chamado.' USING ERRCODE = '42501';
+  END IF;
+  IF p_interno AND NOT v_equipe THEN
+    RAISE EXCEPTION 'Somente a equipe registra mensagens internas.' USING ERRCODE = '42501';
+  END IF;
+  -- Chamado encerrado ainda aceita registro interno (a equipe documenta o que
+  -- ficou), mas não aceita mais conversa com o solicitante.
+  IF v_status IN ('concluido', 'reprovado') AND NOT p_interno THEN
+    RAISE EXCEPTION 'Chamado encerrado — a conversa está fechada.' USING ERRCODE = '22023';
+  END IF;
+
+  INSERT INTO public."CHAMADO_SISTEMA_EVENTO" (chamado_id, autor_id, tipo, texto)
+  VALUES (p_chamado_id, v_uid,
+          CASE WHEN p_interno THEN 'observacao_interna' ELSE 'comentario' END,
+          v_texto)
+  RETURNING id INTO v_id;
+
+  -- Quem escreveu já leu a própria mensagem.
+  INSERT INTO public."CHAMADO_SISTEMA_LEITURA" (chamado_id, user_id, lido_em)
+  VALUES (p_chamado_id, v_uid, now())
+  ON CONFLICT (chamado_id, user_id)
+  DO UPDATE SET lido_em = GREATEST(public."CHAMADO_SISTEMA_LEITURA".lido_em, EXCLUDED.lido_em);
+
+  -- Solicitante respondeu o "aguardando retorno" → volta pro time.
+  IF v_solicitante = v_uid AND NOT v_equipe AND v_status = 'aguardando_retorno' THEN
+    UPDATE public."CHAMADO_SISTEMA"
+       SET status = CASE WHEN v_responsavel IS NOT NULL THEN 'em_andamento' ELSE 'aberto' END
+     WHERE id = p_chamado_id;
+  END IF;
+
+  RETURN v_id;
+END;
+$$;
+REVOKE ALL ON FUNCTION public.chamado_enviar_mensagem(uuid, text, boolean, boolean) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.chamado_enviar_mensagem(uuid, text, boolean, boolean) TO authenticated;
+
+-- ── 6. Conferência ───────────────────────────────────────────────────
+SELECT count(*) AS leituras FROM public."CHAMADO_SISTEMA_LEITURA";
+
+NOTIFY pgrst, 'reload schema';
+
+-- =====================================================================
+-- ROLLBACK
+--   DROP FUNCTION IF EXISTS public.chamado_enviar_mensagem(uuid, text, boolean, boolean);
+--   DROP FUNCTION IF EXISTS public.chamado_participantes(uuid);
+--   DROP FUNCTION IF EXISTS public.chamado_marcar_lido(uuid);
+--   DROP TABLE IF EXISTS public."CHAMADO_SISTEMA_LEITURA";
+--   DROP FUNCTION IF EXISTS public.chamado_pode_conversar(uuid);
+--   DROP FUNCTION IF EXISTS public.chamado_sistema_gestor_uid(uuid);
+--   ALTER TABLE public."CHAMADO_SISTEMA_ANEXO" DROP COLUMN evento_id;
+--   -- e recriar chamado_sistema_anexo_select da 20260802000002
+-- =====================================================================
+
+-- ═══════════════════════════════════════════════════════════════════════
+-- CHAMADOS: mensagens não lidas por chamado — migration 20260831000002
+-- ═══════════════════════════════════════════════════════════════════════
+-- =====================================================================
+
+CREATE OR REPLACE FUNCTION public.chamados_nao_lidos()
+RETURNS TABLE(
+  chamado_id uuid,
+  nao_lidos  integer,
+  ultima_em  timestamptz
+)
+LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public, pg_temp
+AS $$
+  WITH eu AS (
+    SELECT auth.uid() AS uid, public.chamado_sistema_gestor() AS gestor
+  ),
+  meus AS (
+    -- Chamados em que EU participo. Gestão vê os que coordena/acompanha, mas
+    -- só os que já têm conversa — a bolinha é sobre mensagem, não sobre fila.
+    SELECT c.id, c.responsavel_id
+      FROM public."CHAMADO_SISTEMA" c, eu
+     WHERE c.solicitante_id = eu.uid
+        OR c.responsavel_id = eu.uid
+        OR eu.gestor
+  )
+  SELECT m.id,
+         count(e.id)::int,
+         max(e.created_at)
+    FROM meus m
+    CROSS JOIN eu
+    JOIN public."CHAMADO_SISTEMA_EVENTO" e ON e.chamado_id = m.id
+    LEFT JOIN public."CHAMADO_SISTEMA_LEITURA" l
+           ON l.chamado_id = m.id AND l.user_id = eu.uid
+   WHERE e.autor_id IS DISTINCT FROM eu.uid
+     AND e.tipo IN ('comentario', 'observacao_interna')
+     AND (e.meta->>'canal') IS NULL
+     AND (e.tipo <> 'observacao_interna' OR m.responsavel_id = eu.uid OR eu.gestor)
+     AND (l.lido_em IS NULL OR e.created_at > l.lido_em)
+   GROUP BY m.id
+  HAVING count(e.id) > 0;
+$$;
+REVOKE ALL ON FUNCTION public.chamados_nao_lidos() FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.chamados_nao_lidos() TO authenticated;
+
+COMMENT ON FUNCTION public.chamados_nao_lidos() IS
+  'Mensagens não lidas por chamado, para a bolinha vermelha do botão Chat nas listas.';
+
+-- Sem este índice a contagem varre os eventos do chamado inteiro a cada carga
+-- da lista, e a tela tem que abrir instantânea.
+CREATE INDEX IF NOT EXISTS idx_chamado_sistema_evento_chamado_data
+  ON public."CHAMADO_SISTEMA_EVENTO"(chamado_id, created_at DESC);
+
+-- ── Conferência ──────────────────────────────────────────────────────
+SELECT count(*) AS eventos FROM public."CHAMADO_SISTEMA_EVENTO";
+
+NOTIFY pgrst, 'reload schema';
+
+-- =====================================================================
+-- ROLLBACK
+--   DROP FUNCTION IF EXISTS public.chamados_nao_lidos();
+--   DROP INDEX IF EXISTS public.idx_chamado_sistema_evento_chamado_data;
+-- =====================================================================
+
+-- ═══════════════════════════════════════════════════════════════════════
+-- CHAMADOS: grupo da conversa = quem tem acesso — migration 20260831000003
+-- ═══════════════════════════════════════════════════════════════════════
+-- =====================================================================
+
+DROP FUNCTION IF EXISTS public.chamado_participantes(uuid);
+
+CREATE OR REPLACE FUNCTION public.chamado_participantes(p_chamado_id uuid)
+RETURNS TABLE(
+  user_id    uuid,
+  nome       text,
+  papel      text,     -- solicitante | responsavel | gestao
+  ve_interno boolean,
+  principal  boolean,  -- de quem se espera resposta (solicitante/responsável)
+  lido_em    timestamptz
+)
+LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public, pg_temp
+AS $$
+  WITH ch AS (
+    SELECT c.id, c.solicitante_id, c.responsavel_id
+      FROM public."CHAMADO_SISTEMA" c
+     WHERE c.id = p_chamado_id
+       AND public.chamado_pode_conversar(p_chamado_id)
+  ),
+  gestores AS (
+    SELECT DISTINCT s.user_id AS uid
+      FROM public.screen_permission_user s
+     WHERE s.menu_codigo IN ('chamados_sistemas_painel',
+                             'chamados_sistemas_coordenar',
+                             'chamados_sistemas_aprovar')
+       AND s.acao = 'visualizar'::public.app_acao
+       AND s.allow = true
+       AND s.empresa_id IS NULL
+  ),
+  gente AS (
+    SELECT solicitante_id AS uid FROM ch
+    UNION
+    SELECT responsavel_id FROM ch WHERE responsavel_id IS NOT NULL
+    UNION
+    SELECT g.uid FROM gestores g CROSS JOIN ch
+  )
+  SELECT g.uid,
+         COALESCE(NULLIF(btrim(p.display_name), ''), NULLIF(btrim(p.email), ''), 'Usuário'),
+         CASE WHEN g.uid = ch.solicitante_id THEN 'solicitante'
+              WHEN g.uid = ch.responsavel_id THEN 'responsavel'
+              ELSE 'gestao' END,
+         (g.uid = ch.responsavel_id) OR public.chamado_sistema_gestor_uid(g.uid),
+         g.uid IN (ch.solicitante_id, ch.responsavel_id),
+         l.lido_em
+    FROM gente g
+    CROSS JOIN ch
+    LEFT JOIN public.profiles p ON p.id = g.uid
+    LEFT JOIN public."CHAMADO_SISTEMA_LEITURA" l
+           ON l.chamado_id = ch.id AND l.user_id = g.uid
+   WHERE COALESCE(p.ativo, true)
+   ORDER BY CASE WHEN g.uid = ch.solicitante_id THEN 1
+                 WHEN g.uid = ch.responsavel_id THEN 2
+                 ELSE 3 END,
+            2;
+$$;
+REVOKE ALL ON FUNCTION public.chamado_participantes(uuid) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.chamado_participantes(uuid) TO authenticated;
+
+COMMENT ON FUNCTION public.chamado_participantes(uuid) IS
+  'Grupo do chamado = quem tem acesso (solicitante + responsável + gestão), com o carimbo de leitura de cada um.';
+
+-- ── Conferência ──────────────────────────────────────────────────────
+SELECT count(*) AS gestores FROM (
+  SELECT DISTINCT s.user_id
+    FROM public.screen_permission_user s
+   WHERE s.menu_codigo IN ('chamados_sistemas_painel','chamados_sistemas_coordenar','chamados_sistemas_aprovar')
+     AND s.acao = 'visualizar'::public.app_acao AND s.allow AND s.empresa_id IS NULL
+) x;
+
+NOTIFY pgrst, 'reload schema';
+
+-- =====================================================================
+-- ROLLBACK: recriar chamado_participantes como na 20260831000001.
+-- =====================================================================
+
+-- ═══════════════════════════════════════════════════════════════════════
+-- CHAMADOS: comentário obrigatório na avaliação + notas uma a uma
+--           — migration 20260831000004
+-- ═══════════════════════════════════════════════════════════════════════
+-- ── 1. Comentário obrigatório quando não é 5 em tudo ─────────────────
+ALTER TABLE public."CHAMADO_SISTEMA_AVALIACAO"
+  DROP CONSTRAINT IF EXISTS chamado_avaliacao_comentario_obrigatorio;
+
+ALTER TABLE public."CHAMADO_SISTEMA_AVALIACAO"
+  ADD CONSTRAINT chamado_avaliacao_comentario_obrigatorio CHECK (
+    (qualidade = 5 AND prazo = 5 AND comunicacao = 5
+     AND clareza = 5 AND facilidade = 5 AND satisfacao = 5)
+    OR (comentario IS NOT NULL AND length(btrim(comentario)) >= 10)
+  ) NOT VALID;
+
+COMMENT ON CONSTRAINT chamado_avaliacao_comentario_obrigatorio
+  ON public."CHAMADO_SISTEMA_AVALIACAO" IS
+  'Nota cheia (5 em tudo) dispensa comentário; qualquer critério abaixo de 5 exige pelo menos 10 caracteres explicando o que melhorar.';
+
+-- ── 2. Avaliações uma a uma (para a coordenação) ─────────────────────
+DROP FUNCTION IF EXISTS public.chamados_avaliacoes_detalhe();
+
+CREATE OR REPLACE FUNCTION public.chamados_avaliacoes_detalhe()
+RETURNS TABLE(
+  avaliacao_id   uuid,
+  chamado_id     uuid,
+  numero         text,
+  assunto        text,
+  responsavel_id uuid,
+  avaliador_id   uuid,
+  avaliador_nome text,
+  setor          text,
+  qualidade      smallint,
+  prazo          smallint,
+  comunicacao    smallint,
+  clareza        smallint,
+  facilidade     smallint,
+  satisfacao     smallint,
+  comentario     text,
+  created_at     timestamptz
+)
+LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public, pg_temp
+AS $$
+  SELECT a.id, c.id, c.numero, c.assunto, c.responsavel_id,
+         a.solicitante_id,
+         -- O nome do perfil é a fonte boa; solicitante_nome do chamado é o
+         -- retrato de quem abriu e serve de reserva.
+         COALESCE(NULLIF(btrim(p.display_name), ''),
+                  NULLIF(btrim(p.email), ''),
+                  NULLIF(btrim(c.solicitante_nome), ''),
+                  'Usuário'),
+         c.setor,
+         a.qualidade, a.prazo, a.comunicacao, a.clareza, a.facilidade, a.satisfacao,
+         a.comentario, a.created_at
+    FROM public."CHAMADO_SISTEMA_AVALIACAO" a
+    JOIN public."CHAMADO_SISTEMA" c ON c.id = a.chamado_id
+    LEFT JOIN public.profiles p ON p.id = a.solicitante_id
+   WHERE public.chamado_sistema_gestor()
+   ORDER BY a.created_at DESC;
+$$;
+REVOKE ALL ON FUNCTION public.chamados_avaliacoes_detalhe() FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.chamados_avaliacoes_detalhe() TO authenticated;
+
+COMMENT ON FUNCTION public.chamados_avaliacoes_detalhe() IS
+  'Avaliações individuais (quem deu a nota, critérios e comentário) para o Painel de Distribuição. Só gestão.';
+
+-- ── Conferência ──────────────────────────────────────────────────────
+-- Quantas avaliações JÁ EXISTENTES não passariam na nova regra (ficam
+-- válidas pelo NOT VALID; é só pra saber o tamanho do buraco de informação).
+SELECT count(*) FILTER (
+         WHERE NOT (qualidade = 5 AND prazo = 5 AND comunicacao = 5
+                    AND clareza = 5 AND facilidade = 5 AND satisfacao = 5)
+           AND (comentario IS NULL OR length(btrim(comentario)) < 10)
+       ) AS sem_comentario_antigas,
+       count(*) AS total
+  FROM public."CHAMADO_SISTEMA_AVALIACAO";
+
+NOTIFY pgrst, 'reload schema';
+
+-- =====================================================================
+-- ROLLBACK
+--   ALTER TABLE public."CHAMADO_SISTEMA_AVALIACAO"
+--     DROP CONSTRAINT IF EXISTS chamado_avaliacao_comentario_obrigatorio;
+--   DROP FUNCTION IF EXISTS public.chamados_avaliacoes_detalhe();
+-- =====================================================================

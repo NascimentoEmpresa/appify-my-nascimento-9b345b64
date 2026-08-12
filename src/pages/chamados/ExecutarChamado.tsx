@@ -15,11 +15,12 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { CheckCircle2, MessageSquare, XCircle, Paperclip, ArrowLeft, Trash2, Star, Send, UploadCloud, X, RotateCcw, Reply } from "lucide-react";
+import { CheckCircle2, MessageSquare, XCircle, Paperclip, ArrowLeft, Trash2, Star, RotateCcw } from "lucide-react";
 import { ExcluirChamadoDialog } from "./ExcluirChamadoDialog";
+import { ChatChamado } from "./ChatChamado";
 import {
-  StatusBadge, PrioridadeBadge, STATUS_CHAMADO, Estrelas,
-  CATEGORIAS, TIPOS, IMPACTOS, URGENCIAS, AMBIENTES, CRITERIOS_AVALIACAO, mediaAvaliacao,
+  StatusBadge, PrioridadeBadge, STATUS_CHAMADO, CardAvaliacao,
+  CATEGORIAS, TIPOS, IMPACTOS, URGENCIAS, AMBIENTES,
   labelDe, moduloLabel, fmtData, fmtDataHora,
   BUCKET_CHAMADOS, type Chamado, type Anexo, type Evento, type AvaliacaoChamado,
 } from "./types";
@@ -32,15 +33,11 @@ export default function ExecutarChamado() {
   const { user } = useAuth();
   const { canCoordenar, canAprovar, canDev, canExcluir, gestor } = useChamadoPerms();
 
-  const [obsInterna, setObsInterna] = useState("");
   const [reprovando, setReprovando] = useState(false);
   const [motivo, setMotivo] = useState("");
   const [excluindoOpen, setExcluindoOpen] = useState(false);
   const [agindo, setAgindo] = useState<string | null>(null); // ação em curso (trava cliques repetidos)
   const [flash, setFlash] = useState(false);                 // pisca o selo de status ao mudar
-  const [resposta, setResposta] = useState("");              // resposta pública ao solicitante
-  const [respArquivos, setRespArquivos] = useState<File[]>([]);
-  const [enviandoResp, setEnviandoResp] = useState(false);
 
   const { data: usuarios = [] } = useQuery({
     queryKey: ["chamados-usuarios"],
@@ -122,55 +119,6 @@ export default function ExecutarChamado() {
     invalidar();
   };
 
-  const salvarObs = async () => {
-    if (!obsInterna.trim()) return;
-    const { error } = await (supabase as any).from("CHAMADO_SISTEMA_EVENTO").insert({
-      chamado_id: id, tipo: "observacao_interna", texto: obsInterna.trim(),
-    });
-    if (error) { toast({ title: "Erro ao salvar observação", description: error.message, variant: "destructive" }); return; }
-    setObsInterna("");
-    qc.invalidateQueries({ queryKey: ["chamado-eventos", id] });
-  };
-
-  // Resposta PÚBLICA ao solicitante (aparece no histórico dele) + anexos.
-  const sanitizeNome = (nome: string) =>
-    nome.normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/[^a-zA-Z0-9._-]/g, "_");
-
-  const responderSolicitante = async () => {
-    if ((!resposta.trim() && respArquivos.length === 0) || enviandoResp) return;
-    setEnviandoResp(true);
-
-    // 1) Comentário visível ao solicitante (só grava se houver texto).
-    if (resposta.trim()) {
-      const { error } = await (supabase as any).from("CHAMADO_SISTEMA_EVENTO").insert({
-        chamado_id: id, tipo: "comentario", texto: resposta.trim(),
-      });
-      if (error) { setEnviandoResp(false); toast({ title: "Erro ao enviar resposta", description: error.message, variant: "destructive" }); return; }
-    }
-
-    // 2) Anexos da resposta (best-effort), marcados com campo 'resposta'.
-    const falhas: string[] = [];
-    for (const file of respArquivos) {
-      const path = `${id}/${Date.now()}-${sanitizeNome(file.name)}`;
-      const up = await supabase.storage.from(BUCKET_CHAMADOS).upload(path, file, { contentType: file.type });
-      if (up.error) { falhas.push(file.name); continue; }
-      await (supabase as any).from("CHAMADO_SISTEMA_ANEXO").insert({
-        chamado_id: id, storage_path: path, nome_arquivo: file.name,
-        mime_type: file.type || null, tamanho_bytes: file.size, campo: "resposta",
-      });
-    }
-
-    supabase.functions.invoke("enviar-notificacao-push", { body: { chamado_id: id, evento: "resposta_time" } }).catch(() => {});
-    setResposta(""); setRespArquivos([]);
-    setEnviandoResp(false);
-    toast({
-      title: "Resposta enviada ao solicitante",
-      description: falhas.length ? `Anexos com falha: ${falhas.join(", ")}` : undefined,
-    });
-    qc.invalidateQueries({ queryKey: ["chamado-eventos", id] });
-    qc.invalidateQueries({ queryKey: ["chamado-anexos", id] });
-  };
-
   const reprovar = async () => {
     if (!motivo.trim()) { toast({ title: "Informe o motivo.", variant: "destructive" }); return; }
     const { error } = await (supabase as any).from("CHAMADO_SISTEMA").update({ status: "reprovado", motivo_reprovacao: motivo.trim() }).eq("id", id);
@@ -191,7 +139,9 @@ export default function ExecutarChamado() {
   if (!chamado) return <p className="p-6 text-sm text-muted-foreground">Carregando…</p>;
 
   const anexosAbertura = anexos.filter((a) => (a.campo ?? "abertura") === "abertura");
-  const anexosResposta = anexos.filter((a) => a.campo && a.campo !== "abertura");
+  // Anexos de resposta anteriores ao chat: não pertencem a mensagem nenhuma, então
+  // não têm balão onde aparecer — seguem listados à parte.
+  const anexosLegado = anexos.filter((a) => a.campo && a.campo !== "abertura" && !a.evento_id);
   const encerrado = chamado.status === "concluido" || chamado.status === "reprovado";
 
   const Campo = ({ label, children }: { label: string; children: React.ReactNode }) => (
@@ -249,25 +199,7 @@ export default function ExecutarChamado() {
           )}
 
           {avaliacao && (
-            <Card className="animate-rise-in space-y-2 border-warning/30 bg-warning/5 p-4">
-              <div className="flex items-center justify-between">
-                <p className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wider text-warning"><Star className="h-3.5 w-3.5" /> Avaliação do solicitante</p>
-                <div className="flex items-center gap-1.5">
-                  <Estrelas valor={mediaAvaliacao(avaliacao)} size={18} />
-                  <span className="text-xs font-semibold text-muted-foreground">{mediaAvaliacao(avaliacao).toFixed(1).replace(".", ",")}</span>
-                </div>
-              </div>
-              <div className="grid gap-1 sm:grid-cols-2">
-                {CRITERIOS_AVALIACAO.map((c) => (
-                  <div key={c.key} className="flex items-center justify-between gap-2 text-xs">
-                    <span className="text-muted-foreground">{c.titulo}</span>
-                    <Estrelas valor={avaliacao[c.key]} size={12} />
-                  </div>
-                ))}
-              </div>
-              {avaliacao.comentario && <p className="whitespace-pre-wrap border-t border-warning/20 pt-2 text-sm">{avaliacao.comentario}</p>}
-              <p className="text-[11px] text-muted-foreground">{fmtDataHora(avaliacao.created_at)}</p>
-            </Card>
+            <CardAvaliacao avaliacao={avaliacao} titulo="Avaliação do solicitante" tone="warning" />
           )}
 
           <Card className="space-y-3 p-4">
@@ -297,50 +229,12 @@ export default function ExecutarChamado() {
             </div>
           </Card>
 
-          {/* Responder ao solicitante (visível a ele) + anexos */}
-          {podeAgir && !encerrado && (
-            <Card className="animate-rise-in space-y-3 border-primary/30 p-4">
-              <p className="flex items-center gap-1.5 text-sm font-bold"><Reply className="h-4 w-4 text-primary" /> Responder ao solicitante <span className="font-normal text-muted-foreground">(o solicitante recebe e vê no histórico)</span></p>
-              <Textarea
-                rows={3} maxLength={4000}
-                placeholder="Escreva a resposta, uma dúvida ou o retorno da entrega para o solicitante…"
-                value={resposta} onChange={(e) => setResposta(e.target.value)}
-              />
-              <label className="flex cursor-pointer items-center justify-center gap-2 rounded-lg border border-dashed border-border px-3 py-2.5 text-center text-xs text-muted-foreground hover:border-primary/40">
-                <UploadCloud className="h-4 w-4" /> Anexar arquivos (imagens, PDF, planilhas…)
-                <input
-                  type="file" multiple className="hidden"
-                  accept=".pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.csv,.zip,image/*"
-                  onChange={(e) => { setRespArquivos((cur) => [...cur, ...Array.from(e.target.files ?? [])]); e.target.value = ""; }}
-                />
-              </label>
-              {respArquivos.length > 0 && (
-                <div className="space-y-1">
-                  {respArquivos.map((f, i) => (
-                    <div key={i} className="flex items-center justify-between rounded border border-border px-2.5 py-1.5 text-xs">
-                      <span className="truncate">{f.name}</span>
-                      <button type="button" onClick={() => setRespArquivos((cur) => cur.filter((_, j) => j !== i))} className="ml-2 text-muted-foreground hover:text-destructive">
-                        <X className="h-3.5 w-3.5" />
-                      </button>
-                    </div>
-                  ))}
-                </div>
-              )}
-              <Button
-                className="w-full gap-2 transition-transform active:scale-95"
-                onClick={responderSolicitante}
-                disabled={enviandoResp || (!resposta.trim() && respArquivos.length === 0)}
-              >
-                <Send className="h-4 w-4" /> {enviandoResp ? "Enviando…" : "Enviar resposta"}
-              </Button>
-            </Card>
-          )}
-
-          {anexosResposta.length > 0 && (
+          {/* Anexos de respostas antigas — as novas já aparecem no balão do chat */}
+          {anexosLegado.length > 0 && (
             <Card className="space-y-2 p-4">
-              <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Anexos enviados nas respostas ({anexosResposta.length})</p>
+              <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Anexos enviados nas respostas ({anexosLegado.length})</p>
               <div className="space-y-1">
-                {anexosResposta.map((a) => (
+                {anexosLegado.map((a) => (
                   <button key={a.id} onClick={() => baixarAnexo(a.storage_path)} className="flex w-full items-center gap-2 rounded border border-border px-2.5 py-1.5 text-left text-xs hover:border-primary/40">
                     <Paperclip className="h-3.5 w-3.5 text-muted-foreground" />
                     <span className="flex-1 truncate">{a.nome_arquivo}</span>
@@ -352,32 +246,14 @@ export default function ExecutarChamado() {
             </Card>
           )}
 
-          {/* Observações internas */}
-          <Card className="space-y-2 p-4">
-            <p className="text-sm font-bold">Observações internas <span className="font-normal text-muted-foreground">(visíveis só à equipe)</span></p>
-            {podeAgir && (
-              <div className="flex items-start gap-2">
-                <Textarea rows={2} maxLength={1000} placeholder="Adicione observações sobre o andamento, testes, decisões técnicas…" value={obsInterna} onChange={(e) => setObsInterna(e.target.value)} />
-                <Button size="sm" onClick={salvarObs} disabled={!obsInterna.trim()}>Salvar</Button>
-              </div>
-            )}
-            <div className="space-y-2 pt-1">
-              {eventos.map((e) => (
-                <div key={e.id} className="rounded border border-border/60 px-2.5 py-1.5">
-                  <p className="flex items-center gap-2 text-[11px] text-muted-foreground">
-                    <span className="font-medium text-foreground">{nomeDe(e.autor_id)}</span>
-                    {e.tipo === "observacao_interna" && <span className="rounded bg-muted px-1.5 text-[9px] font-semibold uppercase">interna</span>}
-                    {e.tipo === "evento" && <span className="rounded bg-info/10 px-1.5 text-[9px] font-semibold uppercase text-info">evento</span>}
-                    {e.tipo === "comentario" && e.autor_id === chamado.solicitante_id && <span className="rounded bg-primary/10 px-1.5 text-[9px] font-semibold uppercase text-primary">solicitante</span>}
-                    {e.tipo === "comentario" && e.autor_id !== chamado.solicitante_id && <span className="rounded bg-info/10 px-1.5 text-[9px] font-semibold uppercase text-info">comentário</span>}
-                    <span>{fmtDataHora(e.created_at)}</span>
-                  </p>
-                  {e.texto && <p className="whitespace-pre-wrap text-xs">{e.texto}</p>}
-                </div>
-              ))}
-              {eventos.length === 0 && <p className="text-xs text-muted-foreground">Sem histórico ainda.</p>}
-            </div>
-          </Card>
+          {/* Conversa do chamado (grupo: solicitante + equipe) */}
+          <ChatChamado
+            chamadoId={chamado.id}
+            solicitanteId={chamado.solicitante_id}
+            perfil="equipe"
+            encerrado={encerrado}
+            somenteLeitura={!podeAgir}
+          />
         </div>
 
         {/* Coluna de execução */}
