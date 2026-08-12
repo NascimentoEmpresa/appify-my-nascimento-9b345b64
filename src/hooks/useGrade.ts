@@ -126,9 +126,11 @@ export function useGradeUpdate(empresaId: string) {
 
       const updated = data as GradeItem;
 
-      // Item 8: auto-atualiza status da capa quando grade finalizada
-      if (changes.fase === "Finalizada" && updated.capa_id) {
-        const novoStatus = updated.posicao === 1 ? "Ganhamos" : "Perdemos";
+      // Item 8: auto-atualiza status da capa quando grade finalizada ou não participada
+      if (updated.capa_id && (changes.fase === "Finalizada" || changes.fase === "Não Participado")) {
+        const novoStatus =
+          changes.fase === "Não Participado" ? "Não Participado" :
+          updated.posicao === 1 ? "Ganhamos" : "Perdemos";
         await supabase
           .from("capa_edital")
           .update({ status: novoStatus })

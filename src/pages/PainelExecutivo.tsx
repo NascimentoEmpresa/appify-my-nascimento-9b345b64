@@ -373,7 +373,7 @@ export default function PainelExecutivo() {
 
           <Card
             title="Taxa de Sucesso por Responsável"
-            subtitle="% de vitórias dos editais finalizados no período"
+            subtitle="% de vitórias sobre editais finalizados — Não Participado, Suspenso e Revogado não contabilizados"
             className="xl:col-span-2"
             headerExtra={
               <button

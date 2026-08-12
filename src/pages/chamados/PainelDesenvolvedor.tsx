@@ -20,6 +20,7 @@ import { PieChart, Pie, Cell, ResponsiveContainer } from "recharts";
 import { ListChecks, Clock, MessageSquare, CheckCircle2, AlertTriangle, ShieldAlert, CalendarClock, RotateCw, ArrowUpRight, Plus, BookOpen, ClipboardCheck, Sparkles, FileText, Zap, Star, Trophy, GitPullRequest } from "lucide-react";
 import { HoverCard, HoverCardTrigger, HoverCardContent } from "@/components/ui/hover-card";
 import { FeedAtualizacoes } from "./FeedAtualizacoes";
+import { BotaoChatChamado, useChamadosNaoLidos } from "./BotaoChatChamado";
 import {
   StatCard, PrioridadeBadge, StatusBadge, STATUS_CHAMADO, PRIORIDADES, Estrelas, iniciais, fmtData, fmtDataHora,
   chamadoAtivo, posicoesFilaDev, CRITERIOS_AVALIACAO, mediaAvaliacao, type Chamado,
@@ -153,6 +154,8 @@ export default function PainelDesenvolvedor() {
     },
   });
   const nomeDe = (uid: string | null) => (uid ? usuarios.find((u) => u.id === uid)?.display_name ?? "—" : "—");
+
+  const { data: naoLidos = {} } = useChamadosNaoLidos();
 
   // Ranking de satisfação da equipe (nota final ponderada + médias por critério).
   const { data: ranking = [] } = useQuery({
@@ -324,6 +327,7 @@ export default function PainelDesenvolvedor() {
                     <TableHead>Status</TableHead>
                     <TableHead>Prazo</TableHead>
                     <TableHead>Atualização</TableHead>
+                    <TableHead className="text-right">Conversa</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -385,11 +389,14 @@ export default function PainelDesenvolvedor() {
                         <TableCell><StatusBadge status={c.status} /></TableCell>
                         <TableCell className={`whitespace-nowrap text-xs ${atrasado ? "font-semibold text-destructive" : ""}`}>{fmtData(c.prazo_previsto)}{atrasado ? " · atrasado" : ""}</TableCell>
                         <TableCell className="whitespace-nowrap text-xs text-muted-foreground">{fmtDataHora(c.updated_at)}</TableCell>
+                        <TableCell className="text-right" onClick={(e) => e.stopPropagation()}>
+                          <BotaoChatChamado chamado={c} perfil="equipe" naoLidos={naoLidos[c.id] ?? 0} responsavelNome={nomeDe(c.responsavel_id)} />
+                        </TableCell>
                       </TableRow>
                     );
                   })}
                   {visiveis.length === 0 && (
-                    <TableRow><TableCell colSpan={7} className="py-6 text-center text-sm text-muted-foreground">
+                    <TableRow><TableCell colSpan={8} className="py-6 text-center text-sm text-muted-foreground">
                       {visao === "concluidos" ? "Nenhum chamado concluído." : "Nenhum chamado na sua fila."}
                     </TableCell></TableRow>
                   )}
