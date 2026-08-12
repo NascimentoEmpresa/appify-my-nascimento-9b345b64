@@ -522,7 +522,9 @@ export function ChatChamado({
                     )}
                   </p>
 
-                  {e.texto && <p className="whitespace-pre-wrap break-words text-sm">{e.texto}</p>}
+                  {/* overflow-wrap:anywhere porque break-words não quebra uma
+                      "palavra" gigante sem espaço — e aí o balão estoura. */}
+                  {e.texto && <p className="whitespace-pre-wrap break-words text-sm [overflow-wrap:anywhere]">{e.texto}</p>}
 
                   {anexosMsg.length > 0 && (
                     <div className="mt-1.5 space-y-1.5">
