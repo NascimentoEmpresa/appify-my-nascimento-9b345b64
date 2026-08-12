@@ -24,7 +24,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     // 1) Listener primeiro (evita perder eventos)
-    const { data: sub } = supabase.auth.onAuthStateChange((_event, newSession) => {
+    const { data: sub } = supabase.auth.onAuthStateChange((event, newSession) => {
       setSession(newSession);
 
       // Trocou de usuário (login, logout, ou externo → interno): joga fora o
@@ -34,6 +34,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       // mantém o mesmo uid e NÃO limpa nada.
       const nextUid = newSession?.user?.id ?? null;
       if (uidRef.current !== nextUid) {
+        // Sessão expirou (refresh falhou) enquanto o usuário estava logado:
+        // redireciona para login com flag para exibir aviso.
+        if (uidRef.current !== null && nextUid === null && event === "SIGNED_OUT") {
+          queryClient.clear();
+          window.location.replace("/login?expired=1");
+          return;
+        }
         if (uidRef.current !== null) queryClient.clear();
         uidRef.current = nextUid;
       }
@@ -63,6 +70,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     return () => sub.subscription.unsubscribe();
   }, [queryClient]);
+
+  // Quando o usuário volta à aba após inatividade, força refresh do token
+  // antes que o React Query dispare queries com JWT potencialmente expirado.
+  useEffect(() => {
+    const onVisible = () => {
+      if (document.visibilityState === "visible") {
+        supabase.auth.refreshSession();
+      }
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => document.removeEventListener("visibilitychange", onVisible);
+  }, []);
 
   const signOut = useCallback(async () => {
     await supabase.auth.signOut();
