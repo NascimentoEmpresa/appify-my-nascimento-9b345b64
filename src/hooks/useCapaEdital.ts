@@ -143,16 +143,34 @@ export function useCapaUpdate(empresaId: string) {
         historico.push({ ts: now, campo: "Homologação", de: "—", para: today });
       }
 
-      // Sincroniza grade: Ganhamos → posicao=1 + Finalizada; Perdemos → posicao=2 + Finalizada
+      // Sincroniza grade: Ganhamos → posicao=1 + Finalizada; Perdemos → só Finalizada
+      // (posicao não é sobrescrita em "Perdemos": perder não implica 2º lugar)
       if (changes.status && changes.status !== current.status && current.grade_id) {
         const gradeChanges =
           changes.status === "Ganhamos"
-            ? { posicao: 1, fase: "Finalizada" }
+            ? { posicao: 1, fase: "Finalizada" as const }
             : changes.status === "Perdemos"
-            ? { posicao: 2, fase: "Finalizada" }
+            ? { fase: "Finalizada" as const }
             : null;
         if (gradeChanges) {
-          await supabase.from("grade").update(gradeChanges).eq("id", current.grade_id);
+          // Busca estado atual da grade e usuário para registrar no histórico
+          const [{ data: gradeAtual }, { data: authData }] = await Promise.all([
+            supabase.from("grade").select("fase, posicao, historico").eq("id", current.grade_id).single(),
+            supabase.auth.getUser(),
+          ]);
+          const { data: profile } = authData?.user
+            ? await supabase.from("profiles").select("display_name, email").eq("id", authData.user.id).maybeSingle()
+            : { data: null };
+          const usuario = (profile as any)?.display_name || (profile as any)?.email || authData?.user?.email || "—";
+
+          const gradeHistorico = [...((gradeAtual as any)?.historico ?? [])];
+          gradeHistorico.push({ ts: now, usuario, campo: "Fase", de: (gradeAtual as any)?.fase ?? "—", para: "Finalizada" });
+          if (changes.status === "Ganhamos") {
+            const posAnterior = (gradeAtual as any)?.posicao;
+            gradeHistorico.push({ ts: now, usuario, campo: "Posição", de: posAnterior ? `${posAnterior}º` : "—", para: "1º" });
+          }
+
+          await supabase.from("grade").update({ ...gradeChanges, historico: gradeHistorico }).eq("id", current.grade_id);
         }
       }
 

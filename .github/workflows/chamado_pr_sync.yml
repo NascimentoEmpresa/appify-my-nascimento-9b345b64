@@ -1,0 +1,148 @@
+name: Sincronizar Chamado ↔ PR
+
+# pull_request_target (não pull_request): precisa rodar com os secrets do
+# repositório base mesmo em PR de fork, já que qualquer pessoa pode abrir PR
+# num repo público. Por isso NÃO fazemos checkout nem executamos nada do
+# código da branch da PR — só lemos metadados (título/labels/corpo/autor) via
+# API, o que é seguro independente de quem abriu a PR.
+on:
+  pull_request_target:
+    # synchronize = novo commit na PR (inclui "Update branch"/merge da base) —
+    # sem isso, o check obrigatório fica travado como "esperado" pra sempre
+    # depois de qualquer commit novo, mesmo já tendo passado antes.
+    # reopened = reabrir uma PR fechada, mesmo caso de opened na prática.
+    types: [opened, edited, synchronize, reopened]
+
+jobs:
+  # Vira "required status check" na proteção de branch da main (configurado
+  # manualmente em Settings → Branches). Bloqueia o MERGE — não a abertura da
+  # PR, o GitHub não permite vetar isso.
+  validar-chamado:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Validar número de chamado no título da PR
+        env:
+          # Título vem via env, nunca interpolado direto no script — título é
+          # texto de terceiros (qualquer um pode abrir PR num repo público) e
+          # interpolação direta em bash permitiria injeção de comando.
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_LABELS: ${{ toJSON(github.event.pull_request.labels.*.name) }}
+          SUPABASE_FUNCTIONS_URL: https://fwmzeaztjxrxxzxzxmgc.supabase.co/functions/v1
+          CHAMADOS_CI_SECRET: ${{ secrets.CHAMADOS_CI_SECRET }}
+        run: |
+          set -euo pipefail
+
+          # Válvula de escape: PR sem chamado relacionado, de propósito.
+          if [[ "$PR_TITLE" == "[SEM-CHAMADO]"* ]] || echo "$PR_LABELS" | grep -q '"sem-chamado"'; then
+            echo "Válvula de escape ativa — PR marcada explicitamente como sem chamado."
+            exit 0
+          fi
+
+          NUMERO=$(echo "$PR_TITLE" | grep -oE '^SIS-[0-9]{4}-[0-9]+' || true)
+          if [ -z "$NUMERO" ]; then
+            echo "::error::Título da PR precisa começar com o número do chamado (ex: SIS-2026-0076: resumo da mudança). Se esta PR não tem chamado, comece o título com [SEM-CHAMADO] ou adicione a label 'sem-chamado'."
+            exit 1
+          fi
+
+          RESP=$(curl -sS --max-time 15 -w '\n%{http_code}' \
+            -H "Authorization: Bearer $CHAMADOS_CI_SECRET" \
+            "$SUPABASE_FUNCTIONS_URL/chamado-info?numero=$NUMERO") || RESP=$'\n000'
+
+          HTTP_CODE=$(echo "$RESP" | tail -n1)
+          BODY=$(echo "$RESP" | sed '$d')
+
+          # Falha ABERTA em erro de infraestrutura (rede/timeout/Supabase fora
+          # do ar) — diferente de "chamado não encontrado". Uma instabilidade
+          # externa não pode travar merge de toda PR da empresa.
+          if [ "$HTTP_CODE" = "000" ]; then
+            echo "::warning::Não foi possível contatar o serviço de chamados — passando o check pra não travar merges por instabilidade externa."
+            exit 0
+          fi
+
+          # HTTP diferente de 200 é problema NOSSO (function com erro, "Verify
+          # JWT" ligado no Supabase, secret divergente) — não "chamado não
+          # existe". Falha com uma mensagem que aponta pra causa certa, em vez
+          # de confundir com um número de chamado inválido.
+          if [ "$HTTP_CODE" != "200" ]; then
+            echo "::error::chamado-info respondeu HTTP $HTTP_CODE (esperado 200): $BODY"
+            echo "::error::Verifique se 'Verify JWT' está DESLIGADO na function chamado-info (Supabase → Edge Functions → chamado-info → Settings) e se CHAMADOS_CI_SECRET é idêntico no GitHub e no Supabase."
+            exit 1
+          fi
+
+          ENCONTRADO=$(echo "$BODY" | jq -r '.encontrado // false')
+          if [ "$ENCONTRADO" != "true" ]; then
+            echo "::error::Chamado $NUMERO não foi encontrado no sistema."
+            exit 1
+          fi
+
+          echo "Chamado $NUMERO validado com sucesso."
+
+  # Best-effort: nunca falha o workflow. Preenche o corpo da PR com os dados
+  # do chamado e registra o link da PR como evento do chamado (só na abertura).
+  sincronizar-chamado:
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+    steps:
+      - name: Sincronizar dados do chamado na PR
+        uses: actions/github-script@v7
+        env:
+          CHAMADOS_CI_SECRET: ${{ secrets.CHAMADOS_CI_SECRET }}
+        with:
+          script: |
+            const title = context.payload.pull_request.title || "";
+            const match = title.match(/^SIS-\d{4}-\d+/);
+            if (!match) { core.info("Sem número de chamado no título — nada a sincronizar."); return; }
+            const numero = match[0];
+            const FUNCS = "https://fwmzeaztjxrxxzxzxmgc.supabase.co/functions/v1";
+            const secret = process.env.CHAMADOS_CI_SECRET;
+
+            const infoRes = await fetch(`${FUNCS}/chamado-info?numero=${encodeURIComponent(numero)}`, {
+              headers: { Authorization: `Bearer ${secret}` },
+            });
+            if (!infoRes.ok) {
+              core.warning(`chamado-info respondeu ${infoRes.status} (esperado 200) — não sincronizando. Se for 401, confira 'Verify JWT' desligado na function e o CHAMADOS_CI_SECRET.`);
+              return;
+            }
+            const info = await infoRes.json();
+            if (!info.encontrado) { core.info(`Chamado ${numero} não encontrado — nada a sincronizar.`); return; }
+
+            const bloco = [
+              "<!-- chamado:auto:start -->",
+              `**Chamado:** ${info.numero} — ${info.assunto}`,
+              "",
+              `**Descrição:** ${info.descricao || "—"}`,
+              "<!-- chamado:auto:end -->",
+            ].join("\n");
+
+            const corpoAtual = context.payload.pull_request.body || "";
+            const regex = /<!-- chamado:auto:start -->[\s\S]*?<!-- chamado:auto:end -->/;
+            const novoCorpo = regex.test(corpoAtual) ? corpoAtual.replace(regex, bloco) : `${bloco}\n\n${corpoAtual}`;
+
+            if (novoCorpo !== corpoAtual) {
+              await github.rest.pulls.update({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                pull_number: context.payload.pull_request.number,
+                body: novoCorpo,
+              });
+              core.info("Corpo da PR atualizado com os dados do chamado.");
+            }
+
+            // Só registra o vínculo de volta no chamado quando a PR é aberta
+            // (não a cada edição de título), pra não gerar evento repetido.
+            if (context.payload.action === "opened") {
+              const vincularRes = await fetch(`${FUNCS}/chamado-vincular-pr`, {
+                method: "POST",
+                headers: { Authorization: `Bearer ${secret}`, "Content-Type": "application/json" },
+                body: JSON.stringify({
+                  numero,
+                  pr_url: context.payload.pull_request.html_url,
+                  pr_titulo: title,
+                  pr_autor_github: context.payload.pull_request.user.login,
+                }),
+              });
+              if (!vincularRes.ok) core.warning(`chamado-vincular-pr respondeu ${vincularRes.status}`);
+            }
