@@ -27,6 +27,8 @@ interface FormState {
   nome: string;
   ativo: boolean;
   requerSolicitacao: boolean;
+  aprovadorSolicitacaoUserId: string | null;
+  aprovadorSolicitacaoNome: string | null;
   tipo: TipoClassificacaoOrcamento | null;
   setorResponsavel: string | null;
   aprovador1UserId: string | null;
@@ -47,6 +49,8 @@ const VAZIO: FormState = {
   nome: "",
   ativo: true,
   requerSolicitacao: false,
+  aprovadorSolicitacaoUserId: null,
+  aprovadorSolicitacaoNome: null,
   tipo: null,
   setorResponsavel: null,
   aprovador1UserId: null,
@@ -69,6 +73,8 @@ function paraFormState(c: ClassificacaoOrcamento): FormState {
     nome: c.nome,
     ativo: c.ativo,
     requerSolicitacao: c.requer_solicitacao,
+    aprovadorSolicitacaoUserId: c.aprovador_solicitacao_user_id,
+    aprovadorSolicitacaoNome: c.aprovador_solicitacao_nome,
     tipo: c.tipo,
     setorResponsavel: c.setor_responsavel,
     aprovador1UserId: c.aprovador1_user_id,
@@ -96,6 +102,7 @@ export default function ClassificacoesOrcamento() {
   const { data: aprovadores1 = [] } = useAprovadoresDisponiveis(1);
   const { data: aprovadores2 = [] } = useAprovadoresDisponiveis(2);
   const { data: aprovadores3 = [] } = useAprovadoresDisponiveis(3);
+  const { data: aprovadoresSolicitacao = [] } = useAprovadoresDisponiveis();
   const { data: setores = [] } = useSetoresCatalogo();
   const salvar = useSalvarClassificacaoOrcamento();
 
@@ -130,6 +137,11 @@ export default function ClassificacoesOrcamento() {
     editando?.aprovador3UserId ?? null,
     editando?.aprovador3Nome ?? null
   );
+  const opcoesAprovadorSolicitacao = comSelecaoAtual(
+    aprovadoresSolicitacao.map((a) => ({ value: a.id, label: a.nome })),
+    editando?.aprovadorSolicitacaoUserId ?? null,
+    editando?.aprovadorSolicitacaoNome ?? null
+  );
 
   function abrirNovo() {
     setEditando({ ...VAZIO });
@@ -145,6 +157,13 @@ export default function ClassificacoesOrcamento() {
     const nome = todosAprovadores.find((a) => a.id === userId)?.nome ?? null;
     setEditando((v) =>
       v ? { ...v, [`aprovador${slot}UserId`]: userId || null, [`aprovador${slot}Nome`]: userId ? nome : null } : v
+    );
+  }
+
+  function setAprovadorSolicitacao(userId: string) {
+    const nome = aprovadoresSolicitacao.find((a) => a.id === userId)?.nome ?? null;
+    setEditando((v) =>
+      v ? { ...v, aprovadorSolicitacaoUserId: userId || null, aprovadorSolicitacaoNome: userId ? nome : null } : v
     );
   }
 
@@ -166,6 +185,10 @@ export default function ClassificacoesOrcamento() {
     }
     if (!editando.setorResponsavel) {
       toast.error("Selecione o setor responsável.");
+      return;
+    }
+    if (editando.requerSolicitacao && !editando.aprovadorSolicitacaoUserId) {
+      toast.error("Selecione o aprovador da solicitação.");
       return;
     }
     if (!editando.aprovador1UserId) {
@@ -204,6 +227,8 @@ export default function ClassificacoesOrcamento() {
         tipo: editando.tipo,
         setor_responsavel: editando.setorResponsavel,
         requer_solicitacao: editando.requerSolicitacao,
+        aprovador_solicitacao_user_id: editando.requerSolicitacao ? editando.aprovadorSolicitacaoUserId : null,
+        aprovador_solicitacao_nome: editando.requerSolicitacao ? editando.aprovadorSolicitacaoNome : null,
         aprovador1_user_id: editando.aprovador1UserId,
         aprovador1_nome: editando.aprovador1Nome ?? "",
         aprovador1_limite_pct: limite1,
@@ -360,6 +385,24 @@ export default function ClassificacoesOrcamento() {
                   </p>
                 </div>
               </div>
+              {editando?.requerSolicitacao && (
+                <div className="pl-6">
+                  <Label>
+                    Aprovador da solicitação <span className="text-destructive">*</span>
+                  </Label>
+                  <p className="text-xs text-muted-foreground mb-1">
+                    Responsável por aprovar a solicitação antes da cotação. Pode ser diferente do(s) aprovador(es)
+                    da despesa no Malote.
+                  </p>
+                  <SearchableSelect
+                    value={editando?.aprovadorSolicitacaoUserId ?? ""}
+                    onChange={setAprovadorSolicitacao}
+                    options={opcoesAprovadorSolicitacao}
+                    placeholder="Buscar aprovador..."
+                    searchPlaceholder="Buscar aprovador..."
+                  />
+                </div>
+              )}
             </div>
 
             <div className="grid grid-cols-2 gap-3">
