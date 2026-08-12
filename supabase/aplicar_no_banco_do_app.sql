@@ -10309,3 +10309,126 @@ NOTIFY pgrst, 'reload schema';
 -- =====================================================================
 -- ROLLBACK: reaplicar a função da 20260812000002 (só contratos ativos).
 -- =====================================================================
+
+
+-- ═══════════════════════════════════════════════════════════════════════
+-- COMITÊ DE ÉTICA: módulo próprio para as denúncias — migration 20260812000004
+-- ═══════════════════════════════════════════════════════════════════════
+
+INSERT INTO public.app_modulo (codigo, nome, descricao, icone, ordem)
+SELECT 'comite_etica', 'Comitê de Ética', 'Denúncias e apuração de conduta',
+       'ShieldAlert',
+       COALESCE((SELECT max(ordem) FROM public.app_modulo), 200) + 5
+WHERE NOT EXISTS (SELECT 1 FROM public.app_modulo WHERE codigo = 'comite_etica');
+
+-- Painel do canal próprio (o que recebe as denúncias do formulário público).
+UPDATE public.app_menu am
+   SET modulo_id = (SELECT id FROM public.app_modulo WHERE codigo = 'comite_etica'),
+       nome      = 'Denúncias',
+       rota      = '/app/comite-etica/denuncias',
+       ordem     = 10
+ WHERE am.codigo = 'central_servicos_canal_denuncias';
+
+-- Espelho legado da Contato Seguro: fica no mesmo módulo, mas identificado
+-- pela origem, senão as duas telas viram "Denúncias" e ninguém sabe qual é.
+UPDATE public.app_menu am
+   SET modulo_id = (SELECT id FROM public.app_modulo WHERE codigo = 'comite_etica'),
+       nome      = 'Denúncias (Contato Seguro)',
+       rota      = '/app/comite-etica/denuncias-contato-seguro',
+       ordem     = 20
+ WHERE am.codigo = 'central_servicos_denuncias';
+
+-- ── Conferência ──────────────────────────────────────────────────────
+SELECT m.codigo AS modulo, am.codigo AS menu, am.nome, am.rota
+  FROM public.app_menu am
+  JOIN public.app_modulo m ON m.id = am.modulo_id
+ WHERE am.codigo IN ('central_servicos_canal_denuncias', 'central_servicos_denuncias')
+ ORDER BY am.ordem;
+
+NOTIFY pgrst, 'reload schema';
+
+-- =====================================================================
+-- ROLLBACK
+--   UPDATE public.app_menu SET modulo_id = (SELECT id FROM public.app_modulo WHERE codigo='central_servicos'),
+--          nome='Denúncias (Canal de Ética)', rota='/app/central-servicos/denuncias', ordem=50
+--    WHERE codigo='central_servicos_denuncias';
+--   UPDATE public.app_menu SET modulo_id = (SELECT id FROM public.app_modulo WHERE codigo='central_servicos'),
+--          nome='Canal de Denúncias', rota='/app/central-servicos/canal-denuncias', ordem=55
+--    WHERE codigo='central_servicos_canal_denuncias';
+--   DELETE FROM public.app_modulo WHERE codigo='comite_etica';
+-- =====================================================================
+
+
+-- ═══════════════════════════════════════════════════════════════════════
+-- VEÍCULOS: passo 3 lê a tabela "CONTRATOS" — migration 20260812000005
+-- ═══════════════════════════════════════════════════════════════════════
+
+-- ── 1. O vínculo guarda o código da "CONTRATOS" ──────────────────────
+ALTER TABLE public.cs_veiculo_agendamento_contrato
+  ADD COLUMN IF NOT EXISTS contrato_codigo bigint;
+
+COMMENT ON COLUMN public.cs_veiculo_agendamento_contrato.contrato_codigo IS
+  'id da tabela "CONTRATOS" (maiuscula). NULL = vinculo antigo (ver contrato_id) ou viagem ADMINISTRATIVA.';
+COMMENT ON COLUMN public.cs_veiculo_agendamento_contrato.contrato_id IS
+  'LEGADO: uuid de public.contratos, usado ate 08/2026. Vinculos novos gravam contrato_codigo.';
+
+-- Marca a viagem que não atende contrato nenhum (tarefa administrativa).
+-- Sem esta coluna, "administrativo" e "vínculo antigo" seriam os dois um
+-- código nulo, e não daria para separar um do outro no relatório.
+ALTER TABLE public.cs_veiculo_agendamento_contrato
+  ADD COLUMN IF NOT EXISTS administrativo boolean NOT NULL DEFAULT false;
+
+COMMENT ON COLUMN public.cs_veiculo_agendamento_contrato.administrativo IS
+  'true = viagem administrativa, sem contrato especifico. contrato_codigo fica NULL.';
+
+-- Mesmo contrato duas vezes na mesma reserva não faz sentido.
+CREATE UNIQUE INDEX IF NOT EXISTS uq_cs_veic_agend_contrato_codigo
+  ON public.cs_veiculo_agendamento_contrato(agendamento_id, contrato_codigo)
+  WHERE contrato_codigo IS NOT NULL;
+
+-- ── 2. A RPC lê "CONTRATOS" ──────────────────────────────────────────
+DROP FUNCTION IF EXISTS public.cs_veiculos_contratos();
+DROP FUNCTION IF EXISTS public.cs_veiculos_contratos(boolean);
+
+CREATE OR REPLACE FUNCTION public.cs_veiculos_contratos(p_incluir_inativos boolean DEFAULT false)
+RETURNS TABLE (
+  codigo  bigint,
+  nome    text,
+  empresa text,
+  ativo   boolean
+)
+LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public, pg_temp
+AS $$
+  SELECT c.id,
+         btrim(c."NOME CONTRATO"),
+         NULLIF(btrim(c."NOME EMPRESA"), ''),
+         (upper(btrim(COALESCE(c."ATIVO", ''))) = 'SIM')
+    FROM public."CONTRATOS" c
+   -- O menu é o gate, igual à cs_veiculos_frota(). Sem ele, nada volta.
+   WHERE public.tem_acesso_menu('central_servicos_veiculos')
+     AND COALESCE(btrim(c."NOME CONTRATO"), '') <> ''
+     AND (p_incluir_inativos OR upper(btrim(COALESCE(c."ATIVO", ''))) = 'SIM')
+   ORDER BY (upper(btrim(COALESCE(c."ATIVO", ''))) = 'SIM') DESC, btrim(c."NOME CONTRATO");
+$$;
+REVOKE ALL ON FUNCTION public.cs_veiculos_contratos(boolean) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.cs_veiculos_contratos(boolean) TO authenticated;
+
+COMMENT ON FUNCTION public.cs_veiculos_contratos(boolean) IS
+  'Contratos da tabela "CONTRATOS" para o passo 3 do agendamento. Padrao = so ATIVO=SIM; p_incluir_inativos traz os demais. Gate = menu central_servicos_veiculos.';
+
+-- ── 3. Conferência ───────────────────────────────────────────────────
+SELECT upper(btrim(COALESCE("ATIVO", '(nulo)'))) AS ativo, count(*) AS contratos
+  FROM public."CONTRATOS"
+ WHERE COALESCE(btrim("NOME CONTRATO"), '') <> ''
+ GROUP BY 1 ORDER BY 2 DESC;
+
+NOTIFY pgrst, 'reload schema';
+
+-- =====================================================================
+-- ROLLBACK
+--   DROP FUNCTION IF EXISTS public.cs_veiculos_contratos(boolean);
+--   DROP INDEX IF EXISTS public.uq_cs_veic_agend_contrato_codigo;
+--   ALTER TABLE public.cs_veiculo_agendamento_contrato
+--     DROP COLUMN IF EXISTS contrato_codigo, DROP COLUMN IF EXISTS administrativo;
+--   -- e recriar a cs_veiculos_contratos() da 20260812000003
+-- =====================================================================

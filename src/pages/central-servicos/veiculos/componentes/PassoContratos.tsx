@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { Check, FileText, Search } from "lucide-react";
+import { Building2, Check, FileText, Search } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
@@ -13,8 +13,10 @@ interface Props {
   selecionados: string[];
   destino: string;
   motivo: string;
+  incluirInativos: boolean;
   onAlternar: (id: string) => void;
   onMudar: (v: { destino?: string; motivo?: string }) => void;
+  onIncluirInativos: (v: boolean) => void;
 }
 
 /**
@@ -30,8 +32,10 @@ export function PassoContratos({
   selecionados,
   destino,
   motivo,
+  incluirInativos,
   onAlternar,
   onMudar,
+  onIncluirInativos,
 }: Props) {
   const [busca, setBusca] = useState("");
 
@@ -41,8 +45,7 @@ export function PassoContratos({
     return contratos.filter(
       (c) =>
         c.nome.toLowerCase().includes(t) ||
-        (c.cliente ?? "").toLowerCase().includes(t) ||
-        (c.empresa_codigo ?? "").toLowerCase().includes(t),
+        (c.empresa ?? "").toLowerCase().includes(t),
     );
   }, [contratos, busca]);
 
@@ -65,11 +68,27 @@ export function PassoContratos({
         />
       </div>
 
+      {/* Inativo fica de fora por padrão: são 141 contra 58 ativos, e a lista
+          do dia a dia afundaria. Mas contrato encerrado ainda recebe visita,
+          então basta marcar aqui para eles aparecerem. */}
+      <label className="flex cursor-pointer items-center gap-2.5 rounded-lg border border-border bg-muted/30 px-3 py-2.5">
+        <input
+          type="checkbox"
+          className="h-4 w-4 accent-primary"
+          checked={incluirInativos}
+          onChange={(e) => onIncluirInativos(e.target.checked)}
+        />
+        <span className="text-sm font-medium">Contrato inativo?</span>
+        <span className="text-xs text-muted-foreground">
+          Mostrar também os contratos inativos
+        </span>
+      </label>
+
       <div className="max-h-72 space-y-2 overflow-y-auto pr-1">
         {carregando && <p className="py-6 text-center text-sm text-muted-foreground">Carregando contratos...</p>}
         {!carregando && filtrados.length === 0 && (
           <p className="py-6 text-center text-sm text-muted-foreground">
-            {busca ? "Nenhum contrato encontrado." : "Nenhum contrato cadastrado."}
+            {busca ? "Nenhum contrato encontrado." : "Nenhum contrato disponível."}
           </p>
         )}
         {filtrados.map((c, i) => {
@@ -95,28 +114,24 @@ export function PassoContratos({
               >
                 {marcado && <Check className="h-3 w-3 animate-check-pop" strokeWidth={3} />}
               </span>
-              <FileText className={cn("h-4 w-4 shrink-0", marcado ? "text-primary" : "text-muted-foreground")} />
+              {c.administrativo
+                ? <Building2 className={cn("h-4 w-4 shrink-0", marcado ? "text-primary" : "text-muted-foreground")} />
+                : <FileText className={cn("h-4 w-4 shrink-0", marcado ? "text-primary" : "text-muted-foreground")} />}
               <span className="min-w-0 flex-1">
                 <span className="flex items-center gap-1.5">
                   <span className="truncate text-sm font-medium text-foreground">{c.nome}</span>
-                  {/* Encerrado continua agendável (viagem de encerramento,
-                      retirada de material), mas sem o selo dava para escolher
-                      um contrato morto sem perceber. */}
-                  {c.status === "encerrado" && (
+                  {/* Inativo continua agendável, mas sem o selo dava para
+                      escolher um contrato morto sem perceber. */}
+                  {!c.administrativo && !c.ativo && (
                     <span className="shrink-0 rounded border border-warning/40 bg-warning/10 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-warning">
-                      Encerrado
+                      Inativo
                     </span>
                   )}
                 </span>
-                {c.cliente && <span className="block truncate text-xs text-muted-foreground">{c.cliente}</span>}
+                {c.administrativo
+                  ? <span className="block truncate text-xs text-muted-foreground">Viagem administrativa, sem contrato específico</span>
+                  : c.empresa && <span className="block truncate text-xs text-muted-foreground">{c.empresa}</span>}
               </span>
-              {/* O grupo é multi-CNPJ e a frota é compartilhada: sem o código
-                  da empresa, dois contratos de nome parecido viram um só. */}
-              {c.empresa_codigo && (
-                <span className="shrink-0 rounded-md border border-border bg-muted/60 px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-wider text-muted-foreground">
-                  {c.empresa_codigo}
-                </span>
-              )}
             </button>
           );
         })}

@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { ArrowLeft, ArrowRight, Car } from "lucide-react";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { Card } from "@/components/ui/card";
@@ -15,6 +15,7 @@ import {
   useContratosParaAgendamento,
   useCriarAgendamento,
   useFrota,
+  type ContratoOpcao,
   type Turno,
   type VeiculoFrota,
 } from "@/hooks/useAgendamentoVeiculos";
@@ -60,7 +61,9 @@ export default function AgendamentoVeiculos() {
 
   const frota = useFrota();
   const agenda = useAgendamentos();
-  const contratos = useContratosParaAgendamento();
+  // Inativos só entram quando a pessoa pede (são 141 contra 58 ativos).
+  const [incluirInativos, setIncluirInativos] = useState(false);
+  const contratos = useContratosParaAgendamento(incluirInativos);
   const criar = useCriarAgendamento();
 
   const [passo, setPasso] = useState<IndicePasso>(0);
@@ -86,12 +89,38 @@ export default function AgendamentoVeiculos() {
     irPara(1);
   };
 
+  // A lista muda quando a flag de inativos vira, mas a seleção fica. Se
+  // alguém marca um contrato inativo e depois desmarca a flag, o item sai da
+  // lista — e resolvendo pela lista atual o nome e o código dele se perderiam
+  // na hora de salvar. Então guardamos tudo que já passou pela tela.
+  const vistos = useRef(new Map<string, ContratoOpcao>());
+  contratos.data?.forEach((c) => vistos.current.set(c.id, c));
+
+  // Contrato marcado que saiu da lista (inativo, flag desligada depois) segue
+  // aparecendo: marcado num lugar onde não dá para desmarcar seria pior do que
+  // não aparecer. Entra logo depois do ADMINISTRATIVO, que fica sempre no topo.
+  const contratosVisiveis = useMemo(() => {
+    const lista = contratos.data ?? [];
+    const naLista = new Set(lista.map((c) => c.id));
+    const ocultos = rascunho.contratos
+      .filter((id) => !naLista.has(id))
+      .map((id) => vistos.current.get(id))
+      .filter((c): c is ContratoOpcao => !!c);
+    if (!ocultos.length) return lista;
+    const [primeiro, ...resto] = lista;
+    return primeiro?.administrativo ? [primeiro, ...ocultos, ...resto] : [...ocultos, ...lista];
+  }, [contratos.data, rascunho.contratos]);
+
+  // Resolve pela lista visível, que já traz junto o que estava selecionado e
+  // saiu da lista — assim nome e código sobrevivem ao liga-desliga da flag.
+  const acharContrato = (id: string) => contratosVisiveis.find((c) => c.id === id);
+
   const nomesDosContratos = useMemo(
     () =>
       rascunho.contratos
-        .map((id) => contratos.data?.find((c) => c.id === id)?.nome)
+        .map((id) => contratosVisiveis.find((c) => c.id === id)?.nome)
         .filter((n): n is string => !!n),
-    [rascunho.contratos, contratos.data],
+    [rascunho.contratos, contratosVisiveis],
   );
 
   // Cada passo só libera o próximo quando está de fato resolvido.
@@ -118,10 +147,14 @@ export default function AgendamentoVeiculos() {
         destino: rascunho.destino,
         motivo: rascunho.motivo,
         observacoes: rascunho.observacoes,
-        contratos: rascunho.contratos.map((id) => ({
-          id,
-          nome: contratos.data?.find((c) => c.id === id)?.nome ?? "Contrato",
-        })),
+        contratos: rascunho.contratos.map((id) => {
+          const c = acharContrato(id);
+          return {
+            codigo: c?.codigo ?? null,
+            nome: c?.nome ?? "Contrato",
+            administrativo: !!c?.administrativo,
+          };
+        }),
       });
       setRascunho(rascunhoInicial());
       setPasso(0);
@@ -231,8 +264,10 @@ export default function AgendamentoVeiculos() {
 
                 {passo === 2 && (
                   <PassoContratos
-                    contratos={contratos.data ?? []}
+                    contratos={contratosVisiveis}
                     carregando={contratos.isLoading}
+                    incluirInativos={incluirInativos}
+                    onIncluirInativos={setIncluirInativos}
                     selecionados={rascunho.contratos}
                     destino={rascunho.destino}
                     motivo={rascunho.motivo}

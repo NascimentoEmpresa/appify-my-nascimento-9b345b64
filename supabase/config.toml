@@ -48,3 +48,13 @@ verify_jwt = false
 
 [functions.chamado-vincular-pr]
 verify_jwt = false
+
+# Canal de Ética — as duas rotas públicas do formulário /denuncia. Sem JWT de
+# propósito: o navegador manda JSON puro e a chave anon fica só dentro da
+# função, no servidor. Quem valida é a RPC (registro) e o par protocolo+senha
+# conferido contra o hash (consulta).
+[functions.denuncia-registrar]
+verify_jwt = false
+
+[functions.denuncia-consultar]
+verify_jwt = false

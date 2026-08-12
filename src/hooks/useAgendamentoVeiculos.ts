@@ -53,15 +53,19 @@ export interface ContratoDoAgendamento {
   contrato_nome: string;
 }
 
-/** Contrato oferecido no passo 3, com o CNPJ a que pertence. */
+/** Chave da opção "viagem administrativa" (não é um contrato de verdade). */
+export const CONTRATO_ADMINISTRATIVO = "administrativo";
+
+/** Contrato oferecido no passo 3, vindo da tabela "CONTRATOS". */
 export interface ContratoOpcao {
+  /** Chave de seleção: o código como texto, ou CONTRATO_ADMINISTRATIVO. */
   id: string;
+  /** id da "CONTRATOS". NULL na opção administrativa. */
+  codigo: number | null;
   nome: string;
-  cliente: string | null;
-  empresa_codigo: string | null;
-  /** 'ativo' | 'encerrado'. Encerrado continua agendável (viagem de
-   *  encerramento, retirada de material), só vai marcado na lista. */
-  status: string | null;
+  empresa: string | null;
+  ativo: boolean;
+  administrativo?: boolean;
 }
 
 export interface Agendamento {
@@ -93,7 +97,8 @@ export interface NovoAgendamento {
   destino?: string | null;
   motivo?: string | null;
   observacoes?: string | null;
-  contratos: { id: string | null; nome: string }[];
+  /** codigo = id da "CONTRATOS"; null + administrativo = viagem sem contrato. */
+  contratos: { codigo: number | null; nome: string; administrativo?: boolean }[];
 }
 
 // ── Foto do veículo ──────────────────────────────────────────────────
@@ -259,33 +264,40 @@ export function useAgendamentos() {
 }
 
 /**
- * Contratos para o passo 3 — do GRUPO INTEIRO, mesma regra da frota, e
- * incluindo os ENCERRADOS: a frota continua rodando para contrato encerrado
- * (viagem de encerramento, retirada de material, acerto de pendência). Sem
- * eles na lista, a pessoa marcava um contrato errado só para fechar a reserva.
+ * Contratos para o passo 3, lidos da tabela "CONTRATOS" (a base oficial,
+ * com o campo ATIVO que a operação já conhece).
  *
- * Lia `contratos` direto, e aí a RLS da tabela (recorte por `user_empresa`)
- * entregava só os contratos do CNPJ do usuário: quem é da SN via 10 e não
- * conseguia marcar a viagem que atende os da HAGG — mesmo carro, mesma
- * viagem. Como o passo exige ao menos um contrato, a reserva não fechava.
+ * Por padrão só os ativos. `incluirInativos` traz também os inativos, porque
+ * contrato encerrado ainda recebe visita — mas eles ficam fora até alguém
+ * pedir, senão os 141 inativos afogam os 58 que se usa todo dia.
  *
- * A RPC resolve sem afrouxar a RLS de `contratos`, que continua valendo para
- * Licitações, Financeiro e o resto que lê essa tabela. O gate aqui é o menu
- * do agendamento, igual à `cs_veiculos_frota()`.
+ * O gate é o menu do agendamento, igual à `cs_veiculos_frota()`.
  */
-export function useContratosParaAgendamento() {
+export function useContratosParaAgendamento(incluirInativos = false) {
   return useQuery({
-    queryKey: ["cs_veiculos_contratos"],
+    queryKey: ["cs_veiculos_contratos", incluirInativos],
     queryFn: async (): Promise<ContratoOpcao[]> => {
-      const { data, error } = await sb.rpc("cs_veiculos_contratos");
+      const { data, error } = await sb.rpc("cs_veiculos_contratos", {
+        p_incluir_inativos: incluirInativos,
+      });
       if (error) throw error;
-      return ((data ?? []) as any[]).map((c) => ({
-        id: c.id,
-        nome: c.nome,
-        cliente: c.cliente,
-        empresa_codigo: c.empresa_codigo ?? null,
-        status: c.status ?? null,
+      const contratos = ((data ?? []) as any[]).map((c) => ({
+        id: String(c.codigo),
+        codigo: Number(c.codigo),
+        nome: c.nome as string,
+        empresa: (c.empresa ?? null) as string | null,
+        ativo: !!c.ativo,
       }));
+      // ADMINISTRATIVO sempre em primeiro: viagem de tarefa administrativa
+      // não atende contrato nenhum, e sem essa saída a pessoa marcava um
+      // contrato qualquer só para conseguir fechar a reserva.
+      return [
+        {
+          id: CONTRATO_ADMINISTRATIVO, codigo: null, nome: "ADMINISTRATIVO",
+          empresa: null, ativo: true, administrativo: true,
+        },
+        ...contratos,
+      ];
     },
     staleTime: 60_000,
   });
@@ -369,10 +381,14 @@ export function useCriarAgendamento() {
       // existe e o usuário perderia a vaga do carro sem saber. Por isso o
       // erro aqui é avisado, não propagado — a reserva vale, e o vínculo
       // pode ser refeito.
+      // contrato_id (uuid, da tabela antiga) fica nulo nos vínculos novos —
+      // o que identifica o contrato agora é contrato_codigo + contrato_nome.
       const vinculos = n.contratos.map((c) => ({
         agendamento_id: data.id,
-        contrato_id: c.id,
+        contrato_id: null,
+        contrato_codigo: c.codigo,
         contrato_nome: c.nome,
+        administrativo: !!c.administrativo,
       }));
       const { error: errCtr } = await sb.from("cs_veiculo_agendamento_contrato").insert(vinculos);
       if (errCtr) toast.warning("Reserva criada, mas os contratos não foram vinculados.");

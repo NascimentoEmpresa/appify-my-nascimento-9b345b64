@@ -146,6 +146,8 @@ import FormulariosDashboard from "./pages/central-servicos/FormulariosDashboard"
 import PainelGerencialFormularios from "./pages/central-servicos/PainelGerencial";
 import FormulariosConfig from "./pages/central-servicos/FormulariosConfig";
 import FormularioPublico from "./pages/publico/FormularioPublico";
+import Denuncia from "./pages/publico/Denuncia";
+import DenunciasComiteEtica from "./pages/comite-etica/Denuncias";
 import Ferias from "./pages/rh/Ferias";
 import MinhasSolicitacoes from "./pages/MinhasSolicitacoes";
 import BIDashboard from "./pages/bi/Dashboard";
@@ -231,6 +233,9 @@ const App = () => (
           <Route path="/candidatura" element={<Navigate to="/vagas" replace />} />
           {/* Nascimento Formulários — resposta pública, sem login */}
           <Route path="/formularios/:slug" element={<FormularioPublico />} />
+          {/* Canal de Ética — registro e acompanhamento de denúncia, sem login */}
+          <Route path="/denuncia" element={<Denuncia />} />
+          <Route path="/denuncia/acompanhar" element={<Navigate to="/denuncia?acompanhar" replace />} />
           <Route path="/app" element={<ProtectedRoute><AppShell /></ProtectedRoute>}>
             <Route index element={<Inicio />} />
             <Route path="encarregados" element={<Navigate to="/app/encarregados/minhas-solicitacoes" replace />} />
@@ -288,7 +293,13 @@ const App = () => (
             <Route path="central-servicos/reunioes/:id" element={<ReuniaoDetalhe />} />
             <Route path="central-servicos/reunioes/:id/conducao" element={<ConducaoReuniao />} />
             <Route path="central-servicos/orientacoes-juridicas" element={<OrientacoesJuridicas />} />
-            <Route path="central-servicos/denuncias" element={<Denuncias />} />
+            {/* Comitê de Ética — denúncias saíram da Central de Serviços.
+                As rotas antigas seguem redirecionando: link salvo por aí não
+                pode virar 404. */}
+            <Route path="comite-etica/denuncias" element={<DenunciasComiteEtica />} />
+            <Route path="comite-etica/denuncias-contato-seguro" element={<Denuncias />} />
+            <Route path="central-servicos/denuncias" element={<Navigate to="/app/comite-etica/denuncias-contato-seguro" replace />} />
+            <Route path="central-servicos/canal-denuncias" element={<Navigate to="/app/comite-etica/denuncias" replace />} />
             <Route path="central-servicos/formularios" element={<Formularios />} />
             <Route path="central-servicos/formularios/dashboard" element={<FormulariosDashboard />} />
             <Route path="central-servicos/formularios/painel" element={<PainelGerencialFormularios />} />

@@ -16,8 +16,9 @@ import {
 } from "@/components/ui/select";
 import { Bot, ShieldAlert, Plus, Trash2, Save, Power, Inbox, Info, MousePointerClick, FolderTree, Image as ImageIcon } from "lucide-react";
 import { MODELOS, PROVEDORES, DIAS, MENU_ACOES, RETOMADA_MAX_MIN, fmtMinutos, type WaBotConfig, type WaConhecimento, type WaMenu, type WaMenuOpcao, type WaMenuAcao, type WaPasta, type WaProvedor } from "./types";
+import { SUPABASE_URL } from "@/integrations/supabase/env";
 
-const WEBHOOK_URL = "https://fwmzeaztjxrxxzxzxmgc.supabase.co/functions/v1/whatsapp-webhook";
+const WEBHOOK_URL = `${SUPABASE_URL}/functions/v1/whatsapp-webhook`;
 const SECRETS_META = ["WHATSAPP_VERIFY_TOKEN", "WHATSAPP_APP_SECRET", "WHATSAPP_TOKEN", "WHATSAPP_PHONE_NUMBER_ID"];
 
 const novoIdOpcao = () => `o_${Math.random().toString(36).slice(2, 8)}`;
