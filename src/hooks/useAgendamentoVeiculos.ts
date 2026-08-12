@@ -256,25 +256,28 @@ export function useAgendamentos() {
 }
 
 /**
- * Contratos ativos para o passo 3 — mesmo escopo da frota (empresas do
- * usuário, aplicado pela RLS de `contratos`), e não a empresa ativa. O código
- * do CNPJ vai junto para a lista não virar um amontoado sem contexto.
+ * Contratos ativos para o passo 3 — do GRUPO INTEIRO, mesma regra da frota.
+ *
+ * Lia `contratos` direto, e aí a RLS da tabela (recorte por `user_empresa`)
+ * entregava só os contratos do CNPJ do usuário: quem é da SN via 10 e não
+ * conseguia marcar a viagem que atende os da HAGG — mesmo carro, mesma
+ * viagem. Como o passo exige ao menos um contrato, a reserva não fechava.
+ *
+ * A RPC resolve sem afrouxar a RLS de `contratos`, que continua valendo para
+ * Licitações, Financeiro e o resto que lê essa tabela. O gate aqui é o menu
+ * do agendamento, igual à `cs_veiculos_frota()`.
  */
 export function useContratosParaAgendamento() {
   return useQuery({
-    queryKey: ["contratos", "agendamento_veiculos"],
+    queryKey: ["cs_veiculos_contratos"],
     queryFn: async (): Promise<ContratoOpcao[]> => {
-      const { data, error } = await sb
-        .from("contratos")
-        .select("id, nome, cliente, empresa:empresa_id(codigo)")
-        .eq("status", "ativo")
-        .order("nome");
+      const { data, error } = await sb.rpc("cs_veiculos_contratos");
       if (error) throw error;
       return ((data ?? []) as any[]).map((c) => ({
         id: c.id,
         nome: c.nome,
         cliente: c.cliente,
-        empresa_codigo: c.empresa?.codigo ?? null,
+        empresa_codigo: c.empresa_codigo ?? null,
       }));
     },
     staleTime: 60_000,
