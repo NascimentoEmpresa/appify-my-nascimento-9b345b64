@@ -28,3 +28,10 @@ if (!url || !anonKey) {
 
 export const SUPABASE_URL: string = url;
 export const SUPABASE_ANON_KEY: string = anonKey;
+
+/**
+ * Base das Edge Functions. As páginas públicas usam só isto — endereço, sem
+ * credencial nenhuma. É o que permite ao Canal de Ética falar com o servidor
+ * sem carregar token algum no navegador.
+ */
+export const SUPABASE_FUNCTIONS_URL = `${url}/functions/v1`;

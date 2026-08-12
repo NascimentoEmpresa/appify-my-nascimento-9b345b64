@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import { useSearchParams } from "react-router-dom";
-import { supabaseAnonimo } from "@/integrations/supabase/anonimo";
+import { SUPABASE_FUNCTIONS_URL } from "@/integrations/supabase/env";
 import logoGN from "@/assets/logo-grupo-nascimento.png";
 import { ShieldCheck, Lock, Send, Search, Copy, Check, AlertTriangle } from "lucide-react";
 
@@ -11,15 +11,59 @@ import { ShieldCheck, Lock, Send, Search, Copy, Check, AlertTriangle } from "luc
 // terceiro) registra um relato, anônimo ou identificado.
 //
 // COMO A CONFIDENCIALIDADE FUNCIONA
-// A tela não lê nem escreve na tabela: a chave anon está revogada nela. O
-// único caminho é a RPC `denuncia_registrar` (SECURITY DEFINER), que também
-// NÃO grava IP, user-agent nem auth.uid(). Quem lê é só quem tiver o menu
+// A tela não lê nem escreve na tabela, e não carrega credencial nenhuma:
+// fala com duas Edge Functions públicas (`denuncia-registrar` e
+// `denuncia-consultar`, verify_jwt = false) mandando JSON puro, sem header de
+// autenticação. Token nenhum — nem o da sessão de quem estiver logado no ERP,
+// nem chave de API — passa por este navegador.
+//
+// Do outro lado, a função chama a RPC `denuncia_registrar` (SECURITY
+// DEFINER), que valida os campos e NÃO grava IP, user-agent nem auth.uid().
+// Quem lê as denúncias é só quem tiver o menu
 // 'central_servicos_canal_denuncias' liberado em Acesso por Usuário.
 // Ver migration 20260812000001_canal_denuncias.
 //
 // Estilo self-contained com prefixo `dn-`, igual a `pv-` (Vagas) e `fp-`
 // (FormularioPublico): página pública não depende do tema nem do AppShell.
 // =====================================================================
+
+/** O que a consulta por protocolo devolve — nunca o relato, só o andamento. */
+interface DenunciaConsulta {
+  protocolo: string;
+  status: string;
+  tipo_denuncia: string;
+  registrada_em: string;
+  atualizada_em: string;
+  concluida_em: string | null;
+  retorno: string | null;
+}
+
+/**
+ * Chamada às rotas públicas do canal. Sem `Authorization`, sem `apikey`:
+ * é um POST de JSON como qualquer outro — é isso que mantém o navegador
+ * livre de token. Quem guarda a chave é a Edge Function, no servidor.
+ */
+async function chamarCanal<T>(
+  rota: "denuncia-registrar" | "denuncia-consultar",
+  corpo: unknown,
+): Promise<{ data: T | null; erro: string | null }> {
+  try {
+    const resp = await fetch(`${SUPABASE_FUNCTIONS_URL}/${rota}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(corpo),
+    });
+    const corpoResp = await resp.json().catch(() => null);
+    if (!resp.ok) {
+      return { data: null, erro: corpoResp?.error || "Não foi possível completar agora." };
+    }
+    return { data: corpoResp as T, erro: null };
+  } catch {
+    // Rede fora, DNS, bloqueio: sem isso a tela ficaria em "enviando" para
+    // sempre, e o relato já digitado se perderia sem explicação.
+    return { data: null, erro: "Sem conexão com o servidor. Tente de novo em instantes." };
+  }
+}
 
 const RELACAO = [
   { value: "colaborador", label: "Colaborador(a) do Grupo Nascimento" },
@@ -212,8 +256,9 @@ function Formulario({ onAcompanhar }: { onAcompanhar: () => void }) {
     setErros([]);
     setEnviando(true);
     const ident = f.identificado === "sim";
-    const { data, error } = await supabaseAnonimo.rpc("denuncia_registrar", {
-      payload: {
+    const { data, erro } = await chamarCanal<{ protocolo: string; senha: string }>(
+      "denuncia-registrar",
+      {
         identificado: ident,
         nome_completo: ident ? f.nome_completo : "",
         cpf: ident ? f.cpf : "",
@@ -235,14 +280,14 @@ function Formulario({ onAcompanhar }: { onAcompanhar: () => void }) {
         sugestao: f.sugestao,
         concordou_termo: true,
       },
-    });
+    );
     setEnviando(false);
-    if (error) {
-      setErros([error.message || "Não foi possível registrar agora. Tente novamente em instantes."]);
+    if (erro || !data) {
+      setErros([erro || "Não foi possível registrar agora. Tente novamente em instantes."]);
       window.scrollTo({ top: 0, behavior: "smooth" });
       return;
     }
-    setOk(data as { protocolo: string; senha: string });
+    setOk(data);
     window.scrollTo({ top: 0, behavior: "smooth" });
   };
 
@@ -463,7 +508,7 @@ function Acompanhar({ onVoltar }: { onVoltar: () => void }) {
   const [senha, setSenha] = useState("");
   const [erro, setErro] = useState("");
   const [carregando, setCarregando] = useState(false);
-  const [dados, setDados] = useState<any>(null);
+  const [dados, setDados] = useState<DenunciaConsulta | null>(null);
 
   const consultar = async () => {
     if (carregando) return;
@@ -472,11 +517,13 @@ function Acompanhar({ onVoltar }: { onVoltar: () => void }) {
       return;
     }
     setErro(""); setCarregando(true);
-    const { data, error } = await supabaseAnonimo.rpc("denuncia_consultar", {
-      p_protocolo: protocolo.trim(), p_senha: senha.trim(),
+    // `falha` e não `erro` porque `erro` já é o estado da tela logo acima.
+    const { data, erro: falha } = await chamarCanal<DenunciaConsulta>("denuncia-consultar", {
+      protocolo: protocolo.trim(),
+      senha: senha.trim(),
     });
     setCarregando(false);
-    if (error) { setErro(error.message || "Não foi possível consultar agora."); setDados(null); return; }
+    if (falha || !data) { setErro(falha || "Não foi possível consultar agora."); setDados(null); return; }
     setDados(data);
   };
 
