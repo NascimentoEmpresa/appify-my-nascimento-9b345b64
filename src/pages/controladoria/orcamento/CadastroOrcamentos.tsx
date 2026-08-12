@@ -38,6 +38,23 @@ function AprovadorHeadTooltip() {
   );
 }
 
+// Tabela tem muitas colunas de aprovador (1/2/3 + solicitação) — mostrar só
+// o primeiro nome evita o scroll lateral; nome completo + alçada fica no
+// tooltip pra não perder informação.
+function AprovadorCell({ nome, limitePct }: { nome: string | null | undefined; limitePct?: number | null }) {
+  if (!nome) return <span className="text-muted-foreground">—</span>;
+  const primeiroNome = nome.split(" ")[0];
+  const label = limitePct != null ? `${primeiroNome} ${limitePct}%` : primeiroNome;
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <span className="cursor-help underline decoration-dotted underline-offset-2">{label}</span>
+      </TooltipTrigger>
+      <TooltipContent>{fmtAprovador(nome, limitePct)}</TooltipContent>
+    </Tooltip>
+  );
+}
+
 export default function CadastroOrcamentos() {
   const { data: empresaId } = useEmpresaId();
   const { data: classificacoes = [] } = useClassificacoesOrcamento();
@@ -263,7 +280,8 @@ export default function CadastroOrcamentos() {
               <TableRow>
                 <TableHead>Classificação</TableHead>
                 <TableHead>Detalhe</TableHead>
-                <TableHead>Solicitação?</TableHead>
+                <TableHead>Requer Solicitação?</TableHead>
+                <TableHead>Aprovador da Solicitação</TableHead>
                 <TableHead>Origem</TableHead>
                 <TableHead>Responsável</TableHead>
                 <TableHead>
@@ -290,14 +308,14 @@ export default function CadastroOrcamentos() {
             <TableBody>
               {isLoading && (
                 <TableRow>
-                  <TableCell colSpan={12} className="text-center text-muted-foreground py-8">
+                  <TableCell colSpan={13} className="text-center text-muted-foreground py-8">
                     Carregando...
                   </TableCell>
                 </TableRow>
               )}
               {!isLoading && filtrados.length === 0 && (
                 <TableRow>
-                  <TableCell colSpan={12} className="text-center text-muted-foreground py-8">
+                  <TableCell colSpan={13} className="text-center text-muted-foreground py-8">
                     Nenhum orçamento encontrado.
                   </TableCell>
                 </TableRow>
@@ -311,16 +329,23 @@ export default function CadastroOrcamentos() {
                       {o.classificacao?.requer_solicitacao ? "Sim" : "Não"}
                     </Badge>
                   </TableCell>
+                  <TableCell className="whitespace-nowrap">
+                    {o.classificacao?.requer_solicitacao ? (
+                      <AprovadorCell nome={o.classificacao?.aprovador_solicitacao_nome} />
+                    ) : (
+                      "—"
+                    )}
+                  </TableCell>
                   <TableCell>{o.classificacao?.tipo ? ORIGEM_LABEL[o.classificacao.tipo] : "—"}</TableCell>
                   <TableCell>{o.classificacao?.setor_responsavel ?? "—"}</TableCell>
                   <TableCell className="whitespace-nowrap">
-                    {fmtAprovador(o.classificacao?.aprovador1_nome, o.classificacao?.aprovador1_limite_pct)}
+                    <AprovadorCell nome={o.classificacao?.aprovador1_nome} limitePct={o.classificacao?.aprovador1_limite_pct} />
                   </TableCell>
                   <TableCell className="whitespace-nowrap">
-                    {fmtAprovador(o.classificacao?.aprovador2_nome, o.classificacao?.aprovador2_limite_pct)}
+                    <AprovadorCell nome={o.classificacao?.aprovador2_nome} limitePct={o.classificacao?.aprovador2_limite_pct} />
                   </TableCell>
                   <TableCell className="whitespace-nowrap">
-                    {fmtAprovador(o.classificacao?.aprovador3_nome, o.classificacao?.aprovador3_limite_pct)}
+                    <AprovadorCell nome={o.classificacao?.aprovador3_nome} limitePct={o.classificacao?.aprovador3_limite_pct} />
                   </TableCell>
                   <TableCell className="whitespace-nowrap">
                     {fmtDate(o.inicio_vigencia)} – {fmtDate(o.fim_vigencia)}
