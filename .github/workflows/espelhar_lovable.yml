@@ -5,6 +5,9 @@ name: Espelhar main no repositorio do Lovable
 # os PRs, os secrets e os workflows de chamado/Discord) e o repo do Lovable
 # passa a ser um espelho somente-leitura do main, de onde ele faz o build.
 #
+# Autenticacao por token, nao por deploy key: a org bloqueia deploy keys
+# ("Disabled by NascimentoEmpresa" na pagina de Chaves de implantacao).
+#
 # IMPORTANTE: nao edite codigo dentro do Lovable. Todo push daqui sobrescreve
 # o main de la (force push). Hoje isso e seguro: nenhum dos ultimos 100 commits
 # veio do bot do Lovable.
@@ -33,26 +36,19 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
-      - name: Configurar a chave SSH de escrita
-        env:
-          MIRROR_SSH_KEY: ${{ secrets.MIRROR_SSH_KEY }}
-        run: |
-          if [ -z "$MIRROR_SSH_KEY" ]; then
-            echo "::error::Secret MIRROR_SSH_KEY nao configurado. Settings > Secrets and variables > Actions > New repository secret."
-            exit 1
-          fi
-          mkdir -p ~/.ssh
-          printf '%s\n' "$MIRROR_SSH_KEY" > ~/.ssh/id_ed25519
-          chmod 600 ~/.ssh/id_ed25519
-          ssh-keyscan -t ed25519 github.com >> ~/.ssh/known_hosts 2>/dev/null
-
       - name: Empurrar o main para o Lovable
         env:
+          MIRROR_TOKEN: ${{ secrets.MIRROR_TOKEN }}
           # Trocavel sem mexer no codigo: Settings > Secrets and variables >
           # Actions > Variables > LOVABLE_REPO. Se o Lovable criar outro repo,
           # basta atualizar a variavel.
           LOVABLE_REPO: ${{ vars.LOVABLE_REPO || 'NascimentoEmpresa/appify-my-nascimento' }}
         run: |
-          git remote add lovable "git@github.com:${LOVABLE_REPO}.git"
+          if [ -z "$MIRROR_TOKEN" ]; then
+            echo "::error::Secret MIRROR_TOKEN nao configurado. Settings > Secrets and variables > Actions > New repository secret."
+            exit 1
+          fi
+          git remote add lovable "https://x-access-token:${MIRROR_TOKEN}@github.com/${LOVABLE_REPO}.git"
           git push --force lovable main:main
+          git remote remove lovable
           echo "main espelhado em ${LOVABLE_REPO} ($(git rev-parse --short HEAD))"
