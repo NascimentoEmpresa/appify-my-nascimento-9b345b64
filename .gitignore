@@ -22,15 +22,9 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
-# .env É VERSIONADO NESTE PROJETO — de propósito.
-# O build de produção roda no Lovable, que não injeta VITE_* aqui: o único
-# jeito de as variáveis chegarem no build é vindo dentro do repositório.
-# Por isso o .env fica de fora do ignore.
-#
-# ⚠ SÓ ENTRA AQUI VALOR PUBLICÁVEL (VITE_*, que o Vite embute no bundle e
-# qualquer visitante lê no F12). Segredo de verdade — service_role, tokens de
-# API, senha — vai em Edge Function secret ou no painel do Supabase, NUNCA
-# neste arquivo.
+# .env NÃO é versionado. Quem builda precisa ter o arquivo na máquina — sem
+# ele o build para (guarda no vite.config.ts). Ver .env.example.
+.env
 .env.local
 .env.*.local
 docs

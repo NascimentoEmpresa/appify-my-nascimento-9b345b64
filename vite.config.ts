@@ -1,10 +1,25 @@
-import { defineConfig } from "vite";
+import { defineConfig, loadEnv } from "vite";
 import react from "@vitejs/plugin-react-swc";
 import path from "path";
 import { componentTagger } from "lovable-tagger";
 
 // https://vitejs.dev/config/
 export default defineConfig(({ mode }) => {
+  // As credenciais do front vivem no .env, que não é versionado — então toda
+  // máquina que builda precisa ter o arquivo. Faltando, o Vite embutiria
+  // `undefined` no bundle e o app subiria quebrado só no primeiro request:
+  // falha silenciosa que só aparece em produção, e foi assim que a produção
+  // ficou num bundle velho em 12/08/2026. Melhor parar aqui, dizendo o que
+  // faltou.
+  const env = loadEnv(mode, process.cwd(), "");
+  const faltando = ["VITE_SUPABASE_URL", "VITE_SUPABASE_ANON_KEY"].filter((k) => !env[k]);
+  if (faltando.length) {
+    throw new Error(
+      `Faltam variáveis de ambiente: ${faltando.join(", ")}. ` +
+        "Copie o .env.example para .env e preencha antes de rodar o build.",
+    );
+  }
+
   return {
     server: {
       host: "::",

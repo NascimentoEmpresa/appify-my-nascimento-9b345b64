@@ -13,20 +13,24 @@
 // desta chave. Se a intenção for tirar de circulação uma chave que já rodou,
 // o caminho é rotacionar no painel do Supabase — trocar de lugar não basta.
 //
-// POR QUE TEM LITERAL DE FALLBACK
-// O build de produção roda no Lovable, que neste projeto não injeta VITE_* —
-// é do formato antigo, em que o `client.ts` gerado já vinha com os valores
-// escritos no código. Sem o fallback, o bundle sairia com `undefined` e o app
-// subiria quebrado. Quem tem `.env` (dev, ou um build fora do Lovable) usa o
-// `.env`; quem não tem, usa o literal e o build passa do mesmo jeito.
-//
-// Não é perda de segurança: a chave anon é publicável e vai para o navegador
-// nos dois caminhos. O que se ganha aqui é um lugar só para trocá-la.
+// SEM LITERAL DE FALLBACK — e o que isso exige
+// Nenhuma credencial escrita aqui: os valores vêm exclusivamente do `.env`,
+// que NÃO é versionado. Consequência: toda máquina que rode `npm run build`
+// precisa ter o arquivo (ou as variáveis no ambiente). Se o build de produção
+// rodar sem elas, ele PARA — ver a guarda no vite.config.ts. É de propósito:
+// sem a guarda o Vite embutiria `undefined` e o app subiria quebrado só no
+// primeiro request, que foi como a produção ficou num bundle velho em
+// 12/08/2026 sem ninguém perceber.
 // =====================================================================
-const url = import.meta.env.VITE_SUPABASE_URL || "https://fwmzeaztjxrxxzxzxmgc.supabase.co";
-const anonKey =
-  import.meta.env.VITE_SUPABASE_ANON_KEY ||
-  "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImZ3bXplYXp0anhyeHh6eHp4bWdjIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzY2MDc0NTAsImV4cCI6MjA5MjE4MzQ1MH0.i08oF2-9N6w-CxDVy8ink29-ydHTJEc-eQBZDYRxGwI";
+const url = import.meta.env.VITE_SUPABASE_URL;
+const anonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
+
+if (!url || !anonKey) {
+  throw new Error(
+    "VITE_SUPABASE_URL e VITE_SUPABASE_ANON_KEY não estão definidas. " +
+      "Copie o .env.example para .env e preencha antes de rodar o build.",
+  );
+}
 
 export const SUPABASE_URL: string = url;
 export const SUPABASE_ANON_KEY: string = anonKey;
