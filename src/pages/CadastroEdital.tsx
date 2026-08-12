@@ -102,9 +102,10 @@ function CargaHorariaInput({ value, onChange }: { value: string; onChange: (v: s
 // ── Constantes ─────────────────────────────────────────────────────────────
 
 const STATUS_COLOR: Record<CapaStatus, string> = {
-  "Em andamento": "bg-amber-500/15 text-amber-700 border-amber-300/50",
-  "Ganhamos":     "bg-emerald-500/15 text-emerald-700 border-emerald-300/50",
-  "Perdemos":     "bg-red-400/15 text-red-700 border-red-300/50",
+  "Em andamento":   "bg-amber-500/15 text-amber-700 border-amber-300/50",
+  "Ganhamos":       "bg-emerald-500/15 text-emerald-700 border-emerald-300/50",
+  "Perdemos":       "bg-red-400/15 text-red-700 border-red-300/50",
+  "Não Participado": "bg-slate-400/15 text-slate-600 border-slate-300/50",
 };
 
 // Alerta de 48h: só exibe se ganhou há menos de 48h E ainda não tem reuniao_alinhamento
@@ -145,7 +146,7 @@ export default function CadastroEdital() {
   const [reuniaoModal, setReuniaoModal] = useState<CapaEdital | null>(null);
 
   const stats = useMemo(() => {
-    const m: Record<CapaStatus, number> = { "Em andamento": 0, "Ganhamos": 0, "Perdemos": 0 };
+    const m: Record<CapaStatus, number> = { "Em andamento": 0, "Ganhamos": 0, "Perdemos": 0, "Não Participado": 0 };
     capas.forEach((c) => { if (c.status in m) m[c.status]++; });
     return m;
   }, [capas]);
@@ -216,7 +217,7 @@ export default function CadastroEdital() {
 
       {/* Tabs de status */}
       <div className="flex flex-wrap gap-2">
-        {(["Todas", "Em andamento", "Ganhamos", "Perdemos"] as const).map((s) => (
+        {(["Todas", "Em andamento", "Ganhamos", "Perdemos", "Não Participado"] as const).map((s) => (
           <button
             key={s}
             onClick={() => setStatusFiltro(s)}
@@ -433,7 +434,7 @@ function CapaCard({
       {/* Alterar status — qualquer direção */}
       {canAlterar && (
         <div className="flex flex-wrap gap-1.5 border-t border-border pt-2.5">
-          {(["Em andamento", "Ganhamos", "Perdemos"] as CapaStatus[])
+          {(["Em andamento", "Ganhamos", "Perdemos", "Não Participado"] as CapaStatus[])
             .filter((s) => s !== capa.status)
             .map((s) => (
               <Button
@@ -444,6 +445,7 @@ function CapaCard({
                   s === "Ganhamos" && "border-emerald-400/50 text-emerald-700 hover:bg-emerald-50",
                   s === "Perdemos" && "border-red-400/50 text-red-700 hover:bg-red-50",
                   s === "Em andamento" && "border-amber-400/50 text-amber-700 hover:bg-amber-50",
+                  s === "Não Participado" && "border-slate-300/50 text-slate-600 hover:bg-slate-50",
                 )}
                 onClick={() => onStatusChange(s)}
               >
