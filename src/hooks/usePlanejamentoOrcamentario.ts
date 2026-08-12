@@ -5,6 +5,7 @@ export type TipoClassificacaoOrcamento = "contrato" | "administrativo";
 
 const CLASSIFICACAO_COLUMNS =
   "id, nome, ativo, tipo, setor_responsavel, requer_solicitacao, " +
+  "aprovador_solicitacao_user_id, aprovador_solicitacao_nome, " +
   "aprovador1_user_id, aprovador1_nome, aprovador1_limite_pct, aprovador1_sem_limite, " +
   "aprovador2_user_id, aprovador2_nome, aprovador2_limite_pct, aprovador2_sem_limite, " +
   "aprovador3_user_id, aprovador3_nome, aprovador3_limite_pct, aprovador3_sem_limite";
@@ -16,6 +17,8 @@ export interface ClassificacaoOrcamento {
   tipo: TipoClassificacaoOrcamento | null;
   setor_responsavel: string | null;
   requer_solicitacao: boolean;
+  aprovador_solicitacao_user_id: string | null;
+  aprovador_solicitacao_nome: string | null;
   aprovador1_user_id: string | null;
   aprovador1_nome: string | null;
   aprovador1_limite_pct: number | null;
@@ -145,6 +148,8 @@ interface SalvarClassificacaoInput {
   tipo: TipoClassificacaoOrcamento;
   setor_responsavel: string;
   requer_solicitacao: boolean;
+  aprovador_solicitacao_user_id: string | null;
+  aprovador_solicitacao_nome: string | null;
   aprovador1_user_id: string;
   aprovador1_nome: string;
   aprovador1_limite_pct: number | null;
