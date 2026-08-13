@@ -95,8 +95,11 @@ import ConciliacaoFluxoCaixa from "./pages/financeiro/ConciliacaoFluxoCaixa";
 import OBZVersoes from "./pages/controladoria/OBZVersoes";
 import DREGerencial from "./pages/controladoria/DREGerencial";
 import OrcamentoCompleto from "./pages/controladoria/OrcamentoCompleto";
-import CadastroOrcamentos from "./pages/controladoria/orcamento/CadastroOrcamentos";
-import ClassificacoesOrcamento from "./pages/controladoria/orcamento/ClassificacoesOrcamento";
+import MaloteClassificacoesAdministrativo from "./pages/malote/ClassificacoesAdministrativo";
+import MaloteOrcamentoAdministrativo from "./pages/malote/OrcamentoAdministrativo";
+import MaloteClassificacoesMalote from "./pages/malote/ClassificacoesMalote";
+import MaloteOrcamentoContratos from "./pages/malote/OrcamentoContratos";
+import MaloteOrcamentoGeral from "./pages/malote/OrcamentoGeral";
 import GeradorPops from "./pages/controladoria/GeradorPops";
 import MaloteAprovacoes from "./pages/malote/Aprovacoes";
 import MaloteConfiguracoes from "./pages/malote/Configuracoes";
@@ -360,8 +363,6 @@ const App = () => (
             <Route path="controladoria/obz-versoes" element={<OBZVersoes />} />
             <Route path="controladoria/dre-gerencial" element={<DREGerencial />} />
             <Route path="controladoria/orcamento-completo" element={<OrcamentoCompleto />} />
-            <Route path="controladoria/orcamento-administrativo" element={<CadastroOrcamentos />} />
-            <Route path="controladoria/cadastro-classificacao" element={<ClassificacoesOrcamento />} />
             <Route path="controladoria/gerador-pops" element={<GeradorPops />} />
             {/* Malote */}
             <Route path="malote/aprovacoes" element={<MaloteAprovacoes />} />
@@ -372,6 +373,11 @@ const App = () => (
             <Route path="malote/meus-itens" element={<MaloteMeusItens />} />
             <Route path="malote/despesa/:id" element={<MaloteDespesaVisualizar />} />
             <Route path="malote/solicitacao/:id" element={<MaloteSolicitacaoVisualizar />} />
+            <Route path="malote/classificacoes-administrativo" element={<MaloteClassificacoesAdministrativo />} />
+            <Route path="malote/orcamento-administrativo" element={<MaloteOrcamentoAdministrativo />} />
+            <Route path="malote/classificacoes-malote" element={<MaloteClassificacoesMalote />} />
+            <Route path="malote/orcamento-contratos" element={<MaloteOrcamentoContratos />} />
+            <Route path="malote/orcamento-geral" element={<MaloteOrcamentoGeral />} />
             <Route path="orcamento" element={<Orcamento />} />
             {/* Suprimentos */}
             <Route path="suprimentos/fornecedores" element={<Fornecedores />} />

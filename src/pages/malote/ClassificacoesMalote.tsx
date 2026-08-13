@@ -10,7 +10,7 @@ import { SearchableSelect } from "@/components/ui/searchable-select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { Plus, Pencil, ArrowLeft, FolderCog, UserRound, Users } from "lucide-react";
+import { Plus, Pencil, ArrowLeft, FolderCog, UserRound, Users, AlertTriangle } from "lucide-react";
 import { Link } from "react-router-dom";
 import { toast } from "sonner";
 import {
@@ -43,6 +43,7 @@ interface FormState {
   aprovador3Nome: string | null;
   aprovador3LimitePct: string;
   aprovador3SemLimite: boolean;
+  limiteJustificativaPct: string;
 }
 
 const VAZIO: FormState = {
@@ -65,6 +66,7 @@ const VAZIO: FormState = {
   aprovador3Nome: null,
   aprovador3LimitePct: "",
   aprovador3SemLimite: false,
+  limiteJustificativaPct: "",
 };
 
 function paraFormState(c: ClassificacaoOrcamento): FormState {
@@ -89,6 +91,7 @@ function paraFormState(c: ClassificacaoOrcamento): FormState {
     aprovador3Nome: c.aprovador3_nome,
     aprovador3LimitePct: c.aprovador3_limite_pct != null ? String(c.aprovador3_limite_pct) : "",
     aprovador3SemLimite: c.aprovador3_sem_limite,
+    limiteJustificativaPct: c.limite_justificativa_pct != null ? String(c.limite_justificativa_pct) : "",
   };
 }
 
@@ -97,7 +100,7 @@ const TIPO_LABEL: Record<TipoClassificacaoOrcamento, string> = {
   administrativo: "Administrativo",
 };
 
-export default function ClassificacoesOrcamento() {
+export default function ClassificacoesMalote() {
   const { data: classificacoes = [], isLoading } = useClassificacoesOrcamentoAdmin();
   const { data: aprovadores1 = [] } = useAprovadoresDisponiveis(1);
   const { data: aprovadores2 = [] } = useAprovadoresDisponiveis(2);
@@ -218,6 +221,11 @@ export default function ClassificacoesOrcamento() {
       toast.error("O limite do Aprovador 3 deve ser maior que o do Aprovador 2.");
       return;
     }
+    const limiteJustificativa = parsePct(editando.limiteJustificativaPct);
+    if (editando.limiteJustificativaPct.trim() && (limiteJustificativa === null || limiteJustificativa < 0)) {
+      toast.error("Informe um limite para justificativa válido.");
+      return;
+    }
 
     try {
       await salvar.mutateAsync({
@@ -241,6 +249,7 @@ export default function ClassificacoesOrcamento() {
         aprovador3_nome: editando.aprovador3Nome,
         aprovador3_limite_pct: limite3,
         aprovador3_sem_limite: editando.aprovador3SemLimite,
+        limite_justificativa_pct: limiteJustificativa,
       });
       toast.success("Classificação salva.");
       setOpen(false);
@@ -252,14 +261,14 @@ export default function ClassificacoesOrcamento() {
   return (
     <div className="space-y-6 p-6">
       <PageHeader
-        title="Cadastro de Classificação"
-        subtitle="Lista de classificações usadas no Planejamento Orçamentário — compartilhada entre todas as empresas do grupo."
-        module="Controladoria & Orçamento"
-        breadcrumb={["Orçamento", "Cadastro de Classificação"]}
+        title="Classificações do Malote"
+        subtitle="Classificações usadas pelo Malote para aprovação de despesas — compartilhadas entre todas as empresas do grupo."
+        module="Malote"
+        breadcrumb={["Malote", "Classificações e Orçamentos", "Classificações Malote"]}
         actions={
           <>
             <Button asChild variant="outline" size="sm">
-              <Link to="/app/controladoria/orcamento-administrativo">
+              <Link to="/app/malote/orcamento-geral">
                 <ArrowLeft className="mr-1 h-4 w-4" /> Voltar
               </Link>
             </Button>
@@ -591,6 +600,30 @@ export default function ClassificacoesOrcamento() {
                     </label>
                   </div>
                 </div>
+              </div>
+            </div>
+
+            <div className="rounded-lg border border-border bg-muted/20 p-4 space-y-2">
+              <div className="flex items-start gap-2">
+                <AlertTriangle className="h-4 w-4 mt-0.5 text-muted-foreground shrink-0" />
+                <div>
+                  <p className="text-sm font-medium">Limite para Justificativa</p>
+                  <p className="text-xs text-muted-foreground">
+                    Defina a partir de qual percentual do orçamento será necessário informar justificativa para a
+                    despesa.
+                  </p>
+                </div>
+              </div>
+              <div className="max-w-[200px]">
+                <Label>Exigir justificativa a partir de (%)</Label>
+                <Input
+                  type="number"
+                  min={0}
+                  step="0.01"
+                  placeholder="Ex.: 75,00"
+                  value={editando?.limiteJustificativaPct ?? ""}
+                  onChange={(e) => setEditando((v) => (v ? { ...v, limiteJustificativaPct: e.target.value } : v))}
+                />
               </div>
             </div>
           </div>
