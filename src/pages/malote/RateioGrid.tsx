@@ -4,10 +4,12 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { SearchableSelect } from "@/components/ui/searchable-select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Plus, Trash2 } from "lucide-react";
 import { RateioLinha } from "@/hooks/useMaloteDespesa";
 import { useEmpresasGrupo, useContratosAtivos, useFornecedoresAtivos, useIntegrantes } from "@/hooks/useMaloteDespesa";
+import { TipoClassificacaoOrcamento } from "@/hooks/usePlanejamentoOrcamentario";
 
 export interface DimensoesRateio {
   empresa: boolean;
@@ -19,6 +21,7 @@ export interface DimensoesRateio {
 interface ClassificacaoOpcao {
   id: string;
   nome: string;
+  tipo?: TipoClassificacaoOrcamento | null;
 }
 
 interface RateioGridProps {
@@ -34,6 +37,17 @@ interface RateioGridProps {
   distribuirIgualmente?: boolean;
   onDistribuirIgualmenteChange?: (v: boolean) => void;
   disabled?: boolean;
+  // SIS-2026-0129: quando true, a coluna Contrato deixa de ser um checkbox
+  // manual e passa a ser derivada do tipo da Classificação (por linha, se
+  // mostrarClassificacao, ou única, via classificacaoTipoUnica) — ao
+  // selecionar o Contrato, a Empresa é preenchida automaticamente.
+  contratoPorClassificacao?: boolean;
+  classificacaoTipoUnica?: TipoClassificacaoOrcamento | null;
+  // Mostra "Total já lançado" / "Restante para ratear" (contra valorTotal) no
+  // rodapé, ao lado do "Total do Rateio" — só faz sentido quando valorTotal
+  // representa o total da despesa (não usado em RatearClassificacao, que já
+  // tem esse resumo no topo da tela).
+  mostrarResumoValorTotal?: boolean;
 }
 
 export function RateioGrid({
@@ -49,13 +63,41 @@ export function RateioGrid({
   distribuirIgualmente,
   onDistribuirIgualmenteChange,
   disabled,
+  contratoPorClassificacao,
+  classificacaoTipoUnica,
+  mostrarResumoValorTotal,
 }: RateioGridProps) {
   const { data: empresas = [] } = useEmpresasGrupo();
   const { data: contratos = [] } = useContratosAtivos();
   const { data: fornecedores = [] } = useFornecedoresAtivos();
   const { data: integrantes = [] } = useIntegrantes();
 
-  const nenhumaDimensao = !dimensoes.empresa && !dimensoes.contrato && !dimensoes.fornecedor && !dimensoes.integrante;
+  function tipoClassificacaoDaLinha(linha: RateioLinha): TipoClassificacaoOrcamento | null | undefined {
+    if (mostrarClassificacao) {
+      return classificacoesRateaveis.find((c) => c.id === linha.classificacao_id)?.tipo;
+    }
+    return classificacaoTipoUnica;
+  }
+
+  function requerContrato(linha: RateioLinha): boolean {
+    return contratoPorClassificacao ? tipoClassificacaoDaLinha(linha) === "contrato" : false;
+  }
+
+  const colunaContratoAtiva = contratoPorClassificacao
+    ? mostrarClassificacao
+      ? classificacoesRateaveis.some((c) => c.tipo === "contrato")
+      : classificacaoTipoUnica === "contrato"
+    : dimensoes.contrato;
+
+  function atualizarContratoDaLinha(idx: number, contratoId: string) {
+    const c = contratos.find((ct) => ct.id === contratoId);
+    atualizarLinha(idx, { contrato_id: contratoId || null, empresa_id: c?.empresa_id ?? null });
+  }
+
+  const mostrarColunaContrato = colunaContratoAtiva;
+  const mostrarColunaEmpresa = dimensoes.empresa || (contratoPorClassificacao && colunaContratoAtiva);
+
+  const nenhumaDimensao = !mostrarClassificacao && !dimensoes.empresa && !colunaContratoAtiva && !dimensoes.fornecedor && !dimensoes.integrante;
 
   const totalRateado = useMemo(() => linhas.reduce((s, l) => s + (Number(l.valor) || 0), 0), [linhas]);
   const percentualRateado = valorTotal > 0 ? (totalRateado / valorTotal) * 100 : 0;
@@ -117,14 +159,24 @@ export function RateioGrid({
         <div>
           <p className="text-sm font-medium">O que deseja ratear? (marque uma ou mais opções)</p>
           <div className="mt-1 flex flex-wrap gap-4">
-            <label className="flex items-center gap-1.5 text-sm cursor-pointer">
-              <Checkbox checked={dimensoes.empresa} onCheckedChange={(c) => atualizarDimensao("empresa", c === true)} disabled={disabled} />
-              Empresa
-            </label>
-            <label className="flex items-center gap-1.5 text-sm cursor-pointer">
-              <Checkbox checked={dimensoes.contrato} onCheckedChange={(c) => atualizarDimensao("contrato", c === true)} disabled={disabled} />
-              Contrato
-            </label>
+            {!(contratoPorClassificacao && !mostrarClassificacao && classificacaoTipoUnica === "contrato") && (
+              <label className="flex items-center gap-1.5 text-sm cursor-pointer">
+                <Checkbox checked={dimensoes.empresa} onCheckedChange={(c) => atualizarDimensao("empresa", c === true)} disabled={disabled} />
+                Empresa
+              </label>
+            )}
+            {contratoPorClassificacao ? (
+              colunaContratoAtiva && (
+                <span className="flex items-center gap-1.5 text-sm text-muted-foreground">
+                  <Checkbox checked disabled /> Contrato (definido pela classificação)
+                </span>
+              )
+            ) : (
+              <label className="flex items-center gap-1.5 text-sm cursor-pointer">
+                <Checkbox checked={dimensoes.contrato} onCheckedChange={(c) => atualizarDimensao("contrato", c === true)} disabled={disabled} />
+                Contrato
+              </label>
+            )}
             <label className="flex items-center gap-1.5 text-sm cursor-pointer">
               <Checkbox checked={dimensoes.fornecedor} onCheckedChange={(c) => atualizarDimensao("fornecedor", c === true)} disabled={disabled} />
               Fornecedor (opcional)
@@ -169,8 +221,8 @@ export function RateioGrid({
           <TableHeader>
             <TableRow>
               {mostrarClassificacao && <TableHead>Classificação *</TableHead>}
-              {dimensoes.empresa && <TableHead>Empresa *</TableHead>}
-              {dimensoes.contrato && <TableHead>Contrato *</TableHead>}
+              {mostrarColunaEmpresa && <TableHead>Empresa {colunaContratoAtiva && !dimensoes.empresa ? "" : "*"}</TableHead>}
+              {mostrarColunaContrato && <TableHead>Contrato *</TableHead>}
               <TableHead>{ratearPor === "percentual" ? "% Rateio *" : "Valor (R$) *"}</TableHead>
               {dimensoes.fornecedor && <TableHead>Fornecedor (opcional)</TableHead>}
               {dimensoes.integrante && <TableHead>Integrante (opcional)</TableHead>}
@@ -181,7 +233,7 @@ export function RateioGrid({
             {linhas.length === 0 && (
               <TableRow>
                 <TableCell
-                  colSpan={2 + Number(dimensoes.empresa) + Number(dimensoes.contrato) + Number(dimensoes.fornecedor) + Number(dimensoes.integrante) + Number(!!mostrarClassificacao)}
+                  colSpan={2 + Number(mostrarColunaEmpresa) + Number(mostrarColunaContrato) + Number(dimensoes.fornecedor) + Number(dimensoes.integrante) + Number(!!mostrarClassificacao)}
                   className="text-center text-muted-foreground py-6"
                 >
                   {nenhumaDimensao ? "Marque ao menos uma opção acima para começar." : "Nenhuma linha de rateio ainda."}
@@ -192,7 +244,17 @@ export function RateioGrid({
               <TableRow key={idx}>
                 {mostrarClassificacao && (
                   <TableCell>
-                    <Select value={linha.classificacao_id ?? ""} onValueChange={(v) => atualizarLinha(idx, { classificacao_id: v })} disabled={disabled}>
+                    <Select
+                      value={linha.classificacao_id ?? ""}
+                      onValueChange={(v) => {
+                        const novoTipo = classificacoesRateaveis.find((c) => c.id === v)?.tipo;
+                        atualizarLinha(idx, {
+                          classificacao_id: v,
+                          ...(contratoPorClassificacao && novoTipo !== "contrato" ? { contrato_id: null, empresa_id: null } : {}),
+                        });
+                      }}
+                      disabled={disabled}
+                    >
                       <SelectTrigger className="h-8 w-40 text-xs">
                         <SelectValue placeholder="Selecione..." />
                       </SelectTrigger>
@@ -206,38 +268,62 @@ export function RateioGrid({
                     </Select>
                   </TableCell>
                 )}
-                {dimensoes.empresa && (
+                {mostrarColunaEmpresa && (
                   <TableCell>
-                    <Select value={linha.empresa_id ?? ""} onValueChange={(v) => atualizarLinha(idx, { empresa_id: v })} disabled={disabled}>
-                      <SelectTrigger className="h-8 w-36 text-xs">
-                        <SelectValue placeholder="Selecione..." />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {empresas.map((e) => (
-                          <SelectItem key={e.id} value={e.id}>
-                            {e.nome}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </TableCell>
-                )}
-                {dimensoes.contrato && (
-                  <TableCell>
-                    <Select value={linha.contrato_id ?? ""} onValueChange={(v) => atualizarLinha(idx, { contrato_id: v })} disabled={disabled}>
-                      <SelectTrigger className="h-8 w-36 text-xs">
-                        <SelectValue placeholder="Selecione..." />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {contratos
-                          .filter((c) => !linha.empresa_id || c.empresa_id === linha.empresa_id)
-                          .map((c) => (
-                            <SelectItem key={c.id} value={c.id}>
-                              {c.nome}
+                    {requerContrato(linha) ? (
+                      <p className="h-8 flex items-center text-xs text-muted-foreground">
+                        {empresas.find((e) => e.id === linha.empresa_id)?.nome ?? "Derivada do contrato"}
+                      </p>
+                    ) : dimensoes.empresa ? (
+                      <Select value={linha.empresa_id ?? ""} onValueChange={(v) => atualizarLinha(idx, { empresa_id: v })} disabled={disabled}>
+                        <SelectTrigger className="h-8 w-36 text-xs">
+                          <SelectValue placeholder="Selecione..." />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {empresas.map((e) => (
+                            <SelectItem key={e.id} value={e.id}>
+                              {e.nome}
                             </SelectItem>
                           ))}
-                      </SelectContent>
-                    </Select>
+                        </SelectContent>
+                      </Select>
+                    ) : (
+                      <span className="text-xs text-muted-foreground">—</span>
+                    )}
+                  </TableCell>
+                )}
+                {mostrarColunaContrato && (
+                  <TableCell>
+                    {contratoPorClassificacao ? (
+                      requerContrato(linha) ? (
+                        <SearchableSelect
+                          value={linha.contrato_id ?? ""}
+                          onChange={(v) => atualizarContratoDaLinha(idx, v)}
+                          options={contratos.map((c) => ({ value: c.id, label: c.nome }))}
+                          placeholder="Selecione..."
+                          disabled={disabled}
+                          className="w-40"
+                          triggerClassName="h-8 text-xs"
+                        />
+                      ) : (
+                        <span className="text-xs text-muted-foreground">—</span>
+                      )
+                    ) : (
+                      <Select value={linha.contrato_id ?? ""} onValueChange={(v) => atualizarLinha(idx, { contrato_id: v })} disabled={disabled}>
+                        <SelectTrigger className="h-8 w-36 text-xs">
+                          <SelectValue placeholder="Selecione..." />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {contratos
+                            .filter((c) => !linha.empresa_id || c.empresa_id === linha.empresa_id)
+                            .map((c) => (
+                              <SelectItem key={c.id} value={c.id}>
+                                {c.nome}
+                              </SelectItem>
+                            ))}
+                        </SelectContent>
+                      </Select>
+                    )}
                   </TableCell>
                 )}
                 <TableCell>
@@ -313,9 +399,31 @@ export function RateioGrid({
         </Button>
       )}
 
-      <div className="flex justify-end gap-6 text-sm font-medium">
-        <span>Total do Rateio: {percentualRateado.toFixed(2)}%</span>
-        <span>Total: {totalRateado.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}</span>
+      <div className="flex flex-wrap items-center justify-between gap-x-6 gap-y-1">
+        {mostrarResumoValorTotal ? (
+          <div className="flex flex-wrap gap-x-6 gap-y-1 text-xs text-muted-foreground">
+            <span>
+              Total já lançado:{" "}
+              <span className="font-medium text-foreground">
+                {totalRateado.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })} (
+                {valorTotal ? ((totalRateado / valorTotal) * 100).toFixed(0) : 0}%)
+              </span>
+            </span>
+            <span>
+              Restante para ratear:{" "}
+              <span className="font-medium text-foreground">
+                {Math.max(0, valorTotal - totalRateado).toLocaleString("pt-BR", { style: "currency", currency: "BRL" })} (
+                {valorTotal ? (Math.max(0, (100 * (valorTotal - totalRateado)) / valorTotal)).toFixed(0) : 100}%)
+              </span>
+            </span>
+          </div>
+        ) : (
+          <span />
+        )}
+        <div className="flex gap-6 text-sm font-medium">
+          <span>Total do Rateio: {percentualRateado.toFixed(2)}%</span>
+          <span>Total: {totalRateado.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}</span>
+        </div>
       </div>
     </div>
   );
