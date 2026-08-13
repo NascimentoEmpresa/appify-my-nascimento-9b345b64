@@ -128,7 +128,6 @@ export function useAlmoxarifados(empresaId: string | null) {
       const { data, error } = await sb
         .from("almoxarifado")
         .select("id, codigo, nome, empresa_id")
-        .eq("empresa_id", empresaId)
         .eq("ativo", true)
         .order("nome");
       if (error) throw error;
@@ -148,8 +147,7 @@ export function useEstoqueLista(empresaId: string | null) {
         .select(`id, valor_unitario, estoque_minimo,
                  sup_item:sup_item_id (id, nome, tipo),
                  almoxarifado:almoxarifado_id (nome),
-                 sup_estoque_tag (tamanho, tipo, usado, quantidade_massa, quantidade_original_massa)`)
-        .eq("empresa_id", empresaId);
+                 sup_estoque_tag (tamanho, tipo, usado, quantidade_massa, quantidade_original_massa)`);
       if (error) throw error;
 
       // Mesma fórmula da view sup_estoque_saldo — aqui só para evitar um

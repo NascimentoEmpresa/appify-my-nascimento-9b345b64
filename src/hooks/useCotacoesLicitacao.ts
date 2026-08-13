@@ -114,7 +114,6 @@ export function useCotacoesLicitacao() {
       const { data, error } = await sb
         .from("cotacoes_licitacao")
         .select("*")
-        .eq("empresa_id", empresaId!)
         .order("created_at", { ascending: false });
       if (error) throw error;
 
