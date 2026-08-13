@@ -14,22 +14,22 @@ import {
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { toast } from "sonner";
 import {
-  ClassificacaoOrcamento,
+  ClassificacaoAdministrativoRef,
   useEditarPlanejamento,
   useSalvarPlanejamento,
 } from "@/hooks/usePlanejamentoOrcamentario";
-import { OrcamentoComStatus } from "./utils";
+import { OrcamentoComStatus } from "./orcamentoUtils";
 
 interface OrcamentoFormModalProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   empresaId: string | null;
-  classificacoes: ClassificacaoOrcamento[];
+  classificacoes: ClassificacaoAdministrativoRef[];
   orcamentos: OrcamentoComStatus[];
   editando: OrcamentoComStatus | null;
 }
 
-export function OrcamentoFormModal({
+export function OrcamentoAdministrativoFormModal({
   open,
   onOpenChange,
   empresaId,
