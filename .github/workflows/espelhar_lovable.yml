@@ -1,0 +1,72 @@
+name: Espelhar main no repositorio do Lovable
+
+# O Lovable nao consegue reconectar a um repositorio existente: a UI dele so
+# oferece "criar novo". Entao a fonte da verdade continua sendo este repo (com
+# os PRs, os secrets e os workflows de chamado/Discord) e o repo do Lovable
+# passa a ser um espelho somente-leitura do main, de onde ele faz o build.
+#
+# Autenticacao por token, nao por deploy key: a org bloqueia deploy keys
+# ("Disabled by NascimentoEmpresa" na pagina de Chaves de implantacao).
+#
+# O espelho vai SEM .github/workflows. Dois motivos: o GitHub recusa push de
+# workflow file feito por PAT que nao tenha a permissao Workflows, e o espelho
+# nao precisa deles - os workflows rodam aqui, nao la. Assim o token fica so
+# com Contents: Read and write.
+#
+# IMPORTANTE: nao edite codigo dentro do Lovable. Todo push daqui sobrescreve
+# o main de la (force push). Hoje isso e seguro: nenhum dos ultimos 100 commits
+# veio do bot do Lovable.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: espelhar-lovable
+  cancel-in-progress: false
+
+jobs:
+  espelhar:
+    runs-on: ubuntu-latest
+    # Trava anti-loop, defesa em profundidade: o espelho ja vai sem workflows,
+    # mas se um dia algum arquivo destes for parar la, ele nao roda.
+    if: github.repository == 'NascimentoEmpresa/appify-my-nascimento-9b345b64'
+
+    steps:
+      - name: Checkout do main com historico completo
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Empurrar o main para o Lovable
+        env:
+          MIRROR_TOKEN: ${{ secrets.MIRROR_TOKEN }}
+          # Trocavel sem mexer no codigo: Settings > Secrets and variables >
+          # Actions > Variables > LOVABLE_REPO. Se o Lovable criar outro repo,
+          # basta atualizar a variavel.
+          LOVABLE_REPO: ${{ vars.LOVABLE_REPO || 'NascimentoEmpresa/appify-my-nascimento' }}
+        run: |
+          if [ -z "$MIRROR_TOKEN" ]; then
+            echo "::error::Secret MIRROR_TOKEN nao configurado. Settings > Secrets and variables > Actions > New repository secret."
+            exit 1
+          fi
+
+          git config user.name "espelho-lovable"
+          git config user.email "actions@github.com"
+
+          # Commit de topo removendo os workflows. Como o push e --force a
+          # partir de um checkout limpo, o espelho fica sempre em
+          # "main + 1 commit", de forma deterministica.
+          if [ -d .github/workflows ]; then
+            git rm -r --quiet --cached .github/workflows
+            git commit --quiet -m "chore: espelho do main sem os workflows"
+          fi
+
+          git remote add lovable "https://x-access-token:${MIRROR_TOKEN}@github.com/${LOVABLE_REPO}.git"
+          git push --force lovable HEAD:main
+          git remote remove lovable
+
+          echo "main espelhado em ${LOVABLE_REPO} (base $(git rev-parse --short HEAD^))"
