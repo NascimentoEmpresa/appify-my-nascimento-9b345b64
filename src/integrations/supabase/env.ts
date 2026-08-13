@@ -13,8 +13,14 @@
 // desta chave. Se a intenção for tirar de circulação uma chave que já rodou,
 // o caminho é rotacionar no painel do Supabase — trocar de lugar não basta.
 //
-// Faltando no ambiente, o build para (ver vite.config.ts). O erro abaixo é a
-// segunda linha de defesa, para quem importar isto por fora do build.
+// SEM LITERAL DE FALLBACK — e o que isso exige
+// Nenhuma credencial escrita aqui: os valores vêm exclusivamente do `.env`,
+// que NÃO é versionado. Consequência: toda máquina que rode `npm run build`
+// precisa ter o arquivo (ou as variáveis no ambiente). Se o build de produção
+// rodar sem elas, ele PARA — ver a guarda no vite.config.ts. É de propósito:
+// sem a guarda o Vite embutiria `undefined` e o app subiria quebrado só no
+// primeiro request, que foi como a produção ficou num bundle velho em
+// 12/08/2026 sem ninguém perceber.
 // =====================================================================
 const url = import.meta.env.VITE_SUPABASE_URL;
 const anonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;

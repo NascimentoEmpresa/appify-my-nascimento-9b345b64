@@ -22,7 +22,22 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+# ATENÇÃO, LEIA ANTES DE CONFIAR NESTA LINHA:
+# o .env DESTE projeto está versionado (`git ls-files .env` mostra ele). Isso
+# não é contradição — o .gitignore só barra arquivo NOVO, não desfaz
+# rastreamento de arquivo que já está no índice.
+#
+# Está versionado porque o build de produção roda no Lovable, que não injeta
+# VITE_* aqui: o único caminho para as variáveis chegarem no build é dentro do
+# repositório. A linha abaixo fica para impedir que um .env de OUTRA máquina
+# (com valores locais) entre sem querer.
+#
+# ⚠ SÓ VALOR PUBLICÁVEL ali (VITE_*, que o Vite embute no bundle e qualquer
+# visitante lê no F12). Segredo de verdade — service_role, token de API, senha
+# — vai em Edge Function secret, NUNCA no .env.
 .env
+.env.local
+.env.*.local
 docs
 worker
 .claude
