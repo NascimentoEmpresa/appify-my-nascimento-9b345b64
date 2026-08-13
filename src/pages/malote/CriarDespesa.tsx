@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { Card, CardContent } from "@/components/ui/card";
@@ -12,7 +12,7 @@ import { LayoutGrid, Package, Lock, ShoppingCart, FileEdit, ArrowLeft } from "lu
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { useEmpresaId } from "@/hooks/useEmpresaId";
-import { useClassificacoesOrcamento } from "@/hooks/usePlanejamentoOrcamentario";
+import { useClassificacoesOrcamento, TipoClassificacaoOrcamento } from "@/hooks/usePlanejamentoOrcamentario";
 import {
   useSalvarDespesa,
   useConverterSolicitacaoEmDespesa,
@@ -106,8 +106,8 @@ function CriarDespesaNova() {
       </Card>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <PainelSolicitacao classificacaoId={classificacaoId} empresaId={empresaId ?? null} ativo={modo === "solicitacao"} />
-        <PainelDespesaMalote classificacaoId={classificacaoId} empresaId={empresaId ?? null} ativo={modo === "despesa"} />
+        <PainelSolicitacao classificacaoId={classificacaoId} classificacaoTipo={classificacao?.tipo ?? null} empresaId={empresaId ?? null} ativo={modo === "solicitacao"} />
+        <PainelDespesaMalote classificacaoId={classificacaoId} classificacaoTipo={classificacao?.tipo ?? null} empresaId={empresaId ?? null} ativo={modo === "despesa"} />
       </div>
 
       {!modo && (
@@ -230,6 +230,7 @@ function ConverterSolicitacaoEmDespesa({ solicitacaoId }: { solicitacaoId: strin
 
         <PainelDespesaMalote
           classificacaoId={solicitacao.classificacao_id ?? ""}
+          classificacaoTipo={solicitacao.tipo === "administrativo" || solicitacao.tipo === "contrato" ? solicitacao.tipo : null}
           empresaId={solicitacao.empresa_id}
           ativo
           despesaIdExistente={solicitacao.id}
@@ -280,7 +281,17 @@ const TIPO_SOLICITACAO_LABEL: Record<TipoSolicitacao, string> = {
   dispensa_cotacao: "Dispensa de cotação",
 };
 
-function PainelSolicitacao({ classificacaoId, empresaId, ativo }: { classificacaoId: string; empresaId: string | null; ativo: boolean }) {
+function PainelSolicitacao({
+  classificacaoId,
+  classificacaoTipo,
+  empresaId,
+  ativo,
+}: {
+  classificacaoId: string;
+  classificacaoTipo: TipoClassificacaoOrcamento | null;
+  empresaId: string | null;
+  ativo: boolean;
+}) {
   const salvar = useSalvarDespesa();
   const { data: empresas = [] } = useEmpresasGrupo();
   const { data: contratos = [] } = useContratosAtivos();
@@ -295,7 +306,27 @@ function PainelSolicitacao({ classificacaoId, empresaId, ativo }: { classificaca
   const [arquivos, setArquivos] = useState<File[]>([]);
   const [salvando, setSalvando] = useState<"rascunho" | "enviar" | null>(null);
 
-  const contratosDaEmpresa = contratos.filter((c) => !empresaContratoId || c.empresa_id === empresaContratoId);
+  // A Classificação Malote já define se a despesa é de Contrato ou
+  // Administrativo — o Tipo aqui só reflete isso e trava, evitando pedir a
+  // mesma informação duas vezes. "Dispensa de cotação" só fica selecionável
+  // quando a classificação não tem tipo definido (legado).
+  const tipoTravado: TipoSolicitacao | null = classificacaoTipo;
+
+  useEffect(() => {
+    if (tipoTravado) {
+      setTipo(tipoTravado);
+    } else {
+      setTipo("");
+      setEmpresaContratoId("");
+      setContratoId("");
+    }
+  }, [tipoTravado, classificacaoId]);
+
+  function handleContratoChange(id: string) {
+    setContratoId(id);
+    const c = contratos.find((ct) => ct.id === id);
+    setEmpresaContratoId(c?.empresa_id ?? "");
+  }
 
   function validar(paraEnviar: boolean): string | null {
     if (!nome.trim()) return "Informe o nome da solicitação.";
@@ -346,7 +377,8 @@ function PainelSolicitacao({ classificacaoId, empresaId, ativo }: { classificaca
       }
       toast.success(status === "rascunho" ? "Rascunho salvo." : "Solicitação enviada para cotação.");
       setNome(""); setMotivo(""); setDescricao(""); setValorEstimado(""); setLinks(""); setArquivos([]);
-      setTipo(""); setEmpresaContratoId(""); setContratoId("");
+      setEmpresaContratoId(""); setContratoId("");
+      if (!tipoTravado) setTipo("");
     } catch (e: any) {
       toast.error(e.message ?? "Erro ao salvar solicitação.");
     } finally {
@@ -389,54 +421,50 @@ function PainelSolicitacao({ classificacaoId, empresaId, ativo }: { classificaca
 
           <div>
             <Label>Tipo *</Label>
-            <Select
-              value={tipo}
-              onValueChange={(v) => {
-                setTipo(v as TipoSolicitacao);
-                if (v !== "contrato") {
-                  setEmpresaContratoId("");
-                  setContratoId("");
-                }
-              }}
-              disabled={!ativo}
-            >
-              <SelectTrigger>
-                <SelectValue placeholder="Selecione..." />
-              </SelectTrigger>
-              <SelectContent>
-                {(Object.entries(TIPO_SOLICITACAO_LABEL) as [TipoSolicitacao, string][]).map(([v, label]) => (
-                  <SelectItem key={v} value={v}>
-                    {label}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+            {tipoTravado ? (
+              <div className="flex items-center gap-1.5 h-10 px-3 rounded-md border border-input bg-muted text-sm text-muted-foreground">
+                <Lock className="h-3.5 w-3.5" /> {TIPO_SOLICITACAO_LABEL[tipoTravado]}
+              </div>
+            ) : (
+              <Select
+                value={tipo}
+                onValueChange={(v) => setTipo(v as TipoSolicitacao)}
+                disabled={!ativo}
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder="Selecione..." />
+                </SelectTrigger>
+                <SelectContent>
+                  {(Object.entries(TIPO_SOLICITACAO_LABEL) as [TipoSolicitacao, string][]).map(([v, label]) => (
+                    <SelectItem key={v} value={v}>
+                      {label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            )}
+            {tipoTravado && (
+              <p className="text-xs text-muted-foreground mt-1">Definido pela classificação selecionada.</p>
+            )}
           </div>
 
           {tipo === "contrato" && (
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div>
-                <Label>Empresa *</Label>
+                <Label>Contrato *</Label>
                 <SearchableSelect
-                  value={empresaContratoId}
-                  onChange={(v) => {
-                    setEmpresaContratoId(v);
-                    setContratoId("");
-                  }}
-                  options={empresas.map((e) => ({ value: e.id, label: e.nome }))}
-                  placeholder="Selecione a empresa..."
+                  value={contratoId}
+                  onChange={handleContratoChange}
+                  options={contratos.map((c) => ({ value: c.id, label: c.nome }))}
+                  placeholder="Selecione o contrato..."
                   disabled={!ativo}
                 />
               </div>
               <div>
-                <Label>Contrato *</Label>
-                <SearchableSelect
-                  value={contratoId}
-                  onChange={setContratoId}
-                  options={contratosDaEmpresa.map((c) => ({ value: c.id, label: c.nome }))}
-                  placeholder="Selecione o contrato..."
-                  disabled={!ativo || !empresaContratoId}
-                />
+                <Label className="text-xs text-muted-foreground">Empresa</Label>
+                <p className="h-10 flex items-center text-sm text-muted-foreground">
+                  {empresas.find((e) => e.id === empresaContratoId)?.nome ?? "Derivada do contrato selecionado"}
+                </p>
               </div>
             </div>
           )}
@@ -465,6 +493,7 @@ function PainelSolicitacao({ classificacaoId, empresaId, ativo }: { classificaca
 // ============================================================================
 function PainelDespesaMalote({
   classificacaoId,
+  classificacaoTipo,
   empresaId,
   ativo,
   despesaIdExistente,
@@ -474,6 +503,7 @@ function PainelDespesaMalote({
   onConvertida,
 }: {
   classificacaoId: string;
+  classificacaoTipo?: TipoClassificacaoOrcamento | null;
   empresaId: string | null;
   ativo: boolean;
   despesaIdExistente?: string;
@@ -616,7 +646,7 @@ function PainelDespesaMalote({
             <Input value={nome} onChange={(e) => setNome(e.target.value)} placeholder="Ex: Compra de materiais de escritório" disabled={!ativo} />
           </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-4 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div>
               <Label>Total do mês *</Label>
               <Input type="number" step="0.01" value={totalMes} onChange={(e) => setTotalMes(e.target.value)} placeholder="Ex: R$ 5.000,00" disabled={!ativo} />
@@ -624,20 +654,6 @@ function PainelDespesaMalote({
             <div>
               <Label>Data de pagamento *</Label>
               <Input type="date" value={dataPagamento} onChange={(e) => setDataPagamento(e.target.value)} disabled={!ativo} />
-            </div>
-            <div>
-              <Label className="text-xs text-muted-foreground">Total já lançado</Label>
-              <p className="h-10 flex items-center text-sm">
-                {totalRateado.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })} (
-                {totalMes ? ((totalRateado / Number(totalMes)) * 100).toFixed(0) : 0}%)
-              </p>
-            </div>
-            <div>
-              <Label className="text-xs text-muted-foreground">Restante para ratear</Label>
-              <p className="h-10 flex items-center text-sm">
-                {restante.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })} (
-                {totalMes ? ((restante / Number(totalMes)) * 100).toFixed(0) : 100}%)
-              </p>
             </div>
           </div>
 
@@ -683,6 +699,9 @@ function PainelDespesaMalote({
               onRatearPorChange={setRatearPor}
               valorTotal={Number(totalMes) || 0}
               disabled={!ativo}
+              contratoPorClassificacao
+              classificacaoTipoUnica={classificacaoTipo ?? null}
+              mostrarResumoValorTotal
             />
           </div>
 
