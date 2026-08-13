@@ -75,6 +75,7 @@ import AprovacoesCompras from "./pages/suprimentos/AprovacoesCompras";
 import Recebimentos from "./pages/suprimentos/Recebimentos";
 import CotacoesCompras from "./pages/suprimentos/CotacoesCompras";
 import CotacoesMalote from "./pages/suprimentos/CotacoesMalote";
+import CotacaoMaloteDetalhe from "./pages/suprimentos/CotacaoMaloteDetalhe";
 import CatalogoMateriais from "./pages/suprimentos/CatalogoMateriais";
 import CatalogoAprovacoes from "./pages/suprimentos/CatalogoAprovacoes";
 import PedidosMateriais from "./pages/suprimentos/PedidosMateriais";
@@ -399,6 +400,9 @@ const App = () => (
             {/* Reservada: a tela ainda não foi desenvolvida, mas a rota existe
                 para o menu sup_cotacoes_malote poder ser liberado. */}
             <Route path="suprimentos/cotacoes-malote" element={<CotacoesMalote />} />
+            {/* Detalhe da solicitação (SIS-2026-0112). Rota filha para o
+                matchMenuCode continuar resolvendo em sup_cotacoes_malote. */}
+            <Route path="suprimentos/cotacoes-malote/:id" element={<CotacaoMaloteDetalhe />} />
             {/* Supply/Compras — catálogo em cascata (Contrato → Posto → Função → enxoval).
                 Rota mais específica primeiro: matchMenuCode resolve por prefixo mais longo,
                 mas o React Router casa na ordem declarada. */}
