@@ -205,6 +205,7 @@ export default function RatearClassificacao() {
               classificacoesRateaveis={classificacoesRateaveis}
               distribuirIgualmente={distribuirIgualmente}
               onDistribuirIgualmenteChange={setDistribuirIgualmente}
+              contratoPorClassificacao
             />
           </div>
 
