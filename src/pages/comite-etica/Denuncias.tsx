@@ -64,6 +64,7 @@ interface Denuncia {
   data_nascimento: string | null; telefone_fixo: string | null; celular: string | null;
   relacao: string; tipo_denuncia: string; local_ocorrencia: string | null; como_soube: string;
   lideranca_ciente: string | null; lideranca_envolvida: string | null; lideranca_ocultou: string | null;
+  lideranca_ciente_quem: string | null; lideranca_envolvida_quem: string | null; lideranca_ocultou_quem: string | null;
   descricao: string; testemunhas: string | null; evidencias: string | null;
   valor_financeiro: string | null; sugestao: string | null;
   status: string; parecer_interno: string | null; retorno_denunciante: string | null;
@@ -343,9 +344,26 @@ function DetalheDenuncia({ denuncia, onFechar, onSalvo }: {
 
           <Card className="grid gap-4 p-4 sm:grid-cols-3">
             <p className="text-xs font-bold sm:col-span-3">Envolvimento da liderança</p>
-            <Campo label="Está ciente">{SIM_NAO[d.lideranca_ciente ?? ""] ?? "—"}</Campo>
-            <Campo label="Está envolvida">{SIM_NAO[d.lideranca_envolvida ?? ""] ?? "—"}</Campo>
-            <Campo label="Tentou esconder">{SIM_NAO[d.lideranca_ocultou ?? ""] ?? "—"}</Campo>
+            {/* Quem foi citado só aparece quando o denunciante quis dizer —
+                o campo é opcional mesmo depois de um "sim". */}
+            <Campo label="Está ciente">
+              {SIM_NAO[d.lideranca_ciente ?? ""] ?? "—"}
+              {d.lideranca_ciente_quem && (
+                <p className="mt-1 whitespace-pre-wrap text-xs text-muted-foreground">{d.lideranca_ciente_quem}</p>
+              )}
+            </Campo>
+            <Campo label="Está envolvida">
+              {SIM_NAO[d.lideranca_envolvida ?? ""] ?? "—"}
+              {d.lideranca_envolvida_quem && (
+                <p className="mt-1 whitespace-pre-wrap text-xs text-muted-foreground">{d.lideranca_envolvida_quem}</p>
+              )}
+            </Campo>
+            <Campo label="Tentou esconder">
+              {SIM_NAO[d.lideranca_ocultou ?? ""] ?? "—"}
+              {d.lideranca_ocultou_quem && (
+                <p className="mt-1 whitespace-pre-wrap text-xs text-muted-foreground">{d.lideranca_ocultou_quem}</p>
+              )}
+            </Campo>
           </Card>
 
           <Card className="space-y-3 p-4">
