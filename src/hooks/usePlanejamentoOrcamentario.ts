@@ -8,7 +8,8 @@ const CLASSIFICACAO_COLUMNS =
   "aprovador_solicitacao_user_id, aprovador_solicitacao_nome, " +
   "aprovador1_user_id, aprovador1_nome, aprovador1_limite_pct, aprovador1_sem_limite, " +
   "aprovador2_user_id, aprovador2_nome, aprovador2_limite_pct, aprovador2_sem_limite, " +
-  "aprovador3_user_id, aprovador3_nome, aprovador3_limite_pct, aprovador3_sem_limite";
+  "aprovador3_user_id, aprovador3_nome, aprovador3_limite_pct, aprovador3_sem_limite, " +
+  "limite_justificativa_pct";
 
 export interface ClassificacaoOrcamento {
   id: string;
@@ -31,6 +32,7 @@ export interface ClassificacaoOrcamento {
   aprovador3_nome: string | null;
   aprovador3_limite_pct: number | null;
   aprovador3_sem_limite: boolean;
+  limite_justificativa_pct: number | null;
 }
 
 export interface AprovadorDisponivel {
@@ -91,6 +93,12 @@ export function useSetoresCatalogo() {
   });
 }
 
+export interface ClassificacaoAdministrativoRef {
+  id: string;
+  nome: string;
+  ativo: boolean;
+}
+
 export interface PlanejamentoOrcamentarioRow {
   id: string;
   empresa_id: string;
@@ -101,7 +109,10 @@ export interface PlanejamentoOrcamentarioRow {
   valor: number;
   created_at: string;
   updated_at: string;
-  classificacao: ClassificacaoOrcamento | null;
+  // Orçamento Administrativo (SIS-2026-0125): classificacao_id referencia a
+  // Classificação Administrativo (catálogo simples), não a Classificação
+  // Malote — aprovadores/alçadas ficam no Orçamento Geral, via ligação.
+  classificacao: ClassificacaoAdministrativoRef | null;
 }
 
 const LIST_KEY = "planejamento_orcamentario";
@@ -162,6 +173,7 @@ interface SalvarClassificacaoInput {
   aprovador3_nome: string | null;
   aprovador3_limite_pct: number | null;
   aprovador3_sem_limite: boolean;
+  limite_justificativa_pct: number | null;
 }
 
 export function useSalvarClassificacaoOrcamento() {
@@ -188,7 +200,7 @@ export function usePlanejamentosOrcamento(empresaId: string | null | undefined) 
     queryFn: async () => {
       const { data, error } = await (supabase as any)
         .from("planejamento_orcamentario")
-        .select(`*, classificacao:classificacao_id(${CLASSIFICACAO_COLUMNS})`)
+        .select("*, classificacao:classificacao_id(id, nome, ativo)")
         .eq("empresa_id", empresaId)
         .order("inicio_vigencia", { ascending: false });
       if (error) throw error;
