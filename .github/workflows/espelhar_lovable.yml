@@ -1,0 +1,67 @@
+name: Espelhar main no repositorio do Lovable
+
+# O Lovable nao consegue reconectar a um repositorio existente: a UI dele so
+# oferece "criar novo". Entao a fonte da verdade continua sendo este repo (com
+# os PRs, os secrets e os workflows de chamado/Discord) e o repo do Lovable
+# passa a ser um espelho somente-leitura do main, de onde ele faz o build.
+#
+# Autenticacao por token, nao por deploy key: a org bloqueia deploy keys
+# ("Disabled by NascimentoEmpresa" na pagina de Chaves de implantacao).
+#
+# O espelho recebe o main IDENTICO. O desenho anterior criava um commit
+# descartavel em cima do main a cada execucao pra remover .github/workflows, e
+# isso orfanava o commit da execucao anterior: todo espelhamento virava uma
+# reescrita de historico, e o Lovable parava de acompanhar. Agora o push e
+# fast-forward puro, o que exige que o MIRROR_TOKEN tenha, alem de
+# Contents: Read and write, tambem Workflows: Read and write - sem isso o
+# GitHub recusa push que toque em .github/workflows.
+#
+# IMPORTANTE: nao edite codigo dentro do Lovable. Todo push daqui sobrescreve
+# o main de la. Hoje isso e seguro: nenhum commit recente veio do bot dele.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: espelhar-lovable
+  cancel-in-progress: false
+
+jobs:
+  espelhar:
+    runs-on: ubuntu-latest
+    # Trava anti-loop, agora essencial: este arquivo tambem vai pro espelho, e
+    # sem a trava ele rodaria la tentando empurrar pra si mesmo.
+    if: github.repository == 'NascimentoEmpresa/appify-my-nascimento-9b345b64'
+
+    steps:
+      - name: Checkout do main com historico completo
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Empurrar o main para o Lovable
+        env:
+          MIRROR_TOKEN: ${{ secrets.MIRROR_TOKEN }}
+          # Trocavel sem mexer no codigo: Settings > Secrets and variables >
+          # Actions > Variables > LOVABLE_REPO.
+          LOVABLE_REPO: ${{ vars.LOVABLE_REPO || 'NascimentoEmpresa/appify-my-nascimento' }}
+        run: |
+          if [ -z "$MIRROR_TOKEN" ]; then
+            echo "::error::Secret MIRROR_TOKEN nao configurado. Settings > Secrets and variables > Actions > New repository secret."
+            exit 1
+          fi
+
+          git remote add lovable "https://x-access-token:${MIRROR_TOKEN}@github.com/${LOVABLE_REPO}.git"
+
+          # O main nunca e reescrito aqui, entao na pratica todo push e
+          # fast-forward. O --force existe apenas para realinhar o espelho na
+          # primeira execucao, que ainda carrega o commit sintetico do desenho
+          # antigo, e para sobrescrever qualquer escrita feita pelo Lovable.
+          git push --force lovable main:main
+
+          git remote remove lovable
+          echo "main espelhado em ${LOVABLE_REPO} ($(git rev-parse --short HEAD))"

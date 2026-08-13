@@ -28,7 +28,8 @@ import {
   PrazoPagamentoUnidade,
   BloqueioRegra,
 } from "@/hooks/useMaloteConfig";
-import { LigacaoLicitacaoClassificacao } from "./LigacaoLicitacaoClassificacao";
+import { LigacaoLicitacaoClassificacao, LigacaoAdministrativoClassificacaoSection, LigacaoSectionBanner } from "./LigacaoLicitacaoClassificacao";
+import { Briefcase, Building2 } from "lucide-react";
 
 const DIAS_UTEIS_OPCOES = Array.from({ length: 15 }, (_, i) => i + 1);
 const ANO_ATUAL = new Date().getFullYear();
@@ -305,8 +306,25 @@ export default function Configuracoes() {
           )}
         </TabsContent>
 
-        <TabsContent value="ligacoes" className="mt-4">
-          <LigacaoLicitacaoClassificacao podeEditar={podeEditar} />
+        <TabsContent value="ligacoes" className="mt-4 space-y-4">
+          <div>
+            <LigacaoSectionBanner
+              titulo="Licitação → Classificação do Malote"
+              subtitulo="Liga cada rubrica da Planilha de Custo a uma Classificação do Malote do tipo Contrato."
+              icon={<Briefcase />}
+              cor="amber"
+            />
+            <LigacaoLicitacaoClassificacao podeEditar={podeEditar} />
+          </div>
+          <div>
+            <LigacaoSectionBanner
+              titulo="Classificação Administrativo → Classificação do Malote"
+              subtitulo="Liga cada Classificação Administrativo a uma Classificação do Malote, pra trazer aprovadores no Orçamento Geral."
+              icon={<Building2 />}
+              cor="blue"
+            />
+            <LigacaoAdministrativoClassificacaoSection podeEditar={podeEditar} />
+          </div>
         </TabsContent>
       </Tabs>
     </div>

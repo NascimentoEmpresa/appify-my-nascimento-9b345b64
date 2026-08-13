@@ -7,71 +7,26 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
-import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import { Pencil, Plus, Settings2, Info } from "lucide-react";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Pencil, Plus, Settings2 } from "lucide-react";
 import { Link } from "react-router-dom";
 import { useEmpresaId } from "@/hooks/useEmpresaId";
-import { useClassificacoesOrcamento, usePlanejamentosOrcamento, TipoClassificacaoOrcamento } from "@/hooks/usePlanejamentoOrcamentario";
-import { getStatusVigencia, STATUS_LABEL, STATUS_BADGE_CLASS, fmtMoney, fmtDate, OrcamentoComStatus } from "./utils";
-import { OrcamentoFormModal } from "./OrcamentoFormModal";
+import { usePlanejamentosOrcamento } from "@/hooks/usePlanejamentoOrcamentario";
+import { useClassificacoesAdministrativo } from "@/hooks/useMaloteClassificacaoAdministrativo";
+import { getStatusVigencia, STATUS_LABEL, STATUS_BADGE_CLASS, fmtMoney, fmtDate, OrcamentoComStatus } from "./orcamentoUtils";
+import { OrcamentoAdministrativoFormModal } from "./OrcamentoAdministrativoFormModal";
 
-const ORIGEM_LABEL: Record<TipoClassificacaoOrcamento, string> = {
-  contrato: "Contrato",
-  administrativo: "Administrativo",
-};
-
-function fmtAprovador(nome: string | null | undefined, limitePct: number | null | undefined) {
-  if (!nome) return "—";
-  return limitePct != null ? `${nome} — até ${limitePct}%` : nome;
-}
-
-function AprovadorHeadTooltip() {
-  return (
-    <Tooltip>
-      <TooltipTrigger asChild>
-        <Info className="h-3.5 w-3.5 text-muted-foreground cursor-help" />
-      </TooltipTrigger>
-      <TooltipContent className="max-w-64">
-        O percentual é o limite da alçada de aprovação desse aprovador sobre o valor do orçamento.
-      </TooltipContent>
-    </Tooltip>
-  );
-}
-
-// Tabela tem muitas colunas de aprovador (1/2/3 + solicitação) — mostrar só
-// o primeiro nome evita o scroll lateral; nome completo + alçada fica no
-// tooltip pra não perder informação.
-function AprovadorCell({ nome, limitePct }: { nome: string | null | undefined; limitePct?: number | null }) {
-  if (!nome) return <span className="text-muted-foreground">—</span>;
-  const primeiroNome = nome.split(" ")[0];
-  const label = limitePct != null ? `${primeiroNome} ${limitePct}%` : primeiroNome;
-  return (
-    <Tooltip>
-      <TooltipTrigger asChild>
-        <span className="cursor-help underline decoration-dotted underline-offset-2">{label}</span>
-      </TooltipTrigger>
-      <TooltipContent>{fmtAprovador(nome, limitePct)}</TooltipContent>
-    </Tooltip>
-  );
-}
-
-export default function CadastroOrcamentos() {
+export default function OrcamentoAdministrativo() {
   const { data: empresaId } = useEmpresaId();
-  const { data: classificacoes = [] } = useClassificacoesOrcamento();
+  const { data: classificacoes = [] } = useClassificacoesAdministrativo();
   const { data: orcamentos = [], isLoading } = usePlanejamentosOrcamento(empresaId);
 
   const [filtroClassificacao, setFiltroClassificacao] = useState("todas");
-  const [filtroOrigem, setFiltroOrigem] = useState("todas");
-  const [filtroResponsavel, setFiltroResponsavel] = useState("todos");
   const [filtroStatus, setFiltroStatus] = useState("todos");
   const [filtroInicio, setFiltroInicio] = useState("");
   const [filtroFim, setFiltroFim] = useState("");
   const [busca, setBusca] = useState("");
-
-  const responsaveis = useMemo(
-    () => [...new Set(classificacoes.map((c) => c.setor_responsavel).filter(Boolean) as string[])].sort((a, b) => a.localeCompare(b, "pt-BR")),
-    [classificacoes]
-  );
+  const [ocultarHistorico, setOcultarHistorico] = useState(true);
 
   const [modalOpen, setModalOpen] = useState(false);
   const [editando, setEditando] = useState<OrcamentoComStatus | null>(null);
@@ -93,9 +48,8 @@ export default function CadastroOrcamentos() {
   const filtrados = useMemo(() => {
     return comStatus
       .filter((o) => {
+        if (ocultarHistorico && o.status === "historico") return false;
         if (filtroClassificacao !== "todas" && o.classificacao_id !== filtroClassificacao) return false;
-        if (filtroOrigem !== "todas" && o.classificacao?.tipo !== filtroOrigem) return false;
-        if (filtroResponsavel !== "todos" && o.classificacao?.setor_responsavel !== filtroResponsavel) return false;
         if (filtroStatus !== "todos" && o.status !== filtroStatus) return false;
         if (filtroInicio && o.fim_vigencia < filtroInicio) return false;
         if (filtroFim && o.inicio_vigencia > filtroFim) return false;
@@ -106,7 +60,7 @@ export default function CadastroOrcamentos() {
         return true;
       })
       .sort((a, b) => b.inicio_vigencia.localeCompare(a.inicio_vigencia));
-  }, [comStatus, filtroClassificacao, filtroOrigem, filtroResponsavel, filtroStatus, filtroInicio, filtroFim, busca]);
+  }, [comStatus, filtroClassificacao, filtroStatus, filtroInicio, filtroFim, busca, ocultarHistorico]);
 
   function abrirNovo() {
     setEditando(null);
@@ -120,25 +74,24 @@ export default function CadastroOrcamentos() {
 
   function limparFiltros() {
     setFiltroClassificacao("todas");
-    setFiltroOrigem("todas");
-    setFiltroResponsavel("todos");
     setFiltroStatus("todos");
     setFiltroInicio("");
     setFiltroFim("");
     setBusca("");
+    setOcultarHistorico(true);
   }
 
   return (
     <div className="space-y-6 p-6">
       <PageHeader
         title="Orçamento Administrativo"
-        subtitle="Visualize e gerencie todos os orçamentos cadastrados."
-        module="Controladoria & Orçamento"
-        breadcrumb={["Orçamento", "Orçamento Administrativo"]}
+        subtitle="Visualize e gerencie os orçamentos administrativos cadastrados."
+        module="Malote"
+        breadcrumb={["Malote", "Classificações e Orçamentos", "Orçamento Administrativo"]}
         actions={
           <>
             <Button variant="outline" asChild>
-              <Link to="/app/controladoria/cadastro-classificacao">
+              <Link to="/app/malote/classificacoes-administrativo">
                 <Settings2 className="h-4 w-4 mr-2" />
                 Classificações
               </Link>
@@ -187,11 +140,17 @@ export default function CadastroOrcamentos() {
       <Card>
         <CardHeader className="flex flex-row items-center justify-between flex-wrap gap-3">
           <CardTitle className="text-base">Filtros</CardTitle>
-          <Button variant="outline" size="sm" onClick={limparFiltros}>
-            Limpar filtros
-          </Button>
+          <div className="flex items-center gap-4">
+            <label className="flex items-center gap-1.5 text-sm cursor-pointer">
+              <Checkbox checked={ocultarHistorico} onCheckedChange={(c) => setOcultarHistorico(c === true)} />
+              Ocultar histórico
+            </label>
+            <Button variant="outline" size="sm" onClick={limparFiltros}>
+              Limpar filtros
+            </Button>
+          </div>
         </CardHeader>
-        <CardContent className="grid grid-cols-1 md:grid-cols-4 xl:grid-cols-7 gap-3">
+        <CardContent className="grid grid-cols-1 md:grid-cols-4 xl:grid-cols-5 gap-3">
           <div>
             <Label className="text-xs">Classificação</Label>
             <Select value={filtroClassificacao} onValueChange={setFiltroClassificacao}>
@@ -203,35 +162,6 @@ export default function CadastroOrcamentos() {
                 {classificacoes.map((c) => (
                   <SelectItem key={c.id} value={c.id}>
                     {c.nome}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-          <div>
-            <Label className="text-xs">Origem</Label>
-            <Select value={filtroOrigem} onValueChange={setFiltroOrigem}>
-              <SelectTrigger>
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="todas">Todas</SelectItem>
-                <SelectItem value="contrato">Contrato</SelectItem>
-                <SelectItem value="administrativo">Administrativo</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
-          <div>
-            <Label className="text-xs">Responsável</Label>
-            <Select value={filtroResponsavel} onValueChange={setFiltroResponsavel}>
-              <SelectTrigger>
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="todos">Todos</SelectItem>
-                {responsaveis.map((r) => (
-                  <SelectItem key={r} value={r}>
-                    {r}
                   </SelectItem>
                 ))}
               </SelectContent>
@@ -280,25 +210,6 @@ export default function CadastroOrcamentos() {
               <TableRow>
                 <TableHead>Classificação</TableHead>
                 <TableHead>Detalhe</TableHead>
-                <TableHead>Requer Solicitação?</TableHead>
-                <TableHead>Aprovador da Solicitação</TableHead>
-                <TableHead>Origem</TableHead>
-                <TableHead>Responsável</TableHead>
-                <TableHead>
-                  <span className="inline-flex items-center gap-1">
-                    Aprovador 1 <AprovadorHeadTooltip />
-                  </span>
-                </TableHead>
-                <TableHead>
-                  <span className="inline-flex items-center gap-1">
-                    Aprovador 2 <AprovadorHeadTooltip />
-                  </span>
-                </TableHead>
-                <TableHead>
-                  <span className="inline-flex items-center gap-1">
-                    Aprovador 3 <AprovadorHeadTooltip />
-                  </span>
-                </TableHead>
                 <TableHead>Vigência</TableHead>
                 <TableHead>Valor</TableHead>
                 <TableHead>Status</TableHead>
@@ -308,14 +219,14 @@ export default function CadastroOrcamentos() {
             <TableBody>
               {isLoading && (
                 <TableRow>
-                  <TableCell colSpan={13} className="text-center text-muted-foreground py-8">
+                  <TableCell colSpan={6} className="text-center text-muted-foreground py-8">
                     Carregando...
                   </TableCell>
                 </TableRow>
               )}
               {!isLoading && filtrados.length === 0 && (
                 <TableRow>
-                  <TableCell colSpan={13} className="text-center text-muted-foreground py-8">
+                  <TableCell colSpan={6} className="text-center text-muted-foreground py-8">
                     Nenhum orçamento encontrado.
                   </TableCell>
                 </TableRow>
@@ -324,29 +235,6 @@ export default function CadastroOrcamentos() {
                 <TableRow key={o.id}>
                   <TableCell className="font-medium">{o.classificacao?.nome ?? "-"}</TableCell>
                   <TableCell>{o.detalhe}</TableCell>
-                  <TableCell>
-                    <Badge variant={o.classificacao?.requer_solicitacao ? "default" : "outline"}>
-                      {o.classificacao?.requer_solicitacao ? "Sim" : "Não"}
-                    </Badge>
-                  </TableCell>
-                  <TableCell className="whitespace-nowrap">
-                    {o.classificacao?.requer_solicitacao ? (
-                      <AprovadorCell nome={o.classificacao?.aprovador_solicitacao_nome} />
-                    ) : (
-                      "—"
-                    )}
-                  </TableCell>
-                  <TableCell>{o.classificacao?.tipo ? ORIGEM_LABEL[o.classificacao.tipo] : "—"}</TableCell>
-                  <TableCell>{o.classificacao?.setor_responsavel ?? "—"}</TableCell>
-                  <TableCell className="whitespace-nowrap">
-                    <AprovadorCell nome={o.classificacao?.aprovador1_nome} limitePct={o.classificacao?.aprovador1_limite_pct} />
-                  </TableCell>
-                  <TableCell className="whitespace-nowrap">
-                    <AprovadorCell nome={o.classificacao?.aprovador2_nome} limitePct={o.classificacao?.aprovador2_limite_pct} />
-                  </TableCell>
-                  <TableCell className="whitespace-nowrap">
-                    <AprovadorCell nome={o.classificacao?.aprovador3_nome} limitePct={o.classificacao?.aprovador3_limite_pct} />
-                  </TableCell>
                   <TableCell className="whitespace-nowrap">
                     {fmtDate(o.inicio_vigencia)} – {fmtDate(o.fim_vigencia)}
                   </TableCell>
@@ -368,7 +256,7 @@ export default function CadastroOrcamentos() {
         </CardContent>
       </Card>
 
-      <OrcamentoFormModal
+      <OrcamentoAdministrativoFormModal
         open={modalOpen}
         onOpenChange={setModalOpen}
         empresaId={empresaId ?? null}
