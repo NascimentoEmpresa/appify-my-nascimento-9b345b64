@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import { useSearchParams } from "react-router-dom";
 import { SUPABASE_FUNCTIONS_URL } from "@/integrations/supabase/env";
 import arcoNascimento from "@/assets/logo-nascimento-icon.png";
@@ -7,7 +7,7 @@ import {
   FileText, ClipboardList, UsersRound, MessageSquareWarning, ScrollText,
   UserX, HeartCrack, Users, Banknote, HandCoins, Scale, Building2, FileLock2,
   HardHat, Leaf, BookMarked, CircleEllipsis, Info, ArrowLeft, Fingerprint,
-  ServerOff, CheckCircle2, TriangleAlert, ChevronRight,
+  ServerOff, CheckCircle2, TriangleAlert, ChevronRight, MessagesSquare,
 } from "lucide-react";
 
 // =====================================================================
@@ -34,9 +34,24 @@ import {
 // =====================================================================
 
 /** O que a consulta por protocolo devolve — nunca o relato, só o andamento. */
+interface MensagemPublica {
+  id: string;
+  autor: "comite" | "denunciante";
+  mensagem: string;
+  criada_em: string;
+}
+
 interface DenunciaConsulta {
   protocolo: string;
+  /** Assunto dado pelo comitê; nulo enquanto ninguém classificou. */
+  titulo: string | null;
+  /** Mensagens do comitê que a pessoa ainda não abriu. */
+  nao_lidas: number;
+  /** Onde o processo está (situação). */
   status: string;
+  /** No que deu, quando já houve julgamento. Separado do status desde a
+   *  migration 20260901000003 — antes o desfecho era o próprio status. */
+  resultado: string | null;
   tipo_denuncia: string;
   registrada_em: string;
   atualizada_em: string;
@@ -50,7 +65,7 @@ interface DenunciaConsulta {
  * livre de token. Quem guarda a chave é a Edge Function, no servidor.
  */
 async function chamarCanal<T>(
-  rota: "denuncia-registrar" | "denuncia-consultar",
+  rota: "denuncia-registrar" | "denuncia-consultar" | "denuncia-conversa",
   corpo: unknown,
 ): Promise<{ data: T | null; erro: string | null }> {
   try {
@@ -89,6 +104,7 @@ const TIPO_DENUNCIA = [
   { value: "assedio_moral", label: "Assédio moral", Icone: UserX },
   { value: "assedio_sexual", label: "Assédio sexual", Icone: HeartCrack },
   { value: "discriminacao", label: "Discriminação / Preconceito", Icone: Users },
+  { value: "desrespeito", label: "Desrespeito / Conduta inadequada", Icone: MessageSquareWarning },
   { value: "fraude", label: "Fraude / Corrupção / Suborno", Icone: Banknote },
   { value: "furto_desvio", label: "Furto / Roubo / Desvio", Icone: HandCoins },
   { value: "conflito_interesses", label: "Conflito de interesses", Icone: Scale },
@@ -114,18 +130,27 @@ const SIM_NAO_NAOSEI = [
   { value: "nao_sei", label: "Não sei" },
 ];
 
+/** Situação — onde o processo está. */
 const STATUS_LABEL: Record<string, { titulo: string; desc: string; tom: string }> = {
-  nova:         { titulo: "Recebida",                    desc: "Registrada e na fila para análise inicial.", tom: "info" },
-  em_analise:   { titulo: "Em análise",                  desc: "A área responsável está avaliando o relato.", tom: "alerta" },
-  apuracao:     { titulo: "Em apuração",                 desc: "A apuração dos fatos está em andamento.", tom: "alerta" },
-  procedente:   { titulo: "Concluída — procedente",      desc: "A apuração confirmou o relato e as medidas cabíveis foram tomadas.", tom: "ok" },
-  improcedente: { titulo: "Concluída — improcedente",    desc: "A apuração foi encerrada sem confirmar o fato relatado.", tom: "neutro" },
-  arquivada:    { titulo: "Arquivada",                   desc: "O caso foi encerrado sem prosseguimento.", tom: "neutro" },
+  nova:                  { titulo: "Recebida",              desc: "Registrada e na fila para análise inicial.", tom: "info" },
+  em_analise:            { titulo: "Em análise",            desc: "A área responsável está avaliando o relato.", tom: "alerta" },
+  aguardando_documentos: { titulo: "Aguardando documentos", desc: "A apuração depende de documentos ou informações complementares.", tom: "alerta" },
+  investigacao:          { titulo: "Em investigação",       desc: "A apuração dos fatos está em andamento.", tom: "alerta" },
+  julgada:               { titulo: "Julgada",               desc: "O comitê concluiu a análise; as providências estão em execução.", tom: "ok" },
+  encerrada:             { titulo: "Encerrada",             desc: "O caso foi finalizado.", tom: "neutro" },
+};
+
+/** Desfecho — só existe depois do julgamento. */
+const RESULTADO_LABEL: Record<string, { titulo: string; desc: string; tom: string }> = {
+  procedente:              { titulo: "Procedente",              desc: "A apuração confirmou o relato e as medidas cabíveis foram tomadas.", tom: "ok" },
+  parcialmente_procedente: { titulo: "Parcialmente procedente", desc: "Parte do que foi relatado se confirmou, com as medidas cabíveis.", tom: "ok" },
+  improcedente:            { titulo: "Improcedente",            desc: "A apuração foi encerrada sem confirmar o fato relatado.", tom: "neutro" },
+  arquivada:               { titulo: "Arquivada",               desc: "O caso foi encerrado sem prosseguimento.", tom: "neutro" },
 };
 
 /** Ordem do andamento na régua da tela de acompanhamento. */
-const TRILHA = ["nova", "em_analise", "apuracao"];
-const FINAIS = ["procedente", "improcedente", "arquivada"];
+const TRILHA = ["nova", "em_analise", "aguardando_documentos", "investigacao"];
+const FINAIS = ["julgada", "encerrada"];
 
 const fmtDt = (s?: string | null) => {
   if (!s) return "—";
@@ -134,7 +159,13 @@ const fmtDt = (s?: string | null) => {
 };
 
 interface Form {
+  /** Se a pessoa quis dizer o NOME. O e-mail é sempre obrigatório — desde a
+   *  migration 20260901000005 o canal não recebe relato anônimo. */
   identificado: "sim" | "nao" | "";
+  /** Chave de acesso ao acompanhamento. */
+  email_acesso: string;
+  senha: string;
+  senha2: string;
   nome_completo: string; cpf: string; email: string; data_nascimento: string;
   telefone_fixo: string; celular: string;
   relacao: string; tipo_denuncia: string; local_ocorrencia: string; como_soube: string;
@@ -146,7 +177,8 @@ interface Form {
 }
 
 const VAZIO: Form = {
-  identificado: "", nome_completo: "", cpf: "", email: "", data_nascimento: "",
+  identificado: "", email_acesso: "", senha: "", senha2: "",
+  nome_completo: "", cpf: "", email: "", data_nascimento: "",
   telefone_fixo: "", celular: "", relacao: "", tipo_denuncia: "", local_ocorrencia: "",
   como_soube: "", lideranca_ciente: "", lideranca_envolvida: "", lideranca_ocultou: "",
   lideranca_ciente_quem: "", lideranca_envolvida_quem: "", lideranca_ocultou_quem: "",
@@ -190,13 +222,11 @@ interface Pergunta {
 const seIdentificou = (f: Form) => f.identificado === "sim";
 
 const PERGUNTAS: Pergunta[] = [
-  { k: "identificado",        label: "Você gostaria de se identificar?", req: true },
+  { k: "identificado",        label: "Você gostaria de informar seu nome ao comitê?", req: true },
   { k: "nome_completo",       label: "Nome completo", req: true, quando: seIdentificou },
   { k: "cpf",                 label: "CPF", quando: seIdentificou },
-  { k: "email",               label: "E-mail", quando: seIdentificou },
   { k: "data_nascimento",     label: "Data de nascimento", quando: seIdentificou },
   { k: "telefone_fixo",       label: "Telefone fixo", quando: seIdentificou },
-  { k: "celular",             label: "Celular", quando: seIdentificou },
   { k: "relacao",             label: "Qual a sua relação com o Grupo Nascimento?", req: true },
   { k: "tipo_denuncia",       label: "Qual o tipo de denúncia melhor se enquadra ao fato que você está registrando?", req: true },
   { k: "local_ocorrencia",    label: "Em qual empresa, unidade ou setor do grupo ocorreu o fato?" },
@@ -212,6 +242,11 @@ const PERGUNTAS: Pergunta[] = [
   { k: "evidencias",          label: "Você sabe se existem evidências sobre o fato? Em caso positivo, indique-as." },
   { k: "valor_financeiro",    label: "Qual o valor financeiro envolvido no fato relatado?" },
   { k: "sugestao",            label: "Você tem alguma sugestão de como solucionar o problema?" },
+  // O acesso vem por último de propósito: é a última coisa que a pessoa faz
+  // antes de enviar, e o enunciado explica para que serve.
+  { k: "email_acesso",        label: "Qual o seu e-mail?", req: true },
+  { k: "senha",               label: "Escolha uma senha para acompanhar a denúncia", req: true },
+  { k: "celular",             label: "Qual o seu celular com WhatsApp?" },
   { k: "concordou_termo",     label: "Li e concordo com o termo acima.", req: true },
 ];
 
@@ -421,6 +456,28 @@ function Estilos() {
     .dn-cod { font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 21px;
               font-weight: 700; color: #0f3171; letter-spacing: .5px; user-select: all; margin: 5px 0 0; }
 
+    /* ---- fio da conversa com o comitê ---- */
+    .dn-fio { display: flex; flex-direction: column; gap: 8px; max-height: 340px; overflow-y: auto;
+              background: #f8fafc; border: 1px solid #e7ecf4; border-radius: 14px; padding: 12px; }
+    .dn-msg { max-width: 85%; border-radius: 13px; padding: 10px 12px; border: 1px solid #e2e8f0;
+              background: #fff; align-self: flex-start; }
+    .dn-msg[data-eu="1"] { align-self: flex-end; background: #f2f6fd; border-color: #cfdcf5; }
+    .dn-msg-h { font-size: 10.5px; font-weight: 800; text-transform: uppercase; letter-spacing: .06em;
+                color: #94a3b8; margin: 0 0 3px; }
+    .dn-msg-t { font-size: 13.5px; line-height: 1.5; color: #1e293b; margin: 0;
+                white-space: pre-wrap; overflow-wrap: anywhere; }
+    /* Badge de mensagem nova na lista de denúncias da pessoa. */
+    .dn-novas { display: inline-flex; align-items: center; gap: 4px; background: #fff4ec; color: #ea580c;
+                border: 1px solid #ffdec6; border-radius: 99px; padding: 2px 8px;
+                font-size: 10.5px; font-weight: 800; }
+
+    /* ---- item da lista de denúncias da pessoa ---- */
+    .dn-item { display: flex; align-items: center; justify-content: space-between; gap: 12px; width: 100%;
+               text-align: left; cursor: pointer; border: 1.5px solid #dde5f0; background: #fff;
+               border-radius: 14px; padding: 13px 15px; font-family: inherit;
+               transition: border-color .15s, background .15s; }
+    .dn-item:hover { border-color: #0f3171; background: #f4f8ff; }
+
     /* ---- régua de status ---- */
     .dn-tl { display: flex; align-items: flex-start; gap: 0; }
     .dn-tl-p { flex: 1; text-align: center; position: relative; }
@@ -546,12 +603,13 @@ export default function Denuncia() {
             <h1>Sua voz é protegida.<br /><em>Relate com segurança.</em></h1>
             <p>
               Um espaço reservado para relatar condutas contrárias aos nossos valores e ao Código de
-              Conduta. Você escolhe se quer se identificar — a apuração é a mesma nos dois casos.
+              Conduta. Você informa um e-mail e escolhe uma senha — é com eles que acompanha a
+              apuração e recebe as atualizações do caso.
             </p>
             <div className="dn-selos">
               <div className="dn-selo">
                 <EyeOff className="h-5 w-5" />
-                <div><b>Anônimo se você quiser</b><span>Nenhum campo de identificação é obrigatório.</span></div>
+                <div><b>Seu nome é opcional</b><span>Você decide se quer se identificar ao comitê.</span></div>
               </div>
               <div className="dn-selo">
                 <ServerOff className="h-5 w-5" />
@@ -645,6 +703,13 @@ function Formulario({ onAcompanhar, onRegistrou, onProgresso }: {
         ? "escreva o relato — são necessários pelo menos 30 caracteres"
         : `faltam ${30 - n} caracteres para o mínimo de 30`);
     }
+    // Mesmas regras da RPC, checadas aqui para o erro não vir do servidor.
+    const email = f.email_acesso.trim();
+    if (!email) add("email_acesso", "informe o e-mail — é por ele que você acessa depois");
+    else if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) add("email_acesso", "e-mail com formato inválido");
+    if (!f.senha) add("senha", "escolha uma senha");
+    else if (f.senha.length < 8) add("senha", `a senha precisa de pelo menos 8 caracteres (faltam ${8 - f.senha.length})`);
+    else if (f.senha !== f.senha2) add("senha", "as duas senhas digitadas não são iguais");
     if (!f.concordou_termo) add("concordou_termo", "marque a caixa de aceite");
     return pend;
   }, [f, perguntas]);
@@ -669,16 +734,21 @@ function Formulario({ onAcompanhar, onRegistrou, onProgresso }: {
     setErroServidor("");
     setEnviando(true);
     const ident = f.identificado === "sim";
-    const { data, erro } = await chamarCanal<{ protocolo: string; senha: string }>(
+    const { data, erro } = await chamarCanal<{ protocolo: string; email: string }>(
       "denuncia-registrar",
       {
         identificado: ident,
         nome_completo: ident ? f.nome_completo : "",
         cpf: ident ? f.cpf : "",
-        email: ident ? f.email : "",
         data_nascimento: ident ? f.data_nascimento : "",
         telefone_fixo: ident ? f.telefone_fixo : "",
-        celular: ident ? f.celular : "",
+        // Acesso: obrigatórios, independem de a pessoa ter dito o nome.
+        email: f.email_acesso.trim(),
+        senha: f.senha,
+        // Celular vale para todo mundo agora — é por onde sai a confirmação.
+        celular: f.celular,
+        // Só para montar o link na mensagem do WhatsApp; a função valida.
+        origem_url: window.location.origin,
         relacao: f.relacao,
         tipo_denuncia: f.tipo_denuncia,
         local_ocorrencia: f.local_ocorrencia,
@@ -718,18 +788,19 @@ function Formulario({ onAcompanhar, onRegistrou, onProgresso }: {
           </div>
           <h1 className="mt-4 text-2xl font-extrabold text-[#0b1f44]">Denúncia registrada</h1>
           <p className="mx-auto mt-2 max-w-md text-sm leading-relaxed text-slate-600">
-            Seu relato chegou ao comitê responsável. Guarde o protocolo e a senha: são a única forma de
-            acompanhar a apuração sem se identificar.
+            Seu relato chegou ao comitê responsável. Para acompanhar, volte a esta página e entre com o
+            seu e-mail e a senha que você escolheu.
           </p>
 
           <div className="dn-chips mt-6 text-left">
             <div className="dn-chip">
-              <p className="dn-chip-l">Protocolo</p>
+              <p className="dn-chip-l">Número do processo</p>
               <p className="dn-cod">{ok.protocolo}</p>
             </div>
             <div className="dn-chip">
-              <p className="dn-chip-l">Senha de acompanhamento</p>
-              <p className="dn-cod">{ok.senha}</p>
+              <p className="dn-chip-l">Seu acesso</p>
+              <p className="mt-1 break-all text-sm font-bold text-[#0f3171]">{ok.email}</p>
+              <p className="text-xs text-slate-500">+ a senha que você escolheu</p>
             </div>
           </div>
 
@@ -737,11 +808,13 @@ function Formulario({ onAcompanhar, onRegistrou, onProgresso }: {
             <button
               type="button" className="dn-btn dn-btn-sec"
               onClick={() => {
-                navigator.clipboard?.writeText(`Protocolo: ${ok.protocolo} · Senha: ${ok.senha}`);
+                // Só o número do processo: a senha não vai para a área de
+                // transferência, nem para lugar nenhum fora da cabeça da pessoa.
+                navigator.clipboard?.writeText(ok.protocolo);
                 setCopiou(true); setTimeout(() => setCopiou(false), 2000);
               }}
             >
-              {copiou ? <><Check className="h-4 w-4" /> Copiado!</> : <><Copy className="h-4 w-4" /> Copiar dados</>}
+              {copiou ? <><Check className="h-4 w-4" /> Copiado!</> : <><Copy className="h-4 w-4" /> Copiar nº do processo</>}
             </button>
             <button type="button" className="dn-btn" onClick={onAcompanhar}>
               <Search className="h-4 w-4" /> Acompanhar esta denúncia
@@ -750,9 +823,9 @@ function Formulario({ onAcompanhar, onRegistrou, onProgresso }: {
 
           {/* Aviso duro de propósito: não existe recuperação de senha. */}
           <div className="dn-guarde mx-auto mt-6 max-w-lg">
-            <b>Anote antes de fechar esta página.</b> Estes dados não são enviados por e-mail e não podem
-            ser recuperados depois — nem por nós. É exatamente isso que impede alguém de se passar por
-            você para acompanhar a denúncia.
+            <b>Não existe "esqueci minha senha".</b> A senha é guardada apenas cifrada e não pode ser
+            recuperada — nem por nós. É exatamente isso que impede alguém de se passar por você para
+            acompanhar a denúncia. Se esquecer, será preciso registrar um novo relato.
           </div>
         </div>
       </div>
@@ -769,8 +842,8 @@ function Formulario({ onAcompanhar, onRegistrou, onProgresso }: {
         </div>
         <div className="dn-passo">
           <span className="dn-passo-n">Passo 2</span>
-          <b>Recebe protocolo e senha</b>
-          <span className="dn-passo-d">Dois códigos gerados na hora, que só você conhece.</span>
+          <b>Escolhe e-mail e senha</b>
+          <span className="dn-passo-d">Você define a senha; nada de código para decorar.</span>
         </div>
         <div className="dn-passo">
           <span className="dn-passo-n">Passo 3</span>
@@ -785,7 +858,7 @@ function Formulario({ onAcompanhar, onRegistrou, onProgresso }: {
           <span className="dn-card-ic"><Fingerprint className="h-5 w-5" /></span>
           <div>
             <h2>Identificação</h2>
-            <p>Opcional — o relato anônimo é apurado do mesmo jeito.</p>
+            <p>Dizer seu nome é opcional. O e-mail, pedido no fim, é obrigatório.</p>
           </div>
         </div>
         <div className="dn-card-b">
@@ -794,15 +867,15 @@ function Formulario({ onAcompanhar, onRegistrou, onProgresso }: {
               <button type="button" data-on={f.identificado === "nao" ? "1" : "0"} onClick={() => set("identificado", "nao")}>
                 <EyeOff className="h-5 w-5" />
                 <span className="dn-esc-t">
-                  <b>Não, quero permanecer anônimo(a)</b>
-                  <span className="dn-esc-d">Nenhum dado pessoal é solicitado ou gravado.</span>
+                  <b>Não, prefiro não dizer meu nome</b>
+                  <span className="dn-esc-d">Nome, CPF e telefone não são solicitados.</span>
                 </span>
               </button>
               <button type="button" data-on={f.identificado === "sim" ? "1" : "0"} onClick={() => set("identificado", "sim")}>
                 <UserCheck className="h-5 w-5" />
                 <span className="dn-esc-t">
                   <b>Sim, quero me identificar</b>
-                  <span className="dn-esc-d">Permite que o comitê fale com você durante a apuração.</span>
+                  <span className="dn-esc-d">Facilita o contato do comitê durante a apuração.</span>
                 </span>
               </button>
             </div>
@@ -816,17 +889,11 @@ function Formulario({ onAcompanhar, onRegistrou, onProgresso }: {
               <Campo p={perguntas.cpf}>
                 <input id="dn-i-cpf" className="dn-in" value={f.cpf} onChange={(e) => set("cpf", e.target.value)} placeholder="000.000.000-00" />
               </Campo>
-              <Campo p={perguntas.email}>
-                <input id="dn-i-email" type="email" className="dn-in" value={f.email} onChange={(e) => set("email", e.target.value)} placeholder="voce@exemplo.com" />
-              </Campo>
               <Campo p={perguntas.data_nascimento}>
                 <input id="dn-i-data_nascimento" type="date" className="dn-in" value={f.data_nascimento} onChange={(e) => set("data_nascimento", e.target.value)} />
               </Campo>
-              <Campo p={perguntas.telefone_fixo}>
+              <Campo p={perguntas.telefone_fixo} className="dn-full">
                 <input id="dn-i-telefone_fixo" className="dn-in" value={f.telefone_fixo} onChange={(e) => set("telefone_fixo", e.target.value)} placeholder="(00) 0000-0000" />
-              </Campo>
-              <Campo p={perguntas.celular} className="dn-full">
-                <input id="dn-i-celular" className="dn-in" value={f.celular} onChange={(e) => set("celular", e.target.value)} placeholder="(00) 00000-0000" />
               </Campo>
             </div>
           )}
@@ -988,6 +1055,68 @@ function Formulario({ onAcompanhar, onRegistrou, onProgresso }: {
         </div>
       </section>
 
+      {/* ------------------------------------------------------------ Acesso */}
+      <section className="dn-card">
+        <div className="dn-card-h">
+          <span className="dn-card-ic"><KeyRound className="h-5 w-5" /></span>
+          <div>
+            <h2>Como você vai acompanhar</h2>
+            <p>É com estes dados que você volta aqui para ver o andamento.</p>
+          </div>
+        </div>
+        <div className="dn-card-b">
+          <Campo
+            p={perguntas.email_acesso} falta={falta("email_acesso")} para="dn-i-email_acesso"
+            ajuda="Para você receber atualizações sobre a denúncia e acessar o seu processo quando quiser."
+          >
+            <input
+              id="dn-i-email_acesso" type="email" inputMode="email" autoComplete="email"
+              className="dn-in" value={f.email_acesso}
+              onChange={(e) => set("email_acesso", e.target.value)}
+              placeholder="voce@exemplo.com"
+            />
+          </Campo>
+
+          <Campo
+            p={perguntas.senha} falta={falta("senha")} para="dn-i-senha"
+            ajuda="Mínimo de 8 caracteres. Escolha uma senha que você lembre — ela não pode ser recuperada depois."
+          >
+            <div className="dn-grid2">
+              <input
+                id="dn-i-senha" type="password" autoComplete="new-password"
+                className="dn-in" value={f.senha}
+                onChange={(e) => set("senha", e.target.value)}
+                placeholder="Sua senha"
+              />
+              <input
+                id="dn-i-senha2" type="password" autoComplete="new-password"
+                className="dn-in" value={f.senha2}
+                onChange={(e) => set("senha2", e.target.value)}
+                placeholder="Repita a senha"
+              />
+            </div>
+          </Campo>
+
+          <Campo
+            p={perguntas.celular} para="dn-i-celular"
+            ajuda="Se informar, enviamos o número do processo e o link de acompanhamento pelo WhatsApp."
+          >
+            <input
+              id="dn-i-celular" inputMode="tel" className="dn-in" value={f.celular}
+              onChange={(e) => set("celular", e.target.value)} placeholder="(00) 00000-0000"
+            />
+          </Campo>
+
+          <div className="dn-note">
+            <Lock className="h-4 w-4" />
+            <span>
+              A senha é guardada apenas <b>cifrada</b> — nem o comitê consegue lê-la. Ela nunca é
+              enviada por e-mail nem por WhatsApp: só você a conhece.
+            </span>
+          </div>
+        </div>
+      </section>
+
       {/* ------------------------------------------------------------- Termo */}
       <section className="dn-card">
         <div className="dn-card-h">
@@ -1052,12 +1181,13 @@ function Formulario({ onAcompanhar, onRegistrou, onProgresso }: {
           <Send className="h-4 w-4" /> {enviando ? "Enviando…" : "Registrar denúncia"}
         </button>
         <p className="mt-3 text-center text-xs leading-relaxed text-slate-500">
-          Ao registrar, você recebe um <b className="text-slate-700">protocolo</b> e uma{" "}
-          <b className="text-slate-700">senha</b> para acompanhar a denúncia.
+          Você acompanha a denúncia com o seu <b className="text-slate-700">e-mail</b> e a{" "}
+          <b className="text-slate-700">senha</b> que escolheu. Informando o celular, o número do
+          processo também chega pelo WhatsApp.
         </p>
         <div className="dn-note mt-4">
           <KeyRound className="h-4 w-4" />
-          <span>Já registrou antes? Consulte o andamento com o protocolo e a senha que você guardou.</span>
+          <span>Já registrou antes? Entre com o seu e-mail e a senha que você escolheu.</span>
         </div>
         <button className="dn-btn dn-btn-sec dn-btn-w mt-3" onClick={onAcompanhar}>
           <Search className="h-4 w-4" /> Acompanhar uma denúncia
@@ -1069,31 +1199,84 @@ function Formulario({ onAcompanhar, onRegistrou, onProgresso }: {
 
 // -------------------------------------------------------------- Acompanhar
 function Acompanhar({ onVoltar }: { onVoltar: () => void }) {
-  const [protocolo, setProtocolo] = useState("");
+  const [email, setEmail] = useState("");
   const [senha, setSenha] = useState("");
   const [erro, setErro] = useState("");
   const [carregando, setCarregando] = useState(false);
+  /** Todas as denúncias daquele e-mail — a pessoa pode ter registrado várias. */
+  const [lista, setLista] = useState<DenunciaConsulta[] | null>(null);
   const [dados, setDados] = useState<DenunciaConsulta | null>(null);
 
   const consultar = async () => {
     if (carregando) return;
-    if (!protocolo.trim() || !senha.trim()) {
-      setErro("Informe o protocolo e a senha recebidos ao registrar a denúncia.");
+    if (!email.trim() || !senha) {
+      setErro("Informe o e-mail e a senha que você escolheu ao registrar a denúncia.");
       return;
     }
     setErro(""); setCarregando(true);
     // `falha` e não `erro` porque `erro` já é o estado da tela logo acima.
-    const { data, erro: falha } = await chamarCanal<DenunciaConsulta>("denuncia-consultar", {
-      protocolo: protocolo.trim(),
-      senha: senha.trim(),
+    const { data, erro: falha } = await chamarCanal<{ denuncias: DenunciaConsulta[] }>("denuncia-consultar", {
+      email: email.trim(),
+      senha,
     });
     setCarregando(false);
-    if (falha || !data) { setErro(falha || "Não foi possível consultar agora."); setDados(null); return; }
-    setDados(data);
+    if (falha || !data) { setErro(falha || "Não foi possível consultar agora."); setLista(null); return; }
+    const itens = data.denuncias ?? [];
+    setLista(itens);
+    // Com uma denúncia só, abrir a lista para clicar em um item seria um
+    // passo a troco de nada.
+    setDados(itens.length === 1 ? itens[0] : null);
   };
+
+  const limpar = () => { setLista(null); setDados(null); setSenha(""); };
+
+  // Mais de uma denúncia no mesmo e-mail: escolhe qual acompanhar.
+  if (lista && lista.length > 1 && !dados) {
+    return (
+      <div className="space-y-4">
+        <section className="dn-card">
+          <div className="dn-card-h">
+            <span className="dn-card-ic"><FileText className="h-5 w-5" /></span>
+            <div>
+              <h2>Suas denúncias</h2>
+              <p>{lista.length} registros neste e-mail. Toque em um para ver o andamento.</p>
+            </div>
+          </div>
+          <div className="dn-card-b">
+            {lista.map((d) => {
+              const s = STATUS_LABEL[d.status] ?? { titulo: d.status, desc: "", tom: "neutro" };
+              return (
+                <button key={d.protocolo} type="button" className="dn-item" onClick={() => setDados(d)}>
+                  <span className="min-w-0">
+                    <span className="dn-cod block text-base">{d.protocolo}</span>
+                    {d.titulo && <span className="block truncate text-sm font-semibold text-slate-700">{d.titulo}</span>}
+                    <span className="block text-xs text-slate-500">Registrada em {fmtDt(d.registrada_em)}</span>
+                  </span>
+                  <span className="flex shrink-0 items-center gap-2">
+                    {d.nao_lidas > 0 && (
+                      <span className="dn-novas">
+                        <MessagesSquare className="h-3 w-3" /> {d.nao_lidas}
+                      </span>
+                    )}
+                    <span className={`dn-st-${s.tom} rounded-lg px-2.5 py-1 text-xs font-bold`}>
+                      {s.titulo}
+                    </span>
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+        </section>
+        <button className="dn-btn dn-btn-sec dn-btn-w" onClick={limpar}>
+          <ArrowLeft className="h-4 w-4" /> Sair
+        </button>
+      </div>
+    );
+  }
 
   if (dados) {
     const st = STATUS_LABEL[dados.status] ?? { titulo: dados.status, desc: "", tom: "neutro" };
+    const res = dados.resultado ? RESULTADO_LABEL[dados.resultado] : null;
     const tipo = TIPO_DENUNCIA.find((t) => t.value === dados.tipo_denuncia)?.label ?? dados.tipo_denuncia;
     // Caso final acende a régua inteira; caso em curso acende até a etapa atual.
     const encerrada = FINAIS.includes(dados.status);
@@ -1111,7 +1294,7 @@ function Acompanhar({ onVoltar }: { onVoltar: () => void }) {
           </div>
           <div className="dn-card-b">
             <div className="dn-tl">
-              {["Recebida", "Em análise", "Em apuração", "Concluída"].map((etapa, i) => (
+              {["Recebida", "Em análise", "Aguardando docs.", "Investigação", "Concluída"].map((etapa, i) => (
                 <div key={etapa} className="dn-tl-p" data-on={i <= atual ? "1" : "0"}>
                   <span className="dn-tl-b">
                     {i < atual || (encerrada && i === TRILHA.length)
@@ -1128,6 +1311,16 @@ function Acompanhar({ onVoltar }: { onVoltar: () => void }) {
               {st.desc && <p className="mt-0.5 text-xs leading-relaxed">{st.desc}</p>}
             </div>
 
+            {/* O desfecho só existe depois do julgamento, e é a informação
+                que o denunciante mais espera — por isso em bloco próprio. */}
+            {res && (
+              <div className={`dn-st-${res.tom} rounded-xl p-4`}>
+                <p className="text-[11px] font-bold uppercase tracking-wide opacity-70">Resultado da apuração</p>
+                <p className="mt-0.5 text-sm font-extrabold">{res.titulo}</p>
+                <p className="mt-0.5 text-xs leading-relaxed">{res.desc}</p>
+              </div>
+            )}
+
             <div className="dn-grid2">
               <div><p className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">Tipo</p><p className="mt-0.5 text-sm font-bold text-slate-700">{tipo}</p></div>
               <div><p className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">Última atualização</p><p className="mt-0.5 text-sm font-bold text-slate-700">{fmtDt(dados.atualizada_em)}</p></div>
@@ -1137,6 +1330,10 @@ function Acompanhar({ onVoltar }: { onVoltar: () => void }) {
             </div>
           </div>
         </section>
+
+        {/* A conversa vem antes do retorno: se o comitê perguntou algo, é o
+            que a pessoa precisa ver primeiro ao abrir o protocolo. */}
+        <ConversaPublica email={email} senha={senha} protocolo={dados.protocolo} />
 
         <section className="dn-card">
           <div className="dn-card-h">
@@ -1151,15 +1348,20 @@ function Acompanhar({ onVoltar }: { onVoltar: () => void }) {
               ? <p className="whitespace-pre-wrap break-words text-sm leading-relaxed text-slate-700 [overflow-wrap:anywhere]">{dados.retorno}</p>
               : <p className="text-sm leading-relaxed text-slate-500">
                   Ainda não há retorno publicado. Assim que a apuração avançar, a resposta aparece aqui —
-                  guarde seu protocolo e senha para consultar novamente.
+                  basta entrar de novo com o seu e-mail e a sua senha.
                 </p>}
           </div>
         </section>
 
         <div className="flex flex-wrap gap-3">
-          <button className="dn-btn dn-btn-sec" style={{ flex: 1 }} onClick={() => { setDados(null); setSenha(""); }}>
-            <Search className="h-4 w-4" /> Consultar outro protocolo
-          </button>
+          {/* Com várias denúncias, volta para a lista; com uma só, sai. */}
+          {lista && lista.length > 1
+            ? <button className="dn-btn dn-btn-sec" style={{ flex: 1 }} onClick={() => setDados(null)}>
+                <ArrowLeft className="h-4 w-4" /> Ver minhas outras denúncias
+              </button>
+            : <button className="dn-btn dn-btn-sec" style={{ flex: 1 }} onClick={limpar}>
+                <ArrowLeft className="h-4 w-4" /> Sair
+              </button>}
           <button className="dn-btn" style={{ flex: 1 }} onClick={onVoltar}>Registrar nova denúncia</button>
         </div>
       </div>
@@ -1173,26 +1375,26 @@ function Acompanhar({ onVoltar }: { onVoltar: () => void }) {
           <span className="dn-card-ic"><KeyRound className="h-5 w-5" /></span>
           <div>
             <h2>Acompanhar denúncia</h2>
-            <p>É o único jeito de ver o andamento sem se identificar.</p>
+            <p>Entre com o e-mail e a senha que você escolheu ao registrar.</p>
           </div>
         </div>
         <div className="dn-card-b">
           {erro && <div className="dn-erro">{erro}</div>}
 
           <div>
-            <label className="dn-lab" htmlFor="dn-prot">Protocolo</label>
+            <label className="dn-lab" htmlFor="dn-email">E-mail</label>
             <input
-              id="dn-prot" className="dn-in" placeholder="DEN-2026-00001"
-              style={{ fontFamily: "'JetBrains Mono', ui-monospace, monospace" }}
-              value={protocolo} onChange={(e) => setProtocolo(e.target.value)}
+              id="dn-email" type="email" inputMode="email" autoComplete="email"
+              className="dn-in" placeholder="voce@exemplo.com"
+              value={email} onChange={(e) => setEmail(e.target.value)}
               onKeyDown={(e) => { if (e.key === "Enter") consultar(); }}
             />
           </div>
           <div>
-            <label className="dn-lab" htmlFor="dn-senha">Senha de acompanhamento</label>
+            <label className="dn-lab" htmlFor="dn-senha">Senha</label>
             <input
-              id="dn-senha" className="dn-in" placeholder="ABCD123456"
-              style={{ fontFamily: "'JetBrains Mono', ui-monospace, monospace" }}
+              id="dn-senha" type="password" autoComplete="current-password"
+              className="dn-in" placeholder="A senha que você escolheu"
               value={senha} onChange={(e) => setSenha(e.target.value)}
               onKeyDown={(e) => { if (e.key === "Enter") consultar(); }}
             />
@@ -1204,9 +1406,9 @@ function Acompanhar({ onVoltar }: { onVoltar: () => void }) {
           <div className="dn-note">
             <Lock className="h-4 w-4" />
             <span>
-              <b>Perdeu o protocolo ou a senha?</b> Não há como recuperá-los — nem por nós. A senha é
-              guardada apenas cifrada, justamente para que ninguém consiga se passar por você. Se perdeu
-              os dados, registre um novo relato.
+              <b>Esqueceu a senha?</b> Não há como recuperá-la — nem por nós. Ela é guardada apenas
+              cifrada, justamente para que ninguém consiga se passar por você. Se esqueceu, registre um
+              novo relato.
             </span>
           </div>
         </div>
@@ -1251,6 +1453,100 @@ function Enunciado({ texto, destacar }: { texto: string; destacar?: string }) {
   const i = texto.indexOf(destacar);
   if (i < 0) return <>{texto}</>;
   return <>{texto.slice(0, i)}<b>{destacar}</b>{texto.slice(i + destacar.length)}</>;
+}
+
+/**
+ * Conversa do denunciante com o comitê. Recarrega a cada abertura do
+ * protocolo — sem sessão, a credencial (e-mail + senha) viaja em cada
+ * chamada e é conferida no servidor toda vez.
+ */
+function ConversaPublica({ email, senha, protocolo }: {
+  email: string; senha: string; protocolo: string;
+}) {
+  const [itens, setItens] = useState<MensagemPublica[] | null>(null);
+  const [texto, setTexto] = useState("");
+  const [carregando, setCarregando] = useState(true);
+  const [enviando, setEnviando] = useState(false);
+  const [erro, setErro] = useState("");
+
+  const carregar = useCallback(async (mensagem?: string) => {
+    const { data, erro: falha } = await chamarCanal<{ mensagens: MensagemPublica[] }>(
+      "denuncia-conversa",
+      { email, senha, protocolo, ...(mensagem ? { mensagem } : {}) },
+    );
+    if (falha || !data) { setErro(falha || "Não foi possível carregar a conversa."); return false; }
+    setErro("");
+    setItens(data.mensagens ?? []);
+    return true;
+  }, [email, senha, protocolo]);
+
+  useEffect(() => {
+    let vivo = true;
+    setCarregando(true);
+    carregar().finally(() => { if (vivo) setCarregando(false); });
+    return () => { vivo = false; };
+  }, [carregar]);
+
+  const enviar = async () => {
+    const t = texto.trim();
+    if (!t || enviando) return;
+    setEnviando(true);
+    const ok = await carregar(t);
+    setEnviando(false);
+    if (ok) setTexto("");
+  };
+
+  return (
+    <section className="dn-card">
+      <div className="dn-card-h">
+        <span className="dn-card-ic"><MessagesSquare className="h-5 w-5" /></span>
+        <div>
+          <h2>Conversa com o comitê</h2>
+          <p>Use este espaço para responder ao comitê ou acrescentar informação.</p>
+        </div>
+      </div>
+      <div className="dn-card-b">
+        {erro && <div className="dn-erro">{erro}</div>}
+
+        {carregando && <p className="text-sm text-slate-500">Carregando…</p>}
+
+        {!carregando && itens && itens.length === 0 && (
+          <div className="dn-note">
+            <Info className="h-4 w-4" />
+            <span>
+              Ainda não há mensagens. Se lembrar de algum detalhe — data, nome, testemunha — escreva
+              abaixo: ajuda diretamente na apuração.
+            </span>
+          </div>
+        )}
+
+        {!carregando && itens && itens.length > 0 && (
+          <div className="dn-fio">
+            {itens.map((m) => (
+              <div key={m.id} className="dn-msg" data-eu={m.autor === "denunciante" ? "1" : "0"}>
+                <p className="dn-msg-h">
+                  {m.autor === "comite" ? "Comitê de Ética" : "Você"} · {fmtDt(m.criada_em)}
+                </p>
+                <p className="dn-msg-t">{m.mensagem}</p>
+              </div>
+            ))}
+          </div>
+        )}
+
+        <div>
+          <label className="dn-lab" htmlFor="dn-msg">Escrever ao comitê</label>
+          <textarea
+            id="dn-msg" className="dn-in dn-ta" value={texto}
+            onChange={(e) => setTexto(e.target.value)}
+            placeholder="Sua mensagem…"
+          />
+        </div>
+        <button className="dn-btn dn-btn-w" onClick={enviar} disabled={enviando || !texto.trim()}>
+          <Send className="h-4 w-4" /> {enviando ? "Enviando…" : "Enviar mensagem"}
+        </button>
+      </div>
+    </section>
+  );
 }
 
 function Sel({ id, valor, onChange, opcoes }: {
