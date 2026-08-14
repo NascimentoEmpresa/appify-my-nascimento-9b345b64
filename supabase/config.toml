@@ -69,3 +69,8 @@ verify_jwt = false
 
 [functions.denuncia-consultar]
 verify_jwt = false
+
+# Conversa do denunciante com o comitê. Mesmo modelo: a credencial é o par
+# e-mail + senha conferido pela RPC a cada chamada, não uma sessão.
+[functions.denuncia-conversa]
+verify_jwt = false

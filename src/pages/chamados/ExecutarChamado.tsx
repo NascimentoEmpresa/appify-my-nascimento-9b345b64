@@ -7,6 +7,7 @@ import { chamadosMarkSeen } from "@/hooks/useChamadosNotif";
 import { useChamadoPerms } from "./useChamadoPerms";
 import { useToast } from "@/hooks/use-toast";
 import { PageHeader } from "@/components/layout/PageHeader";
+import { ExportarChamado } from "./ExportarChamado";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -328,6 +329,10 @@ export default function ExecutarChamado() {
               )}
             </Card>
           )}
+
+          {/* Exportar fica FORA do `podeAgir`: não é ação de execução — quem
+              enxerga o chamado pode levar a ficha e os anexos embora. */}
+          <ExportarChamado chamadoId={chamado.id} numero={chamado.numero} totalAnexos={anexos.length} />
 
           {canExcluir && (
             <Card className="space-y-2 p-4">

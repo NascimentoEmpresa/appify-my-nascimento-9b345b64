@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
 import { addDays, isSameDay, isWithinInterval, subDays } from "date-fns";
+import { CalendarDays } from "lucide-react";
 import { useMinhasReunioes, useOcultarReuniaoDaHome } from "../useReunioes";
 import { ETAPA_COR, ETAPA_LABEL, salaResumo } from "../types";
 
@@ -38,29 +39,33 @@ export function MinhasReunioesCard() {
   return (
     <div className="ini-card">
       <div className="ini-card-hd">
-        <h3>📅 Minhas Reuniões</h3>
-        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+        {/* O ícone vem do mesmo conjunto do resto do ERP; emoji renderiza
+            diferente em cada sistema operacional e destoa do cabeçalho. */}
+        <div className="ini-hd-tx">
+          <h3><CalendarDays className="ini-hd-ic" aria-hidden /> Minhas Reuniões</h3>
+          <p>Acompanhe suas reuniões agendadas.</p>
+        </div>
+        {/* Cores por token, não literais: o cartão vive dentro do .ini-card e
+            precisa acompanhar o tema junto com ele. */}
+        <div className="ini-hd-acoes">
           <select
             value={filtro}
             onChange={(e) => setFiltro(e.target.value as FiltroPeriodo)}
-            style={{
-              fontSize: ".78rem", fontWeight: 600, color: "#0f172a", background: "#fff",
-              border: "1px solid #e2e8f0", borderRadius: 8, padding: "4px 8px", cursor: "pointer",
-            }}
+            className="ini-select"
           >
             {OPCOES_FILTRO.map((o) => (
               <option key={o.value} value={o.value}>{o.label}</option>
             ))}
           </select>
-          <Link to="/app/central-servicos/reunioes" style={{ fontSize: ".78rem", fontWeight: 600, color: "#0f3171", textDecoration: "none" }}>
+          <Link to="/app/central-servicos/reunioes" className="ini-link">
             Ver agenda completa
           </Link>
         </div>
       </div>
       <div className="ini-card-body">
-        {isLoading && <p style={{ fontSize: ".82rem", color: "#64748b" }}>Carregando…</p>}
+        {isLoading && <p className="ini-nota">Carregando…</p>}
         {!isLoading && reunioesFiltradas.length === 0 && (
-          <p style={{ fontSize: ".82rem", color: "#64748b" }}>Nenhuma reunião nesse período.</p>
+          <p className="ini-nota">Nenhuma reunião nesse período.</p>
         )}
         <div className="ini-reuniao-lista">
           {reunioesFiltradas.map((r) => {
