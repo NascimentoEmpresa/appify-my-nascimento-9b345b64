@@ -118,7 +118,11 @@ async function construirIndice(): Promise<Map<string, Map<string, ParticIdx>>> {
       anota(r.respondente_nome, null);
       anota(r.respondente_cadastro?.nome, null);
       Object.entries(r.itens ?? {}).forEach(([pid, v]) => {
-        (Array.isArray(v) ? v : [v]).forEach(x => anota(x, pergsPorForm[fid]?.[pid] ?? "Resposta"));
+        // Pergunta "colegas": o item é {colaborador, setor, nota, comentario} —
+        // quem interessa é o colaborador (o objeto inteiro viraria lixo no índice).
+        (Array.isArray(v) ? v : [v]).forEach((x: any) =>
+          anota(x && typeof x === "object" && !Array.isArray(x) ? x.colaborador : x,
+                pergsPorForm[fid]?.[pid] ?? "Resposta"));
       });
       naResposta.forEach((info, nome) => {
         const porForm = idx.get(nome) ?? new Map<string, ParticIdx>();

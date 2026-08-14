@@ -39,6 +39,14 @@ export interface Formulario {
   seguranca?: "liberado" | "restrito";
   exige_senha?: boolean;
   setores_acesso?: string[] | null;   // setores (Setor_ERP) liberados quando restrito
+  // Deixa o respondente escolher enviar sem se identificar. Anônimo é anônimo
+  // no banco: o trigger cs_form_resposta_guard apaga criado_por/nome/e-mail/
+  // cadastro antes de gravar (migration 20260902000001).
+  permite_anonimo?: boolean;
+  // Intervalo mínimo entre duas respostas da MESMA pessoa (em horas; null =
+  // sem limite). Só vale para quem responde logado - link liberado não tem
+  // identidade p/ contar o prazo.
+  intervalo_horas?: number | null;
   deleted_at?: string | null;         // soft-delete: na lixeira quando != null
   deleted_por_nome?: string | null;   // quem moveu para a lixeira
 }
@@ -240,13 +248,21 @@ export default function Formularios() {
 
   const duplicar = async (f: Formulario) => {
     const nome = user?.user_metadata?.nome ?? user?.email ?? "";
-    const { error } = await (supabase as any).from("CS_FORMULARIOS").insert({
+    const base = {
       titulo: f.titulo + " (cópia)", descricao: f.descricao, slug: slugify(f.titulo),
       inicia_em: f.inicia_em, encerra_em: f.encerra_em, max_respostas: f.max_respostas,
       coleta_identificacao: f.coleta_identificacao, imagem_capa_url: f.imagem_capa_url, criado_por_nome: nome,
       setor: f.setor ?? null,  // mantém o setor-dono (RLS de insert exige p/ criador de setor)
       perguntas: normalizaPerguntas(f.perguntas).map(p => ({ ...p, id: novoUuid() })),
-    }).select("id").single();
+    };
+    // Anonimato e intervalo entre respostas acompanham a cópia (uma pesquisa
+    // que se repete todo mês não deve perder as regras). Banco sem as colunas
+    // novas: reenvia sem elas em vez de falhar a duplicação.
+    let { error } = await (supabase as any).from("CS_FORMULARIOS")
+      .insert({ ...base, permite_anonimo: !!f.permite_anonimo, intervalo_horas: f.intervalo_horas ?? null })
+      .select("id").single();
+    if (error && /column|schema cache/i.test(error.message))
+      ({ error } = await (supabase as any).from("CS_FORMULARIOS").insert(base).select("id").single());
     if (error) { toast("Erro ao duplicar: " + error.message, "err"); return; }
     toast("Formulário duplicado (como rascunho).", "ok");
     load();
@@ -374,6 +390,12 @@ export default function Formularios() {
                         {seg.icone} <b style={{ color: seg.c }}>{seg.rotulo}</b>
                       </span>
                       <span>🗓 {f.inicia_em || f.encerra_em ? `${f.inicia_em ? "de " + fmtDt(f.inicia_em) : ""} ${f.encerra_em ? "até " + fmtDt(f.encerra_em) : ""}` : "sem prazo definido"}</span>
+                      {f.permite_anonimo && <span title="O respondente escolhe enviar sem se identificar">🕶 Aceita resposta anônima</span>}
+                      {f.intervalo_horas != null && (
+                        <span title="Intervalo mínimo entre duas respostas da mesma pessoa (só p/ quem responde logado)">
+                          ⏱ 1 resposta a cada <b style={{ color: "#0f172a" }}>{f.intervalo_horas % 24 === 0 ? `${f.intervalo_horas / 24} dia(s)` : `${f.intervalo_horas} hora(s)`}</b>
+                        </span>
+                      )}
                       {f.setor && <span>🏷️ Setor: <b style={{ color: "#4338ca" }}>{f.setor}</b></span>}
                       <span>por {f.criado_por_nome || "-"} · criado em {fmtDt(f.created_at)}</span>
                     </div>
