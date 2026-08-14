@@ -23,7 +23,6 @@ import {
   STATUS_FASE_SOLICITACAO,
 } from "@/hooks/useMaloteDespesa";
 import { useClassificacoesOrcamento } from "@/hooks/usePlanejamentoOrcamentario";
-import { SolicitacaoModal } from "./SolicitacaoModal";
 
 const ORIGEM_LABEL: Record<string, string> = {
   solicitacao: "Solicitação",
@@ -117,7 +116,6 @@ export default function MeusItens() {
   const [empresaId, setEmpresaId] = useState("");
   const [excecao, setExcecao] = useState<"todos" | "sim" | "nao">("todos");
   const [busca, setBusca] = useState("");
-  const [solicitacaoModalId, setSolicitacaoModalId] = useState<string | null>(null);
 
   const contagens = useMemo(() => {
     const map: Record<ChipKey, number> = {
@@ -172,7 +170,7 @@ export default function MeusItens() {
 
   function abrirItem(item: MaloteDespesaRow) {
     if (item.origem === "solicitacao" && STATUS_FASE_SOLICITACAO.includes(item.status)) {
-      setSolicitacaoModalId(item.id);
+      navigate(`/app/malote/solicitacao/${item.id}`);
     } else if (item.origem === "solicitacao" && item.status === "cotacao_aprovada") {
       navigate(`/app/malote/criar-despesa?solicitacaoId=${item.id}`);
     } else {
@@ -354,7 +352,6 @@ export default function MeusItens() {
         <p>Itens em "Rascunho" podem ser editados ou excluídos. Após enviados, seguem o fluxo de aprovação.</p>
       </div>
 
-      {solicitacaoModalId && <SolicitacaoModal despesaId={solicitacaoModalId} onClose={() => setSolicitacaoModalId(null)} />}
     </div>
   );
 }
