@@ -5,6 +5,7 @@ import { novoUuid } from "@/lib/utils";
 export type OrigemDespesa = "solicitacao" | "despesa_unica" | "despesa_multi_classificacao";
 export type StatusDespesa =
   | "rascunho"
+  | "aguardando_aprovacao_inicial"
   | "aguardando_cotacao"
   | "cotacao_realizada"
   | "cotacao_aprovada"
@@ -37,7 +38,13 @@ export type TipoEvento =
 // Status ainda dentro da fase "Solicitação" — item abre em modal.
 // A partir daqui em diante (pendente_aprovacao em diante) o item já é
 // tratado como Despesa e abre na tela cheia de visualização.
-export const STATUS_FASE_SOLICITACAO: StatusDespesa[] = ["rascunho", "aguardando_cotacao", "cotacao_realizada", "solicitacao_reprovada"];
+export const STATUS_FASE_SOLICITACAO: StatusDespesa[] = [
+  "rascunho",
+  "aguardando_aprovacao_inicial",
+  "aguardando_cotacao",
+  "cotacao_realizada",
+  "solicitacao_reprovada",
+];
 
 // Solicitação já cotada e aprovada (evento que vem de fora, do módulo de
 // Suprimentos, que escreve direto na malote_despesa) — fica parada aqui até
@@ -48,6 +55,7 @@ export const STATUS_TERMINAIS: StatusDespesa[] = ["despesa_paga", "despesa_repro
 
 export const STATUS_LABEL: Record<StatusDespesa, string> = {
   rascunho: "Rascunho",
+  aguardando_aprovacao_inicial: "Aguardando aprovação inicial",
   aguardando_cotacao: "Aguardando cotação",
   cotacao_realizada: "Cotação realizada",
   cotacao_aprovada: "Cotação aprovada",
@@ -62,6 +70,7 @@ export const STATUS_LABEL: Record<StatusDespesa, string> = {
 
 export const STATUS_BADGE_CLASS: Record<StatusDespesa, string> = {
   rascunho: "bg-muted text-muted-foreground",
+  aguardando_aprovacao_inicial: "bg-violet-100 text-violet-800 dark:bg-violet-950/40 dark:text-violet-300",
   aguardando_cotacao: "bg-sky-100 text-sky-800 dark:bg-sky-950/40 dark:text-sky-300",
   cotacao_realizada: "bg-sky-100 text-sky-800 dark:bg-sky-950/40 dark:text-sky-300",
   cotacao_aprovada: "bg-violet-100 text-violet-800 dark:bg-violet-950/40 dark:text-violet-300",
@@ -120,28 +129,48 @@ export interface MaloteDespesaRow {
   justificativa_aprovacao: string | null;
   motivo_ajuste: string | null;
   excecao: boolean;
-  arquivos: string[];
-  created_at: string;
-  created_by: string;
-  updated_at: string;
-  // ── Cotação por Suprimentos (SIS-2026-0112, migration 20260831000001) ──
-  // Até 3 cotações em colunas, sem tabela filha. Escritas só pelas RPCs
-  // sup_malote_* — a RLS desta tabela não deixa Suprimentos alterar
-  // solicitação de outra pessoa.
-  cot1_fornecedor: string | null; cot1_valor: number | null; cot1_prazo: string | null;
-  cot1_link: string | null; cot1_anexo_path: string | null; cot1_anexo_nome: string | null;
-  cot2_fornecedor: string | null; cot2_valor: number | null; cot2_prazo: string | null;
-  cot2_link: string | null; cot2_anexo_path: string | null; cot2_anexo_nome: string | null;
-  cot3_fornecedor: string | null; cot3_valor: number | null; cot3_prazo: string | null;
-  cot3_link: string | null; cot3_anexo_path: string | null; cot3_anexo_nome: string | null;
+  // ── Cotação (SIS-2026-0112, Suprimentos escreve via RPCs sup_malote_*) ──
+  cot1_fornecedor: string | null;
+  cot1_valor: number | null;
+  cot1_prazo: string | null;
+  cot1_link: string | null;
+  cot1_anexo_path: string | null;
+  cot1_anexo_nome: string | null;
+  cot2_fornecedor: string | null;
+  cot2_valor: number | null;
+  cot2_prazo: string | null;
+  cot2_link: string | null;
+  cot2_anexo_path: string | null;
+  cot2_anexo_nome: string | null;
+  cot3_fornecedor: string | null;
+  cot3_valor: number | null;
+  cot3_prazo: string | null;
+  cot3_link: string | null;
+  cot3_anexo_path: string | null;
+  cot3_anexo_nome: string | null;
   cotacao_enviada_em: string | null;
+  cotacao_enviada_por: string | null;
   cotacao_enviada_por_nome: string | null;
   cotacao_decidida_em: string | null;
+  cotacao_decidida_por: string | null;
   cotacao_decidida_por_nome: string | null;
   cotacao_reprovada_motivo: string | null;
   cotacao_observacoes: string | null;
   cotacao_vencedor_num: 1 | 2 | 3 | null;
-  classificacao?: { id: string; nome: string; aprovador1_nome?: string | null; aprovador2_nome?: string | null; aprovador3_nome?: string | null } | null;
+  arquivos: string[];
+  created_at: string;
+  created_by: string;
+  updated_at: string;
+  classificacao?: {
+    id: string;
+    nome: string;
+    aprovador1_nome?: string | null;
+    aprovador2_nome?: string | null;
+    aprovador3_nome?: string | null;
+    aprovador1_user_id?: string | null;
+    aprovador2_user_id?: string | null;
+    aprovador3_user_id?: string | null;
+  } | null;
 }
 
 export interface DespesaEvento {
@@ -160,13 +189,13 @@ const DESPESA_COLUMNS =
   "id, numero, empresa_id, classificacao_id, origem, status, nome, valor_total, motivo, descricao, links, tipo_movimento, tipo, contrato_id, " +
   "data_pagamento, competencia, forma_pagamento, informacoes_pagamento, parcelado, numero_parcelas, dia_desconto, " +
   "nivel_aprovacao_atual, valor_aprovado_cotacao, valor_aprovado, justificativa_aprovacao, motivo_ajuste, excecao, " +
-  "arquivos, created_at, created_by, updated_at, " +
   "cot1_fornecedor, cot1_valor, cot1_prazo, cot1_link, cot1_anexo_path, cot1_anexo_nome, " +
   "cot2_fornecedor, cot2_valor, cot2_prazo, cot2_link, cot2_anexo_path, cot2_anexo_nome, " +
   "cot3_fornecedor, cot3_valor, cot3_prazo, cot3_link, cot3_anexo_path, cot3_anexo_nome, " +
-  "cotacao_enviada_em, cotacao_enviada_por_nome, cotacao_decidida_em, cotacao_decidida_por_nome, " +
+  "cotacao_enviada_em, cotacao_enviada_por, cotacao_enviada_por_nome, cotacao_decidida_em, cotacao_decidida_por, cotacao_decidida_por_nome, " +
   "cotacao_reprovada_motivo, cotacao_observacoes, cotacao_vencedor_num, " +
-  "classificacao:classificacao_id(id, nome, aprovador1_nome, aprovador2_nome, aprovador3_nome)";
+  "arquivos, created_at, created_by, updated_at, " +
+  "classificacao:classificacao_id(id, nome, aprovador1_nome, aprovador2_nome, aprovador3_nome, aprovador1_user_id, aprovador2_user_id, aprovador3_user_id)";
 
 // ── Catálogos usados no rateio ──────────────────────────────────────────
 export function useEmpresasGrupo() {
@@ -455,6 +484,210 @@ export function useConverterSolicitacaoEmDespesa() {
       return despesaId;
     },
     onSuccess: () => qc.invalidateQueries({ queryKey: [DESPESA_KEY] }),
+  });
+}
+
+// ── Fluxo de aprovação da despesa (N1/N2/N3, ajuste, reprovação) ────────
+// SIS-2026-0132 Fase 1.
+export function aprovadorDoNivel(despesa: MaloteDespesaRow, nivel: 1 | 2 | 3): string | null {
+  const c = despesa.classificacao;
+  if (!c) return null;
+  if (nivel === 1) return c.aprovador1_user_id ?? null;
+  if (nivel === 2) return c.aprovador2_user_id ?? null;
+  return c.aprovador3_user_id ?? null;
+}
+
+export function souAprovadorConfigurado(despesa: MaloteDespesaRow, userId: string | null | undefined): boolean {
+  if (!userId) return false;
+  return ([1, 2, 3] as const).some((n) => aprovadorDoNivel(despesa, n) === userId);
+}
+
+// Reaproveita a função Postgres já usada pelo RLS do Malote (piloto por
+// cargo, SIS-2026-0117-ish) em vez de duplicar a regra de cargo em JS.
+export function useSouSupervisorMalote() {
+  return useQuery({
+    queryKey: ["malote_supervisor_por_cargo"],
+    staleTime: 5 * 60_000,
+    queryFn: async () => {
+      const { data: u } = await supabase.auth.getUser();
+      if (!u.user) return false;
+      const { data, error } = await (supabase as any).rpc("malote_supervisor_por_cargo", { _user_id: u.user.id });
+      if (error) throw error;
+      return !!data;
+    },
+  });
+}
+
+export interface AprovarDespesaInput {
+  id: string;
+  nivelAtual: 1 | 2 | 3;
+  // Se o próximo nível tem aprovador cadastrado na Classificação — decide se
+  // avança pra N+1 (continua pendente_aprovacao) ou fecha o ciclo de
+  // aprovação (vira aguardando_pagamento). Calculado pelo chamador, que já
+  // tem a classificação carregada via useDespesa.
+  proximoNivelConfigurado: boolean;
+  valor_aprovado: number;
+  justificativa_aprovacao: string | null;
+  forma_pagamento: string;
+  informacoes_pagamento: string;
+  data_pagamento: string;
+  competencia: string; // "YYYY-MM"
+}
+
+// Todas as mutations abaixo (aprovar/ajustar/reprovar despesa, aprovação
+// inicial da solicitação) passam por RPC SECURITY DEFINER
+// (20260906000002_malote_permissoes_aprovacao.sql) em vez de UPDATE direto
+// — a RLS de malote_despesa só libera pro criador (e só em rascunho) ou
+// admin/supervisor por cargo, então um aprovador comum configurado na
+// Classificação nunca conseguia agir de fato. A RPC checa malote_pode()
+// (elegibilidade geral, vem do gerenciamento de acesso) E o aprovador da
+// linha específica, e já registra o evento por dentro.
+export function useAprovarDespesa() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (input: AprovarDespesaInput) => {
+      const { error } = await (supabase as any).rpc("malote_aprovar_despesa", {
+        _id: input.id,
+        _proximo_nivel_configurado: input.proximoNivelConfigurado,
+        _valor_aprovado: input.valor_aprovado,
+        _justificativa: input.justificativa_aprovacao,
+        _forma_pagamento: input.forma_pagamento,
+        _informacoes_pagamento: input.informacoes_pagamento,
+        _data_pagamento: input.data_pagamento,
+        _competencia: input.competencia + "-01",
+      });
+      if (error) throw error;
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: [DESPESA_KEY] }),
+  });
+}
+
+export function useSolicitarAjusteDespesa() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ id, motivo }: { id: string; motivo: string }) => {
+      const { error } = await (supabase as any).rpc("malote_solicitar_ajuste_despesa", { _id: id, _motivo: motivo });
+      if (error) throw error;
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: [DESPESA_KEY] }),
+  });
+}
+
+export function useReprovarDespesa() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ id, motivo }: { id: string; motivo: string }) => {
+      const { error } = await (supabase as any).rpc("malote_reprovar_despesa", { _id: id, _motivo: motivo });
+      if (error) throw error;
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: [DESPESA_KEY] }),
+  });
+}
+
+// ── Aprovação Inicial da Solicitação (SIS-2026-0132 Fase 2) ─────────────
+// Gate único (não sequencial como N1/N2/N3 da despesa): qualquer um dos 3
+// aprovadores configurados na Classificação Malote pode aprovar/reprovar.
+export function useAprovarSolicitacaoInicial() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (id: string) => {
+      const { error } = await (supabase as any).rpc("malote_aprovar_solicitacao_inicial", { _id: id });
+      if (error) throw error;
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: [DESPESA_KEY] }),
+  });
+}
+
+export function useReprovarSolicitacaoInicial() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ id, motivo }: { id: string; motivo: string }) => {
+      const { error } = await (supabase as any).rpc("malote_reprovar_solicitacao_inicial", { _id: id, _motivo: motivo });
+      if (error) throw error;
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: [DESPESA_KEY] }),
+  });
+}
+
+// ── Cotações de fornecedor — decisão do Malote (SIS-2026-0132) ──────────
+// Digitar/enviar as cotações é do Suprimentos (SIS-2026-0112, RPCs
+// sup_malote_* em useMaloteCotacao.ts). Escolher a vencedora / reprovar a
+// solicitação continua sendo do Malote, por isso essas duas mutations
+// seguem aqui.
+export function useAprovarCotacao() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ id, numero, valor }: { id: string; numero: 1 | 2 | 3; valor: number }) => {
+      const { error } = await (supabase as any).rpc("malote_aprovar_cotacao", { _id: id, _numero: numero, _valor: valor });
+      if (error) throw error;
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: [DESPESA_KEY] }),
+  });
+}
+
+export function useReprovarCotacao() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ id, motivo }: { id: string; motivo: string }) => {
+      const { error } = await (supabase as any).rpc("malote_reprovar_cotacao", { _id: id, _motivo: motivo });
+      if (error) throw error;
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: [DESPESA_KEY] }),
+  });
+}
+
+export interface ItemAguardandoAprovacao {
+  despesa: MaloteDespesaRow;
+  tela: "solicitacao" | "despesa";
+}
+
+// Lista mínima pra qualquer aprovador achar o que precisa agir — sem os
+// filtros/contadores do dashboard completo (Fase 3). Busca os status
+// relevantes e filtra em JS por aprovador (volume baixo nesta base).
+export function useItensAguardandoMinhaAprovacao() {
+  return useQuery({
+    queryKey: [DESPESA_KEY, "aguardando_minha_aprovacao"],
+    queryFn: async () => {
+      const { data: u } = await supabase.auth.getUser();
+      if (!u.user) return [];
+      const { data, error } = await (supabase as any)
+        .from("malote_despesa")
+        .select(DESPESA_COLUMNS)
+        .in("status", ["aguardando_aprovacao_inicial", "aguardando_cotacao", "cotacao_realizada", "pendente_aprovacao"])
+        .order("created_at", { ascending: false });
+      if (error) throw error;
+      const despesas = (data ?? []) as MaloteDespesaRow[];
+      const resultado: ItemAguardandoAprovacao[] = [];
+      for (const despesa of despesas) {
+        if (despesa.status === "aguardando_aprovacao_inicial" || despesa.status === "aguardando_cotacao" || despesa.status === "cotacao_realizada") {
+          // aguardando_cotacao: nada pra aprovar ainda (esperando o
+          // Suprimentos cotar), mas o aprovador continua com a opção de
+          // reprovar — por isso o item precisa continuar visível aqui.
+          // cotacao_realizada: aprovador precisa escolher qual cotação.
+          if (souAprovadorConfigurado(despesa, u.user.id)) resultado.push({ despesa, tela: "solicitacao" });
+        } else if (despesa.status === "pendente_aprovacao" && despesa.nivel_aprovacao_atual != null) {
+          if (aprovadorDoNivel(despesa, despesa.nivel_aprovacao_atual) === u.user.id) resultado.push({ despesa, tela: "despesa" });
+        }
+      }
+      return resultado;
+    },
+  });
+}
+
+// Lista ampla pro dashboard "Aprovações do Malote" (Fase 3, aproximada) —
+// sem filtro por created_by, a RLS de malote_despesa já restringe ao que
+// o usuário pode ver (dono, mesma empresa, supervisor por cargo, admin).
+export function useItensAprovacoesMalote() {
+  return useQuery({
+    queryKey: [DESPESA_KEY, "aprovacoes_malote"],
+    queryFn: async () => {
+      const { data, error } = await (supabase as any)
+        .from("malote_despesa")
+        .select(DESPESA_COLUMNS)
+        .order("updated_at", { ascending: false });
+      if (error) throw error;
+      return (data ?? []) as MaloteDespesaRow[];
+    },
   });
 }
 
