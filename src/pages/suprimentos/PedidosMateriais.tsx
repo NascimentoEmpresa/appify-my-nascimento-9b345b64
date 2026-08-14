@@ -84,7 +84,6 @@ export default function PedidosMateriais() {
         .from("sup_pedido")
         // item_id vem junto porque a baixa confere se a etiqueta é do material certo.
         .select("*, sup_pedido_item(id, item_id, nome_item, tipo_item, tamanho, quantidade, litros, ordem)")
-        .eq("empresa_id", empresaId)
         .order("created_at", { ascending: false });
       if (error) throw error;
       return data ?? [];

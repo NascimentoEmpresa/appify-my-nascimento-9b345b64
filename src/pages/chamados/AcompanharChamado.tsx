@@ -6,6 +6,7 @@ import { useAuth } from "@/hooks/useAuth";
 import { chamadosMarkSeen } from "@/hooks/useChamadosNotif";
 import { useToast } from "@/hooks/use-toast";
 import { PageHeader } from "@/components/layout/PageHeader";
+import { ExportarChamado } from "./ExportarChamado";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { ArrowLeft, MessageSquarePlus, Paperclip, RotateCcw, Star } from "lucide-react";
@@ -197,6 +198,8 @@ export default function AcompanharChamado({ base = "/app/central-servicos/chamad
 
         {/* Coluna de ação do solicitante */}
         <div className="space-y-4">
+          <ExportarChamado chamadoId={chamado.id} numero={chamado.numero} totalAnexos={anexos.length} />
+
           {ehSolicitante && !encerrado && (
             <Card className={`space-y-2 p-4 ${aguardandoRetorno ? "border-primary/40 bg-primary/5" : ""}`}>
               <p className="flex items-center gap-1.5 text-sm font-bold">
