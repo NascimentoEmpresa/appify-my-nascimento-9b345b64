@@ -35,13 +35,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const nextUid = newSession?.user?.id ?? null;
       const trocouUsuario = uidRef.current !== nextUid;
       if (trocouUsuario) {
-        // Sessão expirou (refresh falhou) enquanto o usuário estava logado:
-        // redireciona para login com flag para exibir aviso.
-        if (uidRef.current !== null && nextUid === null && event === "SIGNED_OUT") {
-          queryClient.clear();
-          window.location.replace("/login?expired=1");
-          return;
-        }
         if (uidRef.current !== null) queryClient.clear();
         uidRef.current = nextUid;
       }

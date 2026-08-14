@@ -205,8 +205,6 @@ const controladoriaOrcModule: ModuleDef = {
         { label: "OBZ — Versões", to: "/app/controladoria/obz-versoes", icon: Calculator },
         { label: "DRE Gerencial", to: "/app/controladoria/dre-gerencial", icon: TrendingUp },
         { label: "Orçamento Completo", to: "/app/controladoria/orcamento-completo", icon: Calculator },
-        { label: "Orçamento Administrativo", to: "/app/controladoria/orcamento-administrativo", icon: ClipboardList },
-        { label: "Cadastro de Classificação", to: "/app/controladoria/cadastro-classificacao", icon: ListChecks },
       ],
     },
     {
@@ -338,6 +336,22 @@ const maloteModule: ModuleDef = {
         { label: "Criar Despesa", to: "/app/malote/criar-despesa", icon: PlusCircle },
         { label: "Dashboard", to: "/app/malote/dashboard", icon: BarChart3 },
         { label: "Meus Itens", to: "/app/malote/meus-itens", icon: ListChecks },
+      ],
+    },
+    // SIS-2026-0125: Classificação/Orçamento saem de Controladoria e passam
+    // a viver aqui — Classificação Administrativo (simples) e Orçamento
+    // Administrativo continuam separados de Classificações Malote (rica,
+    // com aprovadores/alçadas); Orçamento de Contratos (calculado ao vivo
+    // da planilha de custo) e Orçamento Geral (visão conjunta) são novos.
+    {
+      label: "Orçamentos",
+      defaultOpen: true,
+      items: [
+        { label: "Classificações Administrativo", to: "/app/malote/classificacoes-administrativo", icon: ListChecks },
+        { label: "Orçamento Administrativo", to: "/app/malote/orcamento-administrativo", icon: ClipboardList },
+        { label: "Classificações Malote", to: "/app/malote/classificacoes-malote", icon: ListChecks },
+        { label: "Orçamento de Contratos", to: "/app/malote/orcamento-contratos", icon: FileText },
+        { label: "Orçamento Geral", to: "/app/malote/orcamento-geral", icon: Calculator },
       ],
     },
   ],
@@ -1189,7 +1203,12 @@ function SidebarGroup({ group, enabled, base }: { group: NavGroup; enabled: bool
         style={atraso(passo(base))}
         className="sb-grouphd mb-0.5 flex w-full items-center justify-between px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.12em] text-sidebar-muted transition-colors hover:text-white"
       >
-        <span>{group.label}</span>
+        {/* Conflito resolvido juntando os dois lados: `whitespace-nowrap` veio
+            da main (impede o rótulo do grupo de quebrar em duas linhas) e
+            `sb-chev` é a classe que anima a seta. Dispensei o
+            `transition-transform` do Tailwind porque a .sb-chev já define a
+            transição, com curva própria — as duas juntas se anulariam. */}
+        <span className="whitespace-nowrap">{group.label}</span>
         <ChevronDown className={cn("sb-chev h-3 w-3", !open && "-rotate-90")} />
       </button>
       {/* data-open leva o `enabled` junto de propósito: ao recolher o módulo,

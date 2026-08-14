@@ -43,6 +43,24 @@ export function useSalvarLigacaoLicitacaoClassificacao() {
   });
 }
 
+// Cria várias ligações de uma vez (um campo_planilha_custo por linha) pra
+// UMA classificação do malote — evita o usuário ter que adicionar rubrica
+// por rubrica quando várias vão pro mesmo lugar (pedido do Iury).
+export function useSalvarLigacoesLicitacaoClassificacao() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (input: { campos_planilha_custo: string[]; classificacao_malote_id: string }) => {
+      const payload = input.campos_planilha_custo.map((campo) => ({
+        campo_planilha_custo: campo,
+        classificacao_malote_id: input.classificacao_malote_id,
+      }));
+      const { error } = await (supabase as any).from("malote_licitacao_classificacao_link").insert(payload);
+      if (error) throw error;
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: [LIGACOES_KEY] }),
+  });
+}
+
 export function useExcluirLigacaoLicitacaoClassificacao() {
   const qc = useQueryClient();
   return useMutation({
