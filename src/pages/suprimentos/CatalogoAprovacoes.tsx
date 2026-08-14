@@ -67,7 +67,7 @@ export default function CatalogoAprovacoes() {
     queryKey: ["sup_cat_lote", empresaId, filtro],
     enabled: !!empresaId,
     queryFn: async (): Promise<Lote[]> => {
-      let q = sb.from("sup_cat_lote").select("*").eq("empresa_id", empresaId);
+      let q = sb.from("sup_cat_lote").select("*");
       if (filtro !== "TODOS") q = q.eq("status", filtro);
       const { data, error } = await q.order("data_envio", { ascending: false });
       if (error) throw error;

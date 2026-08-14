@@ -65,7 +65,6 @@ export function useContratosCatalogo(empresaId: string | null) {
       const { data, error } = await sb
         .from("contratos")
         .select("id, nome, cliente, status")
-        .eq("empresa_id", empresaId)
         .order("nome");
       if (error) throw error;
       return data ?? [];
@@ -134,7 +133,6 @@ export function useItens(empresaId: string | null) {
       const { data, error } = await sb
         .from("sup_item")
         .select("id, nome, tipo, ativo, aprovado")
-        .eq("empresa_id", empresaId)
         .eq("ativo", true)
         .order("nome");
       if (error) throw error;
@@ -167,7 +165,6 @@ export function useRascunhos(empresaId: string | null) {
       const { data, error } = await sb
         .from("sup_cat_alteracao")
         .select("*")
-        .eq("empresa_id", empresaId)
         .eq("status", "RASCUNHO")
         .order("created_at", { ascending: false });
       if (error) throw error;

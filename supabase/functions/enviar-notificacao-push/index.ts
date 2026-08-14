@@ -25,6 +25,10 @@ const ANON_KEY = Deno.env.get("SUPABASE_ANON_KEY");
 const VAPID_PUBLIC_KEY = Deno.env.get("VAPID_PUBLIC_KEY");
 const VAPID_PRIVATE_KEY = Deno.env.get("VAPID_PRIVATE_KEY");
 const VAPID_SUBJECT = Deno.env.get("VAPID_SUBJECT") ?? "mailto:suporte@gruponascimento.com.br";
+// Secret compartilhado com o GitHub Actions — mesmo usado por chamado-info,
+// chamado-vincular-pr e chamado-concluir-pr. Só existe pra que a conclusão
+// automática de chamado no merge da PR consiga disparar o push sem sessão.
+const CI_SECRET = Deno.env.get("CHAMADOS_CI_SECRET") ?? "";
 
 const ETAPA_LABEL: Record<string, string> = {
   solicitacao_demanda: "Solicitação da Demanda",
@@ -218,13 +222,19 @@ Deno.serve(async (req) => {
       return jsonResponse({ error: "Não autenticado" }, 401);
     }
 
-    const userClient = createClient(SUPABASE_URL, ANON_KEY, {
-      global: { headers: { Authorization: authHeader } },
-      auth: { persistSession: false },
-    });
-    const { data: userData, error: userErr } = await userClient.auth.getUser();
-    if (userErr || !userData?.user) {
-      return jsonResponse({ error: "Sessão inválida" }, 401);
+    // Duas origens legítimas: o usuário logado no ERP (JWT da Supabase) e o
+    // GitHub Actions, que conclui o chamado no merge da PR e não tem sessão —
+    // esse se identifica pelo secret compartilhado do CI. Sem um dos dois, 401.
+    const viaCI = CI_SECRET !== "" && authHeader === `Bearer ${CI_SECRET}`;
+    if (!viaCI) {
+      const userClient = createClient(SUPABASE_URL, ANON_KEY, {
+        global: { headers: { Authorization: authHeader } },
+        auth: { persistSession: false },
+      });
+      const { data: userData, error: userErr } = await userClient.auth.getUser();
+      if (userErr || !userData?.user) {
+        return jsonResponse({ error: "Sessão inválida" }, 401);
+      }
     }
 
     let body: Body;

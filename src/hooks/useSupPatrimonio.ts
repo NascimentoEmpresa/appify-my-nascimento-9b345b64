@@ -75,7 +75,6 @@ export function useBens(empresaId: string | null) {
       const { data, error } = await sb
         .from("sup_patrimonio")
         .select("*, contrato:contrato_id(id, nome), posto:posto_id(id, nome)")
-        .eq("empresa_id", empresaId)
         .eq("ativo", true)
         .order("nome");
       if (error) throw error;

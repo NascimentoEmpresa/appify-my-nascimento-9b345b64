@@ -1,0 +1,82 @@
+name: Concluir Chamado no merge
+
+# Fecha o último passo manual do ciclo: quando a PR que resolve um chamado é
+# mergeada na main, o chamado é concluído sozinho no ERP — sem o dev precisar
+# abrir /app/sistemas/chamados/:id e clicar em "Concluir chamado".
+#
+# Arquivo separado do chamado_pr_sync.yml de propósito: lá o job
+# validar-chamado é required status check na proteção da main, e acrescentar o
+# evento "closed" aos gatilhos daquele arquivo mexeria com o merge de toda PR.
+#
+# pull_request_target (não pull_request): precisa dos secrets do repositório
+# base. Como nos outros workflows, NÃO fazemos checkout nem executamos nada do
+# código da branch da PR — só lemos metadados via evento.
+on:
+  pull_request_target:
+    types: [closed]
+
+jobs:
+  concluir-chamado:
+    # PR fechada sem merge não conclui nada — só o merge significa entrega.
+    if: github.event.pull_request.merged == true
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Concluir chamado vinculado à PR
+        env:
+          # Título vem via env, nunca interpolado direto no script — é texto de
+          # terceiros e interpolação direta em bash permitiria injeção.
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_URL: ${{ github.event.pull_request.html_url }}
+          PR_AUTOR: ${{ github.event.pull_request.user.login }}
+          SUPABASE_FUNCTIONS_URL: https://fwmzeaztjxrxxzxzxmgc.supabase.co/functions/v1
+          CHAMADOS_CI_SECRET: ${{ secrets.CHAMADOS_CI_SECRET }}
+        run: |
+          set -uo pipefail
+
+          # Best-effort do começo ao fim: o merge já aconteceu, então falhar
+          # aqui só acende alarme vermelho sem nada pra corrigir na PR.
+          if [[ "$PR_TITLE" == "[SEM-CHAMADO]"* ]]; then
+            echo "PR sem chamado vinculado — nada a concluir."
+            exit 0
+          fi
+
+          NUMERO=$(echo "$PR_TITLE" | grep -oE '^SIS-[0-9]{4}-[0-9]+' || true)
+          if [ -z "$NUMERO" ]; then
+            echo "Título sem número de chamado — nada a concluir."
+            exit 0
+          fi
+
+          RESP=$(curl -sS --max-time 15 -w '\n%{http_code}' \
+            -X POST "$SUPABASE_FUNCTIONS_URL/chamado-concluir-pr" \
+            -H "Authorization: Bearer $CHAMADOS_CI_SECRET" \
+            -H "Content-Type: application/json" \
+            -d "$(jq -n \
+                  --arg numero "$NUMERO" \
+                  --arg pr_url "$PR_URL" \
+                  --arg pr_titulo "$PR_TITLE" \
+                  --arg pr_autor_github "$PR_AUTOR" \
+                  '{numero: $numero, pr_url: $pr_url, pr_titulo: $pr_titulo, pr_autor_github: $pr_autor_github}')") \
+            || RESP=$'\n000'
+
+          HTTP_CODE=$(echo "$RESP" | tail -n1)
+          BODY=$(echo "$RESP" | sed '$d')
+
+          if [ "$HTTP_CODE" = "000" ]; then
+            echo "::warning::Não foi possível contatar o serviço de chamados — $NUMERO segue aberto para conclusão manual."
+            exit 0
+          fi
+
+          if [ "$HTTP_CODE" != "200" ]; then
+            echo "::warning::chamado-concluir-pr respondeu HTTP $HTTP_CODE: $BODY"
+            echo "::warning::Verifique se 'Verify JWT' está DESLIGADO na function chamado-concluir-pr e se CHAMADOS_CI_SECRET é idêntico no GitHub e no Supabase."
+            exit 0
+          fi
+
+          echo "Resposta: $BODY"
+          if [ "$(echo "$BODY" | jq -r '.concluido // false')" = "true" ]; then
+            echo "Chamado $NUMERO concluído automaticamente."
+          else
+            echo "::warning::Chamado $NUMERO não foi concluído: $(echo "$BODY" | jq -r '.motivo // "motivo não informado"')"
+          fi

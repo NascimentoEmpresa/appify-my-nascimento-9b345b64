@@ -78,7 +78,6 @@ export function useSolicitacoesParaCotar(empresaId: string | null) {
       const { data, error } = await sb
         .from("malote_despesa")
         .select("*, classificacao:classificacao_id(id, nome)")
-        .eq("empresa_id", empresaId)
         .in("status", STATUS_SUPRIMENTOS)
         .order("updated_at", { ascending: false });
       if (error) throw error;
