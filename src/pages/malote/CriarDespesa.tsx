@@ -340,13 +340,14 @@ function PainelSolicitacao({
     return null;
   }
 
-  // Enviar aqui só manda a solicitação pra fila de cotação (Suprimentos,
-  // fora do Malote) — NÃO entra direto no fluxo de aprovação N1/N2/N3.
-  // Ela só vira uma Despesa de verdade depois que o Suprimentos aprovar a
-  // cotação (status='cotacao_aprovada') e o usuário converter em Criar
+  // Enviar aqui manda a solicitação pra Aprovação Inicial do Malote (SIS-
+  // 2026-0132 Fase 2) — só depois de aprovada é que vai pra fila de cotação
+  // do Suprimentos. NÃO entra direto no fluxo de aprovação N1/N2/N3 da
+  // Despesa. Ela só vira uma Despesa de verdade depois que o Suprimentos
+  // cotar, o aprovador escolher a cotação e o usuário converter em Criar
   // Despesa (ver bloco de conversão mais abaixo neste arquivo).
-  async function handleSalvar(status: "rascunho" | "aguardando_cotacao") {
-    const erro = validar(status === "aguardando_cotacao");
+  async function handleSalvar(status: "rascunho" | "aguardando_aprovacao_inicial") {
+    const erro = validar(status === "aguardando_aprovacao_inicial");
     if (erro) {
       toast.error(erro);
       return;
@@ -375,7 +376,7 @@ function PainelSolicitacao({
         const paths = await Promise.all(arquivos.map((f) => uploadAnexoMalote(f, despesaId)));
         await salvar.mutateAsync({ id: despesaId, empresa_id: empresaFinal, classificacao_id: classificacaoId, origem: "solicitacao", status, nome: nome.trim(), valor_total: Number(valorEstimado), arquivos: paths });
       }
-      toast.success(status === "rascunho" ? "Rascunho salvo." : "Solicitação enviada para cotação.");
+      toast.success(status === "rascunho" ? "Rascunho salvo." : "Solicitação enviada para aprovação inicial.");
       setNome(""); setMotivo(""); setDescricao(""); setValorEstimado(""); setLinks(""); setArquivos([]);
       setEmpresaContratoId(""); setContratoId("");
       if (!tipoTravado) setTipo("");
@@ -478,7 +479,7 @@ function PainelSolicitacao({
             <Button variant="outline" onClick={() => handleSalvar("rascunho")} disabled={!ativo || salvando !== null}>
               {salvando === "rascunho" ? "Salvando..." : "Salvar rascunho"}
             </Button>
-            <Button onClick={() => handleSalvar("aguardando_cotacao")} disabled={!ativo || salvando !== null}>
+            <Button onClick={() => handleSalvar("aguardando_aprovacao_inicial")} disabled={!ativo || salvando !== null}>
               {salvando === "enviar" ? "Enviando..." : "Enviar solicitação"}
             </Button>
           </div>
