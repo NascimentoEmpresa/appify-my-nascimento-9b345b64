@@ -122,6 +122,12 @@ export default function SolicitacaoVisualizar() {
   // /app/suprimentos/cotacoes-malote) — aqui só mostramos o resultado.
   const podeEscolherCotacao = despesa.status === "cotacao_realizada" && souAprovadorDaClassificacao;
 
+  // Status em que o aprovador configurado veria os painéis de Resumo/
+  // Orçamento/Impacto — usado só pra explicar pra quem não é esse aprovador
+  // (solicitante, supervisor por cargo etc.) por que eles não aparecem aqui.
+  const statusComPainelDeAprovador = ["aguardando_aprovacao_inicial", "aguardando_cotacao", "cotacao_realizada"].includes(despesa.status);
+  const painelOcultoPorNaoSerAprovador = statusComPainelDeAprovador && !souAprovadorDaClassificacao;
+
   const cotacoes: { n: 1 | 2 | 3; fornecedor: string | null; valor: number | null; prazo: string | null; link: string | null }[] = (
     [1, 2, 3] as const
   )
@@ -492,6 +498,20 @@ export default function SolicitacaoVisualizar() {
                 <p className="text-[11px] text-muted-foreground pt-1">
                   Depende do orçamento da classificação acima. A compra só é registrada após a aprovação e o lançamento
                   da despesa.
+                </p>
+              </CardContent>
+            </Card>
+          )}
+
+          {painelOcultoPorNaoSerAprovador && (
+            <Card className="border-dashed">
+              <CardContent className="p-4 flex items-start gap-2.5">
+                <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-muted text-muted-foreground">
+                  <Info className="h-3.5 w-3.5" />
+                </span>
+                <p className="text-xs text-muted-foreground">
+                  Os painéis de Resumo, Orçamento e Impacto aparecem só para quem está configurado como aprovador desta
+                  Classificação — acesso amplo por cargo (supervisor/admin) não conta pra isso.
                 </p>
               </CardContent>
             </Card>

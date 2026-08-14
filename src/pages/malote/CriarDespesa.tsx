@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { Card, CardContent } from "@/components/ui/card";
@@ -12,7 +12,9 @@ import { LayoutGrid, Package, Lock, ShoppingCart, FileEdit, ArrowLeft } from "lu
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { useEmpresaId } from "@/hooks/useEmpresaId";
-import { useClassificacoesOrcamento, TipoClassificacaoOrcamento } from "@/hooks/usePlanejamentoOrcamentario";
+import { TipoClassificacaoOrcamento, usePlanejamentosOrcamento } from "@/hooks/usePlanejamentoOrcamentario";
+import { useRubricasVinculadas, RubricaVinculada } from "@/hooks/useRubricasMalote";
+import { usePlanilhaCustos, resolverValorPorCampos } from "@/hooks/usePlanilhaCusto";
 import {
   useSalvarDespesa,
   useConverterSolicitacaoEmDespesa,
@@ -29,6 +31,7 @@ import {
 } from "@/hooks/useMaloteDespesa";
 import { RateioGrid, DimensoesRateio } from "./RateioGrid";
 import { AnexosField } from "./AnexosField";
+import { getStatusVigencia } from "./orcamentoUtils";
 
 const DIAS_MES = Array.from({ length: 28 }, (_, i) => i + 1);
 const QUANTIDADE_PARCELAS = Array.from({ length: 24 }, (_, i) => i + 2);
@@ -50,10 +53,11 @@ export default function CriarDespesa() {
 function CriarDespesaNova() {
   const navigate = useNavigate();
   const { data: empresaId } = useEmpresaId();
-  const { data: classificacoes = [] } = useClassificacoesOrcamento();
-  const [classificacaoId, setClassificacaoId] = useState("");
+  const { data: rubricas = [] } = useRubricasVinculadas();
+  const [rubricaId, setRubricaId] = useState("");
 
-  const classificacao = classificacoes.find((c) => c.id === classificacaoId);
+  const rubrica = rubricas.find((r) => r.id === rubricaId) ?? null;
+  const classificacao = rubrica?.classificacaoMalote ?? null;
   const modo: "solicitacao" | "despesa" | null = !classificacao ? null : classificacao.requer_solicitacao ? "solicitacao" : "despesa";
 
   return (
@@ -77,20 +81,19 @@ function CriarDespesaNova() {
           <div className="flex flex-col sm:flex-row items-stretch sm:items-end gap-4">
             <div className="flex-1 w-full">
               <Label>
-                Classificação <span className="text-destructive">*</span>
+                Rubrica <span className="text-destructive">*</span>
               </Label>
-              <Select value={classificacaoId} onValueChange={setClassificacaoId}>
-                <SelectTrigger>
-                  <SelectValue placeholder="Selecione a classificação da despesa" />
-                </SelectTrigger>
-                <SelectContent>
-                  {classificacoes.map((c) => (
-                    <SelectItem key={c.id} value={c.id}>
-                      {c.nome}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              <SearchableSelect
+                value={rubricaId}
+                onChange={setRubricaId}
+                options={rubricas.map((r) => ({
+                  value: r.id,
+                  label: r.label,
+                  hint: r.origem === "administrativo" ? "Administrativo" : "Contrato",
+                }))}
+                placeholder="Selecione a rubrica da despesa"
+                searchPlaceholder="Buscar rubrica..."
+              />
             </div>
             <div className="shrink-0">
               <Label className="invisible hidden sm:block">Ação</Label>
@@ -100,19 +103,23 @@ function CriarDespesaNova() {
             </div>
           </div>
           <p className="text-xs text-muted-foreground">
-            A classificação define quais tipos de despesas estarão disponíveis para esta solicitação.
+            A rubrica escolhida define a Classificação Malote (aprovadores e regras) e sugere o valor a partir do orçamento. Só aparecem rubricas já vinculadas a uma Classificação — configure em{" "}
+            <Link to="/app/malote/configuracoes" className="underline">
+              Ligação de Classificações
+            </Link>
+            .
           </p>
         </CardContent>
       </Card>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <PainelSolicitacao classificacaoId={classificacaoId} classificacaoTipo={classificacao?.tipo ?? null} empresaId={empresaId ?? null} ativo={modo === "solicitacao"} />
-        <PainelDespesaMalote classificacaoId={classificacaoId} classificacaoTipo={classificacao?.tipo ?? null} empresaId={empresaId ?? null} ativo={modo === "despesa"} />
+        <PainelSolicitacao rubrica={rubrica} empresaId={empresaId ?? null} ativo={modo === "solicitacao"} />
+        <PainelDespesaMalote classificacaoId={classificacao?.id ?? ""} classificacaoTipo={classificacao?.tipo ?? null} empresaId={empresaId ?? null} ativo={modo === "despesa"} />
       </div>
 
       {!modo && (
         <p className="text-xs text-muted-foreground text-center">
-          Selecione uma classificação para habilitar os tipos de despesa e preencher os formulários acima.
+          Selecione uma rubrica para habilitar os tipos de despesa e preencher os formulários acima.
         </p>
       )}
     </div>
@@ -282,35 +289,67 @@ const TIPO_SOLICITACAO_LABEL: Record<TipoSolicitacao, string> = {
 };
 
 function PainelSolicitacao({
-  classificacaoId,
-  classificacaoTipo,
+  rubrica,
   empresaId,
   ativo,
 }: {
-  classificacaoId: string;
-  classificacaoTipo: TipoClassificacaoOrcamento | null;
+  rubrica: RubricaVinculada | null;
   empresaId: string | null;
   ativo: boolean;
 }) {
+  const classificacaoId = rubrica?.classificacaoMalote.id ?? "";
+  const classificacaoTipo = rubrica?.classificacaoMalote.tipo ?? null;
+
   const salvar = useSalvarDespesa();
   const { data: empresas = [] } = useEmpresasGrupo();
   const { data: contratos = [] } = useContratosAtivos();
+  const { data: planilhaCustos = [], isLoading: carregandoPlanilha } = usePlanilhaCustos();
+  const { data: planejamentosAdmin = [], isLoading: carregandoPlanejamento } = usePlanejamentosOrcamento(empresaId);
   const [nome, setNome] = useState("");
   const [motivo, setMotivo] = useState("");
   const [descricao, setDescricao] = useState("");
   const [valorEstimado, setValorEstimado] = useState("");
+  const [valorSugerido, setValorSugerido] = useState(false);
   const [links, setLinks] = useState("");
   const [tipo, setTipo] = useState<TipoSolicitacao | "">("");
   const [empresaContratoId, setEmpresaContratoId] = useState("");
   const [contratoId, setContratoId] = useState("");
   const [arquivos, setArquivos] = useState<File[]>([]);
   const [salvando, setSalvando] = useState<"rascunho" | "enviar" | null>(null);
+  const chaveAutoPreenchidaRef = useRef<string | null>(null);
 
   // A Classificação Malote já define se a despesa é de Contrato ou
   // Administrativo — o Tipo aqui só reflete isso e trava, evitando pedir a
   // mesma informação duas vezes. "Dispensa de cotação" só fica selecionável
   // quando a classificação não tem tipo definido (legado).
   const tipoTravado: TipoSolicitacao | null = classificacaoTipo;
+
+  // Sugere o Valor estimado a partir da rubrica escolhida: pra rubrica de
+  // Contrato, soma da planilha de custo vigente daquele contrato; pra
+  // rubrica Administrativa, o valor vigente do Orçamento Administrativo da
+  // empresa. Só recalcula quando rubrica/contrato mudam de verdade (não a
+  // cada refetch em background) pra não brigar com edição manual do valor.
+  useEffect(() => {
+    if (!rubrica) return;
+    if (rubrica.origem === "contrato" && (!contratoId || carregandoPlanilha)) return;
+    if (rubrica.origem === "administrativo" && carregandoPlanejamento) return;
+
+    const chave = `${rubrica.id}|${rubrica.origem === "contrato" ? contratoId : ""}`;
+    if (chaveAutoPreenchidaRef.current === chave) return;
+    chaveAutoPreenchidaRef.current = chave;
+
+    if (rubrica.origem === "contrato") {
+      const valor = resolverValorPorCampos(planilhaCustos, contratoId, [rubrica.campoOuId]);
+      setValorEstimado(valor > 0 ? String(valor) : "");
+      setValorSugerido(valor > 0);
+    } else {
+      const linha = planejamentosAdmin.find(
+        (p) => p.classificacao_id === rubrica.campoOuId && getStatusVigencia(p.inicio_vigencia, p.fim_vigencia) === "na_vigencia"
+      );
+      setValorEstimado(linha ? String(linha.valor) : "");
+      setValorSugerido(!!linha);
+    }
+  }, [rubrica, contratoId, carregandoPlanilha, carregandoPlanejamento, planilhaCustos, planejamentosAdmin]);
 
   useEffect(() => {
     if (tipoTravado) {
@@ -377,8 +416,9 @@ function PainelSolicitacao({
         await salvar.mutateAsync({ id: despesaId, empresa_id: empresaFinal, classificacao_id: classificacaoId, origem: "solicitacao", status, nome: nome.trim(), valor_total: Number(valorEstimado), arquivos: paths });
       }
       toast.success(status === "rascunho" ? "Rascunho salvo." : "Solicitação enviada para aprovação inicial.");
-      setNome(""); setMotivo(""); setDescricao(""); setValorEstimado(""); setLinks(""); setArquivos([]);
+      setNome(""); setMotivo(""); setDescricao(""); setValorEstimado(""); setValorSugerido(false); setLinks(""); setArquivos([]);
       setEmpresaContratoId(""); setContratoId("");
+      chaveAutoPreenchidaRef.current = null;
       if (!tipoTravado) setTipo("");
     } catch (e: any) {
       toast.error(e.message ?? "Erro ao salvar solicitação.");
@@ -409,17 +449,6 @@ function PainelSolicitacao({
             <Input value={descricao} onChange={(e) => setDescricao(e.target.value)} placeholder="Detalhes, especificações..." disabled={!ativo} />
           </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            <div>
-              <Label>Valor estimado *</Label>
-              <Input type="number" step="0.01" value={valorEstimado} onChange={(e) => setValorEstimado(e.target.value)} placeholder="Ex: R$ 1.500,00" disabled={!ativo} />
-            </div>
-            <div>
-              <Label>Link(s)</Label>
-              <Input value={links} onChange={(e) => setLinks(e.target.value)} placeholder="https://..." disabled={!ativo} />
-            </div>
-          </div>
-
           <div>
             <Label>Tipo *</Label>
             {tipoTravado ? (
@@ -445,7 +474,7 @@ function PainelSolicitacao({
               </Select>
             )}
             {tipoTravado && (
-              <p className="text-xs text-muted-foreground mt-1">Definido pela classificação selecionada.</p>
+              <p className="text-xs text-muted-foreground mt-1">Definido pela rubrica selecionada.</p>
             )}
           </div>
 
@@ -469,6 +498,32 @@ function PainelSolicitacao({
               </div>
             </div>
           )}
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div>
+              <Label>Valor estimado *</Label>
+              <Input
+                type="number"
+                step="0.01"
+                value={valorEstimado}
+                onChange={(e) => {
+                  setValorEstimado(e.target.value);
+                  setValorSugerido(false);
+                }}
+                placeholder="Ex: R$ 1.500,00"
+                disabled={!ativo}
+              />
+              {valorSugerido && (
+                <p className="text-[11px] text-muted-foreground mt-1">
+                  Valor sugerido {rubrica?.origem === "contrato" ? "do orçamento do contrato" : "do orçamento administrativo"} — confira antes de enviar.
+                </p>
+              )}
+            </div>
+            <div>
+              <Label>Link(s)</Label>
+              <Input value={links} onChange={(e) => setLinks(e.target.value)} placeholder="https://..." disabled={!ativo} />
+            </div>
+          </div>
 
           <div>
             <Label>Arquivos anexados *</Label>

@@ -2074,8 +2074,8 @@ function FormDrawer({
                 {numField("cesta_basica", "Cesta Básica")}
                 {numField("assistencia_medica", "Assist. Médica")}
                 {numField("hospedagem", "Hospedagem")}
-                {numField("odontologico", "Odontológico")}
-                {numField("manutencao_profissional", "Manut. Profissional")}
+                {numField("odontologico", "Médico/Odontológico")}
+                {numField("manutencao_profissional", "Manut./Capacit. Prof.")}
                 {numField("cafe", "Café")}
                 {numField("almoco", "Almoço")}
                 {numField("janta", "Janta")}
@@ -2132,7 +2132,7 @@ function FormDrawer({
                 {numField("incidencia_aviso_trabalhado", "Inc. s/ Aviso Trab.")}
                 {numField("multa_rescisoria", "Multa Rescisória")}
                 {numField("multa_aviso_indenizado", "Multa FGTS Aviso Ind.")}
-                {numField("contratualidade", "Contratualidade")}
+                {numField("contratualidade", "Multa FGTS Contrat.")}
               </div>
             </Section>
 
@@ -2969,8 +2969,8 @@ function ViewModal({
               <VRow label="Cesta Básica" value={row.cesta_basica} />
               <VRow label="Assist. Médica" value={row.assistencia_medica} />
               <VRow label="Hospedagem" value={row.hospedagem} />
-              <VRow label="Odontológico" value={row.odontologico} />
-              <VRow label="Manut. Profissional" value={row.manutencao_profissional} />
+              <VRow label="Médico/Odontológico" value={row.odontologico} />
+              <VRow label="Manut./Capacit. Prof." value={row.manutencao_profissional} />
               <VRow label="Café" value={row.cafe} />
               <VRow label="Almoço" value={row.almoco} />
               <VRow label="Janta" value={row.janta} />
@@ -3010,7 +3010,7 @@ function ViewModal({
               <VRow label="Inc. s/ Aviso Trab." value={row.incidencia_aviso_trabalhado} />
               <VRow label="Multa Rescisória" value={row.multa_rescisoria} />
               <VRow label="Multa FGTS Aviso Ind." value={row.multa_aviso_indenizado} />
-              <VRow label="Contratualidade" value={row.contratualidade} />
+              <VRow label="Multa FGTS Contrat." value={row.contratualidade} />
             </VSec>
 
             <VSec title="7 — Insumos Diversos" soma={somaInsumos}>
