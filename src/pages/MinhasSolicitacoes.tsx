@@ -2,6 +2,10 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
 import { ESTADOS_BR, municipiosDe } from "@/data/municipios-brasil";
+import {
+  MOTIVOS_VAGA, motivoLabel, ehSubstituicao, avaliarPrazo, dataMinimaVaga,
+  cargoExigeCnh, aplicarReqCnh, REQ_CNH_TEXTO, MIN_DIAS_UTEIS, fmtBr,
+} from "@/lib/recrutamento/vagaRegras";
 
 // ── Helpers ────────────────────────────────────────────────────────
 function fmtDt(s?: string) {
@@ -40,6 +44,21 @@ function badgeStatusCls(st: string) {
     Aberta: "bg-orange-100 text-orange-700 border-orange-200",
   };
   return m[st] ?? "bg-blue-100 text-blue-700 border-blue-200";
+}
+
+/** Explica o prazo da data escolhida: o que falta ou qual grau saiu dela. */
+function PrazoAviso({ prazo }: { prazo: ReturnType<typeof avaliarPrazo> }) {
+  const cor = !prazo.ok ? { bg: "#fef2f2", bd: "#fecaca", tx: "#b91c1c" }
+    : prazo.grau === "Alta — Urgente" ? { bg: "#fff7ed", bd: "#fed7aa", tx: "#c2410c" }
+      : prazo.grau === "Média" ? { bg: "#fefce8", bd: "#fde68a", tx: "#a16207" }
+        : { bg: "#f0fdf4", bd: "#bbf7d0", tx: "#15803d" };
+  return (
+    <div style={{ fontSize: 12, lineHeight: 1.5, background: cor.bg, border: `1px solid ${cor.bd}`, color: cor.tx, borderRadius: 9, padding: "8px 11px", marginBottom: 12, fontWeight: 600 }}>
+      {!prazo.ok
+        ? <>⚠️ {prazo.erro}</>
+        : <>✅ <b>{prazo.dias} dias úteis</b> de antecedência → urgência <b>{prazo.grau}</b>. <span style={{ fontWeight: 500 }}>O grau sai do prazo: até 13 dias úteis é urgente, de 14 a 20 é média, 21 ou mais é baixa.</span></>}
+    </div>
+  );
 }
 
 function brToISO(d?: string): string | null {
@@ -81,7 +100,13 @@ const VAGA_RESET = {
 interface SolItem {
   tipo: string; icon: string; id: number; titulo: string; status: string; data: string;
   substituido?: string; motivo?: string; qtdVagas?: number; statusDesde?: string; excecao?: boolean;
+  dataInicio?: string; grau?: string; alteracoes?: any[];
 }
+
+// Vaga já andou: o encarregado não mexe mais na data (o Recrutamento assume).
+const VAGA_FECHADA = ["Concluída", "Reprovada", "Cancelada", "Contratado"];
+const vagaEditavel = (s: SolItem) =>
+  s.tipo === "Vaga" && !VAGA_FECHADA.includes(s.status) && !String(s.status ?? "").startsWith("Concluído");
 
 // `abrir` vem das rotas dedicadas da sidebar (Solicitar Vaga / Férias /
 // Advertência): é a MESMA tela, só que já com o formulário aberto. Assim cada
@@ -147,7 +172,8 @@ export default function MinhasSolicitacoes({ abrir }: { abrir?: SolicitacaoInici
     const vagaQuery = (cols: string) => (supabase as any)
       .from("SISTEMA_RECRUTAMENTO").select(cols)
       .eq("solicitante_cpf", email).order("created_at", { ascending: false }).limit(30);
-    let vg = await vagaQuery("id, cargo, contrato, status, created_at, nome_substituido, quantidade_vagas, motivo_vaga, status_changed_at");
+    let vg = await vagaQuery("id, cargo, contrato, status, created_at, nome_substituido, quantidade_vagas, motivo_vaga, status_changed_at, data_inicio_prevista, grau_urgencia, data_inicio_alteracoes");
+    if (vg.error) vg = await vagaQuery("id, cargo, contrato, status, created_at, nome_substituido, quantidade_vagas, motivo_vaga, status_changed_at");
     if (vg.error) vg = await vagaQuery("id, cargo, contrato, status, created_at, nome_substituido, quantidade_vagas, motivo_vaga");
 
     const fr = await (supabase as any).from("SISTEMA_SOLICITACOES_FERIAS").select("id, colaborador_nome, status, criado_em").eq("solicitante_email", email).order("criado_em", { ascending: false }).limit(30);
@@ -160,6 +186,8 @@ export default function MinhasSolicitacoes({ abrir }: { abrir?: SolicitacaoInici
         substituido: r.nome_substituido || "", motivo: r.motivo_vaga || "",
         qtdVagas: Number(r.quantidade_vagas) || 1,
         statusDesde: r.status_changed_at || r.created_at,
+        dataInicio: r.data_inicio_prevista || "", grau: r.grau_urgencia || "",
+        alteracoes: Array.isArray(r.data_inicio_alteracoes) ? r.data_inicio_alteracoes : [],
       })),
       ...(fr.data ?? []).map((r: any) => ({ tipo: "Férias", icon: "📅", id: r.id, titulo: `Férias — ${r.colaborador_nome || ""}`, status: r.status, data: r.criado_em, statusDesde: r.criado_em })),
       ...(ad.data ?? []).map((r: any) => ({ tipo: "Advertência", icon: "⚠️", id: r.id, titulo: `Advertência ${r.tipo_advertencia || ""} — ${r.colaborador_nome || ""}`, status: r.status, data: r.created_at, statusDesde: r.status_changed_at || r.created_at, excecao: r.excecao })),
@@ -201,9 +229,16 @@ export default function MinhasSolicitacoes({ abrir }: { abrir?: SolicitacaoInici
     }, 350);
   };
 
+  // Substituição: cargo e contrato vêm do cadastro do colaborador substituído e
+  // não podem ser digitados (a vaga tem que repor exatamente aquele posto).
+  // `substituidoId` também serve de prova de que a pessoa foi ESCOLHIDA na
+  // lista, não só digitada.
+  const [substituidoId, setSubstituidoId] = useState<number | null>(null);
+
   const selecionarEmpregado = (emp: any) => {
     const contratoMatch = contratosFull.find((c: any) => c.Filial === emp.Filial);
     const insal = parseFloat(String(emp["% Insalubridade"] ?? "0").replace(",", ".")) || 0;
+    setSubstituidoId(emp.ID ?? null);
     setVaga(v => ({
       ...v,
       nome_substituido: emp.Nome,
@@ -220,34 +255,88 @@ export default function MinhasSolicitacoes({ abrir }: { abrir?: SolicitacaoInici
 
   const abrirModalVaga = () => {
     setModalVaga(true); setVagaStep(1); setEmpSearch(""); setShowEmpDrop(false); setVaga({ ...VAGA_RESET });
+    setSubstituidoId(null);
     if (!contratos.length) carregarContratos();
   };
+
+  // Prazo/grau da data escolhida — o grau não é mais escolhido na mão.
+  const prazo = avaliarPrazo(vaga.data_inicio_prevista);
+  const cnhDoCargo = cargoExigeCnh(vaga.cargo);
 
   const vagaValidar = (step: number) => {
     if (step === 1) {
       if (!vaga.motivo_vaga) { toast("Selecione o motivo da vaga.", "err"); return false; }
+      if (ehSubstituicao(vaga.motivo_vaga) && !substituidoId) {
+        toast("Escolha na lista o colaborador que será substituído — o cargo e o contrato vêm do cadastro dele.", "err"); return false;
+      }
       if (!vaga.contrato) { toast("Selecione o contrato.", "err"); return false; }
       if (!vaga.cargo.trim()) { toast("Informe o cargo.", "err"); return false; }
     }
+    if (step === 2) {
+      if (!prazo.ok) { toast(prazo.erro ?? "Revise a data de início prevista.", "err"); return false; }
+    }
     if (step === 3) {
-      if (!vaga.req_obrigatorios.trim()) { toast("Informe os requisitos obrigatórios.", "err"); return false; }
+      if (!prazo.ok) { toast(prazo.erro ?? "Revise a data de início prevista.", "err"); return false; }
+      if (!vaga.req_obrigatorios.trim() && !cnhDoCargo) { toast("Informe os requisitos obrigatórios.", "err"); return false; }
     }
     return true;
   };
 
   const submitVaga = async () => {
-    if (!vagaValidar(3)) return;
+    if (!vagaValidar(1) || !vagaValidar(3)) return;
     const payload = {
       ...vaga,
       quantidade_vagas: parseInt(vaga.quantidade_vagas) || 1,
+      // Grau e CNH saem das regras, não do que a pessoa digitou (o banco
+      // recalcula os dois no trigger — aqui é só p/ a tela não mentir).
+      grau_urgencia: prazo.grau ?? "",
+      req_obrigatorios: aplicarReqCnh(vaga.req_obrigatorios, vaga.cargo),
+      cnh_obrigatoria: !!cnhDoCargo,
       status: "Pendente Operacional",
       solicitante_nome: user?.user_metadata?.nome ?? user?.email ?? "",
       solicitante_cpf: user?.email ?? "",
     };
-    const { error, data } = await (supabase as any).from("SISTEMA_RECRUTAMENTO").insert(payload).select("id").single();
+    let { error, data } = await (supabase as any).from("SISTEMA_RECRUTAMENTO").insert(payload).select("id").single();
+    // Banco ainda sem a coluna cnh_obrigatoria: reenvia sem ela.
+    if (error && /column|schema cache/i.test(error.message)) {
+      const { cnh_obrigatoria, ...semCnh } = payload as any;
+      ({ error, data } = await (supabase as any).from("SISTEMA_RECRUTAMENTO").insert(semCnh).select("id").single());
+    }
     if (error) { toast("Erro ao solicitar vaga: " + error.message, "err"); return; }
     toast(`Solicitação #${data?.id} criada com sucesso!`, "ok");
     setModalVaga(false); setVaga({ ...VAGA_RESET }); setVagaStep(1); setEmpSearch(""); setShowEmpDrop(false);
+    setSubstituidoId(null);
+    carregarMinhasSols();
+  };
+
+  // ── Editar a data de início (única coisa que o encarregado muda depois) ──
+  const [editData, setEditData] = useState<{ sol: SolItem; data: string; justificativa: string } | null>(null);
+  const [salvandoData, setSalvandoData] = useState(false);
+  const prazoEdicao = editData ? avaliarPrazo(editData.data) : null;
+
+  const salvarNovaData = async () => {
+    if (!editData || !prazoEdicao) return;
+    if (!prazoEdicao.ok) { toast(prazoEdicao.erro ?? "Revise a data.", "err"); return; }
+    if (editData.data === (editData.sol.dataInicio ?? "")) { toast("A data é a mesma que já está na vaga.", "err"); return; }
+    if (editData.justificativa.trim().length < 10) { toast("Escreva a justificativa da troca de data (mínimo 10 caracteres).", "err"); return; }
+    setSalvandoData(true);
+    const historico = [
+      ...(editData.sol.alteracoes ?? []),
+      {
+        de: editData.sol.dataInicio || null, para: editData.data,
+        justificativa: editData.justificativa.trim(),
+        por_nome: displayName || user?.email || "",
+      },
+    ];
+    const { error } = await (supabase as any).from("SISTEMA_RECRUTAMENTO").update({
+      data_inicio_prevista: editData.data,
+      grau_urgencia: prazoEdicao.grau,
+      data_inicio_alteracoes: historico,
+    }).eq("id", editData.sol.id);
+    setSalvandoData(false);
+    if (error) { toast(error.message, "err"); return; }
+    toast(`Data da vaga #${editData.sol.id} atualizada — urgência ${prazoEdicao.grau}.`, "ok");
+    setEditData(null);
     carregarMinhasSols();
   };
 
@@ -464,10 +553,17 @@ export default function MinhasSolicitacoes({ abrir }: { abrir?: SolicitacaoInici
                     <div className="ini-sol-info">
                       {s.tipo === "Vaga" && (
                         <div className="ini-sol-top">
-                          {s.motivo === "Substituição" && s.substituido && (
+                          {ehSubstituicao(s.motivo) && s.substituido && (
                             <span className="ini-sol-tag">🔁 Substituindo: <strong>{s.substituido}</strong></span>
                           )}
                           <span className="ini-sol-tag">🎯 {qtd} vaga{qtd > 1 ? "s" : ""} solicitada{qtd > 1 ? "s" : ""}</span>
+                          {s.motivo && <span className="ini-sol-tag">{motivoLabel(s.motivo)}</span>}
+                          {s.dataInicio && (
+                            <span className="ini-sol-tag" title={s.grau ? `Urgência ${s.grau}` : undefined}>
+                              📆 Início {fmtBr(s.dataInicio)}{s.grau ? ` · ${s.grau}` : ""}
+                              {(s.alteracoes?.length ?? 0) > 0 ? ` · ${s.alteracoes!.length}× remarcada` : ""}
+                            </span>
+                          )}
                         </div>
                       )}
                       <div className="ini-sol-title">{s.titulo}</div>
@@ -481,6 +577,15 @@ export default function MinhasSolicitacoes({ abrir }: { abrir?: SolicitacaoInici
                           ⏱ {dias === 0 ? "hoje" : `há ${dias} dia${dias > 1 ? "s" : ""}`} neste status
                         </span>
                       )}
+                      {/* Depois de criada, a única coisa que o solicitante muda
+                          é a data de início — e com justificativa. */}
+                      {vagaEditavel(s) && (
+                        <button onClick={() => setEditData({ sol: s, data: s.dataInicio || "", justificativa: "" })}
+                          title="Alterar a data de início prevista desta vaga"
+                          style={{ padding: "4px 10px", borderRadius: 8, border: "1px solid #dbe4f0", background: "#fff", color: "#0f3171", fontSize: 11, fontWeight: 700, cursor: "pointer" }}>
+                          📆 Alterar data
+                        </button>
+                      )}
                     </div>
                   </div>
                 );
@@ -489,6 +594,65 @@ export default function MinhasSolicitacoes({ abrir }: { abrir?: SolicitacaoInici
           )}
         </div>
       </div>
+
+      {/* ── Modal: alterar a data de início da vaga ── */}
+      {editData && prazoEdicao && (
+        <div className="ini-modal-ov">
+          <div className="ini-modal" onClick={e => e.stopPropagation()} style={{ maxWidth: 520 }}>
+            <button onClick={() => setEditData(null)} style={{ position: "absolute", top: 14, right: 14, background: "none", border: "none", color: "#94a3b8", fontSize: 20, cursor: "pointer" }}>✕</button>
+            <div style={{ fontSize: 17, fontWeight: 800, marginBottom: 4 }}>📆 Alterar data de início</div>
+            <div style={{ fontSize: 12, color: "#94a3b8", marginBottom: 14 }}>
+              Vaga #{editData.sol.id} — {editData.sol.titulo}. Esta é a única informação que você altera depois de solicitar; o resto é com o Recrutamento.
+            </div>
+
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+              <div className="ini-fg">
+                <label>Data atual</label>
+                <input className="ini-fi" readOnly value={fmtBr(editData.sol.dataInicio) || "—"} style={{ background: "#f1f5f9", color: "#475569" }} />
+              </div>
+              <div className="ini-fg">
+                <label>Nova data *</label>
+                <input className="ini-fi" type="date" min={dataMinimaVaga()} value={editData.data}
+                  onChange={e => setEditData(d => d && ({ ...d, data: e.target.value }))} />
+              </div>
+            </div>
+            <PrazoAviso prazo={prazoEdicao} />
+
+            <div className="ini-fg">
+              <label>Por que a data mudou? *</label>
+              <textarea className="ini-fi" rows={3} placeholder="Explique o motivo da alteração (mínimo 10 caracteres)…"
+                value={editData.justificativa} onChange={e => setEditData(d => d && ({ ...d, justificativa: e.target.value }))} />
+              <div style={{ fontSize: 11, color: "#94a3b8", marginTop: 4 }}>
+                A justificativa fica registrada na vaga, com o seu nome e a data — o Recrutamento vê o histórico completo.
+              </div>
+            </div>
+
+            {(editData.sol.alteracoes?.length ?? 0) > 0 && (
+              <div style={{ marginTop: 6, border: "1px solid #e2e8f0", borderRadius: 10, padding: "9px 11px", background: "#f8fafc" }}>
+                <div style={{ fontSize: 11, fontWeight: 800, color: "#94a3b8", textTransform: "uppercase", letterSpacing: ".4px", marginBottom: 6 }}>Alterações anteriores</div>
+                <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                  {editData.sol.alteracoes!.map((a: any, i: number) => (
+                    <div key={i} style={{ fontSize: 11.5, color: "#475569" }}>
+                      <b>{fmtBr(a?.de) || "—"} → {fmtBr(a?.para)}</b>
+                      {a?.em ? <span style={{ color: "#94a3b8" }}> · {fmtDt(a.em)}</span> : null}
+                      {a?.por_nome ? <span style={{ color: "#94a3b8" }}> · {a.por_nome}</span> : null}
+                      <div style={{ fontStyle: "italic" }}>{a?.justificativa}</div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 16, paddingTop: 14, borderTop: "1px solid #e2e8f0" }}>
+              <button onClick={() => setEditData(null)} style={{ padding: "7px 14px", borderRadius: 10, border: "1px solid #e2e8f0", background: "#fff", color: "#475569", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>Cancelar</button>
+              <button onClick={salvarNovaData} disabled={salvandoData}
+                style={{ padding: "7px 14px", borderRadius: 10, border: "none", background: salvandoData ? "#94a3b8" : "#0f3171", color: "#fff", fontSize: 12, fontWeight: 700, cursor: salvandoData ? "default" : "pointer" }}>
+                {salvandoData ? "Salvando…" : "✓ Salvar nova data"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ── Modal Nova Vaga ── */}
       {modalVaga && (
@@ -508,16 +672,23 @@ export default function MinhasSolicitacoes({ abrir }: { abrir?: SolicitacaoInici
             {vagaStep === 1 && (<>
               <div className="ini-fg">
                 <label>Motivo da Vaga *</label>
-                <select className="ini-fi" value={vaga.motivo_vaga} onChange={e => setVaga(v => ({ ...v, motivo_vaga: e.target.value }))}>
+                <select className="ini-fi" value={vaga.motivo_vaga}
+                  onChange={e => {
+                    const m = e.target.value;
+                    // Trocou de/para substituição: limpa o que vinha do cadastro
+                    // do substituído, senão sobra cargo/contrato de outro posto.
+                    setSubstituidoId(null); setEmpSearch("");
+                    setVaga(v => ({ ...v, motivo_vaga: m, nome_substituido: "", cargo: "", contrato: "" }));
+                  }}>
                   <option value="">— Selecione —</option>
-                  {["Admissão", "Substituição", "Expansão", "Transferência", "Retorno"].map(o => <option key={o}>{o}</option>)}
+                  {MOTIVOS_VAGA.map(o => <option key={o}>{o}</option>)}
                 </select>
               </div>
-              {vaga.motivo_vaga === "Substituição" && (
+              {ehSubstituicao(vaga.motivo_vaga) && (
                 <div className="ini-fg" style={{ position: "relative" }} onBlur={() => setTimeout(() => setShowEmpDrop(false), 150)}>
-                  <label>Colaborador a Substituir</label>
-                  <input className="ini-fi" placeholder="Digite o nome do colaborador..." value={empSearch} autoComplete="off"
-                    onChange={e => { const v = e.target.value; setEmpSearch(v); setVaga(prev => ({ ...prev, nome_substituido: v })); if (v.length >= 2) { setShowEmpDrop(true); buscarEmpregados(v); } else { setShowEmpDrop(false); setEmpregados([]); } }} />
+                  <label>Colaborador a Substituir *</label>
+                  <input className="ini-fi" placeholder="Digite o nome e escolha na lista..." value={empSearch} autoComplete="off"
+                    onChange={e => { const v = e.target.value; setEmpSearch(v); setSubstituidoId(null); setVaga(prev => ({ ...prev, nome_substituido: v, cargo: "", contrato: "" })); if (v.length >= 2) { setShowEmpDrop(true); buscarEmpregados(v); } else { setShowEmpDrop(false); setEmpregados([]); } }} />
                   {showEmpDrop && empSearch.length >= 2 && (
                     <div style={{ position: "absolute", top: "100%", left: 0, right: 0, zIndex: 999, background: "#fff", border: "1px solid #e2e8f0", borderRadius: 10, boxShadow: "0 8px 24px rgba(15,23,42,.14)", maxHeight: 220, overflowY: "auto", marginTop: 2 }}>
                       {loadingEmps ? <div style={{ padding: "12px", fontSize: 12, color: "#94a3b8", textAlign: "center" }}>Buscando...</div>
@@ -533,14 +704,32 @@ export default function MinhasSolicitacoes({ abrir }: { abrir?: SolicitacaoInici
                   )}
                 </div>
               )}
+              {/* Substituição: contrato e cargo vêm do cadastro do substituído e
+                  ficam travados — a vaga repõe aquele posto, não outro. */}
               <div className="ini-fg">
-                <label>Contrato *</label>
-                <select className="ini-fi" value={vaga.contrato} onChange={e => setVaga(v => ({ ...v, contrato: e.target.value }))}>
-                  <option value="">— Selecione —</option>
-                  {contratos.map(c => <option key={c}>{c}</option>)}
-                </select>
+                <label>Contrato *{ehSubstituicao(vaga.motivo_vaga) && <span style={{ color: "#94a3b8", fontWeight: 600 }}> — do colaborador substituído</span>}</label>
+                {ehSubstituicao(vaga.motivo_vaga) ? (
+                  <input className="ini-fi" readOnly value={vaga.contrato} placeholder="Escolha o colaborador acima"
+                    style={{ background: "#f1f5f9", color: "#475569", cursor: "not-allowed" }} />
+                ) : (
+                  <select className="ini-fi" value={vaga.contrato} onChange={e => setVaga(v => ({ ...v, contrato: e.target.value }))}>
+                    <option value="">— Selecione —</option>
+                    {contratos.map(c => <option key={c}>{c}</option>)}
+                  </select>
+                )}
               </div>
-              <div className="ini-fg"><label>Cargo *</label><input className="ini-fi" placeholder="Ex: Auxiliar de Limpeza, Vigilante..." value={vaga.cargo} onChange={e => setVaga(v => ({ ...v, cargo: e.target.value }))} /></div>
+              <div className="ini-fg">
+                <label>Cargo *{ehSubstituicao(vaga.motivo_vaga) && <span style={{ color: "#94a3b8", fontWeight: 600 }}> — do colaborador substituído</span>}</label>
+                <input className="ini-fi" placeholder={ehSubstituicao(vaga.motivo_vaga) ? "Escolha o colaborador acima" : "Ex: Auxiliar de Limpeza, Vigilante..."}
+                  value={vaga.cargo} readOnly={ehSubstituicao(vaga.motivo_vaga)}
+                  style={ehSubstituicao(vaga.motivo_vaga) ? { background: "#f1f5f9", color: "#475569", cursor: "not-allowed" } : undefined}
+                  onChange={e => setVaga(v => ({ ...v, cargo: e.target.value }))} />
+                {cnhDoCargo && (
+                  <div style={{ marginTop: 6, fontSize: 11.5, fontWeight: 700, color: "#b45309", background: "#fffbeb", border: "1px solid #fde68a", borderRadius: 8, padding: "6px 9px" }}>
+                    🚗 {cnhDoCargo}: CNH obrigatória — já entra sozinha nos requisitos e não pode ser tirada.
+                  </div>
+                )}
+              </div>
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
                 <div className="ini-fg">
                   <label>Estado (UF)</label>
@@ -562,8 +751,13 @@ export default function MinhasSolicitacoes({ abrir }: { abrir?: SolicitacaoInici
             {vagaStep === 2 && (<>
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
                 <div className="ini-fg"><label>Quantidade de Vagas</label><input className="ini-fi" type="number" min={1} max={99} value={vaga.quantidade_vagas} onChange={e => setVaga(v => ({ ...v, quantidade_vagas: e.target.value }))} /></div>
-                <div className="ini-fg"><label>Data de Início Prevista</label><input className="ini-fi" type="date" value={vaga.data_inicio_prevista} onChange={e => setVaga(v => ({ ...v, data_inicio_prevista: e.target.value }))} /></div>
+                <div className="ini-fg">
+                  <label>Data de Início Prevista *</label>
+                  <input className="ini-fi" type="date" min={dataMinimaVaga()} value={vaga.data_inicio_prevista}
+                    onChange={e => setVaga(v => ({ ...v, data_inicio_prevista: e.target.value }))} />
+                </div>
               </div>
+              <PrazoAviso prazo={prazo} />
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
                 <div className="ini-fg"><label>Escala</label><input className="ini-fi" placeholder="Ex: 12x36, 5x2..." value={vaga.escala} onChange={e => setVaga(v => ({ ...v, escala: e.target.value }))} /></div>
                 <div className="ini-fg"><label>Horário</label><input className="ini-fi" placeholder="Ex: 07h às 19h..." value={vaga.horario} onChange={e => setVaga(v => ({ ...v, horario: e.target.value }))} /></div>
@@ -581,10 +775,24 @@ export default function MinhasSolicitacoes({ abrir }: { abrir?: SolicitacaoInici
 
             {vagaStep === 3 && (<>
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-                <div className="ini-fg"><label>Grau de Urgência</label><select className="ini-fi" value={vaga.grau_urgencia} onChange={e => setVaga(v => ({ ...v, grau_urgencia: e.target.value }))}><option value="">— Selecione —</option>{["Baixa", "Média", "Alta — Urgente"].map(o => <option key={o}>{o}</option>)}</select></div>
+                {/* Grau não é mais escolhido: sai do prazo da data de início. */}
+                <div className="ini-fg">
+                  <label>Grau de Urgência — calculado pelo prazo</label>
+                  <input className="ini-fi" readOnly value={prazo.grau ?? "— informe a data de início —"}
+                    style={{ background: "#f1f5f9", color: prazo.grau ? "#0f172a" : "#94a3b8", fontWeight: 700, cursor: "not-allowed" }} />
+                </div>
                 <div className="ini-fg"><label>Alta Rotatividade?</label><select className="ini-fi" value={vaga.alta_rotatividade} onChange={e => setVaga(v => ({ ...v, alta_rotatividade: e.target.value }))}><option>Não</option><option>Sim</option></select></div>
               </div>
-              <div className="ini-fg"><label>Requisitos Obrigatórios *</label><textarea className="ini-fi" rows={3} placeholder="Experiência comprovada, CNH B..." value={vaga.req_obrigatorios} onChange={e => setVaga(v => ({ ...v, req_obrigatorios: e.target.value }))} /></div>
+              <PrazoAviso prazo={prazo} />
+              <div className="ini-fg">
+                <label>Requisitos Obrigatórios *</label>
+                {cnhDoCargo && (
+                  <div style={{ display: "flex", alignItems: "center", gap: 7, fontSize: 12, fontWeight: 700, color: "#b45309", background: "#fffbeb", border: "1px solid #fde68a", borderRadius: 8, padding: "7px 10px", marginBottom: 6 }}>
+                    <span>🚗</span><span>{REQ_CNH_TEXTO} <span style={{ fontWeight: 600, color: "#92400e" }}>(automático para {cnhDoCargo.toLowerCase()} — vai junto mesmo que você não escreva)</span></span>
+                  </div>
+                )}
+                <textarea className="ini-fi" rows={3} placeholder="Experiência comprovada, curso específico..." value={vaga.req_obrigatorios} onChange={e => setVaga(v => ({ ...v, req_obrigatorios: e.target.value }))} />
+              </div>
               <div className="ini-fg"><label>Requisitos Desejáveis</label><textarea className="ini-fi" rows={2} placeholder="Inglês básico, curso técnico..." value={vaga.req_desejaveis} onChange={e => setVaga(v => ({ ...v, req_desejaveis: e.target.value }))} /></div>
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
                 <div className="ini-fg"><label>Experiência Mínima?</label><select className="ini-fi" value={vaga.exp_minima} onChange={e => setVaga(v => ({ ...v, exp_minima: e.target.value }))}><option>Não</option><option>Sim</option></select></div>
