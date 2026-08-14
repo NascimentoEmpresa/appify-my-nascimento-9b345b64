@@ -53,8 +53,8 @@ export const CLASSIFICACOES_LICITACAO: ClassificacaoLicitacao[] = [
   { campo: "cesta_basica", label: "Cesta Básica", grupo: "Benefícios" },
   { campo: "assistencia_medica", label: "Assistência Médica", grupo: "Benefícios" },
   { campo: "hospedagem", label: "Hospedagem", grupo: "Benefícios" },
-  { campo: "odontologico", label: "Odontológico", grupo: "Benefícios" },
-  { campo: "manutencao_profissional", label: "Manutenção Profissional", grupo: "Benefícios" },
+  { campo: "odontologico", label: "Médico/Odontológico", grupo: "Benefícios" },
+  { campo: "manutencao_profissional", label: "Manutenção/Capacitação Profissional", grupo: "Benefícios" },
   { campo: "cafe", label: "Café", grupo: "Benefícios" },
   { campo: "almoco", label: "Almoço", grupo: "Benefícios" },
   { campo: "janta", label: "Janta", grupo: "Benefícios" },
@@ -75,7 +75,7 @@ export const CLASSIFICACOES_LICITACAO: ClassificacaoLicitacao[] = [
   { campo: "aviso_trabalhado", label: "Aviso Prévio Trabalhado", grupo: "Rescisão / Provisão" },
   { campo: "incidencia_aviso_trabalhado", label: "Incidência sobre Aviso Trabalhado", grupo: "Rescisão / Provisão" },
   { campo: "multa_aviso_indenizado", label: "Multa sobre Aviso Indenizado", grupo: "Rescisão / Provisão" },
-  { campo: "contratualidade", label: "Contratualidade", grupo: "Rescisão / Provisão" },
+  { campo: "contratualidade", label: "Multa FGTS Contrat.", grupo: "Rescisão / Provisão" },
 
   // Reposição de Profissional Ausente
   { campo: "sub_ferias", label: "Substituto de Férias", grupo: "Reposição de Ausente" },
