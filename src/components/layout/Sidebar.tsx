@@ -559,6 +559,10 @@ const comiteEticaModule: ModuleDef = {
       label: "Comitê de Ética",
       defaultOpen: true,
       items: [
+        // Indicadores vem primeiro: é a leitura gerencial do módulo, e tem
+        // liberação de acesso própria (comite_etica_indicadores) — dá para a
+        // diretoria ver o painel sem ver o conteúdo dos relatos.
+        { label: "Indicadores", to: "/app/comite-etica/indicadores", icon: BarChart3 },
         { label: "Denúncias", to: "/app/comite-etica/denuncias", icon: ShieldAlert },
         { label: "Denúncias (Contato Seguro)", to: "/app/comite-etica/denuncias-contato-seguro", icon: ShieldAlert },
       ],
@@ -888,9 +892,16 @@ export function Sidebar({ collapsed, mobileOpen = false, onMobileClose }: Sideba
         desktopCollapsed ? "lg:w-[172px]" : "lg:w-[268px]",
       )}
     >
+      {/* Fundo ambiente. Fica atrás de tudo (z-0) e não recebe ponteiro:
+          os blocos abaixo sobem para z-10 justamente por causa dele. */}
+      <div className="sb-amb" aria-hidden>
+        <span className="a" />
+        <span className="b" />
+      </div>
+
       {/* Brand */}
-      <div className="flex h-16 items-center gap-3 border-b border-sidebar-border px-4">
-        <img src={logoGN} alt="Grupo Nascimento" className="h-9 w-9 shrink-0 object-contain" />
+      <div className="sb-brand relative z-10 flex h-16 items-center gap-3 border-b border-sidebar-border px-4">
+        <img src={logoGN} alt="Grupo Nascimento" className="sb-logo h-9 w-9 shrink-0 object-contain" />
         {!collapsed && (
           <div className="min-w-0">
             <p className="font-display text-sm font-bold leading-tight text-white">Grupo Nascimento</p>
@@ -900,23 +911,24 @@ export function Sidebar({ collapsed, mobileOpen = false, onMobileClose }: Sideba
       </div>
 
       {/* Início global */}
-      <div className="px-2 pt-3">
+      <div className="relative z-10 px-2 pt-3">
         <NavLink
           to="/app"
           end
           className={({ isActive }) =>
             cn(
-              "flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors",
+              "sb-item flex items-center gap-3 rounded-md px-3 py-2 text-sm font-bold",
               isActive
-                ? "bg-sidebar-accent text-white"
-                : "text-sidebar-foreground/85 hover:bg-sidebar-accent/60 hover:text-white",
+                ? "sb-on bg-sidebar-accent text-white"
+                : "text-white/85 hover:bg-sidebar-accent/60 hover:text-white",
               collapsed && "justify-center px-2",
             )
           }
         >
           {({ isActive }) => (
             <>
-              <Home className={cn("h-4 w-4 shrink-0", isActive && "text-accent")} />
+              {isActive && <span className="sb-bar absolute left-0 top-1.5 bottom-1.5 w-0.5 rounded-r bg-accent" />}
+              <Home className={cn("sb-ic h-4 w-4 shrink-0", isActive && "text-accent")} />
               {!collapsed && <span>Início</span>}
             </>
           )}
@@ -927,16 +939,21 @@ export function Sidebar({ collapsed, mobileOpen = false, onMobileClose }: Sideba
             to="/app/presidencia"
             className={({ isActive }) =>
               cn(
-                "mt-1 flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors",
+                "sb-item mt-1 flex items-center gap-3 rounded-md px-3 py-2 text-sm font-bold",
                 isActive
-                  ? "bg-sidebar-accent text-white"
-                  : "text-sidebar-foreground/85 hover:bg-sidebar-accent/60 hover:text-white",
+                  ? "sb-on bg-sidebar-accent text-white"
+                  : "text-white/85 hover:bg-sidebar-accent/60 hover:text-white",
                 collapsed && "justify-center px-2",
               )
             }
           >
-            <LayoutDashboard className="h-4 w-4 shrink-0" />
-            {!collapsed && <span>Painel da Presidência</span>}
+            {({ isActive }) => (
+              <>
+                {isActive && <span className="sb-bar absolute left-0 top-1.5 bottom-1.5 w-0.5 rounded-r bg-accent" />}
+                <LayoutDashboard className={cn("sb-ic h-4 w-4 shrink-0", isActive && "text-accent")} />
+                {!collapsed && <span>Painel da Presidência</span>}
+              </>
+            )}
           </NavLink>
         )}
 
@@ -945,22 +962,27 @@ export function Sidebar({ collapsed, mobileOpen = false, onMobileClose }: Sideba
             to="/app/aprovacoes/inbox"
             className={({ isActive }) =>
               cn(
-                "mt-1 flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors",
+                "sb-item mt-1 flex items-center gap-3 rounded-md px-3 py-2 text-sm font-bold",
                 isActive
-                  ? "bg-sidebar-accent text-white"
-                  : "text-sidebar-foreground/85 hover:bg-sidebar-accent/60 hover:text-white",
+                  ? "sb-on bg-sidebar-accent text-white"
+                  : "text-white/85 hover:bg-sidebar-accent/60 hover:text-white",
                 collapsed && "justify-center px-2",
               )
             }
           >
-            <Inbox className="h-4 w-4 shrink-0" />
-            {!collapsed && (
+            {({ isActive }) => (
               <>
-                <span className="flex-1">Aguardando Aprovação</span>
-                {pendentes > 0 && (
-                  <span className="rounded-full bg-amber-500 px-1.5 py-0.5 text-[10px] font-bold text-white">
-                    {pendentes}
-                  </span>
+                {isActive && <span className="sb-bar absolute left-0 top-1.5 bottom-1.5 w-0.5 rounded-r bg-accent" />}
+                <Inbox className={cn("sb-ic h-4 w-4 shrink-0", isActive && "text-accent")} />
+                {!collapsed && (
+                  <>
+                    <span className="flex-1">Aguardando Aprovação</span>
+                    {pendentes > 0 && (
+                      <span className="animate-pop rounded-full bg-amber-500 px-1.5 py-0.5 text-[10px] font-bold text-white">
+                        {pendentes}
+                      </span>
+                    )}
+                  </>
                 )}
               </>
             )}
@@ -970,12 +992,12 @@ export function Sidebar({ collapsed, mobileOpen = false, onMobileClose }: Sideba
 
       {/* Section label */}
       {!collapsed && (
-        <p className="mt-4 px-5 text-[10px] font-semibold uppercase tracking-[0.14em] text-sidebar-muted">
+        <p className="relative z-10 mt-4 px-5 text-[10px] font-semibold uppercase tracking-[0.14em] text-sidebar-muted">
           Módulos do ERP
         </p>
       )}
 
-      <nav className="mt-2 flex-1 overflow-y-auto scroll-elegant px-2 py-1">
+      <nav className="sb-scroll relative z-10 mt-2 flex-1 overflow-y-auto scroll-elegant px-2 py-1">
         {visibleModules.map((mod) => (
           <ModuleEntry
             key={mod.id}
@@ -989,25 +1011,30 @@ export function Sidebar({ collapsed, mobileOpen = false, onMobileClose }: Sideba
       </nav>
 
       {/* Configurações + ambiente */}
-      <div className="border-t border-sidebar-border p-2">
+      <div className="relative z-10 border-t border-sidebar-border p-2">
         <NavLink
           to="/app/administracao"
           className={({ isActive }) =>
             cn(
-              "flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors",
+              "sb-item flex items-center gap-3 rounded-md px-3 py-2 text-sm font-bold",
               isActive
-                ? "bg-sidebar-accent text-white"
-                : "text-sidebar-foreground/75 hover:bg-sidebar-accent/60 hover:text-white",
+                ? "sb-on bg-sidebar-accent text-white"
+                : "text-white/85 hover:bg-sidebar-accent/60 hover:text-white",
               collapsed && "justify-center px-2",
             )
           }
         >
-          <Settings className="h-4 w-4 shrink-0" />
-          {!collapsed && <span>Configurações do ERP</span>}
+          {({ isActive }) => (
+            <>
+              {isActive && <span className="sb-bar absolute left-0 top-1.5 bottom-1.5 w-0.5 rounded-r bg-accent" />}
+              <Settings className={cn("sb-ic h-4 w-4 shrink-0", isActive && "text-accent")} />
+              {!collapsed && <span>Configurações do ERP</span>}
+            </>
+          )}
         </NavLink>
         {!collapsed && (
-          <div className="mt-2 flex items-center gap-2 rounded-md bg-sidebar-accent/40 px-2.5 py-2">
-            <span className="h-2 w-2 rounded-full bg-success animate-pulse-soft" />
+          <div className="mt-2 flex items-center gap-2.5 rounded-md bg-sidebar-accent/40 px-2.5 py-2">
+            <span className="sb-live h-2 w-2 rounded-full bg-success" />
             <span className="text-[11px] font-medium text-sidebar-muted">Ambiente Produção</span>
           </div>
         )}
@@ -1037,6 +1064,28 @@ function ModuleEntry({
   // com a sidebar colapsada ou o submenu recolhido).
   const modDot = !disabled && !!mod.groups?.some((g) => g.items.some((i) => i.dot));
 
+  // Para o submenu FECHAR animado ele precisa continuar no DOM depois de
+  // recolhido — desmontar corta a transição no primeiro frame. Montamos na
+  // primeira abertura e nunca mais tiramos: quem nunca abriu o módulo não
+  // paga nada, e quem abriu ganha a animação nos dois sentidos.
+  const podeAbrir = !collapsed && !disabled && !!mod.groups;
+  const [jaAbriu, setJaAbriu] = useState(expanded && podeAbrir);
+  useEffect(() => { if (expanded && podeAbrir) setJaAbriu(true); }, [expanded, podeAbrir]);
+  const aberto = expanded && podeAbrir;
+
+  // Posição de cada grupo numa contagem contínua do módulo inteiro, para a
+  // entrada escalonada correr de cima para baixo de verdade: sem isso cada
+  // grupo recomeça do zero e o primeiro item de um grupo aparece antes do
+  // título do grupo anterior.
+  const basesDosGrupos = useMemo(() => {
+    let cursor = 0;
+    return (mod.groups ?? []).map((g) => {
+      const base = cursor;
+      cursor += g.items.length + 1; // +1 pela linha do cabeçalho do grupo
+      return base;
+    });
+  }, [mod.groups]);
+
   return (
     <div className="mb-1">
       <button
@@ -1044,31 +1093,31 @@ function ModuleEntry({
         disabled={disabled}
         onClick={() => { if (mod.headerLink) navigate(mod.headerLink); onToggle(); }}
         className={cn(
-          "group relative flex w-full items-center gap-3 rounded-md px-3 py-2 text-left text-sm font-medium transition-colors",
+          "sb-item group flex w-full items-center gap-3 rounded-md px-3 py-2 text-left text-sm font-bold",
           isActiveModule
-            ? "bg-sidebar-accent text-white"
+            ? "sb-on bg-sidebar-accent text-white"
             : disabled
               ? "text-sidebar-muted/70 cursor-not-allowed"
-              : "text-sidebar-foreground/90 hover:bg-sidebar-accent/60 hover:text-white",
+              : "text-white/90 hover:bg-sidebar-accent/60 hover:text-white",
           collapsed && "justify-center px-2",
         )}
         title={collapsed ? mod.label : undefined}
       >
-        {isActiveModule && <span className="absolute left-0 top-1.5 bottom-1.5 w-0.5 rounded-r bg-accent" />}
-        <span className="relative shrink-0">
+        {isActiveModule && <span className="sb-bar absolute left-0 top-1.5 bottom-1.5 w-0.5 rounded-r bg-accent" />}
+        <span className="sb-ic relative shrink-0">
           <Icon className={cn("h-4 w-4", isActiveModule && "text-accent", disabled && "opacity-60")} />
           {modDot && collapsed && (
-            <span className="absolute -right-1 -top-1 h-2 w-2 rounded-full bg-red-500 ring-2 ring-sidebar" />
+            <span className="absolute -right-1 -top-1 h-2 w-2 animate-pulse-soft rounded-full bg-red-500 ring-2 ring-sidebar" />
           )}
         </span>
         {!collapsed && (
           <>
             <span className="flex-1 truncate">{mod.label}</span>
             {modDot && (
-              <span className="h-2 w-2 shrink-0 rounded-full bg-red-500" title="Novidades" />
+              <span className="h-2 w-2 shrink-0 animate-pulse-soft rounded-full bg-red-500" title="Novidades" />
             )}
             {mod.badge && !disabled && (
-              <span className="rounded-md bg-white/10 px-1.5 py-0.5 text-[10px] font-semibold text-sidebar-foreground/70">
+              <span className="animate-pop rounded-md bg-white/10 px-1.5 py-0.5 text-[10px] font-semibold text-sidebar-foreground/70">
                 {mod.badge}
               </span>
             )}
@@ -1079,26 +1128,49 @@ function ModuleEntry({
             )}
             {!disabled && mod.groups && (
               <ChevronRight
-                className={cn("h-3.5 w-3.5 text-sidebar-muted transition-transform", expanded && "rotate-90")}
+                className={cn("sb-chev h-3.5 w-3.5 text-sidebar-muted", aberto && "rotate-90 text-accent")}
               />
             )}
           </>
         )}
       </button>
 
-      {/* Submódulos (apenas quando expandido, módulo ativo e sidebar não colapsada) */}
-      {expanded && !collapsed && !disabled && mod.groups && (
-        <div className="mt-1 ml-3 border-l border-sidebar-border/70 pl-2">
-          {mod.groups.map((group) => (
-            <SidebarGroup key={group.label} group={group} />
-          ))}
+      {/* Submódulos — a altura é animada pelo grid-template-rows do .sb-sub. */}
+      {jaAbriu && mod.groups && (
+        <div className="sb-sub" data-open={aberto} aria-hidden={!aberto}>
+          <div className="sb-sub-in">
+            <div className="sb-rail mt-1 ml-3 pl-2">
+              {mod.groups.map((group, gi) => (
+                <SidebarGroup key={group.label} group={group} enabled={aberto} base={basesDosGrupos[gi]} />
+              ))}
+            </div>
+          </div>
         </div>
       )}
     </div>
   );
 }
 
-function SidebarGroup({ group }: { group: NavGroup }) {
+/** Passo da entrada escalonada, limitado para um módulo grande (Licitações
+ *  tem ~30 submódulos) não levar um segundo e meio para terminar de abrir. */
+const PASSO_MAX = 14;
+const passo = (n: number) => Math.min(n, PASSO_MAX);
+
+/**
+ * Atraso de entrada do item, já como string de CSS.
+ *
+ * Antes isto era `--i` + `animation-delay: calc(60ms + var(--i) * 38ms)`.
+ * O problema é que um `--i` inválido (ex.: "3px", que é o que acontece se o
+ * valor chegar com unidade) torna o calc inteiro inválido e o navegador cai
+ * para 0s — SEM erro no console. Resultado: todos os itens abrem juntos e
+ * nada denuncia a causa. Escrevendo o tempo pronto, não há calc para falhar.
+ *
+ * Passo de 55ms contra duração de 340ms: antes eram 38ms contra 460ms, e a
+ * sobreposição era tão grande que a cascata não se enxergava.
+ */
+const atraso = (n: number): React.CSSProperties => ({ animationDelay: `${40 + n * 55}ms` });
+
+function SidebarGroup({ group, enabled, base }: { group: NavGroup; enabled: boolean; base: number }) {
   const location = useLocation();
   const hasActive = group.items.some(
     (i) => location.pathname === i.to || (i.to !== "/app" && location.pathname.startsWith(i.to)),
@@ -1109,56 +1181,79 @@ function SidebarGroup({ group }: { group: NavGroup }) {
     <div className="mb-1.5">
       <button
         onClick={() => setOpen((o) => !o)}
-        className="mb-0.5 flex w-full items-center justify-between px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.12em] text-sidebar-muted hover:text-white"
+        // tabIndex -1 com o módulo recolhido: o bloco continua no DOM só para
+        // poder animar, e não deve receber foco por Tab enquanto está fechado.
+        tabIndex={enabled ? undefined : -1}
+        // `--i` do cabeçalho entra ANTES dos links do grupo: a lista aparece
+        // de cima para baixo, título e itens no mesmo ritmo.
+        style={atraso(passo(base))}
+        className="sb-grouphd mb-0.5 flex w-full items-center justify-between px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.12em] text-sidebar-muted transition-colors hover:text-white"
       >
         <span>{group.label}</span>
-        <ChevronDown className={cn("h-3 w-3 transition-transform", !open && "-rotate-90")} />
+        <ChevronDown className={cn("sb-chev h-3 w-3", !open && "-rotate-90")} />
       </button>
-      {open && (
-        <ul className="space-y-0.5">
-          {group.items.map((item) => {
-            // Match exato quando outro item do menu está aninhado sob esta rota
-            // (ex.: "Processos" é prefixo de "/processos/dashboard" e "/processos/audiencias");
-            // sem isso o item-pai acenderia junto com o filho.
-            const hasNested = group.items.some((o) => o.to !== item.to && o.to.startsWith(item.to + "/"));
-            return (
-            <li key={item.to}>
-              <NavLink
-                to={item.to}
-                end={item.to === "/app" || hasNested}
-                className={({ isActive }) =>
-                  cn(
-                    "group relative flex items-center gap-2.5 rounded-md px-2.5 py-1.5 text-[13px] font-medium transition-colors",
-                    isActive
-                      ? "bg-sidebar-accent text-white"
-                      : "text-sidebar-foreground/80 hover:bg-sidebar-accent/50 hover:text-white",
-                  )
-                }
-              >
-                {({ isActive }) => (
-                  <>
-                    {isActive && <span className="absolute left-0 top-1.5 bottom-1.5 w-0.5 rounded-r bg-accent" />}
-                    <item.icon className={cn("mt-0.5 h-3.5 w-3.5 shrink-0 self-start", isActive ? "text-accent" : "")} />
-                    {/* Quebra em duas linhas em vez de cortar com reticências:
-                        "Minhas Solicitações de Ma…" esconde justamente a
-                        palavra que distingue um item do outro. */}
-                    <span className="min-w-0 flex-1 leading-snug [overflow-wrap:anywhere]">{item.label}</span>
-                    {item.dot && (
-                      <span className="h-2 w-2 shrink-0 rounded-full bg-red-500" title="Novidades" />
-                    )}
-                    {item.badge && (
-                      <span className="rounded-md bg-white/10 px-1.5 py-0.5 text-[10px] font-semibold text-sidebar-foreground/70">
-                        {item.badge}
-                      </span>
-                    )}
-                  </>
-                )}
-              </NavLink>
-            </li>
-            );
-          })}
-        </ul>
-      )}
+      {/* data-open leva o `enabled` junto de propósito: ao recolher o módulo,
+          este bloco também precisa marcar fechado. É o que faz a entrada
+          escalonada dos itens RODAR DE NOVO na próxima abertura — enquanto
+          algum .sb-sub ancestral continuasse aberto, a regra da animação
+          seguiria casando e o navegador não reiniciaria nada. */}
+      <div className="sb-sub" data-open={open && enabled}>
+        <div className="sb-sub-in">
+          <ul className="space-y-0.5 pb-0.5">
+            {group.items.map((item, i) => {
+              // Match exato quando outro item do menu está aninhado sob esta rota
+              // (ex.: "Processos" é prefixo de "/processos/dashboard" e "/processos/audiencias");
+              // sem isso o item-pai acenderia junto com o filho.
+              const hasNested = group.items.some((o) => o.to !== item.to && o.to.startsWith(item.to + "/"));
+              return (
+              // Escalona a entrada de cada link quando o grupo abre,
+              // continuando a contagem de onde o cabeçalho do grupo parou.
+              <li key={item.to}>
+                <NavLink
+                  to={item.to}
+                  end={item.to === "/app" || hasNested}
+                  tabIndex={enabled && open ? undefined : -1}
+                  // O atraso vai NO PRÓPRIO link, não no <li>: quem tem a
+                  // animação é o `.sb-link`, e `animation-delay` não herda
+                  // do pai (ao contrário da variável CSS que havia antes).
+                  style={atraso(passo(base + 1 + i))}
+                  className={({ isActive }) =>
+                    cn(
+                      // Submódulo fica branco e semibold: um degrau abaixo do
+                      // cabeçalho do módulo (bold). Achatar os dois no mesmo
+                      // peso apaga a hierarquia e a lista vira um paredão.
+                      "sb-item sb-link group flex items-center gap-2.5 rounded-md px-2.5 py-1.5 text-[13px] font-semibold",
+                      isActive
+                        ? "sb-on bg-sidebar-accent text-white"
+                        : "text-white/80 hover:bg-sidebar-accent/50 hover:text-white",
+                    )
+                  }
+                >
+                  {({ isActive }) => (
+                    <>
+                      {isActive && <span className="sb-bar absolute left-0 top-1.5 bottom-1.5 w-0.5 rounded-r bg-accent" />}
+                      <item.icon className={cn("sb-ic mt-0.5 h-3.5 w-3.5 shrink-0 self-start", isActive ? "text-accent" : "")} />
+                      {/* Quebra em duas linhas em vez de cortar com reticências:
+                          "Minhas Solicitações de Ma…" esconde justamente a
+                          palavra que distingue um item do outro. */}
+                      <span className="min-w-0 flex-1 leading-snug [overflow-wrap:anywhere]">{item.label}</span>
+                      {item.dot && (
+                        <span className="h-2 w-2 shrink-0 animate-pulse-soft rounded-full bg-red-500" title="Novidades" />
+                      )}
+                      {item.badge && (
+                        <span className="rounded-md bg-white/10 px-1.5 py-0.5 text-[10px] font-semibold text-sidebar-foreground/70">
+                          {item.badge}
+                        </span>
+                      )}
+                    </>
+                  )}
+                </NavLink>
+              </li>
+              );
+            })}
+          </ul>
+        </div>
+      </div>
     </div>
   );
 }

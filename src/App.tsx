@@ -148,6 +148,7 @@ import FormulariosConfig from "./pages/central-servicos/FormulariosConfig";
 import FormularioPublico from "./pages/publico/FormularioPublico";
 import Denuncia from "./pages/publico/Denuncia";
 import DenunciasComiteEtica from "./pages/comite-etica/Denuncias";
+import IndicadoresComiteEtica from "./pages/comite-etica/Indicadores";
 import Ferias from "./pages/rh/Ferias";
 import MinhasSolicitacoes from "./pages/MinhasSolicitacoes";
 import BIDashboard from "./pages/bi/Dashboard";
@@ -296,6 +297,7 @@ const App = () => (
             {/* Comitê de Ética — denúncias saíram da Central de Serviços.
                 As rotas antigas seguem redirecionando: link salvo por aí não
                 pode virar 404. */}
+            <Route path="comite-etica/indicadores" element={<IndicadoresComiteEtica />} />
             <Route path="comite-etica/denuncias" element={<DenunciasComiteEtica />} />
             <Route path="comite-etica/denuncias-contato-seguro" element={<Denuncias />} />
             <Route path="central-servicos/denuncias" element={<Navigate to="/app/comite-etica/denuncias-contato-seguro" replace />} />
