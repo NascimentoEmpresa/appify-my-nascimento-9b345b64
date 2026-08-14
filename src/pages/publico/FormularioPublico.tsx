@@ -78,7 +78,8 @@ function AnimStyles() {
     .fp-scale-btn:hover { transform: translateY(-3px); box-shadow: 0 8px 18px rgba(15,49,113,.18); }
     .fp-spin { animation: fpSpin .8s linear infinite; display:inline-block; }
     /* Pergunta "colegas": tabela no desktop, cartões empilhados no celular. */
-    .fp-cg { --cg: minmax(150px,1.25fr) minmax(130px,1fr) auto minmax(170px,1.45fr) 26px; }
+    /* setor · colega · avaliação · comentário · lixeira */
+    .fp-cg { --cg: minmax(130px,1fr) minmax(170px,1.35fr) auto minmax(170px,1.4fr) 26px; }
     .fp-cg-head { display:grid; grid-template-columns: var(--cg); gap:10px; align-items:end; padding-bottom:7px; border-bottom:1px solid #e2e8f0; }
     .fp-cg-th { font-size:11px; font-weight:800; color:#475569; text-transform:uppercase; letter-spacing:.4px; }
     .fp-cg-row { display:grid; grid-template-columns: var(--cg); gap:10px; align-items:start; padding:11px 0; border-bottom:1px solid #f1f5f9; }
@@ -323,14 +324,21 @@ const respondida = (p: { tipo: string }, v: any) =>
     ? linhasColegas(v).length > 0
     : !(v == null || v === "" || (Array.isArray(v) && v.length === 0));
 
-/** Setores do cadastro. Uma carga por sessão, compartilhada entre perguntas.
- *  Sai da VW_EMPREGADOS_BASICO (view sem colunas sensíveis, liberada p/ anon). */
+/** Setores do cadastro (RPC cs_form_setores). Uma carga por sessão.
+ *
+ *  Por que RPC e não ler a view: o DISTINCT tem que sair do BANCO. Lendo a
+ *  VW_EMPREGADOS_BASICO e distinguindo aqui, o PostgREST cortava a resposta
+ *  (max-rows) e, como um setor sozinho tem centenas de pessoas, sobravam 6
+ *  dos 14 setores — os pequenos (SISTEMAS, JURIDICO, SST…) sumiam da lista. */
 let setoresPromise: Promise<string[]> | null = null;
 const carregarSetores = (): Promise<string[]> => {
   if (!setoresPromise) setoresPromise = (async () => {
-    const { data } = await (supabase as any).from("VW_EMPREGADOS_BASICO").select('"Setor_ERP","Situação"').limit(20000);
+    const { data, error } = await (supabase as any).rpc("cs_form_setores");
+    if (!error && Array.isArray(data)) return data.map((r: any) => String(r.setor ?? "").trim()).filter(Boolean);
+    // Banco sem a RPC ainda: volta pro jeito antigo (sujeito ao corte acima).
+    const { data: linhas } = await (supabase as any).from("VW_EMPREGADOS_BASICO").select('"Setor_ERP","Situação"').limit(20000);
     const set = new Set<string>();
-    (data ?? []).forEach((r: any) => {
+    (linhas ?? []).forEach((r: any) => {
       if (/demitid/i.test(String(r["Situação"] ?? ""))) return;
       const s = String(r["Setor_ERP"] ?? "").trim();
       if (s) set.add(s);
@@ -340,67 +348,66 @@ const carregarSetores = (): Promise<string[]> => {
   return setoresPromise;
 };
 
-/** Busca de colega já com os vetos aplicados: fora o próprio respondente, os
- *  colegas de outras linhas e (quando é 1 por setor) os setores já usados. */
-function ColegaSelect({ value, setor, vetados, setoresVetados, onPick }: {
-  value: string; setor: string;
-  vetados: Set<string>; setoresVetados: Set<string>;
-  onPick: (nome: string, setorDoColega: string) => void;
+/** Colegas de um setor (RPC cs_form_colegas). Cache por setor — trocar de
+ *  linha ou reabrir o mesmo setor não bate no banco de novo. */
+export interface Colega { id: number; nome: string; setor: string; cargo: string }
+const colegasCache = new Map<string, Promise<Colega[]>>();
+const carregarColegas = (setor: string): Promise<Colega[]> => {
+  const chave = normNome(setor);
+  let p = colegasCache.get(chave);
+  if (!p) {
+    p = (async () => {
+      const { data, error } = await (supabase as any).rpc("cs_form_colegas", { _setor: setor });
+      if (!error && Array.isArray(data)) {
+        return data.map((r: any) => ({ id: Number(r.id), nome: String(r.nome ?? "").trim(), setor: String(r.setor ?? "").trim(), cargo: String(r.cargo ?? "").trim() }))
+          .filter((c: Colega) => c.nome);
+      }
+      // Banco sem a RPC: lê a view filtrando pelo setor (resultado pequeno).
+      const { data: linhas } = await (supabase as any).from("VW_EMPREGADOS_BASICO")
+        .select('"ID","Nome","Setor_ERP","Título do Cargo","Situação"').eq("Setor_ERP", setor).order('"Nome"').limit(1000);
+      return (linhas ?? [])
+        .filter((r: any) => !/demitid/i.test(String(r["Situação"] ?? "")))
+        .map((r: any) => ({ id: Number(r["ID"]), nome: String(r["Nome"] ?? "").trim(), setor: String(r["Setor_ERP"] ?? "").trim(), cargo: String(r["Título do Cargo"] ?? "").trim() }))
+        .filter((c: Colega) => c.nome);
+    })().catch(() => [] as Colega[]);
+    colegasCache.set(chave, p);
+  }
+  return p;
+};
+
+/** Lista de colegas DO SETOR escolhido. O setor vem primeiro justamente para
+ *  esta lista existir: sem ele não há quem listar. Já sai com os vetos —
+ *  fora o próprio respondente e quem foi indicado em outra linha. */
+function ColegaSelect({ value, setor, vetados, onChange }: {
+  value: string; setor: string; vetados: Set<string>;
+  onChange: (nome: string) => void;
 }) {
-  const [busca, setBusca] = useState("");
-  const [aberto, setAberto] = useState(false);
-  const [resultados, setResultados] = useState<{ id: number; nome: string; setor: string; cargo?: string }[]>([]);
-  const [falhou, setFalhou] = useState(false);   // a consulta caiu (≠ "não achou ninguém")
-  const seq = useRef(0);
+  const [colegas, setColegas] = useState<Colega[] | null>(null);
 
-  const buscar = async (texto: string) => {
-    setBusca(texto); setAberto(true);
-    const meu = ++seq.current;
-    const termo = texto.trim();
-    let query = (supabase as any).from("VW_EMPREGADOS_BASICO")
-      .select('"ID","Nome","Setor_ERP","Título do Cargo","Situação"')
-      .order('"Nome"').limit(setor ? 200 : 40);
-    if (setor) query = query.eq("Setor_ERP", setor);
-    if (termo.length >= 2) {
-      const palavras = termo.split(/\s+/).map(w => w.replace(/[%_\\]/g, "")).filter(w => w.length >= 2);
-      for (const w of palavras) query = query.ilike("Nome", `%${w}%`);
-    }
-    const { data, error } = await query;
-    if (meu !== seq.current) return;   // chegou busca mais nova primeiro
-    setFalhou(!!error);
-    setResultados((data ?? [])
-      .filter((r: any) => !/demitid/i.test(String(r["Situação"] ?? "")))
-      .map((r: any) => ({ id: r["ID"], nome: String(r["Nome"] ?? "").trim(), setor: String(r["Setor_ERP"] ?? "").trim(), cargo: r["Título do Cargo"] }))
-      .filter((x: any) => x.nome)
-      .filter((x: any) => !vetados.has(normNome(x.nome)))
-      .filter((x: any) => !(setoresVetados.size > 0 && x.setor && setoresVetados.has(normNome(x.setor)))));
-  };
+  useEffect(() => {
+    if (!setor) { setColegas(null); return; }
+    let vivo = true;
+    setColegas(null);
+    carregarColegas(setor).then(cs => { if (vivo) setColegas(cs); });
+    return () => { vivo = false; };
+  }, [setor]);
 
-  const semSetorEsemTermo = !setor && busca.trim().length < 2;
+  const disponiveis = (colegas ?? []).filter(c => !vetados.has(normNome(c.nome)) || normNome(c.nome) === normNome(value));
+  const carregando = !!setor && colegas === null;
+
   return (
-    <div className={aberto ? "fp-open" : undefined} style={{ position: "relative", zIndex: aberto ? 40 : "auto" }}>
-      <input value={aberto ? busca : (value || "")} onFocus={() => buscar("")} onBlur={() => setTimeout(() => setAberto(false), 150)}
-        onChange={e => buscar(e.target.value)} placeholder={setor ? "Selecione um colega…" : "Digite o nome do colega…"}
-        style={{ ...inp, padding: "9px 11px", fontSize: 13.5 }} />
-      {aberto && (
-        <div style={{ position: "absolute", top: "100%", left: 0, right: 0, minWidth: 240, background: "#fff", border: "1px solid #e2e8f0", borderRadius: 10, marginTop: 4, boxShadow: "0 12px 28px rgba(15,23,42,.14)", zIndex: 40, overflow: "hidden", maxHeight: 260, overflowY: "auto" }}>
-          {resultados.length === 0 && (
-            <div style={{ padding: "8px 11px", fontSize: 12, color: falhou ? "#dc2626" : "#94a3b8", fontWeight: falhou ? 700 : 400 }}>
-              {falhou ? "Não foi possível buscar agora. Digite de novo em alguns segundos."
-                : semSetorEsemTermo ? "Digite ao menos 2 letras (ou escolha o setor ao lado)…"
-                : "Nenhum colega disponível para esta linha."}
-            </div>
-          )}
-          {resultados.map(r => (
-            <div key={r.id} onMouseDown={() => { onPick(r.nome, r.setor); setAberto(false); }}
-              style={{ padding: "8px 11px", cursor: "pointer", borderBottom: "1px solid #f1f5f9" }}>
-              <div style={{ fontSize: 13, fontWeight: 700, color: "#0f172a" }}>{r.nome}</div>
-              <div style={{ fontSize: 11, color: "#94a3b8" }}>{[r.setor, r.cargo].filter(Boolean).join(" · ")}</div>
-            </div>
-          ))}
-        </div>
-      )}
-    </div>
+    <select value={value || ""} disabled={!setor || carregando} onChange={e => onChange(e.target.value)}
+      style={{ ...inp, padding: "9px 11px", fontSize: 13.5, background: setor ? "#fff" : "#f8fafc", color: setor ? "#0f172a" : "#94a3b8" }}>
+      <option value="">
+        {!setor ? "Escolha o setor primeiro…"
+          : carregando ? "Carregando colegas…"
+            : disponiveis.length === 0 ? "Nenhum colega disponível neste setor"
+              : "Selecione um colega…"}
+      </option>
+      {disponiveis.map(c => (
+        <option key={c.id} value={c.nome}>{c.cargo ? `${c.nome} — ${c.cargo}` : c.nome}</option>
+      ))}
+    </select>
   );
 }
 
@@ -457,8 +464,9 @@ function ColegasGrid({ p, valor, onChange, meuNome }: {
   return (
     <div className="fp-cg">
       <div className="fp-cg-head">
-        <span className="fp-cg-th">Colega</span>
+        {/* Setor primeiro: é ele que define de quem é a lista de colegas. */}
         <span className="fp-cg-th">Setor</span>
+        <span className="fp-cg-th">Colega</span>
         <span className="fp-cg-th">
           Avaliação
           {(cfg.rotulo_min || cfg.rotulo_max) && (
@@ -486,23 +494,25 @@ function ColegasGrid({ p, valor, onChange, meuNome }: {
         return (
           <div key={i} className="fp-cg-row">
             <div>
-              <span className="fp-cg-lbl">Colega</span>
-              <ColegaSelect value={l.colaborador ?? ""} setor={l.setor ?? ""} vetados={vetados} setoresVetados={setoresVetados}
-                onPick={(nome, setorDele) => mudaLinha(i, { colaborador: nome, setor: setorDele || l.setor || "" })} />
-            </div>
-            <div>
               <span className="fp-cg-lbl">Setor</span>
               <select value={l.setor ?? ""}
                 onChange={e => {
-                  const s = e.target.value;
-                  // Trocou o setor: o colega escolhido pode não ser mais dele.
-                  mudaLinha(i, { setor: s, colaborador: s && l.setor && s !== l.setor ? "" : l.colaborador });
+                  // Trocar o setor limpa o colega: ele era de outro setor.
+                  mudaLinha(i, { setor: e.target.value, colaborador: "" });
                 }}
                 style={{ ...inp, padding: "9px 11px", fontSize: 13.5 }}>
                 <option value="">{setores.length ? "Selecione o setor…" : "Carregando setores…"}</option>
-                {/* o setor já gravado nesta linha continua na lista mesmo se veio de um colega */}
-                {[...new Set([...(l.setor ? [l.setor] : []), ...setoresLivres])].map(s => <option key={s} value={s}>{s}</option>)}
+                {/* o setor já escolhido nesta linha continua na lista (senão o
+                    próprio veto de "1 por setor" apagaria a escolha dela) */}
+                {[...new Set([...(l.setor ? [l.setor] : []), ...setoresLivres])]
+                  .sort((a, b) => a.localeCompare(b, "pt-BR"))
+                  .map(s => <option key={s} value={s}>{s}</option>)}
               </select>
+            </div>
+            <div>
+              <span className="fp-cg-lbl">Colega</span>
+              <ColegaSelect value={l.colaborador ?? ""} setor={l.setor ?? ""} vetados={vetados}
+                onChange={nome => mudaLinha(i, { colaborador: nome })} />
             </div>
             <div>
               <span className="fp-cg-lbl">Avaliação</span>
