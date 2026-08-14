@@ -17,13 +17,14 @@ import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table";
 import { PieChart, Pie, Cell, ResponsiveContainer } from "recharts";
-import { ListChecks, Clock, MessageSquare, CheckCircle2, AlertTriangle, ShieldAlert, CalendarClock, RotateCw, ArrowUpRight, Plus, BookOpen, ClipboardCheck, Sparkles, FileText, Zap, Star, Trophy, GitPullRequest } from "lucide-react";
+import { ListChecks, Clock, MessageSquare, CheckCircle2, AlertTriangle, ShieldAlert, CalendarClock, RotateCw, RotateCcw, ArrowUpRight, Plus, BookOpen, ClipboardCheck, Sparkles, FileText, Zap, Star, Trophy, GitPullRequest } from "lucide-react";
 import { HoverCard, HoverCardTrigger, HoverCardContent } from "@/components/ui/hover-card";
 import { FeedAtualizacoes } from "./FeedAtualizacoes";
 import { BotaoChatChamado, useChamadosNaoLidos } from "./BotaoChatChamado";
+import { ReabrirChamadoDialog } from "./ReabrirChamadoDialog";
 import {
   StatCard, PrioridadeBadge, StatusBadge, STATUS_CHAMADO, PRIORIDADES, Estrelas, iniciais, fmtData, fmtDataHora,
-  chamadoAtivo, posicoesFilaDev, CRITERIOS_AVALIACAO, mediaAvaliacao, type Chamado,
+  chamadoAtivo, podeReabrirChamado, posicoesFilaDev, CRITERIOS_AVALIACAO, mediaAvaliacao, type Chamado,
 } from "./types";
 
 const DONUT: Record<string, string> = {
@@ -110,13 +111,14 @@ export default function PainelDesenvolvedor() {
   const { toast } = useToast();
   const { user } = useAuth();
   const { data: access } = useAccessibleMenus("visualizar");
-  const { canCoordenar, gestor } = useChamadoPerms();
+  const { canCoordenar, canAprovar, gestor } = useChamadoPerms();
   const dev = access?.codes.has("chamados_sistemas_dev") ?? false;
   const nome = (user?.user_metadata as any)?.nome || user?.email || "";
   const podeEditarPrioridade = canCoordenar || gestor; // gerência troca a prioridade na fila
 
   const [flashPrioridade, setFlashPrioridade] = useState<string | null>(null);
   const [visao, setVisao] = useState<string>("ativos");
+  const [reabrir, setReabrir] = useState<Chamado | null>(null);
 
   // Abriu o Painel do Desenvolvedor → zera a bolinha de novidades do dev.
   useEffect(() => { chamadosMarkSeen(user?.id, "dev"); }, [user?.id]);
@@ -361,13 +363,27 @@ export default function PainelDesenvolvedor() {
                         <TableCell>
                           <p className="font-mono text-[11px] font-semibold">#{c.numero}</p>
                           <p className="text-xs">{c.assunto}</p>
-                          <button
-                            onClick={(e) => abrirPrGithub(c, e, user?.id, toast)}
-                            className="mt-1 inline-flex items-center gap-1 text-[10px] text-muted-foreground hover:text-primary"
-                            title="Abrir PR no GitHub já preenchida com os dados deste chamado"
-                          >
-                            <GitPullRequest className="h-3 w-3" /> Abrir PR
-                          </button>
+                          {/* "Abrir PR" e "Reabrir" andam juntos: o chamado que
+                              precisa de uma segunda PR é justamente o que foi
+                              concluído pelo merge da primeira. */}
+                          <div className="mt-1 flex flex-wrap items-center gap-2">
+                            <button
+                              onClick={(e) => abrirPrGithub(c, e, user?.id, toast)}
+                              className="inline-flex items-center gap-1 text-[10px] text-muted-foreground hover:text-primary"
+                              title="Abrir PR no GitHub já preenchida com os dados deste chamado"
+                            >
+                              <GitPullRequest className="h-3 w-3" /> Abrir PR
+                            </button>
+                            {podeReabrirChamado(c, { canCoordenar, canAprovar, canDev: dev, userId: user?.id }) && (
+                              <button
+                                onClick={(e) => { e.stopPropagation(); setReabrir(c); }}
+                                className="inline-flex items-center gap-1 text-[10px] text-muted-foreground hover:text-primary"
+                                title="Reabrir o chamado — ex.: ainda falta outra PR para concluir"
+                              >
+                                <RotateCcw className="h-3 w-3" /> Reabrir
+                              </button>
+                            )}
+                          </div>
                         </TableCell>
                         <TableCell className="text-xs">{c.solicitante_nome || "—"}<div className="text-[10px] text-muted-foreground">{c.setor}</div></TableCell>
                         <TableCell onClick={(e) => e.stopPropagation()}>
@@ -586,6 +602,15 @@ export default function PainelDesenvolvedor() {
           </div>
         </Card>
       </div>
+
+      <ReabrirChamadoDialog
+        open={!!reabrir}
+        onOpenChange={(v) => { if (!v) setReabrir(null); }}
+        chamado={reabrir}
+        // O chamado reaberto sai de "Concluídos" e volta para a fila; sem
+        // trocar a visão o dev clica e a linha some da tela em que ele está.
+        onReaberto={() => setVisao("ativos")}
+      />
     </div>
   );
 }
