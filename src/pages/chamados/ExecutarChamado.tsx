@@ -18,11 +18,12 @@ import {
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { CheckCircle2, MessageSquare, XCircle, Paperclip, ArrowLeft, Trash2, Star, RotateCcw } from "lucide-react";
 import { ExcluirChamadoDialog } from "./ExcluirChamadoDialog";
+import { ReabrirChamadoDialog } from "./ReabrirChamadoDialog";
 import { ChatChamado } from "./ChatChamado";
 import {
   StatusBadge, PrioridadeBadge, STATUS_CHAMADO, CardAvaliacao,
   CATEGORIAS, TIPOS, IMPACTOS, URGENCIAS, AMBIENTES,
-  labelDe, moduloLabel, fmtData, fmtDataHora,
+  labelDe, moduloLabel, fmtData, fmtDataHora, podeReabrirChamado,
   BUCKET_CHAMADOS, type Chamado, type Anexo, type Evento, type AvaliacaoChamado,
 } from "./types";
 
@@ -37,6 +38,7 @@ export default function ExecutarChamado() {
   const [reprovando, setReprovando] = useState(false);
   const [motivo, setMotivo] = useState("");
   const [excluindoOpen, setExcluindoOpen] = useState(false);
+  const [reabrindoOpen, setReabrindoOpen] = useState(false);
   const [agindo, setAgindo] = useState<string | null>(null); // ação em curso (trava cliques repetidos)
   const [flash, setFlash] = useState(false);                 // pisca o selo de status ao mudar
 
@@ -302,6 +304,17 @@ export default function ExecutarChamado() {
                   <CheckCircle2 className="h-4 w-4" /> {agindo === "concluido" ? "Concluindo…" : "Concluir chamado"}
                 </Button>
               )}
+              {/* Logo abaixo do selo de concluído: é ali que se percebe que o
+                  chamado fechou cedo demais — ex.: falta a 2ª PR da entrega. */}
+              {podeReabrirChamado(chamado, { canCoordenar, canAprovar, canDev, userId: user?.id }) && (
+                <Button
+                  variant="outline"
+                  className="w-full justify-start gap-2 transition-transform active:scale-95"
+                  onClick={() => setReabrindoOpen(true)}
+                >
+                  <RotateCcw className="h-4 w-4 text-primary" /> Reabrir chamado
+                </Button>
+              )}
               <Button
                 variant="outline"
                 className="w-full justify-start gap-2 transition-transform active:scale-95 disabled:opacity-60"
@@ -356,6 +369,13 @@ export default function ExecutarChamado() {
           </div>
         </DialogContent>
       </Dialog>
+
+      <ReabrirChamadoDialog
+        open={reabrindoOpen}
+        onOpenChange={setReabrindoOpen}
+        chamado={chamado}
+        onReaberto={invalidar}
+      />
 
       <ExcluirChamadoDialog
         open={excluindoOpen}

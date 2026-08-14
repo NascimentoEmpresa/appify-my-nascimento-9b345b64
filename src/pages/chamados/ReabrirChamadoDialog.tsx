@@ -63,9 +63,10 @@ export function ReabrirChamadoDialog({
     }
 
     const rotulo = STATUS_CHAMADO[novo]?.label ?? novo;
-    const texto = motivo.trim()
-      ? `Chamado reaberto (${rotulo}): ${motivo.trim()}`
-      : `Chamado reaberto — voltou para ${rotulo}`;
+    // Mesmo formato de "Chamado reprovado: motivo": é o que ChatChamado
+    // traduz para "Fulano reabriu o chamado — motivo". Sem o status no texto
+    // de propósito — ele já aparece no selo do chamado.
+    const texto = motivo.trim() ? `Chamado reaberto: ${motivo.trim()}` : "Chamado reaberto";
     // Histórico e push não desfazem a reabertura, que já valeu — por isso o
     // erro daqui não vira toast de falha (o supabase-js devolve em `error`,
     // não lança).
