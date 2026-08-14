@@ -187,6 +187,31 @@ export const BUCKET_CHAMADOS = "chamados-sistemas";
 export const chamadoAtivo = (status: string) => status !== "concluido" && status !== "reprovado";
 
 /**
+ * Status para onde um chamado encerrado volta ao ser reaberto: se ainda tem
+ * responsável, volta direto para a fila dele; sem responsável, volta para a
+ * mesa da coordenação. Mesma regra da RPC chamado_adicionar_informacao.
+ */
+export const statusAoReabrir = (c: Pick<Chamado, "responsavel_id">) =>
+  c.responsavel_id ? "em_andamento" : "aberto";
+
+/**
+ * Quem pode reabrir. ESPELHA o trigger chamado_sistema_guard no banco, que só
+ * aceita troca de status de quem coordena, aprova ou é o responsável — quem
+ * tem apenas o Painel de Distribuição (`chamados_sistemas_painel`) enxerga
+ * tudo mas NÃO muda status. Sem esta checagem o botão apareceria para ele e o
+ * UPDATE voltaria com "Sem permissão para alterar o status do chamado".
+ */
+export function podeReabrirChamado(
+  c: Pick<Chamado, "status" | "responsavel_id">,
+  perm: { canCoordenar: boolean; canAprovar: boolean; canDev: boolean; userId?: string | null },
+) {
+  if (chamadoAtivo(c.status)) return false;   // só faz sentido no que está encerrado
+  return perm.canCoordenar
+    || perm.canAprovar
+    || (perm.canDev && !!perm.userId && c.responsavel_id === perm.userId);
+}
+
+/**
  * Posição na fila GLOBAL (ordem de chegada): entre os chamados ativos, o mais
  * antigo é o nº 1. Concluídos/reprovados ficam de fora (não têm posição).
  */
