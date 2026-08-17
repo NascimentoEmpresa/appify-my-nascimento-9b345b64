@@ -88,7 +88,13 @@ export function brlParaNumero(v: string): number | null {
 export function useBens(empresaId: string | null) {
   return useQuery({
     queryKey: ["sup_patrimonio", empresaId],
-    enabled: !!empresaId,
+    // SEM `enabled: !!empresaId`. A consulta não filtra por empresa e a RLS
+    // também não — quem tem a permissão vê todo o patrimônio. O portão só
+    // conseguia produzir "Nenhum bem cadastrado" para quem está com
+    // `profiles.empresa_id` nulo, que é indistinguível de não haver dados
+    // (a armadilha que o próprio useEmpresaId documenta). `empresaId` segue
+    // na queryKey e continua sendo usado no CADASTRO de bem, que precisa
+    // dele de verdade.
     queryFn: async (): Promise<Bem[]> => {
       const { data, error } = await sb
         .from("sup_patrimonio")
