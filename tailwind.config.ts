@@ -128,6 +128,10 @@ export default {
         "float-soft": { "0%, 100%": { transform: "translateY(0)" }, "50%": { transform: "translateY(-6px)" } },
         "ring-pulse": { "0%, 100%": { transform: "scale(1)", opacity: "0.7" }, "50%": { transform: "scale(1.06)", opacity: "1" } },
         "progress-fill": { "0%": { width: "0%" }, "100%": { width: "100%" } },
+        // Reflexo percorrendo a trilha do Fluxo de Aprovação (snake): "-y" nos trechos
+        // verticais (virada de linha), "-x" nos trechos horizontais.
+        "flow-glow-y": { "0%": { backgroundPositionY: "-160%" }, "100%": { backgroundPositionY: "260%" } },
+        "flow-glow-x": { "0%": { backgroundPositionX: "-160%" }, "100%": { backgroundPositionX: "260%" } },
       },
       animation: {
         "accordion-down": "accordion-down 0.2s ease-out",
@@ -147,6 +151,8 @@ export default {
         "ring-pulse": "ring-pulse 3.5s ease-in-out infinite",
         // 15s = ROTACAO_MS do Dashboard de Chamados (mantenha os dois iguais).
         "progress-fill": "progress-fill 15s linear forwards",
+        "flow-glow-y": "flow-glow-y 4.5s linear infinite",
+        "flow-glow-x": "flow-glow-x 4.5s linear infinite",
       },
     },
   },

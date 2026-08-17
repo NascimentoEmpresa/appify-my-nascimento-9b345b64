@@ -20,6 +20,21 @@ export const LABEL_CATEGORIA: Record<Categoria, string> = {
   equipamento: "Máquinas/Equipamentos",
 };
 
+/**
+ * Por que o bem está indisponível.
+ *
+ * 'contrato' = alocado a um contrato; o escritório não pode agendá-lo. Não é
+ * manutenção, mas indisponibiliza igual — e é por isso que os dois vivem sob
+ * a mesma flag `em_manutencao`, que é a que o Agendamento de Veículos
+ * consulta. Ver a migration 20260906000006.
+ */
+export type MotivoIndisponivel = "manutencao" | "contrato";
+
+export const LABEL_INDISPONIVEL: Record<MotivoIndisponivel, string> = {
+  manutencao: "em manutenção",
+  contrato: "em contrato",
+};
+
 export interface Bem {
   id: string;
   empresa_id: string;
@@ -30,7 +45,10 @@ export interface Bem {
   contrato_id: string | null;
   posto_id: string | null;
   lotacao: string | null;
+  /** Bem INDISPONÍVEL — não só manutenção. O porquê está em `motivo_indisponivel`. */
   em_manutencao: boolean;
+  /** 'manutencao' | 'contrato' | null (disponível). */
+  motivo_indisponivel: MotivoIndisponivel | null;
   data_inicio_manutencao: string | null;
   data_previsao_fim: string | null;
   ativo: boolean;
@@ -118,7 +136,10 @@ export function usePostosDoContrato(contratoId: string | null) {
 function useInvalidar() {
   const qc = useQueryClient();
   return () => {
-    ["sup_patrimonio", "sup_patrimonio_arquivo"].forEach((k) =>
+    // `cs_veiculos_frota` é a mesma sup_patrimonio vista pelo Agendamento de
+    // Veículos (RPC cs_veiculos_frota). Sem invalidar aqui, pôr um carro em
+    // manutenção não tirava ele da lista de agendáveis até o cache vencer.
+    ["sup_patrimonio", "sup_patrimonio_arquivo", "cs_veiculos_frota"].forEach((k) =>
       qc.invalidateQueries({ queryKey: [k] }));
   };
 }
@@ -166,15 +187,29 @@ export function useAtualizarManutencao() {
   const invalidar = useInvalidar();
   return useMutation({
     mutationFn: async (v: {
-      id: string; em_manutencao: boolean;
+      id: string; em_manutencao: boolean; motivo_indisponivel?: MotivoIndisponivel | null;
       data_inicio_manutencao?: string | null; data_previsao_fim?: string | null;
     }) => {
-      const { error } = await sb.from("sup_patrimonio").update({
+      const { data, error } = await sb.from("sup_patrimonio").update({
         em_manutencao: v.em_manutencao,
+        // A constraint sup_patrimonio_motivo_coerente exige motivo quando
+        // indisponível e exige NULL quando disponível — mandar errado aqui
+        // vira erro do banco, não campo silenciosamente ignorado.
+        motivo_indisponivel: v.em_manutencao ? (v.motivo_indisponivel ?? "manutencao") : null,
         data_inicio_manutencao: v.em_manutencao ? v.data_inicio_manutencao || null : null,
         data_previsao_fim: v.em_manutencao ? v.data_previsao_fim || null : null,
-      }).eq("id", v.id);
+      }).eq("id", v.id).select("id");
       if (error) throw error;
+      // UPDATE barrado pela RLS não devolve erro, devolve zero linhas — mesma
+      // armadilha já tratada em useExcluirBem. Sem esta checagem a tela dizia
+      // "Status de manutenção atualizado" e o carro continuava livre para
+      // agendamento: foi o que aconteceu com quem tem 'visualizar' mas não
+      // 'alterar' em Patrimônio (o modal aparece, o salvar não salva).
+      if (!data?.length) {
+        throw new Error(
+          "Nada foi alterado — seu perfil não tem a ação 'alterar' em Patrimônio nem em Manutenção. " +
+          "Peça a liberação em Administração › Acesso por Usuário.");
+      }
     },
     onSuccess: () => { invalidar(); toast.success("Status de manutenção atualizado."); },
     onError: (e: any) => toast.error(e?.message ?? "Não foi possível atualizar."),

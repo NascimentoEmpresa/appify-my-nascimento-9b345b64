@@ -110,6 +110,10 @@ function descreverAviso(e: Evento, nomeDe: (uid: string | null) => string): Avis
     if ((m = t.match(/^Chamado direcionado a (.+?)(?:\s*—\s*(\d+)º lugar na fila.*)?$/i)))
       return `${quem} designou o chamado para ${m[1]}${m[2] ? ` · ${m[2]}º na fila` : ""}`;
     if ((m = t.match(/^Chamado reprovado:\s*(.+)$/is))) return `${quem} reprovou o chamado — ${m[1]}`;
+    // Reabertura: com e sem motivo. O `:` do motivo é opcional, então o teste
+    // sem motivo vem antes de qualquer coisa que aceite sufixo.
+    if (/^Chamado reaberto$/i.test(t)) return `${quem} reabriu o chamado`;
+    if ((m = t.match(/^Chamado reaberto:\s*(.+)$/is))) return `${quem} reabriu o chamado — ${m[1]}`;
     if ((m = t.match(/^Status alterado para\s+(.+)$/i))) return `${quem} mudou o status para ${m[1]}`;
     if ((m = t.match(/^Prioridade alterada para\s+(.+)$/i))) return `${quem} mudou a prioridade para ${m[1]}`;
     if (/^Solicitadas mais informa/i.test(t)) return `${quem} pediu mais informações ao solicitante`;

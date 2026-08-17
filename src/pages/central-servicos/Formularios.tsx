@@ -4,6 +4,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
 import { parseSurveyMonkey, ImportResultado } from "@/utils/surveyMonkeyImporter";
 import { useFormPerms } from "@/hooks/useFormPerms";
+import { FormularioAcesso } from "./FormularioAcesso";
 import QRCode from "qrcode";
 
 // =====================================================================
@@ -39,6 +40,14 @@ export interface Formulario {
   seguranca?: "liberado" | "restrito";
   exige_senha?: boolean;
   setores_acesso?: string[] | null;   // setores (Setor_ERP) liberados quando restrito
+  // Deixa o respondente escolher enviar sem se identificar. Anônimo é anônimo
+  // no banco: o trigger cs_form_resposta_guard apaga criado_por/nome/e-mail/
+  // cadastro antes de gravar (migration 20260902000001).
+  permite_anonimo?: boolean;
+  // Intervalo mínimo entre duas respostas da MESMA pessoa (em horas; null =
+  // sem limite). Só vale para quem responde logado - link liberado não tem
+  // identidade p/ contar o prazo.
+  intervalo_horas?: number | null;
   deleted_at?: string | null;         // soft-delete: na lixeira quando != null
   deleted_por_nome?: string | null;   // quem moveu para a lixeira
 }
@@ -103,6 +112,9 @@ export default function Formularios() {
   const [excluindo, setExcluindo] = useState<Formulario | null>(null);  // modal "digite CONFIRMAR"
   const [confirmTxt, setConfirmTxt] = useState("");
   const [qrForm, setQrForm] = useState<Formulario | null>(null);  // modal do QR Code
+  const [acessoForm, setAcessoForm] = useState<Formulario | null>(null);  // modal "Acesso"
+  // Lista de acesso por formulário: id -> quantas pessoas + qual o MEU papel.
+  const [acessos, setAcessos] = useState<Record<string, { pessoas: number; meuPapel: string | null }>>({});
   const [qrPng, setQrPng] = useState<string>("");                 // data URL do PNG gerado
   const [lixeiraAberta, setLixeiraAberta] = useState(false);
   const [lixeira, setLixeira] = useState<Formulario[]>([]);
@@ -113,9 +125,14 @@ export default function Formularios() {
 
   const load = useCallback(async () => {
     setLoading(true);
-    const [fRes, rRes] = await Promise.all([
+    const [fRes, rRes, aRes] = await Promise.all([
       (supabase as any).from("CS_FORMULARIOS").select("*").is("deleted_at", null).order("created_at", { ascending: false }),
       (supabase as any).from("CS_FORM_RESPOSTAS").select("formulario_id"),
+      // Lista de acesso POR formulário (migration 20260906000004). Uma
+      // consulta só para todos os cards: quantas pessoas cada formulário tem
+      // e qual é o MEU papel nele. A RLS de CS_FORM_ACESSOS já libera a
+      // leitura dos papéis não-dashboard, então isto não vaza nada novo.
+      (supabase as any).from("CS_FORM_ACESSOS").select("user_id,papel,formulario_id").not("formulario_id", "is", null),
     ]);
     setLoading(false);
     if (fRes.error) { toast("Erro ao carregar: " + fRes.error.message, "err"); return; }
@@ -123,7 +140,14 @@ export default function Formularios() {
     const cont: Record<string, number> = {};
     (rRes.data ?? []).forEach((r: any) => { cont[r.formulario_id] = (cont[r.formulario_id] || 0) + 1; });
     setContagens(cont);
-  }, []);
+    const mapa: Record<string, { pessoas: number; meuPapel: string | null }> = {};
+    (aRes.data ?? []).forEach((r: any) => {
+      const e = (mapa[r.formulario_id] ??= { pessoas: 0, meuPapel: null });
+      e.pessoas += 1;
+      if (r.user_id === user?.id) e.meuPapel = r.papel;
+    });
+    setAcessos(mapa);
+  }, [user?.id]);
   useEffect(() => { load(); }, [load]);
 
   // Gera o PNG do QR Code (512px, margem folgada) sempre que abrir o modal.
@@ -240,13 +264,21 @@ export default function Formularios() {
 
   const duplicar = async (f: Formulario) => {
     const nome = user?.user_metadata?.nome ?? user?.email ?? "";
-    const { error } = await (supabase as any).from("CS_FORMULARIOS").insert({
+    const base = {
       titulo: f.titulo + " (cópia)", descricao: f.descricao, slug: slugify(f.titulo),
       inicia_em: f.inicia_em, encerra_em: f.encerra_em, max_respostas: f.max_respostas,
       coleta_identificacao: f.coleta_identificacao, imagem_capa_url: f.imagem_capa_url, criado_por_nome: nome,
       setor: f.setor ?? null,  // mantém o setor-dono (RLS de insert exige p/ criador de setor)
       perguntas: normalizaPerguntas(f.perguntas).map(p => ({ ...p, id: novoUuid() })),
-    }).select("id").single();
+    };
+    // Anonimato e intervalo entre respostas acompanham a cópia (uma pesquisa
+    // que se repete todo mês não deve perder as regras). Banco sem as colunas
+    // novas: reenvia sem elas em vez de falhar a duplicação.
+    let { error } = await (supabase as any).from("CS_FORMULARIOS")
+      .insert({ ...base, permite_anonimo: !!f.permite_anonimo, intervalo_horas: f.intervalo_horas ?? null })
+      .select("id").single();
+    if (error && /column|schema cache/i.test(error.message))
+      ({ error } = await (supabase as any).from("CS_FORMULARIOS").insert(base).select("id").single());
     if (error) { toast("Erro ao duplicar: " + error.message, "err"); return; }
     toast("Formulário duplicado (como rascunho).", "ok");
     load();
@@ -298,8 +330,38 @@ export default function Formularios() {
   const podeVerTodos = can("editar_criar") || can("encerrar_excluir") || can("ver_tudo");
   // Gestão do formulário: quem cria/encerra amplamente OU é dono do setor dele.
   const podeCriar = can("editar_criar") || meusSetores.length > 0;
-  const podeEditar = (f: Formulario) => can("editar_criar") || canCriarSetor(f.setor);
-  const podeEncerrar = (f: Formulario) => can("encerrar_excluir") || canCriarSetor(f.setor);
+
+  // ── Acesso POR formulário (migration 20260906000004) ──────────────────
+  // Espelha public.cs_form_pode. A autoridade é a RLS; aqui é só para não
+  // desenhar botão que o banco vai recusar.
+  //
+  // A lista, quando existe, RESTRINGE: quem não está nela perde o
+  // formulário mesmo tendo permissão global. Formulário sem lista se
+  // comporta exatamente como antes desta migration.
+  const meuPapel = (f: Formulario) => acessos[f.id]?.meuPapel ?? null;
+  const temLista = (f: Formulario) => (acessos[f.id]?.pessoas ?? 0) > 0;
+  const listaExclui = (f: Formulario) => temLista(f) && !meuPapel(f);
+  const papelPermite = (f: Formulario, papeis: string[]) => papeis.includes(meuPapel(f) ?? "");
+
+  const podeEditar = (f: Formulario) =>
+    ((can("editar_criar") || canCriarSetor(f.setor)) && !listaExclui(f))
+    || papelPermite(f, ["form_dono", "form_gerenciar", "form_editar"]);
+  const podeEncerrar = (f: Formulario) =>
+    ((can("encerrar_excluir") || canCriarSetor(f.setor)) && !listaExclui(f))
+    || papelPermite(f, ["form_dono", "form_gerenciar"]);
+  const podeExcluir = (f: Formulario) =>
+    (can("encerrar_excluir") && !listaExclui(f)) || papelPermite(f, ["form_dono"]);
+  // 'ver_tudo' é a chave-mestra: sempre consegue reabrir a lista (é a saída
+  // para dono desligado da empresa). Sem lista ainda, quem administra hoje
+  // cria a primeira — senão o botão nasceria útil para ninguém.
+  const podeAcesso = (f: Formulario) =>
+    can("ver_tudo")
+    || papelPermite(f, ["form_dono", "form_gerenciar"])
+    || (!temLista(f) && (can("editar_criar") || can("encerrar_excluir")));
+  const podeVerRespostas = (f: Formulario) =>
+    (canVerAlguma && !listaExclui(f))
+    || can("ver_tudo")
+    || papelPermite(f, ["form_dono", "form_gerenciar", "form_editar", "form_ver"]);
   // Gestor só de setor vê apenas os formulários do(s) seu(s) setor(es).
   const soGestorSetor = !podeVerTodos && meusSetores.length > 0;
   const visiveis = forms.filter(f => {
@@ -374,13 +436,24 @@ export default function Formularios() {
                         {seg.icone} <b style={{ color: seg.c }}>{seg.rotulo}</b>
                       </span>
                       <span>🗓 {f.inicia_em || f.encerra_em ? `${f.inicia_em ? "de " + fmtDt(f.inicia_em) : ""} ${f.encerra_em ? "até " + fmtDt(f.encerra_em) : ""}` : "sem prazo definido"}</span>
+                      {f.permite_anonimo && <span title="O respondente escolhe enviar sem se identificar">🕶 Aceita resposta anônima</span>}
+                      {f.intervalo_horas != null && (
+                        <span title="Intervalo mínimo entre duas respostas da mesma pessoa (só p/ quem responde logado)">
+                          ⏱ 1 resposta a cada <b style={{ color: "#0f172a" }}>{f.intervalo_horas % 24 === 0 ? `${f.intervalo_horas / 24} dia(s)` : `${f.intervalo_horas} hora(s)`}</b>
+                        </span>
+                      )}
                       {f.setor && <span>🏷️ Setor: <b style={{ color: "#4338ca" }}>{f.setor}</b></span>}
                       <span>por {f.criado_por_nome || "-"} · criado em {fmtDt(f.created_at)}</span>
                     </div>
                     <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 11 }}>
                       {can("responder") && <a href={urlPublica(f.slug)} target="_blank" rel="noopener noreferrer" style={{ ...btn("#16a34a"), textDecoration: "none", display: "inline-block" }}>↗ Abrir</a>}
                       {podeEditar(f) && <button onClick={() => nav(`/app/central-servicos/formularios/${f.id}`)} style={btn("#0f3171")}>✏️ Editar</button>}
-                      {canVerAlguma && <button onClick={() => nav(`/app/central-servicos/formularios/${f.id}/respostas`)} style={btn("rgba(59,130,246,.1)", "#2563eb", "1px solid rgba(59,130,246,.3)")}>📊 Respostas</button>}
+                      {podeVerRespostas(f) && <button onClick={() => nav(`/app/central-servicos/formularios/${f.id}/respostas`)} style={btn("rgba(59,130,246,.1)", "#2563eb", "1px solid rgba(59,130,246,.3)")}>📊 Respostas</button>}
+                      {podeAcesso(f) && (
+                        <button onClick={() => setAcessoForm(f)} style={btn("#fff", "#475569", "1px solid #e2e8f0")}>
+                          {temLista(f) ? `🔒 Acesso (${acessos[f.id].pessoas})` : "🔓 Acesso"}
+                        </button>
+                      )}
                       {podeEncerrar(f) && f.status !== "publicado" && <button onClick={() => mudarStatus(f, "publicado")} style={btn("#16a34a")}>Publicar</button>}
                       {f.status === "publicado" && <>
                         <button onClick={() => copiarUrl(f)} style={btn("#fff", "#475569", "1px solid #e2e8f0")}>🔗 Copiar URL</button>
@@ -389,7 +462,7 @@ export default function Formularios() {
                       </>}
                       {podeEncerrar(f) && f.status === "encerrado" && <button onClick={() => mudarStatus(f, "publicado")} style={btn("#16a34a")}>Reabrir</button>}
                       {podeEditar(f) && <button onClick={() => duplicar(f)} style={btn("#fff", "#475569", "1px solid #e2e8f0")}>Duplicar</button>}
-                      {podeEncerrar(f) && <button onClick={() => { setExcluindo(f); setConfirmTxt(""); }} style={btn("transparent", "#94a3b8")}>Excluir</button>}
+                      {podeExcluir(f) && <button onClick={() => { setExcluindo(f); setConfirmTxt(""); }} style={btn("transparent", "#94a3b8")}>Excluir</button>}
                     </div>
                   </div>
                 </div>
@@ -398,6 +471,16 @@ export default function Formularios() {
           </div>
         )}
       </div>
+
+      {/* Modal: acesso por formulário */}
+      {acessoForm && (
+        <FormularioAcesso
+          formulario={acessoForm}
+          onFechar={() => setAcessoForm(null)}
+          onSalvo={load}
+          toast={toast}
+        />
+      )}
 
       {/* Modal: novo formulário */}
       {criando && (

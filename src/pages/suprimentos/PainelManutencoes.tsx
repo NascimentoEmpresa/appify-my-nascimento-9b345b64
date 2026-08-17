@@ -27,8 +27,12 @@ export default function PainelManutencoes() {
   const [busca, setBusca] = useState("");
   const [abrindo, setAbrindo] = useState<Bem | null>(null);
 
+  // Só manutenção de verdade. `em_manutencao` passou a significar
+  // INDISPONÍVEL, e bem alocado a contrato entraria aqui sem ter oficina,
+  // custo nem previsão de conserto — poluindo justamente o painel que existe
+  // para acompanhar conserto. Registro antigo não tem motivo: era manutenção.
   const emManutencao = useMemo(
-    () => bens.filter((b) => b.em_manutencao)
+    () => bens.filter((b) => b.em_manutencao && (b.motivo_indisponivel ?? "manutencao") === "manutencao")
       .sort((a, b) => a.nome.localeCompare(b.nome, "pt-BR")),
     [bens],
   );

@@ -2074,8 +2074,8 @@ function FormDrawer({
                 {numField("cesta_basica", "Cesta Básica")}
                 {numField("assistencia_medica", "Assist. Médica")}
                 {numField("hospedagem", "Hospedagem")}
-                {numField("odontologico", "Odontológico")}
-                {numField("manutencao_profissional", "Manut. Profissional")}
+                {numField("odontologico", "Médico/Odontológico")}
+                {numField("manutencao_profissional", "Manut./Capacit. Prof.")}
                 {numField("cafe", "Café")}
                 {numField("almoco", "Almoço")}
                 {numField("janta", "Janta")}
@@ -2132,7 +2132,7 @@ function FormDrawer({
                 {numField("incidencia_aviso_trabalhado", "Inc. s/ Aviso Trab.")}
                 {numField("multa_rescisoria", "Multa Rescisória")}
                 {numField("multa_aviso_indenizado", "Multa FGTS Aviso Ind.")}
-                {numField("contratualidade", "Contratualidade")}
+                {numField("contratualidade", "Multa FGTS Contrat.")}
               </div>
             </Section>
 
@@ -2667,11 +2667,13 @@ function MigracaoModal({ rows: erpRows, onClose }: { rows: PlanilhaCustoRow[]; o
   const [filtroEmpresa, setFiltroEmpresa] = useState<string>("TODOS");
   const [loading, setLoading] = useState(false);
 
-  // Chaves dos registros já existentes no ERP: "contrato||posto||data_vigencia"
+  // Chaves dos registros já existentes no ERP: "contrato||posto||data_vigencia||orexec"
+  // (orexec incluso: sem ele, se só o ORÇADO existe no ERP, o EXECUTADO que
+  // falta era dado como "já no ERP" e nunca importava)
   const erpKeys = React.useMemo(() => {
     const s = new Set<string>();
     for (const r of erpRows) {
-      const key = `${r.contrato.trim().toLowerCase()}||${r.posto.trim().toLowerCase()}||${r.data_vigencia ?? ""}`;
+      const key = `${r.contrato.trim().toLowerCase()}||${r.posto.trim().toLowerCase()}||${r.data_vigencia ?? ""}||${(r.orexec ?? "").trim().toLowerCase()}`;
       s.add(key);
     }
     return s;
@@ -2681,8 +2683,10 @@ function MigracaoModal({ rows: erpRows, onClose }: { rows: PlanilhaCustoRow[]; o
     ? allParsed
     : allParsed.filter((r) => r.empresa === filtroEmpresa);
 
-  const jaNoERP   = filtrados.filter((r) => erpKeys.has(`${String(r.row.contrato ?? "").trim().toLowerCase()}||${String(r.row.posto ?? "").trim().toLowerCase()}||${r.row.data_vigencia ?? ""}`));
-  const pendingRows = filtrados.filter((r) => !erpKeys.has(`${String(r.row.contrato ?? "").trim().toLowerCase()}||${String(r.row.posto ?? "").trim().toLowerCase()}||${r.row.data_vigencia ?? ""}`)).map((r) => r.row);
+  const keyOf = (row: any) =>
+    `${String(row.contrato ?? "").trim().toLowerCase()}||${String(row.posto ?? "").trim().toLowerCase()}||${row.data_vigencia ?? ""}||${String(row.orexec ?? "").trim().toLowerCase()}`;
+  const jaNoERP   = filtrados.filter((r) => erpKeys.has(keyOf(r.row)));
+  const pendingRows = filtrados.filter((r) => !erpKeys.has(keyOf(r.row))).map((r) => r.row);
 
   async function handleFile(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
@@ -2969,8 +2973,8 @@ function ViewModal({
               <VRow label="Cesta Básica" value={row.cesta_basica} />
               <VRow label="Assist. Médica" value={row.assistencia_medica} />
               <VRow label="Hospedagem" value={row.hospedagem} />
-              <VRow label="Odontológico" value={row.odontologico} />
-              <VRow label="Manut. Profissional" value={row.manutencao_profissional} />
+              <VRow label="Médico/Odontológico" value={row.odontologico} />
+              <VRow label="Manut./Capacit. Prof." value={row.manutencao_profissional} />
               <VRow label="Café" value={row.cafe} />
               <VRow label="Almoço" value={row.almoco} />
               <VRow label="Janta" value={row.janta} />
@@ -3010,7 +3014,7 @@ function ViewModal({
               <VRow label="Inc. s/ Aviso Trab." value={row.incidencia_aviso_trabalhado} />
               <VRow label="Multa Rescisória" value={row.multa_rescisoria} />
               <VRow label="Multa FGTS Aviso Ind." value={row.multa_aviso_indenizado} />
-              <VRow label="Contratualidade" value={row.contratualidade} />
+              <VRow label="Multa FGTS Contrat." value={row.contratualidade} />
             </VSec>
 
             <VSec title="7 — Insumos Diversos" soma={somaInsumos}>

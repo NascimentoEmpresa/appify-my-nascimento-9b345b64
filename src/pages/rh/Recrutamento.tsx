@@ -4,6 +4,25 @@ import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
 import { usePermissoes } from "@/context/PermissoesContext";
 import { ESTADOS_BR, municipiosDe } from "@/data/municipios-brasil";
+import {
+  MOTIVOS_VAGA, motivoLabel, ehSubstituicao, avaliarPrazo, dataMinimaVaga,
+  cargoExigeCnh, aplicarReqCnh, REQ_CNH_TEXTO, fmtBr,
+} from "@/lib/recrutamento/vagaRegras";
+
+/** Explica o prazo da data escolhida: o que falta ou qual grau saiu dela. */
+function PrazoAviso({ prazo }: { prazo: ReturnType<typeof avaliarPrazo> }) {
+  const cor = !prazo.ok ? { bg: "#fef2f2", bd: "#fecaca", tx: "#b91c1c" }
+    : prazo.grau === "Alta — Urgente" ? { bg: "#fff7ed", bd: "#fed7aa", tx: "#c2410c" }
+      : prazo.grau === "Média" ? { bg: "#fefce8", bd: "#fde68a", tx: "#a16207" }
+        : { bg: "#f0fdf4", bd: "#bbf7d0", tx: "#15803d" };
+  return (
+    <div style={{ fontSize: 12, lineHeight: 1.5, background: cor.bg, border: `1px solid ${cor.bd}`, color: cor.tx, borderRadius: 9, padding: "8px 11px", marginBottom: 12, fontWeight: 600 }}>
+      {!prazo.ok
+        ? <>⚠️ {prazo.erro}</>
+        : <>✅ <b>{prazo.dias} dias úteis</b> de antecedência → urgência <b>{prazo.grau}</b>. <span style={{ fontWeight: 500 }}>O grau sai do prazo: até 13 dias úteis é urgente, de 14 a 20 é média, 21 ou mais é baixa.</span></>}
+    </div>
+  );
+}
 
 // ── Tipos ──────────────────────────────────────────────────────────
 interface Solicitacao {
@@ -1173,6 +1192,7 @@ export default function Recrutamento() {
   const selecionarEmpregado = (emp: any) => {
     const contratoMatch = contratosFull.find((c: any) => c.Filial === emp.Filial);
     const insal = parseFloat(String(emp["% Insalubridade"] ?? "0").replace(",", ".")) || 0;
+    setSubstituidoId(emp.ID ?? null);
     setVaga(v => ({
       ...v,
       nome_substituido: emp.Nome,
@@ -1187,36 +1207,61 @@ export default function Recrutamento() {
     setShowEmpDrop(false);
   };
 
+  // Substituição: cargo/contrato vêm do cadastro do substituído (o id prova que
+  // a pessoa foi escolhida na lista, não só digitada).
+  const [substituidoId, setSubstituidoId] = useState<number | null>(null);
+
   const abrirModalVaga = () => {
     setModalVaga(true);
     setVagaStep(1);
     setEmpSearch("");
     setShowEmpDrop(false);
+    setSubstituidoId(null);
     if (!contratos.length) carregarContratos();
   };
+
+  // Prazo/grau da data escolhida — o grau não é mais escolhido na mão.
+  const prazo = avaliarPrazo(vaga.data_inicio_prevista);
+  const cnhDoCargo = cargoExigeCnh(vaga.cargo);
 
   const vagaValidar = (step: number) => {
     if (step === 1) {
       if (!vaga.motivo_vaga) { toast("Selecione o motivo da vaga.", "err"); return false; }
+      if (ehSubstituicao(vaga.motivo_vaga) && !substituidoId) {
+        toast("Escolha na lista o colaborador que será substituído — o cargo e o contrato vêm do cadastro dele.", "err"); return false;
+      }
       if (!vaga.contrato)    { toast("Selecione o contrato.", "err"); return false; }
       if (!vaga.cargo.trim()){ toast("Informe o cargo.", "err"); return false; }
     }
+    if (step === 2) {
+      if (!prazo.ok) { toast(prazo.erro ?? "Revise a data de início prevista.", "err"); return false; }
+    }
     if (step === 3) {
-      if (!vaga.req_obrigatorios.trim()) { toast("Informe os requisitos obrigatórios.", "err"); return false; }
+      if (!prazo.ok) { toast(prazo.erro ?? "Revise a data de início prevista.", "err"); return false; }
+      if (!vaga.req_obrigatorios.trim() && !cnhDoCargo) { toast("Informe os requisitos obrigatórios.", "err"); return false; }
     }
     return true;
   };
 
   const submitVaga = async () => {
-    if (!vagaValidar(3)) return;
+    if (!vagaValidar(1) || !vagaValidar(3)) return;
     const payload = {
       ...vaga,
       quantidade_vagas: parseInt(vaga.quantidade_vagas) || 1,
+      // Grau e CNH saem das regras (o trigger recalcula os dois no banco).
+      grau_urgencia: prazo.grau ?? "",
+      req_obrigatorios: aplicarReqCnh(vaga.req_obrigatorios, vaga.cargo),
+      cnh_obrigatoria: !!cnhDoCargo,
       status: "Pendente Operacional",
       solicitante_nome: user?.user_metadata?.nome ?? user?.email ?? "",
       solicitante_cpf: user?.email ?? "",
     };
-    const { error, data } = await (supabase as any).from("SISTEMA_RECRUTAMENTO").insert(payload).select("id").single();
+    let { error, data } = await (supabase as any).from("SISTEMA_RECRUTAMENTO").insert(payload).select("id").single();
+    // Banco ainda sem a coluna cnh_obrigatoria: reenvia sem ela.
+    if (error && /column|schema cache/i.test(error.message)) {
+      const { cnh_obrigatoria, ...semCnh } = payload as any;
+      ({ error, data } = await (supabase as any).from("SISTEMA_RECRUTAMENTO").insert(semCnh).select("id").single());
+    }
     if (error) { toast("Erro ao solicitar vaga: " + error.message, "err"); return; }
     toast(`Solicitação #${data?.id} criada com sucesso!`, "ok");
     setModalVaga(false);
@@ -1228,6 +1273,7 @@ export default function Recrutamento() {
     setVagaStep(1);
     setEmpSearch("");
     setShowEmpDrop(false);
+    setSubstituidoId(null);
     loadStats();
     loadLista();
   };
@@ -1315,19 +1361,38 @@ export default function Recrutamento() {
           {di("Contrato", s.contrato, true)}
           {di("Cargo", s.cargo)}
           {di("Cidade", s.cidade)}
-          {di("Motivo da Vaga", s.motivo_vaga)}
+          {di("Motivo da Vaga", motivoLabel(s.motivo_vaga))}
           {di("Escala", s.escala)}
           {di("Horário", s.horario)}
           {di("Salário", s.salario)}
           {di("Benefícios", s.beneficios, true)}
           {di("Insalubridade", s.insalubridade_recebe + (s.insalubridade_quanto ? " — " + s.insalubridade_quanto : ""))}
           {di("Local Exato", s.local_exato)}
-          {di("Data Início Prevista", s.data_inicio_prevista)}
+          {di("Data Início Prevista", fmtBr(s.data_inicio_prevista))}
           {di("Solicitado por", s.solicitante_nome)}
           {di("Data Solicitação", fmtDt(s.created_at))}
           {s.aprovado_por_nome ? di("Aprovado/Reprovado por", s.aprovado_por_nome) : null}
         </div>
         {dd("Colaborador Substituído", s.nome_substituido)}
+        {/* Remarcações da data de início — quem pediu, quando e por quê. */}
+        {Array.isArray((s as any).data_inicio_alteracoes) && (s as any).data_inicio_alteracoes.length > 0 && (
+          <div style={{ marginBottom: 12 }}>
+            <div className="rec-dd-label">Alterações da Data de Início ({(s as any).data_inicio_alteracoes.length})</div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+              {(s as any).data_inicio_alteracoes.map((a: any, i: number) => (
+                <div key={i} style={{ background: "#fffbeb", border: "1px solid #fde68a", borderRadius: 9, padding: "8px 11px", fontSize: 12.5, color: "#78350f" }}>
+                  <div style={{ fontWeight: 800 }}>
+                    {fmtBr(a?.de) || "—"} → {fmtBr(a?.para)}
+                    <span style={{ fontWeight: 600, color: "#a16207" }}>
+                      {a?.por_nome ? ` · ${a.por_nome}` : ""}{a?.em ? ` · ${fmtDt(a.em)}` : ""}
+                    </span>
+                  </div>
+                  <div style={{ fontStyle: "italic", marginTop: 2 }}>{a?.justificativa}</div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
         {dd("Requisitos Obrigatórios", s.req_obrigatorios)}
         {dd("Requisitos Desejáveis", s.req_desejaveis)}
         <div className="rec-dg">
@@ -2377,24 +2442,32 @@ export default function Recrutamento() {
             {vagaStep === 1 && (<>
               <div className="rec-fg">
                 <label>Motivo da Vaga *</label>
-                <select className="rec-fi" value={vaga.motivo_vaga} onChange={e => setVaga(v => ({ ...v, motivo_vaga: e.target.value }))}>
+                <select className="rec-fi" value={vaga.motivo_vaga}
+                  onChange={e => {
+                    const m = e.target.value;
+                    // Trocou de/para substituição: limpa o que veio do cadastro
+                    // do substituído (senão sobra cargo/contrato de outro posto).
+                    setSubstituidoId(null); setEmpSearch("");
+                    setVaga(v => ({ ...v, motivo_vaga: m, nome_substituido: "", cargo: "", contrato: "" }));
+                  }}>
                   <option value="">— Selecione —</option>
-                  {["Admissão","Substituição","Expansão","Transferência","Retorno"].map(o => <option key={o}>{o}</option>)}
+                  {MOTIVOS_VAGA.map(o => <option key={o}>{o}</option>)}
                 </select>
               </div>
-              {vaga.motivo_vaga === "Substituição" && (
+              {ehSubstituicao(vaga.motivo_vaga) && (
                 <div className="rec-fg" style={{ position: "relative" }}
                   onBlur={() => setTimeout(() => setShowEmpDrop(false), 150)}>
-                  <label>Colaborador a Substituir</label>
+                  <label>Colaborador a Substituir *</label>
                   <input
                     className="rec-fi"
-                    placeholder="Buscar colaborador..."
+                    placeholder="Buscar e escolher na lista..."
                     value={empSearch}
                     autoComplete="off"
                     onChange={e => {
                       const v = e.target.value;
                       setEmpSearch(v);
-                      setVaga(prev => ({ ...prev, nome_substituido: v }));
+                      setSubstituidoId(null);
+                      setVaga(prev => ({ ...prev, nome_substituido: v, cargo: "", contrato: "" }));
                       if (empDebounce.current) clearTimeout(empDebounce.current);
                       if (v.trim().length >= 2) {
                         setShowEmpDrop(true);
@@ -2425,14 +2498,32 @@ export default function Recrutamento() {
                   )}
                 </div>
               )}
+              {/* Substituição: contrato e cargo vêm do cadastro do substituído e
+                  ficam travados — a vaga repõe aquele posto, não outro. */}
               <div className="rec-fg">
-                <label>Contrato *</label>
-                <select className="rec-fi" value={vaga.contrato} onChange={e => setVaga(v => ({ ...v, contrato: e.target.value }))}>
-                  <option value="">— Selecione —</option>
-                  {contratos.map(c => <option key={c}>{c}</option>)}
-                </select>
+                <label>Contrato *{ehSubstituicao(vaga.motivo_vaga) && <span style={{ color: "#94a3b8", fontWeight: 600 }}> — do colaborador substituído</span>}</label>
+                {ehSubstituicao(vaga.motivo_vaga) ? (
+                  <input className="rec-fi" readOnly value={vaga.contrato} placeholder="Escolha o colaborador acima"
+                    style={{ background: "#f1f5f9", color: "#475569", cursor: "not-allowed" }} />
+                ) : (
+                  <select className="rec-fi" value={vaga.contrato} onChange={e => setVaga(v => ({ ...v, contrato: e.target.value }))}>
+                    <option value="">— Selecione —</option>
+                    {contratos.map(c => <option key={c}>{c}</option>)}
+                  </select>
+                )}
               </div>
-              <div className="rec-fg"><label>Cargo *</label><input className="rec-fi" placeholder="Ex: Auxiliar de Limpeza, Vigilante..." value={vaga.cargo} onChange={e => setVaga(v => ({ ...v, cargo: e.target.value }))} /></div>
+              <div className="rec-fg">
+                <label>Cargo *{ehSubstituicao(vaga.motivo_vaga) && <span style={{ color: "#94a3b8", fontWeight: 600 }}> — do colaborador substituído</span>}</label>
+                <input className="rec-fi" placeholder={ehSubstituicao(vaga.motivo_vaga) ? "Escolha o colaborador acima" : "Ex: Auxiliar de Limpeza, Vigilante..."}
+                  value={vaga.cargo} readOnly={ehSubstituicao(vaga.motivo_vaga)}
+                  style={ehSubstituicao(vaga.motivo_vaga) ? { background: "#f1f5f9", color: "#475569", cursor: "not-allowed" } : undefined}
+                  onChange={e => setVaga(v => ({ ...v, cargo: e.target.value }))} />
+                {cnhDoCargo && (
+                  <div style={{ marginTop: 6, fontSize: 11.5, fontWeight: 700, color: "#b45309", background: "#fffbeb", border: "1px solid #fde68a", borderRadius: 8, padding: "6px 9px" }}>
+                    🚗 {cnhDoCargo}: CNH obrigatória — já entra sozinha nos requisitos e não pode ser tirada.
+                  </div>
+                )}
+              </div>
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
                 <div className="rec-fg">
                   <label>Estado (UF)</label>
@@ -2455,8 +2546,13 @@ export default function Recrutamento() {
             {vagaStep === 2 && (<>
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
                 <div className="rec-fg"><label>Quantidade de Vagas</label><input className="rec-fi" type="number" min={1} max={99} value={vaga.quantidade_vagas} onChange={e => setVaga(v => ({ ...v, quantidade_vagas: e.target.value }))} /></div>
-                <div className="rec-fg"><label>Data de Início Prevista</label><input className="rec-fi" type="date" value={vaga.data_inicio_prevista} onChange={e => setVaga(v => ({ ...v, data_inicio_prevista: e.target.value }))} /></div>
+                <div className="rec-fg">
+                  <label>Data de Início Prevista *</label>
+                  <input className="rec-fi" type="date" min={dataMinimaVaga()} value={vaga.data_inicio_prevista}
+                    onChange={e => setVaga(v => ({ ...v, data_inicio_prevista: e.target.value }))} />
+                </div>
               </div>
+              <PrazoAviso prazo={prazo} />
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
                 <div className="rec-fg"><label>Escala</label><input className="rec-fi" placeholder="Ex: 12x36, 5x2..." value={vaga.escala} onChange={e => setVaga(v => ({ ...v, escala: e.target.value }))} /></div>
                 <div className="rec-fg"><label>Horário</label><input className="rec-fi" placeholder="Ex: 07h às 19h..." value={vaga.horario} onChange={e => setVaga(v => ({ ...v, horario: e.target.value }))} /></div>
@@ -2480,12 +2576,11 @@ export default function Recrutamento() {
             {/* Step 3 */}
             {vagaStep === 3 && (<>
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+                {/* Grau não é mais escolhido: sai do prazo da data de início. */}
                 <div className="rec-fg">
-                  <label>Grau de Urgência</label>
-                  <select className="rec-fi" value={vaga.grau_urgencia} onChange={e => setVaga(v => ({ ...v, grau_urgencia: e.target.value }))}>
-                    <option value="">— Selecione —</option>
-                    {["Baixa","Média","Alta — Urgente"].map(o => <option key={o}>{o}</option>)}
-                  </select>
+                  <label>Grau de Urgência — calculado pelo prazo</label>
+                  <input className="rec-fi" readOnly value={prazo.grau ?? "— informe a data de início —"}
+                    style={{ background: "#f1f5f9", color: prazo.grau ? "#0f172a" : "#94a3b8", fontWeight: 700, cursor: "not-allowed" }} />
                 </div>
                 <div className="rec-fg">
                   <label>Alta Rotatividade?</label>
@@ -2494,7 +2589,16 @@ export default function Recrutamento() {
                   </select>
                 </div>
               </div>
-              <div className="rec-fg"><label>Requisitos Obrigatórios *</label><textarea className="rec-fi" rows={3} placeholder="Experiência comprovada, CNH B..." value={vaga.req_obrigatorios} onChange={e => setVaga(v => ({ ...v, req_obrigatorios: e.target.value }))} /></div>
+              <PrazoAviso prazo={prazo} />
+              <div className="rec-fg">
+                <label>Requisitos Obrigatórios *</label>
+                {cnhDoCargo && (
+                  <div style={{ display: "flex", alignItems: "center", gap: 7, fontSize: 12, fontWeight: 700, color: "#b45309", background: "#fffbeb", border: "1px solid #fde68a", borderRadius: 8, padding: "7px 10px", marginBottom: 6 }}>
+                    <span>🚗</span><span>{REQ_CNH_TEXTO} <span style={{ fontWeight: 600, color: "#92400e" }}>(automático para {cnhDoCargo.toLowerCase()} — vai junto mesmo que você não escreva)</span></span>
+                  </div>
+                )}
+                <textarea className="rec-fi" rows={3} placeholder="Experiência comprovada, curso específico..." value={vaga.req_obrigatorios} onChange={e => setVaga(v => ({ ...v, req_obrigatorios: e.target.value }))} />
+              </div>
               <div className="rec-fg"><label>Requisitos Desejáveis</label><textarea className="rec-fi" rows={2} placeholder="Inglês básico, curso técnico... (opcional)" value={vaga.req_desejaveis} onChange={e => setVaga(v => ({ ...v, req_desejaveis: e.target.value }))} /></div>
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
                 <div className="rec-fg">
