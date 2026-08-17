@@ -104,12 +104,13 @@ export function ReuniaoFormCriar({ open, onOpenChange }: { open: boolean; onOpen
 
   const opcoesUsuarios = usuarios.map((u) => ({ value: u.id, label: u.display_name ?? "—" }));
 
-  // Aviso ao vivo de agenda bloqueada — junta todo mundo envolvido até agora
-  // (organizador, responsável, convidados, observadores) e busca o bloqueio
-  // deles de uma vez, recalculando sempre que pessoa ou data/horário mudam.
+  // Aviso ao vivo de agenda bloqueada — junta organizador, responsável e
+  // convidados (não observadores — esses ficam de fora da regra de conflito/
+  // bloqueio de propósito) e busca o bloqueio deles de uma vez, recalculando
+  // sempre que pessoa ou data/horário mudam.
   const idsRelevantes = useMemo(
-    () => [...new Set([form.organizador, form.responsavel, ...form.convidados, ...form.observadores].filter(Boolean))],
-    [form.organizador, form.responsavel, form.convidados, form.observadores],
+    () => [...new Set([form.organizador, form.responsavel, ...form.convidados].filter(Boolean))],
+    [form.organizador, form.responsavel, form.convidados],
   );
   const { data: bloqueiosRelevantes = [] } = useBloqueiosAgendaPorUsuarios(idsRelevantes);
   const avisosBloqueio = useMemo(() => {
@@ -265,11 +266,14 @@ export function ReuniaoFormCriar({ open, onOpenChange }: { open: boolean; onOpen
         }
       }
 
+      // Observador fica de fora dessa checagem de propósito — mesma regra do banco
+      // (checar_conflito_convidado): observador é opcional/informativo, não trava
+      // por conflito de horário nem bloqueio de agenda. Só organizador, responsável
+      // e convidados (participação obrigatória) continuam travando.
       const pessoasAChecar = [
         { userId: form.organizador, rotulo: "O organizador" },
         { userId: form.responsavel, rotulo: "O responsável" },
         ...form.convidados.map((id) => ({ userId: id, rotulo: opcoesUsuarios.find((o) => o.value === id)?.label ?? "Um convidado" })),
-        ...form.observadores.map((id) => ({ userId: id, rotulo: opcoesUsuarios.find((o) => o.value === id)?.label ?? "Um observador" })),
       ];
       for (const pessoa of pessoasAChecar) {
         const bloqueio = await verificarBloqueioAgenda({

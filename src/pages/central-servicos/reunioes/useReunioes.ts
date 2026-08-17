@@ -381,14 +381,17 @@ async function editarReunioesEmLote(reunioes: Reuniao[], novoDiaSemana: number, 
         if (conflitoSala) throw new Error(`"${r.local_ou_link}" já está reservada nesse horário (reunião "${conflitoSala.titulo}").`);
       }
 
+      // Observador fica de fora da checagem de conflito de propósito (mesma regra
+      // do banco em checar_conflito_convidado) — só convidado (participação
+      // obrigatória) entra nessa lista, junto de organizador/responsável.
       const { data: convidados } = await (supabase as any)
         .from("reuniao_convidado")
-        .select("user_id")
+        .select("user_id, papel")
         .eq("reuniao_id", r.id);
       const pessoas = [
         r.organizador_user_id,
         r.responsavel_preenchimento_user_id,
-        ...((convidados ?? []) as { user_id: string }[]).map((c) => c.user_id),
+        ...((convidados ?? []) as { user_id: string; papel: string }[]).filter((c) => c.papel !== "observador").map((c) => c.user_id),
       ];
       for (const userId of new Set(pessoas)) {
         const conflitoPessoa = await verificarConflitoParticipante({
