@@ -104,10 +104,13 @@ export default function Patrimonio() {
   const bensDoPosto = (p: NoPosto, cNome: string) =>
     !termo || contemTermo(cNome) || contemTermo(p.nome) ? p.bens : p.bens.filter(casaBem);
 
+  // `em_manutencao` significa INDISPONÍVEL; o motivo separa os dois grupos.
+  // Registro antigo veio sem motivo — era manutenção, o único que existia.
   const totais = useMemo(() => ({
     veiculos: bens.filter((b) => b.categoria === "veiculo").length,
     equipamentos: bens.filter((b) => b.categoria === "equipamento").length,
-    emManutencao: bens.filter((b) => b.em_manutencao).length,
+    emManutencao: bens.filter((b) => b.em_manutencao && (b.motivo_indisponivel ?? "manutencao") === "manutencao").length,
+    emContrato: bens.filter((b) => b.em_manutencao && b.motivo_indisponivel === "contrato").length,
   }), [bens]);
 
   return (
@@ -145,6 +148,11 @@ export default function Patrimonio() {
         {totais.emManutencao > 0 && (
           <Badge variant="outline" className="border-amber-400/50 text-amber-700 dark:text-amber-300">
             {totais.emManutencao} em manutenção
+          </Badge>
+        )}
+        {totais.emContrato > 0 && (
+          <Badge variant="outline" className="border-sky-400/50 text-sky-700 dark:text-sky-300">
+            {totais.emContrato} em contrato
           </Badge>
         )}
       </div>
@@ -306,9 +314,9 @@ function CardBem({
           {bem.identificador ?? "sem identificador"}
         </span>
         {bem.em_manutencao && (
-          <Badge variant="outline" className="border-amber-400/60 text-[10px] text-amber-700 dark:text-amber-300">
-            em manutenção
-          </Badge>
+          bem.motivo_indisponivel === "contrato"
+            ? <Badge variant="outline" className="border-sky-400/60 text-[10px] text-sky-700 dark:text-sky-300">em contrato</Badge>
+            : <Badge variant="outline" className="border-amber-400/60 text-[10px] text-amber-700 dark:text-amber-300">em manutenção</Badge>
         )}
       </button>
       {modoEdicao && (
