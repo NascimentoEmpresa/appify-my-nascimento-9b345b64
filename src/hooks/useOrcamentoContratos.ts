@@ -44,8 +44,13 @@ export function useOrcamentoContratos() {
       const linhasVigentes = resolverLinhasVigentes(planilha, contrato.id);
       const rubricas: OrcamentoContratoRubrica[] = [];
       for (const c of CLASSIFICACOES_LICITACAO) {
-        const valor = somarCamposEmLinhas(linhasVigentes, [c.campo]);
-        if (valor > 0) {
+        const valorBruto = somarCamposEmLinhas(linhasVigentes, [c.campo]);
+        // "Deduções" é a única rubrica que representa um desconto do total
+        // (mesmo tratamento do somaBeneficios em PlanilhaCusto.tsx) — soma-la
+        // como as demais (positiva) fazia o total ficar 2x o valor de
+        // deduções acima do total_por_empregado real da Planilha de Custo.
+        const valor = c.campo === "deducoes" ? -valorBruto : valorBruto;
+        if (valor !== 0) {
           rubricas.push({
             campo: c.campo,
             label: c.label,
