@@ -584,10 +584,21 @@ export default function Processos({ view = "processos" }: { view?: "dashboard" |
   };
   const confirmarVinculo = async (emp: any) => {
     const cpf = emp["CPF"] || "";
-    // "Descrição do Local" do cadastro é o CONTRATO, não a cidade — era isso
-    // que enchia "Município de origem" com nome de contrato. Agora vai para o
-    // campo certo, e o município fica livre para a cidade.
-    const local = emp["Descrição do Local"] || "";
+    // O CONTRATO do empregado é "Nome Filial", não "Descrição do Local".
+    //
+    // Isto já saiu errado em produção (ARIANA BRITTO PEREIRA veio como
+    // "UFRGS - CAMPUS VALE 6D TRI" em vez de "UFRGS - LIMPEZA GERAL -
+    // 047/2022"). "Descrição do Local" é o POSTO — o prédio/andar/turno onde a
+    // pessoa trabalha dentro do contrato. Medido nos 12.763 empregados:
+    // "Descrição do Local" casa com um contrato ativo em ZERO deles;
+    // "Nome Filial" casa em 5.227.
+    //
+    // Só aceita quando é mesmo um contrato conhecido: nos empregados
+    // administrativos o "Nome Filial" traz a RAZÃO SOCIAL ("NASCIMENTO
+    // SERVICOS DE LIMPEZA LTDA", 5.493 deles), e carimbar isso no campo
+    // Contrato seria trocar um valor errado por outro.
+    const filial = String(emp["Nome Filial"] ?? "").trim();
+    const local = contratosNomes.find(n => n.toUpperCase() === filial.toUpperCase()) ?? "";
     if (local) contratoManual.current = true;
     // Mesmo critério do campo Contrato: só preenche a cidade sozinha quando ela
     // abre o nome do contrato e o município ainda está vazio.
@@ -1344,7 +1355,14 @@ export default function Processos({ view = "processos" }: { view?: "dashboard" |
                       <div key={k} onClick={() => setEmpSelKey(k)} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, padding: "8px 11px", borderTop: i ? "1px solid #f1f5f9" : "none", cursor: "pointer", background: on ? "#eff6ff" : "#fff" }}>
                         <div style={{ minWidth: 0 }}>
                           <div style={{ fontSize: 12.5, fontWeight: 700, color: "#0f172a" }}>{e["Nome"]}</div>
-                          <div style={{ fontSize: 11, color: "#94a3b8" }}>CPF {cpf || "—"} · {e["Situação"] || "—"} · {e["Descrição do Local"] || "—"}</div>
+                          {/* Contrato (Nome Filial) e posto (Descrição do Local)
+                              lado a lado: é o contrato que vai para o processo,
+                              e ver os dois evita confundir um com o outro. */}
+                          <div style={{ fontSize: 11, color: "#94a3b8" }}>
+                            CPF {cpf || "—"} · {e["Situação"] || "—"}
+                            {e["Nome Filial"] ? <> · contrato: <b style={{ color: "#64748b" }}>{e["Nome Filial"]}</b></> : ""}
+                            {e["Descrição do Local"] ? ` · posto: ${e["Descrição do Local"]}` : ""}
+                          </div>
                         </div>
                         {on && <button className="jpr-btn" onClick={ev => { ev.stopPropagation(); confirmarVinculo(e); }} style={{ background: "#15803d", color: "#fff", whiteSpace: "nowrap" }}>Confirmar vínculo</button>}
                       </div>
