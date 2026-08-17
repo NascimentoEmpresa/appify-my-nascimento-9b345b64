@@ -52,9 +52,15 @@ export function AppShell() {
       >
         <DemoBanner />
         <Topbar onToggleSidebar={() => setCollapsed((c) => !c)} onOpenMobile={() => setMobileOpen(true)} />
-        <main className="flex-1 overflow-x-hidden p-4 sm:p-6 lg:p-8 animate-fade-in min-w-0">
+        <main className="flex-1 overflow-x-hidden p-4 sm:p-6 lg:p-8 min-w-0">
           <RouteGuard>
-            <Outlet />
+            {/* A `key` no pathname é o que faz a animação TOCAR A CADA
+                navegação. Antes o `animate-fade-in` vivia no <main>, que não
+                remonta ao trocar de rota — a entrada só acontecia no primeiro
+                carregamento da sessão e nunca mais. */}
+            <div key={location.pathname} className="sh-entra">
+              <Outlet />
+            </div>
           </RouteGuard>
         </main>
       </div>
