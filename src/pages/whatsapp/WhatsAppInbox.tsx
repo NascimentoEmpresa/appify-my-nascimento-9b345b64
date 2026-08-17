@@ -6,6 +6,8 @@ import { useAccessibleMenus } from "@/hooks/useAccessibleMenus";
 import { useToast } from "@/hooks/use-toast";
 import { novoUuid, erroDaFunction } from "@/lib/utils";
 import { HistoricoConversa } from "./HistoricoConversa";
+import { NovaConversa } from "./NovaConversa";
+import { FichaContato } from "./FichaContato";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -14,9 +16,9 @@ import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Bot, Send, Search, ShieldAlert, Settings, User, MessageCircle, MousePointerClick, FileText, Inbox, AlertTriangle, Loader2, Check, CheckCheck, Paperclip, X, SmilePlus, CheckCircle2, History } from "lucide-react";
+import { Bot, Send, Search, ShieldAlert, Settings, User, MessageCircle, MousePointerClick, FileText, Inbox, AlertTriangle, Loader2, Check, CheckCheck, Paperclip, X, SmilePlus, CheckCircle2, History, MessageCirclePlus, Tag } from "lucide-react";
 import {
-  fmtHora, fmtTelefone, iniciais, motivoFalha, MENU_TODAS, EMOJIS_REACAO,
+  fmtHora, fmtTelefone, iniciais, motivoFalha, nomeContato, MENU_TODAS, EMOJIS_REACAO,
   type WaConversa, type WaContato, type WaMensagem, type WaMidia, type WaPasta,
 } from "./types";
 
@@ -45,6 +47,8 @@ export default function WhatsAppInbox() {
   const [enviando, setEnviando] = useState(false);
   const [anexo, setAnexo] = useState<File | null>(null);
   const [historico, setHistorico] = useState(false);
+  const [novaConversa, setNovaConversa] = useState(false);
+  const [ficha, setFicha] = useState(false);
   const inputArquivo = useRef<HTMLInputElement>(null);
   // Pasta aberta. Começa vazio e é resolvido assim que as pastas carregam: quem
   // tem "todas as conversas" abre nela; quem não tem, abre na primeira pasta
@@ -258,7 +262,8 @@ export default function WhatsAppInbox() {
     const base = pastaSel ? daPasta(pastaSel) : [];
     const t = busca.trim().toLowerCase();
     const lista = !t ? base : base.filter((c) =>
-      [c.contato?.nome, c.contato?.wa_id, c.ultima_mensagem_preview].some((v) => String(v ?? "").toLowerCase().includes(t)));
+      [c.contato?.nome, c.contato?.nome_manual, c.contato?.wa_id, c.ultima_mensagem_preview,
+       ...(c.contato?.etiquetas ?? [])].some((v) => String(v ?? "").toLowerCase().includes(t)));
 
     // Não lidas sempre no topo. Quem espera resposta não pode ficar soterrado
     // por conversa que já foi respondida só porque a resposta é mais recente.
@@ -293,7 +298,37 @@ export default function WhatsAppInbox() {
         subtitle="Atenda conversas e acompanhe o chatbot."
         module="Central de Serviços"
         breadcrumb={["WhatsApp", "Caixa de Entrada"]}
-        actions={podeConfig ? <Button variant="outline" className="gap-1.5" onClick={() => nav("/app/whatsapp/chatbot")}><Settings className="h-4 w-4" /> Chatbot</Button> : undefined}
+        actions={
+          <div className="flex gap-2">
+            <Button
+              className="gap-1.5 bg-success text-success-foreground hover:bg-success/90"
+              onClick={() => setNovaConversa(true)}
+            >
+              <MessageCirclePlus className="h-4 w-4" /> Nova conversa
+            </Button>
+            {podeConfig && (
+              <Button variant="outline" className="gap-1.5" onClick={() => nav("/app/whatsapp/chatbot")}>
+                <Settings className="h-4 w-4" /> Chatbot
+              </Button>
+            )}
+          </div>
+        }
+      />
+
+      <NovaConversa
+        aberto={novaConversa}
+        onFechar={() => setNovaConversa(false)}
+        podeConfig={podeConfig}
+        pastas={pastasVisiveis}
+        podeTodas={podeTodas}
+        onAberta={(id, pasta) => {
+          // Alinha a aba com a pasta onde a conversa nasceu, senão ela abre
+          // "selecionada" numa lista que não a contém.
+          qc.invalidateQueries({ queryKey: ["wa-conversas"] });
+          if (podeTodas) setPastaSel(pasta ?? SEM_PASTA);
+          else if (pasta && pastasVisiveis.some((p) => p.codigo === pasta)) setPastaSel(pasta);
+          setSelId(id);
+        }}
       />
 
       <Card className="grid h-[calc(100vh-220px)] min-h-[480px] grid-cols-[320px_minmax(0,1fr)] overflow-hidden p-0">
@@ -329,7 +364,7 @@ export default function WhatsAppInbox() {
           <div className="border-b border-border p-2">
             <div className="relative">
               <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
-              <Input className="h-9 pl-8 text-sm" placeholder="Buscar conversa…" value={busca} onChange={(e) => setBusca(e.target.value)} />
+              <Input className="h-9 pl-8 text-sm" placeholder="Buscar por nome, número ou etiqueta…" value={busca} onChange={(e) => setBusca(e.target.value)} />
             </div>
           </div>
           <div className="flex-1 overflow-y-auto">
@@ -339,12 +374,24 @@ export default function WhatsAppInbox() {
                 onClick={() => abrir(c)}
                 className={`flex w-full items-center gap-2.5 border-b border-border/50 px-3 py-2.5 text-left hover:bg-muted/50 ${selId === c.id ? "bg-muted" : ""}`}
               >
-                <Avatar className="h-9 w-9 shrink-0"><AvatarFallback className="bg-success/15 text-[11px] text-success">{iniciais(c.contato?.nome, c.contato?.wa_id)}</AvatarFallback></Avatar>
+                <Avatar className="h-9 w-9 shrink-0"><AvatarFallback className="bg-success/15 text-[11px] text-success">{iniciais(nomeContato(c.contato), c.contato?.wa_id)}</AvatarFallback></Avatar>
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center justify-between gap-2">
-                    <p className="truncate text-sm font-medium">{c.contato?.nome || fmtTelefone(c.contato?.wa_id)}</p>
+                    <p className="truncate text-sm font-medium">{nomeContato(c.contato)}</p>
                     <span className="shrink-0 text-[10px] text-muted-foreground">{fmtHora(c.ultima_mensagem_em)}</span>
                   </div>
+                  {/* Etiquetas: no máximo duas na lista, para a linha não virar
+                      uma parede de chips e esconder a prévia da mensagem. */}
+                  {!!c.contato?.etiquetas?.length && (
+                    <div className="mb-0.5 flex flex-wrap items-center gap-1">
+                      {c.contato.etiquetas.slice(0, 2).map((e) => (
+                        <span key={e} className="rounded-full bg-primary/10 px-1.5 py-px text-[10px] font-medium text-primary">{e}</span>
+                      ))}
+                      {c.contato.etiquetas.length > 2 && (
+                        <span className="text-[10px] text-muted-foreground">+{c.contato.etiquetas.length - 2}</span>
+                      )}
+                    </div>
+                  )}
                   <div className="flex items-center gap-1.5">
                     <p className="min-w-0 flex-1 truncate text-xs text-muted-foreground">
                       {c.ultima_direcao === "saida" ? "Você: " : ""}{c.ultima_mensagem_preview || "—"}
@@ -373,10 +420,15 @@ export default function WhatsAppInbox() {
             {/* Cabeçalho */}
             <div className="flex shrink-0 items-center justify-between gap-2 border-b border-border px-4 py-2.5">
               <div className="flex items-center gap-2.5">
-                <Avatar className="h-8 w-8"><AvatarFallback className="bg-success/15 text-[11px] text-success">{iniciais(sel.contato?.nome, sel.contato?.wa_id)}</AvatarFallback></Avatar>
-                <div>
-                  <p className="text-sm font-semibold">{sel.contato?.nome || fmtTelefone(sel.contato?.wa_id)}</p>
-                  <p className="text-[11px] text-muted-foreground">{fmtTelefone(sel.contato?.wa_id)}</p>
+                <Avatar className="h-8 w-8"><AvatarFallback className="bg-success/15 text-[11px] text-success">{iniciais(nomeContato(sel.contato), sel.contato?.wa_id)}</AvatarFallback></Avatar>
+                <div className="min-w-0">
+                  <p className="truncate text-sm font-semibold">{nomeContato(sel.contato)}</p>
+                  <p className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
+                    {fmtTelefone(sel.contato?.wa_id)}
+                    {sel.contato?.etiquetas?.map((e) => (
+                      <span key={e} className="rounded-full bg-primary/10 px-1.5 py-px font-medium text-primary">{e}</span>
+                    ))}
+                  </p>
                 </div>
               </div>
               <div className="flex items-center gap-2">
@@ -394,18 +446,32 @@ export default function WhatsAppInbox() {
                 >
                   {sel.bot_ativo ? <><Bot className="h-4 w-4" /> Bot ativo</> : <><User className="h-4 w-4" /> Atendimento humano</>}
                 </Button>
+                <Button variant="outline" size="sm" className="gap-1.5" onClick={() => setFicha(true)}>
+                  <Tag className="h-4 w-4" /> Ficha
+                </Button>
                 <Button variant="outline" size="sm" className="gap-1.5" onClick={() => setHistorico(true)}>
                   <History className="h-4 w-4" /> Histórico
                 </Button>
               </div>
             </div>
 
+            {/* Observação do contato: fica à vista no topo da thread, não
+                escondida na ficha — o recado só serve se for lido ANTES de
+                responder. */}
+            {sel.contato?.observacao && (
+              <div className="shrink-0 border-b border-border bg-warning/5 px-4 py-1.5 text-[11px] text-muted-foreground">
+                <b>Observação:</b> {sel.contato.observacao}
+              </div>
+            )}
+
             <HistoricoConversa
               conversaId={sel.id}
-              nomeContato={sel.contato?.nome || fmtTelefone(sel.contato?.wa_id)}
+              nomeContato={nomeContato(sel.contato)}
               aberto={historico}
               onFechar={() => setHistorico(false)}
             />
+
+            <FichaContato contato={sel.contato ?? null} aberto={ficha} onFechar={() => setFicha(false)} />
 
             {/* Mensagens */}
             <div className="min-h-0 flex-1 space-y-2 overflow-y-auto bg-muted/30 p-4">

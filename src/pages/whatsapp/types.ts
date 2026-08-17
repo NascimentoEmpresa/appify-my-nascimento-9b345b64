@@ -3,8 +3,16 @@
 export interface WaContato {
   id: string;
   wa_id: string;
+  // Nome do WhatsApp (profile.name). Só o webhook escreve — chega quando a
+  // pessoa manda a primeira mensagem, e é null até lá.
   nome: string | null;
+  // Nome/apelido definido pelo atendente. Vive numa coluna separada de
+  // propósito: assim o apelido interno não apaga o nome real do WhatsApp,
+  // nem é apagado por ele quando a pessoa responde.
+  nome_manual: string | null;
   telefone: string | null;
+  etiquetas: string[] | null;
+  observacao: string | null;
 }
 
 export interface WaConversa {
@@ -287,6 +295,13 @@ export const fmtTelefone = (wa?: string | null) => {
   if (nac.length === 10) return `(${nac.slice(0, 2)}) ${nac.slice(2, 6)}-${nac.slice(6)}`;
   return wa;
 };
+
+// Como o contato aparece na tela. A ordem importa e é a mesma em todo lugar:
+// o apelido que o atendente deu vence o nome do WhatsApp (ele é quem sabe de
+// quem se trata), e sem nenhum dos dois sobra o telefone formatado — nunca
+// uma bolha "sem nome", que é o que aparecia em conversa aberta por nós.
+export const nomeContato = (c?: WaContato | null) =>
+  (c?.nome_manual ?? "").trim() || (c?.nome ?? "").trim() || fmtTelefone(c?.wa_id);
 
 export const iniciais = (nome?: string | null, wa?: string | null) => {
   const base = (nome ?? "").trim();

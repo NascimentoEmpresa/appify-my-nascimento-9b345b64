@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
+import { useAuth } from "@/hooks/useAuth";
 import { useChamadoPerms } from "./useChamadoPerms";
 import { useToast } from "@/hooks/use-toast";
 import { PageHeader } from "@/components/layout/PageHeader";
@@ -20,12 +21,13 @@ import {
   DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem,
 } from "@/components/ui/dropdown-menu";
 import { PieChart, Pie, Cell, ResponsiveContainer } from "recharts";
-import { ClipboardList, Clock, Users, CheckCircle2, AlertTriangle, ShieldAlert, MoreHorizontal, ChevronLeft, ChevronRight, Eye, UserCog, Trash2, Info, MessageSquareQuote } from "lucide-react";
+import { ClipboardList, Clock, Users, CheckCircle2, AlertTriangle, ShieldAlert, MoreHorizontal, ChevronLeft, ChevronRight, Eye, UserCog, Trash2, RotateCcw, Info, MessageSquareQuote } from "lucide-react";
 import { FeedAtualizacoes } from "./FeedAtualizacoes";
 import { ExcluirChamadoDialog } from "./ExcluirChamadoDialog";
+import { ReabrirChamadoDialog } from "./ReabrirChamadoDialog";
 import {
   StatCard, StatusBadge, PrioridadeBadge, STATUS_CHAMADO, PRIORIDADES, CATEGORIAS, labelDe, moduloLabel, iniciais, Estrelas, fmtData, fmtDataHora,
-  chamadoAtivo, posicoesFilaGlobal, posicoesFilaDev, CRITERIOS_AVALIACAO, mediaAvaliacao, type Chamado,
+  chamadoAtivo, podeReabrirChamado, posicoesFilaGlobal, posicoesFilaDev, CRITERIOS_AVALIACAO, mediaAvaliacao, type Chamado,
 } from "./types";
 
 const POR_PAGINA = 8;
@@ -70,7 +72,8 @@ export default function PainelDistribuicao() {
   const nav = useNavigate();
   const qc = useQueryClient();
   const { toast } = useToast();
-  const { gestor, canCoordenar, canExcluir } = useChamadoPerms();
+  const { user } = useAuth();
+  const { gestor, canCoordenar, canAprovar, canDev, canExcluir } = useChamadoPerms();
 
   const [aba, setAba] = useState<string>("fila");
   const [busca, setBusca] = useState("");
@@ -83,6 +86,7 @@ export default function PainelDistribuicao() {
   const [atribChamado, setAtribChamado] = useState<string | null>(null);
   const [atribDev, setAtribDev] = useState<string | null>(null);
   const [excluir, setExcluir] = useState<{ id: string; numero: string } | null>(null);
+  const [reabrir, setReabrir] = useState<Chamado | null>(null);
   const [flashPrioridade, setFlashPrioridade] = useState<string | null>(null);
   // Filtro do detalhamento de avaliações: "todos" ou o id do integrante.
   const [fAvaliado, setFAvaliado] = useState("todos");
@@ -441,6 +445,11 @@ export default function PainelDistribuicao() {
                               <DropdownMenuItem onClick={() => nav(`/app/sistemas/chamados/${c.id}`)}>
                                 <Eye className="mr-2 h-4 w-4" /> Ver detalhe
                               </DropdownMenuItem>
+                              {podeReabrirChamado(c, { canCoordenar, canAprovar, canDev, userId: user?.id }) && (
+                                <DropdownMenuItem onClick={() => setReabrir(c)}>
+                                  <RotateCcw className="mr-2 h-4 w-4" /> Reabrir chamado
+                                </DropdownMenuItem>
+                              )}
                             </DropdownMenuContent>
                           </DropdownMenu>
                         </div>
@@ -748,6 +757,15 @@ export default function PainelDistribuicao() {
           qc.invalidateQueries({ queryKey: ["chamados-devs"] });
           qc.invalidateQueries({ queryKey: ["chamados-feed"] });
         }}
+      />
+
+      <ReabrirChamadoDialog
+        open={!!reabrir}
+        onOpenChange={(v) => { if (!v) setReabrir(null); }}
+        chamado={reabrir}
+        // Reabriu estando na aba "Concluídos"/"Reprovados": o chamado deixa de
+        // pertencer a ela. Manda para a fila, que é onde ele passa a estar.
+        onReaberto={() => { setReabrir(null); setAba("fila"); setPagina(1); }}
       />
     </div>
   );

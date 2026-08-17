@@ -19,8 +19,17 @@ interface Resposta {
   respondente_nome?: string | null; respondente_email?: string | null;
   setor?: string | null; respondente_cadastro?: Record<string, any> | null;
   duracao_seg?: number | null; criado_por?: string | null;
+  anonimo?: boolean | null;   // enviada sem identificação (nada aqui aponta p/ quem respondeu)
   itens: Record<string, any>;
 }
+
+// Linha da pergunta "colegas": {colaborador, setor, nota, comentario}.
+const ehLinhaColega = (v: any): boolean =>
+  !!v && typeof v === "object" && !Array.isArray(v) && "colaborador" in v;
+const textoLinhaColega = (l: any): string =>
+  [String(l?.colaborador ?? "").trim(), l?.setor ? `(${l.setor})` : "",
+   l?.nota != null ? `nota ${l.nota}` : "", String(l?.comentario ?? "").trim()]
+    .filter(Boolean).join(" · ");
 
 const fmtDur = (s?: number | null) => { if (s == null) return "-"; const m = Math.floor(s / 60), ss = s % 60; return m ? `${m}m ${ss}s` : `${ss}s`; };
 
@@ -35,7 +44,11 @@ const CADASTRO_CAMPOS: { k: string; rotulo: string }[] = [
 const btn = (bg: string, c = "#fff", border = "none"): React.CSSProperties =>
   ({ padding: "6px 12px", borderRadius: 9, border, background: bg, color: c, fontSize: 12, fontWeight: 700, cursor: "pointer" });
 const card: React.CSSProperties = { background: "#fff", border: "1px solid #e2e8f0", borderRadius: 14, padding: "15px 17px", boxShadow: "0 8px 24px rgba(15,23,42,.06)" };
-const valorTexto = (v: any) => v == null || v === "" ? "-" : Array.isArray(v) ? v.join("; ") : String(v);
+const valorTexto = (v: any): string =>
+  v == null || v === "" ? "-"
+  : Array.isArray(v) ? (v.length ? v.map(x => (ehLinhaColega(x) ? textoLinhaColega(x) : String(x))).join("; ") : "-")
+  : ehLinhaColega(v) ? textoLinhaColega(v)
+  : String(v);
 
 // Texto solto de resposta: itálico, peso normal.
 const valorFonte: React.CSSProperties = { fontSize: 12.5, fontStyle: "italic", fontWeight: 500, color: "#0f172a" };
@@ -67,12 +80,13 @@ const SEM_PESSOA = (v: any): Pessoa => { const t = valorTexto(v); return { ehPes
 //   • a que diz QUEM respondeu → identidade da PRÓPRIA resposta. Quem envia
 //     logado já chega carimbado com o cadastro (respondente_cadastro), então
 //     não há o que adivinhar pelo texto digitado;
-//   • tipo "colaborador" → nome de terceiro, resolvido só pelo vínculo manual;
+//   • tipo "colaborador"/"colegas" → nome de terceiro, resolvido só pelo
+//     vínculo manual;
 //   • qualquer outra → texto puro, sem tratamento de gente.
 // Nas duas primeiras o texto abre a ficha mesmo sem estar vinculado: é de lá
 // que se faz o vínculo à mão, o único jeito de amarrar um nome solto agora.
 const resolverDaPergunta = (p: Pergunta, perguntaNomeId: string | null, ident: Resolver, vinculo: Resolver): Resolver => {
-  const base = p.id === perguntaNomeId ? ident : p.tipo === "colaborador" ? vinculo : null;
+  const base = p.id === perguntaNomeId ? ident : (p.tipo === "colaborador" || p.tipo === "colegas") ? vinculo : null;
   return base ? (v => ({ ...base(v), podeAbrirFicha: true })) : SEM_PESSOA;
 };
 
@@ -97,10 +111,39 @@ function NomeLink({ texto, resolve, onPessoa }: { texto: string; resolve: Resolv
 // discreto, resposta embaixo com destaque: na mesma linha (o formato antigo),
 // pergunta e resposta viravam um parágrafo só - os enunciados daqui têm
 // parágrafos inteiros de instrução.
+// Resposta da pergunta "colegas": uma linha por colega indicado. O nome abre a
+// ficha (é gente de verdade, vinda do cadastro); a nota vira estrelas e o
+// comentário fica embaixo, para o texto não brigar com a tabela.
+function BlocoColegas({ titulo, linhas, resolve, onPessoa }: {
+  titulo: string; linhas: any[]; resolve: Resolver; onPessoa: (n: string) => void;
+}) {
+  return (
+    <div style={{ background: "#f8fafc", border: "1px solid #eef2f7", borderRadius: 10, padding: "9px 12px" }}>
+      <div style={{ fontSize: 11, fontWeight: 700, color: "#94a3b8", lineHeight: 1.45, marginBottom: 6 }}>{titulo}</div>
+      <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+        {linhas.map((l, i) => (
+          <div key={i} style={{ background: "#fff", border: "1px solid #f1f5f9", borderRadius: 9, padding: "7px 10px" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+              <NomeLink texto={String(l?.colaborador ?? "")} resolve={resolve} onPessoa={onPessoa} />
+              {l?.setor && <span style={{ fontSize: 10.5, fontWeight: 800, padding: "2px 8px", borderRadius: 20, background: "#eef2ff", color: "#4338ca" }}>{l.setor}</span>}
+              {l?.nota != null && <span style={{ fontSize: 12, color: "#f59e0b", fontWeight: 800 }}>{"★".repeat(Number(l.nota) || 0)}<span style={{ color: "#94a3b8", fontWeight: 700 }}> {l.nota}</span></span>}
+            </div>
+            {String(l?.comentario ?? "").trim() && (
+              <div style={{ ...valorFonte, marginTop: 4 }}>{String(l.comentario).trim()}</div>
+            )}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function BlocoResposta({ titulo, valor, resolve, onPessoa }: {
   titulo: string; valor: any; resolve: Resolver; onPessoa: (n: string) => void;
 }) {
   const itens = Array.isArray(valor) ? valor.filter(v => v != null && v !== "") : [];
+  if (itens.length && itens.every(ehLinhaColega))
+    return <BlocoColegas titulo={titulo} linhas={itens} resolve={resolve} onPessoa={onPessoa} />;
   return (
     <div style={{ background: "#f8fafc", border: "1px solid #eef2f7", borderRadius: 10, padding: "9px 12px" }}>
       <div style={{ fontSize: 11, fontWeight: 700, color: "#94a3b8", lineHeight: 1.45, marginBottom: 4 }}>{titulo}</div>
@@ -298,6 +341,9 @@ export default function FormularioRespostas() {
   // Quem respondeu: o nome gravado na resposta ou, quando ela veio sem nome
   // (importada), o valor da pergunta que identifica o respondente.
   const nomeRespondente = useCallback((r: Resposta): string => {
+    // Anônima é anônima: nem a pergunta de identificação vale como nome aqui
+    // (o formulário pode ter uma, e ela devolveria a pessoa pela porta dos fundos).
+    if (r.anonimo) return "Anônimo";
     const gravado = (r.respondente_nome ?? "").trim();
     if (gravado) return gravado;
     const v = perguntaNomeId ? r.itens[perguntaNomeId] : null;
@@ -473,6 +519,7 @@ export default function FormularioRespostas() {
                       ? <NomeLink texto={quem} resolve={resolveQuem} onPessoa={setPessoa} />
                       : quem}
                   </span>
+                  {r.anonimo && <span title="Enviada sem identificação - nada nesta resposta aponta para quem respondeu" style={{ fontSize: 10.5, fontWeight: 800, padding: "2px 8px", borderRadius: 20, background: "#f1f5f9", color: "#475569" }}>🕶 Anônima</span>}
                   {r.respondente_email && <span style={{ fontSize: 11.5, color: "#64748b" }}>{r.respondente_email}</span>}
                   <span style={{ fontSize: 11, color: "#94a3b8" }}>{fmtDt(r.enviado_em)}</span>
                   {r.setor && <span style={{ fontSize: 10.5, fontWeight: 800, padding: "2px 8px", borderRadius: 20, background: "#eef2ff", color: "#4338ca" }}>{r.setor}</span>}
@@ -632,6 +679,10 @@ function ResumoPergunta({ p, i, resps, resolve, resolveQuem, onPessoa, quem, onV
   }, [ocorrencias, quem]);
 
   const conteudo = useMemo(() => {
+    // Colegas: o que interessa é o ranking de quem foi indicado - quantas
+    // indicações, média das notas e o que escreveram sobre a pessoa.
+    if (p.tipo === "colegas")
+      return <ResumoColegas resps={resps} pid={p.id} resolve={resolve} onPessoa={onPessoa} quem={quem} />;
     if (["multipla_escolha", "caixas_selecao", "lista_suspensa", "escala"].includes(p.tipo)) {
       const cont: Record<string, number> = {};
       let total = 0;
@@ -678,6 +729,81 @@ function ResumoPergunta({ p, i, resps, resolve, resolveQuem, onPessoa, quem, onV
       <div style={{ fontSize: 14, fontWeight: 800, color: "#0f172a" }}>{i + 1}. {p.titulo}</div>
       <div style={{ fontSize: 11.5, color: "#94a3b8", marginBottom: 10 }}>{valores.length} de {resps.length} responderam</div>
       {conteudo}
+    </div>
+  );
+}
+
+// Resumo da pergunta "colegas": ranking dos indicados. Uma linha por pessoa,
+// com quantas indicações recebeu, a média das notas e - ao abrir - o que cada
+// respondente escreveu sobre ela. Quem respondeu anônimo entra como "Anônimo".
+function ResumoColegas({ resps, pid, resolve, onPessoa, quem }: {
+  resps: Resposta[]; pid: string; resolve: Resolver; onPessoa: (n: string) => void; quem: (r: Resposta) => string;
+}) {
+  const [aberto, setAberto] = useState<string | null>(null);
+
+  const ranking = useMemo(() => {
+    const m = new Map<string, { nome: string; setores: Set<string>; n: number; notas: number[]; comentarios: { texto: string; quem: string }[] }>();
+    resps.forEach(r => {
+      const linhas = Array.isArray(r.itens?.[pid]) ? r.itens[pid] : [];
+      linhas.filter(ehLinhaColega).forEach((l: any) => {
+        const bruto = String(l.colaborador ?? "").trim();
+        if (!bruto) return;
+        const pess = resolve(bruto);
+        const rotulo = pess.ehPessoa ? pess.exibir : bruto;   // nome do cadastro quando vinculado
+        const chave = normNome(rotulo) || rotulo;
+        const g = m.get(chave) ?? { nome: rotulo, setores: new Set<string>(), n: 0, notas: [] as number[], comentarios: [] as { texto: string; quem: string }[] };
+        g.n += 1;
+        if (l.setor) g.setores.add(String(l.setor).trim());
+        const nota = Number(l.nota);
+        if (!isNaN(nota) && l.nota != null) g.notas.push(nota);
+        const txt = String(l.comentario ?? "").trim();
+        if (txt) g.comentarios.push({ texto: txt, quem: quem(r) });
+        m.set(chave, g);
+      });
+    });
+    return [...m.entries()]
+      .map(([chave, g]) => ({ chave, ...g, media: g.notas.length ? g.notas.reduce((s, n) => s + n, 0) / g.notas.length : null }))
+      .sort((a, b) => b.n - a.n || (b.media ?? 0) - (a.media ?? 0) || a.nome.localeCompare(b.nome, "pt-BR"));
+  }, [resps, pid, resolve, quem]);
+
+  if (!ranking.length) return <div style={{ fontSize: 12.5, color: "#94a3b8" }}>Nenhum colega indicado ainda.</div>;
+  const maxN = ranking[0].n;
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 5, maxHeight: 460, overflowY: "auto" }}>
+      {ranking.map(g => {
+        const on = aberto === g.chave;
+        return (
+          <div key={g.chave} style={{ border: "1px solid #f1f5f9", borderRadius: 9, background: on ? "#f8fafc" : "#fff" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 9, padding: "7px 10px", flexWrap: "wrap" }}>
+              <div style={{ flex: 1, minWidth: 150, display: "flex", alignItems: "center", gap: 7, flexWrap: "wrap" }}>
+                <NomeLink texto={g.nome} resolve={resolve} onPessoa={onPessoa} />
+                {[...g.setores].map(s => <span key={s} style={{ fontSize: 10, fontWeight: 800, padding: "2px 7px", borderRadius: 20, background: "#eef2ff", color: "#4338ca" }}>{s}</span>)}
+              </div>
+              <div style={{ width: 90, height: 8, background: "#f1f5f9", borderRadius: 8, overflow: "hidden", flexShrink: 0 }}>
+                <div style={{ width: `${Math.round((g.n / maxN) * 100)}%`, height: "100%", background: "#0f3171" }} />
+              </div>
+              <span style={{ fontSize: 11.5, fontWeight: 800, color: "#0f172a", flexShrink: 0 }}>{g.n}×</span>
+              {g.media != null && <span style={{ fontSize: 11.5, color: "#a16207", fontWeight: 800, flexShrink: 0 }}>★ {g.media.toFixed(1)}</span>}
+              {g.comentarios.length > 0 && (
+                <button onClick={() => setAberto(on ? null : g.chave)} style={btnMini("#fff", "#0f3171", "1px solid rgba(15,49,113,.25)")}>
+                  {on ? "Ocultar" : `${g.comentarios.length} comentário(s)`}
+                </button>
+              )}
+            </div>
+            {on && (
+              <div style={{ display: "flex", flexDirection: "column", gap: 4, padding: "0 10px 9px 10px" }}>
+                {g.comentarios.map((c, ci) => (
+                  <div key={ci} style={{ background: "#fff", border: "1px solid #f1f5f9", borderRadius: 8, padding: "6px 9px" }}>
+                    <div style={valorFonte}>{c.texto}</div>
+                    <div style={{ fontSize: 10.5, color: "#94a3b8", marginTop: 3 }}>— {c.quem}</div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        );
+      })}
     </div>
   );
 }

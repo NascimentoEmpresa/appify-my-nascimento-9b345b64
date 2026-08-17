@@ -14,9 +14,23 @@ import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip, Cell, PieCha
 
 const VAL_FIELDS = ["valor_pedidos", "valor_acordo", "valor_sentenca", "valor_final", "valor_outros_custos", "valor_deposito_recursal", "valor_custas_processuais"] as const;
 
+// Valores lançados POR MOTIVO — estes o agrupamento SOMA entre as linhas.
+// Custo do processo que não se reparte por motivo (custas recursais, perito…)
+// fica em PROC_VAL_FIELDS, abaixo, e é lido de uma linha só.
+const VAL_FIELDS_MOTIVO = ["valor_pedidos", "valor_acordo", "valor_sentenca", "valor_final", "valor_outros_custos", "valor_deposito_recursal", "valor_custas_processuais"] as const;
+
+// Custos do PROCESSO. Ficam repetidos em toda linha de motivo no banco, então
+// são lidos com maxN (uma linha) e NUNCA somados — senão um processo com 3
+// motivos mostraria as custas recursais triplicadas.
+const PROC_VAL_FIELDS = ["valor_custas_recursais", "valor_seguro_garantia", "valor_perito_judicial", "valor_assistente_tecnico"] as const;
+
 interface MotivoItem { ordem: number; motivo: string; valor_pedidos: number; valor_acordo: number; valor_sentenca: number; valor_final: number; valor_outros_custos: number; valor_deposito_recursal: number; valor_custas_processuais: number; }
-// Proposta feita pelo juiz na audiência daquela data (pode haver mais de uma).
-interface Proposta { valor: number; descricao: string; }
+
+// Proposta de acordo. Pode ter saído de uma audiência (fica dentro daquela
+// audiência) ou do decorrer do processo (lista à parte, com data própria).
+export const PROPOSTA_TIPOS = ["Judicial", "Extrajudicial"] as const;
+export const PROPOSTA_QUEM = ["Juiz", "Reclamante", "Reclamada"] as const;
+interface Proposta { valor: number; descricao: string; tipo: string; quem: string; data?: string }
 interface Audiencia { ordem: number; data: string; tipo_audiencia?: string; modalidade_audiencia?: string; horario?: string; propostas?: Proposta[]; }
 interface Processo {
   id: number;
@@ -29,6 +43,12 @@ interface Processo {
   status_recursos: string; havera_pericia: string; motivo_acordo: string; motivos_outros_custos: string;
   local_pericia: string; data_pericia: string; hora_pericia: string;
   data_entrada_reclamatoria: string; tipo_audiencia: string; modalidade_audiencia: string; audiencias: Audiencia[];
+  // Recurso da condenação
+  vai_recorrer: string; valor_custas_recursais: number; valor_seguro_garantia: number;
+  // Perícia médica
+  houve_pericia_medica: string; valor_perito_judicial: number; valor_assistente_tecnico: number;
+  // Propostas fora de audiência ("no decorrer do processo")
+  propostas: Proposta[];
 }
 interface Comentario { id: number; entidade_id?: string; autor_nome?: string; texto: string; created_at?: string; }
 
@@ -148,8 +168,14 @@ export function cidadeDoContrato(nomeContrato: string): { cidade: string; noInic
   return { cidade: "", noInicio: false };
 }
 
-const custoTotal = (p: any) => p.valor_final > 0 ? p.valor_final : p.valor_acordo + p.valor_sentenca + p.valor_outros_custos + p.valor_deposito_recursal + p.valor_custas_processuais;
-const motivoTotal = (i: MotivoItem) => VAL_FIELDS.reduce((s, k) => s + toFloat(i[k]), 0);
+// Custos do processo que não vêm dos motivos: recurso e perícia médica.
+// Somam no custo final (decisão do Pablo, 17/08/2026) — são desembolso real.
+const custosDoProcesso = (p: any) => PROC_VAL_FIELDS.reduce((s, k) => s + toFloat(p[k]), 0);
+// `valor_final` preenchido continua mandando: é o fechamento lançado à mão, e
+// quem o preenche já está dizendo qual foi o custo total.
+const custoTotal = (p: any) => p.valor_final > 0 ? p.valor_final
+  : p.valor_acordo + p.valor_sentenca + p.valor_outros_custos + p.valor_deposito_recursal + p.valor_custas_processuais + custosDoProcesso(p);
+const motivoTotal = (i: MotivoItem) => VAL_FIELDS_MOTIVO.reduce((s, k) => s + toFloat(i[k]), 0);
 
 // Vínculo reclamante ⇄ EMPREGADOS. Lê a tabela direto (mesmo padrão do Recrutamento).
 const EMP_COLS = '"ID","Nome","CPF","Situação","Descrição do Local","Admissão","Data Afastamento","Valor Salário","PIS","C.Custo","Titulo C.Custo","Título do Cargo","Nome da Empresa","Nome Filial"';
@@ -224,8 +250,56 @@ function MotivoSelect({ value, options, onChange }: { value: string; options: st
   );
 }
 
+// Antes de 17/08/2026 toda proposta era, por definição, do juiz na audiência —
+// a tela nem perguntava. Os registros antigos vêm sem `tipo`/`quem`, então o
+// padrão reproduz o que a tela dizia deles: proposta judicial, do juiz.
 const parsePropostas = (raw: any): Proposta[] =>
-  Array.isArray(raw) ? raw.filter(p => p && (p.descricao || p.valor)).map(p => ({ valor: toFloat(p.valor), descricao: String(p.descricao ?? "") })) : [];
+  Array.isArray(raw)
+    ? raw.filter(p => p && (p.descricao || p.valor)).map(p => ({
+        valor: toFloat(p.valor), descricao: String(p.descricao ?? ""),
+        tipo: String(p.tipo ?? "Judicial"), quem: String(p.quem ?? "Juiz"),
+        ...(p.data ? { data: String(p.data).slice(0, 10) } : {}),
+      }))
+    : [];
+
+// As propostas fora de audiência moram numa coluna própria (propostas_json),
+// mas o campo é text e vem repetido em toda linha de motivo: basta a primeira
+// linha que tenha conteúdo.
+function parsePropostasProcesso(rs: any[]): Proposta[] {
+  for (const r of rs) {
+    const raw = r.propostas_json;
+    if (!raw || !String(raw).trim() || String(raw).trim() === "[]") continue;
+    try {
+      const arr = typeof raw === "string" ? JSON.parse(raw) : raw;
+      const lista = parsePropostas(arr);
+      if (lista.length) return lista.sort((a, b) => String(a.data ?? "").localeCompare(String(b.data ?? "")));
+    } catch { /* json inválido */ }
+  }
+  return [];
+}
+
+// Uma proposta na tela de detalhe. O selo diz de quem partiu e a cor separa as
+// três origens de relance — antes era um "PROPOSTA DO JUIZ" fixo no código,
+// que mentia assim que passasse a existir proposta da reclamada.
+const COR_QUEM: Record<string, { bg: string; c: string }> = {
+  Juiz:       { bg: "#fef3c7", c: "#b45309" },
+  Reclamante: { bg: "#e0f2fe", c: "#0369a1" },
+  Reclamada:  { bg: "#dcfce7", c: "#15803d" },
+};
+function LinhaProposta({ pr, comData }: { pr: Proposta; comData?: boolean }) {
+  const cor = COR_QUEM[pr.quem] ?? COR_QUEM.Juiz;
+  return (
+    <div style={{ fontSize: 12, color: "#475569", display: "flex", gap: 7, alignItems: "baseline", flexWrap: "wrap" }}>
+      {comData && <span style={{ color: "#94a3b8", whiteSpace: "nowrap" }}>{pr.data ? fmtDt(pr.data) : "sem data"}</span>}
+      <span style={{ fontSize: 9.5, fontWeight: 800, color: cor.c, background: cor.bg, borderRadius: 20, padding: "1px 7px", whiteSpace: "nowrap" }}>
+        {String(pr.quem || "Juiz").toUpperCase()} · {String(pr.tipo || "Judicial").toUpperCase()}
+      </span>
+      {pr.valor > 0 && <b style={{ color: "#0f172a", whiteSpace: "nowrap" }}>{money(pr.valor)}</b>}
+      <span>{pr.descricao || "—"}</span>
+    </div>
+  );
+}
+
 function parseAudiencias(rs: any[]): Audiencia[] {
   for (const r of rs) {
     const raw = r.audiencias_json;
@@ -258,8 +332,16 @@ function agrupar(rows: any[]): Processo[] {
     const sum = (k: string) => rs.reduce((s, r) => s + toFloat(r[k]), 0);
     const maxN = (k: string) => rs.reduce((m, r) => Math.max(m, Number(r[k]) || 0), 0);
     const minId = rs.reduce((m, r) => Math.min(m, Number(r.id) || Infinity), Infinity);
-    const motivo_items: MotivoItem[] = rs.map((r, i) => { const o: any = { ordem: Number(r.motivo_ordem ?? i + 1), motivo: String(r.motivos ?? "").trim() || "Sem motivo" }; VAL_FIELDS.forEach(k => o[k] = toFloat(r[k])); return o; });
+    const motivo_items: MotivoItem[] = rs.map((r, i) => { const o: any = { ordem: Number(r.motivo_ordem ?? i + 1), motivo: String(r.motivos ?? "").trim() || "Sem motivo" }; VAL_FIELDS_MOTIVO.forEach(k => o[k] = toFloat(r[k])); return o; });
+    // Custos do processo: maxN (uma linha), nunca sum. O valor está repetido
+    // em todas as linhas de motivo, então somar multiplicaria pelo nº de motivos.
+    const procVals: any = {};
+    PROC_VAL_FIELDS.forEach(k => procVals[k] = maxN(k));
     out.push({
+      ...procVals,
+      vai_recorrer: first("vai_recorrer"),
+      houve_pericia_medica: first("houve_pericia_medica"),
+      propostas: parsePropostasProcesso(rs),
       id: Number.isFinite(minId) ? minId : 0,
       id_sequencial: maxN("id_sequencial"),
       numero_processo: numero, reclamante: first("reclamante"), reclamada: first("reclamada"), comarca: first("comarca"), municipio_origem: first("municipio_origem"),
@@ -281,7 +363,13 @@ function agrupar(rows: any[]): Processo[] {
 }
 
 const ativo = (p: Processo) => p.status !== "ARQUIVADO";
-const FORM_RESET = () => ({ numero_processo: "", reclamante: "", reclamada: "", status: "EM ANDAMENTO", comarca: "", municipio_origem: "", data_entrada_reclamatoria: "", contrato: "", reclamante_vinculado_cpf: "", status_sentenca: "", status_recursos: "", houve_acordo: "Não", motivo_acordo: "", havera_pericia: "Não", local_pericia: "", data_pericia: "", hora_pericia: "", motivos_outros_custos: "" });
+const FORM_RESET = () => ({
+  numero_processo: "", reclamante: "", reclamada: "", status: "EM ANDAMENTO", comarca: "", municipio_origem: "", data_entrada_reclamatoria: "", contrato: "", reclamante_vinculado_cpf: "", status_sentenca: "", status_recursos: "", houve_acordo: "Não", motivo_acordo: "", havera_pericia: "Não", local_pericia: "", data_pericia: "", hora_pericia: "", motivos_outros_custos: "",
+  // Recurso da condenação
+  vai_recorrer: "Não", valor_custas_recursais: 0, valor_seguro_garantia: 0,
+  // Perícia médica
+  houve_pericia_medica: "Não", valor_perito_judicial: 0, valor_assistente_tecnico: 0,
+});
 const STATUS_SENTENCA_OPC = ["", "PROCEDENTE", "IMPROCEDENTE", "PARCIALMENTE PROCEDENTE", "EM ANDAMENTO", "ACORDO", "EXTINTO", "ARQUIVADO"];
 const STATUS_RECURSO_OPC = ["", "SEM RECURSO", "EM ANDAMENTO", "PROVIDO", "IMPROVIDO", "ARQUIVADO"];
 // Salário vem de EMPREGADOS como texto pt-BR ("2.002,6900"): normaliza e devolve número.
@@ -332,6 +420,8 @@ export default function Processos({ view = "processos" }: { view?: "dashboard" |
   const [form, setForm] = useState(FORM_RESET());
   const [motivos, setMotivos] = useState<MotivoItem[]>([MOTIVO_RESET()]);
   const [auds, setAuds] = useState<Audiencia[]>([]);
+  // Propostas fora de audiência — "no decorrer do processo".
+  const [propostas, setPropostas] = useState<Proposta[]>([]);
   // vínculo do reclamante com EMPREGADOS
   const [empBusca, setEmpBusca] = useState("");
   const [empResultados, setEmpResultados] = useState<any[]>([]);
@@ -494,10 +584,21 @@ export default function Processos({ view = "processos" }: { view?: "dashboard" |
   };
   const confirmarVinculo = async (emp: any) => {
     const cpf = emp["CPF"] || "";
-    // "Descrição do Local" do cadastro é o CONTRATO, não a cidade — era isso
-    // que enchia "Município de origem" com nome de contrato. Agora vai para o
-    // campo certo, e o município fica livre para a cidade.
-    const local = emp["Descrição do Local"] || "";
+    // O CONTRATO do empregado é "Nome Filial", não "Descrição do Local".
+    //
+    // Isto já saiu errado em produção (ARIANA BRITTO PEREIRA veio como
+    // "UFRGS - CAMPUS VALE 6D TRI" em vez de "UFRGS - LIMPEZA GERAL -
+    // 047/2022"). "Descrição do Local" é o POSTO — o prédio/andar/turno onde a
+    // pessoa trabalha dentro do contrato. Medido nos 12.763 empregados:
+    // "Descrição do Local" casa com um contrato ativo em ZERO deles;
+    // "Nome Filial" casa em 5.227.
+    //
+    // Só aceita quando é mesmo um contrato conhecido: nos empregados
+    // administrativos o "Nome Filial" traz a RAZÃO SOCIAL ("NASCIMENTO
+    // SERVICOS DE LIMPEZA LTDA", 5.493 deles), e carimbar isso no campo
+    // Contrato seria trocar um valor errado por outro.
+    const filial = String(emp["Nome Filial"] ?? "").trim();
+    const local = contratosNomes.find(n => n.toUpperCase() === filial.toUpperCase()) ?? "";
     if (local) contratoManual.current = true;
     // Mesmo critério do campo Contrato: só preenche a cidade sozinha quando ela
     // abre o nome do contrato e o município ainda está vazio.
@@ -531,15 +632,18 @@ export default function Processos({ view = "processos" }: { view?: "dashboard" |
   };
 
   // ── CRUD ───────────────────────────────────────────────────────
-  const abrirNovo = () => { setEditNumero(null); contratoManual.current = false; setForm(FORM_RESET()); setMotivos([MOTIVO_RESET()]); setAuds([]); setEmpBusca(""); setEmpResultados([]); setEmpSelKey(null); setModal(true); };
+  const abrirNovo = () => { setEditNumero(null); contratoManual.current = false; setForm(FORM_RESET()); setMotivos([MOTIVO_RESET()]); setAuds([]); setPropostas([]); setEmpBusca(""); setEmpResultados([]); setEmpSelKey(null); setModal(true); };
   const abrirEditar = (p: Processo) => {
     setEditNumero(p.numero_processo);
     // Processo que já tem contrato salvo: a sugestão não pode sobrescrever o
     // que alguém escolheu antes. Sem contrato, volta a sugerir.
     contratoManual.current = !!String(p.contrato ?? "").trim();
-    setForm({ numero_processo: p.numero_processo, reclamante: p.reclamante, reclamada: p.reclamada, status: p.status, comarca: p.comarca, municipio_origem: p.municipio_origem, data_entrada_reclamatoria: (p.data_entrada_reclamatoria || "").slice(0, 10), contrato: p.contrato, reclamante_vinculado_cpf: p.reclamante_vinculado_cpf || "", status_sentenca: p.status_sentenca || "", status_recursos: p.status_recursos || "", houve_acordo: p.houve_acordo || "Não", motivo_acordo: p.motivo_acordo || "", havera_pericia: p.havera_pericia || "Não", local_pericia: p.local_pericia || "", data_pericia: (p.data_pericia || "").slice(0, 10), hora_pericia: (p.hora_pericia || "").slice(0, 5), motivos_outros_custos: p.motivos_outros_custos || "" });
+    setForm({ numero_processo: p.numero_processo, reclamante: p.reclamante, reclamada: p.reclamada, status: p.status, comarca: p.comarca, municipio_origem: p.municipio_origem, data_entrada_reclamatoria: (p.data_entrada_reclamatoria || "").slice(0, 10), contrato: p.contrato, reclamante_vinculado_cpf: p.reclamante_vinculado_cpf || "", status_sentenca: p.status_sentenca || "", status_recursos: p.status_recursos || "", houve_acordo: p.houve_acordo || "Não", motivo_acordo: p.motivo_acordo || "", havera_pericia: p.havera_pericia || "Não", local_pericia: p.local_pericia || "", data_pericia: (p.data_pericia || "").slice(0, 10), hora_pericia: (p.hora_pericia || "").slice(0, 5), motivos_outros_custos: p.motivos_outros_custos || "",
+      vai_recorrer: p.vai_recorrer || "Não", valor_custas_recursais: p.valor_custas_recursais || 0, valor_seguro_garantia: p.valor_seguro_garantia || 0,
+      houve_pericia_medica: p.houve_pericia_medica || "Não", valor_perito_judicial: p.valor_perito_judicial || 0, valor_assistente_tecnico: p.valor_assistente_tecnico || 0 });
     setMotivos(p.motivo_items.length ? p.motivo_items.map(m => ({ ...m })) : [MOTIVO_RESET()]);
     setAuds(p.audiencias.map(a => ({ ...a, propostas: (a.propostas || []).map(pr => ({ ...pr })) })));
+    setPropostas((p.propostas || []).map(pr => ({ ...pr })));
     setEmpBusca(p.reclamante || ""); setEmpResultados([]); setEmpSelKey(null); setModal(true);
   };
   const salvar = async () => {
@@ -551,7 +655,11 @@ export default function Processos({ view = "processos" }: { view?: "dashboard" |
     if (!form.municipio_origem.trim()) { toast("Informe o município de origem (a cidade do contrato).", "err"); return; }
     const dataEntrada = form.data_entrada_reclamatoria || null;
     const ano = (dataEntrada ? Number(dataEntrada.slice(0, 4)) : null) || anoDoNumero(numero) || null;
-    const audsJson = auds.length ? JSON.stringify(auds.map((a, i) => ({ ordem: i + 1, data: a.data, tipo_audiencia: a.tipo_audiencia || "Instrução", modalidade_audiencia: a.modalidade_audiencia, horario: a.horario || null, propostas: (a.propostas || []).filter(pr => pr.descricao.trim() || pr.valor).map(pr => ({ valor: pr.valor || 0, descricao: pr.descricao.trim() })) }))) : null;
+    const limparPropostas = (lista: Proposta[]) => lista
+      .filter(pr => pr.descricao.trim() || pr.valor)
+      .map(pr => ({ valor: pr.valor || 0, descricao: pr.descricao.trim(), tipo: pr.tipo || "Judicial", quem: pr.quem || "Juiz", ...(pr.data ? { data: pr.data } : {}) }));
+    const audsJson = auds.length ? JSON.stringify(auds.map((a, i) => ({ ordem: i + 1, data: a.data, tipo_audiencia: a.tipo_audiencia || "Instrução", modalidade_audiencia: a.modalidade_audiencia, horario: a.horario || null, propostas: limparPropostas(a.propostas || []) }))) : null;
+    const propostasJson = (() => { const l = limparPropostas(propostas); return l.length ? JSON.stringify(l) : null; })();
     // Nº sequencial: na edição mantém o que o processo já tem; num cadastro novo
     // pega o próximo da base (lido na hora, não do estado em memória).
     const seqAtual = editNumero ? (processos.find(p => p.numero_processo === editNumero)?.id_sequencial || 0) : 0;
@@ -575,6 +683,15 @@ export default function Processos({ view = "processos" }: { view?: "dashboard" |
       motivo_acordo: form.motivo_acordo.trim() || null, havera_pericia: form.havera_pericia || null, motivos_outros_custos: form.motivos_outros_custos.trim() || null,
       local_pericia: form.local_pericia.trim() || null, data_pericia: form.data_pericia || null, hora_pericia: form.hora_pericia || null,
       audiencias_json: audsJson, tipo_audiencia: auds[0]?.tipo_audiencia || null, modalidade_audiencia: auds[0]?.modalidade_audiencia || null, updated_at: new Date().toISOString(),
+      // Campos do PROCESSO: vão repetidos em toda linha de motivo (é assim que
+      // a tabela é), e a leitura em agrupar() pega de uma linha só.
+      vai_recorrer: form.vai_recorrer || null,
+      valor_custas_recursais: form.vai_recorrer === "Sim" ? (form.valor_custas_recursais || 0) : 0,
+      valor_seguro_garantia: form.vai_recorrer === "Sim" ? (form.valor_seguro_garantia || 0) : 0,
+      houve_pericia_medica: form.houve_pericia_medica || null,
+      valor_perito_judicial: form.houve_pericia_medica === "Sim" ? (form.valor_perito_judicial || 0) : 0,
+      valor_assistente_tecnico: form.houve_pericia_medica === "Sim" ? (form.valor_assistente_tecnico || 0) : 0,
+      propostas_json: propostasJson,
     }));
     if (editNumero && editNumero !== numero && processos.some(p => p.numero_processo === numero)) { toast("Já existe outro processo com esse número.", "err"); return; }
     const del = await (supabase as any).from("JUR_PROCESSOS").delete().eq("numero_processo", editNumero || numero);
@@ -628,8 +745,23 @@ export default function Processos({ view = "processos" }: { view?: "dashboard" |
   const mapPropostas = (i: number, fn: (ps: Proposta[]) => Proposta[]) =>
     setAuds(as => as.map((a, idx) => idx === i ? { ...a, propostas: fn(a.propostas || []) } : a));
   const setProposta = (i: number, j: number, patch: Partial<Proposta>) => mapPropostas(i, ps => ps.map((p, idx) => idx === j ? { ...p, ...patch } : p));
-  const addProposta = (i: number) => mapPropostas(i, ps => [...ps, { valor: 0, descricao: "" }]);
+  // Proposta nova numa audiência nasce judicial e do juiz — é o caso de longe
+  // mais comum, e era o único que a tela registrava antes.
+  const addProposta = (i: number) => mapPropostas(i, ps => [...ps, { valor: 0, descricao: "", tipo: "Judicial", quem: "Juiz" }]);
   const delProposta = (i: number, j: number) => mapPropostas(i, ps => ps.filter((_, idx) => idx !== j));
+
+  // Propostas fora de audiência. Nascem extrajudiciais: proposta que aparece no
+  // decorrer do processo, sem audiência, em geral veio de conversa entre as
+  // partes. E têm data própria, que a audiência dava de graça.
+  const setPropostaProc = (j: number, patch: Partial<Proposta>) => setPropostas(ps => ps.map((p, idx) => idx === j ? { ...p, ...patch } : p));
+  const addPropostaProc = () => setPropostas(ps => [...ps, { valor: 0, descricao: "", tipo: "Extrajudicial", quem: "Reclamante", data: "" }]);
+  const delPropostaProc = (j: number) => setPropostas(ps => ps.filter((_, idx) => idx !== j));
+
+  // Depósito recursal continua lançado POR MOTIVO (decisão do Pablo): a aba de
+  // recurso mostra a soma, em leitura, para não haver dois lugares somando a
+  // mesma coisa no custo final.
+  const depositoRecursalTotal = useMemo(
+    () => motivos.reduce((s, m) => s + toFloat(m.valor_deposito_recursal), 0), [motivos]);
 
   const statusCor = (s: string) => s === "ARQUIVADO" ? { bg: "#f1f5f9", c: "#64748b" } : s === "INDEFINIDO" ? { bg: "#fef9c3", c: "#a16207" } : { bg: "#fef3c7", c: "#b45309" };
   const kpi = (label: string, valor: string | number, cor: string, sub?: string) => (
@@ -963,10 +1095,14 @@ export default function Processos({ view = "processos" }: { view?: "dashboard" |
         </>)}
       </div>
 
-      {/* ── Detalhe ── */}
+      {/* ── Detalhe ──
+          Fecha SÓ no ✕. O clique no fundo saiu de propósito: com ele, um
+          clique que caísse fora do cartão derrubava o processo aberto — e
+          havia como isso acontecer sem o usuário mirar no fundo (ver a nota
+          no modal de cadastro, abaixo). */}
       {sel && (
-        <div className="jpr-ov" onClick={e => { if (e.target === e.currentTarget) setSel(null); }}>
-          <div className="jpr-modal" onClick={e => e.stopPropagation()}>
+        <div className="jpr-ov">
+          <div className="jpr-modal">
             <button onClick={() => setSel(null)} style={{ position: "absolute", top: 14, right: 16, border: "none", background: "none", fontSize: 20, color: "#94a3b8", cursor: "pointer" }}>✕</button>
             <div style={{ fontSize: 12, color: "#94a3b8", fontWeight: 700 }}>{sel.id_sequencial ? `#${sel.id_sequencial} · ` : ""}{sel.numero_processo}</div>
             <div style={{ fontSize: 18, fontWeight: 800, color: "#0f172a" }}>{sel.reclamante || "—"}</div>
@@ -998,23 +1134,43 @@ export default function Processos({ view = "processos" }: { view?: "dashboard" |
                   <div style={{ fontSize: 12.5, color: "#334155" }}>📅 <b>{fmtDt(a.data)}</b>{a.horario ? ` · ${a.horario}` : ""} — {a.tipo_audiencia || "Audiência"}{a.modalidade_audiencia ? ` (${a.modalidade_audiencia})` : ""}</div>
                   {(a.propostas || []).length > 0 && (
                     <div style={{ marginTop: 4, marginLeft: 18, display: "flex", flexDirection: "column", gap: 3 }}>
-                      {(a.propostas || []).map((pr, j) => (
-                        <div key={j} style={{ fontSize: 12, color: "#475569", display: "flex", gap: 7, alignItems: "baseline" }}>
-                          <span style={{ fontSize: 9.5, fontWeight: 800, color: "#b45309", background: "#fef3c7", borderRadius: 20, padding: "1px 7px", whiteSpace: "nowrap" }}>PROPOSTA DO JUIZ</span>
-                          {pr.valor > 0 && <b style={{ color: "#0f172a", whiteSpace: "nowrap" }}>{money(pr.valor)}</b>}
-                          <span>{pr.descricao || "—"}</span>
-                        </div>
-                      ))}
+                      {(a.propostas || []).map((pr, j) => <LinhaProposta key={j} pr={pr} />)}
                     </div>
                   )}
                 </div>
               ))}</div>
             </>)}
-            {(sel.data_pericia || sel.hora_pericia || sel.local_pericia || sel.havera_pericia === "Sim") && (<>
+
+            {sel.propostas.length > 0 && (<>
+              <div style={{ fontSize: 11, fontWeight: 800, color: "#0f3171", textTransform: "uppercase", letterSpacing: ".4px", marginBottom: 6 }}>Propostas no decorrer do processo</div>
+              <div style={{ marginBottom: 14, display: "flex", flexDirection: "column", gap: 4 }}>
+                {sel.propostas.map((pr, j) => <LinhaProposta key={j} pr={pr} comData />)}
+              </div>
+            </>)}
+
+            {sel.vai_recorrer === "Sim" && (<>
+              <div style={{ fontSize: 11, fontWeight: 800, color: "#0f3171", textTransform: "uppercase", letterSpacing: ".4px", marginBottom: 6 }}>Recurso</div>
+              <div style={{ marginBottom: 14, display: "flex", gap: 8, flexWrap: "wrap" }}>
+                {[["Custas recursais", sel.valor_custas_recursais], ["Seguro garantia", sel.valor_seguro_garantia], ["Depósito recursal", sel.valor_deposito_recursal]].map(([l, v]: any) => (
+                  <div key={l} style={{ flex: 1, minWidth: 130, background: "#f8fafc", border: "1px solid #eef2f7", borderRadius: 10, padding: "8px 11px" }}>
+                    <div style={{ fontSize: 10, fontWeight: 700, color: "#94a3b8", textTransform: "uppercase" }}>{l}</div>
+                    <div style={{ fontSize: 13.5, fontWeight: 800, color: "#0f172a" }}>{money(v)}</div>
+                  </div>
+                ))}
+              </div>
+            </>)}
+
+            {(sel.data_pericia || sel.hora_pericia || sel.local_pericia || sel.havera_pericia === "Sim" || sel.houve_pericia_medica === "Sim") && (<>
               <div style={{ fontSize: 11, fontWeight: 800, color: "#0f3171", textTransform: "uppercase", letterSpacing: ".4px", marginBottom: 6 }}>Perícia</div>
               <div style={{ marginBottom: 14, fontSize: 12.5, color: "#334155" }}>
                 <div>🔬 <b>{sel.data_pericia ? fmtDt(sel.data_pericia) : "Data a definir"}</b>{sel.hora_pericia ? ` · ${sel.hora_pericia.slice(0, 5)}` : ""}</div>
                 {sel.local_pericia && <div style={{ marginTop: 3, marginLeft: 18, color: "#475569" }}>📍 {sel.local_pericia}</div>}
+                {sel.houve_pericia_medica === "Sim" && (
+                  <div style={{ marginTop: 6, marginLeft: 18, display: "flex", gap: 14, flexWrap: "wrap", color: "#475569" }}>
+                    <span>🩺 Perito judicial <b style={{ color: "#0f172a" }}>{money(sel.valor_perito_judicial)}</b></span>
+                    <span>Assistente técnico/médico <b style={{ color: "#0f172a" }}>{money(sel.valor_assistente_tecnico)}</b></span>
+                  </div>
+                )}
               </div>
             </>)}
             <div style={{ fontSize: 11, fontWeight: 800, color: "#0f3171", textTransform: "uppercase", letterSpacing: ".4px", marginBottom: 6 }}>Comentários</div>
@@ -1035,10 +1191,17 @@ export default function Processos({ view = "processos" }: { view?: "dashboard" |
         </div>
       )}
 
-      {/* ── Modal Criar/Editar ── */}
+      {/* ── Modal Criar/Editar ──
+          Fecha SÓ no ✕ (ou em Cancelar, embaixo). O clique no fundo fechava um
+          formulário inteiro sem confirmar nada — e não era preciso mirar no
+          fundo para disparar: no "➕ Criar novo motivo…" o valor é digitado num
+          window.prompt, e o clique no OK do navegador chega à página depois que
+          a lista de opções já fechou, caindo sobre o fundo do modal. Resultado:
+          digitar o motivo novo derrubava o cadastro com tudo que já havia sido
+          preenchido. Sem o handler, não há como. */}
       {modal && (
-        <div className="jpr-ov" onClick={e => { if (e.target === e.currentTarget) setModal(false); }}>
-          <div className="jpr-modal" onClick={e => e.stopPropagation()}>
+        <div className="jpr-ov">
+          <div className="jpr-modal">
             <button onClick={() => setModal(false)} style={{ position: "absolute", top: 14, right: 16, border: "none", background: "none", fontSize: 20, color: "#94a3b8", cursor: "pointer" }}>✕</button>
             <div style={{ fontSize: 17, fontWeight: 800, marginBottom: 14 }}>{editNumero ? "Editar processo" : "Novo processo"}</div>
             <div className="jpr-grid2">
@@ -1111,6 +1274,62 @@ export default function Processos({ view = "processos" }: { view?: "dashboard" |
               {/* Textarea porque o local vem como endereço inteiro, com ponto de
                   encontro junto ("…Rua Felizardo, 750 — recepção principal"). */}
               <div className="jpr-fg"><label>Local da perícia</label><textarea className="jpr-fi" rows={2} style={{ resize: "vertical" }} value={form.local_pericia} onChange={e => setForm(v => ({ ...v, local_pericia: e.target.value }))} placeholder="Endereço e ponto de encontro" /></div>
+
+              {/* Perícia médica: os honorários só aparecem com "Sim", porque
+                  perícia contábil/de engenharia não tem perito médico nem
+                  assistente técnico, e campo de dinheiro à toa acaba preenchido. */}
+              <div className="jpr-grid2">
+                <div className="jpr-fg">
+                  <label>Houve perícia médica?</label>
+                  <select className="jpr-fi" value={form.houve_pericia_medica} onChange={e => setForm(v => ({ ...v, houve_pericia_medica: e.target.value }))}>
+                    {["Não", "Sim"].map(o => <option key={o}>{o}</option>)}
+                  </select>
+                </div>
+              </div>
+              {form.houve_pericia_medica === "Sim" && (
+                <div className="jpr-grid2">
+                  <div className="jpr-fg">
+                    <label>Perito judicial (R$)</label>
+                    <MoedaInput value={form.valor_perito_judicial} onChange={n => setForm(v => ({ ...v, valor_perito_judicial: n }))} />
+                  </div>
+                  <div className="jpr-fg">
+                    <label>Assistente técnico/médico (R$)</label>
+                    <MoedaInput value={form.valor_assistente_tecnico} onChange={n => setForm(v => ({ ...v, valor_assistente_tecnico: n }))} />
+                  </div>
+                </div>
+              )}
+            </>)}
+
+            {/* ── Recurso da condenação ── */}
+            <div style={{ fontSize: 11, fontWeight: 800, color: "#0f3171", textTransform: "uppercase", letterSpacing: ".4px", margin: "10px 0 6px" }}>Recurso</div>
+            <div className="jpr-grid2">
+              <div className="jpr-fg">
+                <label>A empresa vai recorrer?</label>
+                <select className="jpr-fi" value={form.vai_recorrer} onChange={e => setForm(v => ({ ...v, vai_recorrer: e.target.value }))}>
+                  {["Não", "Sim"].map(o => <option key={o}>{o}</option>)}
+                </select>
+              </div>
+            </div>
+            {form.vai_recorrer === "Sim" && (<>
+              <div className="jpr-grid2">
+                <div className="jpr-fg">
+                  <label>Custas recursais (R$)</label>
+                  <MoedaInput value={form.valor_custas_recursais} onChange={n => setForm(v => ({ ...v, valor_custas_recursais: n }))} />
+                </div>
+                <div className="jpr-fg">
+                  <label>Seguro garantia (R$)</label>
+                  <MoedaInput value={form.valor_seguro_garantia} onChange={n => setForm(v => ({ ...v, valor_seguro_garantia: n }))} />
+                </div>
+              </div>
+              {/* Depósito recursal é lançado por motivo, lá embaixo. Aqui vai só
+                  o total, em leitura: dois campos editáveis para o mesmo dinheiro
+                  entrariam duas vezes no custo final. */}
+              <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 8, flexWrap: "wrap", background: "#f8fafc", border: "1px solid #eef2f7", borderRadius: 9, padding: "8px 11px" }}>
+                <span style={{ fontSize: 11.5, color: "#64748b" }}>
+                  Depósito recursal <b style={{ color: "#0f172a" }}>{money(depositoRecursalTotal)}</b>
+                </span>
+                <span style={{ fontSize: 11, color: "#94a3b8" }}>lançado por motivo, em “Motivos e valores”</span>
+              </div>
             </>)}
 
             {/* Vínculo do reclamante com EMPREGADOS */}
@@ -1136,7 +1355,14 @@ export default function Processos({ view = "processos" }: { view?: "dashboard" |
                       <div key={k} onClick={() => setEmpSelKey(k)} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, padding: "8px 11px", borderTop: i ? "1px solid #f1f5f9" : "none", cursor: "pointer", background: on ? "#eff6ff" : "#fff" }}>
                         <div style={{ minWidth: 0 }}>
                           <div style={{ fontSize: 12.5, fontWeight: 700, color: "#0f172a" }}>{e["Nome"]}</div>
-                          <div style={{ fontSize: 11, color: "#94a3b8" }}>CPF {cpf || "—"} · {e["Situação"] || "—"} · {e["Descrição do Local"] || "—"}</div>
+                          {/* Contrato (Nome Filial) e posto (Descrição do Local)
+                              lado a lado: é o contrato que vai para o processo,
+                              e ver os dois evita confundir um com o outro. */}
+                          <div style={{ fontSize: 11, color: "#94a3b8" }}>
+                            CPF {cpf || "—"} · {e["Situação"] || "—"}
+                            {e["Nome Filial"] ? <> · contrato: <b style={{ color: "#64748b" }}>{e["Nome Filial"]}</b></> : ""}
+                            {e["Descrição do Local"] ? ` · posto: ${e["Descrição do Local"]}` : ""}
+                          </div>
                         </div>
                         {on && <button className="jpr-btn" onClick={ev => { ev.stopPropagation(); confirmarVinculo(e); }} style={{ background: "#15803d", color: "#fff", whiteSpace: "nowrap" }}>Confirmar vínculo</button>}
                       </div>
@@ -1181,22 +1407,52 @@ export default function Processos({ view = "processos" }: { view?: "dashboard" |
                 <div style={{ borderTop: "1px dashed #e2e8f0", marginTop: 9, paddingTop: 8 }}>
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
                     <span style={{ fontSize: 10, fontWeight: 800, color: "#64748b", textTransform: "uppercase", letterSpacing: ".4px" }}>
-                      Propostas do juiz {a.data ? `em ${fmtDt(a.data)}` : "nesta audiência"}
+                      Propostas {a.data ? `em ${fmtDt(a.data)}` : "nesta audiência"}
                     </span>
                     <button className="jpr-btn" onClick={() => addProposta(i)} style={{ background: "#eef4ff", color: "#0f3171", padding: "4px 9px" }}>+ Proposta</button>
                   </div>
                   {(a.propostas || []).length === 0
                     ? <div style={{ fontSize: 11, color: "#94a3b8", marginTop: 5 }}>Nenhuma proposta registrada para esta data.</div>
                     : (a.propostas || []).map((pr, j) => (
-                      <div key={j} className="jpr-prop">
+                      <div key={j} style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center", marginTop: 5 }}>
+                        <select className="jpr-fi" style={{ height: 34, width: 128 }} value={pr.quem} onChange={e => setProposta(i, j, { quem: e.target.value })}>
+                          {PROPOSTA_QUEM.map(o => <option key={o}>{o}</option>)}
+                        </select>
+                        <select className="jpr-fi" style={{ height: 34, width: 138 }} value={pr.tipo} onChange={e => setProposta(i, j, { tipo: e.target.value })}>
+                          {PROPOSTA_TIPOS.map(o => <option key={o}>{o}</option>)}
+                        </select>
                         <MoedaInput value={pr.valor} onChange={n => setProposta(i, j, { valor: n })} />
-                        <input className="jpr-fi" style={{ height: 34 }} placeholder="O que o juiz propôs nesta data" value={pr.descricao} onChange={e => setProposta(i, j, { descricao: e.target.value })} />
+                        <input className="jpr-fi" style={{ height: 34, flex: 1, minWidth: 160 }} placeholder="O que foi proposto nesta data" value={pr.descricao} onChange={e => setProposta(i, j, { descricao: e.target.value })} />
                         <button className="jpr-btn" onClick={() => delProposta(i, j)} style={{ background: "none", color: "#dc2626" }}>✕</button>
                       </div>
                     ))}
                 </div>
               </div>
             ))}
+            {/* Propostas que não saíram de audiência. Ficam fora do bloco de
+                audiências de propósito: elas não têm audiência a que pertencer,
+                e pendurá-las na mais próxima falsearia a data. */}
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", margin: "10px 0 6px" }}>
+              <div style={{ fontSize: 11, fontWeight: 800, color: "#0f3171", textTransform: "uppercase", letterSpacing: ".4px" }}>Propostas no decorrer do processo</div>
+              <button className="jpr-btn" onClick={addPropostaProc} style={{ background: "#eef4ff", color: "#0f3171", padding: "5px 10px" }}>+ Proposta</button>
+            </div>
+            {propostas.length === 0
+              ? <div style={{ fontSize: 11.5, color: "#94a3b8", marginBottom: 6 }}>Nenhuma proposta fora de audiência. As feitas em audiência ficam na audiência correspondente, acima.</div>
+              : propostas.map((pr, j) => (
+                <div key={j} style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center", marginBottom: 6 }}>
+                  <input className="jpr-fi" style={{ height: 34, width: 140 }} type="date" value={pr.data || ""} onChange={e => setPropostaProc(j, { data: e.target.value })} />
+                  <select className="jpr-fi" style={{ height: 34, width: 128 }} value={pr.quem} onChange={e => setPropostaProc(j, { quem: e.target.value })}>
+                    {PROPOSTA_QUEM.map(o => <option key={o}>{o}</option>)}
+                  </select>
+                  <select className="jpr-fi" style={{ height: 34, width: 138 }} value={pr.tipo} onChange={e => setPropostaProc(j, { tipo: e.target.value })}>
+                    {PROPOSTA_TIPOS.map(o => <option key={o}>{o}</option>)}
+                  </select>
+                  <MoedaInput value={pr.valor} onChange={n => setPropostaProc(j, { valor: n })} />
+                  <input className="jpr-fi" style={{ height: 34, flex: 1, minWidth: 160 }} placeholder="O que foi proposto" value={pr.descricao} onChange={e => setPropostaProc(j, { descricao: e.target.value })} />
+                  <button className="jpr-btn" onClick={() => delPropostaProc(j)} style={{ background: "none", color: "#dc2626" }}>✕</button>
+                </div>
+              ))}
+
             <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 12 }}>
               <button className="jpr-btn" onClick={() => setModal(false)} style={{ background: "#fff", border: "1px solid #e2e8f0", color: "#475569" }}>Cancelar</button>
               <button className="jpr-btn" onClick={salvar} style={{ background: "#0f3171", color: "#fff" }}>Salvar processo</button>

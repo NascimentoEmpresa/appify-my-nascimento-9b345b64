@@ -7,10 +7,11 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { ArrowLeft, Paperclip, Trash2, RotateCcw, FileText, Package, DollarSign, Tag, Image as ImageIcon, FileSpreadsheet, File as FileIcon } from "lucide-react";
+import { ArrowLeft, Paperclip, Trash2, RotateCcw, FileText, Package, DollarSign, Tag, Image as ImageIcon, FileSpreadsheet, File as FileIcon, Check, X, PenLine } from "lucide-react";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
 import { cn } from "@/lib/utils";
+import { useAuth } from "@/hooks/useAuth";
 import {
   useDespesa,
   useDespesaEventos,
@@ -18,6 +19,11 @@ import {
   useCancelarDespesa,
   useMandarParaAprovacaoNovamente,
   useContratosAtivos,
+  useAprovarDespesa,
+  useSolicitarAjusteDespesa,
+  useReprovarDespesa,
+  aprovadorDoNivel,
+  souAprovadorConfigurado,
   STATUS_LABEL,
   STATUS_BADGE_CLASS,
   STATUS_TERMINAIS,
@@ -39,24 +45,6 @@ const FORMA_PAGAMENTO_LABEL: Record<string, string> = {
   boleto: "Boleto",
   cartao: "Cartão",
   dinheiro: "Dinheiro",
-};
-
-const EVENTO_LABEL: Record<string, string> = {
-  criacao: "Criada",
-  edicao: "Editada",
-  aguardando_cotacao: "Aguardando cotação",
-  cotacao_realizada: "Cotação realizada",
-  cotacao_aprovada: "Cotação aprovada",
-  solicitacao_aprovada: "Solicitação aprovada",
-  solicitacao_reprovada: "Solicitação reprovada",
-  despesa_criada: "Despesa criada",
-  aprovacao_nivel: "Aprovado",
-  necessidade_de_ajuste: "Necessidade de ajuste",
-  reenvio_aprovacao: "Reenviada para aprovação",
-  aguardando_pagamento: "Aguardando pagamento",
-  despesa_paga: "Despesa paga",
-  despesa_reprovada: "Despesa reprovada",
-  cancelamento: "Cancelada",
 };
 
 async function abrirAnexo(path: string) {
@@ -105,15 +93,20 @@ function TileDestaque({ label, valor, icon, cor }: { label: string; valor: strin
 export default function DespesaVisualizar() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
+  const { user } = useAuth();
   const { data, isLoading } = useDespesa(id);
   const { data: eventos = [] } = useDespesaEventos(id);
   const { data: solicitanteNome } = useNomeUsuario(data?.despesa?.created_by);
   const { data: contratos = [] } = useContratosAtivos();
   const cancelar = useCancelarDespesa();
   const reenviar = useMandarParaAprovacaoNovamente();
+  const aprovar = useAprovarDespesa();
+  const solicitarAjuste = useSolicitarAjusteDespesa();
+  const reprovar = useReprovarDespesa();
 
   const [valorAprovado, setValorAprovado] = useState("");
   const [justificativa, setJustificativa] = useState("");
+  const [comentario, setComentario] = useState("");
   const [formaPagamento, setFormaPagamento] = useState("");
   const [informacoesPagamento, setInformacoesPagamento] = useState("");
   const [dataPagamento, setDataPagamento] = useState("");
@@ -122,6 +115,7 @@ export default function DespesaVisualizar() {
   const [ratearPor, setRatearPor] = useState<"percentual" | "valor">("percentual");
   const [linhasRateio, setLinhasRateio] = useState<RateioLinha[]>([]);
   const [enviando, setEnviando] = useState<"cancelar" | "reenviar" | null>(null);
+  const [acaoEmAndamento, setAcaoEmAndamento] = useState<"aprovar" | "reprovar" | "ajuste" | null>(null);
 
   const despesa = data?.despesa;
 
@@ -151,6 +145,89 @@ export default function DespesaVisualizar() {
 
   const bloqueado = STATUS_TERMINAIS.includes(despesa.status);
   const podeAgir = !bloqueado;
+
+  // Papéis do usuário logado em relação a esta despesa — SIS-2026-0132 Fase 1.
+  const souSolicitante = despesa.created_by === user?.id;
+  const souAprovadorNivelAtual =
+    despesa.status === "pendente_aprovacao" &&
+    despesa.nivel_aprovacao_atual != null &&
+    aprovadorDoNivel(despesa, despesa.nivel_aprovacao_atual) === user?.id;
+  const configurado = souAprovadorConfigurado(despesa, user?.id);
+  const podeReprovarComoAprovadorPassado =
+    configurado && ((despesa.status === "pendente_aprovacao" && !souAprovadorNivelAtual) || despesa.status === "aguardando_pagamento");
+  const souAprovadorVendoAjuste = despesa.status === "necessidade_de_ajuste" && configurado && !souSolicitante;
+  const proximoNivelConfigurado =
+    despesa.nivel_aprovacao_atual != null && despesa.nivel_aprovacao_atual < 3
+      ? aprovadorDoNivel(despesa, (despesa.nivel_aprovacao_atual + 1) as 1 | 2 | 3) != null
+      : false;
+
+  function validarAcaoAprovador(): string | null {
+    if (!formaPagamento) return "Selecione a forma de pagamento.";
+    if (!informacoesPagamento.trim()) return "Informe os dados de pagamento.";
+    if (!dataPagamento) return "Informe a data de pagamento.";
+    if (!competencia) return "Informe a competência.";
+    if (!valorAprovado || Number(valorAprovado) <= 0) return "Informe o valor aprovado.";
+    return null;
+  }
+
+  async function handleAprovar() {
+    const erro = validarAcaoAprovador();
+    if (erro) {
+      toast.error(erro);
+      return;
+    }
+    setAcaoEmAndamento("aprovar");
+    try {
+      await aprovar.mutateAsync({
+        id: despesa!.id,
+        nivelAtual: despesa!.nivel_aprovacao_atual!,
+        proximoNivelConfigurado,
+        valor_aprovado: Number(valorAprovado),
+        justificativa_aprovacao: justificativa || null,
+        forma_pagamento: formaPagamento,
+        informacoes_pagamento: informacoesPagamento,
+        data_pagamento: dataPagamento,
+        competencia,
+      });
+      toast.success(proximoNivelConfigurado ? "Aprovado — enviado pro próximo nível." : "Aprovado — aguardando pagamento.");
+    } catch (e: any) {
+      toast.error(e.message ?? "Erro ao aprovar despesa.");
+    } finally {
+      setAcaoEmAndamento(null);
+    }
+  }
+
+  async function handleSolicitarAjusteAprovador() {
+    if (!comentario.trim()) {
+      toast.error("Descreva o motivo do ajuste no campo Comentário.");
+      return;
+    }
+    setAcaoEmAndamento("ajuste");
+    try {
+      await solicitarAjuste.mutateAsync({ id: despesa!.id, motivo: comentario.trim() });
+      toast.success("Ajuste solicitado ao solicitante.");
+    } catch (e: any) {
+      toast.error(e.message ?? "Erro ao solicitar ajuste.");
+    } finally {
+      setAcaoEmAndamento(null);
+    }
+  }
+
+  async function handleReprovarAprovador() {
+    if (!comentario.trim()) {
+      toast.error("Descreva o motivo da reprovação no campo Comentário.");
+      return;
+    }
+    setAcaoEmAndamento("reprovar");
+    try {
+      await reprovar.mutateAsync({ id: despesa!.id, motivo: comentario.trim() });
+      toast.success("Despesa reprovada.");
+    } catch (e: any) {
+      toast.error(e.message ?? "Erro ao reprovar despesa.");
+    } finally {
+      setAcaoEmAndamento(null);
+    }
+  }
 
   async function handleCancelar() {
     setEnviando("cancelar");
@@ -199,7 +276,7 @@ export default function DespesaVisualizar() {
         module="Malote"
         breadcrumb={["Malote", "Despesa", "Visualizar"]}
         actions={
-          <Button variant="outline" onClick={() => navigate("/app/malote/meus-itens")}>
+          <Button variant="outline" onClick={() => navigate(-1)}>
             <ArrowLeft className="h-4 w-4 mr-2" /> Voltar
           </Button>
         }
@@ -323,30 +400,10 @@ export default function DespesaVisualizar() {
         </Card>
 
         <Card className="flex flex-col">
-          <CardContent className="p-4 flex flex-col flex-1 space-y-4">
-            <div>
-              <p className="text-sm font-semibold mb-1">Fluxo de Aprovação</p>
-              <FluxoAprovacaoVisual despesa={despesa} />
-            </div>
-
-            <div className="border-t border-border pt-3 flex-1 flex flex-col">
-              <p className="text-xs font-medium text-muted-foreground mb-3">Histórico detalhado</p>
-              <div className="flex-1 max-h-72 overflow-y-auto pr-1 space-y-3">
-                {eventos.map((ev) => (
-                  <div key={ev.id} className="flex items-start gap-3 text-sm">
-                    <div className="h-2 w-2 rounded-full bg-primary mt-1.5 shrink-0" />
-                    <div>
-                      <p className="font-medium">
-                        {EVENTO_LABEL[ev.tipo_evento] ?? ev.tipo_evento}
-                        {ev.nivel ? ` (Nível ${ev.nivel})` : ""}
-                      </p>
-                      {ev.descricao && <p className="text-muted-foreground text-xs">{ev.descricao}</p>}
-                      <p className="text-xs text-muted-foreground">{new Date(ev.created_at).toLocaleString("pt-BR")}</p>
-                    </div>
-                  </div>
-                ))}
-                {eventos.length === 0 && <p className="text-sm text-muted-foreground">Sem eventos registrados ainda.</p>}
-              </div>
+          <CardContent className="p-4 flex flex-col flex-1">
+            <p className="text-sm font-semibold mb-3">Fluxo de Aprovação</p>
+            <div className="flex-1 overflow-y-auto pr-1">
+              <FluxoAprovacaoVisual despesa={despesa} eventos={eventos} />
             </div>
           </CardContent>
         </Card>
@@ -413,7 +470,60 @@ export default function DespesaVisualizar() {
         </CardContent>
       </Card>
 
-      {podeAgir && (
+      {(souAprovadorNivelAtual || podeReprovarComoAprovadorPassado) && (
+        <Card>
+          <CardContent className="p-4 space-y-2">
+            <Label>Comentário</Label>
+            <textarea
+              value={comentario}
+              onChange={(e) => setComentario(e.target.value.slice(0, 500))}
+              placeholder="Motivo do ajuste ou da reprovação..."
+              className="w-full min-h-20 rounded-md border border-input bg-background p-2 text-sm"
+              maxLength={500}
+            />
+            <p className="text-xs text-muted-foreground text-right">{comentario.length}/500</p>
+          </CardContent>
+        </Card>
+      )}
+
+      {souAprovadorNivelAtual && (
+        <div className="flex justify-end gap-2">
+          <Button
+            variant="outline"
+            className="text-destructive border-destructive hover:bg-destructive/10 gap-1.5"
+            onClick={handleReprovarAprovador}
+            disabled={acaoEmAndamento !== null}
+          >
+            <X className="h-4 w-4" /> {acaoEmAndamento === "reprovar" ? "Reprovando..." : "Reprovar despesa"}
+          </Button>
+          <Button
+            variant="outline"
+            className="text-amber-700 border-amber-400 hover:bg-amber-50 gap-1.5"
+            onClick={handleSolicitarAjusteAprovador}
+            disabled={acaoEmAndamento !== null}
+          >
+            <PenLine className="h-4 w-4" /> {acaoEmAndamento === "ajuste" ? "Enviando..." : "Solicitar ajuste"}
+          </Button>
+          <Button className="gap-1.5" onClick={handleAprovar} disabled={acaoEmAndamento !== null}>
+            <Check className="h-4 w-4" /> {acaoEmAndamento === "aprovar" ? "Aprovando..." : "Aprovar despesa"}
+          </Button>
+        </div>
+      )}
+
+      {!souAprovadorNivelAtual && podeReprovarComoAprovadorPassado && (
+        <div className="flex justify-end gap-2">
+          <Button
+            variant="outline"
+            className="text-destructive border-destructive hover:bg-destructive/10 gap-1.5"
+            onClick={handleReprovarAprovador}
+            disabled={acaoEmAndamento !== null}
+          >
+            <X className="h-4 w-4" /> {acaoEmAndamento === "reprovar" ? "Reprovando..." : "Reprovar despesa"}
+          </Button>
+        </div>
+      )}
+
+      {!souAprovadorNivelAtual && !podeReprovarComoAprovadorPassado && !souAprovadorVendoAjuste && souSolicitante && podeAgir && (
         <div className="flex justify-end gap-2">
           <Button variant="outline" className="text-destructive border-destructive hover:bg-destructive/10 gap-1.5" onClick={handleCancelar} disabled={enviando !== null}>
             <Trash2 className="h-4 w-4" /> {enviando === "cancelar" ? "Cancelando..." : "Cancelar despesa"}

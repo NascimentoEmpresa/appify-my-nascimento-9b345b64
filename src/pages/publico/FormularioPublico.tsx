@@ -18,6 +18,7 @@ interface Form {
   coleta_identificacao: boolean; imagem_capa_url?: string | null;
   pergunta_setor_id?: string | null; pergunta_nome_id?: string | null; setores_acesso?: string[] | null;
   seguranca?: "liberado" | "restrito"; exige_senha?: boolean;
+  permite_anonimo?: boolean; intervalo_horas?: number | null;
 }
 interface Perg {
   id: string; tipo: string; titulo: string; descricao?: string | null;
@@ -30,6 +31,14 @@ const ESCALAS_TRABALHO = ["12x36", "8 horas", "6 horas", "4 horas", "Escala 5x2"
 const ACCEPT_ANEXO = ".pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.csv,.zip,image/*";
 
 const fmtDt = (s?: string | null) => { if (!s) return ""; const d = new Date(s); return isNaN(+d) ? "" : d.toLocaleString("pt-BR", { dateStyle: "short", timeStyle: "short" }); };
+/** "24" horas vira "1 dia"; 36 vira "36 horas" - só arredonda o que é redondo. */
+const fmtIntervalo = (h?: number | null) => {
+  if (!h) return "período";
+  if (h % 24 === 0) { const d = h / 24; return d === 1 ? "1 dia" : `${d} dias`; }
+  return h === 1 ? "1 hora" : `${h} horas`;
+};
+/** Nome comparável (sem acento, sem caixa, sem espaço sobrando). */
+const normNome = (s?: string | null) => String(s ?? "").normalize("NFD").replace(/[̀-ͯ]/g, "").trim().toUpperCase();
 const card: React.CSSProperties = { background: "#fff", border: "1px solid #e2e8f0", borderRadius: 16, padding: "18px 20px", boxShadow: "0 10px 30px rgba(15,23,42,.07)" };
 const inp: React.CSSProperties = { border: "1px solid #cbd5e1", borderRadius: 10, padding: "10px 12px", fontSize: 14, outline: "none", fontFamily: "inherit", width: "100%", background: "#fff" };
 
@@ -68,6 +77,20 @@ function AnimStyles() {
     .fp-scale-btn { transition: transform .15s ease, background .15s ease, border-color .15s ease, color .15s ease, box-shadow .15s ease; }
     .fp-scale-btn:hover { transform: translateY(-3px); box-shadow: 0 8px 18px rgba(15,49,113,.18); }
     .fp-spin { animation: fpSpin .8s linear infinite; display:inline-block; }
+    /* Pergunta "colegas": tabela no desktop, cartões empilhados no celular. */
+    /* setor · colega · avaliação · comentário · lixeira */
+    .fp-cg { --cg: minmax(130px,1fr) minmax(170px,1.35fr) auto minmax(170px,1.4fr) 26px; }
+    .fp-cg-head { display:grid; grid-template-columns: var(--cg); gap:10px; align-items:end; padding-bottom:7px; border-bottom:1px solid #e2e8f0; }
+    .fp-cg-th { font-size:11px; font-weight:800; color:#475569; text-transform:uppercase; letter-spacing:.4px; }
+    .fp-cg-row { display:grid; grid-template-columns: var(--cg); gap:10px; align-items:start; padding:11px 0; border-bottom:1px solid #f1f5f9; }
+    .fp-cg-lbl { display:none; }
+    .fp-star { transition: transform .12s ease; }
+    .fp-cg button:hover .fp-star { transform: scale(1.18); }
+    @media (max-width: 760px) {
+      .fp-cg-head { display:none; }
+      .fp-cg-row { grid-template-columns: 1fr; gap:9px; border:1px solid #e2e8f0; border-radius:12px; padding:12px; margin-bottom:10px; }
+      .fp-cg-lbl { display:block; font-size:10.5px; font-weight:800; color:#94a3b8; text-transform:uppercase; letter-spacing:.4px; margin-bottom:4px; }
+    }
     @media (prefers-reduced-motion: reduce) { .fp-in,.fp-blob,.fp-side,.fp-particle,.fp-submit::after { animation: none !important; } .fp-in { opacity:1 !important; } .fp-particle { display:none; } }
   `}</style>;
 }
@@ -282,6 +305,251 @@ function ColaboradorSelect({ value, onChange }: { value: string; onChange: (v: s
   );
 }
 
+// =====================================================================
+// Pergunta "colegas": uma linha por colega indicado — colega + setor +
+// nota + comentário. As regras vêm da config da pergunta (min/max, 1 por
+// setor, não pode ser você) e são as MESMAS que o trigger do banco aplica
+// no INSERT: aqui elas guiam, lá elas decidem.
+// =====================================================================
+interface LinhaColega { colaborador?: string; setor?: string; nota?: number | null; comentario?: string }
+
+/** Linhas efetivamente preenchidas (a que tem colega escolhido). */
+const linhasColegas = (v: any): LinhaColega[] =>
+  (Array.isArray(v) ? v : []).filter((l: any) => l && String(l?.colaborador ?? "").trim() !== "");
+
+/** Pergunta respondida? A de colegas conta LINHAS preenchidas — o array dela
+ *  nasce com linhas em branco na tela e "tem array" não quer dizer respondida. */
+const respondida = (p: { tipo: string }, v: any) =>
+  p.tipo === "colegas"
+    ? linhasColegas(v).length > 0
+    : !(v == null || v === "" || (Array.isArray(v) && v.length === 0));
+
+/** Setores do cadastro (RPC cs_form_setores). Uma carga por sessão.
+ *
+ *  Por que RPC e não ler a view: o DISTINCT tem que sair do BANCO. Lendo a
+ *  VW_EMPREGADOS_BASICO e distinguindo aqui, o PostgREST cortava a resposta
+ *  (max-rows) e, como um setor sozinho tem centenas de pessoas, sobravam 6
+ *  dos 14 setores — os pequenos (SISTEMAS, JURIDICO, SST…) sumiam da lista. */
+let setoresPromise: Promise<string[]> | null = null;
+const carregarSetores = (): Promise<string[]> => {
+  if (!setoresPromise) setoresPromise = (async () => {
+    const { data, error } = await (supabase as any).rpc("cs_form_setores");
+    if (!error && Array.isArray(data)) return data.map((r: any) => String(r.setor ?? "").trim()).filter(Boolean);
+    // Banco sem a RPC ainda: volta pro jeito antigo (sujeito ao corte acima).
+    const { data: linhas } = await (supabase as any).from("VW_EMPREGADOS_BASICO").select('"Setor_ERP","Situação"').limit(20000);
+    const set = new Set<string>();
+    (linhas ?? []).forEach((r: any) => {
+      if (/demitid/i.test(String(r["Situação"] ?? ""))) return;
+      const s = String(r["Setor_ERP"] ?? "").trim();
+      if (s) set.add(s);
+    });
+    return [...set].sort((a, b) => a.localeCompare(b, "pt-BR"));
+  })().catch(() => []);
+  return setoresPromise;
+};
+
+/** Colegas de um setor (RPC cs_form_colegas). Cache por setor — trocar de
+ *  linha ou reabrir o mesmo setor não bate no banco de novo. */
+export interface Colega { id: number; nome: string; setor: string; cargo: string }
+const colegasCache = new Map<string, Promise<Colega[]>>();
+const carregarColegas = (setor: string): Promise<Colega[]> => {
+  const chave = normNome(setor);
+  let p = colegasCache.get(chave);
+  if (!p) {
+    p = (async () => {
+      const { data, error } = await (supabase as any).rpc("cs_form_colegas", { _setor: setor });
+      if (!error && Array.isArray(data)) {
+        return data.map((r: any) => ({ id: Number(r.id), nome: String(r.nome ?? "").trim(), setor: String(r.setor ?? "").trim(), cargo: String(r.cargo ?? "").trim() }))
+          .filter((c: Colega) => c.nome);
+      }
+      // Banco sem a RPC: lê a view filtrando pelo setor (resultado pequeno).
+      const { data: linhas } = await (supabase as any).from("VW_EMPREGADOS_BASICO")
+        .select('"ID","Nome","Setor_ERP","Título do Cargo","Situação"').eq("Setor_ERP", setor).order('"Nome"').limit(1000);
+      return (linhas ?? [])
+        .filter((r: any) => !/demitid/i.test(String(r["Situação"] ?? "")))
+        .map((r: any) => ({ id: Number(r["ID"]), nome: String(r["Nome"] ?? "").trim(), setor: String(r["Setor_ERP"] ?? "").trim(), cargo: String(r["Título do Cargo"] ?? "").trim() }))
+        .filter((c: Colega) => c.nome);
+    })().catch(() => [] as Colega[]);
+    colegasCache.set(chave, p);
+  }
+  return p;
+};
+
+/** Lista de colegas DO SETOR escolhido. O setor vem primeiro justamente para
+ *  esta lista existir: sem ele não há quem listar. Já sai com os vetos —
+ *  fora o próprio respondente e quem foi indicado em outra linha. */
+function ColegaSelect({ value, setor, vetados, onChange }: {
+  value: string; setor: string; vetados: Set<string>;
+  onChange: (nome: string) => void;
+}) {
+  const [colegas, setColegas] = useState<Colega[] | null>(null);
+
+  useEffect(() => {
+    if (!setor) { setColegas(null); return; }
+    let vivo = true;
+    setColegas(null);
+    carregarColegas(setor).then(cs => { if (vivo) setColegas(cs); });
+    return () => { vivo = false; };
+  }, [setor]);
+
+  const disponiveis = (colegas ?? []).filter(c => !vetados.has(normNome(c.nome)) || normNome(c.nome) === normNome(value));
+  const carregando = !!setor && colegas === null;
+
+  return (
+    <select value={value || ""} disabled={!setor || carregando} onChange={e => onChange(e.target.value)}
+      style={{ ...inp, padding: "9px 11px", fontSize: 13.5, background: setor ? "#fff" : "#f8fafc", color: setor ? "#0f172a" : "#94a3b8" }}>
+      <option value="">
+        {!setor ? "Escolha o setor primeiro…"
+          : carregando ? "Carregando colegas…"
+            : disponiveis.length === 0 ? "Nenhum colega disponível neste setor"
+              : "Selecione um colega…"}
+      </option>
+      {disponiveis.map(c => (
+        <option key={c.id} value={c.nome}>{c.cargo ? `${c.nome} — ${c.cargo}` : c.nome}</option>
+      ))}
+    </select>
+  );
+}
+
+/** Estrelas de 1 a `max`. Clicar na nota já marcada limpa (dá p/ desfazer). */
+function Estrelas({ nota, max, onChange }: { nota?: number | null; max: number; onChange: (n: number | null) => void }) {
+  const ns: number[] = []; for (let n = 1; n <= max; n++) ns.push(n);
+  return (
+    <div style={{ display: "flex", gap: 2, flexWrap: "wrap" }}>
+      {ns.map(n => {
+        const on = (nota ?? 0) >= n;
+        return (
+          <button key={n} type="button" onClick={() => onChange(nota === n ? null : n)} title={`Nota ${n}`}
+            style={{ background: "none", border: "none", cursor: "pointer", padding: "0 2px", display: "flex", flexDirection: "column", alignItems: "center", lineHeight: 1 }}>
+            <span className="fp-star" style={{ fontSize: 21, color: on ? "#f59e0b" : "#cbd5e1" }}>{on ? "★" : "☆"}</span>
+            <span style={{ fontSize: 9.5, color: "#94a3b8", marginTop: 1 }}>{n}</span>
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+function ColegasGrid({ p, valor, onChange, meuNome }: {
+  p: Perg; valor: any; onChange: (linhas: LinhaColega[]) => void; meuNome: string;
+}) {
+  const [setores, setSetores] = useState<string[]>([]);
+  useEffect(() => { let vivo = true; carregarSetores().then(s => { if (vivo) setSetores(s); }); return () => { vivo = false; }; }, []);
+
+  const cfg = p.config ?? {};
+  const escalaMax = Math.max(2, Number(cfg.escala_max ?? 5));
+  const min = Math.max(0, Number(cfg.min_colegas ?? 0));
+  const max = Math.max(0, Number(cfg.max_colegas ?? 0));
+  const umPorSetor = !!cfg.setores_distintos;
+  const excluirProprio = cfg.excluir_proprio !== false;
+  const rotComentario = cfg.comentario_rotulo || "Comentário";
+  const descComentario = cfg.comentario_desc || "";
+  const phComentario = cfg.comentario_placeholder || "Escreva aqui (opcional)…";
+
+  // Sempre pelo menos 1 linha na tela (e o mínimo pedido, quando houver).
+  const guardadas: LinhaColega[] = Array.isArray(valor) ? valor : [];
+  const linhas = guardadas.length ? guardadas : Array.from({ length: Math.max(1, min) }, () => ({} as LinhaColega));
+
+  const mudaLinha = (i: number, patch: Partial<LinhaColega>) =>
+    onChange(linhas.map((l, j) => (j === i ? { ...l, ...patch } : l)));
+  const removeLinha = (i: number) => {
+    const restante = linhas.filter((_, j) => j !== i);
+    onChange(restante.length ? restante : [{}]);
+  };
+  const addLinha = () => onChange([...linhas, {}]);
+
+  const preenchidas = linhasColegas(linhas).length;
+  const noTeto = max > 0 && linhas.length >= max;
+
+  return (
+    <div className="fp-cg">
+      <div className="fp-cg-head">
+        {/* Setor primeiro: é ele que define de quem é a lista de colegas. */}
+        <span className="fp-cg-th">Setor</span>
+        <span className="fp-cg-th">Colega</span>
+        <span className="fp-cg-th">
+          Avaliação
+          {(cfg.rotulo_min || cfg.rotulo_max) && (
+            <span style={{ display: "block", fontWeight: 500, color: "#94a3b8", textTransform: "none", letterSpacing: 0, fontSize: 10.5 }}>
+              1 ({cfg.rotulo_min || "baixo"}) a {escalaMax} ({cfg.rotulo_max || "excelente"})
+            </span>
+          )}
+        </span>
+        <span className="fp-cg-th">
+          {rotComentario} {!cfg.comentario_obrigatorio && <span style={{ fontWeight: 500, color: "#94a3b8" }}>(opcional)</span>}
+          {descComentario && <span style={{ display: "block", fontWeight: 500, color: "#94a3b8", textTransform: "none", letterSpacing: 0, fontSize: 10.5 }}>{descComentario}</span>}
+        </span>
+        <span />
+      </div>
+
+      {linhas.map((l, i) => {
+        // Vetos desta linha: eu mesmo, os colegas já escolhidos nas outras
+        // linhas e, com "1 por setor", os setores que as outras já ocuparam.
+        const vetados = new Set<string>();
+        if (excluirProprio && meuNome) vetados.add(normNome(meuNome));
+        linhas.forEach((o, j) => { if (j !== i && o.colaborador) vetados.add(normNome(o.colaborador)); });
+        const setoresVetados = new Set<string>();
+        if (umPorSetor) linhas.forEach((o, j) => { if (j !== i && o.setor) setoresVetados.add(normNome(o.setor)); });
+        const setoresLivres = setores.filter(s => !setoresVetados.has(normNome(s)));
+        return (
+          <div key={i} className="fp-cg-row">
+            <div>
+              <span className="fp-cg-lbl">Setor</span>
+              <select value={l.setor ?? ""}
+                onChange={e => {
+                  // Trocar o setor limpa o colega: ele era de outro setor.
+                  mudaLinha(i, { setor: e.target.value, colaborador: "" });
+                }}
+                style={{ ...inp, padding: "9px 11px", fontSize: 13.5 }}>
+                <option value="">{setores.length ? "Selecione o setor…" : "Carregando setores…"}</option>
+                {/* o setor já escolhido nesta linha continua na lista (senão o
+                    próprio veto de "1 por setor" apagaria a escolha dela) */}
+                {[...new Set([...(l.setor ? [l.setor] : []), ...setoresLivres])]
+                  .sort((a, b) => a.localeCompare(b, "pt-BR"))
+                  .map(s => <option key={s} value={s}>{s}</option>)}
+              </select>
+            </div>
+            <div>
+              <span className="fp-cg-lbl">Colega</span>
+              <ColegaSelect value={l.colaborador ?? ""} setor={l.setor ?? ""} vetados={vetados}
+                onChange={nome => mudaLinha(i, { colaborador: nome })} />
+            </div>
+            <div>
+              <span className="fp-cg-lbl">Avaliação</span>
+              <Estrelas nota={l.nota} max={escalaMax} onChange={n => mudaLinha(i, { nota: n })} />
+            </div>
+            <div>
+              <span className="fp-cg-lbl">{rotComentario}</span>
+              <textarea value={l.comentario ?? ""} onChange={e => mudaLinha(i, { comentario: e.target.value })}
+                rows={2} placeholder={phComentario} style={{ ...inp, padding: "8px 10px", fontSize: 13, resize: "vertical" }} />
+            </div>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "flex-end" }}>
+              <button type="button" onClick={() => removeLinha(i)} title="Remover esta linha"
+                style={{ background: "none", border: "none", color: "#dc2626", fontSize: 16, cursor: "pointer", padding: 4 }}>🗑</button>
+            </div>
+          </div>
+        );
+      })}
+
+      <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", marginTop: 10 }}>
+        <button type="button" onClick={addLinha} disabled={noTeto}
+          style={{ padding: "8px 14px", borderRadius: 10, border: "1px dashed #93c5fd", background: noTeto ? "#f8fafc" : "#f0f7ff", color: noTeto ? "#cbd5e1" : "#0f3171", fontSize: 12.5, fontWeight: 700, cursor: noTeto ? "default" : "pointer" }}>
+          + Adicionar outro colega
+        </button>
+        <span style={{ fontSize: 11.5, color: "#94a3b8" }}>
+          {preenchidas} indicado(s){min ? ` · mínimo ${min}` : ""}{max ? ` · máximo ${max}` : ""}
+        </span>
+      </div>
+
+      {(umPorSetor || (excluirProprio && meuNome)) && (
+        <div style={{ fontSize: 11.5, color: "#0369a1", background: "#f0f7ff", border: "1px solid #dbeafe", borderRadius: 9, padding: "7px 10px", marginTop: 8 }}>
+          ℹ️ {[umPorSetor ? "Cada setor pode receber apenas 1 indicação" : "", excluirProprio && meuNome ? "você não aparece na lista" : ""].filter(Boolean).join(" · ")}.
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function FormularioPublico() {
   const { slug } = useParams();
   const { user, loading: authLoading } = useAuth();
@@ -309,6 +577,10 @@ export default function FormularioPublico() {
   const [outroTxt, setOutroTxt] = useState<Record<string, string>>({});
   const [faltando, setFaltando] = useState<Set<string>>(new Set());  // obrigatórias vazias no envio
   const [anexando, setAnexando] = useState<Record<string, boolean>>({});  // upload de anexo em curso
+  const [anonimo, setAnonimo] = useState(false);   // escolha do respondente (só se o form permite)
+  // Intervalo entre respostas (cs_form_prazo): quando já respondeu há pouco, a
+  // tela explica quando libera - a trava de verdade é a policy de INSERT.
+  const [prazo, setPrazo] = useState<{ pode: boolean; proxima_em?: string | null; intervalo_horas?: number | null } | null>(null);
 
   // Upload de anexo do respondente (bucket cs-formularios; anon liberado pela
   // migration). Devolve a URL pública ou null (com aviso).
@@ -364,6 +636,16 @@ export default function FormularioPublico() {
         } catch { setSenhaOk(false); }
       } else setSenhaOk(true);
     } else { setPodeResponder(true); setSenhaOk(true); }
+
+    // 5. Intervalo entre respostas: só faz sentido para quem está logado (é o
+    //    login que identifica quem já respondeu). Banco antigo sem a RPC =
+    //    segue sem limite.
+    if (user) {
+      try {
+        const { data: pz } = await (supabase as any).rpc("cs_form_prazo", { _form_id: f.id });
+        setPrazo(pz ?? null);
+      } catch { setPrazo(null); }
+    } else setPrazo(null);
     setLoading(false);
   }, [slug, user, authLoading]);
   useEffect(() => { load(); }, [load]);
@@ -422,6 +704,14 @@ export default function FormularioPublico() {
       </Aviso>
     );
   }
+  // Já respondeu e o formulário tem intervalo mínimo: mostra quando libera.
+  if (prazo && prazo.pode === false) {
+    const quando = prazo.proxima_em ? fmtDt(prazo.proxima_em) : "";
+    return <Aviso emoji="⏱" titulo="Você já respondeu este formulário"
+      texto={quando
+        ? `Este formulário aceita uma resposta a cada ${fmtIntervalo(prazo.intervalo_horas)}. Você poderá responder de novo a partir de ${quando}.`
+        : `Este formulário aceita uma resposta a cada ${fmtIntervalo(prazo.intervalo_horas)}.`} />;
+  }
   if (enviado) return <SuccessScreen />;
 
   const setVal = (pid: string, v: any) => {
@@ -441,12 +731,47 @@ export default function FormularioPublico() {
   };
   const pergsVisiveis = pergs.filter(perguntaVisivel);
 
+  // Erro da pergunta de colegas, na ordem em que a pessoa entende: primeiro o
+  // que falta, depois o que está repetido. As mesmas regras rodam no banco -
+  // aqui é para não deixar o envio falhar com a mensagem crua do Postgres.
+  const erroColegas = (p: Perg): string | null => {
+    const cfg = p.config ?? {};
+    const linhas = linhasColegas(valores[p.id]);
+    const min = Math.max(0, Number(cfg.min_colegas ?? 0));
+    const max = Math.max(0, Number(cfg.max_colegas ?? 0));
+    const nome0 = `"${p.titulo}"`;
+    if (linhas.length < min) return `Em ${nome0}: indique pelo menos ${min} colega(s). Você indicou ${linhas.length}.`;
+    if (max > 0 && linhas.length > max) return `Em ${nome0}: no máximo ${max} colega(s).`;
+    if (cfg.excluir_proprio !== false && empregado?.nome && linhas.some(l => normNome(l.colaborador) === normNome(empregado.nome)))
+      return `Em ${nome0}: você não pode indicar a si mesmo.`;
+    const nomes = linhas.map(l => normNome(l.colaborador));
+    const repetido = nomes.find((n, i) => nomes.indexOf(n) !== i);
+    if (repetido) return `Em ${nome0}: ${linhas.find(l => normNome(l.colaborador) === repetido)?.colaborador} foi indicado(a) mais de uma vez.`;
+    if (cfg.setores_distintos) {
+      // Sem setor não dá para garantir "1 por setor" - aí ele passa a ser
+      // obrigatório (fora dessa regra, colega sem setor no cadastro passa).
+      const semSetor = linhas.find(l => !String(l.setor ?? "").trim());
+      if (semSetor) return `Em ${nome0}: informe o setor de ${semSetor.colaborador}.`;
+      const setores = linhas.map(l => normNome(l.setor));
+      const set2 = setores.find((s, i) => setores.indexOf(s) !== i);
+      if (set2) return `Em ${nome0}: só é possível indicar 1 colega por setor (${linhas.find(l => normNome(l.setor) === set2)?.setor} repetido).`;
+    }
+    if (cfg.nota_obrigatoria) {
+      const semNota = linhas.find(l => l.nota == null);
+      if (semNota) return `Em ${nome0}: dê uma nota para ${semNota.colaborador}.`;
+    }
+    if (cfg.comentario_obrigatorio) {
+      const semCom = linhas.find(l => !String(l.comentario ?? "").trim());
+      if (semCom) return `Em ${nome0}: escreva o comentário sobre ${semCom.colaborador}.`;
+    }
+    return null;
+  };
+
   const enviar = async () => {
     // Junta TODAS as obrigatórias vazias p/ destacar de uma vez e levar à primeira.
     const faltantes = pergsVisiveis.filter(p => {
       if (p.tipo === "texto_info" || !p.obrigatoria) return false;
-      const v = valores[p.id];
-      return v == null || v === "" || (Array.isArray(v) && v.length === 0);
+      return !respondida(p, valores[p.id]);
     });
     if (faltantes.length) {
       setFaltando(new Set(faltantes.map(p => p.id)));
@@ -454,41 +779,72 @@ export default function FormularioPublico() {
       document.getElementById(`perg-${faltantes[0].id}`)?.scrollIntoView({ behavior: "smooth", block: "center" });
       return;
     }
-    if (form.coleta_identificacao && !empregado && !nome.trim()) { setErro("Informe seu nome."); return; }
+    // Regras das perguntas de colegas (mínimo, 1 por setor, não pode ser você…).
+    for (const p of pergsVisiveis.filter(p => p.tipo === "colegas")) {
+      const msg = erroColegas(p);
+      if (msg) {
+        setFaltando(new Set([p.id]));
+        setErro(msg);
+        document.getElementById(`perg-${p.id}`)?.scrollIntoView({ behavior: "smooth", block: "center" });
+        return;
+      }
+    }
+    if (form.coleta_identificacao && !empregado && !anonimo && !nome.trim()) { setErro("Informe seu nome."); return; }
     setEnviando(true);
+    // Perguntas de colegas: guarda só as linhas preenchidas, já limpas (as
+    // linhas em branco da tela não viram resposta).
+    const itens: Record<string, any> = { ...valores };
+    pergsVisiveis.filter(p => p.tipo === "colegas").forEach(p => {
+      if (itens[p.id] === undefined) return;
+      itens[p.id] = linhasColegas(itens[p.id]).map(l => ({
+        colaborador: String(l.colaborador ?? "").trim(),
+        setor: String(l.setor ?? "").trim() || null,
+        nota: l.nota ?? null,
+        comentario: String(l.comentario ?? "").trim() || null,
+      }));
+    });
     // Cadastro do respondente (logado): puxa nome/setor/cargo/... do EMPREGADOS
     // e anexa como snapshot - o botão "Detalhes" na tela de respostas mostra tudo.
-    const cadastro = empregado ? {
+    const cadastroCompleto = empregado ? {
       id: empregado.id, nome: empregado.nome, cpf: empregado.cpf, cargo: empregado.cargo,
       setor: empregado.setor, perfil: empregado.perfil, lider: empregado.lider,
       situacao: empregado.situacao, admissao: empregado.admissao,
       empresa: empregado.empresa, filial: empregado.filial, email: empregado.email,
     } : null;
+    // Escolheu anônimo: nada que identifique vai junto. O banco reforça isso
+    // (o trigger apaga criado_por/nome/e-mail/cadastro), mas nem enviar a gente
+    // envia. O SETOR continua indo — é dele que vivem os painéis e ele não
+    // aponta para ninguém.
+    const cadastro = anonimo ? null : cadastroCompleto;
     // Setor (p/ Administrativo × Operacional): cadastro tem prioridade; senão o
     // valor da pergunta de setor indicada no formulário.
     const setorRaw = form.pergunta_setor_id ? valores[form.pergunta_setor_id] : null;
     const setorPergunta = Array.isArray(setorRaw) ? (setorRaw[0] ? String(setorRaw[0]).trim() : null) : (setorRaw != null && setorRaw !== "" ? String(setorRaw).trim() : null);
-    const setor = (cadastro?.setor?.trim() || setorPergunta) || null;
+    const setor = (cadastroCompleto?.setor?.trim() || setorPergunta) || null;
     // Nome de quem respondeu: cadastro > campo de identificação > pergunta que
     // identifica o respondente (pergunta_nome_id) — senão fica anônimo.
     const nomeRaw = form.pergunta_nome_id ? valores[form.pergunta_nome_id] : null;
     const nomePergunta = Array.isArray(nomeRaw) ? (nomeRaw[0] ? String(nomeRaw[0]).trim() : "") : (nomeRaw != null ? String(nomeRaw).trim() : "");
-    const nomeResp = cadastro?.nome?.trim() || (form.coleta_identificacao ? nome.trim() : "") || nomePergunta || null;
-    const emailResp = cadastro?.email?.trim() || (form.coleta_identificacao ? email.trim() : "") || null;
+    const nomeResp = anonimo ? null : (cadastro?.nome?.trim() || (form.coleta_identificacao ? nome.trim() : "") || nomePergunta || null);
+    const emailResp = anonimo ? null : (cadastro?.email?.trim() || (form.coleta_identificacao ? email.trim() : "") || null);
     // criado_por é carimbado pelo default do banco (auth.uid()) quando quem envia
     // está logado; anônimo (link público sem login) fica sem dono. Quem não bate
     // por criado_por é reconhecido pela identidade do cadastro na leitura das
     // respostas (cs_form_minha_resposta), então não precisa setar aqui.
     const duracao_seg = Math.max(0, Math.round((Date.now() - abertoEm.current) / 1000));  // tempo de conclusão
-    const base = { formulario_id: form.id, respondente_nome: nomeResp, respondente_email: emailResp, itens: valores };
-    let { error } = await (supabase as any).from("CS_FORM_RESPOSTAS").insert({ ...base, setor, respondente_cadastro: cadastro, duracao_seg });
-    // Banco ainda sem as colunas novas (setor/cadastro/duração): reenvia só o básico.
+    const base = { formulario_id: form.id, respondente_nome: nomeResp, respondente_email: emailResp, itens };
+    let { error } = await (supabase as any).from("CS_FORM_RESPOSTAS").insert({ ...base, setor, respondente_cadastro: cadastro, duracao_seg, anonimo });
+    // Banco ainda sem as colunas novas (setor/cadastro/duração/anônimo): reenvia só o básico.
     if (error && /column|schema cache/i.test(error.message)) ({ error } = await (supabase as any).from("CS_FORM_RESPOSTAS").insert(base));
     setEnviando(false);
     if (error) {
-      setErro(/row-level security/i.test(error.message)
-        ? "Este formulário não está mais aceitando respostas (prazo ou limite atingido)."
-        : "Erro ao enviar: " + error.message);
+      // As regras do banco (trigger) já falam português — mostra a mensagem
+      // como veio em vez de "Erro ao enviar: ...".
+      const daRegra = /^(Em "|Este formulário não aceita)/.test(error.message ?? "");
+      setErro(daRegra ? error.message
+        : /row-level security/i.test(error.message)
+          ? "Este formulário não está aceitando a sua resposta agora (prazo, limite de respostas ou intervalo entre respostas)."
+          : "Erro ao enviar: " + error.message);
       return;
     }
     setEnviado(true);
@@ -496,7 +852,7 @@ export default function FormularioPublico() {
 
   // Progresso: quantas perguntas (fora as informativas) já foram respondidas.
   const perguntasContaveis = pergsVisiveis.filter(p => p.tipo !== "texto_info");
-  const respondidas = perguntasContaveis.filter(p => { const v = valores[p.id]; return !(v == null || v === "" || (Array.isArray(v) && v.length === 0)); }).length;
+  const respondidas = perguntasContaveis.filter(p => respondida(p, valores[p.id])).length;
   const pct = perguntasContaveis.length ? Math.round((respondidas / perguntasContaveis.length) * 100) : 0;
 
   return (
@@ -535,9 +891,13 @@ export default function FormularioPublico() {
                 </span>
               ) : null)}
             </div>
-            <div style={{ fontSize: 11.5, color: "#94a3b8", marginTop: 8 }}>Seus dados de cadastro são anexados automaticamente à resposta - não precisa preencher de novo.</div>
+            <div style={{ fontSize: 11.5, color: anonimo ? "#a16207" : "#94a3b8", marginTop: 8 }}>
+              {anonimo
+                ? "Você escolheu responder de forma anônima: nada disso será enviado junto da resposta."
+                : "Seus dados de cadastro são anexados automaticamente à resposta - não precisa preencher de novo."}
+            </div>
           </div>
-        ) : form.coleta_identificacao ? (
+        ) : form.coleta_identificacao && !anonimo ? (
           <div className="fp-in fp-card-h" style={{ ...card, animationDelay: ".08s" }}>
             <div style={{ fontSize: 14.5, fontWeight: 700, color: "#0f172a", marginBottom: 10 }}>Sua identificação <span style={{ color: "#dc2626" }}>*</span></div>
             <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
@@ -546,6 +906,36 @@ export default function FormularioPublico() {
             </div>
           </div>
         ) : null}
+
+        {/* Identificado × anônimo. Só aparece se o formulário permitir; a
+            escolha vale no banco (o trigger apaga a identidade da resposta
+            anônima antes de gravar). */}
+        {form.permite_anonimo && (
+          <div className="fp-in fp-card-h" style={{ ...card, animationDelay: ".1s" }}>
+            <div style={{ fontSize: 14.5, fontWeight: 800, color: "#0f172a", marginBottom: 11 }}>👤 Como você gostaria de enviar esta pesquisa?</div>
+            <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+              {([
+                { on: false, titulo: "Identificado", desc: "Sua identificação será conhecida apenas pela gestão e usada para fins de melhoria." },
+                { on: true, titulo: "Anônimo", desc: "Sua identidade não será revelada. Sua resposta será contabilizada de forma anônima." },
+              ]).map(o => {
+                const sel = anonimo === o.on;
+                return (
+                  <div key={o.titulo} onClick={() => setAnonimo(o.on)}
+                    style={{ flex: 1, minWidth: 230, cursor: "pointer", display: "flex", gap: 10, padding: "12px 14px", borderRadius: 12, border: sel ? "1.5px solid #0f3171" : "1px solid #e2e8f0", background: sel ? "rgba(15,49,113,.04)" : "#fff" }}>
+                    <div style={{ width: 16, height: 16, borderRadius: "50%", flexShrink: 0, marginTop: 2, border: sel ? "5px solid #0f3171" : "1.5px solid #cbd5e1", background: "#fff" }} />
+                    <div>
+                      <div style={{ fontSize: 13.5, fontWeight: 800, color: sel ? "#0f3171" : "#0f172a" }}>{o.titulo}</div>
+                      <div style={{ fontSize: 12, color: "#64748b", marginTop: 2, lineHeight: 1.5 }}>{o.desc}</div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+            <div style={{ fontSize: 11.5, color: "#0369a1", background: "#f0f7ff", border: "1px solid #dbeafe", borderRadius: 9, padding: "7px 10px", marginTop: 10 }}>
+              ℹ️ Você pode escolher como deseja participar. Essa escolha não poderá ser alterada após o envio.
+            </div>
+          </div>
+        )}
 
         {/* Perguntas (só as visíveis para o setor do respondente) */}
         {(() => { let nq = 0; return pergsVisiveis.map((p, idx) => {
@@ -575,6 +965,10 @@ export default function FormularioPublico() {
               {p.tipo === "texto_curto" && <input value={valores[p.id] ?? ""} onChange={e => setVal(p.id, e.target.value)} style={inp} placeholder="Sua resposta" />}
               {p.tipo === "texto_longo" && <textarea value={valores[p.id] ?? ""} onChange={e => setVal(p.id, e.target.value)} rows={4} style={{ ...inp, resize: "vertical" }} placeholder="Sua resposta" />}
               {p.tipo === "colaborador" && <ColaboradorSelect value={valores[p.id] ?? ""} onChange={v => setVal(p.id, v)} />}
+              {p.tipo === "colegas" && (
+                <ColegasGrid p={p} valor={valores[p.id]} meuNome={empregado?.nome ?? ""}
+                  onChange={linhas => setVal(p.id, linhas)} />
+              )}
               {p.tipo === "contrato" && (
                 <ContratoSelect
                   value={valores[p.id] ?? (p.config?.multiplos ? [] : "")}

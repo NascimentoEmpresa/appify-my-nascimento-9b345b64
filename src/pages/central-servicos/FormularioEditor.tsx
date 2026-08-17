@@ -30,6 +30,7 @@ export const TIPOS: { valor: string; rotulo: string; temOpcoes: boolean }[] = [
   { valor: "multipla_escolha", rotulo: "Múltipla escolha (1 opção)", temOpcoes: true },
   { valor: "caixas_selecao",   rotulo: "Caixas de seleção (várias)", temOpcoes: true },
   { valor: "lista_suspensa",   rotulo: "Lista suspensa",           temOpcoes: true },
+  { valor: "colegas",          rotulo: "Avaliação de colegas (linhas)", temOpcoes: false },
   { valor: "escala",           rotulo: "Escala (nota)",            temOpcoes: false },
   { valor: "data",             rotulo: "Data",                     temOpcoes: false },
   { valor: "numero",           rotulo: "Número",                   temOpcoes: false },
@@ -185,6 +186,70 @@ function Seguranca({ form, mudaForm, setoresErp, usuarios, alvo, setAlvo, senha,
   );
 }
 
+// ── Resposta anônima ────────────────────────────────────────────────────
+// Ligado, o respondente escolhe na hora de enviar. Anônimo vale no banco: o
+// trigger apaga criado_por/nome/e-mail/cadastro antes de gravar - não existe
+// coluna escondida amarrando a resposta à pessoa (migration 20260902000001).
+function Anonimato({ form, mudaForm }: { form: Formulario; mudaForm: (p: Partial<Formulario>) => void }) {
+  const on = !!form.permite_anonimo;
+  return (
+    <div style={{ border: "1px solid #e2e8f0", borderRadius: 12, padding: "10px 12px", background: on ? "rgba(15,49,113,.03)" : "#fff" }}>
+      <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer" }}>
+        <input type="checkbox" checked={on} onChange={e => mudaForm({ permite_anonimo: e.target.checked })} style={{ width: 15, height: 15, accentColor: "#0f3171" }} />
+        <span style={{ fontSize: 12.5, fontWeight: 700, color: "#0f172a" }}>🕶 Permitir resposta anônima</span>
+      </label>
+      <div style={{ fontSize: 11, color: "#94a3b8", marginTop: 5, lineHeight: 1.5 }}>
+        {on
+          ? <>O respondente escolhe entre <b>identificado</b> e <b>anônimo</b> antes de enviar. Na anônima, nome, e-mail e cadastro <b>não são gravados</b> — só o setor, para os painéis.</>
+          : <>Toda resposta sai identificada (cadastro do respondente anexado).</>}
+      </div>
+    </div>
+  );
+}
+
+// ── Intervalo entre respostas ───────────────────────────────────────────
+// "só pode responder 1x a cada N". Guarda em HORAS; a tela deixa escolher a
+// unidade. Vale só para quem responde logado (link liberado não tem
+// identidade p/ contar o prazo) - a trava está na policy de INSERT.
+function Intervalo({ form, mudaForm }: { form: Formulario; mudaForm: (p: Partial<Formulario>) => void }) {
+  const horas = form.intervalo_horas ?? null;
+  const on = horas != null;
+  const emDias = on && horas! % 24 === 0;
+  const [unidade, setUnidade] = useState<"horas" | "dias">(emDias ? "dias" : "horas");
+  const qtd = on ? (unidade === "dias" ? Math.max(1, Math.round(horas! / 24)) : horas!) : 1;
+  const aplica = (n: number, u: "horas" | "dias") =>
+    mudaForm({ intervalo_horas: Math.max(1, Math.round(n)) * (u === "dias" ? 24 : 1) });
+  return (
+    <div style={{ border: "1px solid #e2e8f0", borderRadius: 12, padding: "10px 12px", background: on ? "rgba(15,49,113,.03)" : "#fff" }}>
+      <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer" }}>
+        <input type="checkbox" checked={on}
+          onChange={e => { if (e.target.checked) setUnidade("dias"); mudaForm({ intervalo_horas: e.target.checked ? 24 : null }); }}
+          style={{ width: 15, height: 15, accentColor: "#0f3171" }} />
+        <span style={{ fontSize: 12.5, fontWeight: 700, color: "#0f172a" }}>⏱ Limitar de quanto em quanto tempo a mesma pessoa pode responder</span>
+      </label>
+      {on && (
+        <div style={{ display: "flex", alignItems: "center", gap: 7, marginTop: 8, flexWrap: "wrap" }}>
+          <span style={{ fontSize: 12.5, color: "#334155", fontWeight: 600 }}>Pode responder 1 vez a cada</span>
+          <input type="number" min={1} value={qtd}
+            onChange={e => aplica(Number(e.target.value || 1), unidade)}
+            style={{ ...inp, width: 80, padding: "6px 8px" }} />
+          <select value={unidade}
+            onChange={e => { const u = e.target.value as "horas" | "dias"; setUnidade(u); aplica(qtd, u); }}
+            style={{ ...inp, padding: "6px 8px", fontWeight: 600 }}>
+            <option value="horas">hora(s)</option>
+            <option value="dias">dia(s)</option>
+          </select>
+        </div>
+      )}
+      <div style={{ fontSize: 11, color: "#94a3b8", marginTop: 6, lineHeight: 1.5 }}>
+        {on
+          ? <>Quem já respondeu vê o aviso com a data em que libera de novo. Vale só para quem responde <b>logado no ERP</b> — no link liberado (sem login) não há como identificar quem já respondeu.</>
+          : <>Sem limite: a mesma pessoa pode responder quantas vezes quiser.</>}
+      </div>
+    </div>
+  );
+}
+
 export default function FormularioEditor() {
   const { id } = useParams();
   const nav = useNavigate();
@@ -332,6 +397,8 @@ export default function FormularioEditor() {
       seguranca: form.seguranca ?? "liberado",
       // Liberado zera os filtros: não deixa restrição órfã no banco.
       setores_acesso: restrito ? (form.setores_acesso?.length ? form.setores_acesso : null) : null,
+      permite_anonimo: !!form.permite_anonimo,
+      intervalo_horas: form.intervalo_horas ?? null,
     };
     let { error: e1 } = await (supabase as any).from("CS_FORMULARIOS").update({ ...base, ...extra }).eq("id", form.id);
     if (e1 && /column|schema cache/i.test(e1.message)) ({ error: e1 } = await (supabase as any).from("CS_FORMULARIOS").update(base).eq("id", form.id));
@@ -445,6 +512,12 @@ export default function FormularioEditor() {
                   </label>
                 </div>
                 <div style={{ gridColumn: "1 / -1" }}>
+                  <Anonimato form={form} mudaForm={mudaForm} />
+                </div>
+                <div style={{ gridColumn: "1 / -1" }}>
+                  <Intervalo form={form} mudaForm={mudaForm} />
+                </div>
+                <div style={{ gridColumn: "1 / -1" }}>
                   <label style={lbl}>Pergunta que define o setor (fallback do cadastro, p/ Admin × Operacional)</label>
                   <select value={form.pergunta_setor_id ?? ""} onChange={e => mudaForm({ pergunta_setor_id: e.target.value || null })} style={{ ...inp, width: "100%", maxWidth: 420, textOverflow: "ellipsis" }}>
                     <option value="">- Nenhuma (usa o setor do cadastro do respondente) -</option>
@@ -547,6 +620,93 @@ export default function FormularioEditor() {
   );
 }
 
+// ── Config da pergunta "Avaliação de colegas" ───────────────────────────
+// A pergunta vira uma tabelinha de linhas (colega + setor + nota + comentário)
+// na página de resposta. Aqui se decide o que ela exige. Os três primeiros
+// campos são exatamente os pedidos que a tela pública e o banco aplicam:
+// mínimo de colegas, no máximo 1 por setor e "não pode ser você".
+function ConfigColegas({ p, i, muda }: { p: Pergunta; i: number; muda: (i: number, patch: Partial<Pergunta>) => void }) {
+  const c = p.config ?? {};
+  const set = (patch: Record<string, any>) => muda(i, { config: { ...c, ...patch } });
+  const check = (chave: string, rotulo: string, ajuda: string, padrao = false) => (
+    <label style={{ display: "flex", alignItems: "flex-start", gap: 7, cursor: "pointer" }}>
+      <input type="checkbox" checked={c[chave] ?? padrao} onChange={e => set({ [chave]: e.target.checked })}
+        style={{ width: 14, height: 14, marginTop: 2, accentColor: "#0f3171" }} />
+      <span>
+        <span style={{ fontSize: 12, fontWeight: 700, color: "#0f172a" }}>{rotulo}</span>
+        <span style={{ display: "block", fontSize: 10.5, color: "#94a3b8" }}>{ajuda}</span>
+      </span>
+    </label>
+  );
+  return (
+    <div style={{ border: "1px solid #e2e8f0", borderRadius: 12, padding: "11px 13px", marginBottom: 10, background: "#f8fafc", display: "flex", flexDirection: "column", gap: 11 }}>
+      <div style={{ fontSize: 11, fontWeight: 800, color: "#0f3171", textTransform: "uppercase", letterSpacing: ".5px" }}>Regras da avaliação de colegas</div>
+
+      <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+        <div>
+          <label style={lbl}>Mínimo de colegas</label>
+          <input type="number" min={0} value={c.min_colegas ?? 0}
+            onChange={e => set({ min_colegas: Math.max(0, Number(e.target.value || 0)) })}
+            style={{ ...inp, width: 100, padding: "6px 8px" }} />
+        </div>
+        <div>
+          <label style={lbl}>Máximo (0 = sem teto)</label>
+          <input type="number" min={0} value={c.max_colegas ?? 0}
+            onChange={e => set({ max_colegas: Math.max(0, Number(e.target.value || 0)) })}
+            style={{ ...inp, width: 120, padding: "6px 8px" }} />
+        </div>
+        <div>
+          <label style={lbl}>Nota de 1 até</label>
+          <select value={c.escala_max ?? 5} onChange={e => set({ escala_max: Number(e.target.value) })}
+            style={{ ...inp, padding: "6px 8px" }}>
+            {[3, 4, 5, 6, 7, 8, 9, 10].map(n => <option key={n} value={n}>{n}</option>)}
+          </select>
+        </div>
+        <div style={{ flex: 1, minWidth: 130 }}>
+          <label style={lbl}>Rótulo da nota 1</label>
+          <input value={c.rotulo_min ?? ""} onChange={e => set({ rotulo_min: e.target.value || undefined })}
+            placeholder="Ex.: baixo" style={{ ...inp, width: "100%", padding: "6px 8px" }} />
+        </div>
+        <div style={{ flex: 1, minWidth: 130 }}>
+          <label style={lbl}>Rótulo da nota máxima</label>
+          <input value={c.rotulo_max ?? ""} onChange={e => set({ rotulo_max: e.target.value || undefined })}
+            placeholder="Ex.: excelente" style={{ ...inp, width: "100%", padding: "6px 8px" }} />
+        </div>
+      </div>
+
+      <div style={{ display: "flex", flexDirection: "column", gap: 7 }}>
+        {check("setores_distintos", "Só 1 colega por setor", "Cada setor pode receber uma única indicação nesta pergunta.")}
+        {check("excluir_proprio", "Não pode indicar a si mesmo", "O próprio respondente some da lista de colegas.", true)}
+        {check("nota_obrigatoria", "Nota obrigatória em cada colega indicado", "Sem a nota, o envio é barrado.")}
+        {check("comentario_obrigatorio", "Comentário obrigatório em cada colega indicado", "Por padrão o comentário é opcional.")}
+      </div>
+
+      <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+        <div style={{ flex: 1, minWidth: 160 }}>
+          <label style={lbl}>Título da coluna de comentário</label>
+          <input value={c.comentario_rotulo ?? ""} onChange={e => set({ comentario_rotulo: e.target.value || undefined })}
+            placeholder="Pontos fortes" style={{ ...inp, width: "100%", padding: "6px 8px" }} />
+        </div>
+        <div style={{ flex: 1, minWidth: 200 }}>
+          <label style={lbl}>Ajuda da coluna de comentário</label>
+          <input value={c.comentario_desc ?? ""} onChange={e => set({ comentario_desc: e.target.value || undefined })}
+            placeholder="Conte algo que você mais valoriza nessa pessoa." style={{ ...inp, width: "100%", padding: "6px 8px" }} />
+        </div>
+        <div style={{ flex: 1, minWidth: 200 }}>
+          <label style={lbl}>Exemplo dentro do campo</label>
+          <input value={c.comentario_placeholder ?? ""} onChange={e => set({ comentario_placeholder: e.target.value || undefined })}
+            placeholder="Ex.: sempre disposto(a) a ajudar…" style={{ ...inp, width: "100%", padding: "6px 8px" }} />
+        </div>
+      </div>
+
+      <div style={{ fontSize: 11, color: "#64748b", background: "#eef6ff", border: "1px solid #dbeafe", borderRadius: 9, padding: "7px 10px", lineHeight: 1.5 }}>
+        Marque a pergunta como <b>obrigatória</b> (abaixo) para exigir pelo menos 1 colega; use o <b>mínimo</b> quando precisar de mais de um.
+        {c.setores_distintos ? <> Com “1 por setor”, o setor já escolhido some da lista das linhas seguintes.</> : null}
+      </div>
+    </div>
+  );
+}
+
 // Wrapper de arraste: dá a alça (handleProps) pro card e move o item no DnD.
 function SortablePergunta({ id, children }: { id: string; children: (handleProps: any) => React.ReactNode }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id });
@@ -621,6 +781,11 @@ function PerguntaCard({ p, i, total, muda, move, remove, upload, setores, usuari
           <span style={{ fontSize: 10.5, color: "#cbd5e1" }}>(a lista mostra só contratos ativos)</span>
         </label>
       )}
+
+      {/* Avaliação de colegas: as regras da pergunta (mínimo, 1 por setor, não
+          pode ser você...) valem também no banco — o trigger da resposta relê
+          esta config na hora do INSERT (migration 20260902000001). */}
+      {p.tipo === "colegas" && <ConfigColegas p={p} i={i} muda={muda} />}
 
       {p.tipo === "texto_info" ? (
         <div style={{ marginBottom: 10 }}>

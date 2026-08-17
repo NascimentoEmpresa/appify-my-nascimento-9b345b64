@@ -42,7 +42,10 @@ export interface VeiculoFrota {
   contrato_nome: string | null;
   /** Preenchida pelo módulo de Patrimônio. Aqui só é lida. */
   foto_path: string | null;
+  /** Indisponível — não só manutenção. O porquê vem em `motivo_indisponivel`. */
   em_manutencao: boolean;
+  /** 'manutencao' | 'contrato' | null. Carro em contrato o escritório não agenda. */
+  motivo_indisponivel: string | null;
   data_inicio_manutencao: string | null;
   data_previsao_fim: string | null;
 }
@@ -164,12 +167,18 @@ export interface Disponibilidade {
 export function disponibilidadeDoVeiculo(v: VeiculoFrota, dataInicio?: string): Disponibilidade {
   if (!v.em_manutencao) return { disponivel: true, rotulo: "Livre", detalhe: null };
 
+  // Carro alocado a contrato bloqueia igual à manutenção — o que muda é só o
+  // texto. Registro antigo veio sem motivo gravado: era manutenção, porque
+  // até 17/08/2026 não havia outro.
+  const emContrato = v.motivo_indisponivel === "contrato";
+  const porque = emContrato ? "Em contrato" : "Em manutenção";
+
   const fim = v.data_previsao_fim;
   if (!fim) {
     return {
       disponivel: false,
       rotulo: "Indisponível",
-      detalhe: "Retorno: por tempo indeterminado",
+      detalhe: `${porque} · ${emContrato ? "devolução" : "retorno"} por tempo indeterminado`,
     };
   }
   // Com previsão de retorno, o carro volta a ser agendável no dia seguinte.
@@ -178,12 +187,12 @@ export function disponibilidadeDoVeiculo(v: VeiculoFrota, dataInicio?: string): 
   const referencia = new Date(`${dataInicio ?? hojeISO()}T00:00:00`);
 
   if (referencia >= liberaEm) {
-    return { disponivel: true, rotulo: "Livre", detalhe: `Retorna em ${formatarData(fim)}` };
+    return { disponivel: true, rotulo: "Livre", detalhe: `${emContrato ? "Volta do contrato" : "Retorna"} em ${formatarData(fim)}` };
   }
   return {
     disponivel: false,
     rotulo: "Indisponível",
-    detalhe: `Em manutenção até ${formatarData(fim)}`,
+    detalhe: `${porque} até ${formatarData(fim)}`,
   };
 }
 

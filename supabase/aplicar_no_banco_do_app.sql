@@ -11552,3 +11552,1213 @@ $$;
 -- ROLLBACK
 --   Recriar chamado_sistema_guard() sem o v_auto, exatamente como está em
 --   20260802000002_chamados_sistemas_permissoes.sql (linhas 145-192).
+
+-- ===== 20260902000001_formularios_anonimo_intervalo_colegas =====
+-- =========================================================================
+-- NASCIMENTO FORMULÁRIOS — resposta anônima, intervalo entre respostas e
+-- pergunta "avaliação de colegas" (com as regras valendo no BANCO).
+--
+-- Três recursos que valem para QUALQUER formulário novo (nada é hard-coded
+-- num formulário específico):
+--
+-- 1) RESPOSTA ANÔNIMA  (CS_FORMULARIOS.permite_anonimo)
+--    Ligado, o respondente escolhe na hora de enviar: identificado ou
+--    anônimo. Anônimo é anônimo DE VERDADE — o trigger abaixo apaga
+--    criado_por, nome, e-mail e o snapshot de cadastro ANTES de gravar; não
+--    existe coluna escondida ligando a resposta à pessoa. O setor continua
+--    (é dele que vivem os painéis, e ele não identifica ninguém).
+--
+-- 2) INTERVALO ENTRE RESPOSTAS  (CS_FORMULARIOS.intervalo_horas)
+--    "só pode responder 1x a cada N horas/dias". Como a resposta anônima
+--    não guarda quem respondeu, o carimbo de quem enviou vai para uma tabela
+--    À PARTE (CS_FORM_ENVIOS): formulário + usuário + data, SEM ponteiro para
+--    a resposta. Ela é fechada a anon/authenticated — só as funções
+--    SECURITY DEFINER daqui leem —, então serve de relógio sem desanonimizar
+--    ninguém. A trava está na policy de INSERT, não só na tela.
+--    LIMITE CONHECIDO: formulário 'liberado' (sem login) não tem identidade
+--    p/ contar o intervalo — ali a regra não se aplica.
+--
+-- 3) PERGUNTA "COLEGAS"  (perguntas[].tipo = 'colegas')
+--    Uma pergunta com N linhas: colega + setor + nota + comentário. A config
+--    da pergunta diz o que é obrigatório:
+--      min_colegas       int   — mínimo de colegas indicados
+--      max_colegas       int   — teto (0/ausente = sem teto)
+--      setores_distintos bool  — no máximo 1 colega por setor
+--      excluir_proprio   bool  — não pode indicar a si mesmo (padrão: sim)
+--      nota_obrigatoria  bool  — toda linha precisa de nota
+--    Valor gravado em itens[pergunta_id] = array de
+--      {colaborador, setor, nota, comentario}
+--    O trigger valida essas regras no INSERT: a tela ajuda, o banco decide.
+--
+-- Idempotente. Aplicar no banco do app.
+-- =========================================================================
+
+-- ── 1) Colunas novas ─────────────────────────────────────────────────────
+ALTER TABLE public."CS_FORMULARIOS"
+  ADD COLUMN IF NOT EXISTS permite_anonimo boolean NOT NULL DEFAULT false,
+  ADD COLUMN IF NOT EXISTS intervalo_horas integer;
+
+ALTER TABLE public."CS_FORMULARIOS" DROP CONSTRAINT IF EXISTS cs_forms_intervalo_check;
+ALTER TABLE public."CS_FORMULARIOS" ADD  CONSTRAINT cs_forms_intervalo_check
+  CHECK (intervalo_horas IS NULL OR intervalo_horas > 0);
+
+ALTER TABLE public."CS_FORM_RESPOSTAS"
+  ADD COLUMN IF NOT EXISTS anonimo boolean NOT NULL DEFAULT false;
+
+-- ── 2) Carimbo de envio (relógio do intervalo, sem identificar a resposta) ─
+CREATE TABLE IF NOT EXISTS public."CS_FORM_ENVIOS" (
+  formulario_id uuid NOT NULL REFERENCES public."CS_FORMULARIOS"(id) ON DELETE CASCADE,
+  user_id       uuid NOT NULL,
+  enviado_em    timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY (formulario_id, user_id, enviado_em)
+);
+CREATE INDEX IF NOT EXISTS cs_form_envios_idx
+  ON public."CS_FORM_ENVIOS"(formulario_id, user_id, enviado_em DESC);
+
+ALTER TABLE public."CS_FORM_ENVIOS" ENABLE ROW LEVEL SECURITY;
+-- Sem policy e sem GRANT: ninguém lê pelo PostgREST. Só as funções abaixo.
+REVOKE ALL ON public."CS_FORM_ENVIOS" FROM anon, authenticated;
+
+-- ── 3) Pode responder agora? (intervalo entre respostas) ─────────────────
+-- Sem intervalo configurado, sem login, ou nunca respondeu → true.
+CREATE OR REPLACE FUNCTION public.cs_form_pode_responder(_form_id uuid)
+RETURNS boolean LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public AS $$
+  SELECT NOT EXISTS (
+    SELECT 1
+      FROM public."CS_FORMULARIOS" f
+      JOIN public."CS_FORM_ENVIOS" e
+        ON e.formulario_id = f.id AND e.user_id = auth.uid()
+     WHERE f.id = _form_id
+       AND f.intervalo_horas IS NOT NULL
+       AND auth.uid() IS NOT NULL
+       AND e.enviado_em > now() - make_interval(hours => f.intervalo_horas));
+$$;
+REVOKE EXECUTE ON FUNCTION public.cs_form_pode_responder(uuid) FROM PUBLIC;
+GRANT  EXECUTE ON FUNCTION public.cs_form_pode_responder(uuid) TO anon, authenticated;
+
+-- Mesma conta, mas contando a história p/ a tela: quando respondeu e quando
+-- libera de novo. É o que a página pública mostra em vez de um erro seco.
+CREATE OR REPLACE FUNCTION public.cs_form_prazo(_form_id uuid)
+RETURNS jsonb LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public AS $$
+  SELECT jsonb_build_object(
+           'pode', public.cs_form_pode_responder(_form_id),
+           'intervalo_horas', f.intervalo_horas,
+           'ultima_em', u.ultima,
+           'proxima_em', CASE WHEN f.intervalo_horas IS NULL OR u.ultima IS NULL THEN NULL
+                              ELSE u.ultima + make_interval(hours => f.intervalo_horas) END)
+    FROM public."CS_FORMULARIOS" f
+    LEFT JOIN LATERAL (
+      SELECT max(e.enviado_em) AS ultima
+        FROM public."CS_FORM_ENVIOS" e
+       WHERE e.formulario_id = f.id AND e.user_id = auth.uid()
+    ) u ON true
+   WHERE f.id = _form_id;
+$$;
+REVOKE EXECUTE ON FUNCTION public.cs_form_prazo(uuid) FROM PUBLIC;
+GRANT  EXECUTE ON FUNCTION public.cs_form_prazo(uuid) TO anon, authenticated;
+
+-- ── 4) Guarda da resposta: anonimiza, valida "colegas" e carimba o envio ──
+-- Roda como trigger da tabela (não é chamável pelo client). BEFORE INSERT
+-- porque precisa APAGAR a identidade antes de a linha existir — anonimizar
+-- depois deixaria o dado gravado por um instante.
+CREATE OR REPLACE FUNCTION public.cs_form_resposta_guard()
+RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
+DECLARE
+  v_form   record;
+  v_perg   jsonb;
+  v_cfg    jsonb;
+  v_linhas jsonb;
+  v_linha  jsonb;
+  v_nome   text;      -- nome do próprio respondente (p/ "não pode ser você")
+  v_tit    text;
+  v_min    int;
+  v_max    int;
+  v_n      int;
+  v_setor  text;
+  v_colega text;
+  v_setores text[];
+  v_colegas text[];
+BEGIN
+  SELECT * INTO v_form FROM public."CS_FORMULARIOS" WHERE id = NEW.formulario_id;
+  IF NOT FOUND THEN RETURN NEW; END IF;
+
+  -- 4.1 Anonimato: só se o formulário permite, e aí some TUDO que identifica.
+  IF COALESCE(NEW.anonimo, false) THEN
+    IF NOT COALESCE(v_form.permite_anonimo, false) THEN
+      RAISE EXCEPTION 'Este formulário não aceita resposta anônima.';
+    END IF;
+    NEW.criado_por           := NULL;
+    NEW.respondente_nome     := NULL;
+    NEW.respondente_email    := NULL;
+    NEW.respondente_cadastro := NULL;
+  END IF;
+
+  -- 4.2 Nome oficial de quem está respondendo (só serve p/ barrar auto-indicação).
+  SELECT e."Nome" INTO v_nome
+    FROM public."EMPREGADOS" e
+   WHERE e.auth_user_id = auth.uid()
+   LIMIT 1;
+
+  -- 4.3 Regras das perguntas do tipo "colegas".
+  FOR v_perg IN SELECT * FROM jsonb_array_elements(COALESCE(v_form.perguntas, '[]'::jsonb))
+  LOOP
+    CONTINUE WHEN COALESCE(v_perg->>'tipo', '') <> 'colegas';
+    v_cfg  := COALESCE(v_perg->'config', '{}'::jsonb);
+    v_tit  := COALESCE(NULLIF(btrim(COALESCE(v_perg->>'titulo', '')), ''), 'Avaliação de colegas');
+    v_linhas := COALESCE(NEW.itens -> (v_perg->>'id'), '[]'::jsonb);
+    IF jsonb_typeof(v_linhas) <> 'array' THEN v_linhas := '[]'::jsonb; END IF;
+
+    v_n := 0; v_setores := '{}'; v_colegas := '{}';
+    FOR v_linha IN SELECT * FROM jsonb_array_elements(v_linhas)
+    LOOP
+      v_colega := btrim(COALESCE(v_linha->>'colaborador', ''));
+      CONTINUE WHEN v_colega = '';                 -- linha em branco não conta
+      v_setor  := upper(btrim(COALESCE(v_linha->>'setor', '')));
+      v_n := v_n + 1;
+
+      -- Não pode indicar a si mesmo.
+      IF COALESCE(v_cfg->>'excluir_proprio', 'true') <> 'false'
+         AND v_nome IS NOT NULL
+         AND upper(btrim(v_nome)) = upper(v_colega) THEN
+        RAISE EXCEPTION 'Em "%": você não pode indicar a si mesmo.', v_tit;
+      END IF;
+
+      -- Mesmo colega duas vezes na mesma pergunta nunca faz sentido.
+      IF upper(v_colega) = ANY (v_colegas) THEN
+        RAISE EXCEPTION 'Em "%": % foi indicado(a) mais de uma vez.', v_tit, v_colega;
+      END IF;
+      v_colegas := array_append(v_colegas, upper(v_colega));
+
+      -- No máximo 1 colega por setor (quando a pergunta pede).
+      IF COALESCE(v_cfg->>'setores_distintos', 'false') = 'true' AND v_setor <> '' THEN
+        IF v_setor = ANY (v_setores) THEN
+          RAISE EXCEPTION 'Em "%": só é possível indicar 1 colega por setor (% repetido).', v_tit, v_setor;
+        END IF;
+        v_setores := array_append(v_setores, v_setor);
+      END IF;
+
+      -- Nota obrigatória em cada linha indicada.
+      IF COALESCE(v_cfg->>'nota_obrigatoria', 'false') = 'true'
+         AND COALESCE(btrim(COALESCE(v_linha->>'nota', '')), '') = '' THEN
+        RAISE EXCEPTION 'Em "%": dê uma nota para %.', v_tit, v_colega;
+      END IF;
+    END LOOP;
+
+    v_min := COALESCE(NULLIF(v_cfg->>'min_colegas', '')::int, 0);
+    v_max := COALESCE(NULLIF(v_cfg->>'max_colegas', '')::int, 0);
+    IF v_n < v_min THEN
+      RAISE EXCEPTION 'Em "%": indique pelo menos % colega(s).', v_tit, v_min;
+    END IF;
+    IF v_max > 0 AND v_n > v_max THEN
+      RAISE EXCEPTION 'Em "%": no máximo % colega(s).', v_tit, v_max;
+    END IF;
+  END LOOP;
+
+  RETURN NEW;
+END $$;
+
+DROP TRIGGER IF EXISTS trg_cs_form_resposta_guard ON public."CS_FORM_RESPOSTAS";
+CREATE TRIGGER trg_cs_form_resposta_guard
+  BEFORE INSERT ON public."CS_FORM_RESPOSTAS"
+  FOR EACH ROW EXECUTE FUNCTION public.cs_form_resposta_guard();
+
+-- Carimbo do envio: DEPOIS da linha existir, e sempre pelo auth.uid() da
+-- sessão — inclusive na resposta anônima, que já teve criado_por apagado.
+-- É este registro (e só ele) que sabe "fulano respondeu tal formulário".
+CREATE OR REPLACE FUNCTION public.cs_form_registra_envio()
+RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
+BEGIN
+  IF auth.uid() IS NOT NULL THEN
+    INSERT INTO public."CS_FORM_ENVIOS" (formulario_id, user_id)
+    VALUES (NEW.formulario_id, auth.uid())
+    ON CONFLICT DO NOTHING;
+  END IF;
+  RETURN NULL;
+END $$;
+
+DROP TRIGGER IF EXISTS trg_cs_form_registra_envio ON public."CS_FORM_RESPOSTAS";
+CREATE TRIGGER trg_cs_form_registra_envio
+  AFTER INSERT ON public."CS_FORM_RESPOSTAS"
+  FOR EACH ROW EXECUTE FUNCTION public.cs_form_registra_envio();
+
+-- ── 5) A trava do intervalo entra na policy de INSERT ────────────────────
+-- (mesma policy de 20260715000002 + cs_form_pode_responder; 'editar_criar'
+--  segue com bypass — é por ela que a importação de respostas passa.)
+DROP POLICY IF EXISTS cs_form_resp_ins_auth ON public."CS_FORM_RESPOSTAS";
+CREATE POLICY cs_form_resp_ins_auth ON public."CS_FORM_RESPOSTAS"
+  FOR INSERT TO authenticated WITH CHECK (
+    public.cs_form_cap('editar_criar')
+    OR (public.cs_form_aberto(formulario_id)
+        AND public.cs_form_alvo(formulario_id)
+        AND public.cs_form_senha_ok(formulario_id)
+        AND public.cs_form_pode_responder(formulario_id)));
+
+NOTIFY pgrst, 'reload schema';
+
+-- ROLLBACK
+--   DROP TRIGGER trg_cs_form_resposta_guard  ON public."CS_FORM_RESPOSTAS";
+--   DROP TRIGGER trg_cs_form_registra_envio  ON public."CS_FORM_RESPOSTAS";
+--   DROP FUNCTION public.cs_form_resposta_guard(), public.cs_form_registra_envio();
+--   DROP FUNCTION public.cs_form_prazo(uuid), public.cs_form_pode_responder(uuid);
+--   DROP TABLE public."CS_FORM_ENVIOS";
+--   e recriar cs_form_resp_ins_auth como está em 20260715000002 (sem o
+--   cs_form_pode_responder). As colunas novas podem ficar (default = desligado).
+
+-- ===== 20260903000001_recrutamento_regras_vaga =====
+-- =========================================================================
+-- RECRUTAMENTO E SELEÇÃO — regras da solicitação de vaga no BANCO
+--
+-- O que passa a valer (as mesmas regras estão em src/lib/recrutamento/
+-- vagaRegras.ts, que é o que a tela usa — aqui é o piso, não a decoração):
+--
+-- 1) PRAZO MÍNIMO: vaga só abre para daqui a 7 DIAS ÚTEIS ou mais.
+-- 2) GRAU DE URGÊNCIA sai do prazo, ninguém escolhe na mão:
+--       7 a 13 dias úteis → 'Alta — Urgente'
+--      14 a 20            → 'Média'
+--      21 ou mais         → 'Baixa'
+-- 3) ENCARREGADO SÓ EDITA A DATA depois da vaga criada, e com justificativa.
+--    Toda troca de data fica registrada em data_inicio_alteracoes (jsonb).
+-- 4) CNH OBRIGATÓRIA entra sozinha quando o cargo é motorista, tratorista,
+--    operador de retroescavadeira ou supervisor operacional.
+-- 5) MOTIVO 'Expansão' passa a se chamar 'Expansão (Aumento de Quadro)' —
+--    as vagas antigas são normalizadas.
+--
+-- Diferença conhecida entre a tela e o banco: a tela desconta FERIADO
+-- NACIONAL na conta de dias úteis (src/lib/feriadosNacionais.ts); aqui só
+-- sábado e domingo saem. O banco é, portanto, o piso mais frouxo — quem
+-- passa pela tela passa aqui. Replicar o calendário de feriados em SQL não
+-- se paga: o que importa é não deixar ninguém furar a regra pela API.
+--
+-- Automação de servidor (service_role, sem sessão) não é barrada — quem tem
+-- a service_role já pode tudo, e travá-la só quebraria integração.
+--
+-- Idempotente. Aplicar no banco do app.
+-- =========================================================================
+
+-- ── 1) Colunas novas ─────────────────────────────────────────────────────
+ALTER TABLE public."SISTEMA_RECRUTAMENTO"
+  ADD COLUMN IF NOT EXISTS cnh_obrigatoria boolean NOT NULL DEFAULT false,
+  -- histórico de troca da data de início: [{de, para, justificativa, por, por_nome, em}]
+  ADD COLUMN IF NOT EXISTS data_inicio_alteracoes jsonb NOT NULL DEFAULT '[]'::jsonb;
+
+-- 'Expansão' → 'Expansão (Aumento de Quadro)' nas vagas que já existem.
+UPDATE public."SISTEMA_RECRUTAMENTO"
+   SET motivo_vaga = 'Expansão (Aumento de Quadro)'
+ WHERE btrim(coalesce(motivo_vaga, '')) = 'Expansão';
+
+-- ── 2) Helpers ───────────────────────────────────────────────────────────
+
+-- Dias úteis de _de (exclusivo) até _ate (inclusive). Só tira sáb/dom.
+CREATE OR REPLACE FUNCTION public.dias_uteis_entre(_de date, _ate date)
+RETURNS integer LANGUAGE sql IMMUTABLE AS $$
+  SELECT CASE WHEN _de IS NULL OR _ate IS NULL OR _ate <= _de THEN 0 ELSE (
+    SELECT count(*)::int FROM generate_series(_de + 1, _ate, interval '1 day') d
+     WHERE extract(isodow from d) < 6) END;
+$$;
+
+-- data_inicio_prevista é TEXT na tabela (vem do <input type=date>). Converte
+-- só o que tem cara de ISO; qualquer outra coisa vira NULL em vez de erro.
+CREATE OR REPLACE FUNCTION public.rec_data_prevista(_txt text)
+RETURNS date LANGUAGE sql IMMUTABLE AS $$
+  SELECT CASE WHEN btrim(coalesce(_txt, '')) ~ '^\d{4}-\d{2}-\d{2}'
+              THEN to_date(substr(btrim(_txt), 1, 10), 'YYYY-MM-DD') END;
+$$;
+
+-- Grau pelo prazo. NULL = sem data ou abaixo do mínimo (o guard barra).
+CREATE OR REPLACE FUNCTION public.rec_grau_por_data(_data text, _hoje date DEFAULT current_date)
+RETURNS text LANGUAGE sql IMMUTABLE AS $$
+  SELECT CASE
+    WHEN public.rec_data_prevista(_data) IS NULL THEN NULL
+    WHEN public.dias_uteis_entre(_hoje, public.rec_data_prevista(_data)) >= 21 THEN 'Baixa'
+    WHEN public.dias_uteis_entre(_hoje, public.rec_data_prevista(_data)) >= 14 THEN 'Média'
+    WHEN public.dias_uteis_entre(_hoje, public.rec_data_prevista(_data)) >= 7  THEN 'Alta — Urgente'
+    ELSE NULL END;
+$$;
+
+-- Cargo que dirige veículo/máquina da empresa. Sem acento e sem caixa —
+-- o cargo vem digitado à mão ou do "Título do Cargo" da EMPREGADOS.
+CREATE OR REPLACE FUNCTION public.rec_cargo_exige_cnh(_cargo text)
+RETURNS boolean LANGUAGE sql IMMUTABLE AS $$
+  SELECT upper(translate(coalesce(_cargo, ''),
+           'áàâãäéèêëíìîïóòôõöúùûüçÁÀÂÃÄÉÈÊËÍÌÎÏÓÒÔÕÖÚÙÛÜÇ',
+           'aaaaaeeeeiiiiooooouuuucAAAAAEEEEIIIIOOOOOUUUUC'))
+         ~ '(MOTORISTA|TRATORISTA|RETRO ?ESCAVADEIRA|SUPERVISOR(A)? .*OPERACIONAL)';
+$$;
+
+REVOKE EXECUTE ON FUNCTION public.dias_uteis_entre(date, date), public.rec_data_prevista(text),
+  public.rec_grau_por_data(text, date), public.rec_cargo_exige_cnh(text) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.dias_uteis_entre(date, date), public.rec_data_prevista(text),
+  public.rec_grau_por_data(text, date), public.rec_cargo_exige_cnh(text) TO authenticated;
+
+-- ── 3) O guard ───────────────────────────────────────────────────────────
+CREATE OR REPLACE FUNCTION public.sistema_recrutamento_guard()
+RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
+DECLARE
+  v_auto  boolean := COALESCE(auth.role() = 'service_role', false);
+  v_rh    boolean;
+  v_dias  int;
+  v_grau  text;
+  v_livre jsonb;   -- colunas que o encarregado PODE mexer
+  v_ult   jsonb;
+  v_msg   text := 'A vaga precisa de no mínimo 7 dias úteis de antecedência.';
+BEGIN
+  IF v_auto THEN RETURN NEW; END IF;
+
+  -- Nome novo do motivo, venha de onde vier.
+  IF btrim(coalesce(NEW.motivo_vaga, '')) = 'Expansão' THEN
+    NEW.motivo_vaga := 'Expansão (Aumento de Quadro)';
+  END IF;
+
+  -- CNH obrigatória pelo cargo (marca + linha no requisito, sem duplicar).
+  IF public.rec_cargo_exige_cnh(NEW.cargo) THEN
+    NEW.cnh_obrigatoria := true;
+    IF upper(translate(coalesce(NEW.req_obrigatorios, ''),
+         'áàâãäéèêëíìîïóòôõöúùûüçÁÀÂÃÄÉÈÊËÍÌÎÏÓÒÔÕÖÚÙÛÜÇ',
+         'aaaaaeeeeiiiiooooouuuucAAAAAEEEEIIIIOOOOOUUUUC'))
+       !~ '(CNH|CARTEIRA DE (MOTORISTA|HABILITA))' THEN
+      NEW.req_obrigatorios := btrim(concat(
+        'CNH obrigatória (categoria compatível com a função).',
+        CASE WHEN btrim(coalesce(NEW.req_obrigatorios, '')) = '' THEN '' ELSE E'\n' || NEW.req_obrigatorios END));
+    END IF;
+  ELSIF TG_OP = 'INSERT' THEN
+    NEW.cnh_obrigatoria := COALESCE(NEW.cnh_obrigatoria, false);
+  END IF;
+
+  -- ── INSERT: prazo mínimo + grau automático ─────────────────────────────
+  IF TG_OP = 'INSERT' THEN
+    IF public.rec_data_prevista(NEW.data_inicio_prevista) IS NOT NULL THEN
+      v_dias := public.dias_uteis_entre(current_date, public.rec_data_prevista(NEW.data_inicio_prevista));
+      IF v_dias < 7 THEN
+        RAISE EXCEPTION '% A data escolhida tem % dia(s) útil(eis).', v_msg, v_dias;
+      END IF;
+      NEW.grau_urgencia := public.rec_grau_por_data(NEW.data_inicio_prevista);
+    END IF;
+    NEW.data_inicio_alteracoes := COALESCE(NEW.data_inicio_alteracoes, '[]'::jsonb);
+    RETURN NEW;
+  END IF;
+
+  -- ── UPDATE ─────────────────────────────────────────────────────────────
+  v_rh := has_screen_access(auth.uid(), 'recrutamento_gestao', 'alterar')
+       OR has_screen_access(auth.uid(), 'recrutamento_gestao', 'incluir');
+
+  -- Quem não é do Recrutamento (o encarregado que abriu a vaga) só mexe na
+  -- data — e no que deriva dela. Comparar o resto como jsonb pega qualquer
+  -- coluna, inclusive as que forem criadas depois desta migration.
+  IF NOT v_rh THEN
+    v_livre := to_jsonb(OLD) - 'data_inicio_prevista' - 'grau_urgencia' - 'data_inicio_alteracoes';
+    IF v_livre IS DISTINCT FROM (to_jsonb(NEW) - 'data_inicio_prevista' - 'grau_urgencia' - 'data_inicio_alteracoes') THEN
+      RAISE EXCEPTION 'Depois de criada, você só pode alterar a Data de Início Prevista da vaga. Para mudar qualquer outra informação, fale com o Recrutamento.';
+    END IF;
+  END IF;
+
+  IF NEW.data_inicio_prevista IS DISTINCT FROM OLD.data_inicio_prevista THEN
+    IF public.rec_data_prevista(NEW.data_inicio_prevista) IS NULL THEN
+      RAISE EXCEPTION 'Informe a nova data de início prevista.';
+    END IF;
+    v_dias := public.dias_uteis_entre(current_date, public.rec_data_prevista(NEW.data_inicio_prevista));
+    IF v_dias < 7 THEN
+      RAISE EXCEPTION '% A data escolhida tem % dia(s) útil(eis).', v_msg, v_dias;
+    END IF;
+    NEW.grau_urgencia := public.rec_grau_por_data(NEW.data_inicio_prevista);
+
+    -- Justificativa: a troca precisa entrar no histórico, com texto de gente.
+    IF jsonb_array_length(COALESCE(NEW.data_inicio_alteracoes, '[]'::jsonb))
+       <> jsonb_array_length(COALESCE(OLD.data_inicio_alteracoes, '[]'::jsonb)) + 1 THEN
+      RAISE EXCEPTION 'Toda troca de data precisa de uma justificativa.';
+    END IF;
+    v_ult := NEW.data_inicio_alteracoes -> (jsonb_array_length(NEW.data_inicio_alteracoes) - 1);
+    IF length(btrim(coalesce(v_ult->>'justificativa', ''))) < 10 THEN
+      RAISE EXCEPTION 'Escreva a justificativa da troca de data (mínimo 10 caracteres).';
+    END IF;
+    IF btrim(coalesce(v_ult->>'para', '')) <> btrim(coalesce(NEW.data_inicio_prevista, '')) THEN
+      RAISE EXCEPTION 'O histórico da troca de data não bate com a data enviada.';
+    END IF;
+    -- Carimbo de quem trocou: quem grava é o banco, não o cliente.
+    NEW.data_inicio_alteracoes := jsonb_set(
+      NEW.data_inicio_alteracoes,
+      ARRAY[(jsonb_array_length(NEW.data_inicio_alteracoes) - 1)::text],
+      v_ult || jsonb_build_object('por', auth.uid(), 'em', now()));
+  ELSIF NEW.data_inicio_alteracoes IS DISTINCT FROM OLD.data_inicio_alteracoes AND NOT v_rh THEN
+    -- Não deixa mexer no histórico sem trocar a data (reescrever justificativa).
+    RAISE EXCEPTION 'O histórico de datas não pode ser alterado.';
+  END IF;
+
+  RETURN NEW;
+END $$;
+
+DROP TRIGGER IF EXISTS trg_sistema_recrutamento_guard ON public."SISTEMA_RECRUTAMENTO";
+CREATE TRIGGER trg_sistema_recrutamento_guard
+  BEFORE INSERT OR UPDATE ON public."SISTEMA_RECRUTAMENTO"
+  FOR EACH ROW EXECUTE FUNCTION public.sistema_recrutamento_guard();
+
+NOTIFY pgrst, 'reload schema';
+
+-- ROLLBACK
+--   DROP TRIGGER trg_sistema_recrutamento_guard ON public."SISTEMA_RECRUTAMENTO";
+--   DROP FUNCTION public.sistema_recrutamento_guard();
+--   DROP FUNCTION public.rec_grau_por_data(text, date), public.rec_cargo_exige_cnh(text),
+--                 public.rec_data_prevista(text), public.dias_uteis_entre(date, date);
+--   As colunas novas podem ficar (cnh_obrigatoria default false, histórico vazio).
+--   O UPDATE do motivo 'Expansão' não se desfaz sozinho — se precisar voltar:
+--   UPDATE "SISTEMA_RECRUTAMENTO" SET motivo_vaga='Expansão'
+--    WHERE motivo_vaga='Expansão (Aumento de Quadro)';
+
+-- ===== 20260903000002_form_colegas_por_setor =====
+-- =========================================================================
+-- FORMULÁRIOS — pergunta "colegas": escolher o SETOR e depois a pessoa
+--
+-- Bug que isto conserta: a tela montava a lista de setores lendo a
+-- VW_EMPREGADOS_BASICO inteira e distinguindo no navegador. Só que o
+-- PostgREST corta a resposta (max-rows) — e como o setor "PADRAO" sozinho
+-- tem centenas de pessoas, o pedaço que chegava continha só 6 dos 14
+-- setores. Setor pequeno (SISTEMAS, JURIDICO, SST, TREINAMENTOS…)
+-- simplesmente não aparecia.
+--
+-- Conserto: duas RPCs que fazem o DISTINCT/filtro no banco e devolvem
+-- poucas linhas — nada de paginar cadastro no cliente.
+--
+--   cs_form_setores()          → setores com gente ativa, em ordem
+--   cs_form_colegas(_setor)    → quem trabalha naquele setor
+--
+-- Ambas SECURITY DEFINER porque a EMPREGADOS é fechada por RLS, e liberadas
+-- p/ anon: o formulário pode ser respondido sem login. Não expõem nada novo
+-- — nome, setor e cargo já saem na VW_EMPREGADOS_BASICO, que anon lê desde
+-- a migration 20260724000002. CPF/salário/PIS continuam fora.
+--
+-- Demitido não entra em nenhuma das duas.
+--
+-- Idempotente. Aplicar no banco do app.
+-- =========================================================================
+
+CREATE OR REPLACE FUNCTION public.cs_form_setores()
+RETURNS TABLE(setor text) LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public AS $$
+  SELECT DISTINCT btrim(e."Setor_ERP") AS setor
+    FROM public."EMPREGADOS" e
+   WHERE btrim(coalesce(e."Setor_ERP", '')) <> ''
+     AND coalesce(e."Situação", '') !~* 'demitid'
+   ORDER BY 1;
+$$;
+
+CREATE OR REPLACE FUNCTION public.cs_form_colegas(_setor text)
+RETURNS TABLE(id bigint, nome text, setor text, cargo text)
+LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public AS $$
+  SELECT e."ID"::bigint, btrim(e."Nome"), btrim(e."Setor_ERP"), btrim(coalesce(e."Título do Cargo", ''))
+    FROM public."EMPREGADOS" e
+   WHERE btrim(coalesce(e."Nome", '')) <> ''
+     AND coalesce(e."Situação", '') !~* 'demitid'
+     AND upper(btrim(coalesce(e."Setor_ERP", ''))) = upper(btrim(coalesce(_setor, '')))
+   ORDER BY 2;
+$$;
+
+REVOKE EXECUTE ON FUNCTION public.cs_form_setores(), public.cs_form_colegas(text) FROM PUBLIC;
+GRANT  EXECUTE ON FUNCTION public.cs_form_setores(), public.cs_form_colegas(text) TO anon, authenticated;
+
+NOTIFY pgrst, 'reload schema';
+
+-- ROLLBACK
+--   DROP FUNCTION public.cs_form_colegas(text), public.cs_form_setores();
+--   (a tela volta a ler a VW_EMPREGADOS_BASICO — com o bug de truncamento)
+
+
+-- ===== 20260906000003_wa_nova_conversa =====
+-- =====================================================================
+-- WHATSAPP — NOVA CONVERSA pela Caixa de Entrada + ficha do contato
+--
+-- Ate aqui uma conversa so nascia de dois jeitos: a pessoa mandava
+-- mensagem (webhook) ou o recrutador clicava no icone do card do
+-- candidato. Quem precisava falar com um numero avulso — fornecedor,
+-- colaborador, candidato de fora do portal — abria o WhatsApp no
+-- celular, e aquela conversa ficava fora do historico do ERP.
+--
+-- Esta migration entrega:
+--   1) wa_consultar_telefone   — quem e este numero? (nao grava nada)
+--   2) wa_abrir_conversa_por_telefone — acha/cria contato + conversa
+--   3) WA_CONTATO: nome_manual, etiquetas e observacao
+--   4) WA_BOT_CONFIG: o texto/botao da mensagem de abertura
+--
+-- SOBRE O NOME — a regra do modulo continua de pe: `nome` e o
+-- profile.name que a Meta manda no webhook, e nada mais escreve nele
+-- (ver 20260820000005, o caso do contato que virou "TREINAMENTOS").
+-- O nome digitado pelo atendente vai em `nome_manual`, coluna separada,
+-- e tem precedencia na tela. Assim o apelido interno ("Maria — RH do
+-- HUSM") nao apaga o nome real, e a chegada do nome real nao apaga o
+-- apelido.
+--
+-- E NAO EXISTE, na Cloud API, endpoint que devolva o nome de um numero
+-- que nunca falou com a gente: o profile.name so vem junto da mensagem
+-- de ENTRADA. Por isso wa_consultar_telefone devolve o nome quando ja
+-- temos o contato, e silencio quando nao temos — quem preenche o resto
+-- e o webhook, sozinho, quando a pessoa responder.
+--
+-- A regra do 9o digito (20260820000006) sai de dentro da RPC do
+-- recrutamento e vira funcao propria, usada pelas duas pontas. Era o
+-- que o comentario daquela migration ja pedia: "uma implementacao so,
+-- no banco".
+--
+-- Idempotente.
+-- ROLLBACK:
+--   DROP FUNCTION IF EXISTS public.wa_abrir_conversa_por_telefone(text, text, text);
+--   DROP FUNCTION IF EXISTS public.wa_consultar_telefone(text);
+--   DROP FUNCTION IF EXISTS public.wa_contato_do_telefone(text);
+--   ALTER TABLE public."WA_CONTATO" DROP COLUMN IF EXISTS nome_manual,
+--     DROP COLUMN IF EXISTS etiquetas, DROP COLUMN IF EXISTS observacao;
+--   ALTER TABLE public."WA_BOT_CONFIG" DROP COLUMN IF EXISTS abertura_texto,
+--     DROP COLUMN IF EXISTS abertura_botao, DROP COLUMN IF EXISTS abertura_template,
+--     DROP COLUMN IF EXISTS abertura_template_idioma;
+--   (a recrutamento_abrir_conversa volta na 20260820000006)
+-- =====================================================================
+
+-- 1) Ficha do contato --------------------------------------------------
+ALTER TABLE public."WA_CONTATO"
+  ADD COLUMN IF NOT EXISTS nome_manual text,
+  ADD COLUMN IF NOT EXISTS etiquetas   text[] NOT NULL DEFAULT '{}',
+  ADD COLUMN IF NOT EXISTS observacao  text;
+
+COMMENT ON COLUMN public."WA_CONTATO".nome  IS 'Nome do WhatsApp (profile.name). SO o webhook escreve aqui.';
+COMMENT ON COLUMN public."WA_CONTATO".nome_manual IS 'Nome/apelido definido pelo atendente. Tem precedencia na tela.';
+COMMENT ON COLUMN public."WA_CONTATO".etiquetas  IS 'Marcadores livres do atendimento (ex.: Fornecedor, Candidato, Urgente).';
+
+-- Busca por etiqueta sem varrer a tabela.
+CREATE INDEX IF NOT EXISTS idx_wa_contato_etiquetas
+  ON public."WA_CONTATO" USING gin (etiquetas);
+
+-- 2) Mensagem de abertura ----------------------------------------------
+-- Fica no banco, e nao no codigo, porque tres pontas precisam do MESMO
+-- texto: a previa na tela, o envio dentro da janela de 24h e o template
+-- submetido a Meta. Duas copias e questao de tempo ate divergirem.
+--
+-- ATENCAO: mudar `abertura_texto` NAO muda o template ja aprovado na
+-- Meta — template aprovado e imutavel. Depois de editar aqui, o template
+-- precisa ser recriado (com outro nome) e reaprovado, senao o envio
+-- FORA da janela de 24h continua saindo com o texto antigo.
+ALTER TABLE public."WA_BOT_CONFIG"
+  ADD COLUMN IF NOT EXISTS abertura_texto text NOT NULL DEFAULT
+    E'Olá, Somos do Grupo Nascimento!\nPrecisamos entrar em contato com você, por gentileza responda essa mensagem automática para que possamos entrar em contato.',
+  ADD COLUMN IF NOT EXISTS abertura_botao text NOT NULL DEFAULT 'Olá, Bom dia!',
+  ADD COLUMN IF NOT EXISTS abertura_template text NOT NULL DEFAULT 'abertura_contato',
+  ADD COLUMN IF NOT EXISTS abertura_template_idioma text NOT NULL DEFAULT 'pt_BR';
+
+-- 3) Contato a partir de um telefone qualquer --------------------------
+-- Centraliza a regra do 9o digito (20260820000006): a Cloud API guarda o
+-- wa_id na forma LEGADA (55 + DDD + 8 digitos), entao casar pelo E.164
+-- completo nao acha ninguem e cria duplicata. O trecho estavel entre as
+-- duas formas e pais + DDD + os 8 ultimos.
+--
+-- Helper interno: sem GRANT para authenticated de proposito. Ele cria
+-- contato sem checar permissao — quem checa sao as RPCs abaixo, que o
+-- chamam. Rodando dentro delas (SECURITY DEFINER), o EXECUTE e avaliado
+-- contra o dono da funcao, entao nao falta permissao nenhuma.
+CREATE OR REPLACE FUNCTION public.wa_contato_do_telefone(p_telefone text)
+RETURNS uuid
+LANGUAGE plpgsql VOLATILE SECURITY DEFINER SET search_path = public, pg_temp
+AS $$
+DECLARE
+  v_d       text;   -- so digitos
+  v_nac     text;   -- nacional, sem o 55 do pais
+  v_ddd     text;
+  v_tail    text;   -- 8 ultimos: estaveis entre a forma legada e a nova
+  v_wa_id   text;
+  v_contato uuid;
+BEGIN
+  v_d := regexp_replace(coalesce(p_telefone, ''), '\D', '', 'g');
+  IF length(v_d) < 10 THEN
+    RAISE EXCEPTION 'telefone invalido: informe DDD + numero';
+  END IF;
+
+  -- Tira o 55 so quando ele e mesmo o pais: 12 ou 13 digitos. Numero de
+  -- 10/11 digitos comecando com 55 e DDD 55 (Santa Maria/RS) — regiao do
+  -- contrato HUSM, entao nao e caso hipotetico.
+  v_nac  := CASE WHEN left(v_d, 2) = '55' AND length(v_d) IN (12, 13)
+                 THEN substr(v_d, 3) ELSE v_d END;
+  v_ddd  := left(v_nac, 2);
+  v_tail := right(v_nac, 8);
+
+  SELECT id INTO v_contato
+    FROM public."WA_CONTATO"
+   WHERE wa_id LIKE '55' || v_ddd || '%'
+     AND right(wa_id, 8) = v_tail
+   -- Havendo duplicata, a que ja conversou vence.
+   ORDER BY (SELECT count(*) FROM public."WA_CONVERSA" cv
+               JOIN public."WA_MENSAGEM" m ON m.conversa_id = cv.id
+              WHERE cv.contato_id = "WA_CONTATO".id) DESC,
+            created_at ASC
+   LIMIT 1;
+
+  -- Nao existe: cria na forma legada, que e a que o webhook grava — senao
+  -- a primeira resposta da pessoa abriria um segundo registro.
+  IF v_contato IS NULL THEN
+    v_wa_id := '55' || v_ddd || v_tail;
+    INSERT INTO public."WA_CONTATO"(wa_id, telefone)
+    VALUES (v_wa_id, p_telefone)
+    ON CONFLICT (wa_id) DO NOTHING;
+    SELECT id INTO v_contato FROM public."WA_CONTATO" WHERE wa_id = v_wa_id;
+  END IF;
+
+  RETURN v_contato;
+END $$;
+
+REVOKE ALL ON FUNCTION public.wa_contato_do_telefone(text) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.wa_contato_do_telefone(text) FROM anon;
+REVOKE ALL ON FUNCTION public.wa_contato_do_telefone(text) FROM authenticated;
+
+-- 4) Consulta (nao grava nada) -----------------------------------------
+-- Alimenta o "quem e este numero?" enquanto o atendente digita. NAO cria
+-- contato: numero digitado errado, ou desistencia no meio, nao pode
+-- deixar lixo na Caixa de Entrada.
+CREATE OR REPLACE FUNCTION public.wa_consultar_telefone(p_telefone text)
+RETURNS jsonb
+LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = public, pg_temp
+AS $$
+DECLARE
+  v_d text; v_nac text; v_ddd text; v_tail text;
+  v_ct record;
+  v_conversa uuid;
+  v_pasta text;
+  v_msgs bigint := 0;
+  v_dentro boolean := false;
+BEGIN
+  IF NOT public.tem_acesso_menu('whatsapp') THEN
+    RAISE EXCEPTION 'sem acesso a Caixa de Entrada do WhatsApp';
+  END IF;
+
+  v_d := regexp_replace(coalesce(p_telefone, ''), '\D', '', 'g');
+  IF length(v_d) < 10 THEN
+    RETURN jsonb_build_object('valido', false);
+  END IF;
+
+  v_nac  := CASE WHEN left(v_d, 2) = '55' AND length(v_d) IN (12, 13)
+                 THEN substr(v_d, 3) ELSE v_d END;
+  v_ddd  := left(v_nac, 2);
+  v_tail := right(v_nac, 8);
+
+  SELECT id, wa_id, nome, nome_manual, etiquetas, observacao INTO v_ct
+    FROM public."WA_CONTATO"
+   WHERE wa_id LIKE '55' || v_ddd || '%'
+     AND right(wa_id, 8) = v_tail
+   ORDER BY (SELECT count(*) FROM public."WA_CONVERSA" cv
+               JOIN public."WA_MENSAGEM" m ON m.conversa_id = cv.id
+              WHERE cv.contato_id = "WA_CONTATO".id) DESC,
+            created_at ASC
+   LIMIT 1;
+
+  IF v_ct.id IS NULL THEN
+    RETURN jsonb_build_object('valido', true, 'existe', false);
+  END IF;
+
+  SELECT id, pasta_codigo INTO v_conversa, v_pasta
+    FROM public."WA_CONVERSA" WHERE contato_id = v_ct.id;
+  IF v_conversa IS NOT NULL THEN
+    SELECT count(*) INTO v_msgs FROM public."WA_MENSAGEM" WHERE conversa_id = v_conversa;
+    SELECT EXISTS (
+      SELECT 1 FROM public."WA_MENSAGEM"
+       WHERE conversa_id = v_conversa AND direcao = 'entrada'
+         AND criada_em > now() - interval '24 hours') INTO v_dentro;
+  END IF;
+
+  -- `pode_ver`: a conversa pode existir numa pasta fora do acesso de quem
+  -- consultou. Avisar aqui evita o atendente preencher tudo, clicar e so
+  -- entao descobrir que o numero ja esta com outro setor.
+  RETURN jsonb_build_object(
+    'valido', true,
+    'existe', true,
+    'contato_id',    v_ct.id,
+    'wa_id',         v_ct.wa_id,
+    'nome',          v_ct.nome,
+    'nome_manual',   v_ct.nome_manual,
+    'etiquetas',     to_jsonb(coalesce(v_ct.etiquetas, '{}'::text[])),
+    'observacao',    v_ct.observacao,
+    'conversa_id',   v_conversa,
+    'pasta_codigo',  v_pasta,
+    'pode_ver',      v_conversa IS NULL OR public.wa_pode_ver_pasta(v_pasta),
+    'tem_mensagens', v_msgs > 0,
+    'dentro_janela', v_dentro
+  );
+END $$;
+
+REVOKE ALL ON FUNCTION public.wa_consultar_telefone(text) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.wa_consultar_telefone(text) FROM anon;
+GRANT EXECUTE ON FUNCTION public.wa_consultar_telefone(text) TO authenticated;
+
+-- 5) Abrir a conversa ---------------------------------------------------
+-- Idempotente por telefone: chamar duas vezes devolve a MESMA conversa.
+-- `dentro_janela` diz se cabe texto livre ou se so passa template — e o
+-- que a edge function whatsapp-abertura usa para escolher o caminho.
+--
+-- p_pasta e a fila onde a conversa NOVA nasce, e nao e detalhe: a RLS so
+-- devolve conversa de pasta que a pessoa enxerga, e conversa SEM pasta so
+-- aparece para quem tem 'whatsapp_todas' (wa_pode_ver_pasta). Sem escolher
+-- a pasta, um atendente de fila criava a conversa e a perdia no mesmo
+-- clique — existente no banco, invisivel para ele.
+CREATE OR REPLACE FUNCTION public.wa_abrir_conversa_por_telefone(
+  p_telefone text,
+  p_nome     text DEFAULT NULL,
+  p_pasta    text DEFAULT NULL
+)
+RETURNS jsonb
+LANGUAGE plpgsql VOLATILE SECURITY DEFINER SET search_path = public, pg_temp
+AS $$
+DECLARE
+  v_contato  uuid;
+  v_conversa uuid;
+  v_nova     boolean;
+  v_pasta    text;
+  v_ct       record;
+  v_msgs     bigint;
+  v_dentro   boolean;
+BEGIN
+  IF NOT public.tem_acesso_menu('whatsapp') THEN
+    RAISE EXCEPTION 'sem acesso a Caixa de Entrada do WhatsApp';
+  END IF;
+
+  -- SECURITY DEFINER passa por cima da RLS, entao a checagem da pasta tem
+  -- que ser explicita: sem isto daria para jogar conversa numa fila alheia.
+  IF p_pasta IS NOT NULL AND NOT public.wa_pode_ver_pasta(p_pasta) THEN
+    RAISE EXCEPTION 'sem acesso a pasta %', p_pasta;
+  END IF;
+
+  v_contato := public.wa_contato_do_telefone(p_telefone);
+
+  SELECT id INTO v_conversa FROM public."WA_CONVERSA" WHERE contato_id = v_contato;
+  v_nova := v_conversa IS NULL;
+  IF v_nova THEN
+    INSERT INTO public."WA_CONVERSA"(contato_id, pasta_codigo) VALUES (v_contato, p_pasta)
+    ON CONFLICT (contato_id) DO NOTHING;
+    SELECT id INTO v_conversa FROM public."WA_CONVERSA" WHERE contato_id = v_contato;
+  END IF;
+
+  -- Conversa que ja existia fica na pasta dela: mover e ato deliberado, que
+  -- avisa o contato (whatsapp-mover-pasta). Mas se for uma pasta fora do
+  -- acesso de quem chamou, devolver o id seria entregar uma conversa que a
+  -- RLS nao deixa abrir — melhor dizer o que houve.
+  SELECT pasta_codigo INTO v_pasta FROM public."WA_CONVERSA" WHERE id = v_conversa;
+  IF NOT public.wa_pode_ver_pasta(v_pasta) THEN
+    RAISE EXCEPTION 'este numero ja esta em atendimento numa pasta que voce nao acessa';
+  END IF;
+
+  -- Nome digitado vai para nome_manual — nunca para `nome`. Vazio nao
+  -- apaga o que ja estava: quem quer limpar edita na ficha do contato.
+  IF coalesce(btrim(p_nome), '') <> '' THEN
+    UPDATE public."WA_CONTATO" SET nome_manual = btrim(p_nome) WHERE id = v_contato;
+  END IF;
+
+  SELECT count(*) INTO v_msgs FROM public."WA_MENSAGEM" WHERE conversa_id = v_conversa;
+  SELECT EXISTS (
+    SELECT 1 FROM public."WA_MENSAGEM"
+     WHERE conversa_id = v_conversa AND direcao = 'entrada'
+       AND criada_em > now() - interval '24 hours') INTO v_dentro;
+
+  SELECT wa_id, nome, nome_manual INTO v_ct
+    FROM public."WA_CONTATO" WHERE id = v_contato;
+
+  RETURN jsonb_build_object(
+    'conversa_id',   v_conversa,
+    'contato_id',    v_contato,
+    'wa_id',         v_ct.wa_id,
+    'nome',          v_ct.nome,
+    'nome_manual',   v_ct.nome_manual,
+    'pasta_codigo',  v_pasta,
+    'conversa_nova', v_nova,
+    'tem_mensagens', v_msgs > 0,
+    'dentro_janela', v_dentro
+  );
+END $$;
+
+-- A assinatura antiga (2 argumentos) sairia como sobrecarga e deixaria o
+-- PostgREST sem saber qual chamar.
+DROP FUNCTION IF EXISTS public.wa_abrir_conversa_por_telefone(text, text);
+REVOKE ALL ON FUNCTION public.wa_abrir_conversa_por_telefone(text, text, text) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.wa_abrir_conversa_por_telefone(text, text, text) FROM anon;
+GRANT EXECUTE ON FUNCTION public.wa_abrir_conversa_por_telefone(text, text, text) TO authenticated;
+
+-- 6) Recrutamento passa a usar o mesmo helper ---------------------------
+-- Mesmo comportamento de antes (20260820000006), sem a copia da regra do
+-- 9o digito: agora ha um lugar so para corrigir quando a Meta mudar.
+CREATE OR REPLACE FUNCTION public.recrutamento_abrir_conversa(p_candidato_id bigint)
+RETURNS uuid
+LANGUAGE plpgsql VOLATILE SECURITY DEFINER SET search_path = public, pg_temp
+AS $$
+DECLARE
+  v_tel      text;
+  v_contato  uuid;
+  v_conversa uuid;
+BEGIN
+  SELECT telefone INTO v_tel FROM public."WA_CURRICULOS" WHERE id = p_candidato_id;
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'candidato % nao encontrado', p_candidato_id;
+  END IF;
+
+  -- Sem nome: quem nomeia contato e o webhook, com o profile.name da Meta.
+  v_contato := public.wa_contato_do_telefone(v_tel);
+
+  SELECT id INTO v_conversa FROM public."WA_CONVERSA" WHERE contato_id = v_contato;
+  IF v_conversa IS NULL THEN
+    INSERT INTO public."WA_CONVERSA"(contato_id) VALUES (v_contato)
+    ON CONFLICT (contato_id) DO NOTHING;
+    SELECT id INTO v_conversa FROM public."WA_CONVERSA" WHERE contato_id = v_contato;
+  END IF;
+
+  RETURN v_conversa;
+END $$;
+
+REVOKE ALL ON FUNCTION public.recrutamento_abrir_conversa(bigint) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.recrutamento_abrir_conversa(bigint) FROM anon;
+GRANT EXECUTE ON FUNCTION public.recrutamento_abrir_conversa(bigint) TO authenticated;
+
+NOTIFY pgrst, 'reload schema';
+
+
+-- ===== 20260906000004_formularios_acesso_por_formulario =====
+-- =========================================================================
+-- FORMULARIOS — ACESSO POR FORMULARIO (botao "Acesso" em cada card)
+--
+-- Ate aqui as capacidades eram GLOBAIS: quem tinha 'editar_criar' editava
+-- TODOS os formularios. Nao havia como dizer "este formulario e so a
+-- Fulana que administra". Esta migration cria a lista por formulario.
+--
+-- ONDE MORA: na propria "CS_FORM_ACESSOS", usando a coluna `formulario_id`
+-- que ja existia (sobra do modelo antigo 'visualiza', hoje 100% nula — 0
+-- linhas em 17/08/2026). NAO ha tabela nova de permissao: a regra do
+-- projeto e nao espalhar estrutura de acesso.
+--
+-- PAPEIS POR FORMULARIO (formulario_id NOT NULL):
+--   form_dono       ver + editar + excluir + gerenciar acesso
+--   form_gerenciar  ver + editar +           gerenciar acesso
+--   form_editar     ver + editar
+--   form_ver        ver
+--
+-- COMO A LISTA AGE (decisao do Pablo, 17/08/2026):
+--   * Formulario SEM lista  -> nada muda, valem as regras globais de hoje.
+--   * Formulario COM lista  -> a lista RESTRINGE: quem nao esta nela perde
+--     o formulario, mesmo tendo 'editar_criar' global. E o unico jeito de
+--     "deixar pra apenas uma pessoa".
+--   * Chave-mestra: quem tem 'ver_tudo' global SEMPRE le as respostas e
+--     SEMPRE consegue abrir/reatribuir a lista. E a valvula de escape para
+--     dono desligado da empresa — sem ela, formulario orfao so voltaria com
+--     SQL na mao.
+--
+-- Repare que 'ver_tudo' NAO da direito de editar: ele reatribui o acesso e
+-- le, mas para mexer no formulario tem que se colocar como dono. E de
+-- proposito — a chave-mestra e para destravar, nao para trabalhar.
+--
+-- Idempotente.
+-- ROLLBACK:
+--   ALTER TABLE public."CS_FORM_ACESSOS" DROP CONSTRAINT IF EXISTS cs_form_acessos_form_por_papel;
+--   ALTER TABLE public."CS_FORM_ACESSOS" ADD CONSTRAINT cs_form_acessos_sem_form CHECK (formulario_id IS NULL);
+--   DELETE FROM public."CS_FORM_ACESSOS" WHERE formulario_id IS NOT NULL;
+--   (e recriar as 4 policies com as expressoes anteriores, anotadas em cada bloco abaixo)
+-- =========================================================================
+
+-- ── 1) Liberar a coluna formulario_id ────────────────────────────────────
+-- A constraint antiga proibia QUALQUER linha por formulario. A nova mantem
+-- a mesma garantia para os papeis globais (eles seguem obrigados a ter
+-- formulario_id NULL) e abre a excecao so para os papeis novos.
+ALTER TABLE public."CS_FORM_ACESSOS" DROP CONSTRAINT IF EXISTS cs_form_acessos_sem_form;
+ALTER TABLE public."CS_FORM_ACESSOS" DROP CONSTRAINT IF EXISTS cs_form_acessos_form_por_papel;
+ALTER TABLE public."CS_FORM_ACESSOS" ADD  CONSTRAINT cs_form_acessos_form_por_papel
+  CHECK ((formulario_id IS NOT NULL) = (papel IN ('form_dono','form_gerenciar','form_editar','form_ver')));
+
+-- Uma pessoa tem UM papel por formulario. O indice antigo era
+-- (papel, user_id, formulario_id), que deixaria a mesma pessoa ser dono E
+-- so-ver no mesmo formulario — dois papeis brigando na mesma pergunta.
+DROP INDEX IF EXISTS cs_form_acessos_unq_form;
+CREATE UNIQUE INDEX cs_form_acessos_unq_form
+  ON public."CS_FORM_ACESSOS"(user_id, formulario_id) WHERE formulario_id IS NOT NULL;
+
+-- ── 2) Helpers ───────────────────────────────────────────────────────────
+-- Todos SECURITY DEFINER: alem de padronizar, e o que evita recursao
+-- infinita quando a policy de CS_FORM_ACESSOS pergunta a CS_FORM_ACESSOS
+-- quem pode escrever nela.
+
+-- Meu papel NESTE formulario (null = nao estou na lista).
+CREATE OR REPLACE FUNCTION public.cs_form_papel_no_form(_form uuid)
+RETURNS text LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public AS $$
+  SELECT a.papel FROM public."CS_FORM_ACESSOS" a
+   WHERE a.formulario_id = _form AND a.user_id = auth.uid()
+   LIMIT 1;
+$$;
+
+-- O formulario tem lista propria? (define se o modo restrito esta ligado)
+CREATE OR REPLACE FUNCTION public.cs_form_tem_lista(_form uuid)
+RETURNS boolean LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public AS $$
+  SELECT EXISTS (SELECT 1 FROM public."CS_FORM_ACESSOS" a WHERE a.formulario_id = _form);
+$$;
+
+-- A lista deste formulario esta me deixando de fora? Usada para PODAR as
+-- regras globais — e por isso que ela responde `false` quando nao ha lista.
+CREATE OR REPLACE FUNCTION public.cs_form_lista_exclui(_form uuid)
+RETURNS boolean LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public AS $$
+  SELECT _form IS NOT NULL
+     AND public.cs_form_tem_lista(_form)
+     AND public.cs_form_papel_no_form(_form) IS NULL;
+$$;
+
+-- Capacidade efetiva neste formulario. _cap: ver | editar | excluir | acesso
+CREATE OR REPLACE FUNCTION public.cs_form_pode(_form uuid, _cap text)
+RETURNS boolean LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public AS $$
+  SELECT CASE
+    WHEN _form IS NULL THEN false
+    -- Chave-mestra: le tudo e sempre consegue reatribuir. Nao inclui
+    -- 'editar'/'excluir' de proposito.
+    WHEN _cap IN ('ver','acesso') AND public.cs_form_cap('ver_tudo') THEN true
+    ELSE coalesce(
+      CASE _cap
+        WHEN 'ver'     THEN public.cs_form_papel_no_form(_form) IN ('form_dono','form_gerenciar','form_editar','form_ver')
+        WHEN 'editar'  THEN public.cs_form_papel_no_form(_form) IN ('form_dono','form_gerenciar','form_editar')
+        WHEN 'excluir' THEN public.cs_form_papel_no_form(_form) =  'form_dono'
+        WHEN 'acesso'  THEN public.cs_form_papel_no_form(_form) IN ('form_dono','form_gerenciar')
+                         -- Sem lista ainda: quem ja administra hoje e quem
+                         -- cria a primeira linha. Sem isto o botao "Acesso"
+                         -- nasceria util para ninguem.
+                         OR (NOT public.cs_form_tem_lista(_form)
+                             AND (public.cs_form_cap('editar_criar') OR public.cs_form_cap('encerrar_excluir')))
+        ELSE false
+      END, false)
+  END;
+$$;
+
+REVOKE EXECUTE ON FUNCTION public.cs_form_papel_no_form(uuid) FROM PUBLIC, anon;
+REVOKE EXECUTE ON FUNCTION public.cs_form_tem_lista(uuid)     FROM PUBLIC, anon;
+REVOKE EXECUTE ON FUNCTION public.cs_form_lista_exclui(uuid)  FROM PUBLIC, anon;
+REVOKE EXECUTE ON FUNCTION public.cs_form_pode(uuid, text)    FROM PUBLIC, anon;
+GRANT  EXECUTE ON FUNCTION public.cs_form_papel_no_form(uuid) TO authenticated;
+GRANT  EXECUTE ON FUNCTION public.cs_form_tem_lista(uuid)     TO authenticated;
+GRANT  EXECUTE ON FUNCTION public.cs_form_lista_exclui(uuid)  TO authenticated;
+GRANT  EXECUTE ON FUNCTION public.cs_form_pode(uuid, text)    TO authenticated;
+
+-- ── 3) Policies ──────────────────────────────────────────────────────────
+-- O padrao em todas: a expressao de HOJE fica intacta, so ganha o freio
+-- `AND NOT cs_form_lista_exclui(...)`; e a lista entra como um OR novo.
+-- Formulario sem lista cai exatamente no comportamento anterior.
+
+-- ANTES: USING/CHECK (cs_form_cap('editar_criar') OR cs_form_cap('encerrar_excluir'))
+DROP POLICY IF EXISTS cs_forms_update ON public."CS_FORMULARIOS";
+CREATE POLICY cs_forms_update ON public."CS_FORMULARIOS" FOR UPDATE TO authenticated
+  USING (
+    ((public.cs_form_cap('editar_criar') OR public.cs_form_cap('encerrar_excluir'))
+      AND NOT public.cs_form_lista_exclui(id))
+    OR public.cs_form_pode(id, 'editar')
+  )
+  WITH CHECK (
+    ((public.cs_form_cap('editar_criar') OR public.cs_form_cap('encerrar_excluir'))
+      AND NOT public.cs_form_lista_exclui(id))
+    OR public.cs_form_pode(id, 'editar')
+  );
+
+-- ANTES: USING cs_form_cap('encerrar_excluir')
+DROP POLICY IF EXISTS cs_forms_delete ON public."CS_FORMULARIOS";
+CREATE POLICY cs_forms_delete ON public."CS_FORMULARIOS" FOR DELETE TO authenticated
+  USING (
+    (public.cs_form_cap('encerrar_excluir') AND NOT public.cs_form_lista_exclui(id))
+    OR public.cs_form_pode(id, 'excluir')
+  );
+
+-- ANTES: USING (cs_form_cap('ver_tudo') OR (cs_form_cap('ver_proprias') AND
+--        cs_form_minha_resposta(criado_por, respondente_nome)) OR
+--        cs_form_cap_setor(setor) OR cs_form_cap_form_setor(formulario_id))
+DROP POLICY IF EXISTS cs_form_resp_select ON public."CS_FORM_RESPOSTAS";
+CREATE POLICY cs_form_resp_select ON public."CS_FORM_RESPOSTAS" FOR SELECT TO authenticated
+  USING (
+    (NOT public.cs_form_lista_exclui(formulario_id)
+      AND (
+        public.cs_form_cap('ver_tudo')
+        OR (public.cs_form_cap('ver_proprias') AND public.cs_form_minha_resposta(criado_por, respondente_nome))
+        OR public.cs_form_cap_setor(setor)
+        OR public.cs_form_cap_form_setor(formulario_id)
+      ))
+    OR public.cs_form_pode(formulario_id, 'ver')
+  );
+
+-- CS_FORM_ACESSOS: dono/gerenciar do formulario passam a escrever as linhas
+-- DAQUELE formulario. A clausula global antiga fica intacta — quem
+-- administra em Acesso por Usuario continua podendo tudo.
+-- ANTES (nas 3): ((papel='dashboard' AND user_id=auth.uid()) OR
+--        (papel<>'dashboard' AND can_access(auth.uid(),'central_servicos_formularios','alterar')))
+DROP POLICY IF EXISTS cs_form_acessos_insert ON public."CS_FORM_ACESSOS";
+CREATE POLICY cs_form_acessos_insert ON public."CS_FORM_ACESSOS" FOR INSERT TO authenticated
+  WITH CHECK (
+    ((papel = 'dashboard') AND (user_id = auth.uid()))
+    OR ((papel <> 'dashboard') AND public.can_access(auth.uid(), 'central_servicos_formularios', 'alterar'))
+    OR (formulario_id IS NOT NULL AND public.cs_form_pode(formulario_id, 'acesso'))
+  );
+
+DROP POLICY IF EXISTS cs_form_acessos_update ON public."CS_FORM_ACESSOS";
+CREATE POLICY cs_form_acessos_update ON public."CS_FORM_ACESSOS" FOR UPDATE TO authenticated
+  USING (
+    ((papel = 'dashboard') AND (user_id = auth.uid()))
+    OR ((papel <> 'dashboard') AND public.can_access(auth.uid(), 'central_servicos_formularios', 'alterar'))
+    OR (formulario_id IS NOT NULL AND public.cs_form_pode(formulario_id, 'acesso'))
+  )
+  WITH CHECK (
+    ((papel = 'dashboard') AND (user_id = auth.uid()))
+    OR ((papel <> 'dashboard') AND public.can_access(auth.uid(), 'central_servicos_formularios', 'alterar'))
+    OR (formulario_id IS NOT NULL AND public.cs_form_pode(formulario_id, 'acesso'))
+  );
+
+DROP POLICY IF EXISTS cs_form_acessos_delete ON public."CS_FORM_ACESSOS";
+CREATE POLICY cs_form_acessos_delete ON public."CS_FORM_ACESSOS" FOR DELETE TO authenticated
+  USING (
+    ((papel = 'dashboard') AND (user_id = auth.uid()))
+    OR ((papel <> 'dashboard') AND public.can_access(auth.uid(), 'central_servicos_formularios', 'alterar'))
+    OR (formulario_id IS NOT NULL AND public.cs_form_pode(formulario_id, 'acesso'))
+  );
+
+NOTIFY pgrst, 'reload schema';
+
+
+-- ===== 20260906000005_juridico_processos_recurso_pericia_propostas =====
+-- =========================================================================
+-- JURIDICO / PROCESSOS — recurso, pericia medica e propostas
+--
+-- Tres pedidos do juridico (17/08/2026):
+--   1) Condenacao: a empresa vai recorrer? Se sim, custas recursais,
+--      seguro garantia e deposito recursal.
+--   2) Houve pericia MEDICA? Se sim, valor do perito judicial e do
+--      assistente tecnico/medico.
+--   3) Propostas (judicial/extrajudicial) na 1a e na 2a audiencia e no
+--      decorrer do processo, dizendo de quem partiu: reclamante,
+--      reclamada ou juiz.
+--
+-- ATENCAO AO MODELO — a JUR_PROCESSOS tem UMA LINHA POR MOTIVO, e os
+-- campos do processo ficam repetidos em todas elas. Quem le agrupa: os
+-- valores por motivo sao SOMADOS, os do processo sao lidos de uma linha
+-- so. As colunas criadas aqui sao TODAS do processo, entao NAO podem
+-- entrar na soma por motivo — se entrassem, um processo com 3 motivos
+-- mostraria as custas recursais triplicadas. Ver `agrupar()` no
+-- Processos.tsx, onde elas sao lidas com maxN/first, nunca com sum.
+--
+-- `valor_seguro_garantia` e `valor_deposito_recursal` JA EXISTIAM:
+--   - seguro garantia estava criada e sem uso nenhum na tela;
+--   - deposito recursal continua sendo preenchido POR MOTIVO (decisao do
+--     Pablo, 17/08/2026); a aba de recurso so mostra a soma, em leitura.
+-- Por isso nenhuma das duas e recriada aqui.
+--
+-- Idempotente.
+-- ROLLBACK:
+--   ALTER TABLE public."JUR_PROCESSOS"
+--     DROP COLUMN IF EXISTS vai_recorrer,
+--     DROP COLUMN IF EXISTS valor_custas_recursais,
+--     DROP COLUMN IF EXISTS houve_pericia_medica,
+--     DROP COLUMN IF EXISTS valor_perito_judicial,
+--     DROP COLUMN IF EXISTS valor_assistente_tecnico,
+--     DROP COLUMN IF EXISTS propostas_json;
+-- =========================================================================
+
+ALTER TABLE public."JUR_PROCESSOS"
+  -- 1) Recurso
+  ADD COLUMN IF NOT EXISTS vai_recorrer             text,
+  ADD COLUMN IF NOT EXISTS valor_custas_recursais   numeric,
+  -- 2) Pericia medica
+  ADD COLUMN IF NOT EXISTS houve_pericia_medica     text,
+  ADD COLUMN IF NOT EXISTS valor_perito_judicial    numeric,
+  ADD COLUMN IF NOT EXISTS valor_assistente_tecnico numeric,
+  -- 3) Propostas fora de audiencia ("no decorrer do processo").
+  --    As propostas DE audiencia continuam dentro de audiencias_json.
+  --    text, e nao jsonb, para acompanhar o audiencias_json que ja existe
+  --    — os dois sao serializados/lidos do mesmo jeito na tela.
+  ADD COLUMN IF NOT EXISTS propostas_json           text;
+
+COMMENT ON COLUMN public."JUR_PROCESSOS".vai_recorrer IS
+  'Sim/Nao — a empresa vai recorrer da condenacao. Campo do PROCESSO (repetido nas linhas de motivo).';
+COMMENT ON COLUMN public."JUR_PROCESSOS".houve_pericia_medica IS
+  'Sim/Nao — houve pericia medica. Campo do PROCESSO (repetido nas linhas de motivo).';
+COMMENT ON COLUMN public."JUR_PROCESSOS".propostas_json IS
+  'Propostas fora de audiencia: [{data,tipo,quem,valor,descricao}]. As de audiencia ficam em audiencias_json.';
+
+NOTIFY pgrst, 'reload schema';
+
+
+-- ===== 20260906000006_patrimonio_motivo_indisponivel =====
+-- =========================================================================
+-- PATRIMONIO — por que o bem esta indisponivel (manutencao OU em contrato)
+--
+-- Pedido do Pablo (17/08/2026): alguns veiculos ficam alocados a um
+-- contrato e o escritorio nao pode agenda-los. Isso nao e manutencao, mas
+-- o efeito e o mesmo — o carro nao esta disponivel.
+--
+-- ESCOLHA DE MODELO: `em_manutencao` continua sendo a chave que diz
+-- "indisponivel", e a coluna nova diz o MOTIVO. Nao inventei um segundo
+-- booleano nem troquei o campo por um enum, e a razao e pratica: o
+-- Agendamento de Veiculos ja bloqueia por `em_manutencao`
+-- (disponibilidadeDoVeiculo + cs_veiculos_frota). Pendurando o motivo
+-- nele, "Em contrato" passa a bloquear o agendamento POR CONSTRUCAO —
+-- nao depende de alguem lembrar de somar a nova condicao em cada tela.
+--
+-- O preco disso e o nome do campo ficar mais estreito do que o
+-- significado; por isso o COMMENT abaixo, e por isso as telas de
+-- Patrimonio/Manutencoes passam a filtrar por `motivo_indisponivel` em
+-- vez de por `em_manutencao` (senao o Painel de Manutencoes listaria
+-- carro que so esta em contrato).
+--
+-- As datas continuam valendo para os dois motivos: contrato tambem tem
+-- prazo, e a constraint sup_patrimonio_datas_coerentes (data so existe
+-- com em_manutencao) segue de pe sem alteracao.
+--
+-- Idempotente.
+-- ROLLBACK:
+--   ALTER TABLE public.sup_patrimonio DROP CONSTRAINT IF EXISTS sup_patrimonio_motivo_coerente;
+--   ALTER TABLE public.sup_patrimonio DROP COLUMN IF EXISTS motivo_indisponivel;
+--   (e recriar cs_veiculos_frota sem a coluna — versao anterior na 20260819)
+-- =========================================================================
+
+ALTER TABLE public.sup_patrimonio
+  ADD COLUMN IF NOT EXISTS motivo_indisponivel text;
+
+COMMENT ON COLUMN public.sup_patrimonio.em_manutencao IS
+  'Bem INDISPONIVEL (nao apenas manutencao). O motivo esta em motivo_indisponivel.';
+COMMENT ON COLUMN public.sup_patrimonio.motivo_indisponivel IS
+  'manutencao | contrato. NULL quando disponivel. "contrato" = alocado a um contrato, o escritorio nao agenda.';
+
+-- Backfill: tudo que ja estava indisponivel era, por definicao, manutencao
+-- — ate agora nao havia outro motivo possivel.
+UPDATE public.sup_patrimonio
+   SET motivo_indisponivel = 'manutencao'
+ WHERE em_manutencao AND motivo_indisponivel IS NULL;
+
+-- E o inverso, para o caso de reaplicacao depois de alguem desmarcar.
+UPDATE public.sup_patrimonio
+   SET motivo_indisponivel = NULL
+ WHERE NOT em_manutencao AND motivo_indisponivel IS NOT NULL;
+
+ALTER TABLE public.sup_patrimonio DROP CONSTRAINT IF EXISTS sup_patrimonio_motivo_coerente;
+ALTER TABLE public.sup_patrimonio ADD  CONSTRAINT sup_patrimonio_motivo_coerente
+  CHECK (
+    (em_manutencao AND motivo_indisponivel IN ('manutencao', 'contrato'))
+    OR ((NOT em_manutencao) AND motivo_indisponivel IS NULL)
+  );
+
+-- A frota que o Agendamento de Veiculos le precisa devolver o motivo, para
+-- a tela poder dizer "em contrato" em vez de "em manutencao".
+--
+-- DROP antes do CREATE: acrescentar coluna ao RETURNS TABLE muda o tipo de
+-- retorno, e o CREATE OR REPLACE recusa isso ("cannot change return type of
+-- existing function"). Nao ha view/policy dependendo dela, entao o DROP e
+-- seguro; o CREATE logo abaixo, na mesma transacao, repoe.
+DROP FUNCTION IF EXISTS public.cs_veiculos_frota();
+CREATE OR REPLACE FUNCTION public.cs_veiculos_frota()
+RETURNS TABLE(
+  id uuid, empresa_id uuid, nome text, identificador text, lotacao text,
+  contrato_nome text, foto_path text, em_manutencao boolean,
+  data_inicio_manutencao date, data_previsao_fim date,
+  motivo_indisponivel text
+)
+LANGUAGE sql STABLE SECURITY DEFINER SET search_path TO 'public', 'pg_temp'
+AS $$
+  SELECT p.id, p.empresa_id, p.nome, p.identificador, p.lotacao, c.nome,
+         p.foto_path,
+         p.em_manutencao, p.data_inicio_manutencao, p.data_previsao_fim,
+         p.motivo_indisponivel
+    FROM public.sup_patrimonio p
+    LEFT JOIN public.contratos c ON c.id = p.contrato_id
+   WHERE p.categoria = 'veiculo'
+     AND p.ativo
+     -- Único gate. `empresa_id` continua vindo no retorno porque a reserva é
+     -- arquivada na empresa dona do carro — só não filtra mais por ela.
+     AND public.tem_acesso_menu('central_servicos_veiculos')
+   ORDER BY p.nome;
+$$;
+
+REVOKE ALL ON FUNCTION public.cs_veiculos_frota() FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.cs_veiculos_frota() FROM anon;
+GRANT EXECUTE ON FUNCTION public.cs_veiculos_frota() TO authenticated;
+
+NOTIFY pgrst, 'reload schema';
