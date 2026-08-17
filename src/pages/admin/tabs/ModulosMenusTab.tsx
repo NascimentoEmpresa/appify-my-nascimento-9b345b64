@@ -613,7 +613,11 @@ function ModuleAccessPanel({ podeGerenciar, modulos, menus }: { podeGerenciar: b
   const [selectedMenuCodigo, setSelectedMenuCodigo] = useState<string | null>(null);
 
   const moduloSelecionado = modulos.find((m) => m.id === selectedModuloId) ?? null;
-  const menusDoModulo = menus.filter((mn) => mn.modulo_id === selectedModuloId);
+  // Só menus ATIVOS, pelo mesmo motivo da visão por usuário: menu desativado
+  // não é liberável (`can_access` e `list_accessible_menus` exigem
+  // `ativo = true`), então marcar alguém nele grava a permissão, diz que
+  // salvou e volta sozinho no refetch. 21 dos 192 menus estão desativados.
+  const menusDoModulo = menus.filter((mn) => mn.modulo_id === selectedModuloId && mn.ativo);
 
   // Módulo-folha (sem submenus): ele mesmo é o menu_codigo a marcar pessoas.
   useEffect(() => {

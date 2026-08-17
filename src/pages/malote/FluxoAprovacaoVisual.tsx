@@ -16,9 +16,19 @@ import { DespesaEvento, MaloteDespesaRow, StatusDespesa, TipoEvento, aprovadorDo
 // tipo de evento que explica por que a despesa está ali.
 const STATUS_DESVIO_EVENTO: Partial<Record<StatusDespesa, TipoEvento>> = {
   necessidade_de_ajuste: "necessidade_de_ajuste",
+  ajuste_pagamento: "ajuste_pagamento_solicitado",
   solicitacao_reprovada: "solicitacao_reprovada",
   despesa_reprovada: "despesa_reprovada",
   cancelada: "cancelamento",
+};
+
+// Desvios que representam uma parada de verdade no fluxo (reprovação/
+// cancelamento) ganham destaque vermelho; ajustes (que voltam pro
+// solicitante seguir tentando) ficam no âmbar de "atual".
+const STATUS_DESVIO_ERRO: Partial<Record<StatusDespesa, boolean>> = {
+  solicitacao_reprovada: true,
+  despesa_reprovada: true,
+  cancelada: true,
 };
 
 type Estado = "concluida" | "atual" | "futura";
@@ -140,10 +150,22 @@ function No({
 // Nó de uma etapa do template — se existir um evento real correspondente,
 // mostra autor/descrição/data reais (via tooltip); senão, fica no estado
 // calculado (concluída sem detalhe, atual ou futura/cinza).
-function NoEtapa({ etapa, estado, ev, despesa }: { etapa: EtapaTemplate; estado: Estado; ev: DespesaEvento | undefined; despesa: MaloteDespesaRow }) {
+function NoEtapa({
+  etapa,
+  estado,
+  ev,
+  despesa,
+  erro,
+}: {
+  etapa: EtapaTemplate;
+  estado: Estado;
+  ev: DespesaEvento | undefined;
+  despesa: MaloteDespesaRow;
+  erro?: boolean;
+}) {
   const { data: nomeAtor } = useNomeUsuario(ev?.ator_user_id);
   if (!ev) {
-    return <No estado={estado} icon={etapa.icon} titulo={etapa.titulo} tooltip={etapa.fallback} />;
+    return <No estado={estado} icon={etapa.icon} titulo={etapa.titulo} tooltip={etapa.fallback} erro={erro} />;
   }
   const meta = EVENTO_META[ev.tipo_evento];
   let papel = "";
@@ -151,7 +173,7 @@ function NoEtapa({ etapa, estado, ev, despesa }: { etapa: EtapaTemplate; estado:
   else if (ev.nivel) papel = ` (Nível ${ev.nivel})`;
   const tooltip = `${nomeAtor ?? "—"}${papel}\n${ev.descricao || meta?.fallback || etapa.fallback}\n${new Date(ev.created_at).toLocaleString("pt-BR")}`;
   return (
-    <No estado="concluida" icon={etapa.icon} titulo={etapa.titulo} sub={new Date(ev.created_at).toLocaleDateString("pt-BR")} tooltip={tooltip} />
+    <No estado="concluida" icon={etapa.icon} titulo={etapa.titulo} sub={new Date(ev.created_at).toLocaleDateString("pt-BR")} tooltip={tooltip} erro={erro} />
   );
 }
 
@@ -215,15 +237,35 @@ export function FluxoAprovacaoVisual({ despesa, eventos }: { despesa: MaloteDesp
   }
 
   // "Aguardando pagamento" não tem evento próprio (é uma janela de status, não
-  // uma ação registrada) — se a despesa já chegou em despesa_paga, essa etapa
-  // foi necessariamente cumprida, senão fica presa em "futura" pra sempre.
-  const pagamentoConfirmado = despesa.status === "despesa_paga" || eventos.some((ev) => ev.tipo_evento === "despesa_paga");
+  // uma ação registrada). E despesas que chegaram em qualquer estágio de
+  // pagamento (ou foram reprovadas já com todos os níveis aprovados)
+  // necessariamente passaram por N1/N2/N3 e por "Aguardando pagamento" —
+  // mesmo que, por algum motivo, faltem os eventos individuais (dado
+  // legado/de teste). Infere concluído nesses casos em vez de deixar a
+  // etapa presa em "futura" pra sempre.
+  const nivelFinalConfigurado = nivel3 ? 3 : nivel2 ? 2 : 1;
+  const chegouNoPagamento =
+    ["aguardando_pagamento", "pronto_para_pagar", "ajuste_pagamento", "despesa_paga"].includes(despesa.status) ||
+    (despesa.status === "despesa_reprovada" && despesa.nivel_aprovacao_atual === nivelFinalConfigurado);
+  const passouDoAguardandoPagamento =
+    ["pronto_para_pagar", "ajuste_pagamento", "despesa_paga"].includes(despesa.status) ||
+    (despesa.status === "despesa_reprovada" && despesa.nivel_aprovacao_atual === nivelFinalConfigurado);
 
   const nos: { el: JSX.Element; estado: Estado }[] = etapas.map((etapa) => {
     const ev = buscarEvento(etapa);
     const estado: Estado = ev
       ? "concluida"
-      : etapa.key === "aguardando_pagamento" && pagamentoConfirmado
+      : etapa.key === "despesa_paga"
+      ? despesa.status === "despesa_paga"
+        ? "concluida"
+        : "futura"
+      : etapa.key === "aguardando_pagamento"
+      ? passouDoAguardandoPagamento
+        ? "concluida"
+        : ehAtual("aguardando_pagamento")
+        ? "atual"
+        : "futura"
+      : chegouNoPagamento
       ? "concluida"
       : ehAtual(etapa.key)
       ? "atual"
@@ -232,13 +274,15 @@ export function FluxoAprovacaoVisual({ despesa, eventos }: { despesa: MaloteDesp
   });
 
   // Desvio do caminho feliz (ajuste pedido / reprovação / cancelamento) —
-  // só aparece se a despesa está ATUALMENTE nesse status; entra como um nó
-  // extra no fim, sem tirar as etapas futuras do mapa canônico.
+  // aparece sempre que a despesa está ATUALMENTE nesse status, mesmo sem um
+  // evento real correspondente (dado legado/de teste) — nesse caso mostra
+  // um nó genérico com o texto padrão em vez de sumir silenciosamente.
   const tipoDesvioAtual = STATUS_DESVIO_EVENTO[despesa.status];
-  const desvio = tipoDesvioAtual ? [...eventos].reverse().find((ev) => ev.tipo_evento === tipoDesvioAtual) : undefined;
 
-  if (desvio) {
-    const meta = EVENTO_META[desvio.tipo_evento] ?? { label: desvio.tipo_evento, icon: AlertTriangle, fallback: "" };
+  if (tipoDesvioAtual) {
+    const desvio = [...eventos].reverse().find((ev) => ev.tipo_evento === tipoDesvioAtual);
+    const meta = EVENTO_META[tipoDesvioAtual] ?? { label: tipoDesvioAtual, icon: AlertTriangle, fallback: "" };
+    const erro = STATUS_DESVIO_ERRO[despesa.status] ?? false;
     nos.push({
       el: (
         <NoEtapa
@@ -247,6 +291,7 @@ export function FluxoAprovacaoVisual({ despesa, eventos }: { despesa: MaloteDesp
           estado="atual"
           ev={desvio}
           despesa={despesa}
+          erro={erro}
         />
       ),
       estado: "atual",

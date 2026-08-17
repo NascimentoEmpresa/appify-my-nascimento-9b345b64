@@ -89,6 +89,7 @@ import ContasReceber from "./pages/financeiro/ContasReceber";
 import Cobrancas from "./pages/cobrancas/Cobrancas";
 import RelatorioServicos from "./pages/financeiro/RelatorioServicos";
 import FluxoCaixa from "./pages/financeiro/FluxoCaixa";
+import FluxoCaixaGestao from "./pages/financeiro/FluxoCaixaGestao";
 import ContaGarantida from "./pages/financeiro/ContaGarantida";
 import FluxoCaixaDiario from "./pages/financeiro/FluxoCaixaDiario";
 import CapitalGiro from "./pages/financeiro/CapitalGiro";
@@ -103,6 +104,7 @@ import MaloteOrcamentoContratos from "./pages/malote/OrcamentoContratos";
 import MaloteOrcamentoGeral from "./pages/malote/OrcamentoGeral";
 import GeradorPops from "./pages/controladoria/GeradorPops";
 import MaloteAprovacoes from "./pages/malote/Aprovacoes";
+import MalotePagamento from "./pages/malote/PagamentoMalote";
 import MaloteConfiguracoes from "./pages/malote/Configuracoes";
 import MaloteCriarDespesa from "./pages/malote/CriarDespesa";
 import MaloteRatearClassificacao from "./pages/malote/RatearClassificacao";
@@ -369,6 +371,7 @@ const App = () => (
             <Route path="controladoria/gerador-pops" element={<GeradorPops />} />
             {/* Malote */}
             <Route path="malote/aprovacoes" element={<MaloteAprovacoes />} />
+            <Route path="malote/pagamento" element={<MalotePagamento />} />
             <Route path="malote/configuracoes" element={<MaloteConfiguracoes />} />
             <Route path="malote/criar-despesa" element={<MaloteCriarDespesa />} />
             <Route path="malote/ratear-classificacao" element={<MaloteRatearClassificacao />} />
@@ -421,6 +424,7 @@ const App = () => (
             <Route path="financeiro/relatorio-servicos" element={<RelatorioServicos />} />
             <Route path="financeiro/conta-garantida" element={<ContaGarantida />} />
             <Route path="financeiro/fluxo-caixa" element={<FluxoCaixa />} />
+            <Route path="financeiro/gestao-financeira/fluxo-caixa" element={<FluxoCaixaGestao />} />
             <Route path="financeiro/fluxo-caixa-diario" element={<FluxoCaixaDiario />} />
             <Route path="financeiro/capital-giro" element={<CapitalGiro />} />
             <Route path="financeiro/conciliacao-fluxo-caixa" element={<ConciliacaoFluxoCaixa />} />

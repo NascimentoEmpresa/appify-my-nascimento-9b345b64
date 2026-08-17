@@ -1887,7 +1887,7 @@ function FormDrawer({
     form.manutencao_profissional + form.cafe + form.almoco + form.janta + form.ceia +
     form.funeral + form.assiduidade + form.beneficio_trabalhador + form.patronal +
     form.fundo_assistencial + form.fundo_profissional + form.natalidade +
-    form.outros_1 + form.outros_2 + form.outros_3 - form.deducoes - form.aux_alimentacao_desconto;
+    form.outros_1 + form.outros_2 + form.outros_3 + form.aux_alimentacao_desconto - form.deducoes;
 
   const somaReposicao =
     form.sub_ferias + form.sub_ausencias_legais + form.sub_paternidade +
@@ -2861,7 +2861,7 @@ function ViewModal({
     row.manutencao_profissional + row.cafe + row.almoco + row.janta + row.ceia +
     row.funeral + row.assiduidade + row.beneficio_trabalhador + row.patronal +
     row.fundo_assistencial + row.fundo_profissional + row.natalidade +
-    row.outros_1 + row.outros_2 + row.outros_3 - row.deducoes - row.aux_alimentacao_desconto;
+    row.outros_1 + row.outros_2 + row.outros_3 + row.aux_alimentacao_desconto - row.deducoes;
   const somaReposicao = row.sub_ferias + row.sub_ausencias_legais + row.sub_paternidade +
     row.sub_acidente_trabalho + row.sub_maternidade + row.sub_doenca + row.sub_repouso +
     row.incidencia_maternidade + row.incidencia_enc_reposicao + row.incidencia_enc_reposicao_2 +
