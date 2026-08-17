@@ -1,0 +1,234 @@
+table_name|ordinal_position|column_name|data_type|tam|is_nullable|padrao
+alteracoes_catalogo_site_externo|1|id|integer|32,0|NO|nextval('alteracoes_catalogo_site_externo_id_seq'::regclass)
+alteracoes_catalogo_site_externo|2|lote_id|character varying|100|NO|
+alteracoes_catalogo_site_externo|3|alteracao_id|integer|32,0|NO|
+alteracoes_catalogo_site_externo|4|tipo_entidade|character varying|50|NO|
+alteracoes_catalogo_site_externo|5|tipo_acao|character varying|50|NO|
+alteracoes_catalogo_site_externo|6|dados|jsonb||NO|
+alteracoes_catalogo_site_externo|7|descricao|text||NO|
+alteracoes_catalogo_site_externo|8|status|character varying|20|YES|'PENDENTE'::character varying
+alteracoes_catalogo_site_externo|9|data_criacao|timestamp without time zone||YES|now()
+alteracoes_catalogo_site_externo|10|created_at|timestamp without time zone||YES|now()
+alteracoes_catalogo_site_externo|11|updated_at|timestamp without time zone||YES|now()
+compras_anexos|1|id|integer|32,0|NO|nextval('compras_anexos_id_seq'::regclass)
+compras_anexos|2|solicitacao_id|integer|32,0|NO|
+compras_anexos|3|historico_id|integer|32,0|YES|
+compras_anexos|4|nome_arquivo|character varying|500|NO|
+compras_anexos|5|caminho_arquivo|character varying|1000|NO|
+compras_anexos|6|tamanho_kb|integer|32,0|YES|
+compras_anexos|7|tipo_mime|character varying|200|YES|
+compras_anexos|8|enviado_por_cpf|character varying|11|YES|
+compras_anexos|9|enviado_por_nome|character varying|255|NO|
+compras_anexos|10|created_at|timestamp without time zone||YES|CURRENT_TIMESTAMP
+compras_historico|1|id|integer|32,0|NO|nextval('compras_historico_id_seq'::regclass)
+compras_historico|2|solicitacao_id|integer|32,0|NO|
+compras_historico|3|tipo|character varying|30|NO|
+compras_historico|4|conteudo|text||YES|
+compras_historico|5|autor_cpf|character varying|11|YES|
+compras_historico|6|autor_nome|character varying|255|NO|
+compras_historico|7|autor_setor|character varying|100|YES|
+compras_historico|8|created_at|timestamp without time zone||YES|CURRENT_TIMESTAMP
+compras_solicitacoes|1|id|integer|32,0|NO|nextval('compras_solicitacoes_id_seq'::regclass)
+compras_solicitacoes|2|numero|integer|32,0|NO|
+compras_solicitacoes|3|nome|character varying|500|NO|
+compras_solicitacoes|4|motivo|text||YES|
+compras_solicitacoes|5|descricao|text||YES|
+compras_solicitacoes|6|tipo|character varying|50|NO|
+compras_solicitacoes|7|classificacao|character varying|200|YES|
+compras_solicitacoes|8|empresa|character varying|300|YES|
+compras_solicitacoes|9|contrato|character varying|300|YES|
+compras_solicitacoes|10|valor_estimado|numeric|12,2|YES|
+compras_solicitacoes|11|valor_final|numeric|12,2|YES|
+compras_solicitacoes|12|status|character varying|30|NO|'PENDENTE'::character varying
+compras_solicitacoes|13|criado_por_cpf|character varying|11|YES|
+compras_solicitacoes|14|criado_por_nome|character varying|255|NO|
+compras_solicitacoes|15|criado_por_setor|character varying|100|YES|
+compras_solicitacoes|16|aprovado_por_cpf|character varying|11|YES|
+compras_solicitacoes|17|aprovado_por_nome|character varying|255|YES|
+compras_solicitacoes|18|aprovado_em|timestamp without time zone||YES|
+compras_solicitacoes|19|justificativa_aprovacao|text||YES|
+compras_solicitacoes|20|cotado_por_cpf|character varying|11|YES|
+compras_solicitacoes|21|cotado_por_nome|character varying|255|YES|
+compras_solicitacoes|22|cotado_em|timestamp without time zone||YES|
+compras_solicitacoes|23|observacao_cotacao|text||YES|
+compras_solicitacoes|24|pago_por_cpf|character varying|11|YES|
+compras_solicitacoes|25|pago_por_nome|character varying|255|YES|
+compras_solicitacoes|26|pago_em|timestamp without time zone||YES|
+compras_solicitacoes|27|observacao_pagamento|text||YES|
+compras_solicitacoes|28|created_at|timestamp without time zone||YES|CURRENT_TIMESTAMP
+compras_solicitacoes|29|updated_at|timestamp without time zone||YES|CURRENT_TIMESTAMP
+compras_solicitacoes|30|dispensa_cotacao|boolean||YES|false
+contratos|1|id|integer|32,0|NO|nextval('contratos_id_seq'::regclass)
+contratos|2|numero_contrato|character varying|50|NO|
+contratos|3|licitacao_id|integer|32,0|YES|
+contratos|4|fornecedor_id|integer|32,0|YES|
+contratos|5|objeto|text||NO|
+contratos|6|valor_inicial|numeric|15,2|NO|
+contratos|7|valor_atual|numeric|15,2|NO|
+contratos|8|data_assinatura|date||NO|
+contratos|9|data_inicio|date||NO|
+contratos|10|data_termino|date||NO|
+contratos|11|prazo_meses|integer|32,0|YES|
+contratos|12|vigencia_determinada|boolean||YES|true
+contratos|13|tipo_contrato|character varying|50|YES|
+contratos|14|modalidade_licitacao|character varying|50|YES|
+contratos|15|numero_processo_licitacao|character varying|50|YES|
+contratos|16|fiscal_contrato|character varying|200|YES|
+contratos|17|gestor_contrato|character varying|200|YES|
+contratos|18|status|character varying|30|YES|'vigente'::character varying
+contratos|19|observacoes|text||YES|
+contratos|20|created_at|timestamp without time zone||YES|CURRENT_TIMESTAMP
+contratos|21|updated_at|timestamp without time zone||YES|CURRENT_TIMESTAMP
+cotacoes_impugnacoes|1|id|integer|32,0|NO|nextval('cotacoes_impugnacoes_id_seq'::regclass)
+cotacoes_impugnacoes|2|tipo|character varying|20|NO|
+cotacoes_impugnacoes|3|arquivo_url|character varying|500|NO|
+cotacoes_impugnacoes|4|arquivo_nome|character varying|255|NO|
+cotacoes_impugnacoes|5|comentario|text||NO|
+cotacoes_impugnacoes|6|remetente|character varying|255|NO|
+cotacoes_impugnacoes|7|data_envio|timestamp without time zone||NO|now()
+cotacoes_impugnacoes|8|status|character varying|20|NO|'pendente'::character varying
+cotacoes_impugnacoes|9|resposta_arquivo_url|character varying|500|YES|
+cotacoes_impugnacoes|10|resposta_arquivo_nome|character varying|255|YES|
+cotacoes_impugnacoes|11|resposta_comentario|text||YES|
+cotacoes_impugnacoes|12|respondente|character varying|255|YES|
+cotacoes_impugnacoes|13|data_resposta|timestamp without time zone||YES|
+cotacoes_impugnacoes|14|created_at|timestamp without time zone||YES|now()
+cotacoes_impugnacoes|15|updated_at|timestamp without time zone||YES|now()
+cotacoes_impugnacoes|16|visualizado_por|character varying|200|YES|
+cotacoes_impugnacoes|17|visualizado_em|timestamp without time zone||YES|
+cotacoes_impugnacoes|18|editado_por|character varying|200|YES|
+cotacoes_impugnacoes|19|editado_em|timestamp without time zone||YES|
+cotacoes_impugnacoes|20|resposta_visualizada_por|character varying|200|YES|
+cotacoes_impugnacoes|21|resposta_visualizada_em|timestamp without time zone||YES|
+equipamentos|1|id|integer|32,0|NO|nextval('equipamentos_id_seq'::regclass)
+equipamentos|2|nome|character varying|255|NO|
+equipamentos|3|descricao|text||YES|
+equipamentos|4|created_at|timestamp without time zone||YES|CURRENT_TIMESTAMP
+equipamentos|5|updated_at|timestamp without time zone||YES|CURRENT_TIMESTAMP
+equipamentos|6|contrato|character varying|500|YES|
+equipamentos|7|posto|character varying|500|YES|
+equipamentos|8|em_manutencao|boolean||YES|false
+equipamentos|9|data_inicio_manutencao|date||YES|
+equipamentos|10|data_previsao_fim_manutencao|date||YES|
+equipamentos_arquivos|1|id|integer|32,0|NO|nextval('equipamentos_arquivos_id_seq'::regclass)
+equipamentos_arquivos|2|equipamento_id|integer|32,0|NO|
+equipamentos_arquivos|3|nome_original|character varying|500|NO|
+equipamentos_arquivos|4|nome_arquivo|character varying|500|NO|
+equipamentos_arquivos|5|tamanho|integer|32,0|NO|
+equipamentos_arquivos|6|tipo|character varying|100|NO|
+equipamentos_arquivos|7|url|character varying|1000|NO|
+equipamentos_arquivos|8|created_at|timestamp without time zone||YES|CURRENT_TIMESTAMP
+equipamentos_arquivos|9|comentario|text||YES|
+equipamentos_arquivos|10|valor|numeric|12,2|YES|
+estoque_items|1|id|integer|32,0|NO|nextval('estoque_items_id_seq'::regclass)
+estoque_items|2|nome|character varying|255|NO|
+estoque_items|3|quantidade_total|integer|32,0|NO|0
+estoque_items|4|localizacao|character varying|300|YES|
+estoque_items|5|tipo_item|character varying|100|NO|
+estoque_items|6|estado|character varying|50|NO|
+estoque_items|7|valor_unitario|numeric|10,2|NO|
+estoque_items|8|estoque_minimo|integer|32,0|NO|0
+estoque_items|9|validade|date||YES|
+estoque_items|10|fornecedor|character varying|300|YES|
+estoque_items|11|contrato_id|integer|32,0|YES|
+estoque_items|12|created_at|timestamp without time zone||YES|CURRENT_TIMESTAMP
+estoque_items|13|updated_at|timestamp without time zone||YES|CURRENT_TIMESTAMP
+estoque_items|14|devolucao|boolean||YES|false
+estoque_tags|1|id|integer|32,0|NO|nextval('estoque_tags_id_seq'::regclass)
+estoque_tags|2|item_id|integer|32,0|NO|
+estoque_tags|3|tag_id|character varying|50|NO|
+estoque_tags|4|tamanho|character varying|20|NO|
+estoque_tags|5|sequencia|integer|32,0|NO|
+estoque_tags|6|usado|boolean||NO|false
+estoque_tags|7|pedido_id|character varying|50|YES|
+estoque_tags|8|usado_em|timestamp without time zone||YES|
+estoque_tags|9|usado_por|character varying|255|YES|
+estoque_tags|10|created_at|timestamp without time zone||YES|CURRENT_TIMESTAMP
+estoque_tags|11|tipo_tag|character varying|10|NO|'unico'::character varying
+estoque_tags|12|quantidade_massa|integer|32,0|YES|
+estoque_tags|13|quantidade_original_massa|integer|32,0|YES|
+estoque_tags|14|valor_unitario|numeric|10,2|YES|
+estoque_tags|15|equipamento_index|integer|32,0|YES|
+estoque_tags_consumo|1|id|integer|32,0|NO|nextval('estoque_tags_consumo_id_seq'::regclass)
+estoque_tags_consumo|2|tag_id|character varying|100|NO|
+estoque_tags_consumo|3|item_id|integer|32,0|YES|
+estoque_tags_consumo|4|pedido_id|character varying|100|NO|
+estoque_tags_consumo|5|quantidade|integer|32,0|NO|1
+estoque_tags_consumo|6|equipamento_index|integer|32,0|YES|
+estoque_tags_consumo|7|consumido_em|timestamp without time zone||YES|now()
+estoque_tags_consumo|8|consumido_por|character varying|100|YES|
+lotes_alteracoes_catalogo|1|id|integer|32,0|NO|nextval('lotes_alteracoes_catalogo_id_seq'::regclass)
+lotes_alteracoes_catalogo|2|lote_id|character varying|100|NO|
+lotes_alteracoes_catalogo|3|total_alteracoes|integer|32,0|NO|
+lotes_alteracoes_catalogo|4|callback_url|text||NO|
+lotes_alteracoes_catalogo|5|status|character varying|20|YES|'PENDENTE'::character varying
+lotes_alteracoes_catalogo|6|usuario_erp|character varying|255|YES|
+lotes_alteracoes_catalogo|7|comentario_erp|text||YES|
+lotes_alteracoes_catalogo|8|data_envio|timestamp without time zone||NO|
+lotes_alteracoes_catalogo|9|data_resposta|timestamp without time zone||YES|
+lotes_alteracoes_catalogo|10|created_at|timestamp without time zone||YES|now()
+lotes_alteracoes_catalogo|11|updated_at|timestamp without time zone||YES|now()
+manutencao_logs|1|id|integer|32,0|NO|nextval('manutencao_logs_id_seq'::regclass)
+manutencao_logs|2|tipo_item|character varying|20|NO|
+manutencao_logs|3|item_id|integer|32,0|NO|
+manutencao_logs|4|item_nome|character varying|255|YES|
+manutencao_logs|5|acao|character varying|80|NO|
+manutencao_logs|6|campo|character varying|100|YES|
+manutencao_logs|7|valor_anterior|text||YES|
+manutencao_logs|8|valor_novo|text||YES|
+manutencao_logs|9|usuario_nome|character varying|255|YES|
+manutencao_logs|10|created_at|timestamp without time zone||YES|CURRENT_TIMESTAMP
+pedidos_site_externo|1|id|integer|32,0|NO|nextval('pedidos_site_externo_id_seq'::regclass)
+pedidos_site_externo|2|pedido_id|character varying|50|NO|
+pedidos_site_externo|3|nome_solicitante|character varying|255|NO|
+pedidos_site_externo|4|nome_colaborador|character varying|255|NO|
+pedidos_site_externo|5|matricula_colaborador|character varying|50|NO|
+pedidos_site_externo|6|admissao|boolean||YES|false
+pedidos_site_externo|7|data_admissao|date||YES|
+pedidos_site_externo|8|data_solicitacao|date||NO|
+pedidos_site_externo|9|contrato|character varying|255|NO|
+pedidos_site_externo|10|posto|character varying|255|NO|
+pedidos_site_externo|11|funcao|character varying|255|NO|
+pedidos_site_externo|12|equipamentos|jsonb||NO|
+pedidos_site_externo|13|status|character varying|50|YES|'EM PREPARACAO'::character varying
+pedidos_site_externo|14|tags|jsonb||YES|
+pedidos_site_externo|15|observacao|text||YES|
+pedidos_site_externo|16|data_criacao|timestamp without time zone||YES|now()
+pedidos_site_externo|17|data_atualizacao|timestamp without time zone||YES|now()
+pedidos_site_externo|18|tipo_pedido|character varying|100|YES|
+pedidos_site_externo|19|observacoes_solicitante|text||YES|
+pedidos_site_externo|20|imagem_cracha_url|character varying|500|YES|NULL::character varying
+pedidos_site_externo|21|tipo_admissao|character varying|50|YES|NULL::character varying
+pedidos_site_externo|22|data_despachado|timestamp without time zone||YES|
+usuarios_permissoes|1|cpf|character varying|11|NO|
+usuarios_permissoes|2|nome|character varying|255|NO|
+usuarios_permissoes|3|cargo|character varying|255|NO|
+usuarios_permissoes|4|setor|character varying|100|NO|
+usuarios_permissoes|5|permissoes|jsonb||YES|'{"papel": "VISUALIZADOR", "modulos": []}'::jsonb
+usuarios_permissoes|6|ativo|boolean||YES|true
+usuarios_permissoes|7|created_at|timestamp without time zone||YES|CURRENT_TIMESTAMP
+usuarios_permissoes|8|updated_at|timestamp without time zone||YES|CURRENT_TIMESTAMP
+usuarios_permissoes|9|login|character varying|50|YES|
+usuarios_permissoes|10|senha|character varying|100|YES|
+veiculos|1|id|integer|32,0|NO|nextval('veiculos_id_seq'::regclass)
+veiculos|2|nome|character varying|255|NO|
+veiculos|3|descricao|text||YES|
+veiculos|4|created_at|timestamp without time zone||YES|CURRENT_TIMESTAMP
+veiculos|5|updated_at|timestamp without time zone||YES|CURRENT_TIMESTAMP
+veiculos|6|contrato|character varying|500|YES|
+veiculos|7|posto|character varying|500|YES|
+veiculos|8|em_manutencao|boolean||YES|false
+veiculos|9|data_inicio_manutencao|date||YES|
+veiculos|10|data_previsao_fim_manutencao|date||YES|
+veiculos_arquivos|1|id|integer|32,0|NO|nextval('veiculos_arquivos_id_seq'::regclass)
+veiculos_arquivos|2|veiculo_id|integer|32,0|NO|
+veiculos_arquivos|3|nome_original|character varying|255|NO|
+veiculos_arquivos|4|nome_arquivo|character varying|255|NO|
+veiculos_arquivos|5|tamanho|integer|32,0|YES|
+veiculos_arquivos|6|tipo|character varying|100|YES|
+veiculos_arquivos|7|url|text||YES|
+veiculos_arquivos|8|comentario|text||YES|
+veiculos_arquivos|9|created_at|timestamp without time zone||YES|CURRENT_TIMESTAMP
+veiculos_arquivos|10|updated_at|timestamp without time zone||YES|CURRENT_TIMESTAMP
+veiculos_arquivos|11|valor|numeric|12,2|YES|
+(232 linhas)
