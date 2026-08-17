@@ -295,17 +295,35 @@ function MenusEditor({ moduloId, menus, podeGerenciar, onChange }: { moduloId: s
 // exige incluir/alterar. Concedendo só "visualizar", liberar o menu aqui
 // mostrava o botão de abrir vaga e o banco recusava o INSERT — era o erro
 // "new row violates row-level security policy for SISTEMA_RECRUTAMENTO".
-const MENUS_RECRUTAMENTO = new Set([
-  "recrutamento_gestao",
-  "recrutamento_etapa_juridico",
-  "recrutamento_etapa_sst",
-  "recrutamento_etapa_compras",
-  "encarregados_minhas_solicitacoes",
-]);
+// O enum app_acao do banco. Tipado aqui porque o insert em
+// screen_permission_user exige a união exata, não `string`.
+type AppAcao = "visualizar" | "incluir" | "alterar" | "excluir" | "aprovar" | "exportar" | "executar_ia" | "alterar_dre";
+
 // "excluir" fica de fora de propósito: liberar a tela não é autorizar apagar.
-const ACOES_RECRUTAMENTO = ["visualizar", "incluir", "alterar", "aprovar", "exportar"] as const;
-const ACOES_DO_TOGGLE = (codigo: string): string[] =>
-  MENUS_RECRUTAMENTO.has(codigo) ? [...ACOES_RECRUTAMENTO] : ["visualizar"];
+const ACOES_RECRUTAMENTO: readonly AppAcao[] = ["visualizar", "incluir", "alterar", "aprovar", "exportar"];
+// Patrimônio não aprova nem exporta; precisa cadastrar bem e mexer no status.
+const ACOES_PATRIMONIO: readonly AppAcao[] = ["visualizar", "incluir", "alterar"];
+
+// Menus em que liberar a tela precisa liberar TAMBÉM as ações de trabalho.
+// Fora desta lista o toggle segue significando só "enxerga a tela".
+//
+// Patrimônio entrou em 17/08/2026 pelo mesmo motivo do Recrutamento, e o
+// sintoma foi idêntico: marcar um veículo como "em manutenção"/"em contrato" é
+// UPDATE em sup_patrimonio, cuja policy exige `alterar`. Com só "visualizar", o
+// modal abria, o Salvar parecia funcionar e nada mudava — e o único perfil que
+// concedia `alterar` era o "Administrador Geral" (concede_tudo), ou seja, para
+// o comprador marcar um carro seria preciso torná-lo admin do sistema inteiro.
+const ACOES_POR_MENU: Record<string, readonly AppAcao[]> = {
+  recrutamento_gestao: ACOES_RECRUTAMENTO,
+  recrutamento_etapa_juridico: ACOES_RECRUTAMENTO,
+  recrutamento_etapa_sst: ACOES_RECRUTAMENTO,
+  recrutamento_etapa_compras: ACOES_RECRUTAMENTO,
+  encarregados_minhas_solicitacoes: ACOES_RECRUTAMENTO,
+  sup_patrimonio: ACOES_PATRIMONIO,
+  sup_manutencao: ACOES_PATRIMONIO,
+};
+const ACOES_DO_TOGGLE = (codigo: string): AppAcao[] =>
+  [...(ACOES_POR_MENU[codigo] ?? (["visualizar"] as const))];
 
 function UserAccessPanel({ podeGerenciar, modulos, menus }: { podeGerenciar: boolean; modulos: Modulo[]; menus: Menu[] }) {
   const [selectedUserId, setSelectedUserId] = useState<string>("");
