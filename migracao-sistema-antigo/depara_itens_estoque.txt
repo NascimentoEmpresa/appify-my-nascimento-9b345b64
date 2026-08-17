@@ -1,0 +1,318 @@
+NOME_ANTIGO|FICHAS|ITEM_DESTINO|ITEM_ID|VIA
+,|1|—||nome vazio/lixo
+1|3|—||nome vazio/lixo
+3|1|—||nome vazio/lixo
+41|1|—||sem correspondencia
+A|1|—||nome vazio/lixo
+ABRAÇADEIRA DE NYLON 300X3,6|1|—||sem correspondencia
+ABRAÇADEIRA EM NYLON 2,5X100|1|—||sem correspondencia
+ABRAÇADEIRA EM NYLON 3,5X200|1|—||sem correspondencia
+AGUA SANITARIA 1L|1|—||sem correspondencia
+ALCOOL 70% 5L|1|—||sem correspondencia
+ALCOOL GEL 5L|1|—||sem correspondencia
+AMACIANTE 5L|1|—||sem correspondencia
+AVENTAL COM PUNHO - BRANCO|1|—||sem correspondencia
+AVENTAL DE NAPA|1|AVENTAL DE NAPA|6f2dec64-5ccb-4754-a2b5-baa487765713|exato
+AVENTAL DE RASPA|2|AVENTAL DE RASPA|5ce64e35-9a93-4ac7-a4c5-95c5c403a878|exato
+AVENTAL DESCARTAVEL|1|—||sem correspondencia
+BABUCHE - BRANCO |4|BABUCHE - BRANCO|1c728ad4-3e8d-40d7-9e5d-0b4ddf86eff0|exato
+BABUCHE BRANCO|11|BABUCHE - BRANCO|1c728ad4-3e8d-40d7-9e5d-0b4ddf86eff0|exato
+BABUCHE ORTOPEDICO|2|—||sem correspondencia
+BABUCHE - PRETO |12|BABUCHE - PRETO|81f2d4c5-def8-45b9-8a19-690f8f692445|exato
+BABUCHE PRETO|11|BABUCHE - PRETO|81f2d4c5-def8-45b9-8a19-690f8f692445|exato
+BABUCHJE PRETO|1|—||sem correspondencia
+BALDE|1|Balde|8fe36742-85f4-46f4-95a8-9d95800590e7|exato
+BALDE 15L|1|—||sem correspondencia
+BALDE 6L|1|—||sem correspondencia
+BATERIA STHIL AP 30.0|1|—||sem correspondencia
+BERMUDA AZUL|6|—||sem correspondencia
+BERMUDA SOCIAL |2|—||sem correspondencia
+BLAZER - FEMININO |4|BLAZER - FEMININO|b8468a7a-27ac-4301-8d79-ad0232fafd07|exato
+BLAZER FEMININO|9|BLAZER - FEMININO|b8468a7a-27ac-4301-8d79-ad0232fafd07|exato
+BLAZER - MASCULINO |3|BLAZER - MASCULINO|22be1541-a788-4383-bf35-998dd887fc9f|exato
+BLAZER MASCULINO|10|BLAZER - MASCULINO|22be1541-a788-4383-bf35-998dd887fc9f|exato
+BOJO PARA ROÇADEIRA A GASOLINA STHIL|1|—||sem correspondencia
+BOJO PARA ROÇADEIRA A GASOLINA TOYAMA|1|—||sem correspondencia
+BOJO PARA ROSADEIRA STHIL|1|—||sem correspondencia
+BOLSA DE VINIL AMARELA|1|—||sem correspondencia
+BONE ARABE|1|BONÉ ÁRABE|d2da9887-9a84-43e4-aa84-abb316f64444|exato
+BONE PRETO|1|—||sem correspondencia
+BORRACHA|1|—||sem correspondencia
+BORRIFADOR 500ML|1|—||sem correspondencia
+BOTA DE BORACHE PRETA|1|—||sem correspondencia
+BOTA DE BORRACHA |6|—||sem correspondencia
+BOTA DE PVC|8|—||sem correspondencia
+BOTA DE PVC BRANCA|1|—||sem correspondencia
+BOTA DE PVC - PRETA|1|BOTA DE PVC - PRETA|186fadc6-5c57-4403-b973-4ccc920a4ac4|exato
+BOTINA |11|BOTINA|571af38f-baee-4cee-935b-5a45ad224dd2|exato
+BOTINA COLETORES|1|—||sem correspondencia
+BOTINA - PRETA|9|BOTINA - PRETA|1d851859-7d3d-4009-87ef-163bef755341|exato
+BOTINA PRETA|1|BOTINA - PRETA|1d851859-7d3d-4009-87ef-163bef755341|exato
+CALÇA ANTI CHAMAS|3|—||sem correspondencia
+CALÇA - BRANCA|1|CALÇA - BRANCA|64bded0b-f0f2-4479-8edc-6c7298582d1e|exato
+CALÇA DE MALHA COLEGIAL|3|—||sem correspondencia
+CALÇA DE MALHA COLEGIAL - CINZA |13|CALÇA DE MALHA COLEGIAL - CINZA|51f1619b-661a-4d27-8394-8f48587de89e|exato
+CALÇA DE MALHA COLEGIAL CINZA|1|CALÇA DE MALHA COLEGIAL - CINZA|51f1619b-661a-4d27-8394-8f48587de89e|exato
+CALÇA DE OXFORD |6|CALÇA DE OXFORD|339eaa99-0013-4a6b-a68b-6d5edd6b30cd|exato
+CALÇA DE PROTEÇAO|1|—||sem correspondencia
+CALÇA DE SARJA (AZUL)|6|—||sem correspondencia
+CALÇA DE SARJA (BRANCA)|6|CALÇA DE SARJA (BRANCA)|6ccfe3be-6d50-42bf-b9d7-cc5c3febecd5|exato
+CALÇA DE SARJA (CINZA)|10|CALÇA DE SARJA (CINZA)|6f161e12-5c5d-4bd0-a5dc-74858a72d1ce|exato
+CALÇA DE SARJA CINZA|1|CALÇA DE SARJA (CINZA)|6f161e12-5c5d-4bd0-a5dc-74858a72d1ce|exato
+CALÇA JEANS|12|—||sem correspondencia
+CALÇA MALHA COLEGIAL|10|CALÇA MALHA COLEGIAL|01abc9ae-f0f7-42ef-bfc9-f64308cbc589|exato
+CALÇA PRETA |2|CALÇA PRETA|c6369e1c-d7e0-4c91-bd8c-f8648cc560ae|exato
+CALÇA SARJA - BRANCA |4|—||sem correspondencia
+CALÇA SARJA - CINZA |24|CALÇA SARJA - CINZA|9c2c75b4-009f-4868-99f3-e6ef312b85a3|exato
+CALÇA SARJA - MCINZA|1|—||sem correspondencia
+CALÇA SOCIAL FEMININA|14|CALÇA SOCIAL FEMININA|6565b3de-86ef-4cd9-8ac4-352c16ef2ae1|exato
+CALÇA SOCIAL - FEMININA - PRETA|8|CALÇA SOCIAL - FEMININA - PRETA|fca14a22-f0b7-46d3-9ea7-8e0f65d553cd|exato
+CALÇA SOCIAL - MASCULINA |1|CALÇA SOCIAL MASCULINA|6192a920-3227-41a4-be91-ff074e5b5ec1|exato
+CALÇA SOCIAL MASCULINA|12|CALÇA SOCIAL MASCULINA|6192a920-3227-41a4-be91-ff074e5b5ec1|exato
+CALÇA SOCIAL - MASCULINA - PRETA|3|CALÇA SOCIAL - MASCULINA - PRETA|fa40b224-feaf-4d1c-a4ca-561010466ccb|exato
+CALÇA VIGIA - PRETA|2|—||sem correspondencia
+CAMISA MESCLA CINZA GOLA AZUL (MC)|1|—||sem correspondencia
+CAMISA MESCLA CINZA GOLA AZUL (ML)|1|—||sem correspondencia
+CAMISA MESCLA CINZA GOLA AZUL ML|1|—||sem correspondencia
+CAMISA MESCLA - CINZA GOLA LARANJA (MC)|3|—||sem correspondencia
+CAMISA MESCLA - CINZA GOLA LARANJA (ML)|1|—||sem correspondencia
+CAMISA MESCLA GOLA AZUL |1|—||sem correspondencia
+CAMISA POLO CINZA |1|—||sem correspondencia
+CAMISA POLO CINZA (MC)|5|CAMISA POLO CINZA (MC)|0588fdc4-d097-432b-9c7f-ff73a26a6707|exato
+CAMISA POLO CINZA (ML)|6|CAMISA POLO CINZA (ML)|f1d7f77d-64c3-4b6c-96b4-a75c908e98da|exato
+CAMISA POLO PRETA|4|—||sem correspondencia
+CAMISA SOCIAL FEMININA AZUL (MC)|5|—||sem correspondencia
+CAMISA SOCIAL FEMININA AZUL (ML)|5|—||sem correspondencia
+CAMISA SOCIAL FEMININA BRANCA (ML)|2|—||sem correspondencia
+CAMISA SOCIAL FEMININA (MC)|6|CAMISA SOCIAL FEMININA (MC)|da2b34ff-105c-4b6f-b70b-9770526d1170|exato
+CAMISA SOCIAL FEMININA (ML)|6|CAMISA SOCIAL FEMININA (ML)|64e5e98b-2563-4cdf-b958-c23034626fe8|exato
+CAMISA SOCIAL MASCULINA AZUL (MC)|5|—||sem correspondencia
+CAMISA SOCIAL MASCULINA AZUL (ML)|6|—||sem correspondencia
+CAMISA SOCIAL MASCULINA BRANCA (ML)|4|—||sem correspondencia
+CAMISA SOCIAL MASCULINA (MC)|6|CAMISA SOCIAL MASCULINA (MC)|61d3910b-b462-4976-a576-3703984ad028|exato
+CAMISA SOCIAL MASCULINA (ML)|6|CAMISA SOCIAL MASCULINA (ML)|7b360c9d-732d-4f72-8fbd-9e95a3355c5e|exato
+CAMISA VERDE (ML)|1|—||sem correspondencia
+CAMISETA - AZUL|1|—||sem correspondencia
+CAMISETA AZUL (MC)|7|CAMISETA - AZUL (MC)|15c4c132-2996-4dd4-838e-96b628b5adc9|exato
+CAMISETA AZUL (ML)|6|CAMISETA - AZUL (ML)|ff1f295c-9b47-4bf4-9240-bc432899ee87|exato
+CAMISETA - BRANCA (MC)|5|CAMISETA - BRANCA (MC)|82676edd-da6b-41d0-a37b-544c72539815|exato
+CAMISETA BRANCA (MC)|5|CAMISETA - BRANCA (MC)|82676edd-da6b-41d0-a37b-544c72539815|exato
+CAMISETA - BRANCA (ML)|1|CAMISETA - BRANCA (ML)|15c49e7f-a420-46d7-9770-9bd333441f9b|exato
+CAMISETA BRANCA (ML)|6|CAMISETA - BRANCA (ML)|15c49e7f-a420-46d7-9770-9bd333441f9b|exato
+CAMISETA MESCLA AZUL (MC)|9|CAMISETA MESCLA AZUL (MC)|a9484e0b-f22c-497b-a814-483578bb3580|exato
+CAMISETA MESCLA AZUL (ML)|9|CAMISETA MESCLA AZUL (ML)|d622a6a8-7718-4253-80a9-8cb221cd8ec4|exato
+CAMISETA MESCLA CINZA - GOLA AZUL (MC)|1|CAMISETA MESCLA CINZA GOLA AZUL (MC)|f402da74-f738-492b-8d65-14a7d868adc2|exato
+CAMISETA MESCLA CINZA GOLA AZUL (MC)|7|CAMISETA MESCLA CINZA GOLA AZUL (MC)|f402da74-f738-492b-8d65-14a7d868adc2|exato
+CAMISETA MESCLA CINZA - GOLA AZUL (ML)|1|CAMISETA MESCLA CINZA GOLA AZUL (ML)|a46b6f64-e225-4684-8656-e0dbab0b8589|exato
+CAMISETA MESCLA CINZA GOLA AZUL (ML)|4|CAMISETA MESCLA CINZA GOLA AZUL (ML)|a46b6f64-e225-4684-8656-e0dbab0b8589|exato
+CAMISETA MESCLA GOLA AZUL MC|1|CAMISETA MESCLA GOLA AZUL (MC)|813b4649-0cbe-489f-89e0-0f19df789c0e|exato
+CAMISETA MESCLA GOLA AZUL (ML)|1|CAMISETA MESCLA GOLA AZUL (ML)|60e8f35d-26f0-4159-83c7-678f94e8d271|exato
+CAMISETA MESCLA LARANJA (MC)|6|—||sem correspondencia
+CAMISETA MESCLA LARANJA (ML)|6|—||sem correspondencia
+CAMISETA POLO - CINZA (MC)|1|CAMISETA POLO - CINZA (MC)|8edcb5a8-e73b-4f61-8d23-ecaf309e8a59|exato
+CAMISETA PRETA (MC)|3|—||sem correspondencia
+CAMISETA PRETA (ML)|2|—||sem correspondencia
+CAMISETA - VERDE (MC)|4|CAMISETA VERDE (MC)|f638f045-11c2-4092-9729-b40e6fd8b073|exato
+CAMISETA VERDE (MC)|7|CAMISETA VERDE (MC)|f638f045-11c2-4092-9729-b40e6fd8b073|exato
+CAMISETA - VERDE (ML)|3|CAMISETA VERDE (ML)|a681b2c5-7f4e-4aea-b819-f9aa55ccbbf0|exato
+CAMISETA VERDE (ML)|6|CAMISETA VERDE (ML)|a681b2c5-7f4e-4aea-b819-f9aa55ccbbf0|exato
+CAMISETA VERMELHA (MC)|6|CAMISETA VERMELHA (MC)|e7bd93c2-2bc4-4578-8f55-7d0994eb4f88|exato
+CAMISETA - VERMELHA  ML|1|CAMISETA VERMELHA (ML)|785cb026-3c6f-4119-a7b1-645bc694f061|exato
+CAMISETA - VERMELHA (ML)|5|CAMISETA VERMELHA (ML)|785cb026-3c6f-4119-a7b1-645bc694f061|exato
+CAMISETA VERMELHA (ML)|5|CAMISETA VERMELHA (ML)|785cb026-3c6f-4119-a7b1-645bc694f061|exato
+CANETA BIC AZUL|1|—||sem correspondencia
+CANETA BIC PRETA|1|—||sem correspondencia
+CANETA BIC VERMELHA|1|—||sem correspondencia
+CAPACETE DE PROTEÇÃO|1|—||sem correspondencia
+CAPA DE CHUVA|3|CAPA DE CHUVA|4a44a3cb-2659-4ad0-866b-81cf469906e4|exato
+CARREGADOR A BATERIA STHIL|1|—||sem correspondencia
+CASACO ANTI CHAMAS|1|—||sem correspondencia
+CASACO COLEGIAL|3|—||sem correspondencia
+CERA 5L|1|—||sem correspondencia
+CHAPEU DE PALHA|1|CHAPÉU DE PALHA|d2d7cd92-8de6-4aaa-a8a9-cdc4716a8987|exato
+CINTO|1|CINTO|a1559d2d-43db-4c56-a2ed-288e27ca33b1|exato
+COLA BASTÃO|1|—||sem correspondencia
+COLETE DE LÃ |4|—||sem correspondencia
+COLETE DE LÃ - SOCIAL|1|—||sem correspondencia
+COLETE REFLETIVO|1|—||sem correspondencia
+COLETE REFLETIVO (SOS TRIUNFO)|1|—||sem correspondencia
+COLETE REFLETIVO - VERDE|1|—||sem correspondencia
+COLETE SAMU|6|—||sem correspondencia
+COLETE VIGIAS |4|—||sem correspondencia
+CONE DE SINALIZAÇAO|1|—||sem correspondencia
+CORREIA 6PK 1500|1|—||sem correspondencia
+CORREIA N94|1|—||sem correspondencia
+CORREIA N98|1|—||sem correspondencia
+CORRENTE PARA MOTOSERRA|1|—||sem correspondencia
+COTURNO|1|—||sem correspondencia
+DESENTUPIDOR|1|—||sem correspondencia
+DESINCRUSTANTE ACIDO 5L|1|—||sem correspondencia
+DESINFETANTE 5L|1|—||sem correspondencia
+DETECTOR DE METAL|1|—||sem correspondencia
+DETERGENTE 5L|1|—||sem correspondencia
+DETERGENTE CLORADO 5L|1|—||sem correspondencia
+eeeeeeeeee|1|—||sem correspondencia
+ELETRONICOS - MONITOR LG|1|—||sem correspondencia
+ELETRONICOS - TV 32'|1|—||sem correspondencia
+ENXADA CABO DE MADEIRA |1|ENXADA CABO DE MADEIRA|433ada33-7a1b-4102-af7a-a74b40aed7ca|exato
+ESCOVA DE VASO|1|—||sem correspondencia
+ESOVIHA DE BANHEIRO|1|—||sem correspondencia
+ESPANADOR|1|—||sem correspondencia
+ESPANADOR ELETROSTATICO|1|—||sem correspondencia
+ESPONJA DE AÇO|1|—||sem correspondencia
+ESPONJA MAGICA|1|—||sem correspondencia
+ETIQUETAS ADESIVAS AZUL|1|—||sem correspondencia
+ETIQUETAS ADESIVAS BRANCAS|1|—||sem correspondencia
+ETIQUETAS ADESIVAS VERDES|1|—||sem correspondencia
+EXTENSÃO 30M|1|—||sem correspondencia
+FIBRA AMARELA 350mm|1|—||sem correspondencia
+FIBRA BRANCA 3500mm|1|—||sem correspondencia
+FIBRA BRANCA 410mm|1|—||sem correspondencia
+FIBRA PRETA 410mm|1|—||sem correspondencia
+FIBRA PRETA 510mm|1|—||sem correspondencia
+FIBRA VERDE - 350mm|1|FIBRA VERDE 350MM|df0c70ec-13d4-4e50-92d2-569612e7d7ae|exato
+FIBRA VERDE 350mm|1|FIBRA VERDE 350MM|df0c70ec-13d4-4e50-92d2-569612e7d7ae|exato
+FIBRA VERDE 410mm|1|—||sem correspondencia
+FIBRA VERDE 510mm|1|—||sem correspondencia
+FIBRA VERMELHA 350mm|1|—||sem correspondencia
+FILTRO PARA ASPIRADOR DE PO|1|—||sem correspondencia
+FILTRO PARA ROÇADEIRA|1|—||sem correspondencia
+FIO DE NYLON|1|—||sem correspondencia
+FITA ADESIVA LARGA|1|—||sem correspondencia
+FITA CREPE|1|—||sem correspondencia
+FONTE MANCER THUNDER 400W|1|—||sem correspondencia
+GALAO - ALCOOL GEL|1|—||sem correspondencia
+GALAO - CERA|1|—||sem correspondencia
+GALAO - CLORO|1|—||sem correspondencia
+GLIFOSATO|2|—||sem correspondencia
+GRAVATA|1|GRAVATA|ea834b78-5568-427c-afad-629b8d42058f|exato
+GRAXA AZUL|1|—||sem correspondencia
+JALECO AZUL (MC)|1|—||sem correspondencia
+JALECO AZUL (ML)|4|—||sem correspondencia
+JALECO BRANCO (MC)|6|JALECO - BRANCO (MC)|e4e48f8f-6fbb-48db-b581-5a4fc609e312|exato
+JALECO BRANCO (ML)|6|JALECO BRANCO (ML)|7d4bc5bd-2d37-4d2f-993f-a5b06674a8ac|exato
+JALECO - CINZA (MC)|10|JALECO CINZA (MC)|f3448106-a7bb-4830-97e7-3aca626cef9d|exato
+JALECO CINZA (MC)|4|JALECO CINZA (MC)|f3448106-a7bb-4830-97e7-3aca626cef9d|exato
+JALECO CINZA MC|1|JALECO CINZA (MC)|f3448106-a7bb-4830-97e7-3aca626cef9d|exato
+JALECO CINZA (ML)|6|—||sem correspondencia
+JALECO PRETO COM DETALHE BRANCO (MC)|1|JALECO PRETO COM DETALHE BRANCO (MC)|fe230605-bb05-4730-8086-e5232098e6db|exato
+JALECO - PRETO (MC)|1|JALECO PRETO (MC)|32b83d72-98e4-4a32-83f1-6a105fd9e474|exato
+JALECO PRETO (MC)|5|JALECO PRETO (MC)|32b83d72-98e4-4a32-83f1-6a105fd9e474|exato
+JAQUETA |27|JAQUETA|b2940513-93fc-4ec1-9dfe-0bb24ad328fb|exato
+LAMINA PARA MATO DE ROSADEIRA|1|—||sem correspondencia
+LAPISEIRA|1|—||sem correspondencia
+LAVA CARROS 5L|1|—||sem correspondencia
+LAVADORA DE ALTA PREÇÃO 220V|1|LAVADORA DE ALTA PREÇÃO 220V|946c4215-affa-49b1-b6d9-7124a5140d86|exato
+LIMPA VIDROS 5L|1|—||sem correspondencia
+LUSTRA MOVEL|1|—||sem correspondencia
+LUVA ANTI CORTE|1|—||sem correspondencia
+LUVA DE LATEX AMARELA |5|LUVA DE LATEX AMARELA|4b134e26-4b47-4caa-8b61-2a2ecbbcfdf0|exato
+LUVA DE LATEX AZUL  |5|LUVA DE LATEX AZUL|e00b070f-1fbe-40c9-b10f-8ac43792dc2b|exato
+LUVA DE PROCEDIMENTO|1|LUVA DE PROCEDIMENTO|56e6439a-d7d2-46ed-8244-18a14c2ddb51|exato
+LUVA DE PROCEDIMENTO SEM LATEX|1|—||sem correspondencia
+LUVA GREEN |1|LUVA GREEN|af259f28-a698-437b-b795-5246cb020ee6|exato
+LUVA ISOLANTE ELETRECISTA|1|—||sem correspondencia
+LUVA MULTI TATO|2|LUVA MULTITATO|a3f80924-fc2f-436d-ae50-a10efa09169c|exato
+LUVA MULTITATO |3|LUVA MULTITATO|a3f80924-fc2f-436d-ae50-a10efa09169c|exato
+LUVA PIGMENTADA |2|LUVA PIGMENTADA|b5fb2760-dc59-4a2a-87c8-a0e72f12d4e8|exato
+LUVA RASPA DE COURO|1|—||sem correspondencia
+MACACÃO DE SEGURANÇA TYVEK |3|—||sem correspondencia
+MANGOTE AZUL|1|—||sem correspondencia
+MANGOTE TERMICO|1|MANGOTE TERMICO|364b969a-52de-4827-bb12-5febff8b1407|exato
+MARCA TEXTO AMARELO|1|—||sem correspondencia
+MARCA TEXTO LARANJA|1|—||sem correspondencia
+MARCA TEXTO ROSA|1|—||sem correspondencia
+MARCA TEXTO VERDE|1|—||sem correspondencia
+MASCARA DE GASES|1|—||sem correspondencia
+MASCARA DE PFF2|1|—||sem correspondencia
+MASCARA DE PROTEÇÃO DE PANO|1|—||sem correspondencia
+MASCARA DESCARTAVEL|1|MASCARA DESCARTAVEL|9e160a1f-dbd3-4bb2-894a-be304290d22c|exato
+MASCARA PFF2 COM FILTRO |1|MASCARA PFF2 COM FILTRO|9842a172-d2c0-45fa-b701-bea63d3f0c4e|exato
+MASCARA PFF2 SEM FILTRO|1|MASCARA PFF2 SEM FILTRO|27de2c52-1bc1-4a5c-91ff-3686aef8689d|exato
+MEIA SOCIAL |1|—||sem correspondencia
+MINI IMPRESSORA DE ETIQUETAS|1|—||sem correspondencia
+MO0LETOM CINZA|1|—||sem correspondencia
+MOLETOM - AZUL |14|MOLETOM AZUL|1a3c2c3e-f3da-48ab-80dc-e9a0fd21ca8d|exato
+MOLETOM AZUL |10|MOLETOM AZUL|1a3c2c3e-f3da-48ab-80dc-e9a0fd21ca8d|exato
+MOLETOM - CINZA |4|MOLETOM CINZA|0d55a690-359f-47db-818a-d5d34b65639b|exato
+MOLETOM CINZA|11|MOLETOM CINZA|0d55a690-359f-47db-818a-d5d34b65639b|exato
+MOLETOM VERDE|13|MOLETOM VERDE|a0f63d8c-085a-4bb8-a272-8de19b8303eb|exato
+MOLETOM - VERMELHO |3|MOLETOM VERMELHO|0ed6b75c-f4dc-4c86-8cb0-ed7b73ab5429|exato
+MOLETOM VERMELHO |12|MOLETOM VERMELHO|0ed6b75c-f4dc-4c86-8cb0-ed7b73ab5429|exato
+MOLETON - CINZA |1|MOLETON CINZA|39d1b2af-b972-4208-8044-db5c8a1a879f|exato
+MOP|1|—||sem correspondencia
+MOP ALGODÃO - ROSCA|1|—||sem correspondencia
+NAFTALINA|1|—||sem correspondencia
+NUGGET PARA SAPATO|1|—||sem correspondencia
+OCULOS DE PROTEÇÃO ESCURO|1|ÓCULOS DE PROTEÇÃO ESCURO|db741dac-724c-4184-bc08-e0004ab4e9b9|exato
+OCULOS DE PROTEÇÃO INCOLOR|2|OCULOS DE PROTEÇÃO INCOLOR|0c2a12d1-f826-4076-aa45-b2aa757edf41|exato
+OCULOS DE SOBREPOSIÇÃO ESCURO|1|—||sem correspondencia
+OCULOS DE SOBREPOSIÇÃO INCOLOR|1|—||sem correspondencia
+OLEO 10W 30|1|—||sem correspondencia
+OLEO 20W50 MINERAL|1|—||sem correspondencia
+OLEO 2T 8017H|1|—||sem correspondencia
+OLEO 4T 10W30|1|—||sem correspondencia
+OLEO DE MAQUINA|1|—||sem correspondencia
+OLEO LUBRIFICANTE  2T  500ML  STHIL|1|—||sem correspondencia
+OLEO MAGNUM PARA CORRENTE|1|—||sem correspondencia
+PA DE LIXO|1|—||sem correspondencia
+PANO DE LOUÇA |1|—||sem correspondencia
+PAPEL HIGIENICO|1|—||sem correspondencia
+PERNEIRA DE PROTEÇÃO|2|PERNEIRA DE PROTEÇÃO|56e4a53c-1d49-4eed-a598-2b1c2d90cd2d|exato
+PERNEIRA DE RASPA|1|—||sem correspondencia
+PILHA 2032|1|—||sem correspondencia
+PILHA AA|1|—||sem correspondencia
+PILHA AAA|1|—||sem correspondencia
+PINCEL ATOMICO AZUL|1|—||sem correspondencia
+PINCEL ATOMICO PRETO|1|—||sem correspondencia
+PINCEL ATOMICO VERMELHO|1|—||sem correspondencia
+PLACA DE SINALIZAÇÃO|3|Placa de sinalização|775f6cc5-3eef-4dc4-b754-d7d50e1d8f85|exato
+PLACAS PISO MOLHADO|1|—||sem correspondencia
+PNEU PARA CARINHO DE MÃO|1|—||sem correspondencia
+PORTA CANETAS|1|—||sem correspondencia
+PROTETOR AURICULAR CONCHA|1|—||sem correspondencia
+PROTETOR AURICULAR DE CONCHA|1|—||sem correspondencia
+PROTETOR AURICULAR INTERNO|1|—||sem correspondencia
+PROTETOR FACIAL |1|—||sem correspondencia
+PROTETOR FACIAL DE TELA|1|PROTETOR FACIAL DE TELA|c4a46441-c3f0-40ea-b9c9-84f596544f06|exato
+PROTETOR SOLAR |1|PROTETOR SOLAR|b371ff1f-2b4e-42a2-8012-3f0b0f589795|exato
+PROTETOR SOLAR COM REPELENTE|1|PROTETOR SOLAR COM REPELENTE|ec4fa492-990c-4d92-8829-4969e4f6604b|exato
+RADIO COMUNICAÇÃO|1|—||sem correspondencia
+RASTELO|1|—||sem correspondencia
+RASTILHO|1|RASTILHO|8f9741fb-bfd7-47c0-a378-70d9ec03aeaa|exato
+REGUA 30CM|1|—||sem correspondencia
+REPELENTE|1|Repelente|a906f860-faac-41a3-b944-a9455760b990|exato
+RIBBON 800300-250BR|1|—||sem correspondencia
+RODO|1|Rodo|7b1d7461-1013-4ee8-b122-bfc563c9a447|exato
+ROLO DE FIO DE NYLON |1|ROLO DE FIO DE NYLON|30ef47ad-82ff-4c9d-8ce2-d719b1553e57|exato
+SABÃO EM BARRA|1|—||sem correspondencia
+SABÃO EM PÓ 800G|1|—||sem correspondencia
+SABONETE LIQUIDO 5L|1|—||sem correspondencia
+SACO AMARELA PARA CARRINHO DE LIMPEZA|1|—||sem correspondencia
+SAIA SOCIAL|4|SAIA - SOCIAL|a1597e05-f9ed-4d26-8b4c-af367d8d7596|exato
+SAPATO SOCIAL - FEMININNO|6|—||sem correspondencia
+SAPATO SOCIAL - FEMININO |16|SAPATO SOCIAL FEMININO|fd87c71d-a627-4147-abf0-668297130d83|exato
+SAPATO SOCIAL FEMININO|8|SAPATO SOCIAL FEMININO|fd87c71d-a627-4147-abf0-668297130d83|exato
+SAPATO SOCIAL MASCULINO |9|SAPATO SOCIAL MASCULINO|7c6dba1b-4917-4fa2-b0ad-75d9bb3a2847|exato
+SAPONACEO|1|—||sem correspondencia
+SOPRADOR A BATERIA STHIL|1|—||sem correspondencia
+SUETER |13|SUETER|6d67ea8a-b9aa-4554-911c-17d15199c4b1|exato
+SUPORTE VEICULAR PARA CELULAR |1|—||sem correspondencia
+SUTER|1|—||sem correspondencia
+TESTE|5|—||sem correspondencia
+TN660/2340/2370|1|—||sem correspondencia
+TONNER 2340/2370|1|—||sem correspondencia
+TONNER BQ283A|1|—||sem correspondencia
+TONNER CE285A|2|—||sem correspondencia
+TONNER D116L|1|—||sem correspondencia
+TONNER D116L (COMPRAS)|1|—||sem correspondencia
+TONNER DR116|1|—||sem correspondencia
+TONNER TN1060|1|—||sem correspondencia
+TONNER  TN660/2340/2370|1|—||sem correspondencia
+TOUCA DESCARTAVEL|2|TOUCA DESCARTAVEL|1dfb588d-9e57-410e-a6cc-f0fff5f261f1|exato
+VASSOURA|1|—||sem correspondencia
+VASSOURA DE PIAÇAVA |1|VASSOURA DE PIAÇAVA|d6e09b73-e838-4f33-bb82-4aa9c8faee34|exato
+VASSOURA DE PIASABA|1|—||sem correspondencia
+VASSOURÃO|1|—||sem correspondencia
+VASSOURA RASTELO|1|—||sem correspondencia
+VELA PARA CEIFAS|1|—||sem correspondencia
