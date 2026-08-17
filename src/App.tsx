@@ -103,6 +103,7 @@ import MaloteOrcamentoContratos from "./pages/malote/OrcamentoContratos";
 import MaloteOrcamentoGeral from "./pages/malote/OrcamentoGeral";
 import GeradorPops from "./pages/controladoria/GeradorPops";
 import MaloteAprovacoes from "./pages/malote/Aprovacoes";
+import MalotePagamento from "./pages/malote/PagamentoMalote";
 import MaloteConfiguracoes from "./pages/malote/Configuracoes";
 import MaloteCriarDespesa from "./pages/malote/CriarDespesa";
 import MaloteRatearClassificacao from "./pages/malote/RatearClassificacao";
@@ -369,6 +370,7 @@ const App = () => (
             <Route path="controladoria/gerador-pops" element={<GeradorPops />} />
             {/* Malote */}
             <Route path="malote/aprovacoes" element={<MaloteAprovacoes />} />
+            <Route path="malote/pagamento" element={<MalotePagamento />} />
             <Route path="malote/configuracoes" element={<MaloteConfiguracoes />} />
             <Route path="malote/criar-despesa" element={<MaloteCriarDespesa />} />
             <Route path="malote/ratear-classificacao" element={<MaloteRatearClassificacao />} />

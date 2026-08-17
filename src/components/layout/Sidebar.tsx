@@ -68,6 +68,8 @@ import { Inbox } from "lucide-react";
 import { Target } from "lucide-react";
 import { GitBranch, GitMerge } from "lucide-react";
 import { MessageSquare } from "lucide-react";
+import { Banknote } from "lucide-react";
+import { TrendingDown } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useCallback, useEffect, useMemo, useState, useContext } from "react";
 
@@ -336,6 +338,7 @@ const maloteModule: ModuleDef = {
         { label: "Criar Despesa", to: "/app/malote/criar-despesa", icon: PlusCircle },
         { label: "Dashboard", to: "/app/malote/dashboard", icon: BarChart3 },
         { label: "Meus Itens", to: "/app/malote/meus-itens", icon: ListChecks },
+        { label: "Pagamento Malote", to: "/app/malote/pagamento", icon: Banknote },
       ],
     },
     // SIS-2026-0125: Classificação/Orçamento saem de Controladoria e passam
