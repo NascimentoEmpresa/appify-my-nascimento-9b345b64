@@ -27,6 +27,7 @@ Aplicar o bloco `20260807000001_whatsapp_chatbot` do `supabase/aplicar_no_banco_
 ```bash
 supabase functions deploy whatsapp-webhook
 supabase functions deploy whatsapp-enviar
+supabase functions deploy whatsapp-abertura
 ```
 
 O `verify_jwt=false` do webhook já está no `config.toml` (a Meta chama sem JWT; a autenticidade é validada pela assinatura `X-Hub-Signature-256`).
@@ -49,6 +50,32 @@ Liberar em **Acesso por Usuário** (fechado por padrão):
 ## 6. Ligar o bot
 
 Em `/app/whatsapp/chatbot`: ajustar persona/horário/base de conhecimento e clicar **Ligar**. Por conversa, o botão **Bot ativo / Atendimento humano** na Caixa de Entrada liga/desliga a resposta automática.
+
+## 7. Template de abertura (conversas que NÓS começamos)
+
+O botão **Nova conversa** da Caixa de Entrada fala com quem nunca escreveu para
+a gente. Fora da janela de 24h a Meta só entrega **template aprovado**, então o
+template precisa existir antes:
+
+1. Rodar a migration `20260906000003_wa_nova_conversa` (cria `abertura_texto`,
+   `abertura_botao` e `abertura_template` em `WA_BOT_CONFIG`).
+2. Abrir **Nova conversa** e clicar em **Criar template na Meta** no aviso que
+   aparece quando o envio falha — ou chamar direto:
+
+```bash
+curl -X POST "$SUPABASE_URL/functions/v1/whatsapp-abertura" \
+  -H "Authorization: Bearer $SEU_JWT" -H "Content-Type: application/json" \
+  -d '{"acao":"criar_template"}'
+```
+
+3. Esperar a revisão da Meta (`PENDING` → `APPROVED`). Costuma levar de alguns
+   minutos a um dia.
+
+O texto vive em `WA_BOT_CONFIG.abertura_texto` porque três pontas precisam do
+mesmo conteúdo: a prévia na tela, o envio dentro da janela de 24h e o template.
+**Editar o texto não muda o template já aprovado** — template aprovado é
+imutável na Meta. Depois de editar, é preciso criar um template novo (outro
+nome em `abertura_template`) e esperar nova aprovação.
 
 ## Observações
 

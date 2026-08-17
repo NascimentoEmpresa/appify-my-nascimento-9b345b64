@@ -963,10 +963,14 @@ export default function Processos({ view = "processos" }: { view?: "dashboard" |
         </>)}
       </div>
 
-      {/* ── Detalhe ── */}
+      {/* ── Detalhe ──
+          Fecha SÓ no ✕. O clique no fundo saiu de propósito: com ele, um
+          clique que caísse fora do cartão derrubava o processo aberto — e
+          havia como isso acontecer sem o usuário mirar no fundo (ver a nota
+          no modal de cadastro, abaixo). */}
       {sel && (
-        <div className="jpr-ov" onClick={e => { if (e.target === e.currentTarget) setSel(null); }}>
-          <div className="jpr-modal" onClick={e => e.stopPropagation()}>
+        <div className="jpr-ov">
+          <div className="jpr-modal">
             <button onClick={() => setSel(null)} style={{ position: "absolute", top: 14, right: 16, border: "none", background: "none", fontSize: 20, color: "#94a3b8", cursor: "pointer" }}>✕</button>
             <div style={{ fontSize: 12, color: "#94a3b8", fontWeight: 700 }}>{sel.id_sequencial ? `#${sel.id_sequencial} · ` : ""}{sel.numero_processo}</div>
             <div style={{ fontSize: 18, fontWeight: 800, color: "#0f172a" }}>{sel.reclamante || "—"}</div>
@@ -1035,10 +1039,17 @@ export default function Processos({ view = "processos" }: { view?: "dashboard" |
         </div>
       )}
 
-      {/* ── Modal Criar/Editar ── */}
+      {/* ── Modal Criar/Editar ──
+          Fecha SÓ no ✕ (ou em Cancelar, embaixo). O clique no fundo fechava um
+          formulário inteiro sem confirmar nada — e não era preciso mirar no
+          fundo para disparar: no "➕ Criar novo motivo…" o valor é digitado num
+          window.prompt, e o clique no OK do navegador chega à página depois que
+          a lista de opções já fechou, caindo sobre o fundo do modal. Resultado:
+          digitar o motivo novo derrubava o cadastro com tudo que já havia sido
+          preenchido. Sem o handler, não há como. */}
       {modal && (
-        <div className="jpr-ov" onClick={e => { if (e.target === e.currentTarget) setModal(false); }}>
-          <div className="jpr-modal" onClick={e => e.stopPropagation()}>
+        <div className="jpr-ov">
+          <div className="jpr-modal">
             <button onClick={() => setModal(false)} style={{ position: "absolute", top: 14, right: 16, border: "none", background: "none", fontSize: 20, color: "#94a3b8", cursor: "pointer" }}>✕</button>
             <div style={{ fontSize: 17, fontWeight: 800, marginBottom: 14 }}>{editNumero ? "Editar processo" : "Novo processo"}</div>
             <div className="jpr-grid2">
