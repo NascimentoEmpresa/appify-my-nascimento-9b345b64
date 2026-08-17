@@ -113,6 +113,7 @@ export default function Pipeline() {
   const [anoAtivo, setAnoAtivo] = useState<number | null>(null);
   const [busca, setBusca] = useState("");
   const [responsavelFiltro, setResponsavelFiltro] = useState<string>("Todos");
+  const [posicaoFiltro, setPosicaoFiltro] = useState<string>("Todas");
   const [soGanhos, setSoGanhos] = useState(false);
 
   // lista de responsáveis únicos para o filtro
@@ -122,6 +123,15 @@ export default function Pipeline() {
       if (i.responsavel) seen.add(normName(i.responsavel));
     }
     return Array.from(seen).sort();
+  }, [items]);
+
+  // lista de posições únicas (colocações pós-lance) para o filtro
+  const posicoes = useMemo(() => {
+    const seen = new Set<number>();
+    for (const i of items) {
+      if (i.posicao != null) seen.add(i.posicao);
+    }
+    return Array.from(seen).sort((a, b) => a - b);
   }, [items]);
 
   // modais
@@ -165,6 +175,10 @@ export default function Pipeline() {
       list = list.filter((i) => normName(i.responsavel ?? "") === responsavelFiltro);
     }
 
+    if (posicaoFiltro !== "Todas") {
+      list = list.filter((i) => String(i.posicao ?? "") === posicaoFiltro);
+    }
+
     if (busca.trim()) {
       const q = busca.toLowerCase();
       list = list.filter(
@@ -184,7 +198,7 @@ export default function Pipeline() {
     }
 
     return list;
-  }, [items, faseAtiva, mesAtivo, anoAtivo, busca, responsavelFiltro]);
+  }, [items, faseAtiva, mesAtivo, anoAtivo, busca, responsavelFiltro, posicaoFiltro]);
 
   function openNew() {
     setEditing(null);
@@ -310,10 +324,25 @@ export default function Pipeline() {
             </SelectContent>
           </Select>
         )}
+
+        {/* Filtro por posição (colocação pós-lance) */}
+        {posicoes.length > 0 && (
+          <Select value={posicaoFiltro} onValueChange={setPosicaoFiltro}>
+            <SelectTrigger className="h-9 w-[130px]">
+              <SelectValue placeholder="Posição" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="Todas">Todas as posições</SelectItem>
+              {posicoes.map((p) => (
+                <SelectItem key={p} value={String(p)}>{p}º lugar</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        )}
       </div>
 
       {/* Resumo contextual de filtros */}
-      {(mesAtivo !== null || anoAtivo !== null || responsavelFiltro !== "Todos") && filtered.length > 0 && (() => {
+      {(mesAtivo !== null || anoAtivo !== null || responsavelFiltro !== "Todos" || posicaoFiltro !== "Todas") && filtered.length > 0 && (() => {
         const periodo = [
           mesAtivo !== null ? MESES[mesAtivo] : null,
           anoAtivo !== null ? String(anoAtivo) : null,
@@ -343,6 +372,7 @@ export default function Pipeline() {
           <p className="text-xs text-muted-foreground">
             <span className="font-semibold text-foreground tabular-nums">{filtered.length}</span>
             {` edital${filtered.length !== 1 ? "is" : ""}`}
+            {posicaoFiltro !== "Todas" ? ` em ${posicaoFiltro}º lugar` : ""}
             {periodo ? ` em ${periodo}` : ""}
           </p>
         );

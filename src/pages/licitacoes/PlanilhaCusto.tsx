@@ -2667,11 +2667,13 @@ function MigracaoModal({ rows: erpRows, onClose }: { rows: PlanilhaCustoRow[]; o
   const [filtroEmpresa, setFiltroEmpresa] = useState<string>("TODOS");
   const [loading, setLoading] = useState(false);
 
-  // Chaves dos registros já existentes no ERP: "contrato||posto||data_vigencia"
+  // Chaves dos registros já existentes no ERP: "contrato||posto||data_vigencia||orexec"
+  // (orexec incluso: sem ele, se só o ORÇADO existe no ERP, o EXECUTADO que
+  // falta era dado como "já no ERP" e nunca importava)
   const erpKeys = React.useMemo(() => {
     const s = new Set<string>();
     for (const r of erpRows) {
-      const key = `${r.contrato.trim().toLowerCase()}||${r.posto.trim().toLowerCase()}||${r.data_vigencia ?? ""}`;
+      const key = `${r.contrato.trim().toLowerCase()}||${r.posto.trim().toLowerCase()}||${r.data_vigencia ?? ""}||${(r.orexec ?? "").trim().toLowerCase()}`;
       s.add(key);
     }
     return s;
@@ -2681,8 +2683,10 @@ function MigracaoModal({ rows: erpRows, onClose }: { rows: PlanilhaCustoRow[]; o
     ? allParsed
     : allParsed.filter((r) => r.empresa === filtroEmpresa);
 
-  const jaNoERP   = filtrados.filter((r) => erpKeys.has(`${String(r.row.contrato ?? "").trim().toLowerCase()}||${String(r.row.posto ?? "").trim().toLowerCase()}||${r.row.data_vigencia ?? ""}`));
-  const pendingRows = filtrados.filter((r) => !erpKeys.has(`${String(r.row.contrato ?? "").trim().toLowerCase()}||${String(r.row.posto ?? "").trim().toLowerCase()}||${r.row.data_vigencia ?? ""}`)).map((r) => r.row);
+  const keyOf = (row: any) =>
+    `${String(row.contrato ?? "").trim().toLowerCase()}||${String(row.posto ?? "").trim().toLowerCase()}||${row.data_vigencia ?? ""}||${String(row.orexec ?? "").trim().toLowerCase()}`;
+  const jaNoERP   = filtrados.filter((r) => erpKeys.has(keyOf(r.row)));
+  const pendingRows = filtrados.filter((r) => !erpKeys.has(keyOf(r.row))).map((r) => r.row);
 
   async function handleFile(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
