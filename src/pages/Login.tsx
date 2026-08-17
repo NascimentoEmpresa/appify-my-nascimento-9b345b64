@@ -82,10 +82,15 @@ export default function Login() {
    * EMPREGADOS (CPF + data de nascimento), então o pedido chega assinado com
    * o nome real da pessoa, não com um texto que ela digitou.
    *
-   * A ordem importa: pré-valida ANTES de abrir a sessão anônima, para um CPF
-   * errado não deixar um usuário órfão no auth a cada tentativa. Mas quem
-   * decide de fato é sup_ext_entrar_empregado, que revalida tudo do zero —
-   * a pré-validação é só conveniência.
+   * A ordem importa: pré-valida ANTES de abrir sessão, para um CPF errado
+   * não deixar um usuário órfão no auth a cada tentativa. Mas quem decide de
+   * fato é sup_ext_entrar_empregado, que revalida tudo do zero — a
+   * pré-validação é só conveniência.
+   *
+   * Quem já tem conta vinculada (EMPREGADOS.auth_user_id, via Administração
+   * > Usuários > Vincular colaborador) entra na conta REAL — sup-ext-
+   * verificar-vinculo devolve um magic link trocável por sessão de verdade
+   * (verifyOtp). Sem vínculo, cai no mesmo fluxo anônimo de sempre.
    */
   const handleExterno = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -102,22 +107,43 @@ export default function Login() {
       if (preErr) throw preErr;
       if (!pre?.ok) throw new Error(pre?.motivo ?? "Não foi possível validar seus dados.");
 
-      const { error: anonError } = await supabase.auth.signInAnonymously();
-      if (anonError) {
-        if (/anonymous/i.test(anonError.message)) {
-          throw new Error(
-            "Acesso externo desativado no servidor. Peça ao administrador para habilitar " +
-            "'Anonymous sign-ins' em Authentication → Providers no Supabase.",
-          );
+      // Confere se já existe conta vinculada — se a edge function falhar por
+      // qualquer motivo, segue no fluxo anônimo normalmente (nunca bloqueia).
+      let entrouComContaReal = false;
+      try {
+        const { data: vinculo } = await supabase.functions.invoke("sup-ext-verificar-vinculo", {
+          body: { cpf: extCpf, nascimento: extNasc },
+        });
+        if (vinculo?.linked && vinculo.email && vinculo.token_hash) {
+          const { error: otpError } = await supabase.auth.verifyOtp({
+            email: vinculo.email,
+            token_hash: vinculo.token_hash,
+            type: "magiclink",
+          });
+          if (!otpError) entrouComContaReal = true;
         }
-        throw anonError;
+      } catch {
+        // segue pro fluxo anônimo abaixo
+      }
+
+      if (!entrouComContaReal) {
+        const { error: anonError } = await supabase.auth.signInAnonymously();
+        if (anonError) {
+          if (/anonymous/i.test(anonError.message)) {
+            throw new Error(
+              "Acesso externo desativado no servidor. Peça ao administrador para habilitar " +
+              "'Anonymous sign-ins' em Authentication → Providers no Supabase.",
+            );
+          }
+          throw anonError;
+        }
       }
 
       const { error: rpcError } = await (supabase as any).rpc("sup_ext_entrar_empregado", {
         p_cpf: extCpf, p_nascimento: extNasc, p_contrato_id: extContrato,
       });
-      // Sessão anônima sem vínculo não serve para nada e ainda deixaria um
-      // usuário órfão no auth — desfaz antes de reportar.
+      // Sessão sem vínculo não serve para nada — desfaz antes de reportar.
+      // Numa conta real, "desfazer" é só sair; a conta em si não é apagada.
       if (rpcError) {
         await supabase.auth.signOut();
         throw rpcError;

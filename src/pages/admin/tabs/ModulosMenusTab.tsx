@@ -6,7 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
 import { toast } from "@/hooks/use-toast";
 import { usePermissoes } from "@/context/PermissoesContext";
-import { Plus, Trash2, ChevronDown, ChevronRight, BookOpen, UserCog, X, CheckSquare, Save, Layers } from "lucide-react";
+import { Plus, Trash2, ChevronDown, ChevronRight, BookOpen, UserCog, X, CheckSquare, Save, Layers, Boxes, Search } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import type { FormCap } from "@/hooks/useFormPerms";
@@ -32,7 +32,7 @@ function slugify(text: string): string {
     .replace(/\s+/g, "_");
 }
 
-type View = "catalogo" | "acesso";
+type View = "catalogo" | "acesso" | "por_modulo";
 
 interface PerfilAcesso { id: string; nome: string; descricao: string | null; concede_tudo: boolean; ativo: boolean }
 
@@ -102,6 +102,16 @@ export function ModulosMenusTab() {
             <UserCog className="h-3.5 w-3.5" />
             Acesso por Usuário
           </button>
+          <button
+            onClick={() => { setView("por_modulo"); setShowAddForm(false); }}
+            className={cn(
+              "flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-medium transition-colors",
+              view === "por_modulo" ? "bg-background shadow-sm text-foreground" : "text-muted-foreground hover:text-foreground",
+            )}
+          >
+            <Boxes className="h-3.5 w-3.5" />
+            Por Módulo
+          </button>
         </div>
       </header>
 
@@ -119,6 +129,14 @@ export function ModulosMenusTab() {
 
       {view === "acesso" && (
         <UserAccessPanel
+          podeGerenciar={podeGerenciar}
+          modulos={modulosQ.data ?? []}
+          menus={menusQ.data ?? []}
+        />
+      )}
+
+      {view === "por_modulo" && (
+        <ModuleAccessPanel
           podeGerenciar={podeGerenciar}
           modulos={modulosQ.data ?? []}
           menus={menusQ.data ?? []}
@@ -550,6 +568,223 @@ function UserAccessPanel({ podeGerenciar, modulos, menus }: { podeGerenciar: boo
                     })}
                   </div>
                 )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── View: Por Módulo ───────────────────────────────────────────────────────────
+// Caminho inverso da "Acesso por Usuário" acima: em vez de escolher a pessoa e
+// ver os módulos, escolhe o módulo (ou desce até um menu/submódulo específico)
+// e vê/marca as pessoas. Mesmas tabelas, mesmas regras de precedência — só o
+// eixo de leitura/escrita é trocado (RPC list_users_with_menu_access em vez de
+// list_accessible_menus; grava em screen_permission_user com a mesma lógica de
+// ACOES_DO_TOGGLE que a visão por usuário já usa).
+function ModuleAccessPanel({ podeGerenciar, modulos, menus }: { podeGerenciar: boolean; modulos: Modulo[]; menus: Menu[] }) {
+  const [selectedModuloId, setSelectedModuloId] = useState<string>("");
+  const [selectedMenuCodigo, setSelectedMenuCodigo] = useState<string | null>(null);
+
+  const moduloSelecionado = modulos.find((m) => m.id === selectedModuloId) ?? null;
+  const menusDoModulo = menus.filter((mn) => mn.modulo_id === selectedModuloId);
+
+  // Módulo-folha (sem submenus): ele mesmo é o menu_codigo a marcar pessoas.
+  useEffect(() => {
+    if (!moduloSelecionado) { setSelectedMenuCodigo(null); return; }
+    setSelectedMenuCodigo(menusDoModulo.length === 0 ? moduloSelecionado.codigo : null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedModuloId]);
+
+  return (
+    <div>
+      <div className="border-b border-border bg-muted/30 px-5 py-3">
+        <div className="flex items-center gap-3">
+          <label className="text-sm font-medium whitespace-nowrap">Selecionar módulo</label>
+          <Select value={selectedModuloId} onValueChange={setSelectedModuloId}>
+            <SelectTrigger className="w-72">
+              <SelectValue placeholder="Escolha um módulo…" />
+            </SelectTrigger>
+            <SelectContent>
+              {modulos.map((m) => (
+                <SelectItem key={m.id} value={m.id}>{m.nome}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          {!podeGerenciar && (
+            <p className="text-xs text-muted-foreground">Apenas administradores podem alterar permissões.</p>
+          )}
+        </div>
+      </div>
+
+      {!selectedModuloId && (
+        <p className="px-5 py-8 text-center text-sm text-muted-foreground">
+          Selecione um módulo acima pra ver ou marcar quem tem acesso a ele.
+        </p>
+      )}
+
+      {selectedModuloId && menusDoModulo.length > 0 && (
+        <div className="divide-y divide-border">
+          {menusDoModulo.map((mn) => {
+            const aberto = selectedMenuCodigo === mn.codigo;
+            return (
+              <div key={mn.id}>
+                <button
+                  onClick={() => setSelectedMenuCodigo(aberto ? null : mn.codigo)}
+                  className="flex w-full items-center gap-2 px-5 py-3 text-left hover:bg-muted/40"
+                >
+                  {aberto ? <ChevronDown className="h-4 w-4 text-muted-foreground" /> : <ChevronRight className="h-4 w-4 text-muted-foreground" />}
+                  <div className="flex-1">
+                    <p className="text-sm font-medium">{mn.nome}</p>
+                    <p className="text-[11px] font-mono text-muted-foreground">{mn.codigo}{mn.rota ? ` · ${mn.rota}` : ""}</p>
+                  </div>
+                </button>
+                {aberto && (
+                  <div className="border-t border-border/60 bg-muted/20 px-5 py-3">
+                    <PessoasComAcessoAoMenu menuCodigo={mn.codigo} podeGerenciar={podeGerenciar} />
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {selectedModuloId && menusDoModulo.length === 0 && selectedMenuCodigo && (
+        <div className="px-5 py-3">
+          <PessoasComAcessoAoMenu menuCodigo={selectedMenuCodigo} podeGerenciar={podeGerenciar} />
+        </div>
+      )}
+    </div>
+  );
+}
+
+function PessoasComAcessoAoMenu({ menuCodigo, podeGerenciar }: { menuCodigo: string; podeGerenciar: boolean }) {
+  const qc = useQueryClient();
+  const [busca, setBusca] = useState("");
+  const [pending, setPending] = useState<Map<string, boolean>>(new Map());
+  const [isSaving, setIsSaving] = useState(false);
+
+  const profilesQ = useQuery({
+    queryKey: ["profiles-access-panel"],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("profiles")
+        .select("id,display_name,email")
+        .order("display_name");
+      if (error) throw error;
+      return (data ?? []) as ProfileRow[];
+    },
+  });
+
+  const acessoQ = useQuery({
+    queryKey: ["users-with-menu-access", menuCodigo],
+    queryFn: async () => {
+      const { data, error } = await (supabase as any).rpc("list_users_with_menu_access", {
+        _menu: menuCodigo, _acao: "visualizar",
+      });
+      if (error) throw error;
+      const m = new Map<string, boolean>();
+      (data ?? []).forEach((r: any) => m.set(r.user_id, !!r.allowed));
+      return m;
+    },
+  });
+
+  useEffect(() => { setPending(new Map()); setBusca(""); }, [menuCodigo]);
+
+  const dbHasAccess = (userId: string) => acessoQ.data?.get(userId) ?? false;
+  const hasAccess = (userId: string) => (pending.has(userId) ? pending.get(userId)! : dbHasAccess(userId));
+
+  const stageChange = (userId: string, newValue: boolean) => {
+    setPending((prev) => {
+      const next = new Map(prev);
+      if (newValue === dbHasAccess(userId)) next.delete(userId); else next.set(userId, newValue);
+      return next;
+    });
+  };
+
+  const handleSave = async () => {
+    if (!podeGerenciar || pending.size === 0) return;
+    setIsSaving(true);
+    try {
+      // Mesmas ações que a visão "Acesso por Usuário" grava pra este menu —
+      // pros menus de Recrutamento isso são 5 ações, não só "visualizar".
+      const acoes = ACOES_DO_TOGGLE(menuCodigo);
+      for (const [userId, allow] of pending) {
+        const { error: delErr } = await supabase.from("screen_permission_user").delete()
+          .eq("user_id", userId).eq("menu_codigo", menuCodigo).in("acao", acoes).is("empresa_id", null);
+        if (delErr) console.warn("delete perm error", delErr);
+
+        const { error } = await supabase.from("screen_permission_user").insert(
+          acoes.map((acao) => ({ user_id: userId, menu_codigo: menuCodigo, acao, allow, empresa_id: null })),
+        );
+        if (error) throw error;
+      }
+      await qc.refetchQueries({ queryKey: ["users-with-menu-access", menuCodigo] });
+      await qc.invalidateQueries({ queryKey: ["accessible-menus"] });
+      await qc.invalidateQueries({ queryKey: ["effective-menus-for-user"] });
+      setPending(new Map());
+      toast({ title: "Permissões salvas com sucesso" });
+    } catch (e: any) {
+      toast({ title: "Erro ao salvar permissões", description: e.message, variant: "destructive" });
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const pessoas = (profilesQ.data ?? []).filter((p) => {
+    const q = busca.trim().toLowerCase();
+    if (!q) return true;
+    return (p.display_name ?? "").toLowerCase().includes(q) || (p.email ?? "").toLowerCase().includes(q);
+  });
+
+  const carregando = profilesQ.isLoading || acessoQ.isLoading;
+  const hasPending = pending.size > 0;
+
+  return (
+    <div>
+      <div className="mb-2 flex items-center gap-2">
+        <div className="relative flex-1">
+          <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+          <Input
+            value={busca}
+            onChange={(e) => setBusca(e.target.value)}
+            placeholder="Buscar por nome ou e-mail…"
+            className="h-8 pl-8 text-xs"
+          />
+        </div>
+        {hasPending && (
+          <Button size="sm" className="gap-1.5" disabled={isSaving} onClick={handleSave}>
+            <Save className="h-3.5 w-3.5" />
+            {isSaving ? "Salvando…" : `Salvar ${pending.size} alteraç${pending.size === 1 ? "ão" : "ões"}`}
+          </Button>
+        )}
+      </div>
+
+      {carregando && <p className="py-4 text-center text-xs text-muted-foreground">Carregando…</p>}
+
+      {!carregando && (
+        <div className="max-h-96 divide-y divide-border/60 overflow-y-auto rounded-md border border-border bg-background">
+          {pessoas.length === 0 && (
+            <p className="px-3 py-4 text-center text-xs text-muted-foreground">Nenhuma pessoa encontrada.</p>
+          )}
+          {pessoas.map((p) => {
+            const on = hasAccess(p.id);
+            const isPending = pending.has(p.id);
+            return (
+              <div key={p.id} className={cn("flex items-center gap-2 px-3 py-2 hover:bg-muted/40", isPending && "bg-amber-50/50 dark:bg-amber-950/20")}>
+                <div className="flex-1 min-w-0">
+                  <p className="truncate text-sm">{p.display_name || p.email || p.id}</p>
+                  {p.display_name && p.email && <p className="truncate text-[11px] text-muted-foreground">{p.email}</p>}
+                </div>
+                <Switch
+                  checked={on}
+                  disabled={!podeGerenciar}
+                  onCheckedChange={() => stageChange(p.id, !on)}
+                  aria-label={`Acesso de ${p.display_name || p.email} a este menu`}
+                />
               </div>
             );
           })}
