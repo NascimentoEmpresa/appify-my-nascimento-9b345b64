@@ -1,5 +1,5 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -758,13 +758,59 @@ function PessoasComAcessoAoMenu({ menuCodigo, podeGerenciar }: { menuCodigo: str
     }
   };
 
-  const pessoas = (profilesQ.data ?? []).filter((p) => {
+  // Quem já tem acesso vem primeiro, em ordem alfabética; depois de esgotá-los,
+  // quem não tem, também em ordem alfabética. Sem isso a pergunta que traz
+  // alguém a esta tela — "quem enxerga este menu?" — só se responde rolando as
+  // 176 pessoas caçando switch ligado.
+  //
+  // Ordena pelo estado SALVO (dbHasAccess), nunca pelo hasAccess: a tela empilha
+  // as mudanças até o "Salvar", e seguir o estado ao vivo faria a linha saltar de
+  // grupo no instante do clique — quem desmarca várias pessoas seguidas erraria o
+  // alvo. Por isso `pending` NÃO entra nas dependências: é o que mantém a linha
+  // parada embaixo do cursor. A lista se reorganiza depois de salvar.
+  const { comAcesso, semAcesso } = useMemo(() => {
     const q = busca.trim().toLowerCase();
-    if (!q) return true;
-    return (p.display_name ?? "").toLowerCase().includes(q) || (p.email ?? "").toLowerCase().includes(q);
-  });
+    // Mesmo encadeamento que a linha renderiza; ordenar por display_name puro
+    // colocaria quem só tem e-mail num lugar e o mostraria em outro.
+    const nomeDe = (p: ProfileRow) => p.display_name || p.email || p.id;
+    const filtradas = (profilesQ.data ?? []).filter((p) =>
+      !q || (p.display_name ?? "").toLowerCase().includes(q) || (p.email ?? "").toLowerCase().includes(q));
 
+    const ordenar = (lista: ProfileRow[]) =>
+      // "pt-BR" + sensitivity base para ÁLVARO cair junto de ALVARO, e não no fim.
+      [...lista].sort((a, b) => nomeDe(a).localeCompare(nomeDe(b), "pt-BR", { sensitivity: "base" }));
+
+    return {
+      comAcesso: ordenar(filtradas.filter((p) => dbHasAccess(p.id))),
+      semAcesso: ordenar(filtradas.filter((p) => !dbHasAccess(p.id))),
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [profilesQ.data, acessoQ.data, busca]);
+
+  const nenhuma = comAcesso.length === 0 && semAcesso.length === 0;
   const carregando = profilesQ.isLoading || acessoQ.isLoading;
+
+  // O toggle segue o estado AO VIVO (hasAccess), mesmo com a lista ordenada pelo
+  // salvo: a pessoa precisa ver na hora o que acabou de clicar. O fundo âmbar é
+  // o que avisa que aquilo ainda não foi gravado.
+  const linhaPessoa = (p: ProfileRow) => {
+    const on = hasAccess(p.id);
+    const isPending = pending.has(p.id);
+    return (
+      <div key={p.id} className={cn("flex items-center gap-2 px-3 py-2 hover:bg-muted/40", isPending && "bg-amber-50/50 dark:bg-amber-950/20")}>
+        <div className="flex-1 min-w-0">
+          <p className="truncate text-sm">{p.display_name || p.email || p.id}</p>
+          {p.display_name && p.email && <p className="truncate text-[11px] text-muted-foreground">{p.email}</p>}
+        </div>
+        <Switch
+          checked={on}
+          disabled={!podeGerenciar}
+          onCheckedChange={() => stageChange(p.id, !on)}
+          aria-label={`Acesso de ${p.display_name || p.email} a este menu`}
+        />
+      </div>
+    );
+  };
   const hasPending = pending.size > 0;
 
   return (
@@ -791,29 +837,30 @@ function PessoasComAcessoAoMenu({ menuCodigo, podeGerenciar }: { menuCodigo: str
 
       {!carregando && (
         <div className="max-h-96 divide-y divide-border/60 overflow-y-auto rounded-md border border-border bg-background">
-          {pessoas.length === 0 && (
+          {nenhuma && (
             <p className="px-3 py-4 text-center text-xs text-muted-foreground">Nenhuma pessoa encontrada.</p>
           )}
-          {pessoas.map((p) => {
-            const on = hasAccess(p.id);
-            const isPending = pending.has(p.id);
-            return (
-              <div key={p.id} className={cn("flex items-center gap-2 px-3 py-2 hover:bg-muted/40", isPending && "bg-amber-50/50 dark:bg-amber-950/20")}>
-                <div className="flex-1 min-w-0">
-                  <p className="truncate text-sm">{p.display_name || p.email || p.id}</p>
-                  {p.display_name && p.email && <p className="truncate text-[11px] text-muted-foreground">{p.email}</p>}
-                </div>
-                <Switch
-                  checked={on}
-                  disabled={!podeGerenciar}
-                  onCheckedChange={() => stageChange(p.id, !on)}
-                  aria-label={`Acesso de ${p.display_name || p.email} a este menu`}
-                />
-              </div>
-            );
-          })}
+          {/* Grupo vazio não rende cabeçalho: menu que ninguém acessa mostra só
+              "SEM ACESSO". A contagem segue o que está visível — com busca
+              digitada, ela conta o resultado da busca, não o total. */}
+          {comAcesso.length > 0 && <CabecalhoGrupo rotulo="Com acesso" quantidade={comAcesso.length} />}
+          {comAcesso.map(linhaPessoa)}
+          {semAcesso.length > 0 && <CabecalhoGrupo rotulo="Sem acesso" quantidade={semAcesso.length} />}
+          {semAcesso.map(linhaPessoa)}
         </div>
       )}
+    </div>
+  );
+}
+
+// Faixa que marca a fronteira entre os dois grupos da lista. Sem ela a divisão
+// fica invisível — a lista só muda de switch ligado para desligado. `sticky`
+// porque o contêiner rola (max-h-96): sem isso o rótulo some ao descer.
+function CabecalhoGrupo({ rotulo, quantidade }: { rotulo: string; quantidade: number }) {
+  return (
+    <div className="sticky top-0 z-10 flex items-center gap-2 bg-muted/80 px-3 py-1.5 backdrop-blur-sm">
+      <span className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">{rotulo}</span>
+      <span className="text-[10px] tabular-nums text-muted-foreground">({quantidade})</span>
     </div>
   );
 }
