@@ -20,6 +20,21 @@ export const LABEL_CATEGORIA: Record<Categoria, string> = {
   equipamento: "Máquinas/Equipamentos",
 };
 
+/**
+ * Por que o bem está indisponível.
+ *
+ * 'contrato' = alocado a um contrato; o escritório não pode agendá-lo. Não é
+ * manutenção, mas indisponibiliza igual — e é por isso que os dois vivem sob
+ * a mesma flag `em_manutencao`, que é a que o Agendamento de Veículos
+ * consulta. Ver a migration 20260906000006.
+ */
+export type MotivoIndisponivel = "manutencao" | "contrato";
+
+export const LABEL_INDISPONIVEL: Record<MotivoIndisponivel, string> = {
+  manutencao: "em manutenção",
+  contrato: "em contrato",
+};
+
 export interface Bem {
   id: string;
   empresa_id: string;
@@ -30,7 +45,10 @@ export interface Bem {
   contrato_id: string | null;
   posto_id: string | null;
   lotacao: string | null;
+  /** Bem INDISPONÍVEL — não só manutenção. O porquê está em `motivo_indisponivel`. */
   em_manutencao: boolean;
+  /** 'manutencao' | 'contrato' | null (disponível). */
+  motivo_indisponivel: MotivoIndisponivel | null;
   data_inicio_manutencao: string | null;
   data_previsao_fim: string | null;
   ativo: boolean;
@@ -169,11 +187,15 @@ export function useAtualizarManutencao() {
   const invalidar = useInvalidar();
   return useMutation({
     mutationFn: async (v: {
-      id: string; em_manutencao: boolean;
+      id: string; em_manutencao: boolean; motivo_indisponivel?: MotivoIndisponivel | null;
       data_inicio_manutencao?: string | null; data_previsao_fim?: string | null;
     }) => {
       const { data, error } = await sb.from("sup_patrimonio").update({
         em_manutencao: v.em_manutencao,
+        // A constraint sup_patrimonio_motivo_coerente exige motivo quando
+        // indisponível e exige NULL quando disponível — mandar errado aqui
+        // vira erro do banco, não campo silenciosamente ignorado.
+        motivo_indisponivel: v.em_manutencao ? (v.motivo_indisponivel ?? "manutencao") : null,
         data_inicio_manutencao: v.em_manutencao ? v.data_inicio_manutencao || null : null,
         data_previsao_fim: v.em_manutencao ? v.data_previsao_fim || null : null,
       }).eq("id", v.id).select("id");
