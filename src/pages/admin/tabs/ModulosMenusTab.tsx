@@ -474,7 +474,13 @@ function UserAccessPanel({ podeGerenciar, modulos, menus }: { podeGerenciar: boo
             onToggleExpand={() => toggleExpand("__perfis__")}
           />
           {modulos.map((m) => {
-            const modMenus = menus.filter((x) => x.modulo_id === m.id);
+            // Só menus ATIVOS. Menu desativado não é liberável: tanto
+            // `can_access` quanto `list_accessible_menus` exigem `ativo = true`,
+            // então o switch gravava a permissão, dizia "salvas com sucesso" e
+            // voltava sozinho para desligado no refetch — parecia bug de save e
+            // era menu desligado (21 dos 192 estão assim). Quem quiser liberá-lo
+            // ativa o menu primeiro, na aba Módulos & Menus.
+            const modMenus = menus.filter((x) => x.modulo_id === m.id && x.ativo);
             const open = expanded.has(m.id);
             const moduloAccess = hasAccess(m.codigo);
             const liberados = modMenus.filter((mn) => hasAccess(mn.codigo)).length;
