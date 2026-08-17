@@ -310,6 +310,13 @@ const financeiroModule: ModuleDef = {
       ],
     },
     {
+      label: "Gestão Financeira",
+      defaultOpen: true,
+      items: [
+        { label: "Fluxo de Caixa", to: "/app/financeiro/gestao-financeira/fluxo-caixa", icon: TrendingDown },
+      ],
+    },
+    {
       label: "Ferramentas",
       defaultOpen: true,
       items: [
