@@ -251,7 +251,10 @@ async function processarBot(
   const modo = inferirModo(cfg as any, mensagens as any);
   const rota = rotearBot(cfg as any, {
     modo,
-    texto: msgType === "text" ? texto : null,
+    // `button` (resposta rápida de template) entra como texto livre: o que
+    // chega é o rótulo que a pessoa clicou — "Olá, Bom dia!" — e é isso que
+    // o roteador precisa ver para abrir o menu/saudação.
+    texto: msgType === "text" || msgType === "button" ? texto : null,
     replyId,
     dentroHorario: dentroDoHorario(cfg as any),
     // Sempre false aqui: quem decide se o menu se repete é a RESERVA atômica
@@ -609,7 +612,13 @@ Deno.serve(async (req) => {
 
         // resposta do bot em segundo plano (não segura o 200). Trata texto livre
         // e clique em botão/lista (menu automático).
-        if (conversa.bot_ativo && ((msg.type === "text" && texto) || (msg.type === "interactive" && replyId))) {
+        //
+        // `button` é o clique no botão de RESPOSTA RÁPIDA de um template — o
+        // caso da mensagem de abertura, quando somos nós que começamos a
+        // conversa. Ele não é `interactive` (aquele é do menu do bot) e vinha
+        // sendo gravado sem resposta nenhuma: a pessoa clicava "Olá, Bom dia!"
+        // e ficava falando sozinha até um humano ver.
+        if (conversa.bot_ativo && (((msg.type === "text" || msg.type === "button") && texto) || (msg.type === "interactive" && replyId))) {
           tarefas.push(processarBot(conversa.id, contato.id, from, msg.type, texto, replyId));
         }
       }

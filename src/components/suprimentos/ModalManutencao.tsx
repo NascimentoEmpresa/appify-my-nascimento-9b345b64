@@ -9,7 +9,7 @@ import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "
 import {
   useArquivosDoBem, useAtualizarManutencao, useAnexarArquivo, useAtualizarArquivo,
   useRemoverArquivo, urlDoArquivo, mascaraBRL, brlParaNumero,
-  type Bem, type ArquivoBem,
+  type Bem, type ArquivoBem, type MotivoIndisponivel,
 } from "@/hooks/useSupPatrimonio";
 import { FotoDoBem } from "@/components/suprimentos/FotoDoBem";
 import { Upload, Trash2, FileText, Wrench, Loader2, ExternalLink } from "lucide-react";
@@ -30,9 +30,12 @@ export function ModalManutencao({ bem, onFechar }: { bem: Bem | null; onFechar: 
   const atualizar = useAtualizarManutencao();
   const anexar = useAnexarArquivo();
 
-  const [emManutencao, setEmManutencao] = useState(false);
+  // Um seletor só para três estados: disponível / manutenção / em contrato.
+  // "" = disponível; o resto é o motivo da indisponibilidade.
+  const [motivo, setMotivo] = useState<"" | MotivoIndisponivel>("");
   const [inicio, setInicio] = useState("");
   const [fim, setFim] = useState("");
+  const emManutencao = motivo !== "";
   const [idAtual, setIdAtual] = useState<string | null>(null);
   const [novoArquivo, setNovoArquivo] = useState<File | null>(null);
   const [novoComentario, setNovoComentario] = useState("");
@@ -41,7 +44,9 @@ export function ModalManutencao({ bem, onFechar }: { bem: Bem | null; onFechar: 
   // Semeia ao trocar de bem, sem useEffect.
   if (bem && bem.id !== idAtual) {
     setIdAtual(bem.id);
-    setEmManutencao(bem.em_manutencao);
+    // Registro antigo pode estar indisponível sem motivo gravado: cai em
+    // manutenção, que era o único motivo que existia antes.
+    setMotivo(bem.em_manutencao ? (bem.motivo_indisponivel ?? "manutencao") : "");
     setInicio(bem.data_inicio_manutencao?.slice(0, 10) ?? "");
     setFim(bem.data_previsao_fim?.slice(0, 10) ?? "");
     setNovoArquivo(null); setNovoComentario(""); setNovoValor("");
@@ -53,6 +58,7 @@ export function ModalManutencao({ bem, onFechar }: { bem: Bem | null; onFechar: 
     if (!bem) return;
     await atualizar.mutateAsync({
       id: bem.id, em_manutencao: emManutencao,
+      motivo_indisponivel: emManutencao ? (motivo as MotivoIndisponivel) : null,
       data_inicio_manutencao: inicio || null, data_previsao_fim: fim || null,
     });
     if (novoArquivo) {
@@ -98,39 +104,50 @@ export function ModalManutencao({ bem, onFechar }: { bem: Bem | null; onFechar: 
           {/* Status */}
           <div className="rounded-lg border p-3">
             <Label className="text-xs uppercase tracking-wide text-muted-foreground">
-              Status de manutenção
+              Disponibilidade
             </Label>
             <div className="mt-2">
-              <Label className="text-sm">Está em manutenção?</Label>
+              <Label className="text-sm">O bem está disponível?</Label>
               <Select
-                value={emManutencao ? "sim" : "nao"}
+                value={motivo === "" ? "nao" : motivo}
                 onValueChange={(v) => {
-                  const novo = v === "sim";
-                  setEmManutencao(novo);
-                  // Desmarcar limpa as datas (§9.2).
+                  const novo = v === "nao" ? "" : (v as MotivoIndisponivel);
+                  setMotivo(novo);
+                  // Voltar a disponível limpa as datas (§9.2).
                   if (!novo) { setInicio(""); setFim(""); }
                 }}
               >
                 <SelectTrigger className="mt-1"><SelectValue /></SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="nao">Não — disponível</SelectItem>
-                  <SelectItem value="sim">Sim — parado em manutenção</SelectItem>
+                  <SelectItem value="nao">Sim — disponível</SelectItem>
+                  <SelectItem value="manutencao">Não — parado em manutenção</SelectItem>
+                  <SelectItem value="contrato">Não — em contrato</SelectItem>
                 </SelectContent>
               </Select>
             </div>
 
-            {emManutencao && (
+            {emManutencao && (<>
+              {/* Só veículo é agendável; dizer isso num equipamento seria ruído. */}
+              {bem?.categoria === "veiculo" && (
+                <p className="mt-2 text-xs text-muted-foreground">
+                  {motivo === "contrato"
+                    ? "Alocado a um contrato: o escritório não poderá agendá-lo no Agendamento de Veículos."
+                    : "Parado em manutenção: não poderá ser agendado no Agendamento de Veículos."}
+                </p>
+              )}
               <div className="mt-3 grid gap-3 sm:grid-cols-2">
                 <div>
                   <Label className="text-xs">Data de início</Label>
                   <Input type="date" value={inicio} onChange={(e) => setInicio(e.target.value)} />
                 </div>
                 <div>
-                  <Label className="text-xs">Previsão de fim</Label>
+                  {/* Sem data de fim, a indisponibilidade é por tempo
+                      indeterminado — é o que a tela de agendamento vai dizer. */}
+                  <Label className="text-xs">{motivo === "contrato" ? "Previsão de devolução" : "Previsão de fim"}</Label>
                   <Input type="date" value={fim} onChange={(e) => setFim(e.target.value)} />
                 </div>
               </div>
-            )}
+            </>)}
           </div>
 
           {/* Anexos */}
