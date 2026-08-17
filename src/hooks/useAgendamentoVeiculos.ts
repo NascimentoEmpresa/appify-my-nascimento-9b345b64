@@ -44,8 +44,10 @@ export interface VeiculoFrota {
   foto_path: string | null;
   /** Indisponível — não só manutenção. O porquê vem em `motivo_indisponivel`. */
   em_manutencao: boolean;
-  /** 'manutencao' | 'contrato' | null. Carro em contrato o escritório não agenda. */
+  /** 'manutencao' | 'contrato' | 'outro' | null. Qualquer um deles impede o agendamento. */
   motivo_indisponivel: string | null;
+  /** Texto escrito à mão no Patrimônio. Só vem quando o motivo é 'outro'. */
+  motivo_detalhe: string | null;
   data_inicio_manutencao: string | null;
   data_previsao_fim: string | null;
 }
@@ -167,18 +169,26 @@ export interface Disponibilidade {
 export function disponibilidadeDoVeiculo(v: VeiculoFrota, dataInicio?: string): Disponibilidade {
   if (!v.em_manutencao) return { disponivel: true, rotulo: "Livre", detalhe: null };
 
-  // Carro alocado a contrato bloqueia igual à manutenção — o que muda é só o
-  // texto. Registro antigo veio sem motivo gravado: era manutenção, porque
+  // Contrato e "outro motivo" bloqueiam igual à manutenção — o que muda é só
+  // o texto. Registro antigo veio sem motivo gravado: era manutenção, porque
   // até 17/08/2026 não havia outro.
   const emContrato = v.motivo_indisponivel === "contrato";
-  const porque = emContrato ? "Em contrato" : "Em manutenção";
+  const outro = v.motivo_indisponivel === "outro";
+
+  // Em "outro" quem explica é o texto que o Patrimônio escreveu. Se ele vier
+  // vazio — registro antigo, ou leitura por uma consulta que não trouxe a
+  // coluna — cai num rótulo genérico em vez de mostrar frase pela metade.
+  const porque = emContrato ? "Em contrato"
+    : outro ? (v.motivo_detalhe?.trim() || "Indisponível")
+    : "Em manutenção";
+  const volta = emContrato ? "devolução" : outro ? "liberação" : "retorno";
 
   const fim = v.data_previsao_fim;
   if (!fim) {
     return {
       disponivel: false,
       rotulo: "Indisponível",
-      detalhe: `${porque} · ${emContrato ? "devolução" : "retorno"} por tempo indeterminado`,
+      detalhe: `${porque} · ${volta} por tempo indeterminado`,
     };
   }
   // Com previsão de retorno, o carro volta a ser agendável no dia seguinte.
@@ -187,7 +197,8 @@ export function disponibilidadeDoVeiculo(v: VeiculoFrota, dataInicio?: string): 
   const referencia = new Date(`${dataInicio ?? hojeISO()}T00:00:00`);
 
   if (referencia >= liberaEm) {
-    return { disponivel: true, rotulo: "Livre", detalhe: `${emContrato ? "Volta do contrato" : "Retorna"} em ${formatarData(fim)}` };
+    const comoVolta = emContrato ? "Volta do contrato" : outro ? "Liberado" : "Retorna";
+    return { disponivel: true, rotulo: "Livre", detalhe: `${comoVolta} em ${formatarData(fim)}` };
   }
   return {
     disponivel: false,
