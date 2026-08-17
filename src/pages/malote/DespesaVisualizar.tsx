@@ -35,6 +35,8 @@ import {
   STATUS_TERMINAIS,
   RateioLinha,
   TipoSolicitacao,
+  DespesaEvento,
+  TipoEvento,
 } from "@/hooks/useMaloteDespesa";
 import { RateioGrid, DimensoesRateio } from "./RateioGrid";
 import { FluxoAprovacaoVisual } from "./FluxoAprovacaoVisual";
@@ -52,6 +54,49 @@ const FORMA_PAGAMENTO_LABEL: Record<string, string> = {
   cartao: "Cartão",
   dinheiro: "Dinheiro",
 };
+
+// Mesmo texto usado no FluxoAprovacaoVisual (EVENTO_META), duplicado aqui
+// de propósito — o Histórico é uma lista bruta e cronológica de TODOS os
+// eventos (inclusive ciclos repetidos de ajuste/reenvio, que o fluxo
+// visual não mostra porque só guarda o desvio mais recente de cada tipo).
+const EVENTO_LABEL: Record<TipoEvento, string> = {
+  criacao: "Criada",
+  edicao: "Editada",
+  aguardando_cotacao: "Aguardando cotação",
+  cotacao_realizada: "Cotação realizada",
+  cotacao_aprovada: "Cotação aprovada",
+  solicitacao_aprovada: "Solicitação aprovada",
+  solicitacao_reprovada: "Solicitação reprovada",
+  despesa_criada: "Despesa criada",
+  aprovacao_nivel: "Aprovada",
+  necessidade_de_ajuste: "Necessidade de ajuste",
+  reenvio_aprovacao: "Reenviada para aprovação",
+  aguardando_pagamento: "Aguardando pagamento",
+  conferido_pagamento: "Marcada como conferida",
+  ajuste_pagamento_solicitado: "Ajuste solicitado no pagamento",
+  despesa_paga: "Despesa paga",
+  despesa_reprovada: "Despesa reprovada",
+  cancelamento: "Cancelada",
+};
+
+function LinhaHistorico({ evento, criadoPor }: { evento: DespesaEvento; criadoPor: string }) {
+  const { data: nomeAtor } = useNomeUsuario(evento.ator_user_id);
+  const papel = evento.ator_user_id === criadoPor ? " (Solicitante)" : evento.nivel ? ` (Nível ${evento.nivel})` : "";
+  return (
+    <div className="flex items-start gap-3 text-sm">
+      <div className="h-2 w-2 rounded-full bg-primary mt-1.5 shrink-0" />
+      <div>
+        <p className="font-medium">
+          {EVENTO_LABEL[evento.tipo_evento] ?? evento.tipo_evento}
+          {papel}
+        </p>
+        <p className="text-xs text-muted-foreground">{nomeAtor ?? "—"}</p>
+        {evento.descricao && <p className="text-muted-foreground text-xs">{evento.descricao}</p>}
+        <p className="text-xs text-muted-foreground">{new Date(evento.created_at).toLocaleString("pt-BR")}</p>
+      </div>
+    </div>
+  );
+}
 
 async function abrirAnexo(path: string) {
   const { data, error } = await supabase.storage.from("malote-anexos").createSignedUrl(path, 60);
@@ -507,6 +552,21 @@ export default function DespesaVisualizar() {
           </CardContent>
         </Card>
       </div>
+
+      {/* Histórico detalhado: lista bruta e cronológica de todos os eventos,
+          inclusive ciclos repetidos que o Fluxo de Aprovação visual (acima)
+          não mostra — ele só guarda o desvio mais recente de cada tipo. */}
+      <Card>
+        <CardContent className="p-4 space-y-3">
+          <p className="text-sm font-semibold">Histórico detalhado</p>
+          <div className="max-h-72 overflow-y-auto pr-1 space-y-3">
+            {eventos.map((ev) => (
+              <LinhaHistorico key={ev.id} evento={ev} criadoPor={despesa.created_by} />
+            ))}
+            {eventos.length === 0 && <p className="text-sm text-muted-foreground">Sem eventos registrados ainda.</p>}
+          </div>
+        </CardContent>
+      </Card>
 
       {/* Bloco 3: Dados da Aprovação e Pagamento */}
       <Card>
