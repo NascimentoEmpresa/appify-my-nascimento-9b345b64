@@ -42,6 +42,20 @@ for (const [nome, v] of [["SENIOR_SSH_PW", SSH.password], ["SENIOR_DB_PW", DB.pa
   if (!v && !(DRY && nome.startsWith("SUPABASE"))) { console.error(`Falta a variavel ${nome}.`); process.exit(1); }
 }
 
+// A service_role e um JWT de ~219 caracteres. Colar num painel web corta com
+// facilidade, e o sintoma era um 401 generico DEPOIS de ler o Senior inteiro.
+// Conferir na partida custa nada e falha na hora certa.
+if (SERVICE_KEY && !DRY) {
+  const partes = SERVICE_KEY.split(".");
+  if (partes.length !== 3 || SERVICE_KEY.length < 150) {
+    console.error("SUPABASE_SERVICE_KEY nao parece um JWT valido: " + SERVICE_KEY.length +
+      " caracteres e " + partes.length + " partes (o esperado sao 3 partes e ~219 caracteres).");
+    console.error('  comeca em "' + SERVICE_KEY.slice(0, 12) + '" e termina em "' + SERVICE_KEY.slice(-12) + '"');
+    console.error("  provavel corte ao colar no painel: recadastre a variavel inteira.");
+    process.exit(1);
+  }
+}
+
 // Datas do Senior vem como Date. A EMPREGADOS guarda texto no formato
 // brasileiro, que e o que o resto do ERP ja le (rh_data espera isso).
 const dataBR = (v) => {
@@ -85,6 +99,12 @@ async function enviar(lote) {
     body: JSON.stringify({ _linhas: lote }),
   });
   const txt = await r.text();
+  if (r.status === 401) {
+    throw new Error("Supabase recusou a chave (401). A SUPABASE_SERVICE_KEY em uso tem " +
+      SERVICE_KEY.length + ' caracteres, comeca em "' + SERVICE_KEY.slice(0, 12) +
+      '" e termina em "' + SERVICE_KEY.slice(-12) +
+      '". Confira se e a service_role e se nao foi cortada ao colar. Resposta: ' + txt.slice(0, 160));
+  }
   if (!r.ok) throw new Error(`Supabase HTTP ${r.status}: ${txt.slice(0, 300)}`);
   return JSON.parse(txt);
 }
