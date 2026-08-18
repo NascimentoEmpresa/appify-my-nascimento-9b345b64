@@ -1,0 +1,17 @@
+{
+  "name": "integracao-senior-empregados",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Sincroniza hagg.BiEmpregados (Senior/MySQL, via tunel SSH) para a EMPREGADOS do Supabase.",
+  "main": "index.mjs",
+  "scripts": {
+    "start": "node index.mjs",
+    "dry-run": "node index.mjs --dry-run"
+  },
+  "dependencies": {
+    "mysql2": "^3.11.0",
+    "ssh2": "^1.15.0"
+  },
+  "engines": { "node": ">=18" }
+}
