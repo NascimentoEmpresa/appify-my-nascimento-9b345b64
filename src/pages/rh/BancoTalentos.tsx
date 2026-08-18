@@ -129,15 +129,39 @@ export default function BancoTalentos() {
   const confirmarPuxar = async () => {
     if (!puxar || !vagaSel) { toast("Selecione a vaga.", "err"); return; }
     const nowIso = new Date().toISOString();
-    const { error } = await (supabase as any).from("WA_CURRICULOS").update({
-      vaga_id: Number(vagaSel), etapa_processo: "ENTRADA", etapa_changed_at: nowIso,
-      selecionado_por: nome, selecionado_em: nowIso,
-    }).eq("id", puxar.id);
+    const jaTemVaga = !!puxar.vaga_id;
+
+    // Candidatura que já pertence a uma vaga NÃO é movida: cria-se uma nova.
+    // Mover apagaria o histórico da participação anterior — inclusive o
+    // motivo da reprovação, que é justamente o que o RH precisa consultar ao
+    // reaproveitar a pessoa.
+    let error;
+    if (jaTemVaga) {
+      const { id, created_at, etapa_processo, etapa_changed_at, favorito,
+              juridico_ok, juridico_obs, juridico_por, juridico_em,
+              sst_ok, sst_obs, sst_por, sst_em, compras_ok, compras_obs, compras_por, compras_em,
+              motivo_reprovacao, desistiu, desistencia_motivo, desistencia_em, desistencia_por, desistencia_etapa,
+              admitido_em, admitido_por, empregado_id, enviado_admissao_por, enviado_admissao_em,
+              ...dadosPessoais } = puxar;
+      ({ error } = await (supabase as any).from("WA_CURRICULOS").insert({
+        ...dadosPessoais,
+        vaga_id: Number(vagaSel), etapa_processo: "ENTRADA", etapa_changed_at: nowIso,
+        selecionado_por: nome, selecionado_em: nowIso,
+      }));
+    } else {
+      ({ error } = await (supabase as any).from("WA_CURRICULOS").update({
+        vaga_id: Number(vagaSel), etapa_processo: "ENTRADA", etapa_changed_at: nowIso,
+        selecionado_por: nome, selecionado_em: nowIso,
+      }).eq("id", puxar.id));
+    }
     if (error) { toast("Erro ao puxar: " + error.message, "err"); return; }
     try {
       await (supabase as any).from("RECRUTAMENTO_HISTORICO").insert({
         solicitacao_id: Number(vagaSel), candidato_id: puxar.id, candidato_nome: puxar.nome,
-        evento: "Puxado do Banco de Talentos → ENTRADA", para_status: "ENTRADA",
+        evento: jaTemVaga
+          ? "Puxado do Banco de Talentos (nova candidatura) → ENTRADA"
+          : "Puxado do Banco de Talentos → ENTRADA",
+        para_status: "ENTRADA",
         papel: "Recrutamento", usuario_nome: nome, usuario_email: user?.email ?? "",
       });
     } catch { /* noop */ }
@@ -306,7 +330,11 @@ export default function BancoTalentos() {
                     <span style={{ fontSize: 10.5, color: "#94a3b8" }}>Cadastro em {fmtDt(c.created_at)}</span>
                     <div style={{ display: "flex", gap: 6 }}>
                       <button onClick={() => setDetalhe(g)} style={btnStyle("rgba(15,49,113,.08)", "1px solid rgba(15,49,113,.2)", "#0f3171")}>🔍 Detalhes</button>
-                      {podeAgir && semVaga && <button onClick={() => { setVagaSel(""); setPuxar(semVaga); }} style={btnStyle("#16a34a", "none", "#fff")}>✓ Puxar para vaga</button>}
+                      {/* Antes só aparecia com candidatura SEM vaga, então quem
+                          tinha sido reprovado em alguma ficava preso: todas as
+                          candidaturas dele tinham vaga_id. Agora vale sempre —
+                          reprovado numa vaga pode concorrer a outra. */}
+                      {podeAgir && <button onClick={() => { setVagaSel(""); setPuxar(semVaga ?? c); }} style={btnStyle("#16a34a", "none", "#fff")}>✓ Puxar para vaga</button>}
                     </div>
                   </div>
                 </div>
