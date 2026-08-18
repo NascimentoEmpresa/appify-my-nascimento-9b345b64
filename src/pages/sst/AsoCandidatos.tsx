@@ -51,7 +51,12 @@ export default function AsoCandidatos() {
   const load = useCallback(async () => {
     setLoading(true);
     let q = (supabase as any).from("VW_RECRUTAMENTO_CANDIDATOS").select("*");
-    q = verTodos ? q.or('etapa_processo.eq."EXAME SST",sst_em.not.is.null,sst_agendado_em.not.is.null') : q.eq("etapa_processo", "EXAME SST");
+    // 'EXAME SST' era a etapa exclusiva do SST. Agora SST e Compras correm em
+    // PARALELO numa etapa só; o nome antigo continua aceito porque há registro
+    // gravado antes da mudança.
+    q = verTodos
+      ? q.or('etapa_processo.eq."SST + COMPRAS",etapa_processo.eq."EXAME SST",sst_em.not.is.null,sst_agendado_em.not.is.null')
+      : q.in("etapa_processo", ["SST + COMPRAS", "EXAME SST"]);
     const { data, error } = await q.order("etapa_changed_at", { ascending: true });
     setLoading(false);
     if (error) { toast("Erro ao carregar: " + error.message, "err"); return; }
@@ -81,22 +86,26 @@ export default function AsoCandidatos() {
         if (!error) toast("Agendado sem o link do Maps — aplique a migration sst_maps_url no banco.", "info");
       }
       if (error) { toast("Erro: " + error.message, "err"); return; }
-      await logHist(c, "Exame agendado", "EXAME SST", "EXAME SST", `${fmtD(ag.data)} ${ag.hora} · ${ag.local}`.trim());
+      await logHist(c, "Exame agendado", "SST + COMPRAS", "SST + COMPRAS", `${fmtD(ag.data)} ${ag.hora} · ${ag.local}`.trim());
       toast("Exame agendado.", "ok");
     } else if (acao.tipo === "realizar") {
+      // Só carimba o SST. A etapa NÃO muda aqui: Compras corre em paralelo e
+      // pode não ter aprovado ainda. Quem passa para ADMISSÃO é o trigger
+      // rec_paralelo_admissao, quando o segundo setor aprovar — nenhuma das
+      // duas telas tem como saber se é a última a assinar.
       const { error } = await (supabase as any).from("WA_CURRICULOS").update({
-        etapa_processo: "COMPRAS", etapa_changed_at: nowIso, sst_ok: true, sst_por: nome, sst_em: nowIso, sst_obs: obs.trim() || null,
+        sst_ok: true, sst_por: nome, sst_em: nowIso, sst_obs: obs.trim() || null,
       }).eq("id", c.candidato_id);
       if (error) { toast("Erro: " + error.message, "err"); return; }
-      await logHist(c, "Exame (ASO) realizado → Compras", "EXAME SST", "COMPRAS", obs.trim() || null);
-      toast("Exame realizado — enviado ao Compras.", "ok");
+      await logHist(c, "Exame (ASO) realizado — SST aprovado", "SST + COMPRAS", "SST + COMPRAS", obs.trim() || null);
+      toast("Exame realizado — SST aprovado.", "ok");
     } else {
       if (!obs.trim()) { toast("Informe o motivo.", "err"); return; }
       const { error } = await (supabase as any).from("WA_CURRICULOS").update({
         etapa_processo: "Reprovado", etapa_changed_at: nowIso, sst_ok: false, sst_por: nome, sst_em: nowIso, motivo_reprovacao: obs.trim(),
       }).eq("id", c.candidato_id);
       if (error) { toast("Erro: " + error.message, "err"); return; }
-      await logHist(c, "Candidato reprovado", "EXAME SST", "Reprovado", obs.trim());
+      await logHist(c, "Candidato reprovado", "SST + COMPRAS", "Reprovado", obs.trim());
       toast("Candidato reprovado.", "ok");
     }
     setAcao(null); setObs(""); setAg({ data: "", hora: "", local: "", maps: "" }); setMapPrev("");
@@ -141,9 +150,9 @@ export default function AsoCandidatos() {
                     </div>
                   )}
                   <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 12, alignItems: "center" }}>
-                    {c.etapa_processo !== "EXAME SST" && <span style={{ fontSize: 11, color: "#94a3b8" }}>Situação atual: <EtapaChip etapa={c.etapa_processo} /></span>}
+                    {!["SST + COMPRAS", "EXAME SST"].includes(c.etapa_processo) && <span style={{ fontSize: 11, color: "#94a3b8" }}>Situação atual: <EtapaChip etapa={c.etapa_processo} /></span>}
                     <HistoricoCandidato candidatoId={c.candidato_id} nome={c.nome} />
-                    {podeAgir && c.etapa_processo === "EXAME SST" && <>
+                    {podeAgir && ["SST + COMPRAS", "EXAME SST"].includes(c.etapa_processo) && <>
                       {!c.sst_agendado_em
                         ? <button onClick={() => { const local = c.local_exato || c.cidade || ""; setAg({ data: "", hora: "", local, maps: c.sst_maps_url || "" }); setMapPrev(local); setAcao({ cand: c, tipo: "agendar" }); }} style={btnStyle("#0ea5e9", "none", "#fff")}>🗓 Agendar exame</button>
                         : <button onClick={() => { setObs(""); setAcao({ cand: c, tipo: "realizar" }); }} style={btnStyle("#16a34a", "none", "#fff")}>✓ Realizar (apto) → Compras</button>}

@@ -321,6 +321,8 @@ const ACOES_POR_MENU: Record<string, readonly AppAcao[]> = {
   encarregados_minhas_solicitacoes: ACOES_RECRUTAMENTO,
   sup_patrimonio: ACOES_PATRIMONIO,
   sup_manutencao: ACOES_PATRIMONIO,
+  // Sem `alterar` o Compras abriria a fila de EPIs e nao conseguiria aprovar.
+  sup_epis_admissao: ACOES_PATRIMONIO,
 };
 const ACOES_DO_TOGGLE = (codigo: string): AppAcao[] =>
   [...(ACOES_POR_MENU[codigo] ?? (["visualizar"] as const))];

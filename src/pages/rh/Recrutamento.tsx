@@ -312,6 +312,10 @@ export default function Recrutamento() {
   const [buscaCand, setBuscaCand]           = useState(""); // busca no kanban de candidatos
   const [candModal, setCandModal]           = useState<{ id: number; novaEtapa: string; nome: string } | null>(null);
   const [candObs, setCandObs]               = useState("");
+  // Materiais/EPIs que o Compras precisa providenciar. Obrigatório ao enviar
+  // para a etapa paralela: sem a lista o pedido chega vazio no módulo de
+  // Suprimentos e alguém volta perguntando.
+  const [candMateriais, setCandMateriais]   = useState("");
   const [showKanbanCand, setShowKanbanCand] = useState(false);   // painel dedicado do kanban
   const [showHistorico, setShowHistorico]   = useState(false);   // painel de histórico
   const [historico, setHistorico]           = useState<any[]>([]);
@@ -1059,6 +1063,7 @@ export default function Recrutamento() {
 
   const pedirMoverCand = (cv: Curriculo, novaEtapa: string) => {
     setCandObs("");
+    setCandMateriais("");
     setCandModal({ id: cv.id, novaEtapa, nome: cv.nome || "Candidato" });
   };
 
@@ -1121,42 +1126,6 @@ export default function Recrutamento() {
   // Cada setor aprova o SEU lado; a Admissão só libera com os dois verdes.
   // Antes isto era uma fila (SST → Compras), o que fazia o segundo setor
   // esperar sem motivo — os dois trabalhos são independentes.
-  const paraleloOk = (c: Curriculo) => c.sst_ok === true && c.compras_ok === true;
-  const podeAprovarSst     = podeMoverSst || podeRecrutar;
-  const podeAprovarCompras = podeMoverCompras || podeRecrutar;
-
-  const aprovarParalelo = async (cv: Curriculo, setor: "sst" | "compras") => {
-    const nowIso = new Date().toISOString();
-    const nome = user?.user_metadata?.nome ?? user?.email ?? "";
-    const payload = setor === "sst"
-      ? { sst_ok: true, sst_por: nome, sst_em: nowIso }
-      : { compras_ok: true, compras_por: nome, compras_em: nowIso };
-    const { error } = await (supabase as any).from("WA_CURRICULOS").update(payload).eq("id", cv.id);
-    if (error) { toast("Erro ao aprovar: " + error.message, "err"); return; }
-    if (drawerId) await logHistorico(drawerId, setor === "sst" ? "SST aprovou o candidato" : "Compras aprovou o candidato", {
-      papel: setor === "sst" ? "SST" : "Suprimentos", candidatoId: cv.id, candidatoNome: cv.nome,
-    });
-
-    // Os dois aprovaram: a etapa se encerra SOZINHA. Não há botão de
-    // "confirmar → Admissão" de propósito — não sobra decisão nenhuma para
-    // alguém tomar depois do segundo aval, e o botão só criaria um card
-    // parado esperando clique.
-    const agora = { sst: setor === "sst" ? true : cv.sst_ok === true,
-                    compras: setor === "compras" ? true : cv.compras_ok === true };
-    if (agora.sst && agora.compras) {
-      await (supabase as any).from("WA_CURRICULOS")
-        .update({ etapa_processo: "ADMISSÃO", etapa_changed_at: nowIso }).eq("id", cv.id);
-      if (drawerId) await logHistorico(drawerId, "SST e Compras aprovaram → Admissão", {
-        de: ETAPA_SST_COMPRAS, para: "ADMISSÃO", papel: "SST + Suprimentos",
-        candidatoId: cv.id, candidatoNome: cv.nome,
-      });
-      toast("SST e Compras aprovaram — candidato foi para Admissão.", "ok");
-    } else {
-      toast(setor === "sst" ? "SST aprovado — aguardando Compras." : "Compras aprovado — aguardando SST.", "ok");
-    }
-    if (drawerId) loadCandidatos(drawerId);
-  };
-
   // ── Desistência ───────────────────────────────────────────────────
   // O candidato pode desistir em QUALQUER etapa. Não é reprovação: quem
   // reprova é a empresa, quem desiste é ele — e a diferença importa para o
@@ -1239,9 +1208,18 @@ export default function Recrutamento() {
     if (!candModal) return;
     const { id, novaEtapa } = candModal;
     if (novaEtapa === "Reprovado" && !candObs.trim()) { toast("Informe o motivo da reprovação.", "err"); return; }
+    // Compras precisa saber O QUE comprar: sem a lista, o pedido chega vazio
+    // no módulo de Suprimentos e alguém tem que voltar perguntando. Para o
+    // SST a observação é opcional — o exame independe de descrição.
+    if (novaEtapa === ETAPA_SST_COMPRAS && !candMateriais.trim()) {
+      toast("Descreva os materiais/EPIs necessários — o Compras precisa disso.", "err"); return;
+    }
     const extra: Record<string, any> = {};
     const origem = candidatos.find(c => c.id === id)?.etapa_processo;
-    if (novaEtapa === "Reprovado") {
+    if (novaEtapa === ETAPA_SST_COMPRAS) {
+      extra.compras_necessidades = candMateriais.trim();
+      if (candObs.trim()) extra.sst_obs = candObs.trim();
+    } else if (novaEtapa === "Reprovado") {
       extra.motivo_reprovacao = candObs.trim();
     } else if (candObs.trim()) {
       if (origem === "JURÍDICO")               extra.juridico_obs = candObs.trim();
@@ -1249,6 +1227,7 @@ export default function Recrutamento() {
     }
     setCandModal(null);
     setCandObs("");
+    setCandMateriais("");
     await executarMoverCand(id, novaEtapa, extra);
   };
 
@@ -1766,14 +1745,17 @@ export default function Recrutamento() {
                                 <button onClick={() => pedirMoverCand(c, "APROVADO")} style={bSkip}>Pular Gestor →</button>
                               </>) : etapa === "ADMISSÃO" ? (
                                 podeRecrutar && !c.enviado_admissao_em && <button onClick={() => enviarAdmissao(c)} style={{ ...avancaBtn, background: "#16a34a" }}>✓ Contratar (enviar à Admissão)</button>
-                              ) : etapa === ETAPA_SST_COMPRAS ? (<>
-                                {c.sst_ok !== true && podeAprovarSst && (
-                                  <button onClick={() => aprovarParalelo(c, "sst")} style={{ ...avancaBtn, background: "#f59e0b" }}>✓ Aprovar SST</button>
-                                )}
-                                {c.compras_ok !== true && podeAprovarCompras && (
-                                  <button onClick={() => aprovarParalelo(c, "compras")} style={{ ...avancaBtn, background: "#f97316" }}>✓ Aprovar Compras</button>
-                                )}
-                              </>) : (CAND_PROX[etapa] && podeAqui && (
+                              ) : etapa === ETAPA_SST_COMPRAS ? (
+                                // Aqui o Recrutamento só ACOMPANHA. Quem aprova é
+                                // cada setor no SEU módulo (SST › ASO/Admissão e
+                                // Suprimentos › EPIs/Admissões), onde só ele entra.
+                                // Botão de aprovar neste kanban deixaria o
+                                // Recrutamento assinar etapa alheia.
+                                <div style={{ fontSize: 9.5, color: "#94a3b8", textAlign: "center", padding: "2px 0" }}>
+                                  Aguardando {c.sst_ok !== true && c.compras_ok !== true ? "SST e Compras"
+                                    : c.sst_ok !== true ? "SST" : "Compras"}
+                                </div>
+                              ) : (CAND_PROX[etapa] && podeAqui && (
                                 <button onClick={() => pedirMoverCand(c, CAND_PROX[etapa])} style={{ ...avancaBtn, background: "#16a34a" }}>{labelProx(etapa)}</button>
                               ))}
                               {etapa === "JURÍDICO" && podeMoverJuridico && (
@@ -2165,17 +2147,28 @@ export default function Recrutamento() {
       {candModal && (
         <div className="rec-modal-ov" style={{ zIndex: 850 }}>
           <div className="rec-modal" style={{ maxWidth: 420 }}>
-            <button onClick={() => { setCandModal(null); setCandObs(""); }} style={{ position: "absolute", top: 14, right: 14, background: "none", border: "none", color: "#94a3b8", fontSize: 20, cursor: "pointer" }}>✕</button>
+            <button onClick={() => { setCandModal(null); setCandObs(""); setCandMateriais(""); }} style={{ position: "absolute", top: 14, right: 14, background: "none", border: "none", color: "#94a3b8", fontSize: 20, cursor: "pointer" }}>✕</button>
             <div style={{ fontSize: 17, fontWeight: 800, marginBottom: 4 }}>
               {candModal.novaEtapa === "Reprovado" ? "Reprovar candidato" : `Mover para "${candModal.novaEtapa}"`}
             </div>
             <div style={{ fontSize: 12, color: "#94a3b8", marginBottom: 14 }}>{candModal.nome}</div>
+            {candModal.novaEtapa === ETAPA_SST_COMPRAS && (
+              <div className="rec-fg">
+                <label>Materiais / EPIs necessários *</label>
+                <textarea className="rec-fi" rows={3} placeholder="Ex.: 2 uniformes tam. M, botina 42, luva de raspa, protetor auricular…" value={candMateriais} onChange={e => setCandMateriais(e.target.value)} />
+                <div style={{ fontSize: 10.5, color: "#94a3b8", marginTop: 4 }}>
+                  Vai para o Suprimentos (EPIs — Admissões), que é quem compra.
+                </div>
+              </div>
+            )}
             <div className="rec-fg">
-              <label>{candModal.novaEtapa === "Reprovado" ? "Motivo *" : "Observação (opcional)"}</label>
+              <label>{candModal.novaEtapa === "Reprovado" ? "Motivo *"
+                : candModal.novaEtapa === ETAPA_SST_COMPRAS ? "Observação para o SST (opcional)"
+                : "Observação (opcional)"}</label>
               <textarea className="rec-fi" rows={3} placeholder={candModal.novaEtapa === "Reprovado" ? "Descreva o motivo..." : "Observação da etapa..."} value={candObs} onChange={e => setCandObs(e.target.value)} />
             </div>
             <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 4 }}>
-              <button onClick={() => { setCandModal(null); setCandObs(""); }} style={{ padding: "7px 14px", borderRadius: 10, border: "1px solid #e2e8f0", background: "#fff", color: "#475569", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>Cancelar</button>
+              <button onClick={() => { setCandModal(null); setCandObs(""); setCandMateriais(""); }} style={{ padding: "7px 14px", borderRadius: 10, border: "1px solid #e2e8f0", background: "#fff", color: "#475569", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>Cancelar</button>
               <button onClick={confirmarMoverCand} style={{ padding: "7px 14px", borderRadius: 10, border: "none", background: candModal.novaEtapa === "Reprovado" ? "#dc2626" : "#0f3171", color: "#fff", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>Confirmar</button>
             </div>
           </div>
