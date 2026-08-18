@@ -126,6 +126,22 @@ export type PlanilhaCustoInsert = Omit<PlanilhaCustoRow, "id" | "created_at" | "
 export const formatBRL = (v: number | null | undefined) =>
   (v ?? 0).toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
 
+// "2026-08" -> último dia de agosto/2026 — data de referência usada pra
+// resolver qual vigência conta pro período selecionado nos filtros
+// (SIS-2026-0168), no lugar de "hoje".
+export function fimDoMes(anoMes: string): Date {
+  const [ano, mes] = anoMes.split("-").map(Number);
+  const d = new Date(ano, mes, 0);
+  d.setHours(0, 0, 0, 0);
+  return d;
+}
+
+// "YYYY-MM" de hoje — valor default do filtro Ano/Mês.
+export function anoMesAtual(): string {
+  const hoje = new Date();
+  return `${hoje.getFullYear()}-${String(hoje.getMonth() + 1).padStart(2, "0")}`;
+}
+
 export interface PostoVigente {
   posto: string;
   valorTotal: number;
@@ -141,6 +157,15 @@ export interface PostoVigente {
 export function resolverLinhasVigentes(rows: PlanilhaCustoRow[], contratoId: string): PlanilhaCustoRow[] {
   const today = new Date();
   today.setHours(0, 0, 0, 0);
+  return resolverLinhasPorPeriodo(rows, contratoId, today);
+}
+
+// Igual a resolverLinhasVigentes, mas resolve pra uma data de referência
+// arbitrária em vez de "hoje" — usado pelo Orçamento Geral (SIS-2026-0168)
+// pra achar a vigência que cobre o Ano/Mês selecionado no filtro, mesmo
+// que hoje ela já esteja Histórico ou ainda "Vai iniciar" (a Planilha de
+// Custo já tem vigências com data_vigencia futura de verdade).
+export function resolverLinhasPorPeriodo(rows: PlanilhaCustoRow[], contratoId: string, referencia: Date): PlanilhaCustoRow[] {
   const doContrato = rows.filter((r) => r.contrato_id === contratoId && r.orexec === "EXECUTADO" && !r.encerrado && r.data_vigencia);
 
   const datasPorPosto = new Map<string, Date[]>();
@@ -152,7 +177,7 @@ export function resolverLinhasVigentes(rows: PlanilhaCustoRow[], contratoId: str
   }
   const vigentePorPosto = new Map<string, Date | null>();
   datasPorPosto.forEach((dates, posto) => {
-    const passadas = dates.filter((d) => d <= today).sort((a, b) => b.getTime() - a.getTime());
+    const passadas = dates.filter((d) => d <= referencia).sort((a, b) => b.getTime() - a.getTime());
     vigentePorPosto.set(posto, passadas[0] ?? null);
   });
 
