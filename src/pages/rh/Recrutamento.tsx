@@ -233,9 +233,15 @@ const sugerirNomeTemplate = (n?: string | null) =>
 // Status da Solicitação dirigidos pelo candidato (etapas 3–10).
 const STATUS_PROCESSO = [
   "Vaga aberta - Seleção de Currículos", "Em análise jurídica", "Entrevista e Avaliação",
-  "Entrevista com Gestor", "Aprovado - Aguardando SST", "Encaminhado para SST (ASO)",
-  "ASO Aprovado - Aguardando Informe de EPIs", "Aguardando Confirmação Compras",
+  "Entrevista com Gestor", "Aprovado - Aguardando SST",
   "Compras Confirmou - Aguardando Documentação",
+  // Um status só para a etapa paralela. Os três antigos ("Encaminhado para
+  // SST (ASO)", "ASO Aprovado - Aguardando Informe de EPIs", "Aguardando
+  // Confirmação Compras") descreviam uma fila SST → Compras que não existe
+  // mais; ainda aparecem em vagas antigas e por isso seguem na lista.
+  "Aguardando SST e Compras",
+  "Encaminhado para SST (ASO)", "ASO Aprovado - Aguardando Informe de EPIs",
+  "Aguardando Confirmação Compras",
 ];
 
 // ── Componente Principal ───────────────────────────────────────────
@@ -857,7 +863,7 @@ export default function Recrutamento() {
 
   // ADMISSÃO → efetiva o candidato no módulo de Admissão (RH).
   const enviarAdmissao = async (cv: Curriculo) => {
-    if (!confirm(`Contratar ${cv.nome || "o candidato"}? Ele será enviado à Admissão (RH) e a vaga fica como "Contratado".`)) return;
+    if (!confirm(`Contratar ${cv.nome || "o candidato"}?\n\nEle vai para a Admissão (RH), a vaga é ENCERRADA como "Contratado" e sai do portal público /vagas.`)) return;
     const nowIso = new Date().toISOString();
     const nome = user?.user_metadata?.nome ?? user?.email ?? "";
     const { error } = await (supabase as any).from("WA_CURRICULOS")
@@ -1709,6 +1715,10 @@ export default function Recrutamento() {
                             )}
                             {c.juridico_ok === true && <div style={{ fontSize: 9.5, color: "#15803d", marginTop: 3, fontWeight: 700 }}>✓ Jurídico aprovado</div>}
                             {c.juridico_ok === false && <div style={{ fontSize: 9.5, color: "#b91c1c", marginTop: 3, fontWeight: 700 }}>⛔ Restrito (Jurídico)</div>}
+                            {c.sst_ok === true && <div style={{ fontSize: 9.5, color: "#15803d", marginTop: 3, fontWeight: 700 }}>✓ SST aprovou</div>}
+                            {c.sst_ok === false && <div style={{ fontSize: 9.5, color: "#b91c1c", marginTop: 3, fontWeight: 700 }}>⛔ Reprovado no SST</div>}
+                            {c.compras_ok === true && <div style={{ fontSize: 9.5, color: "#15803d", marginTop: 3, fontWeight: 700 }}>✓ Compras aprovou</div>}
+                            {c.compras_ok === false && <div style={{ fontSize: 9.5, color: "#b91c1c", marginTop: 3, fontWeight: 700 }}>⛔ Reprovado no Compras</div>}
                             {etapa === "Reprovado" && c.desistiu && (
                               <div style={{ fontSize: 9.5, color: "#b45309", marginTop: 3, fontWeight: 700 }}>
                                 🚪 Desistiu{c.desistencia_etapa ? ` (em ${c.desistencia_etapa})` : ""}
