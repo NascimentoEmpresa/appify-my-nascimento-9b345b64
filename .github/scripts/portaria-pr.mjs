@@ -345,6 +345,75 @@ writeFileSync(
   JSON.stringify({ base, arquivosAnalisados, violacoes }, null, 2)
 );
 
+// O que fazer para destravar, por regra. Sem isto o autor vê "R4 reprovou" e
+// fica sem saber o próximo passo — a mensagem diz o que está errado, não como
+// sair. Cada texto é uma instrução executável, não um conselho genérico.
+const COMO_RESOLVER = {
+  R1: "Remova o `DISABLE ROW LEVEL SECURITY`. Se esta tabela precisa mesmo ficar sem RLS, " +
+      "isso é decisão de arquitetura e não cabe numa PR — discuta antes com o time.",
+  R2: "Se a tabela é de carga/importação, renomeie com prefixo `tmp_` ou `sup_imp_`. " +
+      "Se o DROP é intencional numa tabela de negócio, aplique a label `pular-revisao-ia` " +
+      "e explique no corpo da PR por que a tabela pode sumir.",
+  R3: "Acrescente o `CREATE POLICY` correspondente em algum arquivo desta PR. Se a remoção " +
+      "é intencional, escreva no corpo da PR o que passa a proteger a tabela no lugar.",
+  R4: "Reverta este arquivo (`git checkout origin/main -- <arquivo>`) e crie uma migration " +
+      "NOVA com a correção. A migration antiga já rodou no banco de produção — editá-la faz " +
+      "o repositório mentir sobre o estado real do Supabase.",
+  R5: "**Rotacione a credencial agora**, antes de mexer no diff: Supabase → Settings → API, " +
+      "ou o painel do serviço correspondente. Remover do código não resolve, porque o valor " +
+      "já está no histórico do git. Depois de rotacionar, tire do código e use um secret.",
+  R6: "Mova esta chamada para uma Edge Function em `supabase/functions/`. Código em `src/` vai " +
+      "para o bundle do navegador, então a chave viraria pública para qualquer visitante.",
+  R7: "Abra um chamado no ERP e use o número no título da PR (`SIS-XXXX-XXXX: ...`). " +
+      "Funções `admin_*` mexem em vínculo de usuário, empresa e sessão — precisam de rastro.",
+  R8: "Mova o trabalho para a sua branch pessoal (`eduardo`, `joao` ou `pablo`) e abra a PR " +
+      "a partir dela. Só essas três e a `main` existem, sem exceção.",
+};
+
+if (violacoes.length > 0) {
+  const porRegra = new Map();
+  for (const v of violacoes) {
+    if (!porRegra.has(v.regra)) porRegra.set(v.regra, []);
+    porRegra.get(v.regra).push(v);
+  }
+
+  const linhas = [
+    `## Portaria reprovou: ${violacoes.length} violação(ões)`,
+    "",
+    "Estas são **regras absolutas** — verificadas por script, sem IA. Enquanto o check " +
+      "estiver vermelho, a PR não deve ser mergeada.",
+    "",
+  ];
+
+  for (const [regra, lista] of porRegra) {
+    linhas.push(`### ${regra}`, "");
+    for (const v of lista) {
+      linhas.push(`- \`${v.arquivo}:${v.linha}\` — ${v.mensagem}`);
+      if (v.evidencia) {
+        // Linguagem pela extensão: marcar TypeScript como sql quebra o
+        // destaque de sintaxe e faz o comentário parecer descuidado.
+        const ext = v.arquivo.split(".").pop()?.toLowerCase();
+        const lang = ext === "sql" ? "sql"
+                   : ext === "ts" || ext === "tsx" ? "ts"
+                   : ext === "js" || ext === "jsx" || ext === "mjs" ? "js"
+                   : "";
+        linhas.push("", `  \`\`\`${lang}`, `  ${v.evidencia}`, "  ```");
+      }
+    }
+    linhas.push("", `**Como resolver:** ${COMO_RESOLVER[regra] || "Ver `.github/REGRAS-PR.md`."}`, "");
+  }
+
+  linhas.push(
+    "---",
+    "",
+    "**Se a regra é que está errada para este caso**, mude o `.github/REGRAS-PR.md` — mas " +
+      "numa PR separada, porque mudança de regra também passa por revisão. Não contorne com " +
+      "a label sem antes considerar se a regra deveria mudar para todo mundo.",
+  );
+
+  writeFileSync("portaria-comentario.md", linhas.join("\n"));
+}
+
 if (violacoes.length > 0) {
   console.log(`\nPortaria reprovou: ${violacoes.length} violação(ões) de regra absoluta.`);
   process.exit(1);

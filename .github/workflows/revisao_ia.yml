@@ -43,6 +43,8 @@ jobs:
       !contains(github.event.pull_request.labels.*.name, 'pular-revisao-ia')
     permissions:
       contents: read
+      # Necessário para comentar a reprovação na PR (step abaixo).
+      pull-requests: write
     steps:
       - uses: actions/checkout@v6
         with:
@@ -50,11 +52,35 @@ jobs:
           # existe e o script aborta com mensagem explicando isso.
           fetch-depth: 0
 
-      - name: Aplicar regras absolutas (R1–R7)
+      - name: Aplicar regras absolutas (R1–R8)
+        id: regras
         env:
           # Título via env, nunca interpolado no shell: é texto de terceiros.
           PR_TITLE: ${{ github.event.pull_request.title }}
         run: node .github/scripts/portaria-pr.mjs
+
+      # Quando a portaria reprova, o job seguinte (revisao-ia) é pulado por
+      # `needs`, então NINGUÉM comenta na PR: o autor vê só um check vermelho e
+      # precisa entrar em Checks → Details → logs para descobrir o motivo. Este
+      # step fecha esse buraco — a explicação e o passo para destravar vão para
+      # a aba Conversation, que é onde as pessoas olham.
+      - name: Explicar a reprovação na PR
+        if: failure() && steps.regras.outcome == 'failure'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          set -uo pipefail
+          [ -f portaria-comentario.md ] || exit 0
+          {
+            echo "<!-- revisao-ia -->"
+            cat portaria-comentario.md
+            echo
+            echo "---"
+            echo "_Regras em \`.github/REGRAS-PR.md\`. Rode \`npm run revisar\` na sua máquina para conferir antes de subir._"
+          } > comentario.md
+          gh pr comment "$PR" --edit-last --create-if-none --body-file comentario.md \
+            || gh pr comment "$PR" --body-file comentario.md
 
   revisao-ia:
     name: revisao-ia
