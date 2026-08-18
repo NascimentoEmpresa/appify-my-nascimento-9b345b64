@@ -103,25 +103,32 @@ function lerSenior() {
       const conn = mysql.createConnection({ ...DB, stream, connectTimeout: 30000 });
       // sitafa e a SITUACAO (7=Demitido, 1=Trabalhando...), nao a data —
       // a descricao vem da BiSituacoes. Quem tem a data e datafa.
+      // Duas consultas na MESMA conexao: abrir o tunel custa ~2 s, e a
+      // dimensao tem 110 linhas — nao vale um segundo tunel so para ela.
       conn.query(
-        `SELECT e.numemp, e.numcad, e.nomfun, e.datadm, e.datafa,
+        "SELECT situacao, descricao, abreviatura, tipo, tipo_descricao FROM hagg.BiSituacoes",
+        (eS, situacoes) => {
+      if (eS) return err(eS);
+      conn.query(
+        `SELECT e.numemp, e.numcad, e.nomfun, e.datadm, e.datafa, e.sitafa,
                 coalesce(s.descricao, '') AS situacao,
                 e.codfil, e.tipsex, e.datnas, e.numcpf, e.numpis, e.valsal
            FROM hagg.BiEmpregados e
            LEFT JOIN hagg.BiSituacoes s ON s.situacao = e.sitafa
           WHERE e.tipcol = 1`,
-        (e2, linhas) => { if (e2) return err(e2); conn.end(); ssh.end(); ok(linhas); });
+        (e2, linhas) => { if (e2) return err(e2); conn.end(); ssh.end(); ok({ linhas, situacoes }); });
+        });
     }));
     ssh.on("error", err);
     ssh.connect(SSH);
   });
 }
 
-async function enviar(lote) {
-  const r = await fetch(`${SUPABASE_URL}/rest/v1/rpc/rh_sync_senior_empregados`, {
+async function chamarRpc(nome, corpo) {
+  const r = await fetch(`${SUPABASE_URL}/rest/v1/rpc/${nome}`, {
     method: "POST",
     headers: { apikey: SERVICE_KEY, Authorization: `Bearer ${SERVICE_KEY}`, "Content-Type": "application/json" },
-    body: JSON.stringify({ _linhas: lote }),
+    body: JSON.stringify(corpo),
   });
   const txt = await r.text();
   if (r.status === 401) {
@@ -139,25 +146,39 @@ async function enviar(lote) {
 // tipo Discloud/Railway — la nao ha cron, o processo e que persiste).
 async function rodar() {
   const t0 = Date.now();
-  const linhas = await lerSenior();
+  const { linhas, situacoes } = await lerSenior();
+  // A dimensao vai ANTES: o codigo gravado no empregado tem que ter para
+  // onde apontar. "007" vira 7 — no Senior o codigo e varchar com zero a
+  // esquerda de um lado e smallint do outro.
+  const dimensao = situacoes.map((s) => ({
+    codigo: Number(s.situacao), descricao: String(s.descricao ?? "").trim(),
+    abreviatura: String(s.abreviatura ?? "").trim() || null,
+    tipo: String(s.tipo ?? "").trim() || null,
+    tipo_descricao: String(s.tipo_descricao ?? "").trim() || null,
+  })).filter((s) => Number.isFinite(s.codigo) && s.descricao);
+
   const payload = linhas.map((e) => ({
     empresa: e.numemp, cadastro: e.numcad, nome: String(e.nomfun ?? "").trim(),
     admissao: dataBR(e.datadm), situacao: String(e.situacao ?? "").trim() || null,
     data_afastamento: dataBR(e.datafa), filial: e.codfil, sexo: String(e.tipsex ?? "").trim() || null,
     nascimento: dataBR(e.datnas), cpf: String(e.numcpf ?? "").trim() || null,
     pis: String(e.numpis ?? "").trim() || null, salario: valorBR(e.valsal),
+    cod_situacao: e.sitafa == null ? null : Number(e.sitafa),
   }));
 
-  console.log(`Senior: ${payload.length} colaboradores (tipcol=1) em ${Date.now() - t0} ms`);
+  console.log(`Senior: ${payload.length} colaboradores (tipcol=1) e ${dimensao.length} situacoes em ${Date.now() - t0} ms`);
   if (DRY) {
     console.log("--dry-run: nada enviado. Amostra:");
     console.log(JSON.stringify(payload.slice(0, 3), null, 2));
     return;
   }
 
+  const dim = await chamarRpc("rh_sync_senior_situacoes", { _linhas: dimensao });
+  console.log(`  SITUACOES: ${dim.gravadas} gravadas`);
+
   const total = { inseridos: 0, atualizados: 0, ignorados: 0 };
   for (let i = 0; i < payload.length; i += LOTE) {
-    const r = await enviar(payload.slice(i, i + LOTE));
+    const r = await chamarRpc("rh_sync_senior_empregados", { _linhas: payload.slice(i, i + LOTE) });
     for (const k of Object.keys(total)) total[k] += r[k] ?? 0;
     process.stdout.write(`\r  lote ${Math.floor(i / LOTE) + 1}: +${total.inseridos} ins / ${total.atualizados} upd`);
   }
@@ -178,5 +199,8 @@ if (INTERVALO > 0 && !DRY) {
   await ciclo();
   setInterval(ciclo, INTERVALO * 60_000);
 } else {
-  rodar().catch((e) => { falhar(e); process.exit(1); });
+  // process.exit explicito: o handle do tunel SSH mantem o event loop vivo
+  // mesmo depois de ssh.end(), e o processo ficava pendurado apos concluir o
+  // trabalho — no agendador isso vira tarefa que nunca termina.
+  rodar().then(() => process.exit(0)).catch((e) => { falhar(e); process.exit(1); });
 }
