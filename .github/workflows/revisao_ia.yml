@@ -224,8 +224,8 @@ jobs:
             # Sem veredito não dá para saber se o código está bom. Falha ABERTO,
             # igual ao chamado_pr_sync.yml faz quando o Supabase não responde:
             # instabilidade nossa não pode travar merge de toda a empresa.
-            echo "::warning::A revisão por IA não produziu veredito (resultado da ação: $CLAUDE_RESULTADO)."
-            echo "::warning::Passando o check para não travar a PR. Revise à mão e verifique o secret CLAUDE_CODE_OAUTH_TOKEN e a cota da assinatura."
+            echo "::warning::A revisão por IA não produziu veredito (resultado da ação: $CLAUDE_RESULTADO). Passando o check para não travar a PR — revise à mão."
+            echo "::warning::Causas, em ordem de probabilidade: (1) esta PR altera o próprio revisao_ia.yml, e a ação se recusa a rodar quando o workflow difere do que está na main — é proteção contra PR que tenta vazar o token, e some quando a PR for mergeada; (2) o secret CLAUDE_CODE_OAUTH_TOKEN está ausente ou expirado; (3) a cota da assinatura acabou. Procure a linha ##[warning] do step 'Revisar' acima: ela diz qual das três é."
             exit 0
           fi
 
