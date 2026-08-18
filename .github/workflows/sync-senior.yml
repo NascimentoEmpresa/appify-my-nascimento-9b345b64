@@ -33,7 +33,7 @@ jobs:
           node-version: "20"
 
       - name: Instalar dependencias do robo
-        run: npm install --no-save ssh2 mysql2
+        run: npm install --prefix integracao-senior
 
       - name: Sincronizar
         env:
@@ -41,4 +41,4 @@ jobs:
           SENIOR_DB_PW: ${{ secrets.SENIOR_DB_PW }}
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
-        run: node scripts/sync-senior-empregados.mjs
+        run: node integracao-senior/index.mjs
