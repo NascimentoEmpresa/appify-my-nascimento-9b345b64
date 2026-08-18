@@ -42,3 +42,7 @@ docs
 worker
 .claude
 deno.lock
+
+# Saída do .github/scripts/portaria-pr.mjs — gerada a cada execução, local ou
+# no CI. Nunca é para ser versionada.
+portaria-resultado.json

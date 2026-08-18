@@ -7,7 +7,8 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { ArrowLeft, Paperclip, Trash2, RotateCcw, FileText, Package, DollarSign, Tag, Image as ImageIcon, FileSpreadsheet, File as FileIcon, Check, X, PenLine } from "lucide-react";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
+import { ArrowLeft, Paperclip, Trash2, RotateCcw, FileText, Package, DollarSign, Tag, Image as ImageIcon, FileSpreadsheet, File as FileIcon, Check, X, PenLine, ClipboardCheck, Banknote, Upload } from "lucide-react";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
 import { cn } from "@/lib/utils";
@@ -22,6 +23,11 @@ import {
   useAprovarDespesa,
   useSolicitarAjusteDespesa,
   useReprovarDespesa,
+  usePodePagarMalote,
+  useMarcarConferidoDespesa,
+  useSolicitarAjustePagamentoDespesa,
+  usePagarDespesa,
+  uploadAnexoMalote,
   aprovadorDoNivel,
   souAprovadorConfigurado,
   STATUS_LABEL,
@@ -29,6 +35,8 @@ import {
   STATUS_TERMINAIS,
   RateioLinha,
   TipoSolicitacao,
+  DespesaEvento,
+  TipoEvento,
 } from "@/hooks/useMaloteDespesa";
 import { RateioGrid, DimensoesRateio } from "./RateioGrid";
 import { FluxoAprovacaoVisual } from "./FluxoAprovacaoVisual";
@@ -46,6 +54,49 @@ const FORMA_PAGAMENTO_LABEL: Record<string, string> = {
   cartao: "Cartão",
   dinheiro: "Dinheiro",
 };
+
+// Mesmo texto usado no FluxoAprovacaoVisual (EVENTO_META), duplicado aqui
+// de propósito — o Histórico é uma lista bruta e cronológica de TODOS os
+// eventos (inclusive ciclos repetidos de ajuste/reenvio, que o fluxo
+// visual não mostra porque só guarda o desvio mais recente de cada tipo).
+const EVENTO_LABEL: Record<TipoEvento, string> = {
+  criacao: "Criada",
+  edicao: "Editada",
+  aguardando_cotacao: "Aguardando cotação",
+  cotacao_realizada: "Cotação realizada",
+  cotacao_aprovada: "Cotação aprovada",
+  solicitacao_aprovada: "Solicitação aprovada",
+  solicitacao_reprovada: "Solicitação reprovada",
+  despesa_criada: "Despesa criada",
+  aprovacao_nivel: "Aprovada",
+  necessidade_de_ajuste: "Necessidade de ajuste",
+  reenvio_aprovacao: "Reenviada para aprovação",
+  aguardando_pagamento: "Aguardando pagamento",
+  conferido_pagamento: "Marcada como conferida",
+  ajuste_pagamento_solicitado: "Ajuste solicitado no pagamento",
+  despesa_paga: "Despesa paga",
+  despesa_reprovada: "Despesa reprovada",
+  cancelamento: "Cancelada",
+};
+
+function LinhaHistorico({ evento, criadoPor }: { evento: DespesaEvento; criadoPor: string }) {
+  const { data: nomeAtor } = useNomeUsuario(evento.ator_user_id);
+  const papel = evento.ator_user_id === criadoPor ? " (Solicitante)" : evento.nivel ? ` (Nível ${evento.nivel})` : "";
+  return (
+    <div className="flex items-start gap-3 text-sm">
+      <div className="h-2 w-2 rounded-full bg-primary mt-1.5 shrink-0" />
+      <div>
+        <p className="font-medium">
+          {EVENTO_LABEL[evento.tipo_evento] ?? evento.tipo_evento}
+          {papel}
+        </p>
+        <p className="text-xs text-muted-foreground">{nomeAtor ?? "—"}</p>
+        {evento.descricao && <p className="text-muted-foreground text-xs">{evento.descricao}</p>}
+        <p className="text-xs text-muted-foreground">{new Date(evento.created_at).toLocaleString("pt-BR")}</p>
+      </div>
+    </div>
+  );
+}
 
 async function abrirAnexo(path: string) {
   const { data, error } = await supabase.storage.from("malote-anexos").createSignedUrl(path, 60);
@@ -103,6 +154,10 @@ export default function DespesaVisualizar() {
   const aprovar = useAprovarDespesa();
   const solicitarAjuste = useSolicitarAjusteDespesa();
   const reprovar = useReprovarDespesa();
+  const { data: podePagarMalote } = usePodePagarMalote();
+  const marcarConferido = useMarcarConferidoDespesa();
+  const solicitarAjustePagamento = useSolicitarAjustePagamentoDespesa();
+  const pagar = usePagarDespesa();
 
   const [valorAprovado, setValorAprovado] = useState("");
   const [justificativa, setJustificativa] = useState("");
@@ -116,6 +171,12 @@ export default function DespesaVisualizar() {
   const [linhasRateio, setLinhasRateio] = useState<RateioLinha[]>([]);
   const [enviando, setEnviando] = useState<"cancelar" | "reenviar" | null>(null);
   const [acaoEmAndamento, setAcaoEmAndamento] = useState<"aprovar" | "reprovar" | "ajuste" | null>(null);
+  const [acaoPagamentoEmAndamento, setAcaoPagamentoEmAndamento] = useState<"conferir" | "ajuste" | "reprovar" | null>(null);
+  const [pagarAberto, setPagarAberto] = useState(false);
+  const [comprovanteFile, setComprovanteFile] = useState<File | null>(null);
+  const [dataPagamentoConfirmado, setDataPagamentoConfirmado] = useState("");
+  const [observacaoPagamento, setObservacaoPagamento] = useState("");
+  const [pagando, setPagando] = useState(false);
 
   const despesa = data?.despesa;
 
@@ -160,6 +221,11 @@ export default function DespesaVisualizar() {
     despesa.nivel_aprovacao_atual != null && despesa.nivel_aprovacao_atual < 3
       ? aprovadorDoNivel(despesa, (despesa.nivel_aprovacao_atual + 1) as 1 | 2 | 3) != null
       : false;
+
+  // Pagamento Malote (SIS-2026-0160) — elegibilidade resolvida só pelo
+  // gerenciamento de acesso (usePodePagarMalote), não por linha da despesa.
+  const mostrarAcoesPagamento =
+    !!podePagarMalote && ["aguardando_pagamento", "pronto_para_pagar", "ajuste_pagamento"].includes(despesa.status);
 
   function validarAcaoAprovador(): string | null {
     if (!formaPagamento) return "Selecione a forma de pagamento.";
@@ -226,6 +292,84 @@ export default function DespesaVisualizar() {
       toast.error(e.message ?? "Erro ao reprovar despesa.");
     } finally {
       setAcaoEmAndamento(null);
+    }
+  }
+
+  async function handleMarcarConferido() {
+    setAcaoPagamentoEmAndamento("conferir");
+    try {
+      await marcarConferido.mutateAsync(despesa!.id);
+      toast.success("Despesa marcada como conferida — pronta para pagar.");
+    } catch (e: any) {
+      toast.error(e.message ?? "Erro ao marcar como conferido.");
+    } finally {
+      setAcaoPagamentoEmAndamento(null);
+    }
+  }
+
+  async function handleSolicitarAjustePagamento() {
+    if (!comentario.trim()) {
+      toast.error("Descreva o motivo do ajuste no campo Comentário.");
+      return;
+    }
+    setAcaoPagamentoEmAndamento("ajuste");
+    try {
+      await solicitarAjustePagamento.mutateAsync({ id: despesa!.id, motivo: comentario.trim() });
+      toast.success("Ajuste solicitado.");
+    } catch (e: any) {
+      toast.error(e.message ?? "Erro ao solicitar ajuste.");
+    } finally {
+      setAcaoPagamentoEmAndamento(null);
+    }
+  }
+
+  async function handleReprovarPagamento() {
+    if (!comentario.trim()) {
+      toast.error("Descreva o motivo da reprovação no campo Comentário.");
+      return;
+    }
+    setAcaoPagamentoEmAndamento("reprovar");
+    try {
+      await reprovar.mutateAsync({ id: despesa!.id, motivo: comentario.trim() });
+      toast.success("Despesa reprovada.");
+    } catch (e: any) {
+      toast.error(e.message ?? "Erro ao reprovar despesa.");
+    } finally {
+      setAcaoPagamentoEmAndamento(null);
+    }
+  }
+
+  function abrirPagar() {
+    setComprovanteFile(null);
+    setDataPagamentoConfirmado(despesa!.data_pagamento ?? new Date().toISOString().slice(0, 10));
+    setObservacaoPagamento("");
+    setPagarAberto(true);
+  }
+
+  async function handleConfirmarPagamento() {
+    if (!comprovanteFile) {
+      toast.error("Anexe o comprovante de pagamento.");
+      return;
+    }
+    if (!dataPagamentoConfirmado) {
+      toast.error("Informe a data do pagamento.");
+      return;
+    }
+    setPagando(true);
+    try {
+      const comprovantePath = await uploadAnexoMalote(comprovanteFile, despesa!.id);
+      await pagar.mutateAsync({
+        id: despesa!.id,
+        data_pagamento: dataPagamentoConfirmado,
+        comprovante_path: comprovantePath,
+        observacao: observacaoPagamento.trim() || null,
+      });
+      toast.success("Pagamento confirmado.");
+      setPagarAberto(false);
+    } catch (e: any) {
+      toast.error(e.message ?? "Erro ao confirmar pagamento.");
+    } finally {
+      setPagando(false);
     }
   }
 
@@ -409,6 +553,21 @@ export default function DespesaVisualizar() {
         </Card>
       </div>
 
+      {/* Histórico detalhado: lista bruta e cronológica de todos os eventos,
+          inclusive ciclos repetidos que o Fluxo de Aprovação visual (acima)
+          não mostra — ele só guarda o desvio mais recente de cada tipo. */}
+      <Card>
+        <CardContent className="p-4 space-y-3">
+          <p className="text-sm font-semibold">Histórico detalhado</p>
+          <div className="max-h-72 overflow-y-auto pr-1 space-y-3">
+            {eventos.map((ev) => (
+              <LinhaHistorico key={ev.id} evento={ev} criadoPor={despesa.created_by} />
+            ))}
+            {eventos.length === 0 && <p className="text-sm text-muted-foreground">Sem eventos registrados ainda.</p>}
+          </div>
+        </CardContent>
+      </Card>
+
       {/* Bloco 3: Dados da Aprovação e Pagamento */}
       <Card>
         <CardContent className="p-4 space-y-3">
@@ -470,7 +629,7 @@ export default function DespesaVisualizar() {
         </CardContent>
       </Card>
 
-      {(souAprovadorNivelAtual || podeReprovarComoAprovadorPassado) && (
+      {(souAprovadorNivelAtual || podeReprovarComoAprovadorPassado || mostrarAcoesPagamento) && (
         <Card>
           <CardContent className="p-4 space-y-2">
             <Label>Comentário</Label>
@@ -510,7 +669,7 @@ export default function DespesaVisualizar() {
         </div>
       )}
 
-      {!souAprovadorNivelAtual && podeReprovarComoAprovadorPassado && (
+      {!souAprovadorNivelAtual && podeReprovarComoAprovadorPassado && !mostrarAcoesPagamento && (
         <div className="flex justify-end gap-2">
           <Button
             variant="outline"
@@ -522,6 +681,123 @@ export default function DespesaVisualizar() {
           </Button>
         </div>
       )}
+
+      {mostrarAcoesPagamento && despesa.status === "ajuste_pagamento" && (
+        <div className="flex justify-end gap-2">
+          <Button
+            variant="outline"
+            className="text-destructive border-destructive hover:bg-destructive/10 gap-1.5"
+            onClick={handleReprovarPagamento}
+            disabled={acaoPagamentoEmAndamento !== null}
+          >
+            <X className="h-4 w-4" /> {acaoPagamentoEmAndamento === "reprovar" ? "Reprovando..." : "Reprovar despesa"}
+          </Button>
+        </div>
+      )}
+
+      {mostrarAcoesPagamento && despesa.status === "aguardando_pagamento" && (
+        <div className="flex justify-end gap-2">
+          <Button
+            variant="outline"
+            className="text-destructive border-destructive hover:bg-destructive/10 gap-1.5"
+            onClick={handleReprovarPagamento}
+            disabled={acaoPagamentoEmAndamento !== null}
+          >
+            <X className="h-4 w-4" /> {acaoPagamentoEmAndamento === "reprovar" ? "Reprovando..." : "Reprovar"}
+          </Button>
+          <Button
+            variant="outline"
+            className="text-amber-700 border-amber-400 hover:bg-amber-50 gap-1.5"
+            onClick={handleSolicitarAjustePagamento}
+            disabled={acaoPagamentoEmAndamento !== null}
+          >
+            <PenLine className="h-4 w-4" /> {acaoPagamentoEmAndamento === "ajuste" ? "Enviando..." : "Solicitar ajuste"}
+          </Button>
+          <Button
+            variant="outline"
+            className="gap-1.5"
+            onClick={handleMarcarConferido}
+            disabled={acaoPagamentoEmAndamento !== null}
+          >
+            <ClipboardCheck className="h-4 w-4" /> {acaoPagamentoEmAndamento === "conferir" ? "Conferindo..." : "Marcar como conferido"}
+          </Button>
+          <Button className="gap-1.5" onClick={abrirPagar} disabled={acaoPagamentoEmAndamento !== null}>
+            <Banknote className="h-4 w-4" /> Pagar despesa
+          </Button>
+        </div>
+      )}
+
+      {mostrarAcoesPagamento && despesa.status === "pronto_para_pagar" && (
+        <div className="flex justify-end gap-2">
+          <Button
+            variant="outline"
+            className="text-destructive border-destructive hover:bg-destructive/10 gap-1.5"
+            onClick={handleReprovarPagamento}
+            disabled={acaoPagamentoEmAndamento !== null}
+          >
+            <X className="h-4 w-4" /> {acaoPagamentoEmAndamento === "reprovar" ? "Reprovando..." : "Reprovar"}
+          </Button>
+          <Button
+            variant="outline"
+            className="text-amber-700 border-amber-400 hover:bg-amber-50 gap-1.5"
+            onClick={handleSolicitarAjustePagamento}
+            disabled={acaoPagamentoEmAndamento !== null}
+          >
+            <PenLine className="h-4 w-4" /> {acaoPagamentoEmAndamento === "ajuste" ? "Enviando..." : "Solicitar novo ajuste"}
+          </Button>
+          <Button className="gap-1.5" onClick={abrirPagar} disabled={acaoPagamentoEmAndamento !== null}>
+            <Banknote className="h-4 w-4" /> Pagar despesa
+          </Button>
+        </div>
+      )}
+
+      <Dialog open={pagarAberto} onOpenChange={setPagarAberto}>
+        <DialogContent className="sm:max-w-sm p-5">
+          <DialogHeader>
+            <DialogTitle className="text-base">Comprovante de pagamento</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3">
+            <div>
+              <Label className="text-xs">Arquivo do comprovante</Label>
+              <label className="mt-1 flex items-center gap-2 rounded-md border border-dashed border-input px-3 py-2.5 text-xs cursor-pointer hover:bg-muted/50">
+                <Upload className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                <span className="truncate text-muted-foreground">
+                  {comprovanteFile ? comprovanteFile.name : "Selecionar arquivo (PDF, JPG, PNG)"}
+                </span>
+                <input
+                  type="file"
+                  className="hidden"
+                  accept=".pdf,.jpg,.jpeg,.png"
+                  onChange={(e) => setComprovanteFile(e.target.files?.[0] ?? null)}
+                />
+              </label>
+            </div>
+            <div>
+              <Label className="text-xs">Data do pagamento</Label>
+              <Input type="date" className="h-8 text-xs" value={dataPagamentoConfirmado} onChange={(e) => setDataPagamentoConfirmado(e.target.value)} />
+            </div>
+            <div>
+              <Label className="text-xs">Observação (opcional)</Label>
+              <textarea
+                value={observacaoPagamento}
+                onChange={(e) => setObservacaoPagamento(e.target.value.slice(0, 300))}
+                placeholder="Digite uma observação, se necessário..."
+                className="w-full min-h-12 rounded-md border border-input bg-background p-2 text-xs"
+                maxLength={300}
+              />
+              <p className="text-[10px] text-muted-foreground text-right">{observacaoPagamento.length}/300</p>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" size="sm" onClick={() => setPagarAberto(false)} disabled={pagando}>
+              Cancelar
+            </Button>
+            <Button size="sm" onClick={handleConfirmarPagamento} disabled={pagando}>
+              {pagando ? "Confirmando..." : "Confirmar pagamento"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {!souAprovadorNivelAtual && !podeReprovarComoAprovadorPassado && !souAprovadorVendoAjuste && souSolicitante && podeAgir && (
         <div className="flex justify-end gap-2">

@@ -13,6 +13,8 @@ export type StatusDespesa =
   | "pendente_aprovacao"
   | "necessidade_de_ajuste"
   | "aguardando_pagamento"
+  | "pronto_para_pagar"
+  | "ajuste_pagamento"
   | "despesa_paga"
   | "despesa_reprovada"
   | "cancelada";
@@ -31,6 +33,8 @@ export type TipoEvento =
   | "necessidade_de_ajuste"
   | "reenvio_aprovacao"
   | "aguardando_pagamento"
+  | "conferido_pagamento"
+  | "ajuste_pagamento_solicitado"
   | "despesa_paga"
   | "despesa_reprovada"
   | "cancelamento";
@@ -63,6 +67,8 @@ export const STATUS_LABEL: Record<StatusDespesa, string> = {
   pendente_aprovacao: "Pendente aprovação",
   necessidade_de_ajuste: "Necessita de ajuste",
   aguardando_pagamento: "Aguardando pagamento",
+  pronto_para_pagar: "Pronto para pagar (conferido)",
+  ajuste_pagamento: "Necessita de ajuste (pagamento)",
   despesa_paga: "Despesa paga",
   despesa_reprovada: "Despesa reprovada",
   cancelada: "Cancelada",
@@ -78,6 +84,8 @@ export const STATUS_BADGE_CLASS: Record<StatusDespesa, string> = {
   pendente_aprovacao: "bg-amber-100 text-amber-800 dark:bg-amber-950/40 dark:text-amber-300",
   necessidade_de_ajuste: "bg-amber-100 text-amber-800 dark:bg-amber-950/40 dark:text-amber-300",
   aguardando_pagamento: "bg-blue-100 text-blue-800 dark:bg-blue-950/40 dark:text-blue-300",
+  pronto_para_pagar: "bg-violet-100 text-violet-800 dark:bg-violet-950/40 dark:text-violet-300",
+  ajuste_pagamento: "bg-amber-100 text-amber-800 dark:bg-amber-950/40 dark:text-amber-300",
   despesa_paga: "bg-emerald-100 text-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-300",
   despesa_reprovada: "bg-red-100 text-red-800 dark:bg-red-950/40 dark:text-red-300",
   cancelada: "bg-muted text-muted-foreground",
@@ -157,6 +165,13 @@ export interface MaloteDespesaRow {
   cotacao_reprovada_motivo: string | null;
   cotacao_observacoes: string | null;
   cotacao_vencedor_num: 1 | 2 | 3 | null;
+  // ── Pagamento Malote (SIS-2026-0160) ──
+  comprovante_pagamento_path: string | null;
+  observacao_pagamento: string | null;
+  pago_em: string | null;
+  pago_por: string | null;
+  conferido_em: string | null;
+  conferido_por: string | null;
   arquivos: string[];
   created_at: string;
   created_by: string;
@@ -194,6 +209,7 @@ const DESPESA_COLUMNS =
   "cot3_fornecedor, cot3_valor, cot3_prazo, cot3_link, cot3_anexo_path, cot3_anexo_nome, " +
   "cotacao_enviada_em, cotacao_enviada_por, cotacao_enviada_por_nome, cotacao_decidida_em, cotacao_decidida_por, cotacao_decidida_por_nome, " +
   "cotacao_reprovada_motivo, cotacao_observacoes, cotacao_vencedor_num, " +
+  "comprovante_pagamento_path, observacao_pagamento, pago_em, pago_por, conferido_em, conferido_por, " +
   "arquivos, created_at, created_by, updated_at, " +
   "classificacao:classificacao_id(id, nome, aprovador1_nome, aprovador2_nome, aprovador3_nome, aprovador1_user_id, aprovador2_user_id, aprovador3_user_id)";
 
@@ -578,6 +594,67 @@ export function useReprovarDespesa() {
   return useMutation({
     mutationFn: async ({ id, motivo }: { id: string; motivo: string }) => {
       const { error } = await (supabase as any).rpc("malote_reprovar_despesa", { _id: id, _motivo: motivo });
+      if (error) throw error;
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: [DESPESA_KEY] }),
+  });
+}
+
+// ── Pagamento Malote (SIS-2026-0160) ─────────────────────────────────────
+// Elegibilidade geral pra agir no Pagamento Malote — resolvida só pelo
+// gerenciamento de acesso central (menu 'malote_pagamento'), nunca por
+// cargo hardcoded. Usada só pra gating de UI (defesa em profundidade
+// continua nas RPCs, que checam de novo).
+export function usePodePagarMalote() {
+  return useQuery({
+    queryKey: [DESPESA_KEY, "pode_pagar_malote"],
+    queryFn: async () => {
+      const { data, error } = await (supabase as any).rpc("malote_pode_pagar");
+      if (error) throw error;
+      return data === true;
+    },
+  });
+}
+
+export function useMarcarConferidoDespesa() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (id: string) => {
+      const { error } = await (supabase as any).rpc("malote_marcar_conferido_despesa", { _id: id });
+      if (error) throw error;
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: [DESPESA_KEY] }),
+  });
+}
+
+export function useSolicitarAjustePagamentoDespesa() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ id, motivo }: { id: string; motivo: string }) => {
+      const { error } = await (supabase as any).rpc("malote_solicitar_ajuste_pagamento_despesa", { _id: id, _motivo: motivo });
+      if (error) throw error;
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: [DESPESA_KEY] }),
+  });
+}
+
+export interface PagarDespesaInput {
+  id: string;
+  data_pagamento: string;
+  comprovante_path: string;
+  observacao: string | null;
+}
+
+export function usePagarDespesa() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (input: PagarDespesaInput) => {
+      const { error } = await (supabase as any).rpc("malote_pagar_despesa", {
+        _id: input.id,
+        _data_pagamento: input.data_pagamento,
+        _comprovante_path: input.comprovante_path,
+        _observacao: input.observacao,
+      });
       if (error) throw error;
     },
     onSuccess: () => qc.invalidateQueries({ queryKey: [DESPESA_KEY] }),

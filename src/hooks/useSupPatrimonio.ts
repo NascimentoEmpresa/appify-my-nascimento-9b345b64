@@ -28,12 +28,22 @@ export const LABEL_CATEGORIA: Record<Categoria, string> = {
  * a mesma flag `em_manutencao`, que é a que o Agendamento de Veículos
  * consulta. Ver a migration 20260906000006.
  */
-export type MotivoIndisponivel = "manutencao" | "contrato";
+export type MotivoIndisponivel = "manutencao" | "contrato" | "outro";
 
 export const LABEL_INDISPONIVEL: Record<MotivoIndisponivel, string> = {
   manutencao: "em manutenção",
   contrato: "em contrato",
+  outro: "indisponível",
 };
+
+/**
+ * O rótulo curto do card. Em "outro" quem informa é o texto que a pessoa
+ * escreveu — "indisponível" sozinho não diz nada a quem está olhando a frota.
+ */
+export function rotuloIndisponivel(bem: Pick<Bem, "motivo_indisponivel" | "motivo_detalhe">): string {
+  if (bem.motivo_indisponivel === "outro" && bem.motivo_detalhe?.trim()) return bem.motivo_detalhe.trim();
+  return LABEL_INDISPONIVEL[bem.motivo_indisponivel ?? "manutencao"];
+}
 
 export interface Bem {
   id: string;
@@ -47,8 +57,10 @@ export interface Bem {
   lotacao: string | null;
   /** Bem INDISPONÍVEL — não só manutenção. O porquê está em `motivo_indisponivel`. */
   em_manutencao: boolean;
-  /** 'manutencao' | 'contrato' | null (disponível). */
+  /** 'manutencao' | 'contrato' | 'outro' | null (disponível). */
   motivo_indisponivel: MotivoIndisponivel | null;
+  /** Texto livre do motivo. Só existe — e é obrigatório — quando o motivo é 'outro'. */
+  motivo_detalhe: string | null;
   data_inicio_manutencao: string | null;
   data_previsao_fim: string | null;
   ativo: boolean;
@@ -194,14 +206,20 @@ export function useAtualizarManutencao() {
   return useMutation({
     mutationFn: async (v: {
       id: string; em_manutencao: boolean; motivo_indisponivel?: MotivoIndisponivel | null;
+      motivo_detalhe?: string | null;
       data_inicio_manutencao?: string | null; data_previsao_fim?: string | null;
     }) => {
+      const motivo = v.em_manutencao ? (v.motivo_indisponivel ?? "manutencao") : null;
       const { data, error } = await sb.from("sup_patrimonio").update({
         em_manutencao: v.em_manutencao,
         // A constraint sup_patrimonio_motivo_coerente exige motivo quando
         // indisponível e exige NULL quando disponível — mandar errado aqui
         // vira erro do banco, não campo silenciosamente ignorado.
-        motivo_indisponivel: v.em_manutencao ? (v.motivo_indisponivel ?? "manutencao") : null,
+        motivo_indisponivel: motivo,
+        // Mesma constraint: o texto é obrigatório em 'outro' e proibido nos
+        // demais. Zerar aqui evita deixar o motivo antigo pendurado quando
+        // alguém troca "outro" por "manutenção".
+        motivo_detalhe: motivo === "outro" ? (v.motivo_detalhe?.trim() || null) : null,
         data_inicio_manutencao: v.em_manutencao ? v.data_inicio_manutencao || null : null,
         data_previsao_fim: v.em_manutencao ? v.data_previsao_fim || null : null,
       }).eq("id", v.id).select("id");
