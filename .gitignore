@@ -46,3 +46,11 @@ deno.lock
 # Saída do .github/scripts/portaria-pr.mjs — gerada a cada execução, local ou
 # no CI. Nunca é para ser versionada.
 portaria-resultado.json
+
+# Senhas do MySQL do cliente e do túnel SSH (espelho-mysql). Segredo de
+# verdade, e diferente do .env logo acima: este NÃO pode entrar no
+# repositório, porque o repo é espelhado para o Lovable.
+espelho-mysql/credenciais.json
+espelho-mysql/tabelas.descobertas.json
+espelho-mysql/node_modules
+espelho-mysql/logs
