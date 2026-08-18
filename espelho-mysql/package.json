@@ -1,0 +1,16 @@
+{
+  "name": "espelho-mysql",
+  "private": true,
+  "type": "module",
+  "description": "Espelha tabelas do MySQL do cliente (via tunel SSH) para o Supabase, diariamente.",
+  "scripts": {
+    "testar": "node espelho.mjs testar",
+    "descobrir": "node espelho.mjs descobrir",
+    "sincronizar": "node espelho.mjs sincronizar --commit"
+  },
+  "dependencies": {
+    "mysql2": "^3.11.0",
+    "pg": "^8.13.0",
+    "ssh2": "^1.16.0"
+  }
+}
