@@ -38,3 +38,16 @@ export function fmtDate(dateStr: string | null | undefined): string {
   const [y, m, d] = dateStr.split("-");
   return `${d}/${m}/${y}`;
 }
+
+// SIS-2026-0168: "competencia" do malote_despesa é "YYYY-MM" — compara
+// direto com o Ano/Mês selecionado no filtro (mesmo formato).
+export function competenciaNoPeriodo(competencia: string | null | undefined, anoMes: string): boolean {
+  return !!competencia && competencia === anoMes;
+}
+
+// % Utilizado só faz sentido com Orçado > 0 (regra combinada com o
+// usuário: Orçado = 0 mostra "—", não 0% nem Infinity%).
+export function fmtPct(utilizado: number, orcado: number): string {
+  if (!orcado) return "—";
+  return `${((utilizado / orcado) * 100).toFixed(2)}%`;
+}
