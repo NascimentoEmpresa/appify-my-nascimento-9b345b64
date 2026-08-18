@@ -38,7 +38,9 @@ const SLOTS_OUTROS = [
 function coletarRubricasOutros(linhasVigentes: PlanilhaCustoRow[]): OrcamentoContratoRubrica[] {
   const acumulado = new Map<string, { label: string; valor: number }>();
   for (const r of linhasVigentes) {
-    const multiplicador = r.qt_postos || 1;
+    // Posto sem ninguém (qt_postos = 0) zera a contribuição — mesma regra
+    // de somarCamposEmLinhas, não usar "|| 1" aqui.
+    const multiplicador = r.qt_postos || 0;
     for (const slot of SLOTS_OUTROS) {
       const valorLinha = Number(r[slot.campo]) || 0;
       if (!valorLinha) continue;

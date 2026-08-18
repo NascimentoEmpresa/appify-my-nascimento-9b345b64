@@ -192,7 +192,10 @@ export function resolverLinhasPorPeriodo(rows: PlanilhaCustoRow[], contratoId: s
 export function resolverPostosVigentes(rows: PlanilhaCustoRow[], contratoId: string): PostoVigente[] {
   return resolverLinhasVigentes(rows, contratoId).map((r) => ({
     posto: r.posto,
-    valorTotal: (r.total_por_empregado ?? 0) * (r.qt_postos || 1),
+    // Posto sem ninguém (qt_postos = 0) zera o Total Posto — mesma regra
+    // já aplicada em PlanilhaCusto.tsx (a pedido do Iury): não usar "|| 1"
+    // aqui, senão volta a contar como 1 pessoa fictícia.
+    valorTotal: (r.total_por_empregado ?? 0) * (r.qt_postos || 0),
     valorUnitario: r.total_por_empregado ?? 0,
     qtdColaboradores: r.qt_postos || 0,
   }));
@@ -214,7 +217,9 @@ export function resolverValorPorCampos(rows: PlanilhaCustoRow[], contratoId: str
 export function somarCamposEmLinhas(linhasVigentes: PlanilhaCustoRow[], campos: string[]): number {
   return linhasVigentes.reduce((soma, r) => {
     const valorLinha = campos.reduce((s, campo) => s + (Number((r as any)[campo]) || 0), 0);
-    return soma + valorLinha * (r.qt_postos || 1);
+    // Posto sem ninguém (qt_postos = 0) zera a contribuição dessa linha —
+    // "|| 1" faria um posto zerado contar como 1 pessoa fictícia no Orçado.
+    return soma + valorLinha * (r.qt_postos || 0);
   }, 0);
 }
 
