@@ -296,6 +296,32 @@ if (/^\[SEM-CHAMADO\]/.test(tituloPR)) {
   }
 }
 
+// --- R8: branch dentro do combinado ------------------------------------------
+// O time tem 3 devs, cada um com a sua branch, e a main. Branch temporária é
+// aceita com prefixo, e some depois do merge. A regra existe porque branch
+// solta vira PR órfã e trabalho duplicado — e porque nomenclatura é
+// verificável, então não tem por que deixar isso no julgamento do modelo.
+const BRANCHES_FIXAS = ["eduardo", "joao", "pablo", "main"];
+const PREFIXOS_TEMPORARIOS = /^(ci|fix|chore)\//;
+
+// GITHUB_HEAD_REF é a branch de origem da PR; fora do CI, a branch atual.
+let branch = process.env.GITHUB_HEAD_REF || "";
+if (!branch) {
+  try {
+    branch = git(["rev-parse", "--abbrev-ref", "HEAD"]).trim();
+  } catch {
+    branch = "";
+  }
+}
+
+if (branch && !BRANCHES_FIXAS.includes(branch) && !PREFIXOS_TEMPORARIOS.test(branch)) {
+  reprovar("R8", ".github/REGRAS-PR.md", 1,
+    `A branch "${branch}" não está no combinado. Cada dev trabalha na branch com o seu ` +
+    `nome (eduardo, joao, pablo) e abre PR para a main. Branch temporária precisa de ` +
+    `prefixo ci/, fix/ ou chore/, justificativa no corpo da PR, e ser apagada depois do merge.`,
+    "");
+}
+
 // ------------------------------------------------------------------ resultado
 
 const arquivosAnalisados = new Set(adicionadas.map((l) => l.arquivo)).size;
