@@ -232,22 +232,28 @@ banco: `pg_get_expr` sobre `pg_policy`.
 
 ---
 
-## J4 — Rodar o build mentalmente
+## J4 — O que a máquina não pega
 
-**Nenhuma PR passa por build, lint, type-check ou teste.** Não existe um único
-job que rode `npm run build`, `tsc`, `eslint` ou `vitest`. Uma PR que quebra o
-build entra na `main` e o Lovable publica quebrado — já aconteceu mais de uma
-vez (`fix(cobrancas): remove duplicação de merge que quebrava o build`,
-`fix: remove declaração duplicada de empresaCtx`, `Destrava o build do Lovable`).
+O workflow `ci.yml` roda `tsc --noEmit`, `npm test` e `npm run build` em toda
+PR, e reprova se algum falhar. Isso cobre deterministicamente o que antes era
+"rodar o build mentalmente": import que não existe, declaração duplicada, tipo
+que não bate e resto de conflito de merge (`<<<<<<<` vira erro de sintaxe).
 
-Enquanto esse job não existir, o revisor é a única barreira. Procure:
+**Não repita esse trabalho.** Se o CI está verde, não gaste o comentário
+dizendo que compila.
 
-- import de coisa que não existe;
-- variável ou declaração duplicada;
-- tipo que não bate;
-- **resto de conflito de merge** (`<<<<<<<`, bloco repetido) — este é o padrão
-  de falha mais frequente aqui, porque merge de `main` para branch pessoal
-  acontece o tempo todo.
+O que sobra para você é o que compila e mesmo assim está errado:
+
+- **merge que resolveu para o lado errado** — compila, mas perdeu uma linha ou
+  ressuscitou código antigo. É o padrão de falha mais frequente aqui, porque
+  merge de `main` para branch pessoal acontece o tempo todo;
+- lógica invertida (somar onde devia descontar — ver J5);
+- `useEffect` sem dependência ou com dependência a mais, causando loop;
+- `catch` que engole erro e deixa a tela em estado inconsistente.
+
+O lint roda como aviso, sem reprovar, e só nos arquivos que a PR tocou — a base
+tem 2585 erros anteriores. Se o aviso apontar algo que **veio com esta PR**,
+mencione; se for herança, ignore.
 
 ---
 
