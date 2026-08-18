@@ -158,7 +158,11 @@ function valorPg(v) {
   return v;
 }
 
-const aspas = (nome) => `"${String(nome).replace(/"/g, '""')}"`;
+// Os dois bancos citam identificador de jeito diferente, e misturar dá erro de
+// sintaxe: Postgres usa aspas duplas, MySQL usa crase. Aspas duplas no MySQL
+// só funcionariam com ANSI_QUOTES ligado, que não é o padrão.
+const aspas = (nome) => `"${String(nome).replace(/"/g, '""')}"`;        // Postgres
+const crase = (nome) => '`' + String(nome).replace(/`/g, '``') + '`';   // MySQL
 
 // ── leitura do schema de origem ──────────────────────────────────────
 async function colunasDe(my, tabela) {
@@ -277,8 +281,9 @@ async function cmdSincronizar() {
       // cliente apagou na origem, sem precisar rastrear exclusão.
       await pgc.query(`TRUNCATE ${aspas(SCHEMA)}.${aspas(tabela)}`);
 
+      // Origem é MySQL: crase, não aspas.
       const [linhas] = await my.query(
-        `SELECT ${nomes.map(aspas).join(', ')} FROM ${aspas(tabela)}` +
+        `SELECT ${nomes.map(crase).join(', ')} FROM ${crase(tabela)}` +
         (LIMITE ? ` LIMIT ${LIMITE}` : '')
       );
 
