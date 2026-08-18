@@ -1,0 +1,213 @@
+name: Revisão de PR por IA
+
+# Terceira trava da main, ao lado de validar-chamado (título com chamado) e do
+# ruleset que exige 1 aprovação humana. Esta olha o CONTEÚDO do diff.
+#
+# Duas camadas, de propósito:
+#   portaria   — script determinístico, regras absolutas (segredo, DROP TABLE,
+#                RLS desabilitada). Nunca falha aberto.
+#   revisao-ia — Claude lendo .github/REGRAS-PR.md. Julgamento: RLS que vaza
+#                linha, menu que nasce aberto, filtro de empresa faltando.
+#
+# Regra absoluta não fica no julgamento do modelo. Um modelo acerta quase
+# sempre, e "quase sempre" não serve para chave vazada.
+#
+# pull_request (não pull_request_target): precisamos do CÓDIGO da PR, e fazer
+# checkout do head sob pull_request_target num repositório público entrega os
+# secrets para qualquer um que abra uma PR de fork. O preço dessa escolha é
+# que PR de fork não recebe o secret e o check falha — que é o comportamento
+# certo: fork vira revisão humana. Não afeta o time, que trabalha em branches
+# deste repositório.
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+
+# Push novo cancela a revisão anterior da mesma PR. Sem isso, uma sequência de
+# commits gasta a cota da assinatura revisando código que já foi substituído.
+concurrency:
+  group: revisao-ia-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  # Vira required status check junto com revisao-ia. Precisa ser os DOIS: um
+  # job pulado conta como sucesso na proteção de branch, então se só revisao-ia
+  # fosse obrigatório, uma reprovação da portaria (que pula o job seguinte)
+  # deixaria o merge liberado.
+  portaria:
+    name: portaria
+    runs-on: ubuntu-latest
+    # Mesma válvula de escape da label sem-chamado que já existe no repo.
+    if: >-
+      github.repository == 'NascimentoEmpresa/appify-my-nascimento-9b345b64' &&
+      !contains(github.event.pull_request.labels.*.name, 'pular-revisao-ia')
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # As regras comparam a PR com a base; sem histórico o merge-base não
+          # existe e o script aborta com mensagem explicando isso.
+          fetch-depth: 0
+
+      - name: Aplicar regras absolutas (R1–R7)
+        env:
+          # Título via env, nunca interpolado no shell: é texto de terceiros.
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: node .github/scripts/portaria-pr.mjs
+
+  revisao-ia:
+    name: revisao-ia
+    needs: portaria
+    runs-on: ubuntu-latest
+    if: >-
+      github.repository == 'NascimentoEmpresa/appify-my-nascimento-9b345b64' &&
+      !github.event.pull_request.draft &&
+      !contains(github.event.pull_request.labels.*.name, 'pular-revisao-ia')
+    permissions:
+      contents: read
+      pull-requests: write
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # Diff preparado aqui, e não pelo modelo, por duas razões: o filtro de
+      # arquivo fica auditável no YAML, e o corte de tamanho é garantido em vez
+      # de depender do modelo se comportar.
+      - name: Preparar o diff
+        id: diff
+        env:
+          BASE: ${{ github.event.pull_request.base.ref }}
+        run: |
+          set -euo pipefail
+          LIMITE=150000  # ~40k tokens; segura o consumo da assinatura
+
+          git diff "origin/${BASE}...HEAD" -- . \
+            ':(exclude)package-lock.json' \
+            ':(exclude)bun.lockb' \
+            ':(exclude)dist/**' \
+            ':(exclude)**/*.xlsx' ':(exclude)**/*.xls' ':(exclude)**/*.csv' \
+            ':(exclude)**/*.png' ':(exclude)**/*.jpg' ':(exclude)**/*.jpeg' \
+            ':(exclude)**/*.gif' ':(exclude)**/*.webp' ':(exclude)**/*.pdf' \
+            ':(exclude)**/*.zip' ':(exclude)**/*.woff' ':(exclude)**/*.woff2' \
+            > diff-completo.txt || true
+
+          TAMANHO=$(wc -c < diff-completo.txt)
+          if [ "$TAMANHO" -gt "$LIMITE" ]; then
+            head -c "$LIMITE" diff-completo.txt > diff-da-pr.txt
+            printf '\n\n[DIFF CORTADO: %s de %s bytes. Revise o que veio e diga no comentário que a PR excedeu o limite de revisão automática.]\n' \
+              "$LIMITE" "$TAMANHO" >> diff-da-pr.txt
+          else
+            cp diff-completo.txt diff-da-pr.txt
+          fi
+          echo "Diff preparado: $TAMANHO bytes brutos."
+
+      - name: Revisar
+        id: claude
+        # Falha da ação não derruba o job: quem decide o resultado é o step
+        # seguinte, que distingue "modelo reprovou" de "infra caiu".
+        continue-on-error: true
+        uses: anthropics/claude-code-action@v1
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          claude_args: |
+            --model claude-sonnet-5
+            --max-turns 20
+            --allowedTools "Read,Glob,Grep,Write"
+          prompt: |
+            Você é o revisor automático de PR deste repositório.
+
+            Leia `.github/REGRAS-PR.md` — ele tem o contexto do projeto e as
+            regras. Depois leia `diff-da-pr.txt`, que é o diff desta PR já
+            filtrado. Use Read/Grep/Glob para abrir os arquivos ao redor
+            sempre que precisar entender o que uma mudança faz.
+
+            Título da PR: ${{ github.event.pull_request.title }}
+
+            As regras absolutas R1–R7 já foram verificadas por um script e
+            passaram. Não gaste esforço nelas. Seu trabalho são as regras de
+            julgamento J1–J6, com atenção especial a J1 e J2 — RLS é a única
+            barreira de dados deste sistema.
+
+            Produza exatamente dois arquivos na raiz do repositório:
+
+            1. `revisao.md` — o comentário que vai para a PR. Comece com o
+               resumo do que a PR faz e o veredito, em dois parágrafos curtos,
+               para quem não acompanhou o trabalho. Depois os achados, cada um
+               com arquivo, linha, a regra pelo número, e por que aquilo é um
+               problema de verdade. Sem seção de achados quando não há achado.
+               Siga "Como escrever a revisão" do REGRAS-PR.md: nada de
+               formatação, nome de variável ou preferência de estilo, e PR boa
+               se resolve em duas linhas.
+
+            2. `veredito.json` — exatamente neste formato, sem mais nada:
+               {"veredito":"APROVADO","achados":0,"resumo":"uma linha"}
+               O campo veredito é APROVADO, AJUSTES ou BLOQUEADO, conforme a
+               tabela no fim do REGRAS-PR.md.
+
+            Na dúvida entre AJUSTES e APROVADO, escolha APROVADO e deixe a
+            ressalva escrita no comentário. Existe revisor humano depois de
+            você, e um falso positivo custa mais confiança do que um achado a
+            menos.
+
+      # Comentário postado pelo shell, não pelo modelo: assim o comentário sai
+      # mesmo que o modelo tenha terminado de um jeito estranho, e o formato
+      # sticky (editar o anterior em vez de empilhar) fica garantido.
+      - name: Publicar a revisão na PR
+        if: always()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          set -uo pipefail
+          [ -f revisao.md ] || exit 0
+          {
+            echo "<!-- revisao-ia -->"
+            cat revisao.md
+            echo
+            echo "---"
+            echo "_Revisão automática — regras em \`.github/REGRAS-PR.md\`. Para pular, use a label \`pular-revisao-ia\`._"
+          } > comentario.md
+          gh pr comment "$PR" --edit-last --create-if-none --body-file comentario.md \
+            || gh pr comment "$PR" --body-file comentario.md
+
+      - name: Aplicar o veredito
+        if: always()
+        env:
+          # Interruptor do rollout. Ausente ou "false" → modo aviso: comenta
+          # mas nunca fica vermelho. Ligar a Fase 2 é criar esta variable com
+          # "true" em Settings → Secrets and variables → Actions → Variables,
+          # sem precisar de PR nova.
+          BLOQUEIA: ${{ vars.REVISAO_IA_BLOQUEIA }}
+          CLAUDE_RESULTADO: ${{ steps.claude.outcome }}
+        run: |
+          set -uo pipefail
+
+          if [ ! -f veredito.json ]; then
+            # Sem veredito não dá para saber se o código está bom. Falha ABERTO,
+            # igual ao chamado_pr_sync.yml faz quando o Supabase não responde:
+            # instabilidade nossa não pode travar merge de toda a empresa.
+            echo "::warning::A revisão por IA não produziu veredito (resultado da ação: $CLAUDE_RESULTADO)."
+            echo "::warning::Passando o check para não travar a PR. Revise à mão e verifique o secret CLAUDE_CODE_OAUTH_TOKEN e a cota da assinatura."
+            exit 0
+          fi
+
+          VEREDITO=$(node -p "JSON.parse(require('fs').readFileSync('veredito.json','utf8')).veredito || 'DESCONHECIDO'")
+          RESUMO=$(node -p "JSON.parse(require('fs').readFileSync('veredito.json','utf8')).resumo || ''")
+          echo "Veredito: $VEREDITO — $RESUMO"
+
+          if [ "$VEREDITO" = "APROVADO" ]; then
+            echo "Revisão aprovada."
+            exit 0
+          fi
+
+          if [ "${BLOQUEIA:-false}" != "true" ]; then
+            echo "::warning::Veredito $VEREDITO. Modo aviso ativo, então o check passa mesmo assim."
+            echo "::warning::Para bloquear merge nestes casos, defina a variable REVISAO_IA_BLOQUEIA=true."
+            exit 0
+          fi
+
+          echo "::error::Revisão reprovou com veredito $VEREDITO. Veja o comentário na PR."
+          exit 1
