@@ -30,9 +30,10 @@ export function ModalManutencao({ bem, onFechar }: { bem: Bem | null; onFechar: 
   const atualizar = useAtualizarManutencao();
   const anexar = useAnexarArquivo();
 
-  // Um seletor só para três estados: disponível / manutenção / em contrato.
-  // "" = disponível; o resto é o motivo da indisponibilidade.
+  // Um seletor só para quatro estados: disponível / manutenção / em contrato
+  // / outro. "" = disponível; o resto é o motivo da indisponibilidade.
   const [motivo, setMotivo] = useState<"" | MotivoIndisponivel>("");
+  const [detalhe, setDetalhe] = useState("");
   const [inicio, setInicio] = useState("");
   const [fim, setFim] = useState("");
   const emManutencao = motivo !== "";
@@ -47,6 +48,7 @@ export function ModalManutencao({ bem, onFechar }: { bem: Bem | null; onFechar: 
     // Registro antigo pode estar indisponível sem motivo gravado: cai em
     // manutenção, que era o único motivo que existia antes.
     setMotivo(bem.em_manutencao ? (bem.motivo_indisponivel ?? "manutencao") : "");
+    setDetalhe(bem.motivo_detalhe ?? "");
     setInicio(bem.data_inicio_manutencao?.slice(0, 10) ?? "");
     setFim(bem.data_previsao_fim?.slice(0, 10) ?? "");
     setNovoArquivo(null); setNovoComentario(""); setNovoValor("");
@@ -56,9 +58,17 @@ export function ModalManutencao({ bem, onFechar }: { bem: Bem | null; onFechar: 
 
   const salvar = async () => {
     if (!bem) return;
+    // O banco recusa 'outro' sem texto (sup_patrimonio_motivo_coerente). Barrar
+    // aqui evita que o usuário leve um erro de constraint na cara — e a opção
+    // existe justamente para dizer o porquê.
+    if (motivo === "outro" && !detalhe.trim()) {
+      toast.error("Escreva qual é o motivo da indisponibilidade.");
+      return;
+    }
     await atualizar.mutateAsync({
       id: bem.id, em_manutencao: emManutencao,
       motivo_indisponivel: emManutencao ? (motivo as MotivoIndisponivel) : null,
+      motivo_detalhe: motivo === "outro" ? detalhe : null,
       data_inicio_manutencao: inicio || null, data_previsao_fim: fim || null,
     });
     if (novoArquivo) {
@@ -115,6 +125,9 @@ export function ModalManutencao({ bem, onFechar }: { bem: Bem | null; onFechar: 
                   setMotivo(novo);
                   // Voltar a disponível limpa as datas (§9.2).
                   if (!novo) { setInicio(""); setFim(""); }
+                  // Sair de "outro" descarta o texto: motivo escrito para um
+                  // estado que não vale mais é dado órfão, e o banco recusa.
+                  if (novo !== "outro") setDetalhe("");
                 }}
               >
                 <SelectTrigger className="mt-1"><SelectValue /></SelectTrigger>
@@ -122,9 +135,30 @@ export function ModalManutencao({ bem, onFechar }: { bem: Bem | null; onFechar: 
                   <SelectItem value="nao">Sim — disponível</SelectItem>
                   <SelectItem value="manutencao">Não — parado em manutenção</SelectItem>
                   <SelectItem value="contrato">Não — em contrato</SelectItem>
+                  <SelectItem value="outro">Não — outro motivo</SelectItem>
                 </SelectContent>
               </Select>
             </div>
+
+            {motivo === "outro" && (
+              <div className="mt-3">
+                <Label className="text-sm" htmlFor="motivo-outro">
+                  Qual o motivo? <span className="text-destructive">*</span>
+                </Label>
+                <Textarea
+                  id="motivo-outro"
+                  rows={2}
+                  value={detalhe}
+                  onChange={(e) => setDetalhe(e.target.value)}
+                  maxLength={200}
+                  placeholder="Ex.: sinistro aguardando perícia, documentação vencida, emprestado a outra unidade…"
+                  className="mt-1"
+                />
+                <p className="mt-1 text-xs text-muted-foreground">
+                  Este texto aparece para quem tentar agendar o veículo. {detalhe.trim().length}/200
+                </p>
+              </div>
+            )}
 
             {emManutencao && (<>
               {/* Só veículo é agendável; dizer isso num equipamento seria ruído. */}
@@ -132,7 +166,9 @@ export function ModalManutencao({ bem, onFechar }: { bem: Bem | null; onFechar: 
                 <p className="mt-2 text-xs text-muted-foreground">
                   {motivo === "contrato"
                     ? "Alocado a um contrato: o escritório não poderá agendá-lo no Agendamento de Veículos."
-                    : "Parado em manutenção: não poderá ser agendado no Agendamento de Veículos."}
+                    : motivo === "outro"
+                      ? "Indisponível: não poderá ser agendado no Agendamento de Veículos."
+                      : "Parado em manutenção: não poderá ser agendado no Agendamento de Veículos."}
                 </p>
               )}
               <div className="mt-3 grid gap-3 sm:grid-cols-2">
@@ -143,7 +179,11 @@ export function ModalManutencao({ bem, onFechar }: { bem: Bem | null; onFechar: 
                 <div>
                   {/* Sem data de fim, a indisponibilidade é por tempo
                       indeterminado — é o que a tela de agendamento vai dizer. */}
-                  <Label className="text-xs">{motivo === "contrato" ? "Previsão de devolução" : "Previsão de fim"}</Label>
+                  <Label className="text-xs">
+                    {motivo === "contrato" ? "Previsão de devolução"
+                      : motivo === "outro" ? "Previsão de liberação"
+                      : "Previsão de fim"}
+                  </Label>
                   <Input type="date" value={fim} onChange={(e) => setFim(e.target.value)} />
                 </div>
               </div>

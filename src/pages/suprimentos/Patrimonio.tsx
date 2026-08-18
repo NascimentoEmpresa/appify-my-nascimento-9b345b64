@@ -14,7 +14,7 @@ import { useContratosCatalogo } from "@/hooks/useSupCatalogo";
 import { ModalManutencao } from "@/components/suprimentos/ModalManutencao";
 import {
   useBens, useSalvarBem, useExcluirBem, usePostosDoContrato, useFotosDosBens,
-  LABEL_CATEGORIA, SEM_CONTRATO, type Bem, type Categoria,
+  LABEL_CATEGORIA, SEM_CONTRATO, rotuloIndisponivel, type Bem, type Categoria,
 } from "@/hooks/useSupPatrimonio";
 import {
   Search, Plus, Car, Wrench, ChevronDown, ChevronRight, Pencil, Trash2,
@@ -111,6 +111,7 @@ export default function Patrimonio() {
     equipamentos: bens.filter((b) => b.categoria === "equipamento").length,
     emManutencao: bens.filter((b) => b.em_manutencao && (b.motivo_indisponivel ?? "manutencao") === "manutencao").length,
     emContrato: bens.filter((b) => b.em_manutencao && b.motivo_indisponivel === "contrato").length,
+    outroMotivo: bens.filter((b) => b.em_manutencao && b.motivo_indisponivel === "outro").length,
   }), [bens]);
 
   return (
@@ -153,6 +154,11 @@ export default function Patrimonio() {
         {totais.emContrato > 0 && (
           <Badge variant="outline" className="border-sky-400/50 text-sky-700 dark:text-sky-300">
             {totais.emContrato} em contrato
+          </Badge>
+        )}
+        {totais.outroMotivo > 0 && (
+          <Badge variant="outline" className="border-rose-400/50 text-rose-700 dark:text-rose-300">
+            {totais.outroMotivo} por outro motivo
           </Badge>
         )}
       </div>
@@ -316,7 +322,15 @@ function CardBem({
         {bem.em_manutencao && (
           bem.motivo_indisponivel === "contrato"
             ? <Badge variant="outline" className="border-sky-400/60 text-[10px] text-sky-700 dark:text-sky-300">em contrato</Badge>
-            : <Badge variant="outline" className="border-amber-400/60 text-[10px] text-amber-700 dark:text-amber-300">em manutenção</Badge>
+            : bem.motivo_indisponivel === "outro"
+              // O texto escrito à mão é o rótulo: "indisponível" sozinho não
+              // diria nada a quem está varrendo a frota. `title` guarda o
+              // motivo inteiro, porque o card corta em uma linha.
+              ? <Badge variant="outline" title={rotuloIndisponivel(bem)}
+                       className="max-w-full border-rose-400/60 text-[10px] text-rose-700 dark:text-rose-300">
+                  <span className="truncate">{rotuloIndisponivel(bem)}</span>
+                </Badge>
+              : <Badge variant="outline" className="border-amber-400/60 text-[10px] text-amber-700 dark:text-amber-300">em manutenção</Badge>
         )}
       </button>
       {modoEdicao && (

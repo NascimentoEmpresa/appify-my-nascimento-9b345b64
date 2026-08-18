@@ -10,7 +10,8 @@
     "lint": "eslint .",
     "preview": "vite preview",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "revisar": "node .github/scripts/portaria-pr.mjs"
   },
   "dependencies": {
     "@dnd-kit/core": "^6.3.1",

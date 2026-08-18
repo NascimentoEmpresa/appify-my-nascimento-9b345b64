@@ -1,0 +1,108 @@
+name: CI
+
+# Até agora nenhuma PR passava por build, type-check ou teste. Uma PR que
+# quebrava o build entrava na main e o Lovable publicava quebrado — aconteceu
+# pelo menos três vezes ("remove duplicação de merge que quebrava o build",
+# "remove declaração duplicada de empresaCtx", "Destrava o build do Lovable").
+#
+# O type-check é o job mais valioso aqui, e por um motivo específico: ele pega
+# deterministicamente quase tudo que a regra J4 do REGRAS-PR.md pedia para o
+# revisor "rodar mentalmente" — import que não existe (TS2304), declaração
+# duplicada (TS2451), tipo que não bate, e resto de conflito de merge, que vira
+# erro de sintaxe. Isso sai do julgamento e vira máquina.
+#
+# Medido na main em 18/08/2026, antes de escrever este arquivo:
+#   tsc --noEmit ....... 0 erros
+#   npm test ........... 123 testes, 8 arquivos, 0 falha
+#   npm run build ...... passa em 27s
+#   npm run lint ....... 2770 problemas (2585 erros)
+#
+# Por isso o lint NÃO trava a PR: travar nele deixaria toda PR vermelha no
+# primeiro minuto e o time desligaria o check inteiro na primeira semana. Ele
+# roda só nos arquivos que a PR mexeu, como aviso. Ver "Sobre o lint" no fim.
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+
+concurrency:
+  group: ci-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  qualidade:
+    name: qualidade
+    runs-on: ubuntu-latest
+    # Mesma trava dos outros workflows: não rodar no espelho do Lovable.
+    if: github.repository == 'NascimentoEmpresa/appify-my-nascimento-9b345b64'
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          # O lint incremental compara a PR com a base.
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Instalar dependências
+        run: npm ci
+
+      # Primeiro o type-check: é o que dá a mensagem mais clara quando alguém
+      # quebrou o código, e roda antes de gastar tempo no build.
+      - name: Type-check
+        run: npx tsc --noEmit
+
+      - name: Testes
+        run: npm test
+
+      - name: Build de produção
+        run: npm run build
+
+      # Não trava a PR — ver o cabeçalho. A ideia é mostrar o que a PR
+      # introduziu sem cobrar a limpeza dos 2585 erros que já existiam.
+      - name: Lint dos arquivos da PR (aviso)
+        continue-on-error: true
+        env:
+          BASE: ${{ github.event.pull_request.base.ref }}
+        run: |
+          set -uo pipefail
+
+          ARQUIVOS=$(git diff --name-only --diff-filter=ACM "origin/${BASE}...HEAD" \
+            -- '*.ts' '*.tsx' | grep -v '^node_modules/' || true)
+
+          if [ -z "$ARQUIVOS" ]; then
+            echo "Nenhum arquivo .ts/.tsx alterado nesta PR."
+            exit 0
+          fi
+
+          echo "Arquivos analisados:"
+          echo "$ARQUIVOS" | sed 's/^/  /'
+          echo
+
+          # shellcheck disable=SC2086
+          npx eslint $ARQUIVOS || true
+
+          echo
+          echo "Lembrete: este passo é informativo e não reprova a PR. Os erros"
+          echo "apontados podem ser anteriores à sua mudança — corrija os que"
+          echo "vieram com ela."
+
+# ---------------------------------------------------------------------------
+# Sobre o lint
+#
+# São 2585 erros na base inteira, então exigir lint limpo hoje é inviável. O
+# caminho para torná-lo obrigatório, quando o time quiser:
+#
+#   1. Rodar `npx eslint . --fix` — resolve ~8 erros e 8 warnings sozinho.
+#   2. Atacar as regras por volume, uma PR por regra, em vez de arquivo por
+#      arquivo. A campeã costuma ser @typescript-eslint/no-explicit-any.
+#   3. Quando o número chegar perto de zero, trocar este passo por um
+#      `npm run lint` sem continue-on-error e adicioná-lo aos required checks.
+#
+# Enquanto isso, o valor está no build, no type-check e nos testes — que são os
+# três que já estão verdes e travam de verdade.
+# ---------------------------------------------------------------------------

@@ -14,7 +14,7 @@ import {
   AlertDialogHeader, AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { cn } from "@/lib/utils";
-import { Plus, Pencil, Trash2, Building2, CalendarDays, TrendingUp, Download, FileText, ExternalLink } from "lucide-react";
+import { Plus, Pencil, Trash2, Building2, CalendarDays, TrendingUp, Download, FileText, ExternalLink, Archive } from "lucide-react";
 import {
   useContratosERP,
   useContratoERPUpsert,
@@ -150,7 +150,7 @@ export default function ContratosERP() {
       const rowDate = new Date(r.data_vigencia + "T00:00:00");
       const v = vigente.get(key) ?? null;
       if (!v || rowDate.getTime() !== v.getTime()) continue;
-      map.set(r.contrato_id, (map.get(r.contrato_id) ?? 0) + (r.total_por_empregado ?? 0) * (r.qt_postos || 1));
+      map.set(r.contrato_id, (map.get(r.contrato_id) ?? 0) + (r.total_por_empregado ?? 0) * (r.qt_postos || 0));
     }
     return map;
   }, [planilha]);
@@ -251,8 +251,9 @@ export default function ContratosERP() {
     });
   }, [contratos, busca, filtroStatus]);
 
-  const ativos   = contratos.filter((c) => c.status === "ativo").length;
+  const ativos    = contratos.filter((c) => c.status === "ativo").length;
   const suspensos = contratos.filter((c) => c.status === "suspenso").length;
+  const encerrados = contratos.filter((c) => c.status === "encerrado").length;
   const valorTotal = contratos
     .filter((c) => c.status === "ativo")
     .reduce((s, c) => s + (valorPorContratoId.get(c.id) ?? 0), 0);
@@ -337,9 +338,10 @@ export default function ContratosERP() {
       />
 
       {/* KPIs */}
-      <div className="grid grid-cols-2 xl:grid-cols-3 gap-4">
+      <div className="grid grid-cols-2 xl:grid-cols-4 gap-4">
         <KpiCard icon={<Building2 />} label="Contratos Ativos" value={String(ativos)} color="emerald" />
         <KpiCard icon={<TrendingUp />} label="Faturamento Mensal" value={fmt(valorTotal)} color="blue" />
+        <KpiCard icon={<Archive />} label="Encerrados" value={String(encerrados)} color="slate" />
         <KpiCard icon={<CalendarDays />} label="Suspensos" value={String(suspensos)} color="amber" />
       </div>
 
@@ -618,6 +620,7 @@ function KpiCard({ icon, label, value, color }: { icon: React.ReactNode; label: 
     emerald: "text-emerald-500",
     blue: "text-blue-500",
     amber: "text-amber-500",
+    slate: "text-slate-400",
   };
   return (
     <div className="relative overflow-hidden rounded-xl bg-white p-5 shadow-sm ring-1 ring-slate-200 flex flex-col min-h-[90px]">
