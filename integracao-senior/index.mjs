@@ -29,11 +29,15 @@ const SSH = {
   host: process.env.SENIOR_SSH_HOST ?? "72.61.222.128",
   port: Number(process.env.SENIOR_SSH_PORT ?? 22),
   username: process.env.SENIOR_SSH_USER ?? "haggtunel",
-  password: process.env.SENIOR_SSH_PW,
+  password: (process.env.SENIOR_SSH_PW ?? "").trim(),
 };
-const DB = { user: process.env.SENIOR_DB_USER ?? "hagg", password: process.env.SENIOR_DB_PW };
-const SUPABASE_URL = process.env.SUPABASE_URL;
-const SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY;
+const DB = { user: process.env.SENIOR_DB_USER ?? "hagg", password: (process.env.SENIOR_DB_PW ?? "").trim() };
+// .trim() em tudo, e barra do fim da URL removida: colar num painel web traz
+// espaco ou quebra de linha junto com muita facilidade, e o sintoma disso era
+// um "401 Invalid API key" que parece chave errada — sendo que a chave estava
+// certa, so com um espaco no fim. A URL com barra no fim viraria "//rest/v1".
+const SUPABASE_URL = (process.env.SUPABASE_URL ?? "").trim().replace(new RegExp("/+$"), "");
+const SERVICE_KEY = (process.env.SUPABASE_SERVICE_KEY ?? "").trim();
 const DRY = process.argv.includes("--dry-run");
 const LOTE = 500;
 
