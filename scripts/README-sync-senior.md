@@ -3,12 +3,30 @@
 Traz `hagg.BiEmpregados` (MySQL do Senior, via túnel SSH) para a tabela
 `EMPREGADOS` do Supabase.
 
-## Por que não é uma Edge Function
+## Onde pode rodar
 
-O MySQL do Senior só é alcançável por **túnel SSH**, e Edge Function
-(Deno Deploy) não abre socket TCP cru nem SSH. O robô precisa rodar numa
-máquina que enxergue os dois lados — o servidor de produção é o lugar
-natural.
+O SSH do Senior (72.61.222.128) está num **IP público** — verificado: o
+servidor responde direto, sem VPN nem rede local. Então o robô roda em
+qualquer lugar com saída para a internet.
+
+O que **não** serve é Edge Function do Supabase: Deno Deploy não abre
+socket TCP cru nem SSH. Essa é a única restrição real.
+
+| Opção | Como agenda | Observação |
+|---|---|---|
+| **GitHub Actions** | `.github/workflows/sync-senior.yml` | zero infra; ~2 min por rodada — de hora em hora cabe na cota grátis, a cada 15 min não |
+| **Discloud / Railway / Render** | `SYNC_INTERVALO_MIN=15` | container sempre no ar; melhor para sincronizar de poucos em poucos minutos |
+| **Máquina própria** | Tarefas do Windows / cron | só se já houver um servidor ligado sempre |
+
+### Modo contínuo (container)
+
+Com `SYNC_INTERVALO_MIN` definido, o script não encerra: roda, espera o
+intervalo e repete. Falha numa rodada não derruba o processo — a próxima
+tenta de novo. É o modo para Discloud e afins, que não têm cron.
+
+```bash
+SYNC_INTERVALO_MIN=15 node sync-senior-empregados.mjs
+```
 
 ## Chave: (Empresa, Cadastro)
 

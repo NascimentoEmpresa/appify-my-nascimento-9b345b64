@@ -1,0 +1,44 @@
+# Sincroniza o cadastro do Senior para o Supabase sem servidor proprio.
+#
+# Funciona porque o SSH do Senior (72.61.222.128) esta num IP PUBLICO — o
+# runner do GitHub alcanca de fora, nao precisa de rede local nem de VPN.
+#
+# ATENCAO AO CUSTO EM REPOSITORIO PRIVADO: cada rodada gasta ~2 min de
+# Actions. De hora em hora da ~1.440 min/mes e cabe na cota gratuita de
+# 2.000. A cada 15 min daria ~5.760 min/mes e passaria da cota. Para
+# sincronizar de poucos em poucos minutos, sai mais barato um container
+# sempre no ar (Discloud/Railway) com SYNC_INTERVALO_MIN.
+name: Sincronizar Senior → Supabase
+
+on:
+  schedule:
+    - cron: "7 * * * *"   # toda hora, no minuto 7 (fora do pico do :00)
+  workflow_dispatch:       # permite rodar a mao pelo botao Run workflow
+
+concurrency:
+  # Duas rodadas ao mesmo tempo nao corrompem nada (a RPC e idempotente),
+  # mas competem por conexao no Senior sem ganho nenhum.
+  group: sync-senior
+  cancel-in-progress: false
+
+jobs:
+  sincronizar:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Instalar dependencias do robo
+        run: npm install --no-save ssh2 mysql2
+
+      - name: Sincronizar
+        env:
+          SENIOR_SSH_PW: ${{ secrets.SENIOR_SSH_PW }}
+          SENIOR_DB_PW: ${{ secrets.SENIOR_DB_PW }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+        run: node scripts/sync-senior-empregados.mjs

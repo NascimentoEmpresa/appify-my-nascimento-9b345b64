@@ -89,7 +89,10 @@ async function enviar(lote) {
   return JSON.parse(txt);
 }
 
-(async () => {
+// Uma passada completa. Isolada numa funcao para servir aos dois modos: uma
+// execucao so (agendador externo) ou laco continuo (container que fica no ar,
+// tipo Discloud/Railway — la nao ha cron, o processo e que persiste).
+async function rodar() {
   const t0 = Date.now();
   const linhas = await lerSenior();
   const payload = linhas.map((e) => ({
@@ -114,4 +117,21 @@ async function enviar(lote) {
     process.stdout.write(`\r  lote ${Math.floor(i / LOTE) + 1}: +${total.inseridos} ins / ${total.atualizados} upd`);
   }
   console.log(`\nOK em ${Date.now() - t0} ms — inseridos ${total.inseridos}, atualizados ${total.atualizados}, ignorados ${total.ignorados}`);
-})().catch((e) => { console.error("FALHOU:", e.message); process.exit(1); });
+}
+
+// SYNC_INTERVALO_MIN ligado = fica no ar e repete. Sem ele, roda uma vez e sai,
+// que e o que um agendador externo (Tarefas do Windows, cron, GitHub Actions)
+// espera.
+const INTERVALO = Number(process.env.SYNC_INTERVALO_MIN ?? 0);
+const falhar = (e) => console.error("FALHOU:", e.message);
+
+if (INTERVALO > 0 && !DRY) {
+  console.log(`Modo continuo: a cada ${INTERVALO} min.`);
+  // Erro numa rodada nao derruba o processo: a proxima tenta de novo. Sem isso,
+  // uma queda de rede no Senior mataria o robo ate alguem reiniciar.
+  const ciclo = async () => { try { await rodar(); } catch (e) { falhar(e); } };
+  await ciclo();
+  setInterval(ciclo, INTERVALO * 60_000);
+} else {
+  rodar().catch((e) => { falhar(e); process.exit(1); });
+}
