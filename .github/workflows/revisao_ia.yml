@@ -44,7 +44,7 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           # As regras comparam a PR com a base; sem histórico o merge-base não
           # existe e o script aborta com mensagem explicando isso.
@@ -69,7 +69,7 @@ jobs:
       pull-requests: write
       id-token: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           fetch-depth: 0
 
@@ -104,8 +104,22 @@ jobs:
           fi
           echo "Diff preparado: $TAMANHO bytes brutos."
 
+          # Diff vazio pula o modelo por completo. Sem esta trava o revisor
+          # inventa: na primeira execução real o diff veio vazio (a PR tinha
+          # acabado de ser mergeada) e ele produziu um APROVADO deduzido do
+          # título e dos arquivos do repositório, sem ter lido mudança
+          # nenhuma. Em modo bloqueio isso seria um carimbo automático.
+          # Acontece de verdade quando a PR só toca arquivo excluído do filtro.
+          if [ -s diff-da-pr.txt ]; then
+            echo "vazio=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "vazio=true" >> "$GITHUB_OUTPUT"
+            echo "Nenhum arquivo revisável no diff — a revisão por IA será pulada."
+          fi
+
       - name: Revisar
         id: claude
+        if: steps.diff.outputs.vazio != 'true'
         # Falha da ação não derruba o job: quem decide o resultado é o step
         # seguinte, que distingue "modelo reprovou" de "infra caiu".
         continue-on-error: true
@@ -152,6 +166,14 @@ jobs:
             você, e um falso positivo custa mais confiança do que um achado a
             menos.
 
+            Uma coisa que você não deve fazer em hipótese alguma: se
+            `diff-da-pr.txt` estiver vazio ou não contiver linhas de mudança
+            de verdade, NÃO deduza a revisão a partir do título da PR nem
+            lendo os arquivos do repositório. Escreva o veredito
+            {"veredito":"AJUSTES","achados":0,"resumo":"Diff vazio — nada foi
+            revisado"} e diga isso no comentário. Aprovar sem ter lido
+            mudança nenhuma é pior do que não revisar.
+
       # Comentário postado pelo shell, não pelo modelo: assim o comentário sai
       # mesmo que o modelo tenha terminado de um jeito estranho, e o formato
       # sticky (editar o anterior em vez de empilhar) fica garantido.
@@ -182,8 +204,14 @@ jobs:
           # sem precisar de PR nova.
           BLOQUEIA: ${{ vars.REVISAO_IA_BLOQUEIA }}
           CLAUDE_RESULTADO: ${{ steps.claude.outcome }}
+          DIFF_VAZIO: ${{ steps.diff.outputs.vazio }}
         run: |
           set -uo pipefail
+
+          if [ "${DIFF_VAZIO:-false}" = "true" ]; then
+            echo "::notice::Nada a revisar: o diff não tem arquivo revisável (só arquivos fora do filtro, ou a branch não mudou em relação à base)."
+            exit 0
+          fi
 
           if [ ! -f veredito.json ]; then
             # Sem veredito não dá para saber se o código está bom. Falha ABERTO,
