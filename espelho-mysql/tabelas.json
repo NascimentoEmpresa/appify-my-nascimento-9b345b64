@@ -1,7 +1,9 @@
 {
-  "_leia": "Tabelas do MySQL que serão espelhadas no Supabase. Está vazio porque o túnel SSH ainda não abre (IP não liberado), então não deu para ler quais tabelas existem. Quando abrir: rode 'node espelho.mjs descobrir', escolha UMA tabela pequena para o teste de ponta a ponta e coloque só ela aqui. Depois de validado, acrescente as demais.",
+  "_leia": "Tabelas do MySQL (banco hagg) espelhadas no schema 'espelho' do Supabase. Comece pequeno: acrescente tabela por tabela conforme for validando.",
 
-  "_exemplo": ["clientes"],
+  "_cuidado": "BiMarcacoes (~3,4 milhões de linhas) e R046VER (~2 milhões) são grandes. Como a carga recarrega a tabela inteira todo dia, elas podem estourar o timeout de 60 min do workflow. Só inclua depois de medir.",
 
-  "tabelas": []
+  "tabelas": [
+    "BiSindicatos"
+  ]
 }

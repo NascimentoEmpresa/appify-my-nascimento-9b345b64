@@ -71,6 +71,13 @@ if (process.env.SUPABASE_SENHA) cred.supabase.senha = process.env.SUPABASE_SENHA
 
 const SCHEMA = cred.supabase.schema || 'espelho';
 
+// O log do GitHub Actions em repositório público é público. O secret mascara
+// as SENHAS sozinho, mas host e usuário sairiam em texto limpo — e host +
+// usuário + porta é meio caminho para quem quiser tentar força bruta. Rodando
+// no Actions, some com eles; rodando na sua máquina, mostra tudo normalmente.
+const NO_CI = !!process.env.GITHUB_ACTIONS;
+const oculto = (v) => (NO_CI ? '«oculto»' : String(v));
+
 // ── conexões ─────────────────────────────────────────────────────────
 function abrirSsh() {
   return new Promise((resolve, reject) => {
@@ -168,16 +175,16 @@ async function colunasDe(my, tabela) {
 
 // ── comandos ─────────────────────────────────────────────────────────
 async function cmdTestar() {
-  console.log(`1/3  SSH  ${cred.ssh.usuario}@${cred.ssh.host}:${cred.ssh.porta ?? 22} ...`);
+  console.log(`1/3  SSH  ${oculto(`${cred.ssh.usuario}@${cred.ssh.host}:${cred.ssh.porta ?? 22}`)} ...`);
   const ssh = await abrirSsh();
   console.log('     ok\n');
 
-  console.log(`2/3  MySQL  banco "${cred.mysql.banco}" pelo túnel ...`);
+  console.log(`2/3  MySQL  banco ${oculto(`"${cred.mysql.banco}"`)} pelo túnel ...`);
   const my = await abrirMysql(ssh);
   const [[v]] = await my.query('SELECT VERSION() AS versao, DATABASE() AS banco');
   console.log(`     ok — MySQL ${v.versao}, banco ${v.banco}\n`);
 
-  console.log(`3/3  Supabase  ${cred.supabase.host} ...`);
+  console.log(`3/3  Supabase  ${oculto(cred.supabase.host)} ...`);
   const pgc = await abrirSupabase();
   const { rows: [d] } = await pgc.query('SELECT current_database() AS banco, version() AS versao');
   console.log(`     ok — ${d.banco}\n`);
@@ -196,7 +203,7 @@ async function cmdDescobrir() {
   if (!cred.mysql.banco) {
     const [bancos] = await my.query('SHOW DATABASES');
     const sistema = ['information_schema', 'mysql', 'performance_schema', 'sys'];
-    console.log('\nBancos visíveis para o usuário "' + cred.mysql.usuario + '":\n');
+    console.log(`\nBancos visíveis para o usuário ${oculto(cred.mysql.usuario)}:\n`);
     for (const b of bancos) {
       const nome = Object.values(b)[0];
       console.log(`  ${nome}${sistema.includes(nome) ? '   (do próprio MySQL, ignore)' : ''}`);
@@ -215,7 +222,7 @@ async function cmdDescobrir() {
     [cred.mysql.banco]
   );
 
-  console.log(`\n${tabelas.length} tabelas em ${cred.mysql.banco}:\n`);
+  console.log(`\n${tabelas.length} tabelas em ${oculto(cred.mysql.banco)}:\n`);
   for (const t of tabelas) {
     console.log(`  ${t.TABLE_NAME.padEnd(45)} ~${t.TABLE_ROWS ?? '?'} linhas`);
   }
