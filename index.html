@@ -3,6 +3,14 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!-- Impede o navegador (especialmente browsers de smart TV, que fazem cache
+         agressivo e não têm hard-reload) de reutilizar um index.html antigo após
+         um deploy. Sem isso, a TV tenta carregar chunks .js com hash antigo que o
+         deploy novo já apagou → tela preta. Só afeta o HTML; os assets com hash
+         continuam cacheáveis normalmente. -->
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
+    <meta http-equiv="Pragma" content="no-cache" />
+    <meta http-equiv="Expires" content="0" />
     <title>Grupo Nascimento — ERP | Módulo de Licitações</title>
     <meta name="description" content="ERP corporativo do Grupo Nascimento. Gestão completa do ciclo de licitações, pareceres, controladoria e aprovações multi-CNPJ.">
     <meta name="author" content="Grupo Nascimento" />

@@ -41,6 +41,11 @@ export function useOrcamentoContratos() {
   const grupos: OrcamentoContratoGrupo[] = useMemo(() => {
     const resultado: OrcamentoContratoGrupo[] = [];
     for (const contrato of contratos) {
+      // Conta/exibe apenas contratos ATIVOS — alinha com o KPI "Contratos
+      // Ativos" da tela de Contratos e com o breakdown da Planilha de Custo.
+      // Um contrato ativo sem execução lançada aparece com R$ 0 (sinaliza a
+      // lacuna de dados em vez de sumir e gerar divergência de contagem).
+      if (contrato.status !== "ativo") continue;
       const linhasVigentes = resolverLinhasVigentes(planilha, contrato.id);
       const rubricas: OrcamentoContratoRubrica[] = [];
       for (const c of CLASSIFICACOES_LICITACAO) {
@@ -60,10 +65,8 @@ export function useOrcamentoContratos() {
           });
         }
       }
-      if (rubricas.length > 0) {
-        const valorTotal = rubricas.reduce((s, r) => s + r.valor, 0);
-        resultado.push({ contrato, rubricas, valorTotal });
-      }
+      const valorTotal = rubricas.reduce((s, r) => s + r.valor, 0);
+      resultado.push({ contrato, rubricas, valorTotal });
     }
     return resultado;
   }, [contratos, planilha, maloteIdPorCampo]);
