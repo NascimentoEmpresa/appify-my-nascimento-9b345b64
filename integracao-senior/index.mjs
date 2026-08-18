@@ -24,6 +24,27 @@
 // =====================================================================
 import { Client } from "ssh2";
 import mysql from "mysql2";
+import { existsSync, readFileSync } from "node:fs";
+
+// Le um .env ao lado do script, se houver. Sem dependencia: o dotenv seria um
+// pacote a mais so para isso, e process.loadEnvFile() nao existe em todo Node.
+// Variavel ja definida no ambiente VENCE o arquivo — assim o painel da
+// hospedagem continua mandando quando as duas fontes existirem.
+for (const arquivo of [new URL("./.env", import.meta.url)]) {
+  if (!existsSync(arquivo)) continue;
+  for (const bruta of readFileSync(arquivo, "utf8").split(String.fromCharCode(10))) {
+    const linha = bruta.replace(String.fromCharCode(13), "");
+    const corte = linha.indexOf("=");
+    if (!linha.trim() || linha.trimStart().startsWith("#") || corte < 0) continue;
+    const chave = linha.slice(0, corte).trim();
+    let valor = linha.slice(corte + 1).trim();
+    if (valor.length > 1 && ((valor.startsWith('"') && valor.endsWith('"')) ||
+                             (valor.startsWith("'") && valor.endsWith("'")))) {
+      valor = valor.slice(1, -1);
+    }
+    if (!(chave in process.env)) process.env[chave] = valor;
+  }
+}
 
 const SSH = {
   host: process.env.SENIOR_SSH_HOST ?? "72.61.222.128",
