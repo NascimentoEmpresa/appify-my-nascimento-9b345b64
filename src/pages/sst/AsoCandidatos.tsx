@@ -22,7 +22,7 @@ export default function AsoCandidatos() {
   const [loading, setLoading] = useState(true);
   const [busca, setBusca] = useState("");
   const [verTodos, setVerTodos] = useState(false);
-  const [acao, setAcao] = useState<{ cand: any; tipo: "agendar" | "realizar" | "reprovar" } | null>(null);
+  const [acao, setAcao] = useState<{ cand: any; tipo: "agendar" | "reprovar" } | null>(null);
   const [obs, setObs] = useState("");
   const [ag, setAg] = useState({ data: "", hora: "", local: "", maps: "" });
   const [mapPrev, setMapPrev] = useState(""); // texto usado na pré-visualização do mapa (embed)
@@ -56,7 +56,7 @@ export default function AsoCandidatos() {
     // gravado antes da mudança.
     q = verTodos
       ? q.or('etapa_processo.eq."SST + COMPRAS",etapa_processo.eq."EXAME SST",sst_em.not.is.null,sst_agendado_em.not.is.null')
-      : q.in("etapa_processo", ["SST + COMPRAS", "EXAME SST"]);
+      : q.in("etapa_processo", ["SST + COMPRAS", "EXAME SST"]).is("sst_ok", null);
     const { data, error } = await q.order("etapa_changed_at", { ascending: true });
     setLoading(false);
     if (error) { toast("Erro ao carregar: " + error.message, "err"); return; }
@@ -77,6 +77,12 @@ export default function AsoCandidatos() {
         sst_data_exame: ag.data, sst_hora_exame: ag.hora.trim() || null, sst_local_exame: ag.local.trim() || null,
         sst_maps_url: ag.maps.trim() || null,
         sst_agendado_por: nome, sst_agendado_em: nowIso,
+        // Agendar JÁ conclui a etapa do SST. Antes eram dois passos (agendar e
+        // depois "realizar"), e o segundo só repetia o que o primeiro já
+        // dizia — card ficava parado esperando um clique sem decisão nenhuma
+        // por trás. Quem leva o candidato à ADMISSÃO é o trigger, quando o
+        // Compras também assinar.
+        sst_ok: true, sst_por: nome, sst_em: nowIso,
       };
       let { error } = await (supabase as any).from("WA_CURRICULOS").update(patch).eq("id", c.candidato_id);
       if (error && /sst_maps_url/.test(error.message || "")) {
@@ -86,19 +92,10 @@ export default function AsoCandidatos() {
         if (!error) toast("Agendado sem o link do Maps — aplique a migration sst_maps_url no banco.", "info");
       }
       if (error) { toast("Erro: " + error.message, "err"); return; }
-      await logHist(c, "Exame agendado", "SST + COMPRAS", "SST + COMPRAS", `${fmtD(ag.data)} ${ag.hora} · ${ag.local}`.trim());
-      toast("Exame agendado.", "ok");
-    } else if (acao.tipo === "realizar") {
-      // Só carimba o SST. A etapa NÃO muda aqui: Compras corre em paralelo e
-      // pode não ter aprovado ainda. Quem passa para ADMISSÃO é o trigger
-      // rec_paralelo_admissao, quando o segundo setor aprovar — nenhuma das
-      // duas telas tem como saber se é a última a assinar.
-      const { error } = await (supabase as any).from("WA_CURRICULOS").update({
-        sst_ok: true, sst_por: nome, sst_em: nowIso, sst_obs: obs.trim() || null,
-      }).eq("id", c.candidato_id);
-      if (error) { toast("Erro: " + error.message, "err"); return; }
-      await logHist(c, "Exame (ASO) realizado — SST aprovado", "SST + COMPRAS", "SST + COMPRAS", obs.trim() || null);
-      toast("Exame realizado — SST aprovado.", "ok");
+      await logHist(c, "Exame agendado — SST aprovado", "SST + COMPRAS", "SST + COMPRAS", `${fmtD(ag.data)} ${ag.hora} · ${ag.local}`.trim());
+      toast(c.compras_ok === true
+        ? "Exame agendado — candidato liberado para a Admissão."
+        : "Exame agendado — SST concluído, aguardando o Compras.", "ok");
     } else {
       if (!obs.trim()) { toast("Informe o motivo.", "err"); return; }
       const { error } = await (supabase as any).from("WA_CURRICULOS").update({
@@ -120,7 +117,7 @@ export default function AsoCandidatos() {
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "16px 22px", margin: "18px 24px 0", border: "1px solid #e2e8f0", borderRadius: 18, background: "linear-gradient(135deg,#fff 0%,#f8fbff 100%)", boxShadow: "0 8px 24px rgba(15,23,42,.06)", flexShrink: 0, gap: 14, flexWrap: "wrap" }}>
         <div>
           <div style={{ fontSize: 19, fontWeight: 800, color: "#0f3171" }}>🦺 Exame Médico (SST)</div>
-          <div style={{ fontSize: 12, color: "#94a3b8", marginTop: 2 }}>1) Agende o exame (data/hora/local). 2) Após realizado, marque como apto para enviar ao Compras.</div>
+          <div style={{ fontSize: 12, color: "#94a3b8", marginTop: 2 }}>Agende o exame (data/hora/local) — isso já conclui a etapa do SST. O candidato segue para a Admissão quando o Compras também aprovar.</div>
         </div>
         <span style={{ fontSize: 12, fontWeight: 800, background: "#fef3c7", color: "#b45309", border: "1px solid #fde68a", borderRadius: 20, padding: "4px 12px" }}>{rows.length} pendente(s)</span>
       </div>
@@ -153,9 +150,7 @@ export default function AsoCandidatos() {
                     {!["SST + COMPRAS", "EXAME SST"].includes(c.etapa_processo) && <span style={{ fontSize: 11, color: "#94a3b8" }}>Situação atual: <EtapaChip etapa={c.etapa_processo} /></span>}
                     <HistoricoCandidato candidatoId={c.candidato_id} nome={c.nome} />
                     {podeAgir && ["SST + COMPRAS", "EXAME SST"].includes(c.etapa_processo) && <>
-                      {!c.sst_agendado_em
-                        ? <button onClick={() => { const local = c.local_exato || c.cidade || ""; setAg({ data: "", hora: "", local, maps: c.sst_maps_url || "" }); setMapPrev(local); setAcao({ cand: c, tipo: "agendar" }); }} style={btnStyle("#0ea5e9", "none", "#fff")}>🗓 Agendar exame</button>
-                        : <button onClick={() => { setObs(""); setAcao({ cand: c, tipo: "realizar" }); }} style={btnStyle("#16a34a", "none", "#fff")}>✓ Realizar (apto) → Compras</button>}
+                      <button onClick={() => { const local = c.local_exato || c.cidade || ""; setAg({ data: c.sst_data_exame || "", hora: c.sst_hora_exame || "", local, maps: c.sst_maps_url || "" }); setMapPrev(local); setAcao({ cand: c, tipo: "agendar" }); }} style={btnStyle("#0ea5e9", "none", "#fff")}>🗓 {c.sst_agendado_em ? "Reagendar exame" : "Agendar exame e concluir"}</button>
                       <button onClick={() => { setObs(""); setAcao({ cand: c, tipo: "reprovar" }); }} style={btnStyle("rgba(220,38,38,.08)", "1px solid rgba(220,38,38,.25)", "#dc2626")}>Reprovar</button>
                     </>}
                   </div>
@@ -168,7 +163,7 @@ export default function AsoCandidatos() {
 
       {acao && (
         <Modal onClose={() => { setAcao(null); setObs(""); setAg({ data: "", hora: "", local: "", maps: "" }); setMapPrev(""); }}
-          title={acao.tipo === "agendar" ? "Agendar exame (ASO)" : acao.tipo === "realizar" ? "Realizar exame — apto" : "Reprovar candidato"}
+          title={acao.tipo === "agendar" ? "Agendar exame (ASO) — conclui o SST" : "Reprovar candidato"}
           sub={`${acao.cand.nome} · ${acao.cand.cargo || ""}${acao.cand.cidade ? " · " + acao.cand.cidade : ""}`}>
           {acao.tipo === "agendar" ? (<>
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 12 }}>
@@ -198,8 +193,7 @@ export default function AsoCandidatos() {
               <MapaPicker busca={mapPrev} onPick={({ nome, url }) => setAg(s => ({ ...s, maps: url, local: nome || s.local }))} />
             </div>
           </>) : (
-            <Campo label={acao.tipo === "realizar" ? "Observação (opcional)" : "Motivo *"} value={obs} onChange={setObs}
-              placeholder={acao.tipo === "realizar" ? "Ex.: apto no exame admissional." : "Descreva o motivo..."} />
+            <Campo label="Motivo *" value={obs} onChange={setObs} placeholder="Descreva o motivo..." />
           )}
           <Acoes onCancel={() => { setAcao(null); setObs(""); setAg({ data: "", hora: "", local: "", maps: "" }); setMapPrev(""); }} onConfirm={confirmar} cor={acao.tipo === "reprovar" ? "#dc2626" : "#16a34a"} />
         </Modal>
