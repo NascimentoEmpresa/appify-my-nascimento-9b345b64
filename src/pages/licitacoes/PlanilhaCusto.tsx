@@ -18,6 +18,7 @@ import {
 } from "@/hooks/usePlanilhaCusto";
 import { importarPlanilha, type PlanilhaCustoImportada } from "@/utils/planilhaCustoImporter";
 import { useEmpresaAtiva } from "@/context/EmpresaAtivaContext";
+import { useContratosERP } from "@/hooks/useContratosERP";
 import { supabase } from "@/integrations/supabase/client";
 import { CurrencyInput } from "@/components/ui/CurrencyInput";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -141,6 +142,16 @@ export default function PlanilhaCusto() {
   const { data: rows = [], isLoading } = usePlanilhaCustos();
   const del = useDeletePlanilhaCusto();
 
+  // Contratos ativos (tabela oficial `contratos`) — fonte autoritativa da
+  // contagem de contratos. Um contrato ativo sem execução na planilha (ex.:
+  // recém-iniciado) conta aqui mas não teria linha vigente; por isso a
+  // contagem vem daqui e não do texto distinto das linhas.
+  const { data: contratosErp = [] } = useContratosERP();
+  const contratosAtivos = React.useMemo(
+    () => contratosErp.filter((c) => c.status === "ativo"),
+    [contratosErp],
+  );
+
   // Computa status de vigência para cada linha (client-side)
   const statusMap = React.useMemo(() => computeVigenciaStatus(rows), [rows]);
 
@@ -229,8 +240,8 @@ export default function PlanilhaCusto() {
         <Kpi label="Total de registros" v={String(rows.length)} />
         <Kpi label="Empresa ativa" v={empresa.sigla} />
         <Kpi
-          label="Contratos distintos"
-          v={String(new Set(rows.filter((r) => statusMap.get(r.id) === "EM VIGÊNCIA" && r.orexec === "EXECUTADO").map((r) => r.contrato)).size)}
+          label="Contratos ativos"
+          v={String(contratosAtivos.length)}
           onClick={() => setContratosOpen(true)}
           clickable
         />
@@ -494,7 +505,7 @@ export default function PlanilhaCusto() {
       {/* Modal de breakdown por contrato */}
       <Dialog open={contratosOpen} onOpenChange={(o) => !o && setContratosOpen(false)}>
         <DialogContent className="max-w-5xl max-h-[85vh] overflow-y-auto">
-          <ContratosModal rows={rows} statusMap={statusMap} />
+          <ContratosModal rows={rows} statusMap={statusMap} contratosAtivos={contratosAtivos} />
         </DialogContent>
       </Dialog>
 
@@ -1227,7 +1238,7 @@ function LocForm({
 
 // ─── Modal de Breakdown por Contrato ─────────────────────────────────────────
 
-function ContratosModal({ rows, statusMap }: { rows: PlanilhaCustoRow[]; statusMap: Map<string, string> }) {
+function ContratosModal({ rows, statusMap, contratosAtivos }: { rows: PlanilhaCustoRow[]; statusMap: Map<string, string>; contratosAtivos: { id: string; nome: string; cliente: string }[] }) {
   const [search, setSearch] = useState("");
   const [expandido, setExpandido] = useState<string | null>(null);
   const [encerrandoContrato, setEncerrandoContrato] = useState<string | null>(null);
@@ -1256,6 +1267,18 @@ function ContratosModal({ rows, statusMap }: { rows: PlanilhaCustoRow[]; statusM
     acc[key].postoRows.push(r);
     return acc;
   }, {});
+
+  // Inclui contratos ATIVOS que não têm nenhuma linha vigente executada (ex.:
+  // recém-iniciados, sem execução lançada) com R$ 0 — para o breakdown bater
+  // com o KPI "Contratos ativos" e sinalizar a lacuna. Identifica os "já com
+  // execução" pelo contrato_id (não pelo texto), pra não duplicar por
+  // pequenas diferenças de grafia.
+  const idsComVigente = new Set(rowsVigentes.map((r) => r.contrato_id).filter(Boolean));
+  for (const c of contratosAtivos) {
+    if (!idsComVigente.has(c.id) && !byContrato[c.nome]) {
+      byContrato[c.nome] = { cliente: c.cliente, contrato: c.nome, orcado: 0, executado: 0, postos_exec: 0, postoRows: [], justificativas: [] };
+    }
+  }
 
   const lista = Object.values(byContrato)
     .filter((c) =>
@@ -1314,7 +1337,12 @@ function ContratosModal({ rows, statusMap }: { rows: PlanilhaCustoRow[]; statusM
                 <React.Fragment key={c.contrato}>
                   <tr className={`border-t border-border hover:bg-muted/20 ${aberto ? "bg-muted/10" : ""}`}>
                     <td className="px-3 py-2 text-xs text-muted-foreground">{c.cliente}</td>
-                    <td className="px-3 py-2 text-sm font-medium">{c.contrato}</td>
+                    <td className="px-3 py-2 text-sm font-medium">
+                      {c.contrato}
+                      {c.postoRows.length === 0 && (
+                        <span className="ml-2 rounded-full bg-muted px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-muted-foreground">sem execução</span>
+                      )}
+                    </td>
                     <td className="px-3 py-2 text-right text-xs">{c.postos_exec || "—"}</td>
                     <td className="px-3 py-2 text-right font-mono text-xs text-info">{c.orcado ? formatBRL(c.orcado) : "—"}</td>
                     <td className="px-3 py-2 text-right font-mono text-xs text-success">{c.executado ? formatBRL(c.executado) : "—"}</td>
@@ -1341,13 +1369,15 @@ function ContratosModal({ rows, statusMap }: { rows: PlanilhaCustoRow[]; statusM
                             </button>
                           </>
                         )}
-                        <button
-                          onClick={() => { setEncerrandoContrato(c.contrato); setDataEncerramento(""); }}
-                          title="Encerrar contrato"
-                          className="inline-flex h-7 items-center justify-center gap-1 whitespace-nowrap rounded border border-destructive/30 px-2 text-[11px] font-medium text-destructive hover:bg-destructive/10 transition-colors"
-                        >
-                          Encerrar
-                        </button>
+                        {c.postoRows.length > 0 && (
+                          <button
+                            onClick={() => { setEncerrandoContrato(c.contrato); setDataEncerramento(""); }}
+                            title="Encerrar contrato"
+                            className="inline-flex h-7 items-center justify-center gap-1 whitespace-nowrap rounded border border-destructive/30 px-2 text-[11px] font-medium text-destructive hover:bg-destructive/10 transition-colors"
+                          >
+                            Encerrar
+                          </button>
+                        )}
                       </div>
                     </td>
                   </tr>

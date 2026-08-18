@@ -33,7 +33,10 @@ export default function OrcamentoContratos() {
     return [...base].sort((a, b) => a.contrato.nome.localeCompare(b.contrato.nome, "pt-BR"));
   }, [grupos, busca]);
 
-  const valorTotal = useMemo(() => filtrados.reduce((s, g) => s + g.valorTotal, 0), [filtrados]);
+  // KPIs refletem o total de contratos ativos (não a busca) — a busca filtra
+  // só a lista abaixo. Mantém os cards batendo com "Contratos Ativos" da tela
+  // de Contratos e com o breakdown da Planilha de Custo.
+  const valorTotal = useMemo(() => grupos.reduce((s, g) => s + g.valorTotal, 0), [grupos]);
 
   return (
     <div className="space-y-6 p-6">
@@ -47,8 +50,8 @@ export default function OrcamentoContratos() {
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         <Card>
           <CardHeader className="pb-2">
-            <CardDescription>Contratos com orçamento</CardDescription>
-            <CardTitle className="text-3xl">{filtrados.length}</CardTitle>
+            <CardDescription>Contratos ativos</CardDescription>
+            <CardTitle className="text-3xl">{grupos.length}</CardTitle>
           </CardHeader>
         </Card>
         <Card>
