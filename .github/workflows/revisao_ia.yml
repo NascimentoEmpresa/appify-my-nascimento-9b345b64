@@ -184,17 +184,58 @@ jobs:
       # Comentário postado pelo shell, não pelo modelo: assim o comentário sai
       # mesmo que o modelo tenha terminado de um jeito estranho, e o formato
       # sticky (editar o anterior em vez de empilhar) fica garantido.
+      #
+      # SEMPRE posta algo, mesmo quando a revisão não rodou. Antes, quando
+      # não havia revisao.md, o step só dava exit 0 e a PR ficava sem
+      # comentário nenhum — quem olhasse a aba Conversation via só "checks
+      # passaram" e não tinha como saber que a IA nem chegou a rodar. O aviso
+      # existia, mas só no log da Action, que ninguém lê por padrão.
       - name: Publicar a revisão na PR
         if: always()
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PR: ${{ github.event.pull_request.number }}
+          DIFF_VAZIO: ${{ steps.diff.outputs.vazio }}
+          CLAUDE_RESULTADO: ${{ steps.claude.outcome }}
         run: |
           set -uo pipefail
-          [ -f revisao.md ] || exit 0
+
+          if [ -f revisao.md ]; then
+            cat revisao.md > corpo.md
+          elif [ "${DIFF_VAZIO:-false}" = "true" ]; then
+            cat > corpo.md <<'MSG'
+          ## Revisão não rodou — nada a revisar
+
+          Esta PR não tem arquivo revisável no diff: ou ela só toca arquivos
+          fora do filtro (planilhas, imagens, lockfiles), ou o conteúdo é
+          idêntico ao da branch base. As regras absolutas (portaria) já
+          rodaram normalmente e valem independente disso.
+          MSG
+          else
+            cat > corpo.md <<MSG
+          ## Revisão não rodou nesta execução
+
+          Causas possíveis, em ordem de probabilidade:
+
+          1. **Esta PR altera o próprio \`revisao_ia.yml\`.** A ação se recusa a
+             rodar quando o workflow da PR difere do que está na \`main\` —
+             proteção contra PR que tenta alterar o workflow para vazar o
+             token. Isso é esperado e some sozinho quando a PR entrar na main.
+          2. O secret \`CLAUDE_CODE_OAUTH_TOKEN\` está ausente ou expirado.
+          3. A cota da assinatura acabou.
+
+          Resultado da ação: \`$CLAUDE_RESULTADO\`. Para confirmar qual das três
+          é, veja a linha \`##[warning]\` do step **Revisar** no log desta
+          execução.
+
+          As regras absolutas (portaria) já rodaram normalmente e valem
+          independente disso — só a parte de julgamento (IA) ficou de fora.
+          MSG
+          fi
+
           {
             echo "<!-- revisao-ia -->"
-            cat revisao.md
+            cat corpo.md
             echo
             echo "---"
             echo "_Revisão automática — regras em \`.github/REGRAS-PR.md\`. Para pular, use a label \`pular-revisao-ia\`._"
@@ -224,8 +265,7 @@ jobs:
             # Sem veredito não dá para saber se o código está bom. Falha ABERTO,
             # igual ao chamado_pr_sync.yml faz quando o Supabase não responde:
             # instabilidade nossa não pode travar merge de toda a empresa.
-            echo "::warning::A revisão por IA não produziu veredito (resultado da ação: $CLAUDE_RESULTADO)."
-            echo "::warning::Passando o check para não travar a PR. Revise à mão e verifique o secret CLAUDE_CODE_OAUTH_TOKEN e a cota da assinatura."
+            echo "::warning::A revisão por IA não produziu veredito (resultado da ação: $CLAUDE_RESULTADO). Passando o check para não travar a PR — revise à mão. O motivo foi explicado num comentário na própria PR."
             exit 0
           fi
 
