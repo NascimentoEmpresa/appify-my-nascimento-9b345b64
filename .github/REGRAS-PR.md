@@ -52,7 +52,7 @@ ERP interno multiempresa em React + Vite + Supabase (Postgres com RLS).
 | R5 | Nenhum segredo real no diff: chave `service_role`, chave da Anthropic, token do GitHub, credencial de banco. |
 | R6 | `service_role` só em `supabase/functions/**`, nunca em `src/**`. |
 | R7 | Função `admin_*` alterada exige chamado no título (não pode ser `[SEM-CHAMADO]`). |
-| R8 | Branch fora de `eduardo`, `joao`, `pablo` precisa de prefixo `ci/`, `fix/` ou `chore/`. |
+| R8 | Só existem quatro branches: `eduardo`, `joao`, `pablo`, `main`. Sem exceção. |
 
 ### Notas sobre as absolutas
 
@@ -72,12 +72,17 @@ rotacione em Supabase → Settings → API **antes de qualquer outra coisa**.
 Tirar do diff não resolve: o valor já está no histórico do git. A chave ignora
 toda a RLS — é o superusuário do banco.
 
-**R8 — o time tem 3 devs e 4 branches.** Eduardo, João e Pablo trabalham cada
-um na branch com o seu nome e abrem PR para a `main` (Iury é gerente e não
-mexe em código). Branch temporária é aceita com prefixo `ci/`, `fix/` ou
-`chore/`, justificativa no corpo da PR, e **apagada depois do merge**. Branch
-com nome de pessoa fora do time, ou `teste/*` abrindo PR para a `main`,
-reprova.
+**R8 — o time tem 3 devs e 4 branches, sem exceção.** Eduardo, João e Pablo
+trabalham cada um na branch com o seu nome e abrem PR para a `main` (Iury é
+gerente e não mexe em código). Não existe branch temporária, nem para
+corrigir workflow ou infraestrutura — nem `ci/*`, `fix/*` ou `chore/*`.
+
+Esta regra já foi mais frouxa: a v1 aceitava branch temporária com prefixo e
+justificativa. Foi apertada depois que uma dessas exceções ficou aberta como
+PR (`fix/aviso-veredito-causa-certa`) bem na hora em que a própria regra que a
+permitia estava sendo revista — ficou claro que qualquer exceção escrita no
+papel vira porta usada de novo. Zero é mais simples de aplicar e de lembrar do
+que "com justificativa".
 
 ### Válvula de escape
 
@@ -232,22 +237,28 @@ banco: `pg_get_expr` sobre `pg_policy`.
 
 ---
 
-## J4 — Rodar o build mentalmente
+## J4 — O que a máquina não pega
 
-**Nenhuma PR passa por build, lint, type-check ou teste.** Não existe um único
-job que rode `npm run build`, `tsc`, `eslint` ou `vitest`. Uma PR que quebra o
-build entra na `main` e o Lovable publica quebrado — já aconteceu mais de uma
-vez (`fix(cobrancas): remove duplicação de merge que quebrava o build`,
-`fix: remove declaração duplicada de empresaCtx`, `Destrava o build do Lovable`).
+O workflow `ci.yml` roda `tsc --noEmit`, `npm test` e `npm run build` em toda
+PR, e reprova se algum falhar. Isso cobre deterministicamente o que antes era
+"rodar o build mentalmente": import que não existe, declaração duplicada, tipo
+que não bate e resto de conflito de merge (`<<<<<<<` vira erro de sintaxe).
 
-Enquanto esse job não existir, o revisor é a única barreira. Procure:
+**Não repita esse trabalho.** Se o CI está verde, não gaste o comentário
+dizendo que compila.
 
-- import de coisa que não existe;
-- variável ou declaração duplicada;
-- tipo que não bate;
-- **resto de conflito de merge** (`<<<<<<<`, bloco repetido) — este é o padrão
-  de falha mais frequente aqui, porque merge de `main` para branch pessoal
-  acontece o tempo todo.
+O que sobra para você é o que compila e mesmo assim está errado:
+
+- **merge que resolveu para o lado errado** — compila, mas perdeu uma linha ou
+  ressuscitou código antigo. É o padrão de falha mais frequente aqui, porque
+  merge de `main` para branch pessoal acontece o tempo todo;
+- lógica invertida (somar onde devia descontar — ver J5);
+- `useEffect` sem dependência ou com dependência a mais, causando loop;
+- `catch` que engole erro e deixa a tela em estado inconsistente.
+
+O lint roda como aviso, sem reprovar, e só nos arquivos que a PR tocou — a base
+tem 2585 erros anteriores. Se o aviso apontar algo que **veio com esta PR**,
+mencione; se for herança, ignore.
 
 ---
 

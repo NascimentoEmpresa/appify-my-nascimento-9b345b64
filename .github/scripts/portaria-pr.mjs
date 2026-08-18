@@ -296,13 +296,16 @@ if (/^\[SEM-CHAMADO\]/.test(tituloPR)) {
   }
 }
 
-// --- R8: branch dentro do combinado ------------------------------------------
-// O time tem 3 devs, cada um com a sua branch, e a main. Branch temporária é
-// aceita com prefixo, e some depois do merge. A regra existe porque branch
-// solta vira PR órfã e trabalho duplicado — e porque nomenclatura é
-// verificável, então não tem por que deixar isso no julgamento do modelo.
+// --- R8: só as 4 branches combinadas, sem exceção ----------------------------
+// O time tem 3 devs, cada um com a sua branch, e a main. Zero-tolerância: só
+// essas 4 nomes existem, nunca mais. A versão anterior desta regra abria
+// exceção para branch temporária com prefixo ci/fix/chore — foi apertada
+// depois que uma dessas exceções (fix/aviso-veredito-causa-certa) ficou aberta
+// como PR ao mesmo tempo que a própria regra que a permitia estava sendo
+// revista, o que deixou claro que qualquer exceção é uma porta que se abre de
+// novo. Nomenclatura é verificável, então não tem por que deixar isso no
+// julgamento do modelo.
 const BRANCHES_FIXAS = ["eduardo", "joao", "pablo", "main"];
-const PREFIXOS_TEMPORARIOS = /^(ci|fix|chore)\//;
 
 // GITHUB_HEAD_REF é a branch de origem da PR; fora do CI, a branch atual.
 let branch = process.env.GITHUB_HEAD_REF || "";
@@ -314,11 +317,11 @@ if (!branch) {
   }
 }
 
-if (branch && !BRANCHES_FIXAS.includes(branch) && !PREFIXOS_TEMPORARIOS.test(branch)) {
+if (branch && !BRANCHES_FIXAS.includes(branch)) {
   reprovar("R8", ".github/REGRAS-PR.md", 1,
-    `A branch "${branch}" não está no combinado. Cada dev trabalha na branch com o seu ` +
-    `nome (eduardo, joao, pablo) e abre PR para a main. Branch temporária precisa de ` +
-    `prefixo ci/, fix/ ou chore/, justificativa no corpo da PR, e ser apagada depois do merge.`,
+    `A branch "${branch}" não está no combinado. Só existem eduardo, joao, pablo e main — ` +
+    `sem exceção, nem para correção de workflow ou infraestrutura. Cada dev trabalha na ` +
+    `própria branch e abre PR para a main a partir dela.`,
     "");
 }
 
