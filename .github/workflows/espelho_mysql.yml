@@ -1,0 +1,101 @@
+# Espelha as tabelas do MySQL do cliente para o Supabase, todo dia.
+#
+# Por que na nuvem e não na máquina do Eduardo: a rede da empresa bloqueia a
+# porta 22 na saída (github.com:22 também dá timeout de lá). Os runners do
+# GitHub não têm esse bloqueio.
+#
+# Nada de sensível neste arquivo, que é público: host, usuário e senha vêm
+# todos do secret ESPELHO_CREDENCIAIS, que guarda o credenciais.json inteiro.
+
+name: Espelho MySQL -> Supabase
+
+on:
+  workflow_dispatch:
+    inputs:
+      comando:
+        description: 'O que rodar'
+        type: choice
+        options: [testar, descobrir, sincronizar]
+        default: testar
+      limite:
+        description: 'Linhas por tabela (só para teste; vazio = tudo)'
+        type: string
+        default: '100'
+      gravar:
+        description: 'Gravar de verdade? Desmarcado = simulação com rollback'
+        type: boolean
+        default: false
+  schedule:
+    # 10:00 UTC = 07:00 no horário de Brasília.
+    - cron: '0 10 * * *'
+
+# Duas execuções ao mesmo tempo brigariam pelo TRUNCATE das mesmas tabelas.
+concurrency:
+  group: espelho-mysql
+  cancel-in-progress: false
+
+jobs:
+  espelho:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Instalar dependências
+        working-directory: espelho-mysql
+        run: npm ci
+
+      - name: Montar credenciais a partir do secret
+        working-directory: espelho-mysql
+        env:
+          CRED: ${{ secrets.ESPELHO_CREDENCIAIS }}
+        run: |
+          if [ -z "$CRED" ]; then
+            echo "::error::O secret ESPELHO_CREDENCIAIS não está configurado."
+            echo "Configure em Settings > Secrets and variables > Actions."
+            exit 1
+          fi
+          printf '%s' "$CRED" > credenciais.json
+          node -e "JSON.parse(require('fs').readFileSync('credenciais.json','utf8'))" \
+            || { echo "::error::ESPELHO_CREDENCIAIS não contém um JSON válido."; exit 1; }
+
+      - name: Rodar
+        working-directory: espelho-mysql
+        # Os inputs vão por env, nunca interpolados direto no shell: assim um
+        # valor com aspas ou ; não vira comando.
+        env:
+          EVENTO: ${{ github.event_name }}
+          COMANDO: ${{ inputs.comando }}
+          LIMITE: ${{ inputs.limite }}
+          GRAVAR: ${{ inputs.gravar }}
+        run: |
+          set -euo pipefail
+          if [ "$EVENTO" = "schedule" ]; then
+            # A execução diária é sempre a carga completa e definitiva.
+            node espelho.mjs sincronizar --commit
+          else
+            # if explícito, e não "teste && comando". Com set -e, a forma com
+            # && só é segura enquanto não for a última linha do bloco: se um
+            # dia virar, um teste falso derruba o step. O if não tem esse risco.
+            set -- "$COMANDO"
+            if [ "$COMANDO" = "sincronizar" ]; then
+              if [ "$GRAVAR" = "true" ]; then
+                set -- "$@" --commit
+              fi
+              if [ -n "$LIMITE" ]; then
+                set -- "$@" --limite "$LIMITE"
+              fi
+            fi
+            echo "rodando: node espelho.mjs $*"
+            node espelho.mjs "$@"
+          fi
+
+      - name: Apagar credenciais do disco
+        if: always()
+        working-directory: espelho-mysql
+        run: rm -f credenciais.json
