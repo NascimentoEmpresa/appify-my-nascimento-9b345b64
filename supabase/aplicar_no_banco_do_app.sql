@@ -12762,3 +12762,597 @@ REVOKE ALL ON FUNCTION public.cs_veiculos_frota() FROM anon;
 GRANT EXECUTE ON FUNCTION public.cs_veiculos_frota() TO authenticated;
 
 NOTIFY pgrst, 'reload schema';
+
+
+-- ===== 20260906000007_rh_colaboradores_sem_rls_por_linha =====
+-- =========================================================================
+-- RH / COLABORADORES — tirar a RLS do caminho quente (timeout na tela)
+--
+-- Sintoma: a tela de Colaboradores demorava demais, as vezes ficava em
+-- branco e as vezes mostrava zeros com o erro do Postgres
+-- "canceling statement due to statement timeout".
+--
+-- CAUSA. A policy de SELECT da EMPREGADOS e:
+--
+--   (auth_user_id = auth.uid())
+--   OR has_screen_access(auth.uid(), 'colaboradores', 'visualizar')
+--   OR ... mais 8 menus
+--
+-- O primeiro operando referencia uma COLUNA. Isso impede o planner de
+-- icar a expressao para fora do scan: ela vira filtro POR LINHA. Como
+-- `auth_user_id = auth.uid()` e falso em praticamente toda linha, cada
+-- uma segue para os has_screen_access — que sao plpgsql e fazem ate tres
+-- consultas internas cada.
+--
+-- Com 12.909 empregados isso da centenas de milhares de consultas por
+-- varredura. E as duas RPCs da tela NAO eram SECURITY DEFINER, entao
+-- pagavam esse custo inteiro, varias vezes (a CTE `flags` e lida por tres
+-- CTEs distintas).
+--
+-- Medido: rodando como `postgres` (que ignora RLS) o dashboard leva ~1 s;
+-- como `authenticated` estoura o statement_timeout.
+--
+-- CORRECAO. As duas RPCs passam a SECURITY DEFINER e checam o acesso UMA
+-- vez, no inicio, via rh_pode_ver_colaboradores(). O corpo das consultas
+-- nao muda em nada.
+--
+-- Por que isso NAO afrouxa a seguranca: a policy e all-or-nothing. Quem
+-- casa em qualquer um dos 9 menus ja enxergava TODAS as linhas hoje — ela
+-- nao recorta empregado por empregado. A unica clausula que recorta e
+-- `auth_user_id = auth.uid()` (ver a si mesmo), e quem so tem isso nao
+-- alcanca esta tela: ela exige o menu para ser roteada, e estas RPCs sao
+-- usadas somente por ela. A funcao nova replica exatamente a mesma lista
+-- de menus da policy — mesma resposta, avaliada uma vez em vez de 12.909.
+--
+-- A policy da tabela fica INTOCADA: quem le a EMPREGADOS direto continua
+-- protegido do mesmo jeito.
+--
+-- Idempotente.
+-- ROLLBACK: recriar as duas funcoes sem SECURITY DEFINER e sem o IF do
+--   inicio (definicao anterior em qualquer backup), e
+--   DROP FUNCTION IF EXISTS public.rh_pode_ver_colaboradores();
+-- =========================================================================
+
+-- Mesma condicao da policy erp_auth_read_empregados, sem a parte por linha.
+CREATE OR REPLACE FUNCTION public.rh_pode_ver_colaboradores()
+RETURNS boolean
+LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public, pg_temp
+AS $$
+  SELECT public.has_screen_access(auth.uid(), 'colaboradores', 'visualizar')
+      OR public.has_screen_access(auth.uid(), 'recrutamento_gestao', 'visualizar')
+      OR public.has_screen_access(auth.uid(), 'sst_aso', 'visualizar')
+      OR public.has_screen_access(auth.uid(), 'candidatos', 'visualizar')
+      OR public.has_screen_access(auth.uid(), 'encarregados_minhas_solicitacoes', 'visualizar')
+      OR public.has_screen_access(auth.uid(), 'processos', 'visualizar')
+      OR public.has_screen_access(auth.uid(), 'patrimonios', 'visualizar')
+      OR public.has_screen_access(auth.uid(), 'duvidas', 'visualizar')
+      OR public.has_screen_access(auth.uid(), 'central_servicos_formularios', 'visualizar');
+$$;
+
+REVOKE ALL ON FUNCTION public.rh_pode_ver_colaboradores() FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.rh_pode_ver_colaboradores() FROM anon;
+GRANT EXECUTE ON FUNCTION public.rh_pode_ver_colaboradores() TO authenticated;
+
+-- As duas RPCs abaixo sao a definicao ATUAL, sem alteracao de logica:
+-- ganharam apenas SECURITY DEFINER e o IF de acesso no inicio.
+CREATE OR REPLACE FUNCTION public.rh_colaboradores_dashboard(_ano integer, _mes integer, _empresa text DEFAULT ''::text, _contrato text DEFAULT ''::text, _situacao text DEFAULT ''::text, _busca text DEFAULT ''::text)
+ RETURNS jsonb
+ LANGUAGE plpgsql
+ STABLE SECURITY DEFINER
+ SET search_path TO 'public'
+AS $function$
+DECLARE
+  v_ini date := make_date(_ano, _mes, 1);
+  v_fim date := (make_date(_ano, _mes, 1) + interval '1 month' - interval '1 day')::date;
+  v_q   text := nullif(btrim(coalesce(_busca, '')), '');
+  v_emp text := coalesce(_empresa, '');
+  v_ctr text := coalesce(_contrato, '');
+  v_sit text := coalesce(_situacao, '');
+  v_ano int  := extract(year from current_date)::int;
+  v_out jsonb;
+BEGIN
+  -- Uma checagem, no lugar de uma por linha. Ver o cabecalho da migration.
+  IF NOT public.rh_pode_ver_colaboradores() THEN
+    RAISE EXCEPTION 'sem acesso ao cadastro de colaboradores' USING ERRCODE = '42501';
+  END IF;
+
+  WITH ct AS (
+    SELECT DISTINCT ON (btrim(c."Filial"::text))
+           btrim(c."Filial"::text) AS filial,
+           btrim(coalesce(c."NOME CONTRATO", '')) AS nome
+      FROM public."CONTRATOS" c
+     WHERE c."ATIVO" = 'SIM' AND c."Filial" IS NOT NULL
+  ),
+  v AS (
+    SELECT
+      e."ID"                                                            AS id,
+      coalesce(e."Nome", '')                                            AS nome,
+      coalesce(e."CPF", '')                                             AS cpf,
+      coalesce(nullif(btrim(coalesce(e."Título do Cargo", '')), ''),
+               nullif(btrim(coalesce(e."Nome do Cargo", '')), ''), '—') AS cargo,
+      coalesce(public.rh_empresa(e."Empresa"::text, e."Nome da Empresa"), '—') AS empresa,
+      coalesce(nullif(ct.nome, ''), '—')                                AS contrato,
+      coalesce(nullif(btrim(coalesce(e."Nome Filial", '')), ''),
+               nullif(btrim(coalesce(e."Filial"::text, '')), ''), '—')  AS filial,
+      btrim(coalesce(e."Situação", ''))                                 AS situacao,
+      btrim(coalesce(e."Setor_ERP", ''))                                AS setor,
+      public.rh_data(e."Admissão"::text)                                AS admissao,
+      public.rh_data(e."Data Afastamento"::text)                        AS afastamento,
+      public.rh_num(e."Valor Salário"::text)                            AS salario,
+      (btrim(coalesce(e."Situação", '')) ~* '(DEMIT|DESLIG|RESCIS|APOSENT)') AS eh_saida,
+      (coalesce(e."Nome", '') || ' ' || coalesce(e."CPF", '') || ' ' ||
+       coalesce(e."Título do Cargo", '') || ' ' || coalesce(e."Nome do Cargo", '') || ' ' ||
+       coalesce(e."Nome Filial", '') || ' ' || coalesce(e."Setor_ERP", ''))  AS busca_txt
+    FROM public."EMPREGADOS" e
+    LEFT JOIN ct ON ct.filial = btrim(e."Filial"::text)
+  ),
+  flags AS (
+    SELECT v.*,
+      ((v.admissao IS NULL OR v.admissao <= v_fim)
+        AND (NOT v.eh_saida OR (v.afastamento IS NOT NULL AND v.afastamento >= v_ini))) AS no_mes,
+      (v_emp = '' OR v.empresa  = v_emp) AS f_emp,
+      (v_ctr = '' OR v.contrato = v_ctr) AS f_ctr,
+      (v_sit = '' OR v.situacao = v_sit) AS f_sit,
+      (v_q IS NULL OR v.busca_txt ILIKE '%' || v_q || '%') AS f_bus
+    FROM v
+  ),
+  fil    AS (SELECT * FROM flags WHERE no_mes AND f_emp AND f_ctr AND f_sit AND f_bus),
+  semsit AS (SELECT * FROM flags WHERE no_mes AND f_emp AND f_ctr AND f_bus),
+  tempo  AS (SELECT * FROM flags WHERE f_emp AND f_ctr)
+  SELECT jsonb_build_object(
+    'kpis', jsonb_build_object(
+      'ativos_mes', (SELECT count(*) FROM semsit),
+      'no_recorte', (SELECT count(*) FROM fil),
+      'total',      (SELECT count(*) FROM flags),
+      'folha',      (SELECT coalesce(sum(salario), 0) FROM fil),
+      'admitidos',  (SELECT count(*) FROM tempo WHERE admissao BETWEEN v_ini AND v_fim),
+      'desligados', (SELECT count(*) FROM tempo WHERE eh_saida AND afastamento BETWEEN v_ini AND v_fim)
+    ),
+    'por_empresa',   (SELECT coalesce(jsonb_agg(jsonb_build_object('k', k, 'v', v) ORDER BY v DESC), '[]'::jsonb)
+                        FROM (SELECT empresa AS k, count(*) AS v FROM fil GROUP BY 1) t),
+    'folha_empresa', (SELECT coalesce(jsonb_agg(jsonb_build_object('k', k, 'v', v) ORDER BY v DESC), '[]'::jsonb)
+                        FROM (SELECT empresa AS k, coalesce(sum(salario), 0) AS v FROM fil GROUP BY 1) t),
+    'por_situacao',  (SELECT coalesce(jsonb_agg(jsonb_build_object('k', k, 'v', v) ORDER BY v DESC), '[]'::jsonb)
+                        FROM (SELECT coalesce(nullif(situacao, ''), '—') AS k, count(*) AS v FROM semsit GROUP BY 1) t),
+    'por_cargo',     (SELECT coalesce(jsonb_agg(jsonb_build_object('k', k, 'v', v) ORDER BY v DESC), '[]'::jsonb)
+                        FROM (SELECT cargo AS k, count(*) AS v FROM semsit GROUP BY 1) t),
+    'por_contrato',  (SELECT coalesce(jsonb_agg(jsonb_build_object('k', k, 'v', v) ORDER BY v DESC), '[]'::jsonb)
+                        FROM (SELECT contrato AS k, count(*) AS v FROM fil GROUP BY 1 ORDER BY 2 DESC LIMIT 10) t),
+    'por_faixa',     (SELECT jsonb_agg(jsonb_build_object('label', f.label, 'n',
+                              (SELECT count(*) FROM fil x
+                                WHERE x.admissao IS NOT NULL
+                                  AND ((current_date - x.admissao) / 365.25) >= f.mn
+                                  AND ((current_date - x.admissao) / 365.25) <  f.mx)) ORDER BY f.ord)
+                        FROM (VALUES (1, '< 1 ano', 0::numeric, 1::numeric), (2, '1–3 anos', 1, 3),
+                                     (3, '3–5 anos', 3, 5), (4, '5–10 anos', 5, 10),
+                                     (5, '10+ anos', 10, 9999)) AS f(ord, label, mn, mx)),
+    'timeline',      (SELECT coalesce(jsonb_agg(jsonb_build_object('ano', ano, 'adm', adm, 'desl', desl) ORDER BY ano), '[]'::jsonb)
+                        FROM (SELECT a.ano,
+                                     count(*) FILTER (WHERE a.tipo = 'adm')  AS adm,
+                                     count(*) FILTER (WHERE a.tipo = 'desl') AS desl
+                                FROM (SELECT extract(year from admissao)::int AS ano, 'adm' AS tipo
+                                        FROM tempo WHERE admissao IS NOT NULL
+                                       UNION ALL
+                                      SELECT extract(year from afastamento)::int, 'desl'
+                                        FROM tempo WHERE eh_saida AND afastamento IS NOT NULL) a
+                               WHERE a.ano BETWEEN v_ano - 6 AND v_ano
+                               GROUP BY a.ano) z),
+    'opcoes', jsonb_build_object(
+      'empresas',  (SELECT coalesce(jsonb_agg(DISTINCT empresa  ORDER BY empresa),  '[]'::jsonb) FROM flags WHERE empresa  <> '—'),
+      'contratos', (SELECT coalesce(jsonb_agg(DISTINCT contrato ORDER BY contrato), '[]'::jsonb) FROM flags WHERE contrato <> '—'),
+      'situacoes', (SELECT coalesce(jsonb_agg(DISTINCT situacao ORDER BY situacao), '[]'::jsonb) FROM flags WHERE situacao <> ''),
+      'setores',   (SELECT coalesce(jsonb_agg(DISTINCT setor    ORDER BY setor),    '[]'::jsonb) FROM flags WHERE setor    <> '')
+    )
+  ) INTO v_out;
+  RETURN v_out;
+END $function$;
+
+CREATE OR REPLACE FUNCTION public.rh_colaboradores_lista(_ano integer, _mes integer, _empresa text DEFAULT ''::text, _contrato text DEFAULT ''::text, _situacao text DEFAULT ''::text, _busca text DEFAULT ''::text, _offset integer DEFAULT 0, _limite integer DEFAULT 50)
+ RETURNS jsonb
+ LANGUAGE plpgsql
+ STABLE SECURITY DEFINER
+ SET search_path TO 'public'
+AS $function$
+DECLARE
+  v_ini date := make_date(_ano, _mes, 1);
+  v_fim date := (make_date(_ano, _mes, 1) + interval '1 month' - interval '1 day')::date;
+  v_q   text := nullif(btrim(coalesce(_busca, '')), '');
+  v_emp text := coalesce(_empresa, '');
+  v_ctr text := coalesce(_contrato, '');
+  v_sit text := coalesce(_situacao, '');
+  v_saida boolean := v_sit ~* '(DEMIT|DESLIG|RESCIS|APOSENT)';
+  v_out jsonb;
+BEGIN
+  -- Uma checagem, no lugar de uma por linha. Ver o cabecalho da migration.
+  IF NOT public.rh_pode_ver_colaboradores() THEN
+    RAISE EXCEPTION 'sem acesso ao cadastro de colaboradores' USING ERRCODE = '42501';
+  END IF;
+
+  WITH ct AS (
+    SELECT DISTINCT ON (btrim(c."Filial"::text))
+           btrim(c."Filial"::text) AS filial,
+           btrim(coalesce(c."NOME CONTRATO", '')) AS nome
+      FROM public."CONTRATOS" c
+     WHERE c."ATIVO" = 'SIM' AND c."Filial" IS NOT NULL
+  ),
+  v AS (
+    SELECT
+      e."ID"                                                            AS id,
+      coalesce(e."Nome", '')                                            AS nome,
+      coalesce(e."CPF", '')                                             AS cpf,
+      coalesce(nullif(btrim(coalesce(e."Título do Cargo", '')), ''),
+               nullif(btrim(coalesce(e."Nome do Cargo", '')), ''), '—') AS cargo,
+      coalesce(public.rh_empresa(e."Empresa"::text, e."Nome da Empresa"), '—') AS empresa,
+      coalesce(nullif(ct.nome, ''), '—')                                AS contrato,
+      coalesce(nullif(btrim(coalesce(e."Nome Filial", '')), ''),
+               nullif(btrim(coalesce(e."Filial"::text, '')), ''), '—')  AS filial,
+      btrim(coalesce(e."Situação", ''))                                 AS situacao,
+      btrim(coalesce(e."Setor_ERP", ''))                                AS setor,
+      public.rh_data(e."Admissão"::text)                                AS admissao,
+      public.rh_data(e."Data Afastamento"::text)                        AS afastamento,
+      public.rh_num(e."Valor Salário"::text)                            AS salario,
+      (btrim(coalesce(e."Situação", '')) ~* '(DEMIT|DESLIG|RESCIS|APOSENT)') AS eh_saida,
+      (coalesce(e."Nome", '') || ' ' || coalesce(e."CPF", '') || ' ' ||
+       coalesce(e."Título do Cargo", '') || ' ' || coalesce(e."Nome do Cargo", '') || ' ' ||
+       coalesce(e."Nome Filial", '') || ' ' || coalesce(e."Setor_ERP", ''))  AS busca_txt
+    FROM public."EMPREGADOS" e
+    LEFT JOIN ct ON ct.filial = btrim(e."Filial"::text)
+  ),
+  fil AS (
+    SELECT v.* FROM v
+     WHERE (v_saida
+            OR ((v.admissao IS NULL OR v.admissao <= v_fim)
+                AND (NOT v.eh_saida OR (v.afastamento IS NOT NULL AND v.afastamento >= v_ini))))
+       AND (v_emp = '' OR v.empresa  = v_emp)
+       AND (v_ctr = '' OR v.contrato = v_ctr)
+       AND (v_sit = '' OR v.situacao = v_sit)
+       AND (v_q IS NULL OR v.busca_txt ILIKE '%' || v_q || '%')
+  )
+  SELECT jsonb_build_object(
+    'total', (SELECT count(*) FROM fil),
+    'linhas', (SELECT coalesce(jsonb_agg(to_jsonb(p) - 'busca_txt' - 'eh_saida'), '[]'::jsonb)
+                 FROM (SELECT * FROM fil ORDER BY nome, id OFFSET greatest(_offset, 0) LIMIT least(greatest(_limite, 1), 500)) p)
+  ) INTO v_out;
+  RETURN v_out;
+END $function$;
+
+REVOKE ALL ON FUNCTION public.rh_colaboradores_dashboard(integer, integer, text, text, text, text) FROM anon;
+REVOKE ALL ON FUNCTION public.rh_colaboradores_lista(integer, integer, text, text, text, text, integer, integer) FROM anon;
+GRANT EXECUTE ON FUNCTION public.rh_colaboradores_dashboard(integer, integer, text, text, text, text) TO authenticated;
+GRANT EXECUTE ON FUNCTION public.rh_colaboradores_lista(integer, integer, text, text, text, text, integer, integer) TO authenticated;
+
+NOTIFY pgrst, 'reload schema';
+
+
+-- ===== 20260906000008_rh_sync_senior_empregados =====
+-- =========================================================================
+-- RH — sincronizacao do cadastro vindo do Senior (BiEmpregados)
+--
+-- Recebe um lote em jsonb e resolve INSERT/UPDATE de uma vez. A logica
+-- mora aqui, e nao no script, para que o robo nao precise de regra nem de
+-- leitura previa da tabela.
+--
+-- CHAVE: (Empresa, Cadastro). Medido em 17/08/2026 nos 13.214 do Senior:
+--   numcad sozinho ....................  9.810 distintos  <- FUNDE PESSOAS
+--   numemp + numcad ................... 13.152 distintos
+--   numemp + tipcol + numcad .......... 13.214 distintos  <- unico
+-- `numcad = 1` sao CINCO pessoas diferentes (uma por empresa). Por isso a
+-- chave nunca pode ser so o cadastro.
+--
+-- O par (Empresa, Cadastro) deixa 62 colisoes, todas de tipcol = 2 (68
+-- pessoas no total, contra 13.146 de tipcol = 1). A EMPREGADOS nao tem
+-- coluna de tipo de colaborador, entao NAO da para separa-las aqui: o
+-- script filtra tipcol = 1 e as 68 ficam de fora, de proposito, ate haver
+-- decisao sobre criar a coluna.
+--
+-- NAO ha unique index em (Empresa, Cadastro) porque a tabela JA tem 347
+-- pares repetidos de antes desta integracao. Por isso o casamento e feito
+-- por SELECT ... LIMIT 1 (menor ID) em vez de ON CONFLICT.
+--
+-- O QUE ATUALIZA em quem ja existe: so o que muda com o tempo — situacao,
+-- data de afastamento e salario. Nome, CPF, admissao e nascimento NAO sao
+-- sobrescritos: a tela de Colaboradores permite edicao, e sobrescrever
+-- apagaria correcao feita a mao a cada rodada do robo.
+--
+-- Idempotente: rodar duas vezes com o mesmo lote nao insere de novo nem
+-- conta atualizacao (o UPDATE so acontece se algum valor mudou de fato).
+--
+-- ROLLBACK: DROP FUNCTION IF EXISTS public.rh_sync_senior_empregados(jsonb);
+-- =========================================================================
+
+CREATE OR REPLACE FUNCTION public.rh_sync_senior_empregados(_linhas jsonb)
+RETURNS jsonb
+LANGUAGE plpgsql VOLATILE SECURITY DEFINER SET search_path = public, pg_temp
+AS $$
+DECLARE
+  v_ins int := 0;
+  v_upd int := 0;
+  v_ign int := 0;
+  v_id  bigint;
+  v_ex  bigint;
+  r     record;
+BEGIN
+  -- "ID" nao e identity nem tem default: quem insere precisa gerar.
+  SELECT coalesce(max("ID"), 0) INTO v_id FROM public."EMPREGADOS";
+
+  FOR r IN
+    SELECT * FROM jsonb_to_recordset(coalesce(_linhas, '[]'::jsonb)) AS x(
+      empresa bigint, cadastro bigint, nome text, admissao text,
+      situacao text, data_afastamento text, filial bigint, sexo text,
+      nascimento text, cpf text, pis text, salario text)
+  LOOP
+    IF r.empresa IS NULL OR r.cadastro IS NULL OR coalesce(btrim(r.nome), '') = '' THEN
+      v_ign := v_ign + 1;
+      CONTINUE;
+    END IF;
+
+    SELECT "ID" INTO v_ex
+      FROM public."EMPREGADOS"
+     WHERE "Empresa" = r.empresa AND "Cadastro" = r.cadastro
+     ORDER BY "ID"
+     LIMIT 1;
+
+    IF v_ex IS NULL THEN
+      v_id := v_id + 1;
+      INSERT INTO public."EMPREGADOS"
+        ("ID", "Empresa", "Cadastro", "Nome", "Admissão", "Situação",
+         "Data Afastamento", "Filial", "Sexo", "Nascimento", "CPF", "PIS", "Valor Salário")
+      VALUES
+        (v_id, r.empresa, r.cadastro, r.nome, r.admissao, r.situacao,
+         r.data_afastamento, r.filial, r.sexo, r.nascimento, r.cpf, r.pis, r.salario);
+      v_ins := v_ins + 1;
+    ELSE
+      UPDATE public."EMPREGADOS" e
+         SET "Situação"         = coalesce(r.situacao, e."Situação"),
+             "Data Afastamento" = r.data_afastamento,
+             "Valor Salário"    = coalesce(r.salario, e."Valor Salário")
+       WHERE e."ID" = v_ex
+         AND (e."Situação"         IS DISTINCT FROM coalesce(r.situacao, e."Situação")
+           OR e."Data Afastamento" IS DISTINCT FROM r.data_afastamento
+           OR e."Valor Salário"    IS DISTINCT FROM coalesce(r.salario, e."Valor Salário"));
+      IF FOUND THEN v_upd := v_upd + 1; END IF;
+    END IF;
+  END LOOP;
+
+  RETURN jsonb_build_object('inseridos', v_ins, 'atualizados', v_upd, 'ignorados', v_ign);
+END $$;
+
+-- Só o robô sincroniza. Sem GRANT para authenticated/anon: e o unico
+-- controle de acesso desta funcao, que e SECURITY DEFINER e escreve direto.
+REVOKE ALL ON FUNCTION public.rh_sync_senior_empregados(jsonb) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.rh_sync_senior_empregados(jsonb) FROM anon;
+REVOKE ALL ON FUNCTION public.rh_sync_senior_empregados(jsonb) FROM authenticated;
+GRANT EXECUTE ON FUNCTION public.rh_sync_senior_empregados(jsonb) TO service_role;
+
+NOTIFY pgrst, 'reload schema';
+
+
+-- ===== 20260906000009_empregados_indice_empresa_cadastro =====
+-- =========================================================================
+-- EMPREGADOS — indice em (Empresa, Cadastro)
+--
+-- A rh_sync_senior_empregados procura cada pessoa do lote por esse par.
+-- Sem indice, cada busca era uma varredura completa da tabela: um lote de
+-- 500 fazia 500 x 13.526 leituras, e a sincronizacao comecou a estourar o
+-- statement_timeout no segundo lote.
+--
+-- NAO e UNIQUE de proposito: a tabela tem 264 pares repetidos de antes
+-- desta integracao (e 83 linhas sem Cadastro). Um unique falharia na
+-- criacao. A RPC ja lida com isso pegando o menor "ID" (ORDER BY ... LIMIT 1).
+--
+-- Idempotente.
+-- ROLLBACK: DROP INDEX IF EXISTS public.empregados_empresa_cadastro_idx;
+-- =========================================================================
+
+CREATE INDEX IF NOT EXISTS empregados_empresa_cadastro_idx
+  ON public."EMPREGADOS" ("Empresa", "Cadastro");
+
+ANALYZE public."EMPREGADOS";
+
+NOTIFY pgrst, 'reload schema';
+
+
+-- ===== 20260906000010_situacoes_e_cod_situacao =====
+-- =========================================================================
+-- RH — tabela SITUACOES e a coluna "Cod Situacao" em EMPREGADOS
+--
+-- `BiEmpregados.sitafa` e a SITUACAO ATUAL do colaborador (7 = Demitido,
+-- 1 = Trabalhando, 3 = Auxilio Doenca...), nao a data de afastamento. Ate
+-- aqui a sincronizacao gravava so a DESCRICAO, em "Situação". Passa a
+-- gravar tambem o CODIGO, que e o que casa com a tabela de dominio.
+--
+-- CUIDADO COM O TIPO — no Senior os dois lados nao batem sozinhos:
+--   BiEmpregados.sitafa   smallint      -> 7
+--   BiSituacoes.situacao  varchar(10)   -> "007"  (com zero a esquerda)
+-- O MySQL casa por coercao implicita. Aqui os dois viram INTEGER, o que
+-- mata essa armadilha: "007" e 7 passam a ser o mesmo valor sempre.
+--
+-- SEM foreign key de EMPREGADOS para SITUACOES de proposito: a EMPREGADOS
+-- tem 13 mil linhas de carga historica e uma FK faria a sincronizacao
+-- inteira falhar por causa de um codigo novo que o Senior criasse antes de
+-- a dimensao ser replicada. O indice resolve a consulta; a integridade e
+-- garantida pelo robo, que replica SITUACOES antes dos empregados.
+--
+-- Idempotente.
+-- ROLLBACK:
+--   ALTER TABLE public."EMPREGADOS" DROP COLUMN IF EXISTS "Cod Situacao";
+--   DROP FUNCTION IF EXISTS public.rh_sync_senior_situacoes(jsonb);
+--   DROP TABLE IF EXISTS public."SITUACOES";
+-- =========================================================================
+
+-- ── 1) Dimensao: replica da BiSituacoes ─────────────────────────────────
+CREATE TABLE IF NOT EXISTS public."SITUACOES" (
+  codigo          integer PRIMARY KEY,
+  descricao       text NOT NULL,
+  abreviatura     text,
+  tipo            text,
+  tipo_descricao  text,
+  atualizado_em   timestamptz NOT NULL DEFAULT now()
+);
+
+COMMENT ON TABLE public."SITUACOES" IS
+  'Situacoes do colaborador, replicadas de hagg.BiSituacoes (Senior). Casa com EMPREGADOS."Cod Situacao".';
+
+ALTER TABLE public."SITUACOES" ENABLE ROW LEVEL SECURITY;
+
+-- Tabela de dominio: quem esta logado le (as telas precisam do rotulo).
+-- Escrita so pelo robo — nao ha GRANT de INSERT/UPDATE para authenticated.
+DROP POLICY IF EXISTS situacoes_select ON public."SITUACOES";
+CREATE POLICY situacoes_select ON public."SITUACOES" FOR SELECT TO authenticated USING (true);
+
+-- ── 2) O codigo no cadastro ─────────────────────────────────────────────
+ALTER TABLE public."EMPREGADOS"
+  ADD COLUMN IF NOT EXISTS "Cod Situacao" integer;
+
+COMMENT ON COLUMN public."EMPREGADOS"."Cod Situacao" IS
+  'Codigo da situacao atual (BiEmpregados.sitafa). Casa com SITUACOES.codigo. "Situação" guarda a descricao.';
+
+CREATE INDEX IF NOT EXISTS empregados_cod_situacao_idx
+  ON public."EMPREGADOS" ("Cod Situacao");
+
+-- ── 3) Sincronizacao da dimensao ────────────────────────────────────────
+-- Upsert simples: a BiSituacoes tem 110 linhas e o codigo e a chave.
+CREATE OR REPLACE FUNCTION public.rh_sync_senior_situacoes(_linhas jsonb)
+RETURNS jsonb
+LANGUAGE plpgsql VOLATILE SECURITY DEFINER SET search_path = public, pg_temp
+AS $$
+DECLARE
+  v_qtd int := 0;
+BEGIN
+  INSERT INTO public."SITUACOES" (codigo, descricao, abreviatura, tipo, tipo_descricao, atualizado_em)
+  SELECT x.codigo, x.descricao, x.abreviatura, x.tipo, x.tipo_descricao, now()
+    FROM jsonb_to_recordset(coalesce(_linhas, '[]'::jsonb)) AS x(
+           codigo integer, descricao text, abreviatura text, tipo text, tipo_descricao text)
+   WHERE x.codigo IS NOT NULL AND coalesce(btrim(x.descricao), '') <> ''
+      ON CONFLICT (codigo) DO UPDATE
+         SET descricao      = EXCLUDED.descricao,
+             abreviatura    = EXCLUDED.abreviatura,
+             tipo           = EXCLUDED.tipo,
+             tipo_descricao = EXCLUDED.tipo_descricao,
+             atualizado_em  = now()
+       WHERE public."SITUACOES".descricao      IS DISTINCT FROM EXCLUDED.descricao
+          OR public."SITUACOES".abreviatura    IS DISTINCT FROM EXCLUDED.abreviatura
+          OR public."SITUACOES".tipo           IS DISTINCT FROM EXCLUDED.tipo
+          OR public."SITUACOES".tipo_descricao IS DISTINCT FROM EXCLUDED.tipo_descricao;
+  GET DIAGNOSTICS v_qtd = ROW_COUNT;
+  RETURN jsonb_build_object('gravadas', v_qtd);
+END $$;
+
+REVOKE ALL ON FUNCTION public.rh_sync_senior_situacoes(jsonb) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.rh_sync_senior_situacoes(jsonb) FROM anon;
+REVOKE ALL ON FUNCTION public.rh_sync_senior_situacoes(jsonb) FROM authenticated;
+GRANT EXECUTE ON FUNCTION public.rh_sync_senior_situacoes(jsonb) TO service_role;
+
+NOTIFY pgrst, 'reload schema';
+
+
+-- ===== 20260906000011_rh_sync_empregados_com_cod_situacao =====
+-- Recria a rh_sync_senior_empregados da 20260906000008 acrescentando
+-- "Cod Situacao". Arquivo proprio em vez de editar a migration antiga:
+-- reescrever historico ja aplicado esconde o que mudou e quando.
+
+-- =========================================================================
+-- RH — sincronizacao do cadastro vindo do Senior (BiEmpregados)
+--
+-- Recebe um lote em jsonb e resolve INSERT/UPDATE de uma vez. A logica
+-- mora aqui, e nao no script, para que o robo nao precise de regra nem de
+-- leitura previa da tabela.
+--
+-- ATUALIZADA em 18/08/2026: passa a gravar tambem "Cod Situacao"
+-- (BiEmpregados.sitafa), que casa com a tabela SITUACOES.
+--
+-- CHAVE: (Empresa, Cadastro). Medido em 17/08/2026 nos 13.214 do Senior:
+--   numcad sozinho ....................  9.810 distintos  <- FUNDE PESSOAS
+--   numemp + numcad ................... 13.152 distintos
+--   numemp + tipcol + numcad .......... 13.214 distintos  <- unico
+-- `numcad = 1` sao CINCO pessoas diferentes (uma por empresa). Por isso a
+-- chave nunca pode ser so o cadastro.
+--
+-- O par (Empresa, Cadastro) deixa 62 colisoes, todas de tipcol = 2 (68
+-- pessoas no total, contra 13.146 de tipcol = 1). A EMPREGADOS nao tem
+-- coluna de tipo de colaborador, entao NAO da para separa-las aqui: o
+-- script filtra tipcol = 1 e as 68 ficam de fora, de proposito, ate haver
+-- decisao sobre criar a coluna.
+--
+-- NAO ha unique index em (Empresa, Cadastro) porque a tabela JA tem 347
+-- pares repetidos de antes desta integracao. Por isso o casamento e feito
+-- por SELECT ... LIMIT 1 (menor ID) em vez de ON CONFLICT.
+--
+-- O QUE ATUALIZA em quem ja existe: so o que muda com o tempo — situacao,
+-- data de afastamento e salario. Nome, CPF, admissao e nascimento NAO sao
+-- sobrescritos: a tela de Colaboradores permite edicao, e sobrescrever
+-- apagaria correcao feita a mao a cada rodada do robo.
+--
+-- Idempotente: rodar duas vezes com o mesmo lote nao insere de novo nem
+-- conta atualizacao (o UPDATE so acontece se algum valor mudou de fato).
+--
+-- ROLLBACK: DROP FUNCTION IF EXISTS public.rh_sync_senior_empregados(jsonb);
+-- =========================================================================
+
+CREATE OR REPLACE FUNCTION public.rh_sync_senior_empregados(_linhas jsonb)
+RETURNS jsonb
+LANGUAGE plpgsql VOLATILE SECURITY DEFINER SET search_path = public, pg_temp
+AS $$
+DECLARE
+  v_ins int := 0;
+  v_upd int := 0;
+  v_ign int := 0;
+  v_id  bigint;
+  v_ex  bigint;
+  r     record;
+BEGIN
+  -- "ID" nao e identity nem tem default: quem insere precisa gerar.
+  SELECT coalesce(max("ID"), 0) INTO v_id FROM public."EMPREGADOS";
+
+  FOR r IN
+    SELECT * FROM jsonb_to_recordset(coalesce(_linhas, '[]'::jsonb)) AS x(
+      empresa bigint, cadastro bigint, nome text, admissao text,
+      situacao text, data_afastamento text, filial bigint, sexo text,
+      nascimento text, cpf text, pis text, salario text, cod_situacao integer)
+  LOOP
+    IF r.empresa IS NULL OR r.cadastro IS NULL OR coalesce(btrim(r.nome), '') = '' THEN
+      v_ign := v_ign + 1;
+      CONTINUE;
+    END IF;
+
+    SELECT "ID" INTO v_ex
+      FROM public."EMPREGADOS"
+     WHERE "Empresa" = r.empresa AND "Cadastro" = r.cadastro
+     ORDER BY "ID"
+     LIMIT 1;
+
+    IF v_ex IS NULL THEN
+      v_id := v_id + 1;
+      INSERT INTO public."EMPREGADOS"
+        ("ID", "Empresa", "Cadastro", "Nome", "Admissão", "Situação", "Cod Situacao",
+         "Data Afastamento", "Filial", "Sexo", "Nascimento", "CPF", "PIS", "Valor Salário")
+      VALUES
+        (v_id, r.empresa, r.cadastro, r.nome, r.admissao, r.situacao, r.cod_situacao,
+         r.data_afastamento, r.filial, r.sexo, r.nascimento, r.cpf, r.pis, r.salario);
+      v_ins := v_ins + 1;
+    ELSE
+      UPDATE public."EMPREGADOS" e
+         SET "Situação"         = coalesce(r.situacao, e."Situação"),
+             "Cod Situacao"     = coalesce(r.cod_situacao, e."Cod Situacao"),
+             "Data Afastamento" = r.data_afastamento,
+             "Valor Salário"    = coalesce(r.salario, e."Valor Salário")
+       WHERE e."ID" = v_ex
+         AND (e."Situação"         IS DISTINCT FROM coalesce(r.situacao, e."Situação")
+           OR e."Cod Situacao"     IS DISTINCT FROM coalesce(r.cod_situacao, e."Cod Situacao")
+           OR e."Data Afastamento" IS DISTINCT FROM r.data_afastamento
+           OR e."Valor Salário"    IS DISTINCT FROM coalesce(r.salario, e."Valor Salário"));
+      IF FOUND THEN v_upd := v_upd + 1; END IF;
+    END IF;
+  END LOOP;
+
+  RETURN jsonb_build_object('inseridos', v_ins, 'atualizados', v_upd, 'ignorados', v_ign);
+END $$;
+
+-- Só o robô sincroniza. Sem GRANT para authenticated/anon: e o unico
+-- controle de acesso desta funcao, que e SECURITY DEFINER e escreve direto.
+REVOKE ALL ON FUNCTION public.rh_sync_senior_empregados(jsonb) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.rh_sync_senior_empregados(jsonb) FROM anon;
+REVOKE ALL ON FUNCTION public.rh_sync_senior_empregados(jsonb) FROM authenticated;
+GRANT EXECUTE ON FUNCTION public.rh_sync_senior_empregados(jsonb) TO service_role;
+
+NOTIFY pgrst, 'reload schema';
