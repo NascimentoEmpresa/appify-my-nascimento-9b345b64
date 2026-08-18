@@ -150,7 +150,7 @@ export default function ContratosERP() {
       const rowDate = new Date(r.data_vigencia + "T00:00:00");
       const v = vigente.get(key) ?? null;
       if (!v || rowDate.getTime() !== v.getTime()) continue;
-      map.set(r.contrato_id, (map.get(r.contrato_id) ?? 0) + (r.total_por_empregado ?? 0) * (r.qt_postos || 1));
+      map.set(r.contrato_id, (map.get(r.contrato_id) ?? 0) + (r.total_por_empregado ?? 0) * (r.qt_postos || 0));
     }
     return map;
   }, [planilha]);

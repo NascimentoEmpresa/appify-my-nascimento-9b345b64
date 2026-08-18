@@ -102,6 +102,7 @@ import MaloteOrcamentoAdministrativo from "./pages/malote/OrcamentoAdministrativ
 import MaloteClassificacoesMalote from "./pages/malote/ClassificacoesMalote";
 import MaloteOrcamentoContratos from "./pages/malote/OrcamentoContratos";
 import MaloteOrcamentoGeral from "./pages/malote/OrcamentoGeral";
+import MaloteDetalheOrcamento from "./pages/malote/DetalheOrcamento";
 import GeradorPops from "./pages/controladoria/GeradorPops";
 import MaloteAprovacoes from "./pages/malote/Aprovacoes";
 import MalotePagamento from "./pages/malote/PagamentoMalote";
@@ -384,6 +385,7 @@ const App = () => (
             <Route path="malote/classificacoes-malote" element={<MaloteClassificacoesMalote />} />
             <Route path="malote/orcamento-contratos" element={<MaloteOrcamentoContratos />} />
             <Route path="malote/orcamento-geral" element={<MaloteOrcamentoGeral />} />
+            <Route path="malote/detalhe-orcamento" element={<MaloteDetalheOrcamento />} />
             <Route path="orcamento" element={<Orcamento />} />
             {/* Suprimentos */}
             <Route path="suprimentos/fornecedores" element={<Fornecedores />} />

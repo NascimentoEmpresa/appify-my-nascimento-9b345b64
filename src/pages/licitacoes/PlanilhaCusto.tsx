@@ -355,7 +355,9 @@ export default function PlanilhaCusto() {
                     {formatBRL(r.total_por_empregado)}
                   </td>
                   <td className="px-4 py-3 text-center font-mono text-sm text-muted-foreground">
-                    {formatBRL(r.total_por_empregado * (r.qt_postos || 1))}
+                    {/* Posto sem ninguém (qt_postos = 0) zera o Total Posto — o
+                        Total/Empregado (unitário) continua aparecendo ao lado. */}
+                    {formatBRL(r.total_por_empregado * (r.qt_postos || 0))}
                   </td>
                   <td className="px-4 py-3 text-center">
                     <span
@@ -1261,7 +1263,7 @@ function ContratosModal({ rows, statusMap, contratosAtivos }: { rows: PlanilhaCu
   const byContrato = rowsVigentes.reduce<Record<string, ContratoItem>>((acc, r) => {
     const key = r.contrato;
     if (!acc[key]) acc[key] = { cliente: r.cliente, contrato: r.contrato, orcado: 0, executado: 0, postos_exec: 0, postoRows: [], justificativas: r.justificativa_divergencia ?? [] };
-    const total = r.total_por_empregado * (r.qt_postos || 1);
+    const total = r.total_por_empregado * (r.qt_postos || 0);
     if (r.orexec === "EXECUTADO") { acc[key].executado += total; acc[key].postos_exec += r.qt_postos || 0; }
     else acc[key].orcado += total;
     acc[key].postoRows.push(r);
@@ -1326,7 +1328,7 @@ function ContratosModal({ rows, statusMap, contratosAtivos }: { rows: PlanilhaCu
               // Monta drill-down por posto
               const porPosto = c.postoRows.reduce<Record<string, { posto: string; orcado: number; executado: number; postos_orc: number; postos_exec: number }>>((a, r) => {
                 if (!a[r.posto]) a[r.posto] = { posto: r.posto, orcado: 0, executado: 0, postos_orc: 0, postos_exec: 0 };
-                const t = r.total_por_empregado * (r.qt_postos || 1);
+                const t = r.total_por_empregado * (r.qt_postos || 0);
                 if (r.orexec === "EXECUTADO") { a[r.posto].executado += t; a[r.posto].postos_exec += r.qt_postos || 0; }
                 else { a[r.posto].orcado += t; a[r.posto].postos_orc += r.qt_postos || 0; }
                 return a;
@@ -1556,7 +1558,7 @@ function ClientesModal({ rows, statusMap }: { rows: PlanilhaCustoRow[]; statusMa
   }>>((acc, r) => {
     const key = r.cliente;
     if (!acc[key]) acc[key] = { cliente: r.cliente, contratos: new Set(), orcado: 0, executado: 0, postos: 0 };
-    const total = r.total_por_empregado * (r.qt_postos || 1);
+    const total = r.total_por_empregado * (r.qt_postos || 0);
     if (r.orexec === "EXECUTADO") acc[key].executado += total;
     else acc[key].orcado += total;
     acc[key].postos += r.qt_postos || 0;
