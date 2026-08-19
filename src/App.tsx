@@ -85,6 +85,7 @@ import PainelManutencoes from "./pages/suprimentos/PainelManutencoes";
 import EpisAdmissoes from "./pages/suprimentos/EpisAdmissoes";
 import SolicitarMateriais from "./pages/encarregados/SolicitarMateriais";
 import MeusPedidos from "./pages/encarregados/MeusPedidos";
+import ControleDiarias from "./pages/operacional/ControleDiarias";
 import ContasPagar from "./pages/financeiro/ContasPagar";
 import ContasReceber from "./pages/financeiro/ContasReceber";
 import Cobrancas from "./pages/cobrancas/Cobrancas";
@@ -266,6 +267,9 @@ const App = () => (
             <Route path="encarregados/chamados" element={<MeusChamados base="/app/encarregados/chamados" />} />
             <Route path="encarregados/chamados/novo" element={<AbrirChamado base="/app/encarregados/chamados" />} />
             <Route path="encarregados/chamados/:id/acompanhar" element={<AcompanharChamado base="/app/encarregados/chamados" />} />
+            {/* Operacional — Controle de Diárias */}
+            <Route path="operacional" element={<Navigate to="/app/operacional/diarias" replace />} />
+            <Route path="operacional/diarias" element={<ControleDiarias />} />
             {/* Sistemas */}
             <Route path="sistemas/solicitacoes-erp" element={<SolicitacoesErp />} />
             {/* Chamados de Sistemas (help desk) — telas de abrir/meus chamados também
