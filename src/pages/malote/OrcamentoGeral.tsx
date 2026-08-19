@@ -10,8 +10,9 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Accordion, AccordionItem, AccordionTrigger, AccordionContent } from "@/components/ui/accordion";
+import { Collapsible, CollapsibleTrigger, CollapsibleContent } from "@/components/ui/collapsible";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import { Info, Building2, Briefcase, Eye } from "lucide-react";
+import { Info, Building2, Briefcase, Eye, ChevronDown } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useEmpresaId } from "@/hooks/useEmpresaId";
 import { usePlanejamentosOrcamento, useClassificacoesOrcamentoAdmin, ClassificacaoOrcamento } from "@/hooks/usePlanejamentoOrcamentario";
@@ -161,6 +162,8 @@ export default function OrcamentoGeral() {
   const [filtroOrigem, setFiltroOrigem] = useState<"todas" | OrigemOrcamento>("todas");
   const [busca, setBusca] = useState("");
   const [ocultarHistorico, setOcultarHistorico] = useState(true);
+  const [abertoAdm, setAbertoAdm] = useState(true);
+  const [abertoContrato, setAbertoContrato] = useState(true);
 
   const referenciaPeriodo = useMemo(() => fimDoMes(anoMes), [anoMes]);
 
@@ -380,13 +383,21 @@ export default function OrcamentoGeral() {
       </Card>
 
       {mostrarAdm && (
-        <div>
-          <LigacaoSectionBanner
-            titulo="Administrativo"
-            subtitulo="Classificações do Malote alimentadas pelo Orçamento Administrativo, via ligação."
-            icon={<Building2 />}
-            cor="blue"
-          />
+        <Collapsible open={abertoAdm} onOpenChange={setAbertoAdm}>
+          <CollapsibleTrigger asChild>
+            <button type="button" className="flex w-full items-center gap-2 text-left">
+              <div className="flex-1">
+                <LigacaoSectionBanner
+                  titulo="Administrativo"
+                  subtitulo="Classificações do Malote alimentadas pelo Orçamento Administrativo, via ligação."
+                  icon={<Building2 />}
+                  cor="blue"
+                />
+              </div>
+              <ChevronDown className={cn("h-4 w-4 shrink-0 text-muted-foreground transition-transform", abertoAdm && "rotate-180")} />
+            </button>
+          </CollapsibleTrigger>
+          <CollapsibleContent>
         <Card>
           <CardContent className="overflow-x-auto pt-6">
             <Table>
@@ -456,17 +467,26 @@ export default function OrcamentoGeral() {
             </Table>
           </CardContent>
         </Card>
-        </div>
+          </CollapsibleContent>
+        </Collapsible>
       )}
 
       {mostrarContrato && (
-        <div>
-          <LigacaoSectionBanner
-            titulo="Contratos"
-            subtitulo="Classificações do Malote alimentadas pelas rubricas da Planilha de Custo, via ligação."
-            icon={<Briefcase />}
-            cor="amber"
-          />
+        <Collapsible open={abertoContrato} onOpenChange={setAbertoContrato}>
+          <CollapsibleTrigger asChild>
+            <button type="button" className="flex w-full items-center gap-2 text-left">
+              <div className="flex-1">
+                <LigacaoSectionBanner
+                  titulo="Contratos"
+                  subtitulo="Classificações do Malote alimentadas pelas rubricas da Planilha de Custo, via ligação."
+                  icon={<Briefcase />}
+                  cor="amber"
+                />
+              </div>
+              <ChevronDown className={cn("h-4 w-4 shrink-0 text-muted-foreground transition-transform", abertoContrato && "rotate-180")} />
+            </button>
+          </CollapsibleTrigger>
+          <CollapsibleContent>
         <Card>
           <CardContent className="pt-6">
             {isLoading && <p className="text-center text-muted-foreground py-8">Carregando...</p>}
@@ -536,7 +556,8 @@ export default function OrcamentoGeral() {
             )}
           </CardContent>
         </Card>
-        </div>
+          </CollapsibleContent>
+        </Collapsible>
       )}
     </div>
   );

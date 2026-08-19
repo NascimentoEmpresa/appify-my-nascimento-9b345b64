@@ -1,0 +1,27 @@
+{
+  "_leia": "Copie para credenciais.json e preencha com os dados reais. O credenciais.json é barrado pelo .gitignore. ATENÇÃO: este repositório é PÚBLICO — não escreva host, usuário nem senha reais neste arquivo de exemplo.",
+
+  "ssh": {
+    "host": "IP_DO_SERVIDOR",
+    "porta": 22,
+    "usuario": "USUARIO_DO_TUNEL",
+    "senha": "PREENCHER"
+  },
+  "mysql": {
+    "_nota": "host 127.0.0.1 é a visão de DENTRO do servidor, depois do túnel. banco em branco = rode 'descobrir' que ele lista os disponíveis.",
+    "host": "127.0.0.1",
+    "porta": 3306,
+    "usuario": "USUARIO_DO_MYSQL",
+    "senha": "PREENCHER",
+    "banco": ""
+  },
+  "supabase": {
+    "_nota": "porta 5432 (session pooler), não 6543 — a carga usa transação com DDL.",
+    "host": "aws-1-sa-east-1.pooler.supabase.com",
+    "porta": 5432,
+    "usuario": "postgres.PROJECT_REF",
+    "banco": "postgres",
+    "senha": "PREENCHER",
+    "schema": "espelho"
+  }
+}

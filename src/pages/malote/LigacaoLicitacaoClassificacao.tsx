@@ -26,6 +26,7 @@ import {
 } from "@/hooks/useMaloteAdministrativoClassificacaoLink";
 import { useClassificacoesOrcamentoAdmin } from "@/hooks/usePlanejamentoOrcamentario";
 import { useClassificacoesAdministrativoAdmin } from "@/hooks/useMaloteClassificacaoAdministrativo";
+import { useDescricoesOutros } from "@/hooks/usePlanilhaCusto";
 import { CLASSIFICACOES_LICITACAO, labelClassificacaoLicitacao } from "@/lib/planilhaCustoClassificacoes";
 
 // Destaque visual pras duas seções de Ligação (Licitação vs Administrativo)
@@ -97,6 +98,7 @@ interface FormState {
 export function LigacaoLicitacaoClassificacao({ podeEditar }: { podeEditar: boolean }) {
   const { data: ligacoes = [], isLoading } = useLigacoesLicitacaoClassificacao();
   const { data: classificacoesMalote = [] } = useClassificacoesOrcamentoAdmin();
+  const { data: descricoesOutros = [] } = useDescricoesOutros();
   const salvar = useSalvarLigacaoLicitacaoClassificacao();
   const salvarVarias = useSalvarLigacoesLicitacaoClassificacao();
   const excluir = useExcluirLigacaoLicitacaoClassificacao();
@@ -105,26 +107,38 @@ export function LigacaoLicitacaoClassificacao({ podeEditar }: { podeEditar: bool
   const [editando, setEditando] = useState<FormState | null>(null);
   const [ordem, setOrdem] = useState<{ coluna: Coluna; asc: boolean }>({ coluna: "licitacao", asc: true });
 
+  // Junta a lista fixa de rubricas com as descrições dinâmicas de Outros
+  // 1/2/3 (SIS-2026-0168, a pedido do Iury) — cada descrição já digitada
+  // em alguma linha da Planilha de Custo fica ligável individualmente,
+  // igual a uma rubrica fixa.
+  const opcoesLicitacaoTodas = useMemo(
+    () => [
+      ...CLASSIFICACOES_LICITACAO.map((c) => ({ campo: c.campo, label: c.label, grupo: c.grupo })),
+      ...descricoesOutros,
+    ],
+    [descricoesOutros]
+  );
+  const labelPorCampo = useMemo(() => new Map(opcoesLicitacaoTodas.map((c) => [c.campo, c.label])), [opcoesLicitacaoTodas]);
+  const labelDoCampo = (campo: string) => labelPorCampo.get(campo) ?? labelClassificacaoLicitacao(campo);
+
   // Itens já ligados não aparecem de novo pro picker de "Adicionar ligação"
   // (pedido do Iury) — cada campo só pode estar em uma ligação por vez, o
   // picker de edição continua mostrando o próprio valor atual (disabled).
   const camposJaLigados = useMemo(() => new Set(ligacoes.map((l) => l.campo_planilha_custo)), [ligacoes]);
-  const opcoesLicitacaoDisponiveis = CLASSIFICACOES_LICITACAO.filter((c) => !camposJaLigados.has(c.campo)).map((c) => ({
-    value: c.campo,
-    label: c.label,
-    hint: c.grupo,
-  }));
+  const opcoesLicitacaoDisponiveis = opcoesLicitacaoTodas
+    .filter((c) => !camposJaLigados.has(c.campo))
+    .map((c) => ({ value: c.campo, label: c.label, hint: c.grupo }));
   const opcoesMalote = classificacoesMalote.map((c) => ({ value: c.id, label: c.nome }));
 
   const ordenadas = useMemo(() => {
     const copia = [...ligacoes];
     copia.sort((a, b) => {
-      const va = ordem.coluna === "licitacao" ? labelClassificacaoLicitacao(a.campo_planilha_custo) : a.classificacao_malote?.nome ?? "";
-      const vb = ordem.coluna === "licitacao" ? labelClassificacaoLicitacao(b.campo_planilha_custo) : b.classificacao_malote?.nome ?? "";
+      const va = ordem.coluna === "licitacao" ? labelDoCampo(a.campo_planilha_custo) : a.classificacao_malote?.nome ?? "";
+      const vb = ordem.coluna === "licitacao" ? labelDoCampo(b.campo_planilha_custo) : b.classificacao_malote?.nome ?? "";
       return ordem.asc ? va.localeCompare(vb, "pt-BR") : vb.localeCompare(va, "pt-BR");
     });
     return copia;
-  }, [ligacoes, ordem]);
+  }, [ligacoes, ordem, labelPorCampo]);
 
   function alternarOrdem(coluna: Coluna) {
     setOrdem((o) => (o.coluna === coluna ? { coluna, asc: !o.asc } : { coluna, asc: true }));
@@ -233,7 +247,7 @@ export function LigacaoLicitacaoClassificacao({ podeEditar }: { podeEditar: bool
               )}
               {ordenadas.map((l) => (
                 <TableRow key={l.id}>
-                  <TableCell className="py-1.5">{labelClassificacaoLicitacao(l.campo_planilha_custo)}</TableCell>
+                  <TableCell className="py-1.5">{labelDoCampo(l.campo_planilha_custo)}</TableCell>
                   <TableCell className="py-1.5">{l.classificacao_malote?.nome ?? "—"}</TableCell>
                   {podeEditar && (
                     <TableCell className="py-1.5 text-right">
@@ -271,7 +285,7 @@ export function LigacaoLicitacaoClassificacao({ podeEditar }: { podeEditar: bool
                 <SearchableSelect
                   value={editando.campos[0] ?? ""}
                   onChange={() => {}}
-                  options={CLASSIFICACOES_LICITACAO.map((c) => ({ value: c.campo, label: c.label, hint: c.grupo }))}
+                  options={opcoesLicitacaoTodas.map((c) => ({ value: c.campo, label: c.label, hint: c.grupo }))}
                   placeholder="Selecione a classificação..."
                   searchPlaceholder="Buscar..."
                   disabled
