@@ -29,6 +29,8 @@ import {
   BloqueioRegra,
 } from "@/hooks/useMaloteConfig";
 import { LigacaoLicitacaoClassificacao, LigacaoAdministrativoClassificacaoSection, LigacaoSectionBanner } from "./LigacaoLicitacaoClassificacao";
+import { AnalistasContratos } from "./AnalistasContratos";
+import { FormasPagamento } from "./FormasPagamento";
 import { Briefcase, Building2 } from "lucide-react";
 
 const DIAS_UTEIS_OPCOES = Array.from({ length: 15 }, (_, i) => i + 1);
@@ -81,6 +83,8 @@ export default function Configuracoes() {
         <TabsList>
           <TabsTrigger value="config">Configurações do Malote</TabsTrigger>
           <TabsTrigger value="ligacoes">Ligação de Licitações e Classificações</TabsTrigger>
+          <TabsTrigger value="analistas">Analistas de Contratos</TabsTrigger>
+          <TabsTrigger value="formas-pagamento">Formas de Pagamento</TabsTrigger>
         </TabsList>
 
         <TabsContent value="config" className="space-y-6 mt-4">
@@ -325,6 +329,14 @@ export default function Configuracoes() {
             />
             <LigacaoAdministrativoClassificacaoSection podeEditar={podeEditar} />
           </div>
+        </TabsContent>
+
+        <TabsContent value="analistas" className="mt-4">
+          <AnalistasContratos podeEditar={podeEditar} />
+        </TabsContent>
+
+        <TabsContent value="formas-pagamento" className="mt-4">
+          <FormasPagamento podeEditar={podeEditar} />
         </TabsContent>
       </Tabs>
     </div>

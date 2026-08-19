@@ -1,6 +1,8 @@
+import { useMemo } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { useEmpresaAtiva } from "@/context/EmpresaAtivaContext";
+import { chaveCampoOutros, GRUPO_OUTROS } from "@/lib/planilhaCustoClassificacoes";
 
 export type JustificativaEntry = {
   ts: string;
@@ -221,6 +223,37 @@ export function somarCamposEmLinhas(linhasVigentes: PlanilhaCustoRow[], campos: 
     // "|| 1" faria um posto zerado contar como 1 pessoa fictícia no Orçado.
     return soma + valorLinha * (r.qt_postos || 0);
   }, 0);
+}
+
+export interface DescricaoOutros {
+  campo: string; // chaveCampoOutros(descricao) — mesma chave usada em useOrcamentoContratos
+  label: string; // descrição original (primeira grafia encontrada)
+  grupo: string;
+}
+
+// Descrições distintas já digitadas em outros_1/2/3 de QUALQUER contrato —
+// pra Configurações → Ligação (SIS-2026-0168, a pedido do Iury) oferecer
+// cada descrição como algo ligável a uma Classificação do Malote, já que
+// esses campos não têm uma "classificação" fixa (ver
+// planilhaCustoClassificacoes.ts). Não filtra por vigência/contrato: a
+// ligação vale pra descrição em qualquer lugar que ela apareça.
+export function useDescricoesOutros() {
+  const { data: rows = [], isLoading } = usePlanilhaCustos();
+  const data = useMemo(() => {
+    const porChave = new Map<string, string>();
+    for (const r of rows) {
+      for (const campo of ["outros_1_descricao", "outros_2_descricao", "outros_3_descricao"] as const) {
+        const desc = (r[campo] ?? "").trim();
+        if (!desc) continue;
+        const chave = chaveCampoOutros(desc);
+        if (!porChave.has(chave)) porChave.set(chave, desc);
+      }
+    }
+    return Array.from(porChave.entries())
+      .map(([campo, label]): DescricaoOutros => ({ campo, label, grupo: GRUPO_OUTROS }))
+      .sort((a, b) => a.label.localeCompare(b.label, "pt-BR"));
+  }, [rows]);
+  return { data, isLoading };
 }
 
 export function usePlanilhaCustos(filtros?: { cliente?: string; contrato?: string; q?: string }) {
