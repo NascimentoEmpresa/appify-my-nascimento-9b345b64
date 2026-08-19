@@ -1,9 +1,32 @@
 {
-  "_leia": "Tabelas do MySQL (banco hagg) espelhadas no schema 'espelho' do Supabase. Comece pequeno: acrescente tabela por tabela conforme for validando.",
+  "_leia": "Tabelas do MySQL (banco hagg) espelhadas no schema 'espelho' do Supabase. A carga usa streaming + COPY, então tabela grande não segura memória nem faz uma ida e volta por lote.",
 
-  "_cuidado": "BiMarcacoes (~3,4 milhões de linhas) e R046VER (~2 milhões) são grandes. Como a carga recarrega a tabela inteira todo dia, elas podem estourar o timeout de 60 min do workflow. Só inclua depois de medir.",
+  "_ordem": "Pequenas primeiro, grandes por último: se um dia estourar o tempo, o log mostra exatamente onde parou.",
 
   "tabelas": [
-    "BiSindicatos"
+    "R008INC",
+    "log_mail",
+    "logs",
+    "senior_persons",
+    "R030EMP",
+    "R008EVC",
+    "BiSindicatos",
+    "migrations",
+    "BiSituacoes",
+    "BiFilial",
+    "BiCentroCusto",
+    "BiCargos",
+    "BiOrganogramas",
+    "R044CAL",
+    "BiPostos",
+    "R046INF",
+    "BiEmpregados",
+    "BiAssinalamentos",
+    "BiFichaComplementar",
+    "R046HOL",
+    "BiHistSalarial",
+    "BiFichaFinanceira",
+    "R046VER",
+    "BiMarcacoes"
   ]
 }

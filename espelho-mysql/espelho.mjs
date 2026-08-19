@@ -26,8 +26,12 @@
 import { Client as SshClient } from 'ssh2';
 import mysql from 'mysql2/promise';
 import pg from 'pg';
+import { from as copyFrom } from 'pg-copy-streams';
+import { csv } from './csv.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
+import { Transform } from 'node:stream';
+import { pipeline } from 'node:stream/promises';
 import { fileURLToPath } from 'node:url';
 
 const AQUI = path.dirname(fileURLToPath(import.meta.url));
@@ -150,13 +154,7 @@ function tipoPg(col) {
   return 'text'; // char, varchar, text, enum, set, time, bit e o que sobrar
 }
 
-// Alguns valores que o driver do MySQL entrega não entram direto no Postgres.
-function valorPg(v) {
-  if (v === null || v === undefined) return null;
-  if (Buffer.isBuffer(v)) return v;
-  if (typeof v === 'object') return JSON.stringify(v); // coluna json
-  return v;
-}
+// csv() vive em csv.mjs para ser testável sozinho — ver csv.teste.mjs.
 
 // Os dois bancos citam identificador de jeito diferente, e misturar dá erro de
 // sintaxe: Postgres usa aspas duplas, MySQL usa crase. Aspas duplas no MySQL
@@ -328,6 +326,7 @@ async function cmdSincronizar() {
   const resumo = [];
   try {
     for (const tabela of alvo) {
+      const t0 = Date.now();
       const cols = await colunasDe(my, tabela);
       const nomes = cols.map((c) => c.COLUMN_NAME);
       const pk = cols.filter((c) => c.COLUMN_KEY === 'PRI').map((c) => c.COLUMN_NAME);
@@ -340,26 +339,30 @@ async function cmdSincronizar() {
       await pgc.query(`TRUNCATE ${aspas(SCHEMA)}.${aspas(tabela)}`);
 
       // Origem é MySQL: crase, não aspas.
-      const [linhas] = await my.query(
-        `SELECT ${nomes.map(crase).join(', ')} FROM ${crase(tabela)}` +
-        (LIMITE ? ` LIMIT ${LIMITE}` : '')
-      );
+      const sql = `SELECT ${nomes.map(crase).join(', ')} FROM ${crase(tabela)}` +
+                  (LIMITE ? ` LIMIT ${LIMITE}` : '');
 
+      // Streaming + COPY, e não "carrega tudo e insere em lotes". Com 3,5
+      // milhões de linhas, o jeito antigo faria ~7.100 idas e voltas até o
+      // Supabase e ainda seguraria a tabela inteira na memória do runner.
+      // O COPY é o carregador em massa do Postgres: uma conexão só, fluxo
+      // contínuo, memória constante.
       const colsSql = nomes.map(aspas).join(', ');
-      const LOTE = 500;
-      for (let i = 0; i < linhas.length; i += LOTE) {
-        const fatia = linhas.slice(i, i + LOTE);
-        const valores = [];
-        const marcadores = fatia.map((linha, j) => {
-          const base = j * nomes.length;
-          for (const n of nomes) valores.push(valorPg(linha[n]));
-          return `(${nomes.map((_, k) => `$${base + k + 1}`).join(', ')})`;
-        });
-        await pgc.query(
-          `INSERT INTO ${aspas(SCHEMA)}.${aspas(tabela)} (${colsSql}) VALUES ${marcadores.join(', ')}`,
-          valores
-        );
-      }
+      const destino = pgc.query(copyFrom(
+        `COPY ${aspas(SCHEMA)}.${aspas(tabela)} (${colsSql}) FROM STDIN WITH (FORMAT csv, NULL '\\N')`
+      ));
+
+      let linhas = 0;
+      const origem = my.connection.query(sql).stream();
+      const paraCsv = new Transform({
+        objectMode: true,
+        transform(linha, _cod, pronto) {
+          linhas++;
+          pronto(null, nomes.map((n) => csv(linha[n])).join(',') + '\n');
+        },
+      });
+
+      await pipeline(origem, paraCsv, destino);
 
       // A PK da origem vira índice único aqui — o espelho fica consultável
       // com a mesma chave, e uma origem duplicada estoura em vez de passar.
@@ -371,8 +374,9 @@ async function cmdSincronizar() {
         );
       }
 
-      resumo.push({ tabela, linhas: linhas.length, pk: pk.join('+') || '(sem PK)' });
-      console.log(`  ${tabela.padEnd(40)} ${String(linhas.length).padStart(8)} linhas`);
+      resumo.push({ tabela, linhas, pk: pk.join('+') || '(sem PK)' });
+      const seg = ((Date.now() - t0) / 1000).toFixed(1);
+      console.log(`  ${tabela.padEnd(34)} ${String(linhas).padStart(9)} linhas  ${seg.padStart(6)}s`);
     }
 
     await pgc.query(COMMIT ? 'COMMIT' : 'ROLLBACK');
