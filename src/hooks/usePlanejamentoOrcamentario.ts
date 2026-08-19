@@ -39,6 +39,7 @@ export interface AprovadorDisponivel {
   id: string;
   nome: string;
   cargo: string | null;
+  email: string | null;
 }
 
 // profiles.cargo é texto livre curado manualmente (ex.: "GERENTE LICITACAO",
@@ -72,6 +73,7 @@ export function useAprovadoresDisponiveis(slot?: 1 | 2 | 3) {
         id: u.id,
         nome: u.display_name || u.email || u.id,
         cargo: u.cargo,
+        email: u.email,
       })) as AprovadorDisponivel[];
       if (!slot) return todos;
       return todos.filter((u) => u.cargo && CARGO_SLOT_REGEX[slot].test(u.cargo));
