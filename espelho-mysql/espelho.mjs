@@ -47,7 +47,7 @@ if (argLimite && (!Number.isInteger(LIMITE) || LIMITE <= 0)) {
   process.exit(1);
 }
 
-const COMANDOS = ['testar', 'descobrir', 'sincronizar'];
+const COMANDOS = ['testar', 'descobrir', 'perfilar', 'sincronizar'];
 if (!COMANDOS.includes(COMANDO)) {
   console.error(`comando inválido. use um de: ${COMANDOS.join(' | ')}`);
   process.exit(1);
@@ -239,6 +239,64 @@ async function cmdDescobrir() {
   await my.end(); ssh.end();
 }
 
+// Mede o que é preciso saber ANTES de decidir se uma tabela cabe em recarga
+// total: quantas linhas de verdade (TABLE_ROWS do information_schema é
+// estimativa e erra feio no InnoDB), quais colunas serviriam de corte para
+// carga incremental, e quanto tempo custa ler pelo túnel.
+async function cmdPerfilar() {
+  const pedidas = process.argv.slice(3).filter((a) => !a.startsWith('--'));
+  const ssh = await abrirSsh();
+  const my = await abrirMysql(ssh);
+
+  let alvo = pedidas;
+  if (!alvo.length) {
+    const arq = path.join(AQUI, 'tabelas.json');
+    alvo = fs.existsSync(arq) ? JSON.parse(fs.readFileSync(arq, 'utf8')).tabelas : [];
+  }
+  if (!alvo.length) {
+    console.error('diga quais tabelas perfilar. Ex.: node espelho.mjs perfilar BiMarcacoes');
+    await my.end(); ssh.end();
+    process.exit(1);
+  }
+
+  const AMOSTRA = 50_000;
+  for (const tabela of alvo) {
+    console.log(`\n=== ${tabela} ===`);
+    const cols = await colunasDe(my, tabela);
+
+    const [[{ n }]] = await my.query(`SELECT COUNT(*) AS n FROM ${crase(tabela)}`);
+    console.log(`linhas (exato): ${Number(n).toLocaleString('pt-BR')}`);
+
+    const pk = cols.filter((c) => c.COLUMN_KEY === 'PRI').map((c) => c.COLUMN_NAME);
+    console.log(`chave primária: ${pk.join(' + ') || '(nenhuma)'}`);
+
+    // Candidata a corte incremental: coluna de data/hora, ou chave numérica
+    // que só cresce. Sem uma dessas, só resta recarga total.
+    const datas = cols.filter((c) => /^(date|datetime|timestamp)$/i.test(c.DATA_TYPE)).map((c) => c.COLUMN_NAME);
+    console.log(`colunas de data: ${datas.join(', ') || '(nenhuma)'}`);
+
+    console.log(`colunas (${cols.length}): ${cols.map((c) => `${c.COLUMN_NAME}:${c.DATA_TYPE}`).join(', ')}`);
+
+    const nomes = cols.map((c) => c.COLUMN_NAME);
+    const t0 = Date.now();
+    await my.query(`SELECT ${nomes.map(crase).join(', ')} FROM ${crase(tabela)} LIMIT ${AMOSTRA}`);
+    const seg = (Date.now() - t0) / 1000;
+    const lidas = Math.min(AMOSTRA, Number(n));
+    console.log(`leitura: ${lidas.toLocaleString('pt-BR')} linhas em ${seg.toFixed(1)}s`);
+    if (Number(n) > lidas && seg > 0) {
+      const estimado = (seg / lidas) * Number(n) / 60;
+      console.log(`estimativa da tabela inteira: ~${estimado.toFixed(1)} min só de leitura`);
+    }
+
+    for (const d of datas.slice(0, 3)) {
+      const [[mm]] = await my.query(`SELECT MIN(${crase(d)}) AS ini, MAX(${crase(d)}) AS fim FROM ${crase(tabela)}`);
+      console.log(`  intervalo de ${d}: ${mm.ini} .. ${mm.fim}`);
+    }
+  }
+
+  await my.end(); ssh.end();
+}
+
 async function cmdSincronizar() {
   const arqTabelas = path.join(AQUI, 'tabelas.json');
   if (!fs.existsSync(arqTabelas)) {
@@ -333,6 +391,7 @@ async function cmdSincronizar() {
 try {
   if (COMANDO === 'testar') await cmdTestar();
   else if (COMANDO === 'descobrir') await cmdDescobrir();
+  else if (COMANDO === 'perfilar') await cmdPerfilar();
   else await cmdSincronizar();
   process.exit(0);
 } catch (e) {
