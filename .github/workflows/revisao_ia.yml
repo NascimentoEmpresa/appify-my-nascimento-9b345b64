@@ -257,11 +257,14 @@ jobs:
 
           Comece por J1, que é o maior gargalo do projeto: liberar um módulo
           no Gerenciamento de Acesso e o usuário continuar sem ver nada,
-          resolvendo só com "Administrador Geral". São sete causas distintas
-          (J1.A a J1.G) e você precisa percorrer as sete, não a primeira que
-          parecer se aplicar. J1.G você agora CONSEGUE conferir: a frase do
-          teste está (ou não está) em `contexto-da-pr.txt`. Se não estiver,
-          diga que não estiver — não escreva "não verificável neste ambiente".
+          resolvendo só com "Administrador Geral". São seis causas distintas
+          (J1.A a J1.F) e você precisa percorrer as seis, não a primeira que
+          parecer se aplicar.
+
+          J1.G não é causa: é o teste que fecha o assunto, e você agora
+          CONSEGUE conferir — a frase está (ou não está) em
+          `contexto-da-pr.txt`. Se não estiver, diga que não está. Nunca
+          escreva "não verificável neste ambiente".
 
           ## Primeira coisa que você faz, antes de analisar qualquer coisa
 
