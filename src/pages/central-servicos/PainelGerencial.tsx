@@ -15,6 +15,12 @@ import VisaoExecutiva from "./VisaoExecutiva";
 import { useFormPerms } from "@/hooks/useFormPerms";
 import { useVinculoEmpregado } from "@/hooks/useVinculoEmpregado";
 import { useAuth } from "@/hooks/useAuth";
+import { Grupo, ItemDist, Lider, Mapa, Resp, Viz } from "./painel/tipos";
+import { CAMPOS_MAPA, CHART_TIPOS, IND, IND_ALIN, IND_EXEC, IND_PLANO, autoMapa } from "./painel/mapeamento";
+import {
+  agrupaMedia, deltaSerie, distrib, faixa, listaQuem, mediaNota, nota, pctPrimeiraOpcao,
+  respValor, serieTrimestre, setorDe, trimestre, SEM_SETOR,
+} from "./painel/calculos";
 
 // =====================================================================
 // PAINEL GERENCIAL — Nascimento Formulários (feedbacks)
@@ -26,8 +32,6 @@ import { useAuth } from "@/hooks/useAuth";
 
 const CORES = ["#2563eb", "#16a34a", "#f59e0b", "#dc2626", "#7c3aed", "#0891b2", "#db2777", "#ea580c", "#64748b", "#0f3171"];
 const CAT_CORES = ["#2563eb", "#16a34a", "#f59e0b", "#dc2626", "#64748b"];  // situação: desenvolvimento/pronto/acompanhamento/risco/outros
-const CHART_TIPOS = ["multipla_escolha", "caixas_selecao", "lista_suspensa", "escala", "escala_trabalho"];
-type Viz = "barras" | "colunas" | "pizza" | "rosca" | "linha" | "area";
 const VIZ_OPCOES: { v: Viz; r: string }[] = [
   { v: "barras", r: "Barras" }, { v: "colunas", r: "Colunas" }, { v: "pizza", r: "Pizza" },
   { v: "rosca", r: "Rosca" }, { v: "linha", r: "Linha" }, { v: "area", r: "Área" },
@@ -36,8 +40,6 @@ const VIZ_OPCOES: { v: Viz; r: string }[] = [
 const TABS = ["Visão Executiva", "Cumprimento", "Desenvolvimento", "Liderança", "Alinhamento e Entrega", "Planos de Ação", "Histórico Individual", "Indicadores e Cálculos"];
 // Abas já implementadas — as demais aparecem marcadas "em breve" na barra.
 const TABS_PRONTAS = ["Visão Executiva", "Cumprimento", "Desenvolvimento", "Liderança", "Alinhamento e Entrega", "Planos de Ação", "Histórico Individual", "Indicadores e Cálculos"];
-
-interface Resp { id: string; formulario_id: string; enviado_em: string; respondente_nome?: string | null; criado_por?: string | null; setor?: string | null; respondente_cadastro?: Record<string, any> | null; itens: Record<string, any>; }
 
 // Diretoria = atalho para um conjunto FIXO de setores (definição de negócio, não
 // do cadastro). Selecionar uma diretoria recorta as respostas para esses setores.
@@ -51,225 +53,6 @@ const btn = (bg: string, c = "#fff", border = "none"): React.CSSProperties =>
   ({ padding: "7px 13px", borderRadius: 9, border, background: bg, color: c, fontSize: 12.5, fontWeight: 700, cursor: "pointer" });
 const inp: React.CSSProperties = { border: "1px solid #e2e8f0", borderRadius: 9, padding: "8px 10px", fontSize: 13, outline: "none", background: "#fff", width: "100%", color: "#0f172a" };
 const lbl: React.CSSProperties = { display: "block", fontSize: 10, fontWeight: 800, color: "#94a3b8", textTransform: "uppercase", letterSpacing: ".5px", marginBottom: 4 };
-
-const semAcento = (s: string) => s.normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase();
-// indicadores de DESENVOLVIMENTO e as palavras-chave para o auto-mapeamento.
-const IND: { key: string; label: string; kw: string[] }[] = [
-  { key: "situacao", label: "Situação profissional", kw: ["situacao", "como voce acredita", "acredita que est", "nivel prof", "visao do liderado"] },
-  { key: "necessidades", label: "Necessidades de desenvolvimento", kw: ["dificuldade", "necessidade", "precisa desenvolver"] },
-  { key: "fortes", label: "Pontos fortes", kw: ["fazendo bem", "ponto forte", "faz bem", "pontos fortes"] },
-  { key: "melhoria", label: "Pontos de melhoria", kw: ["precisa melhorar", "melhorar", "melhoria", "sente que precisa"] },
-];
-
-// Exclusivo da VISÃO EXECUTIVA: o que o colaborador pede DA LIDERANÇA — outra
-// pergunta, não o que ele mesmo precisa desenvolver. Fica fora de IND para não
-// poluir o mapeamento da aba Desenvolvimento, que não usa este indicador.
-const IND_EXEC: { key: string; label: string; kw: string[] }[] = [
-  { key: "necLideranca", label: "O que se pede da liderança", kw: ["precisa da lideranca", "precisa do lider", "espera da lideranca", "da sua lideranca", "do seu lider", "da lideranca"] },
-];
-// Indicadores da aba ALINHAMENTO E ENTREGA (todos viram nota 1..5).
-const IND_ALIN: { key: string; label: string; kw: string[]; opcional?: boolean }[] = [
-  { key: "alinhamento", label: "Alinhamento às metas", kw: ["alinhad", "alinhamento", "visao do liderado", "meta"] },
-  { key: "entrega", label: "Qualidade da entrega", kw: ["entrega", "nivel de entrega", "qualidade"] },
-  { key: "contribuicao", label: "Contribuição para resultados", kw: ["comprometimento", "contribui", "resultado"] },
-  { key: "metasConcluidas", label: "Metas concluídas (opcional)", kw: ["meta concluida", "metas concluidas", "concluiu"], opcional: true },
-  { key: "metasPrazo", label: "Metas no prazo (opcional)", kw: ["no prazo", "dentro do prazo", "prazo"], opcional: true },
-];
-
-// Aba PLANOS DE AÇÃO — o plano já está no formulário: uma pergunta diz a ação
-// definida e outra o prazo. Sem essas duas a aba não tem o que mostrar.
-const IND_PLANO: { key: string; label: string; kw: string[] }[] = [
-  { key: "acaoPlano", label: "Ação definida", kw: ["acao definida", "treinamento ou acompanhamento", "o que exatamente vai ser feito", "plano de acao"] },
-  { key: "prazoPlano", label: "Prazo para a ação", kw: ["prazo para acao", "prazo para a acao", "prazo da acao", "prazo"] },
-];
-
-// Todos os campos de mapeamento num lugar só — é o que a aba "Indicadores e
-// Cálculos" oferece: lá a pessoa está justamente conferindo de onde cada número
-// sai, então limitar a edição aos indicadores de uma aba obrigaria a passear
-// pelo painel inteiro para consertar o que ela acabou de ver quebrado.
-// `tipos` mantém a mesma restrição das abas: indicador de gráfico não aceita
-// pergunta de texto.
-const CAMPOS_MAPA: { key: string; label: string; tipos?: string[] }[] = [
-  ...IND.map(i => ({ key: i.key, label: `Desenvolvimento · ${i.label}`, tipos: CHART_TIPOS })),
-  ...IND_EXEC.map(i => ({ key: i.key, label: `Visão executiva · ${i.label}`, tipos: CHART_TIPOS })),
-  { key: "lider", label: "Liderança · quem é a liderança avaliada" },
-  { key: "avaliado", label: "Histórico · colaborador avaliado" },
-  ...IND_ALIN.map(i => ({ key: i.key, label: `Alinhamento · ${i.label}`, tipos: ["escala", "multipla_escolha", "lista_suspensa"] })),
-  ...IND_PLANO.map(i => ({ key: i.key, label: `Planos de ação · ${i.label}` })),
-];
-
-type Mapa = Record<string, any>;  // singles = id da pergunta; dimensoes = string[]
-
-function autoMapa(pergs: Pergunta[]): Mapa {
-  const m: Mapa = {};
-  const chart = pergs.filter(p => CHART_TIPOS.includes(p.tipo));
-  for (const ind of IND) {
-    const achou = chart.find(p => ind.kw.some(k => semAcento(p.titulo || "").includes(k)));
-    if (achou) m[ind.key] = achou.id;
-  }
-  // Da mais específica para a mais genérica: "da lideranca" é fraca e casaria
-  // com o enunciado errado se testada junto das outras.
-  for (const ind of IND_EXEC) {
-    const achou = achaPorEspecificidade(chart, ind.kw);
-    if (achou) m[ind.key] = achou.id;
-  }
-  // Perguntas do tipo colaborador: uma diz QUEM É O LÍDER, outra QUEM FOI
-  // AVALIADO. O avaliado é o sujeito do Histórico Individual e o denominador da
-  // Visão Executiva — `respondente_nome` não serve, porque quem preenche o
-  // feedback é o líder e o campo costuma vir vazio.
-  //
-  // Com UMA pergunta só, ela é o AVALIADO, não o líder: o formulário guiado de
-  // feedback pergunta de quem se está falando, não quem está falando. A regra
-  // antiga chutava "líder" nesse caso e deixava o avaliado vazio — a Visão
-  // Executiva ficava sem o dado principal em todo formulário de uma pergunta só.
-  const colabs = pergs.filter(p => p.tipo === "colaborador");
-  const ehLider = (p: Pergunta) => /lideranc|lider|gestor|chefe/.test(semAcento(p.titulo || ""));
-  const ehAvaliado = (p: Pergunta) => /colaborador|avaliad|liderado|funcionario|empregado|nome do/.test(semAcento(p.titulo || ""));
-  const lid = colabs.find(ehLider) ?? (colabs.length > 1 ? colabs.find(p => !ehAvaliado(p)) : undefined);
-  if (lid) m.lider = lid.id;
-  const restantes = colabs.filter(p => p.id !== lid?.id);
-  const aval = restantes.find(ehAvaliado) ?? restantes[0];
-  if (aval) m.avaliado = aval.id;
-  // … e as dimensões avaliadas: escalas (ideal) ou perguntas "o nível/como está".
-  const escalas = pergs.filter(p => p.tipo === "escala");
-  const ordinais = pergs.filter(p => ["multipla_escolha", "lista_suspensa"].includes(p.tipo)
-    && /nivel|como est|avalia|visao do liderado|comprometimento|entrega/.test(semAcento(p.titulo || "")));
-  const dims = (escalas.length ? escalas : ordinais).map(p => p.id);
-  if (dims.length) m.dimensoes = dims;
-  // ALINHAMENTO E ENTREGA: cada indicador é uma pergunta ordinal/escala.
-  const notaveis = pergs.filter(p => ["escala", "multipla_escolha", "lista_suspensa"].includes(p.tipo));
-  for (const ind of IND_ALIN) {
-    const achou = notaveis.find(p => ind.kw.some(k => semAcento(p.titulo || "").includes(k)));
-    if (achou) m[ind.key] = achou.id;
-  }
-  // PLANOS DE AÇÃO: ação é texto, prazo é data/texto.
-  const textuais = pergs.filter(p => ["texto_longo", "texto_curto"].includes(p.tipo));
-  const acaoP = achaPorEspecificidade(textuais, IND_PLANO[0].kw);
-  if (acaoP) m.acaoPlano = acaoP.id;
-  // Perguntas do tipo data primeiro: o prazo costuma ser uma delas, e assim um
-  // campo de texto que só cite "prazo" não passa na frente.
-  const dataPrimeiro = [
-    ...pergs.filter(p => p.tipo === "data"),
-    ...pergs.filter(p => ["texto_curto", "texto_longo"].includes(p.tipo)),
-  ];
-  const prazoP = achaPorEspecificidade(dataPrimeiro, IND_PLANO[1].kw, acaoP?.id);
-  if (prazoP) m.prazoPlano = prazoP.id;
-  return m;
-}
-
-// Casa keyword a keyword — da mais específica para a mais genérica — em vez de
-// pergunta a pergunta.
-//
-// Por que importa: o enunciado da própria "Ação definida" cita "prazo" no meio
-// do texto ("…você tem um prazo de x dias…"). Varrendo por pergunta, ela casava
-// com a keyword fraca "prazo" e roubava o mapeamento antes de a pergunta certa
-// ("Prazo para Ação") ser sequer testada — todo plano ficava "sem prazo".
-// `excluir` garante que a mesma pergunta não vire ação E prazo.
-function achaPorEspecificidade(cands: Pergunta[], kws: string[], excluir?: string): Pergunta | undefined {
-  const uteis = cands.filter(p => p.id !== excluir);
-  for (const k of kws) {
-    const achou = uteis.find(p => semAcento(p.titulo || "").includes(k));
-    if (achou) return achou;
-  }
-  return undefined;
-}
-
-// Converte a resposta de uma pergunta em nota 1..5.
-// Escala: normaliza min..max. Opções: assume ordenadas da MELHOR para a PIOR
-// (1ª opção = 5, última = 1) — é como os formulários de feedback são escritos.
-function nota(p: Pergunta, valor: string): number | null {
-  if (!valor) return null;
-  if (p.tipo === "escala") {
-    const n = Number(valor); if (isNaN(n)) return null;
-    const min = p.config?.min ?? 1, max = p.config?.max ?? 5;
-    return max === min ? null : 1 + ((n - min) / (max - min)) * 4;
-  }
-  const i = p.opcoes.indexOf(valor);
-  if (i < 0 || p.opcoes.length < 2) return null;
-  return 5 - (i / (p.opcoes.length - 1)) * 4;
-}
-const faixa = (n: number) => n >= 4 ? "destaque" : n >= 3 ? "atencao" : "critica";
-
-// Item de gráfico: além da contagem, QUEM está por trás dela — é o que o
-// tooltip mostra ao passar o mouse. `quem` já vem pronto para exibição.
-export interface ItemDist { nome: string; completo: string; n: number; quem: string[] }
-
-// Nomes crus → lista de exibição: sem repetir, em ordem alfabética, marcando
-// entre parênteses quem aparece em mais de uma resposta da mesma fatia.
-function listaQuem(nomes: string[]): string[] {
-  const c = new Map<string, number>();
-  nomes.forEach(n => { const k = (n ?? "").trim(); if (k) c.set(k, (c.get(k) ?? 0) + 1); });
-  return [...c.entries()].sort((a, b) => a[0].localeCompare(b[0], "pt-BR")).map(([n, q]) => q > 1 ? `${n} (${q})` : n);
-}
-
-function distrib(p: Pergunta | undefined, resps: Resp[], quemDa?: (r: Resp) => string): ItemDist[] {
-  if (!p) return [];
-  const cont: Record<string, number> = {};
-  const quem: Record<string, string[]> = {};
-  resps.forEach(r => {
-    const v = r.itens[p.id]; if (v == null || v === "") return;
-    const nome = quemDa ? quemDa(r) : "";
-    (Array.isArray(v) ? v : [v]).forEach(x => {
-      const k = String(x);
-      cont[k] = (cont[k] || 0) + 1;
-      if (nome) (quem[k] ??= []).push(nome);
-    });
-  });
-  let chaves: string[];
-  if (p.tipo === "escala") { chaves = []; for (let n = p.config?.min ?? 1; n <= (p.config?.max ?? 5); n++) chaves.push(String(n)); }
-  else chaves = p.opcoes.length ? p.opcoes : Object.keys(cont);
-  return chaves.map(k => ({ nome: k.length > 24 ? k.slice(0, 24) + "…" : k, completo: k, n: cont[k] || 0, quem: listaQuem(quem[k] ?? []) }));
-}
-const trimestre = (iso: string) => { const d = new Date(iso); return `${Math.floor(d.getMonth() / 3) + 1}º Tri/${String(d.getFullYear()).slice(2)}`; };
-const respValor = (r: Resp, pid?: string) => { if (!pid) return ""; const v = r.itens[pid]; return v == null ? "" : String(Array.isArray(v) ? v[0] : v); };
-// Resposta sem setor = respondente anônimo/sem vínculo E formulário sem pergunta
-// de setor. Não é um setor real: aparece rotulada, mas fica fora dos rankings.
-const SEM_SETOR = "Sem setor";
-const setorDe = (r: Resp) => (r.setor ?? "").trim() || SEM_SETOR;
-
-function mediaNota(p: Pergunta | undefined, resps: Resp[]): number | null {
-  if (!p) return null;
-  const ns = resps.map(r => nota(p, respValor(r, p.id))).filter((x): x is number => x != null);
-  return ns.length ? ns.reduce((a, b) => a + b, 0) / ns.length : null;
-}
-
-function serieTrimestre(resps: Resp[], valor: (r: Resp) => number | null) {
-  const porTri: Record<string, { soma: number; n: number; o: number }> = {};
-  resps.forEach(r => {
-    const v = valor(r); if (v == null) return;
-    const t = trimestre(r.enviado_em);
-    (porTri[t] ??= { soma: 0, n: 0, o: +new Date(r.enviado_em) }); porTri[t].soma += v; porTri[t].n++;
-  });
-  return Object.entries(porTri).map(([t, v]) => ({ tri: t, valor: +(v.soma / v.n).toFixed(2), _o: v.o }))
-    .sort((a, b) => a._o - b._o).slice(-6);
-}
-const deltaSerie = (s: { valor: number }[]) => s.length > 1 ? s[s.length - 1].valor - s[s.length - 2].valor : null;
-
-// Agrupa por chave (líder, setor…) com média e evolução vs. trimestre anterior.
-function agrupaMedia(resps: Resp[], chave: (r: Resp) => string, valor: (r: Resp) => number | null) {
-  const tot: Record<string, { soma: number; n: number }> = {};
-  const tris: Record<string, Record<string, { soma: number; n: number; o: number }>> = {};
-  resps.forEach(r => {
-    const k = (chave(r) || "").trim(); if (!k) return;
-    const v = valor(r); if (v == null) return;
-    (tot[k] ??= { soma: 0, n: 0 }); tot[k].soma += v; tot[k].n++;
-    const t = trimestre(r.enviado_em);
-    ((tris[k] ??= {})[t] ??= { soma: 0, n: 0, o: +new Date(r.enviado_em) }); tris[k][t].soma += v; tris[k][t].n++;
-  });
-  return Object.entries(tot).map(([k, g]) => {
-    const ts = Object.entries(tris[k] ?? {}).sort((a, b) => a[1].o - b[1].o);
-    const ult = ts[ts.length - 1], ant = ts[ts.length - 2];
-    const evol = ult && ant ? (ult[1].soma / ult[1].n) - (ant[1].soma / ant[1].n) : null;
-    return { chave: k, media: g.soma / g.n, n: g.n, evol };
-  }).sort((a, b) => b.media - a.media);
-}
-
-// % das respostas que marcaram a 1ª opção (ex.: "Sim" / "Concluída" / "No prazo").
-function pctPrimeiraOpcao(p: Pergunta | undefined, resps: Resp[]): number | null {
-  if (!p || !p.opcoes.length) return null;
-  const vals = resps.map(r => respValor(r, p.id)).filter(Boolean);
-  return vals.length ? (vals.filter(v => v === p.opcoes[0]).length / vals.length) * 100 : null;
-}
 
 export default function PainelGerencial() {
   const nav = useNavigate();
@@ -1363,7 +1146,6 @@ function EvolucaoChart({ data, cats, viz }: { data: any[]; cats: string[]; viz: 
 }
 
 // ── Aba LIDERANÇA ─────────────────────────────────────────────────────────
-type Lider = { lider: string; indice: number; n: number; evol: number | null };
 const nf = (n: number) => n.toFixed(2).replace(".", ",");
 const evolTxt = (e: number | null) => e == null ? "—" : `${e >= 0 ? "▲" : "▼"} ${Math.abs(e).toFixed(2).replace(".", ",")}`;
 const evolCor = (e: number | null) => e == null ? "#94a3b8" : e >= 0 ? "#16a34a" : "#dc2626";
@@ -1512,7 +1294,6 @@ function PainelLideranca({ indice, dist, porDim, evol, delta, avaliados, lideres
 }
 
 // ── Aba ALINHAMENTO E ENTREGA ─────────────────────────────────────────────
-type Grupo = { chave: string; media: number; n: number; evol: number | null };
 
 function TabelaGrupo({ titulo, lista, colChave, colValor, cor }: { titulo: string; lista: Grupo[]; colChave: string; colValor: string; cor: string }) {
   return (
