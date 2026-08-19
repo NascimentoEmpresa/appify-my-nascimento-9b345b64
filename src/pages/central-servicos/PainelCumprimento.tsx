@@ -22,7 +22,7 @@ import {
 // inventar vencimento.
 // =====================================================================
 
-export interface Resp { id: string; enviado_em: string; setor: string | null; itens: Record<string, any>; respondente_nome: string | null }
+export interface Resp { id: string; formulario_id?: string; enviado_em: string; setor?: string | null; itens: Record<string, any>; respondente_nome?: string | null }
 
 const cardBox: React.CSSProperties = { background: "#fff", border: "1px solid #e2e8f0", borderRadius: 14, padding: "14px 16px", boxShadow: "0 8px 24px rgba(15,23,42,.05)" };
 const btn = (bg: string, c = "#fff", border = "none"): React.CSSProperties =>
@@ -112,14 +112,15 @@ function TabelaGrupo({ titulo, rotulo, dados, onVerTodos }: {
 }
 
 // ── Componente ───────────────────────────────────────────────────────
-export default function PainelCumprimento({ emps, resps, avaliadoDaResposta, mapas, encerraEm, ultima, fSetor, fResp }: {
-  emps: Empregado[];
+export default function PainelCumprimento({ emps, empsTodos, resps, avaliadoDaResposta, mapas, encerraEm, ultima, recorte }: {
+  emps: Empregado[];                               // cadastro JÁ recortado pelos filtros da barra
+  empsTodos: Empregado[];                          // cadastro inteiro — só para saber se o Perfil_ERP veio
   resps: Resp[];                                   // respostas do formulário no recorte
   avaliadoDaResposta: (r: Resp) => string;
   mapas: MapasHier;
   encerraEm: string | null;                        // prazo do ciclo (CS_FORMULARIOS.encerra_em)
   ultima: string;
-  fSetor: string; fResp: string;
+  recorte: string;                                 // resumo dos filtros ativos, para os rótulos
 }) {
   const [lista, setLista] = useState<{ titulo: string; linhas: Grupo[] } | null>(null);
   const [verPendentes, setVerPendentes] = useState(false);
@@ -132,18 +133,16 @@ export default function PainelCumprimento({ emps, resps, avaliadoDaResposta, map
   const proximo = diasDoPrazo != null && diasDoPrazo <= 0 && diasDoPrazo >= -7;
 
   // Quem é ESPERADO no ciclo: régua do RH (perfil administrativo + trabalhando),
-  // só em setor de verdade. Respeita os filtros de setor/colaborador da barra.
-  const esperados = useMemo(() => {
-    const q = normNome(fResp);
-    return emps.filter(e =>
-      ehPerfilEsperado(e.perfil) && ehTrabalhando(e.situacao) && ehSetorReal(e.setor) &&
-      (!fSetor || normSetor(e.setor) === normSetor(fSetor)) &&
-      (!q || normNome(e.nome).includes(q)));
-  }, [emps, fSetor, fResp]);
+  // só em setor de verdade. Os filtros da barra — setor, diretoria, liderança,
+  // empresa, colaborador — já vieram aplicados em `emps`, para o denominador
+  // andar junto com as respostas.
+  const esperados = useMemo(() => emps.filter(e =>
+    ehPerfilEsperado(e.perfil) && ehTrabalhando(e.situacao) && ehSetorReal(e.setor)
+  ), [emps]);
 
   // Se NINGUÉM tem perfil, a coluna não veio do banco — avisar em vez de dizer
   // que o cumprimento é zero.
-  const semPerfil = useMemo(() => emps.length > 0 && emps.every(e => !e.perfil), [emps]);
+  const semPerfil = useMemo(() => empsTodos.length > 0 && empsTodos.every(e => !e.perfil), [empsTodos]);
 
   // Quem já foi avaliado (por nome normalizado).
   const realizadosSet = useMemo(() => {
@@ -244,7 +243,7 @@ export default function PainelCumprimento({ emps, resps, avaliadoDaResposta, map
 
       {/* KPIs */}
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(180px,1fr))", gap: 12, marginBottom: 16 }}>
-        <Kpi titulo="Feedbacks esperados" valor={nInt(k.esp)} sub="Perfil administrativo, trabalhando" cor="#2563eb" icone="👥" />
+        <Kpi titulo="Feedbacks esperados" valor={nInt(k.esp)} sub={recorte ? `Perfil administrativo, trabalhando · ${recorte}` : "Perfil administrativo, trabalhando"} cor="#2563eb" icone="👥" />
         <Kpi titulo="Feedbacks realizados" valor={nInt(k.real)} sub={`${pct1(k.taxa)} do esperado`} cor="#16a34a" icone="✅" />
         <Kpi titulo="Taxa de realização" valor={pct1(k.taxa)} sub={k.taxa >= 90 ? "Dentro da meta de 90%" : "Abaixo da meta de 90%"} cor={k.taxa >= 90 ? "#16a34a" : "#dc2626"} icone="％" />
         <Kpi titulo="Feedbacks pendentes" valor={nInt(k.pend)} sub={`${pct1(k.esp ? (k.pend / k.esp) * 100 : 0)} do esperado`} cor="#f59e0b" icone="⏳" />
