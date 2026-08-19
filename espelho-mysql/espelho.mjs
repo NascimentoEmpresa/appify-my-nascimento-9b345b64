@@ -295,7 +295,43 @@ async function cmdPerfilar() {
   await my.end(); ssh.end();
 }
 
+// Deixa em espelho.sincronizacoes uma linha por execução.
+//
+// Sem isto não dá para responder "atualizou hoje?": as contagens mudam pouco
+// de um dia para o outro, então olhar a tabela de dados não distingue carga de
+// hoje de sobra de ontem — e uma falha silenciosa só apareceria semanas depois.
+async function registrar(pgc, { ok, inicio, resumo, erro = null }) {
+  await pgc.query(`CREATE TABLE IF NOT EXISTS ${aspas(SCHEMA)}.sincronizacoes (
+    id            bigserial PRIMARY KEY,
+    iniciada_em   timestamptz NOT NULL,
+    terminada_em  timestamptz NOT NULL DEFAULT now(),
+    disparo       text NOT NULL,
+    ok            boolean NOT NULL,
+    completa      boolean NOT NULL,
+    tabelas       integer NOT NULL,
+    linhas        bigint  NOT NULL,
+    segundos      numeric(10,1) NOT NULL,
+    erro          text
+  )`);
+
+  // GITHUB_EVENT_NAME distingue o que interessa: "schedule" é o robô rodando
+  // sozinho; qualquer outra coisa foi gente apertando o botão.
+  const evento = process.env.GITHUB_EVENT_NAME;
+  const disparo = evento === 'schedule' ? 'agendado'
+    : evento ? 'manual (Actions)'
+    : 'manual (máquina local)';
+
+  await pgc.query(
+    `INSERT INTO ${aspas(SCHEMA)}.sincronizacoes
+       (iniciada_em, disparo, ok, completa, tabelas, linhas, segundos, erro)
+     VALUES (to_timestamp($1/1000.0), $2, $3, $4, $5, $6, $7, $8)`,
+    [inicio, disparo, ok, !LIMITE, resumo.length,
+     resumo.reduce((s, r) => s + r.linhas, 0), (Date.now() - inicio) / 1000, erro]
+  );
+}
+
 async function cmdSincronizar() {
+  const inicio = Date.now();
   const arqTabelas = path.join(AQUI, 'tabelas.json');
   if (!fs.existsSync(arqTabelas)) {
     console.error('não achei tabelas.json — rode "node espelho.mjs descobrir" primeiro.');
@@ -380,8 +416,12 @@ async function cmdSincronizar() {
     }
 
     await pgc.query(COMMIT ? 'COMMIT' : 'ROLLBACK');
+    if (COMMIT) await registrar(pgc, { ok: true, inicio, resumo });
   } catch (e) {
     await pgc.query('ROLLBACK');
+    // Registra a falha FORA da transação — se fosse dentro, o próprio rollback
+    // apagaria o registro justamente no caso em que o histórico importa.
+    if (COMMIT) await registrar(pgc, { ok: false, inicio, resumo, erro: e.message }).catch(() => {});
     throw e;
   } finally {
     await my.end(); ssh.end(); await pgc.end();
