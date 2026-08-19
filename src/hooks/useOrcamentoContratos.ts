@@ -2,7 +2,7 @@ import { useMemo } from "react";
 import { useContratosERP, ContratoERP } from "@/hooks/useContratosERP";
 import { usePlanilhaCustos, resolverLinhasVigentes, resolverLinhasPorPeriodo, somarCamposEmLinhas, fimDoMes, PlanilhaCustoRow } from "@/hooks/usePlanilhaCusto";
 import { useLigacoesLicitacaoClassificacao } from "@/hooks/useMaloteLicitacaoClassificacaoLink";
-import { CLASSIFICACOES_LICITACAO } from "@/lib/planilhaCustoClassificacoes";
+import { CLASSIFICACOES_LICITACAO, chaveCampoOutros, GRUPO_OUTROS } from "@/lib/planilhaCustoClassificacoes";
 
 export interface OrcamentoContratoRubrica {
   campo: string;
@@ -28,14 +28,17 @@ export interface OrcamentoContratoGrupo {
 // eles de propósito (não são uma classificação fixa). Sem isso, contratos
 // que usam esses campos ficavam com o Orçado abaixo do total real da
 // Planilha de Custo. Aqui cada descrição vira sua própria rubrica
-// dinâmica, agrupando por descrição (case-insensitive) quando repetida.
+// dinâmica, agrupando por descrição (case-insensitive) quando repetida —
+// e usando a MESMA chave (chaveCampoOutros) que Configurações → Ligação
+// usa pra ligar aquela descrição a uma Classificação do Malote, pra também
+// contabilizar no Orçamento Geral quando existir a ligação.
 const SLOTS_OUTROS = [
   { campo: "outros_1" as const, descricaoCampo: "outros_1_descricao" as const, fallback: "Outros 1" },
   { campo: "outros_2" as const, descricaoCampo: "outros_2_descricao" as const, fallback: "Outros 2" },
   { campo: "outros_3" as const, descricaoCampo: "outros_3_descricao" as const, fallback: "Outros 3" },
 ];
 
-function coletarRubricasOutros(linhasVigentes: PlanilhaCustoRow[]): OrcamentoContratoRubrica[] {
+function coletarRubricasOutros(linhasVigentes: PlanilhaCustoRow[], maloteIdPorCampo: Map<string, string>): OrcamentoContratoRubrica[] {
   const acumulado = new Map<string, { label: string; valor: number }>();
   for (const r of linhasVigentes) {
     // Posto sem ninguém (qt_postos = 0) zera a contribuição — mesma regra
@@ -46,7 +49,7 @@ function coletarRubricasOutros(linhasVigentes: PlanilhaCustoRow[]): OrcamentoCon
       if (!valorLinha) continue;
       const descricao = (r[slot.descricaoCampo] ?? "").trim();
       const label = descricao || slot.fallback;
-      const chave = descricao ? descricao.toLowerCase() : `${slot.campo}:${label}`;
+      const chave = descricao ? chaveCampoOutros(descricao) : `outros:${slot.campo}:${label}`;
       const atual = acumulado.get(chave) ?? { label, valor: 0 };
       atual.valor += valorLinha * multiplicador;
       acumulado.set(chave, atual);
@@ -54,12 +57,12 @@ function coletarRubricasOutros(linhasVigentes: PlanilhaCustoRow[]): OrcamentoCon
   }
   return Array.from(acumulado.entries())
     .filter(([, v]) => v.valor !== 0)
-    .map(([chave, v]) => ({
-      campo: `outros:${chave}`,
+    .map(([campo, v]) => ({
+      campo,
       label: v.label,
-      grupo: "Outros / Específicos",
+      grupo: GRUPO_OUTROS,
       valor: v.valor,
-      classificacaoMaloteId: null,
+      classificacaoMaloteId: maloteIdPorCampo.get(campo) ?? null,
     }));
 }
 
@@ -113,7 +116,7 @@ export function useOrcamentoContratos(anoMes?: string) {
           });
         }
       }
-      rubricas.push(...coletarRubricasOutros(linhasVigentes));
+      rubricas.push(...coletarRubricasOutros(linhasVigentes, maloteIdPorCampo));
       const valorTotal = rubricas.reduce((s, r) => s + r.valor, 0);
       resultado.push({ contrato, rubricas, valorTotal });
     }

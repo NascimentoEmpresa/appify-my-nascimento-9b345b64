@@ -82,6 +82,7 @@ import PedidosMateriais from "./pages/suprimentos/PedidosMateriais";
 import EstoqueEtiquetas from "./pages/suprimentos/EstoqueEtiquetas";
 import Patrimonio from "./pages/suprimentos/Patrimonio";
 import PainelManutencoes from "./pages/suprimentos/PainelManutencoes";
+import EpisAdmissoes from "./pages/suprimentos/EpisAdmissoes";
 import SolicitarMateriais from "./pages/encarregados/SolicitarMateriais";
 import MeusPedidos from "./pages/encarregados/MeusPedidos";
 import ControleDiarias from "./pages/operacional/ControleDiarias";
@@ -423,6 +424,7 @@ const App = () => (
             <Route path="suprimentos/estoque-etiquetas" element={<EstoqueEtiquetas />} />
             <Route path="suprimentos/patrimonio" element={<Patrimonio />} />
             <Route path="suprimentos/manutencao" element={<PainelManutencoes />} />
+            <Route path="suprimentos/epis-admissoes" element={<EpisAdmissoes />} />
             {/* Financeiro */}
             <Route path="financeiro/contas-pagar" element={<ContasPagar />} />
             <Route path="financeiro/contas-receber" element={<ContasReceber />} />

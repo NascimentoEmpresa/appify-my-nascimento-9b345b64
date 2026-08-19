@@ -251,6 +251,16 @@ const suprimentosModule: ModuleDef = {
       ],
     },
     {
+      // Fila do Recrutamento que cai no Compras: os EPIs de quem está sendo
+      // admitido. Fica aqui, e não no kanban do RH, porque só o Compras pode
+      // dar esse aval.
+      label: "Admissões",
+      defaultOpen: true,
+      items: [
+        { label: "EPIs — Admissões", to: "/app/suprimentos/epis-admissoes", icon: ShieldCheck },
+      ],
+    },
+    {
       label: "Patrimônio & Manutenção",
       defaultOpen: true,
       items: [

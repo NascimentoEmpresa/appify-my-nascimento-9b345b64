@@ -113,3 +113,17 @@ export const CLASSIFICACOES_LICITACAO: ClassificacaoLicitacao[] = [
 export function labelClassificacaoLicitacao(campo: string): string {
   return CLASSIFICACOES_LICITACAO.find((c) => c.campo === campo)?.label ?? campo;
 }
+
+export const GRUPO_OUTROS = "Outros / Específicos";
+
+// outros_1/2/3 não são um campo fixo — cada linha da Planilha de Custo
+// digita sua própria descrição (ex.: "FERIADO EM DOBRO", "DSR 20% SOBRE
+// ADICIONAIS"), caso a caso por contrato. Pra permitir ligar cada uma
+// dessas descrições a uma Classificação do Malote (a pedido do Iury,
+// pra contabilizar no Orçamento Geral também), a "chave" de ligação é a
+// própria descrição normalizada, prefixada pra não colidir com os campos
+// fixos acima. Usada tanto em useOrcamentoContratos.ts (agregação) quanto
+// em LigacaoLicitacaoClassificacao.tsx (picker de ligação).
+export function chaveCampoOutros(descricao: string): string {
+  return `outros:${descricao.trim().toLowerCase()}`;
+}

@@ -13356,3 +13356,279 @@ REVOKE ALL ON FUNCTION public.rh_sync_senior_empregados(jsonb) FROM authenticate
 GRANT EXECUTE ON FUNCTION public.rh_sync_senior_empregados(jsonb) TO service_role;
 
 NOTIFY pgrst, 'reload schema';
+
+
+-- ===== 20260906000013_recrutamento_paralelo_trigger =====
+-- =========================================================================
+-- RECRUTAMENTO — o avanco para ADMISSAO vira regra do BANCO
+--
+-- SST e Compras aprovam em MODULOS DIFERENTES (SST > ASO/Admissao e
+-- Suprimentos > EPIs/Admissoes), cada um com o seu acesso. Nenhuma das duas
+-- telas pode ser dona da regra "os dois aprovaram, entao vai para
+-- ADMISSAO": qualquer uma que fosse teria de saber do estado da outra, e a
+-- primeira a aprovar nao tem como saber se sera a ultima.
+--
+-- Por isso o avanco e um TRIGGER: quem quer que grave o segundo `ok`
+-- dispara a passagem, sem que a tela precise saber disso.
+--
+-- Tambem registra no historico, porque a movimentacao deixa de ter uma tela
+-- por tras para faze-lo.
+--
+-- Idempotente.
+-- ROLLBACK:
+--   DROP TRIGGER IF EXISTS trg_rec_paralelo_admissao ON public."WA_CURRICULOS";
+--   DROP FUNCTION IF EXISTS public.rec_paralelo_admissao();
+-- =========================================================================
+
+CREATE OR REPLACE FUNCTION public.rec_paralelo_admissao()
+RETURNS trigger
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp
+AS $$
+BEGIN
+  -- So age na etapa paralela e so quando os DOIS estao aprovados. Os nomes
+  -- antigos entram porque dado gravado antes da fusao continua valendo.
+  IF NEW.etapa_processo IN ('SST + COMPRAS', 'EXAME SST', 'COMPRAS')
+     AND NEW.sst_ok IS TRUE AND NEW.compras_ok IS TRUE
+  THEN
+    NEW.etapa_processo   := 'ADMISSÃO';
+    NEW.etapa_changed_at := now();
+
+    INSERT INTO public."RECRUTAMENTO_HISTORICO"
+      (solicitacao_id, candidato_id, candidato_nome, evento, de_status, para_status, papel, usuario_nome, detalhe)
+    VALUES
+      (NEW.vaga_id, NEW.id, NEW.nome, 'SST e Compras aprovaram → Admissão',
+       'SST + COMPRAS', 'ADMISSÃO', 'SST + Suprimentos', 'Sistema',
+       'Avanço automático: os dois setores aprovaram.');
+  END IF;
+  RETURN NEW;
+END $$;
+
+DROP TRIGGER IF EXISTS trg_rec_paralelo_admissao ON public."WA_CURRICULOS";
+CREATE TRIGGER trg_rec_paralelo_admissao
+  BEFORE UPDATE OF sst_ok, compras_ok ON public."WA_CURRICULOS"
+  FOR EACH ROW EXECUTE FUNCTION public.rec_paralelo_admissao();
+
+NOTIFY pgrst, 'reload schema';
+
+
+-- ===== 20260906000014_vw_candidatos_compras_ok =====
+-- =========================================================================
+-- VW_RECRUTAMENTO_CANDIDATOS — expor compras_ok e a desistencia
+--
+-- A tela de Suprimentos (EPIs — Admissoes) precisa saber se o Compras ja
+-- aprovou, e as telas de setor precisam distinguir quem desistiu de quem foi
+-- reprovado. Colunas criadas em 20260906000012/13, fora da view — que lista
+-- coluna a coluna.
+--
+-- ⚠ ARMADILHA: a primeira versao desta migration fez
+--     CREATE OR REPLACE VIEW v AS SELECT v.*, ... FROM v JOIN ...
+--   achando que "v.*" seria resolvido contra a versao ANTIGA. Nao e: o
+--   Postgres aceita a criacao e a view passa a referenciar a si mesma —
+--   "infinite recursion detected in rules". Como as telas do SST e do
+--   Juridico leem daqui, elas quebraram na hora. Nunca reescrever uma view
+--   a partir dela mesma; e preciso repetir a lista inteira, como abaixo.
+--
+-- Idempotente.
+-- ROLLBACK: recriar sem as 6 colunas finais.
+-- =========================================================================
+
+CREATE OR REPLACE VIEW public."VW_RECRUTAMENTO_CANDIDATOS" AS
+  SELECT
+    c.id AS candidato_id, c.vaga_id, c.nome, c.telefone, c.email,
+    COALESCE(c.cpf, c.cpf_cand) AS cpf, c.origem, c.storage_path, c.mensagem,
+    c.etapa_processo, c.etapa_changed_at, c.selecionado_por, c.selecionado_em,
+    c.juridico_ok, c.juridico_obs, c.juridico_por, c.juridico_em,
+    c.sst_ok, c.sst_obs, c.sst_por, c.sst_em,
+    c.sst_data_exame, c.sst_hora_exame, c.sst_local_exame, c.sst_agendado_por, c.sst_agendado_em,
+    c.compras_necessidades, c.compras_por, c.compras_em, c.compras_obs, c.compras_data_chegada,
+    c.epis_informados, c.epis_informados_em,
+    c.enviado_admissao_por, c.enviado_admissao_em,
+    c.admitido_por, c.admitido_em, c.empregado_id, c.motivo_reprovacao,
+    c.experiencia_1, c.experiencia_2, c.experiencia_3, c.favorito, c.tipo_candidatura,
+    c.created_at AS candidatura_em,
+    s.cargo, s.contrato, s.cidade, s.status AS vaga_status,
+    s.motivo_vaga, s.nome_substituido, s.escala, s.horario, s.salario,
+    s.beneficios, s.insalubridade_recebe, s.insalubridade_quanto, s.local_exato,
+    s.data_inicio_prevista, s.quantidade_vagas, s.req_obrigatorios, s.req_desejaveis,
+    s.exp_minima, s.exp_minima_qual, s.grau_urgencia, s.solicitante_nome,
+    (b.cpf_digits IS NOT NULL) AS possui_restricao, b.motivo AS restricao_motivo,
+    -- Novas (vao no fim: CREATE OR REPLACE nao aceita coluna no meio).
+    c.compras_ok,
+    c.desistiu, c.desistencia_motivo, c.desistencia_etapa, c.desistencia_em, c.desistencia_por
+  FROM public."WA_CURRICULOS" c
+  JOIN public."SISTEMA_RECRUTAMENTO" s ON s.id = c.vaga_id
+  LEFT JOIN public."RECRUTAMENTO_CPF_BLACKLIST" b
+    ON b.cpf_digits = regexp_replace(COALESCE(c.cpf, c.cpf_cand, ''), '\D', '', 'g')
+  WHERE c.etapa_processo IS NOT NULL;
+
+ALTER VIEW public."VW_RECRUTAMENTO_CANDIDATOS" SET (security_invoker = true);
+GRANT SELECT ON public."VW_RECRUTAMENTO_CANDIDATOS" TO authenticated;
+
+NOTIFY pgrst, 'reload schema';
+
+
+-- ===== 20260906000015_menu_epis_admissoes =====
+-- =========================================================================
+-- SUPRIMENTOS — menu "EPIs — Admissoes"
+--
+-- Tela onde o COMPRAS aprova os materiais/EPIs do candidato em admissao,
+-- espelhando a do SST (sst_aso). Precisa de menu proprio porque o controle
+-- de acesso e por menu: quem entra aqui e o Compras, nao o RH.
+--
+-- O toggle de Acesso por Usuario libera as acoes de trabalho junto com a
+-- tela (ver ACOES_POR_MENU no ModulosMenusTab): sem `alterar`, a pessoa
+-- abriria a fila e nao conseguiria aprovar nada — o mesmo sintoma que
+-- Patrimonio teve em 17/08/2026.
+--
+-- Idempotente.
+-- ROLLBACK: DELETE FROM public.app_menu WHERE codigo = 'sup_epis_admissao';
+-- =========================================================================
+
+INSERT INTO public.app_menu (modulo_id, codigo, nome, rota, ordem, ativo)
+SELECT m.id, 'sup_epis_admissao', 'EPIs — Admissões', '/app/suprimentos/epis-admissoes',
+       COALESCE((SELECT max(ordem) FROM public.app_menu WHERE modulo_id = m.id), 0) + 10,
+       true
+  FROM public.app_modulo m
+ WHERE m.codigo = 'suprimentos'
+ON CONFLICT (modulo_id, codigo) DO UPDATE
+   SET nome = EXCLUDED.nome, rota = EXCLUDED.rota, ativo = true;
+
+NOTIFY pgrst, 'reload schema';
+
+
+-- ===== 20260906000016_recrutamento_status_e_portal =====
+-- =========================================================================
+-- RECRUTAMENTO — status da vaga alinhado ao fluxo novo, e a vaga fica no
+-- portal /vagas ate a ADMISSAO
+--
+-- TRES CORRECOES:
+--
+-- 1) sr_rank_etapa nao acompanhou o fluxo. Ele ainda ranqueava 'EXAME SST'
+--    e 'COMPRAS' separados (que viraram 'SST + COMPRAS'), usava 'APROVADOS'
+--    no plural enquanto o kanban usa 'APROVADO' no singular, punha
+--    DOCUMENTACAO depois de COMPRAS quando ela vem ANTES, e nao conhecia
+--    'ADMISSAO'. Etapa desconhecida cai em 0, e com rank 0 o status da vaga
+--    voltava para "Vaga aberta" — a vaga parecia nao ter andado.
+--
+-- 2) A vaga so aparecia no portal publico com status
+--    'Vaga aberta - Seleção de Currículos'. Assim que o primeiro candidato
+--    saia da triagem, a vaga sumia de /vagas — mesmo ainda precisando de
+--    gente, porque candidato desiste e reprova o tempo todo. Passa a ficar
+--    visivel durante TODO o processo e so sair quando alguem e efetivado.
+--
+-- 3) Status novo para a etapa paralela: 'Aguardando SST e Compras'. Os tres
+--    antigos ('Encaminhado para SST (ASO)', 'ASO Aprovado - Aguardando
+--    Informe de EPIs', 'Aguardando Confirmação Compras') descreviam uma
+--    fila que nao existe mais.
+--
+-- Idempotente.
+-- ROLLBACK: definicoes anteriores em 20260618000001 e nas migrations do
+--   portal; o status 'Aguardando SST e Compras' volta a ser um dos tres
+--   antigos por UPDATE manual.
+-- =========================================================================
+
+CREATE OR REPLACE FUNCTION public.sr_rank_etapa(p text)
+RETURNS integer
+LANGUAGE sql IMMUTABLE
+AS $$
+  SELECT CASE p
+    WHEN 'ENTRADA'            THEN 1
+    WHEN 'TRIAGEM'            THEN 2
+    WHEN 'JURÍDICO'           THEN 3
+    WHEN 'ENTREVISTA'         THEN 4
+    WHEN 'ENTREVISTA GESTOR'  THEN 5
+    WHEN 'APROVADO'           THEN 6
+    WHEN 'APROVADOS'          THEN 6   -- nome antigo, ainda gravado em registros
+    WHEN 'DOCUMENTAÇÃO'       THEN 7   -- vem ANTES do SST no fluxo real
+    WHEN 'SST + COMPRAS'      THEN 8
+    WHEN 'EXAME SST'          THEN 8   -- antes da fusao
+    WHEN 'COMPRAS'            THEN 8   -- antes da fusao
+    WHEN 'ADMISSÃO'           THEN 9
+    ELSE 0 END;
+$$;
+
+CREATE OR REPLACE FUNCTION public.sr_sync_status_solicitacao()
+RETURNS trigger
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp
+AS $$
+DECLARE
+  v_vaga bigint; v_atual text; v_rank int; v_envadm timestamptz; v_new text;
+BEGIN
+  v_vaga := COALESCE(NEW.vaga_id, OLD.vaga_id);
+  IF v_vaga IS NULL THEN RETURN COALESCE(NEW, OLD); END IF;
+
+  SELECT status INTO v_atual FROM public."SISTEMA_RECRUTAMENTO" WHERE id = v_vaga;
+  -- Vaga que nem chegou ao Recrutamento, ou ja encerrada, nao e dirigida
+  -- pelo candidato.
+  IF v_atual IS NULL OR v_atual IN ('Pendente Operacional','Pendente Recrutamento','Reprovada','Concluída') THEN
+    RETURN COALESCE(NEW, OLD);
+  END IF;
+
+  -- O candidato MAIS ADIANTADO manda no status da vaga. Desistente e
+  -- reprovado ficam de fora: eles nao representam o andamento.
+  SELECT public.sr_rank_etapa(c.etapa_processo), c.enviado_admissao_em
+    INTO v_rank, v_envadm
+    FROM public."WA_CURRICULOS" c
+   WHERE c.vaga_id = v_vaga
+     AND c.etapa_processo IS NOT NULL
+     AND c.etapa_processo <> 'Reprovado'
+   ORDER BY public.sr_rank_etapa(c.etapa_processo) DESC,
+            c.enviado_admissao_em DESC NULLS LAST
+   LIMIT 1;
+
+  v_new := CASE
+    WHEN v_rank IS NULL OR v_rank <= 2 THEN 'Vaga aberta - Seleção de Currículos'
+    WHEN v_rank = 3 THEN 'Em análise jurídica'
+    WHEN v_rank = 4 THEN 'Entrevista e Avaliação'
+    WHEN v_rank = 5 THEN 'Entrevista com Gestor'
+    WHEN v_rank = 6 THEN 'Aprovado - Aguardando SST'
+    WHEN v_rank = 7 THEN 'Compras Confirmou - Aguardando Documentação'
+    WHEN v_rank = 8 THEN 'Aguardando SST e Compras'
+    -- ADMISSAO: so vira 'Contratado' quando alguem foi de fato EFETIVADO.
+    -- Estar na coluna nao basta — e o envio a Admissao que fecha a vaga.
+    WHEN v_rank = 9 THEN CASE WHEN v_envadm IS NOT NULL THEN 'Contratado' ELSE 'Aguardando SST e Compras' END
+    ELSE v_atual END;
+
+  IF v_new IS DISTINCT FROM v_atual THEN
+    UPDATE public."SISTEMA_RECRUTAMENTO" SET status = v_new WHERE id = v_vaga;
+  END IF;
+  RETURN COALESCE(NEW, OLD);
+END $$;
+
+-- ── Portal publico ──────────────────────────────────────────────────────
+-- Lista de EXCLUSAO em vez de inclusao: status novo que apareca no fluxo
+-- continua visivel sozinho, sem precisar lembrar de vir aqui. Sai do ar
+-- quem foi contratado, encerrado, reprovado ou ainda nem foi aprovado.
+CREATE OR REPLACE FUNCTION public.portal_vagas_por_cidade(p_cidade text)
+RETURNS TABLE(id integer, cargo text, contrato text, cidade text, escala text,
+              salario text, beneficios text, quantidade_vagas integer)
+LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public, pg_temp
+AS $$
+  SELECT s."id", s."cargo", s."contrato", s."cidade", s."escala",
+         s."salario", s."beneficios", s."quantidade_vagas"
+    FROM public."SISTEMA_RECRUTAMENTO" s
+   WHERE s."status" NOT IN ('Pendente Operacional','Pendente Recrutamento',
+                            'Reprovada','Concluída','Contratado')
+     AND btrim(lower(s."cidade")) = btrim(lower(coalesce(p_cidade, '')))
+   ORDER BY s."cargo";
+$$;
+
+CREATE OR REPLACE FUNCTION public.portal_cidades_com_vagas()
+RETURNS TABLE(cidade text, vagas bigint)
+LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public, pg_temp
+AS $$
+  SELECT btrim(s."cidade") AS cidade, count(*) AS vagas
+    FROM public."SISTEMA_RECRUTAMENTO" s
+   WHERE s."status" NOT IN ('Pendente Operacional','Pendente Recrutamento',
+                            'Reprovada','Concluída','Contratado')
+     AND btrim(coalesce(s."cidade",'')) <> ''
+   GROUP BY 1
+   ORDER BY 1;
+$$;
+
+REVOKE ALL ON FUNCTION public.portal_vagas_por_cidade(text) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.portal_cidades_com_vagas() FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.portal_vagas_por_cidade(text) TO anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.portal_cidades_com_vagas() TO anon, authenticated;
+
+NOTIFY pgrst, 'reload schema';

@@ -25,7 +25,7 @@ export default function VerificacaoCandidatos() {
   const [loading, setLoading] = useState(true);
   const [busca, setBusca] = useState("");
   const [verTodos, setVerTodos] = useState(false);
-  const [acao, setAcao] = useState<{ cand: any; tipo: "ok" | "reprovar" } | null>(null);
+  const [acao, setAcao] = useState<{ cand: any; tipo: "ok" | "reprovar" | "tirar_restricao" | "realocar" } | null>(null);
   const [obs, setObs] = useState("");
   const [restr, setRestr] = useState<any | null>(null);   // candidato p/ marcar restrição
   const [restrInput, setRestrInput] = useState("");
@@ -56,7 +56,19 @@ export default function VerificacaoCandidatos() {
 
   const confirmar = async () => {
     if (!acao) return;
-    if (acao.tipo === "reprovar" && !obs.trim()) { toast("Informe o motivo.", "err"); return; }
+    if (acao.tipo !== "ok" && !obs.trim()) { toast("Informe o motivo.", "err"); return; }
+
+    if (acao.tipo === "tirar_restricao" || acao.tipo === "realocar") {
+      const ok = acao.tipo === "tirar_restricao"
+        ? await tirarRestricao(acao.cand, obs.trim())
+        : await realocarTriagem(acao.cand, obs.trim());
+      if (!ok) return;
+      const msg = acao.tipo === "tirar_restricao" ? "Restrição removida." : "Candidato realocado na Triagem.";
+      setAcao(null); setObs("");
+      toast(msg, "ok");
+      load();
+      return;
+    }
     const nowIso = new Date().toISOString();
     const payload: Record<string, any> = acao.tipo === "ok"
       ? { etapa_processo: "ENTREVISTA", etapa_changed_at: nowIso, juridico_ok: true, juridico_por: nome, juridico_em: nowIso, juridico_obs: obs.trim() || null }
@@ -113,20 +125,42 @@ export default function VerificacaoCandidatos() {
     load();
   };
 
-  const removerRestricao = async (c: any) => {
+  // Tirar restrição e realocar exigem MOTIVO: as duas desfazem uma decisão já
+  // registrada, e um confirm() sem justificativa deixava o histórico mostrando
+  // que a restrição sumiu sem dizer por quê.
+  const tirarRestricao = async (c: any, motivo: string) => {
     const d = digitsOf(c.cpf);
-    if (d.length !== 11) return;
-    if (!confirm("Remover a restrição deste CPF?")) return;
+    if (d.length !== 11) { toast("CPF inválido.", "err"); return false; }
     const { error } = await (supabase as any).from("RECRUTAMENTO_CPF_BLACKLIST").delete().eq("cpf_digits", d);
-    if (error) { toast("Erro: " + error.message, "err"); return; }
+    if (error) { toast("Erro: " + error.message, "err"); return false; }
+    // Limpa também o parecer negativo: sem isso o juridico_ok = false sobrava
+    // e o card seguia vermelho mesmo sem restrição nenhuma.
+    await (supabase as any).from("WA_CURRICULOS")
+      .update({ juridico_ok: null, juridico_obs: "Restrição removida: " + motivo, juridico_por: nome, juridico_em: new Date().toISOString() })
+      .eq("id", c.candidato_id);
     try {
       await (supabase as any).from("RECRUTAMENTO_HISTORICO").insert({
         solicitacao_id: c.vaga_id, candidato_id: c.candidato_id, candidato_nome: c.nome,
-        evento: "Restrição removida do CPF", papel: "Jurídico", usuario_nome: nome, usuario_email: user?.email ?? "",
+        evento: "Restrição removida do CPF", papel: "Jurídico",
+        usuario_nome: nome, usuario_email: user?.email ?? "", detalhe: motivo,
+      });
+    } catch { /* histórico é registro; não derruba a ação */ }
+    return true;
+  };
+
+  const realocarTriagem = async (c: any, motivo: string) => {
+    const { error } = await (supabase as any).from("WA_CURRICULOS").update({
+      etapa_processo: "TRIAGEM", etapa_changed_at: new Date().toISOString(),
+    }).eq("id", c.candidato_id);
+    if (error) { toast("Erro: " + error.message, "err"); return false; }
+    try {
+      await (supabase as any).from("RECRUTAMENTO_HISTORICO").insert({
+        solicitacao_id: c.vaga_id, candidato_id: c.candidato_id, candidato_nome: c.nome,
+        evento: "Realocado na Triagem pelo Jurídico", de_status: c.etapa_processo, para_status: "TRIAGEM",
+        papel: "Jurídico", usuario_nome: nome, usuario_email: user?.email ?? "", detalhe: motivo,
       });
     } catch { /* noop */ }
-    toast("Restrição removida.", "ok");
-    load();
+    return true;
   };
 
   const termo = busca.trim().toLowerCase();
@@ -169,10 +203,18 @@ export default function VerificacaoCandidatos() {
                     {podeAgir && c.etapa_processo === "JURÍDICO" && <>
                       <button onClick={() => { setObs(""); setAcao({ cand: c, tipo: "ok" }); }} style={btn("#16a34a", "none", "#fff")}>✓ Liberar → Entrevista</button>
                       <button onClick={() => { setObs(""); setAcao({ cand: c, tipo: "reprovar" }); }} style={btn("rgba(220,38,38,.08)", "1px solid rgba(220,38,38,.25)", "#dc2626")}>Reprovar</button>
-                      {c.possui_restricao
-                        ? <button onClick={() => removerRestricao(c)} style={btn("#f1f5f9", "1px solid #e2e8f0", "#475569")}>Remover restrição</button>
-                        : <button onClick={() => { setRestrInput(""); setRestr(c); }} style={btn("#fffbeb", "1px solid #fde68a", "#92400e")}>⚠️ Restringir</button>}
+                      {!c.possui_restricao && <button onClick={() => { setRestrInput(""); setRestr(c); }} style={btn("#fffbeb", "1px solid #fde68a", "#92400e")}>⚠️ Restringir</button>}
                     </>}
+                    {/* Fora do bloco acima de propósito: desfazer restrição e
+                        trazer o candidato de volta não são ações da etapa
+                        JURÍDICO — o caso típico é justamente alguém que já foi
+                        reprovado e está em outra coluna. */}
+                    {podeAgir && c.possui_restricao && (
+                      <button onClick={() => { setObs(""); setAcao({ cand: c, tipo: "tirar_restricao" }); }} style={btn("#f1f5f9", "1px solid #e2e8f0", "#475569")}>🔓 Tirar restrição</button>
+                    )}
+                    {podeAgir && c.etapa_processo !== "TRIAGEM" && (
+                      <button onClick={() => { setObs(""); setAcao({ cand: c, tipo: "realocar" }); }} style={btn("rgba(59,130,246,.08)", "1px solid rgba(59,130,246,.25)", "#2563eb")}>↩ Realocar na Triagem</button>
+                    )}
                   </div>
                 </div>
               </div>
@@ -184,11 +226,28 @@ export default function VerificacaoCandidatos() {
       {/* Modal aprovar/reprovar */}
       {acao && (
         <Modal onClose={() => { setAcao(null); setObs(""); }}
-          title={acao.tipo === "ok" ? "Liberar para a Entrevista" : "Reprovar candidato (restringe o CPF)"}
+          title={acao.tipo === "ok" ? "Liberar para a Entrevista"
+            : acao.tipo === "tirar_restricao" ? "🔓 Tirar restrição do CPF"
+            : acao.tipo === "realocar" ? "↩ Realocar na Triagem"
+            : "Reprovar candidato (restringe o CPF)"}
           sub={`${acao.cand.nome} · ${acao.cand.cargo || ""}`}>
+          {acao.tipo === "tirar_restricao" && (
+            <div style={{ fontSize: 12, color: "#475569", background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: 8, padding: "8px 10px", marginBottom: 12 }}>
+              O CPF deixa de aparecer como restrito em <b>todas</b> as vagas, e o parecer negativo do Jurídico é limpo.
+            </div>
+          )}
+          {acao.tipo === "realocar" && (
+            <div style={{ fontSize: 12, color: "#1e40af", background: "#eff6ff", border: "1px solid #bfdbfe", borderRadius: 8, padding: "8px 10px", marginBottom: 12 }}>
+              O candidato volta para a <b>Triagem</b> do Recrutamento e segue o processo a partir de lá.
+            </div>
+          )}
           <Campo label={acao.tipo === "ok" ? "Observação (opcional)" : "Motivo *"} value={obs} onChange={setObs}
-            placeholder={acao.tipo === "ok" ? "Ex.: documentação OK, nada consta." : "Descreva o motivo..."} />
-          <Acoes onCancel={() => { setAcao(null); setObs(""); }} onConfirm={confirmar} cor={acao.tipo === "ok" ? "#16a34a" : "#dc2626"} />
+            placeholder={acao.tipo === "ok" ? "Ex.: documentação OK, nada consta."
+              : acao.tipo === "tirar_restricao" ? "Ex.: certidão apresentada, pendência resolvida."
+              : acao.tipo === "realocar" ? "Ex.: reanálise pedida pelo RH."
+              : "Descreva o motivo..."} />
+          <Acoes onCancel={() => { setAcao(null); setObs(""); }} onConfirm={confirmar}
+            cor={acao.tipo === "ok" ? "#16a34a" : acao.tipo === "reprovar" ? "#dc2626" : acao.tipo === "realocar" ? "#2563eb" : "#475569"} />
         </Modal>
       )}
 
