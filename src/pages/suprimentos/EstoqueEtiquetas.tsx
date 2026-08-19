@@ -12,12 +12,16 @@ import { PageHeader } from "@/components/layout/PageHeader";
 import { CampoBipagem } from "@/components/suprimentos/CampoBipagem";
 import { useEmpresaId } from "@/hooks/useEmpresaId";
 import { useItens, LABEL_TIPO_ITEM, type TipoItem } from "@/hooks/useSupCatalogo";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Link } from "react-router-dom";
 import {
   useAlmoxarifados, useEstoqueLista, useTagsDoItem, useEntradaEstoque, useDevolverTags,
-  useRemoverTag, useFornecedores, type LinhaEstoque, type TipoTag, type UnidadeEntrada,
+  useRemoverTag, useFornecedores, useHistoricoDoMaterial, useInventario,
+  type LinhaEstoque, type TipoTag, type UnidadeEntrada, type Movimento, type ResultadoInventario,
 } from "@/hooks/useSupEstoque";
 import {
   PackagePlus, Search, AlertTriangle, Boxes, Undo2, Trash2, ShieldAlert, Plus, X, Tag,
+  ClipboardCheck, History, ArrowDownToLine, ArrowUpFromLine, RotateCcw, Check,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -437,6 +441,8 @@ function DialogDetalhe({ linha, onFechar }: { linha: LinhaEstoque | null; onFech
   const { data: tags = [], isLoading } = useTagsDoItem(linha?.item_estoque_id ?? null);
   const remover = useRemoverTag();
   const [filtro, setFiltro] = useState("");
+  const [inventariando, setInventariando] = useState(false);
+  const [removendo, setRemovendo] = useState<{ codigo: string } | null>(null);
 
   const visiveis = useMemo(() => {
     const t = filtro.trim().toLowerCase();
@@ -444,53 +450,342 @@ function DialogDetalhe({ linha, onFechar }: { linha: LinhaEstoque | null; onFech
   }, [tags, filtro]);
 
   return (
-    <Dialog open={!!linha} onOpenChange={(o) => !o && onFechar()}>
-      <DialogContent className="max-h-[85vh] max-w-2xl overflow-y-auto">
+    <>
+      <Dialog open={!!linha} onOpenChange={(o) => !o && onFechar()}>
+        <DialogContent className="max-h-[85vh] max-w-2xl overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="flex flex-wrap items-center gap-2">
+              {linha?.material}
+              <Badge variant="outline">{linha?.disponivel} disponível(is)</Badge>
+              {(linha?.consumido ?? 0) > 0 && (
+                <Badge variant="secondary">{linha?.consumido} já usada(s)</Badge>
+              )}
+            </DialogTitle>
+          </DialogHeader>
+
+          {/* Abas em vez de uma rolagem só: item com 90 etiquetas e 200 eventos
+              vira um modal quilômetro, e ninguém acha o histórico no fim. */}
+          <Tabs defaultValue="etiquetas">
+            <TabsList className="grid w-full grid-cols-2">
+              <TabsTrigger value="etiquetas" className="gap-1.5">
+                <Tag className="h-3.5 w-3.5" /> Etiquetas
+              </TabsTrigger>
+              <TabsTrigger value="historico" className="gap-1.5">
+                <History className="h-3.5 w-3.5" /> Histórico
+              </TabsTrigger>
+            </TabsList>
+
+            <TabsContent value="etiquetas" className="mt-3">
+              <div className="mb-2 flex gap-2">
+                <Input value={filtro} onChange={(e) => setFiltro(e.target.value)}
+                       placeholder="Filtrar por código ou tamanho…" className="flex-1" />
+                <Button variant="outline" className="gap-1.5 whitespace-nowrap"
+                        onClick={() => setInventariando(true)}>
+                  <ClipboardCheck className="h-4 w-4" /> Inventário
+                </Button>
+              </div>
+
+              {isLoading ? (
+                <p className="py-8 text-center text-sm text-muted-foreground">Carregando…</p>
+              ) : (
+                <div className="space-y-1">
+                  {visiveis.map((t) => (
+                    <div key={t.id}
+                      className={cn("flex items-center gap-2 rounded-md border px-3 py-2 text-sm",
+                        t.usado && "bg-muted/50 text-muted-foreground")}>
+                      <span className="w-8 shrink-0 text-xs text-muted-foreground">#{t.sequencia}</span>
+                      <span className="flex-1 truncate font-mono text-xs">{t.codigo}</span>
+                      {t.tamanho && <Badge variant="outline" className="text-[10px]">{t.tamanho}</Badge>}
+                      <Badge variant="secondary" className="text-[10px]">
+                        {t.tipo === "massa" ? `massa · ${t.quantidade_massa}/${t.quantidade_original_massa}` : "única"}
+                      </Badge>
+                      <Badge variant="outline" className="text-[10px]">{t.estado}</Badge>
+                      {t.usado
+                        ? <span className="text-[11px]">usada{t.usado_por_nome ? ` · ${t.usado_por_nome}` : ""}</span>
+                        : (
+                          <Button variant="ghost" size="icon" className="h-6 w-6 text-destructive"
+                            onClick={() => setRemovendo({ codigo: t.codigo })}>
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </Button>
+                        )}
+                    </div>
+                  ))}
+                  {visiveis.length === 0 && (
+                    <p className="py-8 text-center text-sm text-muted-foreground">Nenhuma etiqueta.</p>
+                  )}
+                </div>
+              )}
+            </TabsContent>
+
+            <TabsContent value="historico" className="mt-3">
+              <LinhaDoTempo supItemId={linha?.sup_item_id ?? null} />
+            </TabsContent>
+          </Tabs>
+        </DialogContent>
+      </Dialog>
+
+      <DialogInventario
+        linha={inventariando ? linha : null}
+        tagsLivres={tags.filter((t) => !t.usado)}
+        onFechar={() => setInventariando(false)}
+      />
+
+      <DialogRemoverTag
+        codigo={removendo?.codigo ?? null}
+        onFechar={() => setRemovendo(null)}
+        onConfirmar={(motivo) => {
+          remover.mutate({ codigo: removendo!.codigo, motivo });
+          setRemovendo(null);
+        }}
+      />
+    </>
+  );
+}
+
+/** Rótulo, ícone e cor de cada tipo de movimento. */
+const ESTILO_MOV: Record<Movimento["tipo"], { rotulo: string; Icone: typeof Tag; cor: string }> = {
+  entrada:   { rotulo: "Entrada",    Icone: ArrowDownToLine, cor: "text-emerald-600 dark:text-emerald-400" },
+  saida:     { rotulo: "Saída",      Icone: ArrowUpFromLine, cor: "text-sky-600 dark:text-sky-400" },
+  devolucao: { rotulo: "Devolução",  Icone: RotateCcw,       cor: "text-amber-600 dark:text-amber-400" },
+  ajuste:    { rotulo: "Inventário", Icone: ClipboardCheck,  cor: "text-violet-600 dark:text-violet-400" },
+  remocao:   { rotulo: "Remoção",    Icone: Trash2,          cor: "text-destructive" },
+};
+
+/**
+ * A vida do material em ordem cronológica inversa.
+ *
+ * Mesma gramática visual do histórico de pedido em PedidosMateriais.tsx —
+ * bolinha, fio vertical, autor e data — para as duas trilhas do módulo não
+ * terem cara diferente.
+ */
+function LinhaDoTempo({ supItemId }: { supItemId: string | null }) {
+  const { data: eventos = [], isLoading } = useHistoricoDoMaterial(supItemId);
+
+  if (isLoading) return <p className="py-8 text-center text-sm text-muted-foreground">Carregando…</p>;
+
+  if (eventos.length === 0) {
+    return (
+      <div className="rounded-md border border-dashed px-4 py-8 text-center">
+        <History className="mx-auto mb-2 h-5 w-5 text-muted-foreground" />
+        <p className="text-sm text-muted-foreground">Nenhuma movimentação registrada.</p>
+        {/* Vazio mudo parece defeito. O que veio do sistema antigo entrou direto
+            nas tabelas, sem passar pelas RPCs, então não tem evento nenhum. */}
+        <p className="mt-1 text-xs text-muted-foreground">
+          O histórico passa a ser registrado a partir de agora — o que veio do sistema antigo não trouxe eventos.
+        </p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="max-h-[55vh] overflow-y-auto pr-1">
+      {eventos.map((e, i) => {
+        const { rotulo, Icone, cor } = ESTILO_MOV[e.tipo] ?? ESTILO_MOV.ajuste;
+        return (
+          <div key={e.id} className="relative flex gap-3 pb-5 pl-1">
+            {i < eventos.length - 1 && <div className="absolute left-[13px] top-7 h-full w-px bg-border" />}
+            <div className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full border bg-background">
+              <Icone className={cn("h-3.5 w-3.5", cor)} />
+            </div>
+            <div className="min-w-0 flex-1 text-sm">
+              <p className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                <span className="font-medium">{rotulo}</span>
+                <span className="text-muted-foreground">·</span>
+                <span>{e.quantidade} un</span>
+                {e.codigo && (
+                  <Badge variant="outline" className="font-mono text-[10px]">{e.codigo}</Badge>
+                )}
+                {e.tamanho && <Badge variant="secondary" className="text-[10px]">{e.tamanho}</Badge>}
+                {e.pedido_protocolo && (
+                  <Link
+                    to={`/app/suprimentos/pedidos-materiais?busca=${encodeURIComponent(e.pedido_protocolo)}`}
+                    className="font-mono text-xs text-primary hover:underline"
+                  >
+                    {e.pedido_protocolo}
+                  </Link>
+                )}
+              </p>
+              {e.observacao && <p className="text-muted-foreground">{e.observacao}</p>}
+              <p className="text-xs text-muted-foreground">
+                {e.usuario_nome ?? "—"} · {new Date(e.created_at).toLocaleString("pt-BR")}
+              </p>
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+/**
+ * Inventário — confere o físico contra o sistema e REGISTRA a divergência.
+ *
+ * Não corrige nada de propósito (regra do chamado): baixar etiqueta sozinho
+ * apagaria a prova que o time precisa para apurar depois — ver câmera, ver
+ * quem deu baixa, achar a etiqueta que sumiu sem baixa nenhuma.
+ */
+function DialogInventario({ linha, tagsLivres, onFechar }: {
+  linha: LinhaEstoque | null;
+  tagsLivres: { id: string; codigo: string; tamanho: string | null }[];
+  onFechar: () => void;
+}) {
+  const inventariar = useInventario();
+  const [bipadas, setBipadas] = useState<string[]>([]);
+  const [observacao, setObservacao] = useState("");
+  const [resultado, setResultado] = useState<ResultadoInventario | null>(null);
+
+  const fechar = () => { setBipadas([]); setObservacao(""); setResultado(null); onFechar(); };
+
+  const esperadas = tagsLivres.map((t) => t.codigo);
+  const marcadas = new Set(bipadas);
+  const alternar = (cod: string) =>
+    setBipadas((b) => (b.includes(cod) ? b.filter((x) => x !== cod) : [...b, cod]));
+
+  return (
+    <Dialog open={!!linha} onOpenChange={(o) => !o && fechar()}>
+      <DialogContent className="max-h-[88vh] max-w-xl overflow-y-auto">
         <DialogHeader>
           <DialogTitle className="flex flex-wrap items-center gap-2">
-            {linha?.material}
-            <Badge variant="outline">{linha?.disponivel} disponível(is)</Badge>
-            {(linha?.consumido ?? 0) > 0 && (
-              <Badge variant="secondary">{linha?.consumido} já usada(s)</Badge>
-            )}
+            <ClipboardCheck className="h-4 w-4 text-muted-foreground" />
+            Inventário · {linha?.material}
           </DialogTitle>
         </DialogHeader>
 
-        <Input value={filtro} onChange={(e) => setFiltro(e.target.value)}
-               placeholder="Filtrar por código ou tamanho…" className="mb-2" />
+        {resultado ? (
+          <div className="space-y-3">
+            <div className={cn("rounded-md border p-3",
+              resultado.divergencia === 0
+                ? "border-emerald-400/50 bg-emerald-50/50 dark:bg-emerald-950/20"
+                : "border-destructive/40 bg-destructive/5")}>
+              <p className="text-sm font-semibold">
+                {resultado.encontradas} de {resultado.esperadas} etiquetas conferidas
+              </p>
+              <p className="text-sm">
+                Divergência: <strong>{resultado.divergencia}</strong>
+                {resultado.divergencia === 0 ? " — estoque bate com o sistema." : ""}
+              </p>
+            </div>
 
-        {isLoading ? (
-          <p className="py-8 text-center text-sm text-muted-foreground">Carregando…</p>
-        ) : (
-          <div className="space-y-1">
-            {visiveis.map((t) => (
-              <div key={t.id}
-                className={cn("flex items-center gap-2 rounded-md border px-3 py-2 text-sm",
-                  t.usado && "bg-muted/50 text-muted-foreground")}>
-                <span className="w-8 shrink-0 text-xs text-muted-foreground">#{t.sequencia}</span>
-                <span className="flex-1 truncate font-mono text-xs">{t.codigo}</span>
-                {t.tamanho && <Badge variant="outline" className="text-[10px]">{t.tamanho}</Badge>}
-                <Badge variant="secondary" className="text-[10px]">
-                  {t.tipo === "massa" ? `massa · ${t.quantidade_massa}/${t.quantidade_original_massa}` : "única"}
-                </Badge>
-                <Badge variant="outline" className="text-[10px]">{t.estado}</Badge>
-                {t.usado
-                  ? <span className="text-[11px]">usada{t.usado_por_nome ? ` · ${t.usado_por_nome}` : ""}</span>
-                  : (
-                    <Button variant="ghost" size="icon" className="h-6 w-6 text-destructive"
-                      onClick={() => {
-                        if (confirm(`Remover a etiqueta ${t.codigo} do estoque?`)) remover.mutate(t.codigo);
-                      }}>
-                      <Trash2 className="h-3.5 w-3.5" />
-                    </Button>
-                  )}
+            {resultado.faltantes.length > 0 && (
+              <div>
+                <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                  Não encontradas na prateleira ({resultado.faltantes.length})
+                </p>
+                <div className="flex flex-wrap gap-1.5">
+                  {resultado.faltantes.map((c) => (
+                    <Badge key={c} variant="outline" className="border-destructive/50 font-mono text-[11px] text-destructive">{c}</Badge>
+                  ))}
+                </div>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  Continuam livres no sistema — o inventário registra, não baixa. Apure antes de dar baixa.
+                </p>
               </div>
-            ))}
-            {visiveis.length === 0 && (
-              <p className="py-8 text-center text-sm text-muted-foreground">Nenhuma etiqueta.</p>
             )}
+
+            {resultado.estranhas.length > 0 && (
+              <div>
+                <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                  Bipadas mas não pertencem a este material ({resultado.estranhas.length})
+                </p>
+                <div className="flex flex-wrap gap-1.5">
+                  {resultado.estranhas.map((c) => (
+                    <Badge key={c} variant="outline" className="border-amber-400/60 font-mono text-[11px] text-amber-700 dark:text-amber-300">{c}</Badge>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            <DialogFooter>
+              <Button onClick={fechar}>Fechar</Button>
+            </DialogFooter>
+          </div>
+        ) : (
+          <div className="space-y-4">
+            <p className="text-sm text-muted-foreground">
+              Bipe ou marque as etiquetas que você encontrou de fato na prateleira.
+              O sistema tem <strong>{esperadas.length}</strong> livre(s) deste material.
+            </p>
+
+            <CampoBipagem codigos={bipadas} onChange={setBipadas}
+                          placeholder="Bipe a etiqueta encontrada…" />
+
+            <div>
+              <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                Etiquetas do sistema ({esperadas.length})
+              </p>
+              <div className="max-h-56 space-y-1 overflow-y-auto rounded-md border p-1">
+                {tagsLivres.map((t) => (
+                  <button
+                    key={t.id} type="button" onClick={() => alternar(t.codigo)}
+                    className={cn("flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-sm hover:bg-muted/60",
+                      marcadas.has(t.codigo) && "bg-emerald-50 dark:bg-emerald-950/30")}
+                  >
+                    <span className={cn("flex h-4 w-4 shrink-0 items-center justify-center rounded border",
+                      marcadas.has(t.codigo) && "border-emerald-500 bg-emerald-500 text-white")}>
+                      {marcadas.has(t.codigo) && <Check className="h-3 w-3" />}
+                    </span>
+                    <span className="flex-1 truncate font-mono text-xs">{t.codigo}</span>
+                    {t.tamanho && <Badge variant="outline" className="text-[10px]">{t.tamanho}</Badge>}
+                  </button>
+                ))}
+                {tagsLivres.length === 0 && (
+                  <p className="py-4 text-center text-xs text-muted-foreground">Nenhuma etiqueta livre.</p>
+                )}
+              </div>
+            </div>
+
+            <div>
+              <Label className="text-sm">Observação</Label>
+              <Textarea rows={2} value={observacao} onChange={(e) => setObservacao(e.target.value)}
+                        placeholder="Ex.: contagem mensal, conferência após mudança de prateleira…"
+                        className="mt-1" />
+            </div>
+
+            <DialogFooter>
+              <Button variant="outline" onClick={fechar}>Cancelar</Button>
+              <Button
+                disabled={inventariar.isPending}
+                onClick={async () => {
+                  const r = await inventariar.mutateAsync({
+                    itemEstoqueId: linha!.item_estoque_id, codigos: bipadas, observacao,
+                  });
+                  setResultado(r);
+                }}
+              >
+                {inventariar.isPending ? "Registrando…" : `Registrar inventário (${bipadas.length})`}
+              </Button>
+            </DialogFooter>
           </div>
         )}
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+/** Remoção com justificativa — o motivo vai para a trilha. */
+function DialogRemoverTag({ codigo, onFechar, onConfirmar }: {
+  codigo: string | null; onFechar: () => void; onConfirmar: (motivo: string) => void;
+}) {
+  const [motivo, setMotivo] = useState("");
+  return (
+    <Dialog open={!!codigo} onOpenChange={(o) => { if (!o) { setMotivo(""); onFechar(); } }}>
+      <DialogContent className="max-w-md">
+        <DialogHeader><DialogTitle>Remover a etiqueta {codigo}?</DialogTitle></DialogHeader>
+        <p className="text-sm text-muted-foreground">
+          A etiqueta sai do estoque. O registro da remoção fica no histórico do material.
+        </p>
+        <div>
+          <Label className="text-sm">Motivo</Label>
+          <Textarea rows={2} value={motivo} onChange={(e) => setMotivo(e.target.value)}
+                    placeholder="Ex.: avariada no transporte, extraviada, erro de cadastro…"
+                    className="mt-1" />
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={() => { setMotivo(""); onFechar(); }}>Cancelar</Button>
+          <Button variant="destructive" onClick={() => { onConfirmar(motivo); setMotivo(""); }}>
+            Remover
+          </Button>
+        </DialogFooter>
       </DialogContent>
     </Dialog>
   );

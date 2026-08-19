@@ -1,4 +1,5 @@
 import { useMemo, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
@@ -70,7 +71,11 @@ const ICONE_STATUS: Record<string, any> = {
 export default function PedidosMateriais() {
   const { data: empresaId } = useEmpresaId();
   const qc = useQueryClient();
-  const [busca, setBusca] = useState("");
+  // Semeada por `?busca=`: o histórico de Estoque & Etiquetas linka o protocolo
+  // do pedido para cá, e esta tela não tem rota de detalhe — chegar já filtrado
+  // é o que evita o usuário ter que copiar o número e procurar na mão.
+  const [searchParams] = useSearchParams();
+  const [busca, setBusca] = useState(() => searchParams.get("busca") ?? "");
   const [filtroStatus, setFiltroStatus] = useState("TODOS");
   const [statusDe, setStatusDe] = useState<Pedido | null>(null);
   const [historicoDe, setHistoricoDe] = useState<Pedido | null>(null);
