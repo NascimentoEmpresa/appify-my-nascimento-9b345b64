@@ -15,12 +15,20 @@ on:
       comando:
         description: 'O que rodar'
         type: choice
-        options: [testar, descobrir, sincronizar]
+        options: [testar, descobrir, perfilar, sincronizar]
         default: testar
-      limite:
-        description: 'Linhas por tabela (só para teste; vazio = tudo)'
+      tabelas:
+        description: 'Só para perfilar: tabelas separadas por espaço (vazio = as de tabelas.json)'
         type: string
-        default: '100'
+        default: ''
+      limite:
+        # Padrão VAZIO de propósito. Com default '100', mandar o campo em
+        # branco fazia o GitHub reaplicar o 100 e a carga saía truncada
+        # parecendo completa — que é pior do que falhar. Truncar agora é
+        # sempre uma escolha explícita de quem digita o número.
+        description: 'Linhas por tabela — deixe VAZIO para espelho completo. Só preencha para teste rápido.'
+        type: string
+        default: ''
       gravar:
         description: 'Gravar de verdade? Desmarcado = simulação com rollback'
         type: boolean
@@ -73,6 +81,7 @@ jobs:
           COMANDO: ${{ inputs.comando }}
           LIMITE: ${{ inputs.limite }}
           GRAVAR: ${{ inputs.gravar }}
+          TABELAS: ${{ inputs.tabelas }}
         run: |
           set -euo pipefail
           if [ "$EVENTO" = "schedule" ]; then
@@ -83,6 +92,12 @@ jobs:
             # && só é segura enquanto não for a última linha do bloco: se um
             # dia virar, um teste falso derruba o step. O if não tem esse risco.
             set -- "$COMANDO"
+            if [ "$COMANDO" = "perfilar" ] && [ -n "$TABELAS" ]; then
+              # sem aspas de propósito: a lista vem separada por espaço e cada
+              # nome tem que virar um argumento próprio.
+              # shellcheck disable=SC2086
+              set -- "$@" $TABELAS
+            fi
             if [ "$COMANDO" = "sincronizar" ]; then
               if [ "$GRAVAR" = "true" ]; then
                 set -- "$@" --commit
