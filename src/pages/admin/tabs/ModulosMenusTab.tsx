@@ -321,6 +321,8 @@ const ACOES_POR_MENU: Record<string, readonly AppAcao[]> = {
   encarregados_minhas_solicitacoes: ACOES_RECRUTAMENTO,
   sup_patrimonio: ACOES_PATRIMONIO,
   sup_manutencao: ACOES_PATRIMONIO,
+  // Sem `alterar` o Compras abriria a fila de EPIs e nao conseguiria aprovar.
+  sup_epis_admissao: ACOES_PATRIMONIO,
 };
 const ACOES_DO_TOGGLE = (codigo: string): AppAcao[] =>
   [...(ACOES_POR_MENU[codigo] ?? (["visualizar"] as const))];
@@ -951,14 +953,12 @@ function CapToggles({ caps, onToggle }: { caps: Set<string>; onToggle: (papel: F
 // Bloco "por setor": switch mestre que abre um toggle por setor do cadastro
 // (EMPREGADOS.Setor_ERP). Desligar o mestre revoga todos. Reusado por
 // "Visualizar respostas por setor" (ver_setor), "Criar formularios por setor"
-// (criar_setor), "Diretor responsavel" (RH_SETOR_DIRETOR) e "Gerente do setor"
-// (CS_LIDERES_SETOR) — muda so os rotulos e os handlers.
-function SetorToggles({ titulo, descricao, rotuloLinha, descLinha, ariaLinha, setores, marcados, onToggle, onLimpar, disabled, avisoDesabilitado }: {
+// (criar_setor) — muda so os rotulos e os handlers.
+function SetorToggles({ titulo, descricao, rotuloLinha, descLinha, ariaLinha, setores, marcados, onToggle, onLimpar }: {
   titulo: string; descricao: string;
   rotuloLinha: (s: string) => string; descLinha: (s: string) => string; ariaLinha: (s: string) => string;
   setores: string[]; marcados: Set<string>;
   onToggle: (setor: string) => void; onLimpar: () => void;
-  disabled?: boolean; avisoDesabilitado?: string;
 }) {
   const [aberto, setAberto] = useState(marcados.size > 0);
   useEffect(() => { if (marcados.size > 0) setAberto(true); }, [marcados.size]);
@@ -970,14 +970,13 @@ function SetorToggles({ titulo, descricao, rotuloLinha, descLinha, ariaLinha, se
           <p className="text-sm">{titulo}</p>
           <p className="text-[11px] text-muted-foreground">{descricao}</p>
         </div>
-        <Switch checked={aberto} disabled={disabled} aria-label={titulo}
+        <Switch checked={aberto} aria-label={titulo}
           onCheckedChange={(v) => { setAberto(v); if (!v && marcados.size) onLimpar(); }} />
       </div>
       {aberto && (
         <div className="pb-2 pl-3">
-          {disabled && avisoDesabilitado && <p className="py-2 text-[11px] text-muted-foreground">{avisoDesabilitado}</p>}
-          {!disabled && setores.length === 0 && <p className="py-2 text-[11px] text-muted-foreground">Carregando setores...</p>}
-          {!disabled && setores.map((s) => (
+          {setores.length === 0 && <p className="py-2 text-[11px] text-muted-foreground">Carregando setores...</p>}
+          {setores.map((s) => (
             <div key={s} className="flex items-center gap-3 rounded-md py-2 pl-2 pr-1 hover:bg-muted/40">
               <div className="flex-1">
                 <p className="text-[13px]">{rotuloLinha(s)}</p>
@@ -999,11 +998,6 @@ function FormPermsUsuario({ userId, onToast }: { userId: string; onToast: (m: st
   const [setoresCriar, setSetoresCriar] = useState<Set<string>>(new Set()); // criar_setor (upper)
   const [setoresErp, setSetoresErp] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
-  // Empregado vinculado a este login (EMPREGADOS.auth_user_id = userId). É por
-  // ele que a pessoa vira diretor/gerente de setor — sem vínculo não dá.
-  const [empVinc, setEmpVinc] = useState<{ id: number; nome: string } | null>(null);
-  const [setoresDiretor, setSetoresDiretor] = useState<Set<string>>(new Set());  // RH_SETOR_DIRETOR (upper)
-  const [setoresGerente, setSetoresGerente] = useState<Set<string>>(new Set());  // CS_LIDERES_SETOR (upper)
   const erroPerm = (m: string) => /row-level|permission|policy/i.test(m) ? "So administradores alteram permissoes." : "Erro: " + m;
 
   const load = useCallback(async () => {
@@ -1014,19 +1008,6 @@ function FormPermsUsuario({ userId, onToast }: { userId: string; onToast: (m: st
     setCaps(new Set<string>(linhas.map((r: any) => r.papel)));
     setSetoresVer(setoresDe("ver_setor"));
     setSetoresCriar(setoresDe("criar_setor"));
-
-    // Vínculo com o cadastro + setores onde ele já é diretor/gerente.
-    const eRes = await (supabase as any).from("EMPREGADOS").select('"ID","Nome"').eq("auth_user_id", userId).maybeSingle();
-    const emp = eRes.data ? { id: Number(eRes.data["ID"]), nome: String(eRes.data["Nome"] ?? "") } : null;
-    setEmpVinc(emp);
-    if (emp) {
-      const [dRes, gRes] = await Promise.all([
-        (supabase as any).from("RH_SETOR_DIRETOR").select("setor").eq("diretor_id", emp.id),
-        (supabase as any).from("CS_LIDERES_SETOR").select("setor").eq("empregado_id", emp.id),
-      ]);
-      const up = (rows: any[]) => new Set<string>((rows ?? []).map((r: any) => String(r.setor).trim().toUpperCase()));
-      setSetoresDiretor(up(dRes.data)); setSetoresGerente(up(gRes.data));
-    } else { setSetoresDiretor(new Set()); setSetoresGerente(new Set()); }
     setLoading(false);
   }, [userId]);
   useEffect(() => { load(); }, [load]);
@@ -1099,36 +1080,6 @@ function FormPermsUsuario({ userId, onToast }: { userId: string; onToast: (m: st
   const verSetorH = fazSetorHandlers("ver_setor", setoresVer, setSetoresVer);
   const criarSetorH = fazSetorHandlers("criar_setor", setoresCriar, setSetoresCriar);
 
-  // Responsabilidade por setor (diretor/gerente): grava a pessoa VINCULADA como
-  // dona do setor na tabela certa. É por aqui que o Painel Gerencial passa a
-  // mostrar aquele setor pra ela — a visibilidade vem do vínculo, não de um
-  // switch de "ver respostas" à parte.
-  const fazResponsavelHandlers = (
-    tabela: "RH_SETOR_DIRETOR" | "CS_LIDERES_SETOR",
-    colId: "diretor_id" | "empregado_id",
-    colNome: "diretor_nome" | "empregado_nome",
-    marcados: Set<string>, setMarcados: (f: (s: Set<string>) => Set<string>) => void,
-  ) => ({
-    onToggle: async (setor: string) => {
-      if (!empVinc) return;
-      const chave = setor.trim().toUpperCase();
-      const tem = marcados.has(chave);
-      const { error } = tem
-        ? await (supabase as any).from(tabela).delete().eq("setor", setor).eq(colId, empVinc.id)
-        : await (supabase as any).from(tabela).upsert({ setor, [colId]: empVinc.id, [colNome]: empVinc.nome }, { onConflict: "setor" });
-      if (error) { onToast(erroPerm(error.message), "err"); return; }
-      setMarcados(s => { const n = new Set(s); tem ? n.delete(chave) : n.add(chave); return n; });
-    },
-    onLimpar: async () => {
-      if (!empVinc) return;
-      const { error } = await (supabase as any).from(tabela).delete().eq(colId, empVinc.id);
-      if (error) { onToast(erroPerm(error.message), "err"); return; }
-      setMarcados(() => new Set());
-    },
-  });
-  const diretorH = fazResponsavelHandlers("RH_SETOR_DIRETOR", "diretor_id", "diretor_nome", setoresDiretor, setSetoresDiretor);
-  const gerenteH = fazResponsavelHandlers("CS_LIDERES_SETOR", "empregado_id", "empregado_nome", setoresGerente, setSetoresGerente);
-
   if (loading) return <div className="py-2 text-xs text-muted-foreground">Carregando permissoes...</div>;
 
   return (
@@ -1152,22 +1103,6 @@ function FormPermsUsuario({ userId, onToast }: { userId: string; onToast: (m: st
           descLinha={(s) => `So cria formularios do ${s} e ve todas as respostas deles`}
           ariaLinha={(s) => `Criar formularios de ${s}`}
           setores={setoresErp} marcados={setoresCriar} onToggle={criarSetorH.onToggle} onLimpar={criarSetorH.onLimpar} />
-        <SetorToggles
-          titulo="Diretor responsavel pelos setores"
-          descricao="No Painel Gerencial esta pessoa passa a ver os setores onde e a diretora"
-          rotuloLinha={(s) => `Diretor de ${s}`}
-          descLinha={(s) => `Responde pelo setor ${s} acima dos gerentes`}
-          ariaLinha={(s) => `Diretor de ${s}`}
-          setores={setoresErp} marcados={setoresDiretor} onToggle={diretorH.onToggle} onLimpar={diretorH.onLimpar}
-          disabled={!empVinc} avisoDesabilitado="Vincule este usuario a um colaborador (aba Usuarios) para defini-lo como diretor de setor." />
-        <SetorToggles
-          titulo="Gerente / lider do setor"
-          descricao="No Painel Gerencial esta pessoa passa a ver o setor que lidera"
-          rotuloLinha={(s) => `Gerente de ${s}`}
-          descLinha={(s) => `Lidera o setor ${s} (sobrepoe o lider automatico do cadastro)`}
-          ariaLinha={(s) => `Gerente de ${s}`}
-          setores={setoresErp} marcados={setoresGerente} onToggle={gerenteH.onToggle} onLimpar={gerenteH.onLimpar}
-          disabled={!empVinc} avisoDesabilitado="Vincule este usuario a um colaborador (aba Usuarios) para defini-lo como gerente de setor." />
       </div>
     </div>
   );

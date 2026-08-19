@@ -57,6 +57,34 @@ const trimestreDe = (iso: string) => { const d = new Date(iso); return `${Math.f
 
 interface Resp { id: string; formulario_id: string; enviado_em: string; respondente_nome?: string | null; setor?: string | null; itens: Record<string, any> }
 
+// Nomes de uma fatia do gráfico, prontos para exibir: sem repetir, em ordem, e
+// marcando entre parênteses quem aparece mais de uma vez.
+const nomesUnicos = (nomes: string[]) => {
+  const c = new Map<string, number>();
+  nomes.forEach(n => { const k = (n ?? "").trim(); if (k) c.set(k, (c.get(k) ?? 0) + 1); });
+  return [...c.entries()].sort((a, b) => a[0].localeCompare(b[0], "pt-BR")).map(([n, q]) => q > 1 ? `${n} (${q})` : n);
+};
+
+// Balão que mostra QUEM está no ponto do gráfico, não só o total.
+function TipNomes({ active, payload, rotulo = "resposta(s)" }: any) {
+  if (!active || !payload?.length) return null;
+  const d = payload[0]?.payload ?? {};
+  const quem: string[] = d.quem ?? [];
+  const MAX = 14;
+  return (
+    <div style={{ maxWidth: 280, background: "#fff", border: "1px solid #e2e8f0", borderRadius: 8, boxShadow: "0 8px 24px rgba(15,23,42,.12)", padding: "8px 10px", fontSize: 11.5, lineHeight: 1.35, color: "#0f172a" }}>
+      <div style={{ fontWeight: 800, whiteSpace: "normal", wordBreak: "break-word" }}>{d.completo ?? d.nome}</div>
+      <div style={{ color: "#475569", marginTop: 2 }}><b>{nInt(Number(d.n ?? 0))}</b> {rotulo}</div>
+      {quem.length > 0 && (
+        <div style={{ marginTop: 6, borderTop: "1px dashed #e2e8f0", paddingTop: 5, color: "#475569" }}>
+          {quem.slice(0, MAX).map((q: string) => <div key={q}>• {q}</div>)}
+          {quem.length > MAX && <div style={{ color: "#94a3b8" }}>e mais {quem.length - MAX}…</div>}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function Kpi({ titulo, valor, sub, cor, icone }: { titulo: string; valor: string; sub: string; cor: string; icone: string }) {
   return (
     <div style={{ ...cardBox, display: "flex", gap: 11, alignItems: "flex-start" }}>
@@ -87,45 +115,47 @@ const Vazio = ({ msg }: { msg: string }) => (
 );
 
 export default function VisaoExecutiva({
-  resps, emps, pergs, mapa, planos, diretorPorSetor, fSetor,
+  resps, emps, empsTodos, pergs, mapa, planos, diretorPorSetor, recorte,
   distSituacao, distNecess, ultima, cadastroCarregando, onAbrirMapa, onIrTab,
 }: {
   resps: Resp[];                       // já filtradas (período, setor, colaborador)
-  emps: Empregado[];                   // cadastro cru
+  emps: Empregado[];                   // cadastro JÁ recortado pelos filtros da barra
+  empsTodos: Empregado[];              // cadastro inteiro — só para explicar o "fora do quadro"
   pergs: Pergunta[];
   mapa: Record<string, any>;
   planos: Plano[];
   diretorPorSetor: Map<string, string>;
-  fSetor: string;
-  distSituacao: { nome: string; completo: string; n: number }[];
-  distNecess: { nome: string; completo: string; n: number }[];
+  recorte: string;                     // resumo dos filtros ativos, para os rótulos
+  distSituacao: { nome: string; completo: string; n: number; quem?: string[] }[];
+  distNecess: { nome: string; completo: string; n: number; quem?: string[] }[];
   ultima: string;
   cadastroCarregando: boolean;
   onAbrirMapa: () => void;
   onIrTab: (t: string) => void;
 }) {
   const [porDiretoria, setPorDiretoria] = useState(true);
+  const [verFora, setVerFora] = useState(false);
 
   const pergAvaliado = pergs.find(p => p.id === mapa.avaliado);
   const pergNecLid = pergs.find(p => p.id === mapa.necLideranca);
   // Quem era esperado responder: perfil ADMINISTRATIVO e situação Trabalhando
-  // (régua do RH), dentro do recorte de setor da barra de filtros. O resto do
-  // quadro não participa do ciclo e não pode pesar na taxa.
+  // (régua do RH). O recorte dos filtros da barra — setor, diretoria, liderança,
+  // empresa, colaborador — já veio aplicado em `emps`, para o denominador andar
+  // junto com as respostas. O resto do quadro não participa do ciclo.
   const esperados = useMemo(() => emps.filter(e =>
-    ehPerfilEsperado(e.perfil) && ehTrabalhando(e.situacao) &&
-    (!fSetor || normSetor(e.setor) === normSetor(fSetor))
-  ), [emps, fSetor]);
+    ehPerfilEsperado(e.perfil) && ehTrabalhando(e.situacao)
+  ), [emps]);
   // A RPC do cadastro passou a devolver o Perfil_ERP na migration 20260724000001.
   // Sem ela, TODO mundo vem com perfil vazio e o esperado daria zero — melhor
   // dizer o que falta do que exibir uma taxa impossível.
-  const temPerfil = useMemo(() => emps.some(e => e.perfil), [emps]);
+  const temPerfil = useMemo(() => empsTodos.some(e => e.perfil), [empsTodos]);
 
   // A COBERTURA (esperados/realizados/pendentes/taxa) é a única parte que precisa
   // do cadastro, do Perfil_ERP e da pergunta do avaliado. Todo o resto — situação
   // profissional, necessidades, planos, alertas — sai só das respostas. Por isso
   // o que falta some do lugar dele em vez de derrubar a aba: quem abre a Visão
   // Executiva quer o panorama, não um aviso em tela cheia.
-  const temCobertura = emps.length > 0 && temPerfil && !!pergAvaliado;
+  const temCobertura = empsTodos.length > 0 && temPerfil && !!pergAvaliado;
 
   // Quem respondeu: o COLABORADOR AVALIADO de cada resposta (não o respondente —
   // quem preenche o feedback é o líder). Uma pessoa com três feedbacks no
@@ -153,6 +183,26 @@ export default function VisaoExecutiva({
     const foraCadastro = [...feitos.entries()].filter(([k]) => !chavesEsperadas.has(k)).map(([, v]) => v);
     return { realizados, pendentes, foraCadastro, taxa: esperados.length ? realizados.length / esperados.length * 100 : 0 };
   }, [esperados, feitos]);
+
+  // "Fora do quadro" com o MOTIVO de cada um — sem isso a barra vermelha era um
+  // número sem explicação. O cadastro inteiro (empsTodos) é que separa "não
+  // existe no cadastro" de "existe, mas está fora da régua ou do recorte".
+  const foraDetalhe = useMemo(() => {
+    const porNome = new Map<string, Empregado>();
+    empsTodos.forEach(e => { const k = chaveNome(e.nome); if (k && !porNome.has(k)) porNome.set(k, e); });
+    const noRecorte = new Set(emps.map(e => chaveNome(e.nome)));
+    return cob.foraCadastro.map(f => {
+      const k = chaveNome(f.nome);
+      const e = porNome.get(k);
+      const motivo =
+        !e ? "Não está no cadastro — nome digitado diferente ou pessoa de fora"
+        : !ehTrabalhando(e.situacao) ? `Situação no cadastro: ${e.situacao || "—"}`
+        : !ehPerfilEsperado(e.perfil) ? `Perfil ${e.perfil || "—"} — fora da régua do ciclo (${PERFIL_ESPERADO})`
+        : !noRecorte.has(k) ? `Fora do recorte dos filtros — setor ${e.setor || "—"}`
+        : "Não bateu com o quadro esperado";
+      return { ...f, motivo };
+    }).sort((a, b) => a.nome.localeCompare(b.nome, "pt-BR"));
+  }, [cob.foraCadastro, empsTodos, emps]);
 
   // Evolução da cobertura: pessoas distintas com feedback em cada trimestre.
   // A base é o quadro ATUAL (o cadastro não guarda foto histórica), então a
@@ -212,11 +262,18 @@ export default function VisaoExecutiva({
   // Volume de respostas por setor — o panorama que não depende de cadastro nem
   // de mapeamento nenhum.
   const respostasPorSetor = useMemo(() => {
-    const m = new Map<string, number>();
-    resps.forEach(r => { const s = (r.setor ?? "").trim() || "Sem setor"; m.set(s, (m.get(s) ?? 0) + 1); });
-    return [...m.entries()].map(([completo, n]) => ({ completo, nome: completo.length > 16 ? completo.slice(0, 16) + "…" : completo, n }))
+    const m = new Map<string, { n: number; quem: string[] }>();
+    resps.forEach(r => {
+      const s = (r.setor ?? "").trim() || "Sem setor";
+      const g = m.get(s) ?? { n: 0, quem: [] };
+      g.n++;
+      const nome = ((pergAvaliado ? String(r.itens[pergAvaliado.id] ?? "") : "") || (r.respondente_nome ?? "")).trim();
+      if (nome) g.quem.push(nome);
+      m.set(s, g);
+    });
+    return [...m.entries()].map(([completo, g]) => ({ completo, nome: completo.length > 16 ? completo.slice(0, 16) + "…" : completo, n: g.n, quem: nomesUnicos(g.quem) }))
       .sort((a, b) => b.n - a.n);
-  }, [resps]);
+  }, [resps, pergAvaliado]);
 
   const topNecess = useMemo(() => [...distNecess].sort((a, b) => b.n - a.n).filter(d => d.n > 0).slice(0, 5), [distNecess]);
   const totalNecess = useMemo(() => distNecess.reduce((s, d) => s + d.n, 0), [distNecess]);
@@ -316,22 +373,22 @@ export default function VisaoExecutiva({
           <span style={{ fontSize: 20 }}>⚠️</span>
           <div style={{ flex: 1, minWidth: 260, fontSize: 11.5, color: "#78350f", lineHeight: 1.55 }}>
             <b>Cobertura do quadro indisponível.</b>{" "}
-            {!emps.length
+            {!empsTodos.length
               ? "Não consegui ler o cadastro de colaboradores, então não há denominador para a taxa de realização. Recarregue a página; se persistir, confira o acesso ao módulo de RH."
               : !temPerfil
               ? <>O cadastro veio <b>sem o Perfil_ERP</b>, que é o que define quem precisa responder. Falta aplicar a migration <b>20260724000001_rh_hierarquia_perfil</b> no banco do app (e o <code>NOTIFY pgrst, 'reload schema'</code> que vem nela).</>
               : <>Falta apontar qual pergunta traz o <b>colaborador avaliado</b>. Quem preenche o feedback é o líder, então o nome de quem foi avaliado está numa pergunta do formulário — sem isso não dá para saber quem já recebeu feedback, e a taxa de realização seria um chute.</>}
             {" "}Os demais indicadores abaixo continuam valendo.
           </div>
-          {!!emps.length && temPerfil && !pergAvaliado && <button onClick={onAbrirMapa} style={btn("#0f3171")}>⚙ Abrir mapeamento</button>}
+          {!!empsTodos.length && temPerfil && !pergAvaliado && <button onClick={onAbrirMapa} style={btn("#0f3171")}>⚙ Abrir mapeamento</button>}
         </div>
       )}
 
       {/* KPIs */}
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(184px,1fr))", gap: 12, marginBottom: 14 }}>
         <Kpi titulo="Respostas no período" valor={nInt(resps.length)} cor="#0f3171" icone="📥" sub={`${nInt(feitos.size)} pessoa(s) avaliada(s)`} />
-        {emps.length > 0 && temPerfil && <Kpi titulo="Feedbacks esperados" valor={nInt(esperados.length)} cor="#2563eb" icone="👥"
-          sub={fSetor ? `${PERFIL_ESPERADO} · Trabalhando · ${fSetor}` : `${PERFIL_ESPERADO} · Trabalhando`} />}
+        {empsTodos.length > 0 && temPerfil && <Kpi titulo="Feedbacks esperados" valor={nInt(esperados.length)} cor="#2563eb" icone="👥"
+          sub={recorte ? `${PERFIL_ESPERADO} · Trabalhando · ${recorte}` : `${PERFIL_ESPERADO} · Trabalhando`} />}
         {temCobertura && <>
           <Kpi titulo="Feedbacks realizados" valor={nInt(cob.realizados.length)} cor="#16a34a" icone="✅" sub={`${pctTxt(cob.realizados.length, esperados.length)} do esperado`} />
           <Kpi titulo="Taxa de realização" valor={`${n1(cob.taxa)}%`} cor={cob.taxa >= META_REALIZACAO ? "#16a34a" : cob.taxa >= 70 ? "#f59e0b" : "#dc2626"} icone="％"
@@ -374,7 +431,7 @@ export default function VisaoExecutiva({
                   <Pie data={sitOrdenada} dataKey="n" nameKey="completo" cx="50%" cy="50%" innerRadius={48} outerRadius={72} paddingAngle={2}>
                     {sitOrdenada.map((_, i) => <Cell key={i} fill={CORES[i % CORES.length]} />)}
                   </Pie>
-                  <Tooltip formatter={(v: any, n: any) => [`${nInt(Number(v))} (${pctTxt(Number(v), totalSit)})`, n]} />
+                  <Tooltip content={<TipNomes rotulo="resposta(s)" />} />
                 </PieChart>
               </ResponsiveContainer>
               <div style={{ display: "flex", flexDirection: "column", gap: 3, marginTop: 4 }}>
@@ -394,14 +451,14 @@ export default function VisaoExecutiva({
         {temCobertura && <Painel titulo="Cobertura do quadro">
           <ResponsiveContainer width="100%" height={190}>
             <BarChart layout="vertical" data={[
-              { nome: "Realizados", n: cob.realizados.length, cor: "#16a34a" },
-              { nome: "Pendentes", n: cob.pendentes.length, cor: "#f59e0b" },
-              { nome: "Fora do quadro", n: cob.foraCadastro.length, cor: "#dc2626" },
+              { nome: "Realizados", completo: "Realizados", n: cob.realizados.length, quem: nomesUnicos(cob.realizados.map(e => e.nome)) },
+              { nome: "Pendentes", completo: "Pendentes", n: cob.pendentes.length, quem: nomesUnicos(cob.pendentes.map(e => e.nome)) },
+              { nome: "Fora do quadro", completo: "Fora do quadro", n: cob.foraCadastro.length, quem: nomesUnicos(cob.foraCadastro.map(f => f.nome)) },
             ]} margin={{ top: 4, right: 44, left: 10, bottom: 0 }}>
               <CartesianGrid strokeDasharray="3 3" stroke="#eef2f7" horizontal={false} />
               <XAxis type="number" tick={{ fontSize: 10, fill: "#94a3b8" }} />
               <YAxis type="category" dataKey="nome" width={84} tick={{ fontSize: 10.5, fill: "#475569" }} />
-              <Tooltip formatter={(v: any) => nInt(Number(v))} />
+              <Tooltip content={<TipNomes rotulo="pessoa(s)" />} />
               <Bar dataKey="n" radius={[0, 6, 6, 0]} barSize={20}>
                 {["#16a34a", "#f59e0b", "#dc2626"].map((c, i) => <Cell key={i} fill={c} />)}
                 <LabelList dataKey="n" position="right" formatter={(v: any) => `${nInt(Number(v))} (${pctTxt(Number(v), esperados.length)})`} style={{ fontSize: 9.5, fill: "#64748b", fontWeight: 700 }} />
@@ -409,8 +466,32 @@ export default function VisaoExecutiva({
             </BarChart>
           </ResponsiveContainer>
           <div style={{ fontSize: 10, color: "#94a3b8", marginTop: 6, lineHeight: 1.45 }}>
-            ⓘ “Fora do quadro” são feedbacks de quem não está no cadastro ativo do recorte — não entram na taxa.
+            ⓘ <b>Fora do quadro</b> = feedback de alguém que não está no quadro esperado deste recorte: perfil diferente de {PERFIL_ESPERADO},
+            situação diferente de Trabalhando, nome digitado diferente do cadastro, ou setor fora dos filtros. Não entram na taxa — senão ela passaria de 100%.
           </div>
+          {foraDetalhe.length > 0 && (
+            <>
+              <button onClick={() => setVerFora(v => !v)} style={{ background: "none", border: "none", color: "#0f3171", fontSize: 11, fontWeight: 800, cursor: "pointer", padding: 0, marginTop: 4, alignSelf: "flex-start" }}>
+                {verFora ? "▴ Ocultar" : `▾ Ver quem está fora do quadro (${nInt(foraDetalhe.length)})`}
+              </button>
+              {verFora && (
+                <div style={{ marginTop: 6, maxHeight: 190, overflowY: "auto", border: "1px solid #eef2f7", borderRadius: 8 }}>
+                  <table style={{ width: "100%", borderCollapse: "collapse" }}>
+                    <thead><tr><th style={th}>Pessoa</th><th style={th}>Feedbacks</th><th style={th}>Por que está fora</th></tr></thead>
+                    <tbody>
+                      {foraDetalhe.map(f => (
+                        <tr key={f.nome}>
+                          <td style={{ ...td, fontWeight: 700, color: "#0f172a" }}>{f.nome}</td>
+                          <td style={{ ...td, textAlign: "center" }}>{nInt(f.qtd)}</td>
+                          <td style={td}>{f.motivo}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </>
+          )}
         </Painel>}
 
         {/* Sempre disponível: sai só das respostas, não depende de cadastro nem
@@ -422,7 +503,7 @@ export default function VisaoExecutiva({
                 <CartesianGrid strokeDasharray="3 3" stroke="#eef2f7" horizontal={false} />
                 <XAxis type="number" tick={{ fontSize: 10, fill: "#94a3b8" }} />
                 <YAxis type="category" dataKey="nome" width={96} tick={{ fontSize: 9.5, fill: "#475569" }} />
-                <Tooltip formatter={(v: any, _n: any, p: any) => [`${nInt(Number(v))} resposta(s)`, p.payload.completo]} />
+                <Tooltip content={<TipNomes rotulo="resposta(s)" />} />
                 <Bar dataKey="n" fill="#2563eb" radius={[0, 6, 6, 0]} barSize={15}>
                   <LabelList dataKey="n" position="right" formatter={(v: any) => nInt(Number(v))} style={{ fontSize: 9.5, fill: "#64748b", fontWeight: 700 }} />
                 </Bar>

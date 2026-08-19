@@ -15,12 +15,20 @@ on:
       comando:
         description: 'O que rodar'
         type: choice
-        options: [testar, descobrir, sincronizar]
+        options: [testar, descobrir, perfilar, sincronizar]
         default: testar
-      limite:
-        description: 'Linhas por tabela (só para teste; vazio = tudo)'
+      tabelas:
+        description: 'Só para perfilar: tabelas separadas por espaço (vazio = as de tabelas.json)'
         type: string
-        default: '100'
+        default: ''
+      limite:
+        # Padrão VAZIO de propósito. Com default '100', mandar o campo em
+        # branco fazia o GitHub reaplicar o 100 e a carga saía truncada
+        # parecendo completa — que é pior do que falhar. Truncar agora é
+        # sempre uma escolha explícita de quem digita o número.
+        description: 'Linhas por tabela — deixe VAZIO para espelho completo. Só preencha para teste rápido.'
+        type: string
+        default: ''
       gravar:
         description: 'Gravar de verdade? Desmarcado = simulação com rollback'
         type: boolean
@@ -73,6 +81,7 @@ jobs:
           COMANDO: ${{ inputs.comando }}
           LIMITE: ${{ inputs.limite }}
           GRAVAR: ${{ inputs.gravar }}
+          TABELAS: ${{ inputs.tabelas }}
         run: |
           set -euo pipefail
           if [ "$EVENTO" = "schedule" ]; then
@@ -83,6 +92,12 @@ jobs:
             # && só é segura enquanto não for a última linha do bloco: se um
             # dia virar, um teste falso derruba o step. O if não tem esse risco.
             set -- "$COMANDO"
+            if [ "$COMANDO" = "perfilar" ] && [ -n "$TABELAS" ]; then
+              # sem aspas de propósito: a lista vem separada por espaço e cada
+              # nome tem que virar um argumento próprio.
+              # shellcheck disable=SC2086
+              set -- "$@" $TABELAS
+            fi
             if [ "$COMANDO" = "sincronizar" ]; then
               if [ "$GRAVAR" = "true" ]; then
                 set -- "$@" --commit
@@ -94,6 +109,68 @@ jobs:
             echo "rodando: node espelho.mjs $*"
             node espelho.mjs "$@"
           fi
+
+      # Sem este aviso, uma quebra da rodada diária é invisível: o espelho
+      # congela com os dados de ontem, parecendo certo, e só se descobre por
+      # acaso. Reaproveita o bot que o pr_notify_dm.yml já usa.
+      #
+      # Vai pela API REST em vez do discord.js: são duas chamadas (abre o
+      # canal de DM, manda a mensagem), sem instalar pacote nem esperar o
+      # cliente conectar.
+      - name: Avisar no Discord se quebrou
+        if: failure()
+        env:
+          DISCORD_TOKEN: ${{ secrets.DISCORD_TOKEN }}
+          # IDs de quem recebe, separados por vírgula. Editável em
+          # Settings > Secrets and variables > Actions > Variables,
+          # sem precisar de PR.
+          ALVOS: ${{ vars.ESPELHO_DISCORD_IDS }}
+          URL_RUN: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          DISPARO: ${{ github.event_name }}
+        run: |
+          set -uo pipefail
+          if [ -z "${DISCORD_TOKEN:-}" ] || [ -z "${ALVOS:-}" ]; then
+            echo "::warning::sem DISCORD_TOKEN ou ESPELHO_DISCORD_IDS — aviso não enviado"
+            exit 0
+          fi
+
+          # Texto e JSON montados dentro do node. Em bloco "run: |" do YAML
+          # toda linha precisa ser indentada, então uma string de várias
+          # linhas escrita direto no shell quebraria o arquivo.
+          CORPO=$(node -e '
+            const agendado = process.env.DISPARO === "schedule";
+            const texto = [
+              "🔴 **Espelho MySQL → Supabase falhou**",
+              "",
+              (agendado ? "A rodada automática das 07:00" : "Uma execução manual") +
+                " não conseguiu atualizar o Supabase.",
+              "O espelho continua com os dados da última carga que deu certo —",
+              "nada foi corrompido, mas está desatualizado.",
+              "",
+              "Log: " + process.env.URL_RUN,
+            ].join("\n");
+            process.stdout.write(JSON.stringify({ content: texto }));
+          ')
+
+          for ID in $(echo "$ALVOS" | tr ',' ' '); do
+            CANAL=$(curl -s -X POST "https://discord.com/api/v10/users/@me/channels" \
+              -H "Authorization: Bot $DISCORD_TOKEN" \
+              -H "Content-Type: application/json" \
+              -d "{\"recipient_id\":\"$ID\"}" \
+              | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{try{process.stdout.write(JSON.parse(s).id||"")}catch(e){}})')
+
+            if [ -z "$CANAL" ]; then
+              echo "::warning::não consegui abrir DM para $ID"
+              continue
+            fi
+
+            COD=$(curl -s -o /dev/null -w '%{http_code}' -X POST \
+              "https://discord.com/api/v10/channels/$CANAL/messages" \
+              -H "Authorization: Bot $DISCORD_TOKEN" \
+              -H "Content-Type: application/json" \
+              -d "$CORPO")
+            echo "aviso para $ID: HTTP $COD"
+          done
 
       - name: Apagar credenciais do disco
         if: always()
