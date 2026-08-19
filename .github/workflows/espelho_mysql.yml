@@ -22,9 +22,13 @@ on:
         type: string
         default: ''
       limite:
-        description: 'Linhas por tabela (só para teste; vazio = tudo)'
+        # Padrão VAZIO de propósito. Com default '100', mandar o campo em
+        # branco fazia o GitHub reaplicar o 100 e a carga saía truncada
+        # parecendo completa — que é pior do que falhar. Truncar agora é
+        # sempre uma escolha explícita de quem digita o número.
+        description: 'Linhas por tabela — deixe VAZIO para espelho completo. Só preencha para teste rápido.'
         type: string
-        default: '100'
+        default: ''
       gravar:
         description: 'Gravar de verdade? Desmarcado = simulação com rollback'
         type: boolean
