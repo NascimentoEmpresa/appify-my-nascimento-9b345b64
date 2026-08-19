@@ -2,6 +2,45 @@
 
 Executada em 17/08/2026, direto entre os dois bancos, sem CSV nem Excel.
 Script: [etl.mjs](etl.mjs) · Migrations: `20260903000001`, `20260903000002`.
+Conferência: [verificar.mjs](verificar.mjs) — `node verificar.mjs`.
+
+---
+
+## Recarga de 18/08/2026
+
+Usuários relataram que "não veio 100%". **Não era dado deixado para trás na
+carga: era o sistema antigo continuando a ser usado depois dela.** Entre 17 e
+18/08 a origem ganhou 74 pedidos, 136 etiquetas, 122 linhas de consumo, 74 logs
+e 5 anexos — e apagou 6 pedidos e 1 etiqueta que já tinham sido migrados.
+
+Recarga rodada. Estado ao fim, por **diferença de conjunto de ids** (contar
+linha não serve: num banco vivo dois totais iguais podem esconder uma linha
+faltando de um lado e outra sobrando do outro):
+
+| Tabela | Origem | Destino | Falta | Sobra |
+|---|---:|---:|---:|---:|
+| pedidos | 1.306 | 1.311 | 1 | 6 |
+| etiquetas | 12.689 | 12.683 | 7 | 1 |
+| consumo | 3.575 | 3.575 | **0** | 0 |
+| logs manutenção | 1.187 | 1.177 | 10 | 0 |
+| anexos, catálogo, cotações | — | — | **0** | 0 |
+
+O que ainda falta são só as três exceções conhecidas: 1 pedido criado durante a
+própria verificação, as 7 etiquetas de ficha-lixo e os 10 logs órfãos.
+
+### Dois defeitos do ETL corrigidos nesta recarga
+
+**A nota de colapso duplicava.** Ficha sem etiqueta tem seus dados gravados em
+`observacoes`; sem guarda, cada execução anexava o mesmo texto de novo. Agora
+há `position('[legado ficha N]' in observacoes) = 0`. Conferido: zero duplicadas.
+
+**Código de etiqueta reaproveitado abortava a fase.** O sistema antigo apagou as
+etiquetas 14810 e 32521 e criou outras com os MESMOS códigos impressos (24391 e
+36000). Como `codigo` é único global, o INSERT estourava. Agora, quando o dono
+antigo do código não existe mais na origem, a linha órfã é repontada; se os dois
+estiverem vivos, o ETL recusa e avisa em vez de inventar desempate.
+
+---
 
 ## Conferência origem × destino
 

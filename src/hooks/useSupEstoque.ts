@@ -381,8 +381,10 @@ export function useDevolverTags() {
 export function useRemoverTag() {
   const invalidar = useInvalidarEstoque();
   return useMutation({
-    mutationFn: async (codigo: string) => {
-      const { data, error } = await sb.rpc("sup_est_remover_tag", { p_codigo: codigo });
+    mutationFn: async (v: { codigo: string; motivo?: string | null }) => {
+      const { data, error } = await sb.rpc("sup_est_remover_tag", {
+        p_codigo: v.codigo, p_motivo: v.motivo?.trim() || null,
+      });
       if (error) throw error;
       return data as { acao: string; saldo?: number; restantes?: number };
     },
@@ -394,5 +396,93 @@ export function useRemoverTag() {
         : "Etiqueta removida.");
     },
     onError: (e: any) => toast.error(e?.message ?? "Não foi possível remover."),
+  });
+}
+
+// ── Histórico do material ────────────────────────────────────────────
+
+export type TipoMovimento = "entrada" | "saida" | "devolucao" | "ajuste" | "remocao";
+
+export interface Movimento {
+  id: string;
+  tipo: TipoMovimento;
+  quantidade: number;
+  codigo: string | null;
+  tamanho: string | null;
+  observacao: string | null;
+  usuario_nome: string | null;
+  created_at: string;
+  /** Protocolo legível do pedido (PED-0142), quando a saída foi para um. */
+  pedido_protocolo: string | null;
+}
+
+/**
+ * A vida inteira de um material: entrada, saída (com o pedido), devolução,
+ * remoção e inventário, em ordem cronológica inversa.
+ *
+ * Lê por `sup_item_id`, NÃO por `item_estoque_id`, e a diferença importa:
+ * `sup_est_remover_tag` apaga o `sup_estoque_item` quando tira a última
+ * etiqueta, e o movimento tem ON DELETE SET NULL — ancorar na linha de estoque
+ * perderia o histórico exatamente do caso que mais interessa auditar. Ver a
+ * migration 20260907000003.
+ */
+export function useHistoricoDoMaterial(supItemId: string | null) {
+  return useQuery({
+    queryKey: ["sup_estoque_movimento", supItemId],
+    enabled: !!supItemId,
+    queryFn: async (): Promise<Movimento[]> => {
+      const { data, error } = await sb
+        .from("sup_estoque_movimento")
+        .select("id, tipo, quantidade, codigo, tamanho, observacao, usuario_nome, created_at, pedido:pedido_id (pedido_id)")
+        .eq("sup_item_id", supItemId)
+        .order("created_at", { ascending: false })
+        .limit(500);
+      if (error) throw error;
+      return (data ?? []).map((m: any) => ({
+        ...m, pedido_protocolo: m.pedido?.pedido_id ?? null,
+      }));
+    },
+  });
+}
+
+export interface ResultadoInventario {
+  inventario_id: string;
+  esperadas: number;
+  encontradas: number;
+  divergencia: number;
+  /** Etiquetas que o sistema tem como livres e não foram achadas na prateleira. */
+  faltantes: string[];
+  /** Bipadas que não pertencem a este material, ou que já estavam baixadas. */
+  estranhas: string[];
+}
+
+/**
+ * Registra um inventário. NÃO corrige o estoque de propósito: confronta o
+ * físico com o sistema, grava a divergência e para por aí — apurar o que
+ * aconteceu (câmera, relatório, quem deu baixa) é trabalho humano depois, e
+ * baixar etiqueta sozinho destruiria a prova.
+ */
+export function useInventario() {
+  const invalidar = useInvalidarEstoque();
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (v: { itemEstoqueId: string; codigos: string[]; observacao?: string | null }) => {
+      const { data, error } = await sb.rpc("sup_est_inventario", {
+        p_item_estoque_id: v.itemEstoqueId,
+        p_codigos: v.codigos,
+        p_observacao: v.observacao?.trim() || null,
+      });
+      if (error) throw error;
+      return data as ResultadoInventario;
+    },
+    onSuccess: (r) => {
+      invalidar();
+      qc.invalidateQueries({ queryKey: ["sup_estoque_movimento"] });
+      toast.success(
+        r.divergencia === 0
+          ? `Inventário fechado: ${r.encontradas} de ${r.esperadas} conferidas.`
+          : `Inventário com divergência de ${r.divergencia}: ${r.encontradas} de ${r.esperadas} conferidas.`);
+    },
+    onError: (e: any) => toast.error(e?.message ?? "Não foi possível registrar o inventário."),
   });
 }
