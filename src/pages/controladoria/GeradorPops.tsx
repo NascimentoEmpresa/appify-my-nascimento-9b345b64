@@ -23,6 +23,7 @@ interface PopItem {
   descDetalhada: string; processo: string; id: string;
   gerado: boolean; selected: boolean; tipo: "PRÉVIA" | "PUBLICAÇÃO";
   etapas: string[] | null;
+  nomesFluxo: string[];
   criterioExito: string; acaoInconsistencia: string;
   fluxogramaImg?: string; fluxogramaFileName?: string;
 }
@@ -75,6 +76,111 @@ function wrapText(ctx: CanvasRenderingContext2D, text: string, maxW: number): st
   return lines;
 }
 
+// ── Canvas: render de UMA etapa (para PDF com quebra de página) ───────────
+function renderEtapaCanvas(
+  step: string, index: number, total: number
+): { url: string; canvasW: number; canvasH: number } {
+  const DPR = 2;
+  const W = 1100;
+  const FONT = "Inter, system-ui, Arial, sans-serif";
+  const TEXT_X = 46 + 26 + 22;
+  const TEXT_W = W - TEXT_X - 24;
+  const LINE_H_TITLE = 34;
+  const LINE_H_BODY = 30;
+  const ROW_V_PAD = 18;
+  const ARROW_H = 28;
+  const BADGE_H = 68;
+
+  const tmp = document.createElement("canvas");
+  const tctx = tmp.getContext("2d")!;
+  const colon = step.indexOf(":");
+  const hasTitulo = colon > 0 && colon < 50;
+  const corpo = hasTitulo ? step.substring(colon + 1).trim() : step;
+  tctx.font = `400 22px ${FONT}`;
+  const bodyLines = wrapText(tctx, corpo, TEXT_W);
+  const titleH = hasTitulo ? LINE_H_TITLE : 0;
+  const rh = Math.max(titleH + bodyLines.length * LINE_H_BODY + ROW_V_PAD * 2, BADGE_H + ROW_V_PAD * 2);
+  const hasArrow = index < total - 1;
+  const totalH = rh + (hasArrow ? ARROW_H : 0);
+
+  const canvas = document.createElement("canvas");
+  canvas.width = W * DPR;
+  canvas.height = totalH * DPR;
+  const ctx = canvas.getContext("2d")!;
+  ctx.scale(DPR, DPR);
+  ctx.clearRect(0, 0, W, totalH);
+
+  // fundo alternado
+  ctx.fillStyle = index % 2 === 0 ? "#FFFFFF" : "#F4F7FB";
+  ctx.fillRect(0, 0, W, rh);
+
+  // borda laranja esquerda
+  ctx.fillStyle = PAL.laranja;
+  ctx.fillRect(0, 0, 6, rh);
+
+  const BW = 56, BH = BADGE_H;
+  const BX = 30, BY = (rh - BH) / 2;
+  const BCMID = BX + BW * 0.50;
+
+  ctx.save();
+  ctx.shadowColor = "rgba(230,115,0,0.28)";
+  ctx.shadowBlur = 10; ctx.shadowOffsetY = 3;
+  ctx.fillStyle = PAL.laranja;
+  ctx.beginPath();
+  ctx.moveTo(BX,             BY);
+  ctx.lineTo(BX + BW * 0.50, BY + BH * 0.35);
+  ctx.lineTo(BX + BW,        BY);
+  ctx.lineTo(BX + BW,        BY + BH * 0.65);
+  ctx.lineTo(BX + BW * 0.50, BY + BH);
+  ctx.lineTo(BX,             BY + BH * 0.65);
+  ctx.closePath(); ctx.fill();
+  ctx.restore();
+
+  ctx.fillStyle = "#FFFFFF";
+  ctx.font = `700 15px ${FONT}`;
+  ctx.textAlign = "center"; ctx.textBaseline = "alphabetic";
+  const numStr = String(index + 1);
+  const m = ctx.measureText(numStr);
+  const glyphMid = (m.actualBoundingBoxAscent - m.actualBoundingBoxDescent) / 2;
+  ctx.fillText(numStr, BCMID, BY + BH * 0.35 + (BH * 0.30) / 2 + 5 + glyphMid);
+
+  const titulo = hasTitulo ? step.substring(0, colon).trim() : null;
+  ctx.font = `400 22px ${FONT}`;
+  const allBodyLines = wrapText(ctx, corpo, TEXT_W);
+  const totalTextH = (titulo ? LINE_H_TITLE : 0) + allBodyLines.length * LINE_H_BODY;
+  let textY = (rh - totalTextH) / 2;
+  ctx.textAlign = "left"; ctx.textBaseline = "top";
+  if (titulo) {
+    ctx.font = `700 22px ${FONT}`; ctx.fillStyle = PAL.azulMedio;
+    ctx.fillText(titulo + ":", TEXT_X, textY); textY += LINE_H_TITLE;
+  }
+  ctx.font = `400 22px ${FONT}`; ctx.fillStyle = PAL.escuro;
+  allBodyLines.forEach(l => { ctx.fillText(l, TEXT_X, textY); textY += LINE_H_BODY; });
+
+  if (hasArrow) {
+    const mid = rh + ARROW_H / 2;
+    ctx.setLineDash([4, 4]); ctx.strokeStyle = "#D0D8E8"; ctx.lineWidth = 1.5;
+    ctx.beginPath(); ctx.moveTo(16, mid); ctx.lineTo(W - 16, mid); ctx.stroke();
+    ctx.setLineDash([]);
+    const chevW = 18, chevH = 10, chevGap = 6;
+    [-chevGap / 2 - chevH / 2, chevGap / 2 + chevH / 2 - chevH].forEach((offset, ci) => {
+      const ty = mid + offset - (ci === 0 ? 3 : -3);
+      ctx.strokeStyle = PAL.laranja; ctx.lineWidth = ci === 0 ? 3 : 2.5;
+      ctx.lineCap = "round"; ctx.lineJoin = "round"; ctx.globalAlpha = ci === 0 ? 1 : 0.55;
+      ctx.beginPath(); ctx.moveTo(BCMID - chevW / 2, ty); ctx.lineTo(BCMID, ty + chevH); ctx.lineTo(BCMID + chevW / 2, ty); ctx.stroke();
+      ctx.globalAlpha = 1;
+    });
+  }
+
+  // fundo branco explícito antes de exportar como JPEG (sem transparência)
+  const out = document.createElement("canvas");
+  out.width = canvas.width; out.height = canvas.height;
+  const octx = out.getContext("2d")!;
+  octx.fillStyle = "#FFFFFF"; octx.fillRect(0, 0, out.width, out.height);
+  octx.drawImage(canvas, 0, 0);
+  return { url: out.toDataURL("image/jpeg", 0.88), canvasW: W, canvasH: totalH };
+}
+
 // ── Canvas: render das etapas → { url, canvasW, canvasH } ────────────────
 function renderEtapasCanvas(steps: string[]): { url: string; canvasW: number; canvasH: number } {
   const DPR = 3;
@@ -95,14 +201,15 @@ function renderEtapasCanvas(steps: string[]): { url: string; canvasW: number; ca
   const tmp = document.createElement("canvas");
   const tctx = tmp.getContext("2d")!;
 
+  const BADGE_H = 68; // altura fixa do chevron — independe do texto
   const rowHeights = steps.map(s => {
     const colon = s.indexOf(":");
     const hasTitulo = colon > 0 && colon < 50;
     const corpo = hasTitulo ? s.substring(colon + 1).trim() : s;
-    tctx.font = `400 27px ${FONT}`;
+    tctx.font = `400 22px ${FONT}`;
     const bodyLines = wrapText(tctx, corpo, TEXT_W);
     const titleH = hasTitulo ? LINE_H_TITLE : 0;
-    return Math.max(titleH + bodyLines.length * LINE_H_BODY + ROW_V_PAD * 2, 80);
+    return Math.max(titleH + bodyLines.length * LINE_H_BODY + ROW_V_PAD * 2, BADGE_H + ROW_V_PAD * 2);
   });
 
   // total inclui área de seta entre etapas (exceto após a última)
@@ -130,8 +237,8 @@ function renderEtapasCanvas(steps: string[]): { url: string; canvasW: number; ca
     ctx.fillStyle = PAL.laranja;
     ctx.fillRect(0, ry, 6, rh);
 
-    // badge: chevron contínuo de 6 pontos — V profundo (35%/65%)
-    const BW = 56, BH = rh * 0.52;
+    // badge: chevron de altura fixa, centrado verticalmente na linha
+    const BW = 56, BH = BADGE_H;
     const BX = 30, BY = ry + (rh - BH) / 2;
     const BCMID = BX + BW * 0.50;
 
@@ -169,7 +276,7 @@ function renderEtapasCanvas(steps: string[]): { url: string; canvasW: number; ca
     const titulo = hasTitulo ? step.substring(0, colon).trim() : null;
     const corpo = hasTitulo ? step.substring(colon + 1).trim() : step;
 
-    ctx.font = `400 27px ${FONT}`;
+    ctx.font = `400 22px ${FONT}`;
     const bodyLines = wrapText(ctx, corpo, TEXT_W);
     const totalTextH = (titulo ? LINE_H_TITLE : 0) + bodyLines.length * LINE_H_BODY;
     // início do bloco de texto centrado verticalmente na linha
@@ -177,12 +284,12 @@ function renderEtapasCanvas(steps: string[]): { url: string; canvasW: number; ca
 
     ctx.textAlign = "left"; ctx.textBaseline = "top";
     if (titulo) {
-      ctx.font = `700 27px ${FONT}`;
+      ctx.font = `700 22px ${FONT}`;
       ctx.fillStyle = PAL.azulMedio;
       ctx.fillText(titulo + ":", TEXT_X, textY);
       textY += LINE_H_TITLE;
     }
-    ctx.font = `400 27px ${FONT}`;
+    ctx.font = `400 22px ${FONT}`;
     ctx.fillStyle = PAL.escuro;
     bodyLines.forEach(l => { ctx.fillText(l, TEXT_X, textY); textY += LINE_H_BODY; });
 
@@ -529,12 +636,15 @@ async function gerarPDF(item: PopItem, content: POPContent, opts: { elaborador: 
     txt("Nenhuma etapa definida.", M + 6, y + 8, 8.5, C.cinzaTexto);
     y += 16;
   } else {
-    const { url: etapasPng, canvasW: etW, canvasH: etH } = renderEtapasCanvas(steps);
-    // altura proporcional real: CW mm * (canvasH / canvasW)
-    const etapasH = CW * etH / etW;
-    if (y + etapasH > 272) { doc.addPage(); y = 14; }
-    doc.addImage(etapasPng, "PNG", M, y, CW, etapasH);
-    y += etapasH + 5;
+    // cada etapa é um canvas independente → permite quebra de página entre etapas
+    for (let si = 0; si < steps.length; si++) {
+      const { url: png, canvasW: eW, canvasH: eH } = renderEtapaCanvas(steps[si], si, steps.length);
+      const h = CW * eH / eW;
+      if (y + h > 272) { doc.addPage(); y = 14; }
+      doc.addImage(png, "JPEG", M, y, CW, h);
+      y += h;
+    }
+    y += 5;
   }
 
   // ── SEÇÃO 5: FLUXOGRAMA via Canvas ────────────────────────────────────
@@ -554,10 +664,16 @@ async function gerarPDF(item: PopItem, content: POPContent, opts: { elaborador: 
     const nosFluxo: FluxoNo[] = [
       { label: "INÍCIO", sub: item.setor || item.area, tipo: "inicio" },
       ...steps.map((s, si) => {
-        const colon = s.indexOf(":");
-        const label = colon > 0 && colon < 45
-          ? s.substring(0, colon).trim().toUpperCase()
-          : s.split(" ").slice(0, 4).join(" ").toUpperCase();
+        const nomeCustom = (item.nomesFluxo ?? [])[si]?.trim();
+        let label: string;
+        if (nomeCustom) {
+          label = nomeCustom.toUpperCase();
+        } else {
+          const colon = s.indexOf(":");
+          label = colon > 0 && colon < 45
+            ? s.substring(0, colon).trim().toUpperCase()
+            : s.split(" ").slice(0, 4).join(" ").toUpperCase();
+        }
         return { label, sub: item.responsavel || `Etapa ${si + 1}`, tipo: "meio" as const };
       }),
       { label: "CONCLUÍDO", sub: "Processo finalizado", tipo: "fim" },
@@ -641,7 +757,7 @@ function parseExcel(file: File): Promise<PopItem[]> {
           })(),
           descDetalhada: String(r[15] || ""), processo: String(r[16] || ""),
           id: gerarId(String(r[1] || ""), String(r[2] || "")),
-          gerado: false, selected: false, tipo: "PRÉVIA",
+          gerado: false, selected: false, tipo: "PRÉVIA", nomesFluxo: [],
           etapas: null, criterioExito: "", acaoInconsistencia: "",
         }));
         resolve(items);
@@ -655,16 +771,28 @@ function parseExcel(file: File): Promise<PopItem[]> {
 // ── Modal Etapas ───────────────────────────────────────────────────────────
 function ModalEtapas({ item, onSalvar, onClose }: {
   item: PopItem;
-  onSalvar: (etapas: string[], criterioExito: string, acaoInconsistencia: string) => void;
+  onSalvar: (etapas: string[], nomesFluxo: string[], criterioExito: string, acaoInconsistencia: string) => void;
   onClose: () => void;
 }) {
   const [etapas, setEtapas] = useState<string[]>(item.etapas ?? [""]);
+  const etapaCount = (item.etapas ?? [""]).length;
+  const [nomesFluxo, setNomesFluxo] = useState<string[]>(
+    () => Array.from({ length: etapaCount }, (_, i) => (item.nomesFluxo ?? [])[i] ?? "")
+  );
   const [criterio, setCriterio] = useState(item.criterioExito);
   const [acao, setAcao] = useState(item.acaoInconsistencia);
 
-  const addEtapa = () => setEtapas(p => [...p, ""]);
-  const removeEtapa = (i: number) => setEtapas(p => p.filter((_, j) => j !== i));
+  const addEtapa = () => { setEtapas(p => [...p, ""]); setNomesFluxo(p => [...p, ""]); };
+  const removeEtapa = (i: number) => {
+    setEtapas(p => p.filter((_, j) => j !== i));
+    setNomesFluxo(p => p.filter((_, j) => j !== i));
+  };
   const updateEtapa = (i: number, v: string) => setEtapas(p => p.map((e, j) => j === i ? v : e));
+  const updateNomeFluxo = (i: number, v: string) => setNomesFluxo(p => {
+    const arr = Array.from({ length: Math.max(p.length, i + 1) }, (_, j) => p[j] ?? "");
+    arr[i] = v;
+    return arr;
+  });
   const validas = etapas.filter(e => e.trim().length > 0);
 
   return (
@@ -700,14 +828,23 @@ function ModalEtapas({ item, onSalvar, onClose }: {
                 </p>
               </div>
 
-              <div className="p-4 space-y-2">
+              <div className="p-4 space-y-3">
                 {etapas.map((etapa, i) => (
                   <div key={i} className="flex items-start gap-2">
                     <div className="mt-2 flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-primary text-[11px] font-bold text-white">
                       {i + 1}
                     </div>
-                    <Textarea value={etapa} onChange={e => updateEtapa(i, e.target.value)}
-                      placeholder={`Etapa ${i + 1}…`} className="min-h-[56px] flex-1 resize-none text-sm" rows={2} />
+                    <div className="flex-1 space-y-1">
+                      <Textarea value={etapa} onChange={e => updateEtapa(i, e.target.value)}
+                        placeholder={`Etapa ${i + 1}…`} className="min-h-[56px] w-full resize-none text-sm" rows={2} />
+                      <input
+                        type="text"
+                        value={nomesFluxo[i] ?? ""}
+                        onChange={e => updateNomeFluxo(i, e.target.value)}
+                        placeholder="Nome no fluxograma (ex: ADMINISTRAÇÃO)"
+                        className="w-full rounded border border-border bg-muted/30 px-2 py-1 text-[11px] text-muted-foreground placeholder:text-muted-foreground/50 focus:outline-none focus:ring-1 focus:ring-primary"
+                      />
+                    </div>
                     <Button variant="ghost" size="icon"
                       className="mt-1.5 h-7 w-7 shrink-0 text-muted-foreground hover:text-destructive"
                       onClick={() => removeEtapa(i)} disabled={etapas.length === 1}>
@@ -751,7 +888,7 @@ function ModalEtapas({ item, onSalvar, onClose }: {
             <div className="border-t border-border px-4 py-3 flex justify-end gap-2 shrink-0">
               <Button variant="outline" size="sm" onClick={onClose}>Cancelar</Button>
               <Button size="sm" className="btn-relief gap-2" disabled={validas.length === 0}
-                onClick={() => { onSalvar(validas, criterio, acao); onClose(); }}>
+                onClick={() => { onSalvar(validas, nomesFluxo, criterio, acao); onClose(); }}>
                 <CheckCircle2 className="h-4 w-4" /> Confirmar
               </Button>
             </div>
@@ -794,8 +931,8 @@ export default function GeradorPops() {
   const toggleItem = (idx: number) => setItems(p => p.map((it, i) => i === idx ? { ...it, selected: !it.selected } : it));
   const setTipo    = (idx: number, tipo: "PRÉVIA" | "PUBLICAÇÃO") =>
     setItems(p => p.map((it, i) => i === idx ? { ...it, tipo } : it));
-  const salvarEtapas = (idx: number, etapas: string[], criterioExito: string, acaoInconsistencia: string) =>
-    setItems(p => p.map((it, i) => i === idx ? { ...it, etapas, criterioExito, acaoInconsistencia } : it));
+  const salvarEtapas = (idx: number, etapas: string[], nomesFluxo: string[], criterioExito: string, acaoInconsistencia: string) =>
+    setItems(p => p.map((it, i) => i === idx ? { ...it, etapas, nomesFluxo, criterioExito, acaoInconsistencia } : it));
   const setFluxograma = useCallback((idx: number, file: File) => {
     const reader = new FileReader();
     reader.onload = e => setItems(p => p.map((it, i) =>
@@ -963,7 +1100,7 @@ export default function GeradorPops() {
 
       {editandoIdx !== null && (
         <ModalEtapas item={items[editandoIdx]}
-          onSalvar={(etapas, criterio, acao) => salvarEtapas(editandoIdx, etapas, criterio, acao)}
+          onSalvar={(etapas, nomesFluxo, criterio, acao) => salvarEtapas(editandoIdx, etapas, nomesFluxo, criterio, acao)}
           onClose={() => setEditandoIdx(null)} />
       )}
 

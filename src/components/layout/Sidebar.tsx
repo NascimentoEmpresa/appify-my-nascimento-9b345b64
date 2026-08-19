@@ -57,6 +57,7 @@ import {
   Package,
   PlusCircle,
   UserMinus,
+  CalendarCheck2,
 } from "lucide-react";
 import { useTemAlcada } from "@/hooks/useTemAlcada";
 import { useAccessibleMenus, matchMenuCode } from "@/hooks/useAccessibleMenus";
@@ -741,6 +742,31 @@ function buildPlanoAcoesModule(podeCopiloto: boolean): ModuleDef {
   };
 }
 
+// Operacional — gestão da operação em campo (diárias, coberturas de escala) e
+// o que chega dos encarregados esperando aprovação daqui.
+const operacionalModule: ModuleDef = {
+  id: "operacional",
+  label: "Operacional",
+  description: "Diárias, escala e aprovações",
+  icon: CalendarCheck2,
+  basePath: "/app/operacional",
+  status: "active",
+  groups: [
+    {
+      label: "Operacional",
+      defaultOpen: true,
+      items: [{ label: "Controle de Diárias", to: "/app/operacional/diarias", icon: CalendarCheck2 }],
+    },
+    {
+      label: "Recursos Humanos",
+      defaultOpen: true,
+      items: [
+        { label: "Solicitações de Demissão", to: "/app/operacional/solicitacoes-demissao", icon: UserMinus },
+      ],
+    },
+  ],
+};
+
 // SST — ASO / Admissão (fila do Recrutamento)
 const sstModule: ModuleDef = {
   id: "sst",
@@ -755,25 +781,6 @@ const sstModule: ModuleDef = {
       defaultOpen: true,
       items: [
         { label: "ASO / Admissão", to: "/app/sst/aso", icon: HardHat },
-      ],
-    },
-  ],
-};
-
-// Operacional — o que chega dos encarregados e depende de aprovação daqui
-const operacionalModule: ModuleDef = {
-  id: "operacional",
-  label: "Operacional",
-  description: "Aprovações e acompanhamento",
-  icon: ClipboardCheck,
-  basePath: "/app/operacional",
-  status: "active",
-  groups: [
-    {
-      label: "Recursos Humanos",
-      defaultOpen: true,
-      items: [
-        { label: "Solicitações de Demissão", to: "/app/operacional/solicitacoes-demissao", icon: UserMinus },
       ],
     },
   ],
