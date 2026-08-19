@@ -190,14 +190,35 @@ function nota(p: Pergunta, valor: string): number | null {
 }
 const faixa = (n: number) => n >= 4 ? "destaque" : n >= 3 ? "atencao" : "critica";
 
-function distrib(p: Pergunta | undefined, resps: Resp[]) {
-  if (!p) return [] as { nome: string; completo: string; n: number }[];
+// Item de gráfico: além da contagem, QUEM está por trás dela — é o que o
+// tooltip mostra ao passar o mouse. `quem` já vem pronto para exibição.
+export interface ItemDist { nome: string; completo: string; n: number; quem: string[] }
+
+// Nomes crus → lista de exibição: sem repetir, em ordem alfabética, marcando
+// entre parênteses quem aparece em mais de uma resposta da mesma fatia.
+function listaQuem(nomes: string[]): string[] {
+  const c = new Map<string, number>();
+  nomes.forEach(n => { const k = (n ?? "").trim(); if (k) c.set(k, (c.get(k) ?? 0) + 1); });
+  return [...c.entries()].sort((a, b) => a[0].localeCompare(b[0], "pt-BR")).map(([n, q]) => q > 1 ? `${n} (${q})` : n);
+}
+
+function distrib(p: Pergunta | undefined, resps: Resp[], quemDa?: (r: Resp) => string): ItemDist[] {
+  if (!p) return [];
   const cont: Record<string, number> = {};
-  resps.forEach(r => { const v = r.itens[p.id]; if (v == null || v === "") return; (Array.isArray(v) ? v : [v]).forEach(x => { cont[String(x)] = (cont[String(x)] || 0) + 1; }); });
+  const quem: Record<string, string[]> = {};
+  resps.forEach(r => {
+    const v = r.itens[p.id]; if (v == null || v === "") return;
+    const nome = quemDa ? quemDa(r) : "";
+    (Array.isArray(v) ? v : [v]).forEach(x => {
+      const k = String(x);
+      cont[k] = (cont[k] || 0) + 1;
+      if (nome) (quem[k] ??= []).push(nome);
+    });
+  });
   let chaves: string[];
   if (p.tipo === "escala") { chaves = []; for (let n = p.config?.min ?? 1; n <= (p.config?.max ?? 5); n++) chaves.push(String(n)); }
   else chaves = p.opcoes.length ? p.opcoes : Object.keys(cont);
-  return chaves.map(k => ({ nome: k.length > 24 ? k.slice(0, 24) + "…" : k, completo: k, n: cont[k] || 0 }));
+  return chaves.map(k => ({ nome: k.length > 24 ? k.slice(0, 24) + "…" : k, completo: k, n: cont[k] || 0, quem: listaQuem(quem[k] ?? []) }));
 }
 const trimestre = (iso: string) => { const d = new Date(iso); return `${Math.floor(d.getMonth() / 3) + 1}º Tri/${String(d.getFullYear()).slice(2)}`; };
 const respValor = (r: Resp, pid?: string) => { if (!pid) return ""; const v = r.itens[pid]; return v == null ? "" : String(Array.isArray(v) ? v[0] : v); };
@@ -451,6 +472,41 @@ export default function PainelGerencial() {
     return empresaPorNome.get(normNome(r.respondente_nome)) ?? "";
   }, [empresaPorUid, empresaPorNome]);
 
+  // Cadastro recortado pelos MESMOS filtros da barra — é o denominador de
+  // "feedbacks esperados" (Visão Executiva e Cumprimento). Antes só o setor
+  // chegava lá: filtrar por diretoria, liderança, empresa ou colaborador mexia
+  // só no numerador (as respostas) e a taxa de realização saía errada.
+  // Período fica de fora de propósito: o cadastro é a foto de HOJE, não guarda
+  // histórico — quem está no quadro agora é esperado no ciclo inteiro.
+  const empsFiltrados = useMemo(() => {
+    const q = normNome(fResp);
+    const alvoDir = fDiretoria ? new Set(DIRETORIAS[fDiretoria] ?? []) : null;
+    const alvoEmp = fEmpresas.length ? new Set(fEmpresas) : null;
+    return emps.filter(e => {
+      const k = normSetor(e.setor);
+      if (escopoSetores && !escopoSetores.has(k)) return false;   // permissão do usuário
+      if (fSetor && k !== normSetor(fSetor)) return false;
+      if (alvoDir && !alvoDir.has(k)) return false;
+      if (fLider && liderSetor.get(k) !== fLider) return false;
+      if (q && !normNome(e.nome).includes(q)) return false;
+      // Empresa não existe no cadastro do Senior: vem da "Empresa padrão" do
+      // login (profiles), casada pelo nome — a mesma regra usada nas respostas.
+      // Quem não tem login com empresa fica de fora do recorte por empresa.
+      if (alvoEmp && !alvoEmp.has(empresaPorNome.get(normNome(e.nome)) ?? "")) return false;
+      return true;
+    });
+  }, [emps, escopoSetores, fSetor, fDiretoria, fLider, fResp, fEmpresas, liderSetor, empresaPorNome]);
+
+  // Resumo do recorte, para o número grande de "esperados" sempre dizer de que
+  // recorte ele é.
+  const filtrosResumo = useMemo(() => [
+    fSetor && `Setor: ${fSetor}`,
+    fDiretoria && `Diretoria: ${fDiretoria}`,
+    fLider && `Liderança: ${fLider}`,
+    fEmpresas.length === 1 ? `Empresa: ${fEmpresas[0]}` : fEmpresas.length > 1 ? `${fEmpresas.length} empresas` : "",
+    fResp.trim() && `Colaborador: ${fResp.trim()}`,
+  ].filter(Boolean).join(" · "), [fSetor, fDiretoria, fLider, fEmpresas, fResp]);
+
   const base = useMemo(() => {
     let rs = respsForm;
     const dias = periodo === "todos" ? 0 : Number(periodo);
@@ -514,11 +570,13 @@ export default function PainelGerencial() {
     setores.forEach(setor => { const l = liderSetor.get(normSetor(setor)); if (l) s.add(l); });
     return [...s].sort((a, b) => a.localeCompare(b, "pt-BR"));
   }, [setores, liderSetor]);
-  const distSituacao = useMemo(() => distrib(pq("situacao"), filtradas), [pergs, mapa, filtradas]);
+  // `avaliadoDaResposta` entra aqui para o tooltip do gráfico poder dizer QUEM
+  // está em cada fatia — o número sozinho não deixava chegar na pessoa.
+  const distSituacao = useMemo(() => distrib(pq("situacao"), filtradas, avaliadoDaResposta), [pergs, mapa, filtradas, avaliadoDaResposta]);
   // categorias sem ordem intrínseca: mostrar sempre da mais citada p/ a menos
-  const distNecess = useMemo(() => distrib(pq("necessidades"), filtradas).sort((a, b) => b.n - a.n), [pergs, mapa, filtradas]);
-  const distFortes = useMemo(() => distrib(pq("fortes"), filtradas).sort((a, b) => b.n - a.n), [pergs, mapa, filtradas]);
-  const distMelhoria = useMemo(() => distrib(pq("melhoria"), filtradas).sort((a, b) => b.n - a.n), [pergs, mapa, filtradas]);
+  const distNecess = useMemo(() => distrib(pq("necessidades"), filtradas, avaliadoDaResposta).sort((a, b) => b.n - a.n), [pergs, mapa, filtradas, avaliadoDaResposta]);
+  const distFortes = useMemo(() => distrib(pq("fortes"), filtradas, avaliadoDaResposta).sort((a, b) => b.n - a.n), [pergs, mapa, filtradas, avaliadoDaResposta]);
+  const distMelhoria = useMemo(() => distrib(pq("melhoria"), filtradas, avaliadoDaResposta).sort((a, b) => b.n - a.n), [pergs, mapa, filtradas, avaliadoDaResposta]);
 
   // evolução da situação por trimestre (usa base, sem o filtro de situação)
   const evolucao = useMemo(() => {
@@ -582,12 +640,13 @@ export default function PainelGerencial() {
   }, [filtradas, notaResp, liderDaResposta]);
 
   const distLideranca = useMemo(() => {
-    const c = { destaque: 0, atencao: 0, critica: 0 };
-    porLideranca.forEach(l => { c[faixa(l.indice) as keyof typeof c]++; });
+    const c: Record<string, string[]> = { destaque: [], atencao: [], critica: [] };
+    porLideranca.forEach(l => { c[faixa(l.indice)].push(l.lider); });
+    const item = (rot: string, ns: string[]): ItemDist => ({ nome: rot, completo: rot, n: ns.length, quem: listaQuem(ns) });
     return [
-      { nome: "Acima de 4,0", completo: "Acima de 4,0", n: c.destaque },
-      { nome: "Entre 3,0 e 4,0", completo: "Entre 3,0 e 4,0", n: c.atencao },
-      { nome: "Abaixo de 3,0", completo: "Abaixo de 3,0", n: c.critica },
+      item("Acima de 4,0", c.destaque),
+      item("Entre 3,0 e 4,0", c.atencao),
+      item("Abaixo de 3,0", c.critica),
     ];
   }, [porLideranca]);
 
@@ -623,14 +682,18 @@ export default function PainelGerencial() {
   }, [filtradas, alinP, entP, contP, indiceAlin, pergs, mapa]);
 
   const distAlin = useMemo(() => {
-    const c = { alto: 0, medio: 0, baixo: 0 };
-    filtradas.forEach(r => { const v = indiceAlin(r); if (v == null) return; if (v >= 4) c.alto++; else if (v >= 3) c.medio++; else c.baixo++; });
+    const c: Record<string, string[]> = { alto: [], medio: [], baixo: [] };
+    filtradas.forEach(r => {
+      const v = indiceAlin(r); if (v == null) return;
+      (v >= 4 ? c.alto : v >= 3 ? c.medio : c.baixo).push(avaliadoDaResposta(r));
+    });
+    const item = (rot: string, ns: string[]): ItemDist => ({ nome: rot, completo: rot, n: ns.length, quem: listaQuem(ns) });
     return [
-      { nome: "Alto (4,0 a 5,0)", completo: "Alto (4,0 a 5,0)", n: c.alto },
-      { nome: "Médio (3,0 a 3,9)", completo: "Médio (3,0 a 3,9)", n: c.medio },
-      { nome: "Baixo (0 a 2,9)", completo: "Baixo (0 a 2,9)", n: c.baixo },
+      item("Alto (4,0 a 5,0)", c.alto),
+      item("Médio (3,0 a 3,9)", c.medio),
+      item("Baixo (0 a 2,9)", c.baixo),
     ];
-  }, [filtradas, indiceAlin]);
+  }, [filtradas, indiceAlin, avaliadoDaResposta]);
 
   // Só setor de verdade: fora "Sem setor" e os pseudo-setores de cargo
   // ("DIRETOR ADMINISTRATIVO" é quem responde por setores, não um setor).
@@ -942,16 +1005,16 @@ export default function PainelGerencial() {
           <div style={{ padding: 60, textAlign: "center", color: "#94a3b8" }}>Selecione um formulário.</div>
         ) : tab === "Visão Executiva" ? (
           <VisaoExecutiva
-            resps={filtradas} emps={emps} pergs={pergs} mapa={mapa} planos={planosAcao.planos}
-            diretorPorSetor={diretorSetor} fSetor={fSetor}
+            resps={filtradas} emps={empsFiltrados} empsTodos={emps} pergs={pergs} mapa={mapa} planos={planosAcao.planos}
+            diretorPorSetor={diretorSetor} recorte={filtrosResumo}
             distSituacao={distSituacao} distNecess={distNecess}
             ultima={ultimaAtualizacao} cadastroCarregando={cadastroCarregando}
             onAbrirMapa={abrirMapa} onIrTab={t => TABS.includes(t) && setTab(t)} />
         ) : tab === "Cumprimento" ? (
           <PainelCumprimento
-            emps={emps} resps={filtradas} avaliadoDaResposta={avaliadoDaResposta}
+            emps={empsFiltrados} empsTodos={emps} resps={filtradas} avaliadoDaResposta={avaliadoDaResposta}
             mapas={mapasHier} encerraEm={form?.encerra_em ?? null}
-            ultima={ultimaAtualizacao} fSetor={fSetor} fResp={fResp} />
+            ultima={ultimaAtualizacao} recorte={filtrosResumo} />
         ) : tab === "Liderança" ? (
           <PainelLideranca
             indice={indiceGeral} dist={distLideranca} porDim={porDimensao} evol={evolIndice}
@@ -1175,14 +1238,32 @@ function Painel({ titulo, children, viz, onViz, vizOpts, semViz, semPerg, perg }
   );
 }
 
+// Balão dos gráficos de distribuição: o total E quem está naquela fatia. O
+// número sozinho não deixava chegar na pessoa — era preciso abrir a lista de
+// respostas para descobrir de quem era cada barra.
+function TipQuem({ active, payload, rotulo = "resposta(s)" }: any) {
+  if (!active || !payload?.length) return null;
+  const d = payload[0]?.payload ?? {};
+  const quem: string[] = d.quem ?? [];
+  const MAX = 14;   // lista longa vira rolagem infinita em cima do gráfico
+  return (
+    <div style={{ maxWidth: 280, background: "#fff", border: "1px solid #e2e8f0", borderRadius: 8, boxShadow: "0 8px 24px rgba(15,23,42,.12)", padding: "8px 10px", fontSize: 12, lineHeight: 1.35, color: "#0f172a" }}>
+      <div style={{ fontWeight: 800, whiteSpace: "normal", wordBreak: "break-word" }}>{d.completo ?? d.nome}</div>
+      <div style={{ color: "#475569", marginTop: 2 }}><b>{d.n}</b> {rotulo}</div>
+      {quem.length > 0 && (
+        <div style={{ marginTop: 6, borderTop: "1px dashed #e2e8f0", paddingTop: 5, color: "#475569" }}>
+          {quem.slice(0, MAX).map(q => <div key={q} style={{ whiteSpace: "normal" }}>• {q}</div>)}
+          {quem.length > MAX && <div style={{ color: "#94a3b8" }}>e mais {quem.length - MAX}…</div>}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function Chart({ dados, viz, cor }: { dados: { nome: string; completo: string; n: number }[]; viz: Viz; cor: string }) {
   const comDados = dados.filter(d => d.n);
   if (!comDados.length) return <Vazio />;
-  // rótulos longos: limita o balão para não estourar o card e cobrir o vizinho.
-  const tip = <Tooltip
-    contentStyle={{ maxWidth: 260, whiteSpace: "normal", wordBreak: "break-word", fontSize: 12, lineHeight: 1.35, borderRadius: 8, border: "1px solid #e2e8f0", boxShadow: "0 8px 24px rgba(15,23,42,.12)" }}
-    wrapperStyle={{ zIndex: 60 }}
-    formatter={(v: any, _n: any, e: any) => [v, e?.payload?.completo]} />;
+  const tip = <Tooltip wrapperStyle={{ zIndex: 60 }} content={<TipQuem />} />;
   if (viz === "pizza" || viz === "rosca") {
     // Sem rótulo em volta (estourava o card com opções longas): rosca + legenda.
     const totP = comDados.reduce((s, d) => s + d.n, 0);
@@ -1637,7 +1718,8 @@ function ChartFaixas({ dados, viz, rotulo = "lideranças" }: { dados: { nome: st
       <ResponsiveContainer width="100%" height={210}>
         <BarChart data={dados} margin={{ top: 6, right: 10, left: -20, bottom: 0 }}>
           <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
-          <XAxis dataKey="nome" tick={{ fontSize: 10 }} /><YAxis tick={{ fontSize: 10 }} allowDecimals={false} /><Tooltip />
+          <XAxis dataKey="nome" tick={{ fontSize: 10 }} /><YAxis tick={{ fontSize: 10 }} allowDecimals={false} />
+          <Tooltip wrapperStyle={{ zIndex: 60 }} content={<TipQuem rotulo={rotulo} />} />
           <Bar dataKey="n" radius={[4, 4, 0, 0]}>{dados.map((_, i) => <Cell key={i} fill={cores[i % cores.length]} />)}</Bar>
         </BarChart>
       </ResponsiveContainer>
@@ -1650,7 +1732,7 @@ function ChartFaixas({ dados, viz, rotulo = "lideranças" }: { dados: { nome: st
           <PieChart>
             <Pie data={dados.filter(d => d.n)} dataKey="n" nameKey="nome" cx="50%" cy="50%" innerRadius={viz === "rosca" ? 46 : 0} outerRadius={72} paddingAngle={1}>
               {dados.filter(d => d.n).map((d, i) => <Cell key={i} fill={cores[dados.indexOf(d) % cores.length]} />)}
-            </Pie><Tooltip />
+            </Pie><Tooltip wrapperStyle={{ zIndex: 60 }} content={<TipQuem rotulo={rotulo} />} />
           </PieChart>
         </ResponsiveContainer>
         {viz === "rosca" && (
