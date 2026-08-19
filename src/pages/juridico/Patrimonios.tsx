@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
+import { useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
 import { MapaPatrimonios } from "./patrimonio/MapaPatrimonios";
@@ -32,6 +33,11 @@ interface Obrigacao {
   vigencia_inicio?: string; vigencia_fim?: string; premio?: number; parcelas?: string;
   onde_pagar?: string; comprovante_path?: string; comprovante_nome?: string;
   valor_entrada?: number;
+}
+interface Parcela {
+  id: number; patrimonio_id: number; ordem?: number; numero?: number; rotulo?: string;
+  vencimento?: string; valor?: number; valor_pago?: number; situacao?: string;
+  detalhes?: Record<string, any>; origem?: string;
 }
 interface Acesso { id: number; patrimonio_id: number; servico?: string; link?: string; usuario?: string; local_senha?: string; observacao?: string; }
 interface Contato { id: number; patrimonio_id: number; tipo?: string; nome?: string; telefone?: string; email?: string; observacao?: string; }
@@ -74,6 +80,7 @@ const ehLink = (s?: string) => !!s && /^https?:\/\//i.test(s.trim());
 
 export default function Patrimonios() {
   const { user } = useAuth();
+  const nav = useNavigate();
   const autor = user?.user_metadata?.nome ?? user?.email ?? "Usuário";
 
   const [pats, setPats] = useState<Patrimonio[]>([]);
@@ -94,6 +101,9 @@ export default function Patrimonios() {
   const [soPendentesTransf, setSoPendentesTransf] = useState(false);
   const [viewPag, setViewPag] = useState<"painel" | "lista" | "contas">("lista");
   const [mesContas, setMesContas] = useState<string>(hoje().slice(0, 7));
+  // Cartão escolhido no Lançamento de Contas. null = "Gestão Patrimônios",
+  // que é a soma de todos — é por onde a tela abre.
+  const [contaPatSel, setContaPatSel] = useState<number | null>(null);
   const [toasts, setToasts] = useState<{ id: number; msg: string; t: string }[]>([]);
 
   // modal patrimônio
@@ -106,6 +116,7 @@ export default function Patrimonios() {
   const [tab, setTab] = useState("obrigacoes");
   const [obrs, setObrs] = useState<Obrigacao[]>([]);
   const [mesObr, setMesObr] = useState<string>(""); // "" = todos os meses
+  const [parcelas, setParcelas] = useState<Parcela[]>([]);
   const [acessos, setAcessos] = useState<Acesso[]>([]);
   const [contatos, setContatos] = useState<Contato[]>([]);
   const [docs, setDocs] = useState<Documento[]>([]);
@@ -222,16 +233,19 @@ export default function Patrimonios() {
   // ── Drawer: abrir e carregar relacionados ──────────────────────
   const abrirDrawer = async (p: Patrimonio) => {
     setSel(p); setTab("obrigacoes"); setNovoComentario("");
-    setObrs([]); setAcessos([]); setContatos([]); setDocs([]); setHist([]); setComentarios([]);
-    const [o, a, c, d, h, cm] = await Promise.all([
+    setObrs([]); setParcelas([]); setAcessos([]); setContatos([]); setDocs([]); setHist([]); setComentarios([]);
+    const [o, pc, a, c, d, h, cm] = await Promise.all([
       (supabase as any).from("JUR_PATRIMONIO_OBRIGACOES").select("*").eq("patrimonio_id", p.id).order("vencimento", { ascending: true }),
+      // As parcelas do financiamento vêm na mesma leva; são centenas por
+      // contrato, então ordena pela posição original da planilha.
+      (supabase as any).from("JUR_PATRIMONIO_PARCELAS").select("*").eq("patrimonio_id", p.id).order("ordem", { ascending: true }).limit(1000),
       (supabase as any).from("JUR_PATRIMONIO_ITENS").select("*").eq("kind", "acesso").eq("patrimonio_id", p.id).order("id"),
       (supabase as any).from("JUR_PATRIMONIO_ITENS").select("*").eq("kind", "contato").eq("patrimonio_id", p.id).order("id"),
       (supabase as any).from("JUR_PATRIMONIO_ITENS").select("*").eq("kind", "documento").eq("patrimonio_id", p.id).order("created_at", { ascending: false }),
       (supabase as any).from("JUR_PATRIMONIO_ITENS").select("*").eq("kind", "historico").eq("patrimonio_id", p.id).order("created_at", { ascending: false }).limit(50),
       (supabase as any).from("SISTEMA_COMENTARIOS").select("*").eq("modulo", "patrimonio").eq("entidade_id", String(p.id)).order("created_at", { ascending: false }),
     ]);
-    setObrs(o.data ?? []); setAcessos(a.data ?? []); setContatos(c.data ?? []); setDocs(d.data ?? []); setHist(h.data ?? []); setComentarios(cm.data ?? []);
+    setObrs(o.data ?? []); setParcelas(pc.data ?? []); setAcessos(a.data ?? []); setContatos(c.data ?? []); setDocs(d.data ?? []); setHist(h.data ?? []); setComentarios(cm.data ?? []);
   };
   const recarregarObrs = async () => { if (!sel) return; const { data } = await (supabase as any).from("JUR_PATRIMONIO_OBRIGACOES").select("*").eq("patrimonio_id", sel.id).order("vencimento"); setObrs(data ?? []); load(); };
   const recarregarHist = async () => { if (!sel) return; const { data } = await (supabase as any).from("JUR_PATRIMONIO_ITENS").select("*").eq("kind", "historico").eq("patrimonio_id", sel.id).order("created_at", { ascending: false }).limit(50); setHist(data ?? []); };
@@ -297,7 +311,29 @@ export default function Patrimonios() {
   // Pagar (com comprovante opcional). Funciona com ou sem patrimônio aberto.
   const abrirPagar = (o: Obrigacao) => { setPagarAlvo(o); setPagarFile(null); };
   // "Pagar": se houver link cadastrado, abre o link de pagamento; em seguida pede o comprovante.
-  const pagarConta = (o: Obrigacao) => { if (ehLink(o.onde_pagar)) window.open(o.onde_pagar!.trim(), "_blank", "noopener"); abrirPagar(o); };
+  // Pagar não é dar baixa: é abrir a despesa no MALOTE, que é por onde o
+  // dinheiro sai. A conta vira despesa lá, passa pela aprovação de lá e só
+  // então é paga — por isso a tela leva os dados prontos em vez de duplicar o
+  // formulário do Malote aqui.
+  const MESES_COMP = ["Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho", "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro"];
+  const pagarConta = (o: Obrigacao) => {
+    const venc = o.vencimento || hoje();
+    const [ano, mes] = venc.slice(0, 10).split("-");
+    const q = new URLSearchParams({
+      rubrica: o.categoria || "",
+      nome: `${o.categoria || "Despesa"}${sel ? " · " + sel.descricao : ""} — ${MESES_COMP[Number(mes) - 1] ?? mes}/${ano}`,
+      valor: o.valor != null ? String(o.valor) : "",
+      pagamento: venc.slice(0, 10),
+      competencia: `${ano}-${mes}`,
+      forma: o.forma_pagamento || "",
+      // Onde pagar guarda ora o link, ora a linha digitável; no Malote isso é
+      // "Informações de pagamento", que é onde o financeiro procura.
+      info: o.onde_pagar || "",
+    });
+    nav(`/app/malote/criar-despesa?${q.toString()}`);
+  };
+  // Baixa manual: a conta foi paga por fora e o que falta é o comprovante.
+  const baixarConta = (o: Obrigacao) => { if (ehLink(o.onde_pagar)) window.open(o.onde_pagar!.trim(), "_blank", "noopener"); abrirPagar(o); };
   const confirmarPagar = async () => {
     const o = pagarAlvo; if (!o) return;
     if (!pagarFile) { toast("Anexe o comprovante para registrar o pagamento.", "err"); return; }
@@ -542,7 +578,8 @@ export default function Patrimonios() {
                     <div style={{ display: "flex", alignItems: "center", gap: 10, flexShrink: 0, flexWrap: "wrap" }}>
                       <span style={{ fontWeight: 800, color: "#0f172a" }}>{money(o.valor)}</span>
                       <span style={{ fontSize: 11, fontWeight: 800, padding: "2px 10px", borderRadius: 20, background: atrasada ? "#fee2e2" : "#ffedd5", color: atrasada ? "#dc2626" : "#ea580c" }}>{atrasada ? `Vencida há ${Math.abs(dias)}d` : dias === 0 ? "Vence hoje" : `Vence em ${dias}d`} · {fmtDt(venc)}</span>
-                      <button className="jp-btn" onClick={() => pagarConta(o)} style={{ background: "#0f3171", color: "#fff", border: "1px solid #0f3171", padding: "4px 12px", fontWeight: 700 }}>{ehLink(o.onde_pagar) ? "🔗 Pagar" : "Pagar"}</button>
+                      <button className="jp-btn" onClick={() => pagarConta(o)} style={{ background: "#0f3171", color: "#fff", border: "1px solid #0f3171", padding: "4px 12px", fontWeight: 700 }}>Pagar</button>
+                      <button className="jp-btn" title="Já foi paga por fora: anexar o comprovante e dar baixa" onClick={() => baixarConta(o)} style={{ background: "#f0fdf4", color: "#15803d", border: "1px solid #bbf7d0", padding: "4px 10px", fontWeight: 700 }}>✓ Baixar</button>
                     </div>
                   </div>
                 );
@@ -736,46 +773,94 @@ export default function Patrimonios() {
           </div>
         </>)}
 
-        {/* ── LISTAGEM DE CONTAS (todas as contas do mês, por categoria) ── */}
+        {/* ── LANÇAMENTO DE CONTAS ── */}
         {viewPag === "contas" && (() => {
-          const contasMes = mesContas ? obrAll.filter(o => (o.vencimento || "").slice(0, 7) === mesContas) : obrAll;
+          const pendente = (o: Obrigacao) => statusObr(o) !== "Pago";
+          // Um cartão por patrimônio COM conta, mais o cartão do todo. A
+          // contagem é de pendentes: é o que faz alguém abrir a tela.
+          const cartoes = pats
+            .map(p => ({ p, contas: obrAll.filter(o => o.patrimonio_id === p.id) }))
+            .filter(x => x.contas.length > 0)
+            .map(x => ({ ...x, pendentes: x.contas.filter(pendente).length }))
+            .sort((a, b) => b.pendentes - a.pendentes || a.p.descricao.localeCompare(b.p.descricao, "pt-BR"));
+          const totalPendentes = obrAll.filter(pendente).length;
+
+          const doCartao = contaPatSel == null ? obrAll : obrAll.filter(o => o.patrimonio_id === contaPatSel);
+          const contasMes = mesContas ? doCartao.filter(o => (o.vencimento || "").slice(0, 7) === mesContas) : doCartao;
           const navMesC = (delta: number) => setMesContas(addMonthsISO((mesContas || hoje().slice(0, 7)) + "-01", delta).slice(0, 7));
           const patNome = (id: number) => pats.find(p => p.id === id)?.descricao || "—";
-          const grupos = new Map<string, Obrigacao[]>();
-          for (const o of contasMes) { const k = o.categoria || "Outros"; if (!grupos.has(k)) grupos.set(k, []); grupos.get(k)!.push(o); }
-          const cats = [...grupos.entries()].map(([cat, items]) => ({ cat, items, total: items.reduce((s, o) => s + (Number(o.valor) || 0), 0) })).sort((a, b) => b.total - a.total);
           const totalMes = contasMes.reduce((s, o) => s + (Number(o.valor) || 0), 0);
+
+          const cartao = (chave: string, titulo: string, sub: string, ativo: boolean, aoClicar: () => void) => (
+            <button key={chave} onClick={aoClicar} style={{
+              textAlign: "left", cursor: "pointer", minWidth: 210, flex: "0 0 auto",
+              background: ativo ? "#0f3171" : "#fff", color: ativo ? "#fff" : "#0f172a",
+              border: "1px solid " + (ativo ? "#0f3171" : "#e2e8f0"), borderRadius: 14,
+              padding: "13px 16px", boxShadow: "0 8px 24px rgba(15,23,42,.05)", fontFamily: "inherit",
+            }}>
+              <div style={{ fontSize: 13.5, fontWeight: 800, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{titulo}</div>
+              <div style={{ fontSize: 11.5, color: ativo ? "rgba(255,255,255,.75)" : "#94a3b8", marginTop: 3 }}>{sub}</div>
+            </button>
+          );
+
           return (<>
+            {/* Cartões por patrimônio */}
+            <div style={{ display: "flex", gap: 12, overflowX: "auto", paddingBottom: 6, marginBottom: 14 }}>
+              {cartao("todos", "Gestão Patrimônios", `${totalPendentes} conta(s) pendente(s)`, contaPatSel == null, () => setContaPatSel(null))}
+              {cartoes.map(({ p, pendentes }) => cartao(String(p.id), p.descricao, `${pendentes} conta(s) pendente(s)`, contaPatSel === p.id, () => setContaPatSel(p.id)))}
+            </div>
+
+            {/* Mês */}
             <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12, flexWrap: "wrap" }}>
               <button className="jp-btn" onClick={() => navMesC(-1)} style={{ background: "#eef4ff", color: "#0f3171", padding: "8px 11px" }}>‹</button>
               <span style={{ fontWeight: 700, color: "#0f172a", minWidth: 130, textAlign: "center" }}>{mesContas ? mesLabel(mesContas) : "Todos os meses"}</span>
               <button className="jp-btn" onClick={() => navMesC(1)} style={{ background: "#eef4ff", color: "#0f3171", padding: "8px 11px" }}>›</button>
               <button className="jp-btn" onClick={() => setMesContas("")} style={{ background: mesContas ? "#fff" : "#0f3171", color: mesContas ? "#64748b" : "#fff", border: "1px solid " + (mesContas ? "#e2e8f0" : "#0f3171") }}>Todos</button>
+              {contaPatSel != null && (
+                <button className="jp-btn" onClick={() => { const p = pats.find(x => x.id === contaPatSel); if (p) { abrirDrawer(p); } }} style={{ background: "#fff", color: "#0f3171", border: "1px solid #dbe4f0" }}>+ Nova obrigação</button>
+              )}
               <span style={{ marginLeft: "auto", fontSize: 13, fontWeight: 800, color: "#0f172a" }}>Total: {money(totalMes)}</span>
             </div>
-            {cats.length === 0 ? (
-              <div style={{ background: "#fff", border: "1px solid #e2e8f0", borderRadius: 14, padding: 46, textAlign: "center", color: "#94a3b8", boxShadow: "0 8px 24px rgba(15,23,42,.05)" }}>Nenhuma conta {mesContas ? `em ${mesLabel(mesContas)}` : "cadastrada"}.</div>
-            ) : cats.map(g => (
-              <div key={g.cat} style={{ background: "#fff", border: "1px solid #e2e8f0", borderRadius: 14, overflow: "hidden", boxShadow: "0 8px 24px rgba(15,23,42,.05)", marginBottom: 12 }}>
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "11px 16px", background: "#f8fafc", borderBottom: "1px solid #eef2f7" }}>
-                  <span style={{ fontWeight: 800, color: "#0f3171" }}>{g.cat} <span style={{ color: "#94a3b8", fontWeight: 600 }}>· {g.items.length} conta(s)</span></span>
-                  <span style={{ fontWeight: 800, color: "#0f172a" }}>{money(g.total)}</span>
-                </div>
+
+            {/* Contas do recorte */}
+            <div style={{ background: "#fff", border: "1px solid #e2e8f0", borderRadius: 14, overflow: "hidden", boxShadow: "0 8px 24px rgba(15,23,42,.05)" }}>
+              {contasMes.length === 0 ? (
+                <div style={{ padding: 46, textAlign: "center", color: "#94a3b8" }}>Nenhuma conta {mesContas ? `em ${mesLabel(mesContas)}` : "cadastrada"} neste recorte.</div>
+              ) : (
                 <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
                   <tbody>
-                    {[...g.items].sort((a, b) => String(a.vencimento || "").localeCompare(String(b.vencimento || ""))).map(o => { const st = statusObr(o); const cor = st === "Pago" ? "#16a34a" : st === "Vencido" ? "#dc2626" : "#ea580c"; return (
-                      <tr key={o.id} style={{ borderTop: "1px solid #f1f5f9" }}>
-                        <td style={{ padding: "10px 16px" }}><div style={{ fontWeight: 700, color: "#0f172a" }}>{patNome(o.patrimonio_id)}</div>{o.descricao && <div style={{ fontSize: 11.5, color: "#94a3b8" }}>{o.descricao}</div>}{o.onde_pagar && (ehLink(o.onde_pagar) ? <a href={o.onde_pagar} target="_blank" rel="noopener noreferrer" style={{ fontSize: 11.5, color: "#0f3171", fontWeight: 700, textDecoration: "none" }}>🔗 Pagar aqui</a> : <div style={{ fontSize: 11.5, color: "#94a3b8" }}>📍 {o.onde_pagar}</div>)}</td>
-                        <td style={{ padding: "10px 14px", color: "#475569", whiteSpace: "nowrap" }}>{o.vencimento ? "Venc. " + fmtDt(o.vencimento) : "—"}</td>
-                        <td style={{ padding: "10px 14px", fontWeight: 700, color: "#0f172a", textAlign: "right", whiteSpace: "nowrap" }}>{money(o.valor)}</td>
-                        <td style={{ padding: "10px 14px", textAlign: "center" }}><span style={{ fontSize: 11, fontWeight: 800, padding: "2px 10px", borderRadius: 20, background: cor + "20", color: cor }}>{st}</span></td>
-                        <td style={{ padding: "10px 16px", textAlign: "right", whiteSpace: "nowrap" }}><div style={{ display: "inline-flex", gap: 6 }}>{o.comprovante_path && <button className="jp-btn" title="Ver comprovante" onClick={() => verComprovante(o)} style={{ background: "#eef4ff", color: "#0f3171", border: "1px solid #dbe4f0", padding: "5px 9px" }}>📎</button>}{st !== "Pago" && <button className="jp-btn" title={ehLink(o.onde_pagar) ? "Abre o link de pagamento e pede o comprovante" : "Pedir comprovante e marcar como paga"} onClick={() => pagarConta(o)} style={{ background: "#0f3171", color: "#fff", border: "1px solid #0f3171", padding: "5px 13px", fontWeight: 700 }}>{ehLink(o.onde_pagar) ? "🔗 Pagar" : "Pagar"}</button>}</div></td>
-                      </tr>
-                    ); })}
+                    {[...contasMes].sort((a, b) => String(a.vencimento || "").localeCompare(String(b.vencimento || ""))).map(o => {
+                      const st = statusObr(o);
+                      const cor = st === "Pago" ? "#16a34a" : st === "Vencido" ? "#dc2626" : "#ea580c";
+                      return (
+                        <tr key={o.id} style={{ borderTop: "1px solid #f1f5f9" }}>
+                          <td style={{ padding: "10px 16px" }}>
+                            <div style={{ fontWeight: 700, color: "#0f172a" }}>{o.categoria}<span style={{ color: "#94a3b8", fontWeight: 500 }}> · {patNome(o.patrimonio_id)}</span></div>
+                            {o.descricao && <div style={{ fontSize: 11.5, color: "#94a3b8" }}>{o.descricao}</div>}
+                            {o.onde_pagar && (ehLink(o.onde_pagar)
+                              ? <a href={o.onde_pagar} target="_blank" rel="noopener noreferrer" style={{ fontSize: 11.5, color: "#0f3171", fontWeight: 700, textDecoration: "none" }}>🔗 Pagar aqui</a>
+                              : <div style={{ fontSize: 11.5, color: "#94a3b8" }}>📍 {o.onde_pagar}</div>)}
+                          </td>
+                          <td style={{ padding: "10px 14px", color: "#475569", whiteSpace: "nowrap" }}>{o.vencimento ? "Venc. " + fmtDt(o.vencimento) : "—"}</td>
+                          <td style={{ padding: "10px 14px", color: "#64748b", whiteSpace: "nowrap" }}>{o.periodicidade || "—"}</td>
+                          <td style={{ padding: "10px 14px", color: "#64748b", whiteSpace: "nowrap" }}>{o.forma_pagamento || "—"}</td>
+                          <td style={{ padding: "10px 14px", color: "#64748b", whiteSpace: "nowrap" }}>{o.parcelas ? "Parcela: " + o.parcelas : ""}</td>
+                          <td style={{ padding: "10px 14px", fontWeight: 700, color: "#0f172a", textAlign: "right", whiteSpace: "nowrap" }}>{money(o.valor)}</td>
+                          <td style={{ padding: "10px 14px", textAlign: "center" }}><span style={{ fontSize: 11, fontWeight: 800, padding: "2px 10px", borderRadius: 20, background: cor + "20", color: cor }}>{st}</span></td>
+                          <td style={{ padding: "10px 16px", textAlign: "right", whiteSpace: "nowrap" }}>
+                            <div style={{ display: "inline-flex", gap: 6 }}>
+                              {o.comprovante_path && <button className="jp-btn" title="Ver comprovante" onClick={() => verComprovante(o)} style={{ background: "#eef4ff", color: "#0f3171", border: "1px solid #dbe4f0", padding: "5px 9px" }}>📎</button>}
+                              {st !== "Pago" && <button className="jp-btn" title="Abre a despesa no Malote com os dados desta conta" onClick={() => pagarConta(o)} style={{ background: "#0f3171", color: "#fff", border: "1px solid #0f3171", padding: "5px 13px", fontWeight: 700 }}>Pagar</button>}
+                              {st !== "Pago" && <button className="jp-btn" title="Já foi paga por fora: anexar o comprovante e dar baixa" onClick={() => baixarConta(o)} style={{ background: "#f0fdf4", color: "#15803d", border: "1px solid #bbf7d0", padding: "5px 10px", fontWeight: 700 }}>✓</button>}
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })}
                   </tbody>
                 </table>
-              </div>
-            ))}
+              )}
+            </div>
           </>);
         })()}
       </div>
@@ -867,7 +952,9 @@ export default function Patrimonios() {
             </div>
 
             <div style={{ display: "flex", gap: 2, padding: "0 16px", borderBottom: "1px solid #e2e8f0", background: "#fff", flexWrap: "wrap" }}>
-              {[["obrigacoes", "Contas / Obrigações"], ["acessos", "Acessos"], ["contatos", "Contatos"], ["documentos", "Documentos"], ["historico", "Histórico"], ["comentarios", "Comentários"]].map(([k, l]) => (
+              {/* "Parcelas" só aparece em quem tem financiamento: numa casa
+                  quitada a aba estaria sempre vazia. */}
+              {[["obrigacoes", "Contas / Obrigações"], ...(parcelas.length ? [["parcelas", `Parcelas (${parcelas.length})`]] : []), ["acessos", "Acessos"], ["contatos", "Contatos"], ["documentos", "Documentos"], ["historico", "Histórico"], ["comentarios", "Comentários"]].map(([k, l]) => (
                 <button key={k} className={`jp-tab${tab === k ? " on" : ""}`} onClick={() => setTab(k)}>{l}</button>
               ))}
             </div>
@@ -907,7 +994,7 @@ export default function Patrimonios() {
                         <span style={{ fontSize: 11, fontWeight: 800, height: "fit-content", padding: "2px 10px", borderRadius: 20, background: cor + "20", color: cor }}>{st}</span>
                       </div>
                       <div style={{ display: "flex", gap: 6, marginTop: 10, flexWrap: "wrap" }}>
-                        {st !== "Pago" && <button className="jp-btn" onClick={() => pagarConta(o)} style={{ background: "#0f3171", color: "#fff", border: "1px solid #0f3171", padding: "5px 11px", fontWeight: 700 }}>{ehLink(o.onde_pagar) ? "🔗 Pagar" : "Pagar"}</button>}
+                        {st !== "Pago" && <button className="jp-btn" onClick={() => pagarConta(o)} style={{ background: "#0f3171", color: "#fff", border: "1px solid #0f3171", padding: "5px 11px", fontWeight: 700 }}>Pagar</button>}{st !== "Pago" && <button className="jp-btn" title="Já foi paga por fora: anexar o comprovante e dar baixa" onClick={() => baixarConta(o)} style={{ background: "#f0fdf4", color: "#15803d", border: "1px solid #bbf7d0", padding: "5px 10px", fontWeight: 700 }}>✓</button>}
                         {o.comprovante_path && <button className="jp-btn" onClick={() => verComprovante(o)} style={{ background: "#eef4ff", color: "#0f3171", border: "1px solid #dbe4f0", padding: "5px 11px" }}>📎 Comprovante</button>}
                         <button className="jp-btn" onClick={() => abrirEditarObr(o)} style={{ background: "#f1f5f9", color: "#475569", padding: "5px 11px" }}>Editar</button>
                         {(o.status === "Pago" && o.comprovante_path)
@@ -918,6 +1005,62 @@ export default function Patrimonios() {
                   );
                 })}
               </>); })()}
+
+              {/* PARCELAS — a posição do financiamento, como veio do contrato */}
+              {tab === "parcelas" && (() => {
+                const pagas = parcelas.filter(x => String(x.situacao ?? "").toUpperCase().startsWith("PAG")).length;
+                const somaPagas = parcelas.filter(x => String(x.situacao ?? "").toUpperCase().startsWith("PAG"))
+                  .reduce((s, x) => s + (Number(x.valor_pago ?? x.valor) || 0), 0);
+                const somaAberto = parcelas.filter(x => !String(x.situacao ?? "").toUpperCase().startsWith("PAG"))
+                  .reduce((s, x) => s + (Number(x.valor) || 0), 0);
+                // As colunas extras mudam de contrato para contrato (seguro, taxa,
+                // INCC, juro): mostra as que ESTE contrato tem, na ordem em que
+                // aparecem, em vez de uma tabela fixa cheia de coluna vazia.
+                const extras = [...new Set(parcelas.flatMap(x => Object.keys(x.detalhes ?? {})))].slice(0, 4);
+                return (<>
+                  <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 12 }}>
+                    {card("Parcelas", `${pagas} de ${parcelas.length}`, "#0f3171")}
+                    {card("Pago", money(somaPagas), "#15803d")}
+                    {card("Em aberto", money(somaAberto), somaAberto > 0 ? "#b45309" : "#15803d")}
+                  </div>
+                  <div style={{ background: "#fff", border: "1px solid #e2e8f0", borderRadius: 14, overflow: "hidden" }}>
+                    <div style={{ maxHeight: 420, overflowY: "auto" }}>
+                      <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
+                        <thead>
+                          <tr style={{ background: "#f8fafc", color: "#94a3b8", fontSize: 10.5, textTransform: "uppercase", letterSpacing: ".5px", position: "sticky", top: 0 }}>
+                            <th style={{ textAlign: "left", padding: "9px 14px" }}>Parcela</th>
+                            <th style={{ textAlign: "left", padding: "9px 14px" }}>Vencimento</th>
+                            <th style={{ textAlign: "right", padding: "9px 14px" }}>Valor</th>
+                            {extras.map(e => <th key={e} style={{ textAlign: "right", padding: "9px 14px" }}>{e}</th>)}
+                            <th style={{ textAlign: "center", padding: "9px 14px" }}>Situação</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {parcelas.map(x => {
+                            const paga = String(x.situacao ?? "").toUpperCase().startsWith("PAG");
+                            return (
+                              <tr key={x.id} style={{ borderTop: "1px solid #f1f5f9" }}>
+                                <td style={{ padding: "9px 14px", fontWeight: 700, color: "#0f172a" }}>{x.rotulo || (x.numero != null ? `${x.numero}ª` : "—")}</td>
+                                <td style={{ padding: "9px 14px", color: "#475569" }}>{x.vencimento ? fmtDt(x.vencimento) : "—"}</td>
+                                <td style={{ padding: "9px 14px", textAlign: "right", color: "#0f172a", fontWeight: 700 }}>{x.valor != null ? money(x.valor) : "—"}</td>
+                                {extras.map(e => <td key={e} style={{ padding: "9px 14px", textAlign: "right", color: "#64748b" }}>{x.detalhes?.[e] != null && x.detalhes[e] !== "" ? (typeof x.detalhes[e] === "number" ? money(x.detalhes[e]) : String(x.detalhes[e])) : "—"}</td>)}
+                                <td style={{ padding: "9px 14px", textAlign: "center" }}>
+                                  <span style={{ fontSize: 10.5, fontWeight: 800, padding: "2px 9px", borderRadius: 20, background: paga ? "#dcfce7" : "#fff7ed", color: paga ? "#15803d" : "#c2410c" }}>{x.situacao || "EM ABERTO"}</span>
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                    {parcelas[0]?.origem && (
+                      <div style={{ padding: "8px 14px", borderTop: "1px solid #eef2f7", fontSize: 11, color: "#94a3b8" }}>
+                        Origem: {[...new Set(parcelas.map(x => x.origem).filter(Boolean))].join(" · ")} (planilha ATIVO IMOBILIZADO)
+                      </div>
+                    )}
+                  </div>
+                </>);
+              })()}
 
               {/* ACESSOS */}
               {tab === "acessos" && (<>
@@ -1075,7 +1218,7 @@ export default function Patrimonios() {
         <div className="jp-ov" onClick={e => { if (e.target === e.currentTarget) setPagarAlvo(null); }}>
           <div className="jp-modal" onClick={e => e.stopPropagation()} style={{ maxWidth: 460 }}>
             <button onClick={() => setPagarAlvo(null)} style={{ position: "absolute", top: 14, right: 16, border: "none", background: "none", fontSize: 20, color: "#94a3b8", cursor: "pointer" }}>✕</button>
-            <div style={{ fontSize: 17, fontWeight: 800, marginBottom: 4 }}>Registrar pagamento</div>
+            <div style={{ fontSize: 17, fontWeight: 800, marginBottom: 4 }}>Dar baixa na conta</div>
             <div style={{ fontSize: 12.5, color: "#64748b", marginBottom: 14 }}>{pagarAlvo.categoria}{pagarAlvo.descricao ? " · " + pagarAlvo.descricao : ""} · <b>{money(pagarAlvo.valor)}</b>{pagarAlvo.vencimento ? " · venc. " + fmtDt(pagarAlvo.vencimento) : ""}</div>
             <div className="jp-fg"><label>Comprovante (PDF ou imagem) *</label><input className="jp-fi" type="file" accept="image/*,application/pdf" onChange={e => setPagarFile(e.target.files?.[0] || null)} style={{ padding: 8 }} /><div style={{ fontSize: 10.5, color: "#94a3b8", marginTop: 4 }}>Obrigatório para confirmar o pagamento. Depois de anexado, a conta fica <b>bloqueada para exclusão</b> e tudo fica no histórico.</div></div>
             <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 12 }}>
