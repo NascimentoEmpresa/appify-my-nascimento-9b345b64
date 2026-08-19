@@ -56,6 +56,7 @@ import {
   Car,
   Package,
   PlusCircle,
+  CalendarCheck2,
 } from "lucide-react";
 import { useTemAlcada } from "@/hooks/useTemAlcada";
 import { useAccessibleMenus, matchMenuCode } from "@/hooks/useAccessibleMenus";
@@ -728,6 +729,23 @@ function buildPlanoAcoesModule(podeCopiloto: boolean): ModuleDef {
   };
 }
 
+// Operacional — gestão da operação em campo (diárias, coberturas de escala).
+const operacionalModule: ModuleDef = {
+  id: "operacional",
+  label: "Operacional",
+  description: "Diárias e cobertura de escala",
+  icon: CalendarCheck2,
+  basePath: "/app/operacional",
+  status: "active",
+  groups: [
+    {
+      label: "Operacional",
+      defaultOpen: true,
+      items: [{ label: "Controle de Diárias", to: "/app/operacional/diarias", icon: CalendarCheck2 }],
+    },
+  ],
+};
+
 // SST — ASO / Admissão (fila do Recrutamento)
 const sstModule: ModuleDef = {
   id: "sst",
@@ -758,6 +776,7 @@ const erpModules: ModuleDef[] = [
   rhModule,
   recrutamentoModule,
   encarregadosModule,
+  operacionalModule,
   sistemasModule,
   juridicoModule,
   sstModule,
