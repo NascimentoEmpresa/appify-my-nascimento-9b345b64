@@ -420,22 +420,34 @@ async function estoque() {
       [D.almoxHAGG, item.id])).rows[0];
     fichaParaEstoque.set(f.id, achado.id);
     reusados++;
+
+    // Sempre: o mínimo do material é o maior entre as fichas que colapsaram.
+    // `greatest` é idempotente, então repetir a carga não muda o resultado.
+    await destino.query(
+      'update public.sup_estoque_item set estoque_minimo = greatest(estoque_minimo, coalesce($2,0)) where id=$1',
+      [achado.id, f.estoque_minimo]);
+
     if (!comTag.has(f.id)) {
-      await destino.query(`
+      // Ficha sem nenhuma etiqueta não tem para onde descer o que ela trazia de
+      // próprio (prateleira, valor, fornecedor): fica registrado em observacoes.
+      //
+      // O `position(... ) = 0` é o que torna isto repetível. Sem ele, cada nova
+      // execução do ETL anexaria a MESMA nota outra vez, e depois de algumas
+      // cargas o campo viraria um paredão de linhas repetidas. A marca
+      // "[legado ficha N]" é única por ficha e serve de chave.
+      const marca = `[legado ficha ${f.id}]`;
+      const r = await destino.query(`
         update public.sup_estoque_item
            set observacoes = concat_ws(E'\\n', observacoes,
-                 format('[legado ficha %s] prateleira=%s valor=%s fornecedor=%s estado=%s min=%s',
-                        $2::text, coalesce($3,'-'), coalesce($4::text,'-'), coalesce($5,'-'), coalesce($6,'-'), coalesce($7,'-'))),
-               estoque_minimo = greatest(estoque_minimo, coalesce($8::integer,0))
-         where id = $1`,
-        [achado.id, f.id, fichaInfo.get(f.id).localizacao, f.valor_unitario,
+                 format('%s prateleira=%s valor=%s fornecedor=%s estado=%s min=%s',
+                        $2::text, coalesce($3,'-'), coalesce($4::text,'-'), coalesce($5,'-'), coalesce($6,'-'), coalesce($7,'-')))
+         where id = $1
+           and (observacoes is null or position($2 in observacoes) = 0)
+         returning id`,
+        [achado.id, marca, fichaInfo.get(f.id).localizacao, f.valor_unitario,
          fichaInfo.get(f.id).fornecedor, fichaInfo.get(f.id).estado,
-         f.estoque_minimo === null ? null : String(f.estoque_minimo), f.estoque_minimo]);
-      notasDeColapso++;
-    } else {
-      await destino.query(
-        'update public.sup_estoque_item set estoque_minimo = greatest(estoque_minimo, coalesce($2,0)) where id=$1',
-        [achado.id, f.estoque_minimo]);
+         f.estoque_minimo === null ? null : String(f.estoque_minimo)]);
+      if (r.rows.length) notasDeColapso++;
     }
   }
   conta('materiais de estoque criados', criados);
@@ -448,7 +460,23 @@ async function estoque() {
     select id, item_id, tag_id, tamanho, sequencia, usado, pedido_id, usado_em,
            usado_por, tipo_tag, quantidade_massa, quantidade_original_massa, valor_unitario
       from estoque_tags order by id`)).rows;
-  let tOk = 0, tPulada = 0, tComPedido = 0, tSemPedido = 0;
+  // CÓDIGO REAPROVEITADO
+  // `sup_estoque_tag.codigo` é único global. O sistema antigo APAGA etiqueta e
+  // depois recria outra com o MESMO código impresso e id novo — foi o que
+  // aconteceu com 24391 e 36000 em 18/08. Nesse caso o destino guarda uma linha
+  // órfã (o id de origem dela não existe mais) segurando o código, e o INSERT da
+  // etiqueta nova estoura o índice único.
+  //
+  // Quem manda é a origem: a linha órfã é repontada para a etiqueta nova em vez
+  // de a carga parar. Só vale quando o dono antigo REALMENTE sumiu de lá — se os
+  // dois existirem na origem, é conflito de verdade e tem que aparecer.
+  const idsNaOrigem = new Set(tags.map((t) => t.id));
+  const donoDoCodigo = new Map(
+    (await destino.query(
+      'select codigo, legado_id from public.sup_estoque_tag where legado_id is not null')).rows
+      .map((r) => [r.codigo, r.legado_id]));
+
+  let tOk = 0, tPulada = 0, tComPedido = 0, tSemPedido = 0, tRepontada = 0, tConflito = 0;
   for (const t of tags) {
     const estoqueId = fichaParaEstoque.get(t.item_id);
     if (!estoqueId) { tPulada++; continue; }
@@ -456,6 +484,32 @@ async function estoque() {
     const massa = norm(t.tipo_tag) === 'MASSA';
     const pedidoUuid = t.pedido_id ? pedidoPorProtocolo.get(t.pedido_id) ?? null : null;
     if (t.pedido_id) { if (pedidoUuid) tComPedido++; else tSemPedido++; }
+
+    const dono = donoDoCodigo.get(t.tag_id);
+    if (dono != null && dono !== t.id) {
+      if (idsNaOrigem.has(dono)) {
+        // Os dois vivos com o mesmo código: não invento desempate.
+        console.warn(`  ! codigo ${t.tag_id} disputado pelas etiquetas ${dono} e ${t.id} — pulada`);
+        tConflito++; continue;
+      }
+      await destino.query(`
+        update public.sup_estoque_tag
+           set item_estoque_id=$1, tamanho=$3, sequencia=$4, tipo=$5, quantidade_massa=$6,
+               quantidade_original_massa=$7, valor_unitario=$8, estado=$9, usado=$10,
+               pedido_id=$11, pedido_id_legado=$12, usado_em=$13, usado_por_nome=$14,
+               localizacao=$15, fornecedor=$16, legado_id=$17
+         where codigo=$2`, [
+        estoqueId, t.tag_id, vazio(t.tamanho) ? null : t.tamanho.trim(),
+        t.sequencia ?? 1, massa ? 'massa' : 'unico',
+        massa ? (t.quantidade_massa ?? 0) : null,
+        massa ? t.quantidade_original_massa ?? null : null,
+        t.valor_unitario ?? info.valor ?? null,
+        info.estado ?? 'novo', t.usado ?? false, pedidoUuid, t.pedido_id ?? null,
+        t.usado_em ?? null, vazio(t.usado_por) ? null : t.usado_por.trim(),
+        info.localizacao ?? null, info.fornecedor ?? null, t.id]);
+      donoDoCodigo.set(t.tag_id, t.id);
+      tRepontada++; continue;
+    }
 
     const r = await destino.query(`
       insert into public.sup_estoque_tag
@@ -477,6 +531,8 @@ async function estoque() {
     if (r.rows.length) tOk++;
   }
   conta('etiquetas inseridas', tOk);
+  conta('  — código reaproveitado: linha órfã repontada', tRepontada);
+  conta('  — código disputado por duas vivas (pulada)', tConflito);
   conta('etiquetas puladas (ficha sem material)', tPulada);
   conta('  — com pedido religado', tComPedido);
   conta('  — com pedido só no texto (apagado na origem)', tSemPedido);
