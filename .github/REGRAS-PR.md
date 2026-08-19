@@ -390,9 +390,14 @@ regra, com situação em uma frase:
 | J5 — teste onde há dinheiro ou alçada | … |
 | J6 — Edge Function: `config.toml`, validação do chamador | … |
 | J7 — filtro de escopo em query nova | … |
+| J8 — migration listada para rodar à mão | … |
 
 Use "não se aplica" com o motivo (`não se aplica: sem policy nova`), não apenas
 "ok". O motivo é o que permite discordar de você.
+
+A linha J8 é a que mais importa quando há migration: sem ela a PR é aprovada,
+mergeada, e o recurso simplesmente não existe em produção, porque ninguém
+rodou o SQL. Nesse caso, repita os arquivos no aviso em destaque (parte 2).
 
 **4. Os achados** — cada um com arquivo, linha, a regra pelo número, e por que
 aquilo é um problema de verdade. "Esta policy libera as linhas dos outros
