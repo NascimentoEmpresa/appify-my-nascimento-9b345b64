@@ -285,47 +285,32 @@ function MenusEditor({ moduloId, menus, podeGerenciar, onChange }: { moduloId: s
 
 // ─── View: Acesso por Usuário ──────────────────────────────────────────────────
 
-// Menus do Recrutamento e Seleção. Só eles: nos outros módulos o toggle
-// continua significando apenas "enxerga a tela", e as demais ações vêm do
-// perfil de acesso — mexer nisso daria escrita a 81 usuários em 155 telas de
-// uma vez.
-//
-// Por que o Recrutamento é diferente: a tela decide quem conduz o processo por
-// `can("alterar", …, "recrutamento_gestao")` e o RLS das 6 tabelas do módulo
-// exige incluir/alterar. Concedendo só "visualizar", liberar o menu aqui
-// mostrava o botão de abrir vaga e o banco recusava o INSERT — era o erro
-// "new row violates row-level security policy for SISTEMA_RECRUTAMENTO".
 // O enum app_acao do banco. Tipado aqui porque o insert em
 // screen_permission_user exige a união exata, não `string`.
 type AppAcao = "visualizar" | "incluir" | "alterar" | "excluir" | "aprovar" | "exportar" | "executar_ia" | "alterar_dre";
 
-// "excluir" fica de fora de propósito: liberar a tela não é autorizar apagar.
-const ACOES_RECRUTAMENTO: readonly AppAcao[] = ["visualizar", "incluir", "alterar", "aprovar", "exportar"];
-// Patrimônio não aprova nem exporta; precisa cadastrar bem e mexer no status.
-const ACOES_PATRIMONIO: readonly AppAcao[] = ["visualizar", "incluir", "alterar"];
-
-// Menus em que liberar a tela precisa liberar TAMBÉM as ações de trabalho.
-// Fora desta lista o toggle segue significando só "enxerga a tela".
+// LIBERAR A TELA É LIBERAR A TELA.
 //
-// Patrimônio entrou em 17/08/2026 pelo mesmo motivo do Recrutamento, e o
-// sintoma foi idêntico: marcar um veículo como "em manutenção"/"em contrato" é
-// UPDATE em sup_patrimonio, cuja policy exige `alterar`. Com só "visualizar", o
-// modal abria, o Salvar parecia funcionar e nada mudava — e o único perfil que
-// concedia `alterar` era o "Administrador Geral" (concede_tudo), ou seja, para
-// o comprador marcar um carro seria preciso torná-lo admin do sistema inteiro.
-const ACOES_POR_MENU: Record<string, readonly AppAcao[]> = {
-  recrutamento_gestao: ACOES_RECRUTAMENTO,
-  recrutamento_etapa_juridico: ACOES_RECRUTAMENTO,
-  recrutamento_etapa_sst: ACOES_RECRUTAMENTO,
-  recrutamento_etapa_compras: ACOES_RECRUTAMENTO,
-  encarregados_minhas_solicitacoes: ACOES_RECRUTAMENTO,
-  sup_patrimonio: ACOES_PATRIMONIO,
-  sup_manutencao: ACOES_PATRIMONIO,
-  // Sem `alterar` o Compras abriria a fila de EPIs e nao conseguiria aprovar.
-  sup_epis_admissao: ACOES_PATRIMONIO,
-};
-const ACOES_DO_TOGGLE = (codigo: string): AppAcao[] =>
-  [...(ACOES_POR_MENU[codigo] ?? (["visualizar"] as const))];
+// Marcar o menu aqui concede as ações de trabalho junto — visualizar, incluir,
+// alterar, aprovar e exportar. Não depende de perfil de acesso: o toggle sozinho
+// tem que fazer a tela funcionar, senão o admin marca, o usuário entra e os
+// botões não aparecem (ou aparecem e o RLS recusa a gravação).
+//
+// Antes isso valia só para uma lista fixa de 7 menus escrita neste arquivo, e
+// todo menu novo nascia fora dela. O resultado foi 45 pessoas com o
+// Recrutamento marcado e nenhuma conseguindo aprovar uma vaga — o toggle dizia
+// "liberado" e gravava apenas 'visualizar'. Regra fixa vale mais que lista:
+// não há como esquecer de cadastrar a tela nova.
+//
+// Duas ações ficam DE FORA de propósito, e continuam vindo de perfil:
+//   • excluir      — liberar a tela não é autorizar apagar registro;
+//   • executar_ia / alterar_dre — capacidades caras/sensíveis, concedidas caso
+//     a caso, nunca de brinde junto com a tela.
+const ACOES_DO_TOGGLE_PADRAO: readonly AppAcao[] =
+  ["visualizar", "incluir", "alterar", "aprovar", "exportar"];
+
+// eslint-disable-next-line @typescript-eslint/no-unused-vars -- assinatura mantida: os dois lugares que gravam permissão chamam por menu.
+const ACOES_DO_TOGGLE = (_codigo: string): AppAcao[] => [...ACOES_DO_TOGGLE_PADRAO];
 
 function UserAccessPanel({ podeGerenciar, modulos, menus }: { podeGerenciar: boolean; modulos: Modulo[]; menus: Menu[] }) {
   const [selectedUserId, setSelectedUserId] = useState<string>("");

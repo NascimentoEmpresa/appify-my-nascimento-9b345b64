@@ -6,6 +6,9 @@ import {
 import { Pergunta } from "./Formularios";
 import { Plano, situacaoDe } from "./PainelPlanosAcao";
 import { Empregado, normSetor, PERFIL_ESPERADO, ehPerfilEsperado, ehTrabalhando } from "./LideresSetor";
+import { listaQuem } from "./painel/calculos";
+import { ItemDist } from "./painel/tipos";
+import { TipQuem } from "./painel/ui";
 
 // =====================================================================
 // PAINEL GERENCIAL — aba VISÃO EXECUTIVA
@@ -57,34 +60,6 @@ const trimestreDe = (iso: string) => { const d = new Date(iso); return `${Math.f
 
 interface Resp { id: string; formulario_id: string; enviado_em: string; respondente_nome?: string | null; setor?: string | null; itens: Record<string, any> }
 
-// Nomes de uma fatia do gráfico, prontos para exibir: sem repetir, em ordem, e
-// marcando entre parênteses quem aparece mais de uma vez.
-const nomesUnicos = (nomes: string[]) => {
-  const c = new Map<string, number>();
-  nomes.forEach(n => { const k = (n ?? "").trim(); if (k) c.set(k, (c.get(k) ?? 0) + 1); });
-  return [...c.entries()].sort((a, b) => a[0].localeCompare(b[0], "pt-BR")).map(([n, q]) => q > 1 ? `${n} (${q})` : n);
-};
-
-// Balão que mostra QUEM está no ponto do gráfico, não só o total.
-function TipNomes({ active, payload, rotulo = "resposta(s)" }: any) {
-  if (!active || !payload?.length) return null;
-  const d = payload[0]?.payload ?? {};
-  const quem: string[] = d.quem ?? [];
-  const MAX = 14;
-  return (
-    <div style={{ maxWidth: 280, background: "#fff", border: "1px solid #e2e8f0", borderRadius: 8, boxShadow: "0 8px 24px rgba(15,23,42,.12)", padding: "8px 10px", fontSize: 11.5, lineHeight: 1.35, color: "#0f172a" }}>
-      <div style={{ fontWeight: 800, whiteSpace: "normal", wordBreak: "break-word" }}>{d.completo ?? d.nome}</div>
-      <div style={{ color: "#475569", marginTop: 2 }}><b>{nInt(Number(d.n ?? 0))}</b> {rotulo}</div>
-      {quem.length > 0 && (
-        <div style={{ marginTop: 6, borderTop: "1px dashed #e2e8f0", paddingTop: 5, color: "#475569" }}>
-          {quem.slice(0, MAX).map((q: string) => <div key={q}>• {q}</div>)}
-          {quem.length > MAX && <div style={{ color: "#94a3b8" }}>e mais {quem.length - MAX}…</div>}
-        </div>
-      )}
-    </div>
-  );
-}
-
 function Kpi({ titulo, valor, sub, cor, icone }: { titulo: string; valor: string; sub: string; cor: string; icone: string }) {
   return (
     <div style={{ ...cardBox, display: "flex", gap: 11, alignItems: "flex-start" }}>
@@ -126,8 +101,8 @@ export default function VisaoExecutiva({
   planos: Plano[];
   diretorPorSetor: Map<string, string>;
   recorte: string;                     // resumo dos filtros ativos, para os rótulos
-  distSituacao: { nome: string; completo: string; n: number; quem?: string[] }[];
-  distNecess: { nome: string; completo: string; n: number; quem?: string[] }[];
+  distSituacao: ItemDist[];
+  distNecess: ItemDist[];
   ultima: string;
   cadastroCarregando: boolean;
   onAbrirMapa: () => void;
@@ -271,7 +246,7 @@ export default function VisaoExecutiva({
       if (nome) g.quem.push(nome);
       m.set(s, g);
     });
-    return [...m.entries()].map(([completo, g]) => ({ completo, nome: completo.length > 16 ? completo.slice(0, 16) + "…" : completo, n: g.n, quem: nomesUnicos(g.quem) }))
+    return [...m.entries()].map(([completo, g]) => ({ completo, nome: completo.length > 16 ? completo.slice(0, 16) + "…" : completo, n: g.n, quem: listaQuem(g.quem) }))
       .sort((a, b) => b.n - a.n);
   }, [resps, pergAvaliado]);
 
@@ -431,7 +406,7 @@ export default function VisaoExecutiva({
                   <Pie data={sitOrdenada} dataKey="n" nameKey="completo" cx="50%" cy="50%" innerRadius={48} outerRadius={72} paddingAngle={2}>
                     {sitOrdenada.map((_, i) => <Cell key={i} fill={CORES[i % CORES.length]} />)}
                   </Pie>
-                  <Tooltip content={<TipNomes rotulo="resposta(s)" />} />
+                  <Tooltip content={<TipQuem rotulo="resposta(s)" />} />
                 </PieChart>
               </ResponsiveContainer>
               <div style={{ display: "flex", flexDirection: "column", gap: 3, marginTop: 4 }}>
@@ -451,14 +426,14 @@ export default function VisaoExecutiva({
         {temCobertura && <Painel titulo="Cobertura do quadro">
           <ResponsiveContainer width="100%" height={190}>
             <BarChart layout="vertical" data={[
-              { nome: "Realizados", completo: "Realizados", n: cob.realizados.length, quem: nomesUnicos(cob.realizados.map(e => e.nome)) },
-              { nome: "Pendentes", completo: "Pendentes", n: cob.pendentes.length, quem: nomesUnicos(cob.pendentes.map(e => e.nome)) },
-              { nome: "Fora do quadro", completo: "Fora do quadro", n: cob.foraCadastro.length, quem: nomesUnicos(cob.foraCadastro.map(f => f.nome)) },
+              { nome: "Realizados", completo: "Realizados", n: cob.realizados.length, quem: listaQuem(cob.realizados.map(e => e.nome)) },
+              { nome: "Pendentes", completo: "Pendentes", n: cob.pendentes.length, quem: listaQuem(cob.pendentes.map(e => e.nome)) },
+              { nome: "Fora do quadro", completo: "Fora do quadro", n: cob.foraCadastro.length, quem: listaQuem(cob.foraCadastro.map(f => f.nome)) },
             ]} margin={{ top: 4, right: 44, left: 10, bottom: 0 }}>
               <CartesianGrid strokeDasharray="3 3" stroke="#eef2f7" horizontal={false} />
               <XAxis type="number" tick={{ fontSize: 10, fill: "#94a3b8" }} />
               <YAxis type="category" dataKey="nome" width={84} tick={{ fontSize: 10.5, fill: "#475569" }} />
-              <Tooltip content={<TipNomes rotulo="pessoa(s)" />} />
+              <Tooltip content={<TipQuem rotulo="pessoa(s)" />} />
               <Bar dataKey="n" radius={[0, 6, 6, 0]} barSize={20}>
                 {["#16a34a", "#f59e0b", "#dc2626"].map((c, i) => <Cell key={i} fill={c} />)}
                 <LabelList dataKey="n" position="right" formatter={(v: any) => `${nInt(Number(v))} (${pctTxt(Number(v), esperados.length)})`} style={{ fontSize: 9.5, fill: "#64748b", fontWeight: 700 }} />
@@ -503,7 +478,7 @@ export default function VisaoExecutiva({
                 <CartesianGrid strokeDasharray="3 3" stroke="#eef2f7" horizontal={false} />
                 <XAxis type="number" tick={{ fontSize: 10, fill: "#94a3b8" }} />
                 <YAxis type="category" dataKey="nome" width={96} tick={{ fontSize: 9.5, fill: "#475569" }} />
-                <Tooltip content={<TipNomes rotulo="resposta(s)" />} />
+                <Tooltip content={<TipQuem rotulo="resposta(s)" />} />
                 <Bar dataKey="n" fill="#2563eb" radius={[0, 6, 6, 0]} barSize={15}>
                   <LabelList dataKey="n" position="right" formatter={(v: any) => nInt(Number(v))} style={{ fontSize: 9.5, fill: "#64748b", fontWeight: 700 }} />
                 </Bar>

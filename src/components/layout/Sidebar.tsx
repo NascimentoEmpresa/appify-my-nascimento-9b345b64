@@ -56,6 +56,7 @@ import {
   Car,
   Package,
   PlusCircle,
+  UserMinus,
   CalendarCheck2,
 } from "lucide-react";
 import { useTemAlcada } from "@/hooks/useTemAlcada";
@@ -440,6 +441,7 @@ const rhModule: ModuleDef = {
         { label: "Alocações em Contratos", to: "/app/rh/alocacoes", icon: ListChecks },
         { label: "Folha de Pagamento", to: "/app/rh/folha", icon: ListChecks },
         { label: "Gestão de Férias", to: "/app/rh/ferias", icon: CalendarRange },
+        { label: "Solicitações de Demissão", to: "/app/rh/solicitacoes-demissao", icon: UserMinus },
       ],
     },
   ],
@@ -491,6 +493,7 @@ const encarregadosModule: ModuleDef = {
       defaultOpen: true,
       items: [
         { label: "Solicitar Férias", to: "/app/encarregados/solicitar-ferias", icon: CalendarRange },
+        { label: "Solicitar Demissão", to: "/app/encarregados/solicitar-demissao", icon: UserMinus },
       ],
     },
     {
@@ -739,11 +742,12 @@ function buildPlanoAcoesModule(podeCopiloto: boolean): ModuleDef {
   };
 }
 
-// Operacional — gestão da operação em campo (diárias, coberturas de escala).
+// Operacional — gestão da operação em campo (diárias, coberturas de escala) e
+// o que chega dos encarregados esperando aprovação daqui.
 const operacionalModule: ModuleDef = {
   id: "operacional",
   label: "Operacional",
-  description: "Diárias e cobertura de escala",
+  description: "Diárias, escala e aprovações",
   icon: CalendarCheck2,
   basePath: "/app/operacional",
   status: "active",
@@ -752,6 +756,20 @@ const operacionalModule: ModuleDef = {
       label: "Operacional",
       defaultOpen: true,
       items: [{ label: "Controle de Diárias", to: "/app/operacional/diarias", icon: CalendarCheck2 }],
+    },
+    {
+      label: "Recrutamento e Seleção",
+      defaultOpen: true,
+      items: [
+        { label: "Gestão Recrutamento", to: "/app/operacional/recrutamento", icon: UserCog },
+      ],
+    },
+    {
+      label: "Recursos Humanos",
+      defaultOpen: true,
+      items: [
+        { label: "Solicitações de Demissão", to: "/app/operacional/solicitacoes-demissao", icon: UserMinus },
+      ],
     },
   ],
 };

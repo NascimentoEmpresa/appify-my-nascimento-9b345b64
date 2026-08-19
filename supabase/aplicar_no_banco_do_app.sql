@@ -13632,3 +13632,372 @@ GRANT EXECUTE ON FUNCTION public.portal_vagas_por_cidade(text) TO anon, authenti
 GRANT EXECUTE ON FUNCTION public.portal_cidades_com_vagas() TO anon, authenticated;
 
 NOTIFY pgrst, 'reload schema';
+
+
+-- =========================================================================
+-- 20260909000005_solicitacoes_demissao.sql
+-- =========================================================================
+-- =========================================================================
+-- SOLICITAÇÃO DE DEMISSÃO — encarregado → operacional → RH
+--
+-- O FLUXO
+--   1. O ENCARREGADO abre a solicitação já completa (dados do colaborador,
+--      motivos, aviso e documentos anexados).
+--   2. O OPERACIONAL aprova ou reprova. Reprovar EXIGE motivo — sem isso o
+--      encarregado não sabe o que corrigir.
+--   3. O RH recebe só o que o operacional aprovou e conclui.
+--
+-- O status é a memória desse caminho, e por isso ninguém escreve status
+-- direto na tela: cada etapa grava quem decidiu e quando.
+--
+--   Pendente Operacional → Pendente RH → Concluída
+--                        ↘ Reprovada
+--
+-- Encarregado e operacional enxergam TODAS as solicitações em qualquer
+-- status (o pedido era acompanhar o andamento do começo ao fim); quem entra
+-- em cada tela é decidido pelo menu, como no resto do sistema.
+--
+-- Espelha SISTEMA_SOLICITACOES_FERIAS (20260617000004): RLS liberada para
+-- authenticated, controle de acesso no menu/RouteGuard.
+--
+-- Idempotente.
+-- ROLLBACK:
+--   DROP TABLE public."SISTEMA_SOL_DEMISSAO_ANEXOS";
+--   DROP TABLE public."SISTEMA_SOLICITACOES_DEMISSAO";
+--   DELETE FROM public.app_menu WHERE codigo IN
+--     ('encarregados_solicitar_demissao','operacional_demissoes','rh_demissoes');
+--   DELETE FROM public.app_modulo WHERE codigo = 'operacional';
+-- =========================================================================
+
+-- ── 1. A solicitação ─────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS public."SISTEMA_SOLICITACOES_DEMISSAO" (
+  id                    BIGSERIAL PRIMARY KEY,
+
+  -- Quem pediu (o encarregado logado).
+  solicitante_nome      TEXT,
+  solicitante_email     TEXT,
+  data_solicitacao      DATE,
+
+  -- Quem vai ser desligado. `colaborador_id` é o ID em EMPREGADOS e serve de
+  -- prova de que a pessoa foi ESCOLHIDA na lista, não digitada à mão: os
+  -- campos que vêm do cadastro (posto, contrato, escala) chegam travados na
+  -- tela justamente porque saem daqui.
+  colaborador_id        BIGINT,
+  colaborador_nome      TEXT,
+  colaborador_cpf       TEXT,
+  colaborador_posto     TEXT,
+  colaborador_cargo     TEXT,
+  colaborador_filial    TEXT,
+  colaborador_admissao  DATE,
+  colaborador_telefone  TEXT,
+  colaborador_email     TEXT,
+  contrato              TEXT,
+  contrato_id           BIGINT,
+  escala                TEXT,
+
+  -- Motivos (passo 2 do formulário).
+  motivo_solicitacao    TEXT,
+  motivo_pedido         TEXT,
+  relato               TEXT,
+
+  -- Aviso e dados adicionais (passo 3).
+  termino_experiencia   TEXT,
+  data_aviso            DATE,
+  modelo_aviso          TEXT,
+
+  -- Andamento.
+  status                TEXT NOT NULL DEFAULT 'Pendente Operacional',
+  operacional_por       TEXT,
+  operacional_em        TIMESTAMPTZ,
+  operacional_motivo    TEXT,     -- obrigatório na reprovação
+  rh_por                TEXT,
+  rh_em                 TIMESTAMPTZ,
+  rh_observacao         TEXT,
+
+  criado_em             TIMESTAMPTZ DEFAULT NOW(),
+  atualizado_em         TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS ssd_status_idx      ON public."SISTEMA_SOLICITACOES_DEMISSAO"(status);
+CREATE INDEX IF NOT EXISTS ssd_solicitante_idx ON public."SISTEMA_SOLICITACOES_DEMISSAO"(solicitante_email);
+CREATE INDEX IF NOT EXISTS ssd_colaborador_idx ON public."SISTEMA_SOLICITACOES_DEMISSAO"(colaborador_id);
+CREATE INDEX IF NOT EXISTS ssd_criado_idx      ON public."SISTEMA_SOLICITACOES_DEMISSAO"(criado_em DESC);
+
+ALTER TABLE public."SISTEMA_SOLICITACOES_DEMISSAO" ENABLE ROW LEVEL SECURITY;
+GRANT SELECT, INSERT, UPDATE, DELETE ON public."SISTEMA_SOLICITACOES_DEMISSAO" TO authenticated;
+GRANT USAGE, SELECT ON SEQUENCE public."SISTEMA_SOLICITACOES_DEMISSAO_id_seq" TO authenticated;
+
+DROP POLICY IF EXISTS ssd_all_auth ON public."SISTEMA_SOLICITACOES_DEMISSAO";
+CREATE POLICY ssd_all_auth ON public."SISTEMA_SOLICITACOES_DEMISSAO"
+  FOR ALL TO authenticated USING (true) WITH CHECK (true);
+
+-- ── 2. Os documentos anexados ────────────────────────────────────────
+-- Uma linha por arquivo. O arquivo em si vive no bucket privado
+-- `demissoes-docs`; aqui fica só o caminho, aberto por URL assinada.
+CREATE TABLE IF NOT EXISTS public."SISTEMA_SOL_DEMISSAO_ANEXOS" (
+  id              BIGSERIAL PRIMARY KEY,
+  solicitacao_id  BIGINT NOT NULL REFERENCES public."SISTEMA_SOLICITACOES_DEMISSAO"(id) ON DELETE CASCADE,
+  nome            TEXT NOT NULL,
+  storage_path    TEXT NOT NULL,
+  tamanho         BIGINT,
+  tipo            TEXT,
+  enviado_por     TEXT,
+  criado_em       TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS ssda_sol_idx ON public."SISTEMA_SOL_DEMISSAO_ANEXOS"(solicitacao_id);
+
+ALTER TABLE public."SISTEMA_SOL_DEMISSAO_ANEXOS" ENABLE ROW LEVEL SECURITY;
+GRANT SELECT, INSERT, UPDATE, DELETE ON public."SISTEMA_SOL_DEMISSAO_ANEXOS" TO authenticated;
+GRANT USAGE, SELECT ON SEQUENCE public."SISTEMA_SOL_DEMISSAO_ANEXOS_id_seq" TO authenticated;
+
+DROP POLICY IF EXISTS ssda_all_auth ON public."SISTEMA_SOL_DEMISSAO_ANEXOS";
+CREATE POLICY ssda_all_auth ON public."SISTEMA_SOL_DEMISSAO_ANEXOS"
+  FOR ALL TO authenticated USING (true) WITH CHECK (true);
+
+-- ── 3. Bucket dos documentos ─────────────────────────────────────────
+-- Privado e com teto de 10 MB por arquivo — o mesmo limite que a tela
+-- valida antes de enviar, para o erro aparecer no formulário e não como um
+-- 413 sem explicação.
+INSERT INTO storage.buckets (id, name, public, file_size_limit)
+VALUES ('demissoes-docs', 'demissoes-docs', false, 10485760)
+ON CONFLICT (id) DO UPDATE SET public = false, file_size_limit = 10485760;
+
+DROP POLICY IF EXISTS demissoes_docs_select ON storage.objects;
+CREATE POLICY demissoes_docs_select ON storage.objects
+  FOR SELECT TO authenticated USING (bucket_id = 'demissoes-docs');
+
+DROP POLICY IF EXISTS demissoes_docs_insert ON storage.objects;
+CREATE POLICY demissoes_docs_insert ON storage.objects
+  FOR INSERT TO authenticated WITH CHECK (bucket_id = 'demissoes-docs');
+
+DROP POLICY IF EXISTS demissoes_docs_delete ON storage.objects;
+CREATE POLICY demissoes_docs_delete ON storage.objects
+  FOR DELETE TO authenticated USING (bucket_id = 'demissoes-docs');
+
+-- ── 4. Navegação e acesso ────────────────────────────────────────────
+-- Módulo OPERACIONAL: nasce agora porque a fila de aprovação é dele. Fica
+-- logo abaixo de Encarregados, que é de onde as solicitações chegam.
+INSERT INTO public.app_modulo (codigo, nome, descricao, icone, ordem)
+SELECT 'operacional', 'Operacional', 'Aprovações e acompanhamento das solicitações',
+       'ClipboardCheck',
+       COALESCE((SELECT ordem FROM public.app_modulo WHERE codigo = 'encarregados'),
+                (SELECT max(ordem) FROM public.app_modulo), 200) + 1
+WHERE NOT EXISTS (SELECT 1 FROM public.app_modulo WHERE codigo = 'operacional');
+
+-- Um menu por tela: o acesso é por menu, e aqui são três públicos distintos
+-- (encarregado abre, operacional decide, RH conclui).
+INSERT INTO public.app_menu (modulo_id, codigo, nome, rota, ordem, ativo)
+SELECT m.id, x.codigo, x.nome, x.rota,
+       COALESCE((SELECT max(ordem) FROM public.app_menu WHERE modulo_id = m.id), 0) + x.ordem,
+       true
+  FROM (VALUES
+    ('encarregados', 'encarregados_solicitar_demissao', 'Solicitar Demissão',      '/app/encarregados/solicitar-demissao', 10),
+    ('operacional',  'operacional_demissoes',           'Solicitações de Demissão', '/app/operacional/solicitacoes-demissao', 10),
+    ('rh',           'rh_demissoes',                    'Solicitações de Demissão', '/app/rh/solicitacoes-demissao',          10)
+  ) AS x(modulo, codigo, nome, rota, ordem)
+  JOIN public.app_modulo m ON m.codigo = x.modulo
+ON CONFLICT (modulo_id, codigo) DO UPDATE
+   SET nome = EXCLUDED.nome, rota = EXCLUDED.rota, ativo = true;
+
+-- ── Conferência ──────────────────────────────────────────────────────
+SELECT codigo, nome, rota FROM public.app_menu
+ WHERE codigo IN ('encarregados_solicitar_demissao','operacional_demissoes','rh_demissoes')
+ ORDER BY codigo;
+
+NOTIFY pgrst, 'reload schema';
+
+
+-- =========================================================================
+-- 20260909000006_acesso_toggle_concede_acoes.sql
+-- =========================================================================
+-- =========================================================================
+-- ACESSO POR USUÁRIO — marcar a tela passa a liberar a tela
+--
+-- O PROBLEMA
+-- O toggle de Administração › Acesso por Usuário gravava só a ação
+-- 'visualizar'. As ações de trabalho (incluir/alterar/aprovar/exportar) só
+-- saíam para 7 menus escritos numa lista fixa dentro do ModulosMenusTab, e
+-- todo menu novo nascia fora dela. O admin marcava a tela, o usuário entrava
+-- e não conseguia fazer nada: ou o botão não aparecia (a tela pergunta
+-- `can("alterar", …)`), ou aparecia e o RLS recusava a gravação.
+--
+-- Em 09/09/2026, no menu recrutamento_gestao: 45 pessoas com a tela marcada e
+-- apenas 1 conseguindo aprovar uma vaga. Foi assim que o problema apareceu.
+--
+-- O QUE MUDA
+-- A tela passou a gravar sempre o conjunto de trabalho, para qualquer menu
+-- (ver ACOES_DO_TOGGLE_PADRAO em ModulosMenusTab.tsx). Esta migration alinha
+-- o que JÁ ESTÁ gravado: para cada (usuário, menu) com linha de 'visualizar'
+-- sem empresa, completa as ações que faltam com o MESMO valor de allow —
+-- quem estava liberado passa a poder trabalhar, quem estava explicitamente
+-- negado continua negado em todas.
+--
+-- ESCOPO DESTA RODADA: só os menus do Recrutamento e Seleção, que é onde o
+-- problema apareceu e trava gente hoje. O resto do sistema fica como está,
+-- para ser conferido com calma — são 91 pessoas em 171 telas no total. Para
+-- ampliar depois, troque o filtro `menu_codigo LIKE 'recrutamento%'` pelo
+-- conjunto desejado e rode de novo: a migration é idempotente.
+--
+-- 'excluir', 'executar_ia' e 'alterar_dre' ficam de fora de propósito:
+-- liberar a tela não é autorizar apagar registro nem gastar IA. Essas
+-- continuam vindo de perfil de acesso, concedidas caso a caso.
+--
+-- Só mexe em linhas com empresa_id IS NULL, que é o recorte que o toggle
+-- escreve. Exceções por empresa, se existirem, continuam mandando.
+--
+-- Idempotente: roda de novo sem duplicar (NOT EXISTS, e não ON CONFLICT — a
+-- UNIQUE da tabela inclui empresa_id, e NULL não conflita com NULL no
+-- Postgres, então ON CONFLICT não pegaria nada aqui).
+--
+-- ROLLBACK:
+--   DELETE FROM public.screen_permission_user
+--    WHERE motivo = 'backfill 20260909: toggle concede as acoes de trabalho';
+-- =========================================================================
+
+-- ── 1. Foto de antes, para conferência e para desfazer com segurança ──
+CREATE TABLE IF NOT EXISTS public.bkp_screen_permission_20260909 AS
+SELECT * FROM public.screen_permission_user;
+
+-- ── 2. Completa as ações que faltam ──────────────────────────────────
+INSERT INTO public.screen_permission_user (user_id, menu_codigo, acao, allow, empresa_id, motivo)
+SELECT base.user_id, base.menu_codigo, a.acao, base.allow, NULL,
+       'backfill 20260909: toggle concede as acoes de trabalho'
+  FROM (
+    SELECT DISTINCT ON (user_id, menu_codigo) user_id, menu_codigo, allow
+      FROM public.screen_permission_user
+     WHERE acao = 'visualizar'
+       AND empresa_id IS NULL
+       AND menu_codigo LIKE 'recrutamento%'      -- ← escopo desta rodada
+     ORDER BY user_id, menu_codigo, updated_at DESC
+  ) base
+  CROSS JOIN (VALUES
+    ('incluir'::public.app_acao),
+    ('alterar'::public.app_acao),
+    ('aprovar'::public.app_acao),
+    ('exportar'::public.app_acao)
+  ) AS a(acao)
+ WHERE NOT EXISTS (
+   SELECT 1 FROM public.screen_permission_user x
+    WHERE x.user_id     = base.user_id
+      AND x.menu_codigo = base.menu_codigo
+      AND x.acao        = a.acao
+      AND x.empresa_id IS NULL
+ );
+
+-- ── 3. Conferência ───────────────────────────────────────────────────
+-- Antes: 45 pessoas viam o Recrutamento e 1 conseguia agir. Depois, as duas
+-- colunas têm que bater.
+SELECT
+  count(*) FILTER (WHERE acao = 'visualizar' AND allow) AS veem_a_tela,
+  count(*) FILTER (WHERE acao = 'alterar'    AND allow) AS podem_trabalhar
+  FROM public.screen_permission_user
+ WHERE menu_codigo = 'recrutamento_gestao' AND empresa_id IS NULL;
+
+NOTIFY pgrst, 'reload schema';
+
+
+-- =========================================================================
+-- 20260909000007_operacional_gestao_recrutamento.sql
+-- =========================================================================
+-- =========================================================================
+-- OPERACIONAL — menu "Gestão Recrutamento"
+--
+-- A mesma tela do Recrutamento e Seleção, recortada na etapa 1: o Operacional
+-- vê só o que está "Pendente Operacional" e decide se vira vaga. O React
+-- reaproveita o componente (Recrutamento.tsx, escopo="operacional") em vez de
+-- clonar a tela — o que muda aqui é QUEM entra e o que o banco deixa fazer.
+--
+-- POR QUE UM MENU PRÓPRIO
+-- O acesso é por menu. Sem um código só dele, liberar o Operacional
+-- obrigaria a conceder 'recrutamento_gestao', que é a tela inteira do
+-- Recrutamento — currículos, candidatos, kanban, mover etapa. O operacional
+-- não precisa de nada disso e não deveria receber junto.
+--
+-- AS POLICIES
+-- As tabelas do Recrutamento só aceitam quem tem 'recrutamento_gestao' (ou o
+-- menu do encarregado). Em vez de reescrever aquelas policies, esta migration
+-- ACRESCENTA uma permissiva por tabela: no Postgres, políticas permissivas se
+-- combinam por OR, então nada do que já valia deixa de valer — só passa a
+-- valer também para quem tem o menu novo. Desfazer é dropar as quatro.
+--
+-- Só as tabelas que a etapa 1 usa de verdade: a lista/decisão, o log de
+-- status, o histórico e o chat da solicitação. Currículos, entrevista e
+-- arquivos do candidato ficam de fora — são das etapas seguintes, e o
+-- operacional não abre nenhuma delas.
+--
+-- Idempotente.
+-- ROLLBACK:
+--   DROP POLICY IF EXISTS sistema_recrutamento_operacional ON public."SISTEMA_RECRUTAMENTO";
+--   DROP POLICY IF EXISTS sistema_recrutamento_status_log_operacional ON public."SISTEMA_RECRUTAMENTO_STATUS_LOG";
+--   DROP POLICY IF EXISTS recrutamento_historico_operacional ON public."RECRUTAMENTO_HISTORICO";
+--   DROP POLICY IF EXISTS recrutamento_mensagens_operacional ON public."RECRUTAMENTO_MENSAGENS";
+--   DELETE FROM public.app_menu WHERE codigo = 'operacional_recrutamento';
+-- =========================================================================
+
+-- ── 1. O menu ────────────────────────────────────────────────────────
+-- O módulo 'operacional' nasce em 20260909000005; o COALESCE evita depender
+-- da ordem em que as duas migrations forem aplicadas.
+INSERT INTO public.app_modulo (codigo, nome, descricao, icone, ordem)
+SELECT 'operacional', 'Operacional', 'Diárias, escala e aprovações',
+       'CalendarCheck2',
+       COALESCE((SELECT ordem FROM public.app_modulo WHERE codigo = 'encarregados'),
+                (SELECT max(ordem) FROM public.app_modulo), 200) + 1
+WHERE NOT EXISTS (SELECT 1 FROM public.app_modulo WHERE codigo = 'operacional');
+
+INSERT INTO public.app_menu (modulo_id, codigo, nome, rota, ordem, ativo)
+SELECT m.id, 'operacional_recrutamento', 'Gestão Recrutamento',
+       '/app/operacional/recrutamento',
+       COALESCE((SELECT max(ordem) FROM public.app_menu WHERE modulo_id = m.id), 0) + 10,
+       true
+  FROM public.app_modulo m
+ WHERE m.codigo = 'operacional'
+ON CONFLICT (modulo_id, codigo) DO UPDATE
+   SET nome = EXCLUDED.nome, rota = EXCLUDED.rota, ativo = true;
+
+-- ── 2. As policies do menu novo ──────────────────────────────────────
+-- A fila e a decisão (aprovar/reprovar é UPDATE de status).
+DROP POLICY IF EXISTS sistema_recrutamento_operacional ON public."SISTEMA_RECRUTAMENTO";
+CREATE POLICY sistema_recrutamento_operacional ON public."SISTEMA_RECRUTAMENTO"
+  FOR ALL TO authenticated
+  USING (has_screen_access(auth.uid(), 'operacional_recrutamento', 'visualizar'))
+  WITH CHECK (
+    has_screen_access(auth.uid(), 'operacional_recrutamento', 'alterar')
+    OR has_screen_access(auth.uid(), 'operacional_recrutamento', 'aprovar')
+  );
+
+-- O tempo em cada etapa, que a tela lê junto da lista e grava ao decidir.
+DROP POLICY IF EXISTS sistema_recrutamento_status_log_operacional ON public."SISTEMA_RECRUTAMENTO_STATUS_LOG";
+CREATE POLICY sistema_recrutamento_status_log_operacional ON public."SISTEMA_RECRUTAMENTO_STATUS_LOG"
+  FOR ALL TO authenticated
+  USING (has_screen_access(auth.uid(), 'operacional_recrutamento', 'visualizar'))
+  WITH CHECK (
+    has_screen_access(auth.uid(), 'operacional_recrutamento', 'alterar')
+    OR has_screen_access(auth.uid(), 'operacional_recrutamento', 'aprovar')
+  );
+
+-- A timeline do drawer: sem isto a decisão do operacional não fica registrada.
+DROP POLICY IF EXISTS recrutamento_historico_operacional ON public."RECRUTAMENTO_HISTORICO";
+CREATE POLICY recrutamento_historico_operacional ON public."RECRUTAMENTO_HISTORICO"
+  FOR ALL TO authenticated
+  USING (has_screen_access(auth.uid(), 'operacional_recrutamento', 'visualizar'))
+  WITH CHECK (
+    has_screen_access(auth.uid(), 'operacional_recrutamento', 'incluir')
+    OR has_screen_access(auth.uid(), 'operacional_recrutamento', 'alterar')
+  );
+
+-- O chat da solicitação, que é como o operacional pergunta algo ao solicitante
+-- antes de reprovar.
+DROP POLICY IF EXISTS recrutamento_mensagens_operacional ON public."RECRUTAMENTO_MENSAGENS";
+CREATE POLICY recrutamento_mensagens_operacional ON public."RECRUTAMENTO_MENSAGENS"
+  FOR ALL TO authenticated
+  USING (has_screen_access(auth.uid(), 'operacional_recrutamento', 'visualizar'))
+  WITH CHECK (
+    has_screen_access(auth.uid(), 'operacional_recrutamento', 'incluir')
+    OR has_screen_access(auth.uid(), 'operacional_recrutamento', 'alterar')
+  );
+
+-- ── Conferência ──────────────────────────────────────────────────────
+SELECT codigo, nome, rota, ativo FROM public.app_menu WHERE codigo = 'operacional_recrutamento';
+
+NOTIFY pgrst, 'reload schema';

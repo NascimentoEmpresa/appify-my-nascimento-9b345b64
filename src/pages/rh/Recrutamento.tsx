@@ -245,20 +245,39 @@ const STATUS_PROCESSO = [
 ];
 
 // ── Componente Principal ───────────────────────────────────────────
-export default function Recrutamento() {
+//
+// A MESMA tela serve dois módulos, e é de propósito: o Operacional analisa
+// exatamente as solicitações que o Recrutamento vê na aba "Pendente
+// Operacional", com o mesmo drawer, o mesmo histórico e o mesmo chat. Uma
+// cópia divergiria na primeira correção feita só de um lado.
+//
+//   escopo "rh"          → Recrutamento e Seleção, o processo inteiro
+//   escopo "operacional" → só a fila "Pendente Operacional", para aprovar
+//                          ou reprovar antes de virar vaga
+//
+// O que muda é o recorte e QUAL MENU decide as permissões: no Operacional
+// quem manda é 'operacional_recrutamento', então liberar aquele menu já
+// basta — não precisa dar Gestão Recrutamento junto.
+export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "operacional" }) {
+  const soOperacional = escopo === "operacional";
+  const menuAcesso = soOperacional ? "operacional_recrutamento" : "recrutamento_gestao";
   const { user } = useAuth();
   const { roles, can } = usePermissoes();
   const navigate = useNavigate();
 
   const isTreinamento = roles.includes("treinamentos"); // só rótulo da mensagem no chat, não é gate
 
-  // Recrutamento = quem tem alterar em recrutamento_gestao (conduz o processo).
-  const podeRecrutar = can("alterar", undefined, "recrutamento_gestao");
+  // Recrutamento = quem tem alterar no menu da tela (conduz o processo). No
+  // Operacional ninguém conduz processo: a tela para na etapa 1.
+  const podeRecrutar = !soOperacional && can("alterar", undefined, menuAcesso);
   // Visibilidade ampla (dashboard "Todas as Solicitações") sem rodar o processo.
-  const podeVerTudo = can("visualizar", undefined, "recrutamento_gestao");
-  const isRH = podeVerTudo && !podeRecrutar;
-  // Operacional aprova a etapa 1 (Pendente Operacional → Pendente Recrutamento).
-  const podeAprovarOperacional = can("aprovar", undefined, "recrutamento_gestao");
+  const podeVerTudo = can("visualizar", undefined, menuAcesso);
+  const isRH = !soOperacional && podeVerTudo && !podeRecrutar;
+  // A etapa 1 (Pendente Operacional → Pendente Recrutamento) é do OPERACIONAL,
+  // e só existe na tela dele. No Recrutamento a solicitação nessa fase aparece
+  // na lista, para acompanhar, mas sem botão de decidir — senão as duas telas
+  // aprovariam a mesma coisa e a última a salvar ganharia.
+  const podeAprovarOperacional = soOperacional && can("aprovar", undefined, menuAcesso);
   // Quem pode mover o candidato pra fora de cada etapa específica do kanban.
   const podeMoverJuridico = can("aprovar", undefined, "recrutamento_etapa_juridico");
   const podeMoverSst      = can("aprovar", undefined, "recrutamento_etapa_sst");
@@ -380,17 +399,18 @@ export default function Recrutamento() {
   }, []);
 
   // ── Tabs por perfil ───────────────────────────────────────────
-  const tabs = isRH
+  const tabs = soOperacional
+    ? [{ label: "Pendente Operacional", tab: "analista" }]
+    : isRH
     ? [{ label: "Todas as Solicitações", tab: "todas" }]
     : podeRecrutar
     ? [
         { label: "Todas", tab: "todas" },
-        { label: "Pendente Operacional", tab: "analista" },
         { label: "Minhas Solicitações", tab: "minha" },
       ]
     : [{ label: "Minhas Solicitações", tab: "minha" }];
 
-  useEffect(() => { setTab(tabs[0].tab); }, [isRH, podeRecrutar]);
+  useEffect(() => { setTab(tabs[0].tab); }, [isRH, podeRecrutar, soOperacional]);
 
   // ── Carregar Stats ────────────────────────────────────────────
   const loadStats = useCallback(async () => {
@@ -1795,7 +1815,8 @@ export default function Recrutamento() {
     );
   };
 
-  const canNovaVaga = !isRH;
+  // O Operacional analisa o que chega; abrir vaga é do encarregado/recrutamento.
+  const canNovaVaga = !isRH && !soOperacional;
   const linkUrl = drawerSol?.link_publico ? `${window.location.origin}/recrutamento/candidatura/${drawerSol.link_publico}` : "";
 
   // Kanban: rola o quadro horizontalmente (~1,5 coluna por clique).
@@ -1846,7 +1867,9 @@ export default function Recrutamento() {
 
       {/* Topbar */}
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "16px 22px", margin: "18px 24px 0", border: "1px solid #e2e8f0", borderRadius: 18, background: "linear-gradient(135deg,#fff 0%,#f8fbff 100%)", boxShadow: "0 8px 24px rgba(15,23,42,.06)", flexShrink: 0, gap: 14, flexWrap: "wrap" }}>
-        <div style={{ fontSize: 19, fontWeight: 800, color: "#0f3171" }}>🎯 Seleção e Recrutamento</div>
+        <div style={{ fontSize: 19, fontWeight: 800, color: "#0f3171" }}>
+          {soOperacional ? "🎯 Gestão Recrutamento — aguardando o Operacional" : "🎯 Seleção e Recrutamento"}
+        </div>
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
           {podeRecrutar && (
             <button onClick={copiarLinkPortal} title="Copia o link público (/vagas) para os candidatos escolherem a cidade e enviarem o currículo" style={{ display: "inline-flex", alignItems: "center", gap: 5, padding: "7px 14px", borderRadius: 10, border: "1px solid #f97316", background: "rgba(249,115,22,.10)", color: "#ea580c", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>
@@ -1865,15 +1888,24 @@ export default function Recrutamento() {
       <div style={{ flex: 1, overflowY: "auto", padding: "20px 24px 24px" }}>
 
         {/* KPIs */}
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(6,1fr)", gap: 12, marginBottom: 20 }}>
-          {[
-            { label: "Total",            val: stats.total,           color: "#0f3171" },
-            { label: "Pend. Operacional",val: stats.pendentes,       color: "#f59e0b" },
-            { label: "Pend. Recrutamento",val: stats.ag_treinamentos, color: "#8b5cf6" },
-            { label: "Em Processo",      val: stats.em_processo,     color: "#3b82f6" },
-            { label: "Concluídas",       val: stats.contratados,     color: "#16a34a" },
-            { label: "Reprovadas",       val: stats.reprovadas,      color: "#dc2626" },
-          ].map(k => (
+        <div style={{ display: "grid", gridTemplateColumns: soOperacional ? "repeat(3,1fr)" : "repeat(5,1fr)", gap: 12, marginBottom: 20 }}>
+          {(soOperacional
+            ? [
+              // A fila desta tela, e o destino de quem já passou por ela — é o
+              // que o operacional pergunta ("aprovei quantas hoje?").
+              { label: "Aguardando você",  val: stats.pendentes,       color: "#f59e0b" },
+              { label: "Já aprovadas",     val: stats.ag_treinamentos, color: "#8b5cf6" },
+              { label: "Reprovadas",       val: stats.reprovadas,      color: "#dc2626" },
+            ]
+            : [
+              // "Pend. Operacional" não entra: essa fila é do módulo Operacional.
+              { label: "Total",            val: stats.total,           color: "#0f3171" },
+              { label: "Pend. Recrutamento",val: stats.ag_treinamentos, color: "#8b5cf6" },
+              { label: "Em Processo",      val: stats.em_processo,     color: "#3b82f6" },
+              { label: "Concluídas",       val: stats.contratados,     color: "#16a34a" },
+              { label: "Reprovadas",       val: stats.reprovadas,      color: "#dc2626" },
+            ]
+          ).map(k => (
             <div key={k.label} className="rec-kpi">
               <div style={{ fontSize: 10, color: "#94a3b8", textTransform: "uppercase", letterSpacing: ".7px", marginBottom: 6, fontWeight: 700 }}>{k.label}</div>
               <div style={{ fontSize: 26, fontWeight: 800, color: k.color }}>{k.val}</div>
@@ -1917,11 +1949,12 @@ export default function Recrutamento() {
         {/* Tabela View */}
         {view === "tabela" && (
           <>
-            {/* Filtros de status (linha única) */}
-            <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 14 }}>
+            {/* Filtros de status (linha única). No Operacional a lista já é
+                fixa em "Pendente Operacional": outro filtro de status viraria
+                um segundo .eq na mesma coluna e zeraria a tela sem explicar. */}
+            {!soOperacional && <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 14 }}>
               {[
                 { label: "Todas", val: "" },
-                { label: "Pendente Operacional", val: "Pendente Operacional" },
                 { label: "Pendente Recrutamento", val: "Pendente Recrutamento" },
                 { label: "Em Processo", val: "em_processo" },
                 { label: "Concluídas", val: "concluido" },
@@ -1931,7 +1964,7 @@ export default function Recrutamento() {
                   {p.label}
                 </button>
               ))}
-            </div>
+            </div>}
 
             {/* Busca */}
             <div style={{ marginBottom: 10 }}>
