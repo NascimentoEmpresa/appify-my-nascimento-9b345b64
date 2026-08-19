@@ -758,6 +758,13 @@ const operacionalModule: ModuleDef = {
       items: [{ label: "Controle de Diárias", to: "/app/operacional/diarias", icon: CalendarCheck2 }],
     },
     {
+      label: "Recrutamento e Seleção",
+      defaultOpen: true,
+      items: [
+        { label: "Gestão Recrutamento", to: "/app/operacional/recrutamento", icon: UserCog },
+      ],
+    },
+    {
       label: "Recursos Humanos",
       defaultOpen: true,
       items: [

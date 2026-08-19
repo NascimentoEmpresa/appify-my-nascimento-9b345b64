@@ -479,6 +479,9 @@ const App = () => (
             <Route path="rh/solicitacoes-demissao" element={<RhSolicitacoesDemissao />} />
             {/* Operacional — fila de aprovação das demissões pedidas pelos encarregados. */}
             <Route path="operacional/solicitacoes-demissao" element={<OperacionalSolicitacoesDemissao />} />
+            {/* A MESMA tela do Recrutamento, recortada na etapa 1 — ver o
+                escopo em Recrutamento.tsx. Não é uma cópia. */}
+            <Route path="operacional/recrutamento" element={<Recrutamento escopo="operacional" />} />
             {/* Jurídico — Gestão Patrimonial */}
             <Route path="juridico" element={<Navigate to="/app/juridico/patrimonios" replace />} />
             <Route path="juridico/patrimonios" element={<Patrimonios />} />
