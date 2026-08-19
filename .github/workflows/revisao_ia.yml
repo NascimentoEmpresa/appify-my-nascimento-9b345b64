@@ -151,6 +151,18 @@ jobs:
         continue-on-error: true
         uses: anthropics/claude-code-action@v1
         with:
+          # Duas credenciais aceitas, com a chave de API tendo precedência
+          # quando existir. Motivo: a assinatura pessoal não sustenta uso de
+          # equipe — quando o dono do token usa o Claude, o revisor para de
+          # funcionar para todo mundo, e falha silenciosa (check verde, revisão
+          # nenhuma). Aconteceu de verdade na PR #374.
+          #
+          # A troca é só cadastrar o secret ANTHROPIC_API_KEY em Settings →
+          # Secrets and variables → Actions. Não precisa de PR: com os dois
+          # presentes a ação usa a chave de API; sem ela, continua na
+          # assinatura. Cobrança da API é crédito pré-pago no
+          # console.anthropic.com, separada da assinatura Pro.
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           claude_args: |
             --model claude-sonnet-5
@@ -238,25 +250,56 @@ jobs:
           rodaram normalmente e valem independente disso.
           MSG
           else
-            cat > corpo.md <<MSG
-          ## Revisão não rodou nesta execução
+            # O motivo real está no JSON que a ação grava. Sem ler esse arquivo
+            # o comentário vira uma lista de palpites, e o autor persegue a
+            # causa errada — foi o que aconteceu na PR do Pablo, onde a cota
+            # tinha acabado mas o texto mandava conferir o secret primeiro.
+            EXEC="${RUNNER_TEMP}/claude-execution-output.json"
+            CAUSA="desconhecida"
+            if [ -f "$EXEC" ]; then
+              CUSTO=$(node -e "try{const r=require('$EXEC');const x=Array.isArray(r)?r.find(e=>e.type==='result'):r;console.log(x?.total_cost_usd??'')}catch(e){console.log('')}" 2>/dev/null || echo "")
+              TURNOS=$(node -e "try{const r=require('$EXEC');const x=Array.isArray(r)?r.find(e=>e.type==='result'):r;console.log(x?.num_turns??'')}catch(e){console.log('')}" 2>/dev/null || echo "")
+              # Custo zero com 1 turno = rejeitado antes de ler qualquer coisa.
+              # Uma revisão de verdade sempre consome tokens e gasta vários turnos.
+              if [ "$CUSTO" = "0" ] && [ "$TURNOS" = "1" ]; then CAUSA="credencial"; fi
+            fi
 
-          Causas possíveis, em ordem de probabilidade:
+            if [ "$CAUSA" = "credencial" ]; then
+              cat > corpo.md <<MSG
+          ## Revisão não rodou — cota ou credencial
 
-          1. **Esta PR altera o próprio \`revisao_ia.yml\`.** A ação se recusa a
-             rodar quando o workflow da PR difere do que está na \`main\` —
-             proteção contra PR que tenta alterar o workflow para vazar o
-             token. Isso é esperado e some sozinho quando a PR entrar na main.
-          2. O secret \`CLAUDE_CODE_OAUTH_TOKEN\` está ausente ou expirado.
-          3. A cota da assinatura acabou.
+          A execução foi rejeitada **antes de ler o diff**: custo zero e apenas
+          1 turno. Isso não é erro de revisão, é recusa na porta.
 
-          Resultado da ação: \`$CLAUDE_RESULTADO\`. Para confirmar qual das três
-          é, veja a linha \`##[warning]\` do step **Revisar** no log desta
-          execução.
+          A causa quase certa é **cota da assinatura esgotada**. O revisor usa a
+          assinatura Claude Pro pessoal do Eduardo, então quando ele está usando
+          o Claude, o revisor para de funcionar para o time inteiro. Menos
+          provável: o secret \`CLAUDE_CODE_OAUTH_TOKEN\` expirou.
 
-          As regras absolutas (portaria) já rodaram normalmente e valem
+          **Isto é um problema de infraestrutura, não da sua PR.** Chame o
+          Eduardo — a solução definitiva é migrar para uma chave de API própria,
+          que não compete com o uso pessoal de ninguém.
+
+          As regras absolutas (portaria) rodaram normalmente e valem
           independente disso — só a parte de julgamento (IA) ficou de fora.
           MSG
+            else
+              cat > corpo.md <<MSG
+          ## Revisão não rodou nesta execução
+
+          Causa mais provável: **esta PR altera o próprio \`revisao_ia.yml\`**. A
+          ação se recusa a rodar quando o workflow da PR difere do que está na
+          \`main\` — proteção contra PR que tenta alterar o workflow para vazar o
+          token. É esperado, e some sozinho quando a PR entrar na main.
+
+          Se esta PR **não** mexe nesse arquivo, veja a linha \`##[warning]\` do
+          step **Revisar** no log desta execução. Resultado da ação:
+          \`$CLAUDE_RESULTADO\`.
+
+          As regras absolutas (portaria) rodaram normalmente e valem
+          independente disso — só a parte de julgamento (IA) ficou de fora.
+          MSG
+            fi
           fi
 
           {

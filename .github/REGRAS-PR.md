@@ -84,12 +84,40 @@ permitia estava sendo revista — ficou claro que qualquer exceção escrita no
 papel vira porta usada de novo. Zero é mais simples de aplicar e de lembrar do
 que "com justificativa".
 
+### Justificar uma ocorrência (R2 e R3)
+
+Antes de recorrer à label, existe uma saída cirúrgica: justificar **uma linha**,
+escrevendo o motivo ao lado do código.
+
+```sql
+-- portaria-ok: R2 — catálogo criado em 20260909000001, ainda vazio
+DROP TABLE IF EXISTS public.malote_analista;
+```
+
+Vale na própria linha ou na imediatamente acima, e só dispensa a regra citada —
+uma justificativa `R3` não libera uma violação `R2`. As dispensas ficam
+registradas no log da execução, para o revisor humano ver que uma regra
+absoluta foi contornada e com qual motivo.
+
+**Só R2 e R3 aceitam.** Segredo exposto (R5, R6), RLS desligada (R1) e migration
+editada (R4) não se justificam com comentário — se pudessem, não seriam regras
+absolutas, seriam sugestões.
+
+Isto existe por um caso real: uma migration removeu um catálogo criado na
+migration anterior, com a tabela ainda vazia, porque o desenho estava errado. A
+R2 acusou com razão, mas a única saída era desligar a revisão inteira.
+
+A R2 também deixou de acusar `DROP TABLE` quando a mesma PR recria a tabela —
+mudar a forma de uma tabela com DROP + CREATE é padrão normal aqui. Mesma
+lógica de saldo que a R3 já usava para policies.
+
 ### Válvula de escape
 
 A label `pular-revisao-ia` pula as duas camadas, no mesmo padrão da label
-`sem-chamado` que já existe. O uso fica registrado no log e no comentário. Use
-quando a regra estiver errada para aquele caso — e, se estiver errada com
-frequência, corrija a regra aqui em vez de repetir a label.
+`sem-chamado` que já existe. É o canhão: desliga inclusive a revisão de RLS,
+que é a parte que mais importa. Prefira a justificativa por linha quando o caso
+for pontual. Se a regra estiver errada com frequência, corrija a regra aqui em
+vez de repetir a label.
 
 ---
 
