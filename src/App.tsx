@@ -85,6 +85,8 @@ import PainelManutencoes from "./pages/suprimentos/PainelManutencoes";
 import EpisAdmissoes from "./pages/suprimentos/EpisAdmissoes";
 import SolicitarMateriais from "./pages/encarregados/SolicitarMateriais";
 import MeusPedidos from "./pages/encarregados/MeusPedidos";
+import SolicitarDemissao from "./pages/encarregados/SolicitarDemissao";
+import OperacionalSolicitacoesDemissao from "./pages/operacional/SolicitacoesDemissao";
 import ContasPagar from "./pages/financeiro/ContasPagar";
 import ContasReceber from "./pages/financeiro/ContasReceber";
 import Cobrancas from "./pages/cobrancas/Cobrancas";
@@ -158,6 +160,7 @@ import Denuncia from "./pages/publico/Denuncia";
 import DenunciasComiteEtica from "./pages/comite-etica/Denuncias";
 import IndicadoresComiteEtica from "./pages/comite-etica/Indicadores";
 import Ferias from "./pages/rh/Ferias";
+import RhSolicitacoesDemissao from "./pages/rh/SolicitacoesDemissao";
 import MinhasSolicitacoes from "./pages/MinhasSolicitacoes";
 import BIDashboard from "./pages/bi/Dashboard";
 import Fiscal from "./pages/Fiscal";
@@ -255,6 +258,9 @@ const App = () => (
             <Route path="encarregados/solicitar-vaga" element={<MinhasSolicitacoes abrir="vaga" />} />
             <Route path="encarregados/solicitar-ferias" element={<MinhasSolicitacoes abrir="ferias" />} />
             <Route path="encarregados/advertencia" element={<MinhasSolicitacoes abrir="advertencia" />} />
+            {/* Demissão tem tela própria: são 4 passos e documentos obrigatórios,
+                que não cabem no modal de Minhas Solicitações. */}
+            <Route path="encarregados/solicitar-demissao" element={<SolicitarDemissao />} />
             {/* Supply — solicitação de materiais. Também é a única área que o
                 usuário externo (sessão anônima) enxerga; ver useModoExterno. */}
             <Route path="encarregados/solicitar-materiais" element={<SolicitarMateriais />} />
@@ -466,6 +472,9 @@ const App = () => (
             <Route path="rh/recrutamento-dashboard" element={<RecrutamentoDashboard />} />
             <Route path="rh/ferias" element={<Ferias />} />
             <Route path="rh/recrutamento" element={<Recrutamento />} />
+            <Route path="rh/solicitacoes-demissao" element={<RhSolicitacoesDemissao />} />
+            {/* Operacional — fila de aprovação das demissões pedidas pelos encarregados. */}
+            <Route path="operacional/solicitacoes-demissao" element={<OperacionalSolicitacoesDemissao />} />
             {/* Jurídico — Gestão Patrimonial */}
             <Route path="juridico" element={<Navigate to="/app/juridico/patrimonios" replace />} />
             <Route path="juridico/patrimonios" element={<Patrimonios />} />

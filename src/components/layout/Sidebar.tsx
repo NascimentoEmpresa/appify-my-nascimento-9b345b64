@@ -56,6 +56,7 @@ import {
   Car,
   Package,
   PlusCircle,
+  UserMinus,
 } from "lucide-react";
 import { useTemAlcada } from "@/hooks/useTemAlcada";
 import { useAccessibleMenus, matchMenuCode } from "@/hooks/useAccessibleMenus";
@@ -439,6 +440,7 @@ const rhModule: ModuleDef = {
         { label: "Alocações em Contratos", to: "/app/rh/alocacoes", icon: ListChecks },
         { label: "Folha de Pagamento", to: "/app/rh/folha", icon: ListChecks },
         { label: "Gestão de Férias", to: "/app/rh/ferias", icon: CalendarRange },
+        { label: "Solicitações de Demissão", to: "/app/rh/solicitacoes-demissao", icon: UserMinus },
       ],
     },
   ],
@@ -490,6 +492,7 @@ const encarregadosModule: ModuleDef = {
       defaultOpen: true,
       items: [
         { label: "Solicitar Férias", to: "/app/encarregados/solicitar-ferias", icon: CalendarRange },
+        { label: "Solicitar Demissão", to: "/app/encarregados/solicitar-demissao", icon: UserMinus },
       ],
     },
     {
@@ -757,6 +760,25 @@ const sstModule: ModuleDef = {
   ],
 };
 
+// Operacional — o que chega dos encarregados e depende de aprovação daqui
+const operacionalModule: ModuleDef = {
+  id: "operacional",
+  label: "Operacional",
+  description: "Aprovações e acompanhamento",
+  icon: ClipboardCheck,
+  basePath: "/app/operacional",
+  status: "active",
+  groups: [
+    {
+      label: "Recursos Humanos",
+      defaultOpen: true,
+      items: [
+        { label: "Solicitações de Demissão", to: "/app/operacional/solicitacoes-demissao", icon: UserMinus },
+      ],
+    },
+  ],
+};
+
 const erpModules: ModuleDef[] = [
   licitacoesModule,
   controladoriaOrcModule,
@@ -768,6 +790,7 @@ const erpModules: ModuleDef[] = [
   rhModule,
   recrutamentoModule,
   encarregadosModule,
+  operacionalModule,
   sistemasModule,
   juridicoModule,
   sstModule,
