@@ -24,6 +24,7 @@ import {
   ClipboardCheck, History, ArrowDownToLine, ArrowUpFromLine, RotateCcw, Check,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { useAccessibleMenus } from "@/hooks/useAccessibleMenus";
 
 /**
  * Estoque & Etiquetas — o almoxarifado.
@@ -444,6 +445,17 @@ function DialogDetalhe({ linha, onFechar }: { linha: LinhaEstoque | null; onFech
   const [inventariando, setInventariando] = useState(false);
   const [removendo, setRemovendo] = useState<{ codigo: string } | null>(null);
 
+  // Inventário virou capacidade separada de "mexer no estoque": conferir a
+  // prateleira não deveria exigir poder alterar saldo (ver
+  // 20260910000003_capacidades_separadas_suprimentos.sql).
+  //
+  // `|| !configurado` mantém o botão aberto enquanto ninguém tiver configurado
+  // a flag — se a migration ainda não rodou, o comportamento é o de antes, em
+  // vez de o botão sumir pra todo mundo.
+  const { data: acesso } = useAccessibleMenus("visualizar");
+  const podeInventariar = (acesso?.codes.has("sup_estoque_inventario") ?? false)
+    || !(acesso?.configuredCodes.has("sup_estoque_inventario") ?? false);
+
   const visiveis = useMemo(() => {
     const t = filtro.trim().toLowerCase();
     return t ? tags.filter((x) => `${x.codigo} ${x.tamanho ?? ""}`.toLowerCase().includes(t)) : tags;
@@ -479,10 +491,12 @@ function DialogDetalhe({ linha, onFechar }: { linha: LinhaEstoque | null; onFech
               <div className="mb-2 flex gap-2">
                 <Input value={filtro} onChange={(e) => setFiltro(e.target.value)}
                        placeholder="Filtrar por código ou tamanho…" className="flex-1" />
-                <Button variant="outline" className="gap-1.5 whitespace-nowrap"
-                        onClick={() => setInventariando(true)}>
-                  <ClipboardCheck className="h-4 w-4" /> Inventário
-                </Button>
+                {podeInventariar && (
+                  <Button variant="outline" className="gap-1.5 whitespace-nowrap"
+                          onClick={() => setInventariando(true)}>
+                    <ClipboardCheck className="h-4 w-4" /> Inventário
+                  </Button>
+                )}
               </div>
 
               {isLoading ? (

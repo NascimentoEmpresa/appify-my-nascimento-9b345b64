@@ -11,11 +11,17 @@ name: CI
 # duplicada (TS2451), tipo que não bate, e resto de conflito de merge, que vira
 # erro de sintaxe. Isso sai do julgamento e vira máquina.
 #
-# Medido na main em 18/08/2026, antes de escrever este arquivo:
-#   tsc --noEmit ....... 0 erros
-#   npm test ........... 123 testes, 8 arquivos, 0 falha
-#   npm run build ...... passa em 27s
-#   npm run lint ....... 2770 problemas (2585 erros)
+# Medido na main em 19/08/2026:
+#   tsc -p tsconfig.app.json ... 192 erros em 26 arquivos
+#   npm test ................... 123 testes, 8 arquivos, 0 falha
+#   npm run build .............. passa em 27s
+#   npm run lint ............... 2770 problemas (2585 erros)
+#
+# A primeira linha dizia "tsc --noEmit ... 0 erros" quando este arquivo foi
+# escrito, em 18/08. Era falso: sem `-p`, tsc não compila arquivo nenhum neste
+# repositório (ver o comentário no passo de type-check). O passo mais valioso
+# do job era o único que não rodava — e passou despercebido justamente porque
+# um check que nunca falha parece um check saudável.
 #
 # Por isso o lint NÃO trava a PR: travar nele deixaria toda PR vermelha no
 # primeiro minuto e o time desligaria o check inteiro na primeira semana. Ele
@@ -53,8 +59,63 @@ jobs:
 
       # Primeiro o type-check: é o que dá a mensagem mais clara quando alguém
       # quebrou o código, e roda antes de gastar tempo no build.
-      - name: Type-check
-        run: npx tsc --noEmit
+      #
+      # ATENÇÃO AO COMANDO. `npx tsc --noEmit` sozinho não checa NADA neste
+      # repositório: o tsconfig.json da raiz é o "solution file" do Vite, com
+      # `"files": []` e apenas `references`, então tsc sem `-p` compila zero
+      # arquivo e sai 0. Foi exatamente o que aconteceu quando este workflow
+      # nasceu — mediu-se "0 erros" e concluiu-se que estava verde, quando o
+      # passo não rodava. Antes de mexer aqui, confirme com:
+      #     npx tsc --noEmit --listFiles | grep -c src/
+      #
+      # E por que só os arquivos da PR: o projeto tem 192 erros de tipo em 26
+      # arquivos (medido em 19/08/2026, com o comando certo). Travar a PR
+      # nesses erros pararia o time inteiro por dívida antiga — mesmo motivo
+      # pelo qual o lint não trava. Então o compilador roda no PROJETO todo,
+      # que é o único jeito de enxergar import, alias e tipo entre arquivos, e
+      # a PR só reprova se o erro estiver num arquivo que ela mexeu.
+      - name: Type-check dos arquivos da PR
+        env:
+          BASE: ${{ github.event.pull_request.base.ref }}
+        run: |
+          set -uo pipefail
+
+          npx tsc -p tsconfig.app.json --noEmit > tsc-saida.txt 2>&1 || true
+          TOTAL=$(grep -cE "error TS" tsc-saida.txt || true)
+
+          ARQUIVOS=$(git diff --name-only --diff-filter=ACM "origin/${BASE}...HEAD" \
+            -- '*.ts' '*.tsx' | grep -v '^node_modules/' || true)
+
+          if [ -z "$ARQUIVOS" ]; then
+            echo "Nenhum arquivo .ts/.tsx alterado nesta PR."
+            echo "($TOTAL erro(s) de tipo na base, todos anteriores a ela.)"
+            exit 0
+          fi
+
+          printf '%s\n' "$ARQUIVOS" > arquivos-da-pr.txt
+
+          # Um erro do tsc é a linha "caminho(linha,col): error TSxxxx: ..."
+          # seguida de linhas indentadas de detalhe. O awk preserva o bloco
+          # inteiro, senão a mensagem chega pela metade e não ajuda ninguém.
+          awk 'NR==FNR { muda[$0]=1; next }
+               /^[^ \t]/ { arq=$0; sub(/\(.*/, "", arq); mostra=(arq in muda) }
+               mostra' arquivos-da-pr.txt tsc-saida.txt > tsc-da-pr.txt
+
+          NOVOS=$(grep -cE "error TS" tsc-da-pr.txt || true)
+
+          echo "Erros de tipo na base inteira: $TOTAL"
+          echo "Erros em arquivos desta PR:    $NOVOS"
+          echo
+
+          if [ "$NOVOS" -gt 0 ]; then
+            cat tsc-da-pr.txt
+            echo
+            echo "::error::$NOVOS erro(s) de tipo em arquivo que esta PR alterou."
+            echo "Algum pode ser anterior à sua mudança — mas o arquivo é seu agora."
+            exit 1
+          fi
+
+          echo "Nenhum erro de tipo nos arquivos desta PR."
 
       - name: Testes
         run: npm test

@@ -185,6 +185,21 @@ export interface MaloteDespesaRow {
     aprovador1_user_id?: string | null;
     aprovador2_user_id?: string | null;
     aprovador3_user_id?: string | null;
+    // Alçada por nível (SIS-2026-0132, antes cadastrada mas nunca
+    // consumida) — sem_limite=true dispensa a checagem de %; limite_pct
+    // null (e sem_limite=false) é tratado como "sem trava configurada"
+    // pra não quebrar classificações que nunca preencheram esse campo.
+    aprovador1_limite_pct?: number | null;
+    aprovador1_sem_limite?: boolean;
+    aprovador2_limite_pct?: number | null;
+    aprovador2_sem_limite?: boolean;
+    aprovador3_limite_pct?: number | null;
+    aprovador3_sem_limite?: boolean;
+    // Aprovador da Solicitação (SIS-2026-0106) é um cargo diferente do
+    // aprovador1/2/3 da Despesa — gate único da fase de Solicitação
+    // (aguardando_aprovacao_inicial/aguardando_cotacao/cotacao_realizada).
+    aprovador_solicitacao_user_id?: string | null;
+    aprovador_solicitacao_nome?: string | null;
   } | null;
 }
 
@@ -211,7 +226,9 @@ const DESPESA_COLUMNS =
   "cotacao_reprovada_motivo, cotacao_observacoes, cotacao_vencedor_num, " +
   "comprovante_pagamento_path, observacao_pagamento, pago_em, pago_por, conferido_em, conferido_por, " +
   "arquivos, created_at, created_by, updated_at, " +
-  "classificacao:classificacao_id(id, nome, aprovador1_nome, aprovador2_nome, aprovador3_nome, aprovador1_user_id, aprovador2_user_id, aprovador3_user_id)";
+  "classificacao:classificacao_id(id, nome, aprovador1_nome, aprovador2_nome, aprovador3_nome, aprovador1_user_id, aprovador2_user_id, aprovador3_user_id, " +
+  "aprovador1_limite_pct, aprovador1_sem_limite, aprovador2_limite_pct, aprovador2_sem_limite, aprovador3_limite_pct, aprovador3_sem_limite, " +
+  "aprovador_solicitacao_user_id, aprovador_solicitacao_nome)";
 
 // ── Catálogos usados no rateio ──────────────────────────────────────────
 export function useEmpresasGrupo() {
@@ -348,6 +365,7 @@ export interface SalvarDespesaInput {
   arquivos?: string[];
   rateio?: RateioLinha[];
   parcelas?: Parcela[];
+  nivel_aprovacao_atual?: 1 | 2 | 3 | null;
 }
 
 export function useSalvarDespesa() {
@@ -516,6 +534,18 @@ export function aprovadorDoNivel(despesa: MaloteDespesaRow, nivel: 1 | 2 | 3): s
 export function souAprovadorConfigurado(despesa: MaloteDespesaRow, userId: string | null | undefined): boolean {
   if (!userId) return false;
   return ([1, 2, 3] as const).some((n) => aprovadorDoNivel(despesa, n) === userId);
+}
+
+// SIS-2026-0189: fase de Solicitação (aguardando_aprovacao_inicial/
+// aguardando_cotacao/cotacao_realizada) é gate do "Aprovador da
+// solicitação" (aprovador_solicitacao_user_id) — um cargo à parte do
+// aprovador1/2/3 da Despesa, cadastrado desde SIS-2026-0106 mas nunca
+// consumido: a UI/RPC estavam checando souAprovadorConfigurado (despesa)
+// por engano, então só funcionava quando a mesma pessoa também era
+// aprovador1.
+export function souAprovadorSolicitacao(despesa: MaloteDespesaRow, userId: string | null | undefined): boolean {
+  if (!userId) return false;
+  return despesa.classificacao?.aprovador_solicitacao_user_id === userId;
 }
 
 // Reaproveita a função Postgres já usada pelo RLS do Malote (piloto por
@@ -741,7 +771,7 @@ export function useItensAguardandoMinhaAprovacao() {
           // Suprimentos cotar), mas o aprovador continua com a opção de
           // reprovar — por isso o item precisa continuar visível aqui.
           // cotacao_realizada: aprovador precisa escolher qual cotação.
-          if (souAprovadorConfigurado(despesa, u.user.id)) resultado.push({ despesa, tela: "solicitacao" });
+          if (souAprovadorSolicitacao(despesa, u.user.id)) resultado.push({ despesa, tela: "solicitacao" });
         } else if (despesa.status === "pendente_aprovacao" && despesa.nivel_aprovacao_atual != null) {
           if (aprovadorDoNivel(despesa, despesa.nivel_aprovacao_atual) === u.user.id) resultado.push({ despesa, tela: "despesa" });
         }
