@@ -62,7 +62,7 @@ import {
 import { useTemAlcada } from "@/hooks/useTemAlcada";
 import { useAccessibleMenus, matchMenuCode } from "@/hooks/useAccessibleMenus";
 import { useModoExterno, ROTAS_EXTERNO } from "@/hooks/useModoExterno";
-import { ACESSO_ABERTO_SEM_PERMISSOES, MENUS_SEMPRE_RESTRITOS } from "@/lib/acesso";
+import { ACESSO_ABERTO_SEM_PERMISSOES, rotaSempreLiberada } from "@/lib/acesso";
 import { useGradeAtivaCount } from "@/hooks/useGradeAtivaCount";
 import { useChamadosNotif } from "@/hooks/useChamadosNotif";
 import { EmpresaAtivaContext } from "@/context/EmpresaAtivaContext";
@@ -846,17 +846,15 @@ export function Sidebar({ collapsed, mobileOpen = false, onMobileClose }: Sideba
     // configurado → visível" e enxergaria o ERP inteiro no menu. Este ramo
     // apenas restringe; quem decide de verdade é a RLS do banco.
     if (externo) return ROTAS_EXTERNO.some((r) => to === r || to.startsWith(r + "/"));
-    if (ACESSO_ABERTO_SEM_PERMISSOES || !access) return true;
+    if (ACESSO_ABERTO_SEM_PERMISSOES) return true;
+    // Mesma regra do RouteGuard: NEGA POR PADRÃO. A sidebar não pode listar o
+    // que a rota vai barrar — item visível que dá "Acesso negado" ao clicar é
+    // pior do que item ausente.
+    if (rotaSempreLiberada(to)) return true;
+    if (!access) return false;
     const code = matchMenuCode(to, access.routes);
-    // Rota sem entrada em app_menu: nunca foi migrada pro controle por
-    // perfil, então continua sempre visível (não é regressão esconder algo
-    // que nunca teve controle de acesso definido).
-    if (!code) return true;
-    // Menu existe, mas ninguém nunca configurou nada pra ele no
-    // gerenciamento de acesso (nenhuma linha em perfil_acesso_permissao
-    // ou screen_permission_user) — fica aberto até alguém decidir algo lá.
-    // Exceção: administracao/integracao nunca caem aqui, ver MENUS_SEMPRE_RESTRITOS.
-    if (!access.configuredCodes.has(code) && !MENUS_SEMPRE_RESTRITOS.has(code)) return true;
+    // Sem cadastro em app_menu, ou menu desativado no Catálogo: não aparece.
+    if (!code || access.inactiveCodes.has(code)) return false;
     return access.codes.has(code);
   }, [access, externo]);
 

@@ -5,7 +5,7 @@ import { useAccessibleMenus, matchMenuCode } from "@/hooks/useAccessibleMenus";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
 import { useFeatureFlag } from "@/lib/featureFlags";
-import { ACESSO_ABERTO_SEM_PERMISSOES, MENUS_SEMPRE_RESTRITOS } from "@/lib/acesso";
+import { ACESSO_ABERTO_SEM_PERMISSOES, rotaSempreLiberada } from "@/lib/acesso";
 import { useModoExterno, rotaPermitidaExterno } from "@/hooks/useModoExterno";
 
 /**
@@ -44,24 +44,31 @@ export function RouteGuard({ children }: { children: ReactNode }) {
   // só restringe: nunca libera nada que as regras abaixo negariam.
   const externo = useModoExterno();
 
-  // Acesso determinado pelo gerenciamento de acesso ("Acesso por Usuário"):
-  // - rota sem entrada em app_menu -> nunca foi migrada pro controle por
-  //   perfil, continua sempre aberta;
-  // - menu existe mas ninguém nunca configurou nada nele (nenhuma linha em
-  //   perfil_acesso_permissao/screen_permission_user) -> aberto até alguém
-  //   decidir algo lá (ver list_configured_menu_codes), EXCETO os menus em
-  //   MENUS_SEMPRE_RESTRITOS (administração/integração — deliberadamente só
-  //   concede_tudo, nunca "esquecido");
-  // - menu configurado -> vale o resolvido por list_accessible_menus pra
-  //   este usuário (perfil comum, concede_tudo ou exceção individual).
+  // NEGA POR PADRÃO. Regra atual, em uma frase: só passa quem tem permissão
+  // explícita para uma tela cadastrada e ativa.
+  //
+  // - rota em ROTAS_SEMPRE_LIBERADAS -> passa (próprio perfil, abrir chamado).
+  //   Sem isso, usuário novo não teria como nem pedir acesso;
+  // - rota sem entrada em app_menu -> NEGA. Antes era liberada ("não migrada
+  //   pro controle por perfil"), o que publicava toda tela nova que alguém
+  //   esquecesse de cadastrar;
+  // - menu INATIVO -> NEGA. Antes o menu inativo era filtrado antes do
+  //   casamento, a rota virava "não cadastrada" e ficava ABERTA: desativar um
+  //   menu no Catálogo publicava a tela em vez de fechá-la;
+  // - menu ativo e cadastrado -> vale o que list_accessible_menus resolveu
+  //   para este usuário (perfil comum, concede_tudo ou exceção individual).
+  //   Não existe mais o ramo "ninguém configurou nada ainda => aberto"; com os
+  //   20 perfis de módulo populados (20260906000001), quem trabalha já tem
+  //   permissão, e quem não tem deve receber pelo painel — não por omissão.
   const allowed = externo
     ? rotaPermitidaExterno(pathname)
     : phaseFlagEnabled &&
       (ACESSO_ABERTO_SEM_PERMISSOES ||
-        !access ||
-        !menuCode ||
-        (!access.configuredCodes.has(menuCode) && !MENUS_SEMPRE_RESTRITOS.has(menuCode)) ||
-        access.codes.has(menuCode));
+        rotaSempreLiberada(pathname) ||
+        (!!access &&
+          !!menuCode &&
+          !access.inactiveCodes.has(menuCode) &&
+          access.codes.has(menuCode)));
 
   useEffect(() => {
     // Externo não tem grant em access_audit_log e o bloqueio dele não é um
