@@ -1,6 +1,11 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
+import {
+  ehContratoParcelado, gerarParcelas, renumerar, somaParcelas, totalGeral, MODOS_PARCELA,
+  validarParcelas, mapaValorQueFalta, numero as numParc, somaMeses,
+  type LinhaParcela, type ModoParcelas,
+} from "@/pages/juridico/patrimonio/parcelas";
 import { useAuth } from "@/hooks/useAuth";
 import { MapaPatrimonios } from "./patrimonio/MapaPatrimonios";
 import { CLASSIFICACOES, ESPECIES_ESCRITURA, SITUACOES_PAGAMENTO, corSituacao } from "./patrimonio/carteira";
@@ -47,10 +52,17 @@ interface Comentario { id: number; entidade_id?: string; texto: string; autor_no
 interface EmpJuridico { id: number; nome: string; }
 
 const TIPOS = ["Imóvel", "Veículo", "Terreno", "Equipamento", "Outros"];
-const CATEGORIAS = ["Financiamento", "Consórcio", "Parcela da Compra", "IPTU", "Condomínio", "Energia", "Água", "Luz", "Internet", "Telefone", "Seguro", "Aluguel", "Imposto", "IPVA", "Licenciamento", "Manutenção", "Rastreamento", "Outros"];
-// Só nestas a obrigação tem entrada: nas demais o campo nem aparece, para não
-// sugerir que uma conta de luz tem valor de entrada.
-const CATEGORIAS_COM_ENTRADA = ["Financiamento", "Consórcio"];
+// "Energia" e "Parcela da Compra" saíram a pedido do Jurídico (ago/2026):
+// energia é a mesma conta de "Luz", e a parcela da compra virou o bloco de
+// parcelas do Financiamento/Consórcio. Categoria antiga já gravada continua
+// aparecendo no select ao editar aquela conta (ver categoriasDoSelect), senão
+// abrir para editar trocaria a categoria sozinho.
+const CATEGORIAS = ["Financiamento", "Consórcio", "IPTU", "Condomínio", "Água", "Luz", "Internet", "Telefone", "Seguro", "Aluguel", "Imposto", "IPVA", "Licenciamento", "Manutenção", "Rastreamento", "Outros"];
+// Financiamento e Consórcio: têm entrada E parcelas de contrato. As demais
+// são conta de mês — nelas o campo de entrada nem aparece, para não sugerir
+// que uma conta de luz tem valor de entrada.
+const categoriasDoSelect = (atual?: string) =>
+  atual && !CATEGORIAS.includes(atual) ? [atual, ...CATEGORIAS] : CATEGORIAS;
 const PERIODICIDADES = ["Mensal", "Bimestral", "Trimestral", "Semestral", "Anual", "Único"];
 
 const fmtDt = (s?: string) => { if (!s) return "—"; const d = new Date(s.length <= 10 ? s + "T12:00:00" : s); return isNaN(+d) ? s : d.toLocaleDateString("pt-BR"); };
@@ -75,7 +87,7 @@ const PATRIM_RESET = {
   classificacao: "", matricula: "", possui_escritura: "", especie_escritura: "",
   situacao_pagamento: "", valor_contrato: "", valor_entrada: "",
 };
-const OBR_RESET = { categoria: "Energia", descricao: "", valor: "", valor_entrada: "", vencimento: "", periodicidade: "Mensal", repetir: "0", onde_pagar: "", forma_pagamento: "", responsavel: "", seguradora: "", apolice: "", vigencia_inicio: "", vigencia_fim: "", premio: "", parcelas: "" };
+const OBR_RESET = { categoria: "", modo_parcelas: "igual" as ModoParcelas, qtd_parcelas: "", descricao: "", valor: "", valor_entrada: "", vencimento: "", periodicidade: "Mensal", repetir: "0", onde_pagar: "", forma_pagamento: "", responsavel: "", seguradora: "", apolice: "", vigencia_inicio: "", vigencia_fim: "", premio: "", parcelas: "" };
 const ehLink = (s?: string) => !!s && /^https?:\/\//i.test(s.trim());
 
 export default function Patrimonios() {
@@ -131,6 +143,9 @@ export default function Patrimonios() {
   const [modalObr, setModalObr] = useState(false);
   const [obrEditId, setObrEditId] = useState<number | null>(null);
   const [obr, setObr] = useState({ ...OBR_RESET });
+  // Parcelas do contrato (Financiamento/Consórcio). Só existem ao CRIAR: abrir
+  // uma parcela para editar mexe naquela linha, não no contrato inteiro.
+  const [parcelasContrato, setParcelasContrato] = useState<LinhaParcela[]>([]);
   const [pagarAlvo, setPagarAlvo] = useState<Obrigacao | null>(null);
   const [pagarFile, setPagarFile] = useState<File | null>(null);
 
@@ -252,7 +267,51 @@ export default function Patrimonios() {
   const recarregarComentarios = async () => { if (!sel) return; const { data } = await (supabase as any).from("SISTEMA_COMENTARIOS").select("*").eq("modulo", "patrimonio").eq("entidade_id", String(sel.id)).order("created_at", { ascending: false }); setComentarios(data ?? []); };
 
   // ── Obrigação ──────────────────────────────────────────────────
-  const abrirNovaObr = () => { setObrEditId(null); setObr({ ...OBR_RESET }); setModalObr(true); };
+  const abrirNovaObr = () => { setObrEditId(null); setObr({ ...OBR_RESET }); setParcelasContrato([]); setModalObr(true); };
+
+  // ── Bloco de parcelas do contrato ──────────────────────────────
+  const contratoParcelado = ehContratoParcelado(obr.categoria) && !obrEditId;
+  const gerar = () => {
+    if (!obr.vencimento) { toast("Informe o vencimento da 1ª parcela.", "err"); return; }
+    const qtd = Math.trunc(numParc(obr.qtd_parcelas));
+    if (qtd <= 0) { toast("Informe quantas parcelas o contrato tem.", "err"); return; }
+    if (qtd > 480) { toast("No máximo 480 parcelas (40 anos).", "err"); return; }
+    if (numParc(obr.valor) <= 0) { toast("Informe o valor total do contrato.", "err"); return; }
+    setParcelasContrato(gerarParcelas({
+      total: obr.valor, entrada: obr.valor_entrada, quantidade: qtd,
+      primeiroVencimento: obr.vencimento, periodicidade: obr.periodicidade,
+    }));
+  };
+  const mexerParcela = (i: number, campo: "vencimento" | "valor", v: string) =>
+    setParcelasContrato(ls => ls.map((l, idx) => idx === i ? { ...l, [campo]: v } : l));
+  const removerParcela = (i: number) => setParcelasContrato(ls => renumerar(ls.filter((_, idx) => idx !== i)));
+  const adicionarParcela = () => setParcelasContrato(ls => {
+    const ultima = ls[ls.length - 1];
+    const passoMes = ultima ? somaMeses(ultima.vencimento, 1) : (obr.vencimento || hoje());
+    return renumerar([...ls, { numero: ls.length + 1, vencimento: passoMes, valor: ultima?.valor ?? "" }]);
+  });
+  // No modo "igual" o valor não se digita: vem do total menos a entrada,
+  // dividido pela quantidade.
+  const modoIgual = obr.modo_parcelas === "igual";
+  // Modo "igual": corrigir o total (ou a entrada, a data, a periodicidade)
+  // depois de gerar tem que refazer a tabela. Sem isto ela ficava mostrando os
+  // valores do total ANTIGO, e a validação acusava diferença que a pessoa não
+  // tinha como entender. A quantidade vem das linhas que estão na tela, para
+  // que excluir uma parcela redistribua entre as que sobraram.
+  useEffect(() => {
+    if (!contratoParcelado || !modoIgual) return;
+    setParcelasContrato(atual => {
+      if (!atual.length) return atual;
+      const novas = gerarParcelas({
+        total: obr.valor, entrada: obr.valor_entrada, quantidade: atual.length,
+        primeiroVencimento: obr.vencimento, periodicidade: obr.periodicidade,
+      });
+      return novas.length ? novas : atual;
+    });
+  }, [contratoParcelado, modoIgual, obr.valor, obr.valor_entrada, obr.vencimento, obr.periodicidade]);
+
+  // O aviso aparece enquanto a pessoa digita, não só no Salvar.
+  const avisoParcelas = parcelasContrato.length ? validarParcelas(parcelasContrato, obr.valor, obr.valor_entrada) : null;
   const abrirEditarObr = (o: Obrigacao) => {
     setObrEditId(o.id);
     // Os campos numéricos voltam do banco como number e os inputs são de texto;
@@ -263,6 +322,7 @@ export default function Patrimonios() {
       premio: o.premio != null ? String(o.premio) : "",
       valor_entrada: o.valor_entrada != null ? String(o.valor_entrada) : "",
     } as any);
+    setParcelasContrato([]);
     setModalObr(true);
   };
   const salvarObr = async () => {
@@ -279,8 +339,37 @@ export default function Patrimonios() {
       premio: obr.premio ? Number(obr.premio) : null, parcelas: obr.parcelas || null,
       // Entrada só existe em financiamento/consórcio; nas outras vai null, senão
       // um valor digitado antes de trocar a categoria ficaria gravado escondido.
-      valor_entrada: CATEGORIAS_COM_ENTRADA.includes(obr.categoria) && obr.valor_entrada ? Number(obr.valor_entrada) : null,
+      valor_entrada: ehContratoParcelado(obr.categoria) && obr.valor_entrada ? Number(obr.valor_entrada) : null,
     };
+    // 1-A) Contrato parcelado: uma LINHA POR PARCELA, amarradas por
+    // contrato_uid. Cada parcela é uma conta de verdade — aparece na lista,
+    // vai pro Malote e recebe comprovante — e é a soma das que não foram
+    // pagas que vira o "valor que falta" do patrimônio.
+    if (contratoParcelado) {
+      const problema = validarParcelas(parcelasContrato, obr.valor, obr.valor_entrada);
+      if (problema) { toast(problema, "err"); return; }
+      const uid = typeof crypto !== "undefined" && crypto.randomUUID ? crypto.randomUUID() : String(Date.now());
+      const linhas = parcelasContrato.map(l => ({
+        ...payload,
+        valor: numParc(l.valor),
+        vencimento: l.vencimento,
+        status: "Pendente",
+        contrato_uid: uid,
+        parcela_numero: l.numero,
+        parcela_total: parcelasContrato.length,
+        // A entrada é do CONTRATO, não de cada parcela: fica só na primeira,
+        // senão o mesmo valor apareceria somado N vezes.
+        valor_entrada: l.numero === 1 ? payload.valor_entrada : null,
+      }));
+      const { error } = await (supabase as any).from("JUR_PATRIMONIO_OBRIGACOES").insert(linhas);
+      if (error) { toast("Erro ao gravar as parcelas: " + error.message, "err"); return; }
+      await logHist(sel.id, "Contrato parcelado cadastrado",
+        obr.categoria + " · " + linhas.length + "x · total " + money(totalGeral(parcelasContrato, obr.valor_entrada)));
+      setMesObr(parcelasContrato[0].vencimento.slice(0, 7));
+      setModalObr(false); toast(linhas.length + " parcelas lançadas.", "ok");
+      recarregarObrs(); recarregarHist(); load();
+      return;
+    }
     const step = PERIOD_STEP[obr.periodicidade] || 0;
     const reps = parseInt(obr.repetir, 10) || 0;
     // 1) Cria ou atualiza a conta base.
@@ -306,7 +395,7 @@ export default function Patrimonios() {
       }
       setMesObr(obr.vencimento.slice(0, 7));
     }
-    setModalObr(false); toast("Obrigação salva.", "ok"); recarregarObrs(); recarregarHist();
+    setModalObr(false); toast("Obrigação salva.", "ok"); recarregarObrs(); recarregarHist(); load();
   };
   // Pagar (com comprovante opcional). Funciona com ou sem patrimônio aberto.
   const abrirPagar = (o: Obrigacao) => { setPagarAlvo(o); setPagarFile(null); };
@@ -480,7 +569,14 @@ export default function Patrimonios() {
   // do patrimônio já é da empresa de fato.
   const somar = (f: (p: Patrimonio) => number | undefined) =>
     listaFiltrada.reduce((s, p) => s + (Number(f(p)) || 0), 0);
+  // "Valor que falta" NÃO sai mais de JUR_PATRIMONIOS.valor_falta: aquilo veio
+  // da importação e ninguém atualizava quando uma parcela era paga. Agora é a
+  // soma das parcelas em aberto de Financiamento/Consórcio nas obrigações, que
+  // se corrige sozinha a cada baixa.
+  const faltaPorPatrimonio = useMemo(() => mapaValorQueFalta(obrAll), [obrAll]);
+  const faltaDe = (id: number) => faltaPorPatrimonio.get(Number(id)) ?? 0;
   const totalContratos = somar(p => p.valor_contrato);
+  const totalFalta = listaFiltrada.reduce((acc, p) => acc + faltaDe(p.id), 0);
   const totalEmCaixa = somar(p => p.valor_total);
   const qtdPagando = listaFiltrada.filter(p => String(p.situacao_pagamento ?? "").toUpperCase().startsWith("PAGANDO")).length;
   const qtdPagos = listaFiltrada.filter(p => String(p.situacao_pagamento ?? "").toUpperCase() === "PAGO").length;
@@ -749,7 +845,9 @@ export default function Patrimonios() {
                           <td style={{ padding: "10px 12px", color: "#475569" }}>{p.matricula || "—"}</td>
                           <td style={{ padding: "10px 12px", color: "#475569" }}>{p.empresa_pagadora || "—"}</td>
                           <td style={{ padding: "10px 12px", color: "#0f172a", fontWeight: 700 }}>{p.valor_contrato != null ? money(p.valor_contrato) : "—"}</td>
-                          <td style={{ padding: "10px 12px", color: Number(p.valor_falta) > 0 ? "#b45309" : "#15803d", fontWeight: 700 }}>{p.valor_falta != null ? money(p.valor_falta) : "—"}</td>
+                          <td style={{ padding: "10px 12px", color: faltaDe(p.id) > 0 ? "#b45309" : "#15803d", fontWeight: 700 }}
+                              title={faltaDe(p.id) > 0 ? "Soma das parcelas em aberto de Financiamento/Consórcio" : "Nenhuma parcela em aberto"}>
+                            {faltaDe(p.id) > 0 ? money(faltaDe(p.id)) : "—"}</td>
                           <td style={{ padding: "10px 12px", fontWeight: 800, color: p.possui_escritura ? "#15803d" : "#94a3b8" }}>{p.possui_escritura == null ? "—" : p.possui_escritura ? "SIM" : "NÃO"}</td>
                         </tr>
                       );
@@ -1168,9 +1266,9 @@ export default function Patrimonios() {
             <button onClick={() => setModalObr(false)} style={{ position: "absolute", top: 14, right: 16, border: "none", background: "none", fontSize: 20, color: "#94a3b8", cursor: "pointer" }}>✕</button>
             <div style={{ fontSize: 17, fontWeight: 800, marginBottom: 14 }}>{obrEditId ? "Editar obrigação" : "Nova obrigação"}</div>
             <div className="jp-grid2">
-              <div className="jp-fg"><label>Categoria *</label><select className="jp-fi" value={obr.categoria} onChange={e => setObr(v => ({ ...v, categoria: e.target.value }))}>{CATEGORIAS.map(c => <option key={c}>{c}</option>)}</select></div>
-              <div className="jp-fg"><label>Valor (R$) *</label><input className="jp-fi" type="number" step="0.01" value={obr.valor} onChange={e => setObr(v => ({ ...v, valor: e.target.value }))} placeholder="0,00" /></div>
-              {CATEGORIAS_COM_ENTRADA.includes(obr.categoria) && (
+              <div className="jp-fg"><label>Categoria *</label><select className="jp-fi" value={obr.categoria} onChange={e => { const c = e.target.value; setObr(v => ({ ...v, categoria: c })); setParcelasContrato([]); }}><option value="">Selecione…</option>{categoriasDoSelect(obr.categoria).map(c => <option key={c}>{c}</option>)}</select></div>
+              <div className="jp-fg"><label>{contratoParcelado ? "Valor total (R$) *" : "Valor (R$) *"}</label><input className="jp-fi" type="number" step="0.01" value={obr.valor} onChange={e => setObr(v => ({ ...v, valor: e.target.value }))} placeholder="0,00" /></div>
+              {ehContratoParcelado(obr.categoria) && (
                 <div className="jp-fg" style={{ gridColumn: "2" }}>
                   <label>Valor de entrada</label>
                   <input className="jp-fi" type="number" step="0.01" value={obr.valor_entrada} onChange={e => setObr(v => ({ ...v, valor_entrada: e.target.value }))} placeholder="R$ 0,00" />
@@ -1178,7 +1276,7 @@ export default function Patrimonios() {
               )}
               <div className="jp-fg"><label>Vencimento *</label><input className="jp-fi" type="date" value={obr.vencimento} onChange={e => setObr(v => ({ ...v, vencimento: e.target.value }))} /></div>
               <div className="jp-fg"><label>Periodicidade</label><select className="jp-fi" value={obr.periodicidade} onChange={e => setObr(v => ({ ...v, periodicidade: e.target.value }))}>{PERIODICIDADES.map(p => <option key={p}>{p}</option>)}</select></div>
-              {!!PERIOD_STEP[obr.periodicidade] && (
+              {!!PERIOD_STEP[obr.periodicidade] && !contratoParcelado && (
                 <div className="jp-fg"><label>Gerar nos próximos meses</label><input className="jp-fi" type="number" min={0} max={36} value={obr.repetir} onChange={e => setObr(v => ({ ...v, repetir: e.target.value }))} placeholder="0 = só este mês; 11 = ano todo" /><div style={{ fontSize: 10.5, color: "#94a3b8", marginTop: 3 }}>“{obr.periodicidade}” é só o rótulo — informe quantos meses gerar pra criar as contas dos próximos meses (não duplica os que já existem).</div></div>
               )}
               <div className="jp-fg"><label>Forma de pagamento</label><input className="jp-fi" value={obr.forma_pagamento} onChange={e => setObr(v => ({ ...v, forma_pagamento: e.target.value }))} placeholder="Boleto, Débito em conta…" /></div>
@@ -1190,6 +1288,93 @@ export default function Patrimonios() {
                 </select>
               </div>
             </div>
+
+            {/* ── Parcelas do contrato (Financiamento/Consórcio) ── */}
+            {contratoParcelado && (
+              <div style={{ border: "1px solid #e2e8f0", borderRadius: 12, padding: 14, marginTop: 4, background: "#fbfdff" }}>
+                <div style={{ fontSize: 11, fontWeight: 800, color: "#0f3171", textTransform: "uppercase", letterSpacing: ".5px", marginBottom: 10 }}>Parcelas do contrato</div>
+
+                <div style={{ fontSize: 10.5, fontWeight: 800, color: "#94a3b8", textTransform: "uppercase", letterSpacing: ".5px", marginBottom: 7 }}>Forma de cadastro das parcelas</div>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 14 }}>
+                  {MODOS_PARCELA.map(o => {
+                    const on = obr.modo_parcelas === o.v;
+                    return (
+                      <button key={o.v} type="button"
+                        onClick={() => setObr(v => ({ ...v, modo_parcelas: o.v }))}
+                        style={{ textAlign: "left", cursor: "pointer", borderRadius: 11, padding: "11px 13px", background: on ? "#f0f6ff" : "#fff", border: on ? "1.5px solid #0f3171" : "1px solid #e2e8f0", transition: "border-color .18s, background .18s" }}>
+                        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                          <span style={{ width: 15, height: 15, borderRadius: "50%", flex: "none", border: on ? "4.5px solid #0f3171" : "1.5px solid #cbd5e1", background: "#fff", transition: "border .18s" }} />
+                          <span style={{ fontSize: 12.5, fontWeight: 800, color: "#0f172a" }}>{o.t}</span>
+                        </div>
+                        <div style={{ fontSize: 11, color: "#94a3b8", marginTop: 4, lineHeight: 1.45 }}>{o.d}</div>
+                      </button>
+                    );
+                  })}
+                </div>
+
+                <div style={{ display: "flex", alignItems: "flex-end", gap: 12, flexWrap: "wrap", marginBottom: 12 }}>
+                  <div className="jp-fg" style={{ margin: 0, minWidth: 150 }}>
+                    <label>Quantidade de parcelas *</label>
+                    <input className="jp-fi" type="number" min={1} max={480} value={obr.qtd_parcelas}
+                      onChange={e => setObr(v => ({ ...v, qtd_parcelas: e.target.value }))} placeholder="60" />
+                  </div>
+                  <button type="button" className="jp-btn" onClick={gerar}
+                    style={{ background: "#fff", border: "1.5px solid #0f3171", color: "#0f3171", fontWeight: 800 }}>
+                    Gerar parcelas
+                  </button>
+                  <div style={{ fontSize: 11, color: "#94a3b8", flex: 1, minWidth: 180, lineHeight: 1.45 }}>
+                    {modoIgual
+                      ? "O valor de cada parcela sai do total menos a entrada, dividido pela quantidade."
+                      : "Ajuste valores e vencimentos individualmente, se necessário."}
+                  </div>
+                </div>
+
+                {parcelasContrato.length > 0 && (<>
+                  <div style={{ border: "1px solid #e2e8f0", borderRadius: 10, overflow: "hidden", background: "#fff" }}>
+                    <div style={{ display: "grid", gridTemplateColumns: "70px 1fr 1fr 60px", gap: 8, padding: "8px 12px", background: "#f8fafc", fontSize: 10.5, fontWeight: 800, color: "#94a3b8", textTransform: "uppercase", letterSpacing: ".5px" }}>
+                      <span>Parcela</span><span>Vencimento</span><span>Valor da parcela</span><span style={{ textAlign: "center" }}>Ações</span>
+                    </div>
+                    <div style={{ maxHeight: 260, overflowY: "auto" }}>
+                      {parcelasContrato.map((l, i) => (
+                        <div key={i} style={{ display: "grid", gridTemplateColumns: "70px 1fr 1fr 60px", gap: 8, padding: "7px 12px", alignItems: "center", borderTop: "1px solid #f1f5f9" }}>
+                          <span style={{ fontSize: 12.5, fontWeight: 700, color: "#475569" }}>{l.numero}</span>
+                          <input className="jp-fi" type="date" value={l.vencimento} onChange={e => mexerParcela(i, "vencimento", e.target.value)} style={{ padding: "6px 9px" }} />
+                          <input className="jp-fi" type="number" step="0.01" value={l.valor} readOnly={modoIgual}
+                            onChange={e => mexerParcela(i, "valor", e.target.value)}
+                            title={modoIgual ? "No modo de valor igual a parcela vem do total dividido pela quantidade." : undefined}
+                            style={{ padding: "6px 9px", background: modoIgual ? "#f1f5f9" : "#fff", color: modoIgual ? "#475569" : "#0f172a", cursor: modoIgual ? "not-allowed" : "text" }} />
+                          <button type="button" onClick={() => removerParcela(i)} title="Excluir parcela"
+                            style={{ justifySelf: "center", background: "none", border: "none", cursor: "pointer", color: "#dc2626", fontSize: 15, lineHeight: 1 }}>&#128465;</button>
+                        </div>
+                      ))}
+                    </div>
+                    {!modoIgual && (
+                      <button type="button" onClick={adicionarParcela}
+                        style={{ width: "100%", padding: 9, background: "#fff", border: "none", borderTop: "1px dashed #cbd5e1", color: "#0f3171", fontWeight: 800, fontSize: 12, cursor: "pointer" }}>
+                        + Adicionar parcela
+                      </button>
+                    )}
+                  </div>
+
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 1, marginTop: 10, background: "#e2e8f0", border: "1px solid #e2e8f0", borderRadius: 10, overflow: "hidden" }}>
+                    <div style={{ background: "#f8fafc", padding: "9px 13px" }}>
+                      <div style={{ fontSize: 10, fontWeight: 800, color: "#94a3b8", textTransform: "uppercase", letterSpacing: ".5px" }}>Total das parcelas</div>
+                      <div style={{ fontSize: 15, fontWeight: 800, color: "#0f172a", marginTop: 2 }}>{money(somaParcelas(parcelasContrato))}</div>
+                    </div>
+                    <div style={{ background: "#f8fafc", padding: "9px 13px" }}>
+                      <div style={{ fontSize: 10, fontWeight: 800, color: "#94a3b8", textTransform: "uppercase", letterSpacing: ".5px" }}>Total geral (entrada + parcelas)</div>
+                      <div style={{ fontSize: 15, fontWeight: 800, color: "#0f172a", marginTop: 2 }}>{money(totalGeral(parcelasContrato, obr.valor_entrada))}</div>
+                    </div>
+                  </div>
+
+                  {/* Confere na hora: descobrir a diferença só no Salvar faria
+                      a pessoa refazer a tabela inteira. */}
+                  {avisoParcelas && (
+                    <div style={{ marginTop: 9, background: "#fffbeb", border: "1px solid #fde68a", color: "#92400e", borderRadius: 9, padding: "8px 11px", fontSize: 11.5, fontWeight: 700 }}>{avisoParcelas}</div>
+                  )}
+                </>)}
+              </div>
+            )}
             <div className="jp-fg"><label>Descrição</label><input className="jp-fi" value={obr.descricao} onChange={e => setObr(v => ({ ...v, descricao: e.target.value }))} /></div>
             <div className="jp-fg"><label>Caminho para pagar (link ou local no servidor)</label><input className="jp-fi" value={obr.onde_pagar} onChange={e => setObr(v => ({ ...v, onde_pagar: e.target.value }))} placeholder="https://…  ou  \\servidor\contas\agua" /><div style={{ fontSize: 10.5, color: "#94a3b8", marginTop: 3 }}>Se for um link (https://…) vira botão clicável na conta; senão fica como referência do local.</div></div>
             {obr.categoria === "Seguro" && (
