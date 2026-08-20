@@ -101,6 +101,11 @@ export interface RateioLinha {
   percentual: number | null;
   valor: number;
   ordem: number;
+  // SIS-2026-0192: justificativa por linha, quando o % dela sobre o
+  // Orçado passa do limite_justificativa_pct da Classificação.
+  justificativa_texto?: string | null;
+  justificativa_por?: string | null;
+  justificativa_em?: string | null;
 }
 
 export interface Parcela {
@@ -200,6 +205,10 @@ export interface MaloteDespesaRow {
     // (aguardando_aprovacao_inicial/aguardando_cotacao/cotacao_realizada).
     aprovador_solicitacao_user_id?: string | null;
     aprovador_solicitacao_nome?: string | null;
+    // SIS-2026-0192: % acima do qual uma linha de rateio precisa de
+    // justificativa (cadastrado desde SIS-2026-0106, só passa a ser
+    // exibido aqui — sem null tratado como "nunca pede justificativa").
+    limite_justificativa_pct?: number | null;
   } | null;
 }
 
@@ -228,7 +237,7 @@ const DESPESA_COLUMNS =
   "arquivos, created_at, created_by, updated_at, " +
   "classificacao:classificacao_id(id, nome, aprovador1_nome, aprovador2_nome, aprovador3_nome, aprovador1_user_id, aprovador2_user_id, aprovador3_user_id, " +
   "aprovador1_limite_pct, aprovador1_sem_limite, aprovador2_limite_pct, aprovador2_sem_limite, aprovador3_limite_pct, aprovador3_sem_limite, " +
-  "aprovador_solicitacao_user_id, aprovador_solicitacao_nome)";
+  "aprovador_solicitacao_user_id, aprovador_solicitacao_nome, limite_justificativa_pct)";
 
 // ── Catálogos usados no rateio ──────────────────────────────────────────
 export function useEmpresasGrupo() {
@@ -624,6 +633,19 @@ export function useReprovarDespesa() {
   return useMutation({
     mutationFn: async ({ id, motivo }: { id: string; motivo: string }) => {
       const { error } = await (supabase as any).rpc("malote_reprovar_despesa", { _id: id, _motivo: motivo });
+      if (error) throw error;
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: [DESPESA_KEY] }),
+  });
+}
+
+// SIS-2026-0192: justificativa por linha de Rateio, quando o % dela sobre
+// o Orçado passa do limite_justificativa_pct da Classificação.
+export function useJustificarRateioLinha() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ linhaId, texto }: { linhaId: string; texto: string }) => {
+      const { error } = await (supabase as any).rpc("malote_justificar_rateio_linha", { _linha_id: linhaId, _texto: texto });
       if (error) throw error;
     },
     onSuccess: () => qc.invalidateQueries({ queryKey: [DESPESA_KEY] }),

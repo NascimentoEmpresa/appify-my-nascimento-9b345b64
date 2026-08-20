@@ -41,6 +41,7 @@ import {
 import { useOrcadoClassificacao } from "@/hooks/useOrcadoClassificacao";
 import { anoMesAtual } from "@/hooks/usePlanilhaCusto";
 import { RateioGrid, DimensoesRateio } from "./RateioGrid";
+import { RateioAprovadorTable } from "./RateioAprovadorTable";
 import { FluxoAprovacaoVisual } from "./FluxoAprovacaoVisual";
 
 const TIPO_SOLICITACAO_LABEL: Record<TipoSolicitacao, string> = {
@@ -223,6 +224,12 @@ export default function DespesaVisualizar() {
     despesa.nivel_aprovacao_atual != null &&
     aprovadorDoNivel(despesa, despesa.nivel_aprovacao_atual) === user?.id;
   const configurado = souAprovadorConfigurado(despesa, user?.id);
+  // SIS-2026-0192: "Dados da Aprovação e Pagamento" e "Rateio da Despesa"
+  // só podem ser alterados pelo Solicitante (ex.: quando o aprovador pede
+  // ajuste) — ninguém mais edita, nem admin/supervisor/aprovador. Pra
+  // qualquer outro papel o Rateio vira só-leitura com as colunas de
+  // Orçado/Utilizado/Status.
+  const rateioEPagamentoEditaveis = !bloqueado && souSolicitante;
   const podeReprovarComoAprovadorPassado =
     configurado && ((despesa.status === "pendente_aprovacao" && !souAprovadorNivelAtual) || despesa.status === "aguardando_pagamento");
   const souAprovadorVendoAjuste = despesa.status === "necessidade_de_ajuste" && configurado && !souSolicitante;
@@ -606,18 +613,18 @@ export default function DespesaVisualizar() {
       <Card>
         <CardContent className="p-4 space-y-3">
           <p className="text-sm font-semibold">Dados da Aprovação e Pagamento</p>
-          <div className={cn("grid grid-cols-1 sm:grid-cols-3 gap-4", bloqueado && "opacity-60")}>
+          <div className={cn("grid grid-cols-1 sm:grid-cols-3 gap-4", !rateioEPagamentoEditaveis && "opacity-60")}>
             <div>
               <Label>Valor aprovado</Label>
-              <Input type="number" step="0.01" value={valorAprovado} onChange={(e) => setValorAprovado(e.target.value)} disabled={bloqueado} />
+              <Input type="number" step="0.01" value={valorAprovado} onChange={(e) => setValorAprovado(e.target.value)} disabled={!rateioEPagamentoEditaveis} />
             </div>
             <div>
               <Label>Justificativa da aprovação</Label>
-              <Input value={justificativa} onChange={(e) => setJustificativa(e.target.value)} disabled={bloqueado} />
+              <Input value={justificativa} onChange={(e) => setJustificativa(e.target.value)} disabled={!rateioEPagamentoEditaveis} />
             </div>
             <div>
               <Label>Forma de pagamento</Label>
-              <Select value={formaPagamento} onValueChange={setFormaPagamento} disabled={bloqueado}>
+              <Select value={formaPagamento} onValueChange={setFormaPagamento} disabled={!rateioEPagamentoEditaveis}>
                 <SelectTrigger>
                   <SelectValue placeholder="Selecione" />
                 </SelectTrigger>
@@ -632,15 +639,15 @@ export default function DespesaVisualizar() {
             </div>
             <div>
               <Label>Dados de pagamento</Label>
-              <Input value={informacoesPagamento} onChange={(e) => setInformacoesPagamento(e.target.value)} disabled={bloqueado} />
+              <Input value={informacoesPagamento} onChange={(e) => setInformacoesPagamento(e.target.value)} disabled={!rateioEPagamentoEditaveis} />
             </div>
             <div>
               <Label>Data do pagamento</Label>
-              <Input type="date" value={dataPagamento} onChange={(e) => setDataPagamento(e.target.value)} disabled={bloqueado} />
+              <Input type="date" value={dataPagamento} onChange={(e) => setDataPagamento(e.target.value)} disabled={!rateioEPagamentoEditaveis} />
             </div>
             <div>
               <Label>Competência</Label>
-              <Input type="month" value={competencia} onChange={(e) => setCompetencia(e.target.value)} disabled={bloqueado} />
+              <Input type="month" value={competencia} onChange={(e) => setCompetencia(e.target.value)} disabled={!rateioEPagamentoEditaveis} />
             </div>
           </div>
         </CardContent>
@@ -650,16 +657,29 @@ export default function DespesaVisualizar() {
       <Card>
         <CardContent className="p-4 space-y-3">
           <p className="text-sm font-semibold">Rateio da Despesa</p>
-          <RateioGrid
-            linhas={linhasRateio}
-            onChange={setLinhasRateio}
-            dimensoes={dimensoes}
-            onDimensoesChange={setDimensoes}
-            ratearPor={ratearPor}
-            onRatearPorChange={setRatearPor}
-            valorTotal={Number(valorAprovado) || despesa.valor_total}
-            disabled={bloqueado}
-          />
+          {rateioEPagamentoEditaveis ? (
+            <RateioGrid
+              linhas={linhasRateio}
+              onChange={setLinhasRateio}
+              dimensoes={dimensoes}
+              onDimensoesChange={setDimensoes}
+              ratearPor={ratearPor}
+              onRatearPorChange={setRatearPor}
+              valorTotal={Number(valorAprovado) || despesa.valor_total}
+              disabled={bloqueado}
+            />
+          ) : (
+            <RateioAprovadorTable
+              despesaId={despesa.id}
+              linhas={linhasRateio}
+              dimensoes={dimensoes}
+              classificacaoId={despesa.classificacao_id}
+              limiteJustificativaPct={despesa.classificacao?.limite_justificativa_pct ?? null}
+              resolverOrcado={resolverOrcado}
+              anoMesDespesa={anoMesDespesa}
+              podeJustificarComoAprovador={configurado}
+            />
+          )}
         </CardContent>
       </Card>
 
