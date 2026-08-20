@@ -20,6 +20,7 @@ import { usePlanilhaCustos, resolverValorPorCampos } from "@/hooks/usePlanilhaCu
 import {
   useSalvarDespesa,
   useConverterSolicitacaoEmDespesa,
+  buscarNumeroDespesa,
   useDespesa,
   useEmpresasGrupo,
   useContratosAtivos,
@@ -615,7 +616,7 @@ function PainelDespesaMalote({
   // Confirmação no centro da tela quando a despesa vai para aprovação. O
   // toast de canto some antes de a pessoa registrar, e aqui dar certo importa:
   // a despesa saiu da mão dela e entrou na fila de outra pessoa.
-  const [confirmacao, setConfirmacao] = useState<{ titulo: string; subtitulo: string } | null>(null);
+  const [confirmacao, setConfirmacao] = useState<{ titulo: string; subtitulo: string; numero?: string | null } | null>(null);
   const salvar = useSalvarDespesa();
   const converter = useConverterSolicitacaoEmDespesa();
   const [nome, setNome] = useState(nomeInicial ?? inicial?.nome ?? "");
@@ -732,8 +733,9 @@ function PainelDespesaMalote({
 
       if (paraEnviar && despesaIdExistente) {
         setConfirmacao({
-          titulo: "Despesa enviada ao Malote!",
+          titulo: "Despesa enviada ao Malote",
           subtitulo: "Criada a partir da solicitação e já na fila de aprovação.",
+          numero: await buscarNumeroDespesa(despesaId),
         });
         onConvertida?.();
         return;
@@ -749,10 +751,11 @@ function PainelDespesaMalote({
         toast.success("Rascunho salvo.");
       } else {
         setConfirmacao({
-          titulo: "Despesa enviada ao Malote!",
+          titulo: "Despesa enviada ao Malote",
           subtitulo: obrigacaoPatrimonio
-            ? "A conta do Patrimônio já aparece como enviada."
-            : "Agora ela está na fila de aprovação.",
+            ? "A conta do Patrimônio já aparece como enviada, e a despesa entrou na fila de aprovação."
+            : "Ela entrou na fila de aprovação. Você acompanha o andamento em Meus Itens.",
+          numero: await buscarNumeroDespesa(despesaId),
         });
       }
       if (!despesaIdExistente) {
@@ -773,6 +776,7 @@ function PainelDespesaMalote({
         aberto={!!confirmacao}
         titulo={confirmacao?.titulo}
         subtitulo={confirmacao?.subtitulo}
+        numero={confirmacao?.numero}
         onFechar={() => setConfirmacao(null)}
       />
       <CardContent className="p-6 space-y-4">
