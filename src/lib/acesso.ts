@@ -24,3 +24,52 @@ export const ACESSO_ABERTO_SEM_PERMISSOES = false;
  */
 export const MENUS_SEMPRE_RESTRITOS = new Set(["administracao", "integracao", "integracao-aliases"]);
 
+/**
+ * Rotas que TODO usuário autenticado acessa, sem depender de permissão.
+ *
+ * Existem porque o sistema NEGA POR PADRÃO: rota sem cadastro em app_menu, ou
+ * menu sem permissão pra pessoa, é bloqueada. Sem esta lista, um usuário
+ * recém-criado ficaria sem nem ver o próprio perfil.
+ *
+ * Não são "furos": nenhuma expõe dado de terceiro. O perfil é do próprio
+ * usuário (RLS filtra por auth.uid()) e os avisos são o changelog do ERP.
+ *
+ * O que NÃO entra aqui, por decisão explícita:
+ *   /app/sistemas/*  — área dos desenvolvedores do ERP. Só quem receber a
+ *                      permissão no painel enxerga. Esteve nesta lista por
+ *                      engano meu, como "canal pra pedir acesso".
+ *
+ * Mantenha curta. Tela de negócio NÃO entra aqui — entra em app_menu.
+ */
+export const ROTAS_SEMPRE_LIBERADAS = [
+  "/app/meu-perfil",
+  // Avisos do sistema (changelog do ERP). A sidebar mostra o item para todo
+  // mundo, então sem estar aqui o clique dava "Acesso negado".
+  "/app/novidades",
+];
+
+/**
+ * Rotas liberadas SÓ em casamento exato — nunca por prefixo.
+ *
+ * "/app" é a tela inicial e não tem entrada em app_menu (é o shell, não um
+ * módulo). Sem estar aqui, o deny-by-default barrava a própria home: o
+ * usuário logava e tomava "Acesso negado" na primeira tela, sem nada no painel
+ * de administração que pudesse liberar — porque não é menu, não aparece lá.
+ *
+ * Precisa ser lista separada porque a de cima casa por PREFIXO: "/app" ali
+ * dentro liberaria "/app/qualquer-coisa" e anularia o controle inteiro.
+ */
+export const ROTAS_LIBERADAS_EXATAS = ["/app"];
+
+/**
+ * Prefixo para ROTAS_SEMPRE_LIBERADAS (cobre subrotas e /:id), exato para
+ * ROTAS_LIBERADAS_EXATAS.
+ */
+export function rotaSempreLiberada(pathname: string): boolean {
+  const normalizada = pathname.length > 1 && pathname.endsWith("/")
+    ? pathname.slice(0, -1)
+    : pathname;
+  if (ROTAS_LIBERADAS_EXATAS.includes(normalizada)) return true;
+  return ROTAS_SEMPRE_LIBERADAS.some((r) => normalizada === r || normalizada.startsWith(r + "/"));
+}
+
