@@ -19,6 +19,8 @@ export interface EmpregadoEscolhido {
   posto: string;
   filial: string;
   nomeFilial: string;
+  /** Coluna "Descrição do Local" da EMPREGADOS — é ela que dá o contrato. */
+  descricaoLocal: string;
   escala: string;
   admissao: string | null;
   email: string;
@@ -106,6 +108,7 @@ export function BuscaColaborador({
       posto: primeiroCampo(e, "Organograma", "Descrição do Local", "Titulo C.Custo", "Nome Filial"),
       filial: texto(e["Filial"]),
       nomeFilial: texto(e["Nome Filial"]),
+      descricaoLocal: texto(e["Descrição do Local"]),
       escala: primeiroCampo(e, "Escala", "Escala de Trabalho"),
       admissao: texto(e["Admissão"]) || null,
       email: primeiroCampo(e, "email", "E-mail", "Email"),

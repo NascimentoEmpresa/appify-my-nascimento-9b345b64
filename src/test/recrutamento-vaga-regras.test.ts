@@ -3,6 +3,8 @@ import {
   diasUteisEntre, somaDiasUteis, dataMinimaVaga, avaliarPrazo, grauPorDiasUteis,
   cargoExigeCnh, aplicarReqCnh, motivoLabel, MOTIVO_EXPANSAO,
   GRAU_ALTA, GRAU_MEDIA, GRAU_BAIXA, REQ_CNH_TEXTO,
+  contratoDoEmpregado, rotuloReferencia, mostraNomeReferencia,
+  vagaSeguraSubstituido, substituidosComVagaViva,
 } from "@/lib/recrutamento/vagaRegras";
 
 // Datas fixas p/ o teste não depender de "hoje":
@@ -91,5 +93,85 @@ describe("motivo da vaga", () => {
     expect(motivoLabel("Expansão")).toBe(MOTIVO_EXPANSAO);
     expect(motivoLabel(MOTIVO_EXPANSAO)).toBe(MOTIVO_EXPANSAO);
     expect(motivoLabel("Substituição")).toBe("Substituição");
+  });
+});
+
+describe("colaborador de referência", () => {
+  it("só mostra o nome quando a vaga é de substituição", () => {
+    expect(mostraNomeReferencia("Substituição")).toBe(true);
+    expect(mostraNomeReferencia(MOTIVO_EXPANSAO)).toBe(false);
+    expect(mostraNomeReferencia("Admissão")).toBe(false);
+    expect(rotuloReferencia("Substituição")).toBe("Colaborador a Substituir");
+    expect(rotuloReferencia("Retorno")).toBe("Selecione alguém com o mesmo cargo");
+  });
+});
+
+describe("contrato do empregado", () => {
+  // A filial 1093 tem DOIS contratos ativos: era daí que saía o "LIMPEZA HUSM"
+  // em quem trabalha no administrativo.
+  const contratos = [
+    { id: 27,  "NOME CONTRATO": "LIMPEZA HUSM",           Filial: 1093 },
+    { id: 195, "NOME CONTRATO": "ADM E ESTAGIARIOS - NH", Filial: 1093 },
+    { id: 12,  "NOME CONTRATO": "UFRGS - LIMPEZA GERAL",  Filial: 1050 },
+  ];
+
+  it("desempata pelo Nome Filial quando a filial tem mais de um contrato", () => {
+    const emp = { Filial: 1093, "Nome Filial": "ADM E ESTAGIARIOS - NH" };
+    expect(contratoDoEmpregado(contratos, emp)?.id).toBe(195);
+  });
+
+  it("pega o único contrato quando a filial não tem empate", () => {
+    expect(contratoDoEmpregado(contratos, { Filial: 1050, "Nome Filial": "qualquer" })?.id).toBe(12);
+  });
+
+  it("cai no primeiro da filial quando o Nome Filial não casa com nenhum", () => {
+    expect(contratoDoEmpregado(contratos, { Filial: 1093, "Nome Filial": "" })?.id).toBe(27);
+  });
+
+  it("devolve null sem filial", () => {
+    expect(contratoDoEmpregado(contratos, { Filial: "" })).toBeNull();
+    expect(contratoDoEmpregado(contratos, null)).toBeNull();
+  });
+});
+
+describe("substituído em uma vaga só", () => {
+  // Vaga viva segura o colaborador; reprovada e cancelada soltam.
+  it("sabe quais status seguram o substituído", () => {
+    expect(vagaSeguraSubstituido("Pendente Operacional")).toBe(true);
+    expect(vagaSeguraSubstituido("Vaga aberta - Seleção de Currículos")).toBe(true);
+    expect(vagaSeguraSubstituido("Concluída")).toBe(true);
+    expect(vagaSeguraSubstituido("Reprovada")).toBe(false);
+    expect(vagaSeguraSubstituido("Cancelada")).toBe(false);
+  });
+
+  const sbFake = (linhas: any[], erro: any = null) => ({
+    from: () => ({ select: () => ({ in: async () => ({ data: linhas, error: erro }) }) }),
+  });
+
+  it("mapeia o colaborador para a vaga que já o segura", async () => {
+    const presos = await substituidosComVagaViva(sbFake([
+      { id: 41, substituido_id: 11763, status: "Pendente Operacional" },
+      { id: 42, substituido_id: 900,   status: "Reprovada" },
+    ]), [11763, 900]);
+    expect(presos.get(11763)).toBe(41);
+    expect(presos.has(900)).toBe(false);   // reprovada não segura
+  });
+
+  it("fica com a vaga mais antiga quando há mais de uma", async () => {
+    const presos = await substituidosComVagaViva(sbFake([
+      { id: 7, substituido_id: 5, status: "Pendente Recrutamento" },
+      { id: 9, substituido_id: 5, status: "Pendente Operacional" },
+    ]), [5]);
+    expect(presos.get(5)).toBe(7);
+  });
+
+  it("não trava a tela quando o banco ainda não tem a coluna", async () => {
+    const presos = await substituidosComVagaViva(sbFake(null, { message: "column does not exist" }), [1]);
+    expect(presos.size).toBe(0);
+  });
+
+  it("nem consulta sem ids", async () => {
+    const sb = { from: () => { throw new Error("não devia consultar"); } };
+    expect((await substituidosComVagaViva(sb, [])).size).toBe(0);
   });
 });

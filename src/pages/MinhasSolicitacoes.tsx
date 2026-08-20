@@ -5,6 +5,8 @@ import { ESTADOS_BR, municipiosDe } from "@/data/municipios-brasil";
 import {
   MOTIVOS_VAGA, motivoLabel, ehSubstituicao, avaliarPrazo, dataMinimaVaga,
   cargoExigeCnh, aplicarReqCnh, REQ_CNH_TEXTO, MIN_DIAS_UTEIS, fmtBr,
+  rotuloReferencia, ajudaReferencia, mostraNomeReferencia, contratoDoEmpregado,
+  SALARIO_MASCARA, substituidosComVagaViva, avisoSubstituidoPreso,
 } from "@/lib/recrutamento/vagaRegras";
 
 // ── Helpers ────────────────────────────────────────────────────────
@@ -122,8 +124,9 @@ export default function MinhasSolicitacoes({ abrir }: { abrir?: SolicitacaoInici
   const [modalVaga, setModalVaga] = useState(false);
   const [vagaStep, setVagaStep] = useState(1);
   const [vaga, setVaga] = useState({ ...VAGA_RESET });
-  const [contratos, setContratos] = useState<string[]>([]);
   const [contratosFull, setContratosFull] = useState<any[]>([]);
+  // Empregado -> nº da vaga de substituição que já o segura (regra do banco).
+  const [presos, setPresos] = useState<Map<number, number>>(new Map());
   const [empregados, setEmpregados] = useState<any[]>([]);
   const [empSearch, setEmpSearch] = useState("");
   const [showEmpDrop, setShowEmpDrop] = useState(false);
@@ -202,11 +205,7 @@ export default function MinhasSolicitacoes({ abrir }: { abrir?: SolicitacaoInici
   const carregarContratos = async () => {
     const { data } = await (supabase as any)
       .from("CONTRATOS").select('id, "NOME CONTRATO", Filial').eq("ATIVO", "SIM").order('"NOME CONTRATO"');
-    if (data) {
-      setContratosFull(data);
-      const nomes = Array.from(new Set(data.map((c: any) => c["NOME CONTRATO"] ?? "").filter(Boolean)));
-      setContratos(nomes as string[]);
-    }
+    if (data) setContratosFull(data);
   };
 
   // ── Empregados (busca auto-debounced + descarta obsoletas) ──────────
@@ -225,7 +224,13 @@ export default function MinhasSolicitacoes({ abrir }: { abrir?: SolicitacaoInici
       if (empTermo.current !== term) return;
       setLoadingEmps(false);
       if (error) console.error("[EMPREGADOS] erro:", error.message, error.code);
-      setEmpregados(data ?? []);
+      const lista = data ?? [];
+      setEmpregados(lista);
+      // Só a substituição trava: nos outros motivos a pessoa é molde e pode
+      // servir de molde quantas vezes for.
+      setPresos(modalVaga && ehSubstituicao(vaga.motivo_vaga)
+        ? await substituidosComVagaViva(supabase, lista.map((e: any) => Number(e.ID)))
+        : new Map());
     }, 350);
   };
 
@@ -236,12 +241,15 @@ export default function MinhasSolicitacoes({ abrir }: { abrir?: SolicitacaoInici
   const [substituidoId, setSubstituidoId] = useState<number | null>(null);
 
   const selecionarEmpregado = (emp: any) => {
-    const contratoMatch = contratosFull.find((c: any) => c.Filial === emp.Filial);
+    const jaTem = ehSubstituicao(vaga.motivo_vaga) ? presos.get(Number(emp.ID)) : undefined;
+    if (jaTem) { toast(avisoSubstituidoPreso(jaTem), "err"); return; }
+    const contratoMatch = contratoDoEmpregado(contratosFull, emp);
     const insal = parseFloat(String(emp["% Insalubridade"] ?? "0").replace(",", ".")) || 0;
     setSubstituidoId(emp.ID ?? null);
     setVaga(v => ({
       ...v,
-      nome_substituido: emp.Nome,
+      // Nos outros motivos o escolhido é só o molde: o nome não entra na vaga.
+      nome_substituido: mostraNomeReferencia(v.motivo_vaga) ? emp.Nome : "",
       cargo: emp["Título do Cargo"] ?? "",
       salario: emp["Valor Salário"] ? `R$ ${String(emp["Valor Salário"]).replace(".", ",")}` : "",
       insalubridade_recebe: insal > 0 ? "Sim" : "Não",
@@ -249,14 +257,14 @@ export default function MinhasSolicitacoes({ abrir }: { abrir?: SolicitacaoInici
       escala: emp["Escala"] ? String(emp["Escala"]) : v.escala,
       contrato: contratoMatch ? contratoMatch["NOME CONTRATO"] : v.contrato,
     }));
-    setEmpSearch(emp.Nome);
+    setEmpSearch(mostraNomeReferencia(vaga.motivo_vaga) ? emp.Nome : "");
     setShowEmpDrop(false);
   };
 
   const abrirModalVaga = () => {
     setModalVaga(true); setVagaStep(1); setEmpSearch(""); setShowEmpDrop(false); setVaga({ ...VAGA_RESET });
     setSubstituidoId(null);
-    if (!contratos.length) carregarContratos();
+    if (!contratosFull.length) carregarContratos();
   };
 
   // Prazo/grau da data escolhida — o grau não é mais escolhido na mão.
@@ -266,9 +274,14 @@ export default function MinhasSolicitacoes({ abrir }: { abrir?: SolicitacaoInici
   const vagaValidar = (step: number) => {
     if (step === 1) {
       if (!vaga.motivo_vaga) { toast("Selecione o motivo da vaga.", "err"); return false; }
-      if (ehSubstituicao(vaga.motivo_vaga) && !substituidoId) {
-        toast("Escolha na lista o colaborador que será substituído — o cargo e o contrato vêm do cadastro dele.", "err"); return false;
+      if (!substituidoId) {
+        toast(ehSubstituicao(vaga.motivo_vaga)
+          ? "Escolha na lista o colaborador que será substituído — o cargo e o contrato vêm do cadastro dele."
+          : "Escolha na lista alguém com o mesmo cargo da vaga — é de lá que vêm cargo, contrato, escala e salário.", "err");
+        return false;
       }
+      const jaTem = ehSubstituicao(vaga.motivo_vaga) ? presos.get(substituidoId) : undefined;
+      if (jaTem) { toast(avisoSubstituidoPreso(jaTem), "err"); return false; }
       if (!vaga.contrato) { toast("Selecione o contrato.", "err"); return false; }
       if (!vaga.cargo.trim()) { toast("Informe o cargo.", "err"); return false; }
     }
@@ -292,15 +305,17 @@ export default function MinhasSolicitacoes({ abrir }: { abrir?: SolicitacaoInici
       grau_urgencia: prazo.grau ?? "",
       req_obrigatorios: aplicarReqCnh(vaga.req_obrigatorios, vaga.cargo),
       cnh_obrigatoria: !!cnhDoCargo,
+      // Só a substituição grava o id: é ele que trava a pessoa numa vaga só.
+      substituido_id: ehSubstituicao(vaga.motivo_vaga) ? substituidoId : null,
       status: "Pendente Operacional",
       solicitante_nome: user?.user_metadata?.nome ?? user?.email ?? "",
       solicitante_cpf: user?.email ?? "",
     };
     let { error, data } = await (supabase as any).from("SISTEMA_RECRUTAMENTO").insert(payload).select("id").single();
-    // Banco ainda sem a coluna cnh_obrigatoria: reenvia sem ela.
+    // Banco ainda sem as colunas novas: reenvia sem elas.
     if (error && /column|schema cache/i.test(error.message)) {
-      const { cnh_obrigatoria, ...semCnh } = payload as any;
-      ({ error, data } = await (supabase as any).from("SISTEMA_RECRUTAMENTO").insert(semCnh).select("id").single());
+      const { cnh_obrigatoria, substituido_id, ...semColunasNovas } = payload as any;
+      ({ error, data } = await (supabase as any).from("SISTEMA_RECRUTAMENTO").insert(semColunasNovas).select("id").single());
     }
     if (error) { toast("Erro ao solicitar vaga: " + error.message, "err"); return; }
     toast(`Solicitação #${data?.id} criada com sucesso!`, "ok");
@@ -380,7 +395,7 @@ export default function MinhasSolicitacoes({ abrir }: { abrir?: SolicitacaoInici
 
   // ── Advertência ─────────────────────────────────────────────────────
   const selecionarColabAdv = async (emp: any) => {
-    const contratoMatch = contratosFull.find((c: any) => c.Filial === emp.Filial);
+    const contratoMatch = contratoDoEmpregado(contratosFull, emp);
     setAdv(a => ({
       ...a,
       colaborador_id: emp.ID ?? null, colaborador_nome: emp.Nome ?? "", colaborador_cpf: emp.CPF ?? "",
@@ -401,7 +416,7 @@ export default function MinhasSolicitacoes({ abrir }: { abrir?: SolicitacaoInici
 
   const abrirModalAdv = () => {
     setModalAdv(true); setAdv({ ...ADV_RESET }); setEmpSearch(""); setShowEmpDrop(false); setEmpregados([]); setAdvHistorico([]);
-    if (!contratos.length) carregarContratos();
+    if (!contratosFull.length) carregarContratos();
   };
 
   // Abre o formulário pedido pela rota. Guarda o último valor atendido em vez
@@ -675,55 +690,65 @@ export default function MinhasSolicitacoes({ abrir }: { abrir?: SolicitacaoInici
                 <select className="ini-fi" value={vaga.motivo_vaga}
                   onChange={e => {
                     const m = e.target.value;
-                    // Trocou de/para substituição: limpa o que vinha do cadastro
-                    // do substituído, senão sobra cargo/contrato de outro posto.
+                    // Trocou de motivo: limpa tudo o que vinha do cadastro do
+                    // escolhido anterior (senão sobra cargo/contrato/salário de
+                    // outro posto) e obriga a escolher de novo.
                     setSubstituidoId(null); setEmpSearch("");
-                    setVaga(v => ({ ...v, motivo_vaga: m, nome_substituido: "", cargo: "", contrato: "" }));
+                    setVaga(v => ({
+                      ...v, motivo_vaga: m, nome_substituido: "", cargo: "", contrato: "",
+                      salario: "", escala: "", insalubridade_recebe: "Não", insalubridade_quanto: "",
+                    }));
                   }}>
                   <option value="">— Selecione —</option>
                   {MOTIVOS_VAGA.map(o => <option key={o}>{o}</option>)}
                 </select>
               </div>
-              {ehSubstituicao(vaga.motivo_vaga) && (
+              {!!vaga.motivo_vaga && (
                 <div className="ini-fg" style={{ position: "relative" }} onBlur={() => setTimeout(() => setShowEmpDrop(false), 150)}>
-                  <label>Colaborador a Substituir *</label>
+                  <label>{rotuloReferencia(vaga.motivo_vaga)} *</label>
                   <input className="ini-fi" placeholder="Digite o nome e escolha na lista..." value={empSearch} autoComplete="off"
-                    onChange={e => { const v = e.target.value; setEmpSearch(v); setSubstituidoId(null); setVaga(prev => ({ ...prev, nome_substituido: v, cargo: "", contrato: "" })); if (v.length >= 2) { setShowEmpDrop(true); buscarEmpregados(v); } else { setShowEmpDrop(false); setEmpregados([]); } }} />
+                    onChange={e => { const v = e.target.value; setEmpSearch(v); setSubstituidoId(null); setVaga(prev => ({ ...prev, nome_substituido: "", cargo: "", contrato: "", salario: "", escala: "" })); if (v.length >= 2) { setShowEmpDrop(true); buscarEmpregados(v); } else { setShowEmpDrop(false); setEmpregados([]); } }} />
                   {showEmpDrop && empSearch.length >= 2 && (
                     <div style={{ position: "absolute", top: "100%", left: 0, right: 0, zIndex: 999, background: "#fff", border: "1px solid #e2e8f0", borderRadius: 10, boxShadow: "0 8px 24px rgba(15,23,42,.14)", maxHeight: 220, overflowY: "auto", marginTop: 2 }}>
                       {loadingEmps ? <div style={{ padding: "12px", fontSize: 12, color: "#94a3b8", textAlign: "center" }}>Buscando...</div>
                         : empregados.length === 0 ? <div style={{ padding: "12px", fontSize: 12, color: "#94a3b8", textAlign: "center" }}>Nenhum colaborador encontrado.</div>
-                          : empregados.slice(0, 40).map((emp, i) => (
-                            <div key={i} onMouseDown={() => selecionarEmpregado(emp)} style={{ padding: "8px 12px", fontSize: 13, cursor: "pointer", borderBottom: "1px solid #f1f5f9", color: "#0f172a" }}
-                              onMouseEnter={e => (e.currentTarget.style.background = "#f0f4ff")} onMouseLeave={e => (e.currentTarget.style.background = "#fff")}>
+                          : empregados.slice(0, 40).map((emp, i) => {
+                            // Já tem vaga de substituição em pé: fica na lista
+                            // para a pessoa entender por que não pode escolher.
+                            const preso = ehSubstituicao(vaga.motivo_vaga) ? presos.get(Number(emp.ID)) : undefined;
+                            return (
+                            <div key={i} onMouseDown={() => selecionarEmpregado(emp)} style={{ padding: "8px 12px", fontSize: 13, cursor: preso ? "not-allowed" : "pointer", borderBottom: "1px solid #f1f5f9", color: preso ? "#94a3b8" : "#0f172a", background: preso ? "#f8fafc" : "#fff" }}
+                              onMouseEnter={e => { if (!preso) e.currentTarget.style.background = "#f0f4ff"; }} onMouseLeave={e => { e.currentTarget.style.background = preso ? "#f8fafc" : "#fff"; }}>
                               <div style={{ fontWeight: 600 }}>{emp.Nome}</div>
                               <div style={{ fontSize: 11, color: "#94a3b8" }}>{emp["Título do Cargo"]}{emp["Nome Filial"] ? ` · ${emp["Nome Filial"]}` : ""}</div>
+                              {preso && <div style={{ fontSize: 10.5, fontWeight: 800, color: "#b91c1c", marginTop: 2 }}>🚫 já está na vaga de substituição #{preso}</div>}
                             </div>
-                          ))}
+                            );
+                          })}
+                    </div>
+                  )}
+                  <div style={{ marginTop: 6, fontSize: 11.5, color: "#94a3b8" }}>{ajudaReferencia(vaga.motivo_vaga)}</div>
+                  {/* Sem nome: fora da Substituição o escolhido é só o molde da
+                      vaga, e é isso que a tela confirma. */}
+                  {!!substituidoId && !mostraNomeReferencia(vaga.motivo_vaga) && (
+                    <div style={{ marginTop: 6, fontSize: 11.5, fontWeight: 700, color: "#15803d", background: "#f0fdf4", border: "1px solid #bbf7d0", borderRadius: 8, padding: "6px 9px" }}>
+                      ✓ Colaborador escolhido — cargo, contrato e escala já vieram do cadastro dele.
                     </div>
                   )}
                 </div>
               )}
-              {/* Substituição: contrato e cargo vêm do cadastro do substituído e
-                  ficam travados — a vaga repõe aquele posto, não outro. */}
+              {/* Contrato e cargo vêm do cadastro do escolhido e ficam travados
+                  — a vaga é do posto dele, não de outro. */}
               <div className="ini-fg">
-                <label>Contrato *{ehSubstituicao(vaga.motivo_vaga) && <span style={{ color: "#94a3b8", fontWeight: 600 }}> — do colaborador substituído</span>}</label>
-                {ehSubstituicao(vaga.motivo_vaga) ? (
-                  <input className="ini-fi" readOnly value={vaga.contrato} placeholder="Escolha o colaborador acima"
-                    style={{ background: "#f1f5f9", color: "#475569", cursor: "not-allowed" }} />
-                ) : (
-                  <select className="ini-fi" value={vaga.contrato} onChange={e => setVaga(v => ({ ...v, contrato: e.target.value }))}>
-                    <option value="">— Selecione —</option>
-                    {contratos.map(c => <option key={c}>{c}</option>)}
-                  </select>
-                )}
+                <label>Contrato *<span style={{ color: "#94a3b8", fontWeight: 600 }}> — do colaborador escolhido</span></label>
+                <input className="ini-fi" readOnly value={vaga.contrato} placeholder="Escolha o colaborador acima"
+                  style={{ background: "#f1f5f9", color: "#475569", cursor: "not-allowed" }} />
               </div>
               <div className="ini-fg">
-                <label>Cargo *{ehSubstituicao(vaga.motivo_vaga) && <span style={{ color: "#94a3b8", fontWeight: 600 }}> — do colaborador substituído</span>}</label>
-                <input className="ini-fi" placeholder={ehSubstituicao(vaga.motivo_vaga) ? "Escolha o colaborador acima" : "Ex: Auxiliar de Limpeza, Vigilante..."}
-                  value={vaga.cargo} readOnly={ehSubstituicao(vaga.motivo_vaga)}
-                  style={ehSubstituicao(vaga.motivo_vaga) ? { background: "#f1f5f9", color: "#475569", cursor: "not-allowed" } : undefined}
-                  onChange={e => setVaga(v => ({ ...v, cargo: e.target.value }))} />
+                <label>Cargo *<span style={{ color: "#94a3b8", fontWeight: 600 }}> — do colaborador escolhido</span></label>
+                <input className="ini-fi" placeholder="Escolha o colaborador acima"
+                  value={vaga.cargo} readOnly
+                  style={{ background: "#f1f5f9", color: "#475569", cursor: "not-allowed" }} />
                 {cnhDoCargo && (
                   <div style={{ marginTop: 6, fontSize: 11.5, fontWeight: 700, color: "#b45309", background: "#fffbeb", border: "1px solid #fde68a", borderRadius: 8, padding: "6px 9px" }}>
                     🚗 {cnhDoCargo}: CNH obrigatória — já entra sozinha nos requisitos e não pode ser tirada.
@@ -763,7 +788,15 @@ export default function MinhasSolicitacoes({ abrir }: { abrir?: SolicitacaoInici
                 <div className="ini-fg"><label>Horário</label><input className="ini-fi" placeholder="Ex: 07h às 19h..." value={vaga.horario} onChange={e => setVaga(v => ({ ...v, horario: e.target.value }))} /></div>
               </div>
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-                <div className="ini-fg"><label>Salário</label><input className="ini-fi" placeholder="Ex: R$ 1.412,00" value={vaga.salario} onChange={e => setVaga(v => ({ ...v, salario: e.target.value }))} /></div>
+                {/* Salário: quem abre a vaga não vê o valor. Ele vem do cadastro
+                    do colaborador escolhido e segue na solicitação — só o
+                    Operacional e o Recrutamento, que aprovam, é que enxergam. */}
+                <div className="ini-fg">
+                  <label>Salário</label>
+                  <input className="ini-fi" readOnly value={vaga.salario ? SALARIO_MASCARA : ""} placeholder="Vem do cadastro do colaborador"
+                    style={{ background: "#f1f5f9", color: "#475569", cursor: "not-allowed", letterSpacing: 2 }} />
+                  <div style={{ marginTop: 4, fontSize: 11, color: "#94a3b8" }}>Visível só para o Operacional e o Recrutamento.</div>
+                </div>
                 <div className="ini-fg"><label>Insalubridade</label><select className="ini-fi" value={vaga.insalubridade_recebe} onChange={e => setVaga(v => ({ ...v, insalubridade_recebe: e.target.value }))}><option>Não</option><option>Sim</option></select></div>
               </div>
               {vaga.insalubridade_recebe === "Sim" && (

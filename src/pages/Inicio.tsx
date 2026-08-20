@@ -6,6 +6,7 @@ import { useAccessibleMenus, matchMenuCode } from "@/hooks/useAccessibleMenus";
 import { useModoExterno, ROTAS_EXTERNO } from "@/hooks/useModoExterno";
 import { ACESSO_ABERTO_SEM_PERMISSOES, MENUS_SEMPRE_RESTRITOS } from "@/lib/acesso";
 import { MinhasReunioesCard } from "@/pages/central-servicos/reunioes/componentes/MinhasReunioesCard";
+import { NovidadesPainel } from "@/components/novidades/NovidadesPainel";
 import fachadaImg from "@/assets/fachada.jpg";
 import {
   Gavel, FileSignature, ClipboardCheck, Wallet, Users, ShoppingCart,
@@ -292,6 +293,13 @@ export default function Inicio() {
         </div>
       </header>
 
+      {/* ══════════════════ Novidades do Sistema ════════════════════ */}
+      {/* Vem antes dos Favoritos de propósito: Favoritos é sempre igual, e
+          novidade só vale enquanto é novidade. */}
+      <div data-reveal className="ini-novidades">
+        <NovidadesPainel limite={4} />
+      </div>
+
       {/* ═════════════════════════ Favoritos ════════════════════════ */}
       <section className="ini-card" data-reveal ref={refCatalogo}>
         <div className="ini-card-hd">
@@ -446,6 +454,9 @@ function CartaoAtalho({
 /* ================================================================== */
 const CSS_INICIO = `
 .ini-page{flex:1;display:flex;flex-direction:column;min-width:0;}
+/* O painel de Novidades usa o CSS próprio dele (components/novidades); aqui
+   só entra o espaço que ele ocupa no fluxo da tela. */
+.ini-novidades{margin-bottom:22px;}
 
 /* ───────────────────────────── hero ───────────────────────────── */
 .ini-hero{position:relative;overflow:hidden;border-radius:20px;margin-bottom:22px;
