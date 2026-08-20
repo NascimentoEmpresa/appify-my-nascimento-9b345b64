@@ -39,10 +39,12 @@ export function fmtDate(dateStr: string | null | undefined): string {
   return `${d}/${m}/${y}`;
 }
 
-// SIS-2026-0168: "competencia" do malote_despesa é "YYYY-MM" — compara
-// direto com o Ano/Mês selecionado no filtro (mesmo formato).
+// SIS-2026-0168: "competencia" do malote_despesa é uma coluna `date`
+// (vem como "YYYY-MM-DD"), mas o Ano/Mês do filtro é "YYYY-MM" — comparar
+// os dois direto nunca batia, deixando "Utilizado" sempre zerado no
+// Orçamento Geral (achado no SIS-2026-0192, ao testar um lançamento real).
 export function competenciaNoPeriodo(competencia: string | null | undefined, anoMes: string): boolean {
-  return !!competencia && competencia === anoMes;
+  return !!competencia && competencia.slice(0, 7) === anoMes;
 }
 
 // % Utilizado só faz sentido com Orçado > 0 (regra combinada com o
