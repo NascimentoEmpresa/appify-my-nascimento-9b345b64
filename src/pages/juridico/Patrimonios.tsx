@@ -42,12 +42,13 @@ interface Obrigacao {
   vigencia_inicio?: string; vigencia_fim?: string; premio?: number; parcelas?: string;
   onde_pagar?: string; comprovante_path?: string; comprovante_nome?: string;
   valor_entrada?: number;
+  // Despesa criada no Malote a partir desta conta (migration 20260912000003).
+  malote_despesa_id?: string | null; enviado_malote_em?: string | null;
 }
 interface Parcela {
   id: number; patrimonio_id: number; ordem?: number; numero?: number; rotulo?: string;
   vencimento?: string; valor?: number; valor_pago?: number; situacao?: string;
   detalhes?: Record<string, any>; origem?: string;
-  malote_despesa_id?: string | null; enviado_malote_em?: string | null;
 }
 interface Acesso { id: number; patrimonio_id: number; servico?: string; link?: string; usuario?: string; local_senha?: string; observacao?: string; }
 interface Contato { id: number; patrimonio_id: number; tipo?: string; nome?: string; telefone?: string; email?: string; observacao?: string; }

@@ -40,10 +40,6 @@ const QUANTIDADE_PARCELAS = Array.from({ length: 24 }, (_, i) => i + 2);
 export default function CriarDespesa() {
   const [searchParams] = useSearchParams();
   const solicitacaoId = searchParams.get("solicitacaoId");
-  // Veio de uma conta do Patrimônio ("Pagar" lá manda para cá). O vínculo é
-  // o que tira aquela conta de "Pendente" e depois deixa ela saber que foi
-  // paga — ver src/pages/juridico/patrimonio/vinculoMalote.ts.
-  const obrigacaoPatrimonio = searchParams.get(PARAM_ORIGEM);
 
   if (solicitacaoId) {
     return <ConverterSolicitacaoEmDespesa solicitacaoId={solicitacaoId} />;
@@ -586,6 +582,10 @@ function PainelSolicitacao({
 // ============================================================================
 // Painel: Criar Despesa Malote (lançamento direto, sem solicitação)
 // ============================================================================
+// `origem_obrigacao` na URL = a despesa veio de uma conta do Patrimônio
+// ("Pagar" lá manda para cá). Gravar o vínculo é o que tira aquela conta de
+// "Pendente" e depois deixa ela saber que foi paga — ver
+// src/pages/juridico/patrimonio/vinculoMalote.ts.
 function PainelDespesaMalote({
   classificacaoId,
   classificacaoTipo,
@@ -609,6 +609,8 @@ function PainelDespesaMalote({
   inicial?: PrefillDespesa;
   onConvertida?: () => void;
 }) {
+  const [paramsUrl] = useSearchParams();
+  const obrigacaoPatrimonio = paramsUrl.get(PARAM_ORIGEM);
   const salvar = useSalvarDespesa();
   const converter = useConverterSolicitacaoEmDespesa();
   const [nome, setNome] = useState(nomeInicial ?? inicial?.nome ?? "");
