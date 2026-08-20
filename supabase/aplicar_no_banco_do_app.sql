@@ -14495,3 +14495,101 @@ NOTIFY pgrst, 'reload schema';
 --   DROP FUNCTION public.sistema_novidades_touch();
 --   DELETE FROM public.app_menu WHERE codigo = 'novidades_publicar';
 -- =========================================================================
+
+
+-- =========================================================================
+-- Patrimônio: parcelas de contrato nas Contas / Obrigações
+--
+-- Financiamento e Consórcio não são conta de mês: são um contrato com N
+-- parcelas. Cada parcela continua sendo UMA linha em
+-- JUR_PATRIMONIO_OBRIGACOES — é assim que ela aparece na lista de contas,
+-- vai para o Malote e recebe comprovante. O que faltava era saber que um
+-- punhado dessas linhas é o MESMO contrato.
+--
+-- Não usa a JUR_PATRIMONIO_PARCELAS: aquela tabela guarda o histórico
+-- importado do sistema antigo (1.219 linhas, presas ao patrimônio e sem
+-- ligação com obrigação), e não tem status/comprovante/Malote.
+-- =========================================================================
+
+ALTER TABLE public."JUR_PATRIMONIO_OBRIGACOES"
+  ADD COLUMN IF NOT EXISTS contrato_uid   uuid,
+  ADD COLUMN IF NOT EXISTS parcela_numero integer,
+  ADD COLUMN IF NOT EXISTS parcela_total  integer;
+
+COMMENT ON COLUMN public."JUR_PATRIMONIO_OBRIGACOES".contrato_uid IS
+  'Amarra as parcelas de um mesmo contrato (Financiamento/Consórcio). NULL nas contas avulsas.';
+COMMENT ON COLUMN public."JUR_PATRIMONIO_OBRIGACOES".parcela_numero IS
+  'Posição da parcela dentro do contrato (1..parcela_total).';
+COMMENT ON COLUMN public."JUR_PATRIMONIO_OBRIGACOES".parcela_total IS
+  'Quantas parcelas o contrato tem, para a tela mostrar "3/60".';
+
+CREATE INDEX IF NOT EXISTS jur_patr_obr_contrato_idx
+  ON public."JUR_PATRIMONIO_OBRIGACOES" (patrimonio_id, contrato_uid)
+  WHERE contrato_uid IS NOT NULL;
+
+-- "Valor que falta" do patrimônio passa a ser a soma das parcelas NÃO PAGAS
+-- de Financiamento/Consórcio, calculada na hora. A coluna
+-- JUR_PATRIMONIOS.valor_falta continua existindo (é o número que veio da
+-- importação), mas deixa de ser o que a tela mostra: ninguém a atualizava
+-- quando uma parcela era paga.
+COMMENT ON COLUMN public."JUR_PATRIMONIOS".valor_falta IS
+  'LEGADO da importação. A tela calcula o que falta somando as parcelas em aberto de Financiamento/Consórcio nas obrigações.';
+
+NOTIFY pgrst, 'reload schema';
+
+-- =========================================================================
+-- ROLLBACK
+--   DROP INDEX public.jur_patr_obr_contrato_idx;
+--   ALTER TABLE public."JUR_PATRIMONIO_OBRIGACOES"
+--     DROP COLUMN contrato_uid, DROP COLUMN parcela_numero, DROP COLUMN parcela_total;
+-- =========================================================================
+
+
+-- =========================================================================
+-- Patrimônio: coordenada por imóvel (o mapa deixa de ser um pino por cidade)
+--
+-- Hoje o mapa põe UM pino por cidade, de uma tabela de coordenadas fixa: dez
+-- imóveis em Triunfo viram um pino só no centro de Triunfo. O Jurídico quer
+-- ver cada endereço no lugar dele.
+--
+-- A coordenada fica GRAVADA aqui, não resolvida a cada abertura de tela:
+-- geocodificar é chamada a serviço externo, e repetir isso a cada F5 seria
+-- lento, frágil e abusivo com o Nominatim. Grava uma vez, usa sempre.
+--
+-- `geo_endereco` guarda o texto que gerou a coordenada. É ele que diz se
+-- precisa refazer: mudou o endereço no cadastro, a coordenada está velha.
+-- =========================================================================
+
+ALTER TABLE public."JUR_PATRIMONIOS"
+  ADD COLUMN IF NOT EXISTS latitude      double precision,
+  ADD COLUMN IF NOT EXISTS longitude     double precision,
+  ADD COLUMN IF NOT EXISTS geo_endereco  text,
+  ADD COLUMN IF NOT EXISTS geo_status    text,
+  ADD COLUMN IF NOT EXISTS geo_em        timestamptz;
+
+COMMENT ON COLUMN public."JUR_PATRIMONIOS".latitude IS
+  'Latitude do imóvel. Preenchida pelo botão "Localizar endereços" (Nominatim/OpenStreetMap) ou digitada à mão no cadastro.';
+COMMENT ON COLUMN public."JUR_PATRIMONIOS".longitude IS
+  'Longitude do imóvel. Ver latitude.';
+COMMENT ON COLUMN public."JUR_PATRIMONIOS".geo_endereco IS
+  'Endereço exatamente como estava quando a coordenada foi obtida. Se o cadastro mudar, a tela sabe que precisa localizar de novo.';
+COMMENT ON COLUMN public."JUR_PATRIMONIOS".geo_status IS
+  'ok = achou pelo endereço; manual = coordenada digitada por alguém; nao_encontrado = o serviço não achou (fica no pino da cidade e não é tentado de novo sozinho).';
+COMMENT ON COLUMN public."JUR_PATRIMONIOS".geo_em IS
+  'Quando a coordenada foi definida.';
+
+-- Só quem tem coordenada entra no índice: a maioria das consultas do mapa
+-- filtra exatamente por isso.
+CREATE INDEX IF NOT EXISTS jur_patrimonios_geo_idx
+  ON public."JUR_PATRIMONIOS" (latitude, longitude)
+  WHERE latitude IS NOT NULL AND longitude IS NOT NULL;
+
+NOTIFY pgrst, 'reload schema';
+
+-- =========================================================================
+-- ROLLBACK
+--   DROP INDEX public.jur_patrimonios_geo_idx;
+--   ALTER TABLE public."JUR_PATRIMONIOS"
+--     DROP COLUMN latitude, DROP COLUMN longitude,
+--     DROP COLUMN geo_endereco, DROP COLUMN geo_status, DROP COLUMN geo_em;
+-- =========================================================================
