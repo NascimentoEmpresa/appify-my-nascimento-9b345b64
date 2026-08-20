@@ -597,9 +597,9 @@ export default function Patrimonios() {
   const paginaAtual = Math.min(pagina, totalPaginas);
   const pagFatia = listaFiltrada.slice((paginaAtual - 1) * POR_PAGINA, paginaAtual * POR_PAGINA);
 
-  // KPIs da carteira. "Em compras" é o que foi contratado; "em caixa" é o que
-  // já saiu (entrada + reforços + parcelas pagas), que é a leitura de quanto
-  // do patrimônio já é da empresa de fato.
+  // KPIs da carteira: o quanto foi contratado e o quanto ainda falta pagar.
+  // Os dois vêm da mesma régua da tabela — contrato do cadastro, falta das
+  // parcelas em aberto — para o topo da tela e a coluna nunca discordarem.
   const somar = (f: (p: Patrimonio) => number | undefined) =>
     listaFiltrada.reduce((s, p) => s + (Number(f(p)) || 0), 0);
   // "Valor que falta" NÃO sai mais de JUR_PATRIMONIOS.valor_falta: aquilo veio
@@ -610,7 +610,6 @@ export default function Patrimonios() {
   const faltaDe = (id: number) => faltaPorPatrimonio.get(Number(id)) ?? 0;
   const totalContratos = somar(p => p.valor_contrato);
   const totalFalta = listaFiltrada.reduce((acc, p) => acc + faltaDe(p.id), 0);
-  const totalEmCaixa = somar(p => p.valor_total);
   const qtdPagando = listaFiltrada.filter(p => String(p.situacao_pagamento ?? "").toUpperCase().startsWith("PAGANDO")).length;
   const qtdPagos = listaFiltrada.filter(p => String(p.situacao_pagamento ?? "").toUpperCase() === "PAGO").length;
   const pct = (v: number, total: number) => total > 0 ? `${(v / total * 100).toFixed(2).replace(".", ",")}% do total` : "—";
@@ -679,8 +678,11 @@ export default function Patrimonios() {
             {card("Total de Patrimônios", listaFiltrada.length, "#0f3171", "100% do total")}
             {card("Patrimônios Pagando", qtdPagando, "#2563eb", pct(qtdPagando, listaFiltrada.length))}
             {card("Patrimônios Quitados", qtdPagos, "#7c3aed", pct(qtdPagos, listaFiltrada.length))}
-            {card("Valor Total em Compras", money(totalContratos), "#ea580c", "100% do total")}
-            {card("Valor Total em Caixa", money(totalEmCaixa), "#dc2626", pct(totalEmCaixa, totalContratos))}
+            {card("Valor Total dos Contratos", money(totalContratos), "#ea580c", "Somatório do valor de contrato cadastrado")}
+            {/* Mesma conta da coluna "Valor que falta": parcelas em aberto de
+                Financiamento/Consórcio. O apoio mostra quanto isso é do
+                contratado, que é a leitura de quanto já foi quitado. */}
+            {card("Valor Total que Falta Pagar", money(totalFalta), "#dc2626", pct(totalFalta, totalContratos))}
           </>)}
         </div>
 
