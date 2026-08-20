@@ -312,14 +312,34 @@ const ACOES_DO_TOGGLE_PADRAO: readonly AppAcao[] =
 // eslint-disable-next-line @typescript-eslint/no-unused-vars -- assinatura mantida: os dois lugares que gravam permissão chamam por menu.
 const ACOES_DO_TOGGLE = (_codigo: string): AppAcao[] => [...ACOES_DO_TOGGLE_PADRAO];
 
-// Ações que ganham switch independente (fora do pacote fixo de ACOES_POR_MENU)
-// pra menus "comuns" — onde o switch principal continua significando só
-// "enxerga a tela", mas incluir/alterar/excluir precisam de um jeito de
-// conceder por pessoa sem precisar virar Administrador Geral. Menus que já
-// têm um pacote próprio em ACOES_POR_MENU (Recrutamento, Patrimônio etc.)
-// ficam de fora — o switch principal deles já cuida disso.
-const ACOES_EXTRAS: readonly AppAcao[] = ["incluir", "alterar", "excluir"];
-const temAcoesExtras = (codigo: string) => !(codigo in ACOES_POR_MENU);
+// Ações que ganham switch INDEPENDENTE, uma por menu.
+//
+// É exatamente o complemento de ACOES_DO_TOGGLE_PADRAO, derivado dele em vez
+// de escrito à mão. Duas razões:
+//
+//   1. As duas listas não podem se sobrepor. Se uma ação estivesse nas duas, o
+//      switch principal e o switch da ação gravariam a MESMA linha em
+//      screen_permission_user, e o último a salvar venceria — o admin liga a
+//      ação, depois mexe no switch da tela e a ação some sozinha.
+//   2. Derivar impede que envelheça. Quando alguém mudar o pacote padrão, os
+//      extras se ajustam sozinhos; uma lista manual vira mentira em silêncio,
+//      que foi como `ACOES_POR_MENU` sobreviveu em comentários depois de
+//      deletada.
+//
+// Na prática hoje isto dá `excluir`, `executar_ia` e `alterar_dre`: as três
+// que o toggle não concede de propósito, e para as quais o único caminho era
+// virar Administrador Geral — a gambiarra que este painel existe para evitar.
+const TODAS_AS_ACOES: readonly AppAcao[] = [
+  "visualizar", "incluir", "alterar", "excluir", "aprovar", "exportar", "executar_ia", "alterar_dre",
+];
+const ACOES_EXTRAS: readonly AppAcao[] =
+  TODAS_AS_ACOES.filter((a) => !ACOES_DO_TOGGLE_PADRAO.includes(a));
+
+// Todo menu tem ações extras agora. Antes a lista fixa de 7 menus
+// (`ACOES_POR_MENU`) ficava de fora porque o pacote próprio dela já cobria
+// incluir/alterar; esse pacote virou o padrão de todo menu em 17/08/2026 e a
+// exceção deixou de existir junto com a constante.
+const TEM_ACOES_EXTRAS = ACOES_EXTRAS.length > 0;
 const ACAO_LABEL: Record<AppAcao, string> = {
   visualizar: "Visualizar", incluir: "Incluir", alterar: "Alterar", excluir: "Excluir",
   aprovar: "Aprovar", exportar: "Exportar", executar_ia: "Executar IA", alterar_dre: "Alterar DRE",
@@ -375,16 +395,23 @@ function UserAccessPanel({ podeGerenciar, modulos, menus }: { podeGerenciar: boo
     enabled: !!selectedUserId,
     staleTime: 30_000,
     queryFn: async () => {
-      const resultados = await Promise.all(
-        ACOES_EXTRAS.map((acao) =>
-          supabase.rpc("list_accessible_menus", { _user: selectedUserId as string, _acao: acao, _empresa: null })
-            .then(({ data, error }) => {
-              if (error) { console.warn("effective menus (ação extra) error", acao, error); return [acao, new Set<string>()] as const; }
-              return [acao, new Set<string>((data ?? []).map((r: any) => r.menu_codigo))] as const;
-            }),
-        ),
-      );
-      return new Map<AppAcao, Set<string>>(resultados);
+      if (!ACOES_EXTRAS.length) return new Map<AppAcao, Set<string>>();
+      try {
+        const resultados = await Promise.all(
+          ACOES_EXTRAS.map((acao) =>
+            supabase.rpc("list_accessible_menus", { _user: selectedUserId as string, _acao: acao, _empresa: null })
+              .then(({ data, error }) => {
+                if (error) { console.warn("effective menus (ação extra) error", acao, error); return [acao, new Set<string>()] as const; }
+                return [acao, new Set<string>((data ?? []).map((r: any) => r.menu_codigo))] as const;
+              })
+              .catch((err) => { console.warn("effective menus (ação extra) catch", acao, err); return [acao, new Set<string>()] as const; }),
+          ),
+        );
+        return new Map<AppAcao, Set<string>>(resultados);
+      } catch (err) {
+        console.warn("effectiveAcoesQ error", err);
+        return new Map<AppAcao, Set<string>>();
+      }
     },
   });
 
@@ -439,8 +466,9 @@ function UserAccessPanel({ podeGerenciar, modulos, menus }: { podeGerenciar: boo
     setIsSaving(true);
     try {
       for (const [codigo, allow] of pending) {
-        // No Recrutamento (e menus com pacote próprio em ACOES_POR_MENU) o
-        // toggle vale por todas as ações do pacote, não só "ver".
+        // O toggle da tela vale pelo pacote inteiro de trabalho, não só "ver"
+        // (ACOES_DO_TOGGLE_PADRAO). As ações de fora do pacote têm switch
+        // próprio e são gravadas no laço de `pendingAcoes`, logo abaixo.
         const acoes = ACOES_DO_TOGGLE(codigo);
         const { error: delErr } = await supabase.from("screen_permission_user").delete()
           .eq("user_id", selectedUserId).eq("menu_codigo", codigo)
@@ -610,7 +638,7 @@ function UserAccessPanel({ podeGerenciar, modulos, menus }: { podeGerenciar: boo
                       const isForm = mn.codigo === FORM_MENU_CODIGO;
                       const isReunioes = mn.codigo === REUNIOES_MENU_CODIGO;
                       const capsOpen = expanded.has(mn.id);
-                      const comAcoesExtras = temAcoesExtras(mn.codigo);
+                      const comAcoesExtras = TEM_ACOES_EXTRAS;
                       const acoesKey = `${mn.id}::acoes`;
                       const acoesOpen = expanded.has(acoesKey);
                       return (
@@ -780,9 +808,10 @@ function PessoasComAcessoAoMenu({ menuCodigo, podeGerenciar }: { menuCodigo: str
   const [busca, setBusca] = useState("");
   const [pending, setPending] = useState<Map<string, boolean>>(new Map());
   const [isSaving, setIsSaving] = useState(false);
-  // Menus com pacote próprio (ACOES_POR_MENU, ex.: Recrutamento) só mostram
-  // "Visualizar" aqui — o pacote de ações deles é tratado à parte, sem seletor.
-  const podeTrocarAcao = temAcoesExtras(menuCodigo);
+  // Todo menu mostra o seletor de ação: a exceção antiga eram os menus com
+  // pacote próprio (`ACOES_POR_MENU`), que deixou de existir quando o pacote
+  // virou o padrão de todos.
+  const podeTrocarAcao = true;
   const [acao, setAcao] = useState<AppAcao>("visualizar");
   const ACOES_SELETOR: readonly AppAcao[] = ["visualizar", "incluir", "alterar", "excluir"];
 
