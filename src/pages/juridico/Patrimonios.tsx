@@ -10,6 +10,7 @@ import { useAuth } from "@/hooks/useAuth";
 import { MapaPatrimonios } from "./patrimonio/MapaPatrimonios";
 import { CLASSIFICACOES, ESPECIES_ESCRITURA, SITUACOES_PAGAMENTO, corSituacao } from "./patrimonio/carteira";
 import { coordenadaValida } from "./patrimonio/geo";
+import { PARAM_ORIGEM, despesaEstaPaga } from "./patrimonio/vinculoMalote";
 
 // =====================================================================
 // JURÍDICO — Gestão Patrimonial e Obrigações
@@ -41,6 +42,8 @@ interface Obrigacao {
   vigencia_inicio?: string; vigencia_fim?: string; premio?: number; parcelas?: string;
   onde_pagar?: string; comprovante_path?: string; comprovante_nome?: string;
   valor_entrada?: number;
+  // Despesa criada no Malote a partir desta conta (migration 20260912000003).
+  malote_despesa_id?: string | null; enviado_malote_em?: string | null;
 }
 interface Parcela {
   id: number; patrimonio_id: number; ordem?: number; numero?: number; rotulo?: string;
@@ -76,12 +79,28 @@ const PERIOD_STEP: Record<string, number> = { Mensal: 1, Bimestral: 2, Trimestra
 const addMonthsISO = (iso: string, n: number) => { const d = new Date(iso + "T12:00:00"); d.setMonth(d.getMonth() + n); return d.toISOString().slice(0, 10); };
 const MESES_PT = ["Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho", "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro"];
 const mesLabel = (ym: string) => { const [y, m] = String(ym).split("-"); return `${MESES_PT[+m - 1] ?? m}/${y}`; };
-// Status efetivo da obrigação (deriva "Vencido" quando passou do vencimento e não foi pago).
-const statusObr = (o: Obrigacao): "Pago" | "Vencido" | "Pendente" => {
-  if (o.status === "Pago") return "Pago";
+export type StatusConta = "Pago" | "Enviado ao Malote" | "Vencido" | "Pendente";
+
+/**
+ * Status efetivo da conta.
+ *
+ * "Pago" NÃO é digitado no Patrimônio quando a conta foi pelo Malote: quem
+ * sabe se o dinheiro saiu é o Malote, e `paga` chega de lá
+ * (malote_despesa.status = despesa_paga). Guardar esse estado nas duas
+ * tabelas seria garantir que uma hora elas discordam.
+ *
+ * A ordem importa: uma conta já paga não deve voltar a "Vencido" só porque a
+ * data passou, e uma conta que está no Malote não é "Pendente" — está andando.
+ */
+const statusObr = (o: Obrigacao, malotePaga?: (id?: string | null) => boolean): StatusConta => {
+  if (o.status === "Pago") return "Pago";                       // baixa manual, com comprovante
+  if (o.malote_despesa_id) return malotePaga?.(o.malote_despesa_id) ? "Pago" : "Enviado ao Malote";
   if (o.vencimento && o.vencimento < hoje()) return "Vencido";
   return "Pendente";
 };
+
+const corConta = (st: StatusConta): string =>
+  st === "Pago" ? "#16a34a" : st === "Enviado ao Malote" ? "#2563eb" : st === "Vencido" ? "#dc2626" : "#ea580c";
 
 const PATRIM_RESET = {
   codigo: "", tipo: "Imóvel", descricao: "", localizacao: "", placa: "", cidade: "",
@@ -150,20 +169,38 @@ export default function Patrimonios() {
   // Parcelas do contrato (Financiamento/Consórcio). Só existem ao CRIAR: abrir
   // uma parcela para editar mexe naquela linha, não no contrato inteiro.
   const [parcelasContrato, setParcelasContrato] = useState<LinhaParcela[]>([]);
+  // despesa do Malote -> já paga? Alimenta o selo "Pago" das contas enviadas.
+  const [malotePago, setMalotePago] = useState<Map<string, boolean>>(new Map());
   const [pagarAlvo, setPagarAlvo] = useState<Obrigacao | null>(null);
   const [pagarFile, setPagarFile] = useState<File | null>(null);
 
   const toast = (msg: string, t = "info") => { const id = Date.now() + Math.random(); setToasts(x => [...x, { id, msg, t }]); setTimeout(() => setToasts(x => x.filter(i => i.id !== id)), 3200); };
+
+  // Quais despesas do Malote já estão pagas. O Patrimônio não guarda esse
+  // estado: pergunta ao Malote, que é quem sabe se o dinheiro saiu. A RPC
+  // devolve só id/status/pago_em das despesas pedidas — a tela não precisa
+  // (nem recebe) o resto da despesa.
+  const carregarStatusMalote = useCallback(async (linhas: Obrigacao[]) => {
+    const ids = [...new Set(linhas.map(x => x.malote_despesa_id).filter(Boolean))] as string[];
+    if (!ids.length) { setMalotePago(new Map()); return; }
+    const { data, error } = await (supabase as any).rpc("jur_patrimonio_status_malote", { _ids: ids });
+    if (error) { console.warn("status do malote:", error.message); return; }
+    const m = new Map<string, boolean>();
+    (data ?? []).forEach((d: any) => m.set(String(d.despesa_id), despesaEstaPaga(d)));
+    setMalotePago(m);
+  }, []);
 
   // ── Carregar lista + indicadores ───────────────────────────────
   const load = useCallback(async () => {
     setLoading(true);
     const [{ data: p }, { data: o }] = await Promise.all([
       (supabase as any).from("JUR_PATRIMONIOS").select("*").order("created_at", { ascending: false }),
-      (supabase as any).from("JUR_PATRIMONIO_OBRIGACOES").select("id,patrimonio_id,categoria,descricao,valor,vencimento,status,pago_em,vigencia_fim,onde_pagar,comprovante_path,comprovante_nome"),
+      (supabase as any).from("JUR_PATRIMONIO_OBRIGACOES").select("id,patrimonio_id,categoria,descricao,valor,vencimento,status,pago_em,vigencia_fim,onde_pagar,comprovante_path,comprovante_nome,malote_despesa_id,enviado_malote_em"),
     ]);
-    setPats(p ?? []); setObrAll(o ?? []); setLoading(false);
-  }, []);
+    setPats(p ?? []); setObrAll(o ?? []);
+    await carregarStatusMalote(o ?? []);
+    setLoading(false);
+  }, []);   // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { load(); }, [load]);
 
   // Empregados do setor Jurídico que estão Trabalhando (para o select de responsável).
@@ -298,6 +335,9 @@ export default function Patrimonios() {
   const recarregarObrs = async () => { if (!sel) return; const { data } = await (supabase as any).from("JUR_PATRIMONIO_OBRIGACOES").select("*").eq("patrimonio_id", sel.id).order("vencimento"); setObrs(data ?? []); load(); };
   const recarregarHist = async () => { if (!sel) return; const { data } = await (supabase as any).from("JUR_PATRIMONIO_ITENS").select("*").eq("kind", "historico").eq("patrimonio_id", sel.id).order("created_at", { ascending: false }).limit(50); setHist(data ?? []); };
   const recarregarComentarios = async () => { if (!sel) return; const { data } = await (supabase as any).from("SISTEMA_COMENTARIOS").select("*").eq("modulo", "patrimonio").eq("entidade_id", String(sel.id)).order("created_at", { ascending: false }); setComentarios(data ?? []); };
+
+  const estaPagaNoMalote = useCallback((id?: string | null) => !!id && malotePago.get(String(id)) === true, [malotePago]);
+  const statusDaConta = useCallback((o: Obrigacao) => statusObr(o, estaPagaNoMalote), [estaPagaNoMalote]);
 
   // ── Obrigação ──────────────────────────────────────────────────
   const abrirNovaObr = () => { setObrEditId(null); setObr({ ...OBR_RESET }); setParcelasContrato([]); setModalObr(true); };
@@ -451,6 +491,9 @@ export default function Patrimonios() {
       // Onde pagar guarda ora o link, ora a linha digitável; no Malote isso é
       // "Informações de pagamento", que é onde o financeiro procura.
       info: o.onde_pagar || "",
+      // O Malote devolve o vínculo: ao criar a despesa, ele carimba
+      // malote_despesa_id nesta conta e ela vira "Enviado ao Malote".
+      [PARAM_ORIGEM]: String(o.id),
     });
     nav(`/app/malote/criar-despesa?${q.toString()}`);
   };
@@ -908,7 +951,7 @@ export default function Patrimonios() {
 
         {/* ── LANÇAMENTO DE CONTAS ── */}
         {viewPag === "contas" && (() => {
-          const pendente = (o: Obrigacao) => statusObr(o) !== "Pago";
+          const pendente = (o: Obrigacao) => statusDaConta(o) !== "Pago";
           // Um cartão por patrimônio COM conta, mais o cartão do todo. A
           // contagem é de pendentes: é o que faz alguém abrir a tela.
           const cartoes = pats
@@ -963,8 +1006,8 @@ export default function Patrimonios() {
                 <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
                   <tbody>
                     {[...contasMes].sort((a, b) => String(a.vencimento || "").localeCompare(String(b.vencimento || ""))).map(o => {
-                      const st = statusObr(o);
-                      const cor = st === "Pago" ? "#16a34a" : st === "Vencido" ? "#dc2626" : "#ea580c";
+                      const st = statusDaConta(o);
+                      const cor = corConta(st);
                       return (
                         <tr key={o.id} style={{ borderTop: "1px solid #f1f5f9" }}>
                           <td style={{ padding: "10px 16px" }}>
@@ -1124,7 +1167,7 @@ export default function Patrimonios() {
                   <button className="jp-btn" onClick={abrirNovaObr} style={{ marginLeft: "auto", background: "#0f3171", color: "#fff" }}>+ Nova obrigação</button>
                 </div>
                 {obrsFiltradas.length === 0 ? <div style={{ color: "#94a3b8", fontSize: 13, padding: 20, textAlign: "center" }}>{mesObr ? `Nenhuma conta em ${mesLabel(mesObr)}.` : "Nenhuma obrigação cadastrada."}</div> : obrsFiltradas.map(o => {
-                  const st = statusObr(o); const cor = st === "Pago" ? "#16a34a" : st === "Vencido" ? "#dc2626" : "#ea580c";
+                  const st = statusDaConta(o); const cor = corConta(st);
                   return (
                     <div key={o.id} style={{ background: "#fff", border: "1px solid #e2e8f0", borderRadius: 11, padding: "12px 14px", marginBottom: 8 }}>
                       <div style={{ display: "flex", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>

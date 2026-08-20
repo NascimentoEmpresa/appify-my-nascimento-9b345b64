@@ -14593,3 +14593,96 @@ NOTIFY pgrst, 'reload schema';
 --     DROP COLUMN latitude, DROP COLUMN longitude,
 --     DROP COLUMN geo_endereco, DROP COLUMN geo_status, DROP COLUMN geo_em;
 -- =========================================================================
+
+
+-- =========================================================================
+-- Patrimônio × Malote: a conta sabe que virou despesa, e sabe quando foi paga
+--
+-- Hoje "Pagar" só navega para o Malote com os campos preenchidos: a conta
+-- fica em "Pendente" para sempre, mesmo depois de a despesa ser criada e
+-- paga lá. Quem olha o patrimônio não tem como saber em que pé está.
+--
+-- `malote_despesa_id` é o vínculo. Com ele:
+--   • assim que a despesa é criada no Malote, a conta vira "Enviado ao Malote";
+--   • o "Pago" NÃO é digitado aqui — é lido do lado do Malote
+--     (malote_despesa.status = 'despesa_paga'), que é quem sabe se o dinheiro
+--     saiu. Duplicar esse estado nas duas tabelas é garantir divergência.
+-- =========================================================================
+
+ALTER TABLE public."JUR_PATRIMONIO_OBRIGACOES"
+  ADD COLUMN IF NOT EXISTS malote_despesa_id  uuid,
+  ADD COLUMN IF NOT EXISTS enviado_malote_em  timestamptz;
+
+COMMENT ON COLUMN public."JUR_PATRIMONIO_OBRIGACOES".malote_despesa_id IS
+  'Despesa criada no Malote a partir desta conta. Enquanto existir e não estiver paga, a conta aparece como "Enviado ao Malote"; quando a despesa vira despesa_paga, a conta aparece como "Pago".';
+COMMENT ON COLUMN public."JUR_PATRIMONIO_OBRIGACOES".enviado_malote_em IS
+  'Quando a despesa foi criada no Malote a partir desta conta.';
+
+CREATE INDEX IF NOT EXISTS jur_patr_obr_malote_idx
+  ON public."JUR_PATRIMONIO_OBRIGACOES" (malote_despesa_id)
+  WHERE malote_despesa_id IS NOT NULL;
+
+-- A tela do Patrimônio precisa LER o status da despesa vinculada. A RLS do
+-- malote_despesa é do módulo Malote e não vai ser afrouxada por causa disto:
+-- esta função devolve só id/status/pago_em das despesas pedidas, que é o
+-- mínimo para desenhar o selo, e nada mais da despesa.
+CREATE OR REPLACE FUNCTION public.jur_patrimonio_status_malote(_ids uuid[])
+RETURNS TABLE (despesa_id uuid, status text, pago_em timestamptz)
+LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public AS $$
+  SELECT d.id, d.status, d.pago_em
+    FROM public.malote_despesa d
+   WHERE d.id = ANY(_ids)
+$$;
+
+REVOKE ALL ON FUNCTION public.jur_patrimonio_status_malote(uuid[]) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.jur_patrimonio_status_malote(uuid[]) TO authenticated;
+
+NOTIFY pgrst, 'reload schema';
+
+-- =========================================================================
+-- ROLLBACK
+--   DROP FUNCTION public.jur_patrimonio_status_malote(uuid[]);
+--   DROP INDEX public.jur_patr_obr_malote_idx;
+--   ALTER TABLE public."JUR_PATRIMONIO_OBRIGACOES"
+--     DROP COLUMN malote_despesa_id, DROP COLUMN enviado_malote_em;
+-- =========================================================================
+
+
+-- =========================================================================
+-- Aperta a jur_patrimonio_status_malote (criada em 20260912000003)
+--
+-- Como nasceu, ela respondia sobre QUALQUER despesa cujo id fosse informado:
+-- é SECURITY DEFINER e está concedida a `authenticated`, então quem tivesse
+-- um uuid de despesa na mão descobria se ela foi paga, mesmo sem acesso ao
+-- Malote. Uuid não se adivinha, mas o contrato da função ficava mais largo
+-- que o uso — e função de contorno de RLS tem que responder exatamente o que
+-- a tela precisa, nada além.
+--
+-- Agora ela só fala de despesa que ESTÁ VINCULADA a uma conta de patrimônio,
+-- que é o único caso para o qual existe. Migration nova em vez de editar a
+-- anterior, que já está aplicada no banco (regra R4).
+-- =========================================================================
+
+CREATE OR REPLACE FUNCTION public.jur_patrimonio_status_malote(_ids uuid[])
+RETURNS TABLE (despesa_id uuid, status text, pago_em timestamptz)
+LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public AS $$
+  SELECT d.id, d.status, d.pago_em
+    FROM public.malote_despesa d
+   WHERE d.id = ANY(_ids)
+     AND EXISTS (
+       SELECT 1 FROM public."JUR_PATRIMONIO_OBRIGACOES" o
+        WHERE o.malote_despesa_id = d.id
+     )
+$$;
+
+COMMENT ON FUNCTION public.jur_patrimonio_status_malote(uuid[]) IS
+  'Status de pagamento das despesas do Malote que estão vinculadas a contas de patrimônio. Devolve só id/status/pago_em: é o mínimo para a tela do Patrimônio desenhar o selo "Enviado ao Malote" / "Pago" sem afrouxar a RLS do Malote.';
+
+REVOKE ALL ON FUNCTION public.jur_patrimonio_status_malote(uuid[]) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.jur_patrimonio_status_malote(uuid[]) TO authenticated;
+
+NOTIFY pgrst, 'reload schema';
+
+-- =========================================================================
+-- ROLLBACK: voltar ao corpo da 20260912000003 (sem o EXISTS).
+-- =========================================================================

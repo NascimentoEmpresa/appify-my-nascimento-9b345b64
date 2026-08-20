@@ -12,6 +12,7 @@ import { LayoutGrid, Package, Lock, ShoppingCart, FileEdit, ArrowLeft } from "lu
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { useEmpresaId } from "@/hooks/useEmpresaId";
+import { vincularContaAoMalote, PARAM_ORIGEM } from "@/pages/juridico/patrimonio/vinculoMalote";
 import { TipoClassificacaoOrcamento, usePlanejamentosOrcamento } from "@/hooks/usePlanejamentoOrcamentario";
 import { useRubricasVinculadas, RubricaVinculada } from "@/hooks/useRubricasMalote";
 import { usePlanilhaCustos, resolverValorPorCampos } from "@/hooks/usePlanilhaCusto";
@@ -581,6 +582,10 @@ function PainelSolicitacao({
 // ============================================================================
 // Painel: Criar Despesa Malote (lançamento direto, sem solicitação)
 // ============================================================================
+// `origem_obrigacao` na URL = a despesa veio de uma conta do Patrimônio
+// ("Pagar" lá manda para cá). Gravar o vínculo é o que tira aquela conta de
+// "Pendente" e depois deixa ela saber que foi paga — ver
+// src/pages/juridico/patrimonio/vinculoMalote.ts.
 function PainelDespesaMalote({
   classificacaoId,
   classificacaoTipo,
@@ -604,6 +609,8 @@ function PainelDespesaMalote({
   inicial?: PrefillDespesa;
   onConvertida?: () => void;
 }) {
+  const [paramsUrl] = useSearchParams();
+  const obrigacaoPatrimonio = paramsUrl.get(PARAM_ORIGEM);
   const salvar = useSalvarDespesa();
   const converter = useConverterSolicitacaoEmDespesa();
   const [nome, setNome] = useState(nomeInicial ?? inicial?.nome ?? "");
@@ -707,6 +714,15 @@ function PainelDespesaMalote({
           valor_total: Number(totalMes),
           arquivos: paths,
         });
+      }
+
+      if (obrigacaoPatrimonio) {
+        const vinculo = await vincularContaAoMalote(obrigacaoPatrimonio, despesaId);
+        // Falhar aqui não desfaz a despesa, que já existe e é o que importa:
+        // avisa para alguém religar o vínculo, em vez de engolir o erro.
+        if (!vinculo.ok && vinculo.erro) {
+          toast.warning("Despesa criada, mas a conta do Patrimônio não foi marcada como enviada: " + vinculo.erro);
+        }
       }
 
       if (paraEnviar && despesaIdExistente) {
