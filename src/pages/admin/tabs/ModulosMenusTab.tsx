@@ -621,6 +621,14 @@ function UserAccessPanel({ podeGerenciar, modulos, menus }: { podeGerenciar: boo
             // era menu desligado (21 dos 192 estão assim). Quem quiser liberá-lo
             // ativa o menu primeiro, na aba Módulos & Menus.
             const modMenus = menus.filter((x) => x.modulo_id === m.id && x.ativo);
+            // Menus DESLIGADOS do módulo. Não entram em modMenus (não são
+            // liberáveis), mas precisam aparecer: desde que o acesso passou a
+            // negar por padrão, menu desligado BLOQUEIA a tela — e como o
+            // painel os escondia, o admin marcava tudo o que via, o usuário
+            // continuava sem acesso, e não havia nada na tela que explicasse.
+            // Foi assim que "não consigo delegar chamado mesmo com tudo
+            // marcado" virou um mistério (era chamados_sistemas desligado).
+            const modMenusInativos = menus.filter((x) => x.modulo_id === m.id && !x.ativo);
             const open = expanded.has(m.id);
             const moduloAccess = hasAccess(m.codigo);
             const liberados = modMenus.filter((mn) => hasAccess(mn.codigo)).length;
@@ -749,6 +757,28 @@ function UserAccessPanel({ podeGerenciar, modulos, menus }: { podeGerenciar: boo
                         </div>
                       );
                     })}
+
+                    {/* Telas DESLIGADAS do módulo. Sem switch de propósito:
+                        permissão não vence menu desligado — o acesso é negado
+                        antes de olhar permissão. Aparecem só para o admin
+                        entender por que a tela não abre "mesmo com tudo
+                        marcado", em vez de ficar procurando um menu que o
+                        painel escondia. */}
+                    {modMenusInativos.length > 0 && (
+                      <div className="border-t border-border/60 bg-muted/30 px-12 py-2.5">
+                        <p className="text-[11px] font-medium text-muted-foreground">
+                          Telas desligadas neste módulo — o acesso é negado a todos, e marcar
+                          permissão aqui não teria efeito. Para reativar, use a aba Catálogo.
+                        </p>
+                        <div className="mt-1.5 space-y-1">
+                          {modMenusInativos.map((mn) => (
+                            <p key={mn.id} className="text-[11px] font-mono text-muted-foreground/80">
+                              {mn.nome} · {mn.codigo}{mn.rota ? ` · ${mn.rota}` : ""}
+                            </p>
+                          ))}
+                        </div>
+                      </div>
+                    )}
                   </div>
                 )}
               </div>

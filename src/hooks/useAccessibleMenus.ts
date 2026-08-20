@@ -22,6 +22,7 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 export interface MenuRoute {
   codigo: string;
   rota: string;
+  ativo: boolean;
 }
 
 export function useAccessibleMenus(acao: string = "visualizar") {
@@ -68,7 +69,7 @@ export function useAccessibleMenus(acao: string = "visualizar") {
 
       const routes: MenuRoute[] = menus
         .filter((m) => !!m.rota)
-        .map((m) => ({ codigo: m.codigo, rota: m.rota as string }));
+        .map((m) => ({ codigo: m.codigo, rota: m.rota as string, ativo: m.ativo }));
 
       // Códigos desativados no Catálogo: o RouteGuard nega, e a Sidebar não
       // lista. Um menu desativado é uma tela fora do ar, não uma tela pública.
@@ -84,14 +85,32 @@ export function useAccessibleMenus(acao: string = "visualizar") {
   });
 }
 
-/** Best-effort match of a pathname to an app_menu code (longest-prefix). */
+/**
+ * Best-effort match of a pathname to an app_menu code (longest-prefix).
+ *
+ * Desempate por ATIVO, e isso não é detalhe: a mesma rota aparece cadastrada
+ * duas vezes em vários lugares — uma entrada viva e uma sobra desativada de
+ * quando a tela mudou de módulo (ex.: /app/rh/recrutamento existe como
+ * `recrutamento` em RH, inativo, e como `recrutamento_gestao` em Recrutamento
+ * e Seleção, ativo). Sem o desempate, a ordem que o banco devolveu decidia
+ * quem vencia; se viesse a inativa, o RouteGuard bloqueava a tela e o painel
+ * de acesso não resolvia — porque lá só aparece a ativa, e conceder nela não
+ * mudava o casamento. Foi assim que "Gestão e Recrutamento" sumiu da sidebar.
+ *
+ * Regra: entre dois casamentos de mesmo comprimento, o ATIVO ganha. Comprimento
+ * maior continua tendo prioridade sobre tudo (rota mais específica).
+ */
 export function matchMenuCode(pathname: string, routes: MenuRoute[]): string | null {
-  let best: { code: string; len: number } | null = null;
-  for (const { codigo, rota } of routes) {
+  let best: { code: string; len: number; ativo: boolean } | null = null;
+  for (const { codigo, rota, ativo } of routes) {
     // Normalize dynamic segments like /:id by comparing only up to the first ":"
     const base = rota.split("/:")[0];
     if (pathname === rota || pathname === base || pathname.startsWith(base + "/")) {
-      if (!best || base.length > best.len) best = { code: codigo, len: base.length };
+      const melhor =
+        !best ||
+        base.length > best.len ||
+        (base.length === best.len && ativo && !best.ativo);
+      if (melhor) best = { code: codigo, len: base.length, ativo };
     }
   }
   return best?.code ?? null;
