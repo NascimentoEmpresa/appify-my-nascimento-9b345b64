@@ -34,10 +34,13 @@ describe("rotaSempreLiberada", () => {
     expect(rotaSempreLiberada("/app/meu-perfil/discord")).toBe(true);
   });
 
-  it("libera abrir chamado — é o canal para pedir o acesso que falta", () => {
-    expect(rotaSempreLiberada("/app/sistemas/chamados")).toBe(true);
-    expect(rotaSempreLiberada("/app/sistemas/chamados/novo")).toBe(true);
-    expect(rotaSempreLiberada("/app/central-servicos/chamados/novo")).toBe(true);
+  it("NÃO libera /app/sistemas — é a área dos desenvolvedores do ERP", () => {
+    // Esteve liberada por engano, como "canal pra pedir acesso". Só enxerga
+    // quem receber a permissão no painel.
+    expect(rotaSempreLiberada("/app/sistemas")).toBe(false);
+    expect(rotaSempreLiberada("/app/sistemas/chamados")).toBe(false);
+    expect(rotaSempreLiberada("/app/sistemas/chamados/novo")).toBe(false);
+    expect(rotaSempreLiberada("/app/sistemas/desenvolvedores")).toBe(false);
   });
 
   it("libera os avisos do sistema, que a sidebar mostra para todos", () => {
