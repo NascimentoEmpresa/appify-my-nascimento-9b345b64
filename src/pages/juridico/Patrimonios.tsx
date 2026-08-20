@@ -495,6 +495,7 @@ export default function Patrimonios() {
       // malote_despesa_id nesta conta e ela vira "Enviado ao Malote".
       [PARAM_ORIGEM]: String(o.id),
     });
+    toast("Complete a despesa no Malote e envie para aprovação — a conta só sai de Pendente depois disso.", "info");
     nav(`/app/malote/criar-despesa?${q.toString()}`);
   };
   // Baixa manual: a conta foi paga por fora e o que falta é o comprovante.
@@ -752,7 +753,7 @@ export default function Patrimonios() {
                     <div style={{ display: "flex", alignItems: "center", gap: 10, flexShrink: 0, flexWrap: "wrap" }}>
                       <span style={{ fontWeight: 800, color: "#0f172a" }}>{money(o.valor)}</span>
                       <span style={{ fontSize: 11, fontWeight: 800, padding: "2px 10px", borderRadius: 20, background: atrasada ? "#fee2e2" : "#ffedd5", color: atrasada ? "#dc2626" : "#ea580c" }}>{atrasada ? `Vencida há ${Math.abs(dias)}d` : dias === 0 ? "Vence hoje" : `Vence em ${dias}d`} · {fmtDt(venc)}</span>
-                      <button className="jp-btn" onClick={() => pagarConta(o)} style={{ background: "#0f3171", color: "#fff", border: "1px solid #0f3171", padding: "4px 12px", fontWeight: 700 }}>Pagar</button>
+                      <button className="jp-btn" title="Abre o Malote com os dados desta conta já preenchidos. A conta só sai de Pendente quando você concluir o envio lá." onClick={() => pagarConta(o)} style={{ background: "#0f3171", color: "#fff", border: "1px solid #0f3171", padding: "4px 12px", fontWeight: 700 }}>Enviar ao Malote</button>
                       <button className="jp-btn" title="Já foi paga por fora: anexar o comprovante e dar baixa" onClick={() => baixarConta(o)} style={{ background: "#f0fdf4", color: "#15803d", border: "1px solid #bbf7d0", padding: "4px 10px", fontWeight: 700 }}>✓ Baixar</button>
                     </div>
                   </div>
@@ -1026,7 +1027,7 @@ export default function Patrimonios() {
                           <td style={{ padding: "10px 16px", textAlign: "right", whiteSpace: "nowrap" }}>
                             <div style={{ display: "inline-flex", gap: 6 }}>
                               {o.comprovante_path && <button className="jp-btn" title="Ver comprovante" onClick={() => verComprovante(o)} style={{ background: "#eef4ff", color: "#0f3171", border: "1px solid #dbe4f0", padding: "5px 9px" }}>📎</button>}
-                              {st !== "Pago" && <button className="jp-btn" title="Abre a despesa no Malote com os dados desta conta" onClick={() => pagarConta(o)} style={{ background: "#0f3171", color: "#fff", border: "1px solid #0f3171", padding: "5px 13px", fontWeight: 700 }}>Pagar</button>}
+                              {st !== "Pago" && <button className="jp-btn" title="Abre o Malote com os dados desta conta já preenchidos. A conta só sai de Pendente quando você concluir o envio lá." onClick={() => pagarConta(o)} style={{ background: "#0f3171", color: "#fff", border: "1px solid #0f3171", padding: "5px 13px", fontWeight: 700 }}>Enviar ao Malote</button>}
                               {st !== "Pago" && <button className="jp-btn" title="Já foi paga por fora: anexar o comprovante e dar baixa" onClick={() => baixarConta(o)} style={{ background: "#f0fdf4", color: "#15803d", border: "1px solid #bbf7d0", padding: "5px 10px", fontWeight: 700 }}>✓</button>}
                             </div>
                           </td>
@@ -1188,7 +1189,7 @@ export default function Patrimonios() {
                         <span style={{ fontSize: 11, fontWeight: 800, height: "fit-content", padding: "2px 10px", borderRadius: 20, background: cor + "20", color: cor }}>{st}</span>
                       </div>
                       <div style={{ display: "flex", gap: 6, marginTop: 10, flexWrap: "wrap" }}>
-                        {st !== "Pago" && <button className="jp-btn" onClick={() => pagarConta(o)} style={{ background: "#0f3171", color: "#fff", border: "1px solid #0f3171", padding: "5px 11px", fontWeight: 700 }}>Pagar</button>}{st !== "Pago" && <button className="jp-btn" title="Já foi paga por fora: anexar o comprovante e dar baixa" onClick={() => baixarConta(o)} style={{ background: "#f0fdf4", color: "#15803d", border: "1px solid #bbf7d0", padding: "5px 10px", fontWeight: 700 }}>✓</button>}
+                        {st !== "Pago" && <button className="jp-btn" title="Abre o Malote com os dados desta conta já preenchidos. A conta só sai de Pendente quando você concluir o envio lá." onClick={() => pagarConta(o)} style={{ background: "#0f3171", color: "#fff", border: "1px solid #0f3171", padding: "5px 11px", fontWeight: 700 }}>Enviar ao Malote</button>}{st !== "Pago" && <button className="jp-btn" title="Já foi paga por fora: anexar o comprovante e dar baixa" onClick={() => baixarConta(o)} style={{ background: "#f0fdf4", color: "#15803d", border: "1px solid #bbf7d0", padding: "5px 10px", fontWeight: 700 }}>✓</button>}
                         {o.comprovante_path && <button className="jp-btn" onClick={() => verComprovante(o)} style={{ background: "#eef4ff", color: "#0f3171", border: "1px solid #dbe4f0", padding: "5px 11px" }}>📎 Comprovante</button>}
                         <button className="jp-btn" onClick={() => abrirEditarObr(o)} style={{ background: "#f1f5f9", color: "#475569", padding: "5px 11px" }}>Editar</button>
                         {(o.status === "Pago" && o.comprovante_path)
