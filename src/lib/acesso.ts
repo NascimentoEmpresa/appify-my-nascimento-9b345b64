@@ -27,21 +27,22 @@ export const MENUS_SEMPRE_RESTRITOS = new Set(["administracao", "integracao", "i
 /**
  * Rotas que TODO usuário autenticado acessa, sem depender de permissão.
  *
- * Existem porque o sistema passou a NEGAR POR PADRÃO: rota sem cadastro em
- * app_menu, ou menu sem permissão pra pessoa, é bloqueada. Sem esta lista, um
- * usuário recém-criado não conseguiria nem ver o próprio perfil nem abrir
- * chamado pra pedir acesso — ficaria preso sem caminho de saída.
+ * Existem porque o sistema NEGA POR PADRÃO: rota sem cadastro em app_menu, ou
+ * menu sem permissão pra pessoa, é bloqueada. Sem esta lista, um usuário
+ * recém-criado ficaria sem nem ver o próprio perfil.
  *
- * Não são "furos": nenhuma delas expõe dado de terceiro. O perfil é do próprio
- * usuário (RLS filtra por auth.uid()) e a abertura de chamado é justamente o
- * canal para pedir o acesso que falta.
+ * Não são "furos": nenhuma expõe dado de terceiro. O perfil é do próprio
+ * usuário (RLS filtra por auth.uid()) e os avisos são o changelog do ERP.
+ *
+ * O que NÃO entra aqui, por decisão explícita:
+ *   /app/sistemas/*  — área dos desenvolvedores do ERP. Só quem receber a
+ *                      permissão no painel enxerga. Esteve nesta lista por
+ *                      engano meu, como "canal pra pedir acesso".
  *
  * Mantenha curta. Tela de negócio NÃO entra aqui — entra em app_menu.
  */
 export const ROTAS_SEMPRE_LIBERADAS = [
   "/app/meu-perfil",
-  "/app/sistemas/chamados",
-  "/app/central-servicos/chamados/novo",
   // Avisos do sistema (changelog do ERP). A sidebar mostra o item para todo
   // mundo, então sem estar aqui o clique dava "Acesso negado".
   "/app/novidades",
