@@ -38,6 +38,8 @@ import {
   DespesaEvento,
   TipoEvento,
 } from "@/hooks/useMaloteDespesa";
+import { useOrcadoClassificacao } from "@/hooks/useOrcadoClassificacao";
+import { anoMesAtual } from "@/hooks/usePlanilhaCusto";
 import { RateioGrid, DimensoesRateio } from "./RateioGrid";
 import { FluxoAprovacaoVisual } from "./FluxoAprovacaoVisual";
 
@@ -180,6 +182,13 @@ export default function DespesaVisualizar() {
 
   const despesa = data?.despesa;
 
+  // Orçado da Classificação no período da despesa (SIS-2026-0132/0168) —
+  // usado só pra decidir se a aprovação escalona pro próximo nível ou vai
+  // direto pro pagamento (a % de alçada do aprovador nunca bloqueia o
+  // aprovador de agir, só decide o destino depois de aprovado).
+  const anoMesDespesa = despesa?.competencia ? despesa.competencia.slice(0, 7) : anoMesAtual();
+  const { resolver: resolverOrcado } = useOrcadoClassificacao(despesa?.empresa_id, anoMesDespesa);
+
   useEffect(() => {
     if (!despesa) return;
     setValorAprovado(despesa.valor_aprovado != null ? String(despesa.valor_aprovado) : String(despesa.valor_total));
@@ -217,10 +226,35 @@ export default function DespesaVisualizar() {
   const podeReprovarComoAprovadorPassado =
     configurado && ((despesa.status === "pendente_aprovacao" && !souAprovadorNivelAtual) || despesa.status === "aguardando_pagamento");
   const souAprovadorVendoAjuste = despesa.status === "necessidade_de_ajuste" && configurado && !souSolicitante;
-  const proximoNivelConfigurado =
+  const proximoNivelExiste =
     despesa.nivel_aprovacao_atual != null && despesa.nivel_aprovacao_atual < 3
       ? aprovadorDoNivel(despesa, (despesa.nivel_aprovacao_atual + 1) as 1 | 2 | 3) != null
       : false;
+
+  // % de alçada (SIS-2026-0132, cadastrado desde sempre mas nunca
+  // consumido): o aprovador do nível atual SEMPRE pode aprovar/reprovar,
+  // independente do valor — a % só decide se, ao aprovar, a despesa
+  // escalona pro próximo nível ou vai direto pro pagamento. Orçado
+  // desconhecido ou limite não cadastrado nunca bloqueia (trata como sem
+  // trava, pra não quebrar classificações que nunca preencheram o campo).
+  const orcadoClassificacao = resolverOrcado(despesa.classificacao_id, despesa.contrato_id);
+  const alcadaNivelAtual = (() => {
+    const c = despesa.classificacao;
+    const nivel = despesa.nivel_aprovacao_atual;
+    if (!c || !nivel) return { semLimite: true, limitePct: null as number | null };
+    if (nivel === 1) return { semLimite: !!c.aprovador1_sem_limite, limitePct: c.aprovador1_limite_pct ?? null };
+    if (nivel === 2) return { semLimite: !!c.aprovador2_sem_limite, limitePct: c.aprovador2_limite_pct ?? null };
+    return { semLimite: !!c.aprovador3_sem_limite, limitePct: c.aprovador3_limite_pct ?? null };
+  })();
+  const valorParaAlcada = Number(valorAprovado) || despesa.valor_total;
+  const percentualDoOrcado = orcadoClassificacao ? (valorParaAlcada / orcadoClassificacao) * 100 : null;
+  const dentroDaAlcada =
+    alcadaNivelAtual.semLimite ||
+    alcadaNivelAtual.limitePct == null ||
+    orcadoClassificacao == null ||
+    percentualDoOrcado == null ||
+    percentualDoOrcado <= alcadaNivelAtual.limitePct;
+  const proximoNivelConfigurado = proximoNivelExiste && !dentroDaAlcada;
 
   // Pagamento Malote (SIS-2026-0160) — elegibilidade resolvida só pelo
   // gerenciamento de acesso (usePodePagarMalote), não por linha da despesa.

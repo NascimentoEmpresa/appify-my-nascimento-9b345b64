@@ -44,17 +44,51 @@ export default function CriarDespesa() {
     return <ConverterSolicitacaoEmDespesa solicitacaoId={solicitacaoId} />;
   }
 
-  return <CriarDespesaNova />;
+  // Prefill por querystring: outra tela manda a despesa já montada (hoje é o
+  // "Pagar" do Patrimônio) e o usuário confere aqui em vez de redigitar. É a
+  // MESMA tela do Malote — clonar o formulário faria as regras de aprovação,
+  // rateio e parcelamento existirem em dois lugares.
+  const inicial: PrefillDespesa = {
+    rubrica: searchParams.get("rubrica") ?? "",
+    nome: searchParams.get("nome") ?? "",
+    valor: searchParams.get("valor") ?? "",
+    dataPagamento: searchParams.get("pagamento") ?? "",
+    competencia: searchParams.get("competencia") ?? "",
+    formaPagamento: searchParams.get("forma") ?? "",
+    informacoesPagamento: searchParams.get("info") ?? "",
+  };
+
+  return <CriarDespesaNova inicial={inicial} />;
 }
+
+/** O que outra tela pode mandar pronto para a despesa do Malote. */
+export interface PrefillDespesa {
+  rubrica?: string; nome?: string; valor?: string; dataPagamento?: string;
+  competencia?: string; formaPagamento?: string; informacoesPagamento?: string;
+}
+
+const semAcento = (s: string) => s.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().trim();
 
 // ============================================================================
 // Fluxo normal: escolher classificação e preencher Solicitação OU Despesa
 // ============================================================================
-function CriarDespesaNova() {
+function CriarDespesaNova({ inicial }: { inicial?: PrefillDespesa }) {
   const navigate = useNavigate();
   const { data: empresaId } = useEmpresaId();
   const { data: rubricas = [] } = useRubricasVinculadas();
   const [rubricaId, setRubricaId] = useState("");
+
+  // Casa a rubrica pedida com a lista assim que ela carrega. Se o nome não
+  // bater com nenhuma, o campo fica vazio de propósito: escolher a rubrica
+  // errada é pior do que pedir para a pessoa escolher.
+  const rubricaPedida = inicial?.rubrica ?? "";
+  useEffect(() => {
+    if (!rubricaPedida || rubricaId || rubricas.length === 0) return;
+    const alvo = semAcento(rubricaPedida);
+    const achou = rubricas.find((r) => semAcento(r.label) === alvo)
+      ?? rubricas.find((r) => semAcento(r.label).includes(alvo));
+    if (achou) setRubricaId(achou.id);
+  }, [rubricaPedida, rubricas, rubricaId]);
 
   const rubrica = rubricas.find((r) => r.id === rubricaId) ?? null;
   const classificacao = rubrica?.classificacaoMalote ?? null;
@@ -114,7 +148,7 @@ function CriarDespesaNova() {
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         <PainelSolicitacao rubrica={rubrica} empresaId={empresaId ?? null} ativo={modo === "solicitacao"} />
-        <PainelDespesaMalote classificacaoId={classificacao?.id ?? ""} classificacaoTipo={classificacao?.tipo ?? null} empresaId={empresaId ?? null} ativo={modo === "despesa"} />
+        <PainelDespesaMalote classificacaoId={classificacao?.id ?? ""} classificacaoTipo={classificacao?.tipo ?? null} empresaId={empresaId ?? null} ativo={modo === "despesa"} inicial={inicial} />
       </div>
 
       {!modo && (
@@ -556,6 +590,7 @@ function PainelDespesaMalote({
   origem = "despesa_unica",
   nomeInicial,
   valorInicial,
+  inicial,
   onConvertida,
 }: {
   classificacaoId: string;
@@ -566,16 +601,17 @@ function PainelDespesaMalote({
   origem?: OrigemDespesa;
   nomeInicial?: string;
   valorInicial?: number;
+  inicial?: PrefillDespesa;
   onConvertida?: () => void;
 }) {
   const salvar = useSalvarDespesa();
   const converter = useConverterSolicitacaoEmDespesa();
-  const [nome, setNome] = useState(nomeInicial ?? "");
-  const [totalMes, setTotalMes] = useState(valorInicial != null ? String(valorInicial) : "");
-  const [dataPagamento, setDataPagamento] = useState("");
-  const [competencia, setCompetencia] = useState("");
-  const [formaPagamento, setFormaPagamento] = useState("");
-  const [informacoesPagamento, setInformacoesPagamento] = useState("");
+  const [nome, setNome] = useState(nomeInicial ?? inicial?.nome ?? "");
+  const [totalMes, setTotalMes] = useState(valorInicial != null ? String(valorInicial) : (inicial?.valor ?? ""));
+  const [dataPagamento, setDataPagamento] = useState(inicial?.dataPagamento ?? "");
+  const [competencia, setCompetencia] = useState(inicial?.competencia ?? "");
+  const [formaPagamento, setFormaPagamento] = useState(inicial?.formaPagamento ?? "");
+  const [informacoesPagamento, setInformacoesPagamento] = useState(inicial?.informacoesPagamento ?? "");
   const [dimensoes, setDimensoes] = useState<DimensoesRateio>({ empresa: false, contrato: false, fornecedor: false, integrante: false });
   const [ratearPor, setRatearPor] = useState<"percentual" | "valor">("percentual");
   const [linhasRateio, setLinhasRateio] = useState<RateioLinha[]>([]);
@@ -649,7 +685,12 @@ function PainelDespesaMalote({
       if (paraEnviar && despesaIdExistente) {
         despesaId = await converter.mutateAsync({ ...payloadBase, status: "pendente_aprovacao" });
       } else if (paraEnviar) {
-        despesaId = await salvar.mutateAsync({ ...payloadBase, status: "pendente_aprovacao" });
+        // Despesa nova indo direto pra pendente_aprovacao (sem passar pela
+        // conversão de solicitação, que já seta nivel_aprovacao_atual=1
+        // sozinha) — sem isso, nenhum aprovador configurado via
+        // Classificação era reconhecido como "aprovador do nível atual" e
+        // só o botão Reprovar aparecia.
+        despesaId = await salvar.mutateAsync({ ...payloadBase, status: "pendente_aprovacao", nivel_aprovacao_atual: 1 });
       } else {
         despesaId = await salvar.mutateAsync({ ...payloadBase, status: despesaIdExistente ? "cotacao_aprovada" : "rascunho" });
       }
