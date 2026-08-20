@@ -37,6 +37,7 @@ import { useUtilizadoOrcamento } from "@/hooks/useUtilizadoOrcamento";
 import { anoMesAtual } from "@/hooks/usePlanilhaCusto";
 import { AnexosField } from "./AnexosField";
 import { ComprasPassadas } from "@/components/malote/ComprasPassadas";
+import { ExcluirPermanentementeButton } from "./ExcluirPermanentementeButton";
 
 function fmtMoney(n: number | null | undefined): string {
   if (n == null) return "—";
@@ -304,9 +305,17 @@ export default function SolicitacaoVisualizar() {
         module="Malote"
         breadcrumb={["Malote", "Solicitação", "Visualizar"]}
         actions={
-          <Button variant="outline" onClick={() => navigate(-1)}>
-            <ArrowLeft className="h-4 w-4 mr-2" /> Voltar
-          </Button>
+          <div className="flex items-center gap-2">
+            <ExcluirPermanentementeButton
+              despesaId={despesa.id}
+              numero={despesa.numero}
+              menu="malote_solicitacao_visualizar"
+              voltarPara="/app/malote/meus-itens"
+            />
+            <Button variant="outline" onClick={() => navigate(-1)}>
+              <ArrowLeft className="h-4 w-4 mr-2" /> Voltar
+            </Button>
+          </div>
         }
       />
 
