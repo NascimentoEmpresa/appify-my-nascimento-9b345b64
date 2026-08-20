@@ -23,6 +23,91 @@ export const motivoLabel = (m?: string | null): string =>
 export const ehSubstituicao = (m?: string | null): boolean =>
   String(m ?? "").trim() === MOTIVO_SUBSTITUICAO;
 
+// ── Colaborador de referência ───────────────────────────────────────────
+// Todo motivo de vaga exige escolher alguém do cadastro: é de lá que saem
+// cargo, contrato, escala, salário e insalubridade — ninguém digita isso à
+// mão e ninguém erra o posto. A ÚNICA diferença entre os motivos é o nome:
+// em Substituição ele fica registrado na vaga (a vaga repõe aquela pessoa);
+// nos outros ele é só o molde e não aparece em lugar nenhum.
+export const rotuloReferencia = (m?: string | null): string =>
+  ehSubstituicao(m) ? "Colaborador a Substituir" : "Selecione alguém com o mesmo cargo";
+
+export const ajudaReferencia = (m?: string | null): string =>
+  ehSubstituicao(m)
+    ? "Cargo, contrato, escala e salário vêm do cadastro dele e não podem ser trocados."
+    : "Serve só de molde: cargo, contrato, escala e salário vêm do cadastro dele. O nome não fica na vaga.";
+
+/** O nome do escolhido só é exibido quando a vaga é de Substituição. */
+export const mostraNomeReferencia = (m?: string | null): boolean => ehSubstituicao(m);
+
+// ── Substituído só pode estar em UMA vaga ───────────────────────────────
+// Um colaborador não pode ser escolhido para substituição se já existe vaga
+// de substituição dele em pé. Reprovada e Cancelada não seguram ninguém: não
+// repõem o posto, e travar a pessoa por causa de uma vaga recusada só daria
+// trabalho pro RH. O piso é o banco (índice único parcial + trigger
+// `rec_substituido_unico`, migration 20260909000009) — aqui é para a tela
+// avisar ANTES de a pessoa preencher três etapas e tomar erro no fim.
+export const STATUS_VAGA_MORTA = ["Reprovada", "Cancelada"];
+
+export const vagaSeguraSubstituido = (status?: string | null): boolean =>
+  !STATUS_VAGA_MORTA.includes(String(status ?? "").trim());
+
+/**
+ * Dos IDs de empregado passados, quais já estão presos a uma vaga viva.
+ * Devolve empregado → número da vaga, para a tela poder dizer QUAL é.
+ *
+ * Recebe o client em vez de importá-lo: mantém este arquivo sem dependência
+ * de Supabase (é ele que os testes carregam) e serve as duas telas.
+ * Banco ainda sem a coluna: devolve vazio e a regra fica só no servidor.
+ */
+export async function substituidosComVagaViva(
+  sb: any, ids: number[],
+): Promise<Map<number, number>> {
+  const presos = new Map<number, number>();
+  const alvos = Array.from(new Set(ids.filter(n => Number.isFinite(n))));
+  if (!alvos.length) return presos;
+  const { data, error } = await sb.from("SISTEMA_RECRUTAMENTO")
+    .select("id, substituido_id, status")
+    .in("substituido_id", alvos);
+  if (error || !data) return presos;
+  for (const v of data as any[]) {
+    const emp = Number(v.substituido_id);
+    if (!Number.isFinite(emp) || !vagaSeguraSubstituido(v.status)) continue;
+    if (!presos.has(emp)) presos.set(emp, Number(v.id));
+  }
+  return presos;
+}
+
+export const avisoSubstituidoPreso = (vagaId: number): string =>
+  `Esse colaborador já está na vaga de substituição #${vagaId}. Só dá para abrir outra depois que aquela for concluída, cancelada ou reprovada.`;
+
+// ── Salário ─────────────────────────────────────────────────────────────
+// Quem ABRE a vaga (encarregado/solicitante) não vê salário — vê a máscara.
+// Operacional e Recrutamento, que aprovam, veem o valor.
+export const SALARIO_MASCARA = "****";
+
+// ── Contrato do empregado ───────────────────────────────────────────────
+/**
+ * Acha o contrato do empregado dentro da lista de CONTRATOS ativos.
+ *
+ * A ligação é pela Filial, mas UMA FILIAL PODE TER MAIS DE UM CONTRATO — a
+ * 1093, por exemplo, tem "LIMPEZA HUSM" e "ADM E ESTAGIARIOS - NH". Pegar o
+ * primeiro que o `find` achava trazia o contrato errado para metade da
+ * filial. No empate quem desempata é o `Nome Filial` do próprio empregado,
+ * que é onde o Senior grava o contrato dele.
+ */
+export function contratoDoEmpregado<T extends Record<string, any>>(
+  contratos: T[], emp: Record<string, any> | null | undefined,
+): T | null {
+  const filial = String(emp?.["Filial"] ?? "").trim();
+  if (!filial) return null;
+  const daFilial = contratos.filter(c => String(c.Filial ?? "").trim() === filial);
+  if (daFilial.length <= 1) return daFilial[0] ?? null;
+  const nomeFilial = String(emp?.["Nome Filial"] ?? "").trim().toUpperCase();
+  return daFilial.find(c => String(c["NOME CONTRATO"] ?? "").trim().toUpperCase() === nomeFilial)
+      ?? daFilial[0];
+}
+
 // ── Dias úteis ──────────────────────────────────────────────────────────
 // Seg–sex menos feriados NACIONAIS (ponto facultativo não conta como
 // feriado — é dia útil pra empresa). Feriado estadual/municipal não entra:
