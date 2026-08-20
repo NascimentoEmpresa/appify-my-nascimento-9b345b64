@@ -413,22 +413,28 @@ function UserAccessPanel({ podeGerenciar, modulos, menus }: { podeGerenciar: boo
     enabled: !!selectedUserId && acoesConsultadas.length > 0,
     staleTime: 30_000,
     queryFn: async () => {
-      try {
-        const resultados = await Promise.all(
-          acoesConsultadas.map((acao) =>
-            supabase.rpc("list_accessible_menus", { _user: selectedUserId as string, _acao: acao, _empresa: null })
-              .then(({ data, error }) => {
-                if (error) { console.warn("effective menus (ação) error", acao, error); return [acao, new Set<string>()] as const; }
-                return [acao, new Set<string>((data ?? []).map((r: any) => r.menu_codigo))] as const;
-              })
-              .catch((err) => { console.warn("effective menus (ação) catch", acao, err); return [acao, new Set<string>()] as const; }),
-          ),
-        );
-        return new Map<AppAcao, Set<string>>(resultados);
-      } catch (err) {
-        console.warn("effectiveAcoesQ error", err);
-        return new Map<AppAcao, Set<string>>();
-      }
+      // Uma RPC por ação, em paralelo. Cada uma isolada em try/catch: se uma
+      // falhar, as outras seguem e a tela abre com aquela ação em branco, em
+      // vez de o painel inteiro travar sem renderizar.
+      //
+      // async/await em vez de .then().catch() de propósito: o builder do
+      // Supabase devolve PromiseLike, que não tem .catch() — encadear ali
+      // compila no build (esbuild não checa tipo) mas quebra o tsc.
+      const resultados = await Promise.all(
+        acoesConsultadas.map(async (acao): Promise<readonly [AppAcao, Set<string>]> => {
+          try {
+            const { data, error } = await supabase.rpc("list_accessible_menus", {
+              _user: selectedUserId as string, _acao: acao, _empresa: null,
+            });
+            if (error) { console.warn("effective menus (ação) error", acao, error); return [acao, new Set<string>()]; }
+            return [acao, new Set<string>((data ?? []).map((r: any) => r.menu_codigo))];
+          } catch (err) {
+            console.warn("effective menus (ação) catch", acao, err);
+            return [acao, new Set<string>()];
+          }
+        }),
+      );
+      return new Map<AppAcao, Set<string>>(resultados);
     },
   });
 
