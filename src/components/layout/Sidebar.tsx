@@ -72,6 +72,8 @@ import { GitBranch, GitMerge } from "lucide-react";
 import { MessageSquare } from "lucide-react";
 import { Banknote } from "lucide-react";
 import { TrendingDown } from "lucide-react";
+import { Megaphone } from "lucide-react";
+import { useNovidades } from "@/hooks/useNovidades";
 import { cn } from "@/lib/utils";
 import { useCallback, useEffect, useMemo, useState, useContext } from "react";
 
@@ -832,6 +834,8 @@ export function Sidebar({ collapsed, mobileOpen = false, onMobileClose }: Sideba
   // query com 400. Só busca depois que o contexto termina de carregar.
   const { data: gradeAtivaCount } = useGradeAtivaCount(!empresaCtx?.loading ? empresaCtx?.empresa?.id ?? null : null);
   const chamadosNotif = useChamadosNotif();
+  // Contador das Novidades do Sistema: o mesmo número da bolinha do topo.
+  const { naoLidasCount: novidadesNaoLidas } = useNovidades();
 
   const allModules = [...erpModules, buildPlanoAcoesModule(false), integracaoModule];
 
@@ -1001,6 +1005,38 @@ export function Sidebar({ collapsed, mobileOpen = false, onMobileClose }: Sideba
               {isActive && <span className="sb-bar absolute left-0 top-1.5 bottom-1.5 w-0.5 rounded-r bg-accent" />}
               <Home className={cn("sb-ic h-4 w-4 shrink-0", isActive && "text-accent")} />
               {!collapsed && <span>Início</span>}
+            </>
+          )}
+        </NavLink>
+
+        {/* Novidades do Sistema — fica no topo, junto do Início: é sobre o
+            ERP, não sobre um módulo. A rota não está em app_menu, então é
+            visível para todo mundo (publicar é que depende do flag). */}
+        <NavLink
+          to="/app/novidades"
+          className={({ isActive }) =>
+            cn(
+              "sb-item mt-1 flex items-center gap-3 rounded-md px-3 py-2 text-sm font-bold",
+              isActive
+                ? "sb-on bg-sidebar-accent text-white"
+                : "text-white/85 hover:bg-sidebar-accent/60 hover:text-white",
+              collapsed && "justify-center px-2",
+            )
+          }
+          title={collapsed ? "Novidades do Sistema" : undefined}
+        >
+          {({ isActive }) => (
+            <>
+              {isActive && <span className="sb-bar absolute left-0 top-1.5 bottom-1.5 w-0.5 rounded-r bg-accent" />}
+              <Megaphone className={cn("sb-ic h-4 w-4 shrink-0", isActive && "text-accent")} />
+              {!collapsed && <span className="flex-1">Novidades do Sistema</span>}
+              {novidadesNaoLidas > 0 && (
+                collapsed
+                  ? <span className="absolute right-1 top-1 h-2 w-2 rounded-full bg-accent" />
+                  : <span className="rounded-full bg-accent px-1.5 py-0.5 text-[10px] font-black leading-none text-accent-foreground">
+                      {novidadesNaoLidas > 9 ? "9+" : novidadesNaoLidas}
+                    </span>
+              )}
             </>
           )}
         </NavLink>
