@@ -685,7 +685,12 @@ function PainelDespesaMalote({
       if (paraEnviar && despesaIdExistente) {
         despesaId = await converter.mutateAsync({ ...payloadBase, status: "pendente_aprovacao" });
       } else if (paraEnviar) {
-        despesaId = await salvar.mutateAsync({ ...payloadBase, status: "pendente_aprovacao" });
+        // Despesa nova indo direto pra pendente_aprovacao (sem passar pela
+        // conversão de solicitação, que já seta nivel_aprovacao_atual=1
+        // sozinha) — sem isso, nenhum aprovador configurado via
+        // Classificação era reconhecido como "aprovador do nível atual" e
+        // só o botão Reprovar aparecia.
+        despesaId = await salvar.mutateAsync({ ...payloadBase, status: "pendente_aprovacao", nivel_aprovacao_atual: 1 });
       } else {
         despesaId = await salvar.mutateAsync({ ...payloadBase, status: despesaIdExistente ? "cotacao_aprovada" : "rascunho" });
       }
