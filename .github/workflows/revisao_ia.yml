@@ -19,12 +19,28 @@ name: Revisão de PR por IA
 # certo: fork vira revisão humana. Não afeta o time, que trabalha em branches
 # deste repositório.
 
+# SEM `synchronize` de propósito — este é o maior corte de custo do arquivo.
+#
+# Com ele, a revisão rodava a cada push. Medido em 19/08: 32 execuções para 12
+# PRs mergeadas, quase 3x. Numa assinatura isso só gastava cota; numa API paga
+# é a maior linha da fatura, e revisar de novo um código que o autor ainda está
+# mexendo raramente muda o veredito.
+#
+# Consequência que o time precisa saber: se você corrigir um achado e empurrar
+# o commit, a revisão NÃO roda sozinha de novo. Para forçar, use um destes:
+#   • marcar a PR como rascunho e tirar de rascunho (dispara ready_for_review);
+#   • fechar e reabrir a PR (dispara reopened);
+#   • Actions → a execução da sua PR → "Re-run all jobs".
+#
+# Se o time sentir falta da revisão automática a cada push, o caminho não é
+# devolver `synchronize` cru: é medir quanto ele custa de fato com o número da
+# API em mãos e decidir com dado.
 on:
   pull_request:
-    types: [opened, synchronize, reopened, ready_for_review]
+    types: [opened, reopened, ready_for_review]
 
-# Push novo cancela a revisão anterior da mesma PR. Sem isso, uma sequência de
-# commits gasta a cota da assinatura revisando código que já foi substituído.
+# Segunda revisão da mesma PR cancela a anterior ainda em andamento. Continua
+# valendo para reopened/ready_for_review em sequência rápida.
 concurrency:
   group: revisao-ia-${{ github.event.pull_request.number }}
   cancel-in-progress: true
@@ -191,12 +207,29 @@ jobs:
           # Conta o que NÃO é texto/binário. Zero = a PR não tem código nenhum.
           CODIGO=$(grep -cvE '(\.(md|txt|xlsx|xls|csv|png|jpe?g|gif|webp|pdf|svgz?|ico|woff2?)$|^docs/)' arquivos-da-pr.txt || true)
 
+          # MODELO ÚNICO enquanto medimos o custo real na API paga.
+          #
+          # A ideia original era Sonnet no alto risco e Haiku no resto. Medido
+          # nas últimas 36 PRs mergeadas: 31 são alto risco, 5 baixo, nenhuma
+          # pulada — quase toda PR aqui encosta em migration ou tela de admin.
+          # O roteamento por modelo economizaria ~14%, o que não paga a
+          # complexidade de manter duas configurações.
+          #
+          # Então o risco continua decidindo DUAS coisas — pular a revisão e o
+          # teto de turnos —, mas o modelo é sempre o barato. Para voltar ao
+          # roteamento depois de conhecer o custo real, troque a linha do
+          # alto risco por `MODELO=claude-sonnet-5`.
+          #
+          # ATENÇÃO ao ID: é `claude-haiku-4-5`, sem sufixo de data. IDs com
+          # data (`-20251001`) são inválidos e a chamada falha.
+          MODELO=claude-haiku-4-5
+
           if [ "$ALTO" -gt 0 ]; then
-            RISCO=alto;   MODELO=claude-sonnet-5;          TURNOS=40
+            RISCO=alto;   TURNOS=40
           elif [ "$CODIGO" -eq 0 ]; then
-            RISCO=nenhum; MODELO=nenhum;                   TURNOS=0
+            RISCO=nenhum; MODELO=nenhum; TURNOS=0
           else
-            RISCO=baixo;  MODELO=claude-haiku-4-5-20251001; TURNOS=25
+            RISCO=baixo;  TURNOS=25
           fi
 
           {
@@ -352,11 +385,11 @@ jobs:
       # inteira, que foi jogada fora por não ter sido escrita em disco. Repetir
       # recupera esse trabalho.
       #
-      # Sonnet sempre, mesmo que a 1ª tenha sido Haiku: se o barato não deu
-      # conta, insistir com ele é pagar duas vezes pelo mesmo resultado.
-      #
-      # Quando a causa foi cota esgotada, esta tentativa é recusada na porta em
-      # menos de meio segundo e custo zero — não atrapalha nem encarece.
+      # Mesmo modelo barato da 1ª, com o teto de turnos bem maior. A causa
+      # dominante de falha era ficar sem turno, não falta de capacidade — então
+      # dar mais turno ao mesmo modelo resolve mais barato que subir de modelo.
+      # Se na prática a 2ª tentativa também falhar com frequência, aí sim vale
+      # trocar esta linha por `claude-sonnet-5`.
       - name: Revisar (2ª tentativa)
         id: claude_retry
         if: >-
@@ -369,7 +402,7 @@ jobs:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           claude_args: |
-            --model claude-sonnet-5
+            --model claude-haiku-4-5
             --max-turns 70
             --allowedTools "Read,Glob,Grep,Write"
           prompt: |
@@ -403,6 +436,10 @@ jobs:
           CLAUDE_RESULTADO: ${{ steps.claude.outcome }}
           CLAUDE_RETRY: ${{ steps.claude_retry.outcome }}
           RISCO: ${{ steps.risco.outputs.risco }}
+          # Modelo da 1ª tentativa vem do classificador; o da 2ª é fixo no
+          # step de retry. Mantenha os dois em sincronia se trocar de modelo.
+          MODELO_1: ${{ steps.risco.outputs.modelo }}
+          MODELO_2: claude-haiku-4-5
         run: |
           set -uo pipefail
 
@@ -521,12 +558,27 @@ jobs:
             fi
           fi
 
+          # O rodapé diz QUAL MODELO revisou. Sem isso a única forma de saber
+          # era abrir o log da Action, o que ninguém faz — e saber o modelo é o
+          # que permite julgar o peso da revisão (um achado do modelo barato
+          # merece mais conferência humana que um do caro) e perceber na hora
+          # se alguém mudou a configuração sem avisar.
+          if [ -z "${MODELO_1:-}" ] || [ "${MODELO_1:-}" = "nenhum" ]; then
+            # Diff vazio ou sem código: nenhum modelo foi chamado. Dizer o nome
+            # de um modelo aqui seria mentir sobre o que aconteceu.
+            CREDITO="Revisão automática (nenhum modelo chamado)"
+          elif [ "${CLAUDE_RETRY:-skipped}" != "skipped" ]; then
+            CREDITO="Revisão automática por \`$MODELO_1\` (1ª tentativa) + \`$MODELO_2\` (2ª)"
+          else
+            CREDITO="Revisão automática por \`$MODELO_1\`"
+          fi
+
           {
             echo "<!-- revisao-ia -->"
             cat corpo.md
             echo
             echo "---"
-            echo "_Revisão automática — regras em \`.github/REGRAS-PR.md\`. Para pular, use a label \`pular-revisao-ia\`._"
+            echo "_${CREDITO} — regras em \`.github/REGRAS-PR.md\`. Para pular, use a label \`pular-revisao-ia\`._"
           } > comentario.md
           gh pr comment "$PR" --edit-last --create-if-none --body-file comentario.md \
             || gh pr comment "$PR" --body-file comentario.md

@@ -312,34 +312,18 @@ const ACOES_DO_TOGGLE_PADRAO: readonly AppAcao[] =
 // eslint-disable-next-line @typescript-eslint/no-unused-vars -- assinatura mantida: os dois lugares que gravam permissão chamam por menu.
 const ACOES_DO_TOGGLE = (_codigo: string): AppAcao[] => [...ACOES_DO_TOGGLE_PADRAO];
 
-// Ações que ganham switch INDEPENDENTE, uma por menu.
+// Ordem canônica de exibição dos switches de ação. Serve só pra apresentação:
+// quais ações cada menu realmente tem vem da tabela `app_menu_acao`, populada
+// pela auditoria das três fontes de verdade (RLS, corpo das funções e chamadas
+// can() no frontend) — ver 20260910000002_app_menu_acao_relevante.sql.
 //
-// É exatamente o complemento de ACOES_DO_TOGGLE_PADRAO, derivado dele em vez
-// de escrito à mão. Duas razões:
-//
-//   1. As duas listas não podem se sobrepor. Se uma ação estivesse nas duas, o
-//      switch principal e o switch da ação gravariam a MESMA linha em
-//      screen_permission_user, e o último a salvar venceria — o admin liga a
-//      ação, depois mexe no switch da tela e a ação some sozinha.
-//   2. Derivar impede que envelheça. Quando alguém mudar o pacote padrão, os
-//      extras se ajustam sozinhos; uma lista manual vira mentira em silêncio,
-//      que foi como `ACOES_POR_MENU` sobreviveu em comentários depois de
-//      deletada.
-//
-// Na prática hoje isto dá `excluir`, `executar_ia` e `alterar_dre`: as três
-// que o toggle não concede de propósito, e para as quais o único caminho era
-// virar Administrador Geral — a gambiarra que este painel existe para evitar.
-const TODAS_AS_ACOES: readonly AppAcao[] = [
+// Antes esta lista era fixa e global: TODO menu mostrava os mesmos 3 switches
+// (Excluir / Executar IA / Alterar DRE), o que colocava "Alterar DRE" no
+// Suprimentos. Pior, 'executar_ia' e 'alterar_dre' não são checadas em canto
+// nenhum do sistema — aqueles dois switches nunca controlaram nada.
+const ORDEM_ACOES: readonly AppAcao[] = [
   "visualizar", "incluir", "alterar", "excluir", "aprovar", "exportar", "executar_ia", "alterar_dre",
 ];
-const ACOES_EXTRAS: readonly AppAcao[] =
-  TODAS_AS_ACOES.filter((a) => !ACOES_DO_TOGGLE_PADRAO.includes(a));
-
-// Todo menu tem ações extras agora. Antes a lista fixa de 7 menus
-// (`ACOES_POR_MENU`) ficava de fora porque o pacote próprio dela já cobria
-// incluir/alterar; esse pacote virou o padrão de todo menu em 17/08/2026 e a
-// exceção deixou de existir junto com a constante.
-const TEM_ACOES_EXTRAS = ACOES_EXTRAS.length > 0;
 const ACAO_LABEL: Record<AppAcao, string> = {
   visualizar: "Visualizar", incluir: "Incluir", alterar: "Alterar", excluir: "Excluir",
   aprovar: "Aprovar", exportar: "Exportar", executar_ia: "Executar IA", alterar_dre: "Alterar DRE",
@@ -388,30 +372,69 @@ function UserAccessPanel({ podeGerenciar, modulos, menus }: { podeGerenciar: boo
     },
   });
 
-  // Acesso efetivo das 3 ações extras, uma RPC por ação (mesma list_accessible_menus
-  // já usada acima, só variando _acao — sem SQL novo).
+  // Quais ações são REAIS em cada menu (app_menu_acao). Antes a tela mostrava os
+  // mesmos 3 switches em todo menu, e dois deles ('executar_ia'/'alterar_dre')
+  // não são checados em lugar nenhum do sistema — Suprimentos exibia
+  // "Alterar DRE" sem que aquilo controlasse coisa alguma.
+  const menuAcoesQ = useQuery({
+    queryKey: ["app-menu-acao"],
+    staleTime: 5 * 60_000,
+    queryFn: async () => {
+      const { data, error } = await (supabase as any).from("app_menu_acao").select("menu_codigo, acao");
+      if (error) { console.warn("app_menu_acao error", error); return new Map<string, AppAcao[]>(); }
+      const m = new Map<string, AppAcao[]>();
+      (data ?? []).forEach((r: any) => {
+        m.set(r.menu_codigo, [...(m.get(r.menu_codigo) ?? []), r.acao as AppAcao]);
+      });
+      // Ordem canônica pra os switches não dançarem de posição entre menus.
+      for (const [k, v] of m) m.set(k, ORDEM_ACOES.filter((a) => v.includes(a)));
+      return m;
+    },
+  });
+
+  // Ações com switch próprio neste menu: todas as reais menos 'visualizar'
+  // (que é o switch principal da linha).
+  const acoesDoMenu = useCallback(
+    (codigo: string): AppAcao[] => (menuAcoesQ.data?.get(codigo) ?? []).filter((a) => a !== "visualizar"),
+    [menuAcoesQ.data],
+  );
+
+  // União de tudo que pode aparecer — define quantas RPCs precisamos consultar.
+  const acoesConsultadas = useMemo<AppAcao[]>(() => {
+    const s = new Set<AppAcao>();
+    for (const lista of menuAcoesQ.data?.values() ?? []) lista.forEach((a) => { if (a !== "visualizar") s.add(a); });
+    return ORDEM_ACOES.filter((a) => s.has(a));
+  }, [menuAcoesQ.data]);
+
+  // Acesso efetivo por ação, uma RPC por ação (mesma list_accessible_menus já
+  // usada acima, só variando _acao — sem SQL novo).
   const effectiveAcoesQ = useQuery({
-    queryKey: ["effective-menus-acoes-for-user", selectedUserId],
-    enabled: !!selectedUserId,
+    queryKey: ["effective-menus-acoes-for-user", selectedUserId, acoesConsultadas.join(",")],
+    enabled: !!selectedUserId && acoesConsultadas.length > 0,
     staleTime: 30_000,
     queryFn: async () => {
-      if (!ACOES_EXTRAS.length) return new Map<AppAcao, Set<string>>();
-      try {
-        const resultados = await Promise.all(
-          ACOES_EXTRAS.map((acao) =>
-            supabase.rpc("list_accessible_menus", { _user: selectedUserId as string, _acao: acao, _empresa: null })
-              .then(({ data, error }) => {
-                if (error) { console.warn("effective menus (ação extra) error", acao, error); return [acao, new Set<string>()] as const; }
-                return [acao, new Set<string>((data ?? []).map((r: any) => r.menu_codigo))] as const;
-              })
-              .catch((err) => { console.warn("effective menus (ação extra) catch", acao, err); return [acao, new Set<string>()] as const; }),
-          ),
-        );
-        return new Map<AppAcao, Set<string>>(resultados);
-      } catch (err) {
-        console.warn("effectiveAcoesQ error", err);
-        return new Map<AppAcao, Set<string>>();
-      }
+      // Uma RPC por ação, em paralelo. Cada uma isolada em try/catch: se uma
+      // falhar, as outras seguem e a tela abre com aquela ação em branco, em
+      // vez de o painel inteiro travar sem renderizar.
+      //
+      // async/await em vez de .then().catch() de propósito: o builder do
+      // Supabase devolve PromiseLike, que não tem .catch() — encadear ali
+      // compila no build (esbuild não checa tipo) mas quebra o tsc.
+      const resultados = await Promise.all(
+        acoesConsultadas.map(async (acao): Promise<readonly [AppAcao, Set<string>]> => {
+          try {
+            const { data, error } = await supabase.rpc("list_accessible_menus", {
+              _user: selectedUserId as string, _acao: acao, _empresa: null,
+            });
+            if (error) { console.warn("effective menus (ação) error", acao, error); return [acao, new Set<string>()]; }
+            return [acao, new Set<string>((data ?? []).map((r: any) => r.menu_codigo))];
+          } catch (err) {
+            console.warn("effective menus (ação) catch", acao, err);
+            return [acao, new Set<string>()];
+          }
+        }),
+      );
+      return new Map<AppAcao, Set<string>>(resultados);
     },
   });
 
@@ -450,12 +473,29 @@ function UserAccessPanel({ podeGerenciar, modulos, menus }: { podeGerenciar: boo
     });
   };
 
+  // Marcar/desmarcar o módulo inteiro — telas E ações de cada tela.
+  //
+  // As ações entram junto de propósito: liberar só a tela e deixar as ações
+  // desligadas é justamente o estado que trava o usuário no dia a dia (ele
+  // enxerga e não consegue trabalhar), que é o problema que este painel existe
+  // pra evitar. É mais fácil desmarcar uma ação sobrando do que caçar uma
+  // faltando.
   const stageAll = (modMenus: Menu[], allHaveAccess: boolean) => {
     const newValue = !allHaveAccess;
     setPending((prev) => {
       const next = new Map(prev);
       modMenus.forEach((mn) => {
-        if (newValue === dbHasAccess(mn.codigo)) { next.delete(mn.codigo); } else { next.set(mn.codigo, newValue); }
+        if (newValue === dbHasAccess(mn.codigo)) next.delete(mn.codigo); else next.set(mn.codigo, newValue);
+      });
+      return next;
+    });
+    setPendingAcoes((prev) => {
+      const next = new Map(prev);
+      modMenus.forEach((mn) => {
+        acoesDoMenu(mn.codigo).forEach((acao) => {
+          const k = acaoKey(mn.codigo, acao);
+          if (newValue === dbHasAcao(mn.codigo, acao)) next.delete(k); else next.set(k, newValue);
+        });
       });
       return next;
     });
@@ -584,7 +624,11 @@ function UserAccessPanel({ podeGerenciar, modulos, menus }: { podeGerenciar: boo
             const open = expanded.has(m.id);
             const moduloAccess = hasAccess(m.codigo);
             const liberados = modMenus.filter((mn) => hasAccess(mn.codigo)).length;
-            const allHaveAccess = modMenus.length > 0 && liberados === modMenus.length;
+            // "Tudo liberado" só quando as telas E as ações delas estão ligadas —
+            // senão o botão diria "Remover todos" com ações ainda desmarcadas.
+            const allHaveAccess = modMenus.length > 0
+              && liberados === modMenus.length
+              && modMenus.every((mn) => acoesDoMenu(mn.codigo).every((a) => hasAcao(mn.codigo, a)));
 
             return (
               <div key={m.id}>
@@ -638,7 +682,8 @@ function UserAccessPanel({ podeGerenciar, modulos, menus }: { podeGerenciar: boo
                       const isForm = mn.codigo === FORM_MENU_CODIGO;
                       const isReunioes = mn.codigo === REUNIOES_MENU_CODIGO;
                       const capsOpen = expanded.has(mn.id);
-                      const comAcoesExtras = TEM_ACOES_EXTRAS;
+                      const acoesDesteMenu = acoesDoMenu(mn.codigo);
+                      const comAcoesExtras = acoesDesteMenu.length > 0;
                       const acoesKey = `${mn.id}::acoes`;
                       const acoesOpen = expanded.has(acoesKey);
                       return (
@@ -665,7 +710,7 @@ function UserAccessPanel({ podeGerenciar, modulos, menus }: { podeGerenciar: boo
                               <button
                                 onClick={() => toggleExpand(acoesKey)}
                                 className={cn("text-muted-foreground hover:text-foreground", acoesOpen && "text-foreground")}
-                                title="Incluir / Alterar / Excluir por esta pessoa"
+                                title={`Ações desta tela: ${acoesDesteMenu.map((a) => ACAO_LABEL[a]).join(" · ")}`}
                               >
                                 <SlidersHorizontal className="h-3.5 w-3.5" />
                               </button>
@@ -684,7 +729,7 @@ function UserAccessPanel({ podeGerenciar, modulos, menus }: { podeGerenciar: boo
                           {comAcoesExtras && podeGerenciar && acoesOpen && (
                             <div className="border-t border-border/60 bg-background px-12 py-2">
                               <div className="flex flex-wrap items-center gap-4">
-                                {ACOES_EXTRAS.map((acao) => {
+                                {acoesDesteMenu.map((acao) => {
                                   const on = hasAcao(mn.codigo, acao);
                                   const acaoPending = pendingAcoes.has(acaoKey(mn.codigo, acao));
                                   return (
@@ -808,12 +853,34 @@ function PessoasComAcessoAoMenu({ menuCodigo, podeGerenciar }: { menuCodigo: str
   const [busca, setBusca] = useState("");
   const [pending, setPending] = useState<Map<string, boolean>>(new Map());
   const [isSaving, setIsSaving] = useState(false);
-  // Todo menu mostra o seletor de ação: a exceção antiga eram os menus com
-  // pacote próprio (`ACOES_POR_MENU`), que deixou de existir quando o pacote
-  // virou o padrão de todos.
-  const podeTrocarAcao = true;
   const [acao, setAcao] = useState<AppAcao>("visualizar");
-  const ACOES_SELETOR: readonly AppAcao[] = ["visualizar", "incluir", "alterar", "excluir"];
+
+  // O seletor mostra só as ações que existem de verdade NESTE menu — mesma
+  // fonte da visão por usuário (app_menu_acao). Antes era uma lista fixa de 4,
+  // que oferecia "Excluir" em tela que não tem exclusão e escondia "Aprovar"
+  // em tela de aprovação.
+  const menuAcoesQ = useQuery({
+    queryKey: ["app-menu-acao"],
+    staleTime: 5 * 60_000,
+    queryFn: async () => {
+      const { data, error } = await (supabase as any).from("app_menu_acao").select("menu_codigo, acao");
+      if (error) { console.warn("app_menu_acao error", error); return new Map<string, AppAcao[]>(); }
+      const m = new Map<string, AppAcao[]>();
+      (data ?? []).forEach((r: any) => {
+        m.set(r.menu_codigo, [...(m.get(r.menu_codigo) ?? []), r.acao as AppAcao]);
+      });
+      for (const [k, v] of m) m.set(k, ORDEM_ACOES.filter((a) => v.includes(a)));
+      return m;
+    },
+  });
+
+  // 'visualizar' sempre entra: é o acesso à tela em si, mesmo que nenhuma
+  // policy a cheque explicitamente.
+  const ACOES_SELETOR = useMemo<AppAcao[]>(() => {
+    const reais = (menuAcoesQ.data?.get(menuCodigo) ?? []).filter((a) => a !== "visualizar");
+    return ["visualizar", ...reais];
+  }, [menuAcoesQ.data, menuCodigo]);
+  const podeTrocarAcao = ACOES_SELETOR.length > 1;
 
   const profilesQ = useQuery({
     queryKey: ["profiles-access-panel"],
