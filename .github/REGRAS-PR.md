@@ -128,28 +128,46 @@ aba do módulo em Gerenciamento de Acesso e o usuário continuar sem ver nada,
 só resolvendo quando alguém dá "Administrador Geral" ou o perfil "Legado:
 Suprimentos". Isso é erro, não configuração.
 
-Não tem uma causa só — são seis, todas verificáveis no diff. Cheque as seis.
+Não tem uma causa só — são seis (J1.A a J1.F), todas verificáveis no diff.
+Cheque as seis, não pare na primeira que parecer se aplicar. J1.G não é causa:
+é o teste que fecha o assunto, e ele se confere no corpo da PR.
 
-### J1.A — Toggle concede `visualizar`, mas a policy exige `alterar`
+### J1.A — A ação que a policy exige precisa existir no painel
 
 **O campeão de todos.** Nas policies, o `can_access` pede `alterar` 482 vezes,
-`visualizar` 250, `excluir` 111, `incluir` 85, `aprovar` 24. A maioria
-esmagadora exige uma ação de trabalho. Mas o toggle de "Acesso por Usuário"
-grava **somente `visualizar`**, exceto para 7 menus numa lista chumbada no
-código: `ACOES_POR_MENU`, em `src/pages/admin/tabs/ModulosMenusTab.tsx:316`
-(5 do Recrutamento + `sup_patrimonio` + `sup_manutencao`).
+`visualizar` 252, `excluir` 111, `incluir` 85, `aprovar` 24. A maioria
+esmagadora exige uma ação de trabalho, não só "enxergar a tela".
 
-Resultado: a tela abre, o botão aparece, o Salvar parece funcionar e nada muda
-no banco — sem erro na cara do usuário. O único perfil que concede `alterar` é
-o Administrador Geral (`concede_tudo`). Daí a gambiarra de tornar todo mundo
-admin.
+Desde 17/08/2026 o toggle de "Acesso por Usuário" concede um pacote fixo:
+`visualizar`, `incluir`, `alterar`, `aprovar` e `exportar`
+(`ACOES_DO_TOGGLE_PADRAO`, em `src/pages/admin/tabs/ModulosMenusTab.tsx`).
+Antes valia só para 7 menus numa lista chumbada no código, e **todo menu novo
+nascia fora dela** — deu 45 pessoas com o Recrutamento marcado e nenhuma
+conseguindo aprovar uma vaga. Regra fixa vale mais que lista: assim não há como
+esquecer de cadastrar a tela nova.
 
-**Reprove** toda PR que cria ou altera policy com
-`can_access(..., 'alterar' | 'incluir' | 'excluir' | 'aprovar')` sem dizer
-explicitamente **como um usuário comum ganha essa ação pelo painel**. Se a
-resposta for "pelo Administrador Geral", reprove. Se o menu não estiver em
-`ACOES_POR_MENU`, a PR tem que incluí-lo lá **ou** semear a permissão num
-perfil de acesso na própria migration.
+Duas famílias de ação continuam **fora** do toggle, de propósito:
+
+- `excluir` — liberar a tela não é autorizar apagar registro. E **111 policies
+  exigem `excluir`**.
+- `executar_ia` e `alterar_dre` — capacidades caras ou sensíveis, concedidas
+  caso a caso, nunca de brinde junto com a tela.
+
+Ou seja: o buraco encolheu, não fechou. Para essas ações o único caminho ainda
+é um perfil de acesso — ou o Administrador Geral (`concede_tudo`), que é
+exatamente a gambiarra que esta regra existe para impedir. O sintoma é o de
+sempre: a tela abre, o botão aparece, o Salvar parece funcionar e nada muda no
+banco, sem erro nenhum na cara do usuário.
+
+**Reprove** toda PR que cria ou altera policy exigindo `excluir`,
+`executar_ia` ou `alterar_dre` sem dizer explicitamente **como um usuário
+comum ganha essa ação pelo painel**. Se a resposta for "pelo Administrador
+Geral", reprove: a PR tem que semear a permissão num perfil de acesso na
+própria migration.
+
+**Não invente achado** para `visualizar`, `incluir`, `alterar`, `aprovar` ou
+`exportar` — o toggle já concede as cinco. Cobrar seed para elas é falso
+positivo, e falso positivo custa mais confiança do que um achado a menos.
 
 ### J1.B — Exceção individual vence o `concede_tudo`
 

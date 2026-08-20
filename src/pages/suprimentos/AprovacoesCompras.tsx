@@ -294,7 +294,7 @@ export default function AprovacoesCompras() {
                       <TableCell className="text-sm">R$ {Number(f.valor_min).toLocaleString("pt-BR")} – {f.valor_max ? `R$ ${Number(f.valor_max).toLocaleString("pt-BR")}` : "∞"}</TableCell>
                       <TableCell>{f.ativo ? <Badge>Sim</Badge> : <Badge variant="secondary">Não</Badge>}</TableCell>
                       <TableCell>
-                        <Button size="sm" variant="outline" onClick={() => { setFluxoSel(f); setOpenEtapas(true); setEtapaSel(null); }}>
+                        <Button size="sm" variant="outline" onClick={() => { setFluxoSel(f); setOpenEtapas(true); }}>
                           <GitBranch className="h-4 w-4 mr-2" />Etapas
                         </Button>
                       </TableCell>

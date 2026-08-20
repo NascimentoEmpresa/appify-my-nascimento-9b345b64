@@ -86,6 +86,10 @@ export default function RatearClassificacao() {
         classificacao_id: null,
         origem: "despesa_multi_classificacao",
         status,
+        // Sem isso, uma despesa indo direto pra pendente_aprovacao ficava
+        // sem "nível atual" e nenhum aprovador configurado via
+        // Classificação era reconhecido — só o botão Reprovar aparecia.
+        nivel_aprovacao_atual: status === "pendente_aprovacao" ? 1 : null,
         nome: nome.trim(),
         valor_total: Number(valorTotal),
         data_pagamento: dataPagamento,
