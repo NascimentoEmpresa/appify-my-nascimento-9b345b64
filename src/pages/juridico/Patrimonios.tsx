@@ -9,6 +9,7 @@ import {
 import { useAuth } from "@/hooks/useAuth";
 import { MapaPatrimonios } from "./patrimonio/MapaPatrimonios";
 import { CLASSIFICACOES, ESPECIES_ESCRITURA, SITUACOES_PAGAMENTO, corSituacao } from "./patrimonio/carteira";
+import { coordenadaValida } from "./patrimonio/geo";
 
 // =====================================================================
 // JURÍDICO — Gestão Patrimonial e Obrigações
@@ -26,6 +27,8 @@ interface Patrimonio {
   classificacao?: string; situacao_pagamento?: string; matricula?: string;
   possui_escritura?: boolean; especie_escritura?: string;
   valor_contrato?: number; valor_entrada?: number; valor_falta?: number;
+  latitude?: number | null; longitude?: number | null;
+  geo_endereco?: string | null; geo_status?: string | null;
   valor_total?: number; valor_estimado?: number; comissao?: number;
   reforcos_pagos?: number; reforcos_a_pagar?: number; valor_parcela?: number;
   qtd_parcelas?: number; parcelas_pagas?: number; parcelas_falta?: number;
@@ -86,6 +89,7 @@ const PATRIM_RESET = {
   centro_custo: "", status: "Ativo", observacoes: "",
   classificacao: "", matricula: "", possui_escritura: "", especie_escritura: "",
   situacao_pagamento: "", valor_contrato: "", valor_entrada: "",
+  latitude: "", longitude: "",
 };
 const OBR_RESET = { categoria: "", modo_parcelas: "igual" as ModoParcelas, qtd_parcelas: "", descricao: "", valor: "", valor_entrada: "", vencimento: "", periodicidade: "Mensal", repetir: "0", onde_pagar: "", forma_pagamento: "", responsavel: "", seguradora: "", apolice: "", vigencia_inicio: "", vigencia_fim: "", premio: "", parcelas: "" };
 const ehLink = (s?: string) => !!s && /^https?:\/\//i.test(s.trim());
@@ -179,6 +183,25 @@ export default function Patrimonios() {
     await (supabase as any).from("JUR_PATRIMONIO_ITENS").insert({ patrimonio_id: patId, kind: "historico", acao, detalhe, autor });
   };
 
+  // O mapa acha a coordenada e devolve por aqui. Grava uma linha de cada vez:
+  // fechar a tela no meio da busca não perde o que já foi localizado.
+  const gravarCoordenada = useCallback(async (id: number, dados: any) => {
+    const { error } = await (supabase as any).from("JUR_PATRIMONIOS")
+      .update({ ...dados, geo_em: new Date().toISOString() }).eq("id", id);
+    if (error) throw new Error(error.message);
+    setPats(atual => atual.map(p => p.id === id ? { ...p, ...dados } : p));
+  }, []);
+
+  // Latitude sem longitude (ou coordenada fora do Brasil) é engano de
+  // digitação: avisa na hora, senão o pino some ou vai parar no oceano.
+  const avisoCoordenada = (() => {
+    const temUm = !!String(pat.latitude ?? "").trim(), temOutro = !!String(pat.longitude ?? "").trim();
+    if (temUm !== temOutro) return "Informe latitude E longitude — uma sozinha não posiciona nada.";
+    if (temUm && temOutro && !coordenadaValida(pat.latitude, pat.longitude))
+      return "Essa coordenada cai fora do Brasil. Confira os sinais: no Sul, latitude e longitude são negativas.";
+    return null;
+  })();
+
   // ── Patrimônio: salvar ─────────────────────────────────────────
   const proximoCodigo = () => {
     const nums = pats.map(p => parseInt(String(p.codigo || "").replace(/\D/g, ""), 10)).filter(n => !isNaN(n));
@@ -196,6 +219,8 @@ export default function Patrimonios() {
       possui_escritura: p.possui_escritura == null ? "" : p.possui_escritura ? "SIM" : "NAO",
       valor_contrato: txt(p.valor_contrato),
       valor_entrada: txt(p.valor_entrada),
+      latitude: txt(p.latitude),
+      longitude: txt(p.longitude),
       classificacao: txt(p.classificacao),
       matricula: txt(p.matricula),
       especie_escritura: txt(p.especie_escritura),
@@ -205,6 +230,7 @@ export default function Patrimonios() {
   };
   const salvarPat = async () => {
     if (!pat.descricao.trim()) { toast("Informe a descrição.", "err"); return; }
+    if (avisoCoordenada) { toast(avisoCoordenada, "err"); return; }
     const num = (v: string) => v === "" || v == null ? null : Number(String(v).replace(",", "."));
     const payload = {
       ...pat,
@@ -214,6 +240,13 @@ export default function Patrimonios() {
       possui_escritura: pat.possui_escritura === "SIM" ? true : pat.possui_escritura === "NAO" ? false : null,
       valor_contrato: num(pat.valor_contrato),
       valor_entrada: num(pat.valor_entrada),
+      // Coordenada digitada aqui é decisão de gente: entra como "manual" e o
+      // botão "Localizar endereços" não passa por cima dela.
+      latitude: num(pat.latitude),
+      longitude: num(pat.longitude),
+      ...(num(pat.latitude) != null && num(pat.longitude) != null
+        ? { geo_status: "manual", geo_endereco: `${(pat.localizacao ?? "").trim()}|${(pat.cidade ?? "").trim()}`, geo_em: new Date().toISOString() }
+        : {}),
       classificacao: pat.classificacao || null,
       matricula: pat.matricula || null,
       especie_escritura: pat.especie_escritura || null,
@@ -803,7 +836,7 @@ export default function Patrimonios() {
           {/* Mapa */}
           <div style={{ background: "#fff", border: "1px solid #e2e8f0", borderRadius: 14, padding: "14px 16px", marginBottom: 14, boxShadow: "0 8px 24px rgba(15,23,42,.05)" }}>
             <div style={{ fontSize: 13, fontWeight: 800, color: "#0f172a", marginBottom: 10 }}>Mapa dos patrimônios</div>
-            <MapaPatrimonios patrimonios={listaFiltrada} />
+            <MapaPatrimonios patrimonios={listaFiltrada} onLocalizar={gravarCoordenada} />
           </div>
 
           {/* Carteira */}
@@ -1019,6 +1052,24 @@ export default function Patrimonios() {
               <div className="jp-fg"><label>Empresa</label><input className="jp-fi" value={pat.empresa} onChange={e => setPat(v => ({ ...v, empresa: e.target.value }))} placeholder="HAGG, CANAÃ…" /></div>
               <div className="jp-fg"><label>Empresa que pagará</label><input className="jp-fi" value={pat.empresa_pagadora} onChange={e => setPat(v => ({ ...v, empresa_pagadora: e.target.value }))} placeholder="Quem paga as contas/obrigações" /></div>
               <div className="jp-fg"><label>Responsável interno</label><input className="jp-fi" value={pat.responsavel} onChange={e => setPat(v => ({ ...v, responsavel: e.target.value }))} /></div>
+            </div>
+            {/* Coordenada no mapa. A maioria dos imóveis é localizada sozinha
+                pelo botão do mapa; estes campos existem para os endereços que
+                nenhum serviço acha ("MURANO", "COTAS - GAV") e para corrigir um
+                pino que caiu no lugar errado. Valor digitado aqui vira "manual"
+                e o botão de localizar não passa por cima dele. */}
+            <div style={{ borderTop: "1px dashed #e2e8f0", marginTop: 4, paddingTop: 12, marginBottom: 12 }}>
+              <div style={{ fontSize: 11, fontWeight: 800, color: "#0f3171", textTransform: "uppercase", marginBottom: 4 }}>Posição no mapa</div>
+              <div style={{ fontSize: 10.5, color: "#94a3b8", marginBottom: 8, lineHeight: 1.45 }}>
+                Opcional — deixe vazio e o mapa localiza pelo endereço. Para pegar à mão: no Google Maps, clique com o botão direito no ponto e o primeiro item do menu copia as duas coordenadas.
+              </div>
+              <div className="jp-grid2">
+                <div className="jp-fg"><label>Latitude</label><input className="jp-fi" type="number" step="0.0000001" value={pat.latitude} onChange={e => setPat(v => ({ ...v, latitude: e.target.value }))} placeholder="-29.9447" /></div>
+                <div className="jp-fg"><label>Longitude</label><input className="jp-fi" type="number" step="0.0000001" value={pat.longitude} onChange={e => setPat(v => ({ ...v, longitude: e.target.value }))} placeholder="-51.7186" /></div>
+              </div>
+              {avisoCoordenada && (
+                <div style={{ background: "#fef2f2", border: "1px solid #fecaca", color: "#b91c1c", borderRadius: 9, padding: "7px 10px", fontSize: 11.5, fontWeight: 700 }}>{avisoCoordenada}</div>
+              )}
             </div>
             <div className="jp-fg"><label>Observações</label><textarea className="jp-fi" rows={2} value={pat.observacoes} onChange={e => setPat(v => ({ ...v, observacoes: e.target.value }))} /></div>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, marginTop: 6 }}>
