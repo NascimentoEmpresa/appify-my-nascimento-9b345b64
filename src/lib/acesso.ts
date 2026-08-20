@@ -42,10 +42,33 @@ export const ROTAS_SEMPRE_LIBERADAS = [
   "/app/meu-perfil",
   "/app/sistemas/chamados",
   "/app/central-servicos/chamados/novo",
+  // Avisos do sistema (changelog do ERP). A sidebar mostra o item para todo
+  // mundo, então sem estar aqui o clique dava "Acesso negado".
+  "/app/novidades",
 ];
 
-/** Casa por prefixo, igual ao matchMenuCode (cobre subrotas e /:id). */
+/**
+ * Rotas liberadas SÓ em casamento exato — nunca por prefixo.
+ *
+ * "/app" é a tela inicial e não tem entrada em app_menu (é o shell, não um
+ * módulo). Sem estar aqui, o deny-by-default barrava a própria home: o
+ * usuário logava e tomava "Acesso negado" na primeira tela, sem nada no painel
+ * de administração que pudesse liberar — porque não é menu, não aparece lá.
+ *
+ * Precisa ser lista separada porque a de cima casa por PREFIXO: "/app" ali
+ * dentro liberaria "/app/qualquer-coisa" e anularia o controle inteiro.
+ */
+export const ROTAS_LIBERADAS_EXATAS = ["/app"];
+
+/**
+ * Prefixo para ROTAS_SEMPRE_LIBERADAS (cobre subrotas e /:id), exato para
+ * ROTAS_LIBERADAS_EXATAS.
+ */
 export function rotaSempreLiberada(pathname: string): boolean {
-  return ROTAS_SEMPRE_LIBERADAS.some((r) => pathname === r || pathname.startsWith(r + "/"));
+  const normalizada = pathname.length > 1 && pathname.endsWith("/")
+    ? pathname.slice(0, -1)
+    : pathname;
+  if (ROTAS_LIBERADAS_EXATAS.includes(normalizada)) return true;
+  return ROTAS_SEMPRE_LIBERADAS.some((r) => normalizada === r || normalizada.startsWith(r + "/"));
 }
 
