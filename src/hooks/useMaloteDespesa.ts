@@ -488,6 +488,22 @@ export function useCancelarDespesa() {
   });
 }
 
+// SIS-2026-0194: exclusão PERMANENTE (não é cancelamento) — usada só pra
+// limpar dados de teste, restrita ao Administrador Geral via
+// gerenciamento de acesso (ação "excluir" em malote_despesa_visualizar/
+// malote_solicitacao_visualizar). RPC valida a permissão de novo no
+// banco — a checagem de `can()` no client é só heurística de UI.
+export function useExcluirPermanentemente() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (id: string) => {
+      const { error } = await (supabase as any).rpc("malote_excluir_permanentemente", { _id: id });
+      if (error) throw error;
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: [DESPESA_KEY] }),
+  });
+}
+
 // "Mandar para aprovação novamente" — salva as edições e reinicia o
 // fluxo em N1, disponível em qualquer status ativo (não existe "salvar
 // sem reenviar" — parecer do chefe, SIS-2026-0104).
