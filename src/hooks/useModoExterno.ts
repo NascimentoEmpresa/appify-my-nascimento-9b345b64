@@ -19,10 +19,18 @@ import { useAuth } from "@/hooks/useAuth";
  * concedem: nenhuma delas libera nada que a RLS negue.
  */
 
-/** Prefixos que o usuário externo pode navegar. Tudo fora daqui é negado. */
+/**
+ * Prefixos que o usuário externo pode navegar. Tudo fora daqui é negado.
+ *
+ * É o módulo Encarregados INTEIRO: quem entra pela aba "Externo" trabalha em
+ * /app/encarregados (solicitar materiais, meus pedidos, minhas solicitações,
+ * férias, vaga, advertência, chamados) e em mais nada. Antes a lista tinha só
+ * as duas primeiras telas, e as outras do próprio módulo caíam fora da
+ * allowlist — funcionavam apenas porque o RouteGuard liberava rota não
+ * cadastrada, o que deixou de valer com o deny-by-default.
+ */
 export const ROTAS_EXTERNO = [
-  "/app/encarregados/solicitar-materiais",
-  "/app/encarregados/meus-pedidos",
+  "/app/encarregados",
 ];
 
 export function useModoExterno(): boolean {

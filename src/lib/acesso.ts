@@ -24,3 +24,28 @@ export const ACESSO_ABERTO_SEM_PERMISSOES = false;
  */
 export const MENUS_SEMPRE_RESTRITOS = new Set(["administracao", "integracao", "integracao-aliases"]);
 
+/**
+ * Rotas que TODO usuário autenticado acessa, sem depender de permissão.
+ *
+ * Existem porque o sistema passou a NEGAR POR PADRÃO: rota sem cadastro em
+ * app_menu, ou menu sem permissão pra pessoa, é bloqueada. Sem esta lista, um
+ * usuário recém-criado não conseguiria nem ver o próprio perfil nem abrir
+ * chamado pra pedir acesso — ficaria preso sem caminho de saída.
+ *
+ * Não são "furos": nenhuma delas expõe dado de terceiro. O perfil é do próprio
+ * usuário (RLS filtra por auth.uid()) e a abertura de chamado é justamente o
+ * canal para pedir o acesso que falta.
+ *
+ * Mantenha curta. Tela de negócio NÃO entra aqui — entra em app_menu.
+ */
+export const ROTAS_SEMPRE_LIBERADAS = [
+  "/app/meu-perfil",
+  "/app/sistemas/chamados",
+  "/app/central-servicos/chamados/novo",
+];
+
+/** Casa por prefixo, igual ao matchMenuCode (cobre subrotas e /:id). */
+export function rotaSempreLiberada(pathname: string): boolean {
+  return ROTAS_SEMPRE_LIBERADAS.some((r) => pathname === r || pathname.startsWith(r + "/"));
+}
+
