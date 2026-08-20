@@ -6,7 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
 import { toast } from "@/hooks/use-toast";
 import { usePermissoes } from "@/context/PermissoesContext";
-import { Plus, Trash2, ChevronDown, ChevronRight, BookOpen, UserCog, X, CheckSquare, Save, Layers, Boxes, Search } from "lucide-react";
+import { Plus, Trash2, ChevronDown, ChevronRight, BookOpen, UserCog, X, CheckSquare, Save, Layers, Boxes, Search, SlidersHorizontal } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import type { FormCap } from "@/hooks/useFormPerms";
@@ -312,11 +312,27 @@ const ACOES_DO_TOGGLE_PADRAO: readonly AppAcao[] =
 // eslint-disable-next-line @typescript-eslint/no-unused-vars -- assinatura mantida: os dois lugares que gravam permissão chamam por menu.
 const ACOES_DO_TOGGLE = (_codigo: string): AppAcao[] => [...ACOES_DO_TOGGLE_PADRAO];
 
+// Ações que ganham switch independente (fora do pacote fixo de ACOES_POR_MENU)
+// pra menus "comuns" — onde o switch principal continua significando só
+// "enxerga a tela", mas incluir/alterar/excluir precisam de um jeito de
+// conceder por pessoa sem precisar virar Administrador Geral. Menus que já
+// têm um pacote próprio em ACOES_POR_MENU (Recrutamento, Patrimônio etc.)
+// ficam de fora — o switch principal deles já cuida disso.
+const ACOES_EXTRAS: readonly AppAcao[] = ["incluir", "alterar", "excluir"];
+const temAcoesExtras = (codigo: string) => !(codigo in ACOES_POR_MENU);
+const ACAO_LABEL: Record<AppAcao, string> = {
+  visualizar: "Visualizar", incluir: "Incluir", alterar: "Alterar", excluir: "Excluir",
+  aprovar: "Aprovar", exportar: "Exportar", executar_ia: "Executar IA", alterar_dre: "Alterar DRE",
+};
+
 function UserAccessPanel({ podeGerenciar, modulos, menus }: { podeGerenciar: boolean; modulos: Modulo[]; menus: Menu[] }) {
   const [selectedUserId, setSelectedUserId] = useState<string>("");
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   // Map of menu_codigo → desired allow value (staged, not yet saved)
   const [pending, setPending] = useState<Map<string, boolean>>(new Map());
+  // Map of "menu_codigo::acao" → desired allow value, pras ações extras
+  // (incluir/alterar/excluir) independentes do switch principal.
+  const [pendingAcoes, setPendingAcoes] = useState<Map<string, boolean>>(new Map());
   const [isSaving, setIsSaving] = useState(false);
   const qc = useQueryClient();
 
@@ -352,8 +368,28 @@ function UserAccessPanel({ podeGerenciar, modulos, menus }: { podeGerenciar: boo
     },
   });
 
+  // Acesso efetivo das 3 ações extras, uma RPC por ação (mesma list_accessible_menus
+  // já usada acima, só variando _acao — sem SQL novo).
+  const effectiveAcoesQ = useQuery({
+    queryKey: ["effective-menus-acoes-for-user", selectedUserId],
+    enabled: !!selectedUserId,
+    staleTime: 30_000,
+    queryFn: async () => {
+      const resultados = await Promise.all(
+        ACOES_EXTRAS.map((acao) =>
+          supabase.rpc("list_accessible_menus", { _user: selectedUserId as string, _acao: acao, _empresa: null })
+            .then(({ data, error }) => {
+              if (error) { console.warn("effective menus (ação extra) error", acao, error); return [acao, new Set<string>()] as const; }
+              return [acao, new Set<string>((data ?? []).map((r: any) => r.menu_codigo))] as const;
+            }),
+        ),
+      );
+      return new Map<AppAcao, Set<string>>(resultados);
+    },
+  });
+
   // Clear pending changes when user is switched
-  useEffect(() => { setPending(new Map()); }, [selectedUserId]);
+  useEffect(() => { setPending(new Map()); setPendingAcoes(new Map()); }, [selectedUserId]);
 
   // Acesso efetivo atual (role + overrides). Base para os switches e para detectar mudança real.
   const dbHasAccess = (codigo: string) =>
@@ -372,6 +408,21 @@ function UserAccessPanel({ podeGerenciar, modulos, menus }: { podeGerenciar: boo
     });
   };
 
+  const dbHasAcao = (codigo: string, acao: AppAcao) => effectiveAcoesQ.data?.get(acao)?.has(codigo) ?? false;
+  const acaoKey = (codigo: string, acao: AppAcao) => `${codigo}::${acao}`;
+  const hasAcao = (codigo: string, acao: AppAcao) => {
+    const k = acaoKey(codigo, acao);
+    return pendingAcoes.has(k) ? pendingAcoes.get(k)! : dbHasAcao(codigo, acao);
+  };
+  const stageAcao = (codigo: string, acao: AppAcao, newValue: boolean) => {
+    const k = acaoKey(codigo, acao);
+    setPendingAcoes((prev) => {
+      const next = new Map(prev);
+      if (newValue === dbHasAcao(codigo, acao)) next.delete(k); else next.set(k, newValue);
+      return next;
+    });
+  };
+
   const stageAll = (modMenus: Menu[], allHaveAccess: boolean) => {
     const newValue = !allHaveAccess;
     setPending((prev) => {
@@ -384,12 +435,12 @@ function UserAccessPanel({ podeGerenciar, modulos, menus }: { podeGerenciar: boo
   };
 
   const handleSave = async () => {
-    if (!selectedUserId || !podeGerenciar || pending.size === 0) return;
+    if (!selectedUserId || !podeGerenciar || (pending.size === 0 && pendingAcoes.size === 0)) return;
     setIsSaving(true);
     try {
       for (const [codigo, allow] of pending) {
-        // No Recrutamento o toggle vale por todas as ações, não só "ver".
-        // Nos demais módulos as ações continuam vindo do perfil de acesso.
+        // No Recrutamento (e menus com pacote próprio em ACOES_POR_MENU) o
+        // toggle vale por todas as ações do pacote, não só "ver".
         const acoes = ACOES_DO_TOGGLE(codigo);
         const { error: delErr } = await supabase.from("screen_permission_user").delete()
           .eq("user_id", selectedUserId).eq("menu_codigo", codigo)
@@ -403,11 +454,26 @@ function UserAccessPanel({ podeGerenciar, modulos, menus }: { podeGerenciar: boo
         );
         if (error) throw error;
       }
+
+      for (const [key, allow] of pendingAcoes) {
+        const [codigo, acao] = key.split("::") as [string, AppAcao];
+        const { error: delErr } = await supabase.from("screen_permission_user").delete()
+          .eq("user_id", selectedUserId).eq("menu_codigo", codigo).eq("acao", acao).is("empresa_id", null);
+        if (delErr) console.warn("delete perm (ação extra) error", delErr);
+
+        const { error } = await supabase.from("screen_permission_user").insert({
+          user_id: selectedUserId, menu_codigo: codigo, acao, allow, empresa_id: null,
+        });
+        if (error) throw error;
+      }
+
       // refetchQueries aguarda o re-fetch completar antes de limpar pending,
       // evitando o flicker onde os switches voltam ao estado anterior por um instante.
       await qc.refetchQueries({ queryKey: ["effective-menus-for-user", selectedUserId] });
+      await qc.refetchQueries({ queryKey: ["effective-menus-acoes-for-user", selectedUserId] });
       await qc.invalidateQueries({ queryKey: ["accessible-menus"] });
       setPending(new Map());
+      setPendingAcoes(new Map());
       toast({ title: "Permissões salvas com sucesso" });
     } catch (e: any) {
       toast({ title: "Erro ao salvar permissões", description: e.message, variant: "destructive" });
@@ -422,7 +488,8 @@ function UserAccessPanel({ podeGerenciar, modulos, menus }: { podeGerenciar: boo
     setExpanded(s);
   };
 
-  const hasPending = pending.size > 0;
+  const totalPending = pending.size + pendingAcoes.size;
+  const hasPending = totalPending > 0;
 
   return (
     <div>
@@ -450,7 +517,7 @@ function UserAccessPanel({ podeGerenciar, modulos, menus }: { podeGerenciar: boo
               onClick={handleSave}
             >
               <Save className="h-3.5 w-3.5" />
-              {isSaving ? "Salvando…" : `Salvar ${pending.size} alteraç${pending.size === 1 ? "ão" : "ões"}`}
+              {isSaving ? "Salvando…" : `Salvar ${totalPending} alteraç${totalPending === 1 ? "ão" : "ões"}`}
             </Button>
           )}
 
@@ -543,6 +610,9 @@ function UserAccessPanel({ podeGerenciar, modulos, menus }: { podeGerenciar: boo
                       const isForm = mn.codigo === FORM_MENU_CODIGO;
                       const isReunioes = mn.codigo === REUNIOES_MENU_CODIGO;
                       const capsOpen = expanded.has(mn.id);
+                      const comAcoesExtras = temAcoesExtras(mn.codigo);
+                      const acoesKey = `${mn.id}::acoes`;
+                      const acoesOpen = expanded.has(acoesKey);
                       return (
                         <div key={mn.id}>
                           <div className={cn("flex items-center gap-2 px-12 py-2.5 hover:bg-muted/40", isPending && "bg-amber-50/50 dark:bg-amber-950/20")}>
@@ -563,6 +633,15 @@ function UserAccessPanel({ podeGerenciar, modulos, menus }: { podeGerenciar: boo
                               onCheckedChange={() => stageChange(mn.codigo, !menuAccess)}
                               aria-label={`Acesso ao menu ${mn.nome}`}
                             />
+                            {comAcoesExtras && podeGerenciar && (
+                              <button
+                                onClick={() => toggleExpand(acoesKey)}
+                                className={cn("text-muted-foreground hover:text-foreground", acoesOpen && "text-foreground")}
+                                title="Incluir / Alterar / Excluir por esta pessoa"
+                              >
+                                <SlidersHorizontal className="h-3.5 w-3.5" />
+                              </button>
+                            )}
                           </div>
                           {isForm && podeGerenciar && capsOpen && (
                             <div className="border-t border-border/60 bg-background px-12 py-2">
@@ -572,6 +651,26 @@ function UserAccessPanel({ podeGerenciar, modulos, menus }: { podeGerenciar: boo
                           {isReunioes && podeGerenciar && capsOpen && (
                             <div className="border-t border-border/60 bg-background px-12 py-2">
                               <ObservadorAutomaticoReuniao userId={selectedUserId} onToast={(m, t) => toast({ title: m, variant: t === "err" ? "destructive" : "default" })} />
+                            </div>
+                          )}
+                          {comAcoesExtras && podeGerenciar && acoesOpen && (
+                            <div className="border-t border-border/60 bg-background px-12 py-2">
+                              <div className="flex flex-wrap items-center gap-4">
+                                {ACOES_EXTRAS.map((acao) => {
+                                  const on = hasAcao(mn.codigo, acao);
+                                  const acaoPending = pendingAcoes.has(acaoKey(mn.codigo, acao));
+                                  return (
+                                    <label key={acao} className={cn("flex items-center gap-1.5 rounded-md px-1.5 py-1 text-xs", acaoPending && "bg-amber-50/50 dark:bg-amber-950/20")}>
+                                      <Switch
+                                        checked={on}
+                                        onCheckedChange={() => stageAcao(mn.codigo, acao, !on)}
+                                        aria-label={`${ACAO_LABEL[acao]} em ${mn.nome}`}
+                                      />
+                                      {ACAO_LABEL[acao]}
+                                    </label>
+                                  );
+                                })}
+                              </div>
                             </div>
                           )}
                         </div>
@@ -681,6 +780,11 @@ function PessoasComAcessoAoMenu({ menuCodigo, podeGerenciar }: { menuCodigo: str
   const [busca, setBusca] = useState("");
   const [pending, setPending] = useState<Map<string, boolean>>(new Map());
   const [isSaving, setIsSaving] = useState(false);
+  // Menus com pacote próprio (ACOES_POR_MENU, ex.: Recrutamento) só mostram
+  // "Visualizar" aqui — o pacote de ações deles é tratado à parte, sem seletor.
+  const podeTrocarAcao = temAcoesExtras(menuCodigo);
+  const [acao, setAcao] = useState<AppAcao>("visualizar");
+  const ACOES_SELETOR: readonly AppAcao[] = ["visualizar", "incluir", "alterar", "excluir"];
 
   const profilesQ = useQuery({
     queryKey: ["profiles-access-panel"],
@@ -695,10 +799,10 @@ function PessoasComAcessoAoMenu({ menuCodigo, podeGerenciar }: { menuCodigo: str
   });
 
   const acessoQ = useQuery({
-    queryKey: ["users-with-menu-access", menuCodigo],
+    queryKey: ["users-with-menu-access", menuCodigo, acao],
     queryFn: async () => {
       const { data, error } = await (supabase as any).rpc("list_users_with_menu_access", {
-        _menu: menuCodigo, _acao: "visualizar",
+        _menu: menuCodigo, _acao: acao,
       });
       if (error) throw error;
       const m = new Map<string, boolean>();
@@ -707,7 +811,8 @@ function PessoasComAcessoAoMenu({ menuCodigo, podeGerenciar }: { menuCodigo: str
     },
   });
 
-  useEffect(() => { setPending(new Map()); setBusca(""); }, [menuCodigo]);
+  useEffect(() => { setPending(new Map()); setBusca(""); setAcao("visualizar"); }, [menuCodigo]);
+  useEffect(() => { setPending(new Map()); }, [acao]);
 
   const dbHasAccess = (userId: string) => acessoQ.data?.get(userId) ?? false;
   const hasAccess = (userId: string) => (pending.has(userId) ? pending.get(userId)! : dbHasAccess(userId));
@@ -724,22 +829,26 @@ function PessoasComAcessoAoMenu({ menuCodigo, podeGerenciar }: { menuCodigo: str
     if (!podeGerenciar || pending.size === 0) return;
     setIsSaving(true);
     try {
-      // Mesmas ações que a visão "Acesso por Usuário" grava pra este menu —
-      // pros menus de Recrutamento isso são 5 ações, não só "visualizar".
-      const acoes = ACOES_DO_TOGGLE(menuCodigo);
+      // Na aba "Visualizar" de um menu com pacote próprio (ex.: Recrutamento),
+      // o toggle vale pelas ações do pacote inteiro — mesmo comportamento da
+      // "Acesso por Usuário". Nas outras abas (Incluir/Alterar/Excluir), grava
+      // só aquela ação específica.
+      const acoes = acao === "visualizar" ? ACOES_DO_TOGGLE(menuCodigo) : [acao];
       for (const [userId, allow] of pending) {
         const { error: delErr } = await supabase.from("screen_permission_user").delete()
           .eq("user_id", userId).eq("menu_codigo", menuCodigo).in("acao", acoes).is("empresa_id", null);
         if (delErr) console.warn("delete perm error", delErr);
 
         const { error } = await supabase.from("screen_permission_user").insert(
-          acoes.map((acao) => ({ user_id: userId, menu_codigo: menuCodigo, acao, allow, empresa_id: null })),
+          acoes.map((a) => ({ user_id: userId, menu_codigo: menuCodigo, acao: a, allow, empresa_id: null })),
         );
         if (error) throw error;
       }
-      await qc.refetchQueries({ queryKey: ["users-with-menu-access", menuCodigo] });
+      await qc.refetchQueries({ queryKey: ["users-with-menu-access", menuCodigo, acao] });
+      await qc.invalidateQueries({ queryKey: ["users-with-menu-access"] });
       await qc.invalidateQueries({ queryKey: ["accessible-menus"] });
       await qc.invalidateQueries({ queryKey: ["effective-menus-for-user"] });
+      await qc.invalidateQueries({ queryKey: ["effective-menus-acoes-for-user"] });
       setPending(new Map());
       toast({ title: "Permissões salvas com sucesso" });
     } catch (e: any) {
@@ -806,6 +915,22 @@ function PessoasComAcessoAoMenu({ menuCodigo, podeGerenciar }: { menuCodigo: str
 
   return (
     <div>
+      {podeTrocarAcao && (
+        <div className="mb-2 flex items-center gap-1 rounded-md border border-border bg-muted/40 p-0.5 w-fit">
+          {ACOES_SELETOR.map((a) => (
+            <button
+              key={a}
+              onClick={() => setAcao(a)}
+              className={cn(
+                "rounded px-2.5 py-1 text-[11px] font-medium transition-colors",
+                acao === a ? "bg-background shadow-sm text-foreground" : "text-muted-foreground hover:text-foreground",
+              )}
+            >
+              {ACAO_LABEL[a]}
+            </button>
+          ))}
+        </div>
+      )}
       <div className="mb-2 flex items-center gap-2">
         <div className="relative flex-1">
           <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
