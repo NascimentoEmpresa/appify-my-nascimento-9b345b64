@@ -43,6 +43,7 @@ import { anoMesAtual } from "@/hooks/usePlanilhaCusto";
 import { RateioGrid, DimensoesRateio } from "./RateioGrid";
 import { RateioAprovadorTable } from "./RateioAprovadorTable";
 import { FluxoAprovacaoVisual } from "./FluxoAprovacaoVisual";
+import { ExcluirPermanentementeButton } from "./ExcluirPermanentementeButton";
 
 const TIPO_SOLICITACAO_LABEL: Record<TipoSolicitacao, string> = {
   administrativo: "Administrativo",
@@ -461,9 +462,17 @@ export default function DespesaVisualizar() {
         module="Malote"
         breadcrumb={["Malote", "Despesa", "Visualizar"]}
         actions={
-          <Button variant="outline" onClick={() => navigate(-1)}>
-            <ArrowLeft className="h-4 w-4 mr-2" /> Voltar
-          </Button>
+          <div className="flex items-center gap-2">
+            <ExcluirPermanentementeButton
+              despesaId={despesa.id}
+              numero={despesa.numero}
+              menu="malote_despesa_visualizar"
+              voltarPara="/app/malote/meus-itens"
+            />
+            <Button variant="outline" onClick={() => navigate(-1)}>
+              <ArrowLeft className="h-4 w-4 mr-2" /> Voltar
+            </Button>
+          </div>
         }
       />
 
