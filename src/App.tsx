@@ -16,6 +16,7 @@ import { ProtectedRoute } from "./components/ProtectedRoute";
 import PainelExecutivo from "./pages/PainelExecutivo";
 import PainelExecutivoTV from "./pages/PainelExecutivoTV";
 import Inicio from "./pages/Inicio";
+import Novidades from "./pages/Novidades";
 import Presidencia from "./pages/Presidencia";
 import Pipeline from "./pages/Pipeline";
 import CadastroEdital from "./pages/CadastroEdital";
@@ -251,6 +252,8 @@ const App = () => (
           <Route path="/denuncia/acompanhar" element={<Navigate to="/denuncia?acompanhar" replace />} />
           <Route path="/app" element={<ProtectedRoute><AppShell /></ProtectedRoute>}>
             <Route index element={<Inicio />} />
+            {/* Fora de app_menu de propósito: ler novidade é para todo mundo. */}
+            <Route path="novidades" element={<Novidades />} />
             <Route path="encarregados" element={<Navigate to="/app/encarregados/minhas-solicitacoes" replace />} />
             <Route path="encarregados/minhas-solicitacoes" element={<MinhasSolicitacoes />} />
             {/* Um item de sidebar por submódulo de origem (Recrutamento, RH,

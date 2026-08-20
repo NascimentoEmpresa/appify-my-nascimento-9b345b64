@@ -33,6 +33,45 @@ const textoLinhaColega = (l: any): string =>
 
 const fmtDur = (s?: number | null) => { if (s == null) return "-"; const m = Math.floor(s / 60), ss = s % 60; return m ? `${m}m ${ss}s` : `${ss}s`; };
 
+/**
+ * O nome curto CABE dentro do completo? ("CASSIO RAPHAELLI" cabe em "CASSIO
+ * RAPHAELLI CAMARGO DUARTE"). Todo pedaço do curto tem que estar no completo,
+ * e o primeiro nome tem que ser o mesmo — sem isso "SOUZA" casaria com metade
+ * da empresa. Serve para reconhecer quem escreveu o próprio nome encurtado,
+ * sem nunca casar o nome de outra pessoa.
+ */
+export const nomeCabeEm = (curto: string, completo: string): boolean => {
+  const a = curto.split(" ").filter(Boolean);
+  const b = normNome(completo).split(" ").filter(Boolean);
+  if (!a.length || !b.length || a[0] !== b[0]) return false;
+  return a.every(t => b.includes(t));
+};
+
+/**
+ * De-para "texto que apareceu na resposta" → "nome oficial de quem respondeu".
+ *
+ * Existe para a tela não oferecer "Vincular" a alguém que já está
+ * identificado. O cuidado todo é não deixar entrar aqui o nome de um TERCEIRO:
+ * se entrar, todo lugar que mostra aquele nome passa a mostrar o de quem
+ * respondeu (foi o que trocou TALIS por CASSIO no Feedback Guiado).
+ */
+export function mapaIdentidades(
+  resps: { respondente_nome?: string | null; respondente_cadastro?: Record<string, any> | null; itens: Record<string, any> }[],
+  perguntaNomeId: string | null,
+  idConfirmada: boolean,
+): Map<string, string> {
+  const m = new Map<string, string>();
+  resps.forEach(r => {
+    const oficial = String(r.respondente_cadastro?.nome ?? r.respondente_nome ?? "").trim();
+    if (!oficial) return;
+    m.set(normNome(oficial), oficial);
+    const v = perguntaNomeId ? r.itens?.[perguntaNomeId] : null;
+    const digitado = normNome(Array.isArray(v) ? v[0] : v);
+    if (digitado && (idConfirmada || nomeCabeEm(digitado, oficial))) m.set(digitado, oficial);
+  });
+  return m;
+}
+
 // Rótulos amigáveis do snapshot de cadastro (respondente_cadastro).
 const CADASTRO_CAMPOS: { k: string; rotulo: string }[] = [
   { k: "nome", rotulo: "Nome" }, { k: "cpf", rotulo: "CPF" }, { k: "cargo", rotulo: "Cargo" },
@@ -358,18 +397,14 @@ export default function FormularioRespostas() {
   // oferecer "Vincular" para nome que já estava perfeitamente identificado.
   // Resposta vinda do link público (sem login) não entra: ali não existe
   // identidade a afirmar, só o texto que a pessoa digitou.
-  const identidades = useMemo(() => {
-    const m = new Map<string, string>();
-    resps.forEach(r => {
-      const oficial = String(r.respondente_cadastro?.nome ?? r.respondente_nome ?? "").trim();
-      if (!oficial) return;
-      m.set(normNome(oficial), oficial);
-      const v = perguntaNomeId ? r.itens[perguntaNomeId] : null;
-      const digitado = normNome(Array.isArray(v) ? v[0] : v);
-      if (digitado) m.set(digitado, oficial);
-    });
-    return m;
-  }, [resps, perguntaNomeId]);
+  // A pergunta de identificação só vale como "apelido de quem respondeu" quando
+  // o formulário DIZ que é ela (pergunta_nome_id). O palpite pelo título não
+  // serve: no Feedback Guiado ela se chama "IDENTIFICAÇÃO DO COLABORADOR" e é o
+  // LIDERADO, não quem respondeu.
+  const identidades = useMemo(
+    () => mapaIdentidades(resps, perguntaNomeId,
+                          !!form?.pergunta_nome_id && form.pergunta_nome_id === perguntaNomeId),
+    [resps, perguntaNomeId, form?.pergunta_nome_id]);
 
   // Nome de quem respondeu: identidade primeiro; sem ela (link público), cai no
   // casamento com o cadastro, que continua valendo p/ as respostas anônimas.

@@ -12,6 +12,7 @@ import { formatDistanceToNow } from "date-fns";
 import { ptBR } from "date-fns/locale";
 import { AgendaCorporativaSheet } from "./AgendaCorporativaSheet";
 import { resolverLinkNotificacao } from "@/lib/notificacaoLink";
+import { NovidadesSino } from "@/components/novidades/NovidadesSino";
 
 type Notif = {
   id: string;
@@ -272,6 +273,11 @@ export function Topbar({ onToggleSidebar, onOpenMobile }: { onToggleSidebar: () 
             </>
           )}
         </div>
+
+        {/* Novidades do Sistema — changelog interno, com a bolinha do que
+            a pessoa ainda não leu. Fica ANTES do sino: notificação é sobre o
+            trabalho dela, novidade é sobre o ERP. */}
+        <NovidadesSino aoAbrir={fecharTodos} />
 
         {/* Notificações */}
         <div className="relative">

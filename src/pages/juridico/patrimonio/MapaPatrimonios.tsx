@@ -33,7 +33,11 @@ export function MapaPatrimonios({ patrimonios }: { patrimonios: { cidade?: strin
   useEffect(() => {
     if (!caixaRef.current) return;
     if (!mapaRef.current) {
-      const mapa = L.map(caixaRef.current, { scrollWheelZoom: false }).setView([-29.9, -51.0], 8);
+      // Zoom pelo scroll ligado: com o mouse sobre o mapa, a roda aproxima e
+      // afasta. O preço é o scroll da página parar enquanto o ponteiro está
+      // sobre ele — foi o pedido, e o mapa tem altura fixa, então dá para
+      // passar por fora.
+      const mapa = L.map(caixaRef.current, { scrollWheelZoom: true }).setView([-29.9, -51.0], 8);
       L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
         attribution: "© OpenStreetMap", maxZoom: 18,
       }).addTo(mapa);
