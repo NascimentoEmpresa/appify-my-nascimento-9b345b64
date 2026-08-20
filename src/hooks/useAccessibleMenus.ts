@@ -36,7 +36,7 @@ export function useAccessibleMenus(acao: string = "visualizar") {
     placeholderData: keepPreviousData,
     queryFn: async () => {
       const { data: u } = await supabase.auth.getUser();
-      if (!u.user) return { codes: new Set<string>(), routes: [] as MenuRoute[], configuredCodes: new Set<string>() };
+      if (!u.user) return { codes: new Set<string>(), routes: [] as MenuRoute[], configuredCodes: new Set<string>(), inactiveCodes: new Set<string>() };
 
       const [rpcResult, menusResult, configuredResult] = await Promise.all([
         supabase.rpc("list_accessible_menus", {
@@ -44,7 +44,14 @@ export function useAccessibleMenus(acao: string = "visualizar") {
           _acao: acao,
           _empresa: empresaId,
         }),
-        supabase.from("app_menu").select("codigo, rota").eq("ativo", true),
+        // Traz INATIVOS também. Antes filtrava ativo=true, e isso tinha um
+        // efeito perverso: menu desativado sumia do casamento de rota, a rota
+        // virava "não cadastrada" e o RouteGuard a tratava como ABERTA. Ou
+        // seja, desativar um menu no Catálogo publicava a tela em vez de
+        // fechá-la — 14 rotas estavam assim (todo o Suprimentos legado,
+        // /app/pregao, /app/triagem). Agora o menu inativo continua casando a
+        // rota, e o RouteGuard nega por estar inativo.
+        supabase.from("app_menu").select("codigo, rota, ativo"),
         // Menus sem NENHUMA configuração em perfil_acesso_permissao/screen_permission_user
         // (ninguém nunca mexeu no gerenciamento de acesso pra eles) ficam de fora do
         // enforcement — ver 20260729000001_routeguard_list_configured_menu_codes.sql.
@@ -53,20 +60,26 @@ export function useAccessibleMenus(acao: string = "visualizar") {
 
       if (rpcResult.error) {
         console.warn("list_accessible_menus error", rpcResult.error);
-        return { codes: new Set<string>(), routes: [] as MenuRoute[], configuredCodes: new Set<string>() };
+        return { codes: new Set<string>(), routes: [] as MenuRoute[], configuredCodes: new Set<string>(), inactiveCodes: new Set<string>() };
       }
       const codes = new Set<string>((rpcResult.data ?? []).map((r: any) => r.menu_codigo));
 
-      const routes: MenuRoute[] = ((menusResult.data ?? []) as { codigo: string; rota: string | null }[])
+      const menus = (menusResult.data ?? []) as { codigo: string; rota: string | null; ativo: boolean }[];
+
+      const routes: MenuRoute[] = menus
         .filter((m) => !!m.rota)
         .map((m) => ({ codigo: m.codigo, rota: m.rota as string }));
+
+      // Códigos desativados no Catálogo: o RouteGuard nega, e a Sidebar não
+      // lista. Um menu desativado é uma tela fora do ar, não uma tela pública.
+      const inactiveCodes = new Set<string>(menus.filter((m) => !m.ativo).map((m) => m.codigo));
 
       if (configuredResult.error) console.warn("list_configured_menu_codes error", configuredResult.error);
       const configuredCodes = new Set<string>(
         ((configuredResult.data ?? []) as { menu_codigo: string }[]).map((r) => r.menu_codigo),
       );
 
-      return { codes, routes, configuredCodes };
+      return { codes, routes, configuredCodes, inactiveCodes };
     },
   });
 }
