@@ -8,6 +8,7 @@ import {
   MOTIVOS_VAGA, motivoLabel, ehSubstituicao, avaliarPrazo, dataMinimaVaga,
   cargoExigeCnh, aplicarReqCnh, REQ_CNH_TEXTO, fmtBr,
   rotuloReferencia, ajudaReferencia, mostraNomeReferencia, contratoDoEmpregado,
+  podeVagaAdministrativa, filtrarAdministrativas,
   substituidosComVagaViva, avisoSubstituidoPreso,
 } from "@/lib/recrutamento/vagaRegras";
 
@@ -35,6 +36,8 @@ interface Solicitacao {
   status: string;
   grau_urgencia: string;
   motivo_vaga: string;
+  /** Vaga do escritório: só quem tem a capacidade enxerga (RLS). */
+  administrativa?: boolean;
   nome_substituido?: string;
   escala?: string;
   horario?: string;
@@ -281,6 +284,8 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "opera
   // aprovariam a mesma coisa e a última a salvar ganharia.
   const podeAprovarOperacional = soOperacional && can("aprovar", undefined, menuAcesso);
   // Quem pode mover o candidato pra fora de cada etapa específica do kanban.
+  // Vaga do escritório: só quem tem a capacidade vê, marca e decide.
+  const podeAdministrativa = podeVagaAdministrativa(can);
   const podeMoverJuridico = can("aprovar", undefined, "recrutamento_etapa_juridico");
   const podeMoverSst      = can("aprovar", undefined, "recrutamento_etapa_sst");
   const podeMoverCompras  = can("aprovar", undefined, "recrutamento_etapa_compras");
@@ -367,7 +372,7 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "opera
 
   // Wizard nova vaga
   const [vaga, setVaga] = useState({
-    motivo_vaga: "", nome_substituido: "", contrato: "", cargo: "",
+    motivo_vaga: "", administrativa: false, nome_substituido: "", contrato: "", cargo: "",
     estado: "", cidade: "", quantidade_vagas: "1", data_inicio_prevista: "",
     escala: "", horario: "", salario: "", insalubridade_recebe: "Não",
     insalubridade_quanto: "", beneficios: "", local_exato: "",
@@ -474,7 +479,7 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "opera
     if (myReq !== listaReq.current) return;   // já saiu uma consulta mais nova: ignora esta
     setLoading(false);
     if (error) { toast("Erro ao carregar lista: " + error.message, "err"); return; }
-    setItems(data ?? []);
+    setItems(filtrarAdministrativas(data ?? [], podeAdministrativa));
     const ct = count ?? 0;
     setTotal(ct);
     setPages(Math.max(1, Math.ceil(ct / PER)));
@@ -1407,6 +1412,7 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "opera
       grau_urgencia: prazo.grau ?? "",
       req_obrigatorios: aplicarReqCnh(vaga.req_obrigatorios, vaga.cargo),
       cnh_obrigatoria: !!cnhDoCargo,
+      administrativa: podeAdministrativa ? !!vaga.administrativa : false,
       // Só a substituição grava o id: é ele que trava a pessoa numa vaga só.
       substituido_id: ehSubstituicao(vaga.motivo_vaga) ? substituidoId : null,
       status: "Pendente Operacional",
@@ -1422,7 +1428,7 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "opera
     if (error) { toast("Erro ao solicitar vaga: " + error.message, "err"); return; }
     toast(`Solicitação #${data?.id} criada com sucesso!`, "ok");
     setModalVaga(false);
-    setVaga({ motivo_vaga:"",nome_substituido:"",contrato:"",cargo:"",estado:"",cidade:"",
+    setVaga({ motivo_vaga:"",administrativa:false,nome_substituido:"",contrato:"",cargo:"",estado:"",cidade:"",
       quantidade_vagas:"1",data_inicio_prevista:"",escala:"",horario:"",salario:"",
       insalubridade_recebe:"Não",insalubridade_quanto:"",beneficios:"",local_exato:"",
       grau_urgencia:"",alta_rotatividade:"Não",req_obrigatorios:"",req_desejaveis:"",
@@ -1519,6 +1525,7 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "opera
           {di("Cargo", s.cargo)}
           {di("Cidade", s.cidade)}
           {di("Motivo da Vaga", motivoLabel(s.motivo_vaga))}
+          {s.administrativa ? di("Tipo de vaga", "Administrativa (escritório)") : null}
           {di("Escala", s.escala)}
           {di("Horário", s.horario)}
           {di("Salário", s.salario)}
@@ -2799,6 +2806,21 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "opera
                   </select>
                 </div>
               </div>
+
+              {podeAdministrativa && (
+                <div className="rec-fg" style={{ gridColumn: "1 / -1" }}>
+                  <label style={{ display: "flex", alignItems: "flex-start", gap: 9, cursor: "pointer", background: vaga.administrativa ? "#f0f6ff" : "#fff", border: vaga.administrativa ? "1.5px solid #0f3171" : "1px solid #e2e8f0", borderRadius: 11, padding: "10px 13px", transition: "background .18s, border-color .18s" }}>
+                    <input type="checkbox" checked={!!vaga.administrativa} style={{ marginTop: 2, width: 15, height: 15, accentColor: "#0f3171", cursor: "pointer" }}
+                      onChange={e => setVaga(v => ({ ...v, administrativa: e.target.checked }))} />
+                    <span>
+                      <span style={{ display: "block", fontSize: 12.5, fontWeight: 800, color: "#0f172a" }}>Vaga é administrativa?</span>
+                      <span style={{ display: "block", fontSize: 11, color: "#94a3b8", marginTop: 3, lineHeight: 1.45 }}>
+                        Vaga do escritório. Só quem tem “Ver vaga administrativa?” enxerga, aprova ou reprova — os demais nem veem que ela existe.
+                      </span>
+                    </span>
+                  </label>
+                </div>
+              )}
             </>)}
 
             {/* Step 2 */}

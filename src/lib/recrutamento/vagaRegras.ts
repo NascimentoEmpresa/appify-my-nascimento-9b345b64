@@ -81,6 +81,30 @@ export async function substituidosComVagaViva(
 export const avisoSubstituidoPreso = (vagaId: number): string =>
   `Esse colaborador já está na vaga de substituição #${vagaId}. Só dá para abrir outra depois que aquela for concluída, cancelada ou reprovada.`;
 
+// ── Vaga administrativa ─────────────────────────────────────────────────
+// Vaga do escritório é gerida só pela diretoria. Quem não tem a capacidade
+// não VÊ a vaga — logo não aprova, não reprova e não mexe nos candidatos.
+//
+// O código é o de um MENU DE CAPACIDADE em app_menu (rota NULL), cadastrado
+// nos módulos Recrutamento e Operacional pela migration 20260913000004. As
+// duas entradas ligam a MESMA capacidade, porque a permissão é gravada por
+// menu_codigo. Quem recusa de verdade é a RLS; isto aqui só esconde botão.
+export const MENU_VAGA_ADMINISTRATIVA = "recrutamento_vaga_administrativa";
+
+/** Só quem enxerga vaga administrativa pode MARCAR uma como tal — senão a
+ *  pessoa criaria a vaga e ela sumiria da própria vista no mesmo instante. */
+export const podeVagaAdministrativa = (
+  can: (acao: string, modulo?: string, menu?: string) => boolean,
+): boolean => can("visualizar", undefined, MENU_VAGA_ADMINISTRATIVA);
+
+/** Recorte de segurança na tela. A RLS já não entrega essas linhas; isto
+ *  evita que um cache antigo mostre o que a pessoa não pode mais ver. */
+export function filtrarAdministrativas<T extends { administrativa?: boolean | null }>(
+  vagas: T[], podeVer: boolean,
+): T[] {
+  return podeVer ? vagas : vagas.filter(v => !v.administrativa);
+}
+
 // ── Salário ─────────────────────────────────────────────────────────────
 // Quem ABRE a vaga (encarregado/solicitante) não vê salário — vê a máscara.
 // Operacional e Recrutamento, que aprovam, veem o valor.

@@ -1,12 +1,14 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
+import { usePermissoes } from "@/context/PermissoesContext";
 import { ESTADOS_BR, municipiosDe } from "@/data/municipios-brasil";
 import {
   MOTIVOS_VAGA, motivoLabel, ehSubstituicao, avaliarPrazo, dataMinimaVaga,
   cargoExigeCnh, aplicarReqCnh, REQ_CNH_TEXTO, MIN_DIAS_UTEIS, fmtBr,
   rotuloReferencia, ajudaReferencia, mostraNomeReferencia, contratoDoEmpregado,
   SALARIO_MASCARA, substituidosComVagaViva, avisoSubstituidoPreso,
+  podeVagaAdministrativa,
 } from "@/lib/recrutamento/vagaRegras";
 
 // ── Helpers ────────────────────────────────────────────────────────
@@ -90,7 +92,7 @@ const ADV_RESET = {
   advertencia_verbal_dada: "Não", data_advertencia_verbal: "",
 };
 const VAGA_RESET = {
-  motivo_vaga: "", nome_substituido: "", contrato: "", cargo: "",
+  motivo_vaga: "", administrativa: false, nome_substituido: "", contrato: "", cargo: "",
   estado: "", cidade: "", quantidade_vagas: "1", data_inicio_prevista: "",
   escala: "", horario: "", salario: "", insalubridade_recebe: "Não",
   insalubridade_quanto: "", beneficios: "", local_exato: "",
@@ -118,6 +120,9 @@ export type SolicitacaoInicial = "vaga" | "ferias" | "advertencia";
 
 export default function MinhasSolicitacoes({ abrir }: { abrir?: SolicitacaoInicial }) {
   const { user } = useAuth();
+  const { can } = usePermissoes();
+  // Vaga do escritório: só quem enxerga esse tipo pode marcar uma como tal.
+  const podeAdministrativa = podeVagaAdministrativa(can);
   const [displayName, setDisplayName] = useState("");
 
   // Wizard nova vaga
@@ -307,6 +312,7 @@ export default function MinhasSolicitacoes({ abrir }: { abrir?: SolicitacaoInici
       cnh_obrigatoria: !!cnhDoCargo,
       // Só a substituição grava o id: é ele que trava a pessoa numa vaga só.
       substituido_id: ehSubstituicao(vaga.motivo_vaga) ? substituidoId : null,
+      administrativa: podeAdministrativa ? !!vaga.administrativa : false,
       status: "Pendente Operacional",
       solicitante_nome: user?.user_metadata?.nome ?? user?.email ?? "",
       solicitante_cpf: user?.email ?? "",
@@ -314,7 +320,7 @@ export default function MinhasSolicitacoes({ abrir }: { abrir?: SolicitacaoInici
     let { error, data } = await (supabase as any).from("SISTEMA_RECRUTAMENTO").insert(payload).select("id").single();
     // Banco ainda sem as colunas novas: reenvia sem elas.
     if (error && /column|schema cache/i.test(error.message)) {
-      const { cnh_obrigatoria, substituido_id, ...semColunasNovas } = payload as any;
+      const { cnh_obrigatoria, substituido_id, administrativa, ...semColunasNovas } = payload as any;
       ({ error, data } = await (supabase as any).from("SISTEMA_RECRUTAMENTO").insert(semColunasNovas).select("id").single());
     }
     if (error) { toast("Erro ao solicitar vaga: " + error.message, "err"); return; }
@@ -771,6 +777,20 @@ export default function MinhasSolicitacoes({ abrir }: { abrir?: SolicitacaoInici
                   </select>
                 </div>
               </div>
+              {podeAdministrativa && (
+                <div className="ini-fg">
+                  <label style={{ display: "flex", alignItems: "flex-start", gap: 9, cursor: "pointer", background: vaga.administrativa ? "#f0f6ff" : "#fff", border: vaga.administrativa ? "1.5px solid #0f3171" : "1px solid #e2e8f0", borderRadius: 11, padding: "10px 13px", transition: "background .18s, border-color .18s" }}>
+                    <input type="checkbox" checked={!!vaga.administrativa} style={{ marginTop: 2, width: 15, height: 15, accentColor: "#0f3171", cursor: "pointer" }}
+                      onChange={e => setVaga(v => ({ ...v, administrativa: e.target.checked }))} />
+                    <span>
+                      <span style={{ display: "block", fontSize: 12.5, fontWeight: 800, color: "#0f172a" }}>Vaga é administrativa?</span>
+                      <span style={{ display: "block", fontSize: 11, color: "#94a3b8", marginTop: 3, lineHeight: 1.45 }}>
+                        Vaga do escritório. Só quem tem “Ver vaga administrativa?” enxerga, aprova ou reprova — os demais nem veem que ela existe.
+                      </span>
+                    </span>
+                  </label>
+                </div>
+              )}
             </>)}
 
             {vagaStep === 2 && (<>
