@@ -91,8 +91,13 @@ export default function SolicitarDemissao() {
     })();
   }, [user?.id, user?.email]);
 
-  // Contrato do colaborador: a EMPREGADOS guarda a filial, e o nome do
-  // contrato mora na CONTRATOS — a mesma ligação que a solicitação de vaga faz.
+  // Contrato do colaborador: vem da coluna "Descrição do Local" da EMPREGADOS.
+  //
+  // Antes a tela ligava EMPREGADOS.Filial → CONTRATOS.Filial e pegava o
+  // primeiro que casasse. Só que UMA FILIAL TEM MAIS DE UM CONTRATO — a 1093
+  // tem "LIMPEZA HUSM" e "ADM E ESTAGIARIOS - NH" — então o `find` devolvia
+  // o contrato de outra gente (era daí que saía o "LIMPEZA HUSM" num
+  // analista do administrativo).
   const [contratos, setContratos] = useState<any[]>([]);
   useEffect(() => {
     (async () => {
@@ -101,11 +106,14 @@ export default function SolicitarDemissao() {
       setContratos(data ?? []);
     })();
   }, []);
+  const nomeContrato = colaborador?.descricaoLocal || colaborador?.nomeFilial || "";
+  // O id só sai quando o nome bate mesmo com um contrato ativo — apontar para
+  // um id que não corresponde ao nome exibido é pior do que não apontar.
   const contratoDoColaborador = useMemo(() => {
-    if (!colaborador) return null;
-    return contratos.find((c: any) => String(c.Filial) === String(colaborador.filial)) ?? null;
-  }, [contratos, colaborador]);
-  const nomeContrato = contratoDoColaborador?.["NOME CONTRATO"] ?? colaborador?.nomeFilial ?? "";
+    const alvo = nomeContrato.trim().toUpperCase();
+    if (!alvo) return null;
+    return contratos.find((c: any) => String(c["NOME CONTRATO"] ?? "").trim().toUpperCase() === alvo) ?? null;
+  }, [contratos, nomeContrato]);
 
   // Minhas solicitações, para acompanhar o andamento sem sair da tela.
   const [minhas, setMinhas] = useState<SolicitacaoDemissao[]>([]);

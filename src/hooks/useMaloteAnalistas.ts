@@ -56,6 +56,21 @@ export function useSalvarAnalistaContrato() {
   });
 }
 
+// SIS-2026-0192: contratos em que o usuário logado é Analista ativo — via
+// RPC SECURITY DEFINER porque malote_analista_contrato tem SELECT
+// restrito a admin/controladoria/diretor_adm (um Analista comum não lê a
+// própria linha de vínculo direto).
+export function useMeusContratosAnalista() {
+  return useQuery({
+    queryKey: [VINCULOS_KEY, "meus_contratos"],
+    queryFn: async () => {
+      const { data, error } = await (supabase as any).rpc("malote_meus_contratos_analista");
+      if (error) throw error;
+      return new Set<string>((data ?? []) as string[]);
+    },
+  });
+}
+
 export function useExcluirAnalistaContrato() {
   const qc = useQueryClient();
   return useMutation({
