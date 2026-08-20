@@ -32,8 +32,16 @@ import {
   STATUS_FASE_SOLICITACAO,
   TipoSolicitacao,
 } from "@/hooks/useMaloteDespesa";
+import { useOrcadoClassificacao } from "@/hooks/useOrcadoClassificacao";
+import { useUtilizadoOrcamento } from "@/hooks/useUtilizadoOrcamento";
+import { anoMesAtual } from "@/hooks/usePlanilhaCusto";
 import { AnexosField } from "./AnexosField";
 import { ComprasPassadas } from "@/components/malote/ComprasPassadas";
+
+function fmtMoney(n: number | null | undefined): string {
+  if (n == null) return "—";
+  return n.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
+}
 
 const TIPO_LABEL: Record<TipoSolicitacao, string> = {
   administrativo: "Administrativo",
@@ -104,6 +112,15 @@ export default function SolicitacaoVisualizar() {
 
   const despesa = data?.despesa;
 
+  // Impacto no orçamento (SIS-2026-0192, confirmado com o Iury): solicitação
+  // ainda não tem competência definida (só a despesa final tem), então usa
+  // o mês atual como referência — o aprovador vê aqui a soma do que já está
+  // em Aguardando Pagamento/Despesa Paga + o valor desta solicitação, antes
+  // dela virar despesa de verdade.
+  const anoMesRef = anoMesAtual();
+  const { resolver: resolverOrcado } = useOrcadoClassificacao(despesa?.empresa_id, anoMesRef);
+  const { data: utilizadoLinhas = [] } = useUtilizadoOrcamento();
+
   if (isLoading || !despesa) {
     return <div className="p-6 text-muted-foreground">Carregando...</div>;
   }
@@ -141,6 +158,29 @@ export default function SolicitacaoVisualizar() {
       link: despesa[`cot${n}_link`],
     }))
     .filter((c) => c.fornecedor);
+
+  // Orçamento da classificação + Impacto desta compra (SIS-2026-0192,
+  // confirmado com o Iury): soma do que já está em Aguardando Pagamento/
+  // Despesa Paga naquele mês + o valor que o aprovador está avaliando
+  // agora — dá visibilidade do impacto ANTES da solicitação virar despesa.
+  const orcadoClassificacao = resolverOrcado(despesa.classificacao_id, despesa.contrato_id);
+  const utilizadoAtual = utilizadoLinhas
+    .filter(
+      (u) =>
+        u.classificacao_id === despesa.classificacao_id &&
+        (u.contrato_id ?? null) === (despesa.contrato_id ?? null) &&
+        !!u.competencia &&
+        u.competencia.slice(0, 7) === anoMesRef
+    )
+    .reduce((s, u) => s + (Number(u.valor) || 0), 0);
+  const cotacaoSelecionada = cotacoes.find((c) => c.n === (numeroSelecionado ?? despesa.cotacao_vencedor_num));
+  const valorImpacto = cotacaoSelecionada?.valor ?? despesa.valor_total;
+  const utilizadoAposCompra = utilizadoAtual + (Number(valorImpacto) || 0);
+  const saldoDisponivel = orcadoClassificacao != null ? orcadoClassificacao - utilizadoAtual : null;
+  const saldoAposCompra = orcadoClassificacao != null ? orcadoClassificacao - utilizadoAposCompra : null;
+  const pctAtual = orcadoClassificacao ? (utilizadoAtual / orcadoClassificacao) * 100 : null;
+  const pctAposCompra = orcadoClassificacao ? (utilizadoAposCompra / orcadoClassificacao) * 100 : null;
+  const corPct = (pct: number | null) => (pct == null ? "hsl(var(--muted-foreground)/0.25)" : pct > 100 ? "#ef4444" : pct >= 80 ? "#f59e0b" : "#10b981");
 
   async function handleAprovarInicial() {
     setAcaoAprovacao("aprovar");
@@ -437,69 +477,89 @@ export default function SolicitacaoVisualizar() {
                   </span>
                 </p>
                 <p className="text-[11px] text-muted-foreground pt-1">
-                  Consulte o Orçamento Administrativo/de Contratos pra ver o saldo do mês desta classificação.
+                  Veja o orçamento e o impacto desta compra nos cards ao lado.
                 </p>
               </CardContent>
             </Card>
           )}
 
           {(emAprovacaoInicial || podeEscolherCotacao) && (
-            <Card className={cn("border-l-4 border-l-sky-400 border-dashed bg-muted/20", !podeEscolherCotacao && "flex-1")}>
+            <Card className={cn("border-l-4 border-l-sky-400", !podeEscolherCotacao && "flex-1")}>
               <CardContent className="p-4 space-y-3">
                 <div className="flex items-center justify-between gap-2">
                   <div className="flex items-center gap-2">
                     <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-sky-100 text-sky-600 dark:bg-sky-950/40 dark:text-sky-400">
                       <Wallet className="h-3.5 w-3.5" />
                     </span>
-                    <p className="text-sm font-semibold text-muted-foreground">Orçamento da classificação</p>
+                    <p className="text-sm font-semibold">Orçamento da classificação</p>
                   </div>
-                  <Badge variant="outline" className="text-[10px] font-normal shrink-0">em breve</Badge>
                 </div>
                 <div className="flex items-center gap-4">
                   <div
                     className="relative flex h-16 w-16 shrink-0 items-center justify-center rounded-full"
-                    style={{ background: "conic-gradient(hsl(var(--muted-foreground)/0.25) 0deg, hsl(var(--muted-foreground)/0.25) 360deg)" }}
+                    style={{
+                      background: `conic-gradient(${corPct(pctAtual)} ${Math.min(pctAtual ?? 0, 100) * 3.6}deg, hsl(var(--muted-foreground)/0.15) 0deg)`,
+                    }}
                   >
                     <div className="flex h-11 w-11 items-center justify-center rounded-full bg-card text-[11px] font-semibold text-muted-foreground">
-                      —%
+                      {pctAtual != null ? `${pctAtual.toFixed(0)}%` : "—"}
                     </div>
                   </div>
                   <div className="space-y-1 text-xs text-muted-foreground">
-                    <p>Valor orçado: —</p>
-                    <p>Utilizado até o momento: —</p>
-                    <p>Saldo disponível: —</p>
+                    <p>
+                      Valor orçado: <span className="font-medium text-foreground">{fmtMoney(orcadoClassificacao)}</span>
+                    </p>
+                    <p>
+                      Utilizado até o momento: <span className="font-medium text-foreground">{fmtMoney(utilizadoAtual)}</span>
+                    </p>
+                    <p>
+                      Saldo disponível: <span className="font-medium text-foreground">{fmtMoney(saldoDisponivel)}</span>
+                    </p>
                   </div>
                 </div>
                 <p className="text-[11px] text-muted-foreground">
-                  Ainda não temos o orçamento mensal completo cadastrado pra essa classificação/contrato — assim que
-                  estiver pronto, este gráfico mostra o consumo real do mês.
+                  "Utilizado" soma despesas já em Aguardando Pagamento ou Despesa Paga no mês corrente ({anoMesRef}) —
+                  ainda não conta o valor desta solicitação, veja o impacto dela no card abaixo.
                 </p>
               </CardContent>
             </Card>
           )}
 
           {podeEscolherCotacao && (
-            <Card className="flex-1 border-l-4 border-l-amber-400 border-dashed bg-muted/20">
+            <Card className="flex-1 border-l-4 border-l-amber-400">
               <CardContent className="p-4 space-y-1.5">
                 <div className="flex items-center justify-between gap-2">
                   <div className="flex items-center gap-2">
                     <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-amber-100 text-amber-600 dark:bg-amber-950/40 dark:text-amber-400">
                       <TrendingUp className="h-3.5 w-3.5" />
                     </span>
-                    <p className="text-sm font-semibold text-muted-foreground">Impacto desta compra</p>
+                    <p className="text-sm font-semibold">Impacto desta compra</p>
                   </div>
-                  <Badge variant="outline" className="text-[10px] font-normal shrink-0">em breve</Badge>
                 </div>
                 <div className="space-y-1 text-xs text-muted-foreground">
-                  <p>Valor da cotação selecionada: —</p>
-                  <p>Utilizado atualmente: —</p>
-                  <p>Utilizado após esta compra: —</p>
-                  <p>Saldo após esta compra: —</p>
-                  <p>% do orçamento após compra: —</p>
+                  <p>
+                    Valor da cotação selecionada:{" "}
+                    <span className="font-medium text-foreground">{fmtMoney(cotacaoSelecionada?.valor ?? null)}</span>
+                  </p>
+                  <p>
+                    Utilizado atualmente: <span className="font-medium text-foreground">{fmtMoney(utilizadoAtual)}</span>
+                  </p>
+                  <p>
+                    Utilizado após esta compra: <span className="font-medium text-foreground">{fmtMoney(utilizadoAposCompra)}</span>
+                  </p>
+                  <p>
+                    Saldo após esta compra: <span className="font-medium text-foreground">{fmtMoney(saldoAposCompra)}</span>
+                  </p>
+                  <p>
+                    % do orçamento após compra:{" "}
+                    <span className="font-medium" style={{ color: corPct(pctAposCompra) }}>
+                      {pctAposCompra != null ? `${pctAposCompra.toFixed(2)}%` : "—"}
+                    </span>
+                  </p>
                 </div>
                 <p className="text-[11px] text-muted-foreground pt-1">
-                  Depende do orçamento da classificação acima. A compra só é registrada após a aprovação e o lançamento
-                  da despesa.
+                  Enquanto nenhuma cotação está selecionada, usa o Valor estimado da solicitação como referência. A
+                  compra só entra de fato no "Utilizado" após a aprovação e o lançamento da despesa.
                 </p>
               </CardContent>
             </Card>
