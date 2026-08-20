@@ -24,7 +24,7 @@ import {
   useReprovarSolicitacaoInicial,
   useAprovarCotacao,
   useReprovarCotacao,
-  souAprovadorConfigurado,
+  souAprovadorSolicitacao,
   uploadAnexoMalote,
   registrarEventoDespesa,
   STATUS_LABEL,
@@ -111,9 +111,11 @@ export default function SolicitacaoVisualizar() {
   const editavel = STATUS_FASE_SOLICITACAO.includes(despesa.status) && despesa.status !== "solicitacao_reprovada";
   const podeCancelar = editavel;
 
-  // Aprovação Inicial — SIS-2026-0132 Fase 2. Gate único (não sequencial):
-  // qualquer aprovador configurado na Classificação Malote pode agir.
-  const souAprovadorDaClassificacao = souAprovadorConfigurado(despesa, user?.id);
+  // Aprovação Inicial — SIS-2026-0132 Fase 2. Gate é o Aprovador da
+  // Solicitação (aprovador_solicitacao_user_id), diferente do
+  // aprovador1/2/3 da Despesa — SIS-2026-0189 corrigiu isso, antes
+  // checava souAprovadorConfigurado (despesa) por engano.
+  const souAprovadorDaClassificacao = souAprovadorSolicitacao(despesa, user?.id);
   const aguardandoMinhaAprovacaoInicial = despesa.status === "aguardando_aprovacao_inicial" && souAprovadorDaClassificacao;
   const aguardandoCotacaoComoAprovador = despesa.status === "aguardando_cotacao" && souAprovadorDaClassificacao;
   const emAprovacaoInicial = aguardandoMinhaAprovacaoInicial || aguardandoCotacaoComoAprovador;
