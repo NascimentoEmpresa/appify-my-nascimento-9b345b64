@@ -13,6 +13,7 @@ import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { useEmpresaId } from "@/hooks/useEmpresaId";
 import { vincularContaAoMalote, PARAM_ORIGEM } from "@/pages/juridico/patrimonio/vinculoMalote";
+import { ConfirmacaoMalote } from "@/components/malote/ConfirmacaoMalote";
 import { TipoClassificacaoOrcamento, usePlanejamentosOrcamento } from "@/hooks/usePlanejamentoOrcamentario";
 import { useRubricasVinculadas, RubricaVinculada } from "@/hooks/useRubricasMalote";
 import { usePlanilhaCustos, resolverValorPorCampos } from "@/hooks/usePlanilhaCusto";
@@ -611,6 +612,10 @@ function PainelDespesaMalote({
 }) {
   const [paramsUrl] = useSearchParams();
   const obrigacaoPatrimonio = paramsUrl.get(PARAM_ORIGEM);
+  // Confirmação no centro da tela quando a despesa vai para aprovação. O
+  // toast de canto some antes de a pessoa registrar, e aqui dar certo importa:
+  // a despesa saiu da mão dela e entrou na fila de outra pessoa.
+  const [confirmacao, setConfirmacao] = useState<{ titulo: string; subtitulo: string } | null>(null);
   const salvar = useSalvarDespesa();
   const converter = useConverterSolicitacaoEmDespesa();
   const [nome, setNome] = useState(nomeInicial ?? inicial?.nome ?? "");
@@ -726,7 +731,10 @@ function PainelDespesaMalote({
       }
 
       if (paraEnviar && despesaIdExistente) {
-        toast.success("Despesa criada a partir da solicitação e enviada para aprovação.");
+        setConfirmacao({
+          titulo: "Despesa enviada ao Malote!",
+          subtitulo: "Criada a partir da solicitação e já na fila de aprovação.",
+        });
         onConvertida?.();
         return;
       }
@@ -735,7 +743,18 @@ function PainelDespesaMalote({
         await registrarEventoDespesa(despesaId, "edicao", "Dados da despesa atualizados antes do envio para aprovação.");
       }
 
-      toast.success(acao === "rascunho" ? "Rascunho salvo." : "Despesa enviada para aprovação.");
+      // Rascunho não é conquista: continua no toast discreto. O que ganha a
+      // tela é o envio para aprovação.
+      if (acao === "rascunho") {
+        toast.success("Rascunho salvo.");
+      } else {
+        setConfirmacao({
+          titulo: "Despesa enviada ao Malote!",
+          subtitulo: obrigacaoPatrimonio
+            ? "A conta do Patrimônio já aparece como enviada."
+            : "Agora ela está na fila de aprovação.",
+        });
+      }
       if (!despesaIdExistente) {
         setNome(""); setTotalMes(""); setDataPagamento(""); setCompetencia(""); setFormaPagamento("");
         setInformacoesPagamento(""); setLinhasRateio([]); setParcelado("nao"); setDiaDesconto("");
@@ -750,6 +769,12 @@ function PainelDespesaMalote({
 
   return (
     <Card>
+      <ConfirmacaoMalote
+        aberto={!!confirmacao}
+        titulo={confirmacao?.titulo}
+        subtitulo={confirmacao?.subtitulo}
+        onFechar={() => setConfirmacao(null)}
+      />
       <CardContent className="p-6 space-y-4">
         <PainelHeader icon={<FileEdit className="h-4 w-4 mt-0.5 text-muted-foreground" />} titulo="Criar Despesa Malote" subtitulo="Preencha os dados para incluir a despesa diretamente no malote." ativo={ativo} />
 
