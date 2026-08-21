@@ -106,6 +106,15 @@ export interface RateioLinha {
   justificativa_texto?: string | null;
   justificativa_por?: string | null;
   justificativa_em?: string | null;
+  // SIS-2026-0212 (complemento): "congela" Orçado/Utilizado no momento do
+  // pagamento (malote_pagar_despesa) — sem isso, o Orçado/Utilizado exibido
+  // recalculava pra sempre contra despesas lançadas depois, e uma despesa
+  // já paga passava a aparecer "fora do orçado" por causa de lançamentos
+  // que nem existiam quando ela foi paga. congelado_em != null decide se a
+  // tela usa o snapshot em vez de recalcular ao vivo.
+  orcado_snapshot?: number | null;
+  utilizado_com_lancamento_snapshot?: number | null;
+  congelado_em?: string | null;
 }
 
 export interface Parcela {
@@ -734,6 +743,11 @@ export interface PagarDespesaInput {
   data_pagamento: string;
   comprovante_path: string;
   observacao: string | null;
+  // SIS-2026-0212 (complemento): Orçado/Utilizado calculados no client no
+  // momento do pagamento (mesma lógica de useOrcadoClassificacao/
+  // RateioAprovadorTable), gravados por linha via malote_pagar_despesa —
+  // só registro histórico, não é dado de segurança.
+  rateio_snapshot?: { linha_id: string; orcado: number | null; utilizado_com_lancamento: number | null }[];
 }
 
 export function usePagarDespesa() {
@@ -745,6 +759,7 @@ export function usePagarDespesa() {
         _data_pagamento: input.data_pagamento,
         _comprovante_path: input.comprovante_path,
         _observacao: input.observacao,
+        _rateio_snapshot: input.rateio_snapshot ?? [],
       });
       if (error) throw error;
     },

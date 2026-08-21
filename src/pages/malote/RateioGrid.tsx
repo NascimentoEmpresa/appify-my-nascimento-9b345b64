@@ -479,10 +479,18 @@ export function RateioGrid({
                 )}
                 {mostrarColunasOrcamento &&
                   (() => {
-                    const orcado = resolverOrcado!(classificacaoId, linha.contrato_id);
+                    // SIS-2026-0212 (complemento): mesmo congelamento da
+                    // RateioAprovadorTable — na prática essa grade só
+                    // renderiza pra despesa ainda não paga (bloqueado=true
+                    // desliga rateioEPagamentoEditaveis), mas mantém
+                    // consistente caso isso mude.
+                    const estaCongelada = linha.congelado_em != null;
+                    const orcado = estaCongelada ? linha.orcado_snapshot ?? null : resolverOrcado!(classificacaoId, linha.contrato_id);
                     const chave = linha.contrato_id ?? "__sem_contrato__";
                     const utilizadoAntes = utilizadoAntesPorContrato.get(chave) ?? 0;
-                    const utilizadoComLancamento = utilizadoAntes + (Number(linha.valor) || 0);
+                    const utilizadoComLancamento = estaCongelada
+                      ? linha.utilizado_com_lancamento_snapshot ?? 0
+                      : utilizadoAntes + (Number(linha.valor) || 0);
                     const dentroDoOrcado = orcado == null ? null : utilizadoComLancamento <= orcado;
                     const percentualLinha = orcado ? (utilizadoComLancamento / orcado) * 100 : null;
                     const precisaJustificar =
