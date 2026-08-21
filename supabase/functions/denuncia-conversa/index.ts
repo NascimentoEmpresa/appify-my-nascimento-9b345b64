@@ -36,28 +36,30 @@ Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: cors });
   if (req.method !== "POST") return json({ error: "method not allowed" }, 405);
 
-  let body: { email?: string; senha?: string; protocolo?: string; mensagem?: string };
+  let body: { identificador?: string; email?: string; senha?: string; protocolo?: string; mensagem?: string };
   try {
     body = await req.json();
   } catch {
     return json({ error: "Corpo inválido." }, 400);
   }
 
-  const email = (body?.email ?? "").trim();
+  // E-mail OU protocolo: o relato anônimo não tem e-mail, e é a mesma
+  // conversa. `email` segue aceito para não quebrar tela em cache.
+  const identificador = (body?.identificador ?? body?.email ?? "").trim();
   // A senha não é normalizada: é escolhida pela pessoa e gravada como veio.
   const senha = body?.senha ?? "";
   const protocolo = (body?.protocolo ?? "").trim();
   const mensagem = (body?.mensagem ?? "").trim();
 
-  if (!email || !senha || !protocolo) {
-    return json({ error: "Informe o e-mail, a senha e o protocolo." }, 400);
+  if (!identificador || !senha || !protocolo) {
+    return json({ error: "Informe o e-mail (ou o protocolo), a senha e o número do protocolo." }, 400);
   }
 
   const sb = createClient(SUPABASE_URL, ANON_KEY, { auth: { persistSession: false } });
 
   if (mensagem) {
     const { error } = await sb.rpc("denuncia_responder", {
-      p_email: email, p_senha: senha, p_protocolo: protocolo, p_mensagem: mensagem,
+      p_identificador: identificador, p_senha: senha, p_protocolo: protocolo, p_mensagem: mensagem,
     });
     if (error) return json({ error: error.message || "Não foi possível enviar agora." }, 400);
   }
@@ -66,7 +68,7 @@ Deno.serve(async (req) => {
   // tela não precisar de uma segunda chamada só para mostrar o que acabou de
   // escrever.
   const { data, error } = await sb.rpc("denuncia_mensagens", {
-    p_email: email, p_senha: senha, p_protocolo: protocolo,
+    p_identificador: identificador, p_senha: senha, p_protocolo: protocolo,
   });
 
   // 400 para tudo: 401/404 distintos entregariam de graça se o protocolo

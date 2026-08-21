@@ -8,6 +8,7 @@ import {
   UserX, HeartCrack, Users, Banknote, HandCoins, Scale, Building2, FileLock2,
   HardHat, Leaf, BookMarked, CircleEllipsis, Info, ArrowLeft, Fingerprint,
   ServerOff, CheckCircle2, TriangleAlert, ChevronRight, MessagesSquare,
+  ShieldAlert, Paperclip, X, Upload,
 } from "lucide-react";
 
 // =====================================================================
@@ -65,7 +66,7 @@ interface DenunciaConsulta {
  * livre de token. Quem guarda a chave é a Edge Function, no servidor.
  */
 async function chamarCanal<T>(
-  rota: "denuncia-registrar" | "denuncia-consultar" | "denuncia-conversa",
+  rota: "denuncia-registrar" | "denuncia-consultar" | "denuncia-conversa" | "denuncia-listas",
   corpo: unknown,
 ): Promise<{ data: T | null; erro: string | null }> {
   try {
@@ -124,6 +125,18 @@ const COMO_SOUBE = [
   { value: "outro", label: "Outro" },
 ];
 
+/** Risco e retaliação são fato ou não são — "não sei" ali não ajudaria ninguém. */
+const SIM_NAO = [
+  { value: "sim", label: "Sim" },
+  { value: "nao", label: "Não" },
+];
+
+const FREQUENCIA_OPC = [
+  { value: "unica", label: "Aconteceu uma vez" },
+  { value: "recorrente", label: "Acontece de forma repetida" },
+  { value: "em_curso", label: "Está acontecendo agora" },
+];
+
 const SIM_NAO_NAOSEI = [
   { value: "sim", label: "Sim" },
   { value: "nao", label: "Não" },
@@ -159,13 +172,36 @@ const fmtDt = (s?: string | null) => {
 };
 
 interface Form {
-  /** Se a pessoa quis dizer o NOME. O e-mail é sempre obrigatório — desde a
-   *  migration 20260901000005 o canal não recebe relato anônimo. */
+  /**
+   * Duas perguntas diferentes, e é importante que continuem separadas:
+   *
+   *   `anonimo`      — não deixa NENHUM contato. O acompanhamento passa a ser
+   *                    por protocolo + senha (20260914000003).
+   *   `identificado` — deixa e-mail, mas escolhe se diz o nome.
+   *
+   * Juntá-las faria "não quero me identificar" significar "abro mão de saber
+   * o que aconteceu com a minha denúncia", que não é a mesma coisa.
+   */
+  anonimo: "sim" | "nao" | "";
   identificado: "sim" | "nao" | "";
-  /** Chave de acesso ao acompanhamento. */
+  /** Chave de acesso ao acompanhamento (vazio quando anônimo). */
   email_acesso: string;
   senha: string;
   senha2: string;
+  empresa_id: string;
+  contrato_informado: string;
+  contrato_situacao: string;
+  ocorrencia_data: string;
+  ocorrencia_hora: string;
+  ocorrencia_frequencia: string;
+  risco_imediato: "sim" | "nao" | "";
+  risco_imediato_detalhe: string;
+  retaliacao: "sim" | "nao" | "";
+  retaliacao_detalhe: string;
+  denunciado_informado: string;
+  denunciado_funcao: string;
+  /** Só vive na tela: os arquivos sobem depois do registro, com o protocolo. */
+  arquivos: File[];
   nome_completo: string; cpf: string; email: string; data_nascimento: string;
   telefone_fixo: string; celular: string;
   relacao: string; tipo_denuncia: string; local_ocorrencia: string; como_soube: string;
@@ -177,7 +213,12 @@ interface Form {
 }
 
 const VAZIO: Form = {
-  identificado: "", email_acesso: "", senha: "", senha2: "",
+  anonimo: "", identificado: "", email_acesso: "", senha: "", senha2: "",
+  empresa_id: "", contrato_informado: "", contrato_situacao: "",
+  ocorrencia_data: "", ocorrencia_hora: "", ocorrencia_frequencia: "",
+  risco_imediato: "", risco_imediato_detalhe: "",
+  retaliacao: "", retaliacao_detalhe: "",
+  denunciado_informado: "", denunciado_funcao: "", arquivos: [],
   nome_completo: "", cpf: "", email: "", data_nascimento: "",
   telefone_fixo: "", celular: "", relacao: "", tipo_denuncia: "", local_ocorrencia: "",
   como_soube: "", lideranca_ciente: "", lideranca_envolvida: "", lideranca_ocultou: "",
@@ -222,15 +263,33 @@ interface Pergunta {
 const seIdentificou = (f: Form) => f.identificado === "sim";
 
 const PERGUNTAS: Pergunta[] = [
-  { k: "identificado",        label: "Você gostaria de informar seu nome ao comitê?", req: true },
+  // Empresa e contrato abrem o formulário: é o que decide para qual comitê o
+  // caso vai e qual operação está envolvida — perguntar isso no fim faria a
+  // pessoa recontar o caso já pensando em outra coisa.
+  { k: "empresa_id",          label: "Em qual empresa do grupo ocorreu o fato?", req: true },
+  { k: "contrato_informado",  label: "Em qual contrato ou local de trabalho?" },
+  { k: "anonimo",             label: "Você quer registrar esta denúncia de forma anônima?", req: true },
+  { k: "identificado",        label: "Você gostaria de informar seu nome ao comitê?", req: true,
+    quando: (f) => f.anonimo !== "sim" },
   { k: "nome_completo",       label: "Nome completo", req: true, quando: seIdentificou },
   { k: "cpf",                 label: "CPF", quando: seIdentificou },
   { k: "data_nascimento",     label: "Data de nascimento", quando: seIdentificou },
   { k: "telefone_fixo",       label: "Telefone fixo", quando: seIdentificou },
   { k: "relacao",             label: "Qual a sua relação com o Grupo Nascimento?", req: true },
   { k: "tipo_denuncia",       label: "Qual o tipo de denúncia melhor se enquadra ao fato que você está registrando?", req: true },
-  { k: "local_ocorrencia",    label: "Em qual empresa, unidade ou setor do grupo ocorreu o fato?" },
+  { k: "local_ocorrencia",    label: "Em que local exatamente aconteceu?" },
+  { k: "ocorrencia_data",     label: "Em que dia aconteceu? Se não lembrar a data exata, use a mais próxima." },
+  { k: "ocorrencia_hora",     label: "Por volta de que horário?" },
+  { k: "ocorrencia_frequencia", label: "Isso aconteceu uma vez ou se repete?" },
   { k: "como_soube",          label: "Como você tomou conhecimento deste fato?", req: true },
+  { k: "denunciado_informado", label: "Quem é a pessoa denunciada?" },
+  { k: "denunciado_funcao",   label: "Qual a função dela?", quando: (f) => !!f.denunciado_informado.trim() },
+  { k: "risco_imediato",      label: "Existe risco imediato à segurança ou à saúde de alguém?", destacar: "risco imediato" },
+  { k: "risco_imediato_detalhe", label: "Explique o risco. Isso faz o caso furar a fila.",
+    quando: (f) => f.risco_imediato === "sim" },
+  { k: "retaliacao",          label: "Você sofreu ou teme sofrer ameaça ou retaliação por causa disso?", destacar: "retaliação" },
+  { k: "retaliacao_detalhe",  label: "Conte o que aconteceu ou o que você teme.",
+    quando: (f) => f.retaliacao === "sim" },
   { k: "lideranca_ciente",    label: "Algum Diretor, Gerente, Coordenador, Supervisor ou Encarregado está CIENTE do problema relatado?", destacar: "CIENTE" },
   { k: "lideranca_ciente_quem",    label: "Quem está ciente? Se souber, indique as pessoas ou testemunhas.", quando: (f) => f.lideranca_ciente === "sim" },
   { k: "lideranca_envolvida", label: "Algum Diretor, Gerente, Coordenador, Supervisor ou Encarregado está ENVOLVIDO diretamente no fato relatado?", destacar: "ENVOLVIDO" },
@@ -240,11 +299,13 @@ const PERGUNTAS: Pergunta[] = [
   { k: "descricao",           label: "O que você quer denunciar?", req: true },
   { k: "testemunhas",         label: "Existem testemunhas? Em caso positivo, indique-as." },
   { k: "evidencias",          label: "Você sabe se existem evidências sobre o fato? Em caso positivo, indique-as." },
+  { k: "arquivos",            label: "Quer anexar documentos, fotos, vídeos ou áudios?" },
   { k: "valor_financeiro",    label: "Qual o valor financeiro envolvido no fato relatado?" },
   { k: "sugestao",            label: "Você tem alguma sugestão de como solucionar o problema?" },
   // O acesso vem por último de propósito: é a última coisa que a pessoa faz
   // antes de enviar, e o enunciado explica para que serve.
-  { k: "email_acesso",        label: "Qual o seu e-mail?", req: true },
+  { k: "email_acesso",        label: "Qual o seu e-mail?", req: true,
+    quando: (f) => f.anonimo !== "sim" },
   { k: "senha",               label: "Escolha uma senha para acompanhar a denúncia", req: true },
   { k: "celular",             label: "Qual o seu celular com WhatsApp?" },
   { k: "concordou_termo",     label: "Li e concordo com o termo acima.", req: true },
@@ -316,6 +377,17 @@ function Estilos() {
     .dn-selo svg { color: #0f3171; flex-shrink: 0; margin-top: 1px; }
     .dn-selo b { display: block; font-size: 12.5px; font-weight: 800; color: #0b1f44; }
     .dn-selo span { display: block; font-size: 11.5px; line-height: 1.45; color: #64748b; margin-top: 2px; }
+
+    /* ---- anexos escolhidos ---- */
+    .dn-anexos { list-style: none; margin: 10px 0 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+    .dn-anexos li { display: flex; align-items: center; gap: 8px; background: #f8fafc;
+                    border: 1px solid #e7ecf4; border-radius: 10px; padding: 8px 10px; font-size: 13px; }
+    .dn-anexos li svg { color: #64748b; flex: 0 0 auto; }
+    .dn-anexo-n { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .dn-anexo-t { color: #64748b; font-size: 12px; flex: 0 0 auto; }
+    .dn-anexos button { background: none; border: 0; cursor: pointer; padding: 2px; display: flex;
+                        color: #b91c1c; border-radius: 6px; }
+    .dn-anexos button:hover { background: #fee2e2; }
 
     /* ---- passos ---- */
     .dn-passos { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
@@ -667,10 +739,39 @@ function Formulario({ onAcompanhar, onRegistrou, onProgresso }: {
   // formulário inteiro pintado de vermelho antes de ter respondido nada.
   const [tentou, setTentou] = useState(false);
   const [erroServidor, setErroServidor] = useState("");
-  const [ok, setOk] = useState<{ protocolo: string; senha: string } | null>(null);
+  const [ok, setOk] = useState<
+    { protocolo: string; anonimo?: boolean; acesso?: string; falhasAnexo?: string[] } | null
+  >(null);
   const [copiou, setCopiou] = useState(false);
+  /** Progresso do upload — envio de vídeo demora, e barra parada assusta. */
+  const [anexando, setAnexando] = useState<{ feitos: number; total: number } | null>(null);
+
+  // As listas do banco. Empresa é cadastro (CANAL_DENUNCIA_EMPRESA), e os
+  // contratos vêm do cadastro de pessoal da empresa escolhida.
+  const [empresas, setEmpresas] = useState<{ id: string; rotulo: string }[]>([]);
+  const [contratos, setContratos] = useState<string[]>([]);
 
   const set = <K extends keyof Form>(k: K, v: Form[K]) => setF((c) => ({ ...c, [k]: v }));
+
+  // Empresas: uma vez, ao abrir.
+  useEffect(() => {
+    (async () => {
+      const { data } = await chamarCanal<{ id: string; rotulo: string }[]>("denuncia-listas", { o: "empresas" });
+      if (Array.isArray(data)) setEmpresas(data);
+    })();
+  }, []);
+
+  // Contratos: sempre que a empresa muda. A lista anterior é limpa junto —
+  // deixar o contrato de outra empresa selecionado seria pior que não ter lista.
+  useEffect(() => {
+    if (!f.empresa_id) { setContratos([]); return; }
+    setF((c) => ({ ...c, contrato_informado: "", contrato_situacao: "" }));
+    (async () => {
+      const { data } = await chamarCanal<{ contratos: string[] }>(
+        "denuncia-listas", { o: "contratos", empresa_id: f.empresa_id });
+      setContratos(data?.contratos ?? []);
+    })();
+  }, [f.empresa_id]);
 
   /**
    * Numeração corrida das perguntas visíveis. Recalcula quando alguma
@@ -691,7 +792,9 @@ function Formulario({ onAcompanhar, onRegistrou, onProgresso }: {
       const p = perguntas[k];
       if (p) pend.push({ k, n: p.n, label: p.label, motivo });
     };
-    if (f.identificado === "") add("identificado", "escolha uma das duas opções");
+    if (!f.empresa_id) add("empresa_id", "selecione a empresa");
+    if (f.anonimo === "") add("anonimo", "escolha uma das duas opções");
+    if (f.anonimo !== "sim" && f.identificado === "") add("identificado", "escolha uma das duas opções");
     if (f.identificado === "sim" && !f.nome_completo.trim()) add("nome_completo", "digite seu nome completo");
     if (!f.relacao) add("relacao", "selecione uma opção na lista");
     if (!f.tipo_denuncia) add("tipo_denuncia", "toque em um dos tipos");
@@ -704,9 +807,13 @@ function Formulario({ onAcompanhar, onRegistrou, onProgresso }: {
         : `faltam ${30 - n} caracteres para o mínimo de 30`);
     }
     // Mesmas regras da RPC, checadas aqui para o erro não vir do servidor.
+    // No relato anônimo não há e-mail: o acesso é pelo protocolo, e cobrar
+    // e-mail aqui tornaria a opção de anonimato impossível de concluir.
     const email = f.email_acesso.trim();
-    if (!email) add("email_acesso", "informe o e-mail — é por ele que você acessa depois");
-    else if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) add("email_acesso", "e-mail com formato inválido");
+    if (f.anonimo !== "sim") {
+      if (!email) add("email_acesso", "informe o e-mail — é por ele que você acessa depois");
+      else if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) add("email_acesso", "e-mail com formato inválido");
+    }
     if (!f.senha) add("senha", "escolha uma senha");
     else if (f.senha.length < 8) add("senha", `a senha precisa de pelo menos 8 caracteres (faltam ${8 - f.senha.length})`);
     else if (f.senha !== f.senha2) add("senha", "as duas senhas digitadas não são iguais");
@@ -733,20 +840,38 @@ function Formulario({ onAcompanhar, onRegistrou, onProgresso }: {
     }
     setErroServidor("");
     setEnviando(true);
-    const ident = f.identificado === "sim";
-    const { data, erro } = await chamarCanal<{ protocolo: string; email: string }>(
+    const anon = f.anonimo === "sim";
+    const ident = !anon && f.identificado === "sim";
+    const { data, erro } = await chamarCanal<{ protocolo: string; anonimo: boolean; acesso: string }>(
       "denuncia-registrar",
       {
+        anonimo: anon,
         identificado: ident,
+        empresa_id: f.empresa_id,
+        contrato_informado: f.contrato_informado,
+        // Se a pessoa digitou algo mas não escolheu da lista, é preenchimento
+        // manual — e isso precisa aparecer no relatório como tal.
+        contrato_situacao: f.contrato_situacao
+          || (f.contrato_informado.trim() ? "manual" : "nao_sei"),
+        ocorrencia_data: f.ocorrencia_data,
+        ocorrencia_hora: f.ocorrencia_hora,
+        ocorrencia_frequencia: f.ocorrencia_frequencia,
+        risco_imediato: f.risco_imediato === "sim",
+        risco_imediato_detalhe: f.risco_imediato_detalhe,
+        retaliacao: f.retaliacao === "sim",
+        retaliacao_detalhe: f.retaliacao_detalhe,
+        denunciado_informado: f.denunciado_informado,
+        denunciado_funcao: f.denunciado_funcao,
         nome_completo: ident ? f.nome_completo : "",
         cpf: ident ? f.cpf : "",
         data_nascimento: ident ? f.data_nascimento : "",
         telefone_fixo: ident ? f.telefone_fixo : "",
-        // Acesso: obrigatórios, independem de a pessoa ter dito o nome.
-        email: f.email_acesso.trim(),
+        // Acesso. No anônimo o e-mail vai vazio de propósito: a RPC recusa
+        // gravar e-mail junto de `anonimo`, e é essa recusa que faz o
+        // anonimato ser uma garantia e não uma promessa.
+        email_acesso: anon ? "" : f.email_acesso.trim(),
         senha: f.senha,
-        // Celular vale para todo mundo agora — é por onde sai a confirmação.
-        celular: f.celular,
+        celular: anon ? "" : f.celular,
         // Só para montar o link na mensagem do WhatsApp; a função valida.
         origem_url: window.location.origin,
         relacao: f.relacao,
@@ -769,12 +894,42 @@ function Formulario({ onAcompanhar, onRegistrou, onProgresso }: {
         concordou_termo: true,
       },
     );
-    setEnviando(false);
     if (erro || !data) {
+      setEnviando(false);
       setErroServidor(erro || "Não foi possível registrar agora. Tente novamente em instantes.");
       return;
     }
-    setOk(data);
+
+    // Os arquivos sobem DEPOIS do registro, um a um, autenticados pelo
+    // protocolo que acabou de nascer e pela senha que a pessoa escolheu.
+    // A denúncia já está gravada: se um anexo falhar, o relato não se perde —
+    // a tela avisa quais não subiram e a pessoa reenvia pelo acompanhamento.
+    const falhas: string[] = [];
+    if (f.arquivos.length) {
+      setAnexando({ feitos: 0, total: f.arquivos.length });
+      for (const [i, arq] of f.arquivos.entries()) {
+        const fd = new FormData();
+        fd.append("protocolo", data.protocolo);
+        fd.append("senha", f.senha);
+        fd.append("arquivo", arq);
+        try {
+          const resp = await fetch(`${SUPABASE_FUNCTIONS_URL}/denuncia-anexar`, {
+            method: "POST", body: fd,
+          });
+          if (!resp.ok) {
+            const c = await resp.json().catch(() => null);
+            falhas.push(`${arq.name}: ${c?.error ?? "falhou"}`);
+          }
+        } catch {
+          falhas.push(`${arq.name}: sem conexão`);
+        }
+        setAnexando({ feitos: i + 1, total: f.arquivos.length });
+      }
+      setAnexando(null);
+    }
+
+    setEnviando(false);
+    setOk({ ...data, falhasAnexo: falhas });
     onRegistrou();
     window.scrollTo({ top: 0, behavior: "smooth" });
   };
@@ -788,8 +943,9 @@ function Formulario({ onAcompanhar, onRegistrou, onProgresso }: {
           </div>
           <h1 className="mt-4 text-2xl font-extrabold text-[#0b1f44]">Denúncia registrada</h1>
           <p className="mx-auto mt-2 max-w-md text-sm leading-relaxed text-slate-600">
-            Seu relato chegou ao comitê responsável. Para acompanhar, volte a esta página e entre com o
-            seu e-mail e a senha que você escolheu.
+            {ok.anonimo
+              ? "Seu relato chegou ao comitê responsável, sem nenhum dado que identifique você. Anote o número do processo abaixo: é ele, junto da sua senha, que abre o acompanhamento."
+              : "Seu relato chegou ao comitê responsável. Para acompanhar, volte a esta página e entre com o seu e-mail e a senha que você escolheu."}
           </p>
 
           <div className="dn-chips mt-6 text-left">
@@ -799,10 +955,25 @@ function Formulario({ onAcompanhar, onRegistrou, onProgresso }: {
             </div>
             <div className="dn-chip">
               <p className="dn-chip-l">Seu acesso</p>
-              <p className="mt-1 break-all text-sm font-bold text-[#0f3171]">{ok.email}</p>
+              <p className="mt-1 break-all text-sm font-bold text-[#0f3171]">
+                {ok.anonimo ? "O número do processo acima" : f.email_acesso.trim()}
+              </p>
               <p className="text-xs text-slate-500">+ a senha que você escolheu</p>
             </div>
           </div>
+
+          {/* O relato foi gravado; o anexo é que não subiu. Dizer as duas
+              coisas na mesma tela evita que a pessoa registre tudo de novo
+              achando que perdeu a denúncia. */}
+          {!!ok.falhasAnexo?.length && (
+            <div className="dn-guarde mx-auto mt-5 max-w-lg" style={{ borderColor: "#fca5a5", background: "#fef2f2" }}>
+              <b>A denúncia foi registrada, mas {ok.falhasAnexo.length} arquivo(s) não subiram.</b>{" "}
+              Entre em “Acompanhar esta denúncia” para enviá-los de novo. Não registre outro relato.
+              <ul style={{ margin: "8px 0 0 18px", padding: 0 }}>
+                {ok.falhasAnexo.map((x) => <li key={x} style={{ fontSize: 12 }}>{x}</li>)}
+              </ul>
+            </div>
+          )}
 
           <div className="mt-4 flex flex-wrap justify-center gap-2.5">
             <button
@@ -862,6 +1033,80 @@ function Formulario({ onAcompanhar, onRegistrou, onProgresso }: {
           </div>
         </div>
         <div className="dn-card-b">
+          <Campo
+            p={perguntas.empresa_id} falta={falta("empresa_id")} para="dn-i-empresa"
+            ajuda="O grupo tem empresas diferentes, e cada uma tem o seu comitê. É por aqui que a denúncia chega a quem pode apurar."
+          >
+            <Sel id="dn-i-empresa" valor={f.empresa_id} onChange={(v) => set("empresa_id", v)}
+                 opcoes={empresas.map((e) => ({ value: e.id, label: e.rotulo }))} />
+          </Campo>
+
+          <Campo
+            p={perguntas.contrato_informado} para="dn-i-contrato"
+            ajuda="Se não encontrar na lista, escolha “Não localizei” e escreva do seu jeito — ninguém precisa saber o nome oficial do contrato."
+          >
+            {contratos.length > 0 && (
+              <Sel
+                id="dn-i-contrato"
+                valor={f.contrato_situacao === "selecionado" ? f.contrato_informado : ""}
+                onChange={(v) => setF((c) => ({
+                  ...c, contrato_informado: v, contrato_situacao: v ? "selecionado" : "",
+                }))}
+                opcoes={[
+                  ...contratos.map((c) => ({ value: c, label: c })),
+                  { value: "__nao_localizado", label: "Não localizei meu contrato na lista" },
+                  { value: "__nao_sei", label: "Não sei informar" },
+                ]}
+              />
+            )}
+            {/* O campo livre aparece quando não há lista, ou quando a pessoa
+                disse que não achou o contrato dela. */}
+            {(contratos.length === 0
+              || f.contrato_informado === "__nao_localizado"
+              || f.contrato_situacao === "manual") && (
+              <input
+                className="dn-in"
+                style={{ marginTop: contratos.length ? 8 : 0 }}
+                value={f.contrato_situacao === "manual" ? f.contrato_informado : ""}
+                onChange={(e) => setF((c) => ({
+                  ...c, contrato_informado: e.target.value, contrato_situacao: "manual",
+                }))}
+                placeholder="Escreva o contrato, a unidade ou o local onde você trabalha"
+              />
+            )}
+          </Campo>
+
+          <Campo
+            p={perguntas.anonimo} falta={falta("anonimo")}
+            ajuda="Anônima: você não deixa nenhum contato, e acompanha o caso pelo número de protocolo + a senha que escolher. Com e-mail: o comitê consegue pedir esclarecimentos e você recebe o retorno."
+          >
+            <div className="dn-esc">
+              <button type="button" data-on={f.anonimo === "nao" ? "1" : "0"} onClick={() => set("anonimo", "nao")}>
+                <Fingerprint className="h-5 w-5" />
+                <span className="dn-esc-t">
+                  <b>Quero deixar meu e-mail</b>
+                  <span>O comitê pode conversar comigo e me dar retorno.</span>
+                </span>
+              </button>
+              <button type="button" data-on={f.anonimo === "sim" ? "1" : "0"} onClick={() => set("anonimo", "sim")}>
+                <EyeOff className="h-5 w-5" />
+                <span className="dn-esc-t">
+                  <b>Anônima, sem nenhum contato</b>
+                  <span>Guarde bem o protocolo e a senha: sem eles não há como recuperar o acesso.</span>
+                </span>
+              </button>
+            </div>
+          </Campo>
+
+          {f.anonimo === "sim" && (
+            <p className="dn-help" style={{ marginTop: -6 }}>
+              Nada que identifique você é gravado — nem e-mail, nem endereço de internet, nem
+              o aparelho usado. Em troca, o comitê não terá como pedir um detalhe que falte,
+              e isso às vezes é o que trava uma apuração.
+            </p>
+          )}
+
+          {f.anonimo !== "sim" && (
           <Campo p={perguntas.identificado} falta={falta("identificado")}>
             <div className="dn-esc">
               <button type="button" data-on={f.identificado === "nao" ? "1" : "0"} onClick={() => set("identificado", "nao")}>
@@ -881,7 +1126,9 @@ function Formulario({ onAcompanhar, onRegistrou, onProgresso }: {
             </div>
           </Campo>
 
-          {f.identificado === "sim" && (
+          )}
+
+          {f.anonimo !== "sim" && f.identificado === "sim" && (
             <div className="dn-grid2">
               <Campo p={perguntas.nome_completo} falta={falta("nome_completo")} className="dn-full">
                 <input id="dn-i-nome_completo" className="dn-in" value={f.nome_completo} onChange={(e) => set("nome_completo", e.target.value)} placeholder="Seu nome" />
@@ -933,12 +1180,88 @@ function Formulario({ onAcompanhar, onRegistrou, onProgresso }: {
           </Campo>
 
           <Campo p={perguntas.local_ocorrencia} para="dn-i-local_ocorrencia">
-            <input id="dn-i-local_ocorrencia" className="dn-in" value={f.local_ocorrencia} onChange={(e) => set("local_ocorrencia", e.target.value)} placeholder="Ex.: contrato SMED — unidade Centro" />
+            <input id="dn-i-local_ocorrencia" className="dn-in" value={f.local_ocorrencia} onChange={(e) => set("local_ocorrencia", e.target.value)} placeholder="Ex.: refeitório, portaria, sala da coordenação" />
+          </Campo>
+
+          <div className="dn-grid2">
+            <Campo p={perguntas.ocorrencia_data} para="dn-i-ocorrencia_data">
+              <input id="dn-i-ocorrencia_data" type="date" className="dn-in"
+                     value={f.ocorrencia_data} onChange={(e) => set("ocorrencia_data", e.target.value)} />
+            </Campo>
+            <Campo p={perguntas.ocorrencia_hora} para="dn-i-ocorrencia_hora">
+              <input id="dn-i-ocorrencia_hora" className="dn-in" value={f.ocorrencia_hora}
+                     onChange={(e) => set("ocorrencia_hora", e.target.value)}
+                     placeholder="Ex.: de manhã, por volta das 9h" />
+            </Campo>
+          </div>
+
+          <Campo p={perguntas.ocorrencia_frequencia} para="dn-i-freq">
+            <Sel id="dn-i-freq" valor={f.ocorrencia_frequencia}
+                 onChange={(v) => set("ocorrencia_frequencia", v)} opcoes={FREQUENCIA_OPC} />
           </Campo>
 
           <Campo p={perguntas.como_soube} falta={falta("como_soube")} para="dn-i-como_soube">
             <Sel id="dn-i-como_soube" valor={f.como_soube} onChange={(v) => set("como_soube", v)} opcoes={COMO_SOUBE} />
           </Campo>
+
+          <Campo
+            p={perguntas.denunciado_informado} para="dn-i-denunciado"
+            ajuda="Se não souber o nome, descreva do jeito que der: “o encarregado do turno da noite” já ajuda."
+          >
+            <input id="dn-i-denunciado" className="dn-in" value={f.denunciado_informado}
+                   onChange={(e) => set("denunciado_informado", e.target.value)}
+                   placeholder="Nome ou descrição de quem cometeu o fato" />
+          </Campo>
+
+          {f.denunciado_informado.trim() && (
+            <Campo p={perguntas.denunciado_funcao} para="dn-i-denunciado_funcao">
+              <input id="dn-i-denunciado_funcao" className="dn-in" value={f.denunciado_funcao}
+                     onChange={(e) => set("denunciado_funcao", e.target.value)}
+                     placeholder="Ex.: encarregado, supervisora, motorista" />
+            </Campo>
+          )}
+        </div>
+      </section>
+
+      {/* ------------------------------------------------ Risco e retaliação */}
+      {/* Bloco à parte, e não mais uma pergunta no meio: é o que decide se o
+          caso fura a fila da triagem, e no meio de vinte perguntas passaria
+          batido tanto para quem responde quanto para quem lê. */}
+      <section className="dn-card">
+        <div className="dn-card-h">
+          <span className="dn-card-ic"><ShieldAlert className="h-5 w-5" /></span>
+          <div>
+            <h2>Risco e proteção</h2>
+            <p>Se há alguém em perigo agora, ou se você teme sofrer consequências por denunciar.</p>
+          </div>
+        </div>
+        <div className="dn-card-b">
+          <Campo p={perguntas.risco_imediato}>
+            <Pills valor={f.risco_imediato} onChange={(v) => set("risco_imediato", v as "sim" | "nao")} opcoes={SIM_NAO} />
+          </Campo>
+          {f.risco_imediato === "sim" && (
+            <Campo p={perguntas.risco_imediato_detalhe} para="dn-i-risco_det">
+              <textarea id="dn-i-risco_det" className="dn-ta" rows={3}
+                        value={f.risco_imediato_detalhe}
+                        onChange={(e) => set("risco_imediato_detalhe", e.target.value)}
+                        placeholder="Quem está em risco e por quê." />
+            </Campo>
+          )}
+
+          <Campo p={perguntas.retaliacao}>
+            <Pills valor={f.retaliacao} onChange={(v) => set("retaliacao", v as "sim" | "nao")} opcoes={SIM_NAO} />
+          </Campo>
+          {f.retaliacao === "sim" && (
+            <Campo p={perguntas.retaliacao_detalhe} para="dn-i-retal_det">
+              <textarea id="dn-i-retal_det" className="dn-ta" rows={3}
+                        value={f.retaliacao_detalhe}
+                        onChange={(e) => set("retaliacao_detalhe", e.target.value)}
+                        placeholder="O que aconteceu, ou o que você teme que aconteça." />
+            </Campo>
+          )}
+          <p className="dn-help">
+            Retaliar quem usa este canal é falta grave e apurada como denúncia própria.
+          </p>
         </div>
       </section>
 
@@ -1043,6 +1366,42 @@ function Formulario({ onAcompanhar, onRegistrou, onProgresso }: {
                 mensagens ou objetos pode prejudicar a investigação.
               </span>
             </div>
+          </Campo>
+
+          <Campo
+            p={perguntas.arquivos}
+            ajuda="Aceita imagem, vídeo, áudio, PDF e documentos, até 25 MB cada e 20 arquivos. Eles são enviados depois que a denúncia é registrada, e ficam guardados em local restrito ao comitê."
+          >
+            <input
+              id="dn-i-arquivos" type="file" multiple className="dn-in"
+              onChange={(e) => {
+                const novos = Array.from(e.target.files ?? []);
+                // Acumula em vez de substituir: o seletor do navegador só
+                // aceita uma pasta por vez, e trocar tudo faria a pessoa
+                // perder o que já tinha escolhido sem nenhum aviso.
+                setF((c) => ({ ...c, arquivos: [...c.arquivos, ...novos].slice(0, 20) }));
+                e.target.value = "";
+              }}
+            />
+            {f.arquivos.length > 0 && (
+              <ul className="dn-anexos">
+                {f.arquivos.map((a, i) => (
+                  <li key={`${a.name}-${i}`}>
+                    <Paperclip className="h-4 w-4" />
+                    <span className="dn-anexo-n">{a.name}</span>
+                    <span className="dn-anexo-t">{(a.size / 1024 / 1024).toFixed(1)} MB</span>
+                    <button
+                      type="button" aria-label={`Remover ${a.name}`}
+                      onClick={() => setF((c) => ({
+                        ...c, arquivos: c.arquivos.filter((_, j) => j !== i),
+                      }))}
+                    >
+                      <X className="h-4 w-4" />
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
           </Campo>
 
           <Campo p={perguntas.valor_financeiro} para="dn-i-valor_financeiro">
@@ -1178,7 +1537,11 @@ function Formulario({ onAcompanhar, onRegistrou, onProgresso }: {
         {erroServidor && <div className="dn-erro" style={{ marginBottom: 16 }}>{erroServidor}</div>}
 
         <button className="dn-btn dn-btn-lar dn-btn-w" onClick={enviar} disabled={enviando}>
-          <Send className="h-4 w-4" /> {enviando ? "Enviando…" : "Registrar denúncia"}
+          <Send className="h-4 w-4" /> {
+            anexando
+              ? `Enviando anexos (${anexando.feitos} de ${anexando.total})…`
+              : enviando ? "Enviando…" : "Registrar denúncia"
+          }
         </button>
         <p className="mt-3 text-center text-xs leading-relaxed text-slate-500">
           Você acompanha a denúncia com o seu <b className="text-slate-700">e-mail</b> e a{" "}
@@ -1210,13 +1573,15 @@ function Acompanhar({ onVoltar }: { onVoltar: () => void }) {
   const consultar = async () => {
     if (carregando) return;
     if (!email.trim() || !senha) {
-      setErro("Informe o e-mail e a senha que você escolheu ao registrar a denúncia.");
+      setErro("Informe o e-mail (ou o número do processo) e a senha que você escolheu.");
       return;
     }
     setErro(""); setCarregando(true);
     // `falha` e não `erro` porque `erro` já é o estado da tela logo acima.
     const { data, erro: falha } = await chamarCanal<{ denuncias: DenunciaConsulta[] }>("denuncia-consultar", {
-      email: email.trim(),
+      // E-mail ou protocolo — o servidor decide qual é, e a resposta é a
+      // mesma para credencial errada nos dois casos.
+      identificador: email.trim(),
       senha,
     });
     setCarregando(false);
@@ -1375,17 +1740,17 @@ function Acompanhar({ onVoltar }: { onVoltar: () => void }) {
           <span className="dn-card-ic"><KeyRound className="h-5 w-5" /></span>
           <div>
             <h2>Acompanhar denúncia</h2>
-            <p>Entre com o e-mail e a senha que você escolheu ao registrar.</p>
+            <p>Entre com o e-mail — ou o número do processo, se a denúncia foi anônima — e a senha que você escolheu.</p>
           </div>
         </div>
         <div className="dn-card-b">
           {erro && <div className="dn-erro">{erro}</div>}
 
           <div>
-            <label className="dn-lab" htmlFor="dn-email">E-mail</label>
+            <label className="dn-lab" htmlFor="dn-email">E-mail ou número do processo</label>
             <input
-              id="dn-email" type="email" inputMode="email" autoComplete="email"
-              className="dn-in" placeholder="voce@exemplo.com"
+              id="dn-email" autoComplete="username"
+              className="dn-in" placeholder="voce@exemplo.com   ou   DEN-2026-00001"
               value={email} onChange={(e) => setEmail(e.target.value)}
               onKeyDown={(e) => { if (e.key === "Enter") consultar(); }}
             />
@@ -1472,7 +1837,7 @@ function ConversaPublica({ email, senha, protocolo }: {
   const carregar = useCallback(async (mensagem?: string) => {
     const { data, erro: falha } = await chamarCanal<{ mensagens: MensagemPublica[] }>(
       "denuncia-conversa",
-      { email, senha, protocolo, ...(mensagem ? { mensagem } : {}) },
+      { identificador: email, senha, protocolo, ...(mensagem ? { mensagem } : {}) },
     );
     if (falha || !data) { setErro(falha || "Não foi possível carregar a conversa."); return false; }
     setErro("");

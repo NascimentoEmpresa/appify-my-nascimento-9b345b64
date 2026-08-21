@@ -8,7 +8,10 @@ import {
 } from "@/pages/juridico/patrimonio/parcelas";
 import { useAuth } from "@/hooks/useAuth";
 import { MapaPatrimonios } from "./patrimonio/MapaPatrimonios";
-import { CLASSIFICACOES, ESPECIES_ESCRITURA, SITUACOES_PAGAMENTO, corSituacao } from "./patrimonio/carteira";
+import {
+  CLASSIFICACOES, ESPECIES_ESCRITURA, SITUACOES_PAGAMENTO, corSituacao,
+  PATRIM_RESET, soCamposDoForm,
+} from "./patrimonio/carteira";
 import { coordenadaValida } from "./patrimonio/geo";
 import { PARAM_ORIGEM, despesaEstaPaga } from "./patrimonio/vinculoMalote";
 
@@ -102,14 +105,6 @@ const statusObr = (o: Obrigacao, malotePaga?: (id?: string | null) => boolean): 
 const corConta = (st: StatusConta): string =>
   st === "Pago" ? "#16a34a" : st === "Enviado ao Malote" ? "#2563eb" : st === "Vencido" ? "#dc2626" : "#ea580c";
 
-const PATRIM_RESET = {
-  codigo: "", tipo: "Imóvel", descricao: "", localizacao: "", placa: "", cidade: "",
-  transferida: "Não", empresa: "", empresa_pagadora: "", proprietario: "", responsavel: "",
-  centro_custo: "", status: "Ativo", observacoes: "",
-  classificacao: "", matricula: "", possui_escritura: "", especie_escritura: "",
-  situacao_pagamento: "", valor_contrato: "", valor_entrada: "",
-  latitude: "", longitude: "",
-};
 const OBR_RESET = { categoria: "", modo_parcelas: "igual" as ModoParcelas, qtd_parcelas: "", descricao: "", valor: "", valor_entrada: "", vencimento: "", periodicidade: "Mensal", repetir: "0", onde_pagar: "", forma_pagamento: "", responsavel: "", seguradora: "", apolice: "", vigencia_inicio: "", vigencia_fim: "", premio: "", parcelas: "" };
 const ehLink = (s?: string) => !!s && /^https?:\/\//i.test(s.trim());
 
@@ -270,7 +265,7 @@ export default function Patrimonios() {
     if (avisoCoordenada) { toast(avisoCoordenada, "err"); return; }
     const num = (v: string) => v === "" || v == null ? null : Number(String(v).replace(",", "."));
     const payload = {
-      ...pat,
+      ...soCamposDoForm(pat),
       transferida: pat.transferida === "Sim",
       // O select guarda "SIM"/"NAO"/"" e a coluna é booleana; "" vira null, que
       // é "ainda não sabemos", diferente de "não tem escritura".

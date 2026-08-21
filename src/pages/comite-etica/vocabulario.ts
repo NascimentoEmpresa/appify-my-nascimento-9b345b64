@@ -64,16 +64,96 @@ export const SIGILO: Opcao[] = [
  * procedente continuava aberto aguardando o cumprimento da medida.
  */
 export const SITUACAO: Opcao[] = [
-  { value: "nova", label: "Recebida" },
-  { value: "em_analise", label: "Em análise" },
+  { value: "nova", label: "Denúncia recebida" },
+  { value: "triagem", label: "Em triagem" },
+  { value: "investigacao", label: "Em apuração" },
+  { value: "aguardando_esclarecimentos", label: "Aguardando esclarecimentos" },
   { value: "aguardando_documentos", label: "Aguardando documentos" },
-  { value: "investigacao", label: "Em investigação" },
-  { value: "julgada", label: "Julgada" },
-  { value: "encerrada", label: "Encerrada" },
+  { value: "parecer_elaboracao", label: "Parecer em elaboração" },
+  { value: "aguardando_presidencia", label: "Aguardando decisão da Presidência" },
+  { value: "aguardando_cumprimento", label: "Aguardando cumprimento de medida" },
+  { value: "concluida", label: "Concluída" },
+  { value: "arquivada", label: "Arquivada" },
+  { value: "reaberta", label: "Reaberta" },
 ];
 
-/** Situações que param o cronômetro do SLA. */
-export const SITUACOES_CONCLUIDAS = ["julgada", "encerrada"];
+/**
+ * Situações que param o cronômetro do SLA.
+ *
+ * `aguardando_cumprimento` NÃO entra — e é o ponto todo dela existir. Antes,
+ * o equivalente (`julgada`) parava o relógio, então um caso julgado cuja
+ * medida ninguém executou aparecia como concluído e sumia do radar.
+ */
+export const SITUACOES_CONCLUIDAS = ["concluida", "arquivada"];
+
+/** Situações em que a bola está com quem denunciou, não com o Comitê. */
+export const SITUACOES_AGUARDANDO_TERCEIRO = [
+  "aguardando_esclarecimentos", "aguardando_documentos",
+];
+
+/** O que o Comitê recomenda ao fim da apuração. */
+export const RECOMENDACAO: Opcao[] = [
+  { value: "arquivamento", label: "Arquivamento" },
+  { value: "aplicacao_medida", label: "Aplicação de medida" },
+  { value: "apuracao_complementar", label: "Apuração complementar" },
+  { value: "reabertura", label: "Reabertura" },
+];
+
+/** O que a Presidência fez com a recomendação do Comitê. */
+export const DECISAO_SOBRE_PARECER: Opcao[] = [
+  { value: "aprovada", label: "Aprovou a recomendação" },
+  { value: "alterada", label: "Alterou a recomendação" },
+  { value: "rejeitada", label: "Rejeitou a recomendação" },
+];
+
+/** Frequência do fato, informada por quem denuncia. */
+export const FREQUENCIA: Opcao[] = [
+  { value: "unica", label: "Aconteceu uma vez" },
+  { value: "recorrente", label: "Acontece de forma repetida" },
+  { value: "em_curso", label: "Está acontecendo agora" },
+];
+
+/** Como o contrato foi informado — "em branco" significava três coisas. */
+export const CONTRATO_SITUACAO: Opcao[] = [
+  { value: "selecionado", label: "Selecionado na lista" },
+  { value: "manual", label: "Informado manualmente" },
+  { value: "nao_localizado", label: "Contrato não localizado" },
+  { value: "nao_sei", label: "Não sei informar" },
+];
+
+/** Para que serve cada arquivo do procedimento. */
+export const CATEGORIA_ANEXO: Opcao[] = [
+  { value: "evidencia", label: "Evidência" },
+  { value: "documento_suporte", label: "Documento de suporte" },
+  { value: "entrevista", label: "Entrevista" },
+  { value: "manifestacao", label: "Manifestação" },
+  { value: "parecer", label: "Parecer" },
+  { value: "outro", label: "Outro" },
+];
+
+/** Registros de apuração que entram no fio da conversa, sempre internos. */
+export const TIPO_REGISTRO: Opcao[] = [
+  { value: "nota", label: "Nota interna" },
+  { value: "entrevista", label: "Entrevista" },
+  { value: "manifestacao", label: "Manifestação" },
+  { value: "providencia", label: "Registro de providência" },
+];
+
+/** Andamento de cada providência. */
+export const SITUACAO_PROVIDENCIA: Opcao[] = [
+  { value: "pendente", label: "Pendente" },
+  { value: "em_andamento", label: "Em andamento" },
+  { value: "concluida", label: "Concluída" },
+  { value: "cancelada", label: "Cancelada" },
+];
+
+/** O que cada alerta do tick quer dizer. */
+export const TIPO_ALERTA: Record<string, string> = {
+  prazo_vencido: "Prazo estourado",
+  primeira_providencia: "Sem primeira providência",
+  parado: "Sem movimentação",
+  providencia_vencida: "Providência vencida",
+};
 
 export const RESULTADO: Opcao[] = [
   { value: "procedente", label: "Procedente" },
@@ -168,6 +248,13 @@ export const LABEL_RECURSO = mapaDe(RECURSO_RESULTADO);
 export const LABEL_CAUSA = mapaDe(CAUSA_RAIZ);
 export const LABEL_RELACAO = mapaDe(RELACAO);
 export const LABEL_SIM_NAO = mapaDe(SIM_NAO_NAOSEI);
+export const LABEL_RECOMENDACAO = mapaDe(RECOMENDACAO);
+export const LABEL_DECISAO = mapaDe(DECISAO_SOBRE_PARECER);
+export const LABEL_FREQUENCIA = mapaDe(FREQUENCIA);
+export const LABEL_CONTRATO_SIT = mapaDe(CONTRATO_SITUACAO);
+export const LABEL_CATEGORIA_ANEXO = mapaDe(CATEGORIA_ANEXO);
+export const LABEL_TIPO_REGISTRO = mapaDe(TIPO_REGISTRO);
+export const LABEL_SIT_PROVIDENCIA = mapaDe(SITUACAO_PROVIDENCIA);
 
 /** Rótulo com fallback: valor desconhecido aparece cru em vez de sumir. */
 export const rotulo = (mapa: Record<string, string>, v?: string | null) =>

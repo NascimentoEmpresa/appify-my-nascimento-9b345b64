@@ -50,12 +50,15 @@ const nova = (over: Partial<Denuncia> = {}): Denuncia => ({
 });
 
 describe("situação e prazo", () => {
-  it("só julgada e encerrada param o cronômetro", () => {
+  it("só concluída e arquivada param o cronômetro", () => {
     expect(concluida(nova({ status: "nova" }))).toBe(false);
     expect(concluida(nova({ status: "investigacao" }))).toBe(false);
     expect(concluida(nova({ status: "aguardando_documentos" }))).toBe(false);
-    expect(concluida(nova({ status: "julgada" }))).toBe(true);
-    expect(concluida(nova({ status: "encerrada" }))).toBe(true);
+    // Trocou de significado em 20260914000002 e é o ponto da mudança: o caso
+    // julgado cuja medida ninguém executou continua correndo contra o prazo.
+    expect(concluida(nova({ status: "aguardando_cumprimento" }))).toBe(false);
+    expect(concluida(nova({ status: "concluida" }))).toBe(true);
+    expect(concluida(nova({ status: "arquivada" }))).toBe(true);
   });
 
   it("o prazo vem da gravidade, e o override do caso vence a régua", () => {
@@ -76,14 +79,14 @@ describe("situação e prazo", () => {
   });
 
   it("caso concluído conta até a conclusão", () => {
-    const d = nova({ status: "encerrada", created_at: haDias(40), concluido_em: haDias(25) });
+    const d = nova({ status: "concluida", created_at: haDias(40), concluido_em: haDias(25) });
     expect(diasDeTratamento(d)).toBe(15);
   });
 
   it("vencida é só quem está em aberto e passou do prazo", () => {
     const atrasada = nova({ status: "investigacao", gravidade: "critica", created_at: haDias(15) });
     const noPrazo = nova({ status: "investigacao", gravidade: "baixa", created_at: haDias(15) });
-    const fechadaTarde = nova({ status: "encerrada", gravidade: "critica", created_at: haDias(90), concluido_em: haDias(1) });
+    const fechadaTarde = nova({ status: "concluida", gravidade: "critica", created_at: haDias(90), concluido_em: haDias(1) });
 
     expect(vencida(atrasada, SLAS)).toBe(true);
     expect(vencida(noPrazo, SLAS)).toBe(false);
@@ -92,13 +95,13 @@ describe("situação e prazo", () => {
 
   it("dias restantes fica negativo quando venceu e nulo quando concluída", () => {
     expect(diasRestantes(nova({ status: "investigacao", gravidade: "critica", created_at: haDias(14) }), SLAS)).toBe(-4);
-    expect(diasRestantes(nova({ status: "encerrada" }), SLAS)).toBeNull();
+    expect(diasRestantes(nova({ status: "concluida" }), SLAS)).toBeNull();
   });
 
   it("dentro do SLA só responde para caso concluído", () => {
     expect(dentroDoSla(nova({ status: "investigacao" }), SLAS)).toBeNull();
-    expect(dentroDoSla(nova({ status: "encerrada", gravidade: "alta", created_at: haDias(30), concluido_em: haDias(15) }), SLAS)).toBe(true);
-    expect(dentroDoSla(nova({ status: "encerrada", gravidade: "alta", created_at: haDias(60), concluido_em: haDias(15) }), SLAS)).toBe(false);
+    expect(dentroDoSla(nova({ status: "concluida", gravidade: "alta", created_at: haDias(30), concluido_em: haDias(15) }), SLAS)).toBe(true);
+    expect(dentroDoSla(nova({ status: "concluida", gravidade: "alta", created_at: haDias(60), concluido_em: haDias(15) }), SLAS)).toBe(false);
   });
 
   it("tempo até a primeira providência é nulo enquanto não houve nenhuma", () => {
@@ -205,7 +208,7 @@ describe("reincidência", () => {
     const r = reincidencias(
       [
         nova({ denunciado_empregado_id: 9, created_at: haDias(90) }),                     // antes
-        nova({ denunciado_empregado_id: 9, created_at: haDias(60), status: "encerrada",
+        nova({ denunciado_empregado_id: 9, created_at: haDias(60), status: "concluida",
                concluido_em: haDias(50), medidas: ["suspensao"] }),                       // a punição
         nova({ denunciado_empregado_id: 9, created_at: haDias(20) }),                      // recaída
       ],
@@ -242,7 +245,7 @@ describe("reincidência", () => {
   it("sem medida disciplinar aplicada não existe recaída a medir", () => {
     const r = reincidencias(
       [
-        nova({ denunciado_empregado_id: 9, created_at: haDias(60), status: "encerrada",
+        nova({ denunciado_empregado_id: 9, created_at: haDias(60), status: "concluida",
                concluido_em: haDias(50), medidas: ["orientacao"] }),
         nova({ denunciado_empregado_id: 9, created_at: haDias(20) }),
       ],

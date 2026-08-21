@@ -61,6 +61,7 @@ const fmtData = (s?: string | null) =>
 export default function IndicadoresComiteEtica() {
   const nav = useNavigate();
   const [meses, setMeses] = useState("12");
+  const [fEmpresa, setFEmpresa] = useState("todas");
   const [fContrato, setFContrato] = useState("todos");
   const [fSetor, setFSetor] = useState("todos");
 
@@ -68,7 +69,7 @@ export default function IndicadoresComiteEtica() {
     queryKey: ["canal-denuncias"],
     queryFn: async () => {
       const { data, error } = await db
-        .from("CANAL_DENUNCIA").select("*").order("created_at", { ascending: false });
+        .from("v_canal_denuncia").select("*").order("created_at", { ascending: false });
       if (error) throw error;
       return (data ?? []) as Denuncia[];
     },
@@ -86,6 +87,9 @@ export default function IndicadoresComiteEtica() {
   const contratos = useMemo(
     () => [...new Set(todas.map((d) => (d.contrato ?? "").trim()).filter(Boolean))].sort(),
     [todas]);
+  const empresasOpc = useMemo(
+    () => [...new Set(todas.map((d) => (d.empresa_nome ?? "").trim()).filter(Boolean))].sort(),
+    [todas]);
   const setores = useMemo(
     () => [...new Set(todas.map((d) => (d.setor ?? "").trim()).filter(Boolean))].sort(),
     [todas]);
@@ -96,11 +100,12 @@ export default function IndicadoresComiteEtica() {
       : new Date(new Date().setMonth(new Date().getMonth() - Number(meses)));
     return todas.filter((d) => {
       if (corte && new Date(d.created_at) < corte) return false;
+      if (fEmpresa !== "todas" && (d.empresa_nome ?? "").trim() !== fEmpresa) return false;
       if (fContrato !== "todos" && (d.contrato ?? "").trim() !== fContrato) return false;
       if (fSetor !== "todos" && (d.setor ?? "").trim() !== fSetor) return false;
       return true;
     });
-  }, [todas, meses, fContrato, fSetor]);
+  }, [todas, meses, fEmpresa, fContrato, fSetor]);
 
   const m = useMemo(() => {
     const concluidas = ds.filter(concluida);
@@ -193,6 +198,13 @@ export default function IndicadoresComiteEtica() {
             <SelectItem value="12">Últimos 12 meses</SelectItem>
             <SelectItem value="24">Últimos 24 meses</SelectItem>
             <SelectItem value="tudo">Todo o período</SelectItem>
+          </SelectContent>
+        </Select>
+        <Select value={fEmpresa} onValueChange={setFEmpresa}>
+          <SelectTrigger className="w-[180px]"><SelectValue /></SelectTrigger>
+          <SelectContent>
+            <SelectItem value="todas">Todas as empresas</SelectItem>
+            {empresasOpc.map((e) => <SelectItem key={e} value={e}>{e}</SelectItem>)}
           </SelectContent>
         </Select>
         <Select value={fContrato} onValueChange={setFContrato}>
