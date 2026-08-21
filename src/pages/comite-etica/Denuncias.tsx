@@ -16,15 +16,19 @@ import {
 } from "@/components/ui/table";
 import {
   ShieldAlert, Copy, Check, Search, Link2, UserX, User, Inbox, Gavel, BarChart3, TimerOff,
+  PauseCircle, BellRing, Settings2, X,
 } from "lucide-react";
 import {
   SITUACAO, GRAVIDADE, RESULTADO, LABEL_SITUACAO, LABEL_TIPO, LABEL_RELACAO,
   LABEL_GRAVIDADE, LABEL_RESULTADO, COR_GRAVIDADE, rotulo,
 } from "./vocabulario";
 import {
-  type Denuncia, type RegraSla, concluida, diasRestantes, tipoEfetivo, vencida,
+  type Alerta, type Denuncia, type RegraSla, concluida, diasParado, diasRestantes,
+  parada, tipoEfetivo, vencida,
 } from "./metricas";
 import FichaDenuncia from "./FichaDenuncia";
+import { ExportarLista } from "./ExportarDenuncia";
+import { TIPO_ALERTA } from "./vocabulario";
 
 // =====================================================================
 // COMITÊ DE ÉTICA — Denúncias recebidas pelo canal próprio
@@ -38,13 +42,21 @@ import FichaDenuncia from "./FichaDenuncia";
 // banco); da ficha só saem os campos da apuração.
 // =====================================================================
 
+// Cor por FASE, não por nome: entrou (azul), o Comitê está trabalhando
+// (âmbar), a bola está com outro (âmbar mais claro), decidido (azul forte),
+// fechado (cinza). Situação sem entrada aqui cai no neutro e continua legível.
 const CLS_SITUACAO: Record<string, string> = {
   nova: "border-info/30 bg-info/10 text-info",
-  em_analise: "border-warning/30 bg-warning/10 text-warning",
-  aguardando_documentos: "border-warning/30 bg-warning/10 text-warning",
+  triagem: "border-info/30 bg-info/10 text-info",
   investigacao: "border-warning/30 bg-warning/10 text-warning",
-  julgada: "border-primary/30 bg-primary/10 text-primary",
-  encerrada: "border-border bg-muted text-muted-foreground",
+  aguardando_esclarecimentos: "border-warning/30 bg-warning/10 text-warning",
+  aguardando_documentos: "border-warning/30 bg-warning/10 text-warning",
+  parecer_elaboracao: "border-primary/30 bg-primary/10 text-primary",
+  aguardando_presidencia: "border-primary/30 bg-primary/10 text-primary",
+  aguardando_cumprimento: "border-primary/30 bg-primary/10 text-primary",
+  concluida: "border-border bg-muted text-muted-foreground",
+  arquivada: "border-border bg-muted text-muted-foreground",
+  reaberta: "border-destructive/30 bg-destructive/10 text-destructive",
 };
 
 const CLS_RESULTADO: Record<string, string> = {
@@ -68,14 +80,23 @@ export default function DenunciasComiteEtica() {
   const [fStatus, setFStatus] = useState("todos");
   const [fGravidade, setFGravidade] = useState("todas");
   const [fResultado, setFResultado] = useState("todos");
+  const [fEmpresa, setFEmpresa] = useState("todas");
+  const [fContrato, setFContrato] = useState("todos");
+  const [fResponsavel, setFResponsavel] = useState("todos");
+  const [fPeriodo, setFPeriodo] = useState("tudo");
+  /** "" | "risco" | "vencidas" | "paradas" — os recortes que são conta, não campo. */
+  const [fAtencao, setFAtencao] = useState("");
   const [alvo, setAlvo] = useState<Denuncia | null>(null);
   const [copiou, setCopiou] = useState(false);
 
   const { data: denuncias = [], isLoading } = useQuery({
     queryKey: ["canal-denuncias"],
     queryFn: async () => {
+      // Lê da VISÃO, não da tabela: é ela que mascara a identidade do
+      // denunciante para quem não tem `comite_etica_sigilo` (a tabela nem
+      // concede SELECT à aplicação desde a 20260914000002).
       const { data, error } = await db
-        .from("CANAL_DENUNCIA").select("*").order("created_at", { ascending: false });
+        .from("v_canal_denuncia").select("*").order("created_at", { ascending: false });
       if (error) throw error;
       return (data ?? []) as Denuncia[];
     },
@@ -105,18 +126,49 @@ export default function DenunciasComiteEtica() {
     }
   };
 
+  /**
+   * As listas dos selects saem dos próprios dados: contrato e empresa que
+   * ninguém usou não têm o que fazer no filtro.
+   *
+   * As três saem de um `useMemo` só porque varrem a MESMA lista — três
+   * passagens separadas sobre o mesmo array não pagam a legibilidade.
+   */
+  const { empresas, contratos, responsaveis } = useMemo(() => {
+    const distintos = (f: (d: Denuncia) => string | null | undefined) =>
+      [...new Set(denuncias.map(f).filter((v): v is string => !!v && !!v.trim()))].sort();
+    return {
+      empresas: distintos((d) => d.empresa_nome),
+      contratos: distintos((d) => d.contrato || d.contrato_informado),
+      responsaveis: distintos((d) => d.apuracao_responsavel),
+    };
+  }, [denuncias]);
+
   const filtradas = useMemo(() => {
     const t = busca.trim().toLowerCase();
+    const corte = fPeriodo === "tudo"
+      ? null
+      : new Date(Date.now() - Number(fPeriodo) * 86_400_000);
     return denuncias.filter((d) => {
       if (fStatus !== "todos" && d.status !== fStatus) return false;
       if (fGravidade !== "todas" && (d.gravidade ?? "") !== fGravidade) return false;
       if (fResultado !== "todos" && (d.resultado ?? "") !== fResultado) return false;
+      if (fEmpresa !== "todas" && (d.empresa_nome ?? "") !== fEmpresa) return false;
+      if (fContrato !== "todos" && (d.contrato || d.contrato_informado || "") !== fContrato) return false;
+      if (fResponsavel === "__sem" && (d.apuracao_responsavel ?? "").trim()) return false;
+      if (fResponsavel !== "todos" && fResponsavel !== "__sem"
+          && (d.apuracao_responsavel ?? "") !== fResponsavel) return false;
+      if (corte && new Date(d.created_at) < corte) return false;
+      if (fAtencao === "risco" && !d.risco_imediato) return false;
+      if (fAtencao === "vencidas" && !vencida(d, slas)) return false;
+      if (fAtencao === "paradas" && !parada(d, slas)) return false;
       if (!t) return true;
-      return [d.protocolo, d.titulo, d.descricao, d.local_ocorrencia, d.nome_completo,
-              d.denunciado_nome, d.lider_nome, d.contrato, d.setor, d.cidade]
+      return [d.protocolo, d.titulo, d.resumo, d.descricao, d.local_ocorrencia, d.nome_completo,
+              d.denunciado_nome, d.denunciado_informado, d.lider_nome, d.empresa_nome,
+              d.contrato, d.contrato_informado, d.setor, d.cidade, d.apuracao_responsavel]
         .some((c) => (c ?? "").toString().toLowerCase().includes(t));
     });
-  }, [denuncias, busca, fStatus, fGravidade, fResultado]);
+  }, [denuncias, busca, fStatus, fGravidade, fResultado, fEmpresa, fContrato,
+      fResponsavel, fPeriodo, fAtencao, slas]);
 
   const kpis = useMemo(() => {
     const abertas = denuncias.filter((d) => !concluida(d));
@@ -125,8 +177,28 @@ export default function DenunciasComiteEtica() {
       novas: denuncias.filter((d) => d.status === "nova").length,
       andamento: abertas.filter((d) => d.status !== "nova").length,
       vencidas: abertas.filter((d) => vencida(d, slas)).length,
+      paradas: abertas.filter((d) => parada(d, slas)).length,
+      risco: abertas.filter((d) => d.risco_imediato).length,
     };
   }, [denuncias, slas]);
+
+  // Os alertas que o tick diário acendeu e ninguém deu baixa ainda.
+  const { data: alertas = [] } = useQuery({
+    queryKey: ["canal-denuncias-alertas"],
+    queryFn: async () => {
+      const { data, error } = await db.from("CANAL_DENUNCIA_ALERTA")
+        .select("*").is("resolvido_em", null).order("created_at", { ascending: false }).limit(50);
+      if (error) throw error;
+      return (data ?? []) as Alerta[];
+    },
+  });
+
+  const darBaixa = async (a: Alerta) => {
+    const { error } = await db.from("CANAL_DENUNCIA_ALERTA")
+      .update({ resolvido_em: new Date().toISOString() }).eq("id", a.id);
+    if (error) { toast({ title: "Erro", description: error.message, variant: "destructive" }); return; }
+    qc.invalidateQueries({ queryKey: ["canal-denuncias-alertas"] });
+  };
 
   return (
     <div>
@@ -139,6 +211,10 @@ export default function DenunciasComiteEtica() {
           <div className="flex flex-wrap gap-2">
             <Button variant="outline" className="gap-1.5" onClick={() => nav("/app/comite-etica/indicadores")}>
               <BarChart3 className="h-4 w-4" /> Indicadores
+            </Button>
+            <ExportarLista denuncias={filtradas} />
+            <Button variant="outline" className="gap-1.5" onClick={() => nav("/app/comite-etica/configuracao")}>
+              <Settings2 className="h-4 w-4" /> Configuração
             </Button>
             <Button variant="outline" className="gap-1.5" onClick={copiarLink}>
               {copiou ? <Check className="h-4 w-4 text-success" /> : <Link2 className="h-4 w-4" />}
@@ -159,12 +235,50 @@ export default function DenunciasComiteEtica() {
         </Button>
       </Card>
 
-      <div className="mb-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+      {/* Os alertas que o tick diário acendeu. Ficam acima de tudo: é o que
+          responde "o que precisa de mim hoje?" sem ninguém abrir filtro. */}
+      {alertas.length > 0 && (
+        <Card className="mb-4 border-destructive/40 bg-destructive/5 p-4">
+          <p className="mb-2 flex items-center gap-2 text-sm font-semibold text-destructive">
+            <BellRing className="h-4 w-4" />
+            {alertas.length === 1 ? "1 alerta em aberto" : `${alertas.length} alertas em aberto`}
+          </p>
+          <ul className="flex flex-col gap-1.5">
+            {alertas.slice(0, 8).map((a) => {
+              const alvoAlerta = denuncias.find((d) => d.id === a.denuncia_id);
+              return (
+                <li key={a.id} className="flex flex-wrap items-center gap-2 text-xs">
+                  <Badge variant="outline" className="shrink-0">{TIPO_ALERTA[a.tipo] ?? a.tipo}</Badge>
+                  <button
+                    type="button"
+                    className="flex-1 text-left hover:underline disabled:cursor-default disabled:no-underline"
+                    disabled={!alvoAlerta}
+                    onClick={() => alvoAlerta && setAlvo(alvoAlerta)}
+                  >
+                    {a.mensagem}
+                  </button>
+                  <Button variant="ghost" size="icon" className="h-6 w-6"
+                          onClick={() => darBaixa(a)} aria-label="Dar baixa no alerta">
+                    <X className="h-3 w-3" />
+                  </Button>
+                </li>
+              );
+            })}
+          </ul>
+          {alertas.length > 8 && (
+            <p className="mt-2 text-xs text-muted-foreground">e mais {alertas.length - 8}…</p>
+          )}
+        </Card>
+      )}
+
+      <div className="mb-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
         {[
           { k: "todas", label: "Total recebidas", v: kpis.total, icon: Inbox, tone: "text-primary" },
           { k: "nova", label: "Aguardando triagem", v: kpis.novas, icon: ShieldAlert, tone: "text-info" },
           { k: "andamento", label: "Em apuração", v: kpis.andamento, icon: Search, tone: "text-warning" },
           { k: "vencidas", label: "Fora do prazo", v: kpis.vencidas, icon: TimerOff, tone: "text-destructive" },
+          { k: "paradas", label: "Sem movimentação", v: kpis.paradas, icon: PauseCircle, tone: "text-warning" },
+          { k: "risco", label: "Risco imediato", v: kpis.risco, icon: ShieldAlert, tone: "text-destructive" },
         ].map((s) => (
           <Card key={s.k} className="flex items-center gap-3 p-4">
             <s.icon className={`h-5 w-5 shrink-0 ${s.tone}`} />
@@ -206,6 +320,55 @@ export default function DenunciasComiteEtica() {
               {RESULTADO.map((s) => <SelectItem key={s.value} value={s.value}>{s.label}</SelectItem>)}
             </SelectContent>
           </Select>
+          <Select value={fEmpresa} onValueChange={setFEmpresa}>
+            <SelectTrigger className="w-[170px]"><SelectValue /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="todas">Todas as empresas</SelectItem>
+              {empresas.map((e) => <SelectItem key={e} value={e}>{e}</SelectItem>)}
+            </SelectContent>
+          </Select>
+          <Select value={fContrato} onValueChange={setFContrato}>
+            <SelectTrigger className="w-[190px]"><SelectValue /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="todos">Todos os contratos</SelectItem>
+              {contratos.map((c) => <SelectItem key={c} value={c}>{c}</SelectItem>)}
+            </SelectContent>
+          </Select>
+          <Select value={fResponsavel} onValueChange={setFResponsavel}>
+            <SelectTrigger className="w-[190px]"><SelectValue /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="todos">Todo responsável</SelectItem>
+              <SelectItem value="__sem">Sem responsável</SelectItem>
+              {responsaveis.map((r) => <SelectItem key={r} value={r}>{r}</SelectItem>)}
+            </SelectContent>
+          </Select>
+          <Select value={fPeriodo} onValueChange={setFPeriodo}>
+            <SelectTrigger className="w-[170px]"><SelectValue /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="tudo">Todo o período</SelectItem>
+              <SelectItem value="30">Últimos 30 dias</SelectItem>
+              <SelectItem value="90">Últimos 3 meses</SelectItem>
+              <SelectItem value="180">Últimos 6 meses</SelectItem>
+              <SelectItem value="365">Últimos 12 meses</SelectItem>
+            </SelectContent>
+          </Select>
+          {/* Atalhos do que precisa de atenção. Cada um é um recorte que a
+              dona do canal pediria de manhã, e que os selects não dão
+              combinando: "fora do prazo" e "parado" são contas, não campos. */}
+          <div className="flex gap-1.5">
+            {([
+              ["risco", "Risco imediato"],
+              ["vencidas", "Fora do prazo"],
+              ["paradas", "Paradas"],
+            ] as const).map(([k, rot]) => (
+              <Button
+                key={k} size="sm" variant={fAtencao === k ? "default" : "outline"}
+                onClick={() => setFAtencao(fAtencao === k ? "" : k)}
+              >
+                {rot}
+              </Button>
+            ))}
+          </div>
         </div>
 
         <div className="overflow-x-auto">
@@ -222,16 +385,17 @@ export default function DenunciasComiteEtica() {
                 <TableHead>Situação</TableHead>
                 <TableHead>Resultado</TableHead>
                 <TableHead>Prazo</TableHead>
+                <TableHead>Parado</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {isLoading && (
-                <TableRow><TableCell colSpan={10} className="py-8 text-center text-sm text-muted-foreground">
+                <TableRow><TableCell colSpan={11} className="py-8 text-center text-sm text-muted-foreground">
                   Carregando…
                 </TableCell></TableRow>
               )}
               {!isLoading && filtradas.length === 0 && (
-                <TableRow><TableCell colSpan={10} className="py-8 text-center text-sm text-muted-foreground">
+                <TableRow><TableCell colSpan={11} className="py-8 text-center text-sm text-muted-foreground">
                   {denuncias.length === 0
                     ? "Nenhuma denúncia recebida ainda. Divulgue o link acima para o canal começar a receber."
                     : "Nenhuma denúncia com esse filtro."}
@@ -239,6 +403,7 @@ export default function DenunciasComiteEtica() {
               )}
               {filtradas.map((d) => {
                 const restam = diasRestantes(d, slas);
+                const parado = diasParado(d);
                 return (
                   <TableRow key={d.id} className="cursor-pointer" onClick={() => setAlvo(d)}>
                     <TableCell className="whitespace-nowrap font-mono text-xs font-semibold">{d.protocolo}</TableCell>
@@ -289,6 +454,15 @@ export default function DenunciasComiteEtica() {
                           : <span className={restam <= 3 ? "font-semibold text-warning" : "text-muted-foreground"}>
                               {restam} d
                             </span>}
+                    </TableCell>
+                    {/* Parado é outra pergunta que o prazo não responde: um
+                        caso dentro do prazo pode estar abandonado há semanas. */}
+                    <TableCell className="whitespace-nowrap text-xs">
+                      {parado === null
+                        ? <span className="text-muted-foreground">—</span>
+                        : <span className={parada(d, slas) ? "font-semibold text-warning" : "text-muted-foreground"}>
+                            {parado} d
+                          </span>}
                     </TableCell>
                   </TableRow>
                 );

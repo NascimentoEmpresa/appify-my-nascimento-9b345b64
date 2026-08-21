@@ -30,25 +30,29 @@ Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: cors });
   if (req.method !== "POST") return json({ error: "method not allowed" }, 405);
 
-  let body: { email?: string; senha?: string };
+  let body: { identificador?: string; email?: string; senha?: string };
   try {
     body = await req.json();
   } catch {
     return json({ error: "Corpo inválido." }, 400);
   }
 
-  const email = (body?.email ?? "").trim();
-  // A senha NÃO é normalizada: desde a 20260901000005 ela é escolhida pela
-  // pessoa e o registro grava exatamente o que foi digitado. Um trim só aqui
-  // faria "  minha senha " nunca mais conferir com o próprio hash.
+  // A credencial é o e-mail OU o protocolo — desde que a denúncia anônima
+  // voltou, quem não deu e-mail entra pelo número do caso. `email` continua
+  // sendo aceito porque a tela antiga ainda pode estar em cache no navegador
+  // de alguém.
+  const identificador = (body?.identificador ?? body?.email ?? "").trim();
+  // A senha NÃO é normalizada: ela é escolhida pela pessoa e o registro grava
+  // exatamente o que foi digitado. Um trim só aqui faria "  minha senha "
+  // nunca mais conferir com o próprio hash.
   const senha = body?.senha ?? "";
-  if (!email || !senha) {
-    return json({ error: "Informe o e-mail e a senha que você escolheu ao registrar a denúncia." }, 400);
+  if (!identificador || !senha) {
+    return json({ error: "Informe o e-mail (ou o protocolo) e a senha que você escolheu ao registrar a denúncia." }, 400);
   }
 
   const sb = createClient(SUPABASE_URL, ANON_KEY, { auth: { persistSession: false } });
   const { data, error } = await sb.rpc("denuncia_consultar", {
-    p_email: email,
+    p_identificador: identificador,
     p_senha: senha,
   });
 
