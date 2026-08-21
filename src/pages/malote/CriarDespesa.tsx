@@ -35,6 +35,9 @@ import {
 import { RateioGrid, DimensoesRateio } from "./RateioGrid";
 import { AnexosField } from "./AnexosField";
 import { getStatusVigencia } from "./orcamentoUtils";
+import { DiaPagamentoPicker } from "./DiaPagamentoPicker";
+import { ExcecaoDiaBloqueadoField } from "./ExcecaoDiaBloqueadoField";
+import { useMaloteConfig } from "@/hooks/useMaloteConfig";
 
 const DIAS_MES = Array.from({ length: 28 }, (_, i) => i + 1);
 const QUANTIDADE_PARCELAS = Array.from({ length: 24 }, (_, i) => i + 2);
@@ -622,6 +625,8 @@ function PainelDespesaMalote({
   const [nome, setNome] = useState(nomeInicial ?? inicial?.nome ?? "");
   const [totalMes, setTotalMes] = useState(valorInicial != null ? String(valorInicial) : (inicial?.valor ?? ""));
   const [dataPagamento, setDataPagamento] = useState(inicial?.dataPagamento ?? "");
+  const [excecao, setExcecao] = useState(false);
+  const [justificativaExcecao, setJustificativaExcecao] = useState("");
   const [competencia, setCompetencia] = useState(inicial?.competencia ?? "");
   const [formaPagamento, setFormaPagamento] = useState(inicial?.formaPagamento ?? "");
   const [informacoesPagamento, setInformacoesPagamento] = useState(inicial?.informacoesPagamento ?? "");
@@ -633,6 +638,7 @@ function PainelDespesaMalote({
   const [quantidadeParcelas, setQuantidadeParcelas] = useState("");
   const [arquivos, setArquivos] = useState<File[]>([]);
   const [salvando, setSalvando] = useState<"rascunho" | "enviar" | null>(null);
+  const { data: maloteConfig } = useMaloteConfig();
 
   const totalRateado = useMemo(() => linhasRateio.reduce((s, l) => s + (Number(l.valor) || 0), 0), [linhasRateio]);
   const restante = Math.max(0, (Number(totalMes) || 0) - totalRateado);
@@ -641,6 +647,9 @@ function PainelDespesaMalote({
     if (!nome.trim()) return "Informe o nome da despesa.";
     if (!totalMes || Number(totalMes) <= 0) return "Informe o total do mês.";
     if (!dataPagamento) return "Informe a data de pagamento.";
+    if (excecao && (maloteConfig?.excecao_exigir_justificativa_solicitante ?? true) && !justificativaExcecao.trim()) {
+      return "Informe a justificativa da exceção.";
+    }
     if (!competencia) return "Informe a competência.";
     if (!formaPagamento) return "Selecione a forma de pagamento.";
     if (!informacoesPagamento.trim()) return "Informe os dados de pagamento.";
@@ -684,6 +693,8 @@ function PainelDespesaMalote({
         nome: nome.trim(),
         valor_total: Number(totalMes),
         data_pagamento: dataPagamento,
+        excecao,
+        justificativa_excecao: excecao ? justificativaExcecao.trim() || null : null,
         competencia: competencia + "-01",
         forma_pagamento: formaPagamento,
         informacoes_pagamento: informacoesPagamento.trim(),
@@ -795,9 +806,16 @@ function PainelDespesaMalote({
             </div>
             <div>
               <Label>Data de pagamento *</Label>
-              <Input type="date" value={dataPagamento} onChange={(e) => setDataPagamento(e.target.value)} disabled={!ativo} />
+              <DiaPagamentoPicker value={dataPagamento} onChange={setDataPagamento} disabled={!ativo} permitirDiasBloqueados={excecao} />
             </div>
           </div>
+          <ExcecaoDiaBloqueadoField
+            checked={excecao}
+            onCheckedChange={setExcecao}
+            justificativa={justificativaExcecao}
+            onJustificativaChange={setJustificativaExcecao}
+            disabled={!ativo}
+          />
 
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
             <div>
