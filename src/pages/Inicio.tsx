@@ -4,17 +4,14 @@ import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
 import { useAccessibleMenus, matchMenuCode } from "@/hooks/useAccessibleMenus";
 import { useModoExterno, ROTAS_EXTERNO } from "@/hooks/useModoExterno";
-import { ACESSO_ABERTO_SEM_PERMISSOES, MENUS_SEMPRE_RESTRITOS } from "@/lib/acesso";
+import { ACESSO_ABERTO_SEM_PERMISSOES, rotaSempreLiberada } from "@/lib/acesso";
+import { NAV_MODULOS } from "@/components/layout/Sidebar";
 import { MinhasReunioesCard } from "@/pages/central-servicos/reunioes/componentes/MinhasReunioesCard";
 import { NovidadesPainel } from "@/components/novidades/NovidadesPainel";
 import fachadaImg from "@/assets/fachada.jpg";
 import {
-  Gavel, FileSignature, ClipboardCheck, Wallet, Users, ShoppingCart,
-  BarChart3, UserSearch, CircleUserRound, Send, Quote, Star, Search,
-  LayoutDashboard, Headset, CalendarRange, Car, ClipboardList, BookOpen,
-  FolderKanban, Package, Boxes, Receipt, HardHat, Target, Scale, ShieldAlert,
-  MessageCircle, Laptop2, Network, CalendarCheck, UserPlus, ArrowRight, ChevronUp,
-  Settings2, Check, LayoutGrid,
+  CircleUserRound, Megaphone, Quote, Star, Search,
+  ArrowRight, ChevronUp, Settings2, Check, LayoutGrid,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 
@@ -67,8 +64,16 @@ function saudacao(hora: number) {
 }
 
 /* ------------------------------------------------------------------ */
-/* Catálogo de atalhos. `cor` tinge só o ícone e o realce de hover: o   */
-/* cartão continua neutro, senão a grade vira um arco-íris.             */
+/* Catálogo de atalhos.                                                 */
+/*                                                                      */
+/* NÃO é escrito à mão. Vem de NAV_MODULOS — a mesma definição que      */
+/* desenha o menu lateral. Enquanto eram duas listas, o Início vivia    */
+/* atrasado: o encarregado tinha oito telas no menu e via duas aqui,    */
+/* porque cada tela nova entrava só na sidebar. Agora tela nova no menu */
+/* nasce no Início junto, sem ninguém lembrar de repetir.               */
+/*                                                                      */
+/* `cor` tinge só o ícone e o realce de hover: o cartão continua        */
+/* neutro, senão a grade vira um arco-íris.                             */
 /* ------------------------------------------------------------------ */
 type Atalho = {
   to: string;
@@ -76,53 +81,119 @@ type Atalho = {
   label: string;
   desc: string;
   cor: string;
-  grupo: "Central de Serviços" | "Operação" | "Pessoas" | "Governança" | "Meu espaço";
+  grupo: string;
 };
 
-const CATALOGO: Atalho[] = [
-  // ── Central de Serviços ──
-  { to: "/app/central-servicos/chamados",              icon: Headset,        label: "Central de Chamados",      desc: "Abrir e acompanhar chamados",  cor: "#0891b2", grupo: "Central de Serviços" },
-  { to: "/app/central-servicos/reunioes",              icon: CalendarRange,  label: "Agendamento de Reuniões",  desc: "Agende e participe",           cor: "#7c3aed", grupo: "Central de Serviços" },
-  { to: "/app/central-servicos/veiculos",              icon: Car,            label: "Agendamento de Veículos",  desc: "Reserve veículos da frota",    cor: "#059669", grupo: "Central de Serviços" },
-  { to: "/app/central-servicos/formularios",           icon: ClipboardList,  label: "Nascimento Formulários",   desc: "Formulários e respostas",      cor: "#db2777", grupo: "Central de Serviços" },
-  { to: "/app/central-servicos/orientacoes-juridicas", icon: BookOpen,       label: "Orientações Jurídicas",    desc: "Consulte orientações",         cor: "#2563eb", grupo: "Central de Serviços" },
+/** Uma cor por módulo, para o cartão herdar a identidade do menu. */
+const COR_MODULO: Record<string, string> = {
+  licitacoes: "#0f3171",
+  controladoria_orc: "#0e7490",
+  suprimentos: "#9333ea",
+  financeiro: "#16a34a",
+  malote: "#ea580c",
+  contabil: "#475569",
+  fiscal: "#0d9488",
+  rh: "#ea580c",
+  recrutamento: "#db2777",
+  encarregados: "#0891b2",
+  operacional: "#1d4ed8",
+  sistemas: "#6366f1",
+  juridico: "#64748b",
+  sst: "#d97706",
+  central_servicos: "#0891b2",
+  comite_etica: "#b91c1c",
+  whatsapp: "#22c55e",
+  bi: "#0f3171",
+  "plano-acoes": "#dc2626",
+  integracao: "#475569",
+};
+const COR_PADRAO = "#0f3171";
 
-  // ── Operação ──
-  { to: "/app/editais",                        icon: Gavel,          label: "Licitações",          desc: "Editais e propostas",     cor: "#0f3171", grupo: "Operação" },
-  { to: "/app/licitacoes/grade",               icon: FolderKanban,   label: "Grade de Licitações", desc: "Acompanhamento por lote", cor: "#1d4ed8", grupo: "Operação" },
-  { to: "/app/contratos/ativos",               icon: FileSignature,  label: "Contratos",           desc: "Vigentes e aditivos",     cor: "#2563eb", grupo: "Operação" },
-  { to: "/app/controladoria",                  icon: ClipboardCheck, label: "Controladoria",       desc: "Orçamento e análises",    cor: "#0e7490", grupo: "Operação" },
-  { to: "/app/financeiro/contas-pagar",        icon: Wallet,         label: "Financeiro",          desc: "Contas e fluxo de caixa", cor: "#16a34a", grupo: "Operação" },
-  { to: "/app/malote/meus-itens",              icon: Package,        label: "Malote",              desc: "Despesas e aprovações",   cor: "#ea580c", grupo: "Operação" },
-  { to: "/app/suprimentos/requisicoes",        icon: ShoppingCart,   label: "Suprimentos",         desc: "Requisições e compras",   cor: "#9333ea", grupo: "Operação" },
-  { to: "/app/suprimentos/patrimonio",         icon: Boxes,          label: "Patrimônio",          desc: "Bens e manutenções",      cor: "#7c3aed", grupo: "Operação" },
-  { to: "/app/contabil/lancamentos",           icon: BookOpen,       label: "Contábil",            desc: "Lançamentos e razão",     cor: "#475569", grupo: "Operação" },
-  { to: "/app/fiscal",                         icon: Receipt,        label: "Fiscal & Tributário", desc: "Notas e apuração",        cor: "#0d9488", grupo: "Operação" },
+/**
+ * Descrições melhores que o nome do grupo, para as telas que já tinham uma
+ * escrita à mão aqui. Só isso — quem não está no mapa cai no nome do
+ * submódulo, que é o que a sidebar mostra e ninguém precisa manter.
+ */
+const DESC_ROTA: Record<string, string> = {
+  "/app/central-servicos/chamados": "Abrir e acompanhar chamados",
+  "/app/central-servicos/reunioes": "Agende e participe",
+  "/app/central-servicos/veiculos": "Reserve veículos da frota",
+  "/app/central-servicos/formularios": "Formulários e respostas",
+  "/app/central-servicos/orientacoes-juridicas": "Consulte orientações",
+  "/app/editais": "Editais e propostas",
+  "/app/licitacoes/grade": "Acompanhamento por lote",
+  "/app/contratos/ativos": "Vigentes e aditivos",
+  "/app/financeiro/contas-pagar": "Contas e fluxo de caixa",
+  "/app/malote/meus-itens": "Despesas e aprovações",
+  "/app/suprimentos/requisicoes": "Requisições e compras",
+  "/app/suprimentos/patrimonio": "Bens e manutenções",
+  "/app/rh/colaboradores": "Cadastro e documentos",
+  "/app/rh/hierarquia": "Setores e lideranças",
+  "/app/rh/ferias": "Programação e saldos",
+  "/app/sst/aso": "Saúde e segurança",
+  "/app/painel-executivo": "Visão consolidada",
+  "/app/juridico/processos": "Processos e audiências",
+  "/app/whatsapp": "Atendimento e chatbot",
+  "/app/encarregados/minhas-solicitacoes": "Acompanhe seus pedidos",
+  "/app/encarregados/solicitar-vaga": "Abrir vaga para a equipe",
+  "/app/encarregados/solicitar-ferias": "Programar afastamento",
+  "/app/encarregados/solicitar-demissao": "Desligamento da equipe",
+  "/app/encarregados/advertencia": "Registrar ocorrência",
+  "/app/encarregados/chamados": "Suporte de sistemas",
+  "/app/encarregados/solicitar-materiais": "Uniformes e materiais",
+  "/app/encarregados/meus-pedidos": "Acompanhe seus materiais",
+};
 
-  // ── Pessoas ──
-  { to: "/app/rh/colaboradores",     icon: Users,        label: "RH",                desc: "Colaboradores",          cor: "#ea580c", grupo: "Pessoas" },
-  { to: "/app/rh/hierarquia",        icon: Network,      label: "Hierarquia",        desc: "Setores e lideranças",   cor: "#f59e0b", grupo: "Pessoas" },
-  { to: "/app/rh/ferias",            icon: CalendarCheck,label: "Gestão de Férias",  desc: "Programação e saldos",   cor: "#0ea5e9", grupo: "Pessoas" },
-  { to: "/app/rh/recrutamento",      icon: UserSearch,   label: "Recrutamento",      desc: "Vagas e candidatos",     cor: "#db2777", grupo: "Pessoas" },
-  { to: "/app/sst/aso",              icon: HardHat,      label: "SST · ASO",         desc: "Saúde e segurança",      cor: "#d97706", grupo: "Pessoas" },
+const GRUPO_MEU_ESPACO = "Meu espaço";
 
-  // ── Governança ──
-  { to: "/app/painel-executivo",        icon: LayoutDashboard, label: "Painel Executivo", desc: "Visão consolidada",     cor: "#1e40af", grupo: "Governança" },
-  { to: "/app/bi",                      icon: BarChart3,       label: "BI & Analytics",   desc: "Indicadores",           cor: "#0f3171", grupo: "Governança" },
-  { to: "/app/plano-acoes",             icon: Target,          label: "Plano de Ações",   desc: "Ações e comitês",       cor: "#dc2626", grupo: "Governança" },
-  { to: "/app/juridico/processos",      icon: Scale,           label: "Jurídico",         desc: "Processos e audiências",cor: "#64748b", grupo: "Governança" },
-  { to: "/app/comite-etica/denuncias",  icon: ShieldAlert,     label: "Comitê de Ética",  desc: "Denúncias e apuração",  cor: "#b91c1c", grupo: "Governança" },
-  { to: "/app/sistemas/solicitacoes-erp", icon: Laptop2,       label: "Sistemas",         desc: "Solicitações do ERP",   cor: "#6366f1", grupo: "Governança" },
-  { to: "/app/whatsapp",                icon: MessageCircle,   label: "WhatsApp",         desc: "Atendimento e chatbot", cor: "#22c55e", grupo: "Governança" },
-
-  // ── Meu espaço ──
-  { to: "/app/meu-perfil",                       icon: CircleUserRound, label: "Meu Perfil",           desc: "Seus dados e acessos",   cor: "#475569", grupo: "Meu espaço" },
-  { to: "/app/encarregados/minhas-solicitacoes", icon: Send,            label: "Minhas Solicitações",  desc: "Acompanhe seus pedidos", cor: "#0891b2", grupo: "Meu espaço" },
-  { to: "/app/encarregados/solicitar-vaga",      icon: UserPlus,        label: "Solicitar Vaga",       desc: "Abrir vaga para a equipe", cor: "#db2777", grupo: "Meu espaço" },
-  { to: "/app/encarregados/solicitar-ferias",    icon: CalendarRange,   label: "Solicitar Férias",     desc: "Programar afastamento",  cor: "#0ea5e9", grupo: "Meu espaço" },
+/**
+ * O que não sai de NAV_MODULOS: telas pessoais, que não pertencem a módulo
+ * nenhum e por isso não têm entrada no menu lateral.
+ */
+const ATALHOS_PESSOAIS: Atalho[] = [
+  { to: "/app/meu-perfil", icon: CircleUserRound, label: "Meu Perfil",   desc: "Seus dados e acessos", cor: "#475569", grupo: GRUPO_MEU_ESPACO },
+  { to: "/app/novidades",  icon: Megaphone,       label: "Novidades",    desc: "Atualizações do ERP",  cor: "#7c3aed", grupo: GRUPO_MEU_ESPACO },
 ];
 
-const ORDEM_GRUPOS: Atalho["grupo"][] = ["Central de Serviços", "Operação", "Pessoas", "Governança", "Meu espaço"];
+/** Achata NAV_MODULOS em cartões, um por tela, sem repetir rota. */
+function montarCatalogo(): Atalho[] {
+  const vistos = new Set<string>();
+  const out: Atalho[] = [];
+  for (const mod of NAV_MODULOS) {
+    for (const grupo of mod.groups ?? []) {
+      for (const item of grupo.items) {
+        if (vistos.has(item.to)) continue;
+        vistos.add(item.to);
+        out.push({
+          to: item.to,
+          icon: item.icon as LucideIcon,
+          label: item.label,
+          // Nome do submódulo quando não há descrição própria: é o rótulo que
+          // a pessoa já lê no menu, então serve de referência sem inventar texto.
+          desc: DESC_ROTA[item.to] ?? grupo.label,
+          cor: COR_MODULO[mod.id] ?? COR_PADRAO,
+          grupo: mod.label,
+        });
+      }
+    }
+  }
+  for (const a of ATALHOS_PESSOAIS) {
+    if (!vistos.has(a.to)) { vistos.add(a.to); out.push(a); }
+  }
+  // Alfabética dentro de cada módulo, igual à sidebar: quem procura um cartão
+  // procura pelo mesmo nome, na mesma ordem que já viu no menu.
+  return out.sort((a, b) => a.label.localeCompare(b.label, "pt-BR", { sensitivity: "base" }));
+}
+
+const CATALOGO: Atalho[] = montarCatalogo();
+
+/** Módulos em ordem alfabética, como na sidebar; "Meu espaço" fecha a lista. */
+const ORDEM_GRUPOS: string[] = (() => {
+  const nomes = [...new Set(CATALOGO.map((a) => a.grupo))].filter((g) => g !== GRUPO_MEU_ESPACO);
+  nomes.sort((a, b) => a.localeCompare(b, "pt-BR", { sensitivity: "base" }));
+  return [...nomes, GRUPO_MEU_ESPACO];
+})();
+
 
 /** Favoritos de quem nunca escolheu: os mesmos atalhos que a tela trazia antes. */
 const FAVORITOS_PADRAO = [
@@ -191,20 +262,21 @@ export default function Inicio() {
     });
   }, [user?.id]);
 
-  // Mesmo filtro do menu lateral: rota sem entrada em app_menu ou sem nada
-  // configurado no gerenciamento de acesso segue visível; o resto obedece ao
-  // perfil da pessoa. Ver Sidebar.tsx — a regra é intencionalmente idêntica,
-  // e vale tanto para a grade de Favoritos quanto para "Gerenciar favoritos":
-  // ninguém consegue favoritar uma tela que não tem permissão de abrir.
+  // MESMA regra do menu lateral e do RouteGuard, palavra por palavra: NEGA
+  // POR PADRÃO. Precisa ser idêntica porque o catálogo agora lista o ERP
+  // inteiro — com a regra antiga ("rota sem cadastro em app_menu segue
+  // visível") qualquer pessoa passaria a ver as 140 telas do sistema aqui e
+  // tomaria "Acesso negado" ao clicar. Vale também para "Gerenciar
+  // favoritos": ninguém favorita tela que não pode abrir.
   const podeVer = useCallback((to: string) => {
-    // Encarregado externo primeiro: ele não tem perfil de acesso, então
-    // cairia no ramo "menu sem configuração → visível" e enxergaria o ERP
-    // inteiro no catálogo.
+    // Encarregado externo primeiro: ele não tem perfil de acesso, então só a
+    // allowlist dele responde.
     if (externo) return ROTAS_EXTERNO.some((r) => to === r || to.startsWith(r + "/"));
-    if (ACESSO_ABERTO_SEM_PERMISSOES || !access) return true;
+    if (ACESSO_ABERTO_SEM_PERMISSOES) return true;
+    if (rotaSempreLiberada(to)) return true;
+    if (!access) return false;
     const code = matchMenuCode(to, access.routes);
-    if (!code) return true;
-    if (!access.configuredCodes.has(code) && !MENUS_SEMPRE_RESTRITOS.has(code)) return true;
+    if (!code || access.inactiveCodes.has(code)) return false;
     return access.codes.has(code);
   }, [access, externo]);
 

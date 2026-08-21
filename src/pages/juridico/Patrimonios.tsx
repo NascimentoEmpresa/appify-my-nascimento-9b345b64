@@ -175,17 +175,40 @@ export default function Patrimonios() {
     setMalotePago(m);
   }, []);
 
+  /**
+   * Traz TODAS as linhas de uma tabela, em páginas.
+   *
+   * O PostgREST corta a resposta em 1.000 linhas e não avisa: a query volta
+   * "com sucesso", só que incompleta. Enquanto as contas eram dezenas isso não
+   * aparecia; com as parcelas de financiamento lançadas (1.400+) o "quanto
+   * falta" de metade da carteira passaria a sair errado — e errado para MENOS,
+   * que é o jeito pior de errar aqui.
+   */
+  const todas = useCallback(async (tabela: string, colunas: string) => {
+    const PAGINA = 1000;
+    const acc: any[] = [];
+    for (let de = 0; ; de += PAGINA) {
+      const { data, error } = await (supabase as any)
+        .from(tabela).select(colunas).order("id", { ascending: true }).range(de, de + PAGINA - 1);
+      if (error) { console.warn(tabela + ":", error.message); break; }
+      acc.push(...(data ?? []));
+      if (!data || data.length < PAGINA) break;
+    }
+    return acc;
+  }, []);
+
   // ── Carregar lista + indicadores ───────────────────────────────
   const load = useCallback(async () => {
     setLoading(true);
-    const [{ data: p }, { data: o }] = await Promise.all([
+    const [{ data: p }, o] = await Promise.all([
       (supabase as any).from("JUR_PATRIMONIOS").select("*").order("created_at", { ascending: false }),
-      (supabase as any).from("JUR_PATRIMONIO_OBRIGACOES").select("id,patrimonio_id,categoria,descricao,valor,vencimento,status,pago_em,vigencia_fim,onde_pagar,comprovante_path,comprovante_nome,malote_despesa_id,enviado_malote_em"),
+      todas("JUR_PATRIMONIO_OBRIGACOES",
+        "id,patrimonio_id,categoria,descricao,valor,vencimento,status,pago_em,vigencia_fim,onde_pagar,comprovante_path,comprovante_nome,malote_despesa_id,enviado_malote_em"),
     ]);
     setPats(p ?? []); setObrAll(o ?? []);
     await carregarStatusMalote(o ?? []);
     setLoading(false);
-  }, []);   // eslint-disable-line react-hooks/exhaustive-deps
+  }, [todas]);   // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { load(); }, [load]);
 
   // Empregados do setor Jurídico que estão Trabalhando (para o select de responsável).

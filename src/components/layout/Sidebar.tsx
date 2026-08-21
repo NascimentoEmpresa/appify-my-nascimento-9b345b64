@@ -832,6 +832,18 @@ const erpModules: ModuleDef[] = [
   biModule,
 ];
 
+/**
+ * O MESMO conjunto que a sidebar monta em runtime (`allModules`), exposto para
+ * quem precisa listar o ERP inteiro sem manter um segundo catálogo — hoje o
+ * Início, em "Todos os módulos".
+ *
+ * Existe porque a lista de lá era escrita à mão e ficava para trás a cada tela
+ * nova: o encarregado via oito itens no menu lateral e dois no Início. Catálogo
+ * único é a única forma de isso não se repetir.
+ */
+export const NAV_MODULOS: ModuleDef[] = [...erpModules, buildPlanoAcoesModule(false), integracaoModule];
+export type { ModuleDef as NavModuleDef, NavItem as NavItemDef };
+
 interface SidebarProps {
   collapsed: boolean;
   mobileOpen?: boolean;
@@ -853,7 +865,7 @@ export function Sidebar({ collapsed, mobileOpen = false, onMobileClose }: Sideba
   // Contador das Novidades do Sistema: o mesmo número da bolinha do topo.
   const { naoLidasCount: novidadesNaoLidas } = useNovidades();
 
-  const allModules = [...erpModules, buildPlanoAcoesModule(false), integracaoModule];
+  const allModules = NAV_MODULOS;
 
   // Sidebar filtra itens com base nos menus acessíveis do usuário (perfil de
   // acesso, ver list_accessible_menus). Cargo/role não concede bypass. Plano de
