@@ -142,6 +142,7 @@ export interface MaloteDespesaRow {
   justificativa_aprovacao: string | null;
   motivo_ajuste: string | null;
   excecao: boolean;
+  justificativa_excecao: string | null;
   // ── Cotação (SIS-2026-0112, Suprimentos escreve via RPCs sup_malote_*) ──
   cot1_fornecedor: string | null;
   cot1_valor: number | null;
@@ -227,7 +228,7 @@ const DESPESA_KEY = "malote_despesa";
 const DESPESA_COLUMNS =
   "id, numero, empresa_id, classificacao_id, origem, status, nome, valor_total, motivo, descricao, links, tipo_movimento, tipo, contrato_id, " +
   "data_pagamento, competencia, forma_pagamento, informacoes_pagamento, parcelado, numero_parcelas, dia_desconto, " +
-  "nivel_aprovacao_atual, valor_aprovado_cotacao, valor_aprovado, justificativa_aprovacao, motivo_ajuste, excecao, " +
+  "nivel_aprovacao_atual, valor_aprovado_cotacao, valor_aprovado, justificativa_aprovacao, motivo_ajuste, excecao, justificativa_excecao, " +
   "cot1_fornecedor, cot1_valor, cot1_prazo, cot1_link, cot1_anexo_path, cot1_anexo_nome, " +
   "cot2_fornecedor, cot2_valor, cot2_prazo, cot2_link, cot2_anexo_path, cot2_anexo_nome, " +
   "cot3_fornecedor, cot3_valor, cot3_prazo, cot3_link, cot3_anexo_path, cot3_anexo_nome, " +
@@ -375,6 +376,10 @@ export interface SalvarDespesaInput {
   rateio?: RateioLinha[];
   parcelas?: Parcela[];
   nivel_aprovacao_atual?: 1 | 2 | 3 | null;
+  // SIS-2026-0211: marca a despesa como exceção — passa por cima do
+  // bloqueio de dia (data_pagamento em dia bloqueado), só pra ela.
+  excecao?: boolean;
+  justificativa_excecao?: string | null;
 }
 
 export function useSalvarDespesa() {
