@@ -26,12 +26,14 @@ const db = supabase as unknown as SupabaseClient;
 //                 usa na tela de Férias.
 //   Advertência → SISTEMA_COMENTARIOS (modulo 'advertencia'). Este fio nasce
 //                 aqui; o Jurídico passa a ler o mesmo.
+//   Demissão    → SISTEMA_COMENTARIOS (modulo 'demissao'). Idem, do lado do
+//                 Operacional e do RH.
 //
 // Um fio novo e separado para o encarregado seria pior que nada: os dois
 // lados escreveriam sem nunca se ver.
 // =====================================================================
 
-export type TipoSolicitacao = "Vaga" | "Férias" | "Advertência";
+export type TipoSolicitacao = "Vaga" | "Férias" | "Advertência" | "Demissão";
 
 export interface Mensagem {
   id: number | string;
@@ -47,6 +49,7 @@ const FIO = {
   "Vaga": { tabela: "WA_MENSAGENS_RECRUTAMENTO", modulo: null },
   "Férias": { tabela: "SISTEMA_COMENTARIOS", modulo: "ferias" },
   "Advertência": { tabela: "SISTEMA_COMENTARIOS", modulo: "advertencia" },
+  "Demissão": { tabela: "SISTEMA_COMENTARIOS", modulo: "demissao" },
 } as const;
 
 const fmt = (s?: string | null) => {
@@ -74,6 +77,14 @@ const ROTULO: Record<string, string> = {
   alta_rotatividade: "Alta rotatividade", observacao_importante: "Observação",
   analista_nome: "Analista", motivo_reprovacao: "Motivo da reprovação",
   colaborador_nome: "Colaborador", tipo_advertencia: "Tipo de advertência",
+  colaborador_cargo: "Cargo do colaborador", colaborador_posto: "Posto",
+  colaborador_filial: "Filial", colaborador_admissao: "Admissão",
+  colaborador_telefone: "Telefone", colaborador_email: "E-mail do colaborador",
+  motivo_solicitacao: "Motivo da solicitação", motivo_pedido: "Motivo do pedido",
+  relato: "Relato", termino_experiencia: "Término de experiência",
+  data_aviso: "Data do aviso", modelo_aviso: "Modelo de aviso",
+  operacional_motivo: "Retorno do Operacional", rh_observacao: "Observação do RH",
+  data_solicitacao: "Data da solicitação",
   descricao: "Descrição", motivo: "Motivo", data_ocorrido: "Data do ocorrido",
   periodo_inicio: "Início do período", periodo_fim: "Fim do período",
   dias: "Dias", observacao: "Observação", excecao: "Exceção",
@@ -85,6 +96,9 @@ const OCULTAS = new Set([
   "id", "created_at", "criado_em", "updated_at", "status", "status_changed_at",
   "solicitante_email", "solicitante_cpf", "solicitante_nome", "data_inicio_alteracoes",
   "administrativa", "cnh_obrigatoria",
+  // Demissao: ids e carimbos de quem tratou nao dizem nada a quem solicitou.
+  "colaborador_id", "colaborador_cpf", "contrato_id", "atualizado_em",
+  "operacional_por", "operacional_em", "rh_por", "rh_em",
 ]);
 
 export function DetalheSolicitacao({ tipo, id, titulo, status, onFechar }: {
@@ -108,6 +122,7 @@ export function DetalheSolicitacao({ tipo, id, titulo, status, onFechar }: {
   const tabelaFicha =
     tipo === "Vaga" ? "SISTEMA_RECRUTAMENTO"
     : tipo === "Férias" ? "SISTEMA_SOLICITACOES_FERIAS"
+    : tipo === "Demissão" ? "SISTEMA_SOLICITACOES_DEMISSAO"
     : "SISTEMA_SOLICITACOES_ADVERTENCIA";
 
   const carregarMsgs = useCallback(async () => {
@@ -222,7 +237,9 @@ export function DetalheSolicitacao({ tipo, id, titulo, status, onFechar }: {
                 ? "A mesma conversa que o Operacional e o Recrutamento leem."
                 : tipo === "Férias"
                   ? "A mesma conversa que o RH lê na tela de Férias."
-                  : "A mesma conversa que o Jurídico lê na tela de Advertências."}
+                  : tipo === "Demissão"
+                    ? "A mesma conversa que o Operacional e o RH leem na tela de Demissões."
+                    : "A mesma conversa que o Jurídico lê na tela de Advertências."}
             </p>
 
             <div style={{ flex: 1, overflowY: "auto", background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: 12, padding: 10, minHeight: 180 }}>

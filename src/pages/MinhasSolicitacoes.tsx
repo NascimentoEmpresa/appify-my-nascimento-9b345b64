@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from "react";
+import { useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
 import { usePermissoes } from "@/context/PermissoesContext";
@@ -123,6 +124,7 @@ export type SolicitacaoInicial = "vaga" | "ferias" | "advertencia";
 export default function MinhasSolicitacoes({ abrir }: { abrir?: SolicitacaoInicial }) {
   const { user } = useAuth();
   const { can } = usePermissoes();
+  const nav = useNavigate();
   // Vaga do escritório: só quem enxerga esse tipo pode marcar uma como tal.
   const podeAdministrativa = podeVagaAdministrativa(can);
   const [displayName, setDisplayName] = useState("");
@@ -190,6 +192,11 @@ export default function MinhasSolicitacoes({ abrir }: { abrir?: SolicitacaoInici
 
     const fr = await (supabase as any).from("SISTEMA_SOLICITACOES_FERIAS").select("id, colaborador_nome, status, criado_em").eq("solicitante_email", email).order("criado_em", { ascending: false }).limit(30);
     const ad = await (supabase as any).from("SISTEMA_SOLICITACOES_ADVERTENCIA").select("id, colaborador_nome, tipo_advertencia, status, created_at, status_changed_at, excecao").eq("solicitante_email", email).order("created_at", { ascending: false }).limit(30);
+    // Demissão morava só na tela dedicada: quem pedia não a via no histórico,
+    // e por isso não tinha como acompanhar o andamento junto do resto.
+    const dm = await (supabase as any).from("SISTEMA_SOLICITACOES_DEMISSAO")
+      .select("id, colaborador_nome, motivo_solicitacao, status, criado_em, data_solicitacao")
+      .eq("solicitante_email", email).order("criado_em", { ascending: false }).limit(30);
     const itens: SolItem[] = [
       ...(vg.data ?? []).map((r: any) => ({
         tipo: "Vaga", icon: "🎯", id: r.id,
@@ -203,6 +210,16 @@ export default function MinhasSolicitacoes({ abrir }: { abrir?: SolicitacaoInici
       })),
       ...(fr.data ?? []).map((r: any) => ({ tipo: "Férias", icon: "📅", id: r.id, titulo: `Férias — ${r.colaborador_nome || ""}`, status: r.status, data: r.criado_em, statusDesde: r.criado_em })),
       ...(ad.data ?? []).map((r: any) => ({ tipo: "Advertência", icon: "⚠️", id: r.id, titulo: `Advertência ${r.tipo_advertencia || ""} — ${r.colaborador_nome || ""}`, status: r.status, data: r.created_at, statusDesde: r.status_changed_at || r.created_at, excecao: r.excecao })),
+      ...(dm.data ?? []).map((r: any) => ({
+        tipo: "Demissão", icon: "🚪", id: r.id,
+        titulo: `Demissão — ${r.colaborador_nome || ""}`,
+        status: r.status,
+        // A tabela de demissão usa `criado_em`; a data digitada no formulário
+        // é outra coisa e só serve de reserva quando o carimbo falta.
+        data: r.criado_em || r.data_solicitacao,
+        statusDesde: r.criado_em || r.data_solicitacao,
+        motivo: r.motivo_solicitacao || "",
+      })),
     ].sort((a, b) => String(b.data || "").localeCompare(String(a.data || "")));
     setLoadingSols(false);
     setMinhasSols(itens);
@@ -541,7 +558,28 @@ export default function MinhasSolicitacoes({ abrir }: { abrir?: SolicitacaoInici
             <button onClick={abrirModalVaga} className="ini-sol-create"><span className="icon">🎯</span><span>Solicitar Vaga</span></button>
             <button onClick={abrirModalFerias} className="ini-sol-create"><span className="icon">📅</span><span>Solicitar Férias</span></button>
             <button onClick={abrirModalAdv} className="ini-sol-create"><span className="icon">⚠️</span><span>Advertência</span></button>
-            <button className="ini-sol-create" style={{ opacity: .5, cursor: "not-allowed" }} disabled title="Em breve"><span className="icon">🚪</span><span>Solicitar Demissão</span></button>
+            {/* Demissão estava como "Em breve" — mas a tela existe e funciona
+                desde sempre, só não estava ligada aqui. Vai para a página
+                dedicada em vez de virar modal: é um formulário de vários
+                passos, com anexos, e não cabe num card. */}
+            <button onClick={() => nav("/app/encarregados/solicitar-demissao")} className="ini-sol-create">
+              <span className="icon">🚪</span><span>Solicitar Demissão</span>
+            </button>
+          </div>
+
+          {/* Materiais e Chamados têm tela própria, com recursos que esta não
+              tem (carrinho, anexos, avaliação). Aqui fica o caminho para elas,
+              e não uma segunda cópia que divergiria da primeira. */}
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 12, paddingTop: 12, borderTop: "1px solid #eef2f7" }}>
+            <span style={{ fontSize: 11, color: "#94a3b8", fontWeight: 700, alignSelf: "center" }}>Também suas:</span>
+            <button onClick={() => nav("/app/encarregados/meus-pedidos")}
+              style={{ padding: "5px 12px", borderRadius: 16, border: "1px solid #e2e8f0", background: "#fff", color: "#475569", fontSize: 11.5, fontWeight: 700, cursor: "pointer" }}>
+              📦 Solicitações de materiais
+            </button>
+            <button onClick={() => nav("/app/encarregados/chamados")}
+              style={{ padding: "5px 12px", borderRadius: 16, border: "1px solid #e2e8f0", background: "#fff", color: "#475569", fontSize: 11.5, fontWeight: 700, cursor: "pointer" }}>
+              🎧 Chamados de sistemas
+            </button>
           </div>
         </div>
       </div>
@@ -551,7 +589,7 @@ export default function MinhasSolicitacoes({ abrir }: { abrir?: SolicitacaoInici
         <div className="ini-card-hd">
           <h3>🗂 Histórico & Status</h3>
           <div style={{ display: "flex", gap: 6 }}>
-            {["", "Vaga", "Férias", "Advertência"].map(f => (
+            {["", "Vaga", "Férias", "Advertência", "Demissão"].map(f => (
               <button key={f || "all"} onClick={() => setFiltro(f)}
                 style={{ padding: "4px 10px", borderRadius: 16, fontSize: 11, fontWeight: 700, cursor: "pointer",
                   border: `1px solid ${filtro === f ? "#0f3171" : "#e2e8f0"}`, background: filtro === f ? "#0f3171" : "#fff", color: filtro === f ? "#fff" : "#475569" }}>

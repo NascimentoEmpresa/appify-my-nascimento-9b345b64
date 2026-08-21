@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
+import { ConversaSolicitacao } from "@/components/solicitacoes/ConversaSolicitacao";
 
 // ── Helpers ──────────────────────────────────────────────────────────
 function fmtDt(s?: string) {
@@ -34,8 +35,6 @@ export default function Ferias() {
 
   const [drawerId, setDrawerId] = useState<number | null>(null);
   const [sol, setSol] = useState<any | null>(null);
-  const [msgs, setMsgs] = useState<any[]>([]);
-  const [chatInput, setChatInput] = useState("");
   const [reprovando, setReprovando] = useState(false);
   const [motivo, setMotivo] = useState("");
 
@@ -82,10 +81,6 @@ export default function Ferias() {
     setSol(row);
     setReprovando(false);
     setMotivo("");
-    setMsgs([]);
-    const { data } = await (supabase as any)
-      .from("SISTEMA_COMENTARIOS").select("*").eq("modulo", "ferias").eq("entidade_id", String(row.id)).order("created_at");
-    setMsgs(data ?? []);
   };
   const fecharDrawer = () => { setDrawerId(null); setSol(null); };
 
@@ -102,19 +97,6 @@ export default function Ferias() {
     setReprovando(false);
     setMotivo("");
     recarregarTudo();
-  };
-
-  const enviarMsg = async () => {
-    if (!chatInput.trim() || !drawerId) return;
-    const txt = chatInput.trim();
-    setChatInput("");
-    const { error } = await (supabase as any).from("SISTEMA_COMENTARIOS").insert({
-      modulo: "ferias", entidade_id: String(drawerId), texto: txt,
-      autor_nome: nome || user?.email || "Usuário", autor_cpf: user?.email ?? "",
-    });
-    if (error) { toast("Erro ao enviar.", "err"); return; }
-    const { data } = await (supabase as any).from("SISTEMA_COMENTARIOS").select("*").eq("modulo", "ferias").eq("entidade_id", String(drawerId)).order("created_at");
-    setMsgs(data ?? []);
   };
 
   const kpi = (label: string, val: number, cor: string) => (
@@ -261,29 +243,10 @@ export default function Ferias() {
                 </div>
               )}
 
-              {/* Chat */}
-              <div style={{ borderTop: "1px solid #e2e8f0", paddingTop: 16 }}>
-                <div style={{ fontSize: 12, fontWeight: 700, color: "#475569", marginBottom: 10 }}>💬 Conversa</div>
-                <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 12 }}>
-                  {msgs.length === 0 ? (
-                    <div style={{ fontSize: 12, color: "#94a3b8", textAlign: "center", padding: "12px 0" }}>Nenhuma mensagem ainda.</div>
-                  ) : msgs.map(m => {
-                    const mine = m.autor_cpf === user?.email;
-                    return (
-                      <div key={m.id} style={{ alignSelf: mine ? "flex-end" : "flex-start", maxWidth: "75%" }}>
-                        <div style={{ fontSize: 10, color: "#94a3b8", padding: "0 2px", textAlign: mine ? "right" : "left" }}>{m.autor_nome}</div>
-                        <div style={{ background: mine ? "#0f3171" : "#f1f5f9", color: mine ? "#fff" : "#0f172a", borderRadius: 12, padding: "8px 12px", fontSize: 13 }}>{m.texto}</div>
-                        <div style={{ fontSize: 10, color: "#94a3b8", padding: "0 2px", textAlign: mine ? "right" : "left" }}>{fmtDt(m.created_at)}</div>
-                      </div>
-                    );
-                  })}
-                </div>
-                <div style={{ display: "flex", gap: 8 }}>
-                  <input value={chatInput} onChange={e => setChatInput(e.target.value)} onKeyDown={e => { if (e.key === "Enter") enviarMsg(); }}
-                    placeholder="Escreva uma mensagem..." style={{ flex: 1, border: "1px solid #e2e8f0", borderRadius: 10, padding: "9px 12px", fontSize: 13, outline: "none" }} />
-                  <button onClick={enviarMsg} style={{ padding: "9px 16px", borderRadius: 10, border: "none", background: "#0f3171", color: "#fff", fontSize: 13, fontWeight: 700, cursor: "pointer" }}>Enviar</button>
-                </div>
-              </div>
+              <ConversaSolicitacao
+                modulo="ferias" entidadeId={drawerId}
+                aviso="Quem solicitou lê e responde por Encarregados › Minhas Solicitações."
+              />
             </div>
           </div>
         </div>
