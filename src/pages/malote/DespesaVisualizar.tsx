@@ -44,6 +44,8 @@ import { RateioGrid, DimensoesRateio } from "./RateioGrid";
 import { RateioAprovadorTable } from "./RateioAprovadorTable";
 import { FluxoAprovacaoVisual } from "./FluxoAprovacaoVisual";
 import { ExcluirPermanentementeButton } from "./ExcluirPermanentementeButton";
+import { DiaPagamentoPicker } from "./DiaPagamentoPicker";
+import { ExcecaoDiaBloqueadoField } from "./ExcecaoDiaBloqueadoField";
 
 const TIPO_SOLICITACAO_LABEL: Record<TipoSolicitacao, string> = {
   administrativo: "Administrativo",
@@ -169,6 +171,8 @@ export default function DespesaVisualizar() {
   const [formaPagamento, setFormaPagamento] = useState("");
   const [informacoesPagamento, setInformacoesPagamento] = useState("");
   const [dataPagamento, setDataPagamento] = useState("");
+  const [excecao, setExcecao] = useState(false);
+  const [justificativaExcecao, setJustificativaExcecao] = useState("");
   const [competencia, setCompetencia] = useState("");
   const [dimensoes, setDimensoes] = useState<DimensoesRateio>({ empresa: false, contrato: false, fornecedor: false, integrante: false });
   const [ratearPor, setRatearPor] = useState<"percentual" | "valor">("percentual");
@@ -198,6 +202,8 @@ export default function DespesaVisualizar() {
     setFormaPagamento(despesa.forma_pagamento ?? "");
     setInformacoesPagamento(despesa.informacoes_pagamento ?? "");
     setDataPagamento(despesa.data_pagamento ?? "");
+    setExcecao(despesa.excecao);
+    setJustificativaExcecao(despesa.justificativa_excecao ?? "");
     setCompetencia(despesa.competencia ? despesa.competencia.slice(0, 7) : "");
   }, [despesa?.id]);
 
@@ -443,6 +449,8 @@ export default function DespesaVisualizar() {
         forma_pagamento: formaPagamento || null,
         informacoes_pagamento: informacoesPagamento || null,
         data_pagamento: dataPagamento || null,
+        excecao,
+        justificativa_excecao: excecao ? justificativaExcecao.trim() || null : null,
         competencia: competencia ? competencia + "-01" : null,
         rateio: linhasRateio,
       });
@@ -652,13 +660,25 @@ export default function DespesaVisualizar() {
             </div>
             <div>
               <Label>Data do pagamento</Label>
-              <Input type="date" value={dataPagamento} onChange={(e) => setDataPagamento(e.target.value)} disabled={!rateioEPagamentoEditaveis} />
+              <DiaPagamentoPicker
+                value={dataPagamento}
+                onChange={setDataPagamento}
+                disabled={!rateioEPagamentoEditaveis}
+                permitirDiasBloqueados={excecao}
+              />
             </div>
             <div>
               <Label>Competência</Label>
               <Input type="month" value={competencia} onChange={(e) => setCompetencia(e.target.value)} disabled={!rateioEPagamentoEditaveis} />
             </div>
           </div>
+          <ExcecaoDiaBloqueadoField
+            checked={excecao}
+            onCheckedChange={setExcecao}
+            justificativa={justificativaExcecao}
+            onJustificativaChange={setJustificativaExcecao}
+            disabled={!rateioEPagamentoEditaveis}
+          />
         </CardContent>
       </Card>
 
