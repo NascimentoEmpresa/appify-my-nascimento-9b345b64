@@ -67,6 +67,17 @@ END $$;
 REVOKE ALL ON FUNCTION public.denuncia_contratos(uuid) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION public.denuncia_contratos(uuid) TO anon, authenticated;
 
+-- ── 1.1 As assinaturas antigas saem primeiro ─────────────────────────
+-- As três funções do denunciante trocam o nome do primeiro parâmetro
+-- (`p_email` → `p_identificador`, porque agora aceita e-mail OU protocolo).
+-- CREATE OR REPLACE não renomeia parâmetro — o Postgres recusa com
+-- "cannot change name of input parameter". Então elas caem antes de nascer
+-- de novo. Como tudo aqui roda numa transação só, não existe instante em
+-- que o site fique sem a função.
+DROP FUNCTION IF EXISTS public.denuncia_consultar(text, text);
+DROP FUNCTION IF EXISTS public.denuncia_mensagens(text, text, text);
+DROP FUNCTION IF EXISTS public.denuncia_responder(text, text, text, text);
+
 -- ── 2. Registro ──────────────────────────────────────────────────────
 CREATE OR REPLACE FUNCTION public.denuncia_registrar(payload jsonb)
 RETURNS jsonb

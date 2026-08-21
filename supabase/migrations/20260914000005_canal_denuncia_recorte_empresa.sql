@@ -37,7 +37,9 @@ ON CONFLICT (modulo_id, codigo) DO NOTHING;
 -- toggle de "Acesso por Usuário" concede (`visualizar`), para o flag poder
 -- ser tirado por lá depois.
 INSERT INTO public.screen_permission_user (user_id, menu_codigo, acao, allow, empresa_id)
-SELECT DISTINCT s.user_id, 'comite_etica_todas_empresas', 'visualizar'::public.app_acao, true, NULL
+-- NULL precisa de tipo: sem o cast, o Postgres o trata como text e recusa
+-- ("column empresa_id is of type uuid but expression is of type text").
+SELECT DISTINCT s.user_id, 'comite_etica_todas_empresas', 'visualizar'::public.app_acao, true, NULL::uuid
   FROM public.screen_permission_user s
  WHERE s.menu_codigo = 'central_servicos_canal_denuncias'
    AND s.allow = true
@@ -49,13 +51,27 @@ ON CONFLICT DO NOTHING;
 -- OPÇÃO do canal, e o acesso da pessoa é por empresa do cadastro fiscal.
 -- "Nascimento" é a HAGG, a matriz (confirmado pelo Pablo em 21/08/2026).
 UPDATE public."CANAL_DENUNCIA_EMPRESA" ce
-   SET empresa_id        = e.id,
-       -- Casado contra EMPREGADOS."Nome da Empresa" para a lista de contratos
-       -- daquela empresa deixar de oferecer os contratos do grupo inteiro.
-       padrao_empregados = COALESCE(ce.padrao_empregados, '%' || e.codigo || '%')
+   SET empresa_id = e.id
   FROM public.empresas e
  WHERE ce.empresa_id IS NULL
    AND e.codigo = CASE ce.rotulo WHEN 'Nascimento' THEN 'HAGG' ELSE ce.rotulo END;
+
+-- O padrão que monta a lista de contratos é casado contra
+-- EMPREGADOS."Nome da Empresa", que guarda RAZÃO SOCIAL — não o código do
+-- cadastro fiscal. Derivar do código não funciona: a empresa `HAGG` aparece
+-- lá como "NASCIMENTO SERVICOS DE LIMPEZA LTDA", e `%HAGG%` não casa com
+-- linha nenhuma (medido em 21/08/2026: devolvia 0 contratos).
+--
+-- Prefixo, e não nome inteiro: a razão social muda de sufixo com o tempo
+-- ("LTDA", "EIRELI - ME"), e o começo é o que identifica.
+UPDATE public."CANAL_DENUNCIA_EMPRESA" SET padrao_empregados = v.padrao
+  FROM (VALUES
+    ('Nascimento', 'NASCIMENTO%'),   -- 348 locais
+    ('SN',         'SN %'),          --  58
+    ('NH',         'NH %')           --  21
+  ) AS v(rotulo, padrao)
+ WHERE public."CANAL_DENUNCIA_EMPRESA".rotulo = v.rotulo
+   AND COALESCE(public."CANAL_DENUNCIA_EMPRESA".padrao_empregados, '') IN ('', '%HAGG%', '%SN%', '%NH%');
 
 -- ── 3. Quem pode ver este caso ───────────────────────────────────────
 -- Fica numa função só, e não repetida em cada policy: a regra de quem

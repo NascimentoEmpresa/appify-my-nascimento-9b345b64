@@ -69,7 +69,12 @@ CREATE OR REPLACE FUNCTION public.comite_etica_apurar_alertas()
 RETURNS jsonb
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp
 AS $$
-DECLARE v_novos integer := 0; v_fechados integer := 0;
+DECLARE
+  v_novos    integer := 0;
+  v_fechados integer := 0;
+  -- GET DIAGNOSTICS so ATRIBUI: "v_novos = v_novos + ROW_COUNT" e erro de
+  -- sintaxe. O acumulado passa por uma variavel de apoio.
+  v_parcial  integer := 0;
 BEGIN
   -- 3.1 Prazo total estourado.
   WITH base AS (
@@ -98,7 +103,8 @@ BEGIN
      AND d.primeira_providencia_em IS NULL
      AND d.created_at + (COALESCE(s.dias_primeira_providencia, 3) || ' days')::interval < now()
   ON CONFLICT (denuncia_id, tipo, referencia) DO NOTHING;
-  GET DIAGNOSTICS v_novos = v_novos + ROW_COUNT;
+  GET DIAGNOSTICS v_parcial = ROW_COUNT;
+  v_novos := v_novos + v_parcial;
 
   -- 3.3 Parado: ninguém encostou no procedimento.
   INSERT INTO public."CANAL_DENUNCIA_ALERTA"(denuncia_id, tipo, mensagem)
@@ -111,7 +117,8 @@ BEGIN
    WHERE d.status NOT IN ('concluida','arquivada')
      AND d.ultima_movimentacao_em + (COALESCE(s.dias_sem_movimentacao, 10) || ' days')::interval < now()
   ON CONFLICT (denuncia_id, tipo, referencia) DO NOTHING;
-  GET DIAGNOSTICS v_novos = v_novos + ROW_COUNT;
+  GET DIAGNOSTICS v_parcial = ROW_COUNT;
+  v_novos := v_novos + v_parcial;
 
   -- 3.4 Providência com prazo vencido.
   INSERT INTO public."CANAL_DENUNCIA_ALERTA"(denuncia_id, tipo, mensagem)
@@ -121,7 +128,8 @@ BEGIN
    WHERE p.situacao IN ('pendente','em_andamento')
      AND p.prazo IS NOT NULL AND p.prazo < current_date
   ON CONFLICT (denuncia_id, tipo, referencia) DO NOTHING;
-  GET DIAGNOSTICS v_novos = v_novos + ROW_COUNT;
+  GET DIAGNOSTICS v_parcial = ROW_COUNT;
+  v_novos := v_novos + v_parcial;
 
   -- 3.5 Baixa automática: caso encerrado não deixa alerta aberto atrás de si.
   UPDATE public."CANAL_DENUNCIA_ALERTA" a

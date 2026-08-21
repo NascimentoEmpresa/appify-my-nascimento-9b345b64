@@ -274,9 +274,13 @@ ON CONFLICT (modulo_id, codigo) DO NOTHING;
 -- =====================================================================
 -- 7. FLUXO DE 11 SITUAÇÕES
 -- =====================================================================
--- Traduz o que já existe antes de trocar o domínio — CHECK novo com linha
--- fora do domínio derruba a migration inteira.
---
+-- A ORDEM AQUI É O QUE FAZ A MIGRATION RODAR: solta o CHECK velho, traduz os
+-- status, e só então prende o novo. Traduzir com o CHECK antigo ainda de pé
+-- falha na primeira linha — ele não conhece 'triagem'. (Foi exatamente assim
+-- que esta migration quebrou na primeira tentativa, em 21/08/2026.)
+ALTER TABLE public."CANAL_DENUNCIA" DROP CONSTRAINT IF EXISTS canal_denuncia_status_chk;
+ALTER TABLE public."CANAL_DENUNCIA" DROP CONSTRAINT IF EXISTS canal_denuncia_status_valido;
+
 -- `julgada` vira `aguardando_cumprimento`: era exatamente o que ela
 -- descrevia ("o comitê concluiu; as providências estão em execução"), e ela
 -- PARAVA o cronômetro do prazo. Um caso julgado cuja medida ninguém executou
@@ -287,7 +291,6 @@ UPDATE public."CANAL_DENUNCIA" SET status = 'concluida'              WHERE statu
 
 DO $$
 BEGIN
-  ALTER TABLE public."CANAL_DENUNCIA" DROP CONSTRAINT IF EXISTS canal_denuncia_status_chk;
   ALTER TABLE public."CANAL_DENUNCIA" ADD CONSTRAINT canal_denuncia_status_chk
     CHECK (status IN (
       'nova',                     -- denúncia recebida

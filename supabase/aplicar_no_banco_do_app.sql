@@ -14908,6 +14908,7 @@ NOTIFY pgrst, 'reload schema';
 --     DROP COLUMN IF EXISTS chamado_id, DROP COLUMN IF EXISTS origem;
 -- =========================================================================
 
+
 -- ===== 20260914000002_canal_denuncia_estrutura =====
 -- =====================================================================
 -- CANAL DE ÉTICA — atendimento integral do pedido do Comitê (21/08/2026)
@@ -15185,9 +15186,13 @@ ON CONFLICT (modulo_id, codigo) DO NOTHING;
 -- =====================================================================
 -- 7. FLUXO DE 11 SITUAÇÕES
 -- =====================================================================
--- Traduz o que já existe antes de trocar o domínio — CHECK novo com linha
--- fora do domínio derruba a migration inteira.
---
+-- A ORDEM AQUI É O QUE FAZ A MIGRATION RODAR: solta o CHECK velho, traduz os
+-- status, e só então prende o novo. Traduzir com o CHECK antigo ainda de pé
+-- falha na primeira linha — ele não conhece 'triagem'. (Foi exatamente assim
+-- que esta migration quebrou na primeira tentativa, em 21/08/2026.)
+ALTER TABLE public."CANAL_DENUNCIA" DROP CONSTRAINT IF EXISTS canal_denuncia_status_chk;
+ALTER TABLE public."CANAL_DENUNCIA" DROP CONSTRAINT IF EXISTS canal_denuncia_status_valido;
+
 -- `julgada` vira `aguardando_cumprimento`: era exatamente o que ela
 -- descrevia ("o comitê concluiu; as providências estão em execução"), e ela
 -- PARAVA o cronômetro do prazo. Um caso julgado cuja medida ninguém executou
@@ -15198,7 +15203,6 @@ UPDATE public."CANAL_DENUNCIA" SET status = 'concluida'              WHERE statu
 
 DO $$
 BEGIN
-  ALTER TABLE public."CANAL_DENUNCIA" DROP CONSTRAINT IF EXISTS canal_denuncia_status_chk;
   ALTER TABLE public."CANAL_DENUNCIA" ADD CONSTRAINT canal_denuncia_status_chk
     CHECK (status IN (
       'nova',                     -- denúncia recebida
@@ -15739,6 +15743,17 @@ END $$;
 REVOKE ALL ON FUNCTION public.denuncia_contratos(uuid) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION public.denuncia_contratos(uuid) TO anon, authenticated;
 
+-- ── 1.1 As assinaturas antigas saem primeiro ─────────────────────────
+-- As três funções do denunciante trocam o nome do primeiro parâmetro
+-- (`p_email` → `p_identificador`, porque agora aceita e-mail OU protocolo).
+-- CREATE OR REPLACE não renomeia parâmetro — o Postgres recusa com
+-- "cannot change name of input parameter". Então elas caem antes de nascer
+-- de novo. Como tudo aqui roda numa transação só, não existe instante em
+-- que o site fique sem a função.
+DROP FUNCTION IF EXISTS public.denuncia_consultar(text, text);
+DROP FUNCTION IF EXISTS public.denuncia_mensagens(text, text, text);
+DROP FUNCTION IF EXISTS public.denuncia_responder(text, text, text, text);
+
 -- ── 2. Registro ──────────────────────────────────────────────────────
 CREATE OR REPLACE FUNCTION public.denuncia_registrar(payload jsonb)
 RETURNS jsonb
@@ -16111,7 +16126,12 @@ CREATE OR REPLACE FUNCTION public.comite_etica_apurar_alertas()
 RETURNS jsonb
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp
 AS $$
-DECLARE v_novos integer := 0; v_fechados integer := 0;
+DECLARE
+  v_novos    integer := 0;
+  v_fechados integer := 0;
+  -- GET DIAGNOSTICS so ATRIBUI: "v_novos = v_novos + ROW_COUNT" e erro de
+  -- sintaxe. O acumulado passa por uma variavel de apoio.
+  v_parcial  integer := 0;
 BEGIN
   -- 3.1 Prazo total estourado.
   WITH base AS (
@@ -16140,7 +16160,8 @@ BEGIN
      AND d.primeira_providencia_em IS NULL
      AND d.created_at + (COALESCE(s.dias_primeira_providencia, 3) || ' days')::interval < now()
   ON CONFLICT (denuncia_id, tipo, referencia) DO NOTHING;
-  GET DIAGNOSTICS v_novos = v_novos + ROW_COUNT;
+  GET DIAGNOSTICS v_parcial = ROW_COUNT;
+  v_novos := v_novos + v_parcial;
 
   -- 3.3 Parado: ninguém encostou no procedimento.
   INSERT INTO public."CANAL_DENUNCIA_ALERTA"(denuncia_id, tipo, mensagem)
@@ -16153,7 +16174,8 @@ BEGIN
    WHERE d.status NOT IN ('concluida','arquivada')
      AND d.ultima_movimentacao_em + (COALESCE(s.dias_sem_movimentacao, 10) || ' days')::interval < now()
   ON CONFLICT (denuncia_id, tipo, referencia) DO NOTHING;
-  GET DIAGNOSTICS v_novos = v_novos + ROW_COUNT;
+  GET DIAGNOSTICS v_parcial = ROW_COUNT;
+  v_novos := v_novos + v_parcial;
 
   -- 3.4 Providência com prazo vencido.
   INSERT INTO public."CANAL_DENUNCIA_ALERTA"(denuncia_id, tipo, mensagem)
@@ -16163,7 +16185,8 @@ BEGIN
    WHERE p.situacao IN ('pendente','em_andamento')
      AND p.prazo IS NOT NULL AND p.prazo < current_date
   ON CONFLICT (denuncia_id, tipo, referencia) DO NOTHING;
-  GET DIAGNOSTICS v_novos = v_novos + ROW_COUNT;
+  GET DIAGNOSTICS v_parcial = ROW_COUNT;
+  v_novos := v_novos + v_parcial;
 
   -- 3.5 Baixa automática: caso encerrado não deixa alerta aberto atrás de si.
   UPDATE public."CANAL_DENUNCIA_ALERTA" a
@@ -16255,7 +16278,9 @@ ON CONFLICT (modulo_id, codigo) DO NOTHING;
 -- toggle de "Acesso por Usuário" concede (`visualizar`), para o flag poder
 -- ser tirado por lá depois.
 INSERT INTO public.screen_permission_user (user_id, menu_codigo, acao, allow, empresa_id)
-SELECT DISTINCT s.user_id, 'comite_etica_todas_empresas', 'visualizar'::public.app_acao, true, NULL
+-- NULL precisa de tipo: sem o cast, o Postgres o trata como text e recusa
+-- ("column empresa_id is of type uuid but expression is of type text").
+SELECT DISTINCT s.user_id, 'comite_etica_todas_empresas', 'visualizar'::public.app_acao, true, NULL::uuid
   FROM public.screen_permission_user s
  WHERE s.menu_codigo = 'central_servicos_canal_denuncias'
    AND s.allow = true
@@ -16267,13 +16292,27 @@ ON CONFLICT DO NOTHING;
 -- OPÇÃO do canal, e o acesso da pessoa é por empresa do cadastro fiscal.
 -- "Nascimento" é a HAGG, a matriz (confirmado pelo Pablo em 21/08/2026).
 UPDATE public."CANAL_DENUNCIA_EMPRESA" ce
-   SET empresa_id        = e.id,
-       -- Casado contra EMPREGADOS."Nome da Empresa" para a lista de contratos
-       -- daquela empresa deixar de oferecer os contratos do grupo inteiro.
-       padrao_empregados = COALESCE(ce.padrao_empregados, '%' || e.codigo || '%')
+   SET empresa_id = e.id
   FROM public.empresas e
  WHERE ce.empresa_id IS NULL
    AND e.codigo = CASE ce.rotulo WHEN 'Nascimento' THEN 'HAGG' ELSE ce.rotulo END;
+
+-- O padrão que monta a lista de contratos é casado contra
+-- EMPREGADOS."Nome da Empresa", que guarda RAZÃO SOCIAL — não o código do
+-- cadastro fiscal. Derivar do código não funciona: a empresa `HAGG` aparece
+-- lá como "NASCIMENTO SERVICOS DE LIMPEZA LTDA", e `%HAGG%` não casa com
+-- linha nenhuma (medido em 21/08/2026: devolvia 0 contratos).
+--
+-- Prefixo, e não nome inteiro: a razão social muda de sufixo com o tempo
+-- ("LTDA", "EIRELI - ME"), e o começo é o que identifica.
+UPDATE public."CANAL_DENUNCIA_EMPRESA" SET padrao_empregados = v.padrao
+  FROM (VALUES
+    ('Nascimento', 'NASCIMENTO%'),   -- 348 locais
+    ('SN',         'SN %'),          --  58
+    ('NH',         'NH %')           --  21
+  ) AS v(rotulo, padrao)
+ WHERE public."CANAL_DENUNCIA_EMPRESA".rotulo = v.rotulo
+   AND COALESCE(public."CANAL_DENUNCIA_EMPRESA".padrao_empregados, '') IN ('', '%HAGG%', '%SN%', '%NH%');
 
 -- ── 3. Quem pode ver este caso ───────────────────────────────────────
 -- Fica numa função só, e não repetida em cada policy: a regra de quem
