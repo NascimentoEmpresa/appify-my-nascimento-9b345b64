@@ -548,6 +548,18 @@ export function useConverterSolicitacaoEmDespesa() {
 
 // ── Fluxo de aprovação da despesa (N1/N2/N3, ajuste, reprovação) ────────
 // SIS-2026-0132 Fase 1.
+/**
+ * Nº legível da despesa (DM-2026-0026). É o banco que gera no insert, e o
+ * `useSalvarDespesa` devolve só o id — mudar o retorno dele mexeria em todos
+ * os chamadores, então quem precisa do número o busca por aqui.
+ */
+export async function buscarNumeroDespesa(id: string): Promise<string | null> {
+  if (!id) return null;
+  const { data } = await (supabase as any)
+    .from("malote_despesa").select("numero").eq("id", id).maybeSingle();
+  return (data?.numero as string | undefined) ?? null;
+}
+
 export function aprovadorDoNivel(despesa: MaloteDespesaRow, nivel: 1 | 2 | 3): string | null {
   const c = despesa.classificacao;
   if (!c) return null;

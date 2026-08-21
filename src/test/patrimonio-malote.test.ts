@@ -64,3 +64,29 @@ describe("o parâmetro que liga as duas telas", () => {
     expect(PARAM_ORIGEM).toBe("origem_obrigacao");
   });
 });
+
+// Caso REAL de 20/08/2026: a conta 113 (Água, R$100) virou a despesa
+// DM-2026-0026 no Malote (786a0bdd…, pendente_aprovacao) e mesmo assim a tela
+// continuava mostrando "Pendente" e oferecendo "Enviar ao Malote" de novo.
+describe("caso real da conta 113", () => {
+  const conta = {
+    id: 113, status: "Pendente", vencimento: "2026-08-21",
+    malote_despesa_id: "786a0bdd-f177-4686-91ab-06e1b7f1bf73",
+  };
+
+  it("com a despesa criada, o selo é Enviado ao Malote", () => {
+    expect(statusConta(conta, () => false)).toBe("Enviado ao Malote");
+  });
+
+  it("quando a despesa for paga no Malote, vira Pago sozinha", () => {
+    expect(statusConta(conta, id => id === conta.malote_despesa_id)).toBe("Pago");
+  });
+
+  it("o indicador de pendentes não pode ler a coluna crua", () => {
+    // Era o bug: `o.status !== "Pago"` ignora o Malote, então a conta seguia
+    // contada como pendente e listada em "a vencer / vencidas".
+    const paga = (id?: string | null) => id === conta.malote_despesa_id;
+    expect(conta.status !== "Pago").toBe(true);              // coluna crua: enganosa
+    expect(statusConta(conta, paga) !== "Pago").toBe(false); // status efetivo: correto
+  });
+});

@@ -4,6 +4,7 @@ import {
   cargoExigeCnh, aplicarReqCnh, motivoLabel, MOTIVO_EXPANSAO,
   GRAU_ALTA, GRAU_MEDIA, GRAU_BAIXA, REQ_CNH_TEXTO,
   contratoDoEmpregado, rotuloReferencia, mostraNomeReferencia,
+  MENU_VAGA_ADMINISTRATIVA, podeVagaAdministrativa, filtrarAdministrativas,
   vagaSeguraSubstituido, substituidosComVagaViva,
 } from "@/lib/recrutamento/vagaRegras";
 
@@ -173,5 +174,33 @@ describe("substituído em uma vaga só", () => {
   it("nem consulta sem ids", async () => {
     const sb = { from: () => { throw new Error("não devia consultar"); } };
     expect((await substituidosComVagaViva(sb, [])).size).toBe(0);
+  });
+});
+
+describe("vaga administrativa", () => {
+  // Vaga do escritório é gerida só pela diretoria: quem não tem a capacidade
+  // não VÊ a vaga — logo não aprova nem reprova. A RLS é quem recusa; estes
+  // helpers só escondem botão e recortam cache antigo.
+  const comAcesso = (_a: string, _m?: string, menu?: string) => menu === MENU_VAGA_ADMINISTRATIVA;
+  const semAcesso = () => false;
+
+  it("o código é o do menu de capacidade cadastrado nos dois módulos", () => {
+    expect(MENU_VAGA_ADMINISTRATIVA).toBe("recrutamento_vaga_administrativa");
+  });
+
+  it("só quem enxerga vaga administrativa pode marcar uma", () => {
+    // Sem isto a pessoa criaria a vaga e ela sumiria da própria vista.
+    expect(podeVagaAdministrativa(comAcesso)).toBe(true);
+    expect(podeVagaAdministrativa(semAcesso)).toBe(false);
+  });
+
+  it("some da lista de quem não pode ver, e a comum fica", () => {
+    const vagas = [
+      { id: 1, administrativa: false },
+      { id: 2, administrativa: true },
+      { id: 3 },                        // coluna ainda nula: não é administrativa
+    ];
+    expect(filtrarAdministrativas(vagas, false).map(v => v.id)).toEqual([1, 3]);
+    expect(filtrarAdministrativas(vagas, true).map(v => v.id)).toEqual([1, 2, 3]);
   });
 });
