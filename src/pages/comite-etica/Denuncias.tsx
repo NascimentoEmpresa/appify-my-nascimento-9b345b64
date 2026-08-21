@@ -16,7 +16,7 @@ import {
 } from "@/components/ui/table";
 import {
   ShieldAlert, Copy, Check, Search, Link2, UserX, User, Inbox, Gavel, BarChart3, TimerOff,
-  PauseCircle, BellRing, Settings2, X,
+  PauseCircle, BellRing, Settings2, X, Building2,
 } from "lucide-react";
 import {
   SITUACAO, GRAVIDADE, RESULTADO, LABEL_SITUACAO, LABEL_TIPO, LABEL_RELACAO,
@@ -27,6 +27,7 @@ import {
   parada, tipoEfetivo, vencida,
 } from "./metricas";
 import FichaDenuncia from "./FichaDenuncia";
+import { usePermissoes } from "@/context/PermissoesContext";
 import { ExportarLista } from "./ExportarDenuncia";
 import { TIPO_ALERTA } from "./vocabulario";
 
@@ -76,6 +77,9 @@ export default function DenunciasComiteEtica() {
   const qc = useQueryClient();
   const nav = useNavigate();
   const { toast } = useToast();
+  const { can } = usePermissoes();
+  /** Sem isto, a lista vem recortada pelas empresas vinculadas ao usuario. */
+  const veTodasEmpresas = can("visualizar", undefined, "comite_etica_todas_empresas");
   const [busca, setBusca] = useState("");
   const [fStatus, setFStatus] = useState("todos");
   const [fGravidade, setFGravidade] = useState("todas");
@@ -223,6 +227,19 @@ export default function DenunciasComiteEtica() {
           </div>
         }
       />
+
+      {/* Lista recortada tem que se anunciar. Num canal de ética, mostrar um
+          subconjunto sem dizer que é um subconjunto faz alguém concluir que
+          "não há denúncias naquele contrato" quando só não são as dele. */}
+      {!veTodasEmpresas && (
+        <Card className="mb-4 flex flex-wrap items-center gap-3 border-warning/30 bg-warning/5 p-3">
+          <Building2 className="h-4 w-4 shrink-0 text-warning" />
+          <p className="text-xs text-warning">
+            Você está vendo apenas as denúncias das empresas às quais tem acesso. A visão consolidada
+            do grupo exige a liberação de “Vê denúncias de todas as empresas”.
+          </p>
+        </Card>
+      )}
 
       <Card className="mb-4 flex flex-wrap items-center gap-3 border-info/30 bg-info/5 p-4">
         <ShieldAlert className="h-5 w-5 shrink-0 text-info" />
