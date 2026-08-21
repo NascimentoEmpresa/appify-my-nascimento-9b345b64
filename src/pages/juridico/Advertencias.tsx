@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useMemo } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
+import { ConversaSolicitacao } from "@/components/solicitacoes/ConversaSolicitacao";
 import { useVinculoEmpregado } from "@/hooks/useVinculoEmpregado";
 
 // =====================================================================
@@ -201,6 +202,16 @@ export default function Advertencias() {
             <div style={{ fontSize: 13, color: "#0f172a", whiteSpace: "pre-wrap", overflowWrap: "break-word", wordBreak: "break-word", background: "#f8fafc", borderRadius: 9, padding: "9px 12px" }}>{detalhe.descricao_ocorrido || "—"}</div>
             {detalhe.detalhe_anterior && <><div style={{ fontSize: 11, fontWeight: 800, color: "#0f3171", textTransform: "uppercase", margin: "12px 0 4px" }}>Advertência anterior</div><div style={{ fontSize: 12.5, color: "#475569" }}>{detalhe.detalhe_anterior}</div></>}
             {detalhe.parecer_juridico && <><div style={{ fontSize: 11, fontWeight: 800, color: "#0f3171", textTransform: "uppercase", margin: "12px 0 4px" }}>Parecer do Jurídico</div><div style={{ fontSize: 12.5, color: "#475569" }}>{detalhe.parecer_juridico}</div></>}
+
+            {/* O encarregado que pediu a advertência escreve do lado dele, em
+                Minhas Solicitações. É o mesmo fio — sem este bloco, ele
+                perguntava e ninguém via. */}
+            <div style={{ marginTop: 16 }}>
+              <ConversaSolicitacao
+                modulo="advertencia" entidadeId={detalhe.id}
+                aviso="Quem solicitou a advertência lê e responde por Encarregados › Minhas Solicitações."
+              />
+            </div>
           </div>
         </div>
       )}
