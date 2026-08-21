@@ -105,9 +105,24 @@ const VAGA_RESET = {
 import { DetalheSolicitacao, type TipoSolicitacao } from "./encarregados/DetalheSolicitacao";
 
 interface SolItem {
-  tipo: string; icon: string; id: number; titulo: string; status: string; data: string;
+  tipo: string; icon: string;
+  /** Chamado e Materiais tem id uuid; os demais, bigint. So serve de chave. */
+  id: number | string;
+  titulo: string; status: string; data: string;
   substituido?: string; motivo?: string; qtdVagas?: number; statusDesde?: string; excecao?: boolean;
   dataInicio?: string; grau?: string; alteracoes?: any[];
+  /**
+   * Para onde o botão leva, quando o tipo JÁ TEM tela própria.
+   *
+   * Chamados e Materiais entram no histórico para o encarregado ver tudo num
+   * lugar só — mas o detalhe deles continua na tela do módulo, que tem o que
+   * este painel não tem (anexos e avaliação no chamado; itens e recebimento
+   * no pedido). Refazer isso aqui seria uma segunda versão, pior, da mesma
+   * coisa.
+   */
+  rota?: string;
+  /** Rótulo do botão quando há rota — nem todo tipo tem conversa. */
+  acao?: string;
 }
 
 // Vaga já andou: o encarregado não mexe mais na data (o Recrutamento assume).
@@ -197,6 +212,18 @@ export default function MinhasSolicitacoes({ abrir }: { abrir?: SolicitacaoInici
     const dm = await (supabase as any).from("SISTEMA_SOLICITACOES_DEMISSAO")
       .select("id, colaborador_nome, motivo_solicitacao, status, criado_em, data_solicitacao")
       .eq("solicitante_email", email).order("criado_em", { ascending: false }).limit(30);
+
+    // Chamado é por auth.uid (a tabela usa solicitante_id), não por e-mail.
+    const ch = user?.id
+      ? await (supabase as any).from("CHAMADO_SISTEMA")
+          .select("id, numero, assunto, status, created_at")
+          .eq("solicitante_id", user.id).order("created_at", { ascending: false }).limit(30)
+      : { data: [] };
+
+    // Materiais vem por RPC do próprio módulo (sup_ext_meus_pedidos), que já
+    // devolve só os pedidos de quem está logado. Não consulto as tabelas de
+    // Suprimentos direto — a regra de quem vê o quê é de lá.
+    const mt = await (supabase as any).rpc("sup_ext_meus_pedidos");
     const itens: SolItem[] = [
       ...(vg.data ?? []).map((r: any) => ({
         tipo: "Vaga", icon: "🎯", id: r.id,
@@ -219,6 +246,23 @@ export default function MinhasSolicitacoes({ abrir }: { abrir?: SolicitacaoInici
         data: r.criado_em || r.data_solicitacao,
         statusDesde: r.criado_em || r.data_solicitacao,
         motivo: r.motivo_solicitacao || "",
+      })),
+      ...(ch.data ?? []).map((r: any) => ({
+        tipo: "Chamado", icon: "🎧", id: r.id,
+        titulo: `${r.numero ? r.numero + " — " : ""}${r.assunto || "Chamado"}`,
+        status: r.status, data: r.created_at, statusDesde: r.created_at,
+        rota: `/app/encarregados/chamados/${r.id}/acompanhar`,
+        acao: "💬 Detalhes e chat",
+      })),
+      ...(Array.isArray(mt.data) ? mt.data : []).map((r: any) => ({
+        tipo: "Materiais", icon: "📦", id: r.id,
+        titulo: `Materiais — ${r.nome_colaborador || r.posto_nome || r.contrato_nome || ""}`.trim(),
+        status: r.status, data: r.created_at || r.data_solicitacao,
+        statusDesde: r.created_at || r.data_solicitacao,
+        rota: "/app/encarregados/meus-pedidos",
+        // Pedido de material não tem conversa; prometer "chat" aqui seria
+        // mandar o encarregado procurar algo que não existe.
+        acao: "📦 Ver pedido",
       })),
     ].sort((a, b) => String(b.data || "").localeCompare(String(a.data || "")));
     setLoadingSols(false);
@@ -565,20 +609,15 @@ export default function MinhasSolicitacoes({ abrir }: { abrir?: SolicitacaoInici
             <button onClick={() => nav("/app/encarregados/solicitar-demissao")} className="ini-sol-create">
               <span className="icon">🚪</span><span>Solicitar Demissão</span>
             </button>
-          </div>
-
-          {/* Materiais e Chamados têm tela própria, com recursos que esta não
-              tem (carrinho, anexos, avaliação). Aqui fica o caminho para elas,
-              e não uma segunda cópia que divergiria da primeira. */}
-          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 12, paddingTop: 12, borderTop: "1px solid #eef2f7" }}>
-            <span style={{ fontSize: 11, color: "#94a3b8", fontWeight: 700, alignSelf: "center" }}>Também suas:</span>
-            <button onClick={() => nav("/app/encarregados/meus-pedidos")}
-              style={{ padding: "5px 12px", borderRadius: 16, border: "1px solid #e2e8f0", background: "#fff", color: "#475569", fontSize: 11.5, fontWeight: 700, cursor: "pointer" }}>
-              📦 Solicitações de materiais
+            {/* Materiais e Chamado entram no mesmo padrão dos demais cards.
+                O card só leva para a tela do módulo, que é onde o fluxo
+                próprio vive (carrinho de itens, anexo, categoria): refazer o
+                formulário aqui seria uma segunda versão para manter. */}
+            <button onClick={() => nav("/app/encarregados/solicitar-materiais")} className="ini-sol-create">
+              <span className="icon">📦</span><span>Solicitar Materiais</span>
             </button>
-            <button onClick={() => nav("/app/encarregados/chamados")}
-              style={{ padding: "5px 12px", borderRadius: 16, border: "1px solid #e2e8f0", background: "#fff", color: "#475569", fontSize: 11.5, fontWeight: 700, cursor: "pointer" }}>
-              🎧 Chamados de sistemas
+            <button onClick={() => nav("/app/encarregados/chamados/novo")} className="ini-sol-create">
+              <span className="icon">🎧</span><span>Abrir Chamado</span>
             </button>
           </div>
         </div>
@@ -589,7 +628,7 @@ export default function MinhasSolicitacoes({ abrir }: { abrir?: SolicitacaoInici
         <div className="ini-card-hd">
           <h3>🗂 Histórico & Status</h3>
           <div style={{ display: "flex", gap: 6 }}>
-            {["", "Vaga", "Férias", "Advertência", "Demissão"].map(f => (
+            {["", "Vaga", "Férias", "Advertência", "Demissão", "Chamado", "Materiais"].map(f => (
               <button key={f || "all"} onClick={() => setFiltro(f)}
                 style={{ padding: "4px 10px", borderRadius: 16, fontSize: 11, fontWeight: 700, cursor: "pointer",
                   border: `1px solid ${filtro === f ? "#0f3171" : "#e2e8f0"}`, background: filtro === f ? "#0f3171" : "#fff", color: filtro === f ? "#fff" : "#475569" }}>
@@ -652,10 +691,13 @@ export default function MinhasSolicitacoes({ abrir }: { abrir?: SolicitacaoInici
                       {/* Reler o que foi pedido e falar com quem está tratando.
                           A conversa é a MESMA que o outro lado enxerga — ver
                           encarregados/DetalheSolicitacao. */}
-                      <button onClick={() => setDetalhe(s)}
-                        title="Ver os detalhes e conversar sobre esta solicitação"
+                      <button
+                        onClick={() => (s.rota ? nav(s.rota) : setDetalhe(s))}
+                        title={s.rota
+                          ? "Abrir na tela do módulo, que tem o detalhe completo"
+                          : "Ver os detalhes e conversar sobre esta solicitação"}
                         style={{ padding: "4px 10px", borderRadius: 8, border: "1px solid #dbe4f0", background: "#fff", color: "#0f3171", fontSize: 11, fontWeight: 700, cursor: "pointer" }}>
-                        💬 Detalhes e chat
+                        {s.acao ?? "💬 Detalhes e chat"}
                       </button>
                     </div>
                   </div>
