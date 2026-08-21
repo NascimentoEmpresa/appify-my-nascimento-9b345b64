@@ -34,8 +34,11 @@ import { GRAVIDADE, rotulo, LABEL_GRAVIDADE } from "./vocabulario";
 
 interface EmpresaOpcao {
   id: string; rotulo: string; padrao_empregados: string | null;
+  /** Empresa do cadastro fiscal. É o que liga o recorte de acesso ao caso. */
+  empresa_id: string | null;
   ordem: number; ativo: boolean;
 }
+interface EmpresaCadastro { id: string; codigo: string; razao_social: string | null; }
 interface Responsavel {
   id: string; user_id: string; nome: string; papel: string | null; ativo: boolean;
 }
@@ -54,6 +57,7 @@ export default function ConfiguracaoComiteEtica() {
   const [responsaveis, setResponsaveis] = useState<Responsavel[]>([]);
   const [perfis, setPerfis] = useState<Perfil[]>([]);
   const [slas, setSlas] = useState<Sla[]>([]);
+  const [cadastro, setCadastro] = useState<EmpresaCadastro[]>([]);
   const [carregando, setCarregando] = useState(true);
 
   const [novaEmpresa, setNovaEmpresa] = useState({ rotulo: "", padrao: "" });
@@ -61,14 +65,16 @@ export default function ConfiguracaoComiteEtica() {
   const [salvando, setSalvando] = useState(false);
 
   const carregar = useCallback(async () => {
-    const [e, r, s] = await Promise.all([
+    const [e, r, s, c] = await Promise.all([
       db.from("CANAL_DENUNCIA_EMPRESA").select("*").order("ordem"),
       db.from("COMITE_ETICA_RESPONSAVEL").select("*").order("nome"),
       db.from("COMITE_ETICA_SLA").select("*").order("dias"),
+      db.from("empresas").select("id, codigo, razao_social").eq("ativa", true).order("codigo"),
     ]);
     setEmpresas((e.data ?? []) as EmpresaOpcao[]);
     setResponsaveis((r.data ?? []) as Responsavel[]);
     setSlas((s.data ?? []) as Sla[]);
+    setCadastro((c.data ?? []) as EmpresaCadastro[]);
     setCarregando(false);
   }, []);
 
@@ -196,15 +202,17 @@ export default function ConfiguracaoComiteEtica() {
               <Building2 className="h-4 w-4 text-muted-foreground" /> Empresas do formulário
             </h3>
             <p className="mb-3 text-xs text-muted-foreground">
-              É o campo obrigatório “Empresa” que quem denuncia preenche. O padrão de empregados é
-              casado com a coluna “Nome da Empresa” do cadastro para montar a lista de contratos —
-              deixe em branco para oferecer todos os contratos.
+              É o campo obrigatório “Empresa” que quem denuncia preenche. O <strong>vínculo</strong> liga a
+              opção ao cadastro do ERP — é ele que decide quem enxerga o caso quando a pessoa não tem
+              “Vê denúncias de todas as empresas”. O <strong>padrão de empregados</strong> é casado com a coluna
+              “Nome da Empresa” para montar a lista de contratos; em branco, oferece todos.
             </p>
 
             <Table>
               <TableHeader>
                 <TableRow>
                   <TableHead>Empresa</TableHead>
+                  <TableHead>Vínculo com o cadastro</TableHead>
                   <TableHead>Padrão de empregados</TableHead>
                   <TableHead className="w-[90px]">Ativa</TableHead>
                   <TableHead className="w-[60px]" />
@@ -219,8 +227,23 @@ export default function ConfiguracaoComiteEtica() {
                                && mudarEmpresa(e, { rotulo: ev.target.value.trim() })} />
                     </TableCell>
                     <TableCell>
+                      <select
+                        className="h-8 w-full rounded-md border bg-background px-2 text-xs"
+                        value={e.empresa_id ?? ""}
+                        aria-label={`Empresa do cadastro para ${e.rotulo}`}
+                        onChange={(ev) => mudarEmpresa(e, { empresa_id: ev.target.value || null })}
+                      >
+                        <option value="">Sem vínculo — só quem vê todas enxerga</option>
+                        {cadastro.map((c) => (
+                          <option key={c.id} value={c.id}>
+                            {c.codigo}{c.razao_social ? ` — ${c.razao_social}` : ""}
+                          </option>
+                        ))}
+                      </select>
+                    </TableCell>
+                    <TableCell>
                       <Input defaultValue={e.padrao_empregados ?? ""} className="h-8"
-                             placeholder="Ex.: %NASCIMENTO%"
+                             placeholder="Ex.: %HAGG%"
                              onBlur={(ev) => ev.target.value.trim() !== (e.padrao_empregados ?? "")
                                && mudarEmpresa(e, { padrao_empregados: ev.target.value.trim() || null })} />
                     </TableCell>

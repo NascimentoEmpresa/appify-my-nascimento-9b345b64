@@ -604,7 +604,12 @@ const comiteEticaModule: ModuleDef = {
         // diretoria ver o painel sem ver o conteúdo dos relatos.
         { label: "Indicadores", to: "/app/comite-etica/indicadores", icon: BarChart3 },
         { label: "Denúncias", to: "/app/comite-etica/denuncias", icon: ShieldAlert },
-        { label: "Denúncias (Contato Seguro)", to: "/app/comite-etica/denuncias-contato-seguro", icon: ShieldAlert },
+        // "Denúncias (Contato Seguro)" saiu daqui em 21/08/2026: o canal
+        // legado foi aposentado, a tela e a função de sync foram removidas e
+        // o menu ficou com app_menu.ativo = false (mesmo par que "Pregão &
+        // Lances" usou). As TABELAS do legado continuam no banco, só sem
+        // porta de entrada — apagar histórico de canal de ética não se desfaz.
+        { label: "Configuração", to: "/app/comite-etica/configuracao", icon: Settings },
       ],
     },
   ],

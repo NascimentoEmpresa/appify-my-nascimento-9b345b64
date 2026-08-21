@@ -1,5 +1,7 @@
 import { describe, it, expect } from "vitest";
-import { despesaEstaPaga, PARAM_ORIGEM } from "@/pages/juridico/patrimonio/vinculoMalote";
+import {
+  despesaEstaPaga, PARAM_ORIGEM, statusDaConta, podeEnviarAoMalote, podeBaixarManualmente,
+} from "@/pages/juridico/patrimonio/vinculoMalote";
 
 // O selo da conta do Patrimônio. A regra é a que a tela usa em statusObr:
 // baixa manual > despesa no Malote (paga ou andando) > vencido > pendente.
@@ -88,5 +90,52 @@ describe("caso real da conta 113", () => {
     const paga = (id?: string | null) => id === conta.malote_despesa_id;
     expect(conta.status !== "Pago").toBe(true);              // coluna crua: enganosa
     expect(statusConta(conta, paga) !== "Pago").toBe(false); // status efetivo: correto
+  });
+});
+
+// =====================================================================
+// O que a conta ainda aceita fazer.
+//
+// Estes testes importam a regra REAL (vinculoMalote), não uma cópia — foi
+// tendo cópias dela espalhadas que o botão "Enviar ao Malote" continuou
+// aparecendo em conta que já estava no Malote, criando despesa duplicada.
+// =====================================================================
+
+describe("botões da conta", () => {
+  const naoPaga = () => false;
+  const paga = () => true;
+
+  it("conta que já foi ao Malote não oferece enviar de novo", () => {
+    const st = statusDaConta({ malote_despesa_id: "abc" }, naoPaga, HOJE);
+    expect(st).toBe("Enviado ao Malote");
+    expect(podeEnviarAoMalote(st)).toBe(false);
+  });
+
+  it("nem quando está vencida — vencer não devolve o botão", () => {
+    const st = statusDaConta({ malote_despesa_id: "abc", vencimento: "2026-01-01" }, naoPaga, HOJE);
+    expect(st).toBe("Enviado ao Malote");
+    expect(podeEnviarAoMalote(st)).toBe(false);
+  });
+
+  it("conta paga não oferece enviar", () => {
+    expect(podeEnviarAoMalote(statusDaConta({ status: "Pago" }, naoPaga, HOJE))).toBe(false);
+    expect(podeEnviarAoMalote(statusDaConta({ malote_despesa_id: "abc" }, paga, HOJE))).toBe(false);
+  });
+
+  it("pendente e vencida continuam podendo ser enviadas", () => {
+    expect(podeEnviarAoMalote(statusDaConta({ vencimento: "2026-09-10" }, naoPaga, HOJE))).toBe(true);
+    expect(podeEnviarAoMalote(statusDaConta({ vencimento: "2026-08-01" }, naoPaga, HOJE))).toBe(true);
+  });
+
+  it("baixa manual some junto: conta no Malote tem uma verdade só, e é a de lá", () => {
+    expect(podeBaixarManualmente(statusDaConta({ malote_despesa_id: "abc" }, naoPaga, HOJE))).toBe(false);
+    expect(podeBaixarManualmente(statusDaConta({ vencimento: "2026-08-01" }, naoPaga, HOJE))).toBe(true);
+  });
+
+  it("a regra da tela e a do teste são a mesma função", () => {
+    // statusDaConta importado bate com a cópia local que este arquivo já usava.
+    for (const c of [{ status: "Pago" }, { malote_despesa_id: "x" }, { vencimento: "2026-08-01" }, {}]) {
+      expect(statusDaConta(c, naoPaga, HOJE)).toBe(statusConta(c, naoPaga));
+    }
   });
 });
