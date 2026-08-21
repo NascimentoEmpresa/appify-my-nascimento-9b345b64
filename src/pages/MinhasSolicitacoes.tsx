@@ -101,6 +101,8 @@ const VAGA_RESET = {
   motivos_saida: "", recomendacao: "", observacao_importante: "",
 };
 
+import { DetalheSolicitacao, type TipoSolicitacao } from "./encarregados/DetalheSolicitacao";
+
 interface SolItem {
   tipo: string; icon: string; id: number; titulo: string; status: string; data: string;
   substituido?: string; motivo?: string; qtdVagas?: number; statusDesde?: string; excecao?: boolean;
@@ -151,6 +153,8 @@ export default function MinhasSolicitacoes({ abrir }: { abrir?: SolicitacaoInici
   const [minhasSols, setMinhasSols] = useState<SolItem[]>([]);
   const [loadingSols, setLoadingSols] = useState(false);
   const [filtro, setFiltro] = useState("");
+  /** Solicitacao aberta no painel de detalhes + conversa. */
+  const [detalhe, setDetalhe] = useState<SolItem | null>(null);
 
   // Toasts
   const [toasts, setToasts] = useState<{ id: number; msg: string; type: string }[]>([]);
@@ -607,6 +611,14 @@ export default function MinhasSolicitacoes({ abrir }: { abrir?: SolicitacaoInici
                           📆 Alterar data
                         </button>
                       )}
+                      {/* Reler o que foi pedido e falar com quem está tratando.
+                          A conversa é a MESMA que o outro lado enxerga — ver
+                          encarregados/DetalheSolicitacao. */}
+                      <button onClick={() => setDetalhe(s)}
+                        title="Ver os detalhes e conversar sobre esta solicitação"
+                        style={{ padding: "4px 10px", borderRadius: 8, border: "1px solid #dbe4f0", background: "#fff", color: "#0f3171", fontSize: 11, fontWeight: 700, cursor: "pointer" }}>
+                        💬 Detalhes e chat
+                      </button>
                     </div>
                   </div>
                 );
@@ -617,6 +629,16 @@ export default function MinhasSolicitacoes({ abrir }: { abrir?: SolicitacaoInici
       </div>
 
       {/* ── Modal: alterar a data de início da vaga ── */}
+      {detalhe && (
+        <DetalheSolicitacao
+          tipo={detalhe.tipo as TipoSolicitacao}
+          id={detalhe.id}
+          titulo={detalhe.titulo}
+          status={detalhe.status}
+          onFechar={() => setDetalhe(null)}
+        />
+      )}
+
       {editData && prazoEdicao && (
         <div className="ini-modal-ov">
           <div className="ini-modal" onClick={e => e.stopPropagation()} style={{ maxWidth: 520 }}>
