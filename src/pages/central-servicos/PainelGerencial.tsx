@@ -96,7 +96,7 @@ export default function PainelGerencial() {
 
   // Permissões do usuário logado (espelha a RLS dos formulários). Quem NÃO tem
   // 'ver_tudo' fica preso aos setores que pode ver — o Painel trava o filtro.
-  const { can: canForm, setoresVer, setoresCriar, loading: permsLoading } = useFormPerms();
+  const { can: canForm, canNoForm, canVerSetorNoForm, temRegraNoForm, regrasForm, setoresVer, setoresCriar, loading: permsLoading } = useFormPerms();
   const { empregado: meuEmpregado } = useVinculoEmpregado();  // p/ saber os setores que EU lidero
   const { user: authUser } = useAuth();                        // p/ casar "minhas respostas" (criado_por)
 
@@ -170,13 +170,26 @@ export default function PainelGerencial() {
   // Escopo de setores do usuário. null = vê tudo (papel 'ver_tudo') OU nenhum
   // setor concedido (ex.: só 'ver_proprias'). Base SÓ nas permissões concedidas
   // + setores que lidera — NUNCA no que o servidor devolveu. Ao carregar, não trava.
+  // O painel cruza VÁRIOS formulários, e o filtro de setor é um só. Quando o
+  // formulário selecionado tem regra própria, quem manda é ela — e o escopo
+  // geral (que pode ser mais estreito) não pode podar o que a RLS liberou.
   const escopoSetores = useMemo(() => {
-    if (permsLoading || canForm("ver_tudo")) return null;
+    if (permsLoading || canNoForm(formSel, "ver_tudo")) return null;
     const s = new Set<string>();
+    // Com regra própria no formulário, o recorte por setor é o DELE; a
+    // liderança continua somando (é aditiva também no banco).
+    if (temRegraNoForm(formSel)) {
+      regrasForm.get(String(formSel))?.setores.forEach(k => { const n = normSetor(k); if (n) s.add(n); });
+      setoresQueLidero.forEach(k => s.add(k));
+      // Sem setor e sem "só as próprias" a pessoa não vê nada aqui: escopo
+      // VAZIO (bloqueia), que é diferente de null (não restringe).
+      if (s.size) return s;
+      return canNoForm(formSel, "ver_proprias") ? null : new Set<string>();
+    }
     [...setoresVer, ...setoresCriar].forEach(x => { const k = normSetor(x); if (k) s.add(k); });
     setoresQueLidero.forEach(k => s.add(k));
     return s.size ? s : null;
-  }, [permsLoading, canForm, setoresVer, setoresCriar, setoresQueLidero]);
+  }, [permsLoading, canNoForm, formSel, temRegraNoForm, regrasForm, setoresVer, setoresCriar, setoresQueLidero]);
 
   // Visibilidade por resposta — espelha a RLS cs_form_resp_select, como defesa
   // em profundidade (a RLS é a autoridade; a tela mostra só o permitido mesmo
@@ -184,14 +197,18 @@ export default function PainelGerencial() {
   // criado_por meu OU eu sou o respondente pelo nome) com os setores do escopo
   // (ver_setor/criar_setor/liderança). Enquanto carrega, não restringe.
   const podeVer = useCallback((r: Resp) => {
-    if (permsLoading || canForm("ver_tudo")) return true;
-    const ehMinha = canForm("ver_proprias") && (
+    if (permsLoading || canNoForm(r.formulario_id, "ver_tudo")) return true;
+    const ehMinha = canNoForm(r.formulario_id, "ver_proprias") && (
       (!!r.criado_por && r.criado_por === authUser?.id) ||
       (!!meuNome && normNome(r.respondente_nome) === meuNome)
     );
-    const noSetor = !!escopoSetores && escopoSetores.has(normSetor(r.setor));
+    // Regra própria: o setor liberado é o do formulário da resposta, não o
+    // escopo geral da tela.
+    const noSetor = temRegraNoForm(r.formulario_id)
+      ? canVerSetorNoForm(r.formulario_id, r.setor)
+      : (!!escopoSetores && escopoSetores.has(normSetor(r.setor)));
     return ehMinha || noSetor;
-  }, [permsLoading, canForm, authUser, meuNome, escopoSetores]);
+  }, [permsLoading, canNoForm, canVerSetorNoForm, temRegraNoForm, authUser, meuNome, escopoSetores]);
 
   // respostas do formulário que o usuário PODE ver — fonte ÚNICA já recortada
   // pela permissão (podeVer), então TODAS as abas herdam (dashboards, planos,
