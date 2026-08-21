@@ -298,7 +298,10 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "opera
   const [total, setTotal]             = useState(0);
   const [items, setItems]             = useState<Solicitacao[]>([]);
   const [loading, setLoading]         = useState(false);
-  const [statusFilter, setStatusFilter] = useState("");
+  // O Operacional abre na fila dele; os demais abrem em "Todas". Antes isso
+  // vinha da aba, que PRENDIA o status e impedia ele de rever o que ja tinha
+  // aprovado.
+  const [statusFilter, setStatusFilter] = useState(soOperacional ? "Pendente Operacional" : "");
   const [contratoFiltro, setContratoFiltro]         = useState<string[]>([]);
   const [contratoCounts, setContratoCounts]         = useState<{ contrato: string; n: number }[]>([]);
   const [showContratoFiltro, setShowContratoFiltro] = useState(false);
@@ -450,9 +453,11 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "opera
     }
     if (tab === "minha" && user?.email) {
       q = q.eq("solicitante_cpf", user.email);
-    } else if (tab === "analista") {
-      q = q.eq("status", "Pendente Operacional");
     }
+    // A aba "analista" NÃO prende mais o status. Quem recorta é o filtro de
+    // chips, que já abre em "Pendente Operacional" — prender aqui deixava o
+    // Operacional trancado na própria fila, sem alcançar o que ele mesmo
+    // aprovou ou reprovou (nem o chat daqueles casos).
     if (search) {
       q = q.or(`cargo.ilike.%${search}%,contrato.ilike.%${search}%,cidade.ilike.%${search}%`);
     }
@@ -1973,19 +1978,34 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "opera
             {/* Filtros de status (linha única). No Operacional a lista já é
                 fixa em "Pendente Operacional": outro filtro de status viraria
                 um segundo .eq na mesma coluna e zeraria a tela sem explicar. */}
-            {!soOperacional && <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 14 }}>
-              {[
+            {/* O Operacional também filtra. Sem isto ele só via a própria fila
+                (Pendente Operacional) e não conseguia voltar no que já tinha
+                aprovado ou reprovado — nem abrir o chat daqueles casos. */}
+            <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 14 }}>
+              {(soOperacional
+              ? [
+                { label: "Aguardando você", val: "Pendente Operacional" },
+                // Aprovar pelo Operacional manda para o Recrutamento; daí em
+                // diante o caso anda sozinho. Por isso "já aprovadas" não é um
+                // status só, e cada etapa vira um recorte próprio.
+                { label: "Já aprovadas", val: "Pendente Recrutamento" },
+                { label: "Em processo", val: "em_processo" },
+                { label: "Concluídas", val: "concluido" },
+                { label: "Reprovadas", val: "Reprovada" },
+                { label: "Todas", val: "" },
+              ]
+              : [
                 { label: "Todas", val: "" },
                 { label: "Pendente Recrutamento", val: "Pendente Recrutamento" },
                 { label: "Em Processo", val: "em_processo" },
                 { label: "Concluídas", val: "concluido" },
                 { label: "Reprovados", val: "Reprovada" },
-              ].map(p => (
+              ]).map(p => (
                 <button key={p.val} onClick={() => { setStatusFilter(p.val); setPage(1); }} style={{ padding: "5px 13px", borderRadius: 20, border: "1px solid #e2e8f0", background: statusFilter === p.val ? "#0f3171" : "#fff", color: statusFilter === p.val ? "#fff" : "#94a3b8", fontSize: 11, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
                   {p.label}
                 </button>
               ))}
-            </div>}
+            </div>
 
             {/* Busca */}
             <div style={{ marginBottom: 10 }}>
