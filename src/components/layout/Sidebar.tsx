@@ -484,6 +484,17 @@ const encarregadosModule: ModuleDef = {
   // formulário que já vem aberto.
   groups: [
     {
+      // Vem PRIMEIRO de propósito. Os itens abaixo abrem o formulário já
+      // pronto para pedir — e quem só quer saber "em que pé está minha
+      // solicitação de férias?" era obrigado a abrir o card de pedir férias
+      // para descobrir. Consultar tem que ter porta própria, antes de pedir.
+      label: "Acompanhamento",
+      defaultOpen: true,
+      items: [
+        { label: "Minhas Solicitações", to: "/app/encarregados/minhas-solicitacoes", icon: ClipboardList },
+      ],
+    },
+    {
       label: "Recrutamento e Seleção",
       defaultOpen: true,
       items: [
