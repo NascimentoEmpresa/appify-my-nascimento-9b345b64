@@ -57,10 +57,22 @@ export function AppShell() {
             {/* A `key` no pathname é o que faz a animação TOCAR A CADA
                 navegação. Antes o `animate-fade-in` vivia no <main>, que não
                 remonta ao trocar de rota — a entrada só acontecia no primeiro
-                carregamento da sessão e nunca mais. */}
-            <div key={location.pathname} className="sh-entra">
+                carregamento da sessão e nunca mais.
+
+                O `sh-entra` anima com `transform`, e `transform` num ancestral
+                vira containing block do `position: fixed` dos filhos. Telas de
+                tela-cheia (painel TV, `fixed inset-0`) ficariam presas na área
+                de conteúdo em vez de cobrir a tela — no desktop o transform
+                acaba em 0,26s e libera, mas em navegador de Smart TV ele não
+                solta e o painel fica preto. Por isso a rota TV NÃO usa o
+                wrapper animado. */}
+            {location.pathname === "/app/painel-executivo/tv" ? (
               <Outlet />
-            </div>
+            ) : (
+              <div key={location.pathname} className="sh-entra">
+                <Outlet />
+              </div>
+            )}
           </RouteGuard>
         </main>
       </div>
