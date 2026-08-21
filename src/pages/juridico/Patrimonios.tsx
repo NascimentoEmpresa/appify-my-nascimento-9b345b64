@@ -495,6 +495,7 @@ export default function Patrimonios() {
       // malote_despesa_id nesta conta e ela vira "Enviado ao Malote".
       [PARAM_ORIGEM]: String(o.id),
     });
+    toast("Complete a despesa no Malote e envie para aprovação — a conta só sai de Pendente depois disso.", "info");
     nav(`/app/malote/criar-despesa?${q.toString()}`);
   };
   // Baixa manual: a conta foi paga por fora e o que falta é o comprovante.
@@ -591,8 +592,8 @@ export default function Patrimonios() {
 
   // ── Indicadores ────────────────────────────────────────────────
   const ativos = pats.filter(p => p.status === "Ativo").length;
-  const naoPagas = obrAll.filter(o => o.status !== "Pago");
-  const vencidas = naoPagas.filter(o => o.vencimento && o.vencimento < hoje()).length;
+  const naoPagas = obrAll.filter(o => statusDaConta(o) !== "Pago");
+  const vencidas = naoPagas.filter(o => statusDaConta(o) === "Vencido").length;
   const mesAtual = hoje().slice(0, 7);
   const pagoMes = obrAll.filter(o => o.status === "Pago" && (o.pago_em || "").slice(0, 7) === mesAtual).reduce((s, o) => s + (Number(o.valor) || 0), 0);
   const pendentesTransf = pats.filter(p => !p.transferida).length;
@@ -610,10 +611,12 @@ export default function Patrimonios() {
   const maxCat = Math.max(1, ...porCategoria.map(x => x.valor));
   const obrPorPat = pats.map(p => {
     const os = obrAll.filter(o => o.patrimonio_id === p.id);
-    const naoPg = os.filter(o => o.status !== "Pago");
-    const venc = naoPg.filter(o => o.vencimento && o.vencimento < hoje()).length;
+    // Status EFETIVO, igual ao selo: conta paga no Malote nao pode continuar
+    // contando como vencida nem entrar no "previsto".
+    const naoPg = os.filter(o => statusDaConta(o) !== "Pago");
+    const venc = naoPg.filter(o => statusDaConta(o) === "Vencido").length;
     const prev = naoPg.reduce((s, o) => s + (Number(o.valor) || 0), 0);
-    const pg = os.filter(o => o.status === "Pago").reduce((s, o) => s + (Number(o.valor) || 0), 0);
+    const pg = os.filter(o => statusDaConta(o) === "Pago").reduce((s, o) => s + (Number(o.valor) || 0), 0);
     return { p, n: os.length, venc, prev, pg };
   }).filter(x => x.n > 0).sort((a, b) => b.venc - a.venc || b.prev - a.prev);
 
@@ -743,6 +746,7 @@ export default function Patrimonios() {
                 const dias = Math.round((new Date(venc + "T00:00:00").getTime() - new Date(hoje() + "T00:00:00").getTime()) / 86400000);
                 const atrasada = dias < 0;
                 const patN = pats.find(p => p.id === o.patrimonio_id)?.descricao || "—";
+                const stAlerta = statusDaConta(o);
                 return (
                   <div key={o.id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, flexWrap: "wrap", background: "#fff", border: "1px solid #fee2d5", borderRadius: 10, padding: "8px 12px" }}>
                     <div style={{ minWidth: 0 }}>
@@ -751,9 +755,16 @@ export default function Patrimonios() {
                     </div>
                     <div style={{ display: "flex", alignItems: "center", gap: 10, flexShrink: 0, flexWrap: "wrap" }}>
                       <span style={{ fontWeight: 800, color: "#0f172a" }}>{money(o.valor)}</span>
+                      {stAlerta !== "Pendente" && stAlerta !== "Vencido" && (
+                        <span style={{ fontSize: 11, fontWeight: 800, padding: "2px 10px", borderRadius: 20, background: `${corConta(stAlerta)}1a`, color: corConta(stAlerta) }}>{stAlerta}</span>
+                      )}
                       <span style={{ fontSize: 11, fontWeight: 800, padding: "2px 10px", borderRadius: 20, background: atrasada ? "#fee2e2" : "#ffedd5", color: atrasada ? "#dc2626" : "#ea580c" }}>{atrasada ? `Vencida há ${Math.abs(dias)}d` : dias === 0 ? "Vence hoje" : `Vence em ${dias}d`} · {fmtDt(venc)}</span>
-                      <button className="jp-btn" onClick={() => pagarConta(o)} style={{ background: "#0f3171", color: "#fff", border: "1px solid #0f3171", padding: "4px 12px", fontWeight: 700 }}>Pagar</button>
-                      <button className="jp-btn" title="Já foi paga por fora: anexar o comprovante e dar baixa" onClick={() => baixarConta(o)} style={{ background: "#f0fdf4", color: "#15803d", border: "1px solid #bbf7d0", padding: "4px 10px", fontWeight: 700 }}>✓ Baixar</button>
+                      {stAlerta === "Enviado ao Malote" ? (
+                        <button className="jp-btn" title="A conta já virou despesa no Malote — o pagamento se resolve lá" onClick={() => nav("/app/malote/aprovacoes")} style={{ background: "#eff6ff", color: "#1d4ed8", border: "1px solid #bfdbfe", padding: "4px 12px", fontWeight: 700 }}>Ver no Malote</button>
+                      ) : (<>
+                        <button className="jp-btn" title="Abre o Malote com os dados desta conta já preenchidos. A conta só sai de Pendente quando você concluir o envio lá." onClick={() => pagarConta(o)} style={{ background: "#0f3171", color: "#fff", border: "1px solid #0f3171", padding: "4px 12px", fontWeight: 700 }}>Enviar ao Malote</button>
+                        <button className="jp-btn" title="Já foi paga por fora: anexar o comprovante e dar baixa" onClick={() => baixarConta(o)} style={{ background: "#f0fdf4", color: "#15803d", border: "1px solid #bbf7d0", padding: "4px 10px", fontWeight: 700 }}>✓ Baixar</button>
+                      </>)}
                     </div>
                   </div>
                 );
@@ -1026,7 +1037,7 @@ export default function Patrimonios() {
                           <td style={{ padding: "10px 16px", textAlign: "right", whiteSpace: "nowrap" }}>
                             <div style={{ display: "inline-flex", gap: 6 }}>
                               {o.comprovante_path && <button className="jp-btn" title="Ver comprovante" onClick={() => verComprovante(o)} style={{ background: "#eef4ff", color: "#0f3171", border: "1px solid #dbe4f0", padding: "5px 9px" }}>📎</button>}
-                              {st !== "Pago" && <button className="jp-btn" title="Abre a despesa no Malote com os dados desta conta" onClick={() => pagarConta(o)} style={{ background: "#0f3171", color: "#fff", border: "1px solid #0f3171", padding: "5px 13px", fontWeight: 700 }}>Pagar</button>}
+                              {st !== "Pago" && <button className="jp-btn" title="Abre o Malote com os dados desta conta já preenchidos. A conta só sai de Pendente quando você concluir o envio lá." onClick={() => pagarConta(o)} style={{ background: "#0f3171", color: "#fff", border: "1px solid #0f3171", padding: "5px 13px", fontWeight: 700 }}>Enviar ao Malote</button>}
                               {st !== "Pago" && <button className="jp-btn" title="Já foi paga por fora: anexar o comprovante e dar baixa" onClick={() => baixarConta(o)} style={{ background: "#f0fdf4", color: "#15803d", border: "1px solid #bbf7d0", padding: "5px 10px", fontWeight: 700 }}>✓</button>}
                             </div>
                           </td>
@@ -1188,7 +1199,7 @@ export default function Patrimonios() {
                         <span style={{ fontSize: 11, fontWeight: 800, height: "fit-content", padding: "2px 10px", borderRadius: 20, background: cor + "20", color: cor }}>{st}</span>
                       </div>
                       <div style={{ display: "flex", gap: 6, marginTop: 10, flexWrap: "wrap" }}>
-                        {st !== "Pago" && <button className="jp-btn" onClick={() => pagarConta(o)} style={{ background: "#0f3171", color: "#fff", border: "1px solid #0f3171", padding: "5px 11px", fontWeight: 700 }}>Pagar</button>}{st !== "Pago" && <button className="jp-btn" title="Já foi paga por fora: anexar o comprovante e dar baixa" onClick={() => baixarConta(o)} style={{ background: "#f0fdf4", color: "#15803d", border: "1px solid #bbf7d0", padding: "5px 10px", fontWeight: 700 }}>✓</button>}
+                        {st !== "Pago" && <button className="jp-btn" title="Abre o Malote com os dados desta conta já preenchidos. A conta só sai de Pendente quando você concluir o envio lá." onClick={() => pagarConta(o)} style={{ background: "#0f3171", color: "#fff", border: "1px solid #0f3171", padding: "5px 11px", fontWeight: 700 }}>Enviar ao Malote</button>}{st !== "Pago" && <button className="jp-btn" title="Já foi paga por fora: anexar o comprovante e dar baixa" onClick={() => baixarConta(o)} style={{ background: "#f0fdf4", color: "#15803d", border: "1px solid #bbf7d0", padding: "5px 10px", fontWeight: 700 }}>✓</button>}
                         {o.comprovante_path && <button className="jp-btn" onClick={() => verComprovante(o)} style={{ background: "#eef4ff", color: "#0f3171", border: "1px solid #dbe4f0", padding: "5px 11px" }}>📎 Comprovante</button>}
                         <button className="jp-btn" onClick={() => abrirEditarObr(o)} style={{ background: "#f1f5f9", color: "#475569", padding: "5px 11px" }}>Editar</button>
                         {(o.status === "Pago" && o.comprovante_path)
