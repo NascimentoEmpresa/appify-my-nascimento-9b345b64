@@ -136,10 +136,18 @@ export function RateioAprovadorTable({
               </TableRow>
             )}
             {linhas.map((linha, idx) => {
-              const orcado = resolverOrcado(classificacaoId, linha.contrato_id);
+              // SIS-2026-0212 (complemento): despesa paga tem Orçado/
+              // Utilizado congelados em malote_pagar_despesa — usa o
+              // snapshot em vez de recalcular contra despesas lançadas
+              // depois (senão uma despesa já paga passa a aparecer "fora
+              // do orçado" por causa de lançamento que nem existia então).
+              const estaCongelada = linha.congelado_em != null;
+              const orcado = estaCongelada ? linha.orcado_snapshot ?? null : resolverOrcado(classificacaoId, linha.contrato_id);
               const chave = linha.contrato_id ?? "__sem_contrato__";
               const utilizadoAntes = utilizadoAntesPorContrato.get(chave) ?? 0;
-              const utilizadoComLancamento = utilizadoAntes + (Number(linha.valor) || 0);
+              const utilizadoComLancamento = estaCongelada
+                ? linha.utilizado_com_lancamento_snapshot ?? 0
+                : utilizadoAntes + (Number(linha.valor) || 0);
               const dentroDoOrcado = orcado == null ? null : utilizadoComLancamento <= orcado;
               const percentualLinha = orcado ? (utilizadoComLancamento / orcado) * 100 : null;
               const precisaJustificar =
@@ -162,7 +170,8 @@ export function RateioAprovadorTable({
                   )}
                   <TableCell className="text-center text-xs">{fmtMoney(linha.valor)}</TableCell>
                   <TableCell className="text-center text-xs">{fmtMoney(orcado)}</TableCell>
-                  <TableCell className="text-center text-xs">
+                  <TableCell className="text-center text-xs" title={estaCongelada ? "Congelado no momento do pagamento" : undefined}>
+                    {estaCongelada && "🔒 "}
                     {fmtMoney(utilizadoComLancamento)}
                     {percentualLinha != null && <span className="text-muted-foreground"> ({percentualLinha.toFixed(2)}%)</span>}
                   </TableCell>
