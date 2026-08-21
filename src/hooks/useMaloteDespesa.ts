@@ -516,13 +516,19 @@ export function useMandarParaAprovacaoNovamente() {
   const qc = useQueryClient();
   const salvar = useSalvarDespesa();
   return useMutation({
-    mutationFn: async (input: SalvarDespesaInput) => {
+    // SIS-2026-0211 (complemento, pedido do Iury): "descricaoEvento" é um
+    // resumo do que mudou (rateio, forma de pagamento, etc.), calculado pelo
+    // chamador antes de reenviar — vai só pro histórico, nunca pra
+    // malote_despesa (por isso é destructured fora do resto do input, que
+    // vira despesaFields no useSalvarDespesa).
+    mutationFn: async (input: SalvarDespesaInput & { descricaoEvento?: string | null }) => {
+      const { descricaoEvento, ...resto } = input;
       const despesaId = await salvar.mutateAsync({
-        ...input,
+        ...resto,
         status: "pendente_aprovacao",
       });
       await (supabase as any).from("malote_despesa").update({ nivel_aprovacao_atual: 1, motivo_ajuste: null }).eq("id", despesaId);
-      await registrarEventoDespesa(despesaId, "reenvio_aprovacao", null, 1);
+      await registrarEventoDespesa(despesaId, "reenvio_aprovacao", descricaoEvento ?? null, 1);
       return despesaId;
     },
     onSuccess: () => qc.invalidateQueries({ queryKey: [DESPESA_KEY] }),

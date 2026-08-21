@@ -61,6 +61,48 @@ const FORMA_PAGAMENTO_LABEL: Record<string, string> = {
   dinheiro: "Dinheiro",
 };
 
+function fmtMoneyResumo(n: number | null | undefined): string {
+  if (n == null) return "—";
+  return n.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
+}
+
+function fmtDataResumo(v: string | null | undefined): string {
+  if (!v) return "—";
+  return new Date(v + "T00:00:00").toLocaleDateString("pt-BR");
+}
+
+// SIS-2026-0211 (complemento, pedido do Iury): resumo do que mudou no
+// reenvio, pra ficar no Histórico junto do evento "Reenviada para
+// aprovação" — sem isso, o histórico só dizia QUE foi reenviado, nunca O
+// QUE mudou. Compara campo a campo (não linha a linha de input), pra não
+// virar um log de cada tecla digitada.
+function resumoAlteracoesRateio(antigo: RateioLinha[], novo: RateioLinha[], contratos: { id: string; nome: string }[]): string[] {
+  const nomeContrato = (id: string | null | undefined) => (id ? contratos.find((c) => c.id === id)?.nome ?? "contrato removido" : "sem contrato");
+  const antigosPorId = new Map(antigo.filter((l) => l.id).map((l) => [l.id as string, l]));
+  const idsNovos = new Set(novo.filter((l) => l.id).map((l) => l.id as string));
+  const linhas: string[] = [];
+
+  for (const l of novo) {
+    const anterior = l.id ? antigosPorId.get(l.id) : undefined;
+    if (!anterior) {
+      linhas.push(`Rateio: linha adicionada (${nomeContrato(l.contrato_id)}, ${fmtMoneyResumo(l.valor)})`);
+      continue;
+    }
+    if (Number(anterior.valor) !== Number(l.valor)) {
+      linhas.push(`Rateio (${nomeContrato(l.contrato_id)}): valor ${fmtMoneyResumo(anterior.valor)} → ${fmtMoneyResumo(l.valor)}`);
+    }
+    if ((anterior.contrato_id ?? null) !== (l.contrato_id ?? null)) {
+      linhas.push(`Rateio: contrato ${nomeContrato(anterior.contrato_id)} → ${nomeContrato(l.contrato_id)}`);
+    }
+  }
+  for (const l of antigo) {
+    if (l.id && !idsNovos.has(l.id)) {
+      linhas.push(`Rateio: linha removida (${nomeContrato(l.contrato_id)}, ${fmtMoneyResumo(l.valor)})`);
+    }
+  }
+  return linhas;
+}
+
 // Mesmo texto usado no FluxoAprovacaoVisual (EVENTO_META), duplicado aqui
 // de propósito — o Histórico é uma lista bruta e cronológica de TODOS os
 // eventos (inclusive ciclos repetidos de ajuste/reenvio, que o fluxo
@@ -97,7 +139,7 @@ function LinhaHistorico({ evento, criadoPor }: { evento: DespesaEvento; criadoPo
           {papel}
         </p>
         <p className="text-xs text-muted-foreground">{nomeAtor ?? "—"}</p>
-        {evento.descricao && <p className="text-muted-foreground text-xs">{evento.descricao}</p>}
+        {evento.descricao && <p className="text-muted-foreground text-xs whitespace-pre-line">{evento.descricao}</p>}
         <p className="text-xs text-muted-foreground">{new Date(evento.created_at).toLocaleString("pt-BR")}</p>
       </div>
     </div>
@@ -147,6 +189,35 @@ function TileDestaque({ label, valor, icon, cor }: { label: string; valor: strin
   );
 }
 
+// SIS-2026-0212: o comprovante anexado pelo financeiro no pagamento
+// (comprovante_pagamento_path, via malote_pagar_despesa) nunca aparecia em
+// lugar nenhum depois de salvo — só existia dentro do banco. Mesmo visual
+// do TileDestaque, mas clicável (abre o anexo) e com fundo verde de
+// propósito, pra ficar destacado igual pedido.
+function TileComprovante({ label, onClick }: { label: string; onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="relative overflow-hidden rounded-lg border border-emerald-300 bg-emerald-50 dark:border-emerald-800 dark:bg-emerald-950/30 p-3 text-left transition hover:bg-emerald-100 dark:hover:bg-emerald-950/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500"
+    >
+      <div
+        className="pointer-events-none absolute right-0 top-1/2 -translate-y-1/2 translate-x-1"
+        style={{
+          WebkitMaskImage: "linear-gradient(to left, black 0%, black 30%, rgba(0,0,0,0.6) 60%, transparent 100%)",
+          maskImage: "linear-gradient(to left, black 0%, black 30%, rgba(0,0,0,0.6) 60%, transparent 100%)",
+        }}
+      >
+        <span className="[&>svg]:h-14 [&>svg]:w-14 text-emerald-300 dark:text-emerald-800">
+          <Paperclip />
+        </span>
+      </div>
+      <p className="relative z-10 text-[10px] uppercase tracking-wide text-emerald-700 dark:text-emerald-400">Comprovante de pagamento</p>
+      <p className="relative z-10 text-base font-semibold mt-0.5 truncate max-w-[85%] text-emerald-900 dark:text-emerald-200">{label}</p>
+    </button>
+  );
+}
+
 export default function DespesaVisualizar() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
@@ -154,6 +225,7 @@ export default function DespesaVisualizar() {
   const { data, isLoading } = useDespesa(id);
   const { data: eventos = [] } = useDespesaEventos(id);
   const { data: solicitanteNome } = useNomeUsuario(data?.despesa?.created_by);
+  const { data: pagoPorNome } = useNomeUsuario(data?.despesa?.pago_por);
   const { data: contratos = [] } = useContratosAtivos();
   const cancelar = useCancelarDespesa();
   const reenviar = useMandarParaAprovacaoNovamente();
@@ -436,6 +508,30 @@ export default function DespesaVisualizar() {
   async function handleReenviar() {
     setEnviando("reenviar");
     try {
+      // Resumo do que mudou desde a última vez, pro Histórico — compara
+      // contra o snapshot original (despesa/data.rateio, antes das edições
+      // desta tela), não contra o que já foi salvo em reenvios anteriores.
+      const partesResumo: string[] = [];
+      if ((despesa!.forma_pagamento ?? "") !== (formaPagamento || "")) {
+        partesResumo.push(
+          `Forma de pagamento: ${FORMA_PAGAMENTO_LABEL[despesa!.forma_pagamento ?? ""] ?? "—"} → ${FORMA_PAGAMENTO_LABEL[formaPagamento] ?? (formaPagamento || "—")}`
+        );
+      }
+      if ((despesa!.informacoes_pagamento ?? "") !== informacoesPagamento) {
+        partesResumo.push("Dados de pagamento alterados");
+      }
+      if ((despesa!.data_pagamento ?? "") !== dataPagamento) {
+        partesResumo.push(`Data de pagamento: ${fmtDataResumo(despesa!.data_pagamento)} → ${fmtDataResumo(dataPagamento)}`);
+      }
+      const competenciaAtual = despesa!.competencia ? despesa!.competencia.slice(0, 7) : "";
+      if (competenciaAtual !== competencia) partesResumo.push("Competência alterada");
+      const valorAprovadoAtual = despesa!.valor_aprovado != null ? Number(despesa!.valor_aprovado) : despesa!.valor_total;
+      if (valorAprovadoAtual !== (Number(valorAprovado) || 0)) {
+        partesResumo.push(`Valor aprovado: ${fmtMoneyResumo(valorAprovadoAtual)} → ${fmtMoneyResumo(Number(valorAprovado) || 0)}`);
+      }
+      if (despesa!.excecao !== excecao) partesResumo.push(excecao ? "Marcada como Exceção (dia bloqueado)" : "Exceção removida");
+      partesResumo.push(...resumoAlteracoesRateio(data?.rateio ?? [], linhasRateio, contratos));
+
       await reenviar.mutateAsync({
         id: despesa!.id,
         empresa_id: despesa!.empresa_id,
@@ -453,6 +549,7 @@ export default function DespesaVisualizar() {
         justificativa_excecao: excecao ? justificativaExcecao.trim() || null : null,
         competencia: competencia ? competencia + "-01" : null,
         rateio: linhasRateio,
+        descricaoEvento: partesResumo.length > 0 ? partesResumo.join("\n") : null,
       });
       toast.success("Enviado para aprovação novamente (reiniciado em N1).");
     } catch (e: any) {
@@ -679,6 +776,20 @@ export default function DespesaVisualizar() {
             onJustificativaChange={setJustificativaExcecao}
             disabled={!rateioEPagamentoEditaveis}
           />
+
+          {despesa.comprovante_pagamento_path && (
+            <div className="border-t border-border pt-3 space-y-2">
+              <TileComprovante
+                label={despesa.pago_em ? `Pago em ${new Date(despesa.pago_em).toLocaleDateString("pt-BR")} — clique para abrir` : "Clique para abrir"}
+                onClick={() => abrirAnexo(despesa.comprovante_pagamento_path!)}
+              />
+              <p className="text-xs text-muted-foreground">
+                {pagoPorNome && <>Pago por {pagoPorNome}. </>}
+                {despesa.conferido_em && <>Conferido em {new Date(despesa.conferido_em).toLocaleDateString("pt-BR")}. </>}
+                {despesa.observacao_pagamento && <>Observação: {despesa.observacao_pagamento}</>}
+              </p>
+            </div>
+          )}
         </CardContent>
       </Card>
 
@@ -696,6 +807,12 @@ export default function DespesaVisualizar() {
               onRatearPorChange={setRatearPor}
               valorTotal={Number(valorAprovado) || despesa.valor_total}
               disabled={bloqueado}
+              despesaId={despesa.id}
+              classificacaoId={despesa.classificacao_id}
+              limiteJustificativaPct={despesa.classificacao?.limite_justificativa_pct ?? null}
+              resolverOrcado={resolverOrcado}
+              anoMesDespesa={anoMesDespesa}
+              podeJustificarComoAprovador={configurado}
             />
           ) : (
             <RateioAprovadorTable
