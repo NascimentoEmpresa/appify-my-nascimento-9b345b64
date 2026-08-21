@@ -3,7 +3,7 @@
 // Conta para a empresa o que mudou, quando um Chamado de Sistemas é concluído.
 //
 // Disparada pelo trigger trg_chamado_concluido_novidade_ia em CHAMADO_SISTEMA
-// (migration 20260821000001) — via pg_net, no mesmo padrão dos ticks de cron
+// (migration 20260914000001) — via pg_net, no mesmo padrão dos ticks de cron
 // já existentes. Pega o chamado, pede à IA (Groq) um aviso em linguagem de
 // usuário e PUBLICA em SISTEMA_NOVIDADES, que é o que alimenta o sino do topo,
 // o painel do Início e /app/novidades.

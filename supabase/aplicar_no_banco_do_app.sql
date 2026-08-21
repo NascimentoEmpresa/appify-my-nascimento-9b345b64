@@ -14783,7 +14783,7 @@ NOTIFY pgrst, 'reload schema';
 --   ALTER TABLE public."SISTEMA_RECRUTAMENTO" DROP COLUMN administrativa;
 -- =========================================================================
 
--- ===== 20260821000001_novidades_ia_chamados =====
+-- ===== 20260914000001_novidades_ia_chamados =====
 -- =========================================================================
 -- NOVIDADE AUTOMÁTICA AO CONCLUIR CHAMADO (pedido do Pablo, 21/08/2026)
 --
