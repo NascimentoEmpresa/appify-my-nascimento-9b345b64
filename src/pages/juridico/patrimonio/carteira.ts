@@ -57,3 +57,40 @@ export const coordDaCidade = (cidade?: string | null): [number, number] | null =
 
 /** Cores dos pinos, na ordem em que as cidades aparecem na legenda. */
 export const CORES_CIDADE = ["#f59e0b", "#2563eb", "#16a34a", "#7c3aed", "#db2777", "#0891b2", "#dc2626"];
+
+// =====================================================================
+// O formulário de patrimônio: quais campos ele edita.
+// =====================================================================
+
+/**
+ * O formulário vazio — e, junto com ele, a lista fechada de colunas que a
+ * tela de patrimônio pode gravar. Tudo texto porque são inputs controlados:
+ * número e booleano são convertidos na hora de salvar.
+ */
+export const PATRIM_RESET = {
+  codigo: "", tipo: "Imóvel", descricao: "", localizacao: "", placa: "", cidade: "",
+  transferida: "Não", empresa: "", empresa_pagadora: "", proprietario: "", responsavel: "",
+  centro_custo: "", status: "Ativo", observacoes: "",
+  classificacao: "", matricula: "", possui_escritura: "", especie_escritura: "",
+  situacao_pagamento: "", valor_contrato: "", valor_entrada: "",
+  latitude: "", longitude: "",
+};
+
+export const CAMPOS_PATRIMONIO = Object.keys(PATRIM_RESET) as (keyof typeof PATRIM_RESET)[];
+
+/**
+ * Só os campos do formulário — é o que vai para o INSERT/UPDATE.
+ *
+ * Abrir um patrimônio para editar espalha a linha INTEIRA do SELECT no estado
+ * do formulário, então ele carrega junto o `id`, o `created_at` e as colunas
+ * de rollup das parcelas. Devolver isso num UPDATE quebrava o salvar: `id` é
+ * GENERATED ALWAYS AS IDENTITY e o Postgres recusa
+ * ("column \"id\" can only be updated to DEFAULT").
+ *
+ * Filtrar só o `id` calaria a mensagem, mas continuaria devolvendo
+ * valor_falta / parcelas_pagas / proxima_parcela com o valor que estava na
+ * tela quando o modal abriu — e esses são recalculados a partir das parcelas.
+ * Corrigir o endereço de um imóvel não pode ressuscitar parcela velha.
+ */
+export const soCamposDoForm = (o: Record<string, unknown>): Record<string, unknown> =>
+  Object.fromEntries(CAMPOS_PATRIMONIO.map(k => [k, o[k]]));
