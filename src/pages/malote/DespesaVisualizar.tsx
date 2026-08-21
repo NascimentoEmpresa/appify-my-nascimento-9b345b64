@@ -852,6 +852,7 @@ export default function DespesaVisualizar() {
               resolverOrcado={resolverOrcado}
               anoMesDespesa={anoMesDespesa}
               podeJustificarComoAprovador={configurado}
+              souSolicitante={souSolicitante}
             />
           ) : (
             <RateioAprovadorTable
@@ -863,6 +864,7 @@ export default function DespesaVisualizar() {
               resolverOrcado={resolverOrcado}
               anoMesDespesa={anoMesDespesa}
               podeJustificarComoAprovador={configurado}
+              souSolicitante={souSolicitante}
             />
           )}
         </CardContent>
