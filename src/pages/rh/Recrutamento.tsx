@@ -655,7 +655,7 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "opera
       is_treinamento: isTreinamento,
     });
     setSendingMsg(false);
-    if (error) { toast("Erro ao enviar mensagem.", "err"); return; }
+    if (error) { toast("Erro ao enviar mensagem: " + error.message, "err"); return; }
     setChatInput("");
     const { data } = await (supabase as any)
       .from("WA_MENSAGENS_RECRUTAMENTO").select("*").eq("solicitacao_id", drawerId).order("created_at");
@@ -676,7 +676,7 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "opera
       .update({ status: novoStatus, aprovado_por_nome: user?.user_metadata?.nome ?? user?.email ?? "" })
       .eq("id", drawerId);
 
-    if (error) { toast("Erro ao aprovar.", "err"); return; }
+    if (error) { toast("Erro ao aprovar: " + error.message, "err"); return; }
     await logHistorico(drawerId, ehAbertura ? "Abertura de vaga confirmada" : "Aprovada pelo Operacional", {
       de: drawerSol.status, para: novoStatus, papel: ehAbertura ? "Recrutamento" : "Operacional",
     });
@@ -696,7 +696,7 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "opera
       .from("SISTEMA_RECRUTAMENTO")
       .update({ status: "Concluída" })
       .eq("id", drawerId);
-    if (error) { toast("Erro ao concluir.", "err"); return; }
+    if (error) { toast("Erro ao concluir: " + error.message, "err"); return; }
     await logHistorico(drawerId, "Solicitação concluída", {
       de: "Seleção de Candidato", para: "Concluída", papel: "Recrutamento",
       detalhe: admitido.nome ? `Admitido: ${admitido.nome}` : undefined,
@@ -715,7 +715,7 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "opera
       .from("SISTEMA_RECRUTAMENTO")
       .update({ status: "Reprovada", motivo_reprovacao: reprovarMotivo.trim(), aprovado_por_nome: user?.user_metadata?.nome ?? "" })
       .eq("id", drawerId);
-    if (error) { toast("Erro ao reprovar.", "err"); return; }
+    if (error) { toast("Erro ao reprovar: " + error.message, "err"); return; }
     if (drawerId) {
       const papel = drawerSol?.status === "Pendente Operacional" ? "Operacional" : "Recrutamento";
       await logHistorico(drawerId, "Solicitação reprovada", {
@@ -744,7 +744,7 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "opera
       payload.contratado_data_inicio = statusExtra.data;
     }
     const { error } = await (supabase as any).from("SISTEMA_RECRUTAMENTO").update(payload).eq("id", drawerId);
-    if (error) { toast("Erro ao atualizar status.", "err"); return; }
+    if (error) { toast("Erro ao atualizar status: " + error.message, "err"); return; }
     toast("Status atualizado!", "ok");
     setModalStatus(false);
     setStatusSel("");
@@ -1269,7 +1269,7 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "opera
   const executarMover = async (id: number, novoStatus: string, oldSt: string, extra: Record<string, any>) => {
     const payload: Record<string, any> = { status: novoStatus, ...extra };
     const { error } = await (supabase as any).from("SISTEMA_RECRUTAMENTO").update(payload).eq("id", id);
-    if (error) { toast("Erro ao mover card.", "err"); loadKanban(); return; }
+    if (error) { toast("Erro ao mover card: " + error.message, "err"); loadKanban(); return; }
     toast(`Card movido para "${novoStatus}"`, "ok");
     loadStats();
     loadKanban();
