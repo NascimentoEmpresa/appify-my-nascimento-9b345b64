@@ -23,6 +23,7 @@ iterativo) — preservando a janela do Claude pro que só ele faz bem.
 | Este documento | ✅ Pronto |
 | `.claude/commands/chamado.md` (comando de planejamento) | ✅ Pronto |
 | `.claude/commands/codex-executar.md` (handoff pro Codex) | ✅ Pronto |
+| `.claude/commands/chamados-pendentes.md` (lista o que aguarda revisão) | ✅ Pronto |
 | `worker/src/chamadosDev.js` (disparo automático) | ✅ Escrito e plugado no ciclo — **falta testar com chamado real** |
 | Codex CLI headless | ✅ Validado na prática (ver abaixo) |
 | Claude Code headless plan mode | ✅ Validado na prática (ver abaixo) |
@@ -223,6 +224,28 @@ Solução: `npm install --no-audit --no-fund` dentro da worktree, uma vez por
 worktree (leva alguns minutos). Com `node_modules` real, os 217 testes passam
 na worktree normalmente. Isso já está instruído em
 `.claude/commands/codex-executar.md`.
+
+## O que acontece quando chega um chamado e você não está no computador
+
+Cenário real: chamado direcionado às 08:00, você abre o VSCode às 09:00.
+
+- **08:00** — o worker (processo Node num terminal, independente do VSCode)
+  detecta em até 60s, roda o Claude Code em modo invisível (sem janela), gera
+  o plano, salva em `worker/state/planos/<numero>.md` e manda DM no Discord.
+- **09:00** — você abre o VSCode. **Nada abre sozinho**: não existe chat
+  esperando nem pop-up. O plano fica parado no arquivo.
+- Pra ver o que está pendente: **`/chamados-pendentes`** lista os planos
+  prontos aguardando revisão (com tempo de espera e se há pergunta em aberto),
+  e marca como obsoleto o que já foi concluído/redirecionado.
+- Pra tocar um deles: `/codex-executar <numero>`.
+
+**O worker precisa estar rodando na hora em que o chamado chega.** Se o PC
+estava desligado ou o terminal fechado, o chamado não é percebido — e, por
+desenho, ele ignora o que passou antes de ligar (o cursor só anda pra frente).
+Por isso existe um atalho em
+`%APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup\Worker ERP.lnk`
+apontando pro `worker/iniciar.bat`, que sobe o worker minimizado junto com o
+Windows. Pra desligar essa automação, basta apagar esse atalho.
 
 ## Como ligar a automação (passo a passo)
 
