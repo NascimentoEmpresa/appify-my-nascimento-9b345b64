@@ -13,6 +13,8 @@ import { ptBR } from "date-fns/locale";
 import { AgendaCorporativaSheet } from "./AgendaCorporativaSheet";
 import { resolverLinkNotificacao } from "@/lib/notificacaoLink";
 import { NovidadesSino } from "@/components/novidades/NovidadesSino";
+import { useModoExterno } from "@/hooks/useModoExterno";
+import { useSessaoExterna } from "@/hooks/useSupPedidos";
 
 type Notif = {
   id: string;
@@ -46,6 +48,16 @@ export function Topbar({ onToggleSidebar, onOpenMobile }: { onToggleSidebar: () 
   const { user, signOut } = useAuth();
   const { roles, can } = usePermissoes();
   const qc = useQueryClient();
+
+  // Encarregado externo (sessão anônima). A barra dele fica com o essencial:
+  // o hambúrguer (é como ele abre o menu no celular), a ficha dele e o Sair.
+  // Seletor de empresa, busca, ajuda, engrenagem, novidades, notificações e
+  // agenda saem — nenhuma delas funciona sem perfil de acesso, e todas
+  // levavam a "Acesso negado".
+  const externo = useModoExterno();
+  // O anônimo não tem linha em profiles (ver 20260821000003): o nome real
+  // dele vem da sessão externa, gravada no login com o cadastro de EMPREGADOS.
+  const sessaoExtQ = useSessaoExterna(externo);
 
   const isAdmin = can("alterar", undefined, "administracao");
 
@@ -132,9 +144,15 @@ export function Topbar({ onToggleSidebar, onOpenMobile }: { onToggleSidebar: () 
     else navigate(destino);
   };
 
-  const nomeExibido = displayName || user?.email?.split("@")[0] || "Usuário";
+  const nomeExibido =
+    (externo ? sessaoExtQ.data?.empregado_nome : null) ||
+    displayName || user?.email?.split("@")[0] || "Usuário";
   const iniciais = nomeExibido.split(/\s+/).filter(Boolean).slice(0, 2).map((p) => p[0]?.toUpperCase()).join("") || "U";
-  const roleLabel = isAdmin ? "Admin Master" : (roles?.[0] ? roles[0].replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase()) : "Usuário");
+  // Externo não tem role nem empresa ativa de verdade — o rótulo dizia
+  // "Usuário · HAGG", a sigla do placeholder estático, o que é simplesmente falso.
+  const roleLabel = externo
+    ? "Acesso externo"
+    : isAdmin ? "Admin Master" : (roles?.[0] ? roles[0].replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase()) : "Usuário");
 
   const fecharTodos = () => { setOpenSelector(false); setOpenNotif(false); setOpenHelp(false); setOpenSettings(false); setOpenProfile(false); setOpenAgenda(false); };
 
@@ -155,6 +173,10 @@ export function Topbar({ onToggleSidebar, onOpenMobile }: { onToggleSidebar: () 
         <PanelLeft className="h-4 w-4" />
       </button>
 
+      {/* Externo não escolhe empresa (não tem linha em user_empresa) e a
+          busca global não alcança nada que ele possa abrir. */}
+      {!externo && (
+        <>
       {/* Empresa selector */}
       <div className="relative min-w-0">
         <button
@@ -236,8 +258,15 @@ export function Topbar({ onToggleSidebar, onOpenMobile }: { onToggleSidebar: () 
         />
         <kbd className="absolute right-2 top-1/2 -translate-y-1/2 rounded border border-border bg-muted px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground">⌘K</kbd>
       </div>
+        </>
+      )}
 
       <div className="ml-auto flex items-center gap-1.5">
+        {/* Tudo daqui até o separador some no acesso externo: nenhuma
+            dessas telas existe para ele, e a engrenagem/seletor levavam
+            direto pro "Acesso negado". Sobra o menu de perfil e o Sair. */}
+        {!externo && (
+          <>
         {/* Ajuda */}
         <div className="relative">
           <IconBtn aria-label="Ajuda" onClick={() => { fecharTodos(); setOpenHelp((o) => !o); }}><HelpCircle className="h-4 w-4" /></IconBtn>
@@ -355,6 +384,8 @@ export function Topbar({ onToggleSidebar, onOpenMobile }: { onToggleSidebar: () 
         </IconBtn>
 
         <div className="mx-1 h-8 w-px bg-border" />
+          </>
+        )}
 
         {/* Perfil/Sessões */}
         <div className="relative">
@@ -375,7 +406,7 @@ export function Topbar({ onToggleSidebar, onOpenMobile }: { onToggleSidebar: () 
             <div className="hidden text-left lg:block">
               <p className="text-xs font-semibold leading-tight">{nomeExibido}</p>
               <p className="text-[10px] text-muted-foreground">
-                {roleLabel}{!isAdmin && ` · ${empresa.sigla}`}
+                {roleLabel}{!isAdmin && !externo && ` · ${empresa.sigla}`}
               </p>
             </div>
             <ChevronDown className="hidden h-3.5 w-3.5 text-muted-foreground lg:block" />
@@ -398,7 +429,9 @@ export function Topbar({ onToggleSidebar, onOpenMobile }: { onToggleSidebar: () 
                 </div>
                 <ul className="text-sm">
                   <MenuItem onClick={() => { setOpenProfile(false); navigate("/app/meu-perfil"); }} icon={<UserIcon className="h-3.5 w-3.5" />}>Meu perfil</MenuItem>
-                  <MenuItem onClick={() => { setOpenProfile(false); navigate("/app/administracao"); }} icon={<ShieldCheck className="h-3.5 w-3.5" />}>Administração / Usuários</MenuItem>
+                  {!externo && (
+                    <MenuItem onClick={() => { setOpenProfile(false); navigate("/app/administracao"); }} icon={<ShieldCheck className="h-3.5 w-3.5" />}>Administração / Usuários</MenuItem>
+                  )}
                 </ul>
                 <div className="border-t border-border bg-muted/20 px-3 py-2">
                   <p className="mb-1.5 flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
