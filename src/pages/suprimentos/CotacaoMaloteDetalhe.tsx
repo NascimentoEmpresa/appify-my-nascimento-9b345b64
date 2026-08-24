@@ -4,6 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
@@ -18,6 +19,8 @@ import {
   type Cotacao,
 } from "@/hooks/useMaloteCotacao";
 import { STATUS_BADGE_CLASS, uploadAnexoMalote } from "@/hooks/useMaloteDespesa";
+import { useEmpresaId } from "@/hooks/useEmpresaId";
+import { useFornecedores, type FornecedorOpcao } from "@/hooks/useSupEstoque";
 import {
   ArrowLeft, Paperclip, Save, Send, Trash2, CheckCircle2, XCircle, Ban,
   Trophy, Loader2, ShieldAlert, Info,
@@ -49,6 +52,8 @@ export default function CotacaoMaloteDetalhe() {
   const aprovar = useAprovarCotacao();
   const reprovar = useReprovarCotacao();
   const cancelar = useCancelarCotacao();
+  const { data: empresaId } = useEmpresaId();
+  const { data: fornecedores = [] } = useFornecedores(empresaId ?? null);
 
   const [cots, setCots] = useState<Cotacao[]>(lerCotacoes(null));
   const [carregadoDe, setCarregadoDe] = useState<string | null>(null);
@@ -209,6 +214,7 @@ export default function CotacaoMaloteDetalhe() {
           {cots.map((c, i) => (
             <CartaoCotacao
               key={i} indice={i} cot={c} editavel={editavel} despesaId={d.id}
+              fornecedores={fornecedores}
               obrigatoria={i < minimo}
               vencedora={d.cotacao_vencedor_num === i + 1}
               selecionavel={decidivel && cotacaoPreenchida(c)}
@@ -354,14 +360,18 @@ function Aviso({
 
 function CartaoCotacao({
   indice, cot, editavel, obrigatoria, despesaId, vencedora, selecionavel, selecionada,
-  onSelecionar, onTrocar,
+  fornecedores, onSelecionar, onTrocar,
 }: {
   indice: number; cot: Cotacao; editavel: boolean; obrigatoria: boolean; despesaId: string;
   vencedora: boolean; selecionavel: boolean; selecionada: boolean;
+  fornecedores: FornecedorOpcao[];
   onSelecionar: () => void; onTrocar: (campo: keyof Cotacao, valor: string) => void;
 }) {
   const inputRef = useRef<HTMLInputElement>(null);
   const [subindo, setSubindo] = useState(false);
+  const fornecedorLegado = cot.fornecedor && !fornecedores.some(
+    (f) => (f.nome_fantasia || f.razao_social) === cot.fornecedor,
+  );
 
   async function anexar(f: File | null) {
     if (!f) return;
@@ -405,9 +415,21 @@ function CartaoCotacao({
         <div className="space-y-2">
           <div>
             <Label className="text-xs">Fornecedor {obrigatoria && "*"}</Label>
-            <Input className="mt-1 h-9" value={cot.fornecedor}
-                   onChange={(e) => onTrocar("fornecedor", e.target.value)}
-                   placeholder="Razão social" />
+            <Select value={cot.fornecedor || undefined}
+                    onValueChange={(v) => onTrocar("fornecedor", v)}>
+              <SelectTrigger className="mt-1 h-9">
+                <SelectValue placeholder={fornecedores.length ? "Selecione o fornecedor" : "Nenhum fornecedor cadastrado"} />
+              </SelectTrigger>
+              <SelectContent>
+                {fornecedorLegado && (
+                  <SelectItem value={cot.fornecedor}>{cot.fornecedor} (não cadastrado)</SelectItem>
+                )}
+                {fornecedores.map((f) => {
+                  const nome = f.nome_fantasia || f.razao_social;
+                  return <SelectItem key={f.id} value={nome}>{nome}</SelectItem>;
+                })}
+              </SelectContent>
+            </Select>
           </div>
           <div className="grid grid-cols-2 gap-2">
             <div>

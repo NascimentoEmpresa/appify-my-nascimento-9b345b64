@@ -10,9 +10,16 @@ import { Plus, Trash2, ChevronDown, ChevronRight, BookOpen, UserCog, X, CheckSqu
 import { cn } from "@/lib/utils";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import type { FormCap } from "@/hooks/useFormPerms";
+import { useSetoresCatalogo } from "@/hooks/usePlanejamentoOrcamentario";
+import { SearchableMultiSelect } from "@/components/ui/searchable-multi-select";
 
 const FORM_MENU_CODIGO = "central_servicos_formularios";
 const REUNIOES_MENU_CODIGO = "central_servicos_reunioes";
+// SIS-2026-0216: painel condicional (mesmo padrão de FormPermsUsuario) que
+// deixa restringir quais Setores (Setor Responsável da Classificação
+// Malote) um usuário pode ver em Aprovações do Malote — a mesma lista
+// também vale pra Meus Itens (uma lista só, não duplica configuração).
+const MALOTE_APROVACOES_MENU_CODIGO = "malote_aprovacoes";
 
 interface Modulo { id: string; codigo: string; nome: string; ordem: number; ativo: boolean; icone: string | null }
 interface Menu { id: string; modulo_id: string; codigo: string; nome: string; rota: string | null; ordem: number; ativo: boolean }
@@ -689,6 +696,7 @@ function UserAccessPanel({ podeGerenciar, modulos, menus }: { podeGerenciar: boo
                       const isPending = pending.has(mn.codigo);
                       const isForm = mn.codigo === FORM_MENU_CODIGO;
                       const isReunioes = mn.codigo === REUNIOES_MENU_CODIGO;
+                      const isMaloteSetor = mn.codigo === MALOTE_APROVACOES_MENU_CODIGO;
                       const capsOpen = expanded.has(mn.id);
                       const acoesDesteMenu = acoesDoMenu(mn.codigo);
                       const comAcoesExtras = acoesDesteMenu.length > 0;
@@ -697,7 +705,7 @@ function UserAccessPanel({ podeGerenciar, modulos, menus }: { podeGerenciar: boo
                       return (
                         <div key={mn.id}>
                           <div className={cn("flex items-center gap-2 px-12 py-2.5 hover:bg-muted/40", isPending && "bg-amber-50/50 dark:bg-amber-950/20")}>
-                            {(isForm || isReunioes) && podeGerenciar ? (
+                            {(isForm || isReunioes || isMaloteSetor) && podeGerenciar ? (
                               <button onClick={() => toggleExpand(mn.id)} className="text-muted-foreground" title="Permissões do usuário neste menu">
                                 {capsOpen ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
                               </button>
@@ -732,6 +740,11 @@ function UserAccessPanel({ podeGerenciar, modulos, menus }: { podeGerenciar: boo
                           {isReunioes && podeGerenciar && capsOpen && (
                             <div className="border-t border-border/60 bg-background px-12 py-2">
                               <ObservadorAutomaticoReuniao userId={selectedUserId} onToast={(m, t) => toast({ title: m, variant: t === "err" ? "destructive" : "default" })} />
+                            </div>
+                          )}
+                          {isMaloteSetor && podeGerenciar && capsOpen && (
+                            <div className="border-t border-border/60 bg-background px-12 py-2">
+                              <MaloteSetoresUsuario userId={selectedUserId} onToast={(m, t) => toast({ title: m, variant: t === "err" ? "destructive" : "default" })} />
                             </div>
                           )}
                           {comAcoesExtras && podeGerenciar && acoesOpen && (
@@ -1075,6 +1088,10 @@ function PessoasComAcessoAoMenu({ menuCodigo, podeGerenciar }: { menuCodigo: str
         )}
       </div>
 
+      {menuCodigo === MALOTE_APROVACOES_MENU_CODIGO && !carregando && (
+        <MaloteSetorPorModulo todasPessoas={profilesQ.data ?? []} temAcesso={dbHasAccess} podeGerenciar={podeGerenciar} />
+      )}
+
       {carregando && <p className="py-4 text-center text-xs text-muted-foreground">Carregando…</p>}
 
       {!carregando && (
@@ -1089,6 +1106,117 @@ function PessoasComAcessoAoMenu({ menuCodigo, podeGerenciar }: { menuCodigo: str
           {comAcesso.map(linhaPessoa)}
           {semAcesso.length > 0 && <CabecalhoGrupo rotulo="Sem acesso" quantidade={semAcesso.length} />}
           {semAcesso.map(linhaPessoa)}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── Setores por módulo (SIS-2026-0216, complemento do painel individual em
+// "Acesso por Usuário") — mesmo dado (malote_setor_visivel_usuario), eixo de
+// edição invertido: escolhe o Setor primeiro, depois marca quem das pessoas
+// já com acesso a Aprovações do Malote pertence a ele. Escreve exatamente a
+// mesma tabela que MaloteSetoresUsuario — não importa por qual tela a pessoa
+// foi marcada, o efeito na RLS é idêntico.
+function MaloteSetorPorModulo({ todasPessoas, temAcesso, podeGerenciar }: { todasPessoas: ProfileRow[]; temAcesso: (userId: string) => boolean; podeGerenciar: boolean }) {
+  const [setor, setSetor] = useState<string>("");
+  const [membrosSetor, setMembrosSetor] = useState<Set<string>>(new Set());
+  const [marcados, setMarcados] = useState<Set<string>>(new Set());
+  const [loading, setLoading] = useState(false);
+  const setoresCatalogoQ = useSetoresCatalogo();
+
+  // Quem é "do setor" vem de user_setor (o mesmo cadastro de Setor em
+  // Usuários) — não da lista de quem já tem acesso ao menu. Marcar aqui só
+  // grava a visibilidade (malote_setor_visivel_usuario); se a pessoa ainda
+  // não tem acesso à tela de Aprovações, o switch "COM ACESSO" abaixo mostra
+  // isso e precisa ser ligado separadamente pra ela conseguir entrar na tela.
+  useEffect(() => {
+    if (!setor) { setMembrosSetor(new Set()); setMarcados(new Set()); return; }
+    setLoading(true);
+    Promise.all([
+      (supabase as any).from("user_setor").select("user_id").eq("setor", setor),
+      (supabase as any).from("malote_setor_visivel_usuario").select("user_id").eq("setor", setor),
+    ]).then(([membros, visiveis]: any[]) => {
+      if (membros.error) toast({ title: "Erro ao carregar", description: membros.error.message, variant: "destructive" });
+      if (visiveis.error) toast({ title: "Erro ao carregar", description: visiveis.error.message, variant: "destructive" });
+      setMembrosSetor(new Set((membros.data ?? []).map((r: any) => r.user_id)));
+      setMarcados(new Set((visiveis.data ?? []).map((r: any) => r.user_id)));
+      setLoading(false);
+    });
+  }, [setor]);
+
+  const pessoasDoSetor = useMemo(() => {
+    const nomeDe = (p: ProfileRow) => p.display_name || p.email || p.id;
+    return todasPessoas
+      .filter((p) => membrosSetor.has(p.id))
+      .sort((a, b) => nomeDe(a).localeCompare(nomeDe(b), "pt-BR", { sensitivity: "base" }));
+  }, [todasPessoas, membrosSetor]);
+
+  const toggle = async (userId: string, novo: boolean) => {
+    if (!podeGerenciar) return;
+    if (novo) {
+      const { error } = await (supabase as any)
+        .from("malote_setor_visivel_usuario")
+        .insert({ user_id: userId, setor });
+      if (error) { toast({ title: "Erro", description: error.message, variant: "destructive" }); return; }
+    } else {
+      const { error } = await (supabase as any)
+        .from("malote_setor_visivel_usuario")
+        .delete().eq("user_id", userId).eq("setor", setor);
+      if (error) { toast({ title: "Erro", description: error.message, variant: "destructive" }); return; }
+    }
+    setMarcados((prev) => {
+      const next = new Set(prev);
+      if (novo) next.add(userId); else next.delete(userId);
+      return next;
+    });
+  };
+
+  return (
+    <div className="mb-3 rounded-md border border-border bg-muted/20 p-3">
+      <p className="mb-2 text-[11.5px] text-muted-foreground">
+        Restringir por setor: escolha um <b>Setor Responsável</b> (o mesmo campo da Classificação Malote). A
+        lista abaixo traz quem está cadastrado nesse setor em Usuários — marque quem deve ver SÓ as despesas
+        daquele setor em Aprovações e Meus Itens. Quem não for marcado em nenhum setor continua vendo tudo da
+        empresa, como hoje. Não muda quem aprova — Aprovador 1/2/3 continuam os mesmos.
+      </p>
+      <Select value={setor} onValueChange={setSetor}>
+        <SelectTrigger className="h-8 w-64 text-xs">
+          <SelectValue placeholder="Escolher setor…" />
+        </SelectTrigger>
+        <SelectContent>
+          {(setoresCatalogoQ.data ?? []).map((s: string) => (
+            <SelectItem key={s} value={s}>{s}</SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+
+      {setor && (
+        <div className="mt-2 max-h-56 divide-y divide-border/60 overflow-y-auto rounded-md border border-border bg-background">
+          {loading && <p className="px-3 py-3 text-center text-xs text-muted-foreground">Carregando…</p>}
+          {!loading && pessoasDoSetor.length === 0 && (
+            <p className="px-3 py-3 text-center text-xs text-muted-foreground">
+              Ninguém cadastrado no setor "{setor}" (Usuários → Setor).
+            </p>
+          )}
+          {!loading && pessoasDoSetor.map((p) => (
+            <div key={p.id} className="flex items-center gap-2 px-3 py-2 hover:bg-muted/40">
+              <div className="flex-1 min-w-0">
+                <p className="truncate text-sm">{p.display_name || p.email || p.id}</p>
+                {!temAcesso(p.id) && (
+                  <p className="truncate text-[11px] text-amber-600 dark:text-amber-500">
+                    sem acesso a este menu ainda — ligue o switch na lista abaixo também
+                  </p>
+                )}
+              </div>
+              <Switch
+                checked={marcados.has(p.id)}
+                disabled={!podeGerenciar}
+                onCheckedChange={(v) => toggle(p.id, v)}
+                aria-label={`${p.display_name || p.email} vê só o setor ${setor}`}
+              />
+            </div>
+          ))}
         </div>
       )}
     </div>
@@ -1148,6 +1276,69 @@ function ObservadorAutomaticoReuniao({ userId, onToast }: { userId: string; onTo
         </p>
       </div>
       <Switch checked={ativo} disabled={loading} onCheckedChange={toggle} aria-label="Observadora automática em reuniões de Comitê, Gerencial ou Diretoria" />
+    </div>
+  );
+}
+
+// ─── Malote: visão por Setor (SIS-2026-0216) ────────────────────────────
+// A mesma lista de setores vale tanto pra Aprovações do Malote quanto pra
+// Meus Itens — sem nenhum setor marcado, a pessoa continua vendo tudo da
+// empresa dela (comportamento anterior, sem regressão). Marcar 1+ setores
+// restringe a visão só a eles; não muda quem pode aprovar (isso continua
+// baseado no Aprovador 1/2/3 configurado na Classificação Malote).
+function MaloteSetoresUsuario({ userId, onToast }: { userId: string; onToast: (m: string, t?: string) => void }) {
+  const [setores, setSetores] = useState<Set<string>>(new Set());
+  const [loading, setLoading] = useState(true);
+  const setoresCatalogoQ = useSetoresCatalogo();
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    const { data } = await (supabase as any)
+      .from("malote_setor_visivel_usuario")
+      .select("setor")
+      .eq("user_id", userId);
+    setSetores(new Set((data ?? []).map((r: any) => r.setor as string)));
+    setLoading(false);
+  }, [userId]);
+  useEffect(() => { load(); }, [load]);
+
+  const aplicar = async (novaLista: string[]) => {
+    const novo = new Set(novaLista);
+    const paraAdicionar = novaLista.filter((s) => !setores.has(s));
+    const paraRemover = [...setores].filter((s) => !novo.has(s));
+    if (paraAdicionar.length) {
+      const { error } = await (supabase as any)
+        .from("malote_setor_visivel_usuario")
+        .insert(paraAdicionar.map((setor) => ({ user_id: userId, setor })));
+      if (error) { onToast("Erro: " + error.message, "err"); return; }
+    }
+    if (paraRemover.length) {
+      const { error } = await (supabase as any)
+        .from("malote_setor_visivel_usuario")
+        .delete()
+        .eq("user_id", userId)
+        .in("setor", paraRemover);
+      if (error) { onToast("Erro: " + error.message, "err"); return; }
+    }
+    setSetores(novo);
+  };
+
+  if (loading) return <div className="py-2 text-xs text-muted-foreground">Carregando setores...</div>;
+
+  return (
+    <div className="py-1">
+      <p className="mb-1.5 text-[11px] text-muted-foreground">
+        Setores que <b>este usuário</b> pode ver em Aprovações do Malote e Meus Itens (o setor vem do
+        campo <i>Setor Responsável</i> da Classificação Malote). Sem nenhum setor marcado, a pessoa
+        continua vendo <b>tudo</b> da empresa dela, como hoje. Marcar 1+ setores restringe a visão SÓ
+        a eles — não muda quem aprova (Aprovador 1/2/3 continuam os mesmos).
+      </p>
+      <SearchableMultiSelect
+        value={[...setores]}
+        onChange={aplicar}
+        options={(setoresCatalogoQ.data ?? []).map((s) => ({ value: s, label: s }))}
+        placeholder="Todos os setores (sem restrição)..."
+      />
     </div>
   );
 }

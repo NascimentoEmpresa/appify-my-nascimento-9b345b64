@@ -16,6 +16,7 @@ import {
 } from "@/components/ui/select";
 import { Bot, ShieldAlert, Plus, Trash2, Save, Power, Inbox, Info, MousePointerClick, FolderTree, Image as ImageIcon } from "lucide-react";
 import { MODELOS, PROVEDORES, DIAS, MENU_ACOES, RETOMADA_MAX_MIN, fmtMinutos, type WaBotConfig, type WaConhecimento, type WaMenu, type WaMenuOpcao, type WaMenuAcao, type WaPasta, type WaProvedor } from "./types";
+import { MensagensProntasCard } from "./MensagensProntasCard";
 import { SUPABASE_URL } from "@/integrations/supabase/env";
 
 const WEBHOOK_URL = `${SUPABASE_URL}/functions/v1/whatsapp-webhook`;
@@ -688,6 +689,8 @@ export default function WhatsAppChatbot() {
           </Card>
 
           <PastasCard pastas={pastas} />
+
+          <MensagensProntasCard />
 
           <PerfilNegocioCard />
 
