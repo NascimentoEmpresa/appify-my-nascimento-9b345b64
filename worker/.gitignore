@@ -1,0 +1,9 @@
+node_modules
+.env
+.wwebjs_auth
+.wwebjs_cache
+
+# Estado de execução do chamadosDev.js (cursor de eventos já processados,
+# contador diário e cópias de planos gerados) — é local de cada máquina,
+# nunca versionado.
+state/
