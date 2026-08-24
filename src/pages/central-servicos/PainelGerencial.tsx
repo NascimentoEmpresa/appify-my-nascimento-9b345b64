@@ -606,6 +606,18 @@ export default function PainelGerencial() {
         </div>
       </div>
 
+      {/* Painel sem nada para mostrar. A porta é aberta para todo mundo (o
+          recorte é da RLS e do podeVer), então quem não alcança resposta
+          nenhuma chega aqui — e um painel zerado, sem explicação, parece
+          defeito. Só aparece depois de carregar, senão pisca a cada troca. */}
+      {!loading && !permsLoading && formSel && respsForm.length === 0 && (
+        <div style={{ margin: "12px 24px 0", padding: "12px 16px", border: "1px solid #fde68a", borderRadius: 14, background: "#fffbeb", color: "#92400e", fontSize: 12.5, lineHeight: 1.5, flexShrink: 0 }}>
+          Nenhuma resposta deste formulário está visível para você. Ou ele ainda não tem respostas,
+          ou seu acesso não alcança nenhuma delas — quem define isso é o botão <b>Acesso</b> do
+          formulário e as permissões em Administração › Acesso por Usuário.
+        </div>
+      )}
+
       {/* Barra de filtros */}
       <div style={{ margin: "12px 24px 0", padding: "12px 16px", border: "1px solid #e2e8f0", borderRadius: 14, background: "#fff", boxShadow: "0 8px 24px rgba(15,23,42,.06)", flexShrink: 0 }}>
         {/* Em "Indicadores e Cálculos" não há número para filtrar — é o dicionário

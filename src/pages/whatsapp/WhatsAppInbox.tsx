@@ -8,6 +8,7 @@ import { novoUuid, erroDaFunction } from "@/lib/utils";
 import { HistoricoConversa } from "./HistoricoConversa";
 import { NovaConversa } from "./NovaConversa";
 import { FichaContato } from "./FichaContato";
+import { MenuMensagens, PreencherVariaveis, useMensagensProntas, useStatusNaMeta, type WaTemplate } from "./MenuMensagens";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -50,6 +51,17 @@ export default function WhatsAppInbox() {
   const [novaConversa, setNovaConversa] = useState(false);
   const [ficha, setFicha] = useState(false);
   const inputArquivo = useRef<HTMLInputElement>(null);
+  // Menu da "/": abre quando o campo COMEÇA com barra, e o que vem depois
+  // dela é o filtro. Só no começo — barra no meio de uma frase é barra.
+  const menuAberto = texto.startsWith("/") && !anexo;
+  const filtroMenu = menuAberto ? texto.slice(1) : "";
+  // Mensagem escolhida que ainda precisa das variáveis preenchidas.
+  const [preenchendo, setPreenchendo] = useState<WaTemplate | null>(null);
+  // O foco fica no textarea enquanto o menu está aberto; ele repassa ↑/↓/Enter
+  // para o menu por esta função, que o próprio menu registra aqui.
+  const navegarMenu = useRef<((e: React.KeyboardEvent) => boolean) | null>(null);
+  const { data: mensagensProntas = [] } = useMensagensProntas(podeVer);
+  const { data: statusMeta = {} } = useStatusNaMeta(podeVer);
   // Pasta aberta. Começa vazio e é resolvido assim que as pastas carregam: quem
   // tem "todas as conversas" abre nela; quem não tem, abre na primeira pasta
   // liberada — senão a tela abriria vazia sem explicar por quê.
@@ -230,6 +242,9 @@ export default function WhatsAppInbox() {
   const enviar = async () => {
     if (!sel || enviando) return;
     if (!texto.trim() && !anexo) return;
+    // Enquanto o menu da "/" está aberto o campo guarda o filtro, não uma
+    // mensagem — mandar "/saud" para o contato seria o pior desfecho.
+    if (texto.startsWith("/") && !anexo) return;
     setEnviando(true);
     try {
       let midia: { storage_path: string; mime_type: string; filename: string } | undefined;
@@ -256,6 +271,34 @@ export default function WhatsAppInbox() {
     } finally {
       setEnviando(false);
     }
+  };
+
+  // Mensagem pronta escolhida no menu da "/". Quem decide se vai como texto
+  // livre ou como template é a edge function, que consulta a janela de 24h no
+  // momento do envio — a daqui já pode estar velha.
+  const enviarPronta = async (t: WaTemplate, valores: string[]) => {
+    if (!sel || enviando) return;
+    setEnviando(true);
+    try {
+      const { error } = await supabase.functions.invoke("whatsapp-template-enviar", {
+        body: { conversa_id: sel.id, codigo: t.codigo, valores },
+      });
+      if (error) throw new Error(await erroDaFunction(error));
+      setTexto("");
+      setPreenchendo(null);
+      qc.invalidateQueries({ queryKey: ["wa-mensagens", sel.id] });
+      qc.invalidateQueries({ queryKey: ["wa-conversas"] });
+    } catch (e: any) {
+      toast({ title: "Falha ao enviar", description: String(e?.message ?? e), variant: "destructive" });
+    } finally {
+      setEnviando(false);
+    }
+  };
+
+  // Sem variável vai direto; com variável, o formulário primeiro.
+  const escolherPronta = (t: WaTemplate) => {
+    if (t.variaveis.length) { setPreenchendo(t); return; }
+    enviarPronta(t, []);
   };
 
   const filtradas = useMemo(() => {
@@ -313,6 +356,13 @@ export default function WhatsAppInbox() {
             )}
           </div>
         }
+      />
+
+      <PreencherVariaveis
+        mensagem={preenchendo}
+        enviando={enviando}
+        onCancelar={() => setPreenchendo(null)}
+        onConfirmar={(valores) => preenchendo && enviarPronta(preenchendo, valores)}
       />
 
       <NovaConversa
@@ -556,6 +606,16 @@ export default function WhatsAppInbox() {
               onDragOver={(e) => e.preventDefault()}
               onDrop={(e) => { e.preventDefault(); anexar(e.dataTransfer.files?.[0]); }}
             >
+              {menuAberto && (
+                <MenuMensagens
+                  filtro={filtroMenu}
+                  mensagens={mensagensProntas}
+                  status={statusMeta}
+                  onEscolher={escolherPronta}
+                  onFechar={() => setTexto("")}
+                  registrarNavegacao={(fn) => { navegarMenu.current = fn; }}
+                />
+              )}
               {anexo && <PreviaAnexo arquivo={anexo} onRemover={() => setAnexo(null)} />}
               <div className="flex items-end gap-2">
                 <input
@@ -571,12 +631,17 @@ export default function WhatsAppInbox() {
                 </Button>
                 <Textarea
                   rows={1} className="max-h-32 min-h-[40px] resize-none"
-                  placeholder={anexo ? "Legenda (opcional)…" : "Digite uma mensagem…"}
+                  placeholder={anexo ? "Legenda (opcional)…" : "Digite uma mensagem, ou / para as prontas…"}
                   value={texto} onChange={(e) => setTexto(e.target.value)}
                   onPaste={aoColar}
-                  onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); enviar(); } }}
+                  onKeyDown={(e) => {
+                    // Com o menu aberto, ↑/↓/Enter/Esc são dele — só o que
+                    // ele não usar cai no comportamento normal do campo.
+                    if (menuAberto && navegarMenu.current?.(e)) { e.preventDefault(); return; }
+                    if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); enviar(); }
+                  }}
                 />
-                <Button className="shrink-0 gap-1.5 bg-success text-success-foreground hover:bg-success/90" onClick={enviar} disabled={(!texto.trim() && !anexo) || enviando}>
+                <Button className="shrink-0 gap-1.5 bg-success text-success-foreground hover:bg-success/90" onClick={enviar} disabled={(!texto.trim() && !anexo) || menuAberto || enviando}>
                   {enviando
                     ? <><Loader2 className="h-4 w-4 animate-spin" /> Enviando…</>
                     : <><Send className="h-4 w-4" /> Enviar</>}
