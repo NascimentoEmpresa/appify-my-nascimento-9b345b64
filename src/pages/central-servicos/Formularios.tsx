@@ -98,7 +98,7 @@ const btn = (bg: string, c = "#fff", border = "none"): React.CSSProperties =>
 export default function Formularios() {
   const nav = useNavigate();
   const { user } = useAuth();
-  const { can, canVerAlguma, canVerAlgumaNoForm, canNoForm, canCriarSetor, setoresCriar, setor } = useFormPerms();
+  const { can, canVerAlgumaNoForm, canNoForm, canCriarSetor, setoresCriar, setor } = useFormPerms();
   // Flag "Botão de acessos de cada formulário" (migration 20260921000003): um
   // menu de capacidade em Administração › Acesso por Usuário. O toggle de lá
   // grava visualizar+incluir+alterar de uma vez; a RLS cobra 'incluir'.
@@ -415,8 +415,14 @@ export default function Formularios() {
           <div style={{ fontSize: 12, color: "#94a3b8", marginTop: 2 }}>Crie formulários e pesquisas, publique numa URL e acompanhe as respostas.</div>
         </div>
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-          {canVerAlguma && <button onClick={() => nav("/app/central-servicos/formularios/dashboard")} style={btn("#fff", "#475569", "1px solid #e2e8f0")}>📊 Dashboard</button>}
-          {canVerAlguma && <button onClick={() => nav("/app/central-servicos/formularios/painel")} style={btn("#0f3171")}>📈 Painel Gerencial</button>}
+          {/* Sempre visíveis. `canVerAlguma` só enxerga as capacidades GERAIS,
+              e desde a regra por formulário (20260921000002) dá para ver tudo
+              de UM formulário sem ter capacidade geral nenhuma — o botão sumia
+              justamente para quem acabou de ganhar acesso. Quem não pode ver
+              nada entra e encontra o painel vazio: o recorte é da RLS e do
+              `podeVer` lá dentro, não de esconder a porta. */}
+          <button onClick={() => nav("/app/central-servicos/formularios/dashboard")} style={btn("#fff", "#475569", "1px solid #e2e8f0")}>📊 Dashboard</button>
+          <button onClick={() => nav("/app/central-servicos/formularios/painel")} style={btn("#0f3171")}>📈 Painel Gerencial</button>
           {/* "Líderes por setor" foi centralizado na Administração → Módulos & Menus →
               Acesso por Usuário (regra geral por setor). */}
           {can("ver_lixeira") && <button onClick={abrirLixeira} style={btn("#fff", "#475569", "1px solid #e2e8f0")}>🗑 Lixeira</button>}
