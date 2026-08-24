@@ -635,6 +635,10 @@ export interface AprovarDespesaInput {
   informacoes_pagamento: string;
   data_pagamento: string;
   competencia: string; // "YYYY-MM"
+  // SIS-2026-0212 (complemento): Orçado/Utilizado calculados no client no
+  // momento da aprovação — o RPC só congela quando a despesa realmente sai
+  // do fluxo (não escala pro próximo nível).
+  rateio_snapshot?: { linha_id: string; orcado: number | null; utilizado_com_lancamento: number | null }[];
 }
 
 // Todas as mutations abaixo (aprovar/ajustar/reprovar despesa, aprovação
@@ -658,6 +662,7 @@ export function useAprovarDespesa() {
         _informacoes_pagamento: input.informacoes_pagamento,
         _data_pagamento: input.data_pagamento,
         _competencia: input.competencia + "-01",
+        _rateio_snapshot: input.rateio_snapshot ?? [],
       });
       if (error) throw error;
     },

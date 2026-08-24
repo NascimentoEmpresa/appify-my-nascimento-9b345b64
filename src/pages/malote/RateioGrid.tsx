@@ -70,6 +70,10 @@ interface RateioGridProps {
   resolverOrcado?: (classificacaoId: string | null | undefined, contratoId: string | null | undefined) => number | null;
   anoMesDespesa?: string;
   podeJustificarComoAprovador?: boolean;
+  // SIS-2026-0212 (complemento, pedido do Iury): despesa administrativa
+  // (linha sem contrato) não tem Analista — quem justifica o estouro é o
+  // próprio solicitante.
+  souSolicitante?: boolean;
 }
 
 export function RateioGrid({
@@ -94,6 +98,7 @@ export function RateioGrid({
   resolverOrcado,
   anoMesDespesa,
   podeJustificarComoAprovador,
+  souSolicitante,
 }: RateioGridProps) {
   const { data: empresas = [] } = useEmpresasGrupo();
   const { data: contratos = [] } = useContratosAtivos();
@@ -497,7 +502,7 @@ export function RateioGrid({
                       limiteJustificativaPct != null && percentualLinha != null && percentualLinha > limiteJustificativaPct;
                     const temJustificativa = !!linha.justificativa_texto;
                     const souAnalistaDesseContrato = !!linha.contrato_id && !!meusContratosAnalista?.has(linha.contrato_id);
-                    const podeJustificarEstaLinha = souAnalistaDesseContrato || podeJustificarComoAprovador;
+                    const podeJustificarEstaLinha = souAnalistaDesseContrato || podeJustificarComoAprovador || (!linha.contrato_id && !!souSolicitante);
                     return (
                       <>
                         <TableCell className="text-center text-xs">{fmtMoney(orcado)}</TableCell>
