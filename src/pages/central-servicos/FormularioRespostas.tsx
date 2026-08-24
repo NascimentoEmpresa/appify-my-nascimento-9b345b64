@@ -299,7 +299,7 @@ export default function FormularioRespostas() {
   const { id } = useParams();
   const nav = useNavigate();
   const { user } = useAuth();
-  const { can, canVerSetor, canCriarSetor, soProprias, loading: permsLoading } = useFormPerms();
+  const { can, canCriarSetor, canNoForm, canVerSetorNoForm, soPropriasNoForm, loading: permsLoading } = useFormPerms();
   const { empregado, loading: vincLoading } = useVinculoEmpregado();
   const [form, setForm] = useState<Formulario | null>(null);
   // Todas as perguntas como estão hoje no formulário (inclusive os blocos de
@@ -439,14 +439,14 @@ export default function FormularioRespostas() {
   //     Setor_ERP de quem respondeu, gravado em CS_FORM_RESPOSTAS.setor).
   const respsEscopo = useMemo(() => {
     if (!user) return [];
-    if (can("ver_tudo") || (form && canCriarSetor((form as any).setor))) return resps;
+    if (canNoForm(id, "ver_tudo") || (form && canCriarSetor((form as any).setor))) return resps;
     return resps.filter(r =>
-      (can("ver_proprias") && (
+      (canNoForm(id, "ver_proprias") && (
         (!!r.criado_por && r.criado_por === user.id) ||
         (!!meuNome && normNome(nomeRespondente(r)) === meuNome)
       ))
-      || canVerSetor(r.setor));
-  }, [resps, user, form, can, canVerSetor, canCriarSetor, meuNome, nomeRespondente]);
+      || canVerSetorNoForm(id, r.setor));
+  }, [resps, user, form, id, canNoForm, canVerSetorNoForm, canCriarSetor, meuNome, nomeRespondente]);
 
   // Opções dos filtros: saem das próprias respostas (só o que existe aparece).
   const opcoesResp = useMemo(
@@ -529,7 +529,7 @@ export default function FormularioRespostas() {
       <div style={{ flex: 1, overflowY: "auto", padding: "18px 24px 40px" }}>
         <div style={{ maxWidth: 860, margin: "0 auto", display: "flex", flexDirection: "column", gap: 14 }}>
           {respsEscopo.length === 0 ? (
-            <div style={{ ...card, textAlign: "center", color: "#94a3b8", padding: 50 }}>{soProprias ? "Você ainda não enviou nenhuma resposta a este formulário." : "Nenhuma resposta ainda. Compartilhe a URL pública do formulário."}</div>
+            <div style={{ ...card, textAlign: "center", color: "#94a3b8", padding: 50 }}>{soPropriasNoForm(id) ? "Você ainda não enviou nenhuma resposta a este formulário." : "Nenhuma resposta ainda. Compartilhe a URL pública do formulário."}</div>
           ) : respsFiltradas.length === 0 ? (
             <div style={{ ...card, textAlign: "center", color: "#94a3b8", padding: 40 }}>
               Nenhuma resposta bate com o filtro. <button onClick={limparFiltros} style={{ background: "none", border: "none", color: "#2563eb", fontWeight: 700, cursor: "pointer", fontSize: 12.5 }}>Limpar filtros</button>

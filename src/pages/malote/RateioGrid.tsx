@@ -1,15 +1,25 @@
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
+import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { SearchableSelect } from "@/components/ui/searchable-select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { Plus, Trash2 } from "lucide-react";
-import { RateioLinha } from "@/hooks/useMaloteDespesa";
+import { CheckCircle2, Eye, Pencil, Plus, Trash2, XCircle } from "lucide-react";
+import { toast } from "sonner";
+import { RateioLinha, useJustificarRateioLinha } from "@/hooks/useMaloteDespesa";
 import { useEmpresasGrupo, useContratosAtivos, useFornecedoresAtivos, useIntegrantes } from "@/hooks/useMaloteDespesa";
+import { useUtilizadoOrcamento } from "@/hooks/useUtilizadoOrcamento";
+import { useMeusContratosAnalista } from "@/hooks/useMaloteAnalistas";
 import { TipoClassificacaoOrcamento } from "@/hooks/usePlanejamentoOrcamentario";
+
+function fmtMoney(n: number | null | undefined): string {
+  if (n == null) return "—";
+  return n.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
+}
 
 export interface DimensoesRateio {
   empresa: boolean;
@@ -48,6 +58,22 @@ interface RateioGridProps {
   // representa o total da despesa (não usado em RatearClassificacao, que já
   // tem esse resumo no topo da tela).
   mostrarResumoValorTotal?: boolean;
+  // SIS-2026-0211 (complemento, pedido do Iury): o solicitante via a grade
+  // editável sem nenhuma informação de orçamento — só o aprovador via essas
+  // colunas na RateioAprovadorTable (read-only). Passando resolverOrcado a
+  // grade acrescenta, por linha, Valor Orçado/Utilizado/Status/Justificativa
+  // continuando editável — mesmo cálculo da RateioAprovadorTable. Presença de
+  // `resolverOrcado` decide se as colunas aparecem.
+  despesaId?: string;
+  classificacaoId?: string | null;
+  limiteJustificativaPct?: number | null;
+  resolverOrcado?: (classificacaoId: string | null | undefined, contratoId: string | null | undefined) => number | null;
+  anoMesDespesa?: string;
+  podeJustificarComoAprovador?: boolean;
+  // SIS-2026-0212 (complemento, pedido do Iury): despesa administrativa
+  // (linha sem contrato) não tem Analista — quem justifica o estouro é o
+  // próprio solicitante.
+  souSolicitante?: boolean;
 }
 
 export function RateioGrid({
@@ -66,11 +92,68 @@ export function RateioGrid({
   contratoPorClassificacao,
   classificacaoTipoUnica,
   mostrarResumoValorTotal,
+  despesaId,
+  classificacaoId,
+  limiteJustificativaPct,
+  resolverOrcado,
+  anoMesDespesa,
+  podeJustificarComoAprovador,
+  souSolicitante,
 }: RateioGridProps) {
   const { data: empresas = [] } = useEmpresasGrupo();
   const { data: contratos = [] } = useContratosAtivos();
   const { data: fornecedores = [] } = useFornecedoresAtivos();
   const { data: integrantes = [] } = useIntegrantes();
+  const { data: utilizadoLinhas = [] } = useUtilizadoOrcamento();
+  const { data: meusContratosAnalista } = useMeusContratosAnalista();
+  const justificar = useJustificarRateioLinha();
+
+  const [dialogLinha, setDialogLinha] = useState<RateioLinha | null>(null);
+  const [modoEdicaoJustificativa, setModoEdicaoJustificativa] = useState(false);
+  const [textoJustificativa, setTextoJustificativa] = useState("");
+  const [salvandoJustificativa, setSalvandoJustificativa] = useState(false);
+
+  const mostrarColunasOrcamento = !!resolverOrcado;
+
+  // Mesmo cálculo de "utilizado antes desta despesa" da RateioAprovadorTable
+  // — exclui a própria despesa (senão conta 2x: uma vez pela view, outra
+  // pelo valor da linha sendo editada agora).
+  const utilizadoAntesPorContrato = useMemo(() => {
+    const map = new Map<string, number>();
+    if (!mostrarColunasOrcamento) return map;
+    for (const u of utilizadoLinhas) {
+      if (u.despesa_id === despesaId) continue;
+      if (u.classificacao_id !== classificacaoId) continue;
+      if (!u.competencia || u.competencia.slice(0, 7) !== anoMesDespesa) continue;
+      const chave = u.contrato_id ?? "__sem_contrato__";
+      map.set(chave, (map.get(chave) ?? 0) + (Number(u.valor) || 0));
+    }
+    return map;
+  }, [mostrarColunasOrcamento, utilizadoLinhas, despesaId, classificacaoId, anoMesDespesa]);
+
+  function abrirDialogJustificativa(linha: RateioLinha, edicao: boolean) {
+    setDialogLinha(linha);
+    setModoEdicaoJustificativa(edicao);
+    setTextoJustificativa(linha.justificativa_texto ?? "");
+  }
+
+  async function salvarJustificativa() {
+    if (!dialogLinha?.id) return;
+    if (!textoJustificativa.trim()) {
+      toast.error("Descreva a justificativa.");
+      return;
+    }
+    setSalvandoJustificativa(true);
+    try {
+      await justificar.mutateAsync({ linhaId: dialogLinha.id, texto: textoJustificativa.trim() });
+      toast.success("Justificativa salva.");
+      setDialogLinha(null);
+    } catch (e: any) {
+      toast.error(e.message ?? "Erro ao salvar justificativa.");
+    } finally {
+      setSalvandoJustificativa(false);
+    }
+  }
 
   function tipoClassificacaoDaLinha(linha: RateioLinha): TipoClassificacaoOrcamento | null | undefined {
     if (mostrarClassificacao) {
@@ -226,6 +309,15 @@ export function RateioGrid({
               <TableHead>{ratearPor === "percentual" ? "% Rateio *" : "Valor (R$) *"}</TableHead>
               {dimensoes.fornecedor && <TableHead>Fornecedor (opcional)</TableHead>}
               {dimensoes.integrante && <TableHead>Integrante (opcional)</TableHead>}
+              {mostrarColunasOrcamento && (
+                <>
+                  <TableHead className="text-center">Valor orçado (mês)</TableHead>
+                  <TableHead className="text-center">Valor utilizado + lançamento (R$)</TableHead>
+                  <TableHead className="text-center">Status</TableHead>
+                  <TableHead className="text-center">Status justificativa</TableHead>
+                  <TableHead className="w-20 text-center">Justificativa</TableHead>
+                </>
+              )}
               <TableHead className="text-right">Ações</TableHead>
             </TableRow>
           </TableHeader>
@@ -233,7 +325,15 @@ export function RateioGrid({
             {linhas.length === 0 && (
               <TableRow>
                 <TableCell
-                  colSpan={2 + Number(mostrarColunaEmpresa) + Number(mostrarColunaContrato) + Number(dimensoes.fornecedor) + Number(dimensoes.integrante) + Number(!!mostrarClassificacao)}
+                  colSpan={
+                    2 +
+                    Number(mostrarColunaEmpresa) +
+                    Number(mostrarColunaContrato) +
+                    Number(dimensoes.fornecedor) +
+                    Number(dimensoes.integrante) +
+                    Number(!!mostrarClassificacao) +
+                    (mostrarColunasOrcamento ? 5 : 0)
+                  }
                   className="text-center text-muted-foreground py-6"
                 >
                   {nenhumaDimensao ? "Marque ao menos uma opção acima para começar." : "Nenhuma linha de rateio ainda."}
@@ -382,6 +482,76 @@ export function RateioGrid({
                     </Select>
                   </TableCell>
                 )}
+                {mostrarColunasOrcamento &&
+                  (() => {
+                    // SIS-2026-0212 (complemento): mesmo congelamento da
+                    // RateioAprovadorTable — na prática essa grade só
+                    // renderiza pra despesa ainda não paga (bloqueado=true
+                    // desliga rateioEPagamentoEditaveis), mas mantém
+                    // consistente caso isso mude.
+                    const estaCongelada = linha.congelado_em != null;
+                    const orcado = estaCongelada ? linha.orcado_snapshot ?? null : resolverOrcado!(classificacaoId, linha.contrato_id);
+                    const chave = linha.contrato_id ?? "__sem_contrato__";
+                    const utilizadoAntes = utilizadoAntesPorContrato.get(chave) ?? 0;
+                    const utilizadoComLancamento = estaCongelada
+                      ? linha.utilizado_com_lancamento_snapshot ?? 0
+                      : utilizadoAntes + (Number(linha.valor) || 0);
+                    const dentroDoOrcado = orcado == null ? null : utilizadoComLancamento <= orcado;
+                    const percentualLinha = orcado ? (utilizadoComLancamento / orcado) * 100 : null;
+                    const precisaJustificar =
+                      limiteJustificativaPct != null && percentualLinha != null && percentualLinha > limiteJustificativaPct;
+                    const temJustificativa = !!linha.justificativa_texto;
+                    const souAnalistaDesseContrato = !!linha.contrato_id && !!meusContratosAnalista?.has(linha.contrato_id);
+                    const podeJustificarEstaLinha = souAnalistaDesseContrato || podeJustificarComoAprovador || (!linha.contrato_id && !!souSolicitante);
+                    return (
+                      <>
+                        <TableCell className="text-center text-xs">{fmtMoney(orcado)}</TableCell>
+                        <TableCell className="text-center text-xs">
+                          {fmtMoney(utilizadoComLancamento)}
+                          {percentualLinha != null && <span className="text-muted-foreground"> ({percentualLinha.toFixed(2)}%)</span>}
+                        </TableCell>
+                        <TableCell>
+                          <div className="flex items-center justify-center">
+                            {dentroDoOrcado == null ? (
+                              <span className="text-xs text-muted-foreground">—</span>
+                            ) : dentroDoOrcado ? (
+                              <CheckCircle2 className="h-4 w-4 text-emerald-600" />
+                            ) : (
+                              <XCircle className="h-4 w-4 text-red-600" />
+                            )}
+                          </div>
+                        </TableCell>
+                        <TableCell>
+                          <div className="flex items-center justify-center">
+                            {precisaJustificar ? (
+                              <Badge variant="outline" className="border-amber-300 bg-amber-50 text-amber-700 dark:bg-amber-950/30 dark:text-amber-400">
+                                {temJustificativa ? "Justificada" : "Pendente"}
+                              </Badge>
+                            ) : (
+                              <span className="text-xs text-muted-foreground">N/A</span>
+                            )}
+                          </div>
+                        </TableCell>
+                        <TableCell>
+                          <div className="flex items-center justify-center gap-1">
+                            {temJustificativa && (
+                              <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => abrirDialogJustificativa(linha, false)}>
+                                <Eye className="h-3.5 w-3.5" />
+                              </Button>
+                            )}
+                            {precisaJustificar && podeJustificarEstaLinha && (
+                              <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => abrirDialogJustificativa(linha, true)}>
+                                <Pencil className="h-3.5 w-3.5" />
+                              </Button>
+                            )}
+                            {!temJustificativa && !(precisaJustificar && podeJustificarEstaLinha) && (
+                              <span className="text-xs text-muted-foreground">—</span>
+                            )}
+                          </div>
+                        </TableCell>
+                      </>
+                    );
+                  })()}
                 <TableCell className="text-right">
                   <Button variant="ghost" size="icon" className="h-7 w-7 text-destructive" onClick={() => removerLinha(idx)} disabled={disabled}>
                     <Trash2 className="h-3.5 w-3.5" />
@@ -392,6 +562,38 @@ export function RateioGrid({
           </TableBody>
         </Table>
       </div>
+
+      {mostrarColunasOrcamento && (
+        <Dialog open={!!dialogLinha} onOpenChange={(open) => !open && setDialogLinha(null)}>
+          <DialogContent className="sm:max-w-md p-5">
+            <DialogHeader>
+              <DialogTitle className="text-base">{modoEdicaoJustificativa ? "Justificar linha do rateio" : "Justificativa"}</DialogTitle>
+            </DialogHeader>
+            {modoEdicaoJustificativa ? (
+              <textarea
+                value={textoJustificativa}
+                onChange={(e) => setTextoJustificativa(e.target.value.slice(0, 500))}
+                placeholder="Descreva o motivo desta linha ultrapassar o limite de justificativa..."
+                className="w-full min-h-24 rounded-md border border-input bg-background p-2 text-sm"
+                maxLength={500}
+                autoFocus
+              />
+            ) : (
+              <p className="text-sm whitespace-pre-wrap">{dialogLinha?.justificativa_texto}</p>
+            )}
+            {modoEdicaoJustificativa && (
+              <DialogFooter>
+                <Button variant="outline" size="sm" onClick={() => setDialogLinha(null)} disabled={salvandoJustificativa}>
+                  Cancelar
+                </Button>
+                <Button size="sm" onClick={salvarJustificativa} disabled={salvandoJustificativa}>
+                  {salvandoJustificativa ? "Salvando..." : "Salvar justificativa"}
+                </Button>
+              </DialogFooter>
+            )}
+          </DialogContent>
+        </Dialog>
+      )}
 
       {!disabled && (
         <Button variant="outline" size="sm" onClick={adicionarLinha} disabled={nenhumaDimensao} className="gap-1.5">

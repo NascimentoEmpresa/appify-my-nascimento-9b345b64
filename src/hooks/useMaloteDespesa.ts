@@ -106,6 +106,15 @@ export interface RateioLinha {
   justificativa_texto?: string | null;
   justificativa_por?: string | null;
   justificativa_em?: string | null;
+  // SIS-2026-0212 (complemento): "congela" Orçado/Utilizado no momento do
+  // pagamento (malote_pagar_despesa) — sem isso, o Orçado/Utilizado exibido
+  // recalculava pra sempre contra despesas lançadas depois, e uma despesa
+  // já paga passava a aparecer "fora do orçado" por causa de lançamentos
+  // que nem existiam quando ela foi paga. congelado_em != null decide se a
+  // tela usa o snapshot em vez de recalcular ao vivo.
+  orcado_snapshot?: number | null;
+  utilizado_com_lancamento_snapshot?: number | null;
+  congelado_em?: string | null;
 }
 
 export interface Parcela {
@@ -142,6 +151,7 @@ export interface MaloteDespesaRow {
   justificativa_aprovacao: string | null;
   motivo_ajuste: string | null;
   excecao: boolean;
+  justificativa_excecao: string | null;
   // ── Cotação (SIS-2026-0112, Suprimentos escreve via RPCs sup_malote_*) ──
   cot1_fornecedor: string | null;
   cot1_valor: number | null;
@@ -227,7 +237,7 @@ const DESPESA_KEY = "malote_despesa";
 const DESPESA_COLUMNS =
   "id, numero, empresa_id, classificacao_id, origem, status, nome, valor_total, motivo, descricao, links, tipo_movimento, tipo, contrato_id, " +
   "data_pagamento, competencia, forma_pagamento, informacoes_pagamento, parcelado, numero_parcelas, dia_desconto, " +
-  "nivel_aprovacao_atual, valor_aprovado_cotacao, valor_aprovado, justificativa_aprovacao, motivo_ajuste, excecao, " +
+  "nivel_aprovacao_atual, valor_aprovado_cotacao, valor_aprovado, justificativa_aprovacao, motivo_ajuste, excecao, justificativa_excecao, " +
   "cot1_fornecedor, cot1_valor, cot1_prazo, cot1_link, cot1_anexo_path, cot1_anexo_nome, " +
   "cot2_fornecedor, cot2_valor, cot2_prazo, cot2_link, cot2_anexo_path, cot2_anexo_nome, " +
   "cot3_fornecedor, cot3_valor, cot3_prazo, cot3_link, cot3_anexo_path, cot3_anexo_nome, " +
@@ -309,17 +319,68 @@ export function useNomeUsuario(userId: string | null | undefined) {
 }
 
 // ── Despesas ──────────────────────────────────────────────────────────
+
+// Setores liberados para um usuário em Aprovações/Meus Itens do Malote
+// (SIS-2026-0216, Gerenciamento de Acesso). Lista vazia = sem recorte = vê
+// tudo da empresa (default, mesmo comportamento de antes desta feature).
+export function useMaloteSetoresVisiveis(userId: string | null | undefined) {
+  return useQuery({
+    queryKey: ["malote_setor_visivel_usuario", userId],
+    enabled: !!userId,
+    staleTime: 60_000,
+    queryFn: async () => {
+      const { data, error } = await (supabase as any)
+        .from("malote_setor_visivel_usuario")
+        .select("setor")
+        .eq("user_id", userId)
+        .order("setor");
+      if (error) throw error;
+      return (data ?? []).map((r: any) => r.setor as string);
+    },
+  });
+}
+
 export function useMinhasDespesas() {
   return useQuery({
     queryKey: [DESPESA_KEY, "minhas"],
     queryFn: async () => {
       const { data: u } = await supabase.auth.getUser();
       if (!u.user) return [];
-      const { data, error } = await (supabase as any)
+
+      // SIS-2026-0216: além do que a pessoa criou, ela pode ter setores
+      // liberados em Gerenciamento de Acesso (mesma lista usada em
+      // Aprovações do Malote — malote_setor_visivel_usuario). Sem nenhum
+      // setor configurado, mantém o comportamento anterior (só o que ela
+      // criou); a RLS de malote_despesa já impõe o resto da regra (mesma
+      // empresa) — aqui é só montar o filtro pra ele aparecer.
+      const { data: setoresRows, error: setoresErr } = await (supabase as any)
+        .from("malote_setor_visivel_usuario")
+        .select("setor")
+        .eq("user_id", u.user.id);
+      if (setoresErr) throw setoresErr;
+      const setores = (setoresRows ?? []).map((r: any) => r.setor as string);
+
+      let query = (supabase as any)
         .from("malote_despesa")
         .select(DESPESA_COLUMNS)
-        .eq("created_by", u.user.id)
         .order("created_at", { ascending: false });
+
+      if (setores.length === 0) {
+        query = query.eq("created_by", u.user.id);
+      } else {
+        const { data: classRows, error: classErr } = await (supabase as any)
+          .from("planejamento_orcamentario_classificacao")
+          .select("id")
+          .in("setor_responsavel", setores);
+        if (classErr) throw classErr;
+        const classIds = (classRows ?? []).map((r: any) => r.id as string);
+
+        const orParts = [`created_by.eq.${u.user.id}`];
+        if (classIds.length > 0) orParts.push(`classificacao_id.in.(${classIds.join(",")})`);
+        query = query.or(orParts.join(","));
+      }
+
+      const { data, error } = await query;
       if (error) throw error;
       return (data ?? []) as MaloteDespesaRow[];
     },
@@ -375,6 +436,10 @@ export interface SalvarDespesaInput {
   rateio?: RateioLinha[];
   parcelas?: Parcela[];
   nivel_aprovacao_atual?: 1 | 2 | 3 | null;
+  // SIS-2026-0211: marca a despesa como exceção — passa por cima do
+  // bloqueio de dia (data_pagamento em dia bloqueado), só pra ela.
+  excecao?: boolean;
+  justificativa_excecao?: string | null;
 }
 
 export function useSalvarDespesa() {
@@ -511,13 +576,19 @@ export function useMandarParaAprovacaoNovamente() {
   const qc = useQueryClient();
   const salvar = useSalvarDespesa();
   return useMutation({
-    mutationFn: async (input: SalvarDespesaInput) => {
+    // SIS-2026-0211 (complemento, pedido do Iury): "descricaoEvento" é um
+    // resumo do que mudou (rateio, forma de pagamento, etc.), calculado pelo
+    // chamador antes de reenviar — vai só pro histórico, nunca pra
+    // malote_despesa (por isso é destructured fora do resto do input, que
+    // vira despesaFields no useSalvarDespesa).
+    mutationFn: async (input: SalvarDespesaInput & { descricaoEvento?: string | null }) => {
+      const { descricaoEvento, ...resto } = input;
       const despesaId = await salvar.mutateAsync({
-        ...input,
+        ...resto,
         status: "pendente_aprovacao",
       });
       await (supabase as any).from("malote_despesa").update({ nivel_aprovacao_atual: 1, motivo_ajuste: null }).eq("id", despesaId);
-      await registrarEventoDespesa(despesaId, "reenvio_aprovacao", null, 1);
+      await registrarEventoDespesa(despesaId, "reenvio_aprovacao", descricaoEvento ?? null, 1);
       return despesaId;
     },
     onSuccess: () => qc.invalidateQueries({ queryKey: [DESPESA_KEY] }),
@@ -548,6 +619,18 @@ export function useConverterSolicitacaoEmDespesa() {
 
 // ── Fluxo de aprovação da despesa (N1/N2/N3, ajuste, reprovação) ────────
 // SIS-2026-0132 Fase 1.
+/**
+ * Nº legível da despesa (DM-2026-0026). É o banco que gera no insert, e o
+ * `useSalvarDespesa` devolve só o id — mudar o retorno dele mexeria em todos
+ * os chamadores, então quem precisa do número o busca por aqui.
+ */
+export async function buscarNumeroDespesa(id: string): Promise<string | null> {
+  if (!id) return null;
+  const { data } = await (supabase as any)
+    .from("malote_despesa").select("numero").eq("id", id).maybeSingle();
+  return (data?.numero as string | undefined) ?? null;
+}
+
 export function aprovadorDoNivel(despesa: MaloteDespesaRow, nivel: 1 | 2 | 3): string | null {
   const c = despesa.classificacao;
   if (!c) return null;
@@ -603,6 +686,10 @@ export interface AprovarDespesaInput {
   informacoes_pagamento: string;
   data_pagamento: string;
   competencia: string; // "YYYY-MM"
+  // SIS-2026-0212 (complemento): Orçado/Utilizado calculados no client no
+  // momento da aprovação — o RPC só congela quando a despesa realmente sai
+  // do fluxo (não escala pro próximo nível).
+  rateio_snapshot?: { linha_id: string; orcado: number | null; utilizado_com_lancamento: number | null }[];
 }
 
 // Todas as mutations abaixo (aprovar/ajustar/reprovar despesa, aprovação
@@ -626,6 +713,7 @@ export function useAprovarDespesa() {
         _informacoes_pagamento: input.informacoes_pagamento,
         _data_pagamento: input.data_pagamento,
         _competencia: input.competencia + "-01",
+        _rateio_snapshot: input.rateio_snapshot ?? [],
       });
       if (error) throw error;
     },
@@ -711,6 +799,11 @@ export interface PagarDespesaInput {
   data_pagamento: string;
   comprovante_path: string;
   observacao: string | null;
+  // SIS-2026-0212 (complemento): Orçado/Utilizado calculados no client no
+  // momento do pagamento (mesma lógica de useOrcadoClassificacao/
+  // RateioAprovadorTable), gravados por linha via malote_pagar_despesa —
+  // só registro histórico, não é dado de segurança.
+  rateio_snapshot?: { linha_id: string; orcado: number | null; utilizado_com_lancamento: number | null }[];
 }
 
 export function usePagarDespesa() {
@@ -722,6 +815,7 @@ export function usePagarDespesa() {
         _data_pagamento: input.data_pagamento,
         _comprovante_path: input.comprovante_path,
         _observacao: input.observacao,
+        _rateio_snapshot: input.rateio_snapshot ?? [],
       });
       if (error) throw error;
     },

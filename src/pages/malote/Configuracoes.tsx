@@ -181,7 +181,25 @@ export default function Configuracoes() {
                     <span className="font-medium">Impedir lançamento em dias bloqueados</span>
                     <br />
                     <span className="text-xs text-muted-foreground">
-                      Não será permitido incluir despesas com data de vencimento em dias bloqueados.
+                      Não será permitido incluir nem aprovar despesas com data de vencimento em dias bloqueados.
+                    </span>
+                  </span>
+                </label>
+                <label className="flex items-start gap-2 text-sm cursor-pointer mt-3">
+                  <Checkbox
+                    checked={form.bloqueio_fins_de_semana}
+                    onCheckedChange={(checked) =>
+                      setForm((f) => (f ? { ...f, bloqueio_fins_de_semana: checked === true } : f))
+                    }
+                    disabled={!podeEditar}
+                  />
+                  <span>
+                    <span className="font-medium">Bloquear sábados e domingos</span>
+                    <br />
+                    <span className="text-xs text-muted-foreground">
+                      Todo fim de semana passa a contar como dia bloqueado. Pra abrir uma exceção pontual (alguém
+                      precisar lançar despesa num sábado/domingo específico), cadastre esse dia em "Dias Bloqueados
+                      Cadastrados" abaixo marcando "Liberar este dia".
                     </span>
                   </span>
                 </label>
@@ -469,6 +487,7 @@ interface DiaBloqueadoForm {
   data: string;
   tipo: string;
   descricao: string;
+  liberado: boolean;
 }
 
 function DiasBloqueadosSection({ podeEditar }: { podeEditar: boolean }) {
@@ -510,13 +529,13 @@ function DiasBloqueadosSection({ podeEditar }: { podeEditar: boolean }) {
   );
 
   function abrirNovo() {
-    setEditando({ data: "", tipo: "", descricao: "" });
+    setEditando({ data: "", tipo: "", descricao: "", liberado: false });
     setNovoTipo("");
     setOpen(true);
   }
 
   function abrirEditar(d: MaloteDiaBloqueado) {
-    setEditando({ id: d.id, data: d.data, tipo: d.tipo, descricao: d.descricao ?? "" });
+    setEditando({ id: d.id, data: d.data, tipo: d.tipo, descricao: d.descricao ?? "", liberado: d.liberado });
     setNovoTipo("");
     setOpen(true);
   }
@@ -536,6 +555,7 @@ function DiasBloqueadosSection({ podeEditar }: { podeEditar: boolean }) {
         data: editando.data,
         tipo: editando.tipo,
         descricao: editando.descricao.trim() || null,
+        liberado: editando.liberado,
       });
       toast.success("Dia bloqueado salvo.");
       setOpen(false);
@@ -599,20 +619,21 @@ function DiasBloqueadosSection({ podeEditar }: { podeEditar: boolean }) {
               <TableHead className="h-9 py-2">Data</TableHead>
               <TableHead className="h-9 py-2">Tipo</TableHead>
               <TableHead className="h-9 py-2">Descrição</TableHead>
+              <TableHead className="h-9 py-2">Status</TableHead>
               {podeEditar && <TableHead className="h-9 py-2 text-right">Ações</TableHead>}
             </TableRow>
           </TableHeader>
           <TableBody>
             {isLoading && (
               <TableRow>
-                <TableCell colSpan={4} className="text-center text-muted-foreground py-4">
+                <TableCell colSpan={5} className="text-center text-muted-foreground py-4">
                   Carregando...
                 </TableCell>
               </TableRow>
             )}
             {!isLoading && filtrados.length === 0 && (
               <TableRow>
-                <TableCell colSpan={4} className="text-center text-muted-foreground py-4">
+                <TableCell colSpan={5} className="text-center text-muted-foreground py-4">
                   Nenhum dia bloqueado cadastrado.
                 </TableCell>
               </TableRow>
@@ -622,6 +643,17 @@ function DiasBloqueadosSection({ podeEditar }: { podeEditar: boolean }) {
                 <TableCell className="py-1.5">{new Date(d.data + "T00:00:00").toLocaleDateString("pt-BR")}</TableCell>
                 <TableCell className="py-1.5">{d.tipo}</TableCell>
                 <TableCell className="py-1.5 text-muted-foreground">{d.descricao ?? "—"}</TableCell>
+                <TableCell className="py-1.5">
+                  {d.liberado ? (
+                    <span className="inline-flex items-center rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-medium text-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-300">
+                      Liberado
+                    </span>
+                  ) : (
+                    <span className="inline-flex items-center rounded-full bg-red-100 px-2 py-0.5 text-xs font-medium text-red-800 dark:bg-red-950/40 dark:text-red-300">
+                      Bloqueado
+                    </span>
+                  )}
+                </TableCell>
                 {podeEditar && (
                   <TableCell className="py-1.5 text-right">
                     <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => abrirEditar(d)}>
@@ -723,6 +755,20 @@ function DiasBloqueadosSection({ podeEditar }: { podeEditar: boolean }) {
                 onChange={(e) => setEditando((v) => (v ? { ...v, descricao: e.target.value } : v))}
               />
             </div>
+            <label className="flex items-start gap-2 text-sm cursor-pointer">
+              <Checkbox
+                checked={editando?.liberado ?? false}
+                onCheckedChange={(checked) => setEditando((v) => (v ? { ...v, liberado: checked === true } : v))}
+              />
+              <span>
+                <span className="font-medium">Liberar este dia</span>
+                <br />
+                <span className="text-xs text-muted-foreground">
+                  Marque só pra abrir uma exceção pontual num sábado/domingo (ou outro dia normalmente bloqueado).
+                  Deixe desmarcado pro uso padrão (bloquear essa data).
+                </span>
+              </span>
+            </label>
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setOpen(false)}>

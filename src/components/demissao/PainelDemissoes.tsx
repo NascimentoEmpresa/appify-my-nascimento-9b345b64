@@ -17,6 +17,7 @@ import {
 import {
   CheckCircle2, Clock, Download, FileText, Loader2, Search, ThumbsDown, ThumbsUp, XCircle,
 } from "lucide-react";
+import { ConversaSolicitacao } from "@/components/solicitacoes/ConversaSolicitacao";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 
@@ -384,6 +385,14 @@ function DetalheSolicitacao({ solicitacao, etapa, quemSou, onFechar, onDecidir }
             </Button>
           </div>
         )}
+
+        {/* Quem pediu a demissão escreve do lado dele, em Minhas Solicitações.
+            É o mesmo fio — sem este bloco, o encarregado perguntava e nem o
+            Operacional nem o RH viam. */}
+        <ConversaSolicitacao
+          modulo="demissao" entidadeId={s.id}
+          aviso="Quem solicitou lê e responde por Encarregados › Minhas Solicitações. Operacional e RH veem a mesma conversa."
+        />
       </DialogContent>
     </Dialog>
   );

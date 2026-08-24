@@ -44,6 +44,10 @@ export function MapaPatrimonios({
   const camadaRef = useRef<L.LayerGroup | null>(null);
   const [buscando, setBuscando] = useState<{ feitos: number; total: number } | null>(null);
   const [recado, setRecado] = useState<string | null>(null);
+  // Expandir NÃO remonta o mapa: só troca o tamanho do container. Se a caixa
+  // do mapa fosse renderizada noutro ramo da árvore, o Leaflet perderia a
+  // instância e a tela voltaria ao zoom inicial a cada abertura.
+  const [expandido, setExpandido] = useState(false);
 
   // Quem já tem coordenada vira pino próprio; o resto continua no pino da
   // cidade, para não sumir do mapa enquanto ninguém localizou.
@@ -128,6 +132,22 @@ export function MapaPatrimonios({
     setTimeout(() => mapa.invalidateSize(), 60);   // o card só ganha altura depois de montar
   }, [assinatura]);   // eslint-disable-line react-hooks/exhaustive-deps
 
+  // O container muda de tamanho ao expandir; sem avisar o Leaflet, o mapa
+  // continua desenhando no tamanho antigo e sobra cinza na tela cheia.
+  useEffect(() => {
+    if (!mapaRef.current) return;
+    const t = setTimeout(() => mapaRef.current?.invalidateSize(), 90);
+    return () => clearTimeout(t);
+  }, [expandido]);
+
+  // Esc fecha — é o que se espera de qualquer coisa em tela cheia.
+  useEffect(() => {
+    if (!expandido) return;
+    const aoTeclar = (e: KeyboardEvent) => { if (e.key === "Escape") setExpandido(false); };
+    window.addEventListener("keydown", aoTeclar);
+    return () => window.removeEventListener("keydown", aoTeclar);
+  }, [expandido]);
+
   useEffect(() => () => { mapaRef.current?.remove(); mapaRef.current = null; }, []);
 
   /**
@@ -163,10 +183,36 @@ export function MapaPatrimonios({
 
   const cidadesLegenda = [...new Set(patrimonios.map(p => String(p.cidade ?? "").trim()).filter(Boolean))].sort();
 
+  const botaoExpandir = (
+    <button
+      type="button" onClick={() => setExpandido(v => !v)}
+      title={expandido ? "Fechar a tela cheia (Esc)" : "Ver o mapa em tela cheia"}
+      style={{
+        position: "absolute", top: 10, right: 10, zIndex: 500,
+        display: "inline-flex", alignItems: "center", gap: 6,
+        padding: "6px 11px", borderRadius: 9, cursor: "pointer",
+        border: "1px solid #cbd5e1", background: "#fff", color: "#0f3171",
+        fontSize: 11.5, fontWeight: 800, boxShadow: "0 4px 14px rgba(15,23,42,.14)",
+      }}>
+      {expandido ? "✕ Fechar" : "⤢ Expandir"}
+    </button>
+  );
+
   return (
-    <div style={{ display: "flex", gap: 12, alignItems: "stretch", flexWrap: "wrap" }}>
-      <div ref={caixaRef} style={{ flex: 1, minWidth: 280, height: 260, borderRadius: 12, overflow: "hidden", border: "1px solid #e2e8f0" }} />
-      <div style={{ width: 210, background: "#fff", border: "1px solid #e2e8f0", borderRadius: 12, padding: "12px 14px", display: "flex", flexDirection: "column" }}>
+    <div
+      style={expandido
+        // Tela cheia por cima do resto: o mapa cresce, e a legenda vem junto —
+        // pino sem cidade ao lado não diz de quem é.
+        ? {
+          position: "fixed", inset: 0, zIndex: 1200, background: "#f5f7fb",
+          padding: 14, display: "flex", gap: 12, alignItems: "stretch",
+        }
+        : { display: "flex", gap: 12, alignItems: "stretch", flexWrap: "wrap" }}>
+      <div style={{ position: "relative", flex: 1, minWidth: expandido ? 0 : 280 }}>
+        <div ref={caixaRef} style={{ height: expandido ? "100%" : 260, borderRadius: 12, overflow: "hidden", border: "1px solid #e2e8f0" }} />
+        {botaoExpandir}
+      </div>
+      <div style={{ width: 210, flexShrink: 0, background: "#fff", border: "1px solid #e2e8f0", borderRadius: 12, padding: "12px 14px", display: "flex", flexDirection: "column", overflowY: "auto" }}>
         <div style={{ fontSize: 11, fontWeight: 800, color: "#94a3b8", textTransform: "uppercase", letterSpacing: ".5px", marginBottom: 8 }}>Cidades</div>
         {cidadesLegenda.length === 0 ? (
           <div style={{ fontSize: 12, color: "#94a3b8" }}>Nenhuma cidade no recorte.</div>

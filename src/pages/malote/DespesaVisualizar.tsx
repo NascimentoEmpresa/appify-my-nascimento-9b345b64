@@ -39,11 +39,14 @@ import {
   TipoEvento,
 } from "@/hooks/useMaloteDespesa";
 import { useOrcadoClassificacao } from "@/hooks/useOrcadoClassificacao";
+import { useUtilizadoOrcamento } from "@/hooks/useUtilizadoOrcamento";
 import { anoMesAtual } from "@/hooks/usePlanilhaCusto";
 import { RateioGrid, DimensoesRateio } from "./RateioGrid";
 import { RateioAprovadorTable } from "./RateioAprovadorTable";
 import { FluxoAprovacaoVisual } from "./FluxoAprovacaoVisual";
 import { ExcluirPermanentementeButton } from "./ExcluirPermanentementeButton";
+import { DiaPagamentoPicker } from "./DiaPagamentoPicker";
+import { ExcecaoDiaBloqueadoField } from "./ExcecaoDiaBloqueadoField";
 
 const TIPO_SOLICITACAO_LABEL: Record<TipoSolicitacao, string> = {
   administrativo: "Administrativo",
@@ -58,6 +61,48 @@ const FORMA_PAGAMENTO_LABEL: Record<string, string> = {
   cartao: "Cartão",
   dinheiro: "Dinheiro",
 };
+
+function fmtMoneyResumo(n: number | null | undefined): string {
+  if (n == null) return "—";
+  return n.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
+}
+
+function fmtDataResumo(v: string | null | undefined): string {
+  if (!v) return "—";
+  return new Date(v + "T00:00:00").toLocaleDateString("pt-BR");
+}
+
+// SIS-2026-0211 (complemento, pedido do Iury): resumo do que mudou no
+// reenvio, pra ficar no Histórico junto do evento "Reenviada para
+// aprovação" — sem isso, o histórico só dizia QUE foi reenviado, nunca O
+// QUE mudou. Compara campo a campo (não linha a linha de input), pra não
+// virar um log de cada tecla digitada.
+function resumoAlteracoesRateio(antigo: RateioLinha[], novo: RateioLinha[], contratos: { id: string; nome: string }[]): string[] {
+  const nomeContrato = (id: string | null | undefined) => (id ? contratos.find((c) => c.id === id)?.nome ?? "contrato removido" : "sem contrato");
+  const antigosPorId = new Map(antigo.filter((l) => l.id).map((l) => [l.id as string, l]));
+  const idsNovos = new Set(novo.filter((l) => l.id).map((l) => l.id as string));
+  const linhas: string[] = [];
+
+  for (const l of novo) {
+    const anterior = l.id ? antigosPorId.get(l.id) : undefined;
+    if (!anterior) {
+      linhas.push(`Rateio: linha adicionada (${nomeContrato(l.contrato_id)}, ${fmtMoneyResumo(l.valor)})`);
+      continue;
+    }
+    if (Number(anterior.valor) !== Number(l.valor)) {
+      linhas.push(`Rateio (${nomeContrato(l.contrato_id)}): valor ${fmtMoneyResumo(anterior.valor)} → ${fmtMoneyResumo(l.valor)}`);
+    }
+    if ((anterior.contrato_id ?? null) !== (l.contrato_id ?? null)) {
+      linhas.push(`Rateio: contrato ${nomeContrato(anterior.contrato_id)} → ${nomeContrato(l.contrato_id)}`);
+    }
+  }
+  for (const l of antigo) {
+    if (l.id && !idsNovos.has(l.id)) {
+      linhas.push(`Rateio: linha removida (${nomeContrato(l.contrato_id)}, ${fmtMoneyResumo(l.valor)})`);
+    }
+  }
+  return linhas;
+}
 
 // Mesmo texto usado no FluxoAprovacaoVisual (EVENTO_META), duplicado aqui
 // de propósito — o Histórico é uma lista bruta e cronológica de TODOS os
@@ -95,7 +140,7 @@ function LinhaHistorico({ evento, criadoPor }: { evento: DespesaEvento; criadoPo
           {papel}
         </p>
         <p className="text-xs text-muted-foreground">{nomeAtor ?? "—"}</p>
-        {evento.descricao && <p className="text-muted-foreground text-xs">{evento.descricao}</p>}
+        {evento.descricao && <p className="text-muted-foreground text-xs whitespace-pre-line">{evento.descricao}</p>}
         <p className="text-xs text-muted-foreground">{new Date(evento.created_at).toLocaleString("pt-BR")}</p>
       </div>
     </div>
@@ -145,6 +190,35 @@ function TileDestaque({ label, valor, icon, cor }: { label: string; valor: strin
   );
 }
 
+// SIS-2026-0212: o comprovante anexado pelo financeiro no pagamento
+// (comprovante_pagamento_path, via malote_pagar_despesa) nunca aparecia em
+// lugar nenhum depois de salvo — só existia dentro do banco. Mesmo visual
+// do TileDestaque, mas clicável (abre o anexo) e com fundo verde de
+// propósito, pra ficar destacado igual pedido.
+function TileComprovante({ label, onClick }: { label: string; onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="relative overflow-hidden rounded-lg border border-emerald-300 bg-emerald-50 dark:border-emerald-800 dark:bg-emerald-950/30 p-3 text-left transition hover:bg-emerald-100 dark:hover:bg-emerald-950/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500"
+    >
+      <div
+        className="pointer-events-none absolute right-0 top-1/2 -translate-y-1/2 translate-x-1"
+        style={{
+          WebkitMaskImage: "linear-gradient(to left, black 0%, black 30%, rgba(0,0,0,0.6) 60%, transparent 100%)",
+          maskImage: "linear-gradient(to left, black 0%, black 30%, rgba(0,0,0,0.6) 60%, transparent 100%)",
+        }}
+      >
+        <span className="[&>svg]:h-14 [&>svg]:w-14 text-emerald-300 dark:text-emerald-800">
+          <Paperclip />
+        </span>
+      </div>
+      <p className="relative z-10 text-[10px] uppercase tracking-wide text-emerald-700 dark:text-emerald-400">Comprovante de pagamento</p>
+      <p className="relative z-10 text-base font-semibold mt-0.5 truncate max-w-[85%] text-emerald-900 dark:text-emerald-200">{label}</p>
+    </button>
+  );
+}
+
 export default function DespesaVisualizar() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
@@ -152,6 +226,7 @@ export default function DespesaVisualizar() {
   const { data, isLoading } = useDespesa(id);
   const { data: eventos = [] } = useDespesaEventos(id);
   const { data: solicitanteNome } = useNomeUsuario(data?.despesa?.created_by);
+  const { data: pagoPorNome } = useNomeUsuario(data?.despesa?.pago_por);
   const { data: contratos = [] } = useContratosAtivos();
   const cancelar = useCancelarDespesa();
   const reenviar = useMandarParaAprovacaoNovamente();
@@ -169,6 +244,8 @@ export default function DespesaVisualizar() {
   const [formaPagamento, setFormaPagamento] = useState("");
   const [informacoesPagamento, setInformacoesPagamento] = useState("");
   const [dataPagamento, setDataPagamento] = useState("");
+  const [excecao, setExcecao] = useState(false);
+  const [justificativaExcecao, setJustificativaExcecao] = useState("");
   const [competencia, setCompetencia] = useState("");
   const [dimensoes, setDimensoes] = useState<DimensoesRateio>({ empresa: false, contrato: false, fornecedor: false, integrante: false });
   const [ratearPor, setRatearPor] = useState<"percentual" | "valor">("percentual");
@@ -189,7 +266,15 @@ export default function DespesaVisualizar() {
   // direto pro pagamento (a % de alçada do aprovador nunca bloqueia o
   // aprovador de agir, só decide o destino depois de aprovado).
   const anoMesDespesa = despesa?.competencia ? despesa.competencia.slice(0, 7) : anoMesAtual();
-  const { resolver: resolverOrcado } = useOrcadoClassificacao(despesa?.empresa_id, anoMesDespesa);
+  // SIS-2026-0212 (complemento): "orcadoCarregando" trava o botão Aprovar —
+  // achado real (DM-2026-0041): o aprovador clicou Aprovar antes dos dados
+  // de planejamento/rubricas terminarem de carregar, resolverOrcado()
+  // devolveu 0 momentaneamente, a % de alçada saiu errada (deu "dentro"
+  // quando era 105% do orçado) e essa decisão errada foi gravada pra
+  // sempre — o RPC malote_aprovar_despesa confia cegamente no que o
+  // client manda, sem reconferir nada no banco.
+  const { resolver: resolverOrcado, isLoading: orcadoCarregando } = useOrcadoClassificacao(despesa?.empresa_id, anoMesDespesa);
+  const { data: utilizadoLinhasGlobal = [] } = useUtilizadoOrcamento();
 
   useEffect(() => {
     if (!despesa) return;
@@ -198,6 +283,8 @@ export default function DespesaVisualizar() {
     setFormaPagamento(despesa.forma_pagamento ?? "");
     setInformacoesPagamento(despesa.informacoes_pagamento ?? "");
     setDataPagamento(despesa.data_pagamento ?? "");
+    setExcecao(despesa.excecao);
+    setJustificativaExcecao(despesa.justificativa_excecao ?? "");
     setCompetencia(despesa.competencia ? despesa.competencia.slice(0, 7) : "");
   }, [despesa?.id]);
 
@@ -231,6 +318,11 @@ export default function DespesaVisualizar() {
   // qualquer outro papel o Rateio vira só-leitura com as colunas de
   // Orçado/Utilizado/Status.
   const rateioEPagamentoEditaveis = !bloqueado && souSolicitante;
+  // SIS-2026-0212 (pedido do Iury): a "Justificativa da aprovação" é o
+  // único campo deste bloco que o aprovador do nível atual também precisa
+  // editar — é onde ele registra o motivo de escalar de N1 pra N2 (os
+  // outros campos continuam só do solicitante, por SIS-2026-0192).
+  const podeEditarJustificativaAprovacao = rateioEPagamentoEditaveis || souAprovadorNivelAtual;
   const podeReprovarComoAprovadorPassado =
     configurado && ((despesa.status === "pendente_aprovacao" && !souAprovadorNivelAtual) || despesa.status === "aguardando_pagamento");
   const souAprovadorVendoAjuste = despesa.status === "necessidade_de_ajuste" && configurado && !souSolicitante;
@@ -254,8 +346,25 @@ export default function DespesaVisualizar() {
     if (nivel === 2) return { semLimite: !!c.aprovador2_sem_limite, limitePct: c.aprovador2_limite_pct ?? null };
     return { semLimite: !!c.aprovador3_sem_limite, limitePct: c.aprovador3_limite_pct ?? null };
   })();
-  const valorParaAlcada = Number(valorAprovado) || despesa.valor_total;
-  const percentualDoOrcado = orcadoClassificacao ? (valorParaAlcada / orcadoClassificacao) * 100 : null;
+  // Achado real (SIS-2026-0212, DM-2026-0048): valorParaAlcada usava só o
+  // valor desta despesa (ex.: 500/948 = 52,74%), nunca somava o que outras
+  // despesas da mesma Classificação já tinham consumido no mês — por isso
+  // a % nunca refletia o estouro de verdade. Mesma soma de "utilizado
+  // antes" usada em calcularRateioSnapshot/RateioAprovadorTable, só que
+  // aqui na decisão de escalar.
+  const utilizadoAntesDestaDespesa = utilizadoLinhasGlobal.reduce((soma, u) => {
+    if (u.despesa_id === despesa.id) return soma;
+    if (u.classificacao_id !== despesa.classificacao_id) return soma;
+    if (!u.competencia || u.competencia.slice(0, 7) !== anoMesDespesa) return soma;
+    if ((u.contrato_id ?? null) !== (despesa.contrato_id ?? null)) return soma;
+    return soma + (Number(u.valor) || 0);
+  }, 0);
+  const valorParaAlcada = utilizadoAntesDestaDespesa + (Number(valorAprovado) || despesa.valor_total);
+  // Achado à parte (SIS-2026-0212): era "orcadoClassificacao ? ... : null"
+  // — orçado 0 de verdade (ex.: contrato sem rubrica vinculada) caía no
+  // else e virava "sem trava" em vez de "100% estourado". != null trata 0
+  // como valor real, só null continua sendo "orçado desconhecido".
+  const percentualDoOrcado = orcadoClassificacao != null ? (valorParaAlcada / orcadoClassificacao) * 100 : null;
   const dentroDaAlcada =
     alcadaNivelAtual.semLimite ||
     alcadaNivelAtual.limitePct == null ||
@@ -270,11 +379,17 @@ export default function DespesaVisualizar() {
     !!podePagarMalote && ["aguardando_pagamento", "pronto_para_pagar", "ajuste_pagamento"].includes(despesa.status);
 
   function validarAcaoAprovador(): string | null {
+    if (orcadoCarregando) return "Aguarde o orçamento terminar de carregar antes de aprovar.";
     if (!formaPagamento) return "Selecione a forma de pagamento.";
     if (!informacoesPagamento.trim()) return "Informe os dados de pagamento.";
     if (!dataPagamento) return "Informe a data de pagamento.";
     if (!competencia) return "Informe a competência.";
     if (!valorAprovado || Number(valorAprovado) <= 0) return "Informe o valor aprovado.";
+    // SIS-2026-0212 (pedido do Iury): ao escalar de N1 pra N2 (estourou a
+    // alçada do Nível 1), o aprovador do N1 precisa registrar o motivo.
+    if (despesa!.nivel_aprovacao_atual === 1 && proximoNivelConfigurado && !justificativa.trim()) {
+      return "Informe a justificativa da aprovação — obrigatória quando a despesa escala para o Nível 2.";
+    }
     return null;
   }
 
@@ -296,6 +411,7 @@ export default function DespesaVisualizar() {
         informacoes_pagamento: informacoesPagamento,
         data_pagamento: dataPagamento,
         competencia,
+        rateio_snapshot: calcularRateioSnapshot(),
       });
       toast.success(proximoNivelConfigurado ? "Aprovado — enviado pro próximo nível." : "Aprovado — aguardando pagamento.");
     } catch (e: any) {
@@ -388,6 +504,29 @@ export default function DespesaVisualizar() {
     setPagarAberto(true);
   }
 
+  // SIS-2026-0212 (complemento): mesmo cálculo de "utilizado antes desta
+  // despesa" da RateioAprovadorTable, aqui só pra congelar no momento do
+  // pagamento — não fica em um hook compartilhado porque só é chamado
+  // uma vez, aqui.
+  function calcularRateioSnapshot(): { linha_id: string; orcado: number | null; utilizado_com_lancamento: number | null }[] {
+    const utilizadoAntesPorContrato = new Map<string, number>();
+    for (const u of utilizadoLinhasGlobal) {
+      if (u.despesa_id === despesa!.id) continue;
+      if (u.classificacao_id !== despesa!.classificacao_id) continue;
+      if (!u.competencia || u.competencia.slice(0, 7) !== anoMesDespesa) continue;
+      const chave = u.contrato_id ?? "__sem_contrato__";
+      utilizadoAntesPorContrato.set(chave, (utilizadoAntesPorContrato.get(chave) ?? 0) + (Number(u.valor) || 0));
+    }
+    return linhasRateio
+      .filter((l) => l.id)
+      .map((l) => {
+        const orcado = resolverOrcado(despesa!.classificacao_id, l.contrato_id);
+        const chave = l.contrato_id ?? "__sem_contrato__";
+        const utilizadoAntes = utilizadoAntesPorContrato.get(chave) ?? 0;
+        return { linha_id: l.id as string, orcado, utilizado_com_lancamento: utilizadoAntes + (Number(l.valor) || 0) };
+      });
+  }
+
   async function handleConfirmarPagamento() {
     if (!comprovanteFile) {
       toast.error("Anexe o comprovante de pagamento.");
@@ -404,6 +543,7 @@ export default function DespesaVisualizar() {
         id: despesa!.id,
         data_pagamento: dataPagamentoConfirmado,
         comprovante_path: comprovantePath,
+        rateio_snapshot: calcularRateioSnapshot(),
         observacao: observacaoPagamento.trim() || null,
       });
       toast.success("Pagamento confirmado.");
@@ -430,6 +570,30 @@ export default function DespesaVisualizar() {
   async function handleReenviar() {
     setEnviando("reenviar");
     try {
+      // Resumo do que mudou desde a última vez, pro Histórico — compara
+      // contra o snapshot original (despesa/data.rateio, antes das edições
+      // desta tela), não contra o que já foi salvo em reenvios anteriores.
+      const partesResumo: string[] = [];
+      if ((despesa!.forma_pagamento ?? "") !== (formaPagamento || "")) {
+        partesResumo.push(
+          `Forma de pagamento: ${FORMA_PAGAMENTO_LABEL[despesa!.forma_pagamento ?? ""] ?? "—"} → ${FORMA_PAGAMENTO_LABEL[formaPagamento] ?? (formaPagamento || "—")}`
+        );
+      }
+      if ((despesa!.informacoes_pagamento ?? "") !== informacoesPagamento) {
+        partesResumo.push("Dados de pagamento alterados");
+      }
+      if ((despesa!.data_pagamento ?? "") !== dataPagamento) {
+        partesResumo.push(`Data de pagamento: ${fmtDataResumo(despesa!.data_pagamento)} → ${fmtDataResumo(dataPagamento)}`);
+      }
+      const competenciaAtual = despesa!.competencia ? despesa!.competencia.slice(0, 7) : "";
+      if (competenciaAtual !== competencia) partesResumo.push("Competência alterada");
+      const valorAprovadoAtual = despesa!.valor_aprovado != null ? Number(despesa!.valor_aprovado) : despesa!.valor_total;
+      if (valorAprovadoAtual !== (Number(valorAprovado) || 0)) {
+        partesResumo.push(`Valor aprovado: ${fmtMoneyResumo(valorAprovadoAtual)} → ${fmtMoneyResumo(Number(valorAprovado) || 0)}`);
+      }
+      if (despesa!.excecao !== excecao) partesResumo.push(excecao ? "Marcada como Exceção (dia bloqueado)" : "Exceção removida");
+      partesResumo.push(...resumoAlteracoesRateio(data?.rateio ?? [], linhasRateio, contratos));
+
       await reenviar.mutateAsync({
         id: despesa!.id,
         empresa_id: despesa!.empresa_id,
@@ -443,8 +607,11 @@ export default function DespesaVisualizar() {
         forma_pagamento: formaPagamento || null,
         informacoes_pagamento: informacoesPagamento || null,
         data_pagamento: dataPagamento || null,
+        excecao,
+        justificativa_excecao: excecao ? justificativaExcecao.trim() || null : null,
         competencia: competencia ? competencia + "-01" : null,
         rateio: linhasRateio,
+        descricaoEvento: partesResumo.length > 0 ? partesResumo.join("\n") : null,
       });
       toast.success("Enviado para aprovação novamente (reiniciado em N1).");
     } catch (e: any) {
@@ -583,6 +750,21 @@ export default function DespesaVisualizar() {
                   </div>
                 </div>
               )}
+
+              {despesa.comprovante_pagamento_path && (
+                <div className="space-y-2">
+                  <p className="text-xs text-muted-foreground">Pagamento</p>
+                  <TileComprovante
+                    label={despesa.pago_em ? `Pago em ${new Date(despesa.pago_em).toLocaleDateString("pt-BR")} — clique para abrir` : "Clique para abrir"}
+                    onClick={() => abrirAnexo(despesa.comprovante_pagamento_path!)}
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    {pagoPorNome && <>Pago por {pagoPorNome}. </>}
+                    {despesa.conferido_em && <>Conferido em {new Date(despesa.conferido_em).toLocaleDateString("pt-BR")}. </>}
+                    {despesa.observacao_pagamento && <>Observação: {despesa.observacao_pagamento}</>}
+                  </p>
+                </div>
+              )}
             </div>
 
             <div className="flex-1" />
@@ -622,16 +804,21 @@ export default function DespesaVisualizar() {
       <Card>
         <CardContent className="p-4 space-y-3">
           <p className="text-sm font-semibold">Dados da Aprovação e Pagamento</p>
-          <div className={cn("grid grid-cols-1 sm:grid-cols-3 gap-4", !rateioEPagamentoEditaveis && "opacity-60")}>
-            <div>
+          <div className={cn("grid grid-cols-1 sm:grid-cols-3 gap-4", !rateioEPagamentoEditaveis && !podeEditarJustificativaAprovacao && "opacity-60")}>
+            <div className={cn(!rateioEPagamentoEditaveis && "opacity-60")}>
               <Label>Valor aprovado</Label>
               <Input type="number" step="0.01" value={valorAprovado} onChange={(e) => setValorAprovado(e.target.value)} disabled={!rateioEPagamentoEditaveis} />
             </div>
             <div>
-              <Label>Justificativa da aprovação</Label>
-              <Input value={justificativa} onChange={(e) => setJustificativa(e.target.value)} disabled={!rateioEPagamentoEditaveis} />
+              <Label>
+                Justificativa da aprovação
+                {souAprovadorNivelAtual && despesa.nivel_aprovacao_atual === 1 && (
+                  <span className="text-xs text-muted-foreground font-normal"> (obrigatória se escalar para N2)</span>
+                )}
+              </Label>
+              <Input value={justificativa} onChange={(e) => setJustificativa(e.target.value)} disabled={!podeEditarJustificativaAprovacao} />
             </div>
-            <div>
+            <div className={cn(!rateioEPagamentoEditaveis && "opacity-60")}>
               <Label>Forma de pagamento</Label>
               <Select value={formaPagamento} onValueChange={setFormaPagamento} disabled={!rateioEPagamentoEditaveis}>
                 <SelectTrigger>
@@ -646,19 +833,31 @@ export default function DespesaVisualizar() {
                 </SelectContent>
               </Select>
             </div>
-            <div>
+            <div className={cn(!rateioEPagamentoEditaveis && "opacity-60")}>
               <Label>Dados de pagamento</Label>
               <Input value={informacoesPagamento} onChange={(e) => setInformacoesPagamento(e.target.value)} disabled={!rateioEPagamentoEditaveis} />
             </div>
-            <div>
+            <div className={cn(!rateioEPagamentoEditaveis && "opacity-60")}>
               <Label>Data do pagamento</Label>
-              <Input type="date" value={dataPagamento} onChange={(e) => setDataPagamento(e.target.value)} disabled={!rateioEPagamentoEditaveis} />
+              <DiaPagamentoPicker
+                value={dataPagamento}
+                onChange={setDataPagamento}
+                disabled={!rateioEPagamentoEditaveis}
+                permitirDiasBloqueados={excecao}
+              />
             </div>
-            <div>
+            <div className={cn(!rateioEPagamentoEditaveis && "opacity-60")}>
               <Label>Competência</Label>
               <Input type="month" value={competencia} onChange={(e) => setCompetencia(e.target.value)} disabled={!rateioEPagamentoEditaveis} />
             </div>
           </div>
+          <ExcecaoDiaBloqueadoField
+            checked={excecao}
+            onCheckedChange={setExcecao}
+            justificativa={justificativaExcecao}
+            onJustificativaChange={setJustificativaExcecao}
+            disabled={!rateioEPagamentoEditaveis}
+          />
         </CardContent>
       </Card>
 
@@ -676,6 +875,13 @@ export default function DespesaVisualizar() {
               onRatearPorChange={setRatearPor}
               valorTotal={Number(valorAprovado) || despesa.valor_total}
               disabled={bloqueado}
+              despesaId={despesa.id}
+              classificacaoId={despesa.classificacao_id}
+              limiteJustificativaPct={despesa.classificacao?.limite_justificativa_pct ?? null}
+              resolverOrcado={resolverOrcado}
+              anoMesDespesa={anoMesDespesa}
+              podeJustificarComoAprovador={configurado}
+              souSolicitante={souSolicitante}
             />
           ) : (
             <RateioAprovadorTable
@@ -687,6 +893,7 @@ export default function DespesaVisualizar() {
               resolverOrcado={resolverOrcado}
               anoMesDespesa={anoMesDespesa}
               podeJustificarComoAprovador={configurado}
+              souSolicitante={souSolicitante}
             />
           )}
         </CardContent>
@@ -726,8 +933,9 @@ export default function DespesaVisualizar() {
           >
             <PenLine className="h-4 w-4" /> {acaoEmAndamento === "ajuste" ? "Enviando..." : "Solicitar ajuste"}
           </Button>
-          <Button className="gap-1.5" onClick={handleAprovar} disabled={acaoEmAndamento !== null}>
-            <Check className="h-4 w-4" /> {acaoEmAndamento === "aprovar" ? "Aprovando..." : "Aprovar despesa"}
+          <Button className="gap-1.5" onClick={handleAprovar} disabled={acaoEmAndamento !== null || orcadoCarregando}>
+            <Check className="h-4 w-4" />{" "}
+            {acaoEmAndamento === "aprovar" ? "Aprovando..." : orcadoCarregando ? "Calculando orçamento..." : "Aprovar despesa"}
           </Button>
         </div>
       )}

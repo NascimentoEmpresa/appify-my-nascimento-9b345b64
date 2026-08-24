@@ -10,9 +10,16 @@ import { Plus, Trash2, ChevronDown, ChevronRight, BookOpen, UserCog, X, CheckSqu
 import { cn } from "@/lib/utils";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import type { FormCap } from "@/hooks/useFormPerms";
+import { useSetoresCatalogo } from "@/hooks/usePlanejamentoOrcamentario";
+import { SearchableMultiSelect } from "@/components/ui/searchable-multi-select";
 
 const FORM_MENU_CODIGO = "central_servicos_formularios";
 const REUNIOES_MENU_CODIGO = "central_servicos_reunioes";
+// SIS-2026-0216: painel condicional (mesmo padrão de FormPermsUsuario) que
+// deixa restringir quais Setores (Setor Responsável da Classificação
+// Malote) um usuário pode ver em Aprovações do Malote — a mesma lista
+// também vale pra Meus Itens (uma lista só, não duplica configuração).
+const MALOTE_APROVACOES_MENU_CODIGO = "malote_aprovacoes";
 
 interface Modulo { id: string; codigo: string; nome: string; ordem: number; ativo: boolean; icone: string | null }
 interface Menu { id: string; modulo_id: string; codigo: string; nome: string; rota: string | null; ordem: number; ativo: boolean }
@@ -689,6 +696,7 @@ function UserAccessPanel({ podeGerenciar, modulos, menus }: { podeGerenciar: boo
                       const isPending = pending.has(mn.codigo);
                       const isForm = mn.codigo === FORM_MENU_CODIGO;
                       const isReunioes = mn.codigo === REUNIOES_MENU_CODIGO;
+                      const isMaloteSetor = mn.codigo === MALOTE_APROVACOES_MENU_CODIGO;
                       const capsOpen = expanded.has(mn.id);
                       const acoesDesteMenu = acoesDoMenu(mn.codigo);
                       const comAcoesExtras = acoesDesteMenu.length > 0;
@@ -697,7 +705,7 @@ function UserAccessPanel({ podeGerenciar, modulos, menus }: { podeGerenciar: boo
                       return (
                         <div key={mn.id}>
                           <div className={cn("flex items-center gap-2 px-12 py-2.5 hover:bg-muted/40", isPending && "bg-amber-50/50 dark:bg-amber-950/20")}>
-                            {(isForm || isReunioes) && podeGerenciar ? (
+                            {(isForm || isReunioes || isMaloteSetor) && podeGerenciar ? (
                               <button onClick={() => toggleExpand(mn.id)} className="text-muted-foreground" title="Permissões do usuário neste menu">
                                 {capsOpen ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
                               </button>
@@ -732,6 +740,11 @@ function UserAccessPanel({ podeGerenciar, modulos, menus }: { podeGerenciar: boo
                           {isReunioes && podeGerenciar && capsOpen && (
                             <div className="border-t border-border/60 bg-background px-12 py-2">
                               <ObservadorAutomaticoReuniao userId={selectedUserId} onToast={(m, t) => toast({ title: m, variant: t === "err" ? "destructive" : "default" })} />
+                            </div>
+                          )}
+                          {isMaloteSetor && podeGerenciar && capsOpen && (
+                            <div className="border-t border-border/60 bg-background px-12 py-2">
+                              <MaloteSetoresUsuario userId={selectedUserId} onToast={(m, t) => toast({ title: m, variant: t === "err" ? "destructive" : "default" })} />
                             </div>
                           )}
                           {comAcoesExtras && podeGerenciar && acoesOpen && (
@@ -1075,6 +1088,10 @@ function PessoasComAcessoAoMenu({ menuCodigo, podeGerenciar }: { menuCodigo: str
         )}
       </div>
 
+      {menuCodigo === MALOTE_APROVACOES_MENU_CODIGO && !carregando && (
+        <MaloteSetorPorModulo todasPessoas={profilesQ.data ?? []} temAcesso={dbHasAccess} podeGerenciar={podeGerenciar} />
+      )}
+
       {carregando && <p className="py-4 text-center text-xs text-muted-foreground">Carregando…</p>}
 
       {!carregando && (
@@ -1089,6 +1106,117 @@ function PessoasComAcessoAoMenu({ menuCodigo, podeGerenciar }: { menuCodigo: str
           {comAcesso.map(linhaPessoa)}
           {semAcesso.length > 0 && <CabecalhoGrupo rotulo="Sem acesso" quantidade={semAcesso.length} />}
           {semAcesso.map(linhaPessoa)}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── Setores por módulo (SIS-2026-0216, complemento do painel individual em
+// "Acesso por Usuário") — mesmo dado (malote_setor_visivel_usuario), eixo de
+// edição invertido: escolhe o Setor primeiro, depois marca quem das pessoas
+// já com acesso a Aprovações do Malote pertence a ele. Escreve exatamente a
+// mesma tabela que MaloteSetoresUsuario — não importa por qual tela a pessoa
+// foi marcada, o efeito na RLS é idêntico.
+function MaloteSetorPorModulo({ todasPessoas, temAcesso, podeGerenciar }: { todasPessoas: ProfileRow[]; temAcesso: (userId: string) => boolean; podeGerenciar: boolean }) {
+  const [setor, setSetor] = useState<string>("");
+  const [membrosSetor, setMembrosSetor] = useState<Set<string>>(new Set());
+  const [marcados, setMarcados] = useState<Set<string>>(new Set());
+  const [loading, setLoading] = useState(false);
+  const setoresCatalogoQ = useSetoresCatalogo();
+
+  // Quem é "do setor" vem de user_setor (o mesmo cadastro de Setor em
+  // Usuários) — não da lista de quem já tem acesso ao menu. Marcar aqui só
+  // grava a visibilidade (malote_setor_visivel_usuario); se a pessoa ainda
+  // não tem acesso à tela de Aprovações, o switch "COM ACESSO" abaixo mostra
+  // isso e precisa ser ligado separadamente pra ela conseguir entrar na tela.
+  useEffect(() => {
+    if (!setor) { setMembrosSetor(new Set()); setMarcados(new Set()); return; }
+    setLoading(true);
+    Promise.all([
+      (supabase as any).from("user_setor").select("user_id").eq("setor", setor),
+      (supabase as any).from("malote_setor_visivel_usuario").select("user_id").eq("setor", setor),
+    ]).then(([membros, visiveis]: any[]) => {
+      if (membros.error) toast({ title: "Erro ao carregar", description: membros.error.message, variant: "destructive" });
+      if (visiveis.error) toast({ title: "Erro ao carregar", description: visiveis.error.message, variant: "destructive" });
+      setMembrosSetor(new Set((membros.data ?? []).map((r: any) => r.user_id)));
+      setMarcados(new Set((visiveis.data ?? []).map((r: any) => r.user_id)));
+      setLoading(false);
+    });
+  }, [setor]);
+
+  const pessoasDoSetor = useMemo(() => {
+    const nomeDe = (p: ProfileRow) => p.display_name || p.email || p.id;
+    return todasPessoas
+      .filter((p) => membrosSetor.has(p.id))
+      .sort((a, b) => nomeDe(a).localeCompare(nomeDe(b), "pt-BR", { sensitivity: "base" }));
+  }, [todasPessoas, membrosSetor]);
+
+  const toggle = async (userId: string, novo: boolean) => {
+    if (!podeGerenciar) return;
+    if (novo) {
+      const { error } = await (supabase as any)
+        .from("malote_setor_visivel_usuario")
+        .insert({ user_id: userId, setor });
+      if (error) { toast({ title: "Erro", description: error.message, variant: "destructive" }); return; }
+    } else {
+      const { error } = await (supabase as any)
+        .from("malote_setor_visivel_usuario")
+        .delete().eq("user_id", userId).eq("setor", setor);
+      if (error) { toast({ title: "Erro", description: error.message, variant: "destructive" }); return; }
+    }
+    setMarcados((prev) => {
+      const next = new Set(prev);
+      if (novo) next.add(userId); else next.delete(userId);
+      return next;
+    });
+  };
+
+  return (
+    <div className="mb-3 rounded-md border border-border bg-muted/20 p-3">
+      <p className="mb-2 text-[11.5px] text-muted-foreground">
+        Restringir por setor: escolha um <b>Setor Responsável</b> (o mesmo campo da Classificação Malote). A
+        lista abaixo traz quem está cadastrado nesse setor em Usuários — marque quem deve ver SÓ as despesas
+        daquele setor em Aprovações e Meus Itens. Quem não for marcado em nenhum setor continua vendo tudo da
+        empresa, como hoje. Não muda quem aprova — Aprovador 1/2/3 continuam os mesmos.
+      </p>
+      <Select value={setor} onValueChange={setSetor}>
+        <SelectTrigger className="h-8 w-64 text-xs">
+          <SelectValue placeholder="Escolher setor…" />
+        </SelectTrigger>
+        <SelectContent>
+          {(setoresCatalogoQ.data ?? []).map((s: string) => (
+            <SelectItem key={s} value={s}>{s}</SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+
+      {setor && (
+        <div className="mt-2 max-h-56 divide-y divide-border/60 overflow-y-auto rounded-md border border-border bg-background">
+          {loading && <p className="px-3 py-3 text-center text-xs text-muted-foreground">Carregando…</p>}
+          {!loading && pessoasDoSetor.length === 0 && (
+            <p className="px-3 py-3 text-center text-xs text-muted-foreground">
+              Ninguém cadastrado no setor "{setor}" (Usuários → Setor).
+            </p>
+          )}
+          {!loading && pessoasDoSetor.map((p) => (
+            <div key={p.id} className="flex items-center gap-2 px-3 py-2 hover:bg-muted/40">
+              <div className="flex-1 min-w-0">
+                <p className="truncate text-sm">{p.display_name || p.email || p.id}</p>
+                {!temAcesso(p.id) && (
+                  <p className="truncate text-[11px] text-amber-600 dark:text-amber-500">
+                    sem acesso a este menu ainda — ligue o switch na lista abaixo também
+                  </p>
+                )}
+              </div>
+              <Switch
+                checked={marcados.has(p.id)}
+                disabled={!podeGerenciar}
+                onCheckedChange={(v) => toggle(p.id, v)}
+                aria-label={`${p.display_name || p.email} vê só o setor ${setor}`}
+              />
+            </div>
+          ))}
         </div>
       )}
     </div>
@@ -1152,6 +1280,69 @@ function ObservadorAutomaticoReuniao({ userId, onToast }: { userId: string; onTo
   );
 }
 
+// ─── Malote: visão por Setor (SIS-2026-0216) ────────────────────────────
+// A mesma lista de setores vale tanto pra Aprovações do Malote quanto pra
+// Meus Itens — sem nenhum setor marcado, a pessoa continua vendo tudo da
+// empresa dela (comportamento anterior, sem regressão). Marcar 1+ setores
+// restringe a visão só a eles; não muda quem pode aprovar (isso continua
+// baseado no Aprovador 1/2/3 configurado na Classificação Malote).
+function MaloteSetoresUsuario({ userId, onToast }: { userId: string; onToast: (m: string, t?: string) => void }) {
+  const [setores, setSetores] = useState<Set<string>>(new Set());
+  const [loading, setLoading] = useState(true);
+  const setoresCatalogoQ = useSetoresCatalogo();
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    const { data } = await (supabase as any)
+      .from("malote_setor_visivel_usuario")
+      .select("setor")
+      .eq("user_id", userId);
+    setSetores(new Set((data ?? []).map((r: any) => r.setor as string)));
+    setLoading(false);
+  }, [userId]);
+  useEffect(() => { load(); }, [load]);
+
+  const aplicar = async (novaLista: string[]) => {
+    const novo = new Set(novaLista);
+    const paraAdicionar = novaLista.filter((s) => !setores.has(s));
+    const paraRemover = [...setores].filter((s) => !novo.has(s));
+    if (paraAdicionar.length) {
+      const { error } = await (supabase as any)
+        .from("malote_setor_visivel_usuario")
+        .insert(paraAdicionar.map((setor) => ({ user_id: userId, setor })));
+      if (error) { onToast("Erro: " + error.message, "err"); return; }
+    }
+    if (paraRemover.length) {
+      const { error } = await (supabase as any)
+        .from("malote_setor_visivel_usuario")
+        .delete()
+        .eq("user_id", userId)
+        .in("setor", paraRemover);
+      if (error) { onToast("Erro: " + error.message, "err"); return; }
+    }
+    setSetores(novo);
+  };
+
+  if (loading) return <div className="py-2 text-xs text-muted-foreground">Carregando setores...</div>;
+
+  return (
+    <div className="py-1">
+      <p className="mb-1.5 text-[11px] text-muted-foreground">
+        Setores que <b>este usuário</b> pode ver em Aprovações do Malote e Meus Itens (o setor vem do
+        campo <i>Setor Responsável</i> da Classificação Malote). Sem nenhum setor marcado, a pessoa
+        continua vendo <b>tudo</b> da empresa dela, como hoje. Marcar 1+ setores restringe a visão SÓ
+        a eles — não muda quem aprova (Aprovador 1/2/3 continuam os mesmos).
+      </p>
+      <SearchableMultiSelect
+        value={[...setores]}
+        onChange={aplicar}
+        options={(setoresCatalogoQ.data ?? []).map((s) => ({ value: s, label: s }))}
+        placeholder="Todos os setores (sem restrição)..."
+      />
+    </div>
+  );
+}
+
 // ─── Permissões do Nascimento Formulários (capacidades por usuário) ─────────────
 // As regras/permissões ficam aqui no Módulos & Menus, não no módulo de origem.
 // Capacidades SOMENTE POR USUÁRIO. 'responder' já é de todos por padrão; o
@@ -1159,6 +1350,42 @@ function ObservadorAutomaticoReuniao({ userId, onToast }: { userId: string; onTo
 // 'ver_setor' é o único papel parametrizado: uma linha por setor liberado
 // (papel='ver_setor' + setor='JURIDICO'), e a leitura das respostas é a UNIÃO
 // de ver_tudo + ver_proprias + os setores marcados (public.cs_form_cap_setor).
+
+// As TRÊS capacidades de LEITURA — as únicas que ganham versão por formulário
+// (migration 20260921000002). Editar/Criar, Encerrar/Excluir e Lixeira seguem
+// gerais; edição de um formulário específico continua no botão "Acesso" do
+// card, que já existe e faria dois mecanismos disputando a mesma pergunta.
+const CAPS_VER: FormCap[] = ["ver_tudo", "ver_proprias", "ver_setor"];
+
+/**
+ * Papel MARCADOR: presença = "este formulário tem regra própria para esta
+ * pessoa". É ele que liga o override no banco (cs_form_regra_propria).
+ *
+ * Existe porque o override não podia depender de haver switch ligado: o admin
+ * adiciona o formulário, deixa tudo desligado esperando "ela não vê nada aqui"
+ * — e sem marcador a regra geral voltaria a valer. Marcador sem switch = não
+ * vê nada NAQUELE formulário.
+ */
+const MARCADOR_FORM = "ver_regra_form";
+
+/** Regra de um formulário para um usuário: o que está ligado ali. */
+interface RegraForm { caps: Set<string>; setores: Set<string> }
+
+/** Agrupa as linhas de CS_FORM_ACESSOS que têm formulário, por formulário. */
+function lerRegrasPorFormulario(todas: any[]): Map<string, RegraForm> {
+  const porForm = new Map<string, RegraForm>();
+  todas
+    .filter((r) => r.formulario_id && (r.papel === MARCADOR_FORM || (CAPS_VER as string[]).includes(r.papel)))
+    .forEach((r) => {
+      const id = String(r.formulario_id);
+      const atual = porForm.get(id) ?? { caps: new Set<string>(), setores: new Set<string>() };
+      if (r.papel === "ver_setor" && r.setor) atual.setores.add(String(r.setor).trim().toUpperCase());
+      else if (r.papel !== MARCADOR_FORM) atual.caps.add(r.papel);
+      porForm.set(id, atual);
+    });
+  return porForm;
+}
+
 
 const CAPS: { papel: FormCap; rotulo: string; desc: string }[] = [
   { papel: "editar_criar",     rotulo: "Editar / Criar",           desc: "Criar e editar formularios" },
@@ -1233,17 +1460,28 @@ function FormPermsUsuario({ userId, onToast }: { userId: string; onToast: (m: st
   const [setoresVer, setSetoresVer] = useState<Set<string>>(new Set());    // ver_setor (upper)
   const [setoresCriar, setSetoresCriar] = useState<Set<string>>(new Set()); // criar_setor (upper)
   const [setoresErp, setSetoresErp] = useState<string[]>([]);
+  // Regra própria por formulário: formulario_id → o que está ligado ali.
+  const [regrasForm, setRegrasForm] = useState<Map<string, RegraForm>>(new Map());
+  // Catálogo de formulários, só para o seletor "+ Adicionar formulário".
+  const [formularios, setFormularios] = useState<{ id: string; titulo: string }[]>([]);
+  const [addForm, setAddForm] = useState("");
   const [loading, setLoading] = useState(true);
   const erroPerm = (m: string) => /row-level|permission|policy/i.test(m) ? "So administradores alteram permissoes." : "Erro: " + m;
 
   const load = useCallback(async () => {
     setLoading(true);
-    const uRes = await (supabase as any).from("CS_FORM_ACESSOS").select("papel, setor").eq("user_id", userId).neq("papel", "dashboard");
-    const linhas = uRes.data ?? [];
+    const uRes = await (supabase as any).from("CS_FORM_ACESSOS")
+      .select("papel, setor, formulario_id").eq("user_id", userId).neq("papel", "dashboard");
+    const todas = uRes.data ?? [];
+    // Os grants GERAIS são os SEM formulário. Os com formulário são a regra
+    // própria daquele formulário e não podem se misturar aqui — senão o painel
+    // geral mostraria ligado um switch que só vale dentro de um formulário.
+    const linhas = todas.filter((r: any) => !r.formulario_id);
     const setoresDe = (papel: string) => new Set<string>(linhas.filter((r: any) => r.papel === papel && r.setor).map((r: any) => String(r.setor).trim().toUpperCase()));
     setCaps(new Set<string>(linhas.map((r: any) => r.papel)));
     setSetoresVer(setoresDe("ver_setor"));
     setSetoresCriar(setoresDe("criar_setor"));
+    setRegrasForm(lerRegrasPorFormulario(todas));
     setLoading(false);
   }, [userId]);
   useEffect(() => { load(); }, [load]);
@@ -1316,6 +1554,94 @@ function FormPermsUsuario({ userId, onToast }: { userId: string; onToast: (m: st
   const verSetorH = fazSetorHandlers("ver_setor", setoresVer, setSetoresVer);
   const criarSetorH = fazSetorHandlers("criar_setor", setoresCriar, setSetoresCriar);
 
+  // ── Regra por formulário ──────────────────────────────────────────────
+  // Carrega o catálogo só quando o painel abre (é a lista do seletor).
+  useEffect(() => {
+    (async () => {
+      const { data } = await (supabase as any).from("CS_FORMULARIOS")
+        .select("id,titulo,deleted_at").order("titulo");
+      setFormularios((data ?? []).filter((f: any) => !f.deleted_at).map((f: any) => ({ id: f.id, titulo: f.titulo ?? "(sem titulo)" })));
+    })();
+  }, []);
+
+  const tituloForm = (id: string) => formularios.find((f) => f.id === id)?.titulo ?? "Formulario removido";
+
+  /** Reflete no estado local sem recarregar tudo do banco. */
+  const mexerRegra = (formId: string, f: (r: RegraForm) => RegraForm | null) => {
+    setRegrasForm((m) => {
+      const n = new Map(m);
+      const atual = n.get(formId) ?? { caps: new Set<string>(), setores: new Set<string>() };
+      const novo = f({ caps: new Set(atual.caps), setores: new Set(atual.setores) });
+      if (novo) n.set(formId, novo); else n.delete(formId);
+      return n;
+    });
+  };
+
+  // Adicionar = gravar o marcador. A partir daí a pessoa passa a enxergar
+  // NESTE formulário só o que estiver ligado aqui — inclusive nada.
+  const adicionarForm = async (formId: string) => {
+    if (!formId || regrasForm.has(formId)) return;
+    const { error } = await (supabase as any).from("CS_FORM_ACESSOS")
+      .insert({ papel: MARCADOR_FORM, user_id: userId, formulario_id: formId });
+    if (error) { onToast(erroPerm(error.message), "err"); return; }
+    mexerRegra(formId, (r) => r);
+    setAddForm("");
+  };
+
+  // Remover a regra devolve o formulário à permissão geral do usuário.
+  const removerForm = async (formId: string) => {
+    const { error } = await (supabase as any).from("CS_FORM_ACESSOS")
+      .delete().eq("user_id", userId).eq("formulario_id", formId)
+      .in("papel", [MARCADOR_FORM, ...CAPS_VER]);
+    if (error) { onToast(erroPerm(error.message), "err"); return; }
+    mexerRegra(formId, () => null);
+  };
+
+  const toggleCapForm = async (formId: string, papel: FormCap) => {
+    const r = regrasForm.get(formId);
+    if (!r) return;
+    const tem = r.caps.has(papel);
+    const oposto = !tem ? OPOSTO[papel] : undefined;   // mesma exclusão de ver_tudo x ver_proprias
+    if (tem) {
+      const { error } = await (supabase as any).from("CS_FORM_ACESSOS")
+        .delete().eq("user_id", userId).eq("formulario_id", formId).eq("papel", papel);
+      if (error) { onToast(erroPerm(error.message), "err"); return; }
+    } else {
+      if (oposto && r.caps.has(oposto)) {
+        await (supabase as any).from("CS_FORM_ACESSOS")
+          .delete().eq("user_id", userId).eq("formulario_id", formId).eq("papel", oposto);
+      }
+      const { error } = await (supabase as any).from("CS_FORM_ACESSOS")
+        .insert({ papel, user_id: userId, formulario_id: formId });
+      if (error) { onToast(erroPerm(error.message), "err"); return; }
+    }
+    mexerRegra(formId, (x) => {
+      if (tem) x.caps.delete(papel);
+      else { x.caps.add(papel); if (oposto) x.caps.delete(oposto); }
+      return x;
+    });
+  };
+
+  const toggleSetorForm = async (formId: string, setor: string) => {
+    const chave = setor.trim().toUpperCase();
+    const tem = regrasForm.get(formId)?.setores.has(chave) ?? false;
+    const { error } = tem
+      ? await (supabase as any).from("CS_FORM_ACESSOS").delete()
+          .eq("user_id", userId).eq("formulario_id", formId).eq("papel", "ver_setor").eq("setor", setor)
+      : await (supabase as any).from("CS_FORM_ACESSOS")
+          .insert({ papel: "ver_setor", user_id: userId, formulario_id: formId, setor });
+    if (error) { onToast(erroPerm(error.message), "err"); return; }
+    mexerRegra(formId, (x) => { tem ? x.setores.delete(chave) : x.setores.add(chave); return x; });
+  };
+
+  const limparSetoresForm = async (formId: string) => {
+    const { error } = await (supabase as any).from("CS_FORM_ACESSOS").delete()
+      .eq("user_id", userId).eq("formulario_id", formId).eq("papel", "ver_setor");
+    if (error) { onToast(erroPerm(error.message), "err"); return; }
+    mexerRegra(formId, (x) => { x.setores.clear(); return x; });
+  };
+
+
   if (loading) return <div className="py-2 text-xs text-muted-foreground">Carregando permissoes...</div>;
 
   return (
@@ -1339,6 +1665,78 @@ function FormPermsUsuario({ userId, onToast }: { userId: string; onToast: (m: st
           descLinha={(s) => `So cria formularios do ${s} e ve todas as respostas deles`}
           ariaLinha={(s) => `Criar formularios de ${s}`}
           setores={setoresErp} marcados={setoresCriar} onToggle={criarSetorH.onToggle} onLimpar={criarSetorH.onLimpar} />
+      </div>
+
+      {/* ── Regra por formulário ──────────────────────────────────────────
+          Os switches acima valem para o catálogo inteiro. Aqui a pessoa ganha
+          uma regra SÓ daquele formulário, que SUBSTITUI a geral ali dentro —
+          é como a Anita vê tudo da Avaliação de Treinamentos e, no Feedbacks,
+          só o setor dela. */}
+      <div className="mt-3 rounded-md border border-border/60 p-3">
+        <p className="text-sm font-medium">Permissões por formulário</p>
+        <p className="mt-0.5 text-[11px] text-muted-foreground">
+          Vale só dentro do formulário escolhido e <b>substitui</b> o que está marcado acima.
+          Formulário que não estiver nesta lista continua seguindo a regra geral.
+          Adicionar sem ligar nenhum switch = esta pessoa <b>não vê nenhuma resposta</b> daquele formulário.
+        </p>
+
+        {regrasForm.size === 0 ? (
+          <p className="mt-2 text-[11px] text-muted-foreground/80">Nenhum formulário com regra própria.</p>
+        ) : (
+          <div className="mt-2 space-y-2">
+            {[...regrasForm.entries()]
+              .sort((a, b) => tituloForm(a[0]).localeCompare(tituloForm(b[0]), "pt-BR"))
+              .map(([formId, regra]) => (
+                <div key={formId} className="rounded-md border border-border/60 bg-muted/30 p-2.5">
+                  <div className="flex items-center gap-2">
+                    <p className="flex-1 text-sm font-medium">{tituloForm(formId)}</p>
+                    <Button variant="ghost" size="sm" className="h-7 px-2 text-[11px]"
+                      onClick={() => removerForm(formId)}>
+                      <Trash2 className="mr-1 h-3 w-3" /> Usar a regra geral
+                    </Button>
+                  </div>
+                  <div className="divide-y divide-border/60">
+                    {CAPS.filter((c) => (CAPS_VER as string[]).includes(c.papel)).map((c) => (
+                      <div key={c.papel} className="flex items-center gap-3 py-2">
+                        <div className="flex-1">
+                          <p className="text-[13px]">{c.rotulo}</p>
+                          <p className="text-[11px] text-muted-foreground">{c.desc} — só neste formulário</p>
+                        </div>
+                        <Switch checked={regra.caps.has(c.papel)}
+                          onCheckedChange={() => toggleCapForm(formId, c.papel)}
+                          aria-label={`${c.rotulo} em ${tituloForm(formId)}`} />
+                      </div>
+                    ))}
+                    <SetorToggles
+                      titulo="Visualizar respostas por setor"
+                      descricao="Só as respostas de quem é dos setores marcados, neste formulário"
+                      rotuloLinha={(s) => `Visualizar respostas - ${s}`}
+                      descLinha={(s) => `Ver respostas de quem e do setor de ${s}`}
+                      ariaLinha={(s) => `Ver respostas de ${s} em ${tituloForm(formId)}`}
+                      setores={setoresErp} marcados={regra.setores}
+                      onToggle={(s) => toggleSetorForm(formId, s)}
+                      onLimpar={() => limparSetoresForm(formId)} />
+                  </div>
+                </div>
+              ))}
+          </div>
+        )}
+
+        <div className="mt-2.5 flex items-center gap-2">
+          <Select value={addForm} onValueChange={setAddForm}>
+            <SelectTrigger className="h-8 flex-1 text-xs">
+              <SelectValue placeholder="Escolher formulário…" />
+            </SelectTrigger>
+            <SelectContent>
+              {formularios.filter((f) => !regrasForm.has(f.id)).map((f) => (
+                <SelectItem key={f.id} value={f.id} className="text-xs">{f.titulo}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <Button size="sm" className="h-8 text-xs" disabled={!addForm} onClick={() => adicionarForm(addForm)}>
+            <Plus className="mr-1 h-3 w-3" /> Adicionar formulário
+          </Button>
+        </div>
       </div>
     </div>
   );

@@ -14593,3 +14593,2819 @@ NOTIFY pgrst, 'reload schema';
 --     DROP COLUMN latitude, DROP COLUMN longitude,
 --     DROP COLUMN geo_endereco, DROP COLUMN geo_status, DROP COLUMN geo_em;
 -- =========================================================================
+
+
+-- =========================================================================
+-- Patrimônio × Malote: a conta sabe que virou despesa, e sabe quando foi paga
+--
+-- Hoje "Pagar" só navega para o Malote com os campos preenchidos: a conta
+-- fica em "Pendente" para sempre, mesmo depois de a despesa ser criada e
+-- paga lá. Quem olha o patrimônio não tem como saber em que pé está.
+--
+-- `malote_despesa_id` é o vínculo. Com ele:
+--   • assim que a despesa é criada no Malote, a conta vira "Enviado ao Malote";
+--   • o "Pago" NÃO é digitado aqui — é lido do lado do Malote
+--     (malote_despesa.status = 'despesa_paga'), que é quem sabe se o dinheiro
+--     saiu. Duplicar esse estado nas duas tabelas é garantir divergência.
+-- =========================================================================
+
+ALTER TABLE public."JUR_PATRIMONIO_OBRIGACOES"
+  ADD COLUMN IF NOT EXISTS malote_despesa_id  uuid,
+  ADD COLUMN IF NOT EXISTS enviado_malote_em  timestamptz;
+
+COMMENT ON COLUMN public."JUR_PATRIMONIO_OBRIGACOES".malote_despesa_id IS
+  'Despesa criada no Malote a partir desta conta. Enquanto existir e não estiver paga, a conta aparece como "Enviado ao Malote"; quando a despesa vira despesa_paga, a conta aparece como "Pago".';
+COMMENT ON COLUMN public."JUR_PATRIMONIO_OBRIGACOES".enviado_malote_em IS
+  'Quando a despesa foi criada no Malote a partir desta conta.';
+
+CREATE INDEX IF NOT EXISTS jur_patr_obr_malote_idx
+  ON public."JUR_PATRIMONIO_OBRIGACOES" (malote_despesa_id)
+  WHERE malote_despesa_id IS NOT NULL;
+
+-- A tela do Patrimônio precisa LER o status da despesa vinculada. A RLS do
+-- malote_despesa é do módulo Malote e não vai ser afrouxada por causa disto:
+-- esta função devolve só id/status/pago_em das despesas pedidas, que é o
+-- mínimo para desenhar o selo, e nada mais da despesa.
+CREATE OR REPLACE FUNCTION public.jur_patrimonio_status_malote(_ids uuid[])
+RETURNS TABLE (despesa_id uuid, status text, pago_em timestamptz)
+LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public AS $$
+  SELECT d.id, d.status, d.pago_em
+    FROM public.malote_despesa d
+   WHERE d.id = ANY(_ids)
+$$;
+
+REVOKE ALL ON FUNCTION public.jur_patrimonio_status_malote(uuid[]) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.jur_patrimonio_status_malote(uuid[]) TO authenticated;
+
+NOTIFY pgrst, 'reload schema';
+
+-- =========================================================================
+-- ROLLBACK
+--   DROP FUNCTION public.jur_patrimonio_status_malote(uuid[]);
+--   DROP INDEX public.jur_patr_obr_malote_idx;
+--   ALTER TABLE public."JUR_PATRIMONIO_OBRIGACOES"
+--     DROP COLUMN malote_despesa_id, DROP COLUMN enviado_malote_em;
+-- =========================================================================
+
+
+-- =========================================================================
+-- Aperta a jur_patrimonio_status_malote (criada em 20260912000003)
+--
+-- Como nasceu, ela respondia sobre QUALQUER despesa cujo id fosse informado:
+-- é SECURITY DEFINER e está concedida a `authenticated`, então quem tivesse
+-- um uuid de despesa na mão descobria se ela foi paga, mesmo sem acesso ao
+-- Malote. Uuid não se adivinha, mas o contrato da função ficava mais largo
+-- que o uso — e função de contorno de RLS tem que responder exatamente o que
+-- a tela precisa, nada além.
+--
+-- Agora ela só fala de despesa que ESTÁ VINCULADA a uma conta de patrimônio,
+-- que é o único caso para o qual existe. Migration nova em vez de editar a
+-- anterior, que já está aplicada no banco (regra R4).
+-- =========================================================================
+
+CREATE OR REPLACE FUNCTION public.jur_patrimonio_status_malote(_ids uuid[])
+RETURNS TABLE (despesa_id uuid, status text, pago_em timestamptz)
+LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public AS $$
+  SELECT d.id, d.status, d.pago_em
+    FROM public.malote_despesa d
+   WHERE d.id = ANY(_ids)
+     AND EXISTS (
+       SELECT 1 FROM public."JUR_PATRIMONIO_OBRIGACOES" o
+        WHERE o.malote_despesa_id = d.id
+     )
+$$;
+
+COMMENT ON FUNCTION public.jur_patrimonio_status_malote(uuid[]) IS
+  'Status de pagamento das despesas do Malote que estão vinculadas a contas de patrimônio. Devolve só id/status/pago_em: é o mínimo para a tela do Patrimônio desenhar o selo "Enviado ao Malote" / "Pago" sem afrouxar a RLS do Malote.';
+
+REVOKE ALL ON FUNCTION public.jur_patrimonio_status_malote(uuid[]) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.jur_patrimonio_status_malote(uuid[]) TO authenticated;
+
+NOTIFY pgrst, 'reload schema';
+
+-- =========================================================================
+-- ROLLBACK: voltar ao corpo da 20260912000003 (sem o EXISTS).
+-- =========================================================================
+
+
+-- =========================================================================
+-- Recrutamento: vaga ADMINISTRATIVA só para quem tem a capacidade
+--
+-- Pedido do Pablo (20/08/2026): as vagas do escritório são geridas só pela
+-- diretora. Quem não tiver "Ver vaga administrativa?" não pode nem VER a
+-- vaga — logo não aprova, não reprova e não mexe nos candidatos dela.
+--
+-- A capacidade é um menu em `app_menu` com rota NULL, do mesmo jeito que
+-- `recrutamento_etapa_juridico` e `whatsapp_pasta_rh`: aparece sozinha em
+-- Administração › Acesso por Usuário, sem tocar em ModulosMenusTab.tsx.
+-- Nenhuma tabela nova de permissão.
+--
+-- O MESMO código entra em DOIS módulos (Recrutamento e Operacional) porque
+-- os dois têm gente que decide sobre a vaga, e o Pablo pediu o botão nos
+-- dois lugares. Como a permissão é gravada por `menu_codigo` (e não por
+-- módulo), as duas entradas ligam e desligam a MESMA capacidade — é uma
+-- porta com duas maçanetas, não duas portas.
+-- =========================================================================
+
+ALTER TABLE public."SISTEMA_RECRUTAMENTO"
+  ADD COLUMN IF NOT EXISTS administrativa boolean NOT NULL DEFAULT false;
+
+COMMENT ON COLUMN public."SISTEMA_RECRUTAMENTO".administrativa IS
+  'Vaga do escritório. Só é visível para quem tem a capacidade recrutamento_vaga_administrativa — a RLS abaixo é quem garante.';
+
+-- Índice parcial: a esmagadora maioria é false, e quem filtra são as telas
+-- que listam as administrativas.
+CREATE INDEX IF NOT EXISTS sistema_recrutamento_administrativa_idx
+  ON public."SISTEMA_RECRUTAMENTO" (administrativa) WHERE administrativa;
+
+-- ── A capacidade, nos dois módulos ───────────────────────────────────────
+INSERT INTO public.app_menu (modulo_id, codigo, nome, rota, ordem, ativo)
+SELECT m.id, 'recrutamento_vaga_administrativa', 'Ver vaga administrativa?', NULL, 25, true
+  FROM public.app_modulo m
+ WHERE m.codigo IN ('recrutamento', 'operacional')
+   AND NOT EXISTS (
+     SELECT 1 FROM public.app_menu x
+      WHERE x.modulo_id = m.id AND x.codigo = 'recrutamento_vaga_administrativa');
+
+-- ── RLS ──────────────────────────────────────────────────────────────────
+-- As duas policies existentes são FOR ALL e são OR entre si: basta uma
+-- passar. Então a trava da administrativa tem que entrar nas DUAS, senão
+-- quem entra pela outra porta continua vendo tudo.
+--
+-- A condição vale para SELECT e também para UPDATE/DELETE (é o `USING` de
+-- uma policy FOR ALL): não aprovar nem reprovar o que não se pode ver não é
+-- efeito colateral, é o pedido.
+--
+-- R3: cada DROP abaixo tem o CREATE correspondente logo em seguida.
+DROP POLICY IF EXISTS sistema_recrutamento_gate ON public."SISTEMA_RECRUTAMENTO";
+CREATE POLICY sistema_recrutamento_gate ON public."SISTEMA_RECRUTAMENTO"
+  FOR ALL TO authenticated
+  USING (
+    (has_screen_access(auth.uid(), 'recrutamento_gestao'::text, 'visualizar'::app_acao)
+      OR has_screen_access(auth.uid(), 'encarregados_minhas_solicitacoes'::text, 'visualizar'::app_acao))
+    AND (NOT administrativa
+      OR has_screen_access(auth.uid(), 'recrutamento_vaga_administrativa'::text, 'visualizar'::app_acao))
+  )
+  WITH CHECK (
+    (has_screen_access(auth.uid(), 'recrutamento_gestao'::text, 'incluir'::app_acao)
+      OR has_screen_access(auth.uid(), 'recrutamento_gestao'::text, 'alterar'::app_acao)
+      OR has_screen_access(auth.uid(), 'encarregados_minhas_solicitacoes'::text, 'incluir'::app_acao)
+      OR has_screen_access(auth.uid(), 'encarregados_minhas_solicitacoes'::text, 'alterar'::app_acao))
+    -- Marcar uma vaga como administrativa é decisão de quem pode vê-las:
+    -- sem isto, qualquer um criaria uma vaga e ela sumiria da própria vista.
+    AND (NOT administrativa
+      OR has_screen_access(auth.uid(), 'recrutamento_vaga_administrativa'::text, 'visualizar'::app_acao))
+  );
+
+DROP POLICY IF EXISTS sistema_recrutamento_operacional ON public."SISTEMA_RECRUTAMENTO";
+CREATE POLICY sistema_recrutamento_operacional ON public."SISTEMA_RECRUTAMENTO"
+  FOR ALL TO authenticated
+  USING (
+    has_screen_access(auth.uid(), 'operacional_recrutamento'::text, 'visualizar'::app_acao)
+    AND (NOT administrativa
+      OR has_screen_access(auth.uid(), 'recrutamento_vaga_administrativa'::text, 'visualizar'::app_acao))
+  )
+  WITH CHECK (
+    (has_screen_access(auth.uid(), 'operacional_recrutamento'::text, 'alterar'::app_acao)
+      OR has_screen_access(auth.uid(), 'operacional_recrutamento'::text, 'aprovar'::app_acao))
+    AND (NOT administrativa
+      OR has_screen_access(auth.uid(), 'recrutamento_vaga_administrativa'::text, 'visualizar'::app_acao))
+  );
+
+NOTIFY pgrst, 'reload schema';
+
+-- =========================================================================
+-- ROLLBACK
+--   Recriar as duas policies sem o trecho "AND (NOT administrativa OR ...)"
+--   (versão em 20260903000001 / migrations anteriores);
+--   DELETE FROM public.app_menu WHERE codigo = 'recrutamento_vaga_administrativa';
+--   DROP INDEX public.sistema_recrutamento_administrativa_idx;
+--   ALTER TABLE public."SISTEMA_RECRUTAMENTO" DROP COLUMN administrativa;
+-- =========================================================================
+
+-- ===== 20260914000001_novidades_ia_chamados =====
+-- =========================================================================
+-- NOVIDADE AUTOMÁTICA AO CONCLUIR CHAMADO (pedido do Pablo, 21/08/2026)
+--
+-- Quando um Chamado de Sistemas é concluído, a IA lê o chamado, escreve o
+-- aviso em linguagem de usuário e PUBLICA em SISTEMA_NOVIDADES — que já
+-- alimenta o sino do topo, o painel do Início e /app/novidades. Nenhuma tela
+-- nova: a novidade automática é uma novidade como as outras.
+--
+-- "Só os próximos, não os antigos": o gatilho é a TRANSIÇÃO de status, então
+-- chamado já concluído nunca dispara nada. A edge function ainda confere
+-- concluido_em >= o marco, para o caso de um UPDATE em massa reencostar em
+-- linha velha.
+--
+-- Quem escreve é a edge function novidade-ia-chamado (service_role, ignora
+-- RLS de propósito — não existe auth.uid() dentro de um trigger disparado
+-- pelo GitHub Actions, e o INSERT direto aqui esbarraria na policy que cobra
+-- o flag novidades_publicar).
+-- =========================================================================
+
+-- ── 1) De onde veio cada novidade ────────────────────────────────────────
+ALTER TABLE public."SISTEMA_NOVIDADES"
+  ADD COLUMN IF NOT EXISTS origem text NOT NULL DEFAULT 'manual',
+  ADD COLUMN IF NOT EXISTS chamado_id uuid;
+
+DO $$
+BEGIN
+  ALTER TABLE public."SISTEMA_NOVIDADES"
+    ADD CONSTRAINT sistema_novidades_origem_chk CHECK (origem IN ('manual', 'ia'));
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
+
+DO $$
+BEGIN
+  ALTER TABLE public."SISTEMA_NOVIDADES"
+    ADD CONSTRAINT sistema_novidades_chamado_fk
+    FOREIGN KEY (chamado_id) REFERENCES public."CHAMADO_SISTEMA"(id) ON DELETE SET NULL;
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
+
+-- Um chamado, uma novidade. Reabrir e reconcluir não gera a segunda.
+CREATE UNIQUE INDEX IF NOT EXISTS sistema_novidades_chamado_uk
+  ON public."SISTEMA_NOVIDADES" (chamado_id) WHERE chamado_id IS NOT NULL;
+
+COMMENT ON COLUMN public."SISTEMA_NOVIDADES".origem IS
+  'manual = alguém escreveu na tela; ia = gerada ao concluir o chamado em chamado_id.';
+
+-- ── 2) O que a IA decidiu, chamado a chamado ─────────────────────────────
+-- Serve para duas coisas: idempotência (a PK é o chamado, então o mesmo
+-- chamado não gasta duas chamadas de IA) e auditoria — quando o Pablo
+-- perguntar "por que o SIS-2026-0123 não virou novidade?", o motivo está aqui.
+CREATE TABLE IF NOT EXISTS public."SISTEMA_NOVIDADES_IA_LOG" (
+  chamado_id  uuid PRIMARY KEY REFERENCES public."CHAMADO_SISTEMA"(id) ON DELETE CASCADE,
+  decisao     text        NOT NULL CHECK (decisao IN ('publicado', 'descartado')),
+  motivo      text,
+  novidade_id bigint      REFERENCES public."SISTEMA_NOVIDADES"(id) ON DELETE SET NULL,
+  criado_em   timestamptz NOT NULL DEFAULT now()
+);
+
+COMMENT ON TABLE public."SISTEMA_NOVIDADES_IA_LOG" IS
+  'Uma linha por chamado avaliado pela IA de novidades. Garante idempotência e explica os descartes.';
+
+ALTER TABLE public."SISTEMA_NOVIDADES_IA_LOG" ENABLE ROW LEVEL SECURITY;
+
+-- Leitura só para quem publica novidades; escrita só via service_role (a edge
+-- function), que não passa por RLS. Sem policy de INSERT de propósito.
+DROP POLICY IF EXISTS sistema_novidades_ia_log_ler ON public."SISTEMA_NOVIDADES_IA_LOG";
+CREATE POLICY sistema_novidades_ia_log_ler ON public."SISTEMA_NOVIDADES_IA_LOG"
+  FOR SELECT TO authenticated
+  USING (public.has_screen_access(auth.uid(), 'novidades_publicar', 'incluir'));
+
+REVOKE ALL ON public."SISTEMA_NOVIDADES_IA_LOG" FROM anon;
+GRANT SELECT ON public."SISTEMA_NOVIDADES_IA_LOG" TO authenticated;
+
+-- ── 3) O gatilho ─────────────────────────────────────────────────────────
+-- SECURITY DEFINER porque net.http_post não é executável pelo `authenticated`
+-- que fez o UPDATE (nem pela service_role do chamado-concluir-pr).
+--
+-- O corpo inteiro é best-effort: se o pg_net estiver fora do ar ou a extensão
+-- sumir, o chamado TEM que concluir do mesmo jeito. Deixar a exceção subir
+-- transformaria "a IA falhou" em "o dev não consegue concluir o chamado".
+CREATE OR REPLACE FUNCTION public.chamado_concluido_gera_novidade()
+RETURNS trigger
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, net, extensions, pg_temp
+AS $$
+BEGIN
+  BEGIN
+    PERFORM net.http_post(
+      url := 'https://fwmzeaztjxrxxzxzxmgc.supabase.co/functions/v1/novidade-ia-chamado',
+      headers := '{"Content-Type":"application/json","apikey":"eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImZ3bXplYXp0anhyeHh6eHp4bWdjIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzY2MDc0NTAsImV4cCI6MjA5MjE4MzQ1MH0.i08oF2-9N6w-CxDVy8ink29-ydHTJEc-eQBZDYRxGwI","Authorization":"Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImZ3bXplYXp0anhyeHh6eHp4bWdjIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzY2MDc0NTAsImV4cCI6MjA5MjE4MzQ1MH0.i08oF2-9N6w-CxDVy8ink29-ydHTJEc-eQBZDYRxGwI"}'::jsonb,
+      body := jsonb_build_object('chamado_id', NEW.id)
+    );
+  EXCEPTION WHEN OTHERS THEN
+    RAISE WARNING 'novidade-ia-chamado não foi disparada para %: %', NEW.id, SQLERRM;
+  END;
+  RETURN NULL;  -- AFTER trigger: o retorno é ignorado
+END $$;
+
+REVOKE ALL ON FUNCTION public.chamado_concluido_gera_novidade() FROM PUBLIC, anon, authenticated;
+
+DROP TRIGGER IF EXISTS trg_chamado_concluido_novidade_ia ON public."CHAMADO_SISTEMA";
+CREATE TRIGGER trg_chamado_concluido_novidade_ia
+  AFTER UPDATE ON public."CHAMADO_SISTEMA"
+  FOR EACH ROW
+  -- Só a transição para concluído. Salvar prazo, trocar responsável ou editar
+  -- um chamado que JÁ estava concluído não redispara nada.
+  WHEN (NEW.status = 'concluido' AND OLD.status IS DISTINCT FROM 'concluido')
+  EXECUTE FUNCTION public.chamado_concluido_gera_novidade();
+
+NOTIFY pgrst, 'reload schema';
+
+-- =========================================================================
+-- ROLLBACK
+--   DROP TRIGGER IF EXISTS trg_chamado_concluido_novidade_ia ON public."CHAMADO_SISTEMA";
+--   DROP FUNCTION IF EXISTS public.chamado_concluido_gera_novidade();
+--   DROP TABLE IF EXISTS public."SISTEMA_NOVIDADES_IA_LOG";
+--   DROP INDEX IF EXISTS public.sistema_novidades_chamado_uk;
+--   ALTER TABLE public."SISTEMA_NOVIDADES"
+--     DROP CONSTRAINT IF EXISTS sistema_novidades_chamado_fk,
+--     DROP CONSTRAINT IF EXISTS sistema_novidades_origem_chk,
+--     DROP COLUMN IF EXISTS chamado_id, DROP COLUMN IF EXISTS origem;
+-- =========================================================================
+
+
+-- ===== 20260914000002_canal_denuncia_estrutura =====
+-- =====================================================================
+-- CANAL DE ÉTICA — atendimento integral do pedido do Comitê (21/08/2026)
+--
+-- Cobre os 57 requisitos que a conferência apontou como ausentes ou
+-- parciais. Esta migration é a ESTRUTURA (colunas, tabelas, domínios,
+-- gatilhos, visão e capacidades); as portas públicas do site ficam na
+-- 20260821000003_canal_denuncia_rpcs.sql.
+--
+-- O QUE MUDA, EM BLOCOS
+--   1. Contato Seguro sai do ar (o espelho legado deixa de ter menu).
+--   2. Empresa e contrato viram dado estruturado, informado por quem denuncia.
+--   3. Volta a denúncia anônima — sem desmontar o acompanhamento.
+--   4. Campos que faltavam ao denunciante (data/hora do fato, risco, retaliação,
+--      quem é o denunciado e sua função).
+--   5. Campos que faltavam ao Comitê (resumo, pendência, medida principal,
+--      recomendação) + providências como LISTA, com prazo e responsável.
+--   6. Camada da Presidência, com capacidade própria e trava no banco.
+--   7. Fluxo de 11 situações, com justificativa obrigatória na mudança.
+--   8. Trilha de TODOS os campos da ficha, não só de quatro.
+--   9. Anexos de verdade (bucket + tabela), com marcação de sensível.
+--  10. Cadastro de responsáveis pela apuração.
+--  11. Sigilo que restringe de verdade: visão mascarada + capacidade.
+--
+-- O QUE NÃO MUDA: o relato continua imutável, continua não existindo
+-- caminho de exclusão pela API, e nada de IP/user-agent/auth.uid() do
+-- denunciante é gravado.
+--
+-- Idempotente.
+-- =====================================================================
+
+-- =====================================================================
+-- 1. CONTATO SEGURO SAI DO AR
+-- =====================================================================
+-- As TABELAS ficam. Elas guardam denúncias reais já tratadas, e apagar
+-- histórico de canal de ética não se desfaz — se a decisão for descartar,
+-- que seja num passo explícito e separado. O que sai é o acesso: sem menu,
+-- a tela não existe mais para ninguém.
+DELETE FROM public.screen_permission_user WHERE menu_codigo = 'central_servicos_denuncias';
+UPDATE public.app_menu SET ativo = false WHERE codigo = 'central_servicos_denuncias';
+
+DO $$
+BEGIN
+  EXECUTE 'COMMENT ON TABLE public."CS_DENUNCIAS" IS ' ||
+    quote_literal('LEGADO (Contato Seguro), aposentado em 21/08/2026. Somente leitura historica: ' ||
+                  'nao recebe denuncia nova e nao tem tela. O canal em uso e CANAL_DENUNCIA.');
+EXCEPTION WHEN undefined_table THEN NULL;
+END $$;
+
+-- =====================================================================
+-- 2. EMPRESA E CONTRATO
+-- =====================================================================
+-- A lista que o site oferece é CADASTRO, não constante no código — foi
+-- pedido explicitamente ("permitir o cadastramento futuro de outras
+-- empresas"), e trocar uma opção não pode exigir deploy.
+--
+-- Fica separada de `public.empresas` de propósito: aquela tabela é o cadastro
+-- fiscal (CNPJ, regime tributário), e nem toda opção que faz sentido para
+-- quem denuncia corresponde a uma linha lá. `empresa_id` liga as duas quando
+-- houver correspondência, e fica nula quando não houver.
+CREATE TABLE IF NOT EXISTS public."CANAL_DENUNCIA_EMPRESA" (
+  id          uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  rotulo      text NOT NULL UNIQUE,
+  empresa_id  uuid REFERENCES public.empresas(id),
+  -- Casado contra EMPREGADOS."Nome da Empresa" para montar a lista de
+  -- contratos daquela empresa. Nulo = oferece todos os contratos.
+  padrao_empregados text,
+  ordem       integer NOT NULL DEFAULT 10,
+  ativo       boolean NOT NULL DEFAULT true,
+  created_at  timestamptz NOT NULL DEFAULT now()
+);
+
+COMMENT ON TABLE public."CANAL_DENUNCIA_EMPRESA" IS
+  'Opcoes do campo "Empresa" do formulario publico. Cadastro: incluir empresa nova nao exige deploy.';
+COMMENT ON COLUMN public."CANAL_DENUNCIA_EMPRESA".padrao_empregados IS
+  'ILIKE contra EMPREGADOS."Nome da Empresa" para listar os contratos. Nulo = todos.';
+
+INSERT INTO public."CANAL_DENUNCIA_EMPRESA" (rotulo, ordem) VALUES
+  ('Nascimento', 10), ('SN', 20), ('NH', 30)
+ON CONFLICT (rotulo) DO NOTHING;
+
+ALTER TABLE public."CANAL_DENUNCIA_EMPRESA" ENABLE ROW LEVEL SECURITY;
+-- A leitura é pública de propósito: é o que popula o select do site, que roda
+-- sem login. São nomes de empresa — não há o que proteger aqui.
+GRANT SELECT ON TABLE public."CANAL_DENUNCIA_EMPRESA" TO anon, authenticated;
+GRANT INSERT, UPDATE, DELETE ON TABLE public."CANAL_DENUNCIA_EMPRESA" TO authenticated;
+
+DROP POLICY IF EXISTS canal_empresa_ler ON public."CANAL_DENUNCIA_EMPRESA";
+CREATE POLICY canal_empresa_ler ON public."CANAL_DENUNCIA_EMPRESA"
+  FOR SELECT TO anon, authenticated USING (ativo OR public.tem_acesso_menu('comite_etica_sigilo'));
+
+DROP POLICY IF EXISTS canal_empresa_manter ON public."CANAL_DENUNCIA_EMPRESA";
+CREATE POLICY canal_empresa_manter ON public."CANAL_DENUNCIA_EMPRESA"
+  FOR ALL TO authenticated
+  USING (public.tem_acesso_menu('comite_etica_sigilo'))
+  WITH CHECK (public.tem_acesso_menu('comite_etica_sigilo'));
+
+ALTER TABLE public."CANAL_DENUNCIA"
+  -- Informados por QUEM DENUNCIA, no formulário público. Fazem parte do
+  -- relato: entram uma vez e não são reescritos (ver a trava, mais abaixo).
+  ADD COLUMN IF NOT EXISTS empresa_id            uuid REFERENCES public."CANAL_DENUNCIA_EMPRESA"(id),
+  -- Retrato do nome no dia do registro. `empresas` pode ser renomeada, e o
+  -- procedimento exportado tem de continuar dizendo o que dizia.
+  ADD COLUMN IF NOT EXISTS empresa_nome          text,
+  ADD COLUMN IF NOT EXISTS contrato_informado    text,
+  -- Como o contrato foi informado. Sem isto, "em branco" ficaria significando
+  -- três coisas diferentes: não perguntei, não achei e não sei.
+  ADD COLUMN IF NOT EXISTS contrato_situacao     text;
+
+DO $$
+BEGIN
+  ALTER TABLE public."CANAL_DENUNCIA" ADD CONSTRAINT canal_denuncia_contrato_situacao_chk
+    CHECK (contrato_situacao IS NULL OR contrato_situacao IN ('selecionado','nao_localizado','nao_sei','manual'));
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
+
+COMMENT ON COLUMN public."CANAL_DENUNCIA".empresa_id IS
+  'Empresa informada pelo denunciante. Faz parte do relato: imutavel apos o registro.';
+COMMENT ON COLUMN public."CANAL_DENUNCIA".contrato_informado IS
+  'Contrato/local de trabalho segundo o denunciante. O campo `contrato` continua sendo a leitura do Comite.';
+
+CREATE INDEX IF NOT EXISTS idx_canal_denuncia_empresa ON public."CANAL_DENUNCIA"(empresa_id);
+
+-- =====================================================================
+-- 3. VOLTA A DENÚNCIA ANÔNIMA
+-- =====================================================================
+-- A 20260901000005 tornou o e-mail obrigatório para dar acompanhamento a
+-- quem denuncia — e, com isso, acabou com o relato anônimo. O Comitê pediu
+-- a opção de volta. Em vez de desfazer o acompanhamento, os dois convivem:
+--
+--   · com e-mail   → acompanha por e-mail + senha (como hoje);
+--   · sem e-mail   → acompanha por PROTOCOLO + senha (o desenho original,
+--                    da 20260812000001, que nunca deixou de funcionar).
+--
+-- A senha continua escolhida pela pessoa e guardada só como hash.
+ALTER TABLE public."CANAL_DENUNCIA"
+  ADD COLUMN IF NOT EXISTS anonimo boolean NOT NULL DEFAULT false;
+
+COMMENT ON COLUMN public."CANAL_DENUNCIA".anonimo IS
+  'true = relato sem e-mail. O acompanhamento passa a ser por protocolo + senha. Diferente de `identificado`, que e sobre dizer o NOME.';
+
+-- Quem é anônimo não pode ter e-mail gravado, e quem não é precisa de um:
+-- sem esta trava, a coluna viraria "às vezes tem" e as duas portas de
+-- acompanhamento passariam a discordar sobre quem entra por onde.
+DO $$
+BEGIN
+  ALTER TABLE public."CANAL_DENUNCIA" ADD CONSTRAINT canal_denuncia_anonimo_chk
+    CHECK ((anonimo AND email IS NULL) OR (NOT anonimo AND email IS NOT NULL));
+EXCEPTION
+  WHEN duplicate_object THEN NULL;
+  -- Base legada com e-mail nulo de antes da 20260901000005: a trava entra
+  -- depois de a 3.1 abaixo acertar as linhas.
+  WHEN check_violation THEN NULL;
+END $$;
+
+-- 3.1 Linhas antigas sem e-mail (anteriores à obrigatoriedade) são anônimas.
+UPDATE public."CANAL_DENUNCIA" SET anonimo = true WHERE email IS NULL AND NOT anonimo;
+
+DO $$
+BEGIN
+  ALTER TABLE public."CANAL_DENUNCIA" ADD CONSTRAINT canal_denuncia_anonimo_chk
+    CHECK ((anonimo AND email IS NULL) OR (NOT anonimo AND email IS NOT NULL));
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
+
+-- =====================================================================
+-- 4. CAMPOS DO DENUNCIANTE QUE FALTAVAM
+-- =====================================================================
+ALTER TABLE public."CANAL_DENUNCIA"
+  -- Quando o fato aconteceu. Estava só dentro do texto do relato, quando
+  -- estava — e é o dado que decide prescrição, escala e testemunha.
+  ADD COLUMN IF NOT EXISTS ocorrencia_data       date,
+  ADD COLUMN IF NOT EXISTS ocorrencia_hora       text,
+  -- 'unica' | 'recorrente' | 'em_curso': assédio contínuo e episódio isolado
+  -- não pedem a mesma resposta.
+  ADD COLUMN IF NOT EXISTS ocorrencia_frequencia text,
+  -- Risco imediato é o que fura a fila. Booleano + detalhe: a triagem precisa
+  -- conseguir filtrar, e o Comitê precisa ler o porquê.
+  ADD COLUMN IF NOT EXISTS risco_imediato        boolean NOT NULL DEFAULT false,
+  ADD COLUMN IF NOT EXISTS risco_imediato_detalhe text,
+  ADD COLUMN IF NOT EXISTS retaliacao            boolean NOT NULL DEFAULT false,
+  ADD COLUMN IF NOT EXISTS retaliacao_detalhe    text,
+  -- Quem é o denunciado SEGUNDO O DENUNCIANTE. Diferente de `denunciado_nome`,
+  -- que é a identificação que o Comitê confirma contra o cadastro.
+  ADD COLUMN IF NOT EXISTS denunciado_informado  text,
+  ADD COLUMN IF NOT EXISTS denunciado_funcao     text;
+
+DO $$
+BEGIN
+  ALTER TABLE public."CANAL_DENUNCIA" ADD CONSTRAINT canal_denuncia_frequencia_chk
+    CHECK (ocorrencia_frequencia IS NULL OR ocorrencia_frequencia IN ('unica','recorrente','em_curso'));
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
+
+-- Filtro da triagem: "o que não pode esperar" tem de ser uma consulta barata.
+CREATE INDEX IF NOT EXISTS idx_canal_denuncia_risco
+  ON public."CANAL_DENUNCIA"(created_at DESC) WHERE risco_imediato;
+
+-- =====================================================================
+-- 5. CAMPOS DO COMITÊ QUE FALTAVAM
+-- =====================================================================
+ALTER TABLE public."CANAL_DENUNCIA"
+  -- `titulo` é o assunto de uma linha da lista. Isto aqui é o resumo que vai
+  -- para o relatório gerencial — são coisas diferentes.
+  ADD COLUMN IF NOT EXISTS resumo             text,
+  ADD COLUMN IF NOT EXISTS pendencia_atual    text,
+  -- As medidas são uma lista de marcar; a principal é a que vai no relatório
+  -- e no indicador de eficácia.
+  ADD COLUMN IF NOT EXISTS medida_principal   text,
+  ADD COLUMN IF NOT EXISTS recomendacao       text,
+  ADD COLUMN IF NOT EXISTS evidencias_analise text,
+  -- Responsável pela apuração deixa de ser texto solto (ver bloco 10). O
+  -- texto continua como retrato de quem era o responsável na época.
+  ADD COLUMN IF NOT EXISTS apuracao_responsavel_id uuid REFERENCES auth.users(id),
+  -- Alimentado por gatilho. É o que responde "parado há quanto tempo?", que o
+  -- SLA contado desde a abertura não responde.
+  ADD COLUMN IF NOT EXISTS ultima_movimentacao_em timestamptz NOT NULL DEFAULT now();
+
+DO $$
+BEGIN
+  ALTER TABLE public."CANAL_DENUNCIA" ADD CONSTRAINT canal_denuncia_recomendacao_chk
+    CHECK (recomendacao IS NULL OR recomendacao IN ('arquivamento','aplicacao_medida','reabertura','apuracao_complementar'));
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
+
+CREATE INDEX IF NOT EXISTS idx_canal_denuncia_parado
+  ON public."CANAL_DENUNCIA"(ultima_movimentacao_em);
+CREATE INDEX IF NOT EXISTS idx_canal_denuncia_resp_id
+  ON public."CANAL_DENUNCIA"(apuracao_responsavel_id);
+
+-- =====================================================================
+-- 6. CAMADA DA PRESIDÊNCIA
+-- =====================================================================
+ALTER TABLE public."CANAL_DENUNCIA"
+  ADD COLUMN IF NOT EXISTS decisao_final          text,
+  ADD COLUMN IF NOT EXISTS decisao_em             timestamptz,
+  ADD COLUMN IF NOT EXISTS decisao_fundamentacao  text,
+  -- O que a Presidência fez com a recomendação do Comitê. É o campo que
+  -- permite medir divergência entre os dois — e é por isso que ele é um
+  -- domínio fechado, e não texto.
+  ADD COLUMN IF NOT EXISTS decisao_sobre_parecer  text,
+  ADD COLUMN IF NOT EXISTS decisao_medidas        text,
+  ADD COLUMN IF NOT EXISTS decisao_por_user_id    uuid REFERENCES auth.users(id),
+  ADD COLUMN IF NOT EXISTS decisao_por_nome       text;
+
+DO $$
+BEGIN
+  ALTER TABLE public."CANAL_DENUNCIA" ADD CONSTRAINT canal_denuncia_decisao_chk
+    CHECK (decisao_sobre_parecer IS NULL
+           OR decisao_sobre_parecer IN ('aprovada','alterada','rejeitada'));
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
+
+-- Capacidade própria: decidir não é tratar. Menu sem rota, igual a
+-- `novidades_publicar` — aparece sozinho em Acesso por Usuário.
+INSERT INTO public.app_menu (modulo_id, codigo, nome, rota, ordem, ativo)
+SELECT m.id, 'comite_etica_presidencia', 'Pode registrar a decisão da Presidência', NULL, 30, true
+  FROM public.app_modulo m WHERE m.codigo = 'comite_etica'
+ON CONFLICT (modulo_id, codigo) DO NOTHING;
+
+-- Capacidade de sigilo: ver identidade do denunciante e anexos sensíveis.
+INSERT INTO public.app_menu (modulo_id, codigo, nome, rota, ordem, ativo)
+SELECT m.id, 'comite_etica_sigilo', 'Pode ver identidade e anexos sigilosos', NULL, 31, true
+  FROM public.app_modulo m WHERE m.codigo = 'comite_etica'
+ON CONFLICT (modulo_id, codigo) DO NOTHING;
+
+-- A tela de configuração do canal (empresas, responsáveis, prazos). Entra em
+-- app_menu COM rota porque rota sem entrada lá é aberta a todo mundo — e esta
+-- não pode ser. A tela também cobra `comite_etica_sigilo` por dentro.
+INSERT INTO public.app_menu (modulo_id, codigo, nome, rota, ordem, ativo)
+SELECT m.id, 'comite_etica_configuracao', 'Configuração do Canal', '/app/comite-etica/configuracao', 32, true
+  FROM public.app_modulo m WHERE m.codigo = 'comite_etica'
+ON CONFLICT (modulo_id, codigo) DO NOTHING;
+
+-- =====================================================================
+-- 7. FLUXO DE 11 SITUAÇÕES
+-- =====================================================================
+-- A ORDEM AQUI É O QUE FAZ A MIGRATION RODAR: solta o CHECK velho, traduz os
+-- status, e só então prende o novo. Traduzir com o CHECK antigo ainda de pé
+-- falha na primeira linha — ele não conhece 'triagem'. (Foi exatamente assim
+-- que esta migration quebrou na primeira tentativa, em 21/08/2026.)
+ALTER TABLE public."CANAL_DENUNCIA" DROP CONSTRAINT IF EXISTS canal_denuncia_status_chk;
+ALTER TABLE public."CANAL_DENUNCIA" DROP CONSTRAINT IF EXISTS canal_denuncia_status_valido;
+
+-- `julgada` vira `aguardando_cumprimento`: era exatamente o que ela
+-- descrevia ("o comitê concluiu; as providências estão em execução"), e ela
+-- PARAVA o cronômetro do prazo. Um caso julgado cuja medida ninguém executou
+-- aparecia como concluído. Agora não para mais.
+UPDATE public."CANAL_DENUNCIA" SET status = 'triagem'                WHERE status = 'em_analise';
+UPDATE public."CANAL_DENUNCIA" SET status = 'aguardando_cumprimento' WHERE status = 'julgada';
+UPDATE public."CANAL_DENUNCIA" SET status = 'concluida'              WHERE status = 'encerrada';
+
+DO $$
+BEGIN
+  ALTER TABLE public."CANAL_DENUNCIA" ADD CONSTRAINT canal_denuncia_status_chk
+    CHECK (status IN (
+      'nova',                     -- denúncia recebida
+      'triagem',
+      'investigacao',             -- em apuração
+      'aguardando_esclarecimentos',
+      'aguardando_documentos',
+      'parecer_elaboracao',
+      'aguardando_presidencia',
+      'aguardando_cumprimento',
+      'concluida',
+      'arquivada',
+      'reaberta'
+    ));
+END $$;
+
+-- Justificativa da última mudança. Fica como coluna, e não só dentro do
+-- evento, para o gatilho conseguir lê-la na mesma transação do UPDATE —
+-- é o que permite exigir o "por quê" sem uma segunda chamada da tela.
+ALTER TABLE public."CANAL_DENUNCIA"
+  ADD COLUMN IF NOT EXISTS justificativa_mudanca text;
+
+COMMENT ON COLUMN public."CANAL_DENUNCIA".justificativa_mudanca IS
+  'Por que a situacao mudou. Copiada para CANAL_DENUNCIA_EVENTO pelo gatilho; obrigatoria na troca de situacao.';
+
+-- =====================================================================
+-- 8. PROVIDÊNCIAS — lista, não campo
+-- =====================================================================
+CREATE TABLE IF NOT EXISTS public."CANAL_DENUNCIA_PROVIDENCIA" (
+  id            uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  denuncia_id   uuid NOT NULL REFERENCES public."CANAL_DENUNCIA"(id) ON DELETE CASCADE,
+  ordem         integer NOT NULL DEFAULT 1,
+  descricao     text NOT NULL CHECK (length(btrim(descricao)) > 0),
+  responsavel   text,
+  responsavel_user_id uuid REFERENCES auth.users(id),
+  prazo         date,
+  concluida_em  timestamptz,
+  -- 'pendente' | 'em_andamento' | 'concluida' | 'cancelada'
+  situacao      text NOT NULL DEFAULT 'pendente',
+  observacao    text,
+  criado_por    uuid REFERENCES auth.users(id) DEFAULT auth.uid(),
+  criado_por_nome text,
+  created_at    timestamptz NOT NULL DEFAULT now(),
+  updated_at    timestamptz NOT NULL DEFAULT now(),
+  CONSTRAINT canal_denuncia_prov_situacao_chk
+    CHECK (situacao IN ('pendente','em_andamento','concluida','cancelada'))
+);
+
+COMMENT ON TABLE public."CANAL_DENUNCIA_PROVIDENCIA" IS
+  'Providencias do procedimento, cada uma com prazo e responsavel. E daqui que sai "data de cada providencia" e "prazo para cumprimento".';
+
+CREATE INDEX IF NOT EXISTS idx_canal_prov_denuncia
+  ON public."CANAL_DENUNCIA_PROVIDENCIA"(denuncia_id, ordem);
+CREATE INDEX IF NOT EXISTS idx_canal_prov_prazo
+  ON public."CANAL_DENUNCIA_PROVIDENCIA"(prazo) WHERE situacao IN ('pendente','em_andamento');
+
+ALTER TABLE public."CANAL_DENUNCIA_PROVIDENCIA" ENABLE ROW LEVEL SECURITY;
+REVOKE ALL ON TABLE public."CANAL_DENUNCIA_PROVIDENCIA" FROM anon;
+GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public."CANAL_DENUNCIA_PROVIDENCIA" TO authenticated;
+
+DROP POLICY IF EXISTS canal_prov_todas ON public."CANAL_DENUNCIA_PROVIDENCIA";
+CREATE POLICY canal_prov_todas ON public."CANAL_DENUNCIA_PROVIDENCIA"
+  FOR ALL TO authenticated
+  USING (public.tem_acesso_menu('central_servicos_canal_denuncias'))
+  WITH CHECK (public.tem_acesso_menu('central_servicos_canal_denuncias'));
+
+-- =====================================================================
+-- 9. ANEXOS
+-- =====================================================================
+-- Bucket privado. Sem `public`, sem política de leitura anônima: quem baixa
+-- é sempre alguém autenticado, por URL assinada de vida curta.
+INSERT INTO storage.buckets (id, name, public, file_size_limit)
+VALUES ('denuncia-evidencias', 'denuncia-evidencias', false, 52428800)
+ON CONFLICT (id) DO UPDATE SET public = false, file_size_limit = 52428800;
+
+CREATE TABLE IF NOT EXISTS public."CANAL_DENUNCIA_ANEXO" (
+  id            uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  denuncia_id   uuid NOT NULL REFERENCES public."CANAL_DENUNCIA"(id) ON DELETE CASCADE,
+  -- Quem juntou o arquivo. O do denunciante é prova do relato e por isso
+  -- não pode ser removido nem por quem apura (ver a policy de DELETE).
+  origem        text NOT NULL CHECK (origem IN ('denunciante','comite','presidencia')),
+  -- 'evidencia' | 'documento_suporte' | 'entrevista' | 'manifestacao' | 'parecer' | 'outro'
+  categoria     text NOT NULL DEFAULT 'evidencia',
+  nome_arquivo  text NOT NULL,
+  storage_path  text NOT NULL UNIQUE,
+  mime_type     text,
+  tamanho_bytes bigint,
+  -- Sensível = só quem tem a capacidade `comite_etica_sigilo` abre.
+  sensivel      boolean NOT NULL DEFAULT false,
+  descricao     text,
+  autor_user_id uuid REFERENCES auth.users(id),
+  autor_nome    text,
+  created_at    timestamptz NOT NULL DEFAULT now()
+);
+
+COMMENT ON TABLE public."CANAL_DENUNCIA_ANEXO" IS
+  'Arquivos do procedimento. O que veio pelo site entra via edge function denuncia-anexar (service_role); o do Comite entra direto pelo storage.';
+
+CREATE INDEX IF NOT EXISTS idx_canal_anexo_denuncia
+  ON public."CANAL_DENUNCIA_ANEXO"(denuncia_id, created_at);
+
+ALTER TABLE public."CANAL_DENUNCIA_ANEXO" ENABLE ROW LEVEL SECURITY;
+REVOKE ALL ON TABLE public."CANAL_DENUNCIA_ANEXO" FROM anon;
+GRANT SELECT, INSERT, UPDATE ON TABLE public."CANAL_DENUNCIA_ANEXO" TO authenticated;
+
+-- Anexo sensível só aparece para quem tem a capacidade. Isto é o que faz o
+-- campo "Sigilo" deixar de ser enfeite: a linha nem volta na consulta.
+DROP POLICY IF EXISTS canal_anexo_select ON public."CANAL_DENUNCIA_ANEXO";
+CREATE POLICY canal_anexo_select ON public."CANAL_DENUNCIA_ANEXO"
+  FOR SELECT TO authenticated
+  USING (public.tem_acesso_menu('central_servicos_canal_denuncias')
+         AND (NOT sensivel OR public.tem_acesso_menu('comite_etica_sigilo')));
+
+DROP POLICY IF EXISTS canal_anexo_insert ON public."CANAL_DENUNCIA_ANEXO";
+CREATE POLICY canal_anexo_insert ON public."CANAL_DENUNCIA_ANEXO"
+  FOR INSERT TO authenticated
+  WITH CHECK (public.tem_acesso_menu('central_servicos_canal_denuncias')
+              AND origem <> 'denunciante');
+
+-- Reclassificar (marcar como sensível, corrigir a categoria) é permitido;
+-- trocar o arquivo por outro, não.
+DROP POLICY IF EXISTS canal_anexo_update ON public."CANAL_DENUNCIA_ANEXO";
+CREATE POLICY canal_anexo_update ON public."CANAL_DENUNCIA_ANEXO"
+  FOR UPDATE TO authenticated
+  USING (public.tem_acesso_menu('central_servicos_canal_denuncias'))
+  WITH CHECK (public.tem_acesso_menu('central_servicos_canal_denuncias'));
+
+CREATE OR REPLACE FUNCTION public.canal_denuncia_anexo_guard()
+RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp
+AS $$
+BEGIN
+  IF NEW.storage_path IS DISTINCT FROM OLD.storage_path
+  OR NEW.denuncia_id  IS DISTINCT FROM OLD.denuncia_id
+  OR NEW.origem       IS DISTINCT FROM OLD.origem
+  OR NEW.nome_arquivo IS DISTINCT FROM OLD.nome_arquivo THEN
+    RAISE EXCEPTION 'O arquivo anexado é imutável. É possível reclassificar, não substituir.'
+      USING ERRCODE = '42501';
+  END IF;
+  RETURN NEW;
+END $$;
+
+DROP TRIGGER IF EXISTS trg_canal_anexo_guard ON public."CANAL_DENUNCIA_ANEXO";
+CREATE TRIGGER trg_canal_anexo_guard
+  BEFORE UPDATE ON public."CANAL_DENUNCIA_ANEXO"
+  FOR EACH ROW EXECUTE FUNCTION public.canal_denuncia_anexo_guard();
+
+-- Sem policy de DELETE: nenhum anexo sai pela API, de nenhuma origem.
+
+-- Storage: o Comitê lê e escreve; o público não alcança o bucket (a entrada
+-- dele é a edge function, que usa service_role e ignora estas políticas).
+DROP POLICY IF EXISTS denuncia_evid_select ON storage.objects;
+CREATE POLICY denuncia_evid_select ON storage.objects
+  FOR SELECT TO authenticated
+  USING (bucket_id = 'denuncia-evidencias'
+         AND public.tem_acesso_menu('central_servicos_canal_denuncias'));
+
+DROP POLICY IF EXISTS denuncia_evid_insert ON storage.objects;
+CREATE POLICY denuncia_evid_insert ON storage.objects
+  FOR INSERT TO authenticated
+  WITH CHECK (bucket_id = 'denuncia-evidencias'
+              AND public.tem_acesso_menu('central_servicos_canal_denuncias'));
+
+-- =====================================================================
+-- 10. CADASTRO DE RESPONSÁVEIS PELA APURAÇÃO
+-- =====================================================================
+CREATE TABLE IF NOT EXISTS public."COMITE_ETICA_RESPONSAVEL" (
+  id         uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id    uuid NOT NULL UNIQUE REFERENCES auth.users(id) ON DELETE CASCADE,
+  nome       text NOT NULL,
+  papel      text,
+  ativo      boolean NOT NULL DEFAULT true,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+
+COMMENT ON TABLE public."COMITE_ETICA_RESPONSAVEL" IS
+  'Quem pode ser apontado como responsavel pela apuracao. Fecha o texto livre que fazia o mesmo nome virar dois responsaveis no relatorio.';
+
+ALTER TABLE public."COMITE_ETICA_RESPONSAVEL" ENABLE ROW LEVEL SECURITY;
+REVOKE ALL ON TABLE public."COMITE_ETICA_RESPONSAVEL" FROM anon;
+GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public."COMITE_ETICA_RESPONSAVEL" TO authenticated;
+
+DROP POLICY IF EXISTS comite_resp_select ON public."COMITE_ETICA_RESPONSAVEL";
+CREATE POLICY comite_resp_select ON public."COMITE_ETICA_RESPONSAVEL"
+  FOR SELECT TO authenticated
+  USING (public.tem_acesso_menu('central_servicos_canal_denuncias'));
+
+-- Manter o cadastro é ato de coordenação: exige a capacidade de sigilo, que
+-- é quem manda no módulo.
+DROP POLICY IF EXISTS comite_resp_escrever ON public."COMITE_ETICA_RESPONSAVEL";
+CREATE POLICY comite_resp_escrever ON public."COMITE_ETICA_RESPONSAVEL"
+  FOR ALL TO authenticated
+  USING (public.tem_acesso_menu('comite_etica_sigilo'))
+  WITH CHECK (public.tem_acesso_menu('comite_etica_sigilo'));
+
+-- =====================================================================
+-- 11. ENTREVISTAS E MANIFESTAÇÕES NO FIO DA CONVERSA
+-- =====================================================================
+ALTER TABLE public."CANAL_DENUNCIA_MENSAGEM"
+  ADD COLUMN IF NOT EXISTS tipo text NOT NULL DEFAULT 'mensagem';
+
+DO $$
+BEGIN
+  ALTER TABLE public."CANAL_DENUNCIA_MENSAGEM" ADD CONSTRAINT canal_msg_tipo_chk
+    CHECK (tipo IN ('mensagem','nota','entrevista','manifestacao','providencia'));
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
+
+-- Entrevista e manifestação são registro de trabalho: nunca saem para o
+-- denunciante, então são obrigatoriamente internas.
+DO $$
+BEGIN
+  ALTER TABLE public."CANAL_DENUNCIA_MENSAGEM" ADD CONSTRAINT canal_msg_tipo_interna_chk
+    CHECK (tipo IN ('mensagem','nota') OR interna);
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
+
+COMMENT ON COLUMN public."CANAL_DENUNCIA_MENSAGEM".tipo IS
+  'Separa conversa de registro de apuracao. entrevista/manifestacao/providencia sao sempre internas e saem tipadas no PDF.';
+
+-- =====================================================================
+-- 12. TRILHA COMPLETA + JUSTIFICATIVA + ÚLTIMA MOVIMENTAÇÃO
+-- =====================================================================
+ALTER TABLE public."CANAL_DENUNCIA_EVENTO"
+  ADD COLUMN IF NOT EXISTS justificativa text,
+  ADD COLUMN IF NOT EXISTS por_nome      text;
+
+-- Antes só quatro campos deixavam rastro (situação, resultado, gravidade e
+-- responsável); mudar contrato, parecer ou setor não registrava nada. Agora a
+-- comparação é sobre a linha inteira, campo a campo — é isto que atende
+-- "manter o histórico das versões" sem uma tabela de versões.
+CREATE OR REPLACE FUNCTION public.canal_denuncia_registrar_evento()
+RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp
+AS $$
+DECLARE
+  v_antes  jsonb := to_jsonb(OLD);
+  v_depois jsonb := to_jsonb(NEW);
+  v_chave  text;
+  v_de     text;
+  v_para   text;
+  v_nome   text;
+  -- Fora da trilha: carimbos automáticos e o campo que carrega a própria
+  -- justificativa. Registrá-los encheria o histórico de linhas sem sentido.
+  v_ignorar text[] := ARRAY['updated_at','ultima_movimentacao_em','justificativa_mudanca','senha_hash'];
+BEGIN
+  SELECT COALESCE(p.display_name, p.email) INTO v_nome
+    FROM public.profiles p WHERE p.id = auth.uid();
+
+  FOR v_chave IN SELECT jsonb_object_keys(v_depois) LOOP
+    CONTINUE WHEN v_chave = ANY(v_ignorar);
+    v_de   := v_antes  ->> v_chave;
+    v_para := v_depois ->> v_chave;
+    CONTINUE WHEN v_de IS NOT DISTINCT FROM v_para;
+
+    INSERT INTO public."CANAL_DENUNCIA_EVENTO"
+      (denuncia_id, campo, de, para, por_user_id, por_nome, justificativa)
+    VALUES
+      (NEW.id, v_chave, v_de, v_para, auth.uid(), v_nome,
+       -- A justificativa acompanha a mudança de situação; nos demais campos
+       -- ela não se aplica e ficaria repetida em dez linhas.
+       CASE WHEN v_chave = 'status' THEN NEW.justificativa_mudanca END);
+  END LOOP;
+
+  RETURN NEW;
+END $$;
+
+-- Toda alteração é movimentação — inclusive as que não mudam a situação.
+-- Sem isto, "parado há 40 dias" continuaria significando "aberto há 40 dias".
+CREATE OR REPLACE FUNCTION public.canal_denuncia_movimentou()
+RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp
+AS $$
+BEGIN
+  NEW.ultima_movimentacao_em := now();
+  RETURN NEW;
+END $$;
+
+DROP TRIGGER IF EXISTS trg_canal_denuncia_movimentou ON public."CANAL_DENUNCIA";
+CREATE TRIGGER trg_canal_denuncia_movimentou
+  BEFORE UPDATE ON public."CANAL_DENUNCIA"
+  FOR EACH ROW EXECUTE FUNCTION public.canal_denuncia_movimentou();
+
+-- Mensagem, providência e anexo também são movimentação do procedimento.
+CREATE OR REPLACE FUNCTION public.canal_denuncia_filho_movimentou()
+RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp
+AS $$
+BEGIN
+  UPDATE public."CANAL_DENUNCIA" SET ultima_movimentacao_em = now()
+   WHERE id = NEW.denuncia_id;
+  RETURN NEW;
+END $$;
+
+DROP TRIGGER IF EXISTS trg_canal_msg_movimentou ON public."CANAL_DENUNCIA_MENSAGEM";
+CREATE TRIGGER trg_canal_msg_movimentou
+  AFTER INSERT ON public."CANAL_DENUNCIA_MENSAGEM"
+  FOR EACH ROW EXECUTE FUNCTION public.canal_denuncia_filho_movimentou();
+
+DROP TRIGGER IF EXISTS trg_canal_prov_movimentou ON public."CANAL_DENUNCIA_PROVIDENCIA";
+CREATE TRIGGER trg_canal_prov_movimentou
+  AFTER INSERT OR UPDATE ON public."CANAL_DENUNCIA_PROVIDENCIA"
+  FOR EACH ROW EXECUTE FUNCTION public.canal_denuncia_filho_movimentou();
+
+DROP TRIGGER IF EXISTS trg_canal_anexo_movimentou ON public."CANAL_DENUNCIA_ANEXO";
+CREATE TRIGGER trg_canal_anexo_movimentou
+  AFTER INSERT ON public."CANAL_DENUNCIA_ANEXO"
+  FOR EACH ROW EXECUTE FUNCTION public.canal_denuncia_filho_movimentou();
+
+-- =====================================================================
+-- 13. A TRAVA, ATUALIZADA
+-- =====================================================================
+-- Os campos novos do DENUNCIANTE entram na imutabilidade (são relato).
+-- Os da Presidência ganham trava própria: só quem tem a capacidade escreve —
+-- e isso é verificado no banco, não na tela, porque a tela é sugestão.
+CREATE OR REPLACE FUNCTION public.canal_denuncia_guard()
+RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, extensions, pg_temp
+AS $$
+BEGIN
+  IF NEW.protocolo                IS DISTINCT FROM OLD.protocolo
+  OR NEW.senha_hash               IS DISTINCT FROM OLD.senha_hash
+  OR NEW.identificado             IS DISTINCT FROM OLD.identificado
+  OR NEW.anonimo                  IS DISTINCT FROM OLD.anonimo
+  OR NEW.nome_completo            IS DISTINCT FROM OLD.nome_completo
+  OR NEW.cpf                      IS DISTINCT FROM OLD.cpf
+  OR NEW.email                    IS DISTINCT FROM OLD.email
+  OR NEW.data_nascimento          IS DISTINCT FROM OLD.data_nascimento
+  OR NEW.telefone_fixo            IS DISTINCT FROM OLD.telefone_fixo
+  OR NEW.celular                  IS DISTINCT FROM OLD.celular
+  OR NEW.relacao                  IS DISTINCT FROM OLD.relacao
+  OR NEW.tipo_denuncia            IS DISTINCT FROM OLD.tipo_denuncia
+  OR NEW.local_ocorrencia         IS DISTINCT FROM OLD.local_ocorrencia
+  OR NEW.como_soube               IS DISTINCT FROM OLD.como_soube
+  OR NEW.lideranca_ciente         IS DISTINCT FROM OLD.lideranca_ciente
+  OR NEW.lideranca_envolvida      IS DISTINCT FROM OLD.lideranca_envolvida
+  OR NEW.lideranca_ocultou        IS DISTINCT FROM OLD.lideranca_ocultou
+  OR NEW.lideranca_ciente_quem    IS DISTINCT FROM OLD.lideranca_ciente_quem
+  OR NEW.lideranca_envolvida_quem IS DISTINCT FROM OLD.lideranca_envolvida_quem
+  OR NEW.lideranca_ocultou_quem   IS DISTINCT FROM OLD.lideranca_ocultou_quem
+  OR NEW.descricao                IS DISTINCT FROM OLD.descricao
+  OR NEW.testemunhas              IS DISTINCT FROM OLD.testemunhas
+  OR NEW.evidencias               IS DISTINCT FROM OLD.evidencias
+  OR NEW.valor_financeiro         IS DISTINCT FROM OLD.valor_financeiro
+  OR NEW.sugestao                 IS DISTINCT FROM OLD.sugestao
+  OR NEW.created_at               IS DISTINCT FROM OLD.created_at
+  -- Campos novos que também são relato (bloco 2 e 4 desta migration)
+  OR NEW.empresa_id               IS DISTINCT FROM OLD.empresa_id
+  OR NEW.empresa_nome             IS DISTINCT FROM OLD.empresa_nome
+  OR NEW.contrato_informado       IS DISTINCT FROM OLD.contrato_informado
+  OR NEW.contrato_situacao        IS DISTINCT FROM OLD.contrato_situacao
+  OR NEW.ocorrencia_data          IS DISTINCT FROM OLD.ocorrencia_data
+  OR NEW.ocorrencia_hora          IS DISTINCT FROM OLD.ocorrencia_hora
+  OR NEW.ocorrencia_frequencia    IS DISTINCT FROM OLD.ocorrencia_frequencia
+  OR NEW.risco_imediato           IS DISTINCT FROM OLD.risco_imediato
+  OR NEW.risco_imediato_detalhe   IS DISTINCT FROM OLD.risco_imediato_detalhe
+  OR NEW.retaliacao               IS DISTINCT FROM OLD.retaliacao
+  OR NEW.retaliacao_detalhe       IS DISTINCT FROM OLD.retaliacao_detalhe
+  OR NEW.denunciado_informado     IS DISTINCT FROM OLD.denunciado_informado
+  OR NEW.denunciado_funcao        IS DISTINCT FROM OLD.denunciado_funcao
+  THEN
+    RAISE EXCEPTION 'O conteúdo da denúncia é imutável. A tratativa altera apenas a apuração, nunca o relato.'
+      USING ERRCODE = '42501';
+  END IF;
+
+  -- Presidência: capacidade própria, cobrada no banco.
+  IF (NEW.decisao_final         IS DISTINCT FROM OLD.decisao_final
+   OR NEW.decisao_em            IS DISTINCT FROM OLD.decisao_em
+   OR NEW.decisao_fundamentacao IS DISTINCT FROM OLD.decisao_fundamentacao
+   OR NEW.decisao_sobre_parecer IS DISTINCT FROM OLD.decisao_sobre_parecer
+   OR NEW.decisao_medidas       IS DISTINCT FROM OLD.decisao_medidas)
+     AND NOT public.tem_acesso_menu('comite_etica_presidencia') THEN
+    RAISE EXCEPTION 'Somente a Presidência registra a decisão final.' USING ERRCODE = '42501';
+  END IF;
+
+  -- Mudou de situação sem dizer por quê? Não passa. É o que transforma o
+  -- histórico em algo que se lê depois — data e hora sozinhas não explicam
+  -- por que um caso ficou seis meses aguardando documentos.
+  IF NEW.status IS DISTINCT FROM OLD.status
+     AND COALESCE(btrim(NEW.justificativa_mudanca), '') = '' THEN
+    RAISE EXCEPTION 'Informe a justificativa da mudança de situação.' USING ERRCODE = '22023';
+  END IF;
+
+  -- Carimba quem decidiu, sem depender da tela mandar.
+  IF NEW.decisao_final IS DISTINCT FROM OLD.decisao_final AND NEW.decisao_final IS NOT NULL THEN
+    NEW.decisao_em          := COALESCE(NEW.decisao_em, now());
+    NEW.decisao_por_user_id := auth.uid();
+    NEW.decisao_por_nome    := (SELECT COALESCE(p.display_name, p.email)
+                                  FROM public.profiles p WHERE p.id = auth.uid());
+  END IF;
+
+  NEW.updated_at := now();
+  RETURN NEW;
+END;
+$$;
+
+-- =====================================================================
+-- 14. SIGILO QUE RESTRINGE DE VERDADE
+-- =====================================================================
+-- RLS é por LINHA e não mascara coluna. Para a identidade do denunciante
+-- ficar restrita sem esconder o caso inteiro, a leitura passa a ser por
+-- visão: quem não tem `comite_etica_sigilo` continua vendo a denúncia, o
+-- relato e a apuração — mas recebe a identificação em branco.
+--
+-- `security_invoker` mantém a RLS da tabela valendo para quem consulta: a
+-- visão mascara, não amplia.
+CREATE OR REPLACE VIEW public.v_canal_denuncia
+WITH (security_invoker = true) AS
+SELECT
+  d.id, d.protocolo, d.identificado, d.anonimo,
+  -- Identidade: só com a capacidade de sigilo.
+  CASE WHEN public.tem_acesso_menu('comite_etica_sigilo') THEN d.nome_completo  END AS nome_completo,
+  CASE WHEN public.tem_acesso_menu('comite_etica_sigilo') THEN d.cpf            END AS cpf,
+  CASE WHEN public.tem_acesso_menu('comite_etica_sigilo') THEN d.email          END AS email,
+  CASE WHEN public.tem_acesso_menu('comite_etica_sigilo') THEN d.data_nascimento END AS data_nascimento,
+  CASE WHEN public.tem_acesso_menu('comite_etica_sigilo') THEN d.telefone_fixo  END AS telefone_fixo,
+  CASE WHEN public.tem_acesso_menu('comite_etica_sigilo') THEN d.celular        END AS celular,
+  -- Bandeira para a tela explicar a lacuna em vez de parecer cadastro vazio.
+  (d.identificado AND NOT public.tem_acesso_menu('comite_etica_sigilo')) AS identidade_restrita,
+
+  d.empresa_id, d.empresa_nome, d.contrato_informado, d.contrato_situacao,
+  d.relacao, d.tipo_denuncia, d.local_ocorrencia, d.como_soube,
+  d.ocorrencia_data, d.ocorrencia_hora, d.ocorrencia_frequencia,
+  d.risco_imediato, d.risco_imediato_detalhe, d.retaliacao, d.retaliacao_detalhe,
+  d.denunciado_informado, d.denunciado_funcao,
+  d.lideranca_ciente, d.lideranca_envolvida, d.lideranca_ocultou,
+  d.lideranca_ciente_quem, d.lideranca_envolvida_quem, d.lideranca_ocultou_quem,
+  d.titulo, d.resumo, d.descricao, d.testemunhas, d.evidencias,
+  d.valor_financeiro, d.sugestao,
+
+  d.origem, d.tipo_classificado, d.gravidade, d.sigilo,
+  d.denunciado_nome, d.denunciado_empregado_id, d.lider_nome, d.lider_empregado_id,
+  d.diretoria, d.contrato, d.setor, d.unidade, d.cidade,
+  d.apuracao_responsavel, d.apuracao_responsavel_id,
+  d.apuracao_inicio, d.apuracao_fim, d.primeira_providencia_em,
+  d.pendencia_atual, d.evidencias_analise,
+  d.resultado, d.medidas, d.medida_principal, d.recomendacao,
+  d.houve_recurso, d.recurso_resultado, d.recurso_data,
+  d.causa_raiz, d.causa_raiz_detalhe, d.acoes_preventivas, d.acoes_corretivas,
+  d.sla_dias_override,
+  d.status, d.justificativa_mudanca, d.parecer_interno, d.retorno_denunciante,
+
+  d.decisao_final, d.decisao_em, d.decisao_fundamentacao,
+  d.decisao_sobre_parecer, d.decisao_medidas, d.decisao_por_nome,
+
+  d.concluido_em, d.ultima_movimentacao_em, d.created_at, d.updated_at
+FROM public."CANAL_DENUNCIA" d;
+
+COMMENT ON VIEW public.v_canal_denuncia IS
+  'Leitura do canal com a identidade do denunciante mascarada para quem nao tem comite_etica_sigilo. E por aqui que as telas leem; a tabela so recebe escrita.';
+
+REVOKE ALL ON public.v_canal_denuncia FROM anon;
+GRANT SELECT ON public.v_canal_denuncia TO authenticated;
+
+-- A tabela deixa de ser lida direto: com SELECT nela, bastaria pedir as
+-- colunas de identidade e a visão viraria decoração.
+REVOKE SELECT ON TABLE public."CANAL_DENUNCIA" FROM authenticated;
+GRANT UPDATE ON TABLE public."CANAL_DENUNCIA" TO authenticated;
+
+NOTIFY pgrst, 'reload schema';
+
+-- =====================================================================
+-- ROLLBACK (resumido — a ordem importa)
+--   DROP VIEW IF EXISTS public.v_canal_denuncia;
+--   GRANT SELECT ON public."CANAL_DENUNCIA" TO authenticated;
+--   DROP TABLE IF EXISTS public."CANAL_DENUNCIA_ANEXO";
+--   DROP TABLE IF EXISTS public."CANAL_DENUNCIA_PROVIDENCIA";
+--   DROP TABLE IF EXISTS public."COMITE_ETICA_RESPONSAVEL";
+--   DELETE FROM storage.buckets WHERE id = 'denuncia-evidencias';
+--   ALTER TABLE public."CANAL_DENUNCIA" DROP COLUMN empresa_id, ... (ver blocos 2 a 7);
+--   Restaurar canal_denuncia_guard e canal_denuncia_registrar_evento da 20260901000006;
+--   UPDATE ... status: triagem→em_analise, aguardando_cumprimento→julgada, concluida→encerrada;
+--   UPDATE public.app_menu SET ativo = true WHERE codigo = 'central_servicos_denuncias';
+-- =====================================================================
+
+-- ===== 20260914000003_canal_denuncia_rpcs =====
+-- =====================================================================
+-- CANAL DE ÉTICA — as portas públicas, atualizadas
+--
+-- Continuação da 20260914000002 (estrutura). Aqui ficam só as funções que
+-- o site em domínio à parte usa, todas SECURITY DEFINER e todas conferindo
+-- credencial a cada chamada — não há sessão do lado de quem denuncia.
+--
+-- O QUE MUDA
+--   · denuncia_registrar   — recebe empresa, contrato, data/hora do fato,
+--                            risco, retaliação, denunciado, e aceita relato
+--                            ANÔNIMO (sem e-mail).
+--   · denuncia_consultar   — a credencial passa a ser e-mail OU protocolo.
+--   · denuncia_mensagens   — idem.
+--   · denuncia_responder   — idem.
+--   · denuncia_empresas    — lista do select do site.
+--   · denuncia_contratos   — contratos da empresa escolhida.
+--
+-- Idempotente.
+-- =====================================================================
+
+-- ── 1. As listas do formulário ───────────────────────────────────────
+CREATE OR REPLACE FUNCTION public.denuncia_empresas()
+RETURNS jsonb
+LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public, pg_temp
+AS $$
+  SELECT COALESCE(jsonb_agg(jsonb_build_object('id', e.id, 'rotulo', e.rotulo)
+                            ORDER BY e.ordem, e.rotulo), '[]'::jsonb)
+    FROM public."CANAL_DENUNCIA_EMPRESA" e
+   WHERE e.ativo;
+$$;
+REVOKE ALL ON FUNCTION public.denuncia_empresas() FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.denuncia_empresas() TO anon, authenticated;
+
+/**
+ * Contratos da empresa escolhida.
+ *
+ * A fonte é EMPREGADOS."Descrição do Local" — o contrato OPERACIONAL, o posto
+ * onde a pessoa trabalha. É diferente de `public.contratos`, que é o contrato
+ * comercial do módulo de Licitações; quem denuncia sabe dizer "Hospital X",
+ * não o número do edital.
+ *
+ * Só devolve nome de local. Não expõe empregado, cadastro nem situação —
+ * é chamada sem login.
+ */
+CREATE OR REPLACE FUNCTION public.denuncia_contratos(p_empresa_id uuid DEFAULT NULL)
+RETURNS jsonb
+LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = public, pg_temp
+AS $$
+DECLARE v_padrao text; v_itens jsonb;
+BEGIN
+  SELECT e.padrao_empregados INTO v_padrao
+    FROM public."CANAL_DENUNCIA_EMPRESA" e WHERE e.id = p_empresa_id AND e.ativo;
+
+  SELECT COALESCE(jsonb_agg(x.local ORDER BY x.local), '[]'::jsonb) INTO v_itens
+    FROM (
+      SELECT DISTINCT btrim(e."Descrição do Local") AS local
+        FROM public."EMPREGADOS" e
+       WHERE COALESCE(btrim(e."Descrição do Local"), '') <> ''
+         -- Empresa sem padrão configurado oferece todos os contratos: melhor
+         -- uma lista larga do que uma lista vazia que empurra todo mundo para
+         -- o "não localizado".
+         AND (v_padrao IS NULL OR e."Nome da Empresa" ILIKE v_padrao)
+    ) x;
+
+  RETURN jsonb_build_object('contratos', v_itens);
+END $$;
+REVOKE ALL ON FUNCTION public.denuncia_contratos(uuid) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.denuncia_contratos(uuid) TO anon, authenticated;
+
+-- ── 1.1 As assinaturas antigas saem primeiro ─────────────────────────
+-- As três funções do denunciante trocam o nome do primeiro parâmetro
+-- (`p_email` → `p_identificador`, porque agora aceita e-mail OU protocolo).
+-- CREATE OR REPLACE não renomeia parâmetro — o Postgres recusa com
+-- "cannot change name of input parameter". Então elas caem antes de nascer
+-- de novo. Como tudo aqui roda numa transação só, não existe instante em
+-- que o site fique sem a função.
+DROP FUNCTION IF EXISTS public.denuncia_consultar(text, text);
+DROP FUNCTION IF EXISTS public.denuncia_mensagens(text, text, text);
+DROP FUNCTION IF EXISTS public.denuncia_responder(text, text, text, text);
+
+-- ── 2. Registro ──────────────────────────────────────────────────────
+CREATE OR REPLACE FUNCTION public.denuncia_registrar(payload jsonb)
+RETURNS jsonb
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, extensions, pg_temp
+AS $$
+DECLARE
+  v_protocolo text;
+  v_id        uuid;
+  v_descricao text    := btrim(COALESCE(payload->>'descricao', ''));
+  v_anonimo   boolean := COALESCE((payload->>'anonimo')::boolean, false);
+  v_email     text    := lower(btrim(COALESCE(payload->>'email_acesso', payload->>'email', '')));
+  v_senha     text    := COALESCE(payload->>'senha', '');
+  v_identif   boolean := COALESCE((payload->>'identificado')::boolean, false);
+  v_empresa   uuid;
+  v_emp_nome  text;
+  v_nasc      date;
+  v_ocorr     date;
+BEGIN
+  IF COALESCE((payload->>'concordou_termo')::boolean, false) IS NOT TRUE THEN
+    RAISE EXCEPTION 'É necessário aceitar o termo para registrar a denúncia.' USING ERRCODE = '22023';
+  END IF;
+  IF length(v_descricao) < 30 THEN
+    RAISE EXCEPTION 'Descreva o fato com mais detalhes (mínimo de 30 caracteres).' USING ERRCODE = '22023';
+  END IF;
+  IF COALESCE(btrim(payload->>'relacao'), '') = ''
+     OR COALESCE(btrim(payload->>'tipo_denuncia'), '') = ''
+     OR COALESCE(btrim(payload->>'como_soube'), '') = '' THEN
+    RAISE EXCEPTION 'Preencha relação, tipo de denúncia e como tomou conhecimento.' USING ERRCODE = '22023';
+  END IF;
+
+  -- Empresa é obrigatória (pedido do Comitê). Precisa existir na lista: um
+  -- texto solto aqui devolveria o problema que o campo veio resolver.
+  v_empresa := NULLIF(btrim(payload->>'empresa_id'), '')::uuid;
+  SELECT e.rotulo INTO v_emp_nome
+    FROM public."CANAL_DENUNCIA_EMPRESA" e WHERE e.id = v_empresa AND e.ativo;
+  IF v_emp_nome IS NULL THEN
+    RAISE EXCEPTION 'Selecione a empresa.' USING ERRCODE = '22023';
+  END IF;
+
+  -- A senha é sempre exigida: é ela que dá acompanhamento, com ou sem e-mail.
+  IF length(v_senha) < 8 THEN
+    RAISE EXCEPTION 'Escolha uma senha de acompanhamento com pelo menos 8 caracteres.' USING ERRCODE = '22023';
+  END IF;
+
+  -- As duas portas de acesso. Anônimo entra por protocolo; identificado por
+  -- e-mail. Uma denúncia nunca tem as duas — ver canal_denuncia_anonimo_chk.
+  IF v_anonimo THEN
+    v_email := NULL;
+  ELSIF v_email = '' OR position('@' in v_email) = 0 THEN
+    RAISE EXCEPTION 'Informe um e-mail válido para acompanhar a denúncia, ou marque a opção de denúncia anônima.'
+      USING ERRCODE = '22023';
+  END IF;
+
+  -- Quem é anônimo não diz o nome: aceitar as duas coisas juntas seria
+  -- prometer anonimato e gravar a identidade na linha de baixo.
+  IF v_anonimo THEN v_identif := false; END IF;
+  IF v_identif AND COALESCE(btrim(payload->>'nome_completo'), '') = '' THEN
+    RAISE EXCEPTION 'Quem opta por se identificar precisa informar o nome completo.' USING ERRCODE = '22023';
+  END IF;
+
+  v_protocolo := 'DEN-' || to_char(now(), 'YYYY') || '-'
+                 || lpad(nextval('public.canal_denuncia_protocolo_seq')::text, 5, '0');
+
+  BEGIN v_nasc := NULLIF(btrim(payload->>'data_nascimento'), '')::date;
+  EXCEPTION WHEN others THEN v_nasc := NULL; END;
+  BEGIN v_ocorr := NULLIF(btrim(payload->>'ocorrencia_data'), '')::date;
+  EXCEPTION WHEN others THEN v_ocorr := NULL; END;
+
+  INSERT INTO public."CANAL_DENUNCIA" (
+    protocolo, senha_hash, identificado, anonimo,
+    nome_completo, cpf, email, data_nascimento, telefone_fixo, celular,
+    empresa_id, empresa_nome, contrato_informado, contrato_situacao,
+    relacao, tipo_denuncia, local_ocorrencia, como_soube,
+    ocorrencia_data, ocorrencia_hora, ocorrencia_frequencia,
+    risco_imediato, risco_imediato_detalhe, retaliacao, retaliacao_detalhe,
+    denunciado_informado, denunciado_funcao,
+    lideranca_ciente, lideranca_envolvida, lideranca_ocultou,
+    lideranca_ciente_quem, lideranca_envolvida_quem, lideranca_ocultou_quem,
+    descricao, testemunhas, evidencias, valor_financeiro, sugestao
+  ) VALUES (
+    v_protocolo, crypt(v_senha, gen_salt('bf')), v_identif, v_anonimo,
+    -- Sem identificação, os campos pessoais nem chegam a ser gravados.
+    CASE WHEN v_identif THEN NULLIF(btrim(payload->>'nome_completo'), '') END,
+    CASE WHEN v_identif THEN NULLIF(btrim(payload->>'cpf'), '') END,
+    v_email,
+    CASE WHEN v_identif THEN v_nasc END,
+    CASE WHEN v_identif THEN NULLIF(btrim(payload->>'telefone_fixo'), '') END,
+    CASE WHEN v_identif THEN NULLIF(btrim(payload->>'celular'), '') END,
+    v_empresa, v_emp_nome,
+    NULLIF(btrim(payload->>'contrato_informado'), ''),
+    COALESCE(NULLIF(btrim(payload->>'contrato_situacao'), ''), 'nao_sei'),
+    btrim(payload->>'relacao'),
+    btrim(payload->>'tipo_denuncia'),
+    NULLIF(btrim(payload->>'local_ocorrencia'), ''),
+    btrim(payload->>'como_soube'),
+    v_ocorr,
+    NULLIF(btrim(payload->>'ocorrencia_hora'), ''),
+    NULLIF(btrim(payload->>'ocorrencia_frequencia'), ''),
+    COALESCE((payload->>'risco_imediato')::boolean, false),
+    NULLIF(btrim(payload->>'risco_imediato_detalhe'), ''),
+    COALESCE((payload->>'retaliacao')::boolean, false),
+    NULLIF(btrim(payload->>'retaliacao_detalhe'), ''),
+    NULLIF(btrim(payload->>'denunciado_informado'), ''),
+    NULLIF(btrim(payload->>'denunciado_funcao'), ''),
+    NULLIF(btrim(payload->>'lideranca_ciente'), ''),
+    NULLIF(btrim(payload->>'lideranca_envolvida'), ''),
+    NULLIF(btrim(payload->>'lideranca_ocultou'), ''),
+    NULLIF(btrim(payload->>'lideranca_ciente_quem'), ''),
+    NULLIF(btrim(payload->>'lideranca_envolvida_quem'), ''),
+    NULLIF(btrim(payload->>'lideranca_ocultou_quem'), ''),
+    v_descricao,
+    NULLIF(btrim(payload->>'testemunhas'), ''),
+    NULLIF(btrim(payload->>'evidencias'), ''),
+    NULLIF(btrim(payload->>'valor_financeiro'), ''),
+    NULLIF(btrim(payload->>'sugestao'), '')
+  )
+  RETURNING id INTO v_id;
+
+  -- `id` volta para a edge function de anexos amarrar os arquivos que a
+  -- pessoa já subiu. Ele não é credencial: sem a senha, não abre nada.
+  RETURN jsonb_build_object(
+    'id', v_id,
+    'protocolo', v_protocolo,
+    'anonimo', v_anonimo,
+    'acesso', CASE WHEN v_anonimo THEN 'protocolo' ELSE 'email' END
+  );
+END;
+$$;
+REVOKE ALL ON FUNCTION public.denuncia_registrar(jsonb) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.denuncia_registrar(jsonb) TO anon, authenticated;
+
+COMMENT ON FUNCTION public.denuncia_registrar(jsonb) IS
+  'Registro publico. Aceita relato anonimo (sem e-mail): nesse caso o acompanhamento e por protocolo + senha.';
+
+-- ── 3. Achar a denúncia por e-mail OU protocolo ──────────────────────
+-- Uma função só, usada pelas três portas do denunciante. Antes cada uma
+-- repetia o mesmo SELECT com crypt; três cópias da regra de credencial é
+-- como se acaba com uma delas mais frouxa que as outras.
+CREATE OR REPLACE FUNCTION public.denuncia_autenticar(p_identificador text, p_senha text)
+RETURNS SETOF uuid
+LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public, extensions, pg_temp
+AS $$
+  SELECT d.id
+    FROM public."CANAL_DENUNCIA" d
+   WHERE d.senha_hash = crypt(COALESCE(p_senha, ''), d.senha_hash)
+     AND (
+       -- Anônimo: a credencial é o protocolo.
+       d.protocolo = btrim(upper(COALESCE(p_identificador, '')))
+       -- Identificado: é o e-mail, e ele devolve TODAS as denúncias da pessoa.
+       OR (d.email IS NOT NULL
+           AND lower(btrim(d.email)) = lower(btrim(COALESCE(p_identificador, ''))))
+     );
+$$;
+REVOKE ALL ON FUNCTION public.denuncia_autenticar(text, text) FROM PUBLIC, anon;
+-- Sem GRANT para anon: é auxiliar interna das funções abaixo, que já rodam
+-- como definer. Exposta, viraria um oráculo de "esta senha existe?".
+
+-- ── 4. Acompanhamento ────────────────────────────────────────────────
+CREATE OR REPLACE FUNCTION public.denuncia_consultar(p_identificador text, p_senha text)
+RETURNS jsonb
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, extensions, pg_temp
+AS $$
+DECLARE v_itens jsonb;
+BEGIN
+  SELECT COALESCE(jsonb_agg(jsonb_build_object(
+           'protocolo',     d.protocolo,
+           'status',        d.status,
+           'resultado',     d.resultado,
+           'tipo_denuncia', d.tipo_denuncia,
+           'empresa',       d.empresa_nome,
+           'registrada_em', d.created_at,
+           'atualizada_em', d.updated_at,
+           'concluida_em',  d.concluido_em,
+           -- A decisão da Presidência é comunicada; a fundamentação interna não.
+           'decisao',       d.decisao_final,
+           'retorno',       d.retorno_denunciante,
+           'anexos',        (SELECT count(*) FROM public."CANAL_DENUNCIA_ANEXO" a
+                              WHERE a.denuncia_id = d.id AND a.origem = 'denunciante')
+         ) ORDER BY d.created_at DESC), '[]'::jsonb)
+    INTO v_itens
+    FROM public."CANAL_DENUNCIA" d
+   WHERE d.id IN (SELECT public.denuncia_autenticar(p_identificador, p_senha));
+
+  -- Mesma resposta para credencial inexistente e senha errada: distinguir os
+  -- dois casos entregaria de graça quais protocolos e e-mails existem.
+  IF v_itens = '[]'::jsonb THEN
+    RAISE EXCEPTION 'Dados de acesso inválidos.' USING ERRCODE = '42501';
+  END IF;
+
+  RETURN jsonb_build_object('denuncias', v_itens);
+END;
+$$;
+REVOKE ALL ON FUNCTION public.denuncia_consultar(text, text) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.denuncia_consultar(text, text) TO anon, authenticated;
+
+-- ── 5. Conversa ──────────────────────────────────────────────────────
+CREATE OR REPLACE FUNCTION public.denuncia_mensagens(
+  p_identificador text, p_senha text, p_protocolo text)
+RETURNS jsonb
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, extensions, pg_temp
+AS $$
+DECLARE v_id uuid; v_itens jsonb; v_anexos jsonb;
+BEGIN
+  SELECT d.id INTO v_id
+    FROM public."CANAL_DENUNCIA" d
+   WHERE d.protocolo = btrim(upper(COALESCE(p_protocolo, '')))
+     AND d.id IN (SELECT public.denuncia_autenticar(p_identificador, p_senha));
+
+  IF v_id IS NULL THEN
+    RAISE EXCEPTION 'Dados de acesso inválidos.' USING ERRCODE = '42501';
+  END IF;
+
+  UPDATE public."CANAL_DENUNCIA_MENSAGEM"
+     SET lida_em = now()
+   WHERE denuncia_id = v_id AND autor = 'comite' AND interna = false AND lida_em IS NULL;
+
+  SELECT COALESCE(jsonb_agg(jsonb_build_object(
+           'id', m.id, 'autor', m.autor, 'mensagem', m.mensagem, 'criada_em', m.created_at
+         ) ORDER BY m.created_at), '[]'::jsonb)
+    INTO v_itens
+    FROM public."CANAL_DENUNCIA_MENSAGEM" m
+   WHERE m.denuncia_id = v_id
+     AND m.interna = false;   -- nota de trabalho do comitê nunca sai daqui
+
+  -- Só os arquivos que a própria pessoa mandou. Documento interno da apuração
+  -- não volta para o denunciante.
+  SELECT COALESCE(jsonb_agg(jsonb_build_object(
+           'nome', a.nome_arquivo, 'enviado_em', a.created_at
+         ) ORDER BY a.created_at), '[]'::jsonb)
+    INTO v_anexos
+    FROM public."CANAL_DENUNCIA_ANEXO" a
+   WHERE a.denuncia_id = v_id AND a.origem = 'denunciante';
+
+  RETURN jsonb_build_object('mensagens', v_itens, 'anexos', v_anexos);
+END;
+$$;
+REVOKE ALL ON FUNCTION public.denuncia_mensagens(text, text, text) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.denuncia_mensagens(text, text, text) TO anon, authenticated;
+
+CREATE OR REPLACE FUNCTION public.denuncia_responder(
+  p_identificador text, p_senha text, p_protocolo text, p_mensagem text)
+RETURNS jsonb
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, extensions, pg_temp
+AS $$
+DECLARE v_id uuid; v_txt text := btrim(COALESCE(p_mensagem, ''));
+BEGIN
+  IF length(v_txt) < 2 THEN
+    RAISE EXCEPTION 'Escreva sua mensagem antes de enviar.' USING ERRCODE = '22023';
+  END IF;
+  IF length(v_txt) > 5000 THEN
+    RAISE EXCEPTION 'Mensagem muito longa (máximo de 5000 caracteres).' USING ERRCODE = '22023';
+  END IF;
+
+  SELECT d.id INTO v_id
+    FROM public."CANAL_DENUNCIA" d
+   WHERE d.protocolo = btrim(upper(COALESCE(p_protocolo, '')))
+     AND d.id IN (SELECT public.denuncia_autenticar(p_identificador, p_senha));
+
+  IF v_id IS NULL THEN
+    RAISE EXCEPTION 'Dados de acesso inválidos.' USING ERRCODE = '42501';
+  END IF;
+
+  INSERT INTO public."CANAL_DENUNCIA_MENSAGEM"(denuncia_id, autor, mensagem, interna, tipo)
+  VALUES (v_id, 'denunciante', v_txt, false, 'mensagem');
+
+  RETURN jsonb_build_object('ok', true);
+END;
+$$;
+REVOKE ALL ON FUNCTION public.denuncia_responder(text, text, text, text) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.denuncia_responder(text, text, text, text) TO anon, authenticated;
+
+-- ── 6. A assinatura antiga sai de circulação ─────────────────────────
+-- A 20260901000005 deixou denuncia_consultar(p_protocolo, p_senha) com os
+-- mesmos tipos da nova. Como os nomes dos parâmetros mudaram, o PostgREST
+-- resolveria as duas — e a antiga não conhece `anonimo` nem `decisao`.
+-- Ela é substituída acima (mesma aridade e tipos), então não há o que dropar;
+-- este bloco existe para deixar o fato registrado e falhar alto se um dia
+-- alguém recriar a versão velha com outro tipo de parâmetro.
+DO $$
+DECLARE v_qtd integer;
+BEGIN
+  SELECT count(*) INTO v_qtd
+    FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+   WHERE n.nspname = 'public' AND p.proname = 'denuncia_consultar';
+  IF v_qtd <> 1 THEN
+    RAISE EXCEPTION 'Existem % versões de denuncia_consultar; deve haver exatamente uma.', v_qtd;
+  END IF;
+END $$;
+
+NOTIFY pgrst, 'reload schema';
+
+-- =====================================================================
+-- ROLLBACK
+--   Restaurar denuncia_registrar/denuncia_consultar da 20260901000005 e
+--   denuncia_mensagens/denuncia_responder da 20260901000006;
+--   DROP FUNCTION IF EXISTS public.denuncia_autenticar(text, text);
+--   DROP FUNCTION IF EXISTS public.denuncia_contratos(uuid);
+--   DROP FUNCTION IF EXISTS public.denuncia_empresas();
+-- =====================================================================
+
+-- ===== 20260914000004_canal_denuncia_alertas =====
+-- =====================================================================
+-- CANAL DE ÉTICA — alertas de prazo e de procedimento parado
+--
+-- O painel já CALCULAVA "fora do prazo", mas só via quem abrisse a tela.
+-- Alerta que depende de alguém lembrar de olhar não é alerta.
+--
+-- Duas contagens diferentes, de propósito:
+--   · PRAZO   — desde a abertura, pela gravidade (COMITE_ETICA_SLA). Responde
+--               "este caso já demorou demais?".
+--   · PARADO  — desde a última movimentação (qualquer mudança, mensagem,
+--               providência ou anexo). Responde "ninguém toca nisto há quanto
+--               tempo?". Um caso mexido ontem não é o mesmo que um esquecido
+--               há um mês, e o SLA sozinho não separa os dois.
+--
+-- Idempotente.
+-- =====================================================================
+
+-- ── 1. Quantos dias sem movimentação já é "parado" ───────────────────
+ALTER TABLE public."COMITE_ETICA_SLA"
+  ADD COLUMN IF NOT EXISTS dias_sem_movimentacao integer NOT NULL DEFAULT 10;
+
+COMMENT ON COLUMN public."COMITE_ETICA_SLA".dias_sem_movimentacao IS
+  'Dias sem nenhuma movimentacao ate o procedimento ser sinalizado como parado. Por gravidade: critica nao espera o mesmo que baixa.';
+
+UPDATE public."COMITE_ETICA_SLA" SET dias_sem_movimentacao =
+  CASE gravidade WHEN 'critica' THEN 2 WHEN 'alta' THEN 5 WHEN 'media' THEN 10 ELSE 15 END
+ WHERE dias_sem_movimentacao = 10;
+
+-- ── 2. O alerta ──────────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS public."CANAL_DENUNCIA_ALERTA" (
+  id           uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  denuncia_id  uuid NOT NULL REFERENCES public."CANAL_DENUNCIA"(id) ON DELETE CASCADE,
+  tipo         text NOT NULL
+               CHECK (tipo IN ('prazo_vencido','primeira_providencia','parado','providencia_vencida')),
+  mensagem     text NOT NULL,
+  -- Dia da apuração do alerta. Faz parte da chave única: o tick roda todo dia
+  -- e não pode empilhar o mesmo aviso; mas se o caso continuar parado amanhã,
+  -- um aviso novo é legítimo.
+  referencia   date NOT NULL DEFAULT current_date,
+  resolvido_em timestamptz,
+  created_at   timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (denuncia_id, tipo, referencia)
+);
+
+CREATE INDEX IF NOT EXISTS idx_canal_alerta_abertos
+  ON public."CANAL_DENUNCIA_ALERTA"(created_at DESC) WHERE resolvido_em IS NULL;
+
+ALTER TABLE public."CANAL_DENUNCIA_ALERTA" ENABLE ROW LEVEL SECURITY;
+REVOKE ALL ON TABLE public."CANAL_DENUNCIA_ALERTA" FROM anon;
+GRANT SELECT, UPDATE ON TABLE public."CANAL_DENUNCIA_ALERTA" TO authenticated;
+
+DROP POLICY IF EXISTS canal_alerta_select ON public."CANAL_DENUNCIA_ALERTA";
+CREATE POLICY canal_alerta_select ON public."CANAL_DENUNCIA_ALERTA"
+  FOR SELECT TO authenticated
+  USING (public.tem_acesso_menu('central_servicos_canal_denuncias'));
+
+-- Dar baixa no aviso é permitido; criar, não — quem cria é o tick.
+DROP POLICY IF EXISTS canal_alerta_update ON public."CANAL_DENUNCIA_ALERTA";
+CREATE POLICY canal_alerta_update ON public."CANAL_DENUNCIA_ALERTA"
+  FOR UPDATE TO authenticated
+  USING (public.tem_acesso_menu('central_servicos_canal_denuncias'))
+  WITH CHECK (public.tem_acesso_menu('central_servicos_canal_denuncias'));
+
+-- ── 3. Quem apura os alertas ─────────────────────────────────────────
+-- Roda como definer e é chamada pela edge function com service_role. A conta
+-- inteira é feita aqui, no banco, para não trafegar o cadastro de denúncias
+-- para dentro da função só para comparar datas.
+CREATE OR REPLACE FUNCTION public.comite_etica_apurar_alertas()
+RETURNS jsonb
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp
+AS $$
+DECLARE
+  v_novos    integer := 0;
+  v_fechados integer := 0;
+  -- GET DIAGNOSTICS so ATRIBUI: "v_novos = v_novos + ROW_COUNT" e erro de
+  -- sintaxe. O acumulado passa por uma variavel de apoio.
+  v_parcial  integer := 0;
+BEGIN
+  -- 3.1 Prazo total estourado.
+  WITH base AS (
+    SELECT d.id, d.protocolo,
+           COALESCE(d.sla_dias_override, s.dias, 30) AS dias
+      FROM public."CANAL_DENUNCIA" d
+      LEFT JOIN public."COMITE_ETICA_SLA" s ON s.gravidade = d.gravidade
+     WHERE d.status NOT IN ('concluida','arquivada')
+  )
+  INSERT INTO public."CANAL_DENUNCIA_ALERTA"(denuncia_id, tipo, mensagem)
+  SELECT b.id, 'prazo_vencido',
+         'Prazo de ' || b.dias || ' dias estourado — ' || b.protocolo
+    FROM base b
+    JOIN public."CANAL_DENUNCIA" d ON d.id = b.id
+   WHERE d.created_at + (b.dias || ' days')::interval < now()
+  ON CONFLICT (denuncia_id, tipo, referencia) DO NOTHING;
+  GET DIAGNOSTICS v_novos = ROW_COUNT;
+
+  -- 3.2 Primeira providência não registrada dentro do prazo da gravidade.
+  INSERT INTO public."CANAL_DENUNCIA_ALERTA"(denuncia_id, tipo, mensagem)
+  SELECT d.id, 'primeira_providencia',
+         'Sem primeira providência registrada — ' || d.protocolo
+    FROM public."CANAL_DENUNCIA" d
+    LEFT JOIN public."COMITE_ETICA_SLA" s ON s.gravidade = d.gravidade
+   WHERE d.status NOT IN ('concluida','arquivada')
+     AND d.primeira_providencia_em IS NULL
+     AND d.created_at + (COALESCE(s.dias_primeira_providencia, 3) || ' days')::interval < now()
+  ON CONFLICT (denuncia_id, tipo, referencia) DO NOTHING;
+  GET DIAGNOSTICS v_parcial = ROW_COUNT;
+  v_novos := v_novos + v_parcial;
+
+  -- 3.3 Parado: ninguém encostou no procedimento.
+  INSERT INTO public."CANAL_DENUNCIA_ALERTA"(denuncia_id, tipo, mensagem)
+  SELECT d.id, 'parado',
+         'Sem movimentação há ' ||
+         floor(extract(epoch FROM (now() - d.ultima_movimentacao_em)) / 86400)::int ||
+         ' dias — ' || d.protocolo
+    FROM public."CANAL_DENUNCIA" d
+    LEFT JOIN public."COMITE_ETICA_SLA" s ON s.gravidade = d.gravidade
+   WHERE d.status NOT IN ('concluida','arquivada')
+     AND d.ultima_movimentacao_em + (COALESCE(s.dias_sem_movimentacao, 10) || ' days')::interval < now()
+  ON CONFLICT (denuncia_id, tipo, referencia) DO NOTHING;
+  GET DIAGNOSTICS v_parcial = ROW_COUNT;
+  v_novos := v_novos + v_parcial;
+
+  -- 3.4 Providência com prazo vencido.
+  INSERT INTO public."CANAL_DENUNCIA_ALERTA"(denuncia_id, tipo, mensagem)
+  SELECT p.denuncia_id, 'providencia_vencida',
+         'Providência vencida em ' || to_char(p.prazo, 'DD/MM/YYYY') || ': ' || left(p.descricao, 80)
+    FROM public."CANAL_DENUNCIA_PROVIDENCIA" p
+   WHERE p.situacao IN ('pendente','em_andamento')
+     AND p.prazo IS NOT NULL AND p.prazo < current_date
+  ON CONFLICT (denuncia_id, tipo, referencia) DO NOTHING;
+  GET DIAGNOSTICS v_parcial = ROW_COUNT;
+  v_novos := v_novos + v_parcial;
+
+  -- 3.5 Baixa automática: caso encerrado não deixa alerta aberto atrás de si.
+  UPDATE public."CANAL_DENUNCIA_ALERTA" a
+     SET resolvido_em = now()
+    FROM public."CANAL_DENUNCIA" d
+   WHERE d.id = a.denuncia_id
+     AND a.resolvido_em IS NULL
+     AND d.status IN ('concluida','arquivada');
+  GET DIAGNOSTICS v_fechados = ROW_COUNT;
+
+  RETURN jsonb_build_object('novos', v_novos, 'fechados', v_fechados);
+END $$;
+
+REVOKE ALL ON FUNCTION public.comite_etica_apurar_alertas() FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.comite_etica_apurar_alertas() TO service_role;
+
+-- A edge function de anexos precisa conferir credencial com service_role.
+GRANT EXECUTE ON FUNCTION public.denuncia_autenticar(text, text) TO service_role;
+
+-- ── 4. O relógio ─────────────────────────────────────────────────────
+-- Mesmo padrão dos outros ticks (ver 20260730000001): o cron chama a edge
+-- function, que roda com service_role. UPDATE direto pelo cron não funciona
+-- aqui — não existe auth.uid() dentro do cron, e a RLS filtraria tudo.
+DO $$
+BEGIN
+  PERFORM cron.unschedule('comite-etica-alertas');
+EXCEPTION WHEN OTHERS THEN NULL;
+END $$;
+
+SELECT cron.schedule(
+  'comite-etica-alertas',
+  '0 8 * * 1-5',   -- dias úteis, 8h (05h UTC-3 = 08h no servidor UTC)
+  $$
+  SELECT net.http_post(
+    url := 'https://fwmzeaztjxrxxzxzxmgc.supabase.co/functions/v1/comite-etica-alertas-tick',
+    headers := '{"Content-Type":"application/json","apikey":"eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImZ3bXplYXp0anhyeHh6eHp4bWdjIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzY2MDc0NTAsImV4cCI6MjA5MjE4MzQ1MH0.i08oF2-9N6w-CxDVy8ink29-ydHTJEc-eQBZDYRxGwI","Authorization":"Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImZ3bXplYXp0anhyeHh6eHp4bWdjIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzY2MDc0NTAsImV4cCI6MjA5MjE4MzQ1MH0.i08oF2-9N6w-CxDVy8ink29-ydHTJEc-eQBZDYRxGwI"}'::jsonb,
+    body := jsonb_build_object('tick_at', now())
+  );
+  $$
+);
+
+NOTIFY pgrst, 'reload schema';
+
+-- =====================================================================
+-- ROLLBACK
+--   SELECT cron.unschedule('comite-etica-alertas');
+--   DROP FUNCTION IF EXISTS public.comite_etica_apurar_alertas();
+--   DROP TABLE IF EXISTS public."CANAL_DENUNCIA_ALERTA";
+--   ALTER TABLE public."COMITE_ETICA_SLA" DROP COLUMN dias_sem_movimentacao;
+-- =====================================================================
+
+-- ===== 20260914000005_canal_denuncia_recorte_empresa =====
+-- =====================================================================
+-- CANAL DE ÉTICA — recorte por empresa conforme o nível de acesso
+--
+-- Fecha o último requisito do Bloco 1 que tinha ficado pela metade: os
+-- relatórios POR empresa já existiam, mas quem tinha o menu do canal via
+-- todas as empresas. Faltava o nível de acesso.
+--
+-- COMO, SEM MECANISMO NOVO
+-- O ERP já responde "esta pessoa pode atuar nesta empresa?" em
+-- public.user_pode_atuar_empresa(), que olha a flag `acessa_todas_empresas`
+-- do perfil, a tabela `user_empresa` e a empresa do próprio perfil — e é o
+-- que Administração já mantém. Aqui ela é plugada na RLS do canal; não há
+-- cadastro novo de permissão (ver a regra do módulo de acesso).
+--
+-- A CAPACIDADE
+--   comite_etica_todas_empresas → vê o consolidado, todas as empresas.
+--   sem ela                     → vê só as empresas às quais está vinculada.
+--
+-- POR QUE A CAPACIDADE É "VÊ TODAS" E NÃO "É RESTRITO"
+-- Porque o padrão seguro aqui não é o mais fechado: é o que não apaga o
+-- canal. Restringir por padrão faria todo membro do Comitê com `user_empresa`
+-- vazio deixar de enxergar qualquer caso no dia em que isto rodar — canal de
+-- ética no escuro é pior do que canal largo. Por isso a migration CONCEDE a
+-- capacidade a quem já tem o canal hoje: no dia 1 nada muda, e a restrição
+-- passa a ser um ato deliberado, feito removendo a capacidade de alguém.
+--
+-- Idempotente.
+-- =====================================================================
+
+-- ── 1. A capacidade ──────────────────────────────────────────────────
+INSERT INTO public.app_menu (modulo_id, codigo, nome, rota, ordem, ativo)
+SELECT m.id, 'comite_etica_todas_empresas', 'Vê denúncias de todas as empresas', NULL, 33, true
+  FROM public.app_modulo m WHERE m.codigo = 'comite_etica'
+ON CONFLICT (modulo_id, codigo) DO NOTHING;
+
+-- Quem hoje enxerga o canal continua enxergando tudo. Mesma ação que o
+-- toggle de "Acesso por Usuário" concede (`visualizar`), para o flag poder
+-- ser tirado por lá depois.
+INSERT INTO public.screen_permission_user (user_id, menu_codigo, acao, allow, empresa_id)
+-- NULL precisa de tipo: sem o cast, o Postgres o trata como text e recusa
+-- ("column empresa_id is of type uuid but expression is of type text").
+SELECT DISTINCT s.user_id, 'comite_etica_todas_empresas', 'visualizar'::public.app_acao, true, NULL::uuid
+  FROM public.screen_permission_user s
+ WHERE s.menu_codigo = 'central_servicos_canal_denuncias'
+   AND s.allow = true
+   AND s.empresa_id IS NULL
+ON CONFLICT DO NOTHING;
+
+-- ── 2. Ligar a opção do canal à empresa do cadastro ──────────────────
+-- Sem este vínculo o recorte não tem como resolver: a denúncia aponta para a
+-- OPÇÃO do canal, e o acesso da pessoa é por empresa do cadastro fiscal.
+-- "Nascimento" é a HAGG, a matriz (confirmado pelo Pablo em 21/08/2026).
+UPDATE public."CANAL_DENUNCIA_EMPRESA" ce
+   SET empresa_id = e.id
+  FROM public.empresas e
+ WHERE ce.empresa_id IS NULL
+   AND e.codigo = CASE ce.rotulo WHEN 'Nascimento' THEN 'HAGG' ELSE ce.rotulo END;
+
+-- O padrão que monta a lista de contratos é casado contra
+-- EMPREGADOS."Nome da Empresa", que guarda RAZÃO SOCIAL — não o código do
+-- cadastro fiscal. Derivar do código não funciona: a empresa `HAGG` aparece
+-- lá como "NASCIMENTO SERVICOS DE LIMPEZA LTDA", e `%HAGG%` não casa com
+-- linha nenhuma (medido em 21/08/2026: devolvia 0 contratos).
+--
+-- Prefixo, e não nome inteiro: a razão social muda de sufixo com o tempo
+-- ("LTDA", "EIRELI - ME"), e o começo é o que identifica.
+UPDATE public."CANAL_DENUNCIA_EMPRESA" SET padrao_empregados = v.padrao
+  FROM (VALUES
+    ('Nascimento', 'NASCIMENTO%'),   -- 348 locais
+    ('SN',         'SN %'),          --  58
+    ('NH',         'NH %')           --  21
+  ) AS v(rotulo, padrao)
+ WHERE public."CANAL_DENUNCIA_EMPRESA".rotulo = v.rotulo
+   AND COALESCE(public."CANAL_DENUNCIA_EMPRESA".padrao_empregados, '') IN ('', '%HAGG%', '%SN%', '%NH%');
+
+-- ── 3. Quem pode ver este caso ───────────────────────────────────────
+-- Fica numa função só, e não repetida em cada policy: a regra de quem
+-- enxerga o quê num canal de ética não pode divergir entre duas cópias.
+CREATE OR REPLACE FUNCTION public.canal_denuncia_visivel(_empresa_opcao uuid)
+RETURNS boolean
+LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public, pg_temp
+AS $$
+  SELECT public.tem_acesso_menu('central_servicos_canal_denuncias')
+     AND (
+       -- Consolidado.
+       public.tem_acesso_menu('comite_etica_todas_empresas')
+       -- Ou vinculada à empresa daquele caso.
+       OR EXISTS (
+         SELECT 1
+           FROM public."CANAL_DENUNCIA_EMPRESA" ce
+          WHERE ce.id = _empresa_opcao
+            AND ce.empresa_id IS NOT NULL
+            AND public.user_pode_atuar_empresa(auth.uid(), ce.empresa_id)
+       )
+     );
+$$;
+
+COMMENT ON FUNCTION public.canal_denuncia_visivel(uuid) IS
+  'Quem enxerga uma denuncia: quem tem o canal E (ve todas as empresas OU esta vinculada a empresa do caso). Denuncia sem empresa so aparece para quem ve todas.';
+
+REVOKE ALL ON FUNCTION public.canal_denuncia_visivel(uuid) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.canal_denuncia_visivel(uuid) TO authenticated;
+
+-- Denúncia com `empresa_id` nulo — as anteriores a esta entrega, e as que
+-- vierem de uma opção ainda não ligada ao cadastro — só aparece para quem vê
+-- todas. É o lado certo para errar: caso não classificado ficar visível a um
+-- recorte que não devia é pior do que ficar invisível a quem tem o consolidado.
+
+-- ── 4. RLS ───────────────────────────────────────────────────────────
+DROP POLICY IF EXISTS canal_denuncia_select ON public."CANAL_DENUNCIA";
+CREATE POLICY canal_denuncia_select ON public."CANAL_DENUNCIA"
+  FOR SELECT TO authenticated
+  USING (public.canal_denuncia_visivel(empresa_id));
+
+DROP POLICY IF EXISTS canal_denuncia_update ON public."CANAL_DENUNCIA";
+CREATE POLICY canal_denuncia_update ON public."CANAL_DENUNCIA"
+  FOR UPDATE TO authenticated
+  USING (public.canal_denuncia_visivel(empresa_id))
+  WITH CHECK (public.canal_denuncia_visivel(empresa_id));
+
+-- As tabelas filhas seguem o pai. Sem isto, alguém restrito a uma empresa
+-- leria a conversa, os anexos e o histórico de um caso que não pode abrir —
+-- e a lista de anexos sozinha já entrega do que o caso trata.
+DROP POLICY IF EXISTS canal_denuncia_msg_select ON public."CANAL_DENUNCIA_MENSAGEM";
+CREATE POLICY canal_denuncia_msg_select ON public."CANAL_DENUNCIA_MENSAGEM"
+  FOR SELECT TO authenticated
+  USING (EXISTS (SELECT 1 FROM public."CANAL_DENUNCIA" d
+                  WHERE d.id = "CANAL_DENUNCIA_MENSAGEM".denuncia_id
+                    AND public.canal_denuncia_visivel(d.empresa_id)));
+
+DROP POLICY IF EXISTS canal_denuncia_msg_insert ON public."CANAL_DENUNCIA_MENSAGEM";
+CREATE POLICY canal_denuncia_msg_insert ON public."CANAL_DENUNCIA_MENSAGEM"
+  FOR INSERT TO authenticated
+  WITH CHECK (autor = 'comite'
+              AND autor_user_id = auth.uid()
+              AND EXISTS (SELECT 1 FROM public."CANAL_DENUNCIA" d
+                           WHERE d.id = "CANAL_DENUNCIA_MENSAGEM".denuncia_id
+                             AND public.canal_denuncia_visivel(d.empresa_id)));
+
+DROP POLICY IF EXISTS canal_denuncia_msg_update ON public."CANAL_DENUNCIA_MENSAGEM";
+CREATE POLICY canal_denuncia_msg_update ON public."CANAL_DENUNCIA_MENSAGEM"
+  FOR UPDATE TO authenticated
+  USING (EXISTS (SELECT 1 FROM public."CANAL_DENUNCIA" d
+                  WHERE d.id = "CANAL_DENUNCIA_MENSAGEM".denuncia_id
+                    AND public.canal_denuncia_visivel(d.empresa_id)))
+  WITH CHECK (EXISTS (SELECT 1 FROM public."CANAL_DENUNCIA" d
+                       WHERE d.id = "CANAL_DENUNCIA_MENSAGEM".denuncia_id
+                         AND public.canal_denuncia_visivel(d.empresa_id)));
+
+DROP POLICY IF EXISTS canal_denuncia_evento_select ON public."CANAL_DENUNCIA_EVENTO";
+CREATE POLICY canal_denuncia_evento_select ON public."CANAL_DENUNCIA_EVENTO"
+  FOR SELECT TO authenticated
+  USING (EXISTS (SELECT 1 FROM public."CANAL_DENUNCIA" d
+                  WHERE d.id = "CANAL_DENUNCIA_EVENTO".denuncia_id
+                    AND public.canal_denuncia_visivel(d.empresa_id)));
+
+DROP POLICY IF EXISTS canal_anexo_select ON public."CANAL_DENUNCIA_ANEXO";
+CREATE POLICY canal_anexo_select ON public."CANAL_DENUNCIA_ANEXO"
+  FOR SELECT TO authenticated
+  USING ((NOT sensivel OR public.tem_acesso_menu('comite_etica_sigilo'))
+         AND EXISTS (SELECT 1 FROM public."CANAL_DENUNCIA" d
+                      WHERE d.id = "CANAL_DENUNCIA_ANEXO".denuncia_id
+                        AND public.canal_denuncia_visivel(d.empresa_id)));
+
+DROP POLICY IF EXISTS canal_anexo_insert ON public."CANAL_DENUNCIA_ANEXO";
+CREATE POLICY canal_anexo_insert ON public."CANAL_DENUNCIA_ANEXO"
+  FOR INSERT TO authenticated
+  WITH CHECK (origem <> 'denunciante'
+              AND EXISTS (SELECT 1 FROM public."CANAL_DENUNCIA" d
+                           WHERE d.id = "CANAL_DENUNCIA_ANEXO".denuncia_id
+                             AND public.canal_denuncia_visivel(d.empresa_id)));
+
+DROP POLICY IF EXISTS canal_anexo_update ON public."CANAL_DENUNCIA_ANEXO";
+CREATE POLICY canal_anexo_update ON public."CANAL_DENUNCIA_ANEXO"
+  FOR UPDATE TO authenticated
+  USING (EXISTS (SELECT 1 FROM public."CANAL_DENUNCIA" d
+                  WHERE d.id = "CANAL_DENUNCIA_ANEXO".denuncia_id
+                    AND public.canal_denuncia_visivel(d.empresa_id)))
+  WITH CHECK (EXISTS (SELECT 1 FROM public."CANAL_DENUNCIA" d
+                       WHERE d.id = "CANAL_DENUNCIA_ANEXO".denuncia_id
+                         AND public.canal_denuncia_visivel(d.empresa_id)));
+
+DROP POLICY IF EXISTS canal_prov_todas ON public."CANAL_DENUNCIA_PROVIDENCIA";
+CREATE POLICY canal_prov_todas ON public."CANAL_DENUNCIA_PROVIDENCIA"
+  FOR ALL TO authenticated
+  USING (EXISTS (SELECT 1 FROM public."CANAL_DENUNCIA" d
+                  WHERE d.id = "CANAL_DENUNCIA_PROVIDENCIA".denuncia_id
+                    AND public.canal_denuncia_visivel(d.empresa_id)))
+  WITH CHECK (EXISTS (SELECT 1 FROM public."CANAL_DENUNCIA" d
+                       WHERE d.id = "CANAL_DENUNCIA_PROVIDENCIA".denuncia_id
+                         AND public.canal_denuncia_visivel(d.empresa_id)));
+
+DROP POLICY IF EXISTS canal_alerta_select ON public."CANAL_DENUNCIA_ALERTA";
+CREATE POLICY canal_alerta_select ON public."CANAL_DENUNCIA_ALERTA"
+  FOR SELECT TO authenticated
+  USING (EXISTS (SELECT 1 FROM public."CANAL_DENUNCIA" d
+                  WHERE d.id = "CANAL_DENUNCIA_ALERTA".denuncia_id
+                    AND public.canal_denuncia_visivel(d.empresa_id)));
+
+DROP POLICY IF EXISTS canal_alerta_update ON public."CANAL_DENUNCIA_ALERTA";
+CREATE POLICY canal_alerta_update ON public."CANAL_DENUNCIA_ALERTA"
+  FOR UPDATE TO authenticated
+  USING (EXISTS (SELECT 1 FROM public."CANAL_DENUNCIA" d
+                  WHERE d.id = "CANAL_DENUNCIA_ALERTA".denuncia_id
+                    AND public.canal_denuncia_visivel(d.empresa_id)))
+  WITH CHECK (EXISTS (SELECT 1 FROM public."CANAL_DENUNCIA" d
+                       WHERE d.id = "CANAL_DENUNCIA_ALERTA".denuncia_id
+                         AND public.canal_denuncia_visivel(d.empresa_id)));
+
+-- Storage: o arquivo mora em `<denuncia_id>/...`, então o primeiro pedaço do
+-- caminho diz de que caso ele é. Sem isto, o recorte valeria para a linha do
+-- anexo e não para o binário — e a URL assinada continuaria saindo.
+DROP POLICY IF EXISTS denuncia_evid_select ON storage.objects;
+CREATE POLICY denuncia_evid_select ON storage.objects
+  FOR SELECT TO authenticated
+  USING (bucket_id = 'denuncia-evidencias'
+         AND EXISTS (SELECT 1 FROM public."CANAL_DENUNCIA" d
+                      WHERE d.id::text = split_part(storage.objects.name, '/', 1)
+                        AND public.canal_denuncia_visivel(d.empresa_id)));
+
+DROP POLICY IF EXISTS denuncia_evid_insert ON storage.objects;
+CREATE POLICY denuncia_evid_insert ON storage.objects
+  FOR INSERT TO authenticated
+  WITH CHECK (bucket_id = 'denuncia-evidencias'
+              AND EXISTS (SELECT 1 FROM public."CANAL_DENUNCIA" d
+                           WHERE d.id::text = split_part(storage.objects.name, '/', 1)
+                             AND public.canal_denuncia_visivel(d.empresa_id)));
+
+-- ── 5. Índice do recorte ─────────────────────────────────────────────
+-- A policy filtra por empresa_id em toda leitura da lista; o índice já existe
+-- desde a 20260914000002 (idx_canal_denuncia_empresa).
+
+NOTIFY pgrst, 'reload schema';
+
+-- ── 6. Conferência ───────────────────────────────────────────────────
+SELECT (SELECT count(*) FROM public."CANAL_DENUNCIA_EMPRESA" WHERE empresa_id IS NOT NULL) AS opcoes_ligadas,
+       (SELECT count(*) FROM public."CANAL_DENUNCIA_EMPRESA")                              AS opcoes_total,
+       (SELECT count(*) FROM public.screen_permission_user
+         WHERE menu_codigo = 'comite_etica_todas_empresas' AND allow)                       AS com_consolidado;
+
+-- =====================================================================
+-- ROLLBACK
+--   Restaurar canal_denuncia_select/update da 20260812000001 e as policies
+--   das tabelas filhas da 20260914000002/4 (todas usando apenas
+--   tem_acesso_menu('central_servicos_canal_denuncias'));
+--   DROP FUNCTION IF EXISTS public.canal_denuncia_visivel(uuid);
+--   DELETE FROM public.screen_permission_user WHERE menu_codigo = 'comite_etica_todas_empresas';
+--   DELETE FROM public.app_menu WHERE codigo = 'comite_etica_todas_empresas';
+-- =====================================================================
+
+-- ===== 20260914000006_recrutamento_guard_operacional =====
+-- =========================================================================
+-- Recrutamento: o Operacional volta a conseguir aprovar a vaga
+--
+-- SINTOMA
+-- Usuário com TODAS as permissões de Operacional abre a Solicitação em
+-- "Pendente Operacional", clica em Aprovar e recebe "Erro ao aprovar".
+--
+-- CAUSA
+-- Não é permissão: a RLS deixa passar (sistema_recrutamento_operacional
+-- cobra `operacional_recrutamento` alterar/aprovar, e ele tem). Quem recusa
+-- é o gatilho `sistema_recrutamento_guard`, da 20260903000001:
+--
+--     v_rh := has_screen_access(auth.uid(), 'recrutamento_gestao', 'alterar')
+--          OR has_screen_access(auth.uid(), 'recrutamento_gestao', 'incluir');
+--     IF NOT v_rh THEN  -- só pode mexer na data
+--       RAISE EXCEPTION 'Depois de criada, você só pode alterar a Data...'
+--
+-- O gatilho foi escrito para travar o ENCARREGADO que abriu a vaga — e, em
+-- 03/09, `recrutamento_gestao` era de fato a única porta de quem decide
+-- sobre ela. Seis dias depois, a 20260909000007 criou a tela do Operacional,
+-- com capacidade própria (`operacional_recrutamento`), e ninguém voltou aqui.
+-- Resultado: a RLS abre a porta e o gatilho fecha logo atrás.
+--
+-- CORREÇÃO
+-- Quem pode decidir sobre a vaga passa a ser as DUAS portas, exatamente as
+-- mesmas que a RLS reconhece. O nome da variável muda junto: não é mais "é
+-- do RH", é "pode editar a vaga inteira" — foi o nome antigo que fez a
+-- segunda porta passar despercebida.
+--
+-- O resto do gatilho fica intacto: o encarregado continua só podendo mexer
+-- na data, com justificativa e prazo mínimo.
+--
+-- Idempotente.
+-- =========================================================================
+
+CREATE OR REPLACE FUNCTION public.sistema_recrutamento_guard()
+RETURNS trigger
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+DECLARE
+  v_gestor  boolean;
+  v_dias    integer;
+  v_livre   jsonb;
+  v_ult     jsonb;
+  v_msg     text := 'A vaga precisa de no mínimo 7 dias úteis entre hoje e a data de início prevista.';
+BEGIN
+  -- Nome novo do motivo, venha de onde vier.
+  IF btrim(coalesce(NEW.motivo_vaga, '')) = 'Expansão' THEN
+    NEW.motivo_vaga := 'Expansão (Aumento de Quadro)';
+  END IF;
+
+  -- CNH obrigatória pelo cargo (marca + linha no requisito, sem duplicar).
+  IF public.rec_cargo_exige_cnh(NEW.cargo) THEN
+    NEW.cnh_obrigatoria := true;
+    IF upper(translate(coalesce(NEW.req_obrigatorios, ''),
+         'áàâãäéèêëíìîïóòôõöúùûüçÁÀÂÃÄÉÈÊËÍÌÎÏÓÒÔÕÖÚÙÛÜÇ',
+         'aaaaaeeeeiiiiooooouuuucAAAAAEEEEIIIIOOOOOUUUUC'))
+       !~ '(CNH|CARTEIRA DE (MOTORISTA|HABILITA))' THEN
+      NEW.req_obrigatorios := btrim(concat(
+        'CNH obrigatória (categoria compatível com a função).',
+        CASE WHEN btrim(coalesce(NEW.req_obrigatorios, '')) = '' THEN '' ELSE E'\n' || NEW.req_obrigatorios END));
+    END IF;
+  ELSIF TG_OP = 'INSERT' THEN
+    NEW.cnh_obrigatoria := COALESCE(NEW.cnh_obrigatoria, false);
+  END IF;
+
+  -- ── INSERT: prazo mínimo + grau automático ─────────────────────────────
+  IF TG_OP = 'INSERT' THEN
+    IF public.rec_data_prevista(NEW.data_inicio_prevista) IS NOT NULL THEN
+      v_dias := public.dias_uteis_entre(current_date, public.rec_data_prevista(NEW.data_inicio_prevista));
+      IF v_dias < 7 THEN
+        RAISE EXCEPTION '% A data escolhida tem % dia(s) útil(eis).', v_msg, v_dias;
+      END IF;
+      NEW.grau_urgencia := public.rec_grau_por_data(NEW.data_inicio_prevista);
+    END IF;
+    NEW.data_inicio_alteracoes := COALESCE(NEW.data_inicio_alteracoes, '[]'::jsonb);
+    RETURN NEW;
+  END IF;
+
+  -- ── UPDATE ─────────────────────────────────────────────────────────────
+  -- Quem decide sobre a vaga. São as MESMAS duas portas que a RLS reconhece
+  -- (sistema_recrutamento_gate e sistema_recrutamento_operacional) — manter
+  -- as duas listas iguais é o que impede a RLS liberar e o gatilho recusar,
+  -- que foi exatamente o defeito corrigido aqui.
+  v_gestor := has_screen_access(auth.uid(), 'recrutamento_gestao', 'alterar')
+           OR has_screen_access(auth.uid(), 'recrutamento_gestao', 'incluir')
+           OR has_screen_access(auth.uid(), 'operacional_recrutamento', 'alterar')
+           OR has_screen_access(auth.uid(), 'operacional_recrutamento', 'aprovar');
+
+  -- Quem não decide (o encarregado que abriu a vaga) só mexe na data — e no
+  -- que deriva dela. Comparar o resto como jsonb pega qualquer coluna,
+  -- inclusive as que forem criadas depois desta migration.
+  IF NOT v_gestor THEN
+    v_livre := to_jsonb(OLD) - 'data_inicio_prevista' - 'grau_urgencia' - 'data_inicio_alteracoes';
+    IF v_livre IS DISTINCT FROM (to_jsonb(NEW) - 'data_inicio_prevista' - 'grau_urgencia' - 'data_inicio_alteracoes') THEN
+      RAISE EXCEPTION 'Depois de criada, você só pode alterar a Data de Início Prevista da vaga. Para mudar qualquer outra informação, fale com o Recrutamento.';
+    END IF;
+  END IF;
+
+  IF NEW.data_inicio_prevista IS DISTINCT FROM OLD.data_inicio_prevista THEN
+    IF public.rec_data_prevista(NEW.data_inicio_prevista) IS NULL THEN
+      RAISE EXCEPTION 'Informe a nova data de início prevista.';
+    END IF;
+    v_dias := public.dias_uteis_entre(current_date, public.rec_data_prevista(NEW.data_inicio_prevista));
+    IF v_dias < 7 THEN
+      RAISE EXCEPTION '% A data escolhida tem % dia(s) útil(eis).', v_msg, v_dias;
+    END IF;
+    NEW.grau_urgencia := public.rec_grau_por_data(NEW.data_inicio_prevista);
+
+    -- Justificativa: a troca precisa entrar no histórico, com texto de gente.
+    IF jsonb_array_length(COALESCE(NEW.data_inicio_alteracoes, '[]'::jsonb))
+       <> jsonb_array_length(COALESCE(OLD.data_inicio_alteracoes, '[]'::jsonb)) + 1 THEN
+      RAISE EXCEPTION 'Toda troca de data precisa de uma justificativa.';
+    END IF;
+    v_ult := NEW.data_inicio_alteracoes -> (jsonb_array_length(NEW.data_inicio_alteracoes) - 1);
+    IF length(btrim(coalesce(v_ult->>'justificativa', ''))) < 10 THEN
+      RAISE EXCEPTION 'Escreva a justificativa da troca de data (mínimo 10 caracteres).';
+    END IF;
+    IF btrim(coalesce(v_ult->>'para', '')) <> btrim(coalesce(NEW.data_inicio_prevista, '')) THEN
+      RAISE EXCEPTION 'O histórico da troca de data não bate com a data enviada.';
+    END IF;
+    -- Carimbo de quem trocou: quem grava é o banco, não o cliente.
+    NEW.data_inicio_alteracoes := jsonb_set(
+      NEW.data_inicio_alteracoes,
+      ARRAY[(jsonb_array_length(NEW.data_inicio_alteracoes) - 1)::text],
+      v_ult || jsonb_build_object('por', auth.uid(), 'em', now()));
+  ELSIF NEW.data_inicio_alteracoes IS DISTINCT FROM OLD.data_inicio_alteracoes AND NOT v_gestor THEN
+    -- Não deixa mexer no histórico sem trocar a data (reescrever justificativa).
+    RAISE EXCEPTION 'O histórico de datas não pode ser alterado.';
+  END IF;
+
+  RETURN NEW;
+END $$;
+
+-- O gatilho já existe e aponta para esta função; o CREATE OR REPLACE acima
+-- basta. Recriado assim mesmo para o caso de a 20260903000001 não ter
+-- rodado neste banco.
+DROP TRIGGER IF EXISTS trg_sistema_recrutamento_guard ON public."SISTEMA_RECRUTAMENTO";
+CREATE TRIGGER trg_sistema_recrutamento_guard
+  BEFORE INSERT OR UPDATE ON public."SISTEMA_RECRUTAMENTO"
+  FOR EACH ROW EXECUTE FUNCTION public.sistema_recrutamento_guard();
+
+NOTIFY pgrst, 'reload schema';
+
+-- =========================================================================
+-- ROLLBACK
+--   Recriar public.sistema_recrutamento_guard() da 20260903000001 (v_rh só
+--   com recrutamento_gestao). Isso devolve o "Erro ao aprovar" para o
+--   Operacional.
+-- =========================================================================
+
+-- ===== 20260916000001_canal_denuncia_policy_sem_select_direto =====
+-- =========================================================================
+-- URGENTE: "permission denied for table CANAL_DENUNCIA" em TODO o ERP
+--
+-- SINTOMA
+-- Lançar despesa no Malote — módulo que não tem nada a ver com denúncias —
+-- falhava com `permission denied for table CANAL_DENUNCIA`.
+--
+-- CAUSA (minha, na 20260914000005)
+-- Duas decisões corretas que, juntas, se mordem:
+--
+--   1. a 20260914000002 REVOGOU o SELECT de `authenticated` em
+--      CANAL_DENUNCIA — a leitura passou a ser pela visão v_canal_denuncia,
+--      que mascara a identidade do denunciante;
+--   2. a 20260914000005 escreveu as policies das tabelas filhas e do
+--      STORAGE assim:
+--
+--          USING (EXISTS (SELECT 1 FROM public."CANAL_DENUNCIA" d
+--                          WHERE d.id = ... AND canal_denuncia_visivel(...)))
+--
+-- Policy roda com os privilégios de QUEM CONSULTA. Como `authenticated` não
+-- tem mais SELECT na tabela, avaliar a policy levanta permission denied — e
+-- não adianta a condição ser falsa: o privilégio é conferido antes.
+--
+-- POR QUE VAZOU PARA O MALOTE
+-- `storage.objects` é uma tabela só para o ERP inteiro. Toda operação de
+-- arquivo de QUALQUER módulo avalia TODAS as policies dela, inclusive as
+-- duas do bucket de evidências. O `bucket_id = 'denuncia-evidencias'` não
+-- protege: AND não garante ordem de avaliação, e a checagem de privilégio
+-- da tabela referenciada acontece de todo jeito.
+--
+-- CORREÇÃO
+-- A consulta a CANAL_DENUNCIA sai de dentro das policies e vai para uma
+-- função SECURITY DEFINER, que lê a tabela com os privilégios do dono. As
+-- policies passam a chamar a função — nenhuma delas toca a tabela direto.
+--
+-- Idempotente.
+-- =========================================================================
+
+-- ── 1. A função que as policies passam a chamar ──────────────────────
+-- SECURITY DEFINER: é ela que tem o direito de ler CANAL_DENUNCIA, para
+-- quem consulta não precisar tê-lo. A regra de quem enxerga o quê continua
+-- sendo a mesma da 20260914000005 (canal_denuncia_visivel).
+CREATE OR REPLACE FUNCTION public.canal_denuncia_visivel_por_id(_denuncia uuid)
+RETURNS boolean
+LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public, pg_temp
+AS $$
+  SELECT EXISTS (
+    SELECT 1 FROM public."CANAL_DENUNCIA" d
+     WHERE d.id = _denuncia
+       AND public.canal_denuncia_visivel(d.empresa_id)
+  );
+$$;
+
+COMMENT ON FUNCTION public.canal_denuncia_visivel_por_id(uuid) IS
+  'Usada pelas policies das tabelas filhas e do storage. DEFINER de proposito: authenticated nao tem SELECT em CANAL_DENUNCIA, e policy que consulta a tabela direto estoura permission denied.';
+
+REVOKE ALL ON FUNCTION public.canal_denuncia_visivel_por_id(uuid) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.canal_denuncia_visivel_por_id(uuid) TO authenticated;
+
+-- Mesma coisa para o storage, onde o dono do arquivo vem do CAMINHO
+-- (`<denuncia_id>/...`) e pode não ser um uuid válido — arquivo de outro
+-- bucket cai aqui também.
+CREATE OR REPLACE FUNCTION public.canal_denuncia_visivel_por_caminho(_nome text)
+RETURNS boolean
+LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = public, pg_temp
+AS $$
+DECLARE v_id uuid;
+BEGIN
+  BEGIN
+    v_id := split_part(COALESCE(_nome, ''), '/', 1)::uuid;
+  EXCEPTION WHEN others THEN
+    RETURN false;   -- caminho que não começa por uuid não é do canal
+  END;
+  RETURN public.canal_denuncia_visivel_por_id(v_id);
+END $$;
+
+REVOKE ALL ON FUNCTION public.canal_denuncia_visivel_por_caminho(text) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.canal_denuncia_visivel_por_caminho(text) TO authenticated;
+
+-- ── 2. STORAGE — o que estava derrubando o resto do ERP ──────────────
+DROP POLICY IF EXISTS denuncia_evid_select ON storage.objects;
+CREATE POLICY denuncia_evid_select ON storage.objects
+  FOR SELECT TO authenticated
+  USING (bucket_id = 'denuncia-evidencias'
+         AND public.canal_denuncia_visivel_por_caminho(name));
+
+DROP POLICY IF EXISTS denuncia_evid_insert ON storage.objects;
+CREATE POLICY denuncia_evid_insert ON storage.objects
+  FOR INSERT TO authenticated
+  WITH CHECK (bucket_id = 'denuncia-evidencias'
+              AND public.canal_denuncia_visivel_por_caminho(name));
+
+-- ── 3. Tabelas filhas ────────────────────────────────────────────────
+DROP POLICY IF EXISTS canal_denuncia_msg_select ON public."CANAL_DENUNCIA_MENSAGEM";
+CREATE POLICY canal_denuncia_msg_select ON public."CANAL_DENUNCIA_MENSAGEM"
+  FOR SELECT TO authenticated
+  USING (public.canal_denuncia_visivel_por_id(denuncia_id));
+
+DROP POLICY IF EXISTS canal_denuncia_msg_insert ON public."CANAL_DENUNCIA_MENSAGEM";
+CREATE POLICY canal_denuncia_msg_insert ON public."CANAL_DENUNCIA_MENSAGEM"
+  FOR INSERT TO authenticated
+  WITH CHECK (autor = 'comite'
+              AND autor_user_id = auth.uid()
+              AND public.canal_denuncia_visivel_por_id(denuncia_id));
+
+DROP POLICY IF EXISTS canal_denuncia_msg_update ON public."CANAL_DENUNCIA_MENSAGEM";
+CREATE POLICY canal_denuncia_msg_update ON public."CANAL_DENUNCIA_MENSAGEM"
+  FOR UPDATE TO authenticated
+  USING (public.canal_denuncia_visivel_por_id(denuncia_id))
+  WITH CHECK (public.canal_denuncia_visivel_por_id(denuncia_id));
+
+DROP POLICY IF EXISTS canal_denuncia_evento_select ON public."CANAL_DENUNCIA_EVENTO";
+CREATE POLICY canal_denuncia_evento_select ON public."CANAL_DENUNCIA_EVENTO"
+  FOR SELECT TO authenticated
+  USING (public.canal_denuncia_visivel_por_id(denuncia_id));
+
+DROP POLICY IF EXISTS canal_anexo_select ON public."CANAL_DENUNCIA_ANEXO";
+CREATE POLICY canal_anexo_select ON public."CANAL_DENUNCIA_ANEXO"
+  FOR SELECT TO authenticated
+  USING ((NOT sensivel OR public.tem_acesso_menu('comite_etica_sigilo'))
+         AND public.canal_denuncia_visivel_por_id(denuncia_id));
+
+DROP POLICY IF EXISTS canal_anexo_insert ON public."CANAL_DENUNCIA_ANEXO";
+CREATE POLICY canal_anexo_insert ON public."CANAL_DENUNCIA_ANEXO"
+  FOR INSERT TO authenticated
+  WITH CHECK (origem <> 'denunciante'
+              AND public.canal_denuncia_visivel_por_id(denuncia_id));
+
+DROP POLICY IF EXISTS canal_anexo_update ON public."CANAL_DENUNCIA_ANEXO";
+CREATE POLICY canal_anexo_update ON public."CANAL_DENUNCIA_ANEXO"
+  FOR UPDATE TO authenticated
+  USING (public.canal_denuncia_visivel_por_id(denuncia_id))
+  WITH CHECK (public.canal_denuncia_visivel_por_id(denuncia_id));
+
+DROP POLICY IF EXISTS canal_prov_todas ON public."CANAL_DENUNCIA_PROVIDENCIA";
+CREATE POLICY canal_prov_todas ON public."CANAL_DENUNCIA_PROVIDENCIA"
+  FOR ALL TO authenticated
+  USING (public.canal_denuncia_visivel_por_id(denuncia_id))
+  WITH CHECK (public.canal_denuncia_visivel_por_id(denuncia_id));
+
+DROP POLICY IF EXISTS canal_alerta_select ON public."CANAL_DENUNCIA_ALERTA";
+CREATE POLICY canal_alerta_select ON public."CANAL_DENUNCIA_ALERTA"
+  FOR SELECT TO authenticated
+  USING (public.canal_denuncia_visivel_por_id(denuncia_id));
+
+DROP POLICY IF EXISTS canal_alerta_update ON public."CANAL_DENUNCIA_ALERTA";
+CREATE POLICY canal_alerta_update ON public."CANAL_DENUNCIA_ALERTA"
+  FOR UPDATE TO authenticated
+  USING (public.canal_denuncia_visivel_por_id(denuncia_id))
+  WITH CHECK (public.canal_denuncia_visivel_por_id(denuncia_id));
+
+NOTIFY pgrst, 'reload schema';
+
+-- ── 4. Conferência: nenhuma policy pode citar CANAL_DENUNCIA direto ──
+-- Se esta consulta devolver linha, o defeito voltou.
+SELECT schemaname, tablename, policyname
+  FROM pg_policies
+ WHERE (COALESCE(qual, '') || COALESCE(with_check, '')) LIKE '%CANAL_DENUNCIA"%'
+   AND policyname NOT LIKE 'canal_denuncia_select%'
+   AND policyname NOT LIKE 'canal_denuncia_update%';
+
+-- =========================================================================
+-- ROLLBACK
+--   Recriar as policies da 20260914000005 (com EXISTS SELECT direto) e
+--   devolver o SELECT: GRANT SELECT ON public."CANAL_DENUNCIA" TO authenticated;
+--   — mas isso derruba a máscara de identidade e volta a quebrar o Malote.
+-- =========================================================================
+
+-- ===== 20260916000002_encarregado_conversa_solicitacoes =====
+-- =========================================================================
+-- Encarregado passa a conversar sobre as PRÓPRIAS solicitações
+--
+-- POR QUE
+-- A tela "Minhas Solicitações" ganhou detalhes e chat. Só que o fio da VAGA
+-- é o WA_MENSAGENS_RECRUTAMENTO, e a policy dele exige `recrutamento_gestao`
+-- — que o encarregado não tem. Sem esta migration, o chat da vaga abriria
+-- vazio para ele e o envio falharia.
+--
+-- E não é só o encarregado: a policy também não conhece
+-- `operacional_recrutamento`. Quem entra pela Gestão de Recrutamento do
+-- Operacional dependia de ter as duas liberações para ver a conversa — o que
+-- contraria o desenho daquele módulo ("liberar operacional_recrutamento já
+-- basta", ver 20260909000007).
+--
+-- O RECORTE DO ENCARREGADO
+-- Ele não vê a conversa de qualquer vaga: vê a das vagas que ELE abriu
+-- (`solicitante_cpf` = e-mail dele, que é como o resto do módulo já amarra).
+-- Quem trata continua vendo todas.
+--
+-- Idempotente.
+-- =========================================================================
+
+-- Sem isto, cada linha da conversa faria uma varredura em SISTEMA_RECRUTAMENTO
+-- para responder "esta vaga é dele?".
+CREATE INDEX IF NOT EXISTS sistema_recrutamento_solicitante_idx
+  ON public."SISTEMA_RECRUTAMENTO" (solicitante_cpf);
+
+-- ── Conversa da vaga ─────────────────────────────────────────────────
+DROP POLICY IF EXISTS wa_mensagens_recrutamento_gate ON public."WA_MENSAGENS_RECRUTAMENTO";
+CREATE POLICY wa_mensagens_recrutamento_gate ON public."WA_MENSAGENS_RECRUTAMENTO"
+  FOR ALL TO authenticated
+  USING (
+    has_screen_access(auth.uid(), 'recrutamento_gestao'::text, 'visualizar'::app_acao)
+    -- O Operacional decide sobre a vaga; ler o que foi conversado sobre ela
+    -- faz parte de decidir.
+    OR has_screen_access(auth.uid(), 'operacional_recrutamento'::text, 'visualizar'::app_acao)
+    -- O encarregado, só nas vagas que ele mesmo abriu.
+    OR EXISTS (
+      SELECT 1 FROM public."SISTEMA_RECRUTAMENTO" s
+       WHERE s.id = "WA_MENSAGENS_RECRUTAMENTO".solicitacao_id
+         AND s.solicitante_cpf = (SELECT p.email FROM public.profiles p WHERE p.id = auth.uid())
+    )
+  )
+  WITH CHECK (
+    has_screen_access(auth.uid(), 'recrutamento_gestao'::text, 'incluir'::app_acao)
+    OR has_screen_access(auth.uid(), 'recrutamento_gestao'::text, 'alterar'::app_acao)
+    OR has_screen_access(auth.uid(), 'operacional_recrutamento'::text, 'alterar'::app_acao)
+    OR has_screen_access(auth.uid(), 'operacional_recrutamento'::text, 'aprovar'::app_acao)
+    OR EXISTS (
+      SELECT 1 FROM public."SISTEMA_RECRUTAMENTO" s
+       WHERE s.id = "WA_MENSAGENS_RECRUTAMENTO".solicitacao_id
+         AND s.solicitante_cpf = (SELECT p.email FROM public.profiles p WHERE p.id = auth.uid())
+    )
+  );
+
+-- ── Conversa de férias, advertência e demissão ───────────────────────
+-- SISTEMA_COMENTARIOS já é `USING (true)` para authenticated — o feed é
+-- compartilhado por vários módulos e sempre foi assim. Não estreito aqui:
+-- estreitar exigiria conhecer a regra de acesso de CADA módulo que usa o
+-- feed (patrimônio, processo, férias…), e errar nisso apagaria comentário
+-- de gente que hoje enxerga. Fica registrado como dívida.
+--
+-- O que dá para fazer sem risco é garantir que os três módulos novos são
+-- valores esperados, para uma consulta futura por módulo não achar que
+-- 'demissao' é typo.
+COMMENT ON COLUMN public."SISTEMA_COMENTARIOS".modulo IS
+  'patrimonio | processo | ferias | bonificacao | advertencia | demissao. advertencia e demissao entraram em 21/08/2026 com a tela de Minhas Solicitacoes do encarregado.';
+
+NOTIFY pgrst, 'reload schema';
+
+-- ── Conferência ──────────────────────────────────────────────────────
+SELECT policyname,
+       (COALESCE(qual, '') LIKE '%operacional_recrutamento%')       AS le_operacional,
+       (COALESCE(qual, '') LIKE '%SISTEMA_RECRUTAMENTO%')           AS le_dono_da_vaga
+  FROM pg_policies
+ WHERE tablename = 'WA_MENSAGENS_RECRUTAMENTO';
+
+-- =========================================================================
+-- ROLLBACK
+--   Recriar wa_mensagens_recrutamento_gate da 20260804000005 (só
+--   recrutamento_gestao). Isso devolve o chat vazio para o encarregado.
+-- =========================================================================
+
+-- ===== 20260921000002_formularios_ver_por_formulario =====
+-- =========================================================================
+-- FORMULÁRIOS — VISUALIZAR RESPOSTAS: REGRA POR FORMULÁRIO
+--
+-- O PROBLEMA
+--   As capacidades de leitura (`ver_tudo`, `ver_proprias`, `ver_setor`) eram
+--   GLOBAIS: valiam para o catálogo inteiro. Marcar "Visualizar tudo" numa
+--   pessoa abria TODAS as respostas de TODOS os formulários. Não havia como
+--   dizer "a Anita vê tudo da Avaliação de Treinamentos, mas no Feedbacks só
+--   vê o setor dela" — e é exatamente disso que a operação precisa.
+--
+-- O MODELO (decidido pelo Pablo, 21/08/2026)
+--   A regra do formulário SUBSTITUI a geral naquele formulário. Não é soma:
+--     * pessoa SEM regra própria no formulário X  → valem as capacidades
+--       gerais, exatamente como hoje;
+--     * pessoa COM regra própria no formulário X  → ali valem SÓ as marcadas
+--       em X, mesmo que ela tenha `ver_tudo` no geral.
+--   Assim dá para deixar o geral aberto e fechar um formulário sensível, ou o
+--   contrário, sem inventar capacidade nova.
+--
+--   O que liga o override é uma linha MARCADORA `papel='ver_regra_form'`
+--   (gravada quando o formulário entra na lista do usuário). Sem ela o
+--   override não existiria quando o admin adiciona o formulário e deixa todos
+--   os switches desligados — e "adicionei e desmarquei tudo, mas ela continua
+--   vendo" seria a pior armadilha possível num painel de permissão.
+--   Marcador presente + nenhum switch = não vê nada NAQUELE formulário.
+--
+-- ONDE MORA
+--   Na própria "CS_FORM_ACESSOS", na coluna `formulario_id` que já existe (é a
+--   mesma que a lista do botão "Acesso" usa desde 20260906000004). NÃO há
+--   tabela nova de permissão — a regra do projeto é não espalhar estrutura de
+--   acesso.
+--
+-- O QUE **NÃO** MUDA
+--   * `editar_criar` / `encerrar_excluir` / `ver_lixeira` seguem globais. Quem
+--     precisa de edição por formulário usa a lista do botão "Acesso"
+--     (form_dono/form_gerenciar/form_editar/form_ver), que já faz isso.
+--   * `criar_setor` (setor-dono do formulário) e a liderança de setor
+--     (`cs_form_lidera_setor`) continuam ADITIVOS: são outra pergunta —
+--     "este formulário/esta resposta é da minha área" —, não o recorte de
+--     leitura que o painel controla.
+--
+-- ⚠ CORREÇÃO DE REGRESSÃO: a policy `cs_form_resp_select` recriada em
+--   20260906000004 perdeu o ramo `cs_form_lidera_setor(setor)` que existia
+--   desde 20260801000001 (o comentário "ANTES:" daquela migration transcreveu
+--   a expressão sem ele). Gerente/diretor de setor parou de receber as
+--   respostas do setor que lidera. Esta migration devolve o ramo.
+--
+-- Idempotente.
+-- ROLLBACK: no fim do arquivo.
+-- =========================================================================
+
+-- ── 1) A coluna formulario_id passa a aceitar as capacidades de leitura ──
+-- A constraint anterior amarrava `formulario_id IS NOT NULL` aos quatro papéis
+-- da lista de acesso. Agora: os papéis da lista CONTINUAM obrigados a ter
+-- formulário; os de leitura PODEM ter (geral quando NULL, do formulário quando
+-- preenchido); o resto segue proibido de ter.
+ALTER TABLE public."CS_FORM_ACESSOS" DROP CONSTRAINT IF EXISTS cs_form_acessos_sem_form;
+ALTER TABLE public."CS_FORM_ACESSOS" DROP CONSTRAINT IF EXISTS cs_form_acessos_form_por_papel;
+ALTER TABLE public."CS_FORM_ACESSOS" ADD  CONSTRAINT cs_form_acessos_form_por_papel
+  CHECK (
+    CASE
+      WHEN papel IN ('form_dono','form_gerenciar','form_editar','form_ver') THEN formulario_id IS NOT NULL
+      WHEN papel IN ('ver_tudo','ver_proprias','ver_setor','ver_regra_form') THEN true
+      ELSE formulario_id IS NULL
+    END
+  );
+
+-- ── 2) Unicidade ─────────────────────────────────────────────────────────
+-- O índice da lista de acesso cobria (user_id, formulario_id) para QUALQUER
+-- linha com formulário — o que impediria a mesma pessoa de ter mais de uma
+-- capacidade de leitura no mesmo formulário. Restringe-se aos papéis da lista.
+DROP INDEX IF EXISTS cs_form_acessos_unq_form;
+CREATE UNIQUE INDEX cs_form_acessos_unq_form
+  ON public."CS_FORM_ACESSOS"(user_id, formulario_id)
+  WHERE papel IN ('form_dono','form_gerenciar','form_editar','form_ver');
+
+-- Uma linha por (usuário, papel, formulário) nas capacidades sem setor.
+DROP INDEX IF EXISTS cs_form_acessos_unq_cap_form;
+CREATE UNIQUE INDEX cs_form_acessos_unq_cap_form
+  ON public."CS_FORM_ACESSOS"(user_id, papel, formulario_id)
+  WHERE formulario_id IS NOT NULL AND papel IN ('ver_tudo','ver_proprias','ver_regra_form');
+
+-- ver_setor: o índice antigo era (user_id, setor) e valia para a linha geral.
+-- Agora existem os dois mundos — o geral (formulario_id NULL) e o do
+-- formulário —, e NULL em índice único não colide com NULL, então são dois
+-- índices parciais em vez de um com a coluna nula.
+DROP INDEX IF EXISTS cs_form_acessos_unq_setor;
+CREATE UNIQUE INDEX cs_form_acessos_unq_setor
+  ON public."CS_FORM_ACESSOS"(user_id, setor)
+  WHERE papel = 'ver_setor' AND formulario_id IS NULL;
+
+DROP INDEX IF EXISTS cs_form_acessos_unq_setor_form;
+CREATE UNIQUE INDEX cs_form_acessos_unq_setor_form
+  ON public."CS_FORM_ACESSOS"(user_id, setor, formulario_id)
+  WHERE papel = 'ver_setor' AND formulario_id IS NOT NULL;
+
+-- ── 3) Helpers ───────────────────────────────────────────────────────────
+-- SECURITY DEFINER como as irmãs: a policy de CS_FORM_ACESSOS pergunta a
+-- CS_FORM_ACESSOS, e sem isso a leitura entra em recursão.
+
+-- Este formulário tem regra própria de leitura para MIM? É o que liga o
+-- override — e é o marcador, não a existência de switches ligados.
+CREATE OR REPLACE FUNCTION public.cs_form_regra_propria(_form uuid)
+RETURNS boolean LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public AS $$
+  SELECT _form IS NOT NULL AND EXISTS (
+    SELECT 1 FROM public."CS_FORM_ACESSOS" a
+     WHERE a.user_id = auth.uid()
+       AND a.formulario_id = _form
+       AND a.papel = 'ver_regra_form');
+$$;
+
+-- A capacidade de leitura que VALE neste formulário.
+--   com regra própria → só o que está marcado no formulário;
+--   sem regra própria → a capacidade geral, como sempre foi.
+CREATE OR REPLACE FUNCTION public.cs_form_cap_ver(_form uuid, _cap text)
+RETURNS boolean LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public AS $$
+  SELECT CASE
+    WHEN public.cs_form_regra_propria(_form) THEN EXISTS (
+      SELECT 1 FROM public."CS_FORM_ACESSOS" a
+       WHERE a.user_id = auth.uid() AND a.formulario_id = _form AND a.papel = _cap)
+    ELSE public.cs_form_cap(_cap)
+  END;
+$$;
+
+-- Mesma régua para o recorte por setor do respondente.
+CREATE OR REPLACE FUNCTION public.cs_form_cap_setor_em(_form uuid, _setor text)
+RETURNS boolean LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public AS $$
+  SELECT CASE
+    WHEN public.cs_form_regra_propria(_form) THEN _setor IS NOT NULL AND EXISTS (
+      SELECT 1 FROM public."CS_FORM_ACESSOS" a
+       WHERE a.user_id = auth.uid() AND a.formulario_id = _form AND a.papel = 'ver_setor'
+         AND upper(btrim(a.setor)) = upper(btrim(_setor)))
+    ELSE public.cs_form_cap_setor(_setor)
+  END;
+$$;
+
+REVOKE EXECUTE ON FUNCTION public.cs_form_regra_propria(uuid)        FROM PUBLIC, anon;
+REVOKE EXECUTE ON FUNCTION public.cs_form_cap_ver(uuid, text)        FROM PUBLIC, anon;
+REVOKE EXECUTE ON FUNCTION public.cs_form_cap_setor_em(uuid, text)   FROM PUBLIC, anon;
+GRANT  EXECUTE ON FUNCTION public.cs_form_regra_propria(uuid)        TO authenticated;
+GRANT  EXECUTE ON FUNCTION public.cs_form_cap_ver(uuid, text)        TO authenticated;
+GRANT  EXECUTE ON FUNCTION public.cs_form_cap_setor_em(uuid, text)   TO authenticated;
+
+-- ── 4) A policy de leitura das respostas ─────────────────────────────────
+-- Mesma estrutura de 20260906000004; o que muda é que os três ramos de
+-- capacidade passam a perguntar "…NESTE formulário". O ramo da liderança
+-- volta (ver o aviso de regressão no cabeçalho).
+DROP POLICY IF EXISTS cs_form_resp_select ON public."CS_FORM_RESPOSTAS";
+CREATE POLICY cs_form_resp_select ON public."CS_FORM_RESPOSTAS" FOR SELECT TO authenticated
+  USING (
+    (NOT public.cs_form_lista_exclui(formulario_id)
+      AND (
+        public.cs_form_cap_ver(formulario_id, 'ver_tudo')
+        OR (public.cs_form_cap_ver(formulario_id, 'ver_proprias')
+            AND public.cs_form_minha_resposta(criado_por, respondente_nome))
+        OR public.cs_form_cap_setor_em(formulario_id, setor)
+        OR public.cs_form_cap_form_setor(formulario_id)   -- setor-dono: aditivo
+        OR public.cs_form_lidera_setor(setor)             -- gerente/diretor: aditivo
+      ))
+    OR public.cs_form_pode(formulario_id, 'ver')
+  );
+
+-- ── 5) A chave-mestra também respeita a regra do formulário ──────────────
+-- `cs_form_pode(_form,'ver')` deixava quem tem `ver_tudo` global ler qualquer
+-- formulário, inclusive um com lista restrita. Se a pessoa tem regra própria
+-- no formulário, é ela que vale — senão o override seria contornado por aqui.
+-- 'acesso' NÃO muda: continua sendo a válvula de escape para reatribuir
+-- formulário órfão (dono desligado da empresa), e isso não é ler resposta.
+CREATE OR REPLACE FUNCTION public.cs_form_pode(_form uuid, _cap text)
+RETURNS boolean LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public AS $$
+  SELECT CASE
+    WHEN _form IS NULL THEN false
+    WHEN _cap = 'ver'    AND public.cs_form_cap_ver(_form, 'ver_tudo') THEN true
+    WHEN _cap = 'acesso' AND public.cs_form_cap('ver_tudo')            THEN true
+    ELSE coalesce(
+      CASE _cap
+        WHEN 'ver'     THEN public.cs_form_papel_no_form(_form) IN ('form_dono','form_gerenciar','form_editar','form_ver')
+        WHEN 'editar'  THEN public.cs_form_papel_no_form(_form) IN ('form_dono','form_gerenciar','form_editar')
+        WHEN 'excluir' THEN public.cs_form_papel_no_form(_form) =  'form_dono'
+        WHEN 'acesso'  THEN public.cs_form_papel_no_form(_form) IN ('form_dono','form_gerenciar')
+                         OR (NOT public.cs_form_tem_lista(_form)
+                             AND (public.cs_form_cap('editar_criar') OR public.cs_form_cap('encerrar_excluir')))
+        ELSE false
+      END, false)
+  END;
+$$;
+
+-- `cs_form_papel_no_form` pegava a PRIMEIRA linha da pessoa naquele formulário,
+-- qualquer que fosse o papel. Com as linhas de leitura por formulário, uma
+-- pessoa de fora da lista de acesso passaria a devolver 'ver_tudo' aqui — e
+-- `cs_form_lista_exclui` concluiria que ela está na lista, furando o modo
+-- restrito. O papel da LISTA é só um dos quatro.
+CREATE OR REPLACE FUNCTION public.cs_form_papel_no_form(_form uuid)
+RETURNS text LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public AS $$
+  SELECT a.papel FROM public."CS_FORM_ACESSOS" a
+   WHERE a.formulario_id = _form AND a.user_id = auth.uid()
+     AND a.papel IN ('form_dono','form_gerenciar','form_editar','form_ver')
+   LIMIT 1;
+$$;
+
+-- `cs_form_tem_lista` conta QUALQUER linha do formulário — e agora existem
+-- linhas de leitura por formulário, que não são lista de acesso. Sem esta
+-- correção, dar "ver_tudo só neste formulário" para alguém ligaria o modo
+-- restrito do formulário e tiraria todo mundo que não estivesse na lista.
+CREATE OR REPLACE FUNCTION public.cs_form_tem_lista(_form uuid)
+RETURNS boolean LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public AS $$
+  SELECT EXISTS (
+    SELECT 1 FROM public."CS_FORM_ACESSOS" a
+     WHERE a.formulario_id = _form
+       AND a.papel IN ('form_dono','form_gerenciar','form_editar','form_ver'));
+$$;
+
+-- ── 6) Conferência ───────────────────────────────────────────────────────
+SELECT count(*) FILTER (WHERE formulario_id IS NULL)     AS grants_gerais,
+       count(*) FILTER (WHERE formulario_id IS NOT NULL) AS grants_por_formulario
+  FROM public."CS_FORM_ACESSOS"
+ WHERE papel IN ('ver_tudo','ver_proprias','ver_setor','ver_regra_form');
+
+NOTIFY pgrst, 'reload schema';
+
+-- =========================================================================
+-- ROLLBACK
+--   DELETE FROM public."CS_FORM_ACESSOS"
+--    WHERE formulario_id IS NOT NULL
+--      AND papel IN ('ver_tudo','ver_proprias','ver_setor','ver_regra_form');
+--   DROP FUNCTION IF EXISTS public.cs_form_cap_setor_em(uuid, text);
+--   DROP FUNCTION IF EXISTS public.cs_form_cap_ver(uuid, text);
+--   DROP FUNCTION IF EXISTS public.cs_form_regra_propria(uuid);
+--   DROP INDEX IF EXISTS cs_form_acessos_unq_cap_form;
+--   DROP INDEX IF EXISTS cs_form_acessos_unq_setor_form;
+--   (e recriar constraint/índices/policy/funções como em 20260906000004)
+-- =========================================================================
+
+
+-- ===== 20260921000003_formularios_botao_acesso =====
+-- =========================================================================
+-- FORMULÁRIOS — "Botão de acessos de cada formulário" (menu de capacidade)
+--
+-- O botão "Acesso" de cada card passa a ser o lugar onde se gerencia POR
+-- COMPLETO o acesso de cada pessoa àquele formulário — inclusive o recorte de
+-- leitura criado em 20260921000002. Faltava dizer QUEM pode abrir esse botão
+-- sem depender de já ser dono do formulário.
+--
+-- É um MENU DE CAPACIDADE: uma linha em app_menu com `rota = NULL`, no módulo
+-- Central de Serviços. Aparece sozinho em Administração › Acesso por Usuário
+-- (a aba lista app_menu) como mais um switch — é o padrão já usado por
+-- `novidades_publicar`, `chamados_sistemas_aprovar` e outros ~25. Nenhuma
+-- tabela nova de permissão.
+--
+-- O toggle daquele painel grava visualizar+incluir+alterar+aprovar+exportar de
+-- uma vez (nunca `excluir`), por isso a checagem aqui cobra `incluir`.
+--
+-- É ADITIVO: quem já abre o botão hoje (dono/gerente do formulário, quem tem
+-- 'ver_tudo', ou quem administra formulários num formulário ainda sem lista)
+-- continua abrindo. O flag só acrescenta quem mais pode.
+--
+-- Idempotente.
+-- ROLLBACK: no fim do arquivo.
+-- =========================================================================
+
+-- ── 1) O menu de capacidade ──────────────────────────────────────────────
+INSERT INTO public.app_menu (modulo_id, codigo, nome, rota, ordem, ativo)
+SELECT m.id, 'formularios_acesso_botao', 'Botão de acessos de cada formulário', NULL, 90, true
+  FROM public.app_modulo m
+ WHERE m.codigo = 'central_servicos'
+   AND NOT EXISTS (
+     SELECT 1 FROM public.app_menu x
+      WHERE x.modulo_id = m.id AND x.codigo = 'formularios_acesso_botao');
+
+-- ── 2) O helper ──────────────────────────────────────────────────────────
+-- Envelopado numa função própria para a policy não repetir a string do menu
+-- em quatro lugares — e para o dia em que a regra mudar ter UM lugar só.
+CREATE OR REPLACE FUNCTION public.cs_form_gerente_de_acesso()
+RETURNS boolean LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public AS $$
+  SELECT public.can_access(auth.uid(), 'formularios_acesso_botao', 'incluir'::public.app_acao);
+$$;
+REVOKE EXECUTE ON FUNCTION public.cs_form_gerente_de_acesso() FROM PUBLIC, anon;
+GRANT  EXECUTE ON FUNCTION public.cs_form_gerente_de_acesso() TO authenticated;
+
+-- ── 3) Entra no 'acesso' de qualquer formulário ──────────────────────────
+-- Mesma função de 20260921000002, com o ramo do flag somado ao 'acesso'. As
+-- policies de escrita de CS_FORM_ACESSOS já chamam cs_form_pode(_,'acesso'),
+-- então nada mais precisa mudar para o flag valer.
+CREATE OR REPLACE FUNCTION public.cs_form_pode(_form uuid, _cap text)
+RETURNS boolean LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public AS $$
+  SELECT CASE
+    WHEN _form IS NULL THEN false
+    WHEN _cap = 'ver'    AND public.cs_form_cap_ver(_form, 'ver_tudo') THEN true
+    WHEN _cap = 'acesso' AND (public.cs_form_cap('ver_tudo') OR public.cs_form_gerente_de_acesso()) THEN true
+    ELSE coalesce(
+      CASE _cap
+        WHEN 'ver'     THEN public.cs_form_papel_no_form(_form) IN ('form_dono','form_gerenciar','form_editar','form_ver')
+        WHEN 'editar'  THEN public.cs_form_papel_no_form(_form) IN ('form_dono','form_gerenciar','form_editar')
+        WHEN 'excluir' THEN public.cs_form_papel_no_form(_form) =  'form_dono'
+        WHEN 'acesso'  THEN public.cs_form_papel_no_form(_form) IN ('form_dono','form_gerenciar')
+                         OR (NOT public.cs_form_tem_lista(_form)
+                             AND (public.cs_form_cap('editar_criar') OR public.cs_form_cap('encerrar_excluir')))
+        ELSE false
+      END, false)
+  END;
+$$;
+
+-- ── 4) Conferência ───────────────────────────────────────────────────────
+SELECT x.codigo, x.nome, x.ativo
+  FROM public.app_menu x JOIN public.app_modulo m ON m.id = x.modulo_id
+ WHERE m.codigo = 'central_servicos' AND x.codigo = 'formularios_acesso_botao';
+
+NOTIFY pgrst, 'reload schema';
+
+-- =========================================================================
+-- ROLLBACK
+--   DELETE FROM public.app_menu x USING public.app_modulo m
+--    WHERE x.modulo_id = m.id AND m.codigo = 'central_servicos'
+--      AND x.codigo = 'formularios_acesso_botao';
+--   DROP FUNCTION IF EXISTS public.cs_form_gerente_de_acesso();
+--   (e recriar cs_form_pode como está em 20260921000002)
+-- =========================================================================
+
+
+-- ===== 20260921000004_formularios_lista_responder =====
+-- =========================================================================
+-- FORMULÁRIOS — QUEM ESTÁ NA LISTA DE ACESSO TAMBÉM RESPONDE
+--
+-- O PROBLEMA
+--   O botão "Acesso" de cada card governa quem ADMINISTRA e quem LÊ as
+--   respostas. Quem PODE RESPONDER é outra pergunta, respondida pelo
+--   público-alvo do editor (`seguranca` + `setores_acesso` +
+--   CS_FORM_ALVO_USUARIOS, tudo dentro de `cs_form_alvo`).
+--
+--   As duas nunca se falaram. Resultado: colocar a Fulana como dona de um
+--   formulário restrito ao setor JURIDICO não a deixava abrir o próprio
+--   formulário para responder se ela não fosse do JURIDICO — ela edita, mas
+--   toma "Você não está na lista de quem pode responder".
+--
+-- A DECISÃO (Pablo, 24/08/2026): SOMAR, não substituir.
+--   * O público-alvo continua sendo quem define os respondentes. Nenhum
+--     formulário que hoje coleta respostas para de coletar — é o motivo de
+--     não termos feito a lista MANDAR em quem responde: a pesquisa com 2
+--     administradores na lista pararia de receber as respostas do alvo no
+--     instante do deploy.
+--   * Quem está na lista de acesso (form_dono/form_gerenciar/form_editar/
+--     form_ver) passa a poder responder MESMO fora do alvo. É o mínimo para
+--     que administrar o formulário não exclua você dele.
+--
+-- O QUE **NÃO** MUDA
+--   * `cs_form_aberto` (publicado, dentro da janela, abaixo do limite) segue
+--     valendo para todo mundo — estar na lista não fura formulário encerrado.
+--   * `cs_form_senha_ok` segue valendo: senha é camada extra, não público.
+--   * `cs_forms_select` (quem ENXERGA a linha do formulário) fica como está.
+--     Podá-la pela lista seria inócuo e perigoso: `cs_form_alvo` já devolve
+--     true para qualquer logado no caso "restrito sem filtro nenhum", que é a
+--     maioria, e quem pode responder PRECISA ler o formulário para preenchê-lo.
+--     Sumir o card da tela de GESTÃO de quem a lista exclui é decisão de
+--     interface (Formularios.tsx), não de RLS — a RLS não distingue "abri a
+--     gestão" de "abri o link para responder".
+--
+-- A tela pública já chama `cs_form_alvo` por RPC para decidir o que mostrar
+-- (FormularioPublico.tsx), então ela acompanha esta migration sozinha.
+--
+-- Idempotente.
+-- ROLLBACK: no fim do arquivo.
+-- =========================================================================
+
+-- Mesma função de 20260715000002 com UM ramo a mais: estar na lista de acesso
+-- do formulário. `cs_form_papel_no_form` só considera os quatro papéis da
+-- lista (desde 20260921000002), então as linhas de LEITURA por formulário —
+-- que não são lista de acesso — não entram aqui e não viram passe de resposta.
+CREATE OR REPLACE FUNCTION public.cs_form_alvo(_form_id uuid)
+RETURNS boolean LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public AS $$
+  SELECT EXISTS (
+    SELECT 1 FROM public."CS_FORMULARIOS" f
+     WHERE f.id = _form_id
+       AND (
+         f.seguranca = 'liberado'
+         OR (auth.uid() IS NOT NULL AND (
+           -- restrito sem filtro nenhum = qualquer usuário logado do ERP
+           (COALESCE(array_length(f.setores_acesso, 1), 0) = 0
+            AND NOT EXISTS (SELECT 1 FROM public."CS_FORM_ALVO_USUARIOS" u WHERE u.formulario_id = f.id))
+           -- união: do setor liberado OU escolhido a dedo
+           OR EXISTS (SELECT 1 FROM public."EMPREGADOS" e
+                       WHERE e.auth_user_id = auth.uid()
+                         AND e."Setor_ERP" = ANY (f.setores_acesso))
+           OR EXISTS (SELECT 1 FROM public."CS_FORM_ALVO_USUARIOS" u
+                       WHERE u.formulario_id = f.id AND u.user_id = auth.uid())
+           -- NOVO: quem administra ou lê pela lista do botão "Acesso" também
+           -- responde, esteja ou não no público-alvo.
+           OR public.cs_form_papel_no_form(f.id) IS NOT NULL
+         ))
+       ));
+$$;
+
+-- CREATE OR REPLACE preserva os grants; repetidos aqui para o caso de a função
+-- ser criada do zero num banco novo.
+REVOKE EXECUTE ON FUNCTION public.cs_form_alvo(uuid) FROM PUBLIC;
+GRANT  EXECUTE ON FUNCTION public.cs_form_alvo(uuid) TO anon, authenticated;
+
+-- ── Conferência ──────────────────────────────────────────────────────────
+-- Quantos formulários têm lista, e quantos deles são restritos (só nesses o
+-- ramo novo muda alguma coisa).
+SELECT count(*) FILTER (WHERE tem_lista)                              AS com_lista,
+       count(*) FILTER (WHERE tem_lista AND seguranca = 'restrito')   AS com_lista_restritos
+  FROM (SELECT f.seguranca,
+               EXISTS (SELECT 1 FROM public."CS_FORM_ACESSOS" a
+                        WHERE a.formulario_id = f.id
+                          AND a.papel IN ('form_dono','form_gerenciar','form_editar','form_ver')) AS tem_lista
+          FROM public."CS_FORMULARIOS" f WHERE f.deleted_at IS NULL) t;
+
+NOTIFY pgrst, 'reload schema';
+
+-- =========================================================================
+-- ROLLBACK
+--   Recriar public.cs_form_alvo(uuid) sem o ramo
+--   `OR public.cs_form_papel_no_form(f.id) IS NOT NULL`
+--   (versão original em 20260715000002_formularios_seguranca.sql, linha 97).
+-- =========================================================================
+
+
+-- ===== 20260922000001_wa_biblioteca_mensagens =====
+-- =========================================================================
+-- WHATSAPP — BIBLIOTECA DE MENSAGENS PRONTAS (o menu da "/")
+--
+-- O PROBLEMA
+--   Só existiam dois textos padronizados no módulo: a abertura (um só, em
+--   WA_BOT_CONFIG.abertura_*) e os do recrutamento (presos a uma etapa do
+--   processo, em RECRUTAMENTO_MENSAGENS). Para qualquer outra conversa o
+--   atendente digitava na mão — e, fora da janela de 24h, nem digitando: a
+--   Meta só aceita TEMPLATE aprovado para quem não escreveu primeiro.
+--
+-- O QUE ISTO CRIA
+--   Uma biblioteca de mensagens que o atendente escolhe na Caixa de Entrada
+--   digitando "/" no campo de mensagem. Cada linha guarda o texto que a
+--   pessoa vai receber E o nome do template correspondente na Meta, porque
+--   os dois caminhos precisam dizer a mesma coisa:
+--     * dentro da janela de 24h → texto livre (não custa conversa nova);
+--     * fora dela              → o template aprovado, mesmo texto.
+--   É o mesmo desenho já usado pela abertura (whatsapp-abertura), agora com
+--   várias mensagens em vez de uma.
+--
+--   `variaveis` são os RÓTULOS das {{1}}, {{2}}… na ordem — é o que a tela
+--   pergunta antes de enviar. Mensagem sem variável (o caso da saudação)
+--   vai direto, sem formulário no meio.
+--
+-- PERMISSÃO
+--   Ler: quem tem a Caixa de Entrada ('whatsapp') — é quem vai usar o menu.
+--   Escrever: quem tem o Chatbot ('whatsapp_chatbot', alterar) — mexer aqui
+--   é configuração, e o texto ainda passa por revisão da Meta. Mesma régua
+--   de whatsapp-abertura/criar_template.
+--
+-- Idempotente.
+-- ROLLBACK: no fim do arquivo.
+-- =========================================================================
+
+CREATE TABLE IF NOT EXISTS public."WA_TEMPLATE" (
+  id             uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  -- O que se digita depois da "/". Minúsculo e sem espaço para poder ser
+  -- filtrado enquanto a pessoa digita.
+  codigo         text NOT NULL UNIQUE CHECK (codigo ~ '^[a-z0-9_]{2,40}$'),
+  titulo         text NOT NULL,
+  texto          text NOT NULL,
+  -- Rótulos das {{n}}, na ordem. Vazio = mensagem fixa.
+  variaveis      text[] NOT NULL DEFAULT '{}',
+  -- Nome na Meta. NULL = só serve dentro da janela de 24h (texto livre).
+  template_nome  text UNIQUE,
+  idioma         text NOT NULL DEFAULT 'pt_BR',
+  -- UTILITY x MARKETING muda o preço da conversa e o rigor da revisão. Quem
+  -- decide de verdade é a Meta; aqui é o que se pede na submissão.
+  categoria      text NOT NULL DEFAULT 'UTILITY' CHECK (categoria IN ('UTILITY','MARKETING')),
+  ativo          boolean NOT NULL DEFAULT true,
+  ordem          integer NOT NULL DEFAULT 100,
+  created_at     timestamptz NOT NULL DEFAULT now(),
+  criado_por     uuid REFERENCES auth.users(id) ON DELETE SET NULL
+);
+
+CREATE INDEX IF NOT EXISTS wa_template_menu_idx ON public."WA_TEMPLATE"(ativo, ordem, titulo);
+
+ALTER TABLE public."WA_TEMPLATE" ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS wa_template_select ON public."WA_TEMPLATE";
+CREATE POLICY wa_template_select ON public."WA_TEMPLATE"
+  FOR SELECT TO authenticated USING (public.tem_acesso_menu('whatsapp'));
+
+DROP POLICY IF EXISTS wa_template_write ON public."WA_TEMPLATE";
+CREATE POLICY wa_template_write ON public."WA_TEMPLATE"
+  FOR ALL TO authenticated
+  USING (public.tem_acesso_menu('whatsapp_chatbot', 'alterar'))
+  WITH CHECK (public.tem_acesso_menu('whatsapp_chatbot', 'alterar'));
+
+-- ── Semente ──────────────────────────────────────────────────────────────
+-- A saudação pedida pelo Pablo (24/08/2026). Sem variável: o texto sai igual
+-- para todo mundo, então nada a preencher antes de enviar.
+--
+-- MARKETING e não UTILITY: é abordagem que parte da empresa, pedindo
+-- consentimento para continuar o contato — não é aviso sobre algo que a
+-- pessoa começou. Submeter como UTILITY é o caminho curto para a Meta
+-- reprovar (ou reclassificar) o template.
+INSERT INTO public."WA_TEMPLATE" (codigo, titulo, texto, template_nome, categoria, ordem)
+SELECT 'saudacao',
+       'Saudação — confirmar contato',
+       E'Olá! Somos do Grupo Nascimento, como você está?\n\nPara confirmar que podemos entrar em contato com você, responda essa mensagem.',
+       'saudacao_contato', 'MARKETING', 10
+ WHERE NOT EXISTS (SELECT 1 FROM public."WA_TEMPLATE" WHERE codigo = 'saudacao');
+
+-- ── Conferência ──────────────────────────────────────────────────────────
+SELECT codigo, titulo, template_nome, categoria, ativo FROM public."WA_TEMPLATE" ORDER BY ordem;
+
+NOTIFY pgrst, 'reload schema';
+
+-- =========================================================================
+-- ROLLBACK
+--   DROP TABLE IF EXISTS public."WA_TEMPLATE";
+-- =========================================================================

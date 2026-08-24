@@ -4,6 +4,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
 import { parseSurveyMonkey, ImportResultado } from "@/utils/surveyMonkeyImporter";
 import { useFormPerms } from "@/hooks/useFormPerms";
+import { useAccessibleMenus } from "@/hooks/useAccessibleMenus";
 import { FormularioAcesso } from "./FormularioAcesso";
 import QRCode from "qrcode";
 
@@ -97,7 +98,12 @@ const btn = (bg: string, c = "#fff", border = "none"): React.CSSProperties =>
 export default function Formularios() {
   const nav = useNavigate();
   const { user } = useAuth();
-  const { can, canVerAlguma, canCriarSetor, setoresCriar, setor } = useFormPerms();
+  const { can, canVerAlgumaNoForm, canNoForm, canCriarSetor, setoresCriar, setor } = useFormPerms();
+  // Flag "Botão de acessos de cada formulário" (migration 20260921000003): um
+  // menu de capacidade em Administração › Acesso por Usuário. O toggle de lá
+  // grava visualizar+incluir+alterar de uma vez; a RLS cobra 'incluir'.
+  const { data: access } = useAccessibleMenus("incluir");
+  const gerenteDeAcesso = access?.codes.has("formularios_acesso_botao") ?? false;
   const meusSetores = [...setoresCriar].sort();  // setores que o usuario e dono (criar_setor)
   const [forms, setForms] = useState<Formulario[]>([]);
   const [contagens, setContagens] = useState<Record<string, number>>({});
@@ -132,7 +138,13 @@ export default function Formularios() {
       // consulta só para todos os cards: quantas pessoas cada formulário tem
       // e qual é o MEU papel nele. A RLS de CS_FORM_ACESSOS já libera a
       // leitura dos papéis não-dashboard, então isto não vaza nada novo.
-      (supabase as any).from("CS_FORM_ACESSOS").select("user_id,papel,formulario_id").not("formulario_id", "is", null),
+      // Só os QUATRO papéis da lista. Desde 20260921000002 existem também
+      // linhas de LEITURA por formulário (ver_tudo/ver_setor/ver_regra_form),
+      // que não são lista de acesso — contá-las aqui ligaria o modo restrito
+      // do formulário e tiraria todo mundo que não estivesse nelas.
+      (supabase as any).from("CS_FORM_ACESSOS").select("user_id,papel,formulario_id")
+        .not("formulario_id", "is", null)
+        .in("papel", ["form_dono", "form_gerenciar", "form_editar", "form_ver"]),
     ]);
     setLoading(false);
     if (fRes.error) { toast("Erro ao carregar: " + fRes.error.message, "err"); return; }
@@ -354,17 +366,34 @@ export default function Formularios() {
   // 'ver_tudo' é a chave-mestra: sempre consegue reabrir a lista (é a saída
   // para dono desligado da empresa). Sem lista ainda, quem administra hoje
   // cria a primeira — senão o botão nasceria útil para ninguém.
+  // 'formularios_acesso_botao' (migration 20260921000003) é o flag de
+  // Administração › Acesso por Usuário que abre este botão em QUALQUER
+  // formulário, sem precisar ser dono dele. Espelha cs_form_gerente_de_acesso.
   const podeAcesso = (f: Formulario) =>
     can("ver_tudo")
+    || gerenteDeAcesso
     || papelPermite(f, ["form_dono", "form_gerenciar"])
     || (!temLista(f) && (can("editar_criar") || can("encerrar_excluir")));
+  // A regra PRÓPRIA do formulário manda aqui também: quem tem "ver tudo" no
+  // geral mas uma regra vazia neste formulário não vê as respostas dele — e o
+  // botão não pode prometer uma tela que a RLS devolve em branco. Espelha
+  // cs_form_cap_ver + cs_form_pode(_,'ver') da migration 20260921000002.
   const podeVerRespostas = (f: Formulario) =>
-    (canVerAlguma && !listaExclui(f))
-    || can("ver_tudo")
+    (canVerAlgumaNoForm(f.id) && (!listaExclui(f) || canNoForm(f.id, "ver_tudo")))
     || papelPermite(f, ["form_dono", "form_gerenciar", "form_editar", "form_ver"]);
   // Gestor só de setor vê apenas os formulários do(s) seu(s) setor(es).
   const soGestorSetor = !podeVerTodos && meusSetores.length > 0;
   const visiveis = forms.filter(f => {
+    // Formulário com lista some da GESTÃO de quem a lista deixou de fora: se
+    // não dá para editar, nem encerrar, nem ler as respostas, o card só serve
+    // para o botão dar "sem permissão". Isto é interface — quem está no
+    // público-alvo continua abrindo o link e respondendo normalmente (a RLS de
+    // CS_FORMULARIOS não foi podada, ver 20260921000004).
+    // A poda só vale quando NADA sobrou para a pessoa: a chave-mestra
+    // 'ver_tudo', o gerente de acesso e quem tem regra PRÓPRIA de leitura
+    // neste formulário (que fura a exclusão da lista, via cs_form_cap_ver)
+    // continuam vendo o card — são justamente quem precisa achá-lo.
+    if (listaExclui(f) && !podeVerRespostas(f) && !podeAcesso(f) && !podeEditar(f)) return false;
     if (soGestorSetor) return canCriarSetor(f.setor);
     const restr = f.setores_acesso ?? [];
     return restr.length === 0 || podeVerTodos || (!!setor && restr.includes(setor));
@@ -386,8 +415,14 @@ export default function Formularios() {
           <div style={{ fontSize: 12, color: "#94a3b8", marginTop: 2 }}>Crie formulários e pesquisas, publique numa URL e acompanhe as respostas.</div>
         </div>
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-          {canVerAlguma && <button onClick={() => nav("/app/central-servicos/formularios/dashboard")} style={btn("#fff", "#475569", "1px solid #e2e8f0")}>📊 Dashboard</button>}
-          {canVerAlguma && <button onClick={() => nav("/app/central-servicos/formularios/painel")} style={btn("#0f3171")}>📈 Painel Gerencial</button>}
+          {/* Sempre visíveis. `canVerAlguma` só enxerga as capacidades GERAIS,
+              e desde a regra por formulário (20260921000002) dá para ver tudo
+              de UM formulário sem ter capacidade geral nenhuma — o botão sumia
+              justamente para quem acabou de ganhar acesso. Quem não pode ver
+              nada entra e encontra o painel vazio: o recorte é da RLS e do
+              `podeVer` lá dentro, não de esconder a porta. */}
+          <button onClick={() => nav("/app/central-servicos/formularios/dashboard")} style={btn("#fff", "#475569", "1px solid #e2e8f0")}>📊 Dashboard</button>
+          <button onClick={() => nav("/app/central-servicos/formularios/painel")} style={btn("#0f3171")}>📈 Painel Gerencial</button>
           {/* "Líderes por setor" foi centralizado na Administração → Módulos & Menus →
               Acesso por Usuário (regra geral por setor). */}
           {can("ver_lixeira") && <button onClick={abrirLixeira} style={btn("#fff", "#475569", "1px solid #e2e8f0")}>🗑 Lixeira</button>}

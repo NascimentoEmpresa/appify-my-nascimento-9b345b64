@@ -8,8 +8,15 @@ import {
 } from "@/pages/juridico/patrimonio/parcelas";
 import { useAuth } from "@/hooks/useAuth";
 import { MapaPatrimonios } from "./patrimonio/MapaPatrimonios";
-import { CLASSIFICACOES, ESPECIES_ESCRITURA, SITUACOES_PAGAMENTO, corSituacao } from "./patrimonio/carteira";
+import {
+  CLASSIFICACOES, ESPECIES_ESCRITURA, SITUACOES_PAGAMENTO, corSituacao,
+  PATRIM_RESET, soCamposDoForm,
+} from "./patrimonio/carteira";
 import { coordenadaValida } from "./patrimonio/geo";
+import {
+  PARAM_ORIGEM, despesaEstaPaga, statusDaConta, corDaConta, podeEnviarAoMalote,
+  podeBaixarManualmente, type StatusConta,
+} from "./patrimonio/vinculoMalote";
 
 // =====================================================================
 // JURÍDICO — Gestão Patrimonial e Obrigações
@@ -41,6 +48,8 @@ interface Obrigacao {
   vigencia_inicio?: string; vigencia_fim?: string; premio?: number; parcelas?: string;
   onde_pagar?: string; comprovante_path?: string; comprovante_nome?: string;
   valor_entrada?: number;
+  // Despesa criada no Malote a partir desta conta (migration 20260912000003).
+  malote_despesa_id?: string | null; enviado_malote_em?: string | null;
 }
 interface Parcela {
   id: number; patrimonio_id: number; ordem?: number; numero?: number; rotulo?: string;
@@ -76,21 +85,16 @@ const PERIOD_STEP: Record<string, number> = { Mensal: 1, Bimestral: 2, Trimestra
 const addMonthsISO = (iso: string, n: number) => { const d = new Date(iso + "T12:00:00"); d.setMonth(d.getMonth() + n); return d.toISOString().slice(0, 10); };
 const MESES_PT = ["Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho", "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro"];
 const mesLabel = (ym: string) => { const [y, m] = String(ym).split("-"); return `${MESES_PT[+m - 1] ?? m}/${y}`; };
-// Status efetivo da obrigação (deriva "Vencido" quando passou do vencimento e não foi pago).
-const statusObr = (o: Obrigacao): "Pago" | "Vencido" | "Pendente" => {
-  if (o.status === "Pago") return "Pago";
-  if (o.vencimento && o.vencimento < hoje()) return "Vencido";
-  return "Pendente";
-};
+// O selo da conta, e o que ela ainda aceita fazer, moram em
+// patrimonio/vinculoMalote. A MESMA regra é desenhada em três lugares desta
+// tela — e foi tendo três cópias dela que o botão "Enviar ao Malote"
+// continuou aparecendo em conta que já estava no Malote.
+//
+// `statusObr` fica como atalho local só para não repetir `hoje()` em cada
+// uma das dezenas de chamadas.
+const statusObr = (o: Obrigacao, malotePaga?: (id?: string | null) => boolean): StatusConta =>
+  statusDaConta(o, malotePaga, hoje());
 
-const PATRIM_RESET = {
-  codigo: "", tipo: "Imóvel", descricao: "", localizacao: "", placa: "", cidade: "",
-  transferida: "Não", empresa: "", empresa_pagadora: "", proprietario: "", responsavel: "",
-  centro_custo: "", status: "Ativo", observacoes: "",
-  classificacao: "", matricula: "", possui_escritura: "", especie_escritura: "",
-  situacao_pagamento: "", valor_contrato: "", valor_entrada: "",
-  latitude: "", longitude: "",
-};
 const OBR_RESET = { categoria: "", modo_parcelas: "igual" as ModoParcelas, qtd_parcelas: "", descricao: "", valor: "", valor_entrada: "", vencimento: "", periodicidade: "Mensal", repetir: "0", onde_pagar: "", forma_pagamento: "", responsavel: "", seguradora: "", apolice: "", vigencia_inicio: "", vigencia_fim: "", premio: "", parcelas: "" };
 const ehLink = (s?: string) => !!s && /^https?:\/\//i.test(s.trim());
 
@@ -150,20 +154,61 @@ export default function Patrimonios() {
   // Parcelas do contrato (Financiamento/Consórcio). Só existem ao CRIAR: abrir
   // uma parcela para editar mexe naquela linha, não no contrato inteiro.
   const [parcelasContrato, setParcelasContrato] = useState<LinhaParcela[]>([]);
+  // despesa do Malote -> já paga? Alimenta o selo "Pago" das contas enviadas.
+  const [malotePago, setMalotePago] = useState<Map<string, boolean>>(new Map());
   const [pagarAlvo, setPagarAlvo] = useState<Obrigacao | null>(null);
   const [pagarFile, setPagarFile] = useState<File | null>(null);
 
   const toast = (msg: string, t = "info") => { const id = Date.now() + Math.random(); setToasts(x => [...x, { id, msg, t }]); setTimeout(() => setToasts(x => x.filter(i => i.id !== id)), 3200); };
 
+  // Quais despesas do Malote já estão pagas. O Patrimônio não guarda esse
+  // estado: pergunta ao Malote, que é quem sabe se o dinheiro saiu. A RPC
+  // devolve só id/status/pago_em das despesas pedidas — a tela não precisa
+  // (nem recebe) o resto da despesa.
+  const carregarStatusMalote = useCallback(async (linhas: Obrigacao[]) => {
+    const ids = [...new Set(linhas.map(x => x.malote_despesa_id).filter(Boolean))] as string[];
+    if (!ids.length) { setMalotePago(new Map()); return; }
+    const { data, error } = await (supabase as any).rpc("jur_patrimonio_status_malote", { _ids: ids });
+    if (error) { console.warn("status do malote:", error.message); return; }
+    const m = new Map<string, boolean>();
+    (data ?? []).forEach((d: any) => m.set(String(d.despesa_id), despesaEstaPaga(d)));
+    setMalotePago(m);
+  }, []);
+
+  /**
+   * Traz TODAS as linhas de uma tabela, em páginas.
+   *
+   * O PostgREST corta a resposta em 1.000 linhas e não avisa: a query volta
+   * "com sucesso", só que incompleta. Enquanto as contas eram dezenas isso não
+   * aparecia; com as parcelas de financiamento lançadas (1.400+) o "quanto
+   * falta" de metade da carteira passaria a sair errado — e errado para MENOS,
+   * que é o jeito pior de errar aqui.
+   */
+  const todas = useCallback(async (tabela: string, colunas: string) => {
+    const PAGINA = 1000;
+    const acc: any[] = [];
+    for (let de = 0; ; de += PAGINA) {
+      const { data, error } = await (supabase as any)
+        .from(tabela).select(colunas).order("id", { ascending: true }).range(de, de + PAGINA - 1);
+      if (error) { console.warn(tabela + ":", error.message); break; }
+      acc.push(...(data ?? []));
+      if (!data || data.length < PAGINA) break;
+    }
+    return acc;
+  }, []);
+
   // ── Carregar lista + indicadores ───────────────────────────────
   const load = useCallback(async () => {
     setLoading(true);
-    const [{ data: p }, { data: o }] = await Promise.all([
+    const [{ data: p }, o] = await Promise.all([
       (supabase as any).from("JUR_PATRIMONIOS").select("*").order("created_at", { ascending: false }),
-      (supabase as any).from("JUR_PATRIMONIO_OBRIGACOES").select("id,patrimonio_id,categoria,descricao,valor,vencimento,status,pago_em,vigencia_fim,onde_pagar,comprovante_path,comprovante_nome"),
+      todas("JUR_PATRIMONIO_OBRIGACOES",
+        "id,patrimonio_id,categoria,descricao,valor,vencimento,status,pago_em,vigencia_fim,onde_pagar,comprovante_path,comprovante_nome,malote_despesa_id,enviado_malote_em"),
     ]);
-    setPats(p ?? []); setObrAll(o ?? []); setLoading(false);
-  }, []);
+    setPats(p ?? []); setObrAll(o ?? []);
+    await carregarStatusMalote(o ?? []);
+    setLoading(false);
+  }, [todas]);   // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { load(); }, [load]);
 
   // Empregados do setor Jurídico que estão Trabalhando (para o select de responsável).
@@ -233,7 +278,7 @@ export default function Patrimonios() {
     if (avisoCoordenada) { toast(avisoCoordenada, "err"); return; }
     const num = (v: string) => v === "" || v == null ? null : Number(String(v).replace(",", "."));
     const payload = {
-      ...pat,
+      ...soCamposDoForm(pat),
       transferida: pat.transferida === "Sim",
       // O select guarda "SIM"/"NAO"/"" e a coluna é booleana; "" vira null, que
       // é "ainda não sabemos", diferente de "não tem escritura".
@@ -298,6 +343,10 @@ export default function Patrimonios() {
   const recarregarObrs = async () => { if (!sel) return; const { data } = await (supabase as any).from("JUR_PATRIMONIO_OBRIGACOES").select("*").eq("patrimonio_id", sel.id).order("vencimento"); setObrs(data ?? []); load(); };
   const recarregarHist = async () => { if (!sel) return; const { data } = await (supabase as any).from("JUR_PATRIMONIO_ITENS").select("*").eq("kind", "historico").eq("patrimonio_id", sel.id).order("created_at", { ascending: false }).limit(50); setHist(data ?? []); };
   const recarregarComentarios = async () => { if (!sel) return; const { data } = await (supabase as any).from("SISTEMA_COMENTARIOS").select("*").eq("modulo", "patrimonio").eq("entidade_id", String(sel.id)).order("created_at", { ascending: false }); setComentarios(data ?? []); };
+
+  const estaPagaNoMalote = useCallback((id?: string | null) => !!id && malotePago.get(String(id)) === true, [malotePago]);
+  /** O selo desta conta, já com o "pago" que veio do Malote. */
+  const seloDaConta = useCallback((o: Obrigacao) => statusObr(o, estaPagaNoMalote), [estaPagaNoMalote]);
 
   // ── Obrigação ──────────────────────────────────────────────────
   const abrirNovaObr = () => { setObrEditId(null); setObr({ ...OBR_RESET }); setParcelasContrato([]); setModalObr(true); };
@@ -451,7 +500,11 @@ export default function Patrimonios() {
       // Onde pagar guarda ora o link, ora a linha digitável; no Malote isso é
       // "Informações de pagamento", que é onde o financeiro procura.
       info: o.onde_pagar || "",
+      // O Malote devolve o vínculo: ao criar a despesa, ele carimba
+      // malote_despesa_id nesta conta e ela vira "Enviado ao Malote".
+      [PARAM_ORIGEM]: String(o.id),
     });
+    toast("Complete a despesa no Malote e envie para aprovação — a conta só sai de Pendente depois disso.", "info");
     nav(`/app/malote/criar-despesa?${q.toString()}`);
   };
   // Baixa manual: a conta foi paga por fora e o que falta é o comprovante.
@@ -548,8 +601,8 @@ export default function Patrimonios() {
 
   // ── Indicadores ────────────────────────────────────────────────
   const ativos = pats.filter(p => p.status === "Ativo").length;
-  const naoPagas = obrAll.filter(o => o.status !== "Pago");
-  const vencidas = naoPagas.filter(o => o.vencimento && o.vencimento < hoje()).length;
+  const naoPagas = obrAll.filter(o => seloDaConta(o) !== "Pago");
+  const vencidas = naoPagas.filter(o => seloDaConta(o) === "Vencido").length;
   const mesAtual = hoje().slice(0, 7);
   const pagoMes = obrAll.filter(o => o.status === "Pago" && (o.pago_em || "").slice(0, 7) === mesAtual).reduce((s, o) => s + (Number(o.valor) || 0), 0);
   const pendentesTransf = pats.filter(p => !p.transferida).length;
@@ -567,10 +620,12 @@ export default function Patrimonios() {
   const maxCat = Math.max(1, ...porCategoria.map(x => x.valor));
   const obrPorPat = pats.map(p => {
     const os = obrAll.filter(o => o.patrimonio_id === p.id);
-    const naoPg = os.filter(o => o.status !== "Pago");
-    const venc = naoPg.filter(o => o.vencimento && o.vencimento < hoje()).length;
+    // Status EFETIVO, igual ao selo: conta paga no Malote nao pode continuar
+    // contando como vencida nem entrar no "previsto".
+    const naoPg = os.filter(o => seloDaConta(o) !== "Pago");
+    const venc = naoPg.filter(o => seloDaConta(o) === "Vencido").length;
     const prev = naoPg.reduce((s, o) => s + (Number(o.valor) || 0), 0);
-    const pg = os.filter(o => o.status === "Pago").reduce((s, o) => s + (Number(o.valor) || 0), 0);
+    const pg = os.filter(o => seloDaConta(o) === "Pago").reduce((s, o) => s + (Number(o.valor) || 0), 0);
     return { p, n: os.length, venc, prev, pg };
   }).filter(x => x.n > 0).sort((a, b) => b.venc - a.venc || b.prev - a.prev);
 
@@ -700,6 +755,7 @@ export default function Patrimonios() {
                 const dias = Math.round((new Date(venc + "T00:00:00").getTime() - new Date(hoje() + "T00:00:00").getTime()) / 86400000);
                 const atrasada = dias < 0;
                 const patN = pats.find(p => p.id === o.patrimonio_id)?.descricao || "—";
+                const stAlerta = seloDaConta(o);
                 return (
                   <div key={o.id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, flexWrap: "wrap", background: "#fff", border: "1px solid #fee2d5", borderRadius: 10, padding: "8px 12px" }}>
                     <div style={{ minWidth: 0 }}>
@@ -708,9 +764,16 @@ export default function Patrimonios() {
                     </div>
                     <div style={{ display: "flex", alignItems: "center", gap: 10, flexShrink: 0, flexWrap: "wrap" }}>
                       <span style={{ fontWeight: 800, color: "#0f172a" }}>{money(o.valor)}</span>
+                      {stAlerta !== "Pendente" && stAlerta !== "Vencido" && (
+                        <span style={{ fontSize: 11, fontWeight: 800, padding: "2px 10px", borderRadius: 20, background: `${corDaConta(stAlerta)}1a`, color: corDaConta(stAlerta) }}>{stAlerta}</span>
+                      )}
                       <span style={{ fontSize: 11, fontWeight: 800, padding: "2px 10px", borderRadius: 20, background: atrasada ? "#fee2e2" : "#ffedd5", color: atrasada ? "#dc2626" : "#ea580c" }}>{atrasada ? `Vencida há ${Math.abs(dias)}d` : dias === 0 ? "Vence hoje" : `Vence em ${dias}d`} · {fmtDt(venc)}</span>
-                      <button className="jp-btn" onClick={() => pagarConta(o)} style={{ background: "#0f3171", color: "#fff", border: "1px solid #0f3171", padding: "4px 12px", fontWeight: 700 }}>Pagar</button>
-                      <button className="jp-btn" title="Já foi paga por fora: anexar o comprovante e dar baixa" onClick={() => baixarConta(o)} style={{ background: "#f0fdf4", color: "#15803d", border: "1px solid #bbf7d0", padding: "4px 10px", fontWeight: 700 }}>✓ Baixar</button>
+                      {stAlerta === "Enviado ao Malote" ? (
+                        <button className="jp-btn" title="A conta já virou despesa no Malote — o pagamento se resolve lá" onClick={() => nav("/app/malote/aprovacoes")} style={{ background: "#eff6ff", color: "#1d4ed8", border: "1px solid #bfdbfe", padding: "4px 12px", fontWeight: 700 }}>Ver no Malote</button>
+                      ) : (<>
+                        <button className="jp-btn" title="Abre o Malote com os dados desta conta já preenchidos. A conta só sai de Pendente quando você concluir o envio lá." onClick={() => pagarConta(o)} style={{ background: "#0f3171", color: "#fff", border: "1px solid #0f3171", padding: "4px 12px", fontWeight: 700 }}>Enviar ao Malote</button>
+                        <button className="jp-btn" title="Já foi paga por fora: anexar o comprovante e dar baixa" onClick={() => baixarConta(o)} style={{ background: "#f0fdf4", color: "#15803d", border: "1px solid #bbf7d0", padding: "4px 10px", fontWeight: 700 }}>✓ Baixar</button>
+                      </>)}
                     </div>
                   </div>
                 );
@@ -908,7 +971,7 @@ export default function Patrimonios() {
 
         {/* ── LANÇAMENTO DE CONTAS ── */}
         {viewPag === "contas" && (() => {
-          const pendente = (o: Obrigacao) => statusObr(o) !== "Pago";
+          const pendente = (o: Obrigacao) => seloDaConta(o) !== "Pago";
           // Um cartão por patrimônio COM conta, mais o cartão do todo. A
           // contagem é de pendentes: é o que faz alguém abrir a tela.
           const cartoes = pats
@@ -963,8 +1026,8 @@ export default function Patrimonios() {
                 <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
                   <tbody>
                     {[...contasMes].sort((a, b) => String(a.vencimento || "").localeCompare(String(b.vencimento || ""))).map(o => {
-                      const st = statusObr(o);
-                      const cor = st === "Pago" ? "#16a34a" : st === "Vencido" ? "#dc2626" : "#ea580c";
+                      const st = seloDaConta(o);
+                      const cor = corDaConta(st);
                       return (
                         <tr key={o.id} style={{ borderTop: "1px solid #f1f5f9" }}>
                           <td style={{ padding: "10px 16px" }}>
@@ -983,8 +1046,10 @@ export default function Patrimonios() {
                           <td style={{ padding: "10px 16px", textAlign: "right", whiteSpace: "nowrap" }}>
                             <div style={{ display: "inline-flex", gap: 6 }}>
                               {o.comprovante_path && <button className="jp-btn" title="Ver comprovante" onClick={() => verComprovante(o)} style={{ background: "#eef4ff", color: "#0f3171", border: "1px solid #dbe4f0", padding: "5px 9px" }}>📎</button>}
-                              {st !== "Pago" && <button className="jp-btn" title="Abre a despesa no Malote com os dados desta conta" onClick={() => pagarConta(o)} style={{ background: "#0f3171", color: "#fff", border: "1px solid #0f3171", padding: "5px 13px", fontWeight: 700 }}>Pagar</button>}
-                              {st !== "Pago" && <button className="jp-btn" title="Já foi paga por fora: anexar o comprovante e dar baixa" onClick={() => baixarConta(o)} style={{ background: "#f0fdf4", color: "#15803d", border: "1px solid #bbf7d0", padding: "5px 10px", fontWeight: 700 }}>✓</button>}
+                              {st === "Enviado ao Malote"
+                                ? <button className="jp-btn" title="A conta já virou despesa no Malote — o pagamento se resolve lá" onClick={() => nav("/app/malote/aprovacoes")} style={{ background: "#eff6ff", color: "#1d4ed8", border: "1px solid #bfdbfe", padding: "5px 13px", fontWeight: 700 }}>Ver no Malote</button>
+                                : podeEnviarAoMalote(st) && <button className="jp-btn" title="Abre o Malote com os dados desta conta já preenchidos. A conta só sai de Pendente quando você concluir o envio lá." onClick={() => pagarConta(o)} style={{ background: "#0f3171", color: "#fff", border: "1px solid #0f3171", padding: "5px 13px", fontWeight: 700 }}>Enviar ao Malote</button>}
+                              {podeBaixarManualmente(st) && <button className="jp-btn" title="Já foi paga por fora: anexar o comprovante e dar baixa" onClick={() => baixarConta(o)} style={{ background: "#f0fdf4", color: "#15803d", border: "1px solid #bbf7d0", padding: "5px 10px", fontWeight: 700 }}>✓</button>}
                             </div>
                           </td>
                         </tr>
@@ -1124,7 +1189,7 @@ export default function Patrimonios() {
                   <button className="jp-btn" onClick={abrirNovaObr} style={{ marginLeft: "auto", background: "#0f3171", color: "#fff" }}>+ Nova obrigação</button>
                 </div>
                 {obrsFiltradas.length === 0 ? <div style={{ color: "#94a3b8", fontSize: 13, padding: 20, textAlign: "center" }}>{mesObr ? `Nenhuma conta em ${mesLabel(mesObr)}.` : "Nenhuma obrigação cadastrada."}</div> : obrsFiltradas.map(o => {
-                  const st = statusObr(o); const cor = st === "Pago" ? "#16a34a" : st === "Vencido" ? "#dc2626" : "#ea580c";
+                  const st = seloDaConta(o); const cor = corDaConta(st);
                   return (
                     <div key={o.id} style={{ background: "#fff", border: "1px solid #e2e8f0", borderRadius: 11, padding: "12px 14px", marginBottom: 8 }}>
                       <div style={{ display: "flex", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
@@ -1145,7 +1210,10 @@ export default function Patrimonios() {
                         <span style={{ fontSize: 11, fontWeight: 800, height: "fit-content", padding: "2px 10px", borderRadius: 20, background: cor + "20", color: cor }}>{st}</span>
                       </div>
                       <div style={{ display: "flex", gap: 6, marginTop: 10, flexWrap: "wrap" }}>
-                        {st !== "Pago" && <button className="jp-btn" onClick={() => pagarConta(o)} style={{ background: "#0f3171", color: "#fff", border: "1px solid #0f3171", padding: "5px 11px", fontWeight: 700 }}>Pagar</button>}{st !== "Pago" && <button className="jp-btn" title="Já foi paga por fora: anexar o comprovante e dar baixa" onClick={() => baixarConta(o)} style={{ background: "#f0fdf4", color: "#15803d", border: "1px solid #bbf7d0", padding: "5px 10px", fontWeight: 700 }}>✓</button>}
+                        {st === "Enviado ao Malote"
+                          ? <button className="jp-btn" title="A conta já virou despesa no Malote — o pagamento se resolve lá" onClick={() => nav("/app/malote/aprovacoes")} style={{ background: "#eff6ff", color: "#1d4ed8", border: "1px solid #bfdbfe", padding: "5px 11px", fontWeight: 700 }}>Ver no Malote</button>
+                          : podeEnviarAoMalote(st) && <button className="jp-btn" title="Abre o Malote com os dados desta conta já preenchidos. A conta só sai de Pendente quando você concluir o envio lá." onClick={() => pagarConta(o)} style={{ background: "#0f3171", color: "#fff", border: "1px solid #0f3171", padding: "5px 11px", fontWeight: 700 }}>Enviar ao Malote</button>}
+                        {podeBaixarManualmente(st) && <button className="jp-btn" title="Já foi paga por fora: anexar o comprovante e dar baixa" onClick={() => baixarConta(o)} style={{ background: "#f0fdf4", color: "#15803d", border: "1px solid #bbf7d0", padding: "5px 10px", fontWeight: 700 }}>✓</button>}
                         {o.comprovante_path && <button className="jp-btn" onClick={() => verComprovante(o)} style={{ background: "#eef4ff", color: "#0f3171", border: "1px solid #dbe4f0", padding: "5px 11px" }}>📎 Comprovante</button>}
                         <button className="jp-btn" onClick={() => abrirEditarObr(o)} style={{ background: "#f1f5f9", color: "#475569", padding: "5px 11px" }}>Editar</button>
                         {(o.status === "Pago" && o.comprovante_path)

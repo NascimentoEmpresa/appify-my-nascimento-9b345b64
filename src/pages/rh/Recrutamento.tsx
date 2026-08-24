@@ -8,6 +8,7 @@ import {
   MOTIVOS_VAGA, motivoLabel, ehSubstituicao, avaliarPrazo, dataMinimaVaga,
   cargoExigeCnh, aplicarReqCnh, REQ_CNH_TEXTO, fmtBr,
   rotuloReferencia, ajudaReferencia, mostraNomeReferencia, contratoDoEmpregado,
+  podeVagaAdministrativa, filtrarAdministrativas,
   substituidosComVagaViva, avisoSubstituidoPreso,
 } from "@/lib/recrutamento/vagaRegras";
 
@@ -35,6 +36,8 @@ interface Solicitacao {
   status: string;
   grau_urgencia: string;
   motivo_vaga: string;
+  /** Vaga do escritório: só quem tem a capacidade enxerga (RLS). */
+  administrativa?: boolean;
   nome_substituido?: string;
   escala?: string;
   horario?: string;
@@ -124,6 +127,27 @@ function fmtDt(s?: string) {
   if (!s) return "—";
   return s.replace("T", " ").slice(0, 10);
 }
+
+/**
+ * Nome completo real (EMPREGADOS) de cada e-mail.
+ *
+ * Quem solicita uma vaga fica gravado com `user_metadata.nome`, e quem não tem
+ * nome no metadata fica gravado só com o e-mail — daí "Solicitado por
+ * fulano.silva@grupo…" nas telas. EMPREGADOS é a fonte oficial do nome
+ * (ver o vínculo login↔empregado), então é dela que se traduz.
+ */
+async function nomesPorEmail(emails: (string | null | undefined)[]): Promise<Record<string, string>> {
+  const lista = Array.from(new Set(emails.filter((e): e is string => !!e && e.includes("@"))));
+  if (!lista.length) return {};
+  const { data } = await (supabase as any).from("EMPREGADOS").select('"Nome","email"').in("email", lista);
+  const mapa: Record<string, string> = {};
+  (data ?? []).forEach((e: any) => { if (e.email && e["Nome"]) mapa[e.email] = e["Nome"]; });
+  return mapa;
+}
+
+/** O e-mail de quem solicitou — mora em `solicitante_cpf` (nome de coluna legado). */
+const emailSolicitante = (s: { solicitante_cpf?: string; solicitante_nome?: string }) =>
+  [s.solicitante_cpf, s.solicitante_nome].find((v) => String(v ?? "").includes("@")) ?? "";
 
 function badgeStatusCls(st: string) {
   if (st === "Pendente Operacional")  return "bg-yellow-100 text-yellow-800 border border-yellow-200";
@@ -281,6 +305,8 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "opera
   // aprovariam a mesma coisa e a última a salvar ganharia.
   const podeAprovarOperacional = soOperacional && can("aprovar", undefined, menuAcesso);
   // Quem pode mover o candidato pra fora de cada etapa específica do kanban.
+  // Vaga do escritório: só quem tem a capacidade vê, marca e decide.
+  const podeAdministrativa = podeVagaAdministrativa(can);
   const podeMoverJuridico = can("aprovar", undefined, "recrutamento_etapa_juridico");
   const podeMoverSst      = can("aprovar", undefined, "recrutamento_etapa_sst");
   const podeMoverCompras  = can("aprovar", undefined, "recrutamento_etapa_compras");
@@ -293,7 +319,10 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "opera
   const [total, setTotal]             = useState(0);
   const [items, setItems]             = useState<Solicitacao[]>([]);
   const [loading, setLoading]         = useState(false);
-  const [statusFilter, setStatusFilter] = useState("");
+  // O Operacional abre na fila dele; os demais abrem em "Todas". Antes isso
+  // vinha da aba, que PRENDIA o status e impedia ele de rever o que ja tinha
+  // aprovado.
+  const [statusFilter, setStatusFilter] = useState(soOperacional ? "Pendente Operacional" : "");
   const [contratoFiltro, setContratoFiltro]         = useState<string[]>([]);
   const [contratoCounts, setContratoCounts]         = useState<{ contrato: string; n: number }[]>([]);
   const [showContratoFiltro, setShowContratoFiltro] = useState(false);
@@ -347,6 +376,7 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "opera
   const [showHistorico, setShowHistorico]   = useState(false);   // painel de histórico
   const [historico, setHistorico]           = useState<any[]>([]);
   const [nomesPorEmailHist, setNomesPorEmailHist] = useState<Record<string, string>>({}); // nome real (EMPREGADOS) por e-mail, p/ histórico
+  const [nomeSolicitante, setNomeSolicitante] = useState("");  // nome real de quem pediu a vaga (quando só ficou o e-mail)
   // Roteiro de entrevista (ENTREVISTA / ENTREVISTA GESTOR)
   const [roteiroModal, setRoteiroModal]     = useState<{ id: number; nome: string; etapa: string } | null>(null);
   const [roteiroRows, setRoteiroRows]       = useState<{ pergunta: string; resposta: string }[]>([]);
@@ -367,7 +397,7 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "opera
 
   // Wizard nova vaga
   const [vaga, setVaga] = useState({
-    motivo_vaga: "", nome_substituido: "", contrato: "", cargo: "",
+    motivo_vaga: "", administrativa: false, nome_substituido: "", contrato: "", cargo: "",
     estado: "", cidade: "", quantidade_vagas: "1", data_inicio_prevista: "",
     escala: "", horario: "", salario: "", insalubridade_recebe: "Não",
     insalubridade_quanto: "", beneficios: "", local_exato: "",
@@ -445,9 +475,11 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "opera
     }
     if (tab === "minha" && user?.email) {
       q = q.eq("solicitante_cpf", user.email);
-    } else if (tab === "analista") {
-      q = q.eq("status", "Pendente Operacional");
     }
+    // A aba "analista" NÃO prende mais o status. Quem recorta é o filtro de
+    // chips, que já abre em "Pendente Operacional" — prender aqui deixava o
+    // Operacional trancado na própria fila, sem alcançar o que ele mesmo
+    // aprovou ou reprovou (nem o chat daqueles casos).
     if (search) {
       q = q.or(`cargo.ilike.%${search}%,contrato.ilike.%${search}%,cidade.ilike.%${search}%`);
     }
@@ -474,7 +506,7 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "opera
     if (myReq !== listaReq.current) return;   // já saiu uma consulta mais nova: ignora esta
     setLoading(false);
     if (error) { toast("Erro ao carregar lista: " + error.message, "err"); return; }
-    setItems(data ?? []);
+    setItems(filtrarAdministrativas(data ?? [], podeAdministrativa));
     const ct = count ?? 0;
     setTotal(ct);
     setPages(Math.max(1, Math.ceil(ct / PER)));
@@ -591,13 +623,7 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "opera
     const eventos = data ?? [];
     // usuario_nome pode ter ficado só com o e-mail (usuário sem nome no metadata)
     // — busca o nome completo real em EMPREGADOS pra exibir no lugar.
-    const emails = Array.from(new Set(eventos.map((r: any) => r.usuario_email).filter(Boolean)));
-    let mapa: Record<string, string> = {};
-    if (emails.length) {
-      const { data: emps } = await (supabase as any).from("EMPREGADOS").select('"Nome","email"').in("email", emails);
-      (emps ?? []).forEach((e: any) => { if (e.email && e["Nome"]) mapa[e.email] = e["Nome"]; });
-    }
-    setNomesPorEmailHist(mapa);
+    setNomesPorEmailHist(await nomesPorEmail(eventos.map((r: any) => r.usuario_email)));
     setHistorico(eventos);
   }, []);
 
@@ -614,6 +640,15 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "opera
       (supabase as any).from("WA_MENSAGENS_RECRUTAMENTO").select("*").eq("solicitacao_id", id).order("created_at"),
     ]);
     if (sol) setDrawerSol(sol);
+    // "Solicitado por": quando ficou gravado só com o e-mail, traduz para o
+    // nome de EMPREGADOS. Só consulta quando precisa — solicitação criada por
+    // quem tem nome no metadata já vem pronta.
+    setNomeSolicitante("");
+    const nomeGravado = String(sol?.solicitante_nome ?? "").trim();
+    if (sol && (!nomeGravado || nomeGravado.includes("@"))) {
+      const email = emailSolicitante(sol);
+      if (email) setNomeSolicitante((await nomesPorEmail([email]))[email] ?? "");
+    }
     if (sol && (STATUS_PROCESSO.includes(sol.status) || sol.status === "Contratado" || String(sol.status ?? "").startsWith("Concluído"))) loadCandidatos(id);
     if (mensagens) setMsgs(mensagens);
 
@@ -650,7 +685,7 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "opera
       is_treinamento: isTreinamento,
     });
     setSendingMsg(false);
-    if (error) { toast("Erro ao enviar mensagem.", "err"); return; }
+    if (error) { toast("Erro ao enviar mensagem: " + error.message, "err"); return; }
     setChatInput("");
     const { data } = await (supabase as any)
       .from("WA_MENSAGENS_RECRUTAMENTO").select("*").eq("solicitacao_id", drawerId).order("created_at");
@@ -671,7 +706,7 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "opera
       .update({ status: novoStatus, aprovado_por_nome: user?.user_metadata?.nome ?? user?.email ?? "" })
       .eq("id", drawerId);
 
-    if (error) { toast("Erro ao aprovar.", "err"); return; }
+    if (error) { toast("Erro ao aprovar: " + error.message, "err"); return; }
     await logHistorico(drawerId, ehAbertura ? "Abertura de vaga confirmada" : "Aprovada pelo Operacional", {
       de: drawerSol.status, para: novoStatus, papel: ehAbertura ? "Recrutamento" : "Operacional",
     });
@@ -691,7 +726,7 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "opera
       .from("SISTEMA_RECRUTAMENTO")
       .update({ status: "Concluída" })
       .eq("id", drawerId);
-    if (error) { toast("Erro ao concluir.", "err"); return; }
+    if (error) { toast("Erro ao concluir: " + error.message, "err"); return; }
     await logHistorico(drawerId, "Solicitação concluída", {
       de: "Seleção de Candidato", para: "Concluída", papel: "Recrutamento",
       detalhe: admitido.nome ? `Admitido: ${admitido.nome}` : undefined,
@@ -710,7 +745,7 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "opera
       .from("SISTEMA_RECRUTAMENTO")
       .update({ status: "Reprovada", motivo_reprovacao: reprovarMotivo.trim(), aprovado_por_nome: user?.user_metadata?.nome ?? "" })
       .eq("id", drawerId);
-    if (error) { toast("Erro ao reprovar.", "err"); return; }
+    if (error) { toast("Erro ao reprovar: " + error.message, "err"); return; }
     if (drawerId) {
       const papel = drawerSol?.status === "Pendente Operacional" ? "Operacional" : "Recrutamento";
       await logHistorico(drawerId, "Solicitação reprovada", {
@@ -739,7 +774,7 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "opera
       payload.contratado_data_inicio = statusExtra.data;
     }
     const { error } = await (supabase as any).from("SISTEMA_RECRUTAMENTO").update(payload).eq("id", drawerId);
-    if (error) { toast("Erro ao atualizar status.", "err"); return; }
+    if (error) { toast("Erro ao atualizar status: " + error.message, "err"); return; }
     toast("Status atualizado!", "ok");
     setModalStatus(false);
     setStatusSel("");
@@ -1264,7 +1299,7 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "opera
   const executarMover = async (id: number, novoStatus: string, oldSt: string, extra: Record<string, any>) => {
     const payload: Record<string, any> = { status: novoStatus, ...extra };
     const { error } = await (supabase as any).from("SISTEMA_RECRUTAMENTO").update(payload).eq("id", id);
-    if (error) { toast("Erro ao mover card.", "err"); loadKanban(); return; }
+    if (error) { toast("Erro ao mover card: " + error.message, "err"); loadKanban(); return; }
     toast(`Card movido para "${novoStatus}"`, "ok");
     loadStats();
     loadKanban();
@@ -1407,6 +1442,7 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "opera
       grau_urgencia: prazo.grau ?? "",
       req_obrigatorios: aplicarReqCnh(vaga.req_obrigatorios, vaga.cargo),
       cnh_obrigatoria: !!cnhDoCargo,
+      administrativa: podeAdministrativa ? !!vaga.administrativa : false,
       // Só a substituição grava o id: é ele que trava a pessoa numa vaga só.
       substituido_id: ehSubstituicao(vaga.motivo_vaga) ? substituidoId : null,
       status: "Pendente Operacional",
@@ -1422,7 +1458,7 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "opera
     if (error) { toast("Erro ao solicitar vaga: " + error.message, "err"); return; }
     toast(`Solicitação #${data?.id} criada com sucesso!`, "ok");
     setModalVaga(false);
-    setVaga({ motivo_vaga:"",nome_substituido:"",contrato:"",cargo:"",estado:"",cidade:"",
+    setVaga({ motivo_vaga:"",administrativa:false,nome_substituido:"",contrato:"",cargo:"",estado:"",cidade:"",
       quantidade_vagas:"1",data_inicio_prevista:"",escala:"",horario:"",salario:"",
       insalubridade_recebe:"Não",insalubridade_quanto:"",beneficios:"",local_exato:"",
       grau_urgencia:"",alta_rotatividade:"Não",req_obrigatorios:"",req_desejaveis:"",
@@ -1498,6 +1534,24 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "opera
   }, []);
 
   // ── Render Detalhe ────────────────────────────────────────────
+  /**
+   * "Solicitado por": nome de quem pediu, com o e-mail embaixo em letra miúda.
+   * O e-mail continua ali porque é o que identifica homônimos e o que aparece
+   * nas outras telas; o que muda é a ordem de leitura — o nome vem primeiro.
+   */
+  const quemSolicitou = (s: Solicitacao) => {
+    const email = emailSolicitante(s);
+    const gravado = String(s.solicitante_nome ?? "").trim();
+    const nome = (gravado && !gravado.includes("@") ? gravado : "") || nomeSolicitante;
+    if (!nome) return email;   // sem cadastro em EMPREGADOS: o e-mail é melhor que nada
+    return (
+      <span style={{ display: "inline-flex", flexDirection: "column", lineHeight: 1.35 }}>
+        <span>{nome}</span>
+        {email && <span style={{ fontSize: 11, fontWeight: 600, color: "#94a3b8" }}>{email}</span>}
+      </span>
+    );
+  };
+
   const renderDetalhe = (s: Solicitacao) => {
     const di = (label: string, val: any, full = false) => (
       <div className={`rec-di${full ? " full" : ""}`} key={label}>
@@ -1519,6 +1573,7 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "opera
           {di("Cargo", s.cargo)}
           {di("Cidade", s.cidade)}
           {di("Motivo da Vaga", motivoLabel(s.motivo_vaga))}
+          {s.administrativa ? di("Tipo de vaga", "Administrativa (escritório)") : null}
           {di("Escala", s.escala)}
           {di("Horário", s.horario)}
           {di("Salário", s.salario)}
@@ -1526,7 +1581,7 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "opera
           {di("Insalubridade", s.insalubridade_recebe + (s.insalubridade_quanto ? " — " + s.insalubridade_quanto : ""))}
           {di("Local Exato", s.local_exato)}
           {di("Data Início Prevista", fmtBr(s.data_inicio_prevista))}
-          {di("Solicitado por", s.solicitante_nome)}
+          {di("Solicitado por", quemSolicitou(s))}
           {di("Data Solicitação", fmtDt(s.created_at))}
           {s.aprovado_por_nome ? di("Aprovado/Reprovado por", s.aprovado_por_nome) : null}
         </div>
@@ -1966,19 +2021,34 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "opera
             {/* Filtros de status (linha única). No Operacional a lista já é
                 fixa em "Pendente Operacional": outro filtro de status viraria
                 um segundo .eq na mesma coluna e zeraria a tela sem explicar. */}
-            {!soOperacional && <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 14 }}>
-              {[
+            {/* O Operacional também filtra. Sem isto ele só via a própria fila
+                (Pendente Operacional) e não conseguia voltar no que já tinha
+                aprovado ou reprovado — nem abrir o chat daqueles casos. */}
+            <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 14 }}>
+              {(soOperacional
+              ? [
+                { label: "Aguardando você", val: "Pendente Operacional" },
+                // Aprovar pelo Operacional manda para o Recrutamento; daí em
+                // diante o caso anda sozinho. Por isso "já aprovadas" não é um
+                // status só, e cada etapa vira um recorte próprio.
+                { label: "Já aprovadas", val: "Pendente Recrutamento" },
+                { label: "Em processo", val: "em_processo" },
+                { label: "Concluídas", val: "concluido" },
+                { label: "Reprovadas", val: "Reprovada" },
+                { label: "Todas", val: "" },
+              ]
+              : [
                 { label: "Todas", val: "" },
                 { label: "Pendente Recrutamento", val: "Pendente Recrutamento" },
                 { label: "Em Processo", val: "em_processo" },
                 { label: "Concluídas", val: "concluido" },
                 { label: "Reprovados", val: "Reprovada" },
-              ].map(p => (
+              ]).map(p => (
                 <button key={p.val} onClick={() => { setStatusFilter(p.val); setPage(1); }} style={{ padding: "5px 13px", borderRadius: 20, border: "1px solid #e2e8f0", background: statusFilter === p.val ? "#0f3171" : "#fff", color: statusFilter === p.val ? "#fff" : "#94a3b8", fontSize: 11, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
                   {p.label}
                 </button>
               ))}
-            </div>}
+            </div>
 
             {/* Busca */}
             <div style={{ marginBottom: 10 }}>
@@ -2799,6 +2869,21 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "opera
                   </select>
                 </div>
               </div>
+
+              {podeAdministrativa && (
+                <div className="rec-fg" style={{ gridColumn: "1 / -1" }}>
+                  <label style={{ display: "flex", alignItems: "flex-start", gap: 9, cursor: "pointer", background: vaga.administrativa ? "#f0f6ff" : "#fff", border: vaga.administrativa ? "1.5px solid #0f3171" : "1px solid #e2e8f0", borderRadius: 11, padding: "10px 13px", transition: "background .18s, border-color .18s" }}>
+                    <input type="checkbox" checked={!!vaga.administrativa} style={{ marginTop: 2, width: 15, height: 15, accentColor: "#0f3171", cursor: "pointer" }}
+                      onChange={e => setVaga(v => ({ ...v, administrativa: e.target.checked }))} />
+                    <span>
+                      <span style={{ display: "block", fontSize: 12.5, fontWeight: 800, color: "#0f172a" }}>Vaga é administrativa?</span>
+                      <span style={{ display: "block", fontSize: 11, color: "#94a3b8", marginTop: 3, lineHeight: 1.45 }}>
+                        Vaga do escritório. Só quem tem “Ver vaga administrativa?” enxerga, aprova ou reprova — os demais nem veem que ela existe.
+                      </span>
+                    </span>
+                  </label>
+                </div>
+              )}
             </>)}
 
             {/* Step 2 */}

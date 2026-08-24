@@ -11,8 +11,11 @@ import { toast } from "sonner";
 import { useEmpresaId } from "@/hooks/useEmpresaId";
 import { useClassificacoesOrcamento } from "@/hooks/usePlanejamentoOrcamentario";
 import { useSalvarDespesa, uploadAnexoMalote, gerarParcelas, RateioLinha } from "@/hooks/useMaloteDespesa";
+import { useMaloteConfig } from "@/hooks/useMaloteConfig";
 import { RateioGrid, DimensoesRateio } from "./RateioGrid";
 import { AnexosField } from "./AnexosField";
+import { DiaPagamentoPicker } from "./DiaPagamentoPicker";
+import { ExcecaoDiaBloqueadoField } from "./ExcecaoDiaBloqueadoField";
 
 const DIAS_MES = Array.from({ length: 28 }, (_, i) => i + 1);
 const QUANTIDADE_PARCELAS = Array.from({ length: 24 }, (_, i) => i + 2);
@@ -33,6 +36,8 @@ export default function RatearClassificacao() {
   const [formaPagamento, setFormaPagamento] = useState("");
   const [dadosPagamento, setDadosPagamento] = useState("");
   const [dataPagamento, setDataPagamento] = useState("");
+  const [excecao, setExcecao] = useState(false);
+  const [justificativaExcecao, setJustificativaExcecao] = useState("");
   const [dataCompetencia, setDataCompetencia] = useState("");
   const [dimensoes, setDimensoes] = useState<DimensoesRateio>({ empresa: false, contrato: false, fornecedor: false, integrante: false });
   const [ratearPor, setRatearPor] = useState<"percentual" | "valor">("percentual");
@@ -43,6 +48,7 @@ export default function RatearClassificacao() {
   const [quantidadeParcelas, setQuantidadeParcelas] = useState("");
   const [arquivos, setArquivos] = useState<File[]>([]);
   const [salvando, setSalvando] = useState<"rascunho" | "enviar" | null>(null);
+  const { data: maloteConfig } = useMaloteConfig();
 
   const totalRateado = useMemo(() => linhasRateio.reduce((s, l) => s + (Number(l.valor) || 0), 0), [linhasRateio]);
   const faltaLancar = Math.max(0, (Number(valorTotal) || 0) - totalRateado);
@@ -53,6 +59,9 @@ export default function RatearClassificacao() {
     if (!formaPagamento) return "Selecione a forma de pagamento.";
     if (!dadosPagamento.trim()) return "Informe os dados de pagamento.";
     if (!dataPagamento) return "Informe a data de pagamento.";
+    if (excecao && (maloteConfig?.excecao_exigir_justificativa_solicitante ?? true) && !justificativaExcecao.trim()) {
+      return "Informe a justificativa da exceção.";
+    }
     if (!dataCompetencia) return "Informe a data de competência.";
     if (paraEnviar) {
       if (linhasRateio.length === 0) return "Adicione ao menos uma linha de rateio.";
@@ -93,6 +102,8 @@ export default function RatearClassificacao() {
         nome: nome.trim(),
         valor_total: Number(valorTotal),
         data_pagamento: dataPagamento,
+        excecao,
+        justificativa_excecao: excecao ? justificativaExcecao.trim() || null : null,
         competencia: dataCompetencia + "-01",
         forma_pagamento: formaPagamento,
         informacoes_pagamento: dadosPagamento.trim(),
@@ -179,7 +190,7 @@ export default function RatearClassificacao() {
             </div>
             <div>
               <Label>Data de Pagamento *</Label>
-              <Input type="date" value={dataPagamento} onChange={(e) => setDataPagamento(e.target.value)} />
+              <DiaPagamentoPicker value={dataPagamento} onChange={setDataPagamento} permitirDiasBloqueados={excecao} />
             </div>
             <div>
               <Label>Data Competência *</Label>
@@ -194,6 +205,13 @@ export default function RatearClassificacao() {
               <p className="h-10 flex items-center text-sm">{faltaLancar.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}</p>
             </div>
           </div>
+
+          <ExcecaoDiaBloqueadoField
+            checked={excecao}
+            onCheckedChange={setExcecao}
+            justificativa={justificativaExcecao}
+            onJustificativaChange={setJustificativaExcecao}
+          />
 
           <div className="border-t border-border pt-4">
             <p className="text-sm font-medium mb-2">Rateio por Classificação, Empresa e Contrato</p>

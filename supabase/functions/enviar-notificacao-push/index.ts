@@ -54,6 +54,11 @@ interface Body {
   // Chamados de Sistemas
   chamado_id?: string;
   evento?: string; // atribuido | status | concluido | reaberto | reprovado | solicitar_info | info_adicionada | mensagem
+  // Aviso direto (Comitê de Ética): destinatários e texto vêm prontos, porque
+  // a origem não pode ter o conteúdo do caso lido do banco aqui.
+  user_ids?: string[];
+  titulo?: string;
+  corpo?: string;
 }
 
 // Título/corpo do push de um Chamado de Sistemas, conforme o evento.
@@ -253,7 +258,18 @@ Deno.serve(async (req) => {
     const userIds = new Set<string>();
     let payload: { title: string; body: string };
 
-    if (typeof body.chamado_id === "string" && body.chamado_id) {
+    if (Array.isArray(body.user_ids) && body.user_ids.length > 0) {
+      // ---- Aviso direto: quem manda já sabe para quem e o quê ----
+      // Usado pelo tick do Comitê de Ética, que não pode revelar o conteúdo
+      // do caso no push. Quem chama é sempre outra Edge Function com
+      // service_role, nunca o navegador — não há aqui um caminho para um
+      // usuário disparar notificação arbitrária para outro.
+      for (const id of body.user_ids) if (typeof id === "string" && id) userIds.add(id);
+      payload = {
+        title: String(body.titulo ?? "Aviso").slice(0, 80),
+        body: String(body.corpo ?? "").slice(0, 200),
+      };
+    } else if (typeof body.chamado_id === "string" && body.chamado_id) {
       // ---- Chamados de Sistemas ----
       const { data: chamado, error: chErr } = await admin
         .from("CHAMADO_SISTEMA")

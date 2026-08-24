@@ -17,6 +17,7 @@ export interface MaloteConfig {
   conferencia_aprovacao_pagamento_unidade: PrazoPagamentoUnidade;
   bloqueio_regra: BloqueioRegra;
   bloqueio_impedir_lancamento: boolean;
+  bloqueio_fins_de_semana: boolean;
   excecao_limite_inclusao_horario: string;
   excecao_limite_aprovacao_horario: string;
   excecao_exigir_justificativa_solicitante: boolean;
@@ -29,6 +30,9 @@ export interface MaloteDiaBloqueado {
   data: string;
   tipo: string;
   descricao: string | null;
+  // SIS-2026-0211: liberado=true LIBERA essa data específica mesmo que
+  // caia num fim de semana bloqueado por padrão — é a exceção pontual.
+  liberado: boolean;
 }
 
 const CONFIG_KEY = "malote_config";
@@ -38,7 +42,7 @@ const DIAS_KEY = "malote_dia_bloqueado";
 const CONFIG_COLUMNS =
   "inclusao_setor_horario, inclusao_setor_pagamento_modo, inclusao_setor_pagamento_dias, inclusao_setor_pagamento_unidade, " +
   "conferencia_aprovacao_horario, conferencia_aprovacao_pagamento_modo, conferencia_aprovacao_pagamento_dias, conferencia_aprovacao_pagamento_unidade, " +
-  "bloqueio_regra, bloqueio_impedir_lancamento, " +
+  "bloqueio_regra, bloqueio_impedir_lancamento, bloqueio_fins_de_semana, " +
   "excecao_limite_inclusao_horario, excecao_limite_aprovacao_horario, " +
   "excecao_exigir_justificativa_solicitante, excecao_exigir_justificativa_aprovador, updated_at";
 
@@ -97,7 +101,7 @@ export function useMaloteDiasBloqueados() {
     queryFn: async () => {
       const { data, error } = await (supabase as any)
         .from("malote_dia_bloqueado")
-        .select("id, data, tipo, descricao")
+        .select("id, data, tipo, descricao, liberado")
         .order("data", { ascending: false });
       if (error) throw error;
       return (data ?? []) as MaloteDiaBloqueado[];
@@ -110,6 +114,7 @@ interface SalvarDiaBloqueadoInput {
   data: string;
   tipo: string;
   descricao: string | null;
+  liberado?: boolean;
 }
 
 export function useSalvarDiaBloqueado() {
