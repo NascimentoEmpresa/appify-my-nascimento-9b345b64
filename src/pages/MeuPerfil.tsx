@@ -15,6 +15,8 @@ import { useVinculoEmpregado } from "@/hooks/useVinculoEmpregado";
 import { useMeuDiscord } from "@/hooks/useVinculoDiscord";
 import { CartaoPerfil } from "@/components/perfil/CartaoPerfil";
 import { VinculoDiscordCard } from "@/components/perfil/VinculoDiscordCard";
+import { useModoExterno } from "@/hooks/useModoExterno";
+import { useSessaoExterna } from "@/hooks/useSupPedidos";
 import { toast } from "sonner";
 
 type Prefs = { sininho_ativo: boolean; email_ativo: boolean; push_ativo: boolean };
@@ -26,6 +28,15 @@ const LIMITE_BIO = 500;
 export default function MeuPerfil() {
   const { user } = useAuth();
   const qc = useQueryClient();
+
+  // Encarregado externo (sessão anônima). Ele NÃO tem linha em profiles — o
+  // trigger handle_new_user ignora anônimo desde 20260821000003 —, então a
+  // ficha viria em branco e "salvar" não gravaria em lugar nenhum. Aqui a
+  // identidade vem de sup_ext_sessao (nome real do cadastro de EMPREGADOS,
+  // conferido no login por CPF + nascimento) e as áreas que dependem de
+  // profiles saem da tela em vez de fingir que funcionam.
+  const externo = useModoExterno();
+  const sessaoExtQ = useSessaoExterna(externo);
   const [prefs, setPrefs] = useState<Prefs>(DEFAULTS);
   const [editandoBio, setEditandoBio] = useState(false);
   const [rascunhoBio, setRascunhoBio] = useState("");
@@ -113,12 +124,14 @@ export default function MeuPerfil() {
       <PageHeader
         title="Meu perfil"
         breadcrumb={["Meu perfil"]}
-        subtitle="Seus dados no ERP, o cadastro da Senior e as preferências de notificação."
+        subtitle={externo
+          ? "Sua identificação no acesso externo, conferida no login pelo cadastro de EMPREGADOS."
+          : "Seus dados no ERP, o cadastro da Senior e as preferências de notificação."}
       />
 
       <CartaoPerfil
         conta={{
-          nome: perfil?.display_name ?? null,
+          nome: perfil?.display_name ?? (externo ? sessaoExtQ.data?.empregado_nome ?? null : null),
           email: perfil?.email ?? user?.email ?? null,
           avatarUrl: perfil?.avatar_url ?? null,
           cargo: perfil?.cargo ?? null,
@@ -127,7 +140,7 @@ export default function MeuPerfil() {
         }}
         empregado={empregado}
         discord={discordQ.data}
-        acoes={
+        acoes={externo ? undefined : (
           <Button
             size="sm"
             variant="outline"
@@ -137,9 +150,10 @@ export default function MeuPerfil() {
             <Pencil className="h-3.5 w-3.5" />
             {bioAtual ? "Editar descrição" : "Adicionar descrição"}
           </Button>
-        }
+        )}
       />
 
+      {!externo && (
       <div className="grid gap-5 lg:grid-cols-2">
         <VinculoDiscordCard />
 
@@ -184,6 +198,7 @@ export default function MeuPerfil() {
           </CardContent>
         </Card>
       </div>
+      )}
 
       <Dialog open={editandoBio} onOpenChange={setEditandoBio}>
         <DialogContent>

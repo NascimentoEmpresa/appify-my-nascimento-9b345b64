@@ -27,6 +27,11 @@ interface RateioAprovadorTableProps {
   // justificar, mesmo quando o contrato ainda não tem Analista vinculado
   // (SIS-2026-0170) — o dono "de direito" da justificativa é o Analista.
   podeJustificarComoAprovador: boolean;
+  // SIS-2026-0212 (complemento, pedido do Iury): despesa administrativa
+  // (linha sem contrato) não tem Analista — quem justifica o estouro é o
+  // próprio solicitante. RPC malote_justificar_rateio_linha já confere
+  // isso de novo no banco, esta prop só decide se o botão aparece.
+  souSolicitante: boolean;
 }
 
 // SIS-2026-0192: visão só-leitura do Rateio pro aprovador — a grade
@@ -44,6 +49,7 @@ export function RateioAprovadorTable({
   resolverOrcado,
   anoMesDespesa,
   podeJustificarComoAprovador,
+  souSolicitante,
 }: RateioAprovadorTableProps) {
   const { data: empresas = [] } = useEmpresasGrupo();
   const { data: contratos = [] } = useContratosAtivos();
@@ -154,7 +160,10 @@ export function RateioAprovadorTable({
                 limiteJustificativaPct != null && percentualLinha != null && percentualLinha > limiteJustificativaPct;
               const temJustificativa = !!linha.justificativa_texto;
               const souAnalistaDesseContrato = !!linha.contrato_id && !!meusContratosAnalista?.has(linha.contrato_id);
-              const podeJustificarEstaLinha = souAnalistaDesseContrato || podeJustificarComoAprovador;
+              // SIS-2026-0212 (complemento): linha sem contrato = despesa
+              // administrativa, sem Analista possível — quem justifica é o
+              // próprio solicitante.
+              const podeJustificarEstaLinha = souAnalistaDesseContrato || podeJustificarComoAprovador || (!linha.contrato_id && souSolicitante);
 
               return (
                 <TableRow key={linha.id ?? idx}>

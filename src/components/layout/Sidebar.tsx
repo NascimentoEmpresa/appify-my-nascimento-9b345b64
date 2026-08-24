@@ -61,7 +61,7 @@ import {
 } from "lucide-react";
 import { useTemAlcada } from "@/hooks/useTemAlcada";
 import { useAccessibleMenus, matchMenuCode } from "@/hooks/useAccessibleMenus";
-import { useModoExterno, ROTAS_EXTERNO } from "@/hooks/useModoExterno";
+import { useModoExterno, rotaPermitidaExterno } from "@/hooks/useModoExterno";
 import { ACESSO_ABERTO_SEM_PERMISSOES, rotaSempreLiberada } from "@/lib/acesso";
 import { useGradeAtivaCount } from "@/hooks/useGradeAtivaCount";
 import { useChamadosNotif } from "@/hooks/useChamadosNotif";
@@ -877,7 +877,7 @@ export function Sidebar({ collapsed, mobileOpen = false, onMobileClose }: Sideba
     // ele não tem perfil de acesso, então cairia no ramo "menu ainda não
     // configurado → visível" e enxergaria o ERP inteiro no menu. Este ramo
     // apenas restringe; quem decide de verdade é a RLS do banco.
-    if (externo) return ROTAS_EXTERNO.some((r) => to === r || to.startsWith(r + "/"));
+    if (externo) return rotaPermitidaExterno(to);
     if (ACESSO_ABERTO_SEM_PERMISSOES) return true;
     // Mesma regra do RouteGuard: NEGA POR PADRÃO. A sidebar não pode listar o
     // que a rota vai barrar — item visível que dá "Acesso negado" ao clicar é
@@ -1145,6 +1145,9 @@ export function Sidebar({ collapsed, mobileOpen = false, onMobileClose }: Sideba
 
       {/* Configurações + ambiente */}
       <div className="relative z-10 border-t border-sidebar-border p-2">
+        {/* Encarregado externo nunca administra nada: o link levava direto
+            pra tela de "Acesso negado" do RouteGuard. Fica fora do menu dele. */}
+        {!externo && (
         <NavLink
           to="/app/administracao"
           className={({ isActive }) =>
@@ -1165,6 +1168,7 @@ export function Sidebar({ collapsed, mobileOpen = false, onMobileClose }: Sideba
             </>
           )}
         </NavLink>
+        )}
         {!collapsed && (
           <div className="mt-2 flex items-center gap-2.5 rounded-md bg-sidebar-accent/40 px-2.5 py-2">
             <span className="sb-live h-2 w-2 rounded-full bg-success" />
