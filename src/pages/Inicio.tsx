@@ -3,7 +3,7 @@ import { Link } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
 import { useAccessibleMenus, matchMenuCode } from "@/hooks/useAccessibleMenus";
-import { useModoExterno, ROTAS_EXTERNO } from "@/hooks/useModoExterno";
+import { useModoExterno, rotaPermitidaExterno } from "@/hooks/useModoExterno";
 import { ACESSO_ABERTO_SEM_PERMISSOES, MENUS_SEMPRE_RESTRITOS } from "@/lib/acesso";
 import { MinhasReunioesCard } from "@/pages/central-servicos/reunioes/componentes/MinhasReunioesCard";
 import { NovidadesPainel } from "@/components/novidades/NovidadesPainel";
@@ -200,7 +200,7 @@ export default function Inicio() {
     // Encarregado externo primeiro: ele não tem perfil de acesso, então
     // cairia no ramo "menu sem configuração → visível" e enxergaria o ERP
     // inteiro no catálogo.
-    if (externo) return ROTAS_EXTERNO.some((r) => to === r || to.startsWith(r + "/"));
+    if (externo) return rotaPermitidaExterno(to);
     if (ACESSO_ABERTO_SEM_PERMISSOES || !access) return true;
     const code = matchMenuCode(to, access.routes);
     if (!code) return true;
@@ -388,9 +388,13 @@ export default function Inicio() {
       </section>
 
       {/* ══════════════════════ Minhas Reuniões ═════════════════════ */}
-      <div data-reveal>
-        <MinhasReunioesCard />
-      </div>
+      {/* Encarregado externo não participa de reunião do ERP: o cartão vinha
+          sempre vazio e o "ver todas" apontava pra uma tela que ele não abre. */}
+      {!externo && (
+        <div data-reveal>
+          <MinhasReunioesCard />
+        </div>
+      )}
     </div>
   );
 }
