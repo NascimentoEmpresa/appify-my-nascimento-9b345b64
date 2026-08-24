@@ -19,7 +19,11 @@ import { getStatusVigencia } from "@/pages/malote/orcamentoUtils";
 export function useOrcadoClassificacao(empresaId: string | null | undefined, anoMes: string) {
   const { data: classificacoes = [], isLoading: carregandoClassificacoes } = useClassificacoesOrcamentoAdmin();
   const { data: orcamentosAdm = [], isLoading: carregandoAdm } = usePlanejamentosOrcamento(empresaId);
-  const { data: ligacoesAdm = [] } = useLigacoesAdministrativoClassificacao();
+  // SIS-2026-0212: faltava no isLoading agregado — enquanto essa ligação
+  // ainda não carregava, maloteIdPorAdministrativa ficava vazio e o
+  // resolver() de tipo administrativo sempre devolvia 0 (nenhuma linha de
+  // orçamento batia), mesmo com isLoading=false liberando o botão Aprovar.
+  const { data: ligacoesAdm = [], isLoading: carregandoLigacoes } = useLigacoesAdministrativoClassificacao();
   const { data: gruposContrato = [], isLoading: carregandoContrato } = useOrcamentoContratos(anoMes);
 
   const classificacoesPorId = useMemo(() => new Map(classificacoes.map((c) => [c.id, c])), [classificacoes]);
@@ -51,5 +55,5 @@ export function useOrcadoClassificacao(empresaId: string | null | undefined, ano
     return soma;
   }
 
-  return { resolver, isLoading: carregandoClassificacoes || carregandoAdm || carregandoContrato };
+  return { resolver, isLoading: carregandoClassificacoes || carregandoAdm || carregandoLigacoes || carregandoContrato };
 }

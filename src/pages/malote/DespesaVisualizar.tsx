@@ -318,6 +318,11 @@ export default function DespesaVisualizar() {
   // qualquer outro papel o Rateio vira só-leitura com as colunas de
   // Orçado/Utilizado/Status.
   const rateioEPagamentoEditaveis = !bloqueado && souSolicitante;
+  // SIS-2026-0212 (pedido do Iury): a "Justificativa da aprovação" é o
+  // único campo deste bloco que o aprovador do nível atual também precisa
+  // editar — é onde ele registra o motivo de escalar de N1 pra N2 (os
+  // outros campos continuam só do solicitante, por SIS-2026-0192).
+  const podeEditarJustificativaAprovacao = rateioEPagamentoEditaveis || souAprovadorNivelAtual;
   const podeReprovarComoAprovadorPassado =
     configurado && ((despesa.status === "pendente_aprovacao" && !souAprovadorNivelAtual) || despesa.status === "aguardando_pagamento");
   const souAprovadorVendoAjuste = despesa.status === "necessidade_de_ajuste" && configurado && !souSolicitante;
@@ -341,7 +346,20 @@ export default function DespesaVisualizar() {
     if (nivel === 2) return { semLimite: !!c.aprovador2_sem_limite, limitePct: c.aprovador2_limite_pct ?? null };
     return { semLimite: !!c.aprovador3_sem_limite, limitePct: c.aprovador3_limite_pct ?? null };
   })();
-  const valorParaAlcada = Number(valorAprovado) || despesa.valor_total;
+  // Achado real (SIS-2026-0212, DM-2026-0048): valorParaAlcada usava só o
+  // valor desta despesa (ex.: 500/948 = 52,74%), nunca somava o que outras
+  // despesas da mesma Classificação já tinham consumido no mês — por isso
+  // a % nunca refletia o estouro de verdade. Mesma soma de "utilizado
+  // antes" usada em calcularRateioSnapshot/RateioAprovadorTable, só que
+  // aqui na decisão de escalar.
+  const utilizadoAntesDestaDespesa = utilizadoLinhasGlobal.reduce((soma, u) => {
+    if (u.despesa_id === despesa.id) return soma;
+    if (u.classificacao_id !== despesa.classificacao_id) return soma;
+    if (!u.competencia || u.competencia.slice(0, 7) !== anoMesDespesa) return soma;
+    if ((u.contrato_id ?? null) !== (despesa.contrato_id ?? null)) return soma;
+    return soma + (Number(u.valor) || 0);
+  }, 0);
+  const valorParaAlcada = utilizadoAntesDestaDespesa + (Number(valorAprovado) || despesa.valor_total);
   // Achado à parte (SIS-2026-0212): era "orcadoClassificacao ? ... : null"
   // — orçado 0 de verdade (ex.: contrato sem rubrica vinculada) caía no
   // else e virava "sem trava" em vez de "100% estourado". != null trata 0
@@ -367,6 +385,11 @@ export default function DespesaVisualizar() {
     if (!dataPagamento) return "Informe a data de pagamento.";
     if (!competencia) return "Informe a competência.";
     if (!valorAprovado || Number(valorAprovado) <= 0) return "Informe o valor aprovado.";
+    // SIS-2026-0212 (pedido do Iury): ao escalar de N1 pra N2 (estourou a
+    // alçada do Nível 1), o aprovador do N1 precisa registrar o motivo.
+    if (despesa!.nivel_aprovacao_atual === 1 && proximoNivelConfigurado && !justificativa.trim()) {
+      return "Informe a justificativa da aprovação — obrigatória quando a despesa escala para o Nível 2.";
+    }
     return null;
   }
 
@@ -388,6 +411,7 @@ export default function DespesaVisualizar() {
         informacoes_pagamento: informacoesPagamento,
         data_pagamento: dataPagamento,
         competencia,
+        rateio_snapshot: calcularRateioSnapshot(),
       });
       toast.success(proximoNivelConfigurado ? "Aprovado — enviado pro próximo nível." : "Aprovado — aguardando pagamento.");
     } catch (e: any) {
@@ -780,16 +804,21 @@ export default function DespesaVisualizar() {
       <Card>
         <CardContent className="p-4 space-y-3">
           <p className="text-sm font-semibold">Dados da Aprovação e Pagamento</p>
-          <div className={cn("grid grid-cols-1 sm:grid-cols-3 gap-4", !rateioEPagamentoEditaveis && "opacity-60")}>
-            <div>
+          <div className={cn("grid grid-cols-1 sm:grid-cols-3 gap-4", !rateioEPagamentoEditaveis && !podeEditarJustificativaAprovacao && "opacity-60")}>
+            <div className={cn(!rateioEPagamentoEditaveis && "opacity-60")}>
               <Label>Valor aprovado</Label>
               <Input type="number" step="0.01" value={valorAprovado} onChange={(e) => setValorAprovado(e.target.value)} disabled={!rateioEPagamentoEditaveis} />
             </div>
             <div>
-              <Label>Justificativa da aprovação</Label>
-              <Input value={justificativa} onChange={(e) => setJustificativa(e.target.value)} disabled={!rateioEPagamentoEditaveis} />
+              <Label>
+                Justificativa da aprovação
+                {souAprovadorNivelAtual && despesa.nivel_aprovacao_atual === 1 && (
+                  <span className="text-xs text-muted-foreground font-normal"> (obrigatória se escalar para N2)</span>
+                )}
+              </Label>
+              <Input value={justificativa} onChange={(e) => setJustificativa(e.target.value)} disabled={!podeEditarJustificativaAprovacao} />
             </div>
-            <div>
+            <div className={cn(!rateioEPagamentoEditaveis && "opacity-60")}>
               <Label>Forma de pagamento</Label>
               <Select value={formaPagamento} onValueChange={setFormaPagamento} disabled={!rateioEPagamentoEditaveis}>
                 <SelectTrigger>
@@ -804,11 +833,11 @@ export default function DespesaVisualizar() {
                 </SelectContent>
               </Select>
             </div>
-            <div>
+            <div className={cn(!rateioEPagamentoEditaveis && "opacity-60")}>
               <Label>Dados de pagamento</Label>
               <Input value={informacoesPagamento} onChange={(e) => setInformacoesPagamento(e.target.value)} disabled={!rateioEPagamentoEditaveis} />
             </div>
-            <div>
+            <div className={cn(!rateioEPagamentoEditaveis && "opacity-60")}>
               <Label>Data do pagamento</Label>
               <DiaPagamentoPicker
                 value={dataPagamento}
@@ -817,7 +846,7 @@ export default function DespesaVisualizar() {
                 permitirDiasBloqueados={excecao}
               />
             </div>
-            <div>
+            <div className={cn(!rateioEPagamentoEditaveis && "opacity-60")}>
               <Label>Competência</Label>
               <Input type="month" value={competencia} onChange={(e) => setCompetencia(e.target.value)} disabled={!rateioEPagamentoEditaveis} />
             </div>
@@ -852,6 +881,7 @@ export default function DespesaVisualizar() {
               resolverOrcado={resolverOrcado}
               anoMesDespesa={anoMesDespesa}
               podeJustificarComoAprovador={configurado}
+              souSolicitante={souSolicitante}
             />
           ) : (
             <RateioAprovadorTable
@@ -863,6 +893,7 @@ export default function DespesaVisualizar() {
               resolverOrcado={resolverOrcado}
               anoMesDespesa={anoMesDespesa}
               podeJustificarComoAprovador={configurado}
+              souSolicitante={souSolicitante}
             />
           )}
         </CardContent>
