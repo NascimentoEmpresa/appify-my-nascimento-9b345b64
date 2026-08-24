@@ -8,7 +8,9 @@ import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { MessagesSquare, Lock, Send, History, Loader2, User, ShieldCheck } from "lucide-react";
-import { LABEL_SITUACAO, LABEL_RESULTADO, LABEL_GRAVIDADE, rotulo } from "./vocabulario";
+import {
+  LABEL_SITUACAO, LABEL_RESULTADO, LABEL_GRAVIDADE, LABEL_TIPO_REGISTRO, TIPO_REGISTRO, rotulo,
+} from "./vocabulario";
 
 // =====================================================================
 // CONVERSA E HISTÓRICO DO RELATO (lado do comitê)
@@ -30,6 +32,8 @@ import { LABEL_SITUACAO, LABEL_RESULTADO, LABEL_GRAVIDADE, rotulo } from "./voca
 interface Mensagem {
   id: string; autor: "comite" | "denunciante";
   mensagem: string; interna: boolean;
+  /** mensagem | nota | entrevista | manifestacao | providencia */
+  tipo: string;
   lida_em: string | null; created_at: string;
 }
 
@@ -64,6 +68,8 @@ export default function Conversa({ denunciaId, protocolo }: {
   const { toast } = useToast();
   const [texto, setTexto] = useState("");
   const [interna, setInterna] = useState(false);
+  /** Só vale para nota interna: mensagem ao denunciante é sempre "mensagem". */
+  const [tipo, setTipo] = useState("nota");
   const [enviando, setEnviando] = useState(false);
 
   const { data: mensagens = [], isLoading } = useQuery({
@@ -96,6 +102,7 @@ export default function Conversa({ denunciaId, protocolo }: {
     const { error } = await db.from("CANAL_DENUNCIA_MENSAGEM").insert({
       denuncia_id: denunciaId, autor: "comite",
       autor_user_id: u.user?.id ?? null, mensagem: t, interna,
+      tipo: interna ? tipo : "mensagem",
     });
     setEnviando(false);
     if (error) {
@@ -147,7 +154,7 @@ export default function Conversa({ denunciaId, protocolo }: {
                     : "border-border bg-background"}`}>
                 <p className="mb-1 flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
                   {m.interna
-                    ? <><Lock className="h-3 w-3" /> Nota interna</>
+                    ? <><Lock className="h-3 w-3" /> {rotulo(LABEL_TIPO_REGISTRO, m.tipo)}</>
                     : m.autor === "comite"
                       ? <><ShieldCheck className="h-3 w-3" /> Comitê</>
                       : <><User className="h-3 w-3" /> Denunciante</>}
@@ -189,10 +196,24 @@ export default function Conversa({ denunciaId, protocolo }: {
               Nota interna
             </button>
           </div>
+
+          {/* Que TIPO de registro interno é este. Sem isto, entrevista e
+              manifestação ficariam indistinguíveis de um comentário no
+              relatório do procedimento — e o Comitê pediu as duas nomeadas. */}
+          {interna && (
+            <select
+              value={tipo} onChange={(e) => setTipo(e.target.value)}
+              aria-label="Tipo do registro interno"
+              className="h-8 rounded-md border bg-background px-2 text-xs"
+            >
+              {TIPO_REGISTRO.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+            </select>
+          )}
+
           <Button size="sm" onClick={enviar} disabled={enviando || !texto.trim()}>
             {enviando
               ? <><Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> Enviando…</>
-              : <><Send className="mr-1.5 h-3.5 w-3.5" /> {interna ? "Registrar nota" : "Enviar"}</>}
+              : <><Send className="mr-1.5 h-3.5 w-3.5" /> {interna ? "Registrar" : "Enviar"}</>}
           </Button>
         </div>
       </Card>

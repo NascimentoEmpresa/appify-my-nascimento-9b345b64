@@ -1,12 +1,15 @@
 import { useState, useEffect, useCallback, useRef } from "react";
+import { useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
+import { usePermissoes } from "@/context/PermissoesContext";
 import { ESTADOS_BR, municipiosDe } from "@/data/municipios-brasil";
 import {
   MOTIVOS_VAGA, motivoLabel, ehSubstituicao, avaliarPrazo, dataMinimaVaga,
   cargoExigeCnh, aplicarReqCnh, REQ_CNH_TEXTO, MIN_DIAS_UTEIS, fmtBr,
   rotuloReferencia, ajudaReferencia, mostraNomeReferencia, contratoDoEmpregado,
   SALARIO_MASCARA, substituidosComVagaViva, avisoSubstituidoPreso,
+  podeVagaAdministrativa,
 } from "@/lib/recrutamento/vagaRegras";
 
 // ── Helpers ────────────────────────────────────────────────────────
@@ -90,7 +93,7 @@ const ADV_RESET = {
   advertencia_verbal_dada: "Não", data_advertencia_verbal: "",
 };
 const VAGA_RESET = {
-  motivo_vaga: "", nome_substituido: "", contrato: "", cargo: "",
+  motivo_vaga: "", administrativa: false, nome_substituido: "", contrato: "", cargo: "",
   estado: "", cidade: "", quantidade_vagas: "1", data_inicio_prevista: "",
   escala: "", horario: "", salario: "", insalubridade_recebe: "Não",
   insalubridade_quanto: "", beneficios: "", local_exato: "",
@@ -99,10 +102,27 @@ const VAGA_RESET = {
   motivos_saida: "", recomendacao: "", observacao_importante: "",
 };
 
+import { DetalheSolicitacao, type TipoSolicitacao } from "./encarregados/DetalheSolicitacao";
+
 interface SolItem {
-  tipo: string; icon: string; id: number; titulo: string; status: string; data: string;
+  tipo: string; icon: string;
+  /** Chamado e Materiais tem id uuid; os demais, bigint. So serve de chave. */
+  id: number | string;
+  titulo: string; status: string; data: string;
   substituido?: string; motivo?: string; qtdVagas?: number; statusDesde?: string; excecao?: boolean;
   dataInicio?: string; grau?: string; alteracoes?: any[];
+  /**
+   * Para onde o botão leva, quando o tipo JÁ TEM tela própria.
+   *
+   * Chamados e Materiais entram no histórico para o encarregado ver tudo num
+   * lugar só — mas o detalhe deles continua na tela do módulo, que tem o que
+   * este painel não tem (anexos e avaliação no chamado; itens e recebimento
+   * no pedido). Refazer isso aqui seria uma segunda versão, pior, da mesma
+   * coisa.
+   */
+  rota?: string;
+  /** Rótulo do botão quando há rota — nem todo tipo tem conversa. */
+  acao?: string;
 }
 
 // Vaga já andou: o encarregado não mexe mais na data (o Recrutamento assume).
@@ -118,6 +138,10 @@ export type SolicitacaoInicial = "vaga" | "ferias" | "advertencia";
 
 export default function MinhasSolicitacoes({ abrir }: { abrir?: SolicitacaoInicial }) {
   const { user } = useAuth();
+  const { can } = usePermissoes();
+  const nav = useNavigate();
+  // Vaga do escritório: só quem enxerga esse tipo pode marcar uma como tal.
+  const podeAdministrativa = podeVagaAdministrativa(can);
   const [displayName, setDisplayName] = useState("");
 
   // Wizard nova vaga
@@ -146,6 +170,8 @@ export default function MinhasSolicitacoes({ abrir }: { abrir?: SolicitacaoInici
   const [minhasSols, setMinhasSols] = useState<SolItem[]>([]);
   const [loadingSols, setLoadingSols] = useState(false);
   const [filtro, setFiltro] = useState("");
+  /** Solicitacao aberta no painel de detalhes + conversa. */
+  const [detalhe, setDetalhe] = useState<SolItem | null>(null);
 
   // Toasts
   const [toasts, setToasts] = useState<{ id: number; msg: string; type: string }[]>([]);
@@ -181,6 +207,23 @@ export default function MinhasSolicitacoes({ abrir }: { abrir?: SolicitacaoInici
 
     const fr = await (supabase as any).from("SISTEMA_SOLICITACOES_FERIAS").select("id, colaborador_nome, status, criado_em").eq("solicitante_email", email).order("criado_em", { ascending: false }).limit(30);
     const ad = await (supabase as any).from("SISTEMA_SOLICITACOES_ADVERTENCIA").select("id, colaborador_nome, tipo_advertencia, status, created_at, status_changed_at, excecao").eq("solicitante_email", email).order("created_at", { ascending: false }).limit(30);
+    // Demissão morava só na tela dedicada: quem pedia não a via no histórico,
+    // e por isso não tinha como acompanhar o andamento junto do resto.
+    const dm = await (supabase as any).from("SISTEMA_SOLICITACOES_DEMISSAO")
+      .select("id, colaborador_nome, motivo_solicitacao, status, criado_em, data_solicitacao")
+      .eq("solicitante_email", email).order("criado_em", { ascending: false }).limit(30);
+
+    // Chamado é por auth.uid (a tabela usa solicitante_id), não por e-mail.
+    const ch = user?.id
+      ? await (supabase as any).from("CHAMADO_SISTEMA")
+          .select("id, numero, assunto, status, created_at")
+          .eq("solicitante_id", user.id).order("created_at", { ascending: false }).limit(30)
+      : { data: [] };
+
+    // Materiais vem por RPC do próprio módulo (sup_ext_meus_pedidos), que já
+    // devolve só os pedidos de quem está logado. Não consulto as tabelas de
+    // Suprimentos direto — a regra de quem vê o quê é de lá.
+    const mt = await (supabase as any).rpc("sup_ext_meus_pedidos");
     const itens: SolItem[] = [
       ...(vg.data ?? []).map((r: any) => ({
         tipo: "Vaga", icon: "🎯", id: r.id,
@@ -194,6 +237,33 @@ export default function MinhasSolicitacoes({ abrir }: { abrir?: SolicitacaoInici
       })),
       ...(fr.data ?? []).map((r: any) => ({ tipo: "Férias", icon: "📅", id: r.id, titulo: `Férias — ${r.colaborador_nome || ""}`, status: r.status, data: r.criado_em, statusDesde: r.criado_em })),
       ...(ad.data ?? []).map((r: any) => ({ tipo: "Advertência", icon: "⚠️", id: r.id, titulo: `Advertência ${r.tipo_advertencia || ""} — ${r.colaborador_nome || ""}`, status: r.status, data: r.created_at, statusDesde: r.status_changed_at || r.created_at, excecao: r.excecao })),
+      ...(dm.data ?? []).map((r: any) => ({
+        tipo: "Demissão", icon: "🚪", id: r.id,
+        titulo: `Demissão — ${r.colaborador_nome || ""}`,
+        status: r.status,
+        // A tabela de demissão usa `criado_em`; a data digitada no formulário
+        // é outra coisa e só serve de reserva quando o carimbo falta.
+        data: r.criado_em || r.data_solicitacao,
+        statusDesde: r.criado_em || r.data_solicitacao,
+        motivo: r.motivo_solicitacao || "",
+      })),
+      ...(ch.data ?? []).map((r: any) => ({
+        tipo: "Chamado", icon: "🎧", id: r.id,
+        titulo: `${r.numero ? r.numero + " — " : ""}${r.assunto || "Chamado"}`,
+        status: r.status, data: r.created_at, statusDesde: r.created_at,
+        rota: `/app/encarregados/chamados/${r.id}/acompanhar`,
+        acao: "💬 Detalhes e chat",
+      })),
+      ...(Array.isArray(mt.data) ? mt.data : []).map((r: any) => ({
+        tipo: "Materiais", icon: "📦", id: r.id,
+        titulo: `Materiais — ${r.nome_colaborador || r.posto_nome || r.contrato_nome || ""}`.trim(),
+        status: r.status, data: r.created_at || r.data_solicitacao,
+        statusDesde: r.created_at || r.data_solicitacao,
+        rota: "/app/encarregados/meus-pedidos",
+        // Pedido de material não tem conversa; prometer "chat" aqui seria
+        // mandar o encarregado procurar algo que não existe.
+        acao: "📦 Ver pedido",
+      })),
     ].sort((a, b) => String(b.data || "").localeCompare(String(a.data || "")));
     setLoadingSols(false);
     setMinhasSols(itens);
@@ -307,6 +377,7 @@ export default function MinhasSolicitacoes({ abrir }: { abrir?: SolicitacaoInici
       cnh_obrigatoria: !!cnhDoCargo,
       // Só a substituição grava o id: é ele que trava a pessoa numa vaga só.
       substituido_id: ehSubstituicao(vaga.motivo_vaga) ? substituidoId : null,
+      administrativa: podeAdministrativa ? !!vaga.administrativa : false,
       status: "Pendente Operacional",
       solicitante_nome: user?.user_metadata?.nome ?? user?.email ?? "",
       solicitante_cpf: user?.email ?? "",
@@ -314,7 +385,7 @@ export default function MinhasSolicitacoes({ abrir }: { abrir?: SolicitacaoInici
     let { error, data } = await (supabase as any).from("SISTEMA_RECRUTAMENTO").insert(payload).select("id").single();
     // Banco ainda sem as colunas novas: reenvia sem elas.
     if (error && /column|schema cache/i.test(error.message)) {
-      const { cnh_obrigatoria, substituido_id, ...semColunasNovas } = payload as any;
+      const { cnh_obrigatoria, substituido_id, administrativa, ...semColunasNovas } = payload as any;
       ({ error, data } = await (supabase as any).from("SISTEMA_RECRUTAMENTO").insert(semColunasNovas).select("id").single());
     }
     if (error) { toast("Erro ao solicitar vaga: " + error.message, "err"); return; }
@@ -531,7 +602,23 @@ export default function MinhasSolicitacoes({ abrir }: { abrir?: SolicitacaoInici
             <button onClick={abrirModalVaga} className="ini-sol-create"><span className="icon">🎯</span><span>Solicitar Vaga</span></button>
             <button onClick={abrirModalFerias} className="ini-sol-create"><span className="icon">📅</span><span>Solicitar Férias</span></button>
             <button onClick={abrirModalAdv} className="ini-sol-create"><span className="icon">⚠️</span><span>Advertência</span></button>
-            <button className="ini-sol-create" style={{ opacity: .5, cursor: "not-allowed" }} disabled title="Em breve"><span className="icon">🚪</span><span>Solicitar Demissão</span></button>
+            {/* Demissão estava como "Em breve" — mas a tela existe e funciona
+                desde sempre, só não estava ligada aqui. Vai para a página
+                dedicada em vez de virar modal: é um formulário de vários
+                passos, com anexos, e não cabe num card. */}
+            <button onClick={() => nav("/app/encarregados/solicitar-demissao")} className="ini-sol-create">
+              <span className="icon">🚪</span><span>Solicitar Demissão</span>
+            </button>
+            {/* Materiais e Chamado entram no mesmo padrão dos demais cards.
+                O card só leva para a tela do módulo, que é onde o fluxo
+                próprio vive (carrinho de itens, anexo, categoria): refazer o
+                formulário aqui seria uma segunda versão para manter. */}
+            <button onClick={() => nav("/app/encarregados/solicitar-materiais")} className="ini-sol-create">
+              <span className="icon">📦</span><span>Solicitar Materiais</span>
+            </button>
+            <button onClick={() => nav("/app/encarregados/chamados/novo")} className="ini-sol-create">
+              <span className="icon">🎧</span><span>Abrir Chamado</span>
+            </button>
           </div>
         </div>
       </div>
@@ -541,7 +628,7 @@ export default function MinhasSolicitacoes({ abrir }: { abrir?: SolicitacaoInici
         <div className="ini-card-hd">
           <h3>🗂 Histórico & Status</h3>
           <div style={{ display: "flex", gap: 6 }}>
-            {["", "Vaga", "Férias", "Advertência"].map(f => (
+            {["", "Vaga", "Férias", "Advertência", "Demissão", "Chamado", "Materiais"].map(f => (
               <button key={f || "all"} onClick={() => setFiltro(f)}
                 style={{ padding: "4px 10px", borderRadius: 16, fontSize: 11, fontWeight: 700, cursor: "pointer",
                   border: `1px solid ${filtro === f ? "#0f3171" : "#e2e8f0"}`, background: filtro === f ? "#0f3171" : "#fff", color: filtro === f ? "#fff" : "#475569" }}>
@@ -601,6 +688,17 @@ export default function MinhasSolicitacoes({ abrir }: { abrir?: SolicitacaoInici
                           📆 Alterar data
                         </button>
                       )}
+                      {/* Reler o que foi pedido e falar com quem está tratando.
+                          A conversa é a MESMA que o outro lado enxerga — ver
+                          encarregados/DetalheSolicitacao. */}
+                      <button
+                        onClick={() => (s.rota ? nav(s.rota) : setDetalhe(s))}
+                        title={s.rota
+                          ? "Abrir na tela do módulo, que tem o detalhe completo"
+                          : "Ver os detalhes e conversar sobre esta solicitação"}
+                        style={{ padding: "4px 10px", borderRadius: 8, border: "1px solid #dbe4f0", background: "#fff", color: "#0f3171", fontSize: 11, fontWeight: 700, cursor: "pointer" }}>
+                        {s.acao ?? "💬 Detalhes e chat"}
+                      </button>
                     </div>
                   </div>
                 );
@@ -611,6 +709,16 @@ export default function MinhasSolicitacoes({ abrir }: { abrir?: SolicitacaoInici
       </div>
 
       {/* ── Modal: alterar a data de início da vaga ── */}
+      {detalhe && (
+        <DetalheSolicitacao
+          tipo={detalhe.tipo as TipoSolicitacao}
+          id={detalhe.id}
+          titulo={detalhe.titulo}
+          status={detalhe.status}
+          onFechar={() => setDetalhe(null)}
+        />
+      )}
+
       {editData && prazoEdicao && (
         <div className="ini-modal-ov">
           <div className="ini-modal" onClick={e => e.stopPropagation()} style={{ maxWidth: 520 }}>
@@ -771,6 +879,20 @@ export default function MinhasSolicitacoes({ abrir }: { abrir?: SolicitacaoInici
                   </select>
                 </div>
               </div>
+              {podeAdministrativa && (
+                <div className="ini-fg">
+                  <label style={{ display: "flex", alignItems: "flex-start", gap: 9, cursor: "pointer", background: vaga.administrativa ? "#f0f6ff" : "#fff", border: vaga.administrativa ? "1.5px solid #0f3171" : "1px solid #e2e8f0", borderRadius: 11, padding: "10px 13px", transition: "background .18s, border-color .18s" }}>
+                    <input type="checkbox" checked={!!vaga.administrativa} style={{ marginTop: 2, width: 15, height: 15, accentColor: "#0f3171", cursor: "pointer" }}
+                      onChange={e => setVaga(v => ({ ...v, administrativa: e.target.checked }))} />
+                    <span>
+                      <span style={{ display: "block", fontSize: 12.5, fontWeight: 800, color: "#0f172a" }}>Vaga é administrativa?</span>
+                      <span style={{ display: "block", fontSize: 11, color: "#94a3b8", marginTop: 3, lineHeight: 1.45 }}>
+                        Vaga do escritório. Só quem tem “Ver vaga administrativa?” enxerga, aprova ou reprova — os demais nem veem que ela existe.
+                      </span>
+                    </span>
+                  </label>
+                </div>
+              )}
             </>)}
 
             {vagaStep === 2 && (<>

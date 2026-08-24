@@ -12,12 +12,15 @@ import { LayoutGrid, Package, Lock, ShoppingCart, FileEdit, ArrowLeft } from "lu
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { useEmpresaId } from "@/hooks/useEmpresaId";
+import { vincularContaAoMalote, PARAM_ORIGEM } from "@/pages/juridico/patrimonio/vinculoMalote";
+import { ConfirmacaoMalote } from "@/components/malote/ConfirmacaoMalote";
 import { TipoClassificacaoOrcamento, usePlanejamentosOrcamento } from "@/hooks/usePlanejamentoOrcamentario";
 import { useRubricasVinculadas, RubricaVinculada } from "@/hooks/useRubricasMalote";
 import { usePlanilhaCustos, resolverValorPorCampos } from "@/hooks/usePlanilhaCusto";
 import {
   useSalvarDespesa,
   useConverterSolicitacaoEmDespesa,
+  buscarNumeroDespesa,
   useDespesa,
   useEmpresasGrupo,
   useContratosAtivos,
@@ -32,6 +35,9 @@ import {
 import { RateioGrid, DimensoesRateio } from "./RateioGrid";
 import { AnexosField } from "./AnexosField";
 import { getStatusVigencia } from "./orcamentoUtils";
+import { DiaPagamentoPicker } from "./DiaPagamentoPicker";
+import { ExcecaoDiaBloqueadoField } from "./ExcecaoDiaBloqueadoField";
+import { useMaloteConfig } from "@/hooks/useMaloteConfig";
 
 const DIAS_MES = Array.from({ length: 28 }, (_, i) => i + 1);
 const QUANTIDADE_PARCELAS = Array.from({ length: 24 }, (_, i) => i + 2);
@@ -581,6 +587,10 @@ function PainelSolicitacao({
 // ============================================================================
 // Painel: Criar Despesa Malote (lançamento direto, sem solicitação)
 // ============================================================================
+// `origem_obrigacao` na URL = a despesa veio de uma conta do Patrimônio
+// ("Pagar" lá manda para cá). Gravar o vínculo é o que tira aquela conta de
+// "Pendente" e depois deixa ela saber que foi paga — ver
+// src/pages/juridico/patrimonio/vinculoMalote.ts.
 function PainelDespesaMalote({
   classificacaoId,
   classificacaoTipo,
@@ -604,11 +614,19 @@ function PainelDespesaMalote({
   inicial?: PrefillDespesa;
   onConvertida?: () => void;
 }) {
+  const [paramsUrl] = useSearchParams();
+  const obrigacaoPatrimonio = paramsUrl.get(PARAM_ORIGEM);
+  // Confirmação no centro da tela quando a despesa vai para aprovação. O
+  // toast de canto some antes de a pessoa registrar, e aqui dar certo importa:
+  // a despesa saiu da mão dela e entrou na fila de outra pessoa.
+  const [confirmacao, setConfirmacao] = useState<{ titulo: string; subtitulo: string; numero?: string | null } | null>(null);
   const salvar = useSalvarDespesa();
   const converter = useConverterSolicitacaoEmDespesa();
   const [nome, setNome] = useState(nomeInicial ?? inicial?.nome ?? "");
   const [totalMes, setTotalMes] = useState(valorInicial != null ? String(valorInicial) : (inicial?.valor ?? ""));
   const [dataPagamento, setDataPagamento] = useState(inicial?.dataPagamento ?? "");
+  const [excecao, setExcecao] = useState(false);
+  const [justificativaExcecao, setJustificativaExcecao] = useState("");
   const [competencia, setCompetencia] = useState(inicial?.competencia ?? "");
   const [formaPagamento, setFormaPagamento] = useState(inicial?.formaPagamento ?? "");
   const [informacoesPagamento, setInformacoesPagamento] = useState(inicial?.informacoesPagamento ?? "");
@@ -620,6 +638,7 @@ function PainelDespesaMalote({
   const [quantidadeParcelas, setQuantidadeParcelas] = useState("");
   const [arquivos, setArquivos] = useState<File[]>([]);
   const [salvando, setSalvando] = useState<"rascunho" | "enviar" | null>(null);
+  const { data: maloteConfig } = useMaloteConfig();
 
   const totalRateado = useMemo(() => linhasRateio.reduce((s, l) => s + (Number(l.valor) || 0), 0), [linhasRateio]);
   const restante = Math.max(0, (Number(totalMes) || 0) - totalRateado);
@@ -628,6 +647,9 @@ function PainelDespesaMalote({
     if (!nome.trim()) return "Informe o nome da despesa.";
     if (!totalMes || Number(totalMes) <= 0) return "Informe o total do mês.";
     if (!dataPagamento) return "Informe a data de pagamento.";
+    if (excecao && (maloteConfig?.excecao_exigir_justificativa_solicitante ?? true) && !justificativaExcecao.trim()) {
+      return "Informe a justificativa da exceção.";
+    }
     if (!competencia) return "Informe a competência.";
     if (!formaPagamento) return "Selecione a forma de pagamento.";
     if (!informacoesPagamento.trim()) return "Informe os dados de pagamento.";
@@ -671,6 +693,8 @@ function PainelDespesaMalote({
         nome: nome.trim(),
         valor_total: Number(totalMes),
         data_pagamento: dataPagamento,
+        excecao,
+        justificativa_excecao: excecao ? justificativaExcecao.trim() || null : null,
         competencia: competencia + "-01",
         forma_pagamento: formaPagamento,
         informacoes_pagamento: informacoesPagamento.trim(),
@@ -709,8 +733,21 @@ function PainelDespesaMalote({
         });
       }
 
+      if (obrigacaoPatrimonio) {
+        const vinculo = await vincularContaAoMalote(obrigacaoPatrimonio, despesaId);
+        // Falhar aqui não desfaz a despesa, que já existe e é o que importa:
+        // avisa para alguém religar o vínculo, em vez de engolir o erro.
+        if (!vinculo.ok && vinculo.erro) {
+          toast.warning("Despesa criada, mas a conta do Patrimônio não foi marcada como enviada: " + vinculo.erro);
+        }
+      }
+
       if (paraEnviar && despesaIdExistente) {
-        toast.success("Despesa criada a partir da solicitação e enviada para aprovação.");
+        setConfirmacao({
+          titulo: "Despesa enviada ao Malote",
+          subtitulo: "Criada a partir da solicitação e já na fila de aprovação.",
+          numero: await buscarNumeroDespesa(despesaId),
+        });
         onConvertida?.();
         return;
       }
@@ -719,7 +756,19 @@ function PainelDespesaMalote({
         await registrarEventoDespesa(despesaId, "edicao", "Dados da despesa atualizados antes do envio para aprovação.");
       }
 
-      toast.success(acao === "rascunho" ? "Rascunho salvo." : "Despesa enviada para aprovação.");
+      // Rascunho não é conquista: continua no toast discreto. O que ganha a
+      // tela é o envio para aprovação.
+      if (acao === "rascunho") {
+        toast.success("Rascunho salvo.");
+      } else {
+        setConfirmacao({
+          titulo: "Despesa enviada ao Malote",
+          subtitulo: obrigacaoPatrimonio
+            ? "A conta do Patrimônio já aparece como enviada, e a despesa entrou na fila de aprovação."
+            : "Ela entrou na fila de aprovação. Você acompanha o andamento em Meus Itens.",
+          numero: await buscarNumeroDespesa(despesaId),
+        });
+      }
       if (!despesaIdExistente) {
         setNome(""); setTotalMes(""); setDataPagamento(""); setCompetencia(""); setFormaPagamento("");
         setInformacoesPagamento(""); setLinhasRateio([]); setParcelado("nao"); setDiaDesconto("");
@@ -734,6 +783,13 @@ function PainelDespesaMalote({
 
   return (
     <Card>
+      <ConfirmacaoMalote
+        aberto={!!confirmacao}
+        titulo={confirmacao?.titulo}
+        subtitulo={confirmacao?.subtitulo}
+        numero={confirmacao?.numero}
+        onFechar={() => setConfirmacao(null)}
+      />
       <CardContent className="p-6 space-y-4">
         <PainelHeader icon={<FileEdit className="h-4 w-4 mt-0.5 text-muted-foreground" />} titulo="Criar Despesa Malote" subtitulo="Preencha os dados para incluir a despesa diretamente no malote." ativo={ativo} />
 
@@ -750,9 +806,16 @@ function PainelDespesaMalote({
             </div>
             <div>
               <Label>Data de pagamento *</Label>
-              <Input type="date" value={dataPagamento} onChange={(e) => setDataPagamento(e.target.value)} disabled={!ativo} />
+              <DiaPagamentoPicker value={dataPagamento} onChange={setDataPagamento} disabled={!ativo} permitirDiasBloqueados={excecao} />
             </div>
           </div>
+          <ExcecaoDiaBloqueadoField
+            checked={excecao}
+            onCheckedChange={setExcecao}
+            justificativa={justificativaExcecao}
+            onJustificativaChange={setJustificativaExcecao}
+            disabled={!ativo}
+          />
 
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
             <div>

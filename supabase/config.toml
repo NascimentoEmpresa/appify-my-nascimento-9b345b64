@@ -27,7 +27,24 @@ verify_jwt = true
 [functions.erp-caixa-export]
 verify_jwt = true
 
-[functions.sync-denuncias-contato-seguro]
+# Chamada pelo trigger trg_chamado_concluido_novidade_ia via pg_net, que manda
+# a chave anon nos headers — JWT válido, então a verificação fica ligada.
+[functions.novidade-ia-chamado]
+verify_jwt = true
+
+# Canal de Ética — anexos de quem denuncia. Público de propósito: o site roda
+# sem login e sem chave no navegador. Quem autentica é protocolo + senha,
+# conferidos dentro da função contra o hash bcrypt.
+[functions.denuncia-anexar]
+verify_jwt = false
+
+# Listas do formulário público (empresas e contratos). Público pelo mesmo
+# motivo das demais rotas do canal: o site roda sem login.
+[functions.denuncia-listas]
+verify_jwt = false
+
+# Tick de alertas do Comitê. Chamado pelo pg_cron com a chave anon.
+[functions.comite-etica-alertas-tick]
 verify_jwt = true
 
 # Webhook público da Meta — chamado sem JWT (a validação é pela assinatura

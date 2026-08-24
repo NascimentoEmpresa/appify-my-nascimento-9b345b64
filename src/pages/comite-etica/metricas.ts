@@ -24,6 +24,18 @@ export interface Denuncia {
   descricao: string; testemunhas: string | null; evidencias: string | null;
   valor_financeiro: string | null; sugestao: string | null;
 
+  // Relato — o que passou a ser perguntado no formulário (20260914000002/3)
+  anonimo: boolean;
+  /** true quando a pessoa se identificou mas quem consulta não tem `comite_etica_sigilo`. */
+  identidade_restrita?: boolean;
+  empresa_id: string | null; empresa_nome: string | null;
+  contrato_informado: string | null; contrato_situacao: string | null;
+  ocorrencia_data: string | null; ocorrencia_hora: string | null;
+  ocorrencia_frequencia: string | null;
+  risco_imediato: boolean; risco_imediato_detalhe: string | null;
+  retaliacao: boolean; retaliacao_detalhe: string | null;
+  denunciado_informado: string | null; denunciado_funcao: string | null;
+
   // Ficha de apuração (migration 20260901000003)
   origem: string | null; tipo_classificado: string | null;
   gravidade: string | null; sigilo: string | null;
@@ -39,16 +51,61 @@ export interface Denuncia {
   acoes_preventivas: string | null; acoes_corretivas: string | null;
   sla_dias_override: number | null;
 
-  status: string; parecer_interno: string | null; retorno_denunciante: string | null;
+  // Apuração — campos acrescentados em 20260914000002
+  resumo: string | null; pendencia_atual: string | null;
+  evidencias_analise: string | null;
+  medida_principal: string | null; recomendacao: string | null;
+  apuracao_responsavel_id: string | null;
+  ultima_movimentacao_em: string;
+
+  // Decisão da Presidência
+  decisao_final: string | null; decisao_em: string | null;
+  decisao_fundamentacao: string | null; decisao_sobre_parecer: string | null;
+  decisao_medidas: string | null; decisao_por_nome: string | null;
+
+  status: string; justificativa_mudanca: string | null;
+  parecer_interno: string | null; retorno_denunciante: string | null;
   concluido_em: string | null; created_at: string; updated_at: string;
 }
 
 export interface RegraSla {
-  gravidade: string; dias: number; dias_primeira_providencia: number;
+  gravidade: string;
+  dias: number;
+  dias_primeira_providencia: number;
+  /** Dias sem NENHUMA movimentação até o caso ser sinalizado como parado. */
+  dias_sem_movimentacao?: number;
+}
+
+/** Uma providência do procedimento — a lista que substituiu o campo único. */
+export interface Providencia {
+  id: string; denuncia_id: string; ordem: number;
+  descricao: string; responsavel: string | null; responsavel_user_id: string | null;
+  prazo: string | null; concluida_em: string | null; situacao: string;
+  observacao: string | null; criado_por_nome: string | null; created_at: string;
+}
+
+/** Um arquivo do procedimento. */
+export interface Anexo {
+  id: string; denuncia_id: string; origem: string; categoria: string;
+  nome_arquivo: string; storage_path: string; mime_type: string | null;
+  tamanho_bytes: number | null; sensivel: boolean; descricao: string | null;
+  autor_nome: string | null; created_at: string;
+}
+
+/** Uma linha do histórico. */
+export interface Evento {
+  id: string; denuncia_id: string; campo: string;
+  de: string | null; para: string | null;
+  por_nome: string | null; justificativa: string | null; created_at: string;
+}
+
+export interface Alerta {
+  id: string; denuncia_id: string; tipo: string; mensagem: string;
+  referencia: string; resolvido_em: string | null; created_at: string;
 }
 
 /** SLA usado quando a gravidade ainda não foi classificada. */
-const SLA_PADRAO = { dias: 30, dias_primeira_providencia: 3 };
+const SLA_PADRAO = { dias: 30, dias_primeira_providencia: 3, dias_sem_movimentacao: 10 };
 
 const DIA = 86_400_000;
 
@@ -70,7 +127,27 @@ export function regraDe(d: Denuncia, slas: RegraSla[]) {
   return {
     dias: d.sla_dias_override ?? r?.dias ?? SLA_PADRAO.dias,
     diasPrimeira: r?.dias_primeira_providencia ?? SLA_PADRAO.dias_primeira_providencia,
+    diasParado: r?.dias_sem_movimentacao ?? SLA_PADRAO.dias_sem_movimentacao,
   };
+}
+
+/**
+ * Dias desde a última vez que ALGUÉM mexeu no procedimento — mudança de
+ * campo, mensagem, providência ou anexo (o banco carimba
+ * `ultima_movimentacao_em` em todos esses).
+ *
+ * É uma pergunta diferente da do SLA. O prazo conta desde a abertura e
+ * responde "já demorou demais?"; isto responde "está abandonado?". Um caso
+ * aberto há 40 dias e trabalhado ontem não é o mesmo que um aberto há 40 dias
+ * e esquecido no dia 2 — e antes os dois contavam igual.
+ */
+export const diasParado = (d: Denuncia, hoje: Date = new Date()): number | null =>
+  concluida(d) ? null : diasEntre(d.ultima_movimentacao_em ?? d.updated_at, hoje);
+
+/** Em aberto e sem ninguém encostar há mais tempo do que a gravidade admite. */
+export function parada(d: Denuncia, slas: RegraSla[], hoje: Date = new Date()): boolean {
+  const dias = diasParado(d, hoje);
+  return dias !== null && dias > regraDe(d, slas).diasParado;
 }
 
 /**

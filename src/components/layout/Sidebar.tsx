@@ -484,6 +484,17 @@ const encarregadosModule: ModuleDef = {
   // formulário que já vem aberto.
   groups: [
     {
+      // Vem PRIMEIRO de propósito. Os itens abaixo abrem o formulário já
+      // pronto para pedir — e quem só quer saber "em que pé está minha
+      // solicitação de férias?" era obrigado a abrir o card de pedir férias
+      // para descobrir. Consultar tem que ter porta própria, antes de pedir.
+      label: "Acompanhamento",
+      defaultOpen: true,
+      items: [
+        { label: "Minhas Solicitações", to: "/app/encarregados/minhas-solicitacoes", icon: ClipboardList },
+      ],
+    },
+    {
       label: "Recrutamento e Seleção",
       defaultOpen: true,
       items: [
@@ -604,7 +615,12 @@ const comiteEticaModule: ModuleDef = {
         // diretoria ver o painel sem ver o conteúdo dos relatos.
         { label: "Indicadores", to: "/app/comite-etica/indicadores", icon: BarChart3 },
         { label: "Denúncias", to: "/app/comite-etica/denuncias", icon: ShieldAlert },
-        { label: "Denúncias (Contato Seguro)", to: "/app/comite-etica/denuncias-contato-seguro", icon: ShieldAlert },
+        // "Denúncias (Contato Seguro)" saiu daqui em 21/08/2026: o canal
+        // legado foi aposentado, a tela e a função de sync foram removidas e
+        // o menu ficou com app_menu.ativo = false (mesmo par que "Pregão &
+        // Lances" usou). As TABELAS do legado continuam no banco, só sem
+        // porta de entrada — apagar histórico de canal de ética não se desfaz.
+        { label: "Configuração", to: "/app/comite-etica/configuracao", icon: Settings },
       ],
     },
   ],
@@ -816,6 +832,18 @@ const erpModules: ModuleDef[] = [
   biModule,
 ];
 
+/**
+ * O MESMO conjunto que a sidebar monta em runtime (`allModules`), exposto para
+ * quem precisa listar o ERP inteiro sem manter um segundo catálogo — hoje o
+ * Início, em "Todos os módulos".
+ *
+ * Existe porque a lista de lá era escrita à mão e ficava para trás a cada tela
+ * nova: o encarregado via oito itens no menu lateral e dois no Início. Catálogo
+ * único é a única forma de isso não se repetir.
+ */
+export const NAV_MODULOS: ModuleDef[] = [...erpModules, buildPlanoAcoesModule(false), integracaoModule];
+export type { ModuleDef as NavModuleDef, NavItem as NavItemDef };
+
 interface SidebarProps {
   collapsed: boolean;
   mobileOpen?: boolean;
@@ -837,7 +865,7 @@ export function Sidebar({ collapsed, mobileOpen = false, onMobileClose }: Sideba
   // Contador das Novidades do Sistema: o mesmo número da bolinha do topo.
   const { naoLidasCount: novidadesNaoLidas } = useNovidades();
 
-  const allModules = [...erpModules, buildPlanoAcoesModule(false), integracaoModule];
+  const allModules = NAV_MODULOS;
 
   // Sidebar filtra itens com base nos menus acessíveis do usuário (perfil de
   // acesso, ver list_accessible_menus). Cargo/role não concede bypass. Plano de

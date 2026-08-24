@@ -14,7 +14,9 @@ import { Badge } from "@/components/ui/badge";
 import { UserX, Search, Loader2, X, AlertTriangle, Clock, History } from "lucide-react";
 import {
   ORIGEM, TIPO, GRAVIDADE, SIGILO, SITUACAO, RESULTADO, MEDIDA, RECURSO_RESULTADO, CAUSA_RAIZ,
+  RECOMENDACAO,
   LABEL_SITUACAO, LABEL_TIPO, LABEL_RELACAO, LABEL_SIM_NAO, LABEL_GRAVIDADE,
+  LABEL_FREQUENCIA, LABEL_CONTRATO_SIT,
   COR_GRAVIDADE, SITUACOES_CONCLUIDAS, rotulo, type Opcao,
 } from "./vocabulario";
 import {
@@ -22,6 +24,10 @@ import {
   diasRestantes, regraDe,
 } from "./metricas";
 import Conversa from "./Conversa";
+import { usePermissoes } from "@/context/PermissoesContext";
+import { BlocoAnexos, BlocoPresidencia, BlocoProvidencias } from "./BlocosApuracao";
+import { ExportarDenuncia } from "./ExportarDenuncia";
+import { HistoricoDenuncia } from "./HistoricoDenuncia";
 
 // =====================================================================
 // FICHA DE APURAÇÃO — o formulário que o Comitê de Ética preenche
@@ -62,8 +68,13 @@ interface Ficha {
   denunciado_nome: string; denunciado_empregado_id: number | null;
   lider_nome: string; lider_empregado_id: number | null;
   diretoria: string; contrato: string; setor: string; unidade: string; cidade: string;
-  apuracao_responsavel: string; apuracao_inicio: string; apuracao_fim: string;
+  apuracao_responsavel: string; apuracao_responsavel_id: string;
+  apuracao_inicio: string; apuracao_fim: string;
   primeira_providencia_em: string;
+  resumo: string; pendencia_atual: string; evidencias_analise: string;
+  medida_principal: string; recomendacao: string;
+  /** Por que a situação mudou. O banco recusa a troca sem isto. */
+  justificativa_mudanca: string;
   status: string; resultado: string; medidas: string[];
   houve_recurso: boolean; recurso_resultado: string; recurso_data: string;
   causa_raiz: string; causa_raiz_detalhe: string;
@@ -82,8 +93,15 @@ const daDenuncia = (d: Denuncia): Ficha => ({
   diretoria: d.diretoria ?? "", contrato: d.contrato ?? "", setor: d.setor ?? "",
   unidade: d.unidade ?? "", cidade: d.cidade ?? "",
   apuracao_responsavel: d.apuracao_responsavel ?? "",
+  apuracao_responsavel_id: d.apuracao_responsavel_id ?? "",
   apuracao_inicio: soData(d.apuracao_inicio), apuracao_fim: soData(d.apuracao_fim),
   primeira_providencia_em: soData(d.primeira_providencia_em),
+  resumo: d.resumo ?? "", pendencia_atual: d.pendencia_atual ?? "",
+  evidencias_analise: d.evidencias_analise ?? "",
+  medida_principal: d.medida_principal ?? "", recomendacao: d.recomendacao ?? "",
+  // Nunca reaproveita a justificativa da mudança anterior: ela é sobre a
+  // troca de agora, e herdar o texto velho seria assinar um motivo que não é.
+  justificativa_mudanca: "",
   status: d.status ?? "nova", resultado: d.resultado ?? "", medidas: d.medidas ?? [],
   houve_recurso: !!d.houve_recurso, recurso_resultado: d.recurso_resultado ?? "",
   recurso_data: soData(d.recurso_data),
@@ -100,8 +118,26 @@ export default function FichaDenuncia({ denuncia, slas, todas, onFechar, onSalvo
   onFechar: () => void; onSalvo: () => void;
 }) {
   const { toast } = useToast();
+  const { can } = usePermissoes();
   const [salvando, setSalvando] = useState(false);
   const [f, setF] = useState<Ficha>(() => (denuncia ? daDenuncia(denuncia) : ({} as Ficha)));
+
+  // As duas capacidades novas do módulo. Isto aqui é heurística de tela —
+  // quem recusa de verdade é a RLS e o gatilho no banco.
+  const podeDecidir = can("visualizar", undefined, "comite_etica_presidencia");
+  const podeVerSigiloso = can("visualizar", undefined, "comite_etica_sigilo");
+
+  // Cadastro de quem pode conduzir uma apuração.
+  const [responsaveis, setResponsaveis] = useState<{ user_id: string; nome: string }[]>([]);
+  useEffect(() => {
+    let vivo = true;
+    (async () => {
+      const { data } = await db.from("COMITE_ETICA_RESPONSAVEL")
+        .select("user_id, nome").eq("ativo", true).order("nome");
+      if (vivo) setResponsaveis((data ?? []) as { user_id: string; nome: string }[]);
+    })();
+    return () => { vivo = false; };
+  }, []);
 
   // Recarrega quando troca a denúncia aberta (o diálogo é reaproveitado).
   const chave = denuncia?.id ?? "";
@@ -144,12 +180,30 @@ export default function FichaDenuncia({ denuncia, slas, todas, onFechar, onSalvo
 
   if (!denuncia) return null;
   const d = denuncia;
+  const mudouSituacao = f.status !== d.status;
 
   const salvar = async () => {
     if (salvando) return;
+    // O banco recusa a troca de situação sem justificativa (canal_denuncia_guard).
+    // Barrar aqui também é só cortesia: assim a pessoa vê o pedido no campo em
+    // vez de um erro de Postgres depois de preencher a ficha inteira.
+    if (mudouSituacao && !f.justificativa_mudanca.trim()) {
+      toast({
+        title: "Falta a justificativa",
+        description: "Diga por que a situação mudou — é o que o histórico vai guardar.",
+        variant: "destructive",
+      });
+      return;
+    }
     setSalvando(true);
     const nulo = (s: string) => (s.trim() ? s.trim() : null);
     const { error } = await db.from("CANAL_DENUNCIA").update({
+      resumo: nulo(f.resumo),
+      pendencia_atual: nulo(f.pendencia_atual),
+      evidencias_analise: nulo(f.evidencias_analise),
+      medida_principal: nulo(f.medida_principal),
+      recomendacao: nulo(f.recomendacao),
+      justificativa_mudanca: mudouSituacao ? f.justificativa_mudanca.trim() : d.justificativa_mudanca,
       titulo: nulo(f.titulo),
       origem: nulo(f.origem),
       tipo_classificado: nulo(f.tipo_classificado),
@@ -162,6 +216,7 @@ export default function FichaDenuncia({ denuncia, slas, todas, onFechar, onSalvo
       diretoria: nulo(f.diretoria), contrato: nulo(f.contrato), setor: nulo(f.setor),
       unidade: nulo(f.unidade), cidade: nulo(f.cidade),
       apuracao_responsavel: nulo(f.apuracao_responsavel),
+      apuracao_responsavel_id: f.apuracao_responsavel_id || null,
       apuracao_inicio: nulo(f.apuracao_inicio), apuracao_fim: nulo(f.apuracao_fim),
       primeira_providencia_em: nulo(f.primeira_providencia_em),
       status: f.status,
@@ -241,10 +296,23 @@ export default function FichaDenuncia({ denuncia, slas, todas, onFechar, onSalvo
             </div>
             {/* O salvar continua sendo um só, no rodapé: trocar a situação sem
                 gravar o resto da ficha deixaria os dois em desacordo. */}
-            {f.status !== d.status && (
-              <p className="mt-2 text-[11px] font-semibold text-warning">
-                Alterado para “{rotulo(LABEL_SITUACAO, f.status)}” — salve a ficha para valer.
-              </p>
+            {mudouSituacao && (
+              <div className="mt-3 rounded-md border border-warning/40 bg-warning/5 p-3">
+                <p className="mb-2 text-[11px] font-semibold text-warning">
+                  Alterando para “{rotulo(LABEL_SITUACAO, f.status)}” — salve a ficha para valer.
+                </p>
+                <Campo
+                  label="Justificativa da mudança"
+                  dica="Obrigatória. É o que o histórico guarda junto com a data, a hora e o seu nome — e é o que explica, meses depois, por que o caso parou aqui."
+                >
+                  <Textarea
+                    rows={2}
+                    value={f.justificativa_mudanca}
+                    onChange={(e) => set("justificativa_mudanca", e.target.value)}
+                    placeholder="Ex.: aguardando documentos solicitados ao RH do contrato."
+                  />
+                </Campo>
+              </div>
             )}
           </Card>
 
@@ -288,13 +356,57 @@ export default function FichaDenuncia({ denuncia, slas, todas, onFechar, onSalvo
             </p>
             <div className="grid gap-3 sm:grid-cols-3">
               <Leitura label="Recebida em">{fmt(d.created_at)}</Leitura>
+              <Leitura label="Empresa">{d.empresa_nome}</Leitura>
+              <Leitura label="Contrato informado">
+                {d.contrato_informado
+                  || (d.contrato_situacao ? rotulo(LABEL_CONTRATO_SIT, d.contrato_situacao) : null)}
+              </Leitura>
               <Leitura label="Tipo informado pelo denunciante">{rotulo(LABEL_TIPO, d.tipo_denuncia)}</Leitura>
               <Leitura label="Relação com o grupo">{rotulo(LABEL_RELACAO, d.relacao)}</Leitura>
+              <Leitura label="Quando aconteceu">
+                {d.ocorrencia_data
+                  ? `${fmt(d.ocorrencia_data)}${d.ocorrencia_hora ? ` às ${d.ocorrencia_hora}` : ""}`
+                  : null}
+              </Leitura>
+              <Leitura label="Frequência">
+                {d.ocorrencia_frequencia ? rotulo(LABEL_FREQUENCIA, d.ocorrencia_frequencia) : null}
+              </Leitura>
               <Leitura label="Local do fato">{d.local_ocorrencia}</Leitura>
               <Leitura label="Como soube">{d.como_soube}</Leitura>
+              <Leitura label="Pessoa denunciada (segundo o denunciante)">
+                {d.denunciado_informado
+                  ? `${d.denunciado_informado}${d.denunciado_funcao ? ` — ${d.denunciado_funcao}` : ""}`
+                  : null}
+              </Leitura>
               <Leitura label="Valor envolvido">{d.valor_financeiro}</Leitura>
             </div>
-            {d.identificado && (
+            {(d.risco_imediato || d.retaliacao) && (
+              <div className="grid gap-2 rounded-md border border-destructive/40 bg-destructive/5 p-3">
+                {d.risco_imediato && (
+                  <p className="text-sm">
+                    <b className="text-destructive">Risco imediato informado.</b>{" "}
+                    {d.risco_imediato_detalhe}
+                  </p>
+                )}
+                {d.retaliacao && (
+                  <p className="text-sm">
+                    <b className="text-destructive">Ameaça ou retaliação informada.</b>{" "}
+                    {d.retaliacao_detalhe}
+                  </p>
+                )}
+              </div>
+            )}
+            {d.anonimo ? (
+              <p className="border-t pt-3 text-xs text-muted-foreground">
+                Relato anônimo. O canal não guarda identidade, IP nem qualquer dado que leve a quem
+                denunciou — a pessoa acompanha o caso pelo protocolo e pela senha que escolheu.
+              </p>
+            ) : d.identidade_restrita ? (
+              <p className="border-t pt-3 text-xs text-warning">
+                A pessoa se identificou, mas o seu acesso não inclui ver a identificação. Isso exige a
+                liberação de “Pode ver identidade e anexos sigilosos”.
+              </p>
+            ) : d.identificado ? (
               <div className="grid gap-3 border-t pt-3 sm:grid-cols-3">
                 <Leitura label="Denunciante">{d.nome_completo}</Leitura>
                 <Leitura label="CPF">{d.cpf}</Leitura>
@@ -302,6 +414,10 @@ export default function FichaDenuncia({ denuncia, slas, todas, onFechar, onSalvo
                 <Leitura label="Telefone">{d.telefone_fixo}</Leitura>
                 <Leitura label="Celular">{d.celular}</Leitura>
               </div>
+            ) : (
+              <p className="border-t pt-3 text-xs text-muted-foreground">
+                A pessoa optou por não dizer o nome, mas deixou e-mail para acompanhar o caso.
+              </p>
             )}
             <div className="grid gap-3 border-t pt-3 sm:grid-cols-3">
               <Leitura label="Liderança ciente">
@@ -330,6 +446,13 @@ export default function FichaDenuncia({ denuncia, slas, todas, onFechar, onSalvo
             <Campo label="Assunto do relato" dica="Título curto para identificar o caso na lista. O relato em si continua imutável.">
               <Input value={f.titulo} onChange={(e) => set("titulo", e.target.value)}
                      placeholder="Ex.: Assédio moral — contrato SMED" />
+            </Campo>
+            <Campo
+              label="Resumo objetivo"
+              dica="Diferente do assunto: é o parágrafo que vai no relatório e no resumo gerencial, contando o caso para quem não leu o relato."
+            >
+              <Textarea rows={3} value={f.resumo} onChange={(e) => set("resumo", e.target.value)}
+                        placeholder="O que aconteceu, quem está envolvido e o que está em apuração." />
             </Campo>
             <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
               <Campo label="Origem"><Sel v={f.origem} on={(v) => set("origem", v)} ops={ORIGEM} /></Campo>
@@ -377,8 +500,25 @@ export default function FichaDenuncia({ denuncia, slas, todas, onFechar, onSalvo
           {/* -------------------------------------------------- investigação */}
           <Bloco titulo="Investigação" desc="Responsável e datas da apuração.">
             <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-              <Campo label="Responsável pela apuração">
-                <Input value={f.apuracao_responsavel} onChange={(e) => set("apuracao_responsavel", e.target.value)} />
+              <Campo
+                label="Responsável pela apuração"
+                dica={responsaveis.length
+                  ? "Sai do cadastro do Comitê — é o que faz o mesmo nome não virar dois responsáveis no relatório."
+                  : "Nenhum responsável cadastrado ainda. Cadastre em Comitê de Ética › Configuração."}
+              >
+                <Sel
+                  v={f.apuracao_responsavel_id}
+                  on={(v) => {
+                    // Grava o id E o nome: o id serve ao filtro e ao alerta; o
+                    // nome é retrato do momento, porque quem sai do cadastro
+                    // não pode sumir do procedimento que conduziu.
+                    const r = responsaveis.find((x) => x.user_id === v);
+                    set("apuracao_responsavel_id", v);
+                    set("apuracao_responsavel", r?.nome ?? "");
+                  }}
+                  ops={responsaveis.map((r) => ({ value: r.user_id, label: r.nome }))}
+                  vazio="Não designado"
+                />
               </Campo>
               <Campo label="Primeira providência" dica="Quando o comitê agiu pela 1ª vez.">
                 <Input type="date" value={f.primeira_providencia_em} onChange={(e) => set("primeira_providencia_em", e.target.value)} />
@@ -396,6 +536,24 @@ export default function FichaDenuncia({ denuncia, slas, todas, onFechar, onSalvo
                        onChange={(e) => set("sla_dias_override", e.target.value)} placeholder="—" />
               </Campo>
             </div>
+            <Campo label="Pendência atual" dica="O que este procedimento está esperando agora. É o que o painel mostra quando alguém pergunta “por que isto não anda?”.">
+              <Input value={f.pendencia_atual} onChange={(e) => set("pendencia_atual", e.target.value)}
+                     placeholder="Ex.: aguardando a folha de ponto do contrato." />
+            </Campo>
+            <Campo label="Evidências recebidas e analisadas" dica="O que foi examinado e o que isso mostrou. Os arquivos ficam no bloco de anexos.">
+              <Textarea rows={2} value={f.evidencias_analise}
+                        onChange={(e) => set("evidencias_analise", e.target.value)} />
+            </Campo>
+          </Bloco>
+
+          {/* ------------------------------------------------ providências */}
+          <Bloco titulo="Providências" desc="Cada passo da apuração, com prazo e responsável. Grava na hora — não espera o “Salvar ficha”.">
+            <BlocoProvidencias denunciaId={d.id} podeEditar />
+          </Bloco>
+
+          {/* ----------------------------------------------------- anexos */}
+          <Bloco titulo="Evidências e documentos" desc="Os arquivos do procedimento. O que veio com o relato não pode ser excluído.">
+            <BlocoAnexos denunciaId={d.id} podeEditar podeVerSigiloso={podeVerSigiloso} />
           </Bloco>
 
           {/* ------------------------------------------------------ desfecho */}
@@ -435,6 +593,16 @@ export default function FichaDenuncia({ denuncia, slas, todas, onFechar, onSalvo
               </div>
             </Campo>
             <div className="grid gap-3 sm:grid-cols-2">
+              <Campo label="Medida principal" dica="Entre as marcadas acima, a que responde pelo caso. É ela que vai no relatório e no indicador de eficácia.">
+                <Sel v={f.medida_principal} on={(v) => set("medida_principal", v)}
+                     ops={MEDIDA.filter((m) => (f.medidas ?? []).includes(m.value))}
+                     vazio={(f.medidas ?? []).length ? "Não definida" : "Marque as medidas primeiro"} />
+              </Campo>
+              <Campo label="Recomendação do Comitê" dica="O que o Comitê propõe à Presidência.">
+                <Sel v={f.recomendacao} on={(v) => set("recomendacao", v)} ops={RECOMENDACAO} />
+              </Campo>
+            </div>
+            <div className="grid gap-3 sm:grid-cols-2">
               <Campo label="Ações corretivas" dica="O que foi feito sobre o que já aconteceu.">
                 <Textarea rows={3} value={f.acoes_corretivas} onChange={(e) => set("acoes_corretivas", e.target.value)} />
               </Campo>
@@ -442,6 +610,16 @@ export default function FichaDenuncia({ denuncia, slas, todas, onFechar, onSalvo
                 <Textarea rows={3} value={f.acoes_preventivas} onChange={(e) => set("acoes_preventivas", e.target.value)} />
               </Campo>
             </div>
+          </Bloco>
+
+          {/* ------------------------------------------------- presidência */}
+          <Bloco
+            titulo="Decisão da Presidência"
+            desc={podeDecidir
+              ? "Registra na hora. A data, o autor e o nome são carimbados pelo banco."
+              : "Somente quem tem a capacidade da Presidência registra aqui."}
+          >
+            <BlocoPresidencia denuncia={d} podeDecidir={podeDecidir} onSalvo={onSalvo} />
           </Bloco>
 
           {/* ------------------------------------------------------- recurso */}
@@ -475,6 +653,22 @@ export default function FichaDenuncia({ denuncia, slas, todas, onFechar, onSalvo
               <Textarea rows={3} value={f.retorno_denunciante} onChange={(e) => set("retorno_denunciante", e.target.value)}
                         placeholder="O que a pessoa vê ao consultar o protocolo dela." />
             </Campo>
+          </Bloco>
+
+          {/* ------------------------------------------------- histórico */}
+          <Bloco
+            titulo="Histórico do procedimento"
+            desc="Gravado pelo banco a cada alteração — não é digitado, e não há como editá-lo pela aplicação."
+          >
+            <HistoricoDenuncia denunciaId={d.id} />
+          </Bloco>
+
+          {/* ------------------------------------------------- exportação */}
+          <Bloco
+            titulo="Exportar o procedimento"
+            desc="O PDF sai em ordem cronológica; o Excel é a base gerencial; o resumo vai para a planilha de controle."
+          >
+            <ExportarDenuncia denunciaId={d.id} />
           </Bloco>
 
           {/* Lacunas: avisa, nunca bloqueia — caso em andamento tem campo vazio. */}
