@@ -17130,3 +17130,186 @@ NOTIFY pgrst, 'reload schema';
 --   DROP INDEX IF EXISTS cs_form_acessos_unq_setor_form;
 --   (e recriar constraint/índices/policy/funções como em 20260906000004)
 -- =========================================================================
+
+
+-- ===== 20260921000003_formularios_botao_acesso =====
+-- =========================================================================
+-- FORMULÁRIOS — "Botão de acessos de cada formulário" (menu de capacidade)
+--
+-- O botão "Acesso" de cada card passa a ser o lugar onde se gerencia POR
+-- COMPLETO o acesso de cada pessoa àquele formulário — inclusive o recorte de
+-- leitura criado em 20260921000002. Faltava dizer QUEM pode abrir esse botão
+-- sem depender de já ser dono do formulário.
+--
+-- É um MENU DE CAPACIDADE: uma linha em app_menu com `rota = NULL`, no módulo
+-- Central de Serviços. Aparece sozinho em Administração › Acesso por Usuário
+-- (a aba lista app_menu) como mais um switch — é o padrão já usado por
+-- `novidades_publicar`, `chamados_sistemas_aprovar` e outros ~25. Nenhuma
+-- tabela nova de permissão.
+--
+-- O toggle daquele painel grava visualizar+incluir+alterar+aprovar+exportar de
+-- uma vez (nunca `excluir`), por isso a checagem aqui cobra `incluir`.
+--
+-- É ADITIVO: quem já abre o botão hoje (dono/gerente do formulário, quem tem
+-- 'ver_tudo', ou quem administra formulários num formulário ainda sem lista)
+-- continua abrindo. O flag só acrescenta quem mais pode.
+--
+-- Idempotente.
+-- ROLLBACK: no fim do arquivo.
+-- =========================================================================
+
+-- ── 1) O menu de capacidade ──────────────────────────────────────────────
+INSERT INTO public.app_menu (modulo_id, codigo, nome, rota, ordem, ativo)
+SELECT m.id, 'formularios_acesso_botao', 'Botão de acessos de cada formulário', NULL, 90, true
+  FROM public.app_modulo m
+ WHERE m.codigo = 'central_servicos'
+   AND NOT EXISTS (
+     SELECT 1 FROM public.app_menu x
+      WHERE x.modulo_id = m.id AND x.codigo = 'formularios_acesso_botao');
+
+-- ── 2) O helper ──────────────────────────────────────────────────────────
+-- Envelopado numa função própria para a policy não repetir a string do menu
+-- em quatro lugares — e para o dia em que a regra mudar ter UM lugar só.
+CREATE OR REPLACE FUNCTION public.cs_form_gerente_de_acesso()
+RETURNS boolean LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public AS $$
+  SELECT public.can_access(auth.uid(), 'formularios_acesso_botao', 'incluir'::public.app_acao);
+$$;
+REVOKE EXECUTE ON FUNCTION public.cs_form_gerente_de_acesso() FROM PUBLIC, anon;
+GRANT  EXECUTE ON FUNCTION public.cs_form_gerente_de_acesso() TO authenticated;
+
+-- ── 3) Entra no 'acesso' de qualquer formulário ──────────────────────────
+-- Mesma função de 20260921000002, com o ramo do flag somado ao 'acesso'. As
+-- policies de escrita de CS_FORM_ACESSOS já chamam cs_form_pode(_,'acesso'),
+-- então nada mais precisa mudar para o flag valer.
+CREATE OR REPLACE FUNCTION public.cs_form_pode(_form uuid, _cap text)
+RETURNS boolean LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public AS $$
+  SELECT CASE
+    WHEN _form IS NULL THEN false
+    WHEN _cap = 'ver'    AND public.cs_form_cap_ver(_form, 'ver_tudo') THEN true
+    WHEN _cap = 'acesso' AND (public.cs_form_cap('ver_tudo') OR public.cs_form_gerente_de_acesso()) THEN true
+    ELSE coalesce(
+      CASE _cap
+        WHEN 'ver'     THEN public.cs_form_papel_no_form(_form) IN ('form_dono','form_gerenciar','form_editar','form_ver')
+        WHEN 'editar'  THEN public.cs_form_papel_no_form(_form) IN ('form_dono','form_gerenciar','form_editar')
+        WHEN 'excluir' THEN public.cs_form_papel_no_form(_form) =  'form_dono'
+        WHEN 'acesso'  THEN public.cs_form_papel_no_form(_form) IN ('form_dono','form_gerenciar')
+                         OR (NOT public.cs_form_tem_lista(_form)
+                             AND (public.cs_form_cap('editar_criar') OR public.cs_form_cap('encerrar_excluir')))
+        ELSE false
+      END, false)
+  END;
+$$;
+
+-- ── 4) Conferência ───────────────────────────────────────────────────────
+SELECT x.codigo, x.nome, x.ativo
+  FROM public.app_menu x JOIN public.app_modulo m ON m.id = x.modulo_id
+ WHERE m.codigo = 'central_servicos' AND x.codigo = 'formularios_acesso_botao';
+
+NOTIFY pgrst, 'reload schema';
+
+-- =========================================================================
+-- ROLLBACK
+--   DELETE FROM public.app_menu x USING public.app_modulo m
+--    WHERE x.modulo_id = m.id AND m.codigo = 'central_servicos'
+--      AND x.codigo = 'formularios_acesso_botao';
+--   DROP FUNCTION IF EXISTS public.cs_form_gerente_de_acesso();
+--   (e recriar cs_form_pode como está em 20260921000002)
+-- =========================================================================
+
+
+-- ===== 20260921000004_formularios_lista_responder =====
+-- =========================================================================
+-- FORMULÁRIOS — QUEM ESTÁ NA LISTA DE ACESSO TAMBÉM RESPONDE
+--
+-- O PROBLEMA
+--   O botão "Acesso" de cada card governa quem ADMINISTRA e quem LÊ as
+--   respostas. Quem PODE RESPONDER é outra pergunta, respondida pelo
+--   público-alvo do editor (`seguranca` + `setores_acesso` +
+--   CS_FORM_ALVO_USUARIOS, tudo dentro de `cs_form_alvo`).
+--
+--   As duas nunca se falaram. Resultado: colocar a Fulana como dona de um
+--   formulário restrito ao setor JURIDICO não a deixava abrir o próprio
+--   formulário para responder se ela não fosse do JURIDICO — ela edita, mas
+--   toma "Você não está na lista de quem pode responder".
+--
+-- A DECISÃO (Pablo, 24/08/2026): SOMAR, não substituir.
+--   * O público-alvo continua sendo quem define os respondentes. Nenhum
+--     formulário que hoje coleta respostas para de coletar — é o motivo de
+--     não termos feito a lista MANDAR em quem responde: a pesquisa com 2
+--     administradores na lista pararia de receber as respostas do alvo no
+--     instante do deploy.
+--   * Quem está na lista de acesso (form_dono/form_gerenciar/form_editar/
+--     form_ver) passa a poder responder MESMO fora do alvo. É o mínimo para
+--     que administrar o formulário não exclua você dele.
+--
+-- O QUE **NÃO** MUDA
+--   * `cs_form_aberto` (publicado, dentro da janela, abaixo do limite) segue
+--     valendo para todo mundo — estar na lista não fura formulário encerrado.
+--   * `cs_form_senha_ok` segue valendo: senha é camada extra, não público.
+--   * `cs_forms_select` (quem ENXERGA a linha do formulário) fica como está.
+--     Podá-la pela lista seria inócuo e perigoso: `cs_form_alvo` já devolve
+--     true para qualquer logado no caso "restrito sem filtro nenhum", que é a
+--     maioria, e quem pode responder PRECISA ler o formulário para preenchê-lo.
+--     Sumir o card da tela de GESTÃO de quem a lista exclui é decisão de
+--     interface (Formularios.tsx), não de RLS — a RLS não distingue "abri a
+--     gestão" de "abri o link para responder".
+--
+-- A tela pública já chama `cs_form_alvo` por RPC para decidir o que mostrar
+-- (FormularioPublico.tsx), então ela acompanha esta migration sozinha.
+--
+-- Idempotente.
+-- ROLLBACK: no fim do arquivo.
+-- =========================================================================
+
+-- Mesma função de 20260715000002 com UM ramo a mais: estar na lista de acesso
+-- do formulário. `cs_form_papel_no_form` só considera os quatro papéis da
+-- lista (desde 20260921000002), então as linhas de LEITURA por formulário —
+-- que não são lista de acesso — não entram aqui e não viram passe de resposta.
+CREATE OR REPLACE FUNCTION public.cs_form_alvo(_form_id uuid)
+RETURNS boolean LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public AS $$
+  SELECT EXISTS (
+    SELECT 1 FROM public."CS_FORMULARIOS" f
+     WHERE f.id = _form_id
+       AND (
+         f.seguranca = 'liberado'
+         OR (auth.uid() IS NOT NULL AND (
+           -- restrito sem filtro nenhum = qualquer usuário logado do ERP
+           (COALESCE(array_length(f.setores_acesso, 1), 0) = 0
+            AND NOT EXISTS (SELECT 1 FROM public."CS_FORM_ALVO_USUARIOS" u WHERE u.formulario_id = f.id))
+           -- união: do setor liberado OU escolhido a dedo
+           OR EXISTS (SELECT 1 FROM public."EMPREGADOS" e
+                       WHERE e.auth_user_id = auth.uid()
+                         AND e."Setor_ERP" = ANY (f.setores_acesso))
+           OR EXISTS (SELECT 1 FROM public."CS_FORM_ALVO_USUARIOS" u
+                       WHERE u.formulario_id = f.id AND u.user_id = auth.uid())
+           -- NOVO: quem administra ou lê pela lista do botão "Acesso" também
+           -- responde, esteja ou não no público-alvo.
+           OR public.cs_form_papel_no_form(f.id) IS NOT NULL
+         ))
+       ));
+$$;
+
+-- CREATE OR REPLACE preserva os grants; repetidos aqui para o caso de a função
+-- ser criada do zero num banco novo.
+REVOKE EXECUTE ON FUNCTION public.cs_form_alvo(uuid) FROM PUBLIC;
+GRANT  EXECUTE ON FUNCTION public.cs_form_alvo(uuid) TO anon, authenticated;
+
+-- ── Conferência ──────────────────────────────────────────────────────────
+-- Quantos formulários têm lista, e quantos deles são restritos (só nesses o
+-- ramo novo muda alguma coisa).
+SELECT count(*) FILTER (WHERE tem_lista)                              AS com_lista,
+       count(*) FILTER (WHERE tem_lista AND seguranca = 'restrito')   AS com_lista_restritos
+  FROM (SELECT f.seguranca,
+               EXISTS (SELECT 1 FROM public."CS_FORM_ACESSOS" a
+                        WHERE a.formulario_id = f.id
+                          AND a.papel IN ('form_dono','form_gerenciar','form_editar','form_ver')) AS tem_lista
+          FROM public."CS_FORMULARIOS" f WHERE f.deleted_at IS NULL) t;
+
+NOTIFY pgrst, 'reload schema';
+
+-- =========================================================================
+-- ROLLBACK
+--   Recriar public.cs_form_alvo(uuid) sem o ramo
+--   `OR public.cs_form_papel_no_form(f.id) IS NOT NULL`
+--   (versão original em 20260715000002_formularios_seguranca.sql, linha 97).
+-- =========================================================================

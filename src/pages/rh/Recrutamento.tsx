@@ -128,6 +128,27 @@ function fmtDt(s?: string) {
   return s.replace("T", " ").slice(0, 10);
 }
 
+/**
+ * Nome completo real (EMPREGADOS) de cada e-mail.
+ *
+ * Quem solicita uma vaga fica gravado com `user_metadata.nome`, e quem não tem
+ * nome no metadata fica gravado só com o e-mail — daí "Solicitado por
+ * fulano.silva@grupo…" nas telas. EMPREGADOS é a fonte oficial do nome
+ * (ver o vínculo login↔empregado), então é dela que se traduz.
+ */
+async function nomesPorEmail(emails: (string | null | undefined)[]): Promise<Record<string, string>> {
+  const lista = Array.from(new Set(emails.filter((e): e is string => !!e && e.includes("@"))));
+  if (!lista.length) return {};
+  const { data } = await (supabase as any).from("EMPREGADOS").select('"Nome","email"').in("email", lista);
+  const mapa: Record<string, string> = {};
+  (data ?? []).forEach((e: any) => { if (e.email && e["Nome"]) mapa[e.email] = e["Nome"]; });
+  return mapa;
+}
+
+/** O e-mail de quem solicitou — mora em `solicitante_cpf` (nome de coluna legado). */
+const emailSolicitante = (s: { solicitante_cpf?: string; solicitante_nome?: string }) =>
+  [s.solicitante_cpf, s.solicitante_nome].find((v) => String(v ?? "").includes("@")) ?? "";
+
 function badgeStatusCls(st: string) {
   if (st === "Pendente Operacional")  return "bg-yellow-100 text-yellow-800 border border-yellow-200";
   if (st === "Pendente Recrutamento") return "bg-purple-100 text-purple-700 border border-purple-200";
@@ -355,6 +376,7 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "opera
   const [showHistorico, setShowHistorico]   = useState(false);   // painel de histórico
   const [historico, setHistorico]           = useState<any[]>([]);
   const [nomesPorEmailHist, setNomesPorEmailHist] = useState<Record<string, string>>({}); // nome real (EMPREGADOS) por e-mail, p/ histórico
+  const [nomeSolicitante, setNomeSolicitante] = useState("");  // nome real de quem pediu a vaga (quando só ficou o e-mail)
   // Roteiro de entrevista (ENTREVISTA / ENTREVISTA GESTOR)
   const [roteiroModal, setRoteiroModal]     = useState<{ id: number; nome: string; etapa: string } | null>(null);
   const [roteiroRows, setRoteiroRows]       = useState<{ pergunta: string; resposta: string }[]>([]);
@@ -601,13 +623,7 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "opera
     const eventos = data ?? [];
     // usuario_nome pode ter ficado só com o e-mail (usuário sem nome no metadata)
     // — busca o nome completo real em EMPREGADOS pra exibir no lugar.
-    const emails = Array.from(new Set(eventos.map((r: any) => r.usuario_email).filter(Boolean)));
-    let mapa: Record<string, string> = {};
-    if (emails.length) {
-      const { data: emps } = await (supabase as any).from("EMPREGADOS").select('"Nome","email"').in("email", emails);
-      (emps ?? []).forEach((e: any) => { if (e.email && e["Nome"]) mapa[e.email] = e["Nome"]; });
-    }
-    setNomesPorEmailHist(mapa);
+    setNomesPorEmailHist(await nomesPorEmail(eventos.map((r: any) => r.usuario_email)));
     setHistorico(eventos);
   }, []);
 
@@ -624,6 +640,15 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "opera
       (supabase as any).from("WA_MENSAGENS_RECRUTAMENTO").select("*").eq("solicitacao_id", id).order("created_at"),
     ]);
     if (sol) setDrawerSol(sol);
+    // "Solicitado por": quando ficou gravado só com o e-mail, traduz para o
+    // nome de EMPREGADOS. Só consulta quando precisa — solicitação criada por
+    // quem tem nome no metadata já vem pronta.
+    setNomeSolicitante("");
+    const nomeGravado = String(sol?.solicitante_nome ?? "").trim();
+    if (sol && (!nomeGravado || nomeGravado.includes("@"))) {
+      const email = emailSolicitante(sol);
+      if (email) setNomeSolicitante((await nomesPorEmail([email]))[email] ?? "");
+    }
     if (sol && (STATUS_PROCESSO.includes(sol.status) || sol.status === "Contratado" || String(sol.status ?? "").startsWith("Concluído"))) loadCandidatos(id);
     if (mensagens) setMsgs(mensagens);
 
@@ -1509,6 +1534,24 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "opera
   }, []);
 
   // ── Render Detalhe ────────────────────────────────────────────
+  /**
+   * "Solicitado por": nome de quem pediu, com o e-mail embaixo em letra miúda.
+   * O e-mail continua ali porque é o que identifica homônimos e o que aparece
+   * nas outras telas; o que muda é a ordem de leitura — o nome vem primeiro.
+   */
+  const quemSolicitou = (s: Solicitacao) => {
+    const email = emailSolicitante(s);
+    const gravado = String(s.solicitante_nome ?? "").trim();
+    const nome = (gravado && !gravado.includes("@") ? gravado : "") || nomeSolicitante;
+    if (!nome) return email;   // sem cadastro em EMPREGADOS: o e-mail é melhor que nada
+    return (
+      <span style={{ display: "inline-flex", flexDirection: "column", lineHeight: 1.35 }}>
+        <span>{nome}</span>
+        {email && <span style={{ fontSize: 11, fontWeight: 600, color: "#94a3b8" }}>{email}</span>}
+      </span>
+    );
+  };
+
   const renderDetalhe = (s: Solicitacao) => {
     const di = (label: string, val: any, full = false) => (
       <div className={`rec-di${full ? " full" : ""}`} key={label}>
@@ -1538,7 +1581,7 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "opera
           {di("Insalubridade", s.insalubridade_recebe + (s.insalubridade_quanto ? " — " + s.insalubridade_quanto : ""))}
           {di("Local Exato", s.local_exato)}
           {di("Data Início Prevista", fmtBr(s.data_inicio_prevista))}
-          {di("Solicitado por", s.solicitante_nome)}
+          {di("Solicitado por", quemSolicitou(s))}
           {di("Data Solicitação", fmtDt(s.created_at))}
           {s.aprovado_por_nome ? di("Aprovado/Reprovado por", s.aprovado_por_nome) : null}
         </div>
