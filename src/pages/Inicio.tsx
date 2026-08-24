@@ -269,12 +269,13 @@ export default function Inicio() {
   // tomaria "Acesso negado" ao clicar. Vale também para "Gerenciar
   // favoritos": ninguém favorita tela que não pode abrir.
   const podeVer = useCallback((to: string) => {
+
     // Encarregado externo primeiro: ele não tem perfil de acesso, então só a
     // allowlist dele responde.
-    if (externo) return ROTAS_EXTERNO.some((r) => to === r || to.startsWith(r + "/"));
     if (ACESSO_ABERTO_SEM_PERMISSOES) return true;
     if (rotaSempreLiberada(to)) return true;
     if (!access) return false;
+    
     const code = matchMenuCode(to, access.routes);
     if (!code || access.inactiveCodes.has(code)) return false;
     return access.codes.has(code);
@@ -460,9 +461,13 @@ export default function Inicio() {
       </section>
 
       {/* ══════════════════════ Minhas Reuniões ═════════════════════ */}
-      <div data-reveal>
-        <MinhasReunioesCard />
-      </div>
+      {/* Encarregado externo não participa de reunião do ERP: o cartão vinha
+          sempre vazio e o "ver todas" apontava pra uma tela que ele não abre. */}
+      {!externo && (
+        <div data-reveal>
+          <MinhasReunioesCard />
+        </div>
+      )}
     </div>
   );
 }
