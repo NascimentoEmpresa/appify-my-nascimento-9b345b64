@@ -97,7 +97,7 @@ const btn = (bg: string, c = "#fff", border = "none"): React.CSSProperties =>
 export default function Formularios() {
   const nav = useNavigate();
   const { user } = useAuth();
-  const { can, canVerAlguma, canCriarSetor, setoresCriar, setor } = useFormPerms();
+  const { can, canVerAlguma, canVerAlgumaNoForm, canNoForm, canCriarSetor, setoresCriar, setor } = useFormPerms();
   const meusSetores = [...setoresCriar].sort();  // setores que o usuario e dono (criar_setor)
   const [forms, setForms] = useState<Formulario[]>([]);
   const [contagens, setContagens] = useState<Record<string, number>>({});
@@ -132,7 +132,13 @@ export default function Formularios() {
       // consulta só para todos os cards: quantas pessoas cada formulário tem
       // e qual é o MEU papel nele. A RLS de CS_FORM_ACESSOS já libera a
       // leitura dos papéis não-dashboard, então isto não vaza nada novo.
-      (supabase as any).from("CS_FORM_ACESSOS").select("user_id,papel,formulario_id").not("formulario_id", "is", null),
+      // Só os QUATRO papéis da lista. Desde 20260921000002 existem também
+      // linhas de LEITURA por formulário (ver_tudo/ver_setor/ver_regra_form),
+      // que não são lista de acesso — contá-las aqui ligaria o modo restrito
+      // do formulário e tiraria todo mundo que não estivesse nelas.
+      (supabase as any).from("CS_FORM_ACESSOS").select("user_id,papel,formulario_id")
+        .not("formulario_id", "is", null)
+        .in("papel", ["form_dono", "form_gerenciar", "form_editar", "form_ver"]),
     ]);
     setLoading(false);
     if (fRes.error) { toast("Erro ao carregar: " + fRes.error.message, "err"); return; }
@@ -358,9 +364,12 @@ export default function Formularios() {
     can("ver_tudo")
     || papelPermite(f, ["form_dono", "form_gerenciar"])
     || (!temLista(f) && (can("editar_criar") || can("encerrar_excluir")));
+  // A regra PRÓPRIA do formulário manda aqui também: quem tem "ver tudo" no
+  // geral mas uma regra vazia neste formulário não vê as respostas dele — e o
+  // botão não pode prometer uma tela que a RLS devolve em branco. Espelha
+  // cs_form_cap_ver + cs_form_pode(_,'ver') da migration 20260921000002.
   const podeVerRespostas = (f: Formulario) =>
-    (canVerAlguma && !listaExclui(f))
-    || can("ver_tudo")
+    (canVerAlgumaNoForm(f.id) && (!listaExclui(f) || canNoForm(f.id, "ver_tudo")))
     || papelPermite(f, ["form_dono", "form_gerenciar", "form_editar", "form_ver"]);
   // Gestor só de setor vê apenas os formulários do(s) seu(s) setor(es).
   const soGestorSetor = !podeVerTodos && meusSetores.length > 0;

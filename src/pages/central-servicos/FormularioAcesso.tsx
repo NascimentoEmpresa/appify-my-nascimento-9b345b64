@@ -58,7 +58,13 @@ export function FormularioAcesso({ formulario, onFechar, onSalvo, toast }: {
 
   const carregar = async () => {
     const [aRes, pRes] = await Promise.all([
-      (supabase as any).from("CS_FORM_ACESSOS").select("id,user_id,papel").eq("formulario_id", formulario.id),
+      // `.in(papel)`: o formulário também guarda linhas de LEITURA por
+      // formulário (20260921000002), que não pertencem a esta lista. Sem o
+      // filtro elas apareceriam como gente na lista e — pior — ligariam o
+      // modo restrito (`restrito = linhas.length > 0`) sem ninguém pedir.
+      (supabase as any).from("CS_FORM_ACESSOS").select("id,user_id,papel")
+        .eq("formulario_id", formulario.id)
+        .in("papel", PAPEIS.map((p) => p.valor)),
       (supabase as any).from("profiles").select("id,display_name,email").order("display_name"),
     ]);
     if (aRes.error) toast("Erro ao carregar o acesso: " + aRes.error.message, "err");
