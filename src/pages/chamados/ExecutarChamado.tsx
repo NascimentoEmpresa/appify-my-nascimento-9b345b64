@@ -191,13 +191,13 @@ export default function ExecutarChamado() {
           {chamado.comentario_gerente && (
             <Card className="space-y-1 border-primary/30 bg-primary/5 p-4">
               <p className="text-xs font-semibold uppercase tracking-wider text-primary">Comentário do gerente de sistemas</p>
-              <p className="whitespace-pre-wrap text-sm">{chamado.comentario_gerente}</p>
+              <p className="whitespace-pre-wrap text-sm [overflow-wrap:anywhere]">{chamado.comentario_gerente}</p>
             </Card>
           )}
           {chamado.observacao_gerente && (
             <Card className="space-y-1 p-4">
               <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Observação do gerente</p>
-              <p className="whitespace-pre-wrap text-sm">{chamado.observacao_gerente}</p>
+              <p className="whitespace-pre-wrap text-sm [overflow-wrap:anywhere]">{chamado.observacao_gerente}</p>
             </Card>
           )}
 
@@ -209,12 +209,12 @@ export default function ExecutarChamado() {
             <p className="text-sm font-bold">Descrição e evidências (abertura)</p>
             <div>
               <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Descrição detalhada</p>
-              <p className="whitespace-pre-wrap text-sm">{chamado.descricao || "—"}</p>
+              <p className="whitespace-pre-wrap text-sm [overflow-wrap:anywhere]">{chamado.descricao || "—"}</p>
             </div>
             {chamado.observacoes_solicitante && (
               <div>
                 <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Observações do solicitante</p>
-                <p className="whitespace-pre-wrap text-sm">{chamado.observacoes_solicitante}</p>
+                <p className="whitespace-pre-wrap text-sm [overflow-wrap:anywhere]">{chamado.observacoes_solicitante}</p>
               </div>
             )}
             <div>

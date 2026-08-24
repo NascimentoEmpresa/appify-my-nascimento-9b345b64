@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { db } from "./db";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
+import { useMeuNome } from "@/hooks/useMeuNome";
 import { useToast } from "@/hooks/use-toast";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -51,6 +52,7 @@ export function BlocoProvidencias({ denunciaId, podeEditar }: {
   denunciaId: string; podeEditar: boolean;
 }) {
   const { user } = useAuth();
+  const meuNome = useMeuNome();  // vai gravado — ver useMeuNome
   const { toast } = useToast();
   const [itens, setItens] = useState<Providencia[]>([]);
   const [carregando, setCarregando] = useState(true);
@@ -75,7 +77,7 @@ export function BlocoProvidencias({ denunciaId, podeEditar }: {
       descricao: nova.descricao.trim(),
       responsavel: nova.responsavel.trim() || null,
       prazo: nova.prazo || null,
-      criado_por_nome: user?.user_metadata?.nome ?? user?.email ?? null,
+      criado_por_nome: meuNome || null,
     });
     setSalvando(false);
     if (error) { toast({ title: "Erro ao gravar", description: error.message, variant: "destructive" }); return; }
@@ -182,6 +184,7 @@ export function BlocoAnexos({ denunciaId, podeEditar, podeVerSigiloso }: {
   denunciaId: string; podeEditar: boolean; podeVerSigiloso: boolean;
 }) {
   const { user } = useAuth();
+  const meuNome = useMeuNome();  // vai gravado — ver useMeuNome
   const { toast } = useToast();
   const [itens, setItens] = useState<Anexo[]>([]);
   const [carregando, setCarregando] = useState(true);
@@ -222,7 +225,7 @@ export function BlocoAnexos({ denunciaId, podeEditar, podeVerSigiloso }: {
         tamanho_bytes: arq.size,
         sensivel,
         autor_user_id: user?.id ?? null,
-        autor_nome: user?.user_metadata?.nome ?? user?.email ?? null,
+        autor_nome: meuNome || null,
       });
       // Linha sem arquivo é ruim; arquivo sem linha é pior — vira lixo
       // invisível no bucket, que ninguém encontra para apagar.

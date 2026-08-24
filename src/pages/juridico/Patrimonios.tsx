@@ -7,6 +7,7 @@ import {
   type LinhaParcela, type ModoParcelas,
 } from "@/pages/juridico/patrimonio/parcelas";
 import { useAuth } from "@/hooks/useAuth";
+import { useMeuNome } from "@/hooks/useMeuNome";
 import { MapaPatrimonios } from "./patrimonio/MapaPatrimonios";
 import {
   CLASSIFICACOES, ESPECIES_ESCRITURA, SITUACOES_PAGAMENTO, corSituacao,
@@ -101,7 +102,7 @@ const ehLink = (s?: string) => !!s && /^https?:\/\//i.test(s.trim());
 export default function Patrimonios() {
   const { user } = useAuth();
   const nav = useNavigate();
-  const autor = user?.user_metadata?.nome ?? user?.email ?? "Usuário";
+  const autor = useMeuNome() || "Usuário";  // vai gravado — ver useMeuNome
 
   const [pats, setPats] = useState<Patrimonio[]>([]);
   const [obrAll, setObrAll] = useState<Obrigacao[]>([]);
