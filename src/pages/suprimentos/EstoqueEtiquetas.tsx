@@ -17,11 +17,12 @@ import { Link } from "react-router-dom";
 import {
   useAlmoxarifados, useEstoqueLista, useTagsDoItem, useEntradaEstoque, useDevolverTags,
   useRemoverTag, useFornecedores, useHistoricoDoMaterial, useInventario,
+  useHistoricoPreco, fmtBRL,
   type LinhaEstoque, type TipoTag, type UnidadeEntrada, type Movimento, type ResultadoInventario,
 } from "@/hooks/useSupEstoque";
 import {
   PackagePlus, Search, AlertTriangle, Boxes, Undo2, Trash2, ShieldAlert, Plus, X, Tag,
-  ClipboardCheck, History, ArrowDownToLine, ArrowUpFromLine, RotateCcw, Check,
+  ClipboardCheck, History, ArrowDownToLine, ArrowUpFromLine, RotateCcw, Check, Coins,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useAccessibleMenus } from "@/hooks/useAccessibleMenus";
@@ -55,6 +56,10 @@ export default function EstoqueEtiquetas() {
     disponivel: linhas.reduce((s, l) => s + l.disponivel, 0),
     abaixo: linhas.filter((l) => l.estoque_minimo > 0 && l.disponivel < l.estoque_minimo).length,
     etiquetas: linhas.reduce((s, l) => s + l.etiquetas, 0),
+    // Quanto vale o que está parado no almoxarifado — pedido explícito do
+    // chamado, junto com o custo por item (SIS-2026-0199).
+    valorTotal: linhas.reduce((s, l) => s + l.valor_total, 0),
+    semCusto: linhas.filter((l) => l.disponivel > 0 && l.custo_unitario === 0).length,
   }), [linhas]);
 
   return (
@@ -76,13 +81,23 @@ export default function EstoqueEtiquetas() {
         }
       />
 
-      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
         <Kpi rotulo="Materiais" valor={kpis.materiais} icone={Boxes} />
         <Kpi rotulo="Unidades disponíveis" valor={kpis.disponivel} icone={Tag} />
         <Kpi rotulo="Etiquetas cadastradas" valor={kpis.etiquetas} icone={Tag} />
         <Kpi rotulo="Abaixo do mínimo" valor={kpis.abaixo} icone={AlertTriangle}
              destaque={kpis.abaixo > 0} />
+        <Kpi rotulo="Valor total do estoque" valor={fmtBRL(kpis.valorTotal)} icone={Coins} />
       </div>
+
+      {/* O total só é confiável se todo material tiver custo. Sem este aviso o
+          número pareceria completo estando pela metade. */}
+      {kpis.semCusto > 0 && (
+        <p className="text-xs text-muted-foreground">
+          {kpis.semCusto} {kpis.semCusto === 1 ? "material com estoque não tem" : "materiais com estoque não têm"} custo
+          informado — o valor total acima não considera {kpis.semCusto === 1 ? "ele" : "eles"}.
+        </p>
+      )}
 
       <div className="relative max-w-md">
         <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
@@ -120,6 +135,10 @@ export default function EstoqueEtiquetas() {
                   <TableHead className="text-right">Disponível</TableHead>
                   <TableHead className="text-right">Consumido</TableHead>
                   <TableHead className="text-right">Mínimo</TableHead>
+                  {/* SIS-2026-0199: o custo já era gravado na entrada e nunca
+                      voltava para a tela. É o último valor pago. */}
+                  <TableHead className="text-right">Custo unit.</TableHead>
+                  <TableHead className="text-right">Valor total</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -149,6 +168,21 @@ export default function EstoqueEtiquetas() {
                       </TableCell>
                       <TableCell className="text-right text-muted-foreground">{l.consumido}</TableCell>
                       <TableCell className="text-right text-muted-foreground">{l.estoque_minimo || "—"}</TableCell>
+                      <TableCell className="text-right">
+                        {l.custo_unitario > 0 ? (
+                          <span className={cn(l.preco_vencido && "text-amber-600")}>
+                            {fmtBRL(l.custo_unitario)}
+                            {/* Preço fora da validade negociada: ainda serve de
+                                referência, mas não para fechar cotação. */}
+                            {l.preco_vencido && <AlertTriangle className="ml-1 inline h-3 w-3" />}
+                          </span>
+                        ) : (
+                          <span className="text-muted-foreground">—</span>
+                        )}
+                      </TableCell>
+                      <TableCell className="text-right font-medium">
+                        {l.valor_total > 0 ? fmtBRL(l.valor_total) : <span className="text-muted-foreground">—</span>}
+                      </TableCell>
                     </TableRow>
                   );
                 })}
@@ -165,8 +199,92 @@ export default function EstoqueEtiquetas() {
   );
 }
 
+/**
+ * O que já se pagou por este material (SIS-2026-0199).
+ *
+ * Existe porque o valor era sobrescrito a cada entrada e o preço anterior se
+ * perdia — então não dava para responder "quanto custava isso antes?", que é a
+ * pergunta de quem vai negociar. A seta ao lado mostra se subiu ou desceu em
+ * relação ao valor que estava lá.
+ */
+function HistoricoDePrecos({ linha }: { linha: LinhaEstoque | null }) {
+  const { data: precos = [], isLoading } = useHistoricoPreco(linha?.sup_item_id ?? null);
+
+  if (isLoading) return <p className="py-8 text-center text-sm text-muted-foreground">Carregando…</p>;
+  if (precos.length === 0) {
+    return (
+      <p className="py-8 text-center text-sm text-muted-foreground">
+        Nenhum preço registrado ainda. O histórico começa na próxima entrada com valor informado.
+      </p>
+    );
+  }
+
+  return (
+    <div className="space-y-3">
+      <div className="flex flex-wrap items-baseline gap-x-4 gap-y-1 rounded-md border bg-muted/40 p-3">
+        <div>
+          <p className="text-xs text-muted-foreground">Último valor pago</p>
+          <p className="text-xl font-bold">{fmtBRL(precos[0].valor_unitario)}</p>
+        </div>
+        {linha?.preco_valido_ate && (
+          <div>
+            <p className="text-xs text-muted-foreground">Preço válido até</p>
+            <p className={cn("text-sm font-medium", linha.preco_vencido && "text-amber-600")}>
+              {fmtDataLocal(linha.preco_valido_ate)}
+              {linha.preco_vencido && " — vencido"}
+            </p>
+          </div>
+        )}
+      </div>
+
+      <div className="space-y-1.5">
+        {precos.map((p, i) => {
+          const subiu = p.valor_anterior != null && p.valor_unitario > p.valor_anterior;
+          const desceu = p.valor_anterior != null && p.valor_unitario < p.valor_anterior;
+          return (
+            <div key={i} className="flex items-start justify-between gap-3 rounded-md border p-2 text-sm">
+              <div className="min-w-0">
+                <p className="font-medium">
+                  {fmtBRL(p.valor_unitario)}
+                  {p.valor_anterior != null && (
+                    <span className={cn("ml-2 text-xs font-normal",
+                      subiu && "text-destructive", desceu && "text-emerald-600")}>
+                      {subiu ? "▲" : desceu ? "▼" : "="} antes {fmtBRL(p.valor_anterior)}
+                    </span>
+                  )}
+                </p>
+                <p className="text-xs text-muted-foreground">
+                  {[
+                    p.fornecedor_nome,
+                    p.almoxarifado,
+                    p.origem === "nf" ? "por nota fiscal"
+                      : p.origem === "ajuste" ? "cadastro anterior" : "entrada",
+                    p.registrado_por_nome,
+                  ].filter(Boolean).join(" · ")}
+                </p>
+              </div>
+              <div className="shrink-0 text-right text-xs text-muted-foreground">
+                <p>{new Date(p.registrado_em).toLocaleDateString("pt-BR")}</p>
+                {p.valido_ate && <p>vale até {fmtDataLocal(p.valido_ate)}</p>}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+/** 'YYYY-MM-DD' → 'DD/MM/AAAA' sem passar por Date (evita o "andou um dia"). */
+function fmtDataLocal(v?: string | null): string {
+  if (!v) return "—";
+  const m = String(v).match(/^(\d{4})-(\d{2})-(\d{2})/);
+  return m ? `${m[3]}/${m[2]}/${m[1]}` : String(v);
+}
+
 function Kpi({ rotulo, valor, icone: Icone, destaque }: {
-  rotulo: string; valor: number; icone: any; destaque?: boolean;
+  // string aceita porque o valor total do estoque vem formatado em R$.
+  rotulo: string; valor: number | string; icone: any; destaque?: boolean;
 }) {
   return (
     <div className={cn("flex items-center gap-3 rounded-lg border p-3",
@@ -197,6 +315,7 @@ function DialogEntrada({ aberto, onFechar, empresaId }: {
   const [material, setMaterial] = useState("");
   const [buscaMat, setBuscaMat] = useState("");
   const [valor, setValor] = useState("");
+  const [precoValidoAte, setPrecoValidoAte] = useState("");
   const [minimo, setMinimo] = useState("");
   const [fornecedor, setFornecedor] = useState("");
   const [blocos, setBlocos] = useState<BlocoUnidade[]>([{ ...BLOCO_VAZIO }]);
@@ -215,7 +334,7 @@ function DialogEntrada({ aberto, onFechar, empresaId }: {
 
   const limpar = () => {
     setAlmox(""); setMaterial(""); setBuscaMat(""); setValor(""); setMinimo("");
-    setFornecedor(""); setBlocos([{ ...BLOCO_VAZIO }]);
+    setPrecoValidoAte(""); setFornecedor(""); setBlocos([{ ...BLOCO_VAZIO }]);
   };
 
   const enviar = async () => {
@@ -229,6 +348,7 @@ function DialogEntrada({ aberto, onFechar, empresaId }: {
     await entrada.mutateAsync({
       almoxarifado_id: almox, sup_item_id: material,
       valor_unitario: Number(valor || 0), estoque_minimo: Number(minimo || 0),
+      preco_valido_ate: precoValidoAte || null,
       fornecedor_id: fornecedor || null, unidades,
     });
     limpar();
@@ -304,11 +424,18 @@ function DialogEntrada({ aberto, onFechar, empresaId }: {
             )}
           </div>
 
-          <div className="grid gap-4 sm:grid-cols-2">
+          <div className="grid gap-4 sm:grid-cols-3">
             <div>
               <Label>Valor unitário</Label>
               <Input type="number" step="0.01" min="0" value={valor}
                      onChange={(e) => setValor(e.target.value)} placeholder="0,00" />
+            </div>
+            <div>
+              {/* "Quanto tempo tu consegue segurar essa cotação para mim?"
+                  O comprador negocia isso e registra aqui (SIS-2026-0199). */}
+              <Label>Preço válido até</Label>
+              <Input type="date" value={precoValidoAte}
+                     onChange={(e) => setPrecoValidoAte(e.target.value)} />
             </div>
             <div>
               <Label>Estoque mínimo</Label>
@@ -478,12 +605,17 @@ function DialogDetalhe({ linha, onFechar }: { linha: LinhaEstoque | null; onFech
           {/* Abas em vez de uma rolagem só: item com 90 etiquetas e 200 eventos
               vira um modal quilômetro, e ninguém acha o histórico no fim. */}
           <Tabs defaultValue="etiquetas">
-            <TabsList className="grid w-full grid-cols-2">
+            <TabsList className="grid w-full grid-cols-3">
               <TabsTrigger value="etiquetas" className="gap-1.5">
                 <Tag className="h-3.5 w-3.5" /> Etiquetas
               </TabsTrigger>
               <TabsTrigger value="historico" className="gap-1.5">
                 <History className="h-3.5 w-3.5" /> Histórico
+              </TabsTrigger>
+              {/* "Histórico de valores das cotações": o que já se pagou por
+                  este material, para o comprador cotar sabendo do que fala. */}
+              <TabsTrigger value="precos" className="gap-1.5">
+                <Coins className="h-3.5 w-3.5" /> Preços
               </TabsTrigger>
             </TabsList>
 
@@ -533,6 +665,10 @@ function DialogDetalhe({ linha, onFechar }: { linha: LinhaEstoque | null; onFech
 
             <TabsContent value="historico" className="mt-3">
               <LinhaDoTempo supItemId={linha?.sup_item_id ?? null} />
+            </TabsContent>
+
+            <TabsContent value="precos" className="mt-3">
+              <HistoricoDePrecos linha={linha} />
             </TabsContent>
           </Tabs>
         </DialogContent>
