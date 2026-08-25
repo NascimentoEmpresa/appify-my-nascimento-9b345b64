@@ -126,8 +126,16 @@ function ResumoItem({
 export function FornecedorDialog({ open, onOpenChange, fornecedor, onSaved, readOnly = false }: Props) {
   const { data: empresaId } = useEmpresaId();
   const { can } = usePermissoes();
-  const canSetGlobal = can("excluir", "suprimentos", "fornecedor");
-  const canEdit = !readOnly && can(fornecedor ? "alterar" : "incluir", "suprimentos", "fornecedor");
+  // Menu code é `fornecedores`, no plural — é o que as policies da tabela usam
+  // (can_access(..., 'fornecedores', ...) na 20260823000001) e o que está em
+  // app_menu. Aqui dizia `fornecedor`: no singular a permissão nunca casa, e a
+  // tela abriria travada para todo mundo.
+  //
+  // Este arquivo continua SEM ROTA (a tela em uso é a enxuta, por decisão de
+  // produto registrada em Fornecedores.tsx). A correção fica para quem for
+  // religá-lo um dia não cair na armadilha — achado em SIS-2026-0209.
+  const canSetGlobal = can("excluir", "suprimentos", "fornecedores");
+  const canEdit = !readOnly && can(fornecedor ? "alterar" : "incluir", "suprimentos", "fornecedores");
   const isLocked = readOnly || !canEdit;
 
   const [form, setForm] = useState<any>(empty);
