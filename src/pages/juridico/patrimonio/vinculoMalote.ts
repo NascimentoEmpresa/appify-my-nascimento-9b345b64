@@ -46,7 +46,17 @@ export const despesaEstaPaga = (d?: { status?: string | null; pago_em?: string |
 // "Enviar ao Malote" para conta que já estava lá.
 // =====================================================================
 
-export type StatusConta = "Pago" | "Enviado ao Malote" | "Vencido" | "Pendente";
+export type StatusConta = "Pago" | "Suspensa" | "Enviado ao Malote" | "Vencido" | "Pendente";
+
+/**
+ * O valor gravado em `status` para a parcela suspensa.
+ *
+ * Suspender é para a parcela que existe no contrato mas NÃO deve ser cobrada
+ * agora — contrato em renegociação, parcela em disputa, financiamento com
+ * carência. Sem isso ela vencia sozinha e ficava no vermelho para sempre,
+ * poluindo o contador de vencidas e escondendo o que realmente atrasou.
+ */
+export const STATUS_SUSPENSA = "Suspensa";
 
 /** Só o que o selo precisa saber da conta. */
 export interface ContaParaSelo {
@@ -71,13 +81,17 @@ export function statusDaConta(
   hoje: string = new Date().toISOString().slice(0, 10),
 ): StatusConta {
   if (o.status === "Pago") return "Pago";                       // baixa manual, com comprovante
+  // Antes do vencimento e antes do Malote: suspender é justamente dizer "esta
+  // não corre agora". Só não passa na frente de "Pago", que é fato consumado.
+  if (o.status === STATUS_SUSPENSA) return "Suspensa";
   if (o.malote_despesa_id) return malotePaga?.(o.malote_despesa_id) ? "Pago" : "Enviado ao Malote";
   if (o.vencimento && o.vencimento < hoje) return "Vencido";
   return "Pendente";
 }
 
 export const corDaConta = (st: StatusConta): string =>
-  st === "Pago" ? "#16a34a" : st === "Enviado ao Malote" ? "#2563eb" : st === "Vencido" ? "#dc2626" : "#ea580c";
+  st === "Pago" ? "#16a34a" : st === "Enviado ao Malote" ? "#2563eb"
+  : st === "Vencido" ? "#dc2626" : st === "Suspensa" ? "#64748b" : "#ea580c";
 
 /**
  * A conta ainda pode ser enviada ao Malote?
@@ -85,7 +99,8 @@ export const corDaConta = (st: StatusConta): string =>
  * Não, se já foi: enviar de novo cria uma SEGUNDA despesa para o mesmo
  * boleto, e o financeiro paga duas vezes. Não, se já está paga.
  */
-export const podeEnviarAoMalote = (st: StatusConta) => st !== "Pago" && st !== "Enviado ao Malote";
+export const podeEnviarAoMalote = (st: StatusConta) =>
+  st !== "Pago" && st !== "Enviado ao Malote" && st !== "Suspensa";
 
 /**
  * A baixa manual ("já paguei por fora") ainda faz sentido?
@@ -95,3 +110,17 @@ export const podeEnviarAoMalote = (st: StatusConta) => st !== "Pago" && st !== "
  * e o Patrimônio não é quem sabe se o dinheiro saiu.
  */
 export const podeBaixarManualmente = (st: StatusConta) => podeEnviarAoMalote(st);
+
+/**
+ * A conta entra no alerta de "a vencer / vencida(s)" do topo da tela?
+ *
+ * Paga não, obviamente. Suspensa também não: suspender é dizer "esta não
+ * corre agora", e o alerta a tratava pela data de vencimento como qualquer
+ * outra — a tela chegou a mostrar "Suspensa" e "Vencida há 164d" no mesmo
+ * item, exatamente a contradição que a suspensão existe para eliminar.
+ *
+ * Enviada ao Malote CONTINUA no alerta de propósito: o dinheiro ainda não
+ * saiu, e sumir daqui esconderia a conta justamente enquanto ela espera
+ * aprovação.
+ */
+export const entraNoAlerta = (st: StatusConta) => st !== "Pago" && st !== "Suspensa";

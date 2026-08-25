@@ -1,0 +1,255 @@
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { supabase } from "@/integrations/supabase/client";
+import { useAuth } from "@/hooks/useAuth";
+import { useMeuNome } from "@/hooks/useMeuNome";
+import { usePermissoes } from "@/context/PermissoesContext";
+import { useToast } from "@/hooks/use-toast";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import {
+  GraduationCap, Video, Paperclip, ListChecks, Plus, Search, Pencil, Trash2,
+  CheckCircle2, EyeOff, PlayCircle, Loader2, Award,
+} from "lucide-react";
+import { TreinamentoEditor } from "./treinamento/TreinamentoEditor";
+import { TreinamentoVisor } from "./treinamento/TreinamentoVisor";
+import { recursosDe, type Treinamento } from "./treinamento/core";
+
+// =====================================================================
+// TREINAMENTOS ERP — a grade de cards.
+//
+// Quem pode gerenciar (menu `treinamentos_gerenciar`) cria e edita; todo
+// mundo que enxerga o menu `treinamentos_erp` assiste. Quem decide de
+// verdade é a RLS — o `podeGerenciar` daqui só evita mostrar botão que o
+// banco recusaria.
+// =====================================================================
+
+interface Conclusao {
+  treinamento_id: string;
+  prova_nota: number | null;
+  aprovado: boolean | null;
+}
+
+export default function TreinamentosERP() {
+  const { user } = useAuth();
+  const meuNome = useMeuNome();
+  const { can } = usePermissoes();
+  const { toast } = useToast();
+
+  const podeGerenciar = can("incluir", undefined, "treinamentos_gerenciar")
+                     || can("alterar", undefined, "treinamentos_gerenciar");
+  const podeExcluir = can("excluir", undefined, "treinamentos_gerenciar");
+
+  const [lista, setLista] = useState<Treinamento[]>([]);
+  const [conclusoes, setConclusoes] = useState<Record<string, Conclusao>>({});
+  const [carregando, setCarregando] = useState(true);
+  const [busca, setBusca] = useState("");
+  const [editorAberto, setEditorAberto] = useState(false);
+  const [emEdicao, setEmEdicao] = useState<Treinamento | null>(null);
+  const [assistindo, setAssistindo] = useState<Treinamento | null>(null);
+
+  const carregar = useCallback(async () => {
+    // Os dois blocos em paralelo: a grade não precisa esperar o histórico
+    // para desenhar, e serializar aqui dobrava o tempo de abertura à toa.
+    const [t, c] = await Promise.all([
+      (supabase as any).from("TREINAMENTOS")
+        .select("*").order("ordem", { ascending: true }).order("created_at", { ascending: false }),
+      (supabase as any).from("TREINAMENTO_CONCLUSAO")
+        .select("treinamento_id, prova_nota, aprovado").eq("user_id", user?.id ?? ""),
+    ]);
+    if (t.error) {
+      toast({ title: "Não deu para carregar os treinamentos", description: t.error.message, variant: "destructive" });
+    }
+    setLista((t.data ?? []) as Treinamento[]);
+    const mapa: Record<string, Conclusao> = {};
+    for (const row of (c.data ?? []) as Conclusao[]) mapa[row.treinamento_id] = row;
+    setConclusoes(mapa);
+    setCarregando(false);
+  }, [user?.id, toast]);
+
+  useEffect(() => { carregar(); }, [carregar]);
+
+  const filtrados = useMemo(() => {
+    const q = busca.trim().toLowerCase();
+    if (!q) return lista;
+    return lista.filter(t =>
+      t.titulo.toLowerCase().includes(q) || (t.descricao ?? "").toLowerCase().includes(q));
+  }, [lista, busca]);
+
+  const feitos = useMemo(
+    () => lista.filter(t => conclusoes[t.id]).length, [lista, conclusoes]);
+
+  const excluir = async (t: Treinamento) => {
+    if (!window.confirm(
+      `Excluir "${t.titulo}"?\n\nIsso apaga também o registro de quem já fez o treinamento. Para apenas tirar do ar, edite o card e desligue "Publicado".`
+    )) return;
+    const { error } = await (supabase as any).from("TREINAMENTOS").delete().eq("id", t.id);
+    if (error) { toast({ title: "Não deu para excluir", description: error.message, variant: "destructive" }); return; }
+    toast({ title: "Treinamento excluído" });
+    carregar();
+  };
+
+  return (
+    <div className="space-y-6 p-4 md:p-6">
+      {/* ---- cabeçalho ---- */}
+      <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+        <div className="flex items-center gap-3">
+          <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-gradient-to-br from-primary to-primary/60 text-primary-foreground shadow-lg">
+            <GraduationCap className="h-6 w-6" />
+          </div>
+          <div>
+            <h1 className="text-2xl font-bold tracking-tight">Treinamentos ERP</h1>
+            <p className="text-sm text-muted-foreground">
+              {carregando ? "Carregando…"
+                : lista.length === 0 ? "Nenhum treinamento publicado ainda"
+                : `${lista.length} ${lista.length === 1 ? "treinamento" : "treinamentos"} · você concluiu ${feitos}`}
+            </p>
+          </div>
+        </div>
+
+        <div className="flex items-center gap-2">
+          <div className="relative">
+            <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+            <Input className="w-full pl-9 md:w-64" placeholder="Buscar treinamento…"
+                   value={busca} onChange={e => setBusca(e.target.value)} />
+          </div>
+          {podeGerenciar && (
+            <Button onClick={() => { setEmEdicao(null); setEditorAberto(true); }}>
+              <Plus className="mr-2 h-4 w-4" /> Novo
+            </Button>
+          )}
+        </div>
+      </div>
+
+      {/* ---- barra de progresso ---- */}
+      {!carregando && lista.length > 0 && (
+        <div className="space-y-2 rounded-xl border bg-gradient-to-r from-primary/5 to-transparent p-4">
+          <div className="flex items-center justify-between text-sm">
+            <span className="flex items-center gap-2 font-medium">
+              <Award className="h-4 w-4 text-primary" /> Seu progresso
+            </span>
+            <span className="tabular-nums text-muted-foreground">{feitos} de {lista.length}</span>
+          </div>
+          <div className="h-2 overflow-hidden rounded-full bg-muted">
+            <div className="h-full rounded-full bg-gradient-to-r from-primary to-emerald-500 transition-all duration-700 ease-out"
+                 style={{ width: `${lista.length ? (feitos / lista.length) * 100 : 0}%` }} />
+          </div>
+        </div>
+      )}
+
+      {/* ---- grade ---- */}
+      {carregando ? (
+        <div className="flex items-center justify-center py-20 text-muted-foreground">
+          <Loader2 className="mr-2 h-5 w-5 animate-spin" /> Carregando treinamentos…
+        </div>
+      ) : filtrados.length === 0 ? (
+        <div className="flex flex-col items-center gap-3 rounded-xl border border-dashed py-20 text-center">
+          <GraduationCap className="h-12 w-12 text-muted-foreground/40" />
+          <p className="font-medium">
+            {busca ? "Nenhum treinamento com esse termo" : "Ainda não há treinamentos"}
+          </p>
+          {!busca && podeGerenciar && (
+            <Button variant="outline" onClick={() => { setEmEdicao(null); setEditorAberto(true); }}>
+              <Plus className="mr-2 h-4 w-4" /> Criar o primeiro
+            </Button>
+          )}
+        </div>
+      ) : (
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          {filtrados.map((t, i) => {
+            const r = recursosDe(t);
+            const feito = conclusoes[t.id];
+            return (
+              <div key={t.id}
+                // O delay escalonado dá a entrada em cascata da grade. Teto de
+                // 300ms para uma lista grande não demorar a terminar de aparecer.
+                style={{ animationDelay: `${Math.min(i * 40, 300)}ms` }}
+                className="group flex animate-in flex-col overflow-hidden rounded-xl border bg-card fade-in slide-in-from-bottom-2 fill-mode-backwards duration-300 transition-all hover:-translate-y-1 hover:border-primary/40 hover:shadow-xl">
+
+                {/* capa */}
+                <div className="relative flex h-28 items-center justify-center bg-gradient-to-br from-primary/15 via-primary/5 to-transparent">
+                  <GraduationCap className="h-10 w-10 text-primary/40 transition-transform duration-300 group-hover:scale-110" />
+                  {feito && (
+                    <span className="absolute right-2 top-2 flex items-center gap-1 rounded-full bg-emerald-500 px-2 py-0.5 text-[11px] font-bold text-white shadow">
+                      <CheckCircle2 className="h-3 w-3" />
+                      {feito.prova_nota != null ? `${feito.prova_nota}%` : "Concluído"}
+                    </span>
+                  )}
+                  {!t.publicado && (
+                    <span className="absolute left-2 top-2 flex items-center gap-1 rounded-full bg-muted px-2 py-0.5 text-[11px] font-bold text-muted-foreground shadow">
+                      <EyeOff className="h-3 w-3" /> Rascunho
+                    </span>
+                  )}
+                </div>
+
+                <div className="flex flex-1 flex-col gap-3 p-4">
+                  <div className="space-y-1">
+                    <h3 className="font-semibold leading-tight">{t.titulo}</h3>
+                    {t.descricao && (
+                      <p className="line-clamp-2 text-sm text-muted-foreground">{t.descricao}</p>
+                    )}
+                  </div>
+
+                  {/* selos do que o card oferece */}
+                  <div className="flex flex-wrap gap-1.5">
+                    {r.video && (
+                      <span className="flex items-center gap-1 rounded-full bg-blue-50 px-2 py-0.5 text-[11px] font-semibold text-blue-700 dark:bg-blue-950/40 dark:text-blue-300">
+                        <Video className="h-3 w-3" /> Vídeo
+                      </span>
+                    )}
+                    {r.anexo && (
+                      <span className="flex items-center gap-1 rounded-full bg-amber-50 px-2 py-0.5 text-[11px] font-semibold text-amber-700 dark:bg-amber-950/40 dark:text-amber-300">
+                        <Paperclip className="h-3 w-3" /> Anexo
+                      </span>
+                    )}
+                    {r.prova && (
+                      <span className="flex items-center gap-1 rounded-full bg-violet-50 px-2 py-0.5 text-[11px] font-semibold text-violet-700 dark:bg-violet-950/40 dark:text-violet-300">
+                        <ListChecks className="h-3 w-3" /> {r.questoes} {r.questoes === 1 ? "questão" : "questões"}
+                      </span>
+                    )}
+                  </div>
+
+                  <div className="mt-auto flex items-center gap-2 pt-1">
+                    <Button className="flex-1" size="sm" onClick={() => setAssistindo(t)}>
+                      <PlayCircle className="mr-2 h-4 w-4" />
+                      {feito ? "Rever" : "Começar"}
+                    </Button>
+                    {podeGerenciar && (
+                      <Button variant="ghost" size="icon" title="Editar"
+                              onClick={() => { setEmEdicao(t); setEditorAberto(true); }}>
+                        <Pencil className="h-4 w-4" />
+                      </Button>
+                    )}
+                    {podeExcluir && (
+                      <Button variant="ghost" size="icon" title="Excluir" className="text-destructive"
+                              onClick={() => excluir(t)}>
+                        <Trash2 className="h-4 w-4" />
+                      </Button>
+                    )}
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      <TreinamentoEditor
+        aberto={editorAberto}
+        treinamento={emEdicao}
+        meuNome={meuNome}
+        meuId={user?.id}
+        onFechar={() => setEditorAberto(false)}
+        onSalvo={carregar}
+      />
+
+      <TreinamentoVisor
+        treinamento={assistindo}
+        meuNome={meuNome}
+        meuId={user?.id}
+        jaFeito={assistindo ? conclusoes[assistindo.id] ?? null : null}
+        onFechar={() => setAssistindo(null)}
+        onConcluido={carregar}
+      />
+    </div>
+  );
+}

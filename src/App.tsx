@@ -145,6 +145,7 @@ import CentralDuvidas from "./pages/juridico/CentralDuvidas";
 import Processos from "./pages/juridico/Processos";
 import Advertencias from "./pages/juridico/Advertencias";
 import VerificacaoCandidatos from "./pages/juridico/VerificacaoCandidatos";
+import TreinamentosERP from "./pages/treinamentos/TreinamentosERP";
 import AsoCandidatos from "./pages/sst/AsoCandidatos";
 import NovasAdmissoes from "./pages/rh/NovasAdmissoes";
 import BancoTalentos from "./pages/rh/BancoTalentos";
@@ -494,6 +495,9 @@ const App = () => (
             <Route path="juridico/advertencias" element={<Advertencias />} />
             <Route path="juridico/candidatos" element={<VerificacaoCandidatos />} />
             <Route path="juridico/duvidas" element={<CentralDuvidas />} />
+            {/* Treinamentos */}
+            <Route path="treinamentos" element={<Navigate to="/app/treinamentos/erp" replace />} />
+            <Route path="treinamentos/erp" element={<TreinamentosERP />} />
             {/* SST — ASO / Admissão (fila do Recrutamento) */}
             <Route path="sst/aso" element={<AsoCandidatos />} />
             {/* BI */}

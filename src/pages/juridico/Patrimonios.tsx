@@ -7,6 +7,7 @@ import {
   type LinhaParcela, type ModoParcelas,
 } from "@/pages/juridico/patrimonio/parcelas";
 import { useAuth } from "@/hooks/useAuth";
+import { useMeuNome } from "@/hooks/useMeuNome";
 import { MapaPatrimonios } from "./patrimonio/MapaPatrimonios";
 import {
   CLASSIFICACOES, ESPECIES_ESCRITURA, SITUACOES_PAGAMENTO, corSituacao,
@@ -15,7 +16,7 @@ import {
 import { coordenadaValida } from "./patrimonio/geo";
 import {
   PARAM_ORIGEM, despesaEstaPaga, statusDaConta, corDaConta, podeEnviarAoMalote,
-  podeBaixarManualmente, type StatusConta,
+  podeBaixarManualmente, entraNoAlerta, STATUS_SUSPENSA, type StatusConta,
 } from "./patrimonio/vinculoMalote";
 
 // =====================================================================
@@ -101,7 +102,7 @@ const ehLink = (s?: string) => !!s && /^https?:\/\//i.test(s.trim());
 export default function Patrimonios() {
   const { user } = useAuth();
   const nav = useNavigate();
-  const autor = user?.user_metadata?.nome ?? user?.email ?? "Usuário";
+  const autor = useMeuNome() || "Usuário";  // vai gravado — ver useMeuNome
 
   const [pats, setPats] = useState<Patrimonio[]>([]);
   const [obrAll, setObrAll] = useState<Obrigacao[]>([]);
@@ -263,6 +264,7 @@ export default function Patrimonios() {
       transferida: p.transferida ? "Sim" : "Não",
       possui_escritura: p.possui_escritura == null ? "" : p.possui_escritura ? "SIM" : "NAO",
       valor_contrato: txt(p.valor_contrato),
+      valor_estimado: txt(p.valor_estimado),
       valor_entrada: txt(p.valor_entrada),
       latitude: txt(p.latitude),
       longitude: txt(p.longitude),
@@ -284,6 +286,7 @@ export default function Patrimonios() {
       // é "ainda não sabemos", diferente de "não tem escritura".
       possui_escritura: pat.possui_escritura === "SIM" ? true : pat.possui_escritura === "NAO" ? false : null,
       valor_contrato: num(pat.valor_contrato),
+      valor_estimado: num(pat.valor_estimado),
       valor_entrada: num(pat.valor_entrada),
       // Coordenada digitada aqui é decisão de gente: entra como "manual" e o
       // botão "Localizar endereços" não passa por cima dela.
@@ -509,6 +512,24 @@ export default function Patrimonios() {
   };
   // Baixa manual: a conta foi paga por fora e o que falta é o comprovante.
   const baixarConta = (o: Obrigacao) => { if (ehLink(o.onde_pagar)) window.open(o.onde_pagar!.trim(), "_blank", "noopener"); abrirPagar(o); };
+
+  /**
+   * Suspende (ou retoma) a parcela. Suspensa não vence, não entra no contador
+   * de vencidas e não pode ir ao Malote — é a parcela que existe no contrato
+   * mas não deve ser cobrada agora (renegociação, disputa, carência).
+   * O valor e o vencimento ficam intactos: retomar devolve tudo como estava.
+   */
+  const alternarSuspensao = async (o: Obrigacao) => {
+    const suspender = statusObr(o, estaPagaNoMalote) !== "Suspensa";
+    if (suspender && !window.confirm(
+      `Suspender a parcela de ${money(o.valor)} com vencimento em ${fmtDt(o.vencimento)}?\n\n` +
+      "Ela deixa de aparecer como vencida e não poderá ser enviada ao Malote até você retomar.")) return;
+    const { error } = await (supabase as any).from("JUR_PATRIMONIO_OBRIGACOES")
+      .update({ status: suspender ? STATUS_SUSPENSA : "Pendente" }).eq("id", o.id);
+    if (error) { toast("Erro ao mudar a parcela: " + error.message, "err"); return; }
+    toast(suspender ? "Parcela suspensa." : "Parcela retomada.", "ok");
+    recarregarObrs();
+  };
   const confirmarPagar = async () => {
     const o = pagarAlvo; if (!o) return;
     if (!pagarFile) { toast("Anexe o comprovante para registrar o pagamento.", "err"); return; }
@@ -608,8 +629,16 @@ export default function Patrimonios() {
   const pendentesTransf = pats.filter(p => !p.transferida).length;
   const totalPrevisto = naoPagas.reduce((s, o) => s + (Number(o.valor) || 0), 0);
   // Alerta: contas em aberto vencidas OU vencendo nos próximos 10 dias.
+  //
+  // Suspensa fica DE FORA: suspender é justamente dizer "esta não corre
+  // agora", e ela reaparecia aqui como "Vencida há 164d" — o alerta exibia
+  // o selo cinza de Suspensa e o vermelho de vencida lado a lado, que é a
+  // contradição que a suspensão existe para eliminar.
   const em10dias = (() => { const d = new Date(hoje() + "T00:00:00"); d.setDate(d.getDate() + 10); return d.toISOString().slice(0, 10); })();
-  const contasAlerta = naoPagas.filter(o => o.vencimento && o.vencimento <= em10dias).sort((a, b) => String(a.vencimento || "").localeCompare(String(b.vencimento || "")));
+  const contasAlerta = naoPagas
+    .filter(o => entraNoAlerta(seloDaConta(o)))
+    .filter(o => o.vencimento && o.vencimento <= em10dias)
+    .sort((a, b) => String(a.vencimento || "").localeCompare(String(b.vencimento || "")));
 
   // ── Dashboard: agregações ──────────────────────────────────────
   const porTipo = TIPOS.map(t => ({ tipo: t, n: pats.filter(p => p.tipo === t).length })).filter(x => x.n > 0);
@@ -771,8 +800,12 @@ export default function Patrimonios() {
                       {stAlerta === "Enviado ao Malote" ? (
                         <button className="jp-btn" title="A conta já virou despesa no Malote — o pagamento se resolve lá" onClick={() => nav("/app/malote/aprovacoes")} style={{ background: "#eff6ff", color: "#1d4ed8", border: "1px solid #bfdbfe", padding: "4px 12px", fontWeight: 700 }}>Ver no Malote</button>
                       ) : (<>
-                        <button className="jp-btn" title="Abre o Malote com os dados desta conta já preenchidos. A conta só sai de Pendente quando você concluir o envio lá." onClick={() => pagarConta(o)} style={{ background: "#0f3171", color: "#fff", border: "1px solid #0f3171", padding: "4px 12px", fontWeight: 700 }}>Enviar ao Malote</button>
-                        <button className="jp-btn" title="Já foi paga por fora: anexar o comprovante e dar baixa" onClick={() => baixarConta(o)} style={{ background: "#f0fdf4", color: "#15803d", border: "1px solid #bbf7d0", padding: "4px 10px", fontWeight: 700 }}>✓ Baixar</button>
+                        {/* Mesma guarda das tabelas de baixo. O alerta só tratava
+                            "Enviado ao Malote" e oferecia o envio para todo o
+                            resto — inclusive para a parcela suspensa, que a
+                            regra proíbe de ir ao Malote. */}
+                        {podeEnviarAoMalote(stAlerta) && <button className="jp-btn" title="Abre o Malote com os dados desta conta já preenchidos. A conta só sai de Pendente quando você concluir o envio lá." onClick={() => pagarConta(o)} style={{ background: "#0f3171", color: "#fff", border: "1px solid #0f3171", padding: "4px 12px", fontWeight: 700 }}>Enviar ao Malote</button>}
+                        {podeBaixarManualmente(stAlerta) && <button className="jp-btn" title="Já foi paga por fora: anexar o comprovante e dar baixa" onClick={() => baixarConta(o)} style={{ background: "#f0fdf4", color: "#15803d", border: "1px solid #bbf7d0", padding: "4px 10px", fontWeight: 700 }}>✓ Baixar</button>}
                       </>)}
                     </div>
                   </div>
@@ -916,7 +949,7 @@ export default function Patrimonios() {
                 <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5, whiteSpace: "nowrap" }}>
                   <thead>
                     <tr style={{ background: "#f8fafc", color: "#94a3b8", fontSize: 10.5, textTransform: "uppercase", letterSpacing: ".5px" }}>
-                      {["#", "Situação", "Próxima parcela", "Classificação", "Descrição", "Endereço", "Cidade", "Proprietário", "Escritura", "Matrícula", "Empresa que pagará", "Valor do contrato", "Valor que falta", "Possui escritura"].map(h => (
+                      {["#", "Situação", "Próxima parcela", "Classificação", "Descrição", "Endereço", "Cidade", "Proprietário", "Escritura", "Matrícula", "Empresa que pagará", "Valor do contrato", "Valor que falta", "Possui escritura", "Valor estimado"].map(h => (
                         <th key={h} style={{ textAlign: "left", padding: "9px 12px", fontWeight: 800 }}>{h}</th>
                       ))}
                     </tr>
@@ -947,6 +980,7 @@ export default function Patrimonios() {
                               title={faltaDe(p.id) > 0 ? "Soma das parcelas em aberto de Financiamento/Consórcio" : "Nenhuma parcela em aberto"}>
                             {faltaDe(p.id) > 0 ? money(faltaDe(p.id)) : "—"}</td>
                           <td style={{ padding: "10px 12px", fontWeight: 800, color: p.possui_escritura ? "#15803d" : "#94a3b8" }}>{p.possui_escritura == null ? "—" : p.possui_escritura ? "SIM" : "NÃO"}</td>
+                          <td style={{ padding: "10px 12px", color: "#0f172a", fontWeight: 700, whiteSpace: "nowrap" }}>{p.valor_estimado != null ? money(p.valor_estimado) : "—"}</td>
                         </tr>
                       );
                     })}
@@ -1050,6 +1084,7 @@ export default function Patrimonios() {
                                 ? <button className="jp-btn" title="A conta já virou despesa no Malote — o pagamento se resolve lá" onClick={() => nav("/app/malote/aprovacoes")} style={{ background: "#eff6ff", color: "#1d4ed8", border: "1px solid #bfdbfe", padding: "5px 13px", fontWeight: 700 }}>Ver no Malote</button>
                                 : podeEnviarAoMalote(st) && <button className="jp-btn" title="Abre o Malote com os dados desta conta já preenchidos. A conta só sai de Pendente quando você concluir o envio lá." onClick={() => pagarConta(o)} style={{ background: "#0f3171", color: "#fff", border: "1px solid #0f3171", padding: "5px 13px", fontWeight: 700 }}>Enviar ao Malote</button>}
                               {podeBaixarManualmente(st) && <button className="jp-btn" title="Já foi paga por fora: anexar o comprovante e dar baixa" onClick={() => baixarConta(o)} style={{ background: "#f0fdf4", color: "#15803d", border: "1px solid #bbf7d0", padding: "5px 10px", fontWeight: 700 }}>✓</button>}
+                              {(st === "Pendente" || st === "Vencido" || st === "Suspensa") && <button className="jp-btn" title={st === "Suspensa" ? "Retomar: a parcela volta a correr e pode ir ao Malote" : "Suspender: a parcela para de vencer até você retomar"} onClick={() => alternarSuspensao(o)} style={{ background: st === "Suspensa" ? "#f1f5f9" : "#fff", color: "#64748b", border: "1px solid #e2e8f0", padding: "5px 10px", fontWeight: 700 }}>{st === "Suspensa" ? "▶" : "⏸"}</button>}
                             </div>
                           </td>
                         </tr>
@@ -1110,6 +1145,9 @@ export default function Patrimonios() {
                 </select>
               </div>
               <div className="jp-fg"><label>Valor do contrato (R$)</label><input className="jp-fi" type="number" step="0.01" value={pat.valor_contrato} onChange={e => setPat(v => ({ ...v, valor_contrato: e.target.value }))} placeholder="0,00" /></div>
+              {/* Quanto o bem vale HOJE — outra pergunta que o valor do contrato,
+                  que é o da aquisição. Fica fora do total de contratos da tela. */}
+              <div className="jp-fg"><label>Valor estimado (R$)</label><input className="jp-fi" type="number" step="0.01" value={pat.valor_estimado} onChange={e => setPat(v => ({ ...v, valor_estimado: e.target.value }))} placeholder="0,00" /></div>
               <div className="jp-fg"><label>Valor de entrada (R$)</label><input className="jp-fi" type="number" step="0.01" value={pat.valor_entrada} onChange={e => setPat(v => ({ ...v, valor_entrada: e.target.value }))} placeholder="0,00" /></div>
               <div className="jp-fg"><label>Código (automático)</label><input className="jp-fi" readOnly value={pat.codigo} style={{ background: "#f8fafc", color: "#475569", cursor: "not-allowed" }} /></div>
               <div className="jp-fg"><label>Tipo</label><select className="jp-fi" value={pat.tipo} onChange={e => setPat(v => ({ ...v, tipo: e.target.value }))}>{TIPOS.map(t => <option key={t}>{t}</option>)}</select></div>
@@ -1214,6 +1252,7 @@ export default function Patrimonios() {
                           ? <button className="jp-btn" title="A conta já virou despesa no Malote — o pagamento se resolve lá" onClick={() => nav("/app/malote/aprovacoes")} style={{ background: "#eff6ff", color: "#1d4ed8", border: "1px solid #bfdbfe", padding: "5px 11px", fontWeight: 700 }}>Ver no Malote</button>
                           : podeEnviarAoMalote(st) && <button className="jp-btn" title="Abre o Malote com os dados desta conta já preenchidos. A conta só sai de Pendente quando você concluir o envio lá." onClick={() => pagarConta(o)} style={{ background: "#0f3171", color: "#fff", border: "1px solid #0f3171", padding: "5px 11px", fontWeight: 700 }}>Enviar ao Malote</button>}
                         {podeBaixarManualmente(st) && <button className="jp-btn" title="Já foi paga por fora: anexar o comprovante e dar baixa" onClick={() => baixarConta(o)} style={{ background: "#f0fdf4", color: "#15803d", border: "1px solid #bbf7d0", padding: "5px 10px", fontWeight: 700 }}>✓</button>}
+                        {(st === "Pendente" || st === "Vencido" || st === "Suspensa") && <button className="jp-btn" title={st === "Suspensa" ? "Retomar: a parcela volta a correr e pode ir ao Malote" : "Suspender: a parcela para de vencer até você retomar"} onClick={() => alternarSuspensao(o)} style={{ background: st === "Suspensa" ? "#f1f5f9" : "#fff", color: "#64748b", border: "1px solid #e2e8f0", padding: "5px 10px", fontWeight: 700 }}>{st === "Suspensa" ? "▶" : "⏸"}</button>}
                         {o.comprovante_path && <button className="jp-btn" onClick={() => verComprovante(o)} style={{ background: "#eef4ff", color: "#0f3171", border: "1px solid #dbe4f0", padding: "5px 11px" }}>📎 Comprovante</button>}
                         <button className="jp-btn" onClick={() => abrirEditarObr(o)} style={{ background: "#f1f5f9", color: "#475569", padding: "5px 11px" }}>Editar</button>
                         {(o.status === "Pago" && o.comprovante_path)

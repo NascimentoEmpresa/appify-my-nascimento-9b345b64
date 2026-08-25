@@ -122,8 +122,10 @@ export function FeedAtualizacoes({
       <p className="mb-2 flex items-center gap-1.5 text-sm font-bold">
         <History className="h-4 w-4 text-primary" /> {title}
       </p>
-      {/* Janela rolável: o feed não empurra o layout nem deixa vão branco. */}
-      <div className="max-h-[22rem] space-y-2 overflow-y-auto pr-1">
+      {/* Janela rolável: o feed não empurra o layout nem deixa vão branco.
+          `overflow-x-hidden` porque o conteúdo (URL de PR, sobretudo) é mais
+          largo que a coluna e criava barra horizontal no card inteiro. */}
+      <div className="max-h-[22rem] space-y-2 overflow-y-auto overflow-x-hidden pr-1">
         {eventos.map((e) => {
           const ch = chamados[e.chamado_id];
           return (
@@ -132,7 +134,7 @@ export function FeedAtualizacoes({
             type="button"
             disabled={!buildHref}
             onClick={() => buildHref && nav(buildHref(e.chamado_id))}
-            className={`block w-full rounded border border-border/60 px-2.5 py-1.5 text-left ${buildHref ? "cursor-pointer hover:border-primary/40" : "cursor-default"}`}
+            className={`block w-full min-w-0 overflow-hidden rounded border border-border/60 px-2.5 py-1.5 text-left ${buildHref ? "cursor-pointer hover:border-primary/40" : "cursor-default"}`}
           >
             <p className="flex items-center gap-2 text-[11px]">
               <span className={`h-2 w-2 shrink-0 rounded-full ${DOT[e.tipo] ?? "bg-muted-foreground"}`} />
@@ -140,8 +142,11 @@ export function FeedAtualizacoes({
               <span className="ml-auto shrink-0 text-muted-foreground">{fmtDataHora(e.created_at)}</span>
             </p>
             {ch?.assunto && <p className="truncate text-[11px] text-muted-foreground">{ch.assunto}</p>}
-            {e.texto && <p className="whitespace-pre-wrap text-xs">{e.texto}</p>}
-            <p className="text-[10px] text-muted-foreground">por {nomeDe(e.autor_id)}</p>
+            {/* `anywhere` e não `break-words`: a URL de um PR é UMA palavra de
+                60+ caracteres, e break-word só quebra quando a palavra sozinha
+                não cabe na linha — no meio de uma frase ela ainda vazava. */}
+            {e.texto && <p className="whitespace-pre-wrap text-xs [overflow-wrap:anywhere]">{e.texto}</p>}
+            <p className="text-[10px] text-muted-foreground [overflow-wrap:anywhere]">por {nomeDe(e.autor_id)}</p>
           </button>
           );
         })}

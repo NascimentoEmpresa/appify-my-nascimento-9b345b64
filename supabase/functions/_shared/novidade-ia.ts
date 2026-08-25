@@ -14,9 +14,18 @@
 export type TipoNovidade = "NOVO" | "MELHORIA" | "AJUSTE" | "AVISO";
 export const TIPOS_NOVIDADE: TipoNovidade[] = ["NOVO", "MELHORIA", "AJUSTE", "AVISO"];
 
-/** Groq, mesmo modelo padrão do bot do WhatsApp (_shared/whatsapp-bot.ts). */
+/**
+ * Groq, mesmo modelo padrão do bot do WhatsApp (_shared/whatsapp-bot.ts).
+ *
+ * Era `llama-3.3-70b-versatile` até a Groq tirar os Llama de chat do catálogo:
+ * a partir daí toda conclusão de chamado levava 404 model_not_found e — como o
+ * erro da IA de propósito não entra no SISTEMA_NOVIDADES_IA_LOG — nenhuma
+ * novidade era publicada, sem deixar rastro. Trocado em 25/08/2026 pelo
+ * gpt-oss-120b, conferido contra /v1/models da conta e testado com o mesmo
+ * response_format json_object que `decidir()` espera.
+ */
 export const GROQ_URL = "https://api.groq.com/openai/v1/chat/completions";
-export const MODELO_PADRAO = "llama-3.3-70b-versatile";
+export const MODELO_PADRAO = "openai/gpt-oss-120b";
 
 export interface ChamadoParaNovidade {
   id: string;

@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
+import { useMeuNome } from "@/hooks/useMeuNome";
 import { usePermissoes } from "@/context/PermissoesContext";
 import { CandidatoInfo, baixarCurriculoCand, Modal, Campo, Acoes, Toasts, btnStyle, PendToggle, EtapaChip, HistoricoCandidato } from "@/components/recrutamento/CandidatoInfo";
 
@@ -19,7 +20,7 @@ export default function VerificacaoCandidatos() {
   const { user } = useAuth();
   const { can } = usePermissoes();
   const podeAgir = can("alterar", undefined, "candidatos");
-  const nome = user?.user_metadata?.nome ?? user?.email ?? "";
+  const nome = useMeuNome();
 
   const [rows, setRows] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);

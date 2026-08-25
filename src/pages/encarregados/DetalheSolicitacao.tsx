@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { useAuth } from "@/hooks/useAuth";
+import { useMeuNome } from "@/hooks/useMeuNome";
 
 // `integrations/supabase/types.ts` é gerado e não conhece as tabelas de
 // solicitações. O resto do ERP resolve isso com um cast solto em cada
@@ -93,6 +94,10 @@ const ROTULO: Record<string, string> = {
 
 /** Colunas que não interessam a quem solicitou. */
 const OCULTAS = new Set([
+  // Salário é do Operacional e do Recrutamento, que aprovam — o encarregado
+  // nem digita (na criação o campo vem do cadastro e aparece mascarado, ver
+  // SALARIO_MASCARA em vagaRegras). Aqui ele estava saindo em claro.
+  "salario",
   "id", "created_at", "criado_em", "updated_at", "status", "status_changed_at",
   "solicitante_email", "solicitante_cpf", "solicitante_nome", "data_inicio_alteracoes",
   "administrativa", "cnh_obrigatoria",
@@ -116,8 +121,8 @@ export function DetalheSolicitacao({ tipo, id, titulo, status, onFechar }: {
   const [erro, setErro] = useState("");
   const fimRef = useRef<HTMLDivElement | null>(null);
 
-  const nome = (user?.user_metadata as { nome?: string } | undefined)?.nome
-    ?? user?.email ?? "Encarregado";
+  // Vai gravado na mensagem — ver useMeuNome.
+  const nome = useMeuNome() || "Encarregado";
 
   const tabelaFicha =
     tipo === "Vaga" ? "SISTEMA_RECRUTAMENTO"

@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   despesaEstaPaga, PARAM_ORIGEM, statusDaConta, podeEnviarAoMalote, podeBaixarManualmente,
+  entraNoAlerta,
 } from "@/pages/juridico/patrimonio/vinculoMalote";
 
 // O selo da conta do Patrimônio. A regra é a que a tela usa em statusObr:
@@ -137,5 +138,54 @@ describe("botões da conta", () => {
     for (const c of [{ status: "Pago" }, { malote_despesa_id: "x" }, { vencimento: "2026-08-01" }, {}]) {
       expect(statusDaConta(c, naoPaga, HOJE)).toBe(statusConta(c, naoPaga));
     }
+  });
+});
+
+describe("parcela suspensa", () => {
+  const naoPaga = () => false;
+
+  it("suspensa não aparece como vencida, mesmo com a data no passado", () => {
+    const st = statusDaConta({ status: "Suspensa", vencimento: "2026-01-01" }, naoPaga, HOJE);
+    expect(st).toBe("Suspensa");
+  });
+
+  it("suspensa não vai ao Malote nem aceita baixa manual", () => {
+    const st = statusDaConta({ status: "Suspensa", vencimento: "2026-01-01" }, naoPaga, HOJE);
+    expect(podeEnviarAoMalote(st)).toBe(false);
+    expect(podeBaixarManualmente(st)).toBe(false);
+  });
+
+  it("retomar devolve o selo que a data manda", () => {
+    // Retomar grava "Pendente"; o vencimento no passado volta a valer.
+    const st = statusDaConta({ status: "Pendente", vencimento: "2026-01-01" }, naoPaga, HOJE);
+    expect(st).toBe("Vencido");
+  });
+
+  it("paga é paga: suspender não apaga um pagamento que já aconteceu", () => {
+    expect(statusDaConta({ status: "Pago" }, naoPaga, HOJE)).toBe("Pago");
+    const noMalote = statusDaConta({ status: "Suspensa", malote_despesa_id: "abc" }, () => true, HOJE);
+    expect(noMalote).toBe("Suspensa");  // não dá para suspender pela tela nesse estado
+  });
+});
+
+describe("entraNoAlerta — o painel de 'a vencer / vencida(s)'", () => {
+  it("mantém pendente, vencida e a que está no Malote", () => {
+    // Enviada ao Malote continua: o dinheiro ainda não saiu, e sumir daqui
+    // esconderia a conta enquanto ela espera aprovação.
+    expect(entraNoAlerta("Pendente")).toBe(true);
+    expect(entraNoAlerta("Vencido")).toBe(true);
+    expect(entraNoAlerta("Enviado ao Malote")).toBe(true);
+  });
+
+  it("tira a paga e a suspensa", () => {
+    // A suspensa aparecia como "Vencida há 164d" com o selo "Suspensa" ao
+    // lado — a contradição que a suspensão existe para eliminar.
+    expect(entraNoAlerta("Pago")).toBe(false);
+    expect(entraNoAlerta("Suspensa")).toBe(false);
+  });
+
+  it("nunca oferece Malote nem baixa para o que saiu do alerta por suspensão", () => {
+    expect(podeEnviarAoMalote("Suspensa")).toBe(false);
+    expect(podeBaixarManualmente("Suspensa")).toBe(false);
   });
 });

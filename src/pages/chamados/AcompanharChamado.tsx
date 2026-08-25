@@ -134,13 +134,13 @@ export default function AcompanharChamado({ base = "/app/central-servicos/chamad
           {chamado.observacao_gerente && (
             <Card className="space-y-1 p-4">
               <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Observação do gerente</p>
-              <p className="whitespace-pre-wrap text-sm">{chamado.observacao_gerente}</p>
+              <p className="whitespace-pre-wrap text-sm [overflow-wrap:anywhere]">{chamado.observacao_gerente}</p>
             </Card>
           )}
           {chamado.status === "reprovado" && chamado.motivo_reprovacao && (
             <Card className="space-y-1 border-destructive/30 bg-destructive/5 p-4">
               <p className="text-xs font-semibold uppercase tracking-wider text-destructive">Motivo da reprovação</p>
-              <p className="whitespace-pre-wrap text-sm">{chamado.motivo_reprovacao}</p>
+              <p className="whitespace-pre-wrap text-sm [overflow-wrap:anywhere]">{chamado.motivo_reprovacao}</p>
             </Card>
           )}
 
@@ -148,12 +148,12 @@ export default function AcompanharChamado({ base = "/app/central-servicos/chamad
             <p className="text-sm font-bold">Descrição e evidências (abertura)</p>
             <div>
               <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Descrição detalhada</p>
-              <p className="whitespace-pre-wrap text-sm">{chamado.descricao || "—"}</p>
+              <p className="whitespace-pre-wrap text-sm [overflow-wrap:anywhere]">{chamado.descricao || "—"}</p>
             </div>
             {chamado.observacoes_solicitante && (
               <div>
                 <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Observações do solicitante</p>
-                <p className="whitespace-pre-wrap text-sm">{chamado.observacoes_solicitante}</p>
+                <p className="whitespace-pre-wrap text-sm [overflow-wrap:anywhere]">{chamado.observacoes_solicitante}</p>
               </div>
             )}
             <div>
