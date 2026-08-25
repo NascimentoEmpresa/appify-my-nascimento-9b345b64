@@ -17,6 +17,7 @@ import {
   ChevronRight,
   Building2,
   Link2,
+  Coins,
   FolderKanban,
   Wallet,
   Users2,
@@ -135,6 +136,9 @@ const licitacoesModule: ModuleDef = {
         { label: "Planilha de Custo", to: "/app/licitacoes/planilha-custo", icon: TableProperties },
         { label: "Contratos", to: "/app/licitacoes/contratos", icon: Building2 },
         { label: "Cotações", to: "/app/licitacoes/cotacoes", icon: MessageSquare },
+        // Consulta do banco de preços do Compras, para a Licitação montar
+        // proposta sem depender do comprador cotar (SIS-2026-0199).
+        { label: "Preços de Materiais", to: "/app/licitacoes/precos-materiais", icon: Coins },
         { label: "Documentos", to: "/app/documentos", icon: ScrollText },
         // B2: "Triagem & IA" removida do menu (rota /app/triagem segue existindo,
         // mas controlada pelo RouteGuard + matriz de permissões do ERP).
