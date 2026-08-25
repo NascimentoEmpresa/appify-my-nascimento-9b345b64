@@ -95,15 +95,27 @@ Deno.serve(async (req) => {
 
     // Já existe? Devolve o status em vez de tentar recriar (a Meta recusa
     // nome repetido, e o erro dela não explica que já está lá).
+    //
+    // Na Meta um template é o par (nome, idioma): cada idioma é uma
+    // "translation" à parte. Casar só pelo nome dava um beco sem saída —
+    // com `abertura_contato` cadastrado em outro idioma, isto respondia
+    // "já existe" e a tradução que o envio pede nunca era criada, enquanto
+    // o envio seguia falhando com #132001 ("does not exist in the
+    // translation"). Por isso o par inteiro entra na comparação.
     const resLista = await fetch(
-      `${GRAPH}/${wabaId}/message_templates?limit=200&fields=name,status,rejected_reason`,
+      `${GRAPH}/${wabaId}/message_templates?limit=200&fields=name,language,status,rejected_reason`,
       { headers: { Authorization: `Bearer ${WA_TOKEN}` } },
     );
     const lista = await resLista.json().catch(() => ({}));
-    const achado = (lista?.data ?? []).find((t: { name?: string }) => t?.name === nomeTemplate);
+    type Tpl = { name?: string; language?: string; status?: string; rejected_reason?: string };
+    const mesmoNome = (lista?.data ?? []).filter((t: Tpl) => t?.name === nomeTemplate);
+    const achado = mesmoNome.find((t: Tpl) => t?.language === idioma);
     if (achado) {
-      return json({ ok: true, ja_existia: true, nome: nomeTemplate, status: achado.status, motivo: achado.rejected_reason });
+      return json({ ok: true, ja_existia: true, nome: nomeTemplate, idioma, status: achado.status, motivo: achado.rejected_reason });
     }
+    // Nome conhecido, idioma faltando: criar a tradução é justamente o que
+    // resolve. Segue adiante, só registrando o que já havia.
+    const outrosIdiomas = mesmoNome.map((t: Tpl) => t?.language).filter(Boolean);
 
     const res = await fetch(`${GRAPH}/${wabaId}/message_templates`, {
       method: "POST",
@@ -127,7 +139,7 @@ Deno.serve(async (req) => {
     });
     const d = await res.json().catch(() => ({}));
     if (!res.ok) return json({ error: "a Meta recusou o template", detalhe: d }, 502);
-    return json({ ok: true, criado: true, nome: nomeTemplate, status: d?.status ?? "PENDING" });
+    return json({ ok: true, criado: true, nome: nomeTemplate, idioma, outros_idiomas: outrosIdiomas, status: d?.status ?? "PENDING" });
   }
 
   // ---- mandar a abertura ----------------------------------------------
