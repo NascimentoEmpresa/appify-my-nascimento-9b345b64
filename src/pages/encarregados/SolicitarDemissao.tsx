@@ -273,11 +273,15 @@ export default function SolicitarDemissao() {
             <h2 className="text-xl font-semibold">Solicitação #{protocolo} enviada</h2>
             <p className="max-w-md text-sm text-muted-foreground">
               O Operacional vai aprovar ou reprovar. Depois de aprovada, ela segue para o RH concluir.
-              Você acompanha o andamento aqui mesmo, na lista abaixo do formulário.
+              Você acompanha o andamento em Minhas Solicitações.
             </p>
             <div className="mt-2 flex gap-2">
               <Button onClick={recomecar}>Nova solicitação</Button>
-              <Button variant="outline" asChild><Link to="/app/encarregados/solicitar-demissao">Ver minhas solicitações</Link></Button>
+              {/* Apontava para ESTA mesma rota: o clique não remontava a tela,
+                  o estado de sucesso continuava na frente e nada acontecia.
+                  A lista completa (demissão, vaga, férias, advertência) mora
+                  em Minhas Solicitações — é para lá que o botão promete ir. */}
+              <Button variant="outline" asChild><Link to="/app/encarregados/minhas-solicitacoes">Ver minhas solicitações</Link></Button>
             </div>
           </CardContent>
         </Card>

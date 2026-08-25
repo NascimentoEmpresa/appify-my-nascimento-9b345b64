@@ -139,3 +139,30 @@ describe("botões da conta", () => {
     }
   });
 });
+
+describe("parcela suspensa", () => {
+  const naoPaga = () => false;
+
+  it("suspensa não aparece como vencida, mesmo com a data no passado", () => {
+    const st = statusDaConta({ status: "Suspensa", vencimento: "2026-01-01" }, naoPaga, HOJE);
+    expect(st).toBe("Suspensa");
+  });
+
+  it("suspensa não vai ao Malote nem aceita baixa manual", () => {
+    const st = statusDaConta({ status: "Suspensa", vencimento: "2026-01-01" }, naoPaga, HOJE);
+    expect(podeEnviarAoMalote(st)).toBe(false);
+    expect(podeBaixarManualmente(st)).toBe(false);
+  });
+
+  it("retomar devolve o selo que a data manda", () => {
+    // Retomar grava "Pendente"; o vencimento no passado volta a valer.
+    const st = statusDaConta({ status: "Pendente", vencimento: "2026-01-01" }, naoPaga, HOJE);
+    expect(st).toBe("Vencido");
+  });
+
+  it("paga é paga: suspender não apaga um pagamento que já aconteceu", () => {
+    expect(statusDaConta({ status: "Pago" }, naoPaga, HOJE)).toBe("Pago");
+    const noMalote = statusDaConta({ status: "Suspensa", malote_despesa_id: "abc" }, () => true, HOJE);
+    expect(noMalote).toBe("Suspensa");  // não dá para suspender pela tela nesse estado
+  });
+});

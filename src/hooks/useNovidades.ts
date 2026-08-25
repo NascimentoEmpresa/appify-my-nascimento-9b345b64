@@ -2,6 +2,7 @@ import { useCallback, useMemo } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
+import { useMeuNome } from "@/hooks/useMeuNome";
 import { usePermissoes } from "@/context/PermissoesContext";
 import {
   MENU_PUBLICAR, TABELA, TABELA_LIDAS, naoLidas,
@@ -24,6 +25,7 @@ const sb = supabase as any;
  */
 export function useNovidades() {
   const { user } = useAuth();
+  const meuNome = useMeuNome();  // vai gravado em criado_por_nome — ver o hook
   const { can } = usePermissoes();
   const qc = useQueryClient();
 
@@ -78,7 +80,7 @@ export function useNovidades() {
 
   const salvar = useMutation({
     mutationFn: async ({ id, form }: { id?: number; form: FormNovidade }) => {
-      const nome = (user?.user_metadata as any)?.nome ?? user?.email ?? null;
+      const nome = meuNome || null;
       const linha = paraBanco(form, nome);
       if (id) {
         const { error } = await sb.from(TABELA).update(linha).eq("id", id);

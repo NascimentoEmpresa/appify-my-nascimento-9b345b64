@@ -248,10 +248,17 @@ export const PROVEDORES: Array<{ value: WaProvedor; label: string; secret: strin
 ];
 
 export const MODELOS: Record<WaProvedor, Array<{ value: string; label: string }>> = {
+  // Conferido contra /v1/models da conta em 25/08/2026. Os Llama de chat
+  // saíram do catálogo da Groq — `llama-3.3-70b-versatile` e
+  // `llama-3.1-8b-instant` respondem 404 model_not_found, e ficaram só os
+  // `llama-prompt-guard` (classificadores de 512 tokens, que não servem para
+  // conversa). Estavam listados aqui como "recomendado" e "mais rápido", então
+  // a tela oferecia duas opções que quebravam o bot em silêncio.
+  // Qwen fica de fora de propósito: falha o response_format json_object.
   groq: [
-    { value: "llama-3.3-70b-versatile", label: "Llama 3.3 70B (recomendado)" },
-    { value: "openai/gpt-oss-120b", label: "GPT-OSS 120B (mais capaz)" },
-    { value: "llama-3.1-8b-instant", label: "Llama 3.1 8B (mais rápido)" },
+    { value: "openai/gpt-oss-120b", label: "GPT-OSS 120B (recomendado)" },
+    { value: "openai/gpt-oss-20b", label: "GPT-OSS 20B (mais rápido)" },
+    { value: "groq/compound-mini", label: "Compound Mini (alternativo)" },
   ],
   gemini: [
     { value: "gemini-2.5-flash", label: "Gemini 2.5 Flash (recomendado)" },

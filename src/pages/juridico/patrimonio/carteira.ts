@@ -72,7 +72,7 @@ export const PATRIM_RESET = {
   transferida: "Não", empresa: "", empresa_pagadora: "", proprietario: "", responsavel: "",
   centro_custo: "", status: "Ativo", observacoes: "",
   classificacao: "", matricula: "", possui_escritura: "", especie_escritura: "",
-  situacao_pagamento: "", valor_contrato: "", valor_entrada: "",
+  situacao_pagamento: "", valor_contrato: "", valor_entrada: "", valor_estimado: "",
   latitude: "", longitude: "",
 };
 

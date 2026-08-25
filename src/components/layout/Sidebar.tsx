@@ -513,7 +513,7 @@ const encarregadosModule: ModuleDef = {
       label: "Jurídico",
       defaultOpen: true,
       items: [
-        { label: "Advertência", to: "/app/encarregados/advertencia", icon: ShieldAlert },
+        { label: "Solicitar Advertência", to: "/app/encarregados/advertencia", icon: ShieldAlert },
       ],
     },
     {

@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
+import { useMeuNome } from "@/hooks/useMeuNome";
 import { parseSurveyMonkey, ImportResultado } from "@/utils/surveyMonkeyImporter";
 import { useFormPerms } from "@/hooks/useFormPerms";
 import { useAccessibleMenus } from "@/hooks/useAccessibleMenus";
@@ -98,6 +99,8 @@ const btn = (bg: string, c = "#fff", border = "none"): React.CSSProperties =>
 export default function Formularios() {
   const nav = useNavigate();
   const { user } = useAuth();
+  // Vai gravado em criado_por_nome/deleted_por_nome — ver useMeuNome.
+  const meuNome = useMeuNome();
   const { can, canVerAlgumaNoForm, canNoForm, canCriarSetor, setoresCriar, setor } = useFormPerms();
   // Flag "Botão de acessos de cada formulário" (migration 20260921000003): um
   // menu de capacidade em Administração › Acesso por Usuário. O toggle de lá
@@ -187,7 +190,7 @@ export default function Formularios() {
     const titulo = novoTitulo.trim();
     if (!titulo) { toast("Dê um título ao formulário.", "err"); return; }
     if (soSetor && !novoSetor) { toast("Escolha o setor do formulário.", "err"); return; }
-    const nome = user?.user_metadata?.nome ?? user?.email ?? "";
+    const nome = meuNome || "";
     const linha: Record<string, any> = { titulo, slug: slugify(titulo), criado_por_nome: nome };
     if (novoSetor) linha.setor = novoSetor;
     const { data, error } = await (supabase as any).from("CS_FORMULARIOS").insert(linha).select("id").single();
@@ -222,7 +225,7 @@ export default function Formularios() {
     if (!importPreview) return;
     const titulo = importTitulo.trim() || importPreview.titulo;
     setImportando(true);
-    const nome = user?.user_metadata?.nome ?? user?.email ?? "";
+    const nome = meuNome || "";
     const temIdent = importPreview.respostas.some(r => r.respondente_nome || r.respondente_email);
     const pergsNovas: Pergunta[] = importPreview.perguntas.map(p => ({
       id: novoUuid(), tipo: p.tipo, titulo: p.titulo, descricao: p.descricao ?? null,
@@ -275,7 +278,7 @@ export default function Formularios() {
   };
 
   const duplicar = async (f: Formulario) => {
-    const nome = user?.user_metadata?.nome ?? user?.email ?? "";
+    const nome = meuNome || "";
     const base = {
       titulo: f.titulo + " (cópia)", descricao: f.descricao, slug: slugify(f.titulo),
       inicia_em: f.inicia_em, encerra_em: f.encerra_em, max_respostas: f.max_respostas,
@@ -300,7 +303,7 @@ export default function Formularios() {
   const confirmarExcluir = async () => {
     if (!excluindo) return;
     if (confirmTxt.trim().toUpperCase() !== "CONFIRMAR") { toast('Digite CONFIRMAR para excluir.', "err"); return; }
-    const nome = user?.user_metadata?.nome ?? user?.email ?? "";
+    const nome = meuNome || "";
     const quando = new Date().toISOString();
     // grava quem apagou; se a coluna ainda não existir no banco, reenvia só a data.
     let { error } = await (supabase as any).from("CS_FORMULARIOS").update({ deleted_at: quando, deleted_por_nome: nome }).eq("id", excluindo.id);

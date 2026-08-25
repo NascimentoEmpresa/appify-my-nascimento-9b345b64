@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { useAuth } from "@/hooks/useAuth";
+import { useMeuNome } from "@/hooks/useMeuNome";
 
 // =====================================================================
 // A CONVERSA DE UMA SOLICITAÇÃO — o mesmo fio dos dois lados
@@ -52,8 +53,9 @@ export function ConversaSolicitacao({ modulo, entidadeId, aviso }: {
   const [enviando, setEnviando] = useState(false);
   const [erro, setErro] = useState("");
 
-  const nome = (user?.user_metadata as { nome?: string } | undefined)?.nome
-    ?? user?.email ?? "Usuário";
+  // O nome vai GRAVADO em cada mensagem — errar aqui deixa e-mail no feed
+  // para sempre. useMeuNome tira do profile (ver o hook).
+  const nome = useMeuNome() || "Usuário";
 
   const carregar = useCallback(async () => {
     if (entidadeId == null) { setMsgs([]); return; }

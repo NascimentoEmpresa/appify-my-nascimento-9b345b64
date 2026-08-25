@@ -523,7 +523,7 @@ export default function CoordenarChamado() {
             {chamado.descricao && (
               <div className="pt-2">
                 <p className="text-xs text-muted-foreground">Descrição</p>
-                <p className="whitespace-pre-wrap text-xs">{chamado.descricao}</p>
+                <p className="whitespace-pre-wrap text-xs [overflow-wrap:anywhere]">{chamado.descricao}</p>
               </div>
             )}
           </Card>
