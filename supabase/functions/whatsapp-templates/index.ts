@@ -70,15 +70,13 @@ Deno.serve(async (req) => {
   try { body = await req.json(); } catch { return json({ error: "json inválido" }, 400); }
   const acao = String(body.acao ?? "listar");
 
-  // A WABA sai do próprio número — evita mais um secret para alguém manter.
-  const resWaba = await fetch(
-    `${GRAPH}/${PHONE_NUMBER_ID}?fields=whatsapp_business_account`,
-    { headers: { Authorization: `Bearer ${WA_TOKEN}` } },
-  );
-  const dataWaba = await resWaba.json().catch(() => ({}));
-  const wabaId = dataWaba?.whatsapp_business_account?.id;
-  if (!resWaba.ok || !wabaId) {
-    return json({ error: "não consegui identificar a conta do WhatsApp", detalhe: dataWaba }, 502);
+  // A WABA vem do secret — ver _shared/whatsapp-waba.ts. O campo
+  // `whatsapp_business_account` NÃO EXISTE no nó do phone number, e era daqui
+  // que saía o #100 que impedia criar qualquer template.
+  const waba = await descobrirWaba(WA_TOKEN, PHONE_NUMBER_ID);
+  const wabaId = waba.id;
+  if (!wabaId) {
+    return json({ error: waba.erro ?? "não consegui identificar a conta do WhatsApp" }, 502);
   }
 
   // Templates que já existem na conta (por nome), para não recriar.

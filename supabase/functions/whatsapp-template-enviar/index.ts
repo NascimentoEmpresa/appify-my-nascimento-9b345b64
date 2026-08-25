@@ -21,6 +21,7 @@
 // Secrets: WHATSAPP_TOKEN, WHATSAPP_PHONE_NUMBER_ID.
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
+import { descobrirWaba } from "../_shared/whatsapp-waba.ts";
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const ANON_KEY = Deno.env.get("SUPABASE_ANON_KEY")!;
@@ -48,13 +49,9 @@ const problemaDeTemplate = (codigo: unknown): boolean => {
 const preencher = (texto: string, valores: string[]) =>
   texto.replace(/\{\{(\d+)\}\}/g, (_, n) => valores[Number(n) - 1] ?? "");
 
-/** A WABA sai do próprio número — evita mais um secret para alguém manter. */
+/** Ver _shared/whatsapp-waba.ts: o campo do phone number não existe. */
 async function wabaId(): Promise<string | null> {
-  const r = await fetch(`${GRAPH}/${PHONE_NUMBER_ID}?fields=whatsapp_business_account`, {
-    headers: { Authorization: `Bearer ${WA_TOKEN}` },
-  });
-  const d = await r.json().catch(() => ({}));
-  return r.ok ? (d?.whatsapp_business_account?.id ?? null) : null;
+  return (await descobrirWaba(WA_TOKEN, PHONE_NUMBER_ID)).id;
 }
 
 /** Status de cada template da conta, por nome. */
@@ -97,7 +94,7 @@ Deno.serve(async (req) => {
   // mensagem não chega.
   if (acao === "status") {
     const waba = await wabaId();
-    if (!waba) return json({ error: "não consegui identificar a conta do WhatsApp" }, 502);
+    if (!waba) return json({ error: (await descobrirWaba(WA_TOKEN, PHONE_NUMBER_ID)).erro ?? "não consegui identificar a conta do WhatsApp" }, 502);
     const { data: linhas } = await db.from("WA_TEMPLATE")
       .select("codigo, template_nome").eq("ativo", true);
     const naMeta = await statusNaMeta(waba);
@@ -126,7 +123,7 @@ Deno.serve(async (req) => {
     if (!tpl.template_nome) return json({ error: "esta mensagem não tem nome de template na Meta" }, 400);
 
     const waba = await wabaId();
-    if (!waba) return json({ error: "não consegui identificar a conta do WhatsApp" }, 502);
+    if (!waba) return json({ error: (await descobrirWaba(WA_TOKEN, PHONE_NUMBER_ID)).erro ?? "não consegui identificar a conta do WhatsApp" }, 502);
 
     // Já existe? Devolve o status em vez de recriar — a Meta recusa nome
     // repetido com um erro que não explica que já está lá.

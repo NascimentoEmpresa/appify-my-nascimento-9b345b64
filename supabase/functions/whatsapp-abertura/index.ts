@@ -83,14 +83,14 @@ Deno.serve(async (req) => {
     const { data: pode } = await db.rpc("tem_acesso_menu", { _menu_codigo: "whatsapp_chatbot" });
     if (pode !== true) return json({ error: "sem permissão para criar template (menu Chatbot)" }, 403);
 
-    // A WABA sai do próprio número — evita mais um secret para manter.
-    const resWaba = await fetch(`${GRAPH}/${PHONE_NUMBER_ID}?fields=whatsapp_business_account`, {
-      headers: { Authorization: `Bearer ${WA_TOKEN}` },
-    });
-    const dataWaba = await resWaba.json().catch(() => ({}));
-    const wabaId = dataWaba?.whatsapp_business_account?.id;
-    if (!resWaba.ok || !wabaId) {
-      return json({ error: "não consegui identificar a conta do WhatsApp", detalhe: dataWaba }, 502);
+    // A WABA vem do secret — ver _shared/whatsapp-waba.ts. O comentário antigo
+    // aqui dizia "sai do próprio número, evita mais um secret", mas o campo
+    // `whatsapp_business_account` NÃO EXISTE no nó do phone number: a Graph
+    // devolvia #100 e nenhum template jamais foi criado por este caminho.
+    const waba = await descobrirWaba(WA_TOKEN, PHONE_NUMBER_ID);
+    const wabaId = waba.id;
+    if (!wabaId) {
+      return json({ error: waba.erro ?? "não consegui identificar a conta do WhatsApp" }, 502);
     }
 
     // Já existe? Devolve o status em vez de tentar recriar (a Meta recusa
