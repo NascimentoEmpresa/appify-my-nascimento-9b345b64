@@ -120,15 +120,22 @@ CREATE OR REPLACE FUNCTION public.canal_denuncia_avisa_comite()
 RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp AS $$
 DECLARE
   v_key text;
+  v_url text;
 BEGIN
+  -- Nem a chave nem a URL do projeto ficam neste arquivo: ele é versionado.
+  -- As duas saem de app_config_runtime, gravadas à mão no banco (ver o
+  -- rodapé). O ref do projeto não é segredo — vai no bundle do front — mas
+  -- identifica a instalação, e endereço de infraestrutura não é coisa que
+  -- se deixe em repositório.
   SELECT valor INTO v_key FROM public.app_config_runtime WHERE chave = 'anon_key';
-  IF coalesce(v_key, '') = '' THEN
-    RAISE WARNING 'aviso do Comitê de Ética NÃO enviado para %: app_config_runtime.anon_key ausente (ver o rodapé da migration 20260925000002)', NEW.id;
+  SELECT valor INTO v_url FROM public.app_config_runtime WHERE chave = 'functions_url';
+  IF coalesce(v_key, '') = '' OR coalesce(v_url, '') = '' THEN
+    RAISE WARNING 'aviso do Comitê de Ética NÃO enviado para %: app_config_runtime sem anon_key ou functions_url (ver o rodapé da migration 20260925000002)', NEW.id;
     RETURN NULL;
   END IF;
   BEGIN
     PERFORM net.http_post(
-      url := 'https://fwmzeaztjxrxxzxzxmgc.supabase.co/functions/v1/comite-etica-nova-denuncia',
+      url := v_url || '/comite-etica-nova-denuncia',
       headers := jsonb_build_object(
         'Content-Type', 'application/json',
         'apikey', v_key,
@@ -153,14 +160,16 @@ NOTIFY pgrst, 'reload schema';
 
 -- =========================================================================
 -- DEPOIS DE RODAR
---   1. Guardar a anon key no banco, que é o que o gatilho lê. NÃO escrever
---      o valor neste arquivo — ele é versionado:
+--   1. Guardar a chave E a URL no banco, que é o que o gatilho lê. NÃO
+--      escrever os valores neste arquivo — ele é versionado:
 --        INSERT INTO public.app_config_runtime (chave, valor, descricao)
---        VALUES ('anon_key', '<anon key do projeto>', 'anon key do projeto')
+--        VALUES ('anon_key',      '<anon key do projeto>', 'anon key'),
+--               ('functions_url', '<url do projeto>/functions/v1', 'base das Edge Functions')
 --        ON CONFLICT (chave) DO UPDATE SET valor = EXCLUDED.valor,
 --                                          atualizado_em = now();
---      (a anon key é pública — vai no bundle do front de qualquer forma —
---       mas o hábito de não versionar credencial vale para ela também.)
+--      (as duas são públicas — vão no bundle do front de qualquer forma —
+--       mas o hábito de não versionar credencial nem endereço de
+--       infraestrutura vale para elas também.)
 --   2. Configurar os secrets de SMTP no Supabase e publicar a function
 --      `comite-etica-nova-denuncia`. Ver o cabeçalho dela.
 -- =========================================================================
