@@ -437,7 +437,10 @@ export interface RespostaIA {
 // que o webhook use o fallback e o Testes consiga exibir o motivo real.
 export async function gerarResposta(cfg: BotConfig, system: string, messages: Msg[]): Promise<RespostaIA> {
   const provedor = cfg.provedor || "groq";
-  const modelo = cfg.modelo || "llama-3.3-70b-versatile";
+  // Fallback só vale quando WA_BOT_CONFIG.modelo está vazio. Era
+  // `llama-3.3-70b-versatile`, que a Groq tirou do catálogo — ver MODELO_PADRAO
+  // em _shared/novidade-ia.ts.
+  const modelo = cfg.modelo || "openai/gpt-oss-120b";
   const maxTokens = cfg.max_tokens || 1024;
   const t0 = Date.now();
   const fim = (texto: string | null, erro: string | null): RespostaIA =>
