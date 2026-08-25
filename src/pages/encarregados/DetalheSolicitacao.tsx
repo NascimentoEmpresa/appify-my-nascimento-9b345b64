@@ -34,7 +34,7 @@ const db = supabase as unknown as SupabaseClient;
 // lados escreveriam sem nunca se ver.
 // =====================================================================
 
-export type TipoSolicitacao = "Vaga" | "Férias" | "Advertência" | "Demissão";
+export type TipoSolicitacao = "Vaga" | "Férias" | "Advertência" | "Demissão" | "Mudança de Função";
 
 export interface Mensagem {
   id: number | string;
@@ -51,6 +51,7 @@ const FIO = {
   "Férias": { tabela: "SISTEMA_COMENTARIOS", modulo: "ferias" },
   "Advertência": { tabela: "SISTEMA_COMENTARIOS", modulo: "advertencia" },
   "Demissão": { tabela: "SISTEMA_COMENTARIOS", modulo: "demissao" },
+  "Mudança de Função": { tabela: "SISTEMA_COMENTARIOS", modulo: "troca_funcao" },
 } as const;
 
 const fmt = (s?: string | null) => {
@@ -85,6 +86,15 @@ const ROTULO: Record<string, string> = {
   relato: "Relato", termino_experiencia: "Término de experiência",
   data_aviso: "Data do aviso", modelo_aviso: "Modelo de aviso",
   operacional_motivo: "Retorno do Operacional", rh_observacao: "Observação do RH",
+  // Mudança de função. `e_escritorio` fica fora de propósito: quem lê a ficha
+  // não pensa em "escritório x contrato", pensa em quem está com o pedido —
+  // e isso o status já diz.
+  cargo_atual: "Cargo atual", cargo_novo: "Cargo novo", local: "Local / contrato",
+  posto: "Posto", filial: "Filial", data_pretendida: "A partir de",
+  aprovador_nome: "Aprovado por", aprovador_em: "Aprovado em",
+  aprovador_motivo: "Retorno de quem aprovou",
+  sst_por: "SST", sst_em: "SST em", sst_aso_data: "Data do ASO",
+  sst_observacao: "Observação do SST",
   data_solicitacao: "Data da solicitação",
   descricao: "Descrição", motivo: "Motivo", data_ocorrido: "Data do ocorrido",
   periodo_inicio: "Início do período", periodo_fim: "Fim do período",
@@ -100,6 +110,8 @@ const OCULTAS = new Set([
   "salario",
   "id", "created_at", "criado_em", "updated_at", "status", "status_changed_at",
   "solicitante_email", "solicitante_cpf", "solicitante_nome", "data_inicio_alteracoes",
+  // Mudança de função: roteamento interno, não informação para quem pediu.
+  "e_escritorio", "atualizado_em",
   "administrativa", "cnh_obrigatoria",
   // Demissao: ids e carimbos de quem tratou nao dizem nada a quem solicitou.
   "colaborador_id", "colaborador_cpf", "contrato_id", "atualizado_em",
@@ -128,6 +140,7 @@ export function DetalheSolicitacao({ tipo, id, titulo, status, onFechar }: {
     tipo === "Vaga" ? "SISTEMA_RECRUTAMENTO"
     : tipo === "Férias" ? "SISTEMA_SOLICITACOES_FERIAS"
     : tipo === "Demissão" ? "SISTEMA_SOLICITACOES_DEMISSAO"
+    : tipo === "Mudança de Função" ? "SISTEMA_SOLICITACOES_TROCA_FUNCAO"
     : "SISTEMA_SOLICITACOES_ADVERTENCIA";
 
   const carregarMsgs = useCallback(async () => {
@@ -244,7 +257,9 @@ export function DetalheSolicitacao({ tipo, id, titulo, status, onFechar }: {
                   ? "A mesma conversa que o RH lê na tela de Férias."
                   : tipo === "Demissão"
                     ? "A mesma conversa que o Operacional e o RH leem na tela de Demissões."
-                    : "A mesma conversa que o Jurídico lê na tela de Advertências."}
+                    : tipo === "Mudança de Função"
+                      ? "A mesma conversa que quem aprova, o SST e o RH leem na tela de Mudança de Função."
+                      : "A mesma conversa que o Jurídico lê na tela de Advertências."}
             </p>
 
             <div style={{ flex: 1, overflowY: "auto", background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: 12, padding: 10, minHeight: 180 }}>

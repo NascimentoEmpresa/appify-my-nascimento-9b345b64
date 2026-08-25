@@ -213,6 +213,12 @@ export default function MinhasSolicitacoes({ abrir }: { abrir?: SolicitacaoInici
       .select("id, colaborador_nome, motivo_solicitacao, status, criado_em, data_solicitacao")
       .eq("solicitante_email", email).order("criado_em", { ascending: false }).limit(30);
 
+    // Mudança de função: mesmo caminho da demissão — quem pede acompanha aqui
+    // em vez de ter que perguntar com quem a solicitação está.
+    const tf = await (supabase as any).from("SISTEMA_SOLICITACOES_TROCA_FUNCAO")
+      .select("id, colaborador_nome, cargo_atual, cargo_novo, status, criado_em, atualizado_em")
+      .eq("solicitante_email", email).order("criado_em", { ascending: false }).limit(30);
+
     // Chamado é por auth.uid (a tabela usa solicitante_id), não por e-mail.
     const ch = user?.id
       ? await (supabase as any).from("CHAMADO_SISTEMA")
@@ -237,6 +243,12 @@ export default function MinhasSolicitacoes({ abrir }: { abrir?: SolicitacaoInici
       })),
       ...(fr.data ?? []).map((r: any) => ({ tipo: "Férias", icon: "📅", id: r.id, titulo: `Férias — ${r.colaborador_nome || ""}`, status: r.status, data: r.criado_em, statusDesde: r.criado_em })),
       ...(ad.data ?? []).map((r: any) => ({ tipo: "Advertência", icon: "⚠️", id: r.id, titulo: `Advertência ${r.tipo_advertencia || ""} — ${r.colaborador_nome || ""}`, status: r.status, data: r.created_at, statusDesde: r.status_changed_at || r.created_at, excecao: r.excecao })),
+      ...(tf.data ?? []).map((r: any) => ({
+        tipo: "Mudança de Função", icon: "🔀", id: r.id,
+        titulo: `${r.colaborador_nome || ""} — ${r.cargo_atual || "?"} → ${r.cargo_novo || "?"}`,
+        status: r.status, data: r.criado_em,
+        statusDesde: r.atualizado_em || r.criado_em,
+      })),
       ...(dm.data ?? []).map((r: any) => ({
         tipo: "Demissão", icon: "🚪", id: r.id,
         titulo: `Demissão — ${r.colaborador_nome || ""}`,

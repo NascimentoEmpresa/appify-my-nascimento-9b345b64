@@ -23,7 +23,7 @@ import { useMeuNome } from "@/hooks/useMeuNome";
 const db = supabase as unknown as SupabaseClient;
 
 /** Os módulos que usam o feed para conversar sobre uma solicitação. */
-export type ModuloConversa = "ferias" | "advertencia" | "demissao";
+export type ModuloConversa = "ferias" | "advertencia" | "demissao" | "troca_funcao";
 
 interface Comentario {
   id: number;
