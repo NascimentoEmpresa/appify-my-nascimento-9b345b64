@@ -91,3 +91,8 @@ verify_jwt = false
 # e-mail + senha conferido pela RPC a cada chamada, não uma sessão.
 [functions.denuncia-conversa]
 verify_jwt = false
+
+# Chamada pelo trigger trg_canal_denuncia_avisa_comite via pg_net, que manda
+# a anon key no Authorization — o gateway valida esse JWT normalmente.
+[functions.comite-etica-nova-denuncia]
+verify_jwt = true
