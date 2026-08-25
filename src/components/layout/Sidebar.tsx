@@ -844,6 +844,14 @@ const sstModule: ModuleDef = {
         { label: "Mudança de Função — ASO", to: "/app/sst/troca-funcao", icon: ArrowLeftRight, notif: "troca_funcao" },
       ],
     },
+    {
+      // A outra ponta: o desligamento também passa pelo SST, depois do RH.
+      label: "Desligamento",
+      defaultOpen: true,
+      items: [
+        { label: "ASO Demissional", to: "/app/sst/aso-demissional", icon: UserMinus },
+      ],
+    },
   ],
 };
 

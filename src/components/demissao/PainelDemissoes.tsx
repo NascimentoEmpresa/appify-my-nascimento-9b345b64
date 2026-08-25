@@ -12,10 +12,12 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import {
   BUCKET, TABELA, TABELA_ANEXOS, corDoStatus, explicaStatus, fmtData, fmtDataHora,
-  fmtTamanho, type AnexoDemissao, type SolicitacaoDemissao,
+  fmtTamanho, linkDoLocalASO, resumoDoASO, type AnexoDemissao, type SolicitacaoDemissao,
 } from "@/lib/demissao/solicitacao";
+import { MapaPicker } from "@/components/sst/MapaPicker";
 import {
-  CheckCircle2, Clock, Download, FileText, Loader2, Search, ThumbsDown, ThumbsUp, XCircle,
+  CheckCircle2, Clock, Download, FileText, Loader2, MapPin, Search, Stethoscope,
+  ThumbsDown, ThumbsUp, XCircle,
 } from "lucide-react";
 import { ConversaSolicitacao } from "@/components/solicitacoes/ConversaSolicitacao";
 import { toast } from "sonner";
@@ -24,31 +26,41 @@ import { cn } from "@/lib/utils";
 const sb = supabase as any;
 
 /**
- * Painel das solicitações de demissão — a mesma tela para as duas etapas.
+ * Painel das solicitações de demissão — a mesma tela para as três etapas.
  *
  *   operacional → aprova (segue para o RH) ou reprova COM MOTIVO;
- *   rh          → conclui o que o operacional já aprovou.
+ *   rh          → trata o que o operacional aprovou e manda para o SST;
+ *   sst         → marca o ASO demissional, e aí sim a demissão fecha.
  *
  * Um componente só porque a lista, os filtros, o detalhe e os anexos são
- * idênticos: o que muda é quem pode agir e sobre qual status. Duas cópias
+ * idênticos: o que muda é quem pode agir e sobre qual status. Três cópias
  * divergiriam na primeira correção feita em uma delas.
  *
  * O RH não enxerga o que ainda está com o operacional nem o que foi
- * reprovado: para o RH, a solicitação só existe depois de aprovada.
+ * reprovado: para o RH, a solicitação só existe depois de aprovada. O SST vê
+ * menos ainda — só o que já passou pelo RH.
+ *
+ * "Concluída" mudou de dono em 25/08/2026: era o fim no RH, hoje é o fim no
+ * SST. As que já estavam concluídas antes disso ficaram como estavam, sem
+ * ASO — jogar desligamento antigo na fila do SST não ajudaria ninguém.
  */
 
-export type Etapa = "operacional" | "rh";
+export type Etapa = "operacional" | "rh" | "sst";
 
 /** Os status que cada etapa enxerga, na ordem em que fazem sentido na fila. */
 const STATUS_DA_ETAPA: Record<Etapa, string[]> = {
-  operacional: ["Pendente Operacional", "Pendente RH", "Concluída", "Reprovada", "Cancelada"],
-  rh: ["Pendente RH", "Concluída"],
+  operacional: ["Pendente Operacional", "Pendente RH", "Pendente SST", "Concluída", "Reprovada", "Cancelada"],
+  // O RH continua vendo o que despachou: a pergunta que mais chega depois de
+  // concluir é "e o ASO do fulano, o SST marcou?".
+  rh: ["Pendente RH", "Pendente SST", "Concluída"],
+  sst: ["Pendente SST", "Concluída"],
 };
 
 /** O status em que a etapa TEM trabalho a fazer. */
 const STATUS_DE_ACAO: Record<Etapa, string> = {
   operacional: "Pendente Operacional",
   rh: "Pendente RH",
+  sst: "Pendente SST",
 };
 
 function Kpi({ titulo, valor, icone: Icone, cor }: {
@@ -125,17 +137,28 @@ export function PainelDemissoes({ etapa }: { etapa: Etapa }) {
 
   return (
     <>
-      <div className="mb-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+      {/* 5 cartões no Operacional (a etapa do SST entrou na régua), 3 no RH e
+          2 no SST — o grid acompanha em vez de espremer todo mundo em quatro
+          colunas fixas, que deixavam o SST com dois cartões perdidos. */}
+      <div className={cn("mb-5 grid gap-3 sm:grid-cols-2",
+        etapa === "operacional" ? "lg:grid-cols-3 xl:grid-cols-5" : etapa === "rh" ? "lg:grid-cols-3" : "")}>
         {etapa === "operacional" ? (
           <>
             <Kpi titulo="Aguardando você" valor={contar("Pendente Operacional")} icone={Clock} cor="bg-yellow-100 text-yellow-700" />
             <Kpi titulo="No RH" valor={contar("Pendente RH")} icone={FileText} cor="bg-purple-100 text-purple-700" />
+            <Kpi titulo="No SST" valor={contar("Pendente SST")} icone={Stethoscope} cor="bg-cyan-100 text-cyan-700" />
             <Kpi titulo="Concluídas" valor={contar("Concluída")} icone={CheckCircle2} cor="bg-green-100 text-green-700" />
             <Kpi titulo="Reprovadas" valor={contar("Reprovada")} icone={XCircle} cor="bg-red-100 text-red-700" />
           </>
-        ) : (
+        ) : etapa === "rh" ? (
           <>
             <Kpi titulo="Aguardando o RH" valor={contar("Pendente RH")} icone={Clock} cor="bg-purple-100 text-purple-700" />
+            <Kpi titulo="No SST (ASO)" valor={contar("Pendente SST")} icone={Stethoscope} cor="bg-cyan-100 text-cyan-700" />
+            <Kpi titulo="Concluídas" valor={contar("Concluída")} icone={CheckCircle2} cor="bg-green-100 text-green-700" />
+          </>
+        ) : (
+          <>
+            <Kpi titulo="ASO a marcar" valor={contar("Pendente SST")} icone={Stethoscope} cor="bg-cyan-100 text-cyan-700" />
             <Kpi titulo="Concluídas" valor={contar("Concluída")} icone={CheckCircle2} cor="bg-green-100 text-green-700" />
           </>
         )}
@@ -233,9 +256,23 @@ function DetalheSolicitacao({ solicitacao, etapa, quemSou, onFechar, onDecidir }
   const [motivo, setMotivo] = useState("");
   const [observacao, setObservacao] = useState("");
   const [salvando, setSalvando] = useState(false);
+  // O ASO demissional — os mesmos quatro campos do ASO de admissão.
+  const [aso, setAso] = useState({ data: "", hora: "", local: "", maps: "" });
+  // Texto que centraliza o mapa; só muda quando o SST sai do campo "local",
+  // senão o mapa saltaria a cada tecla digitada.
+  const [mapPrev, setMapPrev] = useState("");
 
   useEffect(() => {
     setMotivo(""); setObservacao(""); setAnexos([]);
+    // Reabrir uma já marcada mostra o que está gravado — reagendar é editar o
+    // que está lá, não redigitar do zero.
+    setAso({
+      data: solicitacao?.sst_data_exame ?? "",
+      hora: solicitacao?.sst_hora_exame ?? "",
+      local: solicitacao?.sst_local_exame ?? "",
+      maps: solicitacao?.sst_maps_url ?? "",
+    });
+    setMapPrev(solicitacao?.sst_local_exame ?? "");
     if (!solicitacao) return;
     (async () => {
       const { data } = await sb.from(TABELA_ANEXOS)
@@ -276,12 +313,31 @@ function DetalheSolicitacao({ solicitacao, etapa, quemSou, onFechar, onDecidir }
     setSalvando(false);
   };
 
+  // O RH conclui a PARTE DELE e despacha para o SST — não é mais o fim da
+  // linha. Sem esta passagem o encarregado via "Concluída" enquanto o ASO
+  // demissional ainda não tinha sido marcado por ninguém.
   const concluir = async () => {
     setSalvando(true);
     await onDecidir(s, {
-      status: "Concluída", rh_por: quemSou,
+      status: "Pendente SST", rh_por: quemSou,
       rh_em: new Date().toISOString(), rh_observacao: observacao.trim() || null,
-    }, `Solicitação #${s.id} concluída.`);
+    }, `Solicitação #${s.id} concluída no RH e enviada ao SST.`);
+    setSalvando(false);
+  };
+
+  // O SST marca o ASO demissional — e é isso que fecha a demissão.
+  const marcarASO = async () => {
+    if (!aso.data) { toast.error("Informe a data do ASO."); return; }
+    setSalvando(true);
+    await onDecidir(s, {
+      status: "Concluída",
+      sst_data_exame: aso.data,
+      sst_hora_exame: aso.hora.trim() || null,
+      sst_local_exame: aso.local.trim() || null,
+      sst_maps_url: aso.maps.trim() || null,
+      sst_observacao: observacao.trim() || null,
+      sst_por: quemSou, sst_em: new Date().toISOString(),
+    }, `ASO demissional marcado — solicitação #${s.id} concluída.`);
     setSalvando(false);
   };
 
@@ -342,13 +398,33 @@ function DetalheSolicitacao({ solicitacao, etapa, quemSou, onFechar, onDecidir }
           )}
         </div>
 
+        {/* O ASO já marcado — em destaque, porque é a informação que o
+            encarregado e o colaborador precisam ter em mãos (onde e quando
+            comparecer), não um carimbo de auditoria. */}
+        {s.sst_data_exame && (
+          <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-4">
+            <h3 className="mb-1 text-sm font-semibold text-emerald-800">ASO demissional marcado</h3>
+            <p className="text-sm text-emerald-900">{resumoDoASO(s)}</p>
+            {linkDoLocalASO(s) && (
+              <a href={linkDoLocalASO(s)!} target="_blank" rel="noopener noreferrer"
+                 className="mt-1 inline-flex items-center gap-1 text-sm font-semibold text-sky-700 hover:underline">
+                <MapPin className="h-3.5 w-3.5" /> Ver no mapa
+              </a>
+            )}
+            {s.sst_observacao && (
+              <p className="mt-2 whitespace-pre-wrap text-sm text-emerald-900/80">{s.sst_observacao}</p>
+            )}
+          </div>
+        )}
+
         {/* Histórico das decisões já tomadas */}
-        {(s.operacional_em || s.rh_em) && (
+        {(s.operacional_em || s.rh_em || s.sst_em) && (
           <Secao titulo="Decisões" itens={[
             ["Operacional", s.operacional_por ? `${s.operacional_por} · ${fmtDataHora(s.operacional_em)}` : "—"],
             ["Motivo da reprovação", s.operacional_motivo],
             ["RH", s.rh_por ? `${s.rh_por} · ${fmtDataHora(s.rh_em)}` : "—"],
             ["Observação do RH", s.rh_observacao],
+            ["SST (ASO)", s.sst_por ? `${s.sst_por} · ${fmtDataHora(s.sst_em)}` : "—"],
           ]} />
         )}
 
@@ -374,14 +450,68 @@ function DetalheSolicitacao({ solicitacao, etapa, quemSou, onFechar, onDecidir }
 
         {podeAgir && etapa === "rh" && (
           <div className="space-y-3 rounded-lg border border-primary/30 bg-primary/5 p-4">
-            <h3 className="text-sm font-semibold">Concluir no RH</h3>
+            <h3 className="text-sm font-semibold">Concluir no RH e enviar ao SST</h3>
             <div>
               <Label htmlFor="obs">Observação (opcional)</Label>
               <Textarea id="obs" className="mt-1" placeholder="O que foi feito, datas do acerto, pendências…"
                 value={observacao} onChange={(e) => setObservacao(e.target.value)} />
             </div>
             <Button onClick={concluir} disabled={salvando}>
-              <CheckCircle2 className="mr-2 h-4 w-4" /> Concluir solicitação
+              <CheckCircle2 className="mr-2 h-4 w-4" /> Concluir e Enviar ao SST
+            </Button>
+          </div>
+        )}
+
+        {/* SST — os MESMOS campos do ASO de admissão (pages/sst/AsoCandidatos),
+            inclusive o seletor no mapa: é a mesma ficha, na outra ponta. */}
+        {podeAgir && etapa === "sst" && (
+          <div className="space-y-3 rounded-lg border border-primary/30 bg-primary/5 p-4">
+            <h3 className="text-sm font-semibold">Marcar o ASO demissional</h3>
+            <p className="text-sm text-muted-foreground">
+              Informe data, hora e local do exame. Marcar o ASO conclui a demissão — o
+              encarregado passa a ver tudo isso na solicitação dele.
+            </p>
+
+            <div className="grid gap-3 sm:grid-cols-2">
+              <div>
+                <Label htmlFor="aso-data">Data do ASO <span className="text-destructive">*</span></Label>
+                <Input id="aso-data" type="date" className="mt-1" value={aso.data}
+                  onChange={(e) => setAso((v) => ({ ...v, data: e.target.value }))} />
+              </div>
+              <div>
+                <Label htmlFor="aso-hora">Horário</Label>
+                <Input id="aso-hora" className="mt-1" placeholder="Ex.: 09:00" value={aso.hora}
+                  onChange={(e) => setAso((v) => ({ ...v, hora: e.target.value }))} />
+              </div>
+            </div>
+
+            <div>
+              <Label htmlFor="aso-local">Local do exame</Label>
+              <Input id="aso-local" className="mt-1" placeholder="Clínica / endereço" value={aso.local}
+                onChange={(e) => setAso((v) => ({ ...v, local: e.target.value }))}
+                onBlur={() => setMapPrev(aso.local.trim())} />
+            </div>
+
+            <div>
+              <Label htmlFor="aso-maps">Local exato no Google Maps (opcional)</Label>
+              <Input id="aso-maps" className="mt-1" placeholder="Cole o link do Maps (Compartilhar → Copiar link)"
+                value={aso.maps} onChange={(e) => setAso((v) => ({ ...v, maps: e.target.value }))} />
+              <p className="mt-1 text-xs text-muted-foreground">
+                Ou clique no ponto exato no mapa abaixo — o endereço e o link são preenchidos sozinhos.
+              </p>
+            </div>
+
+            <MapaPicker busca={mapPrev}
+              onPick={({ nome, url }) => setAso((v) => ({ ...v, maps: url, local: nome || v.local }))} />
+
+            <div>
+              <Label htmlFor="obs-sst">Observação (opcional)</Label>
+              <Textarea id="obs-sst" className="mt-1" placeholder="Clínica, orientações ao colaborador, pendências…"
+                value={observacao} onChange={(e) => setObservacao(e.target.value)} />
+            </div>
+
+            <Button onClick={marcarASO} disabled={salvando}>
+              <Stethoscope className="mr-2 h-4 w-4" /> Marcar ASO e concluir
             </Button>
           </div>
         )}
@@ -391,7 +521,7 @@ function DetalheSolicitacao({ solicitacao, etapa, quemSou, onFechar, onDecidir }
             Operacional nem o RH viam. */}
         <ConversaSolicitacao
           modulo="demissao" entidadeId={s.id}
-          aviso="Quem solicitou lê e responde por Encarregados › Minhas Solicitações. Operacional e RH veem a mesma conversa."
+          aviso="Quem solicitou lê e responde por Encarregados › Minhas Solicitações. Operacional, RH e SST veem a mesma conversa."
         />
       </DialogContent>
     </Dialog>
