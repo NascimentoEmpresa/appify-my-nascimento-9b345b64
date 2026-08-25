@@ -15,6 +15,7 @@ import { Plus, Pencil, Trash2, Package, Search, Building2, ShieldAlert } from "l
 import { toast } from "sonner";
 import { useEmpresaId } from "@/hooks/useEmpresaId";
 import { MateriaisFornecedorDialog } from "@/components/suprimentos/MateriaisFornecedorDialog";
+import { FORMAS_PAGAMENTO } from "@/hooks/useFornecedorCadastro";
 
 /**
  * Fornecedores — recorte de Compras/Suprimentos.
@@ -27,6 +28,16 @@ import { MateriaisFornecedorDialog } from "@/components/suprimentos/MateriaisFor
  *
  * O formulário antigo, completo, segue em ./fornecedores/FornecedorDialog.tsx
  * e não é mais referenciado; dá para apagar quando decidirem que não volta.
+ *
+ * SIS-2026-0209 manteve esse recorte de propósito, mas trouxe para cá o que o
+ * gerente de Suprimentos pediu e que antes ficava solto dentro de
+ * `observacoes` — o placeholder do campo dizia literalmente "prazo de entrega,
+ * condição de pagamento": e-mail do financeiro e da nota fiscal, telefone do
+ * vendedor, formas de pagamento, prazos de entrega e de devolução.
+ *
+ * Banco e PIX aparecem só para leitura: quem preenche é o próprio fornecedor,
+ * pelo link público, e quem edita é o Financeiro, dono desse cadastro em
+ * títulos a pagar.
  */
 
 const sb = supabase as any;
@@ -37,11 +48,21 @@ interface Fornecedor {
   contato: string | null; telefone: string | null; email: string | null;
   cidade: string | null; uf: string | null;
   observacoes: string | null; ativo: boolean;
+  // SIS-2026-0209: o que antes vivia solto dentro de `observacoes` — e o que o
+  // fornecedor passa a preencher sozinho pelo link público.
+  email_financeiro: string | null; email_nota_fiscal: string | null;
+  telefone_vendedor: string | null;
+  formas_pagamento: string[] | null;
+  condicao_pagamento: string | null; prazo_entrega_dias: number | null;
+  devolucao_prazo_dias: number | null; devolucao_procedimento: string | null;
 }
 
 const VAZIO: Partial<Fornecedor> = {
   tipo: "pj", cnpj_cpf: "", razao_social: "", nome_fantasia: "",
   contato: "", telefone: "", email: "", cidade: "", uf: "", observacoes: "", ativo: true,
+  email_financeiro: "", email_nota_fiscal: "", telefone_vendedor: "",
+  formas_pagamento: [], condicao_pagamento: "", prazo_entrega_dias: null,
+  devolucao_prazo_dias: null, devolucao_procedimento: "",
 };
 
 function mascararDoc(v: string, tipo: string): string {
@@ -78,7 +99,10 @@ export default function Fornecedores() {
     queryFn: async (): Promise<Fornecedor[]> => {
       const { data, error } = await sb
         .from("fornecedor")
-        .select("id, tipo, cnpj_cpf, razao_social, nome_fantasia, contato, telefone, email, cidade, uf, observacoes, ativo")
+        .select(`id, tipo, cnpj_cpf, razao_social, nome_fantasia, contato, telefone, email,
+                 cidade, uf, observacoes, ativo,
+                 email_financeiro, email_nota_fiscal, telefone_vendedor, formas_pagamento,
+                 condicao_pagamento, prazo_entrega_dias, devolucao_prazo_dias, devolucao_procedimento`)
         .order("razao_social");
       if (error) throw error;
       return data ?? [];
@@ -330,12 +354,91 @@ export default function Fornecedores() {
               </div>
             </div>
 
+            {/* Contatos separados: o e-mail que recebe a nota e o do financeiro
+                quase nunca são o comercial, e era o que mais faltava na hora de
+                pagar (SIS-2026-0209). */}
+            <div className="grid gap-4 sm:grid-cols-2">
+              <div>
+                <Label>E-mail do financeiro</Label>
+                <Input type="email" value={editando?.email_financeiro ?? ""}
+                       onChange={(e) => setEditando((s) => ({ ...s, email_financeiro: e.target.value }))} />
+              </div>
+              <div>
+                <Label>E-mail para a nota fiscal</Label>
+                <Input type="email" value={editando?.email_nota_fiscal ?? ""}
+                       onChange={(e) => setEditando((s) => ({ ...s, email_nota_fiscal: e.target.value }))} />
+              </div>
+              <div>
+                <Label>Telefone do vendedor</Label>
+                <Input value={editando?.telefone_vendedor ?? ""}
+                       onChange={(e) => setEditando((s) => ({ ...s, telefone_vendedor: mascararTelefone(e.target.value) }))}
+                       placeholder="(00) 00000-0000" />
+              </div>
+              <div>
+                <Label>Condição de pagamento</Label>
+                <Input value={editando?.condicao_pagamento ?? ""}
+                       onChange={(e) => setEditando((s) => ({ ...s, condicao_pagamento: e.target.value }))}
+                       placeholder="Ex.: 30/60/90 dias" />
+              </div>
+            </div>
+
+            <div>
+              <Label>Formas de pagamento aceitas</Label>
+              <div className="mt-2 flex flex-wrap gap-4">
+                {FORMAS_PAGAMENTO.map((fp) => {
+                  const atuais = editando?.formas_pagamento ?? [];
+                  return (
+                    <label key={fp.valor} className="flex cursor-pointer items-center gap-2 text-sm">
+                      <input
+                        type="checkbox" className="h-4 w-4"
+                        checked={atuais.includes(fp.valor)}
+                        onChange={(e) => setEditando((s) => ({
+                          ...s,
+                          formas_pagamento: e.target.checked
+                            ? [...(s?.formas_pagamento ?? []), fp.valor]
+                            : (s?.formas_pagamento ?? []).filter((x) => x !== fp.valor),
+                        }))}
+                      />
+                      {fp.rotulo}
+                    </label>
+                  );
+                })}
+              </div>
+            </div>
+
+            <div className="grid gap-4 sm:grid-cols-2">
+              <div>
+                <Label>Prazo de entrega (dias)</Label>
+                <Input inputMode="numeric" value={editando?.prazo_entrega_dias ?? ""}
+                       onChange={(e) => setEditando((s) => ({
+                         ...s, prazo_entrega_dias: e.target.value === "" ? null : Number(e.target.value.replace(/\D/g, "")),
+                       }))}
+                       placeholder="Contado a partir do pedido" />
+              </div>
+              <div>
+                <Label>Prazo de devolução (dias)</Label>
+                <Input inputMode="numeric" value={editando?.devolucao_prazo_dias ?? ""}
+                       onChange={(e) => setEditando((s) => ({
+                         ...s, devolucao_prazo_dias: e.target.value === "" ? null : Number(e.target.value.replace(/\D/g, "")),
+                       }))} />
+              </div>
+            </div>
+
+            <div>
+              <Label>Como devolver para este fornecedor</Label>
+              <Textarea rows={2} value={editando?.devolucao_procedimento ?? ""}
+                        onChange={(e) => setEditando((s) => ({ ...s, devolucao_procedimento: e.target.value }))}
+                        placeholder="Assim ninguém precisa ligar para o fornecedor na hora de devolver." />
+            </div>
+
             <div>
               <Label>Observações</Label>
               <Textarea rows={2} value={editando?.observacoes ?? ""}
                         onChange={(e) => setEditando((s) => ({ ...s, observacoes: e.target.value }))}
-                        placeholder="Prazo de entrega, condição de pagamento, o que for útil na compra." />
+                        placeholder="O que mais for útil na compra." />
             </div>
+
+            {editando?.id && <ContasDoFornecedor fornecedorId={editando.id} />}
 
             <label className="flex cursor-pointer items-center gap-2 text-sm">
               <input
@@ -364,6 +467,60 @@ export default function Fornecedores() {
       </Dialog>
 
       <MateriaisFornecedorDialog fornecedor={materiaisDe} onFechar={() => setMateriaisDe(null)} />
+    </div>
+  );
+}
+
+/**
+ * Contas bancárias e PIX, só para LER (SIS-2026-0209).
+ *
+ * Quem preenche isso é o próprio fornecedor, pelo link público, e quem aprova
+ * confere na fila de Cadastros. Aqui aparece para o comprador não precisar
+ * pedir o banco por WhatsApp de novo — editar continua sendo assunto do
+ * Financeiro, que é dono desse cadastro em títulos a pagar.
+ */
+function ContasDoFornecedor({ fornecedorId }: { fornecedorId: string }) {
+  const { data: contas = [] } = useQuery({
+    queryKey: ["fornecedor_conta_bancaria", fornecedorId],
+    queryFn: async () => {
+      const { data, error } = await sb
+        .from("fornecedor_conta_bancaria")
+        .select("id, banco_codigo, banco_nome, agencia, agencia_digito, conta, conta_digito, tipo, titular_nome, pix_tipo, pix_chave, principal, ativa")
+        .eq("fornecedor_id", fornecedorId)
+        .eq("ativa", true)
+        .order("principal", { ascending: false });
+      if (error) throw error;
+      return data ?? [];
+    },
+  });
+
+  if (contas.length === 0) return null;
+
+  return (
+    <div className="rounded-md border bg-muted/30 p-3">
+      <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+        Dados bancários
+      </p>
+      <div className="space-y-2">
+        {contas.map((c: any) => (
+          <div key={c.id} className="text-xs">
+            <p className="font-medium">
+              {[c.banco_codigo, c.banco_nome].filter(Boolean).join(" — ") || "Banco não informado"}
+              {c.principal && <span className="ml-2 text-muted-foreground">(principal)</span>}
+            </p>
+            <p className="text-muted-foreground">
+              {[
+                c.agencia && `Ag. ${[c.agencia, c.agencia_digito].filter(Boolean).join("-")}`,
+                c.conta && `Conta ${[c.conta, c.conta_digito].filter(Boolean).join("-")}`,
+                c.tipo, c.titular_nome,
+              ].filter(Boolean).join(" · ")}
+            </p>
+            {c.pix_chave && (
+              <p className="text-muted-foreground">PIX ({c.pix_tipo || "—"}): {c.pix_chave}</p>
+            )}
+          </div>
+        ))}
+      </div>
     </div>
   );
 }

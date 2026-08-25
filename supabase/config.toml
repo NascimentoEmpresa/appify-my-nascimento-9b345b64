@@ -96,3 +96,10 @@ verify_jwt = false
 # a anon key no Authorization — o gateway valida esse JWT normalmente.
 [functions.comite-etica-nova-denuncia]
 verify_jwt = true
+
+# Cadastro de fornecedor preenchido pelo proprio fornecedor (SIS-2026-0209).
+# Publica de proposito: quem preenche e alguem de fora, que nao tem conta no
+# ERP. A credencial e o token do convite, gerado pelo comprador e queimado
+# depois do uso — quem valida e a RPC, que a funcao alcanca com a chave anon.
+[functions.fornecedor-cadastro-publico]
+verify_jwt = false
