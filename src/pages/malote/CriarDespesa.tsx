@@ -420,6 +420,12 @@ function PainelSolicitacao({
     if (!tipo) return "Selecione o tipo.";
     if (tipo === "contrato" && !empresaContratoId) return "Selecione a empresa do contrato.";
     if (tipo === "contrato" && !contratoId) return "Selecione o contrato.";
+    const itemQuantidadeInvalida = itens.find(
+      (item) => item.nome_item.trim() !== "" && Number(item.quantidade) <= 0,
+    );
+    if (itemQuantidadeInvalida) {
+      return `Informe uma quantidade maior que zero para o item "${itemQuantidadeInvalida.nome_item}".`;
+    }
     if (paraEnviar && arquivos.length === 0) return "Anexe ao menos um arquivo.";
     return null;
   }

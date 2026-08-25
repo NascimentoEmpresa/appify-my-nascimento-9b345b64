@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -10,6 +10,7 @@ import { useItens, LABEL_TIPO_ITEM, type TipoItem } from "@/hooks/useSupCatalogo
 import { type ItemSolicitacao } from "@/hooks/useMaloteDespesa";
 import { Plus, Trash2, Search, Package, PencilLine } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { converterQuantidadeDigitada } from "@/lib/suprimentos/compra";
 
 /**
  * Os itens de uma solicitação de compra (SIS-2026-0207).
@@ -28,8 +29,8 @@ import { cn } from "@/lib/utils";
  * igual.
  *
  * O mesmo componente serve os dois lados: o solicitante monta a lista, e o
- * comprador vê em modo leitura na tela de cotação — com a diferença de que,
- * para ele, aparece o valor negociado por linha.
+ * comprador vê em modo leitura na tela de cotação. A precificação item a item
+ * acontece exclusivamente no Pedido de Compra.
  */
 
 const UNIDADES = ["UN", "CX", "PC", "PAR", "KG", "L", "M", "M²", "RL", "FD"];
@@ -40,13 +41,11 @@ const LINHA_VAZIA: ItemSolicitacao = {
 };
 
 export function ItensSolicitacao({
-  itens, onChange, editavel = true, mostrarValores = false,
+  itens, onChange, editavel = true,
 }: {
   itens: ItemSolicitacao[];
   onChange?: (itens: ItemSolicitacao[]) => void;
   editavel?: boolean;
-  /** Liga a coluna de valor unitário — só faz sentido depois da cotação. */
-  mostrarValores?: boolean;
 }) {
   const { data: empresaId } = useEmpresaId();
   const { data: catalogo = [] } = useItens(empresaId ?? null);
@@ -56,11 +55,6 @@ export function ItensSolicitacao({
 
   const remover = (i: number) => onChange?.(itens.filter((_, j) => j !== i));
   const adicionar = () => onChange?.([...itens, { ...LINHA_VAZIA }]);
-
-  const total = useMemo(
-    () => itens.reduce((s, i) => s + Number(i.valor_unitario ?? 0) * Number(i.quantidade ?? 0), 0),
-    [itens],
-  );
 
   if (!editavel && itens.length === 0) {
     return (
@@ -100,8 +94,8 @@ export function ItensSolicitacao({
                   <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
                     <div>
                       <Label className="text-xs">Quantidade</Label>
-                      <Input className="mt-1 h-9" inputMode="decimal" value={item.quantidade ?? ""}
-                             onChange={(e) => alterar(i, { quantidade: Number(e.target.value.replace(/[^\d.,]/g, "").replace(",", ".")) || 0 })} />
+                      <CampoQuantidade quantidade={item.quantidade}
+                        onFinalizar={(quantidade) => alterar(i, { quantidade })} />
                     </div>
                     <div>
                       <Label className="text-xs">Unidade</Label>
@@ -127,7 +121,7 @@ export function ItensSolicitacao({
                   </div>
                 </div>
               ) : (
-                <LinhaLeitura item={item} mostrarValores={mostrarValores} />
+                <LinhaLeitura item={item} />
               )}
             </div>
           ))}
@@ -140,20 +134,37 @@ export function ItensSolicitacao({
         </Button>
       )}
 
-      {mostrarValores && total > 0 && (
-        <div className="flex justify-between rounded-md border bg-muted/40 p-2 text-sm">
-          <span className="text-muted-foreground">Total dos itens cotados</span>
-          <span className="font-semibold">
-            {total.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}
-          </span>
-        </div>
-      )}
     </div>
   );
 }
 
-function LinhaLeitura({ item, mostrarValores }: { item: ItemSolicitacao; mostrarValores: boolean }) {
-  const linha = Number(item.valor_unitario ?? 0) * Number(item.quantidade ?? 0);
+function CampoQuantidade({
+  quantidade, onFinalizar,
+}: {
+  quantidade: number;
+  onFinalizar: (quantidade: number) => void;
+}) {
+  const [texto, setTexto] = useState(String(quantidade ?? ""));
+  const quantidadeConvertida = converterQuantidadeDigitada(texto);
+
+  useEffect(() => {
+    setTexto(String(quantidade ?? ""));
+  }, [quantidade]);
+
+  return (
+    <>
+      <Input className="mt-1 h-9" inputMode="decimal" value={texto}
+        aria-invalid={quantidadeConvertida <= 0}
+        onChange={(e) => setTexto(e.target.value.replace(/[^\d.,]/g, ""))}
+        onBlur={() => onFinalizar(quantidadeConvertida)} />
+      {quantidadeConvertida <= 0 && (
+        <p className="mt-1 text-xs text-destructive">Informe uma quantidade maior que zero.</p>
+      )}
+    </>
+  );
+}
+
+function LinhaLeitura({ item }: { item: ItemSolicitacao }) {
   return (
     <div className="flex items-start justify-between gap-3 text-sm">
       <div className="min-w-0">
@@ -171,16 +182,6 @@ function LinhaLeitura({ item, mostrarValores }: { item: ItemSolicitacao; mostrar
           ].filter(Boolean).join(" · ")}
         </p>
       </div>
-      {mostrarValores && item.valor_unitario != null && (
-        <div className="shrink-0 text-right text-xs">
-          <p className="text-muted-foreground">
-            {Number(item.valor_unitario).toLocaleString("pt-BR", { style: "currency", currency: "BRL" })} /un
-          </p>
-          <p className="font-semibold">
-            {linha.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}
-          </p>
-        </div>
-      )}
     </div>
   );
 }
