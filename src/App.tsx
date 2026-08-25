@@ -44,6 +44,7 @@ import Implantacao from "./pages/contratos/Implantacao";
 import PlanilhaCusto from "./pages/licitacoes/PlanilhaCusto";
 import ContratosERP from "./pages/licitacoes/ContratosERP";
 import CotacoesLicitacao from "./pages/licitacoes/CotacoesLicitacao";
+import PrecosMateriais from "./pages/licitacoes/PrecosMateriais";
 import ContratosAtivos from "./pages/contratos/Ativos";
 import Empenhos from "./pages/contratos/Empenhos";
 import Postos from "./pages/contratos/Postos";
@@ -365,6 +366,9 @@ const App = () => (
             <Route path="licitacoes/implantacao" element={<Implantacao />} />
             <Route path="licitacoes/contratos" element={<ContratosERP />} />
             <Route path="licitacoes/cotacoes" element={<CotacoesLicitacao />} />
+            {/* Consulta somente-leitura do banco de preços que o Compras
+                alimenta na entrada de estoque (SIS-2026-0199). */}
+            <Route path="licitacoes/precos-materiais" element={<PrecosMateriais />} />
             <Route path="contratos/ativos" element={<ContratosAtivos />} />
             <Route path="contratos/empenhos" element={<Empenhos />} />
             <Route path="contratos/postos" element={<Postos />} />
