@@ -92,6 +92,19 @@ function itemMatchesChip(item: MaloteDespesaRow, chip: ChipKey): boolean {
   }
 }
 
+// `origem` não muda depois que a Solicitação vira Despesa (fica "solicitacao"
+// pra sempre) — quem decide se ainda é Solicitação é o status atual, mesma
+// lógica de Aprovacoes.tsx: a partir de cotacao_aprovada em diante já é
+// Despesa (Tipo e agrupamento das abas Solicitações/Despesas do Malote).
+function aindaESolicitacao(item: MaloteDespesaRow): boolean {
+  return item.origem === "solicitacao" && STATUS_FASE_SOLICITACAO.includes(item.status);
+}
+
+function tipoLabelDe(item: MaloteDespesaRow): string {
+  if (item.origem === "solicitacao") return aindaESolicitacao(item) ? "Solicitação" : "Despesa";
+  return ORIGEM_LABEL[item.origem] ?? item.origem;
+}
+
 function aprovadorPendente(item: MaloteDespesaRow): string | null {
   if (item.status !== "pendente_aprovacao" || !item.nivel_aprovacao_atual) return null;
   const c = item.classificacao;
@@ -141,8 +154,8 @@ export default function MeusItens() {
 
   const filtrados = useMemo(() => {
     return itens.filter((item) => {
-      if (tab === "solicitacoes" && item.origem !== "solicitacao") return false;
-      if (tab === "despesas" && item.origem === "solicitacao") return false;
+      if (tab === "solicitacoes" && !aindaESolicitacao(item)) return false;
+      if (tab === "despesas" && aindaESolicitacao(item)) return false;
       if (!itemMatchesChip(item, chip)) return false;
       if (classificacaoId && item.classificacao_id !== classificacaoId) return false;
       if (empresaId && item.empresa_id !== empresaId) return false;
@@ -318,7 +331,7 @@ export default function MeusItens() {
                   <TableRow key={item.id} className="cursor-pointer" onClick={() => abrirItem(item)}>
                     <TableCell>
                       <span className="flex items-center gap-1.5 text-sm">
-                        <ListChecks className="h-3.5 w-3.5 text-muted-foreground" /> {ORIGEM_LABEL[item.origem] ?? item.origem}
+                        <ListChecks className="h-3.5 w-3.5 text-muted-foreground" /> {tipoLabelDe(item)}
                       </span>
                     </TableCell>
                     <TableCell className="font-mono text-xs">{item.numero}</TableCell>

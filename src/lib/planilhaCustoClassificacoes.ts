@@ -42,6 +42,7 @@ export const CLASSIFICACOES_LICITACAO: ClassificacaoLicitacao[] = [
 
   // Benefícios
   { campo: "transporte", label: "Vale Transporte", grupo: "Benefícios" },
+  { campo: "transporte_desconto", label: "Dedução Vale Transporte", grupo: "Benefícios" },
   { campo: "aux_alimentacao", label: "Auxílio Alimentação", grupo: "Benefícios" },
   { campo: "aux_alimentacao_desconto", label: "Desconto Auxílio Alimentação", grupo: "Benefícios" },
   { campo: "aux_refeicao", label: "Auxílio Refeição", grupo: "Benefícios" },
