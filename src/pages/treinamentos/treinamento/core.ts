@@ -157,16 +157,22 @@ export function validarProva(prova: PerguntaProva[]): string | null {
 /**
  * Teto de upload, em bytes.
  *
- * É o `fileSizeLimit` GLOBAL do projeto no Supabase, não o do bucket: o
- * bucket `treinamentos` foi criado com 200 MB, mas o limite do projeto
- * vence sempre, e um arquivo acima dele volta com "The object exceeded the
- * maximum allowed size" — em inglês, direto da API, sem dizer qual é o
- * limite. Conferido em 25/08/2026: 52428800 bytes.
+ * Vale o MENOR entre dois limites do Supabase, e os dois precisam ser
+ * olhados: o do bucket `treinamentos` (200 MB) e o `fileSizeLimit` GLOBAL
+ * do projeto, que vence sobre qualquer bucket. Arquivo acima disso volta
+ * com "The object exceeded the maximum allowed size" — em inglês, direto
+ * da API, sem dizer qual é o limite.
  *
- * Se alguém aumentar o teto no painel do Supabase, mude aqui junto — senão
- * a tela passa a recusar arquivo que o servidor aceitaria.
+ * Em 25/08/2026 o global estava em 50 MB e barrava vídeo de 60 MB mesmo
+ * com o bucket em 200 MB; foi elevado para 1 GB no painel, então quem
+ * manda agora é o bucket. Atenção ao aviso "Reduced max upload file size
+ * limit due to spend cap" naquela tela: com o limite de gastos ativo, o
+ * valor efetivo pode ser menor do que o campo mostra.
+ *
+ * Mudou lá? Mude aqui junto — senão a tela recusa arquivo que o servidor
+ * aceitaria, ou deixa subir 200 MB para falhar no fim.
  */
-export const LIMITE_UPLOAD_BYTES = 50 * 1024 * 1024;
+export const LIMITE_UPLOAD_BYTES = 200 * 1024 * 1024;
 
 export const formatarMB = (bytes: number) => `${(bytes / 1024 / 1024).toFixed(1).replace(".", ",")} MB`;
 

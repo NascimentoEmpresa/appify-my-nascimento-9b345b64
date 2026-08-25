@@ -136,21 +136,21 @@ describe("validarTamanho", () => {
 
   it("aceita arquivo dentro do limite, inclusive no limite exato", () => {
     expect(validarTamanho(arquivoDe(10))).toBeNull();
-    expect(validarTamanho(arquivoDe(50))).toBeNull();
+    expect(validarTamanho(arquivoDe(200))).toBeNull();
   });
 
   it("recusa acima do limite dizendo o tamanho e a saída", () => {
-    // O caso real: vídeo de 60 MB contra o teto global de 50 MB do projeto.
     // A API devolvia "The object exceeded the maximum allowed size", em
     // inglês e sem dizer qual é o limite.
-    const erro = validarTamanho(arquivoDe(60));
-    expect(erro).toContain("60,0 MB");
-    expect(erro).toContain("50,0 MB");
+    const erro = validarTamanho(arquivoDe(240));
+    expect(erro).toContain("240,0 MB");
+    expect(erro).toContain("200,0 MB");
     expect(erro).toMatch(/YouTube/);
   });
 
-  it("usa o limite do servidor, não o do bucket", () => {
-    // O bucket foi criado com 200 MB, mas o teto do projeto vence sempre.
-    expect(LIMITE_UPLOAD_BYTES).toBe(52428800);
+  it("acompanha o menor limite do servidor", () => {
+    // 200 MB é o do bucket; o global do projeto está em 1 GB desde
+    // 25/08/2026. Quem manda é o menor dos dois.
+    expect(LIMITE_UPLOAD_BYTES).toBe(200 * 1024 * 1024);
   });
 });
