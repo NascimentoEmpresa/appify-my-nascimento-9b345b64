@@ -12,9 +12,12 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { useEmpresaId } from "@/hooks/useEmpresaId";
-import { ESTILO_STATUS, STATUS_PEDIDO, fmtDataBR } from "@/hooks/useSupPedidos";
+import {
+  ESTILO_STATUS, STATUS_PEDIDO, fmtDataBR,
+  ESTILO_STATUS_ITEM, STATUS_ITEM, derivarStatusItem,
+} from "@/hooks/useSupPedidos";
 import { ModalBaixaPedido } from "@/components/suprimentos/ModalBaixaPedido";
-import { useTagsDoPedido } from "@/hooks/useSupEstoque";
+import { useTagsDoPedido, useTagsDePedidos, buscarTagsDePedidos, type TagEmLote } from "@/hooks/useSupEstoque";
 import {
   Search, Package, Boxes, Clock, ShoppingCart, Truck, History as HistoryIcon,
   RefreshCw, Inbox, Download, ShieldAlert, Trash2, AlertTriangle,
@@ -60,6 +63,52 @@ interface EventoHistorico {
   observacao: string | null; alterado_por_nome: string | null; data_alteracao: string;
 }
 
+type ItemPedido = Pedido["sup_pedido_item"][number];
+
+/**
+ * Uma linha do Excel = um item do pedido, com os dados do pedido repetidos.
+ *
+ * Quando o item tem mais de uma etiqueta (pediu 2 botinas, saíram 2 peças
+ * numeradas), os códigos vão concatenados numa célula — o relatório do sistema
+ * antigo já chamava essa coluna de "TAGs", no plural.
+ *
+ * Com etiquetas de valores diferentes na mesma peça (uma nova e uma
+ * higienizada, que custou menos), o unitário exportado é o MAIOR. É a regra
+ * que o gerente de Suprimentos definiu para não subestimar o valor do estoque.
+ */
+function linhaExport(p: Pedido, i: ItemPedido | null, tags: TagEmLote[]) {
+  const valores = tags.map((t) => Number(t.valor_unitario ?? 0)).filter((v) => v > 0);
+  const unitario = valores.length ? Math.max(...valores) : null;
+  const total = tags.reduce((s, t) => s + Number(t.valor_unitario ?? 0) * (t.quantidade || 0), 0);
+
+  return {
+    Protocolo: p.pedido_id,
+    "Tipo pedido": p.tipo_pedido,
+    Colaborador: p.nome_colaborador,
+    Matrícula: p.matricula_colaborador ?? "",
+    Contrato: p.contrato_nome,
+    Posto: p.posto_nome,
+    Função: p.funcao_nome,
+    Solicitante: p.solicitante_nome ?? p.solicitante_login,
+    "Data solicitação": fmtDataBR(p.data_solicitacao),
+    "Data despacho": fmtDataBR(p.data_despachado),
+    Admissão: p.admissao ? "Sim" : "Não",
+    "Tipo admissão": p.tipo_admissao ?? "",
+    "Data admissão": p.admissao ? fmtDataBR(p.data_admissao) : "",
+    Item: i?.nome_item ?? "",
+    Tamanho: i?.tamanho ?? "",
+    Litros: i?.litros ?? "",
+    Qtd: i?.quantidade ?? "",
+    TAGs: tags.map((t) => t.codigo).join(" | "),
+    "Valor unitário": unitario ?? "",
+    "Valor total": total > 0 ? total : "",
+    "Status do item": i ? derivarStatusItem(p.status, tags.length > 0) : "",
+    "Status do pedido": p.status,
+    "Obs. solicitante": p.observacoes_solicitante ?? "",
+    "Obs. compras": p.observacao ?? "",
+  };
+}
+
 const ICONE_STATUS: Record<string, any> = {
   "EM PREPARACAO": Boxes,
   "AGUARDANDO ENVIO": Clock,
@@ -77,6 +126,8 @@ export default function PedidosMateriais() {
   const [searchParams] = useSearchParams();
   const [busca, setBusca] = useState(() => searchParams.get("busca") ?? "");
   const [filtroStatus, setFiltroStatus] = useState("TODOS");
+  const [filtroItem, setFiltroItem] = useState("TODOS");
+  const [exportando, setExportando] = useState(false);
   const [statusDe, setStatusDe] = useState<Pedido | null>(null);
   const [historicoDe, setHistoricoDe] = useState<Pedido | null>(null);
   const [excluindo, setExcluindo] = useState<Pedido | null>(null);
@@ -85,13 +136,32 @@ export default function PedidosMateriais() {
     queryKey: ["sup_pedido", empresaId],
     enabled: !!empresaId,
     queryFn: async (): Promise<Pedido[]> => {
-      const { data, error } = await sb
-        .from("sup_pedido")
-        // item_id vem junto porque a baixa confere se a etiqueta é do material certo.
-        .select("*, sup_pedido_item(id, item_id, nome_item, tipo_item, tamanho, quantidade, litros, ordem)")
-        .order("created_at", { ascending: false });
-      if (error) throw error;
-      return data ?? [];
+      /**
+       * Paginado de propósito (SIS-2026-0201). Sem `.range()` o PostgREST
+       * devolve no máximo 1000 linhas e não avisa: a fila real tinha 1.448
+       * pedidos, o Excel saía com 1.000 e os cards de KPI contavam 1.000.
+       * Ninguém percebia, porque nada na tela indica corte.
+       *
+       * O legado calculava as contagens numa segunda query sem LIMIT
+       * justamente para os cards refletirem o banco inteiro
+       * (REPLICAR-MODULO-COMPRAS.md §5.3) — trazer tudo aqui devolve esse
+       * comportamento com uma consulta só.
+       */
+      const PAGINA = 1000;
+      const todos: Pedido[] = [];
+      for (let de = 0; ; de += PAGINA) {
+        const { data, error } = await sb
+          .from("sup_pedido")
+          // item_id vem junto porque a baixa confere se a etiqueta é do material certo.
+          .select("*, sup_pedido_item(id, item_id, nome_item, tipo_item, tamanho, quantidade, litros, ordem)")
+          .order("created_at", { ascending: false })
+          .range(de, de + PAGINA - 1);
+        if (error) throw error;
+        const lote = data ?? [];
+        todos.push(...lote);
+        if (lote.length < PAGINA) break;
+      }
+      return todos;
     },
   });
 
@@ -104,7 +174,7 @@ export default function PedidosMateriais() {
     return base;
   }, [pedidos]);
 
-  const filtrados = useMemo(() => {
+  const porBusca = useMemo(() => {
     const t = busca.trim().toLowerCase();
     return pedidos.filter((p) => {
       if (filtroStatus !== "TODOS" && p.status !== filtroStatus) return false;
@@ -122,6 +192,28 @@ export default function PedidosMateriais() {
       return alvo.includes(t);
     });
   }, [pedidos, busca, filtroStatus]);
+
+  /**
+   * Filtro por status de ITEM (SIS-2026-0201). Só busca as etiquetas quando o
+   * filtro está ligado — na fila inteira isso é uma varredura que a tela não
+   * precisa pagar para simplesmente listar pedidos.
+   */
+  const filtrandoPorItem = filtroItem !== "TODOS";
+  const idsParaTags = useMemo(() => porBusca.map((p) => p.id), [porBusca]);
+  const { data: tagsFiltro = [], isFetching: buscandoTags } =
+    useTagsDePedidos(idsParaTags, filtrandoPorItem);
+
+  const filtrados = useMemo(() => {
+    if (!filtrandoPorItem) return porBusca;
+    const comTag = new Set(tagsFiltro.map((t) => t.pedido_item_id));
+    // Mantém o pedido que tem ao menos UM item no status procurado — é assim
+    // que "só o que falta comprar" continua mostrando o pedido inteiro.
+    return porBusca.filter((p) =>
+      (p.sup_pedido_item ?? []).some(
+        (i) => derivarStatusItem(p.status, comTag.has(i.id)) === filtroItem,
+      ),
+    );
+  }, [porBusca, filtrandoPorItem, tagsFiltro, filtroItem]);
 
   /**
    * Exclusão de pedido. Existe porque no legado era rotina: o encarregado
@@ -158,29 +250,52 @@ export default function PedidosMateriais() {
       }),
   });
 
-  const exportar = () => {
-    const linhas = filtrados.map((p) => ({
-      Protocolo: p.pedido_id,
-      Status: p.status,
-      Contrato: p.contrato_nome,
-      Posto: p.posto_nome,
-      Função: p.funcao_nome,
-      Solicitante: p.solicitante_nome ?? p.solicitante_login,
-      Colaborador: p.nome_colaborador,
-      Matrícula: p.matricula_colaborador,
-      Admissão: p.admissao ? "Sim" : "Não",
-      "Data solicitação": fmtDataBR(p.data_solicitacao),
-      "Data despacho": fmtDataBR(p.data_despachado),
-      Materiais: (p.sup_pedido_item ?? [])
-        .map((i) => `${i.nome_item}${i.tamanho ? ` (${i.tamanho})` : ""} x${i.quantidade}`)
-        .join(" | "),
-      "Obs. solicitante": p.observacoes_solicitante ?? "",
-      "Obs. compras": p.observacao ?? "",
-    }));
-    const ws = XLSX.utils.json_to_sheet(linhas);
-    const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, "Pedidos");
-    XLSX.writeFile(wb, `pedidos-materiais-${new Date().toISOString().slice(0, 10)}.xlsx`);
+  /**
+   * Exportação VERTICAL — uma linha por item (SIS-2026-0201).
+   *
+   * Antes saía uma linha por pedido, com todos os materiais espremidos numa
+   * célula só ("BOTINA (40) x1 | LUVA (M) x2"). O relatório que o Suprimentos
+   * usava no sistema antigo era horizontal, com 19 blocos repetidos de
+   * "Equipamento N / TAGs N / Valores Unitários N" — 72 colunas, quase todas
+   * vazias, e impossível de filtrar.
+   *
+   * Nos dois formatos dá no mesmo problema: para abrir uma solicitação de
+   * compra o gerente precisa só do que ficou pendente, e acabava apagando
+   * linha na mão. Uma linha por item, com o status DO ITEM, é o que torna o
+   * filtro do Excel utilizável.
+   *
+   * As etiquetas são buscadas aqui, e não no carregamento da tela, porque só
+   * a exportação precisa delas quando o filtro por item está desligado.
+   */
+  const exportar = async () => {
+    setExportando(true);
+    try {
+      const tags = await buscarTagsDePedidos(filtrados.map((p) => p.id));
+
+      const porItem = new Map<string, TagEmLote[]>();
+      for (const t of tags) {
+        const lista = porItem.get(t.pedido_item_id);
+        if (lista) lista.push(t);
+        else porItem.set(t.pedido_item_id, [t]);
+      }
+
+      const linhas = filtrados.flatMap((p) => {
+        const itens = [...(p.sup_pedido_item ?? [])].sort((a, b) => a.ordem - b.ordem);
+        // Pedido sem item ainda assim vira uma linha: sumir com ele do
+        // relatório esconderia um pedido que existe na fila.
+        if (itens.length === 0) return [linhaExport(p, null, [])];
+        return itens.map((i) => linhaExport(p, i, porItem.get(i.id) ?? []));
+      });
+
+      const ws = XLSX.utils.json_to_sheet(linhas);
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, ws, "Pedidos");
+      XLSX.writeFile(wb, `pedidos-materiais-${new Date().toISOString().slice(0, 10)}.xlsx`);
+    } catch (e: any) {
+      toast.error(e?.message ?? "Não foi possível exportar.");
+    } finally {
+      setExportando(false);
+    }
   };
 
   return (
@@ -191,8 +306,9 @@ export default function PedidosMateriais() {
         module="Suprimentos"
         breadcrumb={["Pedidos de Materiais"]}
         actions={
-          <Button variant="outline" onClick={exportar} disabled={filtrados.length === 0}>
-            <Download className="mr-2 h-4 w-4" /> Exportar ({filtrados.length})
+          <Button variant="outline" onClick={exportar} disabled={filtrados.length === 0 || exportando}>
+            <Download className="mr-2 h-4 w-4" />
+            {exportando ? "Exportando…" : `Exportar (${filtrados.length})`}
           </Button>
         }
       />
@@ -230,7 +346,22 @@ export default function PedidosMateriais() {
             ))}
           </SelectContent>
         </Select>
+        {/* Filtro por status do ITEM: é o que responde "o que falta comprar?"
+            sem depender do status do pedido inteiro. */}
+        <Select value={filtroItem} onValueChange={setFiltroItem}>
+          <SelectTrigger className="w-56"><SelectValue /></SelectTrigger>
+          <SelectContent>
+            <SelectItem value="TODOS">Qualquer item</SelectItem>
+            {STATUS_ITEM.map((s) => (
+              <SelectItem key={s} value={s}>Item: {ESTILO_STATUS_ITEM[s].rotulo}</SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
       </div>
+
+      {filtrandoPorItem && buscandoTags && (
+        <p className="text-xs text-muted-foreground">Conferindo as etiquetas de cada item…</p>
+      )}
 
       {/* Consulta que falha NÃO pode parecer lista vazia — foi exatamente esse
           silêncio que escondeu um cache de sessão antiga durante o teste. */}

@@ -244,6 +244,105 @@ export function useTagsDoPedido(pedidoId: string | null) {
   });
 }
 
+/** Etiqueta de um item de pedido, na versão em lote. */
+export interface TagEmLote {
+  pedido_id: string;
+  pedido_item_id: string;
+  codigo: string;
+  tipo: TipoTag;
+  quantidade: number;
+  valor_unitario: number | null;
+}
+
+/** Quantos ids cabem por requisição sem estourar o tamanho da URL do PostgREST. */
+const LOTE_IDS = 150;
+
+async function emLotes<T>(ids: string[], fn: (fatia: string[]) => Promise<T[]>): Promise<T[]> {
+  const out: T[] = [];
+  for (let i = 0; i < ids.length; i += LOTE_IDS) {
+    out.push(...(await fn(ids.slice(i, i + LOTE_IDS))));
+  }
+  return out;
+}
+
+/**
+ * Mesma resposta de `useTagsDoPedido`, só que para MUITOS pedidos de uma vez
+ * (SIS-2026-0201).
+ *
+ * Por que não chamar a RPC num laço: o Excel do Suprimentos sai com ~1.450
+ * pedidos. Seriam 1.450 chamadas para montar uma planilha.
+ *
+ * Esta é uma RÉPLICA EM LOTE da `sup_est_tags_do_pedido`, e a RPC continua
+ * sendo a autoridade — a regra dela está em
+ * supabase/migrations/20260820000002_supply_estoque_rpcs.sql:403. São dois
+ * casos somados, e é preciso manter os dois em sincronia se a RPC mudar:
+ *
+ *   • etiqueta ÚNICA — a própria linha de sup_estoque_tag, quantidade 1,
+ *     exceto quando aquele código já aparece no ledger do mesmo pedido
+ *     (senão a peça seria contada duas vezes);
+ *   • etiqueta em MASSA — vem do ledger sup_estoque_consumo, que é quem sabe
+ *     quanto daquele lote foi para cada pedido. A tag em massa serve vários
+ *     pedidos, então `sup_estoque_tag.pedido_item_id` não responde sozinho.
+ *
+ * Leitura direta em tabela é permitida: a regra do módulo — toda escrita passa
+ * por RPC — vale para ESCRITA. A RLS de sup_estoque_tag já filtra por
+ * `sup_estoque` / visualizar.
+ */
+export async function buscarTagsDePedidos(pedidoIds: string[]): Promise<TagEmLote[]> {
+  if (pedidoIds.length === 0) return [];
+  const [unicas, consumos] = await Promise.all([
+    emLotes(pedidoIds, async (fatia) => {
+      const { data, error } = await sb
+        .from("sup_estoque_tag")
+        .select("codigo, pedido_id, pedido_item_id, tipo, valor_unitario, sup_estoque_item:item_estoque_id (valor_unitario)")
+        .in("pedido_id", fatia)
+        .eq("tipo", "unico");
+      if (error) throw error;
+      return data ?? [];
+    }),
+    emLotes(pedidoIds, async (fatia) => {
+      const { data, error } = await sb
+        .from("sup_estoque_consumo")
+        .select("codigo, pedido_id, pedido_item_id, quantidade, sup_estoque_item:item_estoque_id (valor_unitario)")
+        .in("pedido_id", fatia);
+      if (error) throw error;
+      return data ?? [];
+    }),
+  ]);
+
+  // `codigo|pedido_id` que o ledger já cobre — a linha única correspondente
+  // é descartada, igual ao NOT EXISTS da RPC.
+  const noLedger = new Set(consumos.map((c: any) => `${c.codigo}|${c.pedido_id}`));
+
+  const linhas: TagEmLote[] = [];
+  for (const t of unicas as any[]) {
+    if (!t.pedido_item_id || noLedger.has(`${t.codigo}|${t.pedido_id}`)) continue;
+    linhas.push({
+      pedido_id: t.pedido_id, pedido_item_id: t.pedido_item_id,
+      codigo: t.codigo, tipo: "unico", quantidade: 1,
+      valor_unitario: t.valor_unitario ?? t.sup_estoque_item?.valor_unitario ?? null,
+    });
+  }
+  for (const c of consumos as any[]) {
+    linhas.push({
+      pedido_id: c.pedido_id, pedido_item_id: c.pedido_item_id,
+      codigo: c.codigo, tipo: "massa", quantidade: Number(c.quantidade ?? 0),
+      // O ledger não guarda valor: o preço vem do item de estoque.
+      valor_unitario: c.sup_estoque_item?.valor_unitario ?? null,
+    });
+  }
+  return linhas;
+}
+
+/** Versão reativa de `buscarTagsDePedidos`, para a tela filtrar por status de item. */
+export function useTagsDePedidos(pedidoIds: string[], enabled = true) {
+  return useQuery({
+    queryKey: ["sup_tags_de_pedidos", pedidoIds.join(",")],
+    enabled: enabled && pedidoIds.length > 0,
+    queryFn: () => buscarTagsDePedidos(pedidoIds),
+  });
+}
+
 // ── Escrita ──────────────────────────────────────────────────────────
 
 function useInvalidarEstoque() {
