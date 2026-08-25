@@ -34,6 +34,56 @@ export const ESTILO_STATUS: Record<string, { classe: string; rotulo: string }> =
   "CANCELADO": { classe: "border-slate-300 bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300", rotulo: "Cancelado" },
 };
 
+/**
+ * Status por ITEM — derivado, nunca guardado (SIS-2026-0201).
+ *
+ * O gerente de Suprimentos precisa exportar "só o que ficou pendente" para
+ * abrir a solicitação de compra: o encarregado pede camiseta, jaqueta, calça e
+ * butina, três saem e a butina falta. Com o status só no pedido, as quatro
+ * linhas saem como "AGUARDANDO COMPRA" e ele apaga na mão.
+ *
+ * A informação já existia: quem responde "esta peça saiu?" é a ETIQUETA, não
+ * uma coluna. CardPedido já usa isso para esconder o que está separado quando
+ * o pedido está em AGUARDANDO COMPRA. Aqui a mesma regra vira status nomeado,
+ * reaproveitável no filtro e no Excel.
+ *
+ * Deliberadamente NÃO existe `sup_pedido_item.status`: seria uma segunda
+ * verdade sobre o mesmo fato, e o módulo já pagou esse preço uma vez — o
+ * legado tinha trigger e query calculando saldo de formas diferentes e ninguém
+ * sabia qual valia (REPLICAR-MODULO-COMPRAS.md §12.8).
+ */
+export const STATUS_ITEM = [
+  "PENDENTE",
+  "SEPARADO",
+  "AGUARDANDO COMPRA",
+  "DESPACHADO",
+  "CANCELADO",
+] as const;
+export type StatusItem = (typeof STATUS_ITEM)[number];
+
+export const ESTILO_STATUS_ITEM: Record<StatusItem, { classe: string; rotulo: string }> = {
+  "PENDENTE": { classe: "border-slate-300 bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300", rotulo: "Pendente" },
+  "SEPARADO": { classe: "border-blue-400/50 bg-blue-50 text-blue-700 dark:bg-blue-950/30 dark:text-blue-300", rotulo: "Separado" },
+  "AGUARDANDO COMPRA": { classe: "border-orange-400/50 bg-orange-50 text-orange-700 dark:bg-orange-950/30 dark:text-orange-300", rotulo: "Aguardando compra" },
+  "DESPACHADO": { classe: "border-emerald-400/50 bg-emerald-50 text-emerald-700 dark:bg-emerald-950/30 dark:text-emerald-300", rotulo: "Despachado" },
+  "CANCELADO": { classe: "border-slate-300 bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300", rotulo: "Cancelado" },
+};
+
+/**
+ * Resolve o status de UM item a partir do status do pedido e de a peça ter ou
+ * não etiqueta vinculada.
+ *
+ * O pedido cancelado cancela tudo — não interessa se chegou a separar. Fora
+ * isso, ter etiqueta significa que a peça saiu do estoque para este item; o
+ * status do pedido só decide se ela já foi despachada ou está separada
+ * esperando logística.
+ */
+export function derivarStatusItem(statusPedido: string, temTag: boolean): StatusItem {
+  if (statusPedido === "CANCELADO") return "CANCELADO";
+  if (temTag) return statusPedido === "DESPACHADO" ? "DESPACHADO" : "SEPARADO";
+  return statusPedido === "AGUARDANDO COMPRA" ? "AGUARDANDO COMPRA" : "PENDENTE";
+}
+
 export interface OpcaoCascata { id: string; nome: string }
 export interface ItemEnxoval {
   id: string; nome: string; tipo: string;
