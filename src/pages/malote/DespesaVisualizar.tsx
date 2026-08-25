@@ -8,6 +8,16 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
+import {
+  AlertDialog,
+  AlertDialogContent,
+  AlertDialogHeader,
+  AlertDialogFooter,
+  AlertDialogTitle,
+  AlertDialogDescription,
+  AlertDialogCancel,
+} from "@/components/ui/alert-dialog";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { ArrowLeft, Paperclip, Trash2, RotateCcw, FileText, Package, DollarSign, Tag, Image as ImageIcon, FileSpreadsheet, File as FileIcon, Check, X, PenLine, ClipboardCheck, Banknote, Upload } from "lucide-react";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
@@ -27,13 +37,16 @@ import {
   useMarcarConferidoDespesa,
   useSolicitarAjustePagamentoDespesa,
   usePagarDespesa,
+  usePagarParcela,
   uploadAnexoMalote,
   aprovadorDoNivel,
   souAprovadorConfigurado,
   STATUS_LABEL,
   STATUS_BADGE_CLASS,
   STATUS_TERMINAIS,
+  STATUS_COM_PARCELA_VISIVEL,
   RateioLinha,
+  Parcela,
   TipoSolicitacao,
   DespesaEvento,
   TipoEvento,
@@ -43,6 +56,7 @@ import { useUtilizadoOrcamento } from "@/hooks/useUtilizadoOrcamento";
 import { anoMesAtual } from "@/hooks/usePlanilhaCusto";
 import { RateioGrid, DimensoesRateio } from "./RateioGrid";
 import { RateioAprovadorTable } from "./RateioAprovadorTable";
+import { RateioParceladoTable } from "./RateioParceladoTable";
 import { FluxoAprovacaoVisual } from "./FluxoAprovacaoVisual";
 import { ExcluirPermanentementeButton } from "./ExcluirPermanentementeButton";
 import { DiaPagamentoPicker } from "./DiaPagamentoPicker";
@@ -237,6 +251,7 @@ export default function DespesaVisualizar() {
   const marcarConferido = useMarcarConferidoDespesa();
   const solicitarAjustePagamento = useSolicitarAjustePagamentoDespesa();
   const pagar = usePagarDespesa();
+  const pagarParcela = usePagarParcela();
 
   const [valorAprovado, setValorAprovado] = useState("");
   const [justificativa, setJustificativa] = useState("");
@@ -258,6 +273,10 @@ export default function DespesaVisualizar() {
   const [dataPagamentoConfirmado, setDataPagamentoConfirmado] = useState("");
   const [observacaoPagamento, setObservacaoPagamento] = useState("");
   const [pagando, setPagando] = useState(false);
+  // SIS-2026-0223: qual parcela está sendo paga no Dialog de comprovante
+  // (reaproveitado) — null = pagamento é da despesa inteira (não parcelada).
+  const [parcelaEmPagamento, setParcelaEmPagamento] = useState<Parcela | null>(null);
+  const [confirmarAprovarParceladoAberto, setConfirmarAprovarParceladoAberto] = useState(false);
 
   const despesa = data?.despesa;
 
@@ -265,7 +284,25 @@ export default function DespesaVisualizar() {
   // usado só pra decidir se a aprovação escalona pro próximo nível ou vai
   // direto pro pagamento (a % de alçada do aprovador nunca bloqueia o
   // aprovador de agir, só decide o destino depois de aprovado).
-  const anoMesDespesa = despesa?.competencia ? despesa.competencia.slice(0, 7) : anoMesAtual();
+  //
+  // SIS-2026-0223 (complemento, pedido do Iury): despesa parcelada consome
+  // orçamento mês a mês (parcela 1 em agosto, parcela 2 em setembro...), não
+  // tudo de uma vez em despesa.competencia. Alinhado com o Iury: só a
+  // PARCELA 1 decide a alçada — se ela estourar, escala N1→N2→N3; as
+  // seguintes não são checadas de novo (o aprovador só precisa saber que
+  // aprovar a despesa aprova todas as parcelas junto — já é o que o modal
+  // de confirmação avisa).
+  const parcela1 = despesa?.parcelado ? data?.parcelas.find((p) => p.numero_parcela === 1) : undefined;
+  const anoMesDespesa = parcela1
+    ? parcela1.data_vencimento.slice(0, 7)
+    : despesa?.competencia
+      ? despesa.competencia.slice(0, 7)
+      : anoMesAtual();
+  // Fração da parcela 1 sobre o total — cada linha de rateio (que soma o
+  // valor CHEIO da despesa) precisa ser escalada por essa fração pra
+  // representar só o que a parcela 1 consome do orçamento do mês dela.
+  // Sem parcelamento, fator = 1 (não escala nada).
+  const fatorParcela1 = despesa?.parcelado && parcela1 && despesa.valor_total ? parcela1.valor / despesa.valor_total : 1;
   // SIS-2026-0212 (complemento): "orcadoCarregando" trava o botão Aprovar —
   // achado real (DM-2026-0041): o aprovador clicou Aprovar antes dos dados
   // de planejamento/rubricas terminarem de carregar, resolverOrcado()
@@ -318,6 +355,16 @@ export default function DespesaVisualizar() {
   // qualquer outro papel o Rateio vira só-leitura com as colunas de
   // Orçado/Utilizado/Status.
   const rateioEPagamentoEditaveis = !bloqueado && souSolicitante;
+  // SIS-2026-0223 (complemento 3, pedido do usuário): pra despesa
+  // parcelada, o Rateio só é editável na fase de lançamento — depois que
+  // entra em fase de pagamento (mesma fronteira de
+  // STATUS_COM_PARCELA_VISIVEL), ninguém redistribui empresa/contrato de
+  // novo, nem o solicitante, nem durante ajuste_pagamento (que é sobre
+  // dado de pagamento, não rateio). Reforçado no banco (WITH CHECK de
+  // malote_rateio_linha_all) — isto aqui só decide a UI. Despesa não
+  // parcelada mantém o comportamento de sempre.
+  const rateioEditavel =
+    rateioEPagamentoEditaveis && (!despesa.parcelado || !STATUS_COM_PARCELA_VISIVEL.includes(despesa.status));
   // SIS-2026-0212 (pedido do Iury): a "Justificativa da aprovação" é o
   // único campo deste bloco que o aprovador do nível atual também precisa
   // editar — é onde ele registra o motivo de escalar de N1 pra N2 (os
@@ -359,7 +406,10 @@ export default function DespesaVisualizar() {
     if ((u.contrato_id ?? null) !== (despesa.contrato_id ?? null)) return soma;
     return soma + (Number(u.valor) || 0);
   }, 0);
-  const valorParaAlcada = utilizadoAntesDestaDespesa + (Number(valorAprovado) || despesa.valor_total);
+  // SIS-2026-0223 (complemento): despesa parcelada usa o valor da parcela 1
+  // (é ela que decide a alçada), não o valor cheio da despesa.
+  const valorBaseAlcada = despesa.parcelado && parcela1 ? parcela1.valor : Number(valorAprovado) || despesa.valor_total;
+  const valorParaAlcada = utilizadoAntesDestaDespesa + valorBaseAlcada;
   // Achado à parte (SIS-2026-0212): era "orcadoClassificacao ? ... : null"
   // — orçado 0 de verdade (ex.: contrato sem rubrica vinculada) caía no
   // else e virava "sem trava" em vez de "100% estourado". != null trata 0
@@ -377,6 +427,11 @@ export default function DespesaVisualizar() {
   // gerenciamento de acesso (usePodePagarMalote), não por linha da despesa.
   const mostrarAcoesPagamento =
     !!podePagarMalote && ["aguardando_pagamento", "pronto_para_pagar", "ajuste_pagamento"].includes(despesa.status);
+
+  // SIS-2026-0223: enquanto a despesa ainda está no fluxo de aprovação
+  // (N1/N2/N3), as parcelas ainda não são "pagáveis" de verdade — mesma
+  // lista de status de STATUS_COM_PARCELA_VISIVEL em useMaloteDespesa.ts.
+  const parcelasEmFaseDePagamento = ["aguardando_pagamento", "pronto_para_pagar", "ajuste_pagamento", "despesa_paga"].includes(despesa.status);
 
   function validarAcaoAprovador(): string | null {
     if (orcadoCarregando) return "Aguarde o orçamento terminar de carregar antes de aprovar.";
@@ -413,12 +468,36 @@ export default function DespesaVisualizar() {
         competencia,
         rateio_snapshot: calcularRateioSnapshot(),
       });
-      toast.success(proximoNivelConfigurado ? "Aprovado — enviado pro próximo nível." : "Aprovado — aguardando pagamento.");
+      toast.success(
+        proximoNivelConfigurado
+          ? "Aprovado — enviado pro próximo nível."
+          : despesa!.parcelado
+            ? `Todas as ${despesa!.numero_parcelas} parcelas aprovadas — aguardando pagamento.`
+            : "Aprovado — aguardando pagamento."
+      );
     } catch (e: any) {
       toast.error(e.message ?? "Erro ao aprovar despesa.");
     } finally {
       setAcaoEmAndamento(null);
     }
+  }
+
+  // SIS-2026-0223: despesa parcelada pede confirmação antes de aprovar —
+  // aprovar a despesa aprova as N parcelas juntas de uma vez (só existe 1
+  // despesa por baixo, nunca foram unidades de aprovação separadas), então
+  // o aviso vem ANTES da ação (evita "já aprovei sem querer, o aviso
+  // apareceu depois").
+  function onClickAprovar() {
+    const erro = validarAcaoAprovador();
+    if (erro) {
+      toast.error(erro);
+      return;
+    }
+    if (despesa!.parcelado) {
+      setConfirmarAprovarParceladoAberto(true);
+      return;
+    }
+    handleAprovar();
   }
 
   async function handleSolicitarAjusteAprovador() {
@@ -498,8 +577,20 @@ export default function DespesaVisualizar() {
   }
 
   function abrirPagar() {
+    setParcelaEmPagamento(null);
     setComprovanteFile(null);
     setDataPagamentoConfirmado(despesa!.data_pagamento ?? new Date().toISOString().slice(0, 10));
+    setObservacaoPagamento("");
+    setPagarAberto(true);
+  }
+
+  // SIS-2026-0223: despesa parcelada é paga parcela por parcela — cada
+  // botão "Pagar" da tabela de Parcelas abre o mesmo Dialog de comprovante,
+  // guardando qual parcela está sendo paga.
+  function abrirPagarParcela(p: Parcela) {
+    setParcelaEmPagamento(p);
+    setComprovanteFile(null);
+    setDataPagamentoConfirmado(p.data_vencimento);
     setObservacaoPagamento("");
     setPagarAberto(true);
   }
@@ -523,7 +614,10 @@ export default function DespesaVisualizar() {
         const orcado = resolverOrcado(despesa!.classificacao_id, l.contrato_id);
         const chave = l.contrato_id ?? "__sem_contrato__";
         const utilizadoAntes = utilizadoAntesPorContrato.get(chave) ?? 0;
-        return { linha_id: l.id as string, orcado, utilizado_com_lancamento: utilizadoAntes + (Number(l.valor) || 0) };
+        // SIS-2026-0223 (complemento): despesa parcelada congela o que a
+        // parcela 1 consumiu (é ela que decidiu a alçada), não o valor
+        // cheio da linha de rateio.
+        return { linha_id: l.id as string, orcado, utilizado_com_lancamento: utilizadoAntes + (Number(l.valor) || 0) * fatorParcela1 };
       });
   }
 
@@ -539,14 +633,26 @@ export default function DespesaVisualizar() {
     setPagando(true);
     try {
       const comprovantePath = await uploadAnexoMalote(comprovanteFile, despesa!.id);
-      await pagar.mutateAsync({
-        id: despesa!.id,
-        data_pagamento: dataPagamentoConfirmado,
-        comprovante_path: comprovantePath,
-        rateio_snapshot: calcularRateioSnapshot(),
-        observacao: observacaoPagamento.trim() || null,
-      });
-      toast.success("Pagamento confirmado.");
+      if (despesa!.parcelado && parcelaEmPagamento) {
+        await pagarParcela.mutateAsync({
+          despesaId: despesa!.id,
+          parcelaId: parcelaEmPagamento.id,
+          data_pagamento: dataPagamentoConfirmado,
+          comprovante_path: comprovantePath,
+          observacao: observacaoPagamento.trim() || null,
+          rateio_snapshot: calcularRateioSnapshot(),
+        });
+        toast.success(`Parcela ${parcelaEmPagamento.numero_parcela}/${despesa!.numero_parcelas} paga.`);
+      } else {
+        await pagar.mutateAsync({
+          id: despesa!.id,
+          data_pagamento: dataPagamentoConfirmado,
+          comprovante_path: comprovantePath,
+          rateio_snapshot: calcularRateioSnapshot(),
+          observacao: observacaoPagamento.trim() || null,
+        });
+        toast.success("Pagamento confirmado.");
+      }
       setPagarAberto(false);
     } catch (e: any) {
       toast.error(e.message ?? "Erro ao confirmar pagamento.");
@@ -785,6 +891,66 @@ export default function DespesaVisualizar() {
         </Card>
       </div>
 
+      {despesa.parcelado && (
+        <Card>
+          <CardContent className="p-4 space-y-3">
+            <p className="text-sm font-semibold">Parcelas ({despesa.numero_parcelas}x)</p>
+            <div className="overflow-x-auto">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Parcela</TableHead>
+                    <TableHead>Vencimento</TableHead>
+                    <TableHead className="text-right">Valor</TableHead>
+                    <TableHead>Status</TableHead>
+                    <TableHead>Pago em</TableHead>
+                    <TableHead>Comprovante</TableHead>
+                    {mostrarAcoesPagamento && despesa.status !== "ajuste_pagamento" && <TableHead />}
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {(data?.parcelas ?? []).map((p) => (
+                    <TableRow key={p.id}>
+                      <TableCell className="text-sm">{p.numero_parcela}/{despesa.numero_parcelas}</TableCell>
+                      <TableCell className="text-sm">{fmtDataResumo(p.data_vencimento)}</TableCell>
+                      <TableCell className="text-right text-sm">{fmtMoneyResumo(p.valor)}</TableCell>
+                      <TableCell>
+                        {p.status === "paga" ? (
+                          <Badge className={STATUS_BADGE_CLASS.despesa_paga}>Paga</Badge>
+                        ) : parcelasEmFaseDePagamento ? (
+                          <Badge className={STATUS_BADGE_CLASS.aguardando_pagamento}>Aguardando pagamento</Badge>
+                        ) : (
+                          <Badge className={STATUS_BADGE_CLASS.pendente_aprovacao}>Aguardando aprovação</Badge>
+                        )}
+                      </TableCell>
+                      <TableCell className="text-sm">{p.pago_em ? fmtDataResumo(p.data_pagamento_real) : "—"}</TableCell>
+                      <TableCell>
+                        {p.comprovante_pagamento_path ? (
+                          <button type="button" onClick={() => abrirAnexo(p.comprovante_pagamento_path!)} className="text-xs text-primary underline">
+                            Abrir
+                          </button>
+                        ) : (
+                          <span className="text-xs text-muted-foreground">—</span>
+                        )}
+                      </TableCell>
+                      {mostrarAcoesPagamento && despesa.status !== "ajuste_pagamento" && (
+                        <TableCell>
+                          {p.status !== "paga" && (
+                            <Button size="sm" variant="outline" className="gap-1.5" onClick={() => abrirPagarParcela(p)}>
+                              <Banknote className="h-3.5 w-3.5" /> Pagar
+                            </Button>
+                          )}
+                        </TableCell>
+                      )}
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
       {/* Histórico detalhado: lista bruta e cronológica de todos os eventos,
           inclusive ciclos repetidos que o Fluxo de Aprovação visual (acima)
           não mostra — ele só guarda o desvio mais recente de cada tipo. */}
@@ -864,8 +1030,18 @@ export default function DespesaVisualizar() {
       {/* Bloco 4: Rateio da Despesa */}
       <Card>
         <CardContent className="p-4 space-y-3">
-          <p className="text-sm font-semibold">Rateio da Despesa</p>
-          {rateioEPagamentoEditaveis ? (
+          <div>
+            <p className="text-sm font-semibold">Rateio da Despesa{despesa.parcelado ? " (Parcelado)" : ""}</p>
+            {despesa.parcelado && rateioEditavel && (
+              <p className="text-xs text-muted-foreground mt-0.5">
+                Valor, % e Orçado/Utilizado abaixo são da despesa <span className="font-medium text-foreground">inteira</span> (todas as{" "}
+                {despesa.numero_parcelas} parcelas somadas) — o Orçado/Utilizado reflete só o impacto da{" "}
+                <span className="font-medium text-foreground">parcela 1</span>, que é a que decide a alçada. Editável só nesta fase de lançamento —
+                depois de aprovada, o rateio trava e passa a mostrar o impacto de cada parcela separadamente.
+              </p>
+            )}
+          </div>
+          {rateioEditavel ? (
             <RateioGrid
               linhas={linhasRateio}
               onChange={setLinhasRateio}
@@ -880,6 +1056,21 @@ export default function DespesaVisualizar() {
               limiteJustificativaPct={despesa.classificacao?.limite_justificativa_pct ?? null}
               resolverOrcado={resolverOrcado}
               anoMesDespesa={anoMesDespesa}
+              fatorParcela1={fatorParcela1}
+              mostrarValorParcela1={despesa.parcelado}
+              podeJustificarComoAprovador={configurado}
+              souSolicitante={souSolicitante}
+            />
+          ) : despesa.parcelado ? (
+            <RateioParceladoTable
+              despesaId={despesa.id}
+              empresaId={despesa.empresa_id}
+              classificacaoId={despesa.classificacao_id}
+              valorTotalDespesa={despesa.valor_total}
+              parcelas={data!.parcelas}
+              linhas={linhasRateio}
+              dimensoes={dimensoes}
+              limiteJustificativaPct={despesa.classificacao?.limite_justificativa_pct ?? null}
               podeJustificarComoAprovador={configurado}
               souSolicitante={souSolicitante}
             />
@@ -892,6 +1083,7 @@ export default function DespesaVisualizar() {
               limiteJustificativaPct={despesa.classificacao?.limite_justificativa_pct ?? null}
               resolverOrcado={resolverOrcado}
               anoMesDespesa={anoMesDespesa}
+              fatorParcela1={fatorParcela1}
               podeJustificarComoAprovador={configurado}
               souSolicitante={souSolicitante}
             />
@@ -933,7 +1125,7 @@ export default function DespesaVisualizar() {
           >
             <PenLine className="h-4 w-4" /> {acaoEmAndamento === "ajuste" ? "Enviando..." : "Solicitar ajuste"}
           </Button>
-          <Button className="gap-1.5" onClick={handleAprovar} disabled={acaoEmAndamento !== null || orcadoCarregando}>
+          <Button className="gap-1.5" onClick={onClickAprovar} disabled={acaoEmAndamento !== null || orcadoCarregando}>
             <Check className="h-4 w-4" />{" "}
             {acaoEmAndamento === "aprovar" ? "Aprovando..." : orcadoCarregando ? "Calculando orçamento..." : "Aprovar despesa"}
           </Button>
@@ -992,9 +1184,11 @@ export default function DespesaVisualizar() {
           >
             <ClipboardCheck className="h-4 w-4" /> {acaoPagamentoEmAndamento === "conferir" ? "Conferindo..." : "Marcar como conferido"}
           </Button>
-          <Button className="gap-1.5" onClick={abrirPagar} disabled={acaoPagamentoEmAndamento !== null}>
-            <Banknote className="h-4 w-4" /> Pagar despesa
-          </Button>
+          {!despesa.parcelado && (
+            <Button className="gap-1.5" onClick={abrirPagar} disabled={acaoPagamentoEmAndamento !== null}>
+              <Banknote className="h-4 w-4" /> Pagar despesa
+            </Button>
+          )}
         </div>
       )}
 
@@ -1016,16 +1210,22 @@ export default function DespesaVisualizar() {
           >
             <PenLine className="h-4 w-4" /> {acaoPagamentoEmAndamento === "ajuste" ? "Enviando..." : "Solicitar novo ajuste"}
           </Button>
-          <Button className="gap-1.5" onClick={abrirPagar} disabled={acaoPagamentoEmAndamento !== null}>
-            <Banknote className="h-4 w-4" /> Pagar despesa
-          </Button>
+          {!despesa.parcelado && (
+            <Button className="gap-1.5" onClick={abrirPagar} disabled={acaoPagamentoEmAndamento !== null}>
+              <Banknote className="h-4 w-4" /> Pagar despesa
+            </Button>
+          )}
         </div>
       )}
 
       <Dialog open={pagarAberto} onOpenChange={setPagarAberto}>
         <DialogContent className="sm:max-w-sm p-5">
           <DialogHeader>
-            <DialogTitle className="text-base">Comprovante de pagamento</DialogTitle>
+            <DialogTitle className="text-base">
+              {parcelaEmPagamento
+                ? `Comprovante — parcela ${parcelaEmPagamento.numero_parcela}/${despesa.numero_parcelas}`
+                : "Comprovante de pagamento"}
+            </DialogTitle>
           </DialogHeader>
           <div className="space-y-3">
             <div>
@@ -1069,6 +1269,32 @@ export default function DespesaVisualizar() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <AlertDialog open={confirmarAprovarParceladoAberto} onOpenChange={setConfirmarAprovarParceladoAberto}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Aprovar despesa parcelada?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Esta despesa está dividida em {despesa.numero_parcelas} parcelas. Ao confirmar, você aprova todas as{" "}
+              {despesa.numero_parcelas} parcelas de uma vez — elas ficarão aguardando pagamento, cada uma na sua data
+              de vencimento.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={acaoEmAndamento !== null}>Cancelar</AlertDialogCancel>
+            <Button
+              className="gap-1.5"
+              disabled={acaoEmAndamento !== null}
+              onClick={() => {
+                setConfirmarAprovarParceladoAberto(false);
+                handleAprovar();
+              }}
+            >
+              <Check className="h-4 w-4" /> Aprovar {despesa.numero_parcelas} parcelas
+            </Button>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       {!souAprovadorNivelAtual && !podeReprovarComoAprovadorPassado && !souAprovadorVendoAjuste && souSolicitante && podeAgir && (
         <div className="flex justify-end gap-2">
