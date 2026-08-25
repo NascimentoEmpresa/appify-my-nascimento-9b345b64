@@ -91,3 +91,10 @@ verify_jwt = false
 # e-mail + senha conferido pela RPC a cada chamada, não uma sessão.
 [functions.denuncia-conversa]
 verify_jwt = false
+
+# Cadastro de fornecedor preenchido pelo proprio fornecedor (SIS-2026-0209).
+# Publica de proposito: quem preenche e alguem de fora, que nao tem conta no
+# ERP. A credencial e o token do convite, gerado pelo comprador e queimado
+# depois do uso — quem valida e a RPC, que a funcao alcanca com a chave anon.
+[functions.fornecedor-cadastro-publico]
+verify_jwt = false

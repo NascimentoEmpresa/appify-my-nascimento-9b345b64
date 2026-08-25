@@ -159,6 +159,8 @@ import PainelGerencialFormularios from "./pages/central-servicos/PainelGerencial
 import FormulariosConfig from "./pages/central-servicos/FormulariosConfig";
 import FormularioPublico from "./pages/publico/FormularioPublico";
 import Denuncia from "./pages/publico/Denuncia";
+import FornecedorCadastro from "./pages/publico/FornecedorCadastro";
+import FornecedoresPendentes from "./pages/suprimentos/FornecedoresPendentes";
 import DenunciasComiteEtica from "./pages/comite-etica/Denuncias";
 import ConfiguracaoComiteEtica from "./pages/comite-etica/Configuracao";
 import IndicadoresComiteEtica from "./pages/comite-etica/Indicadores";
@@ -248,6 +250,9 @@ const App = () => (
           <Route path="/candidatura" element={<Navigate to="/vagas" replace />} />
           {/* Nascimento Formulários — resposta pública, sem login */}
           <Route path="/formularios/:slug" element={<FormularioPublico />} />
+          {/* Cadastro que o próprio fornecedor preenche, sem login. A credencial
+              é o token do convite, gerado pelo comprador (SIS-2026-0209). */}
+          <Route path="/fornecedor/cadastro/:token" element={<FornecedorCadastro />} />
           {/* Canal de Ética — registro e acompanhamento de denúncia, sem login */}
           <Route path="/denuncia" element={<Denuncia />} />
           <Route path="/denuncia/acompanhar" element={<Navigate to="/denuncia?acompanhar" replace />} />
@@ -403,6 +408,10 @@ const App = () => (
             <Route path="malote/detalhe-orcamento" element={<MaloteDetalheOrcamento />} />
             <Route path="orcamento" element={<Orcamento />} />
             {/* Suprimentos */}
+            {/* Mais específica primeiro: o React Router casa na ordem declarada,
+                e o matchMenuCode resolve pelo prefixo mais longo — aqui o menu é
+                sup_fornecedor_aprovacao, não `fornecedores` (SIS-2026-0209). */}
+            <Route path="suprimentos/fornecedores/pendentes" element={<FornecedoresPendentes />} />
             <Route path="suprimentos/fornecedores" element={<Fornecedores />} />
             <Route path="suprimentos/produtos-servicos" element={<ProdutosServicos />} />
             <Route path="suprimentos/produtos" element={<Produtos />} />
