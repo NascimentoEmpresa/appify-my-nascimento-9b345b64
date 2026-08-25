@@ -28,6 +28,7 @@ import {
   PieChart,
   HardHat,
   Scale,
+  GraduationCap,
   UserCog,
   Briefcase as BriefcaseIcon,
   Home,
@@ -698,6 +699,25 @@ const juridicoModule: ModuleDef = {
 };
 
 
+// Treinamentos — capacitação interna
+const treinamentosModule: ModuleDef = {
+  id: "treinamentos",
+  label: "Treinamentos",
+  description: "Capacitação da equipe no ERP",
+  icon: GraduationCap,
+  basePath: "/app/treinamentos/erp",
+  status: "active",
+  groups: [
+    {
+      label: "Capacitação",
+      defaultOpen: true,
+      items: [
+        { label: "Treinamentos ERP", to: "/app/treinamentos/erp", icon: GraduationCap },
+      ],
+    },
+  ],
+};
+
 // BI
 const biModule: ModuleDef = {
   id: "bi",
@@ -825,6 +845,7 @@ const erpModules: ModuleDef[] = [
   operacionalModule,
   sistemasModule,
   juridicoModule,
+  treinamentosModule,
   sstModule,
   centralServicosModule,
   comiteEticaModule,
