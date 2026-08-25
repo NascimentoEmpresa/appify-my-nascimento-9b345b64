@@ -16,6 +16,7 @@ import {
   ChevronDown,
   ChevronRight,
   Building2,
+  Link2,
   FolderKanban,
   Wallet,
   Users2,
@@ -281,6 +282,10 @@ const suprimentosModule: ModuleDef = {
         // saíram da navegação em 20260821000001 — as rotas seguem existindo por
         // enquanto, alcançáveis só por URL direta, até removermos os arquivos.
         { label: "Fornecedores", to: "/app/suprimentos/fornecedores", icon: Building2 },
+        // Fila do que os fornecedores preencheram pelo link público
+        // (SIS-2026-0209). Menu próprio: cadastrar fornecedor e aprovar
+        // cadastro vindo de fora são permissões diferentes.
+        { label: "Cadastros de Fornecedor", to: "/app/suprimentos/fornecedores/pendentes", icon: Link2 },
         { label: "Almoxarifados", to: "/app/suprimentos/almoxarifados", icon: Home },
       ],
     },
