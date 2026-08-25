@@ -409,6 +409,27 @@ export function useDespesa(id: string | undefined) {
   });
 }
 
+/**
+ * Um item pedido na solicitação de compra (SIS-2026-0207).
+ *
+ * `sup_item_id` nulo é item FORA do catálogo — acontece e é previsto:
+ * "sei lá, surgiu um tapete lá na licitação, nunca comprei um tapete".
+ * `nome_item` é o que a tela mostra nos dois casos, e é snapshot: o catálogo
+ * pode ser renomeado, a solicitação não muda.
+ */
+export interface ItemSolicitacao {
+  id?: string;
+  sup_item_id?: string | null;
+  nome_item: string;
+  tipo_item?: string | null;
+  quantidade: number;
+  unidade: string;
+  tamanho?: string | null;
+  observacao?: string | null;
+  valor_unitario?: number | null;
+  ordem?: number;
+}
+
 export interface SalvarDespesaInput {
   id?: string;
   empresa_id: string;
@@ -435,6 +456,8 @@ export interface SalvarDespesaInput {
   arquivos?: string[];
   rateio?: RateioLinha[];
   parcelas?: Parcela[];
+  /** Itens pedidos na solicitação (SIS-2026-0207). */
+  itens?: ItemSolicitacao[];
   nivel_aprovacao_atual?: 1 | 2 | 3 | null;
   // SIS-2026-0211: marca a despesa como exceção — passa por cima do
   // bloqueio de dia (data_pagamento em dia bloqueado), só pra ela.
@@ -446,7 +469,7 @@ export function useSalvarDespesa() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async (input: SalvarDespesaInput) => {
-      const { rateio, parcelas, id: despesaIdInput, ...despesaFields } = input;
+      const { rateio, parcelas, itens, id: despesaIdInput, ...despesaFields } = input;
       const { data: u } = await supabase.auth.getUser();
       if (!u.user) throw new Error("Sessão expirada.");
 
@@ -485,6 +508,18 @@ export function useSalvarDespesa() {
         }
       }
 
+      // Mesma estratégia do rateio: apaga e regrava. A lista é pequena e
+      // pertence inteira à solicitação, então reconciliar linha a linha só
+      // traria complexidade sem ganho (SIS-2026-0207).
+      if (itens) {
+        await (supabase as any).from("malote_despesa_item").delete().eq("despesa_id", despesaId);
+        if (itens.length > 0) {
+          const rows = itens.map(({ id: _id, ...i }, ordem) => ({ ...i, despesa_id: despesaId, ordem }));
+          const { error: iErr } = await (supabase as any).from("malote_despesa_item").insert(rows);
+          if (iErr) throw iErr;
+        }
+      }
+
       if (parcelas) {
         await (supabase as any).from("malote_despesa_parcela").delete().eq("despesa_id", despesaId);
         if (parcelas.length > 0) {
@@ -498,6 +533,34 @@ export function useSalvarDespesa() {
     },
     onSuccess: () => qc.invalidateQueries({ queryKey: [DESPESA_KEY] }),
   });
+}
+
+/**
+ * Itens de uma solicitação (SIS-2026-0207).
+ *
+ * Usado dos dois lados: pelo solicitante, que monta a lista, e pelo comprador,
+ * que precisa vê-la para cotar. A policy de SELECT inclui `sup_cotacoes_malote`
+ * justamente por causa do segundo caso.
+ */
+export function useItensDaDespesa(despesaId: string | undefined) {
+  return useQuery({
+    queryKey: [DESPESA_KEY, despesaId, "itens"],
+    enabled: !!despesaId,
+    queryFn: async (): Promise<ItemSolicitacao[]> => {
+      const { data, error } = await (supabase as any)
+        .from("malote_despesa_item")
+        .select("id, sup_item_id, nome_item, tipo_item, quantidade, unidade, tamanho, observacao, valor_unitario, ordem")
+        .eq("despesa_id", despesaId)
+        .order("ordem");
+      if (error) throw error;
+      return (data ?? []).map((r: any) => ({ ...r, quantidade: Number(r.quantidade ?? 0) }));
+    },
+  });
+}
+
+/** Soma dos itens precificados — o total sugerido para a cotação. */
+export function totalDosItens(itens: ItemSolicitacao[]): number {
+  return itens.reduce((s, i) => s + Number(i.valor_unitario ?? 0) * Number(i.quantidade ?? 0), 0);
 }
 
 export function useExcluirDespesa() {

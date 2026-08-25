@@ -40,7 +40,16 @@ export const ROTULO_COTACAO: Partial<Record<StatusDespesa, string>> = {
 };
 
 export interface Cotacao {
+  /** Nome do fornecedor. Continua sendo gravado, como snapshot. */
   fornecedor: string;
+  /**
+   * Vínculo com public.fornecedor (SIS-2026-0207). A tela já oferecia o select
+   * do cadastro, mas guardava só o nome — então renomear um fornecedor
+   * transformava cotações antigas em "(não cadastrado)", e não dava para puxar
+   * prazo nem condição de pagamento do cadastro. Nulo em cotação antiga cujo
+   * nome não casou com nada, e em fornecedor digitado antes de existir cadastro.
+   */
+  fornecedor_id: string | null;
   valor: string;
   prazo: string;
   link: string;
@@ -49,13 +58,14 @@ export interface Cotacao {
 }
 
 export const COTACAO_VAZIA: Cotacao = {
-  fornecedor: "", valor: "", prazo: "", link: "", anexo_path: "", anexo_nome: "",
+  fornecedor: "", fornecedor_id: null, valor: "", prazo: "", link: "", anexo_path: "", anexo_nome: "",
 };
 
 /** Espalha as colunas cotN_* de volta em uma lista de 3, para a tela. */
 export function lerCotacoes(d: MaloteDespesaRow | undefined | null): Cotacao[] {
   const um = (n: 1 | 2 | 3): Cotacao => ({
     fornecedor: (d as any)?.[`cot${n}_fornecedor`] ?? "",
+    fornecedor_id: (d as any)?.[`cot${n}_fornecedor_id`] ?? null,
     valor: (d as any)?.[`cot${n}_valor`] != null ? String((d as any)[`cot${n}_valor`]) : "",
     prazo: (d as any)?.[`cot${n}_prazo`] ?? "",
     link: (d as any)?.[`cot${n}_link`] ?? "",
@@ -145,7 +155,8 @@ function useInvalidar() {
 /** Só as posições preenchidas viram payload; as vazias limpam a coluna. */
 const paraPayload = (cots: Cotacao[]) =>
   cots.map((c) => (cotacaoPreenchida(c)
-    ? { fornecedor: c.fornecedor.trim(), valor: c.valor, prazo: c.prazo,
+    ? { fornecedor: c.fornecedor.trim(), fornecedor_id: c.fornecedor_id ?? "",
+        valor: c.valor, prazo: c.prazo,
         link: c.link.trim(), anexo_path: c.anexo_path, anexo_nome: c.anexo_nome }
     : {}));
 
