@@ -150,7 +150,21 @@ Deno.serve(async (req) => {
     body: JSON.stringify(patch),
   });
   const data = await res.json().catch(() => ({}));
-  if (!res.ok) return json({ error: "falha ao salvar o perfil", detalhe: data }, 502);
+  if (!res.ok) {
+    // "An unknown error has occurred" é o que a Graph devolve para metade dos
+    // problemas deste endpoint, e sozinho não permite consertar nada. O que
+    // ajuda está em error.code/error_subcode/error_data — e saber QUAIS campos
+    // foram enviados, já que campo vazio ou fora do limite derruba a chamada
+    // inteira, inclusive os campos que estavam certos.
+    console.error("perfil: Meta recusou", JSON.stringify({ patch: Object.keys(patch), erro: data }));
+    const e = (data as { error?: { message?: string; code?: number; error_subcode?: number; error_user_msg?: string } })?.error;
+    const detalhe = [
+      e?.error_user_msg || e?.message,
+      e?.code ? `código ${e.code}${e.error_subcode ? `/${e.error_subcode}` : ""}` : null,
+      `campos enviados: ${Object.keys(patch).filter(k => k !== "messaging_product").join(", ") || "nenhum"}`,
+    ].filter(Boolean).join(" — ");
+    return json({ error: `falha ao salvar o perfil: ${detalhe}`, detalhe: data }, 502);
+  }
 
   // Devolve o perfil já relido: a foto vem com URL nova e o front atualiza sem
   // precisar de um segundo clique.
