@@ -110,3 +110,17 @@ export const podeEnviarAoMalote = (st: StatusConta) =>
  * e o Patrimônio não é quem sabe se o dinheiro saiu.
  */
 export const podeBaixarManualmente = (st: StatusConta) => podeEnviarAoMalote(st);
+
+/**
+ * A conta entra no alerta de "a vencer / vencida(s)" do topo da tela?
+ *
+ * Paga não, obviamente. Suspensa também não: suspender é dizer "esta não
+ * corre agora", e o alerta a tratava pela data de vencimento como qualquer
+ * outra — a tela chegou a mostrar "Suspensa" e "Vencida há 164d" no mesmo
+ * item, exatamente a contradição que a suspensão existe para eliminar.
+ *
+ * Enviada ao Malote CONTINUA no alerta de propósito: o dinheiro ainda não
+ * saiu, e sumir daqui esconderia a conta justamente enquanto ela espera
+ * aprovação.
+ */
+export const entraNoAlerta = (st: StatusConta) => st !== "Pago" && st !== "Suspensa";

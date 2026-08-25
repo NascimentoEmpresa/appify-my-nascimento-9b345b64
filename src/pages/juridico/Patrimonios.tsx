@@ -16,7 +16,7 @@ import {
 import { coordenadaValida } from "./patrimonio/geo";
 import {
   PARAM_ORIGEM, despesaEstaPaga, statusDaConta, corDaConta, podeEnviarAoMalote,
-  podeBaixarManualmente, STATUS_SUSPENSA, type StatusConta,
+  podeBaixarManualmente, entraNoAlerta, STATUS_SUSPENSA, type StatusConta,
 } from "./patrimonio/vinculoMalote";
 
 // =====================================================================
@@ -629,8 +629,16 @@ export default function Patrimonios() {
   const pendentesTransf = pats.filter(p => !p.transferida).length;
   const totalPrevisto = naoPagas.reduce((s, o) => s + (Number(o.valor) || 0), 0);
   // Alerta: contas em aberto vencidas OU vencendo nos próximos 10 dias.
+  //
+  // Suspensa fica DE FORA: suspender é justamente dizer "esta não corre
+  // agora", e ela reaparecia aqui como "Vencida há 164d" — o alerta exibia
+  // o selo cinza de Suspensa e o vermelho de vencida lado a lado, que é a
+  // contradição que a suspensão existe para eliminar.
   const em10dias = (() => { const d = new Date(hoje() + "T00:00:00"); d.setDate(d.getDate() + 10); return d.toISOString().slice(0, 10); })();
-  const contasAlerta = naoPagas.filter(o => o.vencimento && o.vencimento <= em10dias).sort((a, b) => String(a.vencimento || "").localeCompare(String(b.vencimento || "")));
+  const contasAlerta = naoPagas
+    .filter(o => entraNoAlerta(seloDaConta(o)))
+    .filter(o => o.vencimento && o.vencimento <= em10dias)
+    .sort((a, b) => String(a.vencimento || "").localeCompare(String(b.vencimento || "")));
 
   // ── Dashboard: agregações ──────────────────────────────────────
   const porTipo = TIPOS.map(t => ({ tipo: t, n: pats.filter(p => p.tipo === t).length })).filter(x => x.n > 0);
@@ -792,8 +800,12 @@ export default function Patrimonios() {
                       {stAlerta === "Enviado ao Malote" ? (
                         <button className="jp-btn" title="A conta já virou despesa no Malote — o pagamento se resolve lá" onClick={() => nav("/app/malote/aprovacoes")} style={{ background: "#eff6ff", color: "#1d4ed8", border: "1px solid #bfdbfe", padding: "4px 12px", fontWeight: 700 }}>Ver no Malote</button>
                       ) : (<>
-                        <button className="jp-btn" title="Abre o Malote com os dados desta conta já preenchidos. A conta só sai de Pendente quando você concluir o envio lá." onClick={() => pagarConta(o)} style={{ background: "#0f3171", color: "#fff", border: "1px solid #0f3171", padding: "4px 12px", fontWeight: 700 }}>Enviar ao Malote</button>
-                        <button className="jp-btn" title="Já foi paga por fora: anexar o comprovante e dar baixa" onClick={() => baixarConta(o)} style={{ background: "#f0fdf4", color: "#15803d", border: "1px solid #bbf7d0", padding: "4px 10px", fontWeight: 700 }}>✓ Baixar</button>
+                        {/* Mesma guarda das tabelas de baixo. O alerta só tratava
+                            "Enviado ao Malote" e oferecia o envio para todo o
+                            resto — inclusive para a parcela suspensa, que a
+                            regra proíbe de ir ao Malote. */}
+                        {podeEnviarAoMalote(stAlerta) && <button className="jp-btn" title="Abre o Malote com os dados desta conta já preenchidos. A conta só sai de Pendente quando você concluir o envio lá." onClick={() => pagarConta(o)} style={{ background: "#0f3171", color: "#fff", border: "1px solid #0f3171", padding: "4px 12px", fontWeight: 700 }}>Enviar ao Malote</button>}
+                        {podeBaixarManualmente(stAlerta) && <button className="jp-btn" title="Já foi paga por fora: anexar o comprovante e dar baixa" onClick={() => baixarConta(o)} style={{ background: "#f0fdf4", color: "#15803d", border: "1px solid #bbf7d0", padding: "4px 10px", fontWeight: 700 }}>✓ Baixar</button>}
                       </>)}
                     </div>
                   </div>
