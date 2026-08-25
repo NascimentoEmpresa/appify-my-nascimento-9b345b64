@@ -117,11 +117,28 @@ export interface RateioLinha {
   congelado_em?: string | null;
 }
 
+export type StatusParcela = "pendente" | "paga";
+
 export interface Parcela {
+  id: string;
+  despesa_id: string;
   numero_parcela: number;
   valor: number;
   data_vencimento: string;
+  // SIS-2026-0223: pagamento passou a ser por parcela — cada uma tem seu
+  // próprio comprovante/data real, independente das demais.
+  status: StatusParcela;
+  comprovante_pagamento_path: string | null;
+  observacao_pagamento: string | null;
+  data_pagamento_real: string | null;
+  pago_em: string | null;
+  pago_por: string | null;
 }
+
+// O que gerarParcelas monta na criação/edição, antes de existir linha no
+// banco (sem id/despesa_id/campos de pagamento, que só existem depois do
+// insert e do fluxo de pagamento por parcela).
+export type NovaParcela = Pick<Parcela, "numero_parcela" | "valor" | "data_vencimento">;
 
 export interface MaloteDespesaRow {
   id: string;
@@ -233,6 +250,55 @@ export interface DespesaEvento {
 }
 
 const DESPESA_KEY = "malote_despesa";
+
+// SIS-2026-0223: item de UI em Aprovações/Meus Itens/Pagamento do Malote —
+// despesa parcelada "explode" em N linhas (1 por parcela); despesa normal
+// (ou parcelada ainda em aprovação, sem parcela pra decidir) é 1 linha só.
+export interface ItemLinhaMalote {
+  despesa: MaloteDespesaRow;
+  parcela: Parcela | null;
+}
+
+// Só a partir daqui a despesa tem pagamento de verdade pra rastrear por
+// parcela — antes disso (ainda em aprovação) continua sendo 1 despesa só,
+// porque aprovar é sempre uma decisão única sobre a despesa inteira.
+export const STATUS_COM_PARCELA_VISIVEL: StatusDespesa[] = [
+  "aguardando_pagamento",
+  "pronto_para_pagar",
+  "ajuste_pagamento",
+  "despesa_paga",
+];
+
+export function explodirParcelas(despesas: MaloteDespesaRow[], parcelasPorDespesa: Map<string, Parcela[]>): ItemLinhaMalote[] {
+  const linhas: ItemLinhaMalote[] = [];
+  for (const d of despesas) {
+    const parcelas = d.parcelado ? parcelasPorDespesa.get(d.id) ?? [] : [];
+    if (d.parcelado && parcelas.length > 0 && STATUS_COM_PARCELA_VISIVEL.includes(d.status)) {
+      for (const p of parcelas) linhas.push({ despesa: d, parcela: p });
+    } else {
+      linhas.push({ despesa: d, parcela: null });
+    }
+  }
+  return linhas;
+}
+
+async function buscarParcelasPorDespesa(despesas: MaloteDespesaRow[]): Promise<Map<string, Parcela[]>> {
+  const ids = despesas.filter((d) => d.parcelado).map((d) => d.id);
+  const mapa = new Map<string, Parcela[]>();
+  if (ids.length === 0) return mapa;
+  const { data, error } = await (supabase as any)
+    .from("malote_despesa_parcela")
+    .select("*")
+    .in("despesa_id", ids)
+    .order("numero_parcela");
+  if (error) throw error;
+  for (const p of (data ?? []) as Parcela[]) {
+    const lst = mapa.get(p.despesa_id) ?? [];
+    lst.push(p);
+    mapa.set(p.despesa_id, lst);
+  }
+  return mapa;
+}
 
 const DESPESA_COLUMNS =
   "id, numero, empresa_id, classificacao_id, origem, status, nome, valor_total, motivo, descricao, links, tipo_movimento, tipo, contrato_id, " +
@@ -382,7 +448,9 @@ export function useMinhasDespesas() {
 
       const { data, error } = await query;
       if (error) throw error;
-      return (data ?? []) as MaloteDespesaRow[];
+      const despesas = (data ?? []) as MaloteDespesaRow[];
+      const parcelasPorDespesa = await buscarParcelasPorDespesa(despesas);
+      return explodirParcelas(despesas, parcelasPorDespesa);
     },
   });
 }
@@ -434,7 +502,7 @@ export interface SalvarDespesaInput {
   dia_desconto?: number | null;
   arquivos?: string[];
   rateio?: RateioLinha[];
-  parcelas?: Parcela[];
+  parcelas?: NovaParcela[];
   nivel_aprovacao_atual?: 1 | 2 | 3 | null;
   // SIS-2026-0211: marca a despesa como exceção — passa por cima do
   // bloqueio de dia (data_pagamento em dia bloqueado), só pra ela.
@@ -823,6 +891,36 @@ export function usePagarDespesa() {
   });
 }
 
+// SIS-2026-0223: despesa parcelada é paga parcela por parcela, cada uma com
+// seu próprio comprovante/data — malote_pagar_despesa (acima) continua
+// servindo só despesa não-parcelada.
+export interface PagarParcelaInput {
+  despesaId: string;
+  parcelaId: string;
+  data_pagamento: string;
+  comprovante_path: string;
+  observacao: string | null;
+  rateio_snapshot?: { linha_id: string; orcado: number | null; utilizado_com_lancamento: number | null }[];
+}
+
+export function usePagarParcela() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (input: PagarParcelaInput) => {
+      const { error } = await (supabase as any).rpc("malote_pagar_parcela", {
+        _despesa_id: input.despesaId,
+        _parcela_id: input.parcelaId,
+        _data_pagamento: input.data_pagamento,
+        _comprovante_path: input.comprovante_path,
+        _observacao: input.observacao,
+        _rateio_snapshot: input.rateio_snapshot ?? [],
+      });
+      if (error) throw error;
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: [DESPESA_KEY] }),
+  });
+}
+
 // ── Aprovação Inicial da Solicitação (SIS-2026-0132 Fase 2) ─────────────
 // Gate único (não sequencial como N1/N2/N3 da despesa): qualquer um dos 3
 // aprovadores configurados na Classificação Malote pode aprovar/reprovar.
@@ -925,7 +1023,9 @@ export function useItensAprovacoesMalote() {
         .select(DESPESA_COLUMNS)
         .order("updated_at", { ascending: false });
       if (error) throw error;
-      return (data ?? []) as MaloteDespesaRow[];
+      const despesas = (data ?? []) as MaloteDespesaRow[];
+      const parcelasPorDespesa = await buscarParcelasPorDespesa(despesas);
+      return explodirParcelas(despesas, parcelasPorDespesa);
     },
   });
 }
@@ -940,14 +1040,14 @@ export async function uploadAnexoMalote(file: File, despesaFolderId: string): Pr
 }
 
 /** Gera N parcelas iguais (a última absorve o resto de arredondamento). */
-export function gerarParcelas(valorTotal: number, numeroParcelas: number, dataPagamento: string, diaDesconto: number | null): Parcela[] {
+export function gerarParcelas(valorTotal: number, numeroParcelas: number, dataPagamento: string, diaDesconto: number | null): NovaParcela[] {
   if (numeroParcelas <= 0) return [];
   const valorParcela = Math.floor((valorTotal / numeroParcelas) * 100) / 100;
   const somaParcelas = valorParcela * (numeroParcelas - 1);
   const ultimaParcela = Math.round((valorTotal - somaParcelas) * 100) / 100;
 
   const base = new Date(dataPagamento + "T00:00:00");
-  const parcelas: Parcela[] = [];
+  const parcelas: NovaParcela[] = [];
   for (let i = 0; i < numeroParcelas; i++) {
     const venc = new Date(base.getFullYear(), base.getMonth() + i, diaDesconto ?? base.getDate());
     parcelas.push({
