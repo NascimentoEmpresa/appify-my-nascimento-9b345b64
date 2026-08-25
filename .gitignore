@@ -38,10 +38,14 @@ dist-ssr
 .env
 .env.local
 .env.*.local
-docs
-worker
-.claude
 deno.lock
+
+# .claude/ é versionado de propósito (CLAUDE.md, skills e slash commands são
+# convenção de projeto, e precisam existir dentro das worktrees — git só
+# materializa arquivo versionado numa worktree nova). Só o que é pessoal ou
+# gerado fica de fora:
+.claude/settings.local.json
+.claude/worktrees/
 
 # Saída do .github/scripts/portaria-pr.mjs — gerada a cada execução, local ou
 # no CI. Nunca é para ser versionada.

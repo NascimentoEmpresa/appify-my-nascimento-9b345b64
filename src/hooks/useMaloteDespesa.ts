@@ -319,17 +319,68 @@ export function useNomeUsuario(userId: string | null | undefined) {
 }
 
 // ── Despesas ──────────────────────────────────────────────────────────
+
+// Setores liberados para um usuário em Aprovações/Meus Itens do Malote
+// (SIS-2026-0216, Gerenciamento de Acesso). Lista vazia = sem recorte = vê
+// tudo da empresa (default, mesmo comportamento de antes desta feature).
+export function useMaloteSetoresVisiveis(userId: string | null | undefined) {
+  return useQuery({
+    queryKey: ["malote_setor_visivel_usuario", userId],
+    enabled: !!userId,
+    staleTime: 60_000,
+    queryFn: async () => {
+      const { data, error } = await (supabase as any)
+        .from("malote_setor_visivel_usuario")
+        .select("setor")
+        .eq("user_id", userId)
+        .order("setor");
+      if (error) throw error;
+      return (data ?? []).map((r: any) => r.setor as string);
+    },
+  });
+}
+
 export function useMinhasDespesas() {
   return useQuery({
     queryKey: [DESPESA_KEY, "minhas"],
     queryFn: async () => {
       const { data: u } = await supabase.auth.getUser();
       if (!u.user) return [];
-      const { data, error } = await (supabase as any)
+
+      // SIS-2026-0216: além do que a pessoa criou, ela pode ter setores
+      // liberados em Gerenciamento de Acesso (mesma lista usada em
+      // Aprovações do Malote — malote_setor_visivel_usuario). Sem nenhum
+      // setor configurado, mantém o comportamento anterior (só o que ela
+      // criou); a RLS de malote_despesa já impõe o resto da regra (mesma
+      // empresa) — aqui é só montar o filtro pra ele aparecer.
+      const { data: setoresRows, error: setoresErr } = await (supabase as any)
+        .from("malote_setor_visivel_usuario")
+        .select("setor")
+        .eq("user_id", u.user.id);
+      if (setoresErr) throw setoresErr;
+      const setores = (setoresRows ?? []).map((r: any) => r.setor as string);
+
+      let query = (supabase as any)
         .from("malote_despesa")
         .select(DESPESA_COLUMNS)
-        .eq("created_by", u.user.id)
         .order("created_at", { ascending: false });
+
+      if (setores.length === 0) {
+        query = query.eq("created_by", u.user.id);
+      } else {
+        const { data: classRows, error: classErr } = await (supabase as any)
+          .from("planejamento_orcamentario_classificacao")
+          .select("id")
+          .in("setor_responsavel", setores);
+        if (classErr) throw classErr;
+        const classIds = (classRows ?? []).map((r: any) => r.id as string);
+
+        const orParts = [`created_by.eq.${u.user.id}`];
+        if (classIds.length > 0) orParts.push(`classificacao_id.in.(${classIds.join(",")})`);
+        query = query.or(orParts.join(","));
+      }
+
+      const { data, error } = await query;
       if (error) throw error;
       return (data ?? []) as MaloteDespesaRow[];
     },

@@ -35,7 +35,7 @@ const EMPTY_FORM: FormData = {
   decimo_terceiro: 0, adicional_ferias: 0, incidencia_enc_41: 0,
   inss: 0, salario_educacao: 0, rat_fap: 0, sesi: 0, senai: 0, sebrae: 0,
   incra: 0, fgts: 0, seguro_acidente_trabalho: 0,
-  transporte: 0, aux_alimentacao: 0, aux_alimentacao_desconto: 0, aux_refeicao: 0,
+  transporte: 0, transporte_desconto: 0, aux_alimentacao: 0, aux_alimentacao_desconto: 0, aux_refeicao: 0,
   beneficio_familiar: 0, aux_lanche: 0, seguro_vida: 0, abono_indenizatorio: 0,
   aux_educacao: 0, cesta_basica: 0, assistencia_medica: 0, hospedagem: 0,
   odontologico: 0, manutencao_profissional: 0, cafe: 0, almoco: 0,
@@ -1666,7 +1666,8 @@ function FormDrawer({
           inss: sourceRow.inss, salario_educacao: sourceRow.salario_educacao, rat_fap: sourceRow.rat_fap,
           sesi: sourceRow.sesi, senai: sourceRow.senai, sebrae: sourceRow.sebrae, incra: sourceRow.incra,
           fgts: sourceRow.fgts, seguro_acidente_trabalho: sourceRow.seguro_acidente_trabalho,
-          transporte: sourceRow.transporte, aux_alimentacao: sourceRow.aux_alimentacao,
+          transporte: sourceRow.transporte, transporte_desconto: sourceRow.transporte_desconto,
+          aux_alimentacao: sourceRow.aux_alimentacao,
           aux_alimentacao_desconto: sourceRow.aux_alimentacao_desconto,
           aux_refeicao: sourceRow.aux_refeicao, beneficio_familiar: sourceRow.beneficio_familiar,
           aux_lanche: sourceRow.aux_lanche, seguro_vida: sourceRow.seguro_vida,
@@ -1810,6 +1811,7 @@ function FormDrawer({
       fgts: r.fgts,
       seguro_acidente_trabalho: r.seguro_acidente_trabalho,
       transporte: r.transporte,
+      transporte_desconto: r.transporte_desconto,
       aux_alimentacao: r.aux_alimentacao,
       aux_alimentacao_desconto: r.aux_alimentacao_desconto,
       aux_refeicao: r.aux_refeicao,
@@ -1919,7 +1921,7 @@ function FormDrawer({
     form.manutencao_profissional + form.cafe + form.almoco + form.janta + form.ceia +
     form.funeral + form.assiduidade + form.beneficio_trabalhador + form.patronal +
     form.fundo_assistencial + form.fundo_profissional + form.natalidade +
-    form.outros_1 + form.outros_2 + form.outros_3 + form.aux_alimentacao_desconto - form.deducoes;
+    form.outros_1 + form.outros_2 + form.outros_3 + form.aux_alimentacao_desconto + form.transporte_desconto - form.deducoes;
 
   const somaReposicao =
     form.sub_ferias + form.sub_ausencias_legais + form.sub_paternidade +
@@ -2095,6 +2097,7 @@ function FormDrawer({
             <Section title="4 — Benefícios Mensais e Diários" soma={somaBeneficios}>
               <div className="grid grid-cols-4 gap-4">
                 {numField("transporte", "Transporte")}
+                {numField("transporte_desconto", "Dedução VT")}
                 {numField("aux_alimentacao", "Aux. Alimentação")}
                 {numField("aux_alimentacao_desconto", "Desc. Alimentação")}
                 {numField("aux_refeicao", "Aux. Refeição")}
@@ -2617,6 +2620,9 @@ const IDX_MAP: Array<[number, keyof Omit<PlanilhaCustoRow, "id" | "empresa_id" |
   [101, "outros_2_descricao"],        // CX
   [102, "outros_3"],                  // CY
   [103, "outros_3_descricao"],        // CZ
+  // Dedução de Vale Transporte: fica isolada lá na coluna DB do arquivo do
+  // José, fora da sequência dos benefícios (por isso o salto de índice).
+  [105, "transporte_desconto"],       // DB
 ];
 
 const TEXT_FIELDS = new Set([
@@ -2893,7 +2899,7 @@ function ViewModal({
     row.manutencao_profissional + row.cafe + row.almoco + row.janta + row.ceia +
     row.funeral + row.assiduidade + row.beneficio_trabalhador + row.patronal +
     row.fundo_assistencial + row.fundo_profissional + row.natalidade +
-    row.outros_1 + row.outros_2 + row.outros_3 + row.aux_alimentacao_desconto - row.deducoes;
+    row.outros_1 + row.outros_2 + row.outros_3 + row.aux_alimentacao_desconto + row.transporte_desconto - row.deducoes;
   const somaReposicao = row.sub_ferias + row.sub_ausencias_legais + row.sub_paternidade +
     row.sub_acidente_trabalho + row.sub_maternidade + row.sub_doenca + row.sub_repouso +
     row.incidencia_maternidade + row.incidencia_enc_reposicao + row.incidencia_enc_reposicao_2 +
@@ -2994,6 +3000,7 @@ function ViewModal({
 
             <VSec title="4 — Benefícios Mensais e Diários" soma={somaBeneficios}>
               <VRow label="Transporte" value={row.transporte} />
+              <VRow label="Dedução VT" value={row.transporte_desconto} />
               <VRow label="Aux. Alimentação" value={row.aux_alimentacao} />
               <VRow label="Desc. Alimentação" value={row.aux_alimentacao_desconto} />
               <VRow label="Aux. Refeição" value={row.aux_refeicao} />
