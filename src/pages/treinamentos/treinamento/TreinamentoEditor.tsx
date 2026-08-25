@@ -9,10 +9,11 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import { Switch } from "@/components/ui/switch";
 import {
   Video, Paperclip, ListChecks, Plus, Trash2, Check, Loader2, Upload, X, AlertCircle,
+  Image as ImageIcon,
 } from "lucide-react";
 import {
-  temConteudo, validarProva, caminhoNoBucket, embedDeVideo,
-  type PerguntaProva, type Treinamento,
+  temConteudo, validarProva, caminhoNoBucket, embedDeVideo, validarTamanho, formatarMB,
+  LIMITE_UPLOAD_BYTES, type PerguntaProva, type Treinamento,
 } from "./core";
 
 // =====================================================================
@@ -56,9 +57,31 @@ export function TreinamentoEditor({ aberto, treinamento, meuNome, meuId, onFecha
   const [prova, setProva] = useState<PerguntaProva[]>([]);
   const [notaMinima, setNotaMinima] = useState(70);
   const [publicado, setPublicado] = useState(true);
+  const [capaPath, setCapaPath] = useState<string | null>(null);
+  const [capaArquivo, setCapaArquivo] = useState<File | null>(null);
+  const [capaPreview, setCapaPreview] = useState<string | null>(null);
 
   const refVideo = useRef<HTMLInputElement>(null);
   const refAnexo = useRef<HTMLInputElement>(null);
+  const refCapa = useRef<HTMLInputElement>(null);
+
+  /**
+   * Recusa o arquivo grande NA ESCOLHA, não no salvar.
+   *
+   * O upload de 60 MB sobe inteiro antes de a API recusar, e o erro dela
+   * ("The object exceeded the maximum allowed size") vem em inglês e sem
+   * dizer qual é o limite. Melhor gastar o clique agora do que a espera
+   * depois.
+   */
+  const escolherArquivo = (arquivo: File | null, onOk: (f: File | null) => void) => {
+    if (!arquivo) { onOk(null); return; }
+    const problema = validarTamanho(arquivo);
+    if (problema) {
+      toast({ title: "Arquivo grande demais", description: problema, variant: "destructive" });
+      return;
+    }
+    onOk(arquivo);
+  };
 
   // Recarrega a cada abertura: o modal fica montado e sem isto o segundo
   // "Novo treinamento" viria com o que sobrou do card editado antes.
@@ -74,9 +97,31 @@ export function TreinamentoEditor({ aberto, treinamento, meuNome, meuId, onFecha
     setProva(Array.isArray(t?.prova) ? t!.prova! : []);
     setNotaMinima(t?.nota_minima ?? 70);
     setPublicado(t?.publicado ?? true);
-    setVideoArquivo(null); setAnexoArquivo(null);
+    setCapaPath(t?.capa_path ?? null);
+    setVideoArquivo(null); setAnexoArquivo(null); setCapaArquivo(null); setCapaPreview(null);
     setAba("video");
   }, [aberto, treinamento]);
+
+  // Capa que já está salva: bucket é privado, então precisa de URL assinada
+  // para aparecer no formulário de edição.
+  useEffect(() => {
+    let vivo = true;
+    if (!aberto || !capaPath || capaArquivo) return;
+    (async () => {
+      const { data } = await supabase.storage.from("treinamentos").createSignedUrl(capaPath, 3600);
+      if (vivo) setCapaPreview(data?.signedUrl ?? null);
+    })();
+    return () => { vivo = false; };
+  }, [aberto, capaPath, capaArquivo]);
+
+  // Preview local do arquivo recém-escolhido, sem esperar upload. O
+  // revokeObjectURL evita segurar a imagem em memória a cada troca.
+  useEffect(() => {
+    if (!capaArquivo) return;
+    const url = URL.createObjectURL(capaArquivo);
+    setCapaPreview(url);
+    return () => URL.revokeObjectURL(url);
+  }, [capaArquivo]);
 
   // O que "vai existir" depois de salvar — inclui arquivo escolhido mas
   // ainda não enviado, senão o botão fica travado com o upload na mão.
@@ -127,19 +172,42 @@ export function TreinamentoEditor({ aberto, treinamento, meuNome, meuId, onFecha
       // sem isso o anexo do card novo não teria onde morar.
       const id = treinamento?.id ?? crypto.randomUUID();
 
+      // Arquivos que saíram de cena e precisam ser apagados DEPOIS de o
+      // update passar. Sem isto cada troca de vídeo/anexo/capa deixava o
+      // arquivo velho no bucket para sempre, pagando storage por lixo.
+      const aRemover: string[] = [];
+
       let vPath = videoPath;
       if (videoArquivo) {
         const path = caminhoNoBucket(id, "video", videoArquivo.name);
         const { error } = await supabase.storage.from("treinamentos").upload(path, videoArquivo);
         if (error) throw new Error(`vídeo: ${error.message}`);
+        if (treinamento?.video_path) aRemover.push(treinamento.video_path);
         vPath = path;
+      } else if (treinamento?.video_path && !videoPath) {
+        aRemover.push(treinamento.video_path);   // removido pelo X, sem substituto
       }
+
       let aPath = anexoPath, aNome = anexoNome;
       if (anexoArquivo) {
         const path = caminhoNoBucket(id, "anexo", anexoArquivo.name);
         const { error } = await supabase.storage.from("treinamentos").upload(path, anexoArquivo);
         if (error) throw new Error(`anexo: ${error.message}`);
+        if (treinamento?.anexo_path) aRemover.push(treinamento.anexo_path);
         aPath = path; aNome = anexoArquivo.name;
+      } else if (treinamento?.anexo_path && !anexoPath) {
+        aRemover.push(treinamento.anexo_path);
+      }
+
+      let cPath = capaPath;
+      if (capaArquivo) {
+        const path = caminhoNoBucket(id, "capa", capaArquivo.name);
+        const { error } = await supabase.storage.from("treinamentos").upload(path, capaArquivo);
+        if (error) throw new Error(`capa: ${error.message}`);
+        if (treinamento?.capa_path) aRemover.push(treinamento.capa_path);
+        cPath = path;
+      } else if (treinamento?.capa_path && !capaPath) {
+        aRemover.push(treinamento.capa_path);
       }
 
       const linha = {
@@ -150,6 +218,7 @@ export function TreinamentoEditor({ aberto, treinamento, meuNome, meuId, onFecha
         video_path: vPath,
         anexo_path: aPath,
         anexo_nome: aNome,
+        capa_path: cPath,
         prova: prova.length ? prova : null,
         nota_minima: notaMinima,
         publicado,
@@ -160,6 +229,10 @@ export function TreinamentoEditor({ aberto, treinamento, meuNome, meuId, onFecha
         : await (supabase as any).from("TREINAMENTOS")
             .insert({ ...linha, criado_por: meuId ?? null, criado_por_nome: meuNome });
       if (error) throw new Error(error.message);
+
+      // Só depois do update: apagar antes deixaria o card apontando para um
+      // arquivo que não existe mais se a gravação falhasse.
+      if (aRemover.length) await supabase.storage.from("treinamentos").remove(aRemover);
 
       toast({ title: treinamento ? "Treinamento atualizado" : "Treinamento publicado" });
       onSalvo(); onFechar();
@@ -188,6 +261,35 @@ export function TreinamentoEditor({ aberto, treinamento, meuNome, meuId, onFecha
             <Label>Título <span className="text-destructive">*</span></Label>
             <Input value={titulo} onChange={e => setTitulo(e.target.value)}
                    placeholder="Ex.: Como lançar uma despesa no Malote" autoFocus />
+          </div>
+
+          {/* Capa: fica junto do título porque é identidade do card, não
+              conteúdo — por isso não entra nas abas nem no CHECK. */}
+          <div className="space-y-1.5">
+            <Label>Foto de capa</Label>
+            <input ref={refCapa} type="file" accept="image/png,image/jpeg,image/webp" className="hidden"
+                   onChange={e => { escolherArquivo(e.target.files?.[0] ?? null, setCapaArquivo); e.target.value = ""; }} />
+            {capaPreview ? (
+              <div className="group relative overflow-hidden rounded-xl border">
+                <img src={capaPreview} alt="Capa do treinamento" className="h-40 w-full object-cover" />
+                <div className="absolute inset-0 flex items-center justify-center gap-2 bg-black/50 opacity-0 transition-opacity group-hover:opacity-100">
+                  <Button type="button" variant="secondary" size="sm" onClick={() => refCapa.current?.click()}>
+                    <ImageIcon className="mr-2 h-4 w-4" /> Trocar
+                  </Button>
+                  <Button type="button" variant="destructive" size="sm"
+                          onClick={() => { setCapaArquivo(null); setCapaPath(null); setCapaPreview(null); }}>
+                    <Trash2 className="mr-2 h-4 w-4" /> Remover
+                  </Button>
+                </div>
+              </div>
+            ) : (
+              <button type="button" onClick={() => refCapa.current?.click()}
+                className="flex h-28 w-full flex-col items-center justify-center gap-1.5 rounded-xl border-2 border-dashed text-muted-foreground transition-all hover:border-primary/50 hover:bg-muted/40 hover:text-foreground">
+                <ImageIcon className="h-6 w-6" />
+                <span className="text-sm font-medium">Escolher imagem de capa</span>
+                <span className="text-xs">PNG, JPG ou WebP · opcional</span>
+              </button>
+            )}
           </div>
 
           <div className="space-y-1.5">
@@ -233,7 +335,7 @@ export function TreinamentoEditor({ aberto, treinamento, meuNome, meuId, onFecha
               <div className="space-y-1.5">
                 <Label>ou envie o arquivo</Label>
                 <input ref={refVideo} type="file" accept="video/*" className="hidden"
-                       onChange={e => setVideoArquivo(e.target.files?.[0] ?? null)} />
+                       onChange={e => { escolherArquivo(e.target.files?.[0] ?? null, setVideoArquivo); e.target.value = ""; }} />
                 <div className="flex items-center gap-2">
                   <Button type="button" variant="outline" onClick={() => refVideo.current?.click()}>
                     <Upload className="mr-2 h-4 w-4" /> Escolher vídeo
@@ -246,7 +348,9 @@ export function TreinamentoEditor({ aberto, treinamento, meuNome, meuId, onFecha
                     </span>
                   )}
                 </div>
-                <p className="text-xs text-muted-foreground">Até 200 MB. Para vídeo longo, prefira o link.</p>
+                <p className="text-xs text-muted-foreground">
+                  Até {formatarMB(LIMITE_UPLOAD_BYTES)}. Vídeo maior que isso: publique no YouTube e cole o link acima — por lá não há limite.
+                </p>
               </div>
             </div>
           )}
@@ -256,7 +360,7 @@ export function TreinamentoEditor({ aberto, treinamento, meuNome, meuId, onFecha
               <Label>Material de apoio</Label>
               <input ref={refAnexo} type="file" className="hidden"
                      accept=".pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.png,.jpg,.jpeg,.zip"
-                     onChange={e => setAnexoArquivo(e.target.files?.[0] ?? null)} />
+                     onChange={e => { escolherArquivo(e.target.files?.[0] ?? null, setAnexoArquivo); e.target.value = ""; }} />
               <div className="flex items-center gap-2">
                 <Button type="button" variant="outline" onClick={() => refAnexo.current?.click()}>
                   <Upload className="mr-2 h-4 w-4" /> Escolher arquivo
@@ -269,7 +373,9 @@ export function TreinamentoEditor({ aberto, treinamento, meuNome, meuId, onFecha
                   </span>
                 )}
               </div>
-              <p className="text-xs text-muted-foreground">PDF, Word, Excel, PowerPoint, imagem ou zip.</p>
+              <p className="text-xs text-muted-foreground">
+                PDF, Word, Excel, PowerPoint, imagem ou zip. Até {formatarMB(LIMITE_UPLOAD_BYTES)}.
+              </p>
             </div>
           )}
 

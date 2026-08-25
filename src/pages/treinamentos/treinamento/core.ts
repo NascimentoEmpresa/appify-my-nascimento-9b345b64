@@ -22,6 +22,8 @@ export interface Treinamento {
   video_path: string | null;
   anexo_path: string | null;
   anexo_nome: string | null;
+  /** Imagem de capa do card. Opcional — sem ela o card usa o gradiente. */
+  capa_path: string | null;
   prova: PerguntaProva[] | null;
   nota_minima: number;
   publicado: boolean;
@@ -152,8 +154,37 @@ export function validarProva(prova: PerguntaProva[]): string | null {
   return null;
 }
 
+/**
+ * Teto de upload, em bytes.
+ *
+ * É o `fileSizeLimit` GLOBAL do projeto no Supabase, não o do bucket: o
+ * bucket `treinamentos` foi criado com 200 MB, mas o limite do projeto
+ * vence sempre, e um arquivo acima dele volta com "The object exceeded the
+ * maximum allowed size" — em inglês, direto da API, sem dizer qual é o
+ * limite. Conferido em 25/08/2026: 52428800 bytes.
+ *
+ * Se alguém aumentar o teto no painel do Supabase, mude aqui junto — senão
+ * a tela passa a recusar arquivo que o servidor aceitaria.
+ */
+export const LIMITE_UPLOAD_BYTES = 50 * 1024 * 1024;
+
+export const formatarMB = (bytes: number) => `${(bytes / 1024 / 1024).toFixed(1).replace(".", ",")} MB`;
+
+/**
+ * O arquivo cabe? Devolve o motivo em português, ou null.
+ *
+ * Vale a pena checar no cliente porque o upload de 60 MB sobe inteiro antes
+ * de ser recusado: sem isto a pessoa espera a barra encher para receber um
+ * erro em inglês que não diz o tamanho permitido.
+ */
+export function validarTamanho(arquivo: File, limite = LIMITE_UPLOAD_BYTES): string | null {
+  if (arquivo.size <= limite) return null;
+  return `O arquivo tem ${formatarMB(arquivo.size)} e o limite é ${formatarMB(limite)}. `
+       + "Para vídeo grande, publique no YouTube e cole o link aqui — não há limite de tamanho por esse caminho.";
+}
+
 /** Nome de arquivo previsível no bucket, sem acento nem espaço. */
-export function caminhoNoBucket(treinamentoId: string, tipo: "video" | "anexo", nome: string): string {
+export function caminhoNoBucket(treinamentoId: string, tipo: "video" | "anexo" | "capa", nome: string): string {
   const limpo = nome
     // NFD antes do filtro ASCII para "Ação.pdf" virar "Acao.pdf", e não
     // "A__o.pdf": o acento vira combining mark separado e cai fora sozinho.
