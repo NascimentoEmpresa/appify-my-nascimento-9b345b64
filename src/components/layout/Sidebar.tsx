@@ -31,6 +31,7 @@ import {
   HardHat,
   Scale,
   GraduationCap,
+  ArrowLeftRight,
   UserCog,
   Briefcase as BriefcaseIcon,
   Home,
@@ -68,6 +69,7 @@ import { useModoExterno, rotaPermitidaExterno } from "@/hooks/useModoExterno";
 import { ACESSO_ABERTO_SEM_PERMISSOES, rotaSempreLiberada } from "@/lib/acesso";
 import { useGradeAtivaCount } from "@/hooks/useGradeAtivaCount";
 import { useChamadosNotif } from "@/hooks/useChamadosNotif";
+import { useTrocaFuncaoNotif } from "@/hooks/useTrocaFuncaoNotif";
 import { EmpresaAtivaContext } from "@/context/EmpresaAtivaContext";
 import { Inbox } from "lucide-react";
 import { Target } from "lucide-react";
@@ -86,7 +88,7 @@ interface NavItem {
   icon: any;
   badge?: string;
   // Bolinha de notificação (novidade). Resolvida em runtime pelo useChamadosNotif.
-  notif?: "meus" | "dev";
+  notif?: "meus" | "dev" | "troca_funcao";
   dot?: boolean;
 }
 interface NavGroup {
@@ -454,6 +456,8 @@ const rhModule: ModuleDef = {
         { label: "Folha de Pagamento", to: "/app/rh/folha", icon: ListChecks },
         { label: "Gestão de Férias", to: "/app/rh/ferias", icon: CalendarRange },
         { label: "Solicitações de Demissão", to: "/app/rh/solicitacoes-demissao", icon: UserMinus },
+        { label: "Mudança de Função", to: "/app/rh/troca-funcao", icon: ArrowLeftRight, notif: "troca_funcao" },
+        { label: "Mudança de Função — Escritório", to: "/app/rh/troca-funcao-escritorio", icon: Building2, notif: "troca_funcao" },
       ],
     },
   ],
@@ -517,6 +521,7 @@ const encarregadosModule: ModuleDef = {
       items: [
         { label: "Solicitar Férias", to: "/app/encarregados/solicitar-ferias", icon: CalendarRange },
         { label: "Solicitar Demissão", to: "/app/encarregados/solicitar-demissao", icon: UserMinus },
+        { label: "Mudança de Função", to: "/app/encarregados/troca-funcao", icon: ArrowLeftRight, notif: "troca_funcao" },
       ],
     },
     {
@@ -816,6 +821,7 @@ const operacionalModule: ModuleDef = {
       defaultOpen: true,
       items: [
         { label: "Solicitações de Demissão", to: "/app/operacional/solicitacoes-demissao", icon: UserMinus },
+        { label: "Mudança de Função", to: "/app/operacional/troca-funcao", icon: ArrowLeftRight, notif: "troca_funcao" },
       ],
     },
   ],
@@ -835,6 +841,7 @@ const sstModule: ModuleDef = {
       defaultOpen: true,
       items: [
         { label: "ASO / Admissão", to: "/app/sst/aso", icon: HardHat },
+        { label: "Mudança de Função — ASO", to: "/app/sst/troca-funcao", icon: ArrowLeftRight, notif: "troca_funcao" },
       ],
     },
   ],
@@ -892,6 +899,7 @@ export function Sidebar({ collapsed, mobileOpen = false, onMobileClose }: Sideba
   // query com 400. Só busca depois que o contexto termina de carregar.
   const { data: gradeAtivaCount } = useGradeAtivaCount(!empresaCtx?.loading ? empresaCtx?.empresa?.id ?? null : null);
   const chamadosNotif = useChamadosNotif();
+  const trocaFuncaoNotif = useTrocaFuncaoNotif();
   // Contador das Novidades do Sistema: o mesmo número da bolinha do topo.
   const { naoLidasCount: novidadesNaoLidas } = useNovidades();
 
@@ -937,8 +945,15 @@ export function Sidebar({ collapsed, mobileOpen = false, onMobileClose }: Sideba
       .filter((mod) => !mod.groups || mod.groups.length > 0);
 
     // Resolve sentinels de badge dinâmico + bolinha de notificação (notif → dot).
-    const resolvedDot = (notif: NavItem["notif"]) =>
-      notif === "meus" ? chamadosNotif.meus : notif === "dev" ? chamadosNotif.dev : false;
+    //
+    // Recebe o item inteiro, e não só `notif`, porque a bolinha da Mudança de
+    // Função depende da ROTA: os quatro itens do fluxo compartilham o mesmo
+    // `notif`, e cada um acende pelo status da própria etapa.
+    const resolvedDot = (item: NavItem) =>
+      item.notif === "meus" ? chamadosNotif.meus
+      : item.notif === "dev" ? chamadosNotif.dev
+      : item.notif === "troca_funcao" ? (trocaFuncaoNotif.porRota[item.to] ?? false)
+      : false;
 
     // Ordem alfabética (pt-BR, ignorando acentos) em todos os níveis: módulos,
     // grupos e itens (submódulos). Ajuste apenas visual.
@@ -953,13 +968,13 @@ export function Sidebar({ collapsed, mobileOpen = false, onMobileClose }: Sideba
           ?.map((g) => ({
             ...g,
             items: g.items
-              .map((item) => ({ ...item, badge: resolvedBadge(item.badge), dot: resolvedDot(item.notif) }))
+              .map((item) => ({ ...item, badge: resolvedBadge(item.badge), dot: resolvedDot(item) }))
               .sort(porNome),
           }))
           .sort(porNome),
       }))
       .sort(porNome);
-  }, [allModules, canSee, gradeAtivaCount, chamadosNotif.meus, chamadosNotif.dev]);
+  }, [allModules, canSee, gradeAtivaCount, chamadosNotif.meus, chamadosNotif.dev, trocaFuncaoNotif]);
 
   // Módulo ativo = aquele cujo ITEM (link real) casa com a rota atual.
   // Detecção por basePath não serve porque o Licitações usa basePath "/app"
