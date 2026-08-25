@@ -46,6 +46,7 @@ export type PlanilhaCustoRow = {
   seguro_acidente_trabalho: number;
   // Benefícios
   transporte: number;
+  transporte_desconto: number;
   aux_alimentacao: number;
   aux_alimentacao_desconto: number;
   aux_refeicao: number;
