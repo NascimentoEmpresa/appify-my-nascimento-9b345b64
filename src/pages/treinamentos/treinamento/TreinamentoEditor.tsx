@@ -11,8 +11,8 @@ import {
   Video, Paperclip, ListChecks, Plus, Trash2, Check, Loader2, Upload, X, AlertCircle,
 } from "lucide-react";
 import {
-  temConteudo, validarProva, caminhoNoBucket, embedDeVideo,
-  type PerguntaProva, type Treinamento,
+  temConteudo, validarProva, caminhoNoBucket, embedDeVideo, validarTamanho, formatarMB,
+  LIMITE_UPLOAD_BYTES, type PerguntaProva, type Treinamento,
 } from "./core";
 
 // =====================================================================
@@ -59,6 +59,24 @@ export function TreinamentoEditor({ aberto, treinamento, meuNome, meuId, onFecha
 
   const refVideo = useRef<HTMLInputElement>(null);
   const refAnexo = useRef<HTMLInputElement>(null);
+
+  /**
+   * Recusa o arquivo grande NA ESCOLHA, não no salvar.
+   *
+   * O upload de 60 MB sobe inteiro antes de a API recusar, e o erro dela
+   * ("The object exceeded the maximum allowed size") vem em inglês e sem
+   * dizer qual é o limite. Melhor gastar o clique agora do que a espera
+   * depois.
+   */
+  const escolherArquivo = (arquivo: File | null, onOk: (f: File | null) => void) => {
+    if (!arquivo) { onOk(null); return; }
+    const problema = validarTamanho(arquivo);
+    if (problema) {
+      toast({ title: "Arquivo grande demais", description: problema, variant: "destructive" });
+      return;
+    }
+    onOk(arquivo);
+  };
 
   // Recarrega a cada abertura: o modal fica montado e sem isto o segundo
   // "Novo treinamento" viria com o que sobrou do card editado antes.
@@ -233,7 +251,7 @@ export function TreinamentoEditor({ aberto, treinamento, meuNome, meuId, onFecha
               <div className="space-y-1.5">
                 <Label>ou envie o arquivo</Label>
                 <input ref={refVideo} type="file" accept="video/*" className="hidden"
-                       onChange={e => setVideoArquivo(e.target.files?.[0] ?? null)} />
+                       onChange={e => { escolherArquivo(e.target.files?.[0] ?? null, setVideoArquivo); e.target.value = ""; }} />
                 <div className="flex items-center gap-2">
                   <Button type="button" variant="outline" onClick={() => refVideo.current?.click()}>
                     <Upload className="mr-2 h-4 w-4" /> Escolher vídeo
@@ -246,7 +264,9 @@ export function TreinamentoEditor({ aberto, treinamento, meuNome, meuId, onFecha
                     </span>
                   )}
                 </div>
-                <p className="text-xs text-muted-foreground">Até 200 MB. Para vídeo longo, prefira o link.</p>
+                <p className="text-xs text-muted-foreground">
+                  Até {formatarMB(LIMITE_UPLOAD_BYTES)}. Vídeo maior que isso: publique no YouTube e cole o link acima — por lá não há limite.
+                </p>
               </div>
             </div>
           )}
@@ -256,7 +276,7 @@ export function TreinamentoEditor({ aberto, treinamento, meuNome, meuId, onFecha
               <Label>Material de apoio</Label>
               <input ref={refAnexo} type="file" className="hidden"
                      accept=".pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.png,.jpg,.jpeg,.zip"
-                     onChange={e => setAnexoArquivo(e.target.files?.[0] ?? null)} />
+                     onChange={e => { escolherArquivo(e.target.files?.[0] ?? null, setAnexoArquivo); e.target.value = ""; }} />
               <div className="flex items-center gap-2">
                 <Button type="button" variant="outline" onClick={() => refAnexo.current?.click()}>
                   <Upload className="mr-2 h-4 w-4" /> Escolher arquivo
@@ -269,7 +289,9 @@ export function TreinamentoEditor({ aberto, treinamento, meuNome, meuId, onFecha
                   </span>
                 )}
               </div>
-              <p className="text-xs text-muted-foreground">PDF, Word, Excel, PowerPoint, imagem ou zip.</p>
+              <p className="text-xs text-muted-foreground">
+                PDF, Word, Excel, PowerPoint, imagem ou zip. Até {formatarMB(LIMITE_UPLOAD_BYTES)}.
+              </p>
             </div>
           )}
 

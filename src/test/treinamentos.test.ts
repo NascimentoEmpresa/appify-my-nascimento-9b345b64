@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   embedDeVideo, corrigirProva, temConteudo, recursosDe, validarProva, caminhoNoBucket,
+  validarTamanho, LIMITE_UPLOAD_BYTES,
   type PerguntaProva,
 } from "@/pages/treinamentos/treinamento/core";
 
@@ -127,5 +128,29 @@ describe("caminhoNoBucket", () => {
     const p = caminhoNoBucket("abc-123", "anexo", "Ação de Segurança.pdf");
     expect(p.startsWith("abc-123/anexo-")).toBe(true);
     expect(p.endsWith("Acao_de_Seguranca.pdf")).toBe(true);
+  });
+});
+
+describe("validarTamanho", () => {
+  const arquivoDe = (mb: number) => ({ size: mb * 1024 * 1024, name: "aula.mp4" }) as File;
+
+  it("aceita arquivo dentro do limite, inclusive no limite exato", () => {
+    expect(validarTamanho(arquivoDe(10))).toBeNull();
+    expect(validarTamanho(arquivoDe(50))).toBeNull();
+  });
+
+  it("recusa acima do limite dizendo o tamanho e a saída", () => {
+    // O caso real: vídeo de 60 MB contra o teto global de 50 MB do projeto.
+    // A API devolvia "The object exceeded the maximum allowed size", em
+    // inglês e sem dizer qual é o limite.
+    const erro = validarTamanho(arquivoDe(60));
+    expect(erro).toContain("60,0 MB");
+    expect(erro).toContain("50,0 MB");
+    expect(erro).toMatch(/YouTube/);
+  });
+
+  it("usa o limite do servidor, não o do bucket", () => {
+    // O bucket foi criado com 200 MB, mas o teto do projeto vence sempre.
+    expect(LIMITE_UPLOAD_BYTES).toBe(52428800);
   });
 });
