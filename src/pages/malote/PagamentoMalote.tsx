@@ -17,12 +17,25 @@ import {
   STATUS_BADGE_CLASS,
   StatusDespesa,
   MaloteDespesaRow,
+  ItemLinhaMalote,
 } from "@/hooks/useMaloteDespesa";
 
 // SIS-2026-0160: fila do Financeiro — só os estágios de pagamento
 // (aguardando_pagamento em diante). Itens anteriores (cotação/aprovação)
 // não são relevantes aqui, ao contrário de Aprovações do Malote.
 const STATUS_PAGAMENTO: StatusDespesa[] = ["ajuste_pagamento", "aguardando_pagamento", "pronto_para_pagar", "despesa_reprovada", "despesa_paga"];
+
+// SIS-2026-0223: despesa parcelada vira N linhas (1 por parcela) a partir de
+// "aguardando_pagamento" — pronto_para_pagar/ajuste_pagamento continuam
+// sendo decisão sobre a despesa inteira (parcela só tem pendente/paga); só
+// aguardando_pagamento/despesa_paga refletem o progresso real de cada
+// parcela.
+function statusEfetivo(item: ItemLinhaMalote): StatusDespesa {
+  if (item.parcela && (item.despesa.status === "aguardando_pagamento" || item.despesa.status === "despesa_paga")) {
+    return item.parcela.status === "paga" ? "despesa_paga" : "aguardando_pagamento";
+  }
+  return item.despesa.status;
+}
 
 const PAGE_SIZE = 10;
 
@@ -97,7 +110,7 @@ function OpcaoResponsavel({ id }: { id: string }) {
 export default function PagamentoMalote() {
   const navigate = useNavigate();
   const { data: todosItens = [], isLoading } = useItensAprovacoesMalote();
-  const itens = useMemo(() => todosItens.filter((d) => STATUS_PAGAMENTO.includes(d.status)), [todosItens]);
+  const itens = useMemo(() => todosItens.filter((item) => STATUS_PAGAMENTO.includes(item.despesa.status)), [todosItens]);
 
   const [dataDe, setDataDe] = useState("");
   const [dataAte, setDataAte] = useState("");
@@ -109,12 +122,12 @@ export default function PagamentoMalote() {
 
   const classificacoesDisponiveis = useMemo(() => {
     const nomes = new Set<string>();
-    itens.forEach((d) => d.classificacao?.nome && nomes.add(d.classificacao.nome));
+    itens.forEach((item) => item.despesa.classificacao?.nome && nomes.add(item.despesa.classificacao.nome));
     return Array.from(nomes).sort();
   }, [itens]);
 
   const responsaveisDisponiveis = useMemo(() => {
-    return Array.from(new Set(itens.map((d) => d.created_by)));
+    return Array.from(new Set(itens.map((item) => item.despesa.created_by)));
   }, [itens]);
 
   function limparFiltros() {
@@ -133,8 +146,9 @@ export default function PagamentoMalote() {
   }
 
   const filtrados = useMemo(() => {
-    return itens.filter((d) => {
-      if (status && d.status !== status) return false;
+    return itens.filter((item) => {
+      const d = item.despesa;
+      if (status && statusEfetivo(item) !== status) return false;
       if (classificacao && d.classificacao?.nome !== classificacao) return false;
       if (responsavelId && d.created_by !== responsavelId) return false;
       if (dataDe && d.updated_at < dataDe) return false;
@@ -152,7 +166,7 @@ export default function PagamentoMalote() {
   const visiveis = filtrados.slice((paginaAtual - 1) * PAGE_SIZE, paginaAtual * PAGE_SIZE);
 
   function contar(s: StatusDespesa) {
-    return itens.filter((d) => d.status === s).length;
+    return itens.filter((item) => statusEfetivo(item) === s).length;
   }
 
   const tiles: TileInfo[] = [
@@ -272,8 +286,8 @@ export default function PagamentoMalote() {
                     </TableCell>
                   </TableRow>
                 )}
-                {visiveis.map((despesa) => (
-                  <LinhaItem key={despesa.id} despesa={despesa} onAbrir={() => abrirItem(despesa)} />
+                {visiveis.map((item) => (
+                  <LinhaItem key={`${item.despesa.id}-${item.parcela?.id ?? "unica"}`} item={item} onAbrir={() => abrirItem(item.despesa)} />
                 ))}
               </TableBody>
             </Table>
@@ -300,24 +314,31 @@ export default function PagamentoMalote() {
   );
 }
 
-function LinhaItem({ despesa, onAbrir }: { despesa: MaloteDespesaRow; onAbrir: () => void }) {
+function LinhaItem({ item, onAbrir }: { item: ItemLinhaMalote; onAbrir: () => void }) {
+  const { despesa, parcela } = item;
   const { data: solicitanteNome } = useNomeUsuario(despesa.created_by);
+  const status = statusEfetivo(item);
+  const valor = parcela ? parcela.valor : despesa.valor_aprovado ?? despesa.valor_total;
+  const dataPagamento = parcela ? parcela.data_pagamento_real ?? parcela.data_vencimento : despesa.data_pagamento;
   return (
     <TableRow className="cursor-pointer hover:bg-muted/50" onClick={onAbrir}>
-      <TableCell className="font-mono text-xs">{despesa.numero}</TableCell>
-      <TableCell className="text-sm">{despesa.data_pagamento ? new Date(despesa.data_pagamento + "T00:00:00").toLocaleDateString("pt-BR") : "—"}</TableCell>
+      <TableCell className="font-mono text-xs">
+        {despesa.numero}
+        {parcela && <span className="text-muted-foreground"> ({parcela.numero_parcela}/{despesa.numero_parcelas})</span>}
+      </TableCell>
+      <TableCell className="text-sm">{dataPagamento ? new Date(dataPagamento + "T00:00:00").toLocaleDateString("pt-BR") : "—"}</TableCell>
       <TableCell className="text-sm">
         <p>{despesa.nome}</p>
         {despesa.motivo && <p className="text-xs text-muted-foreground">{despesa.motivo}</p>}
       </TableCell>
       <TableCell className="text-sm">{despesa.classificacao?.nome ?? "—"}</TableCell>
       <TableCell className="text-right text-sm">
-        {Number(despesa.valor_aprovado ?? despesa.valor_total).toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}
+        {Number(valor).toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}
       </TableCell>
       <TableCell className="text-sm">{despesa.forma_pagamento ?? "—"}</TableCell>
       <TableCell className="text-sm">{solicitanteNome ?? "—"}</TableCell>
       <TableCell>
-        <Badge className={STATUS_BADGE_CLASS[despesa.status]}>{STATUS_LABEL[despesa.status]}</Badge>
+        <Badge className={STATUS_BADGE_CLASS[status]}>{STATUS_LABEL[status]}</Badge>
       </TableCell>
       <TableCell className="text-xs text-muted-foreground">{new Date(despesa.updated_at).toLocaleString("pt-BR")}</TableCell>
     </TableRow>

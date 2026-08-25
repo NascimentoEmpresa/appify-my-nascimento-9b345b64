@@ -69,6 +69,20 @@ interface RateioGridProps {
   limiteJustificativaPct?: number | null;
   resolverOrcado?: (classificacaoId: string | null | undefined, contratoId: string | null | undefined) => number | null;
   anoMesDespesa?: string;
+  // SIS-2026-0223 (complemento): fração da parcela 1 sobre o valor total —
+  // despesa parcelada consome o orçamento do mês pelo valor da parcela 1,
+  // não pelo valor cheio da linha. Sem parcelamento, vem 1 (não escala).
+  fatorParcela1?: number;
+  // SIS-2026-0223 (complemento 4, pedido do usuário): "Valor (R$)" nesta
+  // grade é sempre o total da despesa (é o que fica gravado em
+  // malote_despesa_rateio_linha.valor e alimenta v_malote_utilizado_orcamento
+  // como fração de CADA parcela — mudar esse significado quebraria a view).
+  // Pra despesa parcelada, o Orçado/Utilizado ao lado é escalado só pra
+  // parcela 1 (fatorParcela1) — sem uma coluna própria mostrando esse
+  // valor, fica ambíguo comparar "Valor: R$600" com "Utilizado: R$800"
+  // (que na real usa só R$200 da parcela 1). Esta coluna só existe pra
+  // deixar isso explícito, não é editável nem gravada em lugar nenhum.
+  mostrarValorParcela1?: boolean;
   podeJustificarComoAprovador?: boolean;
   // SIS-2026-0212 (complemento, pedido do Iury): despesa administrativa
   // (linha sem contrato) não tem Analista — quem justifica o estouro é o
@@ -97,6 +111,8 @@ export function RateioGrid({
   limiteJustificativaPct,
   resolverOrcado,
   anoMesDespesa,
+  fatorParcela1 = 1,
+  mostrarValorParcela1,
   podeJustificarComoAprovador,
   souSolicitante,
 }: RateioGridProps) {
@@ -309,6 +325,7 @@ export function RateioGrid({
               <TableHead>{ratearPor === "percentual" ? "% Rateio *" : "Valor (R$) *"}</TableHead>
               {dimensoes.fornecedor && <TableHead>Fornecedor (opcional)</TableHead>}
               {dimensoes.integrante && <TableHead>Integrante (opcional)</TableHead>}
+              {mostrarColunasOrcamento && mostrarValorParcela1 && <TableHead className="text-center">Valor da parcela 1</TableHead>}
               {mostrarColunasOrcamento && (
                 <>
                   <TableHead className="text-center">Valor orçado (mês)</TableHead>
@@ -332,7 +349,8 @@ export function RateioGrid({
                     Number(dimensoes.fornecedor) +
                     Number(dimensoes.integrante) +
                     Number(!!mostrarClassificacao) +
-                    (mostrarColunasOrcamento ? 5 : 0)
+                    (mostrarColunasOrcamento ? 5 : 0) +
+                    (mostrarColunasOrcamento && mostrarValorParcela1 ? 1 : 0)
                   }
                   className="text-center text-muted-foreground py-6"
                 >
@@ -482,6 +500,9 @@ export function RateioGrid({
                     </Select>
                   </TableCell>
                 )}
+                {mostrarColunasOrcamento && mostrarValorParcela1 && (
+                  <TableCell className="text-center text-xs">{fmtMoney((Number(linha.valor) || 0) * fatorParcela1)}</TableCell>
+                )}
                 {mostrarColunasOrcamento &&
                   (() => {
                     // SIS-2026-0212 (complemento): mesmo congelamento da
@@ -495,7 +516,7 @@ export function RateioGrid({
                     const utilizadoAntes = utilizadoAntesPorContrato.get(chave) ?? 0;
                     const utilizadoComLancamento = estaCongelada
                       ? linha.utilizado_com_lancamento_snapshot ?? 0
-                      : utilizadoAntes + (Number(linha.valor) || 0);
+                      : utilizadoAntes + (Number(linha.valor) || 0) * fatorParcela1;
                     const dentroDoOrcado = orcado == null ? null : utilizadoComLancamento <= orcado;
                     const percentualLinha = orcado ? (utilizadoComLancamento / orcado) * 100 : null;
                     const precisaJustificar =

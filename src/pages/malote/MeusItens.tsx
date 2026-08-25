@@ -17,6 +17,7 @@ import {
   useContratosAtivos,
   useEmpresasGrupo,
   MaloteDespesaRow,
+  ItemLinhaMalote,
   StatusDespesa,
   STATUS_LABEL,
   STATUS_BADGE_CLASS,
@@ -65,30 +66,46 @@ const CHIPS: { key: ChipKey; label: string }[] = [
   { key: "despesa_reprovada", label: "Despesa Reprovada" },
 ];
 
-function itemMatchesChip(item: MaloteDespesaRow, chip: ChipKey): boolean {
+// SIS-2026-0223: despesa parcelada vira N linhas (1 por parcela) a partir de
+// "aguardando_pagamento" — pros chips/status de pagamento, o que conta é o
+// status da PARCELA (paga/pendente), não o bruto da despesa, senão as N
+// linhas cairiam sempre no mesmo chip (todas "aguardando" até a despesa
+// inteira ficar paga na última parcela).
+function statusEfetivo(item: ItemLinhaMalote): StatusDespesa {
+  // pronto_para_pagar/ajuste_pagamento continuam sendo decisão sobre a
+  // despesa inteira (parcela só tem pendente/paga) — só aguardando_pagamento
+  // e despesa_paga refletem o progresso real de CADA parcela.
+  if (item.parcela && (item.despesa.status === "aguardando_pagamento" || item.despesa.status === "despesa_paga")) {
+    return item.parcela.status === "paga" ? "despesa_paga" : "aguardando_pagamento";
+  }
+  return item.despesa.status;
+}
+
+function itemMatchesChip(item: ItemLinhaMalote, chip: ChipKey): boolean {
+  const status = statusEfetivo(item);
   switch (chip) {
     case "todos":
       return true;
     case "rascunho":
-      return item.status === "rascunho";
+      return status === "rascunho";
     case "aguardando_cotacao":
-      return item.status === "aguardando_cotacao" || item.status === "cotacao_realizada";
+      return status === "aguardando_cotacao" || status === "cotacao_realizada";
     case "cotacao_aprovada":
-      return item.status === "cotacao_aprovada";
+      return status === "cotacao_aprovada";
     case "pendente_n1":
-      return item.status === "pendente_aprovacao" && item.nivel_aprovacao_atual === 1;
+      return status === "pendente_aprovacao" && item.despesa.nivel_aprovacao_atual === 1;
     case "pendente_n2":
-      return item.status === "pendente_aprovacao" && item.nivel_aprovacao_atual === 2;
+      return status === "pendente_aprovacao" && item.despesa.nivel_aprovacao_atual === 2;
     case "pendente_n3":
-      return item.status === "pendente_aprovacao" && item.nivel_aprovacao_atual === 3;
+      return status === "pendente_aprovacao" && item.despesa.nivel_aprovacao_atual === 3;
     case "aguardando_pagamento":
-      return item.status === "aguardando_pagamento";
+      return status === "aguardando_pagamento";
     case "necessidade_de_ajuste":
-      return item.status === "necessidade_de_ajuste";
+      return status === "necessidade_de_ajuste";
     case "despesa_paga":
-      return item.status === "despesa_paga";
+      return status === "despesa_paga";
     case "despesa_reprovada":
-      return item.status === "despesa_reprovada";
+      return status === "despesa_reprovada";
   }
 }
 
@@ -96,21 +113,21 @@ function itemMatchesChip(item: MaloteDespesaRow, chip: ChipKey): boolean {
 // pra sempre) — quem decide se ainda é Solicitação é o status atual, mesma
 // lógica de Aprovacoes.tsx: a partir de cotacao_aprovada em diante já é
 // Despesa (Tipo e agrupamento das abas Solicitações/Despesas do Malote).
-function aindaESolicitacao(item: MaloteDespesaRow): boolean {
-  return item.origem === "solicitacao" && STATUS_FASE_SOLICITACAO.includes(item.status);
+function aindaESolicitacao(despesa: MaloteDespesaRow): boolean {
+  return despesa.origem === "solicitacao" && STATUS_FASE_SOLICITACAO.includes(despesa.status);
 }
 
-function tipoLabelDe(item: MaloteDespesaRow): string {
-  if (item.origem === "solicitacao") return aindaESolicitacao(item) ? "Solicitação" : "Despesa";
-  return ORIGEM_LABEL[item.origem] ?? item.origem;
+function tipoLabelDe(despesa: MaloteDespesaRow): string {
+  if (despesa.origem === "solicitacao") return aindaESolicitacao(despesa) ? "Solicitação" : "Despesa";
+  return ORIGEM_LABEL[despesa.origem] ?? despesa.origem;
 }
 
-function aprovadorPendente(item: MaloteDespesaRow): string | null {
-  if (item.status !== "pendente_aprovacao" || !item.nivel_aprovacao_atual) return null;
-  const c = item.classificacao;
+function aprovadorPendente(despesa: MaloteDespesaRow): string | null {
+  if (despesa.status !== "pendente_aprovacao" || !despesa.nivel_aprovacao_atual) return null;
+  const c = despesa.classificacao;
   if (!c) return null;
-  if (item.nivel_aprovacao_atual === 1) return c.aprovador1_nome ?? null;
-  if (item.nivel_aprovacao_atual === 2) return c.aprovador2_nome ?? null;
+  if (despesa.nivel_aprovacao_atual === 1) return c.aprovador1_nome ?? null;
+  if (despesa.nivel_aprovacao_atual === 2) return c.aprovador2_nome ?? null;
   return c.aprovador3_nome ?? null;
 }
 
@@ -154,17 +171,19 @@ export default function MeusItens() {
 
   const filtrados = useMemo(() => {
     return itens.filter((item) => {
-      if (tab === "solicitacoes" && !aindaESolicitacao(item)) return false;
-      if (tab === "despesas" && aindaESolicitacao(item)) return false;
+      const { despesa, parcela } = item;
+      if (tab === "solicitacoes" && !aindaESolicitacao(despesa)) return false;
+      if (tab === "despesas" && aindaESolicitacao(despesa)) return false;
       if (!itemMatchesChip(item, chip)) return false;
-      if (classificacaoId && item.classificacao_id !== classificacaoId) return false;
-      if (empresaId && item.empresa_id !== empresaId) return false;
-      if (excecao === "sim" && !item.excecao) return false;
-      if (excecao === "nao" && item.excecao) return false;
-      if (periodoInicio && (!item.data_pagamento || item.data_pagamento < periodoInicio)) return false;
-      if (periodoFim && (!item.data_pagamento || item.data_pagamento > periodoFim)) return false;
+      if (classificacaoId && despesa.classificacao_id !== classificacaoId) return false;
+      if (empresaId && despesa.empresa_id !== empresaId) return false;
+      if (excecao === "sim" && !despesa.excecao) return false;
+      if (excecao === "nao" && despesa.excecao) return false;
+      const dataPagamento = parcela ? parcela.data_pagamento_real ?? parcela.data_vencimento : despesa.data_pagamento;
+      if (periodoInicio && (!dataPagamento || dataPagamento < periodoInicio)) return false;
+      if (periodoFim && (!dataPagamento || dataPagamento > periodoFim)) return false;
       if (busca.trim()) {
-        const alvo = `${item.numero} ${item.nome}`.toLowerCase();
+        const alvo = `${despesa.numero} ${despesa.nome}`.toLowerCase();
         if (!alvo.includes(busca.trim().toLowerCase())) return false;
       }
       return true;
@@ -181,13 +200,13 @@ export default function MeusItens() {
     setChip("todos");
   }
 
-  function abrirItem(item: MaloteDespesaRow) {
-    if (item.origem === "solicitacao" && STATUS_FASE_SOLICITACAO.includes(item.status)) {
-      navigate(`/app/malote/solicitacao/${item.id}`);
-    } else if (item.origem === "solicitacao" && item.status === "cotacao_aprovada") {
-      navigate(`/app/malote/criar-despesa?solicitacaoId=${item.id}`);
+  function abrirItem(despesa: MaloteDespesaRow) {
+    if (despesa.origem === "solicitacao" && STATUS_FASE_SOLICITACAO.includes(despesa.status)) {
+      navigate(`/app/malote/solicitacao/${despesa.id}`);
+    } else if (despesa.origem === "solicitacao" && despesa.status === "cotacao_aprovada") {
+      navigate(`/app/malote/criar-despesa?solicitacaoId=${despesa.id}`);
     } else {
-      navigate(`/app/malote/despesa/${item.id}`);
+      navigate(`/app/malote/despesa/${despesa.id}`);
     }
   }
 
@@ -326,32 +345,39 @@ export default function MeusItens() {
                 </TableRow>
               )}
               {filtrados.map((item) => {
-                const aprovador = aprovadorPendente(item);
+                const { despesa, parcela } = item;
+                const aprovador = aprovadorPendente(despesa);
+                const status = statusEfetivo(item);
+                const valor = parcela ? parcela.valor : despesa.valor_total;
+                const dataPagamento = parcela ? parcela.data_pagamento_real ?? parcela.data_vencimento : despesa.data_pagamento;
                 return (
-                  <TableRow key={item.id} className="cursor-pointer" onClick={() => abrirItem(item)}>
+                  <TableRow key={`${despesa.id}-${parcela?.id ?? "unica"}`} className="cursor-pointer" onClick={() => abrirItem(despesa)}>
                     <TableCell>
                       <span className="flex items-center gap-1.5 text-sm">
-                        <ListChecks className="h-3.5 w-3.5 text-muted-foreground" /> {tipoLabelDe(item)}
+                        <ListChecks className="h-3.5 w-3.5 text-muted-foreground" /> {tipoLabelDe(despesa)}
                       </span>
                     </TableCell>
-                    <TableCell className="font-mono text-xs">{item.numero}</TableCell>
-                    <TableCell>{item.data_pagamento ? new Date(item.data_pagamento + "T00:00:00").toLocaleDateString("pt-BR") : "—"}</TableCell>
-                    <TableCell>{item.classificacao?.nome ?? "—"}</TableCell>
-                    <TableCell className="font-medium">{item.nome}</TableCell>
-                    <TableCell>{empresas.find((e) => e.id === item.empresa_id)?.nome ?? "—"}</TableCell>
-                    <TableCell>{item.forma_pagamento ? FORMA_PAGAMENTO_LABEL[item.forma_pagamento] ?? item.forma_pagamento : "—"}</TableCell>
-                    <TableCell>{Number(item.valor_total).toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}</TableCell>
+                    <TableCell className="font-mono text-xs">
+                      {despesa.numero}
+                      {parcela && <span className="text-muted-foreground"> ({parcela.numero_parcela}/{despesa.numero_parcelas})</span>}
+                    </TableCell>
+                    <TableCell>{dataPagamento ? new Date(dataPagamento + "T00:00:00").toLocaleDateString("pt-BR") : "—"}</TableCell>
+                    <TableCell>{despesa.classificacao?.nome ?? "—"}</TableCell>
+                    <TableCell className="font-medium">{despesa.nome}</TableCell>
+                    <TableCell>{empresas.find((e) => e.id === despesa.empresa_id)?.nome ?? "—"}</TableCell>
+                    <TableCell>{despesa.forma_pagamento ? FORMA_PAGAMENTO_LABEL[despesa.forma_pagamento] ?? despesa.forma_pagamento : "—"}</TableCell>
+                    <TableCell>{Number(valor).toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}</TableCell>
                     <TableCell>
-                      <Badge className={STATUS_BADGE_CLASS[item.status]}>
-                        {STATUS_LABEL[item.status]}
-                        {item.status === "pendente_aprovacao" && item.nivel_aprovacao_atual ? ` N${item.nivel_aprovacao_atual}` : ""}
+                      <Badge className={STATUS_BADGE_CLASS[status]}>
+                        {STATUS_LABEL[status]}
+                        {status === "pendente_aprovacao" && despesa.nivel_aprovacao_atual ? ` N${despesa.nivel_aprovacao_atual}` : ""}
                       </Badge>
                     </TableCell>
                     <TableCell className="text-sm">{aprovador ?? "—"}</TableCell>
                     <TableCell>
-                      {item.excecao ? <span className="text-red-600 dark:text-red-400 text-sm">Sim</span> : <span className="text-muted-foreground text-sm">Não</span>}
+                      {despesa.excecao ? <span className="text-red-600 dark:text-red-400 text-sm">Sim</span> : <span className="text-muted-foreground text-sm">Não</span>}
                     </TableCell>
-                    <TableCell className="text-xs text-muted-foreground">{new Date(item.updated_at).toLocaleString("pt-BR")}</TableCell>
+                    <TableCell className="text-xs text-muted-foreground">{new Date(despesa.updated_at).toLocaleString("pt-BR")}</TableCell>
                   </TableRow>
                 );
               })}
