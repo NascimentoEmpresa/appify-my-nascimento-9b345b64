@@ -24,12 +24,53 @@ export interface LinhaEstoque {
   material: string;
   tipo_material: string;
   almoxarifado: string;
+  /** Último valor pago, do cadastro do item de estoque. */
   valor_unitario: number;
+  /** Custo que a tela mostra — ver `custoDoItem` (SIS-2026-0199). */
+  custo_unitario: number;
+  /** `custo_unitario` × disponível. */
+  valor_total: number;
+  /** Até quando o fornecedor segura este preço. */
+  preco_valido_ate: string | null;
+  preco_vencido: boolean;
   estoque_minimo: number;
   disponivel: number;
   consumido: number;
   etiquetas: number;
   tamanhos: string[];
+}
+
+/**
+ * Qual custo mostrar quando as etiquetas do mesmo material têm valores
+ * diferentes (SIS-2026-0199).
+ *
+ * Acontece de verdade: a peça devolvida e higienizada vale menos que a nova.
+ * Nas palavras do gerente de Suprimentos:
+ *
+ *   "Comprei do Roverim, comprei da Invest, e eu tenho o higienizado que cai
+ *    pela metade. Não tem como nós fazer uma média. Tem que manter o mais
+ *    alto, pra nós não perder dinheiro."
+ *
+ * Então prevalece o MAIOR valor entre as etiquetas disponíveis, com o valor do
+ * cadastro como piso — é ele que responde quando não há etiqueta com preço
+ * próprio, que é o caso comum.
+ */
+export function custoDoItem(valorCadastro: number, valoresDasTags: (number | null)[]): number {
+  const validos = valoresDasTags.map((v) => Number(v ?? 0)).filter((v) => v > 0);
+  return Math.max(Number(valorCadastro ?? 0), ...(validos.length ? validos : [0]));
+}
+
+export function fmtBRL(v?: number | null): string {
+  return Number(v ?? 0).toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
+}
+
+/** Preço com validade no passado não serve para cotar — só para consultar. */
+export function precoVencido(validoAte?: string | null): boolean {
+  if (!validoAte) return false;
+  // Compara por data local, sem passar por UTC (o clássico "andou um dia").
+  const hoje = new Date();
+  const h = `${hoje.getFullYear()}-${String(hoje.getMonth() + 1).padStart(2, "0")}-${String(hoje.getDate()).padStart(2, "0")}`;
+  return validoAte < h;
 }
 
 export interface TagEstoque {
@@ -144,10 +185,10 @@ export function useEstoqueLista(empresaId: string | null) {
     queryFn: async (): Promise<LinhaEstoque[]> => {
       const { data, error } = await sb
         .from("sup_estoque_item")
-        .select(`id, valor_unitario, estoque_minimo,
+        .select(`id, valor_unitario, estoque_minimo, preco_valido_ate,
                  sup_item:sup_item_id (id, nome, tipo),
                  almoxarifado:almoxarifado_id (nome),
-                 sup_estoque_tag (tamanho, tipo, usado, quantidade_massa, quantidade_original_massa)`);
+                 sup_estoque_tag (tamanho, tipo, usado, quantidade_massa, quantidade_original_massa, valor_unitario)`);
       if (error) throw error;
 
       // Mesma fórmula da view sup_estoque_saldo — aqui só para evitar um
@@ -160,6 +201,13 @@ export function useEstoqueLista(empresaId: string | null) {
           s + (t.tipo === "massa"
             ? (t.quantidade_original_massa ?? 0) - (t.quantidade_massa ?? 0)
             : (t.usado ? 1 : 0)), 0);
+        // Custo pelas etiquetas AINDA DISPONÍVEIS: peça já consumida não deve
+        // puxar o custo do que está em estoque hoje.
+        const custo = custoDoItem(
+          Number(r.valor_unitario ?? 0),
+          tags.filter((t: any) => !t.usado).map((t: any) => t.valor_unitario),
+        );
+
         return {
           item_estoque_id: r.id,
           sup_item_id: r.sup_item?.id,
@@ -167,6 +215,10 @@ export function useEstoqueLista(empresaId: string | null) {
           tipo_material: r.sup_item?.tipo ?? "",
           almoxarifado: r.almoxarifado?.nome ?? "—",
           valor_unitario: Number(r.valor_unitario ?? 0),
+          custo_unitario: custo,
+          valor_total: custo * disponivel,
+          preco_valido_ate: r.preco_valido_ate ?? null,
+          preco_vencido: precoVencido(r.preco_valido_ate),
           estoque_minimo: Number(r.estoque_minimo ?? 0),
           disponivel, consumido,
           etiquetas: tags.length,
@@ -227,6 +279,49 @@ export function useSaldoMaterial(supItemId: string | null, tamanho?: string | nu
       const { data, error } = await q;
       if (error) throw error;
       return (data ?? []).reduce((s: number, r: any) => s + Number(r.disponivel ?? 0), 0);
+    },
+  });
+}
+
+// ── Preços (SIS-2026-0199) ───────────────────────────────────────────
+
+export interface PrecoHistorico {
+  valor_unitario: number; valor_anterior: number | null; valido_ate: string | null;
+  origem: "entrada" | "nf" | "ajuste"; fornecedor_nome: string | null;
+  documento: string | null; registrado_em: string;
+  registrado_por_nome: string | null; almoxarifado: string | null;
+}
+
+export interface PrecoConsulta {
+  sup_item_id: string; material: string; tipo: string;
+  valor_unitario: number; valido_ate: string | null; vencido: boolean;
+  fornecedor_nome: string | null; atualizado_em: string; almoxarifado: string | null;
+}
+
+/** Quanto já se pagou por este material, do mais recente para trás. */
+export function useHistoricoPreco(supItemId: string | null) {
+  return useQuery({
+    queryKey: ["sup_item_precos", supItemId],
+    enabled: !!supItemId,
+    queryFn: async (): Promise<PrecoHistorico[]> => {
+      const { data, error } = await sb.rpc("sup_item_precos", { p_sup_item_id: supItemId });
+      if (error) throw error;
+      return data ?? [];
+    },
+  });
+}
+
+/**
+ * Preço vigente por material — a consulta que a Licitação usa para não
+ * depender do comprador estar disponível para cotar.
+ */
+export function usePrecosConsulta(busca: string) {
+  return useQuery({
+    queryKey: ["sup_precos_consulta", busca],
+    queryFn: async (): Promise<PrecoConsulta[]> => {
+      const { data, error } = await sb.rpc("sup_precos_consulta", { p_busca: busca || null });
+      if (error) throw error;
+      return data ?? [];
     },
   });
 }
@@ -372,10 +467,26 @@ export function useEntradaEstoque() {
       /** Id do cadastro em public.fornecedor. O campo texto é legado. */
       fornecedor_id?: string | null;
       validade?: string | null; observacao?: string | null;
+      /** Até quando o fornecedor segura o preço (SIS-2026-0199). */
+      preco_valido_ate?: string | null;
       unidades: UnidadeEntrada[];
     }) => {
       const { data, error } = await sb.rpc("sup_est_entrada", { p_payload: p });
       if (error) throw error;
+
+      // Chamada à parte, e não um campo em sup_est_entrada: aquela RPC é o
+      // caminho crítico do almoxarifado e não vale reescrevê-la inteira por um
+      // campo opcional. Falhar aqui não desfaz a entrada — as etiquetas já
+      // entraram, e é isso que importa para o operador.
+      if (p.preco_valido_ate) {
+        const { error: e2 } = await sb.rpc("sup_est_validade_preco", {
+          p_almoxarifado_id: p.almoxarifado_id,
+          p_sup_item_id: p.sup_item_id,
+          p_valido_ate: p.preco_valido_ate,
+        });
+        if (e2) toast.warning("Entrada gravada, mas a validade do preço não foi salva.");
+      }
+
       return data as { item_estoque_id: string; criadas: number; rejeitadas: { codigo: string; motivo: string }[] };
     },
     onSuccess: (r) => {
