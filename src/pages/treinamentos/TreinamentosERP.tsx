@@ -40,6 +40,7 @@ export default function TreinamentosERP() {
   const podeExcluir = can("excluir", undefined, "treinamentos_gerenciar");
 
   const [lista, setLista] = useState<Treinamento[]>([]);
+  const [capas, setCapas] = useState<Record<string, string>>({});
   const [conclusoes, setConclusoes] = useState<Record<string, Conclusao>>({});
   const [carregando, setCarregando] = useState(true);
   const [busca, setBusca] = useState("");
@@ -59,11 +60,31 @@ export default function TreinamentosERP() {
     if (t.error) {
       toast({ title: "Não deu para carregar os treinamentos", description: t.error.message, variant: "destructive" });
     }
-    setLista((t.data ?? []) as Treinamento[]);
+    const treinamentos = (t.data ?? []) as Treinamento[];
+    setLista(treinamentos);
     const mapa: Record<string, Conclusao> = {};
     for (const row of (c.data ?? []) as Conclusao[]) mapa[row.treinamento_id] = row;
     setConclusoes(mapa);
     setCarregando(false);
+
+    // As capas depois da grade, e numa chamada só: o bucket é privado, então
+    // cada imagem precisa de URL assinada — pedir uma por card seria uma
+    // requisição por treinamento, e a grade ficaria esperando todas.
+    const comCapa = treinamentos.filter(x => x.capa_path);
+    if (comCapa.length) {
+      const { data: urls } = await supabase.storage.from("treinamentos")
+        .createSignedUrls(comCapa.map(x => x.capa_path!), 3600);
+      const porPath: Record<string, string> = {};
+      for (const u of urls ?? []) if (u.path && u.signedUrl) porPath[u.path] = u.signedUrl;
+      const porId: Record<string, string> = {};
+      for (const x of comCapa) {
+        const url = porPath[x.capa_path!];
+        if (url) porId[x.id] = url;
+      }
+      setCapas(porId);
+    } else {
+      setCapas({});
+    }
   }, [user?.id, toast]);
 
   useEffect(() => { carregar(); }, [carregar]);
@@ -84,6 +105,10 @@ export default function TreinamentosERP() {
     )) return;
     const { error } = await (supabase as any).from("TREINAMENTOS").delete().eq("id", t.id);
     if (error) { toast({ title: "Não deu para excluir", description: error.message, variant: "destructive" }); return; }
+    // O CASCADE leva a linha e o histórico, mas não toca no bucket: sem isto
+    // vídeo, anexo e capa ficariam ocupando storage para sempre, sem dono.
+    const arquivos = [t.video_path, t.anexo_path, t.capa_path].filter(Boolean) as string[];
+    if (arquivos.length) await supabase.storage.from("treinamentos").remove(arquivos);
     toast({ title: "Treinamento excluído" });
     carregar();
   };
@@ -165,9 +190,14 @@ export default function TreinamentosERP() {
                 style={{ animationDelay: `${Math.min(i * 40, 300)}ms` }}
                 className="group flex animate-in flex-col overflow-hidden rounded-xl border bg-card fade-in slide-in-from-bottom-2 fill-mode-backwards duration-300 transition-all hover:-translate-y-1 hover:border-primary/40 hover:shadow-xl">
 
-                {/* capa */}
-                <div className="relative flex h-28 items-center justify-center bg-gradient-to-br from-primary/15 via-primary/5 to-transparent">
-                  <GraduationCap className="h-10 w-10 text-primary/40 transition-transform duration-300 group-hover:scale-110" />
+                {/* capa: a imagem quando existe, o gradiente quando não */}
+                <div className="relative flex h-32 items-center justify-center overflow-hidden bg-gradient-to-br from-primary/15 via-primary/5 to-transparent">
+                  {capas[t.id] ? (
+                    <img src={capas[t.id]} alt="" loading="lazy"
+                         className="h-full w-full object-cover transition-transform duration-300 group-hover:scale-105" />
+                  ) : (
+                    <GraduationCap className="h-10 w-10 text-primary/40 transition-transform duration-300 group-hover:scale-110" />
+                  )}
                   {feito && (
                     <span className="absolute right-2 top-2 flex items-center gap-1 rounded-full bg-emerald-500 px-2 py-0.5 text-[11px] font-bold text-white shadow">
                       <CheckCircle2 className="h-3 w-3" />
@@ -175,7 +205,9 @@ export default function TreinamentosERP() {
                     </span>
                   )}
                   {!t.publicado && (
-                    <span className="absolute left-2 top-2 flex items-center gap-1 rounded-full bg-muted px-2 py-0.5 text-[11px] font-bold text-muted-foreground shadow">
+                    // Fundo sólido escuro, e não bg-muted: sobre uma capa
+                    // clara o selo translúcido sumia.
+                    <span className="absolute left-2 top-2 flex items-center gap-1 rounded-full bg-slate-900/85 px-2 py-0.5 text-[11px] font-bold text-white shadow">
                       <EyeOff className="h-3 w-3" /> Rascunho
                     </span>
                   )}

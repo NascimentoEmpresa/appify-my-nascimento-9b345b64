@@ -22,6 +22,8 @@ export interface Treinamento {
   video_path: string | null;
   anexo_path: string | null;
   anexo_nome: string | null;
+  /** Imagem de capa do card. Opcional — sem ela o card usa o gradiente. */
+  capa_path: string | null;
   prova: PerguntaProva[] | null;
   nota_minima: number;
   publicado: boolean;
@@ -182,7 +184,7 @@ export function validarTamanho(arquivo: File, limite = LIMITE_UPLOAD_BYTES): str
 }
 
 /** Nome de arquivo previsível no bucket, sem acento nem espaço. */
-export function caminhoNoBucket(treinamentoId: string, tipo: "video" | "anexo", nome: string): string {
+export function caminhoNoBucket(treinamentoId: string, tipo: "video" | "anexo" | "capa", nome: string): string {
   const limpo = nome
     // NFD antes do filtro ASCII para "Ação.pdf" virar "Acao.pdf", e não
     // "A__o.pdf": o acento vira combining mark separado e cai fora sozinho.
