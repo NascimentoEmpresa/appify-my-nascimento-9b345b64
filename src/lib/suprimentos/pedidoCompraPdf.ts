@@ -76,7 +76,10 @@ export function baixarPdfPedidoCompra(pedido: CompraPedido) {
     startY: finalCabecalho + 7,
     head: [["Código", "Referência", "Descrição", "Un", "Quantidade", "Valor Un", "Valor Total"]],
     body: itens.map((item) => [
-      item.sup_item_id ? item.sup_item_id.replaceAll("-", "").slice(0, 8).toUpperCase() : "—",
+      // `replace(/-/g)` e nao `replaceAll`: o type-check do CI roda com uma lib
+      // anterior a ES2021, onde replaceAll nao existe. O tsc local passa e o CI
+      // reprova — este e o alvo que vale.
+      item.sup_item_id ? item.sup_item_id.replace(/-/g, "").slice(0, 8).toUpperCase() : "—",
       item.codigo_fornecedor ?? "—",
       `${item.nome_item}${item.tamanho ? ` — ${item.tamanho}` : ""}`,
       item.unidade ?? "—",
