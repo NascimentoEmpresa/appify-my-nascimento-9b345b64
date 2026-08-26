@@ -137,50 +137,33 @@ async function baixarPacote() {
 }
 
 /**
- * Descompacta gzip em fluxo, e RECUSA arquivo cortado.
+ * Descompacta gzip em fluxo, tolerando o lixo no fim do arquivo.
  *
- * Dois problemas reais do arquivo do Ministério, ambos medidos no
- * RelatorioCA_20260826_121551.csv.gz:
+ * O arquivo do Ministério traz bytes sobrando depois do conteúdo. O `gunzip`
+ * de linha de comando descompacta tudo e não reclama; o Node tenta ler o resto
+ * como um segundo arquivo gzip e estoura com "incorrect header check" — erro
+ * que não diz nada sobre a causa. Por isso o fluxo, que permite ficar com o
+ * que já saiu antes do erro.
  *
- * 1. Sobram bytes depois do conteúdo. O `gunzip` de linha de comando avisa
- *    "trailing garbage ignored" e segue; o Node tenta ler o resto como um
- *    segundo arquivo e estoura com "incorrect header check", erro que não diz
- *    nada sobre a causa. Por isso o fluxo, que permite ficar com o que já
- *    saiu antes do erro.
- *
- * 2. O download pode vir incompleto — e aí o erro é o MESMO da situação 1.
- *    Distinguir importa muito: no caso 1 os dados estão inteiros, no caso 2
- *    faltam registros, e carregar meia lista de CA é pior que não carregar
- *    (todo CA ausente viraria "não encontrado" na conferência).
- *
- * A distinção sai do rodapé do próprio gzip: os últimos 4 bytes guardam o
- * tamanho original. Se o que saiu não bate com o que o arquivo promete, ele
- * está truncado e a carga é recusada.
+ * NÃO tente validar o tamanho pelos últimos 4 bytes do arquivo. Num gzip o
+ * rodapé guarda o tamanho original, mas aqui os 4 últimos bytes pertencem ao
+ * LIXO, não ao gzip — e comparar o que saiu contra esse número reprova arquivo
+ * íntegro. Eu implementei essa checagem, ela acusou 144 de 161 MB e mandou o
+ * usuário baixar de novo duas vezes; o `gunzip` do sistema extraía os mesmos
+ * 144 MB sem um aviso sequer. A integridade é conferida no parser, sobre os
+ * dados: ver a checagem do último registro em `parsear`.
  */
 function gunzipTolerante(bytes) {
   return new Promise((resolve, reject) => {
-    const prometido = bytes.readUInt32LE(bytes.length - 4);
     const partes = [];
     let lidos = 0;
 
     const gun = zlib.createGunzip();
     gun.on("data", (d) => { partes.push(d); lidos += d.length; });
-    gun.on("error", () => {}); // tratado no close, com o total em mãos
+    gun.on("error", () => {}); // esperado: ver nota sobre o lixo no fim
     gun.on("close", () => {
       if (!lidos) {
         reject(new Error("não foi possível descompactar o arquivo do CAEPI"));
-        return;
-      }
-      // Tolerância de 1%: o ISIZE é módulo 2^32 e arredondamentos de linha
-      // final não deveriam reprovar um arquivo íntegro.
-      if (prometido > 0 && lidos < prometido * 0.99) {
-        const mb = (n) => (n / 1048576).toFixed(0);
-        reject(
-          new Error(
-            `arquivo do CAEPI incompleto: saíram ${mb(lidos)} MB dos ${mb(prometido)} MB ` +
-              "que ele declara. Baixe de novo pelo site do Ministério.",
-          ),
-        );
         return;
       }
       resolve(Buffer.concat(partes));
@@ -226,6 +209,83 @@ function decodificar(buffer) {
   return utf8.includes("�") ? buffer.toString("latin1") : utf8;
 }
 
+/**
+ * Corta uma linha em campos RESPEITANDO aspas.
+ *
+ * Não é preciosismo: no arquivo de 2026, **39% das linhas** têm o separador
+ * dentro de um valor entre aspas — a descrição do equipamento é texto corrido
+ * cheio de `;`. Com `split(sep)` cru, toda coluna depois da descrição sai
+ * deslocada, e basta um `;` no nome de um fabricante para embaralhar o
+ * registro inteiro.
+ */
+function cortarLinha(linha, sep) {
+  const campos = [];
+  let atual = "";
+  let dentroDeAspas = false;
+
+  for (let i = 0; i < linha.length; i++) {
+    const c = linha[i];
+    if (c === '"') {
+      // `""` dentro de campo entre aspas é uma aspa literal, não o fim dele.
+      if (dentroDeAspas && linha[i + 1] === '"') { atual += '"'; i++; }
+      else dentroDeAspas = !dentroDeAspas;
+      continue;
+    }
+    if (c === sep && !dentroDeAspas) { campos.push(atual); atual = ""; continue; }
+    atual += c;
+  }
+  campos.push(atual);
+  return campos;
+}
+
+/**
+ * Percorre o CSV inteiro devolvendo REGISTROS, não linhas.
+ *
+ * A diferença é o que quebrou a primeira versão deste parser: a descrição do
+ * equipamento é texto corrido com parágrafos, então **um registro ocupa várias
+ * linhas**. Quebrar o arquivo por `\n` e tratar cada pedaço como um registro
+ * produz fragmentos — a "última linha" do arquivo de 2026 começa no meio de
+ * uma palavra ("ponsável pela avaliação..."), porque é a cauda de um registro
+ * que começou muito antes.
+ *
+ * Só a quebra de linha FORA de aspas encerra um registro.
+ */
+function* registrosDoCsv(texto, sep) {
+  let campos = [];
+  let atual = "";
+  let dentroDeAspas = false;
+
+  for (let i = 0; i < texto.length; i++) {
+    const c = texto[i];
+
+    if (c === '"') {
+      if (dentroDeAspas && texto[i + 1] === '"') { atual += '"'; i++; }
+      else dentroDeAspas = !dentroDeAspas;
+      continue;
+    }
+
+    if (!dentroDeAspas) {
+      if (c === sep) { campos.push(atual); atual = ""; continue; }
+      if (c === "\n" || c === "\r") {
+        if (c === "\r" && texto[i + 1] === "\n") i++;
+        campos.push(atual);
+        // Linha em branco entre registros não vira registro vazio.
+        if (campos.length > 1 || campos[0].trim() !== "") yield campos;
+        campos = [];
+        atual = "";
+        continue;
+      }
+    }
+
+    atual += c;
+  }
+
+  if (atual !== "" || campos.length) {
+    campos.push(atual);
+    if (campos.length > 1 || campos[0].trim() !== "") yield campos;
+  }
+}
+
 /** O separador é o candidato que mais aparece na linha de cabeçalho. */
 function detectarSeparador(cabecalho) {
   const candidatos = ["|", ";", "\t", ","];
@@ -258,11 +318,10 @@ function parsear(texto) {
   const sep = detectarSeparador(linhas[0]);
   // `﻿+` e não uma vez só: o arquivo de 2026 vem com DOIS marcadores de
   // codificação no começo, um colado no outro.
-  const cabecalho = linhas[0]
-    .replace(/^﻿+/, "")
-    .replace(/^#/, "")
-    .split(sep)
-    .map((c) => c.trim().replace(/^"|"$/g, ""));
+  const cabecalho = cortarLinha(
+    linhas[0].replace(/^﻿+/, "").replace(/^#/, ""),
+    sep,
+  ).map((c) => c.trim());
 
   /**
    * Compara nomes de coluna ignorando espaço, acento e caixa.
@@ -316,11 +375,22 @@ function parsear(texto) {
 
   const limpo = (v) => String(v ?? "").trim().replace(/^"|"$/g, "") || null;
 
-  for (let i = 1; i < linhas.length; i++) {
-    if (!linhas[i].trim()) continue;
+  let primeiro = true;
+  let ultimoRegistro = null;
+  let incompletos = 0;
+
+  for (const campos of registrosDoCsv(texto, sep)) {
+    // O primeiro registro é o cabeçalho, já lido acima.
+    if (primeiro) { primeiro = false; continue; }
+    ultimoRegistro = campos;
+
+    // Registro com menos campos que o cabeçalho está cortado. Acontece no
+    // ÚLTIMO do arquivo do Ministério, que vem truncado no finalzinho — 1 em
+    // 124.062 na medição de 26/08/2026. Descartar o pedaço e seguir é a reação
+    // proporcional; recusar 42 mil CAs por causa de um registro não é.
+    if (campos.length < cabecalho.length) { incompletos++; continue; }
     lidas++;
 
-    const campos = linhas[i].split(sep);
     const ca = soDigitos(campos[iCa]);
     if (!ca) continue;
 
@@ -339,7 +409,7 @@ function parsear(texto) {
     });
   }
 
-  return { registros: [...porCa.values()], lidas };
+  return { registros: [...porCa.values()], lidas, incompletos };
 }
 
 // ── Gravação ─────────────────────────────────────────────────────────────
@@ -496,6 +566,8 @@ async function sincronizarCaepi(supabase) {
 module.exports = {
   sincronizarCaepi,
   baixarPacote,
+  registrosDoCsv,
+  cortarLinha,
   parsear,
   dataBr,
   decodificar,

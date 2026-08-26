@@ -11,6 +11,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { PageHeader } from "@/components/layout/PageHeader";
+import { PainelNotasSefaz } from "./PainelNotasSefaz";
 import { useList } from "@/hooks/useGenericCrud";
 import { Upload, FileText, CheckCircle2, XCircle, AlertTriangle, PackageCheck, Eye, Loader2, FilePlus2 } from "lucide-react";
 import { toast } from "sonner";
@@ -404,6 +405,22 @@ export default function NFEntrada() {
         }
       />
 
+      {/* Duas origens, duas abas: o que alguém importou à mão e o que a Receita
+          entregou sozinha. Separadas de propósito — misturar faria parecer que
+          o resumo vindo da SEFAZ é uma NF incompleta no nosso sistema, quando
+          é outra coisa: uma nota que existe e ainda não foi trazida por
+          inteiro. */}
+      <Tabs defaultValue="importadas">
+        <TabsList>
+          <TabsTrigger value="importadas">Importadas</TabsTrigger>
+          <TabsTrigger value="sefaz">Recebidas da Receita</TabsTrigger>
+        </TabsList>
+
+        <TabsContent value="sefaz" className="pt-4">
+          <PainelNotasSefaz />
+        </TabsContent>
+
+        <TabsContent value="importadas" className="space-y-6 pt-4">
       <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
         <Card><CardHeader className="pb-2"><CardTitle className="text-xs text-muted-foreground">Total NFs</CardTitle></CardHeader><CardContent><p className="text-2xl font-bold">{kpis.total}</p></CardContent></Card>
         <Card><CardHeader className="pb-2"><CardTitle className="text-xs text-muted-foreground">Importadas</CardTitle></CardHeader><CardContent><p className="text-2xl font-bold">{kpis.importadas}</p></CardContent></Card>
@@ -468,6 +485,8 @@ export default function NFEntrada() {
           )}
         </CardContent>
       </Card>
+        </TabsContent>
+      </Tabs>
 
       {/* Detalhe da NF */}
       <Dialog open={openDetail} onOpenChange={setOpenDetail}>
