@@ -11,14 +11,7 @@ import { TrendingDown, TrendingUp, Wallet, LineChart, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useFluxoCaixaMalote } from "@/hooks/useFluxoCaixaMalote";
 import { formatBRL } from "@/hooks/usePlanilhaCusto";
-
-const FORMA_PAGAMENTO_LABEL: Record<string, string> = {
-  pix: "Pix",
-  ted: "TED",
-  boleto: "Boleto",
-  cartao: "Cartão",
-  dinheiro: "Dinheiro",
-};
+import { useTiposFormaPagamento } from "@/hooks/useMaloteFormaPagamento";
 
 // Mesma técnica visual do TileDestaque em DespesaVisualizar.tsx (que por
 // sua vez reaproveita o KpiCard de PainelExecutivo.tsx): ícone grande com
@@ -67,6 +60,10 @@ function KpiTile({
 // zerados até existir outra fonte (recebimentos, saldo bancário real).
 export default function FluxoCaixaGestao() {
   const { data: linhas = [], isLoading } = useFluxoCaixaMalote();
+  // SIS-2026-0221: "Forma de pagamento" vem do catálogo cadastrável em
+  // Configurações do Malote → Formas de Pagamento, não mais de um enum fixo.
+  const { data: tiposFormaPagamento = [] } = useTiposFormaPagamento();
+  const tiposFormaPagamentoAtivos = useMemo(() => tiposFormaPagamento.filter((t) => t.ativo), [tiposFormaPagamento]);
 
   const [dataDe, setDataDe] = useState("");
   const [dataAte, setDataAte] = useState("");
@@ -209,8 +206,8 @@ export default function FluxoCaixaGestao() {
                 <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="todas">Todas</SelectItem>
-                  {Object.entries(FORMA_PAGAMENTO_LABEL).map(([v, l]) => (
-                    <SelectItem key={v} value={v}>{l}</SelectItem>
+                  {tiposFormaPagamentoAtivos.map((t) => (
+                    <SelectItem key={t.nome} value={t.nome}>{t.nome}</SelectItem>
                   ))}
                 </SelectContent>
               </Select>
@@ -269,7 +266,7 @@ export default function FluxoCaixaGestao() {
                     <TableCell className="text-sm">{l.contrato_nome ?? "—"}</TableCell>
                     <TableCell className="text-sm">{l.classificacao_nome ?? "—"}</TableCell>
                     <TableCell className="text-sm">{l.descricao}</TableCell>
-                    <TableCell className="text-sm">{l.forma_pagamento ? FORMA_PAGAMENTO_LABEL[l.forma_pagamento] ?? l.forma_pagamento : "—"}</TableCell>
+                    <TableCell className="text-sm">{l.forma_pagamento ?? "—"}</TableCell>
                     <TableCell className="text-right text-sm font-medium">{formatBRL(l.valor)}</TableCell>
                   </TableRow>
                 ))}

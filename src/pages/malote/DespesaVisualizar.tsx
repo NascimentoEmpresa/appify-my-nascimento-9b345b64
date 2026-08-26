@@ -52,6 +52,7 @@ import {
   TipoEvento,
 } from "@/hooks/useMaloteDespesa";
 import { useOrcadoClassificacao } from "@/hooks/useOrcadoClassificacao";
+import { useTiposFormaPagamento } from "@/hooks/useMaloteFormaPagamento";
 import { useUtilizadoOrcamento } from "@/hooks/useUtilizadoOrcamento";
 import { anoMesAtual } from "@/hooks/usePlanilhaCusto";
 import { RateioGrid, DimensoesRateio } from "./RateioGrid";
@@ -66,14 +67,6 @@ const TIPO_SOLICITACAO_LABEL: Record<TipoSolicitacao, string> = {
   administrativo: "Administrativo",
   contrato: "Contrato",
   dispensa_cotacao: "Dispensa de cotação",
-};
-
-const FORMA_PAGAMENTO_LABEL: Record<string, string> = {
-  pix: "Pix",
-  ted: "TED",
-  boleto: "Boleto",
-  cartao: "Cartão",
-  dinheiro: "Dinheiro",
 };
 
 function fmtMoneyResumo(n: number | null | undefined): string {
@@ -312,6 +305,9 @@ export default function DespesaVisualizar() {
   // client manda, sem reconferir nada no banco.
   const { resolver: resolverOrcado, isLoading: orcadoCarregando } = useOrcadoClassificacao(despesa?.empresa_id, anoMesDespesa);
   const { data: utilizadoLinhasGlobal = [] } = useUtilizadoOrcamento();
+  // SIS-2026-0221: "Forma de pagamento" vem do catálogo cadastrável em
+  // Configurações do Malote → Formas de Pagamento, não mais de um enum fixo.
+  const { data: tiposFormaPagamento = [] } = useTiposFormaPagamento();
 
   useEffect(() => {
     if (!despesa) return;
@@ -341,6 +337,15 @@ export default function DespesaVisualizar() {
 
   const bloqueado = STATUS_TERMINAIS.includes(despesa.status);
   const podeAgir = !bloqueado;
+
+  // SIS-2026-0221: o valor já gravado pode não estar mais entre os Tipos
+  // ativos (renomeado/desativado depois) — inclui ele mesmo assim na lista
+  // pra não "sumir" o dado já salvo ao abrir a tela.
+  const tiposFormaPagamentoAtivos = tiposFormaPagamento.filter((t) => t.ativo);
+  const opcoesFormaPagamento =
+    formaPagamento && !tiposFormaPagamentoAtivos.some((t) => t.nome === formaPagamento)
+      ? [...tiposFormaPagamentoAtivos, { nome: formaPagamento, ativo: false }]
+      : tiposFormaPagamentoAtivos;
 
   // Papéis do usuário logado em relação a esta despesa — SIS-2026-0132 Fase 1.
   const souSolicitante = despesa.created_by === user?.id;
@@ -682,7 +687,7 @@ export default function DespesaVisualizar() {
       const partesResumo: string[] = [];
       if ((despesa!.forma_pagamento ?? "") !== (formaPagamento || "")) {
         partesResumo.push(
-          `Forma de pagamento: ${FORMA_PAGAMENTO_LABEL[despesa!.forma_pagamento ?? ""] ?? "—"} → ${FORMA_PAGAMENTO_LABEL[formaPagamento] ?? (formaPagamento || "—")}`
+          `Forma de pagamento: ${despesa!.forma_pagamento || "—"} → ${formaPagamento || "—"}`
         );
       }
       if ((despesa!.informacoes_pagamento ?? "") !== informacoesPagamento) {
@@ -991,9 +996,10 @@ export default function DespesaVisualizar() {
                   <SelectValue placeholder="Selecione" />
                 </SelectTrigger>
                 <SelectContent>
-                  {Object.entries(FORMA_PAGAMENTO_LABEL).map(([v, l]) => (
-                    <SelectItem key={v} value={v}>
-                      {l}
+                  {opcoesFormaPagamento.map((t) => (
+                    <SelectItem key={t.nome} value={t.nome}>
+                      {t.nome}
+                      {!t.ativo && " (inativo)"}
                     </SelectItem>
                   ))}
                 </SelectContent>

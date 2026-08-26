@@ -40,6 +40,7 @@ import { getStatusVigencia } from "./orcamentoUtils";
 import { DiaPagamentoPicker } from "./DiaPagamentoPicker";
 import { ExcecaoDiaBloqueadoField } from "./ExcecaoDiaBloqueadoField";
 import { useMaloteConfig } from "@/hooks/useMaloteConfig";
+import { useTiposFormaPagamento } from "@/hooks/useMaloteFormaPagamento";
 
 const DIAS_MES = Array.from({ length: 28 }, (_, i) => i + 1);
 const QUANTIDADE_PARCELAS = Array.from({ length: 24 }, (_, i) => i + 2);
@@ -666,6 +667,11 @@ function PainelDespesaMalote({
   const [arquivos, setArquivos] = useState<File[]>([]);
   const [salvando, setSalvando] = useState<"rascunho" | "enviar" | null>(null);
   const { data: maloteConfig } = useMaloteConfig();
+  // SIS-2026-0221: "Forma de pagamento" passa a vir da coluna Tipo do
+  // catálogo cadastrável em Configurações do Malote → Formas de Pagamento
+  // (malote_tipo_forma_pagamento), em vez do enum fixo de 5 opções.
+  const { data: tiposFormaPagamento = [] } = useTiposFormaPagamento();
+  const tiposFormaPagamentoAtivos = useMemo(() => tiposFormaPagamento.filter((t) => t.ativo), [tiposFormaPagamento]);
 
   const totalRateado = useMemo(() => linhasRateio.reduce((s, l) => s + (Number(l.valor) || 0), 0), [linhasRateio]);
   const restante = Math.max(0, (Number(totalMes) || 0) - totalRateado);
@@ -856,11 +862,11 @@ function PainelDespesaMalote({
                   <SelectValue placeholder="Selecione a forma" />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="pix">Pix</SelectItem>
-                  <SelectItem value="ted">TED</SelectItem>
-                  <SelectItem value="boleto">Boleto</SelectItem>
-                  <SelectItem value="cartao">Cartão</SelectItem>
-                  <SelectItem value="dinheiro">Dinheiro</SelectItem>
+                  {tiposFormaPagamentoAtivos.map((t) => (
+                    <SelectItem key={t.nome} value={t.nome}>
+                      {t.nome}
+                    </SelectItem>
+                  ))}
                 </SelectContent>
               </Select>
             </div>
