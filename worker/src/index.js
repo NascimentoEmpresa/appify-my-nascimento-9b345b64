@@ -7,6 +7,7 @@ const { enviarEmailsAta } = require("./emailAta");
 const { verificarChamadosDevNovos } = require("./chamadosDev");
 const { sincronizarCaepi } = require("./caepi");
 const { sincronizarNfe } = require("./nfe");
+const { darCienciaPendentes } = require("./nfeCiencia");
 const { alertarErroWhatsapp } = require("./discordAlert");
 
 const CICLO_MS = 60_000;
@@ -38,6 +39,13 @@ async function rodarCiclo(waClient, transportador) {
     await sincronizarNfe(supabase, alertarErroWhatsapp);
   } catch (e) {
     console.error("[worker] erro no ciclo de NF-e:", e);
+  }
+  try {
+    // Escrita irreversivel na SEFAZ: so roda com NFE_CIENCIA=1 e em lotes
+    // pequenos. Depois dela o XML completo chega pela fila de NSU.
+    await darCienciaPendentes(supabase);
+  } catch (e) {
+    console.error("[worker] erro no ciclo de Ciencia da Operacao:", e);
   }
 }
 
