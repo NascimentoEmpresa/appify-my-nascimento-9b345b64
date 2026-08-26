@@ -5,6 +5,7 @@ const { criarTransportador } = require("./email");
 const { enviarLembretes10min } = require("./lembreteWhatsapp");
 const { enviarEmailsAta } = require("./emailAta");
 const { verificarChamadosDevNovos } = require("./chamadosDev");
+const { sincronizarCaepi } = require("./caepi");
 const { alertarErroWhatsapp } = require("./discordAlert");
 
 const CICLO_MS = 60_000;
@@ -24,6 +25,12 @@ async function rodarCiclo(waClient, transportador) {
     await verificarChamadosDevNovos(supabase);
   } catch (e) {
     console.error("[worker] erro no ciclo de chamados de dev:", e);
+  }
+  try {
+    // Carga semanal; o próprio módulo decide se já é hora.
+    await sincronizarCaepi(supabase);
+  } catch (e) {
+    console.error("[worker] erro no ciclo do catálogo de CA:", e);
   }
 }
 
