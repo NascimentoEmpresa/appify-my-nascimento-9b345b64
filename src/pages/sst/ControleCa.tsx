@@ -10,6 +10,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import type { SituacaoCa } from "@/lib/sst/ca";
 import { cn } from "@/lib/utils";
 import { AlertTriangle, BadgeCheck, CircleHelp, ShieldAlert } from "lucide-react";
+import { PainelCatalogoCa } from "./PainelCatalogoCa";
 
 // As RPCs são novas e ainda não existem em types.ts (regra R8 do projeto).
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -138,6 +139,11 @@ export default function ControleCa() {
           Não foi possível carregar o controle de CA: {(erro as Error).message}
         </div>
       )}
+
+      {/* Fica acima das listas de propósito: os números abaixo só valem o que
+          vale a lista oficial que os alimenta. Ver o site do Ministério recusa
+          download automático em PainelCatalogoCa. */}
+      <PainelCatalogoCa />
 
       <Tabs value={aba} onValueChange={setAba}>
         <TabsList>

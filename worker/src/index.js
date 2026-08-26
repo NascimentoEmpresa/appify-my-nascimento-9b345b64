@@ -5,6 +5,8 @@ const { criarTransportador } = require("./email");
 const { enviarLembretes10min } = require("./lembreteWhatsapp");
 const { enviarEmailsAta } = require("./emailAta");
 const { verificarChamadosDevNovos } = require("./chamadosDev");
+const { sincronizarCaepi } = require("./caepi");
+const { sincronizarNfe } = require("./nfe");
 const { alertarErroWhatsapp } = require("./discordAlert");
 
 const CICLO_MS = 60_000;
@@ -24,6 +26,18 @@ async function rodarCiclo(waClient, transportador) {
     await verificarChamadosDevNovos(supabase);
   } catch (e) {
     console.error("[worker] erro no ciclo de chamados de dev:", e);
+  }
+  try {
+    // Carga semanal; o próprio módulo decide se já é hora.
+    await sincronizarCaepi(supabase);
+  } catch (e) {
+    console.error("[worker] erro no ciclo do catálogo de CA:", e);
+  }
+  try {
+    // O módulo respeita o ritmo da SEFAZ e o recuo de 1h; ver src/nfe.js.
+    await sincronizarNfe(supabase, alertarErroWhatsapp);
+  } catch (e) {
+    console.error("[worker] erro no ciclo de NF-e:", e);
   }
 }
 
