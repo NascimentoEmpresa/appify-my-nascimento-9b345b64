@@ -31,14 +31,6 @@ const ORIGEM_LABEL: Record<string, string> = {
   despesa_multi_classificacao: "Rateio de Classificação",
 };
 
-const FORMA_PAGAMENTO_LABEL: Record<string, string> = {
-  pix: "Pix",
-  ted: "TED",
-  boleto: "Boleto",
-  cartao: "Cartão",
-  dinheiro: "Dinheiro",
-};
-
 type ChipKey =
   | "todos"
   | "rascunho"
@@ -365,7 +357,7 @@ export default function MeusItens() {
                     <TableCell>{despesa.classificacao?.nome ?? "—"}</TableCell>
                     <TableCell className="font-medium">{despesa.nome}</TableCell>
                     <TableCell>{empresas.find((e) => e.id === despesa.empresa_id)?.nome ?? "—"}</TableCell>
-                    <TableCell>{despesa.forma_pagamento ? FORMA_PAGAMENTO_LABEL[despesa.forma_pagamento] ?? despesa.forma_pagamento : "—"}</TableCell>
+                    <TableCell>{despesa.forma_pagamento ?? "—"}</TableCell>
                     <TableCell>{Number(valor).toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}</TableCell>
                     <TableCell>
                       <Badge className={STATUS_BADGE_CLASS[status]}>
