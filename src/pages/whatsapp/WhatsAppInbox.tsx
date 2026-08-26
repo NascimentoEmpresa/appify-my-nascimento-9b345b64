@@ -309,9 +309,34 @@ export default function WhatsAppInbox() {
   };
 
   // Sem variável vai direto; com variável, o formulário primeiro.
-  const escolherPronta = (t: WaTemplate) => {
-    if (t.variaveis.length) { setPreenchendo(t); return; }
-    enviarPronta(t, []);
+  /**
+   * Resposta do bot vai pelo whatsapp-enviar, que aceita botões — o
+   * whatsapp-template-enviar só manda template, e template do "/" não tem
+   * botão. Era por isso que a "/" mandava a mensagem sem os botões.
+   */
+  const enviarRespostaBot = async (b: { texto: string; botoes: { id: string; titulo: string }[] }) => {
+    if (!sel || enviando) return;
+    setEnviando(true);
+    try {
+      const { error } = await supabase.functions.invoke("whatsapp-enviar", {
+        body: { conversa_id: sel.id, texto: b.texto, ...(b.botoes.length ? { botoes: b.botoes } : {}) },
+      });
+      if (error) throw new Error(await erroDaFunction(error));
+      setTexto("");
+      qc.invalidateQueries({ queryKey: ["wa-mensagens", sel.id] });
+      qc.invalidateQueries({ queryKey: ["wa-conversas"] });
+    } catch (e: any) {
+      toast({ title: "Falha ao enviar", description: String(e?.message ?? e), variant: "destructive" });
+    } finally {
+      setEnviando(false);
+    }
+  };
+
+  // Sem variável vai direto; com variável, o formulário primeiro.
+  const escolherPronta = (item: ItemMenu) => {
+    if (item.tipo === "bot") { enviarRespostaBot(item.bot); return; }
+    if (item.pronta.variaveis.length) { setPreenchendo(item.pronta); return; }
+    enviarPronta(item.pronta, []);
   };
 
   const filtradas = useMemo(() => {
