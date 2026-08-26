@@ -316,43 +316,68 @@ function arquivoDaPasta() {
   return candidatos[0] || null;
 }
 
+/** Anexo feito pela tela e ainda não processado. */
+async function uploadPendente(supabase) {
+  const { data, error } = await supabase
+    .from("sst_ca_sincronizacao")
+    .select("id, arquivo_path, arquivo_nome")
+    .not("arquivo_path", "is", null)
+    .is("concluido_em", null)
+    .is("erro", null)
+    .order("iniciado_em", { ascending: true })
+    .limit(1);
+  if (error) throw error;
+  return (data && data[0]) || null;
+}
+
 async function sincronizarCaepi(supabase) {
   if (!LIGADO) return;
-  if (!(await precisaSincronizar(supabase))) return;
 
-  const local = arquivoDaPasta();
+  // 1º) anexo feito pela tela. É o caminho normal — alguém baixou do site do
+  // Ministério e subiu pelo ERP. Tem prioridade e ignora o intervalo semanal:
+  // se a pessoa acabou de anexar, ela quer que valha agora.
+  const upload = await uploadPendente(supabase);
 
-  // Pasta vazia e sem autorização para tentar o site: sai em silêncio. Sem
-  // este atalho o ciclo de 60s tentaria o download a cada minuto, tomaria 403
-  // toda vez e encheria a tabela de sincronização de erro idêntico.
-  if (!local && !TENTAR_SITE) {
-    if (!avisouPastaVazia) {
-      console.log(
-        `[worker] CAEPI: nenhum arquivo em ${PASTA} — baixe pelo site e deposite ali.`,
-      );
-      avisouPastaVazia = true;
+  // 2º) arquivo largado na máquina do worker, para quem tem acesso a ela.
+  const local = upload ? null : arquivoDaPasta();
+
+  if (!upload && !local) {
+    if (!TENTAR_SITE) {
+      if (!avisouPastaVazia) {
+        console.log("[worker] CAEPI: nenhum arquivo anexado — aguardando envio pela tela.");
+        avisouPastaVazia = true;
+      }
+      return;
     }
-    return;
+    if (!(await precisaSincronizar(supabase))) return;
   }
   avisouPastaVazia = false;
 
-  const { data: linha, error: erroInicio } = await supabase
-    .from("sst_ca_sincronizacao")
-    .insert({})
-    .select("id")
-    .single();
-  if (erroInicio) throw erroInicio;
+  // O upload já criou a linha; nos outros caminhos ela nasce aqui.
+  let idSync = upload && upload.id;
+  if (!idSync) {
+    const { data: linha, error: erroInicio } = await supabase
+      .from("sst_ca_sincronizacao")
+      .insert({ origem: local ? "pasta" : "site" })
+      .select("id")
+      .single();
+    if (erroInicio) throw erroInicio;
+    idSync = linha.id;
+  }
+  const linha = { id: idSync };
 
   try {
-    // Pasta primeiro: é o caminho que funciona. O postback fica como tentativa
-    // secundária para o dia em que o WAF afrouxar ou o worker rodar de um
-    // ambiente que ele aceite.
     let bytes;
-    if (local) {
+    if (upload) {
+      console.log(`[worker] CAEPI: baixando ${upload.arquivo_nome || upload.arquivo_path} do Storage`);
+      const { data, error } = await supabase.storage.from("caepi").download(upload.arquivo_path);
+      if (error) throw error;
+      bytes = Buffer.from(await data.arrayBuffer());
+    } else if (local) {
       console.log(`[worker] CAEPI: lendo ${local.nome} de ${PASTA}`);
       bytes = fs.readFileSync(local.caminho);
     } else {
-      console.log("[worker] CAEPI: pasta vazia, tentando o site...");
+      console.log("[worker] CAEPI: tentando baixar do site...");
       bytes = await baixarPacote();
     }
     const texto = decodificar(await descompactar(bytes));
