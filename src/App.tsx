@@ -86,6 +86,8 @@ import EstoqueEtiquetas from "./pages/suprimentos/EstoqueEtiquetas";
 import Patrimonio from "./pages/suprimentos/Patrimonio";
 import PainelManutencoes from "./pages/suprimentos/PainelManutencoes";
 import EpisAdmissoes from "./pages/suprimentos/EpisAdmissoes";
+import HistoricoColaborador from "./pages/suprimentos/HistoricoColaborador";
+import EnxovalAdmissao from "./pages/publico/EnxovalAdmissao";
 import SolicitarMateriais from "./pages/encarregados/SolicitarMateriais";
 import MeusPedidos from "./pages/encarregados/MeusPedidos";
 import SolicitarDemissao from "./pages/encarregados/SolicitarDemissao";
@@ -263,6 +265,7 @@ const App = () => (
           {/* Cadastro que o próprio fornecedor preenche, sem login. A credencial
               é o token do convite, gerado pelo comprador (SIS-2026-0209). */}
           <Route path="/fornecedor/cadastro/:token" element={<FornecedorCadastro />} />
+          <Route path="/admissao/enxoval/:token" element={<EnxovalAdmissao />} />
           {/* Canal de Ética — registro e acompanhamento de denúncia, sem login */}
           <Route path="/denuncia" element={<Denuncia />} />
           <Route path="/denuncia/acompanhar" element={<Navigate to="/denuncia?acompanhar" replace />} />
@@ -458,6 +461,7 @@ const App = () => (
             <Route path="suprimentos/patrimonio" element={<Patrimonio />} />
             <Route path="suprimentos/manutencao" element={<PainelManutencoes />} />
             <Route path="suprimentos/epis-admissoes" element={<EpisAdmissoes />} />
+            <Route path="suprimentos/colaborador" element={<HistoricoColaborador />} />
             {/* Financeiro */}
             <Route path="financeiro/contas-pagar" element={<ContasPagar />} />
             <Route path="financeiro/contas-receber" element={<ContasReceber />} />
