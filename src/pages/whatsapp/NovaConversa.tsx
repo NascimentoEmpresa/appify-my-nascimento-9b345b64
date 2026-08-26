@@ -43,6 +43,24 @@ interface Props {
   podeTodas: boolean;
 }
 
+/**
+ * O que a ação "status_template" da whatsapp-abertura devolve.
+ *
+ * `existe_no_idioma` é o campo que importa: na Meta um template é o par
+ * (nome, idioma), e ter o nome cadastrado em outro idioma ainda devolve
+ * #132001 no envio — parecendo, na mensagem de erro, que ele não existe.
+ */
+interface StatusTemplate {
+  erro?: string;
+  nome?: string;
+  idioma?: string;
+  existe_no_idioma?: boolean;
+  status?: string | null;
+  motivo_reprovacao?: string | null;
+  outros_idiomas?: { idioma?: string; status?: string }[];
+  aprovados?: { nome?: string; idioma?: string }[];
+}
+
 export function NovaConversa({ aberto, onFechar, onAberta, podeConfig, pastas, podeTodas }: Props) {
   const { toast } = useToast();
   const qc = useQueryClient();
@@ -113,6 +131,35 @@ export function NovaConversa({ aberto, onFechar, onAberta, podeConfig, pastas, p
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [digitos, aberto]);
 
+  /**
+   * O estado real do template na Meta. null enquanto consulta.
+   *
+   * Só é buscado DEPOIS que a abertura falha: é uma chamada à Graph API e
+   * não faz sentido pagar por ela em toda abertura do modal — interessa
+   * quando algo deu errado e a pergunta "por quê?" apareceu.
+   */
+  const [statusTpl, setStatusTpl] = useState<StatusTemplate | null>(null);
+
+  const consultarStatus = async () => {
+    setStatusTpl(null);
+    try {
+      const { data, error } = await supabase.functions.invoke("whatsapp-abertura", {
+        body: { acao: "status_template" },
+      });
+      if (error) throw new Error(await erroDaFunction(error));
+      setStatusTpl(data as StatusTemplate);
+    } catch (e) {
+      setStatusTpl({ erro: String((e as Error)?.message ?? e) });
+    }
+  };
+
+  // Falhou por template → vai atrás do motivo sozinho. Sem isto alguém teria
+  // que saber que existe um botão para descobrir por que o erro aconteceu.
+  useEffect(() => {
+    if (faltaTemplate) consultarStatus();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [faltaTemplate]);
+
   const criarTemplate = async () => {
     setCriandoTemplate(true);
     try {
@@ -128,6 +175,7 @@ export function NovaConversa({ aberto, onFechar, onAberta, podeConfig, pastas, p
           : "A revisão costuma levar de alguns minutos a um dia. Enquanto isso, só dá para responder quem escreveu primeiro.",
       });
       if (r.status === "APPROVED") setFaltaTemplate(false);
+      else consultarStatus();   // o motivo pode ter mudado (ex.: reprovado agora)
     } catch (e) {
       toast({ title: "Não deu para criar o template", description: String((e as Error)?.message ?? e), variant: "destructive" });
     } finally {
@@ -297,18 +345,69 @@ export function NovaConversa({ aberto, onFechar, onAberta, podeConfig, pastas, p
             <div className="flex items-start gap-2 rounded-md border border-warning/40 bg-warning/5 p-3">
               <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-warning" />
               <div className="min-w-0 flex-1 text-xs">
-                <p className="font-semibold">Falta o template aprovado na Meta</p>
+                <p className="font-semibold">A abertura não saiu — o template não está utilizável</p>
                 <p className="mt-0.5 text-muted-foreground">
-                  Fora da janela de 24h a Meta só entrega mensagem de template. A conversa já está criada — assim que
-                  o template for aprovado, a abertura pode ser reenviada.
+                  Fora da janela de 24h a Meta só entrega mensagem de template. A conversa já está criada:
+                  assim que o template estiver aprovado, a abertura pode ser reenviada.
                 </p>
+
+                {/* O diagnóstico real. Antes esta caixa dizia sempre a mesma
+                    frase, e "em revisão", "reprovado" e "nunca foi criado"
+                    ficavam indistinguíveis — mas cada um tem uma saída
+                    diferente: esperar, reescrever ou clicar em criar. */}
+                {statusTpl === null ? (
+                  <p className="mt-2 flex items-center gap-1.5 text-muted-foreground">
+                    <Loader2 className="h-3 w-3 animate-spin" /> Consultando a Meta…
+                  </p>
+                ) : statusTpl.erro ? (
+                  <p className="mt-2 text-muted-foreground">
+                    Não consegui consultar o estado na Meta: {statusTpl.erro}
+                  </p>
+                ) : (
+                  <div className="mt-2 space-y-1.5 rounded-md border bg-background/60 p-2">
+                    <p>
+                      <span className="font-mono">{statusTpl.nome}</span>
+                      {" · "}{statusTpl.idioma}{" · "}
+                      <span className="font-semibold">
+                        {!statusTpl.existe_no_idioma ? "não existe neste idioma"
+                          : statusTpl.status === "APPROVED" ? "aprovado"
+                          : statusTpl.status === "PENDING" ? "em revisão na Meta"
+                          : statusTpl.status === "REJECTED" ? "reprovado pela Meta"
+                          : String(statusTpl.status ?? "estado desconhecido")}
+                      </span>
+                    </p>
+
+                    {statusTpl.motivo_reprovacao && (
+                      <p className="text-destructive">Motivo: {statusTpl.motivo_reprovacao}</p>
+                    )}
+
+                    {/* Nome existe, idioma não: é o caso que devolve #132001
+                        parecendo "template inexistente". Vale dizer o nome. */}
+                    {!statusTpl.existe_no_idioma && (statusTpl.outros_idiomas?.length ?? 0) > 0 && (
+                      <p className="text-muted-foreground">
+                        Existe em outro idioma ({statusTpl.outros_idiomas!.map(o => o.idioma).join(", ")}),
+                        mas a Meta trata cada idioma como um template à parte.
+                      </p>
+                    )}
+
+                    {(statusTpl.aprovados?.length ?? 0) > 0 && (
+                      <p className="text-muted-foreground">
+                        Aprovados hoje nesta conta:{" "}
+                        {statusTpl.aprovados!.map(a => `${a.nome} (${a.idioma})`).join(", ")}.
+                        {" "}Dá para mandar por esses digitando <span className="font-mono">/</span> na conversa —
+                        sem o botão de resposta rápida, que só existe na abertura.
+                      </p>
+                    )}
+                  </div>
+                )}
+
                 {podeConfig && (
                   <Button
                     size="sm" variant="outline" className="mt-2 gap-1.5"
                     onClick={criarTemplate} disabled={criandoTemplate}
                   >
                     {criandoTemplate ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Send className="h-3.5 w-3.5" />}
-                    Criar template na Meta
+                    {statusTpl?.existe_no_idioma ? "Consultar de novo" : "Criar template na Meta"}
                   </Button>
                 )}
               </div>
