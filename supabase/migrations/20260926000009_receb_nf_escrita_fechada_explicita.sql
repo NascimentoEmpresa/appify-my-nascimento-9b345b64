@@ -97,3 +97,31 @@ SELECT tablename, policyname, cmd, qual
  ORDER BY tablename, policyname;
 
 NOTIFY pgrst, 'reload schema';
+
+-- ── Complemento: as três que faltavam ────────────────────────────────
+--
+-- Derrubadas nas migrations 0004 e 0006 desta mesma PR, pelo mesmo motivo:
+-- escrita passou para RPC. Recriadas aqui para ficarem explícitas.
+--
+-- `receb_item_write` é o nome VIGENTE da policy de escrita de
+-- recebimento_nf_item — a 0003 tentou derrubar `receb_item_all`, que era o
+-- nome ANTIGO, renomeado em 20260718100005. A 0006 corrigiu derrubando os
+-- dois. Aqui os dois são recriados negando, para não sobrar nome solto.
+DROP POLICY IF EXISTS receb_item_write ON public.recebimento_nf_item;
+CREATE POLICY receb_item_write ON public.recebimento_nf_item
+  FOR ALL TO authenticated USING (false) WITH CHECK (false);
+
+-- nf_entrada_item: escrita é da Edge Function nf-import-xml (service role,
+-- fora da RLS) e das RPCs de vínculo/lançamento. A leitura (nfi_select)
+-- continua aberta — a tela de NF de Entrada lista os itens direto.
+DROP POLICY IF EXISTS nfi_write ON public.nf_entrada_item;
+CREATE POLICY nfi_write ON public.nf_entrada_item
+  FOR ALL TO authenticated USING (false) WITH CHECK (false);
+
+-- Apagar NF não é operação de tela: uma nota lançada vira histórico fiscal e
+-- de estoque. Cancelamento é mudança de status, não DELETE.
+DROP POLICY IF EXISTS nfe_delete ON public.nf_entrada;
+CREATE POLICY nfe_delete ON public.nf_entrada
+  FOR DELETE TO authenticated USING (false);
+
+NOTIFY pgrst, 'reload schema';
