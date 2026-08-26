@@ -20,6 +20,7 @@ import { useLigacoesAdministrativoClassificacao } from "@/hooks/useMaloteAdminis
 import { useOrcamentoContratos } from "@/hooks/useOrcamentoContratos";
 import { useUtilizadoOrcamento } from "@/hooks/useUtilizadoOrcamento";
 import { anoMesAtual, fimDoMes } from "@/hooks/usePlanilhaCusto";
+import { BarraOrcamento } from "@/components/orcamento/BarraOrcamento";
 import { getStatusVigencia, STATUS_LABEL, STATUS_BADGE_CLASS, StatusVigencia, fmtMoney, fmtPct, competenciaNoPeriodo } from "./orcamentoUtils";
 import { LigacaoSectionBanner } from "./LigacaoLicitacaoClassificacao";
 import { OrcamentoTabsNav } from "./OrcamentoTabsNav";
@@ -95,21 +96,14 @@ function LinhaAprovadores({ c }: { c: ClassificacaoOrcamento }) {
   );
 }
 
-// Barra de % Utilizado (SIS-2026-0168) — verde até 80%, âmbar até 100%,
-// vermelho acima (é permitido ultrapassar 100%, só muda a cor de alerta).
-function BarraUtilizado({ orcado, utilizado }: { orcado: number; utilizado: number }) {
-  if (!orcado) return <span className="text-xs text-muted-foreground">—</span>;
-  const pct = (utilizado / orcado) * 100;
-  const cor = pct > 100 ? "bg-red-500" : pct >= 80 ? "bg-amber-500" : "bg-emerald-500";
-  return (
-    <div className="flex items-center gap-2 min-w-[120px]">
-      <div className="h-1.5 flex-1 rounded-full bg-muted overflow-hidden">
-        <div className={cn("h-full rounded-full", cor)} style={{ width: `${Math.min(pct, 100)}%` }} />
-      </div>
-      <span className="text-xs font-medium tabular-nums w-16 text-right">{pct.toFixed(1)}%</span>
-    </div>
-  );
-}
+// A barra de % Utilizado (SIS-2026-0168) morava aqui e foi para
+// `@/components/orcamento/BarraOrcamento` quando o Suprimentos passou a
+// mostrar orçamento também. As faixas continuam as mesmas — verde até 80%,
+// âmbar até 100%, vermelho acima, sendo permitido ultrapassar 100%.
+//
+// Duplicar faria as duas telas divergirem no dia em que alguém mudasse uma
+// faixa, e um dirigente veria "amarelo" num lugar e "verde" no outro para o
+// mesmo percentual.
 
 function BotaoVerDetalhes({
   anoMes,
@@ -457,7 +451,7 @@ export default function OrcamentoGeral() {
                     <TableCell className="text-right">{fmtMoney(l.orcado)}</TableCell>
                     <TableCell className="text-right">{fmtMoney(l.utilizado)}</TableCell>
                     <TableCell>
-                      <BarraUtilizado orcado={l.orcado} utilizado={l.utilizado} />
+                      <BarraOrcamento orcado={l.orcado} usado={l.utilizado} />
                     </TableCell>
                     <TableCell className="whitespace-nowrap">
                       <Badge className={cn(STATUS_BADGE_CLASS[l.status], "whitespace-nowrap")}>{STATUS_LABEL[l.status]}</Badge>
@@ -517,7 +511,7 @@ export default function OrcamentoGeral() {
                           Orçado <span className="font-semibold text-foreground">{fmtMoney(g.orcadoTotal)}</span> · Utilizado{" "}
                           <span className="font-semibold text-foreground">{fmtMoney(g.utilizadoTotal)}</span>
                         </p>
-                        <BarraUtilizado orcado={g.orcadoTotal} utilizado={g.utilizadoTotal} />
+                        <BarraOrcamento orcado={g.orcadoTotal} usado={g.utilizadoTotal} />
                         <BotaoVerDetalhes anoMes={anoMes} contratoId={g.contratoId} label="Ver detalhes gerais do contrato" />
                       </div>
                     </div>
@@ -544,7 +538,7 @@ export default function OrcamentoGeral() {
                               <TableCell className="text-right">{fmtMoney(l.orcado)}</TableCell>
                               <TableCell className="text-right">{fmtMoney(l.utilizado)}</TableCell>
                               <TableCell>
-                                <BarraUtilizado orcado={l.orcado} utilizado={l.utilizado} />
+                                <BarraOrcamento orcado={l.orcado} usado={l.utilizado} />
                               </TableCell>
                               <TableCell>
                                 <BotaoVerDetalhes anoMes={anoMes} classificacaoId={l.classificacaoMalote.id} contratoId={g.contratoId} />

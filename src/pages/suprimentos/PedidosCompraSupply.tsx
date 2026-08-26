@@ -10,6 +10,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Textarea } from "@/components/ui/textarea";
 import { PageHeader } from "@/components/layout/PageHeader";
+import { PainelOrcamentoCompras } from "./PainelOrcamentoCompras";
 import {
   useAtualizarPedidoCompra, useAtualizarValorItemPedido, useCancelarPedidoCompra, useEnviarPedidoCompra,
   usePedidoCompra, usePedidosCompra,
@@ -122,6 +123,11 @@ export default function PedidosCompraSupply() {
         title="Pedidos de Compra"
         subtitle="Pedidos gerados a partir das cotações aprovadas do Malote."
       />
+
+      {/* Fica antes da lista de propósito: a pergunta "posso emitir mais este
+          pedido?" precisa ser respondida ANTES de emitir, não depois de rolar
+          a página até o fim. */}
+      <PainelOrcamentoCompras />
 
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-5">
         {[
