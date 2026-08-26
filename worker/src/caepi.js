@@ -456,7 +456,7 @@ function arquivoDaPasta() {
   if (!fs.existsSync(PASTA)) return null;
   const candidatos = fs
     .readdirSync(PASTA)
-    .filter((n) => !n.startsWith("."))
+    .filter((n) => !n.startsWith(".") && n !== "processados" && n !== "LEIA-ME.txt")
     .map((n) => {
       const completo = path.join(PASTA, n);
       const st = fs.statSync(completo);
@@ -552,6 +552,24 @@ async function sincronizarCaepi(supabase) {
       .eq("id", linha.id);
 
     console.log(`[worker] CAEPI: ${lidas} linhas lidas, ${gravados} CAs gravados.`);
+
+    // Tira o arquivo da fila depois de carregado.
+    //
+    // Sem isto ele fica na pasta para sempre e o ciclo de 60s recarrega 42 mil
+    // CAs a cada minuto — 124 mil linhas relidas e reescritas no banco sem
+    // nenhuma mudança. Aconteceu em 26/08/2026, e o intervalo semanal não
+    // protegia porque arquivo na pasta tem prioridade sobre ele de propósito
+    // (quem acabou de depositar quer que valha agora).
+    //
+    // Movido, não apagado: é o registro de qual base foi carregada em cada
+    // data. Se um CA for contestado, é o arquivo que responde.
+    if (local) {
+      const processados = path.join(PASTA, "processados");
+      fs.mkdirSync(processados, { recursive: true });
+      const carimbo = new Date().toISOString().slice(0, 10);
+      fs.renameSync(local.caminho, path.join(processados, `${carimbo}-${local.nome}`));
+      console.log(`[worker] CAEPI: ${local.nome} movido para processados/`);
+    }
   } catch (e) {
     // Sem `concluido_em`, a próxima passada tenta de novo e a tela consegue
     // avisar que o catálogo está velho, em vez do erro sumir no log.

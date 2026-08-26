@@ -94,28 +94,15 @@ function main() {
   // Agora o lembrete de reunião é a única coisa que depende do WhatsApp, e ele
   // se vira sozinho: enquanto não estiver pronto, essa tarefa é pulada e o
   // resto roda.
-  let whatsappPronto = false;
-
-  waClient.on("ready", () => {
-    whatsappPronto = true;
-    console.log("[worker] WhatsApp conectado — lembretes de reunião ativos.");
-  });
-
-  waClient.on("disconnected", (motivo) => {
-    whatsappPronto = false;
-    console.warn(`[worker] WhatsApp desconectou (${motivo}) — o resto do ciclo continua.`);
-  });
-
-  const ciclo = () => rodarCiclo(whatsappPronto ? waClient : null, transportador);
+  // Não há mais ciclo de vida de cliente: o envio virou HTTP sem estado, via
+  // Edge Function do Supabase (ver a nota no topo de `whatsapp.js`). Sem
+  // navegador, sem QR, sem sessão que expira — e sem os eventos `ready` e
+  // `disconnected` que existiam só porque o WhatsApp Web precisava deles.
+  const ciclo = () => rodarCiclo(waClient, transportador);
 
   console.log(`[worker] ciclo de verificação rodando a cada ${CICLO_MS / 1000}s...`);
   ciclo();
   setInterval(ciclo, CICLO_MS);
-
-  waClient.initialize().catch((e) => {
-    console.error("[worker] falha ao inicializar WhatsApp:", e);
-    alertarErroWhatsapp(`falha ao inicializar: ${e.message}`);
-  });
 }
 
 main();
