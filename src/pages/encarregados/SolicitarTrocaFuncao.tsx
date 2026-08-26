@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
@@ -9,6 +9,8 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { BuscaColaborador, type EmpregadoEscolhido } from "@/components/demissao/BuscaColaborador";
 import { ArrowRight, Building2, CheckCircle2, Loader2, Send, UserCog } from "lucide-react";
 import { localEhEscritorio, statusInicial, TABELA, fmtData } from "@/lib/trocaFuncao/solicitacao";
@@ -27,6 +29,13 @@ const sb = supabase as any;
  * Para onde vai é decidido aqui e MOSTRADO antes de enviar: contrato vai
  * para o Operacional, escritório para o administrativo. Quem só descobre o
  * caminho depois volta para perguntar "com quem está?".
+ *
+ * QUEM RESPONDE "é escritório?" é o encarregado, no checkbox (25/08/2026).
+ * Antes era o cadastro, lido de "Descrição do Local" — e ele erra nos dois
+ * sentidos, porque é espelho do Senior e ninguém aqui pode corrigir. A
+ * solicitação nascia na fila errada e alguém tinha que ir no banco mudar o
+ * status. O cadastro continua sendo lido, mas agora só para SUGERIR: aparece
+ * um aviso ao lado do checkbox, e quem decide é quem está pedindo.
  */
 export default function SolicitarTrocaFuncao() {
   const { user } = useAuth();
@@ -37,13 +46,26 @@ export default function SolicitarTrocaFuncao() {
   const [cargoNovo, setCargoNovo] = useState("");
   const [motivo, setMotivo] = useState("");
   const [dataPretendida, setDataPretendida] = useState("");
+  const [setor, setSetor] = useState("");
+  const [eEscritorio, setEEscritorio] = useState(false);
+  const [setores, setSetores] = useState<string[]>([]);
   const [enviando, setEnviando] = useState(false);
   const [protocolo, setProtocolo] = useState<number | null>(null);
 
   // O local vem de "Descrição do Local"; a filial é o fallback de quem está
   // sem local no cadastro.
   const local = colaborador?.descricaoLocal || colaborador?.nomeFilial || "";
-  const eEscritorio = useMemo(() => localEhEscritorio(local), [local]);
+  /** O que o CADASTRO acha. Só vira aviso — quem marca é o encarregado. */
+  const cadastroDizEscritorio = useMemo(() => localEhEscritorio(local), [local]);
+
+  // O mesmo catálogo da Administração; setor aqui é descritivo e não
+  // concede nada, então basta ler.
+  useEffect(() => {
+    (async () => {
+      const { data } = await sb.from("setor_catalogo").select("nome").order("nome");
+      setSetores((data ?? []).map((s: { nome: string }) => s.nome));
+    })();
+  }, []);
 
   const cargoAtual = colaborador?.cargo ?? "";
   const mesmoCargo = cargoAtual.trim().toUpperCase() === cargoNovo.trim().toUpperCase()
@@ -74,6 +96,7 @@ export default function SolicitarTrocaFuncao() {
       posto: colaborador!.posto || null,
       filial: colaborador!.nomeFilial || null,
       e_escritorio: eEscritorio,
+      setor: setor || null,
       motivo: motivo.trim(),
       data_pretendida: dataPretendida || null,
       status: statusInicial(eEscritorio),
@@ -85,7 +108,7 @@ export default function SolicitarTrocaFuncao() {
 
   const recomecar = () => {
     setColaborador(null); setCargoNovo(""); setMotivo("");
-    setDataPretendida(""); setProtocolo(null);
+    setDataPretendida(""); setSetor(""); setEEscritorio(false); setProtocolo(null);
   };
 
   if (protocolo) {
@@ -100,8 +123,9 @@ export default function SolicitarTrocaFuncao() {
               {eEscritorio
                 ? "Vai para a aprovação do administrativo."
                 : "Vai para o Operacional aprovar."}{" "}
-              Depois de aprovada, o SST marca o ASO de mudança de função e o RH faz a alteração na Senior.
-              Você acompanha o andamento em Minhas Solicitações.
+              Depois de aprovada, o SST avalia o ASO — marca o exame ou dispensa, quando a função
+              nova não exige — e o RH faz a alteração na Senior. Você acompanha o andamento em
+              Minhas Solicitações.
             </p>
             <div className="mt-2 flex gap-2">
               <Button onClick={recomecar}>Nova solicitação</Button>
@@ -177,6 +201,42 @@ export default function SolicitarTrocaFuncao() {
             <Input type="date" className="sm:w-56" value={dataPretendida}
                    onChange={e => setDataPretendida(e.target.value)} />
           </div>
+
+          {/* Setor e origem: os dois opcionais, os dois só para quem aprova
+              conseguir achar o que é dele numa fila grande. */}
+          <div className="space-y-1.5">
+            <Label>Setor (opcional)</Label>
+            <Select value={setor || "nenhum"} onValueChange={v => setSetor(v === "nenhum" ? "" : v)}>
+              <SelectTrigger className="sm:w-72"><SelectValue placeholder="Não informar" /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="nenhum">Não informar</SelectItem>
+                {setores.map(s => <SelectItem key={s} value={s}>{s}</SelectItem>)}
+              </SelectContent>
+            </Select>
+            <p className="text-xs text-muted-foreground">
+              Serve para os gerentes filtrarem a fila por setor. Não muda quem aprova.
+            </p>
+          </div>
+
+          <div className="rounded-lg border p-3">
+            <div className="flex items-start gap-2.5">
+              <Checkbox id="e-escritorio" checked={eEscritorio}
+                        onCheckedChange={v => setEEscritorio(v === true)} className="mt-0.5" />
+              <div className="space-y-1">
+                <Label htmlFor="e-escritorio" className="cursor-pointer font-medium">
+                  É do escritório administrativo
+                </Label>
+                <p className="text-xs text-muted-foreground">
+                  Marcado, a aprovação é do administrativo. Desmarcado, é do Operacional.
+                </p>
+                {colaborador && cadastroDizEscritorio && !eEscritorio && (
+                  <p className="text-xs font-medium text-amber-700 dark:text-amber-400">
+                    O cadastro diz que {colaborador.nome} está em “{local}” — parece escritório. Confira antes de enviar.
+                  </p>
+                )}
+              </div>
+            </div>
+          </div>
         </CardContent>
       </Card>
 
@@ -191,9 +251,9 @@ export default function SolicitarTrocaFuncao() {
             </p>
             <p className="text-muted-foreground">
               {eEscritorio
-                ? `${local} é escritório, então a aprovação é do administrativo.`
-                : `${local || "O local do colaborador"} é contrato, então quem aprova é o Operacional.`}
-              {" "}Depois: SST marca o ASO → RH altera na Senior.
+                ? "Você marcou como escritório administrativo, então a aprovação é do administrativo."
+                : `${local || "O local do colaborador"} vai como contrato, então quem aprova é o Operacional.`}
+              {" "}Depois: SST avalia o ASO (marca ou dispensa) → RH altera na Senior.
             </p>
           </div>
         </div>

@@ -90,11 +90,17 @@ const ROTULO: Record<string, string> = {
   // não pensa em "escritório x contrato", pensa em quem está com o pedido —
   // e isso o status já diz.
   cargo_atual: "Cargo atual", cargo_novo: "Cargo novo", local: "Local / contrato",
-  posto: "Posto", filial: "Filial", data_pretendida: "A partir de",
+  posto: "Posto", filial: "Filial", data_pretendida: "A partir de", setor: "Setor",
+  sst_aso_dispensado: "ASO dispensado",
   aprovador_nome: "Aprovado por", aprovador_em: "Aprovado em",
   aprovador_motivo: "Retorno de quem aprovou",
   sst_por: "SST", sst_em: "SST em", sst_aso_data: "Data do ASO",
   sst_observacao: "Observação do SST",
+  // Demissão: o ASO demissional, com os mesmos nomes de coluna do ASO de
+  // admissão. É a informação que o encarregado repassa ao colaborador —
+  // onde e quando comparecer.
+  sst_data_exame: "Data do ASO demissional", sst_hora_exame: "Horário do ASO",
+  sst_local_exame: "Local do ASO", sst_maps_url: "Local no Google Maps",
   data_solicitacao: "Data da solicitação",
   descricao: "Descrição", motivo: "Motivo", data_ocorrido: "Data do ocorrido",
   periodo_inicio: "Início do período", periodo_fim: "Fim do período",

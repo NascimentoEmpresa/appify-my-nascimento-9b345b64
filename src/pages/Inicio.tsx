@@ -131,6 +131,7 @@ const DESC_ROTA: Record<string, string> = {
   "/app/rh/hierarquia": "Setores e lideranças",
   "/app/rh/ferias": "Programação e saldos",
   "/app/sst/aso": "Saúde e segurança",
+  "/app/sst/aso-demissional": "ASO do desligamento",
   "/app/painel-executivo": "Visão consolidada",
   "/app/juridico/processos": "Processos e audiências",
   "/app/whatsapp": "Atendimento e chatbot",

@@ -154,6 +154,7 @@ import RhTrocaFuncaoEscritorio from "./pages/rh/TrocaFuncaoEscritorio";
 import SstTrocaFuncao from "./pages/sst/TrocaFuncao";
 import RhTrocaFuncao from "./pages/rh/TrocaFuncao";
 import AsoCandidatos from "./pages/sst/AsoCandidatos";
+import AsoDemissional from "./pages/sst/AsoDemissional";
 import LaudosEpi from "./pages/sst/LaudosEpi";
 import ControleCa from "./pages/sst/ControleCa";
 import NovasAdmissoes from "./pages/rh/NovasAdmissoes";
@@ -528,6 +529,8 @@ const App = () => (
             <Route path="rh/troca-funcao" element={<RhTrocaFuncao />} />
             {/* SST — ASO / Admissão (fila do Recrutamento) */}
             <Route path="sst/aso" element={<AsoCandidatos />} />
+            {/* SST — ASO demissional (última etapa da demissão, depois do RH) */}
+            <Route path="sst/aso-demissional" element={<AsoDemissional />} />
             <Route path="sst/laudos" element={<LaudosEpi />} />
             <Route path="sst/controle-ca" element={<ControleCa />} />
             {/* BI */}
