@@ -103,3 +103,10 @@ verify_jwt = true
 # depois do uso — quem valida e a RPC, que a funcao alcanca com a chave anon.
 [functions.fornecedor-cadastro-publico]
 verify_jwt = false
+
+# Envio de WhatsApp a pedido do worker. Sem JWT porque o worker e um processo,
+# nao uma pessoa: nao tem sessao de usuario. Autentica pelo cabecalho
+# x-worker-secret, conferido em tempo constante dentro da funcao — mesmo padrao
+# das funcoes chamadas pelo CI.
+[functions.worker-notificar-whatsapp]
+verify_jwt = false
