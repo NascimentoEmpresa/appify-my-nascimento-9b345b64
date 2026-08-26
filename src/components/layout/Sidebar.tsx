@@ -459,6 +459,8 @@ const rhModule: ModuleDef = {
         { label: "Folha de Pagamento", to: "/app/rh/folha", icon: ListChecks },
         { label: "Gestão de Férias", to: "/app/rh/ferias", icon: CalendarRange },
         { label: "Solicitações de Demissão", to: "/app/rh/solicitacoes-demissao", icon: UserMinus },
+        { label: "Conferência de Ponto", to: "/app/rh/conferencia-ponto", icon: ClipboardCheck },
+        { label: "Conferência de Ponto — Painel", to: "/app/rh/conferencia-ponto/painel", icon: BarChart3 },
         { label: "Mudança de Função", to: "/app/rh/troca-funcao", icon: ArrowLeftRight, notif: "troca_funcao" },
         { label: "Mudança de Função — Aprovação", to: "/app/rh/troca-funcao-escritorio", icon: Building2, notif: "troca_funcao" },
       ],
