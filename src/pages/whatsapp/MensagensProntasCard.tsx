@@ -173,7 +173,16 @@ export function MensagensProntasCard() {
       <div className="space-y-1.5">
         {linhas.map((l) => {
           const st = STATUS[status[l.codigo]?.status ?? "NAO_CRIADO"] ?? STATUS.NAO_CRIADO;
-          const motivo = status[l.codigo]?.motivo;
+          // Só é motivo de recusa se ela tiver sido recusada.
+          //
+          // A Meta manda `rejected_reason: "NONE"` para TODO template que não
+          // foi rejeitado — inclusive o que acabou de entrar em PENDING. A tela
+          // mostrava isso como "Motivo da recusa: NONE" em vermelho, e o
+          // atendente que acabara de submeter lia que tinha sido recusado.
+          const motivoBruto = status[l.codigo]?.motivo;
+          const motivo = status[l.codigo]?.status === "REJECTED"
+            && motivoBruto && motivoBruto.toUpperCase() !== "NONE"
+            ? motivoBruto : null;
           return (
             <div key={l.id} className={`space-y-1 rounded border border-border/60 px-2.5 py-2 ${l.ativo ? "" : "opacity-60"}`}>
               <div className="flex items-center gap-2">

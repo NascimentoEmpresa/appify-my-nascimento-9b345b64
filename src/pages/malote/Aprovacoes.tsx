@@ -21,9 +21,24 @@ import {
   STATUS_BADGE_CLASS,
   STATUS_FASE_SOLICITACAO,
   StatusDespesa,
-  MaloteDespesaRow,
+  ItemLinhaMalote,
   TipoSolicitacao,
 } from "@/hooks/useMaloteDespesa";
+
+// SIS-2026-0223: despesa parcelada vira N linhas (1 por parcela) a partir de
+// "aguardando_pagamento" — o status exibido/contado por linha passa a ser o
+// da PARCELA (paga/pendente), não o bruto da despesa, senão as N linhas
+// mostrariam sempre o mesmo status errado (todas "aguardando pagamento" até
+// a despesa inteira virar paga, ou todas "paga" já na primeira).
+function statusEfetivo(item: ItemLinhaMalote): StatusDespesa {
+  // pronto_para_pagar/ajuste_pagamento continuam sendo decisão sobre a
+  // despesa inteira (parcela só tem pendente/paga) — só aguardando_pagamento
+  // e despesa_paga refletem o progresso real de CADA parcela.
+  if (item.parcela && (item.despesa.status === "aguardando_pagamento" || item.despesa.status === "despesa_paga")) {
+    return item.parcela.status === "paga" ? "despesa_paga" : "aguardando_pagamento";
+  }
+  return item.despesa.status;
+}
 
 const TIPO_LABEL: Record<TipoSolicitacao, string> = {
   administrativo: "Administrativo",
@@ -127,7 +142,7 @@ export default function Aprovacoes() {
   );
   const classificacoesDisponiveis = useMemo(() => {
     const nomes = new Set<string>();
-    itens.forEach((d) => d.classificacao?.nome && nomes.add(d.classificacao.nome));
+    itens.forEach((item) => item.despesa.classificacao?.nome && nomes.add(item.despesa.classificacao.nome));
     return Array.from(nomes).sort();
   }, [itens]);
 
@@ -150,8 +165,9 @@ export default function Aprovacoes() {
   }
 
   const filtrados = useMemo(() => {
-    return itens.filter((d) => {
-      if (status && d.status !== status) return false;
+    return itens.filter((item) => {
+      const d = item.despesa;
+      if (status && statusEfetivo(item) !== status) return false;
       if (tipo && d.tipo !== tipo) return false;
       if (classificacao && d.classificacao?.nome !== classificacao) return false;
       if (empresaId && d.empresa_id !== empresaId) return false;
@@ -173,11 +189,11 @@ export default function Aprovacoes() {
   const visiveis = filtrados.slice((paginaAtual - 1) * PAGE_SIZE, paginaAtual * PAGE_SIZE);
 
   function contar(s: StatusDespesa) {
-    return itens.filter((d) => d.status === s).length;
+    return itens.filter((item) => statusEfetivo(item) === s).length;
   }
 
   const minhasPendentes = itens.filter(
-    (d) => d.status === "pendente_aprovacao" && d.nivel_aprovacao_atual != null && aprovadorDoNivel(d, d.nivel_aprovacao_atual) === user?.id
+    ({ despesa: d }) => d.status === "pendente_aprovacao" && d.nivel_aprovacao_atual != null && aprovadorDoNivel(d, d.nivel_aprovacao_atual) === user?.id
   ).length;
   const outrasPendentes = contar("pendente_aprovacao") - minhasPendentes;
 
@@ -198,7 +214,7 @@ export default function Aprovacoes() {
     { label: STATUS_LABEL.despesa_reprovada, status: "despesa_reprovada", count: contar("despesa_reprovada"), icon: XCircle, cor: "red" },
   ];
 
-  function abrirItem(despesa: MaloteDespesaRow) {
+  function abrirItem(despesa: ItemLinhaMalote["despesa"]) {
     const tela = STATUS_FASE_SOLICITACAO.includes(despesa.status) ? "solicitacao" : "despesa";
     navigate(tela === "solicitacao" ? `/app/malote/solicitacao/${despesa.id}` : `/app/malote/despesa/${despesa.id}`);
   }
@@ -348,13 +364,13 @@ export default function Aprovacoes() {
                     </TableCell>
                   </TableRow>
                 )}
-                {visiveis.map((despesa) => (
+                {visiveis.map((item) => (
                   <LinhaItem
-                    key={despesa.id}
-                    despesa={despesa}
-                    nomeEmpresa={empresasMap.get(despesa.empresa_id)}
-                    nomeContrato={despesa.contrato_id ? contratosMap.get(despesa.contrato_id) : undefined}
-                    onAbrir={() => abrirItem(despesa)}
+                    key={`${item.despesa.id}-${item.parcela?.id ?? "unica"}`}
+                    item={item}
+                    nomeEmpresa={empresasMap.get(item.despesa.empresa_id)}
+                    nomeContrato={item.despesa.contrato_id ? contratosMap.get(item.despesa.contrato_id) : undefined}
+                    onAbrir={() => abrirItem(item.despesa)}
                   />
                 ))}
               </TableBody>
@@ -383,22 +399,29 @@ export default function Aprovacoes() {
 }
 
 function LinhaItem({
-  despesa,
+  item,
   nomeEmpresa,
   nomeContrato,
   onAbrir,
 }: {
-  despesa: MaloteDespesaRow;
+  item: ItemLinhaMalote;
   nomeEmpresa?: string;
   nomeContrato?: string;
   onAbrir: () => void;
 }) {
+  const { despesa, parcela } = item;
   const { data: solicitanteNome } = useNomeUsuario(despesa.created_by);
   const isSolicitacao = STATUS_FASE_SOLICITACAO.includes(despesa.status);
+  const status = statusEfetivo(item);
+  const valor = parcela ? parcela.valor : despesa.valor_total;
+  const dataPagamento = parcela ? parcela.data_pagamento_real ?? parcela.data_vencimento : despesa.data_pagamento;
   return (
     <TableRow className="cursor-pointer hover:bg-muted/50" onClick={onAbrir}>
       <TableCell className="text-sm">{isSolicitacao ? "Solicitação" : "Despesa"}</TableCell>
-      <TableCell className="font-mono text-xs">{despesa.numero}</TableCell>
+      <TableCell className="font-mono text-xs">
+        {despesa.numero}
+        {parcela && <span className="text-muted-foreground"> ({parcela.numero_parcela}/{despesa.numero_parcelas})</span>}
+      </TableCell>
       <TableCell className="text-sm">
         <p>{despesa.nome}</p>
         {despesa.motivo && <p className="text-xs text-muted-foreground">{despesa.motivo}</p>}
@@ -409,14 +432,14 @@ function LinhaItem({
         {nomeContrato && <p className="text-xs text-muted-foreground">{nomeContrato}</p>}
       </TableCell>
       <TableCell className="text-right text-sm">
-        {Number(despesa.valor_total).toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}
+        {Number(valor).toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}
       </TableCell>
-      <TableCell className="text-sm">{despesa.data_pagamento ? new Date(despesa.data_pagamento + "T00:00:00").toLocaleDateString("pt-BR") : "—"}</TableCell>
+      <TableCell className="text-sm">{dataPagamento ? new Date(dataPagamento + "T00:00:00").toLocaleDateString("pt-BR") : "—"}</TableCell>
       <TableCell className="text-sm">{solicitanteNome ?? "—"}</TableCell>
       <TableCell>
-        <Badge className={STATUS_BADGE_CLASS[despesa.status]}>
-          {STATUS_LABEL[despesa.status]}
-          {despesa.status === "pendente_aprovacao" && despesa.nivel_aprovacao_atual ? ` N${despesa.nivel_aprovacao_atual}` : ""}
+        <Badge className={STATUS_BADGE_CLASS[status]}>
+          {STATUS_LABEL[status]}
+          {status === "pendente_aprovacao" && despesa.nivel_aprovacao_atual ? ` N${despesa.nivel_aprovacao_atual}` : ""}
         </Badge>
       </TableCell>
       <TableCell className="text-sm">{despesa.excecao ? "Sim" : "Não"}</TableCell>

@@ -27,6 +27,7 @@ export interface PlanilhaCustoImportada {
   fgts: number;
   seguro_acidente_trabalho: number;
   transporte: number;
+  transporte_desconto: number;
   aux_alimentacao: number;
   aux_alimentacao_desconto: number;
   aux_refeicao: number;
@@ -311,6 +312,7 @@ function extractFields(sheet: Sheet): Omit<PlanilhaCustoImportada, "sheetNames">
 
   // Benefícios
   const transporte = sumAND(s, ["TRANSPORTE"], ["PLATAFORMA", "MOTORISTA", "CUSTO", "DEDUCAO"]);
+  const transporte_desconto = findAND(s, ["DEDUCAO", "VT"], []) || findAND(s, ["DEDUCAO", "TRANSPORTE"], []);
   const aux_alimentacao = sumOR(s, ["ALIMENTACAO", "AUXILIO ALIMENTACAO"], [
     "REFEICAO", "DEDUCAO", "DESCONTO", "EFETIVO",
   ]);
@@ -398,7 +400,7 @@ function extractFields(sheet: Sheet): Omit<PlanilhaCustoImportada, "sheetNames">
     decimo_terceiro, adicional_ferias, incidencia_enc_41, inss,
     salario_educacao, rat_fap, sesi, senai, sebrae, incra, fgts,
     seguro_acidente_trabalho,
-    transporte, aux_alimentacao, aux_alimentacao_desconto, aux_refeicao,
+    transporte, transporte_desconto, aux_alimentacao, aux_alimentacao_desconto, aux_refeicao,
     beneficio_familiar, aux_lanche, seguro_vida, abono_indenizatorio,
     aux_educacao, cesta_basica, assistencia_medica, hospedagem,
     odontologico, manutencao_profissional, cafe, almoco, janta, ceia,

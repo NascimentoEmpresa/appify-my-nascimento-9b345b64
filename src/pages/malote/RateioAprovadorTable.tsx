@@ -23,6 +23,10 @@ interface RateioAprovadorTableProps {
   limiteJustificativaPct: number | null;
   resolverOrcado: (classificacaoId: string | null | undefined, contratoId: string | null | undefined) => number | null;
   anoMesDespesa: string;
+  // SIS-2026-0223 (complemento): fração da parcela 1 sobre o valor total —
+  // despesa parcelada consome o orçamento do mês pelo valor da parcela 1,
+  // não pelo valor cheio da linha. Sem parcelamento, vem 1 (não escala).
+  fatorParcela1?: number;
   // Fallback: aprovador/supervisor/admin da despesa também pode
   // justificar, mesmo quando o contrato ainda não tem Analista vinculado
   // (SIS-2026-0170) — o dono "de direito" da justificativa é o Analista.
@@ -48,6 +52,7 @@ export function RateioAprovadorTable({
   limiteJustificativaPct,
   resolverOrcado,
   anoMesDespesa,
+  fatorParcela1 = 1,
   podeJustificarComoAprovador,
   souSolicitante,
 }: RateioAprovadorTableProps) {
@@ -153,7 +158,7 @@ export function RateioAprovadorTable({
               const utilizadoAntes = utilizadoAntesPorContrato.get(chave) ?? 0;
               const utilizadoComLancamento = estaCongelada
                 ? linha.utilizado_com_lancamento_snapshot ?? 0
-                : utilizadoAntes + (Number(linha.valor) || 0);
+                : utilizadoAntes + (Number(linha.valor) || 0) * fatorParcela1;
               const dentroDoOrcado = orcado == null ? null : utilizadoComLancamento <= orcado;
               const percentualLinha = orcado ? (utilizadoComLancamento / orcado) * 100 : null;
               const precisaJustificar =

@@ -148,6 +148,11 @@ import Processos from "./pages/juridico/Processos";
 import Advertencias from "./pages/juridico/Advertencias";
 import VerificacaoCandidatos from "./pages/juridico/VerificacaoCandidatos";
 import TreinamentosERP from "./pages/treinamentos/TreinamentosERP";
+import SolicitarTrocaFuncao from "./pages/encarregados/SolicitarTrocaFuncao";
+import OperacionalTrocaFuncao from "./pages/operacional/TrocaFuncao";
+import RhTrocaFuncaoEscritorio from "./pages/rh/TrocaFuncaoEscritorio";
+import SstTrocaFuncao from "./pages/sst/TrocaFuncao";
+import RhTrocaFuncao from "./pages/rh/TrocaFuncao";
 import AsoCandidatos from "./pages/sst/AsoCandidatos";
 import NovasAdmissoes from "./pages/rh/NovasAdmissoes";
 import BancoTalentos from "./pages/rh/BancoTalentos";
@@ -513,6 +518,12 @@ const App = () => (
             {/* Treinamentos */}
             <Route path="treinamentos" element={<Navigate to="/app/treinamentos/erp" replace />} />
             <Route path="treinamentos/erp" element={<TreinamentosERP />} />
+            {/* Mudança de Função — encarregado abre, aprovação, SST, RH */}
+            <Route path="encarregados/troca-funcao" element={<SolicitarTrocaFuncao />} />
+            <Route path="operacional/troca-funcao" element={<OperacionalTrocaFuncao />} />
+            <Route path="rh/troca-funcao-escritorio" element={<RhTrocaFuncaoEscritorio />} />
+            <Route path="sst/troca-funcao" element={<SstTrocaFuncao />} />
+            <Route path="rh/troca-funcao" element={<RhTrocaFuncao />} />
             {/* SST — ASO / Admissão (fila do Recrutamento) */}
             <Route path="sst/aso" element={<AsoCandidatos />} />
             {/* BI */}

@@ -43,6 +43,7 @@ const EMPTY_FORM: FormData = {
   patronal: 0, fundo_assistencial: 0, fundo_profissional: 0, natalidade: 0,
   deducoes: 0, outros_1: 0, outros_1_descricao: "", outros_2: 0,
   outros_2_descricao: "", outros_3: 0, outros_3_descricao: "",
+  contrato_id: null, justificativa_divergencia: [],
   aviso_indenizado: 0, incidencia_fgts: 0, multa_rescisoria: 0,
   aviso_trabalhado: 0, incidencia_aviso_trabalhado: 0, multa_aviso_indenizado: 0,
   contratualidade: 0,
@@ -822,6 +823,8 @@ const EMPTY_LOC: Omit<PostoLocalizacao, "id" | "empresa_id" | "planilha_custo_id
   uf: "",
   periculosidade: false,
   insalubridade: false,
+  lat: null,
+  lng: null,
   qt_pessoas_orcadas: 0,
   qt_pessoas_executadas: 0,
 };
@@ -860,6 +863,8 @@ function PostosModal({
       uf: loc.uf ?? "",
       periculosidade: loc.periculosidade,
       insalubridade: loc.insalubridade,
+      lat: loc.lat,
+      lng: loc.lng,
       qt_pessoas_orcadas: loc.qt_pessoas_orcadas,
       qt_pessoas_executadas: loc.qt_pessoas_executadas,
     });
@@ -1657,6 +1662,7 @@ function FormDrawer({
           data_vigencia: editRow ? (sourceRow.data_vigencia ?? "") : "",
           qt_postos: sourceRow.qt_postos,
           arquivo_origem: sourceRow.arquivo_origem ?? "",
+          contrato_id: sourceRow.contrato_id, justificativa_divergencia: sourceRow.justificativa_divergencia,
           salario: sourceRow.salario, insalubridade: sourceRow.insalubridade,
           periculosidade: sourceRow.periculosidade, lideranca: sourceRow.lideranca,
           adicional_noturno_reduzido: sourceRow.adicional_noturno_reduzido,
