@@ -290,8 +290,14 @@ export default function PedidosCompraSupply() {
           <DialogFooter className="flex-wrap gap-2">
             {pedido?.status === "rascunho" && <>
               <Button variant="outline" onClick={() => atualizar.mutate({ id: pedido.id, dados: formulario })} disabled={atualizar.isPending}>Salvar dados</Button>
-              <Button onClick={() => enviar.mutate(pedido.id)}
-                disabled={enviar.isPending || atualizarValor.isPending}>
+              {/* Grava o cabecalho ANTES de enviar: sup_compra_atualizar_pedido
+                  so aceita rascunho, entao o que nao for salvo aqui vira
+                  irrecuperavel no instante em que o status muda. */}
+              <Button onClick={async () => {
+                  await atualizar.mutateAsync({ id: pedido.id, dados: formulario });
+                  enviar.mutate(pedido.id);
+                }}
+                disabled={enviar.isPending || atualizar.isPending || atualizarValor.isPending}>
                 <Send className="mr-2 h-4 w-4" />Enviar pedido
               </Button>
             </>}
