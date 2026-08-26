@@ -1,9 +1,18 @@
 import { describe, it, expect } from "vitest";
 import {
   localEhEscritorio, normalizarLocal, statusInicial, proximoStatus, pertenceAFila,
+  podeAgirEm, origensVisiveis, origemDa, resumoSST,
   statusVisiveis, statusDeAcao, explicaStatus,
-  type StatusTroca,
+  type Origem, type StatusTroca,
 } from "@/lib/trocaFuncao/solicitacao";
+
+// CONTRATO e ESCRITÓRIO deixaram de ser duas telas (25/08/2026): viraram uma
+// tela de aprovação só, recortada pela PERMISSÃO de quem abre. O que estes
+// testes travam é que juntar as telas não juntou as filas — quem só aprova
+// contrato continua sem enxergar o administrativo.
+const CONTRATO: Origem[] = ["contrato"];
+const ESCRITORIO: Origem[] = ["escritorio"];
+const AMBAS: Origem[] = ["contrato", "escritorio"];
 
 describe("localEhEscritorio", () => {
   it("reconhece o escritório nas grafias que existem no cadastro", () => {
@@ -45,7 +54,7 @@ describe("localEhEscritorio", () => {
 });
 
 describe("statusInicial", () => {
-  it("contrato nasce no Operacional e escritório na dupla do administrativo", () => {
+  it("segue o que foi MARCADO no pedido, não o que o cadastro acha", () => {
     expect(statusInicial(false)).toBe("Pendente Operacional");
     expect(statusInicial(true)).toBe("Pendente Escritório");
   });
@@ -60,6 +69,14 @@ describe("proximoStatus", () => {
   it("percorre SST → RH → Concluída", () => {
     expect(proximoStatus("Pendente SST", "aso")).toBe("Pendente RH");
     expect(proximoStatus("Pendente RH", "concluir")).toBe("Concluída");
+  });
+
+  it("dispensar o ASO chega no mesmo lugar que marcar", () => {
+    // Nem toda função nova exige exame. Para o RH os dois querem dizer "o SST
+    // já olhou, pode alterar na Senior" — muda só o que fica registrado.
+    expect(proximoStatus("Pendente SST", "dispensar_aso")).toBe("Pendente RH");
+    expect(proximoStatus("Pendente Operacional", "dispensar_aso")).toBeNull();
+    expect(proximoStatus("Pendente RH", "dispensar_aso")).toBeNull();
   });
 
   it("reprovar só vale enquanto está em aprovação", () => {
@@ -84,44 +101,114 @@ describe("proximoStatus", () => {
   });
 });
 
+describe("origensVisiveis", () => {
+  it("traduz os dois menus antigos em quais origens a pessoa enxerga", () => {
+    expect(origensVisiveis(true, false)).toEqual(["contrato"]);
+    expect(origensVisiveis(false, true)).toEqual(["escritorio"]);
+    expect(origensVisiveis(true, true)).toEqual(["contrato", "escritorio"]);
+  });
+
+  it("sem nenhum dos dois menus, não sobra nada para ver", () => {
+    // Juntar as telas não podia abrir acesso: sem permissão, lista vazia.
+    expect(origensVisiveis(false, false)).toEqual([]);
+  });
+});
+
+describe("origemDa", () => {
+  it("é o flag do pedido, e nada mais", () => {
+    expect(origemDa({ e_escritorio: true })).toBe("escritorio");
+    expect(origemDa({ e_escritorio: false })).toBe("contrato");
+  });
+});
+
 describe("pertenceAFila", () => {
   const sol = (status: StatusTroca, e_escritorio: boolean) => ({ status, e_escritorio });
 
-  it("separa as duas filas de aprovação", () => {
-    expect(pertenceAFila(sol("Pendente Operacional", false), "operacional")).toBe(true);
-    expect(pertenceAFila(sol("Pendente Escritório", true), "escritorio")).toBe(true);
-    // Uma não enxerga a fila da outra.
-    expect(pertenceAFila(sol("Pendente Escritório", true), "operacional")).toBe(false);
-    expect(pertenceAFila(sol("Pendente Operacional", false), "escritorio")).toBe(false);
+  it("uma tela só, mas cada permissão vê a sua fila", () => {
+    expect(pertenceAFila(sol("Pendente Operacional", false), "aprovacao", CONTRATO)).toBe(true);
+    expect(pertenceAFila(sol("Pendente Escritório", true), "aprovacao", ESCRITORIO)).toBe(true);
+    // Juntar as telas não pode dar a fila de um para o outro.
+    expect(pertenceAFila(sol("Pendente Escritório", true), "aprovacao", CONTRATO)).toBe(false);
+    expect(pertenceAFila(sol("Pendente Operacional", false), "aprovacao", ESCRITORIO)).toBe(false);
+  });
+
+  it("quem tem as duas permissões vê as duas origens", () => {
+    expect(pertenceAFila(sol("Pendente Operacional", false), "aprovacao", AMBAS)).toBe(true);
+    expect(pertenceAFila(sol("Pendente Escritório", true), "aprovacao", AMBAS)).toBe(true);
   });
 
   it("depois de aprovada, cada aprovador acompanha só a origem dele", () => {
-    // Os status seguintes são comuns às duas: sem o recorte por origem, o
-    // Operacional passaria a ver as do escritório e vice-versa.
-    expect(pertenceAFila(sol("Pendente SST", false), "operacional")).toBe(true);
-    expect(pertenceAFila(sol("Pendente SST", true), "operacional")).toBe(false);
-    expect(pertenceAFila(sol("Concluída", true), "escritorio")).toBe(true);
+    // Os status seguintes são comuns às duas: sem o recorte por origem, quem
+    // aprova contrato passaria a ver as do escritório e vice-versa.
+    expect(pertenceAFila(sol("Pendente SST", false), "aprovacao", CONTRATO)).toBe(true);
+    expect(pertenceAFila(sol("Pendente SST", true), "aprovacao", CONTRATO)).toBe(false);
+    expect(pertenceAFila(sol("Concluída", true), "aprovacao", ESCRITORIO)).toBe(true);
   });
 
   it("SST e RH tratam as duas origens", () => {
-    expect(pertenceAFila(sol("Pendente SST", true), "sst")).toBe(true);
-    expect(pertenceAFila(sol("Pendente SST", false), "sst")).toBe(true);
-    expect(pertenceAFila(sol("Pendente RH", true), "rh")).toBe(true);
+    expect(pertenceAFila(sol("Pendente SST", true), "sst", AMBAS)).toBe(true);
+    expect(pertenceAFila(sol("Pendente SST", false), "sst", AMBAS)).toBe(true);
+    expect(pertenceAFila(sol("Pendente RH", true), "rh", AMBAS)).toBe(true);
   });
 
   it("SST e RH não enxergam o que está em aprovação nem o reprovado", () => {
-    expect(pertenceAFila(sol("Pendente Operacional", false), "sst")).toBe(false);
-    expect(pertenceAFila(sol("Reprovada", false), "sst")).toBe(false);
-    expect(pertenceAFila(sol("Reprovada", false), "rh")).toBe(false);
-    expect(pertenceAFila(sol("Pendente SST", false), "rh")).toBe(false);
+    expect(pertenceAFila(sol("Pendente Operacional", false), "sst", AMBAS)).toBe(false);
+    expect(pertenceAFila(sol("Reprovada", false), "sst", AMBAS)).toBe(false);
+    expect(pertenceAFila(sol("Reprovada", false), "rh", AMBAS)).toBe(false);
+    expect(pertenceAFila(sol("Pendente SST", false), "rh", AMBAS)).toBe(false);
+  });
+});
+
+describe("podeAgirEm", () => {
+  const sol = (status: StatusTroca, e_escritorio: boolean) => ({ status, e_escritorio });
+
+  it("ver não é decidir: acompanha o que já saiu da mão dele, sem poder mexer", () => {
+    expect(pertenceAFila(sol("Pendente SST", false), "aprovacao", CONTRATO)).toBe(true);
+    expect(podeAgirEm(sol("Pendente SST", false), "aprovacao", CONTRATO)).toBe(false);
+  });
+
+  it("só age no que é da sua origem", () => {
+    expect(podeAgirEm(sol("Pendente Operacional", false), "aprovacao", CONTRATO)).toBe(true);
+    expect(podeAgirEm(sol("Pendente Escritório", true), "aprovacao", CONTRATO)).toBe(false);
+    expect(podeAgirEm(sol("Pendente Escritório", true), "aprovacao", ESCRITORIO)).toBe(true);
+  });
+
+  it("SST e RH agem no status deles, nas duas origens", () => {
+    expect(podeAgirEm(sol("Pendente SST", true), "sst", AMBAS)).toBe(true);
+    expect(podeAgirEm(sol("Pendente RH", false), "rh", AMBAS)).toBe(true);
+    expect(podeAgirEm(sol("Concluída", false), "rh", AMBAS)).toBe(false);
   });
 });
 
 describe("statusVisiveis / statusDeAcao", () => {
-  it("cada etapa age em exatamente um status, e ele está entre os visíveis", () => {
-    for (const etapa of ["operacional", "escritorio", "sst", "rh"] as const) {
-      expect(statusVisiveis(etapa)).toContain(statusDeAcao(etapa));
+  it("todo status de ação da etapa está entre os que ela enxerga", () => {
+    for (const etapa of ["aprovacao", "sst", "rh"] as const) {
+      for (const s of statusDeAcao(etapa)) {
+        expect(statusVisiveis(etapa)).toContain(s);
+      }
     }
+  });
+
+  it("a aprovação age nas duas filas de origem", () => {
+    expect(statusDeAcao("aprovacao")).toEqual(["Pendente Operacional", "Pendente Escritório"]);
+  });
+});
+
+describe("resumoSST", () => {
+  it("antes do SST, não inventa", () => {
+    expect(resumoSST({ sst_em: null, sst_aso_data: null, sst_aso_dispensado: false })).toBe("—");
+  });
+
+  it("dispensado é informação, não ausência dela", () => {
+    // Sem isto, quem lê depois não sabe se ninguém marcou ou se foi decidido
+    // não marcar.
+    expect(resumoSST({ sst_em: "2026-08-25T12:00:00Z", sst_aso_data: null, sst_aso_dispensado: true }))
+      .toMatch(/dispensado/i);
+  });
+
+  it("marcado mostra a data", () => {
+    expect(resumoSST({ sst_em: "2026-08-25T12:00:00Z", sst_aso_data: "2026-09-03", sst_aso_dispensado: false }))
+      .toBe("ASO em 03/09/2026");
   });
 });
 

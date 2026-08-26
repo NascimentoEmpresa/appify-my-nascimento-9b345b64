@@ -90,7 +90,8 @@ const ROTULO: Record<string, string> = {
   // não pensa em "escritório x contrato", pensa em quem está com o pedido —
   // e isso o status já diz.
   cargo_atual: "Cargo atual", cargo_novo: "Cargo novo", local: "Local / contrato",
-  posto: "Posto", filial: "Filial", data_pretendida: "A partir de",
+  posto: "Posto", filial: "Filial", data_pretendida: "A partir de", setor: "Setor",
+  sst_aso_dispensado: "ASO dispensado",
   aprovador_nome: "Aprovado por", aprovador_em: "Aprovado em",
   aprovador_motivo: "Retorno de quem aprovou",
   sst_por: "SST", sst_em: "SST em", sst_aso_data: "Data do ASO",
