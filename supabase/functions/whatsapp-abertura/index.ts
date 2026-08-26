@@ -56,6 +56,46 @@ function problemaDeTemplate(codigo: unknown): boolean {
   return Number.isFinite(n) && n >= 132000 && n < 133000;
 }
 
+interface CorpoAprovado { texto: string | null; botoes: string[] }
+
+/**
+ * O corpo que a Meta REALMENTE entrega para (nome, idioma).
+ *
+ * Existe porque a mensagem de template não carrega texto no envio: mandamos
+ * só o nome e a Meta usa o que foi aprovado. Enquanto isso, o ERP gravava na
+ * Caixa o texto LOCAL (WA_BOT_CONFIG.abertura_texto) — e sempre que os dois
+ * divergiam, a Caixa mentia. Aconteceu em 26/08/2026: a tela mostrava
+ * "Olá, Somos do Grupo Nascimento!" e o contato recebia "Ol?! Somos da
+ * Empresa Nascimento. Sobre qual assunto deseja conversar?", de um template
+ * aprovado com outro conteúdo e sem acentuação.
+ *
+ * Devolve texto null quando não deu para saber — aí o chamador decide.
+ */
+async function corpoAprovado(
+  token: string, wabaId: string, nome: string, idioma: string,
+): Promise<CorpoAprovado> {
+  try {
+    const res = await fetch(
+      `${GRAPH}/${wabaId}/message_templates?limit=200&fields=name,language,status,components`,
+      { headers: { Authorization: `Bearer ${token}` } },
+    );
+    if (!res.ok) return { texto: null, botoes: [] };
+    const d = await res.json();
+    type Comp = { type?: string; text?: string; buttons?: { text?: string }[] };
+    const achado = (d?.data ?? []).find(
+      (x: { name?: string; language?: string }) => x?.name === nome && x?.language === idioma,
+    );
+    if (!achado) return { texto: null, botoes: [] };
+    const comps: Comp[] = achado.components ?? [];
+    const body = comps.find(c => c?.type === "BODY")?.text ?? null;
+    const botoes = (comps.find(c => c?.type === "BUTTONS")?.buttons ?? [])
+      .map(b => String(b?.text ?? "")).filter(Boolean);
+    return { texto: body, botoes };
+  } catch {
+    return { texto: null, botoes: [] };
+  }
+}
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: cors });
   if (req.method !== "POST") return json({ error: "method not allowed" }, 405);
@@ -93,13 +133,14 @@ Deno.serve(async (req) => {
     if (!waba.id) return json({ error: waba.erro ?? "não consegui identificar a conta do WhatsApp" }, 502);
 
     const res = await fetch(
-      `${GRAPH}/${waba.id}/message_templates?limit=200&fields=name,language,status,category,rejected_reason`,
+      `${GRAPH}/${waba.id}/message_templates?limit=200&fields=name,language,status,category,rejected_reason,components`,
       { headers: { Authorization: `Bearer ${WA_TOKEN}` } },
     );
     const d = await res.json().catch(() => ({}));
     if (!res.ok) return json({ error: "a Meta recusou a consulta", detalhe: d }, 502);
 
-    type Tpl = { name?: string; language?: string; status?: string; category?: string; rejected_reason?: string };
+    type Comp = { type?: string; text?: string; buttons?: { text?: string }[] };
+    type Tpl = { name?: string; language?: string; status?: string; category?: string; rejected_reason?: string; components?: Comp[] };
     const todos: Tpl[] = d?.data ?? [];
     const mesmoNome = todos.filter(t => t?.name === nomeTemplate);
     const noIdioma = mesmoNome.find(t => t?.language === idioma);
@@ -115,6 +156,12 @@ Deno.serve(async (req) => {
       status: noIdioma?.status ?? null,
       categoria: noIdioma?.category ?? null,
       motivo_reprovacao: noIdioma?.rejected_reason ?? null,
+      // O corpo REALMENTE aprovado. É o que a pessoa vai receber, e pode
+      // não ter nada a ver com o abertura_texto configurado aqui — foi
+      // exatamente esse descasamento que fez a Caixa mentir em 26/08.
+      corpo_aprovado: (noIdioma?.components ?? []).find(c => c?.type === "BODY")?.text ?? null,
+      botoes_aprovados: ((noIdioma?.components ?? []).find(c => c?.type === "BUTTONS")?.buttons ?? [])
+        .map(b => String(b?.text ?? "")).filter(Boolean),
       outros_idiomas: mesmoNome.filter(t => t?.language !== idioma)
         .map(t => ({ idioma: t.language, status: t.status })),
       // Os aprovados que existem de fato — é o que dá para usar HOJE, e o
@@ -257,19 +304,48 @@ Deno.serve(async (req) => {
 
   const waId = data?.messages?.[0]?.id ?? null;
 
-  // Registra a bolha. `payload.botoes` é o que a Caixa desenha embaixo da
-  // mensagem — sem isso o atendente não vê que mandou um botão.
+  // O QUE FOI ENTREGUE, não o que a gente queria entregar.
+  //
+  // No caminho de template a Meta usa o corpo APROVADO — o texto local nem
+  // viaja. Gravar `texto` aqui fazia a Caixa mostrar uma mensagem que o
+  // contato nunca recebeu. Agora o corpo real é buscado e é ele que fica
+  // registrado; se a consulta falhar, cai no texto local com a ressalva
+  // gravada no payload, para ninguém ler a bolha como se fosse certeza.
+  let textoGravado = texto;
+  let botoesGravados = botoes.map(b => b.titulo);
+  let corpoIncerto = false;
+
+  if (!dentroJanela) {
+    const waba = await descobrirWaba(WA_TOKEN, PHONE_NUMBER_ID);
+    const real = waba.id
+      ? await corpoAprovado(WA_TOKEN, waba.id, nomeTemplate, idioma)
+      : { texto: null, botoes: [] };
+    if (real.texto) {
+      textoGravado = real.texto;
+      botoesGravados = real.botoes;
+    } else {
+      corpoIncerto = true;
+    }
+  }
+
   const row: Record<string, unknown> = {
     conversa_id: conversa.id, contato_id: conversa.contato_id, direcao: "saida",
     tipo: dentroJanela ? "interactive" : "template",
-    texto, wa_message_id: waId, status: waId ? "enviada" : "erro",
+    texto: textoGravado, wa_message_id: waId, status: waId ? "enviada" : "erro",
     origem: "atendente", autor_id: userData.user.id,
   };
-  if (botoes.length) row.payload = { tipo: "button", botoes };
+  if (botoesGravados.length || corpoIncerto || !dentroJanela) {
+    row.payload = {
+      tipo: "button",
+      botoes: botoesGravados.map((titulo, i) => ({ id: i === 0 ? BOTAO_ID : `b_${i}`, titulo })),
+      ...(dentroJanela ? {} : { template: nomeTemplate, idioma }),
+      ...(corpoIncerto ? { corpo_incerto: true } : {}),
+    };
+  }
   await db.from("WA_MENSAGEM").insert(row);
   await db.from("WA_CONVERSA").update({
     ultima_mensagem_em: new Date().toISOString(),
-    ultima_mensagem_preview: texto.slice(0, 120),
+    ultima_mensagem_preview: textoGravado.slice(0, 120),
     ultima_direcao: "saida",
     nao_lidas: 0,
   }).eq("id", conversa.id);
