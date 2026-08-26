@@ -73,7 +73,9 @@ const LOTE = 1000;
 
 /** "25/03/2015" ou "2015-03-25" -> "2015-03-25". Null pro que não casar. */
 function dataBr(texto) {
-  const t = String(texto || "").trim();
+  // As aspas são do CSV de 2026, onde todo valor vem entre `"`. Sem tirá-las
+  // aqui, nenhuma data casa e o catálogo inteiro entra sem validade.
+  const t = String(texto || "").trim().replace(/^"|"$/g, "").trim();
   const br = t.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
   if (br) return `${br[3]}-${br[2]}-${br[1]}`;
   const iso = t.match(/^(\d{4})-(\d{2})-(\d{2})/);
@@ -135,12 +137,66 @@ async function baixarPacote() {
 }
 
 /**
+ * Descompacta gzip em fluxo, e RECUSA arquivo cortado.
+ *
+ * Dois problemas reais do arquivo do Ministério, ambos medidos no
+ * RelatorioCA_20260826_121551.csv.gz:
+ *
+ * 1. Sobram bytes depois do conteúdo. O `gunzip` de linha de comando avisa
+ *    "trailing garbage ignored" e segue; o Node tenta ler o resto como um
+ *    segundo arquivo e estoura com "incorrect header check", erro que não diz
+ *    nada sobre a causa. Por isso o fluxo, que permite ficar com o que já
+ *    saiu antes do erro.
+ *
+ * 2. O download pode vir incompleto — e aí o erro é o MESMO da situação 1.
+ *    Distinguir importa muito: no caso 1 os dados estão inteiros, no caso 2
+ *    faltam registros, e carregar meia lista de CA é pior que não carregar
+ *    (todo CA ausente viraria "não encontrado" na conferência).
+ *
+ * A distinção sai do rodapé do próprio gzip: os últimos 4 bytes guardam o
+ * tamanho original. Se o que saiu não bate com o que o arquivo promete, ele
+ * está truncado e a carga é recusada.
+ */
+function gunzipTolerante(bytes) {
+  return new Promise((resolve, reject) => {
+    const prometido = bytes.readUInt32LE(bytes.length - 4);
+    const partes = [];
+    let lidos = 0;
+
+    const gun = zlib.createGunzip();
+    gun.on("data", (d) => { partes.push(d); lidos += d.length; });
+    gun.on("error", () => {}); // tratado no close, com o total em mãos
+    gun.on("close", () => {
+      if (!lidos) {
+        reject(new Error("não foi possível descompactar o arquivo do CAEPI"));
+        return;
+      }
+      // Tolerância de 1%: o ISIZE é módulo 2^32 e arredondamentos de linha
+      // final não deveriam reprovar um arquivo íntegro.
+      if (prometido > 0 && lidos < prometido * 0.99) {
+        const mb = (n) => (n / 1048576).toFixed(0);
+        reject(
+          new Error(
+            `arquivo do CAEPI incompleto: saíram ${mb(lidos)} MB dos ${mb(prometido)} MB ` +
+              "que ele declara. Baixe de novo pelo site do Ministério.",
+          ),
+        );
+        return;
+      }
+      resolve(Buffer.concat(partes));
+    });
+
+    gun.end(bytes);
+  });
+}
+
+/**
  * Descompacta reconhecendo o container pelos bytes mágicos.
  * gzip = 1f 8b · RAR = "Rar!" · zip = "PK"
  */
 async function descompactar(bytes) {
   if (bytes[0] === 0x1f && bytes[1] === 0x8b) {
-    return zlib.gunzipSync(bytes);
+    return await gunzipTolerante(bytes);
   }
   if (bytes.slice(0, 4).toString("latin1") === "Rar!") {
     const { createExtractorFromData } = await import("node-unrar-js");
@@ -200,27 +256,52 @@ function parsear(texto) {
   if (!linhas.length) return { registros: [], lidas: 0 };
 
   const sep = detectarSeparador(linhas[0]);
+  // `﻿+` e não uma vez só: o arquivo de 2026 vem com DOIS marcadores de
+  // codificação no começo, um colado no outro.
   const cabecalho = linhas[0]
-    .replace(/^﻿/, "")
+    .replace(/^﻿+/, "")
     .replace(/^#/, "")
     .split(sep)
     .map((c) => c.trim().replace(/^"|"$/g, ""));
 
+  /**
+   * Compara nomes de coluna ignorando espaço, acento e caixa.
+   *
+   * Em 2023 a coluna era `NRRegistroCA`; em 2026 virou `NR Registro CA`, e
+   * `DataValidade` virou `DATA DE VALIDADE`. Comparar o texto cru faria a
+   * carga falhar a cada reformatação de cabeçalho do Ministério.
+   */
+  const normalizar = (s) =>
+    String(s || "")
+      .normalize("NFD")
+      .replace(/[̀-ͯ]/g, "")
+      .toLowerCase()
+      .replace(/[^a-z0-9]/g, "");
+
+  const normalizado = cabecalho.map(normalizar);
+
+  // Exato primeiro, "contém" depois: `EQUIPAMENTO` e `DESCRICAO EQUIPAMENTO`
+  // convivem no arquivo, e sem essa ordem a descrição venceria o nome.
   const acha = (...nomes) => {
     for (const n of nomes) {
-      const i = cabecalho.findIndex((c) => c.toLowerCase() === n.toLowerCase());
+      const i = normalizado.indexOf(normalizar(n));
+      if (i >= 0) return i;
+    }
+    for (const n of nomes) {
+      const alvo = normalizar(n);
+      const i = normalizado.findIndex((c) => c.includes(alvo));
       if (i >= 0) return i;
     }
     return -1;
   };
 
-  const iCa = acha("NRRegistroCA", "RegistroCA", "CA", "NumeroCA");
-  const iValidade = acha("DataValidade", "Validade");
-  const iSituacao = acha("Situacao", "Situação");
-  const iEquip = acha("NomeEquipamento", "Equipamento");
+  const iCa = acha("NRRegistroCA", "NR Registro CA", "RegistroCA", "NumeroCA");
+  const iValidade = acha("DataValidade", "Data de Validade", "Validade");
+  const iSituacao = acha("Situacao");
+  const iEquip = acha("Equipamento", "NomeEquipamento");
   const iNatureza = acha("Natureza");
   const iCnpj = acha("CNPJ");
-  const iRazao = acha("RazaoSocial", "RazãoSocial");
+  const iRazao = acha("RazaoSocial", "Razao Social");
 
   if (iCa < 0 || iValidade < 0) {
     throw new Error(
