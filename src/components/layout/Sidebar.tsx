@@ -847,6 +847,14 @@ const sstModule: ModuleDef = {
         { label: "Mudança de Função — ASO", to: "/app/sst/troca-funcao", icon: ArrowLeftRight, notif: "troca_funcao" },
       ],
     },
+    {
+      label: "EPIs",
+      defaultOpen: true,
+      items: [
+        { label: "Laudos de EPI", to: "/app/sst/laudos", icon: FileCheck2 },
+        { label: "Controle de CA", to: "/app/sst/controle-ca", icon: ShieldAlert },
+      ],
+    },
   ],
 };
 
