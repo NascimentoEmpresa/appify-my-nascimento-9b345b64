@@ -10,7 +10,7 @@ import {
   ClipboardCheck,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { DespesaEvento, MaloteDespesaRow, StatusDespesa, TipoEvento, aprovadorDoNivel, useNomeUsuario } from "@/hooks/useMaloteDespesa";
+import { DespesaEvento, MaloteDespesaRow, StatusDespesa, TipoEvento, aprovadoresDoNivel, useNomeUsuario } from "@/hooks/useMaloteDespesa";
 
 // Status que são desvios do caminho feliz — cada um corresponde a um único
 // tipo de evento que explica por que a despesa está ali.
@@ -178,8 +178,8 @@ function NoEtapa({
 }
 
 export function FluxoAprovacaoVisual({ despesa, eventos }: { despesa: MaloteDespesaRow; eventos: DespesaEvento[] }) {
-  const nivel2 = aprovadorDoNivel(despesa, 2) != null;
-  const nivel3 = aprovadorDoNivel(despesa, 3) != null;
+  const nivel2 = aprovadoresDoNivel(despesa, 2).length > 0;
+  const nivel3 = aprovadoresDoNivel(despesa, 3).length > 0;
 
   // Template canônico do fluxo inteiro — sempre mostra todas as etapas
   // mapeadas (Solicitação → Cotação → Despesa → Pagamento), independente

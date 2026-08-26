@@ -16,7 +16,7 @@ import {
   useNomeUsuario,
   useEmpresasGrupo,
   useContratosAtivos,
-  aprovadorDoNivel,
+  souAprovadorDoNivel,
   STATUS_LABEL,
   STATUS_BADGE_CLASS,
   STATUS_FASE_SOLICITACAO,
@@ -193,7 +193,7 @@ export default function Aprovacoes() {
   }
 
   const minhasPendentes = itens.filter(
-    ({ despesa: d }) => d.status === "pendente_aprovacao" && d.nivel_aprovacao_atual != null && aprovadorDoNivel(d, d.nivel_aprovacao_atual) === user?.id
+    ({ despesa: d }) => d.status === "pendente_aprovacao" && d.nivel_aprovacao_atual != null && souAprovadorDoNivel(d, d.nivel_aprovacao_atual, user?.id)
   ).length;
   const outrasPendentes = contar("pendente_aprovacao") - minhasPendentes;
 

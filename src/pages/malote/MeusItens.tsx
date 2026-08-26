@@ -114,13 +114,20 @@ function tipoLabelDe(despesa: MaloteDespesaRow): string {
   return ORIGEM_LABEL[despesa.origem] ?? despesa.origem;
 }
 
+// SIS-2026-0236: nível pode ter mais de um aprovador — mostra o primeiro
+// + indicador "+N" (mesmo padrão de ClassificacoesMalote.tsx/OrcamentoGeral.tsx).
+function formatarAprovadores(nomes: string[] | undefined): string | null {
+  if (!nomes || nomes.length === 0) return null;
+  return nomes.length > 1 ? `${nomes[0]} +${nomes.length - 1}` : nomes[0];
+}
+
 function aprovadorPendente(despesa: MaloteDespesaRow): string | null {
   if (despesa.status !== "pendente_aprovacao" || !despesa.nivel_aprovacao_atual) return null;
   const c = despesa.classificacao;
   if (!c) return null;
-  if (despesa.nivel_aprovacao_atual === 1) return c.aprovador1_nome ?? null;
-  if (despesa.nivel_aprovacao_atual === 2) return c.aprovador2_nome ?? null;
-  return c.aprovador3_nome ?? null;
+  if (despesa.nivel_aprovacao_atual === 1) return formatarAprovadores(c.aprovador1_nomes);
+  if (despesa.nivel_aprovacao_atual === 2) return formatarAprovadores(c.aprovador2_nomes);
+  return formatarAprovadores(c.aprovador3_nomes);
 }
 
 export default function MeusItens() {
