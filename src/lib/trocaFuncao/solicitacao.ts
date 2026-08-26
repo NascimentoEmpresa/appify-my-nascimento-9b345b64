@@ -1,14 +1,29 @@
 // =====================================================================
 // TROCA DE FUNÇÃO — o fluxo, longe do React
 //
-// Encarregado abre → alguém aprova → SST marca o ASO → RH altera na
-// Senior. Quem aprova depende de ONDE a pessoa trabalha: contrato vai
-// para o Operacional, escritório vai para a dupla do administrativo.
+// Encarregado abre → alguém aprova → SST → RH altera na Senior.
 //
 //   Pendente Operacional ─┐
 //                         ├→ Pendente SST → Pendente RH → Concluída
 //   Pendente Escritório  ─┘
 //          ↘ Reprovada (em qualquer uma das duas)
+//
+// CONTRATO x ESCRITÓRIO não é mais tela separada (25/08/2026). Eram duas
+// telas idênticas com o mesmo painel, e quem tinha as duas permissões
+// trocava de menu para ver a mesma fila em pedaços. Agora é UMA tela de
+// aprovação; a origem virou FILTRO e quem decide o que cada um enxerga é a
+// permissão, não a rota:
+//
+//   operacional_troca_funcao → vê as de contrato
+//   escritorio_troca_funcao  → vê as de escritório
+//
+// Quem tem as duas vê tudo e filtra; quem tem uma vê só a sua e nem sabe
+// que o filtro existe. As duas rotas continuam de pé apontando para a
+// mesma tela, para ninguém perder o item de menu que já tinha.
+//
+// O SST pode DISPENSAR o ASO: nem toda troca de função exige exame novo, e
+// antes disso o card ficava parado esperando uma data que não ia existir.
+// Dispensar segue para o RH igual, só sem data.
 //
 // Testado em src/test/troca-funcao.test.ts.
 // =====================================================================
@@ -23,8 +38,39 @@ export type StatusTroca =
   | "Concluída"
   | "Reprovada";
 
-/** A etapa é o papel de quem está olhando a fila. */
-export type Etapa = "operacional" | "escritorio" | "sst" | "rh";
+/**
+ * A etapa é o papel de quem está olhando a fila.
+ *
+ * `aprovacao` cobre o que eram DUAS etapas ("operacional" e "escritorio").
+ * O que separa uma da outra não é mais a tela, é a permissão de quem abriu
+ * — ver `origensVisiveis`.
+ */
+export type Etapa = "aprovacao" | "sst" | "rh";
+
+/** De onde a solicitação veio. É o filtro da tela de aprovação. */
+export type Origem = "contrato" | "escritorio";
+
+export const origemDa = (s: Pick<SolicitacaoTroca, "e_escritorio">): Origem =>
+  s.e_escritorio ? "escritorio" : "contrato";
+
+export const ROTULO_ORIGEM: Record<Origem, string> = {
+  contrato: "Contrato",
+  escritorio: "Escritório / administrativo",
+};
+
+/**
+ * O que a pessoa pode enxergar, a partir dos menus que ela tem.
+ *
+ * É a tradução direta do pedido "a permissão continua: quem pode ver
+ * mudança de função escritório". Os dois menus antigos viraram chave de
+ * ORIGEM em vez de chave de TELA.
+ */
+export function origensVisiveis(podeContrato: boolean, podeEscritorio: boolean): Origem[] {
+  const r: Origem[] = [];
+  if (podeContrato) r.push("contrato");
+  if (podeEscritorio) r.push("escritorio");
+  return r;
+}
 
 export interface SolicitacaoTroca {
   id: number;
@@ -42,6 +88,11 @@ export interface SolicitacaoTroca {
   filial: string | null;
   /** true = escritório (aprova a dupla do administrativo); false = contrato. */
   e_escritorio: boolean;
+  /**
+   * Opcional, escolhido no pedido. Não roteia nada — é só para o gerente
+   * filtrar a fila por setor, do mesmo jeito que já filtra por contrato.
+   */
+  setor: string | null;
   motivo: string | null;
   data_pretendida: string | null;
   status: StatusTroca;
@@ -51,6 +102,8 @@ export interface SolicitacaoTroca {
   sst_por: string | null;
   sst_em: string | null;
   sst_aso_data: string | null;
+  /** O SST passou a troca adiante SEM exame — ver o cabeçalho. */
+  sst_aso_dispensado: boolean;
   sst_observacao: string | null;
   rh_por: string | null;
   rh_em: string | null;
@@ -93,54 +146,80 @@ export function localEhEscritorio(local?: string | null): boolean {
 /**
  * Onde a solicitação nasce.
  *
- * Local desconhecido cai no Operacional de propósito: das ~2.200 pessoas
- * ativas, ~79 são de escritório. Errar para o lado do Operacional acerta
- * na esmagadora maioria, e a fila dele é a que tem gente olhando todo dia.
+ * Quem responde é o CHECKBOX do formulário, não mais o cadastro. A leitura
+ * automática do local vivia errando nos dois sentidos (o cadastro é espelho
+ * do Senior e tem gente de escritório marcada em contrato), e o encarregado
+ * não tinha como consertar: a solicitação nascia na fila errada e alguém
+ * tinha que ir no banco. `localEhEscritorio` continua aqui, mas só para a
+ * tela sugerir — ver SolicitarTrocaFuncao.
  */
 export function statusInicial(eEscritorio: boolean): StatusTroca {
   return eEscritorio ? "Pendente Escritório" : "Pendente Operacional";
 }
 
-/** A etapa tem trabalho a fazer neste status? */
-const STATUS_DE_ACAO: Record<Etapa, StatusTroca> = {
-  operacional: "Pendente Operacional",
-  escritorio: "Pendente Escritório",
-  sst: "Pendente SST",
-  rh: "Pendente RH",
+/**
+ * Os status em que a etapa TEM trabalho a fazer.
+ *
+ * Aprovação tem dois porque é uma tela só para as duas origens: quem abre
+ * age no que for da SUA origem, e é a permissão que decide qual é
+ * (ver `podeAgirEm`).
+ */
+const STATUS_DE_ACAO: Record<Etapa, StatusTroca[]> = {
+  aprovacao: ["Pendente Operacional", "Pendente Escritório"],
+  sst:       ["Pendente SST"],
+  rh:        ["Pendente RH"],
 };
 
-export const statusDeAcao = (etapa: Etapa) => STATUS_DE_ACAO[etapa];
+export const statusDeAcao = (etapa: Etapa): StatusTroca[] => STATUS_DE_ACAO[etapa];
 
 /**
  * O que cada fila enxerga.
  *
- * Operacional e Escritório veem a própria fila do começo ao fim (a pergunta
- * que mais chega é "e a do fulano, andou?"), mas NÃO veem a fila um do
- * outro. SST e RH não enxergam o que ainda está em aprovação nem o que foi
- * reprovado: para eles a solicitação só existe depois de aprovada.
+ * Quem aprova vê a própria fila do começo ao fim (a pergunta que mais chega
+ * é "e a do fulano, andou?"). SST e RH não enxergam o que ainda está em
+ * aprovação nem o que foi reprovado: para eles a solicitação só existe
+ * depois de aprovada.
  */
 const STATUS_VISIVEIS: Record<Etapa, StatusTroca[]> = {
-  operacional: ["Pendente Operacional", "Pendente SST", "Pendente RH", "Concluída", "Reprovada"],
-  escritorio:  ["Pendente Escritório", "Pendente SST", "Pendente RH", "Concluída", "Reprovada"],
-  sst:         ["Pendente SST", "Pendente RH", "Concluída"],
-  rh:          ["Pendente RH", "Concluída"],
+  aprovacao: ["Pendente Operacional", "Pendente Escritório", "Pendente SST", "Pendente RH", "Concluída", "Reprovada"],
+  sst:       ["Pendente SST", "Pendente RH", "Concluída"],
+  rh:        ["Pendente RH", "Concluída"],
 };
 
 export const statusVisiveis = (etapa: Etapa) => STATUS_VISIVEIS[etapa];
 
 /**
- * A fila do Operacional e a do Escritório dividem os mesmos status daqui
- * para a frente, então filtrar só por status misturaria as duas. Depois da
- * aprovação o recorte é a origem da solicitação.
+ * A linha entra na tela desta pessoa?
+ *
+ * Duas perguntas, não uma: o status tem que caber na etapa E a origem tem
+ * que estar entre as que a permissão libera. Sem a segunda, juntar as duas
+ * telas em uma daria ao Operacional a fila do administrativo de brinde.
  */
-export function pertenceAFila(s: Pick<SolicitacaoTroca, "status" | "e_escritorio">, etapa: Etapa): boolean {
+export function pertenceAFila(
+  s: Pick<SolicitacaoTroca, "status" | "e_escritorio">,
+  etapa: Etapa,
+  origens: Origem[],
+): boolean {
   if (!STATUS_VISIVEIS[etapa].includes(s.status)) return false;
-  if (etapa === "operacional") return !s.e_escritorio;
-  if (etapa === "escritorio") return s.e_escritorio;
-  return true;   // SST e RH tratam as duas origens
+  return origens.includes(origemDa(s));
 }
 
-export type Acao = "aprovar" | "reprovar" | "aso" | "concluir";
+/**
+ * Esta pessoa pode DECIDIR esta linha agora?
+ *
+ * Ver não é decidir: na tela de aprovação alguém pode acompanhar o que já
+ * saiu da mão dele, e no SST/RH a origem não separa ninguém.
+ */
+export function podeAgirEm(
+  s: Pick<SolicitacaoTroca, "status" | "e_escritorio">,
+  etapa: Etapa,
+  origens: Origem[],
+): boolean {
+  if (!STATUS_DE_ACAO[etapa].includes(s.status)) return false;
+  return origens.includes(origemDa(s));
+}
+
+export type Acao = "aprovar" | "reprovar" | "aso" | "dispensar_aso" | "concluir";
 
 /**
  * Para onde a solicitação vai. Devolve null quando a ação não vale no
@@ -150,7 +229,10 @@ export function proximoStatus(atual: StatusTroca, acao: Acao): StatusTroca | nul
   const emAprovacao = atual === "Pendente Operacional" || atual === "Pendente Escritório";
   if (acao === "aprovar")  return emAprovacao ? "Pendente SST" : null;
   if (acao === "reprovar") return emAprovacao ? "Reprovada" : null;
-  if (acao === "aso")      return atual === "Pendente SST" ? "Pendente RH" : null;
+  // Marcar o ASO e dispensar o ASO levam ao MESMO lugar de propósito: para o
+  // RH os dois querem dizer "o SST já olhou, pode alterar na Senior". O que
+  // muda é só o que fica registrado.
+  if (acao === "aso" || acao === "dispensar_aso") return atual === "Pendente SST" ? "Pendente RH" : null;
   if (acao === "concluir") return atual === "Pendente RH" ? "Concluída" : null;
   return null;
 }
@@ -171,8 +253,8 @@ export function explicaStatus(s: StatusTroca): string {
   switch (s) {
     case "Pendente Operacional": return "Aguardando o Operacional aprovar a troca.";
     case "Pendente Escritório":  return "Aguardando a aprovação do administrativo.";
-    case "Pendente SST":         return "Aprovada. O SST vai marcar o ASO de mudança de função.";
-    case "Pendente RH":          return "ASO marcado. O RH vai fazer a alteração na Senior.";
+    case "Pendente SST":         return "Aprovada. O SST vai avaliar se precisa de ASO.";
+    case "Pendente RH":          return "Liberada pelo SST. O RH vai fazer a alteração na Senior.";
     case "Concluída":            return "Alteração feita na Senior. Troca concluída.";
     case "Reprovada":            return "Não aprovada — veja o motivo no detalhe.";
   }
@@ -189,3 +271,14 @@ export const fmtDataHora = (v?: string | null) => {
   const d = new Date(v);
   return isNaN(+d) ? "—" : d.toLocaleString("pt-BR", { dateStyle: "short", timeStyle: "short" });
 };
+
+/**
+ * O que o SST resolveu, em uma linha — vale para a trilha e para a lista.
+ * Dispensar é informação, não ausência de informação: quem lê depois
+ * precisa saber que ninguém esqueceu de marcar, foi decidido não marcar.
+ */
+export function resumoSST(s: Pick<SolicitacaoTroca, "sst_em" | "sst_aso_data" | "sst_aso_dispensado">): string {
+  if (!s.sst_em) return "—";
+  if (s.sst_aso_dispensado) return "ASO dispensado — a função não exige exame novo";
+  return s.sst_aso_data ? `ASO em ${fmtData(s.sst_aso_data)}` : "Liberada pelo SST";
+}

@@ -76,11 +76,12 @@ export type Status =
   | "Pendente Operacional"
   | "Reprovada"
   | "Pendente RH"
+  | "Pendente SST"
   | "Concluída"
   | "Cancelada";
 
 export const STATUS_TODOS: Status[] = [
-  "Pendente Operacional", "Pendente RH", "Concluída", "Reprovada", "Cancelada",
+  "Pendente Operacional", "Pendente RH", "Pendente SST", "Concluída", "Reprovada", "Cancelada",
 ];
 
 /** Cor do selo de status — a mesma régua nas três telas. */
@@ -88,6 +89,7 @@ export function corDoStatus(status: string): string {
   const cores: Record<string, string> = {
     "Pendente Operacional": "bg-yellow-100 text-yellow-800 border-yellow-200",
     "Pendente RH": "bg-purple-100 text-purple-700 border-purple-200",
+    "Pendente SST": "bg-cyan-100 text-cyan-800 border-cyan-200",
     "Concluída": "bg-green-100 text-green-700 border-green-200",
     "Reprovada": "bg-red-100 text-red-700 border-red-200",
     "Cancelada": "bg-slate-100 text-slate-600 border-slate-200",
@@ -100,7 +102,8 @@ export function explicaStatus(status: string): string {
   const textos: Record<string, string> = {
     "Pendente Operacional": "Aguardando a aprovação do Operacional.",
     "Pendente RH": "Aprovada pelo Operacional. Aguardando o RH concluir.",
-    "Concluída": "O RH concluiu o desligamento.",
+    "Pendente SST": "O RH concluiu. O SST vai marcar o ASO demissional.",
+    "Concluída": "ASO demissional marcado. Desligamento concluído.",
     "Reprovada": "O Operacional reprovou — veja o motivo.",
     "Cancelada": "A solicitação foi cancelada.",
   };
@@ -143,6 +146,18 @@ export interface SolicitacaoDemissao {
   rh_em: string | null;
   rh_observacao: string | null;
 
+  // ASO demissional. Os nomes são os MESMOS do ASO de admissão
+  // (WA_CURRICULOS.sst_*) de propósito: quem trabalha no SST preenche a mesma
+  // ficha nas duas pontas, e um dia dá para juntar as telas sem renomear
+  // coluna nenhuma.
+  sst_data_exame: string | null;
+  sst_hora_exame: string | null;
+  sst_local_exame: string | null;
+  sst_maps_url: string | null;
+  sst_observacao: string | null;
+  sst_por: string | null;
+  sst_em: string | null;
+
   criado_em: string | null;
   atualizado_em: string | null;
 }
@@ -178,6 +193,30 @@ export function fmtTamanho(bytes?: number | null): string {
 }
 
 export const hojeISO = () => new Date().toISOString().slice(0, 10);
+
+/**
+ * Link para abrir o local do ASO no Google Maps — a mesma regra do ASO de
+ * admissão: vale o link exato que o SST colou; sem ele, cai na busca pelo
+ * texto do local. Null quando não há nem um nem outro.
+ */
+export function linkDoLocalASO(s: {
+  sst_maps_url?: string | null; sst_local_exame?: string | null;
+}): string | null {
+  const url = String(s.sst_maps_url ?? "").trim();
+  if (url) return url;
+  const local = String(s.sst_local_exame ?? "").trim();
+  return local ? `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(local)}` : null;
+}
+
+/** "12/03/2026 às 09:00 · Clínica X" — o ASO em uma linha. */
+export function resumoDoASO(s: {
+  sst_data_exame?: string | null; sst_hora_exame?: string | null; sst_local_exame?: string | null;
+}): string {
+  if (!s.sst_data_exame) return "—";
+  const hora = s.sst_hora_exame ? ` às ${s.sst_hora_exame}` : "";
+  const local = s.sst_local_exame ? ` · ${s.sst_local_exame}` : "";
+  return `${fmtData(s.sst_data_exame)}${hora}${local}`;
+}
 
 /** (00) 00000-0000 enquanto digita — o banco guarda o que aparece na tela. */
 export function mascaraTelefone(v: string): string {

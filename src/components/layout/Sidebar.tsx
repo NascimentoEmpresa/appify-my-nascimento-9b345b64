@@ -461,7 +461,7 @@ const rhModule: ModuleDef = {
         { label: "Gestão de Férias", to: "/app/rh/ferias", icon: CalendarRange },
         { label: "Solicitações de Demissão", to: "/app/rh/solicitacoes-demissao", icon: UserMinus },
         { label: "Mudança de Função", to: "/app/rh/troca-funcao", icon: ArrowLeftRight, notif: "troca_funcao" },
-        { label: "Mudança de Função — Escritório", to: "/app/rh/troca-funcao-escritorio", icon: Building2, notif: "troca_funcao" },
+        { label: "Mudança de Função — Aprovação", to: "/app/rh/troca-funcao-escritorio", icon: Building2, notif: "troca_funcao" },
       ],
     },
   ],
@@ -846,6 +846,14 @@ const sstModule: ModuleDef = {
       items: [
         { label: "ASO / Admissão", to: "/app/sst/aso", icon: HardHat },
         { label: "Mudança de Função — ASO", to: "/app/sst/troca-funcao", icon: ArrowLeftRight, notif: "troca_funcao" },
+      ],
+    },
+    {
+      // A outra ponta: o desligamento também passa pelo SST, depois do RH.
+      label: "Desligamento",
+      defaultOpen: true,
+      items: [
+        { label: "ASO Demissional", to: "/app/sst/aso-demissional", icon: UserMinus },
       ],
     },
     {
