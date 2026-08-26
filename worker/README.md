@@ -56,10 +56,23 @@ oficial e está congelado em 19/01/2023 — declara 13.088 CAs "VÁLIDO" e nenhu
 validade passa de 2025. Ligar aquele arquivo marcaria como vencido quase todo
 CA legítimo e travaria entrada de EPI no estoque.
 
+### O download não é automático, e não é por falta de tentativa
+
 A fonte viva é o botão "Base de dados do sistema CAEPI (Download)" em
-`caepi.trabalho.gov.br`, que é um postback ASP.NET gerando o arquivo sob
-demanda. O módulo carrega a página, devolve os campos de estado e recebe o
-arquivo.
+`caepi.trabalho.gov.br` — um postback ASP.NET que gera o arquivo sob demanda.
+O fluxo está implementado em `baixarPacote()`, **e o site recusa**: responde
+403 para qualquer cliente que não seja navegador de verdade. Testado da mesma
+máquina onde o Chrome baixa sem problema, com cabeçalhos completos de Chrome,
+enquanto `google.com` responde 200 no mesmo processo. A distinção é a
+impressão digital do handshake TLS, que header nenhum muda.
+
+Então o caminho é manual: **baixe pelo site e largue o arquivo em
+`worker/state/caepi/`**. O worker pega o mais recente, seja qual for a
+extensão. A base de CA muda devagar e a tela mostra a idade do catálogo, então
+catálogo velho fica visível em vez de silencioso.
+
+A alternativa seria embutir um Chromium headless (~300 MB) no worker para
+baixar um arquivo por semana. Não compensa.
 
 O formato **é detectado, não assumido**: o container sai dos bytes mágicos
 (gzip, RAR ou zip) e o separador sai da linha de cabeçalho. Em três anos o

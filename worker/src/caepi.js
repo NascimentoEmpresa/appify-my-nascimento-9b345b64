@@ -5,13 +5,29 @@
 // inteiro de uma vez, que é o que responde "quais das minhas 400 máscaras
 // estão vencidas".
 //
-// COMO SE CHEGA NO ARQUIVO
+// COMO SE CHEGA NO ARQUIVO — e por que não dá para automatizar o download
+//
 // Não existe URL fixa. O download nasce de um botão ASP.NET na página
 // https://caepi.trabalho.gov.br/internet/consultaCAInternet.aspx, cujo link é
-// `javascript:__doPostBack('ctl00$PlaceHolderConteudo$LinkButton1','')`. O
+// `javascript:__doPostBack('ctl00$PlaceHolderConteudo$LinkButton1','')`, e o
 // arquivo é gerado sob demanda (o nome carrega o timestamp:
-// RelatorioCA_20260826_104105.csv.gz), então é preciso carregar a página,
-// pegar os campos de estado do ASP.NET e devolvê-los no POST.
+// RelatorioCA_20260826_104105.csv.gz).
+//
+// O fluxo de postback está implementado em `baixarPacote()` e **não funciona
+// hoje**: o WAF do site responde 403 para qualquer cliente que não seja um
+// navegador de verdade. Testado da própria máquina onde o Chrome baixa sem
+// problema, com cabeçalhos completos de Chrome — mesmo assim 403, enquanto
+// google.com responde 200 no mesmo processo. A distinção é a impressão digital
+// do handshake TLS, que nenhum ajuste de header muda.
+//
+// Por isso o caminho principal é a PASTA: alguém baixa pelo navegador e larga
+// o arquivo em `state/caepi/`. O worker pega o mais recente. Não é elegante,
+// mas é honesto sobre a restrição — e a base de CA muda devagar, então uma
+// visita ocasional ao site resolve. A alternativa seria embutir um navegador
+// headless (~300 MB de Chromium) no worker para baixar um arquivo por semana.
+//
+// A tela avisa a idade do catálogo, então catálogo velho é visível em vez de
+// silencioso.
 //
 // NÃO USE a cópia hospedada em gov.br/.../tgg_export_caepi.zip. Ela parece a
 // fonte oficial e está congelada em 19/01/2023 — medido no arquivo: declara
@@ -27,6 +43,12 @@
 // combinação fixa que quebra na próxima troca.
 
 const zlib = require("node:zlib");
+const fs = require("node:fs");
+const path = require("node:path");
+
+// Pasta onde alguém deposita o arquivo baixado do site. É o caminho PRINCIPAL,
+// não um plano B — ver a nota sobre o WAF logo abaixo.
+const PASTA = process.env.CAEPI_PASTA || path.join(__dirname, "..", "state", "caepi");
 
 const PAGINA_CAEPI =
   process.env.CAEPI_PAGINA ||
@@ -39,6 +61,12 @@ const BOTAO = process.env.CAEPI_BOTAO || "ctl00$PlaceHolderConteudo$LinkButton1"
 // que não ter catálogo: catálogo vazio a tela avisa, catálogo errado o usuário
 // acredita.
 const LIGADO = process.env.CAEPI_LIGADO === "1";
+
+// O postback so e tentado com isso ligado — hoje o WAF do site devolve 403
+// para cliente que nao seja navegador. Existe para o dia em que mudar.
+const TENTAR_SITE = process.env.CAEPI_TENTAR_SITE === "1";
+
+let avisouPastaVazia = false;
 
 const INTERVALO_DIAS = 7;
 const LOTE = 1000;
@@ -266,9 +294,47 @@ async function gravar(supabase, registros) {
   return gravados;
 }
 
+/**
+ * Arquivo mais recente depositado na pasta, ou null.
+ *
+ * Aceita qualquer extensão porque o Ministério já serviu `.zip` que era RAR e
+ * agora serve `.csv.gz` — quem decide o formato é `descompactar()`, pelos
+ * bytes, não o nome do arquivo.
+ */
+function arquivoDaPasta() {
+  if (!fs.existsSync(PASTA)) return null;
+  const candidatos = fs
+    .readdirSync(PASTA)
+    .filter((n) => !n.startsWith("."))
+    .map((n) => {
+      const completo = path.join(PASTA, n);
+      const st = fs.statSync(completo);
+      return st.isFile() ? { caminho: completo, nome: n, mtime: st.mtimeMs } : null;
+    })
+    .filter(Boolean)
+    .sort((a, b) => b.mtime - a.mtime);
+  return candidatos[0] || null;
+}
+
 async function sincronizarCaepi(supabase) {
   if (!LIGADO) return;
   if (!(await precisaSincronizar(supabase))) return;
+
+  const local = arquivoDaPasta();
+
+  // Pasta vazia e sem autorização para tentar o site: sai em silêncio. Sem
+  // este atalho o ciclo de 60s tentaria o download a cada minuto, tomaria 403
+  // toda vez e encheria a tabela de sincronização de erro idêntico.
+  if (!local && !TENTAR_SITE) {
+    if (!avisouPastaVazia) {
+      console.log(
+        `[worker] CAEPI: nenhum arquivo em ${PASTA} — baixe pelo site e deposite ali.`,
+      );
+      avisouPastaVazia = true;
+    }
+    return;
+  }
+  avisouPastaVazia = false;
 
   const { data: linha, error: erroInicio } = await supabase
     .from("sst_ca_sincronizacao")
@@ -278,8 +344,17 @@ async function sincronizarCaepi(supabase) {
   if (erroInicio) throw erroInicio;
 
   try {
-    console.log("[worker] CAEPI: baixando catálogo de CA...");
-    const bytes = await baixarPacote();
+    // Pasta primeiro: é o caminho que funciona. O postback fica como tentativa
+    // secundária para o dia em que o WAF afrouxar ou o worker rodar de um
+    // ambiente que ele aceite.
+    let bytes;
+    if (local) {
+      console.log(`[worker] CAEPI: lendo ${local.nome} de ${PASTA}`);
+      bytes = fs.readFileSync(local.caminho);
+    } else {
+      console.log("[worker] CAEPI: pasta vazia, tentando o site...");
+      bytes = await baixarPacote();
+    }
     const texto = decodificar(await descompactar(bytes));
     const { registros, lidas } = parsear(texto);
 
@@ -314,6 +389,7 @@ async function sincronizarCaepi(supabase) {
 
 module.exports = {
   sincronizarCaepi,
+  baixarPacote,
   parsear,
   dataBr,
   decodificar,
