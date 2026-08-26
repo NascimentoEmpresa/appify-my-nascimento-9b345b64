@@ -91,7 +91,7 @@ export function useSetoresCatalogo() {
     queryKey: ["setor_catalogo_planejamento_orcamentario"],
     staleTime: 5 * 60_000,
     queryFn: async () => {
-      const { data, error } = await supabase.from("setor_catalogo").select("nome").order("nome");
+      const { data, error } = await (supabase as any).from("setor_catalogo").select("nome").order("nome");
       if (error) throw error;
       return (data ?? []).map((r) => r.nome as string);
     },
