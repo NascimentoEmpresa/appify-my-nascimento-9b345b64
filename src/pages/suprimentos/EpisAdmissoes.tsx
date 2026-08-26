@@ -2,6 +2,8 @@ import { useState, useCallback, useEffect } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
 import { usePermissoes } from "@/context/PermissoesContext";
+import { useEmpresaAtiva } from "@/context/EmpresaAtivaContext";
+import { useContratosCatalogo, usePostos, useFuncoes } from "@/hooks/useSupCatalogo";
 import {
   CandidatoInfo, Modal, Campo, Acoes, Toasts, btnStyle, PendToggle, EtapaChip, HistoricoCandidato,
 } from "@/components/recrutamento/CandidatoInfo";
@@ -25,10 +27,30 @@ import {
 // =====================================================================
 
 const ETAPAS_PARALELO = ["SST + COMPRAS", "EXAME SST", "COMPRAS"];
+const sb = supabase as any;
+
+interface EnxovalDetalhe {
+  id: string;
+  token: string | null;
+  expira_em: string | null;
+  preenchido_em: string | null;
+  pedido_id: string | null;
+  contrato_id: string | null;
+  posto_id: string | null;
+  funcao_id: string | null;
+  sup_admissao_enxoval_item: Array<{
+    id: string;
+    nome_item: string;
+    tamanho: string | null;
+    quantidade: number;
+    ordem: number;
+  }>;
+}
 
 export default function EpisAdmissoes() {
   const { user } = useAuth();
   const { can } = usePermissoes();
+  const { empresa } = useEmpresaAtiva();
   const podeAgir = can("alterar", undefined, "sup_epis_admissao");
   const nome = user?.user_metadata?.nome ?? user?.email ?? "";
 
@@ -39,6 +61,15 @@ export default function EpisAdmissoes() {
   const [acao, setAcao] = useState<{ cand: any; tipo: "providenciar" | "reprovar" } | null>(null);
   const [obs, setObs] = useState("");
   const [toasts, setToasts] = useState<{ id: number; msg: string; t: string }[]>([]);
+  const [candidatoEnxoval, setCandidatoEnxoval] = useState<any | null>(null);
+  const [selecao, setSelecao] = useState({ contrato_id: "", posto_id: "", funcao_id: "" });
+  const [enxoval, setEnxoval] = useState<EnxovalDetalhe | null>(null);
+  const [carregandoEnxoval, setCarregandoEnxoval] = useState(false);
+  const [salvandoEnxoval, setSalvandoEnxoval] = useState(false);
+
+  const { data: contratosCatalogo = [] } = useContratosCatalogo(empresa.id);
+  const { data: postosCatalogo = [] } = usePostos(selecao.contrato_id || null);
+  const { data: funcoesCatalogo = [] } = useFuncoes(selecao.posto_id || null);
 
   const toast = (msg: string, t = "info") => {
     const id = Date.now() + Math.random();
@@ -70,6 +101,85 @@ export default function EpisAdmissoes() {
     setRows(data ?? []);
   }, [verTodos]);
   useEffect(() => { load(); }, [load]);
+
+  const carregarEnxoval = async (candidatoId: number) => {
+    setCarregandoEnxoval(true);
+    const { data, error } = await sb
+      .from("sup_admissao_enxoval")
+      .select("id,token,expira_em,preenchido_em,pedido_id,contrato_id,posto_id,funcao_id,sup_admissao_enxoval_item(id,nome_item,tamanho,quantidade,ordem)")
+      .eq("candidato_id", candidatoId)
+      .maybeSingle();
+    setCarregandoEnxoval(false);
+    if (error) { toast("Erro ao carregar o enxoval: " + error.message, "err"); return; }
+    const detalhe = data as EnxovalDetalhe | null;
+    setEnxoval(detalhe);
+    if (detalhe) {
+      setSelecao({
+        contrato_id: detalhe.contrato_id ?? "",
+        posto_id: detalhe.posto_id ?? "",
+        funcao_id: detalhe.funcao_id ?? "",
+      });
+    }
+  };
+
+  const abrirEnxoval = (c: any) => {
+    setCandidatoEnxoval(c);
+    setEnxoval(null);
+    setSelecao({
+      contrato_id: c.contrato_id ?? "",
+      posto_id: c.posto_id ?? "",
+      funcao_id: c.funcao_id ?? "",
+    });
+    carregarEnxoval(c.candidato_id);
+  };
+
+  const linkDoEnxoval = enxoval?.token
+    ? `${window.location.origin}/admissao/enxoval/${enxoval.token}`
+    : "";
+
+  const copiarLink = async (link: string) => {
+    try {
+      await navigator.clipboard.writeText(link);
+      toast("Link copiado para a área de transferência.", "ok");
+    } catch {
+      toast("Link gerado. Copie-o pelo campo exibido.", "info");
+    }
+  };
+
+  const gerarEnxoval = async () => {
+    if (!candidatoEnxoval) return;
+    if (!selecao.contrato_id || !selecao.posto_id || !selecao.funcao_id) {
+      toast("Selecione contrato, posto e função.", "err");
+      return;
+    }
+    setSalvandoEnxoval(true);
+    const { data, error } = await sb.rpc("sup_adm_gerar_enxoval", {
+      p_candidato_id: candidatoEnxoval.candidato_id,
+      p_contrato_id: selecao.contrato_id,
+      p_posto_id: selecao.posto_id,
+      p_funcao_id: selecao.funcao_id,
+      p_dias: 15,
+    });
+    setSalvandoEnxoval(false);
+    if (error) { toast("Erro ao gerar o enxoval: " + error.message, "err"); return; }
+    const link = `${window.location.origin}/admissao/enxoval/${data.token}`;
+    toast("Enxoval gerado com validade de 15 dias.", "ok");
+    await copiarLink(link);
+    await carregarEnxoval(candidatoEnxoval.candidato_id);
+    load();
+  };
+
+  const gerarPedido = async () => {
+    if (!enxoval) return;
+    setSalvandoEnxoval(true);
+    const { data, error } = await sb.rpc("sup_adm_criar_pedido", {
+      p_enxoval_id: enxoval.id,
+    });
+    setSalvandoEnxoval(false);
+    if (error) { toast("Erro ao gerar o pedido: " + error.message, "err"); return; }
+    toast(`Pedido de materiais gerado com sucesso (${data}).`, "ok");
+    if (candidatoEnxoval) await carregarEnxoval(candidatoEnxoval.candidato_id);
+  };
 
   const confirmar = async () => {
     if (!acao) return;
@@ -166,6 +276,9 @@ export default function EpisAdmissoes() {
                   <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 12, alignItems: "center" }}>
                     {!ETAPAS_PARALELO.includes(c.etapa_processo) && <span style={{ fontSize: 11, color: "#94a3b8" }}>Situação atual: <EtapaChip etapa={c.etapa_processo} /></span>}
                     <HistoricoCandidato candidatoId={c.candidato_id} nome={c.nome} />
+                    <button onClick={() => abrirEnxoval(c)} style={btnStyle("#0f3171", "none", "#fff")}>
+                      Enxoval e tamanhos
+                    </button>
                     {podeAgir && ETAPAS_PARALELO.includes(c.etapa_processo) && c.compras_ok !== true && <>
                       <button onClick={() => { setObs(""); setAcao({ cand: c, tipo: "providenciar" }); }} style={btnStyle("#16a34a", "none", "#fff")}>✓ Materiais providenciados</button>
                       <button onClick={() => { setObs(""); setAcao({ cand: c, tipo: "reprovar" }); }} style={btnStyle("rgba(220,38,38,.08)", "1px solid rgba(220,38,38,.25)", "#dc2626")}>Reprovar</button>
@@ -190,6 +303,91 @@ export default function EpisAdmissoes() {
           <Campo label={acao.tipo === "providenciar" ? "Observação (opcional)" : "Motivo *"} value={obs} onChange={setObs}
             placeholder={acao.tipo === "providenciar" ? "Ex.: entregue no posto em 20/08." : "Descreva o motivo..."} />
           <Acoes onCancel={() => { setAcao(null); setObs(""); }} onConfirm={confirmar} cor={acao.tipo === "reprovar" ? "#dc2626" : "#16a34a"} />
+        </Modal>
+      )}
+
+      {candidatoEnxoval && (
+        <Modal onClose={() => { setCandidatoEnxoval(null); setEnxoval(null); }}
+          title="Enxoval e tamanhos"
+          sub={`${candidatoEnxoval.nome} · ${candidatoEnxoval.cargo || "Função não informada"}`}>
+          {carregandoEnxoval ? (
+            <div style={{ padding: 24, textAlign: "center", color: "#64748b" }}>Carregando enxoval...</div>
+          ) : (
+            <>
+              <div style={{ display: "grid", gap: 10, marginBottom: 14 }}>
+                <label style={{ fontSize: 11, fontWeight: 700, color: "#64748b" }}>
+                  Contrato
+                  <select value={selecao.contrato_id} disabled={!!candidatoEnxoval.contrato_id}
+                    onChange={e => setSelecao({ contrato_id: e.target.value, posto_id: "", funcao_id: "" })}
+                    style={{ width: "100%", marginTop: 4, padding: "9px 10px", borderRadius: 8, border: "1px solid #cbd5e1", background: candidatoEnxoval.contrato_id ? "#f1f5f9" : "#fff" }}>
+                    <option value="">Selecione o contrato</option>
+                    {contratosCatalogo.map(c => <option key={c.id} value={c.id}>{c.nome}</option>)}
+                  </select>
+                </label>
+                <label style={{ fontSize: 11, fontWeight: 700, color: "#64748b" }}>
+                  Posto
+                  <select value={selecao.posto_id} disabled={!!candidatoEnxoval.posto_id || !selecao.contrato_id}
+                    onChange={e => setSelecao(s => ({ ...s, posto_id: e.target.value, funcao_id: "" }))}
+                    style={{ width: "100%", marginTop: 4, padding: "9px 10px", borderRadius: 8, border: "1px solid #cbd5e1", background: candidatoEnxoval.posto_id ? "#f1f5f9" : "#fff" }}>
+                    <option value="">Selecione o posto</option>
+                    {postosCatalogo.map(p => <option key={p.id} value={p.id}>{p.nome}</option>)}
+                  </select>
+                </label>
+                <label style={{ fontSize: 11, fontWeight: 700, color: "#64748b" }}>
+                  Função
+                  <select value={selecao.funcao_id} disabled={!!candidatoEnxoval.funcao_id || !selecao.posto_id}
+                    onChange={e => setSelecao(s => ({ ...s, funcao_id: e.target.value }))}
+                    style={{ width: "100%", marginTop: 4, padding: "9px 10px", borderRadius: 8, border: "1px solid #cbd5e1", background: candidatoEnxoval.funcao_id ? "#f1f5f9" : "#fff" }}>
+                    <option value="">Selecione a função</option>
+                    {funcoesCatalogo.map(f => <option key={f.id} value={f.id}>{f.nome}</option>)}
+                  </select>
+                </label>
+              </div>
+
+              {!enxoval?.preenchido_em && podeAgir && (
+                <button disabled={salvandoEnxoval} onClick={gerarEnxoval}
+                  style={{ ...btnStyle("#0f3171", "none", "#fff"), width: "100%", justifyContent: "center", opacity: salvandoEnxoval ? .6 : 1 }}>
+                  {enxoval ? "Gerar novo link" : "Gerar link do enxoval"}
+                </button>
+              )}
+
+              {linkDoEnxoval && !enxoval?.preenchido_em && (
+                <div style={{ marginTop: 12, padding: 10, borderRadius: 8, background: "#eff6ff", border: "1px solid #bfdbfe" }}>
+                  <div style={{ fontSize: 11, fontWeight: 700, color: "#1e40af", marginBottom: 5 }}>Link do candidato</div>
+                  <div style={{ display: "flex", gap: 6 }}>
+                    <input readOnly value={linkDoEnxoval} style={{ flex: 1, minWidth: 0, padding: "7px 8px", border: "1px solid #93c5fd", borderRadius: 6, fontSize: 11 }} />
+                    <button onClick={() => copiarLink(linkDoEnxoval)} style={btnStyle("#2563eb", "none", "#fff")}>Copiar</button>
+                  </div>
+                </div>
+              )}
+
+              {enxoval?.preenchido_em && (
+                <div style={{ marginTop: 12 }}>
+                  <div style={{ fontSize: 12, fontWeight: 800, color: "#15803d", marginBottom: 7 }}>
+                    ✓ Tamanhos informados pelo candidato
+                  </div>
+                  <div style={{ border: "1px solid #e2e8f0", borderRadius: 8, overflow: "hidden" }}>
+                    {[...(enxoval.sup_admissao_enxoval_item ?? [])]
+                      .sort((a, b) => a.ordem - b.ordem)
+                      .map(item => (
+                        <div key={item.id} style={{ display: "flex", justifyContent: "space-between", gap: 10, padding: "8px 10px", borderBottom: "1px solid #f1f5f9", fontSize: 12 }}>
+                          <span>{item.nome_item} <span style={{ color: "#94a3b8" }}>× {item.quantidade}</span></span>
+                          <b>{item.tamanho || "Sem tamanho"}</b>
+                        </div>
+                      ))}
+                  </div>
+                  {enxoval.pedido_id ? (
+                    <div style={{ marginTop: 10, fontSize: 12, color: "#15803d" }}>✓ Pedido de materiais já gerado.</div>
+                  ) : podeAgir && (
+                    <button disabled={salvandoEnxoval} onClick={gerarPedido}
+                      style={{ ...btnStyle("#16a34a", "none", "#fff"), width: "100%", justifyContent: "center", marginTop: 10, opacity: salvandoEnxoval ? .6 : 1 }}>
+                      Gerar pedido de materiais
+                    </button>
+                  )}
+                </div>
+              )}
+            </>
+          )}
         </Modal>
       )}
 
