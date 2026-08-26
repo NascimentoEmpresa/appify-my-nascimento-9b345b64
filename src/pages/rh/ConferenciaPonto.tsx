@@ -19,7 +19,7 @@ export default function ConferenciaPonto() {
         module="Recursos Humanos"
         breadcrumb={["Conferência de Ponto"]}
       />
-      <PainelConferenciaPonto />
+      <PainelConferenciaPonto modulo="rh" />
     </div>
   );
 }
