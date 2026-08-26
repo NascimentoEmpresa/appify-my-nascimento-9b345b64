@@ -219,6 +219,29 @@ export function corDoStatus(s: string): string {
   return cores[s] ?? "bg-blue-100 text-blue-700 border-blue-200";
 }
 
+/**
+ * Só a cor da barra lateral do cartão, para o telão.
+ *
+ * Separada de `corDoStatus` porque lá são três coisas juntas (fundo, texto e
+ * borda do selo) e aqui é uma faixa sólida — de longe, na parede, é a faixa
+ * que se lê antes do texto.
+ */
+export function corDaBorda(s: string): string {
+  const cores: Record<string, string> = {
+    "Pendente Operacional":     "border-l-slate-400",
+    "Em Andamento Operacional": "border-l-amber-500",
+    "Pendente RH":              "border-l-orange-500",
+    "Em Andamento RH":          "border-l-violet-500",
+    "Conferido RH":             "border-l-sky-500",
+    "Liberado Financeiro":      "border-l-indigo-500",
+    "Pago":                     "border-l-emerald-500",
+    "Devolvido Operacional":    "border-l-red-500",
+    "Devolvido RH":             "border-l-red-500",
+    "Problema":                 "border-l-red-600",
+  };
+  return cores[s] ?? "border-l-border";
+}
+
 export function explicaStatus(s: string): string {
   const t: Record<string, string> = {
     "Pendente Operacional":     "Aguardando o Operacional conferir o ponto.",
