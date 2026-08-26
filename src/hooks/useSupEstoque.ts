@@ -456,6 +456,9 @@ export interface UnidadeEntrada {
   codigo?: string;       // modo massa
   quantidade?: number;   // modo massa
   valor_unitario?: number | null;
+  /** Certificado pertence à remessa física, não ao cadastro do material. */
+  ca_numero?: string | null;
+  ca_validade?: string | null;
 }
 
 export function useEntradaEstoque() {

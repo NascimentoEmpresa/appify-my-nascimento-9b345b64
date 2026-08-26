@@ -1,4 +1,6 @@
 import { useMemo, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
+import { supabase } from "@/integrations/supabase/client";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -23,9 +25,15 @@ import {
 import {
   PackagePlus, Search, AlertTriangle, Boxes, Undo2, Trash2, ShieldAlert, Plus, X, Tag,
   ClipboardCheck, History, ArrowDownToLine, ArrowUpFromLine, RotateCcw, Check, Coins,
+  type LucideIcon,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { caAtendeLaudo } from "@/lib/sst/laudo";
 import { useAccessibleMenus } from "@/hooks/useAccessibleMenus";
+
+// A tabela de laudos é nova e ainda não existe em types.ts (regra R8).
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const sb = supabase as any;
 
 /**
  * Estoque & Etiquetas — o almoxarifado.
@@ -284,7 +292,7 @@ function fmtDataLocal(v?: string | null): string {
 
 function Kpi({ rotulo, valor, icone: Icone, destaque }: {
   // string aceita porque o valor total do estoque vem formatado em R$.
-  rotulo: string; valor: number | string; icone: any; destaque?: boolean;
+  rotulo: string; valor: number | string; icone: LucideIcon; destaque?: boolean;
 }) {
   return (
     <div className={cn("flex items-center gap-3 rounded-lg border p-3",
@@ -300,8 +308,17 @@ function Kpi({ rotulo, valor, icone: Icone, destaque }: {
 
 // ── Entrada ──────────────────────────────────────────────────────────
 
-interface BlocoUnidade { tamanho: string; tipo: TipoTag; codigos: string[]; quantidade: string }
-const BLOCO_VAZIO: BlocoUnidade = { tamanho: "", tipo: "unico", codigos: [], quantidade: "1" };
+interface BlocoUnidade {
+  tamanho: string;
+  tipo: TipoTag;
+  codigos: string[];
+  quantidade: string;
+  ca_numero: string;
+  ca_validade: string;
+}
+const BLOCO_VAZIO: BlocoUnidade = {
+  tamanho: "", tipo: "unico", codigos: [], quantidade: "1", ca_numero: "", ca_validade: "",
+};
 
 function DialogEntrada({ aberto, onFechar, empresaId }: {
   aberto: boolean; onFechar: () => void; empresaId: string | null;
@@ -321,6 +338,21 @@ function DialogEntrada({ aberto, onFechar, empresaId }: {
   const [blocos, setBlocos] = useState<BlocoUnidade[]>([{ ...BLOCO_VAZIO }]);
 
   const matSelecionado = materiais.find((m) => m.id === material);
+  const materialEhEpi = matSelecionado?.tipo === "epi";
+  const laudoAtivo = useQuery({
+    queryKey: ["sst_laudo_ativo", material],
+    enabled: aberto && !!material && materialEhEpi,
+    queryFn: async (): Promise<number | null> => {
+      const { data, error } = await sb
+        .from("sst_laudo_epi")
+        .select("validade_minima_meses")
+        .eq("sup_item_id", material)
+        .eq("ativo", true)
+        .maybeSingle();
+      if (error) throw error;
+      return data?.validade_minima_meses ?? null;
+    },
+  });
   const filtrados = useMemo(() => {
     const t = buscaMat.trim().toLowerCase();
     return t ? materiais.filter((m) => m.nome.toLowerCase().includes(t)).slice(0, 40) : materiais.slice(0, 40);
@@ -328,6 +360,27 @@ function DialogEntrada({ aberto, onFechar, empresaId }: {
 
   const total = blocos.reduce((s, b) =>
     s + (b.tipo === "massa" ? (b.codigos.length ? Number(b.quantidade || 0) : 0) : b.codigos.length), 0);
+
+  const hoje = new Date();
+  const hojeCivil = [
+    hoje.getFullYear(),
+    String(hoje.getMonth() + 1).padStart(2, "0"),
+    String(hoje.getDate()).padStart(2, "0"),
+  ].join("-");
+  const erroCa = useMemo(() => {
+    if (!materialEhEpi) return null;
+    if (laudoAtivo.error) return "Não foi possível consultar o laudo do SST. Tente novamente antes de dar entrada.";
+    if (laudoAtivo.data === null || laudoAtivo.data === undefined) return null;
+    const blocosPreenchidos = blocos.filter((bloco) => bloco.codigos.length > 0);
+    if (blocosPreenchidos.some((bloco) => !bloco.ca_validade)) {
+      return "Informe a validade do CA em todos os blocos de unidades.";
+    }
+    if (blocosPreenchidos.some((bloco) =>
+      !caAtendeLaudo(bloco.ca_validade, laudoAtivo.data, hojeCivil))) {
+      return `A validade informada não atende aos ${laudoAtivo.data} meses mínimos exigidos pelo laudo do SST.`;
+    }
+    return null;
+  }, [blocos, hojeCivil, laudoAtivo.data, laudoAtivo.error, materialEhEpi]);
 
   const alterar = (i: number, patch: Partial<BlocoUnidade>) =>
     setBlocos((s) => s.map((b, j) => (j === i ? { ...b, ...patch } : b)));
@@ -340,10 +393,15 @@ function DialogEntrada({ aberto, onFechar, empresaId }: {
   const enviar = async () => {
     const unidades: UnidadeEntrada[] = blocos
       .filter((b) => b.codigos.length > 0)
-      .map((b) => b.tipo === "massa"
-        ? { tamanho: b.tamanho, tipo: "massa", codigo: b.codigos[0], quantidade: Math.max(Number(b.quantidade || 1), 1) }
-        : { tamanho: b.tamanho, tipo: "unico", codigos: b.codigos });
-    if (!almox || !material || unidades.length === 0) return;
+      .map((b) => {
+        const ca = materialEhEpi
+          ? { ca_numero: b.ca_numero.trim() || null, ca_validade: b.ca_validade || null }
+          : {};
+        return b.tipo === "massa"
+          ? { tamanho: b.tamanho, tipo: "massa", codigo: b.codigos[0], quantidade: Math.max(Number(b.quantidade || 1), 1), ...ca }
+          : { tamanho: b.tamanho, tipo: "unico", codigos: b.codigos, ...ca };
+      });
+    if (!almox || !material || unidades.length === 0 || erroCa) return;
 
     await entrada.mutateAsync({
       almoxarifado_id: almox, sup_item_id: material,
@@ -478,6 +536,35 @@ function DialogEntrada({ aberto, onFechar, empresaId }: {
                     </Button>
                   )}
                 </div>
+                {materialEhEpi && (
+                  <div className="mb-3 space-y-2">
+                    {laudoAtivo.data !== null && laudoAtivo.data !== undefined && (
+                      <p className="rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-xs font-medium text-amber-800 dark:bg-amber-950/20 dark:text-amber-300">
+                        O laudo do SST exige CA válido por pelo menos {laudoAtivo.data} mês{laudoAtivo.data === 1 ? "" : "es"}.
+                      </p>
+                    )}
+                    <div className="grid gap-3 sm:grid-cols-2">
+                      <div>
+                        <Label className="text-xs">Número do CA</Label>
+                        <Input
+                          value={b.ca_numero}
+                          onChange={(e) => alterar(i, { ca_numero: e.target.value })}
+                          placeholder="Ex.: 12345"
+                          className="h-9"
+                        />
+                      </div>
+                      <div>
+                        <Label className="text-xs">Validade do CA</Label>
+                        <Input
+                          type="date"
+                          value={b.ca_validade}
+                          onChange={(e) => alterar(i, { ca_validade: e.target.value })}
+                          className="h-9"
+                        />
+                      </div>
+                    </div>
+                  </div>
+                )}
                 <CampoBipagem
                   codigos={b.codigos}
                   onChange={(c) => alterar(i, { codigos: c })}
@@ -494,11 +581,14 @@ function DialogEntrada({ aberto, onFechar, empresaId }: {
         </div>
 
         <DialogFooter className="items-center">
-          <span className="mr-auto text-sm text-muted-foreground">
-            Total: <strong>{total}</strong> unidade(s)
-          </span>
+          <div className="mr-auto">
+            <span className="text-sm text-muted-foreground">
+              Total: <strong>{total}</strong> unidade(s)
+            </span>
+            {erroCa && <p className="mt-1 max-w-sm text-xs font-medium text-destructive">{erroCa}</p>}
+          </div>
           <Button variant="outline" onClick={() => { limpar(); onFechar(); }}>Cancelar</Button>
-          <Button disabled={!almox || !material || total === 0 || entrada.isPending} onClick={enviar}>
+          <Button disabled={!almox || !material || total === 0 || !!erroCa || laudoAtivo.isLoading || entrada.isPending} onClick={enviar}>
             Dar entrada
           </Button>
         </DialogFooter>

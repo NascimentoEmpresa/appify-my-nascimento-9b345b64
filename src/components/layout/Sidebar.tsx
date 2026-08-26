@@ -249,6 +249,9 @@ const suprimentosModule: ModuleDef = {
         { label: "Pedidos de Materiais", to: "/app/suprimentos/pedidos-materiais", icon: PackageCheck },
         { label: "Estoque & Etiquetas", to: "/app/suprimentos/estoque-etiquetas", icon: Boxes },
         { label: "Cotações do Malote", to: "/app/suprimentos/cotacoes-malote", icon: FileClock },
+        { label: "Pedidos de Compra", to: "/app/suprimentos/pedidos-compra", icon: ShoppingCart },
+        { label: "Recebimentos", to: "/app/suprimentos/recebimentos", icon: ClipboardCheck },
+        { label: "NF de Entrada", to: "/app/suprimentos/nf-entrada", icon: FileText },
       ],
     },
     {
@@ -850,6 +853,14 @@ const sstModule: ModuleDef = {
       defaultOpen: true,
       items: [
         { label: "ASO Demissional", to: "/app/sst/aso-demissional", icon: UserMinus },
+      ],
+    },
+    {
+      label: "EPIs",
+      defaultOpen: true,
+      items: [
+        { label: "Laudos de EPI", to: "/app/sst/laudos", icon: FileCheck2 },
+        { label: "Controle de CA", to: "/app/sst/controle-ca", icon: ShieldAlert },
       ],
     },
   ],

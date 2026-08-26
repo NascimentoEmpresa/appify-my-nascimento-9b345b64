@@ -18,12 +18,15 @@ import {
   ROTULO_COTACAO, fmtBRL, fmtData, fmtDataHora,
   type Cotacao,
 } from "@/hooks/useMaloteCotacao";
-import { STATUS_BADGE_CLASS, uploadAnexoMalote } from "@/hooks/useMaloteDespesa";
+import { STATUS_BADGE_CLASS, uploadAnexoMalote, useItensDaDespesa } from "@/hooks/useMaloteDespesa";
+import { ItensSolicitacao } from "@/components/malote/ItensSolicitacao";
 import { useEmpresaId } from "@/hooks/useEmpresaId";
 import { useFornecedores, type FornecedorOpcao } from "@/hooks/useSupEstoque";
+import { useGerarPedidoCompra, usePedidoAtivoDaDespesa } from "@/hooks/useCompraPedido";
+import { useScreenAccess } from "@/hooks/useScreenAccess";
 import {
   ArrowLeft, Paperclip, Save, Send, Trash2, CheckCircle2, XCircle, Ban,
-  Trophy, Loader2, ShieldAlert, Info,
+  Trophy, Loader2, ShieldAlert, Info, ShoppingCart,
 } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
@@ -42,16 +45,23 @@ import { cn } from "@/lib/utils";
  * e "status finais não retornam" são garantidos no banco, pelas RPCs — aqui
  * a tela só evita que o usuário tente.
  */
+/** Valor sentinela do select para a cotação sem vínculo — não é id de nada. */
+const LEGADO = "__legado__";
+
 export default function CotacaoMaloteDetalhe() {
   const { id } = useParams<{ id: string }>();
   const navegar = useNavigate();
   const { data: d, isLoading, error } = useSolicitacaoParaCotar(id);
+  const { data: itens = [] } = useItensDaDespesa(id);
 
   const salvar = useSalvarRascunhoCotacao();
   const enviar = useEnviarCotacao();
   const aprovar = useAprovarCotacao();
   const reprovar = useReprovarCotacao();
   const cancelar = useCancelarCotacao();
+  const gerarPedido = useGerarPedidoCompra();
+  const { data: pedidoAtivo, isLoading: carregandoPedidoAtivo } = usePedidoAtivoDaDespesa(id);
+  const { data: podeAbrirPedido = false } = useScreenAccess("sup_compra_pedido", "visualizar");
   const { data: empresaId } = useEmpresaId();
   const { data: fornecedores = [] } = useFornecedores(empresaId ?? null);
 
@@ -123,6 +133,16 @@ export default function CotacaoMaloteDetalhe() {
         <Campo rotulo="Classificação da despesa" valor={d.classificacao?.nome} />
         <Campo rotulo="Tipo" valor={d.tipo} />
         <Campo rotulo="Data de pagamento" valor={fmtData(d.data_pagamento)} />
+        {/* O que foi pedido, item a item (SIS-2026-0207). Antes o comprador
+            cotava lendo a descrição em texto corrido. */}
+        {itens.length > 0 && (
+          <div className="sm:col-span-2">
+            <p className="mb-2 text-xs font-medium text-muted-foreground">
+              Itens a cotar ({itens.length})
+            </p>
+            <ItensSolicitacao itens={itens} editavel={false} />
+          </div>
+        )}
         {d.excecao && (
           <div className="sm:col-span-2">
             <span className="inline-flex items-center gap-1.5 rounded-md border border-red-400/50 bg-red-50 px-2.5 py-1 text-xs font-medium text-red-700 dark:bg-red-950/30 dark:text-red-300">
@@ -179,7 +199,9 @@ export default function CotacaoMaloteDetalhe() {
                texto="A solicitação voltou para o Malote e aguarda ser convertida em Despesa.">
           <div className="mt-2 grid gap-1 text-sm sm:grid-cols-2">
             <p><span className="text-muted-foreground">Fornecedor: </span>
-              <strong>{(d as any)[`cot${d.cotacao_vencedor_num}_fornecedor`] ?? "—"}</strong></p>
+              <strong>{d.cotacao_vencedor_num
+                ? cots[d.cotacao_vencedor_num - 1]?.fornecedor || "—"
+                : "—"}</strong></p>
             <p><span className="text-muted-foreground">Valor final: </span>
               <strong>{fmtBRL(d.valor_aprovado_cotacao)}</strong></p>
             <p><span className="text-muted-foreground">Aprovado por: </span>
@@ -189,6 +211,32 @@ export default function CotacaoMaloteDetalhe() {
                 {d.cotacao_observacoes}</p>
             )}
           </div>
+          <Button className="mt-4"
+            disabled={gerarPedido.isPending || carregandoPedidoAtivo || itens.length === 0 || !!pedidoAtivo}
+            onClick={() => gerarPedido.mutate(d.id)}>
+            {gerarPedido.isPending
+              ? <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+              : <ShoppingCart className="mr-2 h-4 w-4" />}
+            Gerar pedido de compra
+          </Button>
+          {itens.length === 0 && (
+            <p className="mt-2 text-xs text-muted-foreground">
+              Esta solicitação não possui itens. Pedidos de serviço ou solicitações legadas não geram pedido de compra.
+            </p>
+          )}
+          {pedidoAtivo && (
+            <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+              <span>Já existe o pedido ativo {pedidoAtivo.numero} para esta solicitação.</span>
+              {podeAbrirPedido ? (
+                <Button size="sm" variant="outline"
+                  onClick={() => navegar(`/app/suprimentos/pedidos-compra?pedido=${pedidoAtivo.id}`)}>
+                  Abrir pedido
+                </Button>
+              ) : (
+                <span>O pedido foi gerado, mas seu usuário ainda não tem acesso ao menu de Pedidos de Compra.</span>
+              )}
+            </div>
+          )}
         </Aviso>
       )}
 
@@ -221,6 +269,9 @@ export default function CotacaoMaloteDetalhe() {
               selecionada={vencedor === i + 1}
               onSelecionar={() => setVencedor((i + 1) as 1 | 2 | 3)}
               onTrocar={(campo, valor) => trocar(i, campo, valor)}
+              onSelecionarFornecedor={(fid, nome) =>
+                setCots((c) => c.map((x, j) => (j === i ? { ...x, fornecedor_id: fid, fornecedor: nome } : x)))
+              }
             />
           ))}
         </div>
@@ -360,18 +411,23 @@ function Aviso({
 
 function CartaoCotacao({
   indice, cot, editavel, obrigatoria, despesaId, vencedora, selecionavel, selecionada,
-  fornecedores, onSelecionar, onTrocar,
+  fornecedores, onSelecionar, onTrocar, onSelecionarFornecedor,
 }: {
   indice: number; cot: Cotacao; editavel: boolean; obrigatoria: boolean; despesaId: string;
   vencedora: boolean; selecionavel: boolean; selecionada: boolean;
   fornecedores: FornecedorOpcao[];
   onSelecionar: () => void; onTrocar: (campo: keyof Cotacao, valor: string) => void;
+  /** Grava id e nome juntos — o id é o vínculo, o nome é o snapshot. */
+  onSelecionarFornecedor: (id: string, nome: string) => void;
 }) {
   const inputRef = useRef<HTMLInputElement>(null);
   const [subindo, setSubindo] = useState(false);
-  const fornecedorLegado = cot.fornecedor && !fornecedores.some(
-    (f) => (f.nome_fantasia || f.razao_social) === cot.fornecedor,
-  );
+  // Cotação que tem nome mas não tem vínculo: feita antes de o fornecedor ser
+  // cadastrado, ou cujo nome não casou no de-para da migration. Continua
+  // legível, e escolher do select por cima resolve.
+  const fornecedorLegado = !!cot.fornecedor && !cot.fornecedor_id;
+  const fornecedorVinculadoAusente = !!cot.fornecedor_id
+    && !fornecedores.some((fornecedor) => fornecedor.id === cot.fornecedor_id);
 
   async function anexar(f: File | null) {
     if (!f) return;
@@ -380,8 +436,8 @@ function CartaoCotacao({
       const path = await uploadAnexoMalote(f, despesaId);
       onTrocar("anexo_path", path);
       onTrocar("anexo_nome", f.name);
-    } catch (e: any) {
-      toast.error(e?.message ?? "Não foi possível anexar.");
+    } catch (e: unknown) {
+      toast.error(e instanceof Error ? e.message : "Não foi possível anexar.");
     } finally {
       setSubindo(false);
       if (inputRef.current) inputRef.current.value = "";
@@ -415,18 +471,32 @@ function CartaoCotacao({
         <div className="space-y-2">
           <div>
             <Label className="text-xs">Fornecedor {obrigatoria && "*"}</Label>
-            <Select value={cot.fornecedor || undefined}
-                    onValueChange={(v) => onTrocar("fornecedor", v)}>
+            {/* O value é o ID, não o nome (SIS-2026-0207). Antes guardava só o
+                nome: renomear um fornecedor transformava a cotação antiga em
+                "(não cadastrado)", e não dava para puxar prazo nem condição de
+                pagamento do cadastro. O nome continua sendo gravado ao lado,
+                como snapshot. */}
+            <Select value={cot.fornecedor_id ?? (fornecedorLegado ? LEGADO : undefined)}
+                    onValueChange={(v) => {
+                      if (v === LEGADO) return;
+                      const f = fornecedores.find((x) => x.id === v);
+                      onSelecionarFornecedor(v, f ? (f.nome_fantasia || f.razao_social) : "");
+                    }}>
               <SelectTrigger className="mt-1 h-9">
                 <SelectValue placeholder={fornecedores.length ? "Selecione o fornecedor" : "Nenhum fornecedor cadastrado"} />
               </SelectTrigger>
               <SelectContent>
                 {fornecedorLegado && (
-                  <SelectItem value={cot.fornecedor}>{cot.fornecedor} (não cadastrado)</SelectItem>
+                  <SelectItem value={LEGADO}>{cot.fornecedor} (não cadastrado)</SelectItem>
+                )}
+                {fornecedorVinculadoAusente && (
+                  <SelectItem value={cot.fornecedor_id!}>
+                    {cot.fornecedor || "Fornecedor vinculado"} (inativo)
+                  </SelectItem>
                 )}
                 {fornecedores.map((f) => {
                   const nome = f.nome_fantasia || f.razao_social;
-                  return <SelectItem key={f.id} value={nome}>{nome}</SelectItem>;
+                  return <SelectItem key={f.id} value={f.id}>{nome}</SelectItem>;
                 })}
               </SelectContent>
             </Select>

@@ -31,7 +31,9 @@ import {
   OrigemDespesa,
   TipoSolicitacao,
   STATUS_LABEL,
+  ItemSolicitacao,
 } from "@/hooks/useMaloteDespesa";
+import { ItensSolicitacao } from "@/components/malote/ItensSolicitacao";
 import { RateioGrid, DimensoesRateio } from "./RateioGrid";
 import { AnexosField } from "./AnexosField";
 import { getStatusVigencia } from "./orcamentoUtils";
@@ -351,6 +353,9 @@ function PainelSolicitacao({
   const [valorEstimado, setValorEstimado] = useState("");
   const [valorSugerido, setValorSugerido] = useState(false);
   const [links, setLinks] = useState("");
+  // Itens do que está sendo pedido (SIS-2026-0207). Opcional: solicitação de
+  // serviço ou despesa avulsa continua valendo só com a descrição.
+  const [itens, setItens] = useState<ItemSolicitacao[]>([]);
   const [tipo, setTipo] = useState<TipoSolicitacao | "">("");
   const [empresaContratoId, setEmpresaContratoId] = useState("");
   const [contratoId, setContratoId] = useState("");
@@ -415,6 +420,12 @@ function PainelSolicitacao({
     if (!tipo) return "Selecione o tipo.";
     if (tipo === "contrato" && !empresaContratoId) return "Selecione a empresa do contrato.";
     if (tipo === "contrato" && !contratoId) return "Selecione o contrato.";
+    const itemQuantidadeInvalida = itens.find(
+      (item) => item.nome_item.trim() !== "" && Number(item.quantidade) <= 0,
+    );
+    if (itemQuantidadeInvalida) {
+      return `Informe uma quantidade maior que zero para o item "${itemQuantidadeInvalida.nome_item}".`;
+    }
     if (paraEnviar && arquivos.length === 0) return "Anexe ao menos um arquivo.";
     return null;
   }
@@ -450,13 +461,16 @@ function PainelSolicitacao({
         links: links.trim() || null,
         tipo: tipo || null,
         contrato_id: tipo === "contrato" ? contratoId : null,
+        // Linha sem material descrito não vai: o usuário pode ter clicado em
+        // "adicionar item" e desistido.
+        itens: itens.filter((i) => i.nome_item.trim() !== ""),
       });
       if (arquivos.length > 0) {
         const paths = await Promise.all(arquivos.map((f) => uploadAnexoMalote(f, despesaId)));
         await salvar.mutateAsync({ id: despesaId, empresa_id: empresaFinal, classificacao_id: classificacaoId, origem: "solicitacao", status, nome: nome.trim(), valor_total: Number(valorEstimado), arquivos: paths });
       }
       toast.success(status === "rascunho" ? "Rascunho salvo." : "Solicitação enviada para aprovação inicial.");
-      setNome(""); setMotivo(""); setDescricao(""); setValorEstimado(""); setValorSugerido(false); setLinks(""); setArquivos([]);
+      setNome(""); setMotivo(""); setDescricao(""); setValorEstimado(""); setValorSugerido(false); setLinks(""); setArquivos([]); setItens([]);
       setEmpresaContratoId(""); setContratoId("");
       chaveAutoPreenchidaRef.current = null;
       if (!tipoTravado) setTipo("");
@@ -487,6 +501,19 @@ function PainelSolicitacao({
           <div>
             <Label>Descrição *</Label>
             <Input value={descricao} onChange={(e) => setDescricao(e.target.value)} placeholder="Detalhes, especificações..." disabled={!ativo} />
+          </div>
+
+          {/* Itens do pedido (SIS-2026-0207). Antes o comprador cotava lendo a
+              descrição em texto corrido; agora recebe a lista, puxando do
+              catálogo — e o que for pedido segue até o recebimento. */}
+          <div className={cn(!ativo && "opacity-40 pointer-events-none select-none")}>
+            <Label>Itens a comprar</Label>
+            <p className="mb-2 text-xs text-muted-foreground">
+              Opcional, mas é o que o Suprimentos usa para cotar. Materiais do
+              catálogo entram pela busca; o que não estiver lá pode ser descrito
+              à mão.
+            </p>
+            <ItensSolicitacao itens={itens} onChange={setItens} editavel={ativo} />
           </div>
 
           <div>

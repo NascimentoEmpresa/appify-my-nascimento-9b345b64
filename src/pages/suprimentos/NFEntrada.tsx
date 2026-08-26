@@ -63,13 +63,14 @@ export default function NFEntrada() {
   const [xmlContent, setXmlContent] = useState<string>("");
   const [importing, setImporting] = useState(false);
   const [manualForm, setManualForm] = useState<any>({ serie: "1", data_emissao: new Date().toISOString().slice(0, 10) });
+  const [vinculosItens, setVinculosItens] = useState<Record<string, string>>({});
 
   const { data: pcsAprovados = [] } = useQuery<any[]>({
-    queryKey: ["pedido_compra", "aprovados"],
+    queryKey: ["sup_compra_pedido", "para-nf"],
     queryFn: async () => {
-      const { data, error } = await (supabase as any).from("pedido_compra")
+      const { data, error } = await (supabase as any).from("sup_compra_pedido")
         .select("id, numero, fornecedor_id, valor_total, status")
-        .in("status", ["aprovado", "enviado", "recebido_parcial", "recebido_total"])
+        .in("status", ["enviado", "aguardando_entrega", "entrega_parcial"])
         .order("numero", { ascending: false }).limit(200);
       if (error) throw error;
       return data ?? [];
@@ -77,24 +78,26 @@ export default function NFEntrada() {
   });
 
   const { data: fornecedores = [] } = useList<any>("fornecedor", { orderBy: "razao_social", ascending: true });
+  const { data: itensCatalogo = [] } = useQuery<any[]>({
+    queryKey: ["sup_item", "nf-vinculo"],
+    queryFn: async () => {
+      const { data, error } = await (supabase as any).from("sup_item")
+        .select("id,nome,tipo,codigo_barras,empresa_id").eq("ativo", true).order("nome").limit(2000);
+      if (error) throw error;
+      return data ?? [];
+    },
+  });
 
   const lancarManual = useMutation({
     mutationFn: async () => {
-      const { data: u } = await supabase.auth.getUser();
-      const empresa_id = (await (supabase as any).from("profiles").select("empresa_id").eq("id", u.user?.id).maybeSingle()).data?.empresa_id;
-      const payload: any = {
-        ...manualForm,
-        origem: "manual",
-        status: "validada",
-        empresa_id,
-        chave_acesso: manualForm.chave_acesso || `MANUAL-${Date.now()}`,
-      };
-      const { data, error } = await (supabase as any).from("nf_entrada").insert([payload]).select().single();
+      const { data, error } = await (supabase as any).rpc("sup_nf_criar_manual", {
+        p_dados: manualForm,
+      });
       if (error) throw error;
       return data;
     },
     onSuccess: (nf: any) => {
-      toast.success(`NF manual criada: ${nf.numero}. Adicione os itens em "Detalhes".`);
+      toast.success(`NF manual criada: ${nf.numero}. Os itens do pedido foram carregados para conferência.`);
       qc.invalidateQueries({ queryKey: ["nf_entrada"] });
       setOpenManual(false);
       setManualForm({ serie: "1", data_emissao: new Date().toISOString().slice(0, 10) });
@@ -163,14 +166,16 @@ export default function NFEntrada() {
 
   const validarMut = useMutation({
     mutationFn: async (nf_id: string) => {
-      const { error } = await (supabase as any).from("nf_entrada").update({
-        status: "validada",
-        validado_por: (await supabase.auth.getUser()).data.user?.id,
-        validado_em: new Date().toISOString(),
-      }).eq("id", nf_id);
+      const { data, error } = await (supabase as any).rpc("sup_nf_validar", { p_nf_id: nf_id });
       if (error) throw error;
+      return data;
     },
-    onSuccess: () => { toast.success("NF validada"); qc.invalidateQueries({ queryKey: ["nf_entrada"] }); },
+    onSuccess: (resultado: any) => {
+      toast.success(`NF validada e lançada: ${resultado?.itens_lancados ?? 0} item(ns).`);
+      qc.invalidateQueries({ queryKey: ["nf_entrada"] });
+      qc.invalidateQueries({ queryKey: ["sup_estoque"] });
+      setOpenDetail(false);
+    },
     onError: (e: any) => toast.error(e.message),
   });
 
@@ -192,20 +197,25 @@ export default function NFEntrada() {
 
   const cancelarMut = useMutation({
     mutationFn: async (nf_id: string) => {
-      const { error } = await (supabase as any).from("nf_entrada").update({ status: "cancelada" }).eq("id", nf_id);
+      const { error } = await (supabase as any).rpc("sup_nf_cancelar", { p_nf_id: nf_id });
       if (error) throw error;
     },
     onSuccess: () => { toast.success("NF cancelada"); qc.invalidateQueries({ queryKey: ["nf_entrada"] }); },
     onError: (e: any) => toast.error(e.message),
   });
 
-  const confirmarItemMut = useMutation({
+  const vincularItemMut = useMutation({
     mutationFn: async (item_id: string) => {
-      const { error } = await (supabase as any).from("nf_entrada_item").update({ status: "ok" }).eq("id", item_id);
+      const sup_item_id = vinculosItens[item_id];
+      if (!sup_item_id) throw new Error("Selecione o material correspondente.");
+      const { error } = await (supabase as any).rpc("sup_nf_vincular_item", {
+        p_nf_item_id: item_id,
+        p_sup_item_id: sup_item_id,
+      });
       if (error) throw error;
     },
     onSuccess: () => {
-      toast.success("Item confirmado");
+      toast.success("Item vinculado ao catálogo.");
       qc.invalidateQueries({ queryKey: ["nf_item", nfSelecionada?.id] });
     },
     onError: (e: any) => toast.error(e.message),
@@ -245,9 +255,9 @@ export default function NFEntrada() {
                   </div>
                   <div>
                     <Label>Pedido de Compra (obrigatório)</Label>
-                    <Select value={manualForm.pedido_compra_id ?? ""} onValueChange={(v) => {
+                    <Select value={manualForm.sup_compra_pedido_id ?? ""} onValueChange={(v) => {
                       const pc = pcsAprovados.find((p: any) => p.id === v);
-                      setManualForm({ ...manualForm, pedido_compra_id: v, fornecedor_id: pc?.fornecedor_id, valor_total: pc?.valor_total });
+                      setManualForm({ ...manualForm, sup_compra_pedido_id: v, fornecedor_id: pc?.fornecedor_id, valor_total: pc?.valor_total });
                     }}>
                       <SelectTrigger><SelectValue placeholder="Selecione um PC aprovado" /></SelectTrigger>
                       <SelectContent>
@@ -288,7 +298,7 @@ export default function NFEntrada() {
                 <DialogFooter>
                   <Button variant="outline" onClick={() => setOpenManual(false)}>Cancelar</Button>
                   <Button onClick={() => lancarManual.mutate()}
-                    disabled={!manualForm.pedido_compra_id || !manualForm.numero || !manualForm.fornecedor_id || lancarManual.isPending}>
+                    disabled={!manualForm.sup_compra_pedido_id || !manualForm.numero || !manualForm.fornecedor_id || lancarManual.isPending}>
                     {lancarManual.isPending ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Salvando…</> : "Criar NF Manual"}
                   </Button>
                 </DialogFooter>
@@ -319,6 +329,20 @@ export default function NFEntrada() {
                   </div>
 
                   <div className="grid grid-cols-2 gap-3">
+                    <div className="col-span-2">
+                      <Label>Pedido de Compra</Label>
+                      <Select value={importForm.sup_compra_pedido_id ?? ""} onValueChange={(v) => {
+                        const pedido = pcsAprovados.find((p: any) => p.id === v);
+                        setImportForm({ ...importForm, sup_compra_pedido_id: v, fornecedor_id: pedido?.fornecedor_id });
+                      }}>
+                        <SelectTrigger><SelectValue placeholder="Selecione o pedido que originou a NF" /></SelectTrigger>
+                        <SelectContent>
+                          {pcsAprovados.map((p: any) => (
+                            <SelectItem key={p.id} value={p.id}>{p.numero} — {fmtBRL(p.valor_total)}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
                     <div>
                       <Label>Destino</Label>
                       <Select value={importForm.destino} onValueChange={(v) => setImportForm({ ...importForm, destino: v })}>
@@ -512,10 +536,22 @@ export default function NFEntrada() {
                           <TableCell className="text-right font-medium">{fmtBRL(it.valor_total)}</TableCell>
                           <TableCell><Badge variant={s.variant} className="text-[10px]">{s.label}</Badge></TableCell>
                           <TableCell>
-                            {it.status !== "ok" && (
-                              <Button size="sm" variant="outline" onClick={() => confirmarItemMut.mutate(it.id)}>
-                                Confirmar
-                              </Button>
+                            {["importada", "validada"].includes(nfSelecionada?.status) && (
+                              <div className="flex min-w-64 gap-2">
+                                <Select value={vinculosItens[it.id] ?? it.sup_item_id ?? ""}
+                                  onValueChange={(valor) => setVinculosItens({ ...vinculosItens, [it.id]: valor })}>
+                                <SelectTrigger><SelectValue placeholder="Vincular ao catálogo" /></SelectTrigger>
+                                  <SelectContent>{itensCatalogo
+                                    .filter((item) => item.empresa_id === nfSelecionada.empresa_id)
+                                    .map((item) => (
+                                      <SelectItem key={item.id} value={item.id}>{item.nome}</SelectItem>
+                                    ))}</SelectContent>
+                                </Select>
+                                <Button size="sm" variant="outline" onClick={() => vincularItemMut.mutate(it.id)}
+                                  disabled={!vinculosItens[it.id] || vincularItemMut.isPending}>
+                                  {it.sup_item_id ? "Revincular" : "Vincular"}
+                                </Button>
+                              </div>
                             )}
                           </TableCell>
                         </TableRow>
@@ -530,7 +566,7 @@ export default function NFEntrada() {
           <DialogFooter className="gap-2 flex-wrap">
             {nfSelecionada?.status === "importada" && (
               <Button variant="outline" onClick={() => validarMut.mutate(nfSelecionada.id)} disabled={validarMut.isPending}>
-                <CheckCircle2 className="mr-2 h-4 w-4" /> Validar
+                <CheckCircle2 className="mr-2 h-4 w-4" /> Validar e lançar no estoque
               </Button>
             )}
             {(nfSelecionada?.status === "importada" || nfSelecionada?.status === "validada") && (
