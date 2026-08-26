@@ -134,6 +134,12 @@ async function processarChamado(supabase, evento, estado) {
       encoding: "utf8",
       timeout: TIMEOUT_PLANEJAMENTO_MS,
       env: { ...process.env, CHAMADO_HEADLESS: "1" },
+      // `shell: true` porque no Windows o binário é `claude.cmd`, e o Node não
+      // executa arquivo `.cmd` direto: devolve `spawnSync claude.cmd EINVAL`,
+      // erro que não menciona `.cmd` nem shell e manda procurar defeito no
+      // caminho do executável. Sem isto, todo chamado novo falhava no
+      // planejamento automático — medido no SIS-2026-0242 em 26/08/2026.
+      shell: process.platform === "win32",
     },
   );
   if (r.error) {
@@ -215,9 +221,20 @@ async function verificarChamadosDevNovos(supabase) {
       await processarChamado(supabase, evento, estado);
     } catch (e) {
       console.error(`[chamadosDev] erro processando ${evento.CHAMADO_SISTEMA.numero}:`, e);
+    } finally {
+      // O cursor avança SEMPRE, inclusive quando o planejamento falha.
+      //
+      // `processarChamado` tem várias saídas antecipadas (sessão não abriu,
+      // plano não encontrado) que não avançavam o cursor. O mesmo chamado era
+      // então reprocessado a cada 60s, para sempre — e cada tentativa mandava
+      // uma DM. Foi o que encheu o Discord com "SIS-2026-0242: sessão de
+      // planejamento automática falhou" em 26/08/2026.
+      //
+      // Quando falha, o alerta já pediu para rodar `/chamado <numero>` na mão.
+      // Insistir sozinho não conserta nada e transforma um problema em ruído.
       estado.ultimoProcessado = evento.created_at;
+      salvarEstado(estado);
     }
-    salvarEstado(estado);
   }
 }
 

@@ -75,12 +75,23 @@ function validadeCertificado() {
   return (meu || certs[0]).validity.notAfter;
 }
 
+// Última vez que o aviso de vencimento saiu. O ciclo roda a cada 60s e o
+// certificado não vence mais rápido por ser lembrado com frequência — sem esta
+// trava, "vence em 17 dias" viraria 1.440 mensagens por dia. Aconteceu em
+// 26/08/2026 e encheu o Discord.
+let avisadoEm = 0;
+const INTERVALO_AVISO_MS = 24 * 60 * 60 * 1000;
+
 /** Avisa antes de vencer. Sem isso a integração para em silêncio e ninguém
  *  liga o sintoma ("parou de puxar nota") à causa. */
 async function verificarCertificado(supabase, alertar) {
   const expira = validadeCertificado();
   const dias = Math.floor((expira.getTime() - Date.now()) / 86_400_000);
+
+  if (Date.now() - avisadoEm < INTERVALO_AVISO_MS) return dias;
+
   if (dias <= ALERTA_CERT_DIAS) {
+    avisadoEm = Date.now();
     const msg =
       dias < 0
         ? `Certificado digital VENCIDO há ${-dias} dia(s) (${expira.toISOString().slice(0, 10)}). A importação de NF-e está parada.`
