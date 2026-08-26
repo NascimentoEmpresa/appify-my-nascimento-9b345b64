@@ -10,15 +10,24 @@
 // com o mesmo texto (o de WA_BOT_CONFIG.abertura_*).
 //
 // Ações:
-//   { conversa_id }            → manda a abertura (texto livre OU template)
-//   { acao: "criar_template" } → cria/consulta o template na Meta
+//   { conversa_id }             → manda a abertura (texto livre OU template)
+//   { acao: "criar_template" }  → cria/consulta o template na Meta
+//   { acao: "status_template" } → só CONSULTA o estado na Meta
 //
-// Criar template exige o menu do Chatbot; mandar a abertura exige só a
-// Caixa de Entrada (a RLS da conversa é quem autoriza).
+// Criar template exige o menu do Chatbot; mandar a abertura e consultar o
+// estado exigem só a Caixa de Entrada (a RLS da conversa é quem autoriza).
+//
+// Por que a consulta é ação própria, aberta a quem atende: quando a abertura
+// falha com #132001 a tela dizia só "falta o template aprovado", e ninguém —
+// nem quem tem o Chatbot — conseguia ver se o template estava EM REVISÃO, se
+// tinha sido REPROVADO (e por quê), ou se nunca chegou a ser criado. As três
+// situações têm saídas diferentes: esperar, reescrever, ou clicar em criar.
+// Sem isso o atendente só sabia que "deu erro de novo".
 //
 // Secrets: WHATSAPP_TOKEN, WHATSAPP_PHONE_NUMBER_ID.
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
+import { descobrirWaba } from "../_shared/whatsapp-waba.ts";
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const ANON_KEY = Deno.env.get("SUPABASE_ANON_KEY")!;
@@ -75,6 +84,45 @@ Deno.serve(async (req) => {
   const nomeTemplate = String(cfg?.abertura_template ?? "abertura_contato").trim();
   const idioma = String(cfg?.abertura_template_idioma ?? "pt_BR").trim();
   if (!texto) return json({ error: "mensagem de abertura não configurada" }, 500);
+
+  // ---- só consultar o estado na Meta ----------------------------------
+  // Não mexe em nada, então não exige o menu do Chatbot: quem tomou o erro
+  // na cara precisa poder ver o motivo.
+  if (body.acao === "status_template") {
+    const waba = await descobrirWaba(WA_TOKEN, PHONE_NUMBER_ID);
+    if (!waba.id) return json({ error: waba.erro ?? "não consegui identificar a conta do WhatsApp" }, 502);
+
+    const res = await fetch(
+      `${GRAPH}/${waba.id}/message_templates?limit=200&fields=name,language,status,category,rejected_reason`,
+      { headers: { Authorization: `Bearer ${WA_TOKEN}` } },
+    );
+    const d = await res.json().catch(() => ({}));
+    if (!res.ok) return json({ error: "a Meta recusou a consulta", detalhe: d }, 502);
+
+    type Tpl = { name?: string; language?: string; status?: string; category?: string; rejected_reason?: string };
+    const todos: Tpl[] = d?.data ?? [];
+    const mesmoNome = todos.filter(t => t?.name === nomeTemplate);
+    const noIdioma = mesmoNome.find(t => t?.language === idioma);
+
+    return json({
+      ok: true,
+      nome: nomeTemplate,
+      idioma,
+      // A Meta trata um template como o par (nome, idioma). Existir "o
+      // template" não basta: a tradução que o envio pede tem que existir, e
+      // é justamente esse descasamento que devolve #132001.
+      existe_no_idioma: !!noIdioma,
+      status: noIdioma?.status ?? null,
+      categoria: noIdioma?.category ?? null,
+      motivo_reprovacao: noIdioma?.rejected_reason ?? null,
+      outros_idiomas: mesmoNome.filter(t => t?.language !== idioma)
+        .map(t => ({ idioma: t.language, status: t.status })),
+      // Os aprovados que existem de fato — é o que dá para usar HOJE, e o
+      // que a tela oferece como saída enquanto a abertura não passa.
+      aprovados: todos.filter(t => t?.status === "APPROVED")
+        .map(t => ({ nome: t.name, idioma: t.language })),
+    });
+  }
 
   // ---- criar o template na Meta ---------------------------------------
   if (body.acao === "criar_template") {
