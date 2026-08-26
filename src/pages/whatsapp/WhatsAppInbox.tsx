@@ -8,7 +8,10 @@ import { novoUuid, erroDaFunction } from "@/lib/utils";
 import { HistoricoConversa } from "./HistoricoConversa";
 import { NovaConversa } from "./NovaConversa";
 import { FichaContato } from "./FichaContato";
-import { MenuMensagens, PreencherVariaveis, useMensagensProntas, useStatusNaMeta, type WaTemplate } from "./MenuMensagens";
+import {
+  MenuMensagens, PreencherVariaveis, useMensagensProntas, useRespostasBot, useStatusNaMeta,
+  type ItemMenu, type WaTemplate,
+} from "./MenuMensagens";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -62,6 +65,16 @@ export default function WhatsAppInbox() {
   const navegarMenu = useRef<((e: React.KeyboardEvent) => boolean) | null>(null);
   const { data: mensagensProntas = [] } = useMensagensProntas(podeVer);
   const { data: statusMeta = {} } = useStatusNaMeta(podeVer);
+  const { data: respostasBot = [] } = useRespostasBot(podeVer);
+
+  /** Etiqueta selecionada no filtro. Vazio = todas. Vive DENTRO da pasta. */
+  const [etiquetaSel, setEtiquetaSel] = useState("");
+
+  // As prontas primeiro (é o que o atendente usa mais), as do bot depois.
+  const itensMenu: ItemMenu[] = useMemo(() => [
+    ...mensagensProntas.map((pronta) => ({ tipo: "pronta" as const, pronta })),
+    ...respostasBot.map((bot) => ({ tipo: "bot" as const, bot })),
+  ], [mensagensProntas, respostasBot]);
   // Pasta aberta. Começa vazio e é resolvido assim que as pastas carregam: quem
   // tem "todas as conversas" abre nela; quem não tem, abre na primeira pasta
   // liberada — senão a tela abriria vazia sem explicar por quê.
@@ -320,7 +333,26 @@ export default function WhatsAppInbox() {
     const noTopo = (c: WaConversa) => (c.nao_lidas > 0 || c.id === selId ? 0 : 1);
     const quando = (c: WaConversa) => (c.ultima_mensagem_em ? Date.parse(c.ultima_mensagem_em) : -Infinity);
     return [...lista].sort((a, b) => noTopo(a) - noTopo(b) || quando(b) - quando(a));
-  }, [conversas, busca, pastaSel, selId]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [conversas, busca, pastaSel, selId, etiquetaSel]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  /**
+   * As etiquetas que EXISTEM na pasta aberta, com quantas conversas cada uma.
+   *
+   * Sai da pasta, não do catálogo inteiro: filtro que oferece etiqueta sem
+   * nenhuma conversa atrás só rende clique que devolve lista vazia.
+   */
+  const etiquetasDaPasta = useMemo(() => {
+    const base = pastaSel ? daPasta(pastaSel) : [];
+    const m = new Map<string, number>();
+    for (const c of base) {
+      for (const e of c.contato?.etiquetas ?? []) m.set(e, (m.get(e) ?? 0) + 1);
+    }
+    return [...m.entries()].sort((a, b) => a[0].localeCompare(b[0]));
+  }, [conversas, pastaSel]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Trocar de pasta zera o filtro: a etiqueta escolhida pode não existir na
+  // pasta nova, e a lista apareceria vazia sem explicação.
+  useEffect(() => { setEtiquetaSel(""); }, [pastaSel]);
 
   if (!podeVer) {
     return (
@@ -416,6 +448,31 @@ export default function WhatsAppInbox() {
               <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
               <Input className="h-9 pl-8 text-sm" placeholder="Buscar por nome, número ou etiqueta…" value={busca} onChange={(e) => setBusca(e.target.value)} />
             </div>
+
+            {/* Filtro por etiqueta, dentro da pasta. Só aparece quando há
+                etiqueta na pasta — em pasta sem nenhuma, uma fileira de
+                chips vazia é só ruído ocupando a altura da lista. */}
+            {etiquetasDaPasta.length > 0 && (
+              <div className="mt-2 flex flex-wrap items-center gap-1">
+                <button
+                  type="button" onClick={() => setEtiquetaSel("")}
+                  className={`rounded-full px-2 py-0.5 text-[11px] font-medium ${
+                    etiquetaSel === "" ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground hover:bg-muted/70"}`}
+                >
+                  Todas
+                </button>
+                {etiquetasDaPasta.map(([e, n]) => (
+                  <button
+                    key={e} type="button"
+                    onClick={() => setEtiquetaSel((v) => (v === e ? "" : e))}
+                    className={`rounded-full px-2 py-0.5 text-[11px] font-medium ${
+                      etiquetaSel === e ? "bg-primary text-primary-foreground" : "bg-primary/10 text-primary hover:bg-primary/20"}`}
+                  >
+                    {e} <span className="opacity-70">{n}</span>
+                  </button>
+                ))}
+              </div>
+            )}
           </div>
           <div className="flex-1 overflow-y-auto">
             {filtradas.map((c) => (
@@ -609,7 +666,7 @@ export default function WhatsAppInbox() {
               {menuAberto && (
                 <MenuMensagens
                   filtro={filtroMenu}
-                  mensagens={mensagensProntas}
+                  itens={itensMenu}
                   status={statusMeta}
                   onEscolher={escolherPronta}
                   onFechar={() => setTexto("")}
