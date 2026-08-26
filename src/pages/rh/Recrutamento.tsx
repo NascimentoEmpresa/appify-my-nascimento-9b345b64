@@ -3,6 +3,8 @@ import { useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
 import { usePermissoes } from "@/context/PermissoesContext";
+import { useEmpresaAtiva } from "@/context/EmpresaAtivaContext";
+import { useContratosCatalogo, usePostos, useFuncoes } from "@/hooks/useSupCatalogo";
 import { ESTADOS_BR, municipiosDe } from "@/data/municipios-brasil";
 import {
   MOTIVOS_VAGA, motivoLabel, ehSubstituicao, avaliarPrazo, dataMinimaVaga,
@@ -289,6 +291,7 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "opera
   const menuAcesso = soOperacional ? "operacional_recrutamento" : "recrutamento_gestao";
   const { user } = useAuth();
   const { roles, can } = usePermissoes();
+  const { empresa } = useEmpresaAtiva();
   const navigate = useNavigate();
 
   const isTreinamento = roles.includes("treinamentos"); // só rótulo da mensagem no chat, não é gate
@@ -398,6 +401,7 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "opera
   // Wizard nova vaga
   const [vaga, setVaga] = useState({
     motivo_vaga: "", administrativa: false, nome_substituido: "", contrato: "", cargo: "",
+    contrato_id: "", posto_id: "", funcao_id: "",
     estado: "", cidade: "", quantidade_vagas: "1", data_inicio_prevista: "",
     escala: "", horario: "", salario: "", insalubridade_recebe: "Não",
     insalubridade_quanto: "", beneficios: "", local_exato: "",
@@ -405,6 +409,9 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "opera
     req_desejaveis: "", exp_minima: "Não", exp_minima_qual: "",
     motivos_saida: "", recomendacao: "", observacao_importante: "",
   });
+  const { data: contratosCatalogo = [] } = useContratosCatalogo(empresa.id);
+  const { data: postosCatalogo = [] } = usePostos(vaga.contrato_id || null);
+  const { data: funcoesCatalogo = [] } = useFuncoes(vaga.posto_id || null);
   const [contratosFull, setContratosFull] = useState<any[]>([]);
   // Empregado -> nº da vaga de substituição que já o segura (regra do banco).
   const [presos, setPresos] = useState<Map<number, number>>(new Map());
@@ -1387,6 +1394,7 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "opera
       insalubridade_quanto: insal > 0 ? `${emp["% Insalubridade"]}%` : "",
       escala: emp["Escala"] ? String(emp["Escala"]) : v.escala,
       contrato: contratoMatch ? contratoMatch["NOME CONTRATO"] : v.contrato,
+      contrato_id: "", posto_id: "", funcao_id: "",
     }));
     setEmpSearch(mostraNomeReferencia(vaga.motivo_vaga) ? emp.Nome : "");
     setShowEmpDrop(false);
@@ -1422,6 +1430,9 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "opera
       if (jaTem) { toast(avisoSubstituidoPreso(jaTem), "err"); return false; }
       if (!vaga.contrato)    { toast("Selecione o contrato.", "err"); return false; }
       if (!vaga.cargo.trim()){ toast("Informe o cargo.", "err"); return false; }
+      if (!vaga.contrato_id) { toast("Selecione o contrato do catálogo de Suprimentos.", "err"); return false; }
+      if (!vaga.posto_id)    { toast("Selecione o posto do catálogo de Suprimentos.", "err"); return false; }
+      if (!vaga.funcao_id)   { toast("Selecione a função do catálogo de Suprimentos.", "err"); return false; }
     }
     if (step === 2) {
       if (!prazo.ok) { toast(prazo.erro ?? "Revise a data de início prevista.", "err"); return false; }
@@ -1452,13 +1463,13 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "opera
     let { error, data } = await (supabase as any).from("SISTEMA_RECRUTAMENTO").insert(payload).select("id").single();
     // Banco ainda sem as colunas novas: reenvia sem elas.
     if (error && /column|schema cache/i.test(error.message)) {
-      const { cnh_obrigatoria, substituido_id, ...semColunasNovas } = payload as any;
+      const { cnh_obrigatoria, substituido_id, contrato_id, posto_id, funcao_id, ...semColunasNovas } = payload as any;
       ({ error, data } = await (supabase as any).from("SISTEMA_RECRUTAMENTO").insert(semColunasNovas).select("id").single());
     }
     if (error) { toast("Erro ao solicitar vaga: " + error.message, "err"); return; }
     toast(`Solicitação #${data?.id} criada com sucesso!`, "ok");
     setModalVaga(false);
-    setVaga({ motivo_vaga:"",administrativa:false,nome_substituido:"",contrato:"",cargo:"",estado:"",cidade:"",
+    setVaga({ motivo_vaga:"",administrativa:false,nome_substituido:"",contrato:"",cargo:"",contrato_id:"",posto_id:"",funcao_id:"",estado:"",cidade:"",
       quantidade_vagas:"1",data_inicio_prevista:"",escala:"",horario:"",salario:"",
       insalubridade_recebe:"Não",insalubridade_quanto:"",beneficios:"",local_exato:"",
       grau_urgencia:"",alta_rotatividade:"Não",req_obrigatorios:"",req_desejaveis:"",
@@ -2768,6 +2779,7 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "opera
                     setSubstituidoId(null); setEmpSearch("");
                     setVaga(v => ({
                       ...v, motivo_vaga: m, nome_substituido: "", cargo: "", contrato: "",
+                      contrato_id: "", posto_id: "", funcao_id: "",
                       salario: "", escala: "", insalubridade_recebe: "Não", insalubridade_quanto: "",
                     }));
                   }}>
@@ -2790,7 +2802,10 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "opera
                       setSubstituidoId(null);
                       // Digitar não vale escolher: o que ficou do último
                       // escolhido sai daqui, e só volta quando clicarem na lista.
-                      setVaga(prev => ({ ...prev, nome_substituido: "", cargo: "", contrato: "", salario: "", escala: "" }));
+                      setVaga(prev => ({
+                        ...prev, nome_substituido: "", cargo: "", contrato: "", salario: "", escala: "",
+                        contrato_id: "", posto_id: "", funcao_id: "",
+                      }));
                       if (empDebounce.current) clearTimeout(empDebounce.current);
                       if (v.trim().length >= 2) {
                         setShowEmpDrop(true);
@@ -2852,6 +2867,40 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "opera
                     🚗 {cnhDoCargo}: CNH obrigatória — já entra sozinha nos requisitos e não pode ser tirada.
                   </div>
                 )}
+              </div>
+              <div className="rec-fg" style={{ gridColumn: "1 / -1" }}>
+                <label>Vínculo com o catálogo de Suprimentos *</label>
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(3,minmax(0,1fr))", gap: 8 }}>
+                  <select className="rec-fi" value={vaga.contrato_id} onChange={e => {
+                    const id = e.target.value;
+                    const contrato = contratosCatalogo.find(c => c.id === id);
+                    setVaga(v => ({
+                      ...v, contrato_id: id, posto_id: "", funcao_id: "",
+                      contrato: contrato?.nome ?? v.contrato,
+                    }));
+                  }}>
+                    <option value="">Contrato</option>
+                    {contratosCatalogo.map(c => <option key={c.id} value={c.id}>{c.nome}</option>)}
+                  </select>
+                  <select className="rec-fi" value={vaga.posto_id} disabled={!vaga.contrato_id} onChange={e => {
+                    const id = e.target.value;
+                    setVaga(v => ({ ...v, posto_id: id, funcao_id: "" }));
+                  }}>
+                    <option value="">{vaga.contrato_id ? "Posto" : "Escolha o contrato"}</option>
+                    {postosCatalogo.map(p => <option key={p.id} value={p.id}>{p.nome}</option>)}
+                  </select>
+                  <select className="rec-fi" value={vaga.funcao_id} disabled={!vaga.posto_id} onChange={e => {
+                    const id = e.target.value;
+                    const funcao = funcoesCatalogo.find(f => f.id === id);
+                    setVaga(v => ({ ...v, funcao_id: id, cargo: funcao?.nome ?? v.cargo }));
+                  }}>
+                    <option value="">{vaga.posto_id ? "Função" : "Escolha o posto"}</option>
+                    {funcoesCatalogo.map(f => <option key={f.id} value={f.id}>{f.nome}</option>)}
+                  </select>
+                </div>
+                <div style={{ marginTop: 5, fontSize: 11, color: "#64748b" }}>
+                  Este vínculo define automaticamente os uniformes e EPIs da admissão.
+                </div>
               </div>
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
                 <div className="rec-fg">

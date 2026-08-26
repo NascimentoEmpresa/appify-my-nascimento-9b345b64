@@ -248,6 +248,7 @@ const suprimentosModule: ModuleDef = {
         { label: "Aprovação de Catálogo", to: "/app/suprimentos/catalogo/aprovacoes", icon: ClipboardCheck },
         { label: "Pedidos de Materiais", to: "/app/suprimentos/pedidos-materiais", icon: PackageCheck },
         { label: "Estoque & Etiquetas", to: "/app/suprimentos/estoque-etiquetas", icon: Boxes },
+        { label: "Histórico do Colaborador", to: "/app/suprimentos/colaborador", icon: History },
         { label: "Cotações do Malote", to: "/app/suprimentos/cotacoes-malote", icon: FileClock },
       ],
     },
