@@ -53,21 +53,25 @@ interface ContratoGeralGrupo {
 // (com detalhes/vigências diferentes) somam pra mesma Classificação Malote.
 const PRIORIDADE_STATUS: StatusVigencia[] = ["na_vigencia", "entrara_em_vigencia", "historico"];
 
-function fmtAprovador(nome: string | null | undefined, limitePct: number | null | undefined) {
-  if (!nome) return "—";
-  return limitePct != null ? `${nome} — até ${limitePct}%` : nome;
+// SIS-2026-0236: cada nível pode ter mais de um aprovador — mostra só o
+// primeiro + indicador "+N", nome completo dos demais no tooltip.
+function fmtAprovadores(nomes: string[] | null | undefined, limitePct: number | null | undefined) {
+  if (!nomes || nomes.length === 0) return "—";
+  const base = nomes.join(", ");
+  return limitePct != null ? `${base} — até ${limitePct}%` : base;
 }
 
-function AprovadorCell({ nome, limitePct }: { nome: string | null | undefined; limitePct?: number | null }) {
-  if (!nome) return <span className="text-muted-foreground">—</span>;
-  const primeiroNome = nome.split(" ")[0];
-  const label = limitePct != null ? `${primeiroNome} ${limitePct}%` : primeiroNome;
+function AprovadorCell({ nomes, limitePct }: { nomes: string[] | null | undefined; limitePct?: number | null }) {
+  if (!nomes || nomes.length === 0) return <span className="text-muted-foreground">—</span>;
+  const primeiroNome = nomes[0].split(" ")[0];
+  const extra = nomes.length - 1;
+  const label = `${primeiroNome}${extra > 0 ? ` +${extra}` : ""}${limitePct != null ? ` ${limitePct}%` : ""}`;
   return (
     <Tooltip>
       <TooltipTrigger asChild>
         <span className="cursor-help underline decoration-dotted underline-offset-2">{label}</span>
       </TooltipTrigger>
-      <TooltipContent>{fmtAprovador(nome, limitePct)}</TooltipContent>
+      <TooltipContent>{fmtAprovadores(nomes, limitePct)}</TooltipContent>
     </Tooltip>
   );
 }
@@ -76,16 +80,16 @@ function LinhaAprovadores({ c }: { c: ClassificacaoOrcamento }) {
   return (
     <>
       <TableCell className="whitespace-nowrap">
-        <AprovadorCell nome={c.aprovador_solicitacao_nome} />
+        <AprovadorCell nomes={c.aprovador_solicitacao_nome ? [c.aprovador_solicitacao_nome] : []} />
       </TableCell>
       <TableCell className="whitespace-nowrap">
-        <AprovadorCell nome={c.aprovador1_nome} limitePct={c.aprovador1_limite_pct} />
+        <AprovadorCell nomes={c.aprovador1_nomes} limitePct={c.aprovador1_limite_pct} />
       </TableCell>
       <TableCell className="whitespace-nowrap">
-        <AprovadorCell nome={c.aprovador2_nome} limitePct={c.aprovador2_limite_pct} />
+        <AprovadorCell nomes={c.aprovador2_nomes} limitePct={c.aprovador2_limite_pct} />
       </TableCell>
       <TableCell className="whitespace-nowrap">
-        <AprovadorCell nome={c.aprovador3_nome} limitePct={c.aprovador3_limite_pct} />
+        <AprovadorCell nomes={c.aprovador3_nomes} limitePct={c.aprovador3_limite_pct} />
       </TableCell>
     </>
   );

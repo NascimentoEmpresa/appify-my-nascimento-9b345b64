@@ -211,12 +211,12 @@ export interface MaloteDespesaRow {
   classificacao?: {
     id: string;
     nome: string;
-    aprovador1_nome?: string | null;
-    aprovador2_nome?: string | null;
-    aprovador3_nome?: string | null;
-    aprovador1_user_id?: string | null;
-    aprovador2_user_id?: string | null;
-    aprovador3_user_id?: string | null;
+    aprovador1_nomes?: string[];
+    aprovador2_nomes?: string[];
+    aprovador3_nomes?: string[];
+    aprovador1_user_ids?: string[];
+    aprovador2_user_ids?: string[];
+    aprovador3_user_ids?: string[];
     // Alçada por nível (SIS-2026-0132, antes cadastrada mas nunca
     // consumida) — sem_limite=true dispensa a checagem de %; limite_pct
     // null (e sem_limite=false) é tratado como "sem trava configurada"
@@ -311,7 +311,7 @@ const DESPESA_COLUMNS =
   "cotacao_reprovada_motivo, cotacao_observacoes, cotacao_vencedor_num, " +
   "comprovante_pagamento_path, observacao_pagamento, pago_em, pago_por, conferido_em, conferido_por, " +
   "arquivos, created_at, created_by, updated_at, " +
-  "classificacao:classificacao_id(id, nome, aprovador1_nome, aprovador2_nome, aprovador3_nome, aprovador1_user_id, aprovador2_user_id, aprovador3_user_id, " +
+  "classificacao:classificacao_id(id, nome, aprovador1_nomes, aprovador2_nomes, aprovador3_nomes, aprovador1_user_ids, aprovador2_user_ids, aprovador3_user_ids, " +
   "aprovador1_limite_pct, aprovador1_sem_limite, aprovador2_limite_pct, aprovador2_sem_limite, aprovador3_limite_pct, aprovador3_sem_limite, " +
   "aprovador_solicitacao_user_id, aprovador_solicitacao_nome, limite_justificativa_pct)";
 
@@ -764,17 +764,26 @@ export async function buscarNumeroDespesa(id: string): Promise<string | null> {
   return (data?.numero as string | undefined) ?? null;
 }
 
-export function aprovadorDoNivel(despesa: MaloteDespesaRow, nivel: 1 | 2 | 3): string | null {
+// SIS-2026-0236: cada nível pode ter mais de um aprovador — devolve a
+// lista inteira, nunca "o" aprovador. O primeiro elemento é, por convenção,
+// o primeiro selecionado no cadastro (é o que aparece na coluna "Fluxo de
+// Aprovação" da lista de Classificações).
+export function aprovadoresDoNivel(despesa: MaloteDespesaRow, nivel: 1 | 2 | 3): string[] {
   const c = despesa.classificacao;
-  if (!c) return null;
-  if (nivel === 1) return c.aprovador1_user_id ?? null;
-  if (nivel === 2) return c.aprovador2_user_id ?? null;
-  return c.aprovador3_user_id ?? null;
+  if (!c) return [];
+  if (nivel === 1) return c.aprovador1_user_ids ?? [];
+  if (nivel === 2) return c.aprovador2_user_ids ?? [];
+  return c.aprovador3_user_ids ?? [];
+}
+
+export function souAprovadorDoNivel(despesa: MaloteDespesaRow, nivel: 1 | 2 | 3, userId: string | null | undefined): boolean {
+  if (!userId) return false;
+  return aprovadoresDoNivel(despesa, nivel).includes(userId);
 }
 
 export function souAprovadorConfigurado(despesa: MaloteDespesaRow, userId: string | null | undefined): boolean {
   if (!userId) return false;
-  return ([1, 2, 3] as const).some((n) => aprovadorDoNivel(despesa, n) === userId);
+  return ([1, 2, 3] as const).some((n) => souAprovadorDoNivel(despesa, n, userId));
 }
 
 // SIS-2026-0189: fase de Solicitação (aguardando_aprovacao_inicial/
@@ -1068,7 +1077,7 @@ export function useItensAguardandoMinhaAprovacao() {
           // cotacao_realizada: aprovador precisa escolher qual cotação.
           if (souAprovadorSolicitacao(despesa, u.user.id)) resultado.push({ despesa, tela: "solicitacao" });
         } else if (despesa.status === "pendente_aprovacao" && despesa.nivel_aprovacao_atual != null) {
-          if (aprovadorDoNivel(despesa, despesa.nivel_aprovacao_atual) === u.user.id) resultado.push({ despesa, tela: "despesa" });
+          if (souAprovadorDoNivel(despesa, despesa.nivel_aprovacao_atual, u.user.id)) resultado.push({ despesa, tela: "despesa" });
         }
       }
       return resultado;

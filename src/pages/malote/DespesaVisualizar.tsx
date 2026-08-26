@@ -39,7 +39,8 @@ import {
   usePagarDespesa,
   usePagarParcela,
   uploadAnexoMalote,
-  aprovadorDoNivel,
+  aprovadoresDoNivel,
+  souAprovadorDoNivel,
   souAprovadorConfigurado,
   STATUS_LABEL,
   STATUS_BADGE_CLASS,
@@ -352,7 +353,7 @@ export default function DespesaVisualizar() {
   const souAprovadorNivelAtual =
     despesa.status === "pendente_aprovacao" &&
     despesa.nivel_aprovacao_atual != null &&
-    aprovadorDoNivel(despesa, despesa.nivel_aprovacao_atual) === user?.id;
+    souAprovadorDoNivel(despesa, despesa.nivel_aprovacao_atual, user?.id);
   const configurado = souAprovadorConfigurado(despesa, user?.id);
   // SIS-2026-0192: "Dados da Aprovação e Pagamento" e "Rateio da Despesa"
   // só podem ser alterados pelo Solicitante (ex.: quando o aprovador pede
@@ -380,7 +381,7 @@ export default function DespesaVisualizar() {
   const souAprovadorVendoAjuste = despesa.status === "necessidade_de_ajuste" && configurado && !souSolicitante;
   const proximoNivelExiste =
     despesa.nivel_aprovacao_atual != null && despesa.nivel_aprovacao_atual < 3
-      ? aprovadorDoNivel(despesa, (despesa.nivel_aprovacao_atual + 1) as 1 | 2 | 3) != null
+      ? aprovadoresDoNivel(despesa, (despesa.nivel_aprovacao_atual + 1) as 1 | 2 | 3).length > 0
       : false;
 
   // % de alçada (SIS-2026-0132, cadastrado desde sempre mas nunca
