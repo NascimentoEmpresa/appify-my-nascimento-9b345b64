@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
 // Edge function: importa XML de NFe e cria nf_entrada + itens
 // Política para produtos novos: cria automaticamente como pendente_revisao (decisão do usuário: 1-C)
 
@@ -16,6 +17,7 @@ interface ImportPayload {
   almoxarifado_id?: string;
   contrato_id?: string;
   centro_custo_id?: string;
+  sup_compra_pedido_id?: string;
 }
 
 Deno.serve(async (req) => {
@@ -41,6 +43,15 @@ Deno.serve(async (req) => {
     if (userErr || !user) {
       return json({ error: "Unauthorized" }, 401);
     }
+    const { data: podeImportar } = await userClient.rpc("has_screen_access", {
+      _user: user.id,
+      _menu: "nf-entrada",
+      _acao: "incluir",
+      _empresa: null,
+    });
+    if (!podeImportar) {
+      return json({ error: "Sem permissão para importar NF" }, 403);
+    }
 
     // Cliente admin para escrever ignorando RLS quando necessário (mantemos empresa_id correto)
     const admin = createClient(supabaseUrl, serviceKey);
@@ -51,14 +62,25 @@ Deno.serve(async (req) => {
       .select("empresa_id")
       .eq("id", user.id)
       .maybeSingle();
-    const empresa_id = profile?.empresa_id;
-    if (!empresa_id) {
-      return json({ error: "Usuário sem empresa vinculada" }, 400);
-    }
-
+    let empresa_id = profile?.empresa_id;
     const body: ImportPayload = await req.json();
     if (!body.xml || typeof body.xml !== "string") {
       return json({ error: "Campo 'xml' obrigatório" }, 400);
+    }
+
+    if (body.sup_compra_pedido_id) {
+      const { data: pedido } = await admin
+        .from("sup_compra_pedido")
+        .select("empresa_id,status")
+        .eq("id", body.sup_compra_pedido_id)
+        .maybeSingle();
+      if (!pedido || !["enviado", "aguardando_entrega", "entrega_parcial"].includes(pedido.status)) {
+        return json({ error: "Pedido de compra inválido para esta NF" }, 400);
+      }
+      empresa_id = pedido.empresa_id;
+    }
+    if (!empresa_id) {
+      return json({ error: "Selecione um pedido de compra para definir a empresa da NF" }, 400);
     }
 
     // Parse XML
@@ -180,6 +202,7 @@ Deno.serve(async (req) => {
         almoxarifado_id: body.almoxarifado_id ?? null,
         contrato_id: body.contrato_id ?? null,
         centro_custo_id: body.centro_custo_id ?? null,
+        sup_compra_pedido_id: body.sup_compra_pedido_id ?? null,
         xml_storage_path: xml_path,
         xml_protocolo: protocolo,
         importado_por: user.id,
@@ -205,7 +228,42 @@ Deno.serve(async (req) => {
       const ean = prod.cEAN && prod.cEAN !== "SEM GTIN" ? prod.cEAN.toString() : null;
       const xProd = prod.xProd?.toString() ?? "Item sem descrição";
 
-      // Tenta localizar produto existente: codigo_externo == cProd ou ean
+      // Primeiro resolve o catálogo Supply. O de-para do fornecedor é a fonte
+      // principal; o EAN/GTIN é fallback quando aquele vínculo ainda não foi
+      // cadastrado. A empresa aqui não é filtro de acesso: é a empresa da
+      // própria NF e impede gravar nela um material de outro catálogo.
+      let sup_item_id: string | null = null;
+      if (fornecedor_id && cFornecedor) {
+        const { data: vinculos } = await admin
+          .from("sup_fornecedor_item")
+          .select("sup_item_id")
+          .eq("fornecedor_id", fornecedor_id)
+          .eq("codigo_fornecedor", cFornecedor)
+          .limit(20);
+        const idsVinculados = (vinculos ?? []).map((v: any) => v.sup_item_id);
+        if (idsVinculados.length > 0) {
+          const { data: itemDaEmpresa } = await admin
+            .from("sup_item")
+            .select("id")
+            .in("id", idsVinculados)
+            .eq("empresa_id", empresa_id)
+            .limit(1)
+            .maybeSingle();
+          if (itemDaEmpresa) sup_item_id = itemDaEmpresa.id;
+        }
+      }
+      if (!sup_item_id && ean) {
+        const { data: itemEan } = await admin
+          .from("sup_item")
+          .select("id")
+          .eq("codigo_barras", ean)
+          .eq("empresa_id", empresa_id)
+          .limit(1)
+          .maybeSingle();
+        if (itemEan) sup_item_id = itemEan.id;
+      }
+
+      // Mantém também o vínculo com `produto`, consumido pelo módulo legado.
       let produto_id: string | null = null;
       if (cFornecedor) {
         const { data: pExist } = await admin
@@ -217,7 +275,9 @@ Deno.serve(async (req) => {
         if (pExist) produto_id = pExist.id;
       }
 
-      let item_status: "ok" | "pendente_revisao" | "produto_novo" = "ok";
+      const item_status: "ok" | "pendente_revisao" | "produto_novo" = sup_item_id
+        ? "ok"
+        : "pendente_revisao";
       let produto_criado_auto = false;
 
       // Cria produto automaticamente se não existir (decisão 1-C)
@@ -240,7 +300,6 @@ Deno.serve(async (req) => {
           produto_id = pNew.id;
           produto_criado_auto = true;
           produtos_criados++;
-          item_status = "pendente_revisao"; // marca para revisão
         }
       }
 
@@ -251,6 +310,7 @@ Deno.serve(async (req) => {
         empresa_id,
         numero_item: numero,
         produto_id,
+        sup_item_id,
         codigo_fornecedor: cFornecedor,
         ean,
         descricao_original: xProd,

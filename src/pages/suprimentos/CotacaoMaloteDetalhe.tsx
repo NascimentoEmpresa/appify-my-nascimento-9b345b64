@@ -22,9 +22,11 @@ import { STATUS_BADGE_CLASS, uploadAnexoMalote, useItensDaDespesa } from "@/hook
 import { ItensSolicitacao } from "@/components/malote/ItensSolicitacao";
 import { useEmpresaId } from "@/hooks/useEmpresaId";
 import { useFornecedores, type FornecedorOpcao } from "@/hooks/useSupEstoque";
+import { useGerarPedidoCompra, usePedidoAtivoDaDespesa } from "@/hooks/useCompraPedido";
+import { useScreenAccess } from "@/hooks/useScreenAccess";
 import {
   ArrowLeft, Paperclip, Save, Send, Trash2, CheckCircle2, XCircle, Ban,
-  Trophy, Loader2, ShieldAlert, Info,
+  Trophy, Loader2, ShieldAlert, Info, ShoppingCart,
 } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
@@ -57,6 +59,9 @@ export default function CotacaoMaloteDetalhe() {
   const aprovar = useAprovarCotacao();
   const reprovar = useReprovarCotacao();
   const cancelar = useCancelarCotacao();
+  const gerarPedido = useGerarPedidoCompra();
+  const { data: pedidoAtivo, isLoading: carregandoPedidoAtivo } = usePedidoAtivoDaDespesa(id);
+  const { data: podeAbrirPedido = false } = useScreenAccess("sup_compra_pedido", "visualizar");
   const { data: empresaId } = useEmpresaId();
   const { data: fornecedores = [] } = useFornecedores(empresaId ?? null);
 
@@ -194,7 +199,9 @@ export default function CotacaoMaloteDetalhe() {
                texto="A solicitação voltou para o Malote e aguarda ser convertida em Despesa.">
           <div className="mt-2 grid gap-1 text-sm sm:grid-cols-2">
             <p><span className="text-muted-foreground">Fornecedor: </span>
-              <strong>{(d as any)[`cot${d.cotacao_vencedor_num}_fornecedor`] ?? "—"}</strong></p>
+              <strong>{d.cotacao_vencedor_num
+                ? cots[d.cotacao_vencedor_num - 1]?.fornecedor || "—"
+                : "—"}</strong></p>
             <p><span className="text-muted-foreground">Valor final: </span>
               <strong>{fmtBRL(d.valor_aprovado_cotacao)}</strong></p>
             <p><span className="text-muted-foreground">Aprovado por: </span>
@@ -204,6 +211,32 @@ export default function CotacaoMaloteDetalhe() {
                 {d.cotacao_observacoes}</p>
             )}
           </div>
+          <Button className="mt-4"
+            disabled={gerarPedido.isPending || carregandoPedidoAtivo || itens.length === 0 || !!pedidoAtivo}
+            onClick={() => gerarPedido.mutate(d.id)}>
+            {gerarPedido.isPending
+              ? <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+              : <ShoppingCart className="mr-2 h-4 w-4" />}
+            Gerar pedido de compra
+          </Button>
+          {itens.length === 0 && (
+            <p className="mt-2 text-xs text-muted-foreground">
+              Esta solicitação não possui itens. Pedidos de serviço ou solicitações legadas não geram pedido de compra.
+            </p>
+          )}
+          {pedidoAtivo && (
+            <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+              <span>Já existe o pedido ativo {pedidoAtivo.numero} para esta solicitação.</span>
+              {podeAbrirPedido ? (
+                <Button size="sm" variant="outline"
+                  onClick={() => navegar(`/app/suprimentos/pedidos-compra?pedido=${pedidoAtivo.id}`)}>
+                  Abrir pedido
+                </Button>
+              ) : (
+                <span>O pedido foi gerado, mas seu usuário ainda não tem acesso ao menu de Pedidos de Compra.</span>
+              )}
+            </div>
+          )}
         </Aviso>
       )}
 
@@ -393,6 +426,8 @@ function CartaoCotacao({
   // cadastrado, ou cujo nome não casou no de-para da migration. Continua
   // legível, e escolher do select por cima resolve.
   const fornecedorLegado = !!cot.fornecedor && !cot.fornecedor_id;
+  const fornecedorVinculadoAusente = !!cot.fornecedor_id
+    && !fornecedores.some((fornecedor) => fornecedor.id === cot.fornecedor_id);
 
   async function anexar(f: File | null) {
     if (!f) return;
@@ -401,8 +436,8 @@ function CartaoCotacao({
       const path = await uploadAnexoMalote(f, despesaId);
       onTrocar("anexo_path", path);
       onTrocar("anexo_nome", f.name);
-    } catch (e: any) {
-      toast.error(e?.message ?? "Não foi possível anexar.");
+    } catch (e: unknown) {
+      toast.error(e instanceof Error ? e.message : "Não foi possível anexar.");
     } finally {
       setSubindo(false);
       if (inputRef.current) inputRef.current.value = "";
@@ -453,6 +488,11 @@ function CartaoCotacao({
               <SelectContent>
                 {fornecedorLegado && (
                   <SelectItem value={LEGADO}>{cot.fornecedor} (não cadastrado)</SelectItem>
+                )}
+                {fornecedorVinculadoAusente && (
+                  <SelectItem value={cot.fornecedor_id!}>
+                    {cot.fornecedor || "Fornecedor vinculado"} (inativo)
+                  </SelectItem>
                 )}
                 {fornecedores.map((f) => {
                   const nome = f.nome_fantasia || f.razao_social;
