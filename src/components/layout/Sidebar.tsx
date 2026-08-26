@@ -327,6 +327,7 @@ const financeiroModule: ModuleDef = {
       items: [
         { label: "Contas Bancárias", to: "/app/financeiro/contas-bancarias", icon: Wallet },
         { label: "Contas a Pagar", to: "/app/financeiro/contas-pagar", icon: TrendingUp },
+        { label: "Conferência de Ponto", to: "/app/financeiro/conferencia-ponto", icon: ClipboardCheck },
         { label: "Programação de Pagamentos", to: "/app/financeiro/programacao-pagamentos", icon: Wallet },
         { label: "Validação Pós-Pagamento", to: "/app/financeiro/validacao-pos-pagamento", icon: Receipt },
         { label: "Contas a Receber", to: "/app/financeiro/contas-receber", icon: Receipt },
@@ -460,6 +461,8 @@ const rhModule: ModuleDef = {
         { label: "Folha de Pagamento", to: "/app/rh/folha", icon: ListChecks },
         { label: "Gestão de Férias", to: "/app/rh/ferias", icon: CalendarRange },
         { label: "Solicitações de Demissão", to: "/app/rh/solicitacoes-demissao", icon: UserMinus },
+        { label: "Conferência de Ponto", to: "/app/rh/conferencia-ponto", icon: ClipboardCheck },
+        { label: "Conferência de Ponto — Painel", to: "/app/rh/conferencia-ponto/painel", icon: BarChart3 },
         { label: "Mudança de Função", to: "/app/rh/troca-funcao", icon: ArrowLeftRight, notif: "troca_funcao" },
         { label: "Mudança de Função — Aprovação", to: "/app/rh/troca-funcao-escritorio", icon: Building2, notif: "troca_funcao" },
       ],
@@ -825,6 +828,7 @@ const operacionalModule: ModuleDef = {
       defaultOpen: true,
       items: [
         { label: "Solicitações de Demissão", to: "/app/operacional/solicitacoes-demissao", icon: UserMinus },
+        { label: "Conferência de Ponto", to: "/app/operacional/conferencia-ponto", icon: ClipboardCheck },
         { label: "Mudança de Função", to: "/app/operacional/troca-funcao", icon: ArrowLeftRight, notif: "troca_funcao" },
       ],
     },
