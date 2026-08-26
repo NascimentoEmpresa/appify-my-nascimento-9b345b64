@@ -1,59 +1,239 @@
 // Sincronização do catálogo de CA (CAEPI/MTE).
 //
-// O Ministério publica a base inteira de Certificados de Aprovação num arquivo
-// atualizado diariamente às 20h. Este módulo baixa, descompacta, deduplica e
-// grava em `sst_ca_catalogo`, que é o que permite conferir o CA digitado numa
-// entrada de EPI contra a fonte oficial — e auditar o estoque inteiro de uma
-// vez, que é o que originou o chamado das 400 máscaras vencidas.
+// O catálogo é a fonte independente que permite conferir o CA digitado numa
+// entrada de EPI contra o que o Ministério publica — e auditar o estoque
+// inteiro de uma vez, que é o que responde "quais das minhas 400 máscaras
+// estão vencidas".
 //
-// TRÊS COISAS QUE SÓ SE DESCOBRE ABRINDO O ARQUIVO REAL, e que ditam o código
-// abaixo:
+// COMO SE CHEGA NO ARQUIVO
+// Não existe URL fixa. O download nasce de um botão ASP.NET na página
+// https://caepi.trabalho.gov.br/internet/consultaCAInternet.aspx, cujo link é
+// `javascript:__doPostBack('ctl00$PlaceHolderConteudo$LinkButton1','')`. O
+// arquivo é gerado sob demanda (o nome carrega o timestamp:
+// RelatorioCA_20260826_104105.csv.gz), então é preciso carregar a página,
+// pegar os campos de estado do ASP.NET e devolvê-los no POST.
 //
-//   1. O arquivo tem extensão .zip mas é RAR. O descompactador do Windows
-//      recusa ("Pasta Compactada inválida") e qualquer lib de zip também.
-//      Por isso node-unrar-js, que é WASM e não exige binário instalado.
+// NÃO USE a cópia hospedada em gov.br/.../tgg_export_caepi.zip. Ela parece a
+// fonte oficial e está congelada em 19/01/2023 — medido no arquivo: declara
+// 13.088 CAs "VÁLIDO" e nenhuma validade passa de 2025. Ligar aquilo marcaria
+// como vencido quase todo CA legítimo e travaria entrada de EPI no estoque,
+// que é o oposto do que este módulo existe pra fazer.
 //
-//   2. A codificação é latin1, não UTF-8. Lido como UTF-8, todo acento vira
-//      caractere de substituição — e como nome de equipamento é justamente
-//      cheio de acento ("PROTEÇÃO DAS MÃOS"), o catálogo inteiro fica sujo.
-//
-//   3. `NRRegistroCA` NÃO é chave única: há uma linha por norma técnica
-//      atendida pelo mesmo CA. Sem deduplicar, o upsert reescreve a mesma
-//      chave várias vezes por lote e o Postgres reclama de linha afetada duas
-//      vezes no mesmo comando.
-//
-// O ciclo do worker é de 60s; esta carga é semanal. O controle de quando rodar
-// vive em `sst_ca_sincronizacao`, no banco, e não num arquivo local — assim
-// reiniciar o worker não dispara download de 3 MB à toa.
+// POR QUE O FORMATO É DETECTADO E NÃO ASSUMIDO
+// O arquivo de 2023 era RAR com extensão .zip, separado por pipe, em latin1.
+// O de 2026 vem .csv.gz. Duas mudanças de formato em três anos, ambas sem
+// aviso — então o parser reconhece o container pelos bytes mágicos e descobre
+// o separador pela própria linha de cabeçalho, em vez de depender de uma
+// combinação fixa que quebra na próxima troca.
 
-// A URL vem do .env, sem valor padrão, DE PROPÓSITO.
-//
-// A cópia hospedada na página do gov.br (.../tgg_export_caepi.zip) parece a
-// fonte certa e não é: está congelada em 19/01/2023. Medido no arquivo real —
-// ela diz que 13.088 CAs estão "VÁLIDO", mas nenhuma validade passa de 2025.
-// Usá-la hoje marcaria como vencido praticamente todo CA legítimo e travaria
-// entrada de EPI no estoque, que é o oposto do que este módulo existe pra
-// fazer.
-//
-// O FTP histórico (ftp.mtps.gov.br), que era atualizado diariamente às 20h,
-// não responde mais. Enquanto a fonte vigente não estiver confirmada, o
-// módulo não roda — melhor catálogo vazio, com a tela avisando que não há
-// catálogo, do que catálogo errado que o usuário acredita.
-const URL_CAEPI = process.env.CAEPI_URL;
+const zlib = require("node:zlib");
+
+const PAGINA_CAEPI =
+  process.env.CAEPI_PAGINA ||
+  "https://caepi.trabalho.gov.br/internet/consultaCAInternet.aspx";
+
+// Alvo do __doPostBack do botão "Base de dados do sistema CAEPI (Download)".
+const BOTAO = process.env.CAEPI_BOTAO || "ctl00$PlaceHolderConteudo$LinkButton1";
+
+// Deixe em branco para desligar o módulo. Ligar sem fonte confirmada é pior
+// que não ter catálogo: catálogo vazio a tela avisa, catálogo errado o usuário
+// acredita.
+const LIGADO = process.env.CAEPI_LIGADO === "1";
 
 const INTERVALO_DIAS = 7;
 const LOTE = 1000;
 
-/** "25/03/2015" -> "2015-03-25". Devolve null pro que não casar. */
+/** "25/03/2015" ou "2015-03-25" -> "2015-03-25". Null pro que não casar. */
 function dataBr(texto) {
-  const m = String(texto || "").trim().match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
-  if (!m) return null;
-  const [, dia, mes, ano] = m;
-  return `${ano}-${mes}-${dia}`;
+  const t = String(texto || "").trim();
+  const br = t.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
+  if (br) return `${br[3]}-${br[2]}-${br[1]}`;
+  const iso = t.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  return iso ? iso[0] : null;
 }
 
-/** Só dígitos — o CA é numérico e vem com espaço/zero à esquerda em alguns lotes. */
 const soDigitos = (texto) => String(texto || "").replace(/\D/g, "");
+
+// ── Download ─────────────────────────────────────────────────────────────
+
+/** Campos de estado que o ASP.NET exige de volta no POST. */
+function camposOcultos(html) {
+  const campos = {};
+  for (const [, nome, valor] of html.matchAll(
+    /<input[^>]+type="hidden"[^>]*name="(__[A-Z]+)"[^>]*value="([^"]*)"/g,
+  )) {
+    campos[nome] = valor;
+  }
+  return campos;
+}
+
+async function baixarPacote() {
+  const pagina = await fetch(PAGINA_CAEPI, { redirect: "follow" });
+  if (!pagina.ok) throw new Error(`página do CAEPI respondeu HTTP ${pagina.status}`);
+  const cookie = (pagina.headers.get("set-cookie") || "").split(";")[0];
+  const html = await pagina.text();
+
+  const ocultos = camposOcultos(html);
+  if (!ocultos.__VIEWSTATE) {
+    throw new Error("página do CAEPI veio sem __VIEWSTATE — o formulário mudou");
+  }
+
+  const corpo = new URLSearchParams({
+    ...ocultos,
+    __EVENTTARGET: BOTAO,
+    __EVENTARGUMENT: "",
+  });
+
+  const resposta = await fetch(PAGINA_CAEPI, {
+    method: "POST",
+    redirect: "follow",
+    headers: {
+      "Content-Type": "application/x-www-form-urlencoded",
+      Referer: PAGINA_CAEPI,
+      ...(cookie ? { Cookie: cookie } : {}),
+    },
+    body: corpo,
+  });
+  if (!resposta.ok) throw new Error(`download do CAEPI respondeu HTTP ${resposta.status}`);
+
+  const tipo = resposta.headers.get("content-type") || "";
+  const bytes = Buffer.from(await resposta.arrayBuffer());
+  // Se voltou HTML, o postback não gerou arquivo — provavelmente o nome do
+  // botão mudou. Falhar aqui com mensagem clara evita gravar lixo no catálogo.
+  if (/text\/html/i.test(tipo) && bytes.length < 2_000_000) {
+    throw new Error("o postback devolveu HTML em vez de arquivo — confira CAEPI_BOTAO");
+  }
+  return bytes;
+}
+
+/**
+ * Descompacta reconhecendo o container pelos bytes mágicos.
+ * gzip = 1f 8b · RAR = "Rar!" · zip = "PK"
+ */
+async function descompactar(bytes) {
+  if (bytes[0] === 0x1f && bytes[1] === 0x8b) {
+    return zlib.gunzipSync(bytes);
+  }
+  if (bytes.slice(0, 4).toString("latin1") === "Rar!") {
+    const { createExtractorFromData } = await import("node-unrar-js");
+    const ex = await createExtractorFromData({ data: Uint8Array.from(bytes).buffer });
+    const alvo = [...ex.getFileList().fileHeaders].find((f) => /\.(txt|csv)$/i.test(f.name));
+    if (!alvo) throw new Error("pacote RAR do CAEPI sem .txt/.csv dentro");
+    const arquivos = [...ex.extract({ files: [alvo.name] }).files];
+    if (!arquivos.length) throw new Error("falha ao extrair o pacote RAR do CAEPI");
+    return Buffer.from(arquivos[0].extraction);
+  }
+  if (bytes.slice(0, 2).toString("latin1") === "PK") {
+    throw new Error("pacote do CAEPI veio em zip real — adicionar suporte");
+  }
+  return bytes; // texto puro
+}
+
+/**
+ * Decodifica escolhendo entre latin1 e UTF-8.
+ *
+ * O arquivo de 2023 era latin1, e lido como UTF-8 todo acento vira caractere
+ * de substituição — num catálogo cheio de "PROTEÇÃO DAS MÃOS", isso suja tudo.
+ * Não dá para assumir o mesmo do arquivo novo, então testa: se o UTF-8 produz
+ * o caractere de substituição, o arquivo é latin1.
+ */
+function decodificar(buffer) {
+  const utf8 = buffer.toString("utf8");
+  return utf8.includes("�") ? buffer.toString("latin1") : utf8;
+}
+
+/** O separador é o candidato que mais aparece na linha de cabeçalho. */
+function detectarSeparador(cabecalho) {
+  const candidatos = ["|", ";", "\t", ","];
+  let melhor = "|";
+  let maior = -1;
+  for (const c of candidatos) {
+    const n = cabecalho.split(c).length - 1;
+    if (n > maior) { maior = n; melhor = c; }
+  }
+  return melhor;
+}
+
+// ── Parser ───────────────────────────────────────────────────────────────
+
+/**
+ * Converte o arquivo em linhas prontas pro banco, já deduplicadas.
+ *
+ * As colunas saem pelo NOME no cabeçalho, nunca por posição fixa: uma coluna
+ * inserida no meio deslocaria tudo em silêncio.
+ *
+ * `NRRegistroCA` NÃO é chave única — há uma linha por norma técnica atendida
+ * pelo mesmo CA. No arquivo de 2023 isso eram 63.264 linhas repetidas em
+ * 96.553. Sem deduplicar, o upsert atinge a mesma chave duas vezes no mesmo
+ * comando e o Postgres recusa o lote inteiro.
+ */
+function parsear(texto) {
+  const linhas = texto.split(/\r?\n/);
+  if (!linhas.length) return { registros: [], lidas: 0 };
+
+  const sep = detectarSeparador(linhas[0]);
+  const cabecalho = linhas[0]
+    .replace(/^﻿/, "")
+    .replace(/^#/, "")
+    .split(sep)
+    .map((c) => c.trim().replace(/^"|"$/g, ""));
+
+  const acha = (...nomes) => {
+    for (const n of nomes) {
+      const i = cabecalho.findIndex((c) => c.toLowerCase() === n.toLowerCase());
+      if (i >= 0) return i;
+    }
+    return -1;
+  };
+
+  const iCa = acha("NRRegistroCA", "RegistroCA", "CA", "NumeroCA");
+  const iValidade = acha("DataValidade", "Validade");
+  const iSituacao = acha("Situacao", "Situação");
+  const iEquip = acha("NomeEquipamento", "Equipamento");
+  const iNatureza = acha("Natureza");
+  const iCnpj = acha("CNPJ");
+  const iRazao = acha("RazaoSocial", "RazãoSocial");
+
+  if (iCa < 0 || iValidade < 0) {
+    throw new Error(
+      `cabeçalho do CAEPI não reconhecido (separador "${sep}"): ${cabecalho.slice(0, 8).join(", ")}`,
+    );
+  }
+
+  // Map: dedup por CA mantendo a maior validade — se o mesmo CA aparece com
+  // validades diferentes entre normas, a que vale pro nosso uso é a mais longa.
+  const porCa = new Map();
+  let lidas = 0;
+
+  const limpo = (v) => String(v ?? "").trim().replace(/^"|"$/g, "") || null;
+
+  for (let i = 1; i < linhas.length; i++) {
+    if (!linhas[i].trim()) continue;
+    lidas++;
+
+    const campos = linhas[i].split(sep);
+    const ca = soDigitos(campos[iCa]);
+    if (!ca) continue;
+
+    const validade = dataBr(campos[iValidade]);
+    const anterior = porCa.get(ca);
+    if (anterior && anterior.validade && validade && anterior.validade >= validade) continue;
+
+    porCa.set(ca, {
+      ca_numero: ca,
+      validade,
+      situacao: iSituacao >= 0 ? limpo(campos[iSituacao]) : null,
+      equipamento: iEquip >= 0 ? limpo(campos[iEquip]) : null,
+      natureza: iNatureza >= 0 ? limpo(campos[iNatureza]) : null,
+      fabricante_cnpj: iCnpj >= 0 ? soDigitos(campos[iCnpj]) || null : null,
+      fabricante: iRazao >= 0 ? limpo(campos[iRazao]) : null,
+    });
+  }
+
+  return { registros: [...porCa.values()], lidas };
+}
+
+// ── Gravação ─────────────────────────────────────────────────────────────
 
 async function precisaSincronizar(supabase) {
   const { data, error } = await supabase
@@ -67,92 +247,7 @@ async function precisaSincronizar(supabase) {
 
   const ultima = data && data[0] && data[0].concluido_em;
   if (!ultima) return true;
-  const dias = (Date.now() - new Date(ultima).getTime()) / 86_400_000;
-  return dias >= INTERVALO_DIAS;
-}
-
-async function baixarEExtrair() {
-  const resposta = await fetch(URL_CAEPI, { redirect: "follow" });
-  if (!resposta.ok) {
-    throw new Error(`CAEPI respondeu HTTP ${resposta.status}`);
-  }
-  const bruto = Buffer.from(await resposta.arrayBuffer());
-
-  // node-unrar-js é ESM; este worker é CommonJS. Import dinâmico resolve sem
-  // converter o resto do worker.
-  const { createExtractorFromData } = await import("node-unrar-js");
-  const extrator = await createExtractorFromData({
-    data: Uint8Array.from(bruto).buffer,
-  });
-
-  const cabecalhos = [...extrator.getFileList().fileHeaders];
-  const txt = cabecalhos.find((f) => /\.txt$/i.test(f.name));
-  if (!txt) throw new Error("pacote do CAEPI não contém o .txt esperado");
-
-  const extraidos = [...extrator.extract({ files: [txt.name] }).files];
-  if (!extraidos.length) throw new Error("falha ao extrair o .txt do CAEPI");
-
-  // latin1 de propósito — ver nota 2 no topo.
-  return Buffer.from(extraidos[0].extraction).toString("latin1");
-}
-
-/**
- * Converte o texto do arquivo em linhas prontas pro banco, já deduplicadas.
- *
- * As colunas são localizadas pelo NOME no cabeçalho, não por posição fixa: se
- * o Ministério inserir uma coluna no meio (já aconteceu com outras bases
- * abertas), a carga continua correta em vez de gravar tudo deslocado.
- */
-function parsear(texto) {
-  const linhas = texto.split(/\r?\n/);
-  if (!linhas.length) return { registros: [], lidas: 0 };
-
-  const cabecalho = linhas[0].replace(/^#/, "").split("|").map((c) => c.trim());
-  const idx = (nome) => cabecalho.indexOf(nome);
-
-  const iCa = idx("NRRegistroCA");
-  const iValidade = idx("DataValidade");
-  const iSituacao = idx("Situacao");
-  const iEquip = idx("NomeEquipamento");
-  const iNatureza = idx("Natureza");
-  const iCnpj = idx("CNPJ");
-  const iRazao = idx("RazaoSocial");
-
-  if (iCa < 0 || iValidade < 0) {
-    throw new Error("cabeçalho do CAEPI mudou: NRRegistroCA/DataValidade não encontrados");
-  }
-
-  // Map em vez de array: dedup por CA, mantendo a linha de maior validade —
-  // se o mesmo CA aparece com validades diferentes entre normas, a que vale
-  // pro nosso uso é a mais longa.
-  const porCa = new Map();
-  let lidas = 0;
-
-  for (let i = 1; i < linhas.length; i++) {
-    const linha = linhas[i];
-    if (!linha.trim()) continue;
-    lidas++;
-
-    const campos = linha.split("|");
-    const ca = soDigitos(campos[iCa]);
-    if (!ca) continue;
-
-    const validade = dataBr(campos[iValidade]);
-    const anterior = porCa.get(ca);
-    if (anterior && anterior.validade && validade && anterior.validade >= validade) continue;
-
-    porCa.set(ca, {
-      ca_numero: ca,
-      validade,
-      situacao: (campos[iSituacao] || "").trim() || null,
-      equipamento: (campos[iEquip] || "").trim() || null,
-      natureza: (campos[iNatureza] || "").trim() || null,
-      fabricante_cnpj: soDigitos(campos[iCnpj]) || null,
-      fabricante: (campos[iRazao] || "").trim() || null,
-    });
-  }
-
-  return { registros: [...porCa.values()], lidas };
+  return (Date.now() - new Date(ultima).getTime()) / 86_400_000 >= INTERVALO_DIAS;
 }
 
 async function gravar(supabase, registros) {
@@ -172,7 +267,7 @@ async function gravar(supabase, registros) {
 }
 
 async function sincronizarCaepi(supabase) {
-  if (!URL_CAEPI) return; // sem fonte confirmada, não carrega nada — ver nota no topo
+  if (!LIGADO) return;
   if (!(await precisaSincronizar(supabase))) return;
 
   const { data: linha, error: erroInicio } = await supabase
@@ -184,8 +279,16 @@ async function sincronizarCaepi(supabase) {
 
   try {
     console.log("[worker] CAEPI: baixando catálogo de CA...");
-    const texto = await baixarEExtrair();
+    const bytes = await baixarPacote();
+    const texto = decodificar(await descompactar(bytes));
     const { registros, lidas } = parsear(texto);
+
+    // Guarda contra fonte degradada: se o arquivo vier quase vazio, é sinal de
+    // que o postback devolveu outra coisa. Melhor manter o catálogo anterior.
+    if (registros.length < 1000) {
+      throw new Error(`catálogo veio com apenas ${registros.length} CAs — recusado`);
+    }
+
     const gravados = await gravar(supabase, registros);
 
     await supabase
@@ -199,9 +302,8 @@ async function sincronizarCaepi(supabase) {
 
     console.log(`[worker] CAEPI: ${lidas} linhas lidas, ${gravados} CAs gravados.`);
   } catch (e) {
-    // A falha fica registrada em vez de sumir no log: sem `concluido_em`, a
-    // próxima passada do ciclo tenta de novo, e a tela de CA consegue avisar
-    // que o catálogo está velho.
+    // Sem `concluido_em`, a próxima passada tenta de novo e a tela consegue
+    // avisar que o catálogo está velho, em vez do erro sumir no log.
     await supabase
       .from("sst_ca_sincronizacao")
       .update({ erro: String(e && e.message ? e.message : e).slice(0, 500) })
@@ -210,4 +312,11 @@ async function sincronizarCaepi(supabase) {
   }
 }
 
-module.exports = { sincronizarCaepi, parsear, dataBr };
+module.exports = {
+  sincronizarCaepi,
+  parsear,
+  dataBr,
+  decodificar,
+  descompactar,
+  detectarSeparador,
+};
