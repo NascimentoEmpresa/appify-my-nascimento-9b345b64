@@ -24,7 +24,8 @@ import {
 } from "lucide-react";
 import {
   StatusBadge, PrioridadeBadge, PRIORIDADES, CATEGORIAS, AMBIENTES, URGENCIAS, labelDe,
-  iniciais, fmtDataHora, moduloLabel, chamadoAtivo, type Chamado, type Evento,
+  iniciais, fmtDataHora, moduloLabel, chamadoAtivo, CardAvaliacao,
+  type Chamado, type Evento, type AvaliacaoChamado,
 } from "./types";
 
 interface Dev { id: string; display_name: string; em_andamento: number; abertos: number; }
@@ -103,6 +104,26 @@ export default function CoordenarChamado() {
       setObservacao((cur) => cur || c.observacao_gerente || "");
       setPrioridade((cur) => cur || c.prioridade);
       return c;
+    },
+  });
+
+  /**
+   * A avaliação que o solicitante deixou.
+   *
+   * A tela de coordenação era a única das três que não mostrava: quem
+   * distribui o trabalho abria um chamado concluído e avaliado e não via
+   * nota nem comentário — justamente onde a informação decide a próxima
+   * distribuição. O bloco é o mesmo de Acompanhar e Executar
+   * (CardAvaliacao), para nota, critérios e comentário aparecerem iguais
+   * nas três telas.
+   */
+  const { data: avaliacao } = useQuery({
+    queryKey: ["chamado-avaliacao", id],
+    enabled: !!id && gestor,
+    queryFn: async () => {
+      const { data } = await (supabase as any)
+        .from("CHAMADO_SISTEMA_AVALIACAO").select("*").eq("chamado_id", id).maybeSingle();
+      return (data ?? null) as AvaliacaoChamado | null;
     },
   });
 
@@ -365,6 +386,13 @@ export default function CoordenarChamado() {
               </div>
             </div>
           </Card>
+
+          {/* Antes da coordenação de propósito: num chamado já avaliado, a
+              nota e o comentário são o contexto de quem vai redistribuir —
+              ler depois de escolher o responsável não ajuda em nada. */}
+          {avaliacao && (
+            <CardAvaliacao avaliacao={avaliacao} titulo="Avaliação do solicitante" tone="warning" />
+          )}
 
           <Card className="divide-y divide-border">
             {/* 1. Responsável pela execução */}

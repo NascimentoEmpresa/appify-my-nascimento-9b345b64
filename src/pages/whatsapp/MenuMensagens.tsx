@@ -19,6 +19,20 @@ import { AlertTriangle, Loader2 } from "lucide-react";
 // O status na Meta aparece em cada linha porque ele decide se a mensagem
 // alcança quem está FORA da janela de 24h. Sem essa marca o atendente só
 // descobre que o template não passou quando a mensagem não chega.
+//
+// DUAS ORIGENS na mesma lista (26/08/2026):
+//
+//   1. MENSAGENS PRONTAS (WA_TEMPLATE) — vão como template aprovado e
+//      alcançam qualquer um, mas NÃO têm botão: o cadastro delas não
+//      suporta, e a Meta só entrega botão que passou pela aprovação.
+//   2. RESPOSTAS DO BOT (WA_BOT_CONFIG.menu) — o menu e cada opção dele,
+//      para o atendente mandar À MÃO o que o bot mandaria sozinho. O menu
+//      vai COM os botões, porque sai como mensagem interativa.
+//
+// O preço da interativa é a janela: a Meta só entrega interativo para quem
+// escreveu nas últimas 24h. Por isso essas linhas vêm marcadas "só em 24h"
+// — é a mesma marca que uma pronta sem template aprovado recebe, e quer
+// dizer a mesma coisa.
 // =====================================================================
 
 export interface WaTemplate {
@@ -28,6 +42,32 @@ export interface WaTemplate {
   variaveis: string[];
   template_nome: string | null;
 }
+
+/**
+ * Uma resposta do bot, disponível para envio manual.
+ *
+ * `botoes` só vem no menu; as opções soltas são texto puro. Quem envia é o
+ * whatsapp-enviar (que aceita botões), não o whatsapp-template-enviar.
+ */
+export interface RespostaBot {
+  codigo: string;
+  titulo: string;
+  texto: string;
+  botoes: { id: string; titulo: string }[];
+  /** Avisa na lista quando o menu tem mais opções do que cabem em botões. */
+  aviso?: string;
+}
+
+/** O que a lista da "/" mostra: as duas origens, discriminadas. */
+export type ItemMenu =
+  | { tipo: "pronta"; pronta: WaTemplate }
+  | { tipo: "bot"; bot: RespostaBot };
+
+export const chaveDoItem = (i: ItemMenu) =>
+  i.tipo === "pronta" ? `p:${i.pronta.codigo}` : `b:${i.bot.codigo}`;
+const tituloDoItem = (i: ItemMenu) => i.tipo === "pronta" ? i.pronta.titulo : i.bot.titulo;
+const textoDoItem  = (i: ItemMenu) => i.tipo === "pronta" ? i.pronta.texto  : i.bot.texto;
+const codigoDoItem = (i: ItemMenu) => i.tipo === "pronta" ? i.pronta.codigo : i.bot.codigo;
 
 /** Status de cada mensagem na Meta, por código. */
 type StatusMeta = Record<string, { status: string; motivo?: string }>;
@@ -55,6 +95,68 @@ export function useMensagensProntas(habilitado: boolean) {
   });
 }
 
+/**
+ * As respostas do bot, para envio manual.
+ *
+ * O atendente pediu para poder mandar à mão o que o bot manda sozinho —
+ * principalmente o menu com os botões, que era a única forma de oferecer as
+ * opções e não existia em lugar nenhum da Caixa.
+ *
+ * O menu vira UMA linha (com os botões) e cada opção vira outra (só o texto
+ * dela), porque na prática o atendente quer as duas coisas: às vezes reabrir
+ * o menu inteiro, às vezes mandar direto a resposta de "Vagas Disponíveis"
+ * sem obrigar a pessoa a clicar.
+ */
+export function useRespostasBot(habilitado: boolean) {
+  return useQuery({
+    queryKey: ["wa-respostas-bot"],
+    enabled: habilitado,
+    staleTime: 5 * 60 * 1000,
+    queryFn: async (): Promise<RespostaBot[]> => {
+      const { data } = await (supabase as any).from("WA_BOT_CONFIG")
+        .select("menu").limit(1).maybeSingle();
+      const menu = data?.menu ?? {};
+      const opcoes: { id?: string; titulo?: string; valor?: string }[] = menu?.opcoes ?? [];
+      const titulo = String(menu?.titulo ?? "").trim();
+      const fora: RespostaBot[] = [];
+
+      // A Meta aceita no máximo 3 botões numa mensagem interativa. Acima
+      // disso o bot manda lista, que o whatsapp-enviar não faz — então aqui
+      // o menu sai com os 3 primeiros e a linha avisa.
+      if (titulo && opcoes.length) {
+        const cabem = opcoes.slice(0, 3);
+        fora.push({
+          codigo: "menu",
+          titulo: "Menu do bot (com botões)",
+          texto: titulo,
+          botoes: cabem.map((o, i) => ({
+            id: String(o?.id ?? `o_${i}`),
+            titulo: String(o?.titulo ?? "").slice(0, 20),
+          })).filter(b => b.titulo),
+          aviso: opcoes.length > 3
+            ? `O menu tem ${opcoes.length} opções e só cabem 3 botões — vão as 3 primeiras.`
+            : undefined,
+        });
+      }
+
+      opcoes.forEach((o, i) => {
+        const txt = String(o?.valor ?? "").trim();
+        const tit = String(o?.titulo ?? "").trim();
+        if (!txt || !tit) return;
+        fora.push({
+          // Prefixo para o código nunca colidir com o de uma mensagem pronta.
+          codigo: `resposta-${String(o?.id ?? i).replace(/^o_/, "")}`,
+          titulo: `Resposta: ${tit}`,
+          texto: txt,
+          botoes: [],
+        });
+      });
+
+      return fora;
+    },
+  });
+}
+
 /** Status na Meta. Falha aqui não trava o menu: a marca some, o envio segue. */
 export function useStatusNaMeta(habilitado: boolean) {
   return useQuery({
@@ -75,11 +177,11 @@ export function useStatusNaMeta(habilitado: boolean) {
   });
 }
 
-export function MenuMensagens({ filtro, mensagens, status, onEscolher, onFechar, registrarNavegacao }: {
+export function MenuMensagens({ filtro, itens, status, onEscolher, onFechar, registrarNavegacao }: {
   filtro: string;
-  mensagens: WaTemplate[];
+  itens: ItemMenu[];
   status: StatusMeta;
-  onEscolher: (t: WaTemplate) => void;
+  onEscolher: (i: ItemMenu) => void;
   onFechar: () => void;
   // O textarea continua com o foco enquanto o menu está aberto, então é ele
   // quem recebe ↑/↓/Enter e repassa para cá.
@@ -89,10 +191,11 @@ export function MenuMensagens({ filtro, mensagens, status, onEscolher, onFechar,
 
   const lista = useMemo(() => {
     const t = filtro.trim().toLowerCase();
-    if (!t) return mensagens;
-    return mensagens.filter((m) =>
-      [m.codigo, m.titulo, m.texto].some((v) => String(v ?? "").toLowerCase().includes(t)));
-  }, [mensagens, filtro]);
+    if (!t) return itens;
+    return itens.filter((i) =>
+      [codigoDoItem(i), tituloDoItem(i), textoDoItem(i)]
+        .some((v) => String(v ?? "").toLowerCase().includes(t)));
+  }, [itens, filtro]);
 
   // Filtro novo, seleção do topo — senão o índice antigo aponta para outra
   // mensagem e o Enter manda a errada.
@@ -114,26 +217,47 @@ export function MenuMensagens({ filtro, mensagens, status, onEscolher, onFechar,
         <p className="p-3 text-xs text-muted-foreground">
           Nenhuma mensagem com “{filtro}”. As mensagens prontas são cadastradas no Chatbot.
         </p>
-      ) : lista.map((m, i) => {
-        const st = ROTULO_STATUS[status[m.codigo]?.status ?? "NAO_CRIADO"] ?? ROTULO_STATUS.NAO_CRIADO;
+      ) : lista.map((item, i) => {
+        // Resposta do bot sai como interativa, que a Meta só entrega dentro
+        // das 24h — a mesma marca de uma pronta sem template aprovado.
+        const st = item.tipo === "bot"
+          ? ROTULO_STATUS.SEM_TEMPLATE
+          : ROTULO_STATUS[status[item.pronta.codigo]?.status ?? "NAO_CRIADO"] ?? ROTULO_STATUS.NAO_CRIADO;
         return (
           <button
-            key={m.codigo}
+            key={chaveDoItem(item)}
             type="button"
             onMouseEnter={() => setAtivo(i)}
-            onClick={() => onEscolher(m)}
+            onClick={() => onEscolher(item)}
             className={`flex w-full flex-col gap-0.5 border-b border-border/50 px-3 py-2 text-left last:border-b-0 ${
               i === ativo ? "bg-accent" : "hover:bg-accent/50"}`}
           >
             <div className="flex items-center gap-2">
-              <span className="text-sm font-medium">{m.titulo}</span>
-              <code className="text-[11px] text-muted-foreground">/{m.codigo}</code>
+              <span className="text-sm font-medium">{tituloDoItem(item)}</span>
+              <code className="text-[11px] text-muted-foreground">/{codigoDoItem(item)}</code>
+              {item.tipo === "bot" && (
+                <Badge variant="outline" className="text-[10px]">bot</Badge>
+              )}
               <Badge variant="secondary" className={`ml-auto text-[10px] ${st.cls}`}>{st.txt}</Badge>
             </div>
-            <span className="line-clamp-2 text-xs text-muted-foreground">{m.texto}</span>
-            {m.variaveis.length > 0 && (
+            <span className="line-clamp-2 text-xs text-muted-foreground">{textoDoItem(item)}</span>
+
+            {item.tipo === "bot" && item.bot.botoes.length > 0 && (
+              <span className="mt-0.5 flex flex-wrap gap-1">
+                {item.bot.botoes.map((b) => (
+                  <span key={b.id} className="rounded border border-border/70 px-1.5 py-0.5 text-[10px] text-muted-foreground">
+                    {b.titulo}
+                  </span>
+                ))}
+              </span>
+            )}
+            {item.tipo === "bot" && item.bot.aviso && (
+              <span className="text-[11px] text-warning-foreground">{item.bot.aviso}</span>
+            )}
+
+            {item.tipo === "pronta" && item.pronta.variaveis.length > 0 && (
               <span className="text-[11px] text-muted-foreground">
-                pede: {m.variaveis.join(", ")}
+                pede: {item.pronta.variaveis.join(", ")}
               </span>
             )}
           </button>

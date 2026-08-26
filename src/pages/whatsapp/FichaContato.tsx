@@ -8,7 +8,7 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { Label } from "@/components/ui/label";
-import { Tag, X, Loader2, Check, Info } from "lucide-react";
+import { Tag, X, Loader2, Check, Info, Plus } from "lucide-react";
 import { fmtTelefone, type WaContato } from "./types";
 
 interface Props {
@@ -29,6 +29,8 @@ export function FichaContato({ contato, aberto, onFechar }: Props) {
   const [nome, setNome] = useState("");
   const [etiquetas, setEtiquetas] = useState<string[]>([]);
   const [nova, setNova] = useState("");
+  // Criar etiqueta e a excecao: o caminho normal e escolher uma que ja existe.
+  const [criando, setCriando] = useState(false);
   const [observacao, setObservacao] = useState("");
   const [salvando, setSalvando] = useState(false);
 
@@ -58,7 +60,7 @@ export function FichaContato({ contato, aberto, onFechar }: Props) {
   });
 
   const sugestoes = useMemo(
-    () => catalogo.filter((e) => !etiquetas.some((j) => j.toLowerCase() === e.toLowerCase())).slice(0, 12),
+    () => catalogo.filter((e) => !etiquetas.some((j) => j.toLowerCase() === e.toLowerCase())),
     [catalogo, etiquetas]);
 
   const adicionar = (bruta: string) => {
@@ -140,23 +142,52 @@ export function FichaContato({ contato, aberto, onFechar }: Props) {
               ))}
               {etiquetas.length === 0 && <p className="text-[11px] text-muted-foreground">Nenhuma etiqueta.</p>}
             </div>
-            <Input
-              value={nova} onChange={(e) => setNova(e.target.value)}
-              onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); adicionar(nova); } }}
-              placeholder="Escreva e tecle Enter (ex.: Fornecedor)"
-            />
+
+            {/* ESCOLHER, não digitar.
+                Campo livre em etiqueta acaba em "Fornecedor", "fornecedor" e
+                "Fornecedores" convivendo, e aí o filtro por etiqueta não
+                serve para nada. Criar continua possível, mas atrás de um
+                botão — é a exceção, não o caminho. */}
             {sugestoes.length > 0 && (
               <div className="flex flex-wrap gap-1">
-                <span className="text-[11px] text-muted-foreground">Já usadas:</span>
                 {sugestoes.map((e) => (
                   <button
                     key={e} type="button" onClick={() => adicionar(e)}
                     className="rounded-full border border-border px-2 py-0.5 text-[11px] text-muted-foreground hover:bg-muted"
                   >
-                    {e}
+                    + {e}
                   </button>
                 ))}
               </div>
+            )}
+
+            {criando ? (
+              <div className="flex gap-1.5">
+                <Input
+                  autoFocus
+                  value={nova} onChange={(e) => setNova(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") { e.preventDefault(); adicionar(nova); setCriando(false); }
+                    if (e.key === "Escape") { setNova(""); setCriando(false); }
+                  }}
+                  placeholder="Nome da etiqueta (ex.: Fornecedor)"
+                />
+                <Button type="button" variant="outline" size="sm"
+                        onClick={() => { adicionar(nova); setCriando(false); }}>
+                  Criar
+                </Button>
+              </div>
+            ) : (
+              <Button type="button" variant="outline" size="sm" className="gap-1.5"
+                      onClick={() => setCriando(true)}>
+                <Plus className="h-3.5 w-3.5" /> Nova etiqueta
+              </Button>
+            )}
+
+            {sugestoes.length === 0 && !criando && (
+              <p className="text-[11px] text-muted-foreground">
+                Ainda não existe etiqueta nenhuma. Crie a primeira e ela passa a aparecer aqui para os outros contatos.
+              </p>
             )}
           </div>
 
