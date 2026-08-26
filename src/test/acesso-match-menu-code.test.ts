@@ -59,4 +59,22 @@ describe("matchMenuCode — desempate por menu ativo", () => {
     ];
     expect(matchMenuCode("/app/sistemas/chamados/abc-123", rotas)).toBe("chamado_detalhe");
   });
+
+  it("a Conferência de Ponto: três portas para a mesma tela, e o painel não rouba o pai", () => {
+    // A mesma tela abre em três módulos, cada um com o SEU menu — quem entra
+    // pela porta do Financeiro não pode ser gateado pelo menu do RH. E o
+    // /painel é subrota de /conferencia-ponto: sem o longest-match, ele cairia
+    // no menu do pai e quem só tem o painel abriria a tela de operação (ou o
+    // contrário, dependendo da ordem em que o banco devolvesse as linhas).
+    const rotas: MenuRoute[] = [
+      { codigo: "rh_conferencia_ponto",          rota: "/app/rh/conferencia-ponto",          ativo: true },
+      { codigo: "rh_conferencia_ponto_painel",   rota: "/app/rh/conferencia-ponto/painel",   ativo: true },
+      { codigo: "operacional_conferencia_ponto", rota: "/app/operacional/conferencia-ponto", ativo: true },
+      { codigo: "financeiro_conferencia_ponto",  rota: "/app/financeiro/conferencia-ponto",  ativo: true },
+    ];
+    expect(matchMenuCode("/app/rh/conferencia-ponto", rotas)).toBe("rh_conferencia_ponto");
+    expect(matchMenuCode("/app/rh/conferencia-ponto/painel", rotas)).toBe("rh_conferencia_ponto_painel");
+    expect(matchMenuCode("/app/operacional/conferencia-ponto", rotas)).toBe("operacional_conferencia_ponto");
+    expect(matchMenuCode("/app/financeiro/conferencia-ponto", rotas)).toBe("financeiro_conferencia_ponto");
+  });
 });
