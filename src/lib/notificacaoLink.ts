@@ -16,9 +16,11 @@ const REESCRITAS: { de: string; para: string; exato?: boolean }[] = [
   // unificado (sup_aprov) é lido no inbox. Só o caminho cru — se algum dia vier
   // com id/query, o destino já é outro e não deve ser reescrito.
   { de: "/app/aprovacoes", para: "/app/aprovacoes/inbox", exato: true },
-  // A rota real é `/app/suprimentos/pedidos` (App.tsx). O caminho no plural
-  // composto nunca existiu no router.
-  { de: "/app/suprimentos/pedidos-compra", para: "/app/suprimentos/pedidos" },
+  // ATENÇÃO: a reescrita de `/app/suprimentos/pedidos-compra` foi REMOVIDA em
+  // SIS-2026-0207. Ela existia porque essa rota não estava no router e as
+  // notificações caíam em 404. Agora ela EXISTE e é a tela nova de Pedidos de
+  // Compra — manter a reescrita mandaria o usuário para a tela do módulo
+  // aposentado, e engoliria o `?pedido=<id>` que a notificação carrega.
 ];
 
 /** Destino quando a notificação não trouxe link nenhum. */
