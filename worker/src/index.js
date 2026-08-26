@@ -12,7 +12,34 @@ const { alertarErroWhatsapp } = require("./discordAlert");
 
 const CICLO_MS = 60_000;
 
+// Trava contra ciclos sobrepostos.
+//
+// Sem ela, um ciclo lento é alcançado pelo seguinte e os dois trabalham na
+// mesma fila. Não é hipótese: em 26/08/2026, ao subir o worker depois de dias
+// parado, havia 27 atas acumuladas. Enviar 27 e-mails com PDF anexo passa
+// muito dos 60s do intervalo, o segundo ciclo entrou no meio do primeiro, e
+// **13 reuniões tiveram a ata enviada duas vezes** para gente de verdade.
+//
+// A causa raiz é que `emailAta` marca `email_ata_enviado` DEPOIS de enviar —
+// e existe uma janela entre as duas coisas. Marcar antes de enviar trocaria
+// e-mail duplicado por e-mail perdido, que é pior. A correção certa é não
+// deixar dois ciclos existirem ao mesmo tempo.
+let cicloEmAndamento = false;
+
 async function rodarCiclo(waClient, transportador) {
+  if (cicloEmAndamento) {
+    console.warn("[worker] ciclo anterior ainda rodando — pulando esta rodada.");
+    return;
+  }
+  cicloEmAndamento = true;
+  try {
+    await rodarTarefas(waClient, transportador);
+  } finally {
+    cicloEmAndamento = false;
+  }
+}
+
+async function rodarTarefas(waClient, transportador) {
   try {
     // `waClient` vem nulo enquanto o WhatsApp não está pronto. Pular aqui é o
     // que permite o resto do ciclo rodar sem ele — ver a nota em `main`.
