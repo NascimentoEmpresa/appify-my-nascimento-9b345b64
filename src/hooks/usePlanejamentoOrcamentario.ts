@@ -6,9 +6,9 @@ export type TipoClassificacaoOrcamento = "contrato" | "administrativo";
 const CLASSIFICACAO_COLUMNS =
   "id, nome, ativo, tipo, setor_responsavel, requer_solicitacao, " +
   "aprovador_solicitacao_user_id, aprovador_solicitacao_nome, " +
-  "aprovador1_user_id, aprovador1_nome, aprovador1_limite_pct, aprovador1_sem_limite, " +
-  "aprovador2_user_id, aprovador2_nome, aprovador2_limite_pct, aprovador2_sem_limite, " +
-  "aprovador3_user_id, aprovador3_nome, aprovador3_limite_pct, aprovador3_sem_limite, " +
+  "aprovador1_user_ids, aprovador1_nomes, aprovador1_limite_pct, aprovador1_sem_limite, " +
+  "aprovador2_user_ids, aprovador2_nomes, aprovador2_limite_pct, aprovador2_sem_limite, " +
+  "aprovador3_user_ids, aprovador3_nomes, aprovador3_limite_pct, aprovador3_sem_limite, " +
   "limite_justificativa_pct";
 
 export interface ClassificacaoOrcamento {
@@ -20,16 +20,19 @@ export interface ClassificacaoOrcamento {
   requer_solicitacao: boolean;
   aprovador_solicitacao_user_id: string | null;
   aprovador_solicitacao_nome: string | null;
-  aprovador1_user_id: string | null;
-  aprovador1_nome: string | null;
+  // SIS-2026-0236: cada nível pode ter mais de um aprovador — o primeiro
+  // elemento é o primeiro selecionado no cadastro (mostrado sozinho na
+  // coluna "Fluxo de Aprovação").
+  aprovador1_user_ids: string[];
+  aprovador1_nomes: string[];
   aprovador1_limite_pct: number | null;
   aprovador1_sem_limite: boolean;
-  aprovador2_user_id: string | null;
-  aprovador2_nome: string | null;
+  aprovador2_user_ids: string[];
+  aprovador2_nomes: string[];
   aprovador2_limite_pct: number | null;
   aprovador2_sem_limite: boolean;
-  aprovador3_user_id: string | null;
-  aprovador3_nome: string | null;
+  aprovador3_user_ids: string[];
+  aprovador3_nomes: string[];
   aprovador3_limite_pct: number | null;
   aprovador3_sem_limite: boolean;
   limite_justificativa_pct: number | null;
@@ -88,7 +91,7 @@ export function useSetoresCatalogo() {
     queryKey: ["setor_catalogo_planejamento_orcamentario"],
     staleTime: 5 * 60_000,
     queryFn: async () => {
-      const { data, error } = await supabase.from("setor_catalogo").select("nome").order("nome");
+      const { data, error } = await (supabase as any).from("setor_catalogo").select("nome").order("nome");
       if (error) throw error;
       return (data ?? []).map((r) => r.nome as string);
     },
@@ -163,16 +166,16 @@ interface SalvarClassificacaoInput {
   requer_solicitacao: boolean;
   aprovador_solicitacao_user_id: string | null;
   aprovador_solicitacao_nome: string | null;
-  aprovador1_user_id: string;
-  aprovador1_nome: string;
+  aprovador1_user_ids: string[];
+  aprovador1_nomes: string[];
   aprovador1_limite_pct: number | null;
   aprovador1_sem_limite: boolean;
-  aprovador2_user_id: string | null;
-  aprovador2_nome: string | null;
+  aprovador2_user_ids: string[];
+  aprovador2_nomes: string[];
   aprovador2_limite_pct: number | null;
   aprovador2_sem_limite: boolean;
-  aprovador3_user_id: string | null;
-  aprovador3_nome: string | null;
+  aprovador3_user_ids: string[];
+  aprovador3_nomes: string[];
   aprovador3_limite_pct: number | null;
   aprovador3_sem_limite: boolean;
   limite_justificativa_pct: number | null;
