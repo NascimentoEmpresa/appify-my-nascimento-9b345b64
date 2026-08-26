@@ -12,6 +12,7 @@ import { useEmpresaId } from "@/hooks/useEmpresaId";
 import { useClassificacoesOrcamento } from "@/hooks/usePlanejamentoOrcamentario";
 import { useSalvarDespesa, uploadAnexoMalote, gerarParcelas, RateioLinha } from "@/hooks/useMaloteDespesa";
 import { useMaloteConfig } from "@/hooks/useMaloteConfig";
+import { useTiposFormaPagamento } from "@/hooks/useMaloteFormaPagamento";
 import { RateioGrid, DimensoesRateio } from "./RateioGrid";
 import { AnexosField } from "./AnexosField";
 import { DiaPagamentoPicker } from "./DiaPagamentoPicker";
@@ -49,6 +50,10 @@ export default function RatearClassificacao() {
   const [arquivos, setArquivos] = useState<File[]>([]);
   const [salvando, setSalvando] = useState<"rascunho" | "enviar" | null>(null);
   const { data: maloteConfig } = useMaloteConfig();
+  // SIS-2026-0221: "Forma de pagamento" vem do catálogo cadastrável em
+  // Configurações do Malote → Formas de Pagamento, não mais de um enum fixo.
+  const { data: tiposFormaPagamento = [] } = useTiposFormaPagamento();
+  const tiposFormaPagamentoAtivos = useMemo(() => tiposFormaPagamento.filter((t) => t.ativo), [tiposFormaPagamento]);
 
   const totalRateado = useMemo(() => linhasRateio.reduce((s, l) => s + (Number(l.valor) || 0), 0), [linhasRateio]);
   const faltaLancar = Math.max(0, (Number(valorTotal) || 0) - totalRateado);
@@ -176,11 +181,11 @@ export default function RatearClassificacao() {
                   <SelectValue placeholder="Selecione a forma" />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="pix">Pix</SelectItem>
-                  <SelectItem value="ted">TED</SelectItem>
-                  <SelectItem value="boleto">Boleto</SelectItem>
-                  <SelectItem value="cartao">Cartão</SelectItem>
-                  <SelectItem value="dinheiro">Dinheiro</SelectItem>
+                  {tiposFormaPagamentoAtivos.map((t) => (
+                    <SelectItem key={t.nome} value={t.nome}>
+                      {t.nome}
+                    </SelectItem>
+                  ))}
                 </SelectContent>
               </Select>
             </div>
