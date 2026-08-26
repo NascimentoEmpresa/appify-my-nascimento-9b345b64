@@ -11,9 +11,10 @@ import { Textarea } from "@/components/ui/textarea";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Checkbox } from "@/components/ui/checkbox";
 import {
   AlertTriangle, ArrowLeft, ArrowRight, BadgeCheck, Banknote, CheckCircle2,
-  ClipboardCheck, Clock, DollarSign, History, Loader2, Search, Undo2,
+  ClipboardCheck, Clock, DollarSign, Filter, History, Loader2, Search, Undo2,
 } from "lucide-react";
 import {
   MENU, MENU_DA_ACAO, TABELA, TABELA_EVENTOS, addMeses, contaAvanco, corDoStatus,
@@ -41,6 +42,10 @@ const sb = supabase as any;
  * cria 58 linhas vazias para depois preenchê-las é trabalho que a UNIQUE
  * (empresa, filial, mês) já faz de graça.
  */
+
+/** A chave de um contrato: (Empresa, Filial), como em CONTRATOS. */
+const chaveDoContrato = (l: { contrato_empresa: number; contrato_filial: number }) =>
+  `${l.contrato_empresa}__${l.contrato_filial}`;
 
 interface ContratoCad {
   Empresa: number;
@@ -99,6 +104,12 @@ export function PainelConferenciaPonto() {
   const [carregando, setCarregando] = useState(true);
   const [busca, setBusca] = useState("");
   const [fStatus, setFStatus] = useState("");
+  // Quais contratos mostrar. Vazio = todos — o mesmo desenho do filtro de
+  // contratos do Recrutamento (Recrutamento.tsx: "Mostrar só estes
+  // contratos"), porque é a mesma pergunta: 58 contratos na tela e cada
+  // gerente cuida de um punhado.
+  const [fContratos, setFContratos] = useState<string[]>([]);
+  const [abreContratos, setAbreContratos] = useState(false);
   const [aberta, setAberta] = useState<LinhaConferencia | null>(null);
   const [salvando, setSalvando] = useState(false);
 
@@ -131,9 +142,9 @@ export function PainelConferenciaPonto() {
 
   /** O cadastro + o andamento do mês, na mesma linha. */
   const juntas: LinhaConferencia[] = useMemo(() => {
-    const idx = new Map(linhas.map(l => [`${l.contrato_empresa}__${l.contrato_filial}`, l]));
+    const idx = new Map(linhas.map(l => [chaveDoContrato(l), l]));
     return contratos.map(c => {
-      const achada = idx.get(`${c.Empresa}__${c.Filial}`);
+      const achada = idx.get(`${c.Empresa}__${c.Filial}`);   // mesmo formato de chaveDoContrato
       if (achada) {
         return { ...achada, nome_empresa: c["NOME EMPRESA"], analista_nome: null, supervisor_nome: null };
       }
@@ -166,11 +177,28 @@ export function PainelConferenciaPonto() {
     const q = busca.trim().toLowerCase();
     return juntas.filter(l => {
       if (fStatus && l.status !== fStatus) return false;
+      if (fContratos.length && !fContratos.includes(chaveDoContrato(l))) return false;
       if (!q) return true;
       return [l.contrato_nome, l.nome_empresa, String(l.contrato_filial)]
         .some(v => String(v ?? "").toLowerCase().includes(q));
     });
-  }, [juntas, busca, fStatus]);
+  }, [juntas, busca, fStatus, fContratos]);
+
+  /**
+   * Os contratos do mês com quantos aparecem em cada um — a contagem vem do
+   * que está ANTES do próprio filtro de contrato (senão, marcar um zeraria
+   * todos os outros na lista).
+   */
+  const contratosDoMes = useMemo(() => {
+    const m = new Map<string, { chave: string; nome: string; n: number }>();
+    for (const l of juntas) {
+      if (fStatus && l.status !== fStatus) continue;
+      const chave = chaveDoContrato(l);
+      const nome = `${l.contrato_nome ?? "—"} · filial ${l.contrato_filial}`;
+      m.set(chave, { chave, nome, n: (m.get(chave)?.n ?? 0) + 1 });
+    }
+    return [...m.values()].sort((a, b) => a.nome.localeCompare(b.nome));
+  }, [juntas, fStatus]);
 
   const avanco = useMemo(() => contaAvanco(juntas.map(l => l.status)), [juntas]);
   const totalLiberado = useMemo(
@@ -333,6 +361,47 @@ export function PainelConferenciaPonto() {
             {STATUS_TODOS.map(s => <SelectItem key={s} value={s}>{s}</SelectItem>)}
           </SelectContent>
         </Select>
+        {/* Filtro de contratos — o mesmo do Recrutamento: escolha por
+            checkbox, com a contagem do lado, e vazio quer dizer todos. */}
+        <div className="relative">
+          <Button variant={fContratos.length ? "default" : "outline"}
+                  onClick={() => setAbreContratos(v => !v)} className="w-full sm:w-auto">
+            <Filter className="mr-2 h-4 w-4" />
+            Contratos{fContratos.length ? ` (${fContratos.length})` : ""}
+          </Button>
+          {abreContratos && (
+            <>
+              <div className="fixed inset-0 z-40" onClick={() => setAbreContratos(false)} />
+              <div className="absolute right-0 z-50 mt-2 max-h-96 w-[min(24rem,90vw)] overflow-y-auto rounded-xl border bg-popover p-2 shadow-lg">
+                <div className="flex items-center justify-between px-2 pb-2">
+                  <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                    Mostrar só estes contratos
+                  </span>
+                  {fContratos.length > 0 && (
+                    <button className="text-xs font-semibold text-primary hover:underline"
+                            onClick={() => setFContratos([])}>Limpar</button>
+                  )}
+                </div>
+                {contratosDoMes.length === 0 ? (
+                  <p className="px-2 py-3 text-sm text-muted-foreground">Nenhum contrato para este mês.</p>
+                ) : contratosDoMes.map(c => {
+                  const marcado = fContratos.includes(c.chave);
+                  return (
+                    <label key={c.chave}
+                           className={cn("flex cursor-pointer items-center gap-2.5 rounded-lg px-2 py-1.5 text-sm",
+                                         marcado ? "bg-accent" : "hover:bg-muted/60")}>
+                      <Checkbox checked={marcado}
+                                onCheckedChange={() => setFContratos(prev =>
+                                  marcado ? prev.filter(x => x !== c.chave) : [...prev, c.chave])} />
+                      <span className="min-w-0 flex-1 truncate" title={c.nome}>{c.nome}</span>
+                    </label>
+                  );
+                })}
+              </div>
+            </>
+          )}
+        </div>
+
         <Button variant="outline" onClick={carregar} disabled={carregando}>
           {carregando ? <Loader2 className="h-4 w-4 animate-spin" /> : "Atualizar"}
         </Button>
@@ -369,7 +438,7 @@ export function PainelConferenciaPonto() {
                     const temAcao = (["aprovar", "confirmar", "informar_valor", "marcar_pago"] as Acao[])
                       .some(a => podeAgir(l.status, a, pode));
                     return (
-                      <TableRow key={`${l.contrato_empresa}__${l.contrato_filial}`}
+                      <TableRow key={chaveDoContrato(l)}
                                 className="cursor-pointer" onClick={() => setAberta(l)}>
                         <TableCell>
                           <div className="font-medium">{l.contrato_nome || "—"}</div>

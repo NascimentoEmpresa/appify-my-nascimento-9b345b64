@@ -157,6 +157,8 @@ import AsoCandidatos from "./pages/sst/AsoCandidatos";
 import AsoDemissional from "./pages/sst/AsoDemissional";
 import ConferenciaPonto from "./pages/rh/ConferenciaPonto";
 import ConferenciaPontoPainel from "./pages/rh/ConferenciaPontoPainel";
+import OperacionalConferenciaPonto from "./pages/operacional/ConferenciaPonto";
+import FinanceiroConferenciaPonto from "./pages/financeiro/ConferenciaPonto";
 import LaudosEpi from "./pages/sst/LaudosEpi";
 import ControleCa from "./pages/sst/ControleCa";
 import NovasAdmissoes from "./pages/rh/NovasAdmissoes";
@@ -510,6 +512,10 @@ const App = () => (
                 o que muda é a permissão de cada um (ver conferencia.ts). */}
             <Route path="rh/conferencia-ponto" element={<ConferenciaPonto />} />
             <Route path="rh/conferencia-ponto/painel" element={<ConferenciaPontoPainel />} />
+            {/* As outras duas portas do MESMO sistema — o fluxo atravessa os
+                três setores e ninguém troca de módulo para ver o seu. */}
+            <Route path="operacional/conferencia-ponto" element={<OperacionalConferenciaPonto />} />
+            <Route path="financeiro/conferencia-ponto" element={<FinanceiroConferenciaPonto />} />
             {/* Operacional — fila de aprovação das demissões pedidas pelos encarregados. */}
             <Route path="operacional/solicitacoes-demissao" element={<OperacionalSolicitacoesDemissao />} />
             {/* A MESMA tela do Recrutamento, recortada na etapa 1 — ver o
