@@ -17,7 +17,7 @@ derruba as outras.
 | `lembreteWhatsapp.js` | avisa participantes de reunião que começa em ~10 min | todo ciclo |
 | `emailAta.js` | manda o PDF da ata por e-mail quando a reunião encerra | todo ciclo |
 | `chamadosDev.js` | abre worktree e dispara o agente para chamado novo | todo ciclo |
-| `caepi.js` | baixa o catálogo de CA do Ministério do Trabalho | semanal |
+| `caepi.js` | carrega o catálogo de CA do MTE (arquivo depositado à mão) | semanal |
 | `nfe.js` | puxa NF-e emitida contra a empresa na SEFAZ | ver abaixo |
 
 As três primeiras são as originais. As duas últimas nascem **desligadas** e só
