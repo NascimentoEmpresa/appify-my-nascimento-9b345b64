@@ -32,6 +32,9 @@ export interface Reembolso {
   decidido_por_nome: string | null;
   decidido_em: string | null;
   motivo_reprovacao: string | null;
+  /** Preenchido quando já virou despesa no Malote — trava o reenvio. */
+  malote_despesa_id: string | null;
+  enviado_malote_em: string | null;
   created_at: string;
 }
 
@@ -190,8 +193,11 @@ export interface SolicitacaoNova {
   chegada: string;       // HH:MM
   observacoes: string | null;
   solicitante_nome: string | null;
-  setor: string | null;
   despesas: DespesaNova[];
+  // `setor` NÃO entra aqui de propósito: quem carimba é a trigger
+  // `cs_reembolso_carimba_setor`, a partir do cadastro. O setor decide QUEM
+  // aprova — deixá-lo vir do cliente seria deixar a pessoa escolher o próprio
+  // aprovador.
 }
 
 /**
@@ -216,7 +222,6 @@ export function useCriarReembolso() {
         chegada: nova.chegada,
         observacoes: nova.observacoes,
         solicitante_nome: nova.solicitante_nome,
-        setor: nova.setor,
       }).select("id, numero").single();
       if (error) throw error;
 
@@ -288,6 +293,95 @@ export function useDecidirReembolso() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["reembolsos"] });
       qc.invalidateQueries({ queryKey: ["reembolso_meus_stats"] });
+      qc.invalidateQueries({ queryKey: ["reembolso_eventos"] });
+    },
+  });
+}
+
+/**
+ * O setor de quem está pedindo, resolvido PELO BANCO.
+ *
+ * Sai de EMPREGADOS (o cadastro da Senior, que é o que Meu Perfil mostra) e,
+ * na falta dele, do setor do perfil. Vem daqui e não do `useVinculoEmpregado`
+ * para a tela mostrar exatamente o que a trigger vai carimbar — se os dois
+ * discordassem, a pessoa veria "Sistemas" na tela e a solicitação chegaria
+ * para o aprovador de outro setor.
+ *
+ * `null` significa cadastro sem setor: a tela bloqueia e explica, em vez de
+ * deixar abrir uma solicitação que ninguém pode aprovar.
+ */
+export function useMeuSetor() {
+  const { user } = useAuth();
+  return useQuery({
+    queryKey: ["reembolso_meu_setor", user?.id ?? ""],
+    queryFn: async (): Promise<string | null> => {
+      const { data, error } = await sb.rpc("cs_reembolso_meu_setor");
+      if (error) throw error;
+      return (typeof data === "string" && data.trim()) ? data : null;
+    },
+    enabled: !!user?.id,
+  });
+}
+
+export interface ConfigReembolso {
+  empresa_id: string | null;
+  classificacao_id: string | null;
+  forma_pagamento: string | null;
+  tipo_movimento: string | null;
+}
+
+/** Os padrões usados ao criar a despesa no Malote. Linha única. */
+export function useConfigReembolso() {
+  return useQuery({
+    queryKey: ["reembolso_config"],
+    queryFn: async (): Promise<ConfigReembolso> => {
+      const { data, error } = await sb
+        .from("CS_REEMBOLSO_CONFIG")
+        .select("empresa_id, classificacao_id, forma_pagamento, tipo_movimento")
+        .maybeSingle();
+      if (error) throw error;
+      return data ?? {
+        empresa_id: null, classificacao_id: null, forma_pagamento: null, tipo_movimento: null,
+      };
+    },
+  });
+}
+
+export function useSalvarConfigReembolso() {
+  const qc = useQueryClient();
+  const { user } = useAuth();
+  return useMutation({
+    mutationFn: async (cfg: ConfigReembolso) => {
+      const { error } = await sb.from("CS_REEMBOLSO_CONFIG").update({
+        ...cfg,
+        atualizado_por: user?.id ?? null,
+        atualizado_por_nome: user?.user_metadata?.display_name ?? user?.email ?? null,
+        updated_at: new Date().toISOString(),
+      }).eq("id", true);
+      if (error) throw error;
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["reembolso_config"] }),
+  });
+}
+
+/**
+ * Cria a despesa no Malote a partir do reembolso aprovado.
+ *
+ * Toda a regra está na RPC (`cs_reembolso_enviar_ao_malote`): ela confere que
+ * quem chamou aprova aquele setor, que o reembolso está aprovado, e devolve a
+ * despesa já existente se for chamada de novo. O front não repete nada disso —
+ * só mostra o que voltar.
+ */
+export function useEnviarAoMalote() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (id: string): Promise<string> => {
+      const { data, error } = await sb.rpc("cs_reembolso_enviar_ao_malote", { _id: id });
+      if (error) throw error;
+      return data as string;
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["reembolsos"] });
       qc.invalidateQueries({ queryKey: ["reembolso_eventos"] });
     },
   });

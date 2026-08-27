@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
-import { Clock, Loader2, Plus, Save, Settings2, Wallet } from "lucide-react";
+import { Clock, Loader2, Plus, Save, Send, Settings2, Wallet } from "lucide-react";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { AcessoGate } from "@/components/auth/AcessoGate";
 import { Button } from "@/components/ui/button";
@@ -8,7 +8,10 @@ import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
-import { useSalvarTipo, useTiposReembolso } from "@/hooks/useReembolso";
+import {
+  useConfigReembolso, useSalvarConfigReembolso, useSalvarTipo, useTiposReembolso,
+  type ConfigReembolso,
+} from "@/hooks/useReembolso";
 import {
   fmtBRL, normalizaHora, valorEmCentavos, type TipoReembolso,
 } from "@/lib/reembolso/regras";
@@ -34,6 +37,75 @@ import {
 //             valer. Vazio = qualquer horário. É a regra do "almoço das 11 às
 //             13; quem saiu às 14h não pede almoço".
 // =====================================================================
+
+/**
+ * Os padrões usados para criar a despesa no Malote.
+ *
+ * A `malote_despesa` exige empresa e classificação, e o reembolso não tem
+ * nenhum dos dois — não há como derivá-los de uma viagem. Em vez de adivinhar
+ * (e criar despesa torta que alguém teria que corrigir na mão), ficam aqui,
+ * numa linha só, sob a mesma permissão que governa tetos e janelas.
+ *
+ * Sem a empresa preenchida, o botão "Enviar ao malote" existe mas a RPC
+ * recusa com essa razão dita — é melhor do que criar a despesa sem dono.
+ */
+function PadroesMalote() {
+  const { data: cfg } = useConfigReembolso();
+  const salvar = useSalvarConfigReembolso();
+  const [form, setForm] = useState<ConfigReembolso>({
+    empresa_id: null, classificacao_id: null, forma_pagamento: null, tipo_movimento: null,
+  });
+
+  useEffect(() => { if (cfg) setForm(cfg); }, [cfg]);
+
+  const gravar = async () => {
+    try {
+      await salvar.mutateAsync(form);
+      toast.success("Padrões do malote salvos.");
+    } catch (e: any) {
+      toast.error(e?.message ?? "Não deu para salvar.");
+    }
+  };
+
+  return (
+    <Card className="mb-4 p-4">
+      <p className="mb-1 flex items-center gap-2 text-sm font-medium">
+        <Send className="h-4 w-4" /> Padrões para o malote
+      </p>
+      <p className="mb-3 text-xs text-muted-foreground">
+        Com que empresa e classificação a despesa nasce no Malote quando um reembolso aprovado é
+        enviado. Sem a empresa, o envio é recusado — a despesa ficaria sem dono.
+      </p>
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        <div className="space-y-1.5">
+          <Label className="text-xs">Empresa (UUID) <span className="text-destructive">*</span></Label>
+          <Input value={form.empresa_id ?? ""} placeholder="id da empresa"
+                 onChange={(e) => setForm((f) => ({ ...f, empresa_id: e.target.value || null }))} />
+        </div>
+        <div className="space-y-1.5">
+          <Label className="text-xs">Classificação Malote (UUID)</Label>
+          <Input value={form.classificacao_id ?? ""} placeholder="opcional"
+                 onChange={(e) => setForm((f) => ({ ...f, classificacao_id: e.target.value || null }))} />
+        </div>
+        <div className="space-y-1.5">
+          <Label className="text-xs">Forma de pagamento</Label>
+          <Input value={form.forma_pagamento ?? ""} placeholder="PIX"
+                 onChange={(e) => setForm((f) => ({ ...f, forma_pagamento: e.target.value || null }))} />
+        </div>
+        <div className="space-y-1.5">
+          <Label className="text-xs">Tipo de movimento</Label>
+          <Input value={form.tipo_movimento ?? ""} placeholder="opcional"
+                 onChange={(e) => setForm((f) => ({ ...f, tipo_movimento: e.target.value || null }))} />
+        </div>
+      </div>
+      <div className="mt-3 flex justify-end">
+        <Button size="sm" disabled={salvar.isPending} onClick={gravar}>
+          <Save className="mr-2 h-4 w-4" /> Salvar padrões
+        </Button>
+      </div>
+    </Card>
+  );
+}
 
 /** O que fica no formulário — tudo string, porque campo de texto é string. */
 interface Rascunho {
@@ -151,6 +223,8 @@ export default function ConfiguracaoReembolso() {
             tipo valer em qualquer horário.
           </p>
         </Card>
+
+        <PadroesMalote />
 
         {isLoading ? (
           <Card className="flex items-center gap-2 p-6 text-sm text-muted-foreground">

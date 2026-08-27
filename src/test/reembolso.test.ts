@@ -1,7 +1,8 @@
 import { describe, it, expect } from "vitest";
 import {
   competenciaDe, competenciaLegivel, dataParaBR, dataParaISO, descreveJanela, descreveTeto,
-  emMinutos, fmtBRL, normalizaHora, podeLancar, proximoStatus, tiposDisponiveis,
+  ROTULO_STATUS, STATUS_TODOS, emMinutos, fmtBRL, normalizaHora, podeEnviarAoMalote,
+  podeLancar, proximoStatus, tiposDisponiveis,
   totalEmCentavos, valorEmCentavos, viagemAlcancaJanela,
   type TipoReembolso,
 } from "@/lib/reembolso/regras";
@@ -218,6 +219,40 @@ describe("proximoStatus — quem já foi decidido não volta", () => {
       expect(proximoStatus("reprovado", acao)).toBeNull();
       expect(proximoStatus("cancelado", acao)).toBeNull();
     }
+  });
+});
+
+describe("podeEnviarAoMalote — uma vez, e só o aprovado", () => {
+  it("aprovado e ainda sem despesa pode ir", () => {
+    expect(podeEnviarAoMalote("aprovado", false)).toBe(true);
+  });
+
+  it("nunca duas vezes", () => {
+    // Reembolso pago em dobro é o pior erro possível deste módulo, então a
+    // trava existe aqui e na RPC (que devolve a despesa já criada).
+    expect(podeEnviarAoMalote("aprovado", true)).toBe(false);
+    expect(podeEnviarAoMalote("enviado_malote", true)).toBe(false);
+  });
+
+  it("o que não foi aprovado não vai", () => {
+    for (const s of ["pendente", "reprovado", "cancelado"] as const) {
+      expect(podeEnviarAoMalote(s, false)).toBe(false);
+    }
+  });
+});
+
+describe("enviado_malote é fim de linha", () => {
+  it("não aceita mais nenhuma ação", () => {
+    // De lá em diante quem manda é a despesa do Malote; mexer no reembolso
+    // deixaria os dois discordando sobre o mesmo dinheiro.
+    for (const acao of ["aprovar", "reprovar", "cancelar"] as const) {
+      expect(proximoStatus("enviado_malote", acao)).toBeNull();
+    }
+  });
+
+  it("entra na lista de status e tem rótulo", () => {
+    expect(STATUS_TODOS).toContain("enviado_malote");
+    expect(ROTULO_STATUS.enviado_malote).toBe("Enviado ao malote");
   });
 });
 
