@@ -125,6 +125,16 @@ describe("cada botão só existe no módulo dele", () => {
     expect(podeAgir("Liberado Financeiro", "marcar_pago", tudo, "operacional")).toBe(false);
   });
 
+  // "Marcar problema" sai de DOIS status, e um deles ainda é do RH
+  // (`Conferido RH`). Quem marca é o Financeiro — então o botão precisa
+  // aparecer na porta do Financeiro mesmo antes de o contrato chegar lá.
+  it("marcar problema é do Financeiro, inclusive em Conferido RH", () => {
+    expect(podeAgir("Conferido RH", "problema", com(MENU.pagar), "financeiro")).toBe(true);
+    expect(podeAgir("Liberado Financeiro", "problema", com(MENU.pagar), "financeiro")).toBe(true);
+    expect(podeAgir("Conferido RH", "problema", tudo, "rh")).toBe(false);
+    expect(podeAgir("Conferido RH", "problema", tudo, "operacional")).toBe(false);
+  });
+
   it("toda ação tem um módulo, e é o do passo dela", () => {
     expect(MODULO_DA_ACAO.aprovar).toBe("operacional");
     expect(MODULO_DA_ACAO.confirmar).toBe("rh");
