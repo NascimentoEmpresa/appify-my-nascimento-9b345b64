@@ -571,7 +571,7 @@ function DetalheContrato({ linha, pode, modulo, salvando, onFechar, onAgir }: {
 
         {/* ── Ações disponíveis para ESTA pessoa neste status ── */}
         {(p("aprovar") || p("confirmar") || p("informar_valor") || p("marcar_pago") ||
-          p("devolver_op") || p("devolver_rh")) ? (
+          p("devolver_op") || p("devolver_rh") || p("problema")) ? (
           <div className="space-y-3 rounded-xl border border-primary/30 bg-primary/5 p-4">
             <h3 className="text-sm font-semibold">O que você pode fazer agora</h3>
 
@@ -583,10 +583,10 @@ function DetalheContrato({ linha, pode, modulo, salvando, onFechar, onAgir }: {
               </div>
             )}
 
-            {(p("devolver_op") || p("devolver_rh")) && (
+            {(p("devolver_op") || p("devolver_rh") || p("problema")) && (
               <div className="space-y-1.5">
                 <Label htmlFor="motivo-dev">
-                  Motivo <span className="text-xs text-muted-foreground">(obrigatório para devolver)</span>
+                  Motivo <span className="text-xs text-muted-foreground">(obrigatório para devolver ou marcar problema)</span>
                 </Label>
                 <Textarea id="motivo-dev" rows={2} value={motivo} onChange={e => setMotivo(e.target.value)}
                           placeholder="O que precisa ser corrigido?" />

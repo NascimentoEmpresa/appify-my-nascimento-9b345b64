@@ -367,108 +367,118 @@ export default function Inicio() {
         </div>
       </header>
 
-      {/* ══════════════════ Novidades do Sistema ════════════════════ */}
-      {/* Vem antes dos Favoritos de propósito: Favoritos é sempre igual, e
-          novidade só vale enquanto é novidade. */}
-      <div data-reveal className="ini-novidades">
-        <NovidadesPainel limite={4} />
-      </div>
+      {/* ═══════ Corpo: o trabalho à esquerda, o recado à direita ════════ */}
+      {/* Favoritos e Reuniões são o que a pessoa VEM fazer; Novidades é o que
+          a empresa tem a DIZER. Lado a lado, o recado fica à vista o tempo
+          todo sem empurrar os atalhos para baixo da dobra.
 
-      {/* ═════════════════════════ Favoritos ════════════════════════ */}
-      <section className="ini-card" data-reveal ref={refCatalogo}>
-        <div className="ini-card-hd">
-          <div className="ini-hd-tx">
-            <h3><Star className="ini-hd-ic" aria-hidden /> {gerenciando ? "Todos os módulos" : "Favoritos"}</h3>
-            <p>{gerenciando
-              ? "Marque a estrela dos módulos que você quer no seu Início."
-              : "Acesse rapidamente os módulos e submódulos que você mais utiliza."}</p>
-          </div>
-          <div className="ini-hd-acoes">
-            {gerenciando && (
-              <label className="ini-busca">
-                <Search size={14} aria-hidden />
-                <input
-                  value={busca}
-                  onChange={(e) => setBusca(e.target.value)}
-                  placeholder="Buscar módulo…"
-                  aria-label="Buscar módulo"
-                />
-              </label>
-            )}
-            <button
-              type="button"
-              className={`ini-btn ${gerenciando ? "ini-btn--ok" : ""}`}
-              onClick={() => { setGerenciando((g) => !g); setBusca(""); }}
-            >
-              {gerenciando ? <Check size={14} aria-hidden /> : <Settings2 size={14} aria-hidden />}
-              {gerenciando ? "Concluir" : "Gerenciar favoritos"}
-            </button>
-          </div>
-        </div>
+          A ordem aqui no HTML é Novidades PRIMEIRO de propósito: é ela que
+          sobe quando a grade cai para uma coluna só, abaixo de 1100px —
+          novidade só vale enquanto é novidade. Na largura cheia o `order`
+          do CSS devolve o painel para a direita, sem markup duplicado. */}
+      <div className="ini-colunas">
+        <aside className="ini-col-lado" data-reveal>
+          <NovidadesPainel limite={4} />
+        </aside>
 
-        <div className="ini-card-body">
-          {gerenciando ? (
-            ORDEM_GRUPOS.map((grupo) => {
-              const doGrupo = catalogoFiltrado.filter((a) => a.grupo === grupo);
-              if (!doGrupo.length) return null;
-              return (
-                <div key={grupo} className="ini-grupo">
-                  <p className="ini-grupo-tt">{grupo}</p>
-                  <div className="ini-qa">
-                    {doGrupo.map((a, i) => (
-                      <CartaoAtalho
-                        key={a.to} atalho={a} indice={i}
-                        favorito={(favoritos ?? FAVORITOS_PADRAO).includes(a.to)}
-                        modoGerenciar onAlternar={alternarFavorito}
-                      />
-                    ))}
-                  </div>
-                </div>
-              );
-            })
-          ) : meusFavoritos.length ? (
-            <div className="ini-qa">
-              {meusFavoritos.map((a, i) => (
-                <CartaoAtalho key={a.to} atalho={a} indice={i} favorito onAlternar={alternarFavorito} />
-              ))}
+        <div className="ini-col-principal">
+          {/* ═════════════════════ Favoritos ═════════════════════ */}
+          <section className="ini-card" data-reveal ref={refCatalogo}>
+            <div className="ini-card-hd">
+              <div className="ini-hd-tx">
+                <h3><Star className="ini-hd-ic" aria-hidden /> {gerenciando ? "Todos os módulos" : "Favoritos"}</h3>
+                <p>{gerenciando
+                  ? "Marque a estrela dos módulos que você quer no seu Início."
+                  : "Acesse rapidamente os módulos e submódulos que você mais utiliza."}</p>
+              </div>
+              <div className="ini-hd-acoes">
+                {gerenciando && (
+                  <label className="ini-busca">
+                    <Search size={14} aria-hidden />
+                    <input
+                      value={busca}
+                      onChange={(e) => setBusca(e.target.value)}
+                      placeholder="Buscar módulo…"
+                      aria-label="Buscar módulo"
+                    />
+                  </label>
+                )}
+                <button
+                  type="button"
+                  className={`ini-btn ${gerenciando ? "ini-btn--ok" : ""}`}
+                  onClick={() => { setGerenciando((g) => !g); setBusca(""); }}
+                >
+                  {gerenciando ? <Check size={14} aria-hidden /> : <Settings2 size={14} aria-hidden />}
+                  {gerenciando ? "Concluir" : "Gerenciar favoritos"}
+                </button>
+              </div>
             </div>
-          ) : (
-            <div className="ini-vazio">
-              <LayoutGrid size={22} aria-hidden />
-              <p>Você ainda não escolheu nenhum favorito.</p>
-              <button type="button" className="ini-btn" onClick={() => setGerenciando(true)}>
-                <Settings2 size={14} aria-hidden /> Escolher módulos
+
+            <div className="ini-card-body">
+              {gerenciando ? (
+                ORDEM_GRUPOS.map((grupo) => {
+                  const doGrupo = catalogoFiltrado.filter((a) => a.grupo === grupo);
+                  if (!doGrupo.length) return null;
+                  return (
+                    <div key={grupo} className="ini-grupo">
+                      <p className="ini-grupo-tt">{grupo}</p>
+                      <div className="ini-qa">
+                        {doGrupo.map((a, i) => (
+                          <CartaoAtalho
+                            key={a.to} atalho={a} indice={i}
+                            favorito={(favoritos ?? FAVORITOS_PADRAO).includes(a.to)}
+                            modoGerenciar onAlternar={alternarFavorito}
+                          />
+                        ))}
+                      </div>
+                    </div>
+                  );
+                })
+              ) : meusFavoritos.length ? (
+                <div className="ini-qa">
+                  {meusFavoritos.map((a, i) => (
+                    <CartaoAtalho key={a.to} atalho={a} indice={i} favorito onAlternar={alternarFavorito} />
+                  ))}
+                </div>
+              ) : (
+                <div className="ini-vazio">
+                  <LayoutGrid size={22} aria-hidden />
+                  <p>Você ainda não escolheu nenhum favorito.</p>
+                  <button type="button" className="ini-btn" onClick={() => setGerenciando(true)}>
+                    <Settings2 size={14} aria-hidden /> Escolher módulos
+                  </button>
+                </div>
+              )}
+
+              {/* O par abrir/fechar mora no MESMO lugar de propósito. O botão
+                  "Concluir" do cabeçalho continua valendo, mas com a lista
+                  inteira aberta ele sai da tela — quem rolou até o fim não tinha
+                  como voltar sem subir a página atrás dele. */}
+              <button
+                type="button"
+                className="ini-ver-todos"
+                onClick={() => {
+                  if (gerenciando) fecharCatalogo();
+                  else setGerenciando(true);
+                }}
+              >
+                {gerenciando
+                  ? <><ChevronUp size={14} aria-hidden /> Mostrar menos</>
+                  : <>Ver todos os módulos <ArrowRight size={14} aria-hidden /></>}
               </button>
             </div>
+          </section>
+
+          {/* ══════════════════════ Minhas Reuniões ═════════════════════ */}
+          {/* Encarregado externo não participa de reunião do ERP: o cartão vinha
+              sempre vazio e o "ver todas" apontava pra uma tela que ele não abre. */}
+          {!externo && (
+            <div data-reveal>
+              <MinhasReunioesCard />
+            </div>
           )}
-
-          {/* O par abrir/fechar mora no MESMO lugar de propósito. O botão
-              "Concluir" do cabeçalho continua valendo, mas com a lista
-              inteira aberta ele sai da tela — quem rolou até o fim não tinha
-              como voltar sem subir a página atrás dele. */}
-          <button
-            type="button"
-            className="ini-ver-todos"
-            onClick={() => {
-              if (gerenciando) fecharCatalogo();
-              else setGerenciando(true);
-            }}
-          >
-            {gerenciando
-              ? <><ChevronUp size={14} aria-hidden /> Mostrar menos</>
-              : <>Ver todos os módulos <ArrowRight size={14} aria-hidden /></>}
-          </button>
         </div>
-      </section>
-
-      {/* ══════════════════════ Minhas Reuniões ═════════════════════ */}
-      {/* Encarregado externo não participa de reunião do ERP: o cartão vinha
-          sempre vazio e o "ver todas" apontava pra uma tela que ele não abre. */}
-      {!externo && (
-        <div data-reveal>
-          <MinhasReunioesCard />
-        </div>
-      )}
+      </div>
     </div>
   );
 }
@@ -532,9 +542,17 @@ function CartaoAtalho({
 /* ================================================================== */
 const CSS_INICIO = `
 .ini-page{flex:1;display:flex;flex-direction:column;min-width:0;}
+/* ──────────────────── corpo em duas colunas ───────────────────── */
+/* 340px é a largura em que o cartão de novidade ainda cabe título e resumo
+   sem virar uma coluna de tarja. */
+.ini-colunas{display:grid;grid-template-columns:minmax(0,1fr) 340px;
+  gap:22px;align-items:start;}
+.ini-col-principal{min-width:0;order:1;}
 /* O painel de Novidades usa o CSS próprio dele (components/novidades); aqui
-   só entra o espaço que ele ocupa no fluxo da tela. */
-.ini-novidades{margin-bottom:22px;}
+   só entra a coluna em que ele mora. */
+.ini-col-lado{min-width:0;order:2;}
+/* A última caixa da coluna não precisa da margem que separa uma da outra. */
+.ini-col-principal > .ini-card:last-child{margin-bottom:0;}
 
 /* ───────────────────────────── hero ───────────────────────────── */
 .ini-hero{position:relative;overflow:hidden;border-radius:20px;margin-bottom:22px;
@@ -743,6 +761,13 @@ const CSS_INICIO = `
 [data-reveal]{opacity:0;transform:translateY(22px);
   transition:opacity .6s cubic-bezier(.16,1,.3,1),transform .6s cubic-bezier(.16,1,.3,1);}
 [data-reveal].is-in{opacity:1;transform:none;}
+
+/* Abaixo de 1100px a coluna da direita só espreme os cartões de atalho:
+   vira uma coluna só, com Novidades de volta no topo. */
+@media (max-width:1100px){
+  .ini-colunas{grid-template-columns:minmax(0,1fr);}
+  .ini-col-lado{order:0;margin-bottom:22px;}
+}
 
 @media (max-width:900px){
   .ini-hero{padding:30px 24px;flex-direction:column;align-items:flex-start;min-height:0;}
