@@ -520,19 +520,19 @@ VALUES ('reembolsos', 'reembolsos', false, 20971520) -- 20 MB
 ON CONFLICT (id) DO NOTHING;
 
 DROP POLICY IF EXISTS "reembolso comprovante select" ON storage.objects;
-CREATE POLICY "reembolso comprovante select"
-  ON storage.objects FOR SELECT TO authenticated
+CREATE POLICY "reembolso comprovante select" ON storage.objects
+  FOR SELECT TO authenticated
   USING (bucket_id = 'reembolsos');
 
 DROP POLICY IF EXISTS "reembolso comprovante insert" ON storage.objects;
-CREATE POLICY "reembolso comprovante insert"
-  ON storage.objects FOR INSERT TO authenticated
+CREATE POLICY "reembolso comprovante insert" ON storage.objects
+  FOR INSERT TO authenticated
   WITH CHECK (bucket_id = 'reembolsos');
 
 -- Trocar o comprovante errado antes de enviar faz parte do fluxo.
 DROP POLICY IF EXISTS "reembolso comprovante delete" ON storage.objects;
-CREATE POLICY "reembolso comprovante delete"
-  ON storage.objects FOR DELETE TO authenticated
+CREATE POLICY "reembolso comprovante delete" ON storage.objects
+  FOR DELETE TO authenticated
   USING (bucket_id = 'reembolsos' AND owner = auth.uid());
 
 -- 7) RPCs ---------------------------------------------------------------
