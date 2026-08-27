@@ -13,6 +13,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { PageHeader } from "@/components/layout/PageHeader";
 import { CampoBipagem } from "@/components/suprimentos/CampoBipagem";
 import { useEmpresaId } from "@/hooks/useEmpresaId";
+import { TIPOS_MATERIAL, TODOS_OS_TIPOS } from "@/lib/suprimentos/tiposMaterial";
 import { useItens, LABEL_TIPO_ITEM, type TipoItem } from "@/hooks/useSupCatalogo";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Link } from "react-router-dom";
@@ -48,16 +49,26 @@ export default function EstoqueEtiquetas() {
   const { data: empresaId } = useEmpresaId();
   const { data: linhas = [], isLoading, error } = useEstoqueLista(empresaId ?? null);
   const [busca, setBusca] = useState("");
+  const [tipo, setTipo] = useState<string>(TODOS_OS_TIPOS);
   const [entradaAberta, setEntradaAberta] = useState(false);
   const [devolucaoAberta, setDevolucaoAberta] = useState(false);
   const [detalhe, setDetalhe] = useState<LinhaEstoque | null>(null);
 
   const filtradas = useMemo(() => {
     const t = busca.trim().toLowerCase();
-    if (!t) return linhas;
-    return linhas.filter((l) =>
-      `${l.material} ${l.almoxarifado} ${l.tamanhos.join(" ")}`.toLowerCase().includes(t));
-  }, [linhas, busca]);
+    return linhas.filter((l) => {
+      if (tipo !== TODOS_OS_TIPOS && l.tipo_material !== tipo) return false;
+      if (!t) return true;
+      return `${l.material} ${l.almoxarifado} ${l.tamanhos.join(" ")}`.toLowerCase().includes(t);
+    });
+  }, [linhas, busca, tipo]);
+
+  /** Quantos materiais há de cada tipo, para o filtro dizer o que vai achar. */
+  const porTipo = useMemo(() => {
+    const c: Record<string, number> = {};
+    for (const l of linhas) c[l.tipo_material] = (c[l.tipo_material] ?? 0) + 1;
+    return c;
+  }, [linhas]);
 
   const kpis = useMemo(() => ({
     materiais: linhas.length,
@@ -107,10 +118,26 @@ export default function EstoqueEtiquetas() {
         </p>
       )}
 
-      <div className="relative max-w-md">
-        <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-        <Input value={busca} onChange={(e) => setBusca(e.target.value)}
-               placeholder="Buscar material, almoxarifado, tamanho…" className="pl-9" />
+      <div className="flex flex-wrap items-center gap-2">
+        <div className="relative min-w-[260px] flex-1 max-w-md">
+          <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+          <Input value={busca} onChange={(e) => setBusca(e.target.value)}
+                 placeholder="Buscar material, almoxarifado, tamanho…" className="pl-9" />
+        </div>
+
+        {/* O contador em cada opção evita o filtro que zera a tela sem
+            explicação — quem escolhe já sabe se vai achar algo. */}
+        <Select value={tipo} onValueChange={setTipo}>
+          <SelectTrigger className="w-56"><SelectValue /></SelectTrigger>
+          <SelectContent>
+            <SelectItem value={TODOS_OS_TIPOS}>Todos os tipos ({linhas.length})</SelectItem>
+            {TIPOS_MATERIAL.map((t) => (
+              <SelectItem key={t.valor} value={t.valor} disabled={!porTipo[t.valor]}>
+                {t.rotulo} ({porTipo[t.valor] ?? 0})
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
       </div>
 
       {error ? (
@@ -125,7 +152,9 @@ export default function EstoqueEtiquetas() {
         <div className="flex flex-col items-center gap-2 py-16 text-center">
           <Boxes className="h-10 w-10 text-muted-foreground/50" />
           <p className="font-medium">
-            {busca ? `Nenhum resultado para "${busca}"` : "Estoque vazio."}
+            {busca || tipo !== TODOS_OS_TIPOS
+              ? "Nenhum material com esses filtros."
+              : "Estoque vazio."}
           </p>
           <p className="text-sm text-muted-foreground">
             {busca ? "Tente outro termo." : "Comece dando entrada nas etiquetas recebidas."}
@@ -331,6 +360,7 @@ function DialogEntrada({ aberto, onFechar, empresaId }: {
   const [almox, setAlmox] = useState("");
   const [material, setMaterial] = useState("");
   const [buscaMat, setBuscaMat] = useState("");
+  const [tipoMat, setTipoMat] = useState<string>(TODOS_OS_TIPOS);
   const [valor, setValor] = useState("");
   const [precoValidoAte, setPrecoValidoAte] = useState("");
   const [minimo, setMinimo] = useState("");
@@ -355,8 +385,15 @@ function DialogEntrada({ aberto, onFechar, empresaId }: {
   });
   const filtrados = useMemo(() => {
     const t = buscaMat.trim().toLowerCase();
-    return t ? materiais.filter((m) => m.nome.toLowerCase().includes(t)).slice(0, 40) : materiais.slice(0, 40);
-  }, [materiais, buscaMat]);
+    return materiais
+      .filter((m) => {
+        if (tipoMat !== TODOS_OS_TIPOS && m.tipo !== tipoMat) return false;
+        return !t || m.nome.toLowerCase().includes(t);
+      })
+      // O corte em 40 é da versão original: a lista é um seletor, não um
+      // relatório, e o catálogo tem mais de mil itens.
+      .slice(0, 40);
+  }, [materiais, buscaMat, tipoMat]);
 
   const total = blocos.reduce((s, b) =>
     s + (b.tipo === "massa" ? (b.codigos.length ? Number(b.quantidade || 0) : 0) : b.codigos.length), 0);
@@ -464,8 +501,22 @@ function DialogEntrada({ aberto, onFechar, empresaId }: {
               </div>
             ) : (
               <>
-                <Input value={buscaMat} onChange={(e) => setBuscaMat(e.target.value)}
-                       placeholder="Buscar no catálogo…" />
+                {/* Filtrar por tipo antes de procurar pelo nome: o catálogo
+                    passa de mil itens, e quem dá entrada normalmente sabe se
+                    está mexendo com EPI, uniforme ou material de limpeza. */}
+                <div className="flex gap-2">
+                  <Input value={buscaMat} onChange={(e) => setBuscaMat(e.target.value)}
+                         placeholder="Buscar no catálogo…" className="flex-1" />
+                  <Select value={tipoMat} onValueChange={setTipoMat}>
+                    <SelectTrigger className="w-44"><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value={TODOS_OS_TIPOS}>Todos os tipos</SelectItem>
+                      {TIPOS_MATERIAL.map((t) => (
+                        <SelectItem key={t.valor} value={t.valor}>{t.rotulo}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
                 <div className="mt-1 max-h-40 space-y-0.5 overflow-y-auto rounded-md border p-1">
                   {filtrados.map((m) => (
                     <button key={m.id} type="button" onClick={() => setMaterial(m.id)}
