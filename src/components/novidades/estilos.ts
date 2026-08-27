@@ -183,20 +183,27 @@ export const CSS_NOVIDADES = `
    que é larga, e a coluna da direita do Início, que tem 340px. O cabeçalho
    era uma linha só — ícone, texto e botões lado a lado — e na coluna estreita
    o texto (flex:1) era espremido pelos botões (flex:none) até "Novidades do
-   Sistema" quebrar palavra por palavra e o subtítulo virar cinco linhas.
+   Sistema" quebrar palavra por palavra e o subtítulo virar sete linhas.
 
-   É CONTAINER query, não media query: a de cima olha a largura da JANELA, e
-   numa tela larga com a coluna estreita ela nunca dispara — que é exatamente
-   o caso do Início. Aqui o painel reage ao espaço que ELE tem. */
-.nov-card{container-type:inline-size;}
+   A quebra é feita pelo PRÓPRIO FLEX, não por media nem container query:
 
-@container (max-width:430px){
-  /* Título e subtítulo ficam com a linha inteira; os botões descem para a
-     linha de baixo, encostados à direita. */
-  .nov-hd{flex-wrap:wrap;align-items:flex-start;}
-  .nov-hd-tx{flex:1 1 auto;}
-  .nov-hd-acoes{flex:1 0 100%;justify-content:flex-end;}
-}
+   - a media query lá de cima mede a largura da JANELA, e numa tela larga com
+     a coluna estreita ela nunca dispara — que é exatamente o caso do Início;
+   - container query resolveria, mas depende de suporte do navegador e de o
+     containment sobreviver a tudo que envolve o card. Não é dependência que
+     valha a pena para uma quebra de linha.
+
+   Com flex-wrap ligado e um piso de 190px no bloco de texto, os botões
+   descem sozinhos quando não cabem, em qualquer navegador e em qualquer
+   largura de container. O margin-left:auto mantém os botões à direita nos
+   dois casos: colados no canto quando estão na mesma linha do título, e
+   encostados à direita quando caem para a linha de baixo.
+
+   (Sem crases neste comentário de propósito: este CSS mora dentro de uma
+   template string, e uma crase aqui fecha a string e quebra o build.) */
+.nov-hd{flex-wrap:wrap;}
+.nov-hd-tx{flex:1 1 190px;}
+.nov-hd-acoes{margin-left:auto;}
 
 /* Quem pediu menos movimento recebe a tela parada. */
 @media (prefers-reduced-motion:reduce){
