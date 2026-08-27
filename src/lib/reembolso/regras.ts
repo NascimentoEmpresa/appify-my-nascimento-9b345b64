@@ -48,15 +48,18 @@ export interface TipoReembolso {
   ordem: number;
 }
 
-export type StatusReembolso = "pendente" | "aprovado" | "reprovado" | "cancelado";
+export type StatusReembolso =
+  | "pendente" | "aprovado" | "reprovado" | "cancelado" | "enviado_malote";
 
-export const STATUS_TODOS: StatusReembolso[] = ["pendente", "aprovado", "reprovado", "cancelado"];
+export const STATUS_TODOS: StatusReembolso[] =
+  ["pendente", "aprovado", "reprovado", "cancelado", "enviado_malote"];
 
 export const ROTULO_STATUS: Record<StatusReembolso, string> = {
   pendente: "Aguardando aprovação",
   aprovado: "Aprovado",
   reprovado: "Reprovado",
   cancelado: "Cancelado",
+  enviado_malote: "Enviado ao malote",
 };
 
 /** O status que cada ação produz. */
@@ -73,13 +76,27 @@ export type AcaoReembolso = keyof typeof DESTINO;
  *
  * Cancelar é do solicitante e só vale enquanto ninguém decidiu: depois de
  * aprovada, a solicitação já entrou na fila de pagamento e sumir com ela
- * esconderia dinheiro comprometido.
+ * esconderia dinheiro comprometido. `enviado_malote` não aparece em nenhuma
+ * origem — de lá em diante quem manda é a despesa do Malote, e mexer no
+ * reembolso deixaria os dois discordando sobre o mesmo dinheiro.
  */
 const ORIGENS: Record<AcaoReembolso, StatusReembolso[]> = {
   aprovar: ["pendente"],
   reprovar: ["pendente"],
   cancelar: ["pendente"],
 };
+
+/**
+ * Já pode ir para o malote?
+ *
+ * Só o aprovado, e só uma vez. O banco também recusa a segunda chamada (a RPC
+ * devolve a despesa que já existe em vez de criar outra) — reembolso pago em
+ * dobro é o pior erro possível deste módulo, então a trava mora nos dois
+ * lados.
+ */
+export function podeEnviarAoMalote(status: StatusReembolso, jaTemDespesa: boolean): boolean {
+  return status === "aprovado" && !jaTemDespesa;
+}
 
 /** Para onde vai, ou null quando a ação não vale no estado atual. */
 export function proximoStatus(atual: StatusReembolso, acao: AcaoReembolso): StatusReembolso | null {

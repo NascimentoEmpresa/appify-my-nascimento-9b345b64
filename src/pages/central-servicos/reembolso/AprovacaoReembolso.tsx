@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { toast } from "sonner";
-import { BadgeCheck, ShieldCheck, XCircle } from "lucide-react";
+import { BadgeCheck, Send, ShieldCheck, XCircle } from "lucide-react";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { AcessoGate } from "@/components/auth/AcessoGate";
 import { Button } from "@/components/ui/button";
@@ -10,8 +10,10 @@ import { Textarea } from "@/components/ui/textarea";
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
-import { useDecidirReembolso, useReembolsos } from "@/hooks/useReembolso";
-import { ROTULO_STATUS, STATUS_TODOS, type StatusReembolso } from "@/lib/reembolso/regras";
+import { useDecidirReembolso, useEnviarAoMalote, useReembolsos } from "@/hooks/useReembolso";
+import {
+  ROTULO_STATUS, STATUS_TODOS, podeEnviarAoMalote, type StatusReembolso,
+} from "@/lib/reembolso/regras";
 import { ListaReembolsos } from "./componentes/ListaReembolsos";
 
 // =====================================================================
@@ -21,17 +23,20 @@ import { ListaReembolsos } from "./componentes/ListaReembolsos";
 // role de líder do setor, com dois botões. Quem apagasse a conversa perdia a
 // fila, e quem entrasse depois nunca via o que já tinha sido decidido.
 //
-// Quem vê O QUÊ é decidido pela RLS (`cs_reembolso_lidera_setor`): líder de
-// setor vê o próprio setor, quem não lidera setor nenhum e tem a permissão vê
-// a casa inteira — é o caso do RH e do financeiro. Esta tela NÃO repete esse
-// recorte: duas cópias da mesma regra divergem com o tempo, e a cópia do front
-// é a que não protege nada.
+// Quem vê O QUÊ é decidido pela RLS (`cs_reembolso_aprova_setor`): a pessoa
+// enxerga e decide os reembolsos dos SETORES marcados para ela em
+// Administração › Acesso por Usuário, no painel ao lado deste menu. Sem setor
+// marcado, não vê nem decide nada — nem com o menu liberado.
+//
+// Esta tela NÃO repete esse recorte: duas cópias da mesma regra divergem com o
+// tempo, e a cópia do front é justamente a que não protege nada.
 // =====================================================================
 
 export default function AprovacaoReembolso() {
   const [status, setStatus] = useState<StatusReembolso | "todos">("pendente");
   const { data: lista = [], isLoading } = useReembolsos("fila", undefined, status);
   const decidir = useDecidirReembolso();
+  const enviarMalote = useEnviarAoMalote();
 
   // O motivo é por linha: com um estado só, abrir a segunda solicitação
   // herdava o texto digitado na primeira e o motivo saía trocado.
@@ -55,6 +60,20 @@ export default function AprovacaoReembolso() {
         onError: (e: any) => toast.error(e?.message ?? "Não deu para registrar a decisão."),
       },
     );
+  };
+
+  /**
+   * Manda o reembolso aprovado virar despesa no Malote.
+   *
+   * A RPC devolve a despesa que já existe se for chamada de novo, então um
+   * duplo-clique não gera dois lançamentos — mas a tela também esconde o botão
+   * assim que `malote_despesa_id` aparece, para não parecer que nada aconteceu.
+   */
+  const enviar = (id: string) => {
+    enviarMalote.mutate(id, {
+      onSuccess: () => toast.success("Despesa criada no Malote."),
+      onError: (e: any) => toast.error(e?.message ?? "Não deu para enviar ao malote."),
+    });
   };
 
   return (
@@ -92,10 +111,17 @@ export default function AprovacaoReembolso() {
         <ListaReembolsos
           lista={lista}
           carregando={isLoading}
-          vazio="Nada aguardando decisão por aqui."
+          vazio="Nada na sua alçada por aqui. Se você acabou de ganhar a permissão, confira em Acesso por Usuário se algum setor foi marcado — sem setor, a fila vem vazia."
           mostrarSolicitante
           acoes={(r) =>
-            r.status !== "pendente" ? null : (
+            /* Aprovado e ainda não lançado: o passo seguinte é o malote. */
+            podeEnviarAoMalote(r.status, !!r.malote_despesa_id) ? (
+              <AcessoGate menu="central_servicos_reembolso_aprovacao" acao="aprovar">
+                <Button disabled={enviarMalote.isPending} onClick={() => enviar(r.id)}>
+                  <Send className="mr-2 h-4 w-4" /> Enviar ao malote
+                </Button>
+              </AcessoGate>
+            ) : r.status !== "pendente" ? null : (
               <AcessoGate
                 menu="central_servicos_reembolso_aprovacao"
                 acao="aprovar"

@@ -1,9 +1,10 @@
 import { describe, it, expect } from "vitest";
 import {
   competenciaDe, competenciaLegivel, dataParaBR, dataParaISO, descreveJanela, descreveTeto,
-  emMinutos, fmtBRL, normalizaHora, podeLancar, proximoStatus, tiposDisponiveis,
+  ROTULO_STATUS, STATUS_TODOS, emMinutos, fmtBRL, normalizaHora, podeEnviarAoMalote,
+  podeLancar, proximoStatus, tiposDisponiveis,
   totalEmCentavos, valorEmCentavos, viagemAlcancaJanela,
-  type TipoReembolso,
+  type StatusReembolso, type TipoReembolso,
 } from "@/lib/reembolso/regras";
 
 // O Solicitar Reembolso veio de um bot de Discord onde o catálogo de despesas
@@ -218,6 +219,108 @@ describe("proximoStatus — quem já foi decidido não volta", () => {
       expect(proximoStatus("reprovado", acao)).toBeNull();
       expect(proximoStatus("cancelado", acao)).toBeNull();
     }
+  });
+});
+
+describe("podeEnviarAoMalote — uma vez, e só o aprovado", () => {
+  it("aprovado e ainda sem despesa pode ir", () => {
+    expect(podeEnviarAoMalote("aprovado", false)).toBe(true);
+  });
+
+  it("nunca duas vezes", () => {
+    // Reembolso pago em dobro é o pior erro possível deste módulo, então a
+    // trava existe aqui e na RPC (que devolve a despesa já criada).
+    expect(podeEnviarAoMalote("aprovado", true)).toBe(false);
+    expect(podeEnviarAoMalote("enviado_malote", true)).toBe(false);
+  });
+
+  it("o que não foi aprovado não vai", () => {
+    for (const s of ["pendente", "reprovado", "cancelado"] as const) {
+      expect(podeEnviarAoMalote(s, false)).toBe(false);
+    }
+  });
+});
+
+describe("enviado_malote é fim de linha", () => {
+  it("não aceita mais nenhuma ação", () => {
+    // De lá em diante quem manda é a despesa do Malote; mexer no reembolso
+    // deixaria os dois discordando sobre o mesmo dinheiro.
+    for (const acao of ["aprovar", "reprovar", "cancelar"] as const) {
+      expect(proximoStatus("enviado_malote", acao)).toBeNull();
+    }
+  });
+
+  it("entra na lista de status e tem rótulo", () => {
+    expect(STATUS_TODOS).toContain("enviado_malote");
+    expect(ROTULO_STATUS.enviado_malote).toBe("Enviado ao malote");
+  });
+});
+
+describe("a jornada inteira, do lançamento ao malote", () => {
+  // Pedido na revisão da PR: "reembolso tem dinheiro". Um teste de integração
+  // de verdade (criar no banco, aprovar, ver virar despesa) não cabe aqui —
+  // este projeto não tem Supabase local, e a suíte é Vitest puro sobre regra de
+  // negócio. O que dá para travar é a MÁQUINA DE ESTADO da jornada, que é onde
+  // mora o erro caro: pagar duas vezes, ou pagar o que foi reprovado.
+  const catalogo: TipoReembolso[] = [
+    tipo({ codigo: "almoco", nome: "Almoço", valor_maximo_centavos: 3500, hora_inicio: "11:00", hora_fim: "13:00" }),
+    tipo({ codigo: "estacionamento", nome: "Estacionamento", valor_maximo_centavos: 5000, hora_inicio: null, hora_fim: null, ordem: 5 }),
+  ];
+
+  it("caminho feliz: lança duas despesas, aprova, envia uma vez só", () => {
+    const saida = "09:00";
+    const chegada = "15:00";
+
+    // 1) A viagem passou pelo almoço, então os dois tipos estão na mesa.
+    const oferecidos = tiposDisponiveis(catalogo, saida, chegada).map((t) => t.codigo);
+    expect(oferecidos).toEqual(["almoco", "estacionamento"]);
+
+    // 2) As duas despesas passam nas três perguntas.
+    const itens = [
+      { tipo: catalogo[0], centavos: 3200 },
+      { tipo: catalogo[1], centavos: 1800 },
+    ];
+    for (const i of itens) {
+      expect(podeLancar(i.tipo, i.centavos, saida, chegada).ok).toBe(true);
+    }
+
+    // 3) O total fecha em centavos.
+    const total = totalEmCentavos(itens.map((i) => ({ valor_centavos: i.centavos })));
+    expect(total).toBe(5000);
+    expect(fmtBRL(total)).toContain("50,00");
+
+    // 4) Pendente → aprovado → malote.
+    let status: StatusReembolso = "pendente";
+    status = proximoStatus(status, "aprovar")!;
+    expect(status).toBe("aprovado");
+    expect(podeEnviarAoMalote(status, false)).toBe(true);
+
+    // 5) Depois de virar despesa, não vai de novo — nem pelo mesmo caminho.
+    expect(podeEnviarAoMalote(status, true)).toBe(false);
+    expect(podeEnviarAoMalote("enviado_malote", true)).toBe(false);
+  });
+
+  it("reprovado nunca chega ao malote", () => {
+    const status = proximoStatus("pendente", "reprovar")!;
+    expect(status).toBe("reprovado");
+    expect(podeEnviarAoMalote(status, false)).toBe(false);
+    // E não dá para "consertar" reprovando e aprovando depois.
+    expect(proximoStatus(status, "aprovar")).toBeNull();
+  });
+
+  it("cancelado pelo solicitante também não", () => {
+    const status = proximoStatus("pendente", "cancelar")!;
+    expect(status).toBe("cancelado");
+    expect(podeEnviarAoMalote(status, false)).toBe(false);
+  });
+
+  it("despesa fora da janela não entra na conta, mesmo com o resto certo", () => {
+    // Saiu 14h: o almoço não se justifica. Se isto passasse, o total iria para
+    // o malote com um valor que ninguém autorizou.
+    const v = podeLancar(catalogo[0], 3200, "14:00", "18:00");
+    expect(v.ok).toBe(false);
+    expect(tiposDisponiveis(catalogo, "14:00", "18:00").map((t) => t.codigo))
+      .toEqual(["estacionamento"]);
   });
 });
 
