@@ -39,7 +39,7 @@ import { AnexosField } from "./AnexosField";
 import { getStatusVigencia } from "./orcamentoUtils";
 import { DiaPagamentoPicker } from "./DiaPagamentoPicker";
 import { ExcecaoDiaBloqueadoField } from "./ExcecaoDiaBloqueadoField";
-import { useMaloteConfig } from "@/hooks/useMaloteConfig";
+import { useMaloteConfig, usePrazoNormalInclusao, horaAtualPassouDe } from "@/hooks/useMaloteConfig";
 import { useTiposFormaPagamento } from "@/hooks/useMaloteFormaPagamento";
 
 const DIAS_MES = Array.from({ length: 28 }, (_, i) => i + 1);
@@ -675,11 +675,24 @@ function PainelDespesaMalote({
 
   const totalRateado = useMemo(() => linhasRateio.reduce((s, l) => s + (Number(l.valor) || 0), 0), [linhasRateio]);
   const restante = Math.max(0, (Number(totalMes) || 0) - totalRateado);
+  // SIS-2026-0250: regra 1.1 — data pedida mais cedo que o prazo normal
+  // calculado (mesmo cálculo do trigger malote_bloqueia_dia_pagamento, via
+  // RPC) exige marcar exceção. O bloqueio de verdade é no banco; isso aqui
+  // só antecipa o aviso pro usuário antes de tentar salvar.
+  const { data: prazoNormal } = usePrazoNormalInclusao();
+  const exigeExcecao = !!dataPagamento && !!prazoNormal && dataPagamento < prazoNormal;
+  const hoje = useMemo(() => new Date().toLocaleDateString("sv-SE"), []); // "YYYY-MM-DD" local
 
   function validar(paraEnviar: boolean): string | null {
     if (!nome.trim()) return "Informe o nome da despesa.";
     if (!totalMes || Number(totalMes) <= 0) return "Informe o total do mês.";
     if (!dataPagamento) return "Informe a data de pagamento.";
+    if (paraEnviar && exigeExcecao && !excecao) {
+      return `Data de pagamento fora do prazo normal de inclusão (regra 1.1 — hoje o prazo normal é ${prazoNormal}) — marque "Lançar como exceção" para continuar.`;
+    }
+    if (paraEnviar && excecao && dataPagamento === hoje && horaAtualPassouDe(maloteConfig?.excecao_limite_inclusao_horario)) {
+      return `Já passou do horário limite (${maloteConfig?.excecao_limite_inclusao_horario}) para incluir exceção com pagamento hoje (regra 2.1).`;
+    }
     if (excecao && (maloteConfig?.excecao_exigir_justificativa_solicitante ?? true) && !justificativaExcecao.trim()) {
       return "Informe a justificativa da exceção.";
     }
@@ -848,6 +861,8 @@ function PainelDespesaMalote({
             justificativa={justificativaExcecao}
             onJustificativaChange={setJustificativaExcecao}
             disabled={!ativo}
+            foraDoPrazoInclusao={exigeExcecao}
+            prazoNormal={prazoNormal}
           />
 
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">

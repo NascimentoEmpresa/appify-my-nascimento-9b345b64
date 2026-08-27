@@ -46,6 +46,58 @@ const CONFIG_COLUMNS =
   "excecao_limite_inclusao_horario, excecao_limite_aprovacao_horario, " +
   "excecao_exigir_justificativa_solicitante, excecao_exigir_justificativa_aprovador, updated_at";
 
+// SIS-2026-0250: hora atual já passou de um horário-limite (formato
+// "HH:MM"). Genérico — usado pro corte 2.1 (inclusão de exceção pro mesmo
+// dia) e pros avisos de 1.2/2.2 na tela de aprovação.
+export function horaAtualPassouDe(horario: string | undefined | null): boolean {
+  if (!horario) return false;
+  const [h, m] = horario.split(":").map(Number);
+  if (Number.isNaN(h) || Number.isNaN(m)) return false;
+  const agora = new Date();
+  const limite = new Date(agora);
+  limite.setHours(h, m, 0, 0);
+  return agora > limite;
+}
+
+// SIS-2026-0250: 1.1 ("Prazo para inclusão e aprovação pelo setor") define
+// a "data normal" de pagamento pra quem lança agora — hoje só conta como
+// base do cálculo se ainda não passou do horário 1.1; depois disso desloca
+// +1 dia útil, e a partir daí soma o modo/dias/unidade configurados,
+// pulando dia bloqueado quando a unidade é "útil". Pedir uma data mais
+// cedo que essa exige marcar Exceção. O cálculo mora no banco
+// (malote_prazo_normal_inclusao, mesma função que o trigger de
+// malote_despesa usa pra validar de verdade) pra não duplicar a lógica de
+// dia útil/bloqueado em TS — aqui só busca o resultado já pronto.
+export function usePrazoNormalInclusao() {
+  return useQuery({
+    queryKey: [CONFIG_KEY, "prazo_normal_inclusao"],
+    staleTime: 2 * 60_000,
+    queryFn: async () => {
+      const { data, error } = await (supabase as any).rpc("malote_prazo_normal_inclusao");
+      if (error) throw error;
+      return data as string; // "YYYY-MM-DD"
+    },
+  });
+}
+
+// SIS-2026-0250: cargo "GERENTE FINANCEIRO" (Carol) pode aprovar/reprovar
+// qualquer despesa de Exceção como reforço, mesmo sem estar configurada
+// como Aprovadora Nível 2 daquela Classificação — reaproveita o mesmo
+// padrão de useSouSupervisorMalote (RPC de cargo já usada pela RLS).
+export function useSouGerenteFinanceiroMalote() {
+  return useQuery({
+    queryKey: ["malote_gerente_financeiro"],
+    staleTime: 5 * 60_000,
+    queryFn: async () => {
+      const { data: u } = await supabase.auth.getUser();
+      if (!u.user) return false;
+      const { data, error } = await (supabase as any).rpc("malote_gerente_financeiro", { _user_id: u.user.id });
+      if (error) throw error;
+      return !!data;
+    },
+  });
+}
+
 export function useMaloteConfig() {
   return useQuery({
     queryKey: [CONFIG_KEY],

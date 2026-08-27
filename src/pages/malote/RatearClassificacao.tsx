@@ -11,7 +11,7 @@ import { toast } from "sonner";
 import { useEmpresaId } from "@/hooks/useEmpresaId";
 import { useClassificacoesOrcamento } from "@/hooks/usePlanejamentoOrcamentario";
 import { useSalvarDespesa, uploadAnexoMalote, gerarParcelas, RateioLinha } from "@/hooks/useMaloteDespesa";
-import { useMaloteConfig } from "@/hooks/useMaloteConfig";
+import { useMaloteConfig, usePrazoNormalInclusao, horaAtualPassouDe } from "@/hooks/useMaloteConfig";
 import { useTiposFormaPagamento } from "@/hooks/useMaloteFormaPagamento";
 import { RateioGrid, DimensoesRateio } from "./RateioGrid";
 import { AnexosField } from "./AnexosField";
@@ -57,6 +57,12 @@ export default function RatearClassificacao() {
 
   const totalRateado = useMemo(() => linhasRateio.reduce((s, l) => s + (Number(l.valor) || 0), 0), [linhasRateio]);
   const faltaLancar = Math.max(0, (Number(valorTotal) || 0) - totalRateado);
+  // SIS-2026-0250: regra 1.1 — mesma lógica de CriarDespesa.tsx (ver
+  // comentário lá): data mais cedo que o prazo normal calculado exige
+  // exceção; exceção pra hoje depois do horário 2.1 bloqueia.
+  const { data: prazoNormal } = usePrazoNormalInclusao();
+  const exigeExcecao = !!dataPagamento && !!prazoNormal && dataPagamento < prazoNormal;
+  const hoje = useMemo(() => new Date().toLocaleDateString("sv-SE"), []);
 
   function validar(paraEnviar: boolean): string | null {
     if (!nome.trim()) return "Informe o nome da despesa.";
@@ -64,6 +70,12 @@ export default function RatearClassificacao() {
     if (!formaPagamento) return "Selecione a forma de pagamento.";
     if (!dadosPagamento.trim()) return "Informe os dados de pagamento.";
     if (!dataPagamento) return "Informe a data de pagamento.";
+    if (paraEnviar && exigeExcecao && !excecao) {
+      return `Data de pagamento fora do prazo normal de inclusão (regra 1.1 — hoje o prazo normal é ${prazoNormal}) — marque "Lançar como exceção" para continuar.`;
+    }
+    if (paraEnviar && excecao && dataPagamento === hoje && horaAtualPassouDe(maloteConfig?.excecao_limite_inclusao_horario)) {
+      return `Já passou do horário limite (${maloteConfig?.excecao_limite_inclusao_horario}) para incluir exceção com pagamento hoje (regra 2.1).`;
+    }
     if (excecao && (maloteConfig?.excecao_exigir_justificativa_solicitante ?? true) && !justificativaExcecao.trim()) {
       return "Informe a justificativa da exceção.";
     }
@@ -216,6 +228,8 @@ export default function RatearClassificacao() {
             onCheckedChange={setExcecao}
             justificativa={justificativaExcecao}
             onJustificativaChange={setJustificativaExcecao}
+            foraDoPrazoInclusao={exigeExcecao}
+            prazoNormal={prazoNormal}
           />
 
           <div className="border-t border-border pt-4">
