@@ -13,7 +13,7 @@ import { PageHeader } from "@/components/layout/PageHeader";
 import { ComprasPassadas } from "@/components/malote/ComprasPassadas";
 import {
   useSolicitacaoParaCotar, useSalvarRascunhoCotacao, useEnviarCotacao,
-  useAprovarCotacao, useReprovarCotacao, useCancelarCotacao,
+  useAprovarCotacao, useReprovarCotacao, useCancelarCotacao, useSalvarItensDaCotacao,
   lerCotacoes, cotacaoPreenchida, abrirAnexoMalote,
   ROTULO_COTACAO, fmtBRL, fmtData, fmtDataHora,
   type Cotacao,
@@ -26,7 +26,7 @@ import { useGerarPedidoCompra, usePedidoAtivoDaDespesa } from "@/hooks/useCompra
 import { useScreenAccess } from "@/hooks/useScreenAccess";
 import {
   ArrowLeft, Paperclip, Save, Send, Trash2, CheckCircle2, XCircle, Ban,
-  Trophy, Loader2, ShieldAlert, Info, ShoppingCart,
+  Trophy, Loader2, ShieldAlert, Info, ShoppingCart, Pencil,
 } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
@@ -60,6 +60,11 @@ export default function CotacaoMaloteDetalhe() {
   const reprovar = useReprovarCotacao();
   const cancelar = useCancelarCotacao();
   const gerarPedido = useGerarPedidoCompra();
+  const salvarItens = useSalvarItensDaCotacao();
+
+  // Rascunho separado da lista salva: sair sem salvar nao pode alterar nada.
+  const [editandoItens, setEditandoItens] = useState(false);
+  const [rascunhoItens, setRascunhoItens] = useState<any[]>([]);
   const { data: pedidoAtivo, isLoading: carregandoPedidoAtivo } = usePedidoAtivoDaDespesa(id);
   const { data: podeAbrirPedido = false } = useScreenAccess("sup_compra_pedido", "visualizar");
   const { data: empresaId } = useEmpresaId();
@@ -92,6 +97,14 @@ export default function CotacaoMaloteDetalhe() {
   if (isLoading || !d) return <p className="py-20 text-center text-sm text-muted-foreground">Carregando…</p>;
 
   const editavel = d.status === "aguardando_cotacao";
+  // Os itens seguem editaveis pelo comprador em toda a fase de cotacao — a
+  // RPC recusa fora dela, entao a tela so evita oferecer o que seria negado.
+  const podeEditarItens = ["aguardando_cotacao", "cotacao_realizada", "cotacao_aprovada"]
+    .includes(d.status) && !pedidoAtivo;
+  const abrirEdicaoItens = () => {
+    setRascunhoItens(itens.length ? itens.map((i: any) => ({ ...i })) : []);
+    setEditandoItens(true);
+  };
   const decidivel = d.status === "cotacao_realizada";
   const dispensa = d.tipo === "dispensa_cotacao";
   const minimo = dispensa ? 1 : 3;
@@ -135,14 +148,46 @@ export default function CotacaoMaloteDetalhe() {
         <Campo rotulo="Data de pagamento" valor={fmtData(d.data_pagamento)} />
         {/* O que foi pedido, item a item (SIS-2026-0207). Antes o comprador
             cotava lendo a descrição em texto corrido. */}
-        {itens.length > 0 && (
-          <div className="sm:col-span-2">
-            <p className="mb-2 text-xs font-medium text-muted-foreground">
-              Itens a cotar ({itens.length})
+        {/* O comprador edita os itens enquanto a solicitação está em cotação.
+            Antes só o solicitante podia, e isso criava um beco sem saída:
+            solicitação sem itens nunca virava pedido de compra, e quem estava
+            cotando não tinha como destravar. Quem negocia é quem lê a proposta
+            do fornecedor item a item — faz sentido ser ele. */}
+        <div className="sm:col-span-2">
+          <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+            <p className="text-xs font-medium text-muted-foreground">
+              Itens a cotar ({(editandoItens ? rascunhoItens : itens).length})
             </p>
-            <ItensSolicitacao itens={itens} editavel={false} />
+            {podeEditarItens && !editandoItens && (
+              <Button variant="outline" size="sm" onClick={abrirEdicaoItens}>
+                <Pencil className="mr-1.5 h-3.5 w-3.5" />
+                {itens.length ? "Editar itens" : "Adicionar itens"}
+              </Button>
+            )}
+            {editandoItens && (
+              <div className="flex gap-2">
+                <Button variant="ghost" size="sm" onClick={() => setEditandoItens(false)}>
+                  Cancelar
+                </Button>
+                <Button size="sm" disabled={salvarItens.isPending}
+                  onClick={() => salvarItens.mutate({ despesaId: d.id, itens: rascunhoItens })}>
+                  {salvarItens.isPending && <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />}
+                  Salvar itens
+                </Button>
+              </div>
+            )}
           </div>
-        )}
+
+          {editandoItens ? (
+            <ItensSolicitacao itens={rascunhoItens} onChange={setRascunhoItens} editavel />
+          ) : itens.length > 0 ? (
+            <ItensSolicitacao itens={itens} editavel={false} />
+          ) : (
+            <p className="text-xs text-muted-foreground">
+              Nenhum item lançado nesta solicitação.
+            </p>
+          )}
+        </div>
         {d.excecao && (
           <div className="sm:col-span-2">
             <span className="inline-flex items-center gap-1.5 rounded-md border border-red-400/50 bg-red-50 px-2.5 py-1 text-xs font-medium text-red-700 dark:bg-red-950/30 dark:text-red-300">
@@ -221,7 +266,9 @@ export default function CotacaoMaloteDetalhe() {
           </Button>
           {itens.length === 0 && (
             <p className="mt-2 text-xs text-muted-foreground">
-              Esta solicitação não possui itens. Pedidos de serviço ou solicitações legadas não geram pedido de compra.
+              Esta solicitação não possui itens, e o pedido de compra precisa de pelo menos um.
+              Use <strong>Adicionar itens</strong> acima para lançar o que está sendo comprado.
+              Solicitação de serviço, sem material, realmente não gera pedido de compra.
             </p>
           )}
           {pedidoAtivo && (
