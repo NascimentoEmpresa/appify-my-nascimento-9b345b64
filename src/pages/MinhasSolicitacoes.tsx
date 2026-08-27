@@ -129,6 +129,25 @@ interface SolItem {
   acao?: string;
 }
 
+/**
+ * Os chips do histórico.
+ *
+ * Par valor/rótulo porque os dois divergem em um caso: o tipo guardado é
+ * "Mudança de Função" (é o que `SolItem.tipo` traz e o que o DetalheSolicitacao
+ * espera), mas o nome inteiro num chip empurra os outros para a linha de
+ * baixo. O chip diz "Função"; o filtro compara o nome cheio.
+ */
+const FILTROS: Array<{ valor: string; rotulo: string }> = [
+  { valor: "",                   rotulo: "Todas" },
+  { valor: "Vaga",               rotulo: "Vaga" },
+  { valor: "Férias",             rotulo: "Férias" },
+  { valor: "Advertência",        rotulo: "Advertência" },
+  { valor: "Mudança de Função",  rotulo: "Função" },
+  { valor: "Demissão",           rotulo: "Demissão" },
+  { valor: "Chamado",            rotulo: "Chamado" },
+  { valor: "Materiais",          rotulo: "Materiais" },
+];
+
 // Vaga já andou: o encarregado não mexe mais na data (o Recrutamento assume).
 const VAGA_FECHADA = ["Concluída", "Reprovada", "Cancelada", "Contratado"];
 const vagaEditavel = (s: SolItem) =>
@@ -635,6 +654,14 @@ export default function MinhasSolicitacoes({ abrir }: { abrir?: SolicitacaoInici
             <button onClick={() => nav("/app/encarregados/chamados/novo")} className="ini-sol-create">
               <span className="icon">🎧</span><span>Abrir Chamado</span>
             </button>
+            {/* Mudança de Função já aparecia no histórico e no chat, mas não
+                tinha por onde ABRIR daqui — o encarregado tinha que achar a
+                tela no menu do RH. Mesmo padrão de Demissão e Materiais: leva
+                para a tela do módulo, que tem o fluxo próprio (cargo atual,
+                cargo novo, ASO do SST). */}
+            <button onClick={() => nav("/app/encarregados/troca-funcao")} className="ini-sol-create">
+              <span className="icon">🔀</span><span>Mudança de Função</span>
+            </button>
           </div>
         </div>
       </div>
@@ -644,11 +671,11 @@ export default function MinhasSolicitacoes({ abrir }: { abrir?: SolicitacaoInici
         <div className="ini-card-hd">
           <h3>🗂 Histórico & Status</h3>
           <div style={{ display: "flex", gap: 6 }}>
-            {["", "Vaga", "Férias", "Advertência", "Demissão", "Chamado", "Materiais"].map(f => (
+            {FILTROS.map(({ valor: f, rotulo }) => (
               <button key={f || "all"} onClick={() => setFiltro(f)}
                 style={{ padding: "4px 10px", borderRadius: 16, fontSize: 11, fontWeight: 700, cursor: "pointer",
                   border: `1px solid ${filtro === f ? "#0f3171" : "#e2e8f0"}`, background: filtro === f ? "#0f3171" : "#fff", color: filtro === f ? "#fff" : "#475569" }}>
-                {f || "Todas"}
+                {rotulo}
               </button>
             ))}
           </div>
