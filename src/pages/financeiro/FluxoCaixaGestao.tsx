@@ -8,52 +8,10 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { TrendingDown, TrendingUp, Wallet, LineChart, X } from "lucide-react";
-import { cn } from "@/lib/utils";
 import { useFluxoCaixaMalote } from "@/hooks/useFluxoCaixaMalote";
 import { formatBRL } from "@/hooks/usePlanilhaCusto";
 import { useTiposFormaPagamento } from "@/hooks/useMaloteFormaPagamento";
-
-// Mesma técnica visual do TileDestaque em DespesaVisualizar.tsx (que por
-// sua vez reaproveita o KpiCard de PainelExecutivo.tsx): ícone grande com
-// máscara em degradê, sangrando pela borda direita do card.
-const KPI_TILE_ICONE: Record<string, string> = {
-  slate: "text-slate-300 dark:text-slate-700",
-  emerald: "text-emerald-300 dark:text-emerald-800",
-  red: "text-red-300 dark:text-red-900",
-  sky: "text-sky-300 dark:text-sky-800",
-};
-
-function KpiTile({
-  label,
-  valor,
-  icon,
-  cor,
-  valorClass,
-}: {
-  label: string;
-  valor: string;
-  icon: React.ReactNode;
-  cor: keyof typeof KPI_TILE_ICONE;
-  valorClass?: string;
-}) {
-  return (
-    <Card>
-      <CardContent className="relative overflow-hidden p-4">
-        <div
-          className="pointer-events-none absolute right-0 top-1/2 -translate-y-1/2 translate-x-1"
-          style={{
-            WebkitMaskImage: "linear-gradient(to left, black 0%, black 30%, rgba(0,0,0,0.6) 60%, transparent 100%)",
-            maskImage: "linear-gradient(to left, black 0%, black 30%, rgba(0,0,0,0.6) 60%, transparent 100%)",
-          }}
-        >
-          <span className={cn("[&>svg]:h-16 [&>svg]:w-16", KPI_TILE_ICONE[cor])}>{icon}</span>
-        </div>
-        <p className="relative z-10 text-xs font-medium uppercase tracking-wide text-muted-foreground">{label}</p>
-        <p className={cn("relative z-10 text-2xl font-bold mt-1", valorClass)}>{valor}</p>
-      </CardContent>
-    </Card>
-  );
-}
+import { KpiTile } from "@/components/financeiro/KpiTile";
 
 // SIS-2026-0160: início do Fluxo de Caixa. Por enquanto a única fonte de
 // dado é o Pagamento Malote (só saída) — os cards de Entradas/Saldo ficam
