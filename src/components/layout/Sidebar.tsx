@@ -78,6 +78,7 @@ import { MessageSquare } from "lucide-react";
 import { Banknote } from "lucide-react";
 import { TrendingDown } from "lucide-react";
 import { Megaphone } from "lucide-react";
+import { CreditCard } from "lucide-react";
 import { useNovidades } from "@/hooks/useNovidades";
 import { cn } from "@/lib/utils";
 import { useCallback, useEffect, useMemo, useState, useContext } from "react";
@@ -345,6 +346,7 @@ const financeiroModule: ModuleDef = {
       defaultOpen: true,
       items: [
         { label: "Fluxo de Caixa", to: "/app/financeiro/gestao-financeira/fluxo-caixa", icon: TrendingDown },
+        { label: "Cartão de Crédito", to: "/app/financeiro/gestao-financeira/cartao-credito", icon: CreditCard, badge: "Novo" },
       ],
     },
     {
