@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -11,7 +11,7 @@ import { SearchableMultiSelect } from "@/components/ui/searchable-multi-select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { Plus, Pencil, ArrowLeft, FolderCog, UserRound, Users, AlertTriangle } from "lucide-react";
+import { Plus, Pencil, ArrowLeft, FolderCog, UserRound, Users, AlertTriangle, UsersRound } from "lucide-react";
 import { Link } from "react-router-dom";
 import { toast } from "sonner";
 import {
@@ -141,16 +141,22 @@ export default function ClassificacoesMalote() {
   // outro num slot (ex.: Cássio sai, Joel entra no Aprovador 1), oferece
   // replicar a mesma troca nas outras classificações onde o Cássio também é
   // Aprovador 1 — evita abrir uma por uma quando a pessoa aprova em várias.
+  // SIS-2026-0244: soma o caso de remoção PURA (tira um aprovador sem pôr
+  // outro no lugar) — mesmo gatilho, `substitutoId` fica null. É a mesma
+  // situação do exemplo do Iury pra exclusão em massa, só que descoberta
+  // "sem querer" ao editar uma classificação normal em vez de usar a
+  // ferramenta dedicada (Incluir/Excluir Aprovador em Massa) — os dois
+  // caminhos precisam chegar no mesmo resultado.
   interface TrocaDetectada {
     slot: 1 | 2 | 3;
     removidoId: string;
     removidoNome: string;
-    substitutoId: string;
-    substitutoNome: string;
+    substitutoId: string | null;
+    substitutoNome: string | null;
   }
   interface SwapDialogState {
     trocas: TrocaDetectada[];
-    itens: { classificacaoNome: string; slot: 1 | 2 | 3; removidoNome: string; substitutoNome: string }[];
+    itens: { classificacaoNome: string; slot: 1 | 2 | 3; removidoNome: string; substitutoNome: string | null }[];
   }
   const [swapDialog, setSwapDialog] = useState<SwapDialogState | null>(null);
   const [pendingPayload, setPendingPayload] = useState<Parameters<typeof salvar.mutateAsync>[0] | null>(null);
@@ -160,6 +166,22 @@ export default function ClassificacoesMalote() {
   // precisa trocar (ex.: Cassio saiu, agora é o Joel).
   const [buscaNome, setBuscaNome] = useState("");
   const [buscaAprovadorId, setBuscaAprovadorId] = useState("");
+
+  // SIS-2026-0244 (pedido do Iury): inclusão/exclusão de aprovador em
+  // massa, sem precisar abrir classificação por classificação — ex.:
+  // "quero o Iury como Aprovador 1 em 50 classificações de uma vez" ou
+  // "tirar a Helena do Aprovador 3 em várias, não teremos mais esse
+  // nível". Complementar ao fluxo de troca 1-por-1 (SIS-2026-0236) —
+  // aquele dispara sozinho ao editar 1 classificação e detectar uma troca
+  // igual em outras; este é uma ferramenta explícita pra incluir/excluir
+  // (sem precisar já ter feito a troca em nenhuma).
+  const [massaOpen, setMassaOpen] = useState(false);
+  const [massaAcao, setMassaAcao] = useState<"incluir" | "excluir">("incluir");
+  const [massaNivel, setMassaNivel] = useState<1 | 2 | 3>(1);
+  const [massaAprovadorId, setMassaAprovadorId] = useState("");
+  const [massaSelecionadas, setMassaSelecionadas] = useState<Set<string>>(new Set());
+  const [massaBusca, setMassaBusca] = useState("");
+  const [massaAplicando, setMassaAplicando] = useState(false);
 
   const todosAprovadores = useMemo(
     () => [...aprovadores1, ...aprovadores2, ...aprovadores3],
@@ -171,6 +193,157 @@ export default function ClassificacoesMalote() {
     for (const a of todosAprovadores) if (!vistos.has(a.id)) vistos.set(a.id, a.nome);
     return Array.from(vistos, ([value, label]) => ({ value, label })).sort((a, b) => a.label.localeCompare(b.label));
   }, [todosAprovadores]);
+
+  // Opções do Select "Aprovador" da ferramenta em massa, dependentes do
+  // Nível escolhido (pedido do usuário): em "Excluir" só faz sentido
+  // oferecer quem JÁ é aprovador naquele nível em pelo menos 1
+  // classificação (derivado dos dados reais, não do catálogo de cargo) —
+  // senão o usuário escolhe alguém e a lista de candidatas vem vazia. Em
+  // "Incluir" mantém o catálogo por cargo do nível (mesmas listas usadas
+  // no modal de edição — aprovadores1/2/3), já que faz sentido incluir
+  // alguém que ainda não é aprovador em lugar nenhum.
+  const massaAprovadoresAtuaisNoNivel = useMemo(() => {
+    const chaveIds = `aprovador${massaNivel}_user_ids` as const;
+    const chaveNomes = `aprovador${massaNivel}_nomes` as const;
+    const vistos = new Map<string, string>();
+    classificacoes.forEach((c) => {
+      c[chaveIds].forEach((id, i) => {
+        if (!vistos.has(id)) vistos.set(id, c[chaveNomes][i] ?? id);
+      });
+    });
+    return Array.from(vistos, ([value, label]) => ({ value, label })).sort((a, b) => a.label.localeCompare(b.label, "pt-BR"));
+  }, [classificacoes, massaNivel]);
+
+  const massaOpcoesAprovador = useMemo(() => {
+    if (massaAcao === "excluir") return massaAprovadoresAtuaisNoNivel;
+    const catalogo = massaNivel === 1 ? aprovadores1 : massaNivel === 2 ? aprovadores2 : aprovadores3;
+    return catalogo.map((a) => ({ value: a.id, label: a.nome }));
+  }, [massaAcao, massaNivel, massaAprovadoresAtuaisNoNivel, aprovadores1, aprovadores2, aprovadores3]);
+
+  // Candidatas ao aprovador/nível/ação escolhidos na ferramenta em massa:
+  // "incluir" só oferece quem AINDA não está naquele nível (não faz
+  // sentido marcar quem já é aprovador); "excluir" só oferece quem JÁ
+  // está — bate exatamente com o pedido do Iury ("marcar todas as
+  // classificações que eu quero tirar ela").
+  const massaCandidatas = useMemo(() => {
+    if (!massaAprovadorId) return [];
+    const chave = `aprovador${massaNivel}_user_ids` as const;
+    const nomeAlvo = semAcento(massaBusca);
+    return classificacoes.filter((c) => {
+      if (nomeAlvo && !semAcento(c.nome).includes(nomeAlvo)) return false;
+      const jaEsta = c[chave].includes(massaAprovadorId);
+      if (massaAcao === "incluir") return !jaEsta;
+      // Excluir: nunca oferece tirar o único Aprovador 1 de uma
+      // classificação (campo obrigatório) — ficaria sem ninguém pra
+      // aprovar aquele nível.
+      if (!jaEsta) return false;
+      return !esvaziariaAprovador1(c, massaNivel, false);
+    });
+  }, [classificacoes, massaAprovadorId, massaNivel, massaAcao, massaBusca]);
+
+  // Muda nível/ação => a lista de opções de Aprovador é outra (ver
+  // massaOpcoesAprovador), então o aprovador selecionado antes pode nem
+  // fazer mais sentido — limpa pra evitar mostrar um valor que sumiu do
+  // Select.
+  useEffect(() => {
+    setMassaAprovadorId("");
+  }, [massaNivel, massaAcao]);
+
+  // Muda aprovador/nível/ação => a lista de candidatas muda inteira,
+  // então qualquer seleção anterior deixa de fazer sentido.
+  useEffect(() => {
+    setMassaSelecionadas(new Set());
+  }, [massaAprovadorId, massaNivel, massaAcao]);
+
+  function alternarMassaSelecao(id: string) {
+    setMassaSelecionadas((prev) => {
+      const novo = new Set(prev);
+      if (novo.has(id)) novo.delete(id);
+      else novo.add(id);
+      return novo;
+    });
+  }
+
+  function massaSelecionarTodas() {
+    setMassaSelecionadas(new Set(massaCandidatas.map((c) => c.id)));
+  }
+
+  function massaLimparSelecao() {
+    setMassaSelecionadas(new Set());
+  }
+
+  function fecharMassa() {
+    setMassaOpen(false);
+    setMassaAprovadorId("");
+    setMassaSelecionadas(new Set());
+    setMassaBusca("");
+  }
+
+  // Monta o payload de save da classificação aplicando só a inclusão/
+  // exclusão do aprovador no nível escolhido — preserva o resto (mesmo
+  // padrão de construirPayloadComTroca).
+  function construirPayloadEmMassa(c: ClassificacaoOrcamento, aprovadorNome: string) {
+    const idsKey = `aprovador${massaNivel}_user_ids` as const;
+    const nomesKey = `aprovador${massaNivel}_nomes` as const;
+    let ids = [...c[idsKey]];
+    let nomes = [...c[nomesKey]];
+    if (massaAcao === "incluir") {
+      ids = [...ids, massaAprovadorId];
+      nomes = [...nomes, aprovadorNome];
+    } else {
+      const idx = ids.indexOf(massaAprovadorId);
+      if (idx !== -1) {
+        ids = ids.filter((_, i) => i !== idx);
+        nomes = nomes.filter((_, i) => i !== idx);
+      }
+    }
+    return {
+      id: c.id,
+      nome: c.nome,
+      ativo: c.ativo,
+      tipo: c.tipo!,
+      setor_responsavel: c.setor_responsavel!,
+      requer_solicitacao: c.requer_solicitacao,
+      aprovador_solicitacao_user_id: c.aprovador_solicitacao_user_id,
+      aprovador_solicitacao_nome: c.aprovador_solicitacao_nome,
+      aprovador1_user_ids: massaNivel === 1 ? ids : c.aprovador1_user_ids,
+      aprovador1_nomes: massaNivel === 1 ? nomes : c.aprovador1_nomes,
+      aprovador1_limite_pct: c.aprovador1_limite_pct,
+      aprovador1_sem_limite: c.aprovador1_sem_limite,
+      aprovador2_user_ids: massaNivel === 2 ? ids : c.aprovador2_user_ids,
+      aprovador2_nomes: massaNivel === 2 ? nomes : c.aprovador2_nomes,
+      aprovador2_limite_pct: c.aprovador2_limite_pct,
+      aprovador2_sem_limite: c.aprovador2_sem_limite,
+      aprovador3_user_ids: massaNivel === 3 ? ids : c.aprovador3_user_ids,
+      aprovador3_nomes: massaNivel === 3 ? nomes : c.aprovador3_nomes,
+      aprovador3_limite_pct: c.aprovador3_limite_pct,
+      aprovador3_sem_limite: c.aprovador3_sem_limite,
+      limite_justificativa_pct: c.limite_justificativa_pct,
+    };
+  }
+
+  async function aplicarMassa() {
+    if (!massaAprovadorId) return toast.error("Selecione o aprovador.");
+    if (massaSelecionadas.size === 0) return toast.error("Selecione ao menos uma classificação.");
+    const aprovadorNome = todosAprovadores.find((a) => a.id === massaAprovadorId)?.nome ?? massaAprovadorId;
+    setMassaAplicando(true);
+    try {
+      const alvos = classificacoes.filter((c) => massaSelecionadas.has(c.id));
+      for (const c of alvos) {
+        await salvar.mutateAsync(construirPayloadEmMassa(c, aprovadorNome));
+      }
+      toast.success(
+        massaAcao === "incluir"
+          ? `${aprovadorNome} incluído(a) como Aprovador ${massaNivel} em ${alvos.length} classificação(ões).`
+          : `${aprovadorNome} removido(a) do Aprovador ${massaNivel} em ${alvos.length} classificação(ões).`
+      );
+      fecharMassa();
+    } catch (e: any) {
+      toast.error(e.message ?? "Erro ao aplicar em massa.");
+    } finally {
+      setMassaAplicando(false);
+    }
+  }
 
   const classificacoesFiltradas = useMemo(() => {
     const nomeAlvo = semAcento(buscaNome);
@@ -240,9 +413,10 @@ export default function ClassificacoesMalote() {
   }
 
   // Compara o snapshot de abertura com o estado atual e devolve, por slot,
-  // os casos de troca 1-por-1 (exatamente 1 saiu, exatamente 1 entrou) —
-  // remoção sem substituto ou adição de um segundo aprovador não conta como
-  // troca (não há pra quem oferecer a substituição nas outras classificações).
+  // os casos de troca 1-por-1 (exatamente 1 saiu, exatamente 1 entrou) OU
+  // de remoção pura (1 saiu, ninguém entrou) — adição de um segundo
+  // aprovador sem remover ninguém não conta (não há "removido" pra
+  // oferecer replicar em outras classificações).
   function detectarTrocas(orig: FormState, atual: FormState): TrocaDetectada[] {
     const trocas: TrocaDetectada[] = [];
     ([1, 2, 3] as const).forEach((slot) => {
@@ -252,16 +426,21 @@ export default function ClassificacoesMalote() {
       const novosNomes = atual[`aprovador${slot}Nomes`];
       const removidos = origIds.filter((id) => !novosIds.includes(id));
       const adicionados = novosIds.filter((id) => !origIds.includes(id));
-      if (removidos.length === 1 && adicionados.length === 1) {
-        const removidoId = removidos[0];
+      if (removidos.length !== 1) return;
+      if (adicionados.length > 1) return;
+      const removidoId = removidos[0];
+      const removidoNome = origNomes[origIds.indexOf(removidoId)] ?? removidoId;
+      if (adicionados.length === 1) {
         const substitutoId = adicionados[0];
         trocas.push({
           slot,
           removidoId,
-          removidoNome: origNomes[origIds.indexOf(removidoId)] ?? removidoId,
+          removidoNome,
           substitutoId,
           substitutoNome: novosNomes[novosIds.indexOf(substitutoId)] ?? substitutoId,
         });
+      } else {
+        trocas.push({ slot, removidoId, removidoNome, substitutoId: null, substitutoNome: null });
       }
     });
     return trocas;
@@ -273,12 +452,17 @@ export default function ClassificacoesMalote() {
   function construirPayloadComTroca(c: ClassificacaoOrcamento, troca: TrocaDetectada) {
     const idsKey = `aprovador${troca.slot}_user_ids` as const;
     const nomesKey = `aprovador${troca.slot}_nomes` as const;
-    const ids = [...c[idsKey]];
-    const nomes = [...c[nomesKey]];
+    let ids = [...c[idsKey]];
+    let nomes = [...c[nomesKey]];
     const idx = ids.indexOf(troca.removidoId);
     if (idx !== -1) {
-      ids[idx] = troca.substitutoId;
-      nomes[idx] = troca.substitutoNome;
+      if (troca.substitutoId) {
+        ids[idx] = troca.substitutoId;
+        nomes[idx] = troca.substitutoNome!;
+      } else {
+        ids = ids.filter((_, i) => i !== idx);
+        nomes = nomes.filter((_, i) => i !== idx);
+      }
     }
     return {
       id: c.id,
@@ -321,6 +505,14 @@ export default function ClassificacoesMalote() {
     if (!valor.trim()) return null;
     const n = Number(valor.replace(",", "."));
     return Number.isFinite(n) ? n : null;
+  }
+
+  // Aprovador 1 é obrigatório (validação de handleSalvar) — uma remoção em
+  // massa/troca nunca pode deixar OUTRA classificação sem nenhum Aprovador
+  // 1, senão ela fica sem ninguém pra aprovar aquele nível. N2/N3 podem
+  // ficar vazios (são opcionais).
+  function esvaziariaAprovador1(c: ClassificacaoOrcamento, slot: 1 | 2 | 3, temSubstituto: boolean): boolean {
+    return slot === 1 && !temSubstituto && c.aprovador1_user_ids.length === 1;
   }
 
   async function handleSalvar() {
@@ -403,7 +595,10 @@ export default function ClassificacoesMalote() {
       const itens: SwapDialogState["itens"] = [];
       for (const troca of trocas) {
         const afetadas = classificacoes.filter(
-          (c) => c.id !== editando.id && c[`aprovador${troca.slot}_user_ids`].includes(troca.removidoId)
+          (c) =>
+            c.id !== editando.id &&
+            c[`aprovador${troca.slot}_user_ids`].includes(troca.removidoId) &&
+            !esvaziariaAprovador1(c, troca.slot, !!troca.substitutoId)
         );
         for (const c of afetadas) {
           itens.push({
@@ -442,13 +637,16 @@ export default function ClassificacoesMalote() {
       await salvar.mutateAsync(pendingPayload);
       for (const troca of swapDialog.trocas) {
         const afetadas = classificacoes.filter(
-          (c) => c.id !== editando.id && c[`aprovador${troca.slot}_user_ids`].includes(troca.removidoId)
+          (c) =>
+            c.id !== editando.id &&
+            c[`aprovador${troca.slot}_user_ids`].includes(troca.removidoId) &&
+            !esvaziariaAprovador1(c, troca.slot, !!troca.substitutoId)
         );
         for (const c of afetadas) {
           await salvar.mutateAsync(construirPayloadComTroca(c, troca));
         }
       }
-      toast.success(`Classificação salva e troca aplicada em ${swapDialog.itens.length} classificação(ões).`);
+      toast.success(`Classificação salva e alteração aplicada em ${swapDialog.itens.length} classificação(ões).`);
       setSwapDialog(null);
       setPendingPayload(null);
       setOpen(false);
@@ -466,6 +664,15 @@ export default function ClassificacoesMalote() {
     setPendingPayload(null);
   }
 
+  // Fechar o diálogo (X, clicar fora, Esc) ou clicar em "Cancelar" NÃO
+  // salva nada — nem a classificação atual, nem as outras. Volta pro modal
+  // de edição (que continua aberto) com as alterações ainda lá, pra o
+  // usuário poder mexer mais antes de decidir salvar de verdade.
+  function cancelarSwap() {
+    setSwapDialog(null);
+    setPendingPayload(null);
+  }
+
   return (
     <div className="space-y-6 p-6">
       <PageHeader
@@ -479,6 +686,10 @@ export default function ClassificacoesMalote() {
               <Link to="/app/malote/orcamento-geral">
                 <ArrowLeft className="mr-1 h-4 w-4" /> Voltar
               </Link>
+            </Button>
+            <Button variant="outline" onClick={() => setMassaOpen(true)}>
+              <UsersRound className="h-4 w-4 mr-2" />
+              Incluir/Excluir Aprovador em Massa
             </Button>
             <Button onClick={abrirNovo}>
               <Plus className="h-4 w-4 mr-2" />
@@ -867,34 +1078,157 @@ export default function ClassificacoesMalote() {
         </DialogContent>
       </Dialog>
 
-      <Dialog open={!!swapDialog} onOpenChange={(v) => !v && confirmarSemTroca()}>
-        <DialogContent className="sm:max-w-md">
+      <Dialog open={!!swapDialog} onOpenChange={(v) => !v && cancelarSwap()}>
+        <DialogContent className="sm:max-w-lg overflow-x-hidden">
           <DialogHeader>
-            <DialogTitle>Aplicar a mesma troca em outras classificações?</DialogTitle>
+            <DialogTitle>Aplicar a mesma alteração em outras classificações?</DialogTitle>
           </DialogHeader>
           <div className="space-y-2 text-sm">
             <p className="text-muted-foreground">
               {swapDialog?.itens.length === 1
-                ? "Encontramos 1 outra classificação com essa mesma troca de aprovador:"
-                : `Encontramos ${swapDialog?.itens.length ?? 0} outras classificações com essa mesma troca de aprovador:`}
+                ? "Encontramos 1 outra classificação com essa mesma alteração de aprovador:"
+                : `Encontramos ${swapDialog?.itens.length ?? 0} outras classificações com essa mesma alteração de aprovador:`}
             </p>
             <ul className="rounded-md border border-border divide-y divide-border max-h-56 overflow-y-auto">
               {swapDialog?.itens.map((item, i) => (
                 <li key={i} className="px-3 py-2">
                   <p className="font-medium">{item.classificacaoNome}</p>
                   <p className="text-xs text-muted-foreground">
-                    Aprovador N{item.slot}: {item.removidoNome} → {item.substitutoNome}
+                    Aprovador N{item.slot}:{" "}
+                    {item.substitutoNome ? (
+                      <>{item.removidoNome} → {item.substitutoNome}</>
+                    ) : (
+                      <>remover {item.removidoNome}</>
+                    )}
                   </p>
                 </li>
               ))}
             </ul>
           </div>
-          <DialogFooter>
+          <DialogFooter className="flex-wrap gap-2 sm:justify-end sm:space-x-0">
+            <Button variant="ghost" onClick={cancelarSwap} disabled={salvar.isPending}>
+              Cancelar
+            </Button>
             <Button variant="outline" onClick={confirmarSemTroca} disabled={salvar.isPending}>
               Só esta classificação
             </Button>
             <Button onClick={confirmarTrocaEmMassa} disabled={salvar.isPending}>
-              {salvar.isPending ? "Salvando..." : "Trocar em todas"}
+              {salvar.isPending ? "Salvando..." : "Aplicar em todas"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={massaOpen} onOpenChange={(v) => (v ? setMassaOpen(true) : fecharMassa())}>
+        <DialogContent className="sm:max-w-lg max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Incluir/Excluir Aprovador em Massa</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div className="flex rounded-md border border-border p-1 gap-1">
+              <button
+                type="button"
+                className={`flex-1 rounded px-3 py-1.5 text-sm font-medium transition-colors ${
+                  massaAcao === "incluir" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-muted"
+                }`}
+                onClick={() => setMassaAcao("incluir")}
+              >
+                Incluir
+              </button>
+              <button
+                type="button"
+                className={`flex-1 rounded px-3 py-1.5 text-sm font-medium transition-colors ${
+                  massaAcao === "excluir" ? "bg-destructive text-destructive-foreground" : "text-muted-foreground hover:bg-muted"
+                }`}
+                onClick={() => setMassaAcao("excluir")}
+              >
+                Excluir
+              </button>
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <Label>Nível</Label>
+                <Select value={String(massaNivel)} onValueChange={(v) => setMassaNivel(Number(v) as 1 | 2 | 3)}>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="1">Aprovador 1</SelectItem>
+                    <SelectItem value="2">Aprovador 2</SelectItem>
+                    <SelectItem value="3">Aprovador 3</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div>
+                <Label>Aprovador</Label>
+                <SearchableSelect
+                  value={massaAprovadorId}
+                  onChange={setMassaAprovadorId}
+                  options={massaOpcoesAprovador}
+                  placeholder="Selecione..."
+                  searchPlaceholder="Buscar aprovador..."
+                />
+              </div>
+            </div>
+
+            {massaAprovadorId && (
+              <div className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <Label className="text-xs">
+                    {massaAcao === "incluir"
+                      ? `Classificações onde incluir como Aprovador ${massaNivel}`
+                      : `Classificações onde remover do Aprovador ${massaNivel}`}
+                  </Label>
+                  <div className="flex gap-2">
+                    <Button variant="link" size="sm" className="h-auto p-0 text-xs" onClick={massaSelecionarTodas}>
+                      Selecionar todas
+                    </Button>
+                    <Button variant="link" size="sm" className="h-auto p-0 text-xs" onClick={massaLimparSelecao}>
+                      Limpar
+                    </Button>
+                  </div>
+                </div>
+                <Input
+                  placeholder="Buscar classificação..."
+                  value={massaBusca}
+                  onChange={(e) => setMassaBusca(e.target.value)}
+                  className="h-8 text-xs"
+                />
+                <div className="rounded-md border border-border divide-y divide-border max-h-64 overflow-y-auto">
+                  {massaCandidatas.length === 0 && (
+                    <p className="p-3 text-xs text-muted-foreground">
+                      {massaAcao === "incluir"
+                        ? "Todas as classificações já têm esse aprovador nesse nível (ou não há nenhuma cadastrada)."
+                        : "Nenhuma classificação tem esse aprovador nesse nível."}
+                    </p>
+                  )}
+                  {massaCandidatas.map((c) => (
+                    <label key={c.id} className="flex items-center gap-2 px-3 py-2 text-sm cursor-pointer hover:bg-muted/40">
+                      <Checkbox
+                        checked={massaSelecionadas.has(c.id)}
+                        onCheckedChange={() => alternarMassaSelecao(c.id)}
+                      />
+                      {c.nome}
+                    </label>
+                  ))}
+                </div>
+                <p className="text-xs text-muted-foreground">{massaSelecionadas.size} selecionada(s) de {massaCandidatas.length}.</p>
+              </div>
+            )}
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={fecharMassa} disabled={massaAplicando}>
+              Cancelar
+            </Button>
+            <Button
+              variant={massaAcao === "excluir" ? "destructive" : "default"}
+              onClick={aplicarMassa}
+              disabled={massaAplicando || massaSelecionadas.size === 0}
+            >
+              {massaAplicando
+                ? "Aplicando..."
+                : massaAcao === "incluir"
+                ? `Incluir em ${massaSelecionadas.size || ""} classificação(ões)`
+                : `Excluir de ${massaSelecionadas.size || ""} classificação(ões)`}
             </Button>
           </DialogFooter>
         </DialogContent>
