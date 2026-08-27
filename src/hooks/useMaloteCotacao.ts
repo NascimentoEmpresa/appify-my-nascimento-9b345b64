@@ -79,10 +79,22 @@ export const cotacaoPreenchida = (c: Cotacao) => !!c.fornecedor.trim();
 
 // ── Lista ────────────────────────────────────────────────────────────
 
+/**
+ * `empresaId` entra só na chave do cache, para a tela recarregar ao trocar de
+ * empresa no topo. NÃO gateia a consulta.
+ *
+ * Antes havia `enabled: !!empresaId` aqui, e isso produzia um sintoma cruel:
+ * se a empresa ativa ficasse sem valor, a consulta nem rodava e a tela ficava
+ * vazia, como se não houvesse solicitação nenhuma para cotar. Sem erro, sem
+ * aviso — o Eduardo perdeu tempo achando que uma cotação tinha sumido do
+ * sistema (27/08/2026), quando ela estava lá o tempo todo.
+ *
+ * O gate nunca fez sentido: a consulta abaixo não filtra por empresa. O
+ * filtro por empresa é só de frontend, por decisão do projeto.
+ */
 export function useSolicitacoesParaCotar(empresaId: string | null) {
   return useQuery({
     queryKey: [CHAVE, "lista", empresaId],
-    enabled: !!empresaId,
     staleTime: 30_000,
     queryFn: async (): Promise<MaloteDespesaRow[]> => {
       const { data, error } = await sb
@@ -211,6 +223,43 @@ export function useReprovarCotacao() {
     },
     onSuccess: () => { invalidar(); toast.success("Cotação reprovada."); },
     onError: (e: any) => toast.error(e?.message ?? "Não foi possível reprovar."),
+  });
+}
+
+/**
+ * O comprador monta os itens da solicitação que está cotando.
+ *
+ * Existe porque a policy de escrita de `malote_despesa_item` é do SOLICITANTE,
+ * e o botão que gera o Pedido de Compra fica aqui, no Suprimentos. Sem isto,
+ * solicitação criada sem itens nunca virava pedido e ninguém conseguia
+ * destravar — o botão só dizia "não possui itens".
+ *
+ * Passa por RPC como todo o resto do módulo: a tela não escreve na tabela, e a
+ * permissão vive em `sup_cotacoes_malote`. A RPC recusa fora da fase de
+ * cotação, para não reescrever o que já foi aprovado e virou despesa.
+ */
+export function useSalvarItensDaCotacao() {
+  const invalidar = useInvalidar();
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (v: { despesaId: string; itens: unknown[] }) => {
+      const { data, error } = await sb.rpc("sup_malote_definir_itens", {
+        p_despesa_id: v.despesaId,
+        p_itens: v.itens,
+      });
+      if (error) throw error;
+      return data as number;
+    },
+    onSuccess: (quantos) => {
+      invalidar();
+      // A grade de itens tem chave própria; sem isto ela continuaria mostrando
+      // a lista antiga depois de salvar.
+      qc.invalidateQueries({ queryKey: ["malote_despesa"] });
+      toast.success(
+        quantos === 0 ? "Itens removidos." : `${quantos} item(ns) salvo(s).`,
+      );
+    },
+    onError: (e: any) => toast.error(e?.message ?? "Não foi possível salvar os itens."),
   });
 }
 
