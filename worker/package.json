@@ -2,7 +2,7 @@
   "name": "reunioes-whatsapp-worker",
   "version": "1.0.0",
   "private": true,
-  "description": "Worker Node.js separado do app: lembrete de reunião via WhatsApp (whatsapp-web.js) e envio automático do PDF da ata por e-mail (Nodemailer).",
+  "description": "Worker Node.js separado do app: NF-e da SEFAZ, catalogo de CA do MTE, chamados de dev, ata por e-mail e lembrete de reuniao (WhatsApp Cloud API via Edge Function).",
   "main": "src/index.js",
   "scripts": {
     "start": "node --openssl-legacy-provider src/index.js"
@@ -16,8 +16,6 @@
     "node-forge": "^1.4.0",
     "node-unrar-js": "^2.0.2",
     "nodemailer": "^6.9.14",
-    "qrcode-terminal": "^0.12.0",
-    "whatsapp-web.js": "^1.26.0",
     "xml-crypto": "^6.1.2"
   }
 }
