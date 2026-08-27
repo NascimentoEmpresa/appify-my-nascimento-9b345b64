@@ -50,6 +50,11 @@ export default function EstoqueEtiquetas() {
   const { data: linhas = [], isLoading, error } = useEstoqueLista(empresaId ?? null);
   const [busca, setBusca] = useState("");
   const [tipo, setTipo] = useState<string>(TODOS_OS_TIPOS);
+
+  // "alterar" e a acao que movimenta estoque. Quem tem so "visualizar" ve
+  // tudo e nao mexe em nada — e o modo consulta que o Cassio pediu.
+  const { data: acessoAlterar } = useAccessibleMenus("alterar");
+  const podeAlterar = acessoAlterar?.codes.has("sup_estoque") ?? false;
   const [entradaAberta, setEntradaAberta] = useState(false);
   const [devolucaoAberta, setDevolucaoAberta] = useState(false);
   const [detalhe, setDetalhe] = useState<LinhaEstoque | null>(null);
@@ -89,14 +94,28 @@ export default function EstoqueEtiquetas() {
         module="Suprimentos"
         breadcrumb={["Estoque & Etiquetas"]}
         actions={
-          <>
-            <Button variant="outline" onClick={() => setDevolucaoAberta(true)}>
-              <Undo2 className="mr-2 h-4 w-4" /> Devolução
-            </Button>
-            <Button onClick={() => setEntradaAberta(true)}>
-              <PackagePlus className="mr-2 h-4 w-4" /> Entrada
-            </Button>
-          </>
+          // Entrada e Devolução MOVIMENTAM estoque; consultar não. Até aqui
+          // qualquer pessoa que enxergasse a tela podia dar entrada, porque a
+          // permissão era só de visualizar o menu — quem precisava apenas
+          // saber "tem botina 42?" ganhava junto o poder de criar etiqueta.
+          //
+          // A tela esconder não basta (a RPC continua exposta), e por isso
+          // `sup_est_entrada` já exige `can_access(..., 'alterar')` no banco.
+          // Esconder aqui evita oferecer o que seria negado.
+          podeAlterar ? (
+            <>
+              <Button variant="outline" onClick={() => setDevolucaoAberta(true)}>
+                <Undo2 className="mr-2 h-4 w-4" /> Devolução
+              </Button>
+              <Button onClick={() => setEntradaAberta(true)}>
+                <PackagePlus className="mr-2 h-4 w-4" /> Entrada
+              </Button>
+            </>
+          ) : (
+            <span className="text-xs text-muted-foreground">
+              Somente consulta — você não tem permissão para movimentar estoque.
+            </span>
+          )
         }
       />
 
@@ -709,6 +728,10 @@ function DialogDevolucao({ aberto, onFechar }: { aberto: boolean; onFechar: () =
 function DialogDetalhe({ linha, onFechar }: { linha: LinhaEstoque | null; onFechar: () => void }) {
   const { data: tags = [], isLoading } = useTagsDoItem(linha?.item_estoque_id ?? null);
   const remover = useRemoverTag();
+  // Remover etiqueta é destrutivo, e a RPC exige "excluir". Sem este gate a
+  // lixeira aparecia para quem só consulta, e só falhava depois do clique.
+  const { data: acessoExcluir } = useAccessibleMenus("excluir");
+  const podeExcluir = acessoExcluir?.codes.has("sup_estoque") ?? false;
   const [filtro, setFiltro] = useState("");
   const [inventariando, setInventariando] = useState(false);
   const [removendo, setRemovendo] = useState<{ codigo: string } | null>(null);
@@ -789,7 +812,7 @@ function DialogDetalhe({ linha, onFechar }: { linha: LinhaEstoque | null; onFech
                       <Badge variant="outline" className="text-[10px]">{t.estado}</Badge>
                       {t.usado
                         ? <span className="text-[11px]">usada{t.usado_por_nome ? ` · ${t.usado_por_nome}` : ""}</span>
-                        : (
+                        : podeExcluir && (
                           <Button variant="ghost" size="icon" className="h-6 w-6 text-destructive"
                             onClick={() => setRemovendo({ codigo: t.codigo })}>
                             <Trash2 className="h-3.5 w-3.5" />
