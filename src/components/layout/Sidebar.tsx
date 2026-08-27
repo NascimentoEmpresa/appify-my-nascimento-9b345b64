@@ -615,6 +615,12 @@ const centralServicosModule: ModuleDef = {
         { label: "Chamados de Sistemas", to: "/app/central-servicos/chamados", icon: Headset, notif: "meus" },
         { label: "Agenda de Reunião", to: "/app/central-servicos/reunioes", icon: CalendarRange },
         { label: "Agendamento de Veículos", to: "/app/central-servicos/veiculos", icon: Car },
+        // Só o "Solicitar" entra no menu. Aprovação e Tipos/Limites ficam de
+        // fora de propósito: são telas de poucas pessoas, alcançadas pelos
+        // botões do cabeçalho da própria tela de solicitar (que só aparecem
+        // para quem tem a permissão). Menu de 3 itens para 2 que quase
+        // ninguém abre só empurra o resto para baixo.
+        { label: "Solicitar Reembolso", to: "/app/central-servicos/reembolso", icon: Receipt },
       ],
     },
   ],

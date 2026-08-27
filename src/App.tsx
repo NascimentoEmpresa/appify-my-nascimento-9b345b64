@@ -220,6 +220,9 @@ import ReuniaoDetalhe from "./pages/central-servicos/reunioes/ReuniaoDetalhe";
 import ConducaoReuniao from "./pages/central-servicos/reunioes/ConducaoReuniao";
 import PainelGerencial from "./pages/central-servicos/reunioes/PainelGerencial";
 import AgendamentoVeiculos from "./pages/central-servicos/veiculos/AgendamentoVeiculos";
+import SolicitarReembolso from "./pages/central-servicos/reembolso/SolicitarReembolso";
+import AprovacaoReembolso from "./pages/central-servicos/reembolso/AprovacaoReembolso";
+import ConfiguracaoReembolso from "./pages/central-servicos/reembolso/ConfiguracaoReembolso";
 
 // Defaults só de `queries` — mutations seguem com retry 0, porque repetir um
 // insert/update às cegas duplicaria registro.
@@ -334,6 +337,13 @@ const App = () => (
             <Route path="whatsapp/testes" element={<WhatsAppTestes />} />
             <Route path="whatsapp/dashboard" element={<WhatsAppDashboard />} />
             <Route path="central-servicos/veiculos" element={<AgendamentoVeiculos />} />
+            {/* Reembolso: a rota-mãe é aberta a todo colaborador (ele só vê o
+                que é dele); aprovação e configuração são gateadas por
+                AcessoGate dentro da própria tela, não por rota, para quem cai
+                no link entender que existe e falta permissão. */}
+            <Route path="central-servicos/reembolso" element={<SolicitarReembolso />} />
+            <Route path="central-servicos/reembolso/aprovacao" element={<AprovacaoReembolso />} />
+            <Route path="central-servicos/reembolso/configuracao" element={<ConfiguracaoReembolso />} />
             <Route path="central-servicos/reunioes" element={<Reunioes />} />
             <Route path="central-servicos/reunioes/painel-gerencial" element={<PainelGerencial />} />
             <Route path="central-servicos/reunioes/:id" element={<ReuniaoDetalhe />} />
