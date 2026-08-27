@@ -65,6 +65,26 @@ enquanto o backend de permissões era construído.
 - Testes (`Vitest`, `npm run test`) focam em lógica de negócio/regras
   (`src/test/*.test.ts`), não em rendering de componente.
 
+## Branches — quatro, e só
+
+**NUNCA crie branch nova. Nem temporária, nem `fix/`, `ci/`, `chore/`, nem
+"só pra isolar um teste".** Existem exatamente quatro: `eduardo`, `joao`,
+`pablo` e `main`. Cada dev trabalha na branch com o próprio nome e abre PR
+para a `main` a partir dela. Trabalho novo vai **na branch pessoal que já
+está em uso** — em sessão de agente, `pablo`.
+
+Isso não é preferência de estilo: é a **R8**, regra absoluta verificada por
+`.github/scripts/portaria-pr.mjs` (ver [`.github/REGRAS-PR.md`](.github/REGRAS-PR.md)).
+Branch fora da lista deixa o check vermelho e a PR não merge. Não há label
+nem comentário `portaria-ok` que libere — só R2 e R3 aceitam justificativa
+por linha. A regra já foi mais frouxa e foi apertada de propósito: a v1
+aceitava branch temporária com justificativa, e a exceção virou porta usada de
+novo.
+
+Se você se pegar querendo uma branch nova, a resposta certa é commitar na
+`pablo` mesmo. Se achar que o caso é especial, **pergunte antes** — não crie
+e avise depois.
+
 ## Automação de chamados de desenvolvimento
 
 Demandas chegam como chamados em `/app/sistemas/chamados/dev` (tabela

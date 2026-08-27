@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import {
-  MENU, addMeses, contaAvanco, corDoStatus, ehDiaUtil, etapaDoStatus,
+  MENU, MODULO_DA_ACAO, addMeses, contaAvanco, corDoStatus, ehDiaUtil, etapaDoStatus,
   explicaStatus, faltaPara, idsDoAnalista, mesLegivel, mesPadrao,
   ordemDoStatus, pct, podeAgir, prazoDoMes, proximoStatus,
   STATUS_TODOS, type Acao, type StatusPonto,
@@ -60,39 +60,89 @@ describe("proximoStatus — devolução", () => {
   });
 });
 
-describe("podeAgir — a permissão manda", () => {
+describe("podeAgir — permissão E módulo", () => {
   it("sem chave nenhuma, nada anda", () => {
-    for (const acao of ["aprovar", "confirmar", "informar_valor", "marcar_pago"] as Acao[]) {
-      expect(podeAgir("Pendente Operacional", acao, ninguem)).toBe(false);
-      expect(podeAgir("Conferido RH", acao, ninguem)).toBe(false);
-    }
+    expect(podeAgir("Pendente Operacional", "aprovar", ninguem, "operacional")).toBe(false);
+    expect(podeAgir("Pendente RH", "confirmar", ninguem, "rh")).toBe(false);
+    expect(podeAgir("Conferido RH", "informar_valor", ninguem, "rh")).toBe(false);
+    expect(podeAgir("Liberado Financeiro", "marcar_pago", ninguem, "financeiro")).toBe(false);
   });
 
   it("cada chave abre só a sua ação", () => {
-    expect(podeAgir("Pendente Operacional", "aprovar", com(MENU.aprovar))).toBe(true);
+    expect(podeAgir("Pendente Operacional", "aprovar", com(MENU.aprovar), "operacional")).toBe(true);
     // Quem aprova não confirma a própria aprovação: é o ponto de ter duas
     // permissões separadas em vez de uma de "mexer no ponto".
-    expect(podeAgir("Pendente RH", "confirmar", com(MENU.aprovar))).toBe(false);
-    expect(podeAgir("Pendente RH", "confirmar", com(MENU.confirmar))).toBe(true);
+    expect(podeAgir("Pendente RH", "confirmar", com(MENU.aprovar), "rh")).toBe(false);
+    expect(podeAgir("Pendente RH", "confirmar", com(MENU.confirmar), "rh")).toBe(true);
   });
 
   it("quem informa o valor não é necessariamente quem paga", () => {
-    expect(podeAgir("Conferido RH", "informar_valor", com(MENU.valor))).toBe(true);
-    expect(podeAgir("Liberado Financeiro", "marcar_pago", com(MENU.valor))).toBe(false);
-    expect(podeAgir("Liberado Financeiro", "marcar_pago", com(MENU.pagar))).toBe(true);
+    expect(podeAgir("Conferido RH", "informar_valor", com(MENU.valor), "rh")).toBe(true);
+    expect(podeAgir("Liberado Financeiro", "marcar_pago", com(MENU.valor), "financeiro")).toBe(false);
+    expect(podeAgir("Liberado Financeiro", "marcar_pago", com(MENU.pagar), "financeiro")).toBe(true);
   });
 
   it("a permissão não vence o status: chave certa, hora errada, não passa", () => {
-    expect(podeAgir("Pendente Operacional", "marcar_pago", com(MENU.pagar))).toBe(false);
-    expect(podeAgir("Pago", "informar_valor", tudo)).toBe(false);
+    expect(podeAgir("Pendente Operacional", "marcar_pago", com(MENU.pagar), "financeiro")).toBe(false);
+    expect(podeAgir("Pago", "informar_valor", tudo, "rh")).toBe(false);
   });
 
   it("devolver é poder de quem recebeu, não de quem mandou", () => {
-    // Só devolve ao Operacional quem confirma; só devolve ao RH quem paga.
-    expect(podeAgir("Conferido RH", "devolver_op", com(MENU.confirmar))).toBe(true);
-    expect(podeAgir("Conferido RH", "devolver_op", com(MENU.aprovar))).toBe(false);
-    expect(podeAgir("Liberado Financeiro", "devolver_rh", com(MENU.pagar))).toBe(true);
-    expect(podeAgir("Liberado Financeiro", "devolver_rh", com(MENU.confirmar))).toBe(false);
+    expect(podeAgir("Conferido RH", "devolver_op", com(MENU.confirmar), "rh")).toBe(true);
+    expect(podeAgir("Conferido RH", "devolver_op", com(MENU.aprovar), "rh")).toBe(false);
+    expect(podeAgir("Liberado Financeiro", "devolver_rh", com(MENU.pagar), "financeiro")).toBe(true);
+    expect(podeAgir("Liberado Financeiro", "devolver_rh", com(MENU.confirmar), "financeiro")).toBe(false);
+  });
+});
+
+describe("cada botão só existe no módulo dele", () => {
+  // Pedido explícito: mesmo quem acumula as quatro chaves vê, em cada porta,
+  // só o passo daquele setor. Sem isto o fluxo perdia o sentido de setor.
+  it("aprovar é só do Operacional", () => {
+    expect(podeAgir("Pendente Operacional", "aprovar", tudo, "operacional")).toBe(true);
+    expect(podeAgir("Pendente Operacional", "aprovar", tudo, "rh")).toBe(false);
+    expect(podeAgir("Pendente Operacional", "aprovar", tudo, "financeiro")).toBe(false);
+  });
+
+  it("confirmar é só do RH", () => {
+    expect(podeAgir("Pendente RH", "confirmar", tudo, "rh")).toBe(true);
+    expect(podeAgir("Pendente RH", "confirmar", tudo, "operacional")).toBe(false);
+    expect(podeAgir("Pendente RH", "confirmar", tudo, "financeiro")).toBe(false);
+  });
+
+  it("informar valor é só do RH, e ainda exige a chave própria", () => {
+    expect(podeAgir("Conferido RH", "informar_valor", tudo, "rh")).toBe(true);
+    expect(podeAgir("Conferido RH", "informar_valor", tudo, "operacional")).toBe(false);
+    expect(podeAgir("Conferido RH", "informar_valor", tudo, "financeiro")).toBe(false);
+    // Estar no RH não basta: quem confirma não necessariamente informa valor.
+    expect(podeAgir("Conferido RH", "informar_valor", com(MENU.confirmar), "rh")).toBe(false);
+    expect(podeAgir("Conferido RH", "informar_valor", com(MENU.valor), "rh")).toBe(true);
+  });
+
+  it("marcar pago é só do Financeiro", () => {
+    expect(podeAgir("Liberado Financeiro", "marcar_pago", tudo, "financeiro")).toBe(true);
+    expect(podeAgir("Liberado Financeiro", "marcar_pago", tudo, "rh")).toBe(false);
+    expect(podeAgir("Liberado Financeiro", "marcar_pago", tudo, "operacional")).toBe(false);
+  });
+
+  // "Marcar problema" sai de DOIS status, e um deles ainda é do RH
+  // (`Conferido RH`). Quem marca é o Financeiro — então o botão precisa
+  // aparecer na porta do Financeiro mesmo antes de o contrato chegar lá.
+  it("marcar problema é do Financeiro, inclusive em Conferido RH", () => {
+    expect(podeAgir("Conferido RH", "problema", com(MENU.pagar), "financeiro")).toBe(true);
+    expect(podeAgir("Liberado Financeiro", "problema", com(MENU.pagar), "financeiro")).toBe(true);
+    expect(podeAgir("Conferido RH", "problema", tudo, "rh")).toBe(false);
+    expect(podeAgir("Conferido RH", "problema", tudo, "operacional")).toBe(false);
+  });
+
+  it("toda ação tem um módulo, e é o do passo dela", () => {
+    expect(MODULO_DA_ACAO.aprovar).toBe("operacional");
+    expect(MODULO_DA_ACAO.confirmar).toBe("rh");
+    expect(MODULO_DA_ACAO.informar_valor).toBe("rh");
+    expect(MODULO_DA_ACAO.marcar_pago).toBe("financeiro");
+    // Devolver acompanha quem RECEBEU, então acompanha o módulo dele.
+    expect(MODULO_DA_ACAO.devolver_op).toBe("rh");
+    expect(MODULO_DA_ACAO.devolver_rh).toBe("financeiro");
   });
 });
 

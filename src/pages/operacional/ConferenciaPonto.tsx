@@ -19,7 +19,7 @@ export default function OperacionalConferenciaPonto() {
         module="Operacional"
         breadcrumb={["Conferência de Ponto"]}
       />
-      <PainelConferenciaPonto />
+      <PainelConferenciaPonto modulo="operacional" />
     </div>
   );
 }
