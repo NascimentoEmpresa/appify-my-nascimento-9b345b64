@@ -16,6 +16,7 @@ import {
   usePedidoCompra, usePedidosCompra,
 } from "@/hooks/useCompraPedido";
 import { baixarPdfPedidoCompra } from "@/lib/suprimentos/pedidoCompraPdf";
+import { EnviarPedidoFornecedor } from "@/components/suprimentos/EnviarPedidoFornecedor";
 import { obterValorSugeridoUltimoPreco, converterQuantidadeDigitada } from "@/lib/suprimentos/compra";
 import { Ban, Download, Eye, Loader2, Search, Send, ShieldAlert } from "lucide-react";
 
@@ -309,6 +310,18 @@ export default function PedidosCompraSupply() {
             </>}
             {pedido && !["recebido", "cancelado"].includes(pedido.status) && (
               <Button variant="destructive" onClick={pedirCancelamento} disabled={cancelar.isPending}><Ban className="mr-2 h-4 w-4" />Cancelar</Button>
+            )}
+            {pedido && (
+              <EnviarPedidoFornecedor
+                pedidoId={pedido.id}
+                numero={pedido.numero}
+                emailSugerido={pedido.fornecedor?.email ?? null}
+                // Rascunho ainda não foi emitido e cancelado não vale mais:
+                // mandar qualquer um dos dois ao fornecedor confundiria mais
+                // do que ajudaria. A RPC também recusa — isto só evita
+                // oferecer o que seria negado.
+                desabilitado={["rascunho", "cancelado"].includes(pedido.status)}
+              />
             )}
             {pedido && <Button variant="outline" onClick={() => baixarPdfPedidoCompra(pedido)}><Download className="mr-2 h-4 w-4" />Baixar PDF</Button>}
             <Button variant="outline" onClick={fechar}>Fechar</Button>

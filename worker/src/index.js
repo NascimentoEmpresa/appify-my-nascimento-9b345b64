@@ -8,6 +8,7 @@ const { verificarChamadosDevNovos } = require("./chamadosDev");
 const { sincronizarCaepi } = require("./caepi");
 const { sincronizarNfe } = require("./nfe");
 const { darCienciaPendentes } = require("./nfeCiencia");
+const { enviarPedidosPendentes } = require("./pedidoFornecedor");
 const { alertarErroWhatsapp } = require("./discordAlert");
 
 const CICLO_MS = 60_000;
@@ -53,6 +54,12 @@ async function rodarTarefas(waClient, transportador) {
     console.error("[worker] erro no ciclo de e-mails:", e);
   }
   try {
+    // Pedido de compra ao fornecedor, com link de confirmacao.
+    await enviarPedidosPendentes(supabase, transportador);
+  } catch (e) {
+    console.error("[worker] erro no envio de pedido ao fornecedor:", e);
+  }
+  try {
     await verificarChamadosDevNovos(supabase);
   } catch (e) {
     console.error("[worker] erro no ciclo de chamados de dev:", e);
@@ -82,22 +89,17 @@ function main() {
   const waClient = criarClienteWhatsapp();
   const transportador = criarTransportador();
 
-  // O ciclo NÃO espera o WhatsApp.
+  // O ciclo NÃO espera nada para começar.
   //
-  // Antes ele só começava no evento `ready`, e isso fazia uma tarefa das cinco
-  // derrubar as outras quatro: com a sessão do WhatsApp expirada — o que
-  // acontece sozinho, sem ninguém mexer em nada — a nota fiscal deixava de ser
-  // buscada na SEFAZ, o catálogo de CA parava de carregar e o alerta de
-  // vencimento do certificado não saía. Tudo em silêncio, esperando alguém
-  // escanear um QR code.
+  // Antes ele só arrancava no evento `ready` do WhatsApp, e isso fazia uma
+  // tarefa derrubar todas as outras: com a sessão expirada — o que acontece
+  // sozinho — a nota fiscal deixava de ser buscada na SEFAZ, o catálogo de CA
+  // parava e o alerta de vencimento do certificado não saía. Em silêncio,
+  // esperando alguém escanear um QR.
   //
-  // Agora o lembrete de reunião é a única coisa que depende do WhatsApp, e ele
-  // se vira sozinho: enquanto não estiver pronto, essa tarefa é pulada e o
-  // resto roda.
-  // Não há mais ciclo de vida de cliente: o envio virou HTTP sem estado, via
-  // Edge Function do Supabase (ver a nota no topo de `whatsapp.js`). Sem
-  // navegador, sem QR, sem sessão que expira — e sem os eventos `ready` e
-  // `disconnected` que existiam só porque o WhatsApp Web precisava deles.
+  // Hoje nem existe mais ciclo de vida de cliente: o envio de WhatsApp virou
+  // HTTP sem estado, via Edge Function do Supabase (ver o topo de
+  // `whatsapp.js`). Sem navegador, sem QR, sem sessão que expira.
   const ciclo = () => rodarCiclo(waClient, transportador);
 
   console.log(`[worker] ciclo de verificação rodando a cada ${CICLO_MS / 1000}s...`);
