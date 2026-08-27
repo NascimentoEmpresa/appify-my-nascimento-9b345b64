@@ -178,6 +178,26 @@ export const CSS_NOVIDADES = `
   .nov-hd{flex-wrap:wrap;}
 }
 
+/* ────────────────────── cabeçalho em coluna estreita ────────────────────── */
+/* O painel vive em duas larguras muito diferentes: a página /app/novidades,
+   que é larga, e a coluna da direita do Início, que tem 340px. O cabeçalho
+   era uma linha só — ícone, texto e botões lado a lado — e na coluna estreita
+   o texto (flex:1) era espremido pelos botões (flex:none) até "Novidades do
+   Sistema" quebrar palavra por palavra e o subtítulo virar cinco linhas.
+
+   É CONTAINER query, não media query: a de cima olha a largura da JANELA, e
+   numa tela larga com a coluna estreita ela nunca dispara — que é exatamente
+   o caso do Início. Aqui o painel reage ao espaço que ELE tem. */
+.nov-card{container-type:inline-size;}
+
+@container (max-width:430px){
+  /* Título e subtítulo ficam com a linha inteira; os botões descem para a
+     linha de baixo, encostados à direita. */
+  .nov-hd{flex-wrap:wrap;align-items:flex-start;}
+  .nov-hd-tx{flex:1 1 auto;}
+  .nov-hd-acoes{flex:1 0 100%;justify-content:flex-end;}
+}
+
 /* Quem pediu menos movimento recebe a tela parada. */
 @media (prefers-reduced-motion:reduce){
   .nov-item,.nov-pop,.nov-modal,.nov-ov,.nov-bolinha{animation:none;opacity:1;transform:none;}
