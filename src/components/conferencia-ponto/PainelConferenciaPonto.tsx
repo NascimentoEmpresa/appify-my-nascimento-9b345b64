@@ -17,11 +17,11 @@ import {
   ClipboardCheck, Clock, DollarSign, Filter, History, Loader2, Search, Undo2,
 } from "lucide-react";
 import {
-  MENU, MENU_DA_ACAO, TABELA, TABELA_EVENTOS, addMeses, contaAvanco, corDoStatus,
+  MENU, TABELA, TABELA_EVENTOS, addMeses, contaAvanco, corDoStatus,
   explicaStatus, faltaPara, fmtBRL, fmtDataHora, mesLegivel,
   mesPadrao, ordemDoStatus, pct, podeAgir, prazoDoMes, proximoStatus,
   STATUS_INICIAL, STATUS_TODOS,
-  type Acao, type EventoConferencia, type LinhaConferencia, type StatusPonto,
+  type Acao, type EventoConferencia, type LinhaConferencia, type Modulo, type StatusPonto,
 } from "@/lib/conferenciaPonto/conferencia";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
@@ -93,7 +93,7 @@ function Barra({ titulo, feito, total, cor }: {
   );
 }
 
-export function PainelConferenciaPonto() {
+export function PainelConferenciaPonto({ modulo }: { modulo: Modulo }) {
   const meuNome = useMeuNome();
   const { user } = useAuth();
   const { can } = usePermissoes();
@@ -227,7 +227,10 @@ export function PainelConferenciaPonto() {
   ) => {
     const destino = proximoStatus(linha.status, acao);
     if (!destino) { toast.error("Esta ação não vale no estado atual do contrato."); return false; }
-    if (!pode(MENU_DA_ACAO[acao])) { toast.error("Você não tem essa permissão."); return false; }
+    if (!podeAgir(linha.status, acao, pode, modulo)) {
+      toast.error("Esta ação não é deste módulo, ou você não tem a permissão.");
+      return false;
+    }
 
     const agora = new Date().toISOString();
     const patch: Record<string, unknown> = { status: destino, atualizado_por: meuNome };
@@ -335,7 +338,7 @@ export function PainelConferenciaPonto() {
         <Kpi titulo="Aguardando você" icone={Clock} cor="bg-amber-100 text-amber-700"
              valor={String(juntas.filter(l =>
                (["aprovar", "confirmar", "informar_valor", "marcar_pago"] as Acao[])
-                 .some(a => podeAgir(l.status, a, pode)),
+                 .some(a => podeAgir(l.status, a, pode, modulo)),
              ).length)}
              sub="contratos em que você pode agir" />
         {/* Valores só para quem informa valor ou paga — não é número de todo mundo. */}
@@ -436,7 +439,7 @@ export function PainelConferenciaPonto() {
                 <TableBody>
                   {filtradas.map(l => {
                     const temAcao = (["aprovar", "confirmar", "informar_valor", "marcar_pago"] as Acao[])
-                      .some(a => podeAgir(l.status, a, pode));
+                      .some(a => podeAgir(l.status, a, pode, modulo));
                     return (
                       <TableRow key={chaveDoContrato(l)}
                                 className="cursor-pointer" onClick={() => setAberta(l)}>
@@ -477,7 +480,7 @@ export function PainelConferenciaPonto() {
       </Card>
 
       <DetalheContrato
-        linha={aberta} pode={pode} salvando={salvando}
+        linha={aberta} pode={pode} modulo={modulo} salvando={salvando}
         onFechar={() => setAberta(null)} onAgir={agir}
       />
     </div>
@@ -485,9 +488,10 @@ export function PainelConferenciaPonto() {
 }
 
 // ── Detalhe + ações ──────────────────────────────────────────────────
-function DetalheContrato({ linha, pode, salvando, onFechar, onAgir }: {
+function DetalheContrato({ linha, pode, modulo, salvando, onFechar, onAgir }: {
   linha: LinhaConferencia | null;
   pode: (menu: string) => boolean;
+  modulo: Modulo;
   salvando: boolean;
   onFechar: () => void;
   onAgir: (l: LinhaConferencia, a: Acao, extra?: { observacao?: string; valor?: number }) => Promise<boolean>;
@@ -510,7 +514,7 @@ function DetalheContrato({ linha, pode, salvando, onFechar, onAgir }: {
 
   if (!linha) return null;
   const l = linha;
-  const p = (a: Acao) => podeAgir(l.status, a, pode);
+  const p = (a: Acao) => podeAgir(l.status, a, pode, modulo);
 
   const informarValor = () => {
     const v = Number(String(valor).replace(",", "."));

@@ -18,7 +18,7 @@ export default function FinanceiroConferenciaPonto() {
         module="Financeiro"
         breadcrumb={["Conferência de Ponto"]}
       />
-      <PainelConferenciaPonto />
+      <PainelConferenciaPonto modulo="financeiro" />
     </div>
   );
 }

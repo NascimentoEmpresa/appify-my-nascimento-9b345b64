@@ -137,18 +137,48 @@ export function proximoStatus(atual: StatusPonto, acao: Acao): StatusPonto | nul
   return ORIGENS[acao].includes(atual) ? DESTINO[acao] : null;
 }
 
+/** Por qual porta a pessoa entrou. A mesma tela abre nos três módulos. */
+export type Modulo = "operacional" | "rh" | "financeiro";
+
+/**
+ * Em qual MÓDULO cada ação existe.
+ *
+ * A permissão diz se a pessoa PODE; o módulo diz ONDE o botão aparece. São
+ * duas perguntas, e juntar as duas foi pedido explícito: cada setor enxerga
+ * só o próprio passo, mesmo que a pessoa acumule permissões. Quem é do RH e
+ * também aprova contrato não vê "Aprovar" na tela do RH — vê na do
+ * Operacional, que é de onde aquele trabalho sai.
+ *
+ * Sem isto, alguém com as quatro chaves via os quatro botões em qualquer
+ * porta e o fluxo perdia o sentido de setor.
+ */
+export const MODULO_DA_ACAO: Record<Acao, Modulo> = {
+  andamento_op:   "operacional",
+  aprovar:        "operacional",
+  andamento_rh:   "rh",
+  confirmar:      "rh",
+  informar_valor: "rh",
+  marcar_pago:    "financeiro",
+  // Devolver acompanha quem recebeu, então acompanha o módulo dele.
+  devolver_op:    "rh",
+  devolver_rh:    "financeiro",
+  problema:       "financeiro",
+};
+
 /**
  * A pessoa pode fazer esta ação nesta linha AGORA?
  *
- * Duas perguntas: a permissão libera a ação, e o status atual aceita. `pode`
- * é o `can()` do PermissoesContext — fica de fora daqui para esta camada
- * continuar testável sem React.
+ * TRÊS perguntas: o módulo em que ela está tem essa ação, a permissão a
+ * libera, e o status atual aceita. `pode` é o `can()` do PermissoesContext —
+ * fica de fora daqui para esta camada continuar testável sem React.
  */
 export function podeAgir(
   atual: StatusPonto,
   acao: Acao,
   pode: (menu: string) => boolean,
+  modulo: Modulo,
 ): boolean {
+  if (MODULO_DA_ACAO[acao] !== modulo) return false;
   if (!pode(MENU_DA_ACAO[acao])) return false;
   return proximoStatus(atual, acao) !== null;
 }
