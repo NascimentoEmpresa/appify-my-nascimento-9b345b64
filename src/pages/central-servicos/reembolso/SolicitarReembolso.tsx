@@ -2,7 +2,7 @@ import { useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { toast } from "sonner";
 import {
-  AlertTriangle, CheckCircle2, Clock, FileText, Loader2, Paperclip,
+  AlertTriangle, Building2, CheckCircle2, Clock, FileText, Loader2, Paperclip,
   Plus, Receipt, Settings2, ShieldCheck, Trash2, XCircle,
 } from "lucide-react";
 import { PageHeader } from "@/components/layout/PageHeader";
@@ -18,10 +18,9 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
 import { useMeuNome } from "@/hooks/useMeuNome";
-import { useVinculoEmpregado } from "@/hooks/useVinculoEmpregado";
 import {
-  useCriarReembolso, useDecidirReembolso, useMeusStats, useReembolsos, useTiposReembolso,
-  type DespesaNova,
+  useCriarReembolso, useDecidirReembolso, useMeusStats, useMeuSetor, useReembolsos,
+  useTiposReembolso, type DespesaNova,
 } from "@/hooks/useReembolso";
 import {
   competenciaDe, dataParaISO, descreveJanela, descreveTeto, fmtBRL, normalizaHora,
@@ -58,7 +57,10 @@ const TAMANHO_MAX = 20 * 1024 * 1024; // o bucket recusa acima disso
 
 export default function SolicitarReembolso() {
   const meuNome = useMeuNome();
-  const { empregado } = useVinculoEmpregado();
+  // Vem do banco, nao do cadastro lido no front: e exatamente o que a trigger
+  // vai carimbar. Se os dois discordassem, a pessoa veria um setor na tela e a
+  // solicitacao chegaria para o aprovador de outro.
+  const { data: meuSetor, isLoading: carregandoSetor } = useMeuSetor();
   const { data: tipos = [], isLoading: carregandoTipos } = useTiposReembolso();
   const { data: stats } = useMeusStats();
   const criar = useCriarReembolso();
@@ -135,6 +137,12 @@ export default function SolicitarReembolso() {
    * tipo de coisa que faz o formulário ser abandonado.
    */
   const enviar = async () => {
+    // O banco recusa de qualquer forma (a trigger levanta excecao), mas deixar
+    // a pessoa subir tres comprovantes para so entao descobrir que o cadastro
+    // dela nao tem setor seria cruel.
+    if (!meuSetor) {
+      return toast.error("Seu cadastro nao tem setor, entao nao ha para quem enviar. Peca ao RH para preencher.");
+    }
     if (!pix.trim()) return toast.error("Informe o PIX que vai receber o reembolso.");
     if (!dataOk) return toast.error("Data da viagem inválida. Use DD/MM/AAAA.");
     if (!saidaOk || !chegadaOk) return toast.error("Horário de saída ou chegada inválido.");
@@ -173,7 +181,6 @@ export default function SolicitarReembolso() {
         chegada: chegadaOk,
         observacoes: observacoes.trim() || null,
         solicitante_nome: meuNome,
-        setor: empregado?.setor ?? null,
         despesas: prontas,
       });
       toast.success(`Solicitação ${criada.numero ?? ""} enviada para aprovação.`);
@@ -238,6 +245,29 @@ export default function SolicitarReembolso() {
               </Card>
             }
           >
+            {/* O setor não é campo: é consequência do cadastro. Fica visível
+                porque é ele que decide para quem a solicitação vai — a pessoa
+                precisa saber quem vai receber, mesmo não podendo escolher. */}
+            {carregandoSetor ? null : meuSetor ? (
+              <Card className="mb-4 flex flex-wrap items-center gap-2 p-4 text-sm">
+                <Building2 className="h-4 w-4 text-muted-foreground" />
+                <span className="text-muted-foreground">Seu setor:</span>
+                <Badge variant="outline">{meuSetor}</Badge>
+                <span className="text-xs text-muted-foreground">
+                  vem do seu cadastro e define quem aprova este reembolso.
+                </span>
+              </Card>
+            ) : (
+              <Card className="mb-4 flex items-start gap-2 border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
+                <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+                <span>
+                  <strong>Seu cadastro não tem setor definido</strong>, então não há para quem
+                  enviar o reembolso. Peça ao RH para preencher o setor no seu cadastro — se você
+                  tem mais de um setor no perfil, é preciso deixar só o principal.
+                </span>
+              </Card>
+            )}
+
             <Card className="mb-4 p-5">
               <h3 className="mb-1 text-sm font-semibold">A viagem</h3>
               <p className="mb-4 text-xs text-muted-foreground">
@@ -390,7 +420,7 @@ export default function SolicitarReembolso() {
             </Card>
 
             <div className="flex flex-wrap gap-2">
-              <Button onClick={enviar} disabled={criar.isPending}>
+              <Button onClick={enviar} disabled={criar.isPending || !meuSetor}>
                 {criar.isPending
                   ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Enviando…</>
                   : <><FileText className="mr-2 h-4 w-4" /> Enviar para aprovação</>}
