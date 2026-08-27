@@ -3,6 +3,7 @@ import { supabase } from "@/integrations/supabase/client";
 import ImportarColaboradores from "@/components/rh/ImportarColaboradores";
 import IntegrarCargos from "@/components/rh/IntegrarCargos";
 import CarregandoLogo from "@/components/ui/CarregandoLogo";
+import { useScreenAccess } from "@/hooks/useScreenAccess";
 
 // =========================================================================
 // RH — Colaboradores (fonte: tabela EMPREGADOS, read-only + edição de campos RH)
@@ -281,9 +282,28 @@ export default function Colaboradores() {
 
   // Um bloco da EMPREGADOS. O 1º pede o count junto (uma requisição a menos) e
   // é ele que descobre qual recorte de colunas o ambiente aceita.
+  // Salário é opt-in. No modo RPC o corte é no banco (as duas RPCs são
+  // SECURITY DEFINER, então tem que ser lá); aqui a tela deixa de reservar
+  // espaço para uma coluna e dois cards que viriam vazios, e o modo client
+  // deixa de pedir a coluna. Declarado no topo porque `semSalario`, logo
+  // abaixo, já depende dele.
+  const { data: verSalario } = useScreenAccess("colaboradores_ver_salario", "visualizar");
+
+  /**
+   * Tira "Valor Salário" da lista de colunas de quem não tem a permissão.
+   *
+   * O modo `client` lê a EMPREGADOS direto (as constantes FULL/SAFE acima),
+   * então o corte feito nas RPCs não alcança este caminho. Recortar a coluna
+   * no SELECT é melhor que escondê-la depois: o número não chega nem a
+   * trafegar, e a policy da tabela — que é all-or-nothing por linha, não por
+   * coluna — deixaria de qualquer forma.
+   */
+  const semSalario = (cols: string) =>
+    verSalario ? cols : cols.replace('"Valor Salário",', "");
+
   const bloco = (cols: string, de: number, comCount = false) =>
     (supabase as any).from("EMPREGADOS")
-      .select(cols, comCount ? { count: "exact" } : undefined)
+      .select(semSalario(cols), comCount ? { count: "exact" } : undefined)
       .order("Nome", { ascending: true })
       .range(de, de + CHUNK - 1);
 
@@ -599,8 +619,8 @@ export default function Colaboradores() {
       <div style={{ display: loading ? "none" : "flex", gap: 12, flexWrap: "wrap", marginBottom: 14, opacity: veu ? .4 : 1, transition: "opacity .2s ease" }}>
         {card("Ativos no mês", String(ativosNoMes), "#15803d", `${MESES_ABREV[mesRef.mes]}/${mesRef.ano} · presença`)}
         {card("No recorte", String(totalFiltrado), "#0f3171", `${totalGeral} no total`)}
-        {card("Folha (recorte)", moneyK(folhaTotal), "#0f766e", money(folhaTotal))}
-        {card("Salário médio", money(salarioMedio), "#7c3aed")}
+        {verSalario && card("Folha (recorte)", moneyK(folhaTotal), "#0f766e", money(folhaTotal))}
+        {verSalario && card("Salário médio", money(salarioMedio), "#7c3aed")}
         {card("Admitidos no mês", String(admitidosMes), "#2563eb", `${MESES_ABREV[mesRef.mes]}/${mesRef.ano}`)}
         {card("Desligados no mês", String(desligadosMes), "#dc2626", `${MESES_ABREV[mesRef.mes]}/${mesRef.ano}`)}
       </div>
@@ -711,7 +731,8 @@ export default function Colaboradores() {
                 <th className="col-th">Nome</th><th className="col-th">CPF</th><th className="col-th">Cargo</th>
                 <th className="col-th">Empresa</th><th className="col-th">Contrato</th><th className="col-th">Filial</th>
                 <th className="col-th">Admissão</th><th className="col-th">Casa</th>
-                <th className="col-th" style={{ textAlign: "right" }}>Salário</th><th className="col-th">Situação</th><th className="col-th"></th>
+                {verSalario && <th className="col-th" style={{ textAlign: "right" }}>Salário</th>}
+                <th className="col-th">Situação</th><th className="col-th"></th>
               </tr></thead>
               <tbody>
                 {visiveis.map((l, i) => {
@@ -726,7 +747,7 @@ export default function Colaboradores() {
                       <td className="col-td">{l.filial}</td>
                       <td className="col-td" style={{ whiteSpace: "nowrap" }}>{fmtData(l.admissao)}</td>
                       <td className="col-td" style={{ whiteSpace: "nowrap" }}>{casa != null ? `${casa.toFixed(1)}a` : "—"}</td>
-                      <td className="col-td" style={{ textAlign: "right", fontWeight: 700, color: "#0f172a", whiteSpace: "nowrap" }}>{money(l.salario)}</td>
+                      {verSalario && <td className="col-td" style={{ textAlign: "right", fontWeight: 700, color: "#0f172a", whiteSpace: "nowrap" }}>{money(l.salario)}</td>}
                       <td className="col-td"><span style={{ fontSize: 11, fontWeight: 700, padding: "2px 9px", borderRadius: 20, background: trab ? "#dcfce7" : "#f1f5f9", color: trab ? "#15803d" : "#64748b" }}>{l.situacao || "—"}</span></td>
                       <td className="col-td" style={{ textAlign: "right" }}><button className="col-btn" onClick={() => abrirEditPorId(l.id)} style={{ height: 30, padding: "0 11px", background: "#eef4ff", color: "#0f3171", borderColor: "#dbe4f0" }}>Editar</button></td>
                     </tr>
