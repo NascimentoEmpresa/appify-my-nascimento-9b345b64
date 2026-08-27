@@ -94,28 +94,33 @@ export default function EstoqueEtiquetas() {
         module="Suprimentos"
         breadcrumb={["Estoque & Etiquetas"]}
         actions={
-          // Entrada e Devolução MOVIMENTAM estoque; consultar não. Até aqui
-          // qualquer pessoa que enxergasse a tela podia dar entrada, porque a
-          // permissão era só de visualizar o menu — quem precisava apenas
-          // saber "tem botina 42?" ganhava junto o poder de criar etiqueta.
+          // Entrada e Devolução MOVIMENTAM estoque; consultar não.
           //
-          // A tela esconder não basta (a RPC continua exposta), e por isso
-          // `sup_est_entrada` já exige `can_access(..., 'alterar')` no banco.
-          // Esconder aqui evita oferecer o que seria negado.
-          podeAlterar ? (
-            <>
-              <Button variant="outline" onClick={() => setDevolucaoAberta(true)}>
-                <Undo2 className="mr-2 h-4 w-4" /> Devolução
-              </Button>
-              <Button onClick={() => setEntradaAberta(true)}>
-                <PackagePlus className="mr-2 h-4 w-4" /> Entrada
-              </Button>
-            </>
-          ) : (
-            <span className="text-xs text-muted-foreground">
-              Somente consulta — você não tem permissão para movimentar estoque.
-            </span>
-          )
+          // Até aqui não havia gate nenhum: quem enxergasse o menu podia dar
+          // entrada. Pela divisão que o Cassio definiu, o estoquista só
+          // consulta e apenas o supervisor movimenta — então Consultar fica
+          // para todos e as outras duas pedem `alterar`.
+          //
+          // Esconder na tela não é a trava: `sup_est_entrada` já exige
+          // `can_access(..., 'alterar')` no banco. Aqui é só para não oferecer
+          // o que seria negado — falhar depois do clique é pior, porque a
+          // pessoa não sabe se errou ou se o sistema quebrou.
+          <>
+            {/* Consultar é de todo mundo. É o botão que o estoquista usa. */}
+            <Button variant="outline" onClick={() => setEntradaAberta(true)}>
+              <Search className="mr-2 h-4 w-4" /> Consultar
+            </Button>
+            {podeAlterar && (
+              <>
+                <Button variant="outline" onClick={() => setDevolucaoAberta(true)}>
+                  <Undo2 className="mr-2 h-4 w-4" /> Devolução
+                </Button>
+                <Button onClick={() => setEntradaAberta(true)}>
+                  <PackagePlus className="mr-2 h-4 w-4" /> Entrada
+                </Button>
+              </>
+            )}
+          </>
         }
       />
 
@@ -248,7 +253,8 @@ export default function EstoqueEtiquetas() {
         </Card>
       )}
 
-      <DialogEntrada aberto={entradaAberta} onFechar={() => setEntradaAberta(false)} empresaId={empresaId ?? null} />
+      <DialogEntrada aberto={entradaAberta} onFechar={() => setEntradaAberta(false)}
+                     empresaId={empresaId ?? null} podeAlterar={podeAlterar} />
       <DialogDevolucao aberto={devolucaoAberta} onFechar={() => setDevolucaoAberta(false)} />
       <DialogDetalhe linha={detalhe} onFechar={() => setDetalhe(null)} />
     </div>
@@ -368,9 +374,11 @@ const BLOCO_VAZIO: BlocoUnidade = {
   tamanho: "", tipo: "unico", codigos: [], quantidade: "1", ca_numero: "", ca_validade: "",
 };
 
-function DialogEntrada({ aberto, onFechar, empresaId }: {
-  aberto: boolean; onFechar: () => void; empresaId: string | null;
+function DialogEntrada({ aberto, onFechar, empresaId, podeAlterar }: {
+  aberto: boolean; onFechar: () => void; empresaId: string | null; podeAlterar: boolean;
 }) {
+  // Sem permissão de alterar só existe a consulta, então ela é a aba inicial.
+  const [abaModal, setAbaModal] = useState(podeAlterar ? "entrada" : "consultar");
   const { data: almoxarifados = [] } = useAlmoxarifados(empresaId);
   const { data: materiais = [] } = useItens(empresaId);
   const { data: fornecedores = [] } = useFornecedores(empresaId);
@@ -472,8 +480,25 @@ function DialogEntrada({ aberto, onFechar, empresaId }: {
   return (
     <Dialog open={aberto} onOpenChange={(o) => { if (!o) { limpar(); onFechar(); } }}>
       <DialogContent className="max-h-[90vh] max-w-2xl overflow-y-auto">
-        <DialogHeader><DialogTitle>Entrada no estoque</DialogTitle></DialogHeader>
+        <DialogHeader>
+          <DialogTitle>{podeAlterar ? "Estoque" : "Consultar estoque"}</DialogTitle>
+        </DialogHeader>
 
+        {/* Um modal, duas abas. Estoquista tem só "Consultar"; supervisor tem
+            as duas — decisão do Cassio, e é ele quem distribui em Acesso por
+            Usuário. Quando a pessoa não pode dar entrada, a aba nem aparece:
+            mostrar desabilitada só convida a perguntar por que não funciona. */}
+        <Tabs value={abaModal} onValueChange={setAbaModal}>
+          <TabsList>
+            <TabsTrigger value="consultar">Consultar</TabsTrigger>
+            {podeAlterar && <TabsTrigger value="entrada">Dar entrada</TabsTrigger>}
+          </TabsList>
+
+          <TabsContent value="consultar" className="pt-4">
+            <ConsultaEstoque empresaId={empresaId} />
+          </TabsContent>
+
+          <TabsContent value="entrada" className="pt-2">
         <div className="space-y-4 py-1">
           <div className="grid gap-4 sm:grid-cols-2">
             <div>
@@ -662,8 +687,98 @@ function DialogEntrada({ aberto, onFechar, empresaId }: {
             Dar entrada
           </Button>
         </DialogFooter>
+          </TabsContent>
+        </Tabs>
       </DialogContent>
     </Dialog>
+  );
+}
+
+/**
+ * Aba de consulta: o que o estoquista precisa saber sem poder mexer.
+ *
+ * Responde a pergunta do balcão — "tem botina 42?" — e mostra quem mexeu por
+ * último. Ver o log aqui não é curiosidade: quando falta peça, a primeira
+ * pergunta é sempre "quem deu baixa e quando".
+ */
+function ConsultaEstoque({ empresaId }: { empresaId: string | null | undefined }) {
+  const { data: linhas = [], isLoading } = useEstoqueLista(empresaId ?? null);
+  const [busca, setBusca] = useState("");
+  const [escolhido, setEscolhido] = useState<LinhaEstoque | null>(null);
+
+  const achados = useMemo(() => {
+    const t = busca.trim().toLowerCase();
+    if (!t) return [];
+    return linhas
+      .filter((l) => `${l.material} ${l.almoxarifado}`.toLowerCase().includes(t))
+      .slice(0, 25);
+  }, [linhas, busca]);
+
+  return (
+    <div className="space-y-3">
+      <div className="relative">
+        <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+        <Input
+          autoFocus
+          value={busca}
+          onChange={(e) => { setBusca(e.target.value); setEscolhido(null); }}
+          placeholder="Digite o material que você quer consultar…"
+          className="pl-9"
+        />
+      </div>
+
+      {isLoading && <p className="py-6 text-center text-sm text-muted-foreground">Carregando…</p>}
+
+      {!escolhido && !!busca.trim() && (
+        <div className="max-h-56 space-y-0.5 overflow-y-auto rounded-md border p-1">
+          {achados.map((l) => (
+            <button key={l.item_estoque_id} type="button" onClick={() => setEscolhido(l)}
+                    className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-sm hover:bg-muted">
+              <span className="flex-1 truncate">{l.material}</span>
+              <span className="text-xs text-muted-foreground">{l.almoxarifado}</span>
+              <Badge variant={l.disponivel > 0 ? "secondary" : "outline"} className="text-[10px]">
+                {l.disponivel} disp.
+              </Badge>
+            </button>
+          ))}
+          {achados.length === 0 && (
+            <p className="py-6 text-center text-xs text-muted-foreground">Nada encontrado.</p>
+          )}
+        </div>
+      )}
+
+      {escolhido && (
+        <div className="space-y-3">
+          <div className="rounded-md border p-3">
+            <p className="font-medium">{escolhido.material}</p>
+            <p className="text-xs text-muted-foreground">{escolhido.almoxarifado}</p>
+            <div className="mt-2 flex flex-wrap gap-3 text-sm">
+              <span><strong>{escolhido.disponivel}</strong> disponível</span>
+              <span className="text-muted-foreground">{escolhido.consumido} consumido</span>
+              {escolhido.estoque_minimo > 0 && (
+                <span className={cn(escolhido.disponivel < escolhido.estoque_minimo && "text-destructive")}>
+                  mínimo {escolhido.estoque_minimo}
+                </span>
+              )}
+            </div>
+            {escolhido.tamanhos.length > 0 && (
+              <p className="mt-1 text-xs text-muted-foreground">
+                Tamanhos: {escolhido.tamanhos.join(", ")}
+              </p>
+            )}
+          </div>
+
+          <div>
+            <p className="mb-1 text-xs font-medium text-muted-foreground">Últimas movimentações</p>
+            <LinhaDoTempo supItemId={escolhido.sup_item_id} />
+          </div>
+
+          <Button variant="ghost" size="sm" onClick={() => setEscolhido(null)}>
+            ← Consultar outro material
+          </Button>
+        </div>
+      )}
+    </div>
   );
 }
 
