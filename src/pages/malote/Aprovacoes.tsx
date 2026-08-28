@@ -117,7 +117,14 @@ function GrupoTiles({ titulo, tiles, ativo, onClick }: { titulo: string; tiles: 
   );
 }
 
-export default function Aprovacoes() {
+/**
+ * A MESMA tela em duas portas: /app/malote/aprovacoes e, para a Diretoria,
+ * /app/diretoria/malote-aprovacoes. So o prefixo dos links de detalhe muda —
+ * mesmo padrao do MeusChamados, que ja serve tres modulos com um componente.
+ * Sem isso, quem entrasse pela Diretoria clicava num item e tomava "Acesso
+ * negado": o destino era sempre /app/malote/*, menu de outro modulo.
+ */
+export default function Aprovacoes({ base = "/app/malote" }: { base?: string } = {}) {
   const navigate = useNavigate();
   const { user } = useAuth();
   const { data: itens = [], isLoading } = useItensAprovacoesMalote();
@@ -217,7 +224,7 @@ export default function Aprovacoes() {
 
   function abrirItem(despesa: ItemLinhaMalote["despesa"]) {
     const tela = STATUS_FASE_SOLICITACAO.includes(despesa.status) ? "solicitacao" : "despesa";
-    navigate(tela === "solicitacao" ? `/app/malote/solicitacao/${despesa.id}` : `/app/malote/despesa/${despesa.id}`);
+    navigate(tela === "solicitacao" ? `${base}/solicitacao/${despesa.id}` : `${base}/despesa/${despesa.id}`);
   }
 
   return (

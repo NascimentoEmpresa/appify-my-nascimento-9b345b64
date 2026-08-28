@@ -886,12 +886,42 @@ const sstModule: ModuleDef = {
   ],
 };
 
+// Diretoria — as telas de aprovacao que a diretoria ja usa, ancoradas num
+// modulo proprio. NAO ha componente nem regra de acesso nova: sao as MESMAS
+// telas do Malote e do RH, com outra porta de entrada, para quem e da
+// diretoria nao ter que entrar no modulo dos outros para aprovar. E o mesmo
+// arranjo dos Chamados no modulo do encarregado.
+//
+// Quem enxerga cada item continua 100% em Acesso por Usuario: os menus nascem
+// SEM nenhuma linha de permissao e o sistema nega por padrao (RouteGuard e
+// canSee), entao o modulo comeca invisivel para todo mundo, inclusive para
+// quem ja acessa as telas originais.
+const diretoriaModule: ModuleDef = {
+  id: "diretoria",
+  label: "Diretoria",
+  description: "Aprovacoes da diretoria",
+  icon: Building2,
+  basePath: "/app/diretoria",
+  status: "active",
+  groups: [
+    {
+      label: "Aprovacoes",
+      defaultOpen: true,
+      items: [
+        { label: "Aprovacoes do Malote", to: "/app/diretoria/malote-aprovacoes", icon: CheckCircle2 },
+        { label: "Mudanca de Funcao", to: "/app/diretoria/troca-funcao-escritorio", icon: ArrowLeftRight, notif: "troca_funcao" },
+      ],
+    },
+  ],
+};
+
 const erpModules: ModuleDef[] = [
   licitacoesModule,
   controladoriaOrcModule,
   suprimentosModule,
   financeiroModule,
   maloteModule,
+  diretoriaModule,
   fiscalModule,
   contabilModule,
   rhModule,
