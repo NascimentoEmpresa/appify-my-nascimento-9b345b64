@@ -177,6 +177,7 @@ import FormulariosConfig from "./pages/central-servicos/FormulariosConfig";
 import FormularioPublico from "./pages/publico/FormularioPublico";
 import Denuncia from "./pages/publico/Denuncia";
 import FornecedorCadastro from "./pages/publico/FornecedorCadastro";
+import PedidoConfirmar from "./pages/publico/PedidoConfirmar";
 import FornecedoresPendentes from "./pages/suprimentos/FornecedoresPendentes";
 import DenunciasComiteEtica from "./pages/comite-etica/Denuncias";
 import ConfiguracaoComiteEtica from "./pages/comite-etica/Configuracao";
@@ -273,6 +274,8 @@ const App = () => (
           {/* Cadastro que o próprio fornecedor preenche, sem login. A credencial
               é o token do convite, gerado pelo comprador (SIS-2026-0209). */}
           <Route path="/fornecedor/cadastro/:token" element={<FornecedorCadastro />} />
+          {/* Fornecedor abre pelo link do e-mail, sem login: o token e a credencial. */}
+          <Route path="/pedido/confirmar/:token" element={<PedidoConfirmar />} />
           <Route path="/admissao/enxoval/:token" element={<EnxovalAdmissao />} />
           {/* Canal de Ética — registro e acompanhamento de denúncia, sem login */}
           <Route path="/denuncia" element={<Denuncia />} />

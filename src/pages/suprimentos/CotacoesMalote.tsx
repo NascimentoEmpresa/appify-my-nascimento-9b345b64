@@ -9,7 +9,7 @@ import {
   useSolicitacoesParaCotar, STATUS_SUPRIMENTOS, ROTULO_COTACAO,
   fmtBRL, fmtData, fmtDataHora,
 } from "@/hooks/useMaloteCotacao";
-import { STATUS_BADGE_CLASS, type StatusDespesa } from "@/hooks/useMaloteDespesa";
+import { STATUS_BADGE_CLASS, type StatusDespesa, type MaloteDespesaRow } from "@/hooks/useMaloteDespesa";
 import {
   Hourglass, RefreshCw, XCircle, CheckCircle2, Ban, Search, Inbox, ShieldAlert, FilterX,
 } from "lucide-react";
@@ -187,51 +187,19 @@ export default function CotacoesMalote() {
           </p>
         </div>
       ) : (
-        <div className="overflow-x-auto rounded-lg border">
-          <table className="w-full min-w-[60rem] text-sm">
-            <thead className="bg-muted/50 text-xs uppercase text-muted-foreground">
-              <tr>
-                <th className="px-3 py-2 text-left font-medium">Nº da Despesa</th>
-                <th className="px-3 py-2 text-left font-medium">Nome / Motivo</th>
-                <th className="px-3 py-2 text-left font-medium">Classificação</th>
-                <th className="px-3 py-2 text-right font-medium">Valor</th>
-                <th className="px-3 py-2 text-left font-medium">Pagamento</th>
-                <th className="px-3 py-2 text-left font-medium">Status</th>
-                <th className="px-3 py-2 text-left font-medium">Exceção</th>
-                <th className="px-3 py-2 text-left font-medium">Última atualização</th>
-              </tr>
-            </thead>
-            <tbody>
-              {filtrados.map((i) => (
-                <tr
-                  key={i.id}
-                  onClick={() => navegar(`/app/suprimentos/cotacoes-malote/${i.id}`)}
-                  className="cursor-pointer border-t transition-colors hover:bg-muted/40"
-                >
-                  <td className="px-3 py-2 font-medium">{i.numero}</td>
-                  <td className="max-w-[18rem] px-3 py-2">
-                    <p className="truncate">{i.nome}</p>
-                    {i.motivo && <p className="truncate text-xs text-muted-foreground">{i.motivo}</p>}
-                  </td>
-                  <td className="px-3 py-2">{i.classificacao?.nome ?? "—"}</td>
-                  <td className="px-3 py-2 text-right tabular-nums">{fmtBRL(i.valor_total)}</td>
-                  <td className="px-3 py-2">{fmtData(i.data_pagamento)}</td>
-                  <td className="px-3 py-2">
-                    <span className={cn("inline-block rounded-full border px-2 py-0.5 text-[11px] font-medium",
-                      STATUS_BADGE_CLASS[i.status])}>
-                      {ROTULO_COTACAO[i.status] ?? i.status}
-                    </span>
-                  </td>
-                  <td className="px-3 py-2">
-                    {i.excecao
-                      ? <span className="font-medium text-red-600">Sim</span>
-                      : <span className="text-muted-foreground">Não</span>}
-                  </td>
-                  <td className="px-3 py-2 text-xs text-muted-foreground">{fmtDataHora(i.updated_at)}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+        // Cards em vez de tabela, no mesmo formato do Painel de Manutenções —
+        // pedido do Cassio. A tabela tinha oito colunas e 60rem de largura
+        // mínima: no celular do encarregado virava rolagem horizontal, e as
+        // duas informações que ele procura (status e valor) ficavam fora da
+        // tela.
+        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+          {filtrados.map((i) => (
+            <CardCotacao
+              key={i.id}
+              item={i}
+              onAbrir={() => navegar(`/app/suprimentos/cotacoes-malote/${i.id}`)}
+            />
+          ))}
         </div>
       )}
 
@@ -239,5 +207,61 @@ export default function CotacoesMalote() {
         Mostrando {filtrados.length} de {itens.length} solicitações.
       </p>
     </div>
+  );
+}
+
+/**
+ * Uma solicitação, como card.
+ *
+ * A ordem dos campos não é a da tabela antiga: aqui manda o que se procura de
+ * relance. Status e valor ficam em destaque; classificação e data de pagamento
+ * descem, porque são detalhe de quem já abriu.
+ */
+function CardCotacao({
+  item: i,
+  onAbrir,
+}: {
+  item: MaloteDespesaRow;
+  onAbrir: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onAbrir}
+      className="flex flex-col overflow-hidden rounded-lg border text-left transition-shadow hover:shadow-md"
+    >
+      <div className="flex items-start justify-between gap-2 border-b bg-muted/40 px-3 py-2">
+        <div className="min-w-0">
+          <p className="font-mono text-xs text-muted-foreground">{i.numero}</p>
+          <p className="line-clamp-2 text-sm font-semibold">{i.nome}</p>
+        </div>
+        {i.excecao && (
+          <span className="shrink-0 rounded-full border border-red-400/50 bg-red-50 px-2 py-0.5 text-[10px] font-medium text-red-700 dark:bg-red-950/30 dark:text-red-300">
+            exceção
+          </span>
+        )}
+      </div>
+
+      <div className="flex flex-1 flex-col gap-2 p-3">
+        <span className={cn(
+          "inline-block w-fit rounded-full border px-2 py-0.5 text-[11px] font-medium",
+          STATUS_BADGE_CLASS[i.status],
+        )}>
+          {ROTULO_COTACAO[i.status] ?? i.status}
+        </span>
+
+        <p className="text-lg font-semibold tabular-nums">{fmtBRL(i.valor_total)}</p>
+
+        {i.motivo && (
+          <p className="line-clamp-2 text-xs text-muted-foreground">{i.motivo}</p>
+        )}
+
+        <div className="mt-auto space-y-0.5 pt-2 text-[11px] text-muted-foreground">
+          <p className="line-clamp-1">{i.classificacao?.nome ?? "Sem classificação"}</p>
+          <p>Pagamento: {fmtData(i.data_pagamento)}</p>
+          <p>Atualizado {fmtDataHora(i.updated_at)}</p>
+        </div>
+      </div>
+    </button>
   );
 }

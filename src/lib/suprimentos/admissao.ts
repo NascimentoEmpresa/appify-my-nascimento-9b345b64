@@ -54,15 +54,34 @@ export function montarItensDoEnxoval(funcaoItens: VinculoFuncaoItem[]): ItemPreC
 
 export interface ItemRespostaEnxoval {
   tamanho?: string | null;
+  tamanho_informado?: string | null;
   tamanhos_disponiveis?: string[] | null;
 }
 
-/** Item sem grade de tamanhos não exige escolha e não bloqueia o envio. */
+/**
+ * Todo item precisa de tamanho — muda só a forma de responder.
+ *
+ * COM grade → escolher da lista.
+ * SEM grade → escrever, porque não há o que escolher.
+ *
+ * A regra do item sem grade mudou por pedido do Cassio (ajuste 10 de
+ * 27/08/2026). Antes ele passava em branco, e esse é justamente o caso em que
+ * o tamanho importa e ninguém sabe: bota com numeração do fabricante, luva que
+ * veio sem grade no catálogo, item novo. O buraco só aparecia no dia da
+ * entrega, com o colaborador na frente do almoxarife.
+ *
+ * Escolha e texto não são intercambiáveis: valor da grade casa com o estoque e
+ * vira etiqueta; texto livre é recado para quem separa. Por isso item COM grade
+ * continua exigindo a escolha — ali o texto é observação opcional — e a RPC
+ * pública `sup_adm_enxoval_responder` também exige, então aceitar texto no
+ * lugar da escolha deixaria a tela enviar e o banco recusar depois.
+ */
 export function enxovalCompleto(itens: ItemRespostaEnxoval[]): boolean {
-  return itens.every((item) => {
-    if (!item.tamanhos_disponiveis?.length) return true;
-    return !!item.tamanho?.trim();
-  });
+  return itens.every((item) =>
+    item.tamanhos_disponiveis?.length
+      ? !!item.tamanho?.trim()
+      : !!item.tamanho_informado?.trim(),
+  );
 }
 
 export type MotivoTokenInvalido = "inexistente" | "ja_usado" | "expirado";

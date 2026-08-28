@@ -18,10 +18,15 @@ import {
   type CadastroPendente,
 } from "@/hooks/useFornecedorCadastro";
 import {
-  Link2, Copy, Inbox, CheckCircle2, XCircle, Clock, AlertTriangle, Building2, Loader2,
+  Link2, Copy, Inbox, CheckCircle2, XCircle, Clock, AlertTriangle, Building2, Loader2, PencilLine,
 } from "lucide-react";
+import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
+
+// RPC nova, ainda fora do types.ts gerado.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const sb = supabase as any;
 
 /**
  * Cadastros de Fornecedor — a fila do que veio de fora (SIS-2026-0209).
@@ -74,6 +79,32 @@ export default function FornecedoresPendentes() {
     setUltimoLink(url);
     setDestinatario(""); setObservacao("");
     await copiar(url);
+  };
+
+  /**
+   * Cadastro de e-commerce: quem preenche somos nós.
+   *
+   * Ninguém na Amazon vai receber um link nosso e preencher razão social e
+   * dados bancários — mas a compra acontece e o fornecedor precisa existir.
+   *
+   * Reusa o MESMO convite, o MESMO formulário e a MESMA aprovação. A única
+   * diferença é a marca de origem, para quem aprova saber se o dado veio do
+   * fornecedor ou foi transcrito por nós a partir do site dele. Um "cadastro
+   * rápido" que gravasse direto em `fornecedor` seria mais curto e criaria
+   * dois caminhos para o mesmo dado, um validado e outro não.
+   */
+  const preencherEuMesmo = async () => {
+    const c = await gerar.mutateAsync({
+      destinatario: destinatario.trim() || undefined,
+      observacao: observacao.trim() || undefined,
+    });
+    const { error } = await sb.rpc("sup_forn_marcar_convite_interno", { p_convite_id: c.id });
+    if (error) { toast.error(error.message); return; }
+    setConvidando(false);
+    setDestinatario(""); setObservacao("");
+    // Aba nova: o formulário é a rota pública, e trocar de página aqui faria
+    // a pessoa perder a fila de aprovação que ela estava olhando.
+    window.open(linkDoConvite(c.token), "_blank", "noopener,noreferrer");
   };
 
   return (
@@ -175,8 +206,17 @@ export default function FornecedoresPendentes() {
               </div>
             )}
           </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => { setConvidando(false); setUltimoLink(null); }}>Fechar</Button>
+          <DialogFooter className="flex-col gap-2 sm:flex-row">
+            <p className="mr-auto max-w-sm text-left text-xs text-muted-foreground">
+              É uma compra em site como Shopee, Amazon ou AliExpress? Não há a quem mandar o
+              link — use <strong>Preencher eu mesmo</strong>.
+            </p>
+            <Button variant="outline" onClick={() => { setConvidando(false); setUltimoLink(null); }}>
+              Fechar
+            </Button>
+            <Button variant="outline" onClick={preencherEuMesmo} disabled={gerar.isPending}>
+              <PencilLine className="mr-2 h-4 w-4" /> Preencher eu mesmo
+            </Button>
             <Button onClick={gerarLink} disabled={gerar.isPending}>
               {gerar.isPending ? "Gerando…" : ultimoLink ? "Gerar outro" : "Gerar e copiar"}
             </Button>
@@ -210,9 +250,18 @@ function CardPendente({ p, onAbrir }: { p: CadastroPendente; onAbrir: () => void
             <p className="truncate font-medium">{p.razao_social}</p>
             <p className="font-mono text-xs text-muted-foreground">{fmtDoc(p.cnpj_cpf)}</p>
           </div>
-          <Badge variant="outline" className={cn("shrink-0 gap-1", e.classe)}>
-            <Icone className="h-3 w-3" /> {e.rotulo}
-          </Badge>
+          <div className="flex shrink-0 flex-col items-end gap-1">
+            <Badge variant="outline" className={cn("gap-1", e.classe)}>
+              <Icone className="h-3 w-3" /> {e.rotulo}
+            </Badge>
+            {/* Quem aprova precisa saber a origem: dado que o proprio
+                fornecedor preencheu tem outro peso que um transcrito por nos. */}
+            {p.interno && (
+              <Badge variant="secondary" className="gap-1 text-[10px]">
+                <PencilLine className="h-3 w-3" /> preenchido internamente
+              </Badge>
+            )}
+          </div>
         </div>
         <p className="text-xs text-muted-foreground">
           Enviado em {fmtDataHora(p.created_at)}

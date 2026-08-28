@@ -16,6 +16,7 @@ interface ItemEnxovalPublico {
   tipo_item: string | null;
   tamanhos_disponiveis: string[];
   tamanho?: string | null;
+  tamanho_informado?: string | null;
 }
 
 interface EnxovalPublico {
@@ -59,6 +60,7 @@ export default function EnxovalAdmissao() {
           ...item,
           tamanhos_disponiveis: item.tamanhos_disponiveis ?? [],
           tamanho: null,
+          tamanho_informado: null,
         })),
       });
       setEstado("formulario");
@@ -73,9 +75,16 @@ export default function EnxovalAdmissao() {
     } : atual);
   };
 
+  const escreverTamanho = (id: string, tamanho_informado: string) => {
+    setDados((atual) => atual ? {
+      ...atual,
+      itens: atual.itens.map((item) => item.id === id ? { ...item, tamanho_informado } : item),
+    } : atual);
+  };
+
   const enviar = async () => {
     if (!dados || !enxovalCompleto(dados.itens)) {
-      setErro("Escolha o tamanho de todos os itens que possuem grade disponível.");
+      setErro("Informe o tamanho de todos os itens: escolha na lista, ou escreva quando o item não tiver lista.");
       return;
     }
     if (!foto) {
@@ -96,6 +105,24 @@ export default function EnxovalAdmissao() {
       setErro("Não foi possível enviar a foto. Tente novamente.");
       setEnviando(false);
       return;
+    }
+
+    // A ordem importa: o texto vai ANTES. `sup_adm_enxoval_responder` carimba
+    // `preenchido_em`, e `sup_adm_enxoval_tamanhos_escritos` recusa enxoval já
+    // preenchido — invertido, o tamanho escrito se perderia em silêncio.
+    const escritos = dados.itens
+      .filter((item) => item.tamanho_informado?.trim())
+      .map((item) => ({ id: item.id, tamanho_informado: item.tamanho_informado }));
+    if (escritos.length) {
+      const { error: erroEscrito } = await sb.rpc("sup_adm_enxoval_tamanhos_escritos", {
+        p_token: token,
+        p_itens: escritos,
+      });
+      if (erroEscrito) {
+        setEnviando(false);
+        setErro(erroEscrito.message || "Não foi possível enviar os tamanhos.");
+        return;
+      }
     }
 
     const { error: erroResposta } = await sb.rpc("sup_adm_enxoval_responder", {
@@ -148,7 +175,7 @@ export default function EnxovalAdmissao() {
             <Shirt className="h-5 w-5 text-primary" />
             <div>
               <h2 className="text-sm font-semibold">Uniformes e EPIs</h2>
-              <p className="text-xs text-muted-foreground">Escolha o tamanho de cada item.</p>
+              <p className="text-xs text-muted-foreground">Informe o tamanho de cada item.</p>
             </div>
           </div>
           <div className="space-y-3">
@@ -157,18 +184,47 @@ export default function EnxovalAdmissao() {
                 <Label htmlFor={`tamanho-${item.id}`} className="text-sm font-medium">{item.nome_item}</Label>
                 <p className="mb-2 text-xs capitalize text-muted-foreground">{item.tipo_item || "material"}</p>
                 {item.tamanhos_disponiveis.length ? (
-                  <select id={`tamanho-${item.id}`} value={item.tamanho ?? ""}
-                    onChange={(e) => escolherTamanho(item.id, e.target.value)}
-                    className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm">
-                    <option value="">Selecione o tamanho</option>
-                    {item.tamanhos_disponiveis.map((tamanho) => (
-                      <option key={tamanho} value={tamanho}>{tamanho}</option>
-                    ))}
-                  </select>
+                  <>
+                    <select id={`tamanho-${item.id}`} value={item.tamanho ?? ""}
+                      onChange={(e) => escolherTamanho(item.id, e.target.value)}
+                      className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm">
+                      <option value="">Selecione o tamanho</option>
+                      {item.tamanhos_disponiveis.map((tamanho) => (
+                        <option key={tamanho} value={tamanho}>{tamanho}</option>
+                      ))}
+                    </select>
+                    {/* Opcional aqui: a grade já resolve o caso normal, e este
+                        campo existe para quem calça um número que a lista não
+                        tem ou precisa avisar algo (manga longa, cintura). */}
+                    <input
+                      value={item.tamanho_informado ?? ""}
+                      onChange={(e) => escreverTamanho(item.id, e.target.value)}
+                      maxLength={120}
+                      placeholder="Alguma observação sobre o tamanho? (opcional)"
+                      className="mt-2 h-9 w-full rounded-md border border-input bg-background px-3 text-sm"
+                    />
+                  </>
                 ) : (
-                  <p className="rounded-md bg-muted px-3 py-2 text-sm text-muted-foreground">
-                    Este item não exige escolha de tamanho.
-                  </p>
+                  // Sem grade cadastrada, escrever é OBRIGATÓRIO.
+                  //
+                  // Antes aparecia "este item não exige escolha de tamanho" e
+                  // seguia em branco — e esse é justamente o caso em que o
+                  // tamanho importa e ninguém sabe: bota com numeração do
+                  // fabricante, item novo sem grade. O problema só aparecia no
+                  // dia da entrega.
+                  <>
+                    <input
+                      id={`tamanho-${item.id}`}
+                      value={item.tamanho_informado ?? ""}
+                      onChange={(e) => escreverTamanho(item.id, e.target.value)}
+                      maxLength={120}
+                      placeholder="Escreva o seu tamanho (ex.: 42, GG, manga longa)"
+                      className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm"
+                    />
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      Este item não tem grade cadastrada — escreva o tamanho que você usa.
+                    </p>
+                  </>
                 )}
               </div>
             ))}
