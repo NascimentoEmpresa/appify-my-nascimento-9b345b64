@@ -337,6 +337,7 @@ export default function Aprovacoes() {
                 <TableRow>
                   <TableHead>Tipo</TableHead>
                   <TableHead>Nº</TableHead>
+                  <TableHead>Parcela</TableHead>
                   <TableHead>Nome / Motivo</TableHead>
                   <TableHead>Classificação</TableHead>
                   <TableHead>Empresa / Contrato</TableHead>
@@ -351,12 +352,12 @@ export default function Aprovacoes() {
               <TableBody>
                 {isLoading && (
                   <TableRow>
-                    <TableCell colSpan={11} className="text-center text-muted-foreground py-10">Carregando...</TableCell>
+                    <TableCell colSpan={12} className="text-center text-muted-foreground py-10">Carregando...</TableCell>
                   </TableRow>
                 )}
                 {!isLoading && visiveis.length === 0 && (
                   <TableRow>
-                    <TableCell colSpan={11} className="text-center text-muted-foreground py-10">
+                    <TableCell colSpan={12} className="text-center text-muted-foreground py-10">
                       <div className="flex flex-col items-center gap-2">
                         <CheckCircle2 className="h-8 w-8 text-muted-foreground/50" />
                         Nenhum item encontrado com os filtros atuais.
@@ -426,9 +427,9 @@ function LinhaItem({
       onClick={onAbrir}
     >
       <TableCell className="text-sm">{isSolicitacao ? "Solicitação" : "Despesa"}</TableCell>
-      <TableCell className="font-mono text-xs">
-        {despesa.numero}
-        {parcela && <span className="text-muted-foreground"> ({parcela.numero_parcela}/{despesa.numero_parcelas})</span>}
+      <TableCell className="font-mono text-xs">{despesa.numero}</TableCell>
+      <TableCell className="text-sm">
+        {parcela ? `${parcela.numero_parcela}/${despesa.numero_parcelas}` : <span className="text-muted-foreground">—</span>}
       </TableCell>
       <TableCell className="text-sm">
         <p>{despesa.nome}</p>

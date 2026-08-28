@@ -260,6 +260,7 @@ export default function PagamentoMalote() {
               <TableHeader>
                 <TableRow>
                   <TableHead>Nº ID</TableHead>
+                  <TableHead>Parcela</TableHead>
                   <TableHead>Data de Pagamento</TableHead>
                   <TableHead>Nome / Histórico</TableHead>
                   <TableHead>Classificação</TableHead>
@@ -273,12 +274,12 @@ export default function PagamentoMalote() {
               <TableBody>
                 {isLoading && (
                   <TableRow>
-                    <TableCell colSpan={9} className="text-center text-muted-foreground py-10">Carregando...</TableCell>
+                    <TableCell colSpan={10} className="text-center text-muted-foreground py-10">Carregando...</TableCell>
                   </TableRow>
                 )}
                 {!isLoading && visiveis.length === 0 && (
                   <TableRow>
-                    <TableCell colSpan={9} className="text-center text-muted-foreground py-10">
+                    <TableCell colSpan={10} className="text-center text-muted-foreground py-10">
                       <div className="flex flex-col items-center gap-2">
                         <CheckCircle2 className="h-8 w-8 text-muted-foreground/50" />
                         Nenhum item encontrado com os filtros atuais.
@@ -322,9 +323,9 @@ function LinhaItem({ item, onAbrir }: { item: ItemLinhaMalote; onAbrir: () => vo
   const dataPagamento = parcela ? parcela.data_pagamento_real ?? parcela.data_vencimento : despesa.data_pagamento;
   return (
     <TableRow className="cursor-pointer hover:bg-muted/50" onClick={onAbrir}>
-      <TableCell className="font-mono text-xs">
-        {despesa.numero}
-        {parcela && <span className="text-muted-foreground"> ({parcela.numero_parcela}/{despesa.numero_parcelas})</span>}
+      <TableCell className="font-mono text-xs">{despesa.numero}</TableCell>
+      <TableCell className="text-sm">
+        {parcela ? `${parcela.numero_parcela}/${despesa.numero_parcelas}` : <span className="text-muted-foreground">—</span>}
       </TableCell>
       <TableCell className="text-sm">{dataPagamento ? new Date(dataPagamento + "T00:00:00").toLocaleDateString("pt-BR") : "—"}</TableCell>
       <TableCell className="text-sm">

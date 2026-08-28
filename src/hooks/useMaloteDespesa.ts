@@ -1113,7 +1113,17 @@ export async function uploadAnexoMalote(file: File, despesaFolderId: string): Pr
   return path;
 }
 
-/** Gera N parcelas iguais (a última absorve o resto de arredondamento). */
+/**
+ * Gera N parcelas iguais (a última absorve o resto de arredondamento).
+ *
+ * SIS-2026-0259 (Iury): a parcela 1 vence exatamente na data de pagamento
+ * escolhida no lançamento — não no dia do desconto. Só as parcelas
+ * seguintes (2 em diante) caem no dia do desconto dos meses seguintes.
+ * Ex.: data de pagamento 28/08, dia do desconto 8 → parcela 1 = 28/08,
+ * parcela 2 = 08/09, parcela 3 = 08/10 etc. Antes disso, TODAS as parcelas
+ * (inclusive a 1ª) eram forçadas pro dia do desconto, ignorando a data de
+ * pagamento escolhida quando ela não caía nesse dia.
+ */
 export function gerarParcelas(valorTotal: number, numeroParcelas: number, dataPagamento: string, diaDesconto: number | null): NovaParcela[] {
   if (numeroParcelas <= 0) return [];
   const valorParcela = Math.floor((valorTotal / numeroParcelas) * 100) / 100;
@@ -1123,11 +1133,16 @@ export function gerarParcelas(valorTotal: number, numeroParcelas: number, dataPa
   const base = new Date(dataPagamento + "T00:00:00");
   const parcelas: NovaParcela[] = [];
   for (let i = 0; i < numeroParcelas; i++) {
-    const venc = new Date(base.getFullYear(), base.getMonth() + i, diaDesconto ?? base.getDate());
+    // Parcela 1: exatamente a data de pagamento escolhida (string original,
+    // sem passar por new Date/toISOString — evita qualquer risco de
+    // deslocamento de fuso). Parcelas seguintes: dia do desconto no mês
+    // correspondente.
+    const dataVencimento =
+      i === 0 ? dataPagamento : new Date(base.getFullYear(), base.getMonth() + i, diaDesconto ?? base.getDate()).toISOString().slice(0, 10);
     parcelas.push({
       numero_parcela: i + 1,
       valor: i === numeroParcelas - 1 ? ultimaParcela : valorParcela,
-      data_vencimento: venc.toISOString().slice(0, 10),
+      data_vencimento: dataVencimento,
     });
   }
   return parcelas;
