@@ -518,6 +518,13 @@ const encarregadosModule: ModuleDef = {
       ],
     },
     {
+      label: "Operacional",
+      defaultOpen: true,
+      items: [
+        { label: "Controle de Diárias", to: "/app/operacional/diarias", icon: CalendarCheck2 },
+      ],
+    },
+    {
       label: "Recrutamento e Seleção",
       defaultOpen: true,
       items: [

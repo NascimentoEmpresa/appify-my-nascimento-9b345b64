@@ -33,7 +33,7 @@ import { cn } from "@/lib/utils";
 import { useToast } from "@/hooks/use-toast";
 import {
   AnexoDiaria,
-  CONTRATOS,
+  CONTRATOS_DISPONIVEIS,
   LinhaDiaria,
   SolicitacaoDiaria,
   TURNOS,
@@ -315,7 +315,7 @@ export function SolicitacaoDiariaModal({
     setTentouAprovar(false);
   }
 
-  const postosDoContrato = CONTRATOS.find((c) => c.id === contratoId)?.postos ?? [];
+  const postosDoContrato = CONTRATOS_DISPONIVEIS.find((c) => c.id === contratoId)?.postos ?? [];
 
   const conflitos = useMemo(
     () =>
@@ -460,7 +460,7 @@ export function SolicitacaoDiariaModal({
                         <SelectValue placeholder="Selecione um contrato" />
                       </SelectTrigger>
                       <SelectContent>
-                        {CONTRATOS.map((c) => (
+                        {CONTRATOS_DISPONIVEIS.map((c) => (
                           <SelectItem key={c.id} value={c.id}>
                             {c.numero} - {c.descricao}
                           </SelectItem>
