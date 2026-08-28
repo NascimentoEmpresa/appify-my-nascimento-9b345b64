@@ -316,6 +316,7 @@ export default function MeusItens() {
               <TableRow>
                 <TableHead>Tipo</TableHead>
                 <TableHead>Nº / ID</TableHead>
+                <TableHead>Parcela</TableHead>
                 <TableHead>Data de pagamento</TableHead>
                 <TableHead>Classificação</TableHead>
                 <TableHead>Nome da Despesa</TableHead>
@@ -331,14 +332,14 @@ export default function MeusItens() {
             <TableBody>
               {isLoading && (
                 <TableRow>
-                  <TableCell colSpan={12} className="text-center text-muted-foreground py-8">
+                  <TableCell colSpan={13} className="text-center text-muted-foreground py-8">
                     Carregando...
                   </TableCell>
                 </TableRow>
               )}
               {!isLoading && filtrados.length === 0 && (
                 <TableRow>
-                  <TableCell colSpan={12} className="text-center text-muted-foreground py-8">
+                  <TableCell colSpan={13} className="text-center text-muted-foreground py-8">
                     Nenhum item encontrado para os filtros selecionados.
                   </TableCell>
                 </TableRow>
@@ -363,9 +364,9 @@ export default function MeusItens() {
                         <ListChecks className="h-3.5 w-3.5 text-muted-foreground" /> {tipoLabelDe(despesa)}
                       </span>
                     </TableCell>
-                    <TableCell className="font-mono text-xs">
-                      {despesa.numero}
-                      {parcela && <span className="text-muted-foreground"> ({parcela.numero_parcela}/{despesa.numero_parcelas})</span>}
+                    <TableCell className="font-mono text-xs">{despesa.numero}</TableCell>
+                    <TableCell className="text-sm">
+                      {parcela ? `${parcela.numero_parcela}/${despesa.numero_parcelas}` : <span className="text-muted-foreground">—</span>}
                     </TableCell>
                     <TableCell>{dataPagamento ? new Date(dataPagamento + "T00:00:00").toLocaleDateString("pt-BR") : "—"}</TableCell>
                     <TableCell>{despesa.classificacao?.nome ?? "—"}</TableCell>
