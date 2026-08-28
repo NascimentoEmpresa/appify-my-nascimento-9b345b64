@@ -440,6 +440,15 @@ const App = () => (
             <Route path="malote/orcamento-contratos" element={<MaloteOrcamentoContratos />} />
             <Route path="malote/orcamento-geral" element={<MaloteOrcamentoGeral />} />
             <Route path="malote/detalhe-orcamento" element={<MaloteDetalheOrcamento />} />
+            {/* Diretoria — as MESMAS telas de aprovacao, ancoradas no modulo
+                da diretoria. Nao ha componente novo: e o mesmo padrao dos
+                Chamados do encarregado, so que aqui as telas de detalhe do
+                malote tambem entram, senao aprovar leva a "Acesso negado"
+                (o item da lista abre a despesa, que e menu de outro modulo). */}
+            <Route path="diretoria/malote-aprovacoes" element={<MaloteAprovacoes base="/app/diretoria" />} />
+            <Route path="diretoria/despesa/:id" element={<MaloteDespesaVisualizar />} />
+            <Route path="diretoria/solicitacao/:id" element={<MaloteSolicitacaoVisualizar />} />
+            <Route path="diretoria/troca-funcao-escritorio" element={<RhTrocaFuncaoEscritorio />} />
             <Route path="orcamento" element={<Orcamento />} />
             {/* Suprimentos */}
             {/* Mais específica primeiro: o React Router casa na ordem declarada,
