@@ -64,11 +64,27 @@ describe("enxovalCompleto", () => {
     ])).toBe(true);
   });
 
-  it("não trava por item sem tamanho disponível no catálogo", () => {
+  // A regra virou o contrário por pedido do Cassio (ajuste 10, 27/08/2026):
+  // item sem grade passava em branco, e é justamente onde o tamanho importa e
+  // ninguém sabe. Agora o colaborador escreve.
+  it("exige o tamanho escrito quando o item não tem grade", () => {
     expect(enxovalCompleto([
       { tamanhos_disponiveis: [], tamanho: null },
       { tamanhos_disponiveis: null, tamanho: null },
+    ])).toBe(false);
+    expect(enxovalCompleto([
+      { tamanhos_disponiveis: [], tamanho_informado: "42" },
+      { tamanhos_disponiveis: null, tamanho_informado: "manga longa" },
     ])).toBe(true);
+  });
+
+  it("não aceita texto em branco nem texto no lugar da escolha da grade", () => {
+    expect(enxovalCompleto([{ tamanhos_disponiveis: [], tamanho_informado: "   " }])).toBe(false);
+    // Com grade, escrever não substitui escolher: a RPC pública exige o valor
+    // da grade, então deixar passar aqui daria erro do banco no envio.
+    expect(enxovalCompleto([
+      { tamanhos_disponiveis: ["P", "M"], tamanho: null, tamanho_informado: "M mesmo" },
+    ])).toBe(false);
   });
 });
 
