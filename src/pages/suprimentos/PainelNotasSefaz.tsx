@@ -4,10 +4,11 @@ import { supabase } from "@/integrations/supabase/client";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { lerNfeXml } from "@/lib/suprimentos/nfeXml";
-import { CloudDownload, Info, Eye, Copy } from "lucide-react";
+import { CloudDownload, Info, Eye, Copy, ScanLine } from "lucide-react";
 import { toast } from "sonner";
 
 // Tabelas novas, ainda fora do types.ts gerado.
@@ -71,8 +72,21 @@ function fmtCnpj(v: string | null) {
 const fmtQtd = (n: number) =>
   n.toLocaleString("pt-BR", { minimumFractionDigits: 0, maximumFractionDigits: 4 });
 
+/**
+ * Deixa só os dígitos e corta em 44.
+ *
+ * O leitor de código de barras do estoque manda a chave da NF-e como uma
+ * rajada de dígitos seguida de Enter, e o DANFE às vezes traz a chave com
+ * espaços a cada quatro números. Normalizar aqui faz o campo aceitar o bipe, o
+ * texto colado do portal e a digitação manual sem o usuário pensar em formato.
+ */
+function soChave(texto: string): string {
+  return texto.replace(/\D/g, "").slice(0, 44);
+}
+
 export function PainelNotasSefaz() {
   const [aberta, setAberta] = useState<DocumentoSefaz | null>(null);
+  const [busca, setBusca] = useState("");
 
   const documentos = useQuery({
     queryKey: ["nfe_dist_documento"],
@@ -106,8 +120,24 @@ export function PainelNotasSefaz() {
         porChave.set(k, d);
       }
     }
-    return [...porChave.values()].sort((a, b) => Number(b.nsu) - Number(a.nsu));
-  }, [documentos.data]);
+    const lista = [...porChave.values()].sort((a, b) => Number(b.nsu) - Number(a.nsu));
+
+    const termo = busca.trim();
+    if (!termo) return lista;
+
+    // Se o que foi digitado (ou bipado) tem cara de chave, compara só dígitos.
+    // Senão, procura no nome e no CNPJ do emitente.
+    const digitos = soChave(termo);
+    if (digitos.length >= 6) {
+      return lista.filter(
+        (d) =>
+          (d.chave ?? "").includes(digitos) ||
+          (d.emitente_cnpj ?? "").replace(/\D/g, "").includes(digitos),
+      );
+    }
+    const t = termo.toLowerCase();
+    return lista.filter((d) => (d.emitente_nome ?? "").toLowerCase().includes(t));
+  }, [documentos.data, busca]);
 
   const semItens = notas.filter((d) => d.tipo === "resumo").length;
   const e = estado.data;
@@ -142,6 +172,20 @@ export function PainelNotasSefaz() {
           </div>
         </CardContent>
       </Card>
+
+      {/* O leitor do estoque manda a chave e um Enter. Como a busca já filtra a
+          cada tecla, o Enter não precisa fazer nada — mas o form precisa não
+          recarregar a página, daí o preventDefault. */}
+      <form onSubmit={(ev) => ev.preventDefault()} className="relative">
+        <ScanLine className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+        <Input
+          className="pl-9"
+          placeholder="Bipe o código de barras da NF, ou digite a chave, o CNPJ ou o nome do fornecedor"
+          value={busca}
+          onChange={(ev) => setBusca(ev.target.value)}
+          autoComplete="off"
+        />
+      </form>
 
       {e?.bloqueado_ate && new Date(e.bloqueado_ate) > new Date() && (
         <div className="flex items-start gap-2 rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-100">
@@ -211,8 +255,9 @@ export function PainelNotasSefaz() {
               {!documentos.isLoading && notas.length === 0 && (
                 <TableRow>
                   <TableCell colSpan={6} className="py-8 text-center text-sm text-muted-foreground">
-                    Nenhuma nota recebida ainda. A busca automática roda pelo worker — confira se
-                    ele está ligado.
+                    {busca.trim()
+                      ? "Nenhuma nota encontrada para essa busca."
+                      : "Nenhuma nota recebida ainda. A busca automática roda pelo worker — confira se ele está ligado."}
                   </TableCell>
                 </TableRow>
               )}

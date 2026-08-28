@@ -11,6 +11,7 @@ import type { SituacaoCa } from "@/lib/sst/ca";
 import { cn } from "@/lib/utils";
 import { AlertTriangle, BadgeCheck, CircleHelp, ShieldAlert } from "lucide-react";
 import { PainelCatalogoCa } from "./PainelCatalogoCa";
+import { PainelCaBloqueado } from "./PainelCaBloqueado";
 
 // As RPCs são novas e ainda não existem em types.ts (regra R8 do projeto).
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -144,6 +145,10 @@ export default function ControleCa() {
           vale a lista oficial que os alimenta. Ver o site do Ministério recusa
           download automático em PainelCatalogoCa. */}
       <PainelCatalogoCa />
+
+      {/* Logo abaixo do catalogo de proposito: o bloqueio depende da lista
+          oficial estar carregada, entao a ordem na tela conta a dependencia. */}
+      <PainelCaBloqueado />
 
       <Tabs value={aba} onValueChange={setAba}>
         <TabsList>
