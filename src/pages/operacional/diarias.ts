@@ -18,14 +18,6 @@ export const STATUS_SOLICITACAO: Record<StatusSolicitacao, { label: string; cls:
   reprovada: { label: "Reprovada", cls: "border-destructive/40 bg-destructive/10 text-destructive" },
 };
 
-export interface ContratoOpcao {
-  id: string;
-  numero: string;
-  descricao: string;
-  empresa: string;
-  postos: string[];
-}
-
 export interface LinhaDiaria {
   id: string;
   data: string; // yyyy-mm-dd
@@ -40,13 +32,25 @@ export interface AnexoDiaria {
   tipo: string; // PDF, JPG, ...
   tamanho: string; // já formatado
   enviadoEm: string;
+  categoria: "comprovante_ponto" | "documento";
+  storagePath: string;
 }
 
 export interface SolicitacaoDiaria {
-  id: string; // SD-2025-000123
+  /** Chave real no banco — é ela que as mutações usam. */
+  uuid: string;
+  id: string; // número legível gerado no banco: SD-2026-000123
   criadoEm: string; // 18/05/2025 às 09:24
   status: StatusSolicitacao;
   contratoId: string;
+  /**
+   * Nome e cliente do contrato ficam GRAVADOS na leitura, não resolvidos por
+   * uma tabela de apoio no front: a lista mostra centenas de linhas e ir
+   * buscar o contrato de cada uma seria uma consulta por linha.
+   */
+  contratoNome: string;
+  contratoCliente: string;
+  contratoEmpresa: string;
   posto: string;
   faltanteNome: string;
   faltanteCpf: string;
@@ -57,6 +61,7 @@ export interface SolicitacaoDiaria {
   comprovantePonto: AnexoDiaria[];
   documentos: AnexoDiaria[];
   observacoes: string;
+  solicitanteId: string;
   solicitante: string;
   // Preenchidos na aprovação (seção 7 — pré-visualização do Malote).
   maloteMotivo?: string;
@@ -191,14 +196,6 @@ export const textoConflito = (c: ConflitoLinha) =>
       ? "Duplicidade no faltante"
       : "Duplicidade no diarista";
 
-export const CONTRATOS_DISPONIVEIS: ContratoOpcao[] = [];
-
-export const rotuloContrato = (id: string) => {
-  const c = CONTRATOS_DISPONIVEIS.find((x) => x.id === id);
-  return c ? `${c.numero} - ${c.descricao}` : id;
-};
-
-export const empresaDoContrato = (id: string) =>
-  CONTRATOS_DISPONIVEIS.find((c) => c.id === id)?.empresa ?? "—";
-
-export const POSTOS_DISPONIVEIS: string[] = [];
+// Contratos, postos e o cadastro de faltante/diarista NÃO moram aqui: vêm do
+// Supabase por src/hooks/useDiarias.ts. Este arquivo é só a regra da tela
+// (turno, CPF, duplicidade, formatação), que é o que os testes cobrem.
