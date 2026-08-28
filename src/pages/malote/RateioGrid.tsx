@@ -8,7 +8,7 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { SearchableSelect } from "@/components/ui/searchable-select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { CheckCircle2, Eye, Pencil, Plus, Trash2, XCircle } from "lucide-react";
+import { CheckCircle2, ChevronLeft, ChevronRight, Eye, Pencil, Plus, Trash2, XCircle } from "lucide-react";
 import { toast } from "sonner";
 import { RateioLinha, useJustificarRateioLinha } from "@/hooks/useMaloteDespesa";
 import { useEmpresasGrupo, useContratosAtivos, useFornecedoresAtivos, useIntegrantes } from "@/hooks/useMaloteDespesa";
@@ -67,21 +67,39 @@ interface RateioGridProps {
   despesaId?: string;
   classificacaoId?: string | null;
   limiteJustificativaPct?: number | null;
-  resolverOrcado?: (classificacaoId: string | null | undefined, contratoId: string | null | undefined) => number | null;
+  // SIS-2026-0261: ganhou o 3º parâmetro (anoMes) pra resolver o Orçado de
+  // QUALQUER mês, não só o da despesa — é o que permite pré-visualizar o
+  // impacto de outras parcelas sem instanciar um hook por mês (mesmo
+  // resolver multi-mês usado na escalada de alçada de DespesaVisualizar.tsx,
+  // ver useOrcadoClassificacaoMultiMes).
+  resolverOrcado?: (classificacaoId: string | null | undefined, contratoId: string | null | undefined, anoMes: string) => number | null;
   anoMesDespesa?: string;
   // SIS-2026-0223 (complemento): fração da parcela 1 sobre o valor total —
   // despesa parcelada consome o orçamento do mês pelo valor da parcela 1,
   // não pelo valor cheio da linha. Sem parcelamento, vem 1 (não escala).
+  // SIS-2026-0261: só usado como fallback quando `parcelas` não é passado
+  // (ex.: telas que ainda não têm a lista de parcelas geradas) — com
+  // `parcelas`, o solicitante navega e cada parcela calcula o fator dela.
   fatorParcela1?: number;
+  // SIS-2026-0261 (Iury, achado real): o solicitante via o impacto no
+  // orçamento só da parcela 1 — pra ver a 3ª parcela estourando (ou
+  // qualquer outra), tinha que aprovar a despesa primeiro e navegar pelo
+  // RateioParceladoTable (read-only, só depois de aprovada). Passando as
+  // parcelas já geradas (mesmo formato de gerarParcelas), a grade ganha um
+  // seletor de parcela pra pré-visualizar o Orçado/Utilizado de QUALQUER
+  // mês antes de enviar pra aprovação — mesma ideia da navegação por
+  // parcela do RateioParceladoTable, só que aqui ainda editável.
+  parcelas?: { numero_parcela: number; data_vencimento: string; valor: number }[];
   // SIS-2026-0223 (complemento 4, pedido do usuário): "Valor (R$)" nesta
   // grade é sempre o total da despesa (é o que fica gravado em
   // malote_despesa_rateio_linha.valor e alimenta v_malote_utilizado_orcamento
   // como fração de CADA parcela — mudar esse significado quebraria a view).
   // Pra despesa parcelada, o Orçado/Utilizado ao lado é escalado só pra
-  // parcela 1 (fatorParcela1) — sem uma coluna própria mostrando esse
-  // valor, fica ambíguo comparar "Valor: R$600" com "Utilizado: R$800"
-  // (que na real usa só R$200 da parcela 1). Esta coluna só existe pra
-  // deixar isso explícito, não é editável nem gravada em lugar nenhum.
+  // parcela selecionada (fatorParcela1/parcela navegada) — sem uma coluna
+  // própria mostrando esse valor, fica ambíguo comparar "Valor: R$600" com
+  // "Utilizado: R$800" (que na real usa só R$200 da parcela). Esta coluna
+  // só existe pra deixar isso explícito, não é editável nem gravada em
+  // lugar nenhum.
   mostrarValorParcela1?: boolean;
   podeJustificarComoAprovador?: boolean;
   // SIS-2026-0212 (complemento, pedido do Iury): despesa administrativa
@@ -112,6 +130,7 @@ export function RateioGrid({
   resolverOrcado,
   anoMesDespesa,
   fatorParcela1 = 1,
+  parcelas,
   mostrarValorParcela1,
   podeJustificarComoAprovador,
   souSolicitante,
@@ -131,21 +150,33 @@ export function RateioGrid({
 
   const mostrarColunasOrcamento = !!resolverOrcado;
 
+  // SIS-2026-0261: índice da parcela sendo pré-visualizada (0 = parcela 1,
+  // o padrão de sempre). Só existe navegação quando `parcelas` tem mais de
+  // 1 item — sem parcelamento (ou sem a lista passada), cai no
+  // comportamento de sempre (mês/fator da despesa inteira).
+  const [parcelaPreviewIndex, setParcelaPreviewIndex] = useState(0);
+  const indicePreviewSeguro = parcelas && parcelas.length > 0 ? Math.min(parcelaPreviewIndex, parcelas.length - 1) : 0;
+  const parcelaSelecionada = parcelas && parcelas.length > 0 ? parcelas[indicePreviewSeguro] : undefined;
+  const mesSelecionado = parcelaSelecionada ? parcelaSelecionada.data_vencimento.slice(0, 7) : anoMesDespesa;
+  const fatorSelecionado = parcelaSelecionada && valorTotal ? parcelaSelecionada.valor / valorTotal : fatorParcela1;
+
   // Mesmo cálculo de "utilizado antes desta despesa" da RateioAprovadorTable
   // — exclui a própria despesa (senão conta 2x: uma vez pela view, outra
-  // pelo valor da linha sendo editada agora).
+  // pelo valor da linha sendo editada agora). Recalcula por MÊS SELECIONADO
+  // (SIS-2026-0261), não fixo no mês da despesa — é o que permite navegar
+  // entre parcelas e ver o Orçado/Utilizado real de cada mês.
   const utilizadoAntesPorContrato = useMemo(() => {
     const map = new Map<string, number>();
-    if (!mostrarColunasOrcamento) return map;
+    if (!mostrarColunasOrcamento || !mesSelecionado) return map;
     for (const u of utilizadoLinhas) {
       if (u.despesa_id === despesaId) continue;
       if (u.classificacao_id !== classificacaoId) continue;
-      if (!u.competencia || u.competencia.slice(0, 7) !== anoMesDespesa) continue;
+      if (!u.competencia || u.competencia.slice(0, 7) !== mesSelecionado) continue;
       const chave = u.contrato_id ?? "__sem_contrato__";
       map.set(chave, (map.get(chave) ?? 0) + (Number(u.valor) || 0));
     }
     return map;
-  }, [mostrarColunasOrcamento, utilizadoLinhas, despesaId, classificacaoId, anoMesDespesa]);
+  }, [mostrarColunasOrcamento, utilizadoLinhas, despesaId, classificacaoId, mesSelecionado]);
 
   function abrirDialogJustificativa(linha: RateioLinha, edicao: boolean) {
     setDialogLinha(linha);
@@ -315,6 +346,45 @@ export function RateioGrid({
         </div>
       </div>
 
+      {/* SIS-2026-0261 (Iury, achado real): sem isso o solicitante só via o
+          impacto no orçamento da parcela 1 — pra ver a 3ª parcela estourando
+          precisava aprovar a despesa primeiro e navegar pelo
+          RateioParceladoTable (read-only). Aqui pré-visualiza qualquer
+          parcela ANTES de enviar pra aprovação, ainda editável. */}
+      {mostrarColunasOrcamento && parcelas && parcelas.length > 1 && (
+        <div className="flex items-center justify-between rounded-md border border-border bg-muted/30 px-3 py-1.5">
+          <p className="text-xs text-muted-foreground">
+            Pré-visualizando o impacto no orçamento da{" "}
+            <span className="font-medium text-foreground">
+              parcela {parcelaSelecionada?.numero_parcela ?? 1} de {parcelas.length}
+            </span>{" "}
+            — todas as parcelas consomem o orçamento do mês do vencimento delas.
+          </p>
+          <div className="flex items-center gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              size="icon"
+              className="h-7 w-7"
+              disabled={indicePreviewSeguro === 0}
+              onClick={() => setParcelaPreviewIndex((i) => Math.max(0, i - 1))}
+            >
+              <ChevronLeft className="h-3.5 w-3.5" />
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              size="icon"
+              className="h-7 w-7"
+              disabled={indicePreviewSeguro === parcelas.length - 1}
+              onClick={() => setParcelaPreviewIndex((i) => Math.min(parcelas.length - 1, i + 1))}
+            >
+              <ChevronRight className="h-3.5 w-3.5" />
+            </Button>
+          </div>
+        </div>
+      )}
+
       <div className="overflow-x-auto rounded-md border border-border">
         <Table>
           <TableHeader>
@@ -325,7 +395,9 @@ export function RateioGrid({
               <TableHead>{ratearPor === "percentual" ? "% Rateio *" : "Valor (R$) *"}</TableHead>
               {dimensoes.fornecedor && <TableHead>Fornecedor (opcional)</TableHead>}
               {dimensoes.integrante && <TableHead>Integrante (opcional)</TableHead>}
-              {mostrarColunasOrcamento && mostrarValorParcela1 && <TableHead className="text-center">Valor da parcela 1</TableHead>}
+              {mostrarColunasOrcamento && mostrarValorParcela1 && (
+                <TableHead className="text-center">Valor da parcela {parcelaSelecionada?.numero_parcela ?? 1}</TableHead>
+              )}
               {mostrarColunasOrcamento && (
                 <>
                   <TableHead className="text-center">Valor orçado (mês)</TableHead>
@@ -501,7 +573,7 @@ export function RateioGrid({
                   </TableCell>
                 )}
                 {mostrarColunasOrcamento && mostrarValorParcela1 && (
-                  <TableCell className="text-center text-xs">{fmtMoney((Number(linha.valor) || 0) * fatorParcela1)}</TableCell>
+                  <TableCell className="text-center text-xs">{fmtMoney((Number(linha.valor) || 0) * fatorSelecionado)}</TableCell>
                 )}
                 {mostrarColunasOrcamento &&
                   (() => {
@@ -511,14 +583,24 @@ export function RateioGrid({
                     // desliga rateioEPagamentoEditaveis), mas mantém
                     // consistente caso isso mude.
                     const estaCongelada = linha.congelado_em != null;
-                    const orcado = estaCongelada ? linha.orcado_snapshot ?? null : resolverOrcado!(classificacaoId, linha.contrato_id);
+                    const orcado = estaCongelada ? linha.orcado_snapshot ?? null : resolverOrcado!(classificacaoId, linha.contrato_id, mesSelecionado ?? "");
                     const chave = linha.contrato_id ?? "__sem_contrato__";
                     const utilizadoAntes = utilizadoAntesPorContrato.get(chave) ?? 0;
                     const utilizadoComLancamento = estaCongelada
                       ? linha.utilizado_com_lancamento_snapshot ?? 0
-                      : utilizadoAntes + (Number(linha.valor) || 0) * fatorParcela1;
+                      : utilizadoAntes + (Number(linha.valor) || 0) * fatorSelecionado;
                     const dentroDoOrcado = orcado == null ? null : utilizadoComLancamento <= orcado;
                     const percentualLinha = orcado ? (utilizadoComLancamento / orcado) * 100 : null;
+                    // SIS-2026-0261 (Iury, achado real + correção de um bug
+                    // que eu mesmo introduzi): a justificativa agora vale
+                    // pra QUALQUER parcela, não só a 1ª — mas o "estourou" é
+                    // sempre da parcela SELECIONADA no preview agora
+                    // (percentualLinha já é calculado pra ela). A 1ª versão
+                    // desta correção comparava contra TODAS as parcelas de
+                    // uma vez, fazendo uma parcela dentro do orçado aparecer
+                    // "Pendente" só por outra parcela da mesma linha estar
+                    // estourada — confuso e errado: navegue pro preview da
+                    // parcela em questão pra ver o status dela.
                     const precisaJustificar =
                       limiteJustificativaPct != null && percentualLinha != null && percentualLinha > limiteJustificativaPct;
                     const temJustificativa = !!linha.justificativa_texto;

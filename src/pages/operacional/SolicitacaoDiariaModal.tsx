@@ -32,19 +32,25 @@ import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
 import { useToast } from "@/hooks/use-toast";
 import {
+  EmpregadoDiaria,
+  NovaSolicitacaoDiaria,
+  mensagemErroDiaria,
+  urlAnexoDiaria,
+  useBuscaEmpregadosDiaria,
+  useContratosDiaria,
+  usePostosDiaria,
+} from "@/hooks/useDiarias";
+import {
   AnexoDiaria,
-  CONTRATOS_DISPONIVEIS,
   LinhaDiaria,
   SolicitacaoDiaria,
   TURNOS,
   TurnoDiaria,
   avaliarConflitos,
   cpfValido,
-  empresaDoContrato,
   fmtBRL,
   labelTurno,
   mascaraCpf,
-  rotuloContrato,
   soDigitos,
   textoConflito,
   valorTotalLinha,
@@ -66,21 +72,23 @@ interface Props {
   solicitacao?: SolicitacaoDiaria | null;
   /** Base para checar duplicidade das linhas digitadas. */
   existentes: SolicitacaoDiaria[];
-  proximoId: string;
-  solicitanteAtual: string;
+  salvando?: boolean;
   onFechar: () => void;
-  onSalvar: (s: SolicitacaoDiaria) => void;
-  onAprovar: (id: string, motivo: string, dataPagamento: string) => void;
-  onReprovar: (id: string) => void;
+  onSalvar: (s: NovaSolicitacaoDiaria) => void;
+  /** Recebem o uuid da solicitação (a chave no banco), não o número exibido. */
+  onAprovar: (uuid: string, motivo: string, dataPagamento: string) => void;
+  onReprovar: (uuid: string) => void;
 }
 
+// Zerada: os valores de diária e VT variam por contrato e por dissídio, então
+// não há default honesto para chutar — quem lança digita.
 const linhaVazia = (): LinhaDiaria => ({
   id: crypto.randomUUID(),
   data: "",
   turno: "manha",
-  qtVt: 2,
-  valorUnitVt: 11,
-  valorDiaria: 125,
+  qtVt: 0,
+  valorUnitVt: 0,
+  valorDiaria: 0,
 });
 
 // ---------------------------------------------------------------------------
@@ -146,7 +154,21 @@ function Leitura({ label, valor }: { label: string; valor: React.ReactNode }) {
 }
 
 function AnexoLinha({ a }: { a: AnexoDiaria }) {
+  const { toast } = useToast();
   const ehImagem = a.tipo !== "PDF";
+  // O bucket é privado: o "olhinho" pede um link assinado de curta duração em
+  // vez de montar uma URL pública, que não existiria.
+  const abrir = async () => {
+    try {
+      window.open(await urlAnexoDiaria(a.storagePath), "_blank", "noopener");
+    } catch (e: unknown) {
+      toast({
+        title: "Não foi possível abrir o anexo",
+        description: mensagemErroDiaria(e, a.nome),
+        variant: "destructive",
+      });
+    }
+  };
   return (
     <div className="flex items-center gap-3 rounded-md border border-border bg-card px-3 py-2.5">
       <div
@@ -163,7 +185,13 @@ function AnexoLinha({ a }: { a: AnexoDiaria }) {
           {a.tipo} • {a.tamanho} • Enviado em {a.enviadoEm}
         </p>
       </div>
-      <Button variant="ghost" size="icon" className="h-8 w-8 shrink-0" aria-label={`Visualizar ${a.nome}`}>
+      <Button
+        variant="ghost"
+        size="icon"
+        className="h-8 w-8 shrink-0"
+        onClick={abrir}
+        aria-label={`Visualizar ${a.nome}`}
+      >
         <Eye className="h-4 w-4" />
       </Button>
     </div>
@@ -177,7 +205,8 @@ function Dropzone({
   onRemover,
 }: {
   label: string;
-  arquivos: AnexoDiaria[];
+  /** Arquivos ainda em memória — só sobem para o bucket ao salvar. */
+  arquivos: File[];
   onAdicionar: (files: FileList) => void;
   onRemover: (nome: string) => void;
 }) {
@@ -234,22 +263,105 @@ function Dropzone({
         <div className="space-y-1.5">
           {arquivos.map((a) => (
             <div
-              key={a.nome}
+              key={a.name}
               className="flex items-center gap-2 rounded-md border border-border bg-muted/30 px-3 py-1.5 text-xs"
             >
               <FileText className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-              <span className="min-w-0 flex-1 truncate">{a.nome}</span>
-              <span className="shrink-0 text-muted-foreground">{a.tamanho}</span>
+              <span className="min-w-0 flex-1 truncate">{a.name}</span>
+              <span className="shrink-0 text-muted-foreground">
+                {(a.size / 1024).toFixed(0)} KB
+              </span>
               <Button
                 variant="ghost"
                 size="icon"
                 className="h-6 w-6 shrink-0 text-destructive"
-                onClick={() => onRemover(a.nome)}
-                aria-label={`Remover ${a.nome}`}
+                onClick={() => onRemover(a.name)}
+                aria-label={`Remover ${a.name}`}
               >
                 <X className="h-3.5 w-3.5" />
               </Button>
             </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/**
+ * Campo de nome que busca no cadastro de EMPREGADOS e devolve a pessoa
+ * inteira — é o que preenche o CPF ao lado.
+ *
+ * O texto continua livre depois de escolher: diarista nem sempre é empregado
+ * da casa, e travar o campo no cadastro impediria justamente o caso mais comum
+ * de diária. Quando é gente de fora, o CPF é digitado à mão e validado pelo
+ * dígito verificador; quando é do cadastro, o CPF vem de lá e não se digita.
+ */
+function BuscaEmpregado({
+  valor,
+  onEscolher,
+  onDigitar,
+  placeholder,
+}: {
+  valor: string;
+  onEscolher: (e: EmpregadoDiaria) => void;
+  onDigitar: (nome: string) => void;
+  placeholder: string;
+}) {
+  const [aberto, setAberto] = useState(false);
+  const {
+    data: achados = [],
+    isFetching,
+    isError,
+    error,
+  } = useBuscaEmpregadosDiaria(valor);
+
+  return (
+    <div className="relative">
+      <Input
+        value={valor}
+        onChange={(e) => {
+          onDigitar(e.target.value);
+          setAberto(true);
+        }}
+        onFocus={() => setAberto(true)}
+        // `onBlur` com atraso: sem ele o clique na sugestão fecha a lista antes
+        // do onClick disparar, e a escolha se perde.
+        onBlur={() => setTimeout(() => setAberto(false), 150)}
+        placeholder={placeholder}
+        autoComplete="off"
+      />
+      {aberto && valor.trim().length >= 2 && (
+        <div className="absolute z-50 mt-1 max-h-56 w-full overflow-y-auto rounded-md border border-border bg-popover p-1 shadow-md">
+          {isFetching && achados.length === 0 && (
+            <p className="px-2 py-1.5 text-xs text-muted-foreground">Buscando...</p>
+          )}
+          {isError && (
+            <p className="px-2 py-1.5 text-xs text-destructive">
+              {mensagemErroDiaria(error, "Não foi possível consultar EMPREGADOS.")}
+            </p>
+          )}
+          {!isFetching && !isError && achados.length === 0 && (
+            <p className="px-2 py-1.5 text-xs text-muted-foreground">
+              Ninguém encontrado no cadastro — pode digitar nome e CPF à mão.
+            </p>
+          )}
+          {achados.map((e) => (
+            <button
+              key={e.id}
+              type="button"
+              className="flex w-full flex-col items-start rounded-sm px-2 py-1.5 text-left hover:bg-accent"
+              onClick={() => {
+                onEscolher(e);
+                setAberto(false);
+              }}
+            >
+              <span className="text-sm">{e.nome}</span>
+              <span className="text-[11px] text-muted-foreground">
+                {e.cpf}
+                {e.cargo ? ` • ${e.cargo}` : ""}
+              </span>
+            </button>
           ))}
         </div>
       )}
@@ -264,8 +376,7 @@ export function SolicitacaoDiariaModal({
   modo,
   solicitacao,
   existentes,
-  proximoId,
-  solicitanteAtual,
+  salvando,
   onFechar,
   onSalvar,
   onAprovar,
@@ -276,17 +387,35 @@ export function SolicitacaoDiariaModal({
 
   // --- estado do formulário (modo "nova") ---------------------------------
   const [contratoId, setContratoId] = useState("");
-  const [posto, setPosto] = useState("");
+  const [postoId, setPostoId] = useState("");
   const [faltanteNome, setFaltanteNome] = useState("");
   const [faltanteCpf, setFaltanteCpf] = useState("");
+  const [faltanteEmpregadoId, setFaltanteEmpregadoId] = useState<number | null>(null);
   const [diaristaNome, setDiaristaNome] = useState("");
   const [diaristaCpf, setDiaristaCpf] = useState("");
+  const [diaristaEmpregadoId, setDiaristaEmpregadoId] = useState<number | null>(null);
   const [pix, setPix] = useState("");
   const [linhas, setLinhas] = useState<LinhaDiaria[]>([linhaVazia()]);
-  const [comprovante, setComprovante] = useState<AnexoDiaria[]>([]);
-  const [documentos, setDocumentos] = useState<AnexoDiaria[]>([]);
+  const [comprovante, setComprovante] = useState<File[]>([]);
+  const [documentos, setDocumentos] = useState<File[]>([]);
   const [observacoes, setObservacoes] = useState("");
   const [tentouSalvar, setTentouSalvar] = useState(false);
+
+  // Contratos e postos vêm do banco (ver src/hooks/useDiarias.ts). O posto só
+  // é buscado depois de escolher o contrato — é uma cascata.
+  const {
+    data: contratos = [],
+    isLoading: buscandoContratos,
+    isError: falhaContratos,
+    error: erroContratos,
+  } = useContratosDiaria();
+  const {
+    data: postos = [],
+    isFetching: buscandoPostos,
+    isError: falhaPostos,
+    error: erroPostos,
+  } = usePostosDiaria(contratoId || null);
+  const posto = postos.find((p) => p.id === postoId)?.nome ?? "";
 
   // --- estado da aprovação (modo "aprovar", seção 7) ----------------------
   const [maloteMotivo, setMaloteMotivo] = useState("");
@@ -299,11 +428,13 @@ export function SolicitacaoDiariaModal({
   if (chave !== chaveAtual) {
     setChaveAtual(chave);
     setContratoId("");
-    setPosto("");
+    setPostoId("");
     setFaltanteNome("");
     setFaltanteCpf("");
+    setFaltanteEmpregadoId(null);
     setDiaristaNome("");
     setDiaristaCpf("");
+    setDiaristaEmpregadoId(null);
     setPix("");
     setLinhas([linhaVazia()]);
     setComprovante([]);
@@ -314,8 +445,6 @@ export function SolicitacaoDiariaModal({
     setMaloteData(solicitacao?.maloteDataPagamento ?? "");
     setTentouAprovar(false);
   }
-
-  const postosDoContrato = CONTRATOS_DISPONIVEIS.find((c) => c.id === contratoId)?.postos ?? [];
 
   const conflitos = useMemo(
     () =>
@@ -329,13 +458,16 @@ export function SolicitacaoDiariaModal({
   const temConflito = conflitos.some(Boolean);
   const linhasPreenchidas = linhas.every((l) => l.data);
   const cpfsOk = cpfValido(faltanteCpf) && cpfValido(diaristaCpf);
+  const pessoasDiferentes =
+    soDigitos(faltanteCpf) !== "" && soDigitos(faltanteCpf) !== soDigitos(diaristaCpf);
   const camposOk =
     !!contratoId &&
-    !!posto &&
+    !!postoId &&
     !!faltanteNome.trim() &&
     !!diaristaNome.trim() &&
     !!pix.trim() &&
     cpfsOk &&
+    pessoasDiferentes &&
     linhasPreenchidas &&
     comprovante.length > 0 &&
     documentos.length > 0;
@@ -345,14 +477,20 @@ export function SolicitacaoDiariaModal({
 
   const erro = (cond: boolean, msg: string) => (tentouSalvar && cond ? msg : undefined);
 
-  const anexarArquivos = (files: FileList, set: (fn: (a: AnexoDiaria[]) => AnexoDiaria[]) => void) => {
-    const novos: AnexoDiaria[] = Array.from(files).map((f) => ({
-      nome: f.name,
-      tipo: (f.name.split(".").pop() ?? "").toUpperCase(),
-      tamanho: `${(f.size / 1024).toFixed(0)} KB`,
-      enviadoEm: new Date().toLocaleString("pt-BR"),
-    }));
-    set((prev) => [...prev.filter((p) => !novos.some((n) => n.nome === p.nome)), ...novos]);
+  // O arquivo é guardado como File e só sobe para o bucket no salvamento —
+  // anexar e desistir do modal não deixa lixo no storage.
+  const anexarArquivos = (files: FileList, set: (fn: (a: File[]) => File[]) => void) => {
+    const novos = Array.from(files);
+    const grandes = novos.filter((f) => f.size > 10 * 1024 * 1024);
+    if (grandes.length) {
+      toast({
+        title: "Arquivo acima de 10 MB",
+        description: grandes.map((f) => f.name).join(", "),
+        variant: "destructive",
+      });
+    }
+    const aceitos = novos.filter((f) => f.size <= 10 * 1024 * 1024);
+    set((prev) => [...prev.filter((p) => !aceitos.some((n) => n.name === p.name)), ...aceitos]);
   };
 
   const salvar = () => {
@@ -368,28 +506,37 @@ export function SolicitacaoDiariaModal({
       return;
     }
     onSalvar({
-      id: proximoId,
-      criadoEm: new Date().toLocaleString("pt-BR"),
-      status: "solicitada",
       contratoId,
-      posto,
+      postoId: postoId || null,
+      postoNome: posto,
+      faltanteEmpregadoId,
       faltanteNome: faltanteNome.trim(),
       faltanteCpf,
+      diaristaEmpregadoId,
       diaristaNome: diaristaNome.trim(),
       diaristaCpf,
       pix: pix.trim(),
-      diarias: linhas,
+      observacoes: observacoes.trim(),
+      linhas: linhas.map((l) => ({
+        data: l.data,
+        turno: l.turno,
+        qtVt: l.qtVt,
+        valorUnitVt: l.valorUnitVt,
+        valorDiaria: l.valorDiaria,
+      })),
       comprovantePonto: comprovante,
       documentos,
-      observacoes: observacoes.trim(),
-      solicitante: solicitanteAtual,
     });
   };
 
   // --- cabeçalho -----------------------------------------------------------
-  const idExibido = modo === "nova" ? proximoId : (solicitacao?.id ?? "");
+  // O número é uma sequência do banco (SD-2026-000123): só existe depois de
+  // salvar. Adivinhar aqui daria dois lançamentos simultâneos com o mesmo ID.
+  const idExibido = modo === "nova" ? "—" : (solicitacao?.id ?? "");
   const legendaId =
-    modo === "nova" ? "Gerado automaticamente" : `Criado em ${solicitacao?.criadoEm ?? ""}`;
+    modo === "nova"
+      ? "Gerado automaticamente ao salvar"
+      : `Criado em ${solicitacao?.criadoEm ?? ""}`;
 
   const badgeStatus =
     modo === "nova" ? null : solicitacao?.status === "reprovada" ? (
@@ -443,7 +590,7 @@ export function SolicitacaoDiariaModal({
             <div className="grid gap-4 sm:grid-cols-2">
               {somenteLeitura ? (
                 <>
-                  <Leitura label="Contrato" valor={rotuloContrato(s?.contratoId ?? "")} />
+                  <Leitura label="Contrato" valor={s?.contratoNome} />
                   <Leitura label="Posto" valor={s?.posto} />
                 </>
               ) : (
@@ -451,32 +598,62 @@ export function SolicitacaoDiariaModal({
                   <Campo label="Contrato" obrigatorio erro={erro(!contratoId, "Selecione o contrato.")}>
                     <Select
                       value={contratoId}
+                      disabled={buscandoContratos || falhaContratos}
                       onValueChange={(v) => {
                         setContratoId(v);
-                        setPosto("");
+                        setPostoId("");
                       }}
                     >
                       <SelectTrigger>
-                        <SelectValue placeholder="Selecione um contrato" />
+                        <SelectValue
+                          placeholder={
+                            buscandoContratos ? "Carregando..." : "Selecione um contrato"
+                          }
+                        />
                       </SelectTrigger>
                       <SelectContent>
-                        {CONTRATOS_DISPONIVEIS.map((c) => (
+                        {contratos.map((c) => (
                           <SelectItem key={c.id} value={c.id}>
-                            {c.numero} - {c.descricao}
+                            {c.nome}
+                            {c.cliente ? ` - ${c.cliente}` : ""}
                           </SelectItem>
                         ))}
                       </SelectContent>
                     </Select>
+                    {falhaContratos && (
+                      <p className="text-[11px] font-medium text-destructive">
+                        {mensagemErroDiaria(erroContratos, "Não foi possível carregar contratos.")}
+                      </p>
+                    )}
                   </Campo>
-                  <Campo label="Posto" obrigatorio erro={erro(!posto, "Selecione o posto.")}>
-                    <Select value={posto} onValueChange={setPosto} disabled={!contratoId}>
+                  <Campo
+                    label="Posto"
+                    obrigatorio
+                    erro={
+                      // Contrato sem posto cadastrado é o caso que mais trava a
+                      // tela na prática; dizer o que falta cadastrar poupa um
+                      // chamado.
+                      falhaPostos
+                        ? mensagemErroDiaria(erroPostos, "Não foi possível carregar os postos.")
+                        : contratoId && !buscandoPostos && postos.length === 0
+                        ? "Este contrato ainda não tem posto cadastrado no catálogo."
+                        : erro(!postoId, "Selecione o posto.")
+                    }
+                  >
+                    <Select
+                      value={postoId}
+                      onValueChange={setPostoId}
+                      disabled={!contratoId || buscandoPostos || falhaPostos}
+                    >
                       <SelectTrigger>
-                        <SelectValue placeholder="Selecione um posto" />
+                        <SelectValue
+                          placeholder={buscandoPostos ? "Carregando..." : "Selecione um posto"}
+                        />
                       </SelectTrigger>
                       <SelectContent>
-                        {postosDoContrato.map((p) => (
-                          <SelectItem key={p} value={p}>
-                            {p}
+                        {postos.map((p) => (
+                          <SelectItem key={p.id} value={p.id}>
+                            {p.nome}
                           </SelectItem>
                         ))}
                       </SelectContent>
@@ -502,10 +679,19 @@ export function SolicitacaoDiariaModal({
                     obrigatorio
                     erro={erro(!faltanteNome.trim(), "Informe o nome do faltante.")}
                   >
-                    <Input
-                      value={faltanteNome}
-                      onChange={(e) => setFaltanteNome(e.target.value)}
-                      placeholder="Digite o nome do faltante"
+                    <BuscaEmpregado
+                      valor={faltanteNome}
+                      placeholder="Digite o nome ou o CPF do faltante"
+                      onDigitar={(v) => {
+                        setFaltanteNome(v);
+                        setFaltanteCpf("");
+                        setFaltanteEmpregadoId(null);
+                      }}
+                      onEscolher={(e) => {
+                        setFaltanteNome(e.nome);
+                        setFaltanteCpf(mascaraCpf(e.cpf));
+                        setFaltanteEmpregadoId(e.id);
+                      }}
                     />
                   </Campo>
                   <Campo
@@ -524,10 +710,12 @@ export function SolicitacaoDiariaModal({
                       onChange={(e) => setFaltanteCpf(mascaraCpf(e.target.value))}
                       placeholder="000.000.000-00"
                       inputMode="numeric"
+                      readOnly={faltanteEmpregadoId !== null}
                       className={cn(
                         soDigitos(faltanteCpf).length === 11 &&
                           !cpfValido(faltanteCpf) &&
                           "border-destructive focus-visible:ring-destructive",
+                        faltanteEmpregadoId !== null && "bg-muted/40",
                       )}
                     />
                   </Campo>
@@ -552,10 +740,19 @@ export function SolicitacaoDiariaModal({
                     obrigatorio
                     erro={erro(!diaristaNome.trim(), "Informe o nome do diarista.")}
                   >
-                    <Input
-                      value={diaristaNome}
-                      onChange={(e) => setDiaristaNome(e.target.value)}
-                      placeholder="Digite o nome do diarista"
+                    <BuscaEmpregado
+                      valor={diaristaNome}
+                      placeholder="Digite o nome ou o CPF do diarista"
+                      onDigitar={(v) => {
+                        setDiaristaNome(v);
+                        setDiaristaCpf("");
+                        setDiaristaEmpregadoId(null);
+                      }}
+                      onEscolher={(e) => {
+                        setDiaristaNome(e.nome);
+                        setDiaristaCpf(mascaraCpf(e.cpf));
+                        setDiaristaEmpregadoId(e.id);
+                      }}
                     />
                   </Campo>
                   <Campo
@@ -566,7 +763,9 @@ export function SolicitacaoDiariaModal({
                         ? diaristaCpf
                           ? "CPF inexistente."
                           : "Informe o CPF do diarista."
-                        : undefined
+                        : tentouSalvar && !pessoasDiferentes
+                          ? "O diarista precisa ser diferente do faltante."
+                          : undefined
                     }
                   >
                     <Input
@@ -574,10 +773,12 @@ export function SolicitacaoDiariaModal({
                       onChange={(e) => setDiaristaCpf(mascaraCpf(e.target.value))}
                       placeholder="000.000.000-00"
                       inputMode="numeric"
+                      readOnly={diaristaEmpregadoId !== null}
                       className={cn(
                         soDigitos(diaristaCpf).length === 11 &&
                           !cpfValido(diaristaCpf) &&
                           "border-destructive focus-visible:ring-destructive",
+                        diaristaEmpregadoId !== null && "bg-muted/40",
                       )}
                     />
                   </Campo>
@@ -881,8 +1082,8 @@ export function SolicitacaoDiariaModal({
                   />
                 </Campo>
                 <Leitura label="Classificação" valor="Diária" />
-                <Leitura label="Empresa" valor={empresaDoContrato(s.contratoId)} />
-                <Leitura label="Contrato" valor={rotuloContrato(s.contratoId)} />
+                <Leitura label="Empresa" valor={s.contratoEmpresa} />
+                <Leitura label="Contrato" valor={s.contratoNome} />
                 <Leitura label="Valor (R$)" valor={fmtBRL(valorTotalSolicitacao(s))} />
                 <Campo
                   label="Data de Pagamento"
@@ -911,8 +1112,9 @@ export function SolicitacaoDiariaModal({
               <Button variant="outline" onClick={onFechar}>
                 Cancelar
               </Button>
-              <Button onClick={salvar} disabled={temConflito}>
-                <CheckCircle2 className="mr-2 h-4 w-4" /> Salvar solicitação
+              <Button onClick={salvar} disabled={temConflito || salvando}>
+                <CheckCircle2 className="mr-2 h-4 w-4" />
+                {salvando ? "Enviando anexos e salvando..." : "Salvar solicitação"}
               </Button>
             </div>
             {temConflito && (
@@ -928,11 +1130,13 @@ export function SolicitacaoDiariaModal({
             <Button
               variant="outline"
               className="border-destructive/50 text-destructive hover:bg-destructive/10 hover:text-destructive"
-              onClick={() => onReprovar(s.id)}
+              disabled={salvando}
+              onClick={() => onReprovar(s.uuid)}
             >
               <X className="mr-2 h-4 w-4" /> Reprovar solicitação
             </Button>
             <Button
+              disabled={salvando}
               onClick={() => {
                 setTentouAprovar(true);
                 if (!maloteMotivo.trim() || !maloteData) {
@@ -943,7 +1147,7 @@ export function SolicitacaoDiariaModal({
                   });
                   return;
                 }
-                onAprovar(s.id, maloteMotivo.trim(), maloteData);
+                onAprovar(s.uuid, maloteMotivo.trim(), maloteData);
               }}
             >
               <Send className="mr-2 h-4 w-4" /> Aprovar e enviar para malote
@@ -955,7 +1159,11 @@ export function SolicitacaoDiariaModal({
           <div className="sticky bottom-0 flex items-center justify-between gap-3 border-t border-border bg-background px-6 py-4">
             <p className="flex items-center gap-2 text-xs text-muted-foreground">
               <UserX className="h-3.5 w-3.5" />
-              Solicitação reprovada — tela somente para visualização, sem ações disponíveis.
+              {s?.status === "reprovada"
+                ? "Solicitação reprovada — somente visualização."
+                : s?.status === "aprovada"
+                  ? "Solicitação aprovada — somente visualização."
+                  : "Solicitação aguardando aprovação — a decisão deve ser feita por outro usuário autorizado."}
             </p>
             <Button variant="outline" onClick={onFechar}>
               Fechar
