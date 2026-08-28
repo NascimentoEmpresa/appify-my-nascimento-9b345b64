@@ -71,6 +71,33 @@ export function useMeusContratosAnalista() {
   });
 }
 
+// SIS-2026-0261 (Iury): resolver o NOME do(s) analista(s) de um conjunto de
+// contratos, pra mostrar no badge de "Justificativa pendente" em
+// Aprovações/Meus Itens do Malote (lista geral — quem vê a lista precisa
+// saber de quem cobrar, não só que existe pendência). Via RPC
+// SECURITY DEFINER (malote_analistas_dos_contratos) porque
+// malote_analista_contrato tem SELECT restrito a admin/controladoria/
+// diretor_adm — um aprovador comum olhando a lista não teria acesso direto.
+export function useAnalistasDosContratos(contratoIds: string[]) {
+  const chave = Array.from(new Set(contratoIds)).sort().join(",");
+  return useQuery({
+    queryKey: [VINCULOS_KEY, "nomes_por_contrato", chave],
+    enabled: contratoIds.length > 0,
+    staleTime: 5 * 60_000,
+    queryFn: async () => {
+      const { data, error } = await (supabase as any).rpc("malote_analistas_dos_contratos", { _contrato_ids: contratoIds });
+      if (error) throw error;
+      const map = new Map<string, string[]>();
+      for (const row of (data ?? []) as { contrato_id: string; user_id: string; nome: string }[]) {
+        const lst = map.get(row.contrato_id) ?? [];
+        lst.push(row.nome);
+        map.set(row.contrato_id, lst);
+      }
+      return map;
+    },
+  });
+}
+
 export function useExcluirAnalistaContrato() {
   const qc = useQueryClient();
   return useMutation({
