@@ -18,10 +18,10 @@ import { useItens, LABEL_TIPO_ITEM, type TipoItem } from "@/hooks/useSupCatalogo
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Link } from "react-router-dom";
 import {
-  useAlmoxarifados, useEstoqueLista, useTagsDoItem, useEntradaEstoque, useDevolverTags,
+  useAlmoxarifados, useEstoqueLista, useTagsDoItem, useEntradaPorQuantidade, useDevolverTags,
   useRemoverTag, useFornecedores, useHistoricoDoMaterial, useInventario,
   useHistoricoPreco, fmtBRL,
-  type LinhaEstoque, type TipoTag, type UnidadeEntrada, type Movimento, type ResultadoInventario,
+  type LinhaEstoque, type RemessaEntrada, type Movimento, type ResultadoInventario,
 } from "@/hooks/useSupEstoque";
 import {
   PackagePlus, Search, AlertTriangle, Boxes, Undo2, Trash2, ShieldAlert, Plus, X, Tag,
@@ -64,7 +64,7 @@ export default function EstoqueEtiquetas() {
     return linhas.filter((l) => {
       if (tipo !== TODOS_OS_TIPOS && l.tipo_material !== tipo) return false;
       if (!t) return true;
-      return `${l.material} ${l.almoxarifado} ${l.tamanhos.join(" ")}`.toLowerCase().includes(t);
+      return `${l.codigo_item ?? ""} ${l.material} ${l.almoxarifado} ${l.tamanhos.join(" ")}`.toLowerCase().includes(t);
     });
   }, [linhas, busca, tipo]);
 
@@ -190,6 +190,7 @@ export default function EstoqueEtiquetas() {
             <Table>
               <TableHeader>
                 <TableRow>
+                  <TableHead className="w-28">Código</TableHead>
                   <TableHead>Material</TableHead>
                   <TableHead>Almoxarifado</TableHead>
                   <TableHead>Tamanhos livres</TableHead>
@@ -208,6 +209,11 @@ export default function EstoqueEtiquetas() {
                   return (
                     <TableRow key={l.item_estoque_id} className="cursor-pointer"
                               onClick={() => setDetalhe(l)}>
+                      {/* O código do produto vem antes do nome: é por ele que
+                          se procura e se bipa, e ele nunca muda (ajuste 7). */}
+                      <TableCell className="font-mono text-xs text-muted-foreground">
+                        {l.codigo_item ?? "—"}
+                      </TableCell>
                       <TableCell className="font-medium">
                         {l.material}
                         <Badge variant="secondary" className="ml-2 text-[10px]">
@@ -362,16 +368,27 @@ function Kpi({ rotulo, valor, icone: Icone, destaque }: {
 
 // ── Entrada ──────────────────────────────────────────────────────────
 
+/**
+ * Uma remessa recebida: um tamanho e uma quantidade.
+ *
+ * AJUSTE 7 DO CASSIO — o que sumiu daqui foi `tipo` (única/massa) e
+ * `codigos` (a bipagem etiqueta por etiqueta). "Cada item, ao invés de ter
+ * uma tag, ter um código interno do produto, onde somente é adicionado
+ * quantidades dele, mais nada."
+ *
+ * O motivo, na fala dele: "tu tem duas canecas iguais... esse aqui é o tag 02,
+ * só que eu dou baixa no 01. Já está errado o meu estoque." Etiqueta por peça
+ * obriga quem separa a distinguir duas peças idênticas, e não existe resposta
+ * certa. Com código do produto + quantidade, a pergunta some.
+ */
 interface BlocoUnidade {
   tamanho: string;
-  tipo: TipoTag;
-  codigos: string[];
   quantidade: string;
   ca_numero: string;
   ca_validade: string;
 }
 const BLOCO_VAZIO: BlocoUnidade = {
-  tamanho: "", tipo: "unico", codigos: [], quantidade: "1", ca_numero: "", ca_validade: "",
+  tamanho: "", quantidade: "1", ca_numero: "", ca_validade: "",
 };
 
 function DialogEntrada({ aberto, onFechar, empresaId, podeAlterar }: {
@@ -382,7 +399,7 @@ function DialogEntrada({ aberto, onFechar, empresaId, podeAlterar }: {
   const { data: almoxarifados = [] } = useAlmoxarifados(empresaId);
   const { data: materiais = [] } = useItens(empresaId);
   const { data: fornecedores = [] } = useFornecedores(empresaId);
-  const entrada = useEntradaEstoque();
+  const entrada = useEntradaPorQuantidade();
 
   const [almox, setAlmox] = useState("");
   const [material, setMaterial] = useState("");
@@ -422,8 +439,7 @@ function DialogEntrada({ aberto, onFechar, empresaId, podeAlterar }: {
       .slice(0, 40);
   }, [materiais, buscaMat, tipoMat]);
 
-  const total = blocos.reduce((s, b) =>
-    s + (b.tipo === "massa" ? (b.codigos.length ? Number(b.quantidade || 0) : 0) : b.codigos.length), 0);
+  const total = blocos.reduce((s, b) => s + Math.max(Number(b.quantidade || 0), 0), 0);
 
   const hoje = new Date();
   const hojeCivil = [
@@ -435,7 +451,7 @@ function DialogEntrada({ aberto, onFechar, empresaId, podeAlterar }: {
     if (!materialEhEpi) return null;
     if (laudoAtivo.error) return "Não foi possível consultar o laudo do SST. Tente novamente antes de dar entrada.";
     if (laudoAtivo.data === null || laudoAtivo.data === undefined) return null;
-    const blocosPreenchidos = blocos.filter((bloco) => bloco.codigos.length > 0);
+    const blocosPreenchidos = blocos.filter((bloco) => Number(bloco.quantidade || 0) > 0);
     if (blocosPreenchidos.some((bloco) => !bloco.ca_validade)) {
       return "Informe a validade do CA em todos os blocos de unidades.";
     }
@@ -455,23 +471,24 @@ function DialogEntrada({ aberto, onFechar, empresaId, podeAlterar }: {
   };
 
   const enviar = async () => {
-    const unidades: UnidadeEntrada[] = blocos
-      .filter((b) => b.codigos.length > 0)
-      .map((b) => {
-        const ca = materialEhEpi
+    const remessas: RemessaEntrada[] = blocos
+      .filter((b) => Number(b.quantidade || 0) > 0)
+      .map((b) => ({
+        tamanho: b.tamanho,
+        quantidade: Math.max(Number(b.quantidade), 1),
+        // CA pertence à remessa física, não ao cadastro do material: duas
+        // caixas do mesmo EPI podem ter certificados diferentes.
+        ...(materialEhEpi
           ? { ca_numero: b.ca_numero.trim() || null, ca_validade: b.ca_validade || null }
-          : {};
-        return b.tipo === "massa"
-          ? { tamanho: b.tamanho, tipo: "massa", codigo: b.codigos[0], quantidade: Math.max(Number(b.quantidade || 1), 1), ...ca }
-          : { tamanho: b.tamanho, tipo: "unico", codigos: b.codigos, ...ca };
-      });
-    if (!almox || !material || unidades.length === 0 || erroCa) return;
+          : {}),
+      }));
+    if (!almox || !material || remessas.length === 0 || erroCa) return;
 
     await entrada.mutateAsync({
       almoxarifado_id: almox, sup_item_id: material,
       valor_unitario: Number(valor || 0), estoque_minimo: Number(minimo || 0),
       preco_valido_ate: precoValidoAte || null,
-      fornecedor_id: fornecedor || null, unidades,
+      fornecedor_id: fornecedor || null, remessas,
     });
     limpar();
     onFechar();
@@ -607,23 +624,12 @@ function DialogEntrada({ aberto, onFechar, empresaId, podeAlterar }: {
                     <Input value={b.tamanho} onChange={(e) => alterar(i, { tamanho: e.target.value })}
                            placeholder="M, 42…" className="h-9" />
                   </div>
-                  <div className="flex-1">
-                    <Label className="text-xs">Tipo de etiqueta</Label>
-                    <Select value={b.tipo} onValueChange={(v) => alterar(i, { tipo: v as TipoTag, codigos: [] })}>
-                      <SelectTrigger className="h-9"><SelectValue /></SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="unico">🔵 Única — 1 etiqueta por peça</SelectItem>
-                        <SelectItem value="massa">🟠 Em massa — 1 etiqueta, N unidades</SelectItem>
-                      </SelectContent>
-                    </Select>
+                  <div className="w-32">
+                    <Label className="text-xs">Quantidade</Label>
+                    <Input type="number" min="1" value={b.quantidade} autoFocus={i === 0}
+                           onChange={(e) => alterar(i, { quantidade: e.target.value })} className="h-9" />
                   </div>
-                  {b.tipo === "massa" && (
-                    <div className="w-28">
-                      <Label className="text-xs">Unidades</Label>
-                      <Input type="number" min="1" value={b.quantidade}
-                             onChange={(e) => alterar(i, { quantidade: e.target.value })} className="h-9" />
-                    </div>
-                  )}
+                  <div className="flex-1" />
                   {blocos.length > 1 && (
                     <Button variant="ghost" size="icon" className="h-9 w-9 text-destructive"
                             onClick={() => setBlocos((s) => s.filter((_, j) => j !== i))}>
@@ -660,13 +666,6 @@ function DialogEntrada({ aberto, onFechar, empresaId, podeAlterar }: {
                     </div>
                   </div>
                 )}
-                <CampoBipagem
-                  codigos={b.codigos}
-                  onChange={(c) => alterar(i, { codigos: c })}
-                  max={b.tipo === "massa" ? 1 : undefined}
-                  autoFoco={i === 0}
-                  placeholder={b.tipo === "massa" ? "Bipe a etiqueta do lote…" : "Bipe cada peça…"}
-                />
               </div>
             ))}
             <Button variant="outline" size="sm" onClick={() => setBlocos((s) => [...s, { ...BLOCO_VAZIO }])}>
@@ -919,10 +918,12 @@ function DialogDetalhe({ linha, onFechar }: { linha: LinhaEstoque | null; onFech
                       className={cn("flex items-center gap-2 rounded-md border px-3 py-2 text-sm",
                         t.usado && "bg-muted/50 text-muted-foreground")}>
                       <span className="w-8 shrink-0 text-xs text-muted-foreground">#{t.sequencia}</span>
-                      <span className="flex-1 truncate font-mono text-xs">{t.codigo}</span>
+                      <span className="flex-1 truncate font-mono text-[11px] text-muted-foreground">{t.codigo}</span>
                       {t.tamanho && <Badge variant="outline" className="text-[10px]">{t.tamanho}</Badge>}
                       <Badge variant="secondary" className="text-[10px]">
-                        {t.tipo === "massa" ? `massa · ${t.quantidade_massa}/${t.quantidade_original_massa}` : "única"}
+                        {t.tipo === "massa"
+                          ? `${t.quantidade_massa} de ${t.quantidade_original_massa} un`
+                          : "etiqueta antiga · 1 un"}
                       </Badge>
                       <Badge variant="outline" className="text-[10px]">{t.estado}</Badge>
                       {t.usado
@@ -936,7 +937,7 @@ function DialogDetalhe({ linha, onFechar }: { linha: LinhaEstoque | null; onFech
                     </div>
                   ))}
                   {visiveis.length === 0 && (
-                    <p className="py-8 text-center text-sm text-muted-foreground">Nenhuma etiqueta.</p>
+                    <p className="py-8 text-center text-sm text-muted-foreground">Nenhuma entrada registrada.</p>
                   )}
                 </div>
               )}
