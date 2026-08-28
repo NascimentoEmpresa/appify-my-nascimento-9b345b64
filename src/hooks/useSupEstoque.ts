@@ -23,6 +23,15 @@ export interface LinhaEstoque {
   sup_item_id: string;
   /** Código interno do produto, imutável — o que se bipa (ajuste 7 do Cassio). */
   codigo_item: string | null;
+  /**
+   * Códigos dos lotes/etiquetas ainda disponíveis deste item.
+   *
+   * Existe só para a BUSCA. Há 9.248 etiquetas antigas com rótulo físico ainda
+   * colado na peça (e lotes herdados do legado, tipo "INS-0065"): quem bipa uma
+   * delas precisa cair no item, senão a transição para o código do produto
+   * quebra a consulta no chão de almoxarifado.
+   */
+  codigos_lote: string[];
   material: string;
   tipo_material: string;
   almoxarifado: string;
@@ -190,7 +199,7 @@ export function useEstoqueLista(empresaId: string | null) {
         .select(`id, valor_unitario, estoque_minimo, preco_valido_ate,
                  sup_item:sup_item_id (id, nome, tipo, codigo),
                  almoxarifado:almoxarifado_id (nome),
-                 sup_estoque_tag (tamanho, tipo, usado, quantidade_massa, quantidade_original_massa, valor_unitario)`);
+                 sup_estoque_tag (codigo, tamanho, tipo, usado, quantidade_massa, quantidade_original_massa, valor_unitario)`);
       if (error) throw error;
 
       // Mesma fórmula da view sup_estoque_saldo — aqui só para evitar um
@@ -214,6 +223,7 @@ export function useEstoqueLista(empresaId: string | null) {
           item_estoque_id: r.id,
           sup_item_id: r.sup_item?.id,
           codigo_item: r.sup_item?.codigo ?? null,
+          codigos_lote: tags.filter((t: any) => !t.usado && t.codigo).map((t: any) => String(t.codigo)),
           material: r.sup_item?.nome ?? "—",
           tipo_material: r.sup_item?.tipo ?? "",
           almoxarifado: r.almoxarifado?.nome ?? "—",

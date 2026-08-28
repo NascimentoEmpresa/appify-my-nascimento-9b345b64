@@ -90,7 +90,7 @@ export default function EstoqueEtiquetas() {
     <div className="space-y-6">
       <PageHeader
         title="Estoque & Etiquetas"
-        subtitle="Cada peça é rastreada por uma etiqueta física. Entrada, devolução e baixa são por bipagem."
+        subtitle="Cada material tem um código próprio, que não muda. A entrada é por quantidade; devolução e baixa continuam por bipagem."
         module="Suprimentos"
         breadcrumb={["Estoque & Etiquetas"]}
         actions={
@@ -127,7 +127,7 @@ export default function EstoqueEtiquetas() {
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
         <Kpi rotulo="Materiais" valor={kpis.materiais} icone={Boxes} />
         <Kpi rotulo="Unidades disponíveis" valor={kpis.disponivel} icone={Tag} />
-        <Kpi rotulo="Etiquetas cadastradas" valor={kpis.etiquetas} icone={Tag} />
+        <Kpi rotulo="Entradas registradas" valor={kpis.etiquetas} icone={Tag} />
         <Kpi rotulo="Abaixo do mínimo" valor={kpis.abaixo} icone={AlertTriangle}
              destaque={kpis.abaixo > 0} />
         <Kpi rotulo="Valor total do estoque" valor={fmtBRL(kpis.valorTotal)} icone={Coins} />
@@ -181,7 +181,7 @@ export default function EstoqueEtiquetas() {
               : "Estoque vazio."}
           </p>
           <p className="text-sm text-muted-foreground">
-            {busca ? "Tente outro termo." : "Comece dando entrada nas etiquetas recebidas."}
+            {busca ? "Tente outro termo." : "Comece dando entrada no material recebido."}
           </p>
         </div>
       ) : (
@@ -709,7 +709,13 @@ function ConsultaEstoque({ empresaId }: { empresaId: string | null | undefined }
     const t = busca.trim().toLowerCase();
     if (!t) return [];
     return linhas
-      .filter((l) => `${l.material} ${l.almoxarifado}`.toLowerCase().includes(t))
+      .filter((l) => {
+        if (`${l.codigo_item ?? ""} ${l.material} ${l.almoxarifado}`.toLowerCase().includes(t)) return true;
+        // Código de lote/etiqueta antiga: o rótulo físico continua colado na
+        // peça em 9.248 casos, e o estoquista vai bipar o que está na mão.
+        // Sem isto ele bipa, não acha nada e conclui que o item sumiu.
+        return l.codigos_lote.some((c) => c.toLowerCase() === t);
+      })
       .slice(0, 25);
   }, [linhas, busca]);
 
@@ -721,7 +727,7 @@ function ConsultaEstoque({ empresaId }: { empresaId: string | null | undefined }
           autoFocus
           value={busca}
           onChange={(e) => { setBusca(e.target.value); setEscolhido(null); }}
-          placeholder="Digite o material que você quer consultar…"
+          placeholder="Bipe ou digite o código, ou busque pelo nome do material…"
           className="pl-9"
         />
       </div>
@@ -733,6 +739,7 @@ function ConsultaEstoque({ empresaId }: { empresaId: string | null | undefined }
           {achados.map((l) => (
             <button key={l.item_estoque_id} type="button" onClick={() => setEscolhido(l)}
                     className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-sm hover:bg-muted">
+              <span className="w-16 shrink-0 font-mono text-[11px] text-muted-foreground">{l.codigo_item ?? "—"}</span>
               <span className="flex-1 truncate">{l.material}</span>
               <span className="text-xs text-muted-foreground">{l.almoxarifado}</span>
               <Badge variant={l.disponivel > 0 ? "secondary" : "outline"} className="text-[10px]">
@@ -750,7 +757,10 @@ function ConsultaEstoque({ empresaId }: { empresaId: string | null | undefined }
         <div className="space-y-3">
           <div className="rounded-md border p-3">
             <p className="font-medium">{escolhido.material}</p>
-            <p className="text-xs text-muted-foreground">{escolhido.almoxarifado}</p>
+            <p className="text-xs text-muted-foreground">
+              <span className="font-mono">{escolhido.codigo_item ?? "sem código"}</span>
+              {" · "}{escolhido.almoxarifado}
+            </p>
             <div className="mt-2 flex flex-wrap gap-3 text-sm">
               <span><strong>{escolhido.disponivel}</strong> disponível</span>
               <span className="text-muted-foreground">{escolhido.consumido} consumido</span>
@@ -885,7 +895,7 @@ function DialogDetalhe({ linha, onFechar }: { linha: LinhaEstoque | null; onFech
           <Tabs defaultValue="etiquetas">
             <TabsList className="grid w-full grid-cols-3">
               <TabsTrigger value="etiquetas" className="gap-1.5">
-                <Tag className="h-3.5 w-3.5" /> Etiquetas
+                <Tag className="h-3.5 w-3.5" /> Entradas
               </TabsTrigger>
               <TabsTrigger value="historico" className="gap-1.5">
                 <History className="h-3.5 w-3.5" /> Histórico
