@@ -416,7 +416,15 @@ function LinhaItem({
   const valor = parcela ? parcela.valor : despesa.valor_total;
   const dataPagamento = parcela ? parcela.data_pagamento_real ?? parcela.data_vencimento : despesa.data_pagamento;
   return (
-    <TableRow className="cursor-pointer hover:bg-muted/50" onClick={onAbrir}>
+    <TableRow
+      className={cn(
+        "cursor-pointer",
+        despesa.excecao
+          ? "bg-destructive/5 hover:bg-destructive/10 dark:bg-destructive/10 dark:hover:bg-destructive/15"
+          : "hover:bg-muted/50",
+      )}
+      onClick={onAbrir}
+    >
       <TableCell className="text-sm">{isSolicitacao ? "Solicitação" : "Despesa"}</TableCell>
       <TableCell className="font-mono text-xs">
         {despesa.numero}
@@ -442,7 +450,7 @@ function LinhaItem({
           {status === "pendente_aprovacao" && despesa.nivel_aprovacao_atual ? ` N${despesa.nivel_aprovacao_atual}` : ""}
         </Badge>
       </TableCell>
-      <TableCell className="text-sm">{despesa.excecao ? "Sim" : "Não"}</TableCell>
+      <TableCell className="text-sm">{despesa.excecao ? <Badge variant="destructive">Sim</Badge> : "Não"}</TableCell>
       <TableCell className="text-xs text-muted-foreground">{new Date(despesa.updated_at).toLocaleString("pt-BR")}</TableCell>
     </TableRow>
   );

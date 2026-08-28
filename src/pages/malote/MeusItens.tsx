@@ -350,7 +350,14 @@ export default function MeusItens() {
                 const valor = parcela ? parcela.valor : despesa.valor_total;
                 const dataPagamento = parcela ? parcela.data_pagamento_real ?? parcela.data_vencimento : despesa.data_pagamento;
                 return (
-                  <TableRow key={`${despesa.id}-${parcela?.id ?? "unica"}`} className="cursor-pointer" onClick={() => abrirItem(despesa)}>
+                  <TableRow
+                    key={`${despesa.id}-${parcela?.id ?? "unica"}`}
+                    className={cn(
+                      "cursor-pointer",
+                      despesa.excecao && "bg-destructive/5 hover:bg-destructive/10 dark:bg-destructive/10 dark:hover:bg-destructive/15",
+                    )}
+                    onClick={() => abrirItem(despesa)}
+                  >
                     <TableCell>
                       <span className="flex items-center gap-1.5 text-sm">
                         <ListChecks className="h-3.5 w-3.5 text-muted-foreground" /> {tipoLabelDe(despesa)}
@@ -374,7 +381,7 @@ export default function MeusItens() {
                     </TableCell>
                     <TableCell className="text-sm">{aprovador ?? "—"}</TableCell>
                     <TableCell>
-                      {despesa.excecao ? <span className="text-red-600 dark:text-red-400 text-sm">Sim</span> : <span className="text-muted-foreground text-sm">Não</span>}
+                      {despesa.excecao ? <Badge variant="destructive">Sim</Badge> : <span className="text-muted-foreground text-sm">Não</span>}
                     </TableCell>
                     <TableCell className="text-xs text-muted-foreground">{new Date(despesa.updated_at).toLocaleString("pt-BR")}</TableCell>
                   </TableRow>

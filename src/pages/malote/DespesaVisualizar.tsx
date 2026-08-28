@@ -18,7 +18,7 @@ import {
   AlertDialogCancel,
 } from "@/components/ui/alert-dialog";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { ArrowLeft, Paperclip, Trash2, RotateCcw, FileText, Package, DollarSign, Tag, Image as ImageIcon, FileSpreadsheet, File as FileIcon, Check, X, PenLine, ClipboardCheck, Banknote, Upload } from "lucide-react";
+import { ArrowLeft, Paperclip, Trash2, RotateCcw, FileText, Package, DollarSign, Tag, Image as ImageIcon, FileSpreadsheet, File as FileIcon, Check, X, PenLine, ClipboardCheck, Banknote, Upload, AlertTriangle } from "lucide-react";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
 import { cn } from "@/lib/utils";
@@ -53,6 +53,7 @@ import {
   TipoEvento,
 } from "@/hooks/useMaloteDespesa";
 import { useOrcadoClassificacao } from "@/hooks/useOrcadoClassificacao";
+import { useMaloteConfig, usePrazoNormalInclusao, useSouGerenteFinanceiroMalote, horaAtualPassouDe } from "@/hooks/useMaloteConfig";
 import { useTiposFormaPagamento } from "@/hooks/useMaloteFormaPagamento";
 import { useUtilizadoOrcamento } from "@/hooks/useUtilizadoOrcamento";
 import { anoMesAtual } from "@/hooks/usePlanilhaCusto";
@@ -309,6 +310,16 @@ export default function DespesaVisualizar() {
   // SIS-2026-0221: "Forma de pagamento" vem do catálogo cadastrável em
   // Configurações do Malote → Formas de Pagamento, não mais de um enum fixo.
   const { data: tiposFormaPagamento = [] } = useTiposFormaPagamento();
+  const { data: maloteConfig } = useMaloteConfig();
+  // SIS-2026-0250 (errata: exceção continua nascendo no Nível 1 e passa
+  // pela avaliação normal do N1 — não pula mais nada na inclusão). Quando
+  // o N1 aprova uma exceção, a escalada pro Nível 2 é obrigatória (ver
+  // proximoNivelConfigurado abaixo). A Carol (cargo GERENTE FINANCEIRO)
+  // pode agir a partir do Nível 2 em diante, como reforço, mesmo sem
+  // estar configurada como aprovadora 2 daquela Classificação — nunca no
+  // Nível 1, pra nunca pular a avaliação do N1.
+  const { data: souGerenteFinanceiro } = useSouGerenteFinanceiroMalote();
+  const { data: prazoNormal } = usePrazoNormalInclusao();
 
   useEffect(() => {
     if (!despesa) return;
@@ -350,11 +361,17 @@ export default function DespesaVisualizar() {
 
   // Papéis do usuário logado em relação a esta despesa — SIS-2026-0132 Fase 1.
   const souSolicitante = despesa.created_by === user?.id;
+  // SIS-2026-0250: Carol age em exceção como reforço a partir do Nível 2
+  // (nunca no Nível 1 — a exceção sempre precisa passar pela avaliação
+  // normal do N1 primeiro), mesmo sem estar configurada como aprovadora 2
+  // daquela Classificação.
+  const souGerenteFinanceiroDestaExcecao =
+    despesa.excecao && despesa.nivel_aprovacao_atual !== 1 && !!souGerenteFinanceiro;
   const souAprovadorNivelAtual =
     despesa.status === "pendente_aprovacao" &&
     despesa.nivel_aprovacao_atual != null &&
-    souAprovadorDoNivel(despesa, despesa.nivel_aprovacao_atual, user?.id);
-  const configurado = souAprovadorConfigurado(despesa, user?.id);
+    (souAprovadorDoNivel(despesa, despesa.nivel_aprovacao_atual, user?.id) || souGerenteFinanceiroDestaExcecao);
+  const configurado = souAprovadorConfigurado(despesa, user?.id) || souGerenteFinanceiroDestaExcecao;
   // SIS-2026-0192: "Dados da Aprovação e Pagamento" e "Rateio da Despesa"
   // só podem ser alterados pelo Solicitante (ex.: quando o aprovador pede
   // ajuste) — ninguém mais edita, nem admin/supervisor/aprovador. Pra
@@ -427,7 +444,13 @@ export default function DespesaVisualizar() {
     orcadoClassificacao == null ||
     percentualDoOrcado == null ||
     percentualDoOrcado <= alcadaNivelAtual.limitePct;
-  const proximoNivelConfigurado = proximoNivelExiste && !dentroDaAlcada;
+  // SIS-2026-0250: N1 aprovando uma exceção sempre escala pro Nível 2 —
+  // não fica sujeito à alçada (Carol/Gerente Financeiro é o reforço do
+  // Nível 2 mesmo quando não há Aprovador 2 configurado na Classificação,
+  // então "próximo nível existe" vale mesmo com o array vazio). O RPC
+  // malote_aprovar_despesa reforça essa mesma regra no banco.
+  const escalaObrigatoriaPorExcecao = despesa.nivel_aprovacao_atual === 1 && despesa.excecao;
+  const proximoNivelConfigurado = escalaObrigatoriaPorExcecao || (proximoNivelExiste && !dentroDaAlcada);
 
   // Pagamento Malote (SIS-2026-0160) — elegibilidade resolvida só pelo
   // gerenciamento de acesso (usePodePagarMalote), não por linha da despesa.
@@ -450,6 +473,12 @@ export default function DespesaVisualizar() {
     // alçada do Nível 1), o aprovador do N1 precisa registrar o motivo.
     if (despesa!.nivel_aprovacao_atual === 1 && proximoNivelConfigurado && !justificativa.trim()) {
       return "Informe a justificativa da aprovação — obrigatória quando a despesa escala para o Nível 2.";
+    }
+    // SIS-2026-0250 (regra 1.2): N1 aprovando depois do horário de
+    // conferência exige justificativa também — mesmo campo, outro
+    // gatilho. N2/N3 nunca caem aqui (aprovam a qualquer momento).
+    if (despesa!.nivel_aprovacao_atual === 1 && horaAtualPassouDe(maloteConfig?.conferencia_aprovacao_horario) && !justificativa.trim()) {
+      return `Informe a justificativa da aprovação — obrigatória depois do horário limite de conferência (regra 1.2, ${maloteConfig?.conferencia_aprovacao_horario}).`;
     }
     return null;
   }
@@ -755,12 +784,20 @@ export default function DespesaVisualizar() {
         }
       />
 
-      {/* Bloco 1: cabeçalho */}
-      <Card>
+      {/* Bloco 1: cabeçalho — SIS-2026-0250: fundo/borda em vermelho quando
+          é Exceção, pra chamar atenção antes de qualquer outra coisa. */}
+      <Card className={cn(despesa.excecao && "border-destructive/60 bg-destructive/5 dark:bg-destructive/10")}>
         <CardContent className="p-4 flex flex-wrap items-center gap-x-8 gap-y-2 text-sm">
           <div>
             <p className="text-xs text-muted-foreground">Nº da Despesa</p>
-            <p className="font-mono font-medium">{despesa.numero}</p>
+            <p className="font-mono font-medium flex items-center gap-2">
+              {despesa.numero}
+              {despesa.excecao && (
+                <Badge variant="destructive" className="gap-1">
+                  <AlertTriangle className="h-3 w-3" /> Exceção
+                </Badge>
+              )}
+            </p>
           </div>
           <div>
             <p className="text-xs text-muted-foreground">Solicitante</p>
@@ -985,7 +1022,11 @@ export default function DespesaVisualizar() {
               <Label>
                 Justificativa da aprovação
                 {souAprovadorNivelAtual && despesa.nivel_aprovacao_atual === 1 && (
-                  <span className="text-xs text-muted-foreground font-normal"> (obrigatória se escalar para N2)</span>
+                  <span className="text-xs text-muted-foreground font-normal">
+                    {" "}
+                    (obrigatória se escalar para N2{despesa.excecao && " — exceção sempre escala"}
+                    {maloteConfig?.conferencia_aprovacao_horario && <> ou se aprovar após {maloteConfig.conferencia_aprovacao_horario}</>})
+                  </span>
                 )}
               </Label>
               <Input value={justificativa} onChange={(e) => setJustificativa(e.target.value)} disabled={!podeEditarJustificativaAprovacao} />
@@ -1030,7 +1071,21 @@ export default function DespesaVisualizar() {
             justificativa={justificativaExcecao}
             onJustificativaChange={setJustificativaExcecao}
             disabled={!rateioEPagamentoEditaveis}
+            foraDoPrazoInclusao={!!dataPagamento && !!prazoNormal && dataPagamento < prazoNormal}
+            prazoNormal={prazoNormal}
           />
+          {/* SIS-2026-0250 (regra 2.2): aviso informativo só — não bloqueia
+              a aprovação, só avisa o aprovador do prazo do dia. */}
+          {excecao && despesa.status === "pendente_aprovacao" && dataPagamento === new Date().toLocaleDateString("sv-SE") && (
+            <div className="flex items-start gap-2 rounded-lg border border-amber-300 bg-amber-50 dark:bg-amber-950/30 p-3 text-xs">
+              <AlertTriangle className="h-4 w-4 text-amber-600 mt-0.5 shrink-0" />
+              <p className="text-amber-800/80 dark:text-amber-300/80">
+                Exceção com pagamento hoje — precisa ser aprovada até{" "}
+                <span className="font-medium">{maloteConfig?.excecao_limite_aprovacao_horario}</span> (regra 2.2) pra
+                garantir o pagamento no mesmo dia.
+              </p>
+            </div>
+          )}
         </CardContent>
       </Card>
 
@@ -1102,6 +1157,12 @@ export default function DespesaVisualizar() {
         <Card>
           <CardContent className="p-4 space-y-2">
             <Label>Comentário</Label>
+            {despesa.excecao && souAprovadorNivelAtual && (
+              <p className="text-xs text-muted-foreground">
+                Exceção: além de aprovar ou reprovar, dá pra usar "Solicitar ajuste" pra sugerir ao solicitante
+                reagendar pra uma data que não seja exceção.
+              </p>
+            )}
             <textarea
               value={comentario}
               onChange={(e) => setComentario(e.target.value.slice(0, 500))}
