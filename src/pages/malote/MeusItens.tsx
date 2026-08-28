@@ -24,6 +24,7 @@ import {
   STATUS_FASE_SOLICITACAO,
 } from "@/hooks/useMaloteDespesa";
 import { useClassificacoesOrcamento } from "@/hooks/usePlanejamentoOrcamentario";
+import { JustificativaPendenteBadge } from "./JustificativaPendenteBadge";
 
 const ORIGEM_LABEL: Record<string, string> = {
   solicitacao: "Solicitação",
@@ -326,20 +327,21 @@ export default function MeusItens() {
                 <TableHead>Status</TableHead>
                 <TableHead>Aprovador pendente</TableHead>
                 <TableHead>Exceção</TableHead>
+                <TableHead>Justificativa</TableHead>
                 <TableHead>Última atualização</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {isLoading && (
                 <TableRow>
-                  <TableCell colSpan={13} className="text-center text-muted-foreground py-8">
+                  <TableCell colSpan={14} className="text-center text-muted-foreground py-8">
                     Carregando...
                   </TableCell>
                 </TableRow>
               )}
               {!isLoading && filtrados.length === 0 && (
                 <TableRow>
-                  <TableCell colSpan={13} className="text-center text-muted-foreground py-8">
+                  <TableCell colSpan={14} className="text-center text-muted-foreground py-8">
                     Nenhum item encontrado para os filtros selecionados.
                   </TableCell>
                 </TableRow>
@@ -383,6 +385,9 @@ export default function MeusItens() {
                     <TableCell className="text-sm">{aprovador ?? "—"}</TableCell>
                     <TableCell>
                       {despesa.excecao ? <Badge variant="destructive">Sim</Badge> : <span className="text-muted-foreground text-sm">Não</span>}
+                    </TableCell>
+                    <TableCell>
+                      <JustificativaPendenteBadge despesa={despesa} parcela={parcela} />
                     </TableCell>
                     <TableCell className="text-xs text-muted-foreground">{new Date(despesa.updated_at).toLocaleString("pt-BR")}</TableCell>
                   </TableRow>
