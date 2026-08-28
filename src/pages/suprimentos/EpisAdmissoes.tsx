@@ -42,6 +42,7 @@ interface EnxovalDetalhe {
     id: string;
     nome_item: string;
     tamanho: string | null;
+    tamanho_informado: string | null;
     quantidade: number;
     ordem: number;
   }>;
@@ -106,7 +107,7 @@ export default function EpisAdmissoes() {
     setCarregandoEnxoval(true);
     const { data, error } = await sb
       .from("sup_admissao_enxoval")
-      .select("id,token,expira_em,preenchido_em,pedido_id,contrato_id,posto_id,funcao_id,sup_admissao_enxoval_item(id,nome_item,tamanho,quantidade,ordem)")
+      .select("id,token,expira_em,preenchido_em,pedido_id,contrato_id,posto_id,funcao_id,sup_admissao_enxoval_item(id,nome_item,tamanho,tamanho_informado,quantidade,ordem)")
       .eq("candidato_id", candidatoId)
       .maybeSingle();
     setCarregandoEnxoval(false);
@@ -369,12 +370,31 @@ export default function EpisAdmissoes() {
                   <div style={{ border: "1px solid #e2e8f0", borderRadius: 8, overflow: "hidden" }}>
                     {[...(enxoval.sup_admissao_enxoval_item ?? [])]
                       .sort((a, b) => a.ordem - b.ordem)
-                      .map(item => (
-                        <div key={item.id} style={{ display: "flex", justifyContent: "space-between", gap: 10, padding: "8px 10px", borderBottom: "1px solid #f1f5f9", fontSize: 12 }}>
-                          <span>{item.nome_item} <span style={{ color: "#94a3b8" }}>× {item.quantidade}</span></span>
-                          <b>{item.tamanho || "Sem tamanho"}</b>
-                        </div>
-                      ))}
+                      .map(item => {
+                        // Item sem grade vem com o tamanho ESCRITO pelo candidato.
+                        // Mostrar "Sem tamanho" aqui esconderia justamente o dado
+                        // que ele digitou — foi o furo que o Cassio apontou.
+                        const escrito = item.tamanho_informado?.trim();
+                        return (
+                          <div key={item.id} style={{ display: "flex", justifyContent: "space-between", gap: 10, padding: "8px 10px", borderBottom: "1px solid #f1f5f9", fontSize: 12 }}>
+                            <span>
+                              {item.nome_item} <span style={{ color: "#94a3b8" }}>× {item.quantidade}</span>
+                              {item.tamanho && escrito && (
+                                <div style={{ color: "#b45309", fontSize: 11, marginTop: 2 }}>obs.: {escrito}</div>
+                              )}
+                            </span>
+                            {item.tamanho ? (
+                              <b>{item.tamanho}</b>
+                            ) : escrito ? (
+                              <b style={{ color: "#b45309" }} title="Escrito pelo colaborador — o item não tem grade cadastrada">
+                                {escrito} <span style={{ fontWeight: 400, fontSize: 10 }}>(escrito)</span>
+                              </b>
+                            ) : (
+                              <b style={{ color: "#94a3b8" }}>Sem tamanho</b>
+                            )}
+                          </div>
+                        );
+                      })}
                   </div>
                   {enxoval.pedido_id ? (
                     <div style={{ marginTop: 10, fontSize: 12, color: "#15803d" }}>✓ Pedido de materiais já gerado.</div>

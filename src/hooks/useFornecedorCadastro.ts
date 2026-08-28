@@ -30,6 +30,8 @@ export interface ContaBancariaPendente {
 export interface CadastroPendente {
   id: string;
   convite_id: string | null;
+  /** true = alguem da empresa transcreveu, em vez de o fornecedor preencher. */
+  interno?: boolean | null;
   tipo: "pj" | "pf";
   cnpj_cpf: string;
   razao_social: string;

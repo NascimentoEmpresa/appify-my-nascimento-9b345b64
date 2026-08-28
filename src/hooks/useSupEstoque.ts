@@ -21,6 +21,8 @@ export interface Almoxarifado { id: string; codigo: string; nome: string; empres
 export interface LinhaEstoque {
   item_estoque_id: string;
   sup_item_id: string;
+  /** Código interno do produto, imutável — o que se bipa (ajuste 7 do Cassio). */
+  codigo_item: string | null;
   material: string;
   tipo_material: string;
   almoxarifado: string;
@@ -186,7 +188,7 @@ export function useEstoqueLista(empresaId: string | null) {
       const { data, error } = await sb
         .from("sup_estoque_item")
         .select(`id, valor_unitario, estoque_minimo, preco_valido_ate,
-                 sup_item:sup_item_id (id, nome, tipo),
+                 sup_item:sup_item_id (id, nome, tipo, codigo),
                  almoxarifado:almoxarifado_id (nome),
                  sup_estoque_tag (tamanho, tipo, usado, quantidade_massa, quantidade_original_massa, valor_unitario)`);
       if (error) throw error;
@@ -211,6 +213,7 @@ export function useEstoqueLista(empresaId: string | null) {
         return {
           item_estoque_id: r.id,
           sup_item_id: r.sup_item?.id,
+          codigo_item: r.sup_item?.codigo ?? null,
           material: r.sup_item?.nome ?? "—",
           tipo_material: r.sup_item?.tipo ?? "",
           almoxarifado: r.almoxarifado?.nome ?? "—",
@@ -459,6 +462,95 @@ export interface UnidadeEntrada {
   /** Certificado pertence à remessa física, não ao cadastro do material. */
   ca_numero?: string | null;
   ca_validade?: string | null;
+}
+
+/** Uma remessa: um tamanho, uma quantidade, um CA. */
+export interface RemessaEntrada {
+  tamanho: string;
+  quantidade: number;
+  ca_numero?: string | null;
+  ca_validade?: string | null;
+}
+
+/**
+ * Entrada por QUANTIDADE — ajuste 7 do Cassio.
+ *
+ * "Cada item, ao invés de ter uma tag, ter um código interno do produto, onde
+ * somente é adicionado quantidades dele."
+ *
+ * O que ele estava resolvendo: duas peças idênticas com etiquetas diferentes
+ * obrigam quem separa a escolher qual é qual, e não há resposta certa. Bipando
+ * o produto e informando quantidade, a pergunta deixa de existir.
+ *
+ * Uma chamada por remessa, de propósito. Cada remessa vira um lote com o seu
+ * próprio custo e CA — juntar tornaria o custo uma média, e o Cassio já disse
+ * no 0199 que média não serve ("o último valor pago").
+ *
+ * Sucesso parcial é possível e é o comportamento certo: se a terceira remessa
+ * falhar, as duas primeiras JÁ entraram no estoque e desfazê-las seria mentir
+ * sobre o que está na prateleira. O aviso diz exatamente quais faltaram.
+ */
+export function useEntradaPorQuantidade() {
+  const invalidar = useInvalidarEstoque();
+  return useMutation({
+    mutationFn: async (p: {
+      almoxarifado_id: string; sup_item_id: string;
+      valor_unitario?: number; estoque_minimo?: number;
+      fornecedor_id?: string | null;
+      validade?: string | null; observacao?: string | null;
+      preco_valido_ate?: string | null;
+      remessas: RemessaEntrada[];
+    }) => {
+      let gravadas = 0;
+      const falhas: string[] = [];
+
+      for (const r of p.remessas) {
+        const { error } = await sb.rpc("sup_est_entrada_quantidade", {
+          p_payload: {
+            almoxarifado_id: p.almoxarifado_id,
+            sup_item_id: p.sup_item_id,
+            quantidade: r.quantidade,
+            tamanho: r.tamanho || null,
+            valor_unitario: p.valor_unitario ?? null,
+            estoque_minimo: p.estoque_minimo ?? 0,
+            fornecedor: p.fornecedor_id ?? null,
+            validade: p.validade ?? null,
+            observacao: p.observacao ?? null,
+            ca_numero: r.ca_numero ?? null,
+            ca_validade: r.ca_validade ?? null,
+          },
+        });
+        if (error) falhas.push(`${r.tamanho || "sem tamanho"}: ${error.message}`);
+        else gravadas += r.quantidade;
+      }
+
+      // Mesma decisão de useEntradaEstoque: a validade do preço é uma chamada à
+      // parte, e falhar nela não desfaz a entrada — o material já está lá.
+      if (gravadas > 0 && p.preco_valido_ate) {
+        const { error: e2 } = await sb.rpc("sup_est_validade_preco", {
+          p_almoxarifado_id: p.almoxarifado_id,
+          p_sup_item_id: p.sup_item_id,
+          p_valido_ate: p.preco_valido_ate,
+        });
+        if (e2) toast.warning("Entrada gravada, mas a validade do preço não foi salva.");
+      }
+
+      if (gravadas === 0 && falhas.length) throw new Error(falhas.join(" · "));
+      return { gravadas, falhas };
+    },
+    onSuccess: (r) => {
+      invalidar();
+      if (r.falhas.length) {
+        toast.warning(`${r.gravadas} unidade(s) no estoque, ${r.falhas.length} remessa(s) recusada(s).`, {
+          description: r.falhas.join(" · "),
+          duration: 10000,
+        });
+      } else {
+        toast.success(`${r.gravadas} unidade(s) adicionada(s) ao estoque.`);
+      }
+    },
+    onError: (e: any) => toast.error(e?.message ?? "Não foi possível dar entrada."),
+  });
 }
 
 export function useEntradaEstoque() {
