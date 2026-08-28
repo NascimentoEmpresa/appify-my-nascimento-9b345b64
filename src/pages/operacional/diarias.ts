@@ -1,9 +1,4 @@
 // Domínio do Controle de Diárias (módulo Operacional).
-//
-// Ainda não existe tabela no Supabase para diárias — esta tela é a primeira
-// entrega, só de frontend, em cima das telas aprovadas. Tudo aqui (contratos,
-// postos e a lista de solicitações) é mock em memória; quando o backend
-// existir, basta trocar `SOLICITACOES_MOCK` pela query e manter os tipos.
 
 export type TurnoDiaria = "manha" | "tarde" | "noite" | "dia_inteiro";
 export type StatusSolicitacao = "solicitada" | "aprovada" | "reprovada";
@@ -196,85 +191,14 @@ export const textoConflito = (c: ConflitoLinha) =>
       ? "Duplicidade no faltante"
       : "Duplicidade no diarista";
 
-// ---------------------------------------------------------------------------
-// Mock
-// ---------------------------------------------------------------------------
-
-export const CONTRATOS: ContratoOpcao[] = [
-  { id: "CT-2025/0107", numero: "CT-2025/0107", descricao: "Serviço de Portaria", empresa: "HAGG", postos: ["Portaria 01", "Portaria 02", "Portaria 03", "Portaria 04"] },
-  { id: "CT-2025/0108", numero: "CT-2025/0108", descricao: "Serviço de Recepção", empresa: "HAGG", postos: ["Recepção", "Recepção 02"] },
-  { id: "CT-2025/0109", numero: "CT-2025/0109", descricao: "Serviço de Limpeza", empresa: "RAZÃO & SARDA LTDA", postos: ["Zeladoria", "Zeladoria 02"] },
-  { id: "CT-2025/0110", numero: "CT-2025/0110", descricao: "Apoio Operacional", empresa: "RAZÃO & SARDA LTDA", postos: ["Portaria 03", "Apoio 01"] },
-];
+export const CONTRATOS_DISPONIVEIS: ContratoOpcao[] = [];
 
 export const rotuloContrato = (id: string) => {
-  const c = CONTRATOS.find((x) => x.id === id);
+  const c = CONTRATOS_DISPONIVEIS.find((x) => x.id === id);
   return c ? `${c.numero} - ${c.descricao}` : id;
 };
 
-export const empresaDoContrato = (id: string) => CONTRATOS.find((c) => c.id === id)?.empresa ?? "—";
+export const empresaDoContrato = (id: string) =>
+  CONTRATOS_DISPONIVEIS.find((c) => c.id === id)?.empresa ?? "—";
 
-export const POSTOS = Array.from(new Set(CONTRATOS.flatMap((c) => c.postos))).sort((a, b) =>
-  a.localeCompare(b, "pt-BR"),
-);
-
-const anexo = (nome: string, tipo: string, tamanho: string): AnexoDiaria => ({
-  nome,
-  tipo,
-  tamanho,
-  enviadoEm: "18/05/2025 às 09:26",
-});
-
-const pessoas = [
-  { nome: "João Carlos da Silva", cpf: "529.982.247-25" },
-  { nome: "Maria Souza", cpf: "111.444.777-35" },
-  { nome: "Paulo Santos", cpf: "390.533.447-05" },
-  { nome: "José Oliveira", cpf: "168.995.350-09" },
-  { nome: "Fernanda Alves", cpf: "946.827.870-02" },
-  { nome: "Gabriel Costa", cpf: "016.394.520-02" },
-];
-
-const diaristas = [
-  { nome: "Carlos Pereira", cpf: "153.509.460-56", pix: "11 98765-4321" },
-  { nome: "Ana Lima", cpf: "796.020.610-88", pix: "ana.lima.pix@gmail.com" },
-  { nome: "Bruno Rodrigues", cpf: "222.333.444-05", pix: "bruno.rodrigues@pix.com" },
-  { nome: "Marcos Vinícius Almeida", cpf: "875.234.930-13", pix: "11987654321 (CPF)" },
-];
-
-/** 128 solicitações, para bater com os totais das telas aprovadas. */
-export const SOLICITACOES_MOCK: SolicitacaoDiaria[] = Array.from({ length: 128 }, (_, i) => {
-  const n = 128 - i; // mais recente primeiro
-  const contrato = CONTRATOS[n % CONTRATOS.length];
-  const faltante = pessoas[n % pessoas.length];
-  const diarista = diaristas[n % diaristas.length];
-  const turno = TURNOS[n % 3].value;
-  const dia = String(10 + (n % 18)).padStart(2, "0");
-  const status: StatusSolicitacao =
-    n % 7 === 0 ? "reprovada" : n % 2 === 0 ? "aprovada" : "solicitada";
-  return {
-    id: `SD-2025-${String(n).padStart(6, "0")}`,
-    criadoEm: `${dia}/05/2025 às 09:24`,
-    status,
-    contratoId: contrato.id,
-    posto: contrato.postos[n % contrato.postos.length],
-    faltanteNome: faltante.nome,
-    faltanteCpf: faltante.cpf,
-    diaristaNome: diarista.nome,
-    diaristaCpf: diarista.cpf,
-    pix: diarista.pix,
-    diarias: [
-      {
-        id: `${n}-1`,
-        data: `2025-05-${dia}`,
-        turno,
-        qtVt: n % 3 === 0 ? 1 : 2,
-        valorUnitVt: 11,
-        valorDiaria: 125,
-      },
-    ],
-    comprovantePonto: [anexo("comprovante_ponto.pdf", "PDF", "256 KB")],
-    documentos: [anexo("documento_foto.jpg", "JPG", "512 KB")],
-    observacoes: `Solicitação referente à cobertura de escala no dia ${dia}/05/2025.\nFavor revisar apontamentos de inconsistência antes de aprovar.`,
-    solicitante: "Iury de Jesus Silva",
-  };
-});
+export const POSTOS_DISPONIVEIS: string[] = [];

@@ -42,9 +42,8 @@ import { cn } from "@/lib/utils";
 import { useToast } from "@/hooks/use-toast";
 import { ModoModalDiaria, SolicitacaoDiariaModal } from "./SolicitacaoDiariaModal";
 import {
-  CONTRATOS,
-  POSTOS,
-  SOLICITACOES_MOCK,
+  CONTRATOS_DISPONIVEIS,
+  POSTOS_DISPONIVEIS,
   STATUS_SOLICITACAO,
   SolicitacaoDiaria,
   StatusSolicitacao,
@@ -106,7 +105,7 @@ function StatCard({
 
 export default function ControleDiarias() {
   const { toast } = useToast();
-  const [solicitacoes, setSolicitacoes] = useState<SolicitacaoDiaria[]>(SOLICITACOES_MOCK);
+  const [solicitacoes, setSolicitacoes] = useState<SolicitacaoDiaria[]>([]);
 
   // Filtros
   const [busca, setBusca] = useState("");
@@ -207,7 +206,9 @@ export default function ControleDiarias() {
     setModal({ modo: s.status === "solicitada" ? "aprovar" : "visualizar", s });
 
   const postosDisponiveis =
-    contrato === "todos" ? POSTOS : (CONTRATOS.find((c) => c.id === contrato)?.postos ?? POSTOS);
+    contrato === "todos"
+      ? POSTOS_DISPONIVEIS
+      : (CONTRATOS_DISPONIVEIS.find((c) => c.id === contrato)?.postos ?? POSTOS_DISPONIVEIS);
 
   return (
     <div className="space-y-6">
@@ -260,7 +261,7 @@ export default function ControleDiarias() {
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="todos">Todos</SelectItem>
-                {CONTRATOS.map((c) => (
+                {CONTRATOS_DISPONIVEIS.map((c) => (
                   <SelectItem key={c.id} value={c.id}>
                     {c.numero}
                   </SelectItem>
