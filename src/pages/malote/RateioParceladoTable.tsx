@@ -15,7 +15,7 @@ import {
   useIntegrantes,
   useJustificarRateioLinha,
 } from "@/hooks/useMaloteDespesa";
-import { useOrcadoClassificacao } from "@/hooks/useOrcadoClassificacao";
+import { useOrcadoClassificacaoMultiMes } from "@/hooks/useOrcadoClassificacao";
 import { useUtilizadoOrcamento } from "@/hooks/useUtilizadoOrcamento";
 import { useMeusContratosAnalista } from "@/hooks/useMaloteAnalistas";
 import { DimensoesRateio } from "./RateioGrid";
@@ -58,10 +58,20 @@ interface RateioParceladoTableProps {
 // recalculada por mês navegado (useOrcadoClassificacao re-chamado pro mês
 // da parcela atual) em vez de fixa no mês da despesa.
 //
-// Só a PARCELA 1 decide a alçada de aprovação e só ela pode ter snapshot
-// congelado (fatorParcela1, em DespesaVisualizar.tsx) — por isso só ela
-// mostra Status justificativa/Justificativa; parcelas seguintes são puro
-// acompanhamento, sem fluxo de justificativa (não haveria o que "decidir").
+// SIS-2026-0261 (correção — achados reais do Iury): a alçada de aprovação
+// (DespesaVisualizar.tsx) agora checa TODAS as parcelas e todos os
+// contratos do Rateio, não só a 1ª (ver montarCombosAlcada/
+// encontrarComboQueEstouraAlcada em orcamentoUtils.ts). A justificativa por
+// linha (SIS-2026-0192) também deixou de ser exclusiva da parcela 1 — mas
+// continua sendo checada UMA PARCELA DE CADA VEZ (a que está navegada
+// agora, `mesParcela`/`percentualLinha` abaixo), nunca "qualquer parcela
+// da linha de uma vez" — senão a parcela 1 (dentro do orçado) aparecia
+// "Pendente" só porque a parcela 3 (estourada) é da mesma linha, o que é
+// confuso e errado. O texto salvo continua sendo 1 só por linha
+// (`justificativa_texto`), não por parcela — só o SNAPSHOT congelado
+// (fatorParcela1, em DespesaVisualizar.tsx) continua exclusivo da parcela
+// 1, esse sim (é o único mês cujo orçado/utilizado foi decidido e gravado
+// no momento da aprovação).
 export function RateioParceladoTable({
   despesaId,
   empresaId,
@@ -93,7 +103,10 @@ export function RateioParceladoTable({
 
   const mesParcela = parcelaAtual.data_vencimento.slice(0, 7);
   const fatorParcela = valorTotalDespesa ? parcelaAtual.valor / valorTotalDespesa : 0;
-  const { resolver: resolverOrcado, isLoading: orcadoCarregando } = useOrcadoClassificacao(empresaId, mesParcela);
+  // SIS-2026-0261: trocado pelo resolver multi-mês — o mês navegado agora
+  // pode ser qualquer parcela, não só a que a instância antiga do hook
+  // (fixa num anoMes só) suportava.
+  const { resolver: resolverOrcado, isLoading: orcadoCarregando } = useOrcadoClassificacaoMultiMes(empresaId);
   const { data: utilizadoLinhas = [] } = useUtilizadoOrcamento();
 
   const utilizadoAntesPorContrato = useMemo(() => {
@@ -140,8 +153,8 @@ export function RateioParceladoTable({
       <div className="space-y-3">
         <div className="flex items-center justify-between">
           <p className="text-xs text-muted-foreground">
-            Cada parcela consome o orçamento do mês do seu vencimento — mas só a{" "}
-            <span className="font-medium text-foreground">parcela 1</span> decide a alçada de aprovação.
+            Cada parcela consome o orçamento do mês do seu vencimento — qualquer parcela que estourar o orçado do mês dela escala a
+            aprovação pro próximo nível.
           </p>
           <div className="flex items-center gap-2">
             <Button
@@ -243,7 +256,7 @@ export function RateioParceladoTable({
                 // aprovação/pagamento (fatorParcela1, DespesaVisualizar.tsx).
                 // As demais parcelas são sempre recalculadas ao vivo.
                 const estaCongelada = ehParcela1 && linha.congelado_em != null;
-                const orcado = estaCongelada ? linha.orcado_snapshot ?? null : resolverOrcado(classificacaoId, linha.contrato_id);
+                const orcado = estaCongelada ? linha.orcado_snapshot ?? null : resolverOrcado(classificacaoId, linha.contrato_id, mesParcela);
                 const valorDaParcela = (Number(linha.valor) || 0) * fatorParcela;
                 const percentualRateio = valorTotalDespesa ? ((Number(linha.valor) || 0) / valorTotalDespesa) * 100 : 0;
                 const chave = linha.contrato_id ?? "__sem_contrato__";
@@ -251,11 +264,19 @@ export function RateioParceladoTable({
                 const acumulado = estaCongelada ? linha.utilizado_com_lancamento_snapshot ?? 0 : utilizadoAntes + valorDaParcela;
                 const percentualLinha = orcado ? (acumulado / orcado) * 100 : null;
                 const dentroDoOrcado = orcado == null ? null : acumulado <= orcado;
-                // Justificativa só se aplica à parcela 1 — é a única que
-                // decidiu/congelou alguma coisa; as demais são projeção.
+                // SIS-2026-0261 (Iury, achado real + correção de um bug que
+                // eu mesmo introduzi): a justificativa agora vale pra
+                // QUALQUER parcela, não só a 1ª (antes: `ehParcela1 && ...`)
+                // — mas o "estourou" é sempre da PARCELA NAVEGADA agora
+                // (percentualLinha já é calculado pro mês dela, mesParcela),
+                // não de "qualquer parcela da despesa". A 1ª versão desta
+                // correção comparava contra TODAS as parcelas de uma vez,
+                // o que fazia a parcela 1 (ok, 5%) aparecer "Pendente" só
+                // porque a parcela 3 (estourada) também é dessa mesma linha
+                // — confuso e errado: cada parcela mostra o status dela.
                 const precisaJustificar =
-                  ehParcela1 && limiteJustificativaPct != null && percentualLinha != null && percentualLinha > limiteJustificativaPct;
-                const temJustificativa = ehParcela1 && !!linha.justificativa_texto;
+                  limiteJustificativaPct != null && percentualLinha != null && percentualLinha > limiteJustificativaPct;
+                const temJustificativa = !!linha.justificativa_texto;
                 const souAnalistaDesseContrato = !!linha.contrato_id && !!meusContratosAnalista?.has(linha.contrato_id);
                 const podeJustificarEstaLinha = souAnalistaDesseContrato || podeJustificarComoAprovador || (!linha.contrato_id && souSolicitante);
 
@@ -297,9 +318,7 @@ export function RateioParceladoTable({
                     </TableCell>
                     <TableCell>
                       <div className="flex items-center justify-center">
-                        {!ehParcela1 ? (
-                          <span className="text-xs text-muted-foreground">N/A</span>
-                        ) : precisaJustificar ? (
+                        {precisaJustificar ? (
                           <Badge variant="outline" className="border-amber-300 bg-amber-50 text-amber-700 dark:bg-amber-950/30 dark:text-amber-400">
                             {temJustificativa ? "Justificada" : "Pendente"}
                           </Badge>
@@ -310,24 +329,18 @@ export function RateioParceladoTable({
                     </TableCell>
                     <TableCell>
                       <div className="flex items-center justify-center gap-1">
-                        {!ehParcela1 ? (
+                        {temJustificativa && (
+                          <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => abrirDialog(linha, false)}>
+                            <Eye className="h-3.5 w-3.5" />
+                          </Button>
+                        )}
+                        {precisaJustificar && podeJustificarEstaLinha && (
+                          <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => abrirDialog(linha, true)}>
+                            <Pencil className="h-3.5 w-3.5" />
+                          </Button>
+                        )}
+                        {!temJustificativa && !(precisaJustificar && podeJustificarEstaLinha) && (
                           <span className="text-xs text-muted-foreground">—</span>
-                        ) : (
-                          <>
-                            {temJustificativa && (
-                              <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => abrirDialog(linha, false)}>
-                                <Eye className="h-3.5 w-3.5" />
-                              </Button>
-                            )}
-                            {precisaJustificar && podeJustificarEstaLinha && (
-                              <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => abrirDialog(linha, true)}>
-                                <Pencil className="h-3.5 w-3.5" />
-                              </Button>
-                            )}
-                            {!temJustificativa && !(precisaJustificar && podeJustificarEstaLinha) && (
-                              <span className="text-xs text-muted-foreground">—</span>
-                            )}
-                          </>
                         )}
                       </div>
                     </TableCell>

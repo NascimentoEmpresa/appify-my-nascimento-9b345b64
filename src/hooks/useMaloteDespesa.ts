@@ -898,6 +898,28 @@ export function useJustificarRateioLinha() {
   });
 }
 
+// SIS-2026-0261 (Iury): buscar linhas de rateio + parcelas de UMA despesa,
+// pra decidir se ela tem alguma justificativa pendente (analista/solicitante)
+// fora da tela de detalhe — usado no indicador de Aprovações do Malote e no
+// aviso do próprio analista/solicitante em Meus Itens.
+export function useRateioLinhasEParcelas(despesaId: string, parcelado: boolean) {
+  return useQuery({
+    queryKey: [DESPESA_KEY, "rateio_e_parcelas", despesaId],
+    enabled: !!despesaId,
+    queryFn: async () => {
+      const [linhasRes, parcelasRes] = await Promise.all([
+        (supabase as any).from("malote_despesa_rateio_linha").select("*").eq("despesa_id", despesaId).order("ordem"),
+        parcelado
+          ? (supabase as any).from("malote_despesa_parcela").select("*").eq("despesa_id", despesaId).order("numero_parcela")
+          : Promise.resolve({ data: [], error: null }),
+      ]);
+      if (linhasRes.error) throw linhasRes.error;
+      if (parcelasRes.error) throw parcelasRes.error;
+      return { linhas: (linhasRes.data ?? []) as RateioLinha[], parcelas: (parcelasRes.data ?? []) as Parcela[] };
+    },
+  });
+}
+
 // ── Pagamento Malote (SIS-2026-0160) ─────────────────────────────────────
 // Elegibilidade geral pra agir no Pagamento Malote — resolvida só pelo
 // gerenciamento de acesso central (menu 'malote_pagamento'), nunca por

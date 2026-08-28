@@ -24,6 +24,7 @@ import {
   ItemLinhaMalote,
   TipoSolicitacao,
 } from "@/hooks/useMaloteDespesa";
+import { JustificativaPendenteBadge } from "./JustificativaPendenteBadge";
 
 // SIS-2026-0223: despesa parcelada vira N linhas (1 por parcela) a partir de
 // "aguardando_pagamento" — o status exibido/contado por linha passa a ser o
@@ -353,18 +354,19 @@ export default function Aprovacoes({ base = "/app/malote" }: { base?: string } =
                   <TableHead>Solicitante</TableHead>
                   <TableHead>Status</TableHead>
                   <TableHead>Exceção</TableHead>
+                  <TableHead>Justificativa</TableHead>
                   <TableHead>Última atualização</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {isLoading && (
                   <TableRow>
-                    <TableCell colSpan={12} className="text-center text-muted-foreground py-10">Carregando...</TableCell>
+                    <TableCell colSpan={13} className="text-center text-muted-foreground py-10">Carregando...</TableCell>
                   </TableRow>
                 )}
                 {!isLoading && visiveis.length === 0 && (
                   <TableRow>
-                    <TableCell colSpan={12} className="text-center text-muted-foreground py-10">
+                    <TableCell colSpan={13} className="text-center text-muted-foreground py-10">
                       <div className="flex flex-col items-center gap-2">
                         <CheckCircle2 className="h-8 w-8 text-muted-foreground/50" />
                         Nenhum item encontrado com os filtros atuais.
@@ -459,6 +461,9 @@ function LinhaItem({
         </Badge>
       </TableCell>
       <TableCell className="text-sm">{despesa.excecao ? <Badge variant="destructive">Sim</Badge> : "Não"}</TableCell>
+      <TableCell className="text-sm">
+        <JustificativaPendenteBadge despesa={despesa} parcela={parcela} />
+      </TableCell>
       <TableCell className="text-xs text-muted-foreground">{new Date(despesa.updated_at).toLocaleString("pt-BR")}</TableCell>
     </TableRow>
   );
