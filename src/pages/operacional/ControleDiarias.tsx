@@ -40,10 +40,19 @@ import {
 } from "@/components/ui/table";
 import { cn } from "@/lib/utils";
 import { useToast } from "@/hooks/use-toast";
+import { useAuth } from "@/hooks/useAuth";
+import { AcessoGate } from "@/components/auth/AcessoGate";
+import { useScreenAccess } from "@/hooks/useScreenAccess";
+import {
+  mensagemErroDiaria,
+  useContratosDiaria,
+  useCriarSolicitacaoDiaria,
+  useDecidirSolicitacaoDiaria,
+  usePostosDiaria,
+  useSolicitacoesDiaria,
+} from "@/hooks/useDiarias";
 import { ModoModalDiaria, SolicitacaoDiariaModal } from "./SolicitacaoDiariaModal";
 import {
-  CONTRATOS_DISPONIVEIS,
-  POSTOS_DISPONIVEIS,
   STATUS_SOLICITACAO,
   SolicitacaoDiaria,
   StatusSolicitacao,
@@ -105,7 +114,17 @@ function StatCard({
 
 export default function ControleDiarias() {
   const { toast } = useToast();
-  const [solicitacoes, setSolicitacoes] = useState<SolicitacaoDiaria[]>([]);
+  const { user } = useAuth();
+  const {
+    data: solicitacoes = [],
+    isLoading,
+    isError: falhaSolicitacoes,
+    error: erroSolicitacoes,
+  } = useSolicitacoesDiaria();
+  const { data: contratos = [] } = useContratosDiaria();
+  const criar = useCriarSolicitacaoDiaria();
+  const decidir = useDecidirSolicitacaoDiaria();
+  const { data: podeAprovar = false } = useScreenAccess("operacional_diarias", "aprovar");
 
   // Filtros
   const [busca, setBusca] = useState("");
@@ -139,7 +158,7 @@ export default function ControleDiarias() {
     const aprovadas = solicitacoes.filter((s) => s.status === "aprovada");
     return {
       total: solicitacoes.length,
-      solicitadas: solicitacoes.filter((s) => s.status !== "aprovada").length,
+      solicitadas: solicitacoes.filter((s) => s.status === "solicitada").length,
       aprovadas: aprovadas.length,
       valorAprovado: aprovadas.reduce((acc, s) => acc + valorTotalSolicitacao(s), 0),
     };
@@ -197,18 +216,20 @@ export default function ControleDiarias() {
     return [...p, "...", totalPaginas] as (number | "...")[];
   }, [totalPaginas, paginaAtual]);
 
-  const proximoId = useMemo(() => {
-    const maior = solicitacoes.reduce((acc, s) => Math.max(acc, Number(s.id.split("-").pop()) || 0), 0);
-    return `SD-2025-${String(maior + 1).padStart(6, "0")}`;
-  }, [solicitacoes]);
-
   const abrir = (s: SolicitacaoDiaria) =>
-    setModal({ modo: s.status === "solicitada" ? "aprovar" : "visualizar", s });
+    setModal({
+      modo:
+        s.status === "solicitada" && podeAprovar && s.solicitanteId !== user?.id
+          ? "aprovar"
+          : "visualizar",
+      s,
+    });
 
-  const postosDisponiveis =
-    contrato === "todos"
-      ? POSTOS_DISPONIVEIS
-      : (CONTRATOS_DISPONIVEIS.find((c) => c.id === contrato)?.postos ?? POSTOS_DISPONIVEIS);
+  // Só faz sentido filtrar por posto depois de escolher o contrato — posto é
+  // do contrato, e a lista de "todos os postos da casa" não ajudaria ninguém.
+  const { data: postosDisponiveis = [] } = usePostosDiaria(
+    contrato === "todos" ? null : contrato,
+  );
 
   return (
     <div className="space-y-6">
@@ -261,9 +282,9 @@ export default function ControleDiarias() {
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="todos">Todos</SelectItem>
-                {CONTRATOS_DISPONIVEIS.map((c) => (
+                {contratos.map((c) => (
                   <SelectItem key={c.id} value={c.id}>
-                    {c.numero}
+                    {c.nome}
                   </SelectItem>
                 ))}
               </SelectContent>
@@ -285,8 +306,8 @@ export default function ControleDiarias() {
               <SelectContent>
                 <SelectItem value="todos">Todos</SelectItem>
                 {postosDisponiveis.map((p) => (
-                  <SelectItem key={p} value={p}>
-                    {p}
+                  <SelectItem key={p.id} value={p.nome}>
+                    {p.nome}
                   </SelectItem>
                 ))}
               </SelectContent>
@@ -348,9 +369,11 @@ export default function ControleDiarias() {
             <Button variant="outline" onClick={limparFiltros}>
               <RotateCcw className="mr-2 h-4 w-4" /> Limpar filtros
             </Button>
-            <Button onClick={() => setModal({ modo: "nova", s: null })}>
-              <Plus className="mr-2 h-4 w-4" /> Solicitação de pagamento de diária
-            </Button>
+            <AcessoGate menu="operacional_diarias" acao="incluir">
+              <Button onClick={() => setModal({ modo: "nova", s: null })}>
+                <Plus className="mr-2 h-4 w-4" /> Solicitação de pagamento de diária
+              </Button>
+            </AcessoGate>
           </div>
         </div>
       </Card>
@@ -390,7 +413,14 @@ export default function ControleDiarias() {
               {visiveis.length === 0 && (
                 <TableRow>
                   <TableCell colSpan={16} className="py-10 text-center text-sm text-muted-foreground">
-                    Nenhuma solicitação encontrada com os filtros aplicados.
+                    {isLoading
+                      ? "Carregando solicitações..."
+                      : falhaSolicitacoes
+                        ? mensagemErroDiaria(
+                            erroSolicitacoes,
+                            "Não foi possível carregar as solicitações de diárias.",
+                          )
+                      : "Nenhuma solicitação encontrada com os filtros aplicados."}
                   </TableCell>
                 </TableRow>
               )}
@@ -403,7 +433,7 @@ export default function ControleDiarias() {
                     onClick={() => abrir(l.solicitacao)}
                   >
                     <TableCell className="whitespace-nowrap font-medium">{l.solicitacao.id}</TableCell>
-                    <TableCell className="whitespace-nowrap">{l.solicitacao.contratoId}</TableCell>
+                    <TableCell className="min-w-[7rem]">{l.solicitacao.contratoNome}</TableCell>
                     <TableCell className="whitespace-nowrap">{l.solicitacao.posto}</TableCell>
                     <TableCell className="min-w-[7rem]">{l.solicitacao.faltanteNome}</TableCell>
                     <TableCell className="whitespace-nowrap">{l.solicitacao.faltanteCpf}</TableCell>
@@ -536,32 +566,56 @@ export default function ControleDiarias() {
           modo={modal.modo}
           solicitacao={modal.s}
           existentes={solicitacoes}
-          proximoId={proximoId}
-          solicitanteAtual="Iury de Jesus Silva"
+          salvando={criar.isPending || decidir.isPending}
           onFechar={() => setModal(null)}
-          onSalvar={(nova) => {
-            setSolicitacoes((p) => [nova, ...p]);
-            setModal(null);
-            toast({
-              title: "Solicitação salva",
-              description: `${nova.id} entrou na lista com status Solicitada.`,
-            });
+          onSalvar={async (nova) => {
+            try {
+              const { numero } = await criar.mutateAsync(nova);
+              setModal(null);
+              toast({
+                title: "Solicitação salva",
+                description: `${numero} entrou na lista com status Solicitada.`,
+              });
+            } catch (e: unknown) {
+              // A duplicidade de escala barrada pela trigger chega aqui: a
+              // mensagem do banco já diz qual data e turno bateram.
+              toast({
+                title: "Não foi possível salvar",
+                description: mensagemErroDiaria(e, "Erro ao gravar a solicitação."),
+                variant: "destructive",
+              });
+            }
           }}
-          onAprovar={(id, motivo, dataPagamento) => {
-            setSolicitacoes((p) =>
-              p.map((s) =>
-                s.id === id
-                  ? { ...s, status: "aprovada", maloteMotivo: motivo, maloteDataPagamento: dataPagamento }
-                  : s,
-              ),
-            );
-            setModal(null);
-            toast({ title: "Solicitação aprovada", description: `${id} foi enviada para o Malote.` });
+          onAprovar={async (uuid, motivo, dataPagamento) => {
+            try {
+              await decidir.mutateAsync({
+                id: uuid,
+                status: "aprovada",
+                maloteMotivo: motivo,
+                maloteDataPagamento: dataPagamento,
+              });
+              setModal(null);
+              toast({ title: "Solicitação aprovada", description: "Enviada para o Malote." });
+            } catch (e: unknown) {
+              toast({
+                title: "Não foi possível aprovar",
+                description: mensagemErroDiaria(e, "Erro ao aprovar."),
+                variant: "destructive",
+              });
+            }
           }}
-          onReprovar={(id) => {
-            setSolicitacoes((p) => p.map((s) => (s.id === id ? { ...s, status: "reprovada" } : s)));
-            setModal(null);
-            toast({ title: "Solicitação reprovada", description: id, variant: "destructive" });
+          onReprovar={async (uuid) => {
+            try {
+              await decidir.mutateAsync({ id: uuid, status: "reprovada" });
+              setModal(null);
+              toast({ title: "Solicitação reprovada", variant: "destructive" });
+            } catch (e: unknown) {
+              toast({
+                title: "Não foi possível reprovar",
+                description: mensagemErroDiaria(e, "Erro ao reprovar."),
+                variant: "destructive",
+              });
+            }
           }}
         />
       )}
