@@ -28,12 +28,19 @@ import { usarEstiloAniversarios } from "./estilos";
  * O cartão SOME quando não há ninguém hoje nem nos próximos dias — cartão
  * vazio todo dia é ruído numa tela que fica aberta o expediente inteiro.
  */
-export function AniversariantesCard({ dias = 15 }: { dias?: number }) {
+export function AniversariantesCard({ dias = 15, maxProximos = 5 }: { dias?: number; maxProximos?: number }) {
   usarEstiloAniversarios();
   const { user } = useAuth();
   const { deHoje, emBreve, mural, carregando } = useAniversariantes(dias);
 
   if (carregando || (!deHoje.length && !emBreve.length)) return null;
+
+  // O cartão divide a fileira com o Chat da empresa: a lista de próximos é
+  // cortada para o bloco não crescer mais que o vizinho. Em 15/09 caem sete
+  // aniversários no mesmo dia — sem o corte, o "próximos" viraria a maior
+  // parte da tela inicial.
+  const proximosVisiveis = emBreve.slice(0, maxProximos);
+  const proximosRestantes = emBreve.length - proximosVisiveis.length;
 
   return (
     <section className="ini-card">
@@ -48,7 +55,7 @@ export function AniversariantesCard({ dias = 15 }: { dias?: number }) {
         </div>
       </div>
 
-      <div className="ini-card-body">
+      <div className="ini-card-body aniv-body">
         {deHoje.length > 0 && (
           <>
             <div className="aniv-hoje">
@@ -65,9 +72,9 @@ export function AniversariantesCard({ dias = 15 }: { dias?: number }) {
           </>
         )}
 
-        {emBreve.length > 0 && (
+        {proximosVisiveis.length > 0 && (
           <div className="aniv-breve">
-            {emBreve.map((p) => (
+            {proximosVisiveis.map((p) => (
               <div key={p.user_id} className="aniv-breve-item">
                 <span className="aniv-breve-data">{dataCurta(p)}</span>
                 <span className="aniv-breve-nome">
@@ -77,6 +84,11 @@ export function AniversariantesCard({ dias = 15 }: { dias?: number }) {
                 <span className="aniv-breve-quando">{quando(p.dias_ate)}</span>
               </div>
             ))}
+            {proximosRestantes > 0 && (
+              <p className="aniv-breve-mais">
+                e mais {proximosRestantes} {proximosRestantes === 1 ? "pessoa" : "pessoas"} até {quando(emBreve[emBreve.length - 1].dias_ate)}
+              </p>
+            )}
           </div>
         )}
       </div>

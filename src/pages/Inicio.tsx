@@ -8,6 +8,7 @@ import { ACESSO_ABERTO_SEM_PERMISSOES, rotaSempreLiberada } from "@/lib/acesso";
 import { NAV_MODULOS } from "@/components/layout/Sidebar";
 import { MinhasReunioesCard } from "@/pages/central-servicos/reunioes/componentes/MinhasReunioesCard";
 import { AniversariantesCard } from "@/components/aniversarios/AniversariantesCard";
+import { ChatGeralCard } from "@/components/chat-geral/ChatGeralCard";
 import { NovidadesPainel } from "@/components/novidades/NovidadesPainel";
 import fachadaImg from "@/assets/fachada.jpg";
 import {
@@ -470,21 +471,34 @@ export default function Inicio() {
             </div>
           </section>
 
-          {/* ═════════════════════ Aniversariantes ══════════════════════ */}
-          {/* Some sozinho quando não há ninguém hoje nem nos próximos dias —
-              por isso NÃO vai dentro de [data-reveal]: o observer da tela roda
-              uma vez na montagem, e um bloco que aparece depois ficaria preso
-              em opacity:0. Fora do modo externo pelo mesmo motivo das reuniões:
-              encarregado de obra não tem cadastro vinculado, então a lista
-              chegaria vazia de qualquer jeito. */}
-          {!externo && <AniversariantesCard />}
-
           {/* ══════════════════════ Minhas Reuniões ═════════════════════ */}
           {/* Encarregado externo não participa de reunião do ERP: o cartão vinha
               sempre vazio e o "ver todas" apontava pra uma tela que ele não abre. */}
           {!externo && (
             <div data-reveal>
               <MinhasReunioesCard />
+            </div>
+          )}
+
+          {/* ═══════════ Aniversariantes + Chat da empresa ═══════════════ */}
+          {/* A fileira do rodapé: o lado social da tela. Fica por último de
+              propósito — quem abre o ERP vem trabalhar, e o atalho tem que
+              estar acima da dobra; parabéns e bate-papo esperam a rolagem.
+
+              A grade é `auto-fit`, não duas colunas fixas: quando não há
+              aniversariante nenhum o cartão devolve `null`, não vira item da
+              grade, e o chat ocupa a fileira inteira sozinho — sem buraco e
+              sem um `if` a mais no JSX.
+
+              NÃO vai dentro de [data-reveal]: o observer da tela roda uma vez
+              na montagem, e um bloco que aparece depois (os dois carregam por
+              consulta) ficaria preso em opacity:0. Fora do modo externo pelo
+              mesmo motivo das reuniões — encarregado de obra não tem cadastro
+              vinculado nem participa do chat interno. */}
+          {!externo && (
+            <div className="ini-social">
+              <AniversariantesCard />
+              <ChatGeralCard />
             </div>
           )}
         </div>
@@ -563,6 +577,15 @@ const CSS_INICIO = `
 .ini-col-lado{min-width:0;order:2;}
 /* A última caixa da coluna não precisa da margem que separa uma da outra. */
 .ini-col-principal > .ini-card:last-child{margin-bottom:0;}
+
+/* ─────────────── fileira social do rodapé (aniversários + chat) ──────────── */
+/* auto-fit, e não duas colunas fixas: sem aniversariante o cartão devolve null,
+   some da grade e o chat fica com a fileira inteira. 300px é onde o chat ainda
+   mostra nome e hora na mesma linha sem quebrar.
+   (Nada de crase neste bloco: ele mora dentro de um template literal.) */
+.ini-social{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));
+  gap:20px;align-items:start;}
+.ini-social > .ini-card{margin-bottom:0;}
 
 /* ───────────────────────────── hero ───────────────────────────── */
 .ini-hero{position:relative;overflow:hidden;border-radius:20px;margin-bottom:22px;
