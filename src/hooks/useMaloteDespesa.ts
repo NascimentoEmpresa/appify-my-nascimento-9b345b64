@@ -1158,9 +1158,19 @@ export function gerarParcelas(valorTotal: number, numeroParcelas: number, dataPa
     // Parcela 1: exatamente a data de pagamento escolhida (string original,
     // sem passar por new Date/toISOString — evita qualquer risco de
     // deslocamento de fuso). Parcelas seguintes: dia do desconto no mês
-    // correspondente.
-    const dataVencimento =
-      i === 0 ? dataPagamento : new Date(base.getFullYear(), base.getMonth() + i, diaDesconto ?? base.getDate()).toISOString().slice(0, 10);
+    // correspondente — clampado ao último dia daquele mês (SIS-2026-0263:
+    // dia do desconto liberado até 30, mas fevereiro só tem 28/29; sem o
+    // clamp, `new Date(ano, mes, 30)` "rolava" pra março em vez de cair no
+    // fim de fevereiro).
+    let dataVencimento = dataPagamento;
+    if (i > 0) {
+      const mesAlvo = base.getMonth() + i;
+      const diaAlvo = diaDesconto ?? base.getDate();
+      const ultimoDiaDoMesAlvo = new Date(base.getFullYear(), mesAlvo + 1, 0).getDate();
+      dataVencimento = new Date(base.getFullYear(), mesAlvo, Math.min(diaAlvo, ultimoDiaDoMesAlvo))
+        .toISOString()
+        .slice(0, 10);
+    }
     parcelas.push({
       numero_parcela: i + 1,
       valor: i === numeroParcelas - 1 ? ultimaParcela : valorParcela,
