@@ -18,8 +18,11 @@ import { AnexosField } from "./AnexosField";
 import { DiaPagamentoPicker } from "./DiaPagamentoPicker";
 import { ExcecaoDiaBloqueadoField } from "./ExcecaoDiaBloqueadoField";
 
-const DIAS_MES = Array.from({ length: 28 }, (_, i) => i + 1);
-const QUANTIDADE_PARCELAS = Array.from({ length: 24 }, (_, i) => i + 2);
+// SIS-2026-0263 (Iury): mesmo ajuste de CriarDespesa.tsx — dia do desconto
+// 1 a 30, quantidade de parcelas até 420 (Input numérico, não Select).
+const DIAS_MES = Array.from({ length: 30 }, (_, i) => i + 1);
+const QUANTIDADE_PARCELAS_MIN = 2;
+const QUANTIDADE_PARCELAS_MAX = 420;
 
 export default function RatearClassificacao() {
   const navigate = useNavigate();
@@ -84,7 +87,13 @@ export default function RatearClassificacao() {
       if (linhasRateio.length === 0) return "Adicione ao menos uma linha de rateio.";
       if (linhasRateio.some((l) => !l.classificacao_id)) return "Selecione a classificação em todas as linhas.";
       if (Math.abs(totalRateado - Number(valorTotal)) > 0.01) return "O total do rateio deve ser igual ao valor total da despesa.";
-      if (parcelado && (!diaDesconto || !quantidadeParcelas)) return "Informe o dia do desconto e a quantidade de parcelas.";
+      if (parcelado) {
+        if (!diaDesconto || !quantidadeParcelas) return "Informe o dia do desconto e a quantidade de parcelas.";
+        const n = Number(quantidadeParcelas);
+        if (!Number.isInteger(n) || n < QUANTIDADE_PARCELAS_MIN || n > QUANTIDADE_PARCELAS_MAX) {
+          return `Quantidade de parcelas deve ser entre ${QUANTIDADE_PARCELAS_MIN} e ${QUANTIDADE_PARCELAS_MAX}.`;
+        }
+      }
       if (arquivos.length === 0) return "Anexe ao menos um arquivo.";
     }
     return null;
@@ -259,18 +268,15 @@ export default function RatearClassificacao() {
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 items-start">
                 <div>
                   <Label>Número de parcelas *</Label>
-                  <Select value={quantidadeParcelas} onValueChange={setQuantidadeParcelas}>
-                    <SelectTrigger>
-                      <SelectValue placeholder="Selecione" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {QUANTIDADE_PARCELAS.map((n) => (
-                        <SelectItem key={n} value={String(n)}>
-                          {n}x
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+                  <Input
+                    type="number"
+                    min={QUANTIDADE_PARCELAS_MIN}
+                    max={QUANTIDADE_PARCELAS_MAX}
+                    step={1}
+                    placeholder={`De ${QUANTIDADE_PARCELAS_MIN} a ${QUANTIDADE_PARCELAS_MAX}`}
+                    value={quantidadeParcelas}
+                    onChange={(e) => setQuantidadeParcelas(e.target.value)}
+                  />
                 </div>
                 <div>
                   <Label>Dia do mês para desconto *</Label>

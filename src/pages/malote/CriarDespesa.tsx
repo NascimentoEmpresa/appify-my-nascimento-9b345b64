@@ -42,8 +42,14 @@ import { ExcecaoDiaBloqueadoField } from "./ExcecaoDiaBloqueadoField";
 import { useMaloteConfig, usePrazoNormalInclusao, horaAtualPassouDe } from "@/hooks/useMaloteConfig";
 import { useTiposFormaPagamento } from "@/hooks/useMaloteFormaPagamento";
 
-const DIAS_MES = Array.from({ length: 28 }, (_, i) => i + 1);
-const QUANTIDADE_PARCELAS = Array.from({ length: 24 }, (_, i) => i + 2);
+// SIS-2026-0263 (Iury): "colocar a possibilidade de escolher de 1 a 30 para
+// o dia de pagamento e poder escolher parcelar em até 420x" — dia do
+// desconto sobe de 28 pra 30 (Select continua viável); quantidade de
+// parcelas não é mais Select (420 opções seria inutilizável) — virou Input
+// numérico com min/max validados em validar().
+const DIAS_MES = Array.from({ length: 30 }, (_, i) => i + 1);
+const QUANTIDADE_PARCELAS_MIN = 2;
+const QUANTIDADE_PARCELAS_MAX = 420;
 
 export default function CriarDespesa() {
   const [searchParams] = useSearchParams();
@@ -702,7 +708,13 @@ function PainelDespesaMalote({
     if (paraEnviar) {
       if (linhasRateio.length === 0) return "Adicione ao menos uma linha de rateio.";
       if (Math.abs(totalRateado - Number(totalMes)) > 0.01) return "O total do rateio deve ser igual ao Total do mês.";
-      if (parcelado === "sim" && (!diaDesconto || !quantidadeParcelas)) return "Informe o dia do desconto e a quantidade de parcelas.";
+      if (parcelado === "sim") {
+        if (!diaDesconto || !quantidadeParcelas) return "Informe o dia do desconto e a quantidade de parcelas.";
+        const n = Number(quantidadeParcelas);
+        if (!Number.isInteger(n) || n < QUANTIDADE_PARCELAS_MIN || n > QUANTIDADE_PARCELAS_MAX) {
+          return `Quantidade de parcelas deve ser entre ${QUANTIDADE_PARCELAS_MIN} e ${QUANTIDADE_PARCELAS_MAX}.`;
+        }
+      }
       if (arquivos.length === 0) return "Anexe ao menos um arquivo.";
     }
     return null;
@@ -945,18 +957,16 @@ function PainelDespesaMalote({
                 </div>
                 <div>
                   <Label>Quantidade de parcelas *</Label>
-                  <Select value={quantidadeParcelas} onValueChange={setQuantidadeParcelas} disabled={!ativo}>
-                    <SelectTrigger>
-                      <SelectValue placeholder="Selecione a quantidade" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {QUANTIDADE_PARCELAS.map((n) => (
-                        <SelectItem key={n} value={String(n)}>
-                          {n}x
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+                  <Input
+                    type="number"
+                    min={QUANTIDADE_PARCELAS_MIN}
+                    max={QUANTIDADE_PARCELAS_MAX}
+                    step={1}
+                    placeholder={`De ${QUANTIDADE_PARCELAS_MIN} a ${QUANTIDADE_PARCELAS_MAX}`}
+                    value={quantidadeParcelas}
+                    onChange={(e) => setQuantidadeParcelas(e.target.value)}
+                    disabled={!ativo}
+                  />
                 </div>
               </>
             )}
