@@ -102,14 +102,21 @@ export const CSS_ANIVERSARIOS = `
   color:hsl(var(--muted-foreground));margin:13px 0 6px;}
 .aniv-hoje + .aniv-titulo{margin-top:15px;}
 .aniv-breve{display:flex;flex-direction:column;}
-.aniv-breve-item{display:flex;align-items:center;gap:9px;padding:5px 2px;font-size:.76rem;
+/* align-items:flex-start, e não center: o nome agora é o NOME COMPLETO do
+   cadastro e quebra em duas linhas num cartão de meia largura. Centralizado,
+   a data e o "em N dias" flutuariam no meio da segunda linha. */
+.aniv-breve-item{display:flex;align-items:flex-start;gap:9px;padding:6px 2px;font-size:.76rem;
   border-top:1px solid hsl(var(--border));}
 .aniv-breve-item:first-child{border-top:none;}
 .aniv-breve-data{flex:none;width:42px;font-weight:800;font-variant-numeric:tabular-nums;
-  color:hsl(var(--primary));}
-.aniv-breve-nome{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+  color:hsl(var(--primary));line-height:1.35;}
+/* Sem nowrap/ellipsis: cortar "MARIA APARECIDA DA S…" derrota o pedido de
+   mostrar o nome completo. Quem tem nome longo ocupa duas linhas. */
+.aniv-breve-nome{flex:1;min-width:0;line-height:1.35;overflow-wrap:anywhere;
   color:hsl(var(--foreground));}
-.aniv-breve-quando{flex:none;font-size:.67rem;color:hsl(var(--muted-foreground));}
+.aniv-breve-setor{color:hsl(var(--muted-foreground));}
+.aniv-breve-quando{flex:none;font-size:.67rem;line-height:1.5;
+  color:hsl(var(--muted-foreground));}
 .aniv-breve-mais{padding:6px 2px 0;font-size:.7rem;color:hsl(var(--muted-foreground));}
 
 @media (max-width:900px){

@@ -78,15 +78,15 @@ export function AniversariantesCard({ dias = 15, maxProximos = 5 }: { dias?: num
               <div key={p.user_id} className="aniv-breve-item">
                 <span className="aniv-breve-data">{dataCurta(p)}</span>
                 <span className="aniv-breve-nome">
-                  {primeiroESobrenome(p.nome)}
-                  {p.setor ? <span style={{ opacity: 0.6 }}> · {p.setor}</span> : null}
+                  {p.nome}
+                  {lotacao(p) && <span className="aniv-breve-setor"> · {lotacao(p)}</span>}
                 </span>
                 <span className="aniv-breve-quando">{quando(p.dias_ate)}</span>
               </div>
             ))}
             {proximosRestantes > 0 && (
               <p className="aniv-breve-mais">
-                e mais {proximosRestantes} {proximosRestantes === 1 ? "pessoa" : "pessoas"} até {quando(emBreve[emBreve.length - 1].dias_ate)}
+                e mais {proximosRestantes} {proximosRestantes === 1 ? "pessoa" : "pessoas"} até {dataCurta(emBreve[emBreve.length - 1])}
               </p>
             )}
           </div>
@@ -274,6 +274,18 @@ function quando(dias: number) {
   if (dias < 7) return `em ${dias} dias`;
   if (dias === 7) return "em 1 semana";
   return `em ${dias} dias`;
+}
+
+/** O que identifica a pessoa na lista, logo depois do nome: o SETOR.
+ *
+ *  Cai para o cargo quando o setor não está preenchido — e isso acontece
+ *  bastante, porque `EMPREGADOS."Setor_ERP"` é campo de RH digitado à mão, não
+ *  vem do Senior. Cargo não é setor, mas responde à mesma pergunta ("quem é
+ *  essa pessoa aqui dentro?") bem melhor do que um traço vazio. Consertar de
+ *  vez é preencher o setor em RH › Colaboradores, não mexer aqui.
+ */
+function lotacao(p: Aniversariante) {
+  return (p.setor || "").trim() || (p.cargo || "").trim();
 }
 
 function primeiroNome(nome: string) {
