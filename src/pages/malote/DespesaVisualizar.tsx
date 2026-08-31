@@ -536,7 +536,16 @@ export default function DespesaVisualizar() {
     // o orçado de CADA parcela/contrato do Rateio, não só do mês principal.
     if (orcadoCarregando || orcadoMultiMesCarregando) return "Aguarde o orçamento terminar de carregar antes de aprovar.";
     if (!formaPagamento) return "Selecione a forma de pagamento.";
-    if (!informacoesPagamento.trim()) return "Informe os dados de pagamento.";
+    // SIS-2026-0264: "Informações de pagamento" só é obrigatório quando a
+    // despesa NÃO foi lançada como "pagamento só por anexo" — esse flag não
+    // é persistido à parte, então o jeito de saber aqui (aprovador) é o
+    // mesmo dado que já existe: se não tem texto mas tem ao menos um
+    // arquivo anexado, o anexo (ex. boleto) É a informação de pagamento.
+    // Achado do Iury: aprovador ficava travado tentando aprovar despesa
+    // que a própria tela de criação já validou como válida sem esse campo.
+    if (!informacoesPagamento.trim() && despesa!.arquivos.length === 0) {
+      return "Informe os dados de pagamento (ou confira se há um arquivo anexado).";
+    }
     if (!dataPagamento) return "Informe a data de pagamento.";
     if (!competencia) return "Informe a competência.";
     if (!valorAprovado || Number(valorAprovado) <= 0) return "Informe o valor aprovado.";

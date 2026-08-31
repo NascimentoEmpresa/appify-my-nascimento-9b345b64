@@ -9,7 +9,7 @@ import { montarCombosAlcada, encontrarComboQueEstouraAlcada } from "./orcamentoU
 // — mostra só o primeiro nome + inicial do último sobrenome ("Iury S.").
 // Nome sem espaço (ex.: e-mail, quando profiles.display_name está vazio)
 // fica como está.
-function abreviarNome(nome: string): string {
+export function abreviarNome(nome: string): string {
   const partes = nome.trim().split(/\s+/);
   if (partes.length < 2) return nome;
   const ultimo = partes[partes.length - 1];
