@@ -7,6 +7,7 @@ import { useModoExterno, ROTAS_EXTERNO } from "@/hooks/useModoExterno";
 import { ACESSO_ABERTO_SEM_PERMISSOES, rotaSempreLiberada } from "@/lib/acesso";
 import { NAV_MODULOS } from "@/components/layout/Sidebar";
 import { MinhasReunioesCard } from "@/pages/central-servicos/reunioes/componentes/MinhasReunioesCard";
+import { AniversariantesCard } from "@/components/aniversarios/AniversariantesCard";
 import { NovidadesPainel } from "@/components/novidades/NovidadesPainel";
 import fachadaImg from "@/assets/fachada.jpg";
 import {
@@ -468,6 +469,15 @@ export default function Inicio() {
               </button>
             </div>
           </section>
+
+          {/* ═════════════════════ Aniversariantes ══════════════════════ */}
+          {/* Some sozinho quando não há ninguém hoje nem nos próximos dias —
+              por isso NÃO vai dentro de [data-reveal]: o observer da tela roda
+              uma vez na montagem, e um bloco que aparece depois ficaria preso
+              em opacity:0. Fora do modo externo pelo mesmo motivo das reuniões:
+              encarregado de obra não tem cadastro vinculado, então a lista
+              chegaria vazia de qualquer jeito. */}
+          {!externo && <AniversariantesCard />}
 
           {/* ══════════════════════ Minhas Reuniões ═════════════════════ */}
           {/* Encarregado externo não participa de reunião do ERP: o cartão vinha
