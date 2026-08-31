@@ -1415,7 +1415,7 @@ function MaloteSetoresUsuario({ userId, menuCodigo, onToast }: { userId: string;
       .select("setor")
       .eq("user_id", userId)
       .eq("contexto", contexto);
-    const carregados = new Set((data ?? []).map((r: any) => r.setor as string));
+    const carregados = new Set<string>((data ?? []).map((r: any) => r.setor as string));
     setSetoresSalvos(carregados);
     setSetoresPendentes(carregados);
     setLoading(false);
