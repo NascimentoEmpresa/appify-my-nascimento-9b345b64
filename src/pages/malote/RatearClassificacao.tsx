@@ -48,6 +48,10 @@ export default function RatearClassificacao() {
   const [linhasRateio, setLinhasRateio] = useState<RateioLinha[]>([]);
   const [distribuirIgualmente, setDistribuirIgualmente] = useState(false);
   const [parcelado, setParcelado] = useState(false);
+  // SIS-2026-0264 (Iury): mesmo ajuste de CriarDespesa.tsx — marcado, Dados
+  // de pagamento fica opcional (informação é o próprio anexo, ex.: boleto) e
+  // arquivo passa a ser obrigatório; desmarcado, é o oposto (ex.: Pix).
+  const [pagamentoSoAnexo, setPagamentoSoAnexo] = useState(false);
   const [diaDesconto, setDiaDesconto] = useState("");
   const [quantidadeParcelas, setQuantidadeParcelas] = useState("");
   const [arquivos, setArquivos] = useState<File[]>([]);
@@ -71,7 +75,7 @@ export default function RatearClassificacao() {
     if (!nome.trim()) return "Informe o nome da despesa.";
     if (!valorTotal || Number(valorTotal) <= 0) return "Informe o valor total da despesa.";
     if (!formaPagamento) return "Selecione a forma de pagamento.";
-    if (!dadosPagamento.trim()) return "Informe os dados de pagamento.";
+    if (!pagamentoSoAnexo && !dadosPagamento.trim()) return "Informe os dados de pagamento.";
     if (!dataPagamento) return "Informe a data de pagamento.";
     if (paraEnviar && exigeExcecao && !excecao) {
       return `Data de pagamento fora do prazo normal de inclusão (regra 1.1 — hoje o prazo normal é ${prazoNormal}) — marque "Lançar como exceção" para continuar.`;
@@ -94,7 +98,7 @@ export default function RatearClassificacao() {
           return `Quantidade de parcelas deve ser entre ${QUANTIDADE_PARCELAS_MIN} e ${QUANTIDADE_PARCELAS_MAX}.`;
         }
       }
-      if (arquivos.length === 0) return "Anexe ao menos um arquivo.";
+      if (pagamentoSoAnexo && arquivos.length === 0) return "Anexe ao menos um arquivo (Pagamento só por anexo está marcado).";
     }
     return null;
   }
@@ -132,7 +136,7 @@ export default function RatearClassificacao() {
         justificativa_excecao: excecao ? justificativaExcecao.trim() || null : null,
         competencia: dataCompetencia + "-01",
         forma_pagamento: formaPagamento,
-        informacoes_pagamento: dadosPagamento.trim(),
+        informacoes_pagamento: dadosPagamento.trim() || null,
         parcelado,
         numero_parcelas: parcelado ? Number(quantidadeParcelas) : null,
         dia_desconto: parcelado ? Number(diaDesconto) : null,
@@ -211,8 +215,22 @@ export default function RatearClassificacao() {
               </Select>
             </div>
             <div>
-              <Label>Dados de Pagamento *</Label>
-              <Input value={dadosPagamento} onChange={(e) => setDadosPagamento(e.target.value)} placeholder="Pix, copia e cola, dados bancários, etc." />
+              <Label>Dados de Pagamento {!pagamentoSoAnexo && "*"}</Label>
+              <Input
+                value={dadosPagamento}
+                onChange={(e) => setDadosPagamento(e.target.value)}
+                placeholder={pagamentoSoAnexo ? "Não preencher — a informação é o anexo" : "Pix, copia e cola, dados bancários, etc."}
+                disabled={pagamentoSoAnexo}
+              />
+              <label className="mt-1.5 flex items-center gap-1.5 text-xs text-muted-foreground cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={pagamentoSoAnexo}
+                  onChange={(e) => setPagamentoSoAnexo(e.target.checked)}
+                  className="h-3.5 w-3.5"
+                />
+                Pagamento só por anexo (ex.: boleto) — dispensa este campo, mas exige arquivo
+              </label>
             </div>
             <div>
               <Label>Data de Pagamento *</Label>
@@ -301,7 +319,7 @@ export default function RatearClassificacao() {
           </div>
 
           <div>
-            <Label>Arquivos anexados *</Label>
+            <Label>Arquivos anexados {pagamentoSoAnexo && "*"}</Label>
             <AnexosField arquivos={arquivos} onChange={setArquivos} />
           </div>
 

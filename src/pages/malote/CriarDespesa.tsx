@@ -664,6 +664,14 @@ function PainelDespesaMalote({
   const [competencia, setCompetencia] = useState(inicial?.competencia ?? "");
   const [formaPagamento, setFormaPagamento] = useState(inicial?.formaPagamento ?? "");
   const [informacoesPagamento, setInformacoesPagamento] = useState(inicial?.informacoesPagamento ?? "");
+  // SIS-2026-0264 (Iury): "colocar um check em informações de pagamento,
+  // caso marcado o campo não precisa ser preenchido (ex.: boleto — a
+  // informação de pagamento é o próprio anexo) — se marcado, arquivo passa
+  // a ser obrigatório; se não marcado, não precisa (ex.: Pix, informação
+  // digitada no campo, sem anexo)." Ou seja: exatamente um dos dois campos
+  // (Informações de pagamento / Arquivo) é obrigatório, nunca os dois nem
+  // nenhum — pagamentoSoAnexo decide qual.
+  const [pagamentoSoAnexo, setPagamentoSoAnexo] = useState(false);
   const [dimensoes, setDimensoes] = useState<DimensoesRateio>({ empresa: false, contrato: false, fornecedor: false, integrante: false });
   const [ratearPor, setRatearPor] = useState<"percentual" | "valor">("percentual");
   const [linhasRateio, setLinhasRateio] = useState<RateioLinha[]>([]);
@@ -704,7 +712,10 @@ function PainelDespesaMalote({
     }
     if (!competencia) return "Informe a competência.";
     if (!formaPagamento) return "Selecione a forma de pagamento.";
-    if (!informacoesPagamento.trim()) return "Informe os dados de pagamento.";
+    // SIS-2026-0264: com "Pagamento só por anexo" marcado, Informações de
+    // pagamento fica opcional (o anexo é a informação, ex.: boleto);
+    // desmarcado, continua obrigatório (ex.: Pix digitado, sem anexo).
+    if (!pagamentoSoAnexo && !informacoesPagamento.trim()) return "Informe os dados de pagamento.";
     if (paraEnviar) {
       if (linhasRateio.length === 0) return "Adicione ao menos uma linha de rateio.";
       if (Math.abs(totalRateado - Number(totalMes)) > 0.01) return "O total do rateio deve ser igual ao Total do mês.";
@@ -715,7 +726,8 @@ function PainelDespesaMalote({
           return `Quantidade de parcelas deve ser entre ${QUANTIDADE_PARCELAS_MIN} e ${QUANTIDADE_PARCELAS_MAX}.`;
         }
       }
-      if (arquivos.length === 0) return "Anexe ao menos um arquivo.";
+      // Espelho da regra acima: só anexo → arquivo obrigatório; senão, opcional.
+      if (pagamentoSoAnexo && arquivos.length === 0) return "Anexe ao menos um arquivo (Pagamento só por anexo está marcado).";
     }
     return null;
   }
@@ -755,7 +767,7 @@ function PainelDespesaMalote({
         justificativa_excecao: excecao ? justificativaExcecao.trim() || null : null,
         competencia: competencia + "-01",
         forma_pagamento: formaPagamento,
-        informacoes_pagamento: informacoesPagamento.trim(),
+        informacoes_pagamento: informacoesPagamento.trim() || null,
         parcelado: parcelado === "sim",
         numero_parcelas: parcelado === "sim" ? Number(quantidadeParcelas) : null,
         dia_desconto: parcelado === "sim" ? Number(diaDesconto) : null,
@@ -829,7 +841,7 @@ function PainelDespesaMalote({
       }
       if (!despesaIdExistente) {
         setNome(""); setTotalMes(""); setDataPagamento(""); setCompetencia(""); setFormaPagamento("");
-        setInformacoesPagamento(""); setLinhasRateio([]); setParcelado("nao"); setDiaDesconto("");
+        setInformacoesPagamento(""); setPagamentoSoAnexo(false); setLinhasRateio([]); setParcelado("nao"); setDiaDesconto("");
         setQuantidadeParcelas(""); setArquivos([]);
       }
     } catch (e: any) {
@@ -898,13 +910,23 @@ function PainelDespesaMalote({
               </Select>
             </div>
             <div>
-              <Label>Informações de pagamento *</Label>
+              <Label>Informações de pagamento {!pagamentoSoAnexo && "*"}</Label>
               <Input
                 value={informacoesPagamento}
                 onChange={(e) => setInformacoesPagamento(e.target.value)}
-                placeholder="Ex: Pix, copia e cola, dados bancários, etc."
-                disabled={!ativo}
+                placeholder={pagamentoSoAnexo ? "Não preencher — a informação é o anexo" : "Ex: Pix, copia e cola, dados bancários, etc."}
+                disabled={!ativo || pagamentoSoAnexo}
               />
+              <label className="mt-1.5 flex items-center gap-1.5 text-xs text-muted-foreground cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={pagamentoSoAnexo}
+                  onChange={(e) => setPagamentoSoAnexo(e.target.checked)}
+                  disabled={!ativo}
+                  className="h-3.5 w-3.5"
+                />
+                Pagamento só por anexo (ex.: boleto) — dispensa este campo, mas exige arquivo
+              </label>
             </div>
           </div>
 
@@ -973,7 +995,7 @@ function PainelDespesaMalote({
           </div>
 
           <div>
-            <Label>Arquivos anexados *</Label>
+            <Label>Arquivos anexados {pagamentoSoAnexo && "*"}</Label>
             <AnexosField arquivos={arquivos} onChange={setArquivos} disabled={!ativo} />
           </div>
 
