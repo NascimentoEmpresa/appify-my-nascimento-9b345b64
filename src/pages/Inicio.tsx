@@ -7,6 +7,7 @@ import { useModoExterno, ROTAS_EXTERNO } from "@/hooks/useModoExterno";
 import { ACESSO_ABERTO_SEM_PERMISSOES, rotaSempreLiberada } from "@/lib/acesso";
 import { NAV_MODULOS } from "@/components/layout/Sidebar";
 import { MinhasReunioesCard } from "@/pages/central-servicos/reunioes/componentes/MinhasReunioesCard";
+import { AniversariantesCard } from "@/components/aniversarios/AniversariantesCard";
 import { NovidadesPainel } from "@/components/novidades/NovidadesPainel";
 import fachadaImg from "@/assets/fachada.jpg";
 import {
@@ -477,6 +478,19 @@ export default function Inicio() {
               <MinhasReunioesCard />
             </div>
           )}
+
+          {/* ═════════════════════ Aniversariantes ══════════════════════ */}
+          {/* Fica por último de propósito: quem abre o ERP vem trabalhar, e o
+              atalho tem que estar acima da dobra — os parabéns esperam a
+              rolagem.
+
+              Some sozinho quando não há ninguém hoje nem nos próximos dias.
+              Por isso NÃO vai dentro de [data-reveal]: o observer da tela roda
+              uma vez na montagem, e um bloco que aparece depois ficaria preso
+              em opacity:0. Fora do modo externo pelo mesmo motivo das reuniões:
+              encarregado de obra não tem cadastro vinculado, então a lista
+              chegaria vazia de qualquer jeito. */}
+          {!externo && <AniversariantesCard />}
         </div>
       </div>
     </div>

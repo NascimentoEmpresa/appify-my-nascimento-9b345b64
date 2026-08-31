@@ -570,6 +570,18 @@ const encarregadosModule: ModuleDef = {
         { label: "Minhas Solicitações de Materiais", to: "/app/encarregados/meus-pedidos", icon: Truck },
       ],
     },
+    {
+      // Treinamentos deixou de ser modulo proprio: um item so nao sustenta um
+      // bloco no menu, e quem faz o treinamento do ERP e o encarregado. A ROTA
+      // e o CODIGO do menu ficam como estavam (/app/treinamentos/erp) - e o
+      // codigo que carrega a permissao de quem ja tinha, entao mover de modulo
+      // nao tira o acesso de ninguem nem quebra link salvo.
+      label: "Treinamentos",
+      defaultOpen: true,
+      items: [
+        { label: "Treinamentos ERP", to: "/app/treinamentos/erp", icon: GraduationCap },
+      ],
+    },
   ],
 };
 
@@ -735,24 +747,6 @@ const juridicoModule: ModuleDef = {
 };
 
 
-// Treinamentos — capacitação interna
-const treinamentosModule: ModuleDef = {
-  id: "treinamentos",
-  label: "Treinamentos",
-  description: "Capacitação da equipe no ERP",
-  icon: GraduationCap,
-  basePath: "/app/treinamentos/erp",
-  status: "active",
-  groups: [
-    {
-      label: "Capacitação",
-      defaultOpen: true,
-      items: [
-        { label: "Treinamentos ERP", to: "/app/treinamentos/erp", icon: GraduationCap },
-      ],
-    },
-  ],
-};
 
 // BI
 const biModule: ModuleDef = {
@@ -930,7 +924,6 @@ const erpModules: ModuleDef[] = [
   operacionalModule,
   sistemasModule,
   juridicoModule,
-  treinamentosModule,
   sstModule,
   centralServicosModule,
   comiteEticaModule,
