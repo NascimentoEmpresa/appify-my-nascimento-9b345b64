@@ -4,6 +4,7 @@ import { PageHeader } from "@/components/layout/PageHeader";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { InputMaiusculo } from "@/components/ui/InputMaiusculo";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
@@ -866,7 +867,7 @@ function PainelDespesaMalote({
         <div className={cn("space-y-4", !ativo && "opacity-40 pointer-events-none select-none")}>
           <div>
             <Label>Nome da Despesa *</Label>
-            <Input value={nome} onChange={(e) => setNome(e.target.value)} placeholder="Ex: Compra de materiais de escritório" disabled={!ativo} />
+            <InputMaiusculo value={nome} onChange={(e) => setNome(e.target.value)} placeholder="Ex: Compra de materiais de escritório" disabled={!ativo} />
           </div>
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">

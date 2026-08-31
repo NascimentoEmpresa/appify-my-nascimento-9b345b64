@@ -31,6 +31,16 @@ const MALOTE_APROVACOES_MENU_CODIGO = "malote_aprovacoes";
 // (ver useMaloteAcessoOrcamento.ts) — Classificações Malote e Orçamento de
 // Contratos ficaram de fora de propósito lá, então ficam de fora aqui
 // também.
+//
+// Achado seguinte (pós-piloto, ainda o usuário): as duas listas usavam a
+// MESMA linha (user_id, setor) sem discriminador — marcar um setor em
+// Aprovações "puxava" pro Orçamento sem pedir, mesmo sendo semânticas
+// diferentes (fallback oposto, ver comentário em useMaloteAcessoOrcamento.ts).
+// A coluna `contexto` ('aprovacoes' | 'orcamento', migration
+// 20260930000028) separa as duas dentro da mesma tabela — os componentes
+// abaixo (MaloteSetoresUsuario/MaloteSetorPorModulo) decidem o contexto
+// pelo `isOrcamento` (mesmo critério de sempre: é Aprovações, ou é um dos
+// outros 3 menus de Orçamento).
 const MALOTE_SETOR_MENU_CODIGOS = [
   MALOTE_APROVACOES_MENU_CODIGO,
   "malote_orcamento_administrativo",
@@ -1153,10 +1163,18 @@ function MaloteSetorPorModulo({ todasPessoas, temAcesso, podeGerenciar, menuCodi
   // texto explicativo só faz sentido pro contexto de onde foi aberto (ver
   // MaloteSetoresUsuario, mesmo critério).
   const isOrcamento = menuCodigo !== undefined && menuCodigo !== MALOTE_APROVACOES_MENU_CODIGO;
+  // Achado do usuário (pós SIS-2026-0265): Aprovações e Orçamento
+  // compartilhavam a MESMA linha (user_id, setor) — marcar aqui "puxava" pro
+  // outro contexto sem pedir. Coluna `contexto` (20260930000028) separa.
+  const contexto = isOrcamento ? "orcamento" : "aprovacoes";
   const [setor, setSetor] = useState<string>("");
   const [membrosSetor, setMembrosSetor] = useState<Set<string>>(new Set());
-  const [marcados, setMarcados] = useState<Set<string>>(new Set());
+  const [marcadosSalvos, setMarcadosSalvos] = useState<Set<string>>(new Set());
+  // Achado do usuário: switch aqui gravava direto, sem confirmação visível —
+  // agora fica pendente até "Salvar", igual ao resto da tela.
+  const [marcadosPendentes, setMarcadosPendentes] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(false);
+  const [salvando, setSalvando] = useState(false);
   const setoresCatalogoQ = useSetoresCatalogo();
 
   // Quem é "do setor" vem de user_setor (o mesmo cadastro de Setor em
@@ -1165,19 +1183,21 @@ function MaloteSetorPorModulo({ todasPessoas, temAcesso, podeGerenciar, menuCodi
   // não tem acesso à tela de Aprovações, o switch "COM ACESSO" abaixo mostra
   // isso e precisa ser ligado separadamente pra ela conseguir entrar na tela.
   useEffect(() => {
-    if (!setor) { setMembrosSetor(new Set()); setMarcados(new Set()); return; }
+    if (!setor) { setMembrosSetor(new Set()); setMarcadosSalvos(new Set()); setMarcadosPendentes(new Set()); return; }
     setLoading(true);
     Promise.all([
       (supabase as any).from("user_setor").select("user_id").eq("setor", setor),
-      (supabase as any).from("malote_setor_visivel_usuario").select("user_id").eq("setor", setor),
+      (supabase as any).from("malote_setor_visivel_usuario").select("user_id").eq("setor", setor).eq("contexto", contexto),
     ]).then(([membros, visiveis]: any[]) => {
       if (membros.error) toast({ title: "Erro ao carregar", description: membros.error.message, variant: "destructive" });
       if (visiveis.error) toast({ title: "Erro ao carregar", description: visiveis.error.message, variant: "destructive" });
       setMembrosSetor(new Set((membros.data ?? []).map((r: any) => r.user_id)));
-      setMarcados(new Set((visiveis.data ?? []).map((r: any) => r.user_id)));
+      const marcados = new Set((visiveis.data ?? []).map((r: any) => r.user_id)) as Set<string>;
+      setMarcadosSalvos(marcados);
+      setMarcadosPendentes(marcados);
       setLoading(false);
     });
-  }, [setor]);
+  }, [setor, contexto]);
 
   const pessoasDoSetor = useMemo(() => {
     const nomeDe = (p: ProfileRow) => p.display_name || p.email || p.id;
@@ -1186,24 +1206,42 @@ function MaloteSetorPorModulo({ todasPessoas, temAcesso, podeGerenciar, menuCodi
       .sort((a, b) => nomeDe(a).localeCompare(nomeDe(b), "pt-BR", { sensitivity: "base" }));
   }, [todasPessoas, membrosSetor]);
 
-  const toggle = async (userId: string, novo: boolean) => {
+  const toggle = (userId: string, novo: boolean) => {
     if (!podeGerenciar) return;
-    if (novo) {
-      const { error } = await (supabase as any)
-        .from("malote_setor_visivel_usuario")
-        .insert({ user_id: userId, setor });
-      if (error) { toast({ title: "Erro", description: error.message, variant: "destructive" }); return; }
-    } else {
-      const { error } = await (supabase as any)
-        .from("malote_setor_visivel_usuario")
-        .delete().eq("user_id", userId).eq("setor", setor);
-      if (error) { toast({ title: "Erro", description: error.message, variant: "destructive" }); return; }
-    }
-    setMarcados((prev) => {
+    setMarcadosPendentes((prev) => {
       const next = new Set(prev);
       if (novo) next.add(userId); else next.delete(userId);
       return next;
     });
+  };
+
+  const hasPending = [...marcadosPendentes].some((id) => !marcadosSalvos.has(id)) || [...marcadosSalvos].some((id) => !marcadosPendentes.has(id));
+
+  const salvar = async () => {
+    const paraAdicionar = [...marcadosPendentes].filter((id) => !marcadosSalvos.has(id));
+    const paraRemover = [...marcadosSalvos].filter((id) => !marcadosPendentes.has(id));
+    if (paraAdicionar.length === 0 && paraRemover.length === 0) return;
+    setSalvando(true);
+    try {
+      if (paraAdicionar.length) {
+        const { error } = await (supabase as any)
+          .from("malote_setor_visivel_usuario")
+          .insert(paraAdicionar.map((userId) => ({ user_id: userId, setor, contexto })));
+        if (error) throw error;
+      }
+      if (paraRemover.length) {
+        const { error } = await (supabase as any)
+          .from("malote_setor_visivel_usuario")
+          .delete().eq("setor", setor).eq("contexto", contexto).in("user_id", paraRemover);
+        if (error) throw error;
+      }
+      setMarcadosSalvos(new Set(marcadosPendentes));
+      toast({ title: "Setores salvos com sucesso" });
+    } catch (e: any) {
+      toast({ title: "Erro", description: e.message, variant: "destructive" });
+    } finally {
+      setSalvando(false);
+    }
   };
 
   return (
@@ -1225,19 +1263,27 @@ function MaloteSetorPorModulo({ todasPessoas, temAcesso, podeGerenciar, menuCodi
           setor <b>Financeiro</b> tem efeito aqui — escolher "Financeiro" acima e marcar as pessoas libera
           verem as classificações do Financeiro, mesmo sem nenhum outro recorte configurado. Escolher outro
           setor não restringe nada no Orçamento (Setor Responsável é preenchido em toda classificação, mas
-          só o Financeiro é tratado como exclusivo).
+          só o Financeiro é tratado como exclusivo). Lista independente da de Aprovações/Meus Itens.
         </p>
       )}
-      <Select value={setor} onValueChange={setSetor}>
-        <SelectTrigger className="h-8 w-64 text-xs">
-          <SelectValue placeholder="Escolher setor…" />
-        </SelectTrigger>
-        <SelectContent>
-          {(setoresCatalogoQ.data ?? []).map((s: string) => (
-            <SelectItem key={s} value={s}>{s}</SelectItem>
-          ))}
-        </SelectContent>
-      </Select>
+      <div className="flex items-center gap-2">
+        <Select value={setor} onValueChange={setSetor}>
+          <SelectTrigger className="h-8 w-64 text-xs">
+            <SelectValue placeholder="Escolher setor…" />
+          </SelectTrigger>
+          <SelectContent>
+            {(setoresCatalogoQ.data ?? []).map((s: string) => (
+              <SelectItem key={s} value={s}>{s}</SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        {setor && hasPending && (
+          <Button size="sm" className="h-8 gap-1.5" disabled={salvando} onClick={salvar}>
+            <Save className="h-3.5 w-3.5" />
+            {salvando ? "Salvando…" : "Salvar"}
+          </Button>
+        )}
+      </div>
 
       {setor && (
         <div className="mt-2 max-h-56 divide-y divide-border/60 overflow-y-auto rounded-md border border-border bg-background">
@@ -1247,24 +1293,27 @@ function MaloteSetorPorModulo({ todasPessoas, temAcesso, podeGerenciar, menuCodi
               Ninguém cadastrado no setor "{setor}" (Usuários → Setor).
             </p>
           )}
-          {!loading && pessoasDoSetor.map((p) => (
-            <div key={p.id} className="flex items-center gap-2 px-3 py-2 hover:bg-muted/40">
-              <div className="flex-1 min-w-0">
-                <p className="truncate text-sm">{p.display_name || p.email || p.id}</p>
-                {!temAcesso(p.id) && (
-                  <p className="truncate text-[11px] text-amber-600 dark:text-amber-500">
-                    sem acesso a este menu ainda — ligue o switch na lista abaixo também
-                  </p>
-                )}
+          {!loading && pessoasDoSetor.map((p) => {
+            const isPending = marcadosPendentes.has(p.id) !== marcadosSalvos.has(p.id);
+            return (
+              <div key={p.id} className={cn("flex items-center gap-2 px-3 py-2 hover:bg-muted/40", isPending && "bg-amber-50/50 dark:bg-amber-950/20")}>
+                <div className="flex-1 min-w-0">
+                  <p className="truncate text-sm">{p.display_name || p.email || p.id}</p>
+                  {!temAcesso(p.id) && (
+                    <p className="truncate text-[11px] text-amber-600 dark:text-amber-500">
+                      sem acesso a este menu ainda — ligue o switch na lista abaixo também
+                    </p>
+                  )}
+                </div>
+                <Switch
+                  checked={marcadosPendentes.has(p.id)}
+                  disabled={!podeGerenciar}
+                  onCheckedChange={(v) => toggle(p.id, v)}
+                  aria-label={`${p.display_name || p.email} vê só o setor ${setor}`}
+                />
               </div>
-              <Switch
-                checked={marcados.has(p.id)}
-                disabled={!podeGerenciar}
-                onCheckedChange={(v) => toggle(p.id, v)}
-                aria-label={`${p.display_name || p.email} vê só o setor ${setor}`}
-              />
-            </div>
-          ))}
+            );
+          })}
         </div>
       )}
     </div>
@@ -1335,8 +1384,14 @@ function ObservadorAutomaticoReuniao({ userId, onToast }: { userId: string; onTo
 // restringe a visão só a eles; não muda quem pode aprovar (isso continua
 // baseado no Aprovador 1/2/3 configurado na Classificação Malote).
 function MaloteSetoresUsuario({ userId, menuCodigo, onToast }: { userId: string; menuCodigo?: string; onToast: (m: string, t?: string) => void }) {
-  const [setores, setSetores] = useState<Set<string>>(new Set());
+  const [setoresSalvos, setSetoresSalvos] = useState<Set<string>>(new Set());
+  // Achado do usuário: a edição gravava direto a cada clique, sem toast nem
+  // etapa de confirmação — parecia "não salvar nada". Agora segue o MESMO
+  // padrão staged do resto da tela (pending + botão "Salvar"): a seleção só
+  // vira gravação quando confirmada aqui.
+  const [setoresPendentes, setSetoresPendentes] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(true);
+  const [salvando, setSalvando] = useState(false);
   const setoresCatalogoQ = useSetoresCatalogo();
   // Mesmo painel, mesma tabela — mas o "vazio" tem sentido OPOSTO conforme o
   // menu de onde foi aberto (ver bloco de comentário acima da função e o
@@ -1347,40 +1402,60 @@ function MaloteSetoresUsuario({ userId, menuCodigo, onToast }: { userId: string;
   // está gerenciando Orçamento (achado real do usuário) — varia o texto
   // conforme o menu que abriu o painel.
   const isOrcamento = menuCodigo !== undefined && menuCodigo !== MALOTE_APROVACOES_MENU_CODIGO;
+  // Achado do usuário (pós SIS-2026-0265): Aprovações e Orçamento
+  // compartilhavam a MESMA linha (user_id, setor) — marcar um setor num
+  // "puxava" pro outro sem pedir. `contexto` (coluna nova, 20260930000028)
+  // separa as duas listas dentro da mesma tabela.
+  const contexto = isOrcamento ? "orcamento" : "aprovacoes";
 
   const load = useCallback(async () => {
     setLoading(true);
     const { data } = await (supabase as any)
       .from("malote_setor_visivel_usuario")
       .select("setor")
-      .eq("user_id", userId);
-    setSetores(new Set((data ?? []).map((r: any) => r.setor as string)));
+      .eq("user_id", userId)
+      .eq("contexto", contexto);
+    const carregados = new Set<string>((data ?? []).map((r: any) => r.setor as string));
+    setSetoresSalvos(carregados);
+    setSetoresPendentes(carregados);
     setLoading(false);
-  }, [userId]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [userId, contexto]);
   useEffect(() => { load(); }, [load]);
 
-  const aplicar = async (novaLista: string[]) => {
-    const novo = new Set(novaLista);
-    const paraAdicionar = novaLista.filter((s) => !setores.has(s));
-    const paraRemover = [...setores].filter((s) => !novo.has(s));
-    if (paraAdicionar.length) {
-      const { error } = await (supabase as any)
-        .from("malote_setor_visivel_usuario")
-        .insert(paraAdicionar.map((setor) => ({ user_id: userId, setor })));
-      if (error) { onToast("Erro: " + error.message, "err"); return; }
+  const salvar = async () => {
+    const paraAdicionar = [...setoresPendentes].filter((s) => !setoresSalvos.has(s));
+    const paraRemover = [...setoresSalvos].filter((s) => !setoresPendentes.has(s));
+    if (paraAdicionar.length === 0 && paraRemover.length === 0) return;
+    setSalvando(true);
+    try {
+      if (paraAdicionar.length) {
+        const { error } = await (supabase as any)
+          .from("malote_setor_visivel_usuario")
+          .insert(paraAdicionar.map((setor) => ({ user_id: userId, setor, contexto })));
+        if (error) throw error;
+      }
+      if (paraRemover.length) {
+        const { error } = await (supabase as any)
+          .from("malote_setor_visivel_usuario")
+          .delete()
+          .eq("user_id", userId)
+          .eq("contexto", contexto)
+          .in("setor", paraRemover);
+        if (error) throw error;
+      }
+      setSetoresSalvos(new Set(setoresPendentes));
+      onToast("Setores salvos com sucesso");
+    } catch (e: any) {
+      onToast("Erro: " + e.message, "err");
+    } finally {
+      setSalvando(false);
     }
-    if (paraRemover.length) {
-      const { error } = await (supabase as any)
-        .from("malote_setor_visivel_usuario")
-        .delete()
-        .eq("user_id", userId)
-        .in("setor", paraRemover);
-      if (error) { onToast("Erro: " + error.message, "err"); return; }
-    }
-    setSetores(novo);
   };
 
   if (loading) return <div className="py-2 text-xs text-muted-foreground">Carregando setores...</div>;
+
+  const hasPending = [...setoresPendentes].some((s) => !setoresSalvos.has(s)) || [...setoresSalvos].some((s) => !setoresPendentes.has(s));
 
   return (
     <div className="py-1">
@@ -1397,19 +1472,30 @@ function MaloteSetoresUsuario({ userId, menuCodigo, onToast }: { userId: string;
           restringe classificações do <b>Financeiro</b> — marcar aqui "Financeiro" libera vê-las, mesmo sem
           nenhum outro recorte configurado. Marcar outros setores aqui não afeta o Orçamento (Setor
           Responsável é preenchido em toda classificação, mas só o Financeiro é tratado como exclusivo).
+          Lista independente da de Aprovações/Meus Itens.
         </p>
       )}
-      <SearchableMultiSelect
-        value={[...setores]}
-        onChange={aplicar}
-        options={(setoresCatalogoQ.data ?? []).map((s) => ({ value: s, label: s }))}
-        placeholder={
-          isOrcamento
-            ? "Nenhum setor liberado — classificações restritas ficam ocultas..."
-            : "Todos os setores (sem restrição)..."
-        }
-      />
-      {isOrcamento && setores.size === 0 && (
+      <div className="flex items-center gap-2">
+        <div className="flex-1">
+          <SearchableMultiSelect
+            value={[...setoresPendentes]}
+            onChange={(novaLista) => setSetoresPendentes(new Set(novaLista))}
+            options={(setoresCatalogoQ.data ?? []).map((s) => ({ value: s, label: s }))}
+            placeholder={
+              isOrcamento
+                ? "Nenhum setor liberado — classificações restritas ficam ocultas..."
+                : "Todos os setores (sem restrição)..."
+            }
+          />
+        </div>
+        {hasPending && (
+          <Button size="sm" className="h-8 shrink-0 gap-1.5" disabled={salvando} onClick={salvar}>
+            <Save className="h-3.5 w-3.5" />
+            {salvando ? "Salvando…" : "Salvar"}
+          </Button>
+        )}
+      </div>
+      {isOrcamento && setoresPendentes.size === 0 && (
         <p className="mt-1 text-[11px] text-amber-600 dark:text-amber-500">
           Sem nenhum setor marcado, este usuário não vê classificações com Setor Responsável definido (ex.
           Financeiro) nas telas de Orçamento — o oposto de Aprovações/Meus Itens.
