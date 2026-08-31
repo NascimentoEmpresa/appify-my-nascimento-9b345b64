@@ -21,6 +21,22 @@ const REUNIOES_MENU_CODIGO = "central_servicos_reunioes";
 // Malote) um usuário pode ver em Aprovações do Malote — a mesma lista
 // também vale pra Meus Itens (uma lista só, não duplica configuração).
 const MALOTE_APROVACOES_MENU_CODIGO = "malote_aprovacoes";
+// SIS-2026-0265 (achado real do Iury: "não aparece nenhuma identificação
+// que o financeiro possa visualizar" no Gerenciamento de Acesso): as telas
+// de Orçamento passaram a usar a MESMA tabela (malote_setor_visivel_usuario)
+// pra restringir Classificação administrativo com Setor Responsável
+// definido — mas o painel de setor (individual e "Por Módulo") só
+// aparecia no menu de Aprovações, então não dava pra saber/gerenciar quem
+// vê o quê nas telas de Orçamento. Mesmos 3 menus filtrados no client
+// (ver useMaloteAcessoOrcamento.ts) — Classificações Malote e Orçamento de
+// Contratos ficaram de fora de propósito lá, então ficam de fora aqui
+// também.
+const MALOTE_SETOR_MENU_CODIGOS = [
+  MALOTE_APROVACOES_MENU_CODIGO,
+  "malote_orcamento_administrativo",
+  "malote_orcamento_geral",
+  "malote_detalhe_orcamento",
+];
 // Reembolso: painel irmao do do Malote, mas OPT-OUT (sem setor marcado, nao
 // aprova nada) - ver ReembolsoSetoresUsuario.tsx.
 const REEMBOLSO_APROVACAO_MENU_CODIGO = "central_servicos_reembolso_aprovacao";
@@ -700,7 +716,7 @@ function UserAccessPanel({ podeGerenciar, modulos, menus }: { podeGerenciar: boo
                       const isPending = pending.has(mn.codigo);
                       const isForm = mn.codigo === FORM_MENU_CODIGO;
                       const isReunioes = mn.codigo === REUNIOES_MENU_CODIGO;
-                      const isMaloteSetor = mn.codigo === MALOTE_APROVACOES_MENU_CODIGO;
+                      const isMaloteSetor = MALOTE_SETOR_MENU_CODIGOS.includes(mn.codigo);
                       const isReembolsoSetor = mn.codigo === REEMBOLSO_APROVACAO_MENU_CODIGO;
                       const capsOpen = expanded.has(mn.id);
                       const acoesDesteMenu = acoesDoMenu(mn.codigo);
@@ -749,7 +765,7 @@ function UserAccessPanel({ podeGerenciar, modulos, menus }: { podeGerenciar: boo
                           )}
                           {isMaloteSetor && podeGerenciar && capsOpen && (
                             <div className="border-t border-border/60 bg-background px-12 py-2">
-                              <MaloteSetoresUsuario userId={selectedUserId} onToast={(m, t) => toast({ title: m, variant: t === "err" ? "destructive" : "default" })} />
+                              <MaloteSetoresUsuario userId={selectedUserId} menuCodigo={mn.codigo} onToast={(m, t) => toast({ title: m, variant: t === "err" ? "destructive" : "default" })} />
                             </div>
                           )}
                           {isReembolsoSetor && podeGerenciar && capsOpen && (
@@ -1098,8 +1114,8 @@ function PessoasComAcessoAoMenu({ menuCodigo, podeGerenciar }: { menuCodigo: str
         )}
       </div>
 
-      {menuCodigo === MALOTE_APROVACOES_MENU_CODIGO && !carregando && (
-        <MaloteSetorPorModulo todasPessoas={profilesQ.data ?? []} temAcesso={dbHasAccess} podeGerenciar={podeGerenciar} />
+      {MALOTE_SETOR_MENU_CODIGOS.includes(menuCodigo) && !carregando && (
+        <MaloteSetorPorModulo todasPessoas={profilesQ.data ?? []} temAcesso={dbHasAccess} podeGerenciar={podeGerenciar} menuCodigo={menuCodigo} />
       )}
 
       {carregando && <p className="py-4 text-center text-xs text-muted-foreground">Carregando…</p>}
@@ -1127,8 +1143,16 @@ function PessoasComAcessoAoMenu({ menuCodigo, podeGerenciar }: { menuCodigo: str
 // edição invertido: escolhe o Setor primeiro, depois marca quem das pessoas
 // já com acesso a Aprovações do Malote pertence a ele. Escreve exatamente a
 // mesma tabela que MaloteSetoresUsuario — não importa por qual tela a pessoa
-// foi marcada, o efeito na RLS é idêntico.
-function MaloteSetorPorModulo({ todasPessoas, temAcesso, podeGerenciar }: { todasPessoas: ProfileRow[]; temAcesso: (userId: string) => boolean; podeGerenciar: boolean }) {
+// foi marcada, o efeito é idêntico (RLS em Aprovações/Meus Itens, filtro no
+// client nas telas de Orçamento — ver SIS-2026-0265/useMaloteAcessoOrcamento.ts).
+// Renderizado nos 4 menus de MALOTE_SETOR_MENU_CODIGOS, não só Aprovações —
+// achado real do Iury: sem isso, não dava pra saber/gerenciar em massa quem
+// vê o quê nas telas de Orçamento (só existia o painel individual).
+function MaloteSetorPorModulo({ todasPessoas, temAcesso, podeGerenciar, menuCodigo }: { todasPessoas: ProfileRow[]; temAcesso: (userId: string) => boolean; podeGerenciar: boolean; menuCodigo?: string }) {
+  // Mesmo painel renderizado nos 4 menus de MALOTE_SETOR_MENU_CODIGOS — o
+  // texto explicativo só faz sentido pro contexto de onde foi aberto (ver
+  // MaloteSetoresUsuario, mesmo critério).
+  const isOrcamento = menuCodigo !== undefined && menuCodigo !== MALOTE_APROVACOES_MENU_CODIGO;
   const [setor, setSetor] = useState<string>("");
   const [membrosSetor, setMembrosSetor] = useState<Set<string>>(new Set());
   const [marcados, setMarcados] = useState<Set<string>>(new Set());
@@ -1184,12 +1208,26 @@ function MaloteSetorPorModulo({ todasPessoas, temAcesso, podeGerenciar }: { toda
 
   return (
     <div className="mb-3 rounded-md border border-border bg-muted/20 p-3">
-      <p className="mb-2 text-[11.5px] text-muted-foreground">
+      <p className="mb-1 text-[11.5px] text-muted-foreground">
         Restringir por setor: escolha um <b>Setor Responsável</b> (o mesmo campo da Classificação Malote). A
-        lista abaixo traz quem está cadastrado nesse setor em Usuários — marque quem deve ver SÓ as despesas
-        daquele setor em Aprovações e Meus Itens. Quem não for marcado em nenhum setor continua vendo tudo da
-        empresa, como hoje. Não muda quem aprova — Aprovador 1/2/3 continuam os mesmos.
+        lista abaixo traz quem está cadastrado nesse setor em Usuários.
       </p>
+      {!isOrcamento && (
+        <p className="mb-2 text-[11.5px] text-muted-foreground">
+          <b>Em Aprovações e Meus Itens</b>: restringe a pessoa a ver SÓ as despesas daquele setor (quem não
+          é marcado em nenhum setor continua vendo tudo da empresa, como hoje — não muda quem aprova,
+          Aprovador 1/2/3 continuam os mesmos).
+        </p>
+      )}
+      {isOrcamento && (
+        <p className="mb-2 text-[11.5px] text-muted-foreground">
+          <b>Nas telas de Orçamento</b> (Orçamento Geral, Orçamento Administrativo, Detalhe Orçamento): SÓ o
+          setor <b>Financeiro</b> tem efeito aqui — escolher "Financeiro" acima e marcar as pessoas libera
+          verem as classificações do Financeiro, mesmo sem nenhum outro recorte configurado. Escolher outro
+          setor não restringe nada no Orçamento (Setor Responsável é preenchido em toda classificação, mas
+          só o Financeiro é tratado como exclusivo).
+        </p>
+      )}
       <Select value={setor} onValueChange={setSetor}>
         <SelectTrigger className="h-8 w-64 text-xs">
           <SelectValue placeholder="Escolher setor…" />
@@ -1296,10 +1334,19 @@ function ObservadorAutomaticoReuniao({ userId, onToast }: { userId: string; onTo
 // empresa dela (comportamento anterior, sem regressão). Marcar 1+ setores
 // restringe a visão só a eles; não muda quem pode aprovar (isso continua
 // baseado no Aprovador 1/2/3 configurado na Classificação Malote).
-function MaloteSetoresUsuario({ userId, onToast }: { userId: string; onToast: (m: string, t?: string) => void }) {
+function MaloteSetoresUsuario({ userId, menuCodigo, onToast }: { userId: string; menuCodigo?: string; onToast: (m: string, t?: string) => void }) {
   const [setores, setSetores] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(true);
   const setoresCatalogoQ = useSetoresCatalogo();
+  // Mesmo painel, mesma tabela — mas o "vazio" tem sentido OPOSTO conforme o
+  // menu de onde foi aberto (ver bloco de comentário acima da função e o
+  // header de useMaloteAcessoOrcamento.ts): em Aprovações/Meus Itens, vazio =
+  // vê tudo; nas telas de Orçamento, vazio = classificações com Setor
+  // Responsável ficam escondidas. Usar o MESMO placeholder genérico
+  // "Todos os setores (sem restrição)" nas duas situações confundia quem
+  // está gerenciando Orçamento (achado real do usuário) — varia o texto
+  // conforme o menu que abriu o painel.
+  const isOrcamento = menuCodigo !== undefined && menuCodigo !== MALOTE_APROVACOES_MENU_CODIGO;
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -1337,18 +1384,37 @@ function MaloteSetoresUsuario({ userId, onToast }: { userId: string; onToast: (m
 
   return (
     <div className="py-1">
-      <p className="mb-1.5 text-[11px] text-muted-foreground">
-        Setores que <b>este usuário</b> pode ver em Aprovações do Malote e Meus Itens (o setor vem do
-        campo <i>Setor Responsável</i> da Classificação Malote). Sem nenhum setor marcado, a pessoa
-        continua vendo <b>tudo</b> da empresa dela, como hoje. Marcar 1+ setores restringe a visão SÓ
-        a eles — não muda quem aprova (Aprovador 1/2/3 continuam os mesmos).
-      </p>
+      {!isOrcamento && (
+        <p className="mb-1.5 text-[11px] text-muted-foreground">
+          <b>Aprovações do Malote e Meus Itens</b>: sem nenhum setor marcado, a pessoa continua vendo{" "}
+          <b>tudo</b> da empresa dela, como hoje; marcar 1+ setores restringe a visão SÓ a eles (não muda
+          quem aprova — Aprovador 1/2/3 continuam os mesmos).
+        </p>
+      )}
+      {isOrcamento && (
+        <p className="mb-1.5 text-[11px] text-muted-foreground">
+          <b>Nas telas de Orçamento</b> (Orçamento Geral, Orçamento Administrativo, Detalhe Orçamento): SÓ
+          restringe classificações do <b>Financeiro</b> — marcar aqui "Financeiro" libera vê-las, mesmo sem
+          nenhum outro recorte configurado. Marcar outros setores aqui não afeta o Orçamento (Setor
+          Responsável é preenchido em toda classificação, mas só o Financeiro é tratado como exclusivo).
+        </p>
+      )}
       <SearchableMultiSelect
         value={[...setores]}
         onChange={aplicar}
         options={(setoresCatalogoQ.data ?? []).map((s) => ({ value: s, label: s }))}
-        placeholder="Todos os setores (sem restrição)..."
+        placeholder={
+          isOrcamento
+            ? "Nenhum setor liberado — classificações restritas ficam ocultas..."
+            : "Todos os setores (sem restrição)..."
+        }
       />
+      {isOrcamento && setores.size === 0 && (
+        <p className="mt-1 text-[11px] text-amber-600 dark:text-amber-500">
+          Sem nenhum setor marcado, este usuário não vê classificações com Setor Responsável definido (ex.
+          Financeiro) nas telas de Orçamento — o oposto de Aprovações/Meus Itens.
+        </p>
+      )}
     </div>
   );
 }

@@ -19,6 +19,8 @@ import { usePlanejamentosOrcamento, useClassificacoesOrcamentoAdmin, Classificac
 import { useLigacoesAdministrativoClassificacao } from "@/hooks/useMaloteAdministrativoClassificacaoLink";
 import { useOrcamentoContratos } from "@/hooks/useOrcamentoContratos";
 import { useUtilizadoOrcamento } from "@/hooks/useUtilizadoOrcamento";
+import { useClassificacaoMaloteVisivel } from "@/hooks/useMaloteAcessoOrcamento";
+import { SetorRestritoBadge } from "./SetorRestritoBadge";
 import { anoMesAtual, fimDoMes } from "@/hooks/usePlanilhaCusto";
 import { BarraOrcamento } from "@/components/orcamento/BarraOrcamento";
 import { getStatusVigencia, STATUS_LABEL, STATUS_BADGE_CLASS, StatusVigencia, fmtMoney, fmtPct, competenciaNoPeriodo } from "./orcamentoUtils";
@@ -154,8 +156,19 @@ export default function OrcamentoGeral() {
   const [anoMes, setAnoMes] = useState(anoMesAtual());
   const { data: gruposContrato, isLoading: carregandoContrato } = useOrcamentoContratos(anoMes);
   const { data: ligacoesAdm = [] } = useLigacoesAdministrativoClassificacao();
-  const { data: classificacoesMalote = [] } = useClassificacoesOrcamentoAdmin();
+  const { data: classificacoesMaloteTodas = [] } = useClassificacoesOrcamentoAdmin();
   const { data: utilizadoLinhas = [], isLoading: carregandoUtilizado } = useUtilizadoOrcamento();
+  // SIS-2026-0265 (Iury): Classificação Malote com setor_responsavel
+  // definido (ex.: Financeiro) só é visível pra quem tem esse setor
+  // liberado em Gerenciamento de Acesso — filtra ANTES de montar o mapa que
+  // alimenta tanto o bloco Administrativo quanto o de Contratos. Vale pros
+  // dois tipos (não só "administrativo" — setor_responsavel é um campo
+  // único da Classificação Malote, ver classificacaoVisivelPorSetor).
+  const classificacaoMaloteVisivel = useClassificacaoMaloteVisivel();
+  const classificacoesMalote = useMemo(
+    () => classificacoesMaloteTodas.filter(classificacaoMaloteVisivel),
+    [classificacoesMaloteTodas, classificacaoMaloteVisivel]
+  );
 
   const [filtroOrigem, setFiltroOrigem] = useState<"todas" | OrigemOrcamento>("todas");
   const [busca, setBusca] = useState("");
@@ -443,7 +456,12 @@ export default function OrcamentoGeral() {
                 )}
                 {linhasAdmFiltradas.map((l) => (
                   <TableRow key={l.classificacaoMalote.id}>
-                    <TableCell className="font-medium">{l.classificacaoMalote.nome}</TableCell>
+                    <TableCell className="font-medium">
+                      <div className="flex items-center gap-1.5">
+                        {l.classificacaoMalote.nome}
+                        <SetorRestritoBadge setor={l.classificacaoMalote.setor_responsavel} />
+                      </div>
+                    </TableCell>
                     <TableCell className="max-w-64 truncate" title={l.detalhes}>
                       {l.detalhes}
                     </TableCell>
@@ -533,7 +551,12 @@ export default function OrcamentoGeral() {
                         <TableBody>
                           {g.linhas.map((l) => (
                             <TableRow key={l.classificacaoMalote.id}>
-                              <TableCell className="font-medium">{l.classificacaoMalote.nome}</TableCell>
+                              <TableCell className="font-medium">
+                                <div className="flex items-center gap-1.5">
+                                  {l.classificacaoMalote.nome}
+                                  <SetorRestritoBadge setor={l.classificacaoMalote.setor_responsavel} />
+                                </div>
+                              </TableCell>
                               <LinhaAprovadores c={l.classificacaoMalote} />
                               <TableCell className="text-right">{fmtMoney(l.orcado)}</TableCell>
                               <TableCell className="text-right">{fmtMoney(l.utilizado)}</TableCell>
