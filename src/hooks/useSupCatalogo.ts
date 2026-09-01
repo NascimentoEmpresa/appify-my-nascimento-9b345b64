@@ -86,7 +86,7 @@ export function useContratosCatalogo(empresaId: string | null) {
  * payload do Realtime, não.
  *
  * Primeiro uso de Realtime no projeto: `contratos` precisa estar na
- * publication supabase_realtime (migration 20260930000022). Se não estiver,
+ * publication supabase_realtime (migration 20260930000031). Se não estiver,
  * o canal simplesmente nunca recebe evento e a tela continua funcionando
  * como antes, atualizando ao voltar o foco.
  */
