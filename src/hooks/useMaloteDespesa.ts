@@ -369,14 +369,29 @@ export function useIntegrantes() {
     queryKey: ["malote_integrantes"],
     staleTime: 5 * 60_000,
     queryFn: async () => {
-      const { data, error } = await (supabase as any)
-        .from("EMPREGADOS")
-        .select('"ID", "Nome", "Situação"')
-        .eq("Situação", "Trabalhando")
-        .order("Nome")
-        .limit(2000);
-      if (error) throw error;
-      return (data ?? []).map((e: any) => ({ id: e.ID as number, nome: e.Nome as string }));
+      // São 2200+ colaboradores ativos — mais que o teto de linhas por
+      // request do PostgREST (db-max-rows do projeto), que corta a resposta
+      // ANTES do .limit() do client valer, mesmo pedindo mais. Um .limit()
+      // único deixava o combobox de Integrante "parar" no meio do alfabeto
+      // (achado do usuário: só ia até nomes com "J"). Pagina com .range()
+      // até a página vir vazia/incompleta, garantindo a lista inteira.
+      const PAGE = 1000;
+      const todos: { id: number; nome: string }[] = [];
+      for (let pagina = 0; ; pagina++) {
+        const de = pagina * PAGE;
+        const ate = de + PAGE - 1;
+        const { data, error } = await (supabase as any)
+          .from("EMPREGADOS")
+          .select('"ID", "Nome", "Situação"')
+          .eq("Situação", "Trabalhando")
+          .order("Nome")
+          .range(de, ate);
+        if (error) throw error;
+        const lote = (data ?? []).map((e: any) => ({ id: e.ID as number, nome: e.Nome as string }));
+        todos.push(...lote);
+        if (lote.length < PAGE) break;
+      }
+      return todos;
     },
   });
 }
