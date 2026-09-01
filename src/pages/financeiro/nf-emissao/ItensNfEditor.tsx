@@ -1,6 +1,7 @@
 import { Fragment, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { CurrencyInput } from "@/components/ui/CurrencyInput";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
@@ -192,23 +193,37 @@ export function ItensNfEditor({
                               disabled={readOnly}
                             />
                           </div>
-                          {campos.map(([key, label]) => (
-                            <div key={key}>
-                              <Label className="text-xs">{label}</Label>
-                              <Input
-                                className="h-8"
-                                type="number"
-                                step={key === "qtd_colaboradores" ? "1" : "0.01"}
-                                value={it[key] || ""}
-                                onChange={(e) =>
-                                  key === "qtd_colaboradores"
-                                    ? onQtdColaboradoresChange(i, Number(e.target.value) || 0)
-                                    : onUpdateItem(i, { [key]: Number(e.target.value) || 0 } as any)
-                                }
-                                disabled={readOnly}
-                              />
-                            </div>
-                          ))}
+                          {campos.map(([key, label]) =>
+                            // SIS-2026-0257 (Jeferson Ruan): "ajustar mascara de
+                            // valores... melhorar o visual" — todo campo monetário
+                            // (Contrato Exec., VA, VT, Materiais, Faltas, Multas,
+                            // Glosas, descontos, inclusive os pós-emissão) ganha o
+                            // mesmo CurrencyInput já usado em Malote/Licitações.
+                            // Qtd Colab. fica de fora — é contagem, não valor.
+                            key === "qtd_colaboradores" ? (
+                              <div key={key}>
+                                <Label className="text-xs">{label}</Label>
+                                <Input
+                                  className="h-8"
+                                  type="number"
+                                  step="1"
+                                  value={it[key] || ""}
+                                  onChange={(e) => onQtdColaboradoresChange(i, Number(e.target.value) || 0)}
+                                  disabled={readOnly}
+                                />
+                              </div>
+                            ) : (
+                              <div key={key}>
+                                <Label className="text-xs">{label}</Label>
+                                <CurrencyInput
+                                  className="h-8"
+                                  value={String(it[key] || "")}
+                                  onChange={(v) => onUpdateItem(i, { [key]: parseFloat(v) || 0 } as any)}
+                                  disabled={readOnly}
+                                />
+                              </div>
+                            )
+                          )}
                           <div className="col-span-2">
                             <Label className="text-xs">Categoria de risco (INSS)</Label>
                             <Select

@@ -12,6 +12,8 @@ import { cn } from "@/lib/utils";
 import { useContratosERP } from "@/hooks/useContratosERP";
 import { useClassificacoesOrcamentoAdmin, usePlanejamentosOrcamento } from "@/hooks/usePlanejamentoOrcamentario";
 import { useLigacoesAdministrativoClassificacao } from "@/hooks/useMaloteAdministrativoClassificacaoLink";
+import { useClassificacaoMaloteVisivel } from "@/hooks/useMaloteAcessoOrcamento";
+import { SetorRestritoBadge } from "./SetorRestritoBadge";
 import { useOrcamentoContratos } from "@/hooks/useOrcamentoContratos";
 import { useUtilizadoOrcamento } from "@/hooks/useUtilizadoOrcamento";
 import { useEmpresaId } from "@/hooks/useEmpresaId";
@@ -115,7 +117,16 @@ export default function DetalheOrcamento() {
   }
 
   const { data: empresaId } = useEmpresaId();
-  const { data: classificacoes = [] } = useClassificacoesOrcamentoAdmin();
+  const { data: classificacoesTodas = [] } = useClassificacoesOrcamentoAdmin();
+  // SIS-2026-0265 (Iury): Classificação administrativo do Financeiro só
+  // visível pra quem tem o setor liberado — filtrar aqui também protege o
+  // drill-down direto por URL (?classificacaoId=...): classificacaoSelecionada
+  // (abaixo) só acha a classificação se ela estiver nesta lista já filtrada.
+  const classificacaoMaloteVisivel = useClassificacaoMaloteVisivel();
+  const classificacoes = useMemo(
+    () => classificacoesTodas.filter(classificacaoMaloteVisivel),
+    [classificacoesTodas, classificacaoMaloteVisivel]
+  );
   const { data: contratos = [] } = useContratosERP();
   const { data: orcamentosAdm = [] } = usePlanejamentosOrcamento(empresaId);
   const { data: ligacoesAdm = [] } = useLigacoesAdministrativoClassificacao();
@@ -230,13 +241,19 @@ export default function DetalheOrcamento() {
               </Select>
             </div>
             <div>
-              <Label className="text-xs">Classificação</Label>
+              <Label className="text-xs flex items-center gap-1.5">
+                Classificação
+                <SetorRestritoBadge setor={classificacaoSelecionada?.setor_responsavel} />
+              </Label>
               <Select value={classificacaoDraft || "todas"} onValueChange={(v) => setClassificacaoDraft(v === "todas" ? "" : v)}>
                 <SelectTrigger className="h-9"><SelectValue /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="todas">Todas</SelectItem>
                   {classificacoes.map((c) => (
-                    <SelectItem key={c.id} value={c.id}>{c.nome}</SelectItem>
+                    <SelectItem key={c.id} value={c.id}>
+                      {c.nome}
+                      {c.setor_responsavel ? ` 🔒 ${c.setor_responsavel}` : ""}
+                    </SelectItem>
                   ))}
                 </SelectContent>
               </Select>

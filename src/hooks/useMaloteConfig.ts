@@ -49,14 +49,31 @@ const CONFIG_COLUMNS =
 // SIS-2026-0250: hora atual já passou de um horário-limite (formato
 // "HH:MM"). Genérico — usado pro corte 2.1 (inclusão de exceção pro mesmo
 // dia) e pros avisos de 1.2/2.2 na tela de aprovação.
-export function horaAtualPassouDe(horario: string | undefined | null): boolean {
+export function horaAtualPassouDe(horario: string | undefined | null, agora: Date = new Date()): boolean {
   if (!horario) return false;
   const [h, m] = horario.split(":").map(Number);
   if (Number.isNaN(h) || Number.isNaN(m)) return false;
-  const agora = new Date();
   const limite = new Date(agora);
   limite.setHours(h, m, 0, 0);
   return agora > limite;
+}
+
+// SIS-2026-0272 (achado do Iury): a regra 1.2 original exigia justificativa
+// de aprovação (N1) olhando só o relógio contra `conferencia_aprovacao_horario`
+// — sem nenhuma relação com a data de pagamento da despesa. Resultado: uma
+// despesa pra terça, aprovada numa sexta às 16h, disparava "passou do
+// horário 1.2" mesmo sem nenhuma urgência real (o pagamento nem é hoje). A
+// regra só faz sentido quando a despesa precisa ser resolvida hoje —
+// `dataPagamento` vencida ou igual a hoje.
+export function exigeJustificativaPorConferenciaAtrasada(
+  dataPagamento: string | null | undefined,
+  horario: string | undefined | null,
+  agora: Date = new Date()
+): boolean {
+  if (!dataPagamento) return false;
+  const hojeStr = agora.toISOString().slice(0, 10);
+  const venceHojeOuAntes = dataPagamento <= hojeStr;
+  return venceHojeOuAntes && horaAtualPassouDe(horario, agora);
 }
 
 // SIS-2026-0250: 1.1 ("Prazo para inclusão e aprovação pelo setor") define

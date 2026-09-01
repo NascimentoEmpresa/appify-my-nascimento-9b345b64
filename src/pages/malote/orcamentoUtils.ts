@@ -39,6 +39,40 @@ export function fmtDate(dateStr: string | null | undefined): string {
   return `${d}/${m}/${y}`;
 }
 
+// SIS-2026-0265 (Iury): "as classificações administrativas do financeiro só
+// podem ser vistas por eles" — pedido literal, só sobre Financeiro.
+//
+// setor_responsavel NÃO é um marcador de "isso é exclusivo" — é um campo de
+// categorização preenchido em praticamente TODA Classificação Malote (achado
+// real, 31/08: 64/64 tipo contrato e 80/81 tipo administrativo em produção
+// têm o campo preenchido, com Financeiro/Suprimentos/RH/Jurídico/Operacional/
+// Sistemas/etc.). Tratar "tem setor" como "é restrito" (versão anterior
+// desta função) escondia o orçamento inteiro de quem não tem NENHUM recorte
+// configurado — não só o do Financeiro. Por decisão explícita do usuário,
+// SÓ o setor Financeiro é tratado como exclusivo aqui; os demais continuam
+// visíveis a todos, como sempre foram — mesmo comportamento de antes do
+// SIS-2026-0265 pra eles.
+//
+// Quem tem "Financeiro" liberado em Gerenciamento de Acesso
+// (malote_setor_visivel_usuario, SIS-2026-0216/0224) vê essas classificações;
+// os demais não veem, mesmo SEM nenhum recorte configurado (fallback
+// invertido em relação a Aprovações/Meus Itens: lá "sem recorte = vê tudo",
+// aqui "sem Financeiro liberado = não vê o que é do Financeiro"). Função
+// pura (só telas de Orçamento usam isso — não mexe em RLS, ver
+// useMaloteAcessoOrcamento.ts pro porquê).
+export const SETOR_ORCAMENTO_RESTRITO = "FINANCEIRO";
+
+export function classificacaoVisivelPorSetor(
+  c: { setor_responsavel?: string | null } | null | undefined,
+  setoresLiberados: string[]
+): boolean {
+  if (!c) return true;
+  const setor = c.setor_responsavel?.trim().toUpperCase();
+  if (!setor || setor !== SETOR_ORCAMENTO_RESTRITO) return true;
+  const setoresSet = new Set(setoresLiberados.map((s) => s.toUpperCase().trim()));
+  return setoresSet.has(SETOR_ORCAMENTO_RESTRITO);
+}
+
 // SIS-2026-0168: "competencia" do malote_despesa é uma coluna `date`
 // (vem como "YYYY-MM-DD"), mas o Ano/Mês do filtro é "YYYY-MM" — comparar
 // os dois direto nunca batia, deixando "Utilizado" sempre zerado no

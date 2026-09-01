@@ -45,6 +45,7 @@ import PlanilhaCusto from "./pages/licitacoes/PlanilhaCusto";
 import ContratosERP from "./pages/licitacoes/ContratosERP";
 import CotacoesLicitacao from "./pages/licitacoes/CotacoesLicitacao";
 import PrecosMateriais from "./pages/licitacoes/PrecosMateriais";
+import JustificativaAnalistas from "./pages/licitacoes/JustificativaAnalistas";
 import ContratosAtivos from "./pages/contratos/Ativos";
 import Empenhos from "./pages/contratos/Empenhos";
 import Postos from "./pages/contratos/Postos";
@@ -399,6 +400,10 @@ const App = () => (
             {/* Consulta somente-leitura do banco de preços que o Compras
                 alimenta na entrada de estoque (SIS-2026-0199). */}
             <Route path="licitacoes/precos-materiais" element={<PrecosMateriais />} />
+            {/* SIS-2026-0283: espelho simplificado de Aprovações do Malote,
+                só as pendências de justificativa dos contratos do analista
+                logado — ver useMinhasJustificativasPendentes. */}
+            <Route path="licitacoes/justificativa-analistas" element={<JustificativaAnalistas />} />
             <Route path="contratos/ativos" element={<ContratosAtivos />} />
             <Route path="contratos/empenhos" element={<Empenhos />} />
             <Route path="contratos/postos" element={<Postos />} />
