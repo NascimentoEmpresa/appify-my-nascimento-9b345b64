@@ -10,6 +10,7 @@ import { Label } from "@/components/ui/label";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { SearchableSelect } from "@/components/ui/searchable-select";
+import { DateRangeFilter } from "@/components/ui/date-range-filter";
 import { Plus, ListChecks, Search, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import {
@@ -140,8 +141,12 @@ export default function MeusItens() {
 
   const [tab, setTab] = useState<"todos" | "solicitacoes" | "despesas">("todos");
   const [chip, setChip] = useState<ChipKey>("todos");
+  // SIS-2026-0285 (Iury): só existia período por Data de pagamento — agora
+  // tem também Última atualização, os dois independentes (E lógico).
   const [periodoInicio, setPeriodoInicio] = useState("");
   const [periodoFim, setPeriodoFim] = useState("");
+  const [dataAtualizacaoDe, setDataAtualizacaoDe] = useState("");
+  const [dataAtualizacaoAte, setDataAtualizacaoAte] = useState("");
   const [classificacaoId, setClassificacaoId] = useState("");
   const [empresaId, setEmpresaId] = useState("");
   const [excecao, setExcecao] = useState<"todos" | "sim" | "nao">("todos");
@@ -182,17 +187,21 @@ export default function MeusItens() {
       const dataPagamento = parcela ? parcela.data_pagamento_real ?? parcela.data_vencimento : despesa.data_pagamento;
       if (periodoInicio && (!dataPagamento || dataPagamento < periodoInicio)) return false;
       if (periodoFim && (!dataPagamento || dataPagamento > periodoFim)) return false;
+      if (dataAtualizacaoDe && despesa.updated_at < dataAtualizacaoDe) return false;
+      if (dataAtualizacaoAte && despesa.updated_at > dataAtualizacaoAte + "T23:59:59") return false;
       if (busca.trim()) {
         const alvo = `${despesa.numero} ${despesa.nome}`.toLowerCase();
         if (!alvo.includes(busca.trim().toLowerCase())) return false;
       }
       return true;
     });
-  }, [itens, tab, chip, classificacaoId, empresaId, excecao, periodoInicio, periodoFim, busca]);
+  }, [itens, tab, chip, classificacaoId, empresaId, excecao, periodoInicio, periodoFim, dataAtualizacaoDe, dataAtualizacaoAte, busca]);
 
   function limparFiltros() {
     setPeriodoInicio("");
     setPeriodoFim("");
+    setDataAtualizacaoDe("");
+    setDataAtualizacaoAte("");
     setClassificacaoId("");
     setEmpresaId("");
     setExcecao("todos");
@@ -229,14 +238,18 @@ export default function MeusItens() {
       <Card>
         <CardContent className="p-4 space-y-3">
           <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
-            <div>
-              <Label className="text-xs">Período (de)</Label>
-              <Input type="date" value={periodoInicio} onChange={(e) => setPeriodoInicio(e.target.value)} />
-            </div>
-            <div>
-              <Label className="text-xs">Período (até)</Label>
-              <Input type="date" value={periodoFim} onChange={(e) => setPeriodoFim(e.target.value)} />
-            </div>
+            <DateRangeFilter
+              label="Data de pagamento"
+              de={periodoInicio}
+              ate={periodoFim}
+              onChange={(de, ate) => { setPeriodoInicio(de); setPeriodoFim(ate); }}
+            />
+            <DateRangeFilter
+              label="Última atualização"
+              de={dataAtualizacaoDe}
+              ate={dataAtualizacaoAte}
+              onChange={(de, ate) => { setDataAtualizacaoDe(de); setDataAtualizacaoAte(ate); }}
+            />
             <div>
               <Label className="text-xs">Classificação</Label>
               <SearchableSelect

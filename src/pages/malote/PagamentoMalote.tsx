@@ -8,6 +8,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { DateRangeFilter } from "@/components/ui/date-range-filter";
 import { CheckCircle2, ChevronLeft, ChevronRight, Hourglass, AlertTriangle, XCircle, ClipboardCheck, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import {
@@ -112,8 +113,13 @@ export default function PagamentoMalote() {
   const { data: todosItens = [], isLoading } = useItensAprovacoesMalote();
   const itens = useMemo(() => todosItens.filter((item) => STATUS_PAGAMENTO.includes(item.despesa.status)), [todosItens]);
 
-  const [dataDe, setDataDe] = useState("");
-  const [dataAte, setDataAte] = useState("");
+  // SIS-2026-0285 (Iury): filtro de data puxava só de "Última atualização" —
+  // agora tem os dois períodos, independentes (E lógico quando os dois
+  // estão preenchidos).
+  const [dataAtualizacaoDe, setDataAtualizacaoDe] = useState("");
+  const [dataAtualizacaoAte, setDataAtualizacaoAte] = useState("");
+  const [dataPagamentoDe, setDataPagamentoDe] = useState("");
+  const [dataPagamentoAte, setDataPagamentoAte] = useState("");
   const [status, setStatus] = useState<StatusDespesa | "">("");
   const [classificacao, setClassificacao] = useState("");
   const [responsavelId, setResponsavelId] = useState("");
@@ -131,8 +137,10 @@ export default function PagamentoMalote() {
   }, [itens]);
 
   function limparFiltros() {
-    setDataDe("");
-    setDataAte("");
+    setDataAtualizacaoDe("");
+    setDataAtualizacaoAte("");
+    setDataPagamentoDe("");
+    setDataPagamentoAte("");
     setStatus("");
     setClassificacao("");
     setResponsavelId("");
@@ -151,15 +159,20 @@ export default function PagamentoMalote() {
       if (status && statusEfetivo(item) !== status) return false;
       if (classificacao && d.classificacao?.nome !== classificacao) return false;
       if (responsavelId && d.created_by !== responsavelId) return false;
-      if (dataDe && d.updated_at < dataDe) return false;
-      if (dataAte && d.updated_at > dataAte + "T23:59:59") return false;
+      if (dataAtualizacaoDe && d.updated_at < dataAtualizacaoDe) return false;
+      if (dataAtualizacaoAte && d.updated_at > dataAtualizacaoAte + "T23:59:59") return false;
+      if (dataPagamentoDe || dataPagamentoAte) {
+        const dp = item.parcela ? item.parcela.data_pagamento_real ?? item.parcela.data_vencimento : d.data_pagamento;
+        if (dataPagamentoDe && (!dp || dp < dataPagamentoDe)) return false;
+        if (dataPagamentoAte && (!dp || dp > dataPagamentoAte)) return false;
+      }
       if (busca.trim()) {
         const q = busca.trim().toLowerCase();
         if (!d.numero.toLowerCase().includes(q) && !d.nome.toLowerCase().includes(q)) return false;
       }
       return true;
     });
-  }, [itens, status, classificacao, responsavelId, dataDe, dataAte, busca]);
+  }, [itens, status, classificacao, responsavelId, dataAtualizacaoDe, dataAtualizacaoAte, dataPagamentoDe, dataPagamentoAte, busca]);
 
   const totalPaginas = Math.max(1, Math.ceil(filtrados.length / PAGE_SIZE));
   const paginaAtual = Math.min(pagina, totalPaginas);
@@ -199,14 +212,18 @@ export default function PagamentoMalote() {
             </Button>
           </div>
           <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
-            <div>
-              <Label className="text-xs">Data de</Label>
-              <Input type="date" className="h-8 text-xs" value={dataDe} onChange={(e) => { setDataDe(e.target.value); setPagina(1); }} />
-            </div>
-            <div>
-              <Label className="text-xs">Data até</Label>
-              <Input type="date" className="h-8 text-xs" value={dataAte} onChange={(e) => { setDataAte(e.target.value); setPagina(1); }} />
-            </div>
+            <DateRangeFilter
+              label="Última atualização"
+              de={dataAtualizacaoDe}
+              ate={dataAtualizacaoAte}
+              onChange={(de, ate) => { setDataAtualizacaoDe(de); setDataAtualizacaoAte(ate); setPagina(1); }}
+            />
+            <DateRangeFilter
+              label="Data de pagamento"
+              de={dataPagamentoDe}
+              ate={dataPagamentoAte}
+              onChange={(de, ate) => { setDataPagamentoDe(de); setDataPagamentoAte(ate); setPagina(1); }}
+            />
             <div>
               <Label className="text-xs">Classificação</Label>
               <Select value={classificacao || "todas"} onValueChange={(v) => { setClassificacao(v === "todas" ? "" : v); setPagina(1); }}>

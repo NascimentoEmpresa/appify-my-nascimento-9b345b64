@@ -8,6 +8,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { DateRangeFilter } from "@/components/ui/date-range-filter";
 import { CheckCircle2, ChevronLeft, ChevronRight, Hourglass, AlertTriangle, XCircle, FileText, Users, User, X } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
 import { cn } from "@/lib/utils";
@@ -61,6 +62,13 @@ interface TileInfo {
   count: number;
   icon: React.ComponentType<{ className?: string }>;
   cor: "amber" | "sky" | "violet" | "emerald" | "red" | "blue";
+  // SIS-2026-0285: "Aguardando minha aprovação" e "Pendente aprovação
+  // (outros níveis)" são o MESMO status (pendente_aprovacao) — sem esses
+  // overrides, clicar no tile sem status próprio ("outros níveis") só
+  // resetava o filtro pra "Todas", e o tile "minha aprovação" filtrava
+  // pendente_aprovacao inteiro, não só o que é meu de fato.
+  selecionado?: boolean;
+  onClick?: () => void;
 }
 
 const COR_TILE: Record<TileInfo["cor"], string> = {
@@ -113,12 +121,12 @@ function GrupoTiles({ titulo, tiles, ativo, onClick }: { titulo: string; tiles: 
         <div className="grid gap-2 grid-cols-[repeat(auto-fit,minmax(110px,1fr))]">
           {tiles.map((t) => {
             const Icon = t.icon;
-            const selecionado = !!t.status && ativo === t.status;
+            const selecionado = t.selecionado ?? (!!t.status && ativo === t.status);
             return (
               <button
                 key={t.label}
                 type="button"
-                onClick={() => onClick(selecionado ? "" : t.status ?? "")}
+                onClick={() => (t.onClick ? t.onClick() : onClick(selecionado ? "" : t.status ?? ""))}
                 className={cn(
                   "flex flex-col items-center gap-1 rounded-lg border p-2.5 text-center transition-colors",
                   selecionado ? "border-primary bg-primary/10 ring-1 ring-primary" : COR_TILE_CARD[t.cor]
@@ -170,9 +178,20 @@ export default function Aprovacoes({ base = "/app/malote" }: { base?: string } =
     return nomesAprovadorNivel(despesa, nivel, classificacaoIdsRateio?.get(despesa.id), classificacaoPorId);
   }
 
-  const [dataDe, setDataDe] = useState("");
-  const [dataAte, setDataAte] = useState("");
+  // SIS-2026-0285 (Iury): filtro de data puxava só de "Última atualização" —
+  // agora tem os dois períodos, independentes (E lógico quando os dois
+  // estão preenchidos), cada um com o próprio combobox de range + "Hoje".
+  const [dataAtualizacaoDe, setDataAtualizacaoDe] = useState("");
+  const [dataAtualizacaoAte, setDataAtualizacaoAte] = useState("");
+  const [dataPagamentoDe, setDataPagamentoDe] = useState("");
+  const [dataPagamentoAte, setDataPagamentoAte] = useState("");
   const [status, setStatus] = useState<StatusDespesa | "">("");
+  // SIS-2026-0285: os tiles "Aguardando minha aprovação" e "Pendente
+  // aprovação (outros níveis)" são os DOIS o mesmo status
+  // (pendente_aprovacao) — sem isso, clicar em "outros níveis" não filtrava
+  // nada (voltava pra "Todas", já que o tile nunca teve status próprio) e
+  // clicar em "minha aprovação" trazia TODO mundo pendente, não só o meu.
+  const [escopoAprovacaoPendente, setEscopoAprovacaoPendente] = useState<"minhas" | "outras" | "">("");
   // SIS-2026-0281: filtro dedicado por nível de aprovação (N1/N2/N3).
   const [nivelAprovacao, setNivelAprovacao] = useState<1 | 2 | 3 | "">("");
   // SIS-2026-0281 (ideia levantada com o usuário, "future"): "Minhas
@@ -207,9 +226,12 @@ export default function Aprovacoes({ base = "/app/malote" }: { base?: string } =
   }, [itens]);
 
   function limparFiltros() {
-    setDataDe("");
-    setDataAte("");
+    setDataAtualizacaoDe("");
+    setDataAtualizacaoAte("");
+    setDataPagamentoDe("");
+    setDataPagamentoAte("");
     setStatus("");
+    setEscopoAprovacaoPendente("");
     setNivelAprovacao("");
     setSomenteMinhas(false);
     setTipo("");
@@ -223,6 +245,7 @@ export default function Aprovacoes({ base = "/app/malote" }: { base?: string } =
 
   function setStatusFiltro(s: StatusDespesa | "") {
     setStatus(s);
+    setEscopoAprovacaoPendente("");
     setPagina(1);
   }
 
@@ -240,6 +263,14 @@ export default function Aprovacoes({ base = "/app/malote" }: { base?: string } =
     return itens.filter((item) => {
       const d = item.despesa;
       if (status && statusEfetivo(item) !== status) return false;
+      // SIS-2026-0285: escopo dos tiles "minha aprovação" x "outros níveis"
+      // — os dois são status pendente_aprovacao, só o "sou eu o aprovador"
+      // muda (ver comentário do estado escopoAprovacaoPendente).
+      if (status === "pendente_aprovacao" && escopoAprovacaoPendente) {
+        const souAprovadorAtual = d.nivel_aprovacao_atual != null && souAprovadorDoNivel(d, d.nivel_aprovacao_atual, user?.id);
+        if (escopoAprovacaoPendente === "minhas" && !souAprovadorAtual) return false;
+        if (escopoAprovacaoPendente === "outras" && souAprovadorAtual) return false;
+      }
       if (nivelAprovacao && (d.status !== "pendente_aprovacao" || d.nivel_aprovacao_atual !== nivelAprovacao)) return false;
       if (somenteMinhas) {
         const souAprovadorPendente = d.status === "pendente_aprovacao" && d.nivel_aprovacao_atual != null && souAprovadorDoNivel(d, d.nivel_aprovacao_atual, user?.id);
@@ -252,15 +283,40 @@ export default function Aprovacoes({ base = "/app/malote" }: { base?: string } =
       if (contratoId && d.contrato_id !== contratoId) return false;
       if (excecao === "sim" && !d.excecao) return false;
       if (excecao === "nao" && d.excecao) return false;
-      if (dataDe && d.updated_at < dataDe) return false;
-      if (dataAte && d.updated_at > dataAte + "T23:59:59") return false;
+      // SIS-2026-0285 (Iury): antes só filtrava por "Última atualização" —
+      // agora os dois períodos existem, cada um independente (E lógico).
+      if (dataAtualizacaoDe && d.updated_at < dataAtualizacaoDe) return false;
+      if (dataAtualizacaoAte && d.updated_at > dataAtualizacaoAte + "T23:59:59") return false;
+      if (dataPagamentoDe || dataPagamentoAte) {
+        const dp = item.parcela ? item.parcela.data_pagamento_real ?? item.parcela.data_vencimento : d.data_pagamento;
+        if (dataPagamentoDe && (!dp || dp < dataPagamentoDe)) return false;
+        if (dataPagamentoAte && (!dp || dp > dataPagamentoAte)) return false;
+      }
       if (busca.trim()) {
         const q = busca.trim().toLowerCase();
         if (!d.numero.toLowerCase().includes(q) && !d.nome.toLowerCase().includes(q)) return false;
       }
       return true;
     });
-  }, [itens, status, nivelAprovacao, somenteMinhas, user?.id, minhasDespesasJustificativaPendente, tipo, classificacao, empresaId, contratoId, excecao, dataDe, dataAte, busca]);
+  }, [
+    itens,
+    status,
+    escopoAprovacaoPendente,
+    nivelAprovacao,
+    somenteMinhas,
+    user?.id,
+    minhasDespesasJustificativaPendente,
+    tipo,
+    classificacao,
+    empresaId,
+    contratoId,
+    excecao,
+    dataAtualizacaoDe,
+    dataAtualizacaoAte,
+    dataPagamentoDe,
+    dataPagamentoAte,
+    busca,
+  ]);
 
   const totalPaginas = Math.max(1, Math.ceil(filtrados.length / PAGE_SIZE));
   const paginaAtual = Math.min(pagina, totalPaginas);
@@ -298,9 +354,31 @@ export default function Aprovacoes({ base = "/app/malote" }: { base?: string } =
     { label: "Cotação/solicitação reprovada", status: "solicitacao_reprovada", count: contar("solicitacao_reprovada"), icon: XCircle, cor: "red" },
   ];
 
+  function toggleEscopoAprovacaoPendente(escopo: "minhas" | "outras") {
+    const jaAtivo = status === "pendente_aprovacao" && escopoAprovacaoPendente === escopo;
+    setStatus(jaAtivo ? "" : "pendente_aprovacao");
+    setEscopoAprovacaoPendente(jaAtivo ? "" : escopo);
+    setPagina(1);
+  }
+
   const tilesDespesas: TileInfo[] = [
-    { label: "Aguardando minha aprovação", status: "pendente_aprovacao", count: minhasPendentes, icon: Users, cor: "amber" },
-    { label: "Pendente aprovação (outros níveis)", count: outrasPendentes, icon: Hourglass, cor: "sky" },
+    {
+      label: "Aguardando minha aprovação",
+      status: "pendente_aprovacao",
+      count: minhasPendentes,
+      icon: Users,
+      cor: "amber",
+      selecionado: status === "pendente_aprovacao" && escopoAprovacaoPendente === "minhas",
+      onClick: () => toggleEscopoAprovacaoPendente("minhas"),
+    },
+    {
+      label: "Pendente aprovação (outros níveis)",
+      count: outrasPendentes,
+      icon: Hourglass,
+      cor: "sky",
+      selecionado: status === "pendente_aprovacao" && escopoAprovacaoPendente === "outras",
+      onClick: () => toggleEscopoAprovacaoPendente("outras"),
+    },
     { label: STATUS_LABEL.necessidade_de_ajuste, status: "necessidade_de_ajuste", count: contar("necessidade_de_ajuste"), icon: AlertTriangle, cor: "amber" },
     { label: STATUS_LABEL.aguardando_pagamento, status: "aguardando_pagamento", count: contar("aguardando_pagamento"), icon: Hourglass, cor: "blue" },
     { label: STATUS_LABEL.despesa_paga, status: "despesa_paga", count: contar("despesa_paga"), icon: CheckCircle2, cor: "emerald" },
@@ -330,14 +408,18 @@ export default function Aprovacoes({ base = "/app/malote" }: { base?: string } =
             </Button>
           </div>
           <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
-            <div>
-              <Label className="text-xs">Data de</Label>
-              <Input type="date" className="h-8 text-xs" value={dataDe} onChange={(e) => { setDataDe(e.target.value); setPagina(1); }} />
-            </div>
-            <div>
-              <Label className="text-xs">Data até</Label>
-              <Input type="date" className="h-8 text-xs" value={dataAte} onChange={(e) => { setDataAte(e.target.value); setPagina(1); }} />
-            </div>
+            <DateRangeFilter
+              label="Última atualização"
+              de={dataAtualizacaoDe}
+              ate={dataAtualizacaoAte}
+              onChange={(de, ate) => { setDataAtualizacaoDe(de); setDataAtualizacaoAte(ate); setPagina(1); }}
+            />
+            <DateRangeFilter
+              label="Data de pagamento"
+              de={dataPagamentoDe}
+              ate={dataPagamentoAte}
+              onChange={(de, ate) => { setDataPagamentoDe(de); setDataPagamentoAte(ate); setPagina(1); }}
+            />
             <div>
               <Label className="text-xs">Status</Label>
               <Select value={status || "todas"} onValueChange={(v) => { setStatusFiltro(v === "todas" ? "" : (v as StatusDespesa)); }}>
