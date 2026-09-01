@@ -13,13 +13,28 @@ import { Link } from "react-router-dom";
 import { useEmpresaId } from "@/hooks/useEmpresaId";
 import { usePlanejamentosOrcamento } from "@/hooks/usePlanejamentoOrcamentario";
 import { useClassificacoesAdministrativo } from "@/hooks/useMaloteClassificacaoAdministrativo";
+import { useClassificacaoAdministrativaVisivel, useSetorResponsavelDaAdministrativa } from "@/hooks/useMaloteAcessoOrcamento";
 import { getStatusVigencia, STATUS_LABEL, STATUS_BADGE_CLASS, fmtMoney, fmtDate, OrcamentoComStatus } from "./orcamentoUtils";
 import { OrcamentoAdministrativoFormModal } from "./OrcamentoAdministrativoFormModal";
+import { SetorRestritoBadge } from "./SetorRestritoBadge";
 
 export default function OrcamentoAdministrativo() {
   const { data: empresaId } = useEmpresaId();
-  const { data: classificacoes = [] } = useClassificacoesAdministrativo();
-  const { data: orcamentos = [], isLoading } = usePlanejamentosOrcamento(empresaId);
+  const { data: classificacoesTodas = [] } = useClassificacoesAdministrativo();
+  const { data: orcamentosTodos = [], isLoading } = usePlanejamentosOrcamento(empresaId);
+  // SIS-2026-0265 (Iury): Classificação Administrativo ligada a uma
+  // Classificação Malote do Financeiro (setor_responsavel definido) só é
+  // visível pra quem tem esse setor liberado em Gerenciamento de Acesso —
+  // mesma regra de useClassificacaoMaloteVisivel, resolvida aqui via a
+  // ligação (esta tela trabalha com o catálogo simples de Classificação
+  // Administrativo, não a Classificação Malote diretamente).
+  const administrativaVisivel = useClassificacaoAdministrativaVisivel();
+  const setorDaAdministrativa = useSetorResponsavelDaAdministrativa();
+  const classificacoes = useMemo(() => classificacoesTodas.filter((c) => administrativaVisivel(c.id)), [classificacoesTodas, administrativaVisivel]);
+  const orcamentos = useMemo(
+    () => orcamentosTodos.filter((o) => administrativaVisivel(o.classificacao_id)),
+    [orcamentosTodos, administrativaVisivel]
+  );
 
   const [filtroClassificacao, setFiltroClassificacao] = useState("todas");
   const [filtroStatus, setFiltroStatus] = useState("todos");
@@ -233,7 +248,12 @@ export default function OrcamentoAdministrativo() {
               )}
               {filtrados.map((o) => (
                 <TableRow key={o.id}>
-                  <TableCell className="font-medium">{o.classificacao?.nome ?? "-"}</TableCell>
+                  <TableCell className="font-medium">
+                    <div className="flex items-center gap-1.5">
+                      {o.classificacao?.nome ?? "-"}
+                      <SetorRestritoBadge setor={setorDaAdministrativa(o.classificacao_id)} />
+                    </div>
+                  </TableCell>
                   <TableCell>{o.detalhe}</TableCell>
                   <TableCell className="whitespace-nowrap">
                     {fmtDate(o.inicio_vigencia)} – {fmtDate(o.fim_vigencia)}

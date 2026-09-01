@@ -62,6 +62,7 @@ import {
   PlusCircle,
   UserMinus,
   CalendarCheck2,
+  AlertTriangle,
 } from "lucide-react";
 import { useTemAlcada } from "@/hooks/useTemAlcada";
 import { useAccessibleMenus, matchMenuCode } from "@/hooks/useAccessibleMenus";
@@ -140,6 +141,9 @@ const licitacoesModule: ModuleDef = {
         // Consulta do banco de preços do Compras, para a Licitação montar
         // proposta sem depender do comprador cotar (SIS-2026-0199).
         { label: "Preços de Materiais", to: "/app/licitacoes/precos-materiais", icon: Coins },
+        // SIS-2026-0283: espelho simplificado de Aprovações do Malote, só
+        // pra analista ver o que falta justificar nos contratos dele.
+        { label: "Justificativa Analistas", to: "/app/licitacoes/justificativa-analistas", icon: AlertTriangle },
         { label: "Documentos", to: "/app/documentos", icon: ScrollText },
         // B2: "Triagem & IA" removida do menu (rota /app/triagem segue existindo,
         // mas controlada pelo RouteGuard + matriz de permissões do ERP).
@@ -570,6 +574,18 @@ const encarregadosModule: ModuleDef = {
         { label: "Minhas Solicitações de Materiais", to: "/app/encarregados/meus-pedidos", icon: Truck },
       ],
     },
+    {
+      // Treinamentos deixou de ser modulo proprio: um item so nao sustenta um
+      // bloco no menu, e quem faz o treinamento do ERP e o encarregado. A ROTA
+      // e o CODIGO do menu ficam como estavam (/app/treinamentos/erp) - e o
+      // codigo que carrega a permissao de quem ja tinha, entao mover de modulo
+      // nao tira o acesso de ninguem nem quebra link salvo.
+      label: "Treinamentos",
+      defaultOpen: true,
+      items: [
+        { label: "Treinamentos ERP", to: "/app/treinamentos/erp", icon: GraduationCap },
+      ],
+    },
   ],
 };
 
@@ -735,24 +751,6 @@ const juridicoModule: ModuleDef = {
 };
 
 
-// Treinamentos — capacitação interna
-const treinamentosModule: ModuleDef = {
-  id: "treinamentos",
-  label: "Treinamentos",
-  description: "Capacitação da equipe no ERP",
-  icon: GraduationCap,
-  basePath: "/app/treinamentos/erp",
-  status: "active",
-  groups: [
-    {
-      label: "Capacitação",
-      defaultOpen: true,
-      items: [
-        { label: "Treinamentos ERP", to: "/app/treinamentos/erp", icon: GraduationCap },
-      ],
-    },
-  ],
-};
 
 // BI
 const biModule: ModuleDef = {
@@ -886,12 +884,42 @@ const sstModule: ModuleDef = {
   ],
 };
 
+// Diretoria — as telas de aprovacao que a diretoria ja usa, ancoradas num
+// modulo proprio. NAO ha componente nem regra de acesso nova: sao as MESMAS
+// telas do Malote e do RH, com outra porta de entrada, para quem e da
+// diretoria nao ter que entrar no modulo dos outros para aprovar. E o mesmo
+// arranjo dos Chamados no modulo do encarregado.
+//
+// Quem enxerga cada item continua 100% em Acesso por Usuario: os menus nascem
+// SEM nenhuma linha de permissao e o sistema nega por padrao (RouteGuard e
+// canSee), entao o modulo comeca invisivel para todo mundo, inclusive para
+// quem ja acessa as telas originais.
+const diretoriaModule: ModuleDef = {
+  id: "diretoria",
+  label: "Diretoria",
+  description: "Aprovacoes da diretoria",
+  icon: Building2,
+  basePath: "/app/diretoria",
+  status: "active",
+  groups: [
+    {
+      label: "Aprovacoes",
+      defaultOpen: true,
+      items: [
+        { label: "Aprovacoes do Malote", to: "/app/diretoria/malote-aprovacoes", icon: CheckCircle2 },
+        { label: "Mudanca de Funcao", to: "/app/diretoria/troca-funcao-escritorio", icon: ArrowLeftRight, notif: "troca_funcao" },
+      ],
+    },
+  ],
+};
+
 const erpModules: ModuleDef[] = [
   licitacoesModule,
   controladoriaOrcModule,
   suprimentosModule,
   financeiroModule,
   maloteModule,
+  diretoriaModule,
   fiscalModule,
   contabilModule,
   rhModule,
@@ -900,7 +928,6 @@ const erpModules: ModuleDef[] = [
   operacionalModule,
   sistemasModule,
   juridicoModule,
-  treinamentosModule,
   sstModule,
   centralServicosModule,
   comiteEticaModule,

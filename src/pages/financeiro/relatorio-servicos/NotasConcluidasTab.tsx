@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { CurrencyInput } from "@/components/ui/CurrencyInput";
 import { Label } from "@/components/ui/label";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
@@ -511,7 +512,7 @@ function NfPagamentoDialog({ nf, onClose }: { nf: NfEmissaoRow | null; onClose: 
             <div className="grid grid-cols-4 gap-3 items-end">
               <div>
                 <Label>Valor Pago</Label>
-                <Input type="number" step="0.01" value={valorPago} onChange={(e) => setValorPago(e.target.value)} />
+                <CurrencyInput value={valorPago} onChange={setValorPago} />
               </div>
               <div>
                 <Label>Data de Pagamento</Label>
@@ -543,19 +544,19 @@ function NfPagamentoDialog({ nf, onClose }: { nf: NfEmissaoRow | null; onClose: 
               </div>
               <div>
                 <Label className="text-xs">Desconto de conta vinculada</Label>
-                <Input type="number" step="0.01" value={descontoContaVinculada} onChange={(e) => setDescontoContaVinculada(e.target.value)} />
+                <CurrencyInput value={descontoContaVinculada} onChange={setDescontoContaVinculada} />
               </div>
               <div>
                 <Label className="text-xs">Recebimento extra</Label>
-                <Input type="number" step="0.01" value={recebimentoExtra} onChange={(e) => setRecebimentoExtra(e.target.value)} />
+                <CurrencyInput value={recebimentoExtra} onChange={setRecebimentoExtra} />
               </div>
               <div>
                 <Label className="text-xs">Falta receber</Label>
-                <Input type="number" step="0.01" value={faltaReceber} onChange={(e) => setFaltaReceber(e.target.value)} />
+                <CurrencyInput value={faltaReceber} onChange={setFaltaReceber} />
               </div>
               <div>
                 <Label className="text-xs">Pago a mais</Label>
-                <Input type="number" step="0.01" value={pagoAMais} onChange={(e) => setPagoAMais(e.target.value)} />
+                <CurrencyInput value={pagoAMais} onChange={setPagoAMais} />
               </div>
               <div className="col-span-2 flex items-end">
                 <Button variant="outline" onClick={handleSalvarReconciliacao} disabled={registrarPagamento.isPending}>

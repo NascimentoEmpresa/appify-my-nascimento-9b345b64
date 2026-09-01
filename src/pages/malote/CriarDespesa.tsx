@@ -4,6 +4,7 @@ import { PageHeader } from "@/components/layout/PageHeader";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { InputMaiusculo } from "@/components/ui/InputMaiusculo";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
@@ -42,8 +43,14 @@ import { ExcecaoDiaBloqueadoField } from "./ExcecaoDiaBloqueadoField";
 import { useMaloteConfig, usePrazoNormalInclusao, horaAtualPassouDe } from "@/hooks/useMaloteConfig";
 import { useTiposFormaPagamento } from "@/hooks/useMaloteFormaPagamento";
 
-const DIAS_MES = Array.from({ length: 28 }, (_, i) => i + 1);
-const QUANTIDADE_PARCELAS = Array.from({ length: 24 }, (_, i) => i + 2);
+// SIS-2026-0263 (Iury): "colocar a possibilidade de escolher de 1 a 30 para
+// o dia de pagamento e poder escolher parcelar em até 420x" — dia do
+// desconto sobe de 28 pra 30 (Select continua viável); quantidade de
+// parcelas não é mais Select (420 opções seria inutilizável) — virou Input
+// numérico com min/max validados em validar().
+const DIAS_MES = Array.from({ length: 30 }, (_, i) => i + 1);
+const QUANTIDADE_PARCELAS_MIN = 2;
+const QUANTIDADE_PARCELAS_MAX = 420;
 
 export default function CriarDespesa() {
   const [searchParams] = useSearchParams();
@@ -658,6 +665,14 @@ function PainelDespesaMalote({
   const [competencia, setCompetencia] = useState(inicial?.competencia ?? "");
   const [formaPagamento, setFormaPagamento] = useState(inicial?.formaPagamento ?? "");
   const [informacoesPagamento, setInformacoesPagamento] = useState(inicial?.informacoesPagamento ?? "");
+  // SIS-2026-0264 (Iury): "colocar um check em informações de pagamento,
+  // caso marcado o campo não precisa ser preenchido (ex.: boleto — a
+  // informação de pagamento é o próprio anexo) — se marcado, arquivo passa
+  // a ser obrigatório; se não marcado, não precisa (ex.: Pix, informação
+  // digitada no campo, sem anexo)." Ou seja: exatamente um dos dois campos
+  // (Informações de pagamento / Arquivo) é obrigatório, nunca os dois nem
+  // nenhum — pagamentoSoAnexo decide qual.
+  const [pagamentoSoAnexo, setPagamentoSoAnexo] = useState(false);
   const [dimensoes, setDimensoes] = useState<DimensoesRateio>({ empresa: false, contrato: false, fornecedor: false, integrante: false });
   const [ratearPor, setRatearPor] = useState<"percentual" | "valor">("percentual");
   const [linhasRateio, setLinhasRateio] = useState<RateioLinha[]>([]);
@@ -698,12 +713,22 @@ function PainelDespesaMalote({
     }
     if (!competencia) return "Informe a competência.";
     if (!formaPagamento) return "Selecione a forma de pagamento.";
-    if (!informacoesPagamento.trim()) return "Informe os dados de pagamento.";
+    // SIS-2026-0264: com "Pagamento só por anexo" marcado, Informações de
+    // pagamento fica opcional (o anexo é a informação, ex.: boleto);
+    // desmarcado, continua obrigatório (ex.: Pix digitado, sem anexo).
+    if (!pagamentoSoAnexo && !informacoesPagamento.trim()) return "Informe os dados de pagamento.";
     if (paraEnviar) {
       if (linhasRateio.length === 0) return "Adicione ao menos uma linha de rateio.";
       if (Math.abs(totalRateado - Number(totalMes)) > 0.01) return "O total do rateio deve ser igual ao Total do mês.";
-      if (parcelado === "sim" && (!diaDesconto || !quantidadeParcelas)) return "Informe o dia do desconto e a quantidade de parcelas.";
-      if (arquivos.length === 0) return "Anexe ao menos um arquivo.";
+      if (parcelado === "sim") {
+        if (!diaDesconto || !quantidadeParcelas) return "Informe o dia do desconto e a quantidade de parcelas.";
+        const n = Number(quantidadeParcelas);
+        if (!Number.isInteger(n) || n < QUANTIDADE_PARCELAS_MIN || n > QUANTIDADE_PARCELAS_MAX) {
+          return `Quantidade de parcelas deve ser entre ${QUANTIDADE_PARCELAS_MIN} e ${QUANTIDADE_PARCELAS_MAX}.`;
+        }
+      }
+      // Espelho da regra acima: só anexo → arquivo obrigatório; senão, opcional.
+      if (pagamentoSoAnexo && arquivos.length === 0) return "Anexe ao menos um arquivo (Pagamento só por anexo está marcado).";
     }
     return null;
   }
@@ -743,7 +768,7 @@ function PainelDespesaMalote({
         justificativa_excecao: excecao ? justificativaExcecao.trim() || null : null,
         competencia: competencia + "-01",
         forma_pagamento: formaPagamento,
-        informacoes_pagamento: informacoesPagamento.trim(),
+        informacoes_pagamento: informacoesPagamento.trim() || null,
         parcelado: parcelado === "sim",
         numero_parcelas: parcelado === "sim" ? Number(quantidadeParcelas) : null,
         dia_desconto: parcelado === "sim" ? Number(diaDesconto) : null,
@@ -817,7 +842,7 @@ function PainelDespesaMalote({
       }
       if (!despesaIdExistente) {
         setNome(""); setTotalMes(""); setDataPagamento(""); setCompetencia(""); setFormaPagamento("");
-        setInformacoesPagamento(""); setLinhasRateio([]); setParcelado("nao"); setDiaDesconto("");
+        setInformacoesPagamento(""); setPagamentoSoAnexo(false); setLinhasRateio([]); setParcelado("nao"); setDiaDesconto("");
         setQuantidadeParcelas(""); setArquivos([]);
       }
     } catch (e: any) {
@@ -842,7 +867,7 @@ function PainelDespesaMalote({
         <div className={cn("space-y-4", !ativo && "opacity-40 pointer-events-none select-none")}>
           <div>
             <Label>Nome da Despesa *</Label>
-            <Input value={nome} onChange={(e) => setNome(e.target.value)} placeholder="Ex: Compra de materiais de escritório" disabled={!ativo} />
+            <InputMaiusculo value={nome} onChange={(e) => setNome(e.target.value)} placeholder="Ex: Compra de materiais de escritório" disabled={!ativo} />
           </div>
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
@@ -886,13 +911,23 @@ function PainelDespesaMalote({
               </Select>
             </div>
             <div>
-              <Label>Informações de pagamento *</Label>
+              <Label>Informações de pagamento {!pagamentoSoAnexo && "*"}</Label>
               <Input
                 value={informacoesPagamento}
                 onChange={(e) => setInformacoesPagamento(e.target.value)}
-                placeholder="Ex: Pix, copia e cola, dados bancários, etc."
-                disabled={!ativo}
+                placeholder={pagamentoSoAnexo ? "Não preencher — a informação é o anexo" : "Ex: Pix, copia e cola, dados bancários, etc."}
+                disabled={!ativo || pagamentoSoAnexo}
               />
+              <label className="mt-1.5 flex items-center gap-1.5 text-xs text-muted-foreground cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={pagamentoSoAnexo}
+                  onChange={(e) => setPagamentoSoAnexo(e.target.checked)}
+                  disabled={!ativo}
+                  className="h-3.5 w-3.5"
+                />
+                Pagamento só por anexo (ex.: boleto) — dispensa este campo, mas exige arquivo
+              </label>
             </div>
           </div>
 
@@ -945,25 +980,23 @@ function PainelDespesaMalote({
                 </div>
                 <div>
                   <Label>Quantidade de parcelas *</Label>
-                  <Select value={quantidadeParcelas} onValueChange={setQuantidadeParcelas} disabled={!ativo}>
-                    <SelectTrigger>
-                      <SelectValue placeholder="Selecione a quantidade" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {QUANTIDADE_PARCELAS.map((n) => (
-                        <SelectItem key={n} value={String(n)}>
-                          {n}x
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+                  <Input
+                    type="number"
+                    min={QUANTIDADE_PARCELAS_MIN}
+                    max={QUANTIDADE_PARCELAS_MAX}
+                    step={1}
+                    placeholder={`De ${QUANTIDADE_PARCELAS_MIN} a ${QUANTIDADE_PARCELAS_MAX}`}
+                    value={quantidadeParcelas}
+                    onChange={(e) => setQuantidadeParcelas(e.target.value)}
+                    disabled={!ativo}
+                  />
                 </div>
               </>
             )}
           </div>
 
           <div>
-            <Label>Arquivos anexados *</Label>
+            <Label>Arquivos anexados {pagamentoSoAnexo && "*"}</Label>
             <AnexosField arquivos={arquivos} onChange={setArquivos} disabled={!ativo} />
           </div>
 

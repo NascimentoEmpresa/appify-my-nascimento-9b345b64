@@ -45,6 +45,7 @@ import PlanilhaCusto from "./pages/licitacoes/PlanilhaCusto";
 import ContratosERP from "./pages/licitacoes/ContratosERP";
 import CotacoesLicitacao from "./pages/licitacoes/CotacoesLicitacao";
 import PrecosMateriais from "./pages/licitacoes/PrecosMateriais";
+import JustificativaAnalistas from "./pages/licitacoes/JustificativaAnalistas";
 import ContratosAtivos from "./pages/contratos/Ativos";
 import Empenhos from "./pages/contratos/Empenhos";
 import Postos from "./pages/contratos/Postos";
@@ -399,6 +400,10 @@ const App = () => (
             {/* Consulta somente-leitura do banco de preços que o Compras
                 alimenta na entrada de estoque (SIS-2026-0199). */}
             <Route path="licitacoes/precos-materiais" element={<PrecosMateriais />} />
+            {/* SIS-2026-0283: espelho simplificado de Aprovações do Malote,
+                só as pendências de justificativa dos contratos do analista
+                logado — ver useMinhasJustificativasPendentes. */}
+            <Route path="licitacoes/justificativa-analistas" element={<JustificativaAnalistas />} />
             <Route path="contratos/ativos" element={<ContratosAtivos />} />
             <Route path="contratos/empenhos" element={<Empenhos />} />
             <Route path="contratos/postos" element={<Postos />} />
@@ -440,6 +445,15 @@ const App = () => (
             <Route path="malote/orcamento-contratos" element={<MaloteOrcamentoContratos />} />
             <Route path="malote/orcamento-geral" element={<MaloteOrcamentoGeral />} />
             <Route path="malote/detalhe-orcamento" element={<MaloteDetalheOrcamento />} />
+            {/* Diretoria — as MESMAS telas de aprovacao, ancoradas no modulo
+                da diretoria. Nao ha componente novo: e o mesmo padrao dos
+                Chamados do encarregado, so que aqui as telas de detalhe do
+                malote tambem entram, senao aprovar leva a "Acesso negado"
+                (o item da lista abre a despesa, que e menu de outro modulo). */}
+            <Route path="diretoria/malote-aprovacoes" element={<MaloteAprovacoes base="/app/diretoria" />} />
+            <Route path="diretoria/despesa/:id" element={<MaloteDespesaVisualizar />} />
+            <Route path="diretoria/solicitacao/:id" element={<MaloteSolicitacaoVisualizar />} />
+            <Route path="diretoria/troca-funcao-escritorio" element={<RhTrocaFuncaoEscritorio />} />
             <Route path="orcamento" element={<Orcamento />} />
             {/* Suprimentos */}
             {/* Mais específica primeiro: o React Router casa na ordem declarada,

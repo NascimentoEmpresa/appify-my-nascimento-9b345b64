@@ -52,8 +52,8 @@ import {
   DespesaEvento,
   TipoEvento,
 } from "@/hooks/useMaloteDespesa";
-import { useOrcadoClassificacao } from "@/hooks/useOrcadoClassificacao";
-import { useMaloteConfig, usePrazoNormalInclusao, useSouGerenteFinanceiroMalote, horaAtualPassouDe } from "@/hooks/useMaloteConfig";
+import { useOrcadoClassificacao, useOrcadoClassificacaoMultiMes } from "@/hooks/useOrcadoClassificacao";
+import { useMaloteConfig, usePrazoNormalInclusao, useSouGerenteFinanceiroMalote, exigeJustificativaPorConferenciaAtrasada } from "@/hooks/useMaloteConfig";
 import { useTiposFormaPagamento } from "@/hooks/useMaloteFormaPagamento";
 import { useUtilizadoOrcamento } from "@/hooks/useUtilizadoOrcamento";
 import { anoMesAtual } from "@/hooks/usePlanilhaCusto";
@@ -64,6 +64,7 @@ import { FluxoAprovacaoVisual } from "./FluxoAprovacaoVisual";
 import { ExcluirPermanentementeButton } from "./ExcluirPermanentementeButton";
 import { DiaPagamentoPicker } from "./DiaPagamentoPicker";
 import { ExcecaoDiaBloqueadoField } from "./ExcecaoDiaBloqueadoField";
+import { montarCombosAlcada, encontrarComboQueEstouraAlcada } from "./orcamentoUtils";
 
 const TIPO_SOLICITACAO_LABEL: Record<TipoSolicitacao, string> = {
   administrativo: "Administrativo",
@@ -79,6 +80,11 @@ function fmtMoneyResumo(n: number | null | undefined): string {
 function fmtDataResumo(v: string | null | undefined): string {
   if (!v) return "—";
   return new Date(v + "T00:00:00").toLocaleDateString("pt-BR");
+}
+
+function fmtCompetenciaResumo(anoMes: string): string {
+  const [ano, mes] = anoMes.split("-");
+  return `${mes}/${ano}`;
 }
 
 // SIS-2026-0211 (complemento, pedido do Iury): resumo do que mudou no
@@ -306,6 +312,12 @@ export default function DespesaVisualizar() {
   // sempre — o RPC malote_aprovar_despesa confia cegamente no que o
   // client manda, sem reconferir nada no banco.
   const { resolver: resolverOrcado, isLoading: orcadoCarregando } = useOrcadoClassificacao(despesa?.empresa_id, anoMesDespesa);
+  // SIS-2026-0261 (Iury): a alçada de uma despesa parcelada precisa checar
+  // TODAS as parcelas (mês a mês), não só a 1ª — achado real: a 3ª parcela
+  // estourava o orçado do mês dela e mesmo assim a despesa ia direto pro
+  // pagamento na aprovação de N1, porque só a parcela 1 era checada (ver
+  // dentroDaAlcada abaixo).
+  const { resolver: resolverOrcadoMultiMes, isLoading: orcadoMultiMesCarregando } = useOrcadoClassificacaoMultiMes(despesa?.empresa_id);
   const { data: utilizadoLinhasGlobal = [] } = useUtilizadoOrcamento();
   // SIS-2026-0221: "Forma de pagamento" vem do catálogo cadastrável em
   // Configurações do Malote → Formas de Pagamento, não mais de um enum fixo.
@@ -373,11 +385,20 @@ export default function DespesaVisualizar() {
     (souAprovadorDoNivel(despesa, despesa.nivel_aprovacao_atual, user?.id) || souGerenteFinanceiroDestaExcecao);
   const configurado = souAprovadorConfigurado(despesa, user?.id) || souGerenteFinanceiroDestaExcecao;
   // SIS-2026-0192: "Dados da Aprovação e Pagamento" e "Rateio da Despesa"
-  // só podem ser alterados pelo Solicitante (ex.: quando o aprovador pede
-  // ajuste) — ninguém mais edita, nem admin/supervisor/aprovador. Pra
-  // qualquer outro papel o Rateio vira só-leitura com as colunas de
-  // Orçado/Utilizado/Status.
-  const rateioEPagamentoEditaveis = !bloqueado && souSolicitante;
+  // só podem ser alterados pelo Solicitante — ninguém mais edita, nem
+  // admin/supervisor/aprovador. Pra qualquer outro papel o Rateio vira
+  // só-leitura com as colunas de Orçado/Utilizado/Status.
+  //
+  // SIS-2026-0261 (achado real do Iury): a condição usava só "!bloqueado"
+  // (= não terminal), deixando o solicitante editar em QUALQUER status não
+  // terminal — inclusive com a despesa já pendente_aprovacao, aguardando N1
+  // olhar. O comentário original já dizia a intenção certa ("ex.: quando o
+  // aprovador pede ajuste"), só a implementação nunca restringiu de fato.
+  // Agora só edita em rascunho (antes de enviar) e necessidade_de_ajuste
+  // (depois que o aprovador pediu correção) — nos demais status não
+  // terminais (pendente_aprovacao, aguardando_pagamento, etc.), mesmo o
+  // solicitante vê só-leitura até virar ajuste de novo ou ser reenviada.
+  const rateioEPagamentoEditaveis = souSolicitante && (despesa.status === "rascunho" || despesa.status === "necessidade_de_ajuste");
   // SIS-2026-0223 (complemento 3, pedido do usuário): pra despesa
   // parcelada, o Rateio só é editável na fase de lançamento — depois que
   // entra em fase de pagamento (mesma fronteira de
@@ -407,7 +428,6 @@ export default function DespesaVisualizar() {
   // escalona pro próximo nível ou vai direto pro pagamento. Orçado
   // desconhecido ou limite não cadastrado nunca bloqueia (trata como sem
   // trava, pra não quebrar classificações que nunca preencheram o campo).
-  const orcadoClassificacao = resolverOrcado(despesa.classificacao_id, despesa.contrato_id);
   const alcadaNivelAtual = (() => {
     const c = despesa.classificacao;
     const nivel = despesa.nivel_aprovacao_atual;
@@ -416,34 +436,82 @@ export default function DespesaVisualizar() {
     if (nivel === 2) return { semLimite: !!c.aprovador2_sem_limite, limitePct: c.aprovador2_limite_pct ?? null };
     return { semLimite: !!c.aprovador3_sem_limite, limitePct: c.aprovador3_limite_pct ?? null };
   })();
-  // Achado real (SIS-2026-0212, DM-2026-0048): valorParaAlcada usava só o
+  // Achado real (SIS-2026-0212, DM-2026-0048): utilizadoAntesNoMes usava só o
   // valor desta despesa (ex.: 500/948 = 52,74%), nunca somava o que outras
   // despesas da mesma Classificação já tinham consumido no mês — por isso
   // a % nunca refletia o estouro de verdade. Mesma soma de "utilizado
   // antes" usada em calcularRateioSnapshot/RateioAprovadorTable, só que
-  // aqui na decisão de escalar.
-  const utilizadoAntesDestaDespesa = utilizadoLinhasGlobal.reduce((soma, u) => {
-    if (u.despesa_id === despesa.id) return soma;
-    if (u.classificacao_id !== despesa.classificacao_id) return soma;
-    if (!u.competencia || u.competencia.slice(0, 7) !== anoMesDespesa) return soma;
-    if ((u.contrato_id ?? null) !== (despesa.contrato_id ?? null)) return soma;
-    return soma + (Number(u.valor) || 0);
-  }, 0);
-  // SIS-2026-0223 (complemento): despesa parcelada usa o valor da parcela 1
-  // (é ela que decide a alçada), não o valor cheio da despesa.
-  const valorBaseAlcada = despesa.parcelado && parcela1 ? parcela1.valor : Number(valorAprovado) || despesa.valor_total;
-  const valorParaAlcada = utilizadoAntesDestaDespesa + valorBaseAlcada;
-  // Achado à parte (SIS-2026-0212): era "orcadoClassificacao ? ... : null"
-  // — orçado 0 de verdade (ex.: contrato sem rubrica vinculada) caía no
-  // else e virava "sem trava" em vez de "100% estourado". != null trata 0
-  // como valor real, só null continua sendo "orçado desconhecido".
-  const percentualDoOrcado = orcadoClassificacao != null ? (valorParaAlcada / orcadoClassificacao) * 100 : null;
-  const dentroDaAlcada =
-    alcadaNivelAtual.semLimite ||
-    alcadaNivelAtual.limitePct == null ||
-    orcadoClassificacao == null ||
-    percentualDoOrcado == null ||
-    percentualDoOrcado <= alcadaNivelAtual.limitePct;
+  // aqui na decisão de escalar. Recebe o contrato porque, com Rateio em
+  // mais de 1 contrato (ver montarCombosAlcada abaixo), cada linha consome
+  // o orçado do SEU contrato, não o do despesa.contrato_id geral.
+  function utilizadoAntesNoMes(contratoId: string | null, mes: string): number {
+    return utilizadoLinhasGlobal.reduce((soma, u) => {
+      if (u.despesa_id === despesa!.id) return soma;
+      if (u.classificacao_id !== despesa!.classificacao_id) return soma;
+      if (!u.competencia || u.competencia.slice(0, 7) !== mes) return soma;
+      if ((u.contrato_id ?? null) !== contratoId) return soma;
+      return soma + (Number(u.valor) || 0);
+    }, 0);
+  }
+  // SIS-2026-0261 (Iury, dois achados reais):
+  // 1) despesa parcelada checava só a parcela 1 pra decidir a alçada
+  //    (premissa anterior de SIS-2026-0223: "as parcelas sempre teriam
+  //    orçamento", que não se confirmou — a 3ª parcela de um teste real
+  //    estourou o orçado do mês dela e N1 aprovou tudo direto pro
+  //    pagamento mesmo assim);
+  // 2) despesa com Rateio em MAIS DE 1 contrato checava só
+  //    despesa.contrato_id (o contrato "principal" da despesa, quando
+  //    tinha um) — um Rateio em 4 contratos, com 2 deles estourando o
+  //    orçado deles, também passava direto por N1 sem escalar.
+  // A correção (montarCombosAlcada/encontrarComboQueEstouraAlcada, extraídas
+  // pra orcamentoUtils.ts como lógica pura testável) junta os dois: cada
+  // COMBINAÇÃO (linha de rateio × parcela, ou só a linha quando não é
+  // parcelada) é checada contra o orçado do SEU contrato no mês do SEU
+  // vencimento — se qualquer combinação estourar a alçada do nível atual, a
+  // despesa inteira escala (não dá pra escalar só 1 linha/parcela, o
+  // aprovador decide sobre a despesa como um todo).
+  const combosParaAlcada = montarCombosAlcada({
+    parcelado: !!despesa.parcelado,
+    parcelas: data?.parcelas ?? [],
+    linhas: linhasRateio,
+    valorTotalDespesa: despesa.valor_total,
+    anoMesDespesa,
+    // "Valor aprovado" (editável pelo aprovador antes de aprovar) só existe
+    // pra despesa não parcelada — escala cada linha por esse ajuste, mesma
+    // ideia do fatorParcela1 já usado pra parcela.
+    fatorValorAprovado: despesa.valor_total ? (Number(valorAprovado) || despesa.valor_total) / despesa.valor_total : 1,
+  });
+  const parcelaQueEstourouAlcada = encontrarComboQueEstouraAlcada(
+    combosParaAlcada,
+    alcadaNivelAtual.limitePct,
+    (contratoId, mes) => resolverOrcadoMultiMes(despesa!.classificacao_id, contratoId, mes),
+    utilizadoAntesNoMes
+  );
+  const dentroDaAlcada = alcadaNivelAtual.semLimite || alcadaNivelAtual.limitePct == null || !parcelaQueEstourouAlcada;
+  // SIS-2026-0261 (Iury, achado real DM-2026-0086): "já vir com a
+  // informação pra contextualizar N2" — quem está vendo a despesa (N1
+  // decidindo, N2 revisando depois) precisa ver QUAL parcela/contrato
+  // estourou o orçado de verdade (>100%), sem precisar navegar parcela a
+  // parcela no Rateio pra achar. Deliberadamente >100% fixo aqui, não a %
+  // de alçada configurada (essa decide SE escala; isso aqui só explica o
+  // motivo em linguagem simples, e continua valendo pra quem vê a despesa
+  // depois de já ter escalado, mesmo que o nível atual tenha outra alçada).
+  const comboQueEstourouOrcamento = encontrarComboQueEstouraAlcada(
+    combosParaAlcada,
+    100,
+    (contratoId, mes) => resolverOrcadoMultiMes(despesa!.classificacao_id, contratoId, mes),
+    utilizadoAntesNoMes
+  );
+  const infoEstouroOrcamento = (() => {
+    if (!comboQueEstourouOrcamento) return null;
+    const { mes, contratoId, valor } = comboQueEstourouOrcamento;
+    const orcadoDoMes = resolverOrcadoMultiMes(despesa.classificacao_id, contratoId, mes);
+    const utilizadoAcumulado = utilizadoAntesNoMes(contratoId, mes) + valor;
+    const percentual = orcadoDoMes ? (utilizadoAcumulado / orcadoDoMes) * 100 : null;
+    const nomeContrato = contratoId ? contratos.find((c) => c.id === contratoId)?.nome ?? null : null;
+    const parcelaCorrespondente = despesa.parcelado ? data?.parcelas.find((p) => p.data_vencimento.slice(0, 7) === mes) : undefined;
+    return { mes, orcadoDoMes, utilizadoAcumulado, percentual, nomeContrato, parcelaCorrespondente };
+  })();
   // SIS-2026-0250: N1 aprovando uma exceção sempre escala pro Nível 2 —
   // não fica sujeito à alçada (Carol/Gerente Financeiro é o reforço do
   // Nível 2 mesmo quando não há Aprovador 2 configurado na Classificação,
@@ -463,9 +531,21 @@ export default function DespesaVisualizar() {
   const parcelasEmFaseDePagamento = ["aguardando_pagamento", "pronto_para_pagar", "ajuste_pagamento", "despesa_paga"].includes(despesa.status);
 
   function validarAcaoAprovador(): string | null {
-    if (orcadoCarregando) return "Aguarde o orçamento terminar de carregar antes de aprovar.";
+    // SIS-2026-0261: mesmo achado do SIS-2026-0212 (comentário acima de
+    // orcadoCarregando) — agora vale também pros dados usados pra checar
+    // o orçado de CADA parcela/contrato do Rateio, não só do mês principal.
+    if (orcadoCarregando || orcadoMultiMesCarregando) return "Aguarde o orçamento terminar de carregar antes de aprovar.";
     if (!formaPagamento) return "Selecione a forma de pagamento.";
-    if (!informacoesPagamento.trim()) return "Informe os dados de pagamento.";
+    // SIS-2026-0264: "Informações de pagamento" só é obrigatório quando a
+    // despesa NÃO foi lançada como "pagamento só por anexo" — esse flag não
+    // é persistido à parte, então o jeito de saber aqui (aprovador) é o
+    // mesmo dado que já existe: se não tem texto mas tem ao menos um
+    // arquivo anexado, o anexo (ex. boleto) É a informação de pagamento.
+    // Achado do Iury: aprovador ficava travado tentando aprovar despesa
+    // que a própria tela de criação já validou como válida sem esse campo.
+    if (!informacoesPagamento.trim() && despesa!.arquivos.length === 0) {
+      return "Informe os dados de pagamento (ou confira se há um arquivo anexado).";
+    }
     if (!dataPagamento) return "Informe a data de pagamento.";
     if (!competencia) return "Informe a competência.";
     if (!valorAprovado || Number(valorAprovado) <= 0) return "Informe o valor aprovado.";
@@ -477,8 +557,14 @@ export default function DespesaVisualizar() {
     // SIS-2026-0250 (regra 1.2): N1 aprovando depois do horário de
     // conferência exige justificativa também — mesmo campo, outro
     // gatilho. N2/N3 nunca caem aqui (aprovam a qualquer momento).
-    if (despesa!.nivel_aprovacao_atual === 1 && horaAtualPassouDe(maloteConfig?.conferencia_aprovacao_horario) && !justificativa.trim()) {
-      return `Informe a justificativa da aprovação — obrigatória depois do horário limite de conferência (regra 1.2, ${maloteConfig?.conferencia_aprovacao_horario}).`;
+    // SIS-2026-0272: só dispara quando a despesa precisa ser resolvida hoje
+    // (ver exigeJustificativaPorConferenciaAtrasada).
+    if (
+      despesa!.nivel_aprovacao_atual === 1 &&
+      exigeJustificativaPorConferenciaAtrasada(dataPagamento, maloteConfig?.conferencia_aprovacao_horario) &&
+      !justificativa.trim()
+    ) {
+      return `Informe a justificativa da aprovação — obrigatória depois do horário limite de conferência (regra 1.2, ${maloteConfig?.conferencia_aprovacao_horario}) para despesa com pagamento hoje ou vencido.`;
     }
     return null;
   }
@@ -1025,7 +1111,9 @@ export default function DespesaVisualizar() {
                   <span className="text-xs text-muted-foreground font-normal">
                     {" "}
                     (obrigatória se escalar para N2{despesa.excecao && " — exceção sempre escala"}
-                    {maloteConfig?.conferencia_aprovacao_horario && <> ou se aprovar após {maloteConfig.conferencia_aprovacao_horario}</>})
+                    {maloteConfig?.conferencia_aprovacao_horario && (
+                      <> ou se aprovar após {maloteConfig.conferencia_aprovacao_horario} com pagamento hoje ou vencido</>
+                    )})
                   </span>
                 )}
               </Label>
@@ -1074,6 +1162,35 @@ export default function DespesaVisualizar() {
             foraDoPrazoInclusao={!!dataPagamento && !!prazoNormal && dataPagamento < prazoNormal}
             prazoNormal={prazoNormal}
           />
+          {/* SIS-2026-0261: contextualiza QUEM estiver vendo a despesa (N1
+              decidindo, N2 revisando depois) sobre qual parcela/contrato
+              estourou o orçado de verdade — sem isso, só dava pra descobrir
+              navegando parcela a parcela no Rateio abaixo. */}
+          {despesa.status === "pendente_aprovacao" && infoEstouroOrcamento && (
+            <div className="flex items-start gap-2 rounded-lg border border-destructive/40 bg-destructive/5 dark:bg-destructive/10 p-3 text-xs">
+              <AlertTriangle className="h-4 w-4 text-destructive mt-0.5 shrink-0" />
+              <p className="text-destructive/90">
+                Orçamento estourado
+                {infoEstouroOrcamento.parcelaCorrespondente && (
+                  <>
+                    {" "}
+                    na <span className="font-medium">parcela {infoEstouroOrcamento.parcelaCorrespondente.numero_parcela}/{despesa.numero_parcelas}</span>
+                  </>
+                )}
+                {infoEstouroOrcamento.nomeContrato && (
+                  <>
+                    {" "}
+                    do contrato <span className="font-medium">{infoEstouroOrcamento.nomeContrato}</span>
+                  </>
+                )}{" "}
+                ({fmtCompetenciaResumo(infoEstouroOrcamento.mes)}): orçado{" "}
+                <span className="font-medium">{fmtMoneyResumo(infoEstouroOrcamento.orcadoDoMes)}</span>, utilizado{" "}
+                <span className="font-medium">{fmtMoneyResumo(infoEstouroOrcamento.utilizadoAcumulado)}</span>
+                {infoEstouroOrcamento.percentual != null && <> ({infoEstouroOrcamento.percentual.toFixed(2)}%)</>} — por isso escala pro próximo
+                nível de aprovação.
+              </p>
+            </div>
+          )}
           {/* SIS-2026-0250 (regra 2.2): aviso informativo só — não bloqueia
               a aprovação, só avisa o aprovador do prazo do dia. */}
           {excecao && despesa.status === "pendente_aprovacao" && dataPagamento === new Date().toLocaleDateString("sv-SE") && (
@@ -1096,10 +1213,10 @@ export default function DespesaVisualizar() {
             <p className="text-sm font-semibold">Rateio da Despesa{despesa.parcelado ? " (Parcelado)" : ""}</p>
             {despesa.parcelado && rateioEditavel && (
               <p className="text-xs text-muted-foreground mt-0.5">
-                Valor, % e Orçado/Utilizado abaixo são da despesa <span className="font-medium text-foreground">inteira</span> (todas as{" "}
-                {despesa.numero_parcelas} parcelas somadas) — o Orçado/Utilizado reflete só o impacto da{" "}
-                <span className="font-medium text-foreground">parcela 1</span>, que é a que decide a alçada. Editável só nesta fase de lançamento —
-                depois de aprovada, o rateio trava e passa a mostrar o impacto de cada parcela separadamente.
+                Valor e % abaixo são da despesa <span className="font-medium text-foreground">inteira</span> (todas as {despesa.numero_parcelas}{" "}
+                parcelas somadas) — já o Orçado/Utilizado reflete só a parcela pré-visualizada no seletor acima da tabela (use as setas pra conferir o
+                impacto de cada uma). Editável só nesta fase de lançamento — depois de aprovada, o rateio trava e passa a mostrar o impacto de cada
+                parcela separadamente.
               </p>
             )}
           </div>
@@ -1116,9 +1233,10 @@ export default function DespesaVisualizar() {
               despesaId={despesa.id}
               classificacaoId={despesa.classificacao_id}
               limiteJustificativaPct={despesa.classificacao?.limite_justificativa_pct ?? null}
-              resolverOrcado={resolverOrcado}
+              resolverOrcado={resolverOrcadoMultiMes}
               anoMesDespesa={anoMesDespesa}
               fatorParcela1={fatorParcela1}
+              parcelas={despesa.parcelado ? data?.parcelas : undefined}
               mostrarValorParcela1={despesa.parcelado}
               podeJustificarComoAprovador={configurado}
               souSolicitante={souSolicitante}
@@ -1193,9 +1311,13 @@ export default function DespesaVisualizar() {
           >
             <PenLine className="h-4 w-4" /> {acaoEmAndamento === "ajuste" ? "Enviando..." : "Solicitar ajuste"}
           </Button>
-          <Button className="gap-1.5" onClick={onClickAprovar} disabled={acaoEmAndamento !== null || orcadoCarregando}>
+          <Button className="gap-1.5" onClick={onClickAprovar} disabled={acaoEmAndamento !== null || orcadoCarregando || orcadoMultiMesCarregando}>
             <Check className="h-4 w-4" />{" "}
-            {acaoEmAndamento === "aprovar" ? "Aprovando..." : orcadoCarregando ? "Calculando orçamento..." : "Aprovar despesa"}
+            {acaoEmAndamento === "aprovar"
+              ? "Aprovando..."
+              : orcadoCarregando || orcadoMultiMesCarregando
+                ? "Calculando orçamento..."
+                : "Aprovar despesa"}
           </Button>
         </div>
       )}
