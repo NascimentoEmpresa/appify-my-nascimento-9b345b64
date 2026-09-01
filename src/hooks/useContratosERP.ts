@@ -3,6 +3,11 @@ import { supabase } from "@/integrations/supabase/client";
 import { useEmpresaAtiva } from "@/context/EmpresaAtivaContext";
 import { toast } from "@/hooks/use-toast";
 
+// A tabela `contratos` NÃO está no types.ts gerado pelo Lovable, então o client
+// tipado a trata como inexistente e reclama de toda coluna ("id" não é
+// atribuível a never). Mesmo escape que useSupCatalogo e useSupPedidos usam.
+const sb = supabase as any;
+
 export interface ContratoERP {
   id: string;
   empresa_id: string;
@@ -39,7 +44,7 @@ export function useContratosERP() {
     queryKey: ["contratos_erp", empresaId],
     enabled: !!empresaId,
     queryFn: async () => {
-      const { data, error } = await supabase
+      const { data, error } = await sb
         .from("contratos")
         .select("*")
         .eq("empresa_id", empresaId!)
@@ -58,13 +63,13 @@ export function useContratoERPUpsert() {
   return useMutation({
     mutationFn: async ({ id, ...input }: ContratoERPInput & { id?: string }) => {
       if (id) {
-        const { error } = await supabase
+        const { error } = await sb
           .from("contratos")
           .update({ ...input, updated_at: new Date().toISOString() })
           .eq("id", id);
         if (error) throw error;
       } else {
-        const { error } = await supabase
+        const { error } = await sb
           .from("contratos")
           .insert({ ...input, empresa_id: empresaId });
         if (error) throw error;
@@ -86,7 +91,7 @@ export function useContratoERPDelete() {
 
   return useMutation({
     mutationFn: async (id: string) => {
-      const { error } = await supabase.from("contratos").delete().eq("id", id);
+      const { error } = await sb.from("contratos").delete().eq("id", id);
       if (error) throw error;
     },
     onSuccess: () => {
@@ -120,7 +125,7 @@ export function useContratosSelecao() {
   return useQuery({
     queryKey: ["contratos_selecao"],
     queryFn: async (): Promise<ContratoSelecao[]> => {
-      const { data, error } = await (supabase as any)
+      const { data, error } = await sb
         .from("contratos")
         .select("id, nome")
         .order("nome");
