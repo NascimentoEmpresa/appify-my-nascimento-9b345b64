@@ -112,6 +112,35 @@ function OpcaoResponsavel({ id }: { id: string }) {
   return <SelectItem value={id}>{nome ?? id}</SelectItem>;
 }
 
+// SIS-2026-0286 (ajuste visual pedido pelo usuário): mesma técnica de
+// DespesaVisualizar.tsx (TileDestaque) — ícone grande de fundo com máscara
+// em gradiente, em vez do círculo pequeno de ícone que tínhamos antes.
+const TILE_VALOR_COR = {
+  sky: "text-sky-300 dark:text-sky-800",
+  emerald: "text-emerald-300 dark:text-emerald-800",
+  amber: "text-amber-300 dark:text-amber-800",
+} as const;
+
+function TileValor({ label, valor, icon, cor }: { label: string; valor: string; icon: React.ReactNode; cor: keyof typeof TILE_VALOR_COR }) {
+  return (
+    <Card>
+      <CardContent className="relative overflow-hidden p-4">
+        <div
+          className="pointer-events-none absolute right-0 top-1/2 -translate-y-1/2 translate-x-1"
+          style={{
+            WebkitMaskImage: "linear-gradient(to left, black 0%, black 30%, rgba(0,0,0,0.6) 60%, transparent 100%)",
+            maskImage: "linear-gradient(to left, black 0%, black 30%, rgba(0,0,0,0.6) 60%, transparent 100%)",
+          }}
+        >
+          <span className={cn("[&>svg]:h-14 [&>svg]:w-14", TILE_VALOR_COR[cor])}>{icon}</span>
+        </div>
+        <p className="relative z-10 text-xs text-muted-foreground">{label}</p>
+        <p className="relative z-10 text-lg font-bold leading-tight mt-0.5 truncate max-w-[85%]">{valor}</p>
+      </CardContent>
+    </Card>
+  );
+}
+
 export default function PagamentoMalote() {
   const navigate = useNavigate();
   const { data: todosItens = [], isLoading } = useItensAprovacoesMalote();
@@ -396,39 +425,9 @@ export default function PagamentoMalote() {
           pago e valor pendente" — resumo de valor, ao lado dos tiles de
           quantidade (contagem) que já existiam. */}
       <div className="grid gap-3 grid-cols-1 sm:grid-cols-3">
-        <Card>
-          <CardContent className="p-4 flex items-center gap-3">
-            <span className="flex h-10 w-10 items-center justify-center rounded-full bg-sky-100 text-sky-600 dark:bg-sky-950/40 dark:text-sky-400">
-              <Wallet className="h-5 w-5" />
-            </span>
-            <div>
-              <p className="text-xs text-muted-foreground">Valor total do malote</p>
-              <p className="text-lg font-bold leading-tight">{fmtMoney(valorTotalMalote)}</p>
-            </div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="p-4 flex items-center gap-3">
-            <span className="flex h-10 w-10 items-center justify-center rounded-full bg-emerald-100 text-emerald-600 dark:bg-emerald-950/40 dark:text-emerald-400">
-              <CheckCircle className="h-5 w-5" />
-            </span>
-            <div>
-              <p className="text-xs text-muted-foreground">Valor pago</p>
-              <p className="text-lg font-bold leading-tight">{fmtMoney(valorPago)}</p>
-            </div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="p-4 flex items-center gap-3">
-            <span className="flex h-10 w-10 items-center justify-center rounded-full bg-amber-100 text-amber-600 dark:bg-amber-950/40 dark:text-amber-400">
-              <Clock3 className="h-5 w-5" />
-            </span>
-            <div>
-              <p className="text-xs text-muted-foreground">Valor pendente</p>
-              <p className="text-lg font-bold leading-tight">{fmtMoney(valorPendente)}</p>
-            </div>
-          </CardContent>
-        </Card>
+        <TileValor label="Valor total do malote" valor={fmtMoney(valorTotalMalote)} icon={<Wallet />} cor="sky" />
+        <TileValor label="Valor pago" valor={fmtMoney(valorPago)} icon={<CheckCircle />} cor="emerald" />
+        <TileValor label="Valor pendente" valor={fmtMoney(valorPendente)} icon={<Clock3 />} cor="amber" />
       </div>
 
       <GrupoTiles tiles={tiles} ativo={status} onClick={setStatusFiltro} />
