@@ -3,6 +3,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
 import { useEmpresaId } from "@/hooks/useEmpresaId";
+import { useContratosSelecao, type ContratoSelecao } from "@/hooks/useContratosERP";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -118,10 +119,7 @@ export default function Requisicoes() {
     queryKey: ["cc_lookup"],
     queryFn: async () => (await supabase.from("centros_custo").select("id,codigo,nome").eq("ativo", true).order("codigo")).data ?? [],
   });
-  const { data: contratos = [] } = useQuery({
-    queryKey: ["contratos_lookup"],
-    queryFn: async () => (await supabase.from("contrato").select("id,numero,objeto").order("numero")).data ?? [],
-  });
+  const { data: contratos = [] } = useContratosSelecao();
 
   const stats = useMemo(() => {
     const open = rcs.filter((r) => !["atendida_total", "cancelada", "rejeitada"].includes(r.status_v2)).length;
@@ -248,7 +246,7 @@ function NovaRCDialog({
   empresaId, userId, ccs, contratos, onClose, onCreated,
 }: {
   empresaId: string | null; userId: string | null;
-  ccs: any[]; contratos: any[];
+  ccs: any[]; contratos: ContratoSelecao[];
   onClose: () => void; onCreated: () => void;
 }) {
   const [numero, setNumero] = useState("RC-" + new Date().getFullYear() + "-" + String(Math.floor(Math.random() * 9999)).padStart(4, "0"));
@@ -387,7 +385,7 @@ function NovaRCDialog({
             <Select value={contratoId} onValueChange={setContratoId}>
               <SelectTrigger><SelectValue placeholder="Selecionar…" /></SelectTrigger>
               <SelectContent>
-                {contratos.map((c: any) => <SelectItem key={c.id} value={c.id}>{c.numero} — {c.objeto?.slice(0, 40)}</SelectItem>)}
+                {contratos.map((c) => <SelectItem key={c.id} value={c.id}>{c.nome}</SelectItem>)}
               </SelectContent>
             </Select>
           </div>

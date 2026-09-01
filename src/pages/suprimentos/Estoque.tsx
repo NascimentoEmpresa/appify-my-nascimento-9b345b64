@@ -12,6 +12,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Badge } from "@/components/ui/badge";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { useList } from "@/hooks/useGenericCrud";
+import { useContratosSelecao } from "@/hooks/useContratosERP";
 import { useEmpresaId } from "@/hooks/useEmpresaId";
 import { Plus, AlertTriangle, Package, Boxes, TrendingDown } from "lucide-react";
 import { toast } from "sonner";
@@ -24,7 +25,7 @@ export default function Estoque() {
   const { data: empresaId } = useEmpresaId();
   const { data: almoxarifados = [] } = useList<any>("almoxarifado", { orderBy: "codigo", ascending: true });
   const { data: produtos = [] } = useList<any>("produto", { orderBy: "codigo", ascending: true });
-  const { data: contratos = [] } = useList<any>("contrato", { orderBy: "numero" });
+  const { data: contratos = [] } = useContratosSelecao();
   const { data: ccs = [] } = useList<any>("centros_custo", { orderBy: "codigo", ascending: true });
 
   const { data: saldos = [], isLoading } = useQuery<any[]>({
@@ -160,7 +161,7 @@ export default function Estoque() {
                       <Select value={mov.contrato_id ?? ""} onValueChange={(v) => setMov({ ...mov, contrato_id: v })}>
                         <SelectTrigger><SelectValue placeholder="—" /></SelectTrigger>
                         <SelectContent>
-                          {contratos.map((c: any) => <SelectItem key={c.id} value={c.id}>{c.numero}</SelectItem>)}
+                          {contratos.map((c) => <SelectItem key={c.id} value={c.id}>{c.nome}</SelectItem>)}
                         </SelectContent>
                       </Select>
                     </div>
