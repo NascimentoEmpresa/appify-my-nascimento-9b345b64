@@ -553,23 +553,22 @@ export function RateioGrid({
                 )}
                 {dimensoes.integrante && (
                   <TableCell>
-                    <Select
+                    {/* Lista de colaboradores é grande (centenas) — Select nativo do
+                        Radix não tem busca e o scroll manual é impraticável. Combobox
+                        pesquisável, mesmo padrão já usado no Contrato acima. */}
+                    <SearchableSelect
                       value={linha.integrante_empregado_id ? String(linha.integrante_empregado_id) : "none"}
-                      onValueChange={(v) => atualizarLinha(idx, { integrante_empregado_id: v === "none" ? null : Number(v) })}
+                      onChange={(v) => atualizarLinha(idx, { integrante_empregado_id: v === "none" ? null : Number(v) })}
+                      options={[
+                        { value: "none", label: "—" },
+                        ...integrantes.map((i) => ({ value: String(i.id), label: i.nome })),
+                      ]}
+                      placeholder="—"
+                      searchPlaceholder="Buscar colaborador..."
                       disabled={disabled}
-                    >
-                      <SelectTrigger className="h-8 w-36 text-xs">
-                        <SelectValue placeholder="—" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="none">—</SelectItem>
-                        {integrantes.map((i) => (
-                          <SelectItem key={i.id} value={String(i.id)}>
-                            {i.nome}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
+                      className="w-36"
+                      triggerClassName="h-8 text-xs"
+                    />
                   </TableCell>
                 )}
                 {mostrarColunasOrcamento && mostrarValorParcela1 && (

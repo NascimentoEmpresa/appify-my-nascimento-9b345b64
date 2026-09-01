@@ -222,7 +222,7 @@ export function totalEmCentavos(itens: Array<{ valor_centavos: number }>): numbe
 }
 
 // ── A pergunta que a tela faz ────────────────────────────────────────
-export type MotivoRecusa = "tipo_inativo" | "fora_da_janela" | "acima_do_teto" | "valor_invalido";
+export type MotivoRecusa = "tipo_inativo" | "fora_da_janela" | "valor_invalido";
 
 export interface Veredito {
   ok: boolean;
@@ -237,9 +237,16 @@ const OK: Veredito = { ok: true };
  * Esta despesa pode entrar nesta viagem, com este valor?
  *
  * Três perguntas, nesta ordem de propósito: o tipo existe e está ligado; a
- * viagem alcançou a janela dele; o valor cabe no teto. A ordem importa para a
- * mensagem — dizer "acima do teto" para um tipo que a pessoa nem podia pedir
- * manda ela corrigir a coisa errada.
+ * viagem alcançou a janela dele; o valor é um número maior que zero.
+ *
+ * ⚠️ O TETO NÃO ESTÁ AQUI, e não é esquecimento. Até 01/09/2026 ele era a
+ * quarta pergunta e BARRAVA o lançamento — a pessoa digitava R$ 62,00 num
+ * almoço de teto R$ 35,00 e o envio inteiro parava. Pior: o mesmo veto existia
+ * na trigger, então o cabeçalho já criado ficava no banco sem nenhum item, e a
+ * tela mostrava a solicitação valendo R$ 0,00 (foi assim que apareceram três
+ * REEMB zerados em produção). A regra pedida é outra: o valor é o que a pessoa
+ * de fato gastou, o sistema só AVISA quando passa do teto e quem decide é o
+ * aprovador. Ver `avisoDeTeto`.
  */
 export function podeLancar(
   tipo: TipoReembolso | undefined,
@@ -265,17 +272,28 @@ export function podeLancar(
     return { ok: false, motivo: "valor_invalido", mensagem: "Informe um valor maior que zero." };
   }
 
-  if (tipo.valor_maximo_centavos !== null && valorCentavos > tipo.valor_maximo_centavos) {
-    return {
-      ok: false,
-      motivo: "acima_do_teto",
-      mensagem:
-        `${tipo.nome} tem teto de ${fmtBRL(tipo.valor_maximo_centavos)}. ` +
-        `Você lançou ${fmtBRL(valorCentavos)}.`,
-    };
-  }
-
   return OK;
+}
+
+/**
+ * O recado que aparece AO LADO do valor quando ele passa do teto do tipo.
+ *
+ * Devolve `null` quando não há o que avisar — tipo sem teto, valor ainda em
+ * branco, ou valor dentro do limite. Nunca impede nada: é texto, e o
+ * lançamento segue. O aprovador vê o mesmo aviso na fila (ListaReembolsos),
+ * que é onde a decisão sobre o excedente realmente acontece.
+ */
+export function avisoDeTeto(
+  tipo: TipoReembolso | undefined,
+  valorCentavos: number | null,
+): string | null {
+  if (!tipo || tipo.valor_maximo_centavos === null) return null;
+  if (valorCentavos === null || valorCentavos <= tipo.valor_maximo_centavos) return null;
+  const excedente = valorCentavos - tipo.valor_maximo_centavos;
+  return (
+    `Acima do teto de ${fmtBRL(tipo.valor_maximo_centavos)} — ` +
+    `${fmtBRL(excedente)} a mais. Pode enviar assim; o aprovador decide.`
+  );
 }
 
 /**

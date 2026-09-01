@@ -369,14 +369,29 @@ export function useIntegrantes() {
     queryKey: ["malote_integrantes"],
     staleTime: 5 * 60_000,
     queryFn: async () => {
-      const { data, error } = await (supabase as any)
-        .from("EMPREGADOS")
-        .select('"ID", "Nome", "Situação"')
-        .eq("Situação", "Trabalhando")
-        .order("Nome")
-        .limit(2000);
-      if (error) throw error;
-      return (data ?? []).map((e: any) => ({ id: e.ID as number, nome: e.Nome as string }));
+      // São 2200+ colaboradores ativos — mais que o teto de linhas por
+      // request do PostgREST (db-max-rows do projeto), que corta a resposta
+      // ANTES do .limit() do client valer, mesmo pedindo mais. Um .limit()
+      // único deixava o combobox de Integrante "parar" no meio do alfabeto
+      // (achado do usuário: só ia até nomes com "J"). Pagina com .range()
+      // até a página vir vazia/incompleta, garantindo a lista inteira.
+      const PAGE = 1000;
+      const todos: { id: number; nome: string }[] = [];
+      for (let pagina = 0; ; pagina++) {
+        const de = pagina * PAGE;
+        const ate = de + PAGE - 1;
+        const { data, error } = await (supabase as any)
+          .from("EMPREGADOS")
+          .select('"ID", "Nome", "Situação"')
+          .eq("Situação", "Trabalhando")
+          .order("Nome")
+          .range(de, ate);
+        if (error) throw error;
+        const lote = (data ?? []).map((e: any) => ({ id: e.ID as number, nome: e.Nome as string }));
+        todos.push(...lote);
+        if (lote.length < PAGE) break;
+      }
+      return todos;
     },
   });
 }
@@ -1157,6 +1172,38 @@ export function useClassificacaoIdsPorDespesaRateio(despesaIds: string[]) {
         const atual = mapa.get(r.despesa_id) ?? new Set<string>();
         atual.add(r.classificacao_id);
         mapa.set(r.despesa_id, atual);
+      }
+      return mapa;
+    },
+  });
+}
+
+// SIS-2026-0288 (Iury): coluna/filtro de "Empresa" em Pagamento Malote —
+// pra despesa de rateio multi-empresa (dimensão "Empresa" marcada em
+// RatearClassificacao.tsx), despesa.empresa_id é só o contexto de sessão
+// de quem lançou, não reflete o rateio de verdade. O pedido é a empresa da
+// PRIMEIRA linha (menor `ordem`) que tiver empresa_id preenchido — mesmo
+// padrão em lote de useClassificacaoIdsPorDespesaRateio, pra não fazer 1
+// query por despesa numa tabela paginada.
+export function useEmpresaPrimeiraLinhaRateio(despesaIds: string[]) {
+  const chave = despesaIds.slice().sort().join(",");
+  return useQuery({
+    queryKey: ["malote_rateio_empresa_primeira_linha", chave],
+    enabled: despesaIds.length > 0,
+    staleTime: 60_000,
+    queryFn: async () => {
+      const { data, error } = await (supabase as any)
+        .from("malote_despesa_rateio_linha")
+        .select("despesa_id, empresa_id, ordem")
+        .in("despesa_id", despesaIds)
+        .not("empresa_id", "is", null)
+        .order("ordem");
+      if (error) throw error;
+      const mapa = new Map<string, string>();
+      for (const r of (data ?? []) as { despesa_id: string; empresa_id: string; ordem: number }[]) {
+        // Linhas já vêm ordenadas por `ordem` — a primeira vista pra cada
+        // despesa_id é a que fica (não sobrescreve se já tiver achado).
+        if (!mapa.has(r.despesa_id)) mapa.set(r.despesa_id, r.empresa_id);
       }
       return mapa;
     },

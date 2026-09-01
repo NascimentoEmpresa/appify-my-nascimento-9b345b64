@@ -3,7 +3,7 @@ import { toast } from "sonner";
 import {
   Search, Plus, Upload, Trash2, Pencil, ChevronDown, ChevronUp,
   FileSpreadsheet, X, Download, Eye, DatabaseZap, Building2, RefreshCw,
-  MapPin, Loader2, Check,
+  MapPin, Loader2, Check, ChevronsUpDown,
 } from "lucide-react";
 import {
   usePlanilhaPostoLocalizacao, usePlanilhaPostoLocalizacaoAll,
@@ -18,10 +18,15 @@ import {
 } from "@/hooks/usePlanilhaCusto";
 import { importarPlanilha, type PlanilhaCustoImportada } from "@/utils/planilhaCustoImporter";
 import { useEmpresaAtiva } from "@/context/EmpresaAtivaContext";
-import { useContratosERP } from "@/hooks/useContratosERP";
+import { useContratosERP, type ContratoERP } from "@/hooks/useContratosERP";
 import { supabase } from "@/integrations/supabase/client";
 import { CurrencyInput } from "@/components/ui/CurrencyInput";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import {
+  Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList,
+} from "@/components/ui/command";
+import { cn } from "@/lib/utils";
 
 // ─── Tipos ────────────────────────────────────────────────────────────────────
 
@@ -1635,6 +1640,70 @@ function ClientesModal({ rows, statusMap }: { rows: PlanilhaCustoRow[]; statusMa
   );
 }
 
+// ─── Combobox de Contrato ─────────────────────────────────────────────────────
+// Troca o antigo campo de texto livre por seleção da tabela `contratos`: ao
+// escolher, o pai grava `contrato_id` (a FK) na origem — fim do casamento por
+// texto (fantasmas, de-para por nome, contrato_id vazio no import). Mostra o
+// texto atual mesmo quando não casa com nenhum contrato (linhas legadas), sem
+// perder o valor.
+function ContratoCombobox({
+  nome, contratoId, onPick,
+}: {
+  nome: string;
+  contratoId: string | null;
+  onPick: (c: ContratoERP | null) => void;
+}) {
+  const { data: contratos = [] } = useContratosERP();
+  const [aberto, setAberto] = useState(false);
+  const opcoes = [...contratos].sort(
+    (a, b) =>
+      (a.status === "ativo" ? 0 : 1) - (b.status === "ativo" ? 0 : 1) ||
+      a.nome.localeCompare(b.nome, "pt-BR"),
+  );
+
+  return (
+    <Popover open={aberto} onOpenChange={setAberto}>
+      <PopoverTrigger asChild>
+        <button
+          type="button"
+          role="combobox"
+          className="flex h-8 w-full items-center justify-between rounded border border-border bg-background px-2 text-sm outline-none focus:border-primary"
+        >
+          <span className={cn("truncate", !nome && "text-muted-foreground")}>
+            {nome || "Selecionar contrato…"}
+          </span>
+          <ChevronsUpDown className="ml-2 h-3.5 w-3.5 shrink-0 opacity-50" />
+        </button>
+      </PopoverTrigger>
+      <PopoverContent className="w-[--radix-popover-trigger-width] p-0" align="start">
+        <Command>
+          <CommandInput placeholder="Buscar contrato ou cliente…" />
+          <CommandList>
+            <CommandEmpty>Nenhum contrato encontrado.</CommandEmpty>
+            <CommandGroup>
+              {opcoes.map((c) => (
+                <CommandItem
+                  key={c.id}
+                  value={`${c.nome} ${c.cliente}`}
+                  onSelect={() => { onPick(c); setAberto(false); }}
+                >
+                  <Check className={cn("mr-2 h-4 w-4 shrink-0", contratoId === c.id ? "opacity-100" : "opacity-0")} />
+                  <span className="flex min-w-0 flex-1 flex-col">
+                    <span className="truncate">{c.nome}</span>
+                    <span className="text-xs text-muted-foreground">
+                      {c.cliente}{c.status !== "ativo" ? ` · ${c.status}` : ""}
+                    </span>
+                  </span>
+                </CommandItem>
+              ))}
+            </CommandGroup>
+          </CommandList>
+        </Command>
+      </PopoverContent>
+    </Popover>
+  );
+}
+
 // ─── Drawer do formulário ─────────────────────────────────────────────────────
 
 function FormDrawer({
@@ -2036,7 +2105,24 @@ function FormDrawer({
                   </select>
                 </div>
                 {textField("cliente", "Cliente", 1)}
-                {textField("contrato", "Contrato", 1)}
+                <div>
+                  <label className="mb-1 flex min-h-[2rem] items-end text-[10px] font-semibold uppercase leading-tight tracking-wider text-muted-foreground">
+                    Contrato
+                  </label>
+                  <ContratoCombobox
+                    nome={form.contrato ?? ""}
+                    contratoId={form.contrato_id ?? null}
+                    onPick={(c) =>
+                      setForm((prev) => ({
+                        ...prev,
+                        contrato: c?.nome ?? "",
+                        contrato_id: c?.id ?? null,
+                        // auto-preenche o cliente do contrato escolhido
+                        cliente: c ? c.cliente : prev.cliente,
+                      }))
+                    }
+                  />
+                </div>
                 {textField("posto", "Posto", 1)}
                 {textField("servico", "Serviço", 1)}
                 {textField("sindicato", "Sindicato", 1)}
