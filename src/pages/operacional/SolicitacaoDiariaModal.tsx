@@ -1,7 +1,6 @@
 import { useMemo, useRef, useState } from "react";
 import {
   AlertCircle,
-  Calendar as CalendarIcon,
   CheckCircle2,
   Clock,
   Eye,
@@ -34,12 +33,19 @@ import { useToast } from "@/hooks/use-toast";
 import {
   EmpregadoDiaria,
   NovaSolicitacaoDiaria,
+  DespesaAprovacaoDiaria,
   mensagemErroDiaria,
   urlAnexoDiaria,
   useBuscaEmpregadosDiaria,
   useContratosDiaria,
+  useEmpresaContratoDiaria,
   usePostosDiaria,
 } from "@/hooks/useDiarias";
+import { useClassificacoesOrcamento } from "@/hooks/usePlanejamentoOrcamentario";
+import {
+  FORM_ID_PAINEL_DESPESA_DIARIA,
+  PainelDespesaMalote,
+} from "@/pages/malote/PainelDespesaMalote";
 import {
   AnexoDiaria,
   LinhaDiaria,
@@ -76,7 +82,7 @@ interface Props {
   onFechar: () => void;
   onSalvar: (s: NovaSolicitacaoDiaria) => void;
   /** Recebem o uuid da solicitação (a chave no banco), não o número exibido. */
-  onAprovar: (uuid: string, motivo: string, dataPagamento: string) => void;
+  onAprovar: (uuid: string, despesa: DespesaAprovacaoDiaria) => Promise<void> | void;
   onReprovar: (uuid: string) => void;
 }
 
@@ -417,10 +423,18 @@ export function SolicitacaoDiariaModal({
   } = usePostosDiaria(contratoId || null);
   const posto = postos.find((p) => p.id === postoId)?.nome ?? "";
 
-  // --- estado da aprovação (modo "aprovar", seção 7) ----------------------
-  const [maloteMotivo, setMaloteMotivo] = useState("");
-  const [maloteData, setMaloteData] = useState("");
-  const [tentouAprovar, setTentouAprovar] = useState(false);
+  // Contexto do painel do Malote. O backend resolve tudo outra vez na RPC;
+  // estes ids existem para alimentar o mesmo formulário/rateio da tela normal.
+  const { data: empresaContratoId, isLoading: buscandoEmpresaContrato } =
+    useEmpresaContratoDiaria(solicitacao?.contratoId);
+  const { data: classificacoesMalote = [], isLoading: buscandoClassificacoes } =
+    useClassificacoesOrcamento();
+  const classificacaoDiaria = useMemo(
+    () => classificacoesMalote.find((c) =>
+      c.ativo && c.nome.normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim().toLowerCase() === "diaria"
+    ) ?? null,
+    [classificacoesMalote],
+  );
 
   // Reinicia tudo a cada abertura — o modal só existe enquanto `aberto`.
   const chave = `${modo}-${solicitacao?.id ?? "nova"}-${aberto}`;
@@ -441,9 +455,6 @@ export function SolicitacaoDiariaModal({
     setDocumentos([]);
     setObservacoes("");
     setTentouSalvar(false);
-    setMaloteMotivo(solicitacao?.maloteMotivo ?? "");
-    setMaloteData(solicitacao?.maloteDataPagamento ?? "");
-    setTentouAprovar(false);
   }
 
   const conflitos = useMemo(
@@ -1064,43 +1075,38 @@ export function SolicitacaoDiariaModal({
             )}
           </Secao>
 
-          {/* 7. Pré-visualização do Malote — só na aprovação */}
+          {/* 7. Mesmo painel da criação do Malote — SIS-2026-0287. */}
           {modo === "aprovar" && s && (
-            <Secao numero={7} titulo="Pré-visualização do Malote">
-              <div className="grid gap-4 sm:grid-cols-2">
+            <Secao numero={7} titulo="Despesa do Malote">
+              <div className="mb-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
                 <Leitura label="Tipo" valor="Despesa" />
                 <Leitura label="Nº" valor="Gerado automaticamente no Malote" />
-                <Campo
-                  label="Nome / Motivo"
-                  obrigatorio
-                  erro={tentouAprovar && !maloteMotivo.trim() ? "Informe o nome ou motivo." : undefined}
-                >
-                  <Input
-                    value={maloteMotivo}
-                    onChange={(e) => setMaloteMotivo(e.target.value)}
-                    placeholder="Informe o nome ou motivo..."
-                  />
-                </Campo>
                 <Leitura label="Classificação" valor="Diária" />
                 <Leitura label="Empresa" valor={s.contratoEmpresa} />
                 <Leitura label="Contrato" valor={s.contratoNome} />
-                <Leitura label="Valor (R$)" valor={fmtBRL(valorTotalSolicitacao(s))} />
-                <Campo
-                  label="Data de Pagamento"
-                  obrigatorio
-                  erro={tentouAprovar && !maloteData ? "Informe a data de pagamento." : undefined}
-                >
-                  <div className="relative">
-                    <Input
-                      type="date"
-                      value={maloteData}
-                      onChange={(e) => setMaloteData(e.target.value)}
-                    />
-                    <CalendarIcon className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-                  </div>
-                </Campo>
                 <Leitura label="Solicitante" valor={s.solicitante} />
               </div>
+              <PainelDespesaMalote
+                key={chave}
+                classificacaoId={classificacaoDiaria?.id ?? ""}
+                classificacaoTipo={classificacaoDiaria?.tipo ?? "contrato"}
+                empresaId={empresaContratoId ?? null}
+                ativo={!!empresaContratoId && !!classificacaoDiaria}
+                nomeInicial={s.maloteMotivo ?? `Pagamento de diária ${s.id}`}
+                valorInicial={valorTotalSolicitacao(s)}
+                inicial={{
+                  dataPagamento: s.maloteDataPagamento ?? "",
+                  competencia: s.diarias[0]?.data.slice(0, 7) ?? "",
+                  informacoesPagamento: `PIX: ${s.pix}`,
+                }}
+                aoSalvar={async (payload) => onAprovar(s.uuid, payload)}
+                rotuloEnviar="Aprovar e enviar para malote"
+              />
+              {!buscandoEmpresaContrato && !buscandoClassificacoes && (!empresaContratoId || !classificacaoDiaria) && (
+                <p className="mt-2 text-xs font-medium text-destructive">
+                  Não foi possível resolver a empresa do contrato ou a classificação ativa “Diária”.
+                </p>
+              )}
             </Secao>
           )}
         </div>
@@ -1136,19 +1142,9 @@ export function SolicitacaoDiariaModal({
               <X className="mr-2 h-4 w-4" /> Reprovar solicitação
             </Button>
             <Button
-              disabled={salvando}
-              onClick={() => {
-                setTentouAprovar(true);
-                if (!maloteMotivo.trim() || !maloteData) {
-                  toast({
-                    title: "Complete a pré-visualização do Malote",
-                    description: "Nome / Motivo e Data de Pagamento são obrigatórios para aprovar.",
-                    variant: "destructive",
-                  });
-                  return;
-                }
-                onAprovar(s.uuid, maloteMotivo.trim(), maloteData);
-              }}
+              type="submit"
+              form={FORM_ID_PAINEL_DESPESA_DIARIA}
+              disabled={salvando || !empresaContratoId || !classificacaoDiaria}
             >
               <Send className="mr-2 h-4 w-4" /> Aprovar e enviar para malote
             </Button>
