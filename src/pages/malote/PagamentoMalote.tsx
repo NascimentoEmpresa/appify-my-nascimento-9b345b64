@@ -14,6 +14,8 @@ import { cn } from "@/lib/utils";
 import {
   useItensAprovacoesMalote,
   useNomeUsuario,
+  useEmpresasGrupo,
+  useEmpresaPrimeiraLinhaRateio,
   STATUS_LABEL,
   STATUS_BADGE_CLASS,
   StatusDespesa,
@@ -113,6 +115,19 @@ export default function PagamentoMalote() {
   const { data: todosItens = [], isLoading } = useItensAprovacoesMalote();
   const itens = useMemo(() => todosItens.filter((item) => STATUS_PAGAMENTO.includes(item.despesa.status)), [todosItens]);
 
+  // SIS-2026-0288 (Iury): "Empresa" na tabela/filtro — pra despesa de rateio
+  // multi-empresa, empresa_id da despesa é só o contexto de sessão de quem
+  // lançou, não o rateio de verdade; o pedido é a empresa da PRIMEIRA linha
+  // do rateio. Nem toda despesa tem linha de rateio (a maioria não usa a
+  // dimensão "Empresa") — cai pro despesa.empresa_id nesse caso.
+  const { data: empresas = [] } = useEmpresasGrupo();
+  const empresasMap = useMemo(() => new Map(empresas.map((e) => [e.id, e.nome])), [empresas]);
+  const despesaIds = useMemo(() => Array.from(new Set(itens.map((i) => i.despesa.id))), [itens]);
+  const { data: empresaPrimeiraLinhaPorDespesa } = useEmpresaPrimeiraLinhaRateio(despesaIds);
+  function empresaIdResolvida(despesa: MaloteDespesaRow): string | null {
+    return empresaPrimeiraLinhaPorDespesa?.get(despesa.id) ?? despesa.empresa_id ?? null;
+  }
+
   // SIS-2026-0285 (Iury): filtro de data puxava só de "Última atualização" —
   // agora tem os dois períodos, independentes (E lógico quando os dois
   // estão preenchidos).
@@ -123,6 +138,7 @@ export default function PagamentoMalote() {
   const [status, setStatus] = useState<StatusDespesa | "">("");
   const [classificacao, setClassificacao] = useState("");
   const [responsavelId, setResponsavelId] = useState("");
+  const [empresaId, setEmpresaId] = useState("");
   const [busca, setBusca] = useState("");
   const [pagina, setPagina] = useState(1);
 
@@ -136,6 +152,18 @@ export default function PagamentoMalote() {
     return Array.from(new Set(itens.map((item) => item.despesa.created_by)));
   }, [itens]);
 
+  const empresasDisponiveis = useMemo(() => {
+    const ids = new Set<string>();
+    itens.forEach((item) => {
+      const id = empresaIdResolvida(item.despesa);
+      if (id) ids.add(id);
+    });
+    return Array.from(ids)
+      .map((id) => ({ id, nome: empresasMap.get(id) ?? id }))
+      .sort((a, b) => a.nome.localeCompare(b.nome));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [itens, empresaPrimeiraLinhaPorDespesa, empresasMap]);
+
   function limparFiltros() {
     setDataAtualizacaoDe("");
     setDataAtualizacaoAte("");
@@ -144,6 +172,7 @@ export default function PagamentoMalote() {
     setStatus("");
     setClassificacao("");
     setResponsavelId("");
+    setEmpresaId("");
     setBusca("");
     setPagina(1);
   }
@@ -159,6 +188,7 @@ export default function PagamentoMalote() {
       if (status && statusEfetivo(item) !== status) return false;
       if (classificacao && d.classificacao?.nome !== classificacao) return false;
       if (responsavelId && d.created_by !== responsavelId) return false;
+      if (empresaId && empresaIdResolvida(d) !== empresaId) return false;
       if (dataAtualizacaoDe && d.updated_at < dataAtualizacaoDe) return false;
       if (dataAtualizacaoAte && d.updated_at > dataAtualizacaoAte + "T23:59:59") return false;
       if (dataPagamentoDe || dataPagamentoAte) {
@@ -172,7 +202,8 @@ export default function PagamentoMalote() {
       }
       return true;
     });
-  }, [itens, status, classificacao, responsavelId, dataAtualizacaoDe, dataAtualizacaoAte, dataPagamentoDe, dataPagamentoAte, busca]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [itens, status, classificacao, responsavelId, empresaId, empresaPrimeiraLinhaPorDespesa, dataAtualizacaoDe, dataAtualizacaoAte, dataPagamentoDe, dataPagamentoAte, busca]);
 
   const totalPaginas = Math.max(1, Math.ceil(filtrados.length / PAGE_SIZE));
   const paginaAtual = Math.min(pagina, totalPaginas);
@@ -237,6 +268,20 @@ export default function PagamentoMalote() {
               </Select>
             </div>
             <div>
+              {/* SIS-2026-0288 (Iury): empresa da PRIMEIRA linha do rateio
+                  (não a empresa_id "de contexto" da despesa). */}
+              <Label className="text-xs">Empresa</Label>
+              <Select value={empresaId || "todas"} onValueChange={(v) => { setEmpresaId(v === "todas" ? "" : v); setPagina(1); }}>
+                <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="todas">Todas</SelectItem>
+                  {empresasDisponiveis.map((e) => (
+                    <SelectItem key={e.id} value={e.id}>{e.nome}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div>
               <Label className="text-xs">Status</Label>
               <Select value={status || "todos"} onValueChange={(v) => { setStatusFiltro(v === "todos" ? "" : (v as StatusDespesa)); }}>
                 <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
@@ -281,6 +326,7 @@ export default function PagamentoMalote() {
                   <TableHead>Data de Pagamento</TableHead>
                   <TableHead>Nome / Histórico</TableHead>
                   <TableHead>Classificação</TableHead>
+                  <TableHead>Empresa</TableHead>
                   <TableHead className="text-right">Valor (R$)</TableHead>
                   <TableHead>Forma de Pagamento</TableHead>
                   <TableHead>Responsável</TableHead>
@@ -291,12 +337,12 @@ export default function PagamentoMalote() {
               <TableBody>
                 {isLoading && (
                   <TableRow>
-                    <TableCell colSpan={10} className="text-center text-muted-foreground py-10">Carregando...</TableCell>
+                    <TableCell colSpan={11} className="text-center text-muted-foreground py-10">Carregando...</TableCell>
                   </TableRow>
                 )}
                 {!isLoading && visiveis.length === 0 && (
                   <TableRow>
-                    <TableCell colSpan={10} className="text-center text-muted-foreground py-10">
+                    <TableCell colSpan={11} className="text-center text-muted-foreground py-10">
                       <div className="flex flex-col items-center gap-2">
                         <CheckCircle2 className="h-8 w-8 text-muted-foreground/50" />
                         Nenhum item encontrado com os filtros atuais.
@@ -305,7 +351,12 @@ export default function PagamentoMalote() {
                   </TableRow>
                 )}
                 {visiveis.map((item) => (
-                  <LinhaItem key={`${item.despesa.id}-${item.parcela?.id ?? "unica"}`} item={item} onAbrir={() => abrirItem(item.despesa)} />
+                  <LinhaItem
+                    key={`${item.despesa.id}-${item.parcela?.id ?? "unica"}`}
+                    item={item}
+                    empresaNome={empresasMap.get(empresaIdResolvida(item.despesa) ?? "") ?? "—"}
+                    onAbrir={() => abrirItem(item.despesa)}
+                  />
                 ))}
               </TableBody>
             </Table>
@@ -332,7 +383,7 @@ export default function PagamentoMalote() {
   );
 }
 
-function LinhaItem({ item, onAbrir }: { item: ItemLinhaMalote; onAbrir: () => void }) {
+function LinhaItem({ item, empresaNome, onAbrir }: { item: ItemLinhaMalote; empresaNome: string; onAbrir: () => void }) {
   const { despesa, parcela } = item;
   const { data: solicitanteNome } = useNomeUsuario(despesa.created_by);
   const status = statusEfetivo(item);
@@ -350,6 +401,7 @@ function LinhaItem({ item, onAbrir }: { item: ItemLinhaMalote; onAbrir: () => vo
         {despesa.motivo && <p className="text-xs text-muted-foreground">{despesa.motivo}</p>}
       </TableCell>
       <TableCell className="text-sm">{despesa.classificacao?.nome ?? "—"}</TableCell>
+      <TableCell className="text-sm">{empresaNome}</TableCell>
       <TableCell className="text-right text-sm">
         {Number(valor).toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}
       </TableCell>
