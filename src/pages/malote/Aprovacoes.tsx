@@ -29,6 +29,7 @@ import {
   TipoSolicitacao,
 } from "@/hooks/useMaloteDespesa";
 import { useClassificacoesOrcamentoAdmin } from "@/hooks/usePlanejamentoOrcamentario";
+import { useMinhasDespesasComJustificativaPendente } from "@/hooks/useMaloteJustificativaAnalista";
 import { JustificativaPendenteBadge, abreviarNome } from "./JustificativaPendenteBadge";
 
 // SIS-2026-0223: despesa parcelada vira N linhas (1 por parcela) a partir de
@@ -180,6 +181,11 @@ export default function Aprovacoes({ base = "/app/malote" }: { base?: string } =
   // "Aguardando minha aprovação"). Combina com o filtro de Nível acima
   // (os dois se somam), não substitui.
   const [somenteMinhas, setSomenteMinhas] = useState(false);
+  // SIS-2026-0283 (Iury): "Minhas" passa a contemplar também a coluna de
+  // Justificativa — clicar mostra tanto o que está pendente de EU aprovar
+  // quanto o que está com justificativa pendente de MIM (analista de algum
+  // contrato da despesa), não só aprovação.
+  const minhasDespesasJustificativaPendente = useMinhasDespesasComJustificativaPendente();
   const [tipo, setTipo] = useState<TipoSolicitacao | "">("");
   const [classificacao, setClassificacao] = useState("");
   const [empresaId, setEmpresaId] = useState("");
@@ -235,7 +241,11 @@ export default function Aprovacoes({ base = "/app/malote" }: { base?: string } =
       const d = item.despesa;
       if (status && statusEfetivo(item) !== status) return false;
       if (nivelAprovacao && (d.status !== "pendente_aprovacao" || d.nivel_aprovacao_atual !== nivelAprovacao)) return false;
-      if (somenteMinhas && !(d.status === "pendente_aprovacao" && d.nivel_aprovacao_atual != null && souAprovadorDoNivel(d, d.nivel_aprovacao_atual, user?.id))) return false;
+      if (somenteMinhas) {
+        const souAprovadorPendente = d.status === "pendente_aprovacao" && d.nivel_aprovacao_atual != null && souAprovadorDoNivel(d, d.nivel_aprovacao_atual, user?.id);
+        const minhaJustificativaPendente = minhasDespesasJustificativaPendente.has(d.id);
+        if (!souAprovadorPendente && !minhaJustificativaPendente) return false;
+      }
       if (tipo && d.tipo !== tipo) return false;
       if (classificacao && d.classificacao?.nome !== classificacao) return false;
       if (empresaId && d.empresa_id !== empresaId) return false;
@@ -250,7 +260,7 @@ export default function Aprovacoes({ base = "/app/malote" }: { base?: string } =
       }
       return true;
     });
-  }, [itens, status, nivelAprovacao, somenteMinhas, user?.id, tipo, classificacao, empresaId, contratoId, excecao, dataDe, dataAte, busca]);
+  }, [itens, status, nivelAprovacao, somenteMinhas, user?.id, minhasDespesasJustificativaPendente, tipo, classificacao, empresaId, contratoId, excecao, dataDe, dataAte, busca]);
 
   const totalPaginas = Math.max(1, Math.ceil(filtrados.length / PAGE_SIZE));
   const paginaAtual = Math.min(pagina, totalPaginas);
@@ -264,6 +274,13 @@ export default function Aprovacoes({ base = "/app/malote" }: { base?: string } =
     ({ despesa: d }) => d.status === "pendente_aprovacao" && d.nivel_aprovacao_atual != null && souAprovadorDoNivel(d, d.nivel_aprovacao_atual, user?.id)
   ).length;
   const outrasPendentes = contar("pendente_aprovacao") - minhasPendentes;
+  // SIS-2026-0283: contagem do botão "Minhas" — diferente do tile acima
+  // (que é só aprovação), soma também as despesas com justificativa
+  // pendente de mim, sem contar a mesma despesa duas vezes.
+  const minhasNoFiltro = new Set([
+    ...itens.filter(({ despesa: d }) => d.status === "pendente_aprovacao" && d.nivel_aprovacao_atual != null && souAprovadorDoNivel(d, d.nivel_aprovacao_atual, user?.id)).map((i) => i.despesa.id),
+    ...minhasDespesasJustificativaPendente,
+  ]).size;
 
   // SIS-2026-0281: contagem pros botões de "filtrar por nível".
   function contarNivel(n: 1 | 2 | 3) {
@@ -360,10 +377,12 @@ export default function Aprovacoes({ base = "/app/malote" }: { base?: string } =
                     </button>
                   );
                 })}
-                {/* "Minhas aprovações": só as pendentes onde o usuário logado
-                    é de fato aprovador do nível atual — soma com o N1/N2/N3
-                    acima, não substitui (útil sobretudo pra chefia/diretoria,
-                    que vê pendências de vários setores/classificações). */}
+                {/* "Minhas": pendentes onde o usuário logado é aprovador do
+                    nível atual OU tem justificativa pendente como analista
+                    de algum contrato da despesa (SIS-2026-0283) — soma com
+                    o N1/N2/N3 acima, não substitui (útil sobretudo pra
+                    chefia/diretoria, que vê pendências de vários
+                    setores/classificações). */}
                 <button
                   type="button"
                   onClick={toggleSomenteMinhas}
@@ -373,11 +392,11 @@ export default function Aprovacoes({ base = "/app/malote" }: { base?: string } =
                       ? "border-primary bg-primary/10 text-primary ring-1 ring-primary"
                       : "border-border bg-muted/40 text-muted-foreground hover:bg-muted"
                   )}
-                  title={`Só as minhas${minhasPendentes > 0 ? ` (${minhasPendentes})` : ""}`}
+                  title={`Só as minhas (aprovação ou justificativa pendente)${minhasNoFiltro > 0 ? ` (${minhasNoFiltro})` : ""}`}
                 >
                   <User className="h-3.5 w-3.5 shrink-0" />
                   Minhas
-                  {minhasPendentes > 0 && <span className="font-normal opacity-80">({minhasPendentes})</span>}
+                  {minhasNoFiltro > 0 && <span className="font-normal opacity-80">({minhasNoFiltro})</span>}
                 </button>
               </div>
             </div>
