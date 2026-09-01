@@ -97,3 +97,36 @@ export function useContratoERPDelete() {
       toast({ title: "Erro ao excluir", description: e.message, variant: "destructive" }),
   });
 }
+
+export interface ContratoSelecao {
+  id: string;
+  nome: string;
+}
+
+/**
+ * Lista enxuta de contratos para preencher um <Select>.
+ *
+ * Separada de useContratosERP porque aquela traz a linha inteira — as dezenas
+ * de colunas de imposto, faturamento e envio de NF — só para desenhar um
+ * dropdown de duas palavras.
+ *
+ * Sem filtro de empresa_id de propósito, e isso NÃO é descuido: a leitura de
+ * `contratos` é aberta a authenticated desde a migration 20260901000002, que
+ * tirou de vez o user_empresa do caminho. É assim que a cascata do Supply
+ * (useContratosCatalogo) monta a mesma lista; filtrar aqui faria estas telas
+ * mostrarem menos contrato que o Catálogo de Materiais.
+ */
+export function useContratosSelecao() {
+  return useQuery({
+    queryKey: ["contratos_selecao"],
+    queryFn: async (): Promise<ContratoSelecao[]> => {
+      const { data, error } = await (supabase as any)
+        .from("contratos")
+        .select("id, nome")
+        .order("nome");
+      if (error) throw error;
+      return (data ?? []) as ContratoSelecao[];
+    },
+  });
+}
+

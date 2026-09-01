@@ -13,6 +13,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { PainelNotasSefaz } from "./PainelNotasSefaz";
 import { useList } from "@/hooks/useGenericCrud";
+import { useContratosSelecao } from "@/hooks/useContratosERP";
 import { Upload, FileText, CheckCircle2, XCircle, AlertTriangle, PackageCheck, Eye, Loader2, FilePlus2 } from "lucide-react";
 import { toast } from "sonner";
 import { fmtBRL } from "@/components/crud/EntityCrudPage";
@@ -38,7 +39,7 @@ export default function NFEntrada() {
   const qc = useQueryClient();
   const fileRef = useRef<HTMLInputElement>(null);
   const { data: almoxarifados = [] } = useList<any>("almoxarifado", { orderBy: "codigo", ascending: true });
-  const { data: contratos = [] } = useList<any>("contrato", { orderBy: "numero" });
+  const { data: contratos = [] } = useContratosSelecao();
   const { data: ccs = [] } = useList<any>("centros_custo", { orderBy: "codigo", ascending: true });
 
   const { data: nfs = [], isLoading } = useQuery<any[]>({
@@ -371,7 +372,7 @@ export default function NFEntrada() {
                           <Select value={importForm.contrato_id ?? ""} onValueChange={(v) => setImportForm({ ...importForm, contrato_id: v })}>
                             <SelectTrigger><SelectValue placeholder="—" /></SelectTrigger>
                             <SelectContent>
-                              {contratos.map((c: any) => <SelectItem key={c.id} value={c.id}>{c.numero}</SelectItem>)}
+                              {contratos.map((c) => <SelectItem key={c.id} value={c.id}>{c.nome}</SelectItem>)}
                             </SelectContent>
                           </Select>
                         </div>

@@ -1,3 +1,4 @@
+import { useEffect } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
@@ -70,6 +71,37 @@ export function useContratosCatalogo(empresaId: string | null) {
       return data ?? [];
     },
   });
+}
+
+/**
+ * Mantém a raiz da cascata em dia sem o usuário precisar recarregar.
+ *
+ * A lista de contratos é a única parte do Catálogo que muda FORA desta
+ * tela: quem cadastra contrato é Licitações (/app/licitacoes/contratos).
+ * Sem isto, o contrato novo só aparecia depois de trocar de aba e voltar,
+ * que é quando o React Query refaz a busca por foco de janela.
+ *
+ * Só invalida a query; não remenda o cache com o payload do evento. Refazer
+ * o SELECT é uma consulta de dezenas de linhas e passa pela RLS de novo — o
+ * payload do Realtime, não.
+ *
+ * Primeiro uso de Realtime no projeto: `contratos` precisa estar na
+ * publication supabase_realtime (migration 20260930000022). Se não estiver,
+ * o canal simplesmente nunca recebe evento e a tela continua funcionando
+ * como antes, atualizando ao voltar o foco.
+ */
+export function useContratosCatalogoRealtime() {
+  const qc = useQueryClient();
+
+  useEffect(() => {
+    const canal = sb.channel("sup_cat_contratos")
+      .on("postgres_changes",
+          { event: "*", schema: "public", table: "contratos" },
+          () => qc.invalidateQueries({ queryKey: ["sup_cat_contratos"] }))
+      .subscribe();
+
+    return () => { sb.removeChannel(canal); };
+  }, [qc]);
 }
 
 export function usePostos(contratoId: string | null) {
