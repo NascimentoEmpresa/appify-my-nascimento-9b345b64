@@ -62,6 +62,7 @@ import {
   PlusCircle,
   UserMinus,
   CalendarCheck2,
+  AlertTriangle,
 } from "lucide-react";
 import { useTemAlcada } from "@/hooks/useTemAlcada";
 import { useAccessibleMenus, matchMenuCode } from "@/hooks/useAccessibleMenus";
@@ -140,6 +141,9 @@ const licitacoesModule: ModuleDef = {
         // Consulta do banco de preços do Compras, para a Licitação montar
         // proposta sem depender do comprador cotar (SIS-2026-0199).
         { label: "Preços de Materiais", to: "/app/licitacoes/precos-materiais", icon: Coins },
+        // SIS-2026-0283: espelho simplificado de Aprovações do Malote, só
+        // pra analista ver o que falta justificar nos contratos dele.
+        { label: "Justificativa Analistas", to: "/app/licitacoes/justificativa-analistas", icon: AlertTriangle },
         { label: "Documentos", to: "/app/documentos", icon: ScrollText },
         // B2: "Triagem & IA" removida do menu (rota /app/triagem segue existindo,
         // mas controlada pelo RouteGuard + matriz de permissões do ERP).
