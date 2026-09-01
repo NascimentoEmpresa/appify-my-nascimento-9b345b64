@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
-  competenciaDe, competenciaLegivel, dataParaBR, dataParaISO, descreveJanela, descreveTeto,
+  avisoDeTeto, competenciaDe, competenciaLegivel, dataParaBR, dataParaISO,
+  descreveJanela, descreveTeto,
   ROTULO_STATUS, STATUS_TODOS, emMinutos, fmtBRL, normalizaHora, podeEnviarAoMalote,
   podeLancar, proximoStatus, tiposDisponiveis,
   totalEmCentavos, valorEmCentavos, viagemAlcancaJanela,
@@ -10,8 +11,8 @@ import {
 // O Solicitar Reembolso veio de um bot de Discord onde o catálogo de despesas
 // era constante no código, "sem limite de valor", e o poder de aprovar saía do
 // cargo do Discord. O que estes testes travam é o que foi acrescentado por
-// cima: teto por tipo e janela de horário por tipo — as duas regras que agora
-// decidem se a despesa pode sequer ser lançada.
+// cima: janela de horário por tipo, que decide se a despesa pode ser lançada,
+// e teto por tipo, que desde 01/09/2026 só AVISA — ver `avisoDeTeto`.
 
 const tipo = (over: Partial<TipoReembolso> = {}): TipoReembolso => ({
   codigo: "almoco",
@@ -138,20 +139,20 @@ describe("podeLancar — as três perguntas, nessa ordem", () => {
     expect(podeLancar(undefined, 1000, "11:30", "12:30").motivo).toBe("tipo_inativo");
   });
 
-  it("fora da janela vem ANTES do teto", () => {
-    // Valor absurdo E fora da janela: a mensagem tem que mandar corrigir o
-    // horário, não o valor — senão a pessoa baixa o valor e continua barrada.
+  it("fora da janela barra, mesmo com valor absurdo", () => {
+    // A mensagem tem que mandar corrigir o horário: é a única coisa que
+    // realmente impede o lançamento.
     const v = podeLancar(tipo(), 999999, "14:00", "18:00");
     expect(v.ok).toBe(false);
     expect(v.motivo).toBe("fora_da_janela");
     expect(v.mensagem).toContain("11:00");
   });
 
-  it("acima do teto não entra, e a mensagem diz o teto", () => {
-    const v = podeLancar(tipo({ valor_maximo_centavos: 3500 }), 4000, "11:30", "12:30");
-    expect(v.ok).toBe(false);
-    expect(v.motivo).toBe("acima_do_teto");
-    expect(v.mensagem).toContain("35,00");
+  it("acima do teto ENTRA — o teto avisa, não barra", () => {
+    // O veto do teto derrubava o envio inteiro e deixava cabeçalho de R$ 0,00
+    // no banco. Quem decide sobre o excedente é o aprovador.
+    expect(podeLancar(tipo({ valor_maximo_centavos: 3500 }), 4000, "11:30", "12:30").ok).toBe(true);
+    expect(podeLancar(tipo({ valor_maximo_centavos: 3500 }), 999999, "11:30", "12:30").ok).toBe(true);
   });
 
   it("exatamente no teto entra", () => {
@@ -169,6 +170,25 @@ describe("podeLancar — as três perguntas, nessa ordem", () => {
 
   it("o caminho feliz", () => {
     expect(podeLancar(tipo(), 2500, "11:30", "12:30")).toEqual({ ok: true });
+  });
+});
+
+describe("avisoDeTeto — o teto virou recado, não barreira", () => {
+  it("avisa quando passa, dizendo o teto e o excedente", () => {
+    const a = avisoDeTeto(tipo({ valor_maximo_centavos: 3500 }), 6200);
+    expect(a).toContain("35,00");   // o teto
+    expect(a).toContain("27,00");   // 62,00 − 35,00
+  });
+
+  it("cala quando o valor cabe, incluindo exatamente no teto", () => {
+    expect(avisoDeTeto(tipo({ valor_maximo_centavos: 3500 }), 3500)).toBeNull();
+    expect(avisoDeTeto(tipo({ valor_maximo_centavos: 3500 }), 1000)).toBeNull();
+  });
+
+  it("cala para tipo sem teto e enquanto o valor está em branco", () => {
+    expect(avisoDeTeto(tipo({ valor_maximo_centavos: null }), 9999999)).toBeNull();
+    expect(avisoDeTeto(tipo(), null)).toBeNull();
+    expect(avisoDeTeto(undefined, 9999)).toBeNull();
   });
 });
 

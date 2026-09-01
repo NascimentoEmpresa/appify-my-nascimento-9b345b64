@@ -17,14 +17,17 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
+import {
+  Dialog, DialogContent, DialogDescription, DialogTitle,
+} from "@/components/ui/dialog";
 import { useMeuNome } from "@/hooks/useMeuNome";
 import {
   useCriarReembolso, useDecidirReembolso, useMeusStats, useMeuSetor, useReembolsos,
   useTiposReembolso, type DespesaNova,
 } from "@/hooks/useReembolso";
 import {
-  competenciaDe, dataParaISO, descreveJanela, descreveTeto, fmtBRL, normalizaHora,
-  podeLancar, tiposDisponiveis, totalEmCentavos, valorEmCentavos,
+  avisoDeTeto, competenciaDe, dataParaISO, descreveJanela, descreveTeto, fmtBRL,
+  normalizaHora, podeLancar, tiposDisponiveis, totalEmCentavos, valorEmCentavos,
   type TipoReembolso,
 } from "@/lib/reembolso/regras";
 import { ListaReembolsos } from "./componentes/ListaReembolsos";
@@ -74,6 +77,16 @@ export default function SolicitarReembolso() {
   const [chegada, setChegada] = useState("");
   const [observacoes, setObservacoes] = useState("");
   const [despesas, setDespesas] = useState<DespesaRascunho[]>([rascunhoVazio()]);
+
+  /**
+   * O recibo do envio.
+   *
+   * Um toast não servia aqui: o formulário se esvazia no mesmo instante, e ver
+   * a tela em branco com uma tarja sumindo no canto deixa a dúvida de sempre —
+   * "foi?". O diálogo segura o número da solicitação até a pessoa fechar.
+   */
+  const [confirmada, setConfirmada] =
+    useState<{ numero: string; total: number } | null>(null);
 
   const saidaOk = normalizaHora(saida);
   const chegadaOk = normalizaHora(chegada);
@@ -183,7 +196,7 @@ export default function SolicitarReembolso() {
         solicitante_nome: meuNome,
         despesas: prontas,
       });
-      toast.success(`Solicitação ${criada.numero ?? ""} enviada para aprovação.`);
+      setConfirmada({ numero: criada.numero ?? "", total: totalRascunho });
       limpar();
     } catch (e: any) {
       toast.error(e?.message ?? "Não deu para enviar a solicitação.");
@@ -344,6 +357,9 @@ export default function SolicitarReembolso() {
                     const veredito = d.tipo_codigo && d.valor
                       ? podeLancar(tipo, centavos, saidaOk, chegadaOk)
                       : { ok: true };
+                    // Aviso, não impedimento: o valor é o que a pessoa gastou,
+                    // e quem decide sobre o excedente é o aprovador.
+                    const aviso = avisoDeTeto(tipo, centavos);
                     return (
                       <div key={i} className="grid gap-3 rounded-xl border p-3 sm:grid-cols-[1fr_140px_1fr_auto]">
                         <div className="space-y-1.5">
@@ -364,7 +380,13 @@ export default function SolicitarReembolso() {
                         <div className="space-y-1.5">
                           <Label className="text-xs">Valor (R$)</Label>
                           <Input inputMode="decimal" placeholder="0,00" value={d.valor}
+                                 className={aviso ? "border-amber-400 focus-visible:ring-amber-400" : undefined}
                                  onChange={(e) => alterarDespesa(i, { valor: e.target.value })} />
+                          {tipo && (
+                            <p className="text-[11px] leading-tight text-muted-foreground">
+                              Teto {descreveTeto(tipo)}
+                            </p>
+                          )}
                         </div>
 
                         <div className="space-y-1.5">
@@ -390,6 +412,13 @@ export default function SolicitarReembolso() {
                           <p className="flex items-start gap-1.5 text-xs text-destructive sm:col-span-4">
                             <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
                             {veredito.mensagem}
+                          </p>
+                        )}
+
+                        {aviso && (
+                          <p className="flex items-start gap-1.5 rounded-lg bg-amber-50 p-2 text-xs text-amber-900 sm:col-span-4">
+                            <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                            {aviso}
                           </p>
                         )}
                       </div>
@@ -444,7 +473,60 @@ export default function SolicitarReembolso() {
           />
         </TabsContent>
       </Tabs>
+
+      <ConfirmacaoEnvio confirmada={confirmada} onFechar={() => setConfirmada(null)} />
     </div>
+  );
+}
+
+/**
+ * O "foi!" depois de enviar.
+ *
+ * Reaproveita as micro-interações que os Chamados já usam (`check-pop`,
+ * `status-flash`, `rise-in`), em vez de inventar keyframe novo para o mesmo
+ * gesto — assim o ERP confirma coisa sempre do mesmo jeito.
+ */
+function ConfirmacaoEnvio({ confirmada, onFechar }: {
+  confirmada: { numero: string; total: number } | null;
+  onFechar: () => void;
+}) {
+  return (
+    <Dialog open={!!confirmada} onOpenChange={(aberto) => { if (!aberto) onFechar(); }}>
+      <DialogContent className="sm:max-w-md">
+        <div className="flex flex-col items-center gap-4 py-4 text-center">
+          <span className="grid h-20 w-20 animate-status-flash place-items-center rounded-full bg-emerald-100">
+            <CheckCircle2 className="h-11 w-11 animate-check-pop text-emerald-600" />
+          </span>
+
+          <div className="animate-rise-in space-y-1">
+            <DialogTitle className="text-xl">Solicitação enviada!</DialogTitle>
+            <DialogDescription>
+              Ela já está na fila de quem aprova o seu setor.
+            </DialogDescription>
+          </div>
+
+          {confirmada && (
+            <div className="w-full animate-rise-in rounded-xl border bg-muted/40 p-4 [animation-delay:80ms]">
+              <div className="flex items-center justify-between gap-3 text-sm">
+                <span className="text-muted-foreground">Número</span>
+                <span className="font-semibold">{confirmada.numero || "—"}</span>
+              </div>
+              <div className="mt-1.5 flex items-center justify-between gap-3 text-sm">
+                <span className="text-muted-foreground">Total</span>
+                <span className="font-semibold">{fmtBRL(confirmada.total)}</span>
+              </div>
+            </div>
+          )}
+
+          <p className="text-xs text-muted-foreground">
+            Acompanhe em <strong>Minhas solicitações</strong> — dá para cancelar
+            enquanto ninguém decidir.
+          </p>
+
+          <Button className="w-full" onClick={onFechar}>Entendi</Button>
+        </div>
+      </DialogContent>
+    </Dialog>
   );
 }
 
