@@ -7,7 +7,7 @@ import {
   useEventosReembolso, useItensReembolso, urlDoComprovante, type Reembolso,
 } from "@/hooks/useReembolso";
 import {
-  ROTULO_STATUS, dataParaBR, fmtBRL, type StatusReembolso,
+  ROTULO_STATUS, avisoDeTeto, dataParaBR, fmtBRL, type StatusReembolso,
 } from "@/lib/reembolso/regras";
 import { useTiposReembolso } from "@/hooks/useReembolso";
 
@@ -23,6 +23,11 @@ const COR_STATUS: Record<StatusReembolso, string> = {
   aprovado: "bg-emerald-100 text-emerald-800 border-emerald-200",
   reprovado: "bg-rose-100 text-rose-800 border-rose-200",
   cancelado: "bg-slate-100 text-slate-700 border-slate-200",
+  // Faltava desde que a 20260930000007 acrescentou o status: a badge de quem
+  // já foi ao Malote saía sem classe nenhuma, cinza-transparente no meio de
+  // uma lista colorida — o passo FINAL do fluxo era o único sem cor. Azul
+  // porque é conclusão, não pendência.
+  enviado_malote: "bg-sky-100 text-sky-800 border-sky-200",
 };
 
 export function ListaReembolsos({ lista, carregando, vazio, acoes, mostrarSolicitante = false }: {
@@ -97,6 +102,14 @@ function Detalhe({ reembolso }: { reembolso: Reembolso }) {
     tipos.find((t) => t.codigo === codigo)?.nome ?? codigo;
 
   /**
+   * O teto deixou de barrar o lançamento (migration 20260930000027), então é
+   * AQUI que ele precisa aparecer: quem aprova é quem decide sobre o
+   * excedente, e ele só decide o que consegue ver.
+   */
+  const excedente = (codigo: string, centavos: number) =>
+    avisoDeTeto(tipos.find((t) => t.codigo === codigo), centavos);
+
+  /**
    * O bucket é privado, então o link é assinado na hora do clique e não na
    * renderização: gerar uma URL de 1h para cada comprovante de cada linha da
    * lista seria uma ida ao storage por item, à toa.
@@ -127,17 +140,27 @@ function Detalhe({ reembolso }: { reembolso: Reembolso }) {
           <p className="text-xs text-muted-foreground">Carregando…</p>
         ) : (
           <ul className="space-y-1">
-            {itens.map((i) => (
-              <li key={i.id} className="flex flex-wrap items-center gap-2">
-                <span className="min-w-32">{nomeDoTipo(i.tipo_codigo)}</span>
-                <span className="font-medium">{fmtBRL(i.valor_centavos)}</span>
-                <Button variant="link" size="sm" className="h-auto p-0"
-                        onClick={() => abrir(i.storage_path)}>
-                  <Paperclip className="mr-1 h-3 w-3" />
-                  {i.nome_arquivo ?? "comprovante"}
-                </Button>
-              </li>
-            ))}
+            {itens.map((i) => {
+              const acima = excedente(i.tipo_codigo, i.valor_centavos);
+              return (
+                <li key={i.id} className="flex flex-wrap items-center gap-2">
+                  <span className="min-w-32">{nomeDoTipo(i.tipo_codigo)}</span>
+                  <span className="font-medium">{fmtBRL(i.valor_centavos)}</span>
+                  {acima && (
+                    <Badge variant="outline"
+                           className="border-amber-200 bg-amber-100 text-amber-800"
+                           title={acima}>
+                      acima do teto
+                    </Badge>
+                  )}
+                  <Button variant="link" size="sm" className="h-auto p-0"
+                          onClick={() => abrir(i.storage_path)}>
+                    <Paperclip className="mr-1 h-3 w-3" />
+                    {i.nome_arquivo ?? "comprovante"}
+                  </Button>
+                </li>
+              );
+            })}
           </ul>
         )}
       </div>

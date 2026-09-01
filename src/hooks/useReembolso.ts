@@ -113,18 +113,33 @@ export function useSalvarTipo() {
 
 // ── Solicitações ─────────────────────────────────────────────────────
 /**
- * `escopo: "meus"` filtra por solicitante; `"fila"` traz o que a RLS deixar
- * ver — que já é o recorte por setor de quem lidera (ver
- * `cs_reembolso_lidera_setor` na migration). O front não repete esse recorte
- * de propósito: duas cópias da mesma regra divergem com o tempo.
+ * `escopo: "meus"` filtra por solicitante; `"fila"` traz SÓ o que a pessoa
+ * aprova.
+ *
+ * A fila vem da RPC `cs_reembolso_fila` e não de um SELECT na tabela. Não é
+ * preciosismo: a policy de SELECT precisa do ramo `solicitante_id =
+ * auth.uid()` para o dono ver a própria solicitação em "Minhas solicitações",
+ * e um SELECT sem filtro na tela de aprovação herdava esse ramo — a pessoa via
+ * os PRÓPRIOS reembolsos numa fila onde o guard depois respondia "Você não
+ * aprova reembolso do setor X". A RPC aplica o par menu + `aprova_setor` sem o
+ * ramo do dono, e continua sendo uma cópia só da regra, no banco.
  */
 export function useReembolsos(escopo: "meus" | "fila", competencia?: string, status?: StatusReembolso | "todos") {
   const { user } = useAuth();
   return useQuery({
     queryKey: ["reembolsos", escopo, competencia ?? "", status ?? "todos", user?.id ?? ""],
     queryFn: async (): Promise<Reembolso[]> => {
+      if (escopo === "fila") {
+        const { data, error } = await sb.rpc("cs_reembolso_fila", {
+          _status: status && status !== "todos" ? status : null,
+        });
+        if (error) throw error;
+        const lista = (data ?? []) as Reembolso[];
+        return competencia ? lista.filter((r) => r.competencia === competencia) : lista;
+      }
+
       let q = sb.from("CS_REEMBOLSO").select("*").order("created_at", { ascending: false });
-      if (escopo === "meus" && user?.id) q = q.eq("solicitante_id", user.id);
+      if (user?.id) q = q.eq("solicitante_id", user.id);
       if (competencia) q = q.eq("competencia", competencia);
       if (status && status !== "todos") q = q.eq("status", status);
       const { data, error } = await q;
@@ -208,6 +223,13 @@ export interface SolicitacaoNova {
  * financeiro não presta contas. Se um item falhar, a solicitação inteira é
  * apagada — meia solicitação no banco é pior que nenhuma, porque some da tela
  * de quem pediu e aparece na fila de quem aprova.
+ *
+ * ⚠️ Esse rollback foi decorativo até 01/09/2026: `CS_REEMBOLSO` não tinha
+ * GRANT de DELETE, então o `delete` voltava sem erro e sem apagar nada, e cada
+ * envio que falhava largava um REEMB pendente de R$ 0,00 sem despesa nenhuma.
+ * A permissão veio na 20260930000027, estreita (dono, pendente, sem itens). Se
+ * o delete ainda assim não pegar, a solicitação é cancelada — visível, mas
+ * inerte — em vez de ficar pendurada na fila de alguém.
  */
 export function useCriarReembolso() {
   const qc = useQueryClient();
@@ -248,7 +270,12 @@ export function useCriarReembolso() {
           if (erroItem) throw erroItem;
         }
       } catch (e) {
-        await sb.from("CS_REEMBOLSO").delete().eq("id", cabecalho.id);
+        const { error: erroDelete } = await sb
+          .from("CS_REEMBOLSO").delete().eq("id", cabecalho.id);
+        if (erroDelete) {
+          await sb.from("CS_REEMBOLSO")
+            .update({ status: "cancelado" }).eq("id", cabecalho.id);
+        }
         throw e;
       }
 
