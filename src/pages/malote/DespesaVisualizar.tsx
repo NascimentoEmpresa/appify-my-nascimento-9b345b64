@@ -53,7 +53,7 @@ import {
   TipoEvento,
 } from "@/hooks/useMaloteDespesa";
 import { useOrcadoClassificacao, useOrcadoClassificacaoMultiMes } from "@/hooks/useOrcadoClassificacao";
-import { useMaloteConfig, usePrazoNormalInclusao, useSouGerenteFinanceiroMalote, horaAtualPassouDe } from "@/hooks/useMaloteConfig";
+import { useMaloteConfig, usePrazoNormalInclusao, useSouGerenteFinanceiroMalote, exigeJustificativaPorConferenciaAtrasada } from "@/hooks/useMaloteConfig";
 import { useTiposFormaPagamento } from "@/hooks/useMaloteFormaPagamento";
 import { useUtilizadoOrcamento } from "@/hooks/useUtilizadoOrcamento";
 import { anoMesAtual } from "@/hooks/usePlanilhaCusto";
@@ -557,8 +557,14 @@ export default function DespesaVisualizar() {
     // SIS-2026-0250 (regra 1.2): N1 aprovando depois do horário de
     // conferência exige justificativa também — mesmo campo, outro
     // gatilho. N2/N3 nunca caem aqui (aprovam a qualquer momento).
-    if (despesa!.nivel_aprovacao_atual === 1 && horaAtualPassouDe(maloteConfig?.conferencia_aprovacao_horario) && !justificativa.trim()) {
-      return `Informe a justificativa da aprovação — obrigatória depois do horário limite de conferência (regra 1.2, ${maloteConfig?.conferencia_aprovacao_horario}).`;
+    // SIS-2026-0272: só dispara quando a despesa precisa ser resolvida hoje
+    // (ver exigeJustificativaPorConferenciaAtrasada).
+    if (
+      despesa!.nivel_aprovacao_atual === 1 &&
+      exigeJustificativaPorConferenciaAtrasada(dataPagamento, maloteConfig?.conferencia_aprovacao_horario) &&
+      !justificativa.trim()
+    ) {
+      return `Informe a justificativa da aprovação — obrigatória depois do horário limite de conferência (regra 1.2, ${maloteConfig?.conferencia_aprovacao_horario}) para despesa com pagamento hoje ou vencido.`;
     }
     return null;
   }
@@ -1105,7 +1111,9 @@ export default function DespesaVisualizar() {
                   <span className="text-xs text-muted-foreground font-normal">
                     {" "}
                     (obrigatória se escalar para N2{despesa.excecao && " — exceção sempre escala"}
-                    {maloteConfig?.conferencia_aprovacao_horario && <> ou se aprovar após {maloteConfig.conferencia_aprovacao_horario}</>})
+                    {maloteConfig?.conferencia_aprovacao_horario && (
+                      <> ou se aprovar após {maloteConfig.conferencia_aprovacao_horario} com pagamento hoje ou vencido</>
+                    )})
                   </span>
                 )}
               </Label>
