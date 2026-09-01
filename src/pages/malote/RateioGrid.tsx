@@ -638,12 +638,12 @@ export function RateioGrid({
                         <TableCell>
                           <div className="flex items-center justify-center gap-1">
                             {temJustificativa && (
-                              <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => abrirDialogJustificativa(linha, false)}>
+                              <Button type="button" variant="ghost" size="icon" className="h-7 w-7" onClick={() => abrirDialogJustificativa(linha, false)}>
                                 <Eye className="h-3.5 w-3.5" />
                               </Button>
                             )}
                             {precisaJustificar && podeJustificarEstaLinha && (
-                              <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => abrirDialogJustificativa(linha, true)}>
+                              <Button type="button" variant="ghost" size="icon" className="h-7 w-7" onClick={() => abrirDialogJustificativa(linha, true)}>
                                 <Pencil className="h-3.5 w-3.5" />
                               </Button>
                             )}
@@ -656,7 +656,7 @@ export function RateioGrid({
                     );
                   })()}
                 <TableCell className="text-right">
-                  <Button variant="ghost" size="icon" className="h-7 w-7 text-destructive" onClick={() => removerLinha(idx)} disabled={disabled}>
+                  <Button type="button" variant="ghost" size="icon" className="h-7 w-7 text-destructive" onClick={() => removerLinha(idx)} disabled={disabled}>
                     <Trash2 className="h-3.5 w-3.5" />
                   </Button>
                 </TableCell>
@@ -686,10 +686,10 @@ export function RateioGrid({
             )}
             {modoEdicaoJustificativa && (
               <DialogFooter>
-                <Button variant="outline" size="sm" onClick={() => setDialogLinha(null)} disabled={salvandoJustificativa}>
+                <Button type="button" variant="outline" size="sm" onClick={() => setDialogLinha(null)} disabled={salvandoJustificativa}>
                   Cancelar
                 </Button>
-                <Button size="sm" onClick={salvarJustificativa} disabled={salvandoJustificativa}>
+                <Button type="button" size="sm" onClick={salvarJustificativa} disabled={salvandoJustificativa}>
                   {salvandoJustificativa ? "Salvando..." : "Salvar justificativa"}
                 </Button>
               </DialogFooter>
@@ -699,7 +699,7 @@ export function RateioGrid({
       )}
 
       {!disabled && (
-        <Button variant="outline" size="sm" onClick={adicionarLinha} disabled={nenhumaDimensao} className="gap-1.5">
+        <Button type="button" variant="outline" size="sm" onClick={adicionarLinha} disabled={nenhumaDimensao} className="gap-1.5">
           <Plus className="h-3.5 w-3.5" /> Adicionar linha
         </Button>
       )}
