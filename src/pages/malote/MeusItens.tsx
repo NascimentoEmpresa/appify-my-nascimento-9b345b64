@@ -17,6 +17,7 @@ import {
   useMinhasDespesas,
   useContratosAtivos,
   useEmpresasGrupo,
+  useEmpresaPrimeiraLinhaRateio,
   MaloteDespesaRow,
   ItemLinhaMalote,
   StatusDespesa,
@@ -138,6 +139,15 @@ export default function MeusItens() {
   const { data: classificacoes = [] } = useClassificacoesOrcamento();
   const { data: contratos = [] } = useContratosAtivos();
   const { data: empresas = [] } = useEmpresasGrupo();
+  // SIS-2026-0288 (Iury, achado testando DM-2026-0180): coluna/filtro de
+  // Empresa usava despesa.empresa_id direto — contexto de sessão de quem
+  // lançou, não a empresa do rateio de verdade (mesmo ajuste já feito em
+  // Aprovações e Pagamento Malote, pra não voltar a divergir entre telas).
+  const despesaIdsTodos = useMemo(() => Array.from(new Set(itens.map((i) => i.despesa.id))), [itens]);
+  const { data: empresaPrimeiraLinhaPorDespesa } = useEmpresaPrimeiraLinhaRateio(despesaIdsTodos);
+  function empresaIdResolvida(despesa: MaloteDespesaRow): string | null {
+    return empresaPrimeiraLinhaPorDespesa?.get(despesa.id) ?? despesa.empresa_id ?? null;
+  }
 
   const [tab, setTab] = useState<"todos" | "solicitacoes" | "despesas">("todos");
   const [chip, setChip] = useState<ChipKey>("todos");
@@ -181,7 +191,7 @@ export default function MeusItens() {
       if (tab === "despesas" && aindaESolicitacao(despesa)) return false;
       if (!itemMatchesChip(item, chip)) return false;
       if (classificacaoId && despesa.classificacao_id !== classificacaoId) return false;
-      if (empresaId && despesa.empresa_id !== empresaId) return false;
+      if (empresaId && empresaIdResolvida(despesa) !== empresaId) return false;
       if (excecao === "sim" && !despesa.excecao) return false;
       if (excecao === "nao" && despesa.excecao) return false;
       const dataPagamento = parcela ? parcela.data_pagamento_real ?? parcela.data_vencimento : despesa.data_pagamento;
@@ -195,7 +205,8 @@ export default function MeusItens() {
       }
       return true;
     });
-  }, [itens, tab, chip, classificacaoId, empresaId, excecao, periodoInicio, periodoFim, dataAtualizacaoDe, dataAtualizacaoAte, busca]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [itens, tab, chip, classificacaoId, empresaId, empresaPrimeiraLinhaPorDespesa, excecao, periodoInicio, periodoFim, dataAtualizacaoDe, dataAtualizacaoAte, busca]);
 
   function limparFiltros() {
     setPeriodoInicio("");
@@ -386,7 +397,7 @@ export default function MeusItens() {
                     <TableCell>{dataPagamento ? new Date(dataPagamento + "T00:00:00").toLocaleDateString("pt-BR") : "—"}</TableCell>
                     <TableCell>{despesa.classificacao?.nome ?? "—"}</TableCell>
                     <TableCell className="font-medium">{despesa.nome}</TableCell>
-                    <TableCell>{empresas.find((e) => e.id === despesa.empresa_id)?.nome ?? "—"}</TableCell>
+                    <TableCell>{empresas.find((e) => e.id === empresaIdResolvida(despesa))?.nome ?? "—"}</TableCell>
                     <TableCell>{despesa.forma_pagamento ?? "—"}</TableCell>
                     <TableCell>{Number(valor).toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}</TableCell>
                     <TableCell>

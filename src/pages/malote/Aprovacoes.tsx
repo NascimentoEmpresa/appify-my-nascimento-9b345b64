@@ -18,6 +18,7 @@ import {
   useEmpresasGrupo,
   useContratosAtivos,
   useClassificacaoIdsPorDespesaRateio,
+  useEmpresaPrimeiraLinhaRateio,
   nomesAprovadorNivel,
   souAprovadorDoNivel,
   STATUS_LABEL,
@@ -169,6 +170,18 @@ export default function Aprovacoes({ base = "/app/malote" }: { base?: string } =
     [itens]
   );
   const { data: classificacaoIdsRateio } = useClassificacaoIdsPorDespesaRateio(despesaIdsRateio);
+  // SIS-2026-0288 (Iury, achado testando DM-2026-0180): coluna/filtro de
+  // Empresa aqui usava despesa.empresa_id direto — que é só o contexto de
+  // sessão de quem lançou, não a empresa do rateio de verdade (por isso
+  // Aprovações mostrava HAGG e Pagamento, já corrigido, mostrava AGPS pra
+  // MESMA despesa). Mesma resolução em lote usada em Pagamento Malote:
+  // empresa da primeira linha do rateio, com despesa.empresa_id só de
+  // fallback pras despesas sem rateio por empresa.
+  const despesaIdsTodos = useMemo(() => Array.from(new Set(itens.map((i) => i.despesa.id))), [itens]);
+  const { data: empresaPrimeiraLinhaPorDespesa } = useEmpresaPrimeiraLinhaRateio(despesaIdsTodos);
+  function empresaIdResolvida(despesa: MaloteDespesaRow): string | null {
+    return empresaPrimeiraLinhaPorDespesa?.get(despesa.id) ?? despesa.empresa_id ?? null;
+  }
   const { data: classificacoesTodas = [] } = useClassificacoesOrcamentoAdmin();
   const classificacaoPorId = useMemo(
     () => new Map(classificacoesTodas.map((c) => [c.id, c])),
@@ -279,7 +292,7 @@ export default function Aprovacoes({ base = "/app/malote" }: { base?: string } =
       }
       if (tipo && d.tipo !== tipo) return false;
       if (classificacao && d.classificacao?.nome !== classificacao) return false;
-      if (empresaId && d.empresa_id !== empresaId) return false;
+      if (empresaId && empresaIdResolvida(d) !== empresaId) return false;
       if (contratoId && d.contrato_id !== contratoId) return false;
       if (excecao === "sim" && !d.excecao) return false;
       if (excecao === "nao" && d.excecao) return false;
@@ -309,6 +322,7 @@ export default function Aprovacoes({ base = "/app/malote" }: { base?: string } =
     tipo,
     classificacao,
     empresaId,
+    empresaPrimeiraLinhaPorDespesa,
     contratoId,
     excecao,
     dataAtualizacaoDe,
@@ -565,10 +579,12 @@ export default function Aprovacoes({ base = "/app/malote" }: { base?: string } =
                 <TableRow>
                   <TableHead>Tipo</TableHead>
                   <TableHead>Nº</TableHead>
+                  {/* SIS-2026-0288 (Iury): "Empresa / Contrato" logo após o
+                      Nº, não mais depois de Classificação. */}
+                  <TableHead>Empresa / Contrato</TableHead>
                   <TableHead>Parcela</TableHead>
                   <TableHead>Nome / Motivo</TableHead>
                   <TableHead>Classificação</TableHead>
-                  <TableHead>Empresa / Contrato</TableHead>
                   <TableHead className="text-right">Valor (R$)</TableHead>
                   <TableHead>Data de Pagamento</TableHead>
                   <TableHead>Solicitante</TableHead>
@@ -598,7 +614,7 @@ export default function Aprovacoes({ base = "/app/malote" }: { base?: string } =
                   <LinhaItem
                     key={`${item.despesa.id}-${item.parcela?.id ?? "unica"}`}
                     item={item}
-                    nomeEmpresa={empresasMap.get(item.despesa.empresa_id)}
+                    nomeEmpresa={empresasMap.get(empresaIdResolvida(item.despesa) ?? "")}
                     nomeContrato={item.despesa.contrato_id ? contratosMap.get(item.despesa.contrato_id) : undefined}
                     aprovadorNomes={aprovadorNomes}
                     onAbrir={() => abrirItem(item.despesa)}
@@ -661,6 +677,10 @@ function LinhaItem({
       <TableCell className="text-sm">{isSolicitacao ? "Solicitação" : "Despesa"}</TableCell>
       <TableCell className="font-mono text-xs">{despesa.numero}</TableCell>
       <TableCell className="text-sm">
+        <p>{nomeEmpresa ?? "—"}</p>
+        {nomeContrato && <p className="text-xs text-muted-foreground">{nomeContrato}</p>}
+      </TableCell>
+      <TableCell className="text-sm">
         {parcela ? `${parcela.numero_parcela}/${despesa.numero_parcelas}` : <span className="text-muted-foreground">—</span>}
       </TableCell>
       <TableCell className="text-sm">
@@ -668,10 +688,6 @@ function LinhaItem({
         {despesa.motivo && <p className="text-xs text-muted-foreground">{despesa.motivo}</p>}
       </TableCell>
       <TableCell className="text-sm">{despesa.classificacao?.nome ?? "—"}</TableCell>
-      <TableCell className="text-sm">
-        <p>{nomeEmpresa ?? "—"}</p>
-        {nomeContrato && <p className="text-xs text-muted-foreground">{nomeContrato}</p>}
-      </TableCell>
       <TableCell className="text-right text-sm">
         {Number(valor).toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}
       </TableCell>
