@@ -223,6 +223,10 @@ export interface MaloteDespesaRow {
   classificacao?: {
     id: string;
     nome: string;
+    // SIS-2026-0286: coluna/filtro de Setor em Pagamento Malote — o "setor"
+    // que o setor_responsavel da própria Classificação (Regras Gerais do
+    // Malote), não uma tabela nova.
+    setor_responsavel?: string | null;
     aprovador1_nomes?: string[];
     aprovador2_nomes?: string[];
     aprovador3_nomes?: string[];
@@ -323,7 +327,7 @@ const DESPESA_COLUMNS =
   "cotacao_reprovada_motivo, cotacao_observacoes, cotacao_vencedor_num, " +
   "comprovante_pagamento_path, observacao_pagamento, pago_em, pago_por, conferido_em, conferido_por, " +
   "arquivos, created_at, created_by, updated_at, " +
-  "classificacao:classificacao_id(id, nome, aprovador1_nomes, aprovador2_nomes, aprovador3_nomes, aprovador1_user_ids, aprovador2_user_ids, aprovador3_user_ids, " +
+  "classificacao:classificacao_id(id, nome, setor_responsavel, aprovador1_nomes, aprovador2_nomes, aprovador3_nomes, aprovador1_user_ids, aprovador2_user_ids, aprovador3_user_ids, " +
   "aprovador1_limite_pct, aprovador1_sem_limite, aprovador2_limite_pct, aprovador2_sem_limite, aprovador3_limite_pct, aprovador3_sem_limite, " +
   "aprovador_solicitacao_user_id, aprovador_solicitacao_nome, limite_justificativa_pct)";
 
@@ -1204,6 +1208,35 @@ export function useEmpresaPrimeiraLinhaRateio(despesaIds: string[]) {
         // Linhas já vêm ordenadas por `ordem` — a primeira vista pra cada
         // despesa_id é a que fica (não sobrescreve se já tiver achado).
         if (!mapa.has(r.despesa_id)) mapa.set(r.despesa_id, r.empresa_id);
+      }
+      return mapa;
+    },
+  });
+}
+
+// SIS-2026-0286 (Iury): coluna/filtro de "Setor" em Pagamento Malote — o
+// setor_responsavel é da CLASSIFICAÇÃO, não da despesa. Despesa de
+// classificação única já traz isso via o join `classificacao` do select
+// principal; despesa de rateio (multi-classificação, classificacao_id
+// null) precisa da classificação da PRIMEIRA linha (mesmo critério do
+// useEmpresaPrimeiraLinhaRateio, pra manter os dois consistentes).
+export function useClassificacaoPrimeiraLinhaRateio(despesaIds: string[]) {
+  const chave = despesaIds.slice().sort().join(",");
+  return useQuery({
+    queryKey: ["malote_rateio_classificacao_primeira_linha", chave],
+    enabled: despesaIds.length > 0,
+    staleTime: 60_000,
+    queryFn: async () => {
+      const { data, error } = await (supabase as any)
+        .from("malote_despesa_rateio_linha")
+        .select("despesa_id, classificacao_id, ordem")
+        .in("despesa_id", despesaIds)
+        .not("classificacao_id", "is", null)
+        .order("ordem");
+      if (error) throw error;
+      const mapa = new Map<string, string>();
+      for (const r of (data ?? []) as { despesa_id: string; classificacao_id: string; ordem: number }[]) {
+        if (!mapa.has(r.despesa_id)) mapa.set(r.despesa_id, r.classificacao_id);
       }
       return mapa;
     },
