@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { CurrencyInput } from "@/components/ui/CurrencyInput";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
@@ -629,13 +630,10 @@ export function ModeloNfDialog({
                   <Label className="text-[10px] text-muted-foreground" title="Referência informativa (não é usada em cálculo automático)">
                     Valor executado (ref.)
                   </Label>
-                  <Input
+                  <CurrencyInput
                     className="h-8 text-xs"
-                    type="number"
-                    step="0.01"
-                    placeholder="R$"
                     value={it.valorReferencia}
-                    onChange={(e) => updateItem(i, { valorReferencia: e.target.value })}
+                    onChange={(v) => updateItem(i, { valorReferencia: v })}
                   />
                 </div>
                 <div className="col-span-2">
