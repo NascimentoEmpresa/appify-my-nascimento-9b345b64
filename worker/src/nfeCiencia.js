@@ -38,6 +38,15 @@ const AMBIENTE = process.env.NFE_AMBIENTE || "1";
 // conta de uma variável esquecida.
 const LIGADO = process.env.NFE_CIENCIA === "1";
 
+// Recusas que valem para UMA nota e nao melhoram com o tempo.
+//
+// 650 = "Evento de Ciencia da Operacao para NFe cancelada ou denegada". Nota
+// cancelada nao tem mercadoria a receber; a SEFAZ nunca vai aceitar ciencia
+// sobre ela, hoje nem daqui a um mes. Isso e diferente de erro sistemico
+// (assinatura, CNPJ, certificado vencido), que atinge o lote inteiro e onde
+// parar e o certo -- ver o `return` la embaixo.
+const RECUSA_DEFINITIVA = new Set(["650"]);
+
 // Quantas por ciclo. Baixo de propósito: são eventos irreversíveis, e um laço
 // apertado sobre uma fila grande registraria centenas antes de alguém notar
 // que algo está errado.
@@ -179,6 +188,7 @@ async function darCienciaPendentes(supabase) {
     .select("id, chave")
     .eq("tipo", "resumo")
     .is("ciencia_em", null)
+    .is("ciencia_dispensada_em", null)
     .not("chave", "is", null)
     .order("nsu", { ascending: true })
     .limit(POR_CICLO);
@@ -205,10 +215,29 @@ async function darCienciaPendentes(supabase) {
         `[worker] Ciência registrada: ${doc.chave} (${resultado.cStat})` +
           (resultado.cStat === "573" ? " — já existia" : ""),
       );
+    } else if (RECUSA_DEFINITIVA.has(resultado.cStat)) {
+      // Recusa definitiva desta nota só: registra o motivo, tira da fila e
+      // SEGUE para a próxima.
+      //
+      // Abortar o lote aqui foi o que travou a fila em 01/09/2026. A nota
+      // cancelada do RESTAURANTE DONA ANA era a mais antiga por NSU, então
+      // reaparecia como primeira a cada ciclo, era recusada de novo, e as
+      // outras 17 nunca chegavam a ser tentadas. Sem `ciencia_dispensada_em`
+      // não havia como sair desse laço: a recusa não era gravada em lugar
+      // nenhum, e a cada 60s gastava-se uma escrita inútil na SEFAZ.
+      await supabase
+        .from("nfe_dist_documento")
+        .update({
+          ciencia_dispensada_em: new Date().toISOString(),
+          ciencia_dispensa_motivo: `${resultado.cStat} ${resultado.motivo ?? ""}`.trim(),
+        })
+        .eq("id", doc.id);
+      console.warn(`[worker] Ciência dispensada: ${doc.chave} — ${resultado.cStat} ${resultado.motivo}`);
     } else {
       console.warn(`[worker] Ciência recusada: ${doc.chave} — ${resultado.cStat} ${resultado.motivo}`);
-      // Para o lote aqui: se a SEFAZ recusou uma, provavelmente recusará as
-      // seguintes pelo mesmo motivo, e insistir vira consumo indevido.
+      // Para o lote aqui: erro sistêmico — assinatura, CNPJ, certificado —
+      // recusaria as seguintes pelo mesmo motivo, e insistir vira consumo
+      // indevido.
       return;
     }
   }
