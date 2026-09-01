@@ -586,13 +586,12 @@ export default function ControleDiarias() {
               });
             }
           }}
-          onAprovar={async (uuid, motivo, dataPagamento) => {
+          onAprovar={async (uuid, despesa) => {
             try {
               await decidir.mutateAsync({
                 id: uuid,
                 status: "aprovada",
-                maloteMotivo: motivo,
-                maloteDataPagamento: dataPagamento,
+                despesa,
               });
               setModal(null);
               toast({ title: "Solicitação aprovada", description: "Enviada para o Malote." });
