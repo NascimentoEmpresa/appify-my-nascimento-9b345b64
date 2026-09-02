@@ -1704,6 +1704,56 @@ function ContratoCombobox({
   );
 }
 
+function ClienteCombobox({
+  cliente, onPick,
+}: {
+  cliente: string;
+  onPick: (nome: string) => void;
+}) {
+  const { data: contratos = [] } = useContratosERP();
+  const [aberto, setAberto] = useState(false);
+  const clientes = Array.from(
+    new Set(contratos.map((c) => c.cliente).filter(Boolean)),
+  ).sort((a, b) => a.localeCompare(b, "pt-BR"));
+
+  return (
+    <Popover open={aberto} onOpenChange={setAberto}>
+      <PopoverTrigger asChild>
+        <button
+          type="button"
+          role="combobox"
+          className="flex h-8 w-full items-center justify-between rounded border border-border bg-background px-2 text-sm outline-none focus:border-primary"
+        >
+          <span className={cn("truncate", !cliente && "text-muted-foreground")}>
+            {cliente || "Selecionar cliente…"}
+          </span>
+          <ChevronsUpDown className="ml-2 h-3.5 w-3.5 shrink-0 opacity-50" />
+        </button>
+      </PopoverTrigger>
+      <PopoverContent className="w-[--radix-popover-trigger-width] p-0" align="start">
+        <Command>
+          <CommandInput placeholder="Buscar cliente…" />
+          <CommandList>
+            <CommandEmpty>Nenhum cliente encontrado.</CommandEmpty>
+            <CommandGroup>
+              {clientes.map((nome) => (
+                <CommandItem
+                  key={nome}
+                  value={nome}
+                  onSelect={() => { onPick(nome); setAberto(false); }}
+                >
+                  <Check className={cn("mr-2 h-4 w-4 shrink-0", cliente === nome ? "opacity-100" : "opacity-0")} />
+                  <span className="truncate">{nome}</span>
+                </CommandItem>
+              ))}
+            </CommandGroup>
+          </CommandList>
+        </Command>
+      </PopoverContent>
+    </Popover>
+  );
+}
+
 // ─── Drawer do formulário ─────────────────────────────────────────────────────
 
 function FormDrawer({
@@ -2092,19 +2142,32 @@ function FormDrawer({
             <Section title="1 — Cadastro do Contrato">
               <div className="grid grid-cols-4 gap-3">
                 <div>
-                  <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+                  <label className="mb-1 flex min-h-[2rem] items-end text-[10px] font-semibold uppercase leading-tight tracking-wider text-muted-foreground">
                     Orçado / Executado
                   </label>
                   <select
                     value={form.orexec ?? ""}
                     onChange={(e) => set("orexec", e.target.value)}
-                    className="h-8 w-full rounded border border-border bg-background px-2 text-sm outline-none focus:border-primary"
+                    className={cn(
+                      "h-8 w-full rounded border px-2 text-sm font-semibold outline-none focus:border-primary",
+                      form.orexec === "EXECUTADO"
+                        ? "border-success/30 bg-success-soft text-success"
+                        : "border-info/30 bg-info-soft text-info",
+                    )}
                   >
                     <option value="EXECUTADO">EXECUTADO</option>
                     <option value="ORÇADO">ORÇADO</option>
                   </select>
                 </div>
-                {textField("cliente", "Cliente", 1)}
+                <div>
+                  <label className="mb-1 flex min-h-[2rem] items-end text-[10px] font-semibold uppercase leading-tight tracking-wider text-muted-foreground">
+                    Cliente
+                  </label>
+                  <ClienteCombobox
+                    cliente={form.cliente ?? ""}
+                    onPick={(nome) => set("cliente", nome)}
+                  />
+                </div>
                 <div>
                   <label className="mb-1 flex min-h-[2rem] items-end text-[10px] font-semibold uppercase leading-tight tracking-wider text-muted-foreground">
                     Contrato
@@ -2127,7 +2190,7 @@ function FormDrawer({
                 {textField("servico", "Serviço", 1)}
                 {textField("sindicato", "Sindicato", 1)}
                 <div>
-                  <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+                  <label className="mb-1 flex min-h-[2rem] items-end text-[10px] font-semibold uppercase leading-tight tracking-wider text-muted-foreground">
                     Data de Vigência
                   </label>
                   <input

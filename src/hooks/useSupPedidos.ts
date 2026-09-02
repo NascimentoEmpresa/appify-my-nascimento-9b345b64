@@ -254,6 +254,60 @@ export async function enviarFotoCracha(arquivo: File): Promise<string | null> {
   return caminho;
 }
 
+// ── Edição (operador de Supply) ──────────────────────────────────────
+
+/**
+ * Um item na hora de editar. `id` nulo = item que está entrando agora; com
+ * id, é um item que já existe e vai ser atualizado. Quem não vier na lista
+ * é removido — a RPC recusa a remoção se a peça já saiu do estoque.
+ */
+export interface ItemEdicao {
+  id: string | null;
+  item_id: string | null;
+  tamanho?: string | null;
+  quantidade: number;
+  litros?: string | null;
+}
+
+export interface EdicaoPedido {
+  pedido_id: string;
+  colaborador_empregado_id?: number | null;
+  nome_colaborador?: string | null;
+  admissao?: boolean;
+  tipo_admissao?: string | null;
+  data_admissao?: string | null;
+  tipo_pedido?: string;
+  observacoes_solicitante?: string | null;
+  observacao?: string | null;
+  /**
+   * Omitido de propósito quando o pedido está DESPACHADO/CANCELADO: nesse
+   * estado a RPC recusa qualquer mexida em item, e mandar a lista (mesmo
+   * igual) viraria erro na cara do operador que só queria anotar algo.
+   */
+  itens?: ItemEdicao[];
+}
+
+export function useEditarPedido() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ pedido_id, ...resto }: EdicaoPedido) => {
+      const { data, error } = await sb.rpc("sup_pedido_editar", {
+        p_pedido_id: pedido_id,
+        p_payload: resto,
+      });
+      if (error) throw error;
+      return data as {
+        pedido_id: string; travado: boolean;
+        itens_incluidos: number; itens_alterados: number; itens_removidos: number;
+      };
+    },
+    onSuccess: () => {
+      ["sup_pedido", "sup_pedido_historico", "sup_ext_meus_pedidos", "sup_est_tags_do_pedido"]
+        .forEach((k) => qc.invalidateQueries({ queryKey: [k] }));
+    },
+  });
+}
+
 // ── Acompanhamento (solicitante) ─────────────────────────────────────
 
 export function useMeusPedidos() {

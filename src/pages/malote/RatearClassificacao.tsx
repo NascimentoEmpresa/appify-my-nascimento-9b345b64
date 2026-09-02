@@ -11,7 +11,7 @@ import { ArrowLeft, LayoutGrid, AlertTriangle } from "lucide-react";
 import { toast } from "sonner";
 import { useEmpresaId } from "@/hooks/useEmpresaId";
 import { useClassificacoesOrcamento } from "@/hooks/usePlanejamentoOrcamentario";
-import { useSalvarDespesa, uploadAnexoMalote, gerarParcelas, RateioLinha } from "@/hooks/useMaloteDespesa";
+import { useSalvarDespesa, uploadAnexosMalote, gerarParcelas, RateioLinha } from "@/hooks/useMaloteDespesa";
 import { useMaloteConfig, usePrazoNormalInclusao, horaAtualPassouDe } from "@/hooks/useMaloteConfig";
 import { useTiposFormaPagamento } from "@/hooks/useMaloteFormaPagamento";
 import { RateioGrid, DimensoesRateio } from "./RateioGrid";
@@ -146,7 +146,7 @@ export default function RatearClassificacao() {
       });
 
       if (arquivos.length > 0) {
-        const paths = await Promise.all(arquivos.map((f) => uploadAnexoMalote(f, despesaId)));
+        const paths = await uploadAnexosMalote(arquivos, despesaId, nome.trim());
         await salvar.mutateAsync({
           id: despesaId,
           empresa_id: empresaId,
