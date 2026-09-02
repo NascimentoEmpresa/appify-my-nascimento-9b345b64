@@ -211,8 +211,8 @@ export function limparNomesProprios(
     .replace(REGEX_TOKEN_NOME, (token) =>
       dicionario.has(semAcento(token).toLowerCase()) ? "[pessoa]" : token
     )
-    .replaceAll(MARCADOR_EMAIL, "[dado removido]")
-    .replaceAll(MARCADOR_MENCAO, "[pessoa]");
+    .split(MARCADOR_EMAIL).join("[dado removido]")
+    .split(MARCADOR_MENCAO).join("[pessoa]");
 
   return texto
     .replace(/\[pessoa\](?:\s+\[pessoa\])+/g, "[pessoa]")
