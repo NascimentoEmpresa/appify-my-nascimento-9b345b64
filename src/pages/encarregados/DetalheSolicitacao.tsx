@@ -126,7 +126,14 @@ const OCULTAS = new Set([
 
 export function DetalheSolicitacao({ tipo, id, titulo, status, onFechar }: {
   tipo: TipoSolicitacao;
-  id: number;
+  /**
+   * `number | string` porque as duas coisas chegam: as solicitações antigas
+   * têm id bigint, e Chamado e Materiais têm uuid (ver `SolItem` em
+   * MinhasSolicitacoes). Declarar só `number` não impedia o uuid de chegar —
+   * apenas fazia o chamador ter de mentir com um cast. Aqui dentro o id só é
+   * usado em `.eq(...)` e `String(id)`, que aceitam os dois.
+   */
+  id: number | string;
   titulo: string;
   status: string;
   onFechar: () => void;
