@@ -653,8 +653,11 @@ export default function Aprovacoes({ base = "/app/malote" }: { base?: string } =
                   <TableHead>Solicitante</TableHead>
                   <TableHead className="text-center">Status</TableHead>
                   <TableHead>Exceção</TableHead>
-                  <TableHead>Justificativa</TableHead>
                   <TableHead>Última atualização</TableHead>
+                  {/* SIS-2026-0288-ajuste (Iury/usuário): "Justificativa"
+                      virou sino — pedido pra ficar bem evidente e como
+                      última coisa da linha, não mais coladinho no Nº. */}
+                  <TableHead className="w-10 px-2 text-center" />
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -793,10 +796,14 @@ function LinhaItem({
         )}
       </TableCell>
       <TableCell className="text-sm">{despesa.excecao ? <Badge variant="destructive">Sim</Badge> : "Não"}</TableCell>
-      <TableCell className="text-sm whitespace-nowrap">
-        <JustificativaPendenteBadge despesa={despesa} parcela={parcela} />
-      </TableCell>
       <TableCell className="text-xs text-muted-foreground">{new Date(despesa.updated_at).toLocaleString("pt-BR")}</TableCell>
+      {/* SIS-2026-0288-ajuste (Iury/usuário): sino da Justificativa como
+          última coisa da linha, bem mais evidente que o ícone solto de
+          antes — círculo cheio com fundo âmbar, chama a atenção sem
+          precisar de coluna de texto (só aparece quando há pendência). */}
+      <TableCell className="px-2 text-center">
+        <JustificativaPendenteBadge despesa={despesa} parcela={parcela} variant="icon" />
+      </TableCell>
     </TableRow>
   );
 }
