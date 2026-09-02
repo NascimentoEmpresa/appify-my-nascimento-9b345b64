@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
 import { ConversaSolicitacao } from "@/components/solicitacoes/ConversaSolicitacao";
+import { ResumoDeFuncoes } from "@/components/fluxos/ResumoDeFuncoes";
 
 // ── Helpers ──────────────────────────────────────────────────────────
 function fmtDt(s?: string) {
@@ -108,9 +109,12 @@ export default function Ferias() {
 
   return (
     <div style={{ padding: "4px 2px 40px" }}>
-      <div style={{ marginBottom: 18 }}>
-        <h1 style={{ fontSize: 22, fontWeight: 800, color: "#0f172a", display: "flex", alignItems: "center", gap: 8 }}>📅 Gestão de Férias</h1>
-        <p style={{ fontSize: 13, color: "#64748b", marginTop: 2 }}>Solicitações de férias dos colaboradores — aprove, reprove ou acompanhe.</p>
+      <div style={{ marginBottom: 18, display: "flex", alignItems: "flex-end", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
+        <div>
+          <h1 style={{ fontSize: 22, fontWeight: 800, color: "#0f172a", display: "flex", alignItems: "center", gap: 8 }}>📅 Gestão de Férias</h1>
+          <p style={{ fontSize: 13, color: "#64748b", marginTop: 2 }}>Solicitações de férias dos colaboradores — aprove, reprove ou acompanhe.</p>
+        </div>
+        <ResumoDeFuncoes fluxo="ferias" />
       </div>
 
       {/* KPIs */}

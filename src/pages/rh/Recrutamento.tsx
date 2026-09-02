@@ -6,6 +6,7 @@ import { usePermissoes } from "@/context/PermissoesContext";
 import { useEmpresaAtiva } from "@/context/EmpresaAtivaContext";
 import { useContratosCatalogo, usePostos, useFuncoes } from "@/hooks/useSupCatalogo";
 import { ESTADOS_BR, municipiosDe } from "@/data/municipios-brasil";
+import { ResumoDeFuncoes } from "@/components/fluxos/ResumoDeFuncoes";
 import {
   MOTIVOS_VAGA, motivoLabel, ehSubstituicao, avaliarPrazo, dataMinimaVaga,
   cargoExigeCnh, aplicarReqCnh, REQ_CNH_TEXTO, fmtBr,
@@ -152,7 +153,7 @@ const emailSolicitante = (s: { solicitante_cpf?: string; solicitante_nome?: stri
   [s.solicitante_cpf, s.solicitante_nome].find((v) => String(v ?? "").includes("@")) ?? "";
 
 function badgeStatusCls(st: string) {
-  if (st === "Pendente Operacional")  return "bg-yellow-100 text-yellow-800 border border-yellow-200";
+  if (st === "Pendente Analista")  return "bg-yellow-100 text-yellow-800 border border-yellow-200";
   if (st === "Pendente Recrutamento") return "bg-purple-100 text-purple-700 border border-purple-200";
   if (st === "Reprovada")             return "bg-red-100 text-red-700 border border-red-200";
   if (st === "Contratado" || st?.startsWith("Concluído")) return "bg-green-100 text-green-700 border border-green-200";
@@ -180,7 +181,7 @@ function badgeUrgCls(u?: string) {
 
 // Board externo (por solicitação) — fluxo curto.
 const KB_STATUS_ORDER = [
-  "Pendente Operacional",
+  "Pendente Analista",
   "Pendente Recrutamento",
   "Seleção de Candidato",
   "Concluída",
@@ -188,7 +189,7 @@ const KB_STATUS_ORDER = [
 ];
 
 const KB_COL_COLORS: Record<string, { dot: string; label: string; accent: string }> = {
-  "Pendente Operacional":  { dot: "#f59e0b", label: "#b45309", accent: "#f59e0b" },
+  "Pendente Analista":  { dot: "#f59e0b", label: "#b45309", accent: "#f59e0b" },
   "Pendente Recrutamento": { dot: "#8b5cf6", label: "#7c3aed", accent: "#8b5cf6" },
   "Seleção de Candidato":  { dot: "#3b82f6", label: "#2563eb", accent: "#3b82f6" },
   "Concluída":             { dot: "#16a34a", label: "#15803d", accent: "#16a34a" },
@@ -280,15 +281,28 @@ const STATUS_PROCESSO = [
 // cópia divergiria na primeira correção feita só de um lado.
 //
 //   escopo "rh"          → Recrutamento e Seleção, o processo inteiro
-//   escopo "operacional" → só a fila "Pendente Operacional", para aprovar
+//   escopo "analista"    → só a fila "Pendente Analista", para aprovar
 //                          ou reprovar antes de virar vaga
+//   escopo "operacional" → a MESMA fila, só que sem decidir nada: abre o
+//                          card, lê o andamento e pronto
 //
-// O que muda é o recorte e QUAL MENU decide as permissões: no Operacional
-// quem manda é 'operacional_recrutamento', então liberar aquele menu já
-// basta — não precisa dar Gestão Recrutamento junto.
-export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "operacional" }) {
-  const soOperacional = escopo === "operacional";
-  const menuAcesso = soOperacional ? "operacional_recrutamento" : "recrutamento_gestao";
+// A ETAPA 1 MUDOU DE DONO em 02/09/2026: era do Operacional, passou para o
+// analista (Licitações › Analistas Validações). O Operacional não perdeu a
+// tela — perdeu o botão. Foi pedido assim: "pode deixar a gestão recrutamento
+// no operacional só pra eles verem os andamentos das solicitações, mas nenhuma
+// interação".
+//
+// O que muda é o recorte e QUAL MENU decide as permissões — cada escopo tem o
+// seu, então liberar o menu certo já basta; não precisa dar Gestão
+// Recrutamento junto.
+export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "analista" | "operacional" }) {
+  // Os dois escopos estreitos veem a MESMA fila; o que os separa é poder ou
+  // não decidir nela — ver `podeAprovarAnalista`.
+  const soEtapa1 = escopo === "analista" || escopo === "operacional";
+  const menuAcesso =
+    escopo === "analista" ? "licitacoes_analistas_recrutamento"
+    : escopo === "operacional" ? "operacional_recrutamento"
+    : "recrutamento_gestao";
   const { user } = useAuth();
   const { roles, can } = usePermissoes();
   const { empresa } = useEmpresaAtiva();
@@ -298,15 +312,15 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "opera
 
   // Recrutamento = quem tem alterar no menu da tela (conduz o processo). No
   // Operacional ninguém conduz processo: a tela para na etapa 1.
-  const podeRecrutar = !soOperacional && can("alterar", undefined, menuAcesso);
+  const podeRecrutar = !soEtapa1 && can("alterar", undefined, menuAcesso);
   // Visibilidade ampla (dashboard "Todas as Solicitações") sem rodar o processo.
   const podeVerTudo = can("visualizar", undefined, menuAcesso);
-  const isRH = !soOperacional && podeVerTudo && !podeRecrutar;
+  const isRH = !soEtapa1 && podeVerTudo && !podeRecrutar;
   // A etapa 1 (Pendente Operacional → Pendente Recrutamento) é do OPERACIONAL,
   // e só existe na tela dele. No Recrutamento a solicitação nessa fase aparece
   // na lista, para acompanhar, mas sem botão de decidir — senão as duas telas
   // aprovariam a mesma coisa e a última a salvar ganharia.
-  const podeAprovarOperacional = soOperacional && can("aprovar", undefined, menuAcesso);
+  const podeAprovarAnalista = escopo === "analista" && can("aprovar", undefined, menuAcesso);
   // Quem pode mover o candidato pra fora de cada etapa específica do kanban.
   // Vaga do escritório: só quem tem a capacidade vê, marca e decide.
   const podeAdministrativa = podeVagaAdministrativa(can);
@@ -325,7 +339,7 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "opera
   // O Operacional abre na fila dele; os demais abrem em "Todas". Antes isso
   // vinha da aba, que PRENDIA o status e impedia ele de rever o que ja tinha
   // aprovado.
-  const [statusFilter, setStatusFilter] = useState(soOperacional ? "Pendente Operacional" : "");
+  const [statusFilter, setStatusFilter] = useState(soEtapa1 ? "Pendente Analista" : "");
   const [contratoFiltro, setContratoFiltro]         = useState<string[]>([]);
   const [contratoCounts, setContratoCounts]         = useState<{ contrato: string; n: number }[]>([]);
   const [showContratoFiltro, setShowContratoFiltro] = useState(false);
@@ -439,8 +453,8 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "opera
   }, []);
 
   // ── Tabs por perfil ───────────────────────────────────────────
-  const tabs = soOperacional
-    ? [{ label: "Pendente Operacional", tab: "analista" }]
+  const tabs = soEtapa1
+    ? [{ label: "Pendente Analista", tab: "analista" }]
     : isRH
     ? [{ label: "Todas as Solicitações", tab: "todas" }]
     : podeRecrutar
@@ -450,7 +464,7 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "opera
       ]
     : [{ label: "Minhas Solicitações", tab: "minha" }];
 
-  useEffect(() => { setTab(tabs[0].tab); }, [isRH, podeRecrutar, soOperacional]);
+  useEffect(() => { setTab(tabs[0].tab); }, [isRH, podeRecrutar, soEtapa1]);
 
   // ── Carregar Stats ────────────────────────────────────────────
   const loadStats = useCallback(async () => {
@@ -461,7 +475,7 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "opera
     const rows: { status: string }[] = data;
     setStats({
       total:            rows.length,
-      pendentes:        rows.filter(r => r.status === "Pendente Operacional").length,
+      pendentes:        rows.filter(r => r.status === "Pendente Analista").length,
       ag_treinamentos:  rows.filter(r => r.status === "Pendente Recrutamento").length,
       em_processo:      rows.filter(r => STATUS_PROCESSO.includes(r.status)).length,
       contratados:      rows.filter(r => r.status === "Contratado" || String(r.status ?? "").startsWith("Concluído")).length,
@@ -484,7 +498,7 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "opera
       q = q.eq("solicitante_cpf", user.email);
     }
     // A aba "analista" NÃO prende mais o status. Quem recorta é o filtro de
-    // chips, que já abre em "Pendente Operacional" — prender aqui deixava o
+    // chips, que já abre em "Pendente Analista" — prender aqui deixava o
     // Operacional trancado na própria fila, sem alcançar o que ele mesmo
     // aprovou ou reprovou (nem o chat daqueles casos).
     if (search) {
@@ -754,7 +768,7 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "opera
       .eq("id", drawerId);
     if (error) { toast("Erro ao reprovar: " + error.message, "err"); return; }
     if (drawerId) {
-      const papel = drawerSol?.status === "Pendente Operacional" ? "Operacional" : "Recrutamento";
+      const papel = drawerSol?.status === "Pendente Analista" ? "Analista" : "Recrutamento";
       await logHistorico(drawerId, "Solicitação reprovada", {
         de: drawerSol?.status, para: "Reprovada", papel, detalhe: reprovarMotivo.trim(),
       });
@@ -1456,7 +1470,7 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "opera
       administrativa: podeAdministrativa ? !!vaga.administrativa : false,
       // Só a substituição grava o id: é ele que trava a pessoa numa vaga só.
       substituido_id: ehSubstituicao(vaga.motivo_vaga) ? substituidoId : null,
-      status: "Pendente Operacional",
+      status: "Pendente Analista",
       solicitante_nome: user?.user_metadata?.nome ?? user?.email ?? "",
       solicitante_cpf: user?.email ?? "",
     };
@@ -1639,8 +1653,9 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "opera
       <button key={key} onClick={() => { setReprovarMotivo(""); setModalReprovar(true); }} style={{ padding: "5px 12px", borderRadius: 8, border: "none", background: "#dc2626", color: "#fff", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>Reprovar</button>
     );
 
-    // Etapa 1 → 2: Operacional aprova a solicitação.
-    if (s.status === "Pendente Operacional" && podeAprovarOperacional) {
+    // Etapa 1 → 2: o ANALISTA aprova a solicitação (02/09/2026 — era do
+    // Operacional, que ficou só com o acompanhamento).
+    if (s.status === "Pendente Analista" && podeAprovarAnalista) {
       btns.push(reprovar("rep"));
       btns.push(<button key="apr" onClick={aprovar} style={{ padding: "5px 12px", borderRadius: 8, border: "none", background: "#16a34a", color: "#fff", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>✓ Aprovar</button>);
     }
@@ -1665,7 +1680,7 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "opera
 
   // ── Histórico (timeline): sintetiza a criação + eventos logados ──
   const papelCor = (p?: string): string => (({
-    Solicitante: "#0f3171", Operacional: "#b45309", Recrutamento: "#2563eb",
+    Solicitante: "#0f3171", Analista: "#b45309", Operacional: "#b45309", Recrutamento: "#2563eb",
     "Jurídico": "#7c3aed", SST: "#ea580c",
   } as Record<string, string>)[p || ""] || "#64748b");
 
@@ -1675,7 +1690,7 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "opera
       evento: "Solicitação criada",
       papel: "Solicitante",
       usuario_nome: drawerSol.solicitante_nome,
-      para_status: "Pendente Operacional",
+      para_status: "Pendente Analista",
       detalhe: drawerSol.motivo_vaga === "Substituição"
         ? (drawerSol.nome_substituido ? `Substituindo: ${drawerSol.nome_substituido}` : "Substituição")
         : (drawerSol.motivo_vaga ? `Aumento de quadro — ${drawerSol.motivo_vaga}` : null),
@@ -1896,7 +1911,7 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "opera
   };
 
   // O Operacional analisa o que chega; abrir vaga é do encarregado/recrutamento.
-  const canNovaVaga = !isRH && !soOperacional;
+  const canNovaVaga = !isRH && !soEtapa1;
   const linkUrl = drawerSol?.link_publico ? `${window.location.origin}/recrutamento/candidatura/${drawerSol.link_publico}` : "";
 
   // Kanban: rola o quadro horizontalmente (~1,5 coluna por clique).
@@ -1948,9 +1963,14 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "opera
       {/* Topbar */}
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "16px 22px", margin: "18px 24px 0", border: "1px solid #e2e8f0", borderRadius: 18, background: "linear-gradient(135deg,#fff 0%,#f8fbff 100%)", boxShadow: "0 8px 24px rgba(15,23,42,.06)", flexShrink: 0, gap: 14, flexWrap: "wrap" }}>
         <div style={{ fontSize: 19, fontWeight: 800, color: "#0f3171" }}>
-          {soOperacional ? "🎯 Gestão Recrutamento — aguardando o Operacional" : "🎯 Seleção e Recrutamento"}
+          {!soEtapa1 ? "🎯 Seleção e Recrutamento"
+            : escopo === "analista" ? "🎯 Gestão Recrutamento — aguardando o analista"
+            : "🎯 Gestão Recrutamento — acompanhamento"}
         </div>
-        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+          {/* Vale para os três escopos: o fluxo é o mesmo, muda só onde a
+              pessoa entra nele. */}
+          <ResumoDeFuncoes fluxo="vaga" />
           {podeRecrutar && (
             <button onClick={copiarLinkPortal} title="Copia o link público (/vagas) para os candidatos escolherem a cidade e enviarem o currículo" style={{ display: "inline-flex", alignItems: "center", gap: 5, padding: "7px 14px", borderRadius: 10, border: "1px solid #f97316", background: "rgba(249,115,22,.10)", color: "#ea580c", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>
               🔗 {portalCopiado ? "Link copiado!" : "Copiar link de candidatura"}
@@ -1967,9 +1987,23 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "opera
       {/* Content */}
       <div style={{ flex: 1, overflowY: "auto", padding: "20px 24px 24px" }}>
 
+        {/* O Operacional acompanha, não decide. Dizer isso é melhor do que
+            simplesmente não desenhar botão: sem a frase, quem abre o card fica
+            procurando onde clicar para aprovar. */}
+        {escopo === "operacional" && (
+          <div style={{ display: "flex", gap: 10, alignItems: "flex-start", padding: "12px 16px", marginBottom: 16, border: "1px solid #e2e8f0", borderRadius: 12, background: "#fff", fontSize: 13, color: "#475569" }}>
+            <span style={{ fontSize: 15, lineHeight: "18px" }}>👁️</span>
+            <span>
+              Esta tela é de <strong>acompanhamento</strong>. Quem aprova a solicitação de vaga
+              é o analista, em Licitações › Analistas Validações. Aqui você abre o card,
+              vê o andamento e a conversa.
+            </span>
+          </div>
+        )}
+
         {/* KPIs */}
-        <div style={{ display: "grid", gridTemplateColumns: soOperacional ? "repeat(3,1fr)" : "repeat(5,1fr)", gap: 12, marginBottom: 20 }}>
-          {(soOperacional
+        <div style={{ display: "grid", gridTemplateColumns: soEtapa1 ? "repeat(3,1fr)" : "repeat(5,1fr)", gap: 12, marginBottom: 20 }}>
+          {(soEtapa1
             ? [
               // A fila desta tela, e o destino de quem já passou por ela — é o
               // que o operacional pergunta ("aprovei quantas hoje?").
@@ -2030,15 +2064,15 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "opera
         {view === "tabela" && (
           <>
             {/* Filtros de status (linha única). No Operacional a lista já é
-                fixa em "Pendente Operacional": outro filtro de status viraria
+                fixa em "Pendente Analista": outro filtro de status viraria
                 um segundo .eq na mesma coluna e zeraria a tela sem explicar. */}
             {/* O Operacional também filtra. Sem isto ele só via a própria fila
                 (Pendente Operacional) e não conseguia voltar no que já tinha
                 aprovado ou reprovado — nem abrir o chat daqueles casos. */}
             <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 14 }}>
-              {(soOperacional
+              {(soEtapa1
               ? [
-                { label: "Aguardando você", val: "Pendente Operacional" },
+                { label: "Aguardando você", val: "Pendente Analista" },
                 // Aprovar pelo Operacional manda para o Recrutamento; daí em
                 // diante o caso anda sozinho. Por isso "já aprovadas" não é um
                 // status só, e cada etapa vira um recorte próprio.

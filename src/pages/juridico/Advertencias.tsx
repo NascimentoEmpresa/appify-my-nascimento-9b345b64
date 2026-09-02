@@ -3,6 +3,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
 import { ConversaSolicitacao } from "@/components/solicitacoes/ConversaSolicitacao";
 import { useVinculoEmpregado } from "@/hooks/useVinculoEmpregado";
+import { ResumoDeFuncoes } from "@/components/fluxos/ResumoDeFuncoes";
 
 // =====================================================================
 // JURÍDICO — Gestão de Advertências
@@ -117,7 +118,10 @@ export default function Advertencias() {
     <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", background: "#f5f7fb" }}>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "16px 22px", margin: "18px 24px 0", border: "1px solid #e2e8f0", borderRadius: 16, background: "linear-gradient(135deg,#fff,#f8fbff)", boxShadow: "0 8px 24px rgba(15,23,42,.06)", gap: 12, flexWrap: "wrap" }}>
         <div style={{ fontSize: 18, fontWeight: 800, color: "#0f3171" }}>⚠️ Gestão de Advertências</div>
-        <button onClick={() => load()} style={{ border: "none", borderRadius: 9, fontWeight: 700, cursor: "pointer", fontSize: 12, padding: "8px 14px", background: "#0f3171", color: "#fff" }}>↻ Atualizar</button>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+          <ResumoDeFuncoes fluxo="advertencia" />
+          <button onClick={() => load()} style={{ border: "none", borderRadius: 9, fontWeight: 700, cursor: "pointer", fontSize: 12, padding: "8px 14px", background: "#0f3171", color: "#fff" }}>↻ Atualizar</button>
+        </div>
       </div>
 
       <div style={{ flex: 1, overflowY: "auto", padding: "18px 24px 28px" }}>

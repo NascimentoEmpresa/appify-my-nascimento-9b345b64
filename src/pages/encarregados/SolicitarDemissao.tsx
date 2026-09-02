@@ -10,6 +10,7 @@ import { Badge } from "@/components/ui/badge";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { PageHeader } from "@/components/layout/PageHeader";
+import { ResumoDeFuncoes } from "@/components/fluxos/ResumoDeFuncoes";
 import { BuscaColaborador, type EmpregadoEscolhido } from "@/components/demissao/BuscaColaborador";
 import {
   ACCEPT_ANEXO, BUCKET, MODELOS_AVISO, MOTIVOS_PEDIDO, MOTIVOS_SOLICITACAO,
@@ -272,8 +273,9 @@ export default function SolicitarDemissao() {
             <CheckCircle2 className="h-12 w-12 text-emerald-500" />
             <h2 className="text-xl font-semibold">Solicitação #{protocolo} enviada</h2>
             <p className="max-w-md text-sm text-muted-foreground">
-              O Operacional vai aprovar ou reprovar. Depois de aprovada, ela segue para o RH concluir.
-              Você acompanha o andamento em Minhas Solicitações.
+              O analista vai aprovar ou reprovar. Depois de aprovada, o SST marca o ASO
+              demissional e o RH confirma o desligamento. Você acompanha o andamento em
+              Minhas Solicitações.
             </p>
             <div className="mt-2 flex gap-2">
               <Button onClick={recomecar}>Nova solicitação</Button>
@@ -293,9 +295,10 @@ export default function SolicitarDemissao() {
     <div className="mx-auto max-w-3xl">
       <PageHeader
         title="Solicitar Demissão"
-        subtitle="Escolha o colaborador e preencha os dados do desligamento. O Operacional aprova e o RH conclui."
+        subtitle="Escolha o colaborador e preencha os dados do desligamento. O analista aprova, o SST marca o ASO demissional e o RH confirma."
         module="Encarregados"
         breadcrumb={["Recursos Humanos", "Solicitar Demissão"]}
+        actions={<ResumoDeFuncoes fluxo="demissao" />}
       />
 
       {/* Passos */}

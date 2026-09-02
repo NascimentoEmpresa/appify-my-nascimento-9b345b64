@@ -1,10 +1,27 @@
-// Solicitação de Demissão — as regras que as três telas compartilham.
+// Solicitação de Demissão — as regras que as telas compartilham.
 //
-// O encarregado abre, o operacional decide e o RH conclui. Como são três
-// telas diferentes lendo a mesma tabela, o que define o fluxo (as opções dos
-// campos, os status e quem pode agir em cada um) mora aqui — assim o painel
-// do RH não pode discordar do formulário do encarregado sobre o que é uma
-// solicitação válida.
+// O encarregado abre → o ANALISTA aprova → o SST marca o ASO demissional →
+// o RH confirma:
+//
+//   Pendente Analista → Pendente SST → Pendente RH → Concluída
+//          ↘ Reprovada
+//
+// DUAS MUDANÇAS EM 02/09/2026, no mesmo movimento que criou o submódulo
+// "Analistas Validações" em Licitações:
+//
+//   1. Quem decide a etapa 1 passou a ser o ANALISTA, não o Operacional.
+//      "Pendente Operacional" virou "Pendente Analista". O Operacional
+//      continua com a tela, só que para ACOMPANHAR — abre o card e lê, sem
+//      botão de decidir. Mesmo desenho da Gestão Recrutamento.
+//
+//   2. SST e RH TROCARAM DE LUGAR. Era RH → SST ("Concluída" era o fim no
+//      SST desde 25/08/2026); agora o SST marca o ASO demissional e o RH
+//      confirma por último. Quem fecha a demissão é o RH.
+//
+// Como são várias telas lendo a mesma tabela, o que define o fluxo (as
+// opções dos campos, os status e quem pode agir em cada um) mora aqui —
+// assim o painel do RH não pode discordar do formulário do encarregado
+// sobre o que é uma solicitação válida.
 
 export const TABELA = "SISTEMA_SOLICITACOES_DEMISSAO";
 export const TABELA_ANEXOS = "SISTEMA_SOL_DEMISSAO_ANEXOS";
@@ -73,21 +90,22 @@ export function erroDoArquivo(f: File): string | null {
 // O status é o andamento do pedido, não um campo livre: quem muda é sempre
 // uma ação de tela (aprovar, reprovar, concluir), nunca digitação.
 export type Status =
-  | "Pendente Operacional"
+  | "Pendente Analista"
   | "Reprovada"
-  | "Pendente RH"
   | "Pendente SST"
+  | "Pendente RH"
   | "Concluída"
   | "Cancelada";
 
+/** Na ordem do fluxo, que é a ordem em que fazem sentido em qualquer filtro. */
 export const STATUS_TODOS: Status[] = [
-  "Pendente Operacional", "Pendente RH", "Pendente SST", "Concluída", "Reprovada", "Cancelada",
+  "Pendente Analista", "Pendente SST", "Pendente RH", "Concluída", "Reprovada", "Cancelada",
 ];
 
 /** Cor do selo de status — a mesma régua nas três telas. */
 export function corDoStatus(status: string): string {
   const cores: Record<string, string> = {
-    "Pendente Operacional": "bg-yellow-100 text-yellow-800 border-yellow-200",
+    "Pendente Analista": "bg-yellow-100 text-yellow-800 border-yellow-200",
     "Pendente RH": "bg-purple-100 text-purple-700 border-purple-200",
     "Pendente SST": "bg-cyan-100 text-cyan-800 border-cyan-200",
     "Concluída": "bg-green-100 text-green-700 border-green-200",
@@ -100,11 +118,11 @@ export function corDoStatus(status: string): string {
 /** O que ainda falta acontecer, em uma frase, para quem só acompanha. */
 export function explicaStatus(status: string): string {
   const textos: Record<string, string> = {
-    "Pendente Operacional": "Aguardando a aprovação do Operacional.",
-    "Pendente RH": "Aprovada pelo Operacional. Aguardando o RH concluir.",
-    "Pendente SST": "O RH concluiu. O SST vai marcar o ASO demissional.",
-    "Concluída": "ASO demissional marcado. Desligamento concluído.",
-    "Reprovada": "O Operacional reprovou — veja o motivo.",
+    "Pendente Analista": "Aguardando a aprovação do analista.",
+    "Pendente SST": "Aprovada pelo analista. O SST vai marcar o ASO demissional.",
+    "Pendente RH": "ASO demissional marcado. Aguardando o RH confirmar.",
+    "Concluída": "O RH confirmou. Desligamento concluído.",
+    "Reprovada": "O analista reprovou — veja o motivo.",
     "Cancelada": "A solicitação foi cancelada.",
   };
   return textos[status] ?? "";
@@ -139,6 +157,13 @@ export interface SolicitacaoDemissao {
   modelo_aviso: string | null;
 
   status: string;
+  /**
+   * A decisão da ETAPA 1. As colunas mantêm o nome `operacional_*` de
+   * propósito: desde 02/09/2026 quem decide ali é o analista, mas renomear
+   * três colunas com histórico gravado só para acertar o rótulo trocaria uma
+   * confusão de nome por uma migração de dados — e o painel já mostra
+   * "Analista" na tela, que é onde alguém lê.
+   */
   operacional_por: string | null;
   operacional_em: string | null;
   operacional_motivo: string | null;

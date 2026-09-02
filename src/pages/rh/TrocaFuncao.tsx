@@ -1,4 +1,5 @@
 import { PageHeader } from "@/components/layout/PageHeader";
+import { ResumoDeFuncoes } from "@/components/fluxos/ResumoDeFuncoes";
 import { PainelTrocaFuncao } from "@/components/troca-funcao/PainelTrocaFuncao";
 
 export default function TrocaFuncao() {
@@ -9,6 +10,7 @@ export default function TrocaFuncao() {
         subtitle="Faça a alteração do cargo na Senior e conclua a solicitação. Chega aqui o que o SST já liberou — com ASO marcado ou dispensado."
         module="RH"
         breadcrumb={["Mudança de Função"]}
+        actions={<ResumoDeFuncoes fluxo="troca_funcao" />}
       />
       <PainelTrocaFuncao etapa="rh" />
     </div>
