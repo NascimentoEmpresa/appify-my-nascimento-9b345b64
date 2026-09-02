@@ -17,10 +17,12 @@ import {
   ESTILO_STATUS_ITEM, STATUS_ITEM, derivarStatusItem,
 } from "@/hooks/useSupPedidos";
 import { ModalBaixaPedido } from "@/components/suprimentos/ModalBaixaPedido";
+import { ModalEditarPedido } from "@/components/suprimentos/ModalEditarPedido";
+import { AcessoGate } from "@/components/auth/AcessoGate";
 import { useTagsDoPedido, useTagsDePedidos, buscarTagsDePedidos, type TagEmLote } from "@/hooks/useSupEstoque";
 import {
   Search, Package, Boxes, Clock, ShoppingCart, Truck, History as HistoryIcon,
-  RefreshCw, Inbox, Download, ShieldAlert, Trash2, AlertTriangle,
+  RefreshCw, Inbox, Download, ShieldAlert, Trash2, AlertTriangle, Pencil,
 } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
@@ -48,6 +50,9 @@ const sb = supabase as any;
 interface Pedido {
   id: string; pedido_id: string; status: string; data_solicitacao: string;
   contrato_nome: string; posto_nome: string; funcao_nome: string;
+  // Os ids da cascata não aparecem no card, mas a edição precisa deles: a
+  // função é quem define quais materiais o pedido pode receber.
+  contrato_id: string | null; posto_id: string | null; funcao_id: string | null;
   solicitante_login: string; solicitante_nome: string | null;
   nome_colaborador: string; matricula_colaborador: string | null;
   colaborador_empregado_id: number | null; colaborador_digitado: boolean;
@@ -61,6 +66,39 @@ interface Pedido {
 interface EventoHistorico {
   id: string; acao: string; status_anterior: string | null; status_novo: string | null;
   observacao: string | null; alterado_por_nome: string | null; data_alteracao: string;
+  // Preenchidos pelos triggers de auditoria da edição (20260930000037).
+  // Evento antigo (status / comentário de Compras) tem os três nulos.
+  campo: string | null; valor_anterior: string | null; valor_novo: string | null;
+}
+
+/**
+ * Nome de coluna → rótulo que o operador reconhece. O banco guarda o nome
+ * cru da coluna, como sup_patrimonio_log já fazia; traduzir aqui evita
+ * congelar texto de interface dentro de trigger.
+ */
+const ROTULO_CAMPO: Record<string, string> = {
+  nome_colaborador: "Colaborador",
+  matricula_colaborador: "Matrícula",
+  tipo_pedido: "Tipo de pedido",
+  admissao: "É admissão",
+  tipo_admissao: "Tipo de admissão",
+  data_admissao: "Data de admissão",
+  observacoes_solicitante: "Obs. do solicitante",
+  contrato_nome: "Contrato",
+  posto_nome: "Posto",
+  funcao_nome: "Função",
+  imagem_cracha_path: "Foto do crachá",
+  item_adicionado: "Item incluído",
+  item_alterado: "Item alterado",
+  item_removido: "Item removido",
+};
+
+/** `true`/`false` e vazio não se leem numa trilha; aqui viram texto. */
+function valorLegivel(v: string | null): string {
+  if (v === null || v === "") return "—";
+  if (v === "true") return "Sim";
+  if (v === "false") return "Não";
+  return v;
 }
 
 type ItemPedido = Pedido["sup_pedido_item"][number];
@@ -130,6 +168,7 @@ export default function PedidosMateriais() {
   const [exportando, setExportando] = useState(false);
   const [statusDe, setStatusDe] = useState<Pedido | null>(null);
   const [historicoDe, setHistoricoDe] = useState<Pedido | null>(null);
+  const [editandoDe, setEditandoDe] = useState<Pedido | null>(null);
   const [excluindo, setExcluindo] = useState<Pedido | null>(null);
 
   const { data: pedidos = [], isLoading, error } = useQuery({
@@ -398,6 +437,7 @@ export default function PedidosMateriais() {
               key={p.id}
               pedido={p}
               onStatus={() => setStatusDe(p)}
+              onEditar={() => setEditandoDe(p)}
               onHistorico={() => setHistoricoDe(p)}
               onExcluir={() => setExcluindo(p)}
             />
@@ -407,6 +447,9 @@ export default function PedidosMateriais() {
 
       {/* Status + baixa de estoque numa transação só (ver ModalBaixaPedido). */}
       <ModalBaixaPedido pedido={statusDe} onFechar={() => setStatusDe(null)} />
+
+      {/* Edição do pedido em si — cabeçalho e itens, com trilha no histórico. */}
+      <ModalEditarPedido pedido={editandoDe} onFechar={() => setEditandoDe(null)} />
 
       <ModalHistorico pedido={historicoDe} onFechar={() => setHistoricoDe(null)} />
 
@@ -442,8 +485,12 @@ function CardKpi({
 }
 
 function CardPedido({
-  pedido: p, onStatus, onHistorico, onExcluir,
-}: { pedido: Pedido; onStatus: () => void; onHistorico: () => void; onExcluir: () => void }) {
+  pedido: p, onStatus, onEditar, onHistorico, onExcluir,
+}: {
+  pedido: Pedido;
+  onStatus: () => void; onEditar: () => void;
+  onHistorico: () => void; onExcluir: () => void;
+}) {
   const estilo = ESTILO_STATUS[p.status] ?? ESTILO_STATUS["EM PREPARACAO"];
 
   // Em AGUARDANDO COMPRA o card esconde o que já tem etiqueta, virando uma
@@ -549,21 +596,29 @@ function CardPedido({
         )}
       </CardContent>
 
-      <div className="flex gap-2 border-t p-3">
-        <Button size="sm" className="flex-1" onClick={onStatus}>
+      {/* Quatro ações não cabem numa linha só num card de duas/três colunas:
+          Status e Editar (o que se faz o tempo todo) ficam em cima, consulta
+          e exclusão embaixo. */}
+      <div className="grid grid-cols-2 gap-2 border-t p-3">
+        <Button size="sm" onClick={onStatus}>
           <RefreshCw className="mr-1.5 h-3.5 w-3.5" /> Status
         </Button>
-        <Button size="sm" variant="outline" className="flex-1" onClick={onHistorico}>
+        <AcessoGate menu="sup_pedidos_materiais" acao="alterar">
+          <Button size="sm" variant="secondary" onClick={onEditar}>
+            <Pencil className="mr-1.5 h-3.5 w-3.5" /> Editar
+          </Button>
+        </AcessoGate>
+        <Button size="sm" variant="outline" onClick={onHistorico}>
           <HistoryIcon className="mr-1.5 h-3.5 w-3.5" /> Histórico
         </Button>
         <Button
           size="sm" variant="outline"
-          className="shrink-0 border-destructive/40 text-destructive hover:bg-destructive/10"
+          className="border-destructive/40 text-destructive hover:bg-destructive/10"
           onClick={onExcluir}
           aria-label={`Excluir ${p.pedido_id}`}
           title="Excluir pedido"
         >
-          <Trash2 className="h-3.5 w-3.5" />
+          <Trash2 className="mr-1.5 h-3.5 w-3.5" /> Excluir
         </Button>
       </div>
     </Card>
@@ -663,7 +718,11 @@ function ModalHistorico({ pedido, onFechar }: { pedido: Pedido | null; onFechar:
         .from("sup_pedido_historico")
         .select("*")
         .eq("pedido_id", pedido!.id)
-        .order("data_alteracao", { ascending: true });
+        // Uma edição grava várias linhas com o MESMO data_alteracao (é o
+        // now() da transação). O desempate por id não significa nada, mas
+        // impede a lista de trocar de ordem a cada refetch.
+        .order("data_alteracao", { ascending: true })
+        .order("id", { ascending: true });
       if (error) throw error;
       return data ?? [];
     },
@@ -682,11 +741,25 @@ function ModalHistorico({ pedido, onFechar }: { pedido: Pedido | null; onFechar:
               <div className="min-w-0 flex-1 text-sm">
                 <p className="font-medium">
                   {e.acao === "CRIADO" ? "Pedido criado"
-                    : e.status_anterior
-                      ? <>{ESTILO_STATUS[e.status_anterior]?.rotulo ?? e.status_anterior} → {ESTILO_STATUS[e.status_novo ?? ""]?.rotulo ?? e.status_novo}</>
-                      : "Comentário atualizado"}
+                    : e.campo
+                      ? (ROTULO_CAMPO[e.campo] ?? e.campo)
+                      : e.status_anterior
+                        ? <>{ESTILO_STATUS[e.status_anterior]?.rotulo ?? e.status_anterior} → {ESTILO_STATUS[e.status_novo ?? ""]?.rotulo ?? e.status_novo}</>
+                        : "Obs. de Compras atualizada"}
                 </p>
-                {e.observacao && <p className="text-muted-foreground">{e.observacao}</p>}
+
+                {/* Antes → depois. Item incluído não tem "antes" e item
+                    removido não tem "depois": mostrar uma seta com um lado
+                    vazio confundiria mais do que ajudaria. */}
+                {e.campo && (
+                  <p className="break-words text-muted-foreground">
+                    {e.valor_anterior !== null && e.valor_novo !== null
+                      ? <>{valorLegivel(e.valor_anterior)} → <strong className="font-medium text-foreground">{valorLegivel(e.valor_novo)}</strong></>
+                      : valorLegivel(e.valor_novo ?? e.valor_anterior)}
+                  </p>
+                )}
+
+                {e.observacao && <p className="break-words text-muted-foreground">{e.observacao}</p>}
                 <p className="text-xs text-muted-foreground">
                   {e.alterado_por_nome ?? "—"} · {new Date(e.data_alteracao).toLocaleString("pt-BR")}
                 </p>
