@@ -59,6 +59,8 @@ import { useMaloteConfig, usePrazoNormalInclusao, useSouGerenteFinanceiroMalote,
 import { useClassificacoesOrcamentoAdmin } from "@/hooks/usePlanejamentoOrcamentario";
 import { AnexosField } from "./AnexosField";
 import { useTiposFormaPagamento } from "@/hooks/useMaloteFormaPagamento";
+import { useCartaoBancos, urlLogoCartao } from "@/hooks/useMaloteCartaoCredito";
+import { BancoBadge } from "@/components/financeiro/BancoBadge";
 import { useUtilizadoOrcamento } from "@/hooks/useUtilizadoOrcamento";
 import { anoMesAtual } from "@/hooks/usePlanilhaCusto";
 import { RateioGrid, DimensoesRateio } from "./RateioGrid";
@@ -287,6 +289,15 @@ export default function DespesaVisualizar() {
   const [comprovanteFile, setComprovanteFile] = useState<File | null>(null);
   const [dataPagamentoConfirmado, setDataPagamentoConfirmado] = useState("");
   const [observacaoPagamento, setObservacaoPagamento] = useState("");
+  // SIS-2026-0307 (Iury): "Forma de pagamento" pré-selecionada com a que já
+  // está na despesa, mas editável — e "Banco" novo, vindo do catálogo do
+  // Cartão de Crédito. Estado PRÓPRIO do dialog de pagamento (não
+  // reaproveita o `formaPagamento` do card "Dados de pagamento e
+  // Aprovação" mais abaixo — são dois momentos diferentes; usar o mesmo
+  // state faria o Select daquele card mudar visualmente antes mesmo de
+  // confirmar o pagamento).
+  const [formaPagamentoConfirmada, setFormaPagamentoConfirmada] = useState("");
+  const [bancoIdConfirmado, setBancoIdConfirmado] = useState("");
   const [pagando, setPagando] = useState(false);
   // SIS-2026-0223: qual parcela está sendo paga no Dialog de comprovante
   // (reaproveitado) — null = pagamento é da despesa inteira (não parcelada).
@@ -336,6 +347,9 @@ export default function DespesaVisualizar() {
   // SIS-2026-0221: "Forma de pagamento" vem do catálogo cadastrável em
   // Configurações do Malote → Formas de Pagamento, não mais de um enum fixo.
   const { data: tiposFormaPagamento = [] } = useTiposFormaPagamento();
+  // SIS-2026-0307: Banco do dialog de pagamento vem do mesmo catálogo do
+  // Cartão de Crédito (malote_cartao_banco) — não cria catálogo novo.
+  const { data: bancos = [] } = useCartaoBancos();
   const { data: maloteConfig } = useMaloteConfig();
   // SIS-2026-0250 (errata: exceção continua nascendo no Nível 1 e passa
   // pela avaliação normal do N1 — não pula mais nada na inclusão). Quando
@@ -392,6 +406,23 @@ export default function DespesaVisualizar() {
     formaPagamento && !tiposFormaPagamentoAtivos.some((t) => t.nome === formaPagamento)
       ? [...tiposFormaPagamentoAtivos, { nome: formaPagamento, ativo: false }]
       : tiposFormaPagamentoAtivos;
+
+  // SIS-2026-0307: mesmo padrão acima, só que pro Select "Forma de
+  // pagamento" do dialog de pagamento (estado próprio, formaPagamentoConfirmada).
+  const opcoesFormaPagamentoConfirmada =
+    formaPagamentoConfirmada && !tiposFormaPagamentoAtivos.some((t) => t.nome === formaPagamentoConfirmada)
+      ? [...tiposFormaPagamentoAtivos, { nome: formaPagamentoConfirmada, ativo: false }]
+      : tiposFormaPagamentoAtivos;
+
+  // SIS-2026-0307: Banco (catálogo do Cartão de Crédito) — mesma ideia de
+  // sempre incluir o valor já selecionado, mesmo que tenha sido
+  // desativado depois.
+  const bancosAtivos = bancos.filter((b) => b.ativo);
+  const bancoConfirmadoInativo =
+    bancoIdConfirmado && !bancosAtivos.some((b) => b.id === bancoIdConfirmado)
+      ? bancos.find((b) => b.id === bancoIdConfirmado)
+      : undefined;
+  const opcoesBanco = bancoConfirmadoInativo ? [...bancosAtivos, bancoConfirmadoInativo] : bancosAtivos;
 
   // Papéis do usuário logado em relação a esta despesa — SIS-2026-0132 Fase 1.
   const souSolicitante = despesa.created_by === user?.id;
@@ -742,6 +773,10 @@ export default function DespesaVisualizar() {
     setComprovanteFile(null);
     setDataPagamentoConfirmado(despesa!.data_pagamento ?? new Date().toISOString().slice(0, 10));
     setObservacaoPagamento("");
+    // SIS-2026-0307: "pré-selecionada a forma que o usuário selecionou" —
+    // parte do que já está na despesa, editável a partir daqui.
+    setFormaPagamentoConfirmada(despesa!.forma_pagamento ?? "");
+    setBancoIdConfirmado(despesa!.banco_id ?? "");
     setPagarAberto(true);
   }
 
@@ -753,6 +788,10 @@ export default function DespesaVisualizar() {
     setComprovanteFile(null);
     setDataPagamentoConfirmado(p.data_vencimento);
     setObservacaoPagamento("");
+    setFormaPagamentoConfirmada(despesa!.forma_pagamento ?? "");
+    // Parcela ainda não paga não tem banco próprio — cai pro que já foi
+    // usado nas parcelas anteriores (via sincronização em malote_despesa).
+    setBancoIdConfirmado(p.banco_id ?? despesa!.banco_id ?? "");
     setPagarAberto(true);
   }
 
@@ -804,6 +843,8 @@ export default function DespesaVisualizar() {
           comprovante_path: comprovantePath,
           observacao: observacaoPagamento.trim() || null,
           rateio_snapshot: calcularRateioSnapshot(),
+          forma_pagamento: formaPagamentoConfirmada || null,
+          banco_id: bancoIdConfirmado || null,
         });
         toast.success(`Parcela ${parcelaEmPagamento.numero_parcela}/${despesa!.numero_parcelas} paga.`);
       } else {
@@ -813,6 +854,8 @@ export default function DespesaVisualizar() {
           comprovante_path: comprovantePath,
           rateio_snapshot: calcularRateioSnapshot(),
           observacao: observacaoPagamento.trim() || null,
+          forma_pagamento: formaPagamentoConfirmada || null,
+          banco_id: bancoIdConfirmado || null,
         });
         toast.success("Pagamento confirmado.");
       }
@@ -1592,6 +1635,51 @@ export default function DespesaVisualizar() {
             <div>
               <Label className="text-xs">Data do pagamento</Label>
               <Input type="date" className="h-8 text-xs" value={dataPagamentoConfirmado} onChange={(e) => setDataPagamentoConfirmado(e.target.value)} />
+            </div>
+            {/* SIS-2026-0307 (Iury): forma de pagamento pré-selecionada
+                (vem da despesa) mas editável — "deixar possível alterar a
+                forma para ir para o fluxo correto" — e Banco novo, do
+                catálogo do Cartão de Crédito. */}
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <Label className="text-xs">Forma de pagamento</Label>
+                <Select value={formaPagamentoConfirmada} onValueChange={setFormaPagamentoConfirmada}>
+                  <SelectTrigger className="h-8 text-xs"><SelectValue placeholder="Selecione" /></SelectTrigger>
+                  <SelectContent>
+                    {opcoesFormaPagamentoConfirmada.map((t) => (
+                      <SelectItem key={t.nome} value={t.nome}>
+                        {t.nome}
+                        {!t.ativo && " (inativo)"}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div>
+                <Label className="text-xs">Banco</Label>
+                <Select value={bancoIdConfirmado} onValueChange={setBancoIdConfirmado}>
+                  <SelectTrigger className="h-8 text-xs"><SelectValue placeholder="Selecione" /></SelectTrigger>
+                  <SelectContent>
+                    {opcoesBanco.map((b) => (
+                      <SelectItem key={b.id} value={b.id}>
+                        {b.nome}
+                        {!b.ativo && " (inativo)"}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                {/* Preview com o logo real (ou iniciais coloridas, sem
+                    logo cadastrado) — mesmo padrão já usado no Cartão de
+                    Crédito pro Select de Banco. */}
+                {bancoIdConfirmado && bancos.find((b) => b.id === bancoIdConfirmado) && (
+                  <div className="mt-1.5">
+                    <BancoBadge
+                      nome={bancos.find((b) => b.id === bancoIdConfirmado)!.nome}
+                      logoUrl={urlLogoCartao(bancos.find((b) => b.id === bancoIdConfirmado)!.logo_path)}
+                    />
+                  </div>
+                )}
+              </div>
             </div>
             <div>
               <Label className="text-xs">Observação (opcional)</Label>
