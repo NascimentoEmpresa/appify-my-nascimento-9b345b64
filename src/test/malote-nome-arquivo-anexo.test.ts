@@ -6,16 +6,29 @@ import { sanitizarNomeArquivo, proximoNomeArquivoLivre } from "@/hooks/useMalote
 // do UUID cru que sempre foi usado. Exemplo real do chamado: despesa
 // "RGE - JOÃO PESSOA 172" (DM-2026-0164).
 describe("sanitizarNomeArquivo", () => {
-  it("mantém nome já válido como está", () => {
-    expect(sanitizarNomeArquivo("RGE - JOÃO PESSOA 172")).toBe("RGE - JOÃO PESSOA 172");
+  // Achado real (Iury, testando em produção): "TESTE (SOLICITAÇÃO DE AJUSTE
+  // EDITAVEL).pdf" deu "Invalid key" no upload — a chave do Storage só
+  // aceita um conjunto ASCII restrito, e o "mantém como está" original
+  // (versão anterior deste teste) validava um comportamento que na
+  // prática QUEBRAVA em qualquer nome com acento — ou seja, quase todo
+  // nome de despesa deste projeto, que é nomeado em português. Por isso o
+  // nome não fica mais "como está": acento sai, mas parênteses e hífen
+  // continuam permitidos (fazem parte do conjunto seguro do Storage).
+  it("remove acentuação (Storage só aceita ASCII na chave)", () => {
+    expect(sanitizarNomeArquivo("RGE - JOÃO PESSOA 172")).toBe("RGE - JOAO PESSOA 172");
+    expect(sanitizarNomeArquivo("TESTE (SOLICITAÇÃO DE AJUSTE EDITAVEL)")).toBe("TESTE (SOLICITACAO DE AJUSTE EDITAVEL)");
   });
 
   it("troca caracteres reservados de path/Windows por hífen", () => {
     expect(sanitizarNomeArquivo('NF 123/2026: "urgente" <pago>')).toBe("NF 123-2026- -urgente- -pago-");
   });
 
+  it("troca qualquer outro caractere fora do ASCII imprimível por hífen (aspas curvas, travessão...)", () => {
+    expect(sanitizarNomeArquivo("Nome “bonito” — assim")).toBe("Nome -bonito- - assim");
+  });
+
   it("colapsa espaços múltiplos e tira espaço nas pontas", () => {
-    expect(sanitizarNomeArquivo("  RGE   -   JOÃO PESSOA   172  ")).toBe("RGE - JOÃO PESSOA 172");
+    expect(sanitizarNomeArquivo("  RGE   -   JOÃO PESSOA   172  ")).toBe("RGE - JOAO PESSOA 172");
   });
 
   it("nunca devolve string vazia (cai pra 'arquivo')", () => {

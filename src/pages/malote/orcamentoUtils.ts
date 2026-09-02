@@ -142,6 +142,36 @@ export function montarCombosAlcada(params: {
 // — orçado desconhecido (resolverOrcado devolve null) nunca bloqueia, é
 // tratado como "sem trava" (mesmo comportamento de sempre, pra não
 // quebrar classificação/contrato sem dado suficiente pra calcular).
+// SIS-2026-0292 (Iury): "alterando o Valor Total, altera proporcionalmente
+// o rateio perante as porcentagens" — antes, mudar o valor da despesa não
+// mexia em nada mais (nem no despesa.valor_total salvo, nem nas linhas do
+// Rateio, que ficavam com a soma antiga e só apareciam "fora de bater" no
+// rodapé da grade). Recalcula o `valor` de cada linha a partir do
+// `percentual` já gravado nela (fonte da verdade, RateioGrid mantém os
+// dois sempre em sincronia) contra o NOVO total — última linha com
+// percentual absorve a sobra de arredondamento de centavos, mesmo truque
+// já usado em RateioGrid.distribuirIgualmente. Linha sem percentual (caso
+// raro, rateio ainda incompleto) fica intocada.
+export function rescalarRateioPorTotal<T extends { percentual: number | null; valor: number }>(
+  linhas: T[],
+  novoTotal: number
+): T[] {
+  const indicesComPercentual = linhas.reduce<number[]>((acc, l, i) => {
+    if (l.percentual != null) acc.push(i);
+    return acc;
+  }, []);
+  if (indicesComPercentual.length === 0) return linhas;
+  const ultimoIndice = indicesComPercentual[indicesComPercentual.length - 1];
+  let somaAjustada = 0;
+  return linhas.map((l, i) => {
+    if (l.percentual == null) return l;
+    if (i === ultimoIndice) return { ...l, valor: Number((novoTotal - somaAjustada).toFixed(2)) };
+    const valor = Number(((novoTotal * l.percentual) / 100).toFixed(2));
+    somaAjustada += valor;
+    return { ...l, valor };
+  });
+}
+
 export function encontrarComboQueEstouraAlcada(
   combos: ComboAlcada[],
   limitePct: number | null,

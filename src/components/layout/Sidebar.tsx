@@ -38,6 +38,7 @@ import {
   ShoppingCart,
   BarChart3,
   Settings,
+  FileArchive,
   BookOpen,
   ClipboardCheck,
   DatabaseZap,
@@ -390,6 +391,7 @@ const maloteModule: ModuleDef = {
       defaultOpen: true,
       items: [
         { label: "Aprovações do Malote", to: "/app/malote/aprovacoes", icon: CheckCircle2 },
+        { label: "Arquivos do Malote", to: "/app/malote/arquivos", icon: FileArchive },
         { label: "Configurações", to: "/app/malote/configuracoes", icon: Settings },
         { label: "Criar Despesa", to: "/app/malote/criar-despesa", icon: PlusCircle },
         { label: "Dashboard", to: "/app/malote/dashboard", icon: BarChart3 },
