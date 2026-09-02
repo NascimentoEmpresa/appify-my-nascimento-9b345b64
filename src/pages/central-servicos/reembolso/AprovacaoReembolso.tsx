@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { toast } from "sonner";
-import { BadgeCheck, Send, ShieldCheck, XCircle } from "lucide-react";
+import { AlertTriangle, BadgeCheck, Send, ShieldCheck, XCircle } from "lucide-react";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { AcessoGate } from "@/components/auth/AcessoGate";
 import { Button } from "@/components/ui/button";
@@ -10,7 +10,10 @@ import { Textarea } from "@/components/ui/textarea";
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
-import { useDecidirReembolso, useEnviarAoMalote, useReembolsos } from "@/hooks/useReembolso";
+import {
+  useAprovarELancar, useConfigReembolso, useDecidirReembolso, useEnviarAoMalote, useReembolsos,
+} from "@/hooks/useReembolso";
+import { Link } from "react-router-dom";
 import {
   ROTULO_STATUS, STATUS_TODOS, podeEnviarAoMalote, type StatusReembolso,
 } from "@/lib/reembolso/regras";
@@ -36,17 +39,46 @@ export default function AprovacaoReembolso() {
   const [status, setStatus] = useState<StatusReembolso | "todos">("pendente");
   const { data: lista = [], isLoading } = useReembolsos("fila", undefined, status);
   const decidir = useDecidirReembolso();
+  const aprovarELancar = useAprovarELancar();
   const enviarMalote = useEnviarAoMalote();
+  // Só para AVISAR antes do clique. Quem recusa de verdade é a RPC — esta
+  // leitura é conveniência, não regra, e por isso não bloqueia o botão: se a
+  // config for preenchida noutra aba, o aviso some sozinho no próximo refetch
+  // e nada aqui precisa saber disso.
+  const { data: cfg } = useConfigReembolso();
+  const faltaClassificacao = !!cfg && !cfg.classificacao_id;
 
   // O motivo é por linha: com um estado só, abrir a segunda solicitação
   // herdava o texto digitado na primeira e o motivo saía trocado.
   const [motivos, setMotivos] = useState<Record<string, string>>({});
 
+  /**
+   * Aprovar e reprovar seguem caminhos diferentes desde 02/09/2026.
+   *
+   * APROVAR chama `cs_reembolso_aprovar_e_lancar`, que decide e cria a
+   * despesa no Malote na MESMA transação — era o pedido: "ao clicar em
+   * APROVAR vá pro malote e entre como despesa lá". Se o Malote recusar, a
+   * aprovação não acontece e a mensagem dele aparece aqui.
+   *
+   * REPROVAR continua no update simples: não há nada para lançar.
+   */
   const agir = (id: string, acao: "aprovar" | "reprovar") => {
     const motivo = (motivos[id] ?? "").trim();
+
+    if (acao === "aprovar") {
+      aprovarELancar.mutate(id, {
+        onSuccess: () => {
+          toast.success("Reembolso aprovado e lançado como despesa no Malote.");
+          setMotivos((m) => ({ ...m, [id]: "" }));
+        },
+        onError: (e: any) => toast.error(e?.message ?? "Não deu para aprovar."),
+      });
+      return;
+    }
+
     // Reprovar sem motivo devolve a solicitação sem ninguém saber o que
     // corrigir — a mesma regra das outras telas de aprovação do ERP.
-    if (acao === "reprovar" && motivo.length < 10) {
+    if (motivo.length < 10) {
       toast.error("Escreva o motivo da reprovação (mín. 10 caracteres).");
       return;
     }
@@ -54,7 +86,7 @@ export default function AprovacaoReembolso() {
       { id, acao, motivo },
       {
         onSuccess: () => {
-          toast.success(acao === "aprovar" ? "Reembolso aprovado." : "Reembolso reprovado.");
+          toast.success("Reembolso reprovado.");
           setMotivos((m) => ({ ...m, [id]: "" }));
         },
         onError: (e: any) => toast.error(e?.message ?? "Não deu para registrar a decisão."),
@@ -108,6 +140,25 @@ export default function AprovacaoReembolso() {
           </Card>
         }
       >
+        {/* Aprovar agora lança no Malote, então a config virou pré-requisito
+            da aprovação, não do envio. Dizer isso ANTES do clique evita que a
+            pessoa descubra pelo erro. */}
+        {faltaClassificacao && (
+          <Card className="mb-4 flex items-start gap-2 border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
+            <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+            <span>
+              <strong>Aprovar está bloqueado:</strong> falta escolher a classificação com que a
+              despesa nasce no Malote. Aprovar passou a lançar a despesa na mesma hora, e o Malote
+              não aceita despesa sem classificação.{" "}
+              <AcessoGate menu="central_servicos_reembolso_config" acao="alterar">
+                <Link className="font-semibold underline" to="/app/central-servicos/reembolso/configuracao">
+                  Escolher em Tipos e Limites
+                </Link>
+              </AcessoGate>
+            </span>
+          </Card>
+        )}
+
         <ListaReembolsos
           lista={lista}
           carregando={isLoading}
@@ -145,8 +196,12 @@ export default function AprovacaoReembolso() {
                     />
                   </div>
                   <div className="flex flex-wrap gap-2">
-                    <Button disabled={decidir.isPending} onClick={() => agir(r.id, "aprovar")}>
-                      <BadgeCheck className="mr-2 h-4 w-4" /> Aprovar
+                    {/* O rótulo diz o que o clique FAZ. "Aprovar" sozinho
+                        escondia que o dinheiro entra no Malote na mesma hora,
+                        e isso é o tipo de coisa que a pessoa precisa saber
+                        antes de clicar, não depois. */}
+                    <Button disabled={aprovarELancar.isPending} onClick={() => agir(r.id, "aprovar")}>
+                      <BadgeCheck className="mr-2 h-4 w-4" /> Aprovar e lançar no Malote
                     </Button>
                     <Button variant="destructive" disabled={decidir.isPending}
                             onClick={() => agir(r.id, "reprovar")}>
