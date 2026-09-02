@@ -18,6 +18,9 @@ verify_jwt = true
 [functions.copiloto-acoes-analise]
 verify_jwt = true
 
+[functions.diagnostico-feedback-ia]
+verify_jwt = true
+
 [functions.fcr-load]
 verify_jwt = true
 
