@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
-import { Clock, Loader2, Plus, Save, Send, Settings2, Wallet } from "lucide-react";
+import { AlertTriangle, Clock, Loader2, Plus, Save, Send, Settings2, Wallet } from "lucide-react";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { AcessoGate } from "@/components/auth/AcessoGate";
 import { Button } from "@/components/ui/button";
@@ -8,6 +8,11 @@ import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
+import {
+  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
+} from "@/components/ui/select";
+import { useEmpresasGrupo } from "@/hooks/useMaloteDespesa";
+import { useClassificacoesOrcamentoAdmin } from "@/hooks/usePlanejamentoOrcamentario";
 import {
   useConfigReembolso, useSalvarConfigReembolso, useSalvarTipo, useTiposReembolso,
   type ConfigReembolso,
@@ -42,16 +47,27 @@ import {
  * Os padrões usados para criar a despesa no Malote.
  *
  * A `malote_despesa` exige empresa e classificação, e o reembolso não tem
- * nenhum dos dois — não há como derivá-los de uma viagem. Em vez de adivinhar
- * (e criar despesa torta que alguém teria que corrigir na mão), ficam aqui,
- * numa linha só, sob a mesma permissão que governa tetos e janelas.
+ * nenhuma das duas — não há como derivá-las de uma viagem. Em vez de
+ * adivinhar (e criar despesa torta que alguém teria que corrigir na mão),
+ * ficam aqui, numa linha só, sob a mesma permissão que governa tetos e
+ * janelas.
  *
- * Sem a empresa preenchida, o botão "Enviar ao malote" existe mas a RPC
- * recusa com essa razão dita — é melhor do que criar a despesa sem dono.
+ * ATÉ 02/09/2026 ESTES CAMPOS ERAM CAIXAS DE TEXTO PEDINDO UUID. Ninguém
+ * preencheu — e por isso nenhum reembolso jamais chegou ao Malote: a tabela
+ * de config estava inteira nula. Agora são seletores do que existe de
+ * verdade, porque um campo que ninguém consegue preencher é um campo que não
+ * existe.
+ *
+ * A CLASSIFICAÇÃO É OBRIGATÓRIA no banco, não opcional como dizia o rótulo
+ * antigo: `malote_despesa_classificacao_coerente` exige classificação em toda
+ * despesa cuja origem não seja multi-classificação. A empresa é o único campo
+ * com saída — sem ela, o lançamento usa a empresa de quem pediu o reembolso.
  */
 function PadroesMalote() {
   const { data: cfg } = useConfigReembolso();
   const salvar = useSalvarConfigReembolso();
+  const { data: empresas = [] } = useEmpresasGrupo();
+  const { data: classificacoes = [] } = useClassificacoesOrcamentoAdmin();
   const [form, setForm] = useState<ConfigReembolso>({
     empresa_id: null, classificacao_id: null, forma_pagamento: null, tipo_movimento: null,
   });
@@ -67,25 +83,60 @@ function PadroesMalote() {
     }
   };
 
+  const semClassificacao = !form.classificacao_id;
+
   return (
     <Card className="mb-4 p-4">
       <p className="mb-1 flex items-center gap-2 text-sm font-medium">
         <Send className="h-4 w-4" /> Padrões para o malote
       </p>
       <p className="mb-3 text-xs text-muted-foreground">
-        Com que empresa e classificação a despesa nasce no Malote quando um reembolso aprovado é
-        enviado. Sem a empresa, o envio é recusado — a despesa ficaria sem dono.
+        Com que empresa e classificação a despesa nasce no Malote quando um reembolso é aprovado.
+        Aprovar já lança a despesa, então <b>sem a classificação a aprovação é recusada</b> — o
+        Malote não aceita despesa sem classificação.
       </p>
+
+      {semClassificacao && (
+        <div className="mb-3 flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">
+          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+          <span>
+            <b>Falta escolher a classificação.</b> Enquanto ela estiver em branco, ninguém
+            consegue aprovar reembolso — o lançamento no Malote falha e a aprovação volta atrás.
+          </span>
+        </div>
+      )}
+
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
         <div className="space-y-1.5">
-          <Label className="text-xs">Empresa (UUID) <span className="text-destructive">*</span></Label>
-          <Input value={form.empresa_id ?? ""} placeholder="id da empresa"
-                 onChange={(e) => setForm((f) => ({ ...f, empresa_id: e.target.value || null }))} />
+          <Label className="text-xs">Classificação no Malote <span className="text-destructive">*</span></Label>
+          <Select
+            value={form.classificacao_id ?? ""}
+            onValueChange={(v) => setForm((f) => ({ ...f, classificacao_id: v || null }))}
+          >
+            <SelectTrigger><SelectValue placeholder="Escolha a classificação" /></SelectTrigger>
+            <SelectContent>
+              {classificacoes.map((c: any) => (
+                <SelectItem key={c.id} value={c.id}>{c.nome}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
         </div>
         <div className="space-y-1.5">
-          <Label className="text-xs">Classificação Malote (UUID)</Label>
-          <Input value={form.classificacao_id ?? ""} placeholder="opcional"
-                 onChange={(e) => setForm((f) => ({ ...f, classificacao_id: e.target.value || null }))} />
+          <Label className="text-xs">Empresa</Label>
+          <Select
+            value={form.empresa_id ?? ""}
+            onValueChange={(v) => setForm((f) => ({ ...f, empresa_id: v || null }))}
+          >
+            <SelectTrigger><SelectValue placeholder="A empresa de quem pediu" /></SelectTrigger>
+            <SelectContent>
+              {empresas.map((e) => (
+                <SelectItem key={e.id} value={e.id}>{e.nome}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <p className="text-[11px] text-muted-foreground">
+            Em branco, cada despesa nasce na empresa do solicitante.
+          </p>
         </div>
         <div className="space-y-1.5">
           <Label className="text-xs">Forma de pagamento</Label>
