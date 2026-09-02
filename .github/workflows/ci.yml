@@ -151,10 +151,37 @@ jobs:
         run: npm ci
 
       # O cache guarda o .tsbuildinfo: o estado do compilador (versão de cada
-      # arquivo mais os diagnósticos já calculados). A chave inclui o lockfile e
-      # os tsconfig porque trocar a versão do TypeScript ou uma opção do
-      # compilador invalida o estado inteiro — o tsc detecta e refaz tudo, mas
-      # aí o cache velho seria só peso morto ocupando a cota do repositório.
+      # arquivo mais os diagnósticos já calculados).
+      #
+      # São TRÊS buscas, tentadas nesta ordem, e cada linha existe por um motivo:
+      #
+      #   key           tsc-Linux-<impressao>-<run_id>
+      #                 Nunca acerta, de propósito: o run_id é sempre novo. Ela
+      #                 existe para o passo de SALVAR gravar uma entrada nova a
+      #                 cada execução, em vez de reescrever a mesma.
+      #
+      #   restore-key 1 tsc-Linux-<impressao>-
+      #                 O caso normal: pega o estado mais recente gerado com a
+      #                 MESMA versão de TypeScript e as mesmas opções de
+      #                 compilador. A impressão digital sai do package-lock.json
+      #                 e dos tsconfig*.json.
+      #
+      #   restore-key 2 tsc-Linux-
+      #                 Último recurso, acrescentado em 02/09/2026. Sem ele,
+      #                 subir QUALQUER dependência muda a impressão digital, o
+      #                 prefixo acima deixa de casar com cache nenhum e todas as
+      #                 PRs abertas voltam ao compilador do zero (6-8min) até o
+      #                 próximo merge na main re-semear. Com ele, o tsc parte do
+      #                 estado mais recente que existir.
+      #
+      # Por que o último recurso é seguro: o .tsbuildinfo carrega dentro dele a
+      # versão do TypeScript e as opções que geraram aquele estado. Se não
+      # baterem com as de agora, o próprio tsc descarta e refaz tudo — não é
+      # aposta nossa, é conferência do compilador. Os desfechos possíveis são
+      # "reaproveita e é rápido" ou "refaz tudo, igual a hoje". Não existe
+      # "reaproveita errado e deixa passar um erro" — a medição confirma por
+      # outro caminho: frio, morno e morno-com-arquivo-mexido acharam os mesmos
+      # 177 erros.
       - name: Restaurar cache do type-check
         uses: actions/cache/restore@v4
         with:
@@ -162,6 +189,7 @@ jobs:
           key: tsc-${{ runner.os }}-${{ hashFiles('package-lock.json', 'tsconfig*.json') }}-${{ github.run_id }}
           restore-keys: |
             tsc-${{ runner.os }}-${{ hashFiles('package-lock.json', 'tsconfig*.json') }}-
+            tsc-${{ runner.os }}-
 
       - name: Type-check dos arquivos da PR
         id: tsc
