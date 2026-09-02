@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { SearchableSelect } from "@/components/ui/searchable-select";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import {
   AlertDialog,
@@ -55,6 +56,8 @@ import {
 } from "@/hooks/useMaloteDespesa";
 import { useOrcadoClassificacao, useOrcadoClassificacaoMultiMes } from "@/hooks/useOrcadoClassificacao";
 import { useMaloteConfig, usePrazoNormalInclusao, useSouGerenteFinanceiroMalote, exigeJustificativaPorConferenciaAtrasada } from "@/hooks/useMaloteConfig";
+import { useClassificacoesOrcamentoAdmin } from "@/hooks/usePlanejamentoOrcamentario";
+import { AnexosField } from "./AnexosField";
 import { useTiposFormaPagamento } from "@/hooks/useMaloteFormaPagamento";
 import { useUtilizadoOrcamento } from "@/hooks/useUtilizadoOrcamento";
 import { anoMesAtual } from "@/hooks/usePlanilhaCusto";
@@ -65,7 +68,7 @@ import { FluxoAprovacaoVisual } from "./FluxoAprovacaoVisual";
 import { ExcluirPermanentementeButton } from "./ExcluirPermanentementeButton";
 import { DiaPagamentoPicker } from "./DiaPagamentoPicker";
 import { ExcecaoDiaBloqueadoField } from "./ExcecaoDiaBloqueadoField";
-import { montarCombosAlcada, encontrarComboQueEstouraAlcada } from "./orcamentoUtils";
+import { montarCombosAlcada, encontrarComboQueEstouraAlcada, rescalarRateioPorTotal } from "./orcamentoUtils";
 
 const TIPO_SOLICITACAO_LABEL: Record<TipoSolicitacao, string> = {
   administrativo: "Administrativo",
@@ -256,6 +259,16 @@ export default function DespesaVisualizar() {
   const pagarParcela = usePagarParcela();
 
   const [valorAprovado, setValorAprovado] = useState("");
+  // SIS-2026-0292 (Iury): "Dados da Despesa" (Nome/Classificação/Arquivos)
+  // sempre foi só-leitura, mesmo durante ajuste — lacuna real: o
+  // solicitante não tinha como corrigir um erro de digitação no nome ou
+  // uma Classificação errada sem cancelar a despesa inteira e começar de
+  // novo. Editável no mesmo gate de "Dados da Aprovação e Pagamento"/Rateio
+  // (rateioEPagamentoEditaveis, abaixo).
+  const [nomeEditado, setNomeEditado] = useState("");
+  const [classificacaoIdEditado, setClassificacaoIdEditado] = useState("");
+  const [arquivosExistentes, setArquivosExistentes] = useState<string[]>([]);
+  const [arquivosNovos, setArquivosNovos] = useState<File[]>([]);
   const [justificativa, setJustificativa] = useState("");
   const [comentario, setComentario] = useState("");
   const [formaPagamento, setFormaPagamento] = useState("");
@@ -333,10 +346,18 @@ export default function DespesaVisualizar() {
   // Nível 1, pra nunca pular a avaliação do N1.
   const { data: souGerenteFinanceiro } = useSouGerenteFinanceiroMalote();
   const { data: prazoNormal } = usePrazoNormalInclusao();
+  // SIS-2026-0292: catálogo inteiro de Classificações pro combobox de
+  // "corrigir classificação" — a que já vem no join da despesa
+  // (despesa.classificacao) só tem a ATUAL, não serve pra listar opções.
+  const { data: classificacoesCatalogo = [] } = useClassificacoesOrcamentoAdmin();
 
   useEffect(() => {
     if (!despesa) return;
     setValorAprovado(despesa.valor_aprovado != null ? String(despesa.valor_aprovado) : String(despesa.valor_total));
+    setNomeEditado(despesa.nome);
+    setClassificacaoIdEditado(despesa.classificacao_id ?? "");
+    setArquivosExistentes(despesa.arquivos ?? []);
+    setArquivosNovos([]);
     setJustificativa(despesa.justificativa_aprovacao ?? "");
     setFormaPagamento(despesa.forma_pagamento ?? "");
     setInformacoesPagamento(despesa.informacoes_pagamento ?? "");
@@ -410,6 +431,24 @@ export default function DespesaVisualizar() {
   // parcelada mantém o comportamento de sempre.
   const rateioEditavel =
     rateioEPagamentoEditaveis && (!despesa.parcelado || !STATUS_COM_PARCELA_VISIVEL.includes(despesa.status));
+  // SIS-2026-0292: opções do combobox de Classificação (corrigir erro de
+  // digitação) — inclui a atual mesmo se estiver inativa, pra não "sumir"
+  // a seleção já salva (mesmo critério de tiposFormaPagamentoAtivos acima).
+  const classificacoesOpcoes = classificacoesCatalogo
+    .filter((c) => c.ativo || c.id === despesa.classificacao_id)
+    .map((c) => ({ value: c.id, label: c.nome }));
+  const classificacaoEditadaCatalogo = classificacoesCatalogo.find((c) => c.id === classificacaoIdEditado);
+
+  // SIS-2026-0292 (Iury): "alterando o Valor Total, altera proporcionalmente
+  // o rateio perante as porcentagens" — antes, mudar esse campo não mexia
+  // em mais nada (nem no despesa.valor_total salvo no reenvio, nem nas
+  // linhas do Rateio, que ficavam com a soma antiga).
+  function handleValorTotalChange(valor: string) {
+    setValorAprovado(valor);
+    const novoTotal = Number(valor);
+    if (!novoTotal || novoTotal <= 0) return;
+    setLinhasRateio((atual) => rescalarRateioPorTotal(atual, novoTotal));
+  }
   // SIS-2026-0212 (pedido do Iury): a "Justificativa da aprovação" é o
   // único campo deste bloco que o aprovador do nível atual também precisa
   // editar — é onde ele registra o motivo de escalar de N1 pra N2 (os
@@ -549,7 +588,7 @@ export default function DespesaVisualizar() {
     }
     if (!dataPagamento) return "Informe a data de pagamento.";
     if (!competencia) return "Informe a competência.";
-    if (!valorAprovado || Number(valorAprovado) <= 0) return "Informe o valor aprovado.";
+    if (!valorAprovado || Number(valorAprovado) <= 0) return "Informe o Valor Total.";
     // SIS-2026-0212 (pedido do Iury): ao escalar de N1 pra N2 (estourou a
     // alçada do Nível 1), o aprovador do N1 precisa registrar o motivo.
     if (despesa!.nivel_aprovacao_atual === 1 && proximoNivelConfigurado && !justificativa.trim()) {
@@ -798,12 +837,45 @@ export default function DespesaVisualizar() {
   }
 
   async function handleReenviar() {
+    if (!nomeEditado.trim()) {
+      toast.error("Informe o nome da despesa.");
+      return;
+    }
+    if (!classificacaoIdEditado) {
+      toast.error("Selecione a Classificação.");
+      return;
+    }
+    if (!valorAprovado || Number(valorAprovado) <= 0) {
+      toast.error("Informe o Valor Total.");
+      return;
+    }
     setEnviando("reenviar");
     try {
+      const valorTotalNovo = Number(valorAprovado);
+      // SIS-2026-0291 (reaproveitado aqui): anexo novo sobe já com o nome
+      // da despesa (nome ATUAL, que pode ter sido corrigido nesta mesma
+      // tela — por isso usa nomeEditado, não despesa!.nome).
+      const novosPaths = arquivosNovos.length > 0 ? await uploadAnexosMalote(arquivosNovos, despesa!.id, nomeEditado.trim()) : [];
+      const arquivosFinais = [...arquivosExistentes, ...novosPaths];
+
       // Resumo do que mudou desde a última vez, pro Histórico — compara
       // contra o snapshot original (despesa/data.rateio, antes das edições
       // desta tela), não contra o que já foi salvo em reenvios anteriores.
       const partesResumo: string[] = [];
+      // SIS-2026-0292 (Iury): "Dados da Despesa" (Nome/Classificação/Valor/
+      // Arquivos) virou editável durante o ajuste — antes o solicitante não
+      // tinha como corrigir um erro de digitação sem cancelar tudo.
+      if (despesa!.nome !== nomeEditado.trim()) {
+        partesResumo.push(`Nome: ${despesa!.nome} → ${nomeEditado.trim()}`);
+      }
+      if ((despesa!.classificacao_id ?? "") !== classificacaoIdEditado) {
+        const nomeAntigo = despesa!.classificacao?.nome ?? "—";
+        const nomeNovo = classificacoesCatalogo.find((c) => c.id === classificacaoIdEditado)?.nome ?? "—";
+        partesResumo.push(`Classificação: ${nomeAntigo} → ${nomeNovo}`);
+      }
+      if (arquivosFinais.length !== despesa!.arquivos.length || arquivosNovos.length > 0) {
+        partesResumo.push("Arquivos anexados alterados");
+      }
       if ((despesa!.forma_pagamento ?? "") !== (formaPagamento || "")) {
         partesResumo.push(
           `Forma de pagamento: ${despesa!.forma_pagamento || "—"} → ${formaPagamento || "—"}`
@@ -817,9 +889,11 @@ export default function DespesaVisualizar() {
       }
       const competenciaAtual = despesa!.competencia ? despesa!.competencia.slice(0, 7) : "";
       if (competenciaAtual !== competencia) partesResumo.push("Competência alterada");
-      const valorAprovadoAtual = despesa!.valor_aprovado != null ? Number(despesa!.valor_aprovado) : despesa!.valor_total;
-      if (valorAprovadoAtual !== (Number(valorAprovado) || 0)) {
-        partesResumo.push(`Valor aprovado: ${fmtMoneyResumo(valorAprovadoAtual)} → ${fmtMoneyResumo(Number(valorAprovado) || 0)}`);
+      // SIS-2026-0292: "Valor aprovado" virou "Valor Total" — agora
+      // alterá-lo também atualiza despesa.valor_total (antes só ficava
+      // gravado à parte, em valor_aprovado, sem refletir em mais nada).
+      if (despesa!.valor_total !== valorTotalNovo) {
+        partesResumo.push(`Valor Total: ${fmtMoneyResumo(despesa!.valor_total)} → ${fmtMoneyResumo(valorTotalNovo)}`);
       }
       if (despesa!.excecao !== excecao) partesResumo.push(excecao ? "Marcada como Exceção (dia bloqueado)" : "Exceção removida");
       partesResumo.push(...resumoAlteracoesRateio(data?.rateio ?? [], linhasRateio, contratos));
@@ -827,11 +901,11 @@ export default function DespesaVisualizar() {
       await reenviar.mutateAsync({
         id: despesa!.id,
         empresa_id: despesa!.empresa_id,
-        classificacao_id: despesa!.classificacao_id,
+        classificacao_id: classificacaoIdEditado,
         origem: despesa!.origem,
         status: despesa!.status,
-        nome: despesa!.nome,
-        valor_total: despesa!.valor_total,
+        nome: nomeEditado.trim(),
+        valor_total: valorTotalNovo,
         valor_aprovado: valorAprovado ? Number(valorAprovado) : null,
         justificativa_aprovacao: justificativa || null,
         forma_pagamento: formaPagamento || null,
@@ -840,6 +914,7 @@ export default function DespesaVisualizar() {
         excecao,
         justificativa_excecao: excecao ? justificativaExcecao.trim() || null : null,
         competencia: competencia ? competencia + "-01" : null,
+        arquivos: arquivosFinais,
         rateio: linhasRateio,
         descricaoEvento: partesResumo.length > 0 ? partesResumo.join("\n") : null,
       });
@@ -934,18 +1009,50 @@ export default function DespesaVisualizar() {
                   </div>
                   <p className="text-sm font-semibold">{despesa.origem === "solicitacao" ? "Dados da Solicitação" : "Dados da Despesa"}</p>
                 </div>
-                <span className="text-[11px] text-muted-foreground">🔒 bloqueado</span>
+                {/* SIS-2026-0292 (Iury): "Dados da Despesa" era sempre
+                    bloqueado, mesmo durante ajuste — sem jeito de corrigir
+                    Nome/Classificação/Valor/Arquivos errados sem cancelar a
+                    despesa inteira. Editável no mesmo gate do resto da tela
+                    (rateioEPagamentoEditaveis: solicitante, em rascunho ou
+                    necessidade_de_ajuste). */}
+                <span className="text-[11px] text-muted-foreground">{rateioEPagamentoEditaveis ? "✏️ editável" : "🔒 bloqueado"}</span>
               </div>
 
               <div className="grid grid-cols-2 gap-3">
-                <TileDestaque label="Valor" valor={Number(despesa.valor_total).toLocaleString("pt-BR", { style: "currency", currency: "BRL" })} icon={<DollarSign />} cor="emerald" />
-                <TileDestaque label="Classificação" valor={despesa.classificacao?.nome ?? "—"} icon={<Tag />} cor="violet" />
+                <TileDestaque
+                  label="Valor"
+                  valor={(Number(valorAprovado) || despesa.valor_total).toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}
+                  icon={<DollarSign />}
+                  cor="emerald"
+                />
+                <TileDestaque label="Classificação" valor={classificacaoEditadaCatalogo?.nome ?? despesa.classificacao?.nome ?? "—"} icon={<Tag />} cor="violet" />
               </div>
 
+              {rateioEPagamentoEditaveis && (
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div>
+                    <Label className="text-xs">Nome da despesa</Label>
+                    <Input value={nomeEditado} onChange={(e) => setNomeEditado(e.target.value)} />
+                  </div>
+                  <div>
+                    <Label className="text-xs">Classificação</Label>
+                    <SearchableSelect
+                      value={classificacaoIdEditado}
+                      onChange={setClassificacaoIdEditado}
+                      options={classificacoesOpcoes}
+                      placeholder="Selecione a Classificação..."
+                      searchPlaceholder="Buscar Classificação..."
+                    />
+                  </div>
+                </div>
+              )}
+
               <div className="text-sm space-y-2">
-                <p>
-                  <span className="text-muted-foreground">Nome:</span> {despesa.nome}
-                </p>
+                {!rateioEPagamentoEditaveis && (
+                  <p>
+                    <span className="text-muted-foreground">Nome:</span> {despesa.nome}
+                  </p>
+                )}
                 {despesa.motivo && (
                   <p>
                     <span className="text-muted-foreground">Motivo:</span> {despesa.motivo}
@@ -968,24 +1075,37 @@ export default function DespesaVisualizar() {
                 )}
               </div>
 
-              {despesa.arquivos.length > 0 && (
+              {(despesa.arquivos.length > 0 || rateioEPagamentoEditaveis) && (
                 <div>
                   <p className="text-xs text-muted-foreground mb-2">Arquivos anexados</p>
-                  <div className="grid grid-cols-2 gap-2">
-                    {despesa.arquivos.map((path) => (
-                      <button
-                        key={path}
-                        type="button"
-                        onClick={() => abrirAnexo(path)}
-                        className="flex items-center gap-2 rounded-lg border border-border p-2 text-left hover:border-primary hover:bg-primary/5 transition-colors"
-                      >
-                        <div className="h-7 w-7 rounded-md bg-muted text-muted-foreground flex items-center justify-center shrink-0">
-                          <IconeArquivo path={path} />
+                  {(rateioEPagamentoEditaveis ? arquivosExistentes : despesa.arquivos).length > 0 && (
+                    <div className="grid grid-cols-2 gap-2 mb-2">
+                      {(rateioEPagamentoEditaveis ? arquivosExistentes : despesa.arquivos).map((path) => (
+                        <div key={path} className="flex items-center gap-2 rounded-lg border border-border p-2">
+                          <button
+                            type="button"
+                            onClick={() => abrirAnexo(path)}
+                            className="flex items-center gap-2 text-left flex-1 min-w-0 hover:text-primary"
+                          >
+                            <div className="h-7 w-7 rounded-md bg-muted text-muted-foreground flex items-center justify-center shrink-0">
+                              <IconeArquivo path={path} />
+                            </div>
+                            <span className="text-xs truncate">{path.split("/").pop()}</span>
+                          </button>
+                          {rateioEPagamentoEditaveis && (
+                            <button
+                              type="button"
+                              onClick={() => setArquivosExistentes((atual) => atual.filter((p) => p !== path))}
+                              className="text-muted-foreground hover:text-destructive shrink-0"
+                            >
+                              <X className="h-3.5 w-3.5" />
+                            </button>
+                          )}
                         </div>
-                        <span className="text-xs truncate">{path.split("/").pop()}</span>
-                      </button>
-                    ))}
-                  </div>
+                      ))}
+                    </div>
+                  )}
+                  {rateioEPagamentoEditaveis && <AnexosField arquivos={arquivosNovos} onChange={setArquivosNovos} />}
                 </div>
               )}
 
@@ -1012,7 +1132,9 @@ export default function DespesaVisualizar() {
             <div className="flex-1" />
 
             <p className="text-xs text-muted-foreground border-t border-border pt-3 mt-4">
-              Os dados da solicitação estão bloqueados e não podem ser alterados.
+              {rateioEPagamentoEditaveis
+                ? "Corrija o que precisar e reenvie para aprovação — o Valor Total reescala o Rateio proporcionalmente."
+                : "Os dados da solicitação estão bloqueados e não podem ser alterados."}
             </p>
           </CardContent>
         </Card>
@@ -1126,8 +1248,14 @@ export default function DespesaVisualizar() {
           <p className="text-sm font-semibold">Dados da Aprovação e Pagamento</p>
           <div className={cn("grid grid-cols-1 sm:grid-cols-3 gap-4", !rateioEPagamentoEditaveis && !podeEditarJustificativaAprovacao && "opacity-60")}>
             <div className={cn(!rateioEPagamentoEditaveis && "opacity-60")}>
-              <Label>Valor aprovado</Label>
-              <Input type="number" step="0.01" value={valorAprovado} onChange={(e) => setValorAprovado(e.target.value)} disabled={!rateioEPagamentoEditaveis} />
+              {/* SIS-2026-0292 (Iury): renomeado de "Valor aprovado" — o
+                  campo já era só o solicitante quem editava (nunca o
+                  aprovador, só leitura pra ele), então "aprovado" não fazia
+                  sentido. Agora alterar aqui também atualiza o Valor de
+                  "Dados da Despesa" e reescala o Rateio proporcionalmente
+                  (ver handleValorTotalChange). */}
+              <Label>Valor Total</Label>
+              <Input type="number" step="0.01" value={valorAprovado} onChange={(e) => handleValorTotalChange(e.target.value)} disabled={!rateioEPagamentoEditaveis} />
             </div>
             <div>
               <Label>
@@ -1256,8 +1384,11 @@ export default function DespesaVisualizar() {
               valorTotal={Number(valorAprovado) || despesa.valor_total}
               disabled={bloqueado}
               despesaId={despesa.id}
-              classificacaoId={despesa.classificacao_id}
-              limiteJustificativaPct={despesa.classificacao?.limite_justificativa_pct ?? null}
+              // SIS-2026-0292: se o solicitante corrigiu a Classificação
+              // nesta mesma tela, o Rateio (Orçado/limite de justificativa)
+              // já reflete a NOVA, não a antiga.
+              classificacaoId={classificacaoIdEditado || despesa.classificacao_id}
+              limiteJustificativaPct={classificacaoEditadaCatalogo?.limite_justificativa_pct ?? despesa.classificacao?.limite_justificativa_pct ?? null}
               resolverOrcado={resolverOrcadoMultiMes}
               anoMesDespesa={anoMesDespesa}
               fatorParcela1={fatorParcela1}

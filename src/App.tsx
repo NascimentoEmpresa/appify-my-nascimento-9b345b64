@@ -124,6 +124,7 @@ import MaloteDashboard from "./pages/malote/Dashboard";
 import MaloteMeusItens from "./pages/malote/MeusItens";
 import MaloteDespesaVisualizar from "./pages/malote/DespesaVisualizar";
 import MaloteSolicitacaoVisualizar from "./pages/malote/SolicitacaoVisualizar";
+import MaloteArquivos from "./pages/malote/ArquivosMalote";
 import MovimentosBancarios from "./pages/financeiro/MovimentosBancarios";
 import ContasBancariasEmpresa from "./pages/financeiro/ContasBancariasEmpresa";
 import IntegracaoBancaria from "./pages/financeiro/IntegracaoBancaria";
@@ -431,6 +432,7 @@ const App = () => (
             <Route path="controladoria/gerador-pops" element={<GeradorPops />} />
             {/* Malote */}
             <Route path="malote/aprovacoes" element={<MaloteAprovacoes />} />
+            <Route path="malote/arquivos" element={<MaloteArquivos />} />
             <Route path="malote/pagamento" element={<MalotePagamento />} />
             <Route path="malote/configuracoes" element={<MaloteConfiguracoes />} />
             <Route path="malote/criar-despesa" element={<MaloteCriarDespesa />} />
