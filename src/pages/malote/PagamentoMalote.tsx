@@ -9,19 +9,21 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { DateRangeFilter } from "@/components/ui/date-range-filter";
-import { CheckCircle2, ChevronLeft, ChevronRight, Hourglass, AlertTriangle, XCircle, ClipboardCheck, X } from "lucide-react";
+import { CheckCircle2, ChevronLeft, ChevronRight, Hourglass, AlertTriangle, XCircle, ClipboardCheck, X, Wallet, CheckCircle, Clock3 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import {
   useItensAprovacoesMalote,
   useNomeUsuario,
   useEmpresasGrupo,
   useEmpresaPrimeiraLinhaRateio,
+  useClassificacaoPrimeiraLinhaRateio,
   STATUS_LABEL,
   STATUS_BADGE_CLASS,
   StatusDespesa,
   MaloteDespesaRow,
   ItemLinhaMalote,
 } from "@/hooks/useMaloteDespesa";
+import { useClassificacoesOrcamentoAdmin } from "@/hooks/usePlanejamentoOrcamentario";
 
 // SIS-2026-0160: fila do Financeiro — só os estágios de pagamento
 // (aguardando_pagamento em diante). Itens anteriores (cotação/aprovação)
@@ -110,6 +112,35 @@ function OpcaoResponsavel({ id }: { id: string }) {
   return <SelectItem value={id}>{nome ?? id}</SelectItem>;
 }
 
+// SIS-2026-0286 (ajuste visual pedido pelo usuário): mesma técnica de
+// DespesaVisualizar.tsx (TileDestaque) — ícone grande de fundo com máscara
+// em gradiente, em vez do círculo pequeno de ícone que tínhamos antes.
+const TILE_VALOR_COR = {
+  sky: "text-sky-300 dark:text-sky-800",
+  emerald: "text-emerald-300 dark:text-emerald-800",
+  amber: "text-amber-300 dark:text-amber-800",
+} as const;
+
+function TileValor({ label, valor, icon, cor }: { label: string; valor: string; icon: React.ReactNode; cor: keyof typeof TILE_VALOR_COR }) {
+  return (
+    <Card>
+      <CardContent className="relative overflow-hidden p-4">
+        <div
+          className="pointer-events-none absolute right-0 top-1/2 -translate-y-1/2 translate-x-1"
+          style={{
+            WebkitMaskImage: "linear-gradient(to left, black 0%, black 30%, rgba(0,0,0,0.6) 60%, transparent 100%)",
+            maskImage: "linear-gradient(to left, black 0%, black 30%, rgba(0,0,0,0.6) 60%, transparent 100%)",
+          }}
+        >
+          <span className={cn("[&>svg]:h-14 [&>svg]:w-14", TILE_VALOR_COR[cor])}>{icon}</span>
+        </div>
+        <p className="relative z-10 text-xs text-muted-foreground">{label}</p>
+        <p className="relative z-10 text-lg font-bold leading-tight mt-0.5 truncate max-w-[85%]">{valor}</p>
+      </CardContent>
+    </Card>
+  );
+}
+
 export default function PagamentoMalote() {
   const navigate = useNavigate();
   const { data: todosItens = [], isLoading } = useItensAprovacoesMalote();
@@ -128,6 +159,22 @@ export default function PagamentoMalote() {
     return empresaPrimeiraLinhaPorDespesa?.get(despesa.id) ?? despesa.empresa_id ?? null;
   }
 
+  // SIS-2026-0286 (Iury): coluna/filtro de "Setor" — o setor_responsavel é
+  // da Classificação (Regras Gerais do Malote). Despesa de classificação
+  // única já vem com isso no join; despesa de rateio precisa da
+  // classificação da primeira linha (mesmo critério da Empresa acima).
+  const { data: classificacoesTodas = [] } = useClassificacoesOrcamentoAdmin();
+  const setorPorClassificacaoId = useMemo(
+    () => new Map(classificacoesTodas.map((c) => [c.id, c.setor_responsavel])),
+    [classificacoesTodas]
+  );
+  const { data: classificacaoPrimeiraLinhaPorDespesa } = useClassificacaoPrimeiraLinhaRateio(despesaIds);
+  function setorResolvido(despesa: MaloteDespesaRow): string | null {
+    if (despesa.classificacao?.setor_responsavel) return despesa.classificacao.setor_responsavel;
+    const classificacaoIdRateio = classificacaoPrimeiraLinhaPorDespesa?.get(despesa.id);
+    return classificacaoIdRateio ? setorPorClassificacaoId.get(classificacaoIdRateio) ?? null : null;
+  }
+
   // SIS-2026-0285 (Iury): filtro de data puxava só de "Última atualização" —
   // agora tem os dois períodos, independentes (E lógico quando os dois
   // estão preenchidos).
@@ -139,6 +186,7 @@ export default function PagamentoMalote() {
   const [classificacao, setClassificacao] = useState("");
   const [responsavelId, setResponsavelId] = useState("");
   const [empresaId, setEmpresaId] = useState("");
+  const [setor, setSetor] = useState("");
   const [busca, setBusca] = useState("");
   const [pagina, setPagina] = useState(1);
 
@@ -164,6 +212,16 @@ export default function PagamentoMalote() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [itens, empresaPrimeiraLinhaPorDespesa, empresasMap]);
 
+  const setoresDisponiveis = useMemo(() => {
+    const nomes = new Set<string>();
+    itens.forEach((item) => {
+      const s = setorResolvido(item.despesa);
+      if (s) nomes.add(s);
+    });
+    return Array.from(nomes).sort();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [itens, classificacaoPrimeiraLinhaPorDespesa, setorPorClassificacaoId]);
+
   function limparFiltros() {
     setDataAtualizacaoDe("");
     setDataAtualizacaoAte("");
@@ -173,6 +231,7 @@ export default function PagamentoMalote() {
     setClassificacao("");
     setResponsavelId("");
     setEmpresaId("");
+    setSetor("");
     setBusca("");
     setPagina(1);
   }
@@ -189,6 +248,7 @@ export default function PagamentoMalote() {
       if (classificacao && d.classificacao?.nome !== classificacao) return false;
       if (responsavelId && d.created_by !== responsavelId) return false;
       if (empresaId && empresaIdResolvida(d) !== empresaId) return false;
+      if (setor && setorResolvido(d) !== setor) return false;
       if (dataAtualizacaoDe && d.updated_at < dataAtualizacaoDe) return false;
       if (dataAtualizacaoAte && d.updated_at > dataAtualizacaoAte + "T23:59:59") return false;
       if (dataPagamentoDe || dataPagamentoAte) {
@@ -203,7 +263,22 @@ export default function PagamentoMalote() {
       return true;
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [itens, status, classificacao, responsavelId, empresaId, empresaPrimeiraLinhaPorDespesa, dataAtualizacaoDe, dataAtualizacaoAte, dataPagamentoDe, dataPagamentoAte, busca]);
+  }, [
+    itens,
+    status,
+    classificacao,
+    responsavelId,
+    empresaId,
+    empresaPrimeiraLinhaPorDespesa,
+    setor,
+    classificacaoPrimeiraLinhaPorDespesa,
+    setorPorClassificacaoId,
+    dataAtualizacaoDe,
+    dataAtualizacaoAte,
+    dataPagamentoDe,
+    dataPagamentoAte,
+    busca,
+  ]);
 
   const totalPaginas = Math.max(1, Math.ceil(filtrados.length / PAGE_SIZE));
   const paginaAtual = Math.min(pagina, totalPaginas);
@@ -220,6 +295,25 @@ export default function PagamentoMalote() {
     { label: STATUS_LABEL.despesa_reprovada, status: "despesa_reprovada", count: contar("despesa_reprovada"), icon: XCircle, cor: "red" },
     { label: STATUS_LABEL.despesa_paga, status: "despesa_paga", count: contar("despesa_paga"), icon: CheckCircle2, cor: "emerald" },
   ];
+
+  // SIS-2026-0286 (Iury): "três cards com valor total do malote, valor pago
+  // e valor pendente" — mesma base dos tiles de status acima (`itens`, não
+  // `filtrados`): são um resumo geral da fila, não um total dos filtros
+  // ativos no momento (mesmo critério já usado pelos tiles de status).
+  // Reprovada fica de fora dos 3 — não é "pendente" (não vai ser paga) nem
+  // deveria inflar o "total do malote" (nunca foi pago de verdade).
+  function valorItem(item: ItemLinhaMalote): number {
+    return item.parcela ? item.parcela.valor : item.despesa.valor_aprovado ?? item.despesa.valor_total;
+  }
+  const valorPago = itens.filter((i) => statusEfetivo(i) === "despesa_paga").reduce((s, i) => s + valorItem(i), 0);
+  const valorPendente = itens
+    .filter((i) => ["aguardando_pagamento", "pronto_para_pagar", "ajuste_pagamento"].includes(statusEfetivo(i)))
+    .reduce((s, i) => s + valorItem(i), 0);
+  const valorTotalMalote = valorPago + valorPendente;
+
+  function fmtMoney(v: number): string {
+    return v.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
+  }
 
   function abrirItem(despesa: MaloteDespesaRow) {
     navigate(`/app/malote/despesa/${despesa.id}`);
@@ -282,6 +376,20 @@ export default function PagamentoMalote() {
               </Select>
             </div>
             <div>
+              {/* SIS-2026-0286 (Iury): "setor" é o setor_responsavel lá da
+                  Classificação (Regras Gerais do Malote), não tabela nova. */}
+              <Label className="text-xs">Setor</Label>
+              <Select value={setor || "todos"} onValueChange={(v) => { setSetor(v === "todos" ? "" : v); setPagina(1); }}>
+                <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="todos">Todos</SelectItem>
+                  {setoresDisponiveis.map((s) => (
+                    <SelectItem key={s} value={s}>{s}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div>
               <Label className="text-xs">Status</Label>
               <Select value={status || "todos"} onValueChange={(v) => { setStatusFiltro(v === "todos" ? "" : (v as StatusDespesa)); }}>
                 <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
@@ -313,6 +421,15 @@ export default function PagamentoMalote() {
         </CardContent>
       </Card>
 
+      {/* SIS-2026-0286 (Iury): "tres cards com valor total do malote, valor
+          pago e valor pendente" — resumo de valor, ao lado dos tiles de
+          quantidade (contagem) que já existiam. */}
+      <div className="grid gap-3 grid-cols-1 sm:grid-cols-3">
+        <TileValor label="Valor total do malote" valor={fmtMoney(valorTotalMalote)} icon={<Wallet />} cor="sky" />
+        <TileValor label="Valor pago" valor={fmtMoney(valorPago)} icon={<CheckCircle />} cor="emerald" />
+        <TileValor label="Valor pendente" valor={fmtMoney(valorPendente)} icon={<Clock3 />} cor="amber" />
+      </div>
+
       <GrupoTiles tiles={tiles} ativo={status} onClick={setStatusFiltro} />
 
       <Card>
@@ -322,11 +439,12 @@ export default function PagamentoMalote() {
               <TableHeader>
                 <TableRow>
                   <TableHead>Nº ID</TableHead>
+                  <TableHead>Empresa</TableHead>
+                  <TableHead>Setor</TableHead>
                   <TableHead>Parcela</TableHead>
                   <TableHead>Data de Pagamento</TableHead>
                   <TableHead>Nome / Histórico</TableHead>
                   <TableHead>Classificação</TableHead>
-                  <TableHead>Empresa</TableHead>
                   <TableHead className="text-right">Valor (R$)</TableHead>
                   <TableHead>Forma de Pagamento</TableHead>
                   <TableHead>Responsável</TableHead>
@@ -337,12 +455,12 @@ export default function PagamentoMalote() {
               <TableBody>
                 {isLoading && (
                   <TableRow>
-                    <TableCell colSpan={11} className="text-center text-muted-foreground py-10">Carregando...</TableCell>
+                    <TableCell colSpan={12} className="text-center text-muted-foreground py-10">Carregando...</TableCell>
                   </TableRow>
                 )}
                 {!isLoading && visiveis.length === 0 && (
                   <TableRow>
-                    <TableCell colSpan={11} className="text-center text-muted-foreground py-10">
+                    <TableCell colSpan={12} className="text-center text-muted-foreground py-10">
                       <div className="flex flex-col items-center gap-2">
                         <CheckCircle2 className="h-8 w-8 text-muted-foreground/50" />
                         Nenhum item encontrado com os filtros atuais.
@@ -355,6 +473,7 @@ export default function PagamentoMalote() {
                     key={`${item.despesa.id}-${item.parcela?.id ?? "unica"}`}
                     item={item}
                     empresaNome={empresasMap.get(empresaIdResolvida(item.despesa) ?? "") ?? "—"}
+                    setorNome={setorResolvido(item.despesa) ?? "—"}
                     onAbrir={() => abrirItem(item.despesa)}
                   />
                 ))}
@@ -383,7 +502,17 @@ export default function PagamentoMalote() {
   );
 }
 
-function LinhaItem({ item, empresaNome, onAbrir }: { item: ItemLinhaMalote; empresaNome: string; onAbrir: () => void }) {
+function LinhaItem({
+  item,
+  empresaNome,
+  setorNome,
+  onAbrir,
+}: {
+  item: ItemLinhaMalote;
+  empresaNome: string;
+  setorNome: string;
+  onAbrir: () => void;
+}) {
   const { despesa, parcela } = item;
   const { data: solicitanteNome } = useNomeUsuario(despesa.created_by);
   const status = statusEfetivo(item);
@@ -392,6 +521,8 @@ function LinhaItem({ item, empresaNome, onAbrir }: { item: ItemLinhaMalote; empr
   return (
     <TableRow className="cursor-pointer hover:bg-muted/50" onClick={onAbrir}>
       <TableCell className="font-mono text-xs">{despesa.numero}</TableCell>
+      <TableCell className="text-sm">{empresaNome}</TableCell>
+      <TableCell className="text-sm">{setorNome}</TableCell>
       <TableCell className="text-sm">
         {parcela ? `${parcela.numero_parcela}/${despesa.numero_parcelas}` : <span className="text-muted-foreground">—</span>}
       </TableCell>
@@ -401,7 +532,6 @@ function LinhaItem({ item, empresaNome, onAbrir }: { item: ItemLinhaMalote; empr
         {despesa.motivo && <p className="text-xs text-muted-foreground">{despesa.motivo}</p>}
       </TableCell>
       <TableCell className="text-sm">{despesa.classificacao?.nome ?? "—"}</TableCell>
-      <TableCell className="text-sm">{empresaNome}</TableCell>
       <TableCell className="text-right text-sm">
         {Number(valor).toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}
       </TableCell>

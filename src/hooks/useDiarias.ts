@@ -1,5 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
+import { NovaParcela, RateioLinha, uploadAnexoMalote } from "@/hooks/useMaloteDespesa";
 import {
   AnexoDiaria,
   LinhaDiaria,
@@ -38,6 +40,21 @@ export interface ContratoDiaria {
   nome: string;
   cliente: string | null;
   empresa: string | null;
+}
+
+/** Empresa real do contrato, usada pelo rateio do Malote na aprovação. */
+export function useEmpresaContratoDiaria(contratoId: string | null | undefined) {
+  return useQuery({
+    queryKey: ["diaria_empresa_contrato", contratoId],
+    enabled: !!contratoId,
+    queryFn: async (): Promise<string | null> => {
+      const { data, error } = await sb.rpc("diaria_empresa_contrato", {
+        p_contrato_id: contratoId,
+      });
+      if (error) throw error;
+      return (data as string | null | undefined) ?? null;
+    },
+  });
 }
 
 export interface PostoDiaria {
@@ -302,11 +319,32 @@ export function useCriarSolicitacaoDiaria() {
   });
 }
 
+export interface DespesaAprovacaoDiaria {
+  nome: string;
+  valor_total: number;
+  data_pagamento: string | null;
+  competencia: string | null;
+  forma_pagamento: string | null;
+  informacoes_pagamento: string | null;
+  excecao?: boolean;
+  justificativa_excecao?: string | null;
+  parcelado?: boolean;
+  numero_parcelas?: number | null;
+  dia_desconto?: number | null;
+  rateio?: RateioLinha[];
+  parcelas?: NovaParcela[];
+  arquivosNovos: File[];
+}
+
 /**
  * Aprovar ou reprovar. Quem decidiu e quando são carimbados pela trigger
- * diaria_guard() a partir do usuário logado — não são mandados daqui. Na
- * aprovação, a mesma trigger cria atomicamente a despesa em rascunho no
- * Malote; se o Malote recusar, o status da diária também não muda.
+ * diaria_guard() a partir do usuário logado — não são mandados daqui.
+ *
+ * SIS-2026-0287: reprovar continua no UPDATE simples; aprovar chama a RPC
+ * SECURITY DEFINER que cria despesa, rateio e parcelas e só então muda a
+ * diária para aprovada, tudo na mesma transação. Se qualquer regra do Malote
+ * recusar, nenhum dos registros fica pela metade. Os anexos continuam depois,
+ * porque o caminho no Storage depende do id devolvido pela RPC.
  */
 export function useDecidirSolicitacaoDiaria() {
   const qc = useQueryClient();
@@ -314,17 +352,46 @@ export function useDecidirSolicitacaoDiaria() {
     mutationFn: async (input: {
       id: string;
       status: Extract<StatusSolicitacao, "aprovada" | "reprovada">;
-      maloteMotivo?: string;
-      maloteDataPagamento?: string;
+      despesa?: DespesaAprovacaoDiaria;
     }) => {
-      const patch: Record<string, unknown> = { status: input.status };
       if (input.status === "aprovada") {
-        patch.malote_motivo = input.maloteMotivo ?? null;
-        patch.malote_data_pagamento = input.maloteDataPagamento || null;
+        if (!input.despesa) throw new Error("Preencha os dados da despesa do Malote.");
+        const { arquivosNovos, ...pDespesa } = input.despesa;
+        const { data, error } = await sb.rpc("diaria_aprovar_com_despesa", {
+          p_solicitacao_id: input.id,
+          p_despesa: pDespesa,
+        });
+        if (error) throw error;
+        const despesaId = typeof data === "string" ? data : (data?.id as string | undefined);
+        if (!despesaId) throw new Error("A aprovação não devolveu o id da despesa criada.");
+
+        if (arquivosNovos.length > 0) {
+          const resultados = await Promise.allSettled(
+            arquivosNovos.map((arquivo) => uploadAnexoMalote(arquivo, despesaId)),
+          );
+          const paths = resultados
+            .filter((r): r is PromiseFulfilledResult<string> => r.status === "fulfilled")
+            .map((r) => r.value);
+          let anexosComFalha = resultados.some((r) => r.status === "rejected");
+          if (paths.length > 0) {
+            const { error: erroAnexos } = await sb
+              .from("malote_despesa")
+              .update({ arquivos: paths })
+              .eq("id", despesaId)
+              .select("id")
+              .single();
+            anexosComFalha ||= !!erroAnexos;
+          }
+          if (anexosComFalha) {
+            toast.warning("A diária e a despesa foram aprovadas, mas um ou mais anexos falharam. Abra a despesa no Malote e reenvie os arquivos.");
+          }
+        }
+        return despesaId;
       }
+
       const { error } = await sb
         .from("DIARIA_SOLICITACAO")
-        .update(patch)
+        .update({ status: "reprovada" })
         .eq("id", input.id)
         .select("id")
         .single();
