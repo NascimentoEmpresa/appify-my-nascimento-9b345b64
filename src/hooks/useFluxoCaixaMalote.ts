@@ -20,6 +20,12 @@ export interface FluxoCaixaMaloteLinha {
   classificacao_nome: string | null;
   descricao: string;
   forma_pagamento: string | null;
+  // SIS-2026-0307: banco usado no pagamento (catálogo malote_cartao_banco,
+  // reaproveitado do Cartão de Crédito) — a view já resolve o nome, sem
+  // join no client.
+  banco_id: string | null;
+  banco_nome: string | null;
+  banco_logo_path: string | null;
   valor: number;
   tipo: "saida";
 }
