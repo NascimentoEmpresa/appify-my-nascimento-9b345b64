@@ -11,6 +11,7 @@ import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { SearchableSelect } from "@/components/ui/searchable-select";
 import { DateRangeFilter } from "@/components/ui/date-range-filter";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { Plus, ListChecks, Search, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import {
@@ -119,18 +120,31 @@ function tipoLabelDe(despesa: MaloteDespesaRow): string {
 
 // SIS-2026-0236: nível pode ter mais de um aprovador — mostra o primeiro
 // + indicador "+N" (mesmo padrão de ClassificacoesMalote.tsx/OrcamentoGeral.tsx).
-function formatarAprovadores(nomes: string[] | undefined): string | null {
-  if (!nomes || nomes.length === 0) return null;
-  return nomes.length > 1 ? `${nomes[0]} +${nomes.length - 1}` : nomes[0];
-}
-
-function aprovadorPendente(despesa: MaloteDespesaRow): string | null {
+// A lista completa vai no tooltip do <AprovadorPendenteCell> abaixo — achado
+// do usuário: em "Meus Itens" só dava pra ver o primeiro nome (ex. "Yuri Rosa"),
+// sem jeito de saber os demais aprovadores daquele nível.
+function aprovadoresPendentes(despesa: MaloteDespesaRow): string[] | null {
   if (despesa.status !== "pendente_aprovacao" || !despesa.nivel_aprovacao_atual) return null;
   const c = despesa.classificacao;
   if (!c) return null;
-  if (despesa.nivel_aprovacao_atual === 1) return formatarAprovadores(c.aprovador1_nomes);
-  if (despesa.nivel_aprovacao_atual === 2) return formatarAprovadores(c.aprovador2_nomes);
-  return formatarAprovadores(c.aprovador3_nomes);
+  const nomes =
+    despesa.nivel_aprovacao_atual === 1 ? c.aprovador1_nomes : despesa.nivel_aprovacao_atual === 2 ? c.aprovador2_nomes : c.aprovador3_nomes;
+  return nomes && nomes.length > 0 ? nomes : null;
+}
+
+function AprovadorPendenteCell({ despesa }: { despesa: MaloteDespesaRow }) {
+  const nomes = aprovadoresPendentes(despesa);
+  if (!nomes) return <span className="text-muted-foreground">—</span>;
+  const label = nomes.length > 1 ? `${nomes[0]} +${nomes.length - 1}` : nomes[0];
+  if (nomes.length === 1) return <span>{label}</span>;
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <span className="cursor-help underline decoration-dotted underline-offset-2">{label}</span>
+      </TooltipTrigger>
+      <TooltipContent>{nomes.join(", ")}</TooltipContent>
+    </Tooltip>
+  );
 }
 
 export default function MeusItens() {
@@ -372,7 +386,6 @@ export default function MeusItens() {
               )}
               {filtrados.map((item) => {
                 const { despesa, parcela } = item;
-                const aprovador = aprovadorPendente(despesa);
                 const status = statusEfetivo(item);
                 const valor = parcela ? parcela.valor : despesa.valor_total;
                 const dataPagamento = parcela ? parcela.data_pagamento_real ?? parcela.data_vencimento : despesa.data_pagamento;
@@ -406,7 +419,9 @@ export default function MeusItens() {
                         {status === "pendente_aprovacao" && despesa.nivel_aprovacao_atual ? ` N${despesa.nivel_aprovacao_atual}` : ""}
                       </Badge>
                     </TableCell>
-                    <TableCell className="text-sm">{aprovador ?? "—"}</TableCell>
+                    <TableCell className="text-sm">
+                      <AprovadorPendenteCell despesa={despesa} />
+                    </TableCell>
                     <TableCell>
                       {despesa.excecao ? <Badge variant="destructive">Sim</Badge> : <span className="text-muted-foreground text-sm">Não</span>}
                     </TableCell>
