@@ -16,7 +16,7 @@ import {
 } from "@/lib/demissao/solicitacao";
 import { MapaPicker } from "@/components/sst/MapaPicker";
 import {
-  CheckCircle2, Clock, Download, FileText, Loader2, MapPin, Search, Stethoscope,
+  CheckCircle2, Clock, Download, Eye, FileText, Loader2, MapPin, Search, Stethoscope,
   ThumbsDown, ThumbsUp, XCircle,
 } from "lucide-react";
 import { ConversaSolicitacao } from "@/components/solicitacoes/ConversaSolicitacao";
@@ -28,39 +28,51 @@ const sb = supabase as any;
 /**
  * Painel das solicitações de demissão — a mesma tela para as três etapas.
  *
- *   operacional → aprova (segue para o RH) ou reprova COM MOTIVO;
- *   rh          → trata o que o operacional aprovou e manda para o SST;
- *   sst         → marca o ASO demissional, e aí sim a demissão fecha.
+ *   analista    → aprova (segue para o SST) ou reprova COM MOTIVO;
+ *   sst         → marca o ASO demissional e manda para o RH;
+ *   rh          → confirma, e aí sim a demissão fecha;
+ *   operacional → SÓ ACOMPANHA. Abre o card, lê tudo, e não decide nada.
  *
  * Um componente só porque a lista, os filtros, o detalhe e os anexos são
- * idênticos: o que muda é quem pode agir e sobre qual status. Três cópias
+ * idênticos: o que muda é quem pode agir e sobre qual status. Quatro cópias
  * divergiriam na primeira correção feita em uma delas.
  *
- * O RH não enxerga o que ainda está com o operacional nem o que foi
- * reprovado: para o RH, a solicitação só existe depois de aprovada. O SST vê
- * menos ainda — só o que já passou pelo RH.
+ * SST e RH TROCARAM DE LUGAR em 02/09/2026, junto com a entrada do analista.
+ * Antes era analista(operacional) → RH → SST, com "Concluída" sendo o fim no
+ * SST desde 25/08/2026. Agora o SST marca o ASO e o RH confirma por último —
+ * quem fecha a demissão é o RH. As linhas antigas foram convertidas na
+ * migration; as já concluídas ficaram como estavam.
  *
- * "Concluída" mudou de dono em 25/08/2026: era o fim no RH, hoje é o fim no
- * SST. As que já estavam concluídas antes disso ficaram como estavam, sem
- * ASO — jogar desligamento antigo na fila do SST não ajudaria ninguém.
+ * O OPERACIONAL virou leitura pura no mesmo dia. Ele não perdeu a tela: a
+ * pergunta "e a demissão do fulano, andou?" continua sendo dele, só a decisão
+ * é que passou para o analista. É o mesmo desenho da Gestão Recrutamento.
  */
 
-export type Etapa = "operacional" | "rh" | "sst";
+export type Etapa = "analista" | "operacional" | "rh" | "sst";
 
 /** Os status que cada etapa enxerga, na ordem em que fazem sentido na fila. */
 const STATUS_DA_ETAPA: Record<Etapa, string[]> = {
-  operacional: ["Pendente Operacional", "Pendente RH", "Pendente SST", "Concluída", "Reprovada", "Cancelada"],
-  // O RH continua vendo o que despachou: a pergunta que mais chega depois de
-  // concluir é "e o ASO do fulano, o SST marcou?".
-  rh: ["Pendente RH", "Pendente SST", "Concluída"],
-  sst: ["Pendente SST", "Concluída"],
+  analista: ["Pendente Analista", "Pendente SST", "Pendente RH", "Concluída", "Reprovada", "Cancelada"],
+  // O Operacional enxerga o mesmo que o analista de propósito: ele acompanha o
+  // fluxo inteiro. O que ele não tem é `STATUS_DE_ACAO`.
+  operacional: ["Pendente Analista", "Pendente SST", "Pendente RH", "Concluída", "Reprovada", "Cancelada"],
+  // O SST continua vendo o que despachou: a pergunta que mais chega depois de
+  // marcar o ASO é "e aí, o RH fechou?".
+  sst: ["Pendente SST", "Pendente RH", "Concluída"],
+  rh: ["Pendente RH", "Concluída"],
 };
 
-/** O status em que a etapa TEM trabalho a fazer. */
-const STATUS_DE_ACAO: Record<Etapa, string> = {
-  operacional: "Pendente Operacional",
-  rh: "Pendente RH",
+/**
+ * O status em que a etapa TEM trabalho a fazer.
+ *
+ * `null` no Operacional é o que torna a tela dele somente-leitura: `podeAgir`
+ * compara o status com este valor, e nenhum status é igual a null.
+ */
+const STATUS_DE_ACAO: Record<Etapa, string | null> = {
+  analista: "Pendente Analista",
+  operacional: null,
   sst: "Pendente SST",
+  rh: "Pendente RH",
 };
 
 function Kpi({ titulo, valor, icone: Icone, cor }: {
@@ -137,28 +149,30 @@ export function PainelDemissoes({ etapa }: { etapa: Etapa }) {
 
   return (
     <>
-      {/* 5 cartões no Operacional (a etapa do SST entrou na régua), 3 no RH e
-          2 no SST — o grid acompanha em vez de espremer todo mundo em quatro
-          colunas fixas, que deixavam o SST com dois cartões perdidos. */}
+      {/* 5 cartões para quem vê o fluxo inteiro (analista e Operacional), 3 no
+          SST e 2 no RH — o grid acompanha em vez de espremer todo mundo em
+          quatro colunas fixas, que deixavam o RH com dois cartões perdidos. */}
       <div className={cn("mb-5 grid gap-3 sm:grid-cols-2",
-        etapa === "operacional" ? "lg:grid-cols-3 xl:grid-cols-5" : etapa === "rh" ? "lg:grid-cols-3" : "")}>
-        {etapa === "operacional" ? (
+        etapa === "analista" || etapa === "operacional" ? "lg:grid-cols-3 xl:grid-cols-5"
+        : etapa === "sst" ? "lg:grid-cols-3" : "")}>
+        {etapa === "analista" || etapa === "operacional" ? (
           <>
-            <Kpi titulo="Aguardando você" valor={contar("Pendente Operacional")} icone={Clock} cor="bg-yellow-100 text-yellow-700" />
-            <Kpi titulo="No RH" valor={contar("Pendente RH")} icone={FileText} cor="bg-purple-100 text-purple-700" />
+            <Kpi titulo={etapa === "analista" ? "Aguardando você" : "Com o analista"}
+                 valor={contar("Pendente Analista")} icone={Clock} cor="bg-yellow-100 text-yellow-700" />
             <Kpi titulo="No SST" valor={contar("Pendente SST")} icone={Stethoscope} cor="bg-cyan-100 text-cyan-700" />
+            <Kpi titulo="No RH" valor={contar("Pendente RH")} icone={FileText} cor="bg-purple-100 text-purple-700" />
             <Kpi titulo="Concluídas" valor={contar("Concluída")} icone={CheckCircle2} cor="bg-green-100 text-green-700" />
             <Kpi titulo="Reprovadas" valor={contar("Reprovada")} icone={XCircle} cor="bg-red-100 text-red-700" />
           </>
-        ) : etapa === "rh" ? (
+        ) : etapa === "sst" ? (
           <>
+            <Kpi titulo="ASO a marcar" valor={contar("Pendente SST")} icone={Stethoscope} cor="bg-cyan-100 text-cyan-700" />
             <Kpi titulo="Aguardando o RH" valor={contar("Pendente RH")} icone={Clock} cor="bg-purple-100 text-purple-700" />
-            <Kpi titulo="No SST (ASO)" valor={contar("Pendente SST")} icone={Stethoscope} cor="bg-cyan-100 text-cyan-700" />
             <Kpi titulo="Concluídas" valor={contar("Concluída")} icone={CheckCircle2} cor="bg-green-100 text-green-700" />
           </>
         ) : (
           <>
-            <Kpi titulo="ASO a marcar" valor={contar("Pendente SST")} icone={Stethoscope} cor="bg-cyan-100 text-cyan-700" />
+            <Kpi titulo="Aguardando o RH" valor={contar("Pendente RH")} icone={Clock} cor="bg-purple-100 text-purple-700" />
             <Kpi titulo="Concluídas" valor={contar("Concluída")} icone={CheckCircle2} cor="bg-green-100 text-green-700" />
           </>
         )}
@@ -292,12 +306,14 @@ function DetalheSolicitacao({ solicitacao, etapa, quemSou, onFechar, onDecidir }
     window.open(data.signedUrl, "_blank", "noopener");
   };
 
+  // O ANALISTA é a primeira porta. As colunas continuam `operacional_*` — ver
+  // a nota em SolicitacaoDemissao: o dono mudou, o nome da coluna não.
   const aprovar = async () => {
     setSalvando(true);
     await onDecidir(s, {
-      status: "Pendente RH", operacional_por: quemSou,
+      status: "Pendente SST", operacional_por: quemSou,
       operacional_em: new Date().toISOString(), operacional_motivo: null,
-    }, `Solicitação #${s.id} aprovada e enviada ao RH.`);
+    }, `Solicitação #${s.id} aprovada e enviada ao SST.`);
     setSalvando(false);
   };
 
@@ -313,31 +329,31 @@ function DetalheSolicitacao({ solicitacao, etapa, quemSou, onFechar, onDecidir }
     setSalvando(false);
   };
 
-  // O RH conclui a PARTE DELE e despacha para o SST — não é mais o fim da
-  // linha. Sem esta passagem o encarregado via "Concluída" enquanto o ASO
-  // demissional ainda não tinha sido marcado por ninguém.
+  // O RH é o ÚLTIMO a falar desde 02/09/2026: confirma o desligamento depois
+  // de o SST ter marcado o ASO. Antes ele vinha antes do SST, e o encarregado
+  // via "Concluída" com o ASO ainda por marcar.
   const concluir = async () => {
     setSalvando(true);
     await onDecidir(s, {
-      status: "Pendente SST", rh_por: quemSou,
+      status: "Concluída", rh_por: quemSou,
       rh_em: new Date().toISOString(), rh_observacao: observacao.trim() || null,
-    }, `Solicitação #${s.id} concluída no RH e enviada ao SST.`);
+    }, `Solicitação #${s.id} confirmada pelo RH — desligamento concluído.`);
     setSalvando(false);
   };
 
-  // O SST marca o ASO demissional — e é isso que fecha a demissão.
+  // O SST marca o ASO demissional e despacha para o RH confirmar.
   const marcarASO = async () => {
     if (!aso.data) { toast.error("Informe a data do ASO."); return; }
     setSalvando(true);
     await onDecidir(s, {
-      status: "Concluída",
+      status: "Pendente RH",
       sst_data_exame: aso.data,
       sst_hora_exame: aso.hora.trim() || null,
       sst_local_exame: aso.local.trim() || null,
       sst_maps_url: aso.maps.trim() || null,
       sst_observacao: observacao.trim() || null,
       sst_por: quemSou, sst_em: new Date().toISOString(),
-    }, `ASO demissional marcado — solicitação #${s.id} concluída.`);
+    }, `ASO demissional marcado — solicitação #${s.id} segue para o RH confirmar.`);
     setSalvando(false);
   };
 
@@ -428,8 +444,22 @@ function DetalheSolicitacao({ solicitacao, etapa, quemSou, onFechar, onDecidir }
           ]} />
         )}
 
+        {/* O Operacional acompanha, não decide. Dizer isso é melhor do que
+            simplesmente não desenhar botão nenhum: sem a frase, quem abria o
+            card ficava procurando onde clicar. */}
+        {etapa === "operacional" && (
+          <div className="flex items-start gap-2 rounded-lg border bg-muted/40 p-4 text-sm text-muted-foreground">
+            <Eye className="mt-0.5 h-4 w-4 shrink-0" />
+            <span>
+              Esta tela é de <strong>acompanhamento</strong>. Quem aprova a demissão é o
+              analista, em Licitações › Analistas Validações. Aqui você vê o andamento
+              completo e a conversa da solicitação.
+            </span>
+          </div>
+        )}
+
         {/* Ações da etapa */}
-        {podeAgir && etapa === "operacional" && (
+        {podeAgir && etapa === "analista" && (
           <div className="space-y-3 rounded-lg border border-primary/30 bg-primary/5 p-4">
             <h3 className="text-sm font-semibold">Sua decisão</h3>
             <div>
@@ -439,7 +469,7 @@ function DetalheSolicitacao({ solicitacao, etapa, quemSou, onFechar, onDecidir }
             </div>
             <div className="flex flex-wrap gap-2">
               <Button onClick={aprovar} disabled={salvando}>
-                <ThumbsUp className="mr-2 h-4 w-4" /> Aprovar e enviar ao RH
+                <ThumbsUp className="mr-2 h-4 w-4" /> Aprovar e enviar ao SST
               </Button>
               <Button variant="destructive" onClick={reprovar} disabled={salvando}>
                 <ThumbsDown className="mr-2 h-4 w-4" /> Reprovar
@@ -450,14 +480,14 @@ function DetalheSolicitacao({ solicitacao, etapa, quemSou, onFechar, onDecidir }
 
         {podeAgir && etapa === "rh" && (
           <div className="space-y-3 rounded-lg border border-primary/30 bg-primary/5 p-4">
-            <h3 className="text-sm font-semibold">Concluir no RH e enviar ao SST</h3>
+            <h3 className="text-sm font-semibold">Confirmar o desligamento</h3>
             <div>
               <Label htmlFor="obs">Observação (opcional)</Label>
               <Textarea id="obs" className="mt-1" placeholder="O que foi feito, datas do acerto, pendências…"
                 value={observacao} onChange={(e) => setObservacao(e.target.value)} />
             </div>
             <Button onClick={concluir} disabled={salvando}>
-              <CheckCircle2 className="mr-2 h-4 w-4" /> Concluir e Enviar ao SST
+              <CheckCircle2 className="mr-2 h-4 w-4" /> Confirmar e concluir
             </Button>
           </div>
         )}
@@ -468,8 +498,8 @@ function DetalheSolicitacao({ solicitacao, etapa, quemSou, onFechar, onDecidir }
           <div className="space-y-3 rounded-lg border border-primary/30 bg-primary/5 p-4">
             <h3 className="text-sm font-semibold">Marcar o ASO demissional</h3>
             <p className="text-sm text-muted-foreground">
-              Informe data, hora e local do exame. Marcar o ASO conclui a demissão — o
-              encarregado passa a ver tudo isso na solicitação dele.
+              Informe data, hora e local do exame. Marcar o ASO manda a demissão para o RH
+              confirmar — e o encarregado passa a ver tudo isso na solicitação dele.
             </p>
 
             <div className="grid gap-3 sm:grid-cols-2">

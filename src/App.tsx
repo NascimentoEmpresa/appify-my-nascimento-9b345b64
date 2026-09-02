@@ -124,6 +124,7 @@ import MaloteDashboard from "./pages/malote/Dashboard";
 import MaloteMeusItens from "./pages/malote/MeusItens";
 import MaloteDespesaVisualizar from "./pages/malote/DespesaVisualizar";
 import MaloteSolicitacaoVisualizar from "./pages/malote/SolicitacaoVisualizar";
+import MaloteArquivos from "./pages/malote/ArquivosMalote";
 import MovimentosBancarios from "./pages/financeiro/MovimentosBancarios";
 import ContasBancariasEmpresa from "./pages/financeiro/ContasBancariasEmpresa";
 import IntegracaoBancaria from "./pages/financeiro/IntegracaoBancaria";
@@ -154,6 +155,10 @@ import VerificacaoCandidatos from "./pages/juridico/VerificacaoCandidatos";
 import TreinamentosERP from "./pages/treinamentos/TreinamentosERP";
 import SolicitarTrocaFuncao from "./pages/encarregados/SolicitarTrocaFuncao";
 import OperacionalTrocaFuncao from "./pages/operacional/TrocaFuncao";
+// Licitações › Analistas Validações — a primeira porta dos três fluxos.
+import AnalistasRecrutamento from "./pages/licitacoes/analistas/Recrutamento";
+import AnalistasTrocaFuncao from "./pages/licitacoes/analistas/TrocaFuncao";
+import AnalistasSolicitacoesDemissao from "./pages/licitacoes/analistas/SolicitacoesDemissao";
 import RhTrocaFuncaoEscritorio from "./pages/rh/TrocaFuncaoEscritorio";
 import SstTrocaFuncao from "./pages/sst/TrocaFuncao";
 import RhTrocaFuncao from "./pages/rh/TrocaFuncao";
@@ -431,6 +436,7 @@ const App = () => (
             <Route path="controladoria/gerador-pops" element={<GeradorPops />} />
             {/* Malote */}
             <Route path="malote/aprovacoes" element={<MaloteAprovacoes />} />
+            <Route path="malote/arquivos" element={<MaloteArquivos />} />
             <Route path="malote/pagamento" element={<MalotePagamento />} />
             <Route path="malote/configuracoes" element={<MaloteConfiguracoes />} />
             <Route path="malote/criar-despesa" element={<MaloteCriarDespesa />} />
@@ -566,15 +572,26 @@ const App = () => (
             {/* Treinamentos */}
             <Route path="treinamentos" element={<Navigate to="/app/treinamentos/erp" replace />} />
             <Route path="treinamentos/erp" element={<TreinamentosERP />} />
-            {/* Mudança de Função — encarregado abre, aprovação, SST, RH */}
+            {/* Licitações › Analistas Validações — a PRIMEIRA porta dos três
+                fluxos (02/09/2026). Antes a etapa 1 era do Operacional, que
+                ficou só com o acompanhamento. */}
+            <Route path="licitacoes/analistas/recrutamento" element={<AnalistasRecrutamento />} />
+            <Route path="licitacoes/analistas/troca-funcao" element={<AnalistasTrocaFuncao />} />
+            <Route path="licitacoes/analistas/demissao" element={<AnalistasSolicitacoesDemissao />} />
+            {/* Mudança de Função — encarregado abre, analista valida,
+                aprovação, SST, RH */}
             <Route path="encarregados/troca-funcao" element={<SolicitarTrocaFuncao />} />
             <Route path="operacional/troca-funcao" element={<OperacionalTrocaFuncao />} />
+            {/* Saiu do menu do RH em 02/09/2026 (o RH ficou com uma tela só, a
+                de concluir na Senior). A ROTA fica de pé: é ela que carrega a
+                permissão de quem já aprovava o administrativo. */}
             <Route path="rh/troca-funcao-escritorio" element={<RhTrocaFuncaoEscritorio />} />
             <Route path="sst/troca-funcao" element={<SstTrocaFuncao />} />
             <Route path="rh/troca-funcao" element={<RhTrocaFuncao />} />
             {/* SST — ASO / Admissão (fila do Recrutamento) */}
             <Route path="sst/aso" element={<AsoCandidatos />} />
-            {/* SST — ASO demissional (última etapa da demissão, depois do RH) */}
+            {/* SST — ASO demissional. Desde 02/09/2026 vem ANTES do RH: o SST
+                marca o exame e o RH confirma o desligamento. */}
             <Route path="sst/aso-demissional" element={<AsoDemissional />} />
             <Route path="sst/laudos" element={<LaudosEpi />} />
             <Route path="sst/controle-ca" element={<ControleCa />} />

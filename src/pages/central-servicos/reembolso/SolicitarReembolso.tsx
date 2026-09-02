@@ -183,7 +183,7 @@ export default function SolicitarReembolso() {
     // a pessoa subir tres comprovantes para so entao descobrir que o cadastro
     // dela nao tem setor seria cruel.
     if (!meuSetor) {
-      return recusa("Seu cadastro não tem setor, então não há para quem enviar. Peça ao RH para preencher.");
+      return recusa("Seu usuário não tem um setor definido, então não há para quem enviar. Peça a quem administra o ERP para marcar o setor em Administração › Acesso por Usuário.");
     }
     if (!pix.trim()) return recusa("Informe o PIX que vai receber o reembolso.");
     if (!dataOk) return recusa("Data da viagem inválida. Use DD/MM/AAAA.");
@@ -312,16 +312,17 @@ export default function SolicitarReembolso() {
                 <span className="text-muted-foreground">Seu setor:</span>
                 <Badge variant="outline">{meuSetor}</Badge>
                 <span className="text-xs text-muted-foreground">
-                  vem do seu cadastro e define quem aprova este reembolso.
+                  vem do seu usuário no ERP e define quem aprova este reembolso.
                 </span>
               </Card>
             ) : (
               <Card className="mb-4 flex items-start gap-2 border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
                 <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
                 <span>
-                  <strong>Seu cadastro não tem setor definido</strong>, então não há para quem
-                  enviar o reembolso. Peça ao RH para preencher o setor no seu cadastro — se você
-                  tem mais de um setor no perfil, é preciso deixar só o principal.
+                  <strong>Seu usuário não tem um setor definido</strong>, então não há para quem
+                  enviar o reembolso. Peça a quem administra o ERP para marcar o seu setor em
+                  Administração › Acesso por Usuário — e, se houver mais de um marcado, deixar
+                  só o principal: com dois, não há como saber qual aprovador deve receber.
                 </span>
               </Card>
             )}

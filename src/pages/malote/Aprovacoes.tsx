@@ -99,6 +99,62 @@ const COR_TILE_TEXTO: Record<TileInfo["cor"], string> = {
   blue: "text-blue-700 dark:text-blue-400",
 };
 
+// SIS-2026-0288-ajuste (Iury): "cada empresa tendo um badge meio único, com
+// coloração diferente" — paleta fixa de cores, escolhida por hash do
+// empresa_id (estável entre renders/sessões, sem precisar gravar cor em
+// tabela nova). Mesmo badge é reaproveitado quando a linha tem contrato: aí
+// a cor continua vindo da empresa, só que o nome do contrato passa a ser o
+// texto em destaque e a empresa vira o "detalhe menor" — mesmo espírito do
+// badge de aprovador (rótulo pequeno em cima, nome forte embaixo).
+const EMPRESA_BADGE_PALETTE = [
+  "border-sky-200 bg-sky-50 text-sky-700 dark:border-sky-900 dark:bg-sky-950/30 dark:text-sky-400",
+  "border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-900 dark:bg-emerald-950/30 dark:text-emerald-400",
+  "border-violet-200 bg-violet-50 text-violet-700 dark:border-violet-900 dark:bg-violet-950/30 dark:text-violet-400",
+  "border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-400",
+  "border-rose-200 bg-rose-50 text-rose-700 dark:border-rose-900 dark:bg-rose-950/30 dark:text-rose-400",
+  "border-teal-200 bg-teal-50 text-teal-700 dark:border-teal-900 dark:bg-teal-950/30 dark:text-teal-400",
+  "border-indigo-200 bg-indigo-50 text-indigo-700 dark:border-indigo-900 dark:bg-indigo-950/30 dark:text-indigo-400",
+  "border-orange-200 bg-orange-50 text-orange-700 dark:border-orange-900 dark:bg-orange-950/30 dark:text-orange-400",
+];
+
+function corEmpresa(empresaId: string | null | undefined): string {
+  if (!empresaId) return "border-border bg-muted/40 text-muted-foreground";
+  let hash = 0;
+  for (let i = 0; i < empresaId.length; i++) hash = (hash * 31 + empresaId.charCodeAt(i)) >>> 0;
+  return EMPRESA_BADGE_PALETTE[hash % EMPRESA_BADGE_PALETTE.length];
+}
+
+function EmpresaContratoBadge({
+  nomeEmpresa,
+  nomeContrato,
+  empresaId,
+}: {
+  nomeEmpresa?: string;
+  nomeContrato?: string;
+  empresaId?: string | null;
+}) {
+  if (!nomeEmpresa && !nomeContrato) return <span className="text-xs text-muted-foreground">—</span>;
+  return (
+    <div
+      className={cn(
+        "inline-flex max-w-[100px] flex-col items-center gap-0.5 rounded-md border px-2 py-1 text-center leading-none",
+        corEmpresa(empresaId)
+      )}
+    >
+      {nomeContrato ? (
+        <>
+          <span className="text-xs font-bold leading-tight">{nomeContrato}</span>
+          {nomeEmpresa && (
+            <span className="text-[9px] font-medium uppercase leading-tight tracking-wide opacity-70">{nomeEmpresa}</span>
+          )}
+        </>
+      ) : (
+        <span className="text-xs font-bold leading-tight">{nomeEmpresa}</span>
+      )}
+    </div>
+  );
+}
+
 // SIS-2026-0281: botões do filtro "Nível de aprovação" — mesma cor de cada
 // nível usada no badge da tabela (NIVEL_APROVACAO_BADGE_CLASS), só que num
 // tom mais claro quando inativo (pra já dar destaque sem competir com o
@@ -581,17 +637,27 @@ export default function Aprovacoes({ base = "/app/malote" }: { base?: string } =
                   <TableHead>Nº</TableHead>
                   {/* SIS-2026-0288 (Iury): "Empresa / Contrato" logo após o
                       Nº, não mais depois de Classificação. */}
-                  <TableHead>Empresa / Contrato</TableHead>
+                  {/* Cabeçalho centralizado nas duas colunas que renderizam
+                      badge (conteúdo da célula já é centralizado) — nas
+                      demais colunas o texto continua alinhado à esquerda
+                      (ou à direita, no caso de Valor), igual o conteúdo. */}
+                  <TableHead className="text-center">Empresa / Contrato</TableHead>
                   <TableHead>Parcela</TableHead>
-                  <TableHead>Nome / Motivo</TableHead>
+                  {/* SIS-2026-0288-ajuste (Iury): motivo saiu da coluna —
+                      "manter somente NOME" — quem quiser o motivo abre a
+                      despesa. */}
+                  <TableHead>Nome</TableHead>
                   <TableHead>Classificação</TableHead>
                   <TableHead className="text-right">Valor (R$)</TableHead>
                   <TableHead>Data de Pagamento</TableHead>
                   <TableHead>Solicitante</TableHead>
-                  <TableHead>Status</TableHead>
+                  <TableHead className="text-center">Status</TableHead>
                   <TableHead>Exceção</TableHead>
-                  <TableHead>Justificativa</TableHead>
                   <TableHead>Última atualização</TableHead>
+                  {/* SIS-2026-0288-ajuste (Iury/usuário): "Justificativa"
+                      virou sino — pedido pra ficar bem evidente e como
+                      última coisa da linha, não mais coladinho no Nº. */}
+                  <TableHead className="w-10 px-2 text-center" />
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -614,6 +680,7 @@ export default function Aprovacoes({ base = "/app/malote" }: { base?: string } =
                   <LinhaItem
                     key={`${item.despesa.id}-${item.parcela?.id ?? "unica"}`}
                     item={item}
+                    empresaId={empresaIdResolvida(item.despesa)}
                     nomeEmpresa={empresasMap.get(empresaIdResolvida(item.despesa) ?? "")}
                     nomeContrato={item.despesa.contrato_id ? contratosMap.get(item.despesa.contrato_id) : undefined}
                     aprovadorNomes={aprovadorNomes}
@@ -647,12 +714,14 @@ export default function Aprovacoes({ base = "/app/malote" }: { base?: string } =
 
 function LinhaItem({
   item,
+  empresaId,
   nomeEmpresa,
   nomeContrato,
   aprovadorNomes,
   onAbrir,
 }: {
   item: ItemLinhaMalote;
+  empresaId?: string | null;
   nomeEmpresa?: string;
   nomeContrato?: string;
   aprovadorNomes: (despesa: MaloteDespesaRow, nivel: 1 | 2 | 3) => string[];
@@ -676,17 +745,13 @@ function LinhaItem({
     >
       <TableCell className="text-sm">{isSolicitacao ? "Solicitação" : "Despesa"}</TableCell>
       <TableCell className="font-mono text-xs">{despesa.numero}</TableCell>
-      <TableCell className="text-sm">
-        <p>{nomeEmpresa ?? "—"}</p>
-        {nomeContrato && <p className="text-xs text-muted-foreground">{nomeContrato}</p>}
+      <TableCell className="text-center">
+        <EmpresaContratoBadge nomeEmpresa={nomeEmpresa} nomeContrato={nomeContrato} empresaId={empresaId} />
       </TableCell>
       <TableCell className="text-sm">
         {parcela ? `${parcela.numero_parcela}/${despesa.numero_parcelas}` : <span className="text-muted-foreground">—</span>}
       </TableCell>
-      <TableCell className="text-sm">
-        <p>{despesa.nome}</p>
-        {despesa.motivo && <p className="text-xs text-muted-foreground">{despesa.motivo}</p>}
-      </TableCell>
+      <TableCell className="text-sm">{despesa.nome}</TableCell>
       <TableCell className="text-sm">{despesa.classificacao?.nome ?? "—"}</TableCell>
       <TableCell className="text-right text-sm">
         {Number(valor).toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}
@@ -699,17 +764,22 @@ function LinhaItem({
           // aprovação N{x}" pequeno em cima, nome do aprovador em destaque
           // embaixo — o nome é o que importa pra bater o olho e saber se é
           // com ele, o rótulo é só contexto.
+          //
+          // SIS-2026-0288-ajuste (Iury, revertido): uma tentativa anterior
+          // tirou o whitespace-nowrap pra quebrar o nome em 2 linhas — só
+          // que isso piorou a leitura da tabela inteira. Voltou pro badge
+          // numa linha só; quem precisar do nome completo abre a despesa.
           <div
             className={cn(
-              "inline-flex flex-col items-center gap-0.5 whitespace-nowrap rounded-md border px-2.5 py-1.5 text-center",
+              "inline-flex flex-col items-center gap-0.5 whitespace-nowrap rounded-md border px-2 py-1 text-center leading-none",
               NIVEL_APROVACAO_BADGE_CLASS[despesa.nivel_aprovacao_atual]
             )}
           >
-            <span className="text-[10px] font-medium uppercase leading-tight tracking-wide opacity-70">
+            <span className="text-[9px] font-medium uppercase tracking-wide opacity-70">
               {STATUS_LABEL.pendente_aprovacao} N{despesa.nivel_aprovacao_atual}
             </span>
-            <span className="flex items-center gap-1 text-sm font-bold leading-tight">
-              <User className="h-3.5 w-3.5 shrink-0" />
+            <span className="flex items-center gap-1 text-xs font-bold">
+              <User className="h-3 w-3" />
               {(() => {
                 const nomes = aprovadorNomes(despesa, despesa.nivel_aprovacao_atual);
                 return nomes.length > 0 ? nomes.map(abreviarNome).join(" · ") : "Sem aprovador";
@@ -717,14 +787,23 @@ function LinhaItem({
             </span>
           </div>
         ) : (
+          // Achado do usuário: com o mesmo tamanho reduzido do badge de
+          // aprovador, esse Badge (status sem aprovador pendente, ex.
+          // "Aguardando pagamento") ficou pequeno demais — ele não tem o
+          // mesmo problema de largura que motivou reduzir o outro, então
+          // volta pro tamanho padrão do componente Badge.
           <Badge className={STATUS_BADGE_CLASS[status]}>{STATUS_LABEL[status]}</Badge>
         )}
       </TableCell>
       <TableCell className="text-sm">{despesa.excecao ? <Badge variant="destructive">Sim</Badge> : "Não"}</TableCell>
-      <TableCell className="text-sm">
-        <JustificativaPendenteBadge despesa={despesa} parcela={parcela} />
-      </TableCell>
       <TableCell className="text-xs text-muted-foreground">{new Date(despesa.updated_at).toLocaleString("pt-BR")}</TableCell>
+      {/* SIS-2026-0288-ajuste (Iury/usuário): sino da Justificativa como
+          última coisa da linha, bem mais evidente que o ícone solto de
+          antes — círculo cheio com fundo âmbar, chama a atenção sem
+          precisar de coluna de texto (só aparece quando há pendência). */}
+      <TableCell className="px-2 text-center">
+        <JustificativaPendenteBadge despesa={despesa} parcela={parcela} variant="icon" />
+      </TableCell>
     </TableRow>
   );
 }

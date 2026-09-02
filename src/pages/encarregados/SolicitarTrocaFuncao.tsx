@@ -4,6 +4,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
 import { useMeuNome } from "@/hooks/useMeuNome";
 import { PageHeader } from "@/components/layout/PageHeader";
+import { ResumoDeFuncoes } from "@/components/fluxos/ResumoDeFuncoes";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -120,12 +121,10 @@ export default function SolicitarTrocaFuncao() {
             <CheckCircle2 className="h-14 w-14 text-emerald-600 animate-in zoom-in duration-500" />
             <h2 className="text-xl font-semibold">Solicitação #{protocolo} enviada</h2>
             <p className="max-w-md text-sm text-muted-foreground">
-              {eEscritorio
-                ? "Vai para a aprovação do administrativo."
-                : "Vai para o Operacional aprovar."}{" "}
-              Depois de aprovada, o SST avalia o ASO — marca o exame ou dispensa, quando a função
-              nova não exige — e o RH faz a alteração na Senior. Você acompanha o andamento em
-              Minhas Solicitações.
+              Primeiro o analista valida. Depois vai para{" "}
+              {eEscritorio ? "a aprovação do administrativo" : "o Operacional aprovar"}, o SST
+              avalia o ASO — marca o exame ou dispensa, quando a função nova não exige — e o RH
+              faz a alteração na Senior. Você acompanha o andamento em Minhas Solicitações.
             </p>
             <div className="mt-2 flex gap-2">
               <Button onClick={recomecar}>Nova solicitação</Button>
@@ -143,9 +142,10 @@ export default function SolicitarTrocaFuncao() {
     <div className="mx-auto max-w-3xl space-y-4">
       <PageHeader
         title="Mudança de Função"
-        subtitle="Peça a troca de cargo de alguém da sua equipe. O cargo atual vem do cadastro."
+        subtitle="Peça a troca de cargo de alguém da sua equipe. O cargo atual vem do cadastro. Passa pelo analista, pela aprovação, pelo SST e termina no RH."
         module="Encarregados"
         breadcrumb={["Mudança de Função"]}
+        actions={<ResumoDeFuncoes fluxo="troca_funcao" />}
       />
 
       <Card>

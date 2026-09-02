@@ -38,6 +38,7 @@ import {
   ShoppingCart,
   BarChart3,
   Settings,
+  FileArchive,
   BookOpen,
   ClipboardCheck,
   DatabaseZap,
@@ -148,6 +149,18 @@ const licitacoesModule: ModuleDef = {
         // B2: "Triagem & IA" removida do menu (rota /app/triagem segue existindo,
         // mas controlada pelo RouteGuard + matriz de permissões do ERP).
         { label: "Composição & BDI", to: "/app/composicao", icon: PieChart },
+      ],
+    },
+    {
+      // Analistas Validações (02/09/2026): a PRIMEIRA porta dos três fluxos
+      // que antes começavam no Operacional. Ele não perdeu as telas — perdeu
+      // os botões, e ficou só com o acompanhamento.
+      label: "Analistas Validações",
+      defaultOpen: true,
+      items: [
+        { label: "Gestão Recrutamento", to: "/app/licitacoes/analistas/recrutamento", icon: UserCog },
+        { label: "Mudança de Função", to: "/app/licitacoes/analistas/troca-funcao", icon: ArrowLeftRight, notif: "troca_funcao" },
+        { label: "Solicitações de Demissão", to: "/app/licitacoes/analistas/demissao", icon: UserMinus },
       ],
     },
     {
@@ -378,6 +391,7 @@ const maloteModule: ModuleDef = {
       defaultOpen: true,
       items: [
         { label: "Aprovações do Malote", to: "/app/malote/aprovacoes", icon: CheckCircle2 },
+        { label: "Arquivos do Malote", to: "/app/malote/arquivos", icon: FileArchive },
         { label: "Configurações", to: "/app/malote/configuracoes", icon: Settings },
         { label: "Criar Despesa", to: "/app/malote/criar-despesa", icon: PlusCircle },
         { label: "Dashboard", to: "/app/malote/dashboard", icon: BarChart3 },
@@ -469,8 +483,12 @@ const rhModule: ModuleDef = {
         { label: "Solicitações de Demissão", to: "/app/rh/solicitacoes-demissao", icon: UserMinus },
         { label: "Conferência de Ponto", to: "/app/rh/conferencia-ponto", icon: ClipboardCheck },
         { label: "Conferência de Ponto — Painel", to: "/app/rh/conferencia-ponto/painel", icon: BarChart3 },
+        // Uma só, desde 02/09/2026: a etapa do RH é ALTERAR NA SENIOR. A
+        // aprovação do administrativo, que era o segundo item aqui, foi para o
+        // analista junto com a de contrato. A rota
+        // /app/rh/troca-funcao-escritorio continua existindo para quem já tem a
+        // permissão — ela só não é mais um item de menu do RH.
         { label: "Mudança de Função", to: "/app/rh/troca-funcao", icon: ArrowLeftRight, notif: "troca_funcao" },
-        { label: "Mudança de Função — Aprovação", to: "/app/rh/troca-funcao-escritorio", icon: Building2, notif: "troca_funcao" },
       ],
     },
   ],
@@ -833,14 +851,20 @@ const operacionalModule: ModuleDef = {
       label: "Recrutamento e Seleção",
       defaultOpen: true,
       items: [
-        { label: "Gestão Recrutamento", to: "/app/operacional/recrutamento", icon: UserCog },
+        // Acompanhamento, não decisão (02/09/2026): quem aprova é o analista,
+        // em Licitações › Analistas Validações. O rótulo diz isso para a
+        // pessoa não abrir a tela procurando um botão que saiu.
+        { label: "Gestão Recrutamento — Acompanhar", to: "/app/operacional/recrutamento", icon: UserCog },
       ],
     },
     {
       label: "Recursos Humanos",
       defaultOpen: true,
       items: [
-        { label: "Solicitações de Demissão", to: "/app/operacional/solicitacoes-demissao", icon: UserMinus },
+        // Também virou acompanhamento: a aprovação da demissão passou para o
+        // analista. A Mudança de Função abaixo, não — ali o Operacional
+        // continua aprovando, depois do analista.
+        { label: "Solicitações de Demissão — Acompanhar", to: "/app/operacional/solicitacoes-demissao", icon: UserMinus },
         { label: "Conferência de Ponto", to: "/app/operacional/conferencia-ponto", icon: ClipboardCheck },
         { label: "Mudança de Função", to: "/app/operacional/troca-funcao", icon: ArrowLeftRight, notif: "troca_funcao" },
       ],
