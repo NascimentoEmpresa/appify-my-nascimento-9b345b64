@@ -23,7 +23,7 @@ import {
 import { useMeuNome } from "@/hooks/useMeuNome";
 import {
   useCriarReembolso, useDecidirReembolso, useMeusStats, useMeuSetor, useReembolsos,
-  useTiposReembolso, type DespesaNova,
+  useTiposReembolso, type DespesaNova, type EtapaEnvio,
 } from "@/hooks/useReembolso";
 import {
   avisoDeTeto, competenciaDe, dataParaISO, descreveJanela, descreveTeto, fmtBRL,
@@ -53,6 +53,18 @@ interface DespesaRascunho {
 
 const rascunhoVazio = (): DespesaRascunho => ({ tipo_codigo: "", valor: "", arquivo: null });
 
+/**
+ * Os três estados que o clique em "Enviar para aprovação" pode produzir.
+ *
+ * União discriminada em vez de três `useState` soltos porque eles são
+ * mutuamente exclusivos: com booleanos separados existia o estado "enviando e
+ * com erro ao mesmo tempo", que nunca deveria acontecer e sempre acontecia.
+ */
+type EstadoEnvio =
+  | { estado: "enviando"; progresso: EtapaEnvio }
+  | { estado: "erro"; mensagem: string; chegouAoBanco: boolean }
+  | { estado: "sucesso"; numero: string; total: number };
+
 /** O bot aceitava PNG, JPG, JPEG e PDF. Mantido igual. */
 const ACEITA = ".png,.jpg,.jpeg,.pdf";
 const MIMES_OK = ["image/png", "image/jpeg", "image/jpg", "application/pdf"];
@@ -79,14 +91,26 @@ export default function SolicitarReembolso() {
   const [despesas, setDespesas] = useState<DespesaRascunho[]>([rascunhoVazio()]);
 
   /**
-   * O recibo do envio.
+   * TUDO que o botão "Enviar para aprovação" tem a dizer, no meio da tela.
    *
-   * Um toast não servia aqui: o formulário se esvazia no mesmo instante, e ver
-   * a tela em branco com uma tarja sumindo no canto deixa a dúvida de sempre —
-   * "foi?". O diálogo segura o número da solicitação até a pessoa fechar.
+   * Toast não serve para nenhum dos três momentos deste botão:
+   *
+   *  • ENVIANDO — são um upload e um insert por despesa, sequenciais. Com
+   *    comprovante de celular em rede de obra passa de dez segundos, e nesse
+   *    tempo um botão escrito "Enviando…" não distingue lento de travado.
+   *  • ERRO — foi o que motivou este redesenho (02/09/2026): a tarja no canto
+   *    aparecia junto com o formulário ainda cheio e sumia sozinha em segundos.
+   *    A leitura de quem usa era "deu um errinho mas foi" — e não tinha ido.
+   *    Erro de envio agora PARA a tela e espera ser lido.
+   *  • SUCESSO — o formulário se esvazia no mesmo instante; ver a tela em
+   *    branco com uma tarja sumindo no canto deixa a dúvida de sempre, "foi?".
+   *
+   * As três viram o mesmo painel central, porque são a mesma pergunta ("e
+   * aí?") em três respostas. Validação de campo (PIX vazio, hora inválida)
+   * também entra aqui: sai do mesmo clique, e mandar metade da resposta para o
+   * canto e metade para o meio era o que confundia.
    */
-  const [confirmada, setConfirmada] =
-    useState<{ numero: string; total: number } | null>(null);
+  const [envio, setEnvio] = useState<EstadoEnvio | null>(null);
 
   const saidaOk = normalizaHora(saida);
   const chegadaOk = normalizaHora(chegada);
@@ -150,30 +174,35 @@ export default function SolicitarReembolso() {
    * tipo de coisa que faz o formulário ser abandonado.
    */
   const enviar = async () => {
+    /** Recusa que ainda nem tocou no banco — o formulário continua intacto. */
+    const recusa = (mensagem: string) => {
+      setEnvio({ estado: "erro", mensagem, chegouAoBanco: false });
+    };
+
     // O banco recusa de qualquer forma (a trigger levanta excecao), mas deixar
     // a pessoa subir tres comprovantes para so entao descobrir que o cadastro
     // dela nao tem setor seria cruel.
     if (!meuSetor) {
-      return toast.error("Seu cadastro nao tem setor, entao nao ha para quem enviar. Peca ao RH para preencher.");
+      return recusa("Seu cadastro não tem setor, então não há para quem enviar. Peça ao RH para preencher.");
     }
-    if (!pix.trim()) return toast.error("Informe o PIX que vai receber o reembolso.");
-    if (!dataOk) return toast.error("Data da viagem inválida. Use DD/MM/AAAA.");
-    if (!saidaOk || !chegadaOk) return toast.error("Horário de saída ou chegada inválido.");
+    if (!pix.trim()) return recusa("Informe o PIX que vai receber o reembolso.");
+    if (!dataOk) return recusa("Data da viagem inválida. Use DD/MM/AAAA.");
+    if (!saidaOk || !chegadaOk) return recusa("Horário de saída ou chegada inválido.");
 
     const km = Number(String(distancia).replace(",", "."));
-    if (!Number.isFinite(km) || km < 0) return toast.error("Distância inválida.");
+    if (!Number.isFinite(km) || km < 0) return recusa("Distância inválida.");
 
     const preenchidas = despesas.filter((d) => d.tipo_codigo || d.valor || d.arquivo);
-    if (!preenchidas.length) return toast.error("Adicione pelo menos uma despesa.");
+    if (!preenchidas.length) return recusa("Adicione pelo menos uma despesa.");
 
     const prontas: DespesaNova[] = [];
     for (const d of preenchidas) {
       const tipo = porCodigo.get(d.tipo_codigo);
       const centavos = valorEmCentavos(d.valor);
       const veredito = podeLancar(tipo, centavos, saidaOk, chegadaOk);
-      if (!veredito.ok) return toast.error(veredito.mensagem ?? "Despesa inválida.");
+      if (!veredito.ok) return recusa(veredito.mensagem ?? "Despesa inválida.");
       if (!d.arquivo) {
-        return toast.error(`Falta o comprovante de ${tipo?.nome ?? d.tipo_codigo}.`);
+        return recusa(`Falta o comprovante de ${tipo?.nome ?? d.tipo_codigo}.`);
       }
       prontas.push({ tipo_codigo: d.tipo_codigo, valor_centavos: centavos!, arquivo: d.arquivo });
     }
@@ -181,8 +210,14 @@ export default function SolicitarReembolso() {
     const repetido = prontas.map((p) => p.tipo_codigo)
       .find((c, i, arr) => arr.indexOf(c) !== i);
     if (repetido) {
-      return toast.error(`${porCodigo.get(repetido)?.nome ?? repetido} está lançado duas vezes.`);
+      return recusa(`${porCodigo.get(repetido)?.nome ?? repetido} está lançado duas vezes.`);
     }
+
+    const total = totalRascunho;
+    setEnvio({
+      estado: "enviando",
+      progresso: { etapa: "abrindo", indice: 0, total: prontas.length },
+    });
 
     try {
       const criada = await criar.mutateAsync({
@@ -195,11 +230,21 @@ export default function SolicitarReembolso() {
         observacoes: observacoes.trim() || null,
         solicitante_nome: meuNome,
         despesas: prontas,
+        onProgresso: (progresso) =>
+          setEnvio((atual) =>
+            atual?.estado === "enviando" ? { ...atual, progresso } : atual),
       });
-      setConfirmada({ numero: criada.numero ?? "", total: totalRascunho });
+      setEnvio({ estado: "sucesso", numero: criada.numero ?? "", total });
       limpar();
     } catch (e: any) {
-      toast.error(e?.message ?? "Não deu para enviar a solicitação.");
+      // `chegouAoBanco` muda o texto do rodapé: aqui o cabeçalho chegou a ser
+      // criado e o hook desfez tudo, então vale dizer que não sobrou nada
+      // pendurado — é a dúvida que o toast antigo deixava no ar.
+      setEnvio({
+        estado: "erro",
+        mensagem: e?.message ?? "Não deu para enviar a solicitação.",
+        chegouAoBanco: true,
+      });
     }
   };
 
@@ -474,59 +519,167 @@ export default function SolicitarReembolso() {
         </TabsContent>
       </Tabs>
 
-      <ConfirmacaoEnvio confirmada={confirmada} onFechar={() => setConfirmada(null)} />
+      <PainelDeEnvio envio={envio} onFechar={() => setEnvio(null)} />
     </div>
   );
 }
 
 /**
- * O "foi!" depois de enviar.
+ * O painel central do envio — esperando, deu errado, ou foi.
  *
- * Reaproveita as micro-interações que os Chamados já usam (`check-pop`,
- * `status-flash`, `rise-in`), em vez de inventar keyframe novo para o mesmo
- * gesto — assim o ERP confirma coisa sempre do mesmo jeito.
+ * É `Dialog` (Radix) de propósito, e não uma div com `fixed`: enquanto ele
+ * está aberto o foco fica preso dentro, o resto da página vira inerte para
+ * leitor de tela, e Esc fecha. Um overlay caseiro dava o mesmo desenho e
+ * nenhuma dessas três coisas.
+ *
+ * As animações são as que os Chamados já usam (`check-pop`, `status-flash`,
+ * `rise-in`, `shake`, `float-soft`, `ring-pulse`) em vez de keyframe novo para
+ * o mesmo gesto — assim o ERP confirma e recusa coisa sempre do mesmo jeito.
  */
-function ConfirmacaoEnvio({ confirmada, onFechar }: {
-  confirmada: { numero: string; total: number } | null;
+function PainelDeEnvio({ envio, onFechar }: {
+  envio: EstadoEnvio | null;
+  onFechar: () => void;
+}) {
+  const enviando = envio?.estado === "enviando";
+  return (
+    <Dialog
+      open={!!envio}
+      onOpenChange={(aberto) => {
+        // Fechar no meio do envio não cancelaria upload nenhum — só esconderia
+        // o que está acontecendo. Enquanto envia, o painel não fecha.
+        if (!aberto && !enviando) onFechar();
+      }}
+    >
+      <DialogContent
+        className="sm:max-w-md"
+        onPointerDownOutside={(e) => { if (enviando) e.preventDefault(); }}
+        onEscapeKeyDown={(e) => { if (enviando) e.preventDefault(); }}
+      >
+        {envio?.estado === "enviando" && <EnviandoAgora progresso={envio.progresso} />}
+        {envio?.estado === "erro" && <EnvioRecusado envio={envio} onFechar={onFechar} />}
+        {envio?.estado === "sucesso" && <EnvioConfirmado envio={envio} onFechar={onFechar} />}
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+/** Passo a passo do envio, para dez segundos de espera não parecerem travamento. */
+function EnviandoAgora({ progresso }: { progresso: EtapaEnvio }) {
+  const { etapa, indice, total, nomeArquivo } = progresso;
+
+  // O cabeçalho é o passo 0; cada despesa vale um passo. A barra anda por
+  // ETAPA concluída, não por tempo — inventar um tempo que não se conhece é o
+  // que faz barra de progresso empacar em 90%.
+  const passos = total + 1;
+  const feitos = etapa === "abrindo" ? 0
+    : etapa === "concluido" ? passos
+    : indice; // comprovante/registro da despesa `indice`: as anteriores fecharam
+  const pct = Math.round((feitos / passos) * 100);
+
+  const legenda =
+    etapa === "abrindo" ? "Abrindo a solicitação…"
+    : etapa === "comprovante" ? `Enviando o comprovante ${indice} de ${total}…`
+    : etapa === "registrando" ? `Registrando a despesa ${indice} de ${total}…`
+    : "Fechando a solicitação…";
+
+  return (
+    <div className="flex flex-col items-center gap-5 py-6 text-center">
+      <DialogTitle className="sr-only">Enviando a solicitação</DialogTitle>
+      <DialogDescription className="sr-only">{legenda}</DialogDescription>
+
+      {/* Recibo subindo dentro de um anel que pulsa: o mesmo ícone da tela,
+          em movimento. */}
+      <span className="relative grid h-24 w-24 place-items-center">
+        <span className="absolute inset-0 animate-ring-pulse rounded-full bg-primary/10" />
+        <span className="absolute inset-2 rounded-full border-2 border-dashed border-primary/30 [animation:spin_9s_linear_infinite]" />
+        <Receipt className="h-10 w-10 animate-float-soft text-primary" />
+      </span>
+
+      <div className="w-full space-y-2">
+        <p aria-live="polite" className="text-sm font-medium">{legenda}</p>
+        {nomeArquivo && (
+          <p className="truncate text-xs text-muted-foreground">{nomeArquivo}</p>
+        )}
+        <div className="h-1.5 w-full overflow-hidden rounded-full bg-muted">
+          <div
+            className="h-full rounded-full bg-primary transition-[width] duration-500 ease-out"
+            style={{ width: `${Math.max(pct, 8)}%` }}
+          />
+        </div>
+      </div>
+
+      <p className="text-xs text-muted-foreground">
+        Não feche a página — os comprovantes ainda estão subindo.
+      </p>
+    </div>
+  );
+}
+
+/** A recusa. Fica parada até ser lida; era isso que faltava no toast. */
+function EnvioRecusado({ envio, onFechar }: {
+  envio: Extract<EstadoEnvio, { estado: "erro" }>;
   onFechar: () => void;
 }) {
   return (
-    <Dialog open={!!confirmada} onOpenChange={(aberto) => { if (!aberto) onFechar(); }}>
-      <DialogContent className="sm:max-w-md">
-        <div className="flex flex-col items-center gap-4 py-4 text-center">
-          <span className="grid h-20 w-20 animate-status-flash place-items-center rounded-full bg-emerald-100">
-            <CheckCircle2 className="h-11 w-11 animate-check-pop text-emerald-600" />
-          </span>
+    <div className="flex flex-col items-center gap-4 py-4 text-center">
+      <span className="grid h-20 w-20 animate-shake place-items-center rounded-full bg-rose-100">
+        <AlertTriangle className="h-10 w-10 animate-check-pop text-rose-600" />
+      </span>
 
-          <div className="animate-rise-in space-y-1">
-            <DialogTitle className="text-xl">Solicitação enviada!</DialogTitle>
-            <DialogDescription>
-              Ela já está na fila de quem aprova o seu setor.
-            </DialogDescription>
-          </div>
+      <div className="animate-rise-in space-y-1">
+        <DialogTitle className="text-xl">A solicitação não foi enviada</DialogTitle>
+        <DialogDescription>{envio.mensagem}</DialogDescription>
+      </div>
 
-          {confirmada && (
-            <div className="w-full animate-rise-in rounded-xl border bg-muted/40 p-4 [animation-delay:80ms]">
-              <div className="flex items-center justify-between gap-3 text-sm">
-                <span className="text-muted-foreground">Número</span>
-                <span className="font-semibold">{confirmada.numero || "—"}</span>
-              </div>
-              <div className="mt-1.5 flex items-center justify-between gap-3 text-sm">
-                <span className="text-muted-foreground">Total</span>
-                <span className="font-semibold">{fmtBRL(confirmada.total)}</span>
-              </div>
-            </div>
-          )}
+      <p className="animate-rise-in text-xs text-muted-foreground [animation-delay:80ms]">
+        {envio.chegouAoBanco
+          ? "Nada ficou pendurado: o que já tinha subido foi desfeito. Corrija o que a mensagem aponta e envie de novo — o formulário continua preenchido."
+          : "O formulário continua preenchido. Corrija o campo apontado e envie de novo."}
+      </p>
 
-          <p className="text-xs text-muted-foreground">
-            Acompanhe em <strong>Minhas solicitações</strong> — dá para cancelar
-            enquanto ninguém decidir.
-          </p>
+      <Button variant="outline" className="w-full" onClick={onFechar}>
+        Voltar ao formulário
+      </Button>
+    </div>
+  );
+}
 
-          <Button className="w-full" onClick={onFechar}>Entendi</Button>
+/** O recibo: segura o número da solicitação até a pessoa fechar. */
+function EnvioConfirmado({ envio, onFechar }: {
+  envio: Extract<EstadoEnvio, { estado: "sucesso" }>;
+  onFechar: () => void;
+}) {
+  return (
+    <div className="flex flex-col items-center gap-4 py-4 text-center">
+      <span className="grid h-20 w-20 animate-status-flash place-items-center rounded-full bg-emerald-100">
+        <CheckCircle2 className="h-11 w-11 animate-check-pop text-emerald-600" />
+      </span>
+
+      <div className="animate-rise-in space-y-1">
+        <DialogTitle className="text-xl">Solicitação enviada!</DialogTitle>
+        <DialogDescription>
+          Ela já está na fila de quem aprova o seu setor.
+        </DialogDescription>
+      </div>
+
+      <div className="w-full animate-rise-in rounded-xl border bg-muted/40 p-4 [animation-delay:80ms]">
+        <div className="flex items-center justify-between gap-3 text-sm">
+          <span className="text-muted-foreground">Número</span>
+          <span className="font-semibold">{envio.numero || "—"}</span>
         </div>
-      </DialogContent>
-    </Dialog>
+        <div className="mt-1.5 flex items-center justify-between gap-3 text-sm">
+          <span className="text-muted-foreground">Total</span>
+          <span className="font-semibold">{fmtBRL(envio.total)}</span>
+        </div>
+      </div>
+
+      <p className="text-xs text-muted-foreground">
+        Acompanhe em <strong>Minhas solicitações</strong> — dá para cancelar
+        enquanto ninguém decidir.
+      </p>
+
+      <Button className="w-full" onClick={onFechar}>Entendi</Button>
+    </div>
   );
 }
 

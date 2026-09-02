@@ -19,7 +19,7 @@ import {
   useDespesa,
   useEmpresasGrupo,
   useContratosAtivos,
-  uploadAnexoMalote,
+  uploadAnexosMalote,
   TipoSolicitacao,
   STATUS_LABEL,
   ItemSolicitacao,
@@ -417,7 +417,7 @@ function PainelSolicitacao({
         itens: itens.filter((i) => i.nome_item.trim() !== ""),
       });
       if (arquivos.length > 0) {
-        const paths = await Promise.all(arquivos.map((f) => uploadAnexoMalote(f, despesaId)));
+        const paths = await uploadAnexosMalote(arquivos, despesaId, nome.trim());
         await salvar.mutateAsync({ id: despesaId, empresa_id: empresaFinal, classificacao_id: classificacaoId, origem: "solicitacao", status, nome: nome.trim(), valor_total: Number(valorEstimado), arquivos: paths });
       }
       toast.success(status === "rascunho" ? "Rascunho salvo." : "Solicitação enviada para aprovação inicial.");

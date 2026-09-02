@@ -213,6 +213,24 @@ export interface SolicitacaoNova {
   // `cs_reembolso_carimba_setor`, a partir do cadastro. O setor decide QUEM
   // aprova — deixá-lo vir do cliente seria deixar a pessoa escolher o próprio
   // aprovador.
+
+  /**
+   * Onde o envio está, para a tela contar em voz alta.
+   *
+   * O envio não é uma chamada só: é cabeçalho, depois um upload e um insert
+   * POR despesa. Com três comprovantes de celular numa rede de obra isso passa
+   * fácil de dez segundos, e um spinner mudo nesse tempo é indistinguível de
+   * travamento. `etapa` é o que a pessoa lê; `indice`/`total` alimentam a
+   * barra.
+   */
+  onProgresso?: (p: EtapaEnvio) => void;
+}
+
+export interface EtapaEnvio {
+  etapa: "abrindo" | "comprovante" | "registrando" | "concluido";
+  indice: number;   // 1-based, dentro de `total`
+  total: number;    // quantidade de despesas
+  nomeArquivo?: string;
 }
 
 /**
@@ -235,6 +253,10 @@ export function useCriarReembolso() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async (nova: SolicitacaoNova) => {
+      const total = nova.despesas.length;
+      const avisa = (p: EtapaEnvio) => nova.onProgresso?.(p);
+
+      avisa({ etapa: "abrindo", indice: 0, total });
       const { data: cabecalho, error } = await sb.from("CS_REEMBOLSO").insert({
         pix: nova.pix,
         distancia_km: nova.distancia_km,
@@ -248,14 +270,20 @@ export function useCriarReembolso() {
       if (error) throw error;
 
       try {
-        for (const d of nova.despesas) {
+        for (const [i, d] of nova.despesas.entries()) {
           const limpo = d.arquivo.name.replace(/[^\w.-]+/g, "_");
           const caminho = `${cabecalho.id}/${d.tipo_codigo}-${Date.now()}-${limpo}`;
+          avisa({
+            etapa: "comprovante", indice: i + 1, total, nomeArquivo: d.arquivo.name,
+          });
           const up = await supabase.storage
             .from(BUCKET_REEMBOLSO)
             .upload(caminho, d.arquivo, { contentType: d.arquivo.type });
           if (up.error) throw up.error;
 
+          avisa({
+            etapa: "registrando", indice: i + 1, total, nomeArquivo: d.arquivo.name,
+          });
           const { error: erroItem } = await sb.from("CS_REEMBOLSO_ITEM").insert({
             reembolso_id: cabecalho.id,
             tipo_codigo: d.tipo_codigo,
@@ -279,6 +307,7 @@ export function useCriarReembolso() {
         throw e;
       }
 
+      avisa({ etapa: "concluido", indice: total, total });
       return cabecalho as { id: string; numero: string | null };
     },
     onSuccess: () => {
