@@ -1,12 +1,22 @@
 // =====================================================================
 // TROCA DE FUNÇÃO — o fluxo, longe do React
 //
-// Encarregado abre → alguém aprova → SST → RH altera na Senior.
+// Encarregado abre → ANALISTA valida → o Operacional aprova → SST → RH
+// altera na Senior.
 //
-//   Pendente Operacional ─┐
-//                         ├→ Pendente SST → Pendente RH → Concluída
-//   Pendente Escritório  ─┘
-//          ↘ Reprovada (em qualquer uma das duas)
+//                            ┌─ Pendente Operacional ─┐
+//   Pendente Analista ──────┤                         ├→ Pendente SST
+//                            └─ Pendente Escritório ──┘      ↓
+//                                                      Pendente RH
+//                                                            ↓
+//                                                       Concluída
+//          ↘ Reprovada (em qualquer uma das três filas de decisão)
+//
+// A ETAPA DO ANALISTA entrou em 02/09/2026, junto com o submódulo
+// "Analistas Validações" em Licitações. Ela é a PRIMEIRA porta: nada chega
+// ao Operacional sem passar por ela. O analista enxerga as DUAS origens —
+// foi o mesmo movimento que tirou a aprovação do escritório do RH, que ficou
+// só com a etapa final (alterar o cargo na Senior).
 //
 // CONTRATO x ESCRITÓRIO não é mais tela separada (25/08/2026). Eram duas
 // telas idênticas com o mesmo painel, e quem tinha as duas permissões
@@ -31,6 +41,7 @@
 export const TABELA = "SISTEMA_SOLICITACOES_TROCA_FUNCAO";
 
 export type StatusTroca =
+  | "Pendente Analista"
   | "Pendente Operacional"
   | "Pendente Escritório"
   | "Pendente SST"
@@ -41,11 +52,14 @@ export type StatusTroca =
 /**
  * A etapa é o papel de quem está olhando a fila.
  *
- * `aprovacao` cobre o que eram DUAS etapas ("operacional" e "escritorio").
- * O que separa uma da outra não é mais a tela, é a permissão de quem abriu
- * — ver `origensVisiveis`.
+ * `analista`  → a primeira validação, em Licitações › Analistas Validações.
+ *               Vê as DUAS origens: foi para cá que veio a aprovação do
+ *               escritório quando ela saiu do RH.
+ * `aprovacao` → cobre o que eram DUAS etapas ("operacional" e "escritorio").
+ *               O que separa uma da outra não é mais a tela, é a permissão de
+ *               quem abriu — ver `origensVisiveis`.
  */
-export type Etapa = "aprovacao" | "sst" | "rh";
+export type Etapa = "analista" | "aprovacao" | "sst" | "rh";
 
 /** De onde a solicitação veio. É o filtro da tela de aprovação. */
 export type Origem = "contrato" | "escritorio";
@@ -153,7 +167,18 @@ export function localEhEscritorio(local?: string | null): boolean {
  * tinha que ir no banco. `localEhEscritorio` continua aqui, mas só para a
  * tela sugerir — ver SolicitarTrocaFuncao.
  */
-export function statusInicial(eEscritorio: boolean): StatusTroca {
+export function statusInicial(_eEscritorio: boolean): StatusTroca {
+  return "Pendente Analista";
+}
+
+/**
+ * Para qual fila de aprovação a solicitação vai DEPOIS do analista.
+ *
+ * A origem deixou de escolher onde a solicitação NASCE e passou a escolher
+ * para onde ela vai quando o analista libera — o checkbox do formulário
+ * continua valendo, só que um passo adiante.
+ */
+export function statusAposAnalista(eEscritorio: boolean): StatusTroca {
   return eEscritorio ? "Pendente Escritório" : "Pendente Operacional";
 }
 
@@ -165,6 +190,7 @@ export function statusInicial(eEscritorio: boolean): StatusTroca {
  * (ver `podeAgirEm`).
  */
 const STATUS_DE_ACAO: Record<Etapa, StatusTroca[]> = {
+  analista:  ["Pendente Analista"],
   aprovacao: ["Pendente Operacional", "Pendente Escritório"],
   sst:       ["Pendente SST"],
   rh:        ["Pendente RH"],
@@ -181,7 +207,12 @@ export const statusDeAcao = (etapa: Etapa): StatusTroca[] => STATUS_DE_ACAO[etap
  * depois de aprovada.
  */
 const STATUS_VISIVEIS: Record<Etapa, StatusTroca[]> = {
-  aprovacao: ["Pendente Operacional", "Pendente Escritório", "Pendente SST", "Pendente RH", "Concluída", "Reprovada"],
+  // O analista é a primeira porta: acompanha do começo ao fim o que ele
+  // mesmo liberou, que é a pergunta que sobra na mesa dele.
+  analista:  ["Pendente Analista", "Pendente Operacional", "Pendente Escritório", "Pendente SST", "Pendente RH", "Concluída", "Reprovada"],
+  // O Operacional vê o que ainda está com o analista para saber o que vem
+  // pela frente, mas `podeAgirEm` não deixa ele decidir nada lá.
+  aprovacao: ["Pendente Analista", "Pendente Operacional", "Pendente Escritório", "Pendente SST", "Pendente RH", "Concluída", "Reprovada"],
   sst:       ["Pendente SST", "Pendente RH", "Concluída"],
   rh:        ["Pendente RH", "Concluída"],
 };
@@ -225,10 +256,17 @@ export type Acao = "aprovar" | "reprovar" | "aso" | "dispensar_aso" | "concluir"
  * Para onde a solicitação vai. Devolve null quando a ação não vale no
  * estado atual — a tela não deve nem oferecer, mas quem garante é isto.
  */
-export function proximoStatus(atual: StatusTroca, acao: Acao): StatusTroca | null {
+export function proximoStatus(
+  atual: StatusTroca,
+  acao: Acao,
+  eEscritorio = false,
+): StatusTroca | null {
   const emAprovacao = atual === "Pendente Operacional" || atual === "Pendente Escritório";
+  // O analista libera para a fila da ORIGEM — é o único ponto do fluxo em que
+  // contrato e escritório se separam.
+  if (acao === "aprovar" && atual === "Pendente Analista") return statusAposAnalista(eEscritorio);
   if (acao === "aprovar")  return emAprovacao ? "Pendente SST" : null;
-  if (acao === "reprovar") return emAprovacao ? "Reprovada" : null;
+  if (acao === "reprovar") return (emAprovacao || atual === "Pendente Analista") ? "Reprovada" : null;
   // Marcar o ASO e dispensar o ASO levam ao MESMO lugar de propósito: para o
   // RH os dois querem dizer "o SST já olhou, pode alterar na Senior". O que
   // muda é só o que fica registrado.
@@ -242,6 +280,7 @@ export function corDoStatus(s: StatusTroca): string {
   switch (s) {
     case "Concluída":  return "bg-emerald-100 text-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-300";
     case "Reprovada":  return "bg-red-100 text-red-800 dark:bg-red-950/40 dark:text-red-300";
+    case "Pendente Analista": return "bg-sky-100 text-sky-800 dark:bg-sky-950/40 dark:text-sky-300";
     case "Pendente SST": return "bg-violet-100 text-violet-800 dark:bg-violet-950/40 dark:text-violet-300";
     case "Pendente RH":  return "bg-blue-100 text-blue-800 dark:bg-blue-950/40 dark:text-blue-300";
     default:           return "bg-amber-100 text-amber-800 dark:bg-amber-950/40 dark:text-amber-300";
@@ -251,8 +290,9 @@ export function corDoStatus(s: StatusTroca): string {
 /** O que o status quer dizer, em português de gente. */
 export function explicaStatus(s: StatusTroca): string {
   switch (s) {
-    case "Pendente Operacional": return "Aguardando o Operacional aprovar a troca.";
-    case "Pendente Escritório":  return "Aguardando a aprovação do administrativo.";
+    case "Pendente Analista":    return "Aguardando o analista validar a troca.";
+    case "Pendente Operacional": return "Validada pelo analista. Aguardando o Operacional aprovar.";
+    case "Pendente Escritório":  return "Validada pelo analista. Aguardando a aprovação do administrativo.";
     case "Pendente SST":         return "Aprovada. O SST vai avaliar se precisa de ASO.";
     case "Pendente RH":          return "Liberada pelo SST. O RH vai fazer a alteração na Senior.";
     case "Concluída":            return "Alteração feita na Senior. Troca concluída.";

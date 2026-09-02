@@ -1,4 +1,5 @@
 import { PageHeader } from "@/components/layout/PageHeader";
+import { ResumoDeFuncoes } from "@/components/fluxos/ResumoDeFuncoes";
 import { PainelTrocaFuncao } from "@/components/troca-funcao/PainelTrocaFuncao";
 
 /**
@@ -19,6 +20,7 @@ export default function TrocaFuncaoEscritorio() {
         subtitle="Aprove as trocas de função. O que você aprovar segue para o SST."
         module="RH"
         breadcrumb={["Mudança de Função"]}
+        actions={<ResumoDeFuncoes fluxo="troca_funcao" />}
       />
       <PainelTrocaFuncao etapa="aprovacao" />
     </div>

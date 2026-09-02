@@ -3,18 +3,30 @@ import {
   STATUS_TODOS, corDoStatus, explicaStatus, linkDoLocalASO, resumoDoASO,
 } from "@/lib/demissao/solicitacao";
 
-// O ASO demissional é a última etapa da demissão (25/08/2026): o RH conclui a
-// parte dele e manda para o SST, que marca data/hora/local do exame — os
-// MESMOS campos do ASO de admissão. O que este arquivo trava é o que o
-// encarregado lê do outro lado: o status certo e o local do exame.
+// O ASO demissional marca data/hora/local do exame — os MESMOS campos do ASO
+// de admissão. O que este arquivo trava é o que o encarregado lê do outro
+// lado: o status certo e o local do exame.
+//
+// A ORDEM MUDOU EM 02/09/2026. Era analista(operacional) → RH → SST, com o
+// SST fechando; virou analista → SST → RH, com o RH fechando. O teste antigo
+// travava exatamente o contrário do que se pede hoje, e é essa a razão de ele
+// ter sido reescrito em vez de removido.
 
 describe("status do fluxo de demissão", () => {
-  it("tem a etapa do SST entre o RH e o fim", () => {
+  it("tem a etapa do SST entre o analista e o RH", () => {
     expect(STATUS_TODOS).toContain("Pendente SST");
     expect(STATUS_TODOS.indexOf("Pendente SST"))
-      .toBeGreaterThan(STATUS_TODOS.indexOf("Pendente RH"));
+      .toBeGreaterThan(STATUS_TODOS.indexOf("Pendente Analista"));
     expect(STATUS_TODOS.indexOf("Pendente SST"))
+      .toBeLessThan(STATUS_TODOS.indexOf("Pendente RH"));
+    expect(STATUS_TODOS.indexOf("Pendente RH"))
       .toBeLessThan(STATUS_TODOS.indexOf("Concluída"));
+  });
+
+  it("a primeira etapa é do analista, não do Operacional", () => {
+    expect(STATUS_TODOS).toContain("Pendente Analista");
+    expect(STATUS_TODOS).not.toContain("Pendente Operacional");
+    expect(explicaStatus("Pendente Analista")).toMatch(/analista/i);
   });
 
   it("cada status se explica sozinho para quem só acompanha", () => {
@@ -25,9 +37,11 @@ describe("status do fluxo de demissão", () => {
     }
   });
 
-  it("'Concluída' agora fala do ASO, não do RH", () => {
-    expect(explicaStatus("Pendente SST")).toMatch(/SST/);
-    expect(explicaStatus("Concluída")).toMatch(/ASO/);
+  it("quem fecha a demissão é o RH, e o status diz isso", () => {
+    // O SST deixou de ser o fim da linha: ele marca o ASO e passa adiante.
+    expect(explicaStatus("Pendente SST")).toMatch(/ASO/);
+    expect(explicaStatus("Pendente RH")).toMatch(/RH/);
+    expect(explicaStatus("Concluída")).toMatch(/RH/);
   });
 });
 

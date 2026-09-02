@@ -46,6 +46,7 @@ const sb = supabase as any;
  */
 
 const ROTULO: Record<Etapa, { acao: string; icone: any; ajuda: string }> = {
+  analista:  { acao: "Validar",  icone: ThumbsUp,    ajuda: "Validar manda para a aprovação do Operacional (ou do administrativo, se for do escritório)." },
   aprovacao: { acao: "Aprovar",  icone: ThumbsUp,    ajuda: "Aprovar manda para o SST." },
   sst:       { acao: "ASO marcado", icone: Stethoscope, ajuda: "Informe a data do ASO — ou dispense, se a função não exige exame novo. Depois segue para o RH." },
   rh:        { acao: "Concluir", icone: CheckCircle2, ajuda: "Confirme depois de alterar o cargo na Senior." },
@@ -92,6 +93,9 @@ export function PainelTrocaFuncao({ etapa }: { etapa: Etapa }) {
    * Na aprovação, sim: cada permissão abre uma origem.
    */
   const origens: Origem[] = useMemo(() => {
+    // Analista, SST e RH tratam as duas origens. No analista isso é o próprio
+    // desenho da etapa: a validação do escritório saiu do RH e veio para cá
+    // junto com a de contrato (02/09/2026).
     if (etapa !== "aprovacao") return ["contrato", "escritorio"];
     return origensVisiveis(
       can("visualizar", undefined, "operacional_troca_funcao"),
@@ -142,7 +146,9 @@ export function PainelTrocaFuncao({ etapa }: { etapa: Etapa }) {
 
   const decidir = async (acao: "aprovar" | "reprovar" | "aso" | "dispensar_aso" | "concluir") => {
     if (!aberta) return;
-    const destino = proximoStatus(aberta.status, acao);
+    // A origem só muda o destino na mão do analista — é lá que contrato e
+    // escritório se separam. Passar sempre evita ter que lembrar disso aqui.
+    const destino = proximoStatus(aberta.status, acao, aberta.e_escritorio);
     if (!destino) { toast.error("Esta ação não vale no estado atual da solicitação."); return; }
     if (acao === "reprovar" && !motivoReprova.trim()) {
       toast.error("Escreva o motivo — sem ele o encarregado não sabe o que corrigir.");
@@ -187,7 +193,10 @@ export function PainelTrocaFuncao({ etapa }: { etapa: Etapa }) {
     }
     toast.success(
       acao === "reprovar" ? "Solicitação reprovada."
-      : acao === "aprovar" ? "Aprovada — segue para o SST."
+      : acao === "aprovar"
+        ? (etapa === "analista"
+            ? `Validada — segue para ${aberta.e_escritorio ? "a aprovação do administrativo" : "o Operacional"}.`
+            : "Aprovada — segue para o SST.")
       : acao === "aso" ? "ASO registrado — segue para o RH."
       : acao === "dispensar_aso" ? "ASO dispensado — segue para o RH."
       : "Troca de função concluída.",
