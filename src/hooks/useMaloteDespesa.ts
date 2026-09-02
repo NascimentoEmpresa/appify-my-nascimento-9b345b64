@@ -1320,10 +1320,27 @@ export async function uploadAnexoMalote(file: File, despesaFolderId: string): Pr
 // existe na pasta, depois numera local ("Nome (2).pdf", "Nome (3).pdf"...)
 // sem round-trip por arquivo.
 export function sanitizarNomeArquivo(nome: string): string {
-  // Storage aceita a maioria dos caracteres em UTF-8, mas "/" quebraria o
-  // path (viraria subpasta) e os demais são reservados em Windows — troca
-  // por "-" pra quem baixa o anexo não ter problema ao salvar localmente.
-  return nome.trim().replace(/[\\/:*?"<>|]/g, "-").replace(/\s+/g, " ").slice(0, 150) || "arquivo";
+  // Achado real (Iury, testando "TESTE (SOLICITAÇÃO DE AJUSTE EDITAVEL)"):
+  // a suposição do comentário original — "Storage aceita a maioria dos
+  // caracteres em UTF-8" — estava ERRADA. A chave do Storage só aceita um
+  // conjunto ASCII restrito (letras/dígitos e alguns símbolos como
+  // - _ . ! * ' ( ) & $ @ = ; : + , ?); qualquer acentuação (Ç, Ã, Õ, É...)
+  // — praticamente garantida em nome de despesa, já que o padrão do
+  // projeto é nomear tudo em português — vira "Invalid key" no upload.
+  // Normaliza NFD (separa a letra da marca de acento, ex. "Ã" → "A" + til)
+  // e descarta a marca, depois troca qualquer caractere fora do ASCII
+  // imprimível por "-" (rede de segurança pra qualquer símbolo que a
+  // normalização não decomponha, ex. emoji, aspas curvas, travessão "—").
+  const semAcento = nome.normalize("NFD").replace(/\p{Diacritic}/gu, "");
+  // "/" quebraria o path (viraria subpasta) e os demais são reservados em
+  // Windows — troca por "-" pra quem baixa o anexo não ter problema ao
+  // salvar localmente.
+  return semAcento
+    .replace(/[\\/:*?"<>|]/g, "-")
+    .replace(/[^\x20-\x7e]/g, "-")
+    .trim()
+    .replace(/\s+/g, " ")
+    .slice(0, 150) || "arquivo";
 }
 
 // Pura, testável sem mockar storage: dado o nome-base já sanitizado, a
