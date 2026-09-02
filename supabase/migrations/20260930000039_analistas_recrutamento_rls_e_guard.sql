@@ -1,7 +1,7 @@
 -- =====================================================================
 -- ANALISTAS VALIDAÇÕES — o banco precisa reconhecer o menu novo.
 --
--- A 20260930000034 criou `licitacoes_analistas_recrutamento` e moveu a
+-- A 20260930000038 criou `licitacoes_analistas_recrutamento` e moveu a
 -- etapa 1 do recrutamento para o analista. Só que no banco quem decide
 -- sobre a vaga continuava sendo uma lista de DOIS menus, em dois lugares:
 --

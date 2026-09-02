@@ -16,14 +16,19 @@ import { SearchableMultiSelect } from "@/components/ui/searchable-multi-select";
  * aprova".
  *
  * O setor de QUEM PEDE não aparece aqui porque não se escolhe: o banco carimba
- * a partir de EMPREGADOS (o cadastro da Senior, que é o que Meu Perfil mostra)
- * e, na falta dele, do setor do perfil.
+ * a partir de `user_setor`, o setor marcado nesta mesma tela, logo acima.
  *
- * A lista vem da RPC `cs_reembolso_setores`, que junta o catálogo de setores
- * do ERP com os setores que existem em EMPREGADOS. As duas fontes gravam com
- * caixa diferente — "Sistemas" no catálogo, "SISTEMAS" na Senior — e a
- * comparação no banco é normalizada. Oferecer aqui uma lista diferente da que
- * o carimbo usa faria o admin marcar um setor que nunca casaria com nada.
+ * A lista vem da RPC `cs_reembolso_setores`, que devolve o catálogo de setores
+ * do ERP — os mesmos 13 que Administração › Setores mantém, e os mesmos que
+ * `user_setor` grava. Oferecer aqui uma lista diferente da que o carimbo usa
+ * faria o admin marcar um setor que nunca casaria com nada, e foi exatamente
+ * o que aconteceu até 02/09/2026: a RPC fazia UNION com `EMPREGADOS.Setor_ERP`
+ * (o espelho da Senior), então a lista trazia `LICITACAO` junto com
+ * `Licitações`, `DIRETOR ADMINISTRATIVO` junto com `Diretor Adm`, mais
+ * `PADRAO`, `COMPRAS` e `PRESIDÊNCIA`, que não são setores do ERP. Pior: como
+ * o carimbo lia EMPREGADOS primeiro, e lá 547 das 630 pessoas são `PADRAO`,
+ * as solicitações nasciam num setor que ninguém aprova e sumiam da fila.
+ * Ver a migration 20260930000040.
  */
 export function ReembolsoSetoresUsuario({ userId, onToast }: {
   userId: string;
@@ -76,7 +81,7 @@ export function ReembolsoSetoresUsuario({ userId, onToast }: {
     <div className="py-1">
       <p className="mb-1.5 text-[11px] text-muted-foreground">
         Setores cujos reembolsos <b>este usuário</b> pode ver, aprovar, reprovar e enviar ao malote.
-        O setor de quem pede vem do cadastro (Senior ou perfil) e não é escolhido por ele.{" "}
+        O setor de quem pede é o marcado em <b>Setor</b>, aqui em cima, e não é escolhido por ele.{" "}
         <b>Sem nenhum setor marcado, a pessoa não aprova nada</b> — nem vê a fila —, mesmo com o
         menu de Aprovação liberado.
       </p>
