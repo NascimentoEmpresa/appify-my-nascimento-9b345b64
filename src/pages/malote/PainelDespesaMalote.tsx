@@ -20,7 +20,7 @@ import {
   SalvarDespesaInput,
   useConverterSolicitacaoEmDespesa,
   useSalvarDespesa,
-  uploadAnexoMalote,
+  uploadAnexosMalote,
 } from "@/hooks/useMaloteDespesa";
 import { useMaloteConfig, usePrazoNormalInclusao, horaAtualPassouDe } from "@/hooks/useMaloteConfig";
 import { useTiposFormaPagamento } from "@/hooks/useMaloteFormaPagamento";
@@ -256,7 +256,7 @@ export function PainelDespesaMalote({
       }
 
       if (arquivos.length > 0) {
-        const paths = await Promise.all(arquivos.map((f) => uploadAnexoMalote(f, despesaId)));
+        const paths = await uploadAnexosMalote(arquivos, despesaId, nome.trim());
         await salvar.mutateAsync({
           id: despesaId,
           empresa_id: empresaId,

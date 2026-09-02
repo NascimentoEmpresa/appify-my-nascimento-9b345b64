@@ -815,6 +815,17 @@ export function aprovadoresDoNivel(despesa: MaloteDespesaRow, nivel: 1 | 2 | 3):
   return c.aprovador3_user_ids ?? [];
 }
 
+// SIS-2026-0291: mesma lista de aprovadoresDoNivel, só que com nome em vez
+// de user_id — pra exibir em destaque na DM/Meus Itens quem pode aprovar o
+// nível atual (antes só dava pra ver o primeiro nome truncado "+N").
+export function nomesAprovadoresDoNivel(despesa: MaloteDespesaRow, nivel: 1 | 2 | 3): string[] {
+  const c = despesa.classificacao;
+  if (!c) return [];
+  if (nivel === 1) return c.aprovador1_nomes ?? [];
+  if (nivel === 2) return c.aprovador2_nomes ?? [];
+  return c.aprovador3_nomes ?? [];
+}
+
 export function souAprovadorDoNivel(despesa: MaloteDespesaRow, nivel: 1 | 2 | 3, userId: string | null | undefined): boolean {
   if (!userId) return false;
   return aprovadoresDoNivel(despesa, nivel).includes(userId);
@@ -1292,6 +1303,65 @@ export async function uploadAnexoMalote(file: File, despesaFolderId: string): Pr
   const { error } = await supabase.storage.from("malote-anexos").upload(path, file);
   if (error) throw error;
   return path;
+}
+
+// SIS-2026-0291 (Iury): "arquivo anexado ao criar a despesa fica com o
+// mesmo nome do campo Nome da despesa; o comprovante, esse mesmo nome com
+// '- Comprovante' no final" — antes o storage sempre usava um UUID cru
+// (ex. "02bd3310-....pdf"), sem nenhuma relação com a despesa, ilegível
+// tanto na lista de anexos quanto no arquivo baixado de verdade (o nome do
+// download vem da própria chave do storage, não só do texto mostrado na
+// tela — por isso o nome tem que mudar na chave, não só no rótulo).
+//
+// Storage não recusa nome duplicado sozinho de forma segura em paralelo
+// (2 uploads simultâneos com o mesmo nome+extensão colidem) — resolve
+// antes de cada upload, sequencial de propósito (poucos arquivos por
+// despesa, não é caminho quente): 1 `list()` no início pra saber o que já
+// existe na pasta, depois numera local ("Nome (2).pdf", "Nome (3).pdf"...)
+// sem round-trip por arquivo.
+export function sanitizarNomeArquivo(nome: string): string {
+  // Storage aceita a maioria dos caracteres em UTF-8, mas "/" quebraria o
+  // path (viraria subpasta) e os demais são reservados em Windows — troca
+  // por "-" pra quem baixa o anexo não ter problema ao salvar localmente.
+  return nome.trim().replace(/[\\/:*?"<>|]/g, "-").replace(/\s+/g, " ").slice(0, 150) || "arquivo";
+}
+
+// Pura, testável sem mockar storage: dado o nome-base já sanitizado, a
+// extensão e o conjunto de nomes já usados na pasta (mutado a cada
+// chamada, pra numerar corretamente uma leva de vários arquivos com o
+// mesmo nome-base em sequência), devolve o próximo nome livre.
+export function proximoNomeArquivoLivre(base: string, ext: string, usados: Set<string>): string {
+  let nomeArquivo = `${base}.${ext}`;
+  let n = 2;
+  while (usados.has(nomeArquivo)) {
+    nomeArquivo = `${base} (${n}).${ext}`;
+    n++;
+  }
+  usados.add(nomeArquivo);
+  return nomeArquivo;
+}
+
+export async function uploadAnexosMalote(files: File[], despesaFolderId: string, nomeBase?: string): Promise<string[]> {
+  if (files.length === 0) return [];
+  if (!nomeBase?.trim()) {
+    // Fallback (UUID) pros poucos fluxos que ainda não tenham o nome da
+    // despesa disponível no momento do upload — não deveria acontecer nos
+    // caminhos atuais, mas não trava o envio se acontecer.
+    return Promise.all(files.map((f) => uploadAnexoMalote(f, despesaFolderId)));
+  }
+  const base = sanitizarNomeArquivo(nomeBase);
+  const { data: existentes } = await supabase.storage.from("malote-anexos").list(despesaFolderId);
+  const usados = new Set((existentes ?? []).map((f) => f.name));
+  const paths: string[] = [];
+  for (const file of files) {
+    const ext = file.name.split(".").pop() || "bin";
+    const nomeArquivo = proximoNomeArquivoLivre(base, ext, usados);
+    const path = `${despesaFolderId}/${nomeArquivo}`;
+    const { error } = await supabase.storage.from("malote-anexos").upload(path, file);
+    if (error) throw error;
+    paths.push(path);
+  }
+  return paths;
 }
 
 /**
