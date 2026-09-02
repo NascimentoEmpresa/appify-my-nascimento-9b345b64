@@ -33,7 +33,10 @@ const BUCKET = "diarias";
 // O banco guarda dinheiro em centavos (inteiro); a tela trabalha em reais.
 // Converter nas bordas evita que 0.1 + 0.2 apareça num total de pagamento.
 const paraCentavos = (reais: number) => Math.round((Number(reais) || 0) * 100);
-const paraReais = (centavos: number | null | undefined) => (Number(centavos) || 0) / 100;
+// O PostgREST devolve numeric como string, e as interfaces *Banco ja declaram
+// `number | string | null`. O Number() interno sempre deu conta das duas formas;
+// so a assinatura nao dizia isso, e mapearLinha batia em TS2345 desde sempre.
+const paraReais = (centavos: number | string | null | undefined) => (Number(centavos) || 0) / 100;
 
 export interface ContratoDiaria {
   id: string;
