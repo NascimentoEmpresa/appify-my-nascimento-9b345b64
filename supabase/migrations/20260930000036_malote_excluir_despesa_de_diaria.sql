@@ -198,12 +198,22 @@ NOTIFY pgrst, 'reload schema';
 -- =====================================================================
 -- ROLLBACK (executar manualmente)
 --
--- Reexecutar, nesta ordem:
---   1) 20260930000035_diaria_competencia_cast_date.sql  (repõe o diaria_guard
---      sem o desvio da GUC — é a versão imediatamente anterior a esta);
---   2) 20260913000001_malote_exclusao_permanente.sql    (repõe a RPC de
---      exclusão sem o passo que solta a diária);
---   3) DROP FUNCTION IF EXISTS public.diaria_desfazendo_aprovacao();
+-- Reexecutar, NESTA ordem — a 2ª etapa não é opcional:
+--   1) 20260930000033_diaria_despesa_pendente_aprovacao.sql
+--        repõe o diaria_guard() sem o desvio da GUC. É esta migration que
+--        guarda a versão anterior do guard, NÃO a 035 (a 035 só mexe em
+--        diaria_aprovar_com_despesa).
+--   2) 20260930000035_diaria_competencia_cast_date.sql
+--        obrigatória logo depois: a 033 acabou de repor
+--        diaria_aprovar_com_despesa SEM o ::date, reintroduzindo o
+--        'column "competencia" is of type date but expression is of type text'.
+--        Sem esta etapa, nenhuma diária volta a ser aprovável.
+--   3) 20260913000001_malote_exclusao_permanente.sql
+--        repõe a RPC de exclusão sem o passo que solta a diária.
+--   4) DROP FUNCTION IF EXISTS public.diaria_desfazendo_aprovacao();
+--        só depois da etapa 1: enquanto o guard ainda chamar esta função,
+--        derrubá-la faz TODO UPDATE em "DIARIA_SOLICITACAO" estourar com
+--        'function public.diaria_desfazendo_aprovacao() does not exist'.
 --
 -- Depois disso o botão "Excluir permanentemente" volta a falhar em despesa de
 -- diária — é exatamente o bug que esta migration corrige.
