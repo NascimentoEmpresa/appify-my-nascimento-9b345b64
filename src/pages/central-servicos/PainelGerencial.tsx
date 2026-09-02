@@ -21,6 +21,7 @@ import { CAT_CORES, Chart, EvolucaoChart, FiltroFuturo, Kpi, MultiSelectEmpresa,
 import PainelLideranca from "./painel/AbaLideranca";
 import PainelAlinhamento from "./painel/AbaAlinhamento";
 import AbaDiagnostico from "./painel/AbaDiagnostico";
+import ChatPainel from "./painel/ChatPainel";
 import { insightForte, insightNec, insightSit } from "./painel/insights";
 
 // =====================================================================
@@ -225,6 +226,17 @@ export default function PainelGerencial() {
     });
     return [...m.values()].sort((a, b) => a.nome.localeCompare(b.nome, "pt-BR"));
   }, [respsForm]);
+
+  // Dica de mapeamento para o chat de IA: quais perguntas guardam o nome do
+  // colaborador avaliado neste formulário. O mapeamento vive no localStorage
+  // (por formulário, por navegador), então a Edge Function não tem como
+  // descobrir sozinha — ela detecta as perguntas de tipo "colaborador" e usa
+  // esta dica para o resto. Sem isso o chat só acharia quem RESPONDEU, e
+  // juraria que um colaborador avaliado não existe.
+  const dicaIdsChat = useMemo<Record<string, string[]>>(() => {
+    const ids = [mapa.avaliado, mapa.lider].filter((id): id is string => typeof id === "string" && !!id);
+    return formSel && ids.length ? { [formSel]: ids } : {};
+  }, [formSel, mapa.avaliado, mapa.lider]);
 
   // Quem a resposta AVALIA (o dono do feedback).
   const avaliadoDaResposta = useCallback((r: Resp) =>
@@ -988,6 +1000,12 @@ export default function PainelGerencial() {
           ⓘ Os indicadores são baseados nas respostas dos feedbacks e têm caráter de apoio à gestão, não devendo ser usados isoladamente para decisões de promoção, punição ou desligamento.
         </div>
       </div>
+
+      {/* Chat lateral de IA — fica FORA do switch de abas de propósito: a dúvida
+          "onde está o colaborador X?" aparece em qualquer aba da rota, não só na
+          Diagnóstico IA. Ligado/desligado por usuário em Administração →
+          Módulos & Menus → Acesso por Usuário → Formulários. */}
+      {!permsLoading && canForm("chat_ia_painel") && <ChatPainel dicaIds={dicaIdsChat} />}
     </div>
   );
 }

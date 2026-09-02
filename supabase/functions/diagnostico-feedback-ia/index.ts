@@ -159,7 +159,9 @@ Deno.serve(async (req) => {
     const respostasSetor = respostasVisiveis.filter((r) => normalizaSetor(r.setor) === setorNorm);
     if (!elegivel(respostasSetor.length)) {
       return respostaJson({
-        error: `São necessárias pelo menos ${MINIMO_RESPOSTAS_DIAGNOSTICO} respostas visíveis no setor.`,
+        error: MINIMO_RESPOSTAS_DIAGNOSTICO === 1
+          ? "É necessária pelo menos 1 resposta visível no setor para gerar o diagnóstico."
+          : `São necessárias pelo menos ${MINIMO_RESPOSTAS_DIAGNOSTICO} respostas visíveis no setor.`,
         qtd_respostas: respostasSetor.length,
         minimo: MINIMO_RESPOSTAS_DIAGNOSTICO,
       }, 422);

@@ -154,9 +154,13 @@ describe("anonimização de textos livres", () => {
 });
 
 describe("elegibilidade", () => {
-  it("barra setores com menos de cinco respostas", () => {
+  // SIS-2026-0311 derrubou o mínimo de 5. Só o setor sem resposta nenhuma
+  // continua barrado — e por economia de chamada de IA, não por privacidade
+  // (essa é da policy cs_form_diag_select).
+  it("barra apenas setor sem resposta nenhuma", () => {
     expect(elegivel(0)).toBe(false);
-    expect(elegivel(4)).toBe(false);
+    expect(elegivel(1)).toBe(true);
+    expect(elegivel(4)).toBe(true);
     expect(elegivel(5)).toBe(true);
   });
 });

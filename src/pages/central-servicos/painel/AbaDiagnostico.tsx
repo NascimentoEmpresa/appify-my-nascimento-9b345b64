@@ -76,7 +76,13 @@ export default function AbaDiagnostico({ formularioId, setor, respostas }: {
   const setorNorm = normSetor(setor);
   const respostasDoSetor = useMemo(() => respostas.filter((r) => normSetor(r.setor) === setorNorm), [respostas, setorNorm]);
   const qtd = respostasDoSetor.length;
-  const elegivel = qtd >= 5;
+  // Espelha MINIMO_RESPOSTAS_DIAGNOSTICO do _shared da Edge Function (hoje 1) —
+  // a autoridade é ela, aqui é só para não oferecer um botão que o backend
+  // recusaria. Era 5 até SIS-2026-0311; ver o comentário lá para o porquê.
+  const elegivel = qtd >= 1;
+  // Abaixo de 5 o diagnóstico sai, mas a leitura é frágil. Deixou de barrar e
+  // passou a avisar: a decisão de gerar é do gestor, informada.
+  const amostraPequena = qtd > 0 && qtd < 5;
 
   useEffect(() => {
     setGerando(false);
@@ -112,9 +118,10 @@ export default function AbaDiagnostico({ formularioId, setor, respostas }: {
   if (!elegivel) {
     return (
       <div style={{ ...caixa, padding: 40, textAlign: "center", borderColor: "#fde68a", background: "#fffbeb" }}>
-        <div style={{ fontSize: 16, fontWeight: 800, color: "#92400e", marginBottom: 6 }}>Diagnóstico indisponível para este setor</div>
+        <div style={{ fontSize: 16, fontWeight: 800, color: "#92400e", marginBottom: 6 }}>Nenhuma resposta visível em {setor}</div>
         <div style={{ fontSize: 12.5, color: "#92400e", lineHeight: 1.5 }}>
-          Há <b>{qtd}</b> resposta(s) visível(is) em {setor}. São necessárias pelo menos <b>5</b> para preservar a privacidade do grupo.
+          O diagnóstico precisa de pelo menos uma resposta para ter o que ler. Ou este setor ainda
+          não respondeu ao formulário, ou o seu acesso não alcança as respostas dele.
         </div>
       </div>
     );
@@ -132,6 +139,14 @@ export default function AbaDiagnostico({ formularioId, setor, respostas }: {
           {gerando ? "Gerando diagnóstico…" : loading ? "Carregando…" : "Gerar diagnóstico"}
         </button>
       </div>
+
+      {amostraPequena && (
+        <div style={{ marginBottom: 14, padding: "10px 14px", border: "1px solid #e2e8f0", borderRadius: 12, background: "#f8fafc", color: "#475569", fontSize: 12, lineHeight: 1.5 }}>
+          Amostra pequena: <b>{qtd}</b> resposta(s) visível(is) em {setor}. O diagnóstico sai
+          normalmente, mas com poucas respostas ele pode estar refletindo a opinião de uma
+          pessoa só — leia como indício, não como conclusão do setor.
+        </div>
+      )}
 
       {error && (
         <div role="alert" style={{ marginBottom: 14, padding: "12px 14px", border: "1px solid #fecaca", borderRadius: 12, background: "#fef2f2", color: "#b91c1c", fontSize: 12.5 }}>

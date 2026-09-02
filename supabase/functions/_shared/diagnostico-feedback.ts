@@ -74,7 +74,25 @@ export type ResultadoValidacao =
   | { ok: true; diagnostico: DiagnosticoFeedback }
   | { ok: false; motivo: string };
 
-export const MINIMO_RESPOSTAS_DIAGNOSTICO = 5;
+/**
+ * Mínimo de respostas para gerar diagnóstico. Era 5, virou 1 em 02/09/2026
+ * (SIS-2026-0311) a pedido da gestão: setor pequeno ficava sem diagnóstico
+ * nenhum, e a tarja "são necessárias pelo menos 5 para preservar a privacidade
+ * do grupo" prometia uma proteção que não vinha daqui.
+ *
+ * Quem protege a privacidade é a RLS, não este número. A policy
+ * cs_form_diag_select (migration 20260930000038) só entrega um diagnóstico a
+ * quem já enxerga, por RLS, pelo menos a mesma quantidade de respostas usada
+ * para gerá-lo. Um diagnóstico de 2 respostas é legível apenas por quem já
+ * lê essas 2 respostas cruas — baixar o mínimo não revelou nada a ninguém.
+ *
+ * Continua sendo 1, e não 0, por um motivo prático: com zero respostas o
+ * agregado sai com as distribuições zeradas mas ainda traz as perguntas (elas
+ * vêm do formulário, não das respostas), então a guarda de qtdPerguntas na
+ * Edge Function não pegaria o caso e gastaríamos uma chamada de IA pedindo que
+ * ela diagnosticasse o nada.
+ */
+export const MINIMO_RESPOSTAS_DIAGNOSTICO = 1;
 export const MAX_ITENS_POR_BLOCO = 5;
 
 const TIPOS_FECHADOS = new Set([
