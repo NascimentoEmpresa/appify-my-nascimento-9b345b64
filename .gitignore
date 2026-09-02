@@ -59,3 +59,11 @@ espelho-mysql/credenciais.json
 espelho-mysql/tabelas.descobertas.json
 espelho-mysql/node_modules
 espelho-mysql/logs
+
+# Estado do type-check incremental (tsc --incremental) e a saída bruta que o
+# job `tipos` do CI monta. Local, descartável e grande — nunca versionar.
+.tsbuildinfo-ci/
+*.tsbuildinfo
+tsc-saida.txt
+tsc-da-pr.txt
+arquivos-da-pr.txt
