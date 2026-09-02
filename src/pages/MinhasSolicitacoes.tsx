@@ -381,21 +381,34 @@ export default function MinhasSolicitacoes({ abrir }: { abrir?: SolicitacaoInici
   };
 
   /**
-   * A mesma tela, sem o colaborador de referência.
+   * Liga e desliga o preenchimento à mão, com a solicitação já aberta.
    *
-   * Cargo, contrato, escala e salário passam a ser digitados. Só existe para
-   * quem tem a capacidade de vaga administrativa — ver `podePreencherVagaManual`
-   * em lib/recrutamento/vagaRegras.ts, que explica por que o escritório
-   * precisa disso e por que a chave é a capacidade, não o setor.
+   * Cargo, contrato, escala e salário passam a ser digitados em vez de virem
+   * do cadastro de um colaborador. Só existe para quem tem a capacidade de
+   * vaga administrativa — ver `podePreencherVagaManual` em
+   * lib/recrutamento/vagaRegras.ts, que explica por que o escritório precisa
+   * disso e por que a chave é a capacidade, não o setor.
    *
-   * Já marca `administrativa`: quem abre vaga à mão está abrindo vaga do
-   * escritório, e deixar os dois desencontrados criaria a vaga fora da vista
-   * de quem a criou.
+   * NÃO marca `administrativa` sozinho: o checkbox está no mesmo passo, à
+   * vista, e é do dono da solicitação decidir. Marcar por conta seria esconder
+   * a vaga de quem não tem a capacidade sem ninguém ter pedido.
+   *
+   * Ao DESLIGAR, limpa o que foi digitado à mão: esses campos voltam a
+   * prometer que vieram do cadastro, e deixar o texto antigo faria a tela
+   * mentir sobre a origem deles.
    */
-  const abrirModalVagaManual = () => {
-    abrirModalVaga();
-    setVagaManual(true);
-    setVaga({ ...VAGA_RESET, administrativa: true });
+  const alternarVagaManual = () => {
+    setMenuVagaAberto(false);
+    setVagaManual(atual => {
+      if (atual) {
+        setSubstituidoId(null);
+        setEmpSearch("");
+        setVaga(v => ({
+          ...v, nome_substituido: "", cargo: "", contrato: "", salario: "", escala: "",
+        }));
+      }
+      return !atual;
+    });
   };
 
   // Prazo/grau da data escolhida — o grau não é mais escolhido na mão.
@@ -645,9 +658,6 @@ export default function MinhasSolicitacoes({ abrir }: { abrir?: SolicitacaoInici
       .ini-sol-create:hover{border-color:#0f3171;background:#eef4ff;transform:translateY(-2px);box-shadow:0 6px 16px rgba(15,49,113,.1);}
       .ini-sol-create .icon{font-size:1.3rem;}
       .ini-sol-create span{font-size:.75rem;font-weight:600;color:#0f172a;line-height:1.2;}
-      .ini-sol-kebab{position:absolute;top:6px;right:6px;width:24px;height:24px;border-radius:7px;border:none;background:transparent;color:#64748b;font-size:15px;line-height:1;cursor:pointer;display:flex;align-items:center;justify-content:center;z-index:41;}
-      .ini-sol-kebab:hover{background:#e2e8f0;color:#0f172a;}
-      .ini-sol-kebab:focus-visible{outline:2px solid #0f3171;outline-offset:1px;}
       .ini-sol-menu{position:absolute;top:32px;right:4px;z-index:42;min-width:250px;background:#fff;border:1px solid #e2e8f0;border-radius:12px;box-shadow:0 12px 32px rgba(15,23,42,.16);padding:5px;text-align:left;}
       .ini-sol-menu button{display:block;width:100%;padding:9px 11px;border:none;border-radius:9px;background:transparent;cursor:pointer;font-family:inherit;font-size:.8rem;font-weight:600;color:#0f172a;text-align:left;}
       .ini-sol-menu button:hover{background:#eef4ff;}
@@ -694,50 +704,10 @@ export default function MinhasSolicitacoes({ abrir }: { abrir?: SolicitacaoInici
         <div className="ini-card-hd"><h3>➕ Nova Solicitação</h3></div>
         <div className="ini-card-body">
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(140px,1fr))", gap: 10 }}>
-            {/* O card da vaga é o único com menu: só o escritório pode abrir
-                vaga SEM colaborador de referência, e os três pontinhos são o
-                lugar dessa exceção. Para o encarregado o card continua sendo
-                um botão e nada mais — ele não tem a capacidade, então o menu
-                nem é desenhado. */}
-            <div style={{ position: "relative" }}>
-              <button onClick={abrirModalVaga} className="ini-sol-create" style={{ width: "100%" }}>
-                <span className="icon">🎯</span><span>Solicitar Vaga</span>
-              </button>
-              {podeAdministrativa && (
-                <>
-                  <button
-                    type="button"
-                    aria-label="Mais opções de solicitação de vaga"
-                    aria-haspopup="menu"
-                    aria-expanded={menuVagaAberto}
-                    onClick={(e) => { e.stopPropagation(); setMenuVagaAberto((v) => !v); }}
-                    className="ini-sol-kebab"
-                  >
-                    ⋯
-                  </button>
-                  {menuVagaAberto && (
-                    <>
-                      {/* Fecha ao clicar fora. Um overlay transparente resolve
-                          sem listener global no document, que teria de ser
-                          removido na desmontagem e some quando alguém esquece. */}
-                      <div
-                        onClick={() => setMenuVagaAberto(false)}
-                        style={{ position: "fixed", inset: 0, zIndex: 40 }}
-                      />
-                      <div role="menu" className="ini-sol-menu">
-                        <button role="menuitem" type="button" onClick={abrirModalVagaManual}>
-                          ✍️ Preencher manualmente
-                          <small>
-                            Vaga do escritório: você digita cargo, contrato, escala e salário
-                            em vez de copiar de um colaborador.
-                          </small>
-                        </button>
-                      </div>
-                    </>
-                  )}
-                </>
-              )}
-            </div>
+            {/* O menu de "preencher à mão" fica DENTRO do modal, não aqui: o
+                que ele oferece muda a solicitação aberta, não a decisão de
+                abrir uma. */}
+            <button onClick={abrirModalVaga} className="ini-sol-create"><span className="icon">🎯</span><span>Solicitar Vaga</span></button>
             <button onClick={abrirModalFerias} className="ini-sol-create"><span className="icon">📅</span><span>Solicitar Férias</span></button>
             <button onClick={abrirModalAdv} className="ini-sol-create"><span className="icon">⚠️</span><span>Advertência</span></button>
             {/* Demissão estava como "Em breve" — mas a tela existe e funciona
@@ -928,6 +898,45 @@ export default function MinhasSolicitacoes({ abrir }: { abrir?: SolicitacaoInici
         <div className="ini-modal-ov">
           <div className="ini-modal" onClick={e => e.stopPropagation()}>
             <button onClick={() => setModalVaga(false)} style={{ position: "absolute", top: 14, right: 14, background: "none", border: "none", color: "#94a3b8", fontSize: 20, cursor: "pointer" }}>✕</button>
+
+            {/* Os três pontinhos ficam DENTRO da solicitação, ao lado do ✕.
+                É o lugar certo: o que eles oferecem muda esta solicitação que
+                está aberta, não a decisão de abrir uma.
+
+                Quem libera é `recrutamento_vaga_administrativa`, a capacidade
+                que JÁ existe em Gerenciamento de Acesso e que também governa o
+                checkbox "Vaga é administrativa?" logo abaixo. Nenhuma chave de
+                acesso nova foi criada para isto. */}
+            {podeAdministrativa && (
+              <>
+                <button
+                  type="button"
+                  aria-label="Mais opções desta solicitação"
+                  aria-haspopup="menu"
+                  aria-expanded={menuVagaAberto}
+                  onClick={e => { e.stopPropagation(); setMenuVagaAberto(v => !v); }}
+                  style={{ position: "absolute", top: 13, right: 44, width: 26, height: 26, borderRadius: 8, background: menuVagaAberto ? "#e2e8f0" : "none", border: "none", color: "#64748b", fontSize: 17, lineHeight: 1, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}
+                >
+                  ⋯
+                </button>
+                {menuVagaAberto && (
+                  <>
+                    <div onClick={() => setMenuVagaAberto(false)}
+                         style={{ position: "fixed", inset: 0, zIndex: 40 }} />
+                    <div role="menu" className="ini-sol-menu" style={{ top: 42, right: 40 }}>
+                      <button role="menuitem" type="button" onClick={alternarVagaManual}>
+                        {vagaManual ? "↩️ Voltar a puxar do cadastro" : "✍️ Preencher manualmente"}
+                        <small>
+                          {vagaManual
+                            ? "Volta a escolher um colaborador; cargo, contrato, escala e salário vêm do cadastro dele."
+                            : "Vaga do escritório: você digita cargo, contrato, escala e salário em vez de copiar de um colaborador."}
+                        </small>
+                      </button>
+                    </div>
+                  </>
+                )}
+              </>
+            )}
             <div style={{ fontSize: 17, fontWeight: 800, marginBottom: 4 }}>Solicitar Nova Vaga</div>
             <div style={{ fontSize: 12, color: "#94a3b8", marginBottom: 14 }}>
               {vagaStep === 1 ? "Etapa 1 de 3 — Identificação da Vaga" : vagaStep === 2 ? "Etapa 2 de 3 — Detalhes do Posto" : "Etapa 3 de 3 — Requisitos e Urgência"}

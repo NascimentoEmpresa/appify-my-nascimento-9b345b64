@@ -1434,21 +1434,35 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "anali
   };
 
   /**
-   * A mesma tela, sem o colaborador de referência.
+   * Liga e desliga o preenchimento à mão, com a solicitação já aberta.
    *
-   * Cargo, contrato, escala e salário passam a ser digitados. Só existe para
-   * quem tem a capacidade de vaga administrativa — ver `podePreencherVagaManual`
-   * em lib/recrutamento/vagaRegras.ts, que explica por que o escritório
-   * precisa disso e por que a chave é a capacidade, não o setor.
+   * Cargo, contrato, escala e salário passam a ser digitados em vez de virem
+   * do cadastro de um colaborador. Só existe para quem tem a capacidade de
+   * vaga administrativa — ver `podePreencherVagaManual` em
+   * lib/recrutamento/vagaRegras.ts, que explica por que o escritório precisa
+   * disso e por que a chave é a capacidade, não o setor.
    *
-   * Já marca `administrativa`: quem abre vaga à mão está abrindo vaga do
-   * escritório, e deixar os dois desencontrados criaria a vaga fora da vista
-   * de quem a criou.
+   * NÃO marca `administrativa` sozinho. O checkbox está no mesmo passo, à
+   * vista, e é do dono da solicitação decidir: nem toda vaga preenchida à mão
+   * é vaga que precisa sumir de quem não tem a capacidade. Marcar por conta
+   * seria esconder a vaga sem ninguém ter pedido.
+   *
+   * Ao DESLIGAR, limpa o que foi digitado à mão: esses campos passam a
+   * prometer que vieram do cadastro, e deixar o texto antigo faria a tela
+   * mentir sobre a origem deles.
    */
-  const abrirModalVagaManual = () => {
-    abrirModalVaga();
-    setVagaManual(true);
-    setVaga((v: any) => ({ ...v, administrativa: true }));
+  const alternarVagaManual = () => {
+    setMenuVagaAberto(false);
+    setVagaManual(atual => {
+      if (atual) {
+        setSubstituidoId(null);
+        setEmpSearch("");
+        setVaga(v => ({
+          ...v, nome_substituido: "", cargo: "", contrato: "", salario: "", escala: "",
+        }));
+      }
+      return !atual;
+    });
   };
 
   // Prazo/grau da data escolhida — o grau não é mais escolhido na mão.
@@ -2017,49 +2031,9 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "anali
             </button>
           )}
           {canNovaVaga && (
-            /* O botão ganha um menu ao lado, e não outro botão: preencher à
-               mão é a EXCEÇÃO (vaga do escritório, sem molde no cadastro), e
-               exceção não disputa espaço com o caminho normal. Só aparece
-               para quem tem a capacidade de vaga administrativa. */
-            <div style={{ position: "relative", display: "inline-flex", alignItems: "center", gap: 4 }}>
-              <button onClick={abrirModalVaga} style={{ display: "inline-flex", alignItems: "center", gap: 5, padding: "7px 14px", borderRadius: 10, border: "none", background: "#0f3171", color: "#fff", fontSize: 12, fontWeight: 700, cursor: "pointer", boxShadow: "0 10px 22px rgba(15,49,113,.18)" }}>
-                + Nova Solicitação
-              </button>
-              {podeAdministrativa && (
-                <>
-                  <button
-                    type="button"
-                    aria-label="Mais opções de solicitação de vaga"
-                    aria-haspopup="menu"
-                    aria-expanded={menuVagaAberto}
-                    onClick={(e) => { e.stopPropagation(); setMenuVagaAberto(v => !v); }}
-                    style={{ width: 28, height: 28, borderRadius: 8, border: "1px solid #e2e8f0", background: "#fff", color: "#475569", fontSize: 15, lineHeight: 1, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}
-                  >
-                    ⋯
-                  </button>
-                  {menuVagaAberto && (
-                    <>
-                      {/* Overlay transparente fecha ao clicar fora, sem
-                          listener global que alguém esquece de remover. */}
-                      <div onClick={() => setMenuVagaAberto(false)}
-                           style={{ position: "fixed", inset: 0, zIndex: 60 }} />
-                      <div role="menu" style={{ position: "absolute", top: 34, right: 0, zIndex: 61, minWidth: 262, background: "#fff", border: "1px solid #e2e8f0", borderRadius: 12, boxShadow: "0 12px 32px rgba(15,23,42,.16)", padding: 5, textAlign: "left" }}>
-                        <button role="menuitem" type="button" onClick={abrirModalVagaManual}
-                                style={{ display: "block", width: "100%", padding: "9px 11px", border: "none", borderRadius: 9, background: "transparent", cursor: "pointer", fontFamily: "inherit", fontSize: 12.5, fontWeight: 700, color: "#0f172a", textAlign: "left" }}
-                                onMouseEnter={e => { e.currentTarget.style.background = "#eef4ff"; }}
-                                onMouseLeave={e => { e.currentTarget.style.background = "transparent"; }}>
-                          ✍️ Preencher manualmente
-                          <small style={{ display: "block", marginTop: 3, fontWeight: 500, fontSize: 11, color: "#64748b", lineHeight: 1.35, whiteSpace: "normal" }}>
-                            Vaga do escritório: você digita cargo, contrato, escala e salário
-                            em vez de copiar de um colaborador.
-                          </small>
-                        </button>
-                      </div>
-                    </>
-                  )}
-                </>
-              )}
-            </div>
+            <button onClick={abrirModalVaga} style={{ display: "inline-flex", alignItems: "center", gap: 5, padding: "7px 14px", borderRadius: 10, border: "none", background: "#0f3171", color: "#fff", fontSize: 12, fontWeight: 700, cursor: "pointer", boxShadow: "0 10px 22px rgba(15,49,113,.18)" }}>
+              + Nova Solicitação
+            </button>
           )}
         </div>
       </div>
@@ -2868,6 +2842,55 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "anali
         <div className="rec-modal-ov">
           <div className="rec-modal" style={{ maxWidth: 600 }} onClick={e => e.stopPropagation()}>
             <button onClick={() => setModalVaga(false)} style={{ position: "absolute", top: 14, right: 14, background: "none", border: "none", color: "#94a3b8", fontSize: 20, cursor: "pointer" }}>✕</button>
+
+            {/* Os três pontinhos ficam DENTRO da solicitação, ao lado do ✕.
+                É o lugar certo: o que eles oferecem muda esta solicitação que
+                está aberta, não a decisão de abrir uma.
+
+                Quem libera é `recrutamento_vaga_administrativa`, a capacidade
+                que JÁ existe em Gerenciamento de Acesso e que também governa o
+                checkbox "Vaga é administrativa?" logo abaixo. Nenhuma chave de
+                acesso nova foi criada para isto. */}
+            {podeAdministrativa && (
+              <>
+                <button
+                  type="button"
+                  aria-label="Mais opções desta solicitação"
+                  aria-haspopup="menu"
+                  aria-expanded={menuVagaAberto}
+                  onClick={e => { e.stopPropagation(); setMenuVagaAberto(v => !v); }}
+                  style={{ position: "absolute", top: 13, right: 44, width: 26, height: 26, borderRadius: 8, background: menuVagaAberto ? "#e2e8f0" : "none", border: "none", color: "#64748b", fontSize: 17, lineHeight: 1, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}
+                >
+                  ⋯
+                </button>
+                {menuVagaAberto && (
+                  <>
+                    {/* Overlay transparente fecha ao clicar fora, sem listener
+                        global que alguém esquece de remover na desmontagem. */}
+                    <div onClick={() => setMenuVagaAberto(false)}
+                         style={{ position: "fixed", inset: 0, zIndex: 60 }} />
+                    <div role="menu" style={{ position: "absolute", top: 42, right: 40, zIndex: 61, minWidth: 268, background: "#fff", border: "1px solid #e2e8f0", borderRadius: 12, boxShadow: "0 12px 32px rgba(15,23,42,.16)", padding: 5, textAlign: "left" }}>
+                      <button
+                        role="menuitem"
+                        type="button"
+                        onClick={alternarVagaManual}
+                        style={{ display: "block", width: "100%", padding: "9px 11px", border: "none", borderRadius: 9, background: "transparent", cursor: "pointer", fontFamily: "inherit", fontSize: 12.5, fontWeight: 700, color: "#0f172a", textAlign: "left" }}
+                        onMouseEnter={e => { e.currentTarget.style.background = "#eef4ff"; }}
+                        onMouseLeave={e => { e.currentTarget.style.background = "transparent"; }}
+                      >
+                        {vagaManual ? "↩️ Voltar a puxar do cadastro" : "✍️ Preencher manualmente"}
+                        <small style={{ display: "block", marginTop: 3, fontWeight: 500, fontSize: 11, color: "#64748b", lineHeight: 1.35, whiteSpace: "normal" }}>
+                          {vagaManual
+                            ? "Volta a escolher um colaborador; cargo, contrato, escala e salário vêm do cadastro dele."
+                            : "Vaga do escritório: você digita cargo, contrato, escala e salário em vez de copiar de um colaborador."}
+                        </small>
+                      </button>
+                    </div>
+                  </>
+                )}
+              </>
+            )}
+
             <div style={{ fontSize: 17, fontWeight: 800, marginBottom: 4 }}>Solicitar Nova Vaga</div>
             <div style={{ fontSize: 12, color: "#94a3b8", marginBottom: 14 }}>
               {vagaStep === 1 ? "Etapa 1 de 3 — Identificação da Vaga" : vagaStep === 2 ? "Etapa 2 de 3 — Detalhes do Posto" : "Etapa 3 de 3 — Requisitos e Urgência"}
