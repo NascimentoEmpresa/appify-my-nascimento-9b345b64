@@ -8,7 +8,8 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { CheckCircle2, ChevronLeft, ChevronRight, Hourglass, AlertTriangle, XCircle, FileText, Users, X } from "lucide-react";
+import { DateRangeFilter } from "@/components/ui/date-range-filter";
+import { CheckCircle2, ChevronLeft, ChevronRight, Hourglass, AlertTriangle, XCircle, FileText, Users, User, X } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
 import { cn } from "@/lib/utils";
 import {
@@ -16,15 +17,22 @@ import {
   useNomeUsuario,
   useEmpresasGrupo,
   useContratosAtivos,
+  useClassificacaoIdsPorDespesaRateio,
+  useEmpresaPrimeiraLinhaRateio,
+  nomesAprovadorNivel,
   souAprovadorDoNivel,
   STATUS_LABEL,
   STATUS_BADGE_CLASS,
+  NIVEL_APROVACAO_BADGE_CLASS,
   STATUS_FASE_SOLICITACAO,
   StatusDespesa,
   ItemLinhaMalote,
+  MaloteDespesaRow,
   TipoSolicitacao,
 } from "@/hooks/useMaloteDespesa";
-import { JustificativaPendenteBadge } from "./JustificativaPendenteBadge";
+import { useClassificacoesOrcamentoAdmin } from "@/hooks/usePlanejamentoOrcamentario";
+import { useMinhasDespesasComJustificativaPendente } from "@/hooks/useMaloteJustificativaAnalista";
+import { JustificativaPendenteBadge, abreviarNome } from "./JustificativaPendenteBadge";
 
 // SIS-2026-0223: despesa parcelada vira N linhas (1 por parcela) a partir de
 // "aguardando_pagamento" — o status exibido/contado por linha passa a ser o
@@ -55,6 +63,13 @@ interface TileInfo {
   count: number;
   icon: React.ComponentType<{ className?: string }>;
   cor: "amber" | "sky" | "violet" | "emerald" | "red" | "blue";
+  // SIS-2026-0285: "Aguardando minha aprovação" e "Pendente aprovação
+  // (outros níveis)" são o MESMO status (pendente_aprovacao) — sem esses
+  // overrides, clicar no tile sem status próprio ("outros níveis") só
+  // resetava o filtro pra "Todas", e o tile "minha aprovação" filtrava
+  // pendente_aprovacao inteiro, não só o que é meu de fato.
+  selecionado?: boolean;
+  onClick?: () => void;
 }
 
 const COR_TILE: Record<TileInfo["cor"], string> = {
@@ -84,6 +99,21 @@ const COR_TILE_TEXTO: Record<TileInfo["cor"], string> = {
   blue: "text-blue-700 dark:text-blue-400",
 };
 
+// SIS-2026-0281: botões do filtro "Nível de aprovação" — mesma cor de cada
+// nível usada no badge da tabela (NIVEL_APROVACAO_BADGE_CLASS), só que num
+// tom mais claro quando inativo (pra já dar destaque sem competir com o
+// badge de verdade) e mais saturado quando o filtro está ativo.
+const NIVEL_APROVACAO_FILTRO_TINT: Record<1 | 2 | 3, string> = {
+  1: "border-amber-200 bg-amber-50 text-amber-700 hover:bg-amber-100 dark:border-amber-900 dark:bg-amber-950/20 dark:text-amber-400",
+  2: "border-orange-200 bg-orange-50 text-orange-700 hover:bg-orange-100 dark:border-orange-900 dark:bg-orange-950/20 dark:text-orange-400",
+  3: "border-red-200 bg-red-50 text-red-700 hover:bg-red-100 dark:border-red-900 dark:bg-red-950/20 dark:text-red-400",
+};
+const NIVEL_APROVACAO_FILTRO_ATIVO: Record<1 | 2 | 3, string> = {
+  1: "border-amber-400 bg-amber-100 text-amber-900 ring-amber-400 dark:border-amber-700 dark:bg-amber-950/50 dark:text-amber-200",
+  2: "border-orange-400 bg-orange-100 text-orange-900 ring-orange-400 dark:border-orange-700 dark:bg-orange-950/50 dark:text-orange-200",
+  3: "border-red-400 bg-red-100 text-red-900 ring-red-400 dark:border-red-700 dark:bg-red-950/50 dark:text-red-200",
+};
+
 function GrupoTiles({ titulo, tiles, ativo, onClick }: { titulo: string; tiles: TileInfo[]; ativo: StatusDespesa | ""; onClick: (s: StatusDespesa | "") => void }) {
   return (
     <Card>
@@ -92,12 +122,12 @@ function GrupoTiles({ titulo, tiles, ativo, onClick }: { titulo: string; tiles: 
         <div className="grid gap-2 grid-cols-[repeat(auto-fit,minmax(110px,1fr))]">
           {tiles.map((t) => {
             const Icon = t.icon;
-            const selecionado = !!t.status && ativo === t.status;
+            const selecionado = t.selecionado ?? (!!t.status && ativo === t.status);
             return (
               <button
                 key={t.label}
                 type="button"
-                onClick={() => onClick(selecionado ? "" : t.status ?? "")}
+                onClick={() => (t.onClick ? t.onClick() : onClick(selecionado ? "" : t.status ?? ""))}
                 className={cn(
                   "flex flex-col items-center gap-1 rounded-lg border p-2.5 text-center transition-colors",
                   selecionado ? "border-primary bg-primary/10 ring-1 ring-primary" : COR_TILE_CARD[t.cor]
@@ -131,9 +161,63 @@ export default function Aprovacoes({ base = "/app/malote" }: { base?: string } =
   const { data: empresas = [] } = useEmpresasGrupo();
   const { data: contratos = [] } = useContratosAtivos();
 
-  const [dataDe, setDataDe] = useState("");
-  const [dataAte, setDataAte] = useState("");
+  // SIS-2026-0281 (Iury): "colocar os nomes pra eles conseguirem verificar
+  // rapidamente quais são deles" — despesa de rateio (multi-classificação)
+  // não traz aprovador2/3_nomes prontos (a classificação é por linha, não
+  // na despesa) — resolve em lote (1 query pra todas, não 1 por linha).
+  const despesaIdsRateio = useMemo(
+    () => Array.from(new Set(itens.filter((i) => !i.despesa.classificacao_id).map((i) => i.despesa.id))),
+    [itens]
+  );
+  const { data: classificacaoIdsRateio } = useClassificacaoIdsPorDespesaRateio(despesaIdsRateio);
+  // SIS-2026-0288 (Iury, achado testando DM-2026-0180): coluna/filtro de
+  // Empresa aqui usava despesa.empresa_id direto — que é só o contexto de
+  // sessão de quem lançou, não a empresa do rateio de verdade (por isso
+  // Aprovações mostrava HAGG e Pagamento, já corrigido, mostrava AGPS pra
+  // MESMA despesa). Mesma resolução em lote usada em Pagamento Malote:
+  // empresa da primeira linha do rateio, com despesa.empresa_id só de
+  // fallback pras despesas sem rateio por empresa.
+  const despesaIdsTodos = useMemo(() => Array.from(new Set(itens.map((i) => i.despesa.id))), [itens]);
+  const { data: empresaPrimeiraLinhaPorDespesa } = useEmpresaPrimeiraLinhaRateio(despesaIdsTodos);
+  function empresaIdResolvida(despesa: MaloteDespesaRow): string | null {
+    return empresaPrimeiraLinhaPorDespesa?.get(despesa.id) ?? despesa.empresa_id ?? null;
+  }
+  const { data: classificacoesTodas = [] } = useClassificacoesOrcamentoAdmin();
+  const classificacaoPorId = useMemo(
+    () => new Map(classificacoesTodas.map((c) => [c.id, c])),
+    [classificacoesTodas]
+  );
+  function aprovadorNomes(despesa: MaloteDespesaRow, nivel: 1 | 2 | 3): string[] {
+    return nomesAprovadorNivel(despesa, nivel, classificacaoIdsRateio?.get(despesa.id), classificacaoPorId);
+  }
+
+  // SIS-2026-0285 (Iury): filtro de data puxava só de "Última atualização" —
+  // agora tem os dois períodos, independentes (E lógico quando os dois
+  // estão preenchidos), cada um com o próprio combobox de range + "Hoje".
+  const [dataAtualizacaoDe, setDataAtualizacaoDe] = useState("");
+  const [dataAtualizacaoAte, setDataAtualizacaoAte] = useState("");
+  const [dataPagamentoDe, setDataPagamentoDe] = useState("");
+  const [dataPagamentoAte, setDataPagamentoAte] = useState("");
   const [status, setStatus] = useState<StatusDespesa | "">("");
+  // SIS-2026-0285: os tiles "Aguardando minha aprovação" e "Pendente
+  // aprovação (outros níveis)" são os DOIS o mesmo status
+  // (pendente_aprovacao) — sem isso, clicar em "outros níveis" não filtrava
+  // nada (voltava pra "Todas", já que o tile nunca teve status próprio) e
+  // clicar em "minha aprovação" trazia TODO mundo pendente, não só o meu.
+  const [escopoAprovacaoPendente, setEscopoAprovacaoPendente] = useState<"minhas" | "outras" | "">("");
+  // SIS-2026-0281: filtro dedicado por nível de aprovação (N1/N2/N3).
+  const [nivelAprovacao, setNivelAprovacao] = useState<1 | 2 | 3 | "">("");
+  // SIS-2026-0281 (ideia levantada com o usuário, "future"): "Minhas
+  // aprovações" — só as pendentes onde o usuário logado é de fato um dos
+  // aprovadores do nível atual (mesma checagem que já usamos pro tile
+  // "Aguardando minha aprovação"). Combina com o filtro de Nível acima
+  // (os dois se somam), não substitui.
+  const [somenteMinhas, setSomenteMinhas] = useState(false);
+  // SIS-2026-0283 (Iury): "Minhas" passa a contemplar também a coluna de
+  // Justificativa — clicar mostra tanto o que está pendente de EU aprovar
+  // quanto o que está com justificativa pendente de MIM (analista de algum
+  // contrato da despesa), não só aprovação.
+  const minhasDespesasJustificativaPendente = useMinhasDespesasComJustificativaPendente();
   const [tipo, setTipo] = useState<TipoSolicitacao | "">("");
   const [classificacao, setClassificacao] = useState("");
   const [empresaId, setEmpresaId] = useState("");
@@ -155,9 +239,14 @@ export default function Aprovacoes({ base = "/app/malote" }: { base?: string } =
   }, [itens]);
 
   function limparFiltros() {
-    setDataDe("");
-    setDataAte("");
+    setDataAtualizacaoDe("");
+    setDataAtualizacaoAte("");
+    setDataPagamentoDe("");
+    setDataPagamentoAte("");
     setStatus("");
+    setEscopoAprovacaoPendente("");
+    setNivelAprovacao("");
+    setSomenteMinhas(false);
     setTipo("");
     setClassificacao("");
     setEmpresaId("");
@@ -169,6 +258,17 @@ export default function Aprovacoes({ base = "/app/malote" }: { base?: string } =
 
   function setStatusFiltro(s: StatusDespesa | "") {
     setStatus(s);
+    setEscopoAprovacaoPendente("");
+    setPagina(1);
+  }
+
+  function toggleNivelAprovacao(n: 1 | 2 | 3) {
+    setNivelAprovacao((atual) => (atual === n ? "" : n));
+    setPagina(1);
+  }
+
+  function toggleSomenteMinhas() {
+    setSomenteMinhas((atual) => !atual);
     setPagina(1);
   }
 
@@ -176,21 +276,61 @@ export default function Aprovacoes({ base = "/app/malote" }: { base?: string } =
     return itens.filter((item) => {
       const d = item.despesa;
       if (status && statusEfetivo(item) !== status) return false;
+      // SIS-2026-0285: escopo dos tiles "minha aprovação" x "outros níveis"
+      // — os dois são status pendente_aprovacao, só o "sou eu o aprovador"
+      // muda (ver comentário do estado escopoAprovacaoPendente).
+      if (status === "pendente_aprovacao" && escopoAprovacaoPendente) {
+        const souAprovadorAtual = d.nivel_aprovacao_atual != null && souAprovadorDoNivel(d, d.nivel_aprovacao_atual, user?.id);
+        if (escopoAprovacaoPendente === "minhas" && !souAprovadorAtual) return false;
+        if (escopoAprovacaoPendente === "outras" && souAprovadorAtual) return false;
+      }
+      if (nivelAprovacao && (d.status !== "pendente_aprovacao" || d.nivel_aprovacao_atual !== nivelAprovacao)) return false;
+      if (somenteMinhas) {
+        const souAprovadorPendente = d.status === "pendente_aprovacao" && d.nivel_aprovacao_atual != null && souAprovadorDoNivel(d, d.nivel_aprovacao_atual, user?.id);
+        const minhaJustificativaPendente = minhasDespesasJustificativaPendente.has(d.id);
+        if (!souAprovadorPendente && !minhaJustificativaPendente) return false;
+      }
       if (tipo && d.tipo !== tipo) return false;
       if (classificacao && d.classificacao?.nome !== classificacao) return false;
-      if (empresaId && d.empresa_id !== empresaId) return false;
+      if (empresaId && empresaIdResolvida(d) !== empresaId) return false;
       if (contratoId && d.contrato_id !== contratoId) return false;
       if (excecao === "sim" && !d.excecao) return false;
       if (excecao === "nao" && d.excecao) return false;
-      if (dataDe && d.updated_at < dataDe) return false;
-      if (dataAte && d.updated_at > dataAte + "T23:59:59") return false;
+      // SIS-2026-0285 (Iury): antes só filtrava por "Última atualização" —
+      // agora os dois períodos existem, cada um independente (E lógico).
+      if (dataAtualizacaoDe && d.updated_at < dataAtualizacaoDe) return false;
+      if (dataAtualizacaoAte && d.updated_at > dataAtualizacaoAte + "T23:59:59") return false;
+      if (dataPagamentoDe || dataPagamentoAte) {
+        const dp = item.parcela ? item.parcela.data_pagamento_real ?? item.parcela.data_vencimento : d.data_pagamento;
+        if (dataPagamentoDe && (!dp || dp < dataPagamentoDe)) return false;
+        if (dataPagamentoAte && (!dp || dp > dataPagamentoAte)) return false;
+      }
       if (busca.trim()) {
         const q = busca.trim().toLowerCase();
         if (!d.numero.toLowerCase().includes(q) && !d.nome.toLowerCase().includes(q)) return false;
       }
       return true;
     });
-  }, [itens, status, tipo, classificacao, empresaId, contratoId, excecao, dataDe, dataAte, busca]);
+  }, [
+    itens,
+    status,
+    escopoAprovacaoPendente,
+    nivelAprovacao,
+    somenteMinhas,
+    user?.id,
+    minhasDespesasJustificativaPendente,
+    tipo,
+    classificacao,
+    empresaId,
+    empresaPrimeiraLinhaPorDespesa,
+    contratoId,
+    excecao,
+    dataAtualizacaoDe,
+    dataAtualizacaoAte,
+    dataPagamentoDe,
+    dataPagamentoAte,
+    busca,
+  ]);
 
   const totalPaginas = Math.max(1, Math.ceil(filtrados.length / PAGE_SIZE));
   const paginaAtual = Math.min(pagina, totalPaginas);
@@ -204,6 +344,21 @@ export default function Aprovacoes({ base = "/app/malote" }: { base?: string } =
     ({ despesa: d }) => d.status === "pendente_aprovacao" && d.nivel_aprovacao_atual != null && souAprovadorDoNivel(d, d.nivel_aprovacao_atual, user?.id)
   ).length;
   const outrasPendentes = contar("pendente_aprovacao") - minhasPendentes;
+  // SIS-2026-0283: contagem do botão "Minhas" — diferente do tile acima
+  // (que é só aprovação), soma também as despesas com justificativa
+  // pendente de mim, sem contar a mesma despesa duas vezes.
+  const minhasNoFiltro = new Set([
+    ...itens.filter(({ despesa: d }) => d.status === "pendente_aprovacao" && d.nivel_aprovacao_atual != null && souAprovadorDoNivel(d, d.nivel_aprovacao_atual, user?.id)).map((i) => i.despesa.id),
+    ...minhasDespesasJustificativaPendente,
+  ]).size;
+
+  // SIS-2026-0281: contagem pros botões de "filtrar por nível".
+  function contarNivel(n: 1 | 2 | 3) {
+    return itens.filter(({ despesa: d }) => d.status === "pendente_aprovacao" && d.nivel_aprovacao_atual === n).length;
+  }
+  const pendentesN1 = contarNivel(1);
+  const pendentesN2 = contarNivel(2);
+  const pendentesN3 = contarNivel(3);
 
   const tilesSolicitacoes: TileInfo[] = [
     { label: STATUS_LABEL.aguardando_aprovacao_inicial, status: "aguardando_aprovacao_inicial", count: contar("aguardando_aprovacao_inicial"), icon: Hourglass, cor: "violet" },
@@ -213,9 +368,31 @@ export default function Aprovacoes({ base = "/app/malote" }: { base?: string } =
     { label: "Cotação/solicitação reprovada", status: "solicitacao_reprovada", count: contar("solicitacao_reprovada"), icon: XCircle, cor: "red" },
   ];
 
+  function toggleEscopoAprovacaoPendente(escopo: "minhas" | "outras") {
+    const jaAtivo = status === "pendente_aprovacao" && escopoAprovacaoPendente === escopo;
+    setStatus(jaAtivo ? "" : "pendente_aprovacao");
+    setEscopoAprovacaoPendente(jaAtivo ? "" : escopo);
+    setPagina(1);
+  }
+
   const tilesDespesas: TileInfo[] = [
-    { label: "Aguardando minha aprovação", status: "pendente_aprovacao", count: minhasPendentes, icon: Users, cor: "amber" },
-    { label: "Pendente aprovação (outros níveis)", count: outrasPendentes, icon: Hourglass, cor: "sky" },
+    {
+      label: "Aguardando minha aprovação",
+      status: "pendente_aprovacao",
+      count: minhasPendentes,
+      icon: Users,
+      cor: "amber",
+      selecionado: status === "pendente_aprovacao" && escopoAprovacaoPendente === "minhas",
+      onClick: () => toggleEscopoAprovacaoPendente("minhas"),
+    },
+    {
+      label: "Pendente aprovação (outros níveis)",
+      count: outrasPendentes,
+      icon: Hourglass,
+      cor: "sky",
+      selecionado: status === "pendente_aprovacao" && escopoAprovacaoPendente === "outras",
+      onClick: () => toggleEscopoAprovacaoPendente("outras"),
+    },
     { label: STATUS_LABEL.necessidade_de_ajuste, status: "necessidade_de_ajuste", count: contar("necessidade_de_ajuste"), icon: AlertTriangle, cor: "amber" },
     { label: STATUS_LABEL.aguardando_pagamento, status: "aguardando_pagamento", count: contar("aguardando_pagamento"), icon: Hourglass, cor: "blue" },
     { label: STATUS_LABEL.despesa_paga, status: "despesa_paga", count: contar("despesa_paga"), icon: CheckCircle2, cor: "emerald" },
@@ -245,14 +422,18 @@ export default function Aprovacoes({ base = "/app/malote" }: { base?: string } =
             </Button>
           </div>
           <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
-            <div>
-              <Label className="text-xs">Data de</Label>
-              <Input type="date" className="h-8 text-xs" value={dataDe} onChange={(e) => { setDataDe(e.target.value); setPagina(1); }} />
-            </div>
-            <div>
-              <Label className="text-xs">Data até</Label>
-              <Input type="date" className="h-8 text-xs" value={dataAte} onChange={(e) => { setDataAte(e.target.value); setPagina(1); }} />
-            </div>
+            <DateRangeFilter
+              label="Última atualização"
+              de={dataAtualizacaoDe}
+              ate={dataAtualizacaoAte}
+              onChange={(de, ate) => { setDataAtualizacaoDe(de); setDataAtualizacaoAte(ate); setPagina(1); }}
+            />
+            <DateRangeFilter
+              label="Data de pagamento"
+              de={dataPagamentoDe}
+              ate={dataPagamentoAte}
+              onChange={(de, ate) => { setDataPagamentoDe(de); setDataPagamentoAte(ate); setPagina(1); }}
+            />
             <div>
               <Label className="text-xs">Status</Label>
               <Select value={status || "todas"} onValueChange={(v) => { setStatusFiltro(v === "todas" ? "" : (v as StatusDespesa)); }}>
@@ -264,6 +445,56 @@ export default function Aprovacoes({ base = "/app/malote" }: { base?: string } =
                   ))}
                 </SelectContent>
               </Select>
+            </div>
+            <div>
+              <Label className="text-xs">Nível de aprovação</Label>
+              {/* SIS-2026-0281 (ajuste de destaque, pedido do usuário): "meio
+                  termo" entre o card grande de antes e os botões neutros —
+                  cada nível já vem com a própria cor tingida mesmo inativo
+                  (não só cinza), fica mais saturado só quando ativo. */}
+              <div className="flex h-8 items-center gap-1">
+                {([1, 2, 3] as const).map((n) => {
+                  const pendentes = n === 1 ? pendentesN1 : n === 2 ? pendentesN2 : pendentesN3;
+                  const ativo = nivelAprovacao === n;
+                  return (
+                    <button
+                      key={n}
+                      type="button"
+                      onClick={() => toggleNivelAprovacao(n)}
+                      className={cn(
+                        "flex-1 rounded-md border px-1.5 h-8 text-xs font-semibold transition-colors",
+                        ativo ? NIVEL_APROVACAO_FILTRO_ATIVO[n] : NIVEL_APROVACAO_FILTRO_TINT[n],
+                        ativo && "ring-1 ring-offset-1 ring-offset-background"
+                      )}
+                      title={`Pendente aprovação N${n}${pendentes > 0 ? ` (${pendentes})` : ""}`}
+                    >
+                      N{n}
+                      {pendentes > 0 && <span className="font-normal opacity-80"> ({pendentes})</span>}
+                    </button>
+                  );
+                })}
+                {/* "Minhas": pendentes onde o usuário logado é aprovador do
+                    nível atual OU tem justificativa pendente como analista
+                    de algum contrato da despesa (SIS-2026-0283) — soma com
+                    o N1/N2/N3 acima, não substitui (útil sobretudo pra
+                    chefia/diretoria, que vê pendências de vários
+                    setores/classificações). */}
+                <button
+                  type="button"
+                  onClick={toggleSomenteMinhas}
+                  className={cn(
+                    "flex items-center gap-1 rounded-md border px-2 h-8 text-xs font-semibold transition-colors",
+                    somenteMinhas
+                      ? "border-primary bg-primary/10 text-primary ring-1 ring-primary"
+                      : "border-border bg-muted/40 text-muted-foreground hover:bg-muted"
+                  )}
+                  title={`Só as minhas (aprovação ou justificativa pendente)${minhasNoFiltro > 0 ? ` (${minhasNoFiltro})` : ""}`}
+                >
+                  <User className="h-3.5 w-3.5 shrink-0" />
+                  Minhas
+                  {minhasNoFiltro > 0 && <span className="font-normal opacity-80">({minhasNoFiltro})</span>}
+                </button>
+              </div>
             </div>
             <div>
               <Label className="text-xs">Tipo</Label>
@@ -324,7 +555,10 @@ export default function Aprovacoes({ base = "/app/malote" }: { base?: string } =
                 </SelectContent>
               </Select>
             </div>
-            <div className="col-span-2 sm:col-span-3 lg:col-span-4">
+            {/* Preenche o resto da linha da Exceção (9 campos antes deste:
+                em lg:grid-cols-4 sobra 1 vago na 3ª linha; col-span-3 fecha
+                a linha certinho, sem espaço vazio do lado). */}
+            <div className="col-span-2 sm:col-span-3 lg:col-span-3">
               <Label className="text-xs">Buscar por nº ou nome</Label>
               <Input className="h-8 text-xs" placeholder="Buscar por nº da despesa ou nome..." value={busca} onChange={(e) => { setBusca(e.target.value); setPagina(1); }} />
             </div>
@@ -345,10 +579,12 @@ export default function Aprovacoes({ base = "/app/malote" }: { base?: string } =
                 <TableRow>
                   <TableHead>Tipo</TableHead>
                   <TableHead>Nº</TableHead>
+                  {/* SIS-2026-0288 (Iury): "Empresa / Contrato" logo após o
+                      Nº, não mais depois de Classificação. */}
+                  <TableHead>Empresa / Contrato</TableHead>
                   <TableHead>Parcela</TableHead>
                   <TableHead>Nome / Motivo</TableHead>
                   <TableHead>Classificação</TableHead>
-                  <TableHead>Empresa / Contrato</TableHead>
                   <TableHead className="text-right">Valor (R$)</TableHead>
                   <TableHead>Data de Pagamento</TableHead>
                   <TableHead>Solicitante</TableHead>
@@ -378,8 +614,9 @@ export default function Aprovacoes({ base = "/app/malote" }: { base?: string } =
                   <LinhaItem
                     key={`${item.despesa.id}-${item.parcela?.id ?? "unica"}`}
                     item={item}
-                    nomeEmpresa={empresasMap.get(item.despesa.empresa_id)}
+                    nomeEmpresa={empresasMap.get(empresaIdResolvida(item.despesa) ?? "")}
                     nomeContrato={item.despesa.contrato_id ? contratosMap.get(item.despesa.contrato_id) : undefined}
+                    aprovadorNomes={aprovadorNomes}
                     onAbrir={() => abrirItem(item.despesa)}
                   />
                 ))}
@@ -412,11 +649,13 @@ function LinhaItem({
   item,
   nomeEmpresa,
   nomeContrato,
+  aprovadorNomes,
   onAbrir,
 }: {
   item: ItemLinhaMalote;
   nomeEmpresa?: string;
   nomeContrato?: string;
+  aprovadorNomes: (despesa: MaloteDespesaRow, nivel: 1 | 2 | 3) => string[];
   onAbrir: () => void;
 }) {
   const { despesa, parcela } = item;
@@ -438,6 +677,10 @@ function LinhaItem({
       <TableCell className="text-sm">{isSolicitacao ? "Solicitação" : "Despesa"}</TableCell>
       <TableCell className="font-mono text-xs">{despesa.numero}</TableCell>
       <TableCell className="text-sm">
+        <p>{nomeEmpresa ?? "—"}</p>
+        {nomeContrato && <p className="text-xs text-muted-foreground">{nomeContrato}</p>}
+      </TableCell>
+      <TableCell className="text-sm">
         {parcela ? `${parcela.numero_parcela}/${despesa.numero_parcelas}` : <span className="text-muted-foreground">—</span>}
       </TableCell>
       <TableCell className="text-sm">
@@ -445,20 +688,37 @@ function LinhaItem({
         {despesa.motivo && <p className="text-xs text-muted-foreground">{despesa.motivo}</p>}
       </TableCell>
       <TableCell className="text-sm">{despesa.classificacao?.nome ?? "—"}</TableCell>
-      <TableCell className="text-sm">
-        <p>{nomeEmpresa ?? "—"}</p>
-        {nomeContrato && <p className="text-xs text-muted-foreground">{nomeContrato}</p>}
-      </TableCell>
       <TableCell className="text-right text-sm">
         {Number(valor).toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}
       </TableCell>
       <TableCell className="text-sm">{dataPagamento ? new Date(dataPagamento + "T00:00:00").toLocaleDateString("pt-BR") : "—"}</TableCell>
       <TableCell className="text-sm">{solicitanteNome ?? "—"}</TableCell>
-      <TableCell>
-        <Badge className={STATUS_BADGE_CLASS[status]}>
-          {STATUS_LABEL[status]}
-          {status === "pendente_aprovacao" && despesa.nivel_aprovacao_atual ? ` N${despesa.nivel_aprovacao_atual}` : ""}
-        </Badge>
+      <TableCell className="text-center">
+        {status === "pendente_aprovacao" && despesa.nivel_aprovacao_atual ? (
+          // SIS-2026-0281 (ajuste, pedido do usuário): rótulo "Pendente
+          // aprovação N{x}" pequeno em cima, nome do aprovador em destaque
+          // embaixo — o nome é o que importa pra bater o olho e saber se é
+          // com ele, o rótulo é só contexto.
+          <div
+            className={cn(
+              "inline-flex flex-col items-center gap-0.5 whitespace-nowrap rounded-md border px-2.5 py-1.5 text-center",
+              NIVEL_APROVACAO_BADGE_CLASS[despesa.nivel_aprovacao_atual]
+            )}
+          >
+            <span className="text-[10px] font-medium uppercase leading-tight tracking-wide opacity-70">
+              {STATUS_LABEL.pendente_aprovacao} N{despesa.nivel_aprovacao_atual}
+            </span>
+            <span className="flex items-center gap-1 text-sm font-bold leading-tight">
+              <User className="h-3.5 w-3.5 shrink-0" />
+              {(() => {
+                const nomes = aprovadorNomes(despesa, despesa.nivel_aprovacao_atual);
+                return nomes.length > 0 ? nomes.map(abreviarNome).join(" · ") : "Sem aprovador";
+              })()}
+            </span>
+          </div>
+        ) : (
+          <Badge className={STATUS_BADGE_CLASS[status]}>{STATUS_LABEL[status]}</Badge>
+        )}
       </TableCell>
       <TableCell className="text-sm">{despesa.excecao ? <Badge variant="destructive">Sim</Badge> : "Não"}</TableCell>
       <TableCell className="text-sm">

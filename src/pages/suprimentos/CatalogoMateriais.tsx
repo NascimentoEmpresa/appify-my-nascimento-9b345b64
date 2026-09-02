@@ -10,7 +10,8 @@ import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "
 import { PageHeader } from "@/components/layout/PageHeader";
 import { useEmpresaId } from "@/hooks/useEmpresaId";
 import {
-  useContratosCatalogo, usePostos, useFuncoes, useFuncaoItens, useItens, useItemOpcoes,
+  useContratosCatalogo, useContratosCatalogoRealtime,
+  usePostos, useFuncoes, useFuncaoItens, useItens, useItemOpcoes,
   useRascunhos, useCatalogoMutations, OPCOES_PREDEFINIDAS, LABEL_TIPO_ITEM,
   type TipoItem, type Item,
 } from "@/hooks/useSupCatalogo";
@@ -189,6 +190,7 @@ export default function CatalogoMateriais() {
   const [funcaoId, setFuncaoId] = useState<string | null>(null);
 
   const { data: contratos = [] } = useContratosCatalogo(empresaId ?? null);
+  useContratosCatalogoRealtime();
   const { data: postos = [] } = usePostos(contratoId);
   const { data: funcoes = [] } = useFuncoes(postoId);
   const { data: enxoval = [] } = useFuncaoItens(funcaoId);

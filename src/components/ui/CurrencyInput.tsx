@@ -21,9 +21,10 @@ interface CurrencyInputProps {
   onChange: (stored: string) => void;
   className?: string;
   placeholder?: string;
+  disabled?: boolean;
 }
 
-export function CurrencyInput({ value, onChange, className, placeholder = "0,00" }: CurrencyInputProps) {
+export function CurrencyInput({ value, onChange, className, placeholder = "0,00", disabled }: CurrencyInputProps) {
   const [digits, setDigits] = useState(() => valueToDigits(value));
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -77,6 +78,7 @@ export function CurrencyInput({ value, onChange, className, placeholder = "0,00"
         className={cn("pl-9 h-9", className)}
         placeholder={placeholder}
         inputMode="numeric"
+        disabled={disabled}
       />
     </div>
   );

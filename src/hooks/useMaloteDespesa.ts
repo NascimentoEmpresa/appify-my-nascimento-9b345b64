@@ -74,6 +74,18 @@ export const STATUS_LABEL: Record<StatusDespesa, string> = {
   cancelada: "Cancelada",
 };
 
+// SIS-2026-0281 (Iury): "diferenciar as cores entre pendente aprovação N1 e
+// N2" — status "pendente_aprovacao" sozinho é uma cor só (amber) pra
+// qualquer nível; N2/N3 (os 2 diretores) precisam bater o olho e diferenciar
+// sem ler o texto. N1 mantém a cor amber que já existia (zero regressão pra
+// quem só olha N1); N2 sobe pra laranja, N3 pra vermelho (mesmo tom de
+// despesa_reprovada — contexto diferente, o rótulo já diferencia).
+export const NIVEL_APROVACAO_BADGE_CLASS: Record<1 | 2 | 3, string> = {
+  1: "bg-amber-100 text-amber-800 dark:bg-amber-950/40 dark:text-amber-300",
+  2: "bg-orange-100 text-orange-800 dark:bg-orange-950/40 dark:text-orange-300",
+  3: "bg-red-100 text-red-800 dark:bg-red-950/40 dark:text-red-300",
+};
+
 export const STATUS_BADGE_CLASS: Record<StatusDespesa, string> = {
   rascunho: "bg-muted text-muted-foreground",
   aguardando_aprovacao_inicial: "bg-violet-100 text-violet-800 dark:bg-violet-950/40 dark:text-violet-300",
@@ -357,14 +369,29 @@ export function useIntegrantes() {
     queryKey: ["malote_integrantes"],
     staleTime: 5 * 60_000,
     queryFn: async () => {
-      const { data, error } = await (supabase as any)
-        .from("EMPREGADOS")
-        .select('"ID", "Nome", "Situação"')
-        .eq("Situação", "Trabalhando")
-        .order("Nome")
-        .limit(2000);
-      if (error) throw error;
-      return (data ?? []).map((e: any) => ({ id: e.ID as number, nome: e.Nome as string }));
+      // São 2200+ colaboradores ativos — mais que o teto de linhas por
+      // request do PostgREST (db-max-rows do projeto), que corta a resposta
+      // ANTES do .limit() do client valer, mesmo pedindo mais. Um .limit()
+      // único deixava o combobox de Integrante "parar" no meio do alfabeto
+      // (achado do usuário: só ia até nomes com "J"). Pagina com .range()
+      // até a página vir vazia/incompleta, garantindo a lista inteira.
+      const PAGE = 1000;
+      const todos: { id: number; nome: string }[] = [];
+      for (let pagina = 0; ; pagina++) {
+        const de = pagina * PAGE;
+        const ate = de + PAGE - 1;
+        const { data, error } = await (supabase as any)
+          .from("EMPREGADOS")
+          .select('"ID", "Nome", "Situação"')
+          .eq("Situação", "Trabalhando")
+          .order("Nome")
+          .range(de, ate);
+        if (error) throw error;
+        const lote = (data ?? []).map((e: any) => ({ id: e.ID as number, nome: e.Nome as string }));
+        todos.push(...lote);
+        if (lote.length < PAGE) break;
+      }
+      return todos;
     },
   });
 }
@@ -386,12 +413,19 @@ export function useNomeUsuario(userId: string | null | undefined) {
 
 // ── Despesas ──────────────────────────────────────────────────────────
 
-// Setores liberados para um usuário em Aprovações/Meus Itens do Malote
-// (SIS-2026-0216, Gerenciamento de Acesso). Lista vazia = sem recorte = vê
-// tudo da empresa (default, mesmo comportamento de antes desta feature).
+// Setores liberados para um usuário nas telas de Orçamento do Malote
+// (SIS-2026-0265, Gerenciamento de Acesso). Único consumidor é
+// useClassificacaoMaloteVisivel (useMaloteAcessoOrcamento.ts) — a lista de
+// Aprovações/Meus Itens é resolvida no banco (malote_tem_recorte_setor/
+// malote_despesa_visivel_por_setor), não por este hook.
+//
+// Achado do usuário (pós SIS-2026-0265): as duas listas usavam a mesma
+// tabela sem discriminador — marcar um setor em Aprovações "puxava" pro
+// Orçamento também. contexto='orcamento' (coluna adicionada na
+// 20260930000028) separa as duas dentro da mesma tabela.
 export function useMaloteSetoresVisiveis(userId: string | null | undefined) {
   return useQuery({
-    queryKey: ["malote_setor_visivel_usuario", userId],
+    queryKey: ["malote_setor_visivel_usuario", "orcamento", userId],
     enabled: !!userId,
     staleTime: 60_000,
     queryFn: async () => {
@@ -399,6 +433,7 @@ export function useMaloteSetoresVisiveis(userId: string | null | undefined) {
         .from("malote_setor_visivel_usuario")
         .select("setor")
         .eq("user_id", userId)
+        .eq("contexto", "orcamento")
         .order("setor");
       if (error) throw error;
       return (data ?? []).map((r: any) => r.setor as string);
@@ -1110,6 +1145,97 @@ export function useItensAguardandoMinhaAprovacao() {
 // Lista ampla pro dashboard "Aprovações do Malote" (Fase 3, aproximada) —
 // sem filtro por created_by, a RLS de malote_despesa já restringe ao que
 // o usuário pode ver (dono, mesma empresa, supervisor por cargo, admin).
+// SIS-2026-0281 (Iury): "colocar os nomes pra eles conseguirem verificar
+// rapidamente quais são deles" + "diferenciar quem é o N2 em questão (hoje
+// só temos dois: Senilton e Fernanda)" — despesa com classificação única já
+// traz aprovador2_nomes/aprovador3_nomes prontos no join de
+// DESPESA_COLUMNS; despesa de RATEIO (origem despesa_multi_classificacao,
+// classificacao_id nulo na despesa) tem uma classificação por LINHA do
+// rateio, cada uma com seu próprio aprovador — busca em lote (1 query pra
+// todas as despesas visíveis, não 1 por linha) e resolve a união dos nomes
+// de todas as linhas daquela despesa.
+export function useClassificacaoIdsPorDespesaRateio(despesaIds: string[]) {
+  const chave = despesaIds.slice().sort().join(",");
+  return useQuery({
+    queryKey: ["malote_rateio_classificacoes_por_despesa", chave],
+    enabled: despesaIds.length > 0,
+    staleTime: 60_000,
+    queryFn: async () => {
+      const { data, error } = await (supabase as any)
+        .from("malote_despesa_rateio_linha")
+        .select("despesa_id, classificacao_id")
+        .in("despesa_id", despesaIds);
+      if (error) throw error;
+      const mapa = new Map<string, Set<string>>();
+      for (const r of (data ?? []) as { despesa_id: string; classificacao_id: string | null }[]) {
+        if (!r.classificacao_id) continue;
+        const atual = mapa.get(r.despesa_id) ?? new Set<string>();
+        atual.add(r.classificacao_id);
+        mapa.set(r.despesa_id, atual);
+      }
+      return mapa;
+    },
+  });
+}
+
+// SIS-2026-0288 (Iury): coluna/filtro de "Empresa" em Pagamento Malote —
+// pra despesa de rateio multi-empresa (dimensão "Empresa" marcada em
+// RatearClassificacao.tsx), despesa.empresa_id é só o contexto de sessão
+// de quem lançou, não reflete o rateio de verdade. O pedido é a empresa da
+// PRIMEIRA linha (menor `ordem`) que tiver empresa_id preenchido — mesmo
+// padrão em lote de useClassificacaoIdsPorDespesaRateio, pra não fazer 1
+// query por despesa numa tabela paginada.
+export function useEmpresaPrimeiraLinhaRateio(despesaIds: string[]) {
+  const chave = despesaIds.slice().sort().join(",");
+  return useQuery({
+    queryKey: ["malote_rateio_empresa_primeira_linha", chave],
+    enabled: despesaIds.length > 0,
+    staleTime: 60_000,
+    queryFn: async () => {
+      const { data, error } = await (supabase as any)
+        .from("malote_despesa_rateio_linha")
+        .select("despesa_id, empresa_id, ordem")
+        .in("despesa_id", despesaIds)
+        .not("empresa_id", "is", null)
+        .order("ordem");
+      if (error) throw error;
+      const mapa = new Map<string, string>();
+      for (const r of (data ?? []) as { despesa_id: string; empresa_id: string; ordem: number }[]) {
+        // Linhas já vêm ordenadas por `ordem` — a primeira vista pra cada
+        // despesa_id é a que fica (não sobrescreve se já tiver achado).
+        if (!mapa.has(r.despesa_id)) mapa.set(r.despesa_id, r.empresa_id);
+      }
+      return mapa;
+    },
+  });
+}
+
+type ClassificacaoAprovadores = {
+  aprovador1_nomes?: string[] | null;
+  aprovador2_nomes?: string[] | null;
+  aprovador3_nomes?: string[] | null;
+};
+
+// Une os nomes do aprovador de um nível pra uma despesa — direto da
+// classificação dela quando é única, ou de todas as classificações das
+// linhas do rateio quando é multi-classificação.
+export function nomesAprovadorNivel(
+  despesa: MaloteDespesaRow,
+  nivel: 1 | 2 | 3,
+  classificacaoIdsRateio: Set<string> | undefined,
+  classificacaoPorId: Map<string, ClassificacaoAprovadores>
+): string[] {
+  const campo = nivel === 1 ? "aprovador1_nomes" : nivel === 2 ? "aprovador2_nomes" : "aprovador3_nomes";
+  if (despesa.classificacao_id) {
+    return despesa.classificacao?.[campo] ?? [];
+  }
+  const nomes = new Set<string>();
+  for (const id of classificacaoIdsRateio ?? []) {
+    for (const n of classificacaoPorId.get(id)?.[campo] ?? []) nomes.add(n);
+  }
+  return Array.from(nomes);
+}
+
 export function useItensAprovacoesMalote() {
   return useQuery({
     queryKey: [DESPESA_KEY, "aprovacoes_malote"],
@@ -1158,9 +1284,19 @@ export function gerarParcelas(valorTotal: number, numeroParcelas: number, dataPa
     // Parcela 1: exatamente a data de pagamento escolhida (string original,
     // sem passar por new Date/toISOString — evita qualquer risco de
     // deslocamento de fuso). Parcelas seguintes: dia do desconto no mês
-    // correspondente.
-    const dataVencimento =
-      i === 0 ? dataPagamento : new Date(base.getFullYear(), base.getMonth() + i, diaDesconto ?? base.getDate()).toISOString().slice(0, 10);
+    // correspondente — clampado ao último dia daquele mês (SIS-2026-0263:
+    // dia do desconto liberado até 30, mas fevereiro só tem 28/29; sem o
+    // clamp, `new Date(ano, mes, 30)` "rolava" pra março em vez de cair no
+    // fim de fevereiro).
+    let dataVencimento = dataPagamento;
+    if (i > 0) {
+      const mesAlvo = base.getMonth() + i;
+      const diaAlvo = diaDesconto ?? base.getDate();
+      const ultimoDiaDoMesAlvo = new Date(base.getFullYear(), mesAlvo + 1, 0).getDate();
+      dataVencimento = new Date(base.getFullYear(), mesAlvo, Math.min(diaAlvo, ultimoDiaDoMesAlvo))
+        .toISOString()
+        .slice(0, 10);
+    }
     parcelas.push({
       numero_parcela: i + 1,
       valor: i === numeroParcelas - 1 ? ultimaParcela : valorParcela,

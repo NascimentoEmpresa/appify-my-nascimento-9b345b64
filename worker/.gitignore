@@ -1,5 +1,10 @@
 node_modules
 .env
+# Qualquer copia do .env conta como segredo: o arquivo tem service role key,
+# senha de SMTP e senha do certificado A1. Um `cp .env .env.bak` na pressa
+# nao pode virar commit.
+.env.*
+!.env.example
 .wwebjs_auth
 .wwebjs_cache
 

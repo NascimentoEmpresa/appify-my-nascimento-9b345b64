@@ -841,6 +841,11 @@ function NovaNfDialog({ open, onOpenChange, empresaId, contratos, nfParaEditar, 
       return "Nenhuma retenção fiscal configurada (nem no contrato, nem na nota, nem nos itens) — cadastre em pelo menos um desses níveis antes de emitir.";
     }
     if (!competencia) return "Informe a Competência.";
+    // SIS-2026-0258 (Jeferson Ruan): Contrato/Competência já eram obrigatórios
+    // (validados acima) — Data de Emissão e Descrição só tinham a checagem de
+    // preenchimento pulada, apesar de aparecerem como campos normais na tela.
+    if (!dataEmissao) return "Informe a Data de Emissão.";
+    if (!descricao.trim()) return "Informe a Descrição.";
     if (itensCalculados.length === 0) return "Adicione ao menos um item.";
     return null;
   }
@@ -982,7 +987,9 @@ function NovaNfDialog({ open, onOpenChange, empresaId, contratos, nfParaEditar, 
               <Input type="month" value={competencia ? competencia.slice(0, 7) : ""} onChange={(e) => setCompetencia(e.target.value ? `${e.target.value}-01` : "")} />
             </div>
             <div>
-              <Label>Data de Emissão</Label>
+              <Label>
+                Data de Emissão <span className="text-destructive">*</span>
+              </Label>
               <Input type="date" value={dataEmissao} onChange={(e) => setDataEmissao(e.target.value)} />
             </div>
             <div>
@@ -1001,7 +1008,9 @@ function NovaNfDialog({ open, onOpenChange, empresaId, contratos, nfParaEditar, 
               </Select>
             </div>
             <div className="col-span-2">
-              <Label>Descrição</Label>
+              <Label>
+                Descrição <span className="text-destructive">*</span>
+              </Label>
               <Textarea rows={1} value={descricao} onChange={(e) => setDescricao(e.target.value)} />
             </div>
           </div>

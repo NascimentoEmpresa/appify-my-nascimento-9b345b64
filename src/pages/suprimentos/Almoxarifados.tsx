@@ -1,9 +1,9 @@
 import { EntityCrudPage } from "@/components/crud/EntityCrudPage";
-import { useList } from "@/hooks/useGenericCrud";
+import { useContratosSelecao } from "@/hooks/useContratosERP";
 import { Badge } from "@/components/ui/badge";
 
 export default function Almoxarifados() {
-  const { data: contratos = [] } = useList<any>("contrato", { orderBy: "numero" });
+  const { data: contratos = [] } = useContratosSelecao();
 
   return (
     <EntityCrudPage
@@ -27,7 +27,7 @@ export default function Almoxarifados() {
         },
         {
           key: "contrato_id", label: "Contrato vinculado (opcional)", type: "select",
-          options: [{ value: "", label: "— nenhum —" }, ...contratos.map((c: any) => ({ value: c.id, label: `${c.numero} — ${c.objeto?.slice(0, 40)}` }))],
+          options: [{ value: "", label: "— nenhum —" }, ...contratos.map((c) => ({ value: c.id, label: c.nome }))],
         },
         { key: "responsavel", label: "Responsável" },
         { key: "endereco", label: "Endereço" },
