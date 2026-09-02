@@ -25,7 +25,7 @@ import {
   useAprovarCotacao,
   useReprovarCotacao,
   souAprovadorSolicitacao,
-  uploadAnexoMalote,
+  uploadAnexosMalote,
   registrarEventoDespesa,
   STATUS_LABEL,
   STATUS_BADGE_CLASS,
@@ -259,7 +259,7 @@ export default function SolicitacaoVisualizar() {
 
     setSalvando(true);
     try {
-      const novosPaths = arquivosNovos.length > 0 ? await Promise.all(arquivosNovos.map((f) => uploadAnexoMalote(f, despesa!.id))) : [];
+      const novosPaths = arquivosNovos.length > 0 ? await uploadAnexosMalote(arquivosNovos, despesa!.id, nome.trim()) : [];
       await salvar.mutateAsync({
         id: despesa!.id,
         empresa_id: tipo === "contrato" ? empresaContratoId : despesa!.empresa_id,

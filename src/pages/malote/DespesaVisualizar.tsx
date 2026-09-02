@@ -18,7 +18,7 @@ import {
   AlertDialogCancel,
 } from "@/components/ui/alert-dialog";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { ArrowLeft, Paperclip, Trash2, RotateCcw, FileText, Package, DollarSign, Tag, Image as ImageIcon, FileSpreadsheet, File as FileIcon, Check, X, PenLine, ClipboardCheck, Banknote, Upload, AlertTriangle } from "lucide-react";
+import { ArrowLeft, Paperclip, Trash2, RotateCcw, FileText, Package, DollarSign, Tag, Image as ImageIcon, FileSpreadsheet, File as FileIcon, Check, X, PenLine, ClipboardCheck, Banknote, Upload, AlertTriangle, Users } from "lucide-react";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
 import { cn } from "@/lib/utils";
@@ -38,8 +38,9 @@ import {
   useSolicitarAjustePagamentoDespesa,
   usePagarDespesa,
   usePagarParcela,
-  uploadAnexoMalote,
+  uploadAnexosMalote,
   aprovadoresDoNivel,
+  nomesAprovadoresDoNivel,
   souAprovadorDoNivel,
   souAprovadorConfigurado,
   STATUS_LABEL,
@@ -753,7 +754,9 @@ export default function DespesaVisualizar() {
     }
     setPagando(true);
     try {
-      const comprovantePath = await uploadAnexoMalote(comprovanteFile, despesa!.id);
+      // SIS-2026-0291 (Iury): comprovante sobe com "Nome da despesa -
+      // Comprovante", não mais UUID cru.
+      const [comprovantePath] = await uploadAnexosMalote([comprovanteFile], despesa!.id, `${despesa!.nome} - Comprovante`);
       if (despesa!.parcelado && parcelaEmPagamento) {
         await pagarParcela.mutateAsync({
           despesaId: despesa!.id,
@@ -989,11 +992,15 @@ export default function DespesaVisualizar() {
               {despesa.comprovante_pagamento_path && (
                 <div className="space-y-2">
                   <p className="text-xs text-muted-foreground">Pagamento</p>
+                  {/* SIS-2026-0291 (Iury): destaque é o nome do arquivo, não
+                      mais "Pago em ..." — essa data foi pro texto de apoio
+                      abaixo, junto com "Pago por". */}
                   <TileComprovante
-                    label={despesa.pago_em ? `Pago em ${new Date(despesa.pago_em).toLocaleDateString("pt-BR")} — clique para abrir` : "Clique para abrir"}
+                    label={despesa.comprovante_pagamento_path.split("/").pop() ?? "Comprovante"}
                     onClick={() => abrirAnexo(despesa.comprovante_pagamento_path!)}
                   />
                   <p className="text-xs text-muted-foreground">
+                    {despesa.pago_em && <>Pago em {new Date(despesa.pago_em).toLocaleDateString("pt-BR")}. </>}
                     {pagoPorNome && <>Pago por {pagoPorNome}. </>}
                     {despesa.conferido_em && <>Conferido em {new Date(despesa.conferido_em).toLocaleDateString("pt-BR")}. </>}
                     {despesa.observacao_pagamento && <>Observação: {despesa.observacao_pagamento}</>}
@@ -1013,6 +1020,24 @@ export default function DespesaVisualizar() {
         <Card className="flex flex-col">
           <CardContent className="p-4 flex flex-col flex-1">
             <p className="text-sm font-semibold mb-3">Fluxo de Aprovação</p>
+            {/* Achado do usuário: em Meus Itens/na DM só dava pra ver o
+                primeiro aprovador pendente (ex. "Yuri Rosa"), sem jeito de
+                saber quem mais pode aprovar aquele nível. */}
+            {despesa.status === "pendente_aprovacao" && despesa.nivel_aprovacao_atual && (
+              <div className="flex items-start gap-2 rounded-lg border border-amber-300 bg-amber-50 dark:bg-amber-950/30 p-3 text-xs mb-3">
+                <Users className="h-4 w-4 text-amber-600 mt-0.5 shrink-0" />
+                <p className="text-amber-800/80 dark:text-amber-300/80">
+                  Aguardando aprovação do <span className="font-medium">Nível {despesa.nivel_aprovacao_atual}</span>:{" "}
+                  <span className="font-medium">
+                    {nomesAprovadoresDoNivel(despesa, despesa.nivel_aprovacao_atual).join(", ") || "nenhum aprovador configurado"}
+                  </span>
+                  {despesa.excecao && despesa.nivel_aprovacao_atual !== 1 && (
+                    <> (a Gerente Financeiro também pode aprovar/reprovar, por ser exceção)</>
+                  )}
+                  .
+                </p>
+              </div>
+            )}
             <div className="flex-1 overflow-y-auto pr-1">
               <FluxoAprovacaoVisual despesa={despesa} eventos={eventos} />
             </div>
