@@ -9,6 +9,7 @@ import {
   MOTIVOS_VAGA, motivoLabel, ehSubstituicao, avaliarPrazo, dataMinimaVaga,
   cargoExigeCnh, aplicarReqCnh, REQ_CNH_TEXTO, MIN_DIAS_UTEIS, fmtBr,
   rotuloReferencia, ajudaReferencia, mostraNomeReferencia, contratoDoEmpregado,
+  faltamCamposManuais,
   SALARIO_MASCARA, substituidosComVagaViva, avisoSubstituidoPreso,
   podeVagaAdministrativa,
 } from "@/lib/recrutamento/vagaRegras";
@@ -35,6 +36,9 @@ function mesLabel(s?: string) {
 function badgeStatusCls(st: string) {
   const m: Record<string, string> = {
     "Aguardando Aprovação": "bg-yellow-100 text-yellow-800 border-yellow-200",
+    "Pendente Analista": "bg-yellow-100 text-yellow-800 border-yellow-200",
+    // As solicitações abertas antes de 02/09/2026 e já decididas continuam
+    // gravadas com o nome antigo; sem esta linha o selo delas ficava cinza.
     "Pendente Operacional": "bg-yellow-100 text-yellow-800 border-yellow-200",
     "Pendente Recrutamento": "bg-purple-100 text-purple-700 border-purple-200",
     "Seleção de Candidato": "bg-blue-100 text-blue-700 border-blue-200",
@@ -172,6 +176,9 @@ export default function MinhasSolicitacoes({ abrir }: { abrir?: SolicitacaoInici
   const [modalVaga, setModalVaga] = useState(false);
   const [vagaStep, setVagaStep] = useState(1);
   const [vaga, setVaga] = useState({ ...VAGA_RESET });
+  // Vaga do escritório preenchida à mão, sem colaborador de referência.
+  const [vagaManual, setVagaManual] = useState(false);
+  const [menuVagaAberto, setMenuVagaAberto] = useState(false);
   const [contratosFull, setContratosFull] = useState<any[]>([]);
   // Empregado -> nº da vaga de substituição que já o segura (regra do banco).
   const [presos, setPresos] = useState<Map<number, number>>(new Map());
@@ -369,8 +376,26 @@ export default function MinhasSolicitacoes({ abrir }: { abrir?: SolicitacaoInici
 
   const abrirModalVaga = () => {
     setModalVaga(true); setVagaStep(1); setEmpSearch(""); setShowEmpDrop(false); setVaga({ ...VAGA_RESET });
-    setSubstituidoId(null);
+    setSubstituidoId(null); setVagaManual(false); setMenuVagaAberto(false);
     if (!contratosFull.length) carregarContratos();
+  };
+
+  /**
+   * A mesma tela, sem o colaborador de referência.
+   *
+   * Cargo, contrato, escala e salário passam a ser digitados. Só existe para
+   * quem tem a capacidade de vaga administrativa — ver `podePreencherVagaManual`
+   * em lib/recrutamento/vagaRegras.ts, que explica por que o escritório
+   * precisa disso e por que a chave é a capacidade, não o setor.
+   *
+   * Já marca `administrativa`: quem abre vaga à mão está abrindo vaga do
+   * escritório, e deixar os dois desencontrados criaria a vaga fora da vista
+   * de quem a criou.
+   */
+  const abrirModalVagaManual = () => {
+    abrirModalVaga();
+    setVagaManual(true);
+    setVaga({ ...VAGA_RESET, administrativa: true });
   };
 
   // Prazo/grau da data escolhida — o grau não é mais escolhido na mão.
@@ -380,13 +405,31 @@ export default function MinhasSolicitacoes({ abrir }: { abrir?: SolicitacaoInici
   const vagaValidar = (step: number) => {
     if (step === 1) {
       if (!vaga.motivo_vaga) { toast("Selecione o motivo da vaga.", "err"); return false; }
-      if (!substituidoId) {
-        toast(ehSubstituicao(vaga.motivo_vaga)
-          ? "Escolha na lista o colaborador que será substituído — o cargo e o contrato vêm do cadastro dele."
-          : "Escolha na lista alguém com o mesmo cargo da vaga — é de lá que vêm cargo, contrato, escala e salário.", "err");
-        return false;
+
+      // No modo manual ninguém preenche por você: o que o cadastro daria vira
+      // digitação, e o que era "escolha alguém" vira "informe o campo".
+      if (vagaManual) {
+        const faltam = faltamCamposManuais(vaga);
+        if (faltam.length) {
+          toast(`Preenchendo à mão, ${faltam.join(" e ")} ${faltam.length > 1 ? "são obrigatórios" : "é obrigatório"}.`, "err");
+          return false;
+        }
+        // Substituição é o único motivo que PRECISA dizer quem sai — é esse
+        // vínculo que impede duas vagas repondo a mesma pessoa.
+        if (ehSubstituicao(vaga.motivo_vaga) && !substituidoId) {
+          toast("Em Substituição, escolha na lista quem será substituído — mesmo preenchendo o resto à mão.", "err");
+          return false;
+        }
+      } else {
+        if (!substituidoId) {
+          toast(ehSubstituicao(vaga.motivo_vaga)
+            ? "Escolha na lista o colaborador que será substituído — o cargo e o contrato vêm do cadastro dele."
+            : "Escolha na lista alguém com o mesmo cargo da vaga — é de lá que vêm cargo, contrato, escala e salário.", "err");
+          return false;
+        }
       }
-      const jaTem = ehSubstituicao(vaga.motivo_vaga) ? presos.get(substituidoId) : undefined;
+
+      const jaTem = ehSubstituicao(vaga.motivo_vaga) && substituidoId ? presos.get(substituidoId) : undefined;
       if (jaTem) { toast(avisoSubstituidoPreso(jaTem), "err"); return false; }
       if (!vaga.contrato) { toast("Selecione o contrato.", "err"); return false; }
       if (!vaga.cargo.trim()) { toast("Informe o cargo.", "err"); return false; }
@@ -414,7 +457,10 @@ export default function MinhasSolicitacoes({ abrir }: { abrir?: SolicitacaoInici
       // Só a substituição grava o id: é ele que trava a pessoa numa vaga só.
       substituido_id: ehSubstituicao(vaga.motivo_vaga) ? substituidoId : null,
       administrativa: podeAdministrativa ? !!vaga.administrativa : false,
-      status: "Pendente Operacional",
+      // A etapa 1 do recrutamento mudou de dono em 02/09/2026: quem decide é o
+      // ANALISTA. Nascer em "Pendente Operacional" deixava a vaga num status
+      // que nenhuma fila filtra — invisível para todo mundo menos quem pediu.
+      status: "Pendente Analista",
       solicitante_nome: user?.user_metadata?.nome ?? user?.email ?? "",
       solicitante_cpf: user?.email ?? "",
     };
@@ -599,6 +645,13 @@ export default function MinhasSolicitacoes({ abrir }: { abrir?: SolicitacaoInici
       .ini-sol-create:hover{border-color:#0f3171;background:#eef4ff;transform:translateY(-2px);box-shadow:0 6px 16px rgba(15,49,113,.1);}
       .ini-sol-create .icon{font-size:1.3rem;}
       .ini-sol-create span{font-size:.75rem;font-weight:600;color:#0f172a;line-height:1.2;}
+      .ini-sol-kebab{position:absolute;top:6px;right:6px;width:24px;height:24px;border-radius:7px;border:none;background:transparent;color:#64748b;font-size:15px;line-height:1;cursor:pointer;display:flex;align-items:center;justify-content:center;z-index:41;}
+      .ini-sol-kebab:hover{background:#e2e8f0;color:#0f172a;}
+      .ini-sol-kebab:focus-visible{outline:2px solid #0f3171;outline-offset:1px;}
+      .ini-sol-menu{position:absolute;top:32px;right:4px;z-index:42;min-width:250px;background:#fff;border:1px solid #e2e8f0;border-radius:12px;box-shadow:0 12px 32px rgba(15,23,42,.16);padding:5px;text-align:left;}
+      .ini-sol-menu button{display:block;width:100%;padding:9px 11px;border:none;border-radius:9px;background:transparent;cursor:pointer;font-family:inherit;font-size:.8rem;font-weight:600;color:#0f172a;text-align:left;}
+      .ini-sol-menu button:hover{background:#eef4ff;}
+      .ini-sol-menu button small{display:block;margin-top:3px;font-weight:500;font-size:.7rem;color:#64748b;line-height:1.35;white-space:normal;}
       .ini-sol-item{display:flex;align-items:center;gap:12px;padding:10px 0;border-bottom:1px solid #f1f5f9;}
       .ini-sol-item:last-child{border-bottom:none;}
       .ini-sol-icon{width:34px;height:34px;border-radius:9px;flex-shrink:0;display:flex;align-items:center;justify-content:center;font-size:15px;background:rgba(8,145,178,.1);}
@@ -641,7 +694,50 @@ export default function MinhasSolicitacoes({ abrir }: { abrir?: SolicitacaoInici
         <div className="ini-card-hd"><h3>➕ Nova Solicitação</h3></div>
         <div className="ini-card-body">
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(140px,1fr))", gap: 10 }}>
-            <button onClick={abrirModalVaga} className="ini-sol-create"><span className="icon">🎯</span><span>Solicitar Vaga</span></button>
+            {/* O card da vaga é o único com menu: só o escritório pode abrir
+                vaga SEM colaborador de referência, e os três pontinhos são o
+                lugar dessa exceção. Para o encarregado o card continua sendo
+                um botão e nada mais — ele não tem a capacidade, então o menu
+                nem é desenhado. */}
+            <div style={{ position: "relative" }}>
+              <button onClick={abrirModalVaga} className="ini-sol-create" style={{ width: "100%" }}>
+                <span className="icon">🎯</span><span>Solicitar Vaga</span>
+              </button>
+              {podeAdministrativa && (
+                <>
+                  <button
+                    type="button"
+                    aria-label="Mais opções de solicitação de vaga"
+                    aria-haspopup="menu"
+                    aria-expanded={menuVagaAberto}
+                    onClick={(e) => { e.stopPropagation(); setMenuVagaAberto((v) => !v); }}
+                    className="ini-sol-kebab"
+                  >
+                    ⋯
+                  </button>
+                  {menuVagaAberto && (
+                    <>
+                      {/* Fecha ao clicar fora. Um overlay transparente resolve
+                          sem listener global no document, que teria de ser
+                          removido na desmontagem e some quando alguém esquece. */}
+                      <div
+                        onClick={() => setMenuVagaAberto(false)}
+                        style={{ position: "fixed", inset: 0, zIndex: 40 }}
+                      />
+                      <div role="menu" className="ini-sol-menu">
+                        <button role="menuitem" type="button" onClick={abrirModalVagaManual}>
+                          ✍️ Preencher manualmente
+                          <small>
+                            Vaga do escritório: você digita cargo, contrato, escala e salário
+                            em vez de copiar de um colaborador.
+                          </small>
+                        </button>
+                      </div>
+                    </>
+                  )}
+                </>
+              )}
+            </div>
             <button onClick={abrirModalFerias} className="ini-sol-create"><span className="icon">📅</span><span>Solicitar Férias</span></button>
             <button onClick={abrirModalAdv} className="ini-sol-create"><span className="icon">⚠️</span><span>Advertência</span></button>
             {/* Demissão estava como "Em breve" — mas a tela existe e funciona
@@ -861,7 +957,17 @@ export default function MinhasSolicitacoes({ abrir }: { abrir?: SolicitacaoInici
                   {MOTIVOS_VAGA.map(o => <option key={o}>{o}</option>)}
                 </select>
               </div>
-              {!!vaga.motivo_vaga && (
+              {/* Aviso do modo manual: a pessoa precisa saber que trocou de
+                  regime, senão estranha os campos que antes vinham prontos. */}
+              {vagaManual && (
+                <div style={{ gridColumn: "1 / -1", fontSize: 11.5, fontWeight: 600, color: "#0f3171", background: "#eef4ff", border: "1px solid #c7d7fe", borderRadius: 9, padding: "8px 11px" }}>
+                  ✍️ <b>Preenchendo à mão</b> — vaga do escritório. Cargo, contrato, escala e salário
+                  são digitados por você, e não copiados de um colaborador.
+                </div>
+              )}
+              {/* Em Substituição o colaborador continua obrigatório mesmo à
+                  mão: é o vínculo que impede duas vagas repondo a mesma pessoa. */}
+              {!!vaga.motivo_vaga && (!vagaManual || ehSubstituicao(vaga.motivo_vaga)) && (
                 <div className="ini-fg" style={{ position: "relative" }} onBlur={() => setTimeout(() => setShowEmpDrop(false), 150)}>
                   <label>{rotuloReferencia(vaga.motivo_vaga)} *</label>
                   <input className="ini-fi" placeholder="Digite o nome e escolha na lista..." value={empSearch} autoComplete="off"
@@ -898,15 +1004,28 @@ export default function MinhasSolicitacoes({ abrir }: { abrir?: SolicitacaoInici
               {/* Contrato e cargo vêm do cadastro do escolhido e ficam travados
                   — a vaga é do posto dele, não de outro. */}
               <div className="ini-fg">
-                <label>Contrato *<span style={{ color: "#94a3b8", fontWeight: 600 }}> — do colaborador escolhido</span></label>
-                <input className="ini-fi" readOnly value={vaga.contrato} placeholder="Escolha o colaborador acima"
-                  style={{ background: "#f1f5f9", color: "#475569", cursor: "not-allowed" }} />
+                <label>Contrato *{!vagaManual && <span style={{ color: "#94a3b8", fontWeight: 600 }}> — do colaborador escolhido</span>}</label>
+                {vagaManual ? (
+                  <select className="ini-fi" value={vaga.contrato}
+                          onChange={e => setVaga(v => ({ ...v, contrato: e.target.value }))}>
+                    <option value="">— Selecione —</option>
+                    {contratosFull.map((c: any, i: number) => {
+                      const nome = c.nome ?? c.Nome ?? c.descricao ?? String(c);
+                      return <option key={i} value={nome}>{nome}</option>;
+                    })}
+                  </select>
+                ) : (
+                  <input className="ini-fi" readOnly value={vaga.contrato} placeholder="Escolha o colaborador acima"
+                    style={{ background: "#f1f5f9", color: "#475569", cursor: "not-allowed" }} />
+                )}
               </div>
               <div className="ini-fg">
-                <label>Cargo *<span style={{ color: "#94a3b8", fontWeight: 600 }}> — do colaborador escolhido</span></label>
-                <input className="ini-fi" placeholder="Escolha o colaborador acima"
-                  value={vaga.cargo} readOnly
-                  style={{ background: "#f1f5f9", color: "#475569", cursor: "not-allowed" }} />
+                <label>Cargo *{!vagaManual && <span style={{ color: "#94a3b8", fontWeight: 600 }}> — do colaborador escolhido</span>}</label>
+                <input className="ini-fi"
+                  placeholder={vagaManual ? "Ex.: Analista Administrativo" : "Escolha o colaborador acima"}
+                  value={vaga.cargo} readOnly={!vagaManual}
+                  onChange={e => setVaga(v => ({ ...v, cargo: e.target.value }))}
+                  style={vagaManual ? undefined : { background: "#f1f5f9", color: "#475569", cursor: "not-allowed" }} />
                 {cnhDoCargo && (
                   <div style={{ marginTop: 6, fontSize: 11.5, fontWeight: 700, color: "#b45309", background: "#fffbeb", border: "1px solid #fde68a", borderRadius: 8, padding: "6px 9px" }}>
                     🚗 {cnhDoCargo}: CNH obrigatória — já entra sozinha nos requisitos e não pode ser tirada.
@@ -965,8 +1084,18 @@ export default function MinhasSolicitacoes({ abrir }: { abrir?: SolicitacaoInici
                     Operacional e o Recrutamento, que aprovam, é que enxergam. */}
                 <div className="ini-fg">
                   <label>Salário</label>
-                  <input className="ini-fi" readOnly value={vaga.salario ? SALARIO_MASCARA : ""} placeholder="Vem do cadastro do colaborador"
-                    style={{ background: "#f1f5f9", color: "#475569", cursor: "not-allowed", letterSpacing: 2 }} />
+                  {/* No modo manual não há cadastro de onde copiar, então quem
+                      abre a vaga digita — e vê o que digitou. A máscara existe
+                      para não expor o salário de OUTRA pessoa a quem só abre a
+                      vaga; aqui não há outra pessoa. */}
+                  {vagaManual ? (
+                    <input className="ini-fi" inputMode="decimal" placeholder="Ex.: 3500,00"
+                      value={vaga.salario}
+                      onChange={e => setVaga(v => ({ ...v, salario: e.target.value }))} />
+                  ) : (
+                    <input className="ini-fi" readOnly value={vaga.salario ? SALARIO_MASCARA : ""} placeholder="Vem do cadastro do colaborador"
+                      style={{ background: "#f1f5f9", color: "#475569", cursor: "not-allowed", letterSpacing: 2 }} />
+                  )}
                   <div style={{ marginTop: 4, fontSize: 11, color: "#94a3b8" }}>Visível só para o Operacional e o Recrutamento.</div>
                 </div>
                 <div className="ini-fg"><label>Insalubridade</label><select className="ini-fi" value={vaga.insalubridade_recebe} onChange={e => setVaga(v => ({ ...v, insalubridade_recebe: e.target.value }))}><option>Não</option><option>Sim</option></select></div>

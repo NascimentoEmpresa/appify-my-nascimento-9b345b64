@@ -34,7 +34,7 @@ const sb = supabase as any;
  * propósito — se dessem para editar, a demissão poderia apontar para um posto
  * que a pessoa não ocupa, e é o operacional que descobriria isso depois.
  *
- * Ao enviar, a solicitação nasce em "Pendente Operacional". A tela também
+ * Ao enviar, a solicitação nasce em "Pendente Analista". A tela também
  * lista o que este encarregado já pediu, com o status de cada uma: o pedido
  * era acompanhar do começo ao fim, não só abrir e esperar aviso.
  */
@@ -223,7 +223,9 @@ export default function SolicitarDemissao() {
       termino_experiencia: form.termino_experiencia,
       data_aviso: form.data_aviso,
       modelo_aviso: form.modelo_aviso,
-      status: "Pendente Operacional",
+      // Ver a nota igual em MinhasSolicitacoes: a etapa 1 passou para o
+      // analista, e o status antigo não cai em fila nenhuma.
+      status: "Pendente Analista",
     };
 
     const { data: criada, error } = await sb.from(TABELA).insert(payload).select("id").single();
