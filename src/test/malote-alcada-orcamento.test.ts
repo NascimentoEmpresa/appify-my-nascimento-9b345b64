@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { montarCombosAlcada, encontrarComboQueEstouraAlcada } from "@/pages/malote/orcamentoUtils";
+import { montarCombosAlcada, encontrarComboQueEstouraAlcada, rescalarRateioPorTotal } from "@/pages/malote/orcamentoUtils";
 
 // SIS-2026-0261 (Iury) — dois achados reais:
 // 1) despesa parcelada: só a parcela 1 decidia se escalava pra N2, mas uma
@@ -194,5 +194,54 @@ describe("montarCombosAlcada + encontrarComboQueEstouraAlcada", () => {
         { mes: "2026-09", contratoId: "B", valor: 20 },
       ])
     );
+  });
+});
+
+// SIS-2026-0292 (Iury): "alterando o Valor Total, altera proporcionalmente
+// o rateio perante as porcentagens" — mudar o valor da despesa (durante
+// ajuste) recalcula o valor de cada linha do Rateio a partir do percentual
+// já gravado nela, contra o NOVO total.
+describe("rescalarRateioPorTotal", () => {
+  it("recalcula o valor de cada linha a partir do percentual, contra o novo total", () => {
+    const linhas = [
+      { percentual: 60, valor: 600 },
+      { percentual: 40, valor: 400 },
+    ];
+    expect(rescalarRateioPorTotal(linhas, 500)).toEqual([
+      { percentual: 60, valor: 300 },
+      { percentual: 40, valor: 200 },
+    ]);
+  });
+
+  it("última linha com percentual absorve a sobra de arredondamento (soma sempre bate com o novo total)", () => {
+    const linhas = [
+      { percentual: 33.333, valor: 333.33 },
+      { percentual: 33.333, valor: 333.33 },
+      { percentual: 33.334, valor: 333.34 },
+    ];
+    const resultado = rescalarRateioPorTotal(linhas, 100);
+    const soma = resultado.reduce((s, l) => s + l.valor, 0);
+    expect(Number(soma.toFixed(2))).toBe(100);
+  });
+
+  it("linha sem percentual (rateio incompleto) fica intocada", () => {
+    const linhas = [
+      { percentual: 100, valor: 1000 },
+      { percentual: null, valor: 0 },
+    ];
+    expect(rescalarRateioPorTotal(linhas, 500)).toEqual([
+      { percentual: 100, valor: 500 },
+      { percentual: null, valor: 0 },
+    ]);
+  });
+
+  it("sem nenhuma linha com percentual, devolve as linhas como estavam", () => {
+    const linhas = [{ percentual: null, valor: 10 }];
+    expect(rescalarRateioPorTotal(linhas, 999)).toEqual(linhas);
+  });
+
+  it("preserva os outros campos da linha (spread), só troca o valor", () => {
+    const linhas = [{ percentual: 100, valor: 10, contrato_id: "C1", ordem: 0 }];
+    expect(rescalarRateioPorTotal(linhas, 250)).toEqual([{ percentual: 100, valor: 250, contrato_id: "C1", ordem: 0 }]);
   });
 });

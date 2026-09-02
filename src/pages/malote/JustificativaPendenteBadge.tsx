@@ -1,4 +1,4 @@
-import { AlertTriangle } from "lucide-react";
+import { AlertTriangle, Bell } from "lucide-react";
 import { MaloteDespesaRow, Parcela, RateioLinha, useNomeUsuario, useRateioLinhasEParcelas } from "@/hooks/useMaloteDespesa";
 import { useOrcadoClassificacaoMultiMes } from "@/hooks/useOrcadoClassificacao";
 import { useUtilizadoOrcamento } from "@/hooks/useUtilizadoOrcamento";
@@ -41,7 +41,20 @@ export function abreviarNome(nome: string): string {
 // malote_analistas_dos_contratos, ou o Solicitante quando a linha é de
 // Classificação administrativa) — sem isso, dava pra saber que tinha
 // pendência mas não quem cobrar.
-export function JustificativaPendenteBadge({ despesa, parcela }: { despesa: MaloteDespesaRow; parcela?: Parcela | null }) {
+export function JustificativaPendenteBadge({
+  despesa,
+  parcela,
+  variant = "full",
+}: {
+  despesa: MaloteDespesaRow;
+  parcela?: Parcela | null;
+  // SIS-2026-0288-ajuste (Iury/usuário): Aprovações do Malote tinha uma
+  // coluna "Justificativa" quase sempre vazia (poucas linhas têm
+  // pendência) — "icon" troca o texto por só o sino/alerta com tooltip,
+  // pra virar um indicador inline em vez de coluna própria. "full" (default)
+  // mantém o comportamento original (ícone + nomes), usado em Meus Itens.
+  variant?: "full" | "icon";
+}) {
   const limitePct = despesa.classificacao?.limite_justificativa_pct ?? null;
   const { data } = useRateioLinhasEParcelas(despesa.id, !!despesa.parcelado);
   const { resolver: resolverOrcadoMultiMes } = useOrcadoClassificacaoMultiMes(despesa.empresa_id);
@@ -101,10 +114,26 @@ export function JustificativaPendenteBadge({ despesa, parcela }: { despesa: Malo
     )
   );
 
+  const titulo = `Aguardando justificativa de: ${responsaveis.join(", ")}`;
+
+  if (variant === "icon") {
+    // Pedido do usuário: "bem mais evidente" — trocado de ícone solto pra
+    // um círculo cheio (fundo âmbar sólido, sino branco), do tamanho de um
+    // badge de verdade, não um detalhe discreto que passa despercebido.
+    return (
+      <span
+        className="inline-flex h-6 w-6 shrink-0 animate-pulse items-center justify-center rounded-full bg-amber-500 text-white shadow-[0_0_6px_rgba(245,158,11,0.7)] dark:bg-amber-600"
+        title={titulo}
+      >
+        <Bell className="h-3.5 w-3.5 shrink-0 fill-white" />
+      </span>
+    );
+  }
+
   return (
     <span
       className="inline-flex items-center gap-1.5 text-xs font-medium text-amber-600 dark:text-amber-400"
-      title={`Aguardando justificativa de: ${responsaveis.join(", ")}`}
+      title={titulo}
     >
       <AlertTriangle className="h-3.5 w-3.5 shrink-0 animate-pulse drop-shadow-[0_0_3px_rgba(245,158,11,0.8)]" />
       {responsaveis.map(abreviarNome).join(", ")}
