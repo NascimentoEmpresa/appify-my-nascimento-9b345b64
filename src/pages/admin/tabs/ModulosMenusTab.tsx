@@ -1556,6 +1556,7 @@ const CAPS: { papel: FormCap; rotulo: string; desc: string }[] = [
   { papel: "ver_tudo",         rotulo: "Visualizar tudo",          desc: "Ver todas as respostas" },
   { papel: "ver_proprias",     rotulo: "So as proprias respostas", desc: "So o que a propria pessoa enviou" },
   { papel: "ver_lixeira",      rotulo: "Lixeira de formularios",   desc: "Ver e restaurar formularios apagados (30 dias)" },
+  { papel: "diagnostico_feedback", rotulo: "Diagnóstico IA dos feedbacks", desc: "Gerar e ler o diagnóstico automático por setor" },
 ];
 
 // Lista de capacidades como linhas com Switch à direita (mesmo padrão dos menus).
