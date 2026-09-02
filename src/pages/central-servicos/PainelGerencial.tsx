@@ -20,6 +20,7 @@ import {
 import { CAT_CORES, Chart, EvolucaoChart, FiltroFuturo, Kpi, MultiSelectEmpresa, Painel, Vazio, btn, inp, lbl, pct } from "./painel/ui";
 import PainelLideranca from "./painel/AbaLideranca";
 import PainelAlinhamento from "./painel/AbaAlinhamento";
+import AbaDiagnostico from "./painel/AbaDiagnostico";
 import { insightForte, insightNec, insightSit } from "./painel/insights";
 
 // =====================================================================
@@ -40,9 +41,9 @@ import { insightForte, insightNec, insightSit } from "./painel/insights";
 // (localStorage) — sem tocar no banco.
 // =====================================================================
 
-const TABS = ["Visão Executiva", "Cumprimento", "Desenvolvimento", "Liderança", "Alinhamento e Entrega", "Planos de Ação", "Histórico Individual", "Indicadores e Cálculos"];
+const TABS = ["Visão Executiva", "Cumprimento", "Desenvolvimento", "Liderança", "Alinhamento e Entrega", "Diagnóstico IA", "Planos de Ação", "Histórico Individual", "Indicadores e Cálculos"];
 // Abas já implementadas — as demais aparecem marcadas "em breve" na barra.
-const TABS_PRONTAS = ["Visão Executiva", "Cumprimento", "Desenvolvimento", "Liderança", "Alinhamento e Entrega", "Planos de Ação", "Histórico Individual", "Indicadores e Cálculos"];
+const TABS_PRONTAS = ["Visão Executiva", "Cumprimento", "Desenvolvimento", "Liderança", "Alinhamento e Entrega", "Diagnóstico IA", "Planos de Ação", "Histórico Individual", "Indicadores e Cálculos"];
 
 // Diretoria = atalho para um conjunto FIXO de setores (definição de negócio, não
 // do cadastro). Selecionar uma diretoria recorta as respostas para esses setores.
@@ -594,7 +595,7 @@ export default function PainelGerencial() {
           </div>
         </div>
         <div style={{ display: "flex", gap: 4, padding: "0 12px", borderTop: "1px solid #f1f5f9", overflowX: "auto" }}>
-          {TABS.map(t => {
+          {TABS.filter(t => t !== "Diagnóstico IA" || canForm("diagnostico_feedback")).map(t => {
             const on = t === tab;
             const pronto = TABS_PRONTAS.includes(t);
             return (
@@ -624,6 +625,23 @@ export default function PainelGerencial() {
             do painel. Some com os filtros e sobra só o mapeamento, que é o que
             se conserta a partir dali. */}
         <div style={{ display: tab === "Indicadores e Cálculos" ? "none" : "grid", gridTemplateColumns: "repeat(auto-fit,minmax(150px,1fr))", gap: 10 }}>
+          {tab === "Diagnóstico IA" ? (
+            <>
+              <div><label style={lbl}>Setor</label>
+                {escopoSetores && escopoSetores.size === 1 ? (
+                  <select value={setores[0] ?? ""} disabled title="Você só tem acesso a este setor" style={{ ...inp, background: "#f1f5f9", color: "#475569", cursor: "not-allowed" }}>
+                    <option value={setores[0] ?? ""}>{setores[0] ?? "—"}</option>
+                  </select>
+                ) : (
+                  <select value={fSetor} onChange={e => setFSetor(e.target.value)} style={inp}><option value="">Escolha um setor</option>{setores.map(s => <option key={s} value={s}>{s}</option>)}</select>
+                )}
+              </div>
+              <div style={{ gridColumn: "span 2", alignSelf: "end", paddingBottom: 7, fontSize: 11.5, color: "#64748b" }}>
+                O diagnóstico usa todas as respostas visíveis do setor, independentemente dos filtros analíticos das outras abas.
+              </div>
+            </>
+          ) : (
+          <>
           <div><label style={lbl}>Período</label>
             <select value={periodo} onChange={e => setPeriodo(e.target.value as any)} style={inp}>
               <option value="todos">Todo o período</option><option value="90">Últimos 90 dias</option><option value="180">Últimos 180 dias</option><option value="365">Último ano</option>
@@ -673,15 +691,17 @@ export default function PainelGerencial() {
               <FiltroFuturo label="Situação do plano de ação" />
             </>
           )}
+          </>
+          )}
         </div>
-        <div ref={mapaRef} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 10, gap: 8, flexWrap: "wrap", scrollMarginTop: 12 }}>
+        <div ref={mapaRef} style={{ display: tab === "Diagnóstico IA" ? "none" : "flex", justifyContent: "space-between", alignItems: "center", marginTop: 10, gap: 8, flexWrap: "wrap", scrollMarginTop: 12 }}>
           <button onClick={() => setMostrarMapa(v => !v)} style={{ background: "none", border: "none", color: "#0f3171", fontSize: 11.5, fontWeight: 700, cursor: "pointer", padding: 0 }}>⚙ Mapeamento de perguntas {mostrarMapa ? "▴" : "▾"}</button>
           <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-            {tab !== "Indicadores e Cálculos" && <button onClick={() => { setPeriodo("todos"); setFSetor(""); setFResp(""); setFSituacao(""); setFNecessidade(""); setFSitPlano(""); setFPrioridade(""); setFOrigem(""); setFEmpresas([]); setFDiretoria(""); setFLider(""); }} style={btn("#f1f5f9", "#475569", "1px solid #e2e8f0")}>Limpar filtros</button>}
+            {tab !== "Indicadores e Cálculos" && tab !== "Diagnóstico IA" && <button onClick={() => { setPeriodo("todos"); setFSetor(""); setFResp(""); setFSituacao(""); setFNecessidade(""); setFSitPlano(""); setFPrioridade(""); setFOrigem(""); setFEmpresas([]); setFDiretoria(""); setFLider(""); }} style={btn("#f1f5f9", "#475569", "1px solid #e2e8f0")}>Limpar filtros</button>}
             {mostrarMapa && <button onClick={() => setMostrarMapa(false)} style={btn("#f1f5f9", "#475569", "1px solid #e2e8f0")}>✕ Fechar mapeamento</button>}
           </div>
         </div>
-        {mostrarMapa && (
+        {mostrarMapa && tab !== "Diagnóstico IA" && (
           <div style={{ marginTop: 10, borderTop: "1px dashed #e2e8f0", paddingTop: 10, display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(220px,1fr))", gap: 10 }}>
             {tab === "Liderança" || tab === "Indicadores e Cálculos" ? (
               <>
@@ -838,6 +858,8 @@ export default function PainelGerencial() {
             topLidAlin={topLidAlin} topSetorEntrega={topSetorEntrega} topLidContrib={topLidContrib}
             temMapa={!!(alinP || entP || contP)} ultima={ultimaAtualizacao} onExport={exportarCsvAlin}
             viz={viz} onViz={mudaViz} onAbrirMapa={abrirMapa} />
+        ) : tab === "Diagnóstico IA" && canForm("diagnostico_feedback") ? (
+          <AbaDiagnostico formularioId={formSel} setor={fSetor} respostas={respsForm} />
         ) : tab === "Planos de Ação" ? (
           <PainelPlanosAcao
             formId={formSel} ultima={ultimaAtualizacao} respostas={pessoasForm}
