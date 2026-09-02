@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import {
-  localEhEscritorio, normalizarLocal, statusInicial, proximoStatus, pertenceAFila,
+  localEhEscritorio, normalizarLocal, statusInicial, statusAposAnalista, proximoStatus, pertenceAFila,
   podeAgirEm, origensVisiveis, origemDa, resumoSST,
   statusVisiveis, statusDeAcao, explicaStatus,
   type Origem, type StatusTroca,
@@ -54,13 +54,33 @@ describe("localEhEscritorio", () => {
 });
 
 describe("statusInicial", () => {
-  it("segue o que foi MARCADO no pedido, não o que o cadastro acha", () => {
-    expect(statusInicial(false)).toBe("Pendente Operacional");
-    expect(statusInicial(true)).toBe("Pendente Escritório");
+  it("toda troca nasce na mão do analista, venha de onde vier", () => {
+    // A etapa do analista (02/09/2026) é a PRIMEIRA porta: a origem deixou de
+    // decidir onde a solicitação nasce e passou a decidir só para onde ela vai
+    // depois que o analista libera.
+    expect(statusInicial(false)).toBe("Pendente Analista");
+    expect(statusInicial(true)).toBe("Pendente Analista");
+  });
+});
+
+describe("statusAposAnalista", () => {
+  it("a origem escolhe a fila seguinte, não a inicial", () => {
+    expect(statusAposAnalista(false)).toBe("Pendente Operacional");
+    expect(statusAposAnalista(true)).toBe("Pendente Escritório");
   });
 });
 
 describe("proximoStatus", () => {
+  it("o analista libera para a fila da ORIGEM, não direto para o SST", () => {
+    // O pedido é explícito: primeiro o analista, DEPOIS o operacional.
+    expect(proximoStatus("Pendente Analista", "aprovar", false)).toBe("Pendente Operacional");
+    expect(proximoStatus("Pendente Analista", "aprovar", true)).toBe("Pendente Escritório");
+  });
+
+  it("o analista também reprova — é uma porta de decisão, não de leitura", () => {
+    expect(proximoStatus("Pendente Analista", "reprovar")).toBe("Reprovada");
+  });
+
   it("aprovar em qualquer das duas filas manda para o SST", () => {
     expect(proximoStatus("Pendente Operacional", "aprovar")).toBe("Pendente SST");
     expect(proximoStatus("Pendente Escritório", "aprovar")).toBe("Pendente SST");
@@ -75,6 +95,7 @@ describe("proximoStatus", () => {
     // Nem toda função nova exige exame. Para o RH os dois querem dizer "o SST
     // já olhou, pode alterar na Senior" — muda só o que fica registrado.
     expect(proximoStatus("Pendente SST", "dispensar_aso")).toBe("Pendente RH");
+    expect(proximoStatus("Pendente Analista", "dispensar_aso")).toBeNull();
     expect(proximoStatus("Pendente Operacional", "dispensar_aso")).toBeNull();
     expect(proximoStatus("Pendente RH", "dispensar_aso")).toBeNull();
   });
@@ -182,7 +203,7 @@ describe("podeAgirEm", () => {
 
 describe("statusVisiveis / statusDeAcao", () => {
   it("todo status de ação da etapa está entre os que ela enxerga", () => {
-    for (const etapa of ["aprovacao", "sst", "rh"] as const) {
+    for (const etapa of ["analista", "aprovacao", "sst", "rh"] as const) {
       for (const s of statusDeAcao(etapa)) {
         expect(statusVisiveis(etapa)).toContain(s);
       }
@@ -191,6 +212,17 @@ describe("statusVisiveis / statusDeAcao", () => {
 
   it("a aprovação age nas duas filas de origem", () => {
     expect(statusDeAcao("aprovacao")).toEqual(["Pendente Operacional", "Pendente Escritório"]);
+  });
+
+  it("o analista age só na fila dele", () => {
+    expect(statusDeAcao("analista")).toEqual(["Pendente Analista"]);
+  });
+
+  it("o Operacional VÊ a fila do analista, mas não decide nada nela", () => {
+    // É o mesmo desenho da Gestão Recrutamento: quem perdeu a decisão manteve
+    // o acompanhamento, para não ficar cego sobre o que vem pela frente.
+    expect(statusVisiveis("aprovacao")).toContain("Pendente Analista");
+    expect(statusDeAcao("aprovacao")).not.toContain("Pendente Analista");
   });
 });
 

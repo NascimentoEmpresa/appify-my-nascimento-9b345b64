@@ -1,4 +1,5 @@
 import { PageHeader } from "@/components/layout/PageHeader";
+import { ResumoDeFuncoes } from "@/components/fluxos/ResumoDeFuncoes";
 import { PainelTrocaFuncao } from "@/components/troca-funcao/PainelTrocaFuncao";
 
 /**
@@ -18,6 +19,7 @@ export default function TrocaFuncao() {
         subtitle="Aprove as trocas de função pedidas pelos encarregados. O que você aprovar segue para o SST."
         module="Operacional"
         breadcrumb={["Mudança de Função"]}
+        actions={<ResumoDeFuncoes fluxo="troca_funcao" />}
       />
       <PainelTrocaFuncao etapa="aprovacao" />
     </div>

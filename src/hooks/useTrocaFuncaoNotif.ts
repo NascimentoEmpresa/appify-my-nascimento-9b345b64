@@ -14,9 +14,14 @@ import { supabase } from "@/integrations/supabase/client";
 // o oposto do que o Pablo pediu ("sempre que tiver uma solicitação mostrar
 // notificação no módulo").
 //
-// Uma consulta só, agregando os quatro status, porque a sidebar precisa dos
-// quatro ao mesmo tempo e quatro counts seriam quatro round-trips a cada
+// Uma consulta só, agregando os status, porque a sidebar precisa de todos ao
+// mesmo tempo e um count por fila seria um round-trip por fila a cada
 // navegação.
+//
+// A fila do ANALISTA entrou em 02/09/2026 e é a primeira do fluxo. A rota do
+// escritório (`/app/rh/troca-funcao-escritorio`) saiu do menu do RH no mesmo
+// dia, mas continua aqui: a rota segue de pé para quem tem a permissão antiga,
+// e uma bolinha a menos é trabalho invisível.
 // =====================================================================
 
 const sb = supabase as any;
@@ -37,7 +42,7 @@ export function useTrocaFuncaoNotif(): TrocaFuncaoNotif {
       const { data, error } = await sb
         .from("SISTEMA_SOLICITACOES_TROCA_FUNCAO")
         .select("status, e_escritorio")
-        .in("status", ["Pendente Operacional", "Pendente Escritório", "Pendente SST", "Pendente RH"]);
+        .in("status", ["Pendente Analista", "Pendente Operacional", "Pendente Escritório", "Pendente SST", "Pendente RH"]);
       if (error) return VAZIO;
 
       const linhas = (data ?? []) as Array<{ status: string; e_escritorio: boolean }>;
@@ -45,6 +50,7 @@ export function useTrocaFuncaoNotif(): TrocaFuncaoNotif {
 
       return {
         porRota: {
+          "/app/licitacoes/analistas/troca-funcao": tem(l => l.status === "Pendente Analista"),
           "/app/operacional/troca-funcao":      tem(l => l.status === "Pendente Operacional"),
           "/app/rh/troca-funcao-escritorio":    tem(l => l.status === "Pendente Escritório"),
           "/app/sst/troca-funcao":              tem(l => l.status === "Pendente SST"),

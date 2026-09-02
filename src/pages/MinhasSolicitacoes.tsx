@@ -4,6 +4,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
 import { usePermissoes } from "@/context/PermissoesContext";
 import { ESTADOS_BR, municipiosDe } from "@/data/municipios-brasil";
+import { ResumoDeFuncoes } from "@/components/fluxos/ResumoDeFuncoes";
 import {
   MOTIVOS_VAGA, motivoLabel, ehSubstituicao, avaliarPrazo, dataMinimaVaga,
   cargoExigeCnh, aplicarReqCnh, REQ_CNH_TEXTO, MIN_DIAS_UTEIS, fmtBr,
@@ -624,9 +625,15 @@ export default function MinhasSolicitacoes({ abrir }: { abrir?: SolicitacaoInici
 
   return (
     <div style={{ flex: 1, overflowY: "auto", padding: "20px 24px 40px", background: "#f5f7fb" }}>
-      <div style={{ marginBottom: 18 }}>
-        <h1 style={{ fontSize: 22, fontWeight: 800, color: "#0f172a", display: "flex", alignItems: "center", gap: 8 }}>📤 Minhas Solicitações</h1>
-        <p style={{ fontSize: 13, color: "#64748b", marginTop: 2 }}>Abra novas solicitações e acompanhe o status e o histórico das suas.</p>
+      <div style={{ marginBottom: 18, display: "flex", alignItems: "flex-end", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
+        <div>
+          <h1 style={{ fontSize: 22, fontWeight: 800, color: "#0f172a", display: "flex", alignItems: "center", gap: 8 }}>📤 Minhas Solicitações</h1>
+          <p style={{ fontSize: 13, color: "#64748b", marginTop: 2 }}>Abra novas solicitações e acompanhe o status e o histórico das suas.</p>
+        </div>
+        {/* Os quatro sistemas que nascem nesta tela. Um botão só, com a
+            escolha dentro: quatro botões de ajuda lado a lado seriam mais
+            ruído do que ajuda. */}
+        <ResumoDeFuncoes fluxo={["vaga", "ferias", "advertencia", "demissao"]} />
       </div>
 
       {/* Botões de criação */}

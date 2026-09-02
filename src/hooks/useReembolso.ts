@@ -357,14 +357,21 @@ export function useDecidirReembolso() {
 /**
  * O setor de quem está pedindo, resolvido PELO BANCO.
  *
- * Sai de EMPREGADOS (o cadastro da Senior, que é o que Meu Perfil mostra) e,
- * na falta dele, do setor do perfil. Vem daqui e não do `useVinculoEmpregado`
- * para a tela mostrar exatamente o que a trigger vai carimbar — se os dois
- * discordassem, a pessoa veria "Sistemas" na tela e a solicitação chegaria
- * para o aprovador de outro setor.
+ * Sai de `user_setor` — o setor marcado em Administração › Acesso por Usuário,
+ * do catálogo do ERP. Vem daqui e não do `useVinculoEmpregado` para a tela
+ * mostrar exatamente o que a trigger vai carimbar: se os dois discordassem, a
+ * pessoa veria "Sistemas" na tela e a solicitação chegaria para o aprovador de
+ * outro setor.
  *
- * `null` significa cadastro sem setor: a tela bloqueia e explica, em vez de
- * deixar abrir uma solicitação que ninguém pode aprovar.
+ * EMPREGADOS ERA a primeira fonte e saiu em 02/09/2026. O Senior guarda o
+ * setor da FOLHA, onde 547 das 630 pessoas são `PADRAO` — um setor que não
+ * existe no ERP e que ninguém aprova. As solicitações do Jurídico nasciam
+ * carimbadas assim e sumiam da fila de quem devia decidir. Ver a migration
+ * 20260930000040.
+ *
+ * `null` significa cadastro sem setor, OU com mais de um: nos dois casos a
+ * tela bloqueia e explica, em vez de deixar abrir uma solicitação que ninguém
+ * pode aprovar ou de chutar entre dois aprovadores.
  */
 export function useMeuSetor() {
   const { user } = useAuth();
