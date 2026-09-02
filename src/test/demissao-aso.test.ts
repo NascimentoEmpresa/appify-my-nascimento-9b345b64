@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
-  STATUS_TODOS, corDoStatus, explicaStatus, linkDoLocalASO, resumoDoASO,
+  STATUS_TODOS, corDoStatus, explicaStatus, linkDoLocalASO, patchDevolucao,
+  podeDevolver, resumoDevolucao, resumoDoASO,
 } from "@/lib/demissao/solicitacao";
 
 // O ASO demissional marca data/hora/local do exame — os MESMOS campos do ASO
@@ -79,5 +80,87 @@ describe("resumoDoASO", () => {
 
   it("sem ASO marcado, não finge que tem", () => {
     expect(resumoDoASO({ sst_hora_exame: "09:00", sst_local_exame: "Clínica X" })).toBe("—");
+  });
+});
+
+// ── Devolução ao analista (02/09/2026) ───────────────────────────────
+//
+// O erro na solicitação aparece no fim: é o RH, última etapa, que percebe que
+// o aviso está errado ou que falta documento. Antes disso as únicas saídas
+// eram concluir um desligamento errado ou largar o card. O que estes testes
+// travam é o que a devolução PRECISA desfazer — voltar "meio aprovada" faria
+// a solicitação pular o SST na segunda passagem.
+
+describe("podeDevolver", () => {
+  it("só devolve quem tem trabalho a fazer agora", () => {
+    expect(podeDevolver("sst", "Pendente SST")).toBe(true);
+    expect(podeDevolver("rh", "Pendente RH")).toBe(true);
+  });
+
+  it("não devolve turno que ainda não chegou nem que já passou", () => {
+    expect(podeDevolver("sst", "Pendente RH")).toBe(false);
+    expect(podeDevolver("rh", "Pendente SST")).toBe(false);
+    expect(podeDevolver("rh", "Concluída")).toBe(false);
+    expect(podeDevolver("sst", "Pendente Analista")).toBe(false);
+  });
+
+  it("o analista e o Operacional não devolvem", () => {
+    // O analista REPROVA (a solicitação morre); devolver é dele para trás, e
+    // atrás dele só tem o encarregado. O Operacional não decide nada.
+    expect(podeDevolver("analista", "Pendente Analista")).toBe(false);
+    expect(podeDevolver("operacional", "Pendente Analista")).toBe(false);
+  });
+});
+
+describe("patchDevolucao", () => {
+  const p = patchDevolucao("rh", "MELISSA DA SILVA LEITE", "  a data do aviso não bate  ");
+
+  it("volta para a fila do analista, não para o Operacional", () => {
+    // O Operacional é somente-leitura na demissão: devolver para lá encalharia
+    // o card onde ninguém pode mexer.
+    expect(p.status).toBe("Pendente Analista");
+  });
+
+  it("grava quem devolveu, de onde e por quê", () => {
+    expect(p.devolvido_por).toBe("MELISSA DA SILVA LEITE");
+    expect(p.devolvido_de).toBe("rh");
+    expect(p.devolvido_motivo).toBe("a data do aviso não bate");
+    expect(typeof p.devolvido_em).toBe("string");
+  });
+
+  it("desfaz o ASO — senão a segunda passagem pularia o SST", () => {
+    expect(p.sst_por).toBeNull();
+    expect(p.sst_em).toBeNull();
+    expect(p.sst_data_exame).toBeNull();
+    expect(p.sst_local_exame).toBeNull();
+  });
+
+  it("desfaz a decisão do analista — ele vai decidir de novo", () => {
+    expect(p.operacional_por).toBeNull();
+    expect(p.operacional_em).toBeNull();
+    expect(p.operacional_motivo).toBeNull();
+  });
+
+  it("desfaz o que o RH tinha carimbado", () => {
+    expect(p.rh_por).toBeNull();
+    expect(p.rh_em).toBeNull();
+    expect(p.rh_observacao).toBeNull();
+  });
+});
+
+describe("resumoDevolucao", () => {
+  it("sem devolução, não inventa", () => {
+    expect(resumoDevolucao({})).toBeNull();
+    expect(resumoDevolucao({ devolvido_de: "rh", devolvido_por: "X", devolvido_em: null })).toBeNull();
+  });
+
+  it("diz de qual etapa veio, que é o que muda o que conferir", () => {
+    // Erro apontado pelo SST é sobre o exame; pelo RH, sobre o acerto.
+    const sst = resumoDevolucao({ devolvido_de: "sst", devolvido_por: "Ana", devolvido_em: "2026-09-02T12:00:00Z" });
+    const rh  = resumoDevolucao({ devolvido_de: "rh",  devolvido_por: "Melissa", devolvido_em: "2026-09-02T12:00:00Z" });
+    expect(sst).toContain("pelo SST");
+    expect(sst).toContain("Ana");
+    expect(rh).toContain("pelo RH");
+    expect(rh).toContain("Melissa");
   });
 });

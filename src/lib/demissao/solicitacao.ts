@@ -183,6 +183,28 @@ export interface SolicitacaoDemissao {
   sst_por: string | null;
   sst_em: string | null;
 
+  /**
+   * A DEVOLUÇÃO ao analista (02/09/2026).
+   *
+   * O erro na solicitação costuma aparecer no fim — o RH é a última etapa e é
+   * lá que se percebe que o aviso está errado, que falta documento, que a
+   * data não bate. Antes disso as únicas saídas eram concluir um desligamento
+   * errado ou abandonar o card.
+   *
+   * Devolver leva de volta para `Pendente Analista`, e não para o
+   * Operacional: o Operacional acompanha a demissão mas não decide nada nela,
+   * então um card devolvido para lá ficaria encalhado onde ninguém pode
+   * mexer. Ver o cabeçalho da migration 20260930000045.
+   *
+   * Colunas próprias, e não `operacional_motivo`: aquela é do analista, e
+   * escrever a devolução do RH lá faria o histórico mentir sobre quem recusou.
+   */
+  devolvido_por: string | null;
+  devolvido_em: string | null;
+  devolvido_motivo: string | null;
+  /** De qual etapa a devolução partiu: 'sst' ou 'rh'. */
+  devolvido_de: string | null;
+
   criado_em: string | null;
   atualizado_em: string | null;
 }
@@ -218,6 +240,67 @@ export function fmtTamanho(bytes?: number | null): string {
 }
 
 export const hojeISO = () => new Date().toISOString().slice(0, 10);
+
+// ── Devolução ────────────────────────────────────────────────────────
+
+/** As etapas que podem mandar a solicitação de volta para o analista. */
+export const ETAPAS_QUE_DEVOLVEM = ["sst", "rh"] as const;
+export type EtapaQueDevolve = (typeof ETAPAS_QUE_DEVOLVEM)[number];
+
+/** Mínimo do motivo — o mesmo das outras recusas do ERP. */
+export const MOTIVO_DEVOLUCAO_MIN = 10;
+
+/**
+ * Esta etapa pode devolver ESTA solicitação agora?
+ *
+ * Só quem tem trabalho a fazer nela: devolver é recusar o próprio turno, e
+ * não faz sentido recusar um turno que ainda não chegou (ou que já passou).
+ */
+export function podeDevolver(etapa: string, status: string): etapa is EtapaQueDevolve {
+  if (etapa === "sst") return status === "Pendente SST";
+  if (etapa === "rh") return status === "Pendente RH";
+  return false;
+}
+
+/**
+ * O que fica gravado quando alguém devolve.
+ *
+ * O status volta para o começo da linha de decisão — `Pendente Analista` — e
+ * os carimbos das etapas seguintes são LIMPOS: se o SST tinha marcado o ASO e
+ * a solicitação voltou, aquele exame não vale mais como etapa cumprida. Sem
+ * isso a solicitação voltaria ao analista já "meio aprovada", e ao seguir de
+ * novo pularia o SST.
+ */
+export function patchDevolucao(
+  etapa: EtapaQueDevolve,
+  quem: string,
+  motivo: string,
+): Record<string, unknown> {
+  return {
+    status: "Pendente Analista" as Status,
+    devolvido_por: quem,
+    devolvido_em: new Date().toISOString(),
+    devolvido_motivo: motivo.trim(),
+    devolvido_de: etapa,
+    // A decisão do analista também sai: ele vai decidir de novo, e manter a
+    // anterior faria a tela mostrar "aprovado por" numa solicitação pendente.
+    operacional_por: null, operacional_em: null, operacional_motivo: null,
+    // O que a etapa que devolveu (e as seguintes) tinham carimbado.
+    sst_data_exame: null, sst_hora_exame: null, sst_local_exame: null,
+    sst_maps_url: null, sst_observacao: null, sst_por: null, sst_em: null,
+    rh_por: null, rh_em: null, rh_observacao: null,
+  };
+}
+
+/** "Devolvida pelo RH em 02/09/2026" — a devolução em uma linha. */
+export function resumoDevolucao(s: {
+  devolvido_de?: string | null; devolvido_por?: string | null; devolvido_em?: string | null;
+}): string | null {
+  if (!s.devolvido_em) return null;
+  const de = s.devolvido_de === "sst" ? "pelo SST" : s.devolvido_de === "rh" ? "pelo RH" : "";
+  const por = s.devolvido_por ? ` (${s.devolvido_por})` : "";
+  return `Devolvida ${de}${por} em ${fmtDataHora(s.devolvido_em)}`.replace("  ", " ");
+}
 
 /**
  * Link para abrir o local do ASO no Google Maps — a mesma regra do ASO de

@@ -79,8 +79,9 @@ const demissao: Fluxo = {
     },
   ],
   observacoes: [
+    "O SST e o RH podem DEVOLVER ao analista quando a solicitação vem com erro — ela volta para a fila dele com o motivo escrito, e o que já tinha sido carimbado nas etapas seguintes é desfeito. Quando voltar, passa pelo SST de novo.",
     "O Operacional enxerga o fluxo inteiro em Operacional › Solicitações de Demissão, mas só para acompanhar — quem decide a primeira etapa é o analista.",
-    "Reprovada em qualquer ponto, a solicitação para e volta para o encarregado com o motivo.",
+    "Reprovada pelo analista, a solicitação para e volta para o encarregado com o motivo.",
     "O encarregado acompanha tudo em Minhas Solicitações, e a conversa da solicitação é a mesma para todos os setores.",
   ],
 };
