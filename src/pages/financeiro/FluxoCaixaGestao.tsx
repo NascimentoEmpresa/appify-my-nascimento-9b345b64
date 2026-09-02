@@ -211,18 +211,22 @@ export default function FluxoCaixaGestao() {
           <div className="overflow-x-auto">
             <Table>
               <TableHeader>
+                {/* SIS-2026-0306 (Iury): ordem das colunas ajustada — ID,
+                    Data de Pagamento, Tipo, Classificação, Descrição,
+                    Competência, Empresa, Contrato, Banco, Forma de
+                    Pagamento, Valor. */}
                 <TableRow>
-                  <TableHead>ID</TableHead>
-                  <TableHead>Data de Pagamento</TableHead>
-                  <TableHead>Competência</TableHead>
-                  <TableHead>Tipo</TableHead>
-                  <TableHead>Empresa</TableHead>
-                  <TableHead>Contrato</TableHead>
-                  <TableHead>Classificação</TableHead>
-                  <TableHead>Descrição</TableHead>
-                  <TableHead>Forma de Pagamento</TableHead>
-                  <TableHead>Banco</TableHead>
-                  <TableHead className="text-right">Valor (R$)</TableHead>
+                  <TableHead className="text-center">ID</TableHead>
+                  <TableHead className="text-center">Data de Pagamento</TableHead>
+                  <TableHead className="text-center">Tipo</TableHead>
+                  <TableHead className="text-center">Classificação</TableHead>
+                  <TableHead className="text-center">Descrição</TableHead>
+                  <TableHead className="text-center">Competência</TableHead>
+                  <TableHead className="text-center">Empresa</TableHead>
+                  <TableHead className="text-center">Contrato</TableHead>
+                  <TableHead className="text-center">Banco</TableHead>
+                  <TableHead className="text-center">Forma de Pagamento</TableHead>
+                  <TableHead className="text-center">Valor (R$)</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -243,21 +247,21 @@ export default function FluxoCaixaGestao() {
                 )}
                 {filtradas.map((l) => (
                   <TableRow key={l.despesa_id}>
-                    <TableCell className="font-mono text-xs">{l.id_malote}</TableCell>
-                    <TableCell className="text-sm">{l.data_pagamento ? new Date(l.data_pagamento + "T00:00:00").toLocaleDateString("pt-BR") : "—"}</TableCell>
-                    <TableCell className="text-sm">{l.competencia ? new Date(l.competencia + "T00:00:00").toLocaleDateString("pt-BR", { month: "2-digit", year: "numeric" }) : "—"}</TableCell>
-                    <TableCell>
+                    <TableCell className="text-center font-mono text-xs">{l.id_malote}</TableCell>
+                    <TableCell className="text-center text-sm">{l.data_pagamento ? new Date(l.data_pagamento + "T00:00:00").toLocaleDateString("pt-BR") : "—"}</TableCell>
+                    <TableCell className="text-center">
                       <Badge className="bg-red-100 text-red-800 dark:bg-red-950/40 dark:text-red-300">Saída</Badge>
                     </TableCell>
-                    <TableCell className="text-sm">{l.empresa_nome ?? "—"}</TableCell>
-                    <TableCell className="text-sm">{l.contrato_nome ?? "—"}</TableCell>
-                    <TableCell className="text-sm">{l.classificacao_nome ?? "—"}</TableCell>
-                    <TableCell className="text-sm">{l.descricao}</TableCell>
-                    <TableCell className="text-sm">{l.forma_pagamento ?? "—"}</TableCell>
-                    <TableCell className="text-sm">
+                    <TableCell className="text-center text-sm">{l.classificacao_nome ?? "—"}</TableCell>
+                    <TableCell className="text-center text-sm">{l.descricao}</TableCell>
+                    <TableCell className="text-center text-sm">{l.competencia ? new Date(l.competencia + "T00:00:00").toLocaleDateString("pt-BR", { month: "2-digit", year: "numeric" }) : "—"}</TableCell>
+                    <TableCell className="text-center text-sm">{l.empresa_nome ?? "—"}</TableCell>
+                    <TableCell className="text-center text-sm">{l.contrato_nome ?? "—"}</TableCell>
+                    <TableCell className="text-center text-sm">
                       {l.banco_nome ? <BancoBadge nome={l.banco_nome} logoUrl={urlLogoCartao(l.banco_logo_path)} /> : "—"}
                     </TableCell>
-                    <TableCell className="text-right text-sm font-medium">{formatBRL(l.valor)}</TableCell>
+                    <TableCell className="text-center text-sm">{l.forma_pagamento ?? "—"}</TableCell>
+                    <TableCell className="text-center text-sm font-medium">{formatBRL(l.valor)}</TableCell>
                   </TableRow>
                 ))}
               </TableBody>
