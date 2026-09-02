@@ -27,6 +27,9 @@ import { useTiposFormaPagamento } from "@/hooks/useMaloteFormaPagamento";
 import { TipoClassificacaoOrcamento } from "@/hooks/usePlanejamentoOrcamentario";
 import { cn } from "@/lib/utils";
 import { vincularContaAoMalote, PARAM_ORIGEM } from "@/pages/juridico/patrimonio/vinculoMalote";
+import {
+  vincularReembolsoAoMalote, PARAM_ORIGEM_REEMBOLSO,
+} from "@/lib/reembolso/vinculoMalote";
 import { AnexosField } from "./AnexosField";
 import { DiaPagamentoPicker } from "./DiaPagamentoPicker";
 import { ExcecaoDiaBloqueadoField } from "./ExcecaoDiaBloqueadoField";
@@ -139,6 +142,10 @@ export function PainelDespesaMalote({
 }) {
   const [paramsUrl] = useSearchParams();
   const obrigacaoPatrimonio = paramsUrl.get(PARAM_ORIGEM);
+  // Mesmo mecanismo do Patrimônio, outra origem: a Central de Serviços manda
+  // o reembolso aprovado para cá com tudo preenchido menos a classificação —
+  // que é escolha por despesa, e é o que trouxe a pessoa até este formulário.
+  const reembolsoOrigem = paramsUrl.get(PARAM_ORIGEM_REEMBOLSO);
   const [confirmacao, setConfirmacao] = useState<{ titulo: string; subtitulo: string; numero?: string | null } | null>(null);
   const salvar = useSalvarDespesa();
   const converter = useConverterSolicitacaoEmDespesa();
@@ -273,6 +280,16 @@ export function PainelDespesaMalote({
         const vinculo = await vincularContaAoMalote(obrigacaoPatrimonio, despesaId);
         if (!vinculo.ok && vinculo.erro) {
           toast.warning("Despesa criada, mas a conta do Patrimônio não foi marcada como enviada: " + vinculo.erro);
+        }
+      }
+
+      if (reembolsoOrigem) {
+        const vinculo = await vincularReembolsoAoMalote(reembolsoOrigem, despesaId);
+        // Avisa em vez de estourar: a despesa JÁ existe, e desfazê-la por
+        // causa do carimbo seria trocar um problema pequeno (reembolso que
+        // continua "Aprovado") por um grande (dinheiro que sumiu do Malote).
+        if (!vinculo.ok && vinculo.erro) {
+          toast.warning("Despesa criada, mas o reembolso não foi marcado como enviado: " + vinculo.erro);
         }
       }
 

@@ -11,13 +11,15 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import {
-  BUCKET, TABELA, TABELA_ANEXOS, corDoStatus, explicaStatus, fmtData, fmtDataHora,
-  fmtTamanho, linkDoLocalASO, resumoDoASO, type AnexoDemissao, type SolicitacaoDemissao,
+  BUCKET, MOTIVO_DEVOLUCAO_MIN, TABELA, TABELA_ANEXOS, corDoStatus, explicaStatus,
+  fmtData, fmtDataHora, fmtTamanho, linkDoLocalASO, patchDevolucao, podeDevolver,
+  resumoDevolucao, resumoDoASO,
+  type AnexoDemissao, type EtapaQueDevolve, type SolicitacaoDemissao,
 } from "@/lib/demissao/solicitacao";
 import { MapaPicker } from "@/components/sst/MapaPicker";
 import {
   CheckCircle2, Clock, Download, Eye, FileText, Loader2, MapPin, Search, Stethoscope,
-  ThumbsDown, ThumbsUp, XCircle,
+  ThumbsDown, ThumbsUp, Undo2, XCircle,
 } from "lucide-react";
 import { ConversaSolicitacao } from "@/components/solicitacoes/ConversaSolicitacao";
 import { toast } from "sonner";
@@ -32,6 +34,13 @@ const sb = supabase as any;
  *   sst         → marca o ASO demissional e manda para o RH;
  *   rh          → confirma, e aí sim a demissão fecha;
  *   operacional → SÓ ACOMPANHA. Abre o card, lê tudo, e não decide nada.
+ *
+ * SST e RH também DEVOLVEM ao analista (02/09/2026). O erro na solicitação
+ * costuma aparecer no fim — é o RH que percebe que o aviso está errado ou que
+ * falta documento —, e até então as únicas saídas eram concluir um
+ * desligamento errado ou abandonar o card. Devolver volta para `Pendente
+ * Analista` com o motivo escrito, e desfaz o que as etapas seguintes já
+ * tinham carimbado (ver `patchDevolucao`).
  *
  * Um componente só porque a lista, os filtros, o detalhe e os anexos são
  * idênticos: o que muda é quem pode agir e sobre qual status. Quatro cópias
@@ -234,7 +243,17 @@ export function PainelDemissoes({ etapa }: { etapa: Etapa }) {
                       <TableCell className="hidden lg:table-cell">{s.solicitante_nome || "—"}</TableCell>
                       <TableCell className="hidden sm:table-cell">{fmtData(s.criado_em)}</TableCell>
                       <TableCell>
-                        <Badge variant="outline" className={corDoStatus(s.status)}>{s.status}</Badge>
+                        <div className="flex flex-wrap items-center gap-1">
+                          <Badge variant="outline" className={corDoStatus(s.status)}>{s.status}</Badge>
+                          {/* Um card devolvido está no MESMO status de um que
+                              nunca saiu do analista. Sem o selo, os dois se
+                              parecem na lista e o retrabalho some no meio. */}
+                          {s.devolvido_em && (
+                            <Badge variant="outline" className="border-amber-300 bg-amber-100 text-amber-800">
+                              <Undo2 className="mr-1 h-3 w-3" /> Devolvida
+                            </Badge>
+                          )}
+                        </div>
                       </TableCell>
                       <TableCell>
                         <Button variant="ghost" size="sm" onClick={(e) => { e.stopPropagation(); setAberta(s); }}>
@@ -270,6 +289,11 @@ function DetalheSolicitacao({ solicitacao, etapa, quemSou, onFechar, onDecidir }
   const [motivo, setMotivo] = useState("");
   const [observacao, setObservacao] = useState("");
   const [salvando, setSalvando] = useState(false);
+  // O motivo da DEVOLUÇÃO é campo à parte do motivo da reprovação: são duas
+  // recusas diferentes, de gente diferente, e um estado só faria o texto de
+  // uma aparecer no formulário da outra.
+  const [motivoDevolucao, setMotivoDevolucao] = useState("");
+  const [devolvendo, setDevolvendo] = useState(false);
   // O ASO demissional — os mesmos quatro campos do ASO de admissão.
   const [aso, setAso] = useState({ data: "", hora: "", local: "", maps: "" });
   // Texto que centraliza o mapa; só muda quando o SST sai do campo "local",
@@ -338,6 +362,27 @@ function DetalheSolicitacao({ solicitacao, etapa, quemSou, onFechar, onDecidir }
       status: "Concluída", rh_por: quemSou,
       rh_em: new Date().toISOString(), rh_observacao: observacao.trim() || null,
     }, `Solicitação #${s.id} confirmada pelo RH — desligamento concluído.`);
+    setSalvando(false);
+  };
+
+  /**
+   * Devolve ao analista, com o motivo escrito.
+   *
+   * É o "reprovar" do SST e do RH: a solicitação volta para a primeira porta
+   * em vez de ser concluída errada ou abandonada. `patchDevolucao` limpa os
+   * carimbos das etapas já cumpridas — ver o comentário lá.
+   */
+  const devolver = async () => {
+    if (motivoDevolucao.trim().length < MOTIVO_DEVOLUCAO_MIN) {
+      toast.error(`Escreva o que precisa ser corrigido (mín. ${MOTIVO_DEVOLUCAO_MIN} caracteres) — é o que o analista vai ler.`);
+      return;
+    }
+    setSalvando(true);
+    await onDecidir(
+      s,
+      patchDevolucao(etapa as EtapaQueDevolve, quemSou, motivoDevolucao),
+      `Solicitação #${s.id} devolvida ao analista.`,
+    );
     setSalvando(false);
   };
 
@@ -444,6 +489,18 @@ function DetalheSolicitacao({ solicitacao, etapa, quemSou, onFechar, onDecidir }
           ]} />
         )}
 
+        {/* A devolução vem PRIMEIRO no detalhe, antes de qualquer campo: é a
+            única coisa que importa num card que voltou, e enterrá-la no meio
+            faria o analista reaprovar o mesmo erro. */}
+        {s.devolvido_em && (
+          <div className="space-y-1 rounded-lg border border-amber-300 bg-amber-50 p-4 text-sm text-amber-900">
+            <p className="flex items-center gap-2 font-semibold">
+              <Undo2 className="h-4 w-4" /> {resumoDevolucao(s)}
+            </p>
+            <p>{s.devolvido_motivo}</p>
+          </div>
+        )}
+
         {/* O Operacional acompanha, não decide. Dizer isso é melhor do que
             simplesmente não desenhar botão nenhum: sem a frase, quem abria o
             card ficava procurando onde clicar. */}
@@ -543,6 +600,49 @@ function DetalheSolicitacao({ solicitacao, etapa, quemSou, onFechar, onDecidir }
             <Button onClick={marcarASO} disabled={salvando}>
               <Stethoscope className="mr-2 h-4 w-4" /> Marcar ASO e concluir
             </Button>
+          </div>
+        )}
+
+        {/* DEVOLVER AO ANALISTA — o "reprovar" do SST e do RH.
+            Fica fora dos blocos de cada etapa porque é a mesma ação nas duas,
+            e recolhido por padrão: devolver é a exceção, não o caminho. */}
+        {podeDevolver(etapa, s.status) && (
+          <div className="space-y-3 rounded-lg border border-destructive/30 bg-destructive/5 p-4">
+            <h3 className="flex items-center gap-2 text-sm font-semibold">
+              <Undo2 className="h-4 w-4" /> Devolver ao analista
+            </h3>
+            <p className="text-sm text-muted-foreground">
+              Use quando a solicitação vier com erro. Ela volta para a fila do analista com o que
+              você escrever aqui, e o que já tinha sido carimbado nas etapas seguintes é desfeito —
+              quando voltar, passa pelo SST de novo.
+            </p>
+            <div>
+              <Label htmlFor="motivo-devolucao">
+                O que precisa ser corrigido <span className="text-destructive">*</span>
+              </Label>
+              <Textarea
+                id="motivo-devolucao"
+                className="mt-1"
+                placeholder="Ex.: a data do aviso prévio não bate com o desligamento; falta o documento assinado."
+                value={motivoDevolucao}
+                onChange={(e) => setMotivoDevolucao(e.target.value)}
+              />
+            </div>
+            {!devolvendo ? (
+              <Button variant="outline" onClick={() => setDevolvendo(true)} disabled={salvando}>
+                <Undo2 className="mr-2 h-4 w-4" /> Devolver ao analista
+              </Button>
+            ) : (
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="text-sm font-medium">Devolver mesmo? O que já foi feito se perde.</span>
+                <Button variant="destructive" onClick={devolver} disabled={salvando}>
+                  <Undo2 className="mr-2 h-4 w-4" /> Sim, devolver
+                </Button>
+                <Button variant="ghost" onClick={() => setDevolvendo(false)} disabled={salvando}>
+                  Cancelar
+                </Button>
+              </div>
+            )}
           </div>
         )}
 

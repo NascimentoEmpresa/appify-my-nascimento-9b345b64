@@ -428,39 +428,13 @@ export function useSalvarConfigReembolso() {
 }
 
 /**
- * Aprova e JÁ lança a despesa no Malote, numa transação só.
- *
- * É o que o botão Aprovar chama desde 02/09/2026. Antes eram dois cliques —
- * aprovar, e depois um "Enviar ao malote" que quase ninguém dava, deixando o
- * reembolso aprovado e o dinheiro em lugar nenhum.
- *
- * Se o Malote recusar, a aprovação volta atrás junto (é uma função, logo uma
- * transação) e a mensagem da RPC diz o motivo — normalmente "falta escolher a
- * classificação em Tipos e Limites". Meio caminho aqui seria reproduzir
- * exatamente o estado que esta mudança existe para eliminar.
- */
-export function useAprovarELancar() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: async (id: string): Promise<string> => {
-      const { data, error } = await sb.rpc("cs_reembolso_aprovar_e_lancar", { _id: id });
-      if (error) throw error;
-      return data as string;
-    },
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["reembolsos"] });
-      qc.invalidateQueries({ queryKey: ["reembolso_meus_stats"] });
-      qc.invalidateQueries({ queryKey: ["reembolso_eventos"] });
-    },
-  });
-}
-
-/**
  * Cria a despesa no Malote a partir do reembolso aprovado.
  *
- * Continua existindo para as solicitações que já estavam em `aprovado` antes
- * de aprovar passar a lançar sozinho — sem isto elas ficariam encalhadas, sem
- * botão nenhum que as levasse ao Malote.
+ * ⚠️ SEM USO desde 02/09/2026. O envio passou a ser feito pelo FORMULÁRIO do
+ * Malote, que devolve o vínculo por `cs_reembolso_vincular_despesa` — ver
+ * `lib/reembolso/vinculoMalote.ts`. Mantido junto com a RPC, que também
+ * continua no banco, para o caminho antigo poder ser retomado num commit só
+ * se o novo se mostrar pior.
  *
  * Toda a regra está na RPC (`cs_reembolso_enviar_ao_malote`): ela confere que
  * quem chamou aprova aquele setor, que o reembolso está aprovado, e devolve a
