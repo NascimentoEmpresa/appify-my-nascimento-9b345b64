@@ -12,6 +12,8 @@ import { useFluxoCaixaMalote } from "@/hooks/useFluxoCaixaMalote";
 import { formatBRL } from "@/hooks/usePlanilhaCusto";
 import { useTiposFormaPagamento } from "@/hooks/useMaloteFormaPagamento";
 import { KpiTile } from "@/components/financeiro/KpiTile";
+import { BancoBadge } from "@/components/financeiro/BancoBadge";
+import { urlLogoCartao } from "@/hooks/useMaloteCartaoCredito";
 
 // SIS-2026-0160: início do Fluxo de Caixa. Por enquanto a única fonte de
 // dado é o Pagamento Malote (só saída) — os cards de Entradas/Saldo ficam
@@ -30,6 +32,9 @@ export default function FluxoCaixaGestao() {
   const [contratoId, setContratoId] = useState("");
   const [classificacaoId, setClassificacaoId] = useState("");
   const [formaPagamento, setFormaPagamento] = useState("");
+  // SIS-2026-0307: "após o pagamento alimentamos o fluxo de caixa" (usuário)
+  // — Banco entra aqui, não em Pagamento Malote/Meus Itens.
+  const [bancoId, setBancoId] = useState("");
 
   const empresasDisponiveis = useMemo(() => {
     const map = new Map<string, string>();
@@ -49,6 +54,15 @@ export default function FluxoCaixaGestao() {
     return Array.from(map.entries()).sort((a, b) => a[1].localeCompare(b[1], "pt-BR"));
   }, [linhas]);
 
+  // SIS-2026-0307: mesmo padrão dos filtros acima — deriva direto das
+  // linhas já carregadas (a view já entrega banco_nome pronto), sem
+  // depender de outro hook nem da RLS de malote_cartao_banco pra esta tela.
+  const bancosDisponiveis = useMemo(() => {
+    const map = new Map<string, string>();
+    linhas.forEach((l) => l.banco_id && l.banco_nome && map.set(l.banco_id, l.banco_nome));
+    return Array.from(map.entries()).sort((a, b) => a[1].localeCompare(b[1], "pt-BR"));
+  }, [linhas]);
+
   function limparFiltros() {
     setDataDe("");
     setDataAte("");
@@ -57,6 +71,7 @@ export default function FluxoCaixaGestao() {
     setContratoId("");
     setClassificacaoId("");
     setFormaPagamento("");
+    setBancoId("");
   }
 
   const filtradas = useMemo(() => {
@@ -68,9 +83,10 @@ export default function FluxoCaixaGestao() {
       if (contratoId && l.contrato_id !== contratoId) return false;
       if (classificacaoId && l.classificacao_id !== classificacaoId) return false;
       if (formaPagamento && l.forma_pagamento !== formaPagamento) return false;
+      if (bancoId && l.banco_id !== bancoId) return false;
       return true;
     });
-  }, [linhas, dataDe, dataAte, competencia, empresaId, contratoId, classificacaoId, formaPagamento]);
+  }, [linhas, dataDe, dataAte, competencia, empresaId, contratoId, classificacaoId, formaPagamento, bancoId]);
 
   const totalSaidas = useMemo(() => filtradas.reduce((s, l) => s + Number(l.valor), 0), [filtradas]);
 
@@ -170,6 +186,18 @@ export default function FluxoCaixaGestao() {
                 </SelectContent>
               </Select>
             </div>
+            <div>
+              <Label className="text-xs">Banco</Label>
+              <Select value={bancoId || "todos"} onValueChange={(v) => setBancoId(v === "todos" ? "" : v)}>
+                <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="todos">Todos</SelectItem>
+                  {bancosDisponiveis.map(([id, nome]) => (
+                    <SelectItem key={id} value={id}>{nome}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
           </div>
         </CardContent>
       </Card>
@@ -183,28 +211,33 @@ export default function FluxoCaixaGestao() {
           <div className="overflow-x-auto">
             <Table>
               <TableHeader>
+                {/* SIS-2026-0306 (Iury): ordem das colunas ajustada — ID,
+                    Data de Pagamento, Tipo, Classificação, Descrição,
+                    Competência, Empresa, Contrato, Banco, Forma de
+                    Pagamento, Valor. */}
                 <TableRow>
-                  <TableHead>ID</TableHead>
-                  <TableHead>Data de Pagamento</TableHead>
-                  <TableHead>Competência</TableHead>
-                  <TableHead>Tipo</TableHead>
-                  <TableHead>Empresa</TableHead>
-                  <TableHead>Contrato</TableHead>
-                  <TableHead>Classificação</TableHead>
-                  <TableHead>Descrição</TableHead>
-                  <TableHead>Forma de Pagamento</TableHead>
-                  <TableHead className="text-right">Valor (R$)</TableHead>
+                  <TableHead className="text-center">ID</TableHead>
+                  <TableHead className="text-center">Data de Pagamento</TableHead>
+                  <TableHead className="text-center">Tipo</TableHead>
+                  <TableHead className="text-center">Classificação</TableHead>
+                  <TableHead className="text-center">Descrição</TableHead>
+                  <TableHead className="text-center">Competência</TableHead>
+                  <TableHead className="text-center">Empresa</TableHead>
+                  <TableHead className="text-center">Contrato</TableHead>
+                  <TableHead className="text-center">Banco</TableHead>
+                  <TableHead className="text-center">Forma de Pagamento</TableHead>
+                  <TableHead className="text-center">Valor (R$)</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {isLoading && (
                   <TableRow>
-                    <TableCell colSpan={10} className="text-center text-muted-foreground py-10">Carregando...</TableCell>
+                    <TableCell colSpan={11} className="text-center text-muted-foreground py-10">Carregando...</TableCell>
                   </TableRow>
                 )}
                 {!isLoading && filtradas.length === 0 && (
                   <TableRow>
-                    <TableCell colSpan={10} className="text-center text-muted-foreground py-10">
+                    <TableCell colSpan={11} className="text-center text-muted-foreground py-10">
                       <div className="flex flex-col items-center gap-2">
                         <TrendingDown className="h-8 w-8 text-muted-foreground/50" />
                         Nenhuma movimentação encontrada com os filtros atuais.
@@ -214,18 +247,21 @@ export default function FluxoCaixaGestao() {
                 )}
                 {filtradas.map((l) => (
                   <TableRow key={l.despesa_id}>
-                    <TableCell className="font-mono text-xs">{l.id_malote}</TableCell>
-                    <TableCell className="text-sm">{l.data_pagamento ? new Date(l.data_pagamento + "T00:00:00").toLocaleDateString("pt-BR") : "—"}</TableCell>
-                    <TableCell className="text-sm">{l.competencia ? new Date(l.competencia + "T00:00:00").toLocaleDateString("pt-BR", { month: "2-digit", year: "numeric" }) : "—"}</TableCell>
-                    <TableCell>
+                    <TableCell className="text-center font-mono text-xs">{l.id_malote}</TableCell>
+                    <TableCell className="text-center text-sm">{l.data_pagamento ? new Date(l.data_pagamento + "T00:00:00").toLocaleDateString("pt-BR") : "—"}</TableCell>
+                    <TableCell className="text-center">
                       <Badge className="bg-red-100 text-red-800 dark:bg-red-950/40 dark:text-red-300">Saída</Badge>
                     </TableCell>
-                    <TableCell className="text-sm">{l.empresa_nome ?? "—"}</TableCell>
-                    <TableCell className="text-sm">{l.contrato_nome ?? "—"}</TableCell>
-                    <TableCell className="text-sm">{l.classificacao_nome ?? "—"}</TableCell>
-                    <TableCell className="text-sm">{l.descricao}</TableCell>
-                    <TableCell className="text-sm">{l.forma_pagamento ?? "—"}</TableCell>
-                    <TableCell className="text-right text-sm font-medium">{formatBRL(l.valor)}</TableCell>
+                    <TableCell className="text-center text-sm">{l.classificacao_nome ?? "—"}</TableCell>
+                    <TableCell className="text-center text-sm">{l.descricao}</TableCell>
+                    <TableCell className="text-center text-sm">{l.competencia ? new Date(l.competencia + "T00:00:00").toLocaleDateString("pt-BR", { month: "2-digit", year: "numeric" }) : "—"}</TableCell>
+                    <TableCell className="text-center text-sm">{l.empresa_nome ?? "—"}</TableCell>
+                    <TableCell className="text-center text-sm">{l.contrato_nome ?? "—"}</TableCell>
+                    <TableCell className="text-center text-sm">
+                      {l.banco_nome ? <BancoBadge nome={l.banco_nome} logoUrl={urlLogoCartao(l.banco_logo_path)} /> : "—"}
+                    </TableCell>
+                    <TableCell className="text-center text-sm">{l.forma_pagamento ?? "—"}</TableCell>
+                    <TableCell className="text-center text-sm font-medium">{formatBRL(l.valor)}</TableCell>
                   </TableRow>
                 ))}
               </TableBody>
