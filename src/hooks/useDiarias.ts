@@ -1,5 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
+import { NovaParcela, RateioLinha, uploadAnexoMalote } from "@/hooks/useMaloteDespesa";
 import {
   AnexoDiaria,
   LinhaDiaria,
@@ -38,6 +40,21 @@ export interface ContratoDiaria {
   nome: string;
   cliente: string | null;
   empresa: string | null;
+}
+
+/** Empresa real do contrato, usada pelo rateio do Malote na aprovação. */
+export function useEmpresaContratoDiaria(contratoId: string | null | undefined) {
+  return useQuery({
+    queryKey: ["diaria_empresa_contrato", contratoId],
+    enabled: !!contratoId,
+    queryFn: async (): Promise<string | null> => {
+      const { data, error } = await sb.rpc("diaria_empresa_contrato", {
+        p_contrato_id: contratoId,
+      });
+      if (error) throw error;
+      return (data as string | null | undefined) ?? null;
+    },
+  });
 }
 
 export interface PostoDiaria {
@@ -302,11 +319,32 @@ export function useCriarSolicitacaoDiaria() {
   });
 }
 
+export interface DespesaAprovacaoDiaria {
+  nome: string;
+  valor_total: number;
+  data_pagamento: string | null;
+  competencia: string | null;
+  forma_pagamento: string | null;
+  informacoes_pagamento: string | null;
+  excecao?: boolean;
+  justificativa_excecao?: string | null;
+  parcelado?: boolean;
+  numero_parcelas?: number | null;
+  dia_desconto?: number | null;
+  rateio?: RateioLinha[];
+  parcelas?: NovaParcela[];
+  arquivosNovos: File[];
+}
+
 /**
  * Aprovar ou reprovar. Quem decidiu e quando são carimbados pela trigger
- * diaria_guard() a partir do usuário logado — não são mandados daqui. Na
- * aprovação, a mesma trigger cria atomicamente a despesa em rascunho no
- * Malote; se o Malote recusar, o status da diária também não muda.
+ * diaria_guard() a partir do usuário logado — não são mandados daqui.
+ *
+ * SIS-2026-0287: reprovar continua no UPDATE simples; aprovar chama a RPC
+ * SECURITY DEFINER que cria despesa, rateio e parcelas e só então muda a
+ * diária para aprovada, tudo na mesma transação. Se qualquer regra do Malote
+ * recusar, nenhum dos registros fica pela metade. Os anexos continuam depois,
+ * porque o caminho no Storage depende do id devolvido pela RPC.
  */
 export function useDecidirSolicitacaoDiaria() {
   const qc = useQueryClient();
@@ -314,17 +352,66 @@ export function useDecidirSolicitacaoDiaria() {
     mutationFn: async (input: {
       id: string;
       status: Extract<StatusSolicitacao, "aprovada" | "reprovada">;
-      maloteMotivo?: string;
-      maloteDataPagamento?: string;
+      despesa?: DespesaAprovacaoDiaria;
     }) => {
-      const patch: Record<string, unknown> = { status: input.status };
       if (input.status === "aprovada") {
-        patch.malote_motivo = input.maloteMotivo ?? null;
-        patch.malote_data_pagamento = input.maloteDataPagamento || null;
+        if (!input.despesa) throw new Error("Preencha os dados da despesa do Malote.");
+        const { arquivosNovos, ...pDespesa } = input.despesa;
+        const { data, error } = await sb.rpc("diaria_aprovar_com_despesa", {
+          p_solicitacao_id: input.id,
+          p_despesa: pDespesa,
+        });
+        if (error) throw error;
+        const despesaId = typeof data === "string" ? data : (data?.id as string | undefined);
+        if (!despesaId) throw new Error("A aprovação não devolveu o id da despesa criada.");
+
+        // SIS-2026-0287 (correção): os anexos da diária NÃO iam para o Malote.
+        // Eles são obrigatórios na criação (diaria_solicitacao_criar recusa sem
+        // comprovante de ponto e sem documento) e ficam no bucket "diarias", mas
+        // nada nunca os levou adiante — a despesa nascia com arquivos vazio e o
+        // N1 aprovava pagamento a pessoa física sem ver a papelada.
+        //
+        // Copiamos em vez de só referenciar: o bucket "diarias" exige
+        // can_access('operacional_diarias','visualizar'), que o aprovador da
+        // Controladoria normalmente NÃO tem — ele veria o anexo listado e
+        // tomaria erro ao clicar. Em "malote-anexos" valem as regras do Malote.
+        // De quebra, a cópia congela o que foi aprovado, independente do que
+        // aconteça com os anexos da diária depois.
+        const { paths: pathsDaDiaria, falhas } = await copiarAnexosDiariaParaMalote(input.id, despesaId);
+        let anexosComFalha = falhas.length > 0;
+
+        const resultados = await Promise.allSettled(
+          arquivosNovos.map((arquivo) => uploadAnexoMalote(arquivo, despesaId)),
+        );
+        const pathsDoAprovador = resultados
+          .filter((r): r is PromiseFulfilledResult<string> => r.status === "fulfilled")
+          .map((r) => r.value);
+        anexosComFalha ||= resultados.some((r) => r.status === "rejected");
+
+        // Os da diária primeiro: é a ordem em que o Malote lê o caso (papelada
+        // da solicitação, depois o que o aprovador juntou na hora).
+        const paths = [...pathsDaDiaria, ...pathsDoAprovador];
+        if (paths.length > 0) {
+          const { error: erroAnexos } = await sb
+            .from("malote_despesa")
+            .update({ arquivos: paths })
+            .eq("id", despesaId)
+            .select("id")
+            .single();
+          anexosComFalha ||= !!erroAnexos;
+        }
+        if (anexosComFalha) {
+          // Aviso, não erro: a diária já está aprovada e a despesa já existe.
+          // Derrubar tudo por causa de um arquivo seria pior do que avisar.
+          const quais = falhas.length > 0 ? ` (${falhas.join(", ")})` : "";
+          toast.warning(`A diária e a despesa foram aprovadas, mas um ou mais anexos falharam${quais}. Abra a despesa no Malote e reenvie os arquivos.`);
+        }
+        return despesaId;
       }
+
       const { error } = await sb
         .from("DIARIA_SOLICITACAO")
-        .update(patch)
+        .update({ status: "reprovada" })
         .eq("id", input.id)
         .select("id")
         .single();
@@ -342,6 +429,74 @@ export async function urlAnexoDiaria(storagePath: string) {
 }
 
 // ── Apoio ────────────────────────────────────────────────────────────
+
+/** O que a cópia para o Malote precisa saber de cada anexo da diária. */
+interface AnexoParaCopiar {
+  categoria: AnexoDiaria["categoria"];
+  storage_path: string;
+  nome_arquivo: string | null;
+  mime_type: string | null;
+}
+
+/**
+ * Leva os anexos da diária para a pasta da despesa no Malote (SIS-2026-0287).
+ *
+ * Baixa de "diarias" e sobe em "malote-anexos" — os dois buckets têm regras de
+ * acesso diferentes, então link não resolveria (o porquê está no comentário da
+ * aprovação). Roda com o login de quem aprova, que tem leitura no primeiro e
+ * escrita no segundo; não precisa de função SECURITY DEFINER.
+ *
+ * O nome vai legível ("comprovante-ponto-<arquivo>"), porque a tela da despesa
+ * usa o último pedaço do caminho como rótulo e uploadAnexoMalote() batiza tudo
+ * de UUID — inútil para quem precisa saber qual é o comprovante do ponto.
+ *
+ * Nunca lança: quando isto roda a despesa já existe e a diária já está
+ * aprovada. Devolve o que subiu e o nome do que falhou, para o aviso na tela.
+ */
+async function copiarAnexosDiariaParaMalote(
+  solicitacaoId: string,
+  despesaId: string,
+): Promise<{ paths: string[]; falhas: string[] }> {
+  const paths: string[] = [];
+  const falhas: string[] = [];
+
+  const { data, error } = await sb
+    .from("DIARIA_ANEXO")
+    .select("categoria, storage_path, nome_arquivo, mime_type")
+    .eq("solicitacao_id", solicitacaoId)
+    .order("categoria");
+  if (error || !data) return { paths, falhas: ["não foi possível ler os anexos da diária"] };
+
+  const usados = new Set<string>();
+  for (const anexo of data as AnexoParaCopiar[]) {
+    const rotulo = anexo.categoria === "comprovante_ponto" ? "comprovante-ponto" : "documento";
+    const nomeExibido = anexo.nome_arquivo || anexo.storage_path.split("/").pop() || "anexo";
+    try {
+      const { data: blob, error: erroDownload } = await supabase.storage
+        .from(BUCKET)
+        .download(anexo.storage_path);
+      if (erroDownload || !blob) throw erroDownload ?? new Error("arquivo vazio");
+
+      // Mesma sanitização do upload da diária: acento e espaço no caminho do
+      // bucket viram "Invalid key" no Storage, e nome brasileiro tem os dois.
+      const seguro = nomeExibido.normalize("NFD").replace(/[^\w.-]+/g, "_");
+      let nome = `${rotulo}-${seguro}`;
+      // Dois documentos com o mesmo nome existem; o Storage recusa o segundo.
+      for (let n = 2; usados.has(nome); n++) nome = `${rotulo}-${n}-${seguro}`;
+      usados.add(nome);
+
+      const caminho = `${despesaId}/${nome}`;
+      const { error: erroUpload } = await supabase.storage
+        .from("malote-anexos")
+        .upload(caminho, blob, { contentType: anexo.mime_type || blob.type || undefined });
+      if (erroUpload) throw erroUpload;
+      paths.push(caminho);
+    } catch {
+      falhas.push(nomeExibido);
+    }
+  }
+  return { paths, falhas };
+}
 
 async function enviarArquivos(
   solicitacaoId: string,
