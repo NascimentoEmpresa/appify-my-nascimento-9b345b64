@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
-import { AlertTriangle, Clock, Loader2, Plus, Save, Send, Settings2, Wallet } from "lucide-react";
+import { Clock, Loader2, Plus, Save, Send, Settings2, Wallet } from "lucide-react";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { AcessoGate } from "@/components/auth/AcessoGate";
 import { Button } from "@/components/ui/button";
@@ -47,21 +47,21 @@ import {
  * Os padrões usados para criar a despesa no Malote.
  *
  * A `malote_despesa` exige empresa e classificação, e o reembolso não tem
- * nenhuma das duas — não há como derivá-las de uma viagem. Em vez de
- * adivinhar (e criar despesa torta que alguém teria que corrigir na mão),
- * ficam aqui, numa linha só, sob a mesma permissão que governa tetos e
- * janelas.
+ * nenhuma das duas — não há como derivá-las de uma viagem. O que fica aqui
+ * são SUGESTÕES: o que o formulário do Malote já traz preenchido quando um
+ * reembolso aprovado é enviado para lá. Ficam numa linha só, sob a mesma
+ * permissão que governa tetos e janelas.
  *
  * ATÉ 02/09/2026 ESTES CAMPOS ERAM CAIXAS DE TEXTO PEDINDO UUID. Ninguém
- * preencheu — e por isso nenhum reembolso jamais chegou ao Malote: a tabela
- * de config estava inteira nula. Agora são seletores do que existe de
- * verdade, porque um campo que ninguém consegue preencher é um campo que não
- * existe.
+ * preencheu, e a tabela de config ficou inteira nula. Viraram seletores do
+ * que existe de verdade, porque um campo que ninguém consegue preencher é um
+ * campo que não existe.
  *
- * A CLASSIFICAÇÃO É OBRIGATÓRIA no banco, não opcional como dizia o rótulo
- * antigo: `malote_despesa_classificacao_coerente` exige classificação em toda
- * despesa cuja origem não seja multi-classificação. A empresa é o único campo
- * com saída — sem ela, o lançamento usa a empresa de quem pediu o reembolso.
+ * NADA AQUI É OBRIGATÓRIO. Por algumas horas do mesmo dia estes padrões eram
+ * pré-requisito da aprovação — aprovar criava a despesa sozinho e recusava
+ * sem classificação, o que travou a fila inteira do Jurídico. Hoje o envio
+ * passa pelo formulário do Malote, então isto voltou a ser o que sempre
+ * deveria ter sido: sugestão, não exigência.
  */
 function PadroesMalote() {
   const { data: cfg } = useConfigReembolso();
@@ -83,32 +83,20 @@ function PadroesMalote() {
     }
   };
 
-  const semClassificacao = !form.classificacao_id;
-
   return (
     <Card className="mb-4 p-4">
       <p className="mb-1 flex items-center gap-2 text-sm font-medium">
         <Send className="h-4 w-4" /> Padrões para o malote
       </p>
       <p className="mb-3 text-xs text-muted-foreground">
-        Com que empresa e classificação a despesa nasce no Malote quando um reembolso é aprovado.
-        Aprovar já lança a despesa, então <b>sem a classificação a aprovação é recusada</b> — o
-        Malote não aceita despesa sem classificação.
+        <b>Tudo opcional.</b> São sugestões para o formulário do Malote já vir preenchido
+        quando um reembolso aprovado é enviado. Quem envia confere e troca o que quiser lá —
+        inclusive a classificação, que é escolha por despesa, não do módulo inteiro.
       </p>
-
-      {semClassificacao && (
-        <div className="mb-3 flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">
-          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
-          <span>
-            <b>Falta escolher a classificação.</b> Enquanto ela estiver em branco, ninguém
-            consegue aprovar reembolso — o lançamento no Malote falha e a aprovação volta atrás.
-          </span>
-        </div>
-      )}
 
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
         <div className="space-y-1.5">
-          <Label className="text-xs">Classificação no Malote <span className="text-destructive">*</span></Label>
+          <Label className="text-xs">Classificação no Malote</Label>
           <Select
             value={form.classificacao_id ?? ""}
             onValueChange={(v) => setForm((f) => ({ ...f, classificacao_id: v || null }))}
@@ -135,7 +123,7 @@ function PadroesMalote() {
             </SelectContent>
           </Select>
           <p className="text-[11px] text-muted-foreground">
-            Em branco, cada despesa nasce na empresa do solicitante.
+            Em branco, o formulário sugere a empresa do solicitante.
           </p>
         </div>
         <div className="space-y-1.5">
