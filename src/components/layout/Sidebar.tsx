@@ -41,7 +41,6 @@ import {
   FileArchive,
   BookOpen,
   ClipboardCheck,
-  DatabaseZap,
   TableProperties,
   Laptop2,
   Wrench,
@@ -344,19 +343,7 @@ const financeiroModule: ModuleDef = {
       label: "Operação Financeira",
       defaultOpen: true,
       items: [
-        { label: "Contas Bancárias", to: "/app/financeiro/contas-bancarias", icon: Wallet },
-        { label: "Contas a Pagar", to: "/app/financeiro/contas-pagar", icon: TrendingUp },
         { label: "Conferência de Ponto", to: "/app/financeiro/conferencia-ponto", icon: ClipboardCheck },
-        { label: "Programação de Pagamentos", to: "/app/financeiro/programacao-pagamentos", icon: Wallet },
-        { label: "Validação Pós-Pagamento", to: "/app/financeiro/validacao-pos-pagamento", icon: Receipt },
-        { label: "Contas a Receber", to: "/app/financeiro/contas-receber", icon: Receipt },
-        { label: "Conta Garantida", to: "/app/financeiro/conta-garantida", icon: ShieldCheck },
-        { label: "Fluxo de Caixa", to: "/app/financeiro/fluxo-caixa", icon: TrendingUp },
-        { label: "Fluxo de Caixa Diário", to: "/app/financeiro/fluxo-caixa-diario", icon: TrendingUp },
-        { label: "Conciliação Fluxo Caixa", to: "/app/financeiro/conciliacao-fluxo-caixa", icon: Receipt },
-        { label: "Análise de Capital de Giro", to: "/app/financeiro/capital-giro", icon: TrendingUp },
-        { label: "Movimentos Bancários", to: "/app/financeiro/movimentos", icon: Wallet },
-        { label: "Integração Bancária", to: "/app/financeiro/integracao-bancaria", icon: Wallet },
       ],
     },
     {
@@ -796,27 +783,6 @@ const biModule: ModuleDef = {
   ],
 };
 
-// Integração & Migração (somente admin)
-const integracaoModule: ModuleDef = {
-  id: "integracao",
-  label: "Integração & Migração",
-  description: "Lotes de planilhas → ERP",
-  icon: DatabaseZap,
-  basePath: "/app/integracao",
-  status: "active",
-  groups: [
-    {
-      label: "Cargas",
-      defaultOpen: true,
-      items: [
-        { label: "Lotes de Integração", to: "/app/integracao", icon: DatabaseZap },
-        { label: "Aliases (De/Para)", to: "/app/integracao/aliases", icon: ListChecks },
-        { label: "Migração DO ZERO", to: "/app/admin/migracao-zero", icon: DatabaseZap },
-      ],
-    },
-  ],
-};
-
 // Consolidação: módulo "Configurações" removido do Sidebar.
 // Todo acesso à governança do ERP é feito pelo rodapé "Configurações do ERP" → /app/administracao.
 // Permissões (matriz), Visibilidade (overrides por usuário), Alçadas, Plano de Ações (ACL),
@@ -977,7 +943,7 @@ const erpModules: ModuleDef[] = [
  * nova: o encarregado via oito itens no menu lateral e dois no Início. Catálogo
  * único é a única forma de isso não se repetir.
  */
-export const NAV_MODULOS: ModuleDef[] = [...erpModules, buildPlanoAcoesModule(false), integracaoModule];
+export const NAV_MODULOS: ModuleDef[] = [...erpModules, buildPlanoAcoesModule(false)];
 export type { ModuleDef as NavModuleDef, NavItem as NavItemDef };
 
 interface SidebarProps {

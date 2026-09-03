@@ -202,7 +202,6 @@ const FAVORITOS_PADRAO = [
   "/app/editais",
   "/app/contratos/ativos",
   "/app/controladoria",
-  "/app/financeiro/contas-pagar",
   "/app/rh/colaboradores",
   "/app/suprimentos/requisicoes",
   "/app/bi",
