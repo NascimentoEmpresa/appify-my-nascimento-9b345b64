@@ -145,6 +145,11 @@ export interface Parcela {
   data_pagamento_real: string | null;
   pago_em: string | null;
   pago_por: string | null;
+  // SIS-2026-0307: banco usado no pagamento desta parcela (catálogo
+  // malote_cartao_banco, reaproveitado do Cartão de Crédito) — cada
+  // parcela pode em tese ser paga por um banco diferente, mesmo padrão de
+  // comprovante_pagamento_path/data_pagamento_real acima.
+  banco_id: string | null;
 }
 
 // O que gerarParcelas monta na criação/edição, antes de existir linha no
@@ -170,6 +175,10 @@ export interface MaloteDespesaRow {
   data_pagamento: string | null;
   competencia: string | null;
   forma_pagamento: string | null;
+  // SIS-2026-0307: banco usado no pagamento (catálogo malote_cartao_banco,
+  // o mesmo do Cartão de Crédito) — pra despesa parcelada, sincronizado a
+  // partir da última parcela paga (mesmo padrão de comprovante_pagamento_path).
+  banco_id: string | null;
   informacoes_pagamento: string | null;
   parcelado: boolean;
   numero_parcelas: number | null;
@@ -318,7 +327,7 @@ async function buscarParcelasPorDespesa(despesas: MaloteDespesaRow[]): Promise<M
 
 const DESPESA_COLUMNS =
   "id, numero, empresa_id, classificacao_id, origem, status, nome, valor_total, motivo, descricao, links, tipo_movimento, tipo, contrato_id, " +
-  "data_pagamento, competencia, forma_pagamento, informacoes_pagamento, parcelado, numero_parcelas, dia_desconto, " +
+  "data_pagamento, competencia, forma_pagamento, banco_id, informacoes_pagamento, parcelado, numero_parcelas, dia_desconto, " +
   "nivel_aprovacao_atual, valor_aprovado_cotacao, valor_aprovado, justificativa_aprovacao, motivo_ajuste, excecao, justificativa_excecao, " +
   "cot1_fornecedor, cot1_valor, cot1_prazo, cot1_link, cot1_anexo_path, cot1_anexo_nome, " +
   "cot2_fornecedor, cot2_valor, cot2_prazo, cot2_link, cot2_anexo_path, cot2_anexo_nome, " +
@@ -1018,6 +1027,11 @@ export interface PagarDespesaInput {
   // RateioAprovadorTable), gravados por linha via malote_pagar_despesa —
   // só registro histórico, não é dado de segurança.
   rateio_snapshot?: { linha_id: string; orcado: number | null; utilizado_com_lancamento: number | null }[];
+  // SIS-2026-0307 (Iury): forma de pagamento confirmada/alterada e banco
+  // (catálogo malote_cartao_banco) escolhidos no momento do pagamento —
+  // opcionais pra não quebrar nenhuma chamada antiga da RPC.
+  forma_pagamento?: string | null;
+  banco_id?: string | null;
 }
 
 export function usePagarDespesa() {
@@ -1030,6 +1044,8 @@ export function usePagarDespesa() {
         _comprovante_path: input.comprovante_path,
         _observacao: input.observacao,
         _rateio_snapshot: input.rateio_snapshot ?? [],
+        _forma_pagamento: input.forma_pagamento ?? null,
+        _banco_id: input.banco_id ?? null,
       });
       if (error) throw error;
     },
@@ -1047,6 +1063,11 @@ export interface PagarParcelaInput {
   comprovante_path: string;
   observacao: string | null;
   rateio_snapshot?: { linha_id: string; orcado: number | null; utilizado_com_lancamento: number | null }[];
+  // SIS-2026-0307: mesmos dois campos de PagarDespesaInput — sincronizados
+  // pra malote_despesa quando esta for a última parcela paga (ver
+  // malote_pagar_parcela).
+  forma_pagamento?: string | null;
+  banco_id?: string | null;
 }
 
 export function usePagarParcela() {
@@ -1060,6 +1081,8 @@ export function usePagarParcela() {
         _comprovante_path: input.comprovante_path,
         _observacao: input.observacao,
         _rateio_snapshot: input.rateio_snapshot ?? [],
+        _forma_pagamento: input.forma_pagamento ?? null,
+        _banco_id: input.banco_id ?? null,
       });
       if (error) throw error;
     },

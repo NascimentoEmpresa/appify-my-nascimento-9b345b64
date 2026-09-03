@@ -14,7 +14,7 @@ import { useVinculoEmpregado } from "@/hooks/useVinculoEmpregado";
 export type FormCap =
   | "editar_criar" | "responder" | "encerrar_excluir"
   | "ver_tudo" | "ver_proprias" | "ver_setor" | "criar_setor" | "ver_lixeira"
-  | "diagnostico_feedback";
+  | "diagnostico_feedback" | "chat_ia_painel";
 
 const VIEW_CAPS: FormCap[] = ["ver_tudo", "ver_proprias"];
 
