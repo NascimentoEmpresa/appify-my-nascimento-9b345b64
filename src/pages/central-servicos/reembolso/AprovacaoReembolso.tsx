@@ -31,9 +31,9 @@ import { ListaReembolsos } from "./componentes/ListaReembolsos";
 // Esta tela NÃO repete esse recorte: duas cópias da mesma regra divergem com o
 // tempo, e a cópia do front é justamente a que não protege nada.
 //
-// "Enviar ao malote" NÃO mora mais aqui (04/09/2026, troca de fluxo pedida
-// pelo Pablo): o aprovador só decide. Quem lança a despesa aprovada no
-// Malote é quem pediu o reembolso, em Minhas Solicitações — ver
+// "Enviar ao malote" NÃO mora mais aqui (troca de fluxo em 04/09/2026): o
+// aprovador só decide. Quem lança a despesa aprovada no Malote é quem pediu
+// o reembolso, em Minhas Solicitações — ver
 // `SolicitarReembolso.tsx`. O motivo era o próprio histórico: o evento
 // "enviado ao malote" saía assinado com o nome de quem aprova, não de quem
 // de fato clicou (ver migration 20260930000050).

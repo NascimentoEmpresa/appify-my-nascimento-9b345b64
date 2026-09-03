@@ -1,9 +1,9 @@
 -- =====================================================================
 -- REEMBOLSO: troca de dono do passo "lançar no malote".
 --
--- Pedido do Pablo em 04/09/2026: "o lider aprova, mas o proprio usuario que
--- solicitou o reembolso, após ir em Minhas solicitações e estar aprovado,
--- ele pode ir e lançar no malote." Até aqui (20260930000046) era o
+-- Decisão de 04/09/2026: o líder aprova, mas quem lança a despesa no malote
+-- passa a ser quem pediu o reembolso — pela própria tela de Minhas
+-- Solicitações, depois de aprovada. Até aqui (20260930000046) era o
 -- APROVADOR quem via o botão "Enviar ao malote" e chamava esta RPC — o
 -- mesmo par (menu de aprovação + `cs_reembolso_aprova_setor`) que decide.
 -- Agora o papel troca: o líder só decide (aprovar/reprovar); quem pediu é

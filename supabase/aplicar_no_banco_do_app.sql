@@ -19699,9 +19699,9 @@ NOTIFY pgrst, 'reload schema';
 -- =====================================================================
 -- REEMBOLSO: troca de dono do passo "lançar no malote".
 --
--- Pedido do Pablo em 04/09/2026: "o lider aprova, mas o proprio usuario que
--- solicitou o reembolso, após ir em Minhas solicitações e estar aprovado,
--- ele pode ir e lançar no malote." Até aqui (20260930000046) era o
+-- Decisão de 04/09/2026: o líder aprova, mas quem lança a despesa no malote
+-- passa a ser quem pediu o reembolso — pela própria tela de Minhas
+-- Solicitações, depois de aprovada. Até aqui (20260930000046) era o
 -- APROVADOR quem via o botão "Enviar ao malote" e chamava esta RPC — o
 -- mesmo par (menu de aprovação + `cs_reembolso_aprova_setor`) que decide.
 -- Agora o papel troca: o líder só decide (aprovar/reprovar); quem pediu é
@@ -19867,8 +19867,8 @@ NOTIFY pgrst, 'reload schema';
 -- =====================================================================
 -- RH: aposenta os submódulos "Folha de Pagamento" e "Alocações em Contratos".
 --
--- Pedido do Pablo em 04/09/2026: "do recursos humanos remove tudo sobre o
--- submodulo folha de pagamento e alocação de contratos."
+-- Decisão de 04/09/2026: tirar do Recursos Humanos tudo sobre os submódulos
+-- de Folha de Pagamento e Alocação de Contratos.
 --
 -- Eram as duas últimas telas do RH que ainda falavam com o modelo de dados
 -- ANTIGO, o que ficou de antes de EMPREGADOS virar fonte única:
@@ -19937,10 +19937,9 @@ NOTIFY pgrst, 'reload schema';
 -- =====================================================================
 -- TREINAMENTOS: segunda porta, na Central de Serviços.
 --
--- Pedido do Pablo em 04/09/2026: "duplica o sistema dos encarregados de
--- treinamentos, coloca na Central de Serviços; lá o pessoal que tem
--- permissão de ver o sistema vai ver Treinamentos. Mesma lógica do sistema
--- dos encarregados."
+-- Decisão de 04/09/2026: duplicar o sistema de treinamentos dos Encarregados
+-- na Central de Serviços — lá, quem tem permissão de ver o sistema passa a
+-- ver Treinamentos, com a mesma lógica da porta dos Encarregados.
 --
 -- MESMA TELA, MESMOS TREINAMENTOS, PERMISSÃO PRÓPRIA. É o desenho que o ERP
 -- já usa duas vezes:

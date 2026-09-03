@@ -1,10 +1,9 @@
 -- =====================================================================
 -- TREINAMENTOS: segunda porta, na Central de Serviços.
 --
--- Pedido do Pablo em 04/09/2026: "duplica o sistema dos encarregados de
--- treinamentos, coloca na Central de Serviços; lá o pessoal que tem
--- permissão de ver o sistema vai ver Treinamentos. Mesma lógica do sistema
--- dos encarregados."
+-- Decisão de 04/09/2026: duplicar o sistema de treinamentos dos Encarregados
+-- na Central de Serviços — lá, quem tem permissão de ver o sistema passa a
+-- ver Treinamentos, com a mesma lógica da porta dos Encarregados.
 --
 -- MESMA TELA, MESMOS TREINAMENTOS, PERMISSÃO PRÓPRIA. É o desenho que o ERP
 -- já usa duas vezes:
