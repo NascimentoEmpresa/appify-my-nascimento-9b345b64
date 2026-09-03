@@ -4,7 +4,7 @@ import { supabase } from "@/integrations/supabase/client";
 // =====================================================================
 // ESPAÇO DO COLABORADOR — acesso a dados
 //
-// Tudo aqui passa por RPC (`esp_col_*`, migration 20260930000047) e nunca
+// Tudo aqui passa por RPC (`esp_col_*`, migration 20260930000050) e nunca
 // por `.from("EMPREGADOS")`. Não é preferência de estilo: EMPREGADOS guarda
 // CPF, salário, chave PIX e conta bancária na mesma linha que o nome, e o
 // RLS do Postgres filtra LINHA, não COLUNA. Um `select("*")` para montar a
