@@ -3,7 +3,8 @@ import { Link, useParams } from "react-router-dom";
 import QRCode from "qrcode";
 import {
   AlertTriangle, ArrowLeft, ArrowLeftRight, Building2, CalendarDays, ChevronLeft,
-  ChevronRight, Clock, Download, Loader2, QrCode, Shirt, UserRound,
+  ChevronRight, Clock, Download, Loader2, QrCode, ShieldCheck, Shirt, UserCog,
+  UserRound,
 } from "lucide-react";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { AcessoGate } from "@/components/auth/AcessoGate";
@@ -158,10 +159,14 @@ function FichaCarregada({ ficha }: { ficha: Ficha }) {
           <Dado rotulo="Situação" valor={ficha.situacao ?? "—"} />
           <Dado rotulo="Admissão" valor={fmtData(ficha.admissao)} />
           <Dado rotulo="Escala" valor={ficha.escala ?? "—"} />
-          <Dado rotulo="Contrato" valor={ficha.contrato_nome ?? "—"} icone={Building2} />
+          <Dado rotulo="Contrato" valor={ficha.contrato_nome ?? ficha.local ?? "—"} icone={Building2} />
           <Dado rotulo="Posto" valor={ficha.posto ?? "—"} />
           <Dado rotulo="Filial" valor={ficha.filial ?? "—"} />
-          <Dado rotulo="Líder" valor={ficha.lider ?? "—"} icone={UserRound} />
+          {/* EMPREGADOS."LIDER" guarda o NÍVEL da própria pessoa (SUPERVISOR,
+              ENCARREGADO, …), não o nome de quem lidera ela. Quem lidera vem
+              da designação da Operação, no campo ao lado. */}
+          <Dado rotulo="Nível hierárquico" valor={ficha.nivel || "—"} icone={ShieldCheck} />
+          <Dado rotulo="Encarregado do contrato" valor={ficha.encarregado_nome ?? "—"} icone={UserCog} />
         </div>
       </Card>
 
