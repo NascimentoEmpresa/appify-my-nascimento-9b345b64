@@ -357,7 +357,7 @@ const App = () => (
                 próprio (`central_servicos_treinamentos`) para o acesso ser
                 liberado porta a porta. Igual ao que Chamados de Sistemas já
                 faz entre Encarregados e Central de Serviços. */}
-            <Route path="central-servicos/treinamentos" element={<TreinamentosERP />} />
+            <Route path="central-servicos/treinamentos" element={<TreinamentosERP escopo="central_servicos" />} />
             <Route path="central-servicos/reembolso" element={<SolicitarReembolso />} />
             <Route path="central-servicos/reembolso/aprovacao" element={<AprovacaoReembolso />} />
             <Route path="central-servicos/reembolso/configuracao" element={<ConfiguracaoReembolso />} />
@@ -579,7 +579,7 @@ const App = () => (
             <Route path="juridico/duvidas" element={<CentralDuvidas />} />
             {/* Treinamentos */}
             <Route path="treinamentos" element={<Navigate to="/app/treinamentos/erp" replace />} />
-            <Route path="treinamentos/erp" element={<TreinamentosERP />} />
+            <Route path="treinamentos/erp" element={<TreinamentosERP escopo="encarregados" />} />
             {/* Licitações › Analistas Validações — a PRIMEIRA porta dos três
                 fluxos (02/09/2026). Antes a etapa 1 era do Operacional, que
                 ficou só com o acompanhamento. */}

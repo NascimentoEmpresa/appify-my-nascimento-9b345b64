@@ -14,10 +14,31 @@ export interface PerguntaProva {
   correta: number;
 }
 
+/**
+ * Em que módulo(s) o treinamento aparece.
+ *
+ * São grades separadas — treinamento de encarregado não é o de escritório —
+ * mas o mesmo treinamento pode estar nos dois, e aí é UMA linha só, com uma
+ * prova e um histórico de conclusão. Duplicar a linha para aparecer duas
+ * vezes daria dois históricos para o mesmo vídeo.
+ *
+ * Os valores casam com os menus: `encarregados` ↔ `treinamentos_erp`,
+ * `central_servicos` ↔ `central_servicos_treinamentos`. O banco cobra a
+ * mesma lista no CHECK `trn_escopos_validos`.
+ */
+export type EscopoTreinamento = "encarregados" | "central_servicos";
+
+export const ESCOPOS_TREINAMENTO: { id: EscopoTreinamento; label: string }[] = [
+  { id: "encarregados", label: "Encarregados" },
+  { id: "central_servicos", label: "Central de Serviços" },
+];
+
 export interface Treinamento {
   id: string;
   titulo: string;
   descricao: string | null;
+  /** Módulos em que este treinamento aparece — nunca vazio (CHECK no banco). */
+  escopos: EscopoTreinamento[];
   video_url: string | null;
   video_path: string | null;
   anexo_path: string | null;

@@ -13,7 +13,8 @@ import {
 } from "lucide-react";
 import {
   temConteudo, validarProva, caminhoNoBucket, embedDeVideo, validarTamanho, formatarMB,
-  LIMITE_UPLOAD_BYTES, type PerguntaProva, type Treinamento,
+  LIMITE_UPLOAD_BYTES, ESCOPOS_TREINAMENTO,
+  type EscopoTreinamento, type PerguntaProva, type Treinamento,
 } from "./core";
 
 // =====================================================================
@@ -35,13 +36,15 @@ interface Props {
   aberto: boolean;
   /** null = criando; objeto = editando. */
   treinamento: Treinamento | null;
+  /** Módulo da tela que abriu o editor — é o que já vem marcado no card novo. */
+  escopoPadrao: EscopoTreinamento;
   meuNome: string;
   meuId: string | undefined;
   onFechar: () => void;
   onSalvo: () => void;
 }
 
-export function TreinamentoEditor({ aberto, treinamento, meuNome, meuId, onFechar, onSalvo }: Props) {
+export function TreinamentoEditor({ aberto, treinamento, escopoPadrao, meuNome, meuId, onFechar, onSalvo }: Props) {
   const { toast } = useToast();
   const [salvando, setSalvando] = useState(false);
   const [aba, setAba] = useState<Aba>("video");
@@ -57,6 +60,7 @@ export function TreinamentoEditor({ aberto, treinamento, meuNome, meuId, onFecha
   const [prova, setProva] = useState<PerguntaProva[]>([]);
   const [notaMinima, setNotaMinima] = useState(70);
   const [publicado, setPublicado] = useState(true);
+  const [escopos, setEscopos] = useState<EscopoTreinamento[]>([escopoPadrao]);
   const [capaPath, setCapaPath] = useState<string | null>(null);
   const [capaArquivo, setCapaArquivo] = useState<File | null>(null);
   const [capaPreview, setCapaPreview] = useState<string | null>(null);
@@ -97,10 +101,13 @@ export function TreinamentoEditor({ aberto, treinamento, meuNome, meuId, onFecha
     setProva(Array.isArray(t?.prova) ? t!.prova! : []);
     setNotaMinima(t?.nota_minima ?? 70);
     setPublicado(t?.publicado ?? true);
+    // Card novo já nasce no módulo de onde o editor foi aberto; editando, vale
+    // o que está gravado (que pode ser os dois).
+    setEscopos(t?.escopos?.length ? t.escopos : [escopoPadrao]);
     setCapaPath(t?.capa_path ?? null);
     setVideoArquivo(null); setAnexoArquivo(null); setCapaArquivo(null); setCapaPreview(null);
     setAba("video");
-  }, [aberto, treinamento]);
+  }, [aberto, treinamento, escopoPadrao]);
 
   // Capa que já está salva: bucket é privado, então precisa de URL assinada
   // para aparecer no formulário de edição.
@@ -165,6 +172,16 @@ export function TreinamentoEditor({ aberto, treinamento, meuNome, meuId, onFecha
     }
     const problema = validarProva(prova);
     if (problema) { toast({ title: "Revise a prova", description: problema, variant: "destructive" }); return; }
+    // Sem módulo nenhum o card não apareceria em grade alguma — some do
+    // sistema sem erro. O CHECK do banco recusa, mas o aviso tem que ser aqui.
+    if (escopos.length === 0) {
+      toast({
+        title: "Escolha onde o treinamento aparece",
+        description: "Marque pelo menos um módulo: Encarregados ou Central de Serviços.",
+        variant: "destructive",
+      });
+      return;
+    }
 
     setSalvando(true);
     try {
@@ -222,6 +239,7 @@ export function TreinamentoEditor({ aberto, treinamento, meuNome, meuId, onFecha
         prova: prova.length ? prova : null,
         nota_minima: notaMinima,
         publicado,
+        escopos,
       };
 
       const { error } = treinamento
@@ -446,6 +464,45 @@ export function TreinamentoEditor({ aberto, treinamento, meuNome, meuId, onFecha
               </div>
             </div>
           )}
+
+          {/* Onde o card aparece. Marcar os dois é o jeito de aproveitar um
+              treinamento que já existe no outro módulo, sem duplicar a linha
+              (duplicar daria duas provas e dois históricos para o mesmo
+              vídeo). */}
+          <div className="rounded-lg border p-3">
+            <Label className="text-sm font-semibold">Aparece em</Label>
+            <p className="text-xs text-muted-foreground">
+              Cada módulo tem a sua grade. Marque os dois para o mesmo treinamento
+              valer nos dois — continua sendo um só, com uma prova e um histórico.
+            </p>
+            <div className="mt-3 flex flex-wrap gap-2">
+              {ESCOPOS_TREINAMENTO.map(e => {
+                const marcado = escopos.includes(e.id);
+                return (
+                  <button
+                    key={e.id}
+                    type="button"
+                    aria-pressed={marcado}
+                    onClick={() => setEscopos(atual => marcado
+                      ? atual.filter(x => x !== e.id)
+                      : [...atual, e.id])}
+                    className={`rounded-full border px-3 py-1.5 text-xs font-semibold transition-colors ${
+                      marcado
+                        ? "border-primary bg-primary/10 text-primary"
+                        : "border-input text-muted-foreground hover:bg-muted"
+                    }`}
+                  >
+                    {e.label}{marcado ? " ✓" : ""}
+                  </button>
+                );
+              })}
+            </div>
+            {escopos.length === 0 && (
+              <p className="mt-2 text-xs font-medium text-amber-700 dark:text-amber-500">
+                Sem módulo marcado o treinamento não aparece em lugar nenhum.
+              </p>
+            )}
+          </div>
 
           <div className="flex items-center justify-between rounded-lg border p-3">
             <div>
