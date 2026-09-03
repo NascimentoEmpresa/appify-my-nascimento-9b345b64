@@ -9,7 +9,6 @@ import {
   MOTIVOS_VAGA, motivoLabel, ehSubstituicao, avaliarPrazo, dataMinimaVaga,
   cargoExigeCnh, aplicarReqCnh, REQ_CNH_TEXTO, MIN_DIAS_UTEIS, fmtBr,
   rotuloReferencia, ajudaReferencia, mostraNomeReferencia, contratoDoEmpregado,
-  faltamCamposManuais,
   SALARIO_MASCARA, substituidosComVagaViva, avisoSubstituidoPreso,
   podeVagaAdministrativa,
 } from "@/lib/recrutamento/vagaRegras";
@@ -176,9 +175,11 @@ export default function MinhasSolicitacoes({ abrir }: { abrir?: SolicitacaoInici
   const [modalVaga, setModalVaga] = useState(false);
   const [vagaStep, setVagaStep] = useState(1);
   const [vaga, setVaga] = useState({ ...VAGA_RESET });
-  // Vaga do escritório preenchida à mão, sem colaborador de referência.
-  const [vagaManual, setVagaManual] = useState(false);
-  const [menuVagaAberto, setMenuVagaAberto] = useState(false);
+  // Preencher à mão NÃO existe aqui: o encarregado abre vaga do posto dele, e
+  // o posto vem sempre do cadastro de um colaborador. Vaga do escritório é
+  // pedida na Central de Serviços ou na Gestão de Recrutamento, que têm o
+  // botão de "Preencher manualmente" — e o catálogo de Suprimentos junto, que
+  // esta tela não tem. Ver src/components/recrutamento/ModalNovaVaga.tsx.
   const [contratosFull, setContratosFull] = useState<any[]>([]);
   // Empregado -> nº da vaga de substituição que já o segura (regra do banco).
   const [presos, setPresos] = useState<Map<number, number>>(new Map());
@@ -376,39 +377,8 @@ export default function MinhasSolicitacoes({ abrir }: { abrir?: SolicitacaoInici
 
   const abrirModalVaga = () => {
     setModalVaga(true); setVagaStep(1); setEmpSearch(""); setShowEmpDrop(false); setVaga({ ...VAGA_RESET });
-    setSubstituidoId(null); setVagaManual(false); setMenuVagaAberto(false);
+    setSubstituidoId(null);
     if (!contratosFull.length) carregarContratos();
-  };
-
-  /**
-   * Liga e desliga o preenchimento à mão, com a solicitação já aberta.
-   *
-   * Cargo, contrato, escala e salário passam a ser digitados em vez de virem
-   * do cadastro de um colaborador. Só existe para quem tem a capacidade de
-   * vaga administrativa — ver `podePreencherVagaManual` em
-   * lib/recrutamento/vagaRegras.ts, que explica por que o escritório precisa
-   * disso e por que a chave é a capacidade, não o setor.
-   *
-   * NÃO marca `administrativa` sozinho: o checkbox está no mesmo passo, à
-   * vista, e é do dono da solicitação decidir. Marcar por conta seria esconder
-   * a vaga de quem não tem a capacidade sem ninguém ter pedido.
-   *
-   * Ao DESLIGAR, limpa o que foi digitado à mão: esses campos voltam a
-   * prometer que vieram do cadastro, e deixar o texto antigo faria a tela
-   * mentir sobre a origem deles.
-   */
-  const alternarVagaManual = () => {
-    setMenuVagaAberto(false);
-    setVagaManual(atual => {
-      if (atual) {
-        setSubstituidoId(null);
-        setEmpSearch("");
-        setVaga(v => ({
-          ...v, nome_substituido: "", cargo: "", contrato: "", salario: "", escala: "",
-        }));
-      }
-      return !atual;
-    });
   };
 
   // Prazo/grau da data escolhida — o grau não é mais escolhido na mão.
@@ -419,27 +389,13 @@ export default function MinhasSolicitacoes({ abrir }: { abrir?: SolicitacaoInici
     if (step === 1) {
       if (!vaga.motivo_vaga) { toast("Selecione o motivo da vaga.", "err"); return false; }
 
-      // No modo manual ninguém preenche por você: o que o cadastro daria vira
-      // digitação, e o que era "escolha alguém" vira "informe o campo".
-      if (vagaManual) {
-        const faltam = faltamCamposManuais(vaga);
-        if (faltam.length) {
-          toast(`Preenchendo à mão, ${faltam.join(" e ")} ${faltam.length > 1 ? "são obrigatórios" : "é obrigatório"}.`, "err");
-          return false;
-        }
-        // Substituição é o único motivo que PRECISA dizer quem sai — é esse
-        // vínculo que impede duas vagas repondo a mesma pessoa.
-        if (ehSubstituicao(vaga.motivo_vaga) && !substituidoId) {
-          toast("Em Substituição, escolha na lista quem será substituído — mesmo preenchendo o resto à mão.", "err");
-          return false;
-        }
-      } else {
-        if (!substituidoId) {
-          toast(ehSubstituicao(vaga.motivo_vaga)
-            ? "Escolha na lista o colaborador que será substituído — o cargo e o contrato vêm do cadastro dele."
-            : "Escolha na lista alguém com o mesmo cargo da vaga — é de lá que vêm cargo, contrato, escala e salário.", "err");
-          return false;
-        }
+      // Aqui o colaborador é sempre obrigatório: é dele que vêm cargo,
+      // contrato, escala e salário. Não há modo manual nesta tela.
+      if (!substituidoId) {
+        toast(ehSubstituicao(vaga.motivo_vaga)
+          ? "Escolha na lista o colaborador que será substituído — o cargo e o contrato vêm do cadastro dele."
+          : "Escolha na lista alguém com o mesmo cargo da vaga — é de lá que vêm cargo, contrato, escala e salário.", "err");
+        return false;
       }
 
       const jaTem = ehSubstituicao(vaga.motivo_vaga) && substituidoId ? presos.get(substituidoId) : undefined;
@@ -899,44 +855,12 @@ export default function MinhasSolicitacoes({ abrir }: { abrir?: SolicitacaoInici
           <div className="ini-modal" onClick={e => e.stopPropagation()}>
             <button onClick={() => setModalVaga(false)} style={{ position: "absolute", top: 14, right: 14, background: "none", border: "none", color: "#94a3b8", fontSize: 20, cursor: "pointer" }}>✕</button>
 
-            {/* Os três pontinhos ficam DENTRO da solicitação, ao lado do ✕.
-                É o lugar certo: o que eles oferecem muda esta solicitação que
-                está aberta, não a decisão de abrir uma.
-
-                Quem libera é `recrutamento_vaga_administrativa`, a capacidade
-                que JÁ existe em Gerenciamento de Acesso e que também governa o
-                checkbox "Vaga é administrativa?" logo abaixo. Nenhuma chave de
-                acesso nova foi criada para isto. */}
-            {podeAdministrativa && (
-              <>
-                <button
-                  type="button"
-                  aria-label="Mais opções desta solicitação"
-                  aria-haspopup="menu"
-                  aria-expanded={menuVagaAberto}
-                  onClick={e => { e.stopPropagation(); setMenuVagaAberto(v => !v); }}
-                  style={{ position: "absolute", top: 13, right: 44, width: 26, height: 26, borderRadius: 8, background: menuVagaAberto ? "#e2e8f0" : "none", border: "none", color: "#64748b", fontSize: 17, lineHeight: 1, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}
-                >
-                  ⋯
-                </button>
-                {menuVagaAberto && (
-                  <>
-                    <div onClick={() => setMenuVagaAberto(false)}
-                         style={{ position: "fixed", inset: 0, zIndex: 40 }} />
-                    <div role="menu" className="ini-sol-menu" style={{ top: 42, right: 40 }}>
-                      <button role="menuitem" type="button" onClick={alternarVagaManual}>
-                        {vagaManual ? "↩️ Voltar a puxar do cadastro" : "✍️ Preencher manualmente"}
-                        <small>
-                          {vagaManual
-                            ? "Volta a escolher um colaborador; cargo, contrato, escala e salário vêm do cadastro dele."
-                            : "Vaga do escritório: você digita cargo, contrato, escala e salário em vez de copiar de um colaborador."}
-                        </small>
-                      </button>
-                    </div>
-                  </>
-                )}
-              </>
-            )}
+            {/* Sem "Preencher manualmente" aqui, de propósito (03/09/2026).
+                É vaga do escritório — coisa da Central de Serviços e da Gestão
+                de Recrutamento, onde a opção é um botão à vista na etapa 1.
+                Nesta tela nem escondida atrás de capacidade ela cabia: o modo
+                à mão precisa do catálogo de Suprimentos, que o formulário do
+                encarregado não tem. */}
             <div style={{ fontSize: 17, fontWeight: 800, marginBottom: 4 }}>Solicitar Nova Vaga</div>
             <div style={{ fontSize: 12, color: "#94a3b8", marginBottom: 14 }}>
               {vagaStep === 1 ? "Etapa 1 de 3 — Identificação da Vaga" : vagaStep === 2 ? "Etapa 2 de 3 — Detalhes do Posto" : "Etapa 3 de 3 — Requisitos e Urgência"}
@@ -966,17 +890,9 @@ export default function MinhasSolicitacoes({ abrir }: { abrir?: SolicitacaoInici
                   {MOTIVOS_VAGA.map(o => <option key={o}>{o}</option>)}
                 </select>
               </div>
-              {/* Aviso do modo manual: a pessoa precisa saber que trocou de
-                  regime, senão estranha os campos que antes vinham prontos. */}
-              {vagaManual && (
-                <div style={{ gridColumn: "1 / -1", fontSize: 11.5, fontWeight: 600, color: "#0f3171", background: "#eef4ff", border: "1px solid #c7d7fe", borderRadius: 9, padding: "8px 11px" }}>
-                  ✍️ <b>Preenchendo à mão</b> — vaga do escritório. Cargo, contrato, escala e salário
-                  são digitados por você, e não copiados de um colaborador.
-                </div>
-              )}
-              {/* Em Substituição o colaborador continua obrigatório mesmo à
-                  mão: é o vínculo que impede duas vagas repondo a mesma pessoa. */}
-              {!!vaga.motivo_vaga && (!vagaManual || ehSubstituicao(vaga.motivo_vaga)) && (
+              {/* O colaborador é obrigatório em todos os motivos: é dele que
+                  a vaga copia cargo, contrato, escala e salário. */}
+              {!!vaga.motivo_vaga && (
                 <div className="ini-fg" style={{ position: "relative" }} onBlur={() => setTimeout(() => setShowEmpDrop(false), 150)}>
                   <label>{rotuloReferencia(vaga.motivo_vaga)} *</label>
                   <input className="ini-fi" placeholder="Digite o nome e escolha na lista..." value={empSearch} autoComplete="off"
@@ -1013,28 +929,15 @@ export default function MinhasSolicitacoes({ abrir }: { abrir?: SolicitacaoInici
               {/* Contrato e cargo vêm do cadastro do escolhido e ficam travados
                   — a vaga é do posto dele, não de outro. */}
               <div className="ini-fg">
-                <label>Contrato *{!vagaManual && <span style={{ color: "#94a3b8", fontWeight: 600 }}> — do colaborador escolhido</span>}</label>
-                {vagaManual ? (
-                  <select className="ini-fi" value={vaga.contrato}
-                          onChange={e => setVaga(v => ({ ...v, contrato: e.target.value }))}>
-                    <option value="">— Selecione —</option>
-                    {contratosFull.map((c: any, i: number) => {
-                      const nome = c.nome ?? c.Nome ?? c.descricao ?? String(c);
-                      return <option key={i} value={nome}>{nome}</option>;
-                    })}
-                  </select>
-                ) : (
-                  <input className="ini-fi" readOnly value={vaga.contrato} placeholder="Escolha o colaborador acima"
-                    style={{ background: "#f1f5f9", color: "#475569", cursor: "not-allowed" }} />
-                )}
+                <label>Contrato *<span style={{ color: "#94a3b8", fontWeight: 600 }}> — do colaborador escolhido</span></label>
+                <input className="ini-fi" readOnly value={vaga.contrato} placeholder="Escolha o colaborador acima"
+                  style={{ background: "#f1f5f9", color: "#475569", cursor: "not-allowed" }} />
               </div>
               <div className="ini-fg">
-                <label>Cargo *{!vagaManual && <span style={{ color: "#94a3b8", fontWeight: 600 }}> — do colaborador escolhido</span>}</label>
-                <input className="ini-fi"
-                  placeholder={vagaManual ? "Ex.: Analista Administrativo" : "Escolha o colaborador acima"}
-                  value={vaga.cargo} readOnly={!vagaManual}
-                  onChange={e => setVaga(v => ({ ...v, cargo: e.target.value }))}
-                  style={vagaManual ? undefined : { background: "#f1f5f9", color: "#475569", cursor: "not-allowed" }} />
+                <label>Cargo *<span style={{ color: "#94a3b8", fontWeight: 600 }}> — do colaborador escolhido</span></label>
+                <input className="ini-fi" placeholder="Escolha o colaborador acima"
+                  value={vaga.cargo} readOnly
+                  style={{ background: "#f1f5f9", color: "#475569", cursor: "not-allowed" }} />
                 {cnhDoCargo && (
                   <div style={{ marginTop: 6, fontSize: 11.5, fontWeight: 700, color: "#b45309", background: "#fffbeb", border: "1px solid #fde68a", borderRadius: 8, padding: "6px 9px" }}>
                     🚗 {cnhDoCargo}: CNH obrigatória — já entra sozinha nos requisitos e não pode ser tirada.
@@ -1093,18 +996,8 @@ export default function MinhasSolicitacoes({ abrir }: { abrir?: SolicitacaoInici
                     Operacional e o Recrutamento, que aprovam, é que enxergam. */}
                 <div className="ini-fg">
                   <label>Salário</label>
-                  {/* No modo manual não há cadastro de onde copiar, então quem
-                      abre a vaga digita — e vê o que digitou. A máscara existe
-                      para não expor o salário de OUTRA pessoa a quem só abre a
-                      vaga; aqui não há outra pessoa. */}
-                  {vagaManual ? (
-                    <input className="ini-fi" inputMode="decimal" placeholder="Ex.: 3500,00"
-                      value={vaga.salario}
-                      onChange={e => setVaga(v => ({ ...v, salario: e.target.value }))} />
-                  ) : (
-                    <input className="ini-fi" readOnly value={vaga.salario ? SALARIO_MASCARA : ""} placeholder="Vem do cadastro do colaborador"
-                      style={{ background: "#f1f5f9", color: "#475569", cursor: "not-allowed", letterSpacing: 2 }} />
-                  )}
+                  <input className="ini-fi" readOnly value={vaga.salario ? SALARIO_MASCARA : ""} placeholder="Vem do cadastro do colaborador"
+                    style={{ background: "#f1f5f9", color: "#475569", cursor: "not-allowed", letterSpacing: 2 }} />
                   <div style={{ marginTop: 4, fontSize: 11, color: "#94a3b8" }}>Visível só para o Operacional e o Recrutamento.</div>
                 </div>
                 <div className="ini-fg"><label>Insalubridade</label><select className="ini-fi" value={vaga.insalubridade_recebe} onChange={e => setVaga(v => ({ ...v, insalubridade_recebe: e.target.value }))}><option>Não</option><option>Sim</option></select></div>
