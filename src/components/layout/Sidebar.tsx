@@ -81,6 +81,7 @@ import { Banknote } from "lucide-react";
 import { TrendingDown } from "lucide-react";
 import { Megaphone } from "lucide-react";
 import { CreditCard } from "lucide-react";
+import { Network } from "lucide-react";
 import { useNovidades } from "@/hooks/useNovidades";
 import { cn } from "@/lib/utils";
 import { useCallback, useEffect, useMemo, useState, useContext } from "react";
@@ -639,6 +640,7 @@ const centralServicosModule: ModuleDef = {
       defaultOpen: true,
       items: [
         { label: "Central de Serviços", to: "/app/central-servicos", icon: Headset },
+        { label: "Espaço do Colaborador", to: "/app/central-servicos/espaco-colaborador", icon: Network },
         { label: "Orientações Jurídicas", to: "/app/central-servicos/orientacoes-juridicas", icon: BookOpen },
         { label: "Nascimento Formulários", to: "/app/central-servicos/formularios", icon: ClipboardList },
         { label: "Chamados de Sistemas", to: "/app/central-servicos/chamados", icon: Headset, notif: "meus" },
