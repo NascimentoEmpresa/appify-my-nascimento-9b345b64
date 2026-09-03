@@ -1,8 +1,8 @@
 import { useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import {
-  Briefcase, Building2, ChevronRight, FolderOpen, GitBranch, Loader2, MapPin,
-  Search, ShieldCheck, UserCog, UserRound, Users,
+  Briefcase, Building2, ChevronRight, FolderOpen, GitBranch, HelpCircle, Loader2,
+  MapPin, Search, ShieldCheck, UserCog, UserRound, Users,
 } from "lucide-react";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { AcessoGate } from "@/components/auth/AcessoGate";
@@ -13,8 +13,8 @@ import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import {
   ehEncarregado, ehSupervisor, montarPostos, useArvoreContratos,
-  useBuscaColaboradores, useColaboradoresDoContrato,
-  type ColaboradorLinha, type NoContrato, type NoPosto,
+  useBuscaColaboradores, useColaboradoresDoContrato, useColaboradoresSemContrato,
+  type ArvoreCompleta, type ColaboradorLinha, type NoContrato, type NoPosto,
 } from "@/hooks/useEspacoColaborador";
 
 // =====================================================================
@@ -57,6 +57,9 @@ type Modo = "fluxograma" | "pastas";
 
 const ROTA_FICHA = "/app/central-servicos/espaco-colaborador";
 
+/** Chave de expansão do nó dos órfãos — não é um uuid de contrato. */
+const CHAVE_SEM_CONTRATO = "__sem_contrato__";
+
 /** O link da pessoa usa a MATRÍCULA quando existe — é o mesmo identificador
  *  que o QR Code do crachá carrega, então URL colada de um lado abre igual
  *  do outro. Cai no id só para quem ainda não tem matrícula (admissão). */
@@ -92,7 +95,8 @@ function Conteudo() {
   const [termo, setTermo] = useState("");
   const [abertos, setAbertos] = useState<Set<string>>(new Set());
 
-  const { data: contratos = [], isLoading, error } = useArvoreContratos();
+  const { data: arvore, isLoading, error } = useArvoreContratos();
+  const contratos = arvore?.contratos ?? [];
   const { data: achados = [], isFetching: buscando } = useBuscaColaboradores(termo);
 
   const buscaAtiva = termo.trim().length >= 2;
@@ -151,20 +155,163 @@ function Conteudo() {
           Nenhum contrato ativo para mostrar.
         </Card>
       ) : (
-        <div className={cn(modo === "fluxograma" ? "space-y-4" : "space-y-1")}>
-          {contratos.map((c) => (
-            <NoDeContrato
-              key={c.id}
-              contrato={c}
-              modo={modo}
-              aberto={abertos.has(c.id)}
-              abertos={abertos}
-              onAlternar={alternar}
-            />
+        <>
+          <Conferencia arvore={arvore!} />
+          <div className={cn(modo === "fluxograma" ? "space-y-4" : "space-y-1")}>
+            {contratos.map((c) => (
+              <NoDeContrato
+                key={c.id}
+                contrato={c}
+                modo={modo}
+                aberto={abertos.has(c.id)}
+                abertos={abertos}
+                onAlternar={alternar}
+              />
+            ))}
+            {arvore!.sem_contrato > 0 && (
+              <NoSemContrato
+                total={arvore!.sem_contrato}
+                modo={modo}
+                aberto={abertos.has(CHAVE_SEM_CONTRATO)}
+                onAlternar={alternar}
+              />
+            )}
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+/**
+ * A conta, à vista.
+ *
+ * Somar os nós à mão não fecha com o efetivo — quem não casa com contrato não
+ * pende de nó nenhum. Antes essa diferença era invisível: a tela mostrava
+ * 2.066 e o RH mostrava 2.501, e não havia como saber de onde vinha o buraco
+ * sem ir no banco. Agora a decomposição está escrita.
+ */
+function Conferencia({ arvore }: { arvore: ArvoreCompleta }) {
+  const emContrato = arvore.total_ativos - arvore.sem_contrato;
+  return (
+    <Card className="mb-4 flex flex-wrap items-center gap-x-6 gap-y-2 p-3 text-xs">
+      <span>
+        <strong className="text-sm">{arvore.total_ativos.toLocaleString("pt-BR")}</strong>{" "}
+        <span className="text-muted-foreground">ativos na folha</span>
+      </span>
+      <span className="text-muted-foreground">=</span>
+      <span>
+        <strong className="text-sm">{emContrato.toLocaleString("pt-BR")}</strong>{" "}
+        <span className="text-muted-foreground">em contrato</span>
+      </span>
+      <span className="text-muted-foreground">+</span>
+      <span>
+        <strong className={cn("text-sm", arvore.sem_contrato > 0 && "text-amber-600")}>
+          {arvore.sem_contrato.toLocaleString("pt-BR")}
+        </strong>{" "}
+        <span className="text-muted-foreground">sem contrato identificado</span>
+      </span>
+      {arvore.encerrados_com_gente > 0 && (
+        <Badge variant="outline" className="border-amber-500/40 text-amber-600">
+          {arvore.encerrados_com_gente} contrato(s) encerrado(s) ainda com gente
+        </Badge>
+      )}
+      {/* O card do RH conta PRESENÇA NO MÊS (por data de admissão/afastamento);
+          aqui é o quadro de HOJE (por situação). Os dois números são certos e
+          respondem perguntas diferentes — dizer isso evita a próxima rodada de
+          "qual das telas está errada?". */}
+      <span className="ml-auto text-[11px] text-muted-foreground">
+        Quadro de hoje, por situação. O card “Ativos no mês” do RH conta presença
+        no mês, por data — os dois não batem de propósito.
+      </span>
+    </Card>
+  );
+}
+
+/**
+ * O nó de quem a árvore não conseguiu pendurar em contrato nenhum.
+ *
+ * Fica por último e é expansível como qualquer outro: a graça é conseguir
+ * ABRIR e ver quem são, porque é a coluna "local no cadastro" dessas pessoas
+ * que o RH precisa corrigir.
+ */
+function NoSemContrato({
+  total, modo, aberto, onAlternar,
+}: {
+  total: number; modo: Modo; aberto: boolean; onAlternar: (c: string) => void;
+}) {
+  const { data: pessoas = [], isFetching } = useColaboradoresSemContrato(aberto);
+
+  const cabecalho = (
+    <button
+      type="button"
+      onClick={() => onAlternar(CHAVE_SEM_CONTRATO)}
+      className="flex w-full items-center gap-2 text-left"
+    >
+      <ChevronRight
+        className={cn("h-4 w-4 shrink-0 text-muted-foreground transition-transform",
+          aberto && "rotate-90")}
+      />
+      <HelpCircle className="h-4 w-4 shrink-0 text-amber-600" />
+      <span className="min-w-0 flex-1 truncate font-semibold">Sem contrato identificado</span>
+      <Badge variant="outline" className="shrink-0 gap-1 border-amber-500/40 text-amber-600">
+        <Users className="h-3 w-3" />
+        {total}
+      </Badge>
+      {isFetching && <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-muted-foreground" />}
+    </button>
+  );
+
+  const corpo = aberto && (
+    <div className="mt-2">
+      <p className="mb-2 px-2 text-xs text-muted-foreground">
+        O contrato da pessoa sai de <code>“Descrição do Local”</code> (e, como
+        alternativa, da filial). Quando nenhum dos dois casa com um contrato
+        cadastrado, ela cai aqui — quase sempre é diferença de grafia entre a
+        folha e o cadastro de contratos, e a correção é no cadastro.
+      </p>
+      {isFetching && pessoas.length === 0 ? (
+        <p className="px-2 text-xs text-muted-foreground">Carregando…</p>
+      ) : (
+        <div className="divide-y">
+          {pessoas.map((p) => (
+            <Link
+              key={p.empregado_id}
+              to={linkDaPessoa(p)}
+              className="flex items-center gap-3 px-2 py-1.5 text-sm hover:bg-muted/50"
+            >
+              <UserRound className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+              <span className="min-w-0 flex-1 truncate">{p.nome}</span>
+              <span className="hidden min-w-0 flex-1 truncate text-xs text-muted-foreground sm:block">
+                {p.local || "(sem local)"}
+              </span>
+              <span className="hidden min-w-0 flex-1 truncate text-xs text-muted-foreground md:block">
+                {p.filial || "(sem filial)"}
+              </span>
+              {p.matricula && (
+                <Badge variant="outline" className="shrink-0 text-[10px]">#{p.matricula}</Badge>
+              )}
+            </Link>
           ))}
         </div>
       )}
     </div>
+  );
+
+  if (modo === "pastas") {
+    return (
+      <div className="text-sm">
+        <div className="rounded px-2 py-1.5 hover:bg-muted/50">{cabecalho}</div>
+        {corpo && <div className="ml-4 border-l pl-3">{corpo}</div>}
+      </div>
+    );
+  }
+
+  return (
+    <Card className="border-amber-500/40 p-4">
+      {cabecalho}
+      {corpo}
+    </Card>
   );
 }
 
@@ -226,6 +373,11 @@ function NoDeContrato({
       />
       <Building2 className="h-4 w-4 shrink-0 text-primary" />
       <span className="min-w-0 flex-1 truncate font-semibold">{contrato.nome}</span>
+      {contrato.encerrado && (
+        <Badge variant="outline" className="shrink-0 border-amber-500/40 text-amber-600">
+          encerrado
+        </Badge>
+      )}
       {contrato.cliente && (
         <span className="hidden truncate text-xs text-muted-foreground sm:block">
           {contrato.cliente}
