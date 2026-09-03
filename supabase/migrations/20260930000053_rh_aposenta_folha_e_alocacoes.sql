@@ -1,8 +1,8 @@
 -- =====================================================================
 -- RH: aposenta os submódulos "Folha de Pagamento" e "Alocações em Contratos".
 --
--- Decisão de 04/09/2026: tirar do Recursos Humanos tudo sobre os submódulos
--- de Folha de Pagamento e Alocação de Contratos.
+-- Pedido do Pablo em 04/09/2026: "do recursos humanos remove tudo sobre o
+-- submodulo folha de pagamento e alocação de contratos."
 --
 -- Eram as duas últimas telas do RH que ainda falavam com o modelo de dados
 -- ANTIGO, o que ficou de antes de EMPREGADOS virar fonte única:
