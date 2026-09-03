@@ -2,8 +2,8 @@ import { useState, useCallback } from "react";
 import * as XLSX from "xlsx";
 import jsPDF from "jspdf";
 import {
-  Upload, FileText, X, Play, Download, Search,
-  CheckCircle2, AlertTriangle, Info, ChevronDown, ChevronUp,
+  Upload, FileText, X, Play, Download,
+  CheckCircle2, Info, ChevronDown, ChevronUp,
   GitMerge, RefreshCw,
 } from "lucide-react";
 import { PageHeader } from "@/components/layout/PageHeader";
@@ -11,14 +11,18 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
 
 // ── Tipos ──────────────────────────────────────────────────────────────────
 
+type TipoLancamento = "ENTRADA" | "SAÍDA" | "INDEFINIDO";
+
 interface OFXTransaction {
   dia: string;   // YYYY-MM-DD
   valor: number; // abs
+  tipo: "ENTRADA" | "SAÍDA";
   memo: string;
   origem: string;
 }
@@ -26,6 +30,7 @@ interface OFXTransaction {
 interface PlanilhaRow {
   dia: string;
   valor: number;
+  tipo: TipoLancamento;
   banco: string;
 }
 
@@ -40,12 +45,14 @@ interface DiaSummary {
 
 interface AuditRow {
   dia: string;
-  erro: "⚠️ BANCO - NÃO ENCONTRADO" | "🚨 FLUXO - NÃO ENCONTRADO" | "🔍 VALOR SIMILAR";
+  erro: "⚠️ BANCO - NÃO ENCONTRADO" | "🚨 FLUXO - NÃO ENCONTRADO" | "🔍 VALOR SIMILAR" | "❌ TIPO DIVERGENTE";
   valor: number;
   qtd: number;
   total: number;
   detalhe: string;
   origem: string;
+  tipoOFX?: "ENTRADA" | "SAÍDA";
+  tipoPlanilha?: TipoLancamento;
 }
 
 interface Suspeito {
@@ -57,9 +64,20 @@ interface Suspeito {
   confianca: "ALTA" | "MEDIA";
 }
 
+interface LancamentoRow {
+  dia: string;
+  erro: AuditRow["erro"];
+  valor: number;
+  detalhe: string;
+  origem: string;
+  tipoOFX?: "ENTRADA" | "SAÍDA";
+  tipoPlanilha?: TipoLancamento;
+}
+
 interface ReconciliacaoResult {
   resumo: DiaSummary[];
   auditoria: AuditRow[];
+  lancamentos: LancamentoRow[];
   suspeitos: Record<string, Suspeito[]>;
   divergencias: number;
   totalDias: number;
@@ -90,9 +108,11 @@ function parseOFX(text: string, origem: string): OFXTransaction[] {
     const hist = memo || name;
     const upper = hist.toUpperCase();
     if (MEMOS_IGNORAR.some((t) => upper.includes(t))) continue;
+    const rawAmt = parseFloat(amt);
     txns.push({
       dia: `${dt.slice(0, 4)}-${dt.slice(4, 6)}-${dt.slice(6, 8)}`,
-      valor: Math.abs(parseFloat(amt)),
+      valor: Math.abs(rawAmt),
+      tipo: rawAmt >= 0 ? "ENTRADA" : "SAÍDA",
       memo: hist,
       origem,
     });
@@ -107,7 +127,7 @@ function parsePlanilha(buffer: ArrayBuffer): PlanilhaRow[] {
   const ws   = wb.Sheets[wb.SheetNames[0]];
   const raw  = XLSX.utils.sheet_to_json<unknown[]>(ws, { header: 1 }) as unknown[][];
 
-  let colData = -1, colValor = -1, colBanco = -1, startRow = 0;
+  let colData = -1, colValor = -1, colBanco = -1, colTipo = -1, startRow = 0;
 
   for (let i = 0; i < Math.min(raw.length, 20); i++) {
     const cells = raw[i].map((c) => String(c ?? "").toUpperCase().trim());
@@ -115,6 +135,7 @@ function parsePlanilha(buffer: ArrayBuffer): PlanilhaRow[] {
       colData  = cells.findIndex((c) => c.includes("DATA"));
       colValor = cells.findIndex((c) => c === "VALOR");
       colBanco = cells.findIndex((c) => c.includes("BANCO") || c.includes("CONTA"));
+      colTipo  = cells.findIndex((c) => c === "TIPO" || c.includes("NATUREZA") || c === "D/C" || c === "DC");
       startRow = i + 1;
       break;
     }
@@ -156,9 +177,16 @@ function parsePlanilha(buffer: ArrayBuffer): PlanilhaRow[] {
     }
     if (isNaN(val) || val === 0) continue;
 
+    let tipo: TipoLancamento = "INDEFINIDO";
+    if (colTipo >= 0) {
+      const t = String(row[colTipo] ?? "").toUpperCase().trim();
+      if (t.includes("ENTRADA") || t === "E" || t === "C" || t.includes("CRED")) tipo = "ENTRADA";
+      else if (t.includes("SA") || t === "S" || t === "D" || t.includes("DEB")) tipo = "SAÍDA";
+    }
+
     const dia = `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, "0")}-${String(dt.getDate()).padStart(2, "0")}`;
     const banco = colBanco >= 0 ? String(row[colBanco] ?? "").trim() : "";
-    rows.push({ dia, valor: Math.abs(val), banco });
+    rows.push({ dia, valor: Math.abs(val), tipo, banco });
   }
   return rows;
 }
@@ -214,14 +242,39 @@ function reconciliar(
     const ofxSobra  = [...ofxItens];
     const planSobra: PlanilhaRow[] = [];
 
-    // 1ª passagem — match exato com tolerância de float
+    // 1ª passagem — match exato: valor com tolerância float + tipo compatível
     for (const p of planItens) {
       const pv = Math.round(p.valor * 100) / 100;
-      const idx = ofxSobra.findIndex(
-        (e) => Math.abs(Math.round(e.valor * 100) / 100 - pv) < 0.005
+
+      // Tenta match com valor E tipo corretos
+      const idxExato = ofxSobra.findIndex(
+        (e) => Math.abs(Math.round(e.valor * 100) / 100 - pv) < 0.005 &&
+                (p.tipo === "INDEFINIDO" || e.tipo === p.tipo)
       );
-      if (idx >= 0) ofxSobra.splice(idx, 1);
-      else planSobra.push(p);
+      if (idxExato >= 0) { ofxSobra.splice(idxExato, 1); continue; }
+
+      // Valor bate mas tipo está errado → TIPO DIVERGENTE
+      const idxTipoErrado = p.tipo !== "INDEFINIDO"
+        ? ofxSobra.findIndex(
+            (e) => Math.abs(Math.round(e.valor * 100) / 100 - pv) < 0.005 && e.tipo !== p.tipo
+          )
+        : -1;
+      if (idxTipoErrado >= 0) {
+        const e = ofxSobra[idxTipoErrado];
+        rawAudit.push({
+          dia: toFmt(dia),
+          erro: "❌ TIPO DIVERGENTE",
+          valor: pv,
+          detalhe: `Fluxo: ${p.tipo} | Banco: ${e.tipo} | ${e.memo.slice(0, 50)}`,
+          origem: p.banco,
+          tipoOFX: e.tipo,
+          tipoPlanilha: p.tipo,
+        });
+        ofxSobra.splice(idxTipoErrado, 1);
+        continue;
+      }
+
+      planSobra.push(p);
     }
 
     // 2ª passagem — near-match (mesmo lançamento, valor ligeiramente diferente)
@@ -242,14 +295,18 @@ function reconciliar(
       });
 
       if (bestIdx >= 0) {
-        const ev   = Math.round(extSemMatch[bestIdx].valor * 100) / 100;
+        const ev    = Math.round(extSemMatch[bestIdx].valor * 100) / 100;
+        const eItem = extSemMatch[bestIdx];
         const sinal = pv > ev ? `+R$ ${(pv - ev).toFixed(2)}` : `-R$ ${(ev - pv).toFixed(2)}`;
+        const tipoInfo = p.tipo !== "INDEFINIDO" ? ` | Fluxo: ${p.tipo} / Banco: ${eItem.tipo}` : "";
         rawAudit.push({
           dia: toFmt(dia),
           erro: "🔍 VALOR SIMILAR",
           valor: pv,
-          detalhe: `Planilha: R$ ${fmt(pv)} | Banco: R$ ${fmt(ev)} | Diff: ${sinal}`,
+          detalhe: `Planilha: R$ ${fmt(pv)} | Banco: R$ ${fmt(ev)} | Diff: ${sinal}${tipoInfo}`,
           origem: p.banco,
+          tipoOFX: eItem.tipo,
+          tipoPlanilha: p.tipo,
         });
         extSemMatch.splice(bestIdx, 1);
       } else {
@@ -258,14 +315,18 @@ function reconciliar(
     }
 
     for (const p of planSemMatch)
-      rawAudit.push({ dia: toFmt(dia), erro: "⚠️ BANCO - NÃO ENCONTRADO", valor: Math.round(p.valor * 100) / 100, detalhe: "Faltou cair na conta", origem: p.banco });
+      rawAudit.push({ dia: toFmt(dia), erro: "⚠️ BANCO - NÃO ENCONTRADO", valor: Math.round(p.valor * 100) / 100, detalhe: `Faltou cair na conta`, origem: p.banco, tipoPlanilha: p.tipo });
     for (const e of extSemMatch)
-      rawAudit.push({ dia: toFmt(dia), erro: "🚨 FLUXO - NÃO ENCONTRADO", valor: Math.round(e.valor * 100) / 100, detalhe: e.memo, origem: e.origem });
+      rawAudit.push({ dia: toFmt(dia), erro: "🚨 FLUXO - NÃO ENCONTRADO", valor: Math.round(e.valor * 100) / 100, detalhe: e.memo, origem: e.origem, tipoOFX: e.tipo });
   }
 
-  // Agrupar linhas idênticas
+  // Agrupar linhas idênticas (TIPO DIVERGENTE não agrupa — cada par é único)
   const aggMap = new Map<string, AuditRow>();
   for (const r of rawAudit) {
+    if (r.erro === "❌ TIPO DIVERGENTE") {
+      aggMap.set(`${r.dia}||${r.erro}||${r.detalhe}||${Math.random()}`, { ...r, qtd: 1, total: r.valor });
+      continue;
+    }
     const key = `${r.dia}||${r.erro}||${r.detalhe}||${r.valor}||${r.origem}`;
     if (aggMap.has(key)) {
       const existing = aggMap.get(key)!;
@@ -281,6 +342,11 @@ function reconciliar(
   const auditoria = Array.from(aggMap.values())
     .filter((r) => !diasOkSet.has(r.dia))
     .sort((a, b) => a.dia.localeCompare(b.dia) || b.total - a.total);
+
+  // Lista por lançamento (não agrupada, sem dias OK)
+  const lancamentos: LancamentoRow[] = rawAudit
+    .filter((r) => !diasOkSet.has(r.dia))
+    .sort((a, b) => a.dia.localeCompare(b.dia) || b.valor - a.valor);
 
   // ── Motor detetive ────────────────────────────────────────────────────
   const suspeitos: Record<string, Suspeito[]> = {};
@@ -328,6 +394,7 @@ function reconciliar(
   return {
     resumo,
     auditoria,
+    lancamentos,
     suspeitos,
     divergencias: resumo.filter((r) => r.status === "DIVERGENTE").length,
     totalDias,
@@ -489,9 +556,10 @@ export default function ConciliacaoBancaria() {
   const [processando,  setProcessando]  = useState(false);
   const [resultado,    setResultado]    = useState<ReconciliacaoResult | null>(null);
 
-  const [modalAuditoria, setModalAuditoria] = useState(false);
-  const [modalDetetive,  setModalDetetive]  = useState<string | null>(null);
-  const [linhasExp,      setLinhasExp]      = useState<Set<number>>(new Set());
+  const [abaAtiva,        setAbaAtiva]        = useState<"resumo" | "auditoria">("resumo");
+  const [viewAuditoria,   setViewAuditoria]   = useState<"agrupado" | "lancamento">("agrupado");
+  const [modalDetetive,   setModalDetetive]   = useState<string | null>(null);
+  const [linhasExp,       setLinhasExp]       = useState<Set<number>>(new Set());
 
   // ── Drag & drop ──────────────────────────────────────────────────────────
 
@@ -660,15 +728,15 @@ export default function ConciliacaoBancaria() {
         </div>
       ) : (
         /* ── Resultado ──────────────────────────────────────────────────── */
-        <div className="space-y-6">
+        <div className="space-y-4">
           {/* KPIs */}
           <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
             {[
-              { label: "Eficiência", value: `${resultado.eficiencia}%`, ok: resultado.eficiencia >= 100 },
-              { label: "Divergências", value: String(resultado.divergencias), ok: resultado.divergencias === 0 },
-              { label: "Vol. Planilha", value: fmtBRL(resultado.volFluxo), ok: true },
-              { label: "Vol. Banco", value: fmtBRL(resultado.volBanco), ok: true },
-              { label: "Saldo Total", value: fmtBRL(resultado.saldoTotal), ok: Math.abs(resultado.saldoTotal) < 0.005 },
+              { label: "Eficiência",    value: `${resultado.eficiencia}%`,  ok: resultado.eficiencia >= 100 },
+              { label: "Divergências",  value: String(resultado.divergencias), ok: resultado.divergencias === 0 },
+              { label: "Vol. Planilha", value: fmtBRL(resultado.volFluxo),  ok: true },
+              { label: "Vol. Banco",    value: fmtBRL(resultado.volBanco),   ok: true },
+              { label: "Saldo Total",   value: fmtBRL(resultado.saldoTotal), ok: Math.abs(resultado.saldoTotal) < 0.005 },
             ].map((k) => (
               <Card key={k.label}>
                 <CardContent className="pt-4 pb-3 text-center">
@@ -679,131 +747,270 @@ export default function ConciliacaoBancaria() {
             ))}
           </div>
 
-          {/* Tabela resumo */}
+          {/* Abas: Resumo / Auditoria */}
           <Card>
-            <CardHeader className="flex flex-row items-center justify-between pb-2">
-              <CardTitle className="text-sm">Resumo por Dia</CardTitle>
-              <div className="flex gap-2">
-                <Button size="sm" variant="outline" onClick={() => setModalAuditoria(true)}>
-                  <Search className="h-3 w-3 mr-1" /> Auditoria ({resultado.auditoria.length})
-                </Button>
-                <Button size="sm" variant="outline" onClick={() => exportarExcel(resultado, `Conciliacao_${new Date().toLocaleDateString("pt-BR").replace(/\//g, "-")}.xlsx`)}>
-                  <Download className="h-3 w-3 mr-1" /> Excel
-                </Button>
-                <Button size="sm" variant="outline" onClick={() => exportarPDF(resultado, `Conciliacao_${new Date().toLocaleDateString("pt-BR").replace(/\//g, "-")}.pdf`)}>
-                  <Download className="h-3 w-3 mr-1" /> PDF
-                </Button>
-                <Button size="sm" variant="ghost" onClick={reiniciar}>
-                  <RefreshCw className="h-3 w-3 mr-1" /> Nova
-                </Button>
+            <CardHeader className="pb-0 pt-4 px-4">
+              <div className="flex items-center justify-between gap-4">
+                <Tabs value={abaAtiva} onValueChange={(v) => setAbaAtiva(v as "resumo" | "auditoria")} className="flex-1">
+                  <TabsList className="h-9">
+                    <TabsTrigger value="resumo" className="text-xs">
+                      📊 Resumo por Dia
+                    </TabsTrigger>
+                    <TabsTrigger value="auditoria" className="text-xs">
+                      🔍 Auditoria
+                      {resultado.auditoria.length > 0 && (
+                        <Badge variant="destructive" className="ml-1.5 h-4 px-1 text-xs">
+                          {resultado.auditoria.length}
+                        </Badge>
+                      )}
+                    </TabsTrigger>
+                  </TabsList>
+                </Tabs>
+
+                <div className="flex gap-2 shrink-0">
+                  <Button size="sm" variant="outline" onClick={() => exportarExcel(resultado, `Conciliacao_${new Date().toLocaleDateString("pt-BR").replace(/\//g, "-")}.xlsx`)}>
+                    <Download className="h-3 w-3 mr-1" /> Excel
+                  </Button>
+                  <Button size="sm" variant="outline" onClick={() => exportarPDF(resultado, `Conciliacao_${new Date().toLocaleDateString("pt-BR").replace(/\//g, "-")}.pdf`)}>
+                    <Download className="h-3 w-3 mr-1" /> PDF
+                  </Button>
+                  <Button size="sm" variant="ghost" onClick={reiniciar}>
+                    <RefreshCw className="h-3 w-3 mr-1" /> Nova
+                  </Button>
+                </div>
               </div>
             </CardHeader>
-            <CardContent className="p-0">
-              <div className="overflow-x-auto">
-                <table className="w-full text-sm">
-                  <thead>
-                    <tr className="border-b bg-muted/40">
-                      <th className="text-left px-4 py-2 font-medium text-muted-foreground">Data</th>
-                      <th className="text-right px-4 py-2 font-medium text-muted-foreground">Planilha</th>
-                      <th className="text-right px-4 py-2 font-medium text-muted-foreground">Extrato</th>
-                      <th className="text-right px-4 py-2 font-medium text-muted-foreground">Diferença</th>
-                      <th className="text-center px-4 py-2 font-medium text-muted-foreground">Status</th>
-                      <th className="px-4 py-2" />
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {resultado.resumo.map((r, i) => (
-                      <tr key={i} className={cn("border-b transition-colors", r.status === "DIVERGENTE" && "bg-red-50 dark:bg-red-950/10")}>
-                        <td className="px-4 py-2 font-medium">{r.dia}</td>
-                        <td className="px-4 py-2 text-right">{fmtBRL(r.totalPlanilha)}</td>
-                        <td className="px-4 py-2 text-right">{fmtBRL(Math.abs(r.totalExtrato))}</td>
-                        <td className={cn("px-4 py-2 text-right font-medium", Math.abs(r.diferenca) < 0.005 ? "text-green-600" : "text-red-600")}>
-                          {r.diferenca >= 0 ? "+" : ""}{fmtBRL(r.diferenca)}
-                        </td>
-                        <td className="px-4 py-2 text-center">
-                          {r.status === "OK"
-                            ? <Badge className="bg-green-100 text-green-700 border-green-200 hover:bg-green-100">✓ OK</Badge>
-                            : <Badge className="bg-red-100 text-red-700 border-red-200 hover:bg-red-100">Divergente</Badge>}
-                        </td>
-                        <td className="px-4 py-2 text-center">
-                          {r.status === "DIVERGENTE" && resultado.suspeitos[r.dia] && (
-                            <Button size="sm" variant="ghost" className="h-6 text-xs" onClick={() => setModalDetetive(r.dia)}>
-                              🔎 Detetive
-                            </Button>
-                          )}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
+
+            <CardContent className="p-0 pt-0">
+              <Tabs value={abaAtiva} onValueChange={(v) => setAbaAtiva(v as "resumo" | "auditoria")}>
+                {/* ── Aba Resumo ── */}
+                <TabsContent value="resumo" className="mt-0">
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-sm">
+                      <thead>
+                        <tr className="border-b bg-muted/40">
+                          <th className="text-left px-4 py-2 font-medium text-muted-foreground">Data</th>
+                          <th className="text-right px-4 py-2 font-medium text-muted-foreground">Planilha</th>
+                          <th className="text-right px-4 py-2 font-medium text-muted-foreground">Extrato</th>
+                          <th className="text-right px-4 py-2 font-medium text-muted-foreground">Diferença</th>
+                          <th className="text-center px-4 py-2 font-medium text-muted-foreground">Status</th>
+                          <th className="px-4 py-2" />
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {resultado.resumo.map((r, i) => (
+                          <tr key={i} className={cn("border-b transition-colors", r.status === "DIVERGENTE" && "bg-red-50 dark:bg-red-950/10")}>
+                            <td className="px-4 py-2 font-medium">{r.dia}</td>
+                            <td className="px-4 py-2 text-right">{fmtBRL(r.totalPlanilha)}</td>
+                            <td className="px-4 py-2 text-right">{fmtBRL(Math.abs(r.totalExtrato))}</td>
+                            <td className={cn("px-4 py-2 text-right font-medium", Math.abs(r.diferenca) < 0.005 ? "text-green-600" : "text-red-600")}>
+                              {r.diferenca >= 0 ? "+" : ""}{fmtBRL(r.diferenca)}
+                            </td>
+                            <td className="px-4 py-2 text-center">
+                              {r.status === "OK"
+                                ? <Badge className="bg-green-100 text-green-700 border-green-200 hover:bg-green-100">✓ OK</Badge>
+                                : <Badge className="bg-red-100 text-red-700 border-red-200 hover:bg-red-100">Divergente</Badge>}
+                            </td>
+                            <td className="px-4 py-2 text-center">
+                              {r.status === "DIVERGENTE" && resultado.suspeitos[r.dia] && (
+                                <Button size="sm" variant="ghost" className="h-6 text-xs" onClick={() => setModalDetetive(r.dia)}>
+                                  🔎 Detetive
+                                </Button>
+                              )}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </TabsContent>
+
+                {/* ── Aba Auditoria ── */}
+                <TabsContent value="auditoria" className="mt-0">
+                  {/* toggle Agrupado / Por Lançamento */}
+                  <div className="flex items-center gap-2 px-4 py-2 border-b bg-muted/20">
+                    <span className="text-xs text-muted-foreground mr-1">Visualizar:</span>
+                    <Button
+                      size="sm" variant={viewAuditoria === "agrupado" ? "secondary" : "ghost"}
+                      className="h-7 text-xs px-3"
+                      onClick={() => setViewAuditoria("agrupado")}
+                    >
+                      Agrupado
+                    </Button>
+                    <Button
+                      size="sm" variant={viewAuditoria === "lancamento" ? "secondary" : "ghost"}
+                      className="h-7 text-xs px-3"
+                      onClick={() => setViewAuditoria("lancamento")}
+                    >
+                      Por Lançamento
+                      <Badge variant="outline" className="ml-1.5 h-4 px-1 text-xs">
+                        {resultado.lancamentos.length}
+                      </Badge>
+                    </Button>
+                  </div>
+
+                  {viewAuditoria === "agrupado" ? (
+                  <div className="overflow-x-auto max-h-[60vh] overflow-y-auto">
+                    <table className="w-full text-xs">
+                      <thead className="sticky top-0 bg-background border-b z-10">
+                        <tr>
+                          <th className="text-left px-4 py-2 font-medium text-muted-foreground whitespace-nowrap">Data</th>
+                          <th className="text-left px-4 py-2 font-medium text-muted-foreground">Ocorrência</th>
+                          <th className="text-left px-4 py-2 font-medium text-muted-foreground whitespace-nowrap">Banco / Origem</th>
+                          <th className="text-left px-4 py-2 font-medium text-muted-foreground whitespace-nowrap">Tipo (Fluxo → Banco)</th>
+                          <th className="text-left px-4 py-2 font-medium text-muted-foreground">Detalhe</th>
+                          <th className="text-center px-4 py-2 font-medium text-muted-foreground">Qtd</th>
+                          <th className="text-right px-4 py-2 font-medium text-muted-foreground whitespace-nowrap">Valor Unit.</th>
+                          <th className="text-right px-4 py-2 font-medium text-muted-foreground whitespace-nowrap">Total</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {resultado.auditoria.map((r, i) => {
+                          const isExp = linhasExp.has(i);
+                          const isDivTipo = r.erro === "❌ TIPO DIVERGENTE";
+                          const bg = isDivTipo
+                            ? "bg-purple-50 dark:bg-purple-950/20"
+                            : r.erro.includes("SIMILAR")
+                            ? "bg-blue-50 dark:bg-blue-950/20"
+                            : r.erro.includes("BANCO")
+                            ? "bg-amber-50 dark:bg-amber-950/20"
+                            : "bg-red-50 dark:bg-red-950/20";
+                          const cor = isDivTipo
+                            ? "text-purple-700 dark:text-purple-400"
+                            : r.erro.includes("SIMILAR")
+                            ? "text-blue-700 dark:text-blue-400"
+                            : r.erro.includes("BANCO")
+                            ? "text-amber-700 dark:text-amber-400"
+                            : "text-red-700 dark:text-red-400";
+
+                          const tipoBadge = (tipo: string | undefined, side: "fluxo" | "banco") => {
+                            if (!tipo || tipo === "INDEFINIDO") return <span className="text-muted-foreground text-xs">—</span>;
+                            const isEntrada = tipo === "ENTRADA";
+                            return (
+                              <Badge className={cn("text-xs px-1 py-0",
+                                isEntrada
+                                  ? "bg-green-100 text-green-700 border-green-200"
+                                  : "bg-red-100 text-red-700 border-red-200",
+                                side === "banco" && isDivTipo && "ring-1 ring-purple-400"
+                              )}>
+                                {isEntrada ? "↑ ENTRADA" : "↓ SAÍDA"}
+                              </Badge>
+                            );
+                          };
+
+                          return (
+                            <tr
+                              key={i}
+                              className={cn("border-b cursor-pointer hover:opacity-80", bg)}
+                              onClick={() => toggleLinha(i)}
+                            >
+                              <td className="px-4 py-2 font-medium whitespace-nowrap">{r.dia}</td>
+                              <td className={cn("px-4 py-2 font-medium", cor)}>
+                                {r.erro}
+                                {r.qtd > 1 && <Badge variant="secondary" className="ml-1 text-xs">×{r.qtd}</Badge>}
+                              </td>
+                              <td className="px-4 py-2 text-muted-foreground whitespace-nowrap text-xs">
+                                {r.origem || "—"}
+                              </td>
+                              <td className="px-4 py-2">
+                                <div className="flex items-center gap-1">
+                                  {tipoBadge(r.tipoPlanilha, "fluxo")}
+                                  {(r.tipoOFX || r.tipoPlanilha) && r.tipoPlanilha !== "INDEFINIDO" && (
+                                    <span className="text-muted-foreground text-xs">→</span>
+                                  )}
+                                  {tipoBadge(r.tipoOFX, "banco")}
+                                </div>
+                              </td>
+                              <td className="px-4 py-2 text-muted-foreground max-w-xs">
+                                {isExp ? r.detalhe : r.detalhe.slice(0, 55) + (r.detalhe.length > 55 ? "…" : "")}
+                                {isExp ? <ChevronUp className="inline h-3 w-3 ml-1" /> : <ChevronDown className="inline h-3 w-3 ml-1 opacity-40" />}
+                              </td>
+                              <td className="px-4 py-2 text-center text-muted-foreground">{r.qtd > 1 ? r.qtd : "—"}</td>
+                              <td className="px-4 py-2 text-right text-muted-foreground">{r.qtd > 1 ? fmtBRL(r.valor) : "—"}</td>
+                              <td className="px-4 py-2 text-right font-bold">{fmtBRL(r.total)}</td>
+                            </tr>
+                          );
+                        })}
+                        {resultado.auditoria.length === 0 && (
+                          <tr>
+                            <td colSpan={8} className="px-4 py-10 text-center text-muted-foreground">
+                              Nenhuma divergência encontrada.
+                            </td>
+                          </tr>
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                  ) : (
+                  /* ── Por Lançamento ── */
+                  <div className="overflow-x-auto max-h-[60vh] overflow-y-auto">
+                    <table className="w-full text-xs">
+                      <thead className="sticky top-0 bg-background border-b z-10">
+                        <tr>
+                          <th className="text-left px-4 py-2 font-medium text-muted-foreground whitespace-nowrap">Data</th>
+                          <th className="text-left px-4 py-2 font-medium text-muted-foreground">Ocorrência</th>
+                          <th className="text-left px-4 py-2 font-medium text-muted-foreground whitespace-nowrap">Banco / Origem</th>
+                          <th className="text-left px-4 py-2 font-medium text-muted-foreground whitespace-nowrap">Tipo</th>
+                          <th className="text-left px-4 py-2 font-medium text-muted-foreground">Histórico / Detalhe</th>
+                          <th className="text-right px-4 py-2 font-medium text-muted-foreground whitespace-nowrap">Valor</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {resultado.lancamentos.map((r, i) => {
+                          const isDivTipo = r.erro === "❌ TIPO DIVERGENTE";
+                          const bg = isDivTipo
+                            ? "bg-purple-50 dark:bg-purple-950/20"
+                            : r.erro.includes("SIMILAR")
+                            ? "bg-blue-50 dark:bg-blue-950/20"
+                            : r.erro.includes("BANCO")
+                            ? "bg-amber-50 dark:bg-amber-950/20"
+                            : "bg-red-50 dark:bg-red-950/20";
+                          const cor = isDivTipo
+                            ? "text-purple-700 dark:text-purple-400"
+                            : r.erro.includes("SIMILAR")
+                            ? "text-blue-700 dark:text-blue-400"
+                            : r.erro.includes("BANCO")
+                            ? "text-amber-700 dark:text-amber-400"
+                            : "text-red-700 dark:text-red-400";
+                          const tipo = r.tipoOFX ?? r.tipoPlanilha;
+                          return (
+                            <tr key={i} className={cn("border-b", bg)}>
+                              <td className="px-4 py-2 font-medium whitespace-nowrap">{r.dia}</td>
+                              <td className={cn("px-4 py-2 font-medium text-xs", cor)}>{r.erro}</td>
+                              <td className="px-4 py-2 text-muted-foreground whitespace-nowrap">{r.origem || "—"}</td>
+                              <td className="px-4 py-2">
+                                {tipo && tipo !== "INDEFINIDO" ? (
+                                  <Badge className={cn("text-xs px-1 py-0",
+                                    tipo === "ENTRADA"
+                                      ? "bg-green-100 text-green-700 border-green-200"
+                                      : "bg-red-100 text-red-700 border-red-200"
+                                  )}>
+                                    {tipo === "ENTRADA" ? "↑ ENTRADA" : "↓ SAÍDA"}
+                                  </Badge>
+                                ) : <span className="text-muted-foreground">—</span>}
+                              </td>
+                              <td className="px-4 py-2 text-muted-foreground max-w-xs truncate">{r.detalhe}</td>
+                              <td className="px-4 py-2 text-right font-bold">{fmtBRL(r.valor)}</td>
+                            </tr>
+                          );
+                        })}
+                        {resultado.lancamentos.length === 0 && (
+                          <tr>
+                            <td colSpan={6} className="px-4 py-10 text-center text-muted-foreground">
+                              Nenhuma divergência encontrada.
+                            </td>
+                          </tr>
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                  )}
+                </TabsContent>
+              </Tabs>
             </CardContent>
           </Card>
         </div>
       )}
-
-      {/* ── Modal Auditoria ─────────────────────────────────────────────── */}
-      <Dialog open={modalAuditoria} onOpenChange={setModalAuditoria}>
-        <DialogContent className="max-w-5xl max-h-[80vh] overflow-hidden flex flex-col">
-          <DialogHeader>
-            <DialogTitle>Auditoria de Divergências</DialogTitle>
-          </DialogHeader>
-          <div className="overflow-y-auto flex-1">
-            <table className="w-full text-xs">
-              <thead className="sticky top-0 bg-background border-b">
-                <tr>
-                  <th className="text-left px-3 py-2 text-muted-foreground">Data</th>
-                  <th className="text-left px-3 py-2 text-muted-foreground">Tipo</th>
-                  <th className="text-left px-3 py-2 text-muted-foreground">Detalhe</th>
-                  <th className="text-center px-3 py-2 text-muted-foreground">Qtd</th>
-                  <th className="text-right px-3 py-2 text-muted-foreground">Valor Unit.</th>
-                  <th className="text-right px-3 py-2 text-muted-foreground">Total</th>
-                </tr>
-              </thead>
-              <tbody>
-                {resultado?.auditoria.map((r, i) => {
-                  const isExp = linhasExp.has(i);
-                  const bg = r.erro.includes("SIMILAR")
-                    ? "bg-blue-50 dark:bg-blue-950/20"
-                    : r.erro.includes("BANCO")
-                    ? "bg-amber-50 dark:bg-amber-950/20"
-                    : "bg-red-50 dark:bg-red-950/20";
-                  const cor = r.erro.includes("SIMILAR")
-                    ? "text-blue-700 dark:text-blue-400"
-                    : r.erro.includes("BANCO")
-                    ? "text-amber-700 dark:text-amber-400"
-                    : "text-red-700 dark:text-red-400";
-                  return (
-                    <tr
-                      key={i}
-                      className={cn("border-b cursor-pointer hover:opacity-80", bg)}
-                      onClick={() => toggleLinha(i)}
-                    >
-                      <td className="px-3 py-2 font-medium">{r.dia}</td>
-                      <td className={cn("px-3 py-2 font-medium", cor)}>
-                        {r.erro}
-                        {r.qtd > 1 && <Badge variant="secondary" className="ml-1 text-xs">×{r.qtd}</Badge>}
-                      </td>
-                      <td className="px-3 py-2 text-muted-foreground max-w-xs">
-                        {isExp ? r.detalhe : r.detalhe.slice(0, 50) + (r.detalhe.length > 50 ? "…" : "")}
-                        {isExp ? <ChevronUp className="inline h-3 w-3 ml-1" /> : <ChevronDown className="inline h-3 w-3 ml-1 opacity-40" />}
-                      </td>
-                      <td className="px-3 py-2 text-center text-muted-foreground">{r.qtd > 1 ? r.qtd : "-"}</td>
-                      <td className="px-3 py-2 text-right text-muted-foreground">{r.qtd > 1 ? fmtBRL(r.valor) : "-"}</td>
-                      <td className="px-3 py-2 text-right font-bold">{fmtBRL(r.total)}</td>
-                    </tr>
-                  );
-                })}
-                {!resultado?.auditoria.length && (
-                  <tr>
-                    <td colSpan={6} className="px-3 py-8 text-center text-muted-foreground">Nenhuma divergência encontrada.</td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
-          </div>
-        </DialogContent>
-      </Dialog>
 
       {/* ── Modal Detetive ──────────────────────────────────────────────── */}
       <Dialog open={!!modalDetetive} onOpenChange={() => setModalDetetive(null)}>
