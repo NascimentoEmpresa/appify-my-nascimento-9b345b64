@@ -1,5 +1,5 @@
 import { supabase } from "@/integrations/supabase/client";
-import type { Reembolso } from "@/hooks/useReembolso";
+import { BUCKET_REEMBOLSO, type Reembolso } from "@/hooks/useReembolso";
 import { fmtBRL } from "@/lib/reembolso/regras";
 
 /**
@@ -86,3 +86,48 @@ export function urlDespesaDoReembolso(r: Reembolso, sugestoes?: SugestoesMalote)
 /** O que a tela de aprovação diz antes de mandar a pessoa para o Malote. */
 export const avisoEnvioAoMalote = (r: Reembolso) =>
   `Confira a despesa no Malote e envie para aprovação — ${fmtBRL(r.total_centavos ?? 0)} de ${r.solicitante_nome ?? "colaborador"}. O reembolso só sai de "Aprovado" depois disso.`;
+
+/**
+ * Os comprovantes do reembolso, como `File`, prontos para o anexo do Malote.
+ *
+ * Vêm do bucket `reembolsos` (privado) e entram no MESMO estado de arquivos
+ * que o formulário do Malote já usa — de lá o `uploadAnexosMalote` os grava em
+ * `malote-anexos` no salvar, junto com o que a pessoa tiver adicionado à mão.
+ * Nenhum caminho novo de upload: o comprovante segue exatamente a rota de
+ * qualquer outro anexo do Malote.
+ *
+ * Por que COPIAR e não referenciar: são dois buckets, com políticas
+ * diferentes, e `malote_despesa.arquivos` guarda caminho dentro de
+ * `malote-anexos`. Apontar para fora faria o anexo abrir para quem aprova
+ * reembolso e falhar para quem paga — que é justamente quem precisa vê-lo.
+ *
+ * Falha de um arquivo não derruba os outros: o financeiro prefere a despesa
+ * com dois dos três comprovantes (e um aviso) a nenhuma despesa.
+ */
+export async function comprovantesDoReembolso(
+  reembolsoId: string,
+): Promise<{ arquivos: File[]; falhas: number }> {
+  const sb = supabase as any;
+  const { data: itens, error } = await sb
+    .from("CS_REEMBOLSO_ITEM")
+    .select("storage_path, nome_arquivo, mime_type")
+    .eq("reembolso_id", reembolsoId);
+  if (error || !itens?.length) return { arquivos: [], falhas: 0 };
+
+  const arquivos: File[] = [];
+  let falhas = 0;
+  for (const item of itens as Array<{
+    storage_path: string; nome_arquivo: string | null; mime_type: string | null;
+  }>) {
+    const { data, error: erroDownload } = await supabase.storage
+      .from(BUCKET_REEMBOLSO).download(item.storage_path);
+    if (erroDownload || !data) { falhas++; continue; }
+    // O nome do arquivo é o que o financeiro lê na lista de anexos; o do
+    // storage tem prefixo de pasta e carimbo de tempo.
+    const nome = item.nome_arquivo?.trim()
+      || item.storage_path.split("/").pop()
+      || "comprovante";
+    arquivos.push(new File([data], nome, { type: item.mime_type || data.type }));
+  }
+  return { arquivos, falhas };
+}

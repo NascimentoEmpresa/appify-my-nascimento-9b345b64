@@ -11,6 +11,7 @@ import {
   MOTIVOS_VAGA, motivoLabel, ehSubstituicao, avaliarPrazo, dataMinimaVaga,
   cargoExigeCnh, aplicarReqCnh, REQ_CNH_TEXTO, fmtBr,
   rotuloReferencia, ajudaReferencia, mostraNomeReferencia, contratoDoEmpregado,
+  faltamCamposManuais,
   podeVagaAdministrativa, filtrarAdministrativas,
   substituidosComVagaViva, avisoSubstituidoPreso,
 } from "@/lib/recrutamento/vagaRegras";
@@ -329,6 +330,9 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "anali
   const podeMoverCompras  = can("aprovar", undefined, "recrutamento_etapa_compras");
 
   // ── Estado ─────────────────────────────────────────────────────
+  // Vaga do escritório preenchida à mão, sem colaborador de referência.
+  const [vagaManual, setVagaManual]     = useState(false);
+  const [menuVagaAberto, setMenuVagaAberto] = useState(false);
   const [view, setView]               = useState<"tabela" | "kanban">("tabela");
   const [tab, setTab]                 = useState("minha");
   const [page, setPage]               = useState(1);
@@ -1424,7 +1428,41 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "anali
     setEmpSearch("");
     setShowEmpDrop(false);
     setSubstituidoId(null);
+    setVagaManual(false);
+    setMenuVagaAberto(false);
     if (!contratosFull.length) carregarContratos();
+  };
+
+  /**
+   * Liga e desliga o preenchimento à mão, com a solicitação já aberta.
+   *
+   * Cargo, contrato, escala e salário passam a ser digitados em vez de virem
+   * do cadastro de um colaborador. Só existe para quem tem a capacidade de
+   * vaga administrativa — ver `podePreencherVagaManual` em
+   * lib/recrutamento/vagaRegras.ts, que explica por que o escritório precisa
+   * disso e por que a chave é a capacidade, não o setor.
+   *
+   * NÃO marca `administrativa` sozinho. O checkbox está no mesmo passo, à
+   * vista, e é do dono da solicitação decidir: nem toda vaga preenchida à mão
+   * é vaga que precisa sumir de quem não tem a capacidade. Marcar por conta
+   * seria esconder a vaga sem ninguém ter pedido.
+   *
+   * Ao DESLIGAR, limpa o que foi digitado à mão: esses campos passam a
+   * prometer que vieram do cadastro, e deixar o texto antigo faria a tela
+   * mentir sobre a origem deles.
+   */
+  const alternarVagaManual = () => {
+    setMenuVagaAberto(false);
+    setVagaManual(atual => {
+      if (atual) {
+        setSubstituidoId(null);
+        setEmpSearch("");
+        setVaga(v => ({
+          ...v, nome_substituido: "", cargo: "", contrato: "", salario: "", escala: "",
+        }));
+      }
+      return !atual;
+    });
   };
 
   // Prazo/grau da data escolhida — o grau não é mais escolhido na mão.
@@ -1434,13 +1472,29 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "anali
   const vagaValidar = (step: number) => {
     if (step === 1) {
       if (!vaga.motivo_vaga) { toast("Selecione o motivo da vaga.", "err"); return false; }
-      if (!substituidoId) {
+
+      // No modo manual ninguém preenche por você: o que o cadastro daria vira
+      // digitação, e o que era "escolha alguém" vira "informe o campo".
+      if (vagaManual) {
+        const faltam = faltamCamposManuais(vaga);
+        if (faltam.length) {
+          toast(`Preenchendo à mão, ${faltam.join(" e ")} ${faltam.length > 1 ? "são obrigatórios" : "é obrigatório"}.`, "err");
+          return false;
+        }
+        // Substituição é o único motivo que PRECISA dizer quem sai — é esse
+        // vínculo que impede duas vagas repondo a mesma pessoa.
+        if (ehSubstituicao(vaga.motivo_vaga) && !substituidoId) {
+          toast("Em Substituição, escolha na lista quem será substituído — mesmo preenchendo o resto à mão.", "err");
+          return false;
+        }
+      } else if (!substituidoId) {
         toast(ehSubstituicao(vaga.motivo_vaga)
           ? "Escolha na lista o colaborador que será substituído — o cargo e o contrato vêm do cadastro dele."
           : "Escolha na lista alguém com o mesmo cargo da vaga — é de lá que vêm cargo, contrato, escala e salário.", "err");
         return false;
       }
-      const jaTem = ehSubstituicao(vaga.motivo_vaga) ? presos.get(substituidoId) : undefined;
+
+      const jaTem = ehSubstituicao(vaga.motivo_vaga) && substituidoId ? presos.get(substituidoId) : undefined;
       if (jaTem) { toast(avisoSubstituidoPreso(jaTem), "err"); return false; }
       if (!vaga.contrato)    { toast("Selecione o contrato.", "err"); return false; }
       if (!vaga.cargo.trim()){ toast("Informe o cargo.", "err"); return false; }
@@ -2788,6 +2842,55 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "anali
         <div className="rec-modal-ov">
           <div className="rec-modal" style={{ maxWidth: 600 }} onClick={e => e.stopPropagation()}>
             <button onClick={() => setModalVaga(false)} style={{ position: "absolute", top: 14, right: 14, background: "none", border: "none", color: "#94a3b8", fontSize: 20, cursor: "pointer" }}>✕</button>
+
+            {/* Os três pontinhos ficam DENTRO da solicitação, ao lado do ✕.
+                É o lugar certo: o que eles oferecem muda esta solicitação que
+                está aberta, não a decisão de abrir uma.
+
+                Quem libera é `recrutamento_vaga_administrativa`, a capacidade
+                que JÁ existe em Gerenciamento de Acesso e que também governa o
+                checkbox "Vaga é administrativa?" logo abaixo. Nenhuma chave de
+                acesso nova foi criada para isto. */}
+            {podeAdministrativa && (
+              <>
+                <button
+                  type="button"
+                  aria-label="Mais opções desta solicitação"
+                  aria-haspopup="menu"
+                  aria-expanded={menuVagaAberto}
+                  onClick={e => { e.stopPropagation(); setMenuVagaAberto(v => !v); }}
+                  style={{ position: "absolute", top: 13, right: 44, width: 26, height: 26, borderRadius: 8, background: menuVagaAberto ? "#e2e8f0" : "none", border: "none", color: "#64748b", fontSize: 17, lineHeight: 1, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}
+                >
+                  ⋯
+                </button>
+                {menuVagaAberto && (
+                  <>
+                    {/* Overlay transparente fecha ao clicar fora, sem listener
+                        global que alguém esquece de remover na desmontagem. */}
+                    <div onClick={() => setMenuVagaAberto(false)}
+                         style={{ position: "fixed", inset: 0, zIndex: 60 }} />
+                    <div role="menu" style={{ position: "absolute", top: 42, right: 40, zIndex: 61, minWidth: 268, background: "#fff", border: "1px solid #e2e8f0", borderRadius: 12, boxShadow: "0 12px 32px rgba(15,23,42,.16)", padding: 5, textAlign: "left" }}>
+                      <button
+                        role="menuitem"
+                        type="button"
+                        onClick={alternarVagaManual}
+                        style={{ display: "block", width: "100%", padding: "9px 11px", border: "none", borderRadius: 9, background: "transparent", cursor: "pointer", fontFamily: "inherit", fontSize: 12.5, fontWeight: 700, color: "#0f172a", textAlign: "left" }}
+                        onMouseEnter={e => { e.currentTarget.style.background = "#eef4ff"; }}
+                        onMouseLeave={e => { e.currentTarget.style.background = "transparent"; }}
+                      >
+                        {vagaManual ? "↩️ Voltar a puxar do cadastro" : "✍️ Preencher manualmente"}
+                        <small style={{ display: "block", marginTop: 3, fontWeight: 500, fontSize: 11, color: "#64748b", lineHeight: 1.35, whiteSpace: "normal" }}>
+                          {vagaManual
+                            ? "Volta a escolher um colaborador; cargo, contrato, escala e salário vêm do cadastro dele."
+                            : "Vaga do escritório: você digita cargo, contrato, escala e salário em vez de copiar de um colaborador."}
+                        </small>
+                      </button>
+                    </div>
+                  </>
+                )}
+              </>
+            )}
+
             <div style={{ fontSize: 17, fontWeight: 800, marginBottom: 4 }}>Solicitar Nova Vaga</div>
             <div style={{ fontSize: 12, color: "#94a3b8", marginBottom: 14 }}>
               {vagaStep === 1 ? "Etapa 1 de 3 — Identificação da Vaga" : vagaStep === 2 ? "Etapa 2 de 3 — Detalhes do Posto" : "Etapa 3 de 3 — Requisitos e Urgência"}
@@ -2821,7 +2924,19 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "anali
                   {MOTIVOS_VAGA.map(o => <option key={o}>{o}</option>)}
                 </select>
               </div>
-              {!!vaga.motivo_vaga && (
+              {/* Aviso do modo manual: a pessoa precisa saber que trocou de
+                  regime, senão estranha os campos que antes vinham prontos. */}
+              {vagaManual && (
+                <div className="rec-fg" style={{ gridColumn: "1 / -1" }}>
+                  <div style={{ fontSize: 11.5, fontWeight: 600, color: "#0f3171", background: "#eef4ff", border: "1px solid #c7d7fe", borderRadius: 9, padding: "8px 11px" }}>
+                    ✍️ <b>Preenchendo à mão</b> — vaga do escritório. Cargo, contrato, escala e salário
+                    são digitados por você, e não copiados de um colaborador.
+                  </div>
+                </div>
+              )}
+              {/* Em Substituição o colaborador continua obrigatório mesmo à
+                  mão: é o vínculo que impede duas vagas repondo a mesma pessoa. */}
+              {!!vaga.motivo_vaga && (!vagaManual || ehSubstituicao(vaga.motivo_vaga)) && (
                 <div className="rec-fg" style={{ position: "relative" }}
                   onBlur={() => setTimeout(() => setShowEmpDrop(false), 150)}>
                   <label>{rotuloReferencia(vaga.motivo_vaga)} *</label>
@@ -2887,15 +3002,25 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "anali
               {/* Contrato e cargo vêm do cadastro do escolhido e ficam travados
                   — a vaga é do posto dele, não de outro. */}
               <div className="rec-fg">
-                <label>Contrato *<span style={{ color: "#94a3b8", fontWeight: 600 }}> — do colaborador escolhido</span></label>
-                <input className="rec-fi" readOnly value={vaga.contrato} placeholder="Escolha o colaborador acima"
-                  style={{ background: "#f1f5f9", color: "#475569", cursor: "not-allowed" }} />
+                <label>Contrato *{!vagaManual && <span style={{ color: "#94a3b8", fontWeight: 600 }}> — do colaborador escolhido</span>}</label>
+                <input className="rec-fi"
+                  placeholder={vagaManual ? "Ex.: ADM E ESTAGIARIOS - NH" : "Escolha o colaborador acima"}
+                  value={vaga.contrato} readOnly={!vagaManual}
+                  onChange={e => setVaga(v => ({ ...v, contrato: e.target.value }))}
+                  style={vagaManual ? undefined : { background: "#f1f5f9", color: "#475569", cursor: "not-allowed" }} />
+                {vagaManual && (
+                  <div style={{ marginTop: 4, fontSize: 11, color: "#94a3b8" }}>
+                    Escolher o contrato no catálogo de Suprimentos, abaixo, também preenche este campo.
+                  </div>
+                )}
               </div>
               <div className="rec-fg">
-                <label>Cargo *<span style={{ color: "#94a3b8", fontWeight: 600 }}> — do colaborador escolhido</span></label>
-                <input className="rec-fi" placeholder="Escolha o colaborador acima"
-                  value={vaga.cargo} readOnly
-                  style={{ background: "#f1f5f9", color: "#475569", cursor: "not-allowed" }} />
+                <label>Cargo *{!vagaManual && <span style={{ color: "#94a3b8", fontWeight: 600 }}> — do colaborador escolhido</span>}</label>
+                <input className="rec-fi"
+                  placeholder={vagaManual ? "Ex.: Analista Administrativo" : "Escolha o colaborador acima"}
+                  value={vaga.cargo} readOnly={!vagaManual}
+                  onChange={e => setVaga(v => ({ ...v, cargo: e.target.value }))}
+                  style={vagaManual ? undefined : { background: "#f1f5f9", color: "#475569", cursor: "not-allowed" }} />
                 {cnhDoCargo && (
                   <div style={{ marginTop: 6, fontSize: 11.5, fontWeight: 700, color: "#b45309", background: "#fffbeb", border: "1px solid #fde68a", borderRadius: 8, padding: "6px 9px" }}>
                     🚗 {cnhDoCargo}: CNH obrigatória — já entra sozinha nos requisitos e não pode ser tirada.
