@@ -350,6 +350,12 @@ const App = () => (
                 AcessoGate dentro da própria tela, não por rota, para quem cai
                 no link entender que existe e falta permissão. */}
             <Route path="central-servicos/solicitar-vaga" element={<SolicitarVagaCentral />} />
+            {/* Mesma tela de /app/treinamentos/erp, ancorada na Central de
+                Serviços: mesmo componente e mesmos treinamentos, com menu
+                próprio (`central_servicos_treinamentos`) para o acesso ser
+                liberado porta a porta. Igual ao que Chamados de Sistemas já
+                faz entre Encarregados e Central de Serviços. */}
+            <Route path="central-servicos/treinamentos" element={<TreinamentosERP />} />
             <Route path="central-servicos/reembolso" element={<SolicitarReembolso />} />
             <Route path="central-servicos/reembolso/aprovacao" element={<AprovacaoReembolso />} />
             <Route path="central-servicos/reembolso/configuracao" element={<ConfiguracaoReembolso />} />

@@ -652,6 +652,12 @@ const centralServicosModule: ModuleDef = {
         // quem é do escritório pede vaga por esta porta, sem precisar de
         // acesso ao módulo de Recrutamento inteiro.
         { label: "Solicitar Vaga", to: "/app/central-servicos/solicitar-vaga", icon: UserPlus },
+        // Mesma tela de Treinamentos ERP dos Encarregados, ancorada aqui: o
+        // treinamento do ERP interessa a quem não é encarregado, e a única
+        // porta ficava dentro do módulo deles. Menu próprio
+        // (`central_servicos_treinamentos`) — liberar esta porta não abre a
+        // de lá, nem o contrário.
+        { label: "Treinamentos", to: "/app/central-servicos/treinamentos", icon: GraduationCap },
         // Só o "Solicitar" entra no menu. Aprovação e Tipos/Limites ficam de
         // fora de propósito: são telas de poucas pessoas, alcançadas pelos
         // botões do cabeçalho da própria tela de solicitar (que só aparecem
