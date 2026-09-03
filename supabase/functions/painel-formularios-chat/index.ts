@@ -195,7 +195,16 @@ Deno.serve(async (req) => {
           error: `O modelo "${IA_MODELO}" não existe nesta API. Ajuste a variável IA_CHAT_MODELO.`,
         }, 502);
       }
-      return respostaJson({ error: "Falha ao chamar a IA. Tente novamente em instantes." }, 502);
+      // O status entra na mensagem de propósito. "Falha ao chamar a IA" sozinho
+      // não distingue indisponibilidade momentânea (5xx, adianta tentar de novo)
+      // de payload recusado (4xx, tentar de novo não resolve) — e sem log
+      // acessível pelo CLI, esse número é o que permite diagnosticar.
+      const motivo = String(
+        (() => { try { return JSON.parse(txt)?.error?.message ?? ""; } catch { return ""; } })()
+      ).slice(0, 160);
+      return respostaJson({
+        error: `Falha ao chamar a IA (HTTP ${aiResp.status})${motivo ? `: ${motivo}` : "."}`,
+      }, 502);
     }
 
     const dadosIa = await aiResp.json();
