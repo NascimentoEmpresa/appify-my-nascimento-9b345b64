@@ -54,6 +54,20 @@
 --   Se a 051 tiver aplicado alguma coisa (caso o SQL Editor não estivesse em
 --   transação), nada aqui duplica: os INSERT têm ON CONFLICT e os CREATE são
 --   OR REPLACE.
+--
+-- E A MESMA ARMADILHA PEGOU ESTE ARQUIVO NA PRIMEIRA TENTATIVA
+--
+--   A primeira versão desta 057 terminava chamando esp_col_arvore() como
+--   "prova final". No SQL Editor não existe usuário autenticado: auth.uid()
+--   é NULL e a guarda levanta 42501 "Não autenticado" — que é a resposta
+--   CERTA dela. Só que exceção solta num script transacional aborta tudo, e
+--   a minha própria conferência desfez a migration que ela deveria validar.
+--
+--   Escrevi 400 linhas explicando esse mecanismo e caí nele na linha
+--   seguinte. A conferência agora é toda não-lançante: consultas de catálogo
+--   e um bloco DO com EXCEPTION que informa por NOTICE. O teste que precisa
+--   de sessão real ficou COMENTADO no fim, com o SET LOCAL de simulação —
+--   fora do caminho da transação.
 -- =====================================================================
 
 -- ── 1. O menu e a permissão que o torna “configurado” ──────────────
@@ -367,7 +381,7 @@ NOTIFY pgrst, 'reload schema';
 -- plpgsql não é validado na criação, então só a listagem abaixo diz se o
 -- sistema está de pé.
 
--- (a) As SETE funções têm que aparecer.
+-- (a) As OITO funções têm que aparecer.
 --     esp_col_arvore, esp_col_colaboradores, esp_col_contrato_id,
 --     esp_col_esta_ativo, esp_col_exige_acesso, esp_col_ficha,
 --     esp_col_historico, esp_col_marcacoes  → 8 linhas.
@@ -388,21 +402,79 @@ SELECT mo.codigo AS modulo, m.codigo, m.rota, m.ativo,
  WHERE m.codigo = 'central_servicos_espaco_colaborador';
 
 -- (c) A policy aditiva de EMPREGADOS.
+-- to_regclass em vez do cast direto: '...'::regclass LANÇA quando a tabela
+-- não existe, e nada nesta conferência pode abortar a transação.
 SELECT polname FROM pg_policy
- WHERE polrelid = 'public."EMPREGADOS"'::regclass
+ WHERE polrelid = to_regclass('public."EMPREGADOS"')
    AND polname = 'empregados_select_espaco_colaborador';
 
--- (d) A prova final: chama a árvore de verdade, como a tela chama. Se a
---     guarda ou qualquer dependência estiver faltando, isto estoura AQUI —
---     que é onde você quer descobrir, não na tela do usuário.
---     Com o seu próprio login (Administrador Geral) tem que devolver os
---     totais; para quem não tem o menu, devolve "Sem acesso", que também é
---     resposta certa.
-SELECT jsonb_build_object(
-         'total_ativos',         (public.esp_col_arvore() -> 'total_ativos'),
-         'sem_contrato',         (public.esp_col_arvore() -> 'sem_contrato'),
-         'contratos_no_retorno', jsonb_array_length(public.esp_col_arvore() -> 'contratos')
-       ) AS teste_da_arvore;
+-- (d) As tabelas de que as funções dependem. Estático, não executa nada:
+--     se alguma linha vier `false`, a RPC correspondente estoura na tela.
+SELECT t.nome,
+       to_regclass(t.nome) IS NOT NULL AS existe
+  FROM (VALUES
+    ('public."EMPREGADOS"'),
+    ('public.contratos'),
+    ('public.planilha_custo'),
+    ('public.planilha_posto_localizacao'),
+    ('public."RH_CONTRATO_ENCARREGADO"'),
+    ('public.sup_empregado_contrato_depara'),
+    ('public.sup_pedido'),
+    ('public.sup_pedido_item'),
+    ('public."SISTEMA_SOLICITACOES_ADVERTENCIA"'),
+    ('public."SISTEMA_SOLICITACOES_TROCA_FUNCAO"')
+  ) AS t(nome)
+ ORDER BY 2, 1;
+
+-- (e) Chamada real da árvore — SEM poder derrubar este script.
+--
+--     ATENÇÃO, e esta é a lição que custou uma rodada: no SQL Editor NÃO
+--     EXISTE usuário autenticado. `auth.uid()` é NULL, então
+--     esp_col_exige_acesso() levanta 42501 "Não autenticado" — resposta
+--     CORRETA da guarda, não defeito. Só que uma exceção solta aqui aborta a
+--     transação inteira e desfaz toda a migration acima, que foi exatamente
+--     o que aconteceu na primeira tentativa desta 057.
+--
+--     Por isso o teste vive dentro de um DO com EXCEPTION: ele informa por
+--     NOTICE e nunca aborta. Leia a mensagem na aba de resultado.
+DO $teste$
+BEGIN
+  PERFORM public.esp_col_arvore();
+  RAISE NOTICE '[esp_col] arvore executou completa (havia sessão autenticada).';
+EXCEPTION
+  WHEN insufficient_privilege THEN
+    -- Chegou até a guarda: prova que esp_col_arvore e esp_col_exige_acesso
+    -- existem e se enxergam. É o resultado ESPERADO no SQL Editor.
+    RAISE NOTICE '[esp_col] OK — parou na guarda de acesso (esperado no SQL Editor, sem usuário logado).';
+  WHEN undefined_function THEN
+    RAISE NOTICE '[esp_col] FALTA FUNÇÃO -> %', SQLERRM;
+  WHEN undefined_table THEN
+    RAISE NOTICE '[esp_col] FALTA TABELA -> %', SQLERRM;
+  WHEN OTHERS THEN
+    RAISE NOTICE '[esp_col] ERRO INESPERADO (%) -> %', SQLSTATE, SQLERRM;
+END
+$teste$;
+
+
+-- ── Teste de ponta a ponta, OPCIONAL e fora desta migration ──────────
+--
+-- O DO acima prova que as peças existem, mas para na guarda — o corpo da
+-- árvore (planilha_custo, o de-para, EMPREGADOS) só é exercitado com um
+-- usuário de verdade. Para rodar como gente, cole isto SEPARADO, depois de
+-- aplicar a migration, trocando o UUID pelo seu:
+--
+--   SELECT id, email FROM auth.users WHERE email = 'voce@empresa.com';
+--
+--   BEGIN;
+--     SET LOCAL role = authenticated;
+--     SET LOCAL request.jwt.claims = '{"sub":"COLE-O-UUID-AQUI","role":"authenticated"}';
+--     SELECT public.esp_col_arvore() -> 'total_ativos'  AS total_ativos,
+--            public.esp_col_arvore() -> 'sem_contrato'  AS sem_contrato;
+--   ROLLBACK;
+--
+-- O ROLLBACK no fim é de propósito: o teste não deixa nada para trás, e o
+-- SET LOCAL morre junto com a transação.
+
 
 
 -- =====================================================================
