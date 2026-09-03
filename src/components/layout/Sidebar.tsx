@@ -62,6 +62,7 @@ import {
   Package,
   PlusCircle,
   UserMinus,
+  UserPlus,
   CalendarCheck2,
   AlertTriangle,
 } from "lucide-react";
@@ -656,6 +657,10 @@ const centralServicosModule: ModuleDef = {
         { label: "Chamados de Sistemas", to: "/app/central-servicos/chamados", icon: Headset, notif: "meus" },
         { label: "Agenda de Reunião", to: "/app/central-servicos/reunioes", icon: CalendarRange },
         { label: "Agendamento de Veículos", to: "/app/central-servicos/veiculos", icon: Car },
+        // Mesma tela de abrir vaga da Gestão de Recrutamento, ancorada aqui:
+        // quem é do escritório pede vaga por esta porta, sem precisar de
+        // acesso ao módulo de Recrutamento inteiro.
+        { label: "Solicitar Vaga", to: "/app/central-servicos/solicitar-vaga", icon: UserPlus },
         // Só o "Solicitar" entra no menu. Aprovação e Tipos/Limites ficam de
         // fora de propósito: são telas de poucas pessoas, alcançadas pelos
         // botões do cabeçalho da própria tela de solicitar (que só aparecem
