@@ -97,6 +97,45 @@ export const podeVagaAdministrativa = (
   can: (acao: string, modulo?: string, menu?: string) => boolean,
 ): boolean => can("visualizar", undefined, MENU_VAGA_ADMINISTRATIVA);
 
+// ── Preencher a vaga à mão (só o escritório) ────────────────────────────
+/**
+ * O escritório pode abrir vaga SEM colaborador de referência.
+ *
+ * A regra normal (ver "Colaborador de referência", acima) é que cargo,
+ * contrato, escala e salário venham do cadastro de alguém — ninguém digita e
+ * ninguém erra o posto. Isso funciona no contrato, onde a vaga sempre repõe
+ * ou espelha um posto que já existe.
+ *
+ * No ESCRITÓRIO não funciona: cargo administrativo novo não tem molde. Não
+ * existe "alguém com o mesmo cargo" de um analista que a empresa está
+ * contratando pela primeira vez, e obrigar a escolher um parecido gravava
+ * contrato e salário errados de propósito, para o formulário deixar passar.
+ *
+ * QUEM LIBERA É A CAPACIDADE, NÃO O SETOR. `recrutamento_vaga_administrativa`
+ * já é a chave de "vaga do escritório" e mora em Gerenciamento de Acesso, que
+ * é o único lugar onde acesso se decide neste projeto. Setor é rótulo
+ * descritivo — a própria tela de Administração diz "não concede nenhum
+ * acesso" — e gatear por ele seria a regressão que a R-J1.F proíbe.
+ * Encarregado não tem essa capacidade, então para ele nada muda.
+ */
+export const podePreencherVagaManual = podeVagaAdministrativa;
+
+/**
+ * Os campos que o modo manual passa a exigir de quem digita.
+ *
+ * No modo normal eles chegam prontos do cadastro do colaborador de
+ * referência; sem ele, ninguém preenche por você — e vaga sem cargo ou sem
+ * contrato não vira nada do outro lado.
+ */
+export function faltamCamposManuais(v: {
+  cargo?: string | null; contrato?: string | null;
+}): string[] {
+  const faltam: string[] = [];
+  if (!String(v.cargo ?? "").trim()) faltam.push("Cargo");
+  if (!String(v.contrato ?? "").trim()) faltam.push("Contrato");
+  return faltam;
+}
+
 /** Recorte de segurança na tela. A RLS já não entrega essas linhas; isto
  *  evita que um cache antigo mostre o que a pessoa não pode mais ver. */
 export function filtrarAdministrativas<T extends { administrativa?: boolean | null }>(

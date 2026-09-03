@@ -227,6 +227,7 @@ import ReuniaoDetalhe from "./pages/central-servicos/reunioes/ReuniaoDetalhe";
 import ConducaoReuniao from "./pages/central-servicos/reunioes/ConducaoReuniao";
 import PainelGerencial from "./pages/central-servicos/reunioes/PainelGerencial";
 import AgendamentoVeiculos from "./pages/central-servicos/veiculos/AgendamentoVeiculos";
+import SolicitarVagaCentral from "./pages/central-servicos/SolicitarVaga";
 import SolicitarReembolso from "./pages/central-servicos/reembolso/SolicitarReembolso";
 import AprovacaoReembolso from "./pages/central-servicos/reembolso/AprovacaoReembolso";
 import ConfiguracaoReembolso from "./pages/central-servicos/reembolso/ConfiguracaoReembolso";
@@ -350,6 +351,7 @@ const App = () => (
                 que é dele); aprovação e configuração são gateadas por
                 AcessoGate dentro da própria tela, não por rota, para quem cai
                 no link entender que existe e falta permissão. */}
+            <Route path="central-servicos/solicitar-vaga" element={<SolicitarVagaCentral />} />
             <Route path="central-servicos/reembolso" element={<SolicitarReembolso />} />
             <Route path="central-servicos/reembolso/aprovacao" element={<AprovacaoReembolso />} />
             <Route path="central-servicos/reembolso/configuracao" element={<ConfiguracaoReembolso />} />

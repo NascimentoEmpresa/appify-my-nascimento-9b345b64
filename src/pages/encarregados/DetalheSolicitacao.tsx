@@ -124,9 +124,44 @@ const OCULTAS = new Set([
   "operacional_por", "operacional_em", "rh_por", "rh_em",
 ]);
 
+/**
+ * A linha crua das duas tabelas de conversa.
+ *
+ * Elas não têm as mesmas colunas — `texto` x `mensagem` — mas o resto é
+ * igual, e é isso que este tipo captura. Antes as duas eram lidas como
+ * `Record<string, unknown>`, o que fazia CADA campo chegar como `unknown` e
+ * a Mensagem montada não casar com o próprio tipo dela.
+ */
+interface LinhaMensagem {
+  id: number | string;
+  texto?: string | null;
+  mensagem?: string | null;
+  autor_nome?: string | null;
+  autor_cpf?: string | null;
+  created_at: string;
+}
+
+/** O texto vem de fora porque é a única coisa que muda entre as duas. */
+function paraMensagem(m: LinhaMensagem, texto: string | null | undefined, email?: string | null): Mensagem {
+  return {
+    id: m.id,
+    texto: texto ?? "",
+    autor: m.autor_nome || "—",
+    quando: m.created_at,
+    minha: !!email && m.autor_cpf === email,
+  };
+}
+
 export function DetalheSolicitacao({ tipo, id, titulo, status, onFechar }: {
   tipo: TipoSolicitacao;
-  id: number;
+  /**
+   * `number | string` porque as duas coisas chegam: as solicitações antigas
+   * têm id bigint, e Chamado e Materiais têm uuid (ver `SolItem` em
+   * MinhasSolicitacoes). Declarar só `number` não impedia o uuid de chegar —
+   * apenas fazia o chamador ter de mentir com um cast. Aqui dentro o id só é
+   * usado em `.eq(...)` e `String(id)`, que aceitam os dois.
+   */
+  id: number | string;
   titulo: string;
   status: string;
   onFechar: () => void;
@@ -159,19 +194,13 @@ export function DetalheSolicitacao({ tipo, id, titulo, status, onFechar }: {
         .select("id, texto, autor_nome, autor_cpf, created_at")
         .eq("modulo", fio.modulo).eq("entidade_id", String(id))
         .order("created_at");
-      setMsgs((data ?? []).map((m: Record<string, unknown>) => ({
-        id: m.id, texto: m.texto, autor: m.autor_nome || "—", quando: m.created_at,
-        minha: !!user?.email && m.autor_cpf === user.email,
-      })));
+      setMsgs((data ?? []).map((m: LinhaMensagem) => paraMensagem(m, m.texto, user?.email)));
       return;
     }
     const { data } = await db.from("WA_MENSAGENS_RECRUTAMENTO")
       .select("id, mensagem, autor_nome, autor_cpf, created_at")
       .eq("solicitacao_id", id).order("created_at");
-    setMsgs((data ?? []).map((m: Record<string, unknown>) => ({
-      id: m.id, texto: m.mensagem, autor: m.autor_nome || "—", quando: m.created_at,
-      minha: !!user?.email && m.autor_cpf === user.email,
-    })));
+    setMsgs((data ?? []).map((m: LinhaMensagem) => paraMensagem(m, m.mensagem, user?.email)));
   }, [tipo, id, user?.email]);
 
   useEffect(() => {
