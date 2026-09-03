@@ -65,10 +65,35 @@ SELECT m.id, 'central_servicos_espaco_colaborador', 'Espaço do Colaborador',
  WHERE m.codigo = 'central_servicos'
 ON CONFLICT (modulo_id, codigo) DO NOTHING;
 
--- Nasce SEM NENHUMA permissão, como toda tela nova sob deny-by-default:
--- ninguém enxerga até alguém ligar o toggle em Administração → Acesso por
--- Usuário. A ficha mostra a vida inteira de uma pessoa — abrir por padrão
--- seria a decisão errada para tomar dentro de um .sql.
+-- E a permissão do Administrador Geral entra JUNTO, na mesma migration.
+--
+-- Parece redundante — `has_screen_access` já devolve true para o perfil
+-- `concede_tudo` no passo 2, sem consultar `perfil_acesso_permissao`. A linha
+-- não existe para conceder nada: existe para o menu ser CONFIGURADO.
+--
+-- O motivo está em useAccessibleMenus: menu sem NENHUMA linha em
+-- perfil_acesso_permissao/screen_permission_user não entra em
+-- `list_configured_menu_codes`, e o front trata "ninguém nunca mexeu no
+-- gerenciamento de acesso disto" como FORA DO ENFORCEMENT. Ou seja: um menu
+-- sem regra nenhuma não nasce fechado — nasce aparecendo na sidebar de todo
+-- mundo. A rota abriria, o AcessoGate e as RPCs negariam (as duas pontas
+-- checam has_screen_access, então não há vazamento de dado), mas a tela
+-- ficaria listada para os 2.4 mil como um item que só sabe dizer "você não
+-- tem acesso".
+--
+-- Uma linha basta para o menu virar "configurado" e passar a valer o
+-- deny-by-default de verdade. Semeia só `visualizar`, que é tudo o que esta
+-- tela faz — ela não inclui, não altera e não exclui nada.
+INSERT INTO public.perfil_acesso_permissao (perfil_id, menu_codigo, acao, allow)
+SELECT pa.id, 'central_servicos_espaco_colaborador', 'visualizar'::public.app_acao, true
+  FROM public.perfil_acesso pa
+ WHERE pa.concede_tudo AND pa.ativo
+ON CONFLICT (perfil_id, menu_codigo, acao) DO NOTHING;
+
+-- Fora o Administrador Geral, ninguém enxerga até alguém ligar o toggle em
+-- Administração → Acesso por Usuário. A ficha mostra a vida inteira de uma
+-- pessoa — abrir por padrão seria a decisão errada para tomar dentro de um
+-- .sql.
 
 
 -- ── 2. EMPREGADOS passa a reconhecer o novo menu ─────────────────────
@@ -534,7 +559,9 @@ NOTIFY pgrst, 'reload schema';
 
 
 -- ── Conferência ──────────────────────────────────────────────────────
--- Espera: 1 linha, módulo central_servicos, 0 permissões (nasce fechado).
+-- Espera: 1 linha, módulo central_servicos, e permissoes = 1 por perfil
+-- concede_tudo ativo (normalmente 1). ZERO aqui seria o bug: menu nao
+-- configurado fica fora do enforcement e aparece para todo mundo.
 SELECT mo.codigo AS modulo, m.codigo, m.rota,
        (SELECT count(*) FROM public.perfil_acesso_permissao p WHERE p.menu_codigo = m.codigo)
      + (SELECT count(*) FROM public.screen_permission_user s WHERE s.menu_codigo = m.codigo) AS permissoes
@@ -555,6 +582,7 @@ SELECT p.proname FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
 --   DROP FUNCTION IF EXISTS public.esp_col_colaboradores(uuid, text, int);
 --   DROP FUNCTION IF EXISTS public.esp_col_arvore();
 --   DROP FUNCTION IF EXISTS public.esp_col_exige_acesso();
+--   DELETE FROM public.perfil_acesso_permissao WHERE menu_codigo = 'central_servicos_espaco_colaborador';
 --   DELETE FROM public.app_menu WHERE codigo = 'central_servicos_espaco_colaborador';
 --   DROP POLICY IF EXISTS empregados_select_espaco_colaborador ON public."EMPREGADOS";
 --   NOTIFY pgrst, 'reload schema';
