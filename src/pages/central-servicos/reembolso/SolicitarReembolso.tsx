@@ -1,9 +1,9 @@
 import { useMemo, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { toast } from "sonner";
 import {
   AlertTriangle, Building2, CheckCircle2, Clock, FileText, Loader2, Paperclip,
-  Plus, Receipt, Settings2, ShieldCheck, Trash2, XCircle,
+  Plus, Receipt, Send, Settings2, ShieldCheck, Trash2, XCircle,
 } from "lucide-react";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { AcessoGate } from "@/components/auth/AcessoGate";
@@ -22,13 +22,15 @@ import {
 } from "@/components/ui/dialog";
 import { useMeuNome } from "@/hooks/useMeuNome";
 import {
-  useCriarReembolso, useDecidirReembolso, useMeusStats, useMeuSetor, useReembolsos,
-  useTiposReembolso, type DespesaNova, type EtapaEnvio,
+  useConfigReembolso, useCriarReembolso, useDecidirReembolso, useMeusStats, useMeuSetor,
+  useReembolsos, useTiposReembolso, type DespesaNova, type EtapaEnvio, type Reembolso,
 } from "@/hooks/useReembolso";
+import { useClassificacoesOrcamentoAdmin } from "@/hooks/usePlanejamentoOrcamentario";
+import { avisoEnvioAoMalote, urlDespesaDoReembolso } from "@/lib/reembolso/vinculoMalote";
 import {
   avisoDeTeto, competenciaDe, dataParaISO, descreveJanela, descreveTeto, fmtBRL,
-  normalizaHora, podeLancar, tiposDisponiveis, totalEmCentavos, valorEmCentavos,
-  type TipoReembolso,
+  normalizaHora, podeLancar, podeEnviarAoMalote, tiposDisponiveis, totalEmCentavos,
+  valorEmCentavos, type TipoReembolso,
 } from "@/lib/reembolso/regras";
 import { ListaReembolsos } from "./componentes/ListaReembolsos";
 
@@ -684,11 +686,41 @@ function EnvioConfirmado({ envio, onFechar }: {
   );
 }
 
+/**
+ * "Lançar no malote" mora AQUI, não na fila de aprovação (troca de fluxo de
+ * 04/09/2026, pedida pelo Pablo): o líder só aprova; quem pediu o reembolso
+ * é quem leva a despesa aprovada ao Malote. `cs_reembolso_vincular_despesa`
+ * confere no banco que quem chama é o solicitante (migration 20260930000050)
+ * — o botão só aparece aqui de qualquer forma, mas a regra real é lá.
+ *
+ * ⚠️ Depois de "Aprovado", o botão leva ao FORMULÁRIO do Malote
+ * (/app/malote/criar-despesa), que é uma tela de outro módulo com seu
+ * próprio menu (`malote_criar_despesa`). Quem pede reembolso mas não tem
+ * esse menu liberado em Acesso por Usuário esbarra no RouteGuard ao clicar —
+ * é o mesmo requisito que já valia para o aprovador antes desta troca.
+ */
 function MinhasSolicitacoes({ onCancelar, cancelando }: {
   onCancelar: (id: string) => void;
   cancelando: boolean;
 }) {
   const { data: lista = [], isLoading } = useReembolsos("meus");
+  const navigate = useNavigate();
+  // Só para SUGERIR no formulário do Malote. Nada aqui bloqueia o envio: se a
+  // config estiver vazia, a pessoa escolhe tudo lá — que é o caminho normal.
+  const { data: cfg } = useConfigReembolso();
+  const { data: classificacoes = [] } = useClassificacoesOrcamentoAdmin();
+  const sugestoes = {
+    // O formulário do Malote procura a classificação pelo NOME, e a config
+    // guarda o id.
+    rubrica: classificacoes.find((c: any) => c.id === cfg?.classificacao_id)?.nome ?? null,
+    formaPagamento: cfg?.forma_pagamento ?? null,
+  };
+
+  const lancar = (r: Reembolso) => {
+    toast.info(avisoEnvioAoMalote(r));
+    navigate(urlDespesaDoReembolso(r, sugestoes));
+  };
+
   return (
     <ListaReembolsos
       lista={lista}
@@ -699,6 +731,10 @@ function MinhasSolicitacoes({ onCancelar, cancelando }: {
           <Button variant="outline" size="sm" disabled={cancelando}
                   onClick={() => onCancelar(r.id)}>
             Cancelar
+          </Button>
+        ) : podeEnviarAoMalote(r.status, !!r.malote_despesa_id) ? (
+          <Button size="sm" onClick={() => lancar(r)}>
+            <Send className="mr-2 h-4 w-4" /> Lançar no malote
           </Button>
         ) : null
       }
