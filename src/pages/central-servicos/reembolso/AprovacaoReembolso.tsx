@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { toast } from "sonner";
-import { BadgeCheck, Send, ShieldCheck, XCircle } from "lucide-react";
+import { BadgeCheck, ShieldCheck, XCircle } from "lucide-react";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { AcessoGate } from "@/components/auth/AcessoGate";
 import { Button } from "@/components/ui/button";
@@ -10,14 +10,9 @@ import { Textarea } from "@/components/ui/textarea";
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
+import { useDecidirReembolso, useReembolsos } from "@/hooks/useReembolso";
 import {
-  useConfigReembolso, useDecidirReembolso, useReembolsos, type Reembolso,
-} from "@/hooks/useReembolso";
-import { useClassificacoesOrcamentoAdmin } from "@/hooks/usePlanejamentoOrcamentario";
-import { useNavigate } from "react-router-dom";
-import { avisoEnvioAoMalote, urlDespesaDoReembolso } from "@/lib/reembolso/vinculoMalote";
-import {
-  ROTULO_STATUS, STATUS_TODOS, podeEnviarAoMalote, type StatusReembolso,
+  ROTULO_STATUS, STATUS_TODOS, type StatusReembolso,
 } from "@/lib/reembolso/regras";
 import { ListaReembolsos } from "./componentes/ListaReembolsos";
 
@@ -35,23 +30,19 @@ import { ListaReembolsos } from "./componentes/ListaReembolsos";
 //
 // Esta tela NÃO repete esse recorte: duas cópias da mesma regra divergem com o
 // tempo, e a cópia do front é justamente a que não protege nada.
+//
+// "Enviar ao malote" NÃO mora mais aqui (04/09/2026, troca de fluxo pedida
+// pelo Pablo): o aprovador só decide. Quem lança a despesa aprovada no
+// Malote é quem pediu o reembolso, em Minhas Solicitações — ver
+// `SolicitarReembolso.tsx`. O motivo era o próprio histórico: o evento
+// "enviado ao malote" saía assinado com o nome de quem aprova, não de quem
+// de fato clicou (ver migration 20260930000050).
 // =====================================================================
 
 export default function AprovacaoReembolso() {
   const [status, setStatus] = useState<StatusReembolso | "todos">("pendente");
   const { data: lista = [], isLoading } = useReembolsos("fila", undefined, status);
   const decidir = useDecidirReembolso();
-  const navigate = useNavigate();
-  // Só para SUGERIR no formulário do Malote. Nada aqui bloqueia o envio: se a
-  // config estiver vazia, a pessoa escolhe tudo lá — que é o caminho normal.
-  const { data: cfg } = useConfigReembolso();
-  const { data: classificacoes = [] } = useClassificacoesOrcamentoAdmin();
-  const sugestoes = {
-    // O formulário do Malote procura a classificação pelo NOME, e a config
-    // guarda o id.
-    rubrica: classificacoes.find((c: any) => c.id === cfg?.classificacao_id)?.nome ?? null,
-    formaPagamento: cfg?.forma_pagamento ?? null,
-  };
 
   // O motivo é por linha: com um estado só, abrir a segunda solicitação
   // herdava o texto digitado na primeira e o motivo saía trocado.
@@ -71,7 +62,7 @@ export default function AprovacaoReembolso() {
         onSuccess: () => {
           toast.success(
             acao === "aprovar"
-              ? "Reembolso aprovado. Agora envie ao malote para o financeiro pagar."
+              ? "Reembolso aprovado — quem pediu já pode lançar no malote, em Minhas Solicitações."
               : "Reembolso reprovado.",
           );
           setMotivos((m) => ({ ...m, [id]: "" }));
@@ -79,24 +70,6 @@ export default function AprovacaoReembolso() {
         onError: (e: any) => toast.error(e?.message ?? "Não deu para registrar a decisão."),
       },
     );
-  };
-
-  /**
-   * Leva a pessoa ao FORMULÁRIO do Malote, com a despesa já preenchida.
-   *
-   * Não cria despesa nenhuma aqui. A classificação — o único campo que o
-   * reembolso não sabe responder — é escolhida lá, despesa a despesa. Ao
-   * salvar, o Malote devolve o vínculo e o reembolso vira "Enviado ao malote"
-   * (ver `lib/reembolso/vinculoMalote.ts`).
-   *
-   * Tentar criar a despesa daqui, por RPC, foi o desenho das primeiras horas
-   * de 02/09/2026: exigia uma classificação padrão para todo reembolso, que
-   * não existe, e travou a fila inteira do Jurídico com "Aprovar está
-   * bloqueado".
-   */
-  const enviar = (r: Reembolso) => {
-    toast.info(avisoEnvioAoMalote(r));
-    navigate(urlDespesaDoReembolso(r, sugestoes));
   };
 
   return (
@@ -137,14 +110,9 @@ export default function AprovacaoReembolso() {
           vazio="Nada na sua alçada por aqui. Se você acabou de ganhar a permissão, confira em Acesso por Usuário se algum setor foi marcado — sem setor, a fila vem vazia."
           mostrarSolicitante
           acoes={(r) =>
-            /* Aprovado e ainda não lançado: o passo seguinte é o malote. */
-            podeEnviarAoMalote(r.status, !!r.malote_despesa_id) ? (
-              <AcessoGate menu="central_servicos_reembolso_aprovacao" acao="aprovar">
-                <Button onClick={() => enviar(r)}>
-                  <Send className="mr-2 h-4 w-4" /> Enviar ao malote
-                </Button>
-              </AcessoGate>
-            ) : r.status !== "pendente" ? null : (
+            /* Decidido (aprovado/reprovado/o resto): nada mais para o
+               aprovador fazer aqui — o malote é passo de quem pediu. */
+            r.status !== "pendente" ? null : (
               <AcessoGate
                 menu="central_servicos_reembolso_aprovacao"
                 acao="aprovar"
