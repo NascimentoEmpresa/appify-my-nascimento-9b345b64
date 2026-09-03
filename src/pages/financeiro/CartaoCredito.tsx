@@ -7,6 +7,7 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { SearchableSelect } from "@/components/ui/searchable-select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { DateRangeFilter } from "@/components/ui/date-range-filter";
 import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -282,6 +283,11 @@ export default function CartaoCredito() {
   const [filtroBancoId, setFiltroBancoId] = useState("");
   const [filtroBandeiraId, setFiltroBandeiraId] = useState("");
   const [filtroStatus, setFiltroStatus] = useState("");
+  // SIS-2026-0254 (Iury): filtro de Data, dentro do mesmo card de Filtros
+  // dos demais — reflete em "Cartões de Crédito Cadastrados" e em
+  // "Lançamentos recebidos do Fluxo de Caixa".
+  const [lancamentosDataDe, setLancamentosDataDe] = useState("");
+  const [lancamentosDataAte, setLancamentosDataAte] = useState("");
 
   const empresasPorId = useMemo(() => new Map(empresas.map((e) => [e.id, e.nome])), [empresas]);
 
@@ -315,6 +321,8 @@ export default function CartaoCredito() {
     setFiltroBancoId("");
     setFiltroBandeiraId("");
     setFiltroStatus("");
+    setLancamentosDataDe("");
+    setLancamentosDataAte("");
   }
 
   const cartoesAtivos = useMemo(() => cartoes.filter((c) => c.ativo), [cartoes]);
@@ -337,9 +345,44 @@ export default function CartaoCredito() {
   // Só entram lançamentos cuja forma de pagamento bate com um cartão já
   // cadastrado (ativo ou não, pra não sumir histórico de cartão inativado).
   const tiposCadastrados = useMemo(() => new Map(cartoes.map((c) => [c.tipo_forma_pagamento, c.nome_cartao])), [cartoes]);
+  // SIS-2026-0254 (Iury): resolve o cartão de cada lançamento a partir da
+  // forma de pagamento — usado pra aplicar os filtros de Cartão/Banco/
+  // Bandeira/Status (que não existem direto no lançamento) na tabela de
+  // Lançamentos, do mesmo jeito que já valem pra tabela de Cartões.
+  const cartaoPorTipoFormaPagamento = useMemo(() => new Map(cartoes.map((c) => [c.tipo_forma_pagamento, c])), [cartoes]);
+  // SIS-2026-0254 (Iury): "a div de Filtros não está conectada com
+  // Lançamentos" — todos os filtros do card acima (Competência, Cartão,
+  // Empresa, Banco, Bandeira, Status, Data) agora valem também aqui, não só
+  // pra "Cartões de Crédito Cadastrados".
   const lancamentosDeCartao = useMemo(
-    () => lancamentos.filter((l) => l.forma_pagamento && tiposCadastrados.has(l.forma_pagamento)),
-    [lancamentos, tiposCadastrados]
+    () =>
+      lancamentos.filter((l) => {
+        if (!l.forma_pagamento || !tiposCadastrados.has(l.forma_pagamento)) return false;
+        const cartaoDoLancamento = cartaoPorTipoFormaPagamento.get(l.forma_pagamento);
+        if (competencia && l.competencia !== competencia) return false;
+        if (filtroCartaoId && cartaoDoLancamento?.id !== filtroCartaoId) return false;
+        if (filtroEmpresaId && l.empresa_id !== filtroEmpresaId) return false;
+        if (filtroBancoId && cartaoDoLancamento?.banco_id !== filtroBancoId) return false;
+        if (filtroBandeiraId && cartaoDoLancamento?.bandeira_id !== filtroBandeiraId) return false;
+        if (filtroStatus === "ativo" && !cartaoDoLancamento?.ativo) return false;
+        if (filtroStatus === "inativo" && cartaoDoLancamento?.ativo) return false;
+        if (lancamentosDataDe && (!l.data_pagamento || l.data_pagamento < lancamentosDataDe)) return false;
+        if (lancamentosDataAte && (!l.data_pagamento || l.data_pagamento > lancamentosDataAte)) return false;
+        return true;
+      }),
+    [
+      lancamentos,
+      tiposCadastrados,
+      cartaoPorTipoFormaPagamento,
+      competencia,
+      filtroCartaoId,
+      filtroEmpresaId,
+      filtroBancoId,
+      filtroBandeiraId,
+      filtroStatus,
+      lancamentosDataDe,
+      lancamentosDataAte,
+    ]
   );
 
   function abrirNovo() {
@@ -518,6 +561,17 @@ export default function CartaoCredito() {
                 </SelectContent>
               </Select>
             </div>
+            {/* SIS-2026-0254 (Iury): filtro de Data movido pra dentro deste
+                card — junto com os demais, reflete tanto em "Cartões de
+                Crédito Cadastrados" quanto em "Lançamentos recebidos do
+                Fluxo de Caixa" abaixo (antes só existia dentro da div de
+                Lançamentos, desconectado do resto). */}
+            <DateRangeFilter
+              label="Data"
+              de={lancamentosDataDe}
+              ate={lancamentosDataAte}
+              onChange={(de, ate) => { setLancamentosDataDe(de); setLancamentosDataAte(ate); }}
+            />
           </div>
         </CardContent>
       </Card>
@@ -612,7 +666,8 @@ export default function CartaoCredito() {
         </CardHeader>
         <CardContent className="space-y-3 overflow-x-auto">
           <p className="text-xs text-muted-foreground -mt-1">
-            Lançamentos conforme os pagamentos em cartões de crédito recebidos no Fluxo de Caixa.
+            Lançamentos conforme os pagamentos em cartões de crédito recebidos no Fluxo de Caixa. Respeita os
+            filtros do card acima.
           </p>
           <Table>
             <TableHeader>
@@ -620,6 +675,8 @@ export default function CartaoCredito() {
                 <TableHead>ID</TableHead>
                 <TableHead>Data</TableHead>
                 <TableHead>Competência</TableHead>
+                {/* SIS-2026-0254 (Iury): "poderia vir após Competência". */}
+                <TableHead>Parcela</TableHead>
                 <TableHead>Empresa</TableHead>
                 <TableHead>Contrato</TableHead>
                 <TableHead>Classificação</TableHead>
@@ -631,16 +688,22 @@ export default function CartaoCredito() {
             <TableBody>
               {lancamentosDeCartao.length === 0 && (
                 <TableRow>
-                  <TableCell colSpan={9} className="text-center text-muted-foreground py-8">
+                  <TableCell colSpan={10} className="text-center text-muted-foreground py-8">
                     Nenhum lançamento em cartão de crédito ainda.
                   </TableCell>
                 </TableRow>
               )}
               {lancamentosDeCartao.map((l) => (
-                <TableRow key={l.despesa_id}>
+                // SIS-2026-0254: despesa parcelada agora pode gerar mais de
+                // 1 linha (1 por parcela paga) com o mesmo despesa_id —
+                // key precisa incluir o número da parcela.
+                <TableRow key={`${l.despesa_id}-${l.numero_parcela ?? "unica"}`}>
                   <TableCell className="font-mono text-xs">{l.id_malote}</TableCell>
                   <TableCell className="text-sm">{l.data_pagamento ? new Date(l.data_pagamento + "T00:00:00").toLocaleDateString("pt-BR") : "—"}</TableCell>
                   <TableCell className="text-sm">{l.competencia ? new Date(l.competencia + "T00:00:00").toLocaleDateString("pt-BR", { month: "2-digit", year: "numeric" }) : "—"}</TableCell>
+                  <TableCell className="text-sm">
+                    {l.numero_parcela ? `${l.numero_parcela}/${l.numero_parcelas}` : <span className="text-muted-foreground">—</span>}
+                  </TableCell>
                   <TableCell className="text-sm">{l.empresa_nome ?? "—"}</TableCell>
                   <TableCell className="text-sm">{l.contrato_nome ?? "—"}</TableCell>
                   <TableCell className="text-sm">{l.classificacao_nome ?? "—"}</TableCell>
