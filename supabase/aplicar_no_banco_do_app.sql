@@ -19863,7 +19863,7 @@ NOTIFY pgrst, 'reload schema';
 -- =====================================================================
 
 
--- ===== 20260930000051_rh_aposenta_folha_e_alocacoes =====
+-- ===== 20260930000053_rh_aposenta_folha_e_alocacoes =====
 -- =====================================================================
 -- RH: aposenta os submódulos "Folha de Pagamento" e "Alocações em Contratos".
 --
@@ -19933,7 +19933,7 @@ NOTIFY pgrst, 'reload schema';
 -- =====================================================================
 
 
--- ===== 20260930000052_treinamentos_na_central_de_servicos =====
+-- ===== 20260930000054_treinamentos_na_central_de_servicos =====
 -- =====================================================================
 -- TREINAMENTOS: segunda porta, na Central de Serviços.
 --

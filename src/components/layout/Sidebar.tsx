@@ -471,7 +471,7 @@ const rhModule: ModuleDef = {
         // sobraram do modelo antigo (tabelas `alocacao_colaborador`,
         // `folha_periodo`/`folha_evento`, e o cadastro `colaborador`, que a
         // fonte única EMPREGADOS substituiu). Menus desativados na migration
-        // 20260930000051; as tabelas continuam no banco.
+        // 20260930000053; as tabelas continuam no banco.
         { label: "Gestão de Férias", to: "/app/rh/ferias", icon: CalendarRange },
         { label: "Solicitações de Demissão", to: "/app/rh/solicitacoes-demissao", icon: UserMinus },
         { label: "Conferência de Ponto", to: "/app/rh/conferencia-ponto", icon: ClipboardCheck },
