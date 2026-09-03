@@ -52,7 +52,35 @@ interface Processo {
 }
 interface Comentario { id: number; entidade_id?: string; autor_nome?: string; texto: string; created_at?: string; }
 
-const STATUS_OPC = ["EM ANDAMENTO", "INDEFINIDO", "ARQUIVADO"];
+/**
+ * Os status de um processo.
+ *
+ * A lista serve aos TRÊS lugares de uma vez — o select do cadastro e os dois
+ * filtros (lista e agenda de audiências) —, então acrescentar aqui já dá
+ * "conseguir marcar" e "conseguir filtrar" no mesmo passo.
+ *
+ * `status` é texto livre no banco (não há CHECK em JUR_PROCESSOS), então
+ * nada quebra com um valor novo; esta lista é que define o que a tela
+ * oferece. Quem já era ARQUIVADO/EM ANDAMENTO continua igual.
+ */
+const STATUS_OPC = [
+  "EM ANDAMENTO",
+  "PENDENTE DE ENVIO DE DOCUMENTAÇÃO",
+  "INDEFINIDO",
+  "ARQUIVADO",
+];
+
+/**
+ * O selo da tabela usa versão curta; o resto da tela mostra o nome inteiro.
+ *
+ * "PENDENTE DE ENVIO DE DOCUMENTAÇÃO" tem 34 caracteres — inteiro dentro da
+ * pílula, ele dobra a largura da coluna Status e espreme as de valor, que
+ * são as que se lê alinhadas. O valor gravado e o filtro continuam sendo o
+ * texto completo: isto é só rótulo.
+ */
+const STATUS_CURTO: Record<string, string> = {
+  "PENDENTE DE ENVIO DE DOCUMENTAÇÃO": "PEND. DOCUMENTAÇÃO",
+};
 const PAGE_SIZE = 50;
 const PALETTE = ["#f97316", "#14b8a6", "#eab308", "#a78bfa", "#2563eb", "#dc2626", "#16a34a", "#0f3171", "#ec4899", "#0891b2"];
 
@@ -763,7 +791,9 @@ export default function Processos({ view = "processos" }: { view?: "dashboard" |
   const depositoRecursalTotal = useMemo(
     () => motivos.reduce((s, m) => s + toFloat(m.valor_deposito_recursal), 0), [motivos]);
 
-  const statusCor = (s: string) => s === "ARQUIVADO" ? { bg: "#f1f5f9", c: "#64748b" } : s === "INDEFINIDO" ? { bg: "#fef9c3", c: "#a16207" } : { bg: "#fef3c7", c: "#b45309" };
+  // Laranja no "pendente de documentação" porque ele é o único que cobra
+  // AÇÃO de alguém — os outros três descrevem em que pé o processo está.
+  const statusCor = (s: string) => s === "ARQUIVADO" ? { bg: "#f1f5f9", c: "#64748b" } : s === "INDEFINIDO" ? { bg: "#fef9c3", c: "#a16207" } : s === "PENDENTE DE ENVIO DE DOCUMENTAÇÃO" ? { bg: "#ffedd5", c: "#c2410c" } : { bg: "#fef3c7", c: "#b45309" };
   const kpi = (label: string, valor: string | number, cor: string, sub?: string) => (
     <div style={{ background: "#fff", border: "1px solid #e2e8f0", borderRadius: 14, padding: "14px 18px", flex: 1, minWidth: 165, boxShadow: "0 8px 24px rgba(15,23,42,.05)", borderTop: `3px solid ${cor}` }}>
       <div style={{ fontSize: 10.5, fontWeight: 700, color: "#94a3b8", textTransform: "uppercase", letterSpacing: ".6px" }}>{label}</div>
@@ -991,7 +1021,7 @@ export default function Processos({ view = "processos" }: { view?: "dashboard" |
                       <td style={{ padding: "10px 14px" }}><span style={{ fontSize: 11.5, color: "#0f172a" }}>{p.motivo_items[0]?.motivo || "—"}</span>{p.motivo_items.length > 1 && <span style={{ fontSize: 11, color: "#0f3171", fontWeight: 700 }}> +{p.motivo_items.length - 1}</span>}</td>
                       <td style={{ padding: "10px 14px", textAlign: "right", color: "#475569" }}>{money(p.valor_pedidos)}</td>
                       <td style={{ padding: "10px 14px", textAlign: "right", fontWeight: 700, color: "#0f172a" }}>{money(custoTotal(p))}</td>
-                      <td style={{ padding: "10px 14px" }}><span style={{ fontSize: 11, fontWeight: 800, padding: "2px 9px", borderRadius: 20, background: sc.bg, color: sc.c }}>{p.status}</span></td>
+                      <td style={{ padding: "10px 14px" }}><span title={p.status} style={{ fontSize: 11, fontWeight: 800, padding: "2px 9px", borderRadius: 20, background: sc.bg, color: sc.c, whiteSpace: "nowrap" }}>{STATUS_CURTO[p.status] ?? p.status}</span></td>
                       <td style={{ padding: "10px 14px", textAlign: "right", whiteSpace: "nowrap" }}>
                         <button className="jpr-btn" onClick={() => abrirDetalhe(p)} style={{ background: "#eef4ff", color: "#0f3171", marginRight: 5 }}>Ver</button>
                         <button className="jpr-btn" onClick={() => abrirEditar(p)} style={{ background: "#f1f5f9", color: "#475569", marginRight: 5 }}>Editar</button>
