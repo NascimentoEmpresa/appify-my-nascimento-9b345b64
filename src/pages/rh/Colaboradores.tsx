@@ -2,8 +2,10 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import ImportarColaboradores from "@/components/rh/ImportarColaboradores";
 import IntegrarCargos from "@/components/rh/IntegrarCargos";
+import ExportarDados from "@/components/rh/ExportarDados";
 import CarregandoLogo from "@/components/ui/CarregandoLogo";
 import { useScreenAccess } from "@/hooks/useScreenAccess";
+import { empresaDe, parseSalario, parseData, fmtData, nomeCargoDe } from "@/lib/rh/colaboradoresUtils";
 
 // =========================================================================
 // RH — Colaboradores (fonte: tabela EMPREGADOS, read-only + edição de campos RH)
@@ -16,28 +18,6 @@ import { useScreenAccess } from "@/hooks/useScreenAccess";
 // quando o código não estava casado.
 // =========================================================================
 
-// Empresas do grupo (código numérico da coluna "Empresa" → nome curto).
-const EMPRESA_MAP: Record<string, string> = { "1": "HAGG", "2": "SN", "3": "CANAÃ", "5": "NH" };
-const empresaDe = (e: any): string => {
-  const code = String(e?.["Empresa"] ?? "").trim();
-  if (EMPRESA_MAP[code]) return EMPRESA_MAP[code];
-  const nome = String(e?.["Nome da Empresa"] ?? "").toUpperCase();
-  if (nome.includes("HAGG")) return "HAGG";
-  if (nome.includes("CANA")) return "CANAÃ";
-  if (/\bNH\b/.test(nome)) return "NH";
-  if (/\bSN\b/.test(nome)) return "SN";
-  return String(e?.["Nome da Empresa"] ?? "").trim() || "—";
-};
-
-// "Valor Salário" vem como texto pt-BR ("2.002,6900") — normaliza para número.
-const parseSalario = (v: any): number => {
-  if (v == null || v === "") return 0;
-  if (typeof v === "number") return isNaN(v) ? 0 : v;
-  let s = String(v).trim().replace(/[^\d.,-]/g, "");
-  if (s.includes(",")) s = s.replace(/\./g, "").replace(",", ".");
-  const n = parseFloat(s);
-  return isNaN(n) ? 0 : n;
-};
 const money = (n: number) => "R$ " + (n || 0).toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const moneyK = (n: number) => n >= 1000 ? "R$ " + (n / 1000).toLocaleString("pt-BR", { maximumFractionDigits: 1 }) + "k" : money(n);
 
@@ -45,27 +25,12 @@ const moneyK = (n: number) => n >= 1000 ? "R$ " + (n / 1000).toLocaleString("pt-
 const MESES_ABREV = ["JAN", "FEV", "MAR", "ABR", "MAI", "JUN", "JUL", "AGO", "SET", "OUT", "NOV", "DEZ"];
 const pad2 = (n: number) => String(n).padStart(2, "0");
 
-// Datas: aceita "DD/MM/AAAA", ISO ou Date.
-// Ano anterior a 1900 é o "vazio" do sistema legado (30/12/1899 = serial 0 do
-// Excel), não uma data real — vale como SEM data.
-const parseData = (v: any): Date | null => {
-  if (!v) return null;
-  const s = String(v).trim();
-  const br = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})/);
-  const d = br ? new Date(+br[3], +br[2] - 1, +br[1]) : new Date(s);
-  return isNaN(d.getTime()) || d.getFullYear() < 1900 ? null : d;
-};
-const fmtData = (v: any) => { const d = parseData(v); return d ? d.toLocaleDateString("pt-BR") : "—"; };
 const anoDe = (v: any) => parseData(v)?.getFullYear() ?? null;
 const anosDeCasa = (v: any): number | null => {
   const d = parseData(v); if (!d) return null;
   return Math.max(0, (Date.now() - d.getTime()) / (365.25 * 864e5));
 };
 const ehTrabalhando = (e: any) => String(e?.["Situação"] ?? "").trim().toUpperCase().startsWith("TRABALH");
-// O cargo exibido vem de "Título do Cargo" (texto oficial da folha, igual ao
-// resto do sistema). "Nome do Cargo" (mapeado por código na tabela CARGOS) é
-// só fallback — evita "Sem cargo"/"AMBÍGUO" quando o código não está casado.
-const nomeCargoDe = (e: any): string => String(e?.["Título do Cargo"] ?? "").trim() || String(e?.["Nome do Cargo"] ?? "").trim() || "—";
 
 // Cascata de fallback: "Empresa" já era conhecida por falhar em alguns
 // ambientes (por isso o SAFE original não a tem). "Cargo" e "Nome do Cargo"
@@ -603,6 +568,7 @@ export default function Colaboradores() {
             <button className="col-btn" onClick={() => irMes(1)} disabled={ehMesAtual} title="Próximo mês" style={{ height: 30, width: 30, padding: 0, fontSize: 16, lineHeight: 1, opacity: ehMesAtual ? .4 : 1, cursor: ehMesAtual ? "not-allowed" : "pointer" }}>›</button>
           </div>
           <ImportarColaboradores onImported={recarregar} />
+          <ExportarDados />
           <IntegrarCargos onImported={recarregar} />
           {/* Recarrega por trás: a lista continua na tela enquanto atualiza. */}
           <button className="col-btn" onClick={recarregar} disabled={atualizando}
