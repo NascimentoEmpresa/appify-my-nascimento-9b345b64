@@ -455,7 +455,7 @@ const fiscalModule: ModuleDef = {
 const rhModule: ModuleDef = {
   id: "rh",
   label: "Recursos Humanos",
-  description: "Colaboradores e alocações",
+  description: "Colaboradores, férias e movimentações",
   icon: Users2,
   basePath: "/app/rh",
   status: "active",
@@ -466,8 +466,12 @@ const rhModule: ModuleDef = {
       items: [
         { label: "Colaboradores", to: "/app/rh/colaboradores", icon: Users2 },
         { label: "Novas Admissões", to: "/app/rh/novas-admissoes", icon: ClipboardCheck },
-        { label: "Alocações em Contratos", to: "/app/rh/alocacoes", icon: ListChecks },
-        { label: "Folha de Pagamento", to: "/app/rh/folha", icon: ListChecks },
+        // "Alocações em Contratos" e "Folha de Pagamento" saíram em
+        // 04/09/2026, a pedido do Pablo. Eram as duas telas genéricas que
+        // sobraram do modelo antigo (tabelas `alocacao_colaborador`,
+        // `folha_periodo`/`folha_evento`, e o cadastro `colaborador`, que a
+        // fonte única EMPREGADOS substituiu). Menus desativados na migration
+        // 20260930000053; as tabelas continuam no banco.
         { label: "Gestão de Férias", to: "/app/rh/ferias", icon: CalendarRange },
         { label: "Solicitações de Demissão", to: "/app/rh/solicitacoes-demissao", icon: UserMinus },
         { label: "Conferência de Ponto", to: "/app/rh/conferencia-ponto", icon: ClipboardCheck },
@@ -650,6 +654,12 @@ const centralServicosModule: ModuleDef = {
         // quem é do escritório pede vaga por esta porta, sem precisar de
         // acesso ao módulo de Recrutamento inteiro.
         { label: "Solicitar Vaga", to: "/app/central-servicos/solicitar-vaga", icon: UserPlus },
+        // Mesma tela de Treinamentos ERP dos Encarregados, ancorada aqui: o
+        // treinamento do ERP interessa a quem não é encarregado, e a única
+        // porta ficava dentro do módulo deles. Menu próprio
+        // (`central_servicos_treinamentos`) — liberar esta porta não abre a
+        // de lá, nem o contrário.
+        { label: "Treinamentos", to: "/app/central-servicos/treinamentos", icon: GraduationCap },
         // Só o "Solicitar" entra no menu. Aprovação e Tipos/Limites ficam de
         // fora de propósito: são telas de poucas pessoas, alcançadas pelos
         // botões do cabeçalho da própria tela de solicitar (que só aparecem

@@ -1,6 +1,6 @@
 import { PageHeader } from "@/components/layout/PageHeader";
 import { Card } from "@/components/ui/card";
-import { BookOpen, ClipboardList, CalendarRange, Headset, Car, UserPlus, ArrowRight, type LucideIcon } from "lucide-react";
+import { BookOpen, ClipboardList, CalendarRange, Headset, Car, UserPlus, GraduationCap, ArrowRight, type LucideIcon } from "lucide-react";
 import { Link } from "react-router-dom";
 import { usePermissoes } from "@/context/PermissoesContext";
 
@@ -49,6 +49,13 @@ const servicos: Servico[] = [
     title: "Solicitar Vaga",
     desc: "Abra uma vaga para o Recrutamento em três etapas. Vaga do escritório pode ser preenchida à mão, sem copiar o posto de um colaborador.",
     menu: "central_servicos_solicitar_vaga",
+  },
+  {
+    to: "/app/central-servicos/treinamentos",
+    icon: GraduationCap,
+    title: "Treinamentos",
+    desc: "Os treinamentos do ERP em vídeo, com material de apoio e prova. A mesma grade que o encarregado vê, com a sua conclusão e nota registradas.",
+    menu: "central_servicos_treinamentos",
   },
   {
     to: "/app/central-servicos/veiculos",

@@ -19861,3 +19861,161 @@ NOTIFY pgrst, 'reload schema';
 --    (sem o CASE), como estava em 20260930000006.
 -- NOTIFY pgrst, 'reload schema';
 -- =====================================================================
+
+
+-- ===== 20260930000053_rh_aposenta_folha_e_alocacoes =====
+-- =====================================================================
+-- RH: aposenta os submódulos "Folha de Pagamento" e "Alocações em Contratos".
+--
+-- Pedido do Pablo em 04/09/2026: "do recursos humanos remove tudo sobre o
+-- submodulo folha de pagamento e alocação de contratos."
+--
+-- Eram as duas últimas telas do RH que ainda falavam com o modelo de dados
+-- ANTIGO, o que ficou de antes de EMPREGADOS virar fonte única:
+--
+--   • /app/rh/alocacoes  → CRUD genérico de `alocacao_colaborador`, ligando
+--     as tabelas `colaborador` e `contrato`. O cadastro `colaborador` já não
+--     é a fonte de nada: quem responde por pessoa é EMPREGADOS.
+--   • /app/rh/folha      → `folha_periodo`/`folha_evento` + a RPC
+--     `contabilizar_folha`, que gera lançamento contábil de provisão,
+--     pagamento e encargos.
+--
+-- Nenhuma das duas chegou a ser usada de verdade: `alocacao_colaborador` e
+-- `folha_evento` estão VAZIAS e `folha_periodo` tem 1 linha (conferido em
+-- 04/09/2026, antes desta migration).
+--
+-- DESATIVA, NÃO APAGA — é o mesmo caminho de `central_servicos_denuncias`
+-- (canal legado aposentado em 21/08/2026): a linha continua em `app_menu`
+-- com `ativo = false`. Isso basta porque `can_access` e
+-- `list_accessible_menus` exigem `ativo = true`:
+--
+--   · o menu some da lista concedível de Administração › Acesso por Usuário
+--     (a tela separa ativos de inativos — ver ModulosMenusTab.tsx);
+--   · o RouteGuard nega a rota, mesmo para quem já tinha a permissão;
+--   · as ~95 permissões já concedidas nesses dois menus (54 exceções
+--     individuais + 41 em perfis) ficam inertes sem precisar apagá-las, e
+--     voltam a valer sozinhas se alguém reativar o menu;
+--   · a RPC `contabilizar_folha` fecha junto, de graça: o gate dela é
+--     `can_access(auth.uid(), 'folha', 'alterar')` (migration 20260906000004),
+--     que passa a devolver false para todo mundo. Falha fechada, que é como
+--     tem que falhar uma função que gera lançamento contábil.
+--
+-- AS TABELAS FICAM. `folha_periodo`, `folha_evento` e `alocacao_colaborador`
+-- não são dropadas aqui: a de folha tem vínculo com lançamento contábil e
+-- apagar dado contábil é decisão de quem responde pela contabilidade, não
+-- efeito colateral de uma limpeza de menu. Sem tela e sem permissão, elas
+-- não recebem escrita nova.
+--
+-- No front, no mesmo commit: itens saem do Sidebar, rotas saem do App.tsx e
+-- as páginas `src/pages/rh/Folha.tsx` e `src/pages/rh/Alocacoes.tsx` são
+-- removidas.
+--
+-- Idempotente.
+-- =====================================================================
+
+UPDATE public.app_menu
+   SET ativo = false
+ WHERE codigo IN ('folha', 'alocacoes');
+
+-- Conferência: as duas linhas têm que sair inativas.
+SELECT codigo, nome, rota, ativo
+  FROM public.app_menu
+ WHERE codigo IN ('folha', 'alocacoes');
+
+NOTIFY pgrst, 'reload schema';
+
+-- =====================================================================
+-- ROLLBACK
+-- =====================================================================
+-- UPDATE public.app_menu SET ativo = true WHERE codigo IN ('folha', 'alocacoes');
+-- -- E reverter o commit do front (Sidebar, App.tsx e as duas páginas).
+-- NOTIFY pgrst, 'reload schema';
+-- =====================================================================
+
+
+-- ===== 20260930000054_treinamentos_na_central_de_servicos =====
+-- =====================================================================
+-- TREINAMENTOS: segunda porta, na Central de Serviços.
+--
+-- Pedido do Pablo em 04/09/2026: "duplica o sistema dos encarregados de
+-- treinamentos, coloca na Central de Serviços; lá o pessoal que tem
+-- permissão de ver o sistema vai ver Treinamentos. Mesma lógica do sistema
+-- dos encarregados."
+--
+-- MESMA TELA, MESMOS TREINAMENTOS, PERMISSÃO PRÓPRIA. É o desenho que o ERP
+-- já usa duas vezes:
+--
+--   • "Chamados de Sistemas" abre em /app/encarregados/chamados E em
+--     /app/central-servicos/chamados — mesmo componente, duas rotas, cada
+--     uma com seu menu;
+--   • "Solicitar Vaga" abre na Gestão de Recrutamento E na Central de
+--     Serviços (20260930000049), pelo mesmo motivo: quem é do escritório
+--     não precisa do módulo inteiro do outro lado para usar UMA tela.
+--
+-- Aqui é igual: o treinamento do ERP interessa a quem não é encarregado, e
+-- hoje a única porta fica dentro do módulo Encarregados. A tela nova NÃO é
+-- uma cópia do código (o componente é o mesmo, `TreinamentosERP.tsx`) nem
+-- uma cópia do conteúdo (a tabela é a mesma, `TREINAMENTOS`): o que é novo
+-- é só a PORTA e a chave dela.
+--
+-- POR QUE UM CÓDIGO DE MENU NOVO, e não reaproveitar `treinamentos_erp`:
+-- reaproveitar faria a tela aparecer na Central de Serviços para todo mundo
+-- que já vê o menu dos Encarregados, e vice-versa — as duas portas abririam
+-- e fechariam juntas, sem como liberar uma sem a outra. Com código próprio,
+-- quem administra decide porta a porta em Acesso por Usuário.
+--
+-- GERENCIAR CONTINUA UM SÓ (`treinamentos_gerenciar`). Criar e editar
+-- treinamento é a mesma ação, venha de qual porta vier — dois códigos para
+-- isso dariam dois catálogos de permissão para o mesmo botão.
+--
+-- Idempotente.
+-- =====================================================================
+
+-- 1) O menu da porta nova ------------------------------------------------
+INSERT INTO public.app_menu (modulo_id, codigo, nome, rota, ordem)
+SELECT m.id, x.codigo, x.nome, x.rota, x.ordem
+  FROM (VALUES
+    ('central_servicos_treinamentos', 'Treinamentos', '/app/central-servicos/treinamentos', 75)
+  ) AS x(codigo, nome, rota, ordem)
+  JOIN public.app_modulo m ON m.codigo = 'central_servicos'
+ON CONFLICT (modulo_id, codigo) DO NOTHING;
+
+-- Ativo mesmo se a linha já existisse desativada: `can_access` e
+-- `list_accessible_menus` devolvem false para menu inativo ANTES de olhar
+-- perfil, e nem o Administrador Geral escapa disso.
+UPDATE public.app_menu SET ativo = true
+ WHERE codigo = 'central_servicos_treinamentos';
+
+-- 2) Quem enxerga treinamento -------------------------------------------
+-- `trn_pode_ver()` é o único lugar a mexer, e é de propósito que seja um só:
+-- ela governa TANTO o SELECT de "TREINAMENTOS" (a grade de cards) QUANTO a
+-- leitura do bucket `treinamentos` (capas, vídeos e anexos, que são
+-- privados). Se a permissão da porta nova entrasse só na policy da tabela, a
+-- pessoa veria os cards e não abriria nenhum vídeo.
+--
+-- Só GANHA um OR: ninguém que via antes deixa de ver.
+CREATE OR REPLACE FUNCTION public.trn_pode_ver()
+RETURNS boolean
+LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public, pg_temp
+AS $$
+  SELECT public.can_access(auth.uid(), 'treinamentos_erp', 'visualizar'::public.app_acao)
+      OR public.can_access(auth.uid(), 'central_servicos_treinamentos', 'visualizar'::public.app_acao);
+$$;
+REVOKE ALL ON FUNCTION public.trn_pode_ver() FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.trn_pode_ver() TO authenticated;
+
+-- `TREINAMENTO_CONCLUSAO` não precisa de nada: as policies dela são por
+-- `user_id = auth.uid()`, sem menu no meio. Quem alcança a tela por qualquer
+-- porta já registra a própria conclusão e a nota da prova.
+
+NOTIFY pgrst, 'reload schema';
+
+-- =====================================================================
+-- ROLLBACK
+-- =====================================================================
+-- CREATE OR REPLACE FUNCTION public.trn_pode_ver() RETURNS boolean
+-- LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public, pg_temp
+-- AS $$ SELECT public.can_access(auth.uid(),'treinamentos_erp','visualizar'::public.app_acao); $$;
+-- DELETE FROM public.app_menu WHERE codigo = 'central_servicos_treinamentos';
+-- NOTIFY pgrst, 'reload schema';
+-- =====================================================================

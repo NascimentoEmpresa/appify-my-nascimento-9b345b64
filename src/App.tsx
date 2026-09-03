@@ -142,10 +142,8 @@ import Razao from "./pages/contabil/Razao";
 import RazaoDetalhado from "./pages/contabil/RazaoDetalhado";
 import DREGerencialReal from "./pages/contabil/DREGerencialReal";
 import ConciliacaoEventos from "./pages/contabil/ConciliacaoEventos";
-import Folha from "./pages/rh/Folha";
 import Contabilidade from "./pages/Contabilidade";
 import Colaboradores from "./pages/rh/Colaboradores";
-import Alocacoes from "./pages/rh/Alocacoes";
 import Recrutamento from "./pages/rh/Recrutamento";
 import Patrimonios from "./pages/juridico/Patrimonios";
 import CentralDuvidas from "./pages/juridico/CentralDuvidas";
@@ -354,6 +352,12 @@ const App = () => (
                 AcessoGate dentro da própria tela, não por rota, para quem cai
                 no link entender que existe e falta permissão. */}
             <Route path="central-servicos/solicitar-vaga" element={<SolicitarVagaCentral />} />
+            {/* Mesma tela de /app/treinamentos/erp, ancorada na Central de
+                Serviços: mesmo componente e mesmos treinamentos, com menu
+                próprio (`central_servicos_treinamentos`) para o acesso ser
+                liberado porta a porta. Igual ao que Chamados de Sistemas já
+                faz entre Encarregados e Central de Serviços. */}
+            <Route path="central-servicos/treinamentos" element={<TreinamentosERP />} />
             <Route path="central-servicos/reembolso" element={<SolicitarReembolso />} />
             <Route path="central-servicos/reembolso/aprovacao" element={<AprovacaoReembolso />} />
             <Route path="central-servicos/reembolso/configuracao" element={<ConfiguracaoReembolso />} />
@@ -545,8 +549,6 @@ const App = () => (
                 RH_CONTRATO_ENCARREGADO pode ser dropada; a RPC rh_hierarquia_dados
                 CONTINUA (usada por Líderes por setor / Painel Gerencial). */}
             <Route path="rh/hierarquia" element={<Navigate to="/app/rh/colaboradores" replace />} />
-            <Route path="rh/alocacoes" element={<Alocacoes />} />
-            <Route path="rh/folha" element={<Folha />} />
             <Route path="rh/novas-admissoes" element={<NovasAdmissoes />} />
             <Route path="rh/banco-talentos" element={<BancoTalentos />} />
             <Route path="rh/recrutamento-dashboard" element={<RecrutamentoDashboard />} />
