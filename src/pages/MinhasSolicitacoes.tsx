@@ -35,6 +35,9 @@ function mesLabel(s?: string) {
 function badgeStatusCls(st: string) {
   const m: Record<string, string> = {
     "Aguardando Aprovação": "bg-yellow-100 text-yellow-800 border-yellow-200",
+    "Pendente Analista": "bg-yellow-100 text-yellow-800 border-yellow-200",
+    // As solicitações abertas antes de 02/09/2026 e já decididas continuam
+    // gravadas com o nome antigo; sem esta linha o selo delas ficava cinza.
     "Pendente Operacional": "bg-yellow-100 text-yellow-800 border-yellow-200",
     "Pendente Recrutamento": "bg-purple-100 text-purple-700 border-purple-200",
     "Seleção de Candidato": "bg-blue-100 text-blue-700 border-blue-200",
@@ -172,6 +175,11 @@ export default function MinhasSolicitacoes({ abrir }: { abrir?: SolicitacaoInici
   const [modalVaga, setModalVaga] = useState(false);
   const [vagaStep, setVagaStep] = useState(1);
   const [vaga, setVaga] = useState({ ...VAGA_RESET });
+  // Preencher à mão NÃO existe aqui: o encarregado abre vaga do posto dele, e
+  // o posto vem sempre do cadastro de um colaborador. Vaga do escritório é
+  // pedida na Central de Serviços ou na Gestão de Recrutamento, que têm o
+  // botão de "Preencher manualmente" — e o catálogo de Suprimentos junto, que
+  // esta tela não tem. Ver src/components/recrutamento/ModalNovaVaga.tsx.
   const [contratosFull, setContratosFull] = useState<any[]>([]);
   // Empregado -> nº da vaga de substituição que já o segura (regra do banco).
   const [presos, setPresos] = useState<Map<number, number>>(new Map());
@@ -380,13 +388,17 @@ export default function MinhasSolicitacoes({ abrir }: { abrir?: SolicitacaoInici
   const vagaValidar = (step: number) => {
     if (step === 1) {
       if (!vaga.motivo_vaga) { toast("Selecione o motivo da vaga.", "err"); return false; }
+
+      // Aqui o colaborador é sempre obrigatório: é dele que vêm cargo,
+      // contrato, escala e salário. Não há modo manual nesta tela.
       if (!substituidoId) {
         toast(ehSubstituicao(vaga.motivo_vaga)
           ? "Escolha na lista o colaborador que será substituído — o cargo e o contrato vêm do cadastro dele."
           : "Escolha na lista alguém com o mesmo cargo da vaga — é de lá que vêm cargo, contrato, escala e salário.", "err");
         return false;
       }
-      const jaTem = ehSubstituicao(vaga.motivo_vaga) ? presos.get(substituidoId) : undefined;
+
+      const jaTem = ehSubstituicao(vaga.motivo_vaga) && substituidoId ? presos.get(substituidoId) : undefined;
       if (jaTem) { toast(avisoSubstituidoPreso(jaTem), "err"); return false; }
       if (!vaga.contrato) { toast("Selecione o contrato.", "err"); return false; }
       if (!vaga.cargo.trim()) { toast("Informe o cargo.", "err"); return false; }
@@ -414,7 +426,10 @@ export default function MinhasSolicitacoes({ abrir }: { abrir?: SolicitacaoInici
       // Só a substituição grava o id: é ele que trava a pessoa numa vaga só.
       substituido_id: ehSubstituicao(vaga.motivo_vaga) ? substituidoId : null,
       administrativa: podeAdministrativa ? !!vaga.administrativa : false,
-      status: "Pendente Operacional",
+      // A etapa 1 do recrutamento mudou de dono em 02/09/2026: quem decide é o
+      // ANALISTA. Nascer em "Pendente Operacional" deixava a vaga num status
+      // que nenhuma fila filtra — invisível para todo mundo menos quem pediu.
+      status: "Pendente Analista",
       solicitante_nome: user?.user_metadata?.nome ?? user?.email ?? "",
       solicitante_cpf: user?.email ?? "",
     };
@@ -599,6 +614,10 @@ export default function MinhasSolicitacoes({ abrir }: { abrir?: SolicitacaoInici
       .ini-sol-create:hover{border-color:#0f3171;background:#eef4ff;transform:translateY(-2px);box-shadow:0 6px 16px rgba(15,49,113,.1);}
       .ini-sol-create .icon{font-size:1.3rem;}
       .ini-sol-create span{font-size:.75rem;font-weight:600;color:#0f172a;line-height:1.2;}
+      .ini-sol-menu{position:absolute;top:32px;right:4px;z-index:42;min-width:250px;background:#fff;border:1px solid #e2e8f0;border-radius:12px;box-shadow:0 12px 32px rgba(15,23,42,.16);padding:5px;text-align:left;}
+      .ini-sol-menu button{display:block;width:100%;padding:9px 11px;border:none;border-radius:9px;background:transparent;cursor:pointer;font-family:inherit;font-size:.8rem;font-weight:600;color:#0f172a;text-align:left;}
+      .ini-sol-menu button:hover{background:#eef4ff;}
+      .ini-sol-menu button small{display:block;margin-top:3px;font-weight:500;font-size:.7rem;color:#64748b;line-height:1.35;white-space:normal;}
       .ini-sol-item{display:flex;align-items:center;gap:12px;padding:10px 0;border-bottom:1px solid #f1f5f9;}
       .ini-sol-item:last-child{border-bottom:none;}
       .ini-sol-icon{width:34px;height:34px;border-radius:9px;flex-shrink:0;display:flex;align-items:center;justify-content:center;font-size:15px;background:rgba(8,145,178,.1);}
@@ -641,6 +660,9 @@ export default function MinhasSolicitacoes({ abrir }: { abrir?: SolicitacaoInici
         <div className="ini-card-hd"><h3>➕ Nova Solicitação</h3></div>
         <div className="ini-card-body">
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(140px,1fr))", gap: 10 }}>
+            {/* O menu de "preencher à mão" fica DENTRO do modal, não aqui: o
+                que ele oferece muda a solicitação aberta, não a decisão de
+                abrir uma. */}
             <button onClick={abrirModalVaga} className="ini-sol-create"><span className="icon">🎯</span><span>Solicitar Vaga</span></button>
             <button onClick={abrirModalFerias} className="ini-sol-create"><span className="icon">📅</span><span>Solicitar Férias</span></button>
             <button onClick={abrirModalAdv} className="ini-sol-create"><span className="icon">⚠️</span><span>Advertência</span></button>
@@ -832,6 +854,13 @@ export default function MinhasSolicitacoes({ abrir }: { abrir?: SolicitacaoInici
         <div className="ini-modal-ov">
           <div className="ini-modal" onClick={e => e.stopPropagation()}>
             <button onClick={() => setModalVaga(false)} style={{ position: "absolute", top: 14, right: 14, background: "none", border: "none", color: "#94a3b8", fontSize: 20, cursor: "pointer" }}>✕</button>
+
+            {/* Sem "Preencher manualmente" aqui, de propósito (03/09/2026).
+                É vaga do escritório — coisa da Central de Serviços e da Gestão
+                de Recrutamento, onde a opção é um botão à vista na etapa 1.
+                Nesta tela nem escondida atrás de capacidade ela cabia: o modo
+                à mão precisa do catálogo de Suprimentos, que o formulário do
+                encarregado não tem. */}
             <div style={{ fontSize: 17, fontWeight: 800, marginBottom: 4 }}>Solicitar Nova Vaga</div>
             <div style={{ fontSize: 12, color: "#94a3b8", marginBottom: 14 }}>
               {vagaStep === 1 ? "Etapa 1 de 3 — Identificação da Vaga" : vagaStep === 2 ? "Etapa 2 de 3 — Detalhes do Posto" : "Etapa 3 de 3 — Requisitos e Urgência"}
@@ -861,6 +890,8 @@ export default function MinhasSolicitacoes({ abrir }: { abrir?: SolicitacaoInici
                   {MOTIVOS_VAGA.map(o => <option key={o}>{o}</option>)}
                 </select>
               </div>
+              {/* O colaborador é obrigatório em todos os motivos: é dele que
+                  a vaga copia cargo, contrato, escala e salário. */}
               {!!vaga.motivo_vaga && (
                 <div className="ini-fg" style={{ position: "relative" }} onBlur={() => setTimeout(() => setShowEmpDrop(false), 150)}>
                   <label>{rotuloReferencia(vaga.motivo_vaga)} *</label>

@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { FileEdit, Lock } from "lucide-react";
 import { toast } from "sonner";
@@ -28,7 +28,7 @@ import { TipoClassificacaoOrcamento } from "@/hooks/usePlanejamentoOrcamentario"
 import { cn } from "@/lib/utils";
 import { vincularContaAoMalote, PARAM_ORIGEM } from "@/pages/juridico/patrimonio/vinculoMalote";
 import {
-  vincularReembolsoAoMalote, PARAM_ORIGEM_REEMBOLSO,
+  vincularReembolsoAoMalote, comprovantesDoReembolso, PARAM_ORIGEM_REEMBOLSO,
 } from "@/lib/reembolso/vinculoMalote";
 import { AnexosField } from "./AnexosField";
 import { DiaPagamentoPicker } from "./DiaPagamentoPicker";
@@ -168,6 +168,46 @@ export function PainelDespesaMalote({
   const [quantidadeParcelas, setQuantidadeParcelas] = useState("");
   const [arquivos, setArquivos] = useState<File[]>([]);
   const [salvando, setSalvando] = useState<"rascunho" | "enviar" | null>(null);
+
+  /**
+   * Vindo de um reembolso, os comprovantes já entram anexados.
+   *
+   * Eles caem no MESMO estado de arquivos que a pessoa usa à mão, então o
+   * salvar os grava em `malote-anexos` pela rota de sempre — e ela pode
+   * remover ou somar outros antes de enviar. Sem isto, quem paga recebia uma
+   * despesa de reembolso sem a nota que a justifica, e tinha de ir buscar na
+   * Central de Serviços.
+   *
+   * `carregouComprovantes` trava a segunda execução: o efeito depende do id da
+   * URL, mas re-rodar por qualquer motivo duplicaria os anexos.
+   */
+  const carregouComprovantes = useRef(false);
+  useEffect(() => {
+    if (!reembolsoOrigem || carregouComprovantes.current) return;
+    carregouComprovantes.current = true;
+    (async () => {
+      const { arquivos: comprovantes, falhas } = await comprovantesDoReembolso(reembolsoOrigem);
+      if (comprovantes.length) {
+        // Concatena em vez de substituir: entre abrir a tela e o download
+        // terminar, a pessoa pode já ter arrastado um arquivo.
+        setArquivos((atuais) => [...atuais, ...comprovantes]);
+        toast.success(
+          comprovantes.length === 1
+            ? "Comprovante do reembolso anexado."
+            : `${comprovantes.length} comprovantes do reembolso anexados.`,
+        );
+      }
+      // Dizer o que faltou é obrigação: a despesa vai seguir sem aquele
+      // comprovante, e só quem está na tela pode resolver isso agora.
+      if (falhas) {
+        toast.warning(
+          falhas === 1
+            ? "Um comprovante do reembolso não pôde ser baixado — anexe à mão antes de enviar."
+            : `${falhas} comprovantes do reembolso não puderam ser baixados — anexe à mão antes de enviar.`,
+        );
+      }
+    })();
+  }, [reembolsoOrigem]);
   const { data: maloteConfig } = useMaloteConfig();
   const { data: tiposFormaPagamento = [] } = useTiposFormaPagamento();
   const tiposFormaPagamentoAtivos = useMemo(() => tiposFormaPagamento.filter((t) => t.ativo), [tiposFormaPagamento]);

@@ -6,6 +6,7 @@ import {
   contratoDoEmpregado, rotuloReferencia, mostraNomeReferencia,
   MENU_VAGA_ADMINISTRATIVA, podeVagaAdministrativa, filtrarAdministrativas,
   vagaSeguraSubstituido, substituidosComVagaViva,
+  podePreencherVagaManual, faltamCamposManuais,
 } from "@/lib/recrutamento/vagaRegras";
 
 // Datas fixas p/ o teste não depender de "hoje":
@@ -202,5 +203,52 @@ describe("vaga administrativa", () => {
     ];
     expect(filtrarAdministrativas(vagas, false).map(v => v.id)).toEqual([1, 3]);
     expect(filtrarAdministrativas(vagas, true).map(v => v.id)).toEqual([1, 2, 3]);
+  });
+});
+
+// ── Vaga preenchida à mão (02/09/2026) ───────────────────────────────
+//
+// O escritório pode abrir vaga SEM colaborador de referência. Cargo
+// administrativo novo não tem molde: não existe "alguém com o mesmo cargo" de
+// um analista contratado pela primeira vez, e obrigar a escolher um parecido
+// gravava contrato e salário errados de propósito, só para o formulário
+// deixar passar.
+
+describe("podePreencherVagaManual", () => {
+  const can = (menu: string) =>
+    (_acao: string, _mod?: string, m?: string) => m === menu;
+
+  it("é a MESMA chave da vaga administrativa — o escritório", () => {
+    // Gatear por SETOR seria regressão: a própria tela de Administração diz
+    // que setor "não concede nenhum acesso", e a R-J1.F proíbe regra de
+    // acesso fora do Gerenciamento de Acesso.
+    expect(podePreencherVagaManual).toBe(podeVagaAdministrativa);
+    expect(podePreencherVagaManual(can(MENU_VAGA_ADMINISTRATIVA))).toBe(true);
+  });
+
+  it("encarregado não tem — para ele o card continua um botão só", () => {
+    expect(podePreencherVagaManual(can("encarregados_minhas_solicitacoes"))).toBe(false);
+    expect(podePreencherVagaManual(() => false)).toBe(false);
+  });
+});
+
+describe("faltamCamposManuais", () => {
+  it("cobra o que o cadastro daria e agora ninguém preenche", () => {
+    expect(faltamCamposManuais({ cargo: "", contrato: "" })).toEqual(["Cargo", "Contrato"]);
+    expect(faltamCamposManuais({ cargo: "Analista", contrato: "" })).toEqual(["Contrato"]);
+    expect(faltamCamposManuais({ cargo: "", contrato: "ADM" })).toEqual(["Cargo"]);
+  });
+
+  it("espaço em branco não conta como preenchido", () => {
+    expect(faltamCamposManuais({ cargo: "   ", contrato: "  " })).toEqual(["Cargo", "Contrato"]);
+  });
+
+  it("com os dois, não cobra nada", () => {
+    expect(faltamCamposManuais({ cargo: "Analista", contrato: "ADM E ESTAGIARIOS - NH" })).toEqual([]);
+  });
+
+  it("nulo e indefinido são o mesmo que vazio", () => {
+    expect(faltamCamposManuais({})).toEqual(["Cargo", "Contrato"]);
+    expect(faltamCamposManuais({ cargo: null, contrato: null })).toEqual(["Cargo", "Contrato"]);
   });
 });
