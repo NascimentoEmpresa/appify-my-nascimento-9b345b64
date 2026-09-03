@@ -229,6 +229,8 @@ import SolicitarVagaCentral from "./pages/central-servicos/SolicitarVaga";
 import SolicitarReembolso from "./pages/central-servicos/reembolso/SolicitarReembolso";
 import AprovacaoReembolso from "./pages/central-servicos/reembolso/AprovacaoReembolso";
 import ConfiguracaoReembolso from "./pages/central-servicos/reembolso/ConfiguracaoReembolso";
+import EspacoColaborador from "./pages/central-servicos/espaco-colaborador/EspacoColaborador";
+import FichaColaborador from "./pages/central-servicos/espaco-colaborador/FichaColaborador";
 
 // Defaults só de `queries` — mutations seguem com retry 0, porque repetir um
 // insert/update às cegas duplicaria registro.
@@ -364,6 +366,8 @@ const App = () => (
             <Route path="central-servicos/reunioes/:id" element={<ReuniaoDetalhe />} />
             <Route path="central-servicos/reunioes/:id/conducao" element={<ConducaoReuniao />} />
             <Route path="central-servicos/orientacoes-juridicas" element={<OrientacoesJuridicas />} />
+            <Route path="central-servicos/espaco-colaborador" element={<EspacoColaborador />} />
+            <Route path="central-servicos/espaco-colaborador/:id" element={<FichaColaborador />} />
             {/* Comitê de Ética — denúncias saíram da Central de Serviços.
                 As rotas antigas seguem redirecionando: link salvo por aí não
                 pode virar 404. */}
