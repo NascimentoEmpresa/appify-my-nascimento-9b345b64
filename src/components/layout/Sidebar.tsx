@@ -467,8 +467,8 @@ const rhModule: ModuleDef = {
         { label: "Colaboradores", to: "/app/rh/colaboradores", icon: Users2 },
         { label: "Novas Admissões", to: "/app/rh/novas-admissoes", icon: ClipboardCheck },
         // "Alocações em Contratos" e "Folha de Pagamento" saíram em
-        // 04/09/2026, a pedido do Pablo. Eram as duas telas genéricas que
-        // sobraram do modelo antigo (tabelas `alocacao_colaborador`,
+        // 04/09/2026. Eram as duas telas genéricas que sobraram do modelo
+        // antigo (tabelas `alocacao_colaborador`,
         // `folha_periodo`/`folha_evento`, e o cadastro `colaborador`, que a
         // fonte única EMPREGADOS substituiu). Menus desativados na migration
         // 20260930000053; as tabelas continuam no banco.

@@ -688,8 +688,8 @@ function EnvioConfirmado({ envio, onFechar }: {
 
 /**
  * "Lançar no malote" mora AQUI, não na fila de aprovação (troca de fluxo de
- * 04/09/2026, pedida pelo Pablo): o líder só aprova; quem pediu o reembolso
- * é quem leva a despesa aprovada ao Malote. `cs_reembolso_vincular_despesa`
+ * 04/09/2026): o líder só aprova; quem pediu o reembolso é quem leva a
+ * despesa aprovada ao Malote. `cs_reembolso_vincular_despesa`
  * confere no banco que quem chama é o solicitante (migration 20260930000050)
  * — o botão só aparece aqui de qualquer forma, mas a regra real é lá.
  *

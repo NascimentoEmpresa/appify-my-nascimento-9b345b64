@@ -12,15 +12,22 @@ import {
 } from "lucide-react";
 import { TreinamentoEditor } from "./treinamento/TreinamentoEditor";
 import { TreinamentoVisor } from "./treinamento/TreinamentoVisor";
-import { recursosDe, type Treinamento } from "./treinamento/core";
+import { recursosDe, type EscopoTreinamento, type Treinamento } from "./treinamento/core";
 
 // =====================================================================
-// TREINAMENTOS ERP — a grade de cards.
+// TREINAMENTOS — a grade de cards.
 //
-// Quem pode gerenciar (menu `treinamentos_gerenciar`) cria e edita; todo
-// mundo que enxerga o menu `treinamentos_erp` assiste. Quem decide de
-// verdade é a RLS — o `podeGerenciar` daqui só evita mostrar botão que o
-// banco recusaria.
+// A MESMA tela serve os dois módulos, e cada um tem a SUA grade: o `escopo`
+// diz de qual porta a pessoa entrou (Encarregados ou Central de Serviços) e
+// a consulta traz só os treinamentos daquele módulo. Um treinamento marcado
+// nos dois aparece nas duas grades — é uma linha só, com uma prova e um
+// histórico de conclusão.
+//
+// Quem pode gerenciar (menu `treinamentos_gerenciar`) cria e edita; quem
+// enxerga o menu do módulo assiste. Quem decide de verdade é a RLS
+// (`trn_pode_ver_escopos`) — o `podeGerenciar` daqui só evita mostrar botão
+// que o banco recusaria, e o filtro por escopo abaixo é conveniência: a
+// policy já recorta a mesma coisa.
 // =====================================================================
 
 interface Conclusao {
@@ -29,7 +36,12 @@ interface Conclusao {
   aprovado: boolean | null;
 }
 
-export default function TreinamentosERP() {
+interface Props {
+  /** De qual porta a pessoa entrou. Define a grade e o padrão do editor. */
+  escopo: EscopoTreinamento;
+}
+
+export default function TreinamentosERP({ escopo }: Props) {
   const { user } = useAuth();
   const meuNome = useMeuNome();
   const { can } = usePermissoes();
@@ -53,7 +65,11 @@ export default function TreinamentosERP() {
     // para desenhar, e serializar aqui dobrava o tempo de abertura à toa.
     const [t, c] = await Promise.all([
       (supabase as any).from("TREINAMENTOS")
-        .select("*").order("ordem", { ascending: true }).order("created_at", { ascending: false }),
+        .select("*")
+        // `contains` = o array da linha contém este escopo. Traz também os
+        // treinamentos marcados nos dois módulos, que é o compartilhamento.
+        .contains("escopos", [escopo])
+        .order("ordem", { ascending: true }).order("created_at", { ascending: false }),
       (supabase as any).from("TREINAMENTO_CONCLUSAO")
         .select("treinamento_id, prova_nota, aprovado").eq("user_id", user?.id ?? ""),
     ]);
@@ -85,7 +101,7 @@ export default function TreinamentosERP() {
     } else {
       setCapas({});
     }
-  }, [user?.id, toast]);
+  }, [user?.id, toast, escopo]);
 
   useEffect(() => { carregar(); }, [carregar]);
 
@@ -122,7 +138,9 @@ export default function TreinamentosERP() {
             <GraduationCap className="h-6 w-6" />
           </div>
           <div>
-            <h1 className="text-2xl font-bold tracking-tight">Treinamentos ERP</h1>
+            <h1 className="text-2xl font-bold tracking-tight">
+              {escopo === "central_servicos" ? "Treinamentos" : "Treinamentos ERP"}
+            </h1>
             <p className="text-sm text-muted-foreground">
               {carregando ? "Carregando…"
                 : lista.length === 0 ? "Nenhum treinamento publicado ainda"
@@ -268,6 +286,7 @@ export default function TreinamentosERP() {
       <TreinamentoEditor
         aberto={editorAberto}
         treinamento={emEdicao}
+        escopoPadrao={escopo}
         meuNome={meuNome}
         meuId={user?.id}
         onFechar={() => setEditorAberto(false)}
