@@ -13,6 +13,7 @@ import type { FormCap } from "@/hooks/useFormPerms";
 import { useSetoresCatalogo } from "@/hooks/usePlanejamentoOrcamentario";
 import { SearchableMultiSelect } from "@/components/ui/searchable-multi-select";
 import { ReembolsoSetoresUsuario } from "@/components/admin/ReembolsoSetoresUsuario";
+import { rotaVisivelNoGerenciamento } from "@/lib/menusOcultosGerenciamento";
 
 const FORM_MENU_CODIGO = "central_servicos_formularios";
 const REUNIOES_MENU_CODIGO = "central_servicos_reunioes";
@@ -94,7 +95,7 @@ export function ModulosMenusTab() {
     queryFn: async () => {
       const { data, error } = await supabase.from("app_menu").select("*").order("ordem").order("nome");
       if (error) throw error;
-      return (data ?? []) as Menu[];
+      return ((data ?? []) as Menu[]).filter((menu) => rotaVisivelNoGerenciamento(menu.rota));
     },
   });
 
