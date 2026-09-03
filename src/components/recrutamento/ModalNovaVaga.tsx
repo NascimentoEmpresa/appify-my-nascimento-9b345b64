@@ -11,9 +11,10 @@
 //
 // O que este modal tem e o do encarregado (pages/MinhasSolicitacoes.tsx) NÃO
 // tem, de propósito:
-//   • os três pontinhos com "✍️ Preencher manualmente" — vaga do escritório,
-//     em que cargo/contrato/escala/salário são digitados em vez de copiados
-//     do cadastro de um colaborador;
+//   • o botão "✍️ Preencher manualmente" na etapa 1 — vaga do escritório, em
+//     que cargo/contrato/escala/salário são digitados em vez de copiados do
+//     cadastro de um colaborador (era um menu de três pontinhos até 04/09/2026;
+//     virou botão à vista porque ninguém procura o que não aparece);
 //   • o vínculo com o catálogo de Suprimentos (contrato → posto → função),
 //     que é o que define uniformes e EPIs da admissão.
 //
@@ -87,7 +88,6 @@ export function ModalNovaVaga({ aberto, onFechar, onCriada, onToast }: Props) {
   const [vagaStep, setVagaStep] = useState(1);
   // Vaga do escritório preenchida à mão, sem colaborador de referência.
   const [vagaManual, setVagaManual] = useState(false);
-  const [menuVagaAberto, setMenuVagaAberto] = useState(false);
   const [contratosFull, setContratosFull] = useState<any[]>([]);
   // Empregado -> nº da vaga de substituição que já o segura (regra do banco).
   const [presos, setPresos] = useState<Map<number, number>>(new Map());
@@ -146,7 +146,6 @@ export function ModalNovaVaga({ aberto, onFechar, onCriada, onToast }: Props) {
     setEmpregados([]);
     setSubstituidoId(null);
     setVagaManual(false);
-    setMenuVagaAberto(false);
     if (!contratosFull.length) {
       (async () => {
         const { data } = await (supabase as any)
@@ -225,7 +224,6 @@ export function ModalNovaVaga({ aberto, onFechar, onCriada, onToast }: Props) {
    * mentir sobre a origem deles.
    */
   const alternarVagaManual = () => {
-    setMenuVagaAberto(false);
     setVagaManual(atual => {
       if (atual) {
         setSubstituidoId(null);
@@ -323,49 +321,6 @@ export function ModalNovaVaga({ aberto, onFechar, onCriada, onToast }: Props) {
       <div className="nvg-modal" onClick={e => e.stopPropagation()}>
         <button onClick={onFechar} style={{ position: "absolute", top: 14, right: 14, background: "none", border: "none", color: "#94a3b8", fontSize: 20, cursor: "pointer" }}>✕</button>
 
-        {/* Os três pontinhos ficam DENTRO da solicitação, ao lado do ✕.
-            É o lugar certo: o que eles oferecem muda esta solicitação que
-            está aberta, não a decisão de abrir uma. */}
-        {podeAdministrativa && (
-          <>
-            <button
-              type="button"
-              aria-label="Mais opções desta solicitação"
-              aria-haspopup="menu"
-              aria-expanded={menuVagaAberto}
-              onClick={e => { e.stopPropagation(); setMenuVagaAberto(v => !v); }}
-              style={{ position: "absolute", top: 13, right: 44, width: 26, height: 26, borderRadius: 8, background: menuVagaAberto ? "#e2e8f0" : "none", border: "none", color: "#64748b", fontSize: 17, lineHeight: 1, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}
-            >
-              ⋯
-            </button>
-            {menuVagaAberto && (
-              <>
-                {/* Overlay transparente fecha ao clicar fora, sem listener
-                    global que alguém esquece de remover na desmontagem. */}
-                <div onClick={() => setMenuVagaAberto(false)}
-                     style={{ position: "fixed", inset: 0, zIndex: 60 }} />
-                <div role="menu" style={{ position: "absolute", top: 42, right: 40, zIndex: 61, minWidth: 268, background: "#fff", border: "1px solid #e2e8f0", borderRadius: 12, boxShadow: "0 12px 32px rgba(15,23,42,.16)", padding: 5, textAlign: "left" }}>
-                  <button
-                    role="menuitem"
-                    type="button"
-                    onClick={alternarVagaManual}
-                    style={{ display: "block", width: "100%", padding: "9px 11px", border: "none", borderRadius: 9, background: "transparent", cursor: "pointer", fontFamily: "inherit", fontSize: 12.5, fontWeight: 700, color: "#0f172a", textAlign: "left" }}
-                    onMouseEnter={e => { e.currentTarget.style.background = "#eef4ff"; }}
-                    onMouseLeave={e => { e.currentTarget.style.background = "transparent"; }}
-                  >
-                    {vagaManual ? "↩️ Voltar a puxar do cadastro" : "✍️ Preencher manualmente"}
-                    <small style={{ display: "block", marginTop: 3, fontWeight: 500, fontSize: 11, color: "#64748b", lineHeight: 1.35, whiteSpace: "normal" }}>
-                      {vagaManual
-                        ? "Volta a escolher um colaborador; cargo, contrato, escala e salário vêm do cadastro dele."
-                        : "Vaga do escritório: você digita cargo, contrato, escala e salário em vez de copiar de um colaborador."}
-                    </small>
-                  </button>
-                </div>
-              </>
-            )}
-          </>
-        )}
-
         <div style={{ fontSize: 17, fontWeight: 800, marginBottom: 4 }}>Solicitar Nova Vaga</div>
         <div style={{ fontSize: 12, color: "#94a3b8", marginBottom: 14 }}>
           {vagaStep === 1 ? "Etapa 1 de 3 — Identificação da Vaga" : vagaStep === 2 ? "Etapa 2 de 3 — Detalhes do Posto" : "Etapa 3 de 3 — Requisitos e Urgência"}
@@ -377,6 +332,41 @@ export function ModalNovaVaga({ aberto, onFechar, onCriada, onToast }: Props) {
             <div key={i} style={{ flex: 1, height: 3, borderRadius: 2, background: i < vagaStep ? "#16a34a" : i === vagaStep ? "#0f3171" : "#dbe4f0", transition: "background .2s" }}></div>
           ))}
         </div>
+
+        {/* Botão VISÍVEL, não mais escondido atrás de três pontinhos (04/09/2026).
+            Ninguém procura uma opção que não se vê: quem abre vaga do escritório
+            precisava saber de antemão que o menu existia. Fica só na etapa 1,
+            que é onde o modo muda o formulário, e só para quem tem a capacidade
+            `recrutamento_vaga_administrativa` — a mesma do checkbox lá embaixo. */}
+        {podeAdministrativa && vagaStep === 1 && (
+          <button
+            type="button"
+            aria-pressed={vagaManual}
+            onClick={alternarVagaManual}
+            style={{
+              display: "flex", alignItems: "flex-start", gap: 9, width: "100%", marginBottom: 16,
+              padding: "10px 13px", borderRadius: 11, cursor: "pointer", textAlign: "left",
+              fontFamily: "inherit",
+              background: vagaManual ? "#eef4ff" : "#fff",
+              border: vagaManual ? "1.5px solid #0f3171" : "1px solid #e2e8f0",
+              transition: "background .18s, border-color .18s",
+            }}
+            onMouseEnter={e => { if (!vagaManual) e.currentTarget.style.background = "#f8fafc"; }}
+            onMouseLeave={e => { if (!vagaManual) e.currentTarget.style.background = "#fff"; }}
+          >
+            <span style={{ fontSize: 15, lineHeight: 1.2 }}>{vagaManual ? "↩️" : "✍️"}</span>
+            <span>
+              <span style={{ display: "block", fontSize: 12.5, fontWeight: 800, color: vagaManual ? "#0f3171" : "#0f172a" }}>
+                {vagaManual ? "Voltar a puxar do cadastro" : "Preencher manualmente"}
+              </span>
+              <span style={{ display: "block", marginTop: 3, fontSize: 11, fontWeight: 500, color: "#64748b", lineHeight: 1.4 }}>
+                {vagaManual
+                  ? "Volta a escolher um colaborador; cargo, contrato, escala e salário vêm do cadastro dele."
+                  : "Vaga do escritório: você digita cargo, contrato, escala e salário em vez de copiar de um colaborador."}
+              </span>
+            </span>
+          </button>
+        )}
 
         {/* Step 1 */}
         {vagaStep === 1 && (<>

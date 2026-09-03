@@ -9,7 +9,7 @@
 // esbarrava num formulário que exige escolher alguém do posto.
 //
 // O formulário aqui é o MESMO da Gestão de Recrutamento — mesmo componente,
-// com os três pontinhos de "Preencher manualmente" e o vínculo com o catálogo
+// com o botão visível de "Preencher manualmente" e o vínculo com o catálogo
 // de Suprimentos. Ver components/recrutamento/ModalNovaVaga.tsx.
 //
 // A tela é o formulário: ele abre sozinho ao entrar, e fechar deixa o resumo

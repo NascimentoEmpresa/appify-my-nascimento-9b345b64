@@ -178,7 +178,7 @@ export default function MinhasSolicitacoes({ abrir }: { abrir?: SolicitacaoInici
   // Preencher à mão NÃO existe aqui: o encarregado abre vaga do posto dele, e
   // o posto vem sempre do cadastro de um colaborador. Vaga do escritório é
   // pedida na Central de Serviços ou na Gestão de Recrutamento, que têm o
-  // menu de "Preencher manualmente" — e o catálogo de Suprimentos junto, que
+  // botão de "Preencher manualmente" — e o catálogo de Suprimentos junto, que
   // esta tela não tem. Ver src/components/recrutamento/ModalNovaVaga.tsx.
   const [contratosFull, setContratosFull] = useState<any[]>([]);
   // Empregado -> nº da vaga de substituição que já o segura (regra do banco).
@@ -855,13 +855,12 @@ export default function MinhasSolicitacoes({ abrir }: { abrir?: SolicitacaoInici
           <div className="ini-modal" onClick={e => e.stopPropagation()}>
             <button onClick={() => setModalVaga(false)} style={{ position: "absolute", top: 14, right: 14, background: "none", border: "none", color: "#94a3b8", fontSize: 20, cursor: "pointer" }}>✕</button>
 
-            {/* Sem os três pontinhos aqui, de propósito (03/09/2026).
-                O único item deles era "Preencher manualmente", que é vaga do
-                escritório — coisa da Central de Serviços e da Gestão de
-                Recrutamento, não do encarregado. Deixar o botão só para quem
-                tem a capacidade não resolvia: quem não tem via um menu que
-                não abria nada, e quem tinha caía num modo sem o catálogo de
-                Suprimentos que essa vaga precisa. */}
+            {/* Sem "Preencher manualmente" aqui, de propósito (03/09/2026).
+                É vaga do escritório — coisa da Central de Serviços e da Gestão
+                de Recrutamento, onde a opção é um botão à vista na etapa 1.
+                Nesta tela nem escondida atrás de capacidade ela cabia: o modo
+                à mão precisa do catálogo de Suprimentos, que o formulário do
+                encarregado não tem. */}
             <div style={{ fontSize: 17, fontWeight: 800, marginBottom: 4 }}>Solicitar Nova Vaga</div>
             <div style={{ fontSize: 12, color: "#94a3b8", marginBottom: 14 }}>
               {vagaStep === 1 ? "Etapa 1 de 3 — Identificação da Vaga" : vagaStep === 2 ? "Etapa 2 de 3 — Detalhes do Posto" : "Etapa 3 de 3 — Requisitos e Urgência"}

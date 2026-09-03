@@ -2609,8 +2609,8 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "anali
       )}
 
       {/* ── Modal Nova Vaga (Wizard 3 etapas) ── */}
-      {/* Mesmo componente da Central de Serviços › Solicitar Vaga, com os três
-          pontinhos de "Preencher manualmente" e o vínculo com o catálogo de
+      {/* Mesmo componente da Central de Serviços › Solicitar Vaga, com o botão
+          visível de "Preencher manualmente" e o vínculo com o catálogo de
           Suprimentos. Os toasts são os desta tela — daí o `onToast`. */}
       <ModalNovaVaga
         aberto={modalVaga}
