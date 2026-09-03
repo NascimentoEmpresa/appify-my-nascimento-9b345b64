@@ -19527,7 +19527,7 @@ NOTIFY pgrst, 'reload schema';
 -- NOTIFY pgrst, 'reload schema';
 
 
--- ===== 20260930000047_central_servicos_solicitar_vaga =====
+-- ===== 20260930000049_central_servicos_solicitar_vaga =====
 -- =====================================================================
 -- CENTRAL DE SERVIÇOS › SOLICITAR VAGA
 --
