@@ -4,9 +4,15 @@ import { supabase } from "@/integrations/supabase/client";
 // SIS-2026-0160: início do Fluxo de Caixa (Financeiro > Gestão Financeira).
 // Lê direto de v_malote_pagamento_fluxo_caixa (20260907000002), que já
 // resolve os nomes de empresa/contrato/classificação — sem join no
-// client. Só despesas do Malote com status despesa_paga aparecem aqui
-// (a view garante isso); se a despesa for estornada/cancelada depois de
-// paga, a linha some sozinha, sem precisar de lógica extra aqui.
+// client.
+//
+// SIS-2026-0254 (achado ao implementar "qual parcela está sendo paga"):
+// despesa NÃO parcelada continua 1 linha só, quando fica despesa_paga; se
+// for estornada/cancelada depois, a linha some sozinha. Despesa PARCELADA
+// virou 1 linha por PARCELA PAGA (malote_despesa_parcela.status = 'paga'),
+// cada uma com a data/valor reais daquela parcela — antes só aparecia 1x,
+// no fim, com o valor cheio da despesa na data da última parcela (distorção
+// real de Fluxo de Caixa/Fatura do Mês do cartão, não só falta de coluna).
 export interface FluxoCaixaMaloteLinha {
   despesa_id: string;
   id_malote: string;
@@ -26,6 +32,11 @@ export interface FluxoCaixaMaloteLinha {
   banco_id: string | null;
   banco_nome: string | null;
   banco_logo_path: string | null;
+  // SIS-2026-0254: despesa parcelada agora entra 1 linha por PARCELA PAGA
+  // (não mais 1 linha só no fim) — os dois vêm null pra despesa não
+  // parcelada.
+  numero_parcela: number | null;
+  numero_parcelas: number | null;
   valor: number;
   tipo: "saida";
 }
