@@ -246,7 +246,10 @@ export default function FluxoCaixaGestao() {
                   </TableRow>
                 )}
                 {filtradas.map((l) => (
-                  <TableRow key={l.despesa_id}>
+                  // SIS-2026-0254: despesa parcelada agora pode gerar mais
+                  // de 1 linha (1 por parcela paga) com o mesmo
+                  // despesa_id — key precisa incluir o número da parcela.
+                  <TableRow key={`${l.despesa_id}-${l.numero_parcela ?? "unica"}`}>
                     <TableCell className="text-center font-mono text-xs">{l.id_malote}</TableCell>
                     <TableCell className="text-center text-sm">{l.data_pagamento ? new Date(l.data_pagamento + "T00:00:00").toLocaleDateString("pt-BR") : "—"}</TableCell>
                     <TableCell className="text-center">
