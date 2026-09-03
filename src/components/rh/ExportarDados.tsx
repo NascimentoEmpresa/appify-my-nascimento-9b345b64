@@ -70,6 +70,25 @@ const CAMPOS_POR_COLUNA: Record<ColunaKey, string[]> = {
 // algum ambiente.
 const CAMPOS_OPCIONAIS = new Set(["Empresa", "Cargo", "Nome do Cargo"]);
 
+/**
+ * "1107 | UFRGS INTERPRETE DE LIBRAS C. 009.2026".
+ *
+ * O código do contrato é a coluna `Filial` da CONTRATOS — é por ele que o RH
+ * fala do contrato no dia a dia, e sem ele a planilha obriga a procurar o
+ * nome inteiro para achar de qual se trata. Fica JUNTO do nome, na mesma
+ * célula, porque foi assim que o relatório foi pedido (04/09/2026).
+ *
+ * Mora aqui, sozinha, porque o mesmo rótulo é montado em dois lugares — a
+ * coluna exportada e o filtro de contrato. Se cada um formatasse do seu
+ * jeito, o filtro compararia texto que a coluna não produz e nunca casaria.
+ */
+const rotuloContrato = (filial: any, nome: any): string => {
+  const codigo = String(filial ?? "").trim();
+  const nomeContrato = String(nome ?? "").trim();
+  if (!nomeContrato) return codigo || "—";
+  return codigo ? `${codigo} | ${nomeContrato}` : nomeContrato;
+};
+
 const valorDaColuna = (key: ColunaKey, e: any, contratoDe: (e: any) => string): string | number => {
   switch (key) {
     case "filial": return String(e["Nome Filial"] ?? "").trim() || String(e["Filial"] ?? "").trim() || "—";
@@ -118,10 +137,11 @@ export default function ExportarDados() {
     setCarregandoOpcoes(true);
     try {
       const [ct, st] = await Promise.all([
-        (supabase as any).from("CONTRATOS").select('"NOME CONTRATO"').eq("ATIVO", "SIM").order('"NOME CONTRATO"'),
+        (supabase as any).from("CONTRATOS").select('"NOME CONTRATO", Filial').eq("ATIVO", "SIM").order('"NOME CONTRATO"'),
         (supabase as any).from("EMPREGADOS").select('"Situação"').limit(20000),
       ]);
-      if (ct.data) setContratos([...new Set(ct.data.map((c: any) => String(c["NOME CONTRATO"] ?? "").trim()).filter(Boolean))] as string[]);
+      // Mesmo rótulo da coluna exportada — o filtro compara com o que sai lá.
+      if (ct.data) setContratos([...new Set(ct.data.map((c: any) => rotuloContrato(c.Filial, c["NOME CONTRATO"])).filter((x: string) => x && x !== "—"))] as string[]);
       if (st.data) setSituacoesDisponiveis(
         [...new Set(st.data.map((r: any) => String(r["Situação"] ?? "").trim()).filter(Boolean))].sort() as string[],
       );
@@ -152,7 +172,7 @@ export default function ExportarDados() {
         .from("CONTRATOS").select('"NOME CONTRATO", Filial').eq("ATIVO", "SIM");
       if (ctErro) throw new Error("Falha ao ler CONTRATOS: " + ctErro.message);
       const contratoPorFilial: Record<string, string> = {};
-      for (const c of ctData ?? []) if (c.Filial != null) contratoPorFilial[String(c.Filial)] = c["NOME CONTRATO"] || "";
+      for (const c of ctData ?? []) if (c.Filial != null) contratoPorFilial[String(c.Filial)] = rotuloContrato(c.Filial, c["NOME CONTRATO"]);
       const contratoDe = (e: any) => contratoPorFilial[String(e?.["Filial"] ?? "")] || "—";
 
       // Campos a buscar: os das colunas escolhidas + os que os filtros de
