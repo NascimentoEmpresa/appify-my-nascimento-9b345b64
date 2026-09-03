@@ -65,6 +65,8 @@ export interface NoContrato {
   status: string | null;
   /** Contagem, não lista: o nó mostra "48 colaboradores" sem baixar os 48. */
   colaboradores: number;
+  /** Contrato encerrado que ainda tem gente dentro — pessoas a realocar. */
+  encerrado: boolean;
   qtd_postos: number;
   /** Soma de `qt_postos` — o total de vagas contratadas. */
   vagas: number;
@@ -161,15 +163,36 @@ export interface RespostaMarcacoes {
   linhas: MarcacaoLinha[];
 }
 
-/** A estrutura de contratos e seus postos. Poucos KB — cabe numa chamada. */
+/**
+ * A árvore, e a CONTA junto.
+ *
+ * A RPC devolve os totais além dos nós porque somar os contratos à mão não
+ * fecha com o efetivo: quem tem local/filial que não casa com nenhum contrato
+ * não pende de nó nenhum. Em vez de deixar essa diferença escondida (foi
+ * assim que 435 pessoas sumiram da tela), ela vem nomeada e a tela mostra.
+ */
+export interface ArvoreCompleta {
+  contratos: NoContrato[];
+  /** Ativos cujo contrato não foi possível identificar. */
+  sem_contrato: number;
+  /** Todos os ativos da folha, pela mesma régua do RH. */
+  total_ativos: number;
+  encerrados_com_gente: number;
+}
+
 export function useArvoreContratos() {
   return useQuery({
     queryKey: ["esp-col", "arvore"],
     staleTime: 5 * 60_000,
-    queryFn: async (): Promise<NoContrato[]> => {
-      const { data, error } = await sb.rpc<NoContrato[]>("esp_col_arvore");
+    queryFn: async (): Promise<ArvoreCompleta> => {
+      const { data, error } = await sb.rpc<ArvoreCompleta>("esp_col_arvore");
       if (error) throw error;
-      return data ?? [];
+      return {
+        contratos: data?.contratos ?? [],
+        sem_contrato: data?.sem_contrato ?? 0,
+        total_ativos: data?.total_ativos ?? 0,
+        encerrados_com_gente: data?.encerrados_com_gente ?? 0,
+      };
     },
   });
 }
@@ -191,6 +214,31 @@ export function useColaboradoresDoContrato(contratoId: string | null, ativo: boo
         p_contrato_id: contratoId,
         p_busca: null,
         p_limite: 2000,
+      });
+      if (error) throw error;
+      return data ?? [];
+    },
+  });
+}
+
+/**
+ * Quem a árvore não conseguiu pendurar em contrato nenhum.
+ *
+ * Existe para essas pessoas serem ALCANÇÁVEIS, não só contadas: é abrindo a
+ * lista que o RH descobre qual grafia de "Descrição do Local" não casa com
+ * `contratos.nome` e corrige o cadastro.
+ */
+export function useColaboradoresSemContrato(ativo: boolean) {
+  return useQuery({
+    queryKey: ["esp-col", "sem-contrato"],
+    enabled: ativo,
+    staleTime: 5 * 60_000,
+    queryFn: async (): Promise<ColaboradorLinha[]> => {
+      const { data, error } = await sb.rpc<ColaboradorLinha[]>("esp_col_colaboradores", {
+        p_contrato_id: null,
+        p_busca: null,
+        p_limite: 3000,
+        p_sem_contrato: true,
       });
       if (error) throw error;
       return data ?? [];
