@@ -467,7 +467,7 @@ const fiscalModule: ModuleDef = {
 const rhModule: ModuleDef = {
   id: "rh",
   label: "Recursos Humanos",
-  description: "Colaboradores e alocações",
+  description: "Colaboradores, férias e movimentações",
   icon: Users2,
   basePath: "/app/rh",
   status: "active",
@@ -478,8 +478,12 @@ const rhModule: ModuleDef = {
       items: [
         { label: "Colaboradores", to: "/app/rh/colaboradores", icon: Users2 },
         { label: "Novas Admissões", to: "/app/rh/novas-admissoes", icon: ClipboardCheck },
-        { label: "Alocações em Contratos", to: "/app/rh/alocacoes", icon: ListChecks },
-        { label: "Folha de Pagamento", to: "/app/rh/folha", icon: ListChecks },
+        // "Alocações em Contratos" e "Folha de Pagamento" saíram em
+        // 04/09/2026, a pedido do Pablo. Eram as duas telas genéricas que
+        // sobraram do modelo antigo (tabelas `alocacao_colaborador`,
+        // `folha_periodo`/`folha_evento`, e o cadastro `colaborador`, que a
+        // fonte única EMPREGADOS substituiu). Menus desativados na migration
+        // 20260930000051; as tabelas continuam no banco.
         { label: "Gestão de Férias", to: "/app/rh/ferias", icon: CalendarRange },
         { label: "Solicitações de Demissão", to: "/app/rh/solicitacoes-demissao", icon: UserMinus },
         { label: "Conferência de Ponto", to: "/app/rh/conferencia-ponto", icon: ClipboardCheck },
