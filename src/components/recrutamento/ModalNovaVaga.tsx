@@ -89,6 +89,9 @@ export function ModalNovaVaga({ aberto, onFechar, onCriada, onToast }: Props) {
   // Vaga do escritório preenchida à mão, sem colaborador de referência.
   const [vagaManual, setVagaManual] = useState(false);
   const [contratosFull, setContratosFull] = useState<any[]>([]);
+  // Cargos do cadastro (tabela "CARGOS"): sugestão para o modo manual, nunca
+  // uma lista fechada — ver o datalist do campo Cargo.
+  const [cargosFull, setCargosFull] = useState<any[]>([]);
   // Empregado -> nº da vaga de substituição que já o segura (regra do banco).
   const [presos, setPresos] = useState<Map<number, number>>(new Map());
   const [empregados, setEmpregados] = useState<any[]>([]);
@@ -156,8 +159,21 @@ export function ModalNovaVaga({ aberto, onFechar, onCriada, onToast }: Props) {
         if (data) setContratosFull(data);
       })();
     }
-    // contratosFull fica fora das deps de propósito: a lista é carregada uma
-    // vez por sessão e recarregá-la a cada abertura não muda nada na tela.
+    // Cargos do cadastro oficial, para as sugestões do modo manual. São ~200
+    // linhas de texto puro; carregar junto evita o combo vazio no primeiro
+    // clique de quem liga o preenchimento à mão.
+    if (!cargosFull.length) {
+      (async () => {
+        const { data } = await (supabase as any)
+          .from("CARGOS")
+          .select('"Nome do Cargo"')
+          .order('"Nome do Cargo"');
+        if (data) setCargosFull(data);
+      })();
+    }
+    // contratosFull/cargosFull ficam fora das deps de propósito: as listas são
+    // carregadas uma vez por sessão e recarregá-las a cada abertura não muda
+    // nada na tela.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [aberto]);
 
@@ -269,9 +285,16 @@ export function ModalNovaVaga({ aberto, onFechar, onCriada, onToast }: Props) {
       if (jaTem) { toast(avisoSubstituidoPreso(jaTem), "err"); return false; }
       if (!vaga.contrato)    { toast("Selecione o contrato.", "err"); return false; }
       if (!vaga.cargo.trim()){ toast("Informe o cargo.", "err"); return false; }
-      if (!vaga.contrato_id) { toast("Selecione o contrato do catálogo de Suprimentos.", "err"); return false; }
-      if (!vaga.posto_id)    { toast("Selecione o posto do catálogo de Suprimentos.", "err"); return false; }
-      if (!vaga.funcao_id)   { toast("Selecione a função do catálogo de Suprimentos.", "err"); return false; }
+      // O vínculo com o catálogo só é obrigatório quando a vaga copia um posto
+      // de campo: é ele que traz uniformes e EPIs prontos. Vaga do escritório
+      // preenchida à mão muitas vezes NÃO tem posto no catálogo — exigir o
+      // vínculo ali era travar o pedido por causa de um cadastro que ninguém
+      // vai criar só para abrir a vaga.
+      if (!vagaManual) {
+        if (!vaga.contrato_id) { toast("Selecione o contrato do catálogo de Suprimentos.", "err"); return false; }
+        if (!vaga.posto_id)    { toast("Selecione o posto do catálogo de Suprimentos.", "err"); return false; }
+        if (!vaga.funcao_id)   { toast("Selecione a função do catálogo de Suprimentos.", "err"); return false; }
+      }
     }
     if (step === 2) {
       if (!prazo.ok) { toast(prazo.erro ?? "Revise a data de início prevista.", "err"); return false; }
@@ -462,27 +485,57 @@ export function ModalNovaVaga({ aberto, onFechar, onCriada, onToast }: Props) {
             </div>
           )}
           {/* Contrato e cargo vêm do cadastro do escolhido e ficam travados
-              — a vaga é do posto dele, não de outro. */}
+              — a vaga é do posto dele, não de outro.
+
+              À mão os dois viram lista COM digitação livre (`datalist`): o que
+              existe no cadastro aparece pronto para escolher, e o que não
+              existe ainda — cargo novo, contrato que só o escritório usa —
+              continua sendo aceito digitado. Uma lista fechada aqui obrigaria
+              a cadastrar antes de pedir; um campo de texto puro devolveria
+              "ANALISTA ADM" e "Analista Administrativo" como coisas
+              diferentes. */}
           <div className="nvg-fg">
             <label>Contrato *{!vagaManual && <span style={{ color: "#94a3b8", fontWeight: 600 }}> — do colaborador escolhido</span>}</label>
             <input className="nvg-fi"
-              placeholder={vagaManual ? "Ex.: ADM E ESTAGIARIOS - NH" : "Escolha o colaborador acima"}
+              list={vagaManual ? "nvg-contratos" : undefined}
+              placeholder={vagaManual ? "Escolha na lista ou digite" : "Escolha o colaborador acima"}
               value={vaga.contrato} readOnly={!vagaManual}
               onChange={e => setVaga(v => ({ ...v, contrato: e.target.value }))}
               style={vagaManual ? undefined : { background: "#f1f5f9", color: "#475569", cursor: "not-allowed" }} />
             {vagaManual && (
-              <div style={{ marginTop: 4, fontSize: 11, color: "#94a3b8" }}>
-                Escolher o contrato no catálogo de Suprimentos, abaixo, também preenche este campo.
-              </div>
+              <>
+                <datalist id="nvg-contratos">
+                  {contratosFull.map((c: any, i: number) => (
+                    <option key={i} value={c["NOME CONTRATO"] ?? ""} />
+                  ))}
+                </datalist>
+                <div style={{ marginTop: 4, fontSize: 11, color: "#94a3b8" }}>
+                  Escolha um contrato da lista ou digite outro. Escolher no catálogo de
+                  Suprimentos, abaixo, também preenche este campo.
+                </div>
+              </>
             )}
           </div>
           <div className="nvg-fg">
             <label>Cargo *{!vagaManual && <span style={{ color: "#94a3b8", fontWeight: 600 }}> — do colaborador escolhido</span>}</label>
             <input className="nvg-fi"
-              placeholder={vagaManual ? "Ex.: Analista Administrativo" : "Escolha o colaborador acima"}
+              list={vagaManual ? "nvg-cargos" : undefined}
+              placeholder={vagaManual ? "Escolha na lista ou digite" : "Escolha o colaborador acima"}
               value={vaga.cargo} readOnly={!vagaManual}
               onChange={e => setVaga(v => ({ ...v, cargo: e.target.value }))}
               style={vagaManual ? undefined : { background: "#f1f5f9", color: "#475569", cursor: "not-allowed" }} />
+            {vagaManual && (
+              <>
+                <datalist id="nvg-cargos">
+                  {cargosFull.map((c: any, i: number) => (
+                    <option key={i} value={c["Nome do Cargo"] ?? ""} />
+                  ))}
+                </datalist>
+                <div style={{ marginTop: 4, fontSize: 11, color: "#94a3b8" }}>
+                  Escolha um cargo da lista ou digite outro, se o que você precisa ainda não existe.
+                </div>
+              </>
+            )}
             {cnhDoCargo && (
               <div style={{ marginTop: 6, fontSize: 11.5, fontWeight: 700, color: "#b45309", background: "#fffbeb", border: "1px solid #fde68a", borderRadius: 8, padding: "6px 9px" }}>
                 🚗 {cnhDoCargo}: CNH obrigatória — já entra sozinha nos requisitos e não pode ser tirada.
@@ -490,7 +543,12 @@ export function ModalNovaVaga({ aberto, onFechar, onCriada, onToast }: Props) {
             )}
           </div>
           <div className="nvg-fg" style={{ gridColumn: "1 / -1" }}>
-            <label>Vínculo com o catálogo de Suprimentos *</label>
+            <label>
+              Vínculo com o catálogo de Suprimentos
+              {vagaManual
+                ? <span style={{ color: "#94a3b8", fontWeight: 600 }}> — opcional</span>
+                : " *"}
+            </label>
             <div style={{ display: "grid", gridTemplateColumns: "repeat(3,minmax(0,1fr))", gap: 8 }}>
               <select className="nvg-fi" value={vaga.contrato_id} onChange={e => {
                 const id = e.target.value;
@@ -521,6 +579,7 @@ export function ModalNovaVaga({ aberto, onFechar, onCriada, onToast }: Props) {
             </div>
             <div style={{ marginTop: 5, fontSize: 11, color: "#64748b" }}>
               Este vínculo define automaticamente os uniformes e EPIs da admissão.
+              {vagaManual && " Preenchendo à mão ele é opcional — sem posto no catálogo, o Compras monta a lista na admissão."}
             </div>
           </div>
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
