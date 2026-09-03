@@ -1,8 +1,8 @@
 import { useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import {
-  Briefcase, Building2, ChevronRight, FolderOpen, GitBranch, Loader2, Search,
-  ShieldCheck, UserCog, UserRound, Users,
+  Briefcase, Building2, ChevronRight, FolderOpen, GitBranch, Loader2, MapPin,
+  Search, ShieldCheck, UserCog, UserRound, Users,
 } from "lucide-react";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { AcessoGate } from "@/components/auth/AcessoGate";
@@ -12,9 +12,9 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import {
-  agruparPorPosto, ehEncarregado, ehSupervisor, useArvoreContratos,
+  ehEncarregado, ehSupervisor, montarPostos, useArvoreContratos,
   useBuscaColaboradores, useColaboradoresDoContrato,
-  type ColaboradorLinha, type NoContrato,
+  type ColaboradorLinha, type NoContrato, type NoPosto,
 } from "@/hooks/useEspacoColaborador";
 
 // =====================================================================
@@ -31,20 +31,26 @@ import {
 // aparência, não navegação, e recolher tudo a cada clique no botão seria
 // punir quem só queria olhar de outro jeito.
 //
-// A HIERARQUIA REAL versus A DESENHADA
+// A ORDEM EM QUE AS COISAS PASSAM A EXISTIR
 //
-//   O processo é Contrato → Supervisor → Posto → Encarregado → Função →
-//   Colaborador. No banco, Supervisor e Encarregado não são níveis: são
-//   CARGOS em EMPREGADOS. A árvore então separa as duas chefias num ramo
-//   próprio do contrato (derivado do cargo, ver `ehSupervisor`) e agrupa o
-//   resto por Posto → Função. É o mais perto do organograma que os dados
-//   permitem sem inventar vínculo.
+//   Licitação cria o CONTRATO e, junto, os POSTOS dele (planilha_custo) com
+//   as informações financeiras e administrativas. Só depois RH e
+//   Recrutamento fazem as ADMISSÕES — e é a admissão que cria a matrícula e
+//   faz a pessoa aparecer em EMPREGADOS.
 //
-// CARGA SOB DEMANDA
+//   Por isso a árvore mostra posto SEM ninguém dentro como um estado normal,
+//   não como erro: é um contrato novo esperando as contratações, e a
+//   comparação "vagas × pessoas" é justamente o que interessa a quem
+//   acompanha a implantação.
 //
-//   A estrutura de contratos vem inteira (poucos KB). As PESSOAS vêm só
-//   quando o contrato é expandido: são 2.4 mil na ativa, e trazer todas para
-//   mostrar as 40 de um contrato é o que trava a tela.
+// SUPERVISOR E ENCARREGADO
+//
+//   O fluxo futuro é a Operação preencher, para cada contrato, quem é o
+//   supervisor e quais postos cada encarregado cuida. Dessas duas, hoje só
+//   existe RH_CONTRATO_ENCARREGADO — encarregado por CONTRATO, não por
+//   posto. Então a árvore mostra a designação quando ela existe e, ao lado,
+//   quem tem o NÍVEL de supervisor/encarregado no cadastro, marcado como
+//   derivado. Nada aqui finge um vínculo que ninguém cadastrou.
 // =====================================================================
 
 type Modo = "fluxograma" | "pastas";
@@ -196,19 +202,17 @@ function NoDeContrato({
   const { data: pessoas = [], isFetching } = useColaboradoresDoContrato(contrato.id, aberto);
 
   const { supervisores, encarregados, postos } = useMemo(() => {
-    const supervisores = pessoas.filter((p) => ehSupervisor(p.cargo));
-    const encarregados = pessoas.filter((p) => ehEncarregado(p.cargo));
+    const supervisores = pessoas.filter((p) => ehSupervisor(p.nivel));
+    const encarregados = pessoas.filter((p) => ehEncarregado(p.nivel));
     // Chefia sai do agrupamento por posto para não aparecer duas vezes na
     // mesma árvore — quem lê contaria a mesma pessoa em dois lugares.
     const chefia = new Set([...supervisores, ...encarregados].map((p) => p.empregado_id));
     return {
       supervisores,
       encarregados,
-      postos: agruparPorPosto(pessoas.filter((p) => !chefia.has(p.empregado_id))),
+      postos: montarPostos(contrato.postos, pessoas.filter((p) => !chefia.has(p.empregado_id))),
     };
-  }, [pessoas]);
-
-  const funcoesContratadas = contrato.postos.reduce((s, p) => s + p.funcoes.length, 0);
+  }, [pessoas, contrato.postos]);
 
   const cabecalho = (
     <button
@@ -230,10 +234,13 @@ function NoDeContrato({
       <Badge variant="secondary" className="shrink-0 gap-1">
         <Users className="h-3 w-3" />
         {contrato.colaboradores}
+        {contrato.vagas > 0 && (
+          <span className="text-muted-foreground">/ {contrato.vagas}</span>
+        )}
       </Badge>
-      {contrato.postos.length > 0 && (
+      {contrato.qtd_postos > 0 && (
         <Badge variant="outline" className="hidden shrink-0 md:inline-flex">
-          {contrato.postos.length} postos · {funcoesContratadas} funções
+          {contrato.qtd_postos} {contrato.qtd_postos === 1 ? "posto" : "postos"}
         </Badge>
       )}
       {isFetching && <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-muted-foreground" />}
@@ -242,43 +249,43 @@ function NoDeContrato({
 
   const corpo = aberto && (
     <div className={cn(modo === "fluxograma" ? "mt-3 space-y-3" : "mt-1")}>
+      {contrato.qtd_postos === 0 && (
+        <p className="px-2 text-xs text-muted-foreground">
+          Este contrato ainda não tem posto na planilha de custo. Os postos são
+          cadastrados na Licitação, junto com o contrato.
+        </p>
+      )}
+
+      <RamoDeChefia
+        titulo="Supervisores"
+        icone={ShieldCheck}
+        pessoas={supervisores}
+        modo={modo}
+        vazio="Ninguém com nível SUPERVISOR neste contrato."
+      />
+
+      <RamoDeChefia
+        titulo="Encarregados"
+        icone={UserCog}
+        pessoas={encarregados}
+        modo={modo}
+        vazio="Ninguém com nível ENCARREGADO neste contrato."
+        designado={contrato.encarregado_designado}
+      />
+
       {isFetching && pessoas.length === 0 ? (
         <p className="px-2 text-xs text-muted-foreground">Carregando colaboradores…</p>
-      ) : pessoas.length === 0 ? (
-        <p className="px-2 text-xs text-muted-foreground">
-          Nenhum colaborador ativo casado com este contrato. O vínculo é feito por
-          “Nome Filial”; divergências de grafia são resolvidas no de-para do RH.
-        </p>
       ) : (
-        <>
-          <RamoDeChefia
-            titulo="Supervisores"
-            icone={ShieldCheck}
-            pessoas={supervisores}
+        postos.map((g) => (
+          <NoDePosto
+            key={g.chave}
+            chave={`${contrato.id}:${g.chave}`}
+            posto={g}
             modo={modo}
-            vazio="Nenhum cargo de supervisão neste contrato."
+            abertos={abertos}
+            onAlternar={onAlternar}
           />
-          <RamoDeChefia
-            titulo="Encarregados"
-            icone={UserCog}
-            pessoas={encarregados}
-            modo={modo}
-            vazio="Nenhum cargo de encarregado neste contrato."
-          />
-          {postos.map((g) => {
-            const chave = `${contrato.id}:${g.posto}`;
-            return (
-              <NoDePosto
-                key={chave}
-                chave={chave}
-                grupo={g}
-                modo={modo}
-                abertos={abertos}
-                onAlternar={onAlternar}
-              />
-            );
-          })}
-        </>
+        ))
       )}
     </div>
   );
@@ -303,20 +310,40 @@ function NoDeContrato({
 // ── Supervisores / Encarregados ──────────────────────────────────────
 
 function RamoDeChefia({
-  titulo, icone: Icone, pessoas, modo, vazio,
+  titulo, icone: Icone, pessoas, modo, vazio, designado,
 }: {
   titulo: string; icone: typeof ShieldCheck; pessoas: ColaboradorLinha[];
   modo: Modo; vazio: string;
+  designado?: { id: number; nome: string | null } | null;
 }) {
   return (
     <div className={cn(modo === "fluxograma" && "rounded-lg border bg-muted/30 p-3")}>
-      <div className="flex items-center gap-2 px-2 py-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+      <div className="flex flex-wrap items-center gap-2 px-2 py-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
         <Icone className="h-3.5 w-3.5" />
         {titulo}
-        <Badge variant="outline" className="ml-1 h-4 px-1.5 text-[10px]">
+        <Badge variant="outline" className="h-4 px-1.5 text-[10px]">
           {pessoas.length}
         </Badge>
       </div>
+
+      {/* A designação da Operação vem de RH_CONTRATO_ENCARREGADO e é a
+          resposta OFICIAL de quem responde pelo contrato. Fica separada de
+          quem apenas tem o nível no cadastro, que é dedução. */}
+      {designado?.nome && (
+        <div className="mx-2 mb-1 flex items-center gap-2 rounded border border-primary/30 bg-primary/5 px-2 py-1 text-xs">
+          <UserCog className="h-3.5 w-3.5 shrink-0 text-primary" />
+          <Link
+            to={`${ROTA_FICHA}/${designado.id}`}
+            className="truncate font-medium hover:underline"
+          >
+            {designado.nome}
+          </Link>
+          <Badge variant="secondary" className="ml-auto h-4 shrink-0 px-1.5 text-[10px]">
+            designado
+          </Badge>
+        </div>
+      )}
+
       {pessoas.length === 0 ? (
         <p className="px-2 py-1 text-xs text-muted-foreground">{vazio}</p>
       ) : (
@@ -333,18 +360,20 @@ function RamoDeChefia({
 // ── Posto → Função → Pessoas ─────────────────────────────────────────
 
 function NoDePosto({
-  chave, grupo, modo, abertos, onAlternar,
+  chave, posto, modo, abertos, onAlternar,
 }: {
-  chave: string;
-  grupo: ReturnType<typeof agruparPorPosto>[number];
-  modo: Modo;
-  abertos: Set<string>;
-  onAlternar: (chave: string) => void;
+  chave: string; posto: NoPosto; modo: Modo;
+  abertos: Set<string>; onAlternar: (chave: string) => void;
 }) {
   const aberto = abertos.has(chave);
+  const vagas = posto.vagas ?? 0;
+  // Posto contratado com mais gente do que vaga é achado de conferência, não
+  // detalhe visual — por isso ganha destaque em vez de só um número.
+  const excedido = posto.origem === "contratado" && vagas > 0 && posto.total > vagas;
 
   return (
-    <div className={cn(modo === "fluxograma" && "rounded-lg border p-3")}>
+    <div className={cn(modo === "fluxograma" && "rounded-lg border p-3",
+      modo === "fluxograma" && posto.origem === "cadastro" && "border-dashed")}>
       <button
         type="button"
         onClick={() => onAlternar(chave)}
@@ -355,29 +384,67 @@ function NoDePosto({
             aberto && "rotate-90")}
         />
         <Briefcase className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-        <span className="min-w-0 flex-1 truncate font-medium">{grupo.posto}</span>
-        <Badge variant="secondary" className="shrink-0 h-5 px-1.5 text-[10px]">
-          {grupo.total}
+        <span className="min-w-0 flex-1 truncate font-medium">{posto.nome}</span>
+
+        {posto.origem === "cadastro" && (
+          <Badge variant="outline" className="hidden shrink-0 border-dashed text-[10px] sm:inline-flex">
+            só no cadastro
+          </Badge>
+        )}
+        {posto.servico && (
+          <span className="hidden truncate text-xs text-muted-foreground lg:block">
+            {posto.servico}
+          </span>
+        )}
+        <Badge
+          variant={excedido ? "destructive" : "secondary"}
+          className="shrink-0 h-5 px-1.5 text-[10px]"
+        >
+          {posto.total}{vagas > 0 ? ` / ${vagas}` : ""}
         </Badge>
       </button>
 
       {aberto && (
         <div className={cn(modo === "fluxograma" ? "mt-2 space-y-2 pl-6" : "ml-4 border-l pl-3")}>
-          {grupo.funcoes.map((f) => (
-            <div key={f.funcao}>
-              <div className="flex items-center gap-2 px-2 py-1 text-xs text-muted-foreground">
-                <span className="truncate font-medium">{f.funcao}</span>
-                <Badge variant="outline" className="h-4 shrink-0 px-1.5 text-[10px]">
-                  {f.pessoas.length}
-                </Badge>
-              </div>
-              <div className={cn(modo === "fluxograma" ? "flex flex-wrap gap-2 px-2" : "ml-4 border-l pl-3")}>
-                {f.pessoas.map((p) => (
-                  <PessoaLink key={p.empregado_id} pessoa={p} modo={modo} />
-                ))}
-              </div>
+          {posto.locais.length > 0 && (
+            <div className="flex flex-wrap gap-2 px-2">
+              {posto.locais.map((l) => (
+                <span
+                  key={l.id}
+                  className="flex items-center gap-1 rounded border px-2 py-0.5 text-[11px] text-muted-foreground"
+                >
+                  <MapPin className="h-3 w-3 shrink-0" />
+                  {l.nome || "Local sem nome"}
+                  {l.municipio && ` · ${l.municipio}${l.uf ? `/${l.uf}` : ""}`}
+                  {l.orcadas > 0 && ` · ${l.executadas}/${l.orcadas}`}
+                </span>
+              ))}
             </div>
-          ))}
+          )}
+
+          {posto.funcoes.length === 0 ? (
+            <p className="px-2 text-xs text-muted-foreground">
+              {posto.origem === "contratado"
+                ? "Posto contratado, ainda sem ninguém alocado — as pessoas aparecem aqui depois da admissão."
+                : "Sem colaboradores."}
+            </p>
+          ) : (
+            posto.funcoes.map((f) => (
+              <div key={f.funcao}>
+                <div className="flex items-center gap-2 px-2 py-1 text-xs text-muted-foreground">
+                  <span className="truncate font-medium">{f.funcao}</span>
+                  <Badge variant="outline" className="h-4 shrink-0 px-1.5 text-[10px]">
+                    {f.pessoas.length}
+                  </Badge>
+                </div>
+                <div className={cn(modo === "fluxograma" ? "flex flex-wrap gap-2 px-2" : "ml-4 border-l pl-3")}>
+                  {f.pessoas.map((p) => (
+                    <PessoaLink key={p.empregado_id} pessoa={p} modo={modo} />
+                  ))}
+                </div>
+              </div>
+            ))
+          )}
         </div>
       )}
     </div>
@@ -446,7 +513,7 @@ function ResultadoBusca({
                 {p.cargo ?? "—"}
               </span>
               <span className="hidden min-w-0 flex-1 truncate text-xs text-muted-foreground md:block">
-                {p.filial ?? "—"}
+                {p.local || p.filial || "—"}
               </span>
               {p.matricula && (
                 <Badge variant="outline" className="shrink-0">#{p.matricula}</Badge>

@@ -4,12 +4,23 @@ import { supabase } from "@/integrations/supabase/client";
 // =====================================================================
 // ESPAÇO DO COLABORADOR — acesso a dados
 //
-// Tudo aqui passa por RPC (`esp_col_*`, migration 20260930000051) e nunca
-// por `.from("EMPREGADOS")`. Não é preferência de estilo: EMPREGADOS guarda
-// CPF, salário, chave PIX e conta bancária na mesma linha que o nome, e o
-// RLS do Postgres filtra LINHA, não COLUNA. Um `select("*")` para montar a
-// ficha entregaria os dados bancários da pessoa ao navegador de quem só ia
-// olhar o cargo. As RPCs devolvem lista fixa de campos, nenhum sensível.
+// Tudo aqui passa por RPC (`esp_col_*`, migrations 20260930000051 e
+// 20260930000052) e nunca por `.from("EMPREGADOS")`. Não é preferência de
+// estilo: EMPREGADOS guarda CPF, salário, chave PIX e conta bancária na mesma
+// linha que o nome, e o RLS do Postgres filtra LINHA, não COLUNA. Um
+// `select("*")` para montar a ficha entregaria os dados bancários da pessoa ao
+// navegador de quem só ia olhar o cargo. As RPCs devolvem lista fixa de
+// campos, nenhum sensível.
+//
+// DE ONDE VEM CADA NÍVEL DA ÁRVORE
+//
+//   Contrato    → `contratos`, alimentada por Licitações.
+//   Posto       → `planilha_custo` (uma linha por posto do contrato, criada
+//                 junto com o contrato na licitação). NÃO é `sup_posto`, que
+//                 é o catálogo de COMPRAS e serve para montar o enxoval de
+//                 uniforme/EPI de uma função.
+//   Colaborador → `EMPREGADOS`, que só passa a existir depois que RH e
+//                 Recrutamento fazem a admissão e a matrícula sincroniza.
 // =====================================================================
 
 /**
@@ -26,16 +37,25 @@ type ChamadaRpc = <T>(
 
 const sb = supabase as unknown as { rpc: ChamadaRpc };
 
-export interface NoFuncaoCatalogo {
+/** Onde um posto fica fisicamente, e quantas pessoas comporta ali. */
+export interface LocalDoPosto {
   id: string;
-  nome: string;
+  nome: string | null;
+  municipio: string | null;
+  uf: string | null;
+  orcadas: number;
+  executadas: number;
 }
 
-export interface NoPostoCatalogo {
+/** Um posto do contrato, como a licitação o cadastrou em `planilha_custo`. */
+export interface PostoContratado {
   id: string;
   nome: string;
-  descricao: string | null;
-  funcoes: NoFuncaoCatalogo[];
+  servico: string | null;
+  /** `qt_postos`: quantas pessoas o posto comporta. */
+  vagas: number | null;
+  vigencia: string | null;
+  locais: LocalDoPosto[];
 }
 
 export interface NoContrato {
@@ -45,9 +65,15 @@ export interface NoContrato {
   status: string | null;
   /** Contagem, não lista: o nó mostra "48 colaboradores" sem baixar os 48. */
   colaboradores: number;
-  /** Estrutura CONTRATADA (sup_posto/sup_funcao), que é outra coisa do
-   *  posto onde a pessoa está lotada — ver o comentário em `agruparPorPosto`. */
-  postos: NoPostoCatalogo[];
+  qtd_postos: number;
+  /** Soma de `qt_postos` — o total de vagas contratadas. */
+  vagas: number;
+  /**
+   * A designação da Operação, de `RH_CONTRATO_ENCARREGADO`. É por CONTRATO,
+   * não por posto — a amarração encarregado→posto ainda não tem tabela.
+   */
+  encarregado_designado: { id: number; nome: string | null } | null;
+  postos: PostoContratado[];
 }
 
 export interface ColaboradorLinha {
@@ -55,10 +81,15 @@ export interface ColaboradorLinha {
   matricula: string | null;
   nome: string;
   cargo: string | null;
+  /** `"Nome do Posto"`: a lotação da pessoa, texto livre do cadastro. */
   posto: string | null;
+  /** `"Descrição do Local"`: o nome do contrato a que a pessoa pertence. */
+  local: string | null;
   filial: string | null;
   situacao: string | null;
   admissao: string | null;
+  /** `"LIDER"`: o nível hierárquico DA PESSOA, não quem lidera ela. */
+  nivel: string | null;
   contrato_id: string | null;
 }
 
@@ -68,20 +99,23 @@ export interface FichaColaborador {
   nome: string;
   cargo: string | null;
   posto: string | null;
+  local: string | null;
   filial: string | null;
   empresa: string | null;
   setor: string | null;
   situacao: string | null;
   admissao: string | null;
   escala: string | null;
-  lider: string | null;
+  nivel: string | null;
   contrato_id: string | null;
   contrato_nome: string | null;
+  /** Quem a Operação designou como encarregado do contrato desta pessoa. */
+  encarregado_nome: string | null;
 }
 
 export type OrigemHistorico = "advertencia" | "troca_funcao" | "material";
 
-/** Uma peca de uniforme/EPI dentro de um pedido. */
+/** Uma peça de uniforme/EPI dentro de um pedido. */
 export interface ItemMaterial {
   id: string;
   nome: string;
@@ -92,9 +126,9 @@ export interface ItemMaterial {
 
 /**
  * O jsonb solto que cada origem anexa ao evento. As chaves variam por origem
- * (advertencia manda `grau`, troca de funcao manda `cargo_novo`), entao o
- * indexador e `unknown`: a ficha lista o que vier sem inventar significado.
- * `itens` e a excecao — e a unica chave que a tela renderiza estruturada.
+ * (advertência manda `grau`, troca de função manda `cargo_novo`), então o
+ * indexador é `unknown`: a ficha lista o que vier sem inventar significado.
+ * `itens` é a exceção — a única chave que a tela renderiza estruturada.
  */
 export interface ExtraHistorico {
   itens?: ItemMaterial[];
@@ -127,7 +161,7 @@ export interface RespostaMarcacoes {
   linhas: MarcacaoLinha[];
 }
 
-/** A estrutura de contratos/postos/funções. Poucos KB — cabe numa chamada. */
+/** A estrutura de contratos e seus postos. Poucos KB — cabe numa chamada. */
 export function useArvoreContratos() {
   return useQuery({
     queryKey: ["esp-col", "arvore"],
@@ -254,72 +288,136 @@ export function useMarcacoesDoMes(
   });
 }
 
-// ── Agrupamentos que a árvore usa ────────────────────────────────────
+// ── Chefia: derivada do NÍVEL, não do cargo ──────────────────────────
+
+const semAcento = (s: string | null | undefined) =>
+  String(s ?? "").normalize("NFD").replace(/[̀-ͯ]/g, "").toUpperCase().trim();
 
 /**
- * Supervisor e Encarregado NÃO são tabelas.
+ * Supervisor e Encarregado saem de `EMPREGADOS."LIDER"`.
  *
- * A hierarquia que a operação descreve é Contrato → Supervisor → Posto →
- * Encarregado → Função → Colaborador, mas no banco não existe nem tabela de
- * supervisão nem coluna ligando encarregado a posto: as duas chefias são
- * CARGOS dentro de EMPREGADOS, como qualquer outro.
+ * Apesar do nome, essa coluna guarda o NÍVEL HIERÁRQUICO DA PRÓPRIA PESSOA —
+ * ADMIN, CEO, DIREÇÃO, DIRETOR, GERENTE, COORDENADOR, SUPERVISOR,
+ * ENCARREGADO, LÍDER — e não o nome de quem lidera ela. É a mesma lista de
+ * `NIVEIS` em LideresSetor.tsx, e o EmpregadoDetalheModal chega a avisar na
+ * tela quando o valor não é um nível conhecido.
  *
- * Então a árvore deriva os dois níveis do "Título do Cargo" em vez de fingir
- * um vínculo que ninguém cadastrou. Fica honesto sobre o que é dado e o que
- * é leitura: se amanhã existir a tabela de verdade, troca-se esta função e
- * a árvore inteira continua igual.
+ * A comparação normaliza acento e caixa porque o cadastro é espelho do
+ * Senior e chega com grafia inconsistente.
  */
-export const ehSupervisor = (cargo: string | null | undefined) =>
-  /SUPERVISOR/i.test(cargo ?? "");
+export const ehSupervisor = (nivel: string | null | undefined) =>
+  semAcento(nivel) === "SUPERVISOR";
 
-export const ehEncarregado = (cargo: string | null | undefined) =>
-  /ENCARREGAD/i.test(cargo ?? "");
+export const ehEncarregado = (nivel: string | null | undefined) =>
+  semAcento(nivel) === "ENCARREGADO";
 
-export interface GrupoPosto {
-  posto: string;
+// ── Montagem dos nós de posto ────────────────────────────────────────
+
+/** Normaliza nome de posto para casar cadastro × planilha de custo. */
+const normPosto = (s: string | null | undefined) =>
+  semAcento(s).replace(/\s+/g, " ");
+
+export interface NoPosto {
+  chave: string;
+  nome: string;
+  /**
+   * `contratado` = veio de planilha_custo (existe no contrato).
+   * `cadastro`   = só existe como texto na lotação de alguém.
+   */
+  origem: "contratado" | "cadastro";
+  servico: string | null;
+  vagas: number | null;
+  locais: LocalDoPosto[];
   funcoes: { funcao: string; pessoas: ColaboradorLinha[] }[];
   total: number;
 }
 
-/**
- * Agrupa as pessoas de um contrato em Posto → Função.
- *
- * O `posto` aqui é EMPREGADOS."Nome do Posto" — a lotação REAL da pessoa — e
- * não o sup_posto do catálogo de compras. Os dois têm o mesmo nome e não se
- * conversam: a migration 20260830000001 registrou que os "Nome do Posto" não
- * têm NENHUMA correspondência com sup_posto. Misturar os dois faria a árvore
- * pendurar gente em posto errado, então a estrutura contratada aparece como
- * informação do contrato e as pessoas se agrupam pela própria lotação.
- */
-export function agruparPorPosto(pessoas: ColaboradorLinha[]): GrupoPosto[] {
-  const porPosto = new Map<string, Map<string, ColaboradorLinha[]>>();
+function agruparPorFuncao(lista: ColaboradorLinha[]) {
+  const m = new Map<string, ColaboradorLinha[]>();
+  for (const p of lista) {
+    const f = (p.cargo ?? "").trim() || "Sem função informada";
+    if (!m.has(f)) m.set(f, []);
+    m.get(f)!.push(p);
+  }
+  return [...m.entries()]
+    .map(([funcao, pessoas]) => ({
+      funcao,
+      pessoas: [...pessoas].sort((a, b) => a.nome.localeCompare(b.nome, "pt-BR")),
+    }))
+    .sort((a, b) => a.funcao.localeCompare(b.funcao, "pt-BR"));
+}
 
-  for (const p of pessoas) {
-    const posto = (p.posto ?? "").trim() || "Sem posto informado";
-    const funcao = (p.cargo ?? "").trim() || "Sem função informada";
-    if (!porPosto.has(posto)) porPosto.set(posto, new Map());
-    const funcoes = porPosto.get(posto)!;
-    if (!funcoes.has(funcao)) funcoes.set(funcao, []);
-    funcoes.get(funcao)!.push(p);
+/**
+ * Cruza os postos CONTRATADOS com a lotação REAL das pessoas.
+ *
+ * São duas fontes sem chave em comum — `planilha_custo.posto` é o que a
+ * licitação orçou, `EMPREGADOS."Nome do Posto"` é texto livre vindo do
+ * Senior — então o casamento é por nome normalizado e pode não fechar. Em vez
+ * de esconder isso, a árvore mostra os dois lados:
+ *
+ *   • posto contratado sem ninguém casado aparece assim mesmo, com as vagas
+ *     que tem — é exatamente o que interessa a quem confere efetivo;
+ *   • posto que só existe no cadastro entra marcado como `cadastro`, para
+ *     ninguém achar que é posto do contrato.
+ *
+ * Esconder qualquer um dos dois transformaria divergência de cadastro em
+ * "não tem ninguém nesse posto", que é conclusão errada e cara.
+ */
+export function montarPostos(
+  contratados: PostoContratado[],
+  pessoas: ColaboradorLinha[],
+): NoPosto[] {
+  const restantes = new Map<number, ColaboradorLinha>(
+    pessoas.map((p) => [p.empregado_id, p]),
+  );
+
+  const nos: NoPosto[] = (contratados ?? []).map((pc) => {
+    const alvo = normPosto(pc.nome);
+    const casados = alvo === ""
+      ? []
+      : pessoas.filter((p) => normPosto(p.posto) === alvo);
+    casados.forEach((p) => restantes.delete(p.empregado_id));
+    return {
+      chave: `contratado:${pc.id}`,
+      nome: pc.nome,
+      origem: "contratado" as const,
+      servico: pc.servico,
+      vagas: pc.vagas,
+      locais: pc.locais ?? [],
+      funcoes: agruparPorFuncao(casados),
+      total: casados.length,
+    };
+  });
+
+  // O que sobrou, agrupado pela lotação que o cadastro informa.
+  const sobra = new Map<string, ColaboradorLinha[]>();
+  for (const p of restantes.values()) {
+    const nome = (p.posto ?? "").trim() || "Sem posto informado";
+    if (!sobra.has(nome)) sobra.set(nome, []);
+    sobra.get(nome)!.push(p);
   }
 
-  return [...porPosto.entries()]
-    .map(([posto, funcoes]) => ({
-      posto,
-      total: [...funcoes.values()].reduce((s, l) => s + l.length, 0),
-      funcoes: [...funcoes.entries()]
-        .map(([funcao, pessoas]) => ({
-          funcao,
-          pessoas: [...pessoas].sort((a, b) => a.nome.localeCompare(b.nome, "pt-BR")),
-        }))
-        .sort((a, b) => a.funcao.localeCompare(b.funcao, "pt-BR")),
-    }))
-    // "Sem posto informado" por último: é o resto do cadastro, não uma
-    // unidade da operação, e no topo empurraria os postos reais para baixo.
-    .sort((a, b) => {
-      const semA = a.posto === "Sem posto informado";
-      const semB = b.posto === "Sem posto informado";
-      if (semA !== semB) return semA ? 1 : -1;
-      return a.posto.localeCompare(b.posto, "pt-BR");
+  for (const [nome, ps] of sobra) {
+    nos.push({
+      chave: `cadastro:${nome}`,
+      nome,
+      origem: "cadastro",
+      servico: null,
+      vagas: null,
+      locais: [],
+      funcoes: agruparPorFuncao(ps),
+      total: ps.length,
     });
+  }
+
+  // Contratados primeiro (são a estrutura do contrato); dentro de cada grupo,
+  // por nome. "Sem posto informado" fecha a lista: é o resto do cadastro, não
+  // uma unidade da operação.
+  return nos.sort((a, b) => {
+    if (a.origem !== b.origem) return a.origem === "contratado" ? -1 : 1;
+    const semA = a.nome === "Sem posto informado";
+    const semB = b.nome === "Sem posto informado";
+    if (semA !== semB) return semA ? 1 : -1;
+    return a.nome.localeCompare(b.nome, "pt-BR");
+  });
 }
