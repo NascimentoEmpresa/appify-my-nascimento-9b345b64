@@ -64,6 +64,7 @@ import {
   UserPlus,
   CalendarCheck2,
   AlertTriangle,
+  Cpu,
 } from "lucide-react";
 import { useTemAlcada } from "@/hooks/useTemAlcada";
 import { useAccessibleMenus, matchMenuCode } from "@/hooks/useAccessibleMenus";
@@ -631,6 +632,28 @@ const sistemasModule: ModuleDef = {
   ],
 };
 
+// T.I — infraestrutura. Primeiro submódulo: o Mapa de Hardware (planta do
+// escritório com cada equipamento posicionado). Backend na migration
+// 20260930000060; o menu nasce sem permissão nenhuma, então o módulo começa
+// invisível até alguém liberar em Acesso por Usuário.
+const tiModule: ModuleDef = {
+  id: "ti",
+  label: "T.I",
+  description: "Infraestrutura e hardware",
+  icon: Cpu,
+  basePath: "/app/ti",
+  status: "active",
+  groups: [
+    {
+      label: "Infraestrutura",
+      defaultOpen: true,
+      items: [
+        { label: "Mapa de Hardware", to: "/app/ti/mapa-hardware", icon: Network },
+      ],
+    },
+  ],
+};
+
 // Central de Serviços
 const centralServicosModule: ModuleDef = {
   id: "central_servicos",
@@ -935,6 +958,7 @@ const erpModules: ModuleDef[] = [
   encarregadosModule,
   operacionalModule,
   sistemasModule,
+  tiModule,
   juridicoModule,
   sstModule,
   centralServicosModule,
