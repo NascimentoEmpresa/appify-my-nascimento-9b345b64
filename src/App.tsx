@@ -233,6 +233,7 @@ import AprovacaoReembolso from "./pages/central-servicos/reembolso/AprovacaoReem
 import ConfiguracaoReembolso from "./pages/central-servicos/reembolso/ConfiguracaoReembolso";
 import EspacoColaborador from "./pages/central-servicos/espaco-colaborador/EspacoColaborador";
 import FichaColaborador from "./pages/central-servicos/espaco-colaborador/FichaColaborador";
+import DesignacoesOperacao from "./pages/central-servicos/espaco-colaborador/Designacoes";
 
 // Defaults só de `queries` — mutations seguem com retry 0, porque repetir um
 // insert/update às cegas duplicaria registro.
@@ -375,6 +376,7 @@ const App = () => (
             <Route path="central-servicos/reunioes/:id/conducao" element={<ConducaoReuniao />} />
             <Route path="central-servicos/orientacoes-juridicas" element={<OrientacoesJuridicas />} />
             <Route path="central-servicos/espaco-colaborador" element={<EspacoColaborador />} />
+            <Route path="central-servicos/espaco-colaborador/responsaveis" element={<DesignacoesOperacao />} />
             <Route path="central-servicos/espaco-colaborador/:id" element={<FichaColaborador />} />
             {/* Comitê de Ética — denúncias saíram da Central de Serviços.
                 As rotas antigas seguem redirecionando: link salvo por aí não

@@ -14,7 +14,8 @@ import { cn } from "@/lib/utils";
 import {
   ehEncarregado, ehSupervisor, montarPostos, useArvoreContratos,
   useBuscaColaboradores, useColaboradoresDoContrato, useColaboradoresSemContrato,
-  type ArvoreCompleta, type ColaboradorLinha, type NoContrato, type NoPosto,
+  type ArvoreCompleta, type ColaboradorLinha, type DesignadoNoNo, type NoContrato,
+  type NoPosto,
 } from "@/hooks/useEspacoColaborador";
 
 // =====================================================================
@@ -116,13 +117,20 @@ function Conteudo() {
         module="Central de Serviços"
         breadcrumb={["Espaço do Colaborador"]}
         actions={
-          <div className="flex items-center gap-1 rounded-lg border bg-muted/40 p-1">
-            <BotaoModo atual={modo} valor="fluxograma" onClick={setModo} icone={GitBranch}>
-              Fluxograma
-            </BotaoModo>
-            <BotaoModo atual={modo} valor="pastas" onClick={setModo} icone={FolderOpen}>
-              Árvore de pastas
-            </BotaoModo>
+          <div className="flex flex-wrap items-center gap-2">
+            <Button asChild variant="outline" size="sm" className="gap-1.5">
+              <Link to={`${ROTA_FICHA}/responsaveis`}>
+                <UserCog className="h-4 w-4" /> Responsáveis
+              </Link>
+            </Button>
+            <div className="flex items-center gap-1 rounded-lg border bg-muted/40 p-1">
+              <BotaoModo atual={modo} valor="fluxograma" onClick={setModo} icone={GitBranch}>
+                Fluxograma
+              </BotaoModo>
+              <BotaoModo atual={modo} valor="pastas" onClick={setModo} icone={FolderOpen}>
+                Árvore de pastas
+              </BotaoModo>
+            </div>
           </div>
         }
       />
@@ -430,7 +438,8 @@ function NoDeContrato({
         icone={ShieldCheck}
         pessoas={supervisores}
         modo={modo}
-        vazio="Nenhum cargo de supervisão neste contrato."
+        vazio="Ninguém com cargo de supervisão lotado neste contrato."
+        designados={contrato.supervisores}
       />
 
       <RamoDeChefia
@@ -438,8 +447,8 @@ function NoDeContrato({
         icone={UserCog}
         pessoas={encarregados}
         modo={modo}
-        vazio="Nenhum cargo de encarregado neste contrato."
-        designado={contrato.encarregado_designado}
+        vazio="Ninguém com cargo de encarregado lotado neste contrato."
+        designados={contrato.encarregados}
       />
 
       {isFetching && pessoas.length === 0 ? (
@@ -479,40 +488,66 @@ function NoDeContrato({
 // ── Supervisores / Encarregados ──────────────────────────────────────
 
 function RamoDeChefia({
-  titulo, icone: Icone, pessoas, modo, vazio, designado,
+  titulo, icone: Icone, pessoas, modo, vazio, designados = [],
 }: {
   titulo: string; icone: typeof ShieldCheck; pessoas: ColaboradorLinha[];
   modo: Modo; vazio: string;
-  designado?: { id: number; nome: string | null } | null;
+  designados?: DesignadoNoNo[];
 }) {
   return (
     <div className={cn(modo === "fluxograma" && "rounded-lg border bg-muted/30 p-3")}>
       <div className="flex flex-wrap items-center gap-2 px-2 py-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
         <Icone className="h-3.5 w-3.5" />
         {titulo}
-        <Badge variant="outline" className="h-4 px-1.5 text-[10px]">
-          {pessoas.length}
-        </Badge>
+        {designados.length > 0 && (
+          <Badge variant="default" className="h-4 px-1.5 text-[10px]">
+            {designados.length} designado{designados.length > 1 ? "s" : ""}
+          </Badge>
+        )}
       </div>
 
-      {/* A designação da Operação vem de RH_CONTRATO_ENCARREGADO e é a
-          resposta OFICIAL de quem responde pelo contrato. Fica separada de
-          quem apenas tem o nível no cadastro, que é dedução. */}
-      {designado?.nome && (
-        <div className="mx-2 mb-1 flex items-center gap-2 rounded border border-primary/30 bg-primary/5 px-2 py-1 text-xs">
-          <UserCog className="h-3.5 w-3.5 shrink-0 text-primary" />
-          <Link
-            to={`${ROTA_FICHA}/${designado.id}`}
-            className="truncate font-medium hover:underline"
-          >
-            {designado.nome}
+      {/* A DESIGNAÇÃO é a resposta oficial de quem responde pelo contrato —
+          vem de operacao_designacao, preenchida pela Operação. Fica separada,
+          e acima, de quem apenas TEM o cargo e está lotado aqui, que é
+          dedução do cadastro e responde outra pergunta. */}
+      {designados.map((d) => (
+        <div
+          key={`${d.id}:${d.posto ?? ""}`}
+          className={cn(
+            "mx-2 mb-1 flex flex-wrap items-center gap-x-2 gap-y-1 rounded border px-2 py-1 text-xs",
+            d.ativa ? "border-primary/30 bg-primary/5" : "border-destructive/40 bg-destructive/5",
+          )}
+        >
+          <UserCog className={cn("h-3.5 w-3.5 shrink-0", d.ativa ? "text-primary" : "text-destructive")} />
+          <Link to={`${ROTA_FICHA}/${d.id}`} className="min-w-0 flex-1 truncate font-medium hover:underline">
+            {d.nome ?? "—"}
           </Link>
-          <Badge variant="secondary" className="ml-auto h-4 shrink-0 px-1.5 text-[10px]">
-            designado
-          </Badge>
+          {d.posto && (
+            <Badge variant="outline" className="h-4 shrink-0 px-1.5 text-[10px]">
+              {d.posto}
+            </Badge>
+          )}
+          {/* Designado que saiu da empresa NÃO some — é sinalizado. Some em
+              silêncio e o contrato fica órfão sem ninguém perceber. */}
+          {!d.ativa && (
+            <Badge variant="destructive" className="h-4 shrink-0 px-1.5 text-[10px]">
+              {d.situacao ?? "inativo"} — redesignar
+            </Badge>
+          )}
         </div>
+      ))}
+
+      {designados.length === 0 && (
+        <p className="px-2 py-1 text-xs text-amber-600">
+          Sem {titulo.toLowerCase().replace(/e?s$/, "")} designado para este contrato.
+        </p>
       )}
 
+      {/* Abaixo, quem tem o cargo e está lotado aqui — informação diferente
+          da designação, e por isso rotulada. */}
+      <div className="mt-1 px-2 text-[10px] uppercase tracking-wide text-muted-foreground">
+        Com o cargo, lotados aqui ({pessoas.length})
+      </div>
       {pessoas.length === 0 ? (
         <p className="px-2 py-1 text-xs text-muted-foreground">{vazio}</p>
       ) : (
