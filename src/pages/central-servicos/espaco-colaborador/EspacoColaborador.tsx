@@ -367,37 +367,52 @@ function NoDeContrato({
     <button
       type="button"
       onClick={() => onAlternar(contrato.id)}
-      className="flex w-full items-center gap-2 text-left"
+      className="flex w-full flex-wrap items-center gap-x-2 gap-y-1 text-left"
     >
       <ChevronRight
         className={cn("h-4 w-4 shrink-0 text-muted-foreground transition-transform",
           aberto && "rotate-90")}
       />
       <Building2 className="h-4 w-4 shrink-0 text-primary" />
-      <span className="min-w-0 flex-1 truncate font-semibold">{contrato.nome}</span>
-      {contrato.encerrado && (
-        <Badge variant="outline" className="shrink-0 border-amber-500/40 text-amber-600">
-          encerrado
-        </Badge>
-      )}
-      {contrato.cliente && (
-        <span className="hidden truncate text-xs text-muted-foreground sm:block">
-          {contrato.cliente}
-        </span>
-      )}
-      <Badge variant="secondary" className="shrink-0 gap-1">
-        <Users className="h-3 w-3" />
-        {contrato.colaboradores}
-        {contrato.vagas > 0 && (
-          <span className="text-muted-foreground">/ {contrato.vagas}</span>
+
+      {/* NO CELULAR O NOME FICA COM A LINHA INTEIRA, e os contadores descem
+          para a linha de baixo.
+          Truncar não servia: "BENTO GONÇALVES - AUX ADM - 002/2021" e "BENTO
+          GONÇALVES LIMPEZA - 048/2026" viravam os dois "BENTO GONÇ…" — dois
+          nós idênticos, e ninguém sabe em qual está clicando. Quebrar em duas
+          linhas também não bastou, porque os badges comem a largura e o corte
+          continuava caindo antes da parte que distingue um do outro.
+          Numa árvore de NAVEGAÇÃO isso não é detalhe estético: é a função da
+          tela. Em telas largas nada muda — volta a ser uma linha só. */}
+      <span className="min-w-0 flex-1 basis-[calc(100%-3.5rem)] font-semibold leading-tight sm:basis-auto sm:truncate">
+        {contrato.nome}
+      </span>
+
+      <span className="flex w-full items-center gap-2 pl-7 sm:w-auto sm:flex-1 sm:justify-end sm:pl-0">
+        {contrato.encerrado && (
+          <Badge variant="outline" className="shrink-0 border-amber-500/40 text-amber-600">
+            encerrado
+          </Badge>
         )}
-      </Badge>
-      {contrato.qtd_postos > 0 && (
-        <Badge variant="outline" className="hidden shrink-0 md:inline-flex">
-          {contrato.qtd_postos} {contrato.qtd_postos === 1 ? "posto" : "postos"}
+        {contrato.cliente && (
+          <span className="hidden min-w-0 truncate text-xs text-muted-foreground sm:block">
+            {contrato.cliente}
+          </span>
+        )}
+        <Badge variant="secondary" className="shrink-0 gap-1">
+          <Users className="h-3 w-3" />
+          {contrato.colaboradores}
+          {contrato.vagas > 0 && (
+            <span className="text-muted-foreground">/ {contrato.vagas}</span>
+          )}
         </Badge>
-      )}
-      {isFetching && <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-muted-foreground" />}
+        {contrato.qtd_postos > 0 && (
+          <Badge variant="outline" className="shrink-0">
+            {contrato.qtd_postos} {contrato.qtd_postos === 1 ? "posto" : "postos"}
+          </Badge>
+        )}
+        {isFetching && <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-muted-foreground" />}
+      </span>
     </button>
   );
 

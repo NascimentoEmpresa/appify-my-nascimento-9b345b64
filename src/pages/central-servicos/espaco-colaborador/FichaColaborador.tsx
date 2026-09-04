@@ -176,7 +176,12 @@ function FichaCarregada({ ficha }: { ficha: Ficha }) {
       </Card>
 
       <Tabs defaultValue="ponto">
-        <TabsList className="mb-4 flex-wrap">
+        {/* `h-auto` é obrigatório junto com o wrap: a TabsList do shadcn tem
+            altura fixa, então a segunda fileira de abas vazava para fora e
+            caía POR CIMA do conteúdo em telas estreitas. E `w-full` +
+            `justify-start` para as quatro abas ocuparem a largura em vez de
+            ficarem centralizadas e coladas. */}
+        <TabsList className="mb-4 h-auto w-full flex-wrap justify-start gap-1">
           <TabsTrigger value="ponto" className="gap-1.5">
             <Clock className="h-3.5 w-3.5" /> Ponto do mês
           </TabsTrigger>
@@ -335,46 +340,87 @@ function AbaPonto({ empregadoId }: { empregadoId: number }) {
           Nenhuma batida registrada em {MESES[mes - 1]} de {ano}.
         </p>
       ) : (
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-b text-left text-xs uppercase tracking-wide text-muted-foreground">
-                <th className="py-2 pr-4 font-medium">Dia</th>
-                <th className="py-2 pr-4 font-medium">Batidas (24h)</th>
-                <th className="py-2 pr-4 font-medium">Batidas (AM/PM)</th>
-                <th className="py-2 pr-4 text-right font-medium">Trabalhado</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y">
-              {dias.map((d) => (
-                <tr key={d.data} className={cn(d.incompleto && "bg-amber-500/5")}>
-                  <td className="whitespace-nowrap py-2 pr-4 font-medium">
-                    {fmtData(d.data)}
-                    {d.incompleto && (
-                      <Badge variant="outline" className="ml-2 border-amber-500/40 text-amber-600">
-                        batida ímpar
-                      </Badge>
-                    )}
-                  </td>
-                  <td className="py-2 pr-4 font-mono text-xs">
-                    {d.batidas.map((b) => b.hora24).join("  ·  ")}
-                  </td>
-                  <td className="py-2 pr-4 text-xs text-muted-foreground">
-                    {d.batidas.map((b) => b.hora12).join("  ·  ")}
-                  </td>
-                  <td className="whitespace-nowrap py-2 pr-4 text-right font-medium">
-                    {formatarDuracao(d.trabalhado)}
-                  </td>
+        <>
+          {/* CELULAR: um cartão por dia.
+              A tabela de quatro colunas abaixo é ótima para conferir o mês
+              inteiro numa tela larga e é ILEGÍVEL em 390px — as batidas
+              quebram numa pilha vertical e a coluna "Trabalhado" sai da tela.
+              E este não é um caso de borda: o QR Code do crachá desemboca
+              nesta aba, no celular do técnico de segurança, em pé no posto.
+              É a leitura mobile mais importante do sistema. */}
+          <div className="space-y-2 sm:hidden">
+            {dias.map((d) => (
+              <div
+                key={d.data}
+                className={cn("rounded-lg border p-3", d.incompleto && "border-amber-500/40 bg-amber-500/5")}
+              >
+                <div className="mb-1.5 flex items-baseline justify-between gap-2">
+                  <span className="font-medium">{fmtData(d.data)}</span>
+                  <span className="text-sm font-semibold">{formatarDuracao(d.trabalhado)}</span>
+                </div>
+                <div className="flex flex-wrap gap-1.5">
+                  {d.batidas.map((b, i) => (
+                    <span
+                      key={i}
+                      className="rounded bg-muted px-1.5 py-0.5 font-mono text-xs"
+                      title={b.hora12}
+                    >
+                      {b.hora24}
+                    </span>
+                  ))}
+                </div>
+                {d.incompleto && (
+                  <p className="mt-1.5 text-[11px] text-amber-600">
+                    Número ímpar de batidas — falta uma saída.
+                  </p>
+                )}
+              </div>
+            ))}
+          </div>
+
+          {/* TELA LARGA: a tabela, com as duas notações lado a lado. */}
+          <div className="hidden overflow-x-auto sm:block">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b text-left text-xs uppercase tracking-wide text-muted-foreground">
+                  <th className="py-2 pr-4 font-medium">Dia</th>
+                  <th className="py-2 pr-4 font-medium">Batidas (24h)</th>
+                  <th className="hidden py-2 pr-4 font-medium lg:table-cell">Batidas (AM/PM)</th>
+                  <th className="py-2 pr-4 text-right font-medium">Trabalhado</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody className="divide-y">
+                {dias.map((d) => (
+                  <tr key={d.data} className={cn(d.incompleto && "bg-amber-500/5")}>
+                    <td className="whitespace-nowrap py-2 pr-4 font-medium">
+                      {fmtData(d.data)}
+                      {d.incompleto && (
+                        <Badge variant="outline" className="ml-2 border-amber-500/40 text-amber-600">
+                          batida ímpar
+                        </Badge>
+                      )}
+                    </td>
+                    <td className="py-2 pr-4 font-mono text-xs">
+                      {d.batidas.map((b) => b.hora24).join("  ·  ")}
+                    </td>
+                    <td className="hidden py-2 pr-4 text-xs text-muted-foreground lg:table-cell">
+                      {d.batidas.map((b) => b.hora12).join("  ·  ")}
+                    </td>
+                    <td className="whitespace-nowrap py-2 pr-4 text-right font-medium">
+                      {formatarDuracao(d.trabalhado)}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+
           <p className="mt-3 text-[11px] text-muted-foreground">
             O relógio grava o minuto do dia (420 = 07:00). A conversão e a soma das horas
             ficam em <code>src/lib/ponto.ts</code>. Dia com número ímpar de batidas fica
             marcado: falta uma saída, e nenhuma hora é estimada por conta disso.
           </p>
-        </div>
+        </>
       )}
     </Card>
   );
