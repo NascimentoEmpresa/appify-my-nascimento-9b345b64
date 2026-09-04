@@ -372,7 +372,7 @@ const App = () => (
                 Sem redirect de "/app/ti": rota sem entrada em app_menu é NEGADA
                 pelo RouteGuard antes de o Navigate rodar, o que trocaria um 404
                 honesto por um "Acesso negado" confuso. */}
-            <Route path="ti/mapa" element={<Carregando3D><MapaTi /></Carregando3D>} />
+            <Route path="ti/mapa-hardware" element={<Carregando3D><MapaTi /></Carregando3D>} />
             <Route path="ti/construir" element={<Carregando3D><ConstruirMapa /></Carregando3D>} />
             <Route path="ti/inventario" element={<InventarioTi />} />
             <Route path="ti/painel" element={<PainelTiPage />} />

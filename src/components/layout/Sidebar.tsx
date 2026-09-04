@@ -648,7 +648,7 @@ const tiModule: ModuleDef = {
       label: "Infraestrutura",
       defaultOpen: true,
       items: [
-        { label: "Mapa 3D", to: "/app/ti/mapa", icon: Network },
+        { label: "Mapa 3D", to: "/app/ti/mapa-hardware", icon: Network },
         { label: "Construir o mapa", to: "/app/ti/construir", icon: Wrench },
         { label: "Inventário", to: "/app/ti/inventario", icon: Boxes },
         { label: "Painel de T.I", to: "/app/ti/painel", icon: BarChart3 },

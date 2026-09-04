@@ -42,9 +42,29 @@
 -- =====================================================================
 
 -- 1) As quatro telas -----------------------------------------------------
+--
+-- ⚠ A ROTA DO MENU QUE JÁ EXISTIA NÃO MUDA — só o nome.
+--
+-- A primeira versão desta migration trocava a rota de `ti_mapa_hardware` de
+-- /app/ti/mapa-hardware para /app/ti/mapa, por gosto. Aplicada em produção
+-- (04/09/2026), derrubou o módulo inteiro da sidebar: `matchMenuCode` casa
+-- pela ROTA, o bundle em produção ainda era o da main (que aponta para a
+-- rota antiga), e menu que não casa com nada some da navegação e é negado
+-- pelo RouteGuard.
+--
+-- A lição, que vale para qualquer menu deste ERP: com deploy manual, o banco
+-- não pode ir na frente do código numa mudança de ROTA. Acrescentar menu é
+-- aditivo e seguro; renomear a rota de um menu existente quebra a versão que
+-- está no ar até alguém rebuildar. Se um dia a rota precisar mudar mesmo, a
+-- ordem é: sobe o código, confirma o rebuild, DEPOIS roda o UPDATE.
 UPDATE public.app_menu
-   SET nome = 'Mapa 3D do escritório', rota = '/app/ti/mapa', ordem = 10
+   SET nome = 'Mapa 3D do escritório', ordem = 10
  WHERE codigo = 'ti_mapa_hardware';
+
+-- Conserta o estrago de quem já rodou a versão anterior deste arquivo.
+UPDATE public.app_menu
+   SET rota = '/app/ti/mapa-hardware'
+ WHERE codigo = 'ti_mapa_hardware' AND rota = '/app/ti/mapa';
 
 INSERT INTO public.app_menu (modulo_id, codigo, nome, rota, ordem, ativo)
 SELECT m.id, x.codigo, x.nome, x.rota, x.ordem, true

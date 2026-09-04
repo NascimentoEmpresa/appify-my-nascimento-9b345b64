@@ -58,7 +58,7 @@ export default function InventarioTi() {
           ativos={ativos}
           plantas={plantas}
           onAbrir={(id) => setAberto(ativos.find((a) => a.id === id) ?? null)}
-          onIrParaMapa={() => navigate("/app/ti/mapa")}
+          onIrParaMapa={() => navigate("/app/ti/mapa-hardware")}
         />
       )}
 
