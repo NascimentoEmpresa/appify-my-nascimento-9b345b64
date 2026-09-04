@@ -8,18 +8,19 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { TrendingDown, TrendingUp, Wallet, LineChart, X } from "lucide-react";
-import { useFluxoCaixaMalote } from "@/hooks/useFluxoCaixaMalote";
+import { useFluxoCaixaCombinado } from "@/hooks/useFluxoCaixaMalote";
 import { formatBRL } from "@/hooks/usePlanilhaCusto";
 import { useTiposFormaPagamento } from "@/hooks/useMaloteFormaPagamento";
 import { KpiTile } from "@/components/financeiro/KpiTile";
 import { BancoBadge } from "@/components/financeiro/BancoBadge";
 import { urlLogoCartao } from "@/hooks/useMaloteCartaoCredito";
 
-// SIS-2026-0160: início do Fluxo de Caixa. Por enquanto a única fonte de
-// dado é o Pagamento Malote (só saída) — os cards de Entradas/Saldo ficam
-// zerados até existir outra fonte (recebimentos, saldo bancário real).
+// SIS-2026-0160: início do Fluxo de Caixa. SIS-2026-0256 somou o Débito
+// Automático (entrada e saída) ao Pagamento Malote (só saída) como segunda
+// fonte — os cards de Entradas/Saldo ainda ficam zerados (nenhuma das duas
+// fontes hoje resolve saldo bancário real).
 export default function FluxoCaixaGestao() {
-  const { data: linhas = [], isLoading } = useFluxoCaixaMalote();
+  const { data: linhas = [], isLoading } = useFluxoCaixaCombinado();
   // SIS-2026-0221: "Forma de pagamento" vem do catálogo cadastrável em
   // Configurações do Malote → Formas de Pagamento, não mais de um enum fixo.
   const { data: tiposFormaPagamento = [] } = useTiposFormaPagamento();
@@ -88,20 +89,30 @@ export default function FluxoCaixaGestao() {
     });
   }, [linhas, dataDe, dataAte, competencia, empresaId, contratoId, classificacaoId, formaPagamento, bancoId]);
 
-  const totalSaidas = useMemo(() => filtradas.reduce((s, l) => s + Number(l.valor), 0), [filtradas]);
+  // SIS-2026-0256: com o Débito Automático somado à fonte, "Saídas" precisa
+  // filtrar por tipo — antes só existia saída (Malote), então somar tudo
+  // dava no mesmo.
+  const totalSaidas = useMemo(() => filtradas.filter((l) => l.tipo === "saida").reduce((s, l) => s + Number(l.valor), 0), [filtradas]);
+  const totalEntradas = useMemo(() => filtradas.filter((l) => l.tipo === "entrada").reduce((s, l) => s + Number(l.valor), 0), [filtradas]);
 
   return (
     <div className="space-y-6 p-6">
       <PageHeader
         title="Fluxo de Caixa"
-        subtitle="Acompanhe as entradas e saídas financeiras provenientes do Pagamento Malote."
+        subtitle="Acompanhe as entradas e saídas financeiras provenientes do Pagamento Malote e do Débito Automático."
         module="Financeiro"
         breadcrumb={["Financeiro", "Gestão Financeira", "Fluxo de Caixa"]}
       />
 
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         <KpiTile label="Saldo Atual" valor="—" icon={<Wallet />} cor="slate" valorClass="text-muted-foreground" />
-        <KpiTile label="Entradas" valor="—" icon={<TrendingUp />} cor="emerald" valorClass="text-muted-foreground" />
+        <KpiTile
+          label="Entradas (filtro atual)"
+          valor={formatBRL(totalEntradas)}
+          icon={<TrendingUp />}
+          cor="emerald"
+          valorClass="text-emerald-600 dark:text-emerald-400"
+        />
         <KpiTile
           label="Saídas (filtro atual)"
           valor={formatBRL(totalSaidas)}
@@ -113,8 +124,8 @@ export default function FluxoCaixaGestao() {
       </div>
 
       <p className="text-xs text-muted-foreground -mt-2">
-        Saldo Atual, Entradas e Saldo Projetado ainda não têm fonte de dado (só o Pagamento Malote alimenta esta tela
-        por enquanto, e ele só gera saída).
+        Saldo Atual e Saldo Projetado ainda não têm fonte de dado. Entradas e Saídas somam Pagamento Malote (só saída)
+        e Débito Automático (entrada e saída).
       </p>
 
       <Card>
@@ -206,7 +217,7 @@ export default function FluxoCaixaGestao() {
         <CardContent className="p-4 space-y-3">
           <div>
             <p className="text-sm font-semibold">Movimentações do Fluxo de Caixa</p>
-            <p className="text-xs text-muted-foreground">Dados alimentados pelo módulo Pagamento Malote.</p>
+            <p className="text-xs text-muted-foreground">Dados alimentados pelo Pagamento Malote e pelo Débito Automático.</p>
           </div>
           <div className="overflow-x-auto">
             <Table>
@@ -253,7 +264,11 @@ export default function FluxoCaixaGestao() {
                     <TableCell className="text-center font-mono text-xs">{l.id_malote}</TableCell>
                     <TableCell className="text-center text-sm">{l.data_pagamento ? new Date(l.data_pagamento + "T00:00:00").toLocaleDateString("pt-BR") : "—"}</TableCell>
                     <TableCell className="text-center">
-                      <Badge className="bg-red-100 text-red-800 dark:bg-red-950/40 dark:text-red-300">Saída</Badge>
+                      {l.tipo === "entrada" ? (
+                        <Badge className="bg-emerald-100 text-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-300">Entrada</Badge>
+                      ) : (
+                        <Badge className="bg-red-100 text-red-800 dark:bg-red-950/40 dark:text-red-300">Saída</Badge>
+                      )}
                     </TableCell>
                     <TableCell className="text-center text-sm">{l.classificacao_nome ?? "—"}</TableCell>
                     <TableCell className="text-center text-sm">{l.descricao}</TableCell>

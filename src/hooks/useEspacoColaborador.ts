@@ -336,28 +336,52 @@ export function useMarcacoesDoMes(
   });
 }
 
-// ── Chefia: derivada do NÍVEL, não do cargo ──────────────────────────
+// ── Chefia: derivada do CARGO ────────────────────────────────────────
 
 const semAcento = (s: string | null | undefined) =>
   String(s ?? "").normalize("NFD").replace(/[̀-ͯ]/g, "").toUpperCase().trim();
 
 /**
- * Supervisor e Encarregado saem de `EMPREGADOS."LIDER"`.
+ * Níveis hierárquicos que a coluna "LIDER" DEVERIA conter.
  *
- * Apesar do nome, essa coluna guarda o NÍVEL HIERÁRQUICO DA PRÓPRIA PESSOA —
- * ADMIN, CEO, DIREÇÃO, DIRETOR, GERENTE, COORDENADOR, SUPERVISOR,
- * ENCARREGADO, LÍDER — e não o nome de quem lidera ela. É a mesma lista de
- * `NIVEIS` em LideresSetor.tsx, e o EmpregadoDetalheModal chega a avisar na
- * tela quando o valor não é um nível conhecido.
- *
- * A comparação normaliza acento e caixa porque o cadastro é espelho do
- * Senior e chega com grafia inconsistente.
+ * Mesma lista de `NIVEIS` em LideresSetor.tsx. Serve só para saber se o
+ * valor daquela coluna é aproveitável — ver o comentário abaixo.
  */
-export const ehSupervisor = (nivel: string | null | undefined) =>
-  semAcento(nivel) === "SUPERVISOR";
+const NIVEIS_CONHECIDOS = new Set([
+  "ADMIN", "CEO", "DIRECAO", "PRESIDENCIA", "DIRETOR", "GERENTE",
+  "COORDENADOR", "SUPERVISOR", "ENCARREGADO", "LIDER",
+]);
 
-export const ehEncarregado = (nivel: string | null | undefined) =>
-  semAcento(nivel) === "ENCARREGADO";
+/** O valor de "LIDER" é um nível de verdade, ou é lixo do cadastro? */
+export const nivelUtilizavel = (nivel: string | null | undefined) =>
+  NIVEIS_CONHECIDOS.has(semAcento(nivel));
+
+/**
+ * Supervisor e Encarregado saem do "Título do Cargo", NÃO da coluna "LIDER".
+ *
+ * Esta função já foi das duas formas, e a medição no banco decidiu. O
+ * comentário do EmpregadoDetalheModal diz que "LIDER" guarda o NÍVEL da
+ * pessoa, e eu confiei nele. O dado real, em 04/09/2026, sobre os 2.446
+ * ativos:
+ *
+ *   "não" ............ 1.737      "SUPERVISOR" ............... 8
+ *   (vazio) ............. 642      "GERENTE" .................. 8
+ *   "APRENDIZ" ........... 13      "AUXILIAR ADMINISTRATIVO" .. 8
+ *
+ * Em 97% das linhas a coluna é um "sim/não" ou um cargo solto. Confiando
+ * nela, a árvore inteira encontraria OITO supervisores e ZERO encarregados.
+ * Pelo cargo são 68+ supervisores e 9 encarregados — que é como a operação
+ * enxerga a própria estrutura.
+ *
+ * O "LIDER" continua sendo lido, mas só REFORÇA: quando ele por acaso
+ * contém um nível conhecido, vale também. Nunca sozinho.
+ */
+const ehChefiaDe = (regex: RegExp) => (p: { cargo?: string | null; nivel?: string | null }) =>
+  regex.test(semAcento(p.cargo)) ||
+  (nivelUtilizavel(p.nivel) && regex.test(semAcento(p.nivel)));
+
+export const ehSupervisor = ehChefiaDe(/SUPERVISOR/);
+export const ehEncarregado = ehChefiaDe(/ENCARREG/);
 
 // ── Montagem dos nós de posto ────────────────────────────────────────
 

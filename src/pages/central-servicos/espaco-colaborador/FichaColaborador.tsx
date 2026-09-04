@@ -21,7 +21,7 @@ import {
   temBatidaIncompleta,
 } from "@/lib/ponto";
 import {
-  useFichaColaborador, useHistoricoColaborador, useMarcacoesDoMes,
+  nivelUtilizavel, useFichaColaborador, useHistoricoColaborador, useMarcacoesDoMes,
   type EventoHistorico, type FichaColaborador as Ficha,
 } from "@/hooks/useEspacoColaborador";
 
@@ -162,10 +162,15 @@ function FichaCarregada({ ficha }: { ficha: Ficha }) {
           <Dado rotulo="Contrato" valor={ficha.contrato_nome ?? ficha.local ?? "—"} icone={Building2} />
           <Dado rotulo="Posto" valor={ficha.posto ?? "—"} />
           <Dado rotulo="Filial" valor={ficha.filial ?? "—"} />
-          {/* EMPREGADOS."LIDER" guarda o NÍVEL da própria pessoa (SUPERVISOR,
-              ENCARREGADO, …), não o nome de quem lidera ela. Quem lidera vem
-              da designação da Operação, no campo ao lado. */}
-          <Dado rotulo="Nível hierárquico" valor={ficha.nivel || "—"} icone={ShieldCheck} />
+          {/* EMPREGADOS."LIDER" DEVERIA guardar o nível hierárquico da pessoa,
+              mas no banco real ela é "não" ou vazio em 97% das linhas (medido
+              em 04/09/2026). Mostrar o valor cru colocaria "Nível: não" na
+              ficha de quase todo mundo — então só aparece quando o conteúdo é
+              mesmo um nível conhecido. Quem responde pela pessoa está no campo
+              ao lado, que vem da designação da Operação. */}
+          {nivelUtilizavel(ficha.nivel) && (
+            <Dado rotulo="Nível hierárquico" valor={ficha.nivel!} icone={ShieldCheck} />
+          )}
           <Dado rotulo="Encarregado do contrato" valor={ficha.encarregado_nome ?? "—"} icone={UserCog} />
         </div>
       </Card>
