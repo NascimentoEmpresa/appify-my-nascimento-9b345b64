@@ -1,3 +1,4 @@
+import { Suspense, lazy } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
 import { Toaster as Sonner } from "@/components/ui/sonner";
@@ -208,7 +209,14 @@ import Ajuda from "./pages/ajuda/Ajuda";
 import AjudaTopico from "./pages/ajuda/AjudaTopico";
 import InboxAprovacoes from "./pages/aprovacoes/Inbox";
 import SolicitacoesErp from "./pages/sistemas/SolicitacoesErp";
-import MapaHardware from "./pages/ti/MapaHardware";
+// As duas telas 3D entram por lazy: elas puxam three + @react-three, que
+// pesam mais que o resto do ERP somado. Sem isso, quem abre a folha de
+// pagamento baixaria a engine 3D junto — e o bundle único chegou a quebrar
+// o build (ver o comentário do manualChunks em vite.config.ts).
+const MapaTi = lazy(() => import("./pages/ti/MapaTi"));
+const ConstruirMapa = lazy(() => import("./pages/ti/ConstruirMapa"));
+import InventarioTi from "./pages/ti/InventarioTi";
+import PainelTiPage from "./pages/ti/PainelTiPage";
 import CentralServicos from "./pages/central-servicos/CentralServicos";
 import MeusChamados from "./pages/chamados/MeusChamados";
 import AbrirChamado from "./pages/chamados/AbrirChamado";
@@ -244,6 +252,25 @@ import FichaColaborador from "./pages/central-servicos/espaco-colaborador/FichaC
 // era isso que deixava a Grade presa em "Erro ao carregar: JWT expired" até o
 // usuário dar F5. Para esse caso, mais tentativas e mais espaçadas, dando tempo
 // do supabase-js concluir a renovação.
+/**
+ * Espera o pedaço 3D chegar. É um aviso discreto, e não um spinner de tela
+ * cheia, porque na segunda visita o chunk vem do cache e o texto mal
+ * aparece — trocar a tela inteira nesse tempo pisca à toa.
+ */
+function Carregando3D({ children }: { children: React.ReactNode }) {
+  return (
+    <Suspense
+      fallback={
+        <div className="flex h-[70vh] items-center justify-center text-sm text-muted-foreground">
+          Carregando o mapa 3D…
+        </div>
+      }
+    >
+      {children}
+    </Suspense>
+  );
+}
+
 const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
@@ -338,12 +365,17 @@ const App = () => (
                 Central — o solicitante não tem mais nada em /app/sistemas. */}
             <Route path="sistemas/chamados/:id/acompanhar" element={<AcompanharChamado base="/app/central-servicos/chamados" />} />
             <Route path="sistemas/chamados/:id" element={<ExecutarChamado />} />
-            {/* T.I — Mapa de Hardware (planta do escritório + inventário).
-                Sem redirect de "/app/ti" de propósito: rota sem entrada em
-                app_menu é NEGADA pelo RouteGuard antes de o Navigate rodar, o
-                que trocaria um 404 honesto por um "Acesso negado" confuso. A
-                porta do módulo é o item da sidebar. */}
-            <Route path="ti/mapa-hardware" element={<MapaHardware />} />
+            {/* T.I — quatro telas, quatro menus, quatro cadeados: ver o mapa,
+                construir o mapa, o inventário e o painel são permissões
+                separadas — é o que permite liberar só o Mapa para o escritório
+                sem entregar junto o custo dos equipamentos.
+                Sem redirect de "/app/ti": rota sem entrada em app_menu é NEGADA
+                pelo RouteGuard antes de o Navigate rodar, o que trocaria um 404
+                honesto por um "Acesso negado" confuso. */}
+            <Route path="ti/mapa" element={<Carregando3D><MapaTi /></Carregando3D>} />
+            <Route path="ti/construir" element={<Carregando3D><ConstruirMapa /></Carregando3D>} />
+            <Route path="ti/inventario" element={<InventarioTi />} />
+            <Route path="ti/painel" element={<PainelTiPage />} />
             {/* Central de Serviços */}
             <Route path="central-servicos" element={<CentralServicos />} />
             <Route path="central-servicos/chamados" element={<MeusChamados base="/app/central-servicos/chamados" />} />

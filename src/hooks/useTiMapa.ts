@@ -44,6 +44,8 @@ export interface TiPlanta {
   largura_cm: number;
   altura_cm: number;
   cor_piso: string;
+  /** Altura das paredes do ambiente, em cm — a dimensão vertical da cena 3D. */
+  pe_direito_cm: number;
   ordem: number;
   ativo: boolean;
 }
@@ -58,6 +60,11 @@ export interface TiElemento {
   largura: number;
   altura: number;
   rotacao: number;
+  /**
+   * Altura VERTICAL do elemento em cm. NULL = usa o padrão do catálogo.
+   * Não confunda com `altura`, que é a profundidade vista de cima.
+   */
+  altura_z: number | null;
   cor: string | null;
   z_index: number;
   meta: Record<string, unknown>;
@@ -129,6 +136,8 @@ export interface TiAtivo {
   planta_id: string | null;
   pos_x: number | null;
   pos_y: number | null;
+  /** Altura de apoio em cm. NULL = a cena resolve (chão, ou o móvel embaixo). */
+  pos_z: number | null;
   rotacao: number;
   escala: number;
   cor: string | null;
@@ -189,6 +198,7 @@ function mapearElemento(e: any): TiElemento {
     largura: num(e.largura, 100),
     altura: num(e.altura, 100),
     rotacao: num(e.rotacao),
+    altura_z: numOuNulo(e.altura_z),
     cor: e.cor ?? null,
     z_index: num(e.z_index),
     meta: e.meta ?? {},
@@ -204,6 +214,7 @@ function mapearAtivo(a: any): TiAtivo {
     valor_aquisicao: numOuNulo(a.valor_aquisicao),
     pos_x: numOuNulo(a.pos_x),
     pos_y: numOuNulo(a.pos_y),
+    pos_z: numOuNulo(a.pos_z),
     rotacao: num(a.rotacao),
     escala: num(a.escala, 1),
     especificacoes: a.especificacoes ?? {},
@@ -219,7 +230,7 @@ export function usePlantasTi() {
     queryFn: async (): Promise<TiPlanta[]> => {
       const { data, error } = await sb
         .from("TI_PLANTA")
-        .select("id, nome, descricao, endereco, largura_cm, altura_cm, cor_piso, ordem, ativo")
+        .select("id, nome, descricao, endereco, largura_cm, altura_cm, cor_piso, pe_direito_cm, ordem, ativo")
         .eq("ativo", true)
         .order("ordem")
         .order("nome");
@@ -229,6 +240,7 @@ export function usePlantasTi() {
         ...p,
         largura_cm: num(p.largura_cm, 2400),
         altura_cm: num(p.altura_cm, 1600),
+        pe_direito_cm: num(p.pe_direito_cm, 280),
       }));
     },
   });
@@ -245,6 +257,7 @@ export function useSalvarPlanta() {
         largura_cm: planta.largura_cm ?? 2400,
         altura_cm: planta.altura_cm ?? 1600,
         cor_piso: planta.cor_piso ?? "#f1f5f9",
+        pe_direito_cm: planta.pe_direito_cm ?? 280,
         ordem: planta.ordem ?? 0,
       };
       if (planta.id) {
@@ -314,6 +327,7 @@ export function useSalvarElemento() {
         largura: el.largura ?? 100,
         altura: el.altura ?? 100,
         rotacao: el.rotacao ?? 0,
+        altura_z: el.altura_z ?? null,
         cor: el.cor ?? null,
         z_index: el.z_index ?? 0,
         meta: el.meta ?? {},
@@ -426,6 +440,7 @@ export function usePosicionarAtivo() {
       planta_id: string | null;
       pos_x: number | null;
       pos_y: number | null;
+      pos_z?: number | null;
       rotacao?: number;
       escala?: number;
     }) => {
