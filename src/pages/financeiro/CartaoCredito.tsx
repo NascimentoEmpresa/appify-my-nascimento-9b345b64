@@ -20,13 +20,15 @@ import {
   AlertDialogDescription,
   AlertDialogCancel,
 } from "@/components/ui/alert-dialog";
-import { CreditCard, Calendar, TrendingDown, PieChart, Plus, Pencil, X, Settings, Upload, Trash2 } from "lucide-react";
+import { CreditCard, Calendar, TrendingDown, PieChart, Plus, Pencil, X, Settings, Upload, Trash2, FileInput, FileCheck2 } from "lucide-react";
 import { toast } from "sonner";
 import { usePermissoes } from "@/context/PermissoesContext";
 import { KpiTile } from "@/components/financeiro/KpiTile";
 import { BancoBadge } from "@/components/financeiro/BancoBadge";
 import { BandeiraBadge } from "@/components/financeiro/BandeiraBadge";
 import { useFluxoCaixaMalote } from "@/hooks/useFluxoCaixaMalote";
+import { useFaturasResumoPorCartao } from "@/hooks/useCartaoFatura";
+import { ImportarFaturaModal } from "./cartao-credito/ImportarFaturaModal";
 import { useEmpresasGrupo } from "@/hooks/useMaloteDespesa";
 import { useTiposFormaPagamento } from "@/hooks/useMaloteFormaPagamento";
 import { formatBRL } from "@/hooks/usePlanilhaCusto";
@@ -57,6 +59,7 @@ interface FormState {
   diaVencimento: string;
   limite: string;
   ativo: boolean;
+  finalCartao: string;
 }
 
 const VAZIO: FormState = {
@@ -69,6 +72,7 @@ const VAZIO: FormState = {
   diaVencimento: "",
   limite: "",
   ativo: true,
+  finalCartao: "",
 };
 
 function paraFormState(c: CartaoCreditoRow): FormState {
@@ -83,6 +87,7 @@ function paraFormState(c: CartaoCreditoRow): FormState {
     diaVencimento: String(c.dia_vencimento),
     limite: String(c.limite),
     ativo: c.ativo,
+    finalCartao: c.final_cartao ?? "",
   };
 }
 
@@ -276,6 +281,9 @@ export default function CartaoCredito() {
   const [open, setOpen] = useState(false);
   const [editando, setEditando] = useState<FormState | null>(null);
   const [openCatalogo, setOpenCatalogo] = useState(false);
+  const [openImportarFatura, setOpenImportarFatura] = useState(false);
+  const [cartaoImportar, setCartaoImportar] = useState<string | null>(null);
+  const { data: faturasResumo } = useFaturasResumoPorCartao();
 
   const [competencia, setCompetencia] = useState(mesAtualISO());
   const [filtroCartaoId, setFiltroCartaoId] = useState("");
@@ -406,6 +414,7 @@ export default function CartaoCredito() {
     if (!editando.diaVencimento) return toast.error("Selecione o dia de vencimento.");
     const limite = Number(editando.limite.replace(",", "."));
     if (!editando.limite || !Number.isFinite(limite) || limite < 0) return toast.error("Informe um limite válido.");
+    if (editando.finalCartao && !/^\d{4}$/.test(editando.finalCartao)) return toast.error("Final do Cartão precisa ter 4 dígitos.");
 
     // Regra 4 do Anexo 1: não permitir dois cartões ATIVOS com a mesma
     // combinação Empresa + Nome no Malote (Tipo) — mesma checagem do
@@ -436,6 +445,7 @@ export default function CartaoCredito() {
         dia_vencimento: Number(editando.diaVencimento),
         limite,
         ativo: editando.ativo,
+        final_cartao: editando.finalCartao ? editando.finalCartao : null,
       });
       toast.success("Cartão salvo.");
       setOpen(false);
@@ -456,6 +466,10 @@ export default function CartaoCredito() {
             <Button variant="outline" onClick={() => setOpenCatalogo(true)}>
               <Settings className="h-4 w-4 mr-2" />
               Gerenciar Bancos e Bandeiras
+            </Button>
+            <Button variant="outline" onClick={() => { setCartaoImportar(null); setOpenImportarFatura(true); }}>
+              <FileInput className="h-4 w-4 mr-2" />
+              Importar Fatura
             </Button>
             <Button onClick={abrirNovo}>
               <Plus className="h-4 w-4 mr-2" />
@@ -595,18 +609,19 @@ export default function CartaoCredito() {
                 <TableHead className="text-right">Utilizado</TableHead>
                 <TableHead className="text-right">Fatura do Mês</TableHead>
                 <TableHead className="text-center">Status</TableHead>
+                <TableHead className="text-center">Fatura</TableHead>
                 <TableHead className="text-right">Ações</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {isLoading && (
                 <TableRow>
-                  <TableCell colSpan={12} className="text-center text-muted-foreground py-8">Carregando...</TableCell>
+                  <TableCell colSpan={13} className="text-center text-muted-foreground py-8">Carregando...</TableCell>
                 </TableRow>
               )}
               {!isLoading && cartoesFiltrados.length === 0 && (
                 <TableRow>
-                  <TableCell colSpan={12} className="text-center text-muted-foreground py-8">
+                  <TableCell colSpan={13} className="text-center text-muted-foreground py-8">
                     {cartoes.length === 0 ? "Nenhum cartão cadastrado ainda." : "Nenhum cartão encontrado com esse filtro."}
                   </TableCell>
                 </TableRow>
@@ -617,7 +632,10 @@ export default function CartaoCredito() {
                 const bandeira = bandeirasPorId.get(c.bandeira_id);
                 return (
                   <TableRow key={c.id}>
-                    <TableCell className="font-medium">{c.nome_cartao}</TableCell>
+                    <TableCell className="font-medium">
+                      <div className="whitespace-nowrap">{c.nome_cartao}</div>
+                      {c.final_cartao && <div className="font-normal text-xs text-muted-foreground">•••• {c.final_cartao}</div>}
+                    </TableCell>
                     <TableCell className="text-sm">{c.tipo_forma_pagamento}</TableCell>
                     <TableCell className="text-sm text-center">{empresasPorId.get(c.empresa_id) ?? "—"}</TableCell>
                     <TableCell className="text-center">
@@ -645,6 +663,27 @@ export default function CartaoCredito() {
                     <TableCell className="text-right text-sm font-medium">{formatBRL(faturaMes)}</TableCell>
                     <TableCell className="text-center">
                       {c.ativo ? <Badge variant="secondary">Ativo</Badge> : <Badge variant="outline">Inativo</Badge>}
+                    </TableCell>
+                    <TableCell className="text-center">
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="h-7 gap-1.5 text-xs"
+                        title="Importar fatura deste cartão"
+                        onClick={() => { setCartaoImportar(c.id); setOpenImportarFatura(true); }}
+                      >
+                        {faturasResumo?.has(c.id) ? (
+                          <>
+                            <FileCheck2 className="h-3.5 w-3.5 text-emerald-600" />
+                            {new Date(faturasResumo.get(c.id)!.competencia + "T00:00:00").toLocaleDateString("pt-BR", { month: "2-digit", year: "numeric" })}
+                          </>
+                        ) : (
+                          <>
+                            <FileInput className="h-3.5 w-3.5 text-muted-foreground" />
+                            Nunca importada
+                          </>
+                        )}
+                      </Button>
                     </TableCell>
                     <TableCell className="text-right">
                       <Button variant="ghost" size="icon" onClick={() => abrirEditar(c)}>
@@ -723,13 +762,25 @@ export default function CartaoCredito() {
             <DialogTitle>{editando?.id ? "Editar Cartão" : "Cadastrar Cartão de Crédito"}</DialogTitle>
           </DialogHeader>
           <div className="space-y-4">
-            <div>
-              <Label>Nome do Cartão <span className="text-destructive">*</span></Label>
-              <Input
-                value={editando?.nomeCartao ?? ""}
-                onChange={(e) => setEditando((v) => (v ? { ...v, nomeCartao: e.target.value } : v))}
-                placeholder="Ex: Cartão Corporativo HAGG"
-              />
+            <div className="grid grid-cols-3 gap-3">
+              <div className="col-span-2">
+                <Label>Nome do Cartão <span className="text-destructive">*</span></Label>
+                <Input
+                  value={editando?.nomeCartao ?? ""}
+                  onChange={(e) => setEditando((v) => (v ? { ...v, nomeCartao: e.target.value } : v))}
+                  placeholder="Ex: Cartão Corporativo HAGG"
+                />
+              </div>
+              <div>
+                <Label>Final do Cartão</Label>
+                <Input
+                  value={editando?.finalCartao ?? ""}
+                  onChange={(e) => setEditando((v) => (v ? { ...v, finalCartao: e.target.value.replace(/\D/g, "").slice(0, 4) } : v))}
+                  placeholder="0000"
+                  maxLength={4}
+                  inputMode="numeric"
+                />
+              </div>
             </div>
             <div className="grid grid-cols-2 gap-3">
               <div>
@@ -907,6 +958,12 @@ export default function CartaoCredito() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <ImportarFaturaModal
+        open={openImportarFatura}
+        cartaoInicialId={cartaoImportar}
+        onClose={() => { setOpenImportarFatura(false); setCartaoImportar(null); }}
+      />
     </div>
   );
 }
