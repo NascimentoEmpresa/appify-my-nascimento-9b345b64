@@ -11,6 +11,7 @@ import {
   camaraInicial,
   dimensoesAtivo,
   rad,
+  retanguloDoTraco,
   snap,
 } from "./apoio";
 import { ModeloDoAtivo, ModeloDoElemento, Selecao } from "./Modelos";
@@ -26,16 +27,27 @@ import { ModeloDoAtivo, ModeloDoElemento, Selecao } from "./Modelos";
  *   mesa é `alturaDeApoio`, não o modelo.
  *
  *   O MESMO componente serve as duas telas. `editavel` decide se arrastar,
- *   girar e apagar existem: no Mapa ele é falso e a cena vira um passeio —
- *   dá para orbitar, aproximar e clicar para ver a ficha, e não há como mover
- *   nada por acidente. Não são duas cenas parecidas mantidas em paralelo.
+ *   desenhar e apagar existem: no Mapa ele é falso e a cena vira um passeio.
  *
- * ARRASTAR
- *   Não usa plano invisível de colisão: o ponteiro é projetado num
- *   THREE.Plane matemático na altura da base do objeto. Plano de colisão real
- *   deixa de receber evento assim que o cursor passa por cima de outra peça —
- *   e o objeto "gruda" no meio do caminho, que é o bug clássico deste tipo de
- *   editor.
+ * ARRASTAR SEM TRAVAR — a regra mais importante deste arquivo
+ *   Enquanto o dedo está no objeto, a posição vive AQUI, em estado local
+ *   (`previa`), e a cena redesenha sozinha. A gravação no banco acontece UMA
+ *   vez, no soltar (`onSoltarElemento` / `onSoltarAtivo`).
+ *
+ *   A primeira versão chamava a mutation a cada `pointermove`: um UPDATE no
+ *   Supabase por pixel arrastado, dezenas por segundo. A parede andava aos
+ *   trancos, o histórico enchia de linhas e o banco levava a culpa. Se
+ *   precisar mexer aqui, mantenha a regra: **mover é local, soltar é que
+ *   persiste**.
+ *
+ * DESENHAR PAREDE
+ *   Parede não se cria clicando e digitando o comprimento. Com a ferramenta
+ *   ativa, arrasta-se do começo ao fim do traço e a peça nasce com o
+ *   comprimento e o ângulo do arrasto — é como se desenha uma planta.
+ *
+ * frameloop="demand": a cena só redesenha quando algo muda (arrasto, câmera,
+ * dado novo). Sem isso o canvas fica em 60 fps eternos consumindo GPU com o
+ * escritório parado na tela.
  */
 
 export type SelecaoCena =
@@ -43,22 +55,33 @@ export type SelecaoCena =
   | { tipo: "ativo"; id: string }
   | null;
 
+/** Um traço feito no chão, em cm: do ponto inicial ao final. */
+export interface TracoNoChao {
+  x1: number;
+  y1: number;
+  x2: number;
+  y2: number;
+  /** Verdadeiro quando foi um clique seco, sem arrastar. */
+  clique: boolean;
+}
+
 interface Props {
   planta: TiPlanta;
   elementos: TiElemento[];
   ativos: TiAtivo[];
   selecao: SelecaoCena;
   onSelecionar: (s: SelecaoCena) => void;
-  /** Falso no Mapa (só ver); verdadeiro em Construir. */
   editavel: boolean;
-  /** Termo de busca: quem não casa fica translúcido. */
   destaque?: string;
   mostrarGrade?: boolean;
   mostrarRotulos?: boolean;
-  /** Só quando uma ferramenta está ativa: clicar no chão cria a peça ali. */
-  onClicarNoChao?: (x: number, y: number) => void;
-  onMoverElemento?: (id: string, x: number, y: number) => void;
-  onMoverAtivo?: (id: string, x: number, y: number) => void;
+  /** Ferramenta ativa (só o rótulo importa aqui: se há algo para desenhar). */
+  desenhando?: boolean;
+  /** Traço concluído no chão — cria a peça. */
+  onDesenharNoChao?: (t: TracoNoChao) => void;
+  /** Fim do arrasto: a hora (única) de gravar. */
+  onSoltarElemento?: (id: string, x: number, y: number) => void;
+  onSoltarAtivo?: (id: string, x: number, y: number) => void;
   onAbrirFicha?: (ativoId: string) => void;
 }
 
@@ -72,13 +95,12 @@ export function Cena3D(props: Props) {
   return (
     <Canvas
       shadows
-      dpr={[1, 2]}
+      frameloop="demand"
+      dpr={[1, 1.75]}
       camera={{ position: camera, fov: 42, near: 0.1, far: 500 }}
-      // O fundo é pintado aqui e não no CSS: o canvas cobre o contêiner
-      // inteiro, então um `background` de div nunca apareceria.
       onCreated={({ scene }) => {
         scene.background = new THREE.Color("#dbe3ec");
-        scene.fog = new THREE.Fog("#dbe3ec", 40, 140);
+        scene.fog = new THREE.Fog("#dbe3ec", 45, 160);
       }}
     >
       <Suspense fallback={null}>
@@ -98,27 +120,28 @@ function Conteudo({
   destaque,
   mostrarGrade = true,
   mostrarRotulos = true,
-  onClicarNoChao,
-  onMoverElemento,
-  onMoverAtivo,
+  desenhando = false,
+  onDesenharNoChao,
+  onSoltarElemento,
+  onSoltarAtivo,
   onAbrirFicha,
 }: Props) {
   const L = M(planta.largura_cm);
   const P = M(planta.altura_cm);
   const centro = useMemo<[number, number, number]>(() => [L / 2, 0, P / 2], [L, P]);
 
+  const { invalidate } = useThree();
   const controlsRef = useRef<React.ElementRef<typeof OrbitControls>>(null);
-  const [arrasto, setArrasto] = useState<{
-    tipo: "elemento" | "ativo";
-    id: string;
-    alturaBase: number;
-    dx: number;
-    dz: number;
-  } | null>(null);
+
+  // Posição durante o arrasto: local, sem tocar no banco. Ver o cabeçalho.
+  const [previa, setPrevia] = useState<Record<string, { x: number; y: number }>>({});
+  const [arrasto, setArrasto] = useState<
+    { tipo: "elemento" | "ativo"; id: string; alturaBase: number; dx: number; dz: number } | null
+  >(null);
+  const [traco, setTraco] = useState<TracoNoChao | null>(null);
   const [livre, setLivre] = useState(false);
   const [hover, setHover] = useState<string | null>(null);
 
-  // Alt solta o grid enquanto arrasta — mesma tecla do editor 2D anterior.
   useEffect(() => {
     const d = (e: KeyboardEvent) => e.key === "Alt" && setLivre(true);
     const u = (e: KeyboardEvent) => e.key === "Alt" && setLivre(false);
@@ -130,6 +153,61 @@ function Conteudo({
     };
   }, []);
 
+  const travarCamera = (travar: boolean) => {
+    if (controlsRef.current) controlsRef.current.enabled = !travar;
+  };
+
+  const iniciarArrasto = (
+    tipo: "elemento" | "ativo",
+    id: string,
+    alturaBase: number,
+    ponto: THREE.Vector3,
+    posX: number,
+    posZ: number,
+  ) => {
+    if (!editavel || desenhando) return;
+    setArrasto({ tipo, id, alturaBase, dx: ponto.x - posX, dz: ponto.z - posZ });
+    travarCamera(true);
+  };
+
+  const moverLocal = useCallback(
+    (x: number, z: number) => {
+      setArrasto((a) => {
+        if (!a) return a;
+        setPrevia((p) => ({ ...p, [a.id]: { x: snap(x * 100, livre), y: snap(z * 100, livre) } }));
+        return a;
+      });
+      invalidate();
+    },
+    [livre, invalidate],
+  );
+
+  const soltar = useCallback(() => {
+    setArrasto((a) => {
+      if (a) {
+        travarCamera(false);
+        setPrevia((p) => {
+          const pos = p[a.id];
+          // ESTA é a única gravação do arrasto inteiro.
+          if (pos) {
+            if (a.tipo === "elemento") onSoltarElemento?.(a.id, pos.x, pos.y);
+            else onSoltarAtivo?.(a.id, pos.x, pos.y);
+          }
+          return p;
+        });
+      }
+      return null;
+    });
+  }, [onSoltarElemento, onSoltarAtivo]);
+
+  // A prévia some quando o dado novo chega pela query. Limpar na hora faria a
+  // peça piscar de volta na posição antiga até o refetch responder.
+  useEffect(() => {
+    if (arrasto || Object.keys(previa).length === 0) return;
+    const t = window.setTimeout(() => setPrevia({}), 600);
+    return () => window.clearTimeout(t);
+  }, [arrasto, previa, elementos, ativos]);
+
   const termo = (destaque ?? "").trim().toLowerCase();
   const casa = useCallback(
     (a: TiAtivo) =>
@@ -140,24 +218,6 @@ function Conteudo({
     [termo],
   );
 
-  const iniciarArrasto = (
-    tipo: "elemento" | "ativo",
-    id: string,
-    alturaBase: number,
-    ponto: THREE.Vector3,
-    posX: number,
-    posZ: number,
-  ) => {
-    if (!editavel) return;
-    setArrasto({ tipo, id, alturaBase, dx: ponto.x - posX, dz: ponto.z - posZ });
-    if (controlsRef.current) controlsRef.current.enabled = false;
-  };
-
-  const terminarArrasto = useCallback(() => {
-    setArrasto(null);
-    if (controlsRef.current) controlsRef.current.enabled = true;
-  }, []);
-
   return (
     <>
       <Luzes largura={L} profundidade={P} />
@@ -166,30 +226,53 @@ function Conteudo({
         ref={controlsRef}
         target={centro}
         makeDefault
-        // Não deixa passar do horizonte: por baixo do piso não há nada para
-        // ver, e voltar de lá é um quebra-cabeça para quem não usa 3D.
         maxPolarAngle={Math.PI * 0.49}
         minDistance={1.5}
         maxDistance={Math.max(L, P) * 2.5 + 20}
         enableDamping
-        dampingFactor={0.12}
+        dampingFactor={0.15}
       />
 
-      <Piso planta={planta} mostrarGrade={mostrarGrade} onClicarNoChao={onClicarNoChao} editavel={editavel} />
+      <Piso
+        planta={planta}
+        mostrarGrade={mostrarGrade}
+        editavel={editavel}
+        desenhando={desenhando}
+        livre={livre}
+        onComecarTraco={(t) => {
+          setTraco(t);
+          travarCamera(true);
+          invalidate();
+        }}
+      />
+
       <ParedesDoPerimetro planta={planta} />
 
-      <ArrastoNoPlano
-        arrasto={arrasto}
-        livre={livre}
-        onArrastar={(x, z) => {
-          if (!arrasto) return;
-          const cmX = snap(x * 100, livre);
-          const cmY = snap(z * 100, livre);
-          if (arrasto.tipo === "elemento") onMoverElemento?.(arrasto.id, cmX, cmY);
-          else onMoverAtivo?.(arrasto.id, cmX, cmY);
+      <PonteiroNoPlano
+        ativo={!!arrasto || !!traco}
+        altura={arrasto?.alturaBase ?? 0}
+        onMover={(x, z) => {
+          if (arrasto) {
+            moverLocal(x - arrasto.dx, z - arrasto.dz);
+          } else if (traco) {
+            const x2 = snap(x * 100, livre);
+            const y2 = snap(z * 100, livre);
+            setTraco((t) => (t ? { ...t, x2, y2, clique: false } : t));
+            invalidate();
+          }
         }}
-        onSoltar={terminarArrasto}
+        onSoltar={() => {
+          if (traco) {
+            travarCamera(false);
+            onDesenharNoChao?.(traco);
+            setTraco(null);
+            invalidate();
+          }
+          soltar();
+        }}
       />
+
+      {traco && <FantasmaDoTraco traco={traco} />}
 
       {elementos.map((el) => {
         const def = tipoElemento(el.tipo);
@@ -197,15 +280,16 @@ function Conteudo({
         const profundidade = M(Number(el.altura));
         const altura = M(alturaDoElemento(el));
         const selecionado = selecao?.tipo === "elemento" && selecao.id === el.id;
-        // A âncora do banco é o canto; a da cena é o centro da peça.
-        const x = M(Number(el.x)) + largura / 2;
-        const z = M(Number(el.y)) + profundidade / 2;
+        const pos = previa[el.id];
+        const x = M(pos ? pos.x : Number(el.x)) + largura / 2;
+        const z = M(pos ? pos.y : Number(el.y)) + profundidade / 2;
         return (
           <group
             key={el.id}
             position={[x, 0, z]}
             rotation={[0, rad(Number(el.rotacao)), 0]}
             onPointerDown={(e: ThreeEvent<PointerEvent>) => {
+              if (desenhando) return;
               e.stopPropagation();
               onSelecionar({ tipo: "elemento", id: el.id });
               iniciarArrasto("elemento", el.id, 0, e.point, x, z);
@@ -213,16 +297,16 @@ function Conteudo({
           >
             <ModeloDoElemento elemento={el} largura={largura} profundidade={profundidade} altura={altura} />
             {selecionado && <Selecao largura={largura} profundidade={profundidade} altura={altura} />}
-            {selecionado && el.rotulo && (
-              <Html center distanceFactor={14} position={[0, altura + 0.25, 0]}>
-                <span className="whitespace-nowrap rounded bg-slate-900/85 px-1.5 py-0.5 text-[11px] font-semibold text-white">
+            {def.familia === "area" && el.rotulo && (
+              <Html center distanceFactor={22} position={[0, 0.05, 0]}>
+                <span className="whitespace-nowrap rounded bg-white/70 px-1.5 py-0.5 text-[11px] font-bold uppercase tracking-wide text-slate-700">
                   {el.rotulo}
                 </span>
               </Html>
             )}
-            {def.familia === "area" && el.rotulo && !selecionado && (
-              <Html center distanceFactor={22} position={[0, 0.05, 0]}>
-                <span className="whitespace-nowrap rounded bg-white/70 px-1.5 py-0.5 text-[11px] font-bold uppercase tracking-wide text-slate-700">
+            {selecionado && def.familia !== "area" && el.rotulo && (
+              <Html center distanceFactor={14} position={[0, altura + 0.25, 0]}>
+                <span className="whitespace-nowrap rounded bg-slate-900/85 px-1.5 py-0.5 text-[11px] font-semibold text-white">
                   {el.rotulo}
                 </span>
               </Html>
@@ -235,9 +319,11 @@ function Conteudo({
         .filter((a) => a.planta_id === planta.id && a.pos_x != null && a.pos_y != null)
         .map((a) => {
           const { largura, profundidade, altura } = dimensoesAtivo(a);
-          const base = M(alturaDeApoio(a, elementos));
-          const x = M(Number(a.pos_x));
-          const z = M(Number(a.pos_y));
+          const pos = previa[a.id];
+          const alvo = pos ? ({ ...a, pos_x: pos.x, pos_y: pos.y } as TiAtivo) : a;
+          const base = M(alturaDeApoio(alvo, elementos));
+          const x = M(Number(alvo.pos_x));
+          const z = M(Number(alvo.pos_y));
           const selecionado = selecao?.tipo === "ativo" && selecao.id === a.id;
           const apagado = !!termo && !casa(a);
           const st = statusAtivo(a.status);
@@ -248,6 +334,7 @@ function Conteudo({
               position={[x, base, z]}
               rotation={[0, rad(Number(a.rotacao)), 0]}
               onPointerDown={(e: ThreeEvent<PointerEvent>) => {
+                if (desenhando) return;
                 e.stopPropagation();
                 onSelecionar({ tipo: "ativo", id: a.id });
                 iniciarArrasto("ativo", a.id, base, e.point, x, z);
@@ -259,15 +346,18 @@ function Conteudo({
               onPointerOver={(e: ThreeEvent<PointerEvent>) => {
                 e.stopPropagation();
                 setHover(a.id);
+                invalidate();
               }}
-              onPointerOut={() => setHover((h) => (h === a.id ? null : h))}
+              onPointerOut={() => {
+                setHover((h) => (h === a.id ? null : h));
+                invalidate();
+              }}
             >
               <group visible={!apagado}>
                 <ModeloDoAtivo ativo={a} largura={largura} profundidade={profundidade} altura={altura} />
               </group>
               {selecionado && <Selecao largura={largura} profundidade={profundidade} altura={altura} />}
 
-              {/* Pino de status no topo — a bolinha que se enxerga de longe. */}
               {!apagado && (
                 <mesh position={[0, altura + 0.09, 0]}>
                   <sphereGeometry args={[0.045, 12, 10]} />
@@ -296,8 +386,6 @@ function Conteudo({
 // ── Peças da cena ─────────────────────────────────────────────────────
 
 function Luzes({ largura, profundidade }: { largura: number; profundidade: number }) {
-  // A sombra precisa cobrir a planta inteira: uma shadow-camera padrão (±5)
-  // corta a sombra no meio do escritório e deixa metade das mesas flutuando.
   const alcance = Math.max(largura, profundidade) * 0.75 + 6;
   return (
     <>
@@ -307,8 +395,10 @@ function Luzes({ largura, profundidade }: { largura: number; profundidade: numbe
         castShadow
         position={[largura * 0.6 + 8, Math.max(largura, profundidade) * 0.8 + 10, profundidade * 0.35 - 6]}
         intensity={1.35}
-        shadow-mapSize={[2048, 2048]}
-        shadow-bias={-0.0008}
+        // 1024 em vez de 2048: com a planta inteira na sombra, a diferença
+        // visual é mínima e o custo por frame cai à metade.
+        shadow-mapSize={[1024, 1024]}
+        shadow-bias={-0.0009}
         shadow-camera-left={-alcance}
         shadow-camera-right={alcance}
         shadow-camera-top={alcance}
@@ -322,13 +412,17 @@ function Luzes({ largura, profundidade }: { largura: number; profundidade: numbe
 function Piso({
   planta,
   mostrarGrade,
-  onClicarNoChao,
   editavel,
+  desenhando,
+  livre,
+  onComecarTraco,
 }: {
   planta: TiPlanta;
   mostrarGrade: boolean;
-  onClicarNoChao?: (x: number, y: number) => void;
   editavel: boolean;
+  desenhando: boolean;
+  livre: boolean;
+  onComecarTraco: (t: TracoNoChao) => void;
 }) {
   const L = M(planta.largura_cm);
   const P = M(planta.altura_cm);
@@ -339,9 +433,11 @@ function Piso({
         rotation={[-Math.PI / 2, 0, 0]}
         position={[L / 2, 0, P / 2]}
         onPointerDown={(e: ThreeEvent<PointerEvent>) => {
-          if (!editavel || !onClicarNoChao) return;
+          if (!editavel || !desenhando) return;
           e.stopPropagation();
-          onClicarNoChao(Math.round(e.point.x * 100), Math.round(e.point.z * 100));
+          const x = snap(e.point.x * 100, livre);
+          const y = snap(e.point.z * 100, livre);
+          onComecarTraco({ x1: x, y1: y, x2: x, y2: y, clique: true });
         }}
       >
         <planeGeometry args={[L, P]} />
@@ -358,7 +454,7 @@ function Piso({
           sectionSize={1}
           sectionThickness={1}
           sectionColor="#8fa0b4"
-          fadeDistance={Math.max(L, P) * 2.2}
+          fadeDistance={Math.max(L, P) * 2.4}
           fadeStrength={1}
           followCamera={false}
           infiniteGrid={false}
@@ -368,14 +464,6 @@ function Piso({
   );
 }
 
-/**
- * O contorno do ambiente: paredes baixas no perímetro da planta.
- *
- * Existem para dar volume ao espaço mesmo numa planta recém-criada, em que
- * ninguém desenhou parede ainda — um piso solto no vazio não se lê como
- * escritório. São meia altura (1,2 m) de propósito: parede inteira no
- * perímetro tampa a vista da câmera de fora.
- */
 function ParedesDoPerimetro({ planta }: { planta: TiPlanta }) {
   const L = M(planta.largura_cm);
   const P = M(planta.altura_cm);
@@ -404,21 +492,43 @@ function ParedesDoPerimetro({ planta }: { planta: TiPlanta }) {
   );
 }
 
+/** A prévia da peça enquanto o traço está sendo puxado, com a medida em metros. */
+function FantasmaDoTraco({ traco }: { traco: TracoNoChao }) {
+  const r = retanguloDoTraco(traco.x1, traco.y1, traco.x2, traco.y2, 15);
+  const largura = M(r.largura);
+  const profundidade = M(Math.max(r.profundidade, 10));
+  const comprimento = Math.round(r.largura);
+  return (
+    <group position={[M(r.centroX), 0.4, M(r.centroY)]} rotation={[0, rad(r.rotacao), 0]}>
+      <mesh>
+        <boxGeometry args={[largura, 0.8, profundidade]} />
+        <meshStandardMaterial color="#0ea5e9" transparent opacity={0.45} />
+      </mesh>
+      <Html center distanceFactor={14} position={[0, 0.8, 0]}>
+        <span className="whitespace-nowrap rounded bg-sky-600 px-1.5 py-0.5 text-[11px] font-bold text-white">
+          {(comprimento / 100).toFixed(2).replace(".", ",")} m
+        </span>
+      </Html>
+    </group>
+  );
+}
+
 /**
- * Converte o movimento do mouse em posição no mundo enquanto se arrasta.
+ * Projeta o ponteiro num plano matemático e reporta a posição no mundo.
  *
- * Projeta o ponteiro num plano matemático (não num objeto) na altura da base
- * da peça — ver o comentário do topo do arquivo sobre por que o plano de
- * colisão real não serve aqui.
+ * Serve tanto para arrastar quanto para desenhar. Plano matemático, e não um
+ * mesh invisível de colisão: o mesh para de receber evento assim que o cursor
+ * passa por cima de outra peça, e o objeto "gruda" no meio do caminho.
  */
-function ArrastoNoPlano({
-  arrasto,
-  onArrastar,
+function PonteiroNoPlano({
+  ativo,
+  altura,
+  onMover,
   onSoltar,
 }: {
-  arrasto: { tipo: "elemento" | "ativo"; id: string; alturaBase: number; dx: number; dz: number } | null;
-  livre: boolean;
-  onArrastar: (x: number, z: number) => void;
+  ativo: boolean;
+  altura: number;
+  onMover: (x: number, z: number) => void;
   onSoltar: () => void;
 }) {
   const { camera, gl } = useThree();
@@ -427,8 +537,8 @@ function ArrastoNoPlano({
   const ponteiro = useRef(new THREE.Vector2());
 
   useEffect(() => {
-    if (!arrasto) return;
-    const plano = new THREE.Plane(new THREE.Vector3(0, 1, 0), -arrasto.alturaBase);
+    if (!ativo) return;
+    const plano = new THREE.Plane(new THREE.Vector3(0, 1, 0), -altura);
     const el = gl.domElement;
 
     const mover = (ev: PointerEvent) => {
@@ -439,23 +549,21 @@ function ArrastoNoPlano({
       );
       raycaster.current.setFromCamera(ponteiro.current, camera);
       if (raycaster.current.ray.intersectPlane(plano, alvo.current)) {
-        onArrastar(alvo.current.x - arrasto.dx, alvo.current.z - arrasto.dz);
+        onMover(alvo.current.x, alvo.current.z);
       }
     };
-    const soltar = () => onSoltar();
 
     el.addEventListener("pointermove", mover);
-    window.addEventListener("pointerup", soltar);
+    window.addEventListener("pointerup", onSoltar);
     return () => {
       el.removeEventListener("pointermove", mover);
-      window.removeEventListener("pointerup", soltar);
+      window.removeEventListener("pointerup", onSoltar);
     };
-  }, [arrasto, camera, gl, onArrastar, onSoltar]);
+  }, [ativo, altura, camera, gl, onMover, onSoltar]);
 
   return null;
 }
 
-/** Legenda dos status, para a tela não precisar repetir as cores. */
 export function LegendaStatus() {
   return (
     <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
@@ -472,5 +580,4 @@ export function LegendaStatus() {
   );
 }
 
-/** Ícone do tipo, reexportado para as telas montarem paletas sem reimportar. */
 export const iconeDoTipo = (tipo: string) => tipoAtivo(tipo).icone;

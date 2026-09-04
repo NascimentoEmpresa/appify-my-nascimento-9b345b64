@@ -106,6 +106,71 @@ export function dimensoesAtivo(ativo: TiAtivo): { largura: number; profundidade:
 export const rad = (graus: number): number => (-(Number(graus) || 0) * Math.PI) / 180;
 
 /**
+ * Converte um traço no chão (do ponto A ao ponto B) no retângulo da peça.
+ *
+ * É o que faz "arrastar para desenhar uma parede" funcionar: o comprimento
+ * vem da distância entre os dois pontos, a espessura é a do catálogo, e o
+ * giro é o ângulo do traço.
+ *
+ * SOBRE O SINAL DO ÂNGULO: na cena, rotação Y positiva leva +X na direção
+ * -Z, e `rad()` já inverte o sinal ao converter. Por isso o ângulo aqui é o
+ * `atan2` direto, sem negativo — as duas inversões se cancelam. Trocar um
+ * sinal só aqui espelha todas as paredes tortas do escritório.
+ *
+ * Devolve o CENTRO (que é como a cena posiciona) e também o canto, que é o
+ * que o banco guarda.
+ */
+export function retanguloDoTraco(
+  x1: number,
+  y1: number,
+  x2: number,
+  y2: number,
+  espessura: number,
+): {
+  centroX: number;
+  centroY: number;
+  x: number;
+  y: number;
+  largura: number;
+  profundidade: number;
+  rotacao: number;
+} {
+  const dx = x2 - x1;
+  const dy = y2 - y1;
+  const comprimento = Math.round(Math.hypot(dx, dy));
+  const rotacao = (Math.atan2(dy, dx) * 180) / Math.PI;
+  const centroX = Math.round((x1 + x2) / 2);
+  const centroY = Math.round((y1 + y2) / 2);
+  return {
+    centroX,
+    centroY,
+    x: Math.round(centroX - comprimento / 2),
+    y: Math.round(centroY - espessura / 2),
+    largura: comprimento,
+    profundidade: espessura,
+    rotacao: Math.round(rotacao * 10) / 10,
+  };
+}
+
+/**
+ * Retângulo alinhado aos eixos a partir de dois cantos — para ambientes
+ * (sala, copa) e móveis dimensionados no arrasto, que não giram com o traço.
+ */
+export function retanguloDeCantos(
+  x1: number,
+  y1: number,
+  x2: number,
+  y2: number,
+): { x: number; y: number; largura: number; profundidade: number } {
+  return {
+    x: Math.round(Math.min(x1, x2)),
+    y: Math.round(Math.min(y1, y2)),
+    largura: Math.round(Math.abs(x2 - x1)),
+    profundidade: Math.round(Math.abs(y2 - y1)),
+  };
+}
+
+/**
  * Enquadramento inicial da câmera para uma planta de LxA cm.
  *
  * A distância sai do tamanho do ambiente para que uma sala de 8 m e um andar

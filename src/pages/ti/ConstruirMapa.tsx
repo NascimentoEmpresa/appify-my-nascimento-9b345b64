@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
-  Building2, Grid3x3, Hammer, Layers, MousePointer2, Move3d, Package, Plus,
+  Building2, Copy, Grid3x3, Hammer, Layers, MousePointer2, Move3d, Package, Plus,
   RotateCw, Ruler, Tag, Trash2, X,
 } from "lucide-react";
 import { PageHeader } from "@/components/layout/PageHeader";
@@ -29,8 +29,8 @@ import { AtivoDialog } from "./mapa/AtivoDialog";
 import {
   PALETA, STATUS_ATIVO, TIPOS_ELEMENTO, cmParaMetros, statusAtivo, tipoAtivo, tipoElemento,
 } from "./mapa/catalogo";
-import { alturaDoElemento } from "./mapa3d/apoio";
-import { Cena3D, type SelecaoCena } from "./mapa3d/Cena3D";
+import { alturaDoElemento, retanguloDeCantos, retanguloDoTraco } from "./mapa3d/apoio";
+import { Cena3D, type SelecaoCena, type TracoNoChao } from "./mapa3d/Cena3D";
 
 /**
  * T.I › Construir o mapa — o editor da planta em 3D.
@@ -120,6 +120,7 @@ export default function ConstruirMapa() {
       if (e.key === "Escape") { setFerramenta({ tipo: "selecao" }); setSelecao(null); }
       if ((e.key === "Delete" || e.key === "Backspace") && selecao) { e.preventDefault(); pedirRemocao(); }
       if (e.key.toLowerCase() === "r" && selecao) girar(45);
+      if (e.key.toLowerCase() === "d" && elementoSel) duplicar();
     };
     window.addEventListener("keydown", h);
     return () => window.removeEventListener("keydown", h);
@@ -140,28 +141,80 @@ export default function ConstruirMapa() {
     }
   };
 
-  /** Clique no chão: coloca o que estiver na mão. */
-  const clicarNoChao = (x: number, y: number) => {
+  /**
+   * O traço no chão vira peça.
+   *
+   * Parede, divisória e janela nascem do ARRASTO: comprimento e ângulo saem
+   * do traço, como se desenha numa planta. Clicar e digitar o comprimento num
+   * campo — o que esta tela fazia antes — é o caminho mais lento possível
+   * para desenhar uma sala.
+   *
+   * Ambiente (sala, copa) usa os dois cantos como retângulo. Mobília aceita os
+   * dois jeitos: clique seco põe no tamanho de catálogo, arrasto dimensiona.
+   *
+   * A ferramenta CONTINUA ativa depois de criar — quem está levantando as
+   * paredes de uma sala desenha quatro seguidas; voltar para o cursor a cada
+   * peça obrigava a reescolher a mesma ferramenta o tempo todo. Esc larga.
+   */
+  const desenharNoChao = (t: TracoNoChao) => {
     if (!planta) return;
-    if (ferramenta.tipo === "elemento") {
-      const def = tipoElemento(ferramenta.valor);
+
+    if (ferramenta.tipo === "ativo") {
+      posicionar.mutate({ id: ferramenta.id, planta_id: planta.id, pos_x: t.x2, pos_y: t.y2 });
+      setFerramenta({ tipo: "selecao" });
+      return;
+    }
+    if (ferramenta.tipo !== "elemento") return;
+
+    const def = tipoElemento(ferramenta.valor);
+    const arrastou = Math.hypot(t.x2 - t.x1, t.y2 - t.y1) > 30;
+
+    if (!arrastou) {
+      // Clique seco: peça no tamanho de catálogo, centrada no ponto.
       salvarElemento.mutate({
         planta_id: planta.id,
         tipo: ferramenta.valor,
-        // O clique é o CENTRO da peça; o banco guarda o canto.
-        x: Math.round(x - def.largura / 2),
-        y: Math.round(y - def.altura / 2),
+        x: Math.round(t.x1 - def.largura / 2),
+        y: Math.round(t.y1 - def.altura / 2),
         largura: def.largura,
         altura: def.altura,
         altura_z: def.alturaZ,
       });
-      setFerramenta({ tipo: "selecao" });
       return;
     }
-    if (ferramenta.tipo === "ativo") {
-      posicionar.mutate({ id: ferramenta.id, planta_id: planta.id, pos_x: x, pos_y: y });
-      setFerramenta({ tipo: "selecao" });
+
+    if (def.familia === "estrutura") {
+      const r = retanguloDoTraco(t.x1, t.y1, t.x2, t.y2, def.altura);
+      salvarElemento.mutate({
+        planta_id: planta.id,
+        tipo: ferramenta.valor,
+        x: r.x,
+        y: r.y,
+        largura: Math.max(10, r.largura),
+        altura: r.profundidade,
+        rotacao: r.rotacao,
+        altura_z: def.alturaZ,
+      });
+      return;
     }
+
+    const r = retanguloDeCantos(t.x1, t.y1, t.x2, t.y2);
+    salvarElemento.mutate({
+      planta_id: planta.id,
+      tipo: ferramenta.valor,
+      x: r.x,
+      y: r.y,
+      largura: Math.max(10, r.largura),
+      altura: Math.max(10, r.profundidade),
+      altura_z: def.alturaZ,
+    });
+  };
+
+  /** Copia a peça selecionada 50 cm ao lado — o jeito rápido de fazer fileira de mesas. */
+  const duplicar = () => {
+    if (!planta || !elementoSel) return;
+    const { id, ...resto } = elementoSel;
+    salvarElemento.mutate({ ...resto, planta_id: planta.id, x: Number(elementoSel.x) + 50, y: Number(elementoSel.y) + 50 });
   };
 
   const confirmarRemocao = () => {
@@ -257,6 +310,11 @@ export default function ConstruirMapa() {
                 <Button variant="outline" size="sm" onClick={() => girar(45)}>
                   <RotateCw className="mr-1.5 h-4 w-4" /> Girar
                 </Button>
+                {elementoSel && (
+                  <Button variant="outline" size="sm" onClick={duplicar}>
+                    <Copy className="mr-1.5 h-4 w-4" /> Duplicar
+                  </Button>
+                )}
                 {/* Remover, lugar 1 de 3: sempre visível enquanto há seleção. */}
                 {podeRemoverAgora && (
                   <Button variant="destructive" size="sm" onClick={pedirRemocao}>
@@ -272,7 +330,9 @@ export default function ConstruirMapa() {
             {ferramenta.tipo !== "selecao" && (
               <span className="ml-auto flex items-center gap-2 rounded-full bg-sky-600 px-3 py-1 text-xs font-semibold text-white">
                 <Move3d className="h-3.5 w-3.5" />
-                Clique no chão para colocar
+                {ferramenta.tipo === "elemento" && tipoElemento(ferramenta.valor).familia === "estrutura"
+                  ? "Arraste no chão para desenhar"
+                  : "Clique no chão para colocar"}
                 {ferramenta.tipo === "ativo" ? ` “${ferramenta.nome}”` : ` ${tipoElemento(ferramenta.valor).label}`}
                 <button type="button" onClick={() => setFerramenta({ tipo: "selecao" })} className="ml-1 opacity-80 hover:opacity-100">
                   <X className="h-3.5 w-3.5" />
@@ -376,16 +436,16 @@ export default function ConstruirMapa() {
                 editavel
                 mostrarGrade={grade}
                 mostrarRotulos={rotulos}
-                onClicarNoChao={clicarNoChao}
-                onMoverElemento={(id, x, y) => {
+                desenhando={ferramenta.tipo !== "selecao"}
+                onDesenharNoChao={desenharNoChao}
+                onSoltarElemento={(id, x, y) => {
                   const el = elementos.find((e) => e.id === id);
                   if (!el) return;
-                  // O arrasto entrega o CENTRO; o banco guarda o canto.
+                  // Uma gravação por arrasto, no soltar. O arrasto entrega o
+                  // CENTRO; o banco guarda o canto.
                   salvarElemento.mutate({ ...el, x: x - Number(el.largura) / 2, y: y - Number(el.altura) / 2 });
                 }}
-                onMoverAtivo={(id, x, y) => {
-                  const a = ativos.find((z) => z.id === id);
-                  if (!a) return;
+                onSoltarAtivo={(id, x, y) => {
                   posicionar.mutate({ id, planta_id: planta.id, pos_x: x, pos_y: y });
                 }}
                 onAbrirFicha={(id) => {
@@ -407,9 +467,10 @@ export default function ConstruirMapa() {
                   </p>
                   <Separator className="my-2" />
                   <ul className="space-y-1 text-left text-[11px] text-muted-foreground">
+                    <li><b>Arraste no chão</b> com Parede na mão para desenhar</li>
                     <li><b>Arrastar</b> a peça move no chão</li>
                     <li><b>Alt</b> enquanto arrasta ignora a grade</li>
-                    <li><b>R</b> gira 45°, <b>Delete</b> remove</li>
+                    <li><b>R</b> gira 45°, <b>D</b> duplica, <b>Delete</b> remove</li>
                     <li><b>Duplo clique</b> num equipamento abre a ficha</li>
                   </ul>
                 </div>

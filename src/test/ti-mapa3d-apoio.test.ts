@@ -7,6 +7,8 @@ import {
   dentro,
   pegadaDoElemento,
   rad,
+  retanguloDeCantos,
+  retanguloDoTraco,
   snap,
 } from "@/pages/ti/mapa3d/apoio";
 import type { TiAtivo, TiElemento } from "@/hooks/useTiMapa";
@@ -157,5 +159,46 @@ describe("câmera inicial", () => {
   it("olha de cima e de fora — nunca de dentro do piso", () => {
     const [, y] = camaraInicial(2400, 1600);
     expect(y).toBeGreaterThan(0);
+  });
+});
+
+describe("retanguloDoTraco — desenhar parede arrastando", () => {
+  it("uma parede horizontal tem o comprimento do traço e giro zero", () => {
+    const r = retanguloDoTraco(100, 200, 500, 200, 15);
+    expect(r.largura).toBe(400);
+    expect(r.profundidade).toBe(15);
+    expect(r.rotacao).toBe(0);
+    // O banco guarda o canto; a cena posiciona pelo centro.
+    expect(r.centroX).toBe(300);
+    expect(r.x).toBe(100);
+  });
+
+  it("uma parede vertical sai com 90°", () => {
+    const r = retanguloDoTraco(100, 100, 100, 400, 15);
+    expect(r.largura).toBe(300);
+    expect(r.rotacao).toBe(90);
+  });
+
+  it("mede a diagonal pela distância, não pela soma dos lados", () => {
+    const r = retanguloDoTraco(0, 0, 300, 400, 15);
+    expect(r.largura).toBe(500);
+    expect(r.rotacao).toBeCloseTo(53.1, 0);
+  });
+
+  it("aceita o traço desenhado de trás para frente", () => {
+    const ida = retanguloDoTraco(100, 200, 500, 200, 15);
+    const volta = retanguloDoTraco(500, 200, 100, 200, 15);
+    expect(volta.largura).toBe(ida.largura);
+    expect(volta.centroX).toBe(ida.centroX);
+    // 180° desenha a mesma parede — o retângulo é simétrico.
+    expect(Math.abs(volta.rotacao)).toBe(180);
+  });
+});
+
+describe("retanguloDeCantos — ambientes e móveis dimensionados", () => {
+  it("normaliza os cantos, arrastando em qualquer direção", () => {
+    const a = retanguloDeCantos(500, 400, 100, 100);
+    expect(a).toEqual({ x: 100, y: 100, largura: 400, profundidade: 300 });
+    expect(retanguloDeCantos(100, 100, 500, 400)).toEqual(a);
   });
 });
