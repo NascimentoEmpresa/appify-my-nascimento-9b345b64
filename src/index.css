@@ -400,3 +400,20 @@
 @media (prefers-reduced-motion: reduce) {
   .sh-entra { animation: none; }
 }
+
+/* ---------------------------------------------------------------------
+   Leaflet preso na própria caixa.
+
+   O Leaflet dá z-index 1000 aos containers de controle (.leaflet-top /
+   .leaflet-bottom) e nada ao .leaflet-container. Sem um contexto de
+   empilhamento próprio, o zoom "+/−" e a atribuição "© OpenStreetMap"
+   sobem por cima de qualquer overlay do ERP — o drawer de Patrimônios é
+   z-index 680, então os dois apareciam FLUTUANDO sobre o painel aberto,
+   nítidos no meio do fundo desfocado.
+
+   `position: relative` + `z-index: 0` no container resolve de uma vez: os
+   filhos passam a empilhar DENTRO dele, e 1000 vira 1000 relativo ao mapa,
+   não à página. Vale para as três telas que usam Leaflet (Patrimônios,
+   Painel Executivo e o seletor de mapa do SST).
+--------------------------------------------------------------------- */
+.leaflet-container { position: relative; z-index: 0; }
