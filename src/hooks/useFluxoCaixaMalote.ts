@@ -54,3 +54,27 @@ export function useFluxoCaixaMalote() {
     },
   });
 }
+
+// SIS-2026-0256: fonte combinada da tela /app/financeiro/gestao-financeira/
+// fluxo-caixa — Pagamento Malote (só saída) + Débito Automático (entrada e
+// saída, itens "pago" que não passam pelo Malote). Colunas alinhadas 1:1
+// (v_debito_automatico_fluxo_caixa entrega banco/parcela como NULL) — dá pra
+// concatenar direto sem transformação. Cartão de Crédito continua só na
+// fonte do Malote (useFluxoCaixaMalote), sem mudança — Débito Automático não
+// tem relação com cartão.
+export function useFluxoCaixaCombinado() {
+  return useQuery({
+    queryKey: ["fluxo_caixa_combinado"],
+    queryFn: async () => {
+      const [malote, debitoAutomatico] = await Promise.all([
+        (supabase as any).from("v_malote_pagamento_fluxo_caixa").select("*"),
+        (supabase as any).from("v_debito_automatico_fluxo_caixa").select("*"),
+      ]);
+      if (malote.error) throw malote.error;
+      if (debitoAutomatico.error) throw debitoAutomatico.error;
+      const linhas = [...(malote.data ?? []), ...(debitoAutomatico.data ?? [])] as FluxoCaixaMaloteLinha[];
+      linhas.sort((a, b) => (b.data_pagamento ?? "").localeCompare(a.data_pagamento ?? ""));
+      return linhas;
+    },
+  });
+}
