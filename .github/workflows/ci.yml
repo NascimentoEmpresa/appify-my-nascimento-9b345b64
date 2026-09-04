@@ -147,8 +147,56 @@ jobs:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
 
+      # ------------------------------------------------------------------
+      # 04/09/2026 — por que o node_modules virou cache
+      #
+      # Entre 10:37 e 11:35 de 04/09 o `npm ci` deste repositório passou de
+      # 8-12s para 234s, 240s, 306s, 422s e 423s. Não foi mudança nossa: às
+      # 11:39 já estava de volta em 12s. O log mostra onde travou — os avisos
+      # de pacote depreciado saem todos em 11:30:37 (resolver o lockfile é
+      # instantâneo) e a linha seguinte é 11:37:36, "added 699 packages in
+      # 7m". Ou seja: sete minutos parados baixando tarball do registry.
+      #
+      # Naquela janela isso derrubou os quatro jobs de uma vez (cada um roda
+      # o seu `npm ci`) e também o workflow de DM do Discord, que instalava
+      # 718 pacotes para mandar uma mensagem. O type-check, esse, seguiu em
+      # 5-7s o tempo todo — o cache dele não teve nada a ver com o problema.
+      #
+      # O `cache: npm` do setup-node acima NÃO resolve isso sozinho: ele
+      # guarda o ~/.npm (os tarballes baixados), mas o `npm ci` continua
+      # apagando e remontando o node_modules e batendo no registry para
+      # revalidar. Por isso duas mudanças:
+      #
+      #   1. Cachear o node_modules pronto, com a chave saindo do
+      #      package-lock.json. Com acerto, o `npm ci` nem roda: é extrair um
+      #      tar. O registry sai do caminho crítico.
+      #   2. Quando erra (lockfile mudou), o `npm ci` roda com
+      #      --prefer-offline, que manda o npm usar o que já está no ~/.npm
+      #      antes de pedir à rede, e sem --audit/--fund, que são duas idas
+      #      ao registry que não servem para nada dentro do CI.
+      #
+      # Não é imunidade total: registry fora do ar com lockfile novo continua
+      # sendo registry fora do ar. É tirar o caso comum da dependência dele.
+      #
+      # AVISO ESPERADO NO LOG, não é falha: como os quatro jobs rodam juntos
+      # e usam a mesma chave, quando o lockfile muda os quatro erram o cache
+      # ao mesmo tempo e os quatro tentam gravar. Um consegue; os outros três
+      # terminam com "Failed to save: Unable to reserve cache ..., another job
+      # may be creating this cache". O cache fica salvo do mesmo jeito
+      # (conferido: 76 MB gravados no run 33869808944) e o job segue verde.
+      # Evitar o aviso exigiria serializar os jobs, que é justamente o que
+      # esta separação em quatro existe para não fazer.
+      # ------------------------------------------------------------------
+      - name: Cache do node_modules
+        id: node-modules
+        uses: actions/cache@v4
+        with:
+          path: node_modules
+          key: nm-${{ runner.os }}-node${{ env.NODE_VERSION }}-${{ hashFiles('package-lock.json') }}
+
       - name: Instalar dependências
-        run: npm ci
+        if: steps.node-modules.outputs.cache-hit != 'true'
+        run: npm ci --prefer-offline --no-audit --no-fund
 
       # O cache guarda o .tsbuildinfo: o estado do compilador (versão de cada
       # arquivo mais os diagnósticos já calculados).
@@ -293,8 +341,15 @@ jobs:
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
+      - name: Cache do node_modules
+        id: node-modules
+        uses: actions/cache@v4
+        with:
+          path: node_modules
+          key: nm-${{ runner.os }}-node${{ env.NODE_VERSION }}-${{ hashFiles('package-lock.json') }}
       - name: Instalar dependências
-        run: npm ci
+        if: steps.node-modules.outputs.cache-hit != 'true'
+        run: npm ci --prefer-offline --no-audit --no-fund
       - name: Testes
         run: npm test
 
@@ -311,8 +366,15 @@ jobs:
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
+      - name: Cache do node_modules
+        id: node-modules
+        uses: actions/cache@v4
+        with:
+          path: node_modules
+          key: nm-${{ runner.os }}-node${{ env.NODE_VERSION }}-${{ hashFiles('package-lock.json') }}
       - name: Instalar dependências
-        run: npm ci
+        if: steps.node-modules.outputs.cache-hit != 'true'
+        run: npm ci --prefer-offline --no-audit --no-fund
       - name: Build de produção
         run: npm run build
 
@@ -334,8 +396,15 @@ jobs:
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
+      - name: Cache do node_modules
+        id: node-modules
+        uses: actions/cache@v4
+        with:
+          path: node_modules
+          key: nm-${{ runner.os }}-node${{ env.NODE_VERSION }}-${{ hashFiles('package-lock.json') }}
       - name: Instalar dependências
-        run: npm ci
+        if: steps.node-modules.outputs.cache-hit != 'true'
+        run: npm ci --prefer-offline --no-audit --no-fund
       - name: Lint dos arquivos da PR (aviso)
         continue-on-error: true
         env:
