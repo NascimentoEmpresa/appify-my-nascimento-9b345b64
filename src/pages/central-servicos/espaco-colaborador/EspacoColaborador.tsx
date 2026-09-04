@@ -349,8 +349,10 @@ function NoDeContrato({
   const { data: pessoas = [], isFetching } = useColaboradoresDoContrato(contrato.id, aberto);
 
   const { supervisores, encarregados, postos } = useMemo(() => {
-    const supervisores = pessoas.filter((p) => ehSupervisor(p.nivel));
-    const encarregados = pessoas.filter((p) => ehEncarregado(p.nivel));
+    // Pelo CARGO, não pela coluna "LIDER" — ver o comentário em ehSupervisor:
+    // no banco real ela é "não"/vazio em 97% das linhas.
+    const supervisores = pessoas.filter(ehSupervisor);
+    const encarregados = pessoas.filter(ehEncarregado);
     // Chefia sai do agrupamento por posto para não aparecer duas vezes na
     // mesma árvore — quem lê contaria a mesma pessoa em dois lugares.
     const chefia = new Set([...supervisores, ...encarregados].map((p) => p.empregado_id));
@@ -413,7 +415,7 @@ function NoDeContrato({
         icone={ShieldCheck}
         pessoas={supervisores}
         modo={modo}
-        vazio="Ninguém com nível SUPERVISOR neste contrato."
+        vazio="Nenhum cargo de supervisão neste contrato."
       />
 
       <RamoDeChefia
@@ -421,7 +423,7 @@ function NoDeContrato({
         icone={UserCog}
         pessoas={encarregados}
         modo={modo}
-        vazio="Ninguém com nível ENCARREGADO neste contrato."
+        vazio="Nenhum cargo de encarregado neste contrato."
         designado={contrato.encarregado_designado}
       />
 
