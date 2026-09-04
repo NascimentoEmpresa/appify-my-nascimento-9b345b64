@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { useParams } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
+import type { SupabaseClient } from "@supabase/supabase-js";
 import { useAuth } from "@/hooks/useAuth";
 import { useVinculoEmpregado } from "@/hooks/useVinculoEmpregado";
 import logoNascimento from "@/assets/logo-nascimento-icon.png";
@@ -182,17 +183,31 @@ function SuccessScreen() {
 // Suprimentos/Financeiro e um registro falso lá apareceria em emissão de NF,
 // malote e planilha de custo. Como o valor gravado é o nome, "ADMINISTRATIVO"
 // chega em Respostas igual a qualquer outro.
-const CONTRATO_ADMINISTRATIVO: { id: string; nome: string; cliente: string | null } =
+/** O que a pergunta usa de um contrato — o resto das colunas nem é lido. */
+type OpcaoContrato = { id: string; nome: string; cliente: string | null };
+
+const CONTRATO_ADMINISTRATIVO: OpcaoContrato =
   { id: "__administrativo__", nome: "ADMINISTRATIVO", cliente: null };
 
-function ContratoSelect({ value, multiplos, onChange }: { value: any; multiplos: boolean; onChange: (v: any) => void }) {
-  const [contratos, setContratos] = useState<{ id: string; nome: string; cliente: string | null }[]>([]);
+// `contratos` NÃO está no types.ts gerado pelo Lovable, então o client tipado
+// trata a tabela como inexistente e reclama de toda coluna ("id" não é
+// atribuível a never). Mesmo escape do useContratosERP, só que pelo tipo do
+// próprio SDK em vez de `as any` — o client continua o mesmo, o que cai é só
+// o conhecimento do schema.
+const sbSemSchema = supabase as unknown as SupabaseClient;
+
+function ContratoSelect({ value, multiplos, onChange }: {
+  value: string | string[] | null;
+  multiplos: boolean;
+  onChange: (v: string | string[]) => void;
+}) {
+  const [contratos, setContratos] = useState<OpcaoContrato[]>([]);
   const [estado, setEstado] = useState<"carregando" | "ok" | "erro">("carregando");
   const [busca, setBusca] = useState("");
 
   useEffect(() => {
     (async () => {
-      const { data, error } = await (supabase as any)
+      const { data, error } = await sbSemSchema
         .from("contratos")
         .select("id,nome,cliente")
         .eq("status", "ativo")
@@ -202,8 +217,8 @@ function ContratoSelect({ value, multiplos, onChange }: { value: any; multiplos:
       // por nome, então dois contratos homônimos ficariam marcados juntos.
       const vistos = new Set<string>();
       setContratos((data ?? [])
-        .map((r: any) => ({ id: String(r.id), nome: String(r.nome ?? "").trim(), cliente: r.cliente ?? null }))
-        .filter((c: any) => c.nome && !vistos.has(c.nome) && vistos.add(c.nome)));
+        .map((r): OpcaoContrato => ({ id: String(r.id), nome: String(r.nome ?? "").trim(), cliente: r.cliente ?? null }))
+        .filter((c) => c.nome && !vistos.has(c.nome) && vistos.add(c.nome)));
       setEstado("ok");
     })();
   }, []);
