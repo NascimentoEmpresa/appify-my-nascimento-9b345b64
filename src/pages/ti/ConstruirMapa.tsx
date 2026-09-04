@@ -77,7 +77,16 @@ export default function ConstruirMapa() {
   const [grade, setGrade] = useState(true);
   const [verTodosAndares, setVerTodosAndares] = useState(false);
   const [passoCm, setPassoCm] = useState<number>(PASSO_PADRAO_CM);
-  const [rotulos, setRotulos] = useState(true);
+  /**
+   * Nomes DESLIGADOS por padrão.
+   *
+   * Com meia dúzia de equipamentos numa mesa, as etiquetas se empilham e
+   * cobrem justamente o que se quer olhar — o print de uma bancada com
+   * teclado, mouse e monitor virava uma pilha de retângulos pretos.
+   * Quem precisa do nome tem três caminhos: passar o mouse por cima,
+   * selecionar a peça, ou ligar o botão de etiquetas na barra.
+   */
+  const [rotulos, setRotulos] = useState(false);
   const [plantaDialog, setPlantaDialog] = useState<Partial<TiPlanta> | null>(null);
   const [fichaAberta, setFichaAberta] = useState<TiAtivo | null | undefined>(undefined);
   const [confirmar, setConfirmar] = useState<{ tipo: "ativo" | "elemento"; id: string; nome: string } | null>(null);
