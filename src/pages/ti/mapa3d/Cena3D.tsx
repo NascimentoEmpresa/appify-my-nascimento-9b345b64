@@ -218,6 +218,21 @@ function Conteudo({
   }, []);
 
   /**
+   * Dado novo = um quadro novo.
+   *
+   * Com  o canvas só redesenha quando alguém pede. É o que
+   * mantém a GPU quieta com o escritório parado na tela — e é também o que
+   * fazia a peça recém-criada NÃO APARECER: os dados chegavam, o React
+   * re-renderizava a árvore, e o desenho só saía quando algo por acaso pedia
+   * um quadro (girar a câmera, passar o mouse) ou ao recarregar a página.
+   *
+   * Toda entrada de dado que muda a cena precisa passar por aqui.
+   */
+  useEffect(() => {
+    invalidate();
+  }, [elementos, ativos, celulas, planta, andaresVizinhos, mostrarGrade, mostrarRotulos, destaque, selecao, invalidate]);
+
+  /**
    * Trocar de peça zera o que estava em curso.
    *
    * Sem isto, um redimensionamento interrompido (o mouse soltou fora do

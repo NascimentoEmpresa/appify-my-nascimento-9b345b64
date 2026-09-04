@@ -29,7 +29,7 @@ import {
 } from "@/hooks/useTiMapa";
 import { AtivoDialog } from "./mapa/AtivoDialog";
 import {
-  PALETA, PASSOS_DE_MOVIMENTO, PASSO_PADRAO_CM, STATUS_ATIVO, TIPOS_ELEMENTO,
+  PALETA, PASSOS_DE_MOVIMENTO, PASSO_PADRAO_CM, STATUS_ATIVO, TIPOS_ATIVO, TIPOS_ELEMENTO,
   cmParaMetros, statusAtivo, tipoAtivo, tipoElemento,
 } from "./mapa/catalogo";
 import { alturaDoElemento, cantoDaPeca, retanguloDeCantos, retanguloDoTraco } from "./mapa3d/apoio";
@@ -65,7 +65,10 @@ export function nomeDoAndar(nivel: number): string {
 type Ferramenta =
   | { tipo: "selecao" }
   | { tipo: "elemento"; valor: string }
-  | { tipo: "ativo"; id: string; nome: string };
+  /** Equipamento JÁ cadastrado, vindo da bandeja, esperando um lugar. */
+  | { tipo: "ativo"; id: string; nome: string }
+  /** Equipamento NOVO: nasce no clique, com nome automático. */
+  | { tipo: "novo_ativo"; valor: string };
 
 export default function ConstruirMapa() {
   const [plantaId, setPlantaId] = useState<string | null>(null);
@@ -249,6 +252,11 @@ export default function ConstruirMapa() {
       setFerramenta({ tipo: "selecao" });
       return;
     }
+
+    if (ferramenta.tipo === "novo_ativo") {
+      criarAtivoNoMapa(ferramenta.valor, t.x1, t.y1);
+      return;
+    }
     if (ferramenta.tipo !== "elemento") return;
 
     const def = tipoElemento(ferramenta.valor);
@@ -293,6 +301,43 @@ export default function ConstruirMapa() {
       altura: Math.max(10, r.profundidade),
       altura_z: def.alturaZ,
     });
+  };
+
+  /**
+   * Põe um equipamento NOVO direto no mapa, já posicionado.
+   *
+   * Antes, colocar um monitor exigia abrir a ficha de patrimônio (cinco abas,
+   * dezenas de campos) só para depois arrastá-lo da bandeja. Quem está
+   * montando o layout quer o contrário: põe o objeto, e preenche a ficha
+   * quando for inventariar.
+   *
+   * O nome sai automático e numerado por tipo ("Monitor 3") porque `nome` é
+   * obrigatório no banco — e um campo obrigatório no meio do fluxo de montar a
+   * sala é exatamente o que trava esse fluxo. O código TI-0000 continua vindo
+   * do trigger, e a ficha completa segue disponível no duplo clique.
+   */
+  const criarAtivoNoMapa = (tipo: string, x: number, y: number) => {
+    if (!planta) return;
+    const def = tipoAtivo(tipo);
+    const quantos = ativos.filter((a) => a.tipo === tipo).length + 1;
+    salvarAtivo.mutate(
+      {
+        tipo,
+        nome: `${def.label} ${quantos}`,
+        status: "em_uso",
+        planta_id: planta.id,
+        pos_x: x,
+        pos_y: y,
+      },
+      {
+        onSuccess: (novo) => {
+          // Já entrega selecionado: o passo seguinte é sempre ajustar giro,
+          // altura ou abrir a ficha.
+          setSelecao({ tipo: "ativo", id: novo.id });
+          historico.registrar({ tipo: "atualizar_ativo", antes: novo, depois: novo });
+        },
+      },
+    );
   };
 
   /** Copia a peça selecionada 50 cm ao lado — o jeito rápido de fazer fileira de mesas. */
@@ -480,7 +525,11 @@ export default function ConstruirMapa() {
                 {ferramenta.tipo === "elemento" && tipoElemento(ferramenta.valor).familia === "estrutura"
                   ? "Arraste no chão para desenhar"
                   : "Clique no chão para colocar"}
-                {ferramenta.tipo === "ativo" ? ` “${ferramenta.nome}”` : ` ${tipoElemento(ferramenta.valor).label}`}
+                {ferramenta.tipo === "ativo"
+                  ? ` “${ferramenta.nome}”`
+                  : ferramenta.tipo === "novo_ativo"
+                    ? ` ${tipoAtivo(ferramenta.valor).label}`
+                    : ` ${tipoElemento(ferramenta.valor).label}`}
                 <button type="button" onClick={() => setFerramenta({ tipo: "selecao" })} className="ml-1 opacity-80 hover:opacity-100">
                   <X className="h-3.5 w-3.5" />
                 </button>
@@ -497,7 +546,39 @@ export default function ConstruirMapa() {
                 </p>
                 <ScrollArea className="min-h-0 flex-1">
                   <div className="space-y-3 p-2.5">
-                    {(["estrutura", "area", "mobilia"] as const).map((fam) => (
+                    {/* Equipamentos primeiro: é o que se coloca mais, e antes
+                    disso a única porta era o cadastro de patrimônio. */}
+                {podeIncluirAtivo && (
+                  <div>
+                    <p className="mb-1.5 text-[11px] font-medium text-muted-foreground">Equipamentos</p>
+                    <div className="grid grid-cols-2 gap-1.5">
+                      {TIPOS_ATIVO.filter((t) => t.valor !== "outro").map((t) => {
+                        const Icone = t.icone;
+                        const ativa = ferramenta.tipo === "novo_ativo" && ferramenta.valor === t.valor;
+                        return (
+                          <button
+                            key={t.valor}
+                            type="button"
+                            onClick={() =>
+                              setFerramenta(ativa ? { tipo: "selecao" } : { tipo: "novo_ativo", valor: t.valor })
+                            }
+                            className={cn(
+                              "flex flex-col items-center gap-1 rounded-md border p-2 text-[11px] font-medium transition",
+                              ativa ? "border-primary bg-primary/10 text-primary" : "hover:border-primary/40 hover:bg-muted",
+                            )}
+                          >
+                            <span className="flex h-6 w-6 items-center justify-center rounded text-white" style={{ background: t.cor }}>
+                              <Icone className="h-3.5 w-3.5" />
+                            </span>
+                            <span className="truncate">{t.label}</span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+
+                {(["estrutura", "area", "mobilia"] as const).map((fam) => (
                       <div key={fam}>
                         <p className="mb-1.5 text-[11px] font-medium capitalize text-muted-foreground">
                           {fam === "estrutura" ? "Estrutura" : fam === "area" ? "Ambientes" : "Mobília"}

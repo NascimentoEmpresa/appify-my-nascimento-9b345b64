@@ -51,6 +51,17 @@ function Desktop({ cor, largura, profundidade, altura, ligado }: PropsModelo) {
         <planeGeometry args={[largura * 0.8, altura * 0.12]} />
         <meshStandardMaterial color={PRETO} roughness={0.6} />
       </mesh>
+      {/* Ventoinha frontal: o círculo escuro que se enxerga em qualquer
+          gabinete visto de frente. */}
+      <mesh position={[-largura * 0.22, altura * 0.35, profundidade / 2 + 0.003]}>
+        <ringGeometry args={[Math.min(0.03, largura * 0.14), Math.min(0.05, largura * 0.22), 16]} />
+        <meshStandardMaterial color={PRETO} roughness={0.8} />
+      </mesh>
+      {/* Painel lateral, um tom mais escuro — quebra o bloco de cor única. */}
+      <mesh position={[largura / 2 + 0.002, altura / 2, 0]} rotation={[0, Math.PI / 2, 0]}>
+        <planeGeometry args={[profundidade * 0.88, altura * 0.86]} />
+        <meshStandardMaterial color={sombrear(cor, -10)} roughness={0.55} metalness={0.3} />
+      </mesh>
       <mesh position={[largura * 0.3, altura * 0.28, profundidade / 2 + 0.004]}>
         <circleGeometry args={[Math.min(0.012, largura * 0.06), 12]} />
         <meshStandardMaterial
@@ -410,36 +421,70 @@ function Mesa({ cor, largura, profundidade, altura }: PropsModelo) {
 }
 
 function Cadeira({ cor, largura, profundidade, altura }: PropsModelo) {
-  const assento = altura * 0.48;
+  const assento = altura * 0.46;
+  const raioBase = largura * 0.32;
   return (
     <group>
-      <mesh castShadow position={[0, assento, 0]}>
-        <boxGeometry args={[largura * 0.9, 0.07, profundidade * 0.9]} />
-        <meshStandardMaterial color={cor} roughness={0.75} />
+      {/* assento levemente mais fundo que largo, com a frente arredondada
+          sugerida pelo chanfro do cilindro achatado */}
+      <mesh castShadow receiveShadow position={[0, assento, 0]}>
+        <boxGeometry args={[largura * 0.9, 0.08, profundidade * 0.88]} />
+        <meshStandardMaterial color={cor} roughness={0.85} />
       </mesh>
-      <mesh castShadow position={[0, assento + altura * 0.26, -profundidade * 0.4]}>
-        <boxGeometry args={[largura * 0.85, altura * 0.5, 0.06]} />
-        <meshStandardMaterial color={cor} roughness={0.75} />
-      </mesh>
-      <mesh castShadow position={[0, assento / 2, 0]}>
-        <cylinderGeometry args={[0.03, 0.03, assento, 10]} />
-        <meshStandardMaterial color={GRAFITE} metalness={0.6} roughness={0.35} />
-      </mesh>
-      {/* base de 5 pontas, como toda cadeira de escritório */}
-      {Array.from({ length: 5 }).map((_, i) => {
-        const a = (i / 5) * Math.PI * 2;
-        return (
-          // O giro é do MESH, não da geometria: geometry não aceita rotation,
-          // e a perna precisa apontar para fora do centro da base.
-          <mesh
-            key={i}
-            castShadow
-            position={[Math.cos(a) * largura * 0.3, 0.03, Math.sin(a) * largura * 0.3]}
-            rotation={[0, -a, 0]}
-          >
-            <boxGeometry args={[largura * 0.36, 0.04, 0.04]} />
+
+      {/* encosto inclinado para trás — cadeira de escritório não tem encosto
+          a 90°, e é essa inclinação que a distingue de uma cadeira comum */}
+      <group position={[0, assento + 0.04, -profundidade * 0.38]} rotation={[0.14, 0, 0]}>
+        <mesh castShadow position={[0, altura * 0.26, 0]}>
+          <boxGeometry args={[largura * 0.82, altura * 0.5, 0.07]} />
+          <meshStandardMaterial color={cor} roughness={0.85} />
+        </mesh>
+        {/* apoio lombar */}
+        <mesh castShadow position={[0, altura * 0.12, 0.05]}>
+          <boxGeometry args={[largura * 0.7, altura * 0.12, 0.05]} />
+          <meshStandardMaterial color={sombrear(cor, -8)} roughness={0.9} />
+        </mesh>
+      </group>
+
+      {/* braços */}
+      {[-1, 1].map((lado) => (
+        <group key={lado}>
+          <mesh castShadow position={[lado * largura * 0.46, assento + altura * 0.11, -profundidade * 0.05]}>
+            <boxGeometry args={[0.05, 0.05, profundidade * 0.45]} />
+            <meshStandardMaterial color={PRETO} roughness={0.6} />
+          </mesh>
+          <mesh castShadow position={[lado * largura * 0.46, assento + altura * 0.05, -profundidade * 0.22]}>
+            <boxGeometry args={[0.04, altura * 0.13, 0.04]} />
             <meshStandardMaterial color={GRAFITE} metalness={0.5} roughness={0.5} />
           </mesh>
+        </group>
+      ))}
+
+      {/* coluna a gás */}
+      <mesh castShadow position={[0, assento / 2, 0]}>
+        <cylinderGeometry args={[0.028, 0.035, assento, 12]} />
+        <meshStandardMaterial color={METAL} metalness={0.75} roughness={0.28} />
+      </mesh>
+
+      {/* base de 5 pontas COM rodízio na ponta — é o detalhe que faz ler como
+          cadeira de escritório, e não como banco giratório */}
+      {Array.from({ length: 5 }).map((_, i) => {
+        const a = (i / 5) * Math.PI * 2;
+        const px = Math.cos(a) * raioBase;
+        const pz = Math.sin(a) * raioBase;
+        return (
+          <group key={i}>
+            {/* O giro é do MESH, não da geometria: geometry não aceita
+                rotation, e a perna precisa apontar para fora do centro. */}
+            <mesh castShadow position={[px, 0.055, pz]} rotation={[0, -a, 0]}>
+              <boxGeometry args={[raioBase * 1.15, 0.035, 0.045]} />
+              <meshStandardMaterial color={GRAFITE} metalness={0.5} roughness={0.5} />
+            </mesh>
+            <mesh castShadow position={[px * 1.5, 0.025, pz * 1.5]}>
+              <sphereGeometry args={[0.026, 10, 8]} />
+              <meshStandardMaterial color={PRETO} roughness={0.6} />
+            </mesh>
+          </group>
         );
       })}
     </group>
