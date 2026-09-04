@@ -21,9 +21,32 @@ interface Form {
   seguranca?: "liberado" | "restrito"; exige_senha?: boolean;
   permite_anonimo?: boolean; intervalo_horas?: number | null;
 }
+/**
+ * O `config` jsonb da pergunta. Cada tipo usa um punhado destas chaves e
+ * ignora o resto — daí serem todas opcionais. Estão listadas em vez de um
+ * `Record<string, any>` para o editor avisar quando um lado escrever
+ * `multiplo` e o outro ler `multiplos`, que é o erro que o jsonb solto
+ * deixa passar até alguém abrir o formulário.
+ */
+interface ConfigPerg {
+  cor?: string;
+  multiplos?: boolean;
+  outro?: boolean;
+  arquivo_url?: string; arquivo_nome?: string; anexo_resp?: boolean;
+  min?: number; max?: number; rotulo_min?: string; rotulo_max?: string;
+  // Público-alvo da pergunta (união de setores e pessoas).
+  setores?: string[]; pessoas?: string[];
+  // Pergunta "colegas".
+  escala_max?: number; min_colegas?: number; max_colegas?: number;
+  setores_distintos?: boolean; excluir_proprio?: boolean;
+  nota_obrigatoria?: boolean;
+  comentario_rotulo?: string; comentario_desc?: string;
+  comentario_placeholder?: string; comentario_obrigatorio?: boolean;
+}
+
 interface Perg {
   id: string; tipo: string; titulo: string; descricao?: string | null;
-  obrigatoria: boolean; imagem_url?: string | null; opcoes: string[]; config: Record<string, any>;
+  obrigatoria: boolean; imagem_url?: string | null; opcoes: string[]; config: ConfigPerg;
 }
 
 // Escalas de trabalho (enum posto_jornada do banco).
