@@ -38,7 +38,10 @@ export interface FluxoCaixaMaloteLinha {
   numero_parcela: number | null;
   numero_parcelas: number | null;
   valor: number;
-  tipo: "saida";
+  // SIS-2026-0256: até então só existia saída (Malote); Débito Automático
+  // soma entrada também (Nota Recebida, Movimentação Financeira "linha de
+  // entrada").
+  tipo: "entrada" | "saida";
 }
 
 export function useFluxoCaixaMalote() {
