@@ -21526,3 +21526,143 @@ SELECT am.codigo, COALESCE(am.rota, '(capacidade)') AS rota, am.ordem, am.ativo
 --   ALTER TABLE public."TI_PLANTA" DROP COLUMN IF EXISTS pe_direito_cm;
 --   NOTIFY pgrst, 'reload schema';
 -- =====================================================================
+
+-- ===== 20260930000065_ti_catalogo_3d_ampliado =====
+-- =====================================================================
+-- T.I — mais objetos no mapa 3D.
+--
+-- O catálogo nasceu com o essencial (computador, monitor, impressora, rede) e
+-- o escritório de verdade tem mais coisa em cima da mesa: teclado, mouse,
+-- headset, webcam, dock. E a planta precisa de mais móveis para parecer o
+-- andar real — mesa em L, mesa de reunião, gaveteiro, estante, quadro branco,
+-- geladeira e bebedouro da copa, poltrona da recepção.
+--
+-- POR QUE ISTO É UMA MIGRATION, E NÃO SÓ FRONT
+--   Os dois `tipo` são cobrados por CHECK. Acrescentar o tipo apenas no
+--   catálogo do React faz a tela oferecer "Teclado" e o PostgREST devolver 400
+--   ao salvar — a lista do banco e a do front são a MESMA lista escrita duas
+--   vezes, e existe um teste (`src/test/ti-mapa-catalogo.test.ts`) que compara
+--   as duas justamente para isso não passar batido.
+--
+--   Os CHECK são recriados por inteiro (não dá para "adicionar valor" a um
+--   CHECK de lista): DROP + ADD com a lista completa, que é o padrão daqui.
+--   Nenhum valor antigo saiu — só entraram novos —, então nenhuma linha
+--   existente é invalidada.
+--
+-- Idempotente. ROLLBACK no fim.
+-- =====================================================================
+
+-- 1) Equipamentos --------------------------------------------------------
+ALTER TABLE public."TI_ATIVO" DROP CONSTRAINT IF EXISTS "TI_ATIVO_tipo_check";
+ALTER TABLE public."TI_ATIVO" ADD CONSTRAINT "TI_ATIVO_tipo_check" CHECK (tipo IN (
+  -- computadores
+  'desktop', 'notebook', 'servidor', 'storage',
+  -- tela e imagem
+  'monitor', 'tv', 'projetor', 'webcam',
+  -- periféricos de mesa (os que faltavam)
+  'teclado', 'mouse', 'headset', 'dock', 'periferico',
+  -- impressão
+  'impressora', 'scanner',
+  -- rede
+  'switch', 'roteador', 'access_point', 'firewall', 'rack', 'camera',
+  -- energia
+  'nobreak', 'estabilizador',
+  -- telefonia e móveis
+  'telefone_ip', 'celular', 'tablet',
+  'outro'
+));
+
+-- 2) Peças da planta -----------------------------------------------------
+ALTER TABLE public."TI_PLANTA_ELEMENTO" DROP CONSTRAINT IF EXISTS "TI_PLANTA_ELEMENTO_tipo_check";
+ALTER TABLE public."TI_PLANTA_ELEMENTO" ADD CONSTRAINT "TI_PLANTA_ELEMENTO_tipo_check" CHECK (tipo IN (
+  -- estrutura
+  'parede', 'divisoria', 'porta', 'janela', 'escada',
+  -- ambientes (manchas de piso)
+  'sala', 'recepcao', 'copa', 'banheiro', 'impressora_area',
+  -- mobília
+  'mesa', 'mesa_l', 'mesa_reuniao', 'bancada', 'cadeira', 'poltrona', 'sofa',
+  'armario', 'gaveteiro', 'estante', 'rack', 'quadro_branco',
+  'geladeira', 'bebedouro', 'planta_decorativa',
+  -- anotação
+  'texto'
+));
+
+NOTIFY pgrst, 'reload schema';
+
+-- ── Conferência ──────────────────────────────────────────────────────
+-- Nenhuma linha existente pode ter ficado fora da lista nova.
+SELECT 'TI_ATIVO' AS tabela, tipo, count(*) FROM public."TI_ATIVO" GROUP BY tipo
+UNION ALL
+SELECT 'TI_PLANTA_ELEMENTO', tipo, count(*) FROM public."TI_PLANTA_ELEMENTO" GROUP BY tipo
+ORDER BY 1, 2;
+
+-- =====================================================================
+-- ROLLBACK
+--   Reexecutar os dois CHECK da 20260930000060_ti_mapa_hardware.sql — mas só
+--   depois de conferir que nenhuma linha usa os tipos novos, senão o ADD
+--   CONSTRAINT falha com as linhas já gravadas.
+-- =====================================================================
+
+-- ===== 20260930000066_ti_andares_e_setor =====
+-- =====================================================================
+-- T.I — o escritório ganha ANDARES e a sala ganha SETOR.
+--
+-- ANDARES
+--   Cada `TI_PLANTA` já era um ambiente independente. Faltava dizer QUE ANDAR
+--   ela é, para a cena poder empilhá-las: térreo em y=0, 1º andar na altura do
+--   pé-direito do térreo, e assim por diante. Com isso a tela consegue mostrar
+--   um andar por vez (para editar) ou os dois de uma vez (para ver o prédio).
+--
+--   `nivel` é um inteiro e não um texto ("térreo", "1º andar") porque a cena
+--   precisa SOMAR: a altura de um andar é a soma dos pés-direitos dos que
+--   estão abaixo dele. Nome do andar continua sendo o `nome` da planta.
+--
+--   0 = térreo, 1 = primeiro andar, -1 = subsolo. As plantas que já existem
+--   ficam no 0, que é onde elas estão hoje.
+--
+-- SETOR NA SALA
+--   Uma área de piso ("sala", "copa", "recepção") passa a poder dizer de que
+--   setor ela é. Não é enfeite: é o que permite pintar o mapa por setor,
+--   filtrar "onde fica o Financeiro" e, mais adiante, conferir se o
+--   equipamento está na sala do setor do responsável dele.
+--
+--   Texto livre, e não FK para uma tabela de setores: o setor aqui é o mesmo
+--   string que vem de EMPREGADOS."Setor_ERP" — que é a fonte única de setor
+--   deste ERP e não tem tabela própria de catálogo. Inventar uma aqui criaria
+--   um segundo cadastro de setor para manter em sincronia com o Senior.
+--
+-- Idempotente. As duas colunas são aditivas: planta e sala antigas continuam
+-- funcionando sem nenhum preenchimento.
+-- =====================================================================
+
+ALTER TABLE public."TI_PLANTA"
+  ADD COLUMN IF NOT EXISTS nivel integer NOT NULL DEFAULT 0;
+
+COMMENT ON COLUMN public."TI_PLANTA".nivel IS
+  'Andar: 0 = térreo, 1 = primeiro andar, -1 = subsolo. A cena empilha as plantas por este número.';
+
+ALTER TABLE public."TI_PLANTA_ELEMENTO"
+  ADD COLUMN IF NOT EXISTS setor text;
+
+COMMENT ON COLUMN public."TI_PLANTA_ELEMENTO".setor IS
+  'Setor dono da área (mesmo vocabulário de EMPREGADOS."Setor_ERP"). Só faz sentido em elementos de piso (sala, copa, recepção).';
+
+-- Duas plantas não podem disputar o mesmo andar: a cena empilharia uma dentro
+-- da outra e ninguém entenderia o desenho. Índice parcial porque planta
+-- inativa (arquivada) pode conviver com a nova no mesmo nível.
+CREATE UNIQUE INDEX IF NOT EXISTS uq_ti_planta_nivel_ativa
+  ON public."TI_PLANTA"(nivel) WHERE ativo;
+
+NOTIFY pgrst, 'reload schema';
+
+-- ── Conferência ──────────────────────────────────────────────────────
+SELECT nome, nivel, largura_cm, altura_cm, pe_direito_cm, ativo
+  FROM public."TI_PLANTA" ORDER BY nivel;
+
+-- =====================================================================
+-- ROLLBACK
+--   DROP INDEX IF EXISTS public.uq_ti_planta_nivel_ativa;
+--   ALTER TABLE public."TI_PLANTA_ELEMENTO" DROP COLUMN IF EXISTS setor;
+--   ALTER TABLE public."TI_PLANTA" DROP COLUMN IF EXISTS nivel;
+--   NOTIFY pgrst, 'reload schema';
+-- =====================================================================

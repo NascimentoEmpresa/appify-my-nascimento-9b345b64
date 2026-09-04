@@ -46,6 +46,8 @@ export interface TiPlanta {
   cor_piso: string;
   /** Altura das paredes do ambiente, em cm — a dimensão vertical da cena 3D. */
   pe_direito_cm: number;
+  /** Andar: 0 = térreo, 1 = primeiro andar, -1 = subsolo. A cena empilha por aqui. */
+  nivel: number;
   ordem: number;
   ativo: boolean;
 }
@@ -66,6 +68,8 @@ export interface TiElemento {
    */
   altura_z: number | null;
   cor: string | null;
+  /** Setor dono da área (mesmo vocabulário de EMPREGADOS.Setor_ERP). */
+  setor: string | null;
   z_index: number;
   meta: Record<string, unknown>;
 }
@@ -200,6 +204,7 @@ function mapearElemento(e: any): TiElemento {
     rotacao: num(e.rotacao),
     altura_z: numOuNulo(e.altura_z),
     cor: e.cor ?? null,
+    setor: e.setor ?? null,
     z_index: num(e.z_index),
     meta: e.meta ?? {},
   };
@@ -230,9 +235,9 @@ export function usePlantasTi() {
     queryFn: async (): Promise<TiPlanta[]> => {
       const { data, error } = await sb
         .from("TI_PLANTA")
-        .select("id, nome, descricao, endereco, largura_cm, altura_cm, cor_piso, pe_direito_cm, ordem, ativo")
+        .select("id, nome, descricao, endereco, largura_cm, altura_cm, cor_piso, pe_direito_cm, nivel, ordem, ativo")
         .eq("ativo", true)
-        .order("ordem")
+        .order("nivel")
         .order("nome");
       if (error) throw error;
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -241,6 +246,7 @@ export function usePlantasTi() {
         largura_cm: num(p.largura_cm, 2400),
         altura_cm: num(p.altura_cm, 1600),
         pe_direito_cm: num(p.pe_direito_cm, 280),
+        nivel: num(p.nivel, 0),
       }));
     },
   });
@@ -258,6 +264,7 @@ export function useSalvarPlanta() {
         altura_cm: planta.altura_cm ?? 1600,
         cor_piso: planta.cor_piso ?? "#f1f5f9",
         pe_direito_cm: planta.pe_direito_cm ?? 280,
+        nivel: planta.nivel ?? 0,
         ordem: planta.ordem ?? 0,
       };
       if (planta.id) {
@@ -329,6 +336,7 @@ export function useSalvarElemento() {
         rotacao: el.rotacao ?? 0,
         altura_z: el.altura_z ?? null,
         cor: el.cor ?? null,
+        setor: el.setor ?? null,
         z_index: el.z_index ?? 0,
         meta: el.meta ?? {},
       };
@@ -343,6 +351,7 @@ export function useSalvarElemento() {
     },
     onSuccess: (el) => {
       qc.invalidateQueries({ queryKey: ["ti_elementos", el.planta_id] });
+      qc.invalidateQueries({ queryKey: ["ti_elementos_varias"] });
     },
     onError: (e: Error) => toast.error(e.message || "Não foi possível salvar o elemento."),
   });
@@ -355,7 +364,10 @@ export function useExcluirElemento() {
       const { error } = await sb.from("TI_PLANTA_ELEMENTO").delete().eq("id", id);
       if (error) throw error;
     },
-    onSuccess: (_r, v) => qc.invalidateQueries({ queryKey: ["ti_elementos", v.plantaId] }),
+    onSuccess: (_r, v) => {
+      qc.invalidateQueries({ queryKey: ["ti_elementos", v.plantaId] });
+      qc.invalidateQueries({ queryKey: ["ti_elementos_varias"] });
+    },
     onError: (e: Error) => toast.error(e.message || "Não foi possível excluir o elemento."),
   });
 }
@@ -600,6 +612,88 @@ export function useColaboradoresTi() {
         if (lote.length < PAGE) break;
       }
       return todos;
+    },
+  });
+}
+
+/**
+ * Elementos de VÁRIAS plantas de uma vez — o modo "ver todos os andares".
+ *
+ * Uma query só com `in`, e não uma por planta: são poucos andares, mas cada
+ * query extra é um round-trip antes de a cena poder desenhar.
+ */
+export function useElementosDeVariasTi(plantaIds: string[]) {
+  const chave = [...plantaIds].sort().join(",");
+  return useQuery({
+    queryKey: ["ti_elementos_varias", chave],
+    enabled: plantaIds.length > 0,
+    staleTime: 60_000,
+    queryFn: async (): Promise<TiElemento[]> => {
+      const { data, error } = await sb
+        .from("TI_PLANTA_ELEMENTO")
+        .select("*")
+        .in("planta_id", plantaIds)
+        .order("z_index");
+      if (error) throw error;
+      return (data ?? []).map(mapearElemento);
+    },
+  });
+}
+
+/**
+ * Recria um elemento COM O ID ORIGINAL — existe para o Ctrl+Z do editor.
+ *
+ * Um insert normal geraria id novo, e aí o Ctrl+Y seguinte removeria "o
+ * elemento errado" (o histórico guarda o id de antes). Reaproveitar o id
+ * mantém a linha do tempo coerente.
+ */
+export function useRecriarElemento() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (el: TiElemento) => {
+      const { error } = await sb.from("TI_PLANTA_ELEMENTO").insert({
+        id: el.id,
+        planta_id: el.planta_id,
+        tipo: el.tipo,
+        rotulo: el.rotulo,
+        x: el.x,
+        y: el.y,
+        largura: el.largura,
+        altura: el.altura,
+        rotacao: el.rotacao,
+        altura_z: el.altura_z,
+        cor: el.cor,
+        setor: el.setor,
+        z_index: el.z_index,
+        meta: el.meta ?? {},
+      });
+      if (error) throw error;
+      return el;
+    },
+    onSuccess: (el) => {
+      qc.invalidateQueries({ queryKey: ["ti_elementos", el.planta_id] });
+      qc.invalidateQueries({ queryKey: ["ti_elementos_varias"] });
+    },
+    onError: (e: Error) => toast.error(e.message || "Não foi possível restaurar a peça."),
+  });
+}
+
+/** Os setores que já existem no cadastro de pessoas — para marcar a sala. */
+export function useSetoresTi() {
+  return useQuery({
+    queryKey: ["ti_setores"],
+    staleTime: 10 * 60_000,
+    queryFn: async (): Promise<string[]> => {
+      const { data, error } = await sb
+        .from("EMPREGADOS")
+        .select('"Setor_ERP"')
+        .eq("Situação", "Trabalhando")
+        .not("Setor_ERP", "is", null)
+        .limit(5000);
+      if (error) throw error;
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const nomes = new Set<string>((data ?? []).map((e: any) => String(e.Setor_ERP ?? "").trim()).filter(Boolean));
+      return [...nomes].sort((a, b) => a.localeCompare(b, "pt-BR"));
     },
   });
 }

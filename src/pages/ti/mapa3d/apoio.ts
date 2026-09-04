@@ -141,11 +141,20 @@ export function retanguloDoTraco(
   const rotacao = (Math.atan2(dy, dx) * 180) / Math.PI;
   const centroX = Math.round((x1 + x2) / 2);
   const centroY = Math.round((y1 + y2) / 2);
+
+  // O canto guarda DUAS CASAS, não inteiro. Parece exagero num mapa de
+  // escritório, mas não é: espessura ímpar (parede de 15 cm) põe o canto em
+  // .5, e arredondar aqui fazia a parede andar meio centímetro a cada vez que
+  // alguém puxava a ponta — `pontasDaParede` devolvia um centro 0,5 adiante do
+  // que entrou. Num editor, deriva silenciosa a cada arrasto é pior do que
+  // fração no banco (a coluna é numeric(10,2) e comporta).
+  const duasCasas = (v: number) => Math.round(v * 100) / 100;
+
   return {
     centroX,
     centroY,
-    x: Math.round(centroX - comprimento / 2),
-    y: Math.round(centroY - espessura / 2),
+    x: duasCasas(centroX - comprimento / 2),
+    y: duasCasas(centroY - espessura / 2),
     largura: comprimento,
     profundidade: espessura,
     rotacao: Math.round(rotacao * 10) / 10,
@@ -182,4 +191,99 @@ export function camaraInicial(larguraCm: number, alturaCm: number): [number, num
   const a = M(alturaCm);
   const d = Math.max(l, a) * 0.85 + 6;
   return [l / 2 + d * 0.55, d * 0.72, a / 2 + d * 0.75];
+}
+
+// ── Andares ───────────────────────────────────────────────────────────
+
+/**
+ * Altura (cm) em que o piso de um andar começa.
+ *
+ * É a soma dos pés-direitos dos andares ABAIXO dele. Andar sem planta
+ * cadastrada (alguém pulou do térreo para o 2º) entra com 300 cm, senão o
+ * andar de cima pousaria dentro do de baixo.
+ *
+ * Subsolo (nível negativo) desce pelo mesmo caminho, com sinal trocado.
+ */
+export function alturaDoAndar(
+  plantas: { nivel: number; pe_direito_cm: number }[],
+  nivel: number,
+  padrao = 300,
+): number {
+  if (nivel === 0) return 0;
+  const pe = (n: number) => plantas.find((p) => p.nivel === n)?.pe_direito_cm ?? padrao;
+
+  let total = 0;
+  if (nivel > 0) {
+    for (let n = 0; n < nivel; n++) total += pe(n);
+    return total;
+  }
+  for (let n = nivel; n < 0; n++) total -= pe(n);
+  return total;
+}
+
+// ── Puxar parede ──────────────────────────────────────────────────────
+
+/** Um ponto no plano do chão, em cm. */
+export interface Ponto {
+  x: number;
+  y: number;
+}
+
+/**
+ * As duas pontas de uma peça alongada (parede, divisória, janela).
+ *
+ * O banco guarda canto + largura + giro; para PUXAR a parede o editor precisa
+ * das pontas. É o inverso exato de `retanguloDoTraco` — as duas funções são
+ * um par, e mexer numa sem a outra desalinha a alça do desenho.
+ */
+export function pontasDaParede(el: {
+  x: number | string;
+  y: number | string;
+  largura: number | string;
+  altura: number | string;
+  rotacao: number | string;
+}): { a: Ponto; b: Ponto } {
+  const largura = Number(el.largura);
+  const centroX = Number(el.x) + largura / 2;
+  const centroY = Number(el.y) + Number(el.altura) / 2;
+  const t = (Number(el.rotacao) * Math.PI) / 180;
+  const dx = (Math.cos(t) * largura) / 2;
+  const dy = (Math.sin(t) * largura) / 2;
+  return {
+    a: { x: centroX - dx, y: centroY - dy },
+    b: { x: centroX + dx, y: centroY + dy },
+  };
+}
+
+/**
+ * Novo retângulo ao arrastar UM canto de uma peça retangular.
+ *
+ * O canto oposto fica parado — é o que se espera ao esticar uma sala pela
+ * quina. Mínimo de 25 cm para a peça não sumir num arrasto atravessado.
+ */
+export function redimensionarPorCanto(
+  el: { x: number | string; y: number | string; largura: number | string; altura: number | string },
+  canto: "nw" | "ne" | "sw" | "se",
+  px: number,
+  py: number,
+): { x: number; y: number; largura: number; altura: number } {
+  const x0 = Number(el.x);
+  const y0 = Number(el.y);
+  const x1 = x0 + Number(el.largura);
+  const y1 = y0 + Number(el.altura);
+
+  const oeste = canto === "nw" || canto === "sw";
+  const norte = canto === "nw" || canto === "ne";
+
+  const novoX0 = oeste ? Math.min(px, x1 - 25) : x0;
+  const novoX1 = oeste ? x1 : Math.max(px, x0 + 25);
+  const novoY0 = norte ? Math.min(py, y1 - 25) : y0;
+  const novoY1 = norte ? y1 : Math.max(py, y0 + 25);
+
+  return {
+    x: Math.round(novoX0),
+    y: Math.round(novoY0),
+    largura: Math.round(novoX1 - novoX0),
+    altura: Math.round(novoY1 - novoY0),
+  };
 }

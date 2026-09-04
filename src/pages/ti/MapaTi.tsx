@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { Building2, Boxes, Eye, Search, Tag, Users } from "lucide-react";
+import { Building2, Boxes, Eye, Layers3, Search, Tag, Users } from "lucide-react";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -9,9 +9,12 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Separator } from "@/components/ui/separator";
 import { cn } from "@/lib/utils";
-import { useAtivosTi, useElementosTi, usePlantasTi, type TiAtivo } from "@/hooks/useTiMapa";
+import {
+  useAtivosTi, useElementosDeVariasTi, useElementosTi, usePlantasTi, type TiAtivo,
+} from "@/hooks/useTiMapa";
 import { statusAtivo, tipoAtivo } from "./mapa/catalogo";
 import { Cena3D, LegendaStatus, type SelecaoCena } from "./mapa3d/Cena3D";
+import { nomeDoAndar } from "./ConstruirMapa";
 
 /**
  * T.I › Mapa 3D — a tela de VER.
@@ -30,6 +33,7 @@ export default function MapaTi() {
   const [selecao, setSelecao] = useState<SelecaoCena>(null);
   const [busca, setBusca] = useState("");
   const [rotulos, setRotulos] = useState(true);
+  const [verTodosAndares, setVerTodosAndares] = useState(false);
 
   const { data: plantas = [], isLoading: carregandoPlantas } = usePlantasTi();
   const { data: ativos = [], isLoading: carregandoAtivos } = useAtivosTi();
@@ -39,6 +43,24 @@ export default function MapaTi() {
     [plantas, plantaId],
   );
   const { data: elementos = [] } = useElementosTi(plantaAtual?.id);
+
+  // Os outros andares só são buscados quando alguém pede para vê-los.
+  const idsVizinhos = useMemo(
+    () => (verTodosAndares ? plantas.filter((p) => p.id !== plantaAtual?.id).map((p) => p.id) : []),
+    [verTodosAndares, plantas, plantaAtual?.id],
+  );
+  const { data: elementosVizinhos = [] } = useElementosDeVariasTi(idsVizinhos);
+  const andaresVizinhos = useMemo(
+    () =>
+      plantas
+        .filter((p) => idsVizinhos.includes(p.id))
+        .map((p) => ({
+          planta: p,
+          elementos: elementosVizinhos.filter((e) => e.planta_id === p.id),
+          ativos: ativos.filter((a) => a.planta_id === p.id),
+        })),
+    [plantas, idsVizinhos, elementosVizinhos, ativos],
+  );
 
   const doMapa = useMemo(
     () => ativos.filter((a) => a.planta_id === plantaAtual?.id && a.pos_x != null),
@@ -84,7 +106,9 @@ export default function MapaTi() {
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                {plantas.map((p) => <SelectItem key={p.id} value={p.id}>{p.nome}</SelectItem>)}
+                {plantas.map((p) => (
+                  <SelectItem key={p.id} value={p.id}>{nomeDoAndar(p.nivel)} · {p.nome}</SelectItem>
+                ))}
               </SelectContent>
             </Select>
           ) : null
@@ -128,6 +152,16 @@ export default function MapaTi() {
               >
                 <Tag className="mr-1.5 h-4 w-4" /> Nomes
               </Button>
+              {plantas.length > 1 && (
+                <Button
+                  variant={verTodosAndares ? "secondary" : "ghost"}
+                  size="sm"
+                  onClick={() => setVerTodosAndares(!verTodosAndares)}
+                  title="Ver o prédio inteiro, com os andares empilhados"
+                >
+                  <Layers3 className="mr-1.5 h-4 w-4" /> Andares
+                </Button>
+              )}
               <Separator orientation="vertical" className="h-6" />
               <LegendaStatus />
             </Card>
@@ -164,6 +198,8 @@ export default function MapaTi() {
                 destaque={busca}
                 mostrarRotulos={rotulos}
                 mostrarGrade={false}
+                plantas={plantas}
+                andaresVizinhos={andaresVizinhos}
               />
             </div>
           </div>

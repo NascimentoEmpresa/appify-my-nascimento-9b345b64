@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
-  Building2, Copy, Grid3x3, Hammer, Layers, MousePointer2, Move3d, Package, Plus,
-  RotateCw, Ruler, Tag, Trash2, X,
+  Building2, Copy, Grid3x3, Hammer, Layers, Layers3, MousePointer2, Move3d, Package,
+  Plus, Redo2, RotateCw, Ruler, Tag, Trash2, Undo2, X,
 } from "lucide-react";
 import { PageHeader } from "@/components/layout/PageHeader";
 import {
@@ -21,8 +21,9 @@ import { Textarea } from "@/components/ui/textarea";
 import { useScreenAccess } from "@/hooks/useScreenAccess";
 import { cn } from "@/lib/utils";
 import {
-  useAtivosTi, useElementosTi, useExcluirAtivo, useExcluirElemento, usePlantasTi,
-  usePosicionarAtivo, useSalvarAtivo, useSalvarElemento, useSalvarPlanta,
+  useAtivosTi, useElementosDeVariasTi, useElementosTi, useExcluirAtivo, useExcluirElemento,
+  usePlantasTi, usePosicionarAtivo, useRecriarElemento, useSalvarAtivo, useSalvarElemento,
+  useSalvarPlanta, useSetoresTi,
   type TiAtivo, type TiAtivoInput, type TiElemento, type TiPlanta,
 } from "@/hooks/useTiMapa";
 import { AtivoDialog } from "./mapa/AtivoDialog";
@@ -31,6 +32,7 @@ import {
 } from "./mapa/catalogo";
 import { alturaDoElemento, retanguloDeCantos, retanguloDoTraco } from "./mapa3d/apoio";
 import { Cena3D, type SelecaoCena, type TracoNoChao } from "./mapa3d/Cena3D";
+import { useHistoricoMapa, type Aplicador } from "./mapa3d/historico";
 
 /**
  * T.I › Construir o mapa — o editor da planta em 3D.
@@ -51,6 +53,13 @@ import { Cena3D, type SelecaoCena, type TracoNoChao } from "./mapa3d/Cena3D";
  * confirmação, porque apagar equipamento leva junto o histórico dele.
  */
 
+/** "Térreo", "1º andar", "Subsolo 2" — o número vira o nome que se fala. */
+export function nomeDoAndar(nivel: number): string {
+  if (nivel === 0) return "Térreo";
+  if (nivel > 0) return `${nivel}º andar`;
+  return nivel === -1 ? "Subsolo" : `Subsolo ${Math.abs(nivel)}`;
+}
+
 type Ferramenta =
   | { tipo: "selecao" }
   | { tipo: "elemento"; valor: string }
@@ -61,6 +70,7 @@ export default function ConstruirMapa() {
   const [selecao, setSelecao] = useState<SelecaoCena>(null);
   const [ferramenta, setFerramenta] = useState<Ferramenta>({ tipo: "selecao" });
   const [grade, setGrade] = useState(true);
+  const [verTodosAndares, setVerTodosAndares] = useState(false);
   const [rotulos, setRotulos] = useState(true);
   const [plantaDialog, setPlantaDialog] = useState<Partial<TiPlanta> | null>(null);
   const [fichaAberta, setFichaAberta] = useState<TiAtivo | null | undefined>(undefined);
@@ -81,6 +91,27 @@ export default function ConstruirMapa() {
   const salvarAtivo = useSalvarAtivo();
   const excluirAtivo = useExcluirAtivo();
   const salvarPlanta = useSalvarPlanta();
+  const recriarElemento = useRecriarElemento();
+  const { data: setores = [] } = useSetoresTi();
+
+  // Os outros andares, só quando pedidos — a query nem sai enquanto o modo
+  // está desligado.
+  const idsVizinhos = useMemo(
+    () => (verTodosAndares ? plantas.filter((p) => p.id !== planta?.id).map((p) => p.id) : []),
+    [verTodosAndares, plantas, planta?.id],
+  );
+  const { data: elementosVizinhos = [] } = useElementosDeVariasTi(idsVizinhos);
+  const andaresVizinhos = useMemo(
+    () =>
+      plantas
+        .filter((p) => idsVizinhos.includes(p.id))
+        .map((p) => ({
+          planta: p,
+          elementos: elementosVizinhos.filter((e) => e.planta_id === p.id),
+          ativos: ativos.filter((a) => a.planta_id === p.id),
+        })),
+    [plantas, idsVizinhos, elementosVizinhos, ativos],
+  );
 
   const { data: podeGerenciarAtivo = false } = useScreenAccess("ti_ativo_gerenciar", "alterar");
   const { data: podeIncluirAtivo = false } = useScreenAccess("ti_ativo_gerenciar", "incluir");
@@ -101,6 +132,44 @@ export default function ConstruirMapa() {
     [ativos],
   );
 
+  /**
+   * O que o Ctrl+Z executa. Estas mutations NÃO registram no histórico — se
+   * registrassem, desfazer empilharia uma ação nova e o segundo Ctrl+Z
+   * refaria o que o primeiro acabou de desfazer.
+   */
+  const aplicador: Aplicador = {
+    criarElemento: (el) => recriarElemento.mutate(el),
+    atualizarElemento: (el) => salvarElemento.mutate(el),
+    removerElemento: (id) => {
+      if (planta) excluirElemento.mutate({ id, plantaId: planta.id });
+    },
+    atualizarAtivo: (a) => salvarAtivo.mutate({ ...(a as TiAtivoInput), id: a.id }),
+  };
+  const historico = useHistoricoMapa(aplicador);
+
+  /** Cria a peça e guarda no histórico o que foi criado. */
+  const criarElemento = (novo: Partial<TiElemento> & { planta_id: string; tipo: string }) =>
+    salvarElemento.mutate(novo, {
+      onSuccess: (el) => historico.registrar({ tipo: "criar_elemento", depois: el }),
+    });
+
+  /** Altera a peça guardando o ANTES — é o que o Ctrl+Z restaura. */
+  const alterarElemento = (antes: TiElemento, patch: Partial<TiElemento>) => {
+    const depois = { ...antes, ...patch } as TiElemento;
+    salvarElemento.mutate(depois, {
+      onSuccess: () => historico.registrar({ tipo: "atualizar_elemento", antes, depois }),
+    });
+  };
+
+  /** Move/altera equipamento guardando o antes. */
+  const alterarAtivo = (antes: TiAtivo, patch: Partial<TiAtivo>) => {
+    const depois = { ...antes, ...patch } as TiAtivo;
+    salvarAtivo.mutate(
+      { ...(depois as TiAtivoInput), id: antes.id },
+      { onSuccess: () => historico.registrar({ tipo: "atualizar_ativo", antes, depois }) },
+    );
+  };
+
   const nomeSelecionado = elementoSel
     ? elementoSel.rotulo || tipoElemento(elementoSel.tipo).label
     : ativoSel?.nome ?? "";
@@ -117,6 +186,21 @@ export default function ConstruirMapa() {
     const h = (e: KeyboardEvent) => {
       const alvo = e.target as HTMLElement | null;
       if (alvo && (["INPUT", "TEXTAREA", "SELECT"].includes(alvo.tagName) || alvo.isContentEditable)) return;
+
+      // Desfazer/refazer. Ctrl+Y e Ctrl+Shift+Z são a mesma coisa — o segundo
+      // é o que a mão de quem usa editor gráfico procura primeiro.
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "z" && !e.shiftKey) {
+        e.preventDefault();
+        historico.desfazer();
+        return;
+      }
+      if ((e.ctrlKey || e.metaKey) && (e.key.toLowerCase() === "y" || (e.key.toLowerCase() === "z" && e.shiftKey))) {
+        e.preventDefault();
+        historico.refazer();
+        return;
+      }
+      if (e.ctrlKey || e.metaKey) return;
+
       if (e.key === "Escape") { setFerramenta({ tipo: "selecao" }); setSelecao(null); }
       if ((e.key === "Delete" || e.key === "Backspace") && selecao) { e.preventDefault(); pedirRemocao(); }
       if (e.key.toLowerCase() === "r" && selecao) girar(45);
@@ -125,19 +209,13 @@ export default function ConstruirMapa() {
     window.addEventListener("keydown", h);
     return () => window.removeEventListener("keydown", h);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selecao, pedirRemocao, elementoSel, ativoSel]);
+  }, [selecao, pedirRemocao, elementoSel, ativoSel, historico]);
 
   const girar = (passo: number) => {
     if (elementoSel) {
-      salvarElemento.mutate({ ...elementoSel, rotacao: (Number(elementoSel.rotacao) + passo) % 360 });
+      alterarElemento(elementoSel, { rotacao: (Number(elementoSel.rotacao) + passo) % 360 });
     } else if (ativoSel && podeGerenciarAtivo) {
-      posicionar.mutate({
-        id: ativoSel.id,
-        planta_id: ativoSel.planta_id,
-        pos_x: ativoSel.pos_x,
-        pos_y: ativoSel.pos_y,
-        rotacao: (Number(ativoSel.rotacao) + passo) % 360,
-      });
+      alterarAtivo(ativoSel, { rotacao: (Number(ativoSel.rotacao) + passo) % 360 });
     }
   };
 
@@ -171,7 +249,7 @@ export default function ConstruirMapa() {
 
     if (!arrastou) {
       // Clique seco: peça no tamanho de catálogo, centrada no ponto.
-      salvarElemento.mutate({
+      criarElemento({
         planta_id: planta.id,
         tipo: ferramenta.valor,
         x: Math.round(t.x1 - def.largura / 2),
@@ -185,7 +263,7 @@ export default function ConstruirMapa() {
 
     if (def.familia === "estrutura") {
       const r = retanguloDoTraco(t.x1, t.y1, t.x2, t.y2, def.altura);
-      salvarElemento.mutate({
+      criarElemento({
         planta_id: planta.id,
         tipo: ferramenta.valor,
         x: r.x,
@@ -199,7 +277,7 @@ export default function ConstruirMapa() {
     }
 
     const r = retanguloDeCantos(t.x1, t.y1, t.x2, t.y2);
-    salvarElemento.mutate({
+    criarElemento({
       planta_id: planta.id,
       tipo: ferramenta.valor,
       x: r.x,
@@ -214,13 +292,23 @@ export default function ConstruirMapa() {
   const duplicar = () => {
     if (!planta || !elementoSel) return;
     const { id, ...resto } = elementoSel;
-    salvarElemento.mutate({ ...resto, planta_id: planta.id, x: Number(elementoSel.x) + 50, y: Number(elementoSel.y) + 50 });
+    criarElemento({ ...resto, planta_id: planta.id, x: Number(elementoSel.x) + 50, y: Number(elementoSel.y) + 50 });
   };
 
   const confirmarRemocao = () => {
     if (!confirmar) return;
-    if (confirmar.tipo === "ativo") excluirAtivo.mutate(confirmar.id);
-    else if (planta) excluirElemento.mutate({ id: confirmar.id, plantaId: planta.id });
+    if (confirmar.tipo === "ativo") {
+      // Equipamento removido NÃO entra no Ctrl+Z: o DELETE leva o histórico
+      // dele junto (CASCADE) e recriar a linha não traz os eventos de volta.
+      // Prometer um desfazer que restaura pela metade é pior do que não ter.
+      excluirAtivo.mutate(confirmar.id);
+    } else if (planta) {
+      const antes = elementos.find((e) => e.id === confirmar.id);
+      excluirElemento.mutate(
+        { id: confirmar.id, plantaId: planta.id },
+        { onSuccess: () => antes && historico.registrar({ tipo: "remover_elemento", antes }) },
+      );
+    }
     setSelecao(null);
     setConfirmar(null);
   };
@@ -277,13 +365,51 @@ export default function ConstruirMapa() {
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  {plantas.map((p) => <SelectItem key={p.id} value={p.id}>{p.nome}</SelectItem>)}
+                  {plantas.map((p) => (
+                    <SelectItem key={p.id} value={p.id}>
+                      {nomeDoAndar(p.nivel)} · {p.nome}
+                    </SelectItem>
+                  ))}
                 </SelectContent>
               </Select>
             )}
             <span className="hidden text-xs text-muted-foreground sm:inline">
               {cmParaMetros(planta.largura_cm)} × {cmParaMetros(planta.altura_cm)}
             </span>
+
+            {plantas.length > 1 && (
+              <Button
+                variant={verTodosAndares ? "secondary" : "ghost"}
+                size="sm"
+                onClick={() => setVerTodosAndares(!verTodosAndares)}
+                title="Mostrar os outros andares como referência"
+              >
+                <Layers3 className="mr-1.5 h-4 w-4" /> Todos os andares
+              </Button>
+            )}
+
+            <Separator orientation="vertical" className="h-6" />
+
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-8 w-8"
+              disabled={!historico.podeDesfazer}
+              onClick={historico.desfazer}
+              title={historico.podeDesfazer ? `Desfazer ${historico.proximoDesfazer} (Ctrl+Z)` : "Nada para desfazer"}
+            >
+              <Undo2 className="h-4 w-4" />
+            </Button>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-8 w-8"
+              disabled={!historico.podeRefazer}
+              onClick={historico.refazer}
+              title={historico.podeRefazer ? `Refazer ${historico.proximoRefazer} (Ctrl+Y)` : "Nada para refazer"}
+            >
+              <Redo2 className="h-4 w-4" />
+            </Button>
 
             <Separator orientation="vertical" className="h-6" />
 
@@ -438,15 +564,22 @@ export default function ConstruirMapa() {
                 mostrarRotulos={rotulos}
                 desenhando={ferramenta.tipo !== "selecao"}
                 onDesenharNoChao={desenharNoChao}
+                plantas={plantas}
+                andaresVizinhos={andaresVizinhos}
                 onSoltarElemento={(id, x, y) => {
                   const el = elementos.find((e) => e.id === id);
                   if (!el) return;
                   // Uma gravação por arrasto, no soltar. O arrasto entrega o
                   // CENTRO; o banco guarda o canto.
-                  salvarElemento.mutate({ ...el, x: x - Number(el.largura) / 2, y: y - Number(el.altura) / 2 });
+                  alterarElemento(el, { x: x - Number(el.largura) / 2, y: y - Number(el.altura) / 2 });
                 }}
                 onSoltarAtivo={(id, x, y) => {
-                  posicionar.mutate({ id, planta_id: planta.id, pos_x: x, pos_y: y });
+                  const a = ativos.find((z) => z.id === id);
+                  if (a) alterarAtivo(a, { planta_id: planta.id, pos_x: x, pos_y: y });
+                }}
+                onRedimensionar={(id, patch) => {
+                  const el = elementos.find((e) => e.id === id);
+                  if (el) alterarElemento(el, patch);
                 }}
                 onAbrirFicha={(id) => {
                   const a = ativos.find((z) => z.id === id);
@@ -470,7 +603,9 @@ export default function ConstruirMapa() {
                     <li><b>Arraste no chão</b> com Parede na mão para desenhar</li>
                     <li><b>Arrastar</b> a peça move no chão</li>
                     <li><b>Alt</b> enquanto arrasta ignora a grade</li>
+                    <li><b>Puxe as bolinhas laranja</b> para esticar a peça</li>
                     <li><b>R</b> gira 45°, <b>D</b> duplica, <b>Delete</b> remove</li>
+                    <li><b>Ctrl+Z</b> desfaz, <b>Ctrl+Y</b> refaz</li>
                     <li><b>Duplo clique</b> num equipamento abre a ficha</li>
                   </ul>
                 </div>
@@ -481,25 +616,16 @@ export default function ConstruirMapa() {
                       {elementoSel && (
                         <InspetorElemento
                           el={elementoSel}
-                          onAlterar={(patch) => salvarElemento.mutate({ ...elementoSel, ...patch })}
+                          setores={setores}
+                          onAlterar={(patch) => alterarElemento(elementoSel, patch)}
                         />
                       )}
                       {ativoSel && (
                         <InspetorAtivo
                           ativo={ativoSel}
                           podeEditar={podeGerenciarAtivo}
-                          onPosicao={(patch) =>
-                            posicionar.mutate({
-                              id: ativoSel.id,
-                              planta_id: ativoSel.planta_id,
-                              pos_x: ativoSel.pos_x,
-                              pos_y: ativoSel.pos_y,
-                              ...patch,
-                            })
-                          }
-                          onCampo={(patch) =>
-                            salvarAtivo.mutate({ ...(ativoSel as TiAtivoInput), id: ativoSel.id, ...patch })
-                          }
+                          onPosicao={(patch) => alterarAtivo(ativoSel, patch)}
+                          onCampo={(patch) => alterarAtivo(ativoSel, patch)}
                           onAbrirFicha={() => setFichaAberta(ativoSel)}
                           onTirarDoMapa={() => {
                             posicionar.mutate({ id: ativoSel.id, planta_id: null, pos_x: null, pos_y: null });
@@ -576,9 +702,11 @@ export default function ConstruirMapa() {
 
 function InspetorElemento({
   el,
+  setores,
   onAlterar,
 }: {
   el: TiElemento;
+  setores: string[];
   onAlterar: (patch: Partial<TiElemento>) => void;
 }) {
   const def = tipoElemento(el.tipo);
@@ -601,6 +729,28 @@ function InspetorElemento({
           placeholder="Sala do Financeiro"
         />
       </div>
+
+      {/* Setor só faz sentido em área de piso: parede não pertence a um setor.
+          A lista vem de EMPREGADOS (fonte única de setor deste ERP), mas o
+          campo aceita texto livre — sala de setor que ainda não tem gente
+          alocada existe, e travar no combo impediria de nomeá-la. */}
+      {def.familia === "area" && (
+        <div className="space-y-1.5">
+          <Label className="text-xs text-muted-foreground">Setor desta sala</Label>
+          <Input
+            list="ti-setores"
+            defaultValue={el.setor ?? ""}
+            placeholder="Financeiro, RH, Comercial…"
+            onBlur={(e) => {
+              const v = e.target.value.trim();
+              if (v !== (el.setor ?? "")) onAlterar({ setor: v || null });
+            }}
+          />
+          <datalist id="ti-setores">
+            {setores.map((x) => <option key={x} value={x} />)}
+          </datalist>
+        </div>
+      )}
 
       <div className="grid grid-cols-2 gap-2">
         <Numero label="Largura (cm)" valor={Number(el.largura)} onChange={(v) => onAlterar({ largura: Math.max(5, v) })} />
@@ -770,27 +920,58 @@ function PlantaDialog({
             <Label className="text-xs text-muted-foreground">Descrição</Label>
             <Textarea rows={2} value={form.descricao ?? ""} onChange={(e) => setForm((f) => ({ ...f, descricao: e.target.value }))} />
           </div>
+          {/* Em METROS, não em centímetros: quem mede escritório fala "24 por
+              16". O campo pedia cm e alguém digitou 260 querendo 26 m — a
+              planta virou uma sala de 2,6 m. A conversão fica aqui, na borda. */}
           <div className="grid grid-cols-3 gap-2">
             <div className="space-y-1.5">
-              <Label className="text-[11px] text-muted-foreground">Largura (cm)</Label>
-              <Input type="number" step="50" value={form.largura_cm ?? 2400}
-                     onChange={(e) => setForm((f) => ({ ...f, largura_cm: Number(e.target.value) }))} />
+              <Label className="text-[11px] text-muted-foreground">Largura (m)</Label>
+              <Input
+                type="number" step="0.5" min="1"
+                value={((form.largura_cm ?? 2400) / 100).toString()}
+                onChange={(e) => setForm((f) => ({ ...f, largura_cm: Math.round(Number(e.target.value) * 100) }))}
+              />
             </div>
             <div className="space-y-1.5">
-              <Label className="text-[11px] text-muted-foreground">Profundidade (cm)</Label>
-              <Input type="number" step="50" value={form.altura_cm ?? 1600}
-                     onChange={(e) => setForm((f) => ({ ...f, altura_cm: Number(e.target.value) }))} />
+              <Label className="text-[11px] text-muted-foreground">Profundidade (m)</Label>
+              <Input
+                type="number" step="0.5" min="1"
+                value={((form.altura_cm ?? 1600) / 100).toString()}
+                onChange={(e) => setForm((f) => ({ ...f, altura_cm: Math.round(Number(e.target.value) * 100) }))}
+              />
             </div>
             <div className="space-y-1.5">
-              <Label className="text-[11px] text-muted-foreground">Pé-direito (cm)</Label>
-              <Input type="number" step="10" value={form.pe_direito_cm ?? 280}
-                     onChange={(e) => setForm((f) => ({ ...f, pe_direito_cm: Number(e.target.value) }))} />
+              <Label className="text-[11px] text-muted-foreground">Pé-direito (m)</Label>
+              <Input
+                type="number" step="0.1" min="1"
+                value={((form.pe_direito_cm ?? 280) / 100).toString()}
+                onChange={(e) => setForm((f) => ({ ...f, pe_direito_cm: Math.round(Number(e.target.value) * 100) }))}
+              />
             </div>
           </div>
+
+          <div className="space-y-1.5">
+            <Label className="text-xs text-muted-foreground">Andar</Label>
+            <Select
+              value={String(form.nivel ?? 0)}
+              onValueChange={(v) => setForm((f) => ({ ...f, nivel: Number(v) }))}
+            >
+              <SelectTrigger><SelectValue /></SelectTrigger>
+              <SelectContent>
+                {[-2, -1, 0, 1, 2, 3, 4, 5].map((n) => (
+                  <SelectItem key={n} value={String(n)}>{nomeDoAndar(n)}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <p className="text-[11px] leading-tight text-muted-foreground">
+              É por aqui que a cena empilha os andares: o 1º fica na altura do pé-direito do térreo.
+              Cada andar é uma planta — não dá para dois ocuparem o mesmo nível.
+            </p>
+          </div>
+
           <p className="text-[11px] text-muted-foreground">
-            As medidas são reais: {cmParaMetros(Number(form.largura_cm ?? 2400))} ×{" "}
-            {cmParaMetros(Number(form.altura_cm ?? 1600))}. Meça o escritório uma vez com trena
-            e o mapa inteiro passa a valer como planta.
+            {cmParaMetros(Number(form.largura_cm ?? 2400))} × {cmParaMetros(Number(form.altura_cm ?? 1600))} de piso,
+            com {cmParaMetros(Number(form.pe_direito_cm ?? 280))} de altura.
           </p>
         </div>
         <DialogFooter>

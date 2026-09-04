@@ -7,10 +7,13 @@ import { statusAtivo, tipoAtivo, tipoElemento } from "../mapa/catalogo";
 import {
   M,
   alturaDeApoio,
+  alturaDoAndar,
   alturaDoElemento,
   camaraInicial,
   dimensoesAtivo,
+  pontasDaParede,
   rad,
+  redimensionarPorCanto,
   retanguloDoTraco,
   snap,
 } from "./apoio";
@@ -82,7 +85,19 @@ interface Props {
   /** Fim do arrasto: a hora (única) de gravar. */
   onSoltarElemento?: (id: string, x: number, y: number) => void;
   onSoltarAtivo?: (id: string, x: number, y: number) => void;
+  /** Fim do redimensionamento (puxar parede pela ponta, esticar sala pela quina). */
+  onRedimensionar?: (id: string, patch: Partial<TiElemento>) => void;
   onAbrirFicha?: (ativoId: string) => void;
+  /**
+   * Andares abaixo/acima, desenhados translúcidos e SEM interação.
+   *
+   * Servem de referência ("a sala do 2º fica em cima de qual?") sem virar um
+   * segundo editor: quem edita é sempre o andar corrente, e peça de outro
+   * andar não deve responder a clique nem entrar no raycast do arrasto.
+   */
+  andaresVizinhos?: { planta: TiPlanta; elementos: TiElemento[]; ativos: TiAtivo[] }[];
+  /** Todas as plantas — a cena precisa delas para calcular a altura do andar. */
+  plantas?: TiPlanta[];
 }
 
 export function Cena3D(props: Props) {
@@ -124,11 +139,17 @@ function Conteudo({
   onDesenharNoChao,
   onSoltarElemento,
   onSoltarAtivo,
+  onRedimensionar,
   onAbrirFicha,
+  andaresVizinhos = [],
+  plantas = [],
 }: Props) {
   const L = M(planta.largura_cm);
   const P = M(planta.altura_cm);
-  const centro = useMemo<[number, number, number]>(() => [L / 2, 0, P / 2], [L, P]);
+  // O andar corrente é desenhado na altura dele, não em y=0: assim ele fica no
+  // lugar certo em relação aos vizinhos quando os dois estão visíveis.
+  const base = M(alturaDoAndar(plantas.length ? plantas : [planta], planta.nivel ?? 0));
+  const centro = useMemo<[number, number, number]>(() => [L / 2, base, P / 2], [L, base, P]);
 
   const { invalidate } = useThree();
   const controlsRef = useRef<React.ElementRef<typeof OrbitControls>>(null);
@@ -139,6 +160,9 @@ function Conteudo({
     { tipo: "elemento" | "ativo"; id: string; alturaBase: number; dx: number; dz: number } | null
   >(null);
   const [traco, setTraco] = useState<TracoNoChao | null>(null);
+  // Puxar parede / esticar sala: guarda a peça e a alça pega.
+  const [resize, setResize] = useState<{ el: TiElemento; alca: "a" | "b" | "nw" | "ne" | "sw" | "se" } | null>(null);
+  const [previaResize, setPreviaResize] = useState<Partial<TiElemento> | null>(null);
   const [livre, setLivre] = useState(false);
   const [hover, setHover] = useState<string | null>(null);
 
@@ -208,6 +232,13 @@ function Conteudo({
     return () => window.clearTimeout(t);
   }, [arrasto, previa, elementos, ativos]);
 
+  const elementoSelecionado = useMemo(() => {
+    if (selecao?.tipo !== "elemento") return null;
+    const cru = elementos.find((e) => e.id === selecao.id);
+    if (!cru) return null;
+    return previaResize && resize?.el.id === cru.id ? ({ ...cru, ...previaResize } as TiElemento) : cru;
+  }, [selecao, elementos, previaResize, resize]);
+
   const termo = (destaque ?? "").trim().toLowerCase();
   const casa = useCallback(
     (a: TiAtivo) =>
@@ -217,6 +248,21 @@ function Conteudo({
         .some((v) => String(v).toLowerCase().includes(termo)),
     [termo],
   );
+
+  const aplicarResize = (px: number, py: number) => {
+    if (!resize) return;
+    const { el, alca } = resize;
+    if (alca === "a" || alca === "b") {
+      // Puxar a parede pela ponta: a outra ponta fica onde está.
+      const { a, b } = pontasDaParede(el);
+      const fixo = alca === "a" ? b : a;
+      const r = retanguloDoTraco(fixo.x, fixo.y, px, py, Number(el.altura));
+      setPreviaResize({ x: r.x, y: r.y, largura: Math.max(10, r.largura), rotacao: r.rotacao });
+    } else {
+      setPreviaResize(redimensionarPorCanto(el, alca, px, py));
+    }
+    invalidate();
+  };
 
   return (
     <>
@@ -233,6 +279,21 @@ function Conteudo({
         dampingFactor={0.15}
       />
 
+      {/* Andares vizinhos: referência translúcida, sem interação. */}
+      {andaresVizinhos.map((a) => (
+        <AndarFantasma
+          key={a.planta.id}
+          planta={a.planta}
+          elementos={a.elementos}
+          ativos={a.ativos}
+          base={M(alturaDoAndar(plantas.length ? plantas : [a.planta], a.planta.nivel ?? 0))}
+        />
+      ))}
+
+      {/* O andar que está sendo editado/visto. Só o Y muda: X e Z continuam
+          sendo as coordenadas do banco, e é por isso que o arrasto (que
+          trabalha em coordenadas de mundo) não precisa saber de andar. */}
+      <group position={[0, base, 0]}>
       <Piso
         planta={planta}
         mostrarGrade={mostrarGrade}
@@ -249,10 +310,12 @@ function Conteudo({
       <ParedesDoPerimetro planta={planta} />
 
       <PonteiroNoPlano
-        ativo={!!arrasto || !!traco}
-        altura={arrasto?.alturaBase ?? 0}
+        ativo={!!arrasto || !!traco || !!resize}
+        altura={(arrasto?.alturaBase ?? 0) + base}
         onMover={(x, z) => {
-          if (arrasto) {
+          if (resize) {
+            aplicarResize(snap(x * 100, livre), snap(z * 100, livre));
+          } else if (arrasto) {
             moverLocal(x - arrasto.dx, z - arrasto.dz);
           } else if (traco) {
             const x2 = snap(x * 100, livre);
@@ -262,6 +325,14 @@ function Conteudo({
           }
         }}
         onSoltar={() => {
+          if (resize) {
+            if (previaResize) onRedimensionar?.(resize.el.id, previaResize);
+            setResize(null);
+            setPreviaResize(null);
+            travarCamera(false);
+            invalidate();
+            return;
+          }
           if (traco) {
             travarCamera(false);
             onDesenharNoChao?.(traco);
@@ -274,7 +345,11 @@ function Conteudo({
 
       {traco && <FantasmaDoTraco traco={traco} />}
 
-      {elementos.map((el) => {
+      {elementos.map((cru) => {
+        // Enquanto a alça está sendo puxada, a peça desenha com a medida
+        // provisória — o banco só recebe no soltar.
+        const el =
+          previaResize && resize?.el.id === cru.id ? ({ ...cru, ...previaResize } as TiElemento) : cru;
         const def = tipoElemento(el.tipo);
         const largura = M(Number(el.largura));
         const profundidade = M(Number(el.altura));
@@ -379,6 +454,21 @@ function Conteudo({
             </group>
           );
         })}
+
+      {/* Alças de manipulação: puxar a parede pelas pontas, esticar a sala
+          pelas quinas. Ficam por último para desenhar por cima das peças. */}
+      {editavel && !desenhando && elementoSelecionado && (
+        <Alcas
+          el={elementoSelecionado}
+          previa={previaResize}
+          onPegar={(alca) => {
+            setResize({ el: elementoSelecionado, alca });
+            setPreviaResize(null);
+            travarCamera(true);
+          }}
+        />
+      )}
+      </group>
     </>
   );
 }
@@ -562,6 +652,151 @@ function PonteiroNoPlano({
   }, [ativo, altura, camera, gl, onMover, onSoltar]);
 
   return null;
+}
+
+/**
+ * Um andar que não está sendo editado: translúcido, sem sombra e sem eventos.
+ *
+ * `raycast={() => null}` em vez de `pointerEvents`: three não tem CSS, e sem
+ * desligar o raycast o clique atravessaria para a peça do outro andar — que é
+ * exatamente o acidente que a translucidez promete evitar.
+ */
+function AndarFantasma({
+  planta,
+  elementos,
+  ativos,
+  base,
+}: {
+  planta: TiPlanta;
+  elementos: TiElemento[];
+  ativos: TiAtivo[];
+  base: number;
+}) {
+  const L = M(planta.largura_cm);
+  const P = M(planta.altura_cm);
+  return (
+    <group position={[0, base, 0]} raycast={() => null}>
+      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[L / 2, 0, P / 2]} raycast={() => null}>
+        <planeGeometry args={[L, P]} />
+        <meshStandardMaterial color={planta.cor_piso || "#eef2f7"} transparent opacity={0.35} roughness={1} />
+      </mesh>
+      <group>
+        {elementos.map((el) => {
+          const largura = M(Number(el.largura));
+          const profundidade = M(Number(el.altura));
+          const altura = M(alturaDoElemento(el));
+          return (
+            <group
+              key={el.id}
+              position={[M(Number(el.x)) + largura / 2, 0, M(Number(el.y)) + profundidade / 2]}
+              rotation={[0, rad(Number(el.rotacao)), 0]}
+              raycast={() => null}
+            >
+              <ModeloDoElemento elemento={el} largura={largura} profundidade={profundidade} altura={altura} />
+            </group>
+          );
+        })}
+        {ativos
+          .filter((a) => a.planta_id === planta.id && a.pos_x != null)
+          .map((a) => {
+            const { largura, profundidade, altura } = dimensoesAtivo(a);
+            return (
+              <group
+                key={a.id}
+                position={[M(Number(a.pos_x)), M(alturaDeApoio(a, elementos)), M(Number(a.pos_y))]}
+                rotation={[0, rad(Number(a.rotacao)), 0]}
+                raycast={() => null}
+              >
+                <ModeloDoAtivo ativo={a} largura={largura} profundidade={profundidade} altura={altura} />
+              </group>
+            );
+          })}
+      </group>
+      <Html center distanceFactor={26} position={[L / 2, 0.4, -0.6]}>
+        <span className="whitespace-nowrap rounded bg-slate-900/60 px-1.5 py-0.5 text-[11px] font-semibold text-white">
+          {planta.nome}
+        </span>
+      </Html>
+    </group>
+  );
+}
+
+/**
+ * As alças de manipulação da peça selecionada.
+ *
+ * Peça alongada (parede, divisória, janela) ganha DUAS alças, nas pontas:
+ * puxar uma delas muda comprimento e ângulo de uma vez, que é como se ajusta
+ * parede. As demais ganham QUATRO, nas quinas, e esticam o retângulo com o
+ * canto oposto parado.
+ *
+ * O tamanho da esfera não escala com o zoom por enquanto: 12 cm de raio é
+ * grande o bastante para pegar com o mouse na distância em que se edita.
+ */
+function Alcas({
+  el,
+  previa,
+  onPegar,
+}: {
+  el: TiElemento;
+  previa: Partial<TiElemento> | null;
+  onPegar: (alca: "a" | "b" | "nw" | "ne" | "sw" | "se") => void;
+}) {
+  const peca = previa ? ({ ...el, ...previa } as TiElemento) : el;
+  const def = tipoElemento(peca.tipo);
+  const raio = 0.12;
+  const altura = M(alturaDoElemento(peca)) + 0.1;
+
+  if (def.familia === "estrutura") {
+    const { a, b } = pontasDaParede(peca);
+    return (
+      <>
+        {([
+          ["a", a],
+          ["b", b],
+        ] as const).map(([nome, p]) => (
+          <mesh
+            key={nome}
+            position={[M(p.x), altura, M(p.y)]}
+            onPointerDown={(e: ThreeEvent<PointerEvent>) => {
+              e.stopPropagation();
+              onPegar(nome);
+            }}
+          >
+            <sphereGeometry args={[raio, 14, 12]} />
+            <meshStandardMaterial color="#f59e0b" emissive="#f59e0b" emissiveIntensity={0.45} />
+          </mesh>
+        ))}
+      </>
+    );
+  }
+
+  const x0 = M(Number(peca.x));
+  const y0 = M(Number(peca.y));
+  const x1 = x0 + M(Number(peca.largura));
+  const y1 = y0 + M(Number(peca.altura));
+  const quinas: [("nw" | "ne" | "sw" | "se"), number, number][] = [
+    ["nw", x0, y0],
+    ["ne", x1, y0],
+    ["sw", x0, y1],
+    ["se", x1, y1],
+  ];
+  return (
+    <>
+      {quinas.map(([nome, px, pz]) => (
+        <mesh
+          key={nome}
+          position={[px, altura, pz]}
+          onPointerDown={(e: ThreeEvent<PointerEvent>) => {
+            e.stopPropagation();
+            onPegar(nome);
+          }}
+        >
+          <sphereGeometry args={[raio, 14, 12]} />
+          <meshStandardMaterial color="#f59e0b" emissive="#f59e0b" emissiveIntensity={0.45} />
+        </mesh>
+      ))}
+    </>
+  );
 }
 
 export function LegendaStatus() {

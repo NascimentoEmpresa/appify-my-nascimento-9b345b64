@@ -2,11 +2,14 @@ import { describe, expect, it } from "vitest";
 import {
   M,
   alturaDeApoio,
+  alturaDoAndar,
   alturaDoElemento,
   camaraInicial,
   dentro,
   pegadaDoElemento,
+  pontasDaParede,
   rad,
+  redimensionarPorCanto,
   retanguloDeCantos,
   retanguloDoTraco,
   snap,
@@ -171,6 +174,9 @@ describe("retanguloDoTraco — desenhar parede arrastando", () => {
     // O banco guarda o canto; a cena posiciona pelo centro.
     expect(r.centroX).toBe(300);
     expect(r.x).toBe(100);
+    // Duas casas: com espessura ímpar o canto cai em .5, e arredondar fazia a
+    // parede derivar meio centímetro por arrasto.
+    expect(r.y).toBe(192.5);
   });
 
   it("uma parede vertical sai com 90°", () => {
@@ -200,5 +206,70 @@ describe("retanguloDeCantos — ambientes e móveis dimensionados", () => {
     const a = retanguloDeCantos(500, 400, 100, 100);
     expect(a).toEqual({ x: 100, y: 100, largura: 400, profundidade: 300 });
     expect(retanguloDeCantos(100, 100, 500, 400)).toEqual(a);
+  });
+});
+
+describe("andares empilhados", () => {
+  const plantas = [
+    { nivel: 0, pe_direito_cm: 300 },
+    { nivel: 1, pe_direito_cm: 280 },
+    { nivel: 2, pe_direito_cm: 280 },
+  ];
+
+  it("térreo fica no chão", () => {
+    expect(alturaDoAndar(plantas, 0)).toBe(0);
+  });
+
+  it("cada andar sobe a altura dos que estão abaixo", () => {
+    expect(alturaDoAndar(plantas, 1)).toBe(300);
+    expect(alturaDoAndar(plantas, 2)).toBe(580);
+  });
+
+  it("andar sem planta cadastrada não faz o de cima afundar", () => {
+    // Alguém cadastrou térreo e 2º, pulando o 1º: sem o padrão, o 2º pousaria
+    // dentro do térreo.
+    expect(alturaDoAndar([{ nivel: 0, pe_direito_cm: 300 }], 2, 300)).toBe(600);
+  });
+
+  it("subsolo desce", () => {
+    expect(alturaDoAndar([{ nivel: -1, pe_direito_cm: 250 }], -1)).toBe(-250);
+  });
+});
+
+describe("pontasDaParede — é o inverso de retanguloDoTraco", () => {
+  it("devolve as pontas do traço que criou a parede", () => {
+    const r = retanguloDoTraco(100, 200, 500, 200, 15);
+    const { a, b } = pontasDaParede({ ...r, altura: r.profundidade });
+    expect(a.x).toBeCloseTo(100, 0);
+    expect(b.x).toBeCloseTo(500, 0);
+    expect(a.y).toBeCloseTo(200, 0);
+  });
+
+  it("fecha o ciclo em parede na diagonal", () => {
+    // Puxar a ponta e soltar não pode deslocar a parede: se as duas funções
+    // discordarem, cada arrasto move a peça um pouco.
+    const r = retanguloDoTraco(0, 0, 300, 400, 20);
+    const { a, b } = pontasDaParede({ ...r, altura: r.profundidade });
+    expect(Math.hypot(b.x - a.x, b.y - a.y)).toBeCloseTo(500, 0);
+  });
+});
+
+describe("redimensionarPorCanto — esticar sala pela quina", () => {
+  const sala = { x: 100, y: 100, largura: 400, altura: 300 };
+
+  it("puxando a quina sudeste, o canto noroeste fica parado", () => {
+    const r = redimensionarPorCanto(sala, "se", 700, 600);
+    expect(r).toEqual({ x: 100, y: 100, largura: 600, altura: 500 });
+  });
+
+  it("puxando a noroeste, o canto sudeste fica parado", () => {
+    const r = redimensionarPorCanto(sala, "nw", 50, 50);
+    expect(r).toEqual({ x: 50, y: 50, largura: 450, altura: 350 });
+  });
+
+  it("não deixa a peça inverter nem sumir ao atravessar o canto oposto", () => {
+    const r = redimensionarPorCanto(sala, "se", 0, 0);
+    expect(r.largura).toBe(25);
+    expect(r.altura).toBe(25);
   });
 });
