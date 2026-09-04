@@ -407,6 +407,50 @@ export default function Aprovacoes({ base = "/app/malote" }: { base?: string } =
     busca,
   ]);
 
+  // SIS-2026-0323 (Iury): os cards abaixo (Solicitações/Despesas, níveis
+  // N1/N2/N3, "Minhas") contavam sempre em cima de `itens` cru — clicar em
+  // "Empresa: HAGG" ou digitar uma busca não refletia nos números dos
+  // cards, só na tabela. Mesmo predicado de `filtrados`, mas SEM os campos
+  // que os próprios cards representam (status/escopo/nível/somenteMinhas)
+  // — senão cada card ficaria preso ao valor que ELE MESMO define (ex.:
+  // clicar em N2 zeraria a contagem de N1/N3).
+  const itensComFiltrosDoPainel = useMemo(() => {
+    return itens.filter((item) => {
+      const d = item.despesa;
+      if (tipo && d.tipo !== tipo) return false;
+      if (classificacao && d.classificacao?.nome !== classificacao) return false;
+      if (empresaId && empresaIdResolvida(d) !== empresaId) return false;
+      if (contratoId && d.contrato_id !== contratoId) return false;
+      if (excecao === "sim" && !d.excecao) return false;
+      if (excecao === "nao" && d.excecao) return false;
+      if (dataAtualizacaoDe && d.updated_at < dataAtualizacaoDe) return false;
+      if (dataAtualizacaoAte && d.updated_at > dataAtualizacaoAte + "T23:59:59") return false;
+      if (dataPagamentoDe || dataPagamentoAte) {
+        const dp = item.parcela ? item.parcela.data_pagamento_real ?? item.parcela.data_vencimento : d.data_pagamento;
+        if (dataPagamentoDe && (!dp || dp < dataPagamentoDe)) return false;
+        if (dataPagamentoAte && (!dp || dp > dataPagamentoAte)) return false;
+      }
+      if (busca.trim()) {
+        const q = busca.trim().toLowerCase();
+        if (!d.numero.toLowerCase().includes(q) && !d.nome.toLowerCase().includes(q)) return false;
+      }
+      return true;
+    });
+  }, [
+    itens,
+    tipo,
+    classificacao,
+    empresaId,
+    empresaPrimeiraLinhaPorDespesa,
+    contratoId,
+    excecao,
+    dataAtualizacaoDe,
+    dataAtualizacaoAte,
+    dataPagamentoDe,
+    dataPagamentoAte,
+    busca,
+  ]);
+
   // SIS-2026-0316: clique no cabeçalho ordena (aplicado antes da
   // paginação, senão só reordenaria dentro da página atual).
   const ordenados = useMemo(() => {
@@ -430,10 +474,10 @@ export default function Aprovacoes({ base = "/app/malote" }: { base?: string } =
   const visiveis = ordenados.slice((paginaAtual - 1) * PAGE_SIZE, paginaAtual * PAGE_SIZE);
 
   function contar(s: StatusDespesa) {
-    return itens.filter((item) => statusEfetivo(item) === s).length;
+    return itensComFiltrosDoPainel.filter((item) => statusEfetivo(item) === s).length;
   }
 
-  const minhasPendentes = itens.filter(
+  const minhasPendentes = itensComFiltrosDoPainel.filter(
     ({ despesa: d }) => d.status === "pendente_aprovacao" && d.nivel_aprovacao_atual != null && souAprovadorDoNivel(d, d.nivel_aprovacao_atual, user?.id)
   ).length;
   const outrasPendentes = contar("pendente_aprovacao") - minhasPendentes;
@@ -441,13 +485,13 @@ export default function Aprovacoes({ base = "/app/malote" }: { base?: string } =
   // (que é só aprovação), soma também as despesas com justificativa
   // pendente de mim, sem contar a mesma despesa duas vezes.
   const minhasNoFiltro = new Set([
-    ...itens.filter(({ despesa: d }) => d.status === "pendente_aprovacao" && d.nivel_aprovacao_atual != null && souAprovadorDoNivel(d, d.nivel_aprovacao_atual, user?.id)).map((i) => i.despesa.id),
+    ...itensComFiltrosDoPainel.filter(({ despesa: d }) => d.status === "pendente_aprovacao" && d.nivel_aprovacao_atual != null && souAprovadorDoNivel(d, d.nivel_aprovacao_atual, user?.id)).map((i) => i.despesa.id),
     ...minhasDespesasJustificativaPendente,
   ]).size;
 
   // SIS-2026-0281: contagem pros botões de "filtrar por nível".
   function contarNivel(n: 1 | 2 | 3) {
-    return itens.filter(({ despesa: d }) => d.status === "pendente_aprovacao" && d.nivel_aprovacao_atual === n).length;
+    return itensComFiltrosDoPainel.filter(({ despesa: d }) => d.status === "pendente_aprovacao" && d.nivel_aprovacao_atual === n).length;
   }
   const pendentesN1 = contarNivel(1);
   const pendentesN2 = contarNivel(2);

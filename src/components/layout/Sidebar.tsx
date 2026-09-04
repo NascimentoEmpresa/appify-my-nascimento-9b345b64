@@ -362,6 +362,11 @@ const financeiroModule: ModuleDef = {
       defaultOpen: true,
       items: [
         { label: "Conciliação Bancária", to: "/app/financeiro/conciliacao-bancaria", icon: GitMerge },
+        // SIS-2026-0304: Checklist de Faturamento (e a futura Solicitação
+        // de Ajuste, SIS-2026-0305) ficam aqui em "Ferramentas" — decisão
+        // do usuário, são módulos migrados de sistema externo, não fazem
+        // parte da Gestão Financeira "nativa" do ERP.
+        { label: "Checklist de Faturamento", to: "/app/financeiro/checklist-faturamento", icon: ListChecks, badge: "Novo" },
       ],
     },
   ],

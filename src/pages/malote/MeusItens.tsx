@@ -206,6 +206,35 @@ export default function MeusItens() {
   const [busca, setBusca] = useState("");
   const ordenacao = useOrdenacaoTabela<ColunaMeusItens>();
 
+  // SIS-2026-0323 (Iury): os chips contavam sempre em cima de `itens` cru
+  // — mudar a aba (Solicitações/Despesas) ou um filtro do painel (Empresa,
+  // Classificação, Exceção, período, busca) não refletia nos números dos
+  // chips, só na tabela. Mesmo predicado de `filtrados`, sem o próprio
+  // `chip` (cada chip representa um valor dele mesmo — incluí-lo zeraria
+  // os demais ao selecionar um).
+  const itensComFiltrosDoPainel = useMemo(() => {
+    return itens.filter((item) => {
+      const { despesa, parcela } = item;
+      if (tab === "solicitacoes" && !aindaESolicitacao(despesa)) return false;
+      if (tab === "despesas" && aindaESolicitacao(despesa)) return false;
+      if (classificacaoId && despesa.classificacao_id !== classificacaoId) return false;
+      if (empresaId && empresaIdResolvida(despesa) !== empresaId) return false;
+      if (excecao === "sim" && !despesa.excecao) return false;
+      if (excecao === "nao" && despesa.excecao) return false;
+      const dataPagamento = parcela ? parcela.data_pagamento_real ?? parcela.data_vencimento : despesa.data_pagamento;
+      if (periodoInicio && (!dataPagamento || dataPagamento < periodoInicio)) return false;
+      if (periodoFim && (!dataPagamento || dataPagamento > periodoFim)) return false;
+      if (dataAtualizacaoDe && despesa.updated_at < dataAtualizacaoDe) return false;
+      if (dataAtualizacaoAte && despesa.updated_at > dataAtualizacaoAte + "T23:59:59") return false;
+      if (busca.trim()) {
+        const alvo = `${despesa.numero} ${despesa.nome}`.toLowerCase();
+        if (!alvo.includes(busca.trim().toLowerCase())) return false;
+      }
+      return true;
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [itens, tab, classificacaoId, empresaId, empresaPrimeiraLinhaPorDespesa, excecao, periodoInicio, periodoFim, dataAtualizacaoDe, dataAtualizacaoAte, busca]);
+
   const contagens = useMemo(() => {
     const map: Record<ChipKey, number> = {
       todos: 0,
@@ -220,13 +249,13 @@ export default function MeusItens() {
       despesa_paga: 0,
       despesa_reprovada: 0,
     };
-    for (const item of itens) {
+    for (const item of itensComFiltrosDoPainel) {
       for (const c of CHIPS) {
         if (itemMatchesChip(item, c.key)) map[c.key]++;
       }
     }
     return map;
-  }, [itens]);
+  }, [itensComFiltrosDoPainel]);
 
   const filtrados = useMemo(() => {
     return itens.filter((item) => {

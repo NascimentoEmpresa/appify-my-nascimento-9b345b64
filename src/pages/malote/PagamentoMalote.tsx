@@ -297,6 +297,49 @@ export default function PagamentoMalote() {
     busca,
   ]);
 
+  // SIS-2026-0323 (Iury): os cards de status e os 3 cards de valor abaixo
+  // contavam sempre em cima de `itens` cru (decisão antiga, ver comentário
+  // removido do valorPago/valorPendente) — clicar num filtro do painel não
+  // refletia nos cards, só na tabela. Mesmo predicado de `filtrados`, só
+  // sem o campo `status` (o próprio card representa isso — incluí-lo
+  // zeraria os demais cards ao selecionar um).
+  const itensComFiltrosDoPainel = useMemo(() => {
+    return itens.filter((item) => {
+      const d = item.despesa;
+      if (classificacao && d.classificacao?.nome !== classificacao) return false;
+      if (responsavelId && d.created_by !== responsavelId) return false;
+      if (empresaId && empresaIdResolvida(d) !== empresaId) return false;
+      if (setor && setorResolvido(d) !== setor) return false;
+      if (dataAtualizacaoDe && d.updated_at < dataAtualizacaoDe) return false;
+      if (dataAtualizacaoAte && d.updated_at > dataAtualizacaoAte + "T23:59:59") return false;
+      if (dataPagamentoDe || dataPagamentoAte) {
+        const dp = item.parcela ? item.parcela.data_pagamento_real ?? item.parcela.data_vencimento : d.data_pagamento;
+        if (dataPagamentoDe && (!dp || dp < dataPagamentoDe)) return false;
+        if (dataPagamentoAte && (!dp || dp > dataPagamentoAte)) return false;
+      }
+      if (busca.trim()) {
+        const q = busca.trim().toLowerCase();
+        if (!d.numero.toLowerCase().includes(q) && !d.nome.toLowerCase().includes(q)) return false;
+      }
+      return true;
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    itens,
+    classificacao,
+    responsavelId,
+    empresaId,
+    empresaPrimeiraLinhaPorDespesa,
+    setor,
+    classificacaoPrimeiraLinhaPorDespesa,
+    setorPorClassificacaoId,
+    dataAtualizacaoDe,
+    dataAtualizacaoAte,
+    dataPagamentoDe,
+    dataPagamentoAte,
+    busca,
+  ]);
+
   // SIS-2026-0316: clique no cabeçalho ordena (aplicado antes da
   // paginação, senão só reordenaria dentro da página atual).
   const ordenados = useMemo(() => {
@@ -321,7 +364,7 @@ export default function PagamentoMalote() {
   const visiveis = ordenados.slice((paginaAtual - 1) * PAGE_SIZE, paginaAtual * PAGE_SIZE);
 
   function contar(s: StatusDespesa) {
-    return itens.filter((item) => statusEfetivo(item) === s).length;
+    return itensComFiltrosDoPainel.filter((item) => statusEfetivo(item) === s).length;
   }
 
   const tiles: TileInfo[] = [
@@ -332,17 +375,18 @@ export default function PagamentoMalote() {
     { label: STATUS_LABEL.despesa_paga, status: "despesa_paga", count: contar("despesa_paga"), icon: CheckCircle2, cor: "emerald" },
   ];
 
-  // SIS-2026-0286 (Iury): "três cards com valor total do malote, valor pago
-  // e valor pendente" — mesma base dos tiles de status acima (`itens`, não
-  // `filtrados`): são um resumo geral da fila, não um total dos filtros
-  // ativos no momento (mesmo critério já usado pelos tiles de status).
-  // Reprovada fica de fora dos 3 — não é "pendente" (não vai ser paga) nem
-  // deveria inflar o "total do malote" (nunca foi pago de verdade).
+  // SIS-2026-0286 (Iury) / SIS-2026-0323 (Iury, revertido): "três cards com
+  // valor total do malote, valor pago e valor pendente" — inicialmente de
+  // propósito em cima de `itens` cru (resumo geral, não do filtro ativo).
+  // Pedido depois: os cards devem refletir os filtros do painel também
+  // (mesma base usada pelos tiles de status acima). Reprovada continua de
+  // fora dos 3 — não é "pendente" (não vai ser paga) nem deveria inflar o
+  // "total do malote" (nunca foi pago de verdade).
   function valorItem(item: ItemLinhaMalote): number {
     return item.parcela ? item.parcela.valor : item.despesa.valor_aprovado ?? item.despesa.valor_total;
   }
-  const valorPago = itens.filter((i) => statusEfetivo(i) === "despesa_paga").reduce((s, i) => s + valorItem(i), 0);
-  const valorPendente = itens
+  const valorPago = itensComFiltrosDoPainel.filter((i) => statusEfetivo(i) === "despesa_paga").reduce((s, i) => s + valorItem(i), 0);
+  const valorPendente = itensComFiltrosDoPainel
     .filter((i) => ["aguardando_pagamento", "pronto_para_pagar", "ajuste_pagamento"].includes(statusEfetivo(i)))
     .reduce((s, i) => s + valorItem(i), 0);
   const valorTotalMalote = valorPago + valorPendente;
