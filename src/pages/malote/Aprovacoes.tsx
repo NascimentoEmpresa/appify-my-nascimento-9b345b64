@@ -8,6 +8,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { TableHeadOrdenavel } from "@/components/ui/table-head-ordenavel";
 import { DateRangeFilter } from "@/components/ui/date-range-filter";
 import { CheckCircle2, ChevronLeft, ChevronRight, Hourglass, AlertTriangle, XCircle, FileText, Users, User, X } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
@@ -32,7 +33,24 @@ import {
 } from "@/hooks/useMaloteDespesa";
 import { useClassificacoesOrcamentoAdmin } from "@/hooks/usePlanejamentoOrcamentario";
 import { useMinhasDespesasComJustificativaPendente } from "@/hooks/useMaloteJustificativaAnalista";
+import { useOrdenacaoTabela } from "@/hooks/useOrdenacaoTabela";
+import { ordenarPor } from "@/lib/ordenarTabela";
 import { JustificativaPendenteBadge, abreviarNome } from "./JustificativaPendenteBadge";
+
+// SIS-2026-0316: colunas ordenáveis. Fora: Empresa/Contrato (fica só como
+// Empresa pra ordenar, o badge continua mostrando os dois), Parcela
+// (composto X/Y), Solicitante (nome resolvido por hook próprio dentro de
+// cada linha, não dá pra acessar de forma síncrona aqui) e o sino de
+// Justificativa (não é dado ordenável).
+type ColunaAprovacoes = "tipo" | "numero" | "empresa" | "nome" | "classificacao" | "valor" | "data_pagamento" | "status" | "excecao" | "atualizacao";
+
+function dataPagamentoDeItem(item: ItemLinhaMalote): string | null {
+  return item.parcela ? item.parcela.data_pagamento_real ?? item.parcela.data_vencimento : item.despesa.data_pagamento;
+}
+
+function valorDeItem(item: ItemLinhaMalote): number {
+  return Number(item.parcela ? item.parcela.valor : item.despesa.valor_total);
+}
 
 // SIS-2026-0223: despesa parcelada vira N linhas (1 por parcela) a partir de
 // "aguardando_pagamento" — o status exibido/contado por linha passa a ser o
@@ -281,6 +299,7 @@ export default function Aprovacoes({ base = "/app/malote" }: { base?: string } =
   const [excecao, setExcecao] = useState<"" | "sim" | "nao">("");
   const [busca, setBusca] = useState("");
   const [pagina, setPagina] = useState(1);
+  const ordenacao = useOrdenacaoTabela<ColunaAprovacoes>();
 
   const empresasMap = useMemo(() => new Map(empresas.map((e) => [e.id, e.nome])), [empresas]);
   const contratosMap = useMemo(() => new Map(contratos.map((c) => [c.id, c.nome])), [contratos]);
@@ -388,9 +407,27 @@ export default function Aprovacoes({ base = "/app/malote" }: { base?: string } =
     busca,
   ]);
 
-  const totalPaginas = Math.max(1, Math.ceil(filtrados.length / PAGE_SIZE));
+  // SIS-2026-0316: clique no cabeçalho ordena (aplicado antes da
+  // paginação, senão só reordenaria dentro da página atual).
+  const ordenados = useMemo(() => {
+    const acessores: Record<ColunaAprovacoes, (item: ItemLinhaMalote) => string | number | null> = {
+      tipo: (item) => (STATUS_FASE_SOLICITACAO.includes(item.despesa.status) ? "Solicitação" : "Despesa"),
+      numero: (item) => item.despesa.numero,
+      empresa: (item) => empresasMap.get(empresaIdResolvida(item.despesa) ?? "") ?? null,
+      nome: (item) => item.despesa.nome,
+      classificacao: (item) => item.despesa.classificacao?.nome ?? null,
+      valor: (item) => valorDeItem(item),
+      data_pagamento: (item) => dataPagamentoDeItem(item),
+      status: (item) => STATUS_LABEL[statusEfetivo(item)],
+      excecao: (item) => (item.despesa.excecao ? 1 : 0),
+      atualizacao: (item) => item.despesa.updated_at,
+    };
+    return ordenacao.coluna ? ordenarPor(filtrados, acessores[ordenacao.coluna], ordenacao.direcao) : filtrados;
+  }, [filtrados, ordenacao.coluna, ordenacao.direcao, empresasMap, empresaPrimeiraLinhaPorDespesa]);
+
+  const totalPaginas = Math.max(1, Math.ceil(ordenados.length / PAGE_SIZE));
   const paginaAtual = Math.min(pagina, totalPaginas);
-  const visiveis = filtrados.slice((paginaAtual - 1) * PAGE_SIZE, paginaAtual * PAGE_SIZE);
+  const visiveis = ordenados.slice((paginaAtual - 1) * PAGE_SIZE, paginaAtual * PAGE_SIZE);
 
   function contar(s: StatusDespesa) {
     return itens.filter((item) => statusEfetivo(item) === s).length;
@@ -633,27 +670,29 @@ export default function Aprovacoes({ base = "/app/malote" }: { base?: string } =
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead>Tipo</TableHead>
-                  <TableHead>Nº</TableHead>
+                  <TableHeadOrdenavel coluna="tipo" ordenacao={ordenacao}>Tipo</TableHeadOrdenavel>
+                  <TableHeadOrdenavel coluna="numero" ordenacao={ordenacao}>Nº</TableHeadOrdenavel>
                   {/* SIS-2026-0288 (Iury): "Empresa / Contrato" logo após o
                       Nº, não mais depois de Classificação. */}
                   {/* Cabeçalho centralizado nas duas colunas que renderizam
                       badge (conteúdo da célula já é centralizado) — nas
                       demais colunas o texto continua alinhado à esquerda
-                      (ou à direita, no caso de Valor), igual o conteúdo. */}
-                  <TableHead className="text-center">Empresa / Contrato</TableHead>
+                      (ou à direita, no caso de Valor), igual o conteúdo.
+                      SIS-2026-0316: ordena só por Empresa (o Contrato do
+                      badge continua mostrado, só não entra no critério). */}
+                  <TableHeadOrdenavel coluna="empresa" ordenacao={ordenacao} className="text-center">Empresa / Contrato</TableHeadOrdenavel>
                   <TableHead>Parcela</TableHead>
                   {/* SIS-2026-0288-ajuste (Iury): motivo saiu da coluna —
                       "manter somente NOME" — quem quiser o motivo abre a
                       despesa. */}
-                  <TableHead>Nome</TableHead>
-                  <TableHead>Classificação</TableHead>
-                  <TableHead className="text-right">Valor (R$)</TableHead>
-                  <TableHead>Data de Pagamento</TableHead>
+                  <TableHeadOrdenavel coluna="nome" ordenacao={ordenacao}>Nome</TableHeadOrdenavel>
+                  <TableHeadOrdenavel coluna="classificacao" ordenacao={ordenacao}>Classificação</TableHeadOrdenavel>
+                  <TableHeadOrdenavel coluna="valor" ordenacao={ordenacao} className="text-right">Valor (R$)</TableHeadOrdenavel>
+                  <TableHeadOrdenavel coluna="data_pagamento" ordenacao={ordenacao}>Data de Pagamento</TableHeadOrdenavel>
                   <TableHead>Solicitante</TableHead>
-                  <TableHead className="text-center">Status</TableHead>
-                  <TableHead>Exceção</TableHead>
-                  <TableHead>Última atualização</TableHead>
+                  <TableHeadOrdenavel coluna="status" ordenacao={ordenacao} className="text-center">Status</TableHeadOrdenavel>
+                  <TableHeadOrdenavel coluna="excecao" ordenacao={ordenacao}>Exceção</TableHeadOrdenavel>
+                  <TableHeadOrdenavel coluna="atualizacao" ordenacao={ordenacao}>Última atualização</TableHeadOrdenavel>
                   {/* SIS-2026-0288-ajuste (Iury/usuário): "Justificativa"
                       virou sino — pedido pra ficar bem evidente e como
                       última coisa da linha, não mais coladinho no Nº. */}
