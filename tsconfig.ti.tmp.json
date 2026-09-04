@@ -1,5 +1,0 @@
-{
-  "extends": "./tsconfig.app.json",
-  "compilerOptions": { "noEmit": true },
-  "include": ["src/pages/ti/**/*", "src/hooks/useTiMapa.ts", "src/App.tsx", "src/components/layout/Sidebar.tsx", "src/vite-env.d.ts"]
-}
