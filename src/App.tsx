@@ -88,6 +88,7 @@ import Patrimonio from "./pages/suprimentos/Patrimonio";
 import PainelManutencoes from "./pages/suprimentos/PainelManutencoes";
 import EpisAdmissoes from "./pages/suprimentos/EpisAdmissoes";
 import HistoricoColaborador from "./pages/suprimentos/HistoricoColaborador";
+import CorreioDeclaracao from "./pages/suprimentos/CorreioDeclaracao";
 import EnxovalAdmissao from "./pages/publico/EnxovalAdmissao";
 import SolicitarMateriais from "./pages/encarregados/SolicitarMateriais";
 import MeusPedidos from "./pages/encarregados/MeusPedidos";
@@ -510,6 +511,7 @@ const App = () => (
             <Route path="suprimentos/manutencao" element={<PainelManutencoes />} />
             <Route path="suprimentos/epis-admissoes" element={<EpisAdmissoes />} />
             <Route path="suprimentos/colaborador" element={<HistoricoColaborador />} />
+            <Route path="suprimentos/correio-declaracao" element={<CorreioDeclaracao />} />
             {/* Financeiro */}
             <Route path="financeiro/contas-pagar" element={<ContasPagar />} />
             <Route path="financeiro/contas-receber" element={<ContasReceber />} />

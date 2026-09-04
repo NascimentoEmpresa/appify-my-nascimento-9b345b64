@@ -35,6 +35,76 @@ export const ESTILO_STATUS: Record<string, { classe: string; rotulo: string }> =
 };
 
 /**
+ * Status que a pessoa enxerga no pedido. A comprovação é a única verdade
+ * sobre a entrega; persistir outro status no pedido repetiria o mesmo fato em
+ * duas colunas e permitiria que elas divergissem.
+ */
+export type StatusVisivel =
+  | "EM PREPARACAO"
+  | "AGUARDANDO ENVIO"
+  | "AGUARDANDO COMPRA"
+  | "DESPACHADO_AGUARDANDO"
+  | "DESPACHADO_ENTREGUE"
+  | "CANCELADO";
+
+export type StatusComprovacao = "PENDENTE" | "ENVIADO" | "DISPENSADO" | null | undefined;
+
+export const STATUS_VISIVEL: StatusVisivel[] = [
+  "EM PREPARACAO",
+  "AGUARDANDO ENVIO",
+  "AGUARDANDO COMPRA",
+  "DESPACHADO_AGUARDANDO",
+  "DESPACHADO_ENTREGUE",
+  "CANCELADO",
+];
+
+export const ESTILO_STATUS_VISIVEL: Record<StatusVisivel, { classe: string; rotulo: string }> = {
+  "EM PREPARACAO": ESTILO_STATUS["EM PREPARACAO"],
+  "AGUARDANDO ENVIO": ESTILO_STATUS["AGUARDANDO ENVIO"],
+  "AGUARDANDO COMPRA": ESTILO_STATUS["AGUARDANDO COMPRA"],
+  "DESPACHADO_AGUARDANDO": {
+    classe: "border-amber-400/50 bg-amber-50 text-amber-800 dark:bg-amber-950/30 dark:text-amber-300",
+    rotulo: "Despachado e Aguardando Confirmar Entrega",
+  },
+  "DESPACHADO_ENTREGUE": {
+    classe: "border-emerald-400/50 bg-emerald-50 text-emerald-700 dark:bg-emerald-950/30 dark:text-emerald-300",
+    rotulo: "Despachado e Entregue",
+  },
+  "CANCELADO": ESTILO_STATUS.CANCELADO,
+};
+
+export function derivarStatusVisivel(
+  status: string,
+  comprovacaoStatus: StatusComprovacao,
+): StatusVisivel {
+  if (status === "DESPACHADO") {
+    return comprovacaoStatus === "PENDENTE" ? "DESPACHADO_AGUARDANDO" : "DESPACHADO_ENTREGUE";
+  }
+  if (status === "AGUARDANDO ENVIO" || status === "AGUARDANDO COMPRA" || status === "CANCELADO") {
+    return status;
+  }
+  return "EM PREPARACAO";
+}
+
+/**
+ * O acervo anterior à regra compartilha o balde concluído do KPI, mas não
+ * pode afirmar uma entrega que nunca foi comprovada. Esta apresentação mantém
+ * essa diferença explícita nos badges e relatórios detalhados.
+ */
+export function apresentarStatusVisivel(status: string, comprovacaoStatus: StatusComprovacao) {
+  const statusVisivel = derivarStatusVisivel(status, comprovacaoStatus);
+  const estilo = ESTILO_STATUS_VISIVEL[statusVisivel];
+  const anteriorARegra = status === "DESPACHADO"
+    && (comprovacaoStatus === "DISPENSADO" || comprovacaoStatus == null);
+  return {
+    status: statusVisivel,
+    classe: estilo.classe,
+    rotulo: anteriorARegra ? "Despachado" : estilo.rotulo,
+    titulo: anteriorARegra ? "Despachado antes da regra de comprovação" : undefined,
+  };
+}
+
+/**
  * Status por ITEM — derivado, nunca guardado (SIS-2026-0201).
  *
  * O gerente de Suprimentos precisa exportar "só o que ficou pendente" para
@@ -108,6 +178,7 @@ export interface MeuPedido {
   nome_colaborador: string; matricula_colaborador: string | null;
   tipo_pedido: string; observacoes_solicitante: string | null; observacao: string | null;
   data_despachado: string | null; created_at: string;
+  comprovacao_id: string | null; comprovacao_status: StatusComprovacao;
   itens: PedidoItem[];
 }
 

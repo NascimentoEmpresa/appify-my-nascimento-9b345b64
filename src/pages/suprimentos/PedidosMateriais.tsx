@@ -13,20 +13,27 @@ import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "
 import { PageHeader } from "@/components/layout/PageHeader";
 import { useEmpresaId } from "@/hooks/useEmpresaId";
 import {
-  ESTILO_STATUS, STATUS_PEDIDO, fmtDataBR,
+  ESTILO_STATUS, fmtDataBR,
   ESTILO_STATUS_ITEM, STATUS_ITEM, derivarStatusItem,
+  ESTILO_STATUS_VISIVEL, STATUS_VISIVEL, apresentarStatusVisivel,
+  type StatusComprovacao, type StatusVisivel,
 } from "@/hooks/useSupPedidos";
 import { ModalBaixaPedido } from "@/components/suprimentos/ModalBaixaPedido";
 import { ModalEditarPedido } from "@/components/suprimentos/ModalEditarPedido";
+import { ModalEtiquetaTermica } from "@/components/suprimentos/ModalEtiquetaTermica";
 import { AcessoGate } from "@/components/auth/AcessoGate";
 import { useTagsDoPedido, useTagsDePedidos, buscarTagsDePedidos, type TagEmLote } from "@/hooks/useSupEstoque";
 import {
   Search, Package, Boxes, Clock, ShoppingCart, Truck, History as HistoryIcon,
-  RefreshCw, Inbox, Download, ShieldAlert, Trash2, AlertTriangle, Pencil,
+  RefreshCw, Inbox, Download, ShieldAlert, Trash2, AlertTriangle, Pencil, Printer, FileText,
 } from "lucide-react";
+import type { LucideIcon } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import * as XLSX from "xlsx";
+import { buscarDeclaracaoCompleta } from "@/hooks/useCorreioDeclaracao";
+import { imprimirDeclaracao } from "@/lib/suprimentos/declaracaoPrint";
+import { abrirComprovacaoPdf } from "@/lib/suprimentos/comprovacaoPdf";
 
 /**
  * Pedidos de Materiais — fila operacional do Supply.
@@ -60,6 +67,8 @@ interface Pedido {
   tipo_pedido: string; observacoes_solicitante: string | null; observacao: string | null;
   imagem_cracha_path: string | null;
   data_despachado: string | null; created_at: string;
+  envio_tipo: "SUPERVISOR" | "CORREIO" | null; envio_rastreio: string | null;
+  sup_pedido_comprovacao: { id: string; status: StatusComprovacao; respondido_em: string | null }[] | { id: string; status: StatusComprovacao; respondido_em: string | null } | null;
   sup_pedido_item: { id: string; item_id: string | null; nome_item: string; tipo_item: string; tamanho: string | null; quantidade: number; litros: string | null; ordem: number }[];
 }
 
@@ -103,6 +112,20 @@ function valorLegivel(v: string | null): string {
 
 type ItemPedido = Pedido["sup_pedido_item"][number];
 
+function comprovacaoPedido(pedido: Pedido) {
+  const relacao = pedido.sup_pedido_comprovacao;
+  return Array.isArray(relacao) ? relacao[0] ?? null : relacao;
+}
+
+function statusVisivelPedido(pedido: Pedido): StatusVisivel {
+  const comprovacao = comprovacaoPedido(pedido);
+  return apresentarStatusVisivel(pedido.status, comprovacao?.status).status;
+}
+
+function apresentacaoStatusPedido(pedido: Pedido) {
+  return apresentarStatusVisivel(pedido.status, comprovacaoPedido(pedido)?.status);
+}
+
 /**
  * Uma linha do Excel = um item do pedido, com os dados do pedido repetidos.
  *
@@ -141,17 +164,23 @@ function linhaExport(p: Pedido, i: ItemPedido | null, tags: TagEmLote[]) {
     "Valor unitário": unitario ?? "",
     "Valor total": total > 0 ? total : "",
     "Status do item": i ? derivarStatusItem(p.status, tags.length > 0) : "",
-    "Status do pedido": p.status,
+    "Status do pedido": apresentacaoStatusPedido(p).rotulo,
+    "Tipo de envio": p.envio_tipo === "SUPERVISOR" ? "Entrega via Supervisor" : p.envio_tipo === "CORREIO" ? "Entrega via Correio" : "",
+    "Rastreio Correio": p.envio_rastreio ?? "",
+    "Comprovação": comprovacaoPedido(p)?.status === "ENVIADO"
+      ? "Recebida"
+      : comprovacaoPedido(p)?.status === "PENDENTE" ? "Pendente" : "Não aplicável",
     "Obs. solicitante": p.observacoes_solicitante ?? "",
     "Obs. compras": p.observacao ?? "",
   };
 }
 
-const ICONE_STATUS: Record<string, any> = {
+const ICONE_STATUS: Record<StatusVisivel, LucideIcon> = {
   "EM PREPARACAO": Boxes,
   "AGUARDANDO ENVIO": Clock,
   "AGUARDANDO COMPRA": ShoppingCart,
-  "DESPACHADO": Truck,
+  "DESPACHADO_AGUARDANDO": Truck,
+  "DESPACHADO_ENTREGUE": Truck,
   "CANCELADO": Inbox,
 };
 
@@ -170,6 +199,7 @@ export default function PedidosMateriais() {
   const [historicoDe, setHistoricoDe] = useState<Pedido | null>(null);
   const [editandoDe, setEditandoDe] = useState<Pedido | null>(null);
   const [excluindo, setExcluindo] = useState<Pedido | null>(null);
+  const [etiquetaDe, setEtiquetaDe] = useState<Pedido | null>(null);
 
   const { data: pedidos = [], isLoading, error } = useQuery({
     queryKey: ["sup_pedido", empresaId],
@@ -192,7 +222,7 @@ export default function PedidosMateriais() {
         const { data, error } = await sb
           .from("sup_pedido")
           // item_id vem junto porque a baixa confere se a etiqueta é do material certo.
-          .select("*, sup_pedido_item(id, item_id, nome_item, tipo_item, tamanho, quantidade, litros, ordem)")
+          .select("*, sup_pedido_item(id, item_id, nome_item, tipo_item, tamanho, quantidade, litros, ordem), sup_pedido_comprovacao(id, status, respondido_em)")
           .order("created_at", { ascending: false })
           .range(de, de + PAGINA - 1);
         if (error) throw error;
@@ -208,22 +238,26 @@ export default function PedidosMateriais() {
   // precisam refletir a fila inteira.
   const contagens = useMemo(() => {
     const base: Record<string, number> = { TOTAL: pedidos.length };
-    for (const s of STATUS_PEDIDO) base[s] = 0;
-    for (const p of pedidos) base[p.status] = (base[p.status] ?? 0) + 1;
+    for (const s of STATUS_VISIVEL) base[s] = 0;
+    for (const p of pedidos) {
+      const status = statusVisivelPedido(p);
+      base[status] = (base[status] ?? 0) + 1;
+    }
     return base;
   }, [pedidos]);
 
   const porBusca = useMemo(() => {
     const t = busca.trim().toLowerCase();
     return pedidos.filter((p) => {
-      if (filtroStatus !== "TODOS" && p.status !== filtroStatus) return false;
+      const statusVisivel = statusVisivelPedido(p);
+      if (filtroStatus !== "TODOS" && statusVisivel !== filtroStatus) return false;
       if (!t) return true;
       // "Digite qualquer coisa que aparece na tela" — inclui data já
       // formatada em dd/mm/aaaa e nome de material (REPLICAR §5.4).
       const alvo = [
-        p.pedido_id, p.status, p.contrato_nome, p.posto_nome, p.funcao_nome,
+        p.pedido_id, apresentacaoStatusPedido(p).rotulo, p.contrato_nome, p.posto_nome, p.funcao_nome,
         p.solicitante_login, p.solicitante_nome, p.nome_colaborador, p.matricula_colaborador,
-        p.tipo_pedido, p.observacoes_solicitante, p.observacao,
+        p.tipo_pedido, p.observacoes_solicitante, p.observacao, p.envio_rastreio,
         fmtDataBR(p.data_solicitacao), fmtDataBR(p.data_despachado),
         p.admissao ? "admissao admissão" : "",
         ...(p.sup_pedido_item ?? []).flatMap((i) => [i.nome_item, i.tamanho ?? ""]),
@@ -352,12 +386,12 @@ export default function PedidosMateriais() {
         }
       />
 
-      <div className="grid gap-3 sm:grid-cols-3 lg:grid-cols-5">
+      <div className="grid gap-3 sm:grid-cols-3 lg:grid-cols-6">
         <CardKpi rotulo="Total" valor={contagens.TOTAL} icone={Package} ativo={filtroStatus === "TODOS"} onClick={() => setFiltroStatus("TODOS")} />
-        {STATUS_PEDIDO.filter((s) => s !== "CANCELADO").map((s) => (
+        {STATUS_VISIVEL.filter((s) => s !== "CANCELADO").map((s) => (
           <CardKpi
             key={s}
-            rotulo={ESTILO_STATUS[s].rotulo}
+            rotulo={ESTILO_STATUS_VISIVEL[s].rotulo}
             valor={contagens[s] ?? 0}
             icone={ICONE_STATUS[s]}
             ativo={filtroStatus === s}
@@ -380,8 +414,8 @@ export default function PedidosMateriais() {
           <SelectTrigger className="w-52"><SelectValue /></SelectTrigger>
           <SelectContent>
             <SelectItem value="TODOS">Todos os status</SelectItem>
-            {STATUS_PEDIDO.map((s) => (
-              <SelectItem key={s} value={s}>{ESTILO_STATUS[s].rotulo}</SelectItem>
+            {STATUS_VISIVEL.map((s) => (
+              <SelectItem key={s} value={s}>{ESTILO_STATUS_VISIVEL[s].rotulo}</SelectItem>
             ))}
           </SelectContent>
         </Select>
@@ -440,6 +474,7 @@ export default function PedidosMateriais() {
               onEditar={() => setEditandoDe(p)}
               onHistorico={() => setHistoricoDe(p)}
               onExcluir={() => setExcluindo(p)}
+              onEtiqueta={() => setEtiquetaDe(p)}
             />
           ))}
         </div>
@@ -453,6 +488,8 @@ export default function PedidosMateriais() {
 
       <ModalHistorico pedido={historicoDe} onFechar={() => setHistoricoDe(null)} />
 
+      <ModalEtiquetaTermica pedido={etiquetaDe} onFechar={() => setEtiquetaDe(null)} />
+
       <ModalExcluir
         pedido={excluindo}
         onFechar={() => setExcluindo(null)}
@@ -465,7 +502,7 @@ export default function PedidosMateriais() {
 
 function CardKpi({
   rotulo, valor, icone: Icone, ativo, onClick,
-}: { rotulo: string; valor: number; icone: any; ativo: boolean; onClick: () => void }) {
+}: { rotulo: string; valor: number; icone: LucideIcon; ativo: boolean; onClick: () => void }) {
   return (
     <button
       type="button"
@@ -485,13 +522,14 @@ function CardKpi({
 }
 
 function CardPedido({
-  pedido: p, onStatus, onEditar, onHistorico, onExcluir,
+  pedido: p, onStatus, onEditar, onHistorico, onExcluir, onEtiqueta,
 }: {
   pedido: Pedido;
   onStatus: () => void; onEditar: () => void;
-  onHistorico: () => void; onExcluir: () => void;
+  onHistorico: () => void; onExcluir: () => void; onEtiqueta: () => void;
 }) {
-  const estilo = ESTILO_STATUS[p.status] ?? ESTILO_STATUS["EM PREPARACAO"];
+  const apresentacaoStatus = apresentacaoStatusPedido(p);
+  const statusVisivel = apresentacaoStatus.status;
 
   // Em AGUARDANDO COMPRA o card esconde o que já tem etiqueta, virando uma
   // lista viva do que ainda falta comprar. É a melhor ideia de UX do legado
@@ -516,10 +554,19 @@ function CardPedido({
     : "Materiais";
 
   return (
-    <Card className="flex flex-col">
+    <Card className={cn(
+      "flex flex-col",
+      statusVisivel === "DESPACHADO_ENTREGUE" && "bg-emerald-50/60 border-emerald-300/60 dark:bg-emerald-950/20",
+    )}>
       <CardHeader className="flex-row items-center justify-between gap-2 space-y-0 pb-3">
         <span className="font-mono text-sm font-semibold">{p.pedido_id}</span>
-        <Badge variant="outline" className={cn("shrink-0", estilo.classe)}>{estilo.rotulo}</Badge>
+        <Badge
+          variant="outline"
+          className={cn("shrink-0", apresentacaoStatus.classe)}
+          title={apresentacaoStatus.titulo}
+        >
+          {apresentacaoStatus.rotulo}
+        </Badge>
       </CardHeader>
 
       <CardContent className="flex-1 space-y-3 text-sm">
@@ -596,7 +643,7 @@ function CardPedido({
         )}
       </CardContent>
 
-      {/* Quatro ações não cabem numa linha só num card de duas/três colunas:
+      {/* As ações não cabem numa linha só num card de duas/três colunas:
           Status e Editar (o que se faz o tempo todo) ficam em cima, consulta
           e exclusão embaixo. */}
       <div className="grid grid-cols-2 gap-2 border-t p-3">
@@ -611,15 +658,20 @@ function CardPedido({
         <Button size="sm" variant="outline" onClick={onHistorico}>
           <HistoryIcon className="mr-1.5 h-3.5 w-3.5" /> Histórico
         </Button>
-        <Button
-          size="sm" variant="outline"
-          className="border-destructive/40 text-destructive hover:bg-destructive/10"
-          onClick={onExcluir}
-          aria-label={`Excluir ${p.pedido_id}`}
-          title="Excluir pedido"
-        >
-          <Trash2 className="mr-1.5 h-3.5 w-3.5" /> Excluir
-        </Button>
+        <div className="flex gap-2">
+          <Button size="sm" variant="outline" className="flex-1" onClick={onEtiqueta} title="Emitir etiqueta térmica">
+            <Printer className="h-3.5 w-3.5" /><span className="sr-only">Etiqueta térmica</span>
+          </Button>
+          <Button
+            size="sm" variant="outline"
+            className="flex-1 border-destructive/40 text-destructive hover:bg-destructive/10"
+            onClick={onExcluir}
+            aria-label={`Excluir ${p.pedido_id}`}
+            title="Excluir pedido"
+          >
+            <Trash2 className="h-3.5 w-3.5" /><span className="sr-only">Excluir</span>
+          </Button>
+        </div>
       </div>
     </Card>
   );
@@ -710,6 +762,8 @@ function ModalExcluir({
 
 /** Trilha real de mudanças — uma linha por evento, com autor e data. */
 function ModalHistorico({ pedido, onFechar }: { pedido: Pedido | null; onFechar: () => void }) {
+  const [abrindoEvento, setAbrindoEvento] = useState<string | null>(null);
+  const comprovacaoAtual = pedido ? comprovacaoPedido(pedido) : null;
   const { data: eventos = [], isLoading } = useQuery({
     queryKey: ["sup_pedido_historico", pedido?.id],
     enabled: !!pedido,
@@ -728,6 +782,30 @@ function ModalHistorico({ pedido, onFechar }: { pedido: Pedido | null; onFechar:
     },
   });
 
+  const abrirDeclaracao = async (evento: EventoHistorico) => {
+    if (!evento.observacao) return;
+    setAbrindoEvento(evento.id);
+    try {
+      imprimirDeclaracao(await buscarDeclaracaoCompleta(evento.observacao));
+    } catch (erro: unknown) {
+      toast.error(erro instanceof Error ? erro.message : "Não foi possível abrir a declaração.");
+    } finally {
+      setAbrindoEvento(null);
+    }
+  };
+
+  const abrirComprovacao = async (evento: EventoHistorico) => {
+    if (!pedido) return;
+    setAbrindoEvento(evento.id);
+    try {
+      await abrirComprovacaoPdf(pedido.id);
+    } catch (erro: unknown) {
+      toast.error(erro instanceof Error ? erro.message : "Não foi possível abrir a comprovação.");
+    } finally {
+      setAbrindoEvento(null);
+    }
+  };
+
   return (
     <Dialog open={!!pedido} onOpenChange={(o) => !o && onFechar()}>
       <DialogContent className="max-w-lg">
@@ -741,6 +819,8 @@ function ModalHistorico({ pedido, onFechar }: { pedido: Pedido | null; onFechar:
               <div className="min-w-0 flex-1 text-sm">
                 <p className="font-medium">
                   {e.acao === "CRIADO" ? "Pedido criado"
+                    : e.acao === "DECLARACAO" ? `Declaração ${e.observacao ?? ""} gerada`
+                    : e.acao === "COMPROVACAO" ? "Comprovação de entrega recebida"
                     : e.campo
                       ? (ROTULO_CAMPO[e.campo] ?? e.campo)
                       : e.status_anterior
@@ -759,7 +839,19 @@ function ModalHistorico({ pedido, onFechar }: { pedido: Pedido | null; onFechar:
                   </p>
                 )}
 
-                {e.observacao && <p className="break-words text-muted-foreground">{e.observacao}</p>}
+                {e.observacao && e.acao !== "DECLARACAO" && e.acao !== "COMPROVACAO" && <p className="break-words text-muted-foreground">{e.observacao}</p>}
+                {e.acao === "DECLARACAO" && (
+                  <AcessoGate menu="sup_correio_declaracao" acao="visualizar">
+                    <Button size="sm" variant="outline" className="mt-2" disabled={abrindoEvento === e.id} onClick={() => void abrirDeclaracao(e)}>
+                      <FileText className="mr-2 h-3.5 w-3.5" /> Abrir / imprimir declaração
+                    </Button>
+                  </AcessoGate>
+                )}
+                {e.acao === "COMPROVACAO" && comprovacaoAtual?.status === "ENVIADO" && (
+                  <Button size="sm" variant="outline" className="mt-2" disabled={abrindoEvento === e.id} onClick={() => void abrirComprovacao(e)}>
+                    <FileText className="mr-2 h-3.5 w-3.5" /> Abrir formulário
+                  </Button>
+                )}
                 <p className="text-xs text-muted-foreground">
                   {e.alterado_por_nome ?? "—"} · {new Date(e.data_alteracao).toLocaleString("pt-BR")}
                 </p>
