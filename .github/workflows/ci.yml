@@ -177,6 +177,15 @@ jobs:
       #
       # Não é imunidade total: registry fora do ar com lockfile novo continua
       # sendo registry fora do ar. É tirar o caso comum da dependência dele.
+      #
+      # AVISO ESPERADO NO LOG, não é falha: como os quatro jobs rodam juntos
+      # e usam a mesma chave, quando o lockfile muda os quatro erram o cache
+      # ao mesmo tempo e os quatro tentam gravar. Um consegue; os outros três
+      # terminam com "Failed to save: Unable to reserve cache ..., another job
+      # may be creating this cache". O cache fica salvo do mesmo jeito
+      # (conferido: 76 MB gravados no run 33869808944) e o job segue verde.
+      # Evitar o aviso exigiria serializar os jobs, que é justamente o que
+      # esta separação em quatro existe para não fazer.
       # ------------------------------------------------------------------
       - name: Cache do node_modules
         id: node-modules
