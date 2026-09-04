@@ -175,6 +175,16 @@ function SuccessScreen() {
 // Valor gravado = o NOME do contrato (lista de nomes quando múltiplo), igual
 // ao que a pergunta "colaborador" faz — mantém Respostas e painéis legíveis
 // sem precisar resolver id.
+//
+// A primeira opção é sempre "ADMINISTRATIVO", pra quem responde não está
+// lotado em contrato nenhum (escritório/sede). Ela é sintética, do formulário
+// — de propósito NÃO existe como linha em `contratos`: aquela tabela é do
+// Suprimentos/Financeiro e um registro falso lá apareceria em emissão de NF,
+// malote e planilha de custo. Como o valor gravado é o nome, "ADMINISTRATIVO"
+// chega em Respostas igual a qualquer outro.
+const CONTRATO_ADMINISTRATIVO: { id: string; nome: string; cliente: string | null } =
+  { id: "__administrativo__", nome: "ADMINISTRATIVO", cliente: null };
+
 function ContratoSelect({ value, multiplos, onChange }: { value: any; multiplos: boolean; onChange: (v: any) => void }) {
   const [contratos, setContratos] = useState<{ id: string; nome: string; cliente: string | null }[]>([]);
   const [estado, setEstado] = useState<"carregando" | "ok" | "erro">("carregando");
@@ -202,20 +212,28 @@ function ContratoSelect({ value, multiplos, onChange }: { value: any; multiplos:
   if (estado === "erro") return <div style={{ fontSize: 13, color: "#dc2626", fontWeight: 700 }}>Não foi possível carregar os contratos.</div>;
   if (contratos.length === 0) return <div style={{ fontSize: 13, color: "#94a3b8" }}>Nenhum contrato disponível para o seu acesso.</div>;
 
+  // ADMINISTRATIVO na frente da lista. O filtro evita duplicar caso um dia
+  // exista um contrato ativo com esse mesmo nome (a resposta é o nome, então
+  // dois itens homônimos marcariam junto — mesmo motivo da dedup lá em cima).
+  const opcoes = [
+    CONTRATO_ADMINISTRATIVO,
+    ...contratos.filter(c => c.nome.toUpperCase() !== CONTRATO_ADMINISTRATIVO.nome),
+  ];
+
   // Um só: select nativo. São poucas dezenas de contratos ativos, então não
   // precisa de busca — e o nativo já é acessível e funciona bem no celular.
   if (!multiplos) {
     return (
       <select value={value ?? ""} onChange={e => onChange(e.target.value)} style={{ ...inp, maxWidth: 420 }}>
         <option value="">Selecione o contrato…</option>
-        {contratos.map(c => <option key={c.id} value={c.nome}>{c.cliente ? `${c.nome} · ${c.cliente}` : c.nome}</option>)}
+        {opcoes.map(c => <option key={c.id} value={c.nome}>{c.cliente ? `${c.nome} · ${c.cliente}` : c.nome}</option>)}
       </select>
     );
   }
 
   const sel: string[] = Array.isArray(value) ? value : [];
   const termo = busca.trim().toLowerCase();
-  const lista = termo ? contratos.filter(c => `${c.nome} ${c.cliente ?? ""}`.toLowerCase().includes(termo)) : contratos;
+  const lista = termo ? opcoes.filter(c => `${c.nome} ${c.cliente ?? ""}`.toLowerCase().includes(termo)) : opcoes;
   const alterna = (nome: string) =>
     onChange(sel.includes(nome) ? sel.filter(x => x !== nome) : [...sel, nome]);
 
