@@ -1,55 +1,125 @@
 name: Notify Eduardo e Chefe on New PR (DM)
 
+# ---------------------------------------------------------------------------
+# 04/09/2026 — este workflow instalava o ERP inteiro para mandar uma mensagem
+#
+# O passo "Install dependencies" rodava `npm install discord.js` NA RAIZ do
+# repositório. Como a raiz tem o package.json do ERP, o npm resolvia e baixava
+# a árvore inteira do projeto — React, Vite, Radix, Supabase, jsPDF, xlsx,
+# leaflet — mais o discord.js: "added 718 packages". Sem lockfile (`install`,
+# não `ci`) e sem cache nenhum, tudo do zero, a cada push de cada PR.
+#
+# O custo normal disso era 35-44s. Mas é um piso instável, porque depende de
+# resolver e baixar 718 pacotes na hora: em 04/09/2026 às 11:30 a mesma
+# instalação levou 7min02 e o job inteiro, 7min31 (run 33868243225). Sete
+# minutos e meio de runner para mandar um "abriu PR" no Discord.
+#
+# O conserto não foi acelerar a instalação — foi apagá-la. Mandar DM no
+# Discord são duas chamadas HTTP:
+#
+#   POST /users/@me/channels        abre (ou reaproveita) o canal privado
+#   POST /channels/<id>/messages    manda a mensagem
+#
+# O Node do runner já traz `fetch` embutido, então não há dependência para
+# instalar. E o script só lê o payload do evento (GITHUB_EVENT_PATH), que o
+# runner grava em disco antes do primeiro passo — não precisa nem do código
+# do repositório, então o checkout também saiu.
+#
+# Sobrou um job de ~5s sem `npm`, sem `node_modules` e sem checkout.
+#
+# NOTA sobre o gatilho: `synchronize` significa DM a cada push novo na PR, não
+# só quando ela abre. Foi mantido como estava — é decisão de quem recebe as
+# mensagens, não de performance. Se virar barulho, tirar `synchronize` daqui
+# resolve.
+# ---------------------------------------------------------------------------
+
 on:
   pull_request_target:
     types: [opened, reopened, synchronize]
 
+concurrency:
+  # Push em sequência rápida na mesma PR: vale a última. Sem isso, três pushes
+  # em um minuto viravam três DMs iguais e três jobs empilhados.
+  group: notify-dm-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
 jobs:
   notify:
     runs-on: ubuntu-latest
+    # Mesma trava dos outros workflows: não rodar no espelho do Lovable.
+    if: github.repository == 'NascimentoEmpresa/appify-my-nascimento-9b345b64'
+    # Não lê nem escreve nada no repositório — só fala com o Discord.
+    permissions: {}
+    timeout-minutes: 5
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v3
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v3
-        with:
-          node-version: '18'
-
-      - name: Install dependencies
-        run: npm install discord.js
-
       - name: Send DM to Eduardo e Chefe
         env:
           DISCORD_TOKEN: ${{ secrets.DISCORD_TOKEN }}
           USER_IDS: "1384572666752663653,1260583577528303730"
         run: |
-          node -e "
-          const { Client, GatewayIntentBits } = require('discord.js');
-          const client = new Client({ intents: [GatewayIntentBits.Guilds, GatewayIntentBits.DirectMessages], partials: ['CHANNEL'] });
+          cat > enviar-dm.mjs <<'JS'
+          // Duas chamadas por destinatário, direto na API do Discord. Sem
+          // discord.js: a biblioteca abre um WebSocket e espera o evento
+          // "ready" (o script antigo ainda dormia 8s de propósito por causa
+          // disso) para no fim fazer as mesmas duas chamadas REST.
+          import { readFileSync } from "node:fs";
 
-          client.login(process.env.DISCORD_TOKEN);
+          const API = "https://discord.com/api/v10";
+          const token = process.env.DISCORD_TOKEN;
 
-          client.once('ready', async () => {
-            console.log('Bot conectado!');
-            await new Promise(r => setTimeout(r, 8000)); // espera 8 segundos para garantir conexão
+          if (!token) {
+            console.error("DISCORD_TOKEN não está definido. Nada enviado.");
+            process.exit(0);
+          }
 
-            const pr = process.env.GITHUB_EVENT_PATH ? require(process.env.GITHUB_EVENT_PATH).pull_request : null;
-            const message = pr
-              ? \`🚀 Novo Pull Request criado!\nTítulo: \${pr.title}\nAutor: \${pr.user.login}\n🔗 \${pr.html_url}\`
-              : 'Novo PR detectado!';
-            const ids = process.env.USER_IDS.split(',').map(s => s.trim()).filter(Boolean);
+          // O runner grava o payload do evento em disco antes do primeiro
+          // passo — é de lá que saem título, autor e link da PR.
+          const evento = JSON.parse(
+            readFileSync(process.env.GITHUB_EVENT_PATH, "utf8"),
+          );
+          const pr = evento.pull_request;
 
-            for (const id of ids) {
-              try {
-                const user = await client.users.fetch(id);
-                await user.send(message);
-                console.log('Mensagem enviada para ' + id);
-              } catch (error) {
-                console.error('Erro ao enviar DM para ' + id + ':', error);
+          const mensagem = pr
+            ? `🚀 Novo Pull Request criado!\nTítulo: ${pr.title}\nAutor: ${pr.user.login}\n🔗 ${pr.html_url}`
+            : "Novo PR detectado!";
+
+          const cabecalho = {
+            Authorization: `Bot ${token}`,
+            "Content-Type": "application/json",
+          };
+
+          const ids = process.env.USER_IDS.split(",")
+            .map((s) => s.trim())
+            .filter(Boolean);
+
+          for (const id of ids) {
+            try {
+              const canal = await fetch(`${API}/users/@me/channels`, {
+                method: "POST",
+                headers: cabecalho,
+                body: JSON.stringify({ recipient_id: id }),
+              });
+              if (!canal.ok) {
+                throw new Error(`abrir DM: ${canal.status} ${await canal.text()}`);
               }
-            }
+              const { id: canalId } = await canal.json();
 
-            client.destroy();
-          });
-          "
+              const envio = await fetch(`${API}/channels/${canalId}/messages`, {
+                method: "POST",
+                headers: cabecalho,
+                body: JSON.stringify({ content: mensagem }),
+              });
+              if (!envio.ok) {
+                throw new Error(`enviar: ${envio.status} ${await envio.text()}`);
+              }
+
+              console.log(`Mensagem enviada para ${id}`);
+            } catch (erro) {
+              // Falha de notificação não reprova a PR — mesma postura de
+              // antes, mas agora o motivo aparece no log em vez de sumir.
+              console.error(`Erro ao enviar DM para ${id}:`, erro.message);
+            }
+          }
+          JS
+
+          node enviar-dm.mjs
