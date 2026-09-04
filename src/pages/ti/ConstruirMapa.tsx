@@ -223,7 +223,7 @@ export default function ConstruirMapa() {
       if (e.key === "Escape") { setFerramenta({ tipo: "selecao" }); setSelecao(null); }
       if ((e.key === "Delete" || e.key === "Backspace") && selecao) { e.preventDefault(); pedirRemocao(); }
       if (e.key.toLowerCase() === "r" && selecao) girar(45);
-      if (e.key.toLowerCase() === "d" && elementoSel) duplicar();
+      if (e.key.toLowerCase() === "d" && (elementoSel || ativoSel)) duplicar();
     };
     window.addEventListener("keydown", h);
     return () => window.removeEventListener("keydown", h);
@@ -349,11 +349,60 @@ export default function ConstruirMapa() {
     );
   };
 
-  /** Copia a peça selecionada 50 cm ao lado — o jeito rápido de fazer fileira de mesas. */
+/**
+   * Copia o que estiver selecionado, meio metro ao lado — peça da planta ou
+   * equipamento. É o jeito rápido de fazer a fileira de mesas e as estações de
+   * trabalho iguais, que é como um escritório realmente é.
+   */
   const duplicar = () => {
-    if (!planta || !elementoSel) return;
-    const { id, ...resto } = elementoSel;
-    criarElemento({ ...resto, planta_id: planta.id, x: Number(elementoSel.x) + 50, y: Number(elementoSel.y) + 50 });
+    if (!planta) return;
+
+    if (elementoSel) {
+      const { id, ...resto } = elementoSel;
+      criarElemento({
+        ...resto,
+        planta_id: planta.id,
+        x: Number(elementoSel.x) + 50,
+        y: Number(elementoSel.y) + 50,
+      });
+      return;
+    }
+
+    if (ativoSel && podeIncluirAtivo) {
+      /**
+       * ⚠ O que NÃO se copia, e por quê.
+       *
+       * Duplicar um equipamento é dizer "quero outro igual", não "quero uma
+       * segunda linha com a mesma identidade". Patrimônio, número de série,
+       * nota fiscal, IP, MAC, hostname e os IDs de acesso remoto pertencem
+       * àquele aparelho físico — copiá-los criaria duas fichas apontando para
+       * o mesmo equipamento, e o índice único de IP fixo do banco recusaria a
+       * gravação com um erro que ninguém entenderia.
+       *
+       * Configuração (processador, memória, sistema, cor, tamanho) copia:
+       * é justamente o que se repete numa fileira de estações iguais.
+       */
+      const {
+        id, codigo, created_at, updated_at,
+        patrimonio, numero_serie, nota_fiscal,
+        ip, mac, hostname, anydesk, teamviewer,
+        ...resto
+      } = ativoSel;
+
+      const def = tipoAtivo(ativoSel.tipo);
+      const quantos = ativos.filter((a) => a.tipo === ativoSel.tipo).length + 1;
+
+      salvarAtivo.mutate(
+        {
+          ...(resto as TiAtivoInput),
+          nome: `${def.label} ${quantos}`,
+          planta_id: planta.id,
+          pos_x: Number(ativoSel.pos_x ?? 0) + 50,
+          pos_y: Number(ativoSel.pos_y ?? 0) + 50,
+        },
+        { onSuccess: (novo) => setSelecao({ tipo: "ativo", id: novo.id }) },
+      );
+    }
   };
 
   const confirmarRemocao = () => {
@@ -511,7 +560,7 @@ export default function ConstruirMapa() {
                 <Button variant="outline" size="sm" onClick={() => girar(45)}>
                   <RotateCw className="mr-1.5 h-4 w-4" /> Girar
                 </Button>
-                {elementoSel && (
+                {(elementoSel || (ativoSel && podeIncluirAtivo)) && (
                   <Button variant="outline" size="sm" onClick={duplicar}>
                     <Copy className="mr-1.5 h-4 w-4" /> Duplicar
                   </Button>
@@ -763,6 +812,7 @@ export default function ConstruirMapa() {
                           onPosicao={(patch) => alterarAtivo(ativoSel, patch)}
                           onCampo={(patch) => alterarAtivo(ativoSel, patch)}
                           onAbrirFicha={() => setFichaAberta(ativoSel)}
+                          onDuplicar={podeIncluirAtivo ? duplicar : undefined}
                           onTirarDoMapa={() => {
                             posicionar.mutate({ id: ativoSel.id, planta_id: null, pos_x: null, pos_y: null });
                             setSelecao(null);
@@ -917,6 +967,7 @@ function InspetorAtivo({
   onCampo,
   onAbrirFicha,
   onTirarDoMapa,
+  onDuplicar,
 }: {
   ativo: TiAtivo;
   podeEditar: boolean;
@@ -924,6 +975,7 @@ function InspetorAtivo({
   onCampo: (patch: Partial<TiAtivoInput>) => void;
   onAbrirFicha: () => void;
   onTirarDoMapa: () => void;
+  onDuplicar?: () => void;
 }) {
   const def = tipoAtivo(ativo.tipo);
   const Icone = def.icone;
@@ -981,6 +1033,11 @@ function InspetorAtivo({
       <Cores valor={ativo.cor ?? def.cor} onEscolher={(cor) => onCampo({ cor })} />
 
       <div className="flex flex-col gap-1.5">
+        {onDuplicar && (
+          <Button variant="outline" size="sm" onClick={onDuplicar}>
+            <Copy className="mr-1.5 h-4 w-4" /> Duplicar equipamento
+          </Button>
+        )}
         <Button variant="secondary" size="sm" onClick={onAbrirFicha}>Abrir ficha completa</Button>
         <Button variant="outline" size="sm" onClick={onTirarDoMapa}>Tirar do mapa (volta para a bandeja)</Button>
       </div>
