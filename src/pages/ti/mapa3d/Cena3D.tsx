@@ -1,6 +1,6 @@
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Canvas, useThree, type ThreeEvent } from "@react-three/fiber";
-import { Grid, Html, OrbitControls } from "@react-three/drei";
+import { ContactShadows, Grid, Html, OrbitControls, SoftShadows } from "@react-three/drei";
 import * as THREE from "three";
 import type { TiAtivo, TiCelula, TiElemento, TiPlanta } from "@/hooks/useTiMapa";
 import { statusAtivo, tipoAtivo, tipoElemento } from "../mapa/catalogo";
@@ -128,13 +128,17 @@ export function Cena3D(props: Props) {
 
   return (
     <Canvas
-      shadows
+      shadows="soft"
       frameloop="demand"
       dpr={[1, 1.75]}
       camera={{ position: camera, fov: 42, near: 0.1, far: 500 }}
+      // ACESFilmic + sRGB: sem tonemapping o branco das paredes "estoura" e o
+      // ambiente fica lavado, com aquele aspecto de render de estudo. É o
+      // ajuste mais barato que aproxima a cena de um render de jogo.
+      gl={{ antialias: true, toneMapping: THREE.ACESFilmicToneMapping, toneMappingExposure: 1.05 }}
       onCreated={({ scene }) => {
-        scene.background = new THREE.Color("#dbe3ec");
-        scene.fog = new THREE.Fog("#dbe3ec", 45, 160);
+        scene.background = new THREE.Color("#e8eef5");
+        scene.fog = new THREE.Fog("#e8eef5", 55, 190);
       }}
     >
       <Suspense fallback={null}>
@@ -181,6 +185,15 @@ function Conteudo({
     { tipo: "elemento" | "ativo"; id: string; alturaBase: number; dx: number; dz: number } | null
   >(null);
   const [traco, setTraco] = useState<TracoNoChao | null>(null);
+  /**
+   * Espelho do traço em ref.
+   *
+   * O traço termina por dois caminhos (o `pointerup` global e o do próprio
+   * piso, para clique rápido), e `setState` não é síncrono: os dois leriam
+   * `traco` ainda preenchido e criariam DUAS peças. A ref é limpa na hora,
+   * então o segundo caminho não faz nada.
+   */
+  const tracoRef = useRef<TracoNoChao | null>(null);
   // Puxar parede / esticar sala: guarda a peça e a alça pega.
   const [resize, setResize] = useState<{ el: TiElemento; alca: "a" | "b" | "nw" | "ne" | "sw" | "se" } | null>(null);
   const [previaResize, setPreviaResize] = useState<Partial<TiElemento> | null>(null);
@@ -198,9 +211,34 @@ function Conteudo({
     };
   }, []);
 
-  const travarCamera = (travar: boolean) => {
-    if (controlsRef.current) controlsRef.current.enabled = !travar;
-  };
+  /**
+   * Trocar de peça zera o que estava em curso.
+   *
+   * Sem isto, um redimensionamento interrompido (o mouse soltou fora do
+   * canvas, por exemplo) deixava o estado de resize preso na peça antiga, e a
+   * nova seleção convivia com a marcação da anterior — duas peças pareciam
+   * selecionadas ao mesmo tempo.
+   */
+  useEffect(() => {
+    setResize(null);
+    setPreviaResize(null);
+    setArrasto(null);
+  }, [selecao?.tipo, selecao?.id]);
+
+  /**
+   * A câmera fica travada enquanto (e somente enquanto) há algo em curso.
+   *
+   * Antes cada caminho travava ao começar e destravava ao terminar — e bastava
+   * um caminho não terminar para a câmera ficar travada para sempre. Foi o que
+   * aconteceu ao APAGAR uma peça: ela sumia, o "soltar" nunca rodava, e o mapa
+   * parava de girar até recarregar a página.
+   *
+   * Declarar o estado desejado, em vez de comandar as duas pontas, elimina a
+   * classe de bug: não existe caminho de saída para esquecer.
+   */
+  useEffect(() => {
+    if (controlsRef.current) controlsRef.current.enabled = !(arrasto || traco || resize);
+  }, [arrasto, traco, resize]);
 
   const iniciarArrasto = (
     tipo: "elemento" | "ativo",
@@ -212,7 +250,6 @@ function Conteudo({
   ) => {
     if (!editavel || desenhando) return;
     setArrasto({ tipo, id, alturaBase, dx: ponto.x - posX, dz: ponto.z - posZ });
-    travarCamera(true);
   };
 
   const moverLocal = useCallback(
@@ -227,11 +264,28 @@ function Conteudo({
     [livre, invalidate],
   );
 
+  /**
+   * Fecha o traço e cria a peça — uma vez só, venha o `pointerup` de onde vier.
+   *
+   * O clique RÁPIDO no chão não criava nada: o `pointerup` global é registrado
+   * num efeito, que roda depois do render, e um clique de menos de um quadro
+   * termina antes de o listener existir. Para quem usa, era o pior sintoma
+   * possível — clicar no chão com a peça na mão simplesmente não fazia nada.
+   * Agora o próprio piso também fecha o traço.
+   */
+  const finalizarTraco = useCallback(() => {
+    const t = tracoRef.current;
+    if (!t) return;
+    tracoRef.current = null;
+    setTraco(null);
+    onDesenharNoChao?.(t);
+    invalidate();
+  }, [onDesenharNoChao, invalidate]);
+
   const soltar = useCallback(() => {
     setArrasto((a) => {
       if (a) {
-        travarCamera(false);
-        setPrevia((p) => {
+            setPrevia((p) => {
           const pos = p[a.id];
           // ESTA é a única gravação do arrasto inteiro.
           if (pos) {
@@ -309,6 +363,8 @@ function Conteudo({
   return (
     <>
       <Luzes largura={L} profundidade={P} />
+      {/* Sombra macia nas bordas: sombra dura de mapa entrega que é primitiva. */}
+      <SoftShadows size={28} samples={8} focus={0.9} />
 
       <OrbitControls
         ref={controlsRef}
@@ -345,13 +401,29 @@ function Conteudo({
         desenhando={desenhando}
         livre={livre}
         onComecarTraco={(t) => {
+          tracoRef.current = t;
           setTraco(t);
-          travarCamera(true);
           invalidate();
         }}
+        onTerminarTraco={finalizarTraco}
       />
 
       <ParedesDoContorno celulas={celulasDoPiso} planta={planta} />
+
+      {/*
+        A sombra de contato é o que "assenta" o móvel no chão. Sem ela, mesmo
+        com a sombra projetada, os objetos parecem flutuar um centímetro acima
+        do piso — é o detalhe que separa um render bom de um render estranho.
+      */}
+      <ContactShadows
+        position={[L / 2, 0.015, P / 2]}
+        scale={Math.max(L, P) * 1.2}
+        resolution={1024}
+        blur={2.4}
+        opacity={0.42}
+        far={3}
+        frames={1}
+      />
 
       {/*
         Os marcadores de piso aparecem com a grade ligada e SEM ferramenta na
@@ -373,7 +445,11 @@ function Conteudo({
           } else if (traco) {
             const x2 = snap(x * 100, livre);
             const y2 = snap(z * 100, livre);
-            setTraco((t) => (t ? { ...t, x2, y2, clique: false } : t));
+            setTraco((t) => {
+              const novo = t ? { ...t, x2, y2, clique: false } : t;
+              tracoRef.current = novo;
+              return novo;
+            });
             invalidate();
           }
         }}
@@ -382,16 +458,10 @@ function Conteudo({
             if (previaResize) onRedimensionar?.(resize.el.id, previaResize);
             setResize(null);
             setPreviaResize(null);
-            travarCamera(false);
             invalidate();
             return;
           }
-          if (traco) {
-            travarCamera(false);
-            onDesenharNoChao?.(traco);
-            setTraco(null);
-            invalidate();
-          }
+          finalizarTraco();
           soltar();
         }}
       />
@@ -522,8 +592,7 @@ function Conteudo({
           onPegar={(alca) => {
             setResize({ el: elementoSelecionado, alca });
             setPreviaResize(null);
-            travarCamera(true);
-          }}
+                  }}
         />
       )}
       </group>
@@ -533,25 +602,47 @@ function Conteudo({
 
 // ── Peças da cena ─────────────────────────────────────────────────────
 
+/**
+ * A iluminação — a parte que mais separa "caixas cinzas" de "escritório".
+ *
+ * Três luzes, como num estúdio: a PRINCIPAL projeta a sombra e dá a direção;
+ * a de PREENCHIMENTO, do lado oposto e sem sombra, evita que o lado escuro
+ * vire um borrão preto; e a hemisférica traz o azul do céu por cima e o
+ * quente do piso por baixo, que é o que dá sensação de ambiente fechado.
+ *
+ * `Environment preset` fica de fora de propósito: ele baixa um HDR de CDN, e
+ * este ERP roda em rede interna — uma dependência de rede para iluminar a
+ * cena é uma tela quebrada esperando acontecer. O reflexo vem do
+ * `envMapIntensity` dos materiais com o ambiente procedural.
+ */
 function Luzes({ largura, profundidade }: { largura: number; profundidade: number }) {
-  const alcance = Math.max(largura, profundidade) * 0.75 + 6;
+  const alcance = Math.max(largura, profundidade) * 0.75 + 8;
   return (
     <>
-      <hemisphereLight args={["#ffffff", "#9aa7b5", 1.05]} />
-      <ambientLight intensity={0.35} />
+      <hemisphereLight args={["#eaf2ff", "#c9b79c", 0.85]} />
+      <ambientLight intensity={0.28} />
+
+      {/* principal */}
       <directionalLight
         castShadow
-        position={[largura * 0.6 + 8, Math.max(largura, profundidade) * 0.8 + 10, profundidade * 0.35 - 6]}
-        intensity={1.35}
-        // 1024 em vez de 2048: com a planta inteira na sombra, a diferença
-        // visual é mínima e o custo por frame cai à metade.
-        shadow-mapSize={[1024, 1024]}
-        shadow-bias={-0.0009}
+        position={[largura * 0.55 + 9, Math.max(largura, profundidade) * 0.85 + 12, profundidade * 0.3 - 7]}
+        intensity={1.5}
+        color="#fff6e8"
+        shadow-mapSize={[2048, 2048]}
+        shadow-bias={-0.0006}
+        shadow-normalBias={0.02}
         shadow-camera-left={-alcance}
         shadow-camera-right={alcance}
         shadow-camera-top={alcance}
         shadow-camera-bottom={-alcance}
         shadow-camera-far={alcance * 4}
+      />
+
+      {/* preenchimento: sem sombra, só para o lado escuro não sumir */}
+      <directionalLight
+        position={[-largura * 0.4 - 6, Math.max(largura, profundidade) * 0.4 + 6, profundidade + 8]}
+        intensity={0.45}
+        color="#dce9ff"
       />
     </>
   );
@@ -601,6 +692,7 @@ function Piso({
   desenhando,
   livre,
   onComecarTraco,
+  onTerminarTraco,
 }: {
   planta: TiPlanta;
   celulas: TiCelula[];
@@ -609,6 +701,7 @@ function Piso({
   desenhando: boolean;
   livre: boolean;
   onComecarTraco: (t: TracoNoChao) => void;
+  onTerminarTraco: () => void;
 }) {
   const L = M(planta.largura_cm);
   const P = M(planta.altura_cm);
@@ -626,6 +719,11 @@ function Piso({
           const x = snap(e.point.x * 100, livre);
           const y = snap(e.point.z * 100, livre);
           onComecarTraco({ x1: x, y1: y, x2: x, y2: y, clique: true });
+        }}
+        onPointerUp={(e: ThreeEvent<PointerEvent>) => {
+          if (!editavel || !desenhando) return;
+          e.stopPropagation();
+          onTerminarTraco();
         }}
       >
         <meshStandardMaterial color={planta.cor_piso || "#eef2f7"} roughness={0.95} side={THREE.DoubleSide} />
@@ -957,11 +1055,13 @@ function Alca({
   };
   return (
     <group position={posicao}>
-      {/* A área de clique é 2,5× maior que a bola desenhada: mirar numa esfera
-          de 15 cm num mapa de 20 m é frustrante, e aumentar o desenho todo
-          esconderia a peça embaixo. */}
+      {/* A área de clique é maior que a bola desenhada — mirar numa esfera de
+          15 cm num mapa de 20 m é frustrante —, mas só um pouco: com 38 cm de
+          raio ela cobria a peça VIZINHA, e o clique em outra mesa era engolido
+          pela alça da mesa que já estava selecionada. Era isso que fazia a
+          seleção parecer presa. */}
       <mesh onPointerDown={pegar} visible={false}>
-        <sphereGeometry args={[0.38, 8, 6]} />
+        <sphereGeometry args={[0.2, 8, 6]} />
       </mesh>
       <mesh onPointerDown={pegar}>
         <sphereGeometry args={[0.15, 16, 14]} />

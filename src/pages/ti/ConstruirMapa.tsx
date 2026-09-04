@@ -521,7 +521,24 @@ export default function ConstruirMapa() {
                 </p>
                 <ScrollArea className="min-h-0 flex-1">
                   <div className="space-y-1 p-2">
-                    {bandeja.length === 0 && (
+                    {/* Duas situações MUITO diferentes que a mensagem antiga
+                        confundia: "já posicionei tudo" e "não cadastrei nada
+                        ainda". Quem via a segunda achava que era só arrastar de
+                        algum lugar, e não havia lugar nenhum. */}
+                    {bandeja.length === 0 && ativos.length === 0 && (
+                      <div className="space-y-2 p-2">
+                        <p className="text-[11px] text-muted-foreground">
+                          Nenhum equipamento cadastrado ainda. Cadastre o primeiro
+                          e ele aparece aqui para você posicionar no mapa.
+                        </p>
+                        {podeIncluirAtivo && (
+                          <Button size="sm" variant="outline" className="w-full" onClick={() => setFichaAberta(null)}>
+                            <Plus className="mr-1.5 h-4 w-4" /> Novo equipamento
+                          </Button>
+                        )}
+                      </div>
+                    )}
+                    {bandeja.length === 0 && ativos.length > 0 && (
                       <p className="p-2 text-[11px] text-muted-foreground">
                         Todo equipamento cadastrado já está posicionado.
                       </p>
