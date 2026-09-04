@@ -588,7 +588,12 @@ function NoDePosto({
             aberto && "rotate-90")}
         />
         <Briefcase className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-        <span className="min-w-0 flex-1 truncate font-medium">{posto.nome}</span>
+        {/* Mesmo tratamento do nome do contrato: no celular o posto quebra em
+            vez de truncar. "COZINHEIRA/MERENDEIRA" e "COZINHEIRA/AUX" viravam
+            os dois "COZINHEIRA/ME…" e o nó deixava de identificar o posto. */}
+        <span className="line-clamp-2 min-w-0 flex-1 font-medium leading-tight sm:truncate">
+          {posto.nome}
+        </span>
 
         {posto.origem === "cadastro" && (
           <Badge variant="outline" className="hidden shrink-0 border-dashed text-[10px] sm:inline-flex">

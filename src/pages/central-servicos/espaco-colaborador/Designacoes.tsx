@@ -201,13 +201,21 @@ function LinhaContrato({
 
   return (
     <Card className="p-4">
-      <div className="mb-3 flex flex-wrap items-center gap-2">
+      {/* No celular o nome fica com a linha inteira e os badges descem — o
+          mesmo motivo da árvore: com o badge ao lado, "BENTO GONÇALVES - AUX
+          ADM - 002/2021" quebra em quatro linhas espremidas e fica difícil de
+          distinguir do "BENTO GONÇALVES LIMPEZA - 048/2026". */}
+      <div className="mb-3 flex flex-wrap items-center gap-x-2 gap-y-1">
         <Building2 className="h-4 w-4 shrink-0 text-primary" />
-        <span className="min-w-0 flex-1 font-semibold leading-tight">{contrato.nome}</span>
-        {contrato.encerrado && (
-          <Badge variant="outline" className="border-amber-500/40 text-amber-600">encerrado</Badge>
-        )}
-        <Badge variant="secondary" className="shrink-0">{contrato.colaboradores} pessoas</Badge>
+        <span className="min-w-0 flex-1 basis-[calc(100%-1.5rem)] font-semibold leading-tight sm:basis-auto">
+          {contrato.nome}
+        </span>
+        <span className="flex w-full items-center gap-2 pl-6 sm:w-auto sm:pl-0">
+          {contrato.encerrado && (
+            <Badge variant="outline" className="border-amber-500/40 text-amber-600">encerrado</Badge>
+          )}
+          <Badge variant="secondary" className="shrink-0">{contrato.colaboradores} pessoas</Badge>
+        </span>
       </div>
 
       <div className="grid gap-3 sm:grid-cols-2">
