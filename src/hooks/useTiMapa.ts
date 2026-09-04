@@ -5,7 +5,7 @@ import { supabase } from "@/integrations/supabase/client";
 /**
  * T.I — Mapa de Hardware.
  *
- * Backend em supabase/migrations/20260930000060_ti_mapa_hardware.sql. O
+ * Backend em supabase/migrations/20260930000062_ti_mapa_hardware.sql. O
  * cabeçalho de lá explica o desenho; o resumo para quem lê só este arquivo:
  *
  *   TI_PLANTA           → o escritório (um por andar/unidade)

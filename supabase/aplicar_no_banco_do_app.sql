@@ -20531,7 +20531,7 @@ NOTIFY pgrst, 'reload schema';
 --   (volta a versão estrita do total — e volta o bug deste chamado).
 -- =====================================================================
 
--- ===== 20260930000060_ti_mapa_hardware =====
+-- ===== 20260930000062_ti_mapa_hardware =====
 -- =====================================================================
 -- T.I — MAPA DE HARDWARE
 --
@@ -21003,7 +21003,7 @@ SELECT nome, modulo_codigo, ativo FROM public.perfil_acesso WHERE modulo_codigo 
 --   NOTIFY pgrst, 'reload schema';
 -- =====================================================================
 
--- ===== 20260930000061_treinamentos_dashboard_de_videos =====
+-- ===== 20260930000063_treinamentos_dashboard_de_videos =====
 -- =====================================================================
 -- TREINAMENTOS — Dashboard de vídeos: quem viu, quem concluiu, quantas vezes.
 --

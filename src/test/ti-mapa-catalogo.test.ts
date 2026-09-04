@@ -25,7 +25,7 @@ import {
  */
 
 const SQL = readFileSync(
-  resolve(__dirname, "../../supabase/migrations/20260930000060_ti_mapa_hardware.sql"),
+  resolve(__dirname, "../../supabase/migrations/20260930000062_ti_mapa_hardware.sql"),
   "utf-8",
 );
 
