@@ -30,12 +30,27 @@ function estiloBanco(nome: string) {
   return { sigla: inicial, bg: "#64748b", fg: "#ffffff" };
 }
 
-export function BancoBadge({ nome, logoUrl, className }: { nome: string; logoUrl?: string | null; className?: string }) {
+// `showNome=false` (SIS-2026-0256, tabela do Débito Automático — tirar o
+// nome por extenso pra encolher a coluna e sumir com o scroll lateral)
+// mostra só o ícone/logo, com o nome só no `title` (tooltip nativo ao
+// passar o mouse) — cada branch já tinha `title={nome}` no ícone, então só
+// precisa deixar de renderizar o `<span>` de texto.
+export function BancoBadge({
+  nome,
+  logoUrl,
+  className,
+  showNome = true,
+}: {
+  nome: string;
+  logoUrl?: string | null;
+  className?: string;
+  showNome?: boolean;
+}) {
   if (logoUrl) {
     return (
       <span className={cn("inline-flex items-center gap-2", className)}>
         <img src={logoUrl} alt={nome} className="h-6 w-6 shrink-0 rounded-full object-contain" title={nome} />
-        <span className="text-sm">{nome}</span>
+        {showNome && <span className="text-sm">{nome}</span>}
       </span>
     );
   }
@@ -49,7 +64,7 @@ export function BancoBadge({ nome, logoUrl, className }: { nome: string; logoUrl
       >
         {sigla.length > 3 ? sigla.slice(0, 3) : sigla}
       </span>
-      <span className="text-sm">{nome}</span>
+      {showNome && <span className="text-sm">{nome}</span>}
     </span>
   );
 }
