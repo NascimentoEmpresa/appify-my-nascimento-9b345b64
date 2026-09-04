@@ -93,7 +93,7 @@ import { PlantaCanvas, type Ferramenta, type SelecaoMapa } from "./mapa/PlantaCa
  * Acesso (README da raiz): a tela é `ti_mapa_hardware`; desenhar a planta
  * pede `ti_mapa_editar` e mexer em equipamento pede `ti_ativo_gerenciar`.
  * Os três são menus reais em app_menu (os dois últimos como menu fantasma,
- * rota NULL), criados na migration 20260930000062 — quem libera é o admin em
+ * rota NULL), criados na migration 20260930000060 — quem libera é o admin em
  * Administração › Acesso por Usuário, nunca um `if` de cargo aqui dentro.
  */
 

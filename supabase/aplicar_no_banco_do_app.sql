@@ -20531,7 +20531,7 @@ NOTIFY pgrst, 'reload schema';
 --   (volta a versão estrita do total — e volta o bug deste chamado).
 -- =====================================================================
 
--- ===== 20260930000062_ti_mapa_hardware =====
+-- ===== 20260930000060_ti_mapa_hardware =====
 -- =====================================================================
 -- T.I — MAPA DE HARDWARE
 --

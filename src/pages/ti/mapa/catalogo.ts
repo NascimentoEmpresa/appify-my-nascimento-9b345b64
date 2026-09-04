@@ -40,7 +40,7 @@ import {
  * Catálogo do Mapa de Hardware.
  *
  * Um lugar só para "o que existe no mapa e como cada coisa se parece": os
- * CHECKs do banco (supabase/migrations/20260930000062_ti_mapa_hardware.sql)
+ * CHECKs do banco (supabase/migrations/20260930000060_ti_mapa_hardware.sql)
  * e estas listas têm que andar juntos — tipo aceito aqui e recusado lá vira
  * erro 400 na cara de quem cadastra.
  *

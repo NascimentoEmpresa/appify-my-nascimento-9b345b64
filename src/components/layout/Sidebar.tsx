@@ -634,7 +634,7 @@ const sistemasModule: ModuleDef = {
 
 // T.I — infraestrutura. Primeiro submódulo: o Mapa de Hardware (planta do
 // escritório com cada equipamento posicionado). Backend na migration
-// 20260930000062; o menu nasce sem permissão nenhuma, então o módulo começa
+// 20260930000060; o menu nasce sem permissão nenhuma, então o módulo começa
 // invisível até alguém liberar em Acesso por Usuário.
 const tiModule: ModuleDef = {
   id: "ti",
