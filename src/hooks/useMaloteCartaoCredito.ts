@@ -96,10 +96,16 @@ export interface CartaoCredito {
   dia_vencimento: number;
   limite: number;
   ativo: boolean;
+  // SIS-2026-0255 (achado testando import de fatura): mais de um cartão
+  // cadastrado pode ter o MESMO titular em bancos diferentes (ex. "HELENA"
+  // no Banrisul e no Banco do Brasil) — usuário confundiu qual selecionar
+  // guiando só pelo nome. 4 últimos dígitos, visível no cadastro e no
+  // Select de import.
+  final_cartao: string | null;
 }
 
 const KEY = "malote_cartao_credito";
-const COLUMNS = "id, nome_cartao, tipo_forma_pagamento, empresa_id, banco_id, bandeira_id, dia_fechamento, dia_vencimento, limite, ativo";
+const COLUMNS = "id, nome_cartao, tipo_forma_pagamento, empresa_id, banco_id, bandeira_id, dia_fechamento, dia_vencimento, limite, ativo, final_cartao";
 
 export function useCartoesCredito() {
   return useQuery({
@@ -126,6 +132,7 @@ interface SalvarCartaoCreditoInput {
   dia_vencimento: number;
   limite: number;
   ativo: boolean;
+  final_cartao: string | null;
 }
 
 export function useSalvarCartaoCredito() {
