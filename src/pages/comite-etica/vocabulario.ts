@@ -150,10 +150,23 @@ export const SITUACAO_PROVIDENCIA: Opcao[] = [
 /** O que cada alerta do tick quer dizer. */
 export const TIPO_ALERTA: Record<string, string> = {
   prazo_vencido: "Prazo estourado",
+  resposta_pendente: "Pendente de resposta",
+  providencia_vencida: "Providência vencida",
+  // Aposentados na 20260930000058: alertavam AUSÊNCIA de movimento, e alerta
+  // que toca sem ninguém estar esperando vira ruído. Os rótulos ficam porque
+  // linhas antigas continuam no histórico — e porque migration aqui é
+  // aplicada à mão: até alguém rodar o SQL, o tick ainda os acende.
   primeira_providencia: "Sem primeira providência",
   parado: "Sem movimentação",
-  providencia_vencida: "Providência vencida",
 };
+
+/**
+ * O que o banner da lista mostra. Os dois tipos de ausência de movimento
+ * ficam de fora mesmo que o tick ainda os crie — ver TIPO_ALERTA.
+ */
+export const TIPOS_ALERTA_NO_BANNER = [
+  "prazo_vencido", "resposta_pendente", "providencia_vencida",
+];
 
 export const RESULTADO: Opcao[] = [
   { value: "procedente", label: "Procedente" },

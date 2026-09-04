@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { useParams } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
+import type { SupabaseClient } from "@supabase/supabase-js";
 import { useAuth } from "@/hooks/useAuth";
 import { useVinculoEmpregado } from "@/hooks/useVinculoEmpregado";
 import logoNascimento from "@/assets/logo-nascimento-icon.png";
@@ -20,9 +21,32 @@ interface Form {
   seguranca?: "liberado" | "restrito"; exige_senha?: boolean;
   permite_anonimo?: boolean; intervalo_horas?: number | null;
 }
+/**
+ * O `config` jsonb da pergunta. Cada tipo usa um punhado destas chaves e
+ * ignora o resto — daí serem todas opcionais. Estão listadas em vez de um
+ * `Record<string, any>` para o editor avisar quando um lado escrever
+ * `multiplo` e o outro ler `multiplos`, que é o erro que o jsonb solto
+ * deixa passar até alguém abrir o formulário.
+ */
+interface ConfigPerg {
+  cor?: string;
+  multiplos?: boolean;
+  outro?: boolean;
+  arquivo_url?: string; arquivo_nome?: string; anexo_resp?: boolean;
+  min?: number; max?: number; rotulo_min?: string; rotulo_max?: string;
+  // Público-alvo da pergunta (união de setores e pessoas).
+  setores?: string[]; pessoas?: string[];
+  // Pergunta "colegas".
+  escala_max?: number; min_colegas?: number; max_colegas?: number;
+  setores_distintos?: boolean; excluir_proprio?: boolean;
+  nota_obrigatoria?: boolean;
+  comentario_rotulo?: string; comentario_desc?: string;
+  comentario_placeholder?: string; comentario_obrigatorio?: boolean;
+}
+
 interface Perg {
   id: string; tipo: string; titulo: string; descricao?: string | null;
-  obrigatoria: boolean; imagem_url?: string | null; opcoes: string[]; config: Record<string, any>;
+  obrigatoria: boolean; imagem_url?: string | null; opcoes: string[]; config: ConfigPerg;
 }
 
 // Escalas de trabalho (enum posto_jornada do banco).
@@ -175,14 +199,38 @@ function SuccessScreen() {
 // Valor gravado = o NOME do contrato (lista de nomes quando múltiplo), igual
 // ao que a pergunta "colaborador" faz — mantém Respostas e painéis legíveis
 // sem precisar resolver id.
-function ContratoSelect({ value, multiplos, onChange }: { value: any; multiplos: boolean; onChange: (v: any) => void }) {
-  const [contratos, setContratos] = useState<{ id: string; nome: string; cliente: string | null }[]>([]);
+//
+// A primeira opção é sempre "ADMINISTRATIVO", pra quem responde não está
+// lotado em contrato nenhum (escritório/sede). Ela é sintética, do formulário
+// — de propósito NÃO existe como linha em `contratos`: aquela tabela é do
+// Suprimentos/Financeiro e um registro falso lá apareceria em emissão de NF,
+// malote e planilha de custo. Como o valor gravado é o nome, "ADMINISTRATIVO"
+// chega em Respostas igual a qualquer outro.
+/** O que a pergunta usa de um contrato — o resto das colunas nem é lido. */
+type OpcaoContrato = { id: string; nome: string; cliente: string | null };
+
+const CONTRATO_ADMINISTRATIVO: OpcaoContrato =
+  { id: "__administrativo__", nome: "ADMINISTRATIVO", cliente: null };
+
+// `contratos` NÃO está no types.ts gerado pelo Lovable, então o client tipado
+// trata a tabela como inexistente e reclama de toda coluna ("id" não é
+// atribuível a never). Mesmo escape do useContratosERP, só que pelo tipo do
+// próprio SDK em vez de `as any` — o client continua o mesmo, o que cai é só
+// o conhecimento do schema.
+const sbSemSchema = supabase as unknown as SupabaseClient;
+
+function ContratoSelect({ value, multiplos, onChange }: {
+  value: string | string[] | null;
+  multiplos: boolean;
+  onChange: (v: string | string[]) => void;
+}) {
+  const [contratos, setContratos] = useState<OpcaoContrato[]>([]);
   const [estado, setEstado] = useState<"carregando" | "ok" | "erro">("carregando");
   const [busca, setBusca] = useState("");
 
   useEffect(() => {
     (async () => {
-      const { data, error } = await (supabase as any)
+      const { data, error } = await sbSemSchema
         .from("contratos")
         .select("id,nome,cliente")
         .eq("status", "ativo")
@@ -192,8 +240,8 @@ function ContratoSelect({ value, multiplos, onChange }: { value: any; multiplos:
       // por nome, então dois contratos homônimos ficariam marcados juntos.
       const vistos = new Set<string>();
       setContratos((data ?? [])
-        .map((r: any) => ({ id: String(r.id), nome: String(r.nome ?? "").trim(), cliente: r.cliente ?? null }))
-        .filter((c: any) => c.nome && !vistos.has(c.nome) && vistos.add(c.nome)));
+        .map((r): OpcaoContrato => ({ id: String(r.id), nome: String(r.nome ?? "").trim(), cliente: r.cliente ?? null }))
+        .filter((c) => c.nome && !vistos.has(c.nome) && vistos.add(c.nome)));
       setEstado("ok");
     })();
   }, []);
@@ -202,20 +250,28 @@ function ContratoSelect({ value, multiplos, onChange }: { value: any; multiplos:
   if (estado === "erro") return <div style={{ fontSize: 13, color: "#dc2626", fontWeight: 700 }}>Não foi possível carregar os contratos.</div>;
   if (contratos.length === 0) return <div style={{ fontSize: 13, color: "#94a3b8" }}>Nenhum contrato disponível para o seu acesso.</div>;
 
+  // ADMINISTRATIVO na frente da lista. O filtro evita duplicar caso um dia
+  // exista um contrato ativo com esse mesmo nome (a resposta é o nome, então
+  // dois itens homônimos marcariam junto — mesmo motivo da dedup lá em cima).
+  const opcoes = [
+    CONTRATO_ADMINISTRATIVO,
+    ...contratos.filter(c => c.nome.toUpperCase() !== CONTRATO_ADMINISTRATIVO.nome),
+  ];
+
   // Um só: select nativo. São poucas dezenas de contratos ativos, então não
   // precisa de busca — e o nativo já é acessível e funciona bem no celular.
   if (!multiplos) {
     return (
       <select value={value ?? ""} onChange={e => onChange(e.target.value)} style={{ ...inp, maxWidth: 420 }}>
         <option value="">Selecione o contrato…</option>
-        {contratos.map(c => <option key={c.id} value={c.nome}>{c.cliente ? `${c.nome} · ${c.cliente}` : c.nome}</option>)}
+        {opcoes.map(c => <option key={c.id} value={c.nome}>{c.cliente ? `${c.nome} · ${c.cliente}` : c.nome}</option>)}
       </select>
     );
   }
 
   const sel: string[] = Array.isArray(value) ? value : [];
   const termo = busca.trim().toLowerCase();
-  const lista = termo ? contratos.filter(c => `${c.nome} ${c.cliente ?? ""}`.toLowerCase().includes(termo)) : contratos;
+  const lista = termo ? opcoes.filter(c => `${c.nome} ${c.cliente ?? ""}`.toLowerCase().includes(termo)) : opcoes;
   const alterna = (nome: string) =>
     onChange(sel.includes(nome) ? sel.filter(x => x !== nome) : [...sel, nome]);
 
