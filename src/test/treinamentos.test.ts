@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   embedDeVideo, corrigirProva, temConteudo, recursosDe, validarProva, caminhoNoBucket,
-  validarTamanho, LIMITE_UPLOAD_BYTES,
+  validarTamanho, LIMITE_UPLOAD_BYTES, resumirDashboard,
   type PerguntaProva,
 } from "@/pages/treinamentos/treinamento/core";
 
@@ -152,5 +152,53 @@ describe("validarTamanho", () => {
     // 200 MB é o do bucket; o global do projeto está em 1 GB desde
     // 25/08/2026. Quem manda é o menor dos dois.
     expect(LIMITE_UPLOAD_BYTES).toBe(200 * 1024 * 1024);
+  });
+});
+
+describe("resumirDashboard", () => {
+  // Os números do topo do Dashboard de vídeos. O caso que importa é o de
+  // baixo: a mesma pessoa em três treinamentos é UMA pessoa.
+  const videos = [
+    { pessoas_viram: 3, visualizacoes: 7, conclusoes: 2, aprovados: 1 },
+    { pessoas_viram: 2, visualizacoes: 2, conclusoes: 2, aprovados: 2 },
+  ];
+
+  it("soma visualizações, conclusões e aprovados", () => {
+    const r = resumirDashboard(videos, []);
+    expect(r.visualizacoes).toBe(9);
+    expect(r.conclusoes).toBe(4);
+    expect(r.aprovados).toBe(3);
+  });
+
+  it("conta pessoa DISTINTA, não uma vez por treinamento", () => {
+    const pessoas = [
+      { user_id: "ana", visualizou: true },
+      { user_id: "ana", visualizou: true },
+      { user_id: "ana", visualizou: true },
+      { user_id: "bruno", visualizou: true },
+    ];
+    // Somar a coluna dos vídeos daria 5; são 2 gente.
+    expect(resumirDashboard(videos, pessoas).distintas).toBe(2);
+  });
+
+  it("não conta quem só concluiu sem registro de visualização", () => {
+    // Acontece com conclusão anterior ao backfill: aparece na tabela, mas não
+    // é alguém que "assistiu" segundo o contador.
+    const pessoas = [
+      { user_id: "ana", visualizou: true },
+      { user_id: "carla", visualizou: false },
+    ];
+    expect(resumirDashboard(videos, pessoas).distintas).toBe(1);
+  });
+
+  it("calcula a taxa sobre quem viu, arredondando", () => {
+    // 4 conclusões / 5 pessoas que viram = 80%.
+    expect(resumirDashboard(videos, []).taxa).toBe(80);
+    expect(resumirDashboard([{ pessoas_viram: 3, visualizacoes: 3, conclusoes: 1, aprovados: 0 }], []).taxa).toBe(33);
+  });
+
+  it("não divide por zero quando ninguém viu nada", () => {
+    expect(resumirDashboard([], []).taxa).toBe(0);
+    expect(resumirDashboard([{ pessoas_viram: 0, visualizacoes: 0, conclusoes: 0, aprovados: 0 }], []).taxa).toBe(0);
   });
 });

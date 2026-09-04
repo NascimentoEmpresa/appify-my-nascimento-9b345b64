@@ -8,10 +8,12 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
   GraduationCap, Video, Paperclip, ListChecks, Plus, Search, Pencil, Trash2,
-  CheckCircle2, EyeOff, PlayCircle, Loader2, Award,
+  CheckCircle2, EyeOff, PlayCircle, Loader2, Award, BarChart3,
 } from "lucide-react";
+import { AcessoGate } from "@/components/auth/AcessoGate";
 import { TreinamentoEditor } from "./treinamento/TreinamentoEditor";
 import { TreinamentoVisor } from "./treinamento/TreinamentoVisor";
+import { DashboardVideos } from "./treinamento/DashboardVideos";
 import { recursosDe, type EscopoTreinamento, type Treinamento } from "./treinamento/core";
 
 // =====================================================================
@@ -59,6 +61,7 @@ export default function TreinamentosERP({ escopo }: Props) {
   const [editorAberto, setEditorAberto] = useState(false);
   const [emEdicao, setEmEdicao] = useState<Treinamento | null>(null);
   const [assistindo, setAssistindo] = useState<Treinamento | null>(null);
+  const [dashboardAberto, setDashboardAberto] = useState(false);
 
   const carregar = useCallback(async () => {
     // Os dois blocos em paralelo: a grade não precisa esperar o histórico
@@ -155,6 +158,15 @@ export default function TreinamentosERP({ escopo }: Props) {
             <Input className="w-full pl-9 md:w-64" placeholder="Buscar treinamento…"
                    value={busca} onChange={e => setBusca(e.target.value)} />
           </div>
+          {/* Quem enxerga o relatório de quem assistiu é decidido no toggle de
+              Administração › Acesso por Usuário (menu `treinamentos_dashboard`),
+              não aqui — e as RPCs por trás cobram o mesmo código, então
+              esconder o botão é conforto, não a tranca. */}
+          <AcessoGate menu="treinamentos_dashboard" acao="visualizar">
+            <Button variant="outline" onClick={() => setDashboardAberto(true)}>
+              <BarChart3 className="mr-2 h-4 w-4" /> Dashboard de vídeos
+            </Button>
+          </AcessoGate>
           {podeGerenciar && (
             <Button onClick={() => { setEmEdicao(null); setEditorAberto(true); }}>
               <Plus className="mr-2 h-4 w-4" /> Novo
@@ -297,9 +309,16 @@ export default function TreinamentosERP({ escopo }: Props) {
         treinamento={assistindo}
         meuNome={meuNome}
         meuId={user?.id}
+        escopo={escopo}
         jaFeito={assistindo ? conclusoes[assistindo.id] ?? null : null}
         onFechar={() => setAssistindo(null)}
         onConcluido={carregar}
+      />
+
+      <DashboardVideos
+        aberto={dashboardAberto}
+        onFechar={() => setDashboardAberto(false)}
+        escopo={escopo}
       />
     </div>
   );
