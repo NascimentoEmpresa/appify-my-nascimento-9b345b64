@@ -4,6 +4,7 @@ import { PageHeader } from "@/components/layout/PageHeader";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { TableHeadOrdenavel } from "@/components/ui/table-head-ordenavel";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -27,7 +28,26 @@ import {
   STATUS_FASE_SOLICITACAO,
 } from "@/hooks/useMaloteDespesa";
 import { useClassificacoesOrcamento } from "@/hooks/usePlanejamentoOrcamentario";
+import { useOrdenacaoTabela } from "@/hooks/useOrdenacaoTabela";
+import { ordenarPor } from "@/lib/ordenarTabela";
 import { JustificativaPendenteBadge } from "./JustificativaPendenteBadge";
+
+// SIS-2026-0316: colunas ordenáveis (clicar no cabeçalho, mesmo padrão do
+// Windows Explorer). Ficam de fora as que não têm um valor único e
+// comparável de forma útil: Parcela (composto X/Y), Aprovador pendente
+// (lista/tooltip) e Justificativa (badge de estado, não dado ordenável).
+type ColunaMeusItens =
+  | "tipo"
+  | "numero"
+  | "data_pagamento"
+  | "classificacao"
+  | "nome"
+  | "empresa"
+  | "forma_pagamento"
+  | "valor"
+  | "status"
+  | "excecao"
+  | "atualizacao";
 
 const ORIGEM_LABEL: Record<string, string> = {
   solicitacao: "Solicitação",
@@ -75,6 +95,15 @@ function statusEfetivo(item: ItemLinhaMalote): StatusDespesa {
     return item.parcela.status === "paga" ? "despesa_paga" : "aguardando_pagamento";
   }
   return item.despesa.status;
+}
+
+function dataPagamentoDe(item: ItemLinhaMalote): string | null {
+  const { despesa, parcela } = item;
+  return parcela ? parcela.data_pagamento_real ?? parcela.data_vencimento : despesa.data_pagamento;
+}
+
+function valorDe(item: ItemLinhaMalote): number {
+  return Number(item.parcela ? item.parcela.valor : item.despesa.valor_total);
 }
 
 function itemMatchesChip(item: ItemLinhaMalote, chip: ChipKey): boolean {
@@ -175,6 +204,7 @@ export default function MeusItens() {
   const [empresaId, setEmpresaId] = useState("");
   const [excecao, setExcecao] = useState<"todos" | "sim" | "nao">("todos");
   const [busca, setBusca] = useState("");
+  const ordenacao = useOrdenacaoTabela<ColunaMeusItens>();
 
   const contagens = useMemo(() => {
     const map: Record<ChipKey, number> = {
@@ -221,6 +251,25 @@ export default function MeusItens() {
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [itens, tab, chip, classificacaoId, empresaId, empresaPrimeiraLinhaPorDespesa, excecao, periodoInicio, periodoFim, dataAtualizacaoDe, dataAtualizacaoAte, busca]);
+
+  // SIS-2026-0316: clique no cabeçalho ordena — ver ColunaMeusItens acima
+  // pra saber por que algumas colunas ficam de fora.
+  const ordenados = useMemo(() => {
+    const acessores: Record<ColunaMeusItens, (item: ItemLinhaMalote) => string | number | null> = {
+      tipo: (item) => tipoLabelDe(item.despesa),
+      numero: (item) => item.despesa.numero,
+      data_pagamento: (item) => dataPagamentoDe(item),
+      classificacao: (item) => item.despesa.classificacao?.nome ?? null,
+      nome: (item) => item.despesa.nome,
+      empresa: (item) => empresas.find((e) => e.id === empresaIdResolvida(item.despesa))?.nome ?? null,
+      forma_pagamento: (item) => item.despesa.forma_pagamento ?? null,
+      valor: (item) => valorDe(item),
+      status: (item) => STATUS_LABEL[statusEfetivo(item)],
+      excecao: (item) => (item.despesa.excecao ? 1 : 0),
+      atualizacao: (item) => item.despesa.updated_at,
+    };
+    return ordenacao.coluna ? ordenarPor(filtrados, acessores[ordenacao.coluna], ordenacao.direcao) : filtrados;
+  }, [filtrados, ordenacao.coluna, ordenacao.direcao, empresas, empresaPrimeiraLinhaPorDespesa]);
 
   function limparFiltros() {
     setPeriodoInicio("");
@@ -353,20 +402,20 @@ export default function MeusItens() {
           <Table>
             <TableHeader>
               <TableRow>
-                <TableHead>Tipo</TableHead>
-                <TableHead>Nº / ID</TableHead>
+                <TableHeadOrdenavel coluna="tipo" ordenacao={ordenacao}>Tipo</TableHeadOrdenavel>
+                <TableHeadOrdenavel coluna="numero" ordenacao={ordenacao}>Nº / ID</TableHeadOrdenavel>
                 <TableHead>Parcela</TableHead>
-                <TableHead>Data de pagamento</TableHead>
-                <TableHead>Classificação</TableHead>
-                <TableHead>Nome da Despesa</TableHead>
-                <TableHead>Empresa</TableHead>
-                <TableHead>Forma de pagamento</TableHead>
-                <TableHead>Valor (R$)</TableHead>
-                <TableHead>Status</TableHead>
+                <TableHeadOrdenavel coluna="data_pagamento" ordenacao={ordenacao}>Data de pagamento</TableHeadOrdenavel>
+                <TableHeadOrdenavel coluna="classificacao" ordenacao={ordenacao}>Classificação</TableHeadOrdenavel>
+                <TableHeadOrdenavel coluna="nome" ordenacao={ordenacao}>Nome da Despesa</TableHeadOrdenavel>
+                <TableHeadOrdenavel coluna="empresa" ordenacao={ordenacao}>Empresa</TableHeadOrdenavel>
+                <TableHeadOrdenavel coluna="forma_pagamento" ordenacao={ordenacao}>Forma de pagamento</TableHeadOrdenavel>
+                <TableHeadOrdenavel coluna="valor" ordenacao={ordenacao}>Valor (R$)</TableHeadOrdenavel>
+                <TableHeadOrdenavel coluna="status" ordenacao={ordenacao}>Status</TableHeadOrdenavel>
                 <TableHead>Aprovador pendente</TableHead>
-                <TableHead>Exceção</TableHead>
+                <TableHeadOrdenavel coluna="excecao" ordenacao={ordenacao}>Exceção</TableHeadOrdenavel>
                 <TableHead>Justificativa</TableHead>
-                <TableHead>Última atualização</TableHead>
+                <TableHeadOrdenavel coluna="atualizacao" ordenacao={ordenacao}>Última atualização</TableHeadOrdenavel>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -384,7 +433,7 @@ export default function MeusItens() {
                   </TableCell>
                 </TableRow>
               )}
-              {filtrados.map((item) => {
+              {ordenados.map((item) => {
                 const { despesa, parcela } = item;
                 const status = statusEfetivo(item);
                 const valor = parcela ? parcela.valor : despesa.valor_total;
