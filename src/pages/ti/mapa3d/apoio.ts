@@ -16,7 +16,7 @@ import { GRID_CM, tipoAtivo, tipoElemento } from "../mapa/catalogo";
 /** cm → metros (a unidade da cena). */
 export const M = (cm: number): number => cm / 100;
 
-/** Gruda no grid de 25 cm. `livre` desliga (é o Alt do editor). */
+/** Gruda no quadrado de 1 m do piso. `livre` desliga (é o Alt do editor). */
 export function snap(valor: number, livre = false, grid = GRID_CM): number {
   return livre ? Math.round(valor) : Math.round(valor / grid) * grid;
 }
@@ -259,7 +259,9 @@ export function pontasDaParede(el: {
  * Novo retângulo ao arrastar UM canto de uma peça retangular.
  *
  * O canto oposto fica parado — é o que se espera ao esticar uma sala pela
- * quina. Mínimo de 25 cm para a peça não sumir num arrasto atravessado.
+ * quina. Mínimo de 25 cm para a peça não sumir num arrasto atravessado — é
+ * menor que o passo do grid de propósito, porque o mínimo é um limite de
+ * segurança, não uma medida que alguém escolhe.
  */
 export function redimensionarPorCanto(
   el: { x: number | string; y: number | string; largura: number | string; altura: number | string },

@@ -62,7 +62,18 @@ import {
  * parede de 12 cm, em vez de dois retângulos aleatórios.
  */
 
-export const GRID_CM = 25;
+/**
+ * O lado do quadrado do mapa, em cm.
+ *
+ * 1 metro: é o quadrado que aparece no piso e o passo com que tudo cresce e
+ * anda. Já foi 25 cm — mais preciso e pior de usar: quem monta um escritório
+ * pensa em "essa sala tem 6 por 4", não em múltiplos de vinte e cinco
+ * centímetros, e a peça nunca casava com o quadrado desenhado embaixo dela.
+ *
+ * Para medida quebrada (a parede de 3,40 m que existe de verdade) existe o
+ * Alt, que solta o grid enquanto se arrasta.
+ */
+export const GRID_CM = 100;
 
 export interface TipoAtivoDef {
   valor: string;

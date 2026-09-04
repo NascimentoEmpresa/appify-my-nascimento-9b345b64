@@ -59,9 +59,11 @@ describe("conversão e grid", () => {
     expect(M(45)).toBeCloseTo(0.45);
   });
 
-  it("gruda no grid de 25 cm, e solta quando pedido", () => {
-    expect(snap(137)).toBe(125);
-    expect(snap(138)).toBe(150);
+  it("gruda no quadrado de 1 m, e solta quando pedido", () => {
+    // O passo é o quadrado que se vê no piso: quem monta escritório pensa em
+    // "essa sala tem 6 por 4", não em múltiplos de 25 cm.
+    expect(snap(137)).toBe(100);
+    expect(snap(151)).toBe(200);
     expect(snap(137, true)).toBe(137);
   });
 

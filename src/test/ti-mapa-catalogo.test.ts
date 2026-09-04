@@ -95,12 +95,15 @@ describe("tipo desconhecido não derruba o mapa", () => {
 });
 
 describe("geometria do mapa", () => {
-  it("gruda no grid de 25 cm, para os dois lados", () => {
+  it("gruda no quadrado de 1 m, para os dois lados", () => {
+    // O passo do editor é o quadrado desenhado no piso — foi 25 cm e virou
+    // 1 m, porque quem monta escritório mede a sala em metros inteiros.
+    expect(GRID_CM).toBe(100);
     expect(arredondarGrid(0)).toBe(0);
-    expect(arredondarGrid(12)).toBe(0);
-    expect(arredondarGrid(13)).toBe(GRID_CM);
-    expect(arredondarGrid(137)).toBe(125);
-    expect(arredondarGrid(-13)).toBe(-GRID_CM);
+    expect(arredondarGrid(49)).toBe(0);
+    expect(arredondarGrid(51)).toBe(GRID_CM);
+    expect(arredondarGrid(137)).toBe(100);
+    expect(arredondarGrid(-51)).toBe(-GRID_CM);
   });
 
   it("mostra centímetros como metros no formato brasileiro", () => {

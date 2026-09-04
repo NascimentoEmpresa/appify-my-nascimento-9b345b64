@@ -538,12 +538,12 @@ function Piso({
         <Grid
           position={[L / 2, 0.006, P / 2]}
           args={[L, P]}
-          cellSize={0.25}
-          cellThickness={0.5}
-          cellColor="#b9c4d2"
-          sectionSize={1}
-          sectionThickness={1}
-          sectionColor="#8fa0b4"
+          cellSize={1}
+          cellThickness={0.6}
+          cellColor="#aebbcc"
+          sectionSize={5}
+          sectionThickness={1.3}
+          sectionColor="#7f92a8"
           fadeDistance={Math.max(L, P) * 2.4}
           fadeStrength={1}
           followCamera={false}
@@ -721,6 +721,39 @@ function AndarFantasma({
   );
 }
 
+/** Uma bola de puxar: esfera visível + esfera invisível maior, para acertar. */
+function Alca({
+  posicao,
+  onPegar,
+}: {
+  posicao: [number, number, number];
+  onPegar: () => void;
+}) {
+  const pegar = (e: ThreeEvent<PointerEvent>) => {
+    e.stopPropagation();
+    onPegar();
+  };
+  return (
+    <group position={posicao}>
+      {/* A área de clique é 2,5× maior que a bola desenhada: mirar numa esfera
+          de 15 cm num mapa de 20 m é frustrante, e aumentar o desenho todo
+          esconderia a peça embaixo. */}
+      <mesh onPointerDown={pegar} visible={false}>
+        <sphereGeometry args={[0.38, 8, 6]} />
+      </mesh>
+      <mesh onPointerDown={pegar}>
+        <sphereGeometry args={[0.15, 16, 14]} />
+        <meshStandardMaterial color="#f59e0b" emissive="#f59e0b" emissiveIntensity={0.6} />
+      </mesh>
+      {/* Anel no chão, para a alça ser vista mesmo com a peça na frente. */}
+      <mesh position={[0, -0.02, 0]} rotation={[-Math.PI / 2, 0, 0]}>
+        <ringGeometry args={[0.2, 0.28, 20]} />
+        <meshBasicMaterial color="#f59e0b" transparent opacity={0.8} />
+      </mesh>
+    </group>
+  );
+}
+
 /**
  * As alças de manipulação da peça selecionada.
  *
@@ -729,8 +762,8 @@ function AndarFantasma({
  * parede. As demais ganham QUATRO, nas quinas, e esticam o retângulo com o
  * canto oposto parado.
  *
- * O tamanho da esfera não escala com o zoom por enquanto: 12 cm de raio é
- * grande o bastante para pegar com o mouse na distância em que se edita.
+ * Enquanto se puxa, a medida aparece em metros ao lado — sem isso, "aumentar
+ * um quadrado" vira tentativa e erro contra o grid.
  */
 function Alcas({
   el,
@@ -743,29 +776,24 @@ function Alcas({
 }) {
   const peca = previa ? ({ ...el, ...previa } as TiElemento) : el;
   const def = tipoElemento(peca.tipo);
-  const raio = 0.12;
-  const altura = M(alturaDoElemento(peca)) + 0.1;
+  const altura = M(alturaDoElemento(peca)) + 0.15;
+  const metros = (cm: number) => `${(cm / 100).toFixed(2).replace(".", ",")} m`;
 
   if (def.familia === "estrutura") {
     const { a, b } = pontasDaParede(peca);
     return (
       <>
-        {([
-          ["a", a],
-          ["b", b],
-        ] as const).map(([nome, p]) => (
-          <mesh
-            key={nome}
-            position={[M(p.x), altura, M(p.y)]}
-            onPointerDown={(e: ThreeEvent<PointerEvent>) => {
-              e.stopPropagation();
-              onPegar(nome);
-            }}
-          >
-            <sphereGeometry args={[raio, 14, 12]} />
-            <meshStandardMaterial color="#f59e0b" emissive="#f59e0b" emissiveIntensity={0.45} />
-          </mesh>
-        ))}
+        <Alca posicao={[M(a.x), altura, M(a.y)]} onPegar={() => onPegar("a")} />
+        <Alca posicao={[M(b.x), altura, M(b.y)]} onPegar={() => onPegar("b")} />
+        <Html
+          center
+          distanceFactor={16}
+          position={[M((a.x + b.x) / 2), altura + 0.35, M((a.y + b.y) / 2)]}
+        >
+          <span className="pointer-events-none whitespace-nowrap rounded bg-amber-500 px-1.5 py-0.5 text-[11px] font-bold text-white shadow">
+            {metros(Number(peca.largura))}
+          </span>
+        </Html>
       </>
     );
   }
@@ -783,18 +811,13 @@ function Alcas({
   return (
     <>
       {quinas.map(([nome, px, pz]) => (
-        <mesh
-          key={nome}
-          position={[px, altura, pz]}
-          onPointerDown={(e: ThreeEvent<PointerEvent>) => {
-            e.stopPropagation();
-            onPegar(nome);
-          }}
-        >
-          <sphereGeometry args={[raio, 14, 12]} />
-          <meshStandardMaterial color="#f59e0b" emissive="#f59e0b" emissiveIntensity={0.45} />
-        </mesh>
+        <Alca key={nome} posicao={[px, altura, pz]} onPegar={() => onPegar(nome)} />
       ))}
+      <Html center distanceFactor={16} position={[(x0 + x1) / 2, altura + 0.35, (y0 + y1) / 2]}>
+        <span className="pointer-events-none whitespace-nowrap rounded bg-amber-500 px-1.5 py-0.5 text-[11px] font-bold text-white shadow">
+          {metros(Number(peca.largura))} × {metros(Number(peca.altura))}
+        </span>
+      </Html>
     </>
   );
 }

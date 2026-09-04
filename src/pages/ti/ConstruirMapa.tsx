@@ -421,7 +421,7 @@ export default function ConstruirMapa() {
               <MousePointer2 className="mr-1.5 h-4 w-4" /> Selecionar
             </Button>
             <Button variant={grade ? "secondary" : "ghost"} size="icon" className="h-8 w-8"
-                    title="Grade de 25 cm" onClick={() => setGrade(!grade)}>
+                    title="Quadrados de 1 m" onClick={() => setGrade(!grade)}>
               <Grid3x3 className="h-4 w-4" />
             </Button>
             <Button variant={rotulos ? "secondary" : "ghost"} size="icon" className="h-8 w-8"
@@ -602,7 +602,8 @@ export default function ConstruirMapa() {
                   <ul className="space-y-1 text-left text-[11px] text-muted-foreground">
                     <li><b>Arraste no chão</b> com Parede na mão para desenhar</li>
                     <li><b>Arrastar</b> a peça move no chão</li>
-                    <li><b>Alt</b> enquanto arrasta ignora a grade</li>
+                    <li>Tudo anda de <b>1 em 1 metro</b> (o quadrado do piso)</li>
+                    <li><b>Alt</b> enquanto arrasta solta a grade</li>
                     <li><b>Puxe as bolinhas laranja</b> para esticar a peça</li>
                     <li><b>R</b> gira 45°, <b>D</b> duplica, <b>Delete</b> remove</li>
                     <li><b>Ctrl+Z</b> desfaz, <b>Ctrl+Y</b> refaz</li>
