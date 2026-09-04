@@ -14,6 +14,7 @@ import {
 } from "@/hooks/useCorreioDeclaracao";
 import { useEmpresaId } from "@/hooks/useEmpresaId";
 import { imprimirDeclaracao } from "@/lib/suprimentos/declaracaoPrint";
+import { buscarCep } from "@/hooks/useCorreios";
 import { ExternalLink, FilePlus2, Loader2, Plus, Printer, Save, Search, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -42,6 +43,83 @@ function Campo({
         value={String(form[campo] ?? "")}
         onChange={(e) => setForm((atual) => ({ ...atual, [campo]: e.target.value }))}
       />
+    </div>
+  );
+}
+
+/**
+ * CEP que preenche o endereço sozinho, pela base oficial dos Correios.
+ *
+ * Vale a pena ser a base deles, e não uma pública: é a mesma que valida a
+ * entrega do outro lado. Endereço batendo com o cadastro dos Correios é o que
+ * evita objeto devolvido por endereçamento — que, num envio de uniforme para
+ * um posto distante, custa o frete de ida e o de volta.
+ *
+ * A busca é acessória: se falhar, o campo continua digitável e o resto do
+ * formulário não é bloqueado. Por isso o erro vira aviso, não trava.
+ */
+function CampoCep({
+  label,
+  prefixo,
+  form,
+  setForm,
+}: {
+  label: string;
+  prefixo: "rem" | "dest";
+  form: DeclaracaoCorreio;
+  setForm: React.Dispatch<React.SetStateAction<DeclaracaoCorreio>>;
+}) {
+  const campo = `${prefixo}_cep` as CampoTexto;
+  const [buscandoCep, setBuscandoCep] = useState(false);
+  const [ultimoBuscado, setUltimoBuscado] = useState("");
+
+  const consultar = async () => {
+    const digitos = String(form[campo] ?? "").replace(/\D/g, "");
+    if (digitos.length !== 8 || digitos === ultimoBuscado) return;
+    setBuscandoCep(true);
+    try {
+      const e = await buscarCep(digitos);
+      setUltimoBuscado(digitos);
+      // Só sobrescreve o que veio preenchido: quem já digitou um complemento
+      // ou um logradouro corrigido não perde o que escreveu.
+      setForm((atual) => ({
+        ...atual,
+        [`${prefixo}_endereco`]: e.logradouro || atual[`${prefixo}_endereco` as CampoTexto] || "",
+        [`${prefixo}_bairro`]: e.bairro || atual[`${prefixo}_bairro` as CampoTexto] || "",
+        [`${prefixo}_cidade`]: e.cidade || atual[`${prefixo}_cidade` as CampoTexto] || "",
+        [`${prefixo}_uf`]: e.uf || atual[`${prefixo}_uf` as CampoTexto] || "",
+      }));
+    } catch (erro: unknown) {
+      toast.warning(erro instanceof Error ? erro.message : "Não foi possível consultar o CEP.", {
+        description: "Preencha o endereço à mão.",
+      });
+    } finally {
+      setBuscandoCep(false);
+    }
+  };
+
+  return (
+    <div>
+      <Label htmlFor={`declaracao-${campo}`}>{label}</Label>
+      <div className="flex gap-1.5">
+        <Input
+          id={`declaracao-${campo}`}
+          value={String(form[campo] ?? "")}
+          inputMode="numeric"
+          maxLength={9}
+          onChange={(e) => setForm((atual) => ({ ...atual, [campo]: e.target.value }))}
+          onBlur={() => void consultar()}
+          onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); void consultar(); } }}
+        />
+        <Button
+          type="button" variant="outline" size="icon" className="shrink-0"
+          title="Buscar endereço pelo CEP"
+          disabled={buscandoCep}
+          onClick={() => void consultar()}
+        >
+          {buscandoCep ? <Loader2 className="h-4 w-4 animate-spin" /> : <Search className="h-4 w-4" />}
+        </Button>
+      </div>
     </div>
   );
 }
@@ -176,7 +254,7 @@ export default function CorreioDeclaracao() {
               <Campo label="Bairro" campo="rem_bairro" form={form} setForm={setForm} />
               <Campo label="Cidade" campo="rem_cidade" form={form} setForm={setForm} />
               <Campo label="UF" campo="rem_uf" form={form} setForm={setForm} />
-              <Campo label="CEP" campo="rem_cep" form={form} setForm={setForm} />
+              <CampoCep label="CEP" prefixo="rem" form={form} setForm={setForm} />
               <Campo label="Caixa Postal" campo="rem_caixa_postal" form={form} setForm={setForm} />
             </BlocoEndereco>
             <BlocoEndereco titulo="Destinatário">
@@ -187,7 +265,7 @@ export default function CorreioDeclaracao() {
               <Campo label="Bairro" campo="dest_bairro" form={form} setForm={setForm} />
               <Campo label="Cidade" campo="dest_cidade" form={form} setForm={setForm} />
               <Campo label="UF" campo="dest_uf" form={form} setForm={setForm} />
-              <Campo label="CEP" campo="dest_cep" form={form} setForm={setForm} />
+              <CampoCep label="CEP" prefixo="dest" form={form} setForm={setForm} />
             </BlocoEndereco>
           </div>
 

@@ -1,0 +1,94 @@
+# Correios — como colocar no ar
+
+Complementa [`integracao-api-correios.md`](integracao-api-correios.md), que
+explica a API. Aqui está só o que precisa ser feito **uma vez** para as duas
+primeiras funcionalidades funcionarem em produção:
+
+- situação do objeto no card de Pedidos de Materiais (API SRO Rastro);
+- endereço preenchido pelo CEP na Declaração de Conteúdo (API CEP).
+
+Nada disso escreve nos Correios — as duas APIs são somente de leitura.
+
+## 1. Rodar a migration
+
+`supabase/migrations/20260930000061_correios_token_cache.sql`, no SQL Editor do
+projeto, como todas as outras. Cria a tabela `correios_token`.
+
+Ela nasce com RLS ligada e **sem nenhuma policy**, de propósito: só a
+service_role (usada dentro da Edge Function) alcança o conteúdo. O que está lá
+é uma credencial de sessão do contrato dos Correios — se chegasse ao browser,
+qualquer usuário do ERP poderia consultar e postar no contrato da empresa por
+24 horas.
+
+## 2. Cadastrar os três secrets
+
+No painel do Supabase: **Edge Functions → Secrets** (ou Settings → Edge
+Functions, conforme a versão do painel). Três variáveis:
+
+| Nome | Onde encontrar |
+| --- | --- |
+| `CORREIOS_API_USUARIO` | o idCorreios — o CNPJ da empresa, só dígitos |
+| `CORREIOS_API_CODIGO` | gerado em `cws.correios.com.br` → **Gestão de acesso a API's** |
+| `CORREIOS_CARTAO_POSTAGEM` | número do cartão de postagem, visível no Correios Empresas |
+
+O código de acesso **não expira** ("validade indeterminada", diz a própria tela
+do CWS). Ele só morre quando alguém clica em **Regerar código de acesso** —
+e aí o anterior para de funcionar na hora. Se isso acontecer, atualize o
+secret: a function passa a responder com a mensagem pedindo exatamente isso.
+
+Os mesmos valores ficam em `worker/.env` (git-ignorado) para testes por linha
+de comando. O `.env` não é lido pela Edge Function — os secrets do painel são
+a fonte em produção.
+
+## 3. Publicar a Edge Function `correios`
+
+A função é auto-contida de propósito: **não importa nada de `_shared`**, porque
+o editor web do Supabase quebra com import relativo para fora da pasta da
+função. Então dá para publicar pelos dois caminhos.
+
+**Pelo painel** (não exige CLI logado):
+Edge Functions → **Deploy a new function** → nome `correios` → cole o conteúdo
+de `supabase/functions/correios/index.ts` → Deploy.
+
+**Pelo CLI**, se estiver logado:
+
+```
+supabase functions deploy correios --project-ref fwmzeaztjxrxxzxzxmgc
+```
+
+Não existe `supabase functions logs`; os logs ficam no painel, na aba da
+própria função.
+
+## 4. Conferir
+
+Com um pedido despachado via Correio e com código de rastreio preenchido, abra
+`/app/suprimentos/pedidos-materiais`. O card deve mostrar um badge com a
+situação ("Entregue", "Em trânsito", "Aguardando retirada"…).
+
+Na Declaração de Conteúdo, digite um CEP de 8 dígitos e saia do campo:
+logradouro, bairro, cidade e UF se preenchem.
+
+Se o badge não aparecer, veja os logs da função no painel. As mensagens de erro
+são específicas — dizem se falta secret, se o código de acesso foi recusado, ou
+se os Correios responderam algo inesperado.
+
+## O que isto NÃO faz
+
+- **Não notifica ninguém.** Não há worker, e-mail ou WhatsApp envolvido. A
+  consulta acontece quando alguém abre a tela, e o resultado fica em cache por
+  30 minutos no navegador de quem abriu.
+- **Não cria postagem.** A pré-postagem (gerar o código de rastreio pelo ERP,
+  em vez de pegá-lo no balcão) é uma etapa própria, e é a única que escreve nos
+  Correios.
+- **Não cota preço nem prazo.** As APIs estão liberadas no contrato e testadas,
+  mas dependem de peso e dimensões, que hoje o sistema não guarda.
+
+## Limites que valem lembrar
+
+- A API de token aceita **3 requisições por segundo**. Por isso o token é
+  guardado em `correios_token` e reaproveitado por ~23h30 — nunca peça um token
+  por chamada.
+- O SRO aceita **50 códigos por consulta**. O hook já divide em lotes, e a tela
+  rastreia apenas os pedidos filtrados na hora, não a fila inteira.
+- O Rastro só devolve objetos **do contrato do remetente**. Código de terceiro
+  volta com `mensagem`, não com eventos — a tela mostra isso em cinza.
