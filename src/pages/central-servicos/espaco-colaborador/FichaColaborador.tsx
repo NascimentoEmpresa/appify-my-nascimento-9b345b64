@@ -171,7 +171,25 @@ function FichaCarregada({ ficha }: { ficha: Ficha }) {
           {nivelUtilizavel(ficha.nivel) && (
             <Dado rotulo="Nível hierárquico" valor={ficha.nivel!} icone={ShieldCheck} />
           )}
-          <Dado rotulo="Encarregado do contrato" valor={ficha.encarregado_nome ?? "—"} icone={UserCog} />
+          {/* Era "Encarregado do contrato", lendo RH_CONTRATO_ENCARREGADO —
+              tabela vazia, sem tela, de um módulo descontinuado em jul/2026.
+              O campo mostrava "—" para todo mundo e mostraria para sempre.
+              Campo que nunca preenche é pior que campo ausente: ensina o
+              usuário a ignorar aquele pedaço da tela.
+              Agora é o supervisor DESIGNADO (operacao_designacao), e quando
+              ele saiu da empresa a ficha diz isso em vez de exibir o nome
+              como se nada tivesse acontecido. */}
+          <Dado
+            rotulo="Supervisor do contrato"
+            valor={
+              ficha.supervisor_nome
+                ? ficha.supervisor_ativo === false
+                  ? `${ficha.supervisor_nome} (inativo — redesignar)`
+                  : ficha.supervisor_nome
+                : "Sem supervisor designado"
+            }
+            icone={UserCog}
+          />
         </div>
       </Card>
 

@@ -1,4 +1,4 @@
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 
 // =====================================================================
@@ -71,11 +71,30 @@ export interface NoContrato {
   /** Soma de `qt_postos` — o total de vagas contratadas. */
   vagas: number;
   /**
-   * A designação da Operação, de `RH_CONTRATO_ENCARREGADO`. É por CONTRATO,
-   * não por posto — a amarração encarregado→posto ainda não tem tabela.
+   * Quem a Operação DESIGNOU, de `operacao_designacao` (20260930000064).
+   *
+   * Antes isto lia `RH_CONTRATO_ENCARREGADO` — tabela vazia, sem tela, de um
+   * módulo descontinuado em jul/2026. Nunca teria valor.
+   *
+   * `ativa` diz se a pessoa continua na folha. Designação de gente demitida
+   * NÃO some sozinha: ela é sinalizada. Sumir em silêncio deixaria o contrato
+   * órfão sem ninguém perceber — que é o mesmo erro que já deixou 435 pessoas
+   * invisíveis nesta tela.
    */
-  encarregado_designado: { id: number; nome: string | null } | null;
+  supervisores: DesignadoNoNo[];
+  encarregados: DesignadoNoNo[];
   postos: PostoContratado[];
+}
+
+/** Um responsável designado, como a árvore o recebe. */
+export interface DesignadoNoNo {
+  id: number;
+  nome: string | null;
+  /** NULL = responde pelo contrato inteiro. Preenchido = por este posto. */
+  posto: string | null;
+  desde: string | null;
+  ativa: boolean;
+  situacao: string | null;
 }
 
 export interface ColaboradorLinha {
@@ -111,8 +130,10 @@ export interface FichaColaborador {
   nivel: string | null;
   contrato_id: string | null;
   contrato_nome: string | null;
-  /** Quem a Operação designou como encarregado do contrato desta pessoa. */
-  encarregado_nome: string | null;
+  /** Supervisor DESIGNADO do contrato desta pessoa (operacao_designacao). */
+  supervisor_nome: string | null;
+  /** false = o supervisor designado não está mais ativo na folha. */
+  supervisor_ativo: boolean | null;
 }
 
 export type OrigemHistorico = "advertencia" | "troca_funcao" | "material";
@@ -332,6 +353,79 @@ export function useMarcacoesDoMes(
         colunas: data?.colunas,
         linhas: data?.linhas ?? [],
       };
+    },
+  });
+}
+
+// ── Designações da Operação ──────────────────────────────────────────
+
+export type PapelDesignacao = "supervisor" | "encarregado";
+
+export interface Designacao {
+  id: string;
+  contrato_id: string;
+  contrato_nome: string;
+  papel: PapelDesignacao;
+  posto: string | null;
+  empregado_id: number;
+  empregado_nome: string | null;
+  cargo: string | null;
+  situacao: string | null;
+  /** false = designado que não está mais ativo. A tela alerta. */
+  pessoa_ativa: boolean;
+  vigente_de: string;
+  obs: string | null;
+}
+
+/** As designações VIVAS. Sem contrato = todas. */
+export function useDesignacoes(contratoId?: string | null) {
+  return useQuery({
+    queryKey: ["esp-col", "designacoes", contratoId ?? "todas"],
+    staleTime: 60_000,
+    queryFn: async (): Promise<Designacao[]> => {
+      const { data, error } = await sb.rpc<Designacao[]>("esp_col_designacoes", {
+        p_contrato_id: contratoId ?? null,
+      });
+      if (error) throw error;
+      return data ?? [];
+    },
+  });
+}
+
+/**
+ * Designar, trocar ou encerrar — os três são a mesma chamada.
+ *
+ * `empregadoId: null` encerra sem colocar ninguém no lugar. A RPC fecha a
+ * vigência anterior e abre a nova numa transação só: fazer em duas chamadas
+ * deixaria o contrato sem responsável no meio, ou com dois se a segunda
+ * falhasse.
+ */
+export function useDesignar() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (v: {
+      contratoId: string;
+      papel: PapelDesignacao;
+      empregadoId: number | null;
+      posto?: string | null;
+      obs?: string | null;
+    }) => {
+      const { data, error } = await sb.rpc<string | null>("esp_col_designar", {
+        p_contrato_id: v.contratoId,
+        p_papel: v.papel,
+        p_empregado_id: v.empregadoId,
+        p_posto: v.posto ?? null,
+        p_obs: v.obs ?? null,
+      });
+      if (error) throw error;
+      return data;
+    },
+    onSuccess: () => {
+      // A árvore mostra as designações no cabeçalho de cada contrato, então
+      // ela também precisa ser recarregada — não só a lista de designações.
+      qc.invalidateQueries({ queryKey: ["esp-col", "designacoes"] });
+      qc.invalidateQueries({ queryKey: ["esp-col", "arvore"] });
+      qc.invalidateQueries({ queryKey: ["esp-col", "ficha"] });
     },
   });
 }
