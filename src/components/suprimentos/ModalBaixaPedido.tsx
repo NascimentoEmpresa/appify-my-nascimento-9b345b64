@@ -42,6 +42,7 @@ interface ItemPedido {
 }
 export interface PedidoParaBaixa {
   id: string; pedido_id: string; status: string; observacao: string | null;
+  envio_tipo: "SUPERVISOR" | "CORREIO" | null; envio_rastreio: string | null;
   tipo_pedido: string; nome_colaborador: string; observacoes_solicitante: string | null;
   sup_pedido_item: ItemPedido[];
 }
@@ -63,6 +64,8 @@ export function ModalBaixaPedido({
 
   const [status, setStatus] = useState("");
   const [observacao, setObservacao] = useState("");
+  const [envioTipo, setEnvioTipo] = useState<"" | "SUPERVISOR" | "CORREIO">("");
+  const [envioRastreio, setEnvioRastreio] = useState("");
   const [itens, setItens] = useState<Record<string, EstadoItem>>({});
   const [idAtual, setIdAtual] = useState<string | null>(null);
   const [confirmandoSemBaixa, setConfirmandoSemBaixa] = useState(false);
@@ -74,6 +77,8 @@ export function ModalBaixaPedido({
     setIdAtual(chave);
     setStatus(pedido.status);
     setObservacao(pedido.observacao ?? "");
+    setEnvioTipo(pedido.envio_tipo ?? "");
+    setEnvioRastreio(pedido.envio_rastreio ?? "");
     const inicial: Record<string, EstadoItem> = {};
     for (const it of pedido.sup_pedido_item ?? []) {
       const doItem = jaBaixadas.filter((t) => t.pedido_item_id === it.id);
@@ -131,9 +136,24 @@ export function ModalBaixaPedido({
     if (!pedido) return;
     const baixas = montarBaixas();
 
+    // Esta validação antecede inclusive o aviso de baixa incompleta. A mesma
+    // guarda existe na RPC porque outros caminhos também conseguem despachar.
+    if (status === "DESPACHADO" && !envioTipo) {
+      toast.error("Informe o tipo de envio para despachar o pedido.");
+      return;
+    }
+    if (status === "DESPACHADO" && envioTipo === "CORREIO" && !envioRastreio.trim()) {
+      toast.error("Informe o ID de rastreio dos Correios.");
+      return;
+    }
+
     const mudouStatus = status !== pedido.status;
     const mudouObs = (observacao || "") !== (pedido.observacao || "");
-    if (!mudouStatus && !mudouObs && baixas.length === 0) {
+    const mudouEnvio = status === "DESPACHADO" && (
+      envioTipo !== (pedido.envio_tipo ?? "")
+      || (envioTipo === "CORREIO" ? envioRastreio.trim() : "") !== (pedido.envio_rastreio ?? "")
+    );
+    if (!mudouStatus && !mudouObs && !mudouEnvio && baixas.length === 0) {
       toast.info("Nada mudou.");
       return;
     }
@@ -170,6 +190,9 @@ export function ModalBaixaPedido({
       status,
       observacao: observacao || null,
       baixas,
+      envio: status === "DESPACHADO" && envioTipo
+        ? { tipo: envioTipo, rastreio: envioTipo === "CORREIO" ? envioRastreio.trim() : null }
+        : null,
     });
     setConfirmandoSemBaixa(false);
     setIdAtual(null);
@@ -177,6 +200,14 @@ export function ModalBaixaPedido({
   };
 
   const ocupado = validar.isPending || baixar.isPending;
+  const motivoBloqueio = status === "DESPACHADO" && !envioTipo
+    ? "Informe o tipo de envio."
+    : status === "DESPACHADO" && envioTipo === "CORREIO" && !envioRastreio.trim()
+      ? "Informe o ID de rastreio."
+      : null;
+  const formatoRastreioIncomum = envioTipo === "CORREIO"
+    && !!envioRastreio.trim()
+    && !/^[A-Z]{2}\d{9}[A-Z]{2}$/i.test(envioRastreio.trim());
 
   return (
     <>
@@ -233,6 +264,43 @@ export function ModalBaixaPedido({
               </div>
             </div>
 
+            {status === "DESPACHADO" && (
+              <div className="rounded-lg border border-amber-300/60 bg-amber-50/40 p-3 dark:bg-amber-950/20">
+                <div className="grid gap-4 sm:grid-cols-2">
+                  <div>
+                    <Label>Tipo de envio *</Label>
+                    <Select
+                      value={envioTipo}
+                      onValueChange={(v: "SUPERVISOR" | "CORREIO") => setEnvioTipo(v)}
+                    >
+                      <SelectTrigger><SelectValue placeholder="Selecione o tipo" /></SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="SUPERVISOR">Entrega via Supervisor</SelectItem>
+                        <SelectItem value="CORREIO">Entrega via Correio</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  {envioTipo === "CORREIO" && (
+                    <div>
+                      <Label htmlFor="envio-rastreio">ID de Rastreio Correio *</Label>
+                      <Input
+                        id="envio-rastreio"
+                        value={envioRastreio}
+                        onChange={(e) => setEnvioRastreio(e.target.value)}
+                        placeholder="OY768984409BR"
+                        className="font-mono uppercase"
+                      />
+                      {formatoRastreioIncomum && (
+                        <p className="mt-1 text-xs text-amber-700 dark:text-amber-300">
+                          Formato diferente do padrão AA000000000AA; o código será aceito mesmo assim.
+                        </p>
+                      )}
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+
             {/* Baixa de estoque */}
             <div>
               <p className="mb-1 flex items-center gap-1.5 text-sm font-semibold">
@@ -264,9 +332,12 @@ export function ModalBaixaPedido({
 
           <DialogFooter>
             <Button variant="outline" onClick={() => { setIdAtual(null); onFechar(); }}>Cancelar</Button>
-            <Button disabled={ocupado} onClick={() => enviar()}>
-              {ocupado ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Salvando…</> : "Confirmar"}
-            </Button>
+            <div className="flex flex-col items-end gap-1">
+              <Button disabled={ocupado || !!motivoBloqueio} onClick={() => enviar()}>
+                {ocupado ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Salvando…</> : "Confirmar"}
+              </Button>
+              {motivoBloqueio && <span className="text-xs text-amber-700 dark:text-amber-300">{motivoBloqueio}</span>}
+            </div>
           </DialogFooter>
         </DialogContent>
       </Dialog>

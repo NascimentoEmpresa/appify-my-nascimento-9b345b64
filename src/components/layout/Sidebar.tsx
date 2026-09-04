@@ -269,6 +269,7 @@ const suprimentosModule: ModuleDef = {
         { label: "Pedidos de Materiais", to: "/app/suprimentos/pedidos-materiais", icon: PackageCheck },
         { label: "Estoque & Etiquetas", to: "/app/suprimentos/estoque-etiquetas", icon: Boxes },
         { label: "Histórico do Colaborador", to: "/app/suprimentos/colaborador", icon: History },
+        { label: "Declaração de Conteúdo", to: "/app/suprimentos/correio-declaracao", icon: FileText },
         { label: "Cotações do Malote", to: "/app/suprimentos/cotacoes-malote", icon: FileClock },
         { label: "Pedidos de Compra", to: "/app/suprimentos/pedidos-compra", icon: ShoppingCart },
         { label: "Recebimentos", to: "/app/suprimentos/recebimentos", icon: ClipboardCheck },

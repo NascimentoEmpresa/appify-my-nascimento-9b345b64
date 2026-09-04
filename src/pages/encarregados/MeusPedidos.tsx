@@ -4,9 +4,13 @@ import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
+import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { PageHeader } from "@/components/layout/PageHeader";
-import { useMeusPedidos, ESTILO_STATUS, fmtDataBR, type MeuPedido } from "@/hooks/useSupPedidos";
-import { Search, Package, Plus, MessageSquare, Inbox } from "lucide-react";
+import {
+  useMeusPedidos, apresentarStatusVisivel, fmtDataBR, type MeuPedido,
+} from "@/hooks/useSupPedidos";
+import { ModalComprovacaoEntrega } from "@/components/suprimentos/ModalComprovacaoEntrega";
+import { Search, Package, Plus, MessageSquare, Inbox, AlertTriangle, Camera } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 /**
@@ -22,6 +26,13 @@ import { cn } from "@/lib/utils";
 export default function MeusPedidos() {
   const { data: pedidos = [], isLoading } = useMeusPedidos();
   const [busca, setBusca] = useState("");
+  const [avisoAberto, setAvisoAberto] = useState(true);
+  const [comprovando, setComprovando] = useState<MeuPedido | null>(null);
+
+  const pendentes = useMemo(
+    () => pedidos.filter((p) => p.status === "DESPACHADO" && p.comprovacao_status === "PENDENTE"),
+    [pedidos],
+  );
 
   const filtrados = useMemo(() => {
     const t = busca.trim().toLowerCase();
@@ -30,7 +41,9 @@ export default function MeusPedidos() {
     // É a melhor decisão de UX do legado (REPLICAR §5.4) e vale preservar.
     return pedidos.filter((p) =>
       [
-        p.pedido_id, p.status, p.contrato_nome, p.posto_nome, p.funcao_nome,
+        p.pedido_id,
+        apresentarStatusVisivel(p.status, p.comprovacao_status).rotulo,
+        p.contrato_nome, p.posto_nome, p.funcao_nome,
         p.nome_colaborador, p.matricula_colaborador, p.observacoes_solicitante, p.observacao,
         fmtDataBR(p.data_solicitacao),
         ...(p.itens ?? []).flatMap((i) => [i.nome, i.tamanho ?? ""]),
@@ -78,15 +91,37 @@ export default function MeusPedidos() {
         </div>
       ) : (
         <div className="grid gap-4 md:grid-cols-2">
-          {filtrados.map((p) => <CardPedido key={p.id} pedido={p} />)}
+          {filtrados.map((p) => <CardPedido key={p.id} pedido={p} onComprovar={() => setComprovando(p)} />)}
         </div>
       )}
+
+      <Dialog open={avisoAberto && pendentes.length > 0 && !comprovando} onOpenChange={setAvisoAberto}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader><DialogTitle>Confirme os materiais recebidos</DialogTitle></DialogHeader>
+          <div className="space-y-3 py-2">
+            <div className="flex items-start gap-3 rounded-md border border-amber-300/60 bg-amber-50/60 p-3 text-sm dark:bg-amber-950/20">
+              <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-amber-600" />
+              <p>Há {pendentes.length} {pendentes.length === 1 ? "pedido aguardando" : "pedidos aguardando"} o nome de quem recebeu e pelo menos uma foto dos colaboradores.</p>
+            </div>
+            <ul className="space-y-2">
+              {pendentes.map((pedido) => <li key={pedido.id} className="rounded-md border p-2 text-sm"><span className="font-mono font-semibold">{pedido.pedido_id}</span> · {pedido.nome_colaborador || pedido.posto_nome}</li>)}
+            </ul>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setAvisoAberto(false)}>Agora não</Button>
+            <Button onClick={() => { setComprovando(pendentes[0]); setAvisoAberto(false); }}>Preencher agora</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <ModalComprovacaoEntrega pedido={comprovando} onFechar={() => setComprovando(null)} />
     </div>
   );
 }
 
-function CardPedido({ pedido: p }: { pedido: MeuPedido }) {
-  const estilo = ESTILO_STATUS[p.status] ?? ESTILO_STATUS["EM PREPARACAO"];
+function CardPedido({ pedido: p, onComprovar }: { pedido: MeuPedido; onComprovar: () => void }) {
+  const pendente = p.status === "DESPACHADO" && p.comprovacao_status === "PENDENTE";
+  const apresentacaoStatus = apresentarStatusVisivel(p.status, p.comprovacao_status);
   // O cabeçalho da lista fala a língua do pedido — pequeno toque do legado.
   const tituloItens =
     p.tipo_pedido === "uniforme" ? "Uniformes"
@@ -94,10 +129,16 @@ function CardPedido({ pedido: p }: { pedido: MeuPedido }) {
     : "Materiais";
 
   return (
-    <Card>
+    <Card className={cn(pendente && "animate-pulse ring-2 ring-amber-400/70")}>
       <CardHeader className="flex-row items-center justify-between gap-2 space-y-0 pb-3">
         <span className="font-mono text-sm font-semibold">{p.pedido_id}</span>
-        <Badge variant="outline" className={cn("shrink-0", estilo.classe)}>{estilo.rotulo}</Badge>
+        <Badge
+          variant="outline"
+          className={cn("shrink-0", apresentacaoStatus.classe)}
+          title={apresentacaoStatus.titulo}
+        >
+          {apresentacaoStatus.rotulo}
+        </Badge>
       </CardHeader>
       <CardContent className="space-y-3 text-sm">
         <dl className="grid grid-cols-[6.5rem_1fr] gap-x-3 gap-y-1">
@@ -139,6 +180,12 @@ function CardPedido({ pedido: p }: { pedido: MeuPedido }) {
             <MessageSquare className="mt-0.5 h-3.5 w-3.5 shrink-0 text-blue-600" />
             <p><strong>Compras:</strong> {p.observacao}</p>
           </div>
+        )}
+
+        {pendente && (
+          <Button className="w-full" onClick={onComprovar}>
+            <Camera className="mr-2 h-4 w-4" /> Preencher comprovação de entrega
+          </Button>
         )}
       </CardContent>
     </Card>
