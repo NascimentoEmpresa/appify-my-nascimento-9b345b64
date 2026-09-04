@@ -204,7 +204,7 @@ export default function DenunciasComiteEtica() {
    *   movimento. Não faz sentido chamar alguém para um caso que ninguém
    *   está esperando; "Sem movimentação" continua como indicador logo
    *   abaixo, que é o lugar dela. O tick parou de acendê-los na
-   *   20260930000057, mas migration aqui é aplicada à mão — o filtro tira
+   *   20260930000058, mas migration aqui é aplicada à mão — o filtro tira
    *   da tela desde já.
    *
    * · DENÚNCIA VISÍVEL — o alerta guarda o protocolo no texto e a RLS dele

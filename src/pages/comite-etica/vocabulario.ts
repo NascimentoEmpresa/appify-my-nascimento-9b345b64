@@ -152,7 +152,7 @@ export const TIPO_ALERTA: Record<string, string> = {
   prazo_vencido: "Prazo estourado",
   resposta_pendente: "Pendente de resposta",
   providencia_vencida: "Providência vencida",
-  // Aposentados na 20260930000057: alertavam AUSÊNCIA de movimento, e alerta
+  // Aposentados na 20260930000058: alertavam AUSÊNCIA de movimento, e alerta
   // que toca sem ninguém estar esperando vira ruído. Os rótulos ficam porque
   // linhas antigas continuam no histórico — e porque migration aqui é
   // aplicada à mão: até alguém rodar o SQL, o tick ainda os acende.

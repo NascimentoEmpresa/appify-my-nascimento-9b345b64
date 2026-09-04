@@ -20236,7 +20236,7 @@ NOTIFY pgrst, 'reload schema';
 --   (e desfazer o auth_user_id movido no passo 4b, se for o caso)
 -- =========================================================================
 
--- ===== 20260930000057_canal_denuncia_alerta_so_pendente_resposta =====
+-- ===== 20260930000058_canal_denuncia_alerta_so_pendente_resposta =====
 -- =====================================================================
 -- CANAL DE ÉTICA — o aviso passa a ser "pendente de resposta", só
 --
