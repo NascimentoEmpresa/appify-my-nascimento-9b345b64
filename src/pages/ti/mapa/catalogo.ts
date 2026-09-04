@@ -201,6 +201,15 @@ export interface TipoElementoDef {
   alturaZ: number;
   /** Elemento estrutural desenha borda dura; mobília desenha cantos moles. */
   familia: "estrutura" | "mobilia" | "area" | "texto";
+  /**
+   * Tem tampo? Equipamento largado em cima pousa na altura dele.
+   *
+   * Vive no catálogo, e não numa lista solta em outro arquivo, porque a lista
+   * ficou para trás quando o catálogo cresceu: mesa em L, mesa de reunião,
+   * bancada, gaveteiro e estante entraram e ninguém conseguia pôr uma
+   * impressora em cima delas.
+   */
+  apoia?: boolean;
 }
 
 export const TIPOS_ELEMENTO: TipoElementoDef[] = [
@@ -208,26 +217,26 @@ export const TIPOS_ELEMENTO: TipoElementoDef[] = [
   { valor: "divisoria", label: "Divisória", icone: Blocks, cor: "#94a3b8", largura: 200, altura: 8, alturaZ: 160, familia: "estrutura" },
   { valor: "porta", label: "Porta", icone: DoorOpen, cor: "#b45309", largura: 90, altura: 15, alturaZ: 210, familia: "estrutura" },
   { valor: "janela", label: "Janela", icone: Square, cor: "#7dd3fc", largura: 150, altura: 12, alturaZ: 120, familia: "estrutura" },
-  { valor: "escada", label: "Escada", icone: Blocks, cor: "#a1a1aa", largura: 250, altura: 120, alturaZ: 60, familia: "estrutura" },
+  { valor: "escada", label: "Escada", icone: Blocks, cor: "#a1a1aa", largura: 250, altura: 120, alturaZ: 60, familia: "estrutura", apoia: true },
   { valor: "sala", label: "Sala / Setor", icone: Square, cor: "#dbeafe", largura: 500, altura: 400, alturaZ: 0.2, familia: "area" },
   { valor: "recepcao", label: "Recepção", icone: Armchair, cor: "#fef3c7", largura: 400, altura: 300, alturaZ: 0.2, familia: "area" },
   { valor: "copa", label: "Copa", icone: Coffee, cor: "#fce7f3", largura: 300, altura: 250, alturaZ: 0.2, familia: "area" },
   { valor: "banheiro", label: "Banheiro", icone: Bath, cor: "#e0f2fe", largura: 250, altura: 200, alturaZ: 0.2, familia: "area" },
   { valor: "impressora_area", label: "Área de impressão", icone: Printer, cor: "#ede9fe", largura: 200, altura: 150, alturaZ: 0.2, familia: "area" },
-  { valor: "mesa", label: "Mesa", icone: Table2, cor: "#c8a06a", largura: 140, altura: 70, alturaZ: 75, familia: "mobilia" },
+  { valor: "mesa", label: "Mesa", icone: Table2, cor: "#c8a06a", largura: 140, altura: 70, alturaZ: 75, familia: "mobilia", apoia: true },
   { valor: "cadeira", label: "Cadeira", icone: Armchair, cor: "#64748b", largura: 50, altura: 50, alturaZ: 95, familia: "mobilia" },
-  { valor: "armario", label: "Armário", icone: Blocks, cor: "#8b5e34", largura: 120, altura: 45, alturaZ: 180, familia: "mobilia" },
-  { valor: "sofa", label: "Sofá", icone: Sofa, cor: "#7c6f64", largura: 180, altura: 80, alturaZ: 80, familia: "mobilia" },
-  { valor: "rack", label: "Rack de rede", icone: Boxes, cor: "#1f2937", largura: 80, altura: 80, alturaZ: 150, familia: "mobilia" },
+  { valor: "armario", label: "Armário", icone: Blocks, cor: "#8b5e34", largura: 120, altura: 45, alturaZ: 180, familia: "mobilia", apoia: true },
+  { valor: "sofa", label: "Sofá", icone: Sofa, cor: "#7c6f64", largura: 180, altura: 80, alturaZ: 80, familia: "mobilia", apoia: true },
+  { valor: "rack", label: "Rack de rede", icone: Boxes, cor: "#1f2937", largura: 80, altura: 80, alturaZ: 150, familia: "mobilia", apoia: true },
   { valor: "planta_decorativa", label: "Planta", icone: TreePine, cor: "#16a34a", largura: 45, altura: 45, alturaZ: 120, familia: "mobilia" },
-  { valor: "mesa_l", label: "Mesa em L", icone: LayoutPanelTop, cor: "#c8a06a", largura: 160, altura: 160, alturaZ: 75, familia: "mobilia" },
-  { valor: "mesa_reuniao", label: "Mesa de reunião", icone: Users, cor: "#b08d5c", largura: 300, altura: 120, alturaZ: 75, familia: "mobilia" },
-  { valor: "bancada", label: "Bancada", icone: Table2, cor: "#d0ad78", largura: 300, altura: 60, alturaZ: 75, familia: "mobilia" },
+  { valor: "mesa_l", label: "Mesa em L", icone: LayoutPanelTop, cor: "#c8a06a", largura: 160, altura: 160, alturaZ: 75, familia: "mobilia", apoia: true },
+  { valor: "mesa_reuniao", label: "Mesa de reunião", icone: Users, cor: "#b08d5c", largura: 300, altura: 120, alturaZ: 75, familia: "mobilia", apoia: true },
+  { valor: "bancada", label: "Bancada", icone: Table2, cor: "#d0ad78", largura: 300, altura: 60, alturaZ: 75, familia: "mobilia", apoia: true },
   { valor: "poltrona", label: "Poltrona", icone: ArmchairIcon, cor: "#6b7280", largura: 80, altura: 80, alturaZ: 85, familia: "mobilia" },
-  { valor: "gaveteiro", label: "Gaveteiro", icone: Archive, cor: "#8b5e34", largura: 45, altura: 50, alturaZ: 60, familia: "mobilia" },
-  { valor: "estante", label: "Estante", icone: Library, cor: "#7a5230", largura: 90, altura: 35, alturaZ: 200, familia: "mobilia" },
+  { valor: "gaveteiro", label: "Gaveteiro", icone: Archive, cor: "#8b5e34", largura: 45, altura: 50, alturaZ: 60, familia: "mobilia", apoia: true },
+  { valor: "estante", label: "Estante", icone: Library, cor: "#7a5230", largura: 90, altura: 35, alturaZ: 200, familia: "mobilia", apoia: true },
   { valor: "quadro_branco", label: "Quadro branco", icone: Presentation, cor: "#f8fafc", largura: 200, altura: 8, alturaZ: 120, familia: "mobilia" },
-  { valor: "geladeira", label: "Geladeira", icone: Refrigerator, cor: "#e2e8f0", largura: 65, altura: 65, alturaZ: 170, familia: "mobilia" },
+  { valor: "geladeira", label: "Geladeira", icone: Refrigerator, cor: "#e2e8f0", largura: 65, altura: 65, alturaZ: 170, familia: "mobilia", apoia: true },
   { valor: "bebedouro", label: "Bebedouro", icone: GlassWater, cor: "#cbd5e1", largura: 35, altura: 35, alturaZ: 105, familia: "mobilia" },
   { valor: "texto", label: "Texto / etiqueta", icone: Type, cor: "#0f172a", largura: 200, altura: 40, alturaZ: 1, familia: "texto" },
 ];

@@ -125,7 +125,7 @@ interface Props {
 }
 
 export function Cena3D(props: Props) {
-  const { planta } = props;
+  const { planta, onSelecionar } = props;
   const camera = useMemo(
     () => camaraInicial(planta.largura_cm, planta.altura_cm),
     [planta.largura_cm, planta.altura_cm],
@@ -141,6 +141,15 @@ export function Cena3D(props: Props) {
       // ambiente fica lavado, com aquele aspecto de render de estudo. É o
       // ajuste mais barato que aproxima a cena de um render de jogo.
       gl={{ antialias: true, toneMapping: THREE.ACESFilmicToneMapping, toneMappingExposure: 1.05 }}
+      /**
+       * Clicar no vazio desmarca.
+       *
+       * `onPointerMissed` é o evento do R3F para "o clique não acertou objeto
+       * nenhum" — o equivalente 3D de clicar no fundo da tela. Sem ele a peça
+       * ficava selecionada para sempre, com as alças por cima de tudo, e a
+       * única saída era o X da barra ou o Esc.
+       */
+      onPointerMissed={() => onSelecionar(null)}
       onCreated={({ scene }) => {
         scene.background = new THREE.Color("#e8eef5");
         scene.fog = new THREE.Fog("#e8eef5", 55, 190);
@@ -428,6 +437,7 @@ function Conteudo({
           invalidate();
         }}
         onTerminarTraco={finalizarTraco}
+        onDesmarcar={() => onSelecionar(null)}
       />
 
       <ParedesDoContorno celulas={celulasDoPiso} planta={planta} />
@@ -514,10 +524,34 @@ function Conteudo({
             position={[x, 0, z]}
             rotation={[0, rad(Number(el.rotacao)), 0]}
             onPointerDown={(e: ThreeEvent<PointerEvent>) => {
-              if (desenhando) return;
+              /**
+               * Com uma peça na mão, clicar EM CIMA de um móvel de apoio conta
+               * como clicar naquele ponto do móvel.
+               *
+               * Sem isto o raio atravessava a mesa e ia bater no piso ATRÁS
+               * dela (a câmera é inclinada, então há paralaxe): o usuário
+               * clicava sobre o tampo e a impressora nascia no chão, alguns
+               * metros adiante. Aqui o ponto usado é o da superfície clicada —
+               * só X e Z importam, a altura quem resolve é `alturaDeApoio`.
+               */
+              if (desenhando) {
+                if (!tipoElemento(el.tipo).apoia) return;
+                e.stopPropagation();
+                const px = snap(e.point.x * 100, livre, passoCm);
+                const pz = snap(e.point.z * 100, livre, passoCm);
+                tracoRef.current = { x1: px, y1: pz, x2: px, y2: pz, clique: true };
+                setTraco(tracoRef.current);
+                invalidate();
+                return;
+              }
               e.stopPropagation();
               onSelecionar({ tipo: "elemento", id: el.id });
               iniciarArrasto("elemento", el.id, 0, e.point, x, z);
+            }}
+            onPointerUp={(e: ThreeEvent<PointerEvent>) => {
+              if (!desenhando || !tipoElemento(el.tipo).apoia) return;
+              e.stopPropagation();
+              finalizarTraco();
             }}
           >
             <ModeloDoElemento elemento={el} largura={largura} profundidade={profundidade} altura={altura} />
@@ -716,6 +750,7 @@ function Piso({
   passoCm,
   onComecarTraco,
   onTerminarTraco,
+  onDesmarcar,
 }: {
   planta: TiPlanta;
   celulas: TiCelula[];
@@ -726,6 +761,7 @@ function Piso({
   passoCm: number;
   onComecarTraco: (t: TracoNoChao) => void;
   onTerminarTraco: () => void;
+  onDesmarcar: () => void;
 }) {
   const L = M(planta.largura_cm);
   const P = M(planta.altura_cm);
@@ -738,10 +774,16 @@ function Piso({
         receiveShadow
         geometry={geometria}
         onPointerDown={(e: ThreeEvent<PointerEvent>) => {
-          if (!editavel || !desenhando) return;
+          // Sem ferramenta na mão, clicar no chão é "não quero mais nada
+          // selecionado" — o piso conta como área vazia.
+          if (!desenhando) {
+            onDesmarcar();
+            return;
+          }
+          if (!editavel) return;
           e.stopPropagation();
-          const x = snap(e.point.x * 100, livre);
-          const y = snap(e.point.z * 100, livre);
+          const x = snap(e.point.x * 100, livre, passoCm);
+          const y = snap(e.point.z * 100, livre, passoCm);
           onComecarTraco({ x1: x, y1: y, x2: x, y2: y, clique: true });
         }}
         onPointerUp={(e: ThreeEvent<PointerEvent>) => {
@@ -1148,15 +1190,19 @@ function Alcas({
       <>
         <Alca posicao={[M(a.x), altura, M(a.y)]} onPegar={() => onPegar("a")} />
         <Alca posicao={[M(b.x), altura, M(b.y)]} onPegar={() => onPegar("b")} />
-        <Html
-          center
-          distanceFactor={16}
-          position={[M((a.x + b.x) / 2), altura + 0.35, M((a.y + b.y) / 2)]}
-        >
-          <span className="pointer-events-none whitespace-nowrap rounded bg-amber-500 px-1.5 py-0.5 text-[11px] font-bold text-white shadow">
-            {metros(Number(peca.largura))}
-          </span>
-        </Html>
+        {/* Só enquanto se puxa: parada, a etiqueta competia com o nome do
+            equipamento e cobria a peça vizinha. */}
+        {previa && (
+          <Html
+            center
+            distanceFactor={16}
+            position={[M((a.x + b.x) / 2), altura + 0.35, M((a.y + b.y) / 2)]}
+          >
+            <span className="pointer-events-none whitespace-nowrap rounded bg-amber-500 px-1.5 py-0.5 text-[11px] font-bold text-white shadow">
+              {metros(Number(peca.largura))}
+            </span>
+          </Html>
+        )}
       </>
     );
   }
@@ -1176,11 +1222,13 @@ function Alcas({
       {quinas.map(([nome, px, pz]) => (
         <Alca key={nome} posicao={[px, altura, pz]} onPegar={() => onPegar(nome)} />
       ))}
-      <Html center distanceFactor={16} position={[(x0 + x1) / 2, altura + 0.35, (y0 + y1) / 2]}>
-        <span className="pointer-events-none whitespace-nowrap rounded bg-amber-500 px-1.5 py-0.5 text-[11px] font-bold text-white shadow">
-          {metros(Number(peca.largura))} × {metros(Number(peca.altura))}
-        </span>
-      </Html>
+      {previa && (
+        <Html center distanceFactor={16} position={[(x0 + x1) / 2, altura + 0.35, (y0 + y1) / 2]}>
+          <span className="pointer-events-none whitespace-nowrap rounded bg-amber-500 px-1.5 py-0.5 text-[11px] font-bold text-white shadow">
+            {metros(Number(peca.largura))} × {metros(Number(peca.altura))}
+          </span>
+        </Html>
+      )}
     </>
   );
 }

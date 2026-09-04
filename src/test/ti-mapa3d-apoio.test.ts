@@ -433,3 +433,31 @@ describe("centro × canto — a conversão que já quebrou o arrasto duas vezes"
     });
   });
 });
+
+describe("quem serve de apoio vem do catálogo, não de uma lista à parte", () => {
+  const sobre = (tipo: string, alturaZ: number | null = null) =>
+    alturaDeApoio(ativo({ pos_x: 170, pos_y: 130 }), [
+      elemento({ id: "m", tipo, x: 100, y: 100, largura: 300, altura: 200, altura_z: alturaZ }),
+    ]);
+
+  it("os móveis novos também sustentam equipamento", () => {
+    // Era este o bug: a lista de apoios ficou com os cinco móveis originais, e
+    // não dava para pôr uma impressora em cima da mesa de reunião nem da
+    // bancada — o objeto pousava no chão sem dizer por quê.
+    for (const tipo of ["mesa", "mesa_l", "mesa_reuniao", "bancada", "gaveteiro", "estante", "armario"]) {
+      expect(sobre(tipo)).toBeGreaterThan(0);
+    }
+  });
+
+  it("parede, piso e decoração continuam não sustentando nada", () => {
+    for (const tipo of ["parede", "divisoria", "sala", "copa", "planta_decorativa", "quadro_branco"]) {
+      expect(sobre(tipo)).toBe(0);
+    }
+  });
+
+  it("a altura de apoio é a do móvel, não uma constante", () => {
+    expect(sobre("mesa")).toBe(75);
+    expect(sobre("gaveteiro")).toBe(60);
+    expect(sobre("mesa", 110)).toBe(110);
+  });
+});

@@ -60,8 +60,10 @@ export function alturaDoElemento(el: TiElemento): number {
   return propria != null && Number.isFinite(propria) ? propria : tipoElemento(el.tipo).alturaZ;
 }
 
-/** Móveis que servem de bancada. Parede e piso não sustentam equipamento. */
-const APOIOS = new Set(["mesa", "armario", "rack", "sofa", "escada"]);
+// Quem serve de bancada é declarado no catálogo (`apoia`), não numa lista
+// aqui: a lista local ficou desatualizada assim que o catálogo cresceu, e o
+// sintoma foi silencioso — a impressora simplesmente pousava no chão em vez
+// de subir na mesa de reunião.
 
 /**
  * Em que altura (cm) este equipamento se apoia.
@@ -83,7 +85,7 @@ export function alturaDeApoio(ativo: TiAtivo, elementos: TiElemento[]): number {
 
   let melhor = 0;
   for (const el of elementos) {
-    if (!APOIOS.has(el.tipo)) continue;
+    if (!tipoElemento(el.tipo).apoia) continue;
     if (!dentro(cx, cy, pegadaDoElemento(el))) continue;
     const topo = alturaDoElemento(el);
     if (topo > melhor) melhor = topo;
