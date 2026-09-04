@@ -3,12 +3,15 @@ import {
   M,
   alturaDeApoio,
   alturaDoAndar,
+  arestasDoContorno,
   bordaParaRemover,
   celulasDoRetangulo,
   contornoParaExpandir,
   limitesDasCelulas,
   alturaDoElemento,
   camaraInicial,
+  cantoDaPeca,
+  centroDaPeca,
   dentro,
   pegadaDoElemento,
   pontasDaParede,
@@ -342,6 +345,82 @@ describe("piso por células — o retângulo que vira L", () => {
     expect(limitesDasCelulas([{ cx: 0, cy: 0 }, { cx: 3, cy: 1 }])).toEqual({
       larguraCm: 400,
       alturaCm: 200,
+    });
+  });
+});
+
+describe("arestasDoContorno — a parede segue o formato do piso", () => {
+  it("um quadrado sozinho tem quatro paredes", () => {
+    expect(arestasDoContorno([{ cx: 0, cy: 0 }])).toHaveLength(4);
+  });
+
+  it("dois quadrados lado a lado dão quatro paredes, não oito", () => {
+    // A parede entre eles não existe (é piso dos dois lados), e as duas
+    // horizontais viram um trecho de 2 m cada — não quatro de 1 m.
+    const a = arestasDoContorno([
+      { cx: 0, cy: 0 },
+      { cx: 1, cy: 0 },
+    ]);
+    expect(a).toHaveLength(4);
+    const superior = a.find((x) => x.y1 === 0 && x.y2 === 0);
+    expect(superior).toEqual({ x1: 0, y1: 0, x2: 2, y2: 0 });
+  });
+
+  it("um piso em L tem seis trechos de parede", () => {
+    // Este é o caso que a parede retangular anterior desenhava errado: ela
+    // cortava o vazio e deixava o recorte do L aberto.
+    const emL = [
+      { cx: 0, cy: 0 },
+      { cx: 1, cy: 0 },
+      { cx: 1, cy: 1 },
+    ];
+    expect(arestasDoContorno(emL)).toHaveLength(6);
+  });
+
+  it("não desenha parede entre dois quadrados vizinhos", () => {
+    const a = arestasDoContorno([
+      { cx: 0, cy: 0 },
+      { cx: 0, cy: 1 },
+    ]);
+    // A aresta horizontal em y=1 seria a divisa interna: não pode existir.
+    expect(a.some((x) => x.y1 === 1 && x.y2 === 1)).toBe(false);
+  });
+
+  it("mescla um corredor longo num trecho só por lado", () => {
+    const corredor = [0, 1, 2, 3, 4].map((cx) => ({ cx, cy: 0 }));
+    const a = arestasDoContorno(corredor);
+    // Duas paredes de 5 m (norte e sul) e duas de 1 m (as pontas).
+    expect(a).toHaveLength(4);
+    expect(a.filter((x) => x.x2 - x.x1 === 5)).toHaveLength(2);
+  });
+
+  it("um buraco no meio do piso vira parede interna", () => {
+    // Anel 3×3 com o centro vazio: 4 paredes externas + 4 do buraco.
+    const anel = [];
+    for (let cx = 0; cx < 3; cx++)
+      for (let cy = 0; cy < 3; cy++) if (!(cx === 1 && cy === 1)) anel.push({ cx, cy });
+    expect(arestasDoContorno(anel)).toHaveLength(8);
+  });
+});
+
+describe("centro × canto — a conversão que já quebrou o arrasto duas vezes", () => {
+  const mesa = { x: 100, y: 200, largura: 140, altura: 70 };
+
+  it("o centro fica a meia peça do canto", () => {
+    expect(centroDaPeca(mesa)).toEqual({ x: 170, y: 235 });
+  });
+
+  it("voltar do centro devolve o canto original", () => {
+    const c = centroDaPeca(mesa);
+    expect(cantoDaPeca(c.x, c.y, mesa.largura, mesa.altura)).toEqual({ x: 100, y: 200 });
+  });
+
+  it("aceita numeric vindo como string do PostgREST", () => {
+    // As colunas são numeric, e o PostgREST devolve "100.00" — sem o Number()
+    // a soma vira concatenação e a peça vai parar no infinito.
+    expect(centroDaPeca({ x: "100", y: "200", largura: "140", altura: "70" })).toEqual({
+      x: 170,
+      y: 235,
     });
   });
 });

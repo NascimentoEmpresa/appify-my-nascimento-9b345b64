@@ -782,6 +782,7 @@ export function useDefinirCelula() {
     },
     onSuccess: (_r, v) => {
       qc.invalidateQueries({ queryKey: ["ti_celulas", v.planta_id] });
+      qc.invalidateQueries({ queryKey: ["ti_celulas_varias"] });
       // A RPC pode ter empurrado o mundo (célula com índice negativo) e
       // crescido a moldura: planta, peças e equipamentos podem ter mudado.
       qc.invalidateQueries({ queryKey: ["ti_plantas"] });
@@ -790,5 +791,28 @@ export function useDefinirCelula() {
       qc.invalidateQueries({ queryKey: ["ti_ativos"] });
     },
     onError: (e: Error) => toast.error(e.message || "Não foi possível mudar o piso."),
+  });
+}
+
+/** Células de várias plantas — usado ao mostrar mais de um andar. */
+export function useCelulasDeVariasTi(plantaIds: string[]) {
+  const chave = [...plantaIds].sort().join(",");
+  return useQuery({
+    queryKey: ["ti_celulas_varias", chave],
+    enabled: plantaIds.length > 0,
+    staleTime: 60_000,
+    queryFn: async (): Promise<(TiCelula & { planta_id: string })[]> => {
+      const { data, error } = await sb
+        .from("TI_PLANTA_CELULA")
+        .select("planta_id, cx, cy")
+        .in("planta_id", plantaIds);
+      if (error) throw error;
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      return (data ?? []).map((c: any) => ({
+        planta_id: c.planta_id,
+        cx: Number(c.cx),
+        cy: Number(c.cy),
+      }));
+    },
   });
 }

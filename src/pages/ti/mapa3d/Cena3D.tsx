@@ -8,12 +8,15 @@ import {
   M,
   alturaDeApoio,
   alturaDoAndar,
+  arestasDoContorno,
   bordaParaRemover,
   celulasDoRetangulo,
   chaveCelula,
   contornoParaExpandir,
   alturaDoElemento,
   camaraInicial,
+  cantoDaPeca,
+  centroDaPeca,
   dimensoesAtivo,
   pontasDaParede,
   rad,
@@ -106,7 +109,12 @@ interface Props {
    * segundo editor: quem edita é sempre o andar corrente, e peça de outro
    * andar não deve responder a clique nem entrar no raycast do arrasto.
    */
-  andaresVizinhos?: { planta: TiPlanta; elementos: TiElemento[]; ativos: TiAtivo[] }[];
+  andaresVizinhos?: {
+    planta: TiPlanta;
+    elementos: TiElemento[];
+    ativos: TiAtivo[];
+    celulas?: TiCelula[];
+  }[];
   /** Todas as plantas — a cena precisa delas para calcular a altura do andar. */
   plantas?: TiPlanta[];
 }
@@ -251,12 +259,27 @@ function Conteudo({
     [celulas, planta.largura_cm, planta.altura_cm],
   );
 
+  /**
+   * A peça selecionada COMO ELA ESTÁ NA TELA agora — já com o que estiver
+   * sendo arrastado ou esticado.
+   *
+   * As alças e a caixa de seleção se penduram nisto. Antes olhavam só o dado
+   * do banco: enquanto a peça era arrastada, o contorno e as bolinhas ficavam
+   * parados no lugar antigo, como se fossem de outro objeto.
+   */
   const elementoSelecionado = useMemo(() => {
     if (selecao?.tipo !== "elemento") return null;
     const cru = elementos.find((e) => e.id === selecao.id);
     if (!cru) return null;
-    return previaResize && resize?.el.id === cru.id ? ({ ...cru, ...previaResize } as TiElemento) : cru;
-  }, [selecao, elementos, previaResize, resize]);
+
+    const comResize =
+      previaResize && resize?.el.id === cru.id ? ({ ...cru, ...previaResize } as TiElemento) : cru;
+
+    const p = previa[cru.id];
+    if (!p) return comResize;
+    const canto = cantoDaPeca(p.x, p.y, comResize.largura, comResize.altura);
+    return { ...comResize, x: canto.x, y: canto.y } as TiElemento;
+  }, [selecao, elementos, previaResize, resize, previa]);
 
   const termo = (destaque ?? "").trim().toLowerCase();
   const casa = useCallback(
@@ -305,6 +328,7 @@ function Conteudo({
           planta={a.planta}
           elementos={a.elementos}
           ativos={a.ativos}
+          celulas={a.celulas}
           base={M(alturaDoAndar(plantas.length ? plantas : [a.planta], a.planta.nivel ?? 0))}
         />
       ))}
@@ -326,6 +350,8 @@ function Conteudo({
           invalidate();
         }}
       />
+
+      <ParedesDoContorno celulas={celulasDoPiso} planta={planta} />
 
       {/*
         Os marcadores de piso aparecem com a grade ligada e SEM ferramenta na
@@ -383,8 +409,13 @@ function Conteudo({
         const altura = M(alturaDoElemento(el));
         const selecionado = selecao?.tipo === "elemento" && selecao.id === el.id;
         const pos = previa[el.id];
-        const x = M(pos ? pos.x : Number(el.x)) + largura / 2;
-        const z = M(pos ? pos.y : Number(el.y)) + profundidade / 2;
+        // ⚠ `previa` guarda o CENTRO (é o que o arrasto calcula); `el.x`/`el.y`
+        // guardam o CANTO (é o que o banco grava). Somar largura/2 nos dois
+        // fazia a peça saltar meia largura no instante em que se começava a
+        // arrastar — a mesa "pulava" para fora da sala.
+        const centro = pos ?? centroDaPeca(el);
+        const x = M(centro.x);
+        const z = M(centro.y);
         return (
           <group
             key={el.id}
@@ -526,35 +557,19 @@ function Luzes({ largura, profundidade }: { largura: number; profundidade: numbe
   );
 }
 
-function Piso({
-  planta,
-  celulas,
-  mostrarGrade,
-  editavel,
-  desenhando,
-  livre,
-  onComecarTraco,
-}: {
-  planta: TiPlanta;
-  celulas: TiCelula[];
-  mostrarGrade: boolean;
-  editavel: boolean;
-  desenhando: boolean;
-  livre: boolean;
-  onComecarTraco: (t: TracoNoChao) => void;
-}) {
-  const L = M(planta.largura_cm);
-  const P = M(planta.altura_cm);
-
-  /**
-   * UM mesh para o piso inteiro, montado com dois triângulos por quadrado.
-   *
-   * A alternativa óbvia — um `<mesh>` por célula — custa centenas de objetos
-   * na cena num andar de 20×15, e cada um deles entra no raycast a cada
-   * movimento do mouse. Aqui o piso é uma geometria só: o clique continua
-   * funcionando (é o mesmo plano) e o custo não cresce com o tamanho do
-   * escritório.
-   */
+/**
+ * UM mesh para o piso inteiro, montado com dois triângulos por quadrado.
+ *
+ * A alternativa óbvia — um `<mesh>` por célula — custa centenas de objetos na
+ * cena num andar de 20×15, e cada um deles entra no raycast a cada movimento
+ * do mouse. Aqui o piso é uma geometria só: o clique continua funcionando (é
+ * o mesmo plano) e o custo não cresce com o tamanho do escritório.
+ *
+ * Compartilhada entre o andar corrente e os andares vizinhos — foi por não
+ * ser compartilhada que o Mapa desenhava um retângulo onde o Construir já
+ * mostrava o piso recortado.
+ */
+function useGeometriaDoPiso(celulas: TiCelula[]) {
   const geometria = useMemo(() => {
     const posicoes = new Float32Array(celulas.length * 18);
     const normais = new Float32Array(celulas.length * 18);
@@ -575,6 +590,30 @@ function Piso({
   }, [celulas]);
 
   useEffect(() => () => geometria.dispose(), [geometria]);
+  return geometria;
+}
+
+function Piso({
+  planta,
+  celulas,
+  mostrarGrade,
+  editavel,
+  desenhando,
+  livre,
+  onComecarTraco,
+}: {
+  planta: TiPlanta;
+  celulas: TiCelula[];
+  mostrarGrade: boolean;
+  editavel: boolean;
+  desenhando: boolean;
+  livre: boolean;
+  onComecarTraco: (t: TracoNoChao) => void;
+}) {
+  const L = M(planta.largura_cm);
+  const P = M(planta.altura_cm);
+
+  const geometria = useGeometriaDoPiso(celulas);
 
   return (
     <group>
@@ -612,30 +651,44 @@ function Piso({
   );
 }
 
-function ParedesDoPerimetro({ planta }: { planta: TiPlanta }) {
-  const L = M(planta.largura_cm);
-  const P = M(planta.altura_cm);
+/**
+ * As paredes externas, correndo pelo CONTORNO do piso.
+ *
+ * Antes eram quatro caixas no retângulo da planta — o que, com o piso feito de
+ * células, mentia: num andar em L a parede cortava o vazio e deixava o recorte
+ * aberto. Agora cada trecho do contorno vira uma parede, então ela acompanha o
+ * formato desenhado, seja qual for.
+ *
+ * Meia altura (1,3 m no máximo) de propósito: parede inteira no perímetro tapa
+ * a vista da câmera, que olha de fora e de cima.
+ */
+function ParedesDoContorno({ celulas, planta }: { celulas: TiCelula[]; planta: TiPlanta }) {
+  const arestas = useMemo(() => arestasDoContorno(celulas), [celulas]);
   const h = Math.min(M(planta.pe_direito_cm ?? 280) * 0.42, 1.3);
-  const e = 0.08;
-  const cor = "#c3ccd8";
+  const e = 0.1;
+
   return (
     <group>
-      <mesh castShadow receiveShadow position={[L / 2, h / 2, -e / 2]}>
-        <boxGeometry args={[L + e * 2, h, e]} />
-        <meshStandardMaterial color={cor} roughness={0.9} />
-      </mesh>
-      <mesh castShadow receiveShadow position={[L / 2, h / 2, P + e / 2]}>
-        <boxGeometry args={[L + e * 2, h, e]} />
-        <meshStandardMaterial color={cor} roughness={0.9} />
-      </mesh>
-      <mesh castShadow receiveShadow position={[-e / 2, h / 2, P / 2]}>
-        <boxGeometry args={[e, h, P]} />
-        <meshStandardMaterial color={cor} roughness={0.9} />
-      </mesh>
-      <mesh castShadow receiveShadow position={[L + e / 2, h / 2, P / 2]}>
-        <boxGeometry args={[e, h, P]} />
-        <meshStandardMaterial color={cor} roughness={0.9} />
-      </mesh>
+      {arestas.map((a, i) => {
+        const horizontal = a.y1 === a.y2;
+        const comprimento = horizontal ? a.x2 - a.x1 : a.y2 - a.y1;
+        const cx = horizontal ? (a.x1 + a.x2) / 2 : a.x1;
+        const cz = horizontal ? a.y1 : (a.y1 + a.y2) / 2;
+        return (
+          <mesh
+            key={`${a.x1}-${a.y1}-${a.x2}-${a.y2}-${i}`}
+            castShadow
+            receiveShadow
+            position={[cx, h / 2, cz]}
+            raycast={() => null}
+          >
+            <boxGeometry
+              args={horizontal ? [comprimento + e, h, e] : [e, h, comprimento + e]}
+            />
+            <meshStandardMaterial color="#c3ccd8" roughness={0.9} />
+          </mesh>
+        );
+      })}
     </group>
   );
 }
@@ -723,20 +776,34 @@ function AndarFantasma({
   planta,
   elementos,
   ativos,
+  celulas,
   base,
 }: {
   planta: TiPlanta;
   elementos: TiElemento[];
   ativos: TiAtivo[];
+  celulas?: TiCelula[];
   base: number;
 }) {
   const L = M(planta.largura_cm);
-  const P = M(planta.altura_cm);
+  const doPiso = useMemo(
+    () =>
+      celulas && celulas.length > 0
+        ? celulas
+        : celulasDoRetangulo(planta.largura_cm, planta.altura_cm),
+    [celulas, planta.largura_cm, planta.altura_cm],
+  );
+  const geometria = useGeometriaDoPiso(doPiso);
   return (
     <group position={[0, base, 0]} raycast={() => null}>
-      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[L / 2, 0, P / 2]} raycast={() => null}>
-        <planeGeometry args={[L, P]} />
-        <meshStandardMaterial color={planta.cor_piso || "#eef2f7"} transparent opacity={0.35} roughness={1} />
+      <mesh geometry={geometria} raycast={() => null}>
+        <meshStandardMaterial
+          color={planta.cor_piso || "#eef2f7"}
+          transparent
+          opacity={0.35}
+          roughness={1}
+          side={THREE.DoubleSide}
+        />
       </mesh>
       <group>
         {elementos.map((el) => {

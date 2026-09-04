@@ -10,7 +10,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Separator } from "@/components/ui/separator";
 import { cn } from "@/lib/utils";
 import {
-  useAtivosTi, useElementosDeVariasTi, useElementosTi, usePlantasTi, type TiAtivo,
+  useAtivosTi, useCelulasDeVariasTi, useCelulasTi, useElementosDeVariasTi, useElementosTi,
+  usePlantasTi, type TiAtivo,
 } from "@/hooks/useTiMapa";
 import { statusAtivo, tipoAtivo } from "./mapa/catalogo";
 import { Cena3D, LegendaStatus, type SelecaoCena } from "./mapa3d/Cena3D";
@@ -43,6 +44,10 @@ export default function MapaTi() {
     [plantas, plantaId],
   );
   const { data: elementos = [] } = useElementosTi(plantaAtual?.id);
+  // Sem isto o Mapa desenhava o retângulo de compatibilidade enquanto o
+  // Construir já mostrava o piso recortado: as duas telas usam a MESMA cena,
+  // e o que faltava era a informação, não o código.
+  const { data: celulas = [] } = useCelulasTi(plantaAtual?.id);
 
   // Os outros andares só são buscados quando alguém pede para vê-los.
   const idsVizinhos = useMemo(
@@ -50,6 +55,7 @@ export default function MapaTi() {
     [verTodosAndares, plantas, plantaAtual?.id],
   );
   const { data: elementosVizinhos = [] } = useElementosDeVariasTi(idsVizinhos);
+  const { data: celulasVizinhas = [] } = useCelulasDeVariasTi(idsVizinhos);
   const andaresVizinhos = useMemo(
     () =>
       plantas
@@ -58,8 +64,9 @@ export default function MapaTi() {
           planta: p,
           elementos: elementosVizinhos.filter((e) => e.planta_id === p.id),
           ativos: ativos.filter((a) => a.planta_id === p.id),
+          celulas: celulasVizinhas.filter((c) => c.planta_id === p.id),
         })),
-    [plantas, idsVizinhos, elementosVizinhos, ativos],
+    [plantas, idsVizinhos, elementosVizinhos, celulasVizinhas, ativos],
   );
 
   const doMapa = useMemo(
@@ -198,6 +205,7 @@ export default function MapaTi() {
                 destaque={busca}
                 mostrarRotulos={rotulos}
                 mostrarGrade={false}
+                celulas={celulas}
                 plantas={plantas}
                 andaresVizinhos={andaresVizinhos}
               />

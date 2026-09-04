@@ -374,3 +374,107 @@ export function limitesDasCelulas(celulas: Celula[]): { larguraCm: number; altur
   }
   return { larguraCm: (maxX + 1) * 100, alturaCm: (maxY + 1) * 100 };
 }
+
+/** Um trecho reto do contorno do piso, em índices de célula. */
+export interface Aresta {
+  x1: number;
+  y1: number;
+  x2: number;
+  y2: number;
+}
+
+/**
+ * O contorno do piso — por onde as paredes externas correm.
+ *
+ * Uma aresta entra no contorno quando a célula tem piso e o vizinho daquele
+ * lado não tem. É isso que faz a parede acompanhar o formato: num piso em L,
+ * o contorno tem seis trechos, e não os quatro de um retângulo.
+ *
+ * Os trechos colineares e contíguos são MESCLADOS: sem isso, um andar de 20 m
+ * viraria vinte caixinhas de 1 m enfileiradas, cada uma com sua sombra e sua
+ * entrada no raycast, e as emendas apareceriam na renderização.
+ */
+export function arestasDoContorno(celulas: Celula[]): Aresta[] {
+  const ocupadas = new Set(celulas.map((c) => chaveCelula(c.cx, c.cy)));
+  const tem = (cx: number, cy: number) => ocupadas.has(chaveCelula(cx, cy));
+
+  // Horizontais: agrupadas por linha (y), guardando o x de início.
+  const horizontais = new Map<number, number[]>();
+  const verticais = new Map<number, number[]>();
+  const juntar = (mapa: Map<number, number[]>, chave: number, valor: number) => {
+    const lista = mapa.get(chave);
+    if (lista) lista.push(valor);
+    else mapa.set(chave, [valor]);
+  };
+
+  for (const c of celulas) {
+    if (!tem(c.cx, c.cy - 1)) juntar(horizontais, c.cy, c.cx);
+    if (!tem(c.cx, c.cy + 1)) juntar(horizontais, c.cy + 1, c.cx);
+    if (!tem(c.cx - 1, c.cy)) juntar(verticais, c.cx, c.cy);
+    if (!tem(c.cx + 1, c.cy)) juntar(verticais, c.cx + 1, c.cy);
+  }
+
+  const saida: Aresta[] = [];
+
+  /** Junta números contíguos numa lista ordenada em faixas [inicio, fim]. */
+  const faixas = (valores: number[]): [number, number][] => {
+    const ordenados = [...new Set(valores)].sort((a, b) => a - b);
+    const res: [number, number][] = [];
+    let inicio = ordenados[0];
+    let anterior = ordenados[0];
+    for (let i = 1; i < ordenados.length; i++) {
+      if (ordenados[i] === anterior + 1) {
+        anterior = ordenados[i];
+        continue;
+      }
+      res.push([inicio, anterior + 1]);
+      inicio = ordenados[i];
+      anterior = ordenados[i];
+    }
+    res.push([inicio, anterior + 1]);
+    return res;
+  };
+
+  for (const [y, xs] of horizontais) {
+    for (const [a, b] of faixas(xs)) saida.push({ x1: a, y1: y, x2: b, y2: y });
+  }
+  for (const [x, ys] of verticais) {
+    for (const [a, b] of faixas(ys)) saida.push({ x1: x, y1: a, x2: x, y2: b });
+  }
+  return saida;
+}
+
+// ── Centro × canto ────────────────────────────────────────────────────
+//
+// A confusão que já causou dois bugs neste editor: o BANCO guarda o canto
+// superior esquerdo da peça (x, y), e a CENA posiciona pelo centro. Somar
+// meia largura no lugar errado faz a peça saltar — foi o que deixou a mesa
+// pular para fora da sala assim que alguém a arrastava.
+//
+// Sempre que uma posição atravessar a fronteira banco ↔ cena, passe por aqui.
+
+/** Canto (banco) → centro (cena). */
+export function centroDaPeca(el: {
+  x: number | string;
+  y: number | string;
+  largura: number | string;
+  altura: number | string;
+}): Ponto {
+  return {
+    x: Number(el.x) + Number(el.largura) / 2,
+    y: Number(el.y) + Number(el.altura) / 2,
+  };
+}
+
+/** Centro (cena) → canto (banco). */
+export function cantoDaPeca(
+  centroX: number,
+  centroY: number,
+  largura: number | string,
+  altura: number | string,
+): Ponto {
+  return {
+    x: centroX - Number(largura) / 2,
+    y: centroY - Number(altura) / 2,
+  };
+}

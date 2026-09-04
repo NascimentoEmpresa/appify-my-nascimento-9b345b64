@@ -22,7 +22,7 @@ import { useScreenAccess } from "@/hooks/useScreenAccess";
 import { cn } from "@/lib/utils";
 import {
   useAtivosTi, useElementosDeVariasTi, useElementosTi, useExcluirAtivo, useExcluirElemento,
-  useCelulasTi, useDefinirCelula, usePlantasTi, usePosicionarAtivo, useRecriarElemento,
+  useCelulasDeVariasTi, useCelulasTi, useDefinirCelula, usePlantasTi, usePosicionarAtivo, useRecriarElemento,
   useSalvarAtivo, useSalvarElemento,
   useSalvarPlanta, useSetoresTi,
   type TiAtivo, type TiAtivoInput, type TiElemento, type TiPlanta,
@@ -31,7 +31,7 @@ import { AtivoDialog } from "./mapa/AtivoDialog";
 import {
   PALETA, STATUS_ATIVO, TIPOS_ELEMENTO, cmParaMetros, statusAtivo, tipoAtivo, tipoElemento,
 } from "./mapa/catalogo";
-import { alturaDoElemento, retanguloDeCantos, retanguloDoTraco } from "./mapa3d/apoio";
+import { alturaDoElemento, cantoDaPeca, retanguloDeCantos, retanguloDoTraco } from "./mapa3d/apoio";
 import { Cena3D, type SelecaoCena, type TracoNoChao } from "./mapa3d/Cena3D";
 import { useHistoricoMapa, type Aplicador } from "./mapa3d/historico";
 
@@ -104,6 +104,7 @@ export default function ConstruirMapa() {
     [verTodosAndares, plantas, planta?.id],
   );
   const { data: elementosVizinhos = [] } = useElementosDeVariasTi(idsVizinhos);
+  const { data: celulasVizinhas = [] } = useCelulasDeVariasTi(idsVizinhos);
   const andaresVizinhos = useMemo(
     () =>
       plantas
@@ -112,8 +113,9 @@ export default function ConstruirMapa() {
           planta: p,
           elementos: elementosVizinhos.filter((e) => e.planta_id === p.id),
           ativos: ativos.filter((a) => a.planta_id === p.id),
+          celulas: celulasVizinhas.filter((x) => x.planta_id === p.id),
         })),
-    [plantas, idsVizinhos, elementosVizinhos, ativos],
+    [plantas, idsVizinhos, elementosVizinhos, celulasVizinhas, ativos],
   );
 
   const { data: podeGerenciarAtivo = false } = useScreenAccess("ti_ativo_gerenciar", "alterar");
@@ -574,7 +576,8 @@ export default function ConstruirMapa() {
                   if (!el) return;
                   // Uma gravação por arrasto, no soltar. O arrasto entrega o
                   // CENTRO; o banco guarda o canto.
-                  alterarElemento(el, { x: x - Number(el.largura) / 2, y: y - Number(el.altura) / 2 });
+                  const canto = cantoDaPeca(x, y, el.largura, el.altura);
+                  alterarElemento(el, { x: canto.x, y: canto.y });
                 }}
                 onSoltarAtivo={(id, x, y) => {
                   const a = ativos.find((z) => z.id === id);
