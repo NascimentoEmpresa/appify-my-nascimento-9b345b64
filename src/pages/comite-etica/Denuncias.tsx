@@ -29,7 +29,7 @@ import {
 import FichaDenuncia from "./FichaDenuncia";
 import { usePermissoes } from "@/context/PermissoesContext";
 import { ExportarLista } from "./ExportarDenuncia";
-import { TIPO_ALERTA } from "./vocabulario";
+import { TIPO_ALERTA, TIPOS_ALERTA_NO_BANNER } from "./vocabulario";
 
 // =====================================================================
 // COMITÊ DE ÉTICA — Denúncias recebidas pelo canal próprio
@@ -197,6 +197,27 @@ export default function DenunciasComiteEtica() {
     },
   });
 
+  /**
+   * O que o banner mostra de verdade. Dois cortes, os dois por barulho:
+   *
+   * · TIPO — 'parado' e 'primeira_providencia' avisavam AUSÊNCIA de
+   *   movimento. Não faz sentido chamar alguém para um caso que ninguém
+   *   está esperando; "Sem movimentação" continua como indicador logo
+   *   abaixo, que é o lugar dela. O tick parou de acendê-los na
+   *   20260930000057, mas migration aqui é aplicada à mão — o filtro tira
+   *   da tela desde já.
+   *
+   * · DENÚNCIA VISÍVEL — o alerta guarda o protocolo no texto e a RLS dele
+   *   não tinha o recorte por empresa das outras tabelas do canal (só a
+   *   partir da mesma migration). Era isso que fazia a tela abrir com
+   *   "2 alertas em aberto" e a lista, zerada.
+   */
+  const alertasVisiveis = useMemo(
+    () => alertas.filter((a) => TIPOS_ALERTA_NO_BANNER.includes(a.tipo)
+      && denuncias.some((d) => d.id === a.denuncia_id)),
+    [alertas, denuncias],
+  );
+
   const darBaixa = async (a: Alerta) => {
     const { error } = await db.from("CANAL_DENUNCIA_ALERTA")
       .update({ resolvido_em: new Date().toISOString() }).eq("id", a.id);
@@ -254,14 +275,14 @@ export default function DenunciasComiteEtica() {
 
       {/* Os alertas que o tick diário acendeu. Ficam acima de tudo: é o que
           responde "o que precisa de mim hoje?" sem ninguém abrir filtro. */}
-      {alertas.length > 0 && (
+      {alertasVisiveis.length > 0 && (
         <Card className="mb-4 border-destructive/40 bg-destructive/5 p-4">
           <p className="mb-2 flex items-center gap-2 text-sm font-semibold text-destructive">
             <BellRing className="h-4 w-4" />
-            {alertas.length === 1 ? "1 alerta em aberto" : `${alertas.length} alertas em aberto`}
+            {alertasVisiveis.length === 1 ? "1 alerta em aberto" : `${alertasVisiveis.length} alertas em aberto`}
           </p>
           <ul className="flex flex-col gap-1.5">
-            {alertas.slice(0, 8).map((a) => {
+            {alertasVisiveis.slice(0, 8).map((a) => {
               const alvoAlerta = denuncias.find((d) => d.id === a.denuncia_id);
               return (
                 <li key={a.id} className="flex flex-wrap items-center gap-2 text-xs">
@@ -282,8 +303,8 @@ export default function DenunciasComiteEtica() {
               );
             })}
           </ul>
-          {alertas.length > 8 && (
-            <p className="mt-2 text-xs text-muted-foreground">e mais {alertas.length - 8}…</p>
+          {alertasVisiveis.length > 8 && (
+            <p className="mt-2 text-xs text-muted-foreground">e mais {alertasVisiveis.length - 8}…</p>
           )}
         </Card>
       )}
