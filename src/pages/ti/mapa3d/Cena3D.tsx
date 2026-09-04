@@ -2,12 +2,16 @@ import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "rea
 import { Canvas, useThree, type ThreeEvent } from "@react-three/fiber";
 import { Grid, Html, OrbitControls } from "@react-three/drei";
 import * as THREE from "three";
-import type { TiAtivo, TiElemento, TiPlanta } from "@/hooks/useTiMapa";
+import type { TiAtivo, TiCelula, TiElemento, TiPlanta } from "@/hooks/useTiMapa";
 import { statusAtivo, tipoAtivo, tipoElemento } from "../mapa/catalogo";
 import {
   M,
   alturaDeApoio,
   alturaDoAndar,
+  bordaParaRemover,
+  celulasDoRetangulo,
+  chaveCelula,
+  contornoParaExpandir,
   alturaDoElemento,
   camaraInicial,
   dimensoesAtivo,
@@ -87,6 +91,13 @@ interface Props {
   onSoltarAtivo?: (id: string, x: number, y: number) => void;
   /** Fim do redimensionamento (puxar parede pela ponta, esticar sala pela quina). */
   onRedimensionar?: (id: string, patch: Partial<TiElemento>) => void;
+  /**
+   * Os quadrados que formam o piso. Vazio = planta antiga, ainda retangular:
+   * a cena desenha o retângulo inteiro (ver `celulasDoRetangulo`).
+   */
+  celulas?: TiCelula[];
+  /** Clique num "+" (ocupar) ou "−" (liberar) de UM quadrado de 1 m². */
+  onDefinirCelula?: (cx: number, cy: number, ocupar: boolean) => void;
   onAbrirFicha?: (ativoId: string) => void;
   /**
    * Andares abaixo/acima, desenhados translúcidos e SEM interação.
@@ -140,6 +151,8 @@ function Conteudo({
   onSoltarElemento,
   onSoltarAtivo,
   onRedimensionar,
+  celulas,
+  onDefinirCelula,
   onAbrirFicha,
   andaresVizinhos = [],
   plantas = [],
@@ -232,6 +245,12 @@ function Conteudo({
     return () => window.clearTimeout(t);
   }, [arrasto, previa, elementos, ativos]);
 
+  // Planta antiga (sem célula) desenha como o retângulo que sempre foi.
+  const celulasDoPiso = useMemo(
+    () => (celulas && celulas.length > 0 ? celulas : celulasDoRetangulo(planta.largura_cm, planta.altura_cm)),
+    [celulas, planta.largura_cm, planta.altura_cm],
+  );
+
   const elementoSelecionado = useMemo(() => {
     if (selecao?.tipo !== "elemento") return null;
     const cru = elementos.find((e) => e.id === selecao.id);
@@ -296,6 +315,7 @@ function Conteudo({
       <group position={[0, base, 0]}>
       <Piso
         planta={planta}
+        celulas={celulasDoPiso}
         mostrarGrade={mostrarGrade}
         editavel={editavel}
         desenhando={desenhando}
@@ -307,7 +327,14 @@ function Conteudo({
         }}
       />
 
-      <ParedesDoPerimetro planta={planta} />
+      {/*
+        Os marcadores de piso aparecem com a grade ligada e SEM ferramenta na
+        mão: com uma peça selecionada para desenhar, eles roubariam o clique
+        que deveria começar a parede.
+      */}
+      {editavel && mostrarGrade && !desenhando && onDefinirCelula && (
+        <MarcadoresDeCelula celulas={celulasDoPiso} onDefinir={onDefinirCelula} />
+      )}
 
       <PonteiroNoPlano
         ativo={!!arrasto || !!traco || !!resize}
@@ -501,6 +528,7 @@ function Luzes({ largura, profundidade }: { largura: number; profundidade: numbe
 
 function Piso({
   planta,
+  celulas,
   mostrarGrade,
   editavel,
   desenhando,
@@ -508,6 +536,7 @@ function Piso({
   onComecarTraco,
 }: {
   planta: TiPlanta;
+  celulas: TiCelula[];
   mostrarGrade: boolean;
   editavel: boolean;
   desenhando: boolean;
@@ -516,12 +545,42 @@ function Piso({
 }) {
   const L = M(planta.largura_cm);
   const P = M(planta.altura_cm);
+
+  /**
+   * UM mesh para o piso inteiro, montado com dois triângulos por quadrado.
+   *
+   * A alternativa óbvia — um `<mesh>` por célula — custa centenas de objetos
+   * na cena num andar de 20×15, e cada um deles entra no raycast a cada
+   * movimento do mouse. Aqui o piso é uma geometria só: o clique continua
+   * funcionando (é o mesmo plano) e o custo não cresce com o tamanho do
+   * escritório.
+   */
+  const geometria = useMemo(() => {
+    const posicoes = new Float32Array(celulas.length * 18);
+    const normais = new Float32Array(celulas.length * 18);
+    celulas.forEach((c, i) => {
+      const x0 = c.cx;
+      const z0 = c.cy;
+      const x1 = x0 + 1;
+      const z1 = z0 + 1;
+      // dois triângulos: (x0,z0)-(x1,z0)-(x1,z1) e (x0,z0)-(x1,z1)-(x0,z1)
+      const v = [x0, 0, z0, x1, 0, z0, x1, 0, z1, x0, 0, z0, x1, 0, z1, x0, 0, z1];
+      posicoes.set(v, i * 18);
+      for (let k = 0; k < 6; k++) normais.set([0, 1, 0], i * 18 + k * 3);
+    });
+    const g = new THREE.BufferGeometry();
+    g.setAttribute("position", new THREE.BufferAttribute(posicoes, 3));
+    g.setAttribute("normal", new THREE.BufferAttribute(normais, 3));
+    return g;
+  }, [celulas]);
+
+  useEffect(() => () => geometria.dispose(), [geometria]);
+
   return (
     <group>
       <mesh
         receiveShadow
-        rotation={[-Math.PI / 2, 0, 0]}
-        position={[L / 2, 0, P / 2]}
+        geometry={geometria}
         onPointerDown={(e: ThreeEvent<PointerEvent>) => {
           if (!editavel || !desenhando) return;
           e.stopPropagation();
@@ -530,8 +589,7 @@ function Piso({
           onComecarTraco({ x1: x, y1: y, x2: x, y2: y, clique: true });
         }}
       >
-        <planeGeometry args={[L, P]} />
-        <meshStandardMaterial color={planta.cor_piso || "#eef2f7"} roughness={0.95} />
+        <meshStandardMaterial color={planta.cor_piso || "#eef2f7"} roughness={0.95} side={THREE.DoubleSide} />
       </mesh>
 
       {mostrarGrade && (
@@ -717,6 +775,103 @@ function AndarFantasma({
           {planta.nome}
         </span>
       </Html>
+    </group>
+  );
+}
+
+/**
+ * Os marcadores que moldam o piso, um por quadrado de 1 m².
+ *
+ *   "+" fora, encostado no piso  → aquele metro quadrado passa a existir;
+ *   "−" nos quadrados de borda   → aquele metro quadrado deixa de existir.
+ *
+ * É assim que um retângulo vira um L: clicar num "+" da direita embaixo
+ * acrescenta SÓ aquele quadrado, não a fileira inteira.
+ *
+ * Célula cercada por todos os lados não recebe "−" — tirar um quadrado do
+ * meio abriria um buraco no piso, que ninguém quer de propósito.
+ */
+function MarcadoresDeCelula({
+  celulas,
+  onDefinir,
+}: {
+  celulas: TiCelula[];
+  onDefinir: (cx: number, cy: number, ocupar: boolean) => void;
+}) {
+  const fora = useMemo(() => contornoParaExpandir(celulas), [celulas]);
+  const borda = useMemo(() => bordaParaRemover(celulas), [celulas]);
+
+  return (
+    <group>
+      {fora.map((c) => (
+        <MarcadorNoChao
+          key={`mais-${chaveCelula(c.cx, c.cy)}`}
+          cx={c.cx}
+          cy={c.cy}
+          modo="mais"
+          onClicar={() => onDefinir(c.cx, c.cy, true)}
+        />
+      ))}
+      {borda.map((c) => (
+        <MarcadorNoChao
+          key={`menos-${chaveCelula(c.cx, c.cy)}`}
+          cx={c.cx}
+          cy={c.cy}
+          modo="menos"
+          onClicar={() => onDefinir(c.cx, c.cy, false)}
+        />
+      ))}
+    </group>
+  );
+}
+
+/** Um quadrado clicável com "+" ou "−" desenhado — acende ao passar o mouse. */
+function MarcadorNoChao({
+  cx,
+  cy,
+  modo,
+  onClicar,
+}: {
+  cx: number;
+  cy: number;
+  modo: "mais" | "menos";
+  onClicar: () => void;
+}) {
+  const [aceso, setAceso] = useState(false);
+  const mais = modo === "mais";
+  // O "−" fica quase invisível parado: ele mora EM CIMA do piso existente, e
+  // um marcador forte em cada quadrado de borda poluiria a planta inteira.
+  const opacidade = aceso ? 0.5 : mais ? 0.18 : 0.05;
+  const cor = aceso ? (mais ? "#0ea5e9" : "#ef4444") : "#94a3b8";
+  const corSinal = aceso ? "#ffffff" : mais ? "#64748b" : "#94a3b8";
+
+  return (
+    <group
+      position={[cx + 0.5, 0.03, cy + 0.5]}
+      onPointerDown={(e: ThreeEvent<PointerEvent>) => {
+        e.stopPropagation();
+        onClicar();
+      }}
+      onPointerOver={(e: ThreeEvent<PointerEvent>) => {
+        e.stopPropagation();
+        setAceso(true);
+      }}
+      onPointerOut={() => setAceso(false)}
+    >
+      <mesh rotation={[-Math.PI / 2, 0, 0]}>
+        <planeGeometry args={[0.9, 0.9]} />
+        <meshBasicMaterial color={cor} transparent opacity={opacidade} depthWrite={false} />
+      </mesh>
+      <mesh position={[0, 0.01, 0]} rotation={[-Math.PI / 2, 0, 0]}>
+        <planeGeometry args={[0.42, 0.09]} />
+        <meshBasicMaterial color={corSinal} transparent opacity={aceso ? 1 : 0.7} depthWrite={false} />
+      </mesh>
+      {mais && (
+        <mesh position={[0, 0.01, 0]} rotation={[-Math.PI / 2, 0, 0]}>
+          <planeGeometry args={[0.09, 0.42]} />
+          <meshBasicMaterial color={corSinal} transparent opacity={aceso ? 1 : 0.7} depthWrite={false} />
+        </mesh>
+      )}
     </group>
   );
 }

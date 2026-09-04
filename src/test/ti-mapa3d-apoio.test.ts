@@ -3,6 +3,10 @@ import {
   M,
   alturaDeApoio,
   alturaDoAndar,
+  bordaParaRemover,
+  celulasDoRetangulo,
+  contornoParaExpandir,
+  limitesDasCelulas,
   alturaDoElemento,
   camaraInicial,
   dentro,
@@ -273,5 +277,71 @@ describe("redimensionarPorCanto — esticar sala pela quina", () => {
     const r = redimensionarPorCanto(sala, "se", 0, 0);
     expect(r.largura).toBe(25);
     expect(r.altura).toBe(25);
+  });
+});
+
+describe("piso por células — o retângulo que vira L", () => {
+  it("planta antiga (sem célula) equivale ao retângulo inteiro", () => {
+    // 2×2 m = quatro quadrados. É o que a cena desenha para toda planta que
+    // ainda não foi editada célula a célula.
+    expect(celulasDoRetangulo(200, 200)).toHaveLength(4);
+    expect(celulasDoRetangulo(200, 200)).toContainEqual({ cx: 1, cy: 1 });
+  });
+
+  it("arredonda para cima: 2,5 m ocupam três quadrados", () => {
+    expect(celulasDoRetangulo(250, 100)).toHaveLength(3);
+  });
+
+  it("oferece '+' em todo quadrado vazio encostado no piso", () => {
+    // Um quadrado só: quatro vizinhos ortogonais, e nenhuma diagonal.
+    const fora = contornoParaExpandir([{ cx: 0, cy: 0 }]);
+    expect(fora).toHaveLength(4);
+    expect(fora).toContainEqual({ cx: -1, cy: 0 });
+    expect(fora).toContainEqual({ cx: 0, cy: -1 });
+    expect(fora).not.toContainEqual({ cx: 1, cy: 1 });
+  });
+
+  it("não repete o '+' quando dois quadrados dividem o mesmo vizinho", () => {
+    const fora = contornoParaExpandir([
+      { cx: 0, cy: 0 },
+      { cx: 1, cy: 0 },
+    ]);
+    const chaves = fora.map((c) => `${c.cx},${c.cy}`);
+    expect(new Set(chaves).size).toBe(chaves.length);
+  });
+
+  it("é isto que transforma 2 quadrados retos num L", () => {
+    // Dois quadrados lado a lado; clicar no "+" de baixo do da direita
+    // acrescenta SÓ aquele metro quadrado.
+    const antes = [
+      { cx: 0, cy: 0 },
+      { cx: 1, cy: 0 },
+    ];
+    expect(contornoParaExpandir(antes)).toContainEqual({ cx: 1, cy: 1 });
+    const depois = [...antes, { cx: 1, cy: 1 }];
+    expect(depois).toHaveLength(3);
+    // O da esquerda não cresceu junto: o piso agora é um L.
+    expect(depois).not.toContainEqual({ cx: 0, cy: 1 });
+  });
+
+  it("só oferece '−' em quadrado de borda, nunca no meio do piso", () => {
+    // Cruz: o centro está cercado pelos quatro lados.
+    const cruz = [
+      { cx: 1, cy: 1 },
+      { cx: 0, cy: 1 },
+      { cx: 2, cy: 1 },
+      { cx: 1, cy: 0 },
+      { cx: 1, cy: 2 },
+    ];
+    const borda = bordaParaRemover(cruz);
+    expect(borda).not.toContainEqual({ cx: 1, cy: 1 });
+    expect(borda).toHaveLength(4);
+  });
+
+  it("a moldura acompanha o quadrado mais distante", () => {
+    expect(limitesDasCelulas([{ cx: 0, cy: 0 }, { cx: 3, cy: 1 }])).toEqual({
+      larguraCm: 400,
+      alturaCm: 200,
+    });
   });
 });

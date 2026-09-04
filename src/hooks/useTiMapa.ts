@@ -697,3 +697,88 @@ export function useSetoresTi() {
     },
   });
 }
+
+/**
+ * Aumenta o piso 1 metro num dos lados (o "+" do chão, no editor).
+ *
+ * Passa por RPC porque crescer para o norte/oeste move a origem: além da
+ * planta, todas as peças e equipamentos precisam andar junto, em três tabelas,
+ * na mesma transação. Ver o cabeçalho de 20260930000067.
+ */
+export function useExpandirPlanta() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (p: { planta_id: string; lado: "norte" | "sul" | "leste" | "oeste"; metros?: number }) => {
+      const { error } = await sb.rpc("ti_expandir_planta", {
+        p_planta: p.planta_id,
+        p_lado: p.lado,
+        p_metros: p.metros ?? 1,
+      });
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["ti_plantas"] });
+      qc.invalidateQueries({ queryKey: ["ti_elementos"] });
+      qc.invalidateQueries({ queryKey: ["ti_elementos_varias"] });
+      qc.invalidateQueries({ queryKey: ["ti_ativos"] });
+    },
+    onError: (e: Error) => toast.error(e.message || "Não foi possível aumentar a planta."),
+  });
+}
+
+// ── Piso por células (o quadrado de 1 m²) ─────────────────────────────
+
+export interface TiCelula {
+  cx: number;
+  cy: number;
+}
+
+/**
+ * Os quadrados que formam o piso.
+ *
+ * Lista vazia NÃO quer dizer "sem piso": quer dizer planta antiga, ainda
+ * retangular — a tela desenha o retângulo inteiro nesse caso. A primeira
+ * edição materializa as células no banco.
+ */
+export function useCelulasTi(plantaId: string | null | undefined) {
+  return useQuery({
+    queryKey: ["ti_celulas", plantaId],
+    enabled: !!plantaId,
+    staleTime: 60_000,
+    queryFn: async (): Promise<TiCelula[]> => {
+      const { data, error } = await sb
+        .from("TI_PLANTA_CELULA")
+        .select("cx, cy")
+        .eq("planta_id", plantaId);
+      if (error) throw error;
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      return (data ?? []).map((c: any) => ({ cx: Number(c.cx), cy: Number(c.cy) }));
+    },
+  });
+}
+
+/** Ocupa (ou libera) um quadrado de 1 m² do piso. */
+export function useDefinirCelula() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (p: { planta_id: string; cx: number; cy: number; ocupar: boolean }) => {
+      const { error } = await sb.rpc("ti_celula_definir", {
+        p_planta: p.planta_id,
+        p_cx: p.cx,
+        p_cy: p.cy,
+        p_ocupar: p.ocupar,
+      });
+      if (error) throw error;
+    },
+    onSuccess: (_r, v) => {
+      qc.invalidateQueries({ queryKey: ["ti_celulas", v.planta_id] });
+      // A RPC pode ter empurrado o mundo (célula com índice negativo) e
+      // crescido a moldura: planta, peças e equipamentos podem ter mudado.
+      qc.invalidateQueries({ queryKey: ["ti_plantas"] });
+      qc.invalidateQueries({ queryKey: ["ti_elementos"] });
+      qc.invalidateQueries({ queryKey: ["ti_elementos_varias"] });
+      qc.invalidateQueries({ queryKey: ["ti_ativos"] });
+    },
+    onError: (e: Error) => toast.error(e.message || "Não foi possível mudar o piso."),
+  });
+}

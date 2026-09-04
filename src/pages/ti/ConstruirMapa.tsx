@@ -22,7 +22,8 @@ import { useScreenAccess } from "@/hooks/useScreenAccess";
 import { cn } from "@/lib/utils";
 import {
   useAtivosTi, useElementosDeVariasTi, useElementosTi, useExcluirAtivo, useExcluirElemento,
-  usePlantasTi, usePosicionarAtivo, useRecriarElemento, useSalvarAtivo, useSalvarElemento,
+  useCelulasTi, useDefinirCelula, usePlantasTi, usePosicionarAtivo, useRecriarElemento,
+  useSalvarAtivo, useSalvarElemento,
   useSalvarPlanta, useSetoresTi,
   type TiAtivo, type TiAtivoInput, type TiElemento, type TiPlanta,
 } from "@/hooks/useTiMapa";
@@ -84,6 +85,7 @@ export default function ConstruirMapa() {
     [plantas, plantaId],
   );
   const { data: elementos = [] } = useElementosTi(planta?.id);
+  const { data: celulas = [] } = useCelulasTi(planta?.id);
 
   const salvarElemento = useSalvarElemento();
   const excluirElemento = useExcluirElemento();
@@ -92,6 +94,7 @@ export default function ConstruirMapa() {
   const excluirAtivo = useExcluirAtivo();
   const salvarPlanta = useSalvarPlanta();
   const recriarElemento = useRecriarElemento();
+  const definirCelula = useDefinirCelula();
   const { data: setores = [] } = useSetoresTi();
 
   // Os outros andares, só quando pedidos — a query nem sai enquanto o modo
@@ -581,6 +584,10 @@ export default function ConstruirMapa() {
                   const el = elementos.find((e) => e.id === id);
                   if (el) alterarElemento(el, patch);
                 }}
+                celulas={celulas}
+                onDefinirCelula={(cx, cy, ocupar) =>
+                  definirCelula.mutate({ planta_id: planta.id, cx, cy, ocupar })
+                }
                 onAbrirFicha={(id) => {
                   const a = ativos.find((z) => z.id === id);
                   if (a) setFichaAberta(a);
@@ -602,6 +609,7 @@ export default function ConstruirMapa() {
                   <ul className="space-y-1 text-left text-[11px] text-muted-foreground">
                     <li><b>Arraste no chão</b> com Parede na mão para desenhar</li>
                     <li><b>Arrastar</b> a peça move no chão</li>
+                    <li>Com a <b>grade</b> ligada: <b>+</b> acrescenta um quadrado de 1 m², <b>−</b> tira</li>
                     <li>Tudo anda de <b>1 em 1 metro</b> (o quadrado do piso)</li>
                     <li><b>Alt</b> enquanto arrasta solta a grade</li>
                     <li><b>Puxe as bolinhas laranja</b> para esticar a peça</li>

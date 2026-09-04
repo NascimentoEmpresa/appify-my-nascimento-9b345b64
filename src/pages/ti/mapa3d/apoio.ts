@@ -289,3 +289,88 @@ export function redimensionarPorCanto(
     altura: Math.round(novoY1 - novoY0),
   };
 }
+
+// ── Piso por células ──────────────────────────────────────────────────
+
+/** Um quadrado de 1 m² do piso, pelo índice (não em centímetros). */
+export interface Celula {
+  cx: number;
+  cy: number;
+}
+
+export const chaveCelula = (cx: number, cy: number): string => `${cx},${cy}`;
+
+/**
+ * As células equivalentes a uma planta retangular.
+ *
+ * É o que a cena desenha para planta que ainda não tem célula nenhuma —
+ * todas as de hoje. Assim o modelo novo (piso em L, em T) convive com o
+ * antigo sem migração e sem o mapa mudar de forma sozinho.
+ */
+export function celulasDoRetangulo(larguraCm: number, alturaCm: number): Celula[] {
+  const l = Math.max(1, Math.ceil(larguraCm / 100));
+  const a = Math.max(1, Math.ceil(alturaCm / 100));
+  const saida: Celula[] = [];
+  for (let cx = 0; cx < l; cx++) for (let cy = 0; cy < a; cy++) saida.push({ cx, cy });
+  return saida;
+}
+
+const VIZINHOS: [number, number][] = [
+  [1, 0],
+  [-1, 0],
+  [0, 1],
+  [0, -1],
+];
+
+/**
+ * Onde vão os "+": todo quadrado VAZIO encostado num quadrado do piso.
+ *
+ * É a fronteira de fora. Clicar num deles acrescenta exatamente aquele metro
+ * quadrado — é o que transforma um retângulo em L sem mexer no resto.
+ *
+ * Só os quatro vizinhos ortogonais: diagonal não encosta, e oferecer "+" na
+ * quina criaria piso pendurado por um vértice.
+ */
+export function contornoParaExpandir(celulas: Celula[]): Celula[] {
+  const ocupadas = new Set(celulas.map((c) => chaveCelula(c.cx, c.cy)));
+  const vistos = new Set<string>();
+  const saida: Celula[] = [];
+
+  for (const c of celulas) {
+    for (const [dx, dy] of VIZINHOS) {
+      const nx = c.cx + dx;
+      const ny = c.cy + dy;
+      const k = chaveCelula(nx, ny);
+      if (ocupadas.has(k) || vistos.has(k)) continue;
+      vistos.add(k);
+      saida.push({ cx: nx, cy: ny });
+    }
+  }
+  return saida;
+}
+
+/**
+ * Onde vão os "−": quadrados do piso que fazem borda.
+ *
+ * Célula cercada por todos os lados não recebe marcador — tirar um quadrado
+ * do meio abriria um buraco no piso, que ninguém quer de propósito e é chato
+ * de desfazer clicando.
+ */
+export function bordaParaRemover(celulas: Celula[]): Celula[] {
+  const ocupadas = new Set(celulas.map((c) => chaveCelula(c.cx, c.cy)));
+  return celulas.filter((c) =>
+    VIZINHOS.some(([dx, dy]) => !ocupadas.has(chaveCelula(c.cx + dx, c.cy + dy))),
+  );
+}
+
+/** A moldura que contém as células, em cm — para a câmera e para a grade. */
+export function limitesDasCelulas(celulas: Celula[]): { larguraCm: number; alturaCm: number } {
+  if (celulas.length === 0) return { larguraCm: 100, alturaCm: 100 };
+  let maxX = 0;
+  let maxY = 0;
+  for (const c of celulas) {
+    if (c.cx > maxX) maxX = c.cx;
+    if (c.cy > maxY) maxY = c.cy;
+  }
+  return { larguraCm: (maxX + 1) * 100, alturaCm: (maxY + 1) * 100 };
+}
