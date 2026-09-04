@@ -42,6 +42,13 @@ export interface DeclaracaoCorreio extends CamposDestinatario {
   rem_cep: string;
   rem_caixa_postal: string;
   peso_total_kg: number | null;
+  comprimento_cm: number | null;
+  largura_cm: number | null;
+  altura_cm: number | null;
+  valor_declarado: number | null;
+  frete_cotado: number | null;
+  prazo_cotado_dias: number | null;
+  cotado_em: string | null;
   assinatura_cidade: string;
   assinatura_data: string;
   criado_por?: string | null;
@@ -130,6 +137,13 @@ export function novaDeclaracao(empresaId = ""): DeclaracaoCorreio {
       id: "", pedido_id: "", empresa_id: empresaId, contrato_nome: "", sup_pedido_item: [],
     }),
     peso_total_kg: null,
+    comprimento_cm: null,
+    largura_cm: null,
+    altura_cm: null,
+    valor_declarado: null,
+    frete_cotado: null,
+    prazo_cotado_dias: null,
+    cotado_em: null,
     assinatura_cidade: "",
     assinatura_data: hojeISO(),
     sup_correio_declaracao_item: [
@@ -181,6 +195,13 @@ export async function buscarPedidoParaDeclaracao(protocolo: string): Promise<Dec
     rem_cnpj: empresa?.cnpj ?? "",
     ...preencherDestinatario(pedido),
     peso_total_kg: null,
+    comprimento_cm: null,
+    largura_cm: null,
+    altura_cm: null,
+    valor_declarado: null,
+    frete_cotado: null,
+    prazo_cotado_dias: null,
+    cotado_em: null,
     assinatura_data: hojeISO(),
     sup_correio_declaracao_item: [...(pedido.sup_pedido_item ?? [])]
       .sort((a, b) => a.ordem - b.ordem)

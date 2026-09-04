@@ -14,8 +14,8 @@ import {
 } from "@/hooks/useCorreioDeclaracao";
 import { useEmpresaId } from "@/hooks/useEmpresaId";
 import { imprimirDeclaracao } from "@/lib/suprimentos/declaracaoPrint";
-import { buscarCep } from "@/hooks/useCorreios";
-import { ExternalLink, FilePlus2, Loader2, Plus, Printer, Save, Search, Trash2 } from "lucide-react";
+import { buscarCep, cotarFrete, precoParaNumero, type Cotacao } from "@/hooks/useCorreios";
+import { Calculator, ExternalLink, FilePlus2, Loader2, Plus, Printer, Save, Search, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 
 type CampoTexto = Exclude<{
@@ -121,6 +121,151 @@ function CampoCep({
         </Button>
       </div>
     </div>
+  );
+}
+
+/** Campo numérico simples, para as dimensões da caixa. */
+function CampoNumero({
+  label, campo, step, form, setForm,
+}: {
+  label: string;
+  campo: "comprimento_cm" | "largura_cm" | "altura_cm" | "valor_declarado";
+  step: string;
+  form: DeclaracaoCorreio;
+  setForm: React.Dispatch<React.SetStateAction<DeclaracaoCorreio>>;
+}) {
+  return (
+    <div>
+      <Label htmlFor={`declaracao-${campo}`}>{label}</Label>
+      <Input
+        id={`declaracao-${campo}`}
+        type="number" min={0} step={step}
+        value={form[campo] ?? ""}
+        onChange={(e) => setForm((atual) => ({
+          ...atual,
+          [campo]: e.target.value === "" ? null : Number(e.target.value),
+        }))}
+      />
+    </div>
+  );
+}
+
+/**
+ * Quanto vai custar e quanto vai demorar — antes de sair da sala.
+ *
+ * Hoje o Compras só descobre o valor quando o cupom imprime no balcão da
+ * agência, com o dinheiro já gasto. A cotação dos Correios é simulação: não
+ * exige objeto postado, só CEP de origem e destino, peso e dimensões — e a
+ * declaração já é onde essas coisas são preenchidas.
+ *
+ * O resultado fica gravado na declaração (`frete_cotado`, `prazo_cotado_dias`)
+ * ao salvar, virando o "esperado" contra o qual a fatura pode ser conferida
+ * depois. É simulação, não o valor faturado — e a tela diz isso.
+ */
+function BlocoCotacao({
+  form, setForm,
+}: {
+  form: DeclaracaoCorreio;
+  setForm: React.Dispatch<React.SetStateAction<DeclaracaoCorreio>>;
+}) {
+  const [cotando, setCotando] = useState(false);
+  const [resultado, setResultado] = useState<Cotacao | null>(null);
+
+  // O valor declarado é o total dos itens, salvo se alguém digitar outro.
+  // Todo envio da empresa usa Valor Declarado (adicional 019), que é cobrado
+  // à parte: ignorá-lo faria a cotação errar para menos sempre.
+  const totalItens = form.sup_correio_declaracao_item
+    .reduce((soma, i) => soma + (Number(i.valor) || 0) * (Number(i.quantidade) || 1), 0);
+  const declarado = form.valor_declarado ?? (totalItens > 0 ? totalItens : null);
+
+  const faltando: string[] = [];
+  if (String(form.rem_cep ?? "").replace(/\D/g, "").length !== 8) faltando.push("CEP do remetente");
+  if (String(form.dest_cep ?? "").replace(/\D/g, "").length !== 8) faltando.push("CEP do destinatário");
+  if (!form.peso_total_kg) faltando.push("peso");
+  if (!form.comprimento_cm || !form.largura_cm || !form.altura_cm) faltando.push("dimensões");
+
+  const cotar = async () => {
+    setCotando(true);
+    try {
+      const c = await cotarFrete({
+        cepOrigem: form.rem_cep,
+        cepDestino: form.dest_cep,
+        pesoKg: Number(form.peso_total_kg),
+        comprimento: Number(form.comprimento_cm),
+        largura: Number(form.largura_cm),
+        altura: Number(form.altura_cm),
+        valorDeclarado: declarado ?? undefined,
+      });
+      setResultado(c);
+      // Grava no formulário para persistir junto com a declaração. Salvar
+      // continua sendo uma ação explícita — cotar não salva sozinho.
+      setForm((atual) => ({
+        ...atual,
+        valor_declarado: declarado,
+        frete_cotado: precoParaNumero(c.precoTotal),
+        prazo_cotado_dias: c.prazoDias,
+        cotado_em: new Date().toISOString(),
+      }));
+    } catch (erro: unknown) {
+      toast.error(erro instanceof Error ? erro.message : "Não foi possível cotar o frete.");
+    } finally {
+      setCotando(false);
+    }
+  };
+
+  return (
+    <section className="rounded-lg border p-4">
+      <h3 className="mb-1 font-semibold">Frete e prazo</h3>
+      <p className="mb-3 text-xs text-muted-foreground">
+        Simulação nos Correios com o contrato da empresa, antes de postar. O valor
+        faturado é o do cupom da agência.
+      </p>
+
+      <div className="grid gap-4 sm:grid-cols-4">
+        <CampoNumero label="Comprimento (cm)" campo="comprimento_cm" step="0.1" form={form} setForm={setForm} />
+        <CampoNumero label="Largura (cm)" campo="largura_cm" step="0.1" form={form} setForm={setForm} />
+        <CampoNumero label="Altura (cm)" campo="altura_cm" step="0.1" form={form} setForm={setForm} />
+        <CampoNumero label="Valor declarado (R$)" campo="valor_declarado" step="0.01" form={form} setForm={setForm} />
+      </div>
+
+      <div className="mt-3 flex flex-wrap items-center gap-3">
+        <Button type="button" variant="outline" disabled={cotando || faltando.length > 0} onClick={() => void cotar()}>
+          {cotando ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Calculator className="mr-2 h-4 w-4" />}
+          Cotar frete e prazo
+        </Button>
+        {/* Botão desabilitado sem explicação vira reclamação. */}
+        {faltando.length > 0 && (
+          <span className="text-xs text-muted-foreground">Falta informar: {faltando.join(", ")}.</span>
+        )}
+      </div>
+
+      {resultado && (
+        <div className="mt-3 flex flex-wrap items-center gap-x-6 gap-y-1 rounded-md border bg-muted/40 p-3 text-sm">
+          <span>
+            <span className="text-muted-foreground">Frete: </span>
+            <strong>R$ {resultado.precoTotal ?? "—"}</strong>
+          </span>
+          {resultado.prazoDias != null && (
+            <span>
+              <span className="text-muted-foreground">Prazo: </span>
+              <strong>{resultado.prazoDias} dia(s) úteis</strong>
+            </span>
+          )}
+          {/* Peso cubado maior que o da balança é o que explica cupom acima do
+              esperado — mostrar só quando diverge evita ruído. */}
+          {resultado.pesoCobradoKg && Number(resultado.pesoCobradoKg.replace(",", ".")) > Number(form.peso_total_kg) && (
+            <span className="text-amber-700 dark:text-amber-400">
+              Cobrado por {resultado.pesoCobradoKg} kg (peso cúbico)
+            </span>
+          )}
+          {resultado.adicionais.length > 0 && (
+            <span className="text-muted-foreground text-xs">
+              Inclui adicional {resultado.adicionais.map((a) => `${a.codigo} R$ ${a.valor}`).join(", ")}
+            </span>
+          )}
+        </div>
+      )}
+    </section>
   );
 }
 
@@ -294,6 +439,8 @@ export default function CorreioDeclaracao() {
             <Campo label="Cidade da assinatura" campo="assinatura_cidade" form={form} setForm={setForm} />
             <div><Label htmlFor="declaracao-data">Data da assinatura</Label><Input id="declaracao-data" type="date" value={form.assinatura_data} onChange={(e) => setForm((atual) => ({ ...atual, assinatura_data: e.target.value }))} /></div>
           </div>
+
+          <BlocoCotacao form={form} setForm={setForm} />
 
           <div className="flex flex-wrap justify-end gap-2 border-t pt-4">
             <Button variant="outline" onClick={imprimir} disabled={!form.id}><Printer className="mr-2 h-4 w-4" /> Imprimir declaração</Button>

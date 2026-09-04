@@ -1,8 +1,9 @@
 // Edge function: ponte única com a API dos Correios (CWS).
 //
-// Duas ações, as duas SOMENTE DE LEITURA:
+// Três ações, todas SOMENTE DE LEITURA — nada aqui posta ou cria objeto:
 //   • rastrear — situação dos objetos postados (API SRO Rastro)
 //   • cep      — endereço a partir do CEP (API CEP)
+//   • cotar    — preço e prazo antes de postar (APIs Preço e Prazo)
 //
 // Por que uma função só, e não uma por ação: as duas precisam do mesmo token,
 // e o token exige cache (ver abaixo). Separar em duas funções duplicaria a
@@ -31,6 +32,15 @@ const corsHeaders = {
 };
 
 const API = "https://api.correios.com.br";
+
+/**
+ * SEDEX Contrato AG — o produto que a empresa usa em 100% das postagens
+ * (confirmado nos cupons da agência de Triunfo). Fica fixo aqui, e não como
+ * parâmetro vindo da tela, porque um código de produto que o contrato não tem
+ * é recusado pela API com erro obscuro: melhor uma constante conferida do que
+ * um campo livre para digitar errado.
+ */
+const PRODUTO = "03220";
 
 /** Margem de renovação: os Correios já devolvem token novo a 30 min do fim. */
 const MARGEM_MS = 30 * 60 * 1000;
@@ -128,7 +138,7 @@ Deno.serve(async (req) => {
     if (!user) return json({ error: "Unauthorized" }, 401);
 
     const admin = createClient(supabaseUrl, serviceKey);
-    const { acao, codigos, cep } = await req.json().catch(() => ({}));
+    const { acao, codigos, cep, cotacao } = await req.json().catch(() => ({}));
 
     if (acao === "rastrear") {
       const lista: string[] = Array.isArray(codigos)
@@ -186,7 +196,73 @@ Deno.serve(async (req) => {
       });
     }
 
-    return json({ error: "Ação inválida. Use 'rastrear' ou 'cep'." }, 400);
+    if (acao === "cotar") {
+      const { cepOrigem, cepDestino, pesoKg, comprimento, largura, altura, valorDeclarado } = cotacao ?? {};
+      const oCep = String(cepOrigem ?? "").replace(/\D/g, "");
+      const dCep = String(cepDestino ?? "").replace(/\D/g, "");
+      if (oCep.length !== 8 || dCep.length !== 8) {
+        return json({ error: "Informe o CEP do remetente e o do destinatário." }, 400);
+      }
+      // Gramas: é a unidade que a API espera em psObjeto.
+      const gramas = Math.round(Number(pesoKg ?? 0) * 1000);
+      if (!Number.isFinite(gramas) || gramas <= 0) {
+        return json({ error: "Informe o peso total, em quilos." }, 400);
+      }
+      const dim = { c: Number(comprimento ?? 0), l: Number(largura ?? 0), a: Number(altura ?? 0) };
+      if (![dim.c, dim.l, dim.a].every((n) => Number.isFinite(n) && n > 0)) {
+        return json({ error: "Informe comprimento, largura e altura, em centímetros." }, 400);
+      }
+
+      const token = await obterToken(admin);
+
+      // tpObjeto=2 é PACOTE — é o que o cupom da agência imprime em todos os
+      // envios da empresa. O adicional 019 (Valor Declarado) só entra quando
+      // há valor: mandá-lo zerado faz a API recusar.
+      const params = new URLSearchParams({
+        cepOrigem: oCep,
+        cepDestino: dCep,
+        psObjeto: String(gramas),
+        tpObjeto: "2",
+        comprimento: String(dim.c),
+        largura: String(dim.l),
+        altura: String(dim.a),
+      });
+      const declarado = Number(valorDeclarado ?? 0);
+      if (Number.isFinite(declarado) && declarado > 0) {
+        params.set("servicosAdicionais", "019");
+        params.set("vlDeclarado", String(declarado));
+      }
+
+      const preco = await comToken(token, `/preco/v1/nacional/${PRODUTO}?${params.toString()}`);
+      if (preco.status !== 200) {
+        return json({ error: `Correios respondeu ${preco.status} ao cotar o preço.`, detalhe: preco.corpo }, 502);
+      }
+
+      // Prazo é uma chamada separada, e não é fatal: sem ela ainda vale mostrar
+      // o preço. Por isso o resultado é opcional, não um erro.
+      const prazo = await comToken(
+        token,
+        `/prazo/v1/nacional/${PRODUTO}?cepOrigem=${oCep}&cepDestino=${dCep}`,
+      );
+
+      return json({
+        produto: PRODUTO,
+        // Vêm no formato brasileiro ("129,47"), não como número.
+        precoTotal: preco.corpo?.pcFinal ?? null,
+        precoProduto: preco.corpo?.pcBaseGeral ?? null,
+        adicionais: (preco.corpo?.servicoAdicional ?? []).map((s: any) => ({
+          codigo: s.coServAdicional,
+          valor: s.pcServicoAdicional,
+        })),
+        // Peso cobrado pode ser maior que o real quando o volume "cubado"
+        // pesa mais que a balança — é o que explica cupom acima do esperado.
+        pesoCobradoKg: preco.corpo?.psCobrado ?? null,
+        prazoDias: prazo.status === 200 ? prazo.corpo?.prazoEntrega ?? null : null,
+        prazoAte: prazo.status === 200 ? prazo.corpo?.dataMaxima ?? null : null,
+      });
+    }
+
+    return json({ error: "Ação inválida. Use 'rastrear', 'cep' ou 'cotar'." }, 400);
   } catch (e) {
     return json({ error: (e as Error).message ?? "Erro inesperado." }, 500);
   }

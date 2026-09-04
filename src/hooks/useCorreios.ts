@@ -70,6 +70,51 @@ export function useRastreioEmLote(codigos: string[], enabled = true) {
   });
 }
 
+export interface Cotacao {
+  produto: string;
+  /** Formato brasileiro ("129,47"), como os Correios devolvem. */
+  precoTotal: string | null;
+  precoProduto: string | null;
+  adicionais: { codigo: string; valor: string }[];
+  pesoCobradoKg: string | null;
+  prazoDias: number | null;
+  prazoAte: string | null;
+}
+
+export interface PedidoCotacao {
+  cepOrigem: string;
+  cepDestino: string;
+  pesoKg: number;
+  comprimento: number;
+  largura: number;
+  altura: number;
+  valorDeclarado?: number;
+}
+
+/**
+ * Preço e prazo ANTES de postar — é simulação, não exige objeto nenhum.
+ *
+ * Hoje o Compras só descobre o custo quando o cupom imprime no balcão, com o
+ * dinheiro já gasto. Validado em 04/09/2026 contra o cupom real do objeto
+ * AD867127447BR: a API devolveu 125,23 + 4,24 = 129,47, os três idênticos ao
+ * impresso na agência.
+ */
+export async function cotarFrete(pedido: PedidoCotacao): Promise<Cotacao> {
+  const { data, error } = await supabase.functions.invoke("correios", {
+    body: { acao: "cotar", cotacao: pedido },
+  });
+  if (error) throw error;
+  if (data?.error) throw new Error(data.error);
+  return data as Cotacao;
+}
+
+/** "129,47" → 129.47. Os Correios devolvem no formato brasileiro. */
+export function precoParaNumero(valor: string | null | undefined): number | null {
+  if (!valor) return null;
+  const n = Number(String(valor).replace(/\./g, "").replace(",", "."));
+  return Number.isFinite(n) ? n : null;
+}
+
 export async function buscarCep(cep: string): Promise<EnderecoCep> {
   const { data, error } = await supabase.functions.invoke("correios", {
     body: { acao: "cep", cep },
