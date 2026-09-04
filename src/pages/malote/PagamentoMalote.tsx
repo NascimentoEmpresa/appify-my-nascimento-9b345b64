@@ -8,6 +8,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { TableHeadOrdenavel } from "@/components/ui/table-head-ordenavel";
 import { DateRangeFilter } from "@/components/ui/date-range-filter";
 import { CheckCircle2, ChevronLeft, ChevronRight, Hourglass, AlertTriangle, XCircle, ClipboardCheck, X, Wallet, CheckCircle, Clock3 } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -24,6 +25,21 @@ import {
   ItemLinhaMalote,
 } from "@/hooks/useMaloteDespesa";
 import { useClassificacoesOrcamentoAdmin } from "@/hooks/usePlanejamentoOrcamentario";
+import { useOrdenacaoTabela } from "@/hooks/useOrdenacaoTabela";
+import { ordenarPor } from "@/lib/ordenarTabela";
+
+// SIS-2026-0316: colunas ordenáveis. Fora: Parcela (composto X/Y) e
+// Responsável (nome resolvido por hook próprio dentro de cada linha, não
+// dá pra acessar de forma síncrona aqui).
+type ColunaPagamentoMalote = "numero" | "empresa" | "setor" | "data_pagamento" | "nome" | "classificacao" | "valor" | "forma_pagamento" | "status" | "atualizacao";
+
+function dataPagamentoDeItem(item: ItemLinhaMalote): string | null {
+  return item.parcela ? item.parcela.data_pagamento_real ?? item.parcela.data_vencimento : item.despesa.data_pagamento;
+}
+
+function valorDeItem(item: ItemLinhaMalote): number {
+  return Number(item.parcela ? item.parcela.valor : item.despesa.valor_total);
+}
 
 // SIS-2026-0160: fila do Financeiro — só os estágios de pagamento
 // (aguardando_pagamento em diante). Itens anteriores (cotação/aprovação)
@@ -189,6 +205,7 @@ export default function PagamentoMalote() {
   const [setor, setSetor] = useState("");
   const [busca, setBusca] = useState("");
   const [pagina, setPagina] = useState(1);
+  const ordenacao = useOrdenacaoTabela<ColunaPagamentoMalote>();
 
   const classificacoesDisponiveis = useMemo(() => {
     const nomes = new Set<string>();
@@ -280,9 +297,28 @@ export default function PagamentoMalote() {
     busca,
   ]);
 
-  const totalPaginas = Math.max(1, Math.ceil(filtrados.length / PAGE_SIZE));
+  // SIS-2026-0316: clique no cabeçalho ordena (aplicado antes da
+  // paginação, senão só reordenaria dentro da página atual).
+  const ordenados = useMemo(() => {
+    const acessores: Record<ColunaPagamentoMalote, (item: ItemLinhaMalote) => string | number | null> = {
+      numero: (item) => item.despesa.numero,
+      empresa: (item) => empresasMap.get(empresaIdResolvida(item.despesa) ?? "") ?? null,
+      setor: (item) => setorResolvido(item.despesa),
+      data_pagamento: (item) => dataPagamentoDeItem(item),
+      nome: (item) => item.despesa.nome,
+      classificacao: (item) => item.despesa.classificacao?.nome ?? null,
+      valor: (item) => valorDeItem(item),
+      forma_pagamento: (item) => item.despesa.forma_pagamento ?? null,
+      status: (item) => STATUS_LABEL[statusEfetivo(item)],
+      atualizacao: (item) => item.despesa.updated_at,
+    };
+    return ordenacao.coluna ? ordenarPor(filtrados, acessores[ordenacao.coluna], ordenacao.direcao) : filtrados;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [filtrados, ordenacao.coluna, ordenacao.direcao, empresasMap, empresaPrimeiraLinhaPorDespesa, classificacaoPrimeiraLinhaPorDespesa]);
+
+  const totalPaginas = Math.max(1, Math.ceil(ordenados.length / PAGE_SIZE));
   const paginaAtual = Math.min(pagina, totalPaginas);
-  const visiveis = filtrados.slice((paginaAtual - 1) * PAGE_SIZE, paginaAtual * PAGE_SIZE);
+  const visiveis = ordenados.slice((paginaAtual - 1) * PAGE_SIZE, paginaAtual * PAGE_SIZE);
 
   function contar(s: StatusDespesa) {
     return itens.filter((item) => statusEfetivo(item) === s).length;
@@ -438,18 +474,18 @@ export default function PagamentoMalote() {
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead>Nº ID</TableHead>
-                  <TableHead>Empresa</TableHead>
-                  <TableHead>Setor</TableHead>
+                  <TableHeadOrdenavel coluna="numero" ordenacao={ordenacao}>Nº ID</TableHeadOrdenavel>
+                  <TableHeadOrdenavel coluna="empresa" ordenacao={ordenacao}>Empresa</TableHeadOrdenavel>
+                  <TableHeadOrdenavel coluna="setor" ordenacao={ordenacao}>Setor</TableHeadOrdenavel>
                   <TableHead>Parcela</TableHead>
-                  <TableHead>Data de Pagamento</TableHead>
-                  <TableHead>Nome / Histórico</TableHead>
-                  <TableHead>Classificação</TableHead>
-                  <TableHead className="text-right">Valor (R$)</TableHead>
-                  <TableHead>Forma de Pagamento</TableHead>
+                  <TableHeadOrdenavel coluna="data_pagamento" ordenacao={ordenacao}>Data de Pagamento</TableHeadOrdenavel>
+                  <TableHeadOrdenavel coluna="nome" ordenacao={ordenacao}>Nome / Histórico</TableHeadOrdenavel>
+                  <TableHeadOrdenavel coluna="classificacao" ordenacao={ordenacao}>Classificação</TableHeadOrdenavel>
+                  <TableHeadOrdenavel coluna="valor" ordenacao={ordenacao} className="text-right">Valor (R$)</TableHeadOrdenavel>
+                  <TableHeadOrdenavel coluna="forma_pagamento" ordenacao={ordenacao}>Forma de Pagamento</TableHeadOrdenavel>
                   <TableHead>Responsável</TableHead>
-                  <TableHead>Status</TableHead>
-                  <TableHead>Atualizado em</TableHead>
+                  <TableHeadOrdenavel coluna="status" ordenacao={ordenacao}>Status</TableHeadOrdenavel>
+                  <TableHeadOrdenavel coluna="atualizacao" ordenacao={ordenacao}>Atualizado em</TableHeadOrdenavel>
                 </TableRow>
               </TableHeader>
               <TableBody>
