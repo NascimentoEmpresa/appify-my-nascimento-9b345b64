@@ -75,6 +75,29 @@ import {
  */
 export const GRID_CM = 100;
 
+/**
+ * O passo com que as PEÇAS andam ao serem arrastadas.
+ *
+ * Não confunda com `GRID_CM`: aquele é o quadrado do PISO, a unidade em que o
+ * escritório cresce. Este é a precisão de posicionamento, e são coisas
+ * diferentes — o piso anda de metro em metro porque sala se mede assim, mas
+ * encostar um monitor na quina da mesa pede centímetros.
+ *
+ * Os dois nasceram grudados (o piso virou 1 m e o movimento foi junto), e o
+ * resultado foi um editor em que só dava para largar o objeto de metro em
+ * metro.
+ */
+export const PASSOS_DE_MOVIMENTO = [
+  { cm: 5, label: "5 cm" },
+  { cm: 10, label: "10 cm" },
+  { cm: 25, label: "25 cm" },
+  { cm: 50, label: "50 cm" },
+  { cm: 100, label: "1 m" },
+] as const;
+
+/** 25 cm: fino para encaixar móvel, grosso para não virar posicionamento a dedo. */
+export const PASSO_PADRAO_CM = 25;
+
 export interface TipoAtivoDef {
   valor: string;
   label: string;

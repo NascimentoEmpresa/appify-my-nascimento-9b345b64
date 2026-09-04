@@ -1,9 +1,9 @@
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Canvas, useThree, type ThreeEvent } from "@react-three/fiber";
+import { Canvas, useFrame, useThree, type ThreeEvent } from "@react-three/fiber";
 import { ContactShadows, Grid, Html, OrbitControls, SoftShadows } from "@react-three/drei";
 import * as THREE from "three";
 import type { TiAtivo, TiCelula, TiElemento, TiPlanta } from "@/hooks/useTiMapa";
-import { statusAtivo, tipoAtivo, tipoElemento } from "../mapa/catalogo";
+import { PASSO_PADRAO_CM, statusAtivo, tipoAtivo, tipoElemento } from "../mapa/catalogo";
 import {
   M,
   alturaDeApoio,
@@ -87,6 +87,11 @@ interface Props {
   mostrarRotulos?: boolean;
   /** Ferramenta ativa (só o rótulo importa aqui: se há algo para desenhar). */
   desenhando?: boolean;
+  /**
+   * Passo (cm) com que as peças andam ao serem arrastadas. NÃO é o quadrado do
+   * piso: mover um monitor pede centímetros, o piso cresce de metro em metro.
+   */
+  passoCm?: number;
   /** Traço concluído no chão — cria a peça. */
   onDesenharNoChao?: (t: TracoNoChao) => void;
   /** Fim do arrasto: a hora (única) de gravar. */
@@ -159,6 +164,7 @@ function Conteudo({
   mostrarGrade = true,
   mostrarRotulos = true,
   desenhando = false,
+  passoCm = PASSO_PADRAO_CM,
   onDesenharNoChao,
   onSoltarElemento,
   onSoltarAtivo,
@@ -256,12 +262,12 @@ function Conteudo({
     (x: number, z: number) => {
       setArrasto((a) => {
         if (!a) return a;
-        setPrevia((p) => ({ ...p, [a.id]: { x: snap(x * 100, livre), y: snap(z * 100, livre) } }));
+        setPrevia((p) => ({ ...p, [a.id]: { x: snap(x * 100, livre, passoCm), y: snap(z * 100, livre, passoCm) } }));
         return a;
       });
       invalidate();
     },
-    [livre, invalidate],
+    [livre, passoCm, invalidate],
   );
 
   /**
@@ -400,6 +406,7 @@ function Conteudo({
         editavel={editavel}
         desenhando={desenhando}
         livre={livre}
+        passoCm={passoCm}
         onComecarTraco={(t) => {
           tracoRef.current = t;
           setTraco(t);
@@ -439,12 +446,12 @@ function Conteudo({
         altura={(arrasto?.alturaBase ?? 0) + base}
         onMover={(x, z) => {
           if (resize) {
-            aplicarResize(snap(x * 100, livre), snap(z * 100, livre));
+            aplicarResize(snap(x * 100, livre, passoCm), snap(z * 100, livre, passoCm));
           } else if (arrasto) {
             moverLocal(x - arrasto.dx, z - arrasto.dz);
           } else if (traco) {
-            const x2 = snap(x * 100, livre);
-            const y2 = snap(z * 100, livre);
+            const x2 = snap(x * 100, livre, passoCm);
+            const y2 = snap(z * 100, livre, passoCm);
             setTraco((t) => {
               const novo = t ? { ...t, x2, y2, clique: false } : t;
               tracoRef.current = novo;
@@ -691,6 +698,7 @@ function Piso({
   editavel,
   desenhando,
   livre,
+  passoCm,
   onComecarTraco,
   onTerminarTraco,
 }: {
@@ -700,6 +708,7 @@ function Piso({
   editavel: boolean;
   desenhando: boolean;
   livre: boolean;
+  passoCm: number;
   onComecarTraco: (t: TracoNoChao) => void;
   onTerminarTraco: () => void;
 }) {
@@ -1049,12 +1058,29 @@ function Alca({
   posicao: [number, number, number];
   onPegar: () => void;
 }) {
+  const ref = useRef<THREE.Group>(null);
   const pegar = (e: ThreeEvent<PointerEvent>) => {
     e.stopPropagation();
     onPegar();
   };
+
+  /**
+   * Tamanho constante NA TELA, não no mundo.
+   *
+   * Com tamanho fixo em metros, a alça vira uma bola gigante cobrindo meia
+   * sala quando a câmera aproxima, e um ponto invisível quando ela afasta. A
+   * escala acompanha a distância da câmera, então ela ocupa sempre os mesmos
+   * pixels — como a alça de qualquer editor.
+   */
+  useFrame(({ camera }) => {
+    if (!ref.current) return;
+    const d = camera.position.distanceTo(ref.current.getWorldPosition(new THREE.Vector3()));
+    const k = THREE.MathUtils.clamp(d / 14, 0.35, 2.4);
+    ref.current.scale.setScalar(k);
+  });
+
   return (
-    <group position={posicao}>
+    <group ref={ref} position={posicao}>
       {/* A área de clique é maior que a bola desenhada — mirar numa esfera de
           15 cm num mapa de 20 m é frustrante —, mas só um pouco: com 38 cm de
           raio ela cobria a peça VIZINHA, e o clique em outra mesa era engolido

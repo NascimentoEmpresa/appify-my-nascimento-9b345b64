@@ -66,6 +66,15 @@ describe("conversão e grid", () => {
     expect(M(45)).toBeCloseTo(0.45);
   });
 
+  it("aceita um passo próprio, menor que o quadrado do piso", () => {
+    // O piso cresce de metro em metro, mas encostar um monitor na quina da
+    // mesa pede centímetros: são duas grandezas diferentes, e o passo do
+    // movimento é escolhido na barra do editor.
+    expect(snap(137, false, 25)).toBe(125);
+    expect(snap(137, false, 10)).toBe(140);
+    expect(snap(137, false, 5)).toBe(135);
+  });
+
   it("gruda no quadrado de 1 m, e solta quando pedido", () => {
     // O passo é o quadrado que se vê no piso: quem monta escritório pensa em
     // "essa sala tem 6 por 4", não em múltiplos de 25 cm.

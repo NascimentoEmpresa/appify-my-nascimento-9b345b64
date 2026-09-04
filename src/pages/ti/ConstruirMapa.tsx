@@ -29,7 +29,8 @@ import {
 } from "@/hooks/useTiMapa";
 import { AtivoDialog } from "./mapa/AtivoDialog";
 import {
-  PALETA, STATUS_ATIVO, TIPOS_ELEMENTO, cmParaMetros, statusAtivo, tipoAtivo, tipoElemento,
+  PALETA, PASSOS_DE_MOVIMENTO, PASSO_PADRAO_CM, STATUS_ATIVO, TIPOS_ELEMENTO,
+  cmParaMetros, statusAtivo, tipoAtivo, tipoElemento,
 } from "./mapa/catalogo";
 import { alturaDoElemento, cantoDaPeca, retanguloDeCantos, retanguloDoTraco } from "./mapa3d/apoio";
 import { Cena3D, type SelecaoCena, type TracoNoChao } from "./mapa3d/Cena3D";
@@ -72,6 +73,7 @@ export default function ConstruirMapa() {
   const [ferramenta, setFerramenta] = useState<Ferramenta>({ tipo: "selecao" });
   const [grade, setGrade] = useState(true);
   const [verTodosAndares, setVerTodosAndares] = useState(false);
+  const [passoCm, setPassoCm] = useState<number>(PASSO_PADRAO_CM);
   const [rotulos, setRotulos] = useState(true);
   const [plantaDialog, setPlantaDialog] = useState<Partial<TiPlanta> | null>(null);
   const [fichaAberta, setFichaAberta] = useState<TiAtivo | null | undefined>(undefined);
@@ -429,6 +431,20 @@ export default function ConstruirMapa() {
                     title="Quadrados de 1 m" onClick={() => setGrade(!grade)}>
               <Grid3x3 className="h-4 w-4" />
             </Button>
+
+            {/* O passo de MOVER é separado do quadrado do piso: encostar um
+                monitor na quina da mesa pede centímetros. */}
+            <Select value={String(passoCm)} onValueChange={(v) => setPassoCm(Number(v))}>
+              <SelectTrigger className="h-8 w-[104px]" title="De quanto em quanto as peças andam">
+                <Move3d className="mr-1 h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {PASSOS_DE_MOVIMENTO.map((p) => (
+                  <SelectItem key={p.cm} value={String(p.cm)}>{p.label}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
             <Button variant={rotulos ? "secondary" : "ghost"} size="icon" className="h-8 w-8"
                     title="Nomes dos equipamentos" onClick={() => setRotulos(!rotulos)}>
               <Tag className="h-4 w-4" />
@@ -584,6 +600,7 @@ export default function ConstruirMapa() {
                 editavel
                 mostrarGrade={grade}
                 mostrarRotulos={rotulos}
+                passoCm={passoCm}
                 desenhando={ferramenta.tipo !== "selecao"}
                 onDesenharNoChao={desenharNoChao}
                 plantas={plantas}
@@ -630,7 +647,7 @@ export default function ConstruirMapa() {
                     <li><b>Arraste no chão</b> com Parede na mão para desenhar</li>
                     <li><b>Arrastar</b> a peça move no chão</li>
                     <li>Com a <b>grade</b> ligada: <b>+</b> acrescenta um quadrado de 1 m², <b>−</b> tira</li>
-                    <li>Tudo anda de <b>1 em 1 metro</b> (o quadrado do piso)</li>
+                    <li>As peças andam no <b>passo</b> escolhido na barra (padrão 25 cm)</li>
                     <li><b>Alt</b> enquanto arrasta solta a grade</li>
                     <li><b>Puxe as bolinhas laranja</b> para esticar a peça</li>
                     <li><b>R</b> gira 45°, <b>D</b> duplica, <b>Delete</b> remove</li>
