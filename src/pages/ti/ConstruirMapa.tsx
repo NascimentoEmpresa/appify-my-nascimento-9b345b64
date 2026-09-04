@@ -913,6 +913,24 @@ function PlantaDialog({
   const [form, setForm] = useState<Partial<TiPlanta>>({});
   useEffect(() => setForm(valor ?? {}), [valor]);
 
+  /**
+   * O que impede de salvar, em português — os mesmos limites que o CHECK do
+   * banco cobra (20260930000069). Validar aqui não substitui o banco: evita
+   * que a pessoa receba "violates check constraint" e fique sem saber o que
+   * corrigir, como aconteceu ao tentar uma planta de 1 m.
+   */
+  const problema = (() => {
+    if (!form.nome?.trim()) return "Dê um nome para a planta.";
+    const l = Number(form.largura_cm ?? 2400);
+    const a = Number(form.altura_cm ?? 1600);
+    if (!Number.isFinite(l) || !Number.isFinite(a)) return "Largura e profundidade precisam ser números.";
+    if (l < 100 || a < 100) return "Cada lado precisa ter pelo menos 1 metro.";
+    if (l > 20000 || a > 20000) return "O limite é 200 metros de cada lado.";
+    const pe = Number(form.pe_direito_cm ?? 280);
+    if (pe < 100 || pe > 1000) return "O pé-direito precisa ficar entre 1 e 10 metros.";
+    return null;
+  })();
+
   return (
     <Dialog open={!!valor} onOpenChange={(o) => !o && onFechar()}>
       <DialogContent className="max-w-md">
@@ -983,9 +1001,15 @@ function PlantaDialog({
             com {cmParaMetros(Number(form.pe_direito_cm ?? 280))} de altura.
           </p>
         </div>
+        {problema && (
+          <p className="rounded-md bg-destructive/10 p-2 text-xs font-medium text-destructive">{problema}</p>
+        )}
         <DialogFooter>
           <Button variant="outline" onClick={onFechar}>Cancelar</Button>
-          <Button disabled={!form.nome?.trim() || salvando} onClick={() => onSalvar({ ...form, nome: form.nome!.trim() })}>
+          <Button
+            disabled={!!problema || salvando}
+            onClick={() => onSalvar({ ...form, nome: form.nome!.trim() })}
+          >
             Salvar
           </Button>
         </DialogFooter>

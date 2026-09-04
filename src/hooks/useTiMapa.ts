@@ -280,7 +280,17 @@ export function useSalvarPlanta() {
       qc.invalidateQueries({ queryKey: ["ti_plantas"] });
       toast.success("Planta salva.");
     },
-    onError: (e: Error) => toast.error(e.message || "Não foi possível salvar a planta."),
+    onError: (e: Error) => {
+      // O texto cru do Postgres ("violates check constraint
+      // TI_PLANTA_altura_cm_check") chegou ao toast e não dizia a ninguém o
+      // que corrigir. As medidas são o único CHECK desta tabela.
+      const medidas = /largura_cm_check|altura_cm_check/.test(e.message ?? "");
+      toast.error(
+        medidas
+          ? "A planta precisa ter entre 1 e 200 metros de cada lado."
+          : e.message || "Não foi possível salvar a planta.",
+      );
+    },
   });
 }
 
