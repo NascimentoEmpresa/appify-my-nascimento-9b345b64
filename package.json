@@ -11,7 +11,8 @@
     "preview": "vite preview",
     "test": "vitest run",
     "test:watch": "vitest",
-    "revisar": "node .github/scripts/portaria-pr.mjs"
+    "revisar": "node .github/scripts/portaria-pr.mjs",
+    "tempo": "node scripts/tempo-da-pr.mjs"
   },
   "dependencies": {
     "@dnd-kit/core": "^6.3.1",
