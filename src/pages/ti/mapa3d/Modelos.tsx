@@ -261,6 +261,80 @@ function Generico({ cor, largura, profundidade, altura }: PropsModelo) {
   );
 }
 
+function Teclado({ cor, largura, profundidade, altura }: PropsModelo) {
+  // As teclas são UM plano escuro, não 80 caixinhas: a essa escala ninguém
+  // distingue tecla individual, e 80 meshes por teclado multiplicariam o
+  // número de objetos da cena por nada.
+  return (
+    <group rotation={[-0.05, 0, 0]}>
+      <mesh castShadow receiveShadow position={[0, altura / 2, 0]}>
+        <boxGeometry args={[largura, altura, profundidade]} />
+        <meshStandardMaterial color={cor} roughness={0.6} />
+      </mesh>
+      <mesh position={[0, altura + 0.001, 0]} rotation={[-Math.PI / 2, 0, 0]}>
+        <planeGeometry args={[largura * 0.92, profundidade * 0.78]} />
+        <meshStandardMaterial color={PRETO} roughness={0.85} />
+      </mesh>
+    </group>
+  );
+}
+
+function MouseModelo({ cor, largura, profundidade, altura }: PropsModelo) {
+  // Meia esfera achatada: a silhueta de um mouse visto de cima é essa.
+  return (
+    <group>
+      <mesh castShadow receiveShadow position={[0, altura * 0.45, 0]} scale={[largura / 2, altura * 0.9, profundidade / 2]}>
+        <sphereGeometry args={[1, 14, 10, 0, Math.PI * 2, 0, Math.PI / 2]} />
+        <meshStandardMaterial color={cor} roughness={0.45} />
+      </mesh>
+      <mesh position={[0, altura * 0.9, -profundidade * 0.1]}>
+        <boxGeometry args={[0.006, 0.002, profundidade * 0.35]} />
+        <meshStandardMaterial color={PRETO} />
+      </mesh>
+    </group>
+  );
+}
+
+function HeadsetModelo({ cor, largura, altura }: PropsModelo) {
+  const raio = largura * 0.45;
+  return (
+    <group>
+      {/* arco */}
+      <mesh castShadow position={[0, altura * 0.72, 0]} rotation={[Math.PI / 2, 0, 0]}>
+        <torusGeometry args={[raio, largura * 0.055, 8, 20, Math.PI]} />
+        <meshStandardMaterial color={cor} roughness={0.5} />
+      </mesh>
+      {/* conchas */}
+      {[-1, 1].map((lado) => (
+        <mesh key={lado} castShadow position={[lado * raio, altura * 0.35, 0]} rotation={[0, 0, Math.PI / 2]}>
+          <cylinderGeometry args={[altura * 0.3, altura * 0.3, largura * 0.16, 14]} />
+          <meshStandardMaterial color={PRETO} roughness={0.7} />
+        </mesh>
+      ))}
+    </group>
+  );
+}
+
+function WebcamModelo({ cor, largura, altura }: PropsModelo) {
+  return (
+    <group>
+      <mesh castShadow position={[0, altura * 0.6, 0]} rotation={[Math.PI / 2, 0, 0]}>
+        <cylinderGeometry args={[largura * 0.42, largura * 0.42, largura * 0.5, 16]} />
+        <meshStandardMaterial color={cor} roughness={0.45} />
+      </mesh>
+      <mesh position={[0, altura * 0.6, largura * 0.26]} rotation={[Math.PI / 2, 0, 0]}>
+        <cylinderGeometry args={[largura * 0.16, largura * 0.16, 0.004, 12]} />
+        <meshStandardMaterial color={VIDRO} roughness={0.05} metalness={0.9} />
+      </mesh>
+      {/* clipe que prende no monitor */}
+      <mesh castShadow position={[0, altura * 0.15, 0]}>
+        <boxGeometry args={[largura * 0.5, altura * 0.3, largura * 0.3]} />
+        <meshStandardMaterial color={GRAFITE} roughness={0.6} />
+      </mesh>
+    </group>
+  );
+}
+
 /** Escolhe a forma pelo tipo. É o único lugar que mapeia tipo → geometria. */
 export function ModeloDoAtivo({
   ativo,
@@ -299,6 +373,11 @@ export function ModeloDoAtivo({
     case "projetor": return <Tela {...p} />;
     case "camera": return <Camera3D {...p} />;
     case "telefone_ip": return <Telefone {...p} />;
+    case "teclado": return <Teclado {...p} />;
+    case "mouse": return <MouseModelo {...p} />;
+    case "headset": return <HeadsetModelo {...p} />;
+    case "webcam": return <WebcamModelo {...p} />;
+    case "dock": return <Caixote {...p} />;
     default: return <Generico {...p} />;
   }
 }
@@ -488,6 +567,191 @@ function AreaPiso({ cor, largura, profundidade }: PropsModelo) {
   );
 }
 
+function MesaEmL({ cor, largura, profundidade, altura }: PropsModelo) {
+  const esp = 0.04;
+  const braco = profundidade * 0.45;
+  return (
+    <group>
+      {/* tampo maior, na frente */}
+      <mesh castShadow receiveShadow position={[0, altura - esp / 2, profundidade / 2 - braco / 2]}>
+        <boxGeometry args={[largura, esp, braco]} />
+        <meshStandardMaterial color={cor} roughness={0.65} />
+      </mesh>
+      {/* retorno lateral, formando o L */}
+      <mesh castShadow receiveShadow position={[-largura / 2 + braco / 2, altura - esp / 2, -braco / 2]}>
+        <boxGeometry args={[braco, esp, profundidade - braco]} />
+        <meshStandardMaterial color={cor} roughness={0.65} />
+      </mesh>
+      {[
+        [largura / 2 - 0.05, profundidade / 2 - 0.05],
+        [-largura / 2 + 0.05, profundidade / 2 - 0.05],
+        [-largura / 2 + 0.05, -profundidade / 2 + 0.05],
+      ].map(([x, z], i) => (
+        <mesh key={i} castShadow position={[x, (altura - esp) / 2, z]}>
+          <boxGeometry args={[0.06, altura - esp, 0.06]} />
+          <meshStandardMaterial color={GRAFITE} metalness={0.4} roughness={0.5} />
+        </mesh>
+      ))}
+    </group>
+  );
+}
+
+function MesaReuniao({ cor, largura, profundidade, altura }: PropsModelo) {
+  const esp = 0.05;
+  return (
+    <group>
+      <mesh castShadow receiveShadow position={[0, altura - esp / 2, 0]}>
+        <boxGeometry args={[largura, esp, profundidade]} />
+        <meshStandardMaterial color={cor} roughness={0.5} />
+      </mesh>
+      {/* duas bases em vez de quatro pés: é o que sustenta mesa longa */}
+      {[-1, 1].map((lado) => (
+        <group key={lado}>
+          <mesh castShadow position={[lado * largura * 0.28, (altura - esp) / 2, 0]}>
+            <boxGeometry args={[0.1, altura - esp, profundidade * 0.15]} />
+            <meshStandardMaterial color={GRAFITE} metalness={0.5} roughness={0.45} />
+          </mesh>
+          <mesh castShadow position={[lado * largura * 0.28, 0.02, 0]}>
+            <boxGeometry args={[0.5, 0.04, profundidade * 0.7]} />
+            <meshStandardMaterial color={GRAFITE} metalness={0.5} roughness={0.45} />
+          </mesh>
+        </group>
+      ))}
+    </group>
+  );
+}
+
+function Gaveteiro({ cor, largura, profundidade, altura }: PropsModelo) {
+  return (
+    <group>
+      <mesh castShadow receiveShadow position={[0, altura / 2, 0]}>
+        <boxGeometry args={[largura, altura, profundidade]} />
+        <meshStandardMaterial color={cor} roughness={0.7} />
+      </mesh>
+      {[0, 1, 2].map((i) => (
+        <group key={i}>
+          <mesh position={[0, altura * (0.18 + i * 0.3), profundidade / 2 + 0.003]}>
+            <planeGeometry args={[largura * 0.88, altura * 0.24]} />
+            <meshStandardMaterial color={MADEIRA_ESCURA} roughness={0.6} />
+          </mesh>
+          <mesh position={[0, altura * (0.18 + i * 0.3), profundidade / 2 + 0.015]}>
+            <boxGeometry args={[largura * 0.35, 0.012, 0.02]} />
+            <meshStandardMaterial color={METAL} metalness={0.8} roughness={0.25} />
+          </mesh>
+        </group>
+      ))}
+    </group>
+  );
+}
+
+function Estante({ cor, largura, profundidade, altura }: PropsModelo) {
+  const prateleiras = Math.max(3, Math.round(altura / 0.4));
+  return (
+    <group>
+      {/* laterais e fundo — estante é vazada, não um bloco */}
+      {[-1, 1].map((lado) => (
+        <mesh key={lado} castShadow receiveShadow position={[lado * (largura / 2 - 0.015), altura / 2, 0]}>
+          <boxGeometry args={[0.03, altura, profundidade]} />
+          <meshStandardMaterial color={cor} roughness={0.7} />
+        </mesh>
+      ))}
+      <mesh castShadow position={[0, altura / 2, -profundidade / 2 + 0.01]}>
+        <boxGeometry args={[largura, altura, 0.02]} />
+        <meshStandardMaterial color={sombrear(cor, -12)} roughness={0.8} />
+      </mesh>
+      {Array.from({ length: prateleiras }).map((_, i) => (
+        <mesh key={i} castShadow receiveShadow position={[0, (altura * (i + 0.5)) / prateleiras, 0]}>
+          <boxGeometry args={[largura - 0.05, 0.025, profundidade * 0.94]} />
+          <meshStandardMaterial color={cor} roughness={0.7} />
+        </mesh>
+      ))}
+    </group>
+  );
+}
+
+function QuadroBranco({ largura, profundidade, altura }: PropsModelo) {
+  return (
+    <group position={[0, altura * 0.55, 0]}>
+      <mesh castShadow>
+        <boxGeometry args={[largura, altura * 0.75, Math.max(profundidade, 0.04)]} />
+        <meshStandardMaterial color="#e2e8f0" roughness={0.5} metalness={0.3} />
+      </mesh>
+      <mesh position={[0, 0, Math.max(profundidade, 0.04) / 2 + 0.002]}>
+        <planeGeometry args={[largura * 0.94, altura * 0.68]} />
+        <meshStandardMaterial color="#fbfdff" roughness={0.25} />
+      </mesh>
+      {/* calha das canetas */}
+      <mesh position={[0, -altura * 0.4, Math.max(profundidade, 0.04) / 2]}>
+        <boxGeometry args={[largura * 0.9, 0.025, 0.05]} />
+        <meshStandardMaterial color={METAL} metalness={0.6} roughness={0.4} />
+      </mesh>
+    </group>
+  );
+}
+
+function Geladeira({ cor, largura, profundidade, altura }: PropsModelo) {
+  return (
+    <group>
+      <mesh castShadow receiveShadow position={[0, altura / 2, 0]}>
+        <boxGeometry args={[largura, altura, profundidade]} />
+        <meshStandardMaterial color={cor} roughness={0.35} metalness={0.55} />
+      </mesh>
+      {/* fresta do freezer + dois puxadores verticais */}
+      <mesh position={[0, altura * 0.68, profundidade / 2 + 0.003]}>
+        <planeGeometry args={[largura * 0.96, 0.012]} />
+        <meshStandardMaterial color={GRAFITE} />
+      </mesh>
+      {[0.35, 0.82].map((h, i) => (
+        <mesh key={i} castShadow position={[largura * 0.32, altura * h, profundidade / 2 + 0.025]}>
+          <boxGeometry args={[0.03, altura * 0.22, 0.03]} />
+          <meshStandardMaterial color={METAL} metalness={0.85} roughness={0.2} />
+        </mesh>
+      ))}
+    </group>
+  );
+}
+
+function Bebedouro({ cor, largura, profundidade, altura }: PropsModelo) {
+  return (
+    <group>
+      <mesh castShadow receiveShadow position={[0, altura * 0.36, 0]}>
+        <boxGeometry args={[largura, altura * 0.72, profundidade]} />
+        <meshStandardMaterial color={cor} roughness={0.5} />
+      </mesh>
+      {/* o galão azul em cima é o que identifica o bebedouro de longe */}
+      <mesh castShadow position={[0, altura * 0.86, 0]}>
+        <cylinderGeometry args={[largura * 0.3, largura * 0.34, altura * 0.28, 14]} />
+        <meshStandardMaterial color="#38bdf8" transparent opacity={0.75} roughness={0.15} />
+      </mesh>
+      <mesh position={[0, altura * 0.5, profundidade / 2 + 0.01]}>
+        <boxGeometry args={[largura * 0.3, 0.04, 0.04]} />
+        <meshStandardMaterial color={METAL} metalness={0.7} roughness={0.3} />
+      </mesh>
+    </group>
+  );
+}
+
+function Poltrona({ cor, largura, profundidade, altura }: PropsModelo) {
+  return (
+    <group>
+      <mesh castShadow receiveShadow position={[0, altura * 0.3, 0]}>
+        <boxGeometry args={[largura, altura * 0.35, profundidade]} />
+        <meshStandardMaterial color={cor} roughness={0.9} />
+      </mesh>
+      <mesh castShadow position={[0, altura * 0.65, -profundidade * 0.36]}>
+        <boxGeometry args={[largura, altura * 0.6, profundidade * 0.26]} />
+        <meshStandardMaterial color={cor} roughness={0.9} />
+      </mesh>
+      {[-1, 1].map((lado) => (
+        <mesh key={lado} castShadow position={[lado * (largura / 2 - 0.05), altura * 0.52, 0]}>
+          <boxGeometry args={[0.1, altura * 0.3, profundidade * 0.9]} />
+          <meshStandardMaterial color={cor} roughness={0.9} />
+        </mesh>
+      ))}
+    </group>
+  );
+}
+
 export function ModeloDoElemento({
   elemento,
   largura,
@@ -504,7 +768,16 @@ export function ModeloDoElemento({
   const p = { cor, largura, profundidade, altura };
 
   switch (elemento.tipo) {
-    case "mesa": return <Mesa {...p} />;
+    case "mesa":
+    case "bancada": return <Mesa {...p} />;
+    case "mesa_l": return <MesaEmL {...p} />;
+    case "mesa_reuniao": return <MesaReuniao {...p} />;
+    case "gaveteiro": return <Gaveteiro {...p} />;
+    case "estante": return <Estante {...p} />;
+    case "quadro_branco": return <QuadroBranco {...p} />;
+    case "geladeira": return <Geladeira {...p} />;
+    case "bebedouro": return <Bebedouro {...p} />;
+    case "poltrona": return <Poltrona {...p} />;
     case "cadeira": return <Cadeira {...p} />;
     case "armario": return <Armario {...p} />;
     case "sofa": return <Sofa {...p} />;
@@ -543,3 +816,23 @@ export function Selecao({
     </mesh>
   );
 }
+
+// ── Cor ───────────────────────────────────────────────────────────────
+// Uma função de seis linhas em vez de uma dependência de manipulação de cor:
+// os modelos só precisam escurecer um pouco o tom base para dar profundidade
+// (o fundo da estante, por exemplo, não pode ter a mesma cor das laterais —
+// sem isso a estante lê como um bloco maciço).
+
+/** Clareia (delta > 0) ou escurece (delta < 0) um hex, em pontos percentuais. */
+function ajustarCor(hex: string, delta: number): string {
+  const limpo = hex.replace("#", "");
+  if (limpo.length !== 6) return hex;
+  const n = parseInt(limpo, 16);
+  const canal = (deslocamento: number) => {
+    const v = (n >> deslocamento) & 0xff;
+    return Math.max(0, Math.min(255, Math.round(v + (delta / 100) * 255)));
+  };
+  return `rgb(${canal(16)}, ${canal(8)}, ${canal(0)})`;
+}
+
+export const sombrear = (hex: string, p: number) => ajustarCor(hex, p);
