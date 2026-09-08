@@ -3,6 +3,7 @@ import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
+import { ErroDeTela } from "@/components/layout/ErroDeTela";
 import { isAuthExpiredError } from "@/lib/authErrors";
 import NotFound from "./pages/NotFound.tsx";
 import Login from "./pages/Login.tsx";
@@ -266,6 +267,13 @@ const App = () => (
       <Toaster />
       <Sonner />
       <BrowserRouter>
+        {/* Rede final: o ErroDeTela do AppShell cobre as telas de /app
+            mantendo menu e topbar de pé, mas não cobre o que está FORA dele
+            (login, portais públicos, a própria Sidebar/Topbar, os
+            providers). Sem este segundo boundary, um erro nesses pontos
+            voltaria a produzir página branca sem mensagem — que foi
+            exatamente o apagão de 08/09/2026 (ver ErroDeTela.tsx). */}
+        <ErroDeTela>
         <AuthProvider>
         <DemoModeProvider>
         <PermissoesProvider>
@@ -646,6 +654,7 @@ const App = () => (
         </PermissoesProvider>
         </DemoModeProvider>
         </AuthProvider>
+        </ErroDeTela>
       </BrowserRouter>
     </TooltipProvider>
   </QueryClientProvider>
