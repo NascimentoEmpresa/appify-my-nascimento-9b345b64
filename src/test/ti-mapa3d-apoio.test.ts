@@ -181,6 +181,20 @@ describe("recorte da parede para encaixar a porta", () => {
   const porta = (p: Partial<TiElemento>) =>
     elemento({ id: "d", tipo: "porta_vidro", x: 210, y: 2, largura: 180, altura: 10, rotacao: 0, ...p });
 
+  it("o vão sobe só até a altura da porta — o resto vira verga", () => {
+    const [vao] = vaosNaParede(parede, [porta({ altura_z: 210 })]);
+    expect(vao.altura).toBe(210);
+  });
+
+  it("portas fundidas sobem até a mais alta", () => {
+    // Rebaixar o conjunto à altura da menor cortaria a porta alta ao meio.
+    const [vao] = vaosNaParede(parede, [
+      porta({ id: "d1", x: 210, altura_z: 210 }),
+      porta({ id: "d2", x: 380, altura_z: 280 }),
+    ]);
+    expect(vao.altura).toBe(280);
+  });
+
   it("abre o vão na largura da porta, no lugar dela", () => {
     const [vao] = vaosNaParede(parede, [porta({})]);
     expect(vao.de).toBeCloseTo(210, 0);
@@ -215,24 +229,38 @@ describe("recorte da parede para encaixar a porta", () => {
 
   describe("o que sobra em pé", () => {
     it("parede sem vão continua um pedaço só", () => {
-      expect(trechosSolidos(600, [])).toEqual([{ de: 0, ate: 600 }]);
+      expect(trechosSolidos(600, [])).toEqual([{ de: 0, ate: 600, altura: 0 }]);
     });
 
     it("vão no meio deixa dois pedaços", () => {
-      expect(trechosSolidos(600, [{ de: 210, ate: 390 }])).toEqual([
-        { de: 0, ate: 210 },
-        { de: 390, ate: 600 },
+      expect(trechosSolidos(600, [{ de: 210, ate: 390, altura: 210 }])).toEqual([
+        { de: 0, ate: 210, altura: 0 },
+        { de: 390, ate: 600, altura: 0 },
       ]);
     });
 
     it("vão encostado na ponta não deixa lasca de largura zero", () => {
       // Um pedaço de 0,4 cm entre a ponta e o vão seria uma caixa invisível
       // que ainda assim entra na cena e no raycast.
-      expect(trechosSolidos(600, [{ de: 0.4, ate: 390 }])).toEqual([{ de: 390, ate: 600 }]);
+      expect(trechosSolidos(600, [{ de: 0.4, ate: 390, altura: 210 }]))
+        .toEqual([{ de: 390, ate: 600, altura: 0 }]);
     });
 
     it("porta ocupando a parede inteira não deixa nada em pé", () => {
-      expect(trechosSolidos(600, [{ de: 0, ate: 600 }])).toEqual([]);
+      expect(trechosSolidos(600, [{ de: 0, ate: 600, altura: 210 }])).toEqual([]);
+    });
+
+    /**
+     * `altura: 0` no trecho SÓLIDO quer dizer "do piso ao teto".
+     *
+     * É o que separa o pedaço de parede inteiro do vão: quem desenha usa a
+     * altura do vão para saber onde começa a verga, e um trecho sólido não
+     * tem verga — ele já é a parede toda.
+     */
+    it("trecho sólido não carrega altura de vão", () => {
+      for (const t of trechosSolidos(600, [{ de: 200, ate: 300, altura: 210 }])) {
+        expect(t.altura).toBe(0);
+      }
     });
   });
 });

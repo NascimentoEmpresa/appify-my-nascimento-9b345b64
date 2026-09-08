@@ -588,7 +588,7 @@ function Conteudo({
    * esmagadora maioria — aí nem se percorre a lista de paredes.
    */
   const vaosPorParede = useMemo(() => {
-    const mapa = new Map<string, { de: number; ate: number }[]>();
+    const mapa = new Map<string, { de: number; ate: number; altura: number }[]>();
     const aberturas = elementos.filter((e) => tipoElemento(e.tipo).recorta);
     if (!aberturas.length) return mapa;
 
@@ -599,7 +599,13 @@ function Conteudo({
         aberturas.filter((a) => a.id !== parede.id),
       );
       // Os modelos desenham em metros; a conta é feita em cm, como o banco.
-      if (vaos.length) mapa.set(parede.id, vaos.map((v) => ({ de: M(v.de), ate: M(v.ate) })));
+      // A conta é feita em cm, como o banco; os modelos desenham em metros.
+      if (vaos.length) {
+        mapa.set(
+          parede.id,
+          vaos.map((v) => ({ de: M(v.de), ate: M(v.ate), altura: M(v.altura) })),
+        );
+      }
     }
     return mapa;
   }, [elementos]);

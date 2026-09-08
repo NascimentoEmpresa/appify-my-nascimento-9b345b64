@@ -235,7 +235,7 @@ export interface TipoElementoDef {
 export const TIPOS_ELEMENTO: TipoElementoDef[] = [
   { valor: "parede", label: "Parede", icone: Square, cor: "#334155", largura: 400, altura: 15, alturaZ: 280, familia: "estrutura", recortavel: true },
   { valor: "divisoria", label: "Divisória", icone: Blocks, cor: "#94a3b8", largura: 200, altura: 8, alturaZ: 160, familia: "estrutura", recortavel: true },
-  { valor: "porta", label: "Porta", icone: DoorOpen, cor: "#b45309", largura: 90, altura: 15, alturaZ: 210, familia: "estrutura" },
+  { valor: "porta", label: "Porta", icone: DoorOpen, cor: "#b45309", largura: 90, altura: 15, alturaZ: 210, familia: "estrutura", recorta: true },
   { valor: "janela", label: "Janela", icone: Square, cor: "#7dd3fc", largura: 150, altura: 12, alturaZ: 120, familia: "estrutura" },
   { valor: "parede_vidro", label: "Parede de vidro", icone: PanelsTopLeft, cor: "#bae6fd", largura: 400, altura: 10, alturaZ: 280, familia: "estrutura", recortavel: true },
   // Mesma espessura e mesma altura do pano de vidro, de propósito: é o que

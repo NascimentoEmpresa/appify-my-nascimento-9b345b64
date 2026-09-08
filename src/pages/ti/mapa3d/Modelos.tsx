@@ -42,7 +42,7 @@ interface PropsModelo {
    * Quem calcula é a cena, que é a única que enxerga as outras peças; o
    * modelo só desenha o que sobra. Ver `vaosNaParede`, em apoio.ts.
    */
-  vaos?: { de: number; ate: number }[];
+  vaos?: { de: number; ate: number; altura: number }[];
 }
 
 // ── Equipamentos ──────────────────────────────────────────────────────
@@ -280,17 +280,36 @@ function Telefone({ cor, largura, profundidade, altura }: PropsModelo) {
  * só, do começo ao fim.
  */
 function Generico({ cor, largura, profundidade, altura, vaos }: PropsModelo) {
-  const trechos = trechosSolidos(largura, vaos ?? []);
+  const aberturas = vaos ?? [];
+  const trechos = trechosSolidos(largura, aberturas);
+  // O modelo nasce centrado; os trechos vêm medidos da ponta esquerda.
+  const centroDe = (de: number, ate: number) => de + (ate - de) / 2 - largura / 2;
 
   return (
     <group>
-      {trechos.map((t) => {
-        const comprimento = t.ate - t.de;
-        // O modelo nasce centrado; os trechos vêm medidos da ponta esquerda.
-        const centro = t.de + comprimento / 2 - largura / 2;
+      {trechos.map((t) => (
+        <mesh key={`t${t.de}`} castShadow receiveShadow position={[centroDe(t.de, t.ate), altura / 2, 0]}>
+          <boxGeometry args={[t.ate - t.de, altura, profundidade]} />
+          <meshStandardMaterial color={cor} roughness={0.55} metalness={0.25} />
+        </mesh>
+      ))}
+
+      {/* A VERGA: o pedaço de parede que fica ACIMA da porta.
+          Porta tem 2,10 m e a parede 2,80 — sem esta faixa o recorte viraria
+          um rasgo até o teto, que é pior do que porta nenhuma. Vão que sobe
+          até o alto (a porta de vidro, por exemplo) não gera verga: aí não
+          sobra parede em cima. */}
+      {aberturas.map((v) => {
+        const sobra = altura - v.altura;
+        if (v.altura <= 0 || sobra <= 0.02) return null;
         return (
-          <mesh key={t.de} castShadow receiveShadow position={[centro, altura / 2, 0]}>
-            <boxGeometry args={[comprimento, altura, profundidade]} />
+          <mesh
+            key={`v${v.de}`}
+            castShadow
+            receiveShadow
+            position={[centroDe(v.de, v.ate), v.altura + sobra / 2, 0]}
+          >
+            <boxGeometry args={[v.ate - v.de, sobra, profundidade]} />
             <meshStandardMaterial color={cor} roughness={0.55} metalness={0.25} />
           </mesh>
         );
@@ -594,8 +613,6 @@ function Porta({ largura, profundidade, altura }: PropsModelo) {
   const espessuraFolha = 0.045;
   const folhaLargura = largura - batente * 2;
   const folhaAltura = altura - batente;
-  /** Folga pra frente do batente: encosta a folha na face, nunca dentro da parede. */
-  const avanco = profundidade / 2 - espessuraFolha / 2 + 0.015;
   return (
     <group>
       {[-1, 1].map((lado) => (
@@ -608,12 +625,17 @@ function Porta({ largura, profundidade, altura }: PropsModelo) {
         <boxGeometry args={[largura, batente, profundidade]} />
         <meshStandardMaterial color="#9a6b3f" roughness={0.7} />
       </mesh>
-      {/* A folha nasceu entreaberta (rotation -0.7) porque, centrada na espessura
-       * do batente, ela sumia dentro da parede — mas solta no mapa isso virava
-       * uma lâmina torta atravessando o piso. Agora fecha: em vez de girar, a
-       * folha ganha uma folga pra frente (`avanco`) e para na face do batente,
-       * na frente de qualquer parede de 15 cm colada nela. */}
-      <group position={[0, folhaAltura / 2, avanco]}>
+      {/* A folha nasceu entreaberta (rotation -0.7) porque, centrada na
+       * espessura do batente, ela sumia dentro da parede. Depois passou a ficar
+       * ADIANTADA numa das faces, para escapar da parede — e aí a porta ficava
+       * certa de um lado e, do outro, só o batente: a folha morava na face de
+       * trás. Agora ela é CENTRADA, que é o único jeito de a porta ser a mesma
+       * pelos dois lados.
+       *
+       * O que resolveu o sumiço na parede não é mais a folga: é o RECORTE.
+       * A porta abre vão de verdade na parede em que está encostada (ver
+       * `vaosNaParede`), então não há mais parede ocupando este espaço. */}
+      <group position={[0, folhaAltura / 2, 0]}>
         <mesh castShadow>
           <boxGeometry args={[folhaLargura, folhaAltura, espessuraFolha]} />
           <meshStandardMaterial color="#c08a52" roughness={0.65} />
@@ -789,6 +811,8 @@ function Escada({ cor, largura, profundidade, altura }: PropsModelo) {
  * pareceria vidro de aquário, e um de 1 m com seis pareceria gradil.
  */
 function ParedeVidro({ largura, profundidade, altura, vaos }: PropsModelo) {
+  // Sem verga aqui: o que recorta um pano de vidro é a porta de vidro, que
+  // tem a altura toda do pano. Sobra nenhuma para fechar em cima.
   const trechos = trechosSolidos(largura, vaos ?? []);
   return (
     <group>

@@ -304,6 +304,14 @@ export function pontasDaParede(el: {
 export interface VaoNaParede {
   de: number;
   ate: number;
+  /**
+   * Até onde o vão sobe, em cm.
+   *
+   * Porta tem 210 num pé-direito de 280: acima dela a parede CONTINUA, e é
+   * essa faixa que se chama verga. Sem guardar a altura, o recorte ia do piso
+   * ao teto e abria um rasgo — que é pior do que não recortar.
+   */
+  altura: number;
 }
 
 /**
@@ -333,7 +341,10 @@ const FOLGA_DO_VAO = 20;
  */
 export function vaosNaParede(
   parede: { x: number | string; y: number | string; largura: number | string; altura: number | string; rotacao: number | string },
-  aberturas: { x: number | string; y: number | string; largura: number | string; altura: number | string; rotacao: number | string }[],
+  aberturas: {
+    x: number | string; y: number | string; largura: number | string;
+    altura: number | string; rotacao: number | string; altura_z?: number | string | null;
+  }[],
 ): VaoNaParede[] {
   const comprimento = Number(parede.largura);
   const espessura = Number(parede.altura);
@@ -359,9 +370,10 @@ export function vaosNaParede(
 
     const de = Math.max(0, aoLongo - meia);
     const ate = Math.min(comprimento, aoLongo + meia);
+    const alturaVao = Number(ab.altura_z ?? 0) || 0;
     // Vão de menos de 1 cm é a abertura raspando a ponta da parede: cortar ali
     // só produziria um pedaço sólido de largura zero.
-    if (ate - de > 1) achados.push({ de, ate });
+    if (ate - de > 1) achados.push({ de, ate, altura: alturaVao });
   }
 
   // Vãos encostados viram um só. Sem fundir, dois deles sobrepostos deixariam
@@ -370,7 +382,12 @@ export function vaosNaParede(
   const fundidos: VaoNaParede[] = [];
   for (const v of achados) {
     const ultimo = fundidos[fundidos.length - 1];
-    if (ultimo && v.de <= ultimo.ate) ultimo.ate = Math.max(ultimo.ate, v.ate);
+    if (ultimo && v.de <= ultimo.ate) {
+      ultimo.ate = Math.max(ultimo.ate, v.ate);
+      // Vãos fundidos sobem até o MAIS ALTO: rebaixar o conjunto à altura do
+      // menor cortaria a porta alta ao meio.
+      ultimo.altura = Math.max(ultimo.altura, v.altura);
+    }
     else fundidos.push({ ...v });
   }
   return fundidos;
@@ -386,10 +403,12 @@ export function trechosSolidos(comprimento: number, vaos: VaoNaParede[]): VaoNaP
   const trechos: VaoNaParede[] = [];
   let cursor = 0;
   for (const v of vaos) {
-    if (v.de - cursor > 1) trechos.push({ de: cursor, ate: v.de });
+    // `altura: 0` aqui é "pedaço inteiro, do piso ao teto" — trecho sólido não
+    // tem vão nenhum para limitar.
+    if (v.de - cursor > 1) trechos.push({ de: cursor, ate: v.de, altura: 0 });
     cursor = Math.max(cursor, v.ate);
   }
-  if (comprimento - cursor > 1) trechos.push({ de: cursor, ate: comprimento });
+  if (comprimento - cursor > 1) trechos.push({ de: cursor, ate: comprimento, altura: 0 });
   return trechos;
 }
 
