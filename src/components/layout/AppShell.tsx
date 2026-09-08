@@ -5,6 +5,7 @@ import { Topbar } from "./Topbar";
 import { DemoBanner } from "./DemoBanner";
 import { ChamadoFab } from "@/components/chamados/ChamadoFab";
 import { RouteGuard } from "@/components/auth/RouteGuard";
+import { ErroDeTela } from "./ErroDeTela";
 import { VinculoGate } from "@/components/auth/VinculoEmpregado";
 import { VinculoDiscordGate } from "@/components/auth/VinculoDiscordGate";
 import { useModoExterno } from "@/hooks/useModoExterno";
@@ -53,6 +54,14 @@ export function AppShell() {
         <DemoBanner />
         <Topbar onToggleSidebar={() => setCollapsed((c) => !c)} onOpenMobile={() => setMobileOpen(true)} />
         <main className="flex-1 overflow-x-hidden p-4 sm:p-6 lg:p-8 min-w-0">
+          {/* ErroDeTela por DENTRO do <main> e por FORA do RouteGuard: uma
+              tela que estoura no render fica contida na área de conteúdo,
+              com sidebar e topbar de pé pra pessoa navegar pra outro lugar
+              (antes, um erro de render apagava o app inteiro — ver o
+              cabeçalho de ErroDeTela.tsx). A `key` no pathname remonta o
+              boundary a cada navegação, então trocar de tela já limpa o
+              estado de erro; sem ela, o usuário ficaria preso na mensagem. */}
+          <ErroDeTela key={location.pathname} rota={location.pathname}>
           <RouteGuard>
             {/* A `key` no pathname é o que faz a animação TOCAR A CADA
                 navegação. Antes o `animate-fade-in` vivia no <main>, que não
@@ -74,6 +83,7 @@ export function AppShell() {
               </div>
             )}
           </RouteGuard>
+          </ErroDeTela>
         </main>
       </div>
       {!externo && <ChamadoFab />}
