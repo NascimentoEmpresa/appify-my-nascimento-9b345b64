@@ -223,8 +223,8 @@ export function Cena3D(props: Props) {
         planta2d
           ? // O zoom sai daqui com um chute; quem enquadra de verdade é
             // <EnquadrarPlanta>, que só sabe o tamanho do canvas lá dentro.
-            { position: camera, zoom: 40, near: 0.1, far: 500 }
-          : { position: camera, fov: 42, near: 0.1, far: 500 }
+            { position: camera, zoom: 40, near: 0.1, far: 8000 }
+          : { position: camera, fov: 42, near: 0.05, far: 8000 }
       }
       // ACESFilmic + sRGB: sem tonemapping o branco das paredes "estoura" e o
       // ambiente fica lavado, com aquele aspecto de render de estudo. É o
@@ -241,9 +241,19 @@ export function Cena3D(props: Props) {
       onPointerMissed={() => onSelecionar(null)}
       onCreated={({ scene }) => {
         scene.background = new THREE.Color("#e8eef5");
-        // Sem névoa no 2D: a câmera fica 50 m acima do piso, e a mesma névoa
-        // que dá profundidade à maquete apagaria a planta inteira de uma vez.
-        scene.fog = planta2d ? null : new THREE.Fog("#e8eef5", 55, 190);
+        /**
+         * A névoa acompanha o TAMANHO DA PLANTA.
+         *
+         * Era fixa em 55–190 m. Num andar de 37 m isso significa que, ao
+         * afastar a câmera, a cena vai virando cor de fundo e some por
+         * completo aos 190 — e o efeito na mão de quem usa é "o zoom parou",
+         * porque continuar rolando não muda mais nada na tela.
+         *
+         * Amarrada à diagonal do andar, ela volta a ser o que devia ser: um
+         * fundo que dá profundidade, não uma parede invisível.
+         */
+        const alcance = Math.max(M(planta.largura_cm), M(planta.altura_cm));
+        scene.fog = planta2d ? null : new THREE.Fog("#e8eef5", alcance * 2.5, alcance * 14);
       }}
     >
       <Suspense fallback={null}>
@@ -687,10 +697,12 @@ function Conteudo({
         // Limites largos de propósito: o teto antigo (2,5× a planta) parava
         // o afastamento antes de caber o andar inteiro na tela, e o piso de
         // 1,5 m impedia de chegar perto de um monitor.
-        minDistance={modo === "2d" ? 0.1 : 0.4}
-        maxDistance={modo === "2d" ? 4000 : Math.max(L, P) * 8 + 80}
-        minZoom={0.5}
-        maxZoom={3000}
+        // Sem teto prático: qualquer limite aqui vira "o zoom parou" sem
+        // explicação nenhuma na tela. Quem enquadra é a pessoa.
+        minDistance={0.15}
+        maxDistance={6000}
+        minZoom={0.2}
+        maxZoom={5000}
         /**
          * Zoom mais rápido e amortecimento mais curto.
          *
