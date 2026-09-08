@@ -239,7 +239,8 @@ export interface MaloteDespesaRow {
     // SIS-2026-0286: coluna/filtro de Setor em Pagamento Malote — o "setor"
     // que o setor_responsavel da própria Classificação (Regras Gerais do
     // Malote), não uma tabela nova.
-    setor_responsavel?: string | null;
+    // SIS-2026-0335: virou lista (mais de um setor por Classificação).
+    setor_responsavel?: string[] | null;
     aprovador1_nomes?: string[];
     aprovador2_nomes?: string[];
     aprovador3_nomes?: string[];
@@ -487,10 +488,14 @@ export function useMinhasDespesas() {
       if (setores.length === 0) {
         query = query.eq("created_by", u.user.id);
       } else {
+        // SIS-2026-0335: setor_responsavel virou text[] (mais de um setor por
+        // Classificação) — .in() comparava igualdade exata contra um valor
+        // escalar; .overlaps() é o filtro certo pra "algum setor bate" num
+        // array (traduz pro operador && do Postgres).
         const { data: classRows, error: classErr } = await (supabase as any)
           .from("planejamento_orcamentario_classificacao")
           .select("id")
-          .in("setor_responsavel", setores);
+          .overlaps("setor_responsavel", setores);
         if (classErr) throw classErr;
         const classIds = (classRows ?? []).map((r: any) => r.id as string);
 
