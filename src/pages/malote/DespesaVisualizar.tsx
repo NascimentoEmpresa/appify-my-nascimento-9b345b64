@@ -1004,6 +1004,14 @@ export default function DespesaVisualizar() {
                   <AlertTriangle className="h-3 w-3" /> Exceção
                 </Badge>
               )}
+              {/* SIS-2026-0334: rastro de auditoria — quem criou marcou o
+                  checkbox "Não necessita solicitação" e pulou direto para
+                  Despesa, driblando o requer_solicitacao da Classificação. */}
+              {despesa.solicitacao_dispensada_manualmente && (
+                <Badge variant="outline" className="gap-1 border-amber-400 text-amber-700 dark:border-amber-700 dark:text-amber-400" title="Solicitação dispensada manualmente na criação">
+                  <AlertTriangle className="h-3 w-3" /> Solicitação dispensada
+                </Badge>
+              )}
             </p>
           </div>
           <div>

@@ -126,6 +126,7 @@ export function PainelDespesaMalote({
   onConvertida,
   aoSalvar,
   rotuloEnviar = "Enviar para aprovação",
+  solicitacaoDispensadaManualmente,
 }: {
   classificacaoId: string;
   classificacaoTipo?: TipoClassificacaoOrcamento | null;
@@ -139,6 +140,10 @@ export function PainelDespesaMalote({
   onConvertida?: () => void;
   aoSalvar?: (payload: PayloadPainelDespesaMalote) => Promise<void>;
   rotuloEnviar?: string;
+  // SIS-2026-0334: true quando quem abriu este painel marcou o checkbox
+  // "Não necessita solicitação" e a Classificação de fato exigia
+  // solicitação — rastro de auditoria, gravado junto com a despesa.
+  solicitacaoDispensadaManualmente?: boolean;
 }) {
   const [paramsUrl] = useSearchParams();
   const obrigacaoPatrimonio = paramsUrl.get(PARAM_ORIGEM);
@@ -284,6 +289,7 @@ export function PainelDespesaMalote({
         rateio: linhasRateio,
         parcelas,
         arquivosNovos: arquivos,
+        solicitacao_dispensada_manualmente: !!solicitacaoDispensadaManualmente,
       };
 
       if (paraEnviar && aoSalvar) {

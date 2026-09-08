@@ -3,6 +3,7 @@ import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -79,7 +80,21 @@ function CriarDespesaNova({ inicial }: { inicial?: PrefillDespesa }) {
 
   const rubrica = rubricas.find((r) => r.id === rubricaId) ?? null;
   const classificacao = rubrica?.classificacaoMalote ?? null;
-  const modo: "solicitacao" | "despesa" | null = !classificacao ? null : classificacao.requer_solicitacao ? "solicitacao" : "despesa";
+
+  // SIS-2026-0334 (Iury): "Criar um check que se marcado ele deixa a
+  // classificação sem necessidade de solicitação, pulando direto para a
+  // criação de despesa" — bypass só desta despesa, a Classificação
+  // continua exigindo solicitação por padrão pra todo mundo. Reseta ao
+  // trocar de rubrica, senão o check de uma vaza pra próxima selecionada.
+  const [pularSolicitacao, setPularSolicitacao] = useState(false);
+  useEffect(() => setPularSolicitacao(false), [rubricaId]);
+
+  const classificacaoExigeSolicitacao = !!classificacao?.requer_solicitacao;
+  const modo: "solicitacao" | "despesa" | null = !classificacao
+    ? null
+    : classificacaoExigeSolicitacao && !pularSolicitacao
+      ? "solicitacao"
+      : "despesa";
 
   return (
     <div className="space-y-6 p-6">
@@ -123,6 +138,14 @@ function CriarDespesaNova({ inicial }: { inicial?: PrefillDespesa }) {
               </Button>
             </div>
           </div>
+          {classificacaoExigeSolicitacao && (
+            <div className="flex items-center gap-2 pt-1">
+              <Checkbox id="pular-solicitacao" checked={pularSolicitacao} onCheckedChange={(v) => setPularSolicitacao(!!v)} />
+              <Label htmlFor="pular-solicitacao" className="text-sm font-normal cursor-pointer">
+                Não necessita solicitação (Compras)
+              </Label>
+            </div>
+          )}
           <p className="text-xs text-muted-foreground">
             A rubrica escolhida define a Classificação Malote (aprovadores e regras) e sugere o valor a partir do orçamento. Só aparecem rubricas já vinculadas a uma Classificação — configure em{" "}
             <Link to="/app/malote/configuracoes" className="underline">
@@ -135,7 +158,14 @@ function CriarDespesaNova({ inicial }: { inicial?: PrefillDespesa }) {
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         <PainelSolicitacao rubrica={rubrica} empresaId={empresaId ?? null} ativo={modo === "solicitacao"} />
-        <PainelDespesaMalote classificacaoId={classificacao?.id ?? ""} classificacaoTipo={classificacao?.tipo ?? null} empresaId={empresaId ?? null} ativo={modo === "despesa"} inicial={inicial} />
+        <PainelDespesaMalote
+          classificacaoId={classificacao?.id ?? ""}
+          classificacaoTipo={classificacao?.tipo ?? null}
+          empresaId={empresaId ?? null}
+          ativo={modo === "despesa"}
+          inicial={inicial}
+          solicitacaoDispensadaManualmente={modo === "despesa" && classificacaoExigeSolicitacao}
+        />
       </div>
 
       {!modo && (
