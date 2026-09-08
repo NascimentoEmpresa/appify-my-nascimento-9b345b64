@@ -1209,8 +1209,14 @@ export function ModeloDoElemento({
   largura: number;
   profundidade: number;
   altura: number;
-  /** Recortes desta peça, em metros da ponta esquerda. Ver `vaosNaParede`. */
-  vaos?: { de: number; ate: number }[];
+  /**
+   * Recortes desta peça, em metros da ponta esquerda. Ver `vaosNaParede`.
+   *
+   * `altura` é até onde o vão sobe: acima dela a parede continua (a verga).
+   * O tipo tem que casar com o de `PropsModelo` — foi separar os dois que
+   * deixou o spread quebrado quando a altura entrou.
+   */
+  vaos?: { de: number; ate: number; altura: number }[];
 }) {
   const def = tipoElemento(elemento.tipo);
   const cor = elemento.cor || def.cor;
