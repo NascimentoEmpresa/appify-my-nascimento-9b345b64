@@ -865,25 +865,80 @@ export function ModeloDoElemento({
   }
 }
 
-/** Contorno de seleção — a caixa amarela que mostra o que está pego. */
+/**
+ * Contorno de seleção — o amarelo que mostra o que está pego.
+ *
+ * São DOIS desenhos, porque o que funciona numa vista não funciona na outra:
+ *
+ *   3D  — caixa de arame em volta da peça. A gaiola só se lê como volume
+ *         porque a câmera está de lado.
+ *   2D  — moldura chapada no contorno da peça. A MESMA caixa de arame vista
+ *         de cima vira um emaranhado: as oito arestas verticais colapsam nos
+ *         quatro cantos e as diagonais que o `wireframe` desenha em cada face
+ *         (o modo arame mostra os triângulos, não os quadriláteros) se
+ *         cruzam todas no meio, escondendo justamente a peça selecionada.
+ */
 export function Selecao({
   largura,
   profundidade,
   altura,
+  plano = false,
 }: {
   largura: number;
   profundidade: number;
   altura: number;
+  /** Vista 2D: desenha a moldura chapada em vez da caixa de arame. */
+  plano?: boolean;
 }) {
   const args = useMemo<[number, number, number]>(
     () => [largura * 1.06 + 0.02, Math.max(altura, M(4)) * 1.06 + 0.02, profundidade * 1.06 + 0.02],
     [largura, profundidade, altura],
   );
+
+  if (plano) return <MolduraPlana largura={largura} profundidade={profundidade} altura={altura} />;
+
   return (
     <mesh position={[0, Math.max(altura, M(4)) / 2, 0]}>
       <boxGeometry args={args} />
       <meshBasicMaterial color="#f59e0b" wireframe transparent opacity={0.9} />
     </mesh>
+  );
+}
+
+/**
+ * A moldura do 2D: quatro barras finas no contorno da peça.
+ *
+ * Barras, e não um `lineSegments`: linha em WebGL tem 1 pixel de espessura
+ * independente do zoom, some ao afastar a planta e não engorda ao aproximar.
+ * A barra é geometria de verdade, então acompanha o zoom.
+ *
+ * `depthTest={false}` porque a moldura tem que aparecer inteira mesmo quando
+ * a peça está por baixo de outra — selecionar a mesa com um monitor em cima
+ * mostrava só metade do contorno.
+ */
+function MolduraPlana({ largura, profundidade, altura }: { largura: number; profundidade: number; altura: number }) {
+  // Espessura proporcional, com piso e teto: no equipamento pequeno uma barra
+  // fixa engolia a peça; na sala de 8 m ela sumia.
+  const esp = Math.min(0.12, Math.max(0.035, Math.min(largura, profundidade) * 0.06));
+  const y = Math.max(altura, M(4)) + 0.03;
+  const L = largura + esp;
+  const P = profundidade + esp;
+
+  return (
+    <group position={[0, y, 0]} renderOrder={999}>
+      {[-1, 1].map((lado) => (
+        <mesh key={`x${lado}`} position={[0, 0, (lado * P) / 2]}>
+          <boxGeometry args={[L + esp, 0.02, esp]} />
+          <meshBasicMaterial color="#f59e0b" depthTest={false} transparent opacity={0.95} />
+        </mesh>
+      ))}
+      {[-1, 1].map((lado) => (
+        <mesh key={`z${lado}`} position={[(lado * L) / 2, 0, 0]}>
+          <boxGeometry args={[esp, 0.02, P + esp]} />
+          <meshBasicMaterial color="#f59e0b" depthTest={false} transparent opacity={0.95} />
+        </mesh>
+      ))}
+    </group>
   );
 }
 

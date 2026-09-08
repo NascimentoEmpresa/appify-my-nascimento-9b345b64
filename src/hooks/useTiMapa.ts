@@ -794,6 +794,45 @@ export function useDefinirCelula() {
   });
 }
 
+/**
+ * Vários quadrados de piso de uma vez — o que sai de um arrasto.
+ *
+ * SEQUENCIAL, de propósito. A RPC `ti_celula_definir` pode empurrar o mundo
+ * inteiro quando o quadrado tem índice negativo (crescer para cima ou para a
+ * esquerda renumera tudo e move as peças junto). Em paralelo, duas chamadas
+ * empurrariam o mesmo mundo ao mesmo tempo, cada uma partindo de uma origem
+ * diferente — o piso sai torto e as peças espalhadas.
+ *
+ * Uma invalidação só no fim, e não uma por quadrado: com `invalidateQueries`
+ * dentro do laço, um arrasto de 40 m² recarregaria a planta 40 vezes e a tela
+ * piscaria do começo ao fim do arrasto.
+ */
+export function useDefinirCelulas() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (p: { planta_id: string; celulas: { cx: number; cy: number }[]; ocupar: boolean }) => {
+      for (const c of p.celulas) {
+        const { error } = await sb.rpc("ti_celula_definir", {
+          p_planta: p.planta_id,
+          p_cx: c.cx,
+          p_cy: c.cy,
+          p_ocupar: p.ocupar,
+        });
+        if (error) throw error;
+      }
+    },
+    onSuccess: (_r, v) => {
+      qc.invalidateQueries({ queryKey: ["ti_celulas", v.planta_id] });
+      qc.invalidateQueries({ queryKey: ["ti_celulas_varias"] });
+      qc.invalidateQueries({ queryKey: ["ti_plantas"] });
+      qc.invalidateQueries({ queryKey: ["ti_elementos"] });
+      qc.invalidateQueries({ queryKey: ["ti_elementos_varias"] });
+      qc.invalidateQueries({ queryKey: ["ti_ativos"] });
+    },
+    onError: (e: Error) => toast.error(e.message || "Não foi possível mudar o piso."),
+  });
+}
+
 /** Células de várias plantas — usado ao mostrar mais de um andar. */
 export function useCelulasDeVariasTi(plantaIds: string[]) {
   const chave = [...plantaIds].sort().join(",");

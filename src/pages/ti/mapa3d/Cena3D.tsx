@@ -1,4 +1,14 @@
-import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  Suspense,
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ComponentProps,
+} from "react";
 import { Canvas, useFrame, useThree, type ThreeEvent } from "@react-three/fiber";
 import { ContactShadows, Grid, Html, OrbitControls, SoftShadows } from "@react-three/drei";
 import * as THREE from "three";
@@ -14,7 +24,9 @@ import {
   chaveCelula,
   contornoParaExpandir,
   alturaDoElemento,
+  camaraDePlanta,
   camaraInicial,
+  celulasDoArrasto,
   cantoDaPeca,
   centroDaPeca,
   dimensoesAtivo,
@@ -60,6 +72,17 @@ import { ModeloDoAtivo, ModeloDoElemento, Selecao } from "./Modelos";
  * escritório parado na tela.
  */
 
+/**
+ * Como a planta é editada.
+ *
+ * Não são dois editores: é a MESMA cena com outra câmera. Arrastar, desenhar
+ * parede, esticar sala e o histórico são um código só — o 2D troca a câmera
+ * por uma ortográfica olhando de cima e tranca o giro, que é exatamente o que
+ * diferencia uma planta baixa de uma maquete. Duplicar o editor para ter as
+ * duas vistas seria duplicar também todo bug de arrasto.
+ */
+export type ModoCena = "2d" | "3d";
+
 export type SelecaoCena =
   | { tipo: "elemento"; id: string }
   | { tipo: "ativo"; id: string }
@@ -82,11 +105,27 @@ interface Props {
   selecao: SelecaoCena;
   onSelecionar: (s: SelecaoCena) => void;
   editavel: boolean;
+  /** Vista: planta baixa (2d) ou maquete (3d). Padrão: 3d. */
+  modo?: ModoCena;
   destaque?: string;
   mostrarGrade?: boolean;
   mostrarRotulos?: boolean;
   /** Ferramenta ativa (só o rótulo importa aqui: se há algo para desenhar). */
   desenhando?: boolean;
+  /**
+   * O arrasto em curso é de PISO (modo obra), não de peça.
+   *
+   * Muda só o desenho da prévia: quem cria o piso é a tela, no
+   * `onDesenharNoChao` — a cena continua sem saber o que a ferramenta faz.
+   */
+  pintandoPiso?: boolean;
+  /**
+   * Modo obra ligado — piso e parede, não mobília.
+   *
+   * A cena usa isto só para pôr o tapete de fora (ver `TapeteDeObra`): é o
+   * que permite COMEÇAR um arrasto onde ainda não há piso.
+   */
+  obra?: boolean;
   /**
    * Passo (cm) com que as peças andam ao serem arrastadas. NÃO é o quadrado do
    * piso: mover um monitor pede centímetros, o piso cresce de metro em metro.
@@ -125,18 +164,38 @@ interface Props {
 }
 
 export function Cena3D(props: Props) {
-  const { planta, onSelecionar } = props;
+  const { planta, onSelecionar, modo = "3d" } = props;
+  const planta2d = modo === "2d";
   const camera = useMemo(
-    () => camaraInicial(planta.largura_cm, planta.altura_cm),
-    [planta.largura_cm, planta.altura_cm],
+    () =>
+      planta2d
+        ? camaraDePlanta(planta.largura_cm, planta.altura_cm)
+        : camaraInicial(planta.largura_cm, planta.altura_cm),
+    [planta2d, planta.largura_cm, planta.altura_cm],
   );
 
   return (
     <Canvas
+      /**
+       * Trocar de modo remonta o canvas.
+       *
+       * `orthographic` decide QUAL classe de câmera o R3F instancia; alternar a
+       * prop no mesmo canvas deixa OrbitControls e raycaster apontando para a
+       * câmera antiga, e o resultado é uma cena que não responde mais ao mouse.
+       * A remontagem custa um quadro e não tem esse buraco.
+       */
+      key={modo}
+      orthographic={planta2d}
       shadows="soft"
       frameloop="demand"
       dpr={[1, 1.75]}
-      camera={{ position: camera, fov: 42, near: 0.1, far: 500 }}
+      camera={
+        planta2d
+          ? // O zoom sai daqui com um chute; quem enquadra de verdade é
+            // <EnquadrarPlanta>, que só sabe o tamanho do canvas lá dentro.
+            { position: camera, zoom: 40, near: 0.1, far: 500 }
+          : { position: camera, fov: 42, near: 0.1, far: 500 }
+      }
       // ACESFilmic + sRGB: sem tonemapping o branco das paredes "estoura" e o
       // ambiente fica lavado, com aquele aspecto de render de estudo. É o
       // ajuste mais barato que aproxima a cena de um render de jogo.
@@ -152,7 +211,9 @@ export function Cena3D(props: Props) {
       onPointerMissed={() => onSelecionar(null)}
       onCreated={({ scene }) => {
         scene.background = new THREE.Color("#e8eef5");
-        scene.fog = new THREE.Fog("#e8eef5", 55, 190);
+        // Sem névoa no 2D: a câmera fica 50 m acima do piso, e a mesma névoa
+        // que dá profundidade à maquete apagaria a planta inteira de uma vez.
+        scene.fog = planta2d ? null : new THREE.Fog("#e8eef5", 55, 190);
       }}
     >
       <Suspense fallback={null}>
@@ -162,6 +223,36 @@ export function Cena3D(props: Props) {
   );
 }
 
+/**
+ * Em qual vista a cena está, para quem é desenhado lá no fundo da árvore.
+ *
+ * Um contexto, e não mais uma prop: as etiquetas nascem dentro de meia dúzia
+ * de componentes diferentes (peça, equipamento, prévia, andar vizinho), e
+ * furar `modo` por todos eles só para o rótulo saber o tamanho certo espalha
+ * uma prop por arquivo inteiro.
+ */
+const ContextoDaVista = createContext<ModoCena>("3d");
+
+/**
+ * Etiqueta em HTML sobre a cena — sempre esta, nunca `Html` direto.
+ *
+ * `distanceFactor` encolhe a etiqueta conforme ela se afasta. Só que, quando
+ * a câmera é ORTOGRÁFICA, o drei calcula esse fator multiplicando pelo ZOOM
+ * da câmera — e o zoom do modo 2D é da ordem de 60 px por metro. A etiqueta
+ * saía ~1000× maior que a tela.
+ *
+ * E não era só feio: `Html` é DOM de verdade por cima do WebGL, então o
+ * borrão gigante ficava na frente do canvas e ENGOLIA OS CLIQUES — clicar no
+ * chão parava de fazer qualquer coisa. Os dois sintomas, uma causa só.
+ *
+ * No 2D a etiqueta vai sem fator nenhum e fica do tamanho da tela, que é como
+ * um rótulo de planta baixa se comporta.
+ */
+function Etiqueta({ distanceFactor, ...resto }: ComponentProps<typeof Html>) {
+  const vista = useContext(ContextoDaVista);
+  return <Html {...resto} distanceFactor={vista === "2d" ? undefined : distanceFactor} />;
+}
+
 function Conteudo({
   planta,
   elementos,
@@ -169,10 +260,13 @@ function Conteudo({
   selecao,
   onSelecionar,
   editavel,
+  modo = "3d",
   destaque,
   mostrarGrade = true,
   mostrarRotulos = true,
   desenhando = false,
+  pintandoPiso = false,
+  obra = false,
   passoCm = PASSO_PADRAO_CM,
   onDesenharNoChao,
   onSoltarElemento,
@@ -391,7 +485,7 @@ function Conteudo({
   };
 
   return (
-    <>
+    <ContextoDaVista.Provider value={modo}>
       <Luzes largura={L} profundidade={P} />
       {/* Sombra macia nas bordas: sombra dura de mapa entrega que é primitiva. */}
       <SoftShadows size={28} samples={8} focus={0.9} />
@@ -400,12 +494,48 @@ function Conteudo({
         ref={controlsRef}
         target={centro}
         makeDefault
+        // No 2D o giro sai de cena: é o que separa "planta baixa" de "maquete
+        // vista de cima". Sobram arrastar com o botão direito e o zoom.
+        enableRotate={modo !== "2d"}
         maxPolarAngle={Math.PI * 0.49}
-        minDistance={1.5}
-        maxDistance={Math.max(L, P) * 2.5 + 20}
+        // Câmera ortográfica não anda para perto nem para longe (o zoom é
+        // outra coisa), então o limite de distância só teria a chance de puxar
+        // a câmera para baixo sem motivo.
+        minDistance={modo === "2d" ? 0.1 : 1.5}
+        maxDistance={modo === "2d" ? 1000 : Math.max(L, P) * 2.5 + 20}
+        minZoom={4}
+        maxZoom={400}
+        /**
+         * Na obra, cada botão do mouse faz UMA coisa.
+         *
+         * O padrão do OrbitControls é o esquerdo girar a câmera. Com uma
+         * ferramenta de desenho na mão isso vira o pior dos mundos: o mesmo
+         * arrasto que abre o piso também gira o escritório, e o traço sai
+         * torto porque o chão se move debaixo dele. O direito era ainda pior
+         * — arrastava a câmera E desenhava junto, porque o `pointerdown` do
+         * chão não olhava qual botão tinha sido apertado.
+         *
+         * Então: ESQUERDO só desenha (aqui ele não faz nada, e quem responde
+         * é o piso), DIREITO só move a câmera. `undefined` é como o
+         * OrbitControls desliga um botão — ele cai no `default` e não entra
+         * em estado nenhum.
+         *
+         * Fora da obra fica o padrão: lá o esquerdo é que arrasta as peças, e
+         * girar com ele é o que se espera de uma maquete.
+         */
+        mouseButtons={
+          obra
+            ? {
+                LEFT: undefined,
+                MIDDLE: THREE.MOUSE.DOLLY,
+                RIGHT: modo === "2d" ? THREE.MOUSE.PAN : THREE.MOUSE.ROTATE,
+              }
+            : undefined
+        }
         enableDamping
         dampingFactor={0.15}
       />
+      {modo === "2d" && <EnquadrarPlanta largura={L} profundidade={P} />}
 
       {/* Andares vizinhos: referência translúcida, sem interação. */}
       {andaresVizinhos.map((a) => (
@@ -423,6 +553,11 @@ function Conteudo({
           sendo as coordenadas do banco, e é por isso que o arrasto (que
           trabalha em coordenadas de mundo) não precisa saber de andar. */}
       <group position={[0, base, 0]}>
+      {obra && editavel && <TapeteDeObra largura={L} profundidade={P} aoComecar={(t) => {
+        tracoRef.current = t;
+        setTraco(t);
+        invalidate();
+      }} aoTerminar={finalizarTraco} livre={livre} passoCm={passoCm} />}
       <Piso
         planta={planta}
         celulas={celulasDoPiso}
@@ -498,7 +633,7 @@ function Conteudo({
         }}
       />
 
-      {traco && <FantasmaDoTraco traco={traco} />}
+      {traco && <FantasmaDoTraco traco={traco} piso={pintandoPiso} />}
 
       {elementos.map((cru) => {
         // Enquanto a alça está sendo puxada, a peça desenha com a medida
@@ -555,20 +690,22 @@ function Conteudo({
             }}
           >
             <ModeloDoElemento elemento={el} largura={largura} profundidade={profundidade} altura={altura} />
-            {selecionado && <Selecao largura={largura} profundidade={profundidade} altura={altura} />}
+            {selecionado && (
+              <Selecao largura={largura} profundidade={profundidade} altura={altura} plano={modo === "2d"} />
+            )}
             {def.familia === "area" && el.rotulo && (
-              <Html center distanceFactor={22} position={[0, 0.05, 0]}>
+              <Etiqueta center distanceFactor={22} position={[0, 0.05, 0]}>
                 <span className="whitespace-nowrap rounded bg-white/70 px-1.5 py-0.5 text-[11px] font-bold uppercase tracking-wide text-slate-700">
                   {el.rotulo}
                 </span>
-              </Html>
+              </Etiqueta>
             )}
             {selecionado && def.familia !== "area" && el.rotulo && (
-              <Html center distanceFactor={14} position={[0, altura + 0.25, 0]}>
+              <Etiqueta center distanceFactor={14} position={[0, altura + 0.25, 0]}>
                 <span className="whitespace-nowrap rounded bg-slate-900/85 px-1.5 py-0.5 text-[11px] font-semibold text-white">
                   {el.rotulo}
                 </span>
-              </Html>
+              </Etiqueta>
             )}
           </group>
         );
@@ -615,7 +752,9 @@ function Conteudo({
               <group visible={!apagado}>
                 <ModeloDoAtivo ativo={a} largura={largura} profundidade={profundidade} altura={altura} />
               </group>
-              {selecionado && <Selecao largura={largura} profundidade={profundidade} altura={altura} />}
+              {selecionado && (
+              <Selecao largura={largura} profundidade={profundidade} altura={altura} plano={modo === "2d"} />
+            )}
 
               {!apagado && (
                 <mesh position={[0, altura + 0.09, 0]}>
@@ -625,7 +764,7 @@ function Conteudo({
               )}
 
               {!apagado && (mostrarRotulos || hover === a.id || selecionado) && (
-                <Html center distanceFactor={13} position={[0, altura + 0.3, 0]} zIndexRange={[20, 0]}>
+                <Etiqueta center distanceFactor={13} position={[0, altura + 0.3, 0]} zIndexRange={[20, 0]}>
                   <span
                     className="pointer-events-none whitespace-nowrap rounded px-1.5 py-0.5 text-[11px] font-semibold text-white shadow"
                     style={{ background: hover === a.id || selecionado ? "#0f172a" : "rgba(15,23,42,0.72)" }}
@@ -633,7 +772,7 @@ function Conteudo({
                     {a.nome}
                     {hover === a.id && a.responsavel_nome ? ` · ${a.responsavel_nome}` : ""}
                   </span>
-                </Html>
+                </Etiqueta>
               )}
             </group>
           );
@@ -652,11 +791,41 @@ function Conteudo({
         />
       )}
       </group>
-    </>
+    </ContextoDaVista.Provider>
   );
 }
 
 // ── Peças da cena ─────────────────────────────────────────────────────
+
+/**
+ * Enquadra a planta inteira na tela no modo 2D.
+ *
+ * Em câmera ortográfica quem define o tamanho do que aparece é o `zoom` — em
+ * pixels por metro —, e para calculá-lo é preciso saber a largura do canvas.
+ * Isso só existe DENTRO do Canvas, por isso o cálculo mora num componente
+ * filho e não na prop `camera`.
+ *
+ * Enquadra ao montar e quando a planta muda, nunca a cada quadro: refazer o
+ * zoom depois disso desfaria o que o usuário acabou de fazer com a rodinha.
+ * Trocar de modo remonta o Canvas, então montar já é "entrou no 2D".
+ */
+function EnquadrarPlanta({ largura, profundidade }: { largura: number; profundidade: number }) {
+  const { camera, size, invalidate } = useThree();
+  const tamanho = useRef(size);
+  tamanho.current = size;
+
+  useEffect(() => {
+    const cam = camera as THREE.OrthographicCamera;
+    if (!cam.isOrthographicCamera) return;
+    const { width, height } = tamanho.current;
+    // 1.15 = uma folga em volta, para a planta não encostar na borda.
+    cam.zoom = Math.min(width / (largura * 1.15), height / (profundidade * 1.15));
+    cam.updateProjectionMatrix();
+    invalidate();
+  }, [largura, profundidade, camera, invalidate]);
+
+  return null;
+}
 
 /**
  * A iluminação — a parte que mais separa "caixas cinzas" de "escritório".
@@ -774,6 +943,8 @@ function Piso({
         receiveShadow
         geometry={geometria}
         onPointerDown={(e: ThreeEvent<PointerEvent>) => {
+          // Botão direito é da câmera, nunca do desenho — nem para desmarcar.
+          if (e.button !== 0) return;
           // Sem ferramenta na mão, clicar no chão é "não quero mais nada
           // selecionado" — o piso conta como área vazia.
           if (!desenhando) {
@@ -787,6 +958,7 @@ function Piso({
           onComecarTraco({ x1: x, y1: y, x2: x, y2: y, clique: true });
         }}
         onPointerUp={(e: ThreeEvent<PointerEvent>) => {
+          if (e.button !== 0) return;
           if (!editavel || !desenhando) return;
           e.stopPropagation();
           onTerminarTraco();
@@ -858,7 +1030,8 @@ function ParedesDoContorno({ celulas, planta }: { celulas: TiCelula[]; planta: T
 }
 
 /** A prévia da peça enquanto o traço está sendo puxado, com a medida em metros. */
-function FantasmaDoTraco({ traco }: { traco: TracoNoChao }) {
+function FantasmaDoTraco({ traco, piso = false }: { traco: TracoNoChao; piso?: boolean }) {
+  if (piso) return <FantasmaDePiso traco={traco} />;
   const r = retanguloDoTraco(traco.x1, traco.y1, traco.x2, traco.y2, 15);
   const largura = M(r.largura);
   const profundidade = M(Math.max(r.profundidade, 10));
@@ -869,11 +1042,106 @@ function FantasmaDoTraco({ traco }: { traco: TracoNoChao }) {
         <boxGeometry args={[largura, 0.8, profundidade]} />
         <meshStandardMaterial color="#0ea5e9" transparent opacity={0.45} />
       </mesh>
-      <Html center distanceFactor={14} position={[0, 0.8, 0]}>
-        <span className="whitespace-nowrap rounded bg-sky-600 px-1.5 py-0.5 text-[11px] font-bold text-white">
+      <Etiqueta center distanceFactor={14} position={[0, 0.8, 0]}>
+        <span className="pointer-events-none whitespace-nowrap rounded bg-sky-600 px-1.5 py-0.5 text-[11px] font-bold text-white">
           {(comprimento / 100).toFixed(2).replace(".", ",")} m
         </span>
-      </Html>
+      </Etiqueta>
+    </group>
+  );
+}
+
+/**
+ * O chão de fora — onde ainda NÃO existe piso.
+ *
+ * O mesh que recebe o clique do piso é feito das células que existem
+ * (`useGeometriaDoPiso`). Isso quer dizer que, fora da planta, não há nada
+ * para o ponteiro acertar: o arrasto simplesmente não começava. Justo no caso
+ * de EXPANDIR, que é começar do lado de fora e puxar para dentro do vazio.
+ *
+ * Daí este tapete, só no modo obra: um plano grande, logo ABAIXO do piso, que
+ * existe para ser acertado. Fica embaixo de propósito — quando o arrasto
+ * começa em cima do piso de verdade, o raycast acerta o piso primeiro e ele
+ * interrompe a propagação, então o gesto não começa duas vezes.
+ *
+ * O tom azul quase invisível não é decoração: é o que mostra até onde dá para
+ * construir, num plano que de resto seria um vazio idêntico ao fundo.
+ */
+function TapeteDeObra({
+  largura,
+  profundidade,
+  livre,
+  passoCm,
+  aoComecar,
+  aoTerminar,
+}: {
+  largura: number;
+  profundidade: number;
+  livre: boolean;
+  passoCm: number;
+  aoComecar: (t: TracoNoChao) => void;
+  aoTerminar: () => void;
+}) {
+  // Folga generosa: expandir um escritório inteiro não pode esbarrar na borda
+  // do tapete no meio do arrasto.
+  const lado = Math.max(largura, profundidade) * 2 + 60;
+
+  return (
+    <mesh
+      position={[largura / 2, -0.02, profundidade / 2]}
+      rotation={[-Math.PI / 2, 0, 0]}
+      onPointerDown={(e: ThreeEvent<PointerEvent>) => {
+        // Só o esquerdo desenha. Sem esta linha o botão direito arrastava a
+        // câmera e abria piso na mesma passada — o mapa saía coberto de
+        // quadrados que ninguém pediu.
+        if (e.button !== 0) return;
+        e.stopPropagation();
+        const x = snap(e.point.x * 100, livre, passoCm);
+        const y = snap(e.point.z * 100, livre, passoCm);
+        aoComecar({ x1: x, y1: y, x2: x, y2: y, clique: true });
+      }}
+      onPointerUp={(e: ThreeEvent<PointerEvent>) => {
+        if (e.button !== 0) return;
+        e.stopPropagation();
+        aoTerminar();
+      }}
+    >
+      <planeGeometry args={[lado, lado]} />
+      <meshBasicMaterial color="#0ea5e9" transparent opacity={0.045} depthWrite={false} />
+    </mesh>
+  );
+}
+
+/**
+ * A prévia do modo obra: os quadrados de 1 m² que o arrasto vai pegar.
+ *
+ * Mostra o retângulo JÁ ENCAIXADO na grade, e não o traço solto do mouse.
+ * A conta de quais quadrados entram é a mesma que grava (`celulasDoArrasto`),
+ * de propósito: prévia que usa uma regra e gravação que usa outra é como se
+ * descobre, depois de soltar, que pegou uma fileira a mais.
+ */
+function FantasmaDePiso({ traco }: { traco: TracoNoChao }) {
+  const celulas = celulasDoArrasto(traco.x1, traco.y1, traco.x2, traco.y2);
+  const cxs = celulas.map((c) => c.cx);
+  const cys = celulas.map((c) => c.cy);
+  const x0 = Math.min(...cxs);
+  const y0 = Math.min(...cys);
+  const largura = Math.max(...cxs) - x0 + 1;
+  const profundidade = Math.max(...cys) - y0 + 1;
+
+  return (
+    <group position={[x0 + largura / 2, 0.05, y0 + profundidade / 2]}>
+      <mesh rotation={[-Math.PI / 2, 0, 0]}>
+        <planeGeometry args={[largura, profundidade]} />
+        <meshBasicMaterial color="#0ea5e9" transparent opacity={0.35} depthWrite={false} />
+      </mesh>
+      <Etiqueta center distanceFactor={16} position={[0, 0.4, 0]}>
+        {/* pointer-events-none: etiqueta de prévia nunca pode roubar o clique
+            de quem ainda está arrastando — ela nasce debaixo do cursor. */}
+        <span className="pointer-events-none whitespace-nowrap rounded bg-sky-600 px-1.5 py-0.5 text-[11px] font-bold text-white">
+          {largura} × {profundidade} m · {celulas.length} m²
+        </span>
+      </Etiqueta>
     </group>
   );
 }
@@ -1001,11 +1269,11 @@ function AndarFantasma({
             );
           })}
       </group>
-      <Html center distanceFactor={26} position={[L / 2, 0.4, -0.6]}>
+      <Etiqueta center distanceFactor={26} position={[L / 2, 0.4, -0.6]}>
         <span className="whitespace-nowrap rounded bg-slate-900/60 px-1.5 py-0.5 text-[11px] font-semibold text-white">
           {planta.nome}
         </span>
-      </Html>
+      </Etiqueta>
     </group>
   );
 }
@@ -1193,7 +1461,7 @@ function Alcas({
         {/* Só enquanto se puxa: parada, a etiqueta competia com o nome do
             equipamento e cobria a peça vizinha. */}
         {previa && (
-          <Html
+          <Etiqueta
             center
             distanceFactor={16}
             position={[M((a.x + b.x) / 2), altura + 0.35, M((a.y + b.y) / 2)]}
@@ -1201,7 +1469,7 @@ function Alcas({
             <span className="pointer-events-none whitespace-nowrap rounded bg-amber-500 px-1.5 py-0.5 text-[11px] font-bold text-white shadow">
               {metros(Number(peca.largura))}
             </span>
-          </Html>
+          </Etiqueta>
         )}
       </>
     );
@@ -1223,11 +1491,11 @@ function Alcas({
         <Alca key={nome} posicao={[px, altura, pz]} onPegar={() => onPegar(nome)} />
       ))}
       {previa && (
-        <Html center distanceFactor={16} position={[(x0 + x1) / 2, altura + 0.35, (y0 + y1) / 2]}>
+        <Etiqueta center distanceFactor={16} position={[(x0 + x1) / 2, altura + 0.35, (y0 + y1) / 2]}>
           <span className="pointer-events-none whitespace-nowrap rounded bg-amber-500 px-1.5 py-0.5 text-[11px] font-bold text-white shadow">
             {metros(Number(peca.largura))} × {metros(Number(peca.altura))}
           </span>
-        </Html>
+        </Etiqueta>
       )}
     </>
   );

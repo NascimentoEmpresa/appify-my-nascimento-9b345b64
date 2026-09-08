@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
-  Building2, Copy, Grid3x3, Hammer, Layers, Layers3, MousePointer2, Move3d, Package,
-  Plus, Redo2, RotateCw, Ruler, Tag, Trash2, Undo2, X,
+  Box, Building2, Copy, Eraser, Grid3x3, Hammer, Layers, Layers3, MousePointer2, Move3d,
+  Package, Plus, Redo2, RotateCw, Ruler, Square, SquareDashedBottom, Tag, Trash2, Undo2, X,
 } from "lucide-react";
 import { PageHeader } from "@/components/layout/PageHeader";
 import {
@@ -22,7 +22,8 @@ import { useScreenAccess } from "@/hooks/useScreenAccess";
 import { cn } from "@/lib/utils";
 import {
   useAtivosTi, useElementosDeVariasTi, useElementosTi, useExcluirAtivo, useExcluirElemento,
-  useCelulasDeVariasTi, useCelulasTi, useDefinirCelula, usePlantasTi, usePosicionarAtivo, useRecriarElemento,
+  useCelulasDeVariasTi, useCelulasTi, useDefinirCelula, useDefinirCelulas,
+  usePlantasTi, usePosicionarAtivo, useRecriarElemento,
   useSalvarAtivo, useSalvarElemento,
   useSalvarPlanta, useSetoresTi,
   type TiAtivo, type TiAtivoInput, type TiElemento, type TiPlanta,
@@ -32,8 +33,8 @@ import {
   PALETA, PASSOS_DE_MOVIMENTO, PASSO_PADRAO_CM, STATUS_ATIVO, TIPOS_ATIVO, TIPOS_ELEMENTO,
   cmParaMetros, statusAtivo, tipoAtivo, tipoElemento,
 } from "./mapa/catalogo";
-import { alturaDoElemento, cantoDaPeca, retanguloDeCantos, retanguloDoTraco } from "./mapa3d/apoio";
-import { Cena3D, type SelecaoCena, type TracoNoChao } from "./mapa3d/Cena3D";
+import { alturaDoElemento, cantoDaPeca, celulasDoArrasto, retanguloDeCantos, retanguloDoTraco } from "./mapa3d/apoio";
+import { Cena3D, type ModoCena, type SelecaoCena, type TracoNoChao } from "./mapa3d/Cena3D";
 import { useHistoricoMapa, type Aplicador } from "./mapa3d/historico";
 
 /**
@@ -68,12 +69,49 @@ type Ferramenta =
   /** Equipamento JÁ cadastrado, vindo da bandeja, esperando um lugar. */
   | { tipo: "ativo"; id: string; nome: string }
   /** Equipamento NOVO: nasce no clique, com nome automático. */
-  | { tipo: "novo_ativo"; valor: string };
+  | { tipo: "novo_ativo"; valor: string }
+  /**
+   * Modo obra: o arrasto no chão acrescenta (`ocupar`) ou tira quadrados de
+   * 1 m² de piso, em vez de criar peça.
+   *
+   * Existe porque expandir a planta era um clique por metro quadrado: abrir
+   * uma sala de 5×4 custava vinte cliques no "+", um de cada vez, esperando o
+   * banco entre eles. Arrastando, a mesma sala é um gesto.
+   */
+  | { tipo: "piso"; ocupar: boolean };
+
+/**
+ * Onde fica lembrado se a pessoa edita em planta baixa ou na maquete.
+ *
+ * A escolha é de hábito, não de dado: quem desenha parede vive no 2D e quem
+ * confere o resultado vive no 3D. Reabrir a tela sempre no 3D obrigaria os
+ * dois primeiros cliques de toda sessão.
+ */
+const CHAVE_MODO = "ti:construir:modo";
+
+function modoSalvo(): ModoCena {
+  try {
+    return localStorage.getItem(CHAVE_MODO) === "2d" ? "2d" : "3d";
+  } catch {
+    // localStorage bloqueado (janela anônima, política de cookie): o editor
+    // não é lugar de quebrar por causa de uma preferência.
+    return "3d";
+  }
+}
 
 export default function ConstruirMapa() {
   const [plantaId, setPlantaId] = useState<string | null>(null);
   const [selecao, setSelecao] = useState<SelecaoCena>(null);
   const [ferramenta, setFerramenta] = useState<Ferramenta>({ tipo: "selecao" });
+  const [modo, setModoEstado] = useState<ModoCena>(modoSalvo);
+  /**
+   * Modo obra: mexer no ESQUELETO do escritório (piso e paredes), não na
+   * mobília. É um modo à parte porque as duas coisas querem gestos opostos —
+   * montando o layout, arrastar move a mesa; levantando a planta, arrastar
+   * tem que desenhar. Empilhar os dois no mesmo cursor foi o que fez expandir
+   * o piso virar clique a clique no "+".
+   */
+  const [obra, setObra] = useState(false);
   const [grade, setGrade] = useState(true);
   const [verTodosAndares, setVerTodosAndares] = useState(false);
   const [passoCm, setPassoCm] = useState<number>(PASSO_PADRAO_CM);
@@ -90,6 +128,31 @@ export default function ConstruirMapa() {
   const [plantaDialog, setPlantaDialog] = useState<Partial<TiPlanta> | null>(null);
   const [fichaAberta, setFichaAberta] = useState<TiAtivo | null | undefined>(undefined);
   const [confirmar, setConfirmar] = useState<{ tipo: "ativo" | "elemento"; id: string; nome: string } | null>(null);
+
+  const definirCelulas = useDefinirCelulas();
+
+  const entrarNaObra = useCallback(() => {
+    setObra(true);
+    // A grade é a régua da obra: sem os quadrados de 1 m² à vista, arrastar
+    // piso é adivinhação.
+    setGrade(true);
+    setSelecao(null);
+    setFerramenta({ tipo: "piso", ocupar: true });
+  }, []);
+
+  const sairDaObra = useCallback(() => {
+    setObra(false);
+    setFerramenta({ tipo: "selecao" });
+  }, []);
+
+  const setModo = useCallback((m: ModoCena) => {
+    setModoEstado(m);
+    try {
+      localStorage.setItem(CHAVE_MODO, m);
+    } catch {
+      // ver modoSalvo(): não poder lembrar não é motivo para não trocar.
+    }
+  }, []);
 
   const { data: plantas = [], isLoading } = usePlantasTi();
   const { data: ativos = [] } = useAtivosTi();
@@ -220,7 +283,7 @@ export default function ConstruirMapa() {
       }
       if (e.ctrlKey || e.metaKey) return;
 
-      if (e.key === "Escape") { setFerramenta({ tipo: "selecao" }); setSelecao(null); }
+      if (e.key === "Escape") { setFerramenta({ tipo: "selecao" }); setSelecao(null); setObra(false); }
       if ((e.key === "Delete" || e.key === "Backspace") && selecao) { e.preventDefault(); pedirRemocao(); }
       if (e.key.toLowerCase() === "r" && selecao) girar(45);
       if (e.key.toLowerCase() === "d" && (elementoSel || ativoSel)) duplicar();
@@ -264,6 +327,28 @@ export default function ConstruirMapa() {
 
     if (ferramenta.tipo === "novo_ativo") {
       criarAtivoNoMapa(ferramenta.valor, t.x1, t.y1);
+      return;
+    }
+
+    /**
+     * Modo obra: o mesmo arrasto que desenha parede aqui vira piso. Uma
+     * gravação por gesto, não uma por quadrado — ver useDefinirCelulas.
+     *
+     * ⚠ TEM que ficar ACIMA da guarda `tipo !== "elemento"` logo abaixo:
+     * piso NÃO é um elemento, então lá embaixo este bloco nunca rodava. O
+     * arrasto desenhava a prévia certinha e, ao soltar, não acontecia nada —
+     * sem erro, sem toast, porque o retorno acontecia antes de qualquer
+     * chamada ao banco.
+     */
+    if (ferramenta.tipo === "piso") {
+      const celulasDoGesto = celulasDoArrasto(t.x1, t.y1, t.x2, t.y2);
+      if (celulasDoGesto.length) {
+        definirCelulas.mutate({
+          planta_id: planta.id,
+          celulas: celulasDoGesto,
+          ocupar: ferramenta.ocupar,
+        });
+      }
       return;
     }
     if (ferramenta.tipo !== "elemento") return;
@@ -523,13 +608,85 @@ export default function ConstruirMapa() {
 
             <Separator orientation="vertical" className="h-6" />
 
+            {/* Editar em 2D ou em 3D. É a mesma cena e as mesmas ferramentas:
+                muda a câmera (ver ModoCena, em Cena3D). O 2D existe porque
+                desenhar parede e alinhar mesa de cima, sem perspectiva, é
+                muito mais preciso; o 3D existe para conferir o resultado. */}
+            <div className="flex items-center gap-0.5 rounded-md border p-0.5">
+              <Button
+                variant={modo === "2d" ? "secondary" : "ghost"}
+                size="sm"
+                className="h-7 px-2"
+                onClick={() => setModo("2d")}
+                title="Editar em 2D — planta baixa, vista de cima, sem giro"
+              >
+                <Square className="mr-1.5 h-3.5 w-3.5" /> 2D
+              </Button>
+              <Button
+                variant={modo === "3d" ? "secondary" : "ghost"}
+                size="sm"
+                className="h-7 px-2"
+                onClick={() => setModo("3d")}
+                title="Editar em 3D — maquete, com a câmera livre"
+              >
+                <Box className="mr-1.5 h-3.5 w-3.5" /> 3D
+              </Button>
+            </div>
+
+            <Separator orientation="vertical" className="h-6" />
+
             <Button
               variant={ferramenta.tipo === "selecao" ? "secondary" : "ghost"}
               size="sm"
-              onClick={() => setFerramenta({ tipo: "selecao" })}
+              onClick={sairDaObra}
             >
               <MousePointer2 className="mr-1.5 h-4 w-4" /> Selecionar
             </Button>
+
+            <Button
+              variant={obra ? "default" : "ghost"}
+              size="sm"
+              onClick={() => (obra ? sairDaObra() : entrarNaObra())}
+              title="Obra: arrastar no chão abre e fecha piso, e levanta parede"
+            >
+              <Hammer className="mr-1.5 h-4 w-4" /> Obra
+            </Button>
+
+            {/* As ferramentas da obra só existem dentro dela: fora daqui
+                seriam mais três botões competindo com o cursor normal. */}
+            {obra && (
+              <div className="flex items-center gap-0.5 rounded-md border border-primary/40 bg-primary/5 p-0.5">
+                <Button
+                  variant={ferramenta.tipo === "piso" && ferramenta.ocupar ? "secondary" : "ghost"}
+                  size="sm"
+                  className="h-7 px-2"
+                  onClick={() => setFerramenta({ tipo: "piso", ocupar: true })}
+                  title="Arraste no chão para abrir piso"
+                >
+                  <SquareDashedBottom className="mr-1.5 h-3.5 w-3.5" /> Abrir piso
+                </Button>
+                <Button
+                  variant={ferramenta.tipo === "piso" && !ferramenta.ocupar ? "secondary" : "ghost"}
+                  size="sm"
+                  className="h-7 px-2"
+                  onClick={() => setFerramenta({ tipo: "piso", ocupar: false })}
+                  title="Arraste no chão para tirar piso"
+                >
+                  <Eraser className="mr-1.5 h-3.5 w-3.5" /> Tirar piso
+                </Button>
+                <Button
+                  variant={
+                    ferramenta.tipo === "elemento" && ferramenta.valor === "parede" ? "secondary" : "ghost"
+                  }
+                  size="sm"
+                  className="h-7 px-2"
+                  onClick={() => setFerramenta({ tipo: "elemento", valor: "parede" })}
+                  title="Arraste do começo ao fim da parede"
+                >
+                  <Ruler className="mr-1.5 h-3.5 w-3.5" /> Parede
+                </Button>
+              </div>
+            )}
             <Button variant={grade ? "secondary" : "ghost"} size="icon" className="h-8 w-8"
                     title="Quadrados de 1 m" onClick={() => setGrade(!grade)}>
               <Grid3x3 className="h-4 w-4" />
@@ -580,15 +737,24 @@ export default function ConstruirMapa() {
             {ferramenta.tipo !== "selecao" && (
               <span className="ml-auto flex items-center gap-2 rounded-full bg-sky-600 px-3 py-1 text-xs font-semibold text-white">
                 <Move3d className="h-3.5 w-3.5" />
-                {ferramenta.tipo === "elemento" && tipoElemento(ferramenta.valor).familia === "estrutura"
-                  ? "Arraste no chão para desenhar"
-                  : "Clique no chão para colocar"}
+                {ferramenta.tipo === "piso"
+                  ? ferramenta.ocupar
+                    ? "Arraste no chão para abrir piso"
+                    : "Arraste no chão para tirar piso"
+                  : ferramenta.tipo === "elemento" && tipoElemento(ferramenta.valor).familia === "estrutura"
+                    ? "Arraste no chão para desenhar"
+                    : "Clique no chão para colocar"}
                 {ferramenta.tipo === "ativo"
                   ? ` “${ferramenta.nome}”`
                   : ferramenta.tipo === "novo_ativo"
                     ? ` ${tipoAtivo(ferramenta.valor).label}`
-                    : ` ${tipoElemento(ferramenta.valor).label}`}
-                <button type="button" onClick={() => setFerramenta({ tipo: "selecao" })} className="ml-1 opacity-80 hover:opacity-100">
+                    : ferramenta.tipo === "elemento"
+                      ? ` ${tipoElemento(ferramenta.valor).label}`
+                      : ""}
+                {/* O X larga a obra inteira, não só a ferramenta: deixar o
+                    modo ligado sem nenhuma ferramenta na mão é um estado em
+                    que nada responde ao clique e nada explica por quê. */}
+                <button type="button" onClick={sairDaObra} className="ml-1 opacity-80 hover:opacity-100">
                   <X className="h-3.5 w-3.5" />
                 </button>
               </span>
@@ -737,10 +903,13 @@ export default function ConstruirMapa() {
                 selecao={selecao}
                 onSelecionar={(s) => { if (ferramenta.tipo === "selecao") setSelecao(s); }}
                 editavel
+                modo={modo}
                 mostrarGrade={grade}
                 mostrarRotulos={rotulos}
                 passoCm={passoCm}
                 desenhando={ferramenta.tipo !== "selecao"}
+                pintandoPiso={ferramenta.tipo === "piso"}
+                obra={obra}
                 onDesenharNoChao={desenharNoChao}
                 plantas={plantas}
                 andaresVizinhos={andaresVizinhos}
@@ -792,6 +961,9 @@ export default function ConstruirMapa() {
                     <li><b>R</b> gira 45°, <b>D</b> duplica, <b>Delete</b> remove</li>
                     <li><b>Ctrl+Z</b> desfaz, <b>Ctrl+Y</b> refaz</li>
                     <li><b>Duplo clique</b> num equipamento abre a ficha</li>
+                    <li><b>2D / 3D</b> na barra troca a vista; no 2D a câmera não gira e o botão direito arrasta a planta</li>
+                    <li><b>Obra</b> abre o modo de planta: arraste no chão para <b>abrir</b> ou <b>tirar</b> piso de uma vez, ou para levantar <b>parede</b></li>
+                    <li>Na <b>obra</b> os botões não se misturam: <b>esquerdo</b> desenha, <b>direito</b> move a câmera</li>
                   </ul>
                 </div>
               ) : (

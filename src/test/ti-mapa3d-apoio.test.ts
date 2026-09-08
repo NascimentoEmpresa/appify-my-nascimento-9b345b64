@@ -5,10 +5,12 @@ import {
   alturaDoAndar,
   arestasDoContorno,
   bordaParaRemover,
+  celulasDoArrasto,
   celulasDoRetangulo,
   contornoParaExpandir,
   limitesDasCelulas,
   alturaDoElemento,
+  camaraDePlanta,
   camaraInicial,
   cantoDaPeca,
   centroDaPeca,
@@ -167,6 +169,64 @@ describe("alturaDeApoio — o computador em cima da mesa", () => {
     const girada = elemento({ id: "m2", tipo: "mesa", x: 100, y: 100, largura: 140, altura: 70, rotacao: 90 });
     expect(alturaDeApoio(ativo({ pos_x: 150, pos_y: 220 }), [girada])).toBe(75);
     expect(alturaDeApoio(ativo({ pos_x: 220, pos_y: 120 }), [girada])).toBe(0);
+  });
+});
+
+describe("quadrados de piso que um arrasto pega", () => {
+  const chaves = (cs: { cx: number; cy: number }[]) => cs.map((c) => `${c.cx},${c.cy}`).sort();
+
+  it("pega a faixa inteira, inclusive o quadrado só encostado", () => {
+    // De 1,50 m a 3,10 m: encosta em três quadrados (o 1, o 2 e o 3), e o
+    // terceiro entra mesmo tendo sido tocado só nos 10 cm finais.
+    expect(chaves(celulasDoArrasto(150, 150, 310, 150))).toEqual(["1,1", "2,1", "3,1"]);
+  });
+
+  it("clique seco devolve UM quadrado", () => {
+    expect(celulasDoArrasto(240, 380, 240, 380)).toEqual([{ cx: 2, cy: 3 }]);
+  });
+
+  it("não depende do sentido do arrasto", () => {
+    expect(chaves(celulasDoArrasto(500, 500, 100, 100))).toEqual(chaves(celulasDoArrasto(100, 100, 500, 500)));
+  });
+
+  it("cobre o retângulo cheio, não só a borda", () => {
+    // 3 colunas × 2 linhas = 6 quadrados.
+    expect(celulasDoArrasto(0, 0, 250, 150)).toHaveLength(6);
+  });
+
+  /** Crescer para cima/esquerda passa por índice negativo — a RPC empurra o mundo. */
+  it("aceita índice negativo", () => {
+    expect(chaves(celulasDoArrasto(-150, 50, 50, 50))).toEqual(["-1,0", "-2,0", "0,0"]);
+  });
+});
+
+describe("câmera do modo 2D", () => {
+  /**
+   * O x/z da câmera TEM que ser o centro da planta: é o alinhamento com o
+   * alvo do OrbitControls que faz o desenho sair sem perspectiva. Deslocar a
+   * câmera não quebra nada visível de imediato — a planta só começa a sair
+   * "tombada", com as paredes do fundo inclinadas, e ninguém liga isso a esta
+   * função. Por isso é um teste, e não um comentário.
+   */
+  it("fica no centro da planta, olhando para baixo", () => {
+    const [x, y, z] = camaraDePlanta(1200, 1700);
+    expect(x).toBe(M(1200) / 2);
+    expect(z).toBeCloseTo(M(1700) / 2, 1);
+    expect(y).toBeGreaterThan(M(280) * 2);
+  });
+
+  /**
+   * O epsilon no z é de propósito: com câmera e alvo exatamente no mesmo
+   * eixo vertical, o OrbitControls cai na singularidade do ângulo polar.
+   */
+  it("sai do eixo por um fio, para o OrbitControls não travar", () => {
+    const [, , z] = camaraDePlanta(1000, 1000);
+    expect(z).not.toBe(M(1000) / 2);
+    expect(z - M(1000) / 2).toBeLessThan(0.05);
+  });
+
+  it("não muda de altura com o tamanho da planta (quem enquadra é o zoom)", () => {
+    expect(camaraDePlanta(600, 400)[1]).toBe(camaraDePlanta(6000, 4000)[1]);
   });
 });
 

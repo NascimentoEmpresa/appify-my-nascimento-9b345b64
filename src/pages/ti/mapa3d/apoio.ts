@@ -195,6 +195,46 @@ export function camaraInicial(larguraCm: number, alturaCm: number): [number, num
   return [l / 2 + d * 0.55, d * 0.72, a / 2 + d * 0.75];
 }
 
+/**
+ * Os quadrados de 1 m² que um arrasto no chão cobre, de canto a canto.
+ *
+ * É o que transforma "arrastei do começo ao fim da sala" em piso. A conta é
+ * por FAIXA, não por ponto: o quadrado entra se o retângulo do arrasto encosta
+ * nele, mesmo que só de raspão. Exigir que o cursor passe pelo centro de cada
+ * quadrado deixaria a última fileira de fora quase sempre, e é justamente o
+ * "por que faltou uma fileira?" que torna expandir o piso um trabalho chato.
+ *
+ * O clique seco cai aqui também e devolve UM quadrado: os dois pontos caem na
+ * mesma célula.
+ */
+export function celulasDoArrasto(x1: number, y1: number, x2: number, y2: number): Celula[] {
+  const cx1 = Math.floor(Math.min(x1, x2) / 100);
+  const cx2 = Math.floor(Math.max(x1, x2) / 100);
+  const cy1 = Math.floor(Math.min(y1, y2) / 100);
+  const cy2 = Math.floor(Math.max(y1, y2) / 100);
+
+  const saida: Celula[] = [];
+  for (let cy = cy1; cy <= cy2; cy++) {
+    for (let cx = cx1; cx <= cx2; cx++) saida.push({ cx, cy });
+  }
+  return saida;
+}
+
+/**
+ * Câmera do modo 2D: direto de cima, no centro da planta.
+ *
+ * Fica no MESMO x/z do alvo (é isso que faz o desenho sair sem perspectiva),
+ * com um epsilon no z só para escapar da singularidade do OrbitControls quando
+ * câmera e alvo se alinham com o eixo Y.
+ *
+ * A altura é fixa e generosa porque em câmera ortográfica ela não muda o
+ * tamanho do que se vê — só precisa passar por cima das paredes e dos andares
+ * de referência. Quem enquadra é o `zoom`, calculado com o tamanho do canvas.
+ */
+export function camaraDePlanta(larguraCm: number, alturaCm: number): [number, number, number] {
+  return [M(larguraCm) / 2, 50, M(alturaCm) / 2 + 0.01];
+}
+
 // ── Andares ───────────────────────────────────────────────────────────
 
 /**
