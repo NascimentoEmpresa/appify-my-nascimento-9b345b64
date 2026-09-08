@@ -298,6 +298,102 @@ export function pontasDaParede(el: {
 }
 
 /**
+ * Um pedaço vazado da parede, medido em cm ao longo dela a partir da ponta A
+ * (a mesma ponta que `pontasDaParede` chama de `a`).
+ */
+export interface VaoNaParede {
+  de: number;
+  ate: number;
+}
+
+/**
+ * O quanto uma abertura pode estar fora da linha da parede e ainda contar
+ * como encaixada nela (cm).
+ *
+ * Não é zero porque ninguém encosta a porta na parede com precisão de
+ * milímetro: o passo padrão do editor é 25 cm, e a peça costuma ficar alguns
+ * centímetros para dentro ou para fora. Também não é generoso: uma porta na
+ * parede de trás não pode abrir buraco na da frente.
+ */
+const FOLGA_DO_VAO = 20;
+
+/**
+ * Onde uma parede fica vazada por causa das aberturas encostadas nela.
+ *
+ * É o "corte" para encaixar a porta de vidro: a parede deixa de ser um bloco
+ * só e passa a ser desenhada em pedaços, pulando estes trechos.
+ *
+ * A conta é toda no eixo da parede. Para cada abertura:
+ *   · projeta-se o centro dela no eixo → onde o vão fica;
+ *   · mede-se a distância até a linha da parede → se for grande, a abertura
+ *     não é dessa parede e não abre nada;
+ *   · projeta-se a LARGURA da abertura no mesmo eixo — uma porta atravessada
+ *     na parede abre um vão da espessura dela, não da largura, e é por isso
+ *     que entra o ângulo entre as duas e não só a largura.
+ */
+export function vaosNaParede(
+  parede: { x: number | string; y: number | string; largura: number | string; altura: number | string; rotacao: number | string },
+  aberturas: { x: number | string; y: number | string; largura: number | string; altura: number | string; rotacao: number | string }[],
+): VaoNaParede[] {
+  const comprimento = Number(parede.largura);
+  const espessura = Number(parede.altura);
+  const t = (Number(parede.rotacao) * Math.PI) / 180;
+  const eixoX = Math.cos(t);
+  const eixoY = Math.sin(t);
+  const { a } = pontasDaParede(parede);
+
+  const achados: VaoNaParede[] = [];
+  for (const ab of aberturas) {
+    const c = centroDaPeca(ab);
+    const dx = c.x - a.x;
+    const dy = c.y - a.y;
+
+    const aoLongo = dx * eixoX + dy * eixoY;
+    const afastamento = Math.abs(-dx * eixoY + dy * eixoX);
+    if (afastamento > espessura / 2 + Number(ab.altura) / 2 + FOLGA_DO_VAO) continue;
+
+    const giro = ((Number(ab.rotacao) - Number(parede.rotacao)) * Math.PI) / 180;
+    const meia =
+      (Math.abs(Math.cos(giro)) * Number(ab.largura)) / 2 +
+      (Math.abs(Math.sin(giro)) * Number(ab.altura)) / 2;
+
+    const de = Math.max(0, aoLongo - meia);
+    const ate = Math.min(comprimento, aoLongo + meia);
+    // Vão de menos de 1 cm é a abertura raspando a ponta da parede: cortar ali
+    // só produziria um pedaço sólido de largura zero.
+    if (ate - de > 1) achados.push({ de, ate });
+  }
+
+  // Vãos encostados viram um só. Sem fundir, dois deles sobrepostos deixariam
+  // entre si um trecho "sólido" de largura negativa — uma caixa invertida.
+  achados.sort((p, q) => p.de - q.de);
+  const fundidos: VaoNaParede[] = [];
+  for (const v of achados) {
+    const ultimo = fundidos[fundidos.length - 1];
+    if (ultimo && v.de <= ultimo.ate) ultimo.ate = Math.max(ultimo.ate, v.ate);
+    else fundidos.push({ ...v });
+  }
+  return fundidos;
+}
+
+/**
+ * O contrário de `vaosNaParede`: os pedaços que SOBRAM em pé.
+ *
+ * É o que o modelo 3D desenha. Parede sem vão nenhum devolve um pedaço só, do
+ * começo ao fim — o mesmo bloco de sempre, para nada mudar onde não há porta.
+ */
+export function trechosSolidos(comprimento: number, vaos: VaoNaParede[]): VaoNaParede[] {
+  const trechos: VaoNaParede[] = [];
+  let cursor = 0;
+  for (const v of vaos) {
+    if (v.de - cursor > 1) trechos.push({ de: cursor, ate: v.de });
+    cursor = Math.max(cursor, v.ate);
+  }
+  if (comprimento - cursor > 1) trechos.push({ de: cursor, ate: comprimento });
+  return trechos;
+}
+
+/**
  * Novo retângulo ao arrastar UM canto de uma peça retangular.
  *
  * O canto oposto fica parado — é o que se espera ao esticar uma sala pela

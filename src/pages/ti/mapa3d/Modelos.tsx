@@ -1,5 +1,6 @@
 import { useMemo } from "react";
-import { M } from "./apoio";
+import { DoubleSide } from "three";
+import { M, trechosSolidos } from "./apoio";
 import { tipoAtivo, tipoElemento } from "../mapa/catalogo";
 import type { TiAtivo, TiElemento } from "@/hooks/useTiMapa";
 
@@ -35,6 +36,13 @@ interface PropsModelo {
   profundidade: number;
   altura: number;
   ligado?: boolean;
+  /**
+   * Trechos vazados da peça, em METROS medidos da ponta esquerda (local -x).
+   *
+   * Quem calcula é a cena, que é a única que enxerga as outras peças; o
+   * modelo só desenha o que sobra. Ver `vaosNaParede`, em apoio.ts.
+   */
+  vaos?: { de: number; ate: number }[];
 }
 
 // ── Equipamentos ──────────────────────────────────────────────────────
@@ -263,12 +271,31 @@ function Telefone({ cor, largura, profundidade, altura }: PropsModelo) {
   );
 }
 
-function Generico({ cor, largura, profundidade, altura }: PropsModelo) {
+/**
+ * O bloco sólido — parede, divisória, escada e o que não tiver modelo próprio.
+ *
+ * Com `vaos`, deixa de ser UMA caixa e vira uma caixa por pedaço que sobrou:
+ * é assim que a porta de vidro abre um rasgo na parede em vez de ficar
+ * encostada nela. Sem vão nenhum é exatamente a caixa de antes — um pedaço
+ * só, do começo ao fim.
+ */
+function Generico({ cor, largura, profundidade, altura, vaos }: PropsModelo) {
+  const trechos = trechosSolidos(largura, vaos ?? []);
+
   return (
-    <mesh castShadow receiveShadow position={[0, altura / 2, 0]}>
-      <boxGeometry args={[largura, altura, profundidade]} />
-      <meshStandardMaterial color={cor} roughness={0.55} metalness={0.25} />
-    </mesh>
+    <group>
+      {trechos.map((t) => {
+        const comprimento = t.ate - t.de;
+        // O modelo nasce centrado; os trechos vêm medidos da ponta esquerda.
+        const centro = t.de + comprimento / 2 - largura / 2;
+        return (
+          <mesh key={t.de} castShadow receiveShadow position={[centro, altura / 2, 0]}>
+            <boxGeometry args={[comprimento, altura, profundidade]} />
+            <meshStandardMaterial color={cor} roughness={0.55} metalness={0.25} />
+          </mesh>
+        );
+      })}
+    </group>
   );
 }
 
@@ -613,6 +640,52 @@ function Porta({ largura, profundidade, altura }: PropsModelo) {
 }
 
 /**
+ * O vidro desta cena — e por que ele não é um material "realista".
+ *
+ * Não existe environment map aqui (ver `Luzes`, em Cena3D: o HDR de CDN foi
+ * cortado de propósito). E vidro de verdade se enxerga quase só por REFLEXO:
+ * material liso, com `roughness` baixo, num mundo sem nada para refletir
+ * renderiza PRETO. Foi exatamente isso que aconteceu — o pano de vidro saiu
+ * um paredão escuro.
+ *
+ * Então o vidro aqui é fingido, e de propósito: rugosidade média (tem difusa
+ * para as luzes pegarem), `metalness` zero e um `emissive` fraco que garante
+ * um piso de claridade mesmo na face que não recebe luz nenhuma. É o que faz
+ * ele parecer vidro num render sem reflexo.
+ *
+ * `depthWrite={false}`: superfície transparente que escreve profundidade
+ * apaga o que está atrás dela dependendo da ordem de desenho — a mesa vista
+ * através da divisória sumia conforme o ângulo da câmera.
+ */
+function VidroMaterial({ opacidade = 0.24 }: { opacidade?: number }) {
+  return (
+    <meshStandardMaterial
+      color="#dbeefb"
+      emissive="#bfe0f5"
+      emissiveIntensity={0.35}
+      transparent
+      opacity={opacidade}
+      roughness={0.18}
+      metalness={0}
+      depthWrite={false}
+      side={DoubleSide}
+    />
+  );
+}
+
+/**
+ * Alumínio dos caixilhos.
+ *
+ * Mesma armadilha do vidro: `metalness` alto sem environment map dá metal
+ * preto. Aqui ele é quase todo difuso, num tom claro — lê como alumínio
+ * anodizado e, principalmente, não vira uma grade escura por cima do vidro,
+ * que era metade do motivo de o pano parecer sólido.
+ */
+function AluminioMaterial() {
+  return <meshStandardMaterial color="#c4ced9" metalness={0.15} roughness={0.55} />;
+}
+
+/**
  * Pano de vidro: divisória envidraçada de escritório.
  *
  * O vidro sozinho some — um plano transparente sem nada em volta lê como
@@ -621,7 +694,38 @@ function Porta({ largura, profundidade, altura }: PropsModelo) {
  * montantes são calculados, e não fixos: um pano de 6 m com dois montantes
  * pareceria vidro de aquário, e um de 1 m com seis pareceria gradil.
  */
-function ParedeVidro({ largura, profundidade, altura }: PropsModelo) {
+function ParedeVidro({ largura, profundidade, altura, vaos }: PropsModelo) {
+  const trechos = trechosSolidos(largura, vaos ?? []);
+  return (
+    <group>
+      {trechos.map((t) => {
+        const comprimento = t.ate - t.de;
+        return (
+          <PanoDeVidro
+            key={t.de}
+            largura={comprimento}
+            profundidade={profundidade}
+            altura={altura}
+            deslocamento={t.de + comprimento / 2 - largura / 2}
+          />
+        );
+      })}
+    </group>
+  );
+}
+
+/** Um trecho contínuo de pano de vidro, já sem os vãos. */
+function PanoDeVidro({
+  largura,
+  profundidade,
+  altura,
+  deslocamento,
+}: {
+  largura: number;
+  profundidade: number;
+  altura: number;
+  deslocamento: number;
+}) {
   const perfil = 0.06;
   const montante = 0.05;
   // Um montante a cada ~1,2 m, que é a largura de chapa que se usa de verdade.
@@ -629,24 +733,18 @@ function ParedeVidro({ largura, profundidade, altura }: PropsModelo) {
   const passo = largura / vaos;
 
   return (
-    <group>
+    <group position={[deslocamento, 0, 0]}>
       {/* vidro: um pano só, com folga para não brigar com os perfis */}
       <mesh position={[0, altura / 2, 0]}>
-        <boxGeometry args={[largura - perfil, altura - perfil * 2, profundidade * 0.35]} />
-        <meshStandardMaterial
-          color="#cfe9f7"
-          transparent
-          opacity={0.28}
-          roughness={0.04}
-          metalness={0.05}
-        />
+        <boxGeometry args={[largura - perfil, altura - perfil * 2, profundidade * 0.3]} />
+        <VidroMaterial />
       </mesh>
 
       {/* perfis de piso e teto */}
       {[perfil / 2, altura - perfil / 2].map((y) => (
         <mesh key={y} castShadow position={[0, y, 0]}>
           <boxGeometry args={[largura, perfil, profundidade]} />
-          <meshStandardMaterial color={METAL} metalness={0.65} roughness={0.35} />
+          <AluminioMaterial />
         </mesh>
       ))}
 
@@ -654,7 +752,7 @@ function ParedeVidro({ largura, profundidade, altura }: PropsModelo) {
       {Array.from({ length: vaos + 1 }, (_, i) => -largura / 2 + i * passo).map((x) => (
         <mesh key={x} castShadow position={[x, altura / 2, 0]}>
           <boxGeometry args={[montante, altura, profundidade]} />
-          <meshStandardMaterial color={METAL} metalness={0.65} roughness={0.35} />
+          <AluminioMaterial />
         </mesh>
       ))}
     </group>
@@ -662,50 +760,92 @@ function ParedeVidro({ largura, profundidade, altura }: PropsModelo) {
 }
 
 /**
- * Porta de vidro de correr.
+ * Porta de vidro de correr — desenhada para EMENDAR no pano de vidro.
  *
  * O que diz "de correr", e não "de abrir", são duas coisas: o TRILHO
  * atravessando por cima do vão inteiro, e as duas folhas em PLANOS
  * DIFERENTES de profundidade — porta de correr tem uma folha passando na
- * frente da outra, e é esse desencontro que o olho reconhece. Desenhá-las no
- * mesmo plano daria uma porta dupla comum.
+ * frente da outra, e é esse desencontro que o olho reconhece. No mesmo plano
+ * seria uma porta dupla comum.
  *
- * Fica fechada, como a porta comum desta cena: folha aberta em ângulo vira
- * uma lâmina atravessando o piso quando a peça está solta no mapa.
+ * Fica fechada, como a porta comum desta cena: folha em ângulo vira uma
+ * lâmina atravessando o piso quando a peça está solta no mapa.
+ *
+ * A EMENDA COM A PAREDE é o resto do desenho, e é o motivo de a peça ter a
+ * altura do pano (280) em vez da altura de porta (210):
+ *
+ *   · montantes de ponta a ponta, do piso ao teto, no mesmo perfil e na mesma
+ *     espessura da `ParedeVidro` — encostando as duas peças, os montantes se
+ *     encontram e a divisória segue como uma coisa só;
+ *   · bandeira de vidro FIXA acima das folhas, preenchendo o que sobra até o
+ *     alto. Sem ela a porta abria um rasgo de 70 cm de nada entre o topo dela
+ *     e o teto — que é o que dava aquele aspecto de caixa avulsa plantada no
+ *     meio do pano.
+ *
+ * Quem quiser a porta solta, sem bandeira, baixa a altura no inspetor: com
+ * pouca sobra o vidro de cima simplesmente não é desenhado.
  */
 function PortaVidro({ largura, profundidade, altura }: PropsModelo) {
-  const trilho = 0.08;
-  const folhaLargura = largura / 2;
-  const folhaAltura = altura - trilho;
+  const perfil = 0.06;
+  const montante = 0.05;
   const espessura = 0.03;
+  // Altura de porta de verdade — mas nunca maior que a peça.
+  const folhaAltura = Math.min(2.1, altura - perfil * 2);
+  const folhaLargura = (largura - montante * 2) / 2;
   // O desencontro das folhas: uma à frente, outra atrás do eixo.
   const recuo = profundidade * 0.22;
+  const sobra = altura - folhaAltura - perfil;
+  const temBandeira = sobra > 0.15;
 
   return (
     <group>
-      {/* trilho superior, atravessando o vão todo */}
-      <mesh castShadow position={[0, altura - trilho / 2, 0]}>
-        <boxGeometry args={[largura, trilho, profundidade]} />
-        <meshStandardMaterial color={METAL} metalness={0.7} roughness={0.3} />
+      {/* perfis de piso e teto: os mesmos da ParedeVidro, para casar */}
+      {[perfil / 2, altura - perfil / 2].map((y) => (
+        <mesh key={y} castShadow position={[0, y, 0]}>
+          <boxGeometry args={[largura, perfil, profundidade]} />
+          <AluminioMaterial />
+        </mesh>
+      ))}
+
+      {/* montantes das pontas: é por aqui que a porta encosta no pano */}
+      {[-1, 1].map((lado) => (
+        <mesh key={lado} castShadow position={[(lado * (largura - montante)) / 2, altura / 2, 0]}>
+          <boxGeometry args={[montante, altura, profundidade]} />
+          <AluminioMaterial />
+        </mesh>
+      ))}
+
+      {/* trilho, na altura em que as folhas terminam */}
+      <mesh castShadow position={[0, folhaAltura + perfil / 2, 0]}>
+        <boxGeometry args={[largura, perfil, profundidade]} />
+        <AluminioMaterial />
       </mesh>
+
+      {/* bandeira fixa: fecha o vão até o teto */}
+      {temBandeira && (
+        <mesh position={[0, folhaAltura + perfil + sobra / 2, 0]}>
+          <boxGeometry args={[largura - montante * 2, sobra, profundidade * 0.3]} />
+          <VidroMaterial />
+        </mesh>
+      )}
 
       {[-1, 1].map((lado) => (
         <group key={lado} position={[(lado * folhaLargura) / 2, folhaAltura / 2, lado * recuo]}>
           <mesh>
             <boxGeometry args={[folhaLargura, folhaAltura, espessura]} />
-            <meshStandardMaterial color="#cfe9f7" transparent opacity={0.3} roughness={0.04} />
+            <VidroMaterial opacidade={0.3} />
           </mesh>
           {/* moldura fina: sem ela a folha some contra o fundo */}
           {[-1, 1].map((borda) => (
             <mesh key={borda} castShadow position={[(borda * folhaLargura) / 2, 0, 0]}>
               <boxGeometry args={[0.035, folhaAltura, espessura * 1.6]} />
-              <meshStandardMaterial color={METAL} metalness={0.7} roughness={0.3} />
+              <AluminioMaterial />
             </mesh>
           ))}
           {/* puxador vertical, no encontro das folhas — é onde a mão vai */}
           <mesh castShadow position={[(-lado * folhaLargura) / 2 + lado * 0.06, 0, espessura]}>
             <boxGeometry args={[0.025, folhaAltura * 0.35, 0.025]} />
-            <meshStandardMaterial color={METAL} metalness={0.8} roughness={0.25} />
+            <AluminioMaterial />
           </mesh>
         </group>
       ))}
@@ -716,13 +856,15 @@ function PortaVidro({ largura, profundidade, altura }: PropsModelo) {
 function Janela({ largura, profundidade, altura }: PropsModelo) {
   return (
     <group>
+      {/* Mesmo vidro do pano: a janela sofria do mesmo escurecimento, só que
+          menos visível porque é uma peça pequena. Ver VidroMaterial. */}
       <mesh position={[0, altura / 2, 0]}>
         <boxGeometry args={[largura, altura, profundidade * 0.6]} />
-        <meshStandardMaterial color="#bfe6ff" transparent opacity={0.35} roughness={0.05} metalness={0.1} />
+        <VidroMaterial opacidade={0.3} />
       </mesh>
       <mesh castShadow position={[0, altura / 2, 0]}>
         <boxGeometry args={[largura, 0.05, profundidade]} />
-        <meshStandardMaterial color={METAL} metalness={0.6} roughness={0.4} />
+        <AluminioMaterial />
       </mesh>
     </group>
   );
@@ -928,15 +1070,18 @@ export function ModeloDoElemento({
   largura,
   profundidade,
   altura,
+  vaos,
 }: {
   elemento: TiElemento;
   largura: number;
   profundidade: number;
   altura: number;
+  /** Recortes desta peça, em metros da ponta esquerda. Ver `vaosNaParede`. */
+  vaos?: { de: number; ate: number }[];
 }) {
   const def = tipoElemento(elemento.tipo);
   const cor = elemento.cor || def.cor;
-  const p = { cor, largura, profundidade, altura };
+  const p = { cor, largura, profundidade, altura, vaos };
 
   switch (elemento.tipo) {
     case "mesa":

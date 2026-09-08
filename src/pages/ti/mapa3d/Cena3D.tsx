@@ -35,6 +35,7 @@ import {
   redimensionarPorCanto,
   retanguloDoTraco,
   snap,
+  vaosNaParede,
 } from "./apoio";
 import { ModeloDoAtivo, ModeloDoElemento, Selecao } from "./Modelos";
 
@@ -375,6 +376,22 @@ function Conteudo({
     if (controlsRef.current) controlsRef.current.enabled = !(arrasto || traco || resize);
   }, [arrasto, traco, resize]);
 
+  /**
+   * Largar a ferramenta joga fora o traço em curso.
+   *
+   * O traço trava a câmera enquanto existe (efeito acima). Se a pessoa começa
+   * a desenhar e troca de ferramenta no meio — ou volta para o cursor — o
+   * `pointerup` que fecharia o traço nunca chega, ele fica pendurado, e a
+   * câmera fica congelada até recarregar a página. É a mesma classe de bug
+   * que o comentário do efeito acima descreve: sobra um caminho de saída sem
+   * ninguém para percorrê-lo.
+   */
+  useEffect(() => {
+    if (desenhando) return;
+    tracoRef.current = null;
+    setTraco(null);
+  }, [desenhando]);
+
   const iniciarArrasto = (
     tipo: "elemento" | "ativo",
     id: string,
@@ -480,6 +497,33 @@ function Conteudo({
     [termo],
   );
 
+  /**
+   * Onde cada parede fica vazada por causa de uma porta encostada nela.
+   *
+   * Vive AQUI, e não no modelo, porque só a cena enxerga as outras peças: o
+   * `ModeloDoElemento` recebe um elemento por vez e não teria como saber que
+   * há uma porta de vidro atravessada na parede.
+   *
+   * Sai vazio quando não existe nenhuma abertura na planta, que é o caso da
+   * esmagadora maioria — aí nem se percorre a lista de paredes.
+   */
+  const vaosPorParede = useMemo(() => {
+    const mapa = new Map<string, { de: number; ate: number }[]>();
+    const aberturas = elementos.filter((e) => tipoElemento(e.tipo).recorta);
+    if (!aberturas.length) return mapa;
+
+    for (const parede of elementos) {
+      if (!tipoElemento(parede.tipo).recortavel) continue;
+      const vaos = vaosNaParede(
+        parede,
+        aberturas.filter((a) => a.id !== parede.id),
+      );
+      // Os modelos desenham em metros; a conta é feita em cm, como o banco.
+      if (vaos.length) mapa.set(parede.id, vaos.map((v) => ({ de: M(v.de), ate: M(v.ate) })));
+    }
+    return mapa;
+  }, [elementos]);
+
   const aplicarResize = (px: number, py: number) => {
     if (!resize) return;
     const { el, alca } = resize;
@@ -539,6 +583,15 @@ function Conteudo({
          * No 2D o giro está desligado, então o direito não faz nada ali de
          * propósito: planta baixa que gira deixa de ser planta baixa.
          *
+         * ⚠ FORA da obra o objeto é escrito por extenso, com os padrões do
+         * OrbitControls, em vez de `undefined`. Passar `undefined` não
+         * "volta ao padrão": o R3F escreve `controls.mouseButtons = undefined`
+         * e, no clique seguinte, o OrbitControls estoura ao ler
+         * `mouseButtons.LEFT`. O erro acontece dentro do listener de
+         * `pointerdown`, então ele nem chega a registrar o resto — e a câmera
+         * inteira para: não gira, não arrasta, não dá zoom. Bastava entrar na
+         * obra e voltar para o cursor.
+         *
          * Fora da obra fica o padrão: lá o esquerdo é que arrasta as peças, e
          * girar com ele é o que se espera de uma maquete.
          */
@@ -549,7 +602,11 @@ function Conteudo({
                 MIDDLE: THREE.MOUSE.PAN,
                 RIGHT: THREE.MOUSE.ROTATE,
               }
-            : undefined
+            : {
+                LEFT: THREE.MOUSE.ROTATE,
+                MIDDLE: THREE.MOUSE.DOLLY,
+                RIGHT: THREE.MOUSE.PAN,
+              }
         }
         enableDamping
         dampingFactor={0.15}
@@ -734,7 +791,13 @@ function Conteudo({
               if (apagandoEstrutura) setHover((h) => (h === el.id ? null : h));
             }}
           >
-            <ModeloDoElemento elemento={el} largura={largura} profundidade={profundidade} altura={altura} />
+            <ModeloDoElemento
+              elemento={el}
+              largura={largura}
+              profundidade={profundidade}
+              altura={altura}
+              vaos={vaosPorParede.get(el.id)}
+            />
             {selecionado && (
               <Selecao largura={largura} profundidade={profundidade} altura={altura} plano={modo === "2d"} />
             )}

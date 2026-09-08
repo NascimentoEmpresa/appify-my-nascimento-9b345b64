@@ -212,15 +212,35 @@ export interface TipoElementoDef {
    * impressora em cima delas.
    */
   apoia?: boolean;
+  /**
+   * A peça RECORTA a parede em que estiver encostada.
+   *
+   * Só a porta de vidro, por enquanto, e de propósito: ela tem a altura toda
+   * do pano, então o corte de piso a teto encaixa exatamente. Porta comum
+   * (210) e janela (120) num pé-direito de 280 precisariam de verga em cima
+   * do vão — sem isso o corte abriria um rasgo até o teto, que é pior do que
+   * não cortar.
+   */
+  recorta?: boolean;
+  /**
+   * A peça PODE ser recortada por uma abertura encostada nela.
+   *
+   * Só o que é pano de parede. Porta, janela e escada também são "estrutura",
+   * mas recortar uma escada porque passou uma porta perto seria só um bug com
+   * cara de recurso.
+   */
+  recortavel?: boolean;
 }
 
 export const TIPOS_ELEMENTO: TipoElementoDef[] = [
-  { valor: "parede", label: "Parede", icone: Square, cor: "#334155", largura: 400, altura: 15, alturaZ: 280, familia: "estrutura" },
-  { valor: "divisoria", label: "Divisória", icone: Blocks, cor: "#94a3b8", largura: 200, altura: 8, alturaZ: 160, familia: "estrutura" },
+  { valor: "parede", label: "Parede", icone: Square, cor: "#334155", largura: 400, altura: 15, alturaZ: 280, familia: "estrutura", recortavel: true },
+  { valor: "divisoria", label: "Divisória", icone: Blocks, cor: "#94a3b8", largura: 200, altura: 8, alturaZ: 160, familia: "estrutura", recortavel: true },
   { valor: "porta", label: "Porta", icone: DoorOpen, cor: "#b45309", largura: 90, altura: 15, alturaZ: 210, familia: "estrutura" },
   { valor: "janela", label: "Janela", icone: Square, cor: "#7dd3fc", largura: 150, altura: 12, alturaZ: 120, familia: "estrutura" },
-  { valor: "parede_vidro", label: "Parede de vidro", icone: PanelsTopLeft, cor: "#bae6fd", largura: 400, altura: 10, alturaZ: 280, familia: "estrutura" },
-  { valor: "porta_vidro", label: "Porta de vidro (correr)", icone: GalleryVerticalEnd, cor: "#7dd3fc", largura: 180, altura: 12, alturaZ: 210, familia: "estrutura" },
+  { valor: "parede_vidro", label: "Parede de vidro", icone: PanelsTopLeft, cor: "#bae6fd", largura: 400, altura: 10, alturaZ: 280, familia: "estrutura", recortavel: true },
+  // Mesma espessura e mesma altura do pano de vidro, de propósito: é o que
+  // faz a porta encostar na parede e virar uma divisória só (ver PortaVidro).
+  { valor: "porta_vidro", label: "Porta de vidro (correr)", icone: GalleryVerticalEnd, cor: "#7dd3fc", largura: 180, altura: 10, alturaZ: 280, familia: "estrutura", recorta: true },
   { valor: "escada", label: "Escada", icone: Blocks, cor: "#a1a1aa", largura: 250, altura: 120, alturaZ: 60, familia: "estrutura", apoia: true },
   { valor: "sala", label: "Sala / Setor", icone: Square, cor: "#dbeafe", largura: 500, altura: 400, alturaZ: 0.2, familia: "area" },
   { valor: "recepcao", label: "Recepção", icone: Armchair, cor: "#fef3c7", largura: 400, altura: 300, alturaZ: 0.2, familia: "area" },

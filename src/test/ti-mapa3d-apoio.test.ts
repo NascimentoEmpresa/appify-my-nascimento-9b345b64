@@ -6,6 +6,8 @@ import {
   arestasDoContorno,
   bordaParaRemover,
   celulasDoArrasto,
+  trechosSolidos,
+  vaosNaParede,
   celulasDoRetangulo,
   contornoParaExpandir,
   limitesDasCelulas,
@@ -169,6 +171,69 @@ describe("alturaDeApoio — o computador em cima da mesa", () => {
     const girada = elemento({ id: "m2", tipo: "mesa", x: 100, y: 100, largura: 140, altura: 70, rotacao: 90 });
     expect(alturaDeApoio(ativo({ pos_x: 150, pos_y: 220 }), [girada])).toBe(75);
     expect(alturaDeApoio(ativo({ pos_x: 220, pos_y: 120 }), [girada])).toBe(0);
+  });
+});
+
+describe("recorte da parede para encaixar a porta", () => {
+  /** Parede de 6 m deitada no eixo X, começando na origem, 15 cm de espessura. */
+  const parede = elemento({ id: "p", tipo: "parede", x: 0, y: 0, largura: 600, altura: 15, rotacao: 0 });
+  /** Porta de vidro de 180, centrada em x=300, encostada na parede. */
+  const porta = (p: Partial<TiElemento>) =>
+    elemento({ id: "d", tipo: "porta_vidro", x: 210, y: 2, largura: 180, altura: 10, rotacao: 0, ...p });
+
+  it("abre o vão na largura da porta, no lugar dela", () => {
+    const [vao] = vaosNaParede(parede, [porta({})]);
+    expect(vao.de).toBeCloseTo(210, 0);
+    expect(vao.ate).toBeCloseTo(390, 0);
+  });
+
+  it("porta longe da linha da parede não abre nada", () => {
+    // 3 m para o lado: é a parede de outra sala.
+    expect(vaosNaParede(parede, [porta({ y: 300 })])).toEqual([]);
+  });
+
+  it("porta atravessada abre um vão da ESPESSURA dela, não da largura", () => {
+    // Girada 90°, a porta cruza a parede: o rasgo é de 10 cm, não de 180.
+    const [vao] = vaosNaParede(parede, [porta({ rotacao: 90 })]);
+    expect(vao.ate - vao.de).toBeCloseTo(10, 0);
+  });
+
+  it("duas portas coladas viram um vão só", () => {
+    const vaos = vaosNaParede(parede, [
+      porta({ id: "d1", x: 210 }),
+      porta({ id: "d2", x: 380 }),
+    ]);
+    expect(vaos).toHaveLength(1);
+    expect(vaos[0].ate - vaos[0].de).toBeGreaterThan(180);
+  });
+
+  it("o vão não escapa das pontas da parede", () => {
+    const [vao] = vaosNaParede(parede, [porta({ x: -50 })]);
+    expect(vao.de).toBe(0);
+    expect(vao.ate).toBeLessThanOrEqual(600);
+  });
+
+  describe("o que sobra em pé", () => {
+    it("parede sem vão continua um pedaço só", () => {
+      expect(trechosSolidos(600, [])).toEqual([{ de: 0, ate: 600 }]);
+    });
+
+    it("vão no meio deixa dois pedaços", () => {
+      expect(trechosSolidos(600, [{ de: 210, ate: 390 }])).toEqual([
+        { de: 0, ate: 210 },
+        { de: 390, ate: 600 },
+      ]);
+    });
+
+    it("vão encostado na ponta não deixa lasca de largura zero", () => {
+      // Um pedaço de 0,4 cm entre a ponta e o vão seria uma caixa invisível
+      // que ainda assim entra na cena e no raycast.
+      expect(trechosSolidos(600, [{ de: 0.4, ate: 390 }])).toEqual([{ de: 390, ate: 600 }]);
+    });
+
+    it("porta ocupando a parede inteira não deixa nada em pé", () => {
+      expect(trechosSolidos(600, [{ de: 0, ate: 600 }])).toEqual([]);
+    });
   });
 });
 
