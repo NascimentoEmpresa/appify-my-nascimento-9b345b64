@@ -45,8 +45,50 @@ function espiao(): Aplicador & { chamadas: string[] } {
     atualizarElemento: (el) => chamadas.push(`atualizar:${el.id}:${el.x}`),
     removerElemento: (id) => chamadas.push(`remover:${id}`),
     atualizarAtivo: (a) => chamadas.push(`ativo:${a.id}:${a.pos_x}`),
+    criarAtivo: (a) => chamadas.push(`criarAtivo:${a.id}`),
+    removerAtivo: (id) => chamadas.push(`removerAtivo:${id}`),
   };
 }
+
+/** Uma duplicação de bloco: duas peças e um equipamento. */
+const bloco = (): AcaoMapa => ({
+  tipo: "duplicar_bloco",
+  elementos: [parede({ id: "c1" }), parede({ id: "c2" })],
+  ativos: [pc({ id: "c3" })],
+});
+
+describe("duplicar bloco", () => {
+  /**
+   * O bloco é UMA ação. Antes eram doze — uma por peça —, e equipamento não
+   * tinha entrada nenhuma: desfazer a cópia de "mesa + 4 cadeiras + 4
+   * monitores" exigia doze Ctrl+Z e ainda assim os monitores ficavam.
+   */
+  it("desfazer apaga TODAS as peças da cópia, inclusive o equipamento", () => {
+    const ap = espiao();
+    desfazerAcao(bloco(), ap);
+    expect(ap.chamadas).toEqual(["remover:c1", "remover:c2", "removerAtivo:c3"]);
+  });
+
+  it("refazer devolve o bloco com os MESMOS ids", () => {
+    const ap = espiao();
+    refazerAcao(bloco(), ap);
+    // x=100 é o padrão do helper `parede` — o que importa aqui é o id.
+    expect(ap.chamadas).toEqual(["criar:c1:100", "criar:c2:100", "criarAtivo:c3"]);
+  });
+
+  it("desfazer e refazer se anulam — nada sobra e nada falta", () => {
+    const ida = espiao();
+    const volta = espiao();
+    desfazerAcao(bloco(), ida);
+    refazerAcao(bloco(), volta);
+    expect(ida.chamadas).toHaveLength(3);
+    expect(volta.chamadas).toHaveLength(3);
+  });
+
+  it("a descrição conta as peças, para o usuário saber o que o Ctrl+Z vai levar", () => {
+    expect(descreverAcao(bloco())).toBe("duplicar 3 peças");
+  });
+});
 
 describe("desfazer", () => {
   it("o inverso de criar é remover a peça criada", () => {

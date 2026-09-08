@@ -29,7 +29,17 @@ export type AcaoMapa =
   | { tipo: "criar_elemento"; depois: TiElemento }
   | { tipo: "atualizar_elemento"; antes: TiElemento; depois: TiElemento }
   | { tipo: "remover_elemento"; antes: TiElemento }
-  | { tipo: "atualizar_ativo"; antes: TiAtivo; depois: TiAtivo };
+  | { tipo: "atualizar_ativo"; antes: TiAtivo; depois: TiAtivo }
+  /**
+   * Duplicar bloco — UMA ação, não uma por peça.
+   *
+   * Copiar "mesa + 4 cadeiras + 4 monitores + teclados" empilhava doze
+   * entradas no histórico, e desfazer virava doze Ctrl+Z. Pior: equipamento
+   * não tinha entrada nenhuma, então metade da cópia não saía de jeito
+   * nenhum. Guardando o bloco inteiro numa ação só, um Ctrl+Z apaga a cópia
+   * toda — que é o que quem duplicou espera.
+   */
+  | { tipo: "duplicar_bloco"; elementos: TiElemento[]; ativos: TiAtivo[] };
 
 /** O que a tela precisa saber fazer para o histórico funcionar. */
 export interface Aplicador {
@@ -37,6 +47,15 @@ export interface Aplicador {
   atualizarElemento: (el: TiElemento) => void;
   removerElemento: (id: string) => void;
   atualizarAtivo: (ativo: TiAtivo) => void;
+  /**
+   * Só para desfazer/refazer uma DUPLICAÇÃO.
+   *
+   * Apagar equipamento continua fora do Ctrl+Z no resto da tela — o DELETE
+   * leva o histórico do aparelho junto (CASCADE). Aqui é diferente: a peça
+   * nasceu há segundos, da própria cópia, e não tem histórico para perder.
+   */
+  criarAtivo: (ativo: TiAtivo) => void;
+  removerAtivo: (id: string) => void;
 }
 
 const LIMITE = 50;
@@ -62,6 +81,10 @@ export function desfazerAcao(acao: AcaoMapa, ap: Aplicador): void {
     case "atualizar_ativo":
       ap.atualizarAtivo(acao.antes);
       return;
+    case "duplicar_bloco":
+      for (const el of acao.elementos) ap.removerElemento(el.id);
+      for (const a of acao.ativos) ap.removerAtivo(a.id);
+      return;
   }
 }
 
@@ -80,6 +103,12 @@ export function refazerAcao(acao: AcaoMapa, ap: Aplicador): void {
     case "atualizar_ativo":
       ap.atualizarAtivo(acao.depois);
       return;
+    case "duplicar_bloco":
+      // Recria com os MESMOS ids: é o que faz o Ctrl+Y devolver exatamente o
+      // bloco que o Ctrl+Z tirou, em vez de um bloco parecido.
+      for (const el of acao.elementos) ap.criarElemento(el);
+      for (const a of acao.ativos) ap.criarAtivo(a);
+      return;
   }
 }
 
@@ -94,6 +123,10 @@ export function descreverAcao(acao: AcaoMapa): string {
       return "mudar peça";
     case "atualizar_ativo":
       return "mover equipamento";
+    case "duplicar_bloco": {
+      const n = acao.elementos.length + acao.ativos.length;
+      return `duplicar ${n} peça${n === 1 ? "" : "s"}`;
+    }
   }
 }
 

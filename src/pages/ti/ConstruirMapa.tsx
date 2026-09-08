@@ -268,6 +268,8 @@ export default function ConstruirMapa() {
       if (planta) excluirElemento.mutate({ id, plantaId: planta.id });
     },
     atualizarAtivo: (a) => salvarAtivo.mutate({ ...(a as TiAtivoInput), id: a.id }),
+    criarAtivo: (a) => salvarAtivo.mutate({ ...(a as TiAtivoInput), id: a.id }),
+    removerAtivo: (id) => excluirAtivo.mutate(id),
   };
   const historico = useHistoricoMapa(aplicador);
 
@@ -483,9 +485,8 @@ export default function ConstruirMapa() {
    * equipamento. É o jeito rápido de fazer a fileira de mesas e as estações de
    * trabalho iguais, que é como um escritório realmente é.
    */
-  /** Deslocamento da cópia, em cm. Meio metro: sai de cima do original sem
-   *  ir parar longe do lugar onde vai ficar. */
-  const PASSO_DA_COPIA = 50;
+  /** Folga entre o bloco original e a cópia, em cm. */
+  const FOLGA_DA_COPIA = 60;
 
   /**
    * Duplica o GRUPO inteiro, mantendo a formação.
@@ -501,9 +502,47 @@ export default function ConstruirMapa() {
   const duplicarGrupo = () => {
     if (!planta) return;
 
+    /**
+     * O deslocamento sai do TAMANHO DO BLOCO, não de um valor fixo.
+     *
+     * Com 50 cm fixos, um bloco de 3 m nascia praticamente em cima do
+     * original — e o estrago não era só visual: ao arrastar, o clique pegava
+     * a peça de baixo (a original, que não está no grupo) e movia só ela.
+     * Parecia que duplicar e mover em bloco não funcionavam; o que não
+     * funcionava era enxergar a cópia.
+     *
+     * Empurrando pela largura do bloco mais uma folga, a cópia nasce
+     * inteiramente ao lado, clicável e pronta para ser arrastada.
+     */
+    let minX = Infinity;
+    let maxX = -Infinity;
+    for (const item of grupo) {
+      if (!item) continue;
+      if (item.tipo === "elemento") {
+        const el = elementos.find((e) => e.id === item.id);
+        if (el) { minX = Math.min(minX, Number(el.x)); maxX = Math.max(maxX, Number(el.x) + Number(el.largura)); }
+      } else {
+        const a = ativos.find((z) => z.id === item.id);
+        if (a?.pos_x != null) { minX = Math.min(minX, Number(a.pos_x)); maxX = Math.max(maxX, Number(a.pos_x)); }
+      }
+    }
+    const desloca = Number.isFinite(minX) ? maxX - minX + FOLGA_DA_COPIA : FOLGA_DA_COPIA;
+
     const novos: SelecaoCena[] = [];
+    const elsCriados: TiElemento[] = [];
+    const ativosCriados: TiAtivo[] = [];
     let pendentes = 0;
-    const fim = () => { if (--pendentes === 0) setGrupo(novos); };
+    const fim = () => {
+      if (--pendentes > 0) return;
+      setGrupo(novos);
+      // A seleção principal também vai para a cópia: deixá-la no original
+      // faria o inspetor descrever uma peça que não é a que está pega.
+      setSelecao(novos[0] ?? null);
+      // UMA entrada no histórico para o bloco todo — ver `duplicar_bloco`.
+      if (elsCriados.length || ativosCriados.length) {
+        historico.registrar({ tipo: "duplicar_bloco", elementos: elsCriados, ativos: ativosCriados });
+      }
+    };
 
     for (const item of grupo) {
       if (!item) continue;
@@ -517,12 +556,12 @@ export default function ConstruirMapa() {
           {
             ...resto,
             planta_id: planta.id,
-            x: Number(el.x) + PASSO_DA_COPIA,
-            y: Number(el.y) + PASSO_DA_COPIA,
+            x: Number(el.x) + desloca,
+            y: Number(el.y),
           },
           {
             onSuccess: (criado) => {
-              historico.registrar({ tipo: "criar_elemento", depois: criado });
+              elsCriados.push(criado);
               novos.push({ tipo: "elemento", id: criado.id });
               fim();
             },
@@ -551,11 +590,15 @@ export default function ConstruirMapa() {
           ...(resto as TiAtivoInput),
           nome: `${def.label} ${quantos}`,
           planta_id: planta.id,
-          pos_x: Number(a.pos_x ?? 0) + PASSO_DA_COPIA,
-          pos_y: Number(a.pos_y ?? 0) + PASSO_DA_COPIA,
+          pos_x: Number(a.pos_x ?? 0) + desloca,
+          pos_y: Number(a.pos_y ?? 0),
         },
         {
-          onSuccess: (novo) => { novos.push({ tipo: "ativo", id: novo.id }); fim(); },
+          onSuccess: (novo) => {
+            ativosCriados.push(novo);
+            novos.push({ tipo: "ativo", id: novo.id });
+            fim();
+          },
           onError: fim,
         },
       );
