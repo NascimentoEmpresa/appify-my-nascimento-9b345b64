@@ -230,17 +230,52 @@ function ContratoSelect({ value, multiplos, onChange }: {
 
   useEffect(() => {
     (async () => {
-      const { data, error } = await sbSemSchema
-        .from("contratos")
-        .select("id,nome,cliente")
-        .eq("status", "ativo")
-        .order("nome");
-      if (error) { setEstado("erro"); return; }
+      /**
+       * A lista vem por RPC, não do SELECT direto na tabela.
+       *
+       * `contratos` tem política de SELECT só para `authenticated`. Quem
+       * responde o formulário público não tem conta, então o SELECT não dava
+       * erro — dava ZERO LINHA, e a tela exibia "Nenhum contrato disponível
+       * para o seu acesso" para todo mundo que abrisse o link sem estar
+       * logado. Como não é erro, nada aparecia no console.
+       *
+       * `cs_form_contratos` é SECURITY DEFINER e devolve só id/nome/cliente
+       * dos ativos — mesmo desenho de `cs_form_setores` e `cs_form_colegas`,
+       * que já servem este formulário.
+       *
+       * O SELECT continua aqui como PLANO B, para o banco em que a migration
+       * ainda não foi aplicada: lá a RPC não existe e quem está logado
+       * continua vendo a lista, como via antes. É o mesmo cuidado que
+       * `cs_form_porta` toma com "banco antigo".
+       */
+      let linhas: { id: unknown; nome: unknown; cliente: unknown }[] | null = null;
+
+      const viaRpc = await sbSemSchema.rpc("cs_form_contratos");
+      if (!viaRpc.error) {
+        linhas = (viaRpc.data ?? []) as typeof linhas;
+      } else {
+        const { data, error } = await sbSemSchema
+          .from("contratos")
+          .select("id,nome,cliente")
+          .eq("status", "ativo")
+          .order("nome");
+        if (error) { setEstado("erro"); return; }
+        linhas = data ?? [];
+      }
+
+      const data = linhas ?? [];
       // Deduplica por nome: a resposta gravada é o nome e a marcação compara
       // por nome, então dois contratos homônimos ficariam marcados juntos.
       const vistos = new Set<string>();
-      setContratos((data ?? [])
-        .map((r): OpcaoContrato => ({ id: String(r.id), nome: String(r.nome ?? "").trim(), cliente: r.cliente ?? null }))
+      setContratos(data
+        .map((r): OpcaoContrato => ({
+          id: String(r.id),
+          nome: String(r.nome ?? "").trim(),
+          // A RPC e o SELECT chegam sem tipo aqui (a tabela não está no
+          // types.ts gerado), então o campo é normalizado na entrada em vez
+          // de confiar no que veio.
+          cliente: r.cliente == null ? null : String(r.cliente),
+        }))
         .filter((c) => c.nome && !vistos.has(c.nome) && vistos.add(c.nome)));
       setEstado("ok");
     })();
@@ -248,7 +283,9 @@ function ContratoSelect({ value, multiplos, onChange }: {
 
   if (estado === "carregando") return <div style={{ fontSize: 13, color: "#94a3b8" }}>Carregando contratos…</div>;
   if (estado === "erro") return <div style={{ fontSize: 13, color: "#dc2626", fontWeight: 700 }}>Não foi possível carregar os contratos.</div>;
-  if (contratos.length === 0) return <div style={{ fontSize: 13, color: "#94a3b8" }}>Nenhum contrato disponível para o seu acesso.</div>;
+  // "para o seu acesso" sugeria falta de permissão de quem responde — e
+  // quem responde nem tem conta. Vazio aqui é cadastro sem contrato ativo.
+  if (contratos.length === 0) return <div style={{ fontSize: 13, color: "#94a3b8" }}>Nenhum contrato ativo cadastrado.</div>;
 
   // ADMINISTRATIVO na frente da lista. O filtro evita duplicar caso um dia
   // exista um contrato ativo com esse mesmo nome (a resposta é o nome, então
