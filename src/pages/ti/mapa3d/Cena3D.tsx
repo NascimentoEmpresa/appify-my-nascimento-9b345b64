@@ -18,7 +18,6 @@ import {
   M,
   alturaDeApoio,
   alturaDoAndar,
-  arestasDoContorno,
   bordaParaRemover,
   celulasDoRetangulo,
   chaveCelula,
@@ -732,8 +731,6 @@ function Conteudo({
         onDesmarcar={() => onSelecionar(null)}
       />
 
-      <ParedesDoContorno celulas={celulasDoPiso} planta={planta} />
-
       {/*
         A sombra de contato é o que "assenta" o móvel no chão. Sem ela, mesmo
         com a sombra projetada, os objetos parecem flutuar um centímetro acima
@@ -1192,48 +1189,6 @@ function Piso({
           infiniteGrid={false}
         />
       )}
-    </group>
-  );
-}
-
-/**
- * As paredes externas, correndo pelo CONTORNO do piso.
- *
- * Antes eram quatro caixas no retângulo da planta — o que, com o piso feito de
- * células, mentia: num andar em L a parede cortava o vazio e deixava o recorte
- * aberto. Agora cada trecho do contorno vira uma parede, então ela acompanha o
- * formato desenhado, seja qual for.
- *
- * Meia altura (1,3 m no máximo) de propósito: parede inteira no perímetro tapa
- * a vista da câmera, que olha de fora e de cima.
- */
-function ParedesDoContorno({ celulas, planta }: { celulas: TiCelula[]; planta: TiPlanta }) {
-  const arestas = useMemo(() => arestasDoContorno(celulas), [celulas]);
-  const h = Math.min(M(planta.pe_direito_cm ?? 280) * 0.42, 1.3);
-  const e = 0.1;
-
-  return (
-    <group>
-      {arestas.map((a, i) => {
-        const horizontal = a.y1 === a.y2;
-        const comprimento = horizontal ? a.x2 - a.x1 : a.y2 - a.y1;
-        const cx = horizontal ? (a.x1 + a.x2) / 2 : a.x1;
-        const cz = horizontal ? a.y1 : (a.y1 + a.y2) / 2;
-        return (
-          <mesh
-            key={`${a.x1}-${a.y1}-${a.x2}-${a.y2}-${i}`}
-            castShadow
-            receiveShadow
-            position={[cx, h / 2, cz]}
-            raycast={() => null}
-          >
-            <boxGeometry
-              args={horizontal ? [comprimento + e, h, e] : [e, h, comprimento + e]}
-            />
-            <meshStandardMaterial color="#c3ccd8" roughness={0.9} />
-          </mesh>
-        );
-      })}
     </group>
   );
 }
