@@ -883,24 +883,27 @@ export function Selecao({
   profundidade,
   altura,
   plano = false,
+  cor = "#f59e0b",
 }: {
   largura: number;
   profundidade: number;
   altura: number;
   /** Vista 2D: desenha a moldura chapada em vez da caixa de arame. */
   plano?: boolean;
+  /** Âmbar marca o que está pego; vermelho, o que o clique vai apagar. */
+  cor?: string;
 }) {
   const args = useMemo<[number, number, number]>(
     () => [largura * 1.06 + 0.02, Math.max(altura, M(4)) * 1.06 + 0.02, profundidade * 1.06 + 0.02],
     [largura, profundidade, altura],
   );
 
-  if (plano) return <MolduraPlana largura={largura} profundidade={profundidade} altura={altura} />;
+  if (plano) return <MolduraPlana largura={largura} profundidade={profundidade} altura={altura} cor={cor} />;
 
   return (
     <mesh position={[0, Math.max(altura, M(4)) / 2, 0]}>
       <boxGeometry args={args} />
-      <meshBasicMaterial color="#f59e0b" wireframe transparent opacity={0.9} />
+      <meshBasicMaterial color={cor} wireframe transparent opacity={0.9} />
     </mesh>
   );
 }
@@ -916,7 +919,17 @@ export function Selecao({
  * a peça está por baixo de outra — selecionar a mesa com um monitor em cima
  * mostrava só metade do contorno.
  */
-function MolduraPlana({ largura, profundidade, altura }: { largura: number; profundidade: number; altura: number }) {
+function MolduraPlana({
+  largura,
+  profundidade,
+  altura,
+  cor = "#f59e0b",
+}: {
+  largura: number;
+  profundidade: number;
+  altura: number;
+  cor?: string;
+}) {
   // Espessura proporcional, com piso e teto: no equipamento pequeno uma barra
   // fixa engolia a peça; na sala de 8 m ela sumia.
   const esp = Math.min(0.12, Math.max(0.035, Math.min(largura, profundidade) * 0.06));
@@ -929,13 +942,13 @@ function MolduraPlana({ largura, profundidade, altura }: { largura: number; prof
       {[-1, 1].map((lado) => (
         <mesh key={`x${lado}`} position={[0, 0, (lado * P) / 2]}>
           <boxGeometry args={[L + esp, 0.02, esp]} />
-          <meshBasicMaterial color="#f59e0b" depthTest={false} transparent opacity={0.95} />
+          <meshBasicMaterial color={cor} depthTest={false} transparent opacity={0.95} />
         </mesh>
       ))}
       {[-1, 1].map((lado) => (
         <mesh key={`z${lado}`} position={[(lado * L) / 2, 0, 0]}>
           <boxGeometry args={[esp, 0.02, P + esp]} />
-          <meshBasicMaterial color="#f59e0b" depthTest={false} transparent opacity={0.95} />
+          <meshBasicMaterial color={cor} depthTest={false} transparent opacity={0.95} />
         </mesh>
       ))}
     </group>

@@ -120,6 +120,15 @@ interface Props {
    */
   pintandoPiso?: boolean;
   /**
+   * Borracha de estrutura ligada: o clique APAGA a parede em vez de pegá-la.
+   *
+   * Fica separado de `desenhando` porque a borracha não desenha nada — mas
+   * também não pode deixar selecionar nem arrastar, senão o clique que era
+   * para apagar sai empurrando a parede.
+   */
+  apagandoEstrutura?: boolean;
+  onApagarElemento?: (id: string) => void;
+  /**
    * Modo obra ligado — piso e parede, não mobília.
    *
    * A cena usa isto só para pôr o tapete de fora (ver `TapeteDeObra`): é o
@@ -266,6 +275,8 @@ function Conteudo({
   mostrarRotulos = true,
   desenhando = false,
   pintandoPiso = false,
+  apagandoEstrutura = false,
+  onApagarElemento,
   obra = false,
   passoCm = PASSO_PADRAO_CM,
   onDesenharNoChao,
@@ -515,10 +526,18 @@ function Conteudo({
          * — arrastava a câmera E desenhava junto, porque o `pointerdown` do
          * chão não olhava qual botão tinha sido apertado.
          *
-         * Então: ESQUERDO só desenha (aqui ele não faz nada, e quem responde
-         * é o piso), DIREITO só move a câmera. `undefined` é como o
+         * Então, um botão por tarefa: ESQUERDO só desenha (aqui ele não faz
+         * nada, e quem responde é o piso), DIREITO só gira a câmera, MEIO só
+         * arrasta o ponto para onde ela olha. `undefined` é como o
          * OrbitControls desliga um botão — ele cai no `default` e não entra
          * em estado nenhum.
+         *
+         * O zoom saiu do botão do meio e ficou só na rodinha, que é onde a mão
+         * procura — e assim o meio fica livre para o que é usado o tempo todo
+         * ao desenhar: andar pela planta sem mudar o ângulo.
+         *
+         * No 2D o giro está desligado, então o direito não faz nada ali de
+         * propósito: planta baixa que gira deixa de ser planta baixa.
          *
          * Fora da obra fica o padrão: lá o esquerdo é que arrasta as peças, e
          * girar com ele é o que se espera de uma maquete.
@@ -527,8 +546,8 @@ function Conteudo({
           obra
             ? {
                 LEFT: undefined,
-                MIDDLE: THREE.MOUSE.DOLLY,
-                RIGHT: modo === "2d" ? THREE.MOUSE.PAN : THREE.MOUSE.ROTATE,
+                MIDDLE: THREE.MOUSE.PAN,
+                RIGHT: THREE.MOUSE.ROTATE,
               }
             : undefined
         }
@@ -633,7 +652,10 @@ function Conteudo({
         }}
       />
 
-      {traco && <FantasmaDoTraco traco={traco} piso={pintandoPiso} />}
+      {/* Apagando não se desenha nada: a borracha mantém `desenhando` ligado
+          só para travar arrasto e seleção, e a prévia de parede aí em cima do
+          cursor seria a promessa de uma peça que não vai nascer. */}
+      {traco && !apagandoEstrutura && <FantasmaDoTraco traco={traco} piso={pintandoPiso} />}
 
       {elementos.map((cru) => {
         // Enquanto a alça está sendo puxada, a peça desenha com a medida
@@ -660,6 +682,20 @@ function Conteudo({
             rotation={[0, rad(Number(el.rotacao)), 0]}
             onPointerDown={(e: ThreeEvent<PointerEvent>) => {
               /**
+               * A borracha vem PRIMEIRO, antes de desenhar, selecionar ou
+               * arrastar: é o clique inteiro, não um caso a mais.
+               *
+               * Só estrutura some. Móvel e equipamento devolvem o clique sem
+               * fazer nada — apagar a mesa sem querer, no meio de levantar
+               * uma parede, é o tipo de erro que ninguém percebe na hora.
+               */
+              if (apagandoEstrutura) {
+                if (e.button !== 0) return;
+                e.stopPropagation();
+                if (tipoElemento(el.tipo).familia === "estrutura") onApagarElemento?.(el.id);
+                return;
+              }
+              /**
                * Com uma peça na mão, clicar EM CIMA de um móvel de apoio conta
                * como clicar naquele ponto do móvel.
                *
@@ -684,14 +720,35 @@ function Conteudo({
               iniciarArrasto("elemento", el.id, 0, e.point, x, z);
             }}
             onPointerUp={(e: ThreeEvent<PointerEvent>) => {
+              if (apagandoEstrutura) return;
               if (!desenhando || !tipoElemento(el.tipo).apoia) return;
               e.stopPropagation();
               finalizarTraco();
+            }}
+            onPointerOver={(e: ThreeEvent<PointerEvent>) => {
+              if (!apagandoEstrutura) return;
+              e.stopPropagation();
+              setHover(el.id);
+            }}
+            onPointerOut={() => {
+              if (apagandoEstrutura) setHover((h) => (h === el.id ? null : h));
             }}
           >
             <ModeloDoElemento elemento={el} largura={largura} profundidade={profundidade} altura={altura} />
             {selecionado && (
               <Selecao largura={largura} profundidade={profundidade} altura={altura} plano={modo === "2d"} />
+            )}
+            {/* Com a borracha na mão, o que está sob o cursor fica marcado em
+                vermelho — sem isso o clique é uma aposta, ainda mais no 2D,
+                onde parede fina e divisória se parecem. */}
+            {apagandoEstrutura && hover === el.id && def.familia === "estrutura" && (
+              <Selecao
+                largura={largura}
+                profundidade={profundidade}
+                altura={altura}
+                plano={modo === "2d"}
+                cor="#ef4444"
+              />
             )}
             {def.familia === "area" && el.rotulo && (
               <Etiqueta center distanceFactor={22} position={[0, 0.05, 0]}>

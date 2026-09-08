@@ -78,7 +78,16 @@ type Ferramenta =
    * uma sala de 5×4 custava vinte cliques no "+", um de cada vez, esperando o
    * banco entre eles. Arrastando, a mesma sala é um gesto.
    */
-  | { tipo: "piso"; ocupar: boolean };
+  | { tipo: "piso"; ocupar: boolean }
+  /**
+   * Borracha de parede: o clique apaga a estrutura, uma atrás da outra.
+   *
+   * Sem diálogo de confirmação, de propósito. Apagar parede errada acontece,
+   * mas quem está derrubando divisória derruba várias seguidas — um "tem
+   * certeza?" por clique tornaria a ferramenta inútil. O seguro é o Ctrl+Z,
+   * que aqui restaura a peça inteira (ver `recriarElemento`).
+   */
+  | { tipo: "remover_parede" };
 
 /**
  * Onde fica lembrado se a pessoa edita em planta baixa ou na maquete.
@@ -508,6 +517,21 @@ export default function ConstruirMapa() {
     setConfirmar(null);
   };
 
+  /** Apaga a peça direto, guardando o desfazer — a borracha da obra. */
+  const apagarElemento = useCallback(
+    (id: string) => {
+      if (!planta || !podeExcluirElemento) return;
+      const antes = elementos.find((e) => e.id === id);
+      if (!antes) return;
+      excluirElemento.mutate(
+        { id, plantaId: planta.id },
+        { onSuccess: () => historico.registrar({ tipo: "remover_elemento", antes }) },
+      );
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [planta, podeExcluirElemento, elementos, historico],
+  );
+
   const podeRemoverAgora = (elementoSel && podeExcluirElemento) || (ativoSel && podeExcluirAtivo);
 
   return (
@@ -685,6 +709,17 @@ export default function ConstruirMapa() {
                 >
                   <Ruler className="mr-1.5 h-3.5 w-3.5" /> Parede
                 </Button>
+                {podeExcluirElemento && (
+                  <Button
+                    variant={ferramenta.tipo === "remover_parede" ? "secondary" : "ghost"}
+                    size="sm"
+                    className="h-7 px-2"
+                    onClick={() => setFerramenta({ tipo: "remover_parede" })}
+                    title="Clique numa parede, divisória, porta ou janela para tirar (Ctrl+Z desfaz)"
+                  >
+                    <Trash2 className="mr-1.5 h-3.5 w-3.5" /> Tirar parede
+                  </Button>
+                )}
               </div>
             )}
             <Button variant={grade ? "secondary" : "ghost"} size="icon" className="h-8 w-8"
@@ -737,7 +772,9 @@ export default function ConstruirMapa() {
             {ferramenta.tipo !== "selecao" && (
               <span className="ml-auto flex items-center gap-2 rounded-full bg-sky-600 px-3 py-1 text-xs font-semibold text-white">
                 <Move3d className="h-3.5 w-3.5" />
-                {ferramenta.tipo === "piso"
+                {ferramenta.tipo === "remover_parede"
+                  ? "Clique na parede para tirar"
+                  : ferramenta.tipo === "piso"
                   ? ferramenta.ocupar
                     ? "Arraste no chão para abrir piso"
                     : "Arraste no chão para tirar piso"
@@ -909,6 +946,8 @@ export default function ConstruirMapa() {
                 passoCm={passoCm}
                 desenhando={ferramenta.tipo !== "selecao"}
                 pintandoPiso={ferramenta.tipo === "piso"}
+                apagandoEstrutura={ferramenta.tipo === "remover_parede"}
+                onApagarElemento={apagarElemento}
                 obra={obra}
                 onDesenharNoChao={desenharNoChao}
                 plantas={plantas}
@@ -963,7 +1002,8 @@ export default function ConstruirMapa() {
                     <li><b>Duplo clique</b> num equipamento abre a ficha</li>
                     <li><b>2D / 3D</b> na barra troca a vista; no 2D a câmera não gira e o botão direito arrasta a planta</li>
                     <li><b>Obra</b> abre o modo de planta: arraste no chão para <b>abrir</b> ou <b>tirar</b> piso de uma vez, ou para levantar <b>parede</b></li>
-                    <li>Na <b>obra</b> os botões não se misturam: <b>esquerdo</b> desenha, <b>direito</b> move a câmera</li>
+                    <li>Na <b>obra</b> cada botão faz uma coisa: <b>esquerdo</b> desenha, <b>meio</b> arrasta a planta, <b>direito</b> gira a câmera (no 3D), <b>rodinha</b> dá zoom</li>
+                    <li><b>Tirar parede</b> apaga no clique, sem perguntar — o que fica vermelho é o que vai sumir, e <b>Ctrl+Z</b> traz de volta</li>
                   </ul>
                 </div>
               ) : (

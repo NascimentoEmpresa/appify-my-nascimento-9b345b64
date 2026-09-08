@@ -806,6 +806,17 @@ export function useDefinirCelula() {
  * Uma invalidação só no fim, e não uma por quadrado: com `invalidateQueries`
  * dentro do laço, um arrasto de 40 m² recarregaria a planta 40 vezes e a tela
  * piscaria do começo ao fim do arrasto.
+ *
+ * O PISO APARECE ANTES DE O BANCO RESPONDER (`onMutate`), e é isso que torna
+ * a ferramenta usável. Sendo sequencial, um arrasto de 4×4 são dezesseis idas
+ * e voltas ao Supabase: pela VPN, dois segundos largos de tela parada depois
+ * de soltar o mouse, sem nada indicando que algo estava acontecendo. Desenhar
+ * planta é um gesto atrás do outro, e esperar entre eles mata o fluxo.
+ *
+ * O caso em que a prévia otimista e o banco divergem por um instante é o de
+ * crescer para CIMA ou para a ESQUERDA: ali a RPC renumera o mundo inteiro, e
+ * os índices que pintamos deixam de valer. Dura até o refetch do fim, que é a
+ * palavra final — por isso `invalidateQueries` continua onde está.
  */
 export function useDefinirCelulas() {
   const qc = useQueryClient();
@@ -821,6 +832,25 @@ export function useDefinirCelulas() {
         if (error) throw error;
       }
     },
+    onMutate: async (v) => {
+      const chave = ["ti_celulas", v.planta_id];
+      // Sem cancelar, um refetch que já estava a caminho pousa DEPOIS da
+      // pintura otimista e a apaga — o piso aparecia e sumia.
+      await qc.cancelQueries({ queryKey: chave });
+      const anterior = qc.getQueryData<TiCelula[]>(chave);
+
+      const id = (c: { cx: number; cy: number }) => `${c.cx},${c.cy}`;
+      qc.setQueryData<TiCelula[]>(chave, (atual = []) => {
+        if (!v.ocupar) {
+          const tirar = new Set(v.celulas.map(id));
+          return atual.filter((c) => !tirar.has(id(c)));
+        }
+        const jaTem = new Set(atual.map(id));
+        return [...atual, ...v.celulas.filter((c) => !jaTem.has(id(c)))];
+      });
+
+      return { anterior };
+    },
     onSuccess: (_r, v) => {
       qc.invalidateQueries({ queryKey: ["ti_celulas", v.planta_id] });
       qc.invalidateQueries({ queryKey: ["ti_celulas_varias"] });
@@ -829,7 +859,13 @@ export function useDefinirCelulas() {
       qc.invalidateQueries({ queryKey: ["ti_elementos_varias"] });
       qc.invalidateQueries({ queryKey: ["ti_ativos"] });
     },
-    onError: (e: Error) => toast.error(e.message || "Não foi possível mudar o piso."),
+    onError: (e: Error, v, ctx) => {
+      // Devolve o piso ao que era: pintura otimista que falha e fica na tela é
+      // pior que espera, porque some só no próximo F5 — e aí já se desenhou
+      // meia sala em cima de um chão que nunca existiu.
+      if (ctx?.anterior) qc.setQueryData(["ti_celulas", v.planta_id], ctx.anterior);
+      toast.error(e.message || "Não foi possível mudar o piso.");
+    },
   });
 }
 
