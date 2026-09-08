@@ -111,6 +111,18 @@ function modoSalvo(): ModoCena {
 export default function ConstruirMapa() {
   const [plantaId, setPlantaId] = useState<string | null>(null);
   const [selecao, setSelecao] = useState<SelecaoCena>(null);
+  /**
+   * TUDO que está pego — a peça de `selecao` inclusive.
+   *
+   * Existe porque o escritório se repete: "1 mesa, 4 cadeiras, 2 monitores" é
+   * o mesmo bloco em vários setores, e montá-lo peça por peça toda vez era o
+   * trabalho de verdade desta tela. Com o grupo, arrasta-se e duplica-se o
+   * conjunto inteiro.
+   *
+   * `selecao` continua separada porque o inspetor mostra UMA peça: tamanho,
+   * altura, giro e cor de cinco peças ao mesmo tempo não são um formulário.
+   */
+  const [grupo, setGrupo] = useState<SelecaoCena[]>([]);
   const [ferramenta, setFerramenta] = useState<Ferramenta>({ tipo: "selecao" });
   const [modo, setModoEstado] = useState<ModoCena>(modoSalvo);
   /**
@@ -152,6 +164,26 @@ export default function ConstruirMapa() {
   const sairDaObra = useCallback(() => {
     setObra(false);
     setFerramenta({ tipo: "selecao" });
+  }, []);
+
+  /**
+   * Clique numa peça: troca a seleção, ou soma ao grupo com Shift.
+   *
+   * Clicar no vazio (`null`) larga tudo — sem isso o grupo sobrevivia à
+   * "desmarcação" e a próxima duplicação levava peças que ninguém via
+   * marcadas.
+   */
+  const selecionarNaCena = useCallback((s: SelecaoCena, aditivo?: boolean) => {
+    if (!s) { setSelecao(null); setGrupo([]); return; }
+    if (!aditivo) { setSelecao(s); setGrupo([s]); return; }
+
+    setGrupo((g) => {
+      const jaTem = g.some((i) => i?.tipo === s.tipo && i.id === s.id);
+      // Shift no que já está marcado TIRA: é como toda seleção múltipla
+      // funciona, e sem isso corrigir um clique errado exigia recomeçar.
+      return jaTem ? g.filter((i) => !(i?.tipo === s.tipo && i.id === s.id)) : [...g, s];
+    });
+    setSelecao(s);
   }, []);
 
   const setModo = useCallback((m: ModoCena) => {
@@ -292,7 +324,9 @@ export default function ConstruirMapa() {
       }
       if (e.ctrlKey || e.metaKey) return;
 
-      if (e.key === "Escape") { setFerramenta({ tipo: "selecao" }); setSelecao(null); setObra(false); }
+      if (e.key === "Escape") {
+        setFerramenta({ tipo: "selecao" }); setSelecao(null); setGrupo([]); setObra(false);
+      }
       if ((e.key === "Delete" || e.key === "Backspace") && selecao) { e.preventDefault(); pedirRemocao(); }
       if (e.key.toLowerCase() === "r" && selecao) girar(45);
       if (e.key.toLowerCase() === "d" && (elementoSel || ativoSel)) duplicar();
@@ -448,8 +482,92 @@ export default function ConstruirMapa() {
    * equipamento. É o jeito rápido de fazer a fileira de mesas e as estações de
    * trabalho iguais, que é como um escritório realmente é.
    */
+  /** Deslocamento da cópia, em cm. Meio metro: sai de cima do original sem
+   *  ir parar longe do lugar onde vai ficar. */
+  const PASSO_DA_COPIA = 50;
+
+  /**
+   * Duplica o GRUPO inteiro, mantendo a formação.
+   *
+   * Todas as cópias andam o MESMO tanto — é isso que preserva a mesa com as
+   * cadeiras em volta. Deslocar cada peça pelo seu próprio critério
+   * embaralharia o conjunto, que é justamente o que se quer repetir.
+   *
+   * As cópias entram no grupo no lugar dos originais, então o arrasto logo em
+   * seguida leva o bloco novo para o lugar — que é o gesto inteiro: duplicar,
+   * arrastar, soltar.
+   */
+  const duplicarGrupo = () => {
+    if (!planta) return;
+
+    const novos: SelecaoCena[] = [];
+    let pendentes = 0;
+    const fim = () => { if (--pendentes === 0) setGrupo(novos); };
+
+    for (const item of grupo) {
+      if (!item) continue;
+
+      if (item.tipo === "elemento") {
+        const el = elementos.find((e) => e.id === item.id);
+        if (!el) continue;
+        const { id, ...resto } = el;
+        pendentes++;
+        salvarElemento.mutate(
+          {
+            ...resto,
+            planta_id: planta.id,
+            x: Number(el.x) + PASSO_DA_COPIA,
+            y: Number(el.y) + PASSO_DA_COPIA,
+          },
+          {
+            onSuccess: (criado) => {
+              historico.registrar({ tipo: "criar_elemento", depois: criado });
+              novos.push({ tipo: "elemento", id: criado.id });
+              fim();
+            },
+            onError: fim,
+          },
+        );
+        continue;
+      }
+
+      if (!podeIncluirAtivo) continue;
+      const a = ativos.find((z) => z.id === item.id);
+      if (!a) continue;
+      // O que NÃO se copia é o mesmo do duplicar de uma peça — ver a nota lá
+      // embaixo: identidade do aparelho físico não se clona.
+      const {
+        id, codigo, created_at, updated_at,
+        patrimonio, numero_serie, nota_fiscal,
+        ip, mac, hostname, anydesk, teamviewer,
+        ...resto
+      } = a;
+      const def = tipoAtivo(a.tipo);
+      const quantos = ativos.filter((z) => z.tipo === a.tipo).length + novos.length + 1;
+      pendentes++;
+      salvarAtivo.mutate(
+        {
+          ...(resto as TiAtivoInput),
+          nome: `${def.label} ${quantos}`,
+          planta_id: planta.id,
+          pos_x: Number(a.pos_x ?? 0) + PASSO_DA_COPIA,
+          pos_y: Number(a.pos_y ?? 0) + PASSO_DA_COPIA,
+        },
+        {
+          onSuccess: (novo) => { novos.push({ tipo: "ativo", id: novo.id }); fim(); },
+          onError: fim,
+        },
+      );
+    }
+
+    if (pendentes === 0) toast.error("Nada para duplicar nesta seleção.");
+  };
+
   const duplicar = () => {
     if (!planta) return;
+
+    // Duas ou mais peças pegas: duplica o bloco, não a última clicada.
+    if (grupo.length > 1) { duplicarGrupo(); return; }
 
     if (elementoSel) {
       const { id, ...resto } = elementoSel;
@@ -745,6 +863,20 @@ export default function ConstruirMapa() {
               <Tag className="h-4 w-4" />
             </Button>
 
+            {grupo.length > 1 && (
+              <>
+                <Separator orientation="vertical" className="h-6" />
+                {/* Some sozinho ao voltar para uma peça só — um contador
+                    fixo dizendo "1 selecionado" seria ruído permanente. */}
+                <Badge className="bg-amber-500 text-white hover:bg-amber-500">
+                  {grupo.length} peças selecionadas
+                </Badge>
+                <Button variant="outline" size="sm" onClick={duplicarGrupo}>
+                  <Copy className="mr-1.5 h-4 w-4" /> Duplicar bloco
+                </Button>
+              </>
+            )}
+
             {selecao && (
               <>
                 <Separator orientation="vertical" className="h-6" />
@@ -763,7 +895,8 @@ export default function ConstruirMapa() {
                     <Trash2 className="mr-1.5 h-4 w-4" /> Remover
                   </Button>
                 )}
-                <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => setSelecao(null)}>
+                <Button variant="ghost" size="icon" className="h-8 w-8"
+                        onClick={() => { setSelecao(null); setGrupo([]); }}>
                   <X className="h-4 w-4" />
                 </Button>
               </>
@@ -938,7 +1071,10 @@ export default function ConstruirMapa() {
                 elementos={elementos}
                 ativos={ativos}
                 selecao={selecao}
-                onSelecionar={(s) => { if (ferramenta.tipo === "selecao") setSelecao(s); }}
+                grupo={grupo}
+                onSelecionar={(s, aditivo) => {
+                  if (ferramenta.tipo === "selecao") selecionarNaCena(s, aditivo);
+                }}
                 editavel
                 modo={modo}
                 mostrarGrade={grade}
@@ -1000,6 +1136,7 @@ export default function ConstruirMapa() {
                     <li><b>R</b> gira 45°, <b>D</b> duplica, <b>Delete</b> remove</li>
                     <li><b>Ctrl+Z</b> desfaz, <b>Ctrl+Y</b> refaz</li>
                     <li><b>Duplo clique</b> num equipamento abre a ficha</li>
+                    <li><b>Shift + clique</b> marca várias peças; arrastar uma delas leva o bloco todo, e <b>Duplicar bloco</b> copia o conjunto inteiro (mesa com as cadeiras, por exemplo)</li>
                     <li><b>2D / 3D</b> na barra troca a vista; no 2D a câmera não gira e o botão direito arrasta a planta</li>
                     <li><b>Obra</b> abre o modo de planta: arraste no chão para <b>abrir</b> ou <b>tirar</b> piso de uma vez, ou para levantar <b>parede</b></li>
                     <li>Na <b>obra</b> cada botão faz uma coisa: <b>esquerdo</b> desenha, <b>meio</b> arrasta a planta, <b>direito</b> gira a câmera (no 3D), <b>rodinha</b> dá zoom</li>

@@ -104,7 +104,18 @@ interface Props {
   elementos: TiElemento[];
   ativos: TiAtivo[];
   selecao: SelecaoCena;
-  onSelecionar: (s: SelecaoCena) => void;
+  /**
+   * TUDO que está pego, inclusive a peça de `selecao`.
+   *
+   * `selecao` continua sendo a peça "principal" — é dela que o inspetor
+   * mostra tamanho, cor e giro, porque um inspetor de cinco peças ao mesmo
+   * tempo não teria o que mostrar. `grupo` é o que se arrasta e o que se
+   * duplica junto: uma mesa com as quatro cadeiras é um bloco que se repete
+   * em vários setores, e mover isso peça por peça era o trabalho.
+   */
+  grupo?: SelecaoCena[];
+  /** `aditivo` = Shift na mão: soma (ou tira) do grupo em vez de trocar. */
+  onSelecionar: (s: SelecaoCena, aditivo?: boolean) => void;
   editavel: boolean;
   /** Vista: planta baixa (2d) ou maquete (3d). Padrão: 3d. */
   modo?: ModoCena;
@@ -268,6 +279,7 @@ function Conteudo({
   elementos,
   ativos,
   selecao,
+  grupo = [],
   onSelecionar,
   editavel,
   modo = "3d",
@@ -302,8 +314,25 @@ function Conteudo({
 
   // Posição durante o arrasto: local, sem tocar no banco. Ver o cabeçalho.
   const [previa, setPrevia] = useState<Record<string, { x: number; y: number }>>({});
+  /**
+   * O arrasto em curso.
+   *
+   * `membros` é quem se move, com a posição em cm de CADA UM no instante em
+   * que o dedo encostou; `ancora` é a posição da peça efetivamente agarrada.
+   * O movimento é aplicado como DELTA sobre essas posições originais, e não
+   * recalculado peça a peça pelo ponteiro — é isso que mantém a mesa e as
+   * cadeiras na mesma distância entre si do começo ao fim do arrasto.
+   */
   const [arrasto, setArrasto] = useState<
-    { tipo: "elemento" | "ativo"; id: string; alturaBase: number; dx: number; dz: number } | null
+    {
+      tipo: "elemento" | "ativo";
+      id: string;
+      alturaBase: number;
+      dx: number;
+      dz: number;
+      ancora: { x: number; y: number };
+      membros: { tipo: "elemento" | "ativo"; id: string; x: number; y: number }[];
+    } | null
   >(null);
   const [traco, setTraco] = useState<TracoNoChao | null>(null);
   /**
@@ -392,6 +421,26 @@ function Conteudo({
     setTraco(null);
   }, [desenhando]);
 
+  /** Está no grupo? Comparação por tipo E id: os dois têm uuid próprio. */
+  const noGrupo = useCallback(
+    (tipo: "elemento" | "ativo", id: string) =>
+      grupo.some((g) => g?.tipo === tipo && g.id === id),
+    [grupo],
+  );
+
+  /** Onde a peça está AGORA, em cm — a mesma medida que o banco guarda. */
+  const posicaoEmCm = useCallback(
+    (tipo: "elemento" | "ativo", id: string) => {
+      if (tipo === "elemento") {
+        const el = elementos.find((e) => e.id === id);
+        return el ? centroDaPeca(el) : null;
+      }
+      const a = ativos.find((z) => z.id === id);
+      return a?.pos_x == null || a?.pos_y == null ? null : { x: Number(a.pos_x), y: Number(a.pos_y) };
+    },
+    [elementos, ativos],
+  );
+
   const iniciarArrasto = (
     tipo: "elemento" | "ativo",
     id: string,
@@ -401,14 +450,44 @@ function Conteudo({
     posZ: number,
   ) => {
     if (!editavel || desenhando) return;
-    setArrasto({ tipo, id, alturaBase, dx: ponto.x - posX, dz: ponto.z - posZ });
+
+    const ancora = posicaoEmCm(tipo, id);
+    if (!ancora) return;
+
+    /**
+     * Arrastar uma peça do grupo leva o grupo inteiro; arrastar uma de fora
+     * leva só ela.
+     *
+     * A segunda metade importa tanto quanto a primeira: sem ela, com cinco
+     * peças marcadas, encostar em qualquer sexta peça arrastaria as seis — e
+     * a pessoa não teria como mover uma coisa só sem antes desmarcar tudo.
+     */
+    const membros = noGrupo(tipo, id)
+      ? grupo
+          .map((g) => (g ? { tipo: g.tipo, id: g.id, ...posicaoEmCm(g.tipo, g.id) } : null))
+          .filter((m): m is { tipo: "elemento" | "ativo"; id: string; x: number; y: number } =>
+            !!m && typeof m.x === "number" && typeof m.y === "number")
+      : [{ tipo, id, x: ancora.x, y: ancora.y }];
+
+    setArrasto({ tipo, id, alturaBase, dx: ponto.x - posX, dz: ponto.z - posZ, ancora, membros });
   };
 
   const moverLocal = useCallback(
     (x: number, z: number) => {
       setArrasto((a) => {
         if (!a) return a;
-        setPrevia((p) => ({ ...p, [a.id]: { x: snap(x * 100, livre, passoCm), y: snap(z * 100, livre, passoCm) } }));
+        // O ponteiro decide onde vai a peça AGARRADA; as outras andam o mesmo
+        // tanto. Encaixar cada uma na grade separadamente entortaria o
+        // conjunto — a cadeira andaria 25 cm e a mesa 50, a cada quadro.
+        const alvoX = snap(x * 100, livre, passoCm);
+        const alvoY = snap(z * 100, livre, passoCm);
+        const dx = alvoX - a.ancora.x;
+        const dy = alvoY - a.ancora.y;
+        setPrevia((p) => {
+          const novo = { ...p };
+          for (const m of a.membros) novo[m.id] = { x: m.x + dx, y: m.y + dy };
+          return novo;
+        });
         return a;
       });
       invalidate();
@@ -437,12 +516,14 @@ function Conteudo({
   const soltar = useCallback(() => {
     setArrasto((a) => {
       if (a) {
-            setPrevia((p) => {
-          const pos = p[a.id];
-          // ESTA é a única gravação do arrasto inteiro.
-          if (pos) {
-            if (a.tipo === "elemento") onSoltarElemento?.(a.id, pos.x, pos.y);
-            else onSoltarAtivo?.(a.id, pos.x, pos.y);
+        setPrevia((p) => {
+          // ESTA é a única gravação do arrasto inteiro — uma por peça movida,
+          // no soltar. Ver o cabeçalho do arquivo: mover é local.
+          for (const m of a.membros) {
+            const pos = p[m.id];
+            if (!pos) continue;
+            if (m.tipo === "elemento") onSoltarElemento?.(m.id, pos.x, pos.y);
+            else onSoltarAtivo?.(m.id, pos.x, pos.y);
           }
           return p;
         });
@@ -723,7 +804,10 @@ function Conteudo({
         const largura = M(Number(el.largura));
         const profundidade = M(Number(el.altura));
         const altura = M(alturaDoElemento(el));
-        const selecionado = selecao?.tipo === "elemento" && selecao.id === el.id;
+        // Marcado conta como selecionado para o CONTORNO: quem pegou cinco
+        // peças precisa ver as cinco, não só a última clicada.
+        const selecionado =
+          (selecao?.tipo === "elemento" && selecao.id === el.id) || noGrupo("elemento", el.id);
         const pos = previa[el.id];
         // ⚠ `previa` guarda o CENTRO (é o que o arrasto calcula); `el.x`/`el.y`
         // guardam o CANTO (é o que o banco grava). Somar largura/2 nos dois
@@ -773,8 +857,12 @@ function Conteudo({
                 return;
               }
               e.stopPropagation();
-              onSelecionar({ tipo: "elemento", id: el.id });
-              iniciarArrasto("elemento", el.id, 0, e.point, x, z);
+              // Shift soma ao grupo em vez de trocar a seleção — e nesse caso
+              // não começa arrasto: quem está montando a seleção clica várias
+              // vezes seguidas, e sair arrastando a cada clique faria a peça
+              // andar sozinha enquanto ele escolhe.
+              onSelecionar({ tipo: "elemento", id: el.id }, e.shiftKey);
+              if (!e.shiftKey) iniciarArrasto("elemento", el.id, 0, e.point, x, z);
             }}
             onPointerUp={(e: ThreeEvent<PointerEvent>) => {
               if (apagandoEstrutura) return;
@@ -840,7 +928,8 @@ function Conteudo({
           const base = M(alturaDeApoio(alvo, elementos));
           const x = M(Number(alvo.pos_x));
           const z = M(Number(alvo.pos_y));
-          const selecionado = selecao?.tipo === "ativo" && selecao.id === a.id;
+          const selecionado =
+            (selecao?.tipo === "ativo" && selecao.id === a.id) || noGrupo("ativo", a.id);
           const apagado = !!termo && !casa(a);
           const st = statusAtivo(a.status);
 
@@ -852,8 +941,8 @@ function Conteudo({
               onPointerDown={(e: ThreeEvent<PointerEvent>) => {
                 if (desenhando) return;
                 e.stopPropagation();
-                onSelecionar({ tipo: "ativo", id: a.id });
-                iniciarArrasto("ativo", a.id, base, e.point, x, z);
+                onSelecionar({ tipo: "ativo", id: a.id }, e.shiftKey);
+                if (!e.shiftKey) iniciarArrasto("ativo", a.id, base, e.point, x, z);
               }}
               onDoubleClick={(e: ThreeEvent<MouseEvent>) => {
                 e.stopPropagation();
