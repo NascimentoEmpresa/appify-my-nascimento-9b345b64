@@ -510,7 +510,11 @@ describe("quem serve de apoio vem do catálogo, não de uma lista à parte", () 
   });
 
   it("parede, piso e decoração continuam não sustentando nada", () => {
-    for (const tipo of ["parede", "divisoria", "sala", "copa", "planta_decorativa", "quadro_branco"]) {
+    for (const tipo of [
+      "parede", "divisoria", "sala", "copa", "planta_decorativa", "quadro_branco",
+      // Vidro é estrutura: pano e porta de correr não sustentam nada em cima.
+      "parede_vidro", "porta_vidro",
+    ]) {
       expect(sobre(tipo)).toBe(0);
     }
   });
