@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
-  STATUS_TODOS, corDoStatus, explicaStatus, linkDoLocalASO, patchDevolucao,
+  STATUS_FINAIS, STATUS_SST_AGENDADO, STATUS_SST_RECEBIDA, STATUS_TODOS, acaoDoSST,
+  corDoStatus, explicaStatus, linkDoLocalASO, patchDevolucao,
   podeDevolver, resumoDevolucao, resumoDoASO,
 } from "@/lib/demissao/solicitacao";
 
@@ -8,20 +9,27 @@ import {
 // de admissão. O que este arquivo trava é o que o encarregado lê do outro
 // lado: o status certo e o local do exame.
 //
-// A ORDEM MUDOU EM 02/09/2026. Era analista(operacional) → RH → SST, com o
-// SST fechando; virou analista → SST → RH, com o RH fechando. O teste antigo
-// travava exatamente o contrário do que se pede hoje, e é essa a razão de ele
-// ter sido reescrito em vez de removido.
+// A ORDEM JÁ MUDOU TRÊS VEZES: analista → RH → SST (25/08), analista → SST →
+// RH (02/09) e de volta para analista → RH → SST em 08/09/2026, agora com o
+// SST fechando pelo agendamento do ASO. O teste é reescrito a cada vez, em vez
+// de removido, porque é ele que trava a ordem — sem isso, "trocar SST e RH"
+// vira uma edição que passa despercebida em três telas.
 
 describe("status do fluxo de demissão", () => {
-  it("tem a etapa do SST entre o analista e o RH", () => {
-    expect(STATUS_TODOS).toContain("Pendente SST");
-    expect(STATUS_TODOS.indexOf("Pendente SST"))
-      .toBeGreaterThan(STATUS_TODOS.indexOf("Pendente Analista"));
-    expect(STATUS_TODOS.indexOf("Pendente SST"))
-      .toBeLessThan(STATUS_TODOS.indexOf("Pendente RH"));
-    expect(STATUS_TODOS.indexOf("Pendente RH"))
-      .toBeLessThan(STATUS_TODOS.indexOf("Concluída"));
+  it("o RH vem antes do SST, e o SST fecha", () => {
+    const i = (s: string) => STATUS_TODOS.indexOf(s as (typeof STATUS_TODOS)[number]);
+    expect(i("Pendente Analista")).toBeLessThan(i("Pendente RH"));
+    expect(i("Pendente RH")).toBeLessThan(i("Pendente SST"));
+    expect(i("Pendente SST")).toBeLessThan(i(STATUS_SST_RECEBIDA));
+    expect(i(STATUS_SST_RECEBIDA)).toBeLessThan(i(STATUS_SST_AGENDADO));
+  });
+
+  it("os dois status do SST existem e são o fim da linha", () => {
+    expect(STATUS_TODOS).toContain(STATUS_SST_RECEBIDA);
+    expect(STATUS_TODOS).toContain(STATUS_SST_AGENDADO);
+    expect(STATUS_FINAIS).toContain(STATUS_SST_AGENDADO);
+    // "Concluída" fica só por causa das demissões fechadas no desenho antigo.
+    expect(STATUS_FINAIS).toContain("Concluída");
   });
 
   it("a primeira etapa é do analista, não do Operacional", () => {
@@ -38,11 +46,26 @@ describe("status do fluxo de demissão", () => {
     }
   });
 
-  it("quem fecha a demissão é o RH, e o status diz isso", () => {
-    // O SST deixou de ser o fim da linha: ele marca o ASO e passa adiante.
-    expect(explicaStatus("Pendente SST")).toMatch(/ASO/);
+  it("quem fecha a demissão é o SST, e o status diz isso", () => {
     expect(explicaStatus("Pendente RH")).toMatch(/RH/);
-    expect(explicaStatus("Concluída")).toMatch(/RH/);
+    expect(explicaStatus(STATUS_SST_RECEBIDA)).toMatch(/SST/);
+    expect(explicaStatus(STATUS_SST_AGENDADO)).toMatch(/agendad/i);
+  });
+
+  it("o SST recebe primeiro e agenda depois — sem atalho", () => {
+    expect(acaoDoSST("Pendente SST")).toBe("receber");
+    expect(acaoDoSST(STATUS_SST_RECEBIDA)).toBe("agendar");
+    // Já agendado, e antes de chegar no SST, ele não tem nada a fazer.
+    expect(acaoDoSST(STATUS_SST_AGENDADO)).toBeNull();
+    expect(acaoDoSST("Pendente RH")).toBeNull();
+  });
+
+  it("só o SST devolve depois de receber — e nunca depois de agendar", () => {
+    expect(podeDevolver("sst", "Pendente SST")).toBe(true);
+    expect(podeDevolver("sst", STATUS_SST_RECEBIDA)).toBe(true);
+    // Já existe exame marcado com o colaborador: desmarcar não é um botão.
+    expect(podeDevolver("sst", STATUS_SST_AGENDADO)).toBe(false);
+    expect(podeDevolver("rh", STATUS_SST_RECEBIDA)).toBe(false);
   });
 });
 

@@ -56,7 +56,7 @@ export interface Fluxo {
 const demissao: Fluxo = {
   codigo: "demissao",
   nome: "Solicitação de Demissão",
-  paraQue: "Desligar um colaborador, do pedido do encarregado até o ASO demissional e o fechamento no RH.",
+  paraQue: "Desligar um colaborador, do pedido do encarregado até o agendamento do ASO demissional no SST.",
   passos: [
     {
       quem: "Encarregado", faz: "Abre a solicitação com o motivo, o aviso prévio e os documentos.",
@@ -68,18 +68,19 @@ const demissao: Fluxo = {
       status: "Pendente Analista",
     },
     {
-      quem: "SST", faz: "Marca o ASO demissional: data, hora e local do exame.",
-      onde: "SST › ASO Demissional",
-      status: "Pendente SST",
-    },
-    {
-      quem: "RH", faz: "Confirma o desligamento. É o RH que fecha a demissão.",
+      quem: "RH", faz: "Confere o desligamento e libera para o SST agendar o ASO.",
       onde: "RH › Solicitações de Demissão",
       status: "Pendente RH",
     },
+    {
+      quem: "SST", faz: "Marca a solicitação como recebida e agenda o ASO demissional: data, hora e local do exame. É o SST que fecha a demissão.",
+      onde: "SST › ASO Demissional",
+      status: "Pendente SST",
+    },
   ],
   observacoes: [
-    "O SST e o RH podem DEVOLVER ao analista quando a solicitação vem com erro — ela volta para a fila dele com o motivo escrito, e o que já tinha sido carimbado nas etapas seguintes é desfeito. Quando voltar, passa pelo SST de novo.",
+    "Dentro do SST a solicitação passa por dois status: primeiro \"Solicitação de agendamento de DEMISSIONAL recebida\" (o SST pegou o pedido) e depois \"Agendamento concluído\" (o exame tem data, hora e local). Só o painel do SST muda esses dois; as outras telas mostram.",
+    "O SST e o RH podem DEVOLVER ao analista quando a solicitação vem com erro — ela volta para a fila dele com o motivo escrito, e o que já tinha sido carimbado nas etapas seguintes é desfeito. Quando voltar, passa pelo RH de novo. Depois de agendado o SST não devolve mais: já há exame marcado com o colaborador.",
     "O Operacional enxerga o fluxo inteiro em Operacional › Solicitações de Demissão, mas só para acompanhar — quem decide a primeira etapa é o analista.",
     "Reprovada pelo analista, a solicitação para e volta para o encarregado com o motivo.",
     "O encarregado acompanha tudo em Minhas Solicitações, e a conversa da solicitação é a mesma para todos os setores.",
