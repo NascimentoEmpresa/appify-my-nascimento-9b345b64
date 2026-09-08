@@ -20,15 +20,26 @@ export function KpiTile({
   icon,
   cor,
   valorClass,
+  onClick,
 }: {
   label: string;
   valor: string;
   icon: React.ReactNode;
   cor: keyof typeof KPI_TILE_ICONE;
   valorClass?: string;
+  // SIS-2026-0325 (Iury): tile clicável — vira um botão-de-atalho pra um
+  // modal com o detalhe (ex.: "Com Pendência" abre a lista de contratos).
+  // Opcional; os outros usos deste componente continuam iguais sem passar.
+  onClick?: () => void;
 }) {
   return (
-    <Card>
+    <Card
+      className={onClick ? "cursor-pointer transition-colors hover:bg-muted/50" : undefined}
+      onClick={onClick}
+      role={onClick ? "button" : undefined}
+      tabIndex={onClick ? 0 : undefined}
+      onKeyDown={onClick ? (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onClick(); } } : undefined}
+    >
       <CardContent className="relative overflow-hidden p-4">
         <div
           className="pointer-events-none absolute right-0 top-1/2 -translate-y-1/2 translate-x-1"
