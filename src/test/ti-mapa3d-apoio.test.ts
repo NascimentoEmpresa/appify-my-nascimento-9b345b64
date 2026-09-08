@@ -232,9 +232,24 @@ describe("recorte da parede para encaixar a porta", () => {
   });
 
   it("o vão não escapa das pontas da parede", () => {
+    // Centro em 40 (dentro da parede), largura 180: transborda à esquerda
+    // e é aparado em 0.
     const [vao] = vaosNaParede(parede, [porta({ x: -50 })]);
     expect(vao.de).toBe(0);
     expect(vao.ate).toBeLessThanOrEqual(600);
+  });
+
+  /**
+   * O caso do canto: a porta é da parede vizinha e fica logo DEPOIS do fim
+   * desta. Antes ela abria vão mesmo assim — o clamp trazia a projeção para
+   * a ponta — e a parede terminava antes da esquina, com o canto aberto.
+   */
+  it("porta passada do fim da parede não abre vão nela", () => {
+    expect(vaosNaParede(parede, [porta({ x: 620 })])).toEqual([]);
+  });
+
+  it("porta antes do começo da parede também não", () => {
+    expect(vaosNaParede(parede, [porta({ x: -260 })])).toEqual([]);
   });
 
   describe("o que sobra em pé", () => {

@@ -378,6 +378,18 @@ export function vaosNaParede(
      */
     if (Math.abs(Math.sin(giro)) > 0.5) continue;
 
+    /**
+     * O CENTRO da abertura tem que cair DENTRO da parede.
+     *
+     * Sem isto, uma porta logo depois do fim da parede — o caso do canto,
+     * onde ela pertence à parede vizinha — ainda abria vão: a projeção dela
+     * ficava fora do intervalo, o clamp trazia para a ponta, e o resultado
+     * era a parede terminando antes da esquina, com o canto aberto.
+     *
+     * Encostar não basta; tem que estar em cima.
+     */
+    if (aoLongo < 0 || aoLongo > comprimento) continue;
+
     const meia =
       (Math.abs(Math.cos(giro)) * Number(ab.largura)) / 2 +
       (Math.abs(Math.sin(giro)) * Number(ab.altura)) / 2;
