@@ -686,6 +686,147 @@ function AluminioMaterial() {
 }
 
 /**
+ * Escada em L (um quarto de volta), subindo para o andar de cima.
+ *
+ * Era um bloco cinza — o `Generico` — porque escada nunca teve modelo
+ * próprio. Num mapa que já mostra mesa, cadeira e monitor, o bloco lia como
+ * "armário grande", e ninguém achava por onde se sobe.
+ *
+ * COMO ELA É MONTADA
+ *   Dois lances e um patamar, que é o que faz o L: o primeiro lance corre no
+ *   eixo X e sobe METADE da altura; o patamar vira a esquina; o segundo corre
+ *   no eixo Z e sobe a outra metade. É o desenho de escada que cabe em caixa
+ *   de escritório — o lance reto único precisaria de uns 5 m de corrida para
+ *   vencer o mesmo pé-direito.
+ *
+ *   Cada degrau é uma caixa que vai do CHÃO até a altura dele, não uma laje
+ *   solta no ar. Sai mais barato (uma geometria por degrau, sem espelho nem
+ *   viga) e dá a silhueta maciça que se reconhece de longe — inclusive de
+ *   cima, no modo 2D, onde o que se vê é a escadinha de degraus.
+ *
+ * A ALTURA vem da peça (`altura_z`), não de uma constante: escada que sobe
+ * sempre 60 cm não leva a lugar nenhum. O padrão do catálogo passou a ser o
+ * pé-direito típico; quem tiver um andar mais alto ajusta no inspetor e os
+ * degraus se redistribuem sozinhos.
+ */
+function Escada({ cor, largura, profundidade, altura }: PropsModelo) {
+  // Largura do lance: a parte da caixa que vira degrau. O resto do L é o
+  // vão da volta.
+  const w = Math.min(largura, profundidade) * 0.42;
+  const meia = altura / 2;
+
+  // ~18 cm por degrau é o passo confortável de verdade — e é o que faz a
+  // contagem mudar junto com a altura, em vez de esticar degrau gigante.
+  const degrausDe = (subida: number) => Math.max(2, Math.round(subida / 0.18));
+
+  const n1 = degrausDe(meia);
+  const n2 = degrausDe(meia);
+  const corrida1 = largura - w;
+  const corrida2 = profundidade - w;
+  const passo1 = corrida1 / n1;
+  const passo2 = corrida2 / n2;
+
+  // Onde o L se dobra: canto (−X, −Z) da caixa. O primeiro lance sobe indo
+  // PARA A ESQUERDA e a volta é à esquerda — que é o sentido da escada real
+  // do escritório. Espelhar de verdade, e não com `scale={[-1,1,1]}`: escala
+  // negativa inverte a orientação das faces e estraga sombra e iluminação.
+  const zLance1 = -profundidade / 2 + w / 2;
+  const xLance2 = -largura / 2 + w / 2;
+
+  const corDegrau = sombrear(cor, -4);
+  const corPatamar = sombrear(cor, 4);
+
+  return (
+    <group>
+      {/* lance 1 — corre em X, sobe até a metade */}
+      {Array.from({ length: n1 }, (_, i) => {
+        const topo = ((i + 1) * meia) / n1;
+        return (
+          <mesh
+            key={`a${i}`}
+            castShadow
+            receiveShadow
+            position={[largura / 2 - (i + 0.5) * passo1, topo / 2, zLance1]}
+          >
+            <boxGeometry args={[passo1, topo, w]} />
+            <meshStandardMaterial color={corDegrau} roughness={0.8} />
+          </mesh>
+        );
+      })}
+
+      {/* patamar — a esquina do L, na altura em que o primeiro lance termina */}
+      <mesh castShadow receiveShadow position={[xLance2, meia / 2, zLance1]}>
+        <boxGeometry args={[w, meia, w]} />
+        <meshStandardMaterial color={corPatamar} roughness={0.8} />
+      </mesh>
+
+      {/* lance 2 — vira 90° e corre em Z, da metade até o andar de cima */}
+      {Array.from({ length: n2 }, (_, j) => {
+        const topo = meia + ((j + 1) * meia) / n2;
+        return (
+          <mesh
+            key={`b${j}`}
+            castShadow
+            receiveShadow
+            position={[xLance2, topo / 2, -profundidade / 2 + w + (j + 0.5) * passo2]}
+          >
+            <boxGeometry args={[w, topo, passo2]} />
+            <meshStandardMaterial color={corDegrau} roughness={0.8} />
+          </mesh>
+        );
+      })}
+
+      {/* Corrimão nos lados abertos. É o detalhe que diz "escada" mesmo de
+          cima: a linha inclinada acompanhando os degraus não existe em
+          nenhum outro móvel do mapa. */}
+      {/* O lance sobe indo para −X, então a barra desce no sentido de +X:
+          a inclinação entra com sinal trocado. */}
+      <Corrimao
+        comprimento={Math.hypot(corrida1, meia)}
+        inclinacao={-Math.atan2(meia, corrida1)}
+        eixo="x"
+        position={[w / 2, meia / 2 + 0.9, zLance1 - w / 2]}
+      />
+      <Corrimao
+        comprimento={Math.hypot(corrida2, meia)}
+        inclinacao={Math.atan2(meia, corrida2)}
+        eixo="z"
+        // Meio do segundo lance: ele vai de (−P/2 + w) até P/2, então o
+        // centro cai em w/2. A altura é a do meio da subida, mais a mão.
+        position={[xLance2 - w / 2, meia * 1.5 + 0.9, w / 2]}
+      />
+    </group>
+  );
+}
+
+/** A barra inclinada do corrimão — uma caixa girada no eixo do lance. */
+function Corrimao({
+  comprimento,
+  inclinacao,
+  eixo,
+  position,
+}: {
+  comprimento: number;
+  inclinacao: number;
+  eixo: "x" | "z";
+  position: [number, number, number];
+}) {
+  // Girar em Z leva +X para cima; girar em X (com sinal trocado) leva +Z.
+  // São os dois sentidos em que os lances correm.
+  const rotation: [number, number, number] =
+    eixo === "x" ? [0, 0, inclinacao] : [-inclinacao, 0, 0];
+  const args: [number, number, number] =
+    eixo === "x" ? [comprimento, 0.05, 0.05] : [0.05, 0.05, comprimento];
+
+  return (
+    <mesh castShadow position={position} rotation={rotation}>
+      <boxGeometry args={args} />
+      <meshStandardMaterial color={METAL} metalness={0.2} roughness={0.5} />
+    </mesh>
+  );
+}
+
+/**
  * Pano de vidro: divisória envidraçada de escritório.
  *
  * O vidro sozinho some — um plano transparente sem nada em volta lê como
@@ -1101,6 +1242,7 @@ export function ModeloDoElemento({
     case "planta_decorativa": return <Planta {...p} />;
     case "porta": return <Porta {...p} />;
     case "janela": return <Janela {...p} />;
+    case "escada": return <Escada {...p} />;
     case "parede_vidro": return <ParedeVidro {...p} />;
     case "porta_vidro": return <PortaVidro {...p} />;
     case "sala":

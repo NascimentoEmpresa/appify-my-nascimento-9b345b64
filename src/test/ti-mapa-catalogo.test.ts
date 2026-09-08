@@ -44,6 +44,18 @@ const SQL = fs
   .filter((f) => f.endsWith(".sql"))
   .sort()
   .map((f) => readFileSync(resolve(DIR_MIGRATIONS, f), "utf-8"))
+  // SQL COMENTADO NÃO É SQL.
+  //
+  // As migrations deste projeto terminam com um bloco "-- ROLLBACK" que
+  // repete o DDL inverso comentado — e no caso de um CHECK isso significa a
+  // lista ANTIGA escrita logo DEPOIS da nova, no mesmo arquivo. Como
+  // `valoresDoCheck` fica com a ÚLTIMA ocorrência, o teste passou a cobrar a
+  // lista que a migration acabou de aposentar, e reprovou justamente a
+  // migration que ampliou o catálogo (parede e porta de vidro).
+  //
+  // Cortar do "--" até o fim da linha resolve para todo rollback futuro, sem
+  // exigir que quem escreve a migration lembre de despistar o teste.
+  .map((sql) => sql.replace(/--.*$/gm, ""))
   .join("\n");
 
 /**

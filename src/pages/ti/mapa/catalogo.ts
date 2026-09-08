@@ -241,7 +241,10 @@ export const TIPOS_ELEMENTO: TipoElementoDef[] = [
   // Mesma espessura e mesma altura do pano de vidro, de propósito: é o que
   // faz a porta encostar na parede e virar uma divisória só (ver PortaVidro).
   { valor: "porta_vidro", label: "Porta de vidro (correr)", icone: GalleryVerticalEnd, cor: "#7dd3fc", largura: 180, altura: 10, alturaZ: 280, familia: "estrutura", recorta: true },
-  { valor: "escada", label: "Escada", icone: Blocks, cor: "#a1a1aa", largura: 250, altura: 120, alturaZ: 60, familia: "estrutura", apoia: true },
+  // Planta quadrada e alta o bastante para VENCER UM ANDAR: com 60 cm de
+  // altura (o valor antigo) a escada não levava a lugar nenhum, e com 120 de
+  // profundidade não cabia a volta do L. Ver o modelo Escada.
+  { valor: "escada", label: "Escada", icone: Blocks, cor: "#a1a1aa", largura: 260, altura: 260, alturaZ: 280, familia: "estrutura", apoia: true },
   { valor: "sala", label: "Sala / Setor", icone: Square, cor: "#dbeafe", largura: 500, altura: 400, alturaZ: 0.2, familia: "area" },
   { valor: "recepcao", label: "Recepção", icone: Armchair, cor: "#fef3c7", largura: 400, altura: 300, alturaZ: 0.2, familia: "area" },
   { valor: "copa", label: "Copa", icone: Coffee, cor: "#fce7f3", largura: 300, altura: 250, alturaZ: 0.2, familia: "area" },
