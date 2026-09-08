@@ -1459,7 +1459,26 @@ function Numero({
   );
 }
 
+/**
+ * A cor da peça: os atalhos da paleta MAIS a cor livre.
+ *
+ * A paleta continua porque é o caminho de um clique para os tons que se
+ * repetem (o cinza de parede, o marrom de mesa). O que faltava era o resto:
+ * quem pinta a parede da sala com a cor do setor não tem por que ficar preso
+ * a dezesseis tons escolhidos por mim.
+ *
+ * O seletor livre é o `<input type="color">` do próprio navegador — sem
+ * dependência nova, com o conta-gotas e o histórico que o sistema já dá. Ao
+ * lado dele vai o hexadecimal digitável, que é o que serve para repetir a
+ * MESMA cor em várias peças: ninguém acerta o mesmo tom duas vezes no
+ * quadradinho, mas todo mundo copia e cola "#3f5c7a".
+ */
 function Cores({ valor, onEscolher }: { valor: string; onEscolher: (c: string) => void }) {
+  const atual = (valor || "").toLowerCase();
+  // O input de cor só aceita #rrggbb; um valor vazio ou fora do formato o
+  // deixaria em preto sem avisar, então o campo cai num cinza neutro.
+  const paraInput = /^#[0-9a-f]{6}$/i.test(atual) ? atual : "#94a3b8";
+
   return (
     <div className="space-y-1.5">
       <Label className="text-xs text-muted-foreground">Cor</Label>
@@ -1469,11 +1488,35 @@ function Cores({ valor, onEscolher }: { valor: string; onEscolher: (c: string) =
             key={c}
             type="button"
             onClick={() => onEscolher(c)}
-            className={cn("h-5 w-5 rounded border transition", valor?.toLowerCase() === c ? "ring-2 ring-primary ring-offset-1" : "hover:scale-110")}
+            className={cn("h-5 w-5 rounded border transition", atual === c ? "ring-2 ring-primary ring-offset-1" : "hover:scale-110")}
             style={{ background: c }}
             title={c}
           />
         ))}
+      </div>
+
+      <div className="flex items-center gap-2 pt-1">
+        <input
+          type="color"
+          value={paraInput}
+          onChange={(e) => onEscolher(e.target.value)}
+          className="h-7 w-9 cursor-pointer rounded border bg-transparent p-0.5"
+          title="Escolher qualquer cor"
+          aria-label="Escolher qualquer cor"
+        />
+        <Input
+          value={valor ?? ""}
+          onChange={(e) => {
+            const v = e.target.value.trim();
+            // Só grava quando o hexadecimal está completo: a cada tecla o
+            // valor passa por "#3", "#3f"… e salvar isso pintaria a peça de
+            // preto no meio da digitação.
+            if (/^#[0-9a-f]{6}$/i.test(v)) onEscolher(v);
+          }}
+          placeholder="#3f5c7a"
+          className="h-7 w-24 font-mono text-xs"
+          aria-label="Cor em hexadecimal"
+        />
       </div>
     </div>
   );
