@@ -1,9 +1,11 @@
 // Solicitação de Demissão — as regras que as telas compartilham.
 //
-// O encarregado abre → o ANALISTA aprova → o SST marca o ASO demissional →
-// o RH confirma:
+// O encarregado abre → o ANALISTA aprova → o RH libera → o SST agenda o ASO
+// demissional:
 //
-//   Pendente Analista → Pendente SST → Pendente RH → Concluída
+//   Pendente Analista → Pendente RH → Pendente SST
+//        → Solicitação de agendamento de DEMISSIONAL recebida
+//        → Agendamento concluído
 //          ↘ Reprovada
 //
 // DUAS MUDANÇAS EM 02/09/2026, no mesmo movimento que criou o submódulo
@@ -15,8 +17,23 @@
 //      botão de decidir. Mesmo desenho da Gestão Recrutamento.
 //
 //   2. SST e RH TROCARAM DE LUGAR. Era RH → SST ("Concluída" era o fim no
-//      SST desde 25/08/2026); agora o SST marca o ASO demissional e o RH
-//      confirma por último. Quem fecha a demissão é o RH.
+//      SST desde 25/08/2026); passou a ser SST → RH.
+//
+// E EM 08/09/2026 O SST VOLTOU A SER O ÚLTIMO, a pedido do RH: o RH libera e
+// o SST agenda. É a terceira arrumação dessas duas etapas em duas semanas —
+// se for mexer de novo, mexa AQUI e deixe as telas seguirem, que é o motivo
+// deste arquivo existir.
+//
+// No mesmo dia entraram os DOIS STATUS DO SST. Eles são o miolo da última
+// etapa, e existem porque "Pendente SST" respondia mal à pergunta que o
+// encarregado faz: o SST viu meu pedido? já marcou? Agora:
+//
+//   Pendente SST ................ o RH liberou, o SST ainda não pegou
+//   Solicitação ... recebida .... o SST pegou e está agendando
+//   Agendamento concluído ....... o ASO tem data, hora e local
+//
+// Só o painel do SST os define (ver STATUS_DE_ACAO, em PainelDemissoes); as
+// outras telas leem, filtram e mostram, como qualquer outro status.
 //
 // Como são várias telas lendo a mesma tabela, o que define o fluxo (as
 // opções dos campos, os status e quem pode agir em cada um) mora aqui —
@@ -89,18 +106,45 @@ export function erroDoArquivo(f: File): string | null {
 // ── Status ───────────────────────────────────────────────────────────
 // O status é o andamento do pedido, não um campo livre: quem muda é sempre
 // uma ação de tela (aprovar, reprovar, concluir), nunca digitação.
+/**
+ * Os dois status que só o SST define.
+ *
+ * Constantes, e não texto solto: são frases longas, repetidas em tela, filtro
+ * e teste, e uma diferença de um acento entre dois lugares vira um card que
+ * some do filtro sem ninguém entender por quê.
+ *
+ * Sem ponto final, ao contrário de como foram pedidos: isto aqui é VALOR
+ * gravado no banco e comparado com `===`, não frase de tela. Ponto final em
+ * valor é a pontuação que um dia alguém digita errado.
+ */
+export const STATUS_SST_RECEBIDA = "Solicitação de agendamento de DEMISSIONAL recebida";
+export const STATUS_SST_AGENDADO = "Agendamento concluído";
+
 export type Status =
   | "Pendente Analista"
   | "Reprovada"
-  | "Pendente SST"
   | "Pendente RH"
+  | "Pendente SST"
+  | typeof STATUS_SST_RECEBIDA
+  | typeof STATUS_SST_AGENDADO
   | "Concluída"
   | "Cancelada";
 
 /** Na ordem do fluxo, que é a ordem em que fazem sentido em qualquer filtro. */
 export const STATUS_TODOS: Status[] = [
-  "Pendente Analista", "Pendente SST", "Pendente RH", "Concluída", "Reprovada", "Cancelada",
+  "Pendente Analista", "Pendente RH", "Pendente SST",
+  STATUS_SST_RECEBIDA, STATUS_SST_AGENDADO,
+  "Concluída", "Reprovada", "Cancelada",
 ];
+
+/**
+ * O fim da linha.
+ *
+ * "Concluída" continua aqui por causa das solicitações fechadas no desenho
+ * antigo, em que quem fechava era o RH. Nada novo cai nele — hoje o fluxo
+ * termina no SST, com o agendamento feito.
+ */
+export const STATUS_FINAIS: string[] = [STATUS_SST_AGENDADO, "Concluída"];
 
 /** Cor do selo de status — a mesma régua nas três telas. */
 export function corDoStatus(status: string): string {
@@ -108,6 +152,11 @@ export function corDoStatus(status: string): string {
     "Pendente Analista": "bg-yellow-100 text-yellow-800 border-yellow-200",
     "Pendente RH": "bg-purple-100 text-purple-700 border-purple-200",
     "Pendente SST": "bg-cyan-100 text-cyan-800 border-cyan-200",
+    // Os dois do SST puxam para o mesmo lado do círculo cromático que
+    // "Pendente SST" — quem olha a fila vê que são a mesma etapa —, mas o
+    // agendado já é verde: é o fim da linha.
+    [STATUS_SST_RECEBIDA]: "bg-sky-100 text-sky-800 border-sky-200",
+    [STATUS_SST_AGENDADO]: "bg-emerald-100 text-emerald-700 border-emerald-200",
     "Concluída": "bg-green-100 text-green-700 border-green-200",
     "Reprovada": "bg-red-100 text-red-700 border-red-200",
     "Cancelada": "bg-slate-100 text-slate-600 border-slate-200",
@@ -119,8 +168,10 @@ export function corDoStatus(status: string): string {
 export function explicaStatus(status: string): string {
   const textos: Record<string, string> = {
     "Pendente Analista": "Aguardando a aprovação do analista.",
-    "Pendente SST": "Aprovada pelo analista. O SST vai marcar o ASO demissional.",
-    "Pendente RH": "ASO demissional marcado. Aguardando o RH confirmar.",
+    "Pendente RH": "Aprovada pelo analista. Aguardando o RH liberar.",
+    "Pendente SST": "Liberada pelo RH. Aguardando o SST receber a solicitação.",
+    [STATUS_SST_RECEBIDA]: "O SST recebeu a solicitação e está agendando o ASO demissional.",
+    [STATUS_SST_AGENDADO]: "ASO demissional agendado — a data, a hora e o local estão na solicitação.",
     "Concluída": "O RH confirmou. Desligamento concluído.",
     "Reprovada": "O analista reprovou — veja o motivo.",
     "Cancelada": "A solicitação foi cancelada.",
@@ -256,8 +307,28 @@ export const MOTIVO_DEVOLUCAO_MIN = 10;
  * Só quem tem trabalho a fazer nela: devolver é recusar o próprio turno, e
  * não faz sentido recusar um turno que ainda não chegou (ou que já passou).
  */
+/**
+ * O que o SST pode fazer NESTE status — e nada além disso.
+ *
+ * Os dois passos são sequenciais: recebe, depois agenda. A primeira versão
+ * deixava agendar direto de "Pendente SST", para poupar um clique de quem já
+ * tinha a data — só que um status que dá para pular deixa de significar algo,
+ * e "recebida" existe justamente para o encarregado saber que o SST viu o
+ * pedido. A regra mora aqui, e não no JSX, porque foi no JSX que ela se
+ * perdeu da primeira vez.
+ */
+export function acaoDoSST(status: string): "receber" | "agendar" | null {
+  if (status === "Pendente SST") return "receber";
+  if (status === STATUS_SST_RECEBIDA) return "agendar";
+  return null;
+}
+
 export function podeDevolver(etapa: string, status: string): etapa is EtapaQueDevolve {
-  if (etapa === "sst") return status === "Pendente SST";
+  // O SST devolve enquanto não agendou — inclusive depois de dar "recebida",
+  // que é justamente quando ele lê a solicitação com atenção e acha o erro.
+  // Depois de agendado não devolve mais: já existe exame marcado com o
+  // colaborador, e desmarcar não é assunto de um botão de devolver.
+  if (etapa === "sst") return status === "Pendente SST" || status === STATUS_SST_RECEBIDA;
   if (etapa === "rh") return status === "Pendente RH";
   return false;
 }

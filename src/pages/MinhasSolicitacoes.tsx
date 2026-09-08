@@ -47,6 +47,10 @@ function badgeStatusCls(st: string) {
     // o selo não mudar de cor entre esta tela e a de quem trata o pedido.
     "Pendente RH": "bg-purple-100 text-purple-700 border-purple-200",
     "Pendente SST": "bg-cyan-100 text-cyan-800 border-cyan-200",
+    // Os dois status do SST (08/09/2026). O encarregado é o principal leitor
+    // deles: é aqui que ele descobre que o ASO já tem data sem ligar para o SST.
+    "Solicitação de agendamento de DEMISSIONAL recebida": "bg-sky-100 text-sky-800 border-sky-200",
+    "Agendamento concluído": "bg-emerald-100 text-emerald-700 border-emerald-200",
     "Concluída": "bg-green-100 text-green-700 border-green-200",
     Pendente: "bg-yellow-100 text-yellow-800 border-yellow-200",
     Aprovada: "bg-green-100 text-green-700 border-green-200",
