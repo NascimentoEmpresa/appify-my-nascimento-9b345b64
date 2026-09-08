@@ -775,54 +775,7 @@ function Escada({ cor, largura, profundidade, altura }: PropsModelo) {
           </mesh>
         );
       })}
-
-      {/* Corrimão nos lados abertos. É o detalhe que diz "escada" mesmo de
-          cima: a linha inclinada acompanhando os degraus não existe em
-          nenhum outro móvel do mapa. */}
-      {/* O lance sobe indo para −X, então a barra desce no sentido de +X:
-          a inclinação entra com sinal trocado. */}
-      <Corrimao
-        comprimento={Math.hypot(corrida1, meia)}
-        inclinacao={-Math.atan2(meia, corrida1)}
-        eixo="x"
-        position={[w / 2, meia / 2 + 0.9, zLance1 - w / 2]}
-      />
-      <Corrimao
-        comprimento={Math.hypot(corrida2, meia)}
-        inclinacao={Math.atan2(meia, corrida2)}
-        eixo="z"
-        // Meio do segundo lance: ele vai de (−P/2 + w) até P/2, então o
-        // centro cai em w/2. A altura é a do meio da subida, mais a mão.
-        position={[xLance2 - w / 2, meia * 1.5 + 0.9, w / 2]}
-      />
     </group>
-  );
-}
-
-/** A barra inclinada do corrimão — uma caixa girada no eixo do lance. */
-function Corrimao({
-  comprimento,
-  inclinacao,
-  eixo,
-  position,
-}: {
-  comprimento: number;
-  inclinacao: number;
-  eixo: "x" | "z";
-  position: [number, number, number];
-}) {
-  // Girar em Z leva +X para cima; girar em X (com sinal trocado) leva +Z.
-  // São os dois sentidos em que os lances correm.
-  const rotation: [number, number, number] =
-    eixo === "x" ? [0, 0, inclinacao] : [-inclinacao, 0, 0];
-  const args: [number, number, number] =
-    eixo === "x" ? [comprimento, 0.05, 0.05] : [0.05, 0.05, comprimento];
-
-  return (
-    <mesh castShadow position={position} rotation={rotation}>
-      <boxGeometry args={args} />
-      <meshStandardMaterial color={METAL} metalness={0.2} roughness={0.5} />
-    </mesh>
   );
 }
 
