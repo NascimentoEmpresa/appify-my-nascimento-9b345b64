@@ -115,6 +115,16 @@ interface Props {
   grupo?: SelecaoCena[];
   /** `aditivo` = Shift na mão: soma (ou tira) do grupo em vez de trocar. */
   onSelecionar: (s: SelecaoCena, aditivo?: boolean) => void;
+  /**
+   * Onde o Ctrl+V vai colar, em cm — o ponto vermelho no chão.
+   *
+   * Mora na cena, e não na barra, porque é uma marca no MUNDO: anda com a
+   * câmera, encaixa na grade e fica onde o dedo apontou, que é o ponto todo
+   * de "cola AQUI".
+   */
+  alvoColagem?: { x: number; y: number } | null;
+  /** Clique no chão com o cursor na mão — é o que escolhe o alvo. */
+  onCliqueNoChao?: (x: number, y: number) => void;
   editavel: boolean;
   /** Vista: planta baixa (2d) ou maquete (3d). Padrão: 3d. */
   modo?: ModoCena;
@@ -279,6 +289,8 @@ function Conteudo({
   ativos,
   selecao,
   grupo = [],
+  alvoColagem,
+  onCliqueNoChao,
   onSelecionar,
   editavel,
   modo = "3d",
@@ -642,10 +654,24 @@ function Conteudo({
         // Câmera ortográfica não anda para perto nem para longe (o zoom é
         // outra coisa), então o limite de distância só teria a chance de puxar
         // a câmera para baixo sem motivo.
-        minDistance={modo === "2d" ? 0.1 : 1.5}
-        maxDistance={modo === "2d" ? 1000 : Math.max(L, P) * 2.5 + 20}
-        minZoom={4}
-        maxZoom={400}
+        // Limites largos de propósito: o teto antigo (2,5× a planta) parava
+        // o afastamento antes de caber o andar inteiro na tela, e o piso de
+        // 1,5 m impedia de chegar perto de um monitor.
+        minDistance={modo === "2d" ? 0.1 : 0.4}
+        maxDistance={modo === "2d" ? 4000 : Math.max(L, P) * 8 + 80}
+        minZoom={0.5}
+        maxZoom={3000}
+        /**
+         * Zoom mais rápido e amortecimento mais curto.
+         *
+         * Com `zoomSpeed` 1 e `dampingFactor` 0.15 cada passo da rodinha
+         * andava pouco e ainda levava meio segundo deslizando até parar — num
+         * andar de 37 m, atravessar a distância toda virava dezenas de
+         * rolagens. O amortecimento continua (o corte seco enjoa), só que
+         * converge bem mais rápido.
+         */
+        zoomSpeed={2}
+        dampingFactor={0.3}
         /**
          * Na obra, cada botão do mouse faz UMA coisa.
          *
@@ -695,7 +721,6 @@ function Conteudo({
               }
         }
         enableDamping
-        dampingFactor={0.15}
       />
       {modo === "2d" && <EnquadrarPlanta largura={L} profundidade={P} />}
 
@@ -735,6 +760,7 @@ function Conteudo({
         }}
         onTerminarTraco={finalizarTraco}
         onDesmarcar={() => onSelecionar(null)}
+        onCliqueNoChao={onCliqueNoChao}
       />
 
       {/*
@@ -792,6 +818,8 @@ function Conteudo({
           soltar();
         }}
       />
+
+      {alvoColagem && <AlvoDeColagem x={M(alvoColagem.x)} z={M(alvoColagem.y)} />}
 
       {/* Apagando não se desenha nada: a borracha mantém `desenhando` ligado
           só para travar arrasto e seleção, e a prévia de parede aí em cima do
@@ -1143,6 +1171,7 @@ function Piso({
   onComecarTraco: (t: TracoNoChao) => void;
   onTerminarTraco: () => void;
   onDesmarcar: () => void;
+  onCliqueNoChao?: (x: number, y: number) => void;
 }) {
   const L = M(planta.largura_cm);
   const P = M(planta.altura_cm);
@@ -1161,6 +1190,9 @@ function Piso({
           // selecionado" — o piso conta como área vazia.
           if (!desenhando) {
             onDesmarcar();
+            // O MESMO clique que larga a seleção marca onde colar. São a
+            // mesma intenção: "não é nenhuma peça, é ali no chão".
+            onCliqueNoChao?.(snap(e.point.x * 100, livre, passoCm), snap(e.point.z * 100, livre, passoCm));
             return;
           }
           if (!editavel) return;
@@ -1279,6 +1311,35 @@ function TapeteDeObra({
       <planeGeometry args={[lado, lado]} />
       <meshBasicMaterial color="#0ea5e9" transparent opacity={0.045} depthWrite={false} />
     </mesh>
+  );
+}
+
+/**
+ * O ponto vermelho: onde o Ctrl+V vai soltar o bloco copiado.
+ *
+ * Disco rente ao chão mais um pino em pé. O disco sozinho some assim que a
+ * câmera abaixa (fica de perfil, com um pixel de altura) e some também atrás
+ * de qualquer mesa; o pino resolve os dois casos por ser vertical.
+ *
+ * `depthTest={false}` no pino: o alvo tem que ser visível mesmo quando cai
+ * atrás de uma parede — é uma marca de intenção, não um objeto da planta.
+ */
+function AlvoDeColagem({ x, z }: { x: number; z: number }) {
+  return (
+    <group position={[x, 0, z]}>
+      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.02, 0]}>
+        <circleGeometry args={[0.28, 24]} />
+        <meshBasicMaterial color="#ef4444" transparent opacity={0.55} depthWrite={false} />
+      </mesh>
+      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.03, 0]}>
+        <ringGeometry args={[0.3, 0.36, 24]} />
+        <meshBasicMaterial color="#ef4444" transparent opacity={0.9} depthWrite={false} />
+      </mesh>
+      <mesh position={[0, 0.35, 0]} renderOrder={999}>
+        <cylinderGeometry args={[0.025, 0.025, 0.7, 8]} />
+        <meshBasicMaterial color="#ef4444" depthTest={false} />
+      </mesh>
+    </group>
   );
 }
 

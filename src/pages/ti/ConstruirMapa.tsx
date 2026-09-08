@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import {
   Box, Building2, Copy, Eraser, Grid3x3, Hammer, Layers, Layers3, MousePointer2, Move3d,
@@ -124,6 +124,34 @@ export default function ConstruirMapa() {
    * altura, giro e cor de cinco peças ao mesmo tempo não são um formulário.
    */
   const [grupo, setGrupo] = useState<SelecaoCena[]>([]);
+  /**
+   * O que o Ctrl+C guardou, já em coordenadas RELATIVAS ao canto do bloco.
+   *
+   * Relativas, e não absolutas, porque o Ctrl+V solta o bloco em outro lugar:
+   * guardar a posição de origem obrigaria a recalcular a diferença na hora de
+   * colar, e é justamente aí que a formação se perde. Assim, colar é somar o
+   * ponto escolhido a cada deslocamento — a mesa e as cadeiras chegam do
+   * outro lado da sala na mesma distância entre si.
+   */
+  const [copia, setCopia] = useState<{
+    elementos: { el: TiElemento; dx: number; dy: number }[];
+    ativos: { a: TiAtivo; dx: number; dy: number }[];
+  } | null>(null);
+  /** Onde colar, em cm. É o ponto vermelho no chão. */
+  const [alvoColagem, setAlvoColagem] = useState<{ x: number; y: number } | null>(null);
+  /**
+   * Ponte para o listener de teclado.
+   *
+   * `copiarGrupo` e `colarGrupo` são declarados bem mais abaixo (precisam de
+   * `planta`, `historico` e das mutations), mas o Ctrl+C/Ctrl+V é montado
+   * aqui em cima. Chamar direto dava "Cannot access before initialization" no
+   * RENDER — tela branca, sem nada carregar. A ref é preenchida a cada
+   * render e lida só quando a tecla é apertada, que é depois de tudo pronto.
+   */
+  const atalhosRef = useRef<{ copiar: () => void; colar: () => void }>({
+    copiar: () => {},
+    colar: () => {},
+  });
   const [ferramenta, setFerramenta] = useState<Ferramenta>({ tipo: "selecao" });
   const [modo, setModoEstado] = useState<ModoCena>(modoSalvo);
   /**
@@ -176,7 +204,14 @@ export default function ConstruirMapa() {
    */
   const selecionarNaCena = useCallback((s: SelecaoCena, aditivo?: boolean) => {
     if (!s) { setSelecao(null); setGrupo([]); return; }
-    if (!aditivo) { setSelecao(s); setGrupo([s]); return; }
+    if (!aditivo) {
+      setSelecao(s);
+      // Clicar numa peça QUE JÁ ESTÁ no grupo não desmonta o grupo — é como
+      // todo editor se comporta, e sem isso pegar o bloco para arrastar o
+      // reduzia a uma peça no próprio clique: você marcava seis e movia uma.
+      setGrupo((g) => (g.some((i) => i?.tipo === s.tipo && i.id === s.id) ? g : [s]));
+      return;
+    }
 
     setGrupo((g) => {
       const jaTem = g.some((i) => i?.tipo === s.tipo && i.id === s.id);
@@ -330,6 +365,8 @@ export default function ConstruirMapa() {
       if (e.key === "Escape") {
         setFerramenta({ tipo: "selecao" }); setSelecao(null); setGrupo([]); setObra(false);
       }
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "c") { e.preventDefault(); atalhosRef.current.copiar(); return; }
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "v") { e.preventDefault(); atalhosRef.current.colar(); return; }
       if ((e.key === "Delete" || e.key === "Backspace") && selecao) { e.preventDefault(); pedirRemocao(); }
       if (e.key.toLowerCase() === "r" && selecao) girar(45);
       if (e.key.toLowerCase() === "d" && (elementoSel || ativoSel)) duplicar();
@@ -499,6 +536,110 @@ export default function ConstruirMapa() {
    * seguida leva o bloco novo para o lugar — que é o gesto inteiro: duplicar,
    * arrastar, soltar.
    */
+  /**
+   * Ctrl+C — guarda o bloco marcado, sem tocar no banco.
+   *
+   * Copiar não cria nada: só anota o que está pego e onde cada peça fica em
+   * relação ao canto do bloco. Quem cria é o Ctrl+V.
+   */
+  const copiarGrupo = useCallback(() => {
+    const els = grupo
+      .filter((i): i is { tipo: "elemento"; id: string } => i?.tipo === "elemento")
+      .map((i) => elementos.find((e) => e.id === i.id))
+      .filter((e): e is TiElemento => !!e);
+    const ats = grupo
+      .filter((i): i is { tipo: "ativo"; id: string } => i?.tipo === "ativo")
+      .map((i) => ativos.find((a) => a.id === i.id))
+      .filter((a): a is TiAtivo => !!a && a.pos_x != null && a.pos_y != null);
+
+    if (!els.length && !ats.length) { toast.error("Nada selecionado para copiar."); return; }
+
+    // O canto do bloco: o menor x e o menor y de tudo que foi pego. É a ele
+    // que os deslocamentos se referem.
+    const xs = [...els.map((e) => Number(e.x)), ...ats.map((a) => Number(a.pos_x))];
+    const ys = [...els.map((e) => Number(e.y)), ...ats.map((a) => Number(a.pos_y))];
+    const ox = Math.min(...xs);
+    const oy = Math.min(...ys);
+
+    setCopia({
+      elementos: els.map((el) => ({ el, dx: Number(el.x) - ox, dy: Number(el.y) - oy })),
+      ativos: ats.map((a) => ({ a, dx: Number(a.pos_x) - ox, dy: Number(a.pos_y) - oy })),
+    });
+    toast.success(`${els.length + ats.length} peça(s) copiada(s). Clique no chão e tecle Ctrl+V.`);
+  }, [grupo, elementos, ativos]);
+
+  /**
+   * Ctrl+V — cria o bloco copiado no ponto vermelho.
+   *
+   * Sem ponto escolhido não cola: colar no lugar de origem é o que a versão
+   * anterior fazia, e foi exatamente a reclamação — a cópia nascia por cima e
+   * ainda tinha que ser arrastada peça por peça.
+   */
+  const colarGrupo = useCallback(() => {
+    if (!planta) return;
+    if (!copia) { toast.error("Nada copiado ainda — selecione as peças e tecle Ctrl+C."); return; }
+    if (!alvoColagem) { toast.error("Clique no chão para marcar onde colar (o ponto vermelho)."); return; }
+
+    const novos: SelecaoCena[] = [];
+    const elsCriados: TiElemento[] = [];
+    const ativosCriados: TiAtivo[] = [];
+    let pendentes = 0;
+    const fim = () => {
+      if (--pendentes > 0) return;
+      setGrupo(novos);
+      setSelecao(novos[0] ?? null);
+      if (elsCriados.length || ativosCriados.length) {
+        historico.registrar({ tipo: "duplicar_bloco", elementos: elsCriados, ativos: ativosCriados });
+      }
+    };
+
+    for (const { el, dx, dy } of copia.elementos) {
+      const { id, ...resto } = el;
+      pendentes++;
+      salvarElemento.mutate(
+        { ...resto, planta_id: planta.id, x: alvoColagem.x + dx, y: alvoColagem.y + dy },
+        {
+          onSuccess: (criado) => { elsCriados.push(criado); novos.push({ tipo: "elemento", id: criado.id }); fim(); },
+          onError: fim,
+        },
+      );
+    }
+
+    if (podeIncluirAtivo) {
+      for (const { a, dx, dy } of copia.ativos) {
+        // Identidade do aparelho físico não se clona — mesma regra do
+        // duplicar de uma peça só.
+        const {
+          id, codigo, created_at, updated_at,
+          patrimonio, numero_serie, nota_fiscal,
+          ip, mac, hostname, anydesk, teamviewer,
+          ...resto
+        } = a;
+        const def = tipoAtivo(a.tipo);
+        const quantos = ativos.filter((z) => z.tipo === a.tipo).length + novos.length + 1;
+        pendentes++;
+        salvarAtivo.mutate(
+          {
+            ...(resto as TiAtivoInput),
+            nome: `${def.label} ${quantos}`,
+            planta_id: planta.id,
+            pos_x: alvoColagem.x + dx,
+            pos_y: alvoColagem.y + dy,
+          },
+          {
+            onSuccess: (novo) => { ativosCriados.push(novo); novos.push({ tipo: "ativo", id: novo.id }); fim(); },
+            onError: fim,
+          },
+        );
+      }
+    }
+
+    if (pendentes === 0) toast.error("Nada para colar.");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [planta, copia, alvoColagem, podeIncluirAtivo, ativos, historico]);
+
+  atalhosRef.current = { copiar: copiarGrupo, colar: colarGrupo };
+
   const duplicarGrupo = () => {
     if (!planta) return;
 
@@ -907,6 +1048,16 @@ export default function ConstruirMapa() {
               <Tag className="h-4 w-4" />
             </Button>
 
+            {copia && (
+              <>
+                <Separator orientation="vertical" className="h-6" />
+                <Badge variant="outline" className="border-red-300 text-red-600">
+                  {copia.elementos.length + copia.ativos.length} copiada(s) ·{" "}
+                  {alvoColagem ? "Ctrl+V cola no ponto" : "clique no chão"}
+                </Badge>
+              </>
+            )}
+
             {grupo.length > 1 && (
               <>
                 <Separator orientation="vertical" className="h-6" />
@@ -1116,6 +1267,10 @@ export default function ConstruirMapa() {
                 ativos={ativos}
                 selecao={selecao}
                 grupo={grupo}
+                alvoColagem={alvoColagem}
+                onCliqueNoChao={(x, y) => {
+                  if (ferramenta.tipo === "selecao") setAlvoColagem({ x, y });
+                }}
                 onSelecionar={(s, aditivo) => {
                   if (ferramenta.tipo === "selecao") selecionarNaCena(s, aditivo);
                 }}
@@ -1180,7 +1335,8 @@ export default function ConstruirMapa() {
                     <li><b>R</b> gira 45°, <b>D</b> duplica, <b>Delete</b> remove</li>
                     <li><b>Ctrl+Z</b> desfaz, <b>Ctrl+Y</b> refaz</li>
                     <li><b>Duplo clique</b> num equipamento abre a ficha</li>
-                    <li><b>Shift + clique</b> marca várias peças; arrastar uma delas leva o bloco todo, e <b>Duplicar bloco</b> copia o conjunto inteiro (mesa com as cadeiras, por exemplo)</li>
+                    <li><b>Shift + clique</b> marca várias peças; arrastar uma delas leva o bloco todo</li>
+                    <li><b>Ctrl+C</b> copia o que está marcado, <b>clique no chão</b> marca o ponto vermelho e <b>Ctrl+V</b> solta o bloco ali — é o caminho para repetir "mesa + 4 cadeiras" em outro setor</li>
                     <li><b>2D / 3D</b> na barra troca a vista; no 2D a câmera não gira e o botão direito arrasta a planta</li>
                     <li><b>Obra</b> abre o modo de planta: arraste no chão para <b>abrir</b> ou <b>tirar</b> piso de uma vez, ou para levantar <b>parede</b></li>
                     <li>Na <b>obra</b> cada botão faz uma coisa: <b>esquerdo</b> desenha, <b>meio</b> arrasta a planta, <b>direito</b> gira a câmera (no 3D), <b>rodinha</b> dá zoom</li>

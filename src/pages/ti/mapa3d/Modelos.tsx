@@ -608,7 +608,7 @@ function Planta({ largura, altura }: PropsModelo) {
   );
 }
 
-function Porta({ largura, profundidade, altura }: PropsModelo) {
+function Porta({ cor, largura, profundidade, altura }: PropsModelo) {
   const batente = 0.06;
   const espessuraFolha = 0.045;
   const folhaLargura = largura - batente * 2;
@@ -618,12 +618,12 @@ function Porta({ largura, profundidade, altura }: PropsModelo) {
       {[-1, 1].map((lado) => (
         <mesh key={lado} castShadow position={[lado * (largura / 2 - batente / 2), altura / 2, 0]}>
           <boxGeometry args={[batente, altura, profundidade]} />
-          <meshStandardMaterial color="#9a6b3f" roughness={0.7} />
+          <meshStandardMaterial color={cor ? sombrear(cor, -12) : "#9a6b3f"} roughness={0.7} />
         </mesh>
       ))}
       <mesh castShadow position={[0, altura - batente / 2, 0]}>
         <boxGeometry args={[largura, batente, profundidade]} />
-        <meshStandardMaterial color="#9a6b3f" roughness={0.7} />
+        <meshStandardMaterial color={cor ? sombrear(cor, -12) : "#9a6b3f"} roughness={0.7} />
       </mesh>
       {/* A folha nasceu entreaberta (rotation -0.7) porque, centrada na
        * espessura do batente, ela sumia dentro da parede. Depois passou a ficar
@@ -638,7 +638,7 @@ function Porta({ largura, profundidade, altura }: PropsModelo) {
       <group position={[0, folhaAltura / 2, 0]}>
         <mesh castShadow>
           <boxGeometry args={[folhaLargura, folhaAltura, espessuraFolha]} />
-          <meshStandardMaterial color="#c08a52" roughness={0.65} />
+          <meshStandardMaterial color={cor || "#c08a52"} roughness={0.65} />
         </mesh>
         {/* Almofadas e maçaneta nas DUAS faces.
             Porta tem frente e verso iguais, e no mapa se olha dos dois lados:
@@ -694,11 +694,13 @@ function Porta({ largura, profundidade, altura }: PropsModelo) {
  * apaga o que está atrás dela dependendo da ordem de desenho — a mesa vista
  * através da divisória sumia conforme o ângulo da câmera.
  */
-function VidroMaterial({ opacidade = 0.24 }: { opacidade?: number }) {
+function VidroMaterial({ opacidade = 0.24, cor }: { opacidade?: number; cor?: string }) {
   return (
     <meshStandardMaterial
-      color="#dbeefb"
-      emissive="#bfe0f5"
+      // A cor escolhida no inspetor tinge o vidro; sem escolha, o azulado
+      // padrão. Antes o vidro ignorava a cor e o seletor não fazia nada.
+      color={cor || "#dbeefb"}
+      emissive={cor || "#bfe0f5"}
       emissiveIntensity={0.35}
       transparent
       opacity={opacidade}
@@ -718,8 +720,8 @@ function VidroMaterial({ opacidade = 0.24 }: { opacidade?: number }) {
  * anodizado e, principalmente, não vira uma grade escura por cima do vidro,
  * que era metade do motivo de o pano parecer sólido.
  */
-function AluminioMaterial() {
-  return <meshStandardMaterial color="#c4ced9" metalness={0.15} roughness={0.55} />;
+function AluminioMaterial({ cor }: { cor?: string } = {}) {
+  return <meshStandardMaterial color={cor || "#c4ced9"} metalness={0.15} roughness={0.55} />;
 }
 
 /**
@@ -825,7 +827,7 @@ function Escada({ cor, largura, profundidade, altura }: PropsModelo) {
  * montantes são calculados, e não fixos: um pano de 6 m com dois montantes
  * pareceria vidro de aquário, e um de 1 m com seis pareceria gradil.
  */
-function ParedeVidro({ largura, profundidade, altura, vaos }: PropsModelo) {
+function ParedeVidro({ cor, largura, profundidade, altura, vaos }: PropsModelo) {
   // Sem verga aqui: o que recorta um pano de vidro é a porta de vidro, que
   // tem a altura toda do pano. Sobra nenhuma para fechar em cima.
   const trechos = trechosSolidos(largura, vaos ?? []);
@@ -836,6 +838,7 @@ function ParedeVidro({ largura, profundidade, altura, vaos }: PropsModelo) {
         return (
           <PanoDeVidro
             key={t.de}
+            cor={cor}
             largura={comprimento}
             profundidade={profundidade}
             altura={altura}
@@ -849,11 +852,13 @@ function ParedeVidro({ largura, profundidade, altura, vaos }: PropsModelo) {
 
 /** Um trecho contínuo de pano de vidro, já sem os vãos. */
 function PanoDeVidro({
+  cor,
   largura,
   profundidade,
   altura,
   deslocamento,
 }: {
+  cor?: string;
   largura: number;
   profundidade: number;
   altura: number;
@@ -870,7 +875,7 @@ function PanoDeVidro({
       {/* vidro: um pano só, com folga para não brigar com os perfis */}
       <mesh position={[0, altura / 2, 0]}>
         <boxGeometry args={[largura - perfil, altura - perfil * 2, profundidade * 0.3]} />
-        <VidroMaterial />
+        <VidroMaterial cor={cor} />
       </mesh>
 
       {/* perfis de piso e teto */}
@@ -918,7 +923,7 @@ function PanoDeVidro({
  * Quem quiser a porta solta, sem bandeira, baixa a altura no inspetor: com
  * pouca sobra o vidro de cima simplesmente não é desenhado.
  */
-function PortaVidro({ largura, profundidade, altura }: PropsModelo) {
+function PortaVidro({ cor, largura, profundidade, altura }: PropsModelo) {
   const perfil = 0.06;
   const montante = 0.05;
   const espessura = 0.03;
@@ -958,7 +963,7 @@ function PortaVidro({ largura, profundidade, altura }: PropsModelo) {
       {temBandeira && (
         <mesh position={[0, folhaAltura + perfil + sobra / 2, 0]}>
           <boxGeometry args={[largura - montante * 2, sobra, profundidade * 0.3]} />
-          <VidroMaterial />
+          <VidroMaterial cor={cor} />
         </mesh>
       )}
 
@@ -966,7 +971,7 @@ function PortaVidro({ largura, profundidade, altura }: PropsModelo) {
         <group key={lado} position={[(lado * folhaLargura) / 2, folhaAltura / 2, lado * recuo]}>
           <mesh>
             <boxGeometry args={[folhaLargura, folhaAltura, espessura]} />
-            <VidroMaterial opacidade={0.3} />
+            <VidroMaterial opacidade={0.3} cor={cor} />
           </mesh>
           {/* moldura fina: sem ela a folha some contra o fundo */}
           {[-1, 1].map((borda) => (
