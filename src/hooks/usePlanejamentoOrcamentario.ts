@@ -203,16 +203,29 @@ export function useSalvarClassificacaoOrcamento() {
   });
 }
 
-export function usePlanejamentosOrcamento(empresaId: string | null | undefined) {
+// SIS-2026-0337/0309: `todasEmpresas: true` busca sem filtro de empresa —
+// usado pelas telas de Orçamento (Geral/Administrativo/Detalhe) que hoje
+// resolviam Administrativo só da empresa FIXA do perfil (useEmpresaId,
+// nem a empresa "ativa" do seletor) e não tinham como o usuário ver/
+// filtrar as demais empresas que acessa. RLS de planejamento_orcamentario
+// já libera por vínculo (user_pode_ver_empresa, ver migration
+// 20260930000067) — o filtro aqui é só o que o client PEDE, a tela que
+// decide filtrar de volta por empresa localmente (ver FiltroEmpresa em
+// OrcamentoGeral.tsx e afins). Chamadas com só `empresaId` (resolução de
+// Orçado de UMA despesa específica, useOrcadoClassificacao) continuam
+// exatamente como antes.
+export function usePlanejamentosOrcamento(empresaId: string | null | undefined, opts?: { todasEmpresas?: boolean }) {
+  const todasEmpresas = opts?.todasEmpresas ?? false;
   return useQuery({
-    queryKey: [LIST_KEY, empresaId],
-    enabled: !!empresaId,
+    queryKey: [LIST_KEY, todasEmpresas ? "todas" : empresaId],
+    enabled: todasEmpresas || !!empresaId,
     queryFn: async () => {
-      const { data, error } = await (supabase as any)
+      let q = (supabase as any)
         .from("planejamento_orcamentario")
         .select("*, classificacao:classificacao_id(id, nome, ativo)")
-        .eq("empresa_id", empresaId)
         .order("inicio_vigencia", { ascending: false });
+      if (!todasEmpresas) q = q.eq("empresa_id", empresaId);
+      const { data, error } = await q;
       if (error) throw error;
       return (data ?? []) as PlanejamentoOrcamentarioRow[];
     },

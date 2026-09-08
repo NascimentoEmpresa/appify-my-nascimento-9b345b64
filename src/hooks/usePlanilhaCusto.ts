@@ -257,10 +257,16 @@ export function useDescricoesOutros() {
   return { data, isLoading };
 }
 
-export function usePlanilhaCustos(filtros?: { cliente?: string; contrato?: string; q?: string }) {
+// SIS-2026-0337: `todasEmpresas: true` pula o filtro por empresa ativa —
+// mesmo achado/motivo de useContratosERP (ver comentário lá). RLS de
+// planilha_custo já é por vínculo (empresa_id IN user_empresa), não pela
+// empresa "ativa" do seletor, então buscar sem esse filtro client-side é
+// seguro: o banco só devolve o que o usuário de fato tem acesso.
+export function usePlanilhaCustos(filtros?: { cliente?: string; contrato?: string; q?: string; todasEmpresas?: boolean }) {
   const { empresa } = useEmpresaAtiva();
+  const todasEmpresas = filtros?.todasEmpresas ?? false;
   return useQuery({
-    queryKey: ["planilha_custo", empresa.id, filtros],
+    queryKey: ["planilha_custo", todasEmpresas ? "todas" : empresa.id, filtros],
     queryFn: async () => {
       // Busca em lotes de 1000 para contornar o limite do PostgREST
       const PAGE = 1000;
@@ -270,9 +276,9 @@ export function usePlanilhaCustos(filtros?: { cliente?: string; contrato?: strin
         let q = (supabase as any)
           .from("planilha_custo")
           .select("*")
-          .eq("empresa_id", empresa.id)
           .order("created_at", { ascending: false })
           .range(from, from + PAGE - 1);
+        if (!todasEmpresas) q = q.eq("empresa_id", empresa.id);
         if (filtros?.cliente) q = q.ilike("cliente", `%${filtros.cliente}%`);
         if (filtros?.contrato) q = q.ilike("contrato", `%${filtros.contrato}%`);
         const { data, error } = await q;

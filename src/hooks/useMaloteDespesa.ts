@@ -417,15 +417,22 @@ export function useIntegrantes() {
 
 // Nome de exibição de um usuário (usado pro "Solicitante" no cabeçalho da
 // Despesa e pra resolver o ator de cada evento da timeline).
+// [SEM-CHAMADO] (achado real do Iury): antes fazia SELECT direto em
+// `profiles`, cuja RLS (profiles_self_select) só libera a própria linha ou
+// quem tem Administração/Administrador Geral — resolver o nome de QUALQUER
+// outro usuário (aprovador, quem pagou, solicitante...) falhava
+// silenciosamente pra todo mundo sem esse acesso, escondendo a coluna de
+// nome nas telas do Malote. RPC estreita (só nome/email, não a linha
+// inteira) resolve sem abrir a RLS de profiles pra ninguém.
 export function useNomeUsuario(userId: string | null | undefined) {
   return useQuery({
     queryKey: ["profiles_nome", userId],
     enabled: !!userId,
     staleTime: 5 * 60_000,
     queryFn: async () => {
-      const { data, error } = await (supabase as any).from("profiles").select("display_name, email").eq("id", userId).single();
+      const { data, error } = await (supabase as any).rpc("nome_usuario_ator", { _user_id: userId });
       if (error) return null;
-      return (data?.display_name || data?.email || null) as string | null;
+      return (data ?? null) as string | null;
     },
   });
 }
