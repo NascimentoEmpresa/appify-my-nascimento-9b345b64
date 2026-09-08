@@ -80,7 +80,10 @@ export function SearchableSelect({
           </Button>
         </PopoverTrigger>
         <PopoverContent
-          className={cn("p-0 w-[--radix-popover-trigger-width] min-w-[260px]", contentClassName)}
+          className={cn(
+            "p-0 w-[--radix-popover-trigger-width] min-w-[320px] max-w-[min(480px,90vw)]",
+            contentClassName,
+          )}
           align="start"
         >
           <Command
@@ -109,7 +112,7 @@ export function SearchableSelect({
                       )}
                     />
                     <div className="flex flex-col min-w-0">
-                      <span className="truncate">{opt.label}</span>
+                      <span className="whitespace-normal break-words">{opt.label}</span>
                       {opt.hint && (
                         <span className="truncate text-xs text-muted-foreground">{opt.hint}</span>
                       )}
