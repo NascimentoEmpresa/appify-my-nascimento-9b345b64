@@ -631,6 +631,11 @@ export interface Baixa {
   quantidade?: number;
 }
 
+export interface EnvioPedido {
+  tipo: "SUPERVISOR" | "CORREIO";
+  rastreio: string | null;
+}
+
 /**
  * Status + consumo das etiquetas NUMA CHAMADA SÓ.
  * No legado eram duas requisições: se a segunda falhasse, as peças já tinham
@@ -641,12 +646,14 @@ export function useBaixarPedido() {
   return useMutation({
     mutationFn: async (p: {
       pedido_id: string; status: string; observacao: string | null; baixas: Baixa[];
+      envio: EnvioPedido | null;
     }) => {
       const { data, error } = await sb.rpc("sup_est_baixar", {
         p_pedido_id: p.pedido_id,
         p_status: p.status,
         p_observacao: p.observacao,
         p_baixas: p.baixas,
+        p_envio: p.envio,
       });
       if (error) throw error;
       return data as { baixadas: number; rejeitadas: { codigo: string; motivo: string }[] };

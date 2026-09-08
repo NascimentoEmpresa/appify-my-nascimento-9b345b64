@@ -220,3 +220,60 @@ export function caminhoNoBucket(treinamentoId: string, tipo: "video" | "anexo" |
     .slice(-80);
   return `${treinamentoId}/${tipo}-${Date.now()}-${limpo}`;
 }
+
+// =====================================================================
+// DASHBOARD DE VÍDEOS — os números que a tela mostra em cima das tabelas.
+//
+// Vive aqui, e não dentro do componente, porque "quantas pessoas viram" tem
+// uma armadilha de contagem que merece teste: somar a coluna de cada vídeo
+// conta três vezes quem assistiu a três treinamentos. O total de
+// VISUALIZAÇÕES soma; o total de PESSOAS não — ele se conta por distintas.
+// =====================================================================
+
+/** O que `trn_dashboard_videos` devolve, na parte que o resumo usa. */
+export interface LinhaVideoResumo {
+  pessoas_viram: number;
+  visualizacoes: number;
+  conclusoes: number;
+  aprovados: number;
+}
+
+/** O que `trn_dashboard_pessoas` devolve, na parte que o resumo usa. */
+export interface LinhaPessoaResumo {
+  user_id: string;
+  visualizou: boolean;
+}
+
+export interface ResumoDashboard {
+  /** Aberturas somadas — a mesma pessoa abrindo 3× conta 3. */
+  visualizacoes: number;
+  /** Pessoas DISTINTAS que abriram algum dos vídeos do filtro. */
+  distintas: number;
+  conclusoes: number;
+  aprovados: number;
+  /**
+   * Conclusões ÷ pessoas que viram, em %. O denominador é "quem viu", não
+   * "quem existe no ERP": o módulo não tem público-alvo cadastrado, então
+   * uma taxa sobre a empresa inteira seria um número inventado.
+   */
+  taxa: number;
+}
+
+export function resumirDashboard(
+  videos: LinhaVideoResumo[],
+  pessoas: LinhaPessoaResumo[],
+): ResumoDashboard {
+  const soma = (f: (v: LinhaVideoResumo) => number) =>
+    videos.reduce((s, v) => s + (Number(f(v)) || 0), 0);
+
+  const conclusoes = soma((v) => v.conclusoes);
+  const viram = soma((v) => v.pessoas_viram);
+
+  return {
+    visualizacoes: soma((v) => v.visualizacoes),
+    distintas: new Set(pessoas.filter((p) => p.visualizou).map((p) => p.user_id)).size,
+    conclusoes,
+    aprovados: soma((v) => v.aprovados),
+    taxa: viram > 0 ? Math.round((conclusoes / viram) * 100) : 0,
+  };
+}

@@ -6,7 +6,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import {
   Download, ExternalLink, ListChecks, Check, X, Trophy, RotateCcw, Loader2, PartyPopper,
 } from "lucide-react";
-import { corrigirProva, embedDeVideo, type Resultado, type Treinamento } from "./core";
+import { corrigirProva, embedDeVideo, type EscopoTreinamento, type Resultado, type Treinamento } from "./core";
 
 // =====================================================================
 // TREINAMENTOS — assistir, baixar o material e fazer a prova.
@@ -20,12 +20,14 @@ interface Props {
   treinamento: Treinamento | null;
   meuNome: string;
   meuId: string | undefined;
+  /** De qual porta a pessoa entrou — vai junto no registro de visualização. */
+  escopo: EscopoTreinamento;
   jaFeito: { prova_nota: number | null; aprovado: boolean | null } | null;
   onFechar: () => void;
   onConcluido: () => void;
 }
 
-export function TreinamentoVisor({ treinamento, meuNome, meuId, jaFeito, onFechar, onConcluido }: Props) {
+export function TreinamentoVisor({ treinamento, meuNome, meuId, escopo, jaFeito, onFechar, onConcluido }: Props) {
   const { toast } = useToast();
   const [urlVideo, setUrlVideo] = useState<string | null>(null);
   const [respostas, setRespostas] = useState<Record<string, number | undefined>>({});
@@ -49,6 +51,27 @@ export function TreinamentoVisor({ treinamento, meuNome, meuId, jaFeito, onFecha
     })();
     return () => { cancelado = true; };
   }, [t?.id, t?.video_path]);
+
+  // Registra que esta pessoa ABRIU o treinamento — a metade que faltava para
+  // o Dashboard de vídeos responder "quem assistiu", e não só "quem concluiu".
+  //
+  // Dispara na abertura, não no play: YouTube e Vimeo tocam dentro de um
+  // iframe de outro domínio, que não deixa a página saber se alguém apertou
+  // play. Contar a abertura é o que dá para afirmar com honestidade — e é o
+  // que a coluna "Visualizações" do dashboard diz que significa.
+  //
+  // Falha em silêncio de propósito: não conseguir contabilizar não pode
+  // impedir ninguém de assistir ao treinamento.
+  useEffect(() => {
+    if (!t?.id || !meuId) return;
+    (async () => {
+      const { error } = await (supabase as any).rpc("trn_registrar_visualizacao", {
+        _treinamento: t.id,
+        _escopo: escopo,
+      });
+      if (error) console.warn("[treinamentos] visualização não registrada:", error.message);
+    })();
+  }, [t?.id, meuId, escopo]);
 
   const baixarAnexo = async () => {
     if (!t?.anexo_path) return;

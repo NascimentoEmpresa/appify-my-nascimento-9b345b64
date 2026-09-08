@@ -1,5 +1,11 @@
 import { describe, it, expect } from "vitest";
-import { derivarStatusItem, STATUS_ITEM } from "@/hooks/useSupPedidos";
+import {
+  derivarStatusItem,
+  derivarStatusVisivel,
+  apresentarStatusVisivel,
+  ESTILO_STATUS_VISIVEL,
+  STATUS_ITEM,
+} from "@/hooks/useSupPedidos";
 
 /**
  * SIS-2026-0201 — o gerente de Suprimentos precisa exportar "só o que ficou
@@ -71,5 +77,38 @@ describe("derivarStatusItem — status do item vem da etiqueta, não de coluna",
     // relatório continua saindo — sem inventar um status que não existe.
     expect(derivarStatusItem("STATUS_QUE_NAO_EXISTE", false)).toBe("PENDENTE");
     expect(derivarStatusItem("STATUS_QUE_NAO_EXISTE", true)).toBe("SEPARADO");
+  });
+});
+
+describe("derivarStatusVisivel — entrega vem da comprovação", () => {
+  it("mantém o despacho âmbar enquanto a comprovação não voltou", () => {
+    expect(derivarStatusVisivel("DESPACHADO", "PENDENTE")).toBe("DESPACHADO_AGUARDANDO");
+    expect(ESTILO_STATUS_VISIVEL.DESPACHADO_AGUARDANDO.rotulo)
+      .toBe("Despachado e Aguardando Confirmar Entrega");
+  });
+
+  it("só apresenta entregue quando a comprovação foi respondida", () => {
+    expect(derivarStatusVisivel("DESPACHADO", "ENVIADO")).toBe("DESPACHADO_ENTREGUE");
+    expect(ESTILO_STATUS_VISIVEL.DESPACHADO_ENTREGUE.rotulo)
+      .toBe("Despachado e Entregue");
+  });
+
+  it("coloca o acervo dispensado no balde concluído sem afirmar entrega", () => {
+    expect(derivarStatusVisivel("DESPACHADO", "DISPENSADO")).toBe("DESPACHADO_ENTREGUE");
+    expect(apresentarStatusVisivel("DESPACHADO", "DISPENSADO")).toMatchObject({
+      status: "DESPACHADO_ENTREGUE",
+      rotulo: "Despachado",
+      titulo: "Despachado antes da regra de comprovação",
+    });
+  });
+
+  it("trata a ausência de comprovação como acervo anterior à regra", () => {
+    expect(derivarStatusVisivel("DESPACHADO", null)).toBe("DESPACHADO_ENTREGUE");
+    expect(apresentarStatusVisivel("DESPACHADO", null).rotulo).toBe("Despachado");
+  });
+
+  it("não altera os demais estados persistidos", () => {
+    expect(derivarStatusVisivel("AGUARDANDO ENVIO", "PENDENTE")).toBe("AGUARDANDO ENVIO");
+    expect(derivarStatusVisivel("CANCELADO", "ENVIADO")).toBe("CANCELADO");
   });
 });

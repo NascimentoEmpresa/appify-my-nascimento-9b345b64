@@ -88,6 +88,7 @@ import Patrimonio from "./pages/suprimentos/Patrimonio";
 import PainelManutencoes from "./pages/suprimentos/PainelManutencoes";
 import EpisAdmissoes from "./pages/suprimentos/EpisAdmissoes";
 import HistoricoColaborador from "./pages/suprimentos/HistoricoColaborador";
+import CorreioDeclaracao from "./pages/suprimentos/CorreioDeclaracao";
 import EnxovalAdmissao from "./pages/publico/EnxovalAdmissao";
 import SolicitarMateriais from "./pages/encarregados/SolicitarMateriais";
 import MeusPedidos from "./pages/encarregados/MeusPedidos";
@@ -234,6 +235,7 @@ import AprovacaoReembolso from "./pages/central-servicos/reembolso/AprovacaoReem
 import ConfiguracaoReembolso from "./pages/central-servicos/reembolso/ConfiguracaoReembolso";
 import EspacoColaborador from "./pages/central-servicos/espaco-colaborador/EspacoColaborador";
 import FichaColaborador from "./pages/central-servicos/espaco-colaborador/FichaColaborador";
+import DesignacoesOperacao from "./pages/central-servicos/espaco-colaborador/Designacoes";
 
 // Defaults só de `queries` — mutations seguem com retry 0, porque repetir um
 // insert/update às cegas duplicaria registro.
@@ -376,6 +378,7 @@ const App = () => (
             <Route path="central-servicos/reunioes/:id/conducao" element={<ConducaoReuniao />} />
             <Route path="central-servicos/orientacoes-juridicas" element={<OrientacoesJuridicas />} />
             <Route path="central-servicos/espaco-colaborador" element={<EspacoColaborador />} />
+            <Route path="central-servicos/espaco-colaborador/responsaveis" element={<DesignacoesOperacao />} />
             <Route path="central-servicos/espaco-colaborador/:id" element={<FichaColaborador />} />
             {/* Comitê de Ética — denúncias saíram da Central de Serviços.
                 As rotas antigas seguem redirecionando: link salvo por aí não
@@ -519,6 +522,7 @@ const App = () => (
             <Route path="suprimentos/manutencao" element={<PainelManutencoes />} />
             <Route path="suprimentos/epis-admissoes" element={<EpisAdmissoes />} />
             <Route path="suprimentos/colaborador" element={<HistoricoColaborador />} />
+            <Route path="suprimentos/correio-declaracao" element={<CorreioDeclaracao />} />
             {/* Financeiro */}
             <Route path="financeiro/contas-pagar" element={<ContasPagar />} />
             <Route path="financeiro/contas-receber" element={<ContasReceber />} />
