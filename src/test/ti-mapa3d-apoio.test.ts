@@ -206,10 +206,20 @@ describe("recorte da parede para encaixar a porta", () => {
     expect(vaosNaParede(parede, [porta({ y: 300 })])).toEqual([]);
   });
 
-  it("porta atravessada abre um vão da ESPESSURA dela, não da largura", () => {
-    // Girada 90°, a porta cruza a parede: o rasgo é de 10 cm, não de 180.
-    const [vao] = vaosNaParede(parede, [porta({ rotacao: 90 })]);
-    expect(vao.ate - vao.de).toBeCloseTo(10, 0);
+  /**
+   * Porta perpendicular é porta da OUTRA parede.
+   *
+   * No canto do escritório uma porta fica a poucos centímetros das duas
+   * paredes. Sem esta regra ela abria vão nas duas, e o canto aparecia
+   * comido — foi assim que o bug apareceu na tela.
+   */
+  it("porta atravessada não abre vão nenhum nesta parede", () => {
+    expect(vaosNaParede(parede, [porta({ rotacao: 90 })])).toEqual([]);
+  });
+
+  it("porta um pouco torta ainda abre o vão", () => {
+    // 15° é peça posta no olho, não peça de outra parede.
+    expect(vaosNaParede(parede, [porta({ rotacao: 15 })])).toHaveLength(1);
   });
 
   it("duas portas coladas viram um vão só", () => {

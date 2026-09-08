@@ -364,6 +364,20 @@ export function vaosNaParede(
     if (afastamento > espessura / 2 + Number(ab.altura) / 2 + FOLGA_DO_VAO) continue;
 
     const giro = ((Number(ab.rotacao) - Number(parede.rotacao)) * Math.PI) / 180;
+
+    /**
+     * Só abertura ALINHADA com a parede abre vão nela.
+     *
+     * Uma porta encostada no canto fica, por construção, a poucos centímetros
+     * também da parede PERPENDICULAR — e passava no teste de afastamento.
+     * Resultado: a porta de uma sala mordia um pedaço da parede da sala do
+     * lado, e o canto do escritório aparecia comido.
+     *
+     * Porta atravessada na parede não é vão: é porta da outra parede. O corte
+     * de 30° tolera a peça posta um pouco torta sem aceitar a que cruza.
+     */
+    if (Math.abs(Math.sin(giro)) > 0.5) continue;
+
     const meia =
       (Math.abs(Math.cos(giro)) * Number(ab.largura)) / 2 +
       (Math.abs(Math.sin(giro)) * Number(ab.altura)) / 2;
