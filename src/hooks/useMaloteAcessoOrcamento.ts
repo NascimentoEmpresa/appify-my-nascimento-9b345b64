@@ -36,7 +36,7 @@ import { classificacaoVisivelPorSetor } from "@/pages/malote/orcamentoUtils";
 export function useClassificacaoMaloteVisivel() {
   const { user } = useAuth();
   const { data: setoresVisiveis = [] } = useMaloteSetoresVisiveis(user?.id);
-  return (c: { tipo?: string | null; setor_responsavel?: string | null } | null | undefined) =>
+  return (c: { tipo?: string | null; setor_responsavel?: string[] | null } | null | undefined) =>
     classificacaoVisivelPorSetor(c, setoresVisiveis);
 }
 
@@ -59,7 +59,7 @@ function useClassificacaoMaloteDaAdministrativa() {
 
   return useMemo(() => {
     const maloteMap = new Map(classificacoesMalote.map((c) => [c.id, c]));
-    const map = new Map<string, { tipo?: string | null; setor_responsavel?: string | null }>();
+    const map = new Map<string, { tipo?: string | null; setor_responsavel?: string[] | null }>();
     for (const l of ligacoes) {
       const malote = maloteMap.get(l.classificacao_malote_id);
       if (malote) map.set(l.classificacao_administrativa_id, malote);
@@ -85,7 +85,7 @@ export function useClassificacaoAdministrativaVisivel() {
 // pro selo mostrado em OrcamentoAdministrativo.tsx.
 export function useSetorResponsavelDaAdministrativa() {
   const setorPorAdministrativaId = useClassificacaoMaloteDaAdministrativa();
-  return function setorDaAdministrativa(administrativaId: string): string | null {
+  return function setorDaAdministrativa(administrativaId: string): string[] | null {
     return setorPorAdministrativaId.get(administrativaId)?.setor_responsavel ?? null;
   };
 }

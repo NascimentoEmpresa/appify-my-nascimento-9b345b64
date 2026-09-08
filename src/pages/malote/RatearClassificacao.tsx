@@ -7,6 +7,7 @@ import { InputMaiusculo } from "@/components/ui/InputMaiusculo";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
+import { Checkbox } from "@/components/ui/checkbox";
 import { ArrowLeft, LayoutGrid, AlertTriangle } from "lucide-react";
 import { toast } from "sonner";
 import { useEmpresaId } from "@/hooks/useEmpresaId";
@@ -32,9 +33,16 @@ export default function RatearClassificacao() {
   const { data: classificacoes = [] } = useClassificacoesOrcamento();
   const salvar = useSalvarDespesa();
 
-  // Regra confirmada: só classificações que NÃO exigem solicitação podem
-  // entrar num rateio entre classificações.
-  const classificacoesRateaveis = useMemo(() => classificacoes.filter((c) => !c.requer_solicitacao), [classificacoes]);
+  // SIS-2026-0334 (Iury): mesmo checkbox de CriarDespesa.tsx — marcado,
+  // ignora o requer_solicitacao das classificações só nesta despesa
+  // rateada (a regra original — "nenhuma classificação rateada pode
+  // exigir solicitação" — continua valendo por padrão, sem o check).
+  const [pularSolicitacao, setPularSolicitacao] = useState(false);
+  const classificacoesRateaveis = useMemo(
+    () => (pularSolicitacao ? classificacoes : classificacoes.filter((c) => !c.requer_solicitacao)),
+    [classificacoes, pularSolicitacao],
+  );
+  const classificacaoPorId = useMemo(() => new Map(classificacoes.map((c) => [c.id, c])), [classificacoes]);
 
   const [nome, setNome] = useState("");
   const [valorTotal, setValorTotal] = useState("");
@@ -121,11 +129,18 @@ export default function RatearClassificacao() {
           ? gerarParcelas(Number(valorTotal), Number(quantidadeParcelas), dataPagamento, Number(diaDesconto))
           : [];
 
+      // SIS-2026-0334: só marca o rastro de auditoria se o check de fato
+      // driblou alguma classificação que exigia solicitação — se todas as
+      // linhas já eram rateáveis por padrão, marcar o check não mudou nada.
+      const solicitacaoDispensadaManualmente =
+        pularSolicitacao && linhasRateio.some((l) => classificacaoPorId.get(l.classificacao_id)?.requer_solicitacao);
+
       const despesaId = await salvar.mutateAsync({
         empresa_id: empresaId,
         classificacao_id: null,
         origem: "despesa_multi_classificacao",
         status,
+        solicitacao_dispensada_manualmente: solicitacaoDispensadaManualmente,
         // Sem isso, uma despesa indo direto pra pendente_aprovacao ficava
         // sem "nível atual" e nenhum aprovador configurado via
         // Classificação era reconhecido — só o botão Reprovar aparecia.
@@ -184,9 +199,20 @@ export default function RatearClassificacao() {
 
       <div className="flex items-start gap-2 rounded-lg border border-amber-300 bg-amber-50 dark:bg-amber-950/30 p-3">
         <AlertTriangle className="h-4 w-4 text-amber-600 mt-0.5 shrink-0" />
-        <p className="text-xs text-amber-800/90 dark:text-amber-300/90">
-          Nenhuma das classificações rateadas pode ter a exigência de solicitação em seu cadastro.
-        </p>
+        <div className="space-y-2">
+          <p className="text-xs text-amber-800/90 dark:text-amber-300/90">
+            Nenhuma das classificações rateadas pode ter a exigência de solicitação em seu cadastro.
+          </p>
+          {/* SIS-2026-0334 (Iury): mesmo checkbox de Criar Despesa — marcado,
+              libera classificações com requer_solicitacao no rateio, só
+              nesta despesa. */}
+          <div className="flex items-center gap-2">
+            <Checkbox id="pular-solicitacao-rateio" checked={pularSolicitacao} onCheckedChange={(v) => setPularSolicitacao(!!v)} />
+            <Label htmlFor="pular-solicitacao-rateio" className="text-xs font-normal cursor-pointer text-amber-800/90 dark:text-amber-300/90">
+              Não necessita solicitação (Compras)
+            </Label>
+          </div>
+        </div>
       </div>
 
       <Card>

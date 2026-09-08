@@ -185,10 +185,13 @@ export default function PagamentoMalote() {
     [classificacoesTodas]
   );
   const { data: classificacaoPrimeiraLinhaPorDespesa } = useClassificacaoPrimeiraLinhaRateio(despesaIds);
-  function setorResolvido(despesa: MaloteDespesaRow): string | null {
-    if (despesa.classificacao?.setor_responsavel) return despesa.classificacao.setor_responsavel;
+  // SIS-2026-0335: setor_responsavel virou lista (mais de um setor por
+  // Classificação) — filtro/opções/ordenação passam a considerar QUALQUER
+  // um dos setores da despesa, não mais um valor único.
+  function setoresResolvidos(despesa: MaloteDespesaRow): string[] {
+    if (despesa.classificacao?.setor_responsavel?.length) return despesa.classificacao.setor_responsavel;
     const classificacaoIdRateio = classificacaoPrimeiraLinhaPorDespesa?.get(despesa.id);
-    return classificacaoIdRateio ? setorPorClassificacaoId.get(classificacaoIdRateio) ?? null : null;
+    return (classificacaoIdRateio ? setorPorClassificacaoId.get(classificacaoIdRateio) : null) ?? [];
   }
 
   // SIS-2026-0285 (Iury): filtro de data puxava só de "Última atualização" —
@@ -232,8 +235,7 @@ export default function PagamentoMalote() {
   const setoresDisponiveis = useMemo(() => {
     const nomes = new Set<string>();
     itens.forEach((item) => {
-      const s = setorResolvido(item.despesa);
-      if (s) nomes.add(s);
+      setoresResolvidos(item.despesa).forEach((s) => nomes.add(s));
     });
     return Array.from(nomes).sort();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -265,7 +267,7 @@ export default function PagamentoMalote() {
       if (classificacao && d.classificacao?.nome !== classificacao) return false;
       if (responsavelId && d.created_by !== responsavelId) return false;
       if (empresaId && empresaIdResolvida(d) !== empresaId) return false;
-      if (setor && setorResolvido(d) !== setor) return false;
+      if (setor && !setoresResolvidos(d).includes(setor)) return false;
       if (dataAtualizacaoDe && d.updated_at < dataAtualizacaoDe) return false;
       if (dataAtualizacaoAte && d.updated_at > dataAtualizacaoAte + "T23:59:59") return false;
       if (dataPagamentoDe || dataPagamentoAte) {
@@ -309,7 +311,7 @@ export default function PagamentoMalote() {
       if (classificacao && d.classificacao?.nome !== classificacao) return false;
       if (responsavelId && d.created_by !== responsavelId) return false;
       if (empresaId && empresaIdResolvida(d) !== empresaId) return false;
-      if (setor && setorResolvido(d) !== setor) return false;
+      if (setor && !setoresResolvidos(d).includes(setor)) return false;
       if (dataAtualizacaoDe && d.updated_at < dataAtualizacaoDe) return false;
       if (dataAtualizacaoAte && d.updated_at > dataAtualizacaoAte + "T23:59:59") return false;
       if (dataPagamentoDe || dataPagamentoAte) {
@@ -346,7 +348,7 @@ export default function PagamentoMalote() {
     const acessores: Record<ColunaPagamentoMalote, (item: ItemLinhaMalote) => string | number | null> = {
       numero: (item) => item.despesa.numero,
       empresa: (item) => empresasMap.get(empresaIdResolvida(item.despesa) ?? "") ?? null,
-      setor: (item) => setorResolvido(item.despesa),
+      setor: (item) => setoresResolvidos(item.despesa).join(", ") || null,
       data_pagamento: (item) => dataPagamentoDeItem(item),
       nome: (item) => item.despesa.nome,
       classificacao: (item) => item.despesa.classificacao?.nome ?? null,
@@ -553,7 +555,7 @@ export default function PagamentoMalote() {
                     key={`${item.despesa.id}-${item.parcela?.id ?? "unica"}`}
                     item={item}
                     empresaNome={empresasMap.get(empresaIdResolvida(item.despesa) ?? "") ?? "—"}
-                    setorNome={setorResolvido(item.despesa) ?? "—"}
+                    setorNome={setoresResolvidos(item.despesa).join(", ") || "—"}
                     onAbrir={() => abrirItem(item.despesa)}
                   />
                 ))}

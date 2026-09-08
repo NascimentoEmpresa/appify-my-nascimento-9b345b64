@@ -31,7 +31,10 @@ interface FormState {
   aprovadorSolicitacaoUserId: string | null;
   aprovadorSolicitacaoNome: string | null;
   tipo: TipoClassificacaoOrcamento | null;
-  setorResponsavel: string | null;
+  // SIS-2026-0335 (Iury): "existe a possibilidade de ter mais de um
+  // aprovador de setor diferente" — vira lista, mesmo padrão de
+  // aprovador1UserIds (multi-select, ordem não importa aqui).
+  setorResponsavel: string[];
   // SIS-2026-0236: cada nível pode ter mais de um aprovador — a ORDEM do
   // array é a ordem de seleção; o primeiro é "o primeiro selecionado"
   // mostrado sozinho na coluna Fluxo de Aprovação da lista.
@@ -57,7 +60,7 @@ const VAZIO: FormState = {
   aprovadorSolicitacaoUserId: null,
   aprovadorSolicitacaoNome: null,
   tipo: null,
-  setorResponsavel: null,
+  setorResponsavel: [],
   aprovador1UserIds: [],
   aprovador1Nomes: [],
   aprovador1LimitePct: "",
@@ -82,7 +85,7 @@ function paraFormState(c: ClassificacaoOrcamento): FormState {
     aprovadorSolicitacaoUserId: c.aprovador_solicitacao_user_id,
     aprovadorSolicitacaoNome: c.aprovador_solicitacao_nome,
     tipo: c.tipo,
-    setorResponsavel: c.setor_responsavel,
+    setorResponsavel: c.setor_responsavel ?? [],
     aprovador1UserIds: c.aprovador1_user_ids,
     aprovador1Nomes: c.aprovador1_nomes,
     aprovador1LimitePct: c.aprovador1_limite_pct != null ? String(c.aprovador1_limite_pct) : "",
@@ -525,8 +528,8 @@ export default function ClassificacoesMalote() {
       toast.error("Selecione o tipo de classificação.");
       return;
     }
-    if (!editando.setorResponsavel) {
-      toast.error("Selecione o setor responsável.");
+    if (editando.setorResponsavel.length === 0) {
+      toast.error("Selecione ao menos um setor responsável.");
       return;
     }
     if (editando.requerSolicitacao && !editando.aprovadorSolicitacaoUserId) {
@@ -752,7 +755,7 @@ export default function ClassificacoesMalote() {
                 <TableRow key={c.id}>
                   <TableCell className="font-medium">{c.nome}</TableCell>
                   <TableCell>{c.tipo ? TIPO_LABEL[c.tipo] : "—"}</TableCell>
-                  <TableCell>{c.setor_responsavel ?? "—"}</TableCell>
+                  <TableCell>{c.setor_responsavel?.length ? c.setor_responsavel.join(", ") : "—"}</TableCell>
                   <TableCell>
                     <LinhaNivel nivel="N1" nomes={c.aprovador1_nomes} />
                     <LinhaNivel nivel="N2" nomes={c.aprovador2_nomes} />
@@ -901,22 +904,17 @@ export default function ClassificacoesMalote() {
                 <Label>
                   Setor responsável <span className="text-destructive">*</span>
                 </Label>
-                <p className="text-xs text-muted-foreground mb-2">Setor responsável pela gestão desta classificação.</p>
-                <Select
-                  value={editando?.setorResponsavel ?? ""}
-                  onValueChange={(v) => setEditando((s) => (s ? { ...s, setorResponsavel: v } : s))}
-                >
-                  <SelectTrigger>
-                    <SelectValue placeholder="Selecione o setor..." />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {setores.map((s) => (
-                      <SelectItem key={s} value={s}>
-                        {s}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+                {/* SIS-2026-0335 (Iury): "existe a possibilidade de ter mais
+                    de um aprovador de setor diferente" — vira multi-select,
+                    mesmo componente já usado nos Aprovadores abaixo. */}
+                <p className="text-xs text-muted-foreground mb-2">Setor(es) responsável(is) pela gestão desta classificação.</p>
+                <SearchableMultiSelect
+                  value={editando?.setorResponsavel ?? []}
+                  onChange={(v) => setEditando((s) => (s ? { ...s, setorResponsavel: v } : s))}
+                  options={setores.map((s) => ({ value: s, label: s }))}
+                  placeholder="Selecione o(s) setor(es)..."
+                  searchPlaceholder="Buscar setor..."
+                />
               </div>
             </div>
 

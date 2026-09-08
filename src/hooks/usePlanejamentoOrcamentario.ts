@@ -16,7 +16,12 @@ export interface ClassificacaoOrcamento {
   nome: string;
   ativo: boolean;
   tipo: TipoClassificacaoOrcamento | null;
-  setor_responsavel: string | null;
+  // SIS-2026-0335: pode ter mais de um setor responsável (existe a
+  // possibilidade de mais de um aprovador de setor diferente na mesma
+  // Classificação). Comparações em RLS/telas passam a ser "contém"/"algum
+  // bate", não mais igualdade exata — ver classificacaoVisivelPorSetor
+  // (orcamentoUtils.ts) e malote_despesa_visivel_por_setor (RLS).
+  setor_responsavel: string[] | null;
   requer_solicitacao: boolean;
   aprovador_solicitacao_user_id: string | null;
   aprovador_solicitacao_nome: string | null;
@@ -162,7 +167,7 @@ interface SalvarClassificacaoInput {
   nome: string;
   ativo: boolean;
   tipo: TipoClassificacaoOrcamento;
-  setor_responsavel: string;
+  setor_responsavel: string[];
   requer_solicitacao: boolean;
   aprovador_solicitacao_user_id: string | null;
   aprovador_solicitacao_nome: string | null;

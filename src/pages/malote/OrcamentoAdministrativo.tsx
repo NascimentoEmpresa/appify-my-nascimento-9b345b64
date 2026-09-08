@@ -251,7 +251,7 @@ export default function OrcamentoAdministrativo() {
                   <TableCell className="font-medium">
                     <div className="flex items-center gap-1.5">
                       {o.classificacao?.nome ?? "-"}
-                      <SetorRestritoBadge setor={setorDaAdministrativa(o.classificacao_id)} />
+                      <SetorRestritoBadge setores={setorDaAdministrativa(o.classificacao_id)} />
                     </div>
                   </TableCell>
                   <TableCell>{o.detalhe}</TableCell>

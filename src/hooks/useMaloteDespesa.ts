@@ -190,6 +190,10 @@ export interface MaloteDespesaRow {
   motivo_ajuste: string | null;
   excecao: boolean;
   justificativa_excecao: string | null;
+  // SIS-2026-0334: checkbox em Criar Despesa/Ratear Classificação que
+  // ignora, só nesta despesa, o requer_solicitacao da Classificação —
+  // rastro de auditoria (quem aprovar/auditar depois vê que foi de propósito).
+  solicitacao_dispensada_manualmente: boolean;
   // ── Cotação (SIS-2026-0112, Suprimentos escreve via RPCs sup_malote_*) ──
   cot1_fornecedor: string | null;
   cot1_valor: number | null;
@@ -235,7 +239,8 @@ export interface MaloteDespesaRow {
     // SIS-2026-0286: coluna/filtro de Setor em Pagamento Malote — o "setor"
     // que o setor_responsavel da própria Classificação (Regras Gerais do
     // Malote), não uma tabela nova.
-    setor_responsavel?: string | null;
+    // SIS-2026-0335: virou lista (mais de um setor por Classificação).
+    setor_responsavel?: string[] | null;
     aprovador1_nomes?: string[];
     aprovador2_nomes?: string[];
     aprovador3_nomes?: string[];
@@ -329,6 +334,7 @@ const DESPESA_COLUMNS =
   "id, numero, empresa_id, classificacao_id, origem, status, nome, valor_total, motivo, descricao, links, tipo_movimento, tipo, contrato_id, " +
   "data_pagamento, competencia, forma_pagamento, banco_id, informacoes_pagamento, parcelado, numero_parcelas, dia_desconto, " +
   "nivel_aprovacao_atual, valor_aprovado_cotacao, valor_aprovado, justificativa_aprovacao, motivo_ajuste, excecao, justificativa_excecao, " +
+  "solicitacao_dispensada_manualmente, " +
   "cot1_fornecedor, cot1_valor, cot1_prazo, cot1_link, cot1_anexo_path, cot1_anexo_nome, " +
   "cot2_fornecedor, cot2_valor, cot2_prazo, cot2_link, cot2_anexo_path, cot2_anexo_nome, " +
   "cot3_fornecedor, cot3_valor, cot3_prazo, cot3_link, cot3_anexo_path, cot3_anexo_nome, " +
@@ -482,10 +488,14 @@ export function useMinhasDespesas() {
       if (setores.length === 0) {
         query = query.eq("created_by", u.user.id);
       } else {
+        // SIS-2026-0335: setor_responsavel virou text[] (mais de um setor por
+        // Classificação) — .in() comparava igualdade exata contra um valor
+        // escalar; .overlaps() é o filtro certo pra "algum setor bate" num
+        // array (traduz pro operador && do Postgres).
         const { data: classRows, error: classErr } = await (supabase as any)
           .from("planejamento_orcamentario_classificacao")
           .select("id")
-          .in("setor_responsavel", setores);
+          .overlaps("setor_responsavel", setores);
         if (classErr) throw classErr;
         const classIds = (classRows ?? []).map((r: any) => r.id as string);
 
@@ -581,6 +591,10 @@ export interface SalvarDespesaInput {
   // bloqueio de dia (data_pagamento em dia bloqueado), só pra ela.
   excecao?: boolean;
   justificativa_excecao?: string | null;
+  // SIS-2026-0334: true quando o checkbox "Não necessita solicitação"
+  // realmente ignorou um requer_solicitacao=true da Classificação nesta
+  // despesa (rastro de auditoria — ver malote_despesa).
+  solicitacao_dispensada_manualmente?: boolean;
 }
 
 export function useSalvarDespesa() {

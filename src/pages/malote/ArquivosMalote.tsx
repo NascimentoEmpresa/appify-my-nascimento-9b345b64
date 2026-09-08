@@ -127,10 +127,13 @@ export default function ArquivosMalote() {
   function empresaIdResolvida(despesa: MaloteDespesaRow): string | null {
     return empresaPrimeiraLinhaPorDespesa?.get(despesa.id) ?? despesa.empresa_id ?? null;
   }
-  function setorResolvido(despesa: MaloteDespesaRow): string | null {
-    if (despesa.classificacao?.setor_responsavel) return despesa.classificacao.setor_responsavel;
+  // SIS-2026-0335: setor_responsavel virou lista (mais de um setor por
+  // Classificação) — filtro/opções passam a considerar QUALQUER um dos
+  // setores da despesa, não mais um valor único.
+  function setoresResolvidos(despesa: MaloteDespesaRow): string[] {
+    if (despesa.classificacao?.setor_responsavel?.length) return despesa.classificacao.setor_responsavel;
     const classificacaoIdRateio = classificacaoPrimeiraLinhaPorDespesa?.get(despesa.id);
-    return classificacaoIdRateio ? setorPorClassificacaoId.get(classificacaoIdRateio) ?? null : null;
+    return (classificacaoIdRateio ? setorPorClassificacaoId.get(classificacaoIdRateio) : null) ?? [];
   }
 
   // Só interessam aqui itens que têm pelo menos 1 arquivo pra achar
@@ -165,7 +168,7 @@ export default function ArquivosMalote() {
 
   const setoresDisponiveis = useMemo(() => {
     const nomes = new Set<string>();
-    itens.forEach((i) => { const s = setorResolvido(i.despesa); if (s) nomes.add(s); });
+    itens.forEach((i) => setoresResolvidos(i.despesa).forEach((s) => nomes.add(s)));
     return Array.from(nomes).sort();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [itens, classificacaoPrimeiraLinhaPorDespesa, setorPorClassificacaoId]);
@@ -185,7 +188,7 @@ export default function ArquivosMalote() {
       const d = item.despesa;
       if (classificacao && d.classificacao?.nome !== classificacao) return false;
       if (empresaId && empresaIdResolvida(d) !== empresaId) return false;
-      if (setor && setorResolvido(d) !== setor) return false;
+      if (setor && !setoresResolvidos(d).includes(setor)) return false;
       if (contratoId && d.contrato_id !== contratoId) return false;
       if (dataDe || dataAte) {
         const dp = item.parcela ? item.parcela.data_pagamento_real ?? item.parcela.data_vencimento : d.data_pagamento;
