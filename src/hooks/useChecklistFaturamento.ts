@@ -373,6 +373,9 @@ export interface ResumoContratoChecklist {
   total_docs: number;
   ok: number;
   pendentes: number;
+  // SIS-2026-0325 (Iury): "abrir modal com contratos + docs faltantes" —
+  // precisa do nome de cada doc pendente, não só a contagem.
+  docsPendentes: { doc_id: string; nome: string }[];
 }
 
 export function useResumoPendencias(competenciaISO: string | null) {
@@ -381,7 +384,7 @@ export function useResumoPendencias(competenciaISO: string | null) {
     enabled: !!competenciaISO,
     queryFn: async () => {
       const [{ data: vinculos, error: e1 }, { data: marcacoes, error: e2 }] = await Promise.all([
-        (supabase as any).from("contrato_docs_config").select("contrato_id, doc_tipo_id").eq("posto", ""),
+        (supabase as any).from("contrato_docs_config").select("contrato_id, doc_tipo_id, doc:doc_tipos(nome)").eq("posto", ""),
         (supabase as any).from("CHECKLIST_FATURAMENTO_MARCACAO").select("contrato_id, doc_id, status").eq("competencia", competenciaISO),
       ]);
       if (e1) throw e1;
@@ -392,11 +395,15 @@ export function useResumoPendencias(competenciaISO: string | null) {
 
       const porContrato = new Map<string, ResumoContratoChecklist>();
       for (const v of vinculos ?? []) {
-        const atual = porContrato.get(v.contrato_id) ?? { contrato_id: v.contrato_id, total_docs: 0, ok: 0, pendentes: 0 };
+        const atual = porContrato.get(v.contrato_id) ?? { contrato_id: v.contrato_id, total_docs: 0, ok: 0, pendentes: 0, docsPendentes: [] };
         atual.total_docs++;
         const status = statusPorChave.get(`${v.contrato_id}:${v.doc_tipo_id}`) ?? "pendente";
-        if (status === "pendente") atual.pendentes++;
-        else atual.ok++;
+        if (status === "pendente") {
+          atual.pendentes++;
+          atual.docsPendentes.push({ doc_id: v.doc_tipo_id, nome: v.doc?.nome ?? "—" });
+        } else {
+          atual.ok++;
+        }
         porContrato.set(v.contrato_id, atual);
       }
       return porContrato;

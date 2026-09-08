@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { KpiTile } from "@/components/financeiro/KpiTile";
 import { AcessoGate } from "@/components/auth/AcessoGate";
 import { Settings, Paperclip, FileDown, CheckCircle2, AlertTriangle, ListChecks, Trash2, Upload, ExternalLink } from "lucide-react";
@@ -18,7 +19,7 @@ import {
   useContratosAtivosChecklist, useContratoDocs, useMarcacoes, useAtualizarMarcacao,
   useAnexos, useUploadAnexo, useExcluirAnexo, useEnvio, useMarcarBaixado,
   useResumoPendencias, STATUS_CICLO, STATUS_LABEL_CHECKLIST, StatusMarcacao, ContratoChecklist,
-  BUCKET_CHECKLIST_ANEXOS,
+  ResumoContratoChecklist, BUCKET_CHECKLIST_ANEXOS,
 } from "@/hooks/useChecklistFaturamento";
 import { DocsPadraoModal } from "./checklist-faturamento/DocsPadraoModal";
 import { ContratoConfigModal } from "./checklist-faturamento/ContratoConfigModal";
@@ -300,6 +301,107 @@ function MatrizContrato({ contrato, competenciaISO }: { contrato: ContratoCheckl
   );
 }
 
+// SIS-2026-0325 (Iury): "Com Pendência" e "Documentos Pendentes" viram
+// modal ao clicar — antes só o número aparecia no tile, sem jeito de ver
+// QUAIS contratos/documentos estavam faltando sem abrir um por um na
+// matriz. Os dois modais compartilham a mesma base (resumo já filtrado a
+// pendentes > 0) — só a granularidade muda (contrato vs. contrato+docs).
+function ModalContratosPendencia({
+  open, onClose, contratos, empresas, resumo, onAbrirContrato,
+}: {
+  open: boolean;
+  onClose: () => void;
+  contratos: ContratoChecklist[];
+  empresas: { id: string; nome: string }[];
+  resumo: Map<string, ResumoContratoChecklist> | undefined;
+  onAbrirContrato: (id: string) => void;
+}) {
+  const linhas = contratos
+    .map((c) => ({ contrato: c, r: resumo?.get(c.id) }))
+    .filter((x): x is { contrato: ContratoChecklist; r: ResumoContratoChecklist } => (x.r?.pendentes ?? 0) > 0)
+    .sort((a, b) => b.r.pendentes - a.r.pendentes);
+
+  return (
+    <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
+      <DialogContent className="max-w-lg max-h-[80vh] overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle>Contratos com pendência</DialogTitle>
+          <DialogDescription>
+            {linhas.length} contrato(s) com ao menos um documento pendente nesta competência. Clique num contrato pra abri-lo na matriz.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="space-y-1">
+          {linhas.length === 0 && <p className="text-sm text-muted-foreground text-center py-6">Nenhum contrato com pendência. 🎉</p>}
+          {linhas.map(({ contrato, r }) => (
+            <button
+              key={contrato.id}
+              type="button"
+              onClick={() => { onAbrirContrato(contrato.id); onClose(); }}
+              className="flex w-full items-center justify-between gap-2 rounded-md px-2 py-2 text-left text-sm hover:bg-muted/50"
+            >
+              <div className="min-w-0">
+                <p className="truncate font-medium">{contrato.nome}</p>
+                <p className="text-[11px] text-muted-foreground">{empresas.find((e) => e.id === contrato.empresa_id)?.nome ?? "—"}</p>
+              </div>
+              <Badge variant="destructive" className="shrink-0 text-[10px]">{r.pendentes} pend.</Badge>
+            </button>
+          ))}
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function ModalDocumentosPendentes({
+  open, onClose, contratos, empresas, resumo, onAbrirContrato,
+}: {
+  open: boolean;
+  onClose: () => void;
+  contratos: ContratoChecklist[];
+  empresas: { id: string; nome: string }[];
+  resumo: Map<string, ResumoContratoChecklist> | undefined;
+  onAbrirContrato: (id: string) => void;
+}) {
+  const linhas = contratos
+    .map((c) => ({ contrato: c, r: resumo?.get(c.id) }))
+    .filter((x): x is { contrato: ContratoChecklist; r: ResumoContratoChecklist } => (x.r?.pendentes ?? 0) > 0)
+    .sort((a, b) => b.r.pendentes - a.r.pendentes);
+
+  return (
+    <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
+      <DialogContent className="max-w-xl max-h-[80vh] overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle>Documentos pendentes</DialogTitle>
+          <DialogDescription>Contrato e os documentos que faltam entregar nesta competência.</DialogDescription>
+        </DialogHeader>
+        <div className="space-y-3">
+          {linhas.length === 0 && <p className="text-sm text-muted-foreground text-center py-6">Nenhum documento pendente. 🎉</p>}
+          {linhas.map(({ contrato, r }) => (
+            <div key={contrato.id} className="rounded-md border p-3">
+              <button
+                type="button"
+                onClick={() => { onAbrirContrato(contrato.id); onClose(); }}
+                className="flex w-full items-center justify-between gap-2 text-left mb-2"
+              >
+                <div className="min-w-0">
+                  <p className="truncate text-sm font-semibold">{contrato.nome}</p>
+                  <p className="text-[11px] text-muted-foreground">{empresas.find((e) => e.id === contrato.empresa_id)?.nome ?? "—"}</p>
+                </div>
+                <Badge variant="destructive" className="shrink-0 text-[10px]">{r.pendentes} pend.</Badge>
+              </button>
+              <div className="flex flex-wrap gap-1.5">
+                {r.docsPendentes.map((d) => (
+                  <Badge key={d.doc_id} variant="outline" className="text-[11px] font-normal">{d.nome}</Badge>
+                ))}
+              </div>
+            </div>
+          ))}
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 export default function ChecklistFaturamento() {
   const [competencia, setCompetencia] = useState(mesAtualISO());
   const [ano, mes] = competencia.split("-");
@@ -310,6 +412,9 @@ export default function ChecklistFaturamento() {
   const [contratoSelecionadoId, setContratoSelecionadoId] = useState<string | null>(null);
   const [openDocsPadrao, setOpenDocsPadrao] = useState(false);
   const [contratoConfigurar, setContratoConfigurar] = useState<ContratoChecklist | null>(null);
+  // SIS-2026-0325 (Iury): tiles "Com Pendência" e "Documentos Pendentes" clicáveis.
+  const [modalPendencia, setModalPendencia] = useState(false);
+  const [modalDocsPendentes, setModalDocsPendentes] = useState(false);
 
   const contratoSelecionado = contratos.find((c) => c.id === contratoSelecionadoId) ?? null;
 
@@ -365,8 +470,8 @@ export default function ChecklistFaturamento() {
 
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
           <KpiTile label="Contratos" valor={String(kpis.totalContratos)} icon={<ListChecks />} cor="slate" />
-          <KpiTile label="Com Pendência" valor={String(kpis.comPendencia)} icon={<AlertTriangle />} cor="amber" valorClass="text-amber-600 dark:text-amber-400" />
-          <KpiTile label="Documentos Pendentes" valor={String(kpis.totalPendentes)} icon={<AlertTriangle />} cor="red" valorClass="text-red-600 dark:text-red-400" />
+          <KpiTile label="Com Pendência" valor={String(kpis.comPendencia)} icon={<AlertTriangle />} cor="amber" valorClass="text-amber-600 dark:text-amber-400" onClick={() => setModalPendencia(true)} />
+          <KpiTile label="Documentos Pendentes" valor={String(kpis.totalPendentes)} icon={<AlertTriangle />} cor="red" valorClass="text-red-600 dark:text-red-400" onClick={() => setModalDocsPendentes(true)} />
           <KpiTile label="Documentos OK" valor={String(kpis.totalOk)} icon={<CheckCircle2 />} cor="emerald" valorClass="text-emerald-600 dark:text-emerald-400" />
         </div>
 
@@ -420,6 +525,22 @@ export default function ChecklistFaturamento() {
 
       <DocsPadraoModal open={openDocsPadrao} onClose={() => setOpenDocsPadrao(false)} />
       <ContratoConfigModal open={!!contratoConfigurar} contrato={contratoConfigurar} onClose={() => setContratoConfigurar(null)} />
+      <ModalContratosPendencia
+        open={modalPendencia}
+        onClose={() => setModalPendencia(false)}
+        contratos={contratos}
+        empresas={empresas}
+        resumo={resumo}
+        onAbrirContrato={setContratoSelecionadoId}
+      />
+      <ModalDocumentosPendentes
+        open={modalDocsPendentes}
+        onClose={() => setModalDocsPendentes(false)}
+        contratos={contratos}
+        empresas={empresas}
+        resumo={resumo}
+        onAbrirContrato={setContratoSelecionadoId}
+      />
     </AcessoGate>
   );
 }
