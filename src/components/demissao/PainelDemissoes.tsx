@@ -125,6 +125,9 @@ export function PainelDemissoes({ etapa }: { etapa: Etapa }) {
   const [aberta, setAberta] = useState<SolicitacaoDemissao | null>(null);
 
   const statusVisiveis = STATUS_DA_ETAPA[etapa];
+  // Lista, não valor: o SST age em dois status. Comparar com `===` aqui
+  // compilava como sempre-falso e fazia TODA linha da fila dizer "Ver",
+  // inclusive as que a etapa tinha para resolver.
   const statusDeAcao = STATUS_DE_ACAO[etapa];
 
   const carregar = async () => {
@@ -278,7 +281,7 @@ export function PainelDemissoes({ etapa }: { etapa: Etapa }) {
                       </TableCell>
                       <TableCell>
                         <Button variant="ghost" size="sm" onClick={(e) => { e.stopPropagation(); setAberta(s); }}>
-                          {s.status === statusDeAcao ? "Analisar" : "Ver"}
+                          {statusDeAcao.includes(s.status) ? "Analisar" : "Ver"}
                         </Button>
                       </TableCell>
                     </TableRow>
