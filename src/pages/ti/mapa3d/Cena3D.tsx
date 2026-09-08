@@ -427,6 +427,48 @@ function Conteudo({
   }, [arrasto, traco, resize]);
 
   /**
+   * O alvo nunca encosta na câmera — e é isso que mantém o zoom uniforme.
+   *
+   * O OrbitControls dá o passo do zoom PROPORCIONAL à distância até o alvo.
+   * Com `zoomToCursor`, aproximar de uma parede leva o alvo para cima dela:
+   * a distância vira centímetros e cada volta da rodinha passa a andar
+   * centímetros. O sintoma é exatamente "às vezes o zoom fica lento do nada",
+   * porque depende de onde o cursor estava no zoom anterior.
+   *
+   * Aqui o alvo é empurrado para a frente da câmera sempre que chega perto
+   * demais. O ponto de giro passa a ser um metro e meio à frente do olho, que
+   * é o que se espera andando dentro de uma sala — e o passo do zoom volta a
+   * ser sempre o mesmo.
+   */
+  useEffect(() => {
+    const c = controlsRef.current as unknown as {
+      object: THREE.Camera;
+      target: THREE.Vector3;
+      addEventListener: (t: string, f: () => void) => void;
+      removeEventListener: (t: string, f: () => void) => void;
+    } | null;
+    if (!c) return;
+
+    const MINIMO = 1.5;
+    const frente = new THREE.Vector3();
+    let ajustando = false;
+
+    const aoMudar = () => {
+      // Mexer no alvo dispara 'change' de novo: sem a trava, laço infinito.
+      if (ajustando) return;
+      const d = c.object.position.distanceTo(c.target);
+      if (d >= MINIMO) return;
+      ajustando = true;
+      c.object.getWorldDirection(frente);
+      c.target.copy(c.object.position).addScaledVector(frente, MINIMO);
+      ajustando = false;
+    };
+
+    c.addEventListener("change", aoMudar);
+    return () => c.removeEventListener("change", aoMudar);
+  }, []);
+
+  /**
    * O alvo da câmera é definido UMA VEZ por planta, não a cada render.
    *
    * Ele era passado como prop (`target={centro}`), e prop de R3F é reaplicada
