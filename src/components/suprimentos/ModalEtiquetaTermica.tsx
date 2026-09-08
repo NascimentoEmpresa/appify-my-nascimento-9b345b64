@@ -3,14 +3,36 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
-import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { ESTILO_STATUS } from "@/hooks/useSupPedidos";
+import {
+  MEDIDAS, cssEtiqueta, htmlEtiqueta, imprimirEtiqueta, textoItens,
+  type DadosEtiqueta, type TamanhoEtiqueta,
+} from "@/lib/suprimentos/etiquetaTermica";
 import { Eye, Printer } from "lucide-react";
 import { toast } from "sonner";
 
-interface PedidoEtiqueta {
+/**
+ * Emissão de etiqueta térmica do pedido.
+ *
+ * O desenho reproduz a etiqueta do sistema antigo (ver etiquetaTermica.ts).
+ * A caixa de texto continua existindo, mas mudou de papel: ela não é mais a
+ * etiqueta inteira em texto corrido — é a área livre no rodapé, que já vem
+ * com os itens e aceita qualquer acréscimo.
+ *
+ * O cabeçalho da etiqueta (protocolo, status, colaborador, contrato…) NÃO passa
+ * pela caixa de texto de propósito: vem sempre dos campos do pedido, para não
+ * existir etiqueta cujo protocolo não bate com o pedido de onde ela saiu.
+ */
+
+export interface PedidoEtiqueta {
   pedido_id: string;
+  status: string;
   nome_colaborador: string;
+  matricula_colaborador: string | null;
+  solicitante_nome: string | null;
+  solicitante_login: string;
   contrato_nome: string;
   posto_nome: string;
   funcao_nome: string;
@@ -22,26 +44,21 @@ interface PedidoEtiqueta {
   }>;
 }
 
-type TamanhoEtiqueta = "PADRAO" | "COMPACTO";
-
-function textoPedido(pedido: PedidoEtiqueta) {
-  const itens = [...(pedido.sup_pedido_item ?? [])]
-    .map((item) => `• ${item.nome_item}${item.tamanho ? ` — Tam. ${item.tamanho}` : ""}${item.litros ? ` — ${item.litros} L` : ""} — Qtd. ${item.quantidade}`)
-    .join("\n");
-  return [
-    `PEDIDO: ${pedido.pedido_id}`,
-    `COLABORADOR: ${pedido.nome_colaborador || "—"}`,
-    `CONTRATO: ${pedido.contrato_nome}`,
-    `POSTO: ${pedido.posto_nome}`,
-    `FUNÇÃO: ${pedido.funcao_nome}`,
-    "",
-    "ITENS:",
-    itens || "—",
-  ].join("\n");
-}
-
-function escapar(valor: string) {
-  return valor.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+function paraDados(p: PedidoEtiqueta): DadosEtiqueta {
+  return {
+    pedido_id: p.pedido_id,
+    status: p.status,
+    statusRotulo: ESTILO_STATUS[p.status]?.rotulo ?? p.status,
+    nome_colaborador: p.nome_colaborador,
+    matricula_colaborador: p.matricula_colaborador,
+    // A etiqueta antiga separava SOLICITANTE de COLABORADOR, e faz falta: são
+    // pessoas diferentes na maioria dos pedidos.
+    solicitante: p.solicitante_nome ?? p.solicitante_login,
+    funcao_nome: p.funcao_nome,
+    contrato_nome: p.contrato_nome,
+    posto_nome: p.posto_nome,
+    itens: p.sup_pedido_item ?? [],
+  };
 }
 
 export function ModalEtiquetaTermica({
@@ -56,36 +73,23 @@ export function ModalEtiquetaTermica({
   const [conteudo, setConteudo] = useState("");
   const [preview, setPreview] = useState<string | null>(null);
 
+  const dados = useMemo(() => (pedido ? paraDados(pedido) : null), [pedido]);
+
   useEffect(() => {
     if (!pedido) return;
     setTamanho("PADRAO");
     setCopias(1);
-    setConteudo(textoPedido(pedido));
+    setConteudo(textoItens(paraDados(pedido)));
     setPreview(null);
   }, [pedido]);
 
-  const config = useMemo(() => tamanho === "PADRAO"
-    ? { largura: 98, altura: 150, fonte: 10, margem: 4 }
-    : { largura: 40, altura: 50, fonte: 5, margem: 2 }, [tamanho]);
+  const medidas = MEDIDAS[tamanho];
 
   const imprimir = () => {
-    if (!preview) return;
-    const janela = window.open("", "_blank", "width=650,height=750");
-    if (!janela) {
+    if (!dados) return;
+    if (!imprimirEtiqueta(dados, tamanho, conteudo, copias)) {
       toast.error("Libere os pop-ups para abrir a impressão da etiqueta");
-      return;
     }
-    const paginas = Array.from({ length: Math.max(1, copias) }, (_, indice) => `
-      <section class="etiqueta${indice === Math.max(1, copias) - 1 ? " ultima" : ""}">${escapar(preview)}</section>
-    `).join("");
-    janela.document.write(`<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><title>Etiqueta ${escapar(pedido?.pedido_id ?? "")}</title><style>
-      @page { size: ${config.largura}mm ${config.altura}mm; margin: 0; }
-      * { box-sizing: border-box; }
-      html, body { margin: 0; padding: 0; }
-      .etiqueta { width: ${config.largura}mm; height: ${config.altura}mm; padding: ${config.margem}mm; white-space: pre-wrap; overflow-wrap: anywhere; font-family: Arial, sans-serif; font-size: ${config.fonte}pt; line-height: 1.12; page-break-after: always; overflow: hidden; }
-      .ultima { page-break-after: auto; }
-    </style></head><body>${paginas}<script>setTimeout(() => window.print(), 250);</script></body></html>`);
-    janela.document.close();
   };
 
   return (
@@ -113,32 +117,49 @@ export function ModalEtiquetaTermica({
                 <Input id="etiqueta-copias" type="number" min={1} value={copias} onChange={(e) => setCopias(Math.max(1, Number(e.target.value) || 1))} />
               </div>
             </div>
+
             <div>
-              <Label htmlFor="etiqueta-conteudo">Cole abaixo os dados copiados do ERP</Label>
-              <Textarea id="etiqueta-conteudo" rows={14} value={conteudo} onChange={(e) => { setConteudo(e.target.value); setPreview(null); }} className="font-mono text-sm" />
+              <Label htmlFor="etiqueta-conteudo">Texto livre da etiqueta</Label>
+              <p className="mb-1.5 text-xs text-muted-foreground">
+                Já vem com os itens do pedido. Protocolo, colaborador, contrato e posto
+                são impressos a partir do pedido e não dependem deste campo.
+              </p>
+              <Textarea
+                id="etiqueta-conteudo" rows={10}
+                value={conteudo}
+                onChange={(e) => { setConteudo(e.target.value); setPreview(null); }}
+                className="font-mono text-sm"
+              />
+              {tamanho === "COMPACTO" && (
+                <p className="mt-1.5 text-xs text-amber-700 dark:text-amber-400">
+                  No modelo compacto o texto livre, o cabeçalho e o status não são
+                  impressos — em 4x5 cm eles tomariam o lugar do protocolo e do nome.
+                </p>
+              )}
             </div>
-            <Button type="button" variant="secondary" onClick={() => setPreview(conteudo)} disabled={!conteudo.trim()}>
+
+            <Button type="button" variant="secondary" onClick={() => setPreview(conteudo)}>
               <Eye className="mr-2 h-4 w-4" /> Gerar preview da etiqueta
             </Button>
           </div>
 
           <div className="flex min-h-[360px] items-center justify-center rounded-lg border bg-muted/30 p-4">
-            {preview === null ? (
+            {preview === null || !dados ? (
               <p className="text-center text-sm text-muted-foreground">Aguardando geração da prévia…</p>
             ) : (
+              /* A prévia é a etiqueta de verdade, com o mesmo HTML e CSS da
+                 impressão — escalada para caber na tela. Uma prévia "parecida"
+                 esconderia justamente o que se quer conferir antes de gastar
+                 papel: se o nome cabe na linha. */
               <div
-                className="overflow-hidden border-2 border-foreground bg-background p-3 font-mono shadow-sm"
                 style={{
-                  aspectRatio: `${config.largura} / ${config.altura}`,
-                  height: tamanho === "PADRAO" ? 330 : 300,
-                  maxWidth: "100%",
-                  whiteSpace: "pre-wrap",
-                  overflowWrap: "anywhere",
-                  fontSize: tamanho === "PADRAO" ? 10 : 6,
-                  lineHeight: 1.2,
+                  width: `${medidas.largura}mm`,
+                  transform: `scale(${tamanho === "PADRAO" ? 0.85 : 1.7})`,
+                  transformOrigin: "center",
                 }}
               >
-                {preview}
+                <style>{cssEtiqueta(tamanho)}</style>
+                <div dangerouslySetInnerHTML={{ __html: htmlEtiqueta(dados, tamanho, preview) }} />
               </div>
             )}
           </div>
