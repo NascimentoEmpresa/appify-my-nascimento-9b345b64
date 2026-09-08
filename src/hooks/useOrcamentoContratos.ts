@@ -126,8 +126,11 @@ export function computarGruposContrato(
 }
 
 export function useOrcamentoContratos(anoMes?: string) {
-  const { data: contratos = [], isLoading: carregandoContratos } = useContratosERP();
-  const { data: planilha = [], isLoading: carregandoPlanilha } = usePlanilhaCustos();
+  // SIS-2026-0337: resolução de Orçado precisa achar o contrato/planilha
+  // independente de qual empresa está ativa no seletor da barra superior
+  // — ver comentário em useContratosERP/usePlanilhaCustos.
+  const { data: contratos = [], isLoading: carregandoContratos } = useContratosERP({ todasEmpresas: true });
+  const { data: planilha = [], isLoading: carregandoPlanilha } = usePlanilhaCustos({ todasEmpresas: true });
   const { data: ligacoes = [], isLoading: carregandoLigacoes } = useLigacoesLicitacaoClassificacao();
 
   const maloteIdPorCampo = useMemo(() => {

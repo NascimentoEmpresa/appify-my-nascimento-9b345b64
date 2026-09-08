@@ -16,11 +16,11 @@ import { useClassificacaoMaloteVisivel } from "@/hooks/useMaloteAcessoOrcamento"
 import { SetorRestritoBadge } from "./SetorRestritoBadge";
 import { useOrcamentoContratos } from "@/hooks/useOrcamentoContratos";
 import { useUtilizadoOrcamento } from "@/hooks/useUtilizadoOrcamento";
-import { useEmpresaId } from "@/hooks/useEmpresaId";
 import { anoMesAtual, fimDoMes, formatBRL } from "@/hooks/usePlanilhaCusto";
 import { STATUS_LABEL, STATUS_BADGE_CLASS } from "@/hooks/useMaloteDespesa";
 import { getStatusVigencia, fmtMoney, fmtPct, fmtDate, competenciaNoPeriodo } from "./orcamentoUtils";
 import { OrcamentoTabsNav } from "./OrcamentoTabsNav";
+import { FiltroEmpresaOrcamento, EMPRESA_FILTRO_TODAS, FiltroEmpresaValor } from "./FiltroEmpresaOrcamento";
 
 const MESES = [
   "01", "02", "03", "04", "05", "06", "07", "08", "09", "10", "11", "12",
@@ -113,10 +113,11 @@ export default function DetalheOrcamento() {
     setMesDraft(atual[1]);
     setClassificacaoDraft("");
     setContratoDraft("");
+    setFiltroEmpresaId(EMPRESA_FILTRO_TODAS);
     setFiltro({ anoMes: anoMesAtual(), classificacaoId: "", contratoId: "" });
   }
 
-  const { data: empresaId } = useEmpresaId();
+  const [filtroEmpresaId, setFiltroEmpresaId] = useState<FiltroEmpresaValor>(EMPRESA_FILTRO_TODAS);
   const { data: classificacoesTodas = [] } = useClassificacoesOrcamentoAdmin();
   // SIS-2026-0265 (Iury): Classificação administrativo do Financeiro só
   // visível pra quem tem o setor liberado — filtrar aqui também protege o
@@ -127,8 +128,17 @@ export default function DetalheOrcamento() {
     () => classificacoesTodas.filter(classificacaoMaloteVisivel),
     [classificacoesTodas, classificacaoMaloteVisivel]
   );
-  const { data: contratos = [] } = useContratosERP();
-  const { data: orcamentosAdm = [] } = usePlanejamentosOrcamento(empresaId);
+  // SIS-2026-0337: resolve contratos/orçamento administrativo de TODAS as
+  // empresas que o usuário acessa (não só a ativa do seletor) — senão o
+  // dropdown "Contrato" abaixo escondia contrato de outra empresa, e o
+  // orçado da Classificação drilled-down vinha zerado. FiltroEmpresaOrcamento
+  // é quem deixa filtrar de volta pra uma empresa só quando quiser.
+  const { data: contratos = [] } = useContratosERP({ todasEmpresas: true });
+  const { data: orcamentosAdmTodasEmpresas = [] } = usePlanejamentosOrcamento(null, { todasEmpresas: true });
+  const orcamentosAdm = useMemo(
+    () => (filtroEmpresaId === EMPRESA_FILTRO_TODAS ? orcamentosAdmTodasEmpresas : orcamentosAdmTodasEmpresas.filter((o) => o.empresa_id === filtroEmpresaId)),
+    [orcamentosAdmTodasEmpresas, filtroEmpresaId]
+  );
   const { data: ligacoesAdm = [] } = useLigacoesAdministrativoClassificacao();
   const { data: gruposContrato = [], isLoading: carregandoContrato } = useOrcamentoContratos(filtro.anoMes);
   const { data: utilizadoLinhas = [], isLoading: carregandoUtilizado } = useUtilizadoOrcamento();
@@ -217,7 +227,8 @@ export default function DetalheOrcamento() {
               <X className="h-3.5 w-3.5" /> Limpar filtros
             </Button>
           </div>
-          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3 items-end">
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3 items-end">
+            <FiltroEmpresaOrcamento value={filtroEmpresaId} onChange={setFiltroEmpresaId} />
             <div>
               <Label className="text-xs">Ano</Label>
               <Select value={anoDraft} onValueChange={setAnoDraft}>
