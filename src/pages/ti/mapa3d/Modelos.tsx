@@ -640,22 +640,37 @@ function Porta({ largura, profundidade, altura }: PropsModelo) {
           <boxGeometry args={[folhaLargura, folhaAltura, espessuraFolha]} />
           <meshStandardMaterial color="#c08a52" roughness={0.65} />
         </mesh>
-        {/* almofadas: sem elas a folha fechada fica um retângulo chapado */}
-        {[1, -1].map((metade) => (
-          <mesh key={metade} position={[0, metade * folhaAltura * 0.22, espessuraFolha / 2]}>
-            <boxGeometry args={[folhaLargura * 0.66, folhaAltura * 0.3, 0.008]} />
-            <meshStandardMaterial color="#b07c47" roughness={0.7} />
-          </mesh>
+        {/* Almofadas e maçaneta nas DUAS faces.
+            Porta tem frente e verso iguais, e no mapa se olha dos dois lados:
+            com o relevo só numa face, a porta virava uma tábua lisa quando a
+            câmera passava para o outro lado da parede. O laço externo é a
+            face (+z / −z); o interno, a almofada de cima e a de baixo. */}
+        {[1, -1].map((face) => (
+          <group key={face}>
+            {[1, -1].map((metade) => (
+              <mesh
+                key={metade}
+                position={[0, metade * folhaAltura * 0.22, (face * espessuraFolha) / 2]}
+              >
+                <boxGeometry args={[folhaLargura * 0.66, folhaAltura * 0.3, 0.008]} />
+                <meshStandardMaterial color="#b07c47" roughness={0.7} />
+              </mesh>
+            ))}
+            {/* maçaneta do lado oposto às dobradiças, na altura de sempre (~1,05 m) */}
+            <mesh
+              castShadow
+              rotation={[Math.PI / 2, 0, 0]}
+              position={[
+                folhaLargura / 2 - 0.07,
+                1.05 - folhaAltura / 2,
+                face * (espessuraFolha / 2 + 0.02),
+              ]}
+            >
+              <cylinderGeometry args={[0.018, 0.018, 0.05, 10]} />
+              <meshStandardMaterial color={METAL} metalness={0.7} roughness={0.3} />
+            </mesh>
+          </group>
         ))}
-        {/* maçaneta do lado oposto às dobradiças, na altura de sempre (~1,05 m) */}
-        <mesh
-          castShadow
-          rotation={[Math.PI / 2, 0, 0]}
-          position={[folhaLargura / 2 - 0.07, 1.05 - folhaAltura / 2, espessuraFolha / 2 + 0.02]}
-        >
-          <cylinderGeometry args={[0.018, 0.018, 0.05, 10]} />
-          <meshStandardMaterial color={METAL} metalness={0.7} roughness={0.3} />
-        </mesh>
       </group>
     </group>
   );
