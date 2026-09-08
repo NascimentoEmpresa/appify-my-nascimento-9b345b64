@@ -417,6 +417,27 @@ function Conteudo({
   }, [arrasto, traco, resize]);
 
   /**
+   * O alvo da câmera é definido UMA VEZ por planta, não a cada render.
+   *
+   * Ele era passado como prop (`target={centro}`), e prop de R3F é reaplicada
+   * em todo render — que aqui acontece a cada seleção, arrasto, hover e dado
+   * novo. Na prática: a pessoa arrastava a câmera para o canto da sala e o
+   * alvo voltava para o meio da planta no quadro seguinte. Zoom perto ficava
+   * impossível de controlar, porque o pivô nunca era onde ela estava olhando.
+   *
+   * Agora o OrbitControls é dono do próprio alvo; a cena só o reposiciona
+   * quando a planta (ou o andar) muda, que é quando faz sentido reenquadrar.
+   */
+  useEffect(() => {
+    const c = controlsRef.current;
+    if (!c) return;
+    c.target.set(centro[0], centro[1], centro[2]);
+    c.update();
+    invalidate();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [planta.id, modo]);
+
+  /**
    * Largar a ferramenta joga fora o traço em curso.
    *
    * O traço trava a câmera enquanto existe (efeito acima). Se a pessoa começa
@@ -645,8 +666,17 @@ function Conteudo({
 
       <OrbitControls
         ref={controlsRef}
-        target={centro}
         makeDefault
+        /**
+         * Zoom NA DIREÇÃO DO CURSOR, não do alvo.
+         *
+         * Sem isto, aproximar sempre puxa para o centro da planta: para olhar
+         * um canto era preciso zoom + arrastar + zoom + arrastar. Com o
+         * cursor mandando, aponta-se e aproxima.
+         */
+        zoomToCursor
+        panSpeed={1.3}
+        rotateSpeed={0.9}
         // No 2D o giro sai de cena: é o que separa "planta baixa" de "maquete
         // vista de cima". Sobram arrastar com o botão direito e o zoom.
         enableRotate={modo !== "2d"}
