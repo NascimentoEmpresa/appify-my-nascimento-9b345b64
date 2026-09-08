@@ -1016,9 +1016,15 @@ function Conteudo({
                 cor="#ef4444"
               />
             )}
+            {/* O NOME DO AMBIENTE — "Banheiro Feminino", "Copa", "Diretoria".
+                Ficava deitado no chão, a 5 cm: em 3D some atrás da primeira
+                mesa e, visto de fora, atrás da própria parede. Levantado a
+                2,20 m ele passa por cima da mobília e continua abaixo do
+                topo da parede, então se lê de fora pelo teto aberto — que é
+                justamente de onde se olha a planta. */}
             {def.familia === "area" && el.rotulo && (
-              <Etiqueta center distanceFactor={22} position={[0, 0.05, 0]}>
-                <span className="whitespace-nowrap rounded bg-white/70 px-1.5 py-0.5 text-[11px] font-bold uppercase tracking-wide text-slate-700">
+              <Etiqueta center distanceFactor={18} position={[0, 2.2, 0]}>
+                <span className="whitespace-nowrap rounded-md bg-slate-900/80 px-2.5 py-1 text-[13px] font-bold uppercase tracking-wide text-white shadow-lg">
                   {el.rotulo}
                 </span>
               </Etiqueta>
