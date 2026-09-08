@@ -243,7 +243,7 @@ export default function DetalheOrcamento() {
             <div>
               <Label className="text-xs flex items-center gap-1.5">
                 Classificação
-                <SetorRestritoBadge setor={classificacaoSelecionada?.setor_responsavel} />
+                <SetorRestritoBadge setores={classificacaoSelecionada?.setor_responsavel} />
               </Label>
               <Select value={classificacaoDraft || "todas"} onValueChange={(v) => setClassificacaoDraft(v === "todas" ? "" : v)}>
                 <SelectTrigger className="h-9"><SelectValue /></SelectTrigger>
@@ -252,7 +252,7 @@ export default function DetalheOrcamento() {
                   {classificacoes.map((c) => (
                     <SelectItem key={c.id} value={c.id}>
                       {c.nome}
-                      {c.setor_responsavel ? ` 🔒 ${c.setor_responsavel}` : ""}
+                      {c.setor_responsavel?.length ? ` 🔒 ${c.setor_responsavel.join(", ")}` : ""}
                     </SelectItem>
                   ))}
                 </SelectContent>

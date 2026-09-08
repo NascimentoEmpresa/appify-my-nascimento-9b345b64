@@ -10,11 +10,15 @@ import { SETOR_ORCAMENTO_RESTRITO } from "./orcamentoUtils";
 // não exclusividade; mostrar o badge pra qualquer valor virou ruído em toda
 // linha (achado real, 31/08). Só renderiza quando bate com o setor
 // efetivamente restrito.
-export function SetorRestritoBadge({ setor }: { setor: string | null | undefined }) {
-  if (setor?.trim().toUpperCase() !== SETOR_ORCAMENTO_RESTRITO) return null;
+// SIS-2026-0335: setor_responsavel virou lista — o badge aparece se
+// Financeiro estiver ENTRE os setores da Classificação, não só quando for
+// o único (mesmo critério de classificacaoVisivelPorSetor).
+export function SetorRestritoBadge({ setores }: { setores: string[] | null | undefined }) {
+  const restrito = (setores ?? []).some((s) => s?.trim().toUpperCase() === SETOR_ORCAMENTO_RESTRITO);
+  if (!restrito) return null;
   return (
     <Badge variant="outline" className="gap-1 border-slate-300 bg-slate-50 text-slate-600 dark:bg-slate-900/40 dark:text-slate-300">
-      <Lock className="h-3 w-3" /> {setor.trim()}
+      <Lock className="h-3 w-3" /> {SETOR_ORCAMENTO_RESTRITO}
     </Badge>
   );
 }

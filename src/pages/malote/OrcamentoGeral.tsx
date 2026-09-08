@@ -459,7 +459,7 @@ export default function OrcamentoGeral() {
                     <TableCell className="font-medium">
                       <div className="flex items-center gap-1.5">
                         {l.classificacaoMalote.nome}
-                        <SetorRestritoBadge setor={l.classificacaoMalote.setor_responsavel} />
+                        <SetorRestritoBadge setores={l.classificacaoMalote.setor_responsavel} />
                       </div>
                     </TableCell>
                     <TableCell className="max-w-64 truncate" title={l.detalhes}>
@@ -554,7 +554,7 @@ export default function OrcamentoGeral() {
                               <TableCell className="font-medium">
                                 <div className="flex items-center gap-1.5">
                                   {l.classificacaoMalote.nome}
-                                  <SetorRestritoBadge setor={l.classificacaoMalote.setor_responsavel} />
+                                  <SetorRestritoBadge setores={l.classificacaoMalote.setor_responsavel} />
                                 </div>
                               </TableCell>
                               <LinhaAprovadores c={l.classificacaoMalote} />

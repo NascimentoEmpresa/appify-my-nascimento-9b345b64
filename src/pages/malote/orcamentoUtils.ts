@@ -62,13 +62,18 @@ export function fmtDate(dateStr: string | null | undefined): string {
 // useMaloteAcessoOrcamento.ts pro porquê).
 export const SETOR_ORCAMENTO_RESTRITO = "FINANCEIRO";
 
+// SIS-2026-0335 (Iury): setor_responsavel virou lista (mais de um aprovador
+// de setor diferente na mesma Classificação) — decisão confirmada com o
+// usuário: continua restrita ao Financeiro se ELE ESTIVER ENTRE os setores
+// (não só quando for o único), senão marcar um segundo setor qualquer
+// burlaria a restrição.
 export function classificacaoVisivelPorSetor(
-  c: { setor_responsavel?: string | null } | null | undefined,
+  c: { setor_responsavel?: string[] | null } | null | undefined,
   setoresLiberados: string[]
 ): boolean {
   if (!c) return true;
-  const setor = c.setor_responsavel?.trim().toUpperCase();
-  if (!setor || setor !== SETOR_ORCAMENTO_RESTRITO) return true;
+  const setores = (c.setor_responsavel ?? []).map((s) => s?.trim().toUpperCase()).filter(Boolean);
+  if (!setores.includes(SETOR_ORCAMENTO_RESTRITO)) return true;
   const setoresSet = new Set(setoresLiberados.map((s) => s.toUpperCase().trim()));
   return setoresSet.has(SETOR_ORCAMENTO_RESTRITO);
 }
