@@ -86,7 +86,7 @@ interface Props {
    * Quem decide se este caminho existe é o painel de acesso, na capacidade
    * "Editar solicitação de vaga" — ver a migration 20260930000077.
    */
-  solicitacao?: (Record<string, unknown> & { id: number }) | null;
+  solicitacao?: ({ id: number } & object) | null;
 }
 
 export function ModalNovaVaga({ aberto, onFechar, onCriada, onToast, solicitacao = null }: Props) {
@@ -162,19 +162,23 @@ export function ModalNovaVaga({ aberto, onFechar, onCriada, onToast, solicitacao
     // e solicitante são da solicitação, não deste formulário, e passar a linha
     // inteira para cá os traria de volta no update.
     if (solicitacao?.id) {
+      // Uma linha do banco, lida por nome de coluna. O cast mora aqui, num
+      // lugar só: a prop é tipada como "objeto com id" para aceitar a
+      // `Solicitacao` de quem chama sem obrigar a tela a converter.
+      const dados = solicitacao as unknown as Record<string, unknown>;
       const preenchido: Record<string, unknown> = { ...VAGA_RESET };
       for (const campo of Object.keys(VAGA_RESET)) {
-        const v = solicitacao[campo];
+        const v = dados[campo];
         if (v === null || v === undefined) continue;
         preenchido[campo] = typeof VAGA_RESET[campo as keyof typeof VAGA_RESET] === "boolean" ? !!v : String(v);
       }
-      preenchido.administrativa = !!solicitacao.administrativa;
+      preenchido.administrativa = !!dados.administrativa;
       setVaga(preenchido as unknown as typeof VAGA_RESET);
       // Vaga já gravada sem vínculo com o catálogo continua sem ele: exigir o
       // posto agora travaria a correção de uma vaga que foi criada à mão.
-      setVagaManual(!solicitacao.posto_id);
-      setSubstituidoId((solicitacao.substituido_id as number | null) ?? null);
-      setEmpSearch((solicitacao.nome_substituido as string | null) ?? "");
+      setVagaManual(!dados.posto_id);
+      setSubstituidoId((dados.substituido_id as number | null) ?? null);
+      setEmpSearch((dados.nome_substituido as string | null) ?? "");
     } else {
       setVaga({ ...VAGA_RESET });
       setSubstituidoId(null);
