@@ -26,11 +26,14 @@ import {
 import {
   PackagePlus, Search, AlertTriangle, Boxes, Undo2, Trash2, ShieldAlert, Plus, X, Tag,
   ClipboardCheck, History, ArrowDownToLine, ArrowUpFromLine, RotateCcw, Check, Coins,
+  PackageOpen, ClipboardList,
   type LucideIcon,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { caAtendeLaudo } from "@/lib/sst/laudo";
 import { useAccessibleMenus } from "@/hooks/useAccessibleMenus";
+import { AcessoGate } from "@/components/auth/AcessoGate";
+import { useContagemRotativa } from "@/hooks/useSupSeparacao";
 
 // A tabela de laudos é nova e ainda não existe em types.ts (regra R8).
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -78,6 +81,7 @@ export default function EstoqueEtiquetas() {
   const kpis = useMemo(() => ({
     materiais: linhas.length,
     disponivel: linhas.reduce((s, l) => s + l.disponivel, 0),
+    reservado: linhas.reduce((s, l) => s + l.reservado, 0),
     abaixo: linhas.filter((l) => l.estoque_minimo > 0 && l.disponivel < l.estoque_minimo).length,
     etiquetas: linhas.reduce((s, l) => s + l.etiquetas, 0),
     // Quanto vale o que está parado no almoxarifado — pedido explícito do
@@ -127,11 +131,16 @@ export default function EstoqueEtiquetas() {
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
         <Kpi rotulo="Materiais" valor={kpis.materiais} icone={Boxes} />
         <Kpi rotulo="Unidades disponíveis" valor={kpis.disponivel} icone={Tag} />
+        <Kpi rotulo="Reservadas p/ separação" valor={kpis.reservado} icone={PackageOpen} />
         <Kpi rotulo="Entradas registradas" valor={kpis.etiquetas} icone={Tag} />
         <Kpi rotulo="Abaixo do mínimo" valor={kpis.abaixo} icone={AlertTriangle}
              destaque={kpis.abaixo > 0} />
         <Kpi rotulo="Valor total do estoque" valor={fmtBRL(kpis.valorTotal)} icone={Coins} />
       </div>
+
+      <AcessoGate menu="sup_estoque_inventario" acao="visualizar">
+        <PainelContagemRotativa />
+      </AcessoGate>
 
       {/* O total só é confiável se todo material tiver custo. Sem este aviso o
           número pareceria completo estando pela metade. */}
@@ -195,6 +204,8 @@ export default function EstoqueEtiquetas() {
                   <TableHead>Almoxarifado</TableHead>
                   <TableHead>Tamanhos livres</TableHead>
                   <TableHead className="text-right">Disponível</TableHead>
+                  <TableHead className="text-right">Reservado</TableHead>
+                  <TableHead className="text-right">Físico</TableHead>
                   <TableHead className="text-right">Consumido</TableHead>
                   <TableHead className="text-right">Mínimo</TableHead>
                   {/* SIS-2026-0199: o custo já era gravado na entrada e nunca
@@ -229,10 +240,28 @@ export default function EstoqueEtiquetas() {
                                 <Badge key={t} variant="outline" className="text-[10px]">{t}</Badge>))}
                         </div>
                       </TableCell>
+                      {/*
+                        Disponível é LÍQUIDO de reserva desde 20260930000076 — é a
+                        resposta ao "mas tem 10 no estoque, por que está comprando?".
+                        Físico continua ao lado porque é ele que a contagem confere.
+                      */}
                       <TableCell className={cn("text-right font-semibold", critico && "text-destructive")}>
                         {l.disponivel}
                         {critico && <AlertTriangle className="ml-1 inline h-3.5 w-3.5" />}
                       </TableCell>
+                      <TableCell className="text-right">
+                        {l.reservado > 0 ? (
+                          <span
+                            className="text-violet-700 dark:text-violet-300"
+                            title="Separado para um pedido, ainda na prateleira"
+                          >
+                            {l.reservado}
+                          </span>
+                        ) : (
+                          <span className="text-muted-foreground">—</span>
+                        )}
+                      </TableCell>
+                      <TableCell className="text-right text-muted-foreground">{l.fisico}</TableCell>
                       <TableCell className="text-right text-muted-foreground">{l.consumido}</TableCell>
                       <TableCell className="text-right text-muted-foreground">{l.estoque_minimo || "—"}</TableCell>
                       <TableCell className="text-right">
@@ -989,6 +1018,10 @@ const ESTILO_MOV: Record<Movimento["tipo"], { rotulo: string; Icone: typeof Tag;
   devolucao: { rotulo: "Devolução",  Icone: RotateCcw,       cor: "text-amber-600 dark:text-amber-400" },
   ajuste:    { rotulo: "Inventário", Icone: ClipboardCheck,  cor: "text-violet-600 dark:text-violet-400" },
   remocao:   { rotulo: "Remoção",    Icone: Trash2,          cor: "text-destructive" },
+  // A reserva não tira a peça da prateleira, só do saldo disponível — por isso
+  // ela aparece na trilha com peso visual menor que uma saída de verdade.
+  reserva:   { rotulo: "Reservado",  Icone: PackageOpen,     cor: "text-violet-600 dark:text-violet-400" },
+  liberacao: { rotulo: "Reserva liberada", Icone: Undo2,     cor: "text-muted-foreground" },
 };
 
 /**
@@ -1228,5 +1261,65 @@ function DialogRemoverTag({ codigo, onFechar, onConfirmar }: {
         </DialogFooter>
       </DialogContent>
     </Dialog>
+  );
+}
+
+/**
+ * Contagem rotativa — a lista que o gerente de Suprimentos pediu.
+ *
+ * Na conversa: "talvez seja até de geral, uma inconsistência de dizer para
+ * ela: esse produto necessita uma contagem rotativa. Cria uma lista para ela.
+ * E aí talvez até um relatório para nós dizer: olha só, no mês teve 30 itens
+ * que teve necessidade de contagem rotativa, porque o estoque estava errado."
+ *
+ * Cada linha nasce de uma divergência na separação e se fecha sozinha quando
+ * alguém faz o inventário daquele material — nada some, e o motivo escrito
+ * por quem estava na doca fica registrado para a apuração depois.
+ *
+ * Some da tela quando não há nada aberto: painel vazio permanente vira
+ * ruído e as pessoas param de olhar.
+ */
+function PainelContagemRotativa() {
+  const { data: linhas = [], isLoading } = useContagemRotativa(true);
+  if (isLoading || linhas.length === 0) return null;
+
+  return (
+    <Card className="border-amber-400/40 bg-amber-50/40 dark:bg-amber-950/10">
+      <CardContent className="p-4">
+        <div className="mb-3 flex items-center gap-2">
+          <ClipboardList className="h-4 w-4 text-amber-700 dark:text-amber-300" />
+          <h2 className="font-semibold">Contagem rotativa pendente</h2>
+          <Badge variant="outline">{linhas.length}</Badge>
+        </div>
+        <p className="mb-3 text-xs text-muted-foreground">
+          Materiais em que a separação não bateu com o sistema. O saldo NÃO foi
+          corrigido — fazer o inventário do material encerra a pendência.
+        </p>
+        <div className="space-y-2">
+          {linhas.map((l) => (
+            <div key={l.id} className="flex flex-wrap items-baseline gap-x-3 gap-y-1 rounded-md border bg-background p-2.5 text-sm">
+              <span className="font-medium">{l.material?.nome ?? "—"}</span>
+              {l.tamanho && <span className="text-xs text-muted-foreground">({l.tamanho})</span>}
+              {l.codigo && <span className="font-mono text-xs text-muted-foreground">lote {l.codigo}</span>}
+              {l.quantidade_faltante != null && (
+                <Badge variant="outline" className="text-[10px]">faltaram {l.quantidade_faltante}</Badge>
+              )}
+              {l.pedido?.pedido_id && (
+                <Link
+                  to={`/app/suprimentos/pedidos-materiais?busca=${encodeURIComponent(l.pedido.pedido_id)}`}
+                  className="font-mono text-xs text-primary underline-offset-2 hover:underline"
+                >
+                  {l.pedido.pedido_id}
+                </Link>
+              )}
+              <span className="w-full text-xs text-muted-foreground">
+                {l.motivo} — {l.aberta_por_nome ?? "—"},{" "}
+                {new Date(l.aberta_em).toLocaleString("pt-BR")}
+              </span>
+            </div>
+          ))}
+        </div>
+      </CardContent>
+    </Card>
   );
 }

@@ -15,7 +15,7 @@ import { useEmpresaId } from "@/hooks/useEmpresaId";
 import {
   ESTILO_STATUS, fmtDataBR,
   ESTILO_STATUS_ITEM, STATUS_ITEM, derivarStatusItem,
-  ESTILO_STATUS_VISIVEL, STATUS_VISIVEL, apresentarStatusVisivel,
+  ESTILO_STATUS_VISIVEL, STATUS_VISIVEL, apresentarStatusVisivel, type SituacaoPedido,
   type StatusComprovacao, type StatusVisivel,
 } from "@/hooks/useSupPedidos";
 import { ModalBaixaPedido } from "@/components/suprimentos/ModalBaixaPedido";
@@ -26,6 +26,7 @@ import { useTagsDoPedido, useTagsDePedidos, buscarTagsDePedidos, type TagEmLote 
 import {
   Search, Package, Boxes, Clock, ShoppingCart, Truck, History as HistoryIcon,
   RefreshCw, Inbox, Download, ShieldAlert, Trash2, AlertTriangle, Pencil, Printer, FileText,
+  PackageSearch, PackageOpen,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { toast } from "sonner";
@@ -112,18 +113,28 @@ function valorLegivel(v: string | null): string {
 
 type ItemPedido = Pedido["sup_pedido_item"][number];
 
+import { useSituacaoPedidos } from "@/hooks/useSupSeparacao";
+import { ModalPrePedido } from "@/components/suprimentos/ModalPrePedido";
+
+/**
+ * Situação de cada pedido (quantos itens já saíram), vinda da view
+ * sup_pedido_situacao. É o que sustenta o badge "parcialmente despachado" e o
+ * KPI de separação sem carregar as etiquetas de todos os pedidos da fila.
+ */
+type MapaSituacao = Map<string, SituacaoPedido>;
+
 function comprovacaoPedido(pedido: Pedido) {
   const relacao = pedido.sup_pedido_comprovacao;
   return Array.isArray(relacao) ? relacao[0] ?? null : relacao;
 }
 
-function statusVisivelPedido(pedido: Pedido): StatusVisivel {
+function statusVisivelPedido(pedido: Pedido, situacao?: SituacaoPedido | null): StatusVisivel {
   const comprovacao = comprovacaoPedido(pedido);
-  return apresentarStatusVisivel(pedido.status, comprovacao?.status).status;
+  return apresentarStatusVisivel(pedido.status, comprovacao?.status, situacao).status;
 }
 
-function apresentacaoStatusPedido(pedido: Pedido) {
-  return apresentarStatusVisivel(pedido.status, comprovacaoPedido(pedido)?.status);
+function apresentacaoStatusPedido(pedido: Pedido, situacao?: SituacaoPedido | null) {
+  return apresentarStatusVisivel(pedido.status, comprovacaoPedido(pedido)?.status, situacao);
 }
 
 /**
@@ -163,7 +174,7 @@ function linhaExport(p: Pedido, i: ItemPedido | null, tags: TagEmLote[]) {
     TAGs: tags.map((t) => t.codigo).join(" | "),
     "Valor unitário": unitario ?? "",
     "Valor total": total > 0 ? total : "",
-    "Status do item": i ? derivarStatusItem(p.status, tags.length > 0) : "",
+    "Status do item": i ? derivarStatusItem(p.status, { saiu: tags.length > 0 }) : "",
     "Status do pedido": apresentacaoStatusPedido(p).rotulo,
     "Tipo de envio": p.envio_tipo === "SUPERVISOR" ? "Entrega via Supervisor" : p.envio_tipo === "CORREIO" ? "Entrega via Correio" : "",
     "Rastreio Correio": p.envio_rastreio ?? "",
@@ -177,8 +188,10 @@ function linhaExport(p: Pedido, i: ItemPedido | null, tags: TagEmLote[]) {
 
 const ICONE_STATUS: Record<StatusVisivel, LucideIcon> = {
   "EM PREPARACAO": Boxes,
+  "EM SEPARACAO": PackageOpen,
   "AGUARDANDO ENVIO": Clock,
   "AGUARDANDO COMPRA": ShoppingCart,
+  "PARCIALMENTE DESPACHADO": PackageSearch,
   "DESPACHADO_AGUARDANDO": Truck,
   "DESPACHADO_ENTREGUE": Truck,
   "CANCELADO": Inbox,
@@ -198,6 +211,7 @@ export default function PedidosMateriais() {
   const [statusDe, setStatusDe] = useState<Pedido | null>(null);
   const [historicoDe, setHistoricoDe] = useState<Pedido | null>(null);
   const [editandoDe, setEditandoDe] = useState<Pedido | null>(null);
+  const [prePedidoDe, setPrePedidoDe] = useState<Pedido | null>(null);
   const [excluindo, setExcluindo] = useState<Pedido | null>(null);
   const [etiquetaDe, setEtiquetaDe] = useState<Pedido | null>(null);
 
@@ -234,28 +248,39 @@ export default function PedidosMateriais() {
     },
   });
 
+  /**
+   * Quanto de cada pedido já foi atendido. Uma consulta à view
+   * sup_pedido_situacao, que faz no banco o que antes exigiria carregar as
+   * etiquetas de toda a fila — é o que torna o badge "parcialmente
+   * despachado" barato o bastante para ficar sempre ligado.
+   */
+  const idsDosPedidos = useMemo(() => pedidos.map((p) => p.id), [pedidos]);
+  const { data: situacoes } = useSituacaoPedidos(idsDosPedidos);
+  const situacaoDe = (p: Pedido) => situacoes?.get(p.id) ?? null;
+
   // Contagens sobre TUDO que veio, não sobre a página filtrada — os cards
   // precisam refletir a fila inteira.
   const contagens = useMemo(() => {
     const base: Record<string, number> = { TOTAL: pedidos.length };
     for (const s of STATUS_VISIVEL) base[s] = 0;
     for (const p of pedidos) {
-      const status = statusVisivelPedido(p);
+      const status = statusVisivelPedido(p, situacoes?.get(p.id) ?? null);
       base[status] = (base[status] ?? 0) + 1;
     }
     return base;
-  }, [pedidos]);
+  }, [pedidos, situacoes]);
 
   const porBusca = useMemo(() => {
     const t = busca.trim().toLowerCase();
     return pedidos.filter((p) => {
-      const statusVisivel = statusVisivelPedido(p);
+      const statusVisivel = statusVisivelPedido(p, situacoes?.get(p.id) ?? null);
       if (filtroStatus !== "TODOS" && statusVisivel !== filtroStatus) return false;
       if (!t) return true;
       // "Digite qualquer coisa que aparece na tela" — inclui data já
       // formatada em dd/mm/aaaa e nome de material (REPLICAR §5.4).
       const alvo = [
-        p.pedido_id, apresentacaoStatusPedido(p).rotulo, p.contrato_nome, p.posto_nome, p.funcao_nome,
+        p.pedido_id, apresentacaoStatusPedido(p, situacoes?.get(p.id) ?? null).rotulo,
+        p.contrato_nome, p.posto_nome, p.funcao_nome,
         p.solicitante_login, p.solicitante_nome, p.nome_colaborador, p.matricula_colaborador,
         p.tipo_pedido, p.observacoes_solicitante, p.observacao, p.envio_rastreio,
         fmtDataBR(p.data_solicitacao), fmtDataBR(p.data_despachado),
@@ -264,7 +289,7 @@ export default function PedidosMateriais() {
       ].filter(Boolean).join(" ").toLowerCase();
       return alvo.includes(t);
     });
-  }, [pedidos, busca, filtroStatus]);
+  }, [pedidos, busca, filtroStatus, situacoes]);
 
   /**
    * Filtro por status de ITEM (SIS-2026-0201). Só busca as etiquetas quando o
@@ -283,7 +308,7 @@ export default function PedidosMateriais() {
     // que "só o que falta comprar" continua mostrando o pedido inteiro.
     return porBusca.filter((p) =>
       (p.sup_pedido_item ?? []).some(
-        (i) => derivarStatusItem(p.status, comTag.has(i.id)) === filtroItem,
+        (i) => derivarStatusItem(p.status, { saiu: comTag.has(i.id) }) === filtroItem,
       ),
     );
   }, [porBusca, filtrandoPorItem, tagsFiltro, filtroItem]);
@@ -470,7 +495,9 @@ export default function PedidosMateriais() {
             <CardPedido
               key={p.id}
               pedido={p}
+              situacao={situacaoDe(p)}
               onStatus={() => setStatusDe(p)}
+              onPrePedido={() => setPrePedidoDe(p)}
               onEditar={() => setEditandoDe(p)}
               onHistorico={() => setHistoricoDe(p)}
               onExcluir={() => setExcluindo(p)}
@@ -479,6 +506,14 @@ export default function PedidosMateriais() {
           ))}
         </div>
       )}
+
+      {/* Conferência do estoque e criação do pré-pedido (a tela da supervisora). */}
+      <ModalPrePedido
+        pedidoId={prePedidoDe?.id ?? null}
+        protocolo={prePedidoDe?.pedido_id ?? null}
+        aberto={!!prePedidoDe}
+        onFechar={() => setPrePedidoDe(null)}
+      />
 
       {/* Status + baixa de estoque numa transação só (ver ModalBaixaPedido). */}
       <ModalBaixaPedido pedido={statusDe} onFechar={() => setStatusDe(null)} />
@@ -522,13 +557,14 @@ function CardKpi({
 }
 
 function CardPedido({
-  pedido: p, onStatus, onEditar, onHistorico, onExcluir, onEtiqueta,
+  pedido: p, situacao, onStatus, onPrePedido, onEditar, onHistorico, onExcluir, onEtiqueta,
 }: {
   pedido: Pedido;
-  onStatus: () => void; onEditar: () => void;
+  situacao: SituacaoPedido | null;
+  onStatus: () => void; onPrePedido: () => void; onEditar: () => void;
   onHistorico: () => void; onExcluir: () => void; onEtiqueta: () => void;
 }) {
-  const apresentacaoStatus = apresentacaoStatusPedido(p);
+  const apresentacaoStatus = apresentacaoStatusPedido(p, situacao);
   const statusVisivel = apresentacaoStatus.status;
 
   // Em AGUARDANDO COMPRA o card esconde o que já tem etiqueta, virando uma
@@ -647,9 +683,37 @@ function CardPedido({
           Status e Editar (o que se faz o tempo todo) ficam em cima, consulta
           e exclusão embaixo. */}
       <div className="grid grid-cols-2 gap-2 border-t p-3">
-        <Button size="sm" onClick={onStatus}>
-          <RefreshCw className="mr-1.5 h-3.5 w-3.5" /> Status
-        </Button>
+        {/*
+          Em EM PREPARACAO a ação principal deixa de ser "mudar status na mão"
+          e passa a ser conferir o estoque e montar o pré-pedido — é o passo
+          que faz a mercadoria sair do disponível sem sair da prateleira.
+        */}
+        {p.status === "EM PREPARACAO" ? (
+          <AcessoGate
+            menu="sup_pedidos_materiais"
+            acao="alterar"
+            fallback={
+              <Button size="sm" onClick={onStatus}>
+                <RefreshCw className="mr-1.5 h-3.5 w-3.5" /> Status
+              </Button>
+            }
+          >
+            <Button size="sm" onClick={onPrePedido}>
+              <PackageSearch className="mr-1.5 h-3.5 w-3.5" /> Conferir e reservar
+            </Button>
+          </AcessoGate>
+        ) : (
+          <Button
+            size="sm"
+            onClick={onStatus}
+            disabled={p.status === "EM SEPARACAO"}
+            title={p.status === "EM SEPARACAO"
+              ? "Pedido em separação: confirme ou libere pela tela de Separação de Pedidos."
+              : undefined}
+          >
+            <RefreshCw className="mr-1.5 h-3.5 w-3.5" /> Status
+          </Button>
+        )}
         <AcessoGate menu="sup_pedidos_materiais" acao="alterar">
           <Button size="sm" variant="secondary" onClick={onEditar}>
             <Pencil className="mr-1.5 h-3.5 w-3.5" /> Editar
