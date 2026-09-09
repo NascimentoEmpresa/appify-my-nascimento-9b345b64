@@ -85,6 +85,7 @@ import CatalogoMateriais from "./pages/suprimentos/CatalogoMateriais";
 import CatalogoAprovacoes from "./pages/suprimentos/CatalogoAprovacoes";
 import PedidosMateriais from "./pages/suprimentos/PedidosMateriais";
 import EstoqueEtiquetas from "./pages/suprimentos/EstoqueEtiquetas";
+import SeparacaoMateriais from "./pages/suprimentos/SeparacaoMateriais";
 import Patrimonio from "./pages/suprimentos/Patrimonio";
 import PainelManutencoes from "./pages/suprimentos/PainelManutencoes";
 import EpisAdmissoes from "./pages/suprimentos/EpisAdmissoes";
@@ -194,6 +195,7 @@ import Ferias from "./pages/rh/Ferias";
 import RhSolicitacoesDemissao from "./pages/rh/SolicitacoesDemissao";
 import MinhasSolicitacoes from "./pages/MinhasSolicitacoes";
 import BIDashboard from "./pages/bi/Dashboard";
+import LinksBIs from "./pages/bi/LinksBIs";
 import Fiscal from "./pages/Fiscal";
 import IntegracaoBatches from "./pages/integracao/Batches";
 import BatchDetalhe from "./pages/integracao/BatchDetalhe";
@@ -231,6 +233,7 @@ import ConducaoReuniao from "./pages/central-servicos/reunioes/ConducaoReuniao";
 import PainelGerencial from "./pages/central-servicos/reunioes/PainelGerencial";
 import AgendamentoVeiculos from "./pages/central-servicos/veiculos/AgendamentoVeiculos";
 import SolicitarVagaCentral from "./pages/central-servicos/SolicitarVaga";
+import QuadroAvisos from "./pages/central-servicos/QuadroAvisos";
 import SolicitarReembolso from "./pages/central-servicos/reembolso/SolicitarReembolso";
 import AprovacaoReembolso from "./pages/central-servicos/reembolso/AprovacaoReembolso";
 import ConfiguracaoReembolso from "./pages/central-servicos/reembolso/ConfiguracaoReembolso";
@@ -379,6 +382,7 @@ const App = () => (
                 AcessoGate dentro da própria tela, não por rota, para quem cai
                 no link entender que existe e falta permissão. */}
             <Route path="central-servicos/solicitar-vaga" element={<SolicitarVagaCentral />} />
+            <Route path="central-servicos/quadro-avisos" element={<QuadroAvisos />} />
             {/* Mesma tela de /app/treinamentos/erp, ancorada na Central de
                 Serviços: mesmo componente e mesmos treinamentos, com menu
                 próprio (`central_servicos_treinamentos`) para o acesso ser
@@ -533,6 +537,7 @@ const App = () => (
             <Route path="suprimentos/catalogo/aprovacoes" element={<CatalogoAprovacoes />} />
             <Route path="suprimentos/catalogo" element={<CatalogoMateriais />} />
             <Route path="suprimentos/pedidos-materiais" element={<PedidosMateriais />} />
+            <Route path="suprimentos/separacao" element={<SeparacaoMateriais />} />
             <Route path="suprimentos/estoque-etiquetas" element={<EstoqueEtiquetas />} />
             <Route path="suprimentos/patrimonio" element={<Patrimonio />} />
             <Route path="suprimentos/manutencao" element={<PainelManutencoes />} />
@@ -636,6 +641,7 @@ const App = () => (
             <Route path="sst/controle-ca" element={<ControleCa />} />
             {/* BI */}
             <Route path="bi" element={<BIDashboard />} />
+            <Route path="bi/links" element={<LinksBIs />} />
             {/* Integração & Migração */}
             <Route path="integracao" element={<IntegracaoBatches />} />
             <Route path="integracao/aliases" element={<IntegracaoAliases />} />

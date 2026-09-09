@@ -80,7 +80,7 @@ import { GitBranch, GitMerge } from "lucide-react";
 import { MessageSquare } from "lucide-react";
 import { Banknote } from "lucide-react";
 import { TrendingDown } from "lucide-react";
-import { Megaphone } from "lucide-react";
+import { Megaphone, ExternalLink } from "lucide-react";
 import { CreditCard } from "lucide-react";
 import { Network } from "lucide-react";
 import { useNovidades } from "@/hooks/useNovidades";
@@ -267,6 +267,7 @@ const suprimentosModule: ModuleDef = {
         { label: "Catálogo de Materiais", to: "/app/suprimentos/catalogo", icon: Shirt },
         { label: "Aprovação de Catálogo", to: "/app/suprimentos/catalogo/aprovacoes", icon: ClipboardCheck },
         { label: "Pedidos de Materiais", to: "/app/suprimentos/pedidos-materiais", icon: PackageCheck },
+        { label: "Separação de Pedidos", to: "/app/suprimentos/separacao", icon: PackageCheck },
         { label: "Estoque & Etiquetas", to: "/app/suprimentos/estoque-etiquetas", icon: Boxes },
         { label: "Histórico do Colaborador", to: "/app/suprimentos/colaborador", icon: History },
         { label: "Declaração de Conteúdo", to: "/app/suprimentos/correio-declaracao", icon: FileText },
@@ -707,6 +708,12 @@ const centralServicosModule: ModuleDef = {
         // para quem tem a permissão). Menu de 3 itens para 2 que quase
         // ninguém abre só empurra o resto para baixo.
         { label: "Solicitar Reembolso", to: "/app/central-servicos/reembolso", icon: Receipt },
+        // O item precisa existir AQUI, não só em app_menu: esta lista é
+        // estática e o cadastro no banco decide apenas se a pessoa enxerga o
+        // que já está escrito nela. Criar a tela e a permissão sem esta linha
+        // deixa o menu invisível para todo mundo, inclusive para quem acabou
+        // de receber o acesso — foi exatamente o que aconteceu aqui.
+        { label: "Quadro de Avisos", to: "/app/central-servicos/quadro-avisos", icon: Megaphone },
       ],
     },
   ],
@@ -827,7 +834,10 @@ const biModule: ModuleDef = {
     {
       label: "Painéis",
       defaultOpen: true,
-      items: [{ label: "Resumo do Grupo", to: "/app/bi", icon: BarChart3 }],
+      items: [
+        { label: "Resumo do Grupo", to: "/app/bi", icon: BarChart3 },
+        { label: "Links dos BIs", to: "/app/bi/links", icon: ExternalLink },
+      ],
     },
   ],
 };

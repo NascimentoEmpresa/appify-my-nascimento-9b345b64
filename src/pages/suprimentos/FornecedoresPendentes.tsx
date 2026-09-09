@@ -277,7 +277,7 @@ function CardPendente({ p, onAbrir }: { p: CadastroPendente; onAbrir: () => void
 
 /** Decisão do cadastro: escolhe a empresa, vê o de-para e aprova ou reprova. */
 function ModalDecisao({ pendente: p, onFechar }: { pendente: CadastroPendente | null; onFechar: () => void }) {
-  const { data: empresas = [] } = useEmpresasGrupo();
+  const { data: empresas = [], isLoading: carregandoEmpresas } = useEmpresasGrupo();
   const { data: existentes = [] } = useCnpjExistente(p?.cnpj_cpf ?? null);
   const aprovar = useAprovarCadastro();
   const reprovar = useReprovarCadastro();
@@ -375,8 +375,19 @@ function ModalDecisao({ pendente: p, onFechar }: { pendente: CadastroPendente | 
                 <Select value={empresaId} onValueChange={(v) => { setEmpresaId(v); setCampos(null); }}>
                   <SelectTrigger className="mt-1"><SelectValue placeholder="Escolha a empresa…" /></SelectTrigger>
                   <SelectContent>
-                    {empresas.map((e: any) => (
-                      <SelectItem key={e.id} value={e.id}>{e.nome_fantasia || e.razao_social}</SelectItem>
+                    {/* useEmpresasGrupo já devolve { id, nome } achatado — não venha
+                        de nome_fantasia/razao_social aqui: os campos não existem no
+                        retorno e a lista abre com itens em branco. */}
+                    {carregandoEmpresas && (
+                      <div className="px-2 py-1.5 text-sm text-muted-foreground">Carregando empresas…</div>
+                    )}
+                    {!carregandoEmpresas && empresas.length === 0 && (
+                      <div className="px-2 py-1.5 text-sm text-muted-foreground">
+                        Nenhuma empresa disponível para o seu usuário
+                      </div>
+                    )}
+                    {empresas.map((e) => (
+                      <SelectItem key={e.id} value={e.id}>{e.nome}</SelectItem>
                     ))}
                   </SelectContent>
                 </Select>
