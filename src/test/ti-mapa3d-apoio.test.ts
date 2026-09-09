@@ -17,6 +17,9 @@ import {
   cantoDaPeca,
   centroDaPeca,
   dentro,
+  normalizarArea,
+  pecasNaArea,
+  pegadaDoAtivo,
   pegadaDoElemento,
   pontasDaParede,
   rad,
@@ -641,5 +644,64 @@ describe("quem serve de apoio vem do catálogo, não de uma lista à parte", () 
     expect(sobre("mesa")).toBe(75);
     expect(sobre("gaveteiro")).toBe(60);
     expect(sobre("mesa", 110)).toBe(110);
+  });
+});
+
+describe("laço de seleção", () => {
+  // Uma sala com duas estações e a parede do prédio atravessando tudo.
+  const mesaA = elemento({ id: "mesa-a", x: 100, y: 100, largura: 140, altura: 70 });
+  const mesaB = elemento({ id: "mesa-b", x: 600, y: 100, largura: 140, altura: 70 });
+  const parede = elemento({ id: "parede", tipo: "parede", x: 0, y: 0, largura: 2000, altura: 10 });
+
+  it("põe os cantos no lugar, arraste-se para onde for", () => {
+    // Arrastar da direita para a esquerda e de baixo para cima é metade dos
+    // laços que alguém faz — e daria largura negativa se ninguém ordenasse.
+    expect(normalizarArea(500, 400, 100, 200)).toEqual({ x1: 100, y1: 200, x2: 500, y2: 400 });
+    expect(normalizarArea(100, 200, 500, 400)).toEqual({ x1: 100, y1: 200, x2: 500, y2: 400 });
+  });
+
+  it("pega a peça que cabe inteira e ignora a que só encosta", () => {
+    const achados = pecasNaArea(
+      normalizarArea(50, 50, 300, 300),
+      [mesaA, mesaB],
+      [],
+      "p1",
+    );
+    expect(achados).toEqual([{ tipo: "elemento", id: "mesa-a" }]);
+  });
+
+  it("não traz a parede do prédio junto por ela cruzar o retângulo", () => {
+    // O motivo de o critério ser CONTER e não tocar: a parede externa passa
+    // por baixo de quase toda área que se laça num canto da sala, e vir com
+    // ela junto tornaria o gesto inútil justamente onde ele mais serve.
+    const achados = pecasNaArea(normalizarArea(50, 0, 300, 300), [mesaA, parede], [], "p1");
+    expect(achados).toEqual([{ tipo: "elemento", id: "mesa-a" }]);
+  });
+
+  it("laça o equipamento pelo tamanho dele, não pelo ponto", () => {
+    // O monitor tem 55×22 cm em volta do centro: um retângulo que passa pelo
+    // meio dele não o pega, senão o laço traria meia estação de trabalho.
+    const monitor = ativo({ pos_x: 200, pos_y: 200 });
+    expect(pegadaDoAtivo(monitor)).toEqual({ x: 172.5, y: 189, largura: 55, profundidade: 22 });
+    expect(pecasNaArea(normalizarArea(180, 180, 400, 400), [], [monitor], "p1")).toEqual([]);
+    expect(pecasNaArea(normalizarArea(150, 150, 400, 400), [], [monitor], "p1")).toEqual([
+      { tipo: "ativo", id: "a1" },
+    ]);
+  });
+
+  it("não laça peça de outro andar nem equipamento sem lugar no mapa", () => {
+    const deOutroAndar = { ...mesaA, id: "mesa-vizinha", planta_id: "p2" };
+    const naEstante = ativo({ pos_x: 200, pos_y: 200 });
+    const semLugar = { ...naEstante, id: "a2", pos_x: null, pos_y: null } as TiAtivo;
+    const achados = pecasNaArea(
+      normalizarArea(0, 0, 5000, 5000),
+      [mesaA, deOutroAndar],
+      [naEstante, semLugar],
+      "p1",
+    );
+    expect(achados).toEqual([
+      { tipo: "elemento", id: "mesa-a" },
+      { tipo: "ativo", id: "a1" },
+    ]);
   });
 });

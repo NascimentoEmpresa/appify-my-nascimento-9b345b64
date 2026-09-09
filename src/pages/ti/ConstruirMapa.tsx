@@ -23,6 +23,8 @@ import { useScreenAccess } from "@/hooks/useScreenAccess";
 import { cn } from "@/lib/utils";
 import {
   useAtivosTi, useElementosDeVariasTi, useElementosTi, useExcluirAtivo, useExcluirElemento,
+  useCriarAtivosEmLote, useCriarElementosEmLote, useExcluirAtivosEmLote, useExcluirElementosEmLote,
+  useMoverAtivosEmLote, useMoverElementosEmLote,
   useCelulasDeVariasTi, useCelulasTi, useDefinirCelula, useDefinirCelulas,
   usePlantasTi, usePosicionarAtivo, useRecriarElemento,
   useSalvarAtivo, useSalvarElemento,
@@ -177,7 +179,18 @@ export default function ConstruirMapa() {
   const [rotulos, setRotulos] = useState(false);
   const [plantaDialog, setPlantaDialog] = useState<Partial<TiPlanta> | null>(null);
   const [fichaAberta, setFichaAberta] = useState<TiAtivo | null | undefined>(undefined);
-  const [confirmar, setConfirmar] = useState<{ tipo: "ativo" | "elemento"; id: string; nome: string } | null>(null);
+  /**
+   * O que está esperando confirmação para sumir.
+   *
+   * `bloco` é o caso do laço: com 39 peças pegas, apagar só a "principal"
+   * era o que a tela fazia — e limpar uma colagem errada peça por peça, com
+   * um diálogo a cada uma, não é trabalho que alguém faça até o fim.
+   */
+  const [confirmar, setConfirmar] = useState<
+    | { tipo: "ativo" | "elemento"; id: string; nome: string }
+    | { tipo: "bloco"; itens: Exclude<SelecaoCena, null>[]; nome: string }
+    | null
+  >(null);
 
   const definirCelulas = useDefinirCelulas();
 
@@ -222,6 +235,35 @@ export default function ConstruirMapa() {
     setSelecao(s);
   }, []);
 
+  /**
+   * O laço fechou (arrastar o mouse no vazio, no 2D): o grupo vira o que
+   * ficou dentro do retângulo.
+   *
+   * Com Shift, SOMA ao que já estava marcado — é o que permite montar a
+   * seleção em duas passadas quando a estação não cabe num retângulo só
+   * (a mesa de um lado do corredor, o rack do outro).
+   *
+   * Laço vazio não desmarca com Shift: quem segurou Shift está somando, e
+   * apagar o que já havia por causa de um retângulo que não pegou nada é a
+   * pior leitura possível do gesto.
+   */
+  const selecionarArea = useCallback((itens: SelecaoCena[], aditivo: boolean) => {
+    if (!aditivo) {
+      setGrupo(itens);
+      setSelecao(itens[0] ?? null);
+      if (itens.length) toast.success(`${itens.length} peça(s) selecionada(s). Ctrl+C copia.`);
+      return;
+    }
+    if (!itens.length) return;
+    setGrupo((g) => {
+      const novos = itens.filter(
+        (i) => !g.some((j) => j?.tipo === i?.tipo && j?.id === i?.id),
+      );
+      return [...g, ...novos];
+    });
+    setSelecao((atual) => atual ?? itens[0] ?? null);
+  }, []);
+
   const setModo = useCallback((m: ModoCena) => {
     setModoEstado(m);
     try {
@@ -242,6 +284,12 @@ export default function ConstruirMapa() {
   const { data: celulas = [] } = useCelulasTi(planta?.id);
 
   const salvarElemento = useSalvarElemento();
+  const moverElementosEmLote = useMoverElementosEmLote();
+  const moverAtivosEmLote = useMoverAtivosEmLote();
+  const criarElementosEmLote = useCriarElementosEmLote();
+  const criarAtivosEmLote = useCriarAtivosEmLote();
+  const excluirElementosEmLote = useExcluirElementosEmLote();
+  const excluirAtivosEmLote = useExcluirAtivosEmLote();
   const excluirElemento = useExcluirElemento();
   const posicionar = usePosicionarAtivo();
   const salvarAtivo = useSalvarAtivo();
@@ -336,12 +384,19 @@ export default function ConstruirMapa() {
     : ativoSel?.nome ?? "";
 
   const pedirRemocao = useCallback(() => {
+    // Bloco marcado manda no Delete: é o gesto inteiro do laço — pegar
+    // muitas peças e resolver todas de uma vez.
+    const pegas = grupo.filter((i): i is Exclude<SelecaoCena, null> => !!i);
+    if (pegas.length > 1) {
+      setConfirmar({ tipo: "bloco", itens: pegas, nome: `${pegas.length} peças` });
+      return;
+    }
     if (elementoSel && podeExcluirElemento) {
       setConfirmar({ tipo: "elemento", id: elementoSel.id, nome: nomeSelecionado });
     } else if (ativoSel && podeExcluirAtivo) {
       setConfirmar({ tipo: "ativo", id: ativoSel.id, nome: ativoSel.nome });
     }
-  }, [elementoSel, ativoSel, podeExcluirElemento, podeExcluirAtivo, nomeSelecionado]);
+  }, [grupo, elementoSel, ativoSel, podeExcluirElemento, podeExcluirAtivo, nomeSelecionado]);
 
   useEffect(() => {
     const h = (e: KeyboardEvent) => {
@@ -360,13 +415,23 @@ export default function ConstruirMapa() {
         historico.refazer();
         return;
       }
+      /**
+       * Copiar e colar vêm ANTES do corte abaixo — e é aí que eles moravam
+       * antes, DEPOIS dele, sem nunca rodar uma vez sequer: o `return` seco
+       * engole toda tecla com Ctrl, então Ctrl+C e Ctrl+V eram linha morta.
+       * Só desfazer e refazer escapavam, por serem tratados mais acima.
+       */
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "c") { e.preventDefault(); atalhosRef.current.copiar(); return; }
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "v") { e.preventDefault(); atalhosRef.current.colar(); return; }
+
+      // Daqui para baixo é tecla SOLTA, sem Ctrl. O corte protege os atalhos
+      // do navegador: sem ele, Ctrl+R giraria a peça em vez de recarregar a
+      // página e Ctrl+D duplicaria em vez de favoritar.
       if (e.ctrlKey || e.metaKey) return;
 
       if (e.key === "Escape") {
         setFerramenta({ tipo: "selecao" }); setSelecao(null); setGrupo([]); setObra(false);
       }
-      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "c") { e.preventDefault(); atalhosRef.current.copiar(); return; }
-      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "v") { e.preventDefault(); atalhosRef.current.colar(); return; }
       if ((e.key === "Delete" || e.key === "Backspace") && selecao) { e.preventDefault(); pedirRemocao(); }
       if (e.key.toLowerCase() === "r" && selecao) girar(45);
       if (e.key.toLowerCase() === "d" && (elementoSel || ativoSel)) duplicar();
@@ -575,66 +640,86 @@ export default function ConstruirMapa() {
    * anterior fazia, e foi exatamente a reclamação — a cópia nascia por cima e
    * ainda tinha que ser arrastada peça por peça.
    */
-  const colarGrupo = useCallback(() => {
+  /**
+   * Ctrl+V — cria o bloco copiado no ponto vermelho, DE UMA VEZ.
+   *
+   * Sem ponto escolhido não cola: colar no lugar de origem é o que a versão
+   * anterior fazia, e foi exatamente a reclamação — a cópia nascia por cima e
+   * ainda tinha que ser arrastada peça por peça.
+   *
+   * A gravação é em LOTE (ver `useCriarElementosEmLote`). Antes saía um
+   * insert por peça: com 39 peças eram 39 idas ao banco e 39 refetches, o
+   * mapa levava tanto para mostrar o resultado que parecia não ter colado —
+   * e quem apertava Ctrl+V de novo terminava com o bloco repetido. A trava
+   * de `colandoRef` fecha a outra metade desse buraco.
+   */
+  const colandoRef = useRef(false);
+
+  const colarGrupo = useCallback(async () => {
     if (!planta) return;
     if (!copia) { toast.error("Nada copiado ainda — selecione as peças e tecle Ctrl+C."); return; }
     if (!alvoColagem) { toast.error("Clique no chão para marcar onde colar (o ponto vermelho)."); return; }
+    // Uma colagem por vez. O segundo Ctrl+V, dado porque a primeira ainda
+    // não apareceu na tela, é o que enchia a planta de blocos repetidos.
+    if (colandoRef.current) return;
+    colandoRef.current = true;
 
-    const novos: SelecaoCena[] = [];
-    const elsCriados: TiElemento[] = [];
-    const ativosCriados: TiAtivo[] = [];
-    let pendentes = 0;
-    const fim = () => {
-      if (--pendentes > 0) return;
-      setGrupo(novos);
-      setSelecao(novos[0] ?? null);
-      if (elsCriados.length || ativosCriados.length) {
-        historico.registrar({ tipo: "duplicar_bloco", elementos: elsCriados, ativos: ativosCriados });
-      }
-    };
-
-    for (const { el, dx, dy } of copia.elementos) {
+    const els = copia.elementos.map(({ el, dx, dy }) => {
       const { id, ...resto } = el;
-      pendentes++;
-      salvarElemento.mutate(
-        { ...resto, planta_id: planta.id, x: alvoColagem.x + dx, y: alvoColagem.y + dy },
-        {
-          onSuccess: (criado) => { elsCriados.push(criado); novos.push({ tipo: "elemento", id: criado.id }); fim(); },
-          onError: fim,
-        },
-      );
-    }
+      return { ...resto, planta_id: planta.id, x: alvoColagem.x + dx, y: alvoColagem.y + dy };
+    });
 
-    if (podeIncluirAtivo) {
-      for (const { a, dx, dy } of copia.ativos) {
-        // Identidade do aparelho físico não se clona — mesma regra do
-        // duplicar de uma peça só.
-        const {
-          id, codigo, created_at, updated_at,
-          patrimonio, numero_serie, nota_fiscal,
-          ip, mac, hostname, anydesk, teamviewer,
-          ...resto
-        } = a;
-        const def = tipoAtivo(a.tipo);
-        const quantos = ativos.filter((z) => z.tipo === a.tipo).length + novos.length + 1;
-        pendentes++;
-        salvarAtivo.mutate(
-          {
+    // A numeração ("Monitor 12") continua por TIPO, contando o que já existe
+    // mais o que está nascendo agora neste mesmo lote.
+    const feitos = new Map<string, number>();
+    const ats = podeIncluirAtivo
+      ? copia.ativos.map(({ a, dx, dy }) => {
+          // Identidade do aparelho físico não se clona — mesma regra do
+          // duplicar de uma peça só.
+          const {
+            id, codigo, created_at, updated_at,
+            patrimonio, numero_serie, nota_fiscal,
+            ip, mac, hostname, anydesk, teamviewer,
+            ...resto
+          } = a;
+          const def = tipoAtivo(a.tipo);
+          const jaFeitos = feitos.get(a.tipo) ?? 0;
+          feitos.set(a.tipo, jaFeitos + 1);
+          const quantos = ativos.filter((z) => z.tipo === a.tipo).length + jaFeitos + 1;
+          return {
             ...(resto as TiAtivoInput),
             nome: `${def.label} ${quantos}`,
             planta_id: planta.id,
             pos_x: alvoColagem.x + dx,
             pos_y: alvoColagem.y + dy,
-          },
-          {
-            onSuccess: (novo) => { ativosCriados.push(novo); novos.push({ tipo: "ativo", id: novo.id }); fim(); },
-            onError: fim,
-          },
-        );
-      }
-    }
+          };
+        })
+      : [];
 
-    if (pendentes === 0) toast.error("Nada para colar.");
+    if (!els.length && !ats.length) { toast.error("Nada para colar."); colandoRef.current = false; return; }
+
+    const aviso = toast.loading(`Colando ${els.length + ats.length} peça(s)…`);
+    try {
+      const [elsCriados, ativosCriados] = await Promise.all([
+        criarElementosEmLote.mutateAsync(els),
+        criarAtivosEmLote.mutateAsync(ats),
+      ]);
+
+      const novos: SelecaoCena[] = [
+        ...elsCriados.map((e) => ({ tipo: "elemento" as const, id: e.id })),
+        ...ativosCriados.map((a) => ({ tipo: "ativo" as const, id: a.id })),
+      ];
+      setGrupo(novos);
+      setSelecao(novos[0] ?? null);
+      historico.registrar({ tipo: "duplicar_bloco", elementos: elsCriados, ativos: ativosCriados });
+      toast.success(`${novos.length} peça(s) colada(s) no ponto marcado.`, { id: aviso });
+    } catch {
+      // A mensagem do banco já virou toast lá no hook; aqui só se tira o
+      // "colando…", que senão fica girando para sempre.
+      toast.dismiss(aviso);
+    } finally {
+      colandoRef.current = false;
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [planta, copia, alvoColagem, podeIncluirAtivo, ativos, historico]);
 
@@ -669,83 +754,70 @@ export default function ConstruirMapa() {
     }
     const desloca = Number.isFinite(minX) ? maxX - minX + FOLGA_DA_COPIA : FOLGA_DA_COPIA;
 
-    const novos: SelecaoCena[] = [];
-    const elsCriados: TiElemento[] = [];
-    const ativosCriados: TiAtivo[] = [];
-    let pendentes = 0;
-    const fim = () => {
-      if (--pendentes > 0) return;
-      setGrupo(novos);
-      // A seleção principal também vai para a cópia: deixá-la no original
-      // faria o inspetor descrever uma peça que não é a que está pega.
-      setSelecao(novos[0] ?? null);
-      // UMA entrada no histórico para o bloco todo — ver `duplicar_bloco`.
-      if (elsCriados.length || ativosCriados.length) {
-        historico.registrar({ tipo: "duplicar_bloco", elementos: elsCriados, ativos: ativosCriados });
-      }
-    };
-
-    for (const item of grupo) {
-      if (!item) continue;
-
-      if (item.tipo === "elemento") {
-        const el = elementos.find((e) => e.id === item.id);
-        if (!el) continue;
+    // Gravação em LOTE, pelo mesmo motivo do colar: duplicar um bloco de
+    // 39 peças eram 39 inserts e 39 refetches, e a cópia demorava tanto a
+    // aparecer que parecia não ter acontecido.
+    const els = grupo
+      .map((item) => (item?.tipo === "elemento" ? elementos.find((e) => e.id === item.id) : null))
+      .filter((el): el is TiElemento => !!el)
+      .map((el) => {
         const { id, ...resto } = el;
-        pendentes++;
-        salvarElemento.mutate(
-          {
-            ...resto,
-            planta_id: planta.id,
-            x: Number(el.x) + desloca,
-            y: Number(el.y),
-          },
-          {
-            onSuccess: (criado) => {
-              elsCriados.push(criado);
-              novos.push({ tipo: "elemento", id: criado.id });
-              fim();
-            },
-            onError: fim,
-          },
-        );
-        continue;
+        return { ...resto, planta_id: planta.id, x: Number(el.x) + desloca, y: Number(el.y) };
+      });
+
+    const feitos = new Map<string, number>();
+    const ats = !podeIncluirAtivo
+      ? []
+      : grupo
+          .map((item) => (item?.tipo === "ativo" ? ativos.find((z) => z.id === item.id) : null))
+          .filter((a): a is TiAtivo => !!a)
+          .map((a) => {
+            // O que NÃO se copia é o mesmo do duplicar de uma peça — ver a
+            // nota lá: identidade de aparelho físico não se clona.
+            const {
+              id, codigo, created_at, updated_at,
+              patrimonio, numero_serie, nota_fiscal,
+              ip, mac, hostname, anydesk, teamviewer,
+              ...resto
+            } = a;
+            const def = tipoAtivo(a.tipo);
+            const jaFeitos = feitos.get(a.tipo) ?? 0;
+            feitos.set(a.tipo, jaFeitos + 1);
+            const quantos = ativos.filter((z) => z.tipo === a.tipo).length + jaFeitos + 1;
+            return {
+              ...(resto as TiAtivoInput),
+              nome: `${def.label} ${quantos}`,
+              planta_id: planta.id,
+              pos_x: Number(a.pos_x ?? 0) + desloca,
+              pos_y: Number(a.pos_y ?? 0),
+            };
+          });
+
+    if (!els.length && !ats.length) { toast.error("Nada para duplicar nesta seleção."); return; }
+
+    const aviso = toast.loading(`Duplicando ${els.length + ats.length} peça(s)…`);
+    void (async () => {
+      try {
+        const [elsCriados, ativosCriados] = await Promise.all([
+          criarElementosEmLote.mutateAsync(els),
+          criarAtivosEmLote.mutateAsync(ats),
+        ]);
+
+        const novos: SelecaoCena[] = [
+          ...elsCriados.map((e) => ({ tipo: "elemento" as const, id: e.id })),
+          ...ativosCriados.map((a) => ({ tipo: "ativo" as const, id: a.id })),
+        ];
+        setGrupo(novos);
+        // A seleção principal também vai para a cópia: deixá-la no original
+        // faria o inspetor descrever uma peça que não é a que está pega.
+        setSelecao(novos[0] ?? null);
+        // UMA entrada no histórico para o bloco todo — ver `duplicar_bloco`.
+        historico.registrar({ tipo: "duplicar_bloco", elementos: elsCriados, ativos: ativosCriados });
+        toast.success(`${novos.length} peça(s) duplicada(s) ao lado.`, { id: aviso });
+      } catch {
+        toast.dismiss(aviso);
       }
-
-      if (!podeIncluirAtivo) continue;
-      const a = ativos.find((z) => z.id === item.id);
-      if (!a) continue;
-      // O que NÃO se copia é o mesmo do duplicar de uma peça — ver a nota lá
-      // embaixo: identidade do aparelho físico não se clona.
-      const {
-        id, codigo, created_at, updated_at,
-        patrimonio, numero_serie, nota_fiscal,
-        ip, mac, hostname, anydesk, teamviewer,
-        ...resto
-      } = a;
-      const def = tipoAtivo(a.tipo);
-      const quantos = ativos.filter((z) => z.tipo === a.tipo).length + novos.length + 1;
-      pendentes++;
-      salvarAtivo.mutate(
-        {
-          ...(resto as TiAtivoInput),
-          nome: `${def.label} ${quantos}`,
-          planta_id: planta.id,
-          pos_x: Number(a.pos_x ?? 0) + desloca,
-          pos_y: Number(a.pos_y ?? 0),
-        },
-        {
-          onSuccess: (novo) => {
-            ativosCriados.push(novo);
-            novos.push({ tipo: "ativo", id: novo.id });
-            fim();
-          },
-          onError: fim,
-        },
-      );
-    }
-
-    if (pendentes === 0) toast.error("Nada para duplicar nesta seleção.");
+    })();
   };
 
   const duplicar = () => {
@@ -804,6 +876,24 @@ export default function ConstruirMapa() {
 
   const confirmarRemocao = () => {
     if (!confirmar) return;
+
+    if (confirmar.tipo === "bloco") {
+      const idsEl = confirmar.itens.filter((i) => i.tipo === "elemento").map((i) => i.id);
+      const idsAt = confirmar.itens.filter((i) => i.tipo === "ativo").map((i) => i.id);
+      // Uma requisição para cada tipo, não uma por peça: é a mesma razão do
+      // colar em lote, e aqui ainda evita 39 confirmações de exclusão.
+      if (planta && idsEl.length && podeExcluirElemento) {
+        excluirElementosEmLote.mutate({ ids: idsEl, plantaId: planta.id });
+      }
+      if (idsAt.length && podeExcluirAtivo) {
+        excluirAtivosEmLote.mutate(idsAt);
+      }
+      setGrupo([]);
+      setSelecao(null);
+      setConfirmar(null);
+      return;
+    }
+
     if (confirmar.tipo === "ativo") {
       // Equipamento removido NÃO entra no Ctrl+Z: o DELETE leva o histórico
       // dele junto (CASCADE) e recriar a linha não traz os eventos de volta.
@@ -820,6 +910,49 @@ export default function ConstruirMapa() {
     setConfirmar(null);
   };
 
+  /**
+   * O bloco parou de ser arrastado: grava todo mundo numa tacada.
+   *
+   * A cena entrega o CENTRO de cada peça (é assim que ela trabalha); o banco
+   * guarda o canto, então a conversão acontece aqui — mesma regra do arrasto
+   * de uma peça só.
+   *
+   * O histórico continua recebendo uma entrada por peça, como já era quando
+   * cada uma gravava sozinha: o Ctrl+Z desfaz o movimento peça a peça. Não é
+   * o ideal, mas é o comportamento que a tela já tinha, e trocá-lo por um
+   * "desfazer bloco" pede uma entrada nova no motor de histórico.
+   */
+  const moverBloco = useCallback(
+    (movimentos: { tipo: "elemento" | "ativo"; id: string; x: number; y: number }[]) => {
+      if (!planta) return;
+
+      const els: (TiElemento & { id: string })[] = [];
+      const ats: (TiAtivoInput & { id: string })[] = [];
+
+      for (const m of movimentos) {
+        if (m.tipo === "elemento") {
+          const el = elementos.find((e) => e.id === m.id);
+          if (!el) continue;
+          const canto = cantoDaPeca(m.x, m.y, el.largura, el.altura);
+          const depois = { ...el, x: canto.x, y: canto.y };
+          els.push(depois);
+          historico.registrar({ tipo: "atualizar_elemento", antes: el, depois });
+        } else {
+          const a = ativos.find((z) => z.id === m.id);
+          if (!a) continue;
+          const depois = { ...a, planta_id: planta.id, pos_x: m.x, pos_y: m.y };
+          ats.push(depois as TiAtivoInput & { id: string });
+          historico.registrar({ tipo: "atualizar_ativo", antes: a, depois });
+        }
+      }
+
+      if (els.length) moverElementosEmLote.mutate({ els, plantaId: planta.id });
+      if (ats.length) moverAtivosEmLote.mutate(ats);
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [planta, elementos, ativos, historico],
+  );
+
   /** Apaga a peça direto, guardando o desfazer — a borracha da obra. */
   const apagarElemento = useCallback(
     (id: string) => {
@@ -835,7 +968,10 @@ export default function ConstruirMapa() {
     [planta, podeExcluirElemento, elementos, historico],
   );
 
-  const podeRemoverAgora = (elementoSel && podeExcluirElemento) || (ativoSel && podeExcluirAtivo);
+  const podeRemoverAgora =
+    (elementoSel && podeExcluirElemento) ||
+    (ativoSel && podeExcluirAtivo) ||
+    (grupo.filter(Boolean).length > 1 && (podeExcluirElemento || podeExcluirAtivo));
 
   return (
     <div className="p-4 lg:p-6">
@@ -1274,6 +1410,7 @@ export default function ConstruirMapa() {
                 onSelecionar={(s, aditivo) => {
                   if (ferramenta.tipo === "selecao") selecionarNaCena(s, aditivo);
                 }}
+                onSelecionarArea={selecionarArea}
                 editavel
                 modo={modo}
                 mostrarGrade={grade}
@@ -1295,6 +1432,7 @@ export default function ConstruirMapa() {
                   const canto = cantoDaPeca(x, y, el.largura, el.altura);
                   alterarElemento(el, { x: canto.x, y: canto.y });
                 }}
+                onSoltarBloco={moverBloco}
                 onSoltarAtivo={(id, x, y) => {
                   const a = ativos.find((z) => z.id === id);
                   if (a) alterarAtivo(a, { planta_id: planta.id, pos_x: x, pos_y: y });
@@ -1331,10 +1469,11 @@ export default function ConstruirMapa() {
                     <li>Com a <b>grade</b> ligada: <b>+</b> acrescenta um quadrado de 1 m², <b>−</b> tira</li>
                     <li>As peças andam no <b>passo</b> escolhido na barra (padrão 25 cm)</li>
                     <li><b>Alt</b> enquanto arrasta solta a grade</li>
-                    <li><b>Puxe as bolinhas laranja</b> para esticar a peça</li>
+                    <li><b>Puxe as bolinhas laranja</b> (no 3D) para esticar a peça</li>
                     <li><b>R</b> gira 45°, <b>D</b> duplica, <b>Delete</b> remove</li>
                     <li><b>Ctrl+Z</b> desfaz, <b>Ctrl+Y</b> refaz</li>
                     <li><b>Duplo clique</b> num equipamento abre a ficha</li>
+                    <li><b>Arrastar no vazio</b> (no 2D) laça tudo que couber dentro do retângulo; com <b>Shift</b>, soma à seleção</li>
                     <li><b>Shift + clique</b> marca várias peças; arrastar uma delas leva o bloco todo</li>
                     <li><b>Ctrl+C</b> copia o que está marcado, <b>clique no chão</b> marca o ponto vermelho e <b>Ctrl+V</b> solta o bloco ali — é o caminho para repetir "mesa + 4 cadeiras" em outro setor</li>
                     <li><b>2D / 3D</b> na barra troca a vista; no 2D a câmera não gira e o botão direito arrasta a planta</li>
@@ -1414,9 +1553,13 @@ export default function ConstruirMapa() {
       <AlertDialog open={!!confirmar} onOpenChange={(o) => !o && setConfirmar(null)}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Remover “{confirmar?.nome}”?</AlertDialogTitle>
+            <AlertDialogTitle>
+              {confirmar?.tipo === "bloco" ? `Remover ${confirmar.nome}?` : `Remover “${confirmar?.nome}”?`}
+            </AlertDialogTitle>
             <AlertDialogDescription>
-              {confirmar?.tipo === "ativo"
+              {confirmar?.tipo === "bloco"
+                ? "Tudo que está marcado sai da planta de uma vez — peças e equipamentos. Diferente de remover uma peça só, isto NÃO volta com Ctrl+Z: equipamento apagado leva o histórico dele junto."
+                : confirmar?.tipo === "ativo"
                 ? "O equipamento sai do inventário junto com o histórico dele. Se a máquina só saiu de uso, o certo é mudar o status para Descartado — aí ela some do mapa e o histórico fica."
                 : "A peça some da planta. Os equipamentos que estavam sobre ela continuam onde estão, apoiados no chão."}
             </AlertDialogDescription>

@@ -37,6 +37,7 @@ import {
   vaosNaParede,
 } from "./apoio";
 import { ModeloDoAtivo, ModeloDoElemento, Selecao } from "./Modelos";
+import { LIMIAR_ARRASTO_PX, LacoDeSelecao } from "./LacoDeSelecao";
 
 /**
  * A cena 3D do escritório.
@@ -83,6 +84,9 @@ import { ModeloDoAtivo, ModeloDoElemento, Selecao } from "./Modelos";
  */
 export type ModoCena = "2d" | "3d";
 
+/** Cena sem laço (fora da planta baixa). Constante para não remontar nada. */
+const SEM_LACO = () => {};
+
 export type SelecaoCena =
   | { tipo: "elemento"; id: string }
   | { tipo: "ativo"; id: string }
@@ -115,6 +119,14 @@ interface Props {
   grupo?: SelecaoCena[];
   /** `aditivo` = Shift na mão: soma (ou tira) do grupo em vez de trocar. */
   onSelecionar: (s: SelecaoCena, aditivo?: boolean) => void;
+  /**
+   * O laço fechou: eis TUDO que ficou dentro do retângulo.
+   *
+   * Vem em bloco, e não uma chamada por peça, porque a tela troca o grupo
+   * inteiro de uma vez — mandar dez avisos seguidos faria dez renders e,
+   * pior, o `aditivo` teria que ser reinterpretado a cada um.
+   */
+  onSelecionarArea?: (itens: SelecaoCena[], aditivo: boolean) => void;
   /**
    * Onde o Ctrl+V vai colar, em cm — o ponto vermelho no chão.
    *
@@ -165,6 +177,19 @@ interface Props {
   onDesenharNoChao?: (t: TracoNoChao) => void;
   /** Fim do arrasto: a hora (única) de gravar. */
   onSoltarElemento?: (id: string, x: number, y: number) => void;
+  /**
+   * Fim do arrasto de um BLOCO — todas as peças de uma vez.
+   *
+   * Existe porque avisar peça por peça vira uma requisição por peça: a
+   * prévia local expira antes de a última responder e o bloco pula de volta
+   * para a posição antiga na tela. Quem recebe grava em lote.
+   *
+   * Peça só (o caso comum) continua indo pelos avisos individuais: não vale
+   * a pena montar um lote de um item.
+   */
+  onSoltarBloco?: (
+    movimentos: { tipo: "elemento" | "ativo"; id: string; x: number; y: number }[],
+  ) => void;
   onSoltarAtivo?: (id: string, x: number, y: number) => void;
   /** Fim do redimensionamento (puxar parede pela ponta, esticar sala pela quina). */
   onRedimensionar?: (id: string, patch: Partial<TiElemento>) => void;
@@ -196,6 +221,13 @@ interface Props {
 export function Cena3D(props: Props) {
   const { planta, onSelecionar, modo = "3d" } = props;
   const planta2d = modo === "2d";
+  /**
+   * "Acabou de sair um laço" — ver LacoDeSelecao.
+   *
+   * Mora aqui, e não lá dentro, porque quem precisa consultar é o
+   * `onPointerMissed` deste Canvas.
+   */
+  const arrastandoAreaRef = useRef(false);
   const camera = useMemo(
     () =>
       planta2d
@@ -238,7 +270,13 @@ export function Cena3D(props: Props) {
        * ficava selecionada para sempre, com as alças por cima de tudo, e a
        * única saída era o X da barra ou o Esc.
        */
-      onPointerMissed={() => onSelecionar(null)}
+      onPointerMissed={() => {
+        // Soltar um laço NÃO é clicar no vazio: o R3F dispara este evento no
+        // mesmo `pointerup` que fecha a seleção, e sem a guarda ele apagava
+        // o grupo no instante em que ele nascia.
+        if (arrastandoAreaRef.current) return;
+        onSelecionar(null);
+      }}
       onCreated={({ scene }) => {
         scene.background = new THREE.Color("#e8eef5");
         /**
@@ -257,7 +295,7 @@ export function Cena3D(props: Props) {
       }}
     >
       <Suspense fallback={null}>
-        <Conteudo {...props} />
+        <Conteudo {...props} arrastandoAreaRef={arrastandoAreaRef} />
       </Suspense>
     </Canvas>
   );
@@ -316,13 +354,16 @@ function Conteudo({
   onDesenharNoChao,
   onSoltarElemento,
   onSoltarAtivo,
+  onSoltarBloco,
   onRedimensionar,
   celulas,
   onDefinirCelula,
   onAbrirFicha,
   andaresVizinhos = [],
   plantas = [],
-}: Props) {
+  onSelecionarArea,
+  arrastandoAreaRef,
+}: Props & { arrastandoAreaRef: React.MutableRefObject<boolean> }) {
   const L = M(planta.largura_cm);
   const P = M(planta.altura_cm);
   // O andar corrente é desenhado na altura dele, não em y=0: assim ele fica no
@@ -367,6 +408,22 @@ function Conteudo({
   const tracoRef = useRef<TracoNoChao | null>(null);
   // Puxar parede / esticar sala: guarda a peça e a alça pega.
   const [resize, setResize] = useState<{ el: TiElemento; alca: "a" | "b" | "nw" | "ne" | "sw" | "se" } | null>(null);
+
+  /**
+   * Este gesto começou EM CIMA de alguma peça (arrasto ou alça)?
+   *
+   * O laço escuta o mouse no canvas inteiro, por baixo do R3F, então ele vê
+   * o `pointerdown` que agarra uma mesa exatamente como vê o que começa no
+   * vazio — e sem esta marca arrastar uma peça no 2D pintava um retângulo de
+   * seleção por cima dela.
+   *
+   * É um ref, e não estado, porque a resposta é consultada no `pointermove`
+   * seguinte: esperar um render para saber se o dedo pegou algo perde o
+   * primeiro trecho do gesto. Quem zera é o soltar, lá no laço — zerar no
+   * apertar dependeria de o R3F rodar antes deste componente, que é ordem
+   * que ninguém garante.
+   */
+  const gestoEmPecaRef = useRef(false);
   const [previaResize, setPreviaResize] = useState<Partial<TiElemento> | null>(null);
   const [livre, setLivre] = useState(false);
   const [hover, setHover] = useState<string | null>(null);
@@ -533,6 +590,9 @@ function Conteudo({
     posX: number,
     posZ: number,
   ) => {
+    // Antes de qualquer recusa: para o laço, o que importa é que o dedo
+    // encostou numa peça — mesmo que daqui não saia arrasto nenhum.
+    gestoEmPecaRef.current = true;
     if (!editavel || desenhando) return;
 
     const ancora = posicaoEmCm(tipo, id);
@@ -601,20 +661,29 @@ function Conteudo({
     setArrasto((a) => {
       if (a) {
         setPrevia((p) => {
-          // ESTA é a única gravação do arrasto inteiro — uma por peça movida,
-          // no soltar. Ver o cabeçalho do arquivo: mover é local.
-          for (const m of a.membros) {
-            const pos = p[m.id];
-            if (!pos) continue;
-            if (m.tipo === "elemento") onSoltarElemento?.(m.id, pos.x, pos.y);
-            else onSoltarAtivo?.(m.id, pos.x, pos.y);
+          // ESTA é a única gravação do arrasto inteiro, no soltar. Ver o
+          // cabeçalho do arquivo: mover é local até aqui.
+          const movs = a.membros
+            .map((m) => ({ tipo: m.tipo, id: m.id, pos: p[m.id] }))
+            .filter((m): m is { tipo: "elemento" | "ativo"; id: string; pos: { x: number; y: number } } => !!m.pos)
+            .map((m) => ({ tipo: m.tipo, id: m.id, x: m.pos.x, y: m.pos.y }));
+
+          // Bloco vai inteiro, numa tacada; peça só segue pelo caminho de
+          // sempre. Ver `onSoltarBloco`.
+          if (movs.length > 1 && onSoltarBloco) {
+            onSoltarBloco(movs);
+          } else {
+            for (const m of movs) {
+              if (m.tipo === "elemento") onSoltarElemento?.(m.id, m.x, m.y);
+              else onSoltarAtivo?.(m.id, m.x, m.y);
+            }
           }
           return p;
         });
       }
       return null;
     });
-  }, [onSoltarElemento, onSoltarAtivo]);
+  }, [onSoltarElemento, onSoltarAtivo, onSoltarBloco]);
 
   // A prévia some quando o dado novo chega pela query. Limpar na hora faria a
   // peça piscar de volta na posição antiga até o refetch responder.
@@ -808,6 +877,19 @@ function Conteudo({
       />
       {modo === "2d" && <EnquadrarPlanta largura={L} profundidade={P} />}
 
+      {/* Laço de seleção: só na planta baixa e só com o cursor na mão — com
+          uma ferramenta de desenho na mão, arrastar já significa outra coisa. */}
+      <LacoDeSelecao
+        ligado={modo === "2d" && !obra && !desenhando && !apagandoEstrutura && !!onSelecionarArea}
+        planta={planta}
+        elementos={elementos}
+        ativos={ativos}
+        base={base}
+        arrastandoRef={arrastandoAreaRef}
+        gestoEmPecaRef={gestoEmPecaRef}
+        onSelecionarArea={onSelecionarArea ?? SEM_LACO}
+      />
+
       {/* Andares vizinhos: referência translúcida, sem interação. */}
       {andaresVizinhos.map((a) => (
         <AndarFantasma
@@ -986,12 +1068,15 @@ function Conteudo({
               finalizarTraco();
             }}
             onPointerOver={(e: ThreeEvent<PointerEvent>) => {
-              if (!apagandoEstrutura) return;
+              // A borracha precisa saber o que está sob o cursor. A ÁREA
+              // também, agora que ela não se pinta: sem o contorno no hover,
+              // um setor invisível vira um clique que seleciona do nada.
+              if (!apagandoEstrutura && def.familia !== "area") return;
               e.stopPropagation();
               setHover(el.id);
             }}
             onPointerOut={() => {
-              if (apagandoEstrutura) setHover((h) => (h === el.id ? null : h));
+              setHover((h) => (h === el.id ? null : h));
             }}
           >
             <ModeloDoElemento
@@ -1014,6 +1099,18 @@ function Conteudo({
                 altura={altura}
                 plano={modo === "2d"}
                 cor="#ef4444"
+              />
+            )}
+            {/* O setor sem tapete: o contorno aparece só quando o cursor
+                passa por cima. É o que sobrou de pista visual depois que a
+                mancha saiu — e, ao contrário dela, some quando não interessa. */}
+            {!selecionado && !apagandoEstrutura && hover === el.id && def.familia === "area" && (
+              <Selecao
+                largura={largura}
+                profundidade={profundidade}
+                altura={altura}
+                plano={modo === "2d"}
+                cor="#94a3b8"
               />
             )}
             {/* O NOME DO AMBIENTE — "Banheiro Feminino", "Copa", "Diretoria".
@@ -1109,12 +1206,24 @@ function Conteudo({
         })}
 
       {/* Alças de manipulação: puxar a parede pelas pontas, esticar a sala
-          pelas quinas. Ficam por último para desenhar por cima das peças. */}
-      {editavel && !desenhando && elementoSelecionado && (
+          pelas quinas. Ficam por último para desenhar por cima das peças.
+
+          SÓ NO 3D, a pedido: na planta baixa elas apareciam como quatro bolas
+          amarelas enormes, sobrepostas, cobrindo a peça que deveriam marcar.
+          O tamanho vinha de `Alca`, que se escala pela DISTÂNCIA da câmera
+          para ocupar sempre os mesmos pixels — conta que só vale em
+          perspectiva. A câmera da planta é ortográfica e fica parada a 50 m:
+          a distância não muda quando se dá zoom, então a escala travava no
+          teto (2,4×) e as bolas cresciam junto com a aproximação.
+
+          Aqui a seleção do 2D é o contorno, e só. Quem precisa esticar uma
+          sala pela quina ou puxar uma parede pela ponta faz no 3D. */}
+      {editavel && !desenhando && modo !== "2d" && elementoSelecionado && (
         <Alcas
           el={elementoSelecionado}
           previa={previaResize}
           onPegar={(alca) => {
+            gestoEmPecaRef.current = true;
             setResize({ el: elementoSelecionado, alca });
             setPreviaResize(null);
                   }}
@@ -1250,6 +1359,11 @@ function Piso({
   onComecarTraco,
   onTerminarTraco,
   onDesmarcar,
+  // Estava no tipo e na chamada, mas não aqui: o corpo lia um nome que não
+  // existia, e o clique no chão morria em ReferenceError antes de marcar o
+  // ponto vermelho. Passou despercebido porque o `tsc` da raiz não checa
+  // nada (tsconfig.json tem "files": []) — use tsconfig.app.json.
+  onCliqueNoChao,
 }: {
   planta: TiPlanta;
   celulas: TiCelula[];
@@ -1268,6 +1382,17 @@ function Piso({
 
   const geometria = useGeometriaDoPiso(celulas);
 
+  /**
+   * O clique no chão em curso — onde começou, na tela e no piso.
+   *
+   * Marcar o alvo de colagem no `pointerdown` parecia certo até existir o
+   * laço: todo arrasto que COMEÇA no chão passava por aqui, e o ponto
+   * vermelho pulava para o canto do retângulo a cada seleção. Agora quem
+   * decide é o soltar, e um gesto que andou pela tela não é mais clique —
+   * o que também tira o efeito colateral de girar a maquete no 3D.
+   */
+  const cliqueRef = useRef<{ sx: number; sy: number; x: number; y: number } | null>(null);
+
   return (
     <group>
       <mesh
@@ -1279,10 +1404,12 @@ function Piso({
           // Sem ferramenta na mão, clicar no chão é "não quero mais nada
           // selecionado" — o piso conta como área vazia.
           if (!desenhando) {
-            onDesmarcar();
-            // O MESMO clique que larga a seleção marca onde colar. São a
-            // mesma intenção: "não é nenhuma peça, é ali no chão".
-            onCliqueNoChao?.(snap(e.point.x * 100, livre, passoCm), snap(e.point.z * 100, livre, passoCm));
+            cliqueRef.current = {
+              sx: e.clientX,
+              sy: e.clientY,
+              x: snap(e.point.x * 100, livre, passoCm),
+              y: snap(e.point.z * 100, livre, passoCm),
+            };
             return;
           }
           if (!editavel) return;
@@ -1293,7 +1420,19 @@ function Piso({
         }}
         onPointerUp={(e: ThreeEvent<PointerEvent>) => {
           if (e.button !== 0) return;
-          if (!editavel || !desenhando) return;
+          if (!desenhando) {
+            const c = cliqueRef.current;
+            cliqueRef.current = null;
+            // Andou mais que um tremor de mão: era laço (ou câmera), e nem a
+            // seleção nem o alvo de colagem têm o que fazer aqui.
+            if (!c || Math.hypot(e.clientX - c.sx, e.clientY - c.sy) > LIMIAR_ARRASTO_PX) return;
+            // O MESMO clique que larga a seleção marca onde colar. São a
+            // mesma intenção: "não é nenhuma peça, é ali no chão".
+            onDesmarcar();
+            onCliqueNoChao?.(c.x, c.y);
+            return;
+          }
+          if (!editavel) return;
           e.stopPropagation();
           onTerminarTraco();
         }}

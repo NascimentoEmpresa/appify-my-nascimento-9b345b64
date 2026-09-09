@@ -661,3 +661,91 @@ export function cantoDaPeca(
     y: centroY - Number(altura) / 2,
   };
 }
+
+// ── Laço de seleção ───────────────────────────────────────────────────
+//
+// Arrastar o mouse no vazio e pegar tudo que ficou dentro do retângulo. É o
+// gesto que faltava para repetir uma estação de trabalho inteira: marcar as
+// dez peças com Shift+clique, uma a uma, era o trabalho que a cópia
+// prometia evitar.
+
+/** O retângulo do laço, em cm da planta e já normalizado (x1<x2, y1<y2). */
+export interface AreaCm {
+  x1: number;
+  y1: number;
+  x2: number;
+  y2: number;
+}
+
+/** Dois cantos quaisquer → retângulo com os lados no lugar certo. */
+export function normalizarArea(ax: number, ay: number, bx: number, by: number): AreaCm {
+  return {
+    x1: Math.min(ax, bx),
+    y1: Math.min(ay, by),
+    x2: Math.max(ax, bx),
+    y2: Math.max(ay, by),
+  };
+}
+
+/** A caixa cabe INTEIRA dentro da área? */
+function caixaContida(c: Caixa, area: AreaCm): boolean {
+  return (
+    c.x >= area.x1 &&
+    c.y >= area.y1 &&
+    c.x + c.largura <= area.x2 &&
+    c.y + c.profundidade <= area.y2
+  );
+}
+
+/**
+ * A pegada do equipamento no piso, em cm — `pos_x`/`pos_y` são o CENTRO.
+ *
+ * Lê o catálogo direto em vez de reaproveitar `dimensoesAtivo`, que responde
+ * em METROS: a volta cm → m → cm faz 55 virar 55.00000000000001, e um erro
+ * desses no limite do laço é peça que entra ou fica de fora sem explicação.
+ */
+export function pegadaDoAtivo(a: TiAtivo): Caixa {
+  const def = tipoAtivo(a.tipo);
+  const escala = Number(a.escala) || 1;
+  const largura = def.largura * escala;
+  const profundidade = def.altura * escala;
+  return {
+    x: Number(a.pos_x) - largura / 2,
+    y: Number(a.pos_y) - profundidade / 2,
+    largura,
+    profundidade,
+  };
+}
+
+/**
+ * Quem está dentro do laço.
+ *
+ * O critério é CONTER, não tocar: a peça só entra se couber inteira no
+ * retângulo. Tocar seria pior justamente onde o laço mais serve — a parede
+ * externa cruza quase toda área que se desenhe num canto da sala, e o laço
+ * viria com o prédio junto toda vez.
+ *
+ * Peça de outro andar não entra: o laço é desenhado sobre o andar corrente,
+ * e trazer o vizinho translúcido seria pegar o que nem dá para clicar.
+ */
+export function pecasNaArea(
+  area: AreaCm,
+  elementos: TiElemento[],
+  ativos: TiAtivo[],
+  plantaId: string,
+): ({ tipo: "elemento"; id: string } | { tipo: "ativo"; id: string })[] {
+  const achados: ({ tipo: "elemento"; id: string } | { tipo: "ativo"; id: string })[] = [];
+
+  for (const el of elementos) {
+    if (el.planta_id !== plantaId) continue;
+    if (caixaContida(pegadaDoElemento(el), area)) achados.push({ tipo: "elemento", id: el.id });
+  }
+
+  for (const a of ativos) {
+    if (a.planta_id !== plantaId) continue;
+    if (a.pos_x == null || a.pos_y == null) continue;
+    if (caixaContida(pegadaDoAtivo(a), area)) achados.push({ tipo: "ativo", id: a.id });
+  }
+
+  return achados;
+}

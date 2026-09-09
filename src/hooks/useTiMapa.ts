@@ -331,25 +331,30 @@ export function useElementosTi(plantaId: string | null | undefined) {
 
 type ElementoInput = Partial<TiElemento> & { planta_id: string; tipo: string };
 
+/** O que vai para o banco. Fora daqui porque o lote grava pelo mesmo molde. */
+function payloadElemento(el: ElementoInput) {
+  return {
+    planta_id: el.planta_id,
+    tipo: el.tipo,
+    rotulo: el.rotulo ?? null,
+    x: el.x ?? 0,
+    y: el.y ?? 0,
+    largura: el.largura ?? 100,
+    altura: el.altura ?? 100,
+    rotacao: el.rotacao ?? 0,
+    altura_z: el.altura_z ?? null,
+    cor: el.cor ?? null,
+    setor: el.setor ?? null,
+    z_index: el.z_index ?? 0,
+    meta: el.meta ?? {},
+  };
+}
+
 export function useSalvarElemento() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async (el: ElementoInput) => {
-      const payload = {
-        planta_id: el.planta_id,
-        tipo: el.tipo,
-        rotulo: el.rotulo ?? null,
-        x: el.x ?? 0,
-        y: el.y ?? 0,
-        largura: el.largura ?? 100,
-        altura: el.altura ?? 100,
-        rotacao: el.rotacao ?? 0,
-        altura_z: el.altura_z ?? null,
-        cor: el.cor ?? null,
-        setor: el.setor ?? null,
-        z_index: el.z_index ?? 0,
-        meta: el.meta ?? {},
-      };
+      const payload = payloadElemento(el);
       if (el.id) {
         const { data, error } = await sb.from("TI_PLANTA_ELEMENTO").update(payload).eq("id", el.id).select("*").single();
         if (error) throw error;
@@ -364,6 +369,106 @@ export function useSalvarElemento() {
       qc.invalidateQueries({ queryKey: ["ti_elementos_varias"] });
     },
     onError: (e: Error) => toast.error(e.message || "Não foi possível salvar o elemento."),
+  });
+}
+
+/**
+ * Cria VÁRIAS peças numa requisição só.
+ *
+ * O caminho antigo — um `mutate` por peça, em paralelo — colar um bloco de
+ * 39 peças virava 39 inserts e 39 invalidações de cache: demorava tanto que
+ * parecia não ter funcionado, e quem estava do outro lado apertava Ctrl+V de
+ * novo. O mapa terminava com o bloco repetido três vezes.
+ *
+ * Em lote é uma ida ao banco e um refetch — e, o que mais importa, um
+ * resultado que ou entra inteiro ou não entra: meia colagem não existe.
+ */
+export function useCriarElementosEmLote() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (els: ElementoInput[]): Promise<TiElemento[]> => {
+      if (!els.length) return [];
+      const { data, error } = await sb
+        .from("TI_PLANTA_ELEMENTO")
+        .insert(els.map(payloadElemento))
+        .select("*");
+      if (error) throw error;
+      return (data ?? []).map(mapearElemento);
+    },
+    onSuccess: (criados) => {
+      const plantaId = criados[0]?.planta_id;
+      if (plantaId) qc.invalidateQueries({ queryKey: ["ti_elementos", plantaId] });
+      qc.invalidateQueries({ queryKey: ["ti_elementos_varias"] });
+    },
+    onError: (e: Error) => toast.error(e.message || "Não foi possível criar as peças."),
+  });
+}
+
+/**
+ * Grava a posição de VÁRIAS peças de uma vez — o arrasto de bloco.
+ *
+ * Era um UPDATE por peça, disparado no soltar. Com 22 peças pegas isso são
+ * 22 requisições e 22 invalidações: a prévia local (que segura a peça no
+ * lugar novo enquanto o banco responde) expira em 600 ms, um refetch chega
+ * no meio do caminho com metade das peças ainda na posição velha, e o bloco
+ * inteiro PULA DE VOLTA na tela. Quem estava mexendo conclui, com razão, que
+ * mover vários não funciona.
+ *
+ * Em lote é uma requisição: ou o bloco todo andou, ou nenhum andou.
+ *
+ * É `upsert` e não `update` porque o PostgREST não atualiza várias linhas
+ * com valores diferentes numa chamada só. O registro vai inteiro (o conflito
+ * de `id` sempre acontece, então nada é criado) — mandar só x e y esbarraria
+ * nas colunas NOT NULL, que o Postgres confere antes de olhar o conflito.
+ */
+export function useMoverElementosEmLote() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ els }: { els: ElementoInput[]; plantaId: string }) => {
+      if (!els.length) return;
+      const { error } = await sb
+        .from("TI_PLANTA_ELEMENTO")
+        .upsert(els.map((el) => ({ ...payloadElemento(el), id: el.id })));
+      if (error) throw error;
+    },
+    onSuccess: (_r, v) => {
+      qc.invalidateQueries({ queryKey: ["ti_elementos", v.plantaId] });
+      qc.invalidateQueries({ queryKey: ["ti_elementos_varias"] });
+    },
+    onError: (e: Error) => toast.error(e.message || "Não foi possível mover as peças."),
+  });
+}
+
+/** O mesmo, para equipamento — ver `useMoverElementosEmLote`. */
+export function useMoverAtivosEmLote() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (ativos: (TiAtivoInput & { id: string })[]) => {
+      if (!ativos.length) return;
+      const { error } = await sb
+        .from("TI_ATIVO")
+        .upsert(ativos.map(({ id, ...a }) => ({ ...limparPayloadAtivo(a as TiAtivoInput), id })));
+      if (error) throw error;
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["ti_ativos"] }),
+    onError: (e: Error) => toast.error(e.message || "Não foi possível mover os equipamentos."),
+  });
+}
+
+/** Apaga VÁRIAS peças numa requisição só — ver o lote de criação acima. */
+export function useExcluirElementosEmLote() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ ids }: { ids: string[]; plantaId: string }) => {
+      if (!ids.length) return;
+      const { error } = await sb.from("TI_PLANTA_ELEMENTO").delete().in("id", ids);
+      if (error) throw error;
+    },
+    onSuccess: (_r, v) => {
+      qc.invalidateQueries({ queryKey: ["ti_elementos", v.plantaId] });
+      qc.invalidateQueries({ queryKey: ["ti_elementos_varias"] });
+    },
+    onError: (e: Error) => toast.error(e.message || "Não foi possível remover as peças."),
   });
 }
 
@@ -472,6 +577,44 @@ export function usePosicionarAtivo() {
     },
     onSuccess: () => qc.invalidateQueries({ queryKey: ["ti_ativos"] }),
     onError: (e: Error) => toast.error(e.message || "Não foi possível mover o equipamento."),
+  });
+}
+
+/**
+ * Cria VÁRIOS equipamentos numa requisição só.
+ *
+ * Sem toast por item, de propósito: o `useSalvarAtivo` avisa a cada gravação,
+ * e colar 39 peças empilhava 39 avisos na tela. Quem chama diz numa frase o
+ * que aconteceu.
+ */
+export function useCriarAtivosEmLote() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (ativos: TiAtivoInput[]): Promise<TiAtivo[]> => {
+      if (!ativos.length) return [];
+      const { data, error } = await sb
+        .from("TI_ATIVO")
+        .insert(ativos.map((a) => limparPayloadAtivo(a)))
+        .select("*");
+      if (error) throw error;
+      return (data ?? []).map(mapearAtivo);
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["ti_ativos"] }),
+    onError: (e: Error) => toast.error(e.message || "Não foi possível criar os equipamentos."),
+  });
+}
+
+/** Apaga VÁRIOS equipamentos numa requisição só. */
+export function useExcluirAtivosEmLote() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (ids: string[]) => {
+      if (!ids.length) return;
+      const { error } = await sb.from("TI_ATIVO").delete().in("id", ids);
+      if (error) throw error;
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["ti_ativos"] }),
+    onError: (e: Error) => toast.error(e.message || "Não foi possível excluir os equipamentos."),
   });
 }
 

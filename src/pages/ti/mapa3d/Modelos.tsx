@@ -114,25 +114,58 @@ function Monitor({ cor, largura, altura, ligado }: PropsModelo) {
   );
 }
 
+/**
+ * Notebook ABERTO — base na mesa, tela levantada e voltada para quem digita.
+ *
+ * DOIS ERROS MORAVAM AQUI, e os dois deixavam a peça irreconhecível:
+ *
+ *   A TAMPA GIRAVA DEMAIS. Era `-Math.PI * 0.56` (−100,8°), com o comentário
+ *   "100° é o ângulo em que um notebook fica aberto". 100° é a ABERTURA entre
+ *   a base e a tela — e a tampa, com rotação zero, JÁ nasce em pé: a placa é
+ *   fina em Z e alta em Y. Girar 100° a partir daí passa da vertical, deita a
+ *   tela por cima da base e enfia o conjunto dentro do tampo da mesa. Aberto
+ *   de verdade são uns 10° passando da vertical, para trás — e é só isso.
+ *
+ *   O TECLADO FICAVA EM PÉ. `planeGeometry` nasce no plano XY, ou seja,
+ *   vertical; sem `rotation` ele saía como uma lâmina preta atravessando a
+ *   base em vez de uma superfície deitada sobre ela.
+ *
+ * Regra para os próximos modelos: plano do three é VERTICAL até que alguém o
+ * deite com `rotation={[-Math.PI / 2, 0, 0]}`.
+ */
 function Notebook({ cor, largura, profundidade, ligado }: PropsModelo) {
   const esp = 0.012;
+  /** 100° de abertura = 10° além da vertical, reclinando para trás. */
+  const RECLINE = -Math.PI * 0.056;
+
   return (
     <group>
+      {/* base */}
       <mesh castShadow receiveShadow position={[0, esp / 2, 0]}>
         <boxGeometry args={[largura, esp, profundidade]} />
         <meshStandardMaterial color={cor} roughness={0.4} metalness={0.4} />
       </mesh>
-      {/* teclado */}
-      <mesh position={[0, esp + 0.001, profundidade * 0.1]}>
-        <planeGeometry args={[largura * 0.82, profundidade * 0.55]} />
+
+      {/* teclado, deitado na metade de trás da base */}
+      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, esp + 0.001, -profundidade * 0.06]}>
+        <planeGeometry args={[largura * 0.82, profundidade * 0.46]} />
         <meshStandardMaterial color={PRETO} roughness={0.8} />
       </mesh>
-      {/* tampa inclinada: 100° é o ângulo em que um notebook fica aberto */}
-      <group position={[0, esp, -profundidade / 2]} rotation={[-Math.PI * 0.56, 0, 0]}>
+
+      {/* trackpad, à frente do teclado — é o que faz a peça se ler como
+          notebook na vista de cima, que é de onde a planta é olhada */}
+      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, esp + 0.002, profundidade * 0.3]}>
+        <planeGeometry args={[largura * 0.26, profundidade * 0.2]} />
+        <meshStandardMaterial color={GRAFITE} roughness={0.5} />
+      </mesh>
+
+      {/* tampa: sobe da dobradiça, no fundo da base */}
+      <group position={[0, esp, -profundidade / 2]} rotation={[RECLINE, 0, 0]}>
         <mesh castShadow position={[0, profundidade / 2, 0]}>
           <boxGeometry args={[largura, profundidade, esp]} />
           <meshStandardMaterial color={cor} roughness={0.4} metalness={0.4} />
         </mesh>
+        {/* a tela fica na face de dentro (+Z), virada para quem digita */}
         <mesh position={[0, profundidade / 2, esp / 2 + 0.001]}>
           <planeGeometry args={[largura * 0.9, profundidade * 0.86]} />
           <meshStandardMaterial
@@ -1008,12 +1041,25 @@ function Janela({ largura, profundidade, altura }: PropsModelo) {
   );
 }
 
-/** Piso de área (sala, copa, recepção): mancha colorida rente ao chão. */
-function AreaPiso({ cor, largura, profundidade }: PropsModelo) {
+/**
+ * A área (sala, copa, recepção) NÃO se pinta mais no chão.
+ *
+ * Era uma mancha colorida rente ao piso, e foi tirada a pedido: o escritório
+ * de verdade não tem tapete nenhum marcando onde um setor começa, e no mapa
+ * as manchas competiam com o piso e com a mobília sem informar nada que o
+ * nome flutuante do setor já não dissesse.
+ *
+ * O plano continua aqui, invisível, e isso é deliberado: é ele que recebe o
+ * clique que seleciona, move e apaga o setor. Um `visible={false}` sairia do
+ * raycast do three.js e deixaria a peça sem jeito de ser pega — daí a
+ * transparência total no lugar. Quem mostra onde ela está é o contorno, que
+ * acende ao passar o cursor e ao selecionar (ver Cena3D).
+ */
+function AreaPiso({ largura, profundidade }: PropsModelo) {
   return (
-    <mesh receiveShadow rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.004, 0]}>
+    <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.004, 0]}>
       <planeGeometry args={[largura, profundidade]} />
-      <meshStandardMaterial color={cor} roughness={0.95} />
+      <meshStandardMaterial transparent opacity={0} depthWrite={false} />
     </mesh>
   );
 }
