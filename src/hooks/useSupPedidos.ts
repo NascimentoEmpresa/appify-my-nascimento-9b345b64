@@ -18,6 +18,7 @@ const sb = supabase as any;
 
 export const STATUS_PEDIDO = [
   "EM PREPARACAO",
+  "EM SEPARACAO",
   "AGUARDANDO ENVIO",
   "AGUARDANDO COMPRA",
   "DESPACHADO",
@@ -28,6 +29,7 @@ export type StatusPedido = (typeof STATUS_PEDIDO)[number];
 /** Paleta e ícone por status — mesma semântica do legado (REPLICAR §5.5). */
 export const ESTILO_STATUS: Record<string, { classe: string; rotulo: string }> = {
   "EM PREPARACAO": { classe: "border-amber-400/50 bg-amber-50 text-amber-700 dark:bg-amber-950/30 dark:text-amber-300", rotulo: "Em preparação" },
+  "EM SEPARACAO": { classe: "border-violet-400/50 bg-violet-50 text-violet-700 dark:bg-violet-950/30 dark:text-violet-300", rotulo: "Em separação" },
   "AGUARDANDO ENVIO": { classe: "border-blue-400/50 bg-blue-50 text-blue-700 dark:bg-blue-950/30 dark:text-blue-300", rotulo: "Aguardando envio" },
   "AGUARDANDO COMPRA": { classe: "border-orange-400/50 bg-orange-50 text-orange-700 dark:bg-orange-950/30 dark:text-orange-300", rotulo: "Aguardando compra" },
   "DESPACHADO": { classe: "border-emerald-400/50 bg-emerald-50 text-emerald-700 dark:bg-emerald-950/30 dark:text-emerald-300", rotulo: "Despachado" },
@@ -41,18 +43,34 @@ export const ESTILO_STATUS: Record<string, { classe: string; rotulo: string }> =
  */
 export type StatusVisivel =
   | "EM PREPARACAO"
+  | "EM SEPARACAO"
   | "AGUARDANDO ENVIO"
   | "AGUARDANDO COMPRA"
+  | "PARCIALMENTE DESPACHADO"
   | "DESPACHADO_AGUARDANDO"
   | "DESPACHADO_ENTREGUE"
   | "CANCELADO";
+
+/**
+ * Quanto de um pedido já foi atendido. Vem da view sup_pedido_situacao
+ * (20260930000077), que resolve no banco o que antes exigiria carregar as
+ * etiquetas dos ~1.300 pedidos só para pintar um KPI.
+ */
+export interface SituacaoPedido {
+  itens: number;
+  itens_atendidos: number;
+  itens_em_separacao?: number;
+  itens_pendentes_compra?: number;
+}
 
 export type StatusComprovacao = "PENDENTE" | "ENVIADO" | "DISPENSADO" | null | undefined;
 
 export const STATUS_VISIVEL: StatusVisivel[] = [
   "EM PREPARACAO",
+  "EM SEPARACAO",
   "AGUARDANDO ENVIO",
   "AGUARDANDO COMPRA",
+  "PARCIALMENTE DESPACHADO",
   "DESPACHADO_AGUARDANDO",
   "DESPACHADO_ENTREGUE",
   "CANCELADO",
@@ -60,8 +78,13 @@ export const STATUS_VISIVEL: StatusVisivel[] = [
 
 export const ESTILO_STATUS_VISIVEL: Record<StatusVisivel, { classe: string; rotulo: string }> = {
   "EM PREPARACAO": ESTILO_STATUS["EM PREPARACAO"],
+  "EM SEPARACAO": ESTILO_STATUS["EM SEPARACAO"],
   "AGUARDANDO ENVIO": ESTILO_STATUS["AGUARDANDO ENVIO"],
   "AGUARDANDO COMPRA": ESTILO_STATUS["AGUARDANDO COMPRA"],
+  "PARCIALMENTE DESPACHADO": {
+    classe: "border-orange-400/50 bg-orange-50 text-orange-800 dark:bg-orange-950/30 dark:text-orange-300",
+    rotulo: "Parcialmente despachado",
+  },
   "DESPACHADO_AGUARDANDO": {
     classe: "border-amber-400/50 bg-amber-50 text-amber-800 dark:bg-amber-950/30 dark:text-amber-300",
     rotulo: "Despachado e Aguardando Confirmar Entrega",
@@ -76,7 +99,25 @@ export const ESTILO_STATUS_VISIVEL: Record<StatusVisivel, { classe: string; rotu
 export function derivarStatusVisivel(
   status: string,
   comprovacaoStatus: StatusComprovacao,
+  situacao?: SituacaoPedido | null,
 ): StatusVisivel {
+  if (status === "EM SEPARACAO") return "EM SEPARACAO";
+
+  /**
+   * "Parcialmente despachado" — o caso que o gerente de Suprimentos
+   * descreveu: pediu 10, nove saíram e um estava errado. Ele quer ver isso
+   * no badge, sem abrir o pedido.
+   *
+   * É DERIVADO, e não coluna, pelo mesmo motivo do status do item: seria uma
+   * segunda verdade sobre um fato que os itens já contam. Ganha do eixo da
+   * comprovação porque é o mais acionável — falta mercadoria.
+   */
+  const parcial = situacao != null && situacao.itens > 0
+    && situacao.itens_atendidos > 0 && situacao.itens_atendidos < situacao.itens;
+  if (parcial && (status === "AGUARDANDO ENVIO" || status === "DESPACHADO")) {
+    return "PARCIALMENTE DESPACHADO";
+  }
+
   if (status === "DESPACHADO") {
     return comprovacaoStatus === "PENDENTE" ? "DESPACHADO_AGUARDANDO" : "DESPACHADO_ENTREGUE";
   }
@@ -91,8 +132,12 @@ export function derivarStatusVisivel(
  * pode afirmar uma entrega que nunca foi comprovada. Esta apresentação mantém
  * essa diferença explícita nos badges e relatórios detalhados.
  */
-export function apresentarStatusVisivel(status: string, comprovacaoStatus: StatusComprovacao) {
-  const statusVisivel = derivarStatusVisivel(status, comprovacaoStatus);
+export function apresentarStatusVisivel(
+  status: string,
+  comprovacaoStatus: StatusComprovacao,
+  situacao?: SituacaoPedido | null,
+) {
+  const statusVisivel = derivarStatusVisivel(status, comprovacaoStatus, situacao);
   const estilo = ESTILO_STATUS_VISIVEL[statusVisivel];
   const anteriorARegra = status === "DESPACHADO"
     && (comprovacaoStatus === "DISPENSADO" || comprovacaoStatus == null);
@@ -124,7 +169,9 @@ export function apresentarStatusVisivel(status: string, comprovacaoStatus: Statu
  */
 export const STATUS_ITEM = [
   "PENDENTE",
+  "EM SEPARACAO",
   "SEPARADO",
+  "PENDENTE COMPRA",
   "AGUARDANDO COMPRA",
   "DESPACHADO",
   "CANCELADO",
@@ -133,6 +180,8 @@ export type StatusItem = (typeof STATUS_ITEM)[number];
 
 export const ESTILO_STATUS_ITEM: Record<StatusItem, { classe: string; rotulo: string }> = {
   "PENDENTE": { classe: "border-slate-300 bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300", rotulo: "Pendente" },
+  "EM SEPARACAO": { classe: "border-violet-400/50 bg-violet-50 text-violet-700 dark:bg-violet-950/30 dark:text-violet-300", rotulo: "Em separação" },
+  "PENDENTE COMPRA": { classe: "border-red-400/50 bg-red-50 text-red-700 dark:bg-red-950/30 dark:text-red-300", rotulo: "Falta comprar" },
   "SEPARADO": { classe: "border-blue-400/50 bg-blue-50 text-blue-700 dark:bg-blue-950/30 dark:text-blue-300", rotulo: "Separado" },
   "AGUARDANDO COMPRA": { classe: "border-orange-400/50 bg-orange-50 text-orange-700 dark:bg-orange-950/30 dark:text-orange-300", rotulo: "Aguardando compra" },
   "DESPACHADO": { classe: "border-emerald-400/50 bg-emerald-50 text-emerald-700 dark:bg-emerald-950/30 dark:text-emerald-300", rotulo: "Despachado" },
@@ -148,9 +197,35 @@ export const ESTILO_STATUS_ITEM: Record<StatusItem, { classe: string; rotulo: st
  * status do pedido só decide se ela já foi despachada ou está separada
  * esperando logística.
  */
-export function derivarStatusItem(statusPedido: string, temTag: boolean): StatusItem {
+/**
+ * O que já aconteceu com UM item do pedido. Os três campos vêm da view
+ * sup_pedido_situacao; `saiu` também pode vir das etiquetas carregadas em
+ * lote por buscarTagsDePedidos, que é como a exportação do Excel monta.
+ */
+export interface SituacaoItem {
+  /** A peça saiu do estoque para este item — etiqueta única ou ledger de massa. */
+  saiu: boolean;
+  /** Reservada para este item e ainda na prateleira, esperando o separador. */
+  reservado?: boolean;
+  /** Deu divergência na separação: não estava na doca, e falta comprar. */
+  pendenteCompra?: boolean;
+}
+
+/**
+ * Resolve o status de UM item.
+ *
+ * A ordem das perguntas importa. `saiu` vem antes de `pendenteCompra`: um
+ * item que teve divergência e DEPOIS foi atendido com material novo ficaria
+ * marcado como "falta comprar" para sempre, porque a linha DIVERGENTE da
+ * reserva é histórico e não some. Quem quiser a conta por unidade tem a fila
+ * de contagem rotativa e o histórico do material — este badge responde "e
+ * agora, o que ainda falta?".
+ */
+export function derivarStatusItem(statusPedido: string, item: SituacaoItem): StatusItem {
   if (statusPedido === "CANCELADO") return "CANCELADO";
-  if (temTag) return statusPedido === "DESPACHADO" ? "DESPACHADO" : "SEPARADO";
+  if (item.saiu) return statusPedido === "DESPACHADO" ? "DESPACHADO" : "SEPARADO";
+  if (item.reservado) return "EM SEPARACAO";
+  if (item.pendenteCompra) return "PENDENTE COMPRA";
   return statusPedido === "AGUARDANDO COMPRA" ? "AGUARDANDO COMPRA" : "PENDENTE";
 }
 
