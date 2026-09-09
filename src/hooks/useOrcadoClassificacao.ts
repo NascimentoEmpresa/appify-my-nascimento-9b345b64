@@ -82,8 +82,10 @@ export function useOrcadoClassificacaoMultiMes(empresaId: string | null | undefi
   const { data: classificacoes = [], isLoading: carregandoClassificacoes } = useClassificacoesOrcamentoAdmin();
   const { data: orcamentosAdm = [], isLoading: carregandoAdm } = usePlanejamentosOrcamento(empresaId);
   const { data: ligacoesAdm = [], isLoading: carregandoLigacoes } = useLigacoesAdministrativoClassificacao();
-  const { data: contratos = [], isLoading: carregandoContratos } = useContratosERP();
-  const { data: planilha = [], isLoading: carregandoPlanilha } = usePlanilhaCustos();
+  // SIS-2026-0337: mesmo motivo do useOrcamentoContratos — a parcela pode
+  // ser de uma empresa diferente da ativa no seletor da barra superior.
+  const { data: contratos = [], isLoading: carregandoContratos } = useContratosERP({ todasEmpresas: true });
+  const { data: planilha = [], isLoading: carregandoPlanilha } = usePlanilhaCustos({ todasEmpresas: true });
   const { data: ligacoesLicitacao = [], isLoading: carregandoLigacoesLicitacao } = useLigacoesLicitacaoClassificacao();
 
   const classificacoesPorId = useMemo(() => new Map(classificacoes.map((c) => [c.id, c])), [classificacoes]);
