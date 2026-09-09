@@ -464,7 +464,6 @@ function PainelSolicitacao({
       toast.success(status === "rascunho" ? "Rascunho salvo." : "Solicitação enviada para aprovação inicial.");
       setNome(""); setMotivo(""); setDescricao(""); setValorEstimado(""); setLinks(""); setArquivos([]); setItens([]);
       setEmpresaContratoId(""); setContratoId("");
-      chaveAutoPreenchidaRef.current = null;
       if (!tipoTravado) setTipo("");
     } catch (e: unknown) {
       toast.error(e instanceof Error ? e.message : "Erro ao salvar solicitação.");

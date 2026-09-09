@@ -323,7 +323,7 @@ export default function ContratosERP() {
     <div className="flex flex-col gap-6 p-6">
       <PageHeader
         title="Contratos"
-        description="Gestão dos contratos ativos da empresa."
+        subtitle="Gestão dos contratos ativos da empresa."
         actions={
           <div className="flex gap-2">
             <Button size="sm" variant="outline" onClick={handleImportar} disabled={importando}>
