@@ -113,7 +113,16 @@ async function obterToken(admin: ReturnType<typeof createClient>): Promise<strin
 /** Chamada às APIs de negócio, já com o Bearer. */
 async function comToken(token: string, caminho: string) {
   const resp = await fetch(`${API}${caminho}`, {
-    headers: { Accept: "application/json", Authorization: `Bearer ${token}` },
+    headers: {
+      Accept: "application/json",
+      Authorization: `Bearer ${token}`,
+      // OBRIGATÓRIO no SRO Rastro, e não é opcional nem tem equivalente em
+      // query string: sem este header a API recusa TODA consulta de rastreio
+      // com "SRO-018: Permitido apenas os valores pt-BR, en e es-ES para o
+      // idioma" — inclusive a requisição mínima, só com o código do objeto.
+      // Medido contra a API em 09/09/2026. `idioma=pt-BR` na URL não resolve.
+      "Accept-Language": "pt-BR",
+    },
   });
   return { status: resp.status, corpo: await resp.json().catch(() => null) };
 }
@@ -138,7 +147,7 @@ Deno.serve(async (req) => {
     if (!user) return json({ error: "Unauthorized" }, 401);
 
     const admin = createClient(supabaseUrl, serviceKey);
-    const { acao, codigos, cep, cotacao } = await req.json().catch(() => ({}));
+    const { acao, codigos, codigo: codigoUnico, cep, cotacao } = await req.json().catch(() => ({}));
 
     if (acao === "rastrear") {
       const lista: string[] = Array.isArray(codigos)
@@ -173,6 +182,45 @@ Deno.serve(async (req) => {
         };
       });
       return json({ objetos });
+    }
+
+    // Trajeto COMPLETO de UM objeto — o que alimenta o mapa.
+    //
+    // Separado de `rastrear` porque a diferença é `resultado=T` (todos os
+    // eventos) contra `resultado=U` (só o último). Pedir o histórico inteiro
+    // dos 50 objetos da tela a cada abertura seria trafegar centenas de
+    // eventos para mostrar um badge de uma linha.
+    if (acao === "trajeto") {
+      const codigo = String(codigoUnico ?? "").trim().toUpperCase();
+      if (!codigo) return json({ error: "Informe o código do objeto." }, 400);
+
+      const token = await obterToken(admin);
+      const { status, corpo } = await comToken(
+        token,
+        `/srorastro/v1/objetos?codigosObjetos=${encodeURIComponent(codigo)}&resultado=T`,
+      );
+      if (status !== 200) {
+        return json({ error: `Correios respondeu ${status} ao rastrear.`, detalhe: corpo }, 502);
+      }
+
+      const o = (corpo?.objetos ?? [])[0] ?? null;
+      if (!o) return json({ codigo, mensagem: "Objeto não encontrado.", eventos: [] });
+
+      // Os Correios devolvem do mais NOVO para o mais velho. Quem lê um
+      // trajeto lê na ordem em que aconteceu, então a inversão é feita aqui,
+      // uma vez, e não em cada tela que consumir isto.
+      const eventos = [...(o.eventos ?? [])].reverse().map((e: any) => ({
+        descricao: e.descricao ?? null,
+        data: e.dtHrCriado ?? null,
+        cidade: e.unidade?.endereco?.cidade ?? null,
+        uf: e.unidade?.endereco?.uf ?? null,
+        // O destino do evento de transferência: é ele que revela a próxima
+        // parada antes de o objeto chegar lá.
+        destinoCidade: e.unidadeDestino?.endereco?.cidade ?? null,
+        destinoUf: e.unidadeDestino?.endereco?.uf ?? null,
+      }));
+
+      return json({ codigo: o.codObjeto ?? codigo, mensagem: o.mensagem ?? null, eventos });
     }
 
     if (acao === "cep") {

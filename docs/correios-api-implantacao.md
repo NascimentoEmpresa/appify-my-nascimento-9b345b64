@@ -7,6 +7,7 @@ funcionalidades funcionarem em produção:
 - situação do objeto no card de Pedidos de Materiais (API SRO Rastro);
 - endereço preenchido pelo CEP na Declaração de Conteúdo (API CEP);
 - cotação de frete e prazo na Declaração de Conteúdo (APIs Preço e Prazo).
+- mapa do trajeto do objeto no modal de despacho (API SRO Rastro + OpenStreetMap).
 
 Nada disso escreve nos Correios — as três APIs são somente de leitura.
 
@@ -18,6 +19,9 @@ Duas, na ordem, no SQL Editor do projeto:
 2. `20260930000062_correio_declaracao_cotacao.sql` — acrescenta dimensões,
    valor declarado e o resultado da cotação à declaração, e atualiza a RPC
    `sup_correio_declaracao_salvar` para gravar esses campos.
+
+3. `20260930000082_correios_geo_cidade.sql` — cria `correios_geo_cidade`, o
+   cache de coordenada por município que alimenta o mapa do trajeto.
 
 A `correios_token` nasce com RLS ligada e **sem nenhuma policy**, de propósito: só a
 service_role (usada dentro da Edge Function) alcança o conteúdo. O que está lá
@@ -108,6 +112,30 @@ faria a cotação errar para menos em todos os casos reais.
 Validado em 04/09/2026 contra o cupom do objeto AD867127447BR (4,1 kg,
 36x38x38, Triunfo->Realeza, declarado R$ 450): a API devolveu
 125,23 + 4,24 = **129,47**, os três idênticos ao impresso na agência.
+
+## Sobre o mapa do trajeto
+
+O botão de mapa fica ao lado do campo **ID de Rastreio Correio**, no modal de
+despacho. Ele abre os pontos por onde o objeto passou, ligados na ordem.
+
+**Não é rastreamento por satélite, e a tela diz isso.** Os Correios registram o
+objeto quando ele é bipado numa unidade — o que existe é "passou por esta
+cidade nesta hora", nunca a posição do veículo. A linha entre dois pinos liga
+as cidades em reta; não é a estrada percorrida. Prometer mais que isso levaria
+o Compras a tratar o mapa como localização ao vivo, que ele não é.
+
+As coordenadas NÃO vêm dos Correios (eles não devolvem nenhuma). Vêm do
+Nominatim (OpenStreetMap): gratuito, sem chave e sem cadastro, em troca de no
+máximo uma consulta por segundo. Por isso cada município é resolvido **uma vez
+só** e guardado em `correios_geo_cidade` para a empresa inteira — as unidades
+de tratamento se repetem em todas as postagens, então a tabela para de crescer
+depois das primeiras dezenas de objetos.
+
+Município que o Nominatim não achar fica sem pino, e a tela lista quais foram:
+os eventos continuam aparecendo na coluna ao lado, que é onde está a
+informação. Um mapa incompleto é melhor que um mapa que inventa a posição.
+
+Os ladrilhos vêm de `tile.openstreetmap.org`, como no mapa do Patrimônio.
 
 ## Limites que valem lembrar
 
