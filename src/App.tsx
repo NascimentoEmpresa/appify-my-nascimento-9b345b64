@@ -194,6 +194,7 @@ import Ferias from "./pages/rh/Ferias";
 import RhSolicitacoesDemissao from "./pages/rh/SolicitacoesDemissao";
 import MinhasSolicitacoes from "./pages/MinhasSolicitacoes";
 import BIDashboard from "./pages/bi/Dashboard";
+import LinksBIs from "./pages/bi/LinksBIs";
 import Fiscal from "./pages/Fiscal";
 import IntegracaoBatches from "./pages/integracao/Batches";
 import BatchDetalhe from "./pages/integracao/BatchDetalhe";
@@ -630,6 +631,7 @@ const App = () => (
             <Route path="sst/controle-ca" element={<ControleCa />} />
             {/* BI */}
             <Route path="bi" element={<BIDashboard />} />
+            <Route path="bi/links" element={<LinksBIs />} />
             {/* Integração & Migração */}
             <Route path="integracao" element={<IntegracaoBatches />} />
             <Route path="integracao/aliases" element={<IntegracaoAliases />} />

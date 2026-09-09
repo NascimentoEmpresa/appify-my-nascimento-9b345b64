@@ -80,7 +80,7 @@ import { GitBranch, GitMerge } from "lucide-react";
 import { MessageSquare } from "lucide-react";
 import { Banknote } from "lucide-react";
 import { TrendingDown } from "lucide-react";
-import { Megaphone } from "lucide-react";
+import { Megaphone, ExternalLink } from "lucide-react";
 import { CreditCard } from "lucide-react";
 import { Network } from "lucide-react";
 import { useNovidades } from "@/hooks/useNovidades";
@@ -822,7 +822,10 @@ const biModule: ModuleDef = {
     {
       label: "Painéis",
       defaultOpen: true,
-      items: [{ label: "Resumo do Grupo", to: "/app/bi", icon: BarChart3 }],
+      items: [
+        { label: "Resumo do Grupo", to: "/app/bi", icon: BarChart3 },
+        { label: "Links dos BIs", to: "/app/bi/links", icon: ExternalLink },
+      ],
     },
   ],
 };
