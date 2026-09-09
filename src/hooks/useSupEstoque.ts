@@ -45,7 +45,16 @@ export interface LinhaEstoque {
   preco_valido_ate: string | null;
   preco_vencido: boolean;
   estoque_minimo: number;
+  /**
+   * O que Compras pode contar com: físico MENOS o que está reservado para
+   * separação. É a resposta ao "mas tem 10 no estoque" — os 10 podem já
+   * estar dentro de uma sacola esperando despacho.
+   */
   disponivel: number;
+  /** Unidades reservadas para pedidos em separação, ainda na prateleira. */
+  reservado: number;
+  /** O que existe na prateleira, ignorando reserva. Bate com a contagem. */
+  fisico: number;
   consumido: number;
   etiquetas: number;
   tamanhos: string[];
@@ -199,15 +208,23 @@ export function useEstoqueLista(empresaId: string | null) {
         .select(`id, valor_unitario, estoque_minimo, preco_valido_ate,
                  sup_item:sup_item_id (id, nome, tipo, codigo),
                  almoxarifado:almoxarifado_id (nome),
-                 sup_estoque_tag (codigo, tamanho, tipo, usado, quantidade_massa, quantidade_original_massa, valor_unitario)`);
+                 sup_estoque_tag (codigo, tamanho, tipo, usado, quantidade_massa, quantidade_original_massa, valor_unitario,
+                                  sup_estoque_reserva (quantidade, situacao))`);
       if (error) throw error;
 
       // Mesma fórmula da view sup_estoque_saldo — aqui só para evitar um
-      // segundo round-trip. A view continua sendo a autoridade no banco.
+      // segundo round-trip. A view continua sendo a autoridade no banco, e
+      // as DUAS precisam mudar juntas: desde 20260930000074 o disponível é
+      // líquido de reserva, e esquecer a subtração aqui reabriria exatamente
+      // o problema que a reserva veio resolver.
       return (data ?? []).map((r: any) => {
         const tags = r.sup_estoque_tag ?? [];
-        const disponivel = tags.reduce((s: number, t: any) =>
+        const fisico = tags.reduce((s: number, t: any) =>
           s + (t.usado ? 0 : t.tipo === "massa" ? (t.quantidade_massa ?? 0) : 1), 0);
+        const reservado = tags.reduce((s: number, t: any) =>
+          s + (t.sup_estoque_reserva ?? []).reduce(
+            (r2: number, x: any) => r2 + (x.situacao === "ATIVA" ? Number(x.quantidade ?? 0) : 0), 0), 0);
+        const disponivel = fisico - reservado;
         const consumido = tags.reduce((s: number, t: any) =>
           s + (t.tipo === "massa"
             ? (t.quantidade_original_massa ?? 0) - (t.quantidade_massa ?? 0)
@@ -229,11 +246,13 @@ export function useEstoqueLista(empresaId: string | null) {
           almoxarifado: r.almoxarifado?.nome ?? "—",
           valor_unitario: Number(r.valor_unitario ?? 0),
           custo_unitario: custo,
-          valor_total: custo * disponivel,
+          // Valor do que está na prateleira: a reserva não tirou nada de lá
+          // ainda, então descontá-la subavaliaria o estoque.
+          valor_total: custo * fisico,
           preco_valido_ate: r.preco_valido_ate ?? null,
           preco_vencido: precoVencido(r.preco_valido_ate),
           estoque_minimo: Number(r.estoque_minimo ?? 0),
-          disponivel, consumido,
+          disponivel, reservado, fisico, consumido,
           etiquetas: tags.length,
           tamanhos: [...new Set(tags.filter((t: any) => !t.usado && t.tamanho).map((t: any) => t.tamanho))] as string[],
         };
@@ -453,11 +472,19 @@ export function useTagsDePedidos(pedidoIds: string[], enabled = true) {
 
 // ── Escrita ──────────────────────────────────────────────────────────
 
-function useInvalidarEstoque() {
+/**
+ * Exportado porque a separação (useSupSeparacao) mexe nos MESMOS números:
+ * reservar derruba o disponível, confirmar baixa a etiqueta. Duas listas de
+ * chaves acabariam divergindo, e o sintoma seria uma tela mostrando saldo
+ * velho depois de uma operação — o tipo de bug que ninguém associa a cache.
+ */
+export function useInvalidarEstoque() {
   const qc = useQueryClient();
   return () => {
     ["sup_estoque_lista", "sup_estoque_tag", "sup_tags_disponiveis", "sup_saldo_material",
-     "sup_est_tags_do_pedido", "sup_pedido", "sup_pedido_historico"]
+     "sup_est_tags_do_pedido", "sup_pedido", "sup_pedido_historico",
+     "sup_estoque_movimento", "sup_pedido_situacao", "sup_sep_fila", "sup_sep_sugerir",
+     "sup_contagem_fila"]
       .forEach((k) => qc.invalidateQueries({ queryKey: [k] }));
   };
 }
@@ -723,7 +750,12 @@ export function useRemoverTag() {
 
 // ── Histórico do material ────────────────────────────────────────────
 
-export type TipoMovimento = "entrada" | "saida" | "devolucao" | "ajuste" | "remocao";
+export type TipoMovimento =
+  | "entrada" | "saida" | "devolucao" | "ajuste" | "remocao"
+  /** Reservado para separação — saiu do disponível, não da prateleira. */
+  | "reserva"
+  /** Reserva desfeita: pedido cancelado, excluído, ou liberado pela supervisora. */
+  | "liberacao";
 
 export interface Movimento {
   id: string;

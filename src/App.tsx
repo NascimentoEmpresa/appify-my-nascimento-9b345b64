@@ -85,6 +85,7 @@ import CatalogoMateriais from "./pages/suprimentos/CatalogoMateriais";
 import CatalogoAprovacoes from "./pages/suprimentos/CatalogoAprovacoes";
 import PedidosMateriais from "./pages/suprimentos/PedidosMateriais";
 import EstoqueEtiquetas from "./pages/suprimentos/EstoqueEtiquetas";
+import SeparacaoMateriais from "./pages/suprimentos/SeparacaoMateriais";
 import Patrimonio from "./pages/suprimentos/Patrimonio";
 import PainelManutencoes from "./pages/suprimentos/PainelManutencoes";
 import EpisAdmissoes from "./pages/suprimentos/EpisAdmissoes";
@@ -533,6 +534,7 @@ const App = () => (
             <Route path="suprimentos/catalogo/aprovacoes" element={<CatalogoAprovacoes />} />
             <Route path="suprimentos/catalogo" element={<CatalogoMateriais />} />
             <Route path="suprimentos/pedidos-materiais" element={<PedidosMateriais />} />
+            <Route path="suprimentos/separacao" element={<SeparacaoMateriais />} />
             <Route path="suprimentos/estoque-etiquetas" element={<EstoqueEtiquetas />} />
             <Route path="suprimentos/patrimonio" element={<Patrimonio />} />
             <Route path="suprimentos/manutencao" element={<PainelManutencoes />} />
