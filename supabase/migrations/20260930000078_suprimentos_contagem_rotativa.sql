@@ -1,7 +1,7 @@
 -- =====================================================================
 -- Suprimentos — contagem rotativa, parte 3 de 5
 --
--- Depende de 20260930000074 e 20260930000075.
+-- Depende de 20260930000076 e 20260930000077.
 --
 -- Vem ANTES das RPCs de separação (parte 4) porque sup_sep_divergencia
 -- grava nesta fila: a tabela precisa existir primeiro.

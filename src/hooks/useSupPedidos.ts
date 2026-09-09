@@ -53,7 +53,7 @@ export type StatusVisivel =
 
 /**
  * Quanto de um pedido já foi atendido. Vem da view sup_pedido_situacao
- * (20260930000075), que resolve no banco o que antes exigiria carregar as
+ * (20260930000077), que resolve no banco o que antes exigiria carregar as
  * etiquetas dos ~1.300 pedidos só para pintar um KPI.
  */
 export interface SituacaoPedido {

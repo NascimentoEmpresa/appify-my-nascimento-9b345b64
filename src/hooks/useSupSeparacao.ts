@@ -12,7 +12,7 @@ import type { SituacaoPedido } from "@/hooks/useSupPedidos";
  * responde que aqueles 10 já estão dentro de uma sacola esperando despacho.
  * Ninguém está errado — faltava o estado do meio.
  *
- * Toda a escrita passa por RPC (20260930000077). Nenhuma tela escreve em
+ * Toda a escrita passa por RPC (20260930000079). Nenhuma tela escreve em
  * sup_estoque_reserva direto: a tabela não tem policy de INSERT/UPDATE, de
  * propósito, igual a sup_estoque_consumo.
  */

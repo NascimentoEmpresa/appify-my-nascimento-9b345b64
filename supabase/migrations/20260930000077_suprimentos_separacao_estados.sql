@@ -1,7 +1,7 @@
 -- =====================================================================
 -- Suprimentos — estados da separação, parte 2 de 5
 --
--- Depende de 20260930000074 (sup_estoque_reserva).
+-- Depende de 20260930000076 (sup_estoque_reserva).
 --
 -- Acrescenta o estado EM SEPARACAO ao pedido, a view que responde
 -- "quanto deste pedido já foi atendido", o primeiro grafo de transição

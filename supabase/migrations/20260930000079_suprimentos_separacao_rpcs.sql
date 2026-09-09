@@ -1,7 +1,7 @@
 -- =====================================================================
 -- Suprimentos — RPCs da separação, parte 4 de 5
 --
--- Depende de 20260930000074, ...75 e ...76.
+-- Depende de 20260930000076, ...75 e ...76.
 --
 -- O CICLO QUE ESTAS SEIS FUNÇÕES FECHAM
 --

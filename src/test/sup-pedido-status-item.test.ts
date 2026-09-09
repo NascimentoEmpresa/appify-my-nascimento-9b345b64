@@ -22,7 +22,7 @@ import {
  * erro que o legado cometeu com o saldo do estoque, onde trigger e query
  * calculavam diferente e ninguém sabia qual valia (REPLICAR §12.8).
  *
- * A partir da reserva de estoque (20260930000074) o item tem mais dois
+ * A partir da reserva de estoque (20260930000076) o item tem mais dois
  * estados possíveis, e por isso a função passou a receber um objeto no lugar
  * do booleano: além de "saiu", agora existe "está reservado para separação" e
  * "deu divergência e falta comprar". Continuam todos DERIVADOS.

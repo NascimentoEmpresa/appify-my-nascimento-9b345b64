@@ -1,7 +1,7 @@
 -- =====================================================================
 -- Suprimentos — escritores cientes da reserva, parte 5 de 5
 --
--- Depende de 20260930000074 a ...77.
+-- Depende de 20260930000076 a ...77.
 --
 -- As duas RPCs que baixam quantidade_massa passam a enxergar reserva. Sem
 -- isto o trigger de invariante (sup_est_tag_guard_saldo_reservado) as

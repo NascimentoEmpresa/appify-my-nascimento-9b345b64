@@ -241,7 +241,7 @@ export default function EstoqueEtiquetas() {
                         </div>
                       </TableCell>
                       {/*
-                        Disponível é LÍQUIDO de reserva desde 20260930000074 — é a
+                        Disponível é LÍQUIDO de reserva desde 20260930000076 — é a
                         resposta ao "mas tem 10 no estoque, por que está comprando?".
                         Físico continua ao lado porque é ele que a contagem confere.
                       */}

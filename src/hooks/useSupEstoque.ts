@@ -214,7 +214,7 @@ export function useEstoqueLista(empresaId: string | null) {
 
       // Mesma fórmula da view sup_estoque_saldo — aqui só para evitar um
       // segundo round-trip. A view continua sendo a autoridade no banco, e
-      // as DUAS precisam mudar juntas: desde 20260930000074 o disponível é
+      // as DUAS precisam mudar juntas: desde 20260930000076 o disponível é
       // líquido de reserva, e esquecer a subtração aqui reabriria exatamente
       // o problema que a reserva veio resolver.
       return (data ?? []).map((r: any) => {
