@@ -303,6 +303,18 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "anali
   // Quem pode mover o candidato pra fora de cada etapa específica do kanban.
   // Vaga do escritório: só quem tem a capacidade vê, marca e decide.
   const podeAdministrativa = podeVagaAdministrativa(can);
+  /**
+   * Editar e apagar A SOLICITAÇÃO — capacidades próprias, não o "alterar" da
+   * tela.
+   *
+   * São dois menus fantasma (migration 20260930000077), pelo mesmo motivo dos
+   * `recrutamento_etapa_*`: quem conduz o processo não ganha, de brinde,
+   * reescrever ou apagar o pedido de outra pessoa. Quem concede é
+   * Administração › Acesso por Usuário, dentro de Recrutamento e Seleção.
+   */
+  const podeEditarSolicitacao = can("alterar", undefined, "recrutamento_solicitacao_editar");
+  const podeExcluirSolicitacao = can("excluir", undefined, "recrutamento_solicitacao_excluir");
+
   const podeMoverJuridico = can("aprovar", undefined, "recrutamento_etapa_juridico");
   const podeMoverSst      = can("aprovar", undefined, "recrutamento_etapa_sst");
   const podeMoverCompras  = can("aprovar", undefined, "recrutamento_etapa_compras");
@@ -342,6 +354,8 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "anali
   const [modalLink, setModalLink]           = useState(false);
   const [linkCopiado, setLinkCopiado]       = useState(false);
   const [modalVaga, setModalVaga]           = useState(false);
+  // A solicitação aberta no modal para EDIÇÃO (null = solicitação nova).
+  const [vagaEditando, setVagaEditando]     = useState<Solicitacao | null>(null);
   const [curriculos, setCurriculos]         = useState<Curriculo[]>([]);
   const [showCurriculos, setShowCurriculos] = useState(false);
   const [empCpf, setEmpCpf]                 = useState<Record<string, any[]>>({});   // CPF dígitos → cadastros EMPREGADOS
@@ -1319,7 +1333,7 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "anali
   // O wizard inteiro mora em components/recrutamento/ModalNovaVaga.tsx desde
   // 03/09/2026: a Central de Serviços abre o MESMO formulário, e manter duas
   // cópias era garantir que divergissem (já divergiram uma vez).
-  const abrirModalVaga = () => setModalVaga(true);
+  const abrirModalVaga = () => { setVagaEditando(null); setModalVaga(true); };
 
   // ── CSS injetado ──────────────────────────────────────────────
   useEffect(() => {
@@ -1496,9 +1510,51 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "anali
       if (s.link_publico) btns.push(<button key="lnk" onClick={() => { setLinkCopiado(false); setModalLink(true); }} style={{ padding: "5px 12px", borderRadius: 8, border: "1px solid rgba(99,102,241,.35)", background: "rgba(99,102,241,.15)", color: "#818cf8", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>Gerar Link</button>);
       btns.push(reprovar("rep3"));
     }
+    // Editar e apagar a solicitação. Ficam antes do histórico e valem em
+    // QUALQUER status: a correção de um pedido errado (cargo trocado, contrato
+    // errado) costuma chegar justamente depois de ele ter andado.
+    if (podeEditarSolicitacao) {
+      btns.push(
+        <button key="edt" onClick={() => { setVagaEditando(s); setModalVaga(true); }}
+          style={{ padding: "5px 12px", borderRadius: 8, border: "1px solid #bfdbfe", background: "#eff6ff", color: "#1d4ed8", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>
+          ✏️ Editar solicitação
+        </button>,
+      );
+    }
+    if (podeExcluirSolicitacao) {
+      btns.push(
+        <button key="del" onClick={excluirSolicitacao}
+          style={{ padding: "5px 12px", borderRadius: 8, border: "1px solid #fecaca", background: "#fef2f2", color: "#b91c1c", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>
+          🗑 Apagar solicitação
+        </button>,
+      );
+    }
     // Histórico — sempre disponível.
     btns.push(<button key="hist" onClick={() => { if (drawerId) loadHistorico(drawerId); setShowHistorico(true); }} style={{ padding: "5px 12px", borderRadius: 8, border: "1px solid #e2e8f0", background: "#fff", color: "#475569", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>📜 Histórico</button>);
     return btns;
+  };
+
+  /**
+   * Apaga a solicitação inteira.
+   *
+   * Confirmação dupla escrita no texto (o nº e o cargo) porque isto não tem
+   * desfazer: o DELETE leva junto o histórico, o chat e os candidatos ligados
+   * à vaga. Quem não tem a capacidade nem vê o botão, e o RLS recusa mesmo
+   * assim — a policy de DELETE exige 'excluir' em
+   * recrutamento_solicitacao_excluir (migration 20260930000077).
+   */
+  const excluirSolicitacao = async () => {
+    if (!drawerId || !drawerSol) return;
+    const rotulo = `#${drawerId}${drawerSol.cargo ? ` — ${drawerSol.cargo}` : ""}`;
+    if (!confirm(`Apagar a solicitação ${rotulo}?
+
+Isto não tem desfazer: o histórico e os candidatos ligados a ela vão junto.`)) return;
+    const { error } = await (supabase as any).from("SISTEMA_RECRUTAMENTO").delete().eq("id", drawerId);
+    if (error) { toast("Erro ao apagar: " + error.message, "err"); return; }
+    toast(`Solicitação ${rotulo} apagada.`, "ok");
+    fecharDrawer();
+    loadStats();
+    loadLista();
   };
 
   const abrirKanbanCand = () => { setShowKanbanCand(true); setBuscaCand(""); if (drawerId) loadCandidatos(drawerId); };
@@ -2614,8 +2670,16 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "anali
           Suprimentos. Os toasts são os desta tela — daí o `onToast`. */}
       <ModalNovaVaga
         aberto={modalVaga}
-        onFechar={() => setModalVaga(false)}
-        onCriada={() => { loadStats(); loadLista(); }}
+        solicitacao={vagaEditando}
+        onFechar={() => { setModalVaga(false); setVagaEditando(null); }}
+        onCriada={id => {
+          loadStats();
+          loadLista();
+          // Editou com o drawer aberto: recarrega o detalhe para a tela não
+          // continuar mostrando o que acabou de ser trocado.
+          if (vagaEditando && id) verDetalhe(id);
+          setVagaEditando(null);
+        }}
         onToast={toast}
       />
 

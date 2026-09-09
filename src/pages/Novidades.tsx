@@ -1,6 +1,7 @@
 import { useEffect } from "react";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { NovidadesPainel } from "@/components/novidades/NovidadesPainel";
+import { NotificacoesPainel } from "@/components/notificacoes/NotificacoesPainel";
 import { useNovidades } from "@/hooks/useNovidades";
 
 /**
@@ -27,6 +28,12 @@ export default function Novidades() {
         breadcrumb={["Novidades do Sistema"]}
       />
       <NovidadesPainel completo />
+
+      {/* Ao lado de Novidades, como pedido: quem pode criar novidade cria
+          notificação. O painel se esconde sozinho para quem não pode. */}
+      <div style={{ marginTop: 16 }}>
+        <NotificacoesPainel />
+      </div>
       {novidades.length > 0 && (
         <p style={{ textAlign: "center", fontSize: ".72rem", color: "#cbd5e1", margin: "14px 0 4px" }}>
           {novidades.length} {novidades.length === 1 ? "publicação" : "publicações"} no histórico.
