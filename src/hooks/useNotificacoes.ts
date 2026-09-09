@@ -4,7 +4,7 @@ import { useAuth } from "@/hooks/useAuth";
 import { useMeuNome } from "@/hooks/useMeuNome";
 import { usePermissoes } from "@/context/PermissoesContext";
 import {
-  MENU_PUBLICAR, TABELA, TABELA_CIENCIA, pendentesDe,
+  MENU_PUBLICAR, MENU_QUADRO, TABELA, TABELA_CIENCIA, bloqueantesDe, pendentesDe,
   type CienciaNotificacao, type Escolha, type FormNotificacao, type Notificacao,
 } from "@/lib/notificacoes";
 
@@ -25,7 +25,20 @@ export function useNotificacoes() {
   const { can } = usePermissoes();
   const qc = useQueryClient();
 
+  /**
+   * Quem publica Novidades continua publicando aviso — era assim antes do
+   * Quadro existir, e tirar isso obrigaria a reconfigurar o acesso de quem já
+   * usava. O menu do Quadro entra AO LADO, com uma capacidade por ação, e é
+   * ele que permite dar o quadro a quem não mexe no changelog do ERP.
+   *
+   * Isto é heurística de UI (esconder botão). Quem recusa de verdade é a RLS,
+   * pela função pode_gerir_avisos.
+   */
   const podePublicar = can("incluir", undefined, MENU_PUBLICAR);
+  const podeVerQuadro = podePublicar || can("visualizar", undefined, MENU_QUADRO);
+  const podeCriar = podePublicar || can("incluir", undefined, MENU_QUADRO);
+  const podeEditar = podePublicar || can("alterar", undefined, MENU_QUADRO);
+  const podeExcluir = podePublicar || can("excluir", undefined, MENU_QUADRO);
 
   const listaQ = useQuery({
     queryKey: ["notificacoes"],
@@ -54,7 +67,7 @@ export function useNotificacoes() {
   /** O histórico completo — só quem publica enxerga (a RLS confirma). */
   const historicoQ = useQuery({
     queryKey: ["notificacoes_historico"],
-    enabled: podePublicar,
+    enabled: podeVerQuadro,
     staleTime: 30_000,
     queryFn: async (): Promise<CienciaNotificacao[]> => {
       const { data, error } = await sb
@@ -72,6 +85,18 @@ export function useNotificacoes() {
         titulo: f.titulo.trim(),
         mensagem: f.mensagem.trim(),
         publicado: f.publicado,
+        categoria: f.categoria || null,
+        resumo: f.resumo.trim() || null,
+        // Vazio é "não expira" — string vazia em coluna timestamptz estoura
+        // no Postgres ("invalid input syntax"), a ausência é NULL.
+        expira_em: f.expira_em ? f.expira_em : null,
+        publico_alvo: f.publico_alvo || "todos",
+        exigir_ciencia: f.exigir_ciencia,
+        // Bloquear sem exigir ciência prenderia a pessoa num aviso sem botão
+        // de saída; o formulário recusa, e aqui o valor é normalizado também,
+        // porque a tela não é o único caminho até esta função.
+        bloquear_acesso: f.exigir_ciencia && f.bloquear_acesso,
+        permitir_escolha: f.permitir_escolha,
         criado_por_nome: meuNome ?? null,
       };
       const { error } = f.id
@@ -101,11 +126,18 @@ export function useNotificacoes() {
    * sobrescreve não serve como registro de ciência.
    */
   const responder = useMutation({
-    mutationFn: async ({ id, escolha }: { id: number; escolha: Escolha }) => {
+    mutationFn: async (
+      { id, escolha, observacao, lidoEm }:
+      { id: number; escolha: Escolha; observacao?: string; lidoEm?: string },
+    ) => {
       const { error } = await sb.from(TABELA_CIENCIA).insert({
         notificacao_id: id,
         user_id: user?.id,
         escolha,
+        observacao: observacao?.trim() || null,
+        // Quando o aviso abriu na frente da pessoa. A distância até
+        // respondido_em é o que separa quem leu de quem só tirou da frente.
+        lido_em: lidoEm ?? new Date().toISOString(),
       });
       if (error) throw error;
     },
@@ -121,9 +153,17 @@ export function useNotificacoes() {
   return {
     notificacoes,
     historico: historicoQ.data ?? [],
+    minhas,
+    /** Pede ciência e ainda não foi respondido — aparece para a pessoa. */
     pendentes: pendentesDe(notificacoes, minhas),
+    /** Desses, os que travam a tela até responder. */
+    bloqueantes: bloqueantesDe(notificacoes, minhas),
     carregando: listaQ.isLoading || minhasQ.isLoading,
     podePublicar,
+    podeVerQuadro,
+    podeCriar,
+    podeEditar,
+    podeExcluir,
     salvar,
     excluir,
     responder,

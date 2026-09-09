@@ -9,11 +9,9 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { useNotificacoes } from "@/hooks/useNotificacoes";
 import {
-  erroDoFormulario, fmtDataHora, resumoDasRespostas,
+  FORM_VAZIO, erroDoFormulario, fmtDataHora, formDoAviso, resumoDasRespostas,
   type CienciaNotificacao, type FormNotificacao,
 } from "@/lib/notificacoes";
-
-const VAZIO: FormNotificacao = { titulo: "", mensagem: "", publicado: true };
 
 /**
  * Gestão das Notificações — criar, publicar e ver quem respondeu.
@@ -81,7 +79,7 @@ export function NotificacoesPainel() {
             </div>
           </div>
           {!form && (
-            <Button size="sm" onClick={() => setForm({ ...VAZIO })}>
+            <Button size="sm" onClick={() => setForm({ ...FORM_VAZIO })}>
               <Plus className="mr-1.5 h-4 w-4" /> Nova notificação
             </Button>
           )}
@@ -154,9 +152,7 @@ export function NotificacoesPainel() {
                     <Button
                       variant="outline"
                       size="sm"
-                      onClick={() => setForm({
-                        id: n.id, titulo: n.titulo, mensagem: n.mensagem, publicado: n.publicado,
-                      })}
+                      onClick={() => setForm(formDoAviso(n))}
                     >
                       Editar
                     </Button>
