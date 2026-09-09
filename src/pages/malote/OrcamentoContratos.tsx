@@ -7,7 +7,9 @@ import { Accordion, AccordionItem, AccordionTrigger, AccordionContent } from "@/
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Info } from "lucide-react";
 import { useOrcamentoContratos } from "@/hooks/useOrcamentoContratos";
+import { useEmpresasGrupo } from "@/hooks/useMaloteDespesa";
 import { fmtMoney } from "./orcamentoUtils";
+import { FiltroEmpresaOrcamento, EMPRESA_FILTRO_TODAS, FiltroEmpresaValor } from "./FiltroEmpresaOrcamento";
 
 // Orçamento de Contratos (SIS-2026-0125, ajustado após feedback): espelho
 // direto da Planilha de Custo por contrato — não depende de nenhuma
@@ -16,12 +18,23 @@ import { fmtMoney } from "./orcamentoUtils";
 // accordion pra não ficar poluído (cada contrato pode ter dezenas de
 // rubricas com valor).
 export default function OrcamentoContratos() {
+  // SIS-2026-0337: useOrcamentoContratos já resolve TODAS as empresas que
+  // o usuário acessa (não só a empresa ativa do seletor) — o filtro abaixo
+  // (FiltroEmpresaOrcamento) é quem devolve a opção de olhar uma só.
   const { data: grupos, isLoading } = useOrcamentoContratos();
+  const { data: empresasGrupo = [] } = useEmpresasGrupo();
+  const empresaNomePorId = useMemo(() => new Map(empresasGrupo.map((e) => [e.id, e.nome])), [empresasGrupo]);
+  const [filtroEmpresaId, setFiltroEmpresaId] = useState<FiltroEmpresaValor>(EMPRESA_FILTRO_TODAS);
   const [busca, setBusca] = useState("");
+
+  const gruposDaEmpresa = useMemo(
+    () => (filtroEmpresaId === EMPRESA_FILTRO_TODAS ? grupos : grupos.filter((g) => g.contrato.empresa_id === filtroEmpresaId)),
+    [grupos, filtroEmpresaId]
+  );
 
   const filtrados = useMemo(() => {
     const base = busca.trim()
-      ? grupos.filter((g) => {
+      ? gruposDaEmpresa.filter((g) => {
           const alvo = busca.toLowerCase();
           return (
             g.contrato.nome.toLowerCase().includes(alvo) ||
@@ -29,14 +42,15 @@ export default function OrcamentoContratos() {
             g.rubricas.some((r) => r.label.toLowerCase().includes(alvo))
           );
         })
-      : grupos;
+      : gruposDaEmpresa;
     return [...base].sort((a, b) => a.contrato.nome.localeCompare(b.contrato.nome, "pt-BR"));
-  }, [grupos, busca]);
+  }, [gruposDaEmpresa, busca]);
 
-  // KPIs refletem o total de contratos ativos (não a busca) — a busca filtra
-  // só a lista abaixo. Mantém os cards batendo com "Contratos Ativos" da tela
-  // de Contratos e com o breakdown da Planilha de Custo.
-  const valorTotal = useMemo(() => grupos.reduce((s, g) => s + g.valorTotal, 0), [grupos]);
+  // KPIs refletem o total de contratos ativos na empresa filtrada (não a
+  // busca) — a busca filtra só a lista abaixo. Mantém os cards batendo com
+  // "Contratos Ativos" da tela de Contratos e com o breakdown da Planilha
+  // de Custo quando "Todas as empresas" está selecionado.
+  const valorTotal = useMemo(() => gruposDaEmpresa.reduce((s, g) => s + g.valorTotal, 0), [gruposDaEmpresa]);
 
   return (
     <div className="space-y-6 p-6">
@@ -51,7 +65,7 @@ export default function OrcamentoContratos() {
         <Card>
           <CardHeader className="pb-2">
             <CardDescription>Contratos ativos</CardDescription>
-            <CardTitle className="text-3xl">{grupos.length}</CardTitle>
+            <CardTitle className="text-3xl">{gruposDaEmpresa.length}</CardTitle>
           </CardHeader>
         </Card>
         <Card>
@@ -73,13 +87,18 @@ export default function OrcamentoContratos() {
       <Card>
         <CardHeader className="flex flex-row items-center justify-between flex-wrap gap-3">
           <CardTitle className="text-base">Contratos</CardTitle>
-          <div className="w-64">
-            <Label className="text-xs">Buscar</Label>
-            <Input
-              placeholder="Contrato, cliente ou rubrica..."
-              value={busca}
-              onChange={(e) => setBusca(e.target.value)}
-            />
+          <div className="flex items-end gap-3">
+            <div className="w-48">
+              <FiltroEmpresaOrcamento value={filtroEmpresaId} onChange={setFiltroEmpresaId} />
+            </div>
+            <div className="w-64">
+              <Label className="text-xs">Buscar</Label>
+              <Input
+                placeholder="Contrato, cliente ou rubrica..."
+                value={busca}
+                onChange={(e) => setBusca(e.target.value)}
+              />
+            </div>
           </div>
         </CardHeader>
         <CardContent>
@@ -95,7 +114,10 @@ export default function OrcamentoContratos() {
                     <div className="flex flex-1 items-center justify-between gap-3 pr-2">
                       <div className="text-left">
                         <p className="font-medium">{g.contrato.nome}</p>
-                        <p className="text-xs text-muted-foreground font-normal">{g.contrato.cliente}</p>
+                        <p className="text-xs text-muted-foreground font-normal">
+                          {g.contrato.cliente}
+                          {filtroEmpresaId === EMPRESA_FILTRO_TODAS && ` · ${empresaNomePorId.get(g.contrato.empresa_id) ?? "—"}`}
+                        </p>
                       </div>
                       <span className="text-sm font-semibold whitespace-nowrap">{fmtMoney(g.valorTotal)}</span>
                     </div>

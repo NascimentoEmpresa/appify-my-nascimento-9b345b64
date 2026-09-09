@@ -6,6 +6,7 @@ export type TipoClassificacaoOrcamento = "contrato" | "administrativo";
 const CLASSIFICACAO_COLUMNS =
   "id, nome, ativo, tipo, setor_responsavel, requer_solicitacao, " +
   "aprovador_solicitacao_user_id, aprovador_solicitacao_nome, " +
+  "lancador_despesa_user_ids, lancador_despesa_nomes, " +
   "aprovador1_user_ids, aprovador1_nomes, aprovador1_limite_pct, aprovador1_sem_limite, " +
   "aprovador2_user_ids, aprovador2_nomes, aprovador2_limite_pct, aprovador2_sem_limite, " +
   "aprovador3_user_ids, aprovador3_nomes, aprovador3_limite_pct, aprovador3_sem_limite, " +
@@ -25,6 +26,13 @@ export interface ClassificacaoOrcamento {
   requer_solicitacao: boolean;
   aprovador_solicitacao_user_id: string | null;
   aprovador_solicitacao_nome: string | null;
+  // SIS-2026-0340 (Iury): quando uma solicitação chega em cotacao_aprovada,
+  // por padrão (array vazio) quem converte em Despesa continua sendo o
+  // solicitante (created_by), igual sempre foi. Configurado, é SUBSTITUIÇÃO
+  // — só os lançadores listados podem converter, não mais o solicitante
+  // (que continua vendo o item em Meus Itens, só não age mais nele).
+  lancador_despesa_user_ids: string[];
+  lancador_despesa_nomes: string[];
   // SIS-2026-0236: cada nível pode ter mais de um aprovador — o primeiro
   // elemento é o primeiro selecionado no cadastro (mostrado sozinho na
   // coluna "Fluxo de Aprovação").
@@ -171,6 +179,8 @@ interface SalvarClassificacaoInput {
   requer_solicitacao: boolean;
   aprovador_solicitacao_user_id: string | null;
   aprovador_solicitacao_nome: string | null;
+  lancador_despesa_user_ids: string[];
+  lancador_despesa_nomes: string[];
   aprovador1_user_ids: string[];
   aprovador1_nomes: string[];
   aprovador1_limite_pct: number | null;
@@ -203,16 +213,29 @@ export function useSalvarClassificacaoOrcamento() {
   });
 }
 
-export function usePlanejamentosOrcamento(empresaId: string | null | undefined) {
+// SIS-2026-0337/0309: `todasEmpresas: true` busca sem filtro de empresa —
+// usado pelas telas de Orçamento (Geral/Administrativo/Detalhe) que hoje
+// resolviam Administrativo só da empresa FIXA do perfil (useEmpresaId,
+// nem a empresa "ativa" do seletor) e não tinham como o usuário ver/
+// filtrar as demais empresas que acessa. RLS de planejamento_orcamentario
+// já libera por vínculo (user_pode_ver_empresa, ver migration
+// 20260930000067) — o filtro aqui é só o que o client PEDE, a tela que
+// decide filtrar de volta por empresa localmente (ver FiltroEmpresa em
+// OrcamentoGeral.tsx e afins). Chamadas com só `empresaId` (resolução de
+// Orçado de UMA despesa específica, useOrcadoClassificacao) continuam
+// exatamente como antes.
+export function usePlanejamentosOrcamento(empresaId: string | null | undefined, opts?: { todasEmpresas?: boolean }) {
+  const todasEmpresas = opts?.todasEmpresas ?? false;
   return useQuery({
-    queryKey: [LIST_KEY, empresaId],
-    enabled: !!empresaId,
+    queryKey: [LIST_KEY, todasEmpresas ? "todas" : empresaId],
+    enabled: todasEmpresas || !!empresaId,
     queryFn: async () => {
-      const { data, error } = await (supabase as any)
+      let q = (supabase as any)
         .from("planejamento_orcamentario")
         .select("*, classificacao:classificacao_id(id, nome, ativo)")
-        .eq("empresa_id", empresaId)
         .order("inicio_vigencia", { ascending: false });
+      if (!todasEmpresas) q = q.eq("empresa_id", empresaId);
+      const { data, error } = await q;
       if (error) throw error;
       return (data ?? []) as PlanejamentoOrcamentarioRow[];
     },

@@ -328,6 +328,14 @@ const App = () => (
             <Route path="encarregados/chamados" element={<MeusChamados base="/app/encarregados/chamados" />} />
             <Route path="encarregados/chamados/novo" element={<AbrirChamado base="/app/encarregados/chamados" />} />
             <Route path="encarregados/chamados/:id/acompanhar" element={<AcompanharChamado base="/app/encarregados/chamados" />} />
+            {/* Controle de Diárias para o encarregado. É a MESMA tela do
+                Operacional, com porta própria: a permissão da sidebar é casada
+                por rota, então sem esta rota o item de Diárias em Encarregados
+                era governado por `operacional_diarias` e liberá-lo arrastava o
+                módulo Operacional inteiro para a sidebar dele. O prop diz qual
+                menu manda no botão de lançar; aprovar continua sendo só do
+                Operacional. */}
+            <Route path="encarregados/diarias" element={<ControleDiarias menuCodigo="encarregados_diarias" />} />
             {/* Operacional — Controle de Diárias */}
             <Route path="operacional" element={<Navigate to="/app/operacional/diarias" replace />} />
             <Route path="operacional/diarias" element={<ControleDiarias />} />

@@ -11,17 +11,31 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Pencil, Plus, Settings2 } from "lucide-react";
 import { Link } from "react-router-dom";
 import { useEmpresaId } from "@/hooks/useEmpresaId";
+import { useEmpresasGrupo } from "@/hooks/useMaloteDespesa";
 import { usePlanejamentosOrcamento } from "@/hooks/usePlanejamentoOrcamentario";
 import { useClassificacoesAdministrativo } from "@/hooks/useMaloteClassificacaoAdministrativo";
 import { useClassificacaoAdministrativaVisivel, useSetorResponsavelDaAdministrativa } from "@/hooks/useMaloteAcessoOrcamento";
 import { getStatusVigencia, STATUS_LABEL, STATUS_BADGE_CLASS, fmtMoney, fmtDate, OrcamentoComStatus } from "./orcamentoUtils";
 import { OrcamentoAdministrativoFormModal } from "./OrcamentoAdministrativoFormModal";
 import { SetorRestritoBadge } from "./SetorRestritoBadge";
+import { FiltroEmpresaOrcamento, EMPRESA_FILTRO_TODAS, FiltroEmpresaValor } from "./FiltroEmpresaOrcamento";
 
 export default function OrcamentoAdministrativo() {
+  // empresaId (fixa do perfil) continua usada só como padrão pra CRIAR um
+  // orçamento novo (o modal não tem seletor de empresa próprio) — a
+  // listagem/filtro abaixo é independente disso.
   const { data: empresaId } = useEmpresaId();
+  const { data: empresasGrupo = [] } = useEmpresasGrupo();
+  const empresaNomePorId = useMemo(() => new Map(empresasGrupo.map((e) => [e.id, e.nome])), [empresasGrupo]);
+  const [filtroEmpresaId, setFiltroEmpresaId] = useState<FiltroEmpresaValor>(EMPRESA_FILTRO_TODAS);
   const { data: classificacoesTodas = [] } = useClassificacoesAdministrativo();
-  const { data: orcamentosTodos = [], isLoading } = usePlanejamentosOrcamento(empresaId);
+  // SIS-2026-0337: lista de TODAS as empresas que o usuário acessa (não só
+  // a fixa do perfil) — FiltroEmpresaOrcamento é quem deixa olhar 1 só.
+  const { data: orcamentosDeTodasEmpresas = [], isLoading } = usePlanejamentosOrcamento(null, { todasEmpresas: true });
+  const orcamentosTodos = useMemo(
+    () => (filtroEmpresaId === EMPRESA_FILTRO_TODAS ? orcamentosDeTodasEmpresas : orcamentosDeTodasEmpresas.filter((o) => o.empresa_id === filtroEmpresaId)),
+    [orcamentosDeTodasEmpresas, filtroEmpresaId]
+  );
   // SIS-2026-0265 (Iury): Classificação Administrativo ligada a uma
   // Classificação Malote do Financeiro (setor_responsavel definido) só é
   // visível pra quem tem esse setor liberado em Gerenciamento de Acesso —
@@ -165,7 +179,8 @@ export default function OrcamentoAdministrativo() {
             </Button>
           </div>
         </CardHeader>
-        <CardContent className="grid grid-cols-1 md:grid-cols-4 xl:grid-cols-5 gap-3">
+        <CardContent className="grid grid-cols-1 md:grid-cols-4 xl:grid-cols-6 gap-3">
+          <FiltroEmpresaOrcamento value={filtroEmpresaId} onChange={setFiltroEmpresaId} />
           <div>
             <Label className="text-xs">Classificação</Label>
             <Select value={filtroClassificacao} onValueChange={setFiltroClassificacao}>
@@ -223,6 +238,7 @@ export default function OrcamentoAdministrativo() {
           <Table>
             <TableHeader>
               <TableRow>
+                <TableHead>Empresa</TableHead>
                 <TableHead>Classificação</TableHead>
                 <TableHead>Detalhe</TableHead>
                 <TableHead>Vigência</TableHead>
@@ -234,20 +250,21 @@ export default function OrcamentoAdministrativo() {
             <TableBody>
               {isLoading && (
                 <TableRow>
-                  <TableCell colSpan={6} className="text-center text-muted-foreground py-8">
+                  <TableCell colSpan={7} className="text-center text-muted-foreground py-8">
                     Carregando...
                   </TableCell>
                 </TableRow>
               )}
               {!isLoading && filtrados.length === 0 && (
                 <TableRow>
-                  <TableCell colSpan={6} className="text-center text-muted-foreground py-8">
+                  <TableCell colSpan={7} className="text-center text-muted-foreground py-8">
                     Nenhum orçamento encontrado.
                   </TableCell>
                 </TableRow>
               )}
               {filtrados.map((o) => (
                 <TableRow key={o.id}>
+                  <TableCell className="text-sm text-muted-foreground">{empresaNomePorId.get(o.empresa_id) ?? "—"}</TableCell>
                   <TableCell className="font-medium">
                     <div className="flex items-center gap-1.5">
                       {o.classificacao?.nome ?? "-"}
