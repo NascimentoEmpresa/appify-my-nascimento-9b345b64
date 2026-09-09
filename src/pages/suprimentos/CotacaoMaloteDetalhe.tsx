@@ -18,15 +18,16 @@ import {
   ROTULO_COTACAO, fmtBRL, fmtData, fmtDataHora,
   type Cotacao,
 } from "@/hooks/useMaloteCotacao";
-import { STATUS_BADGE_CLASS, uploadAnexoMalote, useItensDaDespesa } from "@/hooks/useMaloteDespesa";
+import { STATUS_BADGE_CLASS, souLancadorDespesa, uploadAnexoMalote, useItensDaDespesa } from "@/hooks/useMaloteDespesa";
 import { ItensSolicitacao } from "@/components/malote/ItensSolicitacao";
 import { useEmpresaId } from "@/hooks/useEmpresaId";
+import { useAuth } from "@/hooks/useAuth";
 import { useFornecedores, type FornecedorOpcao } from "@/hooks/useSupEstoque";
 import { useGerarPedidoCompra, usePedidoAtivoDaDespesa } from "@/hooks/useCompraPedido";
 import { useScreenAccess } from "@/hooks/useScreenAccess";
 import {
   ArrowLeft, Paperclip, Save, Send, Trash2, CheckCircle2, XCircle, Ban,
-  Trophy, Loader2, ShieldAlert, Info, ShoppingCart, Pencil,
+  Trophy, Loader2, ShieldAlert, Info, ShoppingCart, Pencil, PackageCheck,
 } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
@@ -51,6 +52,7 @@ const LEGADO = "__legado__";
 export default function CotacaoMaloteDetalhe() {
   const { id } = useParams<{ id: string }>();
   const navegar = useNavigate();
+  const { user } = useAuth();
   const { data: d, isLoading, error } = useSolicitacaoParaCotar(id);
   const { data: itens = [] } = useItensDaDespesa(id);
 
@@ -256,14 +258,28 @@ export default function CotacaoMaloteDetalhe() {
                 {d.cotacao_observacoes}</p>
             )}
           </div>
-          <Button className="mt-4"
-            disabled={gerarPedido.isPending || carregandoPedidoAtivo || itens.length === 0 || !!pedidoAtivo}
-            onClick={() => gerarPedido.mutate(d.id)}>
-            {gerarPedido.isPending
-              ? <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-              : <ShoppingCart className="mr-2 h-4 w-4" />}
-            Gerar pedido de compra
-          </Button>
+          <div className="mt-4 flex flex-wrap items-center gap-2">
+            <Button
+              disabled={gerarPedido.isPending || carregandoPedidoAtivo || itens.length === 0 || !!pedidoAtivo}
+              onClick={() => gerarPedido.mutate(d.id)}>
+              {gerarPedido.isPending
+                ? <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                : <ShoppingCart className="mr-2 h-4 w-4" />}
+              Gerar pedido de compra
+            </Button>
+            {/* SIS-2026-0340 (Iury): quando a Classificação tem "Lançador da
+                despesa" configurado e o usuário logado é um deles, aparece
+                aqui um caminho direto pra converter em Despesa — antes só
+                existia via "Meus Itens" do solicitante. */}
+            {souLancadorDespesa(d, user?.id) && (
+              <Button
+                variant="outline"
+                onClick={() => navegar(`/app/malote/criar-despesa?solicitacaoId=${d.id}`)}
+              >
+                <PackageCheck className="mr-2 h-4 w-4" /> Lançar despesa
+              </Button>
+            )}
+          </div>
           {itens.length === 0 && (
             <p className="mt-2 text-xs text-muted-foreground">
               Esta solicitação não possui itens, e o pedido de compra precisa de pelo menos um.

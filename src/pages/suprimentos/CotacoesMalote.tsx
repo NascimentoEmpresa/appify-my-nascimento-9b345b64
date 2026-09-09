@@ -5,13 +5,14 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useEmpresaId } from "@/hooks/useEmpresaId";
+import { useAuth } from "@/hooks/useAuth";
 import {
   useSolicitacoesParaCotar, STATUS_SUPRIMENTOS, ROTULO_COTACAO,
   fmtBRL, fmtData, fmtDataHora,
 } from "@/hooks/useMaloteCotacao";
-import { STATUS_BADGE_CLASS, type StatusDespesa, type MaloteDespesaRow } from "@/hooks/useMaloteDespesa";
+import { STATUS_BADGE_CLASS, souLancadorDespesa, type StatusDespesa, type MaloteDespesaRow } from "@/hooks/useMaloteDespesa";
 import {
-  Hourglass, RefreshCw, XCircle, CheckCircle2, Ban, Search, Inbox, ShieldAlert, FilterX,
+  Hourglass, RefreshCw, XCircle, CheckCircle2, Ban, Search, Inbox, ShieldAlert, FilterX, PackageCheck,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -55,6 +56,7 @@ const DESCRICAO: Partial<Record<StatusDespesa, string>> = {
 
 export default function CotacoesMalote() {
   const navegar = useNavigate();
+  const { user } = useAuth();
   const { data: empresaId } = useEmpresaId();
   const { data: itens = [], isLoading, error } = useSolicitacoesParaCotar(empresaId ?? null);
 
@@ -198,6 +200,13 @@ export default function CotacoesMalote() {
               key={i.id}
               item={i}
               onAbrir={() => navegar(`/app/suprimentos/cotacoes-malote/${i.id}`)}
+              // SIS-2026-0340 (Iury): quando a Classificação tem "Lançador
+              // da despesa" configurado e o usuário logado é um deles, o
+              // card ganha um botão direto pra lançar — sem isso, quem não
+              // é o solicitante teria que adivinhar/entrar no detalhe pra
+              // achar como converter.
+              podeLancar={i.status === "cotacao_aprovada" && souLancadorDespesa(i, user?.id)}
+              onLancar={() => navegar(`/app/malote/criar-despesa?solicitacaoId=${i.id}`)}
             />
           ))}
         </div>
@@ -220,15 +229,30 @@ export default function CotacoesMalote() {
 function CardCotacao({
   item: i,
   onAbrir,
+  podeLancar,
+  onLancar,
 }: {
   item: MaloteDespesaRow;
   onAbrir: () => void;
+  // SIS-2026-0340: true quando i.status === "cotacao_aprovada" e o usuário
+  // logado é um dos lançadores configurados na Classificação — controla se
+  // o botão "Lançar despesa" aparece no rodapé do card.
+  podeLancar: boolean;
+  onLancar: () => void;
 }) {
   return (
-    <button
-      type="button"
+    // Era um único <button> (o card inteiro clicável) — virou <div> com
+    // role/tabIndex equivalentes porque agora pode ter um <Button> de
+    // verdade dentro ("Lançar despesa"), e <button> dentro de <button> é
+    // HTML inválido (nesting) e quebra o clique interno.
+    <div
+      role="button"
+      tabIndex={0}
       onClick={onAbrir}
-      className="flex flex-col overflow-hidden rounded-lg border text-left transition-shadow hover:shadow-md"
+      onKeyDown={(e) => {
+        if (e.key === "Enter" || e.key === " ") onAbrir();
+      }}
+      className="flex flex-col overflow-hidden rounded-lg border text-left transition-shadow hover:shadow-md cursor-pointer"
     >
       <div className="flex items-start justify-between gap-2 border-b bg-muted/40 px-3 py-2">
         <div className="min-w-0">
@@ -261,7 +285,20 @@ function CardCotacao({
           <p>Pagamento: {fmtData(i.data_pagamento)}</p>
           <p>Atualizado {fmtDataHora(i.updated_at)}</p>
         </div>
+
+        {podeLancar && (
+          <Button
+            size="sm"
+            className="mt-1 gap-1.5"
+            onClick={(e) => {
+              e.stopPropagation();
+              onLancar();
+            }}
+          >
+            <PackageCheck className="h-3.5 w-3.5" /> Lançar despesa
+          </Button>
+        )}
       </div>
-    </button>
+    </div>
   );
 }

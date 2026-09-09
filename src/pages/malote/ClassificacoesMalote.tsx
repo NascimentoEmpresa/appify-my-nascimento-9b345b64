@@ -30,6 +30,12 @@ interface FormState {
   requerSolicitacao: boolean;
   aprovadorSolicitacaoUserId: string | null;
   aprovadorSolicitacaoNome: string | null;
+  // SIS-2026-0340 (Iury): "caso o item esteja com cotação aprovada, seja
+  // possível definir quem vai lançar essa despesa no malote e não o
+  // solicitante como está hoje" — array (mesmo padrão de aprovador1/2/3),
+  // opcional (vazio = continua sendo o solicitante, comportamento de hoje).
+  lancadorDespesaUserIds: string[];
+  lancadorDespesaNomes: string[];
   tipo: TipoClassificacaoOrcamento | null;
   // SIS-2026-0335 (Iury): "existe a possibilidade de ter mais de um
   // aprovador de setor diferente" — vira lista, mesmo padrão de
@@ -59,6 +65,8 @@ const VAZIO: FormState = {
   requerSolicitacao: false,
   aprovadorSolicitacaoUserId: null,
   aprovadorSolicitacaoNome: null,
+  lancadorDespesaUserIds: [],
+  lancadorDespesaNomes: [],
   tipo: null,
   setorResponsavel: [],
   aprovador1UserIds: [],
@@ -84,6 +92,8 @@ function paraFormState(c: ClassificacaoOrcamento): FormState {
     requerSolicitacao: c.requer_solicitacao,
     aprovadorSolicitacaoUserId: c.aprovador_solicitacao_user_id,
     aprovadorSolicitacaoNome: c.aprovador_solicitacao_nome,
+    lancadorDespesaUserIds: c.lancador_despesa_user_ids,
+    lancadorDespesaNomes: c.lancador_despesa_nomes,
     tipo: c.tipo,
     setorResponsavel: c.setor_responsavel ?? [],
     aprovador1UserIds: c.aprovador1_user_ids,
@@ -180,7 +190,10 @@ export default function ClassificacoesMalote() {
   // (sem precisar já ter feito a troca em nenhuma).
   const [massaOpen, setMassaOpen] = useState(false);
   const [massaAcao, setMassaAcao] = useState<"incluir" | "excluir">("incluir");
-  const [massaNivel, setMassaNivel] = useState<1 | 2 | 3>(1);
+  // SIS-2026-0340 (pedido do usuário): a mesma ferramenta passa a cobrir
+  // também "Lançador da despesa", não só Aprovador 1/2/3 — "campo" no lugar
+  // de "nível" porque lançador não é um nível de aprovação.
+  const [massaNivel, setMassaNivel] = useState<1 | 2 | 3 | "lancador">(1);
   const [massaAprovadorId, setMassaAprovadorId] = useState("");
   const [massaSelecionadas, setMassaSelecionadas] = useState<Set<string>>(new Set());
   const [massaBusca, setMassaBusca] = useState("");
@@ -205,44 +218,51 @@ export default function ClassificacoesMalote() {
   // "Incluir" mantém o catálogo por cargo do nível (mesmas listas usadas
   // no modal de edição — aprovadores1/2/3), já que faz sentido incluir
   // alguém que ainda não é aprovador em lugar nenhum.
+  const massaChaveIds = massaNivel === "lancador" ? "lancador_despesa_user_ids" : (`aprovador${massaNivel}_user_ids` as const);
+  const massaChaveNomes = massaNivel === "lancador" ? "lancador_despesa_nomes" : (`aprovador${massaNivel}_nomes` as const);
+
   const massaAprovadoresAtuaisNoNivel = useMemo(() => {
-    const chaveIds = `aprovador${massaNivel}_user_ids` as const;
-    const chaveNomes = `aprovador${massaNivel}_nomes` as const;
     const vistos = new Map<string, string>();
     classificacoes.forEach((c) => {
-      c[chaveIds].forEach((id, i) => {
-        if (!vistos.has(id)) vistos.set(id, c[chaveNomes][i] ?? id);
+      c[massaChaveIds].forEach((id, i) => {
+        if (!vistos.has(id)) vistos.set(id, c[massaChaveNomes][i] ?? id);
       });
     });
     return Array.from(vistos, ([value, label]) => ({ value, label })).sort((a, b) => a.label.localeCompare(b.label, "pt-BR"));
-  }, [classificacoes, massaNivel]);
+  }, [classificacoes, massaChaveIds, massaChaveNomes]);
 
   const massaOpcoesAprovador = useMemo(() => {
     if (massaAcao === "excluir") return massaAprovadoresAtuaisNoNivel;
+    // SIS-2026-0340: catálogo de Lançador é o mesmo do campo na edição
+    // individual (todos os usuários ativos, sem filtro de cargo).
+    if (massaNivel === "lancador") return aprovadoresSolicitacao.map((a) => ({ value: a.id, label: a.nome }));
     const catalogo = massaNivel === 1 ? aprovadores1 : massaNivel === 2 ? aprovadores2 : aprovadores3;
     return catalogo.map((a) => ({ value: a.id, label: a.nome }));
-  }, [massaAcao, massaNivel, massaAprovadoresAtuaisNoNivel, aprovadores1, aprovadores2, aprovadores3]);
+  }, [massaAcao, massaNivel, massaAprovadoresAtuaisNoNivel, aprovadores1, aprovadores2, aprovadores3, aprovadoresSolicitacao]);
 
-  // Candidatas ao aprovador/nível/ação escolhidos na ferramenta em massa:
-  // "incluir" só oferece quem AINDA não está naquele nível (não faz
-  // sentido marcar quem já é aprovador); "excluir" só oferece quem JÁ
-  // está — bate exatamente com o pedido do Iury ("marcar todas as
-  // classificações que eu quero tirar ela").
+  // Candidatas ao aprovador/campo/ação escolhidos na ferramenta em massa:
+  // "incluir" só oferece quem AINDA não está naquele campo (não faz
+  // sentido marcar quem já está); "excluir" só oferece quem JÁ está —
+  // bate exatamente com o pedido do Iury ("marcar todas as classificações
+  // que eu quero tirar ela"). SIS-2026-0340: Lançador da despesa só faz
+  // sentido em classificação com "Requer solicitação" — é aí que existe
+  // status='cotacao_aprovada' pra alguém lançar.
   const massaCandidatas = useMemo(() => {
     if (!massaAprovadorId) return [];
-    const chave = `aprovador${massaNivel}_user_ids` as const;
     const nomeAlvo = semAcento(massaBusca);
     return classificacoes.filter((c) => {
       if (nomeAlvo && !semAcento(c.nome).includes(nomeAlvo)) return false;
-      const jaEsta = c[chave].includes(massaAprovadorId);
+      if (massaNivel === "lancador" && !c.requer_solicitacao) return false;
+      const jaEsta = c[massaChaveIds].includes(massaAprovadorId);
       if (massaAcao === "incluir") return !jaEsta;
+      if (!jaEsta) return false;
       // Excluir: nunca oferece tirar o único Aprovador 1 de uma
       // classificação (campo obrigatório) — ficaria sem ninguém pra
-      // aprovar aquele nível.
-      if (!jaEsta) return false;
-      return !esvaziariaAprovador1(c, massaNivel, false);
+      // aprovar aquele nível. Lançador é sempre opcional, sem essa trava.
+      if (massaNivel !== "lancador" && esvaziariaAprovador1(c, massaNivel, false)) return false;
+      return true;
     });
-  }, [classificacoes, massaAprovadorId, massaNivel, massaAcao, massaBusca]);
+  }, [classificacoes, massaAprovadorId, massaNivel, massaChaveIds, massaAcao, massaBusca]);
 
   // Muda nível/ação => a lista de opções de Aprovador é outra (ver
   // massaOpcoesAprovador), então o aprovador selecionado antes pode nem
@@ -283,13 +303,11 @@ export default function ClassificacoesMalote() {
   }
 
   // Monta o payload de save da classificação aplicando só a inclusão/
-  // exclusão do aprovador no nível escolhido — preserva o resto (mesmo
-  // padrão de construirPayloadComTroca).
+  // exclusão do aprovador (ou lançador, SIS-2026-0340) no campo escolhido —
+  // preserva o resto (mesmo padrão de construirPayloadComTroca).
   function construirPayloadEmMassa(c: ClassificacaoOrcamento, aprovadorNome: string) {
-    const idsKey = `aprovador${massaNivel}_user_ids` as const;
-    const nomesKey = `aprovador${massaNivel}_nomes` as const;
-    let ids = [...c[idsKey]];
-    let nomes = [...c[nomesKey]];
+    let ids = [...c[massaChaveIds]];
+    let nomes = [...c[massaChaveNomes]];
     if (massaAcao === "incluir") {
       ids = [...ids, massaAprovadorId];
       nomes = [...nomes, aprovadorNome];
@@ -309,6 +327,8 @@ export default function ClassificacoesMalote() {
       requer_solicitacao: c.requer_solicitacao,
       aprovador_solicitacao_user_id: c.aprovador_solicitacao_user_id,
       aprovador_solicitacao_nome: c.aprovador_solicitacao_nome,
+      lancador_despesa_user_ids: massaNivel === "lancador" ? ids : c.lancador_despesa_user_ids,
+      lancador_despesa_nomes: massaNivel === "lancador" ? nomes : c.lancador_despesa_nomes,
       aprovador1_user_ids: massaNivel === 1 ? ids : c.aprovador1_user_ids,
       aprovador1_nomes: massaNivel === 1 ? nomes : c.aprovador1_nomes,
       aprovador1_limite_pct: c.aprovador1_limite_pct,
@@ -325,10 +345,16 @@ export default function ClassificacoesMalote() {
     };
   }
 
+  const massaRotuloCampo = massaNivel === "lancador" ? "Lançador da despesa" : `Aprovador ${massaNivel}`;
+
   async function aplicarMassa() {
-    if (!massaAprovadorId) return toast.error("Selecione o aprovador.");
+    if (!massaAprovadorId) return toast.error(massaNivel === "lancador" ? "Selecione o lançador." : "Selecione o aprovador.");
     if (massaSelecionadas.size === 0) return toast.error("Selecione ao menos uma classificação.");
-    const aprovadorNome = todosAprovadores.find((a) => a.id === massaAprovadorId)?.nome ?? massaAprovadorId;
+    // SIS-2026-0340: catálogo de nome muda com o campo — todosAprovadores
+    // (aprovador1/2/3) não inclui gente que só está no catálogo de
+    // Lançador/Aprovador da solicitação.
+    const catalogoNome = massaNivel === "lancador" ? aprovadoresSolicitacao : todosAprovadores;
+    const aprovadorNome = catalogoNome.find((a) => a.id === massaAprovadorId)?.nome ?? massaAprovadorId;
     setMassaAplicando(true);
     try {
       const alvos = classificacoes.filter((c) => massaSelecionadas.has(c.id));
@@ -337,8 +363,8 @@ export default function ClassificacoesMalote() {
       }
       toast.success(
         massaAcao === "incluir"
-          ? `${aprovadorNome} incluído(a) como Aprovador ${massaNivel} em ${alvos.length} classificação(ões).`
-          : `${aprovadorNome} removido(a) do Aprovador ${massaNivel} em ${alvos.length} classificação(ões).`
+          ? `${aprovadorNome} incluído(a) como ${massaRotuloCampo} em ${alvos.length} classificação(ões).`
+          : `${aprovadorNome} removido(a) do ${massaRotuloCampo} em ${alvos.length} classificação(ões).`
       );
       fecharMassa();
     } catch (e: any) {
@@ -400,6 +426,14 @@ export default function ClassificacoesMalote() {
     aprovadoresSolicitacao.map((a) => ({ value: a.id, label: a.nome })),
     editando?.aprovadorSolicitacaoUserId ?? null,
     editando?.aprovadorSolicitacaoNome ?? null
+  );
+  // SIS-2026-0340: mesmo catálogo do Aprovador da solicitação (todos os
+  // usuários ativos, sem filtro de cargo) — "quem lança" não é um papel
+  // hierárquico fixo, é uma escolha operacional por classificação.
+  const opcoesLancadorDespesa = comSelecaoAtualMulti(
+    aprovadoresSolicitacao.map((a) => ({ value: a.id, label: a.nome })),
+    editando?.lancadorDespesaUserIds ?? [],
+    editando?.lancadorDespesaNomes ?? []
   );
 
   function abrirNovo() {
@@ -476,6 +510,10 @@ export default function ClassificacoesMalote() {
       requer_solicitacao: c.requer_solicitacao,
       aprovador_solicitacao_user_id: c.aprovador_solicitacao_user_id,
       aprovador_solicitacao_nome: c.aprovador_solicitacao_nome,
+      // SIS-2026-0340: troca em massa é só do aprovador1/2/3 (ver
+      // TrocaDetectada) — Lançador nunca muda aqui, preserva como está.
+      lancador_despesa_user_ids: c.lancador_despesa_user_ids,
+      lancador_despesa_nomes: c.lancador_despesa_nomes,
       aprovador1_user_ids: troca.slot === 1 ? ids : c.aprovador1_user_ids,
       aprovador1_nomes: troca.slot === 1 ? nomes : c.aprovador1_nomes,
       aprovador1_limite_pct: c.aprovador1_limite_pct,
@@ -502,6 +540,11 @@ export default function ClassificacoesMalote() {
     setEditando((v) =>
       v ? { ...v, aprovadorSolicitacaoUserId: userId || null, aprovadorSolicitacaoNome: userId ? nome : null } : v
     );
+  }
+
+  function setLancadorDespesa(userIds: string[]) {
+    const nomes = userIds.map((id) => aprovadoresSolicitacao.find((a) => a.id === id)?.nome ?? id);
+    setEditando((v) => (v ? { ...v, lancadorDespesaUserIds: userIds, lancadorDespesaNomes: nomes } : v));
   }
 
   function parsePct(valor: string): number | null {
@@ -578,6 +621,11 @@ export default function ClassificacoesMalote() {
       requer_solicitacao: editando.requerSolicitacao,
       aprovador_solicitacao_user_id: editando.requerSolicitacao ? editando.aprovadorSolicitacaoUserId : null,
       aprovador_solicitacao_nome: editando.requerSolicitacao ? editando.aprovadorSolicitacaoNome : null,
+      // SIS-2026-0340: só faz sentido junto de "Requer solicitação" (é onde
+      // status='cotacao_aprovada' existe) — desmarcar Requer solicitação
+      // limpa, mesmo padrão do Aprovador da solicitação acima.
+      lancador_despesa_user_ids: editando.requerSolicitacao ? editando.lancadorDespesaUserIds : [],
+      lancador_despesa_nomes: editando.requerSolicitacao ? editando.lancadorDespesaNomes : [],
       aprovador1_user_ids: editando.aprovador1UserIds,
       aprovador1_nomes: editando.aprovador1Nomes,
       aprovador1_limite_pct: limite1,
@@ -692,7 +740,7 @@ export default function ClassificacoesMalote() {
             </Button>
             <Button variant="outline" onClick={() => setMassaOpen(true)}>
               <UsersRound className="h-4 w-4 mr-2" />
-              Incluir/Excluir Aprovador em Massa
+              Incluir/Excluir em Massa
             </Button>
             <Button onClick={abrirNovo}>
               <Plus className="h-4 w-4 mr-2" />
@@ -854,6 +902,23 @@ export default function ClassificacoesMalote() {
                     options={opcoesAprovadorSolicitacao}
                     placeholder="Buscar aprovador..."
                     searchPlaceholder="Buscar aprovador..."
+                  />
+                </div>
+              )}
+              {editando?.requerSolicitacao && (
+                <div className="pl-6">
+                  <Label>Lançador da despesa</Label>
+                  <p className="text-xs text-muted-foreground mb-1">
+                    Quando a cotação desta classificação for aprovada, só quem estiver aqui poderá lançar a despesa
+                    no Malote — o solicitante deixa de conseguir fazer isso (mas continua vendo o item em "Meus
+                    Itens"). Deixe vazio para manter como é hoje (o próprio solicitante lança).
+                  </p>
+                  <SearchableMultiSelect
+                    value={editando?.lancadorDespesaUserIds ?? []}
+                    onChange={setLancadorDespesa}
+                    options={opcoesLancadorDespesa}
+                    placeholder="Buscar lançador..."
+                    searchPlaceholder="Buscar lançador..."
                   />
                 </div>
               )}
@@ -1120,7 +1185,7 @@ export default function ClassificacoesMalote() {
       <Dialog open={massaOpen} onOpenChange={(v) => (v ? setMassaOpen(true) : fecharMassa())}>
         <DialogContent className="sm:max-w-lg max-h-[90vh] overflow-y-auto">
           <DialogHeader>
-            <DialogTitle>Incluir/Excluir Aprovador em Massa</DialogTitle>
+            <DialogTitle>Incluir/Excluir em Massa</DialogTitle>
           </DialogHeader>
           <div className="space-y-4">
             <div className="flex rounded-md border border-border p-1 gap-1">
@@ -1146,35 +1211,41 @@ export default function ClassificacoesMalote() {
 
             <div className="grid grid-cols-2 gap-3">
               <div>
-                <Label>Nível</Label>
-                <Select value={String(massaNivel)} onValueChange={(v) => setMassaNivel(Number(v) as 1 | 2 | 3)}>
+                <Label>Campo</Label>
+                <Select value={String(massaNivel)} onValueChange={(v) => setMassaNivel(v === "lancador" ? "lancador" : (Number(v) as 1 | 2 | 3))}>
                   <SelectTrigger><SelectValue /></SelectTrigger>
                   <SelectContent>
                     <SelectItem value="1">Aprovador 1</SelectItem>
                     <SelectItem value="2">Aprovador 2</SelectItem>
                     <SelectItem value="3">Aprovador 3</SelectItem>
+                    <SelectItem value="lancador">Lançador da despesa</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
               <div>
-                <Label>Aprovador</Label>
+                <Label>{massaNivel === "lancador" ? "Lançador" : "Aprovador"}</Label>
                 <SearchableSelect
                   value={massaAprovadorId}
                   onChange={setMassaAprovadorId}
                   options={massaOpcoesAprovador}
                   placeholder="Selecione..."
-                  searchPlaceholder="Buscar aprovador..."
+                  searchPlaceholder={massaNivel === "lancador" ? "Buscar lançador..." : "Buscar aprovador..."}
                 />
               </div>
             </div>
+            {massaNivel === "lancador" && (
+              <p className="text-xs text-muted-foreground">
+                Só aparecem classificações com "Requer solicitação" marcado — é aí que existe cotação a aprovar.
+              </p>
+            )}
 
             {massaAprovadorId && (
               <div className="space-y-2">
                 <div className="flex items-center justify-between">
                   <Label className="text-xs">
                     {massaAcao === "incluir"
-                      ? `Classificações onde incluir como Aprovador ${massaNivel}`
-                      : `Classificações onde remover do Aprovador ${massaNivel}`}
+                      ? `Classificações onde incluir como ${massaRotuloCampo}`
+                      : `Classificações onde remover do ${massaRotuloCampo}`}
                   </Label>
                   <div className="flex gap-2">
                     <Button variant="link" size="sm" className="h-auto p-0 text-xs" onClick={massaSelecionarTodas}>
@@ -1195,8 +1266,8 @@ export default function ClassificacoesMalote() {
                   {massaCandidatas.length === 0 && (
                     <p className="p-3 text-xs text-muted-foreground">
                       {massaAcao === "incluir"
-                        ? "Todas as classificações já têm esse aprovador nesse nível (ou não há nenhuma cadastrada)."
-                        : "Nenhuma classificação tem esse aprovador nesse nível."}
+                        ? `Todas as classificações elegíveis já têm essa pessoa como ${massaRotuloCampo} (ou não há nenhuma).`
+                        : `Nenhuma classificação tem essa pessoa como ${massaRotuloCampo}.`}
                     </p>
                   )}
                   {massaCandidatas.map((c) => (

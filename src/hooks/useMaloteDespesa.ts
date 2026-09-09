@@ -262,6 +262,11 @@ export interface MaloteDespesaRow {
     // (aguardando_aprovacao_inicial/aguardando_cotacao/cotacao_realizada).
     aprovador_solicitacao_user_id?: string | null;
     aprovador_solicitacao_nome?: string | null;
+    // SIS-2026-0340: array vazio/undefined = comportamento de hoje (o
+    // solicitante lança a despesa quando a cotação é aprovada). Preenchido
+    // = só esses usuários podem — ver souLancadorDespesa.
+    lancador_despesa_user_ids?: string[];
+    lancador_despesa_nomes?: string[];
     // SIS-2026-0192: % acima do qual uma linha de rateio precisa de
     // justificativa (cadastrado desde SIS-2026-0106, só passa a ser
     // exibido aqui — sem null tratado como "nunca pede justificativa").
@@ -344,7 +349,7 @@ const DESPESA_COLUMNS =
   "arquivos, created_at, created_by, updated_at, " +
   "classificacao:classificacao_id(id, nome, setor_responsavel, aprovador1_nomes, aprovador2_nomes, aprovador3_nomes, aprovador1_user_ids, aprovador2_user_ids, aprovador3_user_ids, " +
   "aprovador1_limite_pct, aprovador1_sem_limite, aprovador2_limite_pct, aprovador2_sem_limite, aprovador3_limite_pct, aprovador3_sem_limite, " +
-  "aprovador_solicitacao_user_id, aprovador_solicitacao_nome, limite_justificativa_pct)";
+  "aprovador_solicitacao_user_id, aprovador_solicitacao_nome, lancador_despesa_user_ids, lancador_despesa_nomes, limite_justificativa_pct)";
 
 // ── Catálogos usados no rateio ──────────────────────────────────────────
 export function useEmpresasGrupo() {
@@ -598,6 +603,14 @@ export interface SalvarDespesaInput {
   // bloqueio de dia (data_pagamento em dia bloqueado), só pra ela.
   excecao?: boolean;
   justificativa_excecao?: string | null;
+  // [SEM-CHAMADO] (achado real, DM-2026-0246 — complemento ao SIS-2026-0339):
+  // mesma coluna usada por necessidade_de_ajuste (aprovação) e por
+  // ajuste_pagamento (pagamento, malote_solicitar_ajuste_pagamento_despesa).
+  // Precisa ser limpa explicitamente quando o solicitante resolve um
+  // ajuste_pagamento e a despesa volta pra aguardando_pagamento — senão o
+  // motivo antigo (ex. "corrigir nome") fica pendurado numa despesa que já
+  // foi corrigida.
+  motivo_ajuste?: string | null;
   // SIS-2026-0334: true quando o checkbox "Não necessita solicitação"
   // realmente ignorou um requer_solicitacao=true da Classificação nesta
   // despesa (rastro de auditoria — ver malote_despesa).
@@ -772,8 +785,17 @@ export function useExcluirPermanentemente() {
 }
 
 // "Mandar para aprovação novamente" — salva as edições e reinicia o
-// fluxo em N1, disponível em qualquer status ativo (não existe "salvar
-// sem reenviar" — parecer do chefe, SIS-2026-0104).
+// fluxo em N1. Usado em rascunho/necessidade_de_ajuste, onde a intenção É
+// reiniciar a aprovação (o solicitante está corrigindo algo que o
+// aprovador pediu, ou enviando por 1ª vez).
+//
+// SIS-2026-0339 (Iury): exceção à regra "não existe salvar sem reenviar"
+// (parecer do chefe, SIS-2026-0104) — com a despesa já em
+// pendente_aprovacao/aguardando_pagamento, reiniciar em N1 toda vez que o
+// solicitante corrige uma data seria reabrir uma aprovação que já
+// aconteceu, só por causa de um ajuste de dado. Pra esses 2 status,
+// useSalvarEdicaoPosAprovacao (abaixo) é o caminho certo: salva sem
+// reenviar, sem tocar em status/nível.
 export function useMandarParaAprovacaoNovamente() {
   const qc = useQueryClient();
   const salvar = useSalvarDespesa();
@@ -791,6 +813,34 @@ export function useMandarParaAprovacaoNovamente() {
       });
       await (supabase as any).from("malote_despesa").update({ nivel_aprovacao_atual: 1, motivo_ajuste: null }).eq("id", despesaId);
       await registrarEventoDespesa(despesaId, "reenvio_aprovacao", descricaoEvento ?? null, 1);
+      return despesaId;
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: [DESPESA_KEY] }),
+  });
+}
+
+// SIS-2026-0339 (Iury): "Deixar editável para o SOLICITANTE em meus itens
+// a parte de Dados de aprovação e pagamento e dados de despesa até o
+// status de aguardando pagamento... para que possa ser alterado caso
+// necessário como data" — diferente de useMandarParaAprovacaoNovamente,
+// aqui status e nivel_aprovacao_atual NÃO mudam (a despesa continua
+// exatamente de onde estava, já aprovada até o nível em que se encontra).
+// Só o Rateio fica de fora (decisão confirmada com o usuário: continua
+// travado depois de enviado, mesmo nesses 2 status) — por isso não aceita
+// `rateio` no input.
+//
+// "descricaoEvento" nunca é opcional de verdade aqui — o pedido do
+// usuário foi "precisaria registrar em histórico TODAS as modificações
+// realizadas", então sempre grava evento, com um texto padrão quando o
+// chamador não detectou nenhuma diferença pra resumir.
+export function useSalvarEdicaoPosAprovacao() {
+  const qc = useQueryClient();
+  const salvar = useSalvarDespesa();
+  return useMutation({
+    mutationFn: async (input: Omit<SalvarDespesaInput, "rateio"> & { descricaoEvento?: string | null }) => {
+      const { descricaoEvento, ...resto } = input;
+      const despesaId = await salvar.mutateAsync(resto);
+      await registrarEventoDespesa(despesaId, "edicao", descricaoEvento ?? "Dados revisados pelo solicitante (sem alteração detectada).");
       return despesaId;
     },
     onSuccess: () => qc.invalidateQueries({ queryKey: [DESPESA_KEY] }),
@@ -876,6 +926,24 @@ export function souAprovadorConfigurado(despesa: MaloteDespesaRow, userId: strin
 export function souAprovadorSolicitacao(despesa: MaloteDespesaRow, userId: string | null | undefined): boolean {
   if (!userId) return false;
   return despesa.classificacao?.aprovador_solicitacao_user_id === userId;
+}
+
+// SIS-2026-0340 (Iury): "caso o item esteja com cotação aprovada, seja
+// possível a gente definir quem vai lançar essa despesa no malote e não o
+// solicitante como está hoje". Array vazio/undefined = ninguém configurado
+// ainda, então NÃO é "todo mundo pode" — quem decide isso é
+// classificacaoTemLancadorConfigurado (abaixo), não esta função sozinha.
+export function souLancadorDespesa(despesa: MaloteDespesaRow, userId: string | null | undefined): boolean {
+  if (!userId) return false;
+  return !!despesa.classificacao?.lancador_despesa_user_ids?.includes(userId);
+}
+
+// Uma vez que a Classificação tem QUALQUER lançador configurado, é
+// substituição (decisão confirmada com o usuário): o solicitante original
+// deixa de poder lançar essa despesa — só quem está na lista pode. Array
+// vazio = comportamento de sempre (o solicitante lança).
+export function classificacaoTemLancadorConfigurado(despesa: MaloteDespesaRow): boolean {
+  return (despesa.classificacao?.lancador_despesa_user_ids?.length ?? 0) > 0;
 }
 
 // Reaproveita a função Postgres já usada pelo RLS do Malote (piloto por
@@ -1425,6 +1493,24 @@ export async function uploadAnexosMalote(files: File[], despesaFolderId: string,
   return paths;
 }
 
+// [SEM-CHAMADO] (achado real, discutido com o usuário em 09/09): parcela
+// seguinte cai no dia do desconto do mês, sem NENHUM ajuste de dia da
+// semana — se o dia do desconto (ou o clamp de fim de mês) cair num
+// sábado/domingo, a parcela nascia com vencimento no fim de semana. Regra
+// confirmada com o usuário: puxa pro dia útil ANTERIOR (sexta), nunca pra
+// frente. Só cobre fim de semana — feriado/dia bloqueado (malote_dia_bloqueado)
+// é um caso genuinamente diferente (tabela configurável, exigiria consulta
+// ao banco) e já tem tratamento próprio, mas só na data_pagamento da
+// MESTRA/parcela 1 (bloqueia com exceção, não "puxa" — ver
+// 20260914000001_malote_bloqueio_dia_pagamento.sql); não é o que foi pedido
+// aqui.
+function ajustarParaDiaUtilAnterior(data: Date): Date {
+  const diaSemana = data.getDay(); // 0 = domingo, 6 = sábado
+  if (diaSemana === 0) data.setDate(data.getDate() - 2); // domingo → sexta
+  else if (diaSemana === 6) data.setDate(data.getDate() - 1); // sábado → sexta
+  return data;
+}
+
 /**
  * Gera N parcelas iguais (a última absorve o resto de arredondamento).
  *
@@ -1447,19 +1533,21 @@ export function gerarParcelas(valorTotal: number, numeroParcelas: number, dataPa
   for (let i = 0; i < numeroParcelas; i++) {
     // Parcela 1: exatamente a data de pagamento escolhida (string original,
     // sem passar por new Date/toISOString — evita qualquer risco de
-    // deslocamento de fuso). Parcelas seguintes: dia do desconto no mês
-    // correspondente — clampado ao último dia daquele mês (SIS-2026-0263:
-    // dia do desconto liberado até 30, mas fevereiro só tem 28/29; sem o
-    // clamp, `new Date(ano, mes, 30)` "rolava" pra março em vez de cair no
-    // fim de fevereiro).
+    // deslocamento de fuso; também não entra no ajuste de fim de semana —
+    // é a data que o solicitante escolheu, validada pelo bloqueio de dia
+    // bloqueado já existente na mestra, não por este cálculo). Parcelas
+    // seguintes: dia do desconto no mês correspondente — clampado ao
+    // último dia daquele mês (SIS-2026-0263: dia do desconto liberado até
+    // 30, mas fevereiro só tem 28/29; sem o clamp, `new Date(ano, mes, 30)`
+    // "rolava" pra março em vez de cair no fim de fevereiro) — e então
+    // puxado pro dia útil anterior se cair em fim de semana.
     let dataVencimento = dataPagamento;
     if (i > 0) {
       const mesAlvo = base.getMonth() + i;
       const diaAlvo = diaDesconto ?? base.getDate();
       const ultimoDiaDoMesAlvo = new Date(base.getFullYear(), mesAlvo + 1, 0).getDate();
-      dataVencimento = new Date(base.getFullYear(), mesAlvo, Math.min(diaAlvo, ultimoDiaDoMesAlvo))
-        .toISOString()
-        .slice(0, 10);
+      const dataAlvo = ajustarParaDiaUtilAnterior(new Date(base.getFullYear(), mesAlvo, Math.min(diaAlvo, ultimoDiaDoMesAlvo)));
+      dataVencimento = dataAlvo.toISOString().slice(0, 10);
     }
     parcelas.push({
       numero_parcela: i + 1,
