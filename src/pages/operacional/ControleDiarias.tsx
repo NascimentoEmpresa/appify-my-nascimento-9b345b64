@@ -112,7 +112,15 @@ function StatCard({
   );
 }
 
-export default function ControleDiarias() {
+// A mesma tela atende duas portas: /app/operacional/diarias (Operacional) e
+// /app/encarregados/diarias (Encarregados). Cada porta tem seu próprio código
+// de menu, porque a permissão da sidebar é casada por rota — ver o comentário
+// da rota em App.tsx e a migration 20260930000065.
+type MenuDiarias = "operacional_diarias" | "encarregados_diarias";
+
+export default function ControleDiarias({
+  menuCodigo = "operacional_diarias",
+}: { menuCodigo?: MenuDiarias } = {}) {
   const { toast } = useToast();
   const { user } = useAuth();
   const {
@@ -124,6 +132,15 @@ export default function ControleDiarias() {
   const { data: contratos = [] } = useContratosDiaria();
   const criar = useCriarSolicitacaoDiaria();
   const decidir = useDecidirSolicitacaoDiaria();
+  // Aprovar é SEMPRE do Operacional, nunca do menu da porta pela qual a tela
+  // foi aberta — por isso o código aqui é fixo, e não `menuCodigo`. O toggle
+  // padrão do Gerenciamento de Acesso grava o pacote inteiro
+  // (visualizar/incluir/alterar/aprovar/exportar, ACOES_DO_TOGGLE_PADRAO em
+  // ModulosMenusTab.tsx), então ligar a chave de Encarregados grava um
+  // 'aprovar' que o backend deliberadamente ignora: diaria_pode() nega
+  // 'aprovar' para `encarregados_diarias`, e diaria_guard() só reconhece
+  // `operacional_diarias`. Se este hook seguisse `menuCodigo`, o encarregado
+  // veria os botões de aprovar/reprovar e levaria erro do banco ao clicar.
   const { data: podeAprovar = false } = useScreenAccess("operacional_diarias", "aprovar");
 
   // Filtros
@@ -369,7 +386,7 @@ export default function ControleDiarias() {
             <Button variant="outline" onClick={limparFiltros}>
               <RotateCcw className="mr-2 h-4 w-4" /> Limpar filtros
             </Button>
-            <AcessoGate menu="operacional_diarias" acao="incluir">
+            <AcessoGate menu={menuCodigo} acao="incluir">
               <Button onClick={() => setModal({ modo: "nova", s: null })}>
                 <Plus className="mr-2 h-4 w-4" /> Solicitação de pagamento de diária
               </Button>
