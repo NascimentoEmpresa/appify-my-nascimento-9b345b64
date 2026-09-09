@@ -594,18 +594,29 @@ export function RateioGrid({
                 )}
                 {mostrarColunasOrcamento &&
                   (() => {
-                    // SIS-2026-0212 (complemento): mesmo congelamento da
-                    // RateioAprovadorTable — na prática essa grade só
-                    // renderiza pra despesa ainda não paga (bloqueado=true
-                    // desliga rateioEPagamentoEditaveis), mas mantém
-                    // consistente caso isso mude.
-                    const estaCongelada = linha.congelado_em != null;
-                    const orcado = estaCongelada ? linha.orcado_snapshot ?? null : resolverOrcado!(classificacaoId, linha.contrato_id, mesSelecionado ?? "");
+                    // SIS-2026-0212 (complemento) dizia "preferir o snapshot
+                    // congelado, mas essa grade só renderiza pra despesa
+                    // ainda não paga, então na prática nunca tinha
+                    // congelado_em setado" — deixou de valer com o
+                    // DM-2026-0268: agora esta grade TAMBÉM renderiza em
+                    // ajuste_pagamento, status que já passou por
+                    // malote_aprovar_despesa (que congela o snapshot ao
+                    // entrar em aguardando_pagamento). Achado real: preferir
+                    // o snapshot aqui fazia a coluna "Valor utilizado +
+                    // lançamento" ignorar o Valor recém-editado pelo
+                    // solicitante, mostrando sempre o número de antes do
+                    // ajuste. Esta grade só é exibida quando o Rateio está
+                    // de fato editável (rateioEditavel, ver
+                    // DespesaVisualizar.tsx) — a versão read-only congelada
+                    // continua correta em RateioAprovadorTable/
+                    // RateioParceladoTable, que são as únicas que ainda
+                    // devem preferir o snapshot. Por isso, aqui dentro,
+                    // sempre calcula ao vivo a partir do linha.valor atual,
+                    // congelado_em ou não.
+                    const orcado = resolverOrcado!(classificacaoId, linha.contrato_id, mesSelecionado ?? "");
                     const chave = linha.contrato_id ?? "__sem_contrato__";
                     const utilizadoAntes = utilizadoAntesPorContrato.get(chave) ?? 0;
-                    const utilizadoComLancamento = estaCongelada
-                      ? linha.utilizado_com_lancamento_snapshot ?? 0
-                      : utilizadoAntes + (Number(linha.valor) || 0) * fatorSelecionado;
+                    const utilizadoComLancamento = utilizadoAntes + (Number(linha.valor) || 0) * fatorSelecionado;
                     const dentroDoOrcado = orcado == null ? null : utilizadoComLancamento <= orcado;
                     const percentualLinha = orcado ? (utilizadoComLancamento / orcado) * 100 : null;
                     // SIS-2026-0261 (Iury, achado real + correção de um bug
