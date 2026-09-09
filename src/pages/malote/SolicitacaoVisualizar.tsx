@@ -322,7 +322,18 @@ export default function SolicitacaoVisualizar() {
       <Card>
         <CardContent className="p-4 flex items-center gap-3">
           <Badge className={STATUS_BADGE_CLASS[despesa.status]}>{STATUS_LABEL[despesa.status]}</Badge>
-          {!editavel && <p className="text-xs text-muted-foreground">Dados bloqueados, não podem ser alterados.</p>}
+          {despesa.status === "cotacao_aprovada" ? (
+            <p className="text-xs text-muted-foreground">
+              {/* SIS-2026-0340 (Iury): quando a Classificação tem "Lançador
+                  da despesa" configurado, é esse usuário — não mais o
+                  solicitante — quem converte em Despesa no Malote. */}
+              {(despesa.classificacao?.lancador_despesa_nomes?.length ?? 0) > 0
+                ? `Aguardando lançamento no Malote por ${despesa.classificacao!.lancador_despesa_nomes!.join(", ")}.`
+                : "Aguardando lançamento no Malote."}
+            </p>
+          ) : (
+            !editavel && <p className="text-xs text-muted-foreground">Dados bloqueados, não podem ser alterados.</p>
+          )}
         </CardContent>
       </Card>
 

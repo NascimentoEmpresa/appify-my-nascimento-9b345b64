@@ -6,6 +6,7 @@ export type TipoClassificacaoOrcamento = "contrato" | "administrativo";
 const CLASSIFICACAO_COLUMNS =
   "id, nome, ativo, tipo, setor_responsavel, requer_solicitacao, " +
   "aprovador_solicitacao_user_id, aprovador_solicitacao_nome, " +
+  "lancador_despesa_user_ids, lancador_despesa_nomes, " +
   "aprovador1_user_ids, aprovador1_nomes, aprovador1_limite_pct, aprovador1_sem_limite, " +
   "aprovador2_user_ids, aprovador2_nomes, aprovador2_limite_pct, aprovador2_sem_limite, " +
   "aprovador3_user_ids, aprovador3_nomes, aprovador3_limite_pct, aprovador3_sem_limite, " +
@@ -25,6 +26,13 @@ export interface ClassificacaoOrcamento {
   requer_solicitacao: boolean;
   aprovador_solicitacao_user_id: string | null;
   aprovador_solicitacao_nome: string | null;
+  // SIS-2026-0340 (Iury): quando uma solicitação chega em cotacao_aprovada,
+  // por padrão (array vazio) quem converte em Despesa continua sendo o
+  // solicitante (created_by), igual sempre foi. Configurado, é SUBSTITUIÇÃO
+  // — só os lançadores listados podem converter, não mais o solicitante
+  // (que continua vendo o item em Meus Itens, só não age mais nele).
+  lancador_despesa_user_ids: string[];
+  lancador_despesa_nomes: string[];
   // SIS-2026-0236: cada nível pode ter mais de um aprovador — o primeiro
   // elemento é o primeiro selecionado no cadastro (mostrado sozinho na
   // coluna "Fluxo de Aprovação").
@@ -171,6 +179,8 @@ interface SalvarClassificacaoInput {
   requer_solicitacao: boolean;
   aprovador_solicitacao_user_id: string | null;
   aprovador_solicitacao_nome: string | null;
+  lancador_despesa_user_ids: string[];
+  lancador_despesa_nomes: string[];
   aprovador1_user_ids: string[];
   aprovador1_nomes: string[];
   aprovador1_limite_pct: number | null;
