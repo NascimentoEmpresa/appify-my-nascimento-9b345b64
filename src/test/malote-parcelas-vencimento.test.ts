@@ -40,9 +40,11 @@ describe("gerarParcelas", () => {
   // SIS-2026-0263 (Iury): dia do desconto liberado até 30 — fevereiro só
   // tem 28/29 dias, então precisa clampar pro último dia do mês em vez de
   // "rolar" pro mês seguinte (new Date(ano, 1, 30) viraria 2 de março).
+  // 28/02/2026 cai num sábado — com o ajuste de fim de semana ([SEM-CHAMADO]
+  // 09/09), puxa pra sexta 27/02 (antes deste ajuste, o resultado era 28/02).
   it("dia do desconto 30 cai no último dia de fevereiro (não-bissexto), não rola pra março", () => {
     const parcelas = gerarParcelas(200, 2, "2026-01-31", 30);
-    expect(parcelas[1].data_vencimento).toBe("2026-02-28");
+    expect(parcelas[1].data_vencimento).toBe("2026-02-27");
   });
 
   it("dia do desconto 30 cai no último dia de fevereiro (bissexto, 2028)", () => {
@@ -53,6 +55,32 @@ describe("gerarParcelas", () => {
   it("dia do desconto 30 funciona normalmente em mês com 30 dias (abril)", () => {
     const parcelas = gerarParcelas(200, 2, "2026-03-31", 30);
     expect(parcelas[1].data_vencimento).toBe("2026-04-30");
+  });
+
+  // [SEM-CHAMADO] (achado real, discutido com o usuário em 09/09): parcela
+  // seguinte caindo em fim de semana tem que puxar pro dia útil anterior
+  // (sexta), nunca pra frente.
+  it("parcela seguinte caindo num sábado puxa pra sexta anterior", () => {
+    // dia do desconto 8, agosto/2026 → 08/08 é sábado. Puxa pra 07/08 (sexta).
+    const parcelas = gerarParcelas(200, 2, "2026-07-01", 8);
+    expect(parcelas[1].data_vencimento).toBe("2026-08-07");
+  });
+
+  it("parcela seguinte caindo num domingo puxa pra sexta anterior (2 dias)", () => {
+    // dia do desconto 8, novembro/2026 → 08/11 é domingo. Puxa pra 06/11 (sexta).
+    const parcelas = gerarParcelas(300, 3, "2026-09-01", 8);
+    expect(parcelas[2].data_vencimento).toBe("2026-11-06");
+  });
+
+  it("parcela seguinte em dia de semana normal não é afetada pelo ajuste de fim de semana", () => {
+    const parcelas = gerarParcelas(200, 2, "2026-08-28", 8);
+    expect(parcelas[1].data_vencimento).toBe("2026-09-08"); // terça — sem ajuste
+  });
+
+  it("parcela 1 nunca é ajustada por fim de semana (é a data escolhida pelo solicitante)", () => {
+    // 2026-08-08 é sábado — parcela 1 mantém a data exata escolhida.
+    const parcelas = gerarParcelas(200, 2, "2026-08-08", 8);
+    expect(parcelas[0].data_vencimento).toBe("2026-08-08");
   });
 
   it("suporta até 420 parcelas (limite do SIS-2026-0263)", () => {

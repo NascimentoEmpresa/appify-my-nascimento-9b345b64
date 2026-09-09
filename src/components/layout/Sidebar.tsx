@@ -544,7 +544,18 @@ const encarregadosModule: ModuleDef = {
       label: "Operacional",
       defaultOpen: true,
       items: [
-        { label: "Controle de Diárias", to: "/app/operacional/diarias", icon: CalendarCheck2 },
+        // Rota PRÓPRIA (/app/encarregados/diarias), não a do Operacional, e a
+        // tela renderizada é a mesma. Motivo (09/09/2026): a sidebar casa
+        // permissão por ROTA, então enquanto este item apontava para
+        // /app/operacional/diarias ele era governado por `operacional_diarias`
+        // — um menu do módulo Operacional. Consequências, as duas ruins: no
+        // Gerenciamento de Acesso a chave de Diárias só existia no bloco
+        // Operacional (nunca no de Encarregados), e liberá-la fazia o módulo
+        // Operacional INTEIRO brotar na sidebar do encarregado. Com menu
+        // próprio (`encarregados_diarias`, migration 20260930000065), a chave
+        // aparece no bloco certo e o Operacional continua invisível para quem
+        // não tem menu nenhum dele.
+        { label: "Controle de Diárias", to: "/app/encarregados/diarias", icon: CalendarCheck2 },
       ],
     },
     {

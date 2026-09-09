@@ -15,6 +15,7 @@ import { DateRangeFilter } from "@/components/ui/date-range-filter";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { Plus, ListChecks, Search, X } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { useAuth } from "@/hooks/useAuth";
 import {
   useMinhasDespesas,
   useContratosAtivos,
@@ -26,6 +27,8 @@ import {
   STATUS_LABEL,
   STATUS_BADGE_CLASS,
   STATUS_FASE_SOLICITACAO,
+  souLancadorDespesa,
+  classificacaoTemLancadorConfigurado,
 } from "@/hooks/useMaloteDespesa";
 import { useClassificacoesOrcamento } from "@/hooks/usePlanejamentoOrcamentario";
 import { useOrdenacaoTabela } from "@/hooks/useOrdenacaoTabela";
@@ -178,6 +181,7 @@ function AprovadorPendenteCell({ despesa }: { despesa: MaloteDespesaRow }) {
 
 export default function MeusItens() {
   const navigate = useNavigate();
+  const { user } = useAuth();
   const { data: itens = [], isLoading } = useMinhasDespesas();
   const { data: classificacoes = [] } = useClassificacoesOrcamento();
   const { data: contratos = [] } = useContratosAtivos();
@@ -316,7 +320,19 @@ export default function MeusItens() {
     if (despesa.origem === "solicitacao" && STATUS_FASE_SOLICITACAO.includes(despesa.status)) {
       navigate(`/app/malote/solicitacao/${despesa.id}`);
     } else if (despesa.origem === "solicitacao" && despesa.status === "cotacao_aprovada") {
-      navigate(`/app/malote/criar-despesa?solicitacaoId=${despesa.id}`);
+      // SIS-2026-0340 (Iury): com "Lançador da despesa" configurado na
+      // Classificação, o solicitante deixa de poder converter — mas o
+      // Iury confirmou que o item continua listado aqui (não desaparece de
+      // Meus Itens). Só muda o destino do clique: sem lançador configurado,
+      // ou sendo ela mesma um dos lançadores, continua indo pra
+      // criar-despesa; senão, vira só acompanhamento (tela de Solicitação,
+      // que já lida com status fora de STATUS_FASE_SOLICITACAO mostrando
+      // tudo travado/somente leitura).
+      if (classificacaoTemLancadorConfigurado(despesa) && !souLancadorDespesa(despesa, user?.id)) {
+        navigate(`/app/malote/solicitacao/${despesa.id}`);
+      } else {
+        navigate(`/app/malote/criar-despesa?solicitacaoId=${despesa.id}`);
+      }
     } else {
       navigate(`/app/malote/despesa/${despesa.id}`);
     }

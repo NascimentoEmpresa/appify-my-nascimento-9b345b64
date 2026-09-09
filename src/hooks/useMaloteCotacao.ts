@@ -99,7 +99,10 @@ export function useSolicitacoesParaCotar(empresaId: string | null) {
     queryFn: async (): Promise<MaloteDespesaRow[]> => {
       const { data, error } = await sb
         .from("malote_despesa")
-        .select("*, classificacao:classificacao_id(id, nome)")
+        // SIS-2026-0340: lancador_despesa_user_ids/nomes vêm junto pra
+        // CotacoesMalote/CotacaoMaloteDetalhe decidirem se mostram o botão
+        // "Lançar despesa" pro usuário logado.
+        .select("*, classificacao:classificacao_id(id, nome, lancador_despesa_user_ids, lancador_despesa_nomes)")
         .in("status", STATUS_SUPRIMENTOS)
         .order("updated_at", { ascending: false });
       if (error) throw error;
@@ -115,7 +118,10 @@ export function useSolicitacaoParaCotar(id: string | undefined) {
     queryFn: async (): Promise<MaloteDespesaRow> => {
       const { data, error } = await sb
         .from("malote_despesa")
-        .select("*, classificacao:classificacao_id(id, nome)")
+        // SIS-2026-0340: lancador_despesa_user_ids/nomes vêm junto pra
+        // CotacoesMalote/CotacaoMaloteDetalhe decidirem se mostram o botão
+        // "Lançar despesa" pro usuário logado.
+        .select("*, classificacao:classificacao_id(id, nome, lancador_despesa_user_ids, lancador_despesa_nomes)")
         .eq("id", id).single();
       if (error) throw error;
       return data;

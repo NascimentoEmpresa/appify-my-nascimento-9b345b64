@@ -14,7 +14,6 @@ import { Collapsible, CollapsibleTrigger, CollapsibleContent } from "@/component
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { Info, Building2, Briefcase, Eye, ChevronDown } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { useEmpresaId } from "@/hooks/useEmpresaId";
 import { usePlanejamentosOrcamento, useClassificacoesOrcamentoAdmin, ClassificacaoOrcamento } from "@/hooks/usePlanejamentoOrcamentario";
 import { useLigacoesAdministrativoClassificacao } from "@/hooks/useMaloteAdministrativoClassificacaoLink";
 import { useOrcamentoContratos } from "@/hooks/useOrcamentoContratos";
@@ -26,6 +25,7 @@ import { BarraOrcamento } from "@/components/orcamento/BarraOrcamento";
 import { getStatusVigencia, STATUS_LABEL, STATUS_BADGE_CLASS, StatusVigencia, fmtMoney, fmtPct, competenciaNoPeriodo } from "./orcamentoUtils";
 import { LigacaoSectionBanner } from "./LigacaoLicitacaoClassificacao";
 import { OrcamentoTabsNav } from "./OrcamentoTabsNav";
+import { FiltroEmpresaOrcamento, EMPRESA_FILTRO_TODAS, FiltroEmpresaValor } from "./FiltroEmpresaOrcamento";
 
 type OrigemOrcamento = "administrativo" | "contrato";
 
@@ -151,8 +151,12 @@ function BotaoVerDetalhes({
 // Sem ligação, a Classificação Malote não aparece aqui — pra isso existem
 // as telas "puras" (Orçamento Administrativo e Orçamento de Contratos).
 export default function OrcamentoGeral() {
-  const { data: empresaId } = useEmpresaId();
-  const { data: orcamentosAdm = [], isLoading: carregandoAdm } = usePlanejamentosOrcamento(empresaId);
+  // SIS-2026-0337: resolve Administrativo de TODAS as empresas que o
+  // usuário acessa (não só a fixa do perfil) — o filtro local abaixo
+  // (FiltroEmpresaOrcamento) é quem deixa o usuário olhar uma só quando
+  // quiser.
+  const { data: orcamentosAdm = [], isLoading: carregandoAdm } = usePlanejamentosOrcamento(null, { todasEmpresas: true });
+  const [filtroEmpresaId, setFiltroEmpresaId] = useState<FiltroEmpresaValor>(EMPRESA_FILTRO_TODAS);
   const [anoMes, setAnoMes] = useState(anoMesAtual());
   const { data: gruposContrato, isLoading: carregandoContrato } = useOrcamentoContratos(anoMes);
   const { data: ligacoesAdm = [] } = useLigacoesAdministrativoClassificacao();
@@ -211,9 +215,22 @@ export default function OrcamentoGeral() {
     return { utilizadoAdmPorClassificacao: adm, utilizadoContratoPorChave: contrato };
   }, [utilizadoLinhas, anoMes]);
 
+  // SIS-2026-0337: filtro local de empresa — aplicado nos dados CRUS antes
+  // de agregar por Classificação, senão uma Classificação com orçamento
+  // em mais de uma empresa ficaria com o valor de todas somado mesmo
+  // filtrando pra uma só.
+  const orcamentosAdmDaEmpresa = useMemo(
+    () => (filtroEmpresaId === EMPRESA_FILTRO_TODAS ? orcamentosAdm : orcamentosAdm.filter((o) => o.empresa_id === filtroEmpresaId)),
+    [orcamentosAdm, filtroEmpresaId]
+  );
+  const gruposContratoDaEmpresa = useMemo(
+    () => (filtroEmpresaId === EMPRESA_FILTRO_TODAS ? gruposContrato : (gruposContrato ?? []).filter((g) => g.contrato.empresa_id === filtroEmpresaId)),
+    [gruposContrato, filtroEmpresaId]
+  );
+
   const linhasAdm: LinhaAdmGeral[] = useMemo(() => {
     const acumulado = new Map<string, { orcado: number; detalhes: Set<string>; status: Set<StatusVigencia> }>();
-    for (const o of orcamentosAdm) {
+    for (const o of orcamentosAdmDaEmpresa) {
       // Regra 1 do Anexo 1: a vigência que conta é a que cobre o Ano/Mês
       // selecionado (referenciaPeriodo), não "hoje" — mesmo que hoje ela já
       // esteja Histórico ou ainda "Vai entrar em vigência".
@@ -245,10 +262,10 @@ export default function OrcamentoGeral() {
       });
     });
     return resultado;
-  }, [orcamentosAdm, maloteIdPorAdministrativa, classificacaoMalotePorId, referenciaPeriodo, ocultarHistorico, utilizadoAdmPorClassificacao]);
+  }, [orcamentosAdmDaEmpresa, maloteIdPorAdministrativa, classificacaoMalotePorId, referenciaPeriodo, ocultarHistorico, utilizadoAdmPorClassificacao]);
 
   const gruposContratoGeral: ContratoGeralGrupo[] = useMemo(() => {
-    return (gruposContrato ?? [])
+    return (gruposContratoDaEmpresa ?? [])
       .map((g) => {
         const acumulado = new Map<string, number>();
         for (const r of g.rubricas) {
@@ -272,7 +289,7 @@ export default function OrcamentoGeral() {
         };
       })
       .filter((g) => g.linhas.length > 0);
-  }, [gruposContrato, classificacaoMalotePorId, utilizadoContratoPorChave]);
+  }, [gruposContratoDaEmpresa, classificacaoMalotePorId, utilizadoContratoPorChave]);
 
   const linhasAdmFiltradas = useMemo(() => {
     if (!busca.trim()) return linhasAdm;
@@ -364,11 +381,12 @@ export default function OrcamentoGeral() {
             Ocultar histórico
           </label>
         </CardHeader>
-        <CardContent className="grid grid-cols-1 md:grid-cols-4 gap-3">
+        <CardContent className="grid grid-cols-1 md:grid-cols-5 gap-3">
           <div>
             <Label className="text-xs">Ano/Mês</Label>
             <Input type="month" value={anoMes} onChange={(e) => setAnoMes(e.target.value || anoMesAtual())} />
           </div>
+          <FiltroEmpresaOrcamento value={filtroEmpresaId} onChange={setFiltroEmpresaId} />
           <div>
             <Label className="text-xs">Origem</Label>
             <Select value={filtroOrigem} onValueChange={(v) => setFiltroOrigem(v as any)}>

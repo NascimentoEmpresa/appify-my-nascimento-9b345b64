@@ -36,19 +36,30 @@ export interface ContratoERP {
 
 export type ContratoERPInput = Omit<ContratoERP, "id" | "empresa_id" | "created_at" | "updated_at">;
 
-export function useContratosERP() {
+// SIS-2026-0337 (achado real): resolução de Orçado (useOrcamentoContratos/
+// useOrcadoClassificacaoMultiMes) usava este hook sem opção, sempre
+// filtrando pela empresa ATIVA do seletor da barra superior — uma despesa
+// de uma empresa diferente da selecionada no momento nunca encontrava seu
+// contrato, e o Orçado calculado caía pra R$ 0,00 (qualquer valor lançado
+// aparecia como "estourou"). RLS de `contratos` já é `USING (true)`
+// (aberta a authenticated, ver comentário de useContratosSelecao acima) —
+// o filtro indevido era só no client. `todasEmpresas: true` busca sem
+// filtro de empresa, pra quem precisa achar o contrato certo independente
+// de qual empresa está ativa no seletor. Os demais consumidores (telas de
+// cadastro/workspace: Contratos ERP, Planilha de Custo, Emissão de NF...)
+// continuam com o comportamento de sempre (escopados à empresa ativa).
+export function useContratosERP(opts?: { todasEmpresas?: boolean }) {
   const { empresa } = useEmpresaAtiva();
+  const todasEmpresas = opts?.todasEmpresas ?? false;
   const empresaId = empresa?.id ?? null;
 
   return useQuery({
-    queryKey: ["contratos_erp", empresaId],
-    enabled: !!empresaId,
+    queryKey: todasEmpresas ? ["contratos_erp", "todas"] : ["contratos_erp", empresaId],
+    enabled: todasEmpresas || !!empresaId,
     queryFn: async () => {
-      const { data, error } = await sb
-        .from("contratos")
-        .select("*")
-        .eq("empresa_id", empresaId!)
-        .order("created_at", { ascending: false });
+      let q = sb.from("contratos").select("*").order("created_at", { ascending: false });
+      if (!todasEmpresas) q = q.eq("empresa_id", empresaId!);
+      const { data, error } = await q;
       if (error) throw error;
       return (data ?? []) as ContratoERP[];
     },
