@@ -510,6 +510,10 @@ export default function ClassificacoesMalote() {
       requer_solicitacao: c.requer_solicitacao,
       aprovador_solicitacao_user_id: c.aprovador_solicitacao_user_id,
       aprovador_solicitacao_nome: c.aprovador_solicitacao_nome,
+      // SIS-2026-0340: troca em massa é só do aprovador1/2/3 (ver
+      // TrocaDetectada) — Lançador nunca muda aqui, preserva como está.
+      lancador_despesa_user_ids: c.lancador_despesa_user_ids,
+      lancador_despesa_nomes: c.lancador_despesa_nomes,
       aprovador1_user_ids: troca.slot === 1 ? ids : c.aprovador1_user_ids,
       aprovador1_nomes: troca.slot === 1 ? nomes : c.aprovador1_nomes,
       aprovador1_limite_pct: c.aprovador1_limite_pct,
