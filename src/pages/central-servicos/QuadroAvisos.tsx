@@ -38,6 +38,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { ScrollArea } from "@/components/ui/scroll-area";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
@@ -64,7 +65,7 @@ type Aba = "todos" | "ativos" | "arquivados";
 
 export default function QuadroAvisos() {
   const {
-    notificacoes, historico, carregando,
+    notificacoes, historico, alvos, setores, pessoas, carregando,
     podeVerQuadro, podeCriar, podeEditar, podeExcluir,
     salvar, excluir,
   } = useNotificacoes();
@@ -86,6 +87,24 @@ export default function QuadroAvisos() {
     }
     return mapa;
   }, [historico]);
+
+  /**
+   * O público em uma linha: "Todos os colaboradores" ou "RH, Financeiro · 2
+   * pessoa(s)".
+   *
+   * Vale para a lista e para o Visualizar. Sem nenhuma regra o aviso é de
+   * todos — restringir é o ato explícito, igual aos Links de BI.
+   */
+  const publicoDe = (id: number): string => {
+    const meus = alvos.filter((a) => a.notificacao_id === id);
+    if (!meus.length) return "Todos os colaboradores";
+    const st = meus.filter((a) => a.setor).map((a) => a.setor as string);
+    const qtdPessoas = meus.filter((a) => a.user_id).length;
+    const partes: string[] = [];
+    if (st.length) partes.push(st.join(", "));
+    if (qtdPessoas) partes.push(qtdPessoas + " pessoa(s)");
+    return partes.join(" · ");
+  };
 
   const lista = useMemo(() => {
     const termo = busca.trim().toLowerCase();
@@ -244,6 +263,9 @@ export default function QuadroAvisos() {
                       )}>
                         {n.categoria ?? "—"}
                       </span>
+                      {/* Para quem foi. Fica sob a categoria porque é a mesma
+                          pergunta de triagem: "isto era para mim?" */}
+                      <div className="mt-1 text-[11px] text-muted-foreground">{publicoDe(n.id)}</div>
                     </TableCell>
                     <TableCell className="whitespace-nowrap text-sm">
                       <div>{fmtDataHora(n.publicado_em)}</div>
@@ -274,7 +296,7 @@ export default function QuadroAvisos() {
                           <Eye className="mr-1 h-3.5 w-3.5" /> Visualizar
                         </Button>
                         {podeEditar && (
-                          <Button variant="ghost" size="sm" onClick={() => setForm(formDoAviso(n))}>
+                          <Button variant="ghost" size="sm" onClick={() => setForm(formDoAviso(n, alvos))}>
                             <Pencil className="mr-1 h-3.5 w-3.5" /> Editar
                           </Button>
                         )}
@@ -359,17 +381,79 @@ export default function QuadroAvisos() {
                 </div>
               </div>
 
-              <div>
-                <Label>Exibir para *</Label>
-                <Select value={form.publico_alvo} onValueChange={(v) => setForm({ ...form, publico_alvo: v })}>
-                  <SelectTrigger><SelectValue /></SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="todos">Todos os colaboradores</SelectItem>
-                  </SelectContent>
-                </Select>
-                <p className="mt-1 text-xs text-muted-foreground">
-                  Define quem poderá visualizar este aviso.
-                </p>
+              {/* ── Exibir para ─────────────────────────────────────────
+                  Mesma pergunta e mesma resposta dos Links de BI: sem nada
+                  marcado o aviso é de todos, e restringir é o ato explícito.
+                  Duas telas que perguntam "quem vê isto?" têm que responder
+                  do mesmo jeito, senão quem administra aprende duas regras. */}
+              <div className="rounded-lg border p-3">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div>
+                    <div className="text-sm font-semibold">Exibir para</div>
+                    <p className="text-xs text-muted-foreground">
+                      Sem setor nem pessoa marcados, o aviso vai para <b>todos</b>.
+                    </p>
+                  </div>
+                  {form.setores.length === 0 && form.usuarios.length === 0 ? (
+                    <Badge>Todos os colaboradores</Badge>
+                  ) : (
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => setForm({ ...form, setores: [], usuarios: [] })}
+                    >
+                      Voltar para todos
+                    </Button>
+                  )}
+                </div>
+
+                <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                  <div>
+                    <Label className="text-xs">Setores</Label>
+                    <ScrollArea className="h-36 rounded-md border p-2">
+                      {setores.map((st) => (
+                        <label key={st} className="flex items-center gap-2 py-1 text-sm">
+                          <Checkbox
+                            checked={form.setores.includes(st)}
+                            onCheckedChange={(v) => setForm({
+                              ...form,
+                              setores: v === true
+                                ? [...form.setores, st]
+                                : form.setores.filter((x) => x !== st),
+                            })}
+                          />
+                          {st}
+                        </label>
+                      ))}
+                      {setores.length === 0 && (
+                        <p className="p-2 text-xs text-muted-foreground">Nenhum setor cadastrado.</p>
+                      )}
+                    </ScrollArea>
+                  </div>
+
+                  <div>
+                    <Label className="text-xs">Pessoas específicas</Label>
+                    <ScrollArea className="h-36 rounded-md border p-2">
+                      {pessoas.map((ps) => (
+                        <label key={ps.id} className="flex items-center gap-2 py-1 text-sm">
+                          <Checkbox
+                            checked={form.usuarios.includes(ps.id)}
+                            onCheckedChange={(v) => setForm({
+                              ...form,
+                              usuarios: v === true
+                                ? [...form.usuarios, ps.id]
+                                : form.usuarios.filter((x) => x !== ps.id),
+                            })}
+                          />
+                          <span className="truncate">{ps.nome}</span>
+                        </label>
+                      ))}
+                      {pessoas.length === 0 && (
+                        <p className="p-2 text-xs text-muted-foreground">Nenhuma pessoa encontrada.</p>
+                      )}
+                    </ScrollArea>
+                  </div>
+                </div>
               </div>
 
               <div>
@@ -484,6 +568,7 @@ export default function QuadroAvisos() {
                   <li>Bloquear acesso até responder: <b>{vendo.bloquear_acesso ? "Sim" : "Não"}</b></li>
                   <li>Permitir Concordo/Discordo: <b>{vendo.permitir_escolha ? "Sim" : "Não"}</b></li>
                   <li>Expira em: <b>{vendo.expira_em ? fmtDataHora(vendo.expira_em) : "não expira"}</b></li>
+                  <li>Exibido para: <b>{publicoDe(vendo.id)}</b></li>
                 </ul>
               </div>
 

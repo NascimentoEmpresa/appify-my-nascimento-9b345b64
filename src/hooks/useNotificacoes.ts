@@ -4,8 +4,10 @@ import { useAuth } from "@/hooks/useAuth";
 import { useMeuNome } from "@/hooks/useMeuNome";
 import { usePermissoes } from "@/context/PermissoesContext";
 import {
-  MENU_PUBLICAR, MENU_QUADRO, TABELA, TABELA_CIENCIA, bloqueantesDe, pendentesDe,
-  type CienciaNotificacao, type Escolha, type FormNotificacao, type Notificacao,
+  MENU_PUBLICAR, MENU_QUADRO, TABELA, TABELA_ALVO, TABELA_CIENCIA,
+  bloqueantesDe, pendentesDe,
+  type AlvoNotificacao, type CienciaNotificacao, type Escolha,
+  type FormNotificacao, type Notificacao,
 } from "@/lib/notificacoes";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -52,6 +54,52 @@ export function useNotificacoes() {
     },
   });
 
+  /**
+   * Para quem é cada aviso.
+   *
+   * A lista de avisos JÁ chega recortada (a RLS chama notificacao_para_mim),
+   * então isto não filtra nada: serve para o formulário de quem publica e
+   * para a tela poder dizer "este aviso foi para RH e Financeiro".
+   */
+  const alvosQ = useQuery({
+    queryKey: ["notificacoes_alvos"],
+    staleTime: 60_000,
+    queryFn: async (): Promise<AlvoNotificacao[]> => {
+      const { data, error } = await sb.from(TABELA_ALVO).select("*");
+      if (error) throw error;
+      return (data ?? []) as AlvoNotificacao[];
+    },
+  });
+
+  /** Setores do catálogo — a mesma fonte que o resto do ERP usa. */
+  const setoresQ = useQuery({
+    queryKey: ["setor_catalogo"],
+    staleTime: 10 * 60_000,
+    queryFn: async (): Promise<string[]> => {
+      const { data, error } = await sb.from("setor_catalogo").select("nome").order("nome");
+      if (error) throw error;
+      return (data ?? []).map((x: { nome: string }) => x.nome);
+    },
+  });
+
+  /** As pessoas, para mandar um aviso nominal. Só quem publica precisa. */
+  const pessoasQ = useQuery({
+    queryKey: ["notificacoes_pessoas"],
+    enabled: podeCriar || podeEditar,
+    staleTime: 10 * 60_000,
+    queryFn: async (): Promise<{ id: string; nome: string }[]> => {
+      const { data, error } = await sb
+        .from("profiles")
+        .select("id,display_name,email")
+        .order("display_name");
+      if (error) throw error;
+      return (data ?? []).map((x: { id: string; display_name: string | null; email: string | null }) => ({
+        id: x.id,
+        nome: x.display_name || x.email || "(sem nome)",
+      }));
+    },
+  });
+
   /** O que EU já respondi — é o que decide se o modal aparece. */
   const minhasQ = useQuery({
     queryKey: ["notificacoes_minhas", user?.id],
@@ -90,8 +138,9 @@ export function useNotificacoes() {
         // Vazio é "não expira" — string vazia em coluna timestamptz estoura
         // no Postgres ("invalid input syntax"), a ausência é NULL.
         expira_em: f.expira_em ? f.expira_em : null,
-        publico_alvo: f.publico_alvo || "todos",
         exigir_ciencia: f.exigir_ciencia,
+        // publico_alvo saiu na 081: a verdade é a tabela de alvos, e ter as
+        // duas era duas fontes para a mesma pergunta.
         // Bloquear sem exigir ciência prenderia a pessoa num aviso sem botão
         // de saída; o formulário recusa, e aqui o valor é normalizado também,
         // porque a tela não é o único caminho até esta função.
@@ -99,12 +148,34 @@ export function useNotificacoes() {
         permitir_escolha: f.permitir_escolha,
         criado_por_nome: meuNome ?? null,
       };
-      const { error } = f.id
-        ? await sb.from(TABELA).update(linha).eq("id", f.id)
-        : await sb.from(TABELA).insert(linha);
-      if (error) throw error;
+      let id = f.id;
+      if (id) {
+        const { error } = await sb.from(TABELA).update(linha).eq("id", id);
+        if (error) throw error;
+      } else {
+        const { data, error } = await sb.from(TABELA).insert(linha).select("id").single();
+        if (error) throw error;
+        id = data.id as number;
+      }
+
+      // Apaga e reinsere, em vez de calcular o que entrou e o que saiu: são
+      // poucas linhas, e o diff seria código novo só para errar em silêncio.
+      const { error: erroApagar } = await sb.from(TABELA_ALVO).delete().eq("notificacao_id", id);
+      if (erroApagar) throw erroApagar;
+
+      const alvos = [
+        ...f.setores.map((setor) => ({ notificacao_id: id, setor, user_id: null })),
+        ...f.usuarios.map((user_id) => ({ notificacao_id: id, setor: null, user_id })),
+      ];
+      if (alvos.length) {
+        const { error } = await sb.from(TABELA_ALVO).insert(alvos);
+        if (error) throw error;
+      }
     },
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["notificacoes"] }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["notificacoes"] });
+      qc.invalidateQueries({ queryKey: ["notificacoes_alvos"] });
+    },
   });
 
   const excluir = useMutation({
@@ -115,6 +186,7 @@ export function useNotificacoes() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["notificacoes"] });
       qc.invalidateQueries({ queryKey: ["notificacoes_historico"] });
+      qc.invalidateQueries({ queryKey: ["notificacoes_alvos"] });
     },
   });
 
@@ -153,6 +225,9 @@ export function useNotificacoes() {
   return {
     notificacoes,
     historico: historicoQ.data ?? [],
+    alvos: alvosQ.data ?? [],
+    setores: setoresQ.data ?? [],
+    pessoas: pessoasQ.data ?? [],
     minhas,
     /** Pede ciência e ainda não foi respondido — aparece para a pessoa. */
     pendentes: pendentesDe(notificacoes, minhas),
