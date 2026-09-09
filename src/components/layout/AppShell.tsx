@@ -8,6 +8,7 @@ import { RouteGuard } from "@/components/auth/RouteGuard";
 import { ErroDeTela } from "./ErroDeTela";
 import { VinculoGate } from "@/components/auth/VinculoEmpregado";
 import { VinculoDiscordGate } from "@/components/auth/VinculoDiscordGate";
+import { GateNotificacoes } from "@/components/notificacoes/GateNotificacoes";
 import { useModoExterno } from "@/hooks/useModoExterno";
 
 export function AppShell() {
@@ -88,6 +89,10 @@ export function AppShell() {
       </div>
       {!externo && <ChamadoFab />}
       {!externo && <VinculoGate />}
+      {/* Notificação com ciência: para a tela em qualquer rota até a pessoa
+          responder. Fica aqui, e não numa página, porque o aviso é do
+          SISTEMA — não adianta ele existir só em quem abriu Novidades. */}
+      {!externo && <GateNotificacoes />}
       {/* Entra depois do VinculoGate de propósito: ele só aparece quando o
           vínculo Senior já está resolvido, para não empilhar dois modais. */}
       {!externo && <VinculoDiscordGate />}
