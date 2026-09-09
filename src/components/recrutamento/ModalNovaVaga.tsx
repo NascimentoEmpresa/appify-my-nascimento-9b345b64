@@ -74,9 +74,24 @@ interface Props {
    * próprios toasts — é o caso da Central de Serviços, que não tem nenhum.
    */
   onToast?: (msg: string, tipo?: string) => void;
+  /**
+   * A solicitação a EDITAR. Com ela o modal abre preenchido e grava por UPDATE
+   * em vez de INSERT.
+   *
+   * É o mesmo formulário de propósito: "editar qualquer informação" quer dizer
+   * os mesmos campos, as mesmas listas e as mesmas regras de quem cria. Um
+   * segundo formulário só para corrigir vaga nasceria desatualizado no dia em
+   * que alguém acrescentasse um campo aqui.
+   *
+   * Quem decide se este caminho existe é o painel de acesso, na capacidade
+   * "Editar solicitação de vaga" — ver a migration 20260930000077.
+   */
+  solicitacao?: (Record<string, unknown> & { id: number }) | null;
 }
 
-export function ModalNovaVaga({ aberto, onFechar, onCriada, onToast }: Props) {
+export function ModalNovaVaga({ aberto, onFechar, onCriada, onToast, solicitacao = null }: Props) {
+  /** Edição existe quando veio uma solicitação com id. */
+  const editando = !!solicitacao?.id;
   const { user } = useAuth();
   const { can } = usePermissoes();
   const { empresa } = useEmpresaAtiva();
@@ -142,13 +157,33 @@ export function ModalNovaVaga({ aberto, onFechar, onCriada, onToast }: Props) {
   // Abrir é sempre do zero: solicitação nova não herda o que sobrou da anterior.
   useEffect(() => {
     if (!aberto) return;
-    setVaga({ ...VAGA_RESET });
+    // Editar abre com o que está gravado; solicitar abre do zero. Só os campos
+    // do formulário são copiados (as chaves de VAGA_RESET): status, histórico
+    // e solicitante são da solicitação, não deste formulário, e passar a linha
+    // inteira para cá os traria de volta no update.
+    if (solicitacao?.id) {
+      const preenchido: Record<string, unknown> = { ...VAGA_RESET };
+      for (const campo of Object.keys(VAGA_RESET)) {
+        const v = solicitacao[campo];
+        if (v === null || v === undefined) continue;
+        preenchido[campo] = typeof VAGA_RESET[campo as keyof typeof VAGA_RESET] === "boolean" ? !!v : String(v);
+      }
+      preenchido.administrativa = !!solicitacao.administrativa;
+      setVaga(preenchido as unknown as typeof VAGA_RESET);
+      // Vaga já gravada sem vínculo com o catálogo continua sem ele: exigir o
+      // posto agora travaria a correção de uma vaga que foi criada à mão.
+      setVagaManual(!solicitacao.posto_id);
+      setSubstituidoId((solicitacao.substituido_id as number | null) ?? null);
+      setEmpSearch((solicitacao.nome_substituido as string | null) ?? "");
+    } else {
+      setVaga({ ...VAGA_RESET });
+      setSubstituidoId(null);
+      setEmpSearch("");
+      setVagaManual(false);
+    }
     setVagaStep(1);
-    setEmpSearch("");
     setShowEmpDrop(false);
     setEmpregados([]);
-    setSubstituidoId(null);
-    setVagaManual(false);
     if (!contratosFull.length) {
       (async () => {
         const { data } = await (supabase as any)
@@ -175,7 +210,7 @@ export function ModalNovaVaga({ aberto, onFechar, onCriada, onToast }: Props) {
     // carregadas uma vez por sessão e recarregá-las a cada abertura não muda
     // nada na tela.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [aberto]);
+  }, [aberto, solicitacao?.id]);
 
   const buscarEmpregados = async (term: string) => {
     empTermo.current = term;
@@ -282,7 +317,9 @@ export function ModalNovaVaga({ aberto, onFechar, onCriada, onToast }: Props) {
       }
 
       const jaTem = ehSubstituicao(vaga.motivo_vaga) && substituidoId ? presos.get(substituidoId) : undefined;
-      if (jaTem) { toast(avisoSubstituidoPreso(jaTem), "err"); return false; }
+      // Editando, a vaga que "prende" a pessoa costuma ser ESTA — recusar aí
+      // seria impedir a correção por causa dela mesma.
+      if (jaTem && jaTem !== solicitacao?.id) { toast(avisoSubstituidoPreso(jaTem), "err"); return false; }
       if (!vaga.contrato)    { toast("Selecione o contrato.", "err"); return false; }
       if (!vaga.cargo.trim()){ toast("Informe o cargo.", "err"); return false; }
       // O vínculo com o catálogo só é obrigatório quando a vaga copia um posto
@@ -310,7 +347,7 @@ export function ModalNovaVaga({ aberto, onFechar, onCriada, onToast }: Props) {
     if (salvando) return;
     if (!vagaValidar(1) || !vagaValidar(3)) return;
     setSalvando(true);
-    const payload = {
+    const payload: Record<string, unknown> = {
       ...vaga,
       quantidade_vagas: parseInt(vaga.quantidade_vagas) || 1,
       // Grau e CNH saem das regras (o trigger recalcula os dois no banco).
@@ -320,21 +357,38 @@ export function ModalNovaVaga({ aberto, onFechar, onCriada, onToast }: Props) {
       administrativa: podeAdministrativa ? !!vaga.administrativa : false,
       // Só a substituição grava o id: é ele que trava a pessoa numa vaga só.
       substituido_id: ehSubstituicao(vaga.motivo_vaga) ? substituidoId : null,
-      status: "Pendente Analista",
-      solicitante_nome: user?.user_metadata?.nome ?? user?.email ?? "",
-      solicitante_cpf: user?.email ?? "",
     };
-    let { error, data } = await (supabase as any).from("SISTEMA_RECRUTAMENTO").insert(payload).select("id").single();
+
+    // Status, solicitante e data de abertura são da SOLICITAÇÃO, não deste
+    // formulário: corrigir o cargo de um pedido não pode devolvê-lo para
+    // "Pendente Analista" nem trocar o nome de quem pediu.
+    if (!editando) {
+      payload.status = "Pendente Analista";
+      payload.solicitante_nome = user?.user_metadata?.nome ?? user?.email ?? "";
+      payload.solicitante_cpf = user?.email ?? "";
+    }
+
+    const gravar = (corpo: Record<string, unknown>) =>
+      editando
+        ? (supabase as any).from("SISTEMA_RECRUTAMENTO").update(corpo).eq("id", solicitacao!.id).select("id").single()
+        : (supabase as any).from("SISTEMA_RECRUTAMENTO").insert(corpo).select("id").single();
+
+    let { error, data } = await gravar(payload);
     // Banco ainda sem as colunas novas: reenvia sem elas.
     if (error && /column|schema cache/i.test(error.message)) {
       const { cnh_obrigatoria, substituido_id, contrato_id, posto_id, funcao_id, ...semColunasNovas } = payload as any;
-      ({ error, data } = await (supabase as any).from("SISTEMA_RECRUTAMENTO").insert(semColunasNovas).select("id").single());
+      ({ error, data } = await gravar(semColunasNovas));
     }
     setSalvando(false);
-    if (error) { toast("Erro ao solicitar vaga: " + error.message, "err"); return; }
-    toast(`Solicitação #${data?.id} criada com sucesso!`, "ok");
+    if (error) { toast(`Erro ao ${editando ? "salvar" : "solicitar"} vaga: ` + error.message, "err"); return; }
+    toast(
+      editando
+        ? `Solicitação #${solicitacao!.id} atualizada.`
+        : `Solicitação #${data?.id} criada com sucesso!`,
+      "ok",
+    );
     onFechar();
-    onCriada?.(data?.id);
+    onCriada?.(editando ? solicitacao!.id : data?.id);
   };
 
   if (!aberto) return null;
@@ -344,7 +398,9 @@ export function ModalNovaVaga({ aberto, onFechar, onCriada, onToast }: Props) {
       <div className="nvg-modal" onClick={e => e.stopPropagation()}>
         <button onClick={onFechar} style={{ position: "absolute", top: 14, right: 14, background: "none", border: "none", color: "#94a3b8", fontSize: 20, cursor: "pointer" }}>✕</button>
 
-        <div style={{ fontSize: 17, fontWeight: 800, marginBottom: 4 }}>Solicitar Nova Vaga</div>
+        <div style={{ fontSize: 17, fontWeight: 800, marginBottom: 4 }}>
+          {editando ? `Editar solicitação #${solicitacao!.id}` : "Solicitar Nova Vaga"}
+        </div>
         <div style={{ fontSize: 12, color: "#94a3b8", marginBottom: 14 }}>
           {vagaStep === 1 ? "Etapa 1 de 3 — Identificação da Vaga" : vagaStep === 2 ? "Etapa 2 de 3 — Detalhes do Posto" : "Etapa 3 de 3 — Requisitos e Urgência"}
         </div>
@@ -693,7 +749,7 @@ export function ModalNovaVaga({ aberto, onFechar, onCriada, onToast }: Props) {
           <div style={{ display: "flex", gap: 8 }}>
             {vagaStep > 1 && <button onClick={() => setVagaStep(s => s - 1)} style={{ padding: "7px 14px", borderRadius: 10, border: "1px solid #e2e8f0", background: "#fff", color: "#475569", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>← Anterior</button>}
             {vagaStep < 3 && <button onClick={() => { if (vagaValidar(vagaStep)) setVagaStep(s => s + 1); }} style={{ padding: "7px 14px", borderRadius: 10, border: "none", background: "#0f3171", color: "#fff", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>Próximo →</button>}
-            {vagaStep === 3 && <button onClick={submitVaga} disabled={salvando} style={{ padding: "7px 14px", borderRadius: 10, border: "none", background: salvando ? "#94a3b8" : "#16a34a", color: "#fff", fontSize: 12, fontWeight: 700, cursor: salvando ? "default" : "pointer" }}>{salvando ? "Enviando…" : "✓ Solicitar Vaga"}</button>}
+            {vagaStep === 3 && <button onClick={submitVaga} disabled={salvando} style={{ padding: "7px 14px", borderRadius: 10, border: "none", background: salvando ? "#94a3b8" : "#16a34a", color: "#fff", fontSize: 12, fontWeight: 700, cursor: salvando ? "default" : "pointer" }}>{salvando ? (editando ? "Salvando…" : "Enviando…") : editando ? "✓ Salvar alterações" : "✓ Solicitar Vaga"}</button>}
           </div>
         </div>
       </div>
