@@ -262,6 +262,11 @@ export interface MaloteDespesaRow {
     // (aguardando_aprovacao_inicial/aguardando_cotacao/cotacao_realizada).
     aprovador_solicitacao_user_id?: string | null;
     aprovador_solicitacao_nome?: string | null;
+    // SIS-2026-0340: array vazio/undefined = comportamento de hoje (o
+    // solicitante lança a despesa quando a cotação é aprovada). Preenchido
+    // = só esses usuários podem — ver souLancadorDespesa.
+    lancador_despesa_user_ids?: string[];
+    lancador_despesa_nomes?: string[];
     // SIS-2026-0192: % acima do qual uma linha de rateio precisa de
     // justificativa (cadastrado desde SIS-2026-0106, só passa a ser
     // exibido aqui — sem null tratado como "nunca pede justificativa").
@@ -344,7 +349,7 @@ const DESPESA_COLUMNS =
   "arquivos, created_at, created_by, updated_at, " +
   "classificacao:classificacao_id(id, nome, setor_responsavel, aprovador1_nomes, aprovador2_nomes, aprovador3_nomes, aprovador1_user_ids, aprovador2_user_ids, aprovador3_user_ids, " +
   "aprovador1_limite_pct, aprovador1_sem_limite, aprovador2_limite_pct, aprovador2_sem_limite, aprovador3_limite_pct, aprovador3_sem_limite, " +
-  "aprovador_solicitacao_user_id, aprovador_solicitacao_nome, limite_justificativa_pct)";
+  "aprovador_solicitacao_user_id, aprovador_solicitacao_nome, lancador_despesa_user_ids, lancador_despesa_nomes, limite_justificativa_pct)";
 
 // ── Catálogos usados no rateio ──────────────────────────────────────────
 export function useEmpresasGrupo() {
@@ -921,6 +926,24 @@ export function souAprovadorConfigurado(despesa: MaloteDespesaRow, userId: strin
 export function souAprovadorSolicitacao(despesa: MaloteDespesaRow, userId: string | null | undefined): boolean {
   if (!userId) return false;
   return despesa.classificacao?.aprovador_solicitacao_user_id === userId;
+}
+
+// SIS-2026-0340 (Iury): "caso o item esteja com cotação aprovada, seja
+// possível a gente definir quem vai lançar essa despesa no malote e não o
+// solicitante como está hoje". Array vazio/undefined = ninguém configurado
+// ainda, então NÃO é "todo mundo pode" — quem decide isso é
+// classificacaoTemLancadorConfigurado (abaixo), não esta função sozinha.
+export function souLancadorDespesa(despesa: MaloteDespesaRow, userId: string | null | undefined): boolean {
+  if (!userId) return false;
+  return !!despesa.classificacao?.lancador_despesa_user_ids?.includes(userId);
+}
+
+// Uma vez que a Classificação tem QUALQUER lançador configurado, é
+// substituição (decisão confirmada com o usuário): o solicitante original
+// deixa de poder lançar essa despesa — só quem está na lista pode. Array
+// vazio = comportamento de sempre (o solicitante lança).
+export function classificacaoTemLancadorConfigurado(despesa: MaloteDespesaRow): boolean {
+  return (despesa.classificacao?.lancador_despesa_user_ids?.length ?? 0) > 0;
 }
 
 // Reaproveita a função Postgres já usada pelo RLS do Malote (piloto por
