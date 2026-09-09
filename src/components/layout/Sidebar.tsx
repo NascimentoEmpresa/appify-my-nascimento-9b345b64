@@ -696,6 +696,12 @@ const centralServicosModule: ModuleDef = {
         // para quem tem a permissão). Menu de 3 itens para 2 que quase
         // ninguém abre só empurra o resto para baixo.
         { label: "Solicitar Reembolso", to: "/app/central-servicos/reembolso", icon: Receipt },
+        // O item precisa existir AQUI, não só em app_menu: esta lista é
+        // estática e o cadastro no banco decide apenas se a pessoa enxerga o
+        // que já está escrito nela. Criar a tela e a permissão sem esta linha
+        // deixa o menu invisível para todo mundo, inclusive para quem acabou
+        // de receber o acesso — foi exatamente o que aconteceu aqui.
+        { label: "Quadro de Avisos", to: "/app/central-servicos/quadro-avisos", icon: Megaphone },
       ],
     },
   ],
