@@ -364,14 +364,22 @@ export function useEmpresasGrupo() {
   });
 }
 
+// [SEM-CHAMADO] (achado real, pedido do usuário): apesar do nome, este hook
+// sempre trouxe TODOS os contratos (ativos e encerrados) — nunca filtrou
+// nem selecionava `status`. Continua trazendo todos de propósito (quem
+// lançou uma despesa num contrato já encerrado no passado precisa continuar
+// vendo/escolhendo esse contrato pra consultas antigas) — só passou a
+// selecionar `status` também, pra quem MONTA um seletor poder distinguir
+// visualmente os encerrados (opacidade, ver SearchableOption.muted) sem
+// escondê-los nem impedir a seleção.
 export function useContratosAtivos() {
   return useQuery({
     queryKey: ["malote_contratos_ativos"],
     staleTime: 5 * 60_000,
     queryFn: async () => {
-      const { data, error } = await (supabase as any).from("contratos").select("id, nome, empresa_id").order("nome");
+      const { data, error } = await (supabase as any).from("contratos").select("id, nome, empresa_id, status").order("nome");
       if (error) throw error;
-      return (data ?? []) as { id: string; nome: string; empresa_id: string }[];
+      return (data ?? []) as { id: string; nome: string; empresa_id: string; status: string }[];
     },
   });
 }
@@ -825,9 +833,20 @@ export function useMandarParaAprovacaoNovamente() {
 // necessário como data" — diferente de useMandarParaAprovacaoNovamente,
 // aqui status e nivel_aprovacao_atual NÃO mudam (a despesa continua
 // exatamente de onde estava, já aprovada até o nível em que se encontra).
-// Só o Rateio fica de fora (decisão confirmada com o usuário: continua
-// travado depois de enviado, mesmo nesses 2 status) — por isso não aceita
-// `rateio` no input.
+// Rateio ficava de fora por completo (decisão original: continua travado
+// depois de enviado, mesmo em pendente_aprovacao/aguardando_pagamento) —
+// isso segue valendo pra esses 2 status.
+//
+// DM-2026-0268 (financeiro, via Iury): exceção pontual pra ajuste_pagamento
+// — o solicitante pode corrigir Valor/Empresa no Rateio (RateioGrid com
+// apenasValorEEmpresa) sem reiniciar a aprovação, DESDE que só a Empresa
+// tenha mudado (rateioMudouEmpresa em DespesaVisualizar.tsx) — orçamento é
+// do grupo, não por empresa, então trocar empresa não reabre nada que já
+// foi aprovado. Se o VALOR mudou (rateioMudouValor), quem chama força o
+// caminho "Reenviar" (useMandarParaAprovacaoNovamente) em vez deste hook —
+// esta função em si não valida qual dos dois é o caso, confia no chamador
+// (mesmo padrão de "isto aqui só decide a UI, banco reforça" já usado em
+// outras trava de rateio deste arquivo).
 //
 // "descricaoEvento" nunca é opcional de verdade aqui — o pedido do
 // usuário foi "precisaria registrar em histórico TODAS as modificações
@@ -837,7 +856,7 @@ export function useSalvarEdicaoPosAprovacao() {
   const qc = useQueryClient();
   const salvar = useSalvarDespesa();
   return useMutation({
-    mutationFn: async (input: Omit<SalvarDespesaInput, "rateio"> & { descricaoEvento?: string | null }) => {
+    mutationFn: async (input: SalvarDespesaInput & { descricaoEvento?: string | null }) => {
       const { descricaoEvento, ...resto } = input;
       const despesaId = await salvar.mutateAsync(resto);
       await registrarEventoDespesa(despesaId, "edicao", descricaoEvento ?? "Dados revisados pelo solicitante (sem alteração detectada).");

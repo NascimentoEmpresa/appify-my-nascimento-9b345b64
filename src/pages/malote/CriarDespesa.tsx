@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { Card, CardContent } from "@/components/ui/card";
@@ -12,9 +12,9 @@ import { LayoutGrid, Package, Lock, ShoppingCart, ArrowLeft } from "lucide-react
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { useEmpresaId } from "@/hooks/useEmpresaId";
-import { usePlanejamentosOrcamento } from "@/hooks/usePlanejamentoOrcamentario";
-import { useRubricasVinculadas, RubricaVinculada } from "@/hooks/useRubricasMalote";
-import { usePlanilhaCustos, resolverValorPorCampos } from "@/hooks/usePlanilhaCusto";
+import { useClassificacoesOrcamento, TipoClassificacaoOrcamento } from "@/hooks/usePlanejamentoOrcamentario";
+import { useOrcadoClassificacao } from "@/hooks/useOrcadoClassificacao";
+import { useUtilizadoOrcamento } from "@/hooks/useUtilizadoOrcamento";
 import {
   useSalvarDespesa,
   useDespesa,
@@ -27,7 +27,6 @@ import {
 } from "@/hooks/useMaloteDespesa";
 import { ItensSolicitacao } from "@/components/malote/ItensSolicitacao";
 import { AnexosField } from "./AnexosField";
-import { getStatusVigencia } from "./orcamentoUtils";
 import { Campo, PainelDespesaMalote, PainelHeader, PrefillDespesa } from "./PainelDespesaMalote";
 
 export default function CriarDespesa() {
@@ -57,37 +56,52 @@ export default function CriarDespesa() {
 
 const semAcento = (s: string) => s.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().trim();
 
+function fmtMoney(n: number | null | undefined): string {
+  if (n == null) return "\u2014";
+  return n.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
+}
+
 // ============================================================================
 // Fluxo normal: escolher classificação e preencher Solicitação OU Despesa
 // ============================================================================
 function CriarDespesaNova({ inicial }: { inicial?: PrefillDespesa }) {
   const navigate = useNavigate();
   const { data: empresaId } = useEmpresaId();
-  const { data: rubricas = [] } = useRubricasVinculadas();
-  const [rubricaId, setRubricaId] = useState("");
+  const { data: classificacoes = [] } = useClassificacoesOrcamento();
+  const [classificacaoId, setClassificacaoId] = useState("");
 
-  // Casa a rubrica pedida com a lista assim que ela carrega. Se o nome não
-  // bater com nenhuma, o campo fica vazio de propósito: escolher a rubrica
-  // errada é pior do que pedir para a pessoa escolher.
-  const rubricaPedida = inicial?.rubrica ?? "";
+  // DM-2026-0354/SIS-2026-0354 (Iury): antes o campo aqui era "Rubrica" (um
+  // item granular da Planilha de Custo ou do Orçamento Administrativo, que
+  // resolvia a Classificação Malote por trás — ver useRubricasMalote.ts,
+  // decisão original do SIS-2026-0132). Trocado pra escolher a Classificação
+  // Malote direto: o Orçado/Utilizado já é calculado agregado por
+  // Classificação (useOrcadoClassificacao/v_malote_utilizado_orcamento), não
+  // por rubrica — então nada se perde no consumo do orçamento ao pular esse
+  // passo intermediário. Casa o nome pedido (?rubrica=, mantido por
+  // compatibilidade com os chamadores — Patrimonios.tsx/vinculoMalote.ts, que
+  // já documentavam a intenção de comparar contra NOME DE CLASSIFICAÇÃO, não
+  // de rubrica) com a lista assim que ela carrega. Se não bater com nenhuma,
+  // o campo fica vazio de propósito: escolher a errada é pior que pedir para
+  // a pessoa escolher.
+  const classificacaoPedida = inicial?.rubrica ?? "";
   useEffect(() => {
-    if (!rubricaPedida || rubricaId || rubricas.length === 0) return;
-    const alvo = semAcento(rubricaPedida);
-    const achou = rubricas.find((r) => semAcento(r.label) === alvo)
-      ?? rubricas.find((r) => semAcento(r.label).includes(alvo));
-    if (achou) setRubricaId(achou.id);
-  }, [rubricaPedida, rubricas, rubricaId]);
+    if (!classificacaoPedida || classificacaoId || classificacoes.length === 0) return;
+    const alvo = semAcento(classificacaoPedida);
+    const achou = classificacoes.find((c) => semAcento(c.nome) === alvo)
+      ?? classificacoes.find((c) => semAcento(c.nome).includes(alvo));
+    if (achou) setClassificacaoId(achou.id);
+  }, [classificacaoPedida, classificacoes, classificacaoId]);
 
-  const rubrica = rubricas.find((r) => r.id === rubricaId) ?? null;
-  const classificacao = rubrica?.classificacaoMalote ?? null;
+  const classificacao = classificacoes.find((c) => c.id === classificacaoId) ?? null;
 
   // SIS-2026-0334 (Iury): "Criar um check que se marcado ele deixa a
   // classificação sem necessidade de solicitação, pulando direto para a
   // criação de despesa" — bypass só desta despesa, a Classificação
   // continua exigindo solicitação por padrão pra todo mundo. Reseta ao
-  // trocar de rubrica, senão o check de uma vaza pra próxima selecionada.
+  // trocar de classificação, senão o check de uma vaza pra próxima
+  // selecionada.
   const [pularSolicitacao, setPularSolicitacao] = useState(false);
-  useEffect(() => setPularSolicitacao(false), [rubricaId]);
+  useEffect(() => setPularSolicitacao(false), [classificacaoId]);
 
   const classificacaoExigeSolicitacao = !!classificacao?.requer_solicitacao;
   const modo: "solicitacao" | "despesa" | null = !classificacao
@@ -117,18 +131,14 @@ function CriarDespesaNova({ inicial }: { inicial?: PrefillDespesa }) {
           <div className="flex flex-col sm:flex-row items-stretch sm:items-end gap-4">
             <div className="flex-1 w-full">
               <Label>
-                Rubrica <span className="text-destructive">*</span>
+                Classificação Malote <span className="text-destructive">*</span>
               </Label>
               <SearchableSelect
-                value={rubricaId}
-                onChange={setRubricaId}
-                options={rubricas.map((r) => ({
-                  value: r.id,
-                  label: r.label,
-                  hint: r.origem === "administrativo" ? "Administrativo" : "Contrato",
-                }))}
-                placeholder="Selecione a rubrica da despesa"
-                searchPlaceholder="Buscar rubrica..."
+                value={classificacaoId}
+                onChange={setClassificacaoId}
+                options={classificacoes.map((c) => ({ value: c.id, label: c.nome }))}
+                placeholder="Selecione a Classificação Malote"
+                searchPlaceholder="Buscar Classificação..."
               />
             </div>
             <div className="shrink-0">
@@ -147,9 +157,10 @@ function CriarDespesaNova({ inicial }: { inicial?: PrefillDespesa }) {
             </div>
           )}
           <p className="text-xs text-muted-foreground">
-            A rubrica escolhida define a Classificação Malote (aprovadores e regras) e sugere o valor a partir do orçamento. Só aparecem rubricas já vinculadas a uma Classificação — configure em{" "}
-            <Link to="/app/malote/configuracoes" className="underline">
-              Ligação de Classificações
+            A Classificação Malote escolhida define os aprovadores e as regras de orçamento da despesa. Configure
+            aprovadores em{" "}
+            <Link to="/app/malote/classificacoes-malote" className="underline">
+              Classificações do Malote
             </Link>
             .
           </p>
@@ -157,7 +168,12 @@ function CriarDespesaNova({ inicial }: { inicial?: PrefillDespesa }) {
       </Card>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <PainelSolicitacao rubrica={rubrica} empresaId={empresaId ?? null} ativo={modo === "solicitacao"} />
+        <PainelSolicitacao
+          classificacaoId={classificacao?.id ?? ""}
+          classificacaoTipo={classificacao?.tipo ?? null}
+          empresaId={empresaId ?? null}
+          ativo={modo === "solicitacao"}
+        />
         <PainelDespesaMalote
           classificacaoId={classificacao?.id ?? ""}
           classificacaoTipo={classificacao?.tipo ?? null}
@@ -170,7 +186,7 @@ function CriarDespesaNova({ inicial }: { inicial?: PrefillDespesa }) {
 
       {!modo && (
         <p className="text-xs text-muted-foreground text-center">
-          Selecione uma rubrica para habilitar os tipos de despesa e preencher os formulários acima.
+          Selecione uma Classificação Malote para habilitar os tipos de despesa e preencher os formulários acima.
         </p>
       )}
     </div>
@@ -312,27 +328,23 @@ const TIPO_SOLICITACAO_LABEL: Record<TipoSolicitacao, string> = {
 };
 
 function PainelSolicitacao({
-  rubrica,
+  classificacaoId,
+  classificacaoTipo,
   empresaId,
   ativo,
 }: {
-  rubrica: RubricaVinculada | null;
+  classificacaoId: string;
+  classificacaoTipo: TipoClassificacaoOrcamento | null;
   empresaId: string | null;
   ativo: boolean;
 }) {
-  const classificacaoId = rubrica?.classificacaoMalote.id ?? "";
-  const classificacaoTipo = rubrica?.classificacaoMalote.tipo ?? null;
-
   const salvar = useSalvarDespesa();
   const { data: empresas = [] } = useEmpresasGrupo();
   const { data: contratos = [] } = useContratosAtivos();
-  const { data: planilhaCustos = [], isLoading: carregandoPlanilha } = usePlanilhaCustos();
-  const { data: planejamentosAdmin = [], isLoading: carregandoPlanejamento } = usePlanejamentosOrcamento(empresaId);
   const [nome, setNome] = useState("");
   const [motivo, setMotivo] = useState("");
   const [descricao, setDescricao] = useState("");
   const [valorEstimado, setValorEstimado] = useState("");
-  const [valorSugerido, setValorSugerido] = useState(false);
   const [links, setLinks] = useState("");
   // Itens do que está sendo pedido (SIS-2026-0207). Opcional: solicitação de
   // serviço ou despesa avulsa continua valendo só com a descrição.
@@ -342,7 +354,6 @@ function PainelSolicitacao({
   const [contratoId, setContratoId] = useState("");
   const [arquivos, setArquivos] = useState<File[]>([]);
   const [salvando, setSalvando] = useState<"rascunho" | "enviar" | null>(null);
-  const chaveAutoPreenchidaRef = useRef<string | null>(null);
 
   // A Classificação Malote já define se a despesa é de Contrato ou
   // Administrativo — o Tipo aqui só reflete isso e trava, evitando pedir a
@@ -350,32 +361,32 @@ function PainelSolicitacao({
   // quando a classificação não tem tipo definido (legado).
   const tipoTravado: TipoSolicitacao | null = classificacaoTipo;
 
-  // Sugere o Valor estimado a partir da rubrica escolhida: pra rubrica de
-  // Contrato, soma da planilha de custo vigente daquele contrato; pra
-  // rubrica Administrativa, o valor vigente do Orçamento Administrativo da
-  // empresa. Só recalcula quando rubrica/contrato mudam de verdade (não a
-  // cada refetch em background) pra não brigar com edição manual do valor.
-  useEffect(() => {
-    if (!rubrica) return;
-    if (rubrica.origem === "contrato" && (!contratoId || carregandoPlanilha)) return;
-    if (rubrica.origem === "administrativo" && carregandoPlanejamento) return;
-
-    const chave = `${rubrica.id}|${rubrica.origem === "contrato" ? contratoId : ""}`;
-    if (chaveAutoPreenchidaRef.current === chave) return;
-    chaveAutoPreenchidaRef.current = chave;
-
-    if (rubrica.origem === "contrato") {
-      const valor = resolverValorPorCampos(planilhaCustos, contratoId, [rubrica.campoOuId]);
-      setValorEstimado(valor > 0 ? String(valor) : "");
-      setValorSugerido(valor > 0);
-    } else {
-      const linha = planejamentosAdmin.find(
-        (p) => p.classificacao_id === rubrica.campoOuId && getStatusVigencia(p.inicio_vigencia, p.fim_vigencia) === "na_vigencia"
-      );
-      setValorEstimado(linha ? String(linha.valor) : "");
-      setValorSugerido(!!linha);
-    }
-  }, [rubrica, contratoId, carregandoPlanilha, carregandoPlanejamento, planilhaCustos, planejamentosAdmin]);
+  // SIS-2026-0354 (Iury): antes o Valor estimado vinha AUTO-preenchido a
+  // partir da rubrica granular escolhida (uma linha específica da Planilha
+  // de Custo ou do Orçamento Administrativo). Com a Classificação Malote
+  // escolhida direto, isso ficaria ambíguo — pode haver vários itens
+  // somados na mesma Classificação (ex.: R$7.000,00 de "DESPESA TREINAMENTO"
+  // é a soma de vários itens administrativos). Decisão confirmada com o
+  // usuário: não preencher nada automaticamente — só mostrar o Orçado/
+  // Restante da Classificação no mês atual como dica, ao lado do campo, pra
+  // conferir antes de digitar o valor (mesmo mecanismo de
+  // useOrcadoClassificacao/useUtilizadoOrcamento já usados em
+  // DespesaVisualizar.tsx/RateioGrid.tsx — Orçado/Utilizado já são
+  // agregados por Classificação, nunca por rubrica).
+  const anoMesAtual = useMemo(() => new Date().toISOString().slice(0, 7), []);
+  const { resolver: resolverOrcado } = useOrcadoClassificacao(empresaId, anoMesAtual);
+  const { data: utilizadoLinhas = [] } = useUtilizadoOrcamento();
+  const orcadoDoMes = classificacaoId ? resolverOrcado(classificacaoId, tipo === "contrato" ? contratoId || null : null) : null;
+  const utilizadoDoMes = useMemo(() => {
+    if (!classificacaoId) return 0;
+    return utilizadoLinhas.reduce((soma, u) => {
+      if (u.classificacao_id !== classificacaoId) return soma;
+      if (!u.competencia || u.competencia.slice(0, 7) !== anoMesAtual) return soma;
+      if (tipo === "contrato" && (u.contrato_id ?? null) !== (contratoId || null)) return soma;
+      return soma + (Number(u.valor) || 0);
+    }, 0);
+  }, [utilizadoLinhas, classificacaoId, anoMesAtual, tipo, contratoId]);
+  const restanteDoMes = orcadoDoMes != null ? orcadoDoMes - utilizadoDoMes : null;
 
   useEffect(() => {
     if (tipoTravado) {
@@ -451,9 +462,8 @@ function PainelSolicitacao({
         await salvar.mutateAsync({ id: despesaId, empresa_id: empresaFinal, classificacao_id: classificacaoId, origem: "solicitacao", status, nome: nome.trim(), valor_total: Number(valorEstimado), arquivos: paths });
       }
       toast.success(status === "rascunho" ? "Rascunho salvo." : "Solicitação enviada para aprovação inicial.");
-      setNome(""); setMotivo(""); setDescricao(""); setValorEstimado(""); setValorSugerido(false); setLinks(""); setArquivos([]); setItens([]);
+      setNome(""); setMotivo(""); setDescricao(""); setValorEstimado(""); setLinks(""); setArquivos([]); setItens([]);
       setEmpresaContratoId(""); setContratoId("");
-      chaveAutoPreenchidaRef.current = null;
       if (!tipoTravado) setTipo("");
     } catch (e: unknown) {
       toast.error(e instanceof Error ? e.message : "Erro ao salvar solicitação.");
@@ -522,7 +532,7 @@ function PainelSolicitacao({
               </Select>
             )}
             {tipoTravado && (
-              <p className="text-xs text-muted-foreground mt-1">Definido pela rubrica selecionada.</p>
+              <p className="text-xs text-muted-foreground mt-1">Definido pela Classificação Malote selecionada.</p>
             )}
           </div>
 
@@ -533,7 +543,7 @@ function PainelSolicitacao({
                 <SearchableSelect
                   value={contratoId}
                   onChange={handleContratoChange}
-                  options={contratos.map((c) => ({ value: c.id, label: c.nome }))}
+                  options={contratos.map((c) => ({ value: c.id, label: c.nome, muted: c.status === "encerrado" }))}
                   placeholder="Selecione o contrato..."
                   disabled={!ativo}
                 />
@@ -554,16 +564,13 @@ function PainelSolicitacao({
                 type="number"
                 step="0.01"
                 value={valorEstimado}
-                onChange={(e) => {
-                  setValorEstimado(e.target.value);
-                  setValorSugerido(false);
-                }}
+                onChange={(e) => setValorEstimado(e.target.value)}
                 placeholder="Ex: R$ 1.500,00"
                 disabled={!ativo}
               />
-              {valorSugerido && (
+              {classificacaoId && orcadoDoMes != null && (
                 <p className="text-[11px] text-muted-foreground mt-1">
-                  Valor sugerido {rubrica?.origem === "contrato" ? "do orçamento do contrato" : "do orçamento administrativo"} — confira antes de enviar.
+                  Orçado do mês: {fmtMoney(orcadoDoMes)} · Restante: {fmtMoney(restanteDoMes)}
                 </p>
               )}
             </div>

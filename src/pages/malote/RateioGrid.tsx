@@ -1,4 +1,5 @@
 import { useMemo, useState } from "react";
+import { cn } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -106,6 +107,18 @@ interface RateioGridProps {
   // (linha sem contrato) não tem Analista — quem justifica o estouro é o
   // próprio solicitante.
   souSolicitante?: boolean;
+  // DM-2026-0268 (financeiro, via Iury): "ajuste_pagamento" (Solicitar
+  // ajuste pedido pela Conferência de Pagamento) liberou correção de Valor
+  // e Empresa no Rateio — mas não o Rateio completo. Com isto true, trava
+  // tudo que é ESTRUTURA da linha (adicionar/remover linha, Classificação,
+  // Contrato, Fornecedor, Integrante, as próprias dimensões marcadas) e
+  // deixa só o Input de Valor/% e o Select de Empresa editáveis. Decisão
+  // confirmada com o usuário: mudar só Empresa não afeta orçamento (todo
+  // orçamento cadastrado é do grupo, não por empresa) — por isso pode ser
+  // salvo sem reiniciar aprovação; mudar Valor, sim, afeta, e quem decide
+  // se isso força reenvio é DespesaVisualizar.tsx (rateioMudouValor), não
+  // esta grade.
+  apenasValorEEmpresa?: boolean;
 }
 
 export function RateioGrid({
@@ -134,6 +147,7 @@ export function RateioGrid({
   mostrarValorParcela1,
   podeJustificarComoAprovador,
   souSolicitante,
+  apenasValorEEmpresa,
 }: RateioGridProps) {
   const { data: empresas = [] } = useEmpresasGrupo();
   const { data: contratos = [] } = useContratosAtivos();
@@ -149,6 +163,10 @@ export function RateioGrid({
   const [salvandoJustificativa, setSalvandoJustificativa] = useState(false);
 
   const mostrarColunasOrcamento = !!resolverOrcado;
+  // DM-2026-0268: trava tudo que não seja Valor/Empresa quando
+  // apenasValorEEmpresa (ver comentário na prop) — combinado com `disabled`
+  // via `disabled || travarEstrutura` em cada controle que não é Valor/Empresa.
+  const travarEstrutura = !!apenasValorEEmpresa;
 
   // SIS-2026-0261: índice da parcela sendo pré-visualizada (0 = parcela 1,
   // o padrão de sempre). Só existe navegação quando `parcelas` tem mais de
@@ -219,15 +237,30 @@ export function RateioGrid({
       : classificacaoTipoUnica === "contrato"
     : dimensoes.contrato;
 
+  // SIS-2026-0341 (Iury): "incluir junto das opções de contratos quando
+  // coloca em rateio a opção ADMINISTRATIVO" — mesmo numa Classificação
+  // administrativa, há casos que se referem a um contrato específico.
+  // Reaproveita a MESMA checkbox/estado de `dimensoes.contrato` do modo
+  // manual (não-contratoPorClassificacao) — nesse modo ela já era ignorada
+  // quando `colunaContratoAtiva` vinha true (tipo="contrato" trava o
+  // Contrato como obrigatório/derivado), então dá pra usá-la de propósito
+  // como o toggle OPCIONAL quando a Classificação NÃO é de contrato.
+  // Puramente visual/referência: NÃO troca de onde vem o Orçado (continua
+  // o Orçamento Administrativo da Classificação, nunca a Planilha de Custo
+  // do contrato referenciado) — por isso `atualizarContratoDaLinha`
+  // (que auto-preenche Empresa a partir do contrato) só é usada no caso
+  // obrigatório; aqui é um Select comum, sem esse efeito colateral.
+  const colunaContratoOpcional = contratoPorClassificacao && !colunaContratoAtiva && dimensoes.contrato;
+
   function atualizarContratoDaLinha(idx: number, contratoId: string) {
     const c = contratos.find((ct) => ct.id === contratoId);
     atualizarLinha(idx, { contrato_id: contratoId || null, empresa_id: c?.empresa_id ?? null });
   }
 
-  const mostrarColunaContrato = colunaContratoAtiva;
+  const mostrarColunaContrato = colunaContratoAtiva || colunaContratoOpcional;
   const mostrarColunaEmpresa = dimensoes.empresa || (contratoPorClassificacao && colunaContratoAtiva);
 
-  const nenhumaDimensao = !mostrarClassificacao && !dimensoes.empresa && !colunaContratoAtiva && !dimensoes.fornecedor && !dimensoes.integrante;
+  const nenhumaDimensao = !mostrarClassificacao && !dimensoes.empresa && !mostrarColunaContrato && !dimensoes.fornecedor && !dimensoes.integrante;
 
   const totalRateado = useMemo(() => linhas.reduce((s, l) => s + (Number(l.valor) || 0), 0), [linhas]);
   const percentualRateado = valorTotal > 0 ? (totalRateado / valorTotal) * 100 : 0;
@@ -291,28 +324,33 @@ export function RateioGrid({
           <div className="mt-1 flex flex-wrap gap-4">
             {!(contratoPorClassificacao && !mostrarClassificacao && classificacaoTipoUnica === "contrato") && (
               <label className="flex items-center gap-1.5 text-sm cursor-pointer">
-                <Checkbox checked={dimensoes.empresa} onCheckedChange={(c) => atualizarDimensao("empresa", c === true)} disabled={disabled} />
+                <Checkbox checked={dimensoes.empresa} onCheckedChange={(c) => atualizarDimensao("empresa", c === true)} disabled={disabled || travarEstrutura} />
                 Empresa
               </label>
             )}
             {contratoPorClassificacao ? (
-              colunaContratoAtiva && (
+              colunaContratoAtiva ? (
                 <span className="flex items-center gap-1.5 text-sm text-muted-foreground">
                   <Checkbox checked disabled /> Contrato (definido pela classificação)
                 </span>
+              ) : (
+                <label className="flex items-center gap-1.5 text-sm cursor-pointer">
+                  <Checkbox checked={dimensoes.contrato} onCheckedChange={(c) => atualizarDimensao("contrato", c === true)} disabled={disabled || travarEstrutura} />
+                  Contrato (opcional)
+                </label>
               )
             ) : (
               <label className="flex items-center gap-1.5 text-sm cursor-pointer">
-                <Checkbox checked={dimensoes.contrato} onCheckedChange={(c) => atualizarDimensao("contrato", c === true)} disabled={disabled} />
+                <Checkbox checked={dimensoes.contrato} onCheckedChange={(c) => atualizarDimensao("contrato", c === true)} disabled={disabled || travarEstrutura} />
                 Contrato
               </label>
             )}
             <label className="flex items-center gap-1.5 text-sm cursor-pointer">
-              <Checkbox checked={dimensoes.fornecedor} onCheckedChange={(c) => atualizarDimensao("fornecedor", c === true)} disabled={disabled} />
+              <Checkbox checked={dimensoes.fornecedor} onCheckedChange={(c) => atualizarDimensao("fornecedor", c === true)} disabled={disabled || travarEstrutura} />
               Fornecedor (opcional)
             </label>
             <label className="flex items-center gap-1.5 text-sm cursor-pointer">
-              <Checkbox checked={dimensoes.integrante} onCheckedChange={(c) => atualizarDimensao("integrante", c === true)} disabled={disabled} />
+              <Checkbox checked={dimensoes.integrante} onCheckedChange={(c) => atualizarDimensao("integrante", c === true)} disabled={disabled || travarEstrutura} />
               Integrante (opcional)
             </label>
           </div>
@@ -339,7 +377,7 @@ export function RateioGrid({
                   onDistribuirIgualmenteChange(c === true);
                   if (c === true) aplicarDistribuicaoIgual();
                 }}
-                disabled={disabled || linhas.length === 0}
+                disabled={disabled || travarEstrutura || linhas.length === 0}
               />
             </label>
           )}
@@ -391,7 +429,7 @@ export function RateioGrid({
             <TableRow>
               {mostrarClassificacao && <TableHead>Classificação *</TableHead>}
               {mostrarColunaEmpresa && <TableHead>Empresa {colunaContratoAtiva && !dimensoes.empresa ? "" : "*"}</TableHead>}
-              {mostrarColunaContrato && <TableHead>Contrato *</TableHead>}
+              {mostrarColunaContrato && <TableHead>Contrato {colunaContratoAtiva ? "*" : "(opcional)"}</TableHead>}
               <TableHead>{ratearPor === "percentual" ? "% Rateio *" : "Valor (R$) *"}</TableHead>
               {dimensoes.fornecedor && <TableHead>Fornecedor (opcional)</TableHead>}
               {dimensoes.integrante && <TableHead>Integrante (opcional)</TableHead>}
@@ -443,7 +481,7 @@ export function RateioGrid({
                           ...(contratoPorClassificacao && novoTipo !== "contrato" ? { contrato_id: null, empresa_id: null } : {}),
                         });
                       }}
-                      disabled={disabled}
+                      disabled={disabled || travarEstrutura}
                     >
                       <SelectTrigger className="h-8 w-40 text-xs">
                         <SelectValue placeholder="Selecione..." />
@@ -489,9 +527,24 @@ export function RateioGrid({
                         <SearchableSelect
                           value={linha.contrato_id ?? ""}
                           onChange={(v) => atualizarContratoDaLinha(idx, v)}
-                          options={contratos.map((c) => ({ value: c.id, label: c.nome }))}
+                          options={contratos.map((c) => ({ value: c.id, label: c.nome, muted: c.status === "encerrado" }))}
                           placeholder="Selecione..."
-                          disabled={disabled}
+                          disabled={disabled || travarEstrutura}
+                          className="w-40"
+                          triggerClassName="h-8 text-xs"
+                        />
+                      ) : colunaContratoOpcional ? (
+                        // SIS-2026-0341: referência visual apenas — não usa
+                        // atualizarContratoDaLinha (não auto-preenche
+                        // Empresa nem troca a origem do Orçado, que segue
+                        // sendo o Orçamento Administrativo da Classificação).
+                        <SearchableSelect
+                          value={linha.contrato_id ?? ""}
+                          onChange={(v) => atualizarLinha(idx, { contrato_id: v || null })}
+                          options={contratos.map((c) => ({ value: c.id, label: c.nome, muted: c.status === "encerrado" }))}
+                          placeholder="Referência (opcional)..."
+                          disabled={disabled || travarEstrutura}
+                          allowClear
                           className="w-40"
                           triggerClassName="h-8 text-xs"
                         />
@@ -499,7 +552,7 @@ export function RateioGrid({
                         <span className="text-xs text-muted-foreground">—</span>
                       )
                     ) : (
-                      <Select value={linha.contrato_id ?? ""} onValueChange={(v) => atualizarLinha(idx, { contrato_id: v })} disabled={disabled}>
+                      <Select value={linha.contrato_id ?? ""} onValueChange={(v) => atualizarLinha(idx, { contrato_id: v })} disabled={disabled || travarEstrutura}>
                         <SelectTrigger className="h-8 w-36 text-xs">
                           <SelectValue placeholder="Selecione..." />
                         </SelectTrigger>
@@ -507,7 +560,7 @@ export function RateioGrid({
                           {contratos
                             .filter((c) => !linha.empresa_id || c.empresa_id === linha.empresa_id)
                             .map((c) => (
-                              <SelectItem key={c.id} value={c.id}>
+                              <SelectItem key={c.id} value={c.id} className={cn(c.status === "encerrado" && "opacity-50")}>
                                 {c.nome}
                               </SelectItem>
                             ))}
@@ -535,7 +588,7 @@ export function RateioGrid({
                     <Select
                       value={linha.fornecedor_id ?? "none"}
                       onValueChange={(v) => atualizarLinha(idx, { fornecedor_id: v === "none" ? null : v })}
-                      disabled={disabled}
+                      disabled={disabled || travarEstrutura}
                     >
                       <SelectTrigger className="h-8 w-36 text-xs">
                         <SelectValue placeholder="—" />
@@ -565,7 +618,7 @@ export function RateioGrid({
                       ]}
                       placeholder="—"
                       searchPlaceholder="Buscar colaborador..."
-                      disabled={disabled}
+                      disabled={disabled || travarEstrutura}
                       className="w-36"
                       triggerClassName="h-8 text-xs"
                     />
@@ -576,18 +629,29 @@ export function RateioGrid({
                 )}
                 {mostrarColunasOrcamento &&
                   (() => {
-                    // SIS-2026-0212 (complemento): mesmo congelamento da
-                    // RateioAprovadorTable — na prática essa grade só
-                    // renderiza pra despesa ainda não paga (bloqueado=true
-                    // desliga rateioEPagamentoEditaveis), mas mantém
-                    // consistente caso isso mude.
-                    const estaCongelada = linha.congelado_em != null;
-                    const orcado = estaCongelada ? linha.orcado_snapshot ?? null : resolverOrcado!(classificacaoId, linha.contrato_id, mesSelecionado ?? "");
+                    // SIS-2026-0212 (complemento) dizia "preferir o snapshot
+                    // congelado, mas essa grade só renderiza pra despesa
+                    // ainda não paga, então na prática nunca tinha
+                    // congelado_em setado" — deixou de valer com o
+                    // DM-2026-0268: agora esta grade TAMBÉM renderiza em
+                    // ajuste_pagamento, status que já passou por
+                    // malote_aprovar_despesa (que congela o snapshot ao
+                    // entrar em aguardando_pagamento). Achado real: preferir
+                    // o snapshot aqui fazia a coluna "Valor utilizado +
+                    // lançamento" ignorar o Valor recém-editado pelo
+                    // solicitante, mostrando sempre o número de antes do
+                    // ajuste. Esta grade só é exibida quando o Rateio está
+                    // de fato editável (rateioEditavel, ver
+                    // DespesaVisualizar.tsx) — a versão read-only congelada
+                    // continua correta em RateioAprovadorTable/
+                    // RateioParceladoTable, que são as únicas que ainda
+                    // devem preferir o snapshot. Por isso, aqui dentro,
+                    // sempre calcula ao vivo a partir do linha.valor atual,
+                    // congelado_em ou não.
+                    const orcado = resolverOrcado!(classificacaoId, linha.contrato_id, mesSelecionado ?? "");
                     const chave = linha.contrato_id ?? "__sem_contrato__";
                     const utilizadoAntes = utilizadoAntesPorContrato.get(chave) ?? 0;
-                    const utilizadoComLancamento = estaCongelada
-                      ? linha.utilizado_com_lancamento_snapshot ?? 0
-                      : utilizadoAntes + (Number(linha.valor) || 0) * fatorSelecionado;
+                    const utilizadoComLancamento = utilizadoAntes + (Number(linha.valor) || 0) * fatorSelecionado;
                     const dentroDoOrcado = orcado == null ? null : utilizadoComLancamento <= orcado;
                     const percentualLinha = orcado ? (utilizadoComLancamento / orcado) * 100 : null;
                     // SIS-2026-0261 (Iury, achado real + correção de um bug
@@ -655,7 +719,7 @@ export function RateioGrid({
                     );
                   })()}
                 <TableCell className="text-right">
-                  <Button type="button" variant="ghost" size="icon" className="h-7 w-7 text-destructive" onClick={() => removerLinha(idx)} disabled={disabled}>
+                  <Button type="button" variant="ghost" size="icon" className="h-7 w-7 text-destructive" onClick={() => removerLinha(idx)} disabled={disabled || travarEstrutura}>
                     <Trash2 className="h-3.5 w-3.5" />
                   </Button>
                 </TableCell>
@@ -697,7 +761,7 @@ export function RateioGrid({
         </Dialog>
       )}
 
-      {!disabled && (
+      {!disabled && !travarEstrutura && (
         <Button type="button" variant="outline" size="sm" onClick={adicionarLinha} disabled={nenhumaDimensao} className="gap-1.5">
           <Plus className="h-3.5 w-3.5" /> Adicionar linha
         </Button>
