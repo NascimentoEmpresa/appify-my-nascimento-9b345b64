@@ -237,15 +237,30 @@ export function RateioGrid({
       : classificacaoTipoUnica === "contrato"
     : dimensoes.contrato;
 
+  // SIS-2026-0341 (Iury): "incluir junto das opções de contratos quando
+  // coloca em rateio a opção ADMINISTRATIVO" — mesmo numa Classificação
+  // administrativa, há casos que se referem a um contrato específico.
+  // Reaproveita a MESMA checkbox/estado de `dimensoes.contrato` do modo
+  // manual (não-contratoPorClassificacao) — nesse modo ela já era ignorada
+  // quando `colunaContratoAtiva` vinha true (tipo="contrato" trava o
+  // Contrato como obrigatório/derivado), então dá pra usá-la de propósito
+  // como o toggle OPCIONAL quando a Classificação NÃO é de contrato.
+  // Puramente visual/referência: NÃO troca de onde vem o Orçado (continua
+  // o Orçamento Administrativo da Classificação, nunca a Planilha de Custo
+  // do contrato referenciado) — por isso `atualizarContratoDaLinha`
+  // (que auto-preenche Empresa a partir do contrato) só é usada no caso
+  // obrigatório; aqui é um Select comum, sem esse efeito colateral.
+  const colunaContratoOpcional = contratoPorClassificacao && !colunaContratoAtiva && dimensoes.contrato;
+
   function atualizarContratoDaLinha(idx: number, contratoId: string) {
     const c = contratos.find((ct) => ct.id === contratoId);
     atualizarLinha(idx, { contrato_id: contratoId || null, empresa_id: c?.empresa_id ?? null });
   }
 
-  const mostrarColunaContrato = colunaContratoAtiva;
+  const mostrarColunaContrato = colunaContratoAtiva || colunaContratoOpcional;
   const mostrarColunaEmpresa = dimensoes.empresa || (contratoPorClassificacao && colunaContratoAtiva);
 
-  const nenhumaDimensao = !mostrarClassificacao && !dimensoes.empresa && !colunaContratoAtiva && !dimensoes.fornecedor && !dimensoes.integrante;
+  const nenhumaDimensao = !mostrarClassificacao && !dimensoes.empresa && !mostrarColunaContrato && !dimensoes.fornecedor && !dimensoes.integrante;
 
   const totalRateado = useMemo(() => linhas.reduce((s, l) => s + (Number(l.valor) || 0), 0), [linhas]);
   const percentualRateado = valorTotal > 0 ? (totalRateado / valorTotal) * 100 : 0;
@@ -314,10 +329,15 @@ export function RateioGrid({
               </label>
             )}
             {contratoPorClassificacao ? (
-              colunaContratoAtiva && (
+              colunaContratoAtiva ? (
                 <span className="flex items-center gap-1.5 text-sm text-muted-foreground">
                   <Checkbox checked disabled /> Contrato (definido pela classificação)
                 </span>
+              ) : (
+                <label className="flex items-center gap-1.5 text-sm cursor-pointer">
+                  <Checkbox checked={dimensoes.contrato} onCheckedChange={(c) => atualizarDimensao("contrato", c === true)} disabled={disabled || travarEstrutura} />
+                  Contrato (opcional)
+                </label>
               )
             ) : (
               <label className="flex items-center gap-1.5 text-sm cursor-pointer">
@@ -409,7 +429,7 @@ export function RateioGrid({
             <TableRow>
               {mostrarClassificacao && <TableHead>Classificação *</TableHead>}
               {mostrarColunaEmpresa && <TableHead>Empresa {colunaContratoAtiva && !dimensoes.empresa ? "" : "*"}</TableHead>}
-              {mostrarColunaContrato && <TableHead>Contrato *</TableHead>}
+              {mostrarColunaContrato && <TableHead>Contrato {colunaContratoAtiva ? "*" : "(opcional)"}</TableHead>}
               <TableHead>{ratearPor === "percentual" ? "% Rateio *" : "Valor (R$) *"}</TableHead>
               {dimensoes.fornecedor && <TableHead>Fornecedor (opcional)</TableHead>}
               {dimensoes.integrante && <TableHead>Integrante (opcional)</TableHead>}
@@ -510,6 +530,21 @@ export function RateioGrid({
                           options={contratos.map((c) => ({ value: c.id, label: c.nome, muted: c.status === "encerrado" }))}
                           placeholder="Selecione..."
                           disabled={disabled || travarEstrutura}
+                          className="w-40"
+                          triggerClassName="h-8 text-xs"
+                        />
+                      ) : colunaContratoOpcional ? (
+                        // SIS-2026-0341: referência visual apenas — não usa
+                        // atualizarContratoDaLinha (não auto-preenche
+                        // Empresa nem troca a origem do Orçado, que segue
+                        // sendo o Orçamento Administrativo da Classificação).
+                        <SearchableSelect
+                          value={linha.contrato_id ?? ""}
+                          onChange={(v) => atualizarLinha(idx, { contrato_id: v || null })}
+                          options={contratos.map((c) => ({ value: c.id, label: c.nome, muted: c.status === "encerrado" }))}
+                          placeholder="Referência (opcional)..."
+                          disabled={disabled || travarEstrutura}
+                          allowClear
                           className="w-40"
                           triggerClassName="h-8 text-xs"
                         />
