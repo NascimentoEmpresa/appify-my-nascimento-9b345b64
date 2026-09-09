@@ -77,4 +77,32 @@ describe("matchMenuCode — desempate por menu ativo", () => {
     expect(matchMenuCode("/app/operacional/conferencia-ponto", rotas)).toBe("operacional_conferencia_ponto");
     expect(matchMenuCode("/app/financeiro/conferencia-ponto", rotas)).toBe("financeiro_conferencia_ponto");
   });
+
+  it("Diárias: a porta do encarregado não pode cair no menu raiz do módulo", () => {
+    // 09/09/2026. O item "Controle de Diárias" da sidebar de Encarregados
+    // apontava para /app/operacional/diarias, então era governado por
+    // `operacional_diarias` — um menu de OUTRO módulo. Resultado: a chave só
+    // existia no bloco Operacional do gerenciamento de acesso, e ligá-la fazia
+    // o módulo Operacional inteiro aparecer na sidebar do encarregado.
+    //
+    // A correção deu porta própria à tela. O risco novo é o prefixo: o menu
+    // `minhas_solicitações` tem rota '/app/encarregados' (a raiz do módulo), e
+    // sem uma entrada específica para /app/encarregados/diarias o longest-match
+    // cairia nele — a tela de diárias herdaria a permissão de "Minhas
+    // Solicitações" e apareceria para quem nunca recebeu Diárias.
+    const rotas: MenuRoute[] = [
+      { codigo: "minhas_solicitações", rota: "/app/encarregados", ativo: true },
+      { codigo: "encarregados_diarias", rota: "/app/encarregados/diarias", ativo: true },
+      { codigo: "operacional_diarias", rota: "/app/operacional/diarias", ativo: true },
+    ];
+    expect(matchMenuCode("/app/encarregados/diarias", rotas)).toBe("encarregados_diarias");
+    expect(matchMenuCode("/app/operacional/diarias", rotas)).toBe("operacional_diarias");
+    expect(matchMenuCode("/app/encarregados", rotas)).toBe("minhas_solicitações");
+
+    // E o que acontece se a migration 20260930000065 não tiver sido aplicada
+    // antes de o frontend subir: a rota nova cai na raiz do módulo. É o motivo
+    // de a migration ter que ir para o banco ANTES do deploy.
+    const semMenuNovo = rotas.filter((r) => r.codigo !== "encarregados_diarias");
+    expect(matchMenuCode("/app/encarregados/diarias", semMenuNovo)).toBe("minhas_solicitações");
+  });
 });
