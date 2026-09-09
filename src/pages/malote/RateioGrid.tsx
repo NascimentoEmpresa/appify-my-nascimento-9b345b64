@@ -1,4 +1,5 @@
 import { useMemo, useState } from "react";
+import { cn } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -106,6 +107,18 @@ interface RateioGridProps {
   // (linha sem contrato) não tem Analista — quem justifica o estouro é o
   // próprio solicitante.
   souSolicitante?: boolean;
+  // DM-2026-0268 (financeiro, via Iury): "ajuste_pagamento" (Solicitar
+  // ajuste pedido pela Conferência de Pagamento) liberou correção de Valor
+  // e Empresa no Rateio — mas não o Rateio completo. Com isto true, trava
+  // tudo que é ESTRUTURA da linha (adicionar/remover linha, Classificação,
+  // Contrato, Fornecedor, Integrante, as próprias dimensões marcadas) e
+  // deixa só o Input de Valor/% e o Select de Empresa editáveis. Decisão
+  // confirmada com o usuário: mudar só Empresa não afeta orçamento (todo
+  // orçamento cadastrado é do grupo, não por empresa) — por isso pode ser
+  // salvo sem reiniciar aprovação; mudar Valor, sim, afeta, e quem decide
+  // se isso força reenvio é DespesaVisualizar.tsx (rateioMudouValor), não
+  // esta grade.
+  apenasValorEEmpresa?: boolean;
 }
 
 export function RateioGrid({
@@ -134,6 +147,7 @@ export function RateioGrid({
   mostrarValorParcela1,
   podeJustificarComoAprovador,
   souSolicitante,
+  apenasValorEEmpresa,
 }: RateioGridProps) {
   const { data: empresas = [] } = useEmpresasGrupo();
   const { data: contratos = [] } = useContratosAtivos();
@@ -149,6 +163,10 @@ export function RateioGrid({
   const [salvandoJustificativa, setSalvandoJustificativa] = useState(false);
 
   const mostrarColunasOrcamento = !!resolverOrcado;
+  // DM-2026-0268: trava tudo que não seja Valor/Empresa quando
+  // apenasValorEEmpresa (ver comentário na prop) — combinado com `disabled`
+  // via `disabled || travarEstrutura` em cada controle que não é Valor/Empresa.
+  const travarEstrutura = !!apenasValorEEmpresa;
 
   // SIS-2026-0261: índice da parcela sendo pré-visualizada (0 = parcela 1,
   // o padrão de sempre). Só existe navegação quando `parcelas` tem mais de
@@ -291,7 +309,7 @@ export function RateioGrid({
           <div className="mt-1 flex flex-wrap gap-4">
             {!(contratoPorClassificacao && !mostrarClassificacao && classificacaoTipoUnica === "contrato") && (
               <label className="flex items-center gap-1.5 text-sm cursor-pointer">
-                <Checkbox checked={dimensoes.empresa} onCheckedChange={(c) => atualizarDimensao("empresa", c === true)} disabled={disabled} />
+                <Checkbox checked={dimensoes.empresa} onCheckedChange={(c) => atualizarDimensao("empresa", c === true)} disabled={disabled || travarEstrutura} />
                 Empresa
               </label>
             )}
@@ -303,16 +321,16 @@ export function RateioGrid({
               )
             ) : (
               <label className="flex items-center gap-1.5 text-sm cursor-pointer">
-                <Checkbox checked={dimensoes.contrato} onCheckedChange={(c) => atualizarDimensao("contrato", c === true)} disabled={disabled} />
+                <Checkbox checked={dimensoes.contrato} onCheckedChange={(c) => atualizarDimensao("contrato", c === true)} disabled={disabled || travarEstrutura} />
                 Contrato
               </label>
             )}
             <label className="flex items-center gap-1.5 text-sm cursor-pointer">
-              <Checkbox checked={dimensoes.fornecedor} onCheckedChange={(c) => atualizarDimensao("fornecedor", c === true)} disabled={disabled} />
+              <Checkbox checked={dimensoes.fornecedor} onCheckedChange={(c) => atualizarDimensao("fornecedor", c === true)} disabled={disabled || travarEstrutura} />
               Fornecedor (opcional)
             </label>
             <label className="flex items-center gap-1.5 text-sm cursor-pointer">
-              <Checkbox checked={dimensoes.integrante} onCheckedChange={(c) => atualizarDimensao("integrante", c === true)} disabled={disabled} />
+              <Checkbox checked={dimensoes.integrante} onCheckedChange={(c) => atualizarDimensao("integrante", c === true)} disabled={disabled || travarEstrutura} />
               Integrante (opcional)
             </label>
           </div>
@@ -339,7 +357,7 @@ export function RateioGrid({
                   onDistribuirIgualmenteChange(c === true);
                   if (c === true) aplicarDistribuicaoIgual();
                 }}
-                disabled={disabled || linhas.length === 0}
+                disabled={disabled || travarEstrutura || linhas.length === 0}
               />
             </label>
           )}
@@ -443,7 +461,7 @@ export function RateioGrid({
                           ...(contratoPorClassificacao && novoTipo !== "contrato" ? { contrato_id: null, empresa_id: null } : {}),
                         });
                       }}
-                      disabled={disabled}
+                      disabled={disabled || travarEstrutura}
                     >
                       <SelectTrigger className="h-8 w-40 text-xs">
                         <SelectValue placeholder="Selecione..." />
@@ -489,9 +507,9 @@ export function RateioGrid({
                         <SearchableSelect
                           value={linha.contrato_id ?? ""}
                           onChange={(v) => atualizarContratoDaLinha(idx, v)}
-                          options={contratos.map((c) => ({ value: c.id, label: c.nome }))}
+                          options={contratos.map((c) => ({ value: c.id, label: c.nome, muted: c.status === "encerrado" }))}
                           placeholder="Selecione..."
-                          disabled={disabled}
+                          disabled={disabled || travarEstrutura}
                           className="w-40"
                           triggerClassName="h-8 text-xs"
                         />
@@ -499,7 +517,7 @@ export function RateioGrid({
                         <span className="text-xs text-muted-foreground">—</span>
                       )
                     ) : (
-                      <Select value={linha.contrato_id ?? ""} onValueChange={(v) => atualizarLinha(idx, { contrato_id: v })} disabled={disabled}>
+                      <Select value={linha.contrato_id ?? ""} onValueChange={(v) => atualizarLinha(idx, { contrato_id: v })} disabled={disabled || travarEstrutura}>
                         <SelectTrigger className="h-8 w-36 text-xs">
                           <SelectValue placeholder="Selecione..." />
                         </SelectTrigger>
@@ -507,7 +525,7 @@ export function RateioGrid({
                           {contratos
                             .filter((c) => !linha.empresa_id || c.empresa_id === linha.empresa_id)
                             .map((c) => (
-                              <SelectItem key={c.id} value={c.id}>
+                              <SelectItem key={c.id} value={c.id} className={cn(c.status === "encerrado" && "opacity-50")}>
                                 {c.nome}
                               </SelectItem>
                             ))}
@@ -535,7 +553,7 @@ export function RateioGrid({
                     <Select
                       value={linha.fornecedor_id ?? "none"}
                       onValueChange={(v) => atualizarLinha(idx, { fornecedor_id: v === "none" ? null : v })}
-                      disabled={disabled}
+                      disabled={disabled || travarEstrutura}
                     >
                       <SelectTrigger className="h-8 w-36 text-xs">
                         <SelectValue placeholder="—" />
@@ -565,7 +583,7 @@ export function RateioGrid({
                       ]}
                       placeholder="—"
                       searchPlaceholder="Buscar colaborador..."
-                      disabled={disabled}
+                      disabled={disabled || travarEstrutura}
                       className="w-36"
                       triggerClassName="h-8 text-xs"
                     />
@@ -655,7 +673,7 @@ export function RateioGrid({
                     );
                   })()}
                 <TableCell className="text-right">
-                  <Button type="button" variant="ghost" size="icon" className="h-7 w-7 text-destructive" onClick={() => removerLinha(idx)} disabled={disabled}>
+                  <Button type="button" variant="ghost" size="icon" className="h-7 w-7 text-destructive" onClick={() => removerLinha(idx)} disabled={disabled || travarEstrutura}>
                     <Trash2 className="h-3.5 w-3.5" />
                   </Button>
                 </TableCell>
@@ -697,7 +715,7 @@ export function RateioGrid({
         </Dialog>
       )}
 
-      {!disabled && (
+      {!disabled && !travarEstrutura && (
         <Button type="button" variant="outline" size="sm" onClick={adicionarLinha} disabled={nenhumaDimensao} className="gap-1.5">
           <Plus className="h-3.5 w-3.5" /> Adicionar linha
         </Button>
