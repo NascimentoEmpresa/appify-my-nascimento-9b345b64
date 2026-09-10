@@ -23,6 +23,28 @@ export const motivoLabel = (m?: string | null): string =>
 export const ehSubstituicao = (m?: string | null): boolean =>
   String(m ?? "").trim() === MOTIVO_SUBSTITUICAO;
 
+/**
+ * Quantas vagas o motivo permite pedir.
+ *
+ * Substituição repõe UMA pessoa: a vaga aponta para um colaborador
+ * específico (`substituido_id`) e é esse id que trava a pessoa numa vaga só.
+ * Pedir 3 vagas para repor um colaborador não tem leitura possível — o campo
+ * fica travado em 1 em vez de aceitar o número e recusar depois.
+ *
+ * Mora aqui, e não no componente, porque a tela não é o único caminho até o
+ * banco: o mesmo formulário grava criação e edição, e a regra tem que valer
+ * nos dois sem depender de alguém lembrar de repetir o `if`.
+ */
+export const maximoDeVagas = (motivo?: string | null): number =>
+  ehSubstituicao(motivo) ? 1 : 99;
+
+/** A quantidade que realmente vai para o banco, já limitada pelo motivo. */
+export const quantidadeValida = (motivo: string | null | undefined, digitado: string | number): number => {
+  const n = typeof digitado === "number" ? digitado : parseInt(digitado, 10);
+  const limpo = Number.isFinite(n) && n > 0 ? Math.floor(n) : 1;
+  return Math.min(limpo, maximoDeVagas(motivo));
+};
+
 // ── Colaborador de referência ───────────────────────────────────────────
 // Todo motivo de vaga exige escolher alguém do cadastro: é de lá que saem
 // cargo, contrato, escala, salário e insalubridade — ninguém digita isso à
