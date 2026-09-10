@@ -323,7 +323,7 @@ export default function ContratosERP() {
     <div className="flex flex-col gap-6 p-6">
       <PageHeader
         title="Contratos"
-        description="Gestão dos contratos ativos da empresa."
+        subtitle="Gestão dos contratos ativos da empresa."
         actions={
           <div className="flex gap-2">
             <Button size="sm" variant="outline" onClick={handleImportar} disabled={importando}>
@@ -394,7 +394,10 @@ export default function ContratosERP() {
             </thead>
             <tbody className="divide-y divide-border">
               {filtered.map((c) => (
-                <tr key={c.id} className="hover:bg-muted/30 transition-colors">
+                <tr
+                  key={c.id}
+                  className={cn("hover:bg-muted/30 transition-colors", c.status === "encerrado" && "opacity-50")}
+                >
                   <td className="px-4 py-3 font-medium">{c.nome}</td>
                   <td className="px-4 py-3 text-muted-foreground">{c.cliente}</td>
                   <td className="px-4 py-3 text-muted-foreground">{fmtData(c.data_inicio)}</td>

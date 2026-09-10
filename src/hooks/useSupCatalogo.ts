@@ -20,7 +20,11 @@ export type TipoEntidade = "posto" | "funcao" | "item" | "opcoes" | "funcao_item
 export type TipoAcao = "criar" | "editar" | "excluir";
 
 export interface Contrato { id: string; nome: string; cliente: string | null; status: string }
-export interface Posto { id: string; contrato_id: string; nome: string; ativo: boolean; aprovado: boolean }
+export interface Posto {
+  id: string; contrato_id: string; nome: string; ativo: boolean; aprovado: boolean;
+  /** false = posto que existe na cascata mas a Planilha de Custo não declara mais. */
+  na_planilha: boolean;
+}
 export interface Funcao { id: string; posto_id: string; nome: string; ativo: boolean; aprovado: boolean }
 export interface Item {
   id: string; nome: string; tipo: TipoItem; ativo: boolean; aprovado: boolean;
@@ -104,17 +108,28 @@ export function useContratosCatalogoRealtime() {
   }, [qc]);
 }
 
+/**
+ * Postos do contrato — DERIVADOS da Planilha de Custo, não cadastrados aqui.
+ *
+ * Não é um SELECT em sup_posto: a RPC sincroniza planilha_custo → sup_posto e
+ * devolve a lista no mesmo round-trip (ver migration
+ * 20260930000081_supply_catalogo_posto_da_planilha). Por isso a tela não tem
+ * botão de criar/renomear/excluir posto, e o banco também não aceita — a
+ * policy de escrita de sup_posto foi removida naquela migration.
+ *
+ * `staleTime: 0` de propósito: a sincronização é o efeito colateral desejado,
+ * e quem acabou de mexer na Planilha de Custo espera ver o posto novo ao
+ * voltar aqui.
+ */
 export function usePostos(contratoId: string | null) {
   return useQuery({
     queryKey: ["sup_posto", contratoId],
     enabled: !!contratoId,
+    staleTime: 0,
     queryFn: async (): Promise<Posto[]> => {
-      const { data, error } = await sb
-        .from("sup_posto")
-        .select("id, contrato_id, nome, ativo, aprovado")
-        .eq("contrato_id", contratoId)
-        .eq("ativo", true)
-        .order("nome");
+      const { data, error } = await sb.rpc("sup_cat_postos_do_contrato", {
+        p_contrato_id: contratoId,
+      });
       if (error) throw error;
       return data ?? [];
     },
@@ -284,57 +299,11 @@ export function useCatalogoMutations(empresaId: string | null) {
 
   const onErro = (e: any) => toast.error(e?.message ?? "Não foi possível salvar.");
 
-  // ── Posto ──
-  const criarPosto = useMutation({
-    mutationFn: async (v: { contratoId: string; contratoNome: string; nome: string }) => {
-      const emp = exigeEmpresa();
-      // empresa_id é preenchido por trigger a partir do contrato (ver migration).
-      const { data, error } = await sb.from("sup_posto")
-        .insert({ contrato_id: v.contratoId, nome: v.nome.trim(), empresa_id: emp })
-        .select("id").single();
-      if (error) throw error;
-      await registrarAlteracao({
-        empresaId: emp, tipoEntidade: "posto", tipoAcao: "criar", alvoId: data.id,
-        descricao: `Criar posto "${v.nome.trim()}"`,
-        dados: { nome: v.nome.trim(), contrato_id: v.contratoId },
-        contexto: { contrato: v.contratoNome, posto: v.nome.trim() },
-      });
-    },
-    onSuccess: () => { invalidar(); toast.success("Posto criado — aguardando aprovação."); },
-    onError: onErro,
-  });
-
-  const renomearPosto = useMutation({
-    mutationFn: async (v: { id: string; nome: string; nomeAnterior: string; contratoNome: string }) => {
-      const emp = exigeEmpresa();
-      const { error } = await sb.from("sup_posto").update({ nome: v.nome.trim() }).eq("id", v.id);
-      if (error) throw error;
-      await registrarAlteracao({
-        empresaId: emp, tipoEntidade: "posto", tipoAcao: "editar", alvoId: v.id,
-        descricao: `Renomear posto "${v.nomeAnterior}" → "${v.nome.trim()}"`,
-        dados: { de: v.nomeAnterior, para: v.nome.trim() },
-        contexto: { contrato: v.contratoNome, posto: v.nome.trim() },
-      });
-    },
-    onSuccess: () => { invalidar(); toast.success("Posto renomeado."); },
-    onError: onErro,
-  });
-
-  const excluirPosto = useMutation({
-    mutationFn: async (v: { id: string; nome: string; contratoNome: string }) => {
-      const emp = exigeEmpresa();
-      if (await descartarCriacaoPendente("sup_posto", "posto", v.id)) return;
-      const { error } = await sb.from("sup_posto").update({ ativo: false }).eq("id", v.id);
-      if (error) throw error;
-      await registrarAlteracao({
-        empresaId: emp, tipoEntidade: "posto", tipoAcao: "excluir", alvoId: v.id,
-        descricao: `Excluir posto "${v.nome}"`,
-        contexto: { contrato: v.contratoNome, posto: v.nome },
-      });
-    },
-    onSuccess: () => { invalidar(); toast.success("Posto removido."); },
-    onError: onErro,
-  });
+  // ── Posto: não existe mutation ──
+  //
+  // Posto é derivado da Planilha de Custo (migration 20260930000081). Criar,
+  // renomear e excluir posto é lá, não aqui — e a policy de escrita de
+  // sup_posto foi removida, então nem contornando a tela dá.
 
   // ── Função ──
   const criarFuncao = useMutation({
@@ -492,7 +461,6 @@ export function useCatalogoMutations(empresaId: string | null) {
   });
 
   return {
-    criarPosto, renomearPosto, excluirPosto,
     criarFuncao, renomearFuncao, excluirFuncao,
     criarItem, salvarOpcoes,
     adicionarAoEnxoval, removerDoEnxoval,
