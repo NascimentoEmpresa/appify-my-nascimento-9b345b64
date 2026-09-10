@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useMemo } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { Card, CardContent } from "@/components/ui/card";
@@ -32,6 +32,7 @@ import {
 } from "@/hooks/useMaloteDespesa";
 import { useClassificacoesOrcamento } from "@/hooks/usePlanejamentoOrcamentario";
 import { useOrdenacaoTabela } from "@/hooks/useOrdenacaoTabela";
+import { useEstadoPersistido } from "@/hooks/useEstadoPersistido";
 import { ordenarPor } from "@/lib/ordenarTabela";
 import { JustificativaPendenteBadge } from "./JustificativaPendenteBadge";
 
@@ -196,18 +197,21 @@ export default function MeusItens() {
     return empresaPrimeiraLinhaPorDespesa?.get(despesa.id) ?? despesa.empresa_id ?? null;
   }
 
-  const [tab, setTab] = useState<"todos" | "solicitacoes" | "despesas">("todos");
-  const [chip, setChip] = useState<ChipKey>("todos");
+  // SIS-2026-0350 (Cálita): aba, chip e filtros persistem no sessionStorage
+  // pra sobreviver ao entrar numa despesa e voltar.
+  const F = "malote_meus_itens";
+  const [tab, setTab] = useEstadoPersistido<"todos" | "solicitacoes" | "despesas">(F, "tab", "todos");
+  const [chip, setChip] = useEstadoPersistido<ChipKey>(F, "chip", "todos");
   // SIS-2026-0285 (Iury): só existia período por Data de pagamento — agora
   // tem também Última atualização, os dois independentes (E lógico).
-  const [periodoInicio, setPeriodoInicio] = useState("");
-  const [periodoFim, setPeriodoFim] = useState("");
-  const [dataAtualizacaoDe, setDataAtualizacaoDe] = useState("");
-  const [dataAtualizacaoAte, setDataAtualizacaoAte] = useState("");
-  const [classificacaoId, setClassificacaoId] = useState("");
-  const [empresaId, setEmpresaId] = useState("");
-  const [excecao, setExcecao] = useState<"todos" | "sim" | "nao">("todos");
-  const [busca, setBusca] = useState("");
+  const [periodoInicio, setPeriodoInicio] = useEstadoPersistido(F, "periodoInicio", "");
+  const [periodoFim, setPeriodoFim] = useEstadoPersistido(F, "periodoFim", "");
+  const [dataAtualizacaoDe, setDataAtualizacaoDe] = useEstadoPersistido(F, "dataAtualizacaoDe", "");
+  const [dataAtualizacaoAte, setDataAtualizacaoAte] = useEstadoPersistido(F, "dataAtualizacaoAte", "");
+  const [classificacaoId, setClassificacaoId] = useEstadoPersistido(F, "classificacaoId", "");
+  const [empresaId, setEmpresaId] = useEstadoPersistido(F, "empresaId", "");
+  const [excecao, setExcecao] = useEstadoPersistido<"todos" | "sim" | "nao">(F, "excecao", "todos");
+  const [busca, setBusca] = useEstadoPersistido(F, "busca", "");
   const ordenacao = useOrdenacaoTabela<ColunaMeusItens>();
 
   // SIS-2026-0323 (Iury): os chips contavam sempre em cima de `itens` cru

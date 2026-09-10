@@ -4,6 +4,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
@@ -86,11 +87,14 @@ function soChave(texto: string): string {
 
 interface PainelNotasSefazProps {
   onImportar: (xml: string) => void;
+  onImportarLote: (xmls: string[]) => Promise<void>;
 }
 
-export function PainelNotasSefaz({ onImportar }: PainelNotasSefazProps) {
+export function PainelNotasSefaz({ onImportar, onImportarLote }: PainelNotasSefazProps) {
   const [aberta, setAberta] = useState<DocumentoSefaz | null>(null);
   const [busca, setBusca] = useState("");
+  const [selecionadas, setSelecionadas] = useState<string[]>([]);
+  const [importandoLote, setImportandoLote] = useState(false);
 
   const documentos = useQuery({
     queryKey: ["nfe_dist_documento"],
@@ -144,8 +148,39 @@ export function PainelNotasSefaz({ onImportar }: PainelNotasSefazProps) {
   }, [documentos.data, busca]);
 
   const semItens = notas.filter((d) => d.tipo === "resumo").length;
+  const notasCompletas = notas.filter((d) => d.tipo === "completo");
+  const todasCompletasSelecionadas = notasCompletas.length > 0 && notasCompletas.every((d) => selecionadas.includes(d.id));
   const e = estado.data;
   const nota = aberta ? lerNfeXml(aberta.xml) : null;
+
+  const selecionarTodas = (selecionar: boolean) => {
+    const idsVisiveis = notasCompletas.map((d) => d.id);
+    setSelecionadas((atuais) => selecionar
+      ? [...new Set([...atuais, ...idsVisiveis])]
+      : atuais.filter((id) => !idsVisiveis.includes(id)),
+    );
+  };
+
+  const alternarSelecao = (id: string, selecionar: boolean) => {
+    setSelecionadas((atuais) => selecionar ? [...atuais, id] : atuais.filter((selecionada) => selecionada !== id));
+  };
+
+  const importarSelecionadas = async () => {
+    const xmls = notasCompletas
+      .filter((d) => selecionadas.includes(d.id))
+      .map((d) => d.xml)
+      .filter((xml): xml is string => !!xml);
+
+    if (!xmls.length) return;
+
+    setImportandoLote(true);
+    try {
+      await onImportarLote(xmls);
+    } finally {
+      setSelecionadas([]);
+      setImportandoLote(false);
+    }
+  };
 
   const copiarChave = (chave: string) => {
     navigator.clipboard.writeText(chave).then(
@@ -213,10 +248,26 @@ export function PainelNotasSefaz({ onImportar }: PainelNotasSefazProps) {
       )}
 
       <Card>
+        {selecionadas.length > 0 && (
+          <div className="flex items-center justify-between gap-3 border-b px-6 py-3">
+            <span className="text-sm text-muted-foreground">{selecionadas.length} selecionada(s)</span>
+            <Button size="sm" onClick={importarSelecionadas} disabled={importandoLote}>
+              {importandoLote ? "Importando..." : `Importar selecionadas (${selecionadas.length})`}
+            </Button>
+          </div>
+        )}
         <CardContent className="p-0">
           <Table>
             <TableHeader>
               <TableRow>
+                <TableHead className="w-10">
+                  <Checkbox
+                    checked={todasCompletasSelecionadas}
+                    onCheckedChange={(selecionar) => selecionarTodas(selecionar === true)}
+                    disabled={notasCompletas.length === 0}
+                    aria-label="Selecionar todas as notas completas"
+                  />
+                </TableHead>
                 <TableHead>Emitente</TableHead>
                 <TableHead>CNPJ</TableHead>
                 <TableHead>Emissão</TableHead>
@@ -228,6 +279,15 @@ export function PainelNotasSefaz({ onImportar }: PainelNotasSefazProps) {
             <TableBody>
               {notas.map((d) => (
                 <TableRow key={d.id}>
+                  <TableCell>
+                    {d.tipo === "completo" && (
+                      <Checkbox
+                        checked={selecionadas.includes(d.id)}
+                        onCheckedChange={(selecionar) => alternarSelecao(d.id, selecionar === true)}
+                        aria-label={`Selecionar nota ${d.chave ?? d.id}`}
+                      />
+                    )}
+                  </TableCell>
                   <TableCell className="font-medium">{d.emitente_nome || "—"}</TableCell>
                   <TableCell className="text-xs">{fmtCnpj(d.emitente_cnpj)}</TableCell>
                   <TableCell>{fmtData(d.emitida_em)}</TableCell>
@@ -263,7 +323,7 @@ export function PainelNotasSefaz({ onImportar }: PainelNotasSefazProps) {
 
               {!documentos.isLoading && notas.length === 0 && (
                 <TableRow>
-                  <TableCell colSpan={6} className="py-8 text-center text-sm text-muted-foreground">
+                  <TableCell colSpan={7} className="py-8 text-center text-sm text-muted-foreground">
                     {busca.trim()
                       ? "Nenhuma nota encontrada para essa busca."
                       : "Nenhuma nota recebida ainda. A busca automática roda pelo worker — confira se ele está ligado."}
@@ -273,7 +333,7 @@ export function PainelNotasSefaz({ onImportar }: PainelNotasSefazProps) {
 
               {documentos.isLoading && (
                 <TableRow>
-                  <TableCell colSpan={6} className="py-8 text-center text-sm text-muted-foreground">
+                  <TableCell colSpan={7} className="py-8 text-center text-sm text-muted-foreground">
                     Carregando…
                   </TableCell>
                 </TableRow>

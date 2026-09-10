@@ -7,10 +7,11 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { TableHeadOrdenavel } from "@/components/ui/table-head-ordenavel";
 import { DateRangeFilter } from "@/components/ui/date-range-filter";
-import { CheckCircle2, ChevronLeft, ChevronRight, Hourglass, AlertTriangle, XCircle, FileText, Users, User, X } from "lucide-react";
+import { CheckCircle2, ChevronLeft, ChevronRight, Hourglass, AlertTriangle, XCircle, FileText, Users, User, X, Check } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
 import { cn } from "@/lib/utils";
 import {
@@ -33,6 +34,7 @@ import {
 } from "@/hooks/useMaloteDespesa";
 import { useClassificacoesOrcamentoAdmin } from "@/hooks/usePlanejamentoOrcamentario";
 import { useMinhasDespesasComJustificativaPendente } from "@/hooks/useMaloteJustificativaAnalista";
+import { useEstadoPersistido } from "@/hooks/useEstadoPersistido";
 import { useOrdenacaoTabela } from "@/hooks/useOrdenacaoTabela";
 import { ordenarPor } from "@/lib/ordenarTabela";
 import { JustificativaPendenteBadge, abreviarNome } from "./JustificativaPendenteBadge";
@@ -188,6 +190,23 @@ const NIVEL_APROVACAO_FILTRO_ATIVO: Record<1 | 2 | 3, string> = {
   3: "border-red-400 bg-red-100 text-red-900 ring-red-400 dark:border-red-700 dark:bg-red-950/50 dark:text-red-200",
 };
 
+// SIS-2026-0358: item do popover de aprovador N2 — tingido na cor do nível.
+function OpcaoFiltroN2({ label, selecionado, onClick }: { label: string; selecionado: boolean; onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={cn(
+        "flex w-full items-center justify-between gap-2 rounded px-2 py-1.5 text-left text-xs font-medium text-orange-800 hover:bg-orange-100 dark:text-orange-200 dark:hover:bg-orange-900/40",
+        selecionado && "bg-orange-100 dark:bg-orange-900/40"
+      )}
+    >
+      <span className="truncate">{label}</span>
+      {selecionado && <Check className="h-3.5 w-3.5 shrink-0" />}
+    </button>
+  );
+}
+
 function GrupoTiles({ titulo, tiles, ativo, onClick }: { titulo: string; tiles: TileInfo[]; ativo: StatusDespesa | ""; onClick: (s: StatusDespesa | "") => void }) {
   return (
     <Card>
@@ -268,37 +287,49 @@ export default function Aprovacoes({ base = "/app/malote" }: { base?: string } =
   // SIS-2026-0285 (Iury): filtro de data puxava só de "Última atualização" —
   // agora tem os dois períodos, independentes (E lógico quando os dois
   // estão preenchidos), cada um com o próprio combobox de range + "Hoje".
-  const [dataAtualizacaoDe, setDataAtualizacaoDe] = useState("");
-  const [dataAtualizacaoAte, setDataAtualizacaoAte] = useState("");
-  const [dataPagamentoDe, setDataPagamentoDe] = useState("");
-  const [dataPagamentoAte, setDataPagamentoAte] = useState("");
-  const [status, setStatus] = useState<StatusDespesa | "">("");
+  // SIS-2026-0350 (Cálita): filtros e página persistem no sessionStorage
+  // (uma chave só, "malote_aprovacoes") pra sobreviver ao entrar numa despesa
+  // e voltar. Só estado de filtro/página — popover etc. segue em useState.
+  const F = "malote_aprovacoes";
+  const [dataAtualizacaoDe, setDataAtualizacaoDe] = useEstadoPersistido(F, "dataAtualizacaoDe", "");
+  const [dataAtualizacaoAte, setDataAtualizacaoAte] = useEstadoPersistido(F, "dataAtualizacaoAte", "");
+  const [dataPagamentoDe, setDataPagamentoDe] = useEstadoPersistido(F, "dataPagamentoDe", "");
+  const [dataPagamentoAte, setDataPagamentoAte] = useEstadoPersistido(F, "dataPagamentoAte", "");
+  const [status, setStatus] = useEstadoPersistido<StatusDespesa | "">(F, "status", "");
   // SIS-2026-0285: os tiles "Aguardando minha aprovação" e "Pendente
   // aprovação (outros níveis)" são os DOIS o mesmo status
   // (pendente_aprovacao) — sem isso, clicar em "outros níveis" não filtrava
   // nada (voltava pra "Todas", já que o tile nunca teve status próprio) e
   // clicar em "minha aprovação" trazia TODO mundo pendente, não só o meu.
-  const [escopoAprovacaoPendente, setEscopoAprovacaoPendente] = useState<"minhas" | "outras" | "">("");
+  const [escopoAprovacaoPendente, setEscopoAprovacaoPendente] = useEstadoPersistido<"minhas" | "outras" | "">(F, "escopoAprovacaoPendente", "");
   // SIS-2026-0281: filtro dedicado por nível de aprovação (N1/N2/N3).
-  const [nivelAprovacao, setNivelAprovacao] = useState<1 | 2 | 3 | "">("");
+  const [nivelAprovacao, setNivelAprovacao] = useEstadoPersistido<1 | 2 | 3 | "">(F, "nivelAprovacao", "");
   // SIS-2026-0281 (ideia levantada com o usuário, "future"): "Minhas
   // aprovações" — só as pendentes onde o usuário logado é de fato um dos
   // aprovadores do nível atual (mesma checagem que já usamos pro tile
   // "Aguardando minha aprovação"). Combina com o filtro de Nível acima
   // (os dois se somam), não substitui.
-  const [somenteMinhas, setSomenteMinhas] = useState(false);
+  const [somenteMinhas, setSomenteMinhas] = useEstadoPersistido(F, "somenteMinhas", false);
+  // SIS-2026-0358 (Iury): o filtro de N2 só ligava/desligava o nível inteiro.
+  // Hoje há 2 aprovadores N2 no Malote — Fernanda (grosso modo "N2
+  // Administrativo") e Senilton ("N2 Operacional") — e eles querem afunilar o
+  // N2 por pessoa. Subfiltro que só aparece com N2 selecionado; "" = todos os
+  // N2. Guardado como nome (mesma chave que aprovadorNomes devolve), não
+  // user_id, pra casar com a resolução por rateio já existente.
+  const [aprovadorN2, setAprovadorN2] = useEstadoPersistido(F, "aprovadorN2", "");
+  const [popoverN2Aberto, setPopoverN2Aberto] = useState(false);
   // SIS-2026-0283 (Iury): "Minhas" passa a contemplar também a coluna de
   // Justificativa — clicar mostra tanto o que está pendente de EU aprovar
   // quanto o que está com justificativa pendente de MIM (analista de algum
   // contrato da despesa), não só aprovação.
   const minhasDespesasJustificativaPendente = useMinhasDespesasComJustificativaPendente();
-  const [tipo, setTipo] = useState<TipoSolicitacao | "">("");
-  const [classificacao, setClassificacao] = useState("");
-  const [empresaId, setEmpresaId] = useState("");
-  const [contratoId, setContratoId] = useState("");
-  const [excecao, setExcecao] = useState<"" | "sim" | "nao">("");
-  const [busca, setBusca] = useState("");
-  const [pagina, setPagina] = useState(1);
+  const [tipo, setTipo] = useEstadoPersistido<TipoSolicitacao | "">(F, "tipo", "");
+  const [classificacao, setClassificacao] = useEstadoPersistido(F, "classificacao", "");
+  const [empresaId, setEmpresaId] = useEstadoPersistido(F, "empresaId", "");
+  const [contratoId, setContratoId] = useEstadoPersistido(F, "contratoId", "");
+  const [excecao, setExcecao] = useEstadoPersistido<"" | "sim" | "nao">(F, "excecao", "");
+  const [busca, setBusca] = useEstadoPersistido(F, "busca", "");
+  const [pagina, setPagina] = useEstadoPersistido(F, "pagina", 1);
   const ordenacao = useOrdenacaoTabela<ColunaAprovacoes>();
 
   const empresasMap = useMemo(() => new Map(empresas.map((e) => [e.id, e.nome])), [empresas]);
@@ -321,6 +352,8 @@ export default function Aprovacoes({ base = "/app/malote" }: { base?: string } =
     setStatus("");
     setEscopoAprovacaoPendente("");
     setNivelAprovacao("");
+    setAprovadorN2("");
+    setPopoverN2Aberto(false);
     setSomenteMinhas(false);
     setTipo("");
     setClassificacao("");
@@ -339,7 +372,31 @@ export default function Aprovacoes({ base = "/app/malote" }: { base?: string } =
 
   function toggleNivelAprovacao(n: 1 | 2 | 3) {
     setNivelAprovacao((atual) => (atual === n ? "" : n));
+    setAprovadorN2(""); // SIS-2026-0358: subfiltro de N2 não faz sentido fora do N2
     setPagina(1);
+  }
+
+  // SIS-2026-0358: quando há mais de um N2 nas pendências, o próprio botão N2
+  // vira o gatilho de um popover (tingido na cor do N2) pra escolher o
+  // aprovador — em vez de um campo separado. Abrir o popover já liga o
+  // filtro N2; "Todos os N2" mantém ligado sem recorte; "Remover" desliga.
+  function abrirPopoverN2(aberto: boolean) {
+    setPopoverN2Aberto(aberto);
+    if (aberto && nivelAprovacao !== 2) {
+      setNivelAprovacao(2);
+      setPagina(1);
+    }
+  }
+  function escolherAprovadorN2(nome: string) {
+    setAprovadorN2(nome);
+    setPagina(1);
+    setPopoverN2Aberto(false);
+  }
+  function removerFiltroN2() {
+    setNivelAprovacao("");
+    setAprovadorN2("");
+    setPagina(1);
+    setPopoverN2Aberto(false);
   }
 
   function toggleSomenteMinhas() {
@@ -360,6 +417,8 @@ export default function Aprovacoes({ base = "/app/malote" }: { base?: string } =
         if (escopoAprovacaoPendente === "outras" && souAprovadorAtual) return false;
       }
       if (nivelAprovacao && (d.status !== "pendente_aprovacao" || d.nivel_aprovacao_atual !== nivelAprovacao)) return false;
+      // SIS-2026-0358: subfiltro por aprovador N2 (só quando N2 está ativo).
+      if (nivelAprovacao === 2 && aprovadorN2 && !aprovadorNomes(d, 2).includes(aprovadorN2)) return false;
       if (somenteMinhas) {
         const souAprovadorPendente = d.status === "pendente_aprovacao" && d.nivel_aprovacao_atual != null && souAprovadorDoNivel(d, d.nivel_aprovacao_atual, user?.id);
         const minhaJustificativaPendente = minhasDespesasJustificativaPendente.has(d.id);
@@ -386,11 +445,15 @@ export default function Aprovacoes({ base = "/app/malote" }: { base?: string } =
       }
       return true;
     });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
     itens,
     status,
     escopoAprovacaoPendente,
     nivelAprovacao,
+    aprovadorN2,
+    classificacaoIdsRateio,
+    classificacaoPorId,
     somenteMinhas,
     user?.id,
     minhasDespesasJustificativaPendente,
@@ -450,6 +513,21 @@ export default function Aprovacoes({ base = "/app/malote" }: { base?: string } =
     dataPagamentoAte,
     busca,
   ]);
+
+  // SIS-2026-0358: nomes de aprovador N2 que de fato aparecem nas pendências
+  // N2 (respeitando os demais filtros do painel) — alimenta o subfiltro que
+  // surge ao selecionar N2. Se só houver um, o select nem aparece.
+  const aprovadoresN2Disponiveis = useMemo(() => {
+    const nomes = new Set<string>();
+    itensComFiltrosDoPainel.forEach(({ despesa: d }) => {
+      if (d.status === "pendente_aprovacao" && d.nivel_aprovacao_atual === 2) {
+        aprovadorNomes(d, 2).forEach((n) => nomes.add(n));
+      }
+    });
+    return Array.from(nomes).sort();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [itensComFiltrosDoPainel, classificacaoIdsRateio, classificacaoPorId]);
+  const temSubfiltroN2 = aprovadoresN2Disponiveis.length > 1;
 
   // SIS-2026-0316: clique no cabeçalho ordena (aplicado antes da
   // paginação, senão só reordenaria dentro da página atual).
@@ -593,20 +671,64 @@ export default function Aprovacoes({ base = "/app/malote" }: { base?: string } =
                 {([1, 2, 3] as const).map((n) => {
                   const pendentes = n === 1 ? pendentesN1 : n === 2 ? pendentesN2 : pendentesN3;
                   const ativo = nivelAprovacao === n;
+                  const classe = cn(
+                    "flex-1 inline-flex items-center justify-center gap-0.5 rounded-md border px-1.5 h-8 text-xs font-semibold transition-colors",
+                    ativo ? NIVEL_APROVACAO_FILTRO_ATIVO[n] : NIVEL_APROVACAO_FILTRO_TINT[n],
+                    ativo && "ring-1 ring-offset-1 ring-offset-background"
+                  );
+                  const conteudo = (
+                    <>
+                      N{n}
+                      {pendentes > 0 && <span className="font-normal opacity-80"> ({pendentes})</span>}
+                      {n === 2 && temSubfiltroN2 && ativo && aprovadorN2 && (
+                        <span className="font-normal opacity-80"> · {abreviarNome(aprovadorN2)}</span>
+                      )}
+                    </>
+                  );
+                  // SIS-2026-0358: com mais de um N2, o botão N2 abre um popover
+                  // na própria cor do nível pra escolher o aprovador.
+                  if (n === 2 && temSubfiltroN2) {
+                    return (
+                      <Popover key={n} open={popoverN2Aberto} onOpenChange={abrirPopoverN2}>
+                        <PopoverTrigger asChild>
+                          <button type="button" className={classe} title="Filtrar por aprovador N2">
+                            {conteudo}
+                          </button>
+                        </PopoverTrigger>
+                        <PopoverContent
+                          align="start"
+                          className="w-56 p-1 border-orange-200 bg-orange-50 dark:border-orange-900 dark:bg-orange-950/40"
+                        >
+                          <OpcaoFiltroN2 label="Todos os N2" selecionado={!aprovadorN2} onClick={() => escolherAprovadorN2("")} />
+                          {aprovadoresN2Disponiveis.map((nome) => (
+                            <OpcaoFiltroN2
+                              key={nome}
+                              label={nome}
+                              selecionado={aprovadorN2 === nome}
+                              onClick={() => escolherAprovadorN2(nome)}
+                            />
+                          ))}
+                          <div className="my-1 border-t border-orange-200 dark:border-orange-900" />
+                          <button
+                            type="button"
+                            onClick={removerFiltroN2}
+                            className="flex w-full items-center gap-1.5 rounded px-2 py-1.5 text-xs text-orange-700/70 hover:bg-orange-100 dark:text-orange-300/70 dark:hover:bg-orange-900/40"
+                          >
+                            <X className="h-3.5 w-3.5" /> Remover filtro N2
+                          </button>
+                        </PopoverContent>
+                      </Popover>
+                    );
+                  }
                   return (
                     <button
                       key={n}
                       type="button"
                       onClick={() => toggleNivelAprovacao(n)}
-                      className={cn(
-                        "flex-1 rounded-md border px-1.5 h-8 text-xs font-semibold transition-colors",
-                        ativo ? NIVEL_APROVACAO_FILTRO_ATIVO[n] : NIVEL_APROVACAO_FILTRO_TINT[n],
-                        ativo && "ring-1 ring-offset-1 ring-offset-background"
-                      )}
+                      className={classe}
                       title={`Pendente aprovação N${n}${pendentes > 0 ? ` (${pendentes})` : ""}`}
                     >
-                      N{n}
-                      {pendentes > 0 && <span className="font-normal opacity-80"> ({pendentes})</span>}
+                      {conteudo}
                     </button>
                   );
                 })}
