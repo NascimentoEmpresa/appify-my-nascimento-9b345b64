@@ -330,7 +330,10 @@ export default function PedidosMateriais() {
       .map((p) => p.envio_rastreio!.trim().toUpperCase()),
     [filtrados],
   );
-  const { data: situacoes = {}, isFetching: carregandoRastreio } =
+  // `situacoesCorreio`, e não `situacoes`: logo acima já existe um `situacoes`
+  // que é a situação de ATENDIMENTO do pedido (quanto já foi separado). São
+  // dois assuntos diferentes, e o nome curto pertence ao que veio primeiro.
+  const { data: situacoesCorreio = {}, isFetching: carregandoRastreio } =
     useRastreioEmLote(codigosRastreio);
 
   /**
@@ -522,7 +525,7 @@ export default function PedidosMateriais() {
               onHistorico={() => setHistoricoDe(p)}
               onExcluir={() => setExcluindo(p)}
               onEtiqueta={() => setEtiquetaDe(p)}
-              rastreio={p.envio_rastreio ? situacoes[p.envio_rastreio.trim().toUpperCase()] : undefined}
+              rastreio={p.envio_rastreio ? situacoesCorreio[p.envio_rastreio.trim().toUpperCase()] : undefined}
               rastreioCarregando={carregandoRastreio}
             />
           ))}

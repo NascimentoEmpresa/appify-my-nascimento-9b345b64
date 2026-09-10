@@ -283,9 +283,14 @@ function LinhaArquivo({ arquivo }: { arquivo: ArquivoBem }) {
     brlParaNumero(valor) !== (arquivo.valor != null ? Number(arquivo.valor) : null);
 
   const abrir = async () => {
-    const url = await urlDoArquivo(arquivo.caminho);
-    if (url) window.open(url, "_blank", "noopener");
-    else toast.error("Não foi possível gerar o link do arquivo.");
+    const resultado = await urlDoArquivo(arquivo.caminho);
+    if ("url" in resultado) {
+      window.open(resultado.url, "_blank", "noopener");
+    } else if (resultado.motivo === "nao_encontrado") {
+      toast.error("Este anexo veio do sistema antigo e o arquivo ainda não foi migrado para o novo armazenamento.");
+    } else {
+      toast.error(resultado.erro);
+    }
   };
 
   return (
