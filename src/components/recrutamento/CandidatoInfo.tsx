@@ -107,6 +107,7 @@ export function CandidatoInfo({ cand, hideCurriculo }: { cand: any; hideCurricul
           <Field label="Salário" val={cand.salario} />
           <Field label="Insalubridade" val={cand.insalubridade_recebe + (cand.insalubridade_quanto ? " — " + cand.insalubridade_quanto : "")} />
           <Field label="Local" val={cand.local_exato} />
+          <Field label="Reposição Técnica (RT)" val={cand.reposicao_tecnica ? "Sim" : null} />
           <Field label="Início previsto" val={cand.data_inicio_prevista} />
           <Field label="Urgência" val={cand.grau_urgencia} />
           <Field label="Solicitante" val={cand.solicitante_nome} />
