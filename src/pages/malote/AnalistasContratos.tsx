@@ -1,4 +1,5 @@
 import { useMemo, useState } from "react";
+import { cn } from "@/lib/utils";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
@@ -147,7 +148,9 @@ export function AnalistasContratos({ podeEditar }: { podeEditar: boolean }) {
                 <SelectTrigger><SelectValue placeholder="Selecione o contrato..." /></SelectTrigger>
                 <SelectContent>
                   {contratosDaEmpresa.map((c) => (
-                    <SelectItem key={c.id} value={c.id}>{c.nome}</SelectItem>
+                    <SelectItem key={c.id} value={c.id} className={cn(c.status === "encerrado" && "opacity-50")}>
+                      {c.nome}
+                    </SelectItem>
                   ))}
                 </SelectContent>
               </Select>
