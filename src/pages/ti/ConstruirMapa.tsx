@@ -1,0 +1,1938 @@
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { toast } from "sonner";
+import {
+  Box, Building2, Copy, Eraser, Grid3x3, Hammer, Layers, Layers3, MousePointer2, Move3d,
+  Package, Plus, Redo2, RotateCw, Ruler, Square, SquareDashedBottom, Tag, Trash2, Undo2, X,
+} from "lucide-react";
+import { PageHeader } from "@/components/layout/PageHeader";
+import {
+  AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
+  AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Card } from "@/components/ui/card";
+import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { ScrollArea } from "@/components/ui/scroll-area";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Separator } from "@/components/ui/separator";
+import { Textarea } from "@/components/ui/textarea";
+import { useScreenAccess } from "@/hooks/useScreenAccess";
+import { cn } from "@/lib/utils";
+import {
+  useAtivosTi, useElementosDeVariasTi, useElementosTi, useExcluirAtivo, useExcluirElemento,
+  useCriarAtivosEmLote, useCriarElementosEmLote, useExcluirAtivosEmLote, useExcluirElementosEmLote,
+  useMoverAtivosEmLote, useMoverElementosEmLote,
+  useCelulasDeVariasTi, useCelulasTi, useDefinirCelula, useDefinirCelulas,
+  usePlantasTi, usePosicionarAtivo, useRecriarElemento,
+  useSalvarAtivo, useSalvarElemento,
+  useSalvarPlanta, useSetoresTi,
+  type TiAtivo, type TiAtivoInput, type TiElemento, type TiPlanta,
+} from "@/hooks/useTiMapa";
+import { AtivoDialog } from "./mapa/AtivoDialog";
+import {
+  PALETA, PASSOS_DE_MOVIMENTO, PASSO_PADRAO_CM, STATUS_ATIVO, TIPOS_ATIVO, TIPOS_ELEMENTO,
+  cmParaMetros, statusAtivo, tipoAtivo, tipoElemento,
+} from "./mapa/catalogo";
+import { alturaDoElemento, cantoDaPeca, celulasDoArrasto, retanguloDeCantos, retanguloDoTraco } from "./mapa3d/apoio";
+import { Cena3D, type ModoCena, type SelecaoCena, type TracoNoChao } from "./mapa3d/Cena3D";
+import { useHistoricoMapa, type Aplicador } from "./mapa3d/historico";
+
+/**
+ * T.I › Construir o mapa — o editor da planta em 3D.
+ *
+ * Tela separada do Mapa por causa da permissão: quem só precisa VER onde as
+ * pessoas sentam não deve conseguir mover uma parede sem querer. Aqui é o
+ * contrário — tudo é editável, e a cena recebe `editavel`.
+ *
+ * COMO SE CONSTRÓI (o fluxo é sempre o mesmo, para peça e para equipamento):
+ *   1. escolhe na coluna da esquerda o que quer colocar;
+ *   2. clica no chão, onde quer;
+ *   3. ajusta arrastando, e afina os números no inspetor da direita.
+ *
+ * REMOVER está em TRÊS lugares, de propósito — na primeira versão a única
+ * saída era a tecla Delete e ninguém encontrou: botão vermelho no rodapé do
+ * inspetor, botão na barra de cima enquanto há algo selecionado, e a tecla
+ * Delete para quem já sabe. Nenhum deles apaga direto: todos passam pela
+ * confirmação, porque apagar equipamento leva junto o histórico dele.
+ */
+
+/** "Térreo", "1º andar", "Subsolo 2" — o número vira o nome que se fala. */
+export function nomeDoAndar(nivel: number): string {
+  if (nivel === 0) return "Térreo";
+  if (nivel > 0) return `${nivel}º andar`;
+  return nivel === -1 ? "Subsolo" : `Subsolo ${Math.abs(nivel)}`;
+}
+
+type Ferramenta =
+  | { tipo: "selecao" }
+  | { tipo: "elemento"; valor: string }
+  /** Equipamento JÁ cadastrado, vindo da bandeja, esperando um lugar. */
+  | { tipo: "ativo"; id: string; nome: string }
+  /** Equipamento NOVO: nasce no clique, com nome automático. */
+  | { tipo: "novo_ativo"; valor: string }
+  /**
+   * Modo obra: o arrasto no chão acrescenta (`ocupar`) ou tira quadrados de
+   * 1 m² de piso, em vez de criar peça.
+   *
+   * Existe porque expandir a planta era um clique por metro quadrado: abrir
+   * uma sala de 5×4 custava vinte cliques no "+", um de cada vez, esperando o
+   * banco entre eles. Arrastando, a mesma sala é um gesto.
+   */
+  | { tipo: "piso"; ocupar: boolean }
+  /**
+   * Borracha de parede: o clique apaga a estrutura, uma atrás da outra.
+   *
+   * Sem diálogo de confirmação, de propósito. Apagar parede errada acontece,
+   * mas quem está derrubando divisória derruba várias seguidas — um "tem
+   * certeza?" por clique tornaria a ferramenta inútil. O seguro é o Ctrl+Z,
+   * que aqui restaura a peça inteira (ver `recriarElemento`).
+   */
+  | { tipo: "remover_parede" };
+
+/**
+ * Onde fica lembrado se a pessoa edita em planta baixa ou na maquete.
+ *
+ * A escolha é de hábito, não de dado: quem desenha parede vive no 2D e quem
+ * confere o resultado vive no 3D. Reabrir a tela sempre no 3D obrigaria os
+ * dois primeiros cliques de toda sessão.
+ */
+const CHAVE_MODO = "ti:construir:modo";
+
+function modoSalvo(): ModoCena {
+  try {
+    return localStorage.getItem(CHAVE_MODO) === "2d" ? "2d" : "3d";
+  } catch {
+    // localStorage bloqueado (janela anônima, política de cookie): o editor
+    // não é lugar de quebrar por causa de uma preferência.
+    return "3d";
+  }
+}
+
+export default function ConstruirMapa() {
+  const [plantaId, setPlantaId] = useState<string | null>(null);
+  const [selecao, setSelecao] = useState<SelecaoCena>(null);
+  /**
+   * TUDO que está pego — a peça de `selecao` inclusive.
+   *
+   * Existe porque o escritório se repete: "1 mesa, 4 cadeiras, 2 monitores" é
+   * o mesmo bloco em vários setores, e montá-lo peça por peça toda vez era o
+   * trabalho de verdade desta tela. Com o grupo, arrasta-se e duplica-se o
+   * conjunto inteiro.
+   *
+   * `selecao` continua separada porque o inspetor mostra UMA peça: tamanho,
+   * altura, giro e cor de cinco peças ao mesmo tempo não são um formulário.
+   */
+  const [grupo, setGrupo] = useState<SelecaoCena[]>([]);
+  /**
+   * O que o Ctrl+C guardou, já em coordenadas RELATIVAS ao canto do bloco.
+   *
+   * Relativas, e não absolutas, porque o Ctrl+V solta o bloco em outro lugar:
+   * guardar a posição de origem obrigaria a recalcular a diferença na hora de
+   * colar, e é justamente aí que a formação se perde. Assim, colar é somar o
+   * ponto escolhido a cada deslocamento — a mesa e as cadeiras chegam do
+   * outro lado da sala na mesma distância entre si.
+   */
+  const [copia, setCopia] = useState<{
+    elementos: { el: TiElemento; dx: number; dy: number }[];
+    ativos: { a: TiAtivo; dx: number; dy: number }[];
+  } | null>(null);
+  /** Onde colar, em cm. É o ponto vermelho no chão. */
+  const [alvoColagem, setAlvoColagem] = useState<{ x: number; y: number } | null>(null);
+  /**
+   * Ponte para o listener de teclado.
+   *
+   * `copiarGrupo` e `colarGrupo` são declarados bem mais abaixo (precisam de
+   * `planta`, `historico` e das mutations), mas o Ctrl+C/Ctrl+V é montado
+   * aqui em cima. Chamar direto dava "Cannot access before initialization" no
+   * RENDER — tela branca, sem nada carregar. A ref é preenchida a cada
+   * render e lida só quando a tecla é apertada, que é depois de tudo pronto.
+   */
+  const atalhosRef = useRef<{ copiar: () => void; colar: () => void }>({
+    copiar: () => {},
+    colar: () => {},
+  });
+  const [ferramenta, setFerramenta] = useState<Ferramenta>({ tipo: "selecao" });
+  const [modo, setModoEstado] = useState<ModoCena>(modoSalvo);
+  /**
+   * Modo obra: mexer no ESQUELETO do escritório (piso e paredes), não na
+   * mobília. É um modo à parte porque as duas coisas querem gestos opostos —
+   * montando o layout, arrastar move a mesa; levantando a planta, arrastar
+   * tem que desenhar. Empilhar os dois no mesmo cursor foi o que fez expandir
+   * o piso virar clique a clique no "+".
+   */
+  const [obra, setObra] = useState(false);
+  const [grade, setGrade] = useState(true);
+  const [verTodosAndares, setVerTodosAndares] = useState(false);
+  const [passoCm, setPassoCm] = useState<number>(PASSO_PADRAO_CM);
+  /**
+   * Nomes DESLIGADOS por padrão.
+   *
+   * Com meia dúzia de equipamentos numa mesa, as etiquetas se empilham e
+   * cobrem justamente o que se quer olhar — o print de uma bancada com
+   * teclado, mouse e monitor virava uma pilha de retângulos pretos.
+   * Quem precisa do nome tem três caminhos: passar o mouse por cima,
+   * selecionar a peça, ou ligar o botão de etiquetas na barra.
+   */
+  const [rotulos, setRotulos] = useState(false);
+  const [plantaDialog, setPlantaDialog] = useState<Partial<TiPlanta> | null>(null);
+  const [fichaAberta, setFichaAberta] = useState<TiAtivo | null | undefined>(undefined);
+  /**
+   * O que está esperando confirmação para sumir.
+   *
+   * `bloco` é o caso do laço: com 39 peças pegas, apagar só a "principal"
+   * era o que a tela fazia — e limpar uma colagem errada peça por peça, com
+   * um diálogo a cada uma, não é trabalho que alguém faça até o fim.
+   */
+  const [confirmar, setConfirmar] = useState<
+    | { tipo: "ativo" | "elemento"; id: string; nome: string }
+    | { tipo: "bloco"; itens: Exclude<SelecaoCena, null>[]; nome: string }
+    | null
+  >(null);
+
+  const definirCelulas = useDefinirCelulas();
+
+  const entrarNaObra = useCallback(() => {
+    setObra(true);
+    // A grade é a régua da obra: sem os quadrados de 1 m² à vista, arrastar
+    // piso é adivinhação.
+    setGrade(true);
+    setSelecao(null);
+    setFerramenta({ tipo: "piso", ocupar: true });
+  }, []);
+
+  const sairDaObra = useCallback(() => {
+    setObra(false);
+    setFerramenta({ tipo: "selecao" });
+  }, []);
+
+  /**
+   * Clique numa peça: troca a seleção, ou soma ao grupo com Shift.
+   *
+   * Clicar no vazio (`null`) larga tudo — sem isso o grupo sobrevivia à
+   * "desmarcação" e a próxima duplicação levava peças que ninguém via
+   * marcadas.
+   */
+  const selecionarNaCena = useCallback((s: SelecaoCena, aditivo?: boolean) => {
+    if (!s) { setSelecao(null); setGrupo([]); return; }
+    if (!aditivo) {
+      setSelecao(s);
+      // Clicar numa peça QUE JÁ ESTÁ no grupo não desmonta o grupo — é como
+      // todo editor se comporta, e sem isso pegar o bloco para arrastar o
+      // reduzia a uma peça no próprio clique: você marcava seis e movia uma.
+      setGrupo((g) => (g.some((i) => i?.tipo === s.tipo && i.id === s.id) ? g : [s]));
+      return;
+    }
+
+    setGrupo((g) => {
+      const jaTem = g.some((i) => i?.tipo === s.tipo && i.id === s.id);
+      // Shift no que já está marcado TIRA: é como toda seleção múltipla
+      // funciona, e sem isso corrigir um clique errado exigia recomeçar.
+      return jaTem ? g.filter((i) => !(i?.tipo === s.tipo && i.id === s.id)) : [...g, s];
+    });
+    setSelecao(s);
+  }, []);
+
+  /**
+   * O laço fechou (arrastar o mouse no vazio, no 2D): o grupo vira o que
+   * ficou dentro do retângulo.
+   *
+   * Com Shift, SOMA ao que já estava marcado — é o que permite montar a
+   * seleção em duas passadas quando a estação não cabe num retângulo só
+   * (a mesa de um lado do corredor, o rack do outro).
+   *
+   * Laço vazio não desmarca com Shift: quem segurou Shift está somando, e
+   * apagar o que já havia por causa de um retângulo que não pegou nada é a
+   * pior leitura possível do gesto.
+   */
+  const selecionarArea = useCallback((itens: SelecaoCena[], aditivo: boolean) => {
+    if (!aditivo) {
+      setGrupo(itens);
+      setSelecao(itens[0] ?? null);
+      if (itens.length) toast.success(`${itens.length} peça(s) selecionada(s). Ctrl+C copia.`);
+      return;
+    }
+    if (!itens.length) return;
+    setGrupo((g) => {
+      const novos = itens.filter(
+        (i) => !g.some((j) => j?.tipo === i?.tipo && j?.id === i?.id),
+      );
+      return [...g, ...novos];
+    });
+    setSelecao((atual) => atual ?? itens[0] ?? null);
+  }, []);
+
+  const setModo = useCallback((m: ModoCena) => {
+    setModoEstado(m);
+    try {
+      localStorage.setItem(CHAVE_MODO, m);
+    } catch {
+      // ver modoSalvo(): não poder lembrar não é motivo para não trocar.
+    }
+  }, []);
+
+  const { data: plantas = [], isLoading } = usePlantasTi();
+  const { data: ativos = [] } = useAtivosTi();
+
+  const planta = useMemo(
+    () => plantas.find((p) => p.id === plantaId) ?? plantas[0] ?? null,
+    [plantas, plantaId],
+  );
+  const { data: elementos = [] } = useElementosTi(planta?.id);
+  const { data: celulas = [] } = useCelulasTi(planta?.id);
+
+  const salvarElemento = useSalvarElemento();
+  const moverElementosEmLote = useMoverElementosEmLote();
+  const moverAtivosEmLote = useMoverAtivosEmLote();
+  const criarElementosEmLote = useCriarElementosEmLote();
+  const criarAtivosEmLote = useCriarAtivosEmLote();
+  const excluirElementosEmLote = useExcluirElementosEmLote();
+  const excluirAtivosEmLote = useExcluirAtivosEmLote();
+  const excluirElemento = useExcluirElemento();
+  const posicionar = usePosicionarAtivo();
+  const salvarAtivo = useSalvarAtivo();
+  const excluirAtivo = useExcluirAtivo();
+  const salvarPlanta = useSalvarPlanta();
+  const recriarElemento = useRecriarElemento();
+  const definirCelula = useDefinirCelula();
+  const { data: setores = [] } = useSetoresTi();
+
+  // Os outros andares, só quando pedidos — a query nem sai enquanto o modo
+  // está desligado.
+  const idsVizinhos = useMemo(
+    () => (verTodosAndares ? plantas.filter((p) => p.id !== planta?.id).map((p) => p.id) : []),
+    [verTodosAndares, plantas, planta?.id],
+  );
+  const { data: elementosVizinhos = [] } = useElementosDeVariasTi(idsVizinhos);
+  const { data: celulasVizinhas = [] } = useCelulasDeVariasTi(idsVizinhos);
+  const andaresVizinhos = useMemo(
+    () =>
+      plantas
+        .filter((p) => idsVizinhos.includes(p.id))
+        .map((p) => ({
+          planta: p,
+          elementos: elementosVizinhos.filter((e) => e.planta_id === p.id),
+          ativos: ativos.filter((a) => a.planta_id === p.id),
+          celulas: celulasVizinhas.filter((x) => x.planta_id === p.id),
+        })),
+    [plantas, idsVizinhos, elementosVizinhos, celulasVizinhas, ativos],
+  );
+
+  const { data: podeGerenciarAtivo = false } = useScreenAccess("ti_ativo_gerenciar", "alterar");
+  const { data: podeIncluirAtivo = false } = useScreenAccess("ti_ativo_gerenciar", "incluir");
+  const { data: podeExcluirAtivo = false } = useScreenAccess("ti_ativo_gerenciar", "excluir");
+  const { data: podeExcluirElemento = false } = useScreenAccess("ti_construir", "excluir");
+
+  const elementoSel = useMemo(
+    () => (selecao?.tipo === "elemento" ? elementos.find((e) => e.id === selecao.id) ?? null : null),
+    [selecao, elementos],
+  );
+  const ativoSel = useMemo(
+    () => (selecao?.tipo === "ativo" ? ativos.find((a) => a.id === selecao.id) ?? null : null),
+    [selecao, ativos],
+  );
+
+  const bandeja = useMemo(
+    () => ativos.filter((a) => a.status !== "descartado" && (!a.planta_id || a.pos_x == null)),
+    [ativos],
+  );
+
+  /**
+   * O que o Ctrl+Z executa. Estas mutations NÃO registram no histórico — se
+   * registrassem, desfazer empilharia uma ação nova e o segundo Ctrl+Z
+   * refaria o que o primeiro acabou de desfazer.
+   */
+  const aplicador: Aplicador = {
+    criarElemento: (el) => recriarElemento.mutate(el),
+    atualizarElemento: (el) => salvarElemento.mutate(el),
+    removerElemento: (id) => {
+      if (planta) excluirElemento.mutate({ id, plantaId: planta.id });
+    },
+    atualizarAtivo: (a) => salvarAtivo.mutate({ ...(a as TiAtivoInput), id: a.id }),
+    criarAtivo: (a) => salvarAtivo.mutate({ ...(a as TiAtivoInput), id: a.id }),
+    removerAtivo: (id) => excluirAtivo.mutate(id),
+  };
+  const historico = useHistoricoMapa(aplicador);
+
+  /** Cria a peça e guarda no histórico o que foi criado. */
+  const criarElemento = (novo: Partial<TiElemento> & { planta_id: string; tipo: string }) =>
+    salvarElemento.mutate(novo, {
+      onSuccess: (el) => historico.registrar({ tipo: "criar_elemento", depois: el }),
+    });
+
+  /** Altera a peça guardando o ANTES — é o que o Ctrl+Z restaura. */
+  const alterarElemento = (antes: TiElemento, patch: Partial<TiElemento>) => {
+    const depois = { ...antes, ...patch } as TiElemento;
+    salvarElemento.mutate(depois, {
+      onSuccess: () => historico.registrar({ tipo: "atualizar_elemento", antes, depois }),
+    });
+  };
+
+  /** Move/altera equipamento guardando o antes. */
+  const alterarAtivo = (antes: TiAtivo, patch: Partial<TiAtivo>) => {
+    const depois = { ...antes, ...patch } as TiAtivo;
+    salvarAtivo.mutate(
+      { ...(depois as TiAtivoInput), id: antes.id },
+      { onSuccess: () => historico.registrar({ tipo: "atualizar_ativo", antes, depois }) },
+    );
+  };
+
+  const nomeSelecionado = elementoSel
+    ? elementoSel.rotulo || tipoElemento(elementoSel.tipo).label
+    : ativoSel?.nome ?? "";
+
+  const pedirRemocao = useCallback(() => {
+    // Bloco marcado manda no Delete: é o gesto inteiro do laço — pegar
+    // muitas peças e resolver todas de uma vez.
+    const pegas = grupo.filter((i): i is Exclude<SelecaoCena, null> => !!i);
+    if (pegas.length > 1) {
+      setConfirmar({ tipo: "bloco", itens: pegas, nome: `${pegas.length} peças` });
+      return;
+    }
+    if (elementoSel && podeExcluirElemento) {
+      setConfirmar({ tipo: "elemento", id: elementoSel.id, nome: nomeSelecionado });
+    } else if (ativoSel && podeExcluirAtivo) {
+      setConfirmar({ tipo: "ativo", id: ativoSel.id, nome: ativoSel.nome });
+    }
+  }, [grupo, elementoSel, ativoSel, podeExcluirElemento, podeExcluirAtivo, nomeSelecionado]);
+
+  useEffect(() => {
+    const h = (e: KeyboardEvent) => {
+      const alvo = e.target as HTMLElement | null;
+      if (alvo && (["INPUT", "TEXTAREA", "SELECT"].includes(alvo.tagName) || alvo.isContentEditable)) return;
+
+      // Desfazer/refazer. Ctrl+Y e Ctrl+Shift+Z são a mesma coisa — o segundo
+      // é o que a mão de quem usa editor gráfico procura primeiro.
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "z" && !e.shiftKey) {
+        e.preventDefault();
+        historico.desfazer();
+        return;
+      }
+      if ((e.ctrlKey || e.metaKey) && (e.key.toLowerCase() === "y" || (e.key.toLowerCase() === "z" && e.shiftKey))) {
+        e.preventDefault();
+        historico.refazer();
+        return;
+      }
+      /**
+       * Copiar e colar vêm ANTES do corte abaixo — e é aí que eles moravam
+       * antes, DEPOIS dele, sem nunca rodar uma vez sequer: o `return` seco
+       * engole toda tecla com Ctrl, então Ctrl+C e Ctrl+V eram linha morta.
+       * Só desfazer e refazer escapavam, por serem tratados mais acima.
+       */
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "c") { e.preventDefault(); atalhosRef.current.copiar(); return; }
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "v") { e.preventDefault(); atalhosRef.current.colar(); return; }
+
+      // Daqui para baixo é tecla SOLTA, sem Ctrl. O corte protege os atalhos
+      // do navegador: sem ele, Ctrl+R giraria a peça em vez de recarregar a
+      // página e Ctrl+D duplicaria em vez de favoritar.
+      if (e.ctrlKey || e.metaKey) return;
+
+      if (e.key === "Escape") {
+        setFerramenta({ tipo: "selecao" }); setSelecao(null); setGrupo([]); setObra(false);
+      }
+      if ((e.key === "Delete" || e.key === "Backspace") && selecao) { e.preventDefault(); pedirRemocao(); }
+      if (e.key.toLowerCase() === "r" && selecao) girar(45);
+      if (e.key.toLowerCase() === "d" && (elementoSel || ativoSel)) duplicar();
+    };
+    window.addEventListener("keydown", h);
+    return () => window.removeEventListener("keydown", h);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selecao, pedirRemocao, elementoSel, ativoSel, historico]);
+
+  const girar = (passo: number) => {
+    if (elementoSel) {
+      alterarElemento(elementoSel, { rotacao: (Number(elementoSel.rotacao) + passo) % 360 });
+    } else if (ativoSel && podeGerenciarAtivo) {
+      alterarAtivo(ativoSel, { rotacao: (Number(ativoSel.rotacao) + passo) % 360 });
+    }
+  };
+
+  /**
+   * O traço no chão vira peça.
+   *
+   * Parede, divisória e janela nascem do ARRASTO: comprimento e ângulo saem
+   * do traço, como se desenha numa planta. Clicar e digitar o comprimento num
+   * campo — o que esta tela fazia antes — é o caminho mais lento possível
+   * para desenhar uma sala.
+   *
+   * Ambiente (sala, copa) usa os dois cantos como retângulo. Mobília aceita os
+   * dois jeitos: clique seco põe no tamanho de catálogo, arrasto dimensiona.
+   *
+   * A ferramenta CONTINUA ativa depois de criar — quem está levantando as
+   * paredes de uma sala desenha quatro seguidas; voltar para o cursor a cada
+   * peça obrigava a reescolher a mesma ferramenta o tempo todo. Esc larga.
+   */
+  const desenharNoChao = (t: TracoNoChao) => {
+    if (!planta) return;
+
+    if (ferramenta.tipo === "ativo") {
+      posicionar.mutate({ id: ferramenta.id, planta_id: planta.id, pos_x: t.x2, pos_y: t.y2 });
+      setFerramenta({ tipo: "selecao" });
+      return;
+    }
+
+    if (ferramenta.tipo === "novo_ativo") {
+      criarAtivoNoMapa(ferramenta.valor, t.x1, t.y1);
+      return;
+    }
+
+    /**
+     * Modo obra: o mesmo arrasto que desenha parede aqui vira piso. Uma
+     * gravação por gesto, não uma por quadrado — ver useDefinirCelulas.
+     *
+     * ⚠ TEM que ficar ACIMA da guarda `tipo !== "elemento"` logo abaixo:
+     * piso NÃO é um elemento, então lá embaixo este bloco nunca rodava. O
+     * arrasto desenhava a prévia certinha e, ao soltar, não acontecia nada —
+     * sem erro, sem toast, porque o retorno acontecia antes de qualquer
+     * chamada ao banco.
+     */
+    if (ferramenta.tipo === "piso") {
+      const celulasDoGesto = celulasDoArrasto(t.x1, t.y1, t.x2, t.y2);
+      if (celulasDoGesto.length) {
+        definirCelulas.mutate({
+          planta_id: planta.id,
+          celulas: celulasDoGesto,
+          ocupar: ferramenta.ocupar,
+        });
+      }
+      return;
+    }
+    if (ferramenta.tipo !== "elemento") return;
+
+    const def = tipoElemento(ferramenta.valor);
+    const arrastou = Math.hypot(t.x2 - t.x1, t.y2 - t.y1) > 30;
+
+    if (!arrastou) {
+      // Clique seco: peça no tamanho de catálogo, centrada no ponto.
+      criarElemento({
+        planta_id: planta.id,
+        tipo: ferramenta.valor,
+        x: Math.round(t.x1 - def.largura / 2),
+        y: Math.round(t.y1 - def.altura / 2),
+        largura: def.largura,
+        altura: def.altura,
+        altura_z: def.alturaZ,
+      });
+      return;
+    }
+
+    if (def.familia === "estrutura") {
+      const r = retanguloDoTraco(t.x1, t.y1, t.x2, t.y2, def.altura);
+      criarElemento({
+        planta_id: planta.id,
+        tipo: ferramenta.valor,
+        x: r.x,
+        y: r.y,
+        largura: Math.max(10, r.largura),
+        altura: r.profundidade,
+        rotacao: r.rotacao,
+        altura_z: def.alturaZ,
+      });
+      return;
+    }
+
+    const r = retanguloDeCantos(t.x1, t.y1, t.x2, t.y2);
+    criarElemento({
+      planta_id: planta.id,
+      tipo: ferramenta.valor,
+      x: r.x,
+      y: r.y,
+      largura: Math.max(10, r.largura),
+      altura: Math.max(10, r.profundidade),
+      altura_z: def.alturaZ,
+    });
+  };
+
+  /**
+   * Põe um equipamento NOVO direto no mapa, já posicionado.
+   *
+   * Antes, colocar um monitor exigia abrir a ficha de patrimônio (cinco abas,
+   * dezenas de campos) só para depois arrastá-lo da bandeja. Quem está
+   * montando o layout quer o contrário: põe o objeto, e preenche a ficha
+   * quando for inventariar.
+   *
+   * O nome sai automático e numerado por tipo ("Monitor 3") porque `nome` é
+   * obrigatório no banco — e um campo obrigatório no meio do fluxo de montar a
+   * sala é exatamente o que trava esse fluxo. O código TI-0000 continua vindo
+   * do trigger, e a ficha completa segue disponível no duplo clique.
+   */
+  const criarAtivoNoMapa = (tipo: string, x: number, y: number) => {
+    if (!planta) return;
+    const def = tipoAtivo(tipo);
+    const quantos = ativos.filter((a) => a.tipo === tipo).length + 1;
+    salvarAtivo.mutate(
+      {
+        tipo,
+        nome: `${def.label} ${quantos}`,
+        status: "em_uso",
+        planta_id: planta.id,
+        pos_x: x,
+        pos_y: y,
+      },
+      {
+        onSuccess: (novo) => {
+          // Já entrega selecionado: o passo seguinte é sempre ajustar giro,
+          // altura ou abrir a ficha.
+          setSelecao({ tipo: "ativo", id: novo.id });
+          historico.registrar({ tipo: "atualizar_ativo", antes: novo, depois: novo });
+        },
+      },
+    );
+  };
+
+/**
+   * Copia o que estiver selecionado, meio metro ao lado — peça da planta ou
+   * equipamento. É o jeito rápido de fazer a fileira de mesas e as estações de
+   * trabalho iguais, que é como um escritório realmente é.
+   */
+  /** Folga entre o bloco original e a cópia, em cm. */
+  const FOLGA_DA_COPIA = 60;
+
+  /**
+   * Duplica o GRUPO inteiro, mantendo a formação.
+   *
+   * Todas as cópias andam o MESMO tanto — é isso que preserva a mesa com as
+   * cadeiras em volta. Deslocar cada peça pelo seu próprio critério
+   * embaralharia o conjunto, que é justamente o que se quer repetir.
+   *
+   * As cópias entram no grupo no lugar dos originais, então o arrasto logo em
+   * seguida leva o bloco novo para o lugar — que é o gesto inteiro: duplicar,
+   * arrastar, soltar.
+   */
+  /**
+   * Ctrl+C — guarda o bloco marcado, sem tocar no banco.
+   *
+   * Copiar não cria nada: só anota o que está pego e onde cada peça fica em
+   * relação ao canto do bloco. Quem cria é o Ctrl+V.
+   */
+  const copiarGrupo = useCallback(() => {
+    const els = grupo
+      .filter((i): i is { tipo: "elemento"; id: string } => i?.tipo === "elemento")
+      .map((i) => elementos.find((e) => e.id === i.id))
+      .filter((e): e is TiElemento => !!e);
+    const ats = grupo
+      .filter((i): i is { tipo: "ativo"; id: string } => i?.tipo === "ativo")
+      .map((i) => ativos.find((a) => a.id === i.id))
+      .filter((a): a is TiAtivo => !!a && a.pos_x != null && a.pos_y != null);
+
+    if (!els.length && !ats.length) { toast.error("Nada selecionado para copiar."); return; }
+
+    // O canto do bloco: o menor x e o menor y de tudo que foi pego. É a ele
+    // que os deslocamentos se referem.
+    const xs = [...els.map((e) => Number(e.x)), ...ats.map((a) => Number(a.pos_x))];
+    const ys = [...els.map((e) => Number(e.y)), ...ats.map((a) => Number(a.pos_y))];
+    const ox = Math.min(...xs);
+    const oy = Math.min(...ys);
+
+    setCopia({
+      elementos: els.map((el) => ({ el, dx: Number(el.x) - ox, dy: Number(el.y) - oy })),
+      ativos: ats.map((a) => ({ a, dx: Number(a.pos_x) - ox, dy: Number(a.pos_y) - oy })),
+    });
+    toast.success(`${els.length + ats.length} peça(s) copiada(s). Clique no chão e tecle Ctrl+V.`);
+  }, [grupo, elementos, ativos]);
+
+  /**
+   * Ctrl+V — cria o bloco copiado no ponto vermelho.
+   *
+   * Sem ponto escolhido não cola: colar no lugar de origem é o que a versão
+   * anterior fazia, e foi exatamente a reclamação — a cópia nascia por cima e
+   * ainda tinha que ser arrastada peça por peça.
+   */
+  /**
+   * Ctrl+V — cria o bloco copiado no ponto vermelho, DE UMA VEZ.
+   *
+   * Sem ponto escolhido não cola: colar no lugar de origem é o que a versão
+   * anterior fazia, e foi exatamente a reclamação — a cópia nascia por cima e
+   * ainda tinha que ser arrastada peça por peça.
+   *
+   * A gravação é em LOTE (ver `useCriarElementosEmLote`). Antes saía um
+   * insert por peça: com 39 peças eram 39 idas ao banco e 39 refetches, o
+   * mapa levava tanto para mostrar o resultado que parecia não ter colado —
+   * e quem apertava Ctrl+V de novo terminava com o bloco repetido. A trava
+   * de `colandoRef` fecha a outra metade desse buraco.
+   */
+  const colandoRef = useRef(false);
+
+  const colarGrupo = useCallback(async () => {
+    if (!planta) return;
+    if (!copia) { toast.error("Nada copiado ainda — selecione as peças e tecle Ctrl+C."); return; }
+    if (!alvoColagem) { toast.error("Clique no chão para marcar onde colar (o ponto vermelho)."); return; }
+    // Uma colagem por vez. O segundo Ctrl+V, dado porque a primeira ainda
+    // não apareceu na tela, é o que enchia a planta de blocos repetidos.
+    if (colandoRef.current) return;
+    colandoRef.current = true;
+
+    const els = copia.elementos.map(({ el, dx, dy }) => {
+      const { id, ...resto } = el;
+      return { ...resto, planta_id: planta.id, x: alvoColagem.x + dx, y: alvoColagem.y + dy };
+    });
+
+    // A numeração ("Monitor 12") continua por TIPO, contando o que já existe
+    // mais o que está nascendo agora neste mesmo lote.
+    const feitos = new Map<string, number>();
+    const ats = podeIncluirAtivo
+      ? copia.ativos.map(({ a, dx, dy }) => {
+          // Identidade do aparelho físico não se clona — mesma regra do
+          // duplicar de uma peça só.
+          const {
+            id, codigo, created_at, updated_at,
+            patrimonio, numero_serie, nota_fiscal,
+            ip, mac, hostname, anydesk, teamviewer,
+            ...resto
+          } = a;
+          const def = tipoAtivo(a.tipo);
+          const jaFeitos = feitos.get(a.tipo) ?? 0;
+          feitos.set(a.tipo, jaFeitos + 1);
+          const quantos = ativos.filter((z) => z.tipo === a.tipo).length + jaFeitos + 1;
+          return {
+            ...(resto as TiAtivoInput),
+            nome: `${def.label} ${quantos}`,
+            planta_id: planta.id,
+            pos_x: alvoColagem.x + dx,
+            pos_y: alvoColagem.y + dy,
+          };
+        })
+      : [];
+
+    if (!els.length && !ats.length) { toast.error("Nada para colar."); colandoRef.current = false; return; }
+
+    const aviso = toast.loading(`Colando ${els.length + ats.length} peça(s)…`);
+    try {
+      const [elsCriados, ativosCriados] = await Promise.all([
+        criarElementosEmLote.mutateAsync(els),
+        criarAtivosEmLote.mutateAsync(ats),
+      ]);
+
+      const novos: SelecaoCena[] = [
+        ...elsCriados.map((e) => ({ tipo: "elemento" as const, id: e.id })),
+        ...ativosCriados.map((a) => ({ tipo: "ativo" as const, id: a.id })),
+      ];
+      setGrupo(novos);
+      setSelecao(novos[0] ?? null);
+      historico.registrar({ tipo: "duplicar_bloco", elementos: elsCriados, ativos: ativosCriados });
+      toast.success(`${novos.length} peça(s) colada(s) no ponto marcado.`, { id: aviso });
+    } catch {
+      // A mensagem do banco já virou toast lá no hook; aqui só se tira o
+      // "colando…", que senão fica girando para sempre.
+      toast.dismiss(aviso);
+    } finally {
+      colandoRef.current = false;
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [planta, copia, alvoColagem, podeIncluirAtivo, ativos, historico]);
+
+  atalhosRef.current = { copiar: copiarGrupo, colar: colarGrupo };
+
+  const duplicarGrupo = () => {
+    if (!planta) return;
+
+    /**
+     * O deslocamento sai do TAMANHO DO BLOCO, não de um valor fixo.
+     *
+     * Com 50 cm fixos, um bloco de 3 m nascia praticamente em cima do
+     * original — e o estrago não era só visual: ao arrastar, o clique pegava
+     * a peça de baixo (a original, que não está no grupo) e movia só ela.
+     * Parecia que duplicar e mover em bloco não funcionavam; o que não
+     * funcionava era enxergar a cópia.
+     *
+     * Empurrando pela largura do bloco mais uma folga, a cópia nasce
+     * inteiramente ao lado, clicável e pronta para ser arrastada.
+     */
+    let minX = Infinity;
+    let maxX = -Infinity;
+    for (const item of grupo) {
+      if (!item) continue;
+      if (item.tipo === "elemento") {
+        const el = elementos.find((e) => e.id === item.id);
+        if (el) { minX = Math.min(minX, Number(el.x)); maxX = Math.max(maxX, Number(el.x) + Number(el.largura)); }
+      } else {
+        const a = ativos.find((z) => z.id === item.id);
+        if (a?.pos_x != null) { minX = Math.min(minX, Number(a.pos_x)); maxX = Math.max(maxX, Number(a.pos_x)); }
+      }
+    }
+    const desloca = Number.isFinite(minX) ? maxX - minX + FOLGA_DA_COPIA : FOLGA_DA_COPIA;
+
+    // Gravação em LOTE, pelo mesmo motivo do colar: duplicar um bloco de
+    // 39 peças eram 39 inserts e 39 refetches, e a cópia demorava tanto a
+    // aparecer que parecia não ter acontecido.
+    const els = grupo
+      .map((item) => (item?.tipo === "elemento" ? elementos.find((e) => e.id === item.id) : null))
+      .filter((el): el is TiElemento => !!el)
+      .map((el) => {
+        const { id, ...resto } = el;
+        return { ...resto, planta_id: planta.id, x: Number(el.x) + desloca, y: Number(el.y) };
+      });
+
+    const feitos = new Map<string, number>();
+    const ats = !podeIncluirAtivo
+      ? []
+      : grupo
+          .map((item) => (item?.tipo === "ativo" ? ativos.find((z) => z.id === item.id) : null))
+          .filter((a): a is TiAtivo => !!a)
+          .map((a) => {
+            // O que NÃO se copia é o mesmo do duplicar de uma peça — ver a
+            // nota lá: identidade de aparelho físico não se clona.
+            const {
+              id, codigo, created_at, updated_at,
+              patrimonio, numero_serie, nota_fiscal,
+              ip, mac, hostname, anydesk, teamviewer,
+              ...resto
+            } = a;
+            const def = tipoAtivo(a.tipo);
+            const jaFeitos = feitos.get(a.tipo) ?? 0;
+            feitos.set(a.tipo, jaFeitos + 1);
+            const quantos = ativos.filter((z) => z.tipo === a.tipo).length + jaFeitos + 1;
+            return {
+              ...(resto as TiAtivoInput),
+              nome: `${def.label} ${quantos}`,
+              planta_id: planta.id,
+              pos_x: Number(a.pos_x ?? 0) + desloca,
+              pos_y: Number(a.pos_y ?? 0),
+            };
+          });
+
+    if (!els.length && !ats.length) { toast.error("Nada para duplicar nesta seleção."); return; }
+
+    const aviso = toast.loading(`Duplicando ${els.length + ats.length} peça(s)…`);
+    void (async () => {
+      try {
+        const [elsCriados, ativosCriados] = await Promise.all([
+          criarElementosEmLote.mutateAsync(els),
+          criarAtivosEmLote.mutateAsync(ats),
+        ]);
+
+        const novos: SelecaoCena[] = [
+          ...elsCriados.map((e) => ({ tipo: "elemento" as const, id: e.id })),
+          ...ativosCriados.map((a) => ({ tipo: "ativo" as const, id: a.id })),
+        ];
+        setGrupo(novos);
+        // A seleção principal também vai para a cópia: deixá-la no original
+        // faria o inspetor descrever uma peça que não é a que está pega.
+        setSelecao(novos[0] ?? null);
+        // UMA entrada no histórico para o bloco todo — ver `duplicar_bloco`.
+        historico.registrar({ tipo: "duplicar_bloco", elementos: elsCriados, ativos: ativosCriados });
+        toast.success(`${novos.length} peça(s) duplicada(s) ao lado.`, { id: aviso });
+      } catch {
+        toast.dismiss(aviso);
+      }
+    })();
+  };
+
+  const duplicar = () => {
+    if (!planta) return;
+
+    // Duas ou mais peças pegas: duplica o bloco, não a última clicada.
+    if (grupo.length > 1) { duplicarGrupo(); return; }
+
+    if (elementoSel) {
+      const { id, ...resto } = elementoSel;
+      criarElemento({
+        ...resto,
+        planta_id: planta.id,
+        x: Number(elementoSel.x) + 50,
+        y: Number(elementoSel.y) + 50,
+      });
+      return;
+    }
+
+    if (ativoSel && podeIncluirAtivo) {
+      /**
+       * ⚠ O que NÃO se copia, e por quê.
+       *
+       * Duplicar um equipamento é dizer "quero outro igual", não "quero uma
+       * segunda linha com a mesma identidade". Patrimônio, número de série,
+       * nota fiscal, IP, MAC, hostname e os IDs de acesso remoto pertencem
+       * àquele aparelho físico — copiá-los criaria duas fichas apontando para
+       * o mesmo equipamento, e o índice único de IP fixo do banco recusaria a
+       * gravação com um erro que ninguém entenderia.
+       *
+       * Configuração (processador, memória, sistema, cor, tamanho) copia:
+       * é justamente o que se repete numa fileira de estações iguais.
+       */
+      const {
+        id, codigo, created_at, updated_at,
+        patrimonio, numero_serie, nota_fiscal,
+        ip, mac, hostname, anydesk, teamviewer,
+        ...resto
+      } = ativoSel;
+
+      const def = tipoAtivo(ativoSel.tipo);
+      const quantos = ativos.filter((a) => a.tipo === ativoSel.tipo).length + 1;
+
+      salvarAtivo.mutate(
+        {
+          ...(resto as TiAtivoInput),
+          nome: `${def.label} ${quantos}`,
+          planta_id: planta.id,
+          pos_x: Number(ativoSel.pos_x ?? 0) + 50,
+          pos_y: Number(ativoSel.pos_y ?? 0) + 50,
+        },
+        { onSuccess: (novo) => setSelecao({ tipo: "ativo", id: novo.id }) },
+      );
+    }
+  };
+
+  const confirmarRemocao = () => {
+    if (!confirmar) return;
+
+    if (confirmar.tipo === "bloco") {
+      const idsEl = confirmar.itens.filter((i) => i.tipo === "elemento").map((i) => i.id);
+      const idsAt = confirmar.itens.filter((i) => i.tipo === "ativo").map((i) => i.id);
+      // Uma requisição para cada tipo, não uma por peça: é a mesma razão do
+      // colar em lote, e aqui ainda evita 39 confirmações de exclusão.
+      if (planta && idsEl.length && podeExcluirElemento) {
+        excluirElementosEmLote.mutate({ ids: idsEl, plantaId: planta.id });
+      }
+      if (idsAt.length && podeExcluirAtivo) {
+        excluirAtivosEmLote.mutate(idsAt);
+      }
+      setGrupo([]);
+      setSelecao(null);
+      setConfirmar(null);
+      return;
+    }
+
+    if (confirmar.tipo === "ativo") {
+      // Equipamento removido NÃO entra no Ctrl+Z: o DELETE leva o histórico
+      // dele junto (CASCADE) e recriar a linha não traz os eventos de volta.
+      // Prometer um desfazer que restaura pela metade é pior do que não ter.
+      excluirAtivo.mutate(confirmar.id);
+    } else if (planta) {
+      const antes = elementos.find((e) => e.id === confirmar.id);
+      excluirElemento.mutate(
+        { id: confirmar.id, plantaId: planta.id },
+        { onSuccess: () => antes && historico.registrar({ tipo: "remover_elemento", antes }) },
+      );
+    }
+    setSelecao(null);
+    setConfirmar(null);
+  };
+
+  /**
+   * O bloco parou de ser arrastado: grava todo mundo numa tacada.
+   *
+   * A cena entrega o CENTRO de cada peça (é assim que ela trabalha); o banco
+   * guarda o canto, então a conversão acontece aqui — mesma regra do arrasto
+   * de uma peça só.
+   *
+   * O histórico continua recebendo uma entrada por peça, como já era quando
+   * cada uma gravava sozinha: o Ctrl+Z desfaz o movimento peça a peça. Não é
+   * o ideal, mas é o comportamento que a tela já tinha, e trocá-lo por um
+   * "desfazer bloco" pede uma entrada nova no motor de histórico.
+   */
+  const moverBloco = useCallback(
+    (movimentos: { tipo: "elemento" | "ativo"; id: string; x: number; y: number }[]) => {
+      if (!planta) return;
+
+      const els: (TiElemento & { id: string })[] = [];
+      const ats: (TiAtivoInput & { id: string })[] = [];
+
+      for (const m of movimentos) {
+        if (m.tipo === "elemento") {
+          const el = elementos.find((e) => e.id === m.id);
+          if (!el) continue;
+          const canto = cantoDaPeca(m.x, m.y, el.largura, el.altura);
+          const depois = { ...el, x: canto.x, y: canto.y };
+          els.push(depois);
+          historico.registrar({ tipo: "atualizar_elemento", antes: el, depois });
+        } else {
+          const a = ativos.find((z) => z.id === m.id);
+          if (!a) continue;
+          const depois = { ...a, planta_id: planta.id, pos_x: m.x, pos_y: m.y };
+          ats.push(depois as TiAtivoInput & { id: string });
+          historico.registrar({ tipo: "atualizar_ativo", antes: a, depois });
+        }
+      }
+
+      if (els.length) moverElementosEmLote.mutate({ els, plantaId: planta.id });
+      if (ats.length) moverAtivosEmLote.mutate(ats);
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [planta, elementos, ativos, historico],
+  );
+
+  /** Apaga a peça direto, guardando o desfazer — a borracha da obra. */
+  const apagarElemento = useCallback(
+    (id: string) => {
+      if (!planta || !podeExcluirElemento) return;
+      const antes = elementos.find((e) => e.id === id);
+      if (!antes) return;
+      excluirElemento.mutate(
+        { id, plantaId: planta.id },
+        { onSuccess: () => historico.registrar({ tipo: "remover_elemento", antes }) },
+      );
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [planta, podeExcluirElemento, elementos, historico],
+  );
+
+  const podeRemoverAgora =
+    (elementoSel && podeExcluirElemento) ||
+    (ativoSel && podeExcluirAtivo) ||
+    (grupo.filter(Boolean).length > 1 && (podeExcluirElemento || podeExcluirAtivo));
+
+  return (
+    <div className="p-4 lg:p-6">
+      <PageHeader
+        title="Construir o mapa"
+        module="T.I"
+        breadcrumb={["Construir o mapa"]}
+        subtitle="Monte o escritório: escolha uma peça à esquerda, clique no chão para colocar e arraste para ajustar."
+        actions={
+          <>
+            {podeIncluirAtivo && (
+              <Button variant="outline" onClick={() => setFichaAberta(null)}>
+                <Plus className="mr-1.5 h-4 w-4" /> Novo equipamento
+              </Button>
+            )}
+            <Button onClick={() => setPlantaDialog(planta ?? { nome: "", largura_cm: 2400, altura_cm: 1600 })}>
+              <Ruler className="mr-1.5 h-4 w-4" /> {planta ? "Medidas da planta" : "Criar planta"}
+            </Button>
+          </>
+        }
+      />
+
+      {isLoading && (
+        <Card className="flex h-[72vh] items-center justify-center text-sm text-muted-foreground">Carregando…</Card>
+      )}
+
+      {!isLoading && !planta && (
+        <Card className="flex h-[72vh] flex-col items-center justify-center gap-3 text-center">
+          <Building2 className="h-10 w-10 text-muted-foreground" />
+          <p className="font-semibold">Comece criando a planta</p>
+          <p className="max-w-sm text-sm text-muted-foreground">
+            Meça o escritório (largura e profundidade, em metros) e crie a planta. Depois é
+            só colocar paredes, mesas e equipamentos em cima dela.
+          </p>
+          <Button onClick={() => setPlantaDialog({ nome: "", largura_cm: 2400, altura_cm: 1600 })}>
+            <Plus className="mr-1.5 h-4 w-4" /> Criar planta
+          </Button>
+        </Card>
+      )}
+
+      {!isLoading && planta && (
+        <div className="space-y-3">
+          {/* ---- barra ---- */}
+          <Card className="flex flex-wrap items-center gap-2 p-2">
+            {plantas.length > 1 && (
+              <Select value={planta.id} onValueChange={(v) => { setPlantaId(v); setSelecao(null); }}>
+                <SelectTrigger className="w-[200px]">
+                  <Building2 className="mr-1.5 h-4 w-4 shrink-0 text-muted-foreground" />
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {plantas.map((p) => (
+                    <SelectItem key={p.id} value={p.id}>
+                      {nomeDoAndar(p.nivel)} · {p.nome}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            )}
+            <span className="hidden text-xs text-muted-foreground sm:inline">
+              {cmParaMetros(planta.largura_cm)} × {cmParaMetros(planta.altura_cm)}
+            </span>
+
+            {plantas.length > 1 && (
+              <Button
+                variant={verTodosAndares ? "secondary" : "ghost"}
+                size="sm"
+                onClick={() => setVerTodosAndares(!verTodosAndares)}
+                title="Mostrar os outros andares como referência"
+              >
+                <Layers3 className="mr-1.5 h-4 w-4" /> Todos os andares
+              </Button>
+            )}
+
+            <Separator orientation="vertical" className="h-6" />
+
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-8 w-8"
+              disabled={!historico.podeDesfazer}
+              onClick={historico.desfazer}
+              title={historico.podeDesfazer ? `Desfazer ${historico.proximoDesfazer} (Ctrl+Z)` : "Nada para desfazer"}
+            >
+              <Undo2 className="h-4 w-4" />
+            </Button>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-8 w-8"
+              disabled={!historico.podeRefazer}
+              onClick={historico.refazer}
+              title={historico.podeRefazer ? `Refazer ${historico.proximoRefazer} (Ctrl+Y)` : "Nada para refazer"}
+            >
+              <Redo2 className="h-4 w-4" />
+            </Button>
+
+            <Separator orientation="vertical" className="h-6" />
+
+            {/* Editar em 2D ou em 3D. É a mesma cena e as mesmas ferramentas:
+                muda a câmera (ver ModoCena, em Cena3D). O 2D existe porque
+                desenhar parede e alinhar mesa de cima, sem perspectiva, é
+                muito mais preciso; o 3D existe para conferir o resultado. */}
+            <div className="flex items-center gap-0.5 rounded-md border p-0.5">
+              <Button
+                variant={modo === "2d" ? "secondary" : "ghost"}
+                size="sm"
+                className="h-7 px-2"
+                onClick={() => setModo("2d")}
+                title="Editar em 2D — planta baixa, vista de cima, sem giro"
+              >
+                <Square className="mr-1.5 h-3.5 w-3.5" /> 2D
+              </Button>
+              <Button
+                variant={modo === "3d" ? "secondary" : "ghost"}
+                size="sm"
+                className="h-7 px-2"
+                onClick={() => setModo("3d")}
+                title="Editar em 3D — maquete, com a câmera livre"
+              >
+                <Box className="mr-1.5 h-3.5 w-3.5" /> 3D
+              </Button>
+            </div>
+
+            <Separator orientation="vertical" className="h-6" />
+
+            <Button
+              variant={ferramenta.tipo === "selecao" ? "secondary" : "ghost"}
+              size="sm"
+              onClick={sairDaObra}
+            >
+              <MousePointer2 className="mr-1.5 h-4 w-4" /> Selecionar
+            </Button>
+
+            <Button
+              variant={obra ? "default" : "ghost"}
+              size="sm"
+              onClick={() => (obra ? sairDaObra() : entrarNaObra())}
+              title="Obra: arrastar no chão abre e fecha piso, e levanta parede"
+            >
+              <Hammer className="mr-1.5 h-4 w-4" /> Obra
+            </Button>
+
+            {/* As ferramentas da obra só existem dentro dela: fora daqui
+                seriam mais três botões competindo com o cursor normal. */}
+            {obra && (
+              <div className="flex items-center gap-0.5 rounded-md border border-primary/40 bg-primary/5 p-0.5">
+                <Button
+                  variant={ferramenta.tipo === "piso" && ferramenta.ocupar ? "secondary" : "ghost"}
+                  size="sm"
+                  className="h-7 px-2"
+                  onClick={() => setFerramenta({ tipo: "piso", ocupar: true })}
+                  title="Arraste no chão para abrir piso"
+                >
+                  <SquareDashedBottom className="mr-1.5 h-3.5 w-3.5" /> Abrir piso
+                </Button>
+                <Button
+                  variant={ferramenta.tipo === "piso" && !ferramenta.ocupar ? "secondary" : "ghost"}
+                  size="sm"
+                  className="h-7 px-2"
+                  onClick={() => setFerramenta({ tipo: "piso", ocupar: false })}
+                  title="Arraste no chão para tirar piso"
+                >
+                  <Eraser className="mr-1.5 h-3.5 w-3.5" /> Tirar piso
+                </Button>
+                <Button
+                  variant={
+                    ferramenta.tipo === "elemento" && ferramenta.valor === "parede" ? "secondary" : "ghost"
+                  }
+                  size="sm"
+                  className="h-7 px-2"
+                  onClick={() => setFerramenta({ tipo: "elemento", valor: "parede" })}
+                  title="Arraste do começo ao fim da parede"
+                >
+                  <Ruler className="mr-1.5 h-3.5 w-3.5" /> Parede
+                </Button>
+                {podeExcluirElemento && (
+                  <Button
+                    variant={ferramenta.tipo === "remover_parede" ? "secondary" : "ghost"}
+                    size="sm"
+                    className="h-7 px-2"
+                    onClick={() => setFerramenta({ tipo: "remover_parede" })}
+                    title="Clique numa parede, divisória, porta ou janela para tirar (Ctrl+Z desfaz)"
+                  >
+                    <Trash2 className="mr-1.5 h-3.5 w-3.5" /> Tirar parede
+                  </Button>
+                )}
+              </div>
+            )}
+            <Button variant={grade ? "secondary" : "ghost"} size="icon" className="h-8 w-8"
+                    title="Quadrados de 1 m" onClick={() => setGrade(!grade)}>
+              <Grid3x3 className="h-4 w-4" />
+            </Button>
+
+            {/* O passo de MOVER é separado do quadrado do piso: encostar um
+                monitor na quina da mesa pede centímetros. */}
+            <Select value={String(passoCm)} onValueChange={(v) => setPassoCm(Number(v))}>
+              <SelectTrigger className="h-8 w-[104px]" title="De quanto em quanto as peças andam">
+                <Move3d className="mr-1 h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {PASSOS_DE_MOVIMENTO.map((p) => (
+                  <SelectItem key={p.cm} value={String(p.cm)}>{p.label}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <Button variant={rotulos ? "secondary" : "ghost"} size="icon" className="h-8 w-8"
+                    title="Nomes dos equipamentos" onClick={() => setRotulos(!rotulos)}>
+              <Tag className="h-4 w-4" />
+            </Button>
+
+            {copia && (
+              <>
+                <Separator orientation="vertical" className="h-6" />
+                <Badge variant="outline" className="border-red-300 text-red-600">
+                  {copia.elementos.length + copia.ativos.length} copiada(s) ·{" "}
+                  {alvoColagem ? "Ctrl+V cola no ponto" : "clique no chão"}
+                </Badge>
+              </>
+            )}
+
+            {grupo.length > 1 && (
+              <>
+                <Separator orientation="vertical" className="h-6" />
+                {/* Some sozinho ao voltar para uma peça só — um contador
+                    fixo dizendo "1 selecionado" seria ruído permanente. */}
+                <Badge className="bg-amber-500 text-white hover:bg-amber-500">
+                  {grupo.length} peças selecionadas
+                </Badge>
+                <Button variant="outline" size="sm" onClick={duplicarGrupo}>
+                  <Copy className="mr-1.5 h-4 w-4" /> Duplicar bloco
+                </Button>
+              </>
+            )}
+
+            {selecao && (
+              <>
+                <Separator orientation="vertical" className="h-6" />
+                <Badge variant="secondary" className="max-w-[180px] truncate">{nomeSelecionado}</Badge>
+                <Button variant="outline" size="sm" onClick={() => girar(45)}>
+                  <RotateCw className="mr-1.5 h-4 w-4" /> Girar
+                </Button>
+                {(elementoSel || (ativoSel && podeIncluirAtivo)) && (
+                  <Button variant="outline" size="sm" onClick={duplicar}>
+                    <Copy className="mr-1.5 h-4 w-4" /> Duplicar
+                  </Button>
+                )}
+                {/* Remover, lugar 1 de 3: sempre visível enquanto há seleção. */}
+                {podeRemoverAgora && (
+                  <Button variant="destructive" size="sm" onClick={pedirRemocao}>
+                    <Trash2 className="mr-1.5 h-4 w-4" /> Remover
+                  </Button>
+                )}
+                <Button variant="ghost" size="icon" className="h-8 w-8"
+                        onClick={() => { setSelecao(null); setGrupo([]); }}>
+                  <X className="h-4 w-4" />
+                </Button>
+              </>
+            )}
+
+            {ferramenta.tipo !== "selecao" && (
+              <span className="ml-auto flex items-center gap-2 rounded-full bg-sky-600 px-3 py-1 text-xs font-semibold text-white">
+                <Move3d className="h-3.5 w-3.5" />
+                {ferramenta.tipo === "remover_parede"
+                  ? "Clique na parede para tirar"
+                  : ferramenta.tipo === "piso"
+                  ? ferramenta.ocupar
+                    ? "Arraste no chão para abrir piso"
+                    : "Arraste no chão para tirar piso"
+                  : ferramenta.tipo === "elemento" && tipoElemento(ferramenta.valor).familia === "estrutura"
+                    ? "Arraste no chão para desenhar"
+                    : "Clique no chão para colocar"}
+                {ferramenta.tipo === "ativo"
+                  ? ` “${ferramenta.nome}”`
+                  : ferramenta.tipo === "novo_ativo"
+                    ? ` ${tipoAtivo(ferramenta.valor).label}`
+                    : ferramenta.tipo === "elemento"
+                      ? ` ${tipoElemento(ferramenta.valor).label}`
+                      : ""}
+                {/* O X larga a obra inteira, não só a ferramenta: deixar o
+                    modo ligado sem nenhuma ferramenta na mão é um estado em
+                    que nada responde ao clique e nada explica por quê. */}
+                <button type="button" onClick={sairDaObra} className="ml-1 opacity-80 hover:opacity-100">
+                  <X className="h-3.5 w-3.5" />
+                </button>
+              </span>
+            )}
+          </Card>
+
+          <div className="grid gap-3 xl:grid-cols-[240px_minmax(0,1fr)_300px]">
+            {/* ---- paleta ---- */}
+            <div className="flex h-[72vh] min-h-[520px] flex-col gap-3">
+              <Card className="flex min-h-0 flex-[3] flex-col">
+                <p className="flex items-center gap-1.5 border-b p-2.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                  <Hammer className="h-3.5 w-3.5" /> Peças
+                </p>
+                <ScrollArea className="min-h-0 flex-1">
+                  <div className="space-y-3 p-2.5">
+                    {/* Equipamentos primeiro: é o que se coloca mais, e antes
+                    disso a única porta era o cadastro de patrimônio. */}
+                {podeIncluirAtivo && (
+                  <div>
+                    <p className="mb-1.5 text-[11px] font-medium text-muted-foreground">Equipamentos</p>
+                    <div className="grid grid-cols-2 gap-1.5">
+                      {TIPOS_ATIVO.filter((t) => t.valor !== "outro").map((t) => {
+                        const Icone = t.icone;
+                        const ativa = ferramenta.tipo === "novo_ativo" && ferramenta.valor === t.valor;
+                        return (
+                          <button
+                            key={t.valor}
+                            type="button"
+                            onClick={() =>
+                              setFerramenta(ativa ? { tipo: "selecao" } : { tipo: "novo_ativo", valor: t.valor })
+                            }
+                            className={cn(
+                              "flex flex-col items-center gap-1 rounded-md border p-2 text-[11px] font-medium transition",
+                              ativa ? "border-primary bg-primary/10 text-primary" : "hover:border-primary/40 hover:bg-muted",
+                            )}
+                          >
+                            <span className="flex h-6 w-6 items-center justify-center rounded text-white" style={{ background: t.cor }}>
+                              <Icone className="h-3.5 w-3.5" />
+                            </span>
+                            <span className="truncate">{t.label}</span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+
+                {(["estrutura", "area", "mobilia"] as const).map((fam) => (
+                      <div key={fam}>
+                        <p className="mb-1.5 text-[11px] font-medium capitalize text-muted-foreground">
+                          {fam === "estrutura" ? "Estrutura" : fam === "area" ? "Ambientes" : "Mobília"}
+                        </p>
+                        <div className="grid grid-cols-2 gap-1.5">
+                          {TIPOS_ELEMENTO.filter((t) => t.familia === fam || (fam === "mobilia" && t.familia === "texto")).map((t) => {
+                            const Icone = t.icone;
+                            const ativa = ferramenta.tipo === "elemento" && ferramenta.valor === t.valor;
+                            return (
+                              <button
+                                key={t.valor}
+                                type="button"
+                                onClick={() => setFerramenta(ativa ? { tipo: "selecao" } : { tipo: "elemento", valor: t.valor })}
+                                className={cn(
+                                  "flex flex-col items-center gap-1 rounded-md border p-2 text-[11px] font-medium transition",
+                                  ativa ? "border-primary bg-primary/10 text-primary" : "hover:border-primary/40 hover:bg-muted",
+                                )}
+                              >
+                                <span className="flex h-6 w-6 items-center justify-center rounded text-white" style={{ background: t.cor }}>
+                                  <Icone className="h-3.5 w-3.5" />
+                                </span>
+                                <span className="truncate">{t.label}</span>
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </ScrollArea>
+              </Card>
+
+              <Card className="flex min-h-0 flex-[2] flex-col">
+                <p className="flex items-center gap-1.5 border-b p-2.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                  <Package className="h-3.5 w-3.5" /> Fora do mapa
+                  <Badge variant="secondary" className="ml-auto">{bandeja.length}</Badge>
+                </p>
+                <ScrollArea className="min-h-0 flex-1">
+                  <div className="space-y-1 p-2">
+                    {/* Duas situações MUITO diferentes que a mensagem antiga
+                        confundia: "já posicionei tudo" e "não cadastrei nada
+                        ainda". Quem via a segunda achava que era só arrastar de
+                        algum lugar, e não havia lugar nenhum. */}
+                    {bandeja.length === 0 && ativos.length === 0 && (
+                      <div className="space-y-2 p-2">
+                        <p className="text-[11px] text-muted-foreground">
+                          Nenhum equipamento cadastrado ainda. Cadastre o primeiro
+                          e ele aparece aqui para você posicionar no mapa.
+                        </p>
+                        {podeIncluirAtivo && (
+                          <Button size="sm" variant="outline" className="w-full" onClick={() => setFichaAberta(null)}>
+                            <Plus className="mr-1.5 h-4 w-4" /> Novo equipamento
+                          </Button>
+                        )}
+                      </div>
+                    )}
+                    {bandeja.length === 0 && ativos.length > 0 && (
+                      <p className="p-2 text-[11px] text-muted-foreground">
+                        Todo equipamento cadastrado já está posicionado.
+                      </p>
+                    )}
+                    {bandeja.map((a) => {
+                      const def = tipoAtivo(a.tipo);
+                      const Icone = def.icone;
+                      const ativa = ferramenta.tipo === "ativo" && ferramenta.id === a.id;
+                      return (
+                        <button
+                          key={a.id}
+                          type="button"
+                          onClick={() => setFerramenta(ativa ? { tipo: "selecao" } : { tipo: "ativo", id: a.id, nome: a.nome })}
+                          className={cn(
+                            "flex w-full items-center gap-2 rounded-md border p-1.5 text-left text-xs transition",
+                            ativa ? "border-primary bg-primary/10" : "hover:bg-muted",
+                          )}
+                        >
+                          <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded text-white"
+                                style={{ background: a.cor || def.cor }}>
+                            <Icone className="h-3.5 w-3.5" />
+                          </span>
+                          <span className="min-w-0 flex-1">
+                            <span className="block truncate font-medium">{a.nome}</span>
+                            <span className="block truncate text-[10px] text-muted-foreground">{a.codigo}</span>
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </ScrollArea>
+              </Card>
+            </div>
+
+            {/* ---- cena ---- */}
+            <div className="h-[72vh] min-h-[520px] overflow-hidden rounded-xl border">
+              <Cena3D
+                planta={planta}
+                elementos={elementos}
+                ativos={ativos}
+                selecao={selecao}
+                grupo={grupo}
+                alvoColagem={alvoColagem}
+                onCliqueNoChao={(x, y) => {
+                  if (ferramenta.tipo === "selecao") setAlvoColagem({ x, y });
+                }}
+                onSelecionar={(s, aditivo) => {
+                  if (ferramenta.tipo === "selecao") selecionarNaCena(s, aditivo);
+                }}
+                onSelecionarArea={selecionarArea}
+                editavel
+                modo={modo}
+                mostrarGrade={grade}
+                mostrarRotulos={rotulos}
+                passoCm={passoCm}
+                desenhando={ferramenta.tipo !== "selecao"}
+                pintandoPiso={ferramenta.tipo === "piso"}
+                apagandoEstrutura={ferramenta.tipo === "remover_parede"}
+                onApagarElemento={apagarElemento}
+                obra={obra}
+                onDesenharNoChao={desenharNoChao}
+                plantas={plantas}
+                andaresVizinhos={andaresVizinhos}
+                onSoltarElemento={(id, x, y) => {
+                  const el = elementos.find((e) => e.id === id);
+                  if (!el) return;
+                  // Uma gravação por arrasto, no soltar. O arrasto entrega o
+                  // CENTRO; o banco guarda o canto.
+                  const canto = cantoDaPeca(x, y, el.largura, el.altura);
+                  alterarElemento(el, { x: canto.x, y: canto.y });
+                }}
+                onSoltarBloco={moverBloco}
+                onSoltarAtivo={(id, x, y) => {
+                  const a = ativos.find((z) => z.id === id);
+                  if (a) alterarAtivo(a, { planta_id: planta.id, pos_x: x, pos_y: y });
+                }}
+                onRedimensionar={(id, patch) => {
+                  const el = elementos.find((e) => e.id === id);
+                  if (el) alterarElemento(el, patch);
+                }}
+                celulas={celulas}
+                onDefinirCelula={(cx, cy, ocupar) =>
+                  definirCelula.mutate({ planta_id: planta.id, cx, cy, ocupar })
+                }
+                onAbrirFicha={(id) => {
+                  const a = ativos.find((z) => z.id === id);
+                  if (a) setFichaAberta(a);
+                }}
+              />
+            </div>
+
+            {/* ---- inspetor ---- */}
+            <Card className="flex h-[72vh] min-h-[520px] flex-col">
+              {!elementoSel && !ativoSel ? (
+                <div className="flex flex-1 flex-col items-center justify-center gap-2 p-6 text-center">
+                  <Layers className="h-8 w-8 text-muted-foreground/50" />
+                  <p className="text-sm font-medium">Nada selecionado</p>
+                  <p className="text-xs leading-relaxed text-muted-foreground">
+                    Clique numa peça da cena para ajustar tamanho, altura, giro e cor —
+                    ou para removê-la.
+                  </p>
+                  <Separator className="my-2" />
+                  <ul className="space-y-1 text-left text-[11px] text-muted-foreground">
+                    <li><b>Arraste no chão</b> com Parede na mão para desenhar</li>
+                    <li><b>Arrastar</b> a peça move no chão</li>
+                    <li>Com a <b>grade</b> ligada: <b>+</b> acrescenta um quadrado de 1 m², <b>−</b> tira</li>
+                    <li>As peças andam no <b>passo</b> escolhido na barra (padrão 25 cm)</li>
+                    <li><b>Alt</b> enquanto arrasta solta a grade</li>
+                    <li><b>Puxe as bolinhas laranja</b> (no 3D) para esticar a peça</li>
+                    <li><b>R</b> gira 45°, <b>D</b> duplica, <b>Delete</b> remove</li>
+                    <li><b>Ctrl+Z</b> desfaz, <b>Ctrl+Y</b> refaz</li>
+                    <li><b>Duplo clique</b> num equipamento abre a ficha</li>
+                    <li><b>Arrastar no vazio</b> (no 2D) laça tudo que couber dentro do retângulo; com <b>Shift</b>, soma à seleção</li>
+                    <li><b>Shift + clique</b> marca várias peças; arrastar uma delas leva o bloco todo</li>
+                    <li><b>Ctrl+C</b> copia o que está marcado, <b>clique no chão</b> marca o ponto vermelho e <b>Ctrl+V</b> solta o bloco ali — é o caminho para repetir "mesa + 4 cadeiras" em outro setor</li>
+                    <li><b>2D / 3D</b> na barra troca a vista; no 2D a câmera não gira e o botão direito arrasta a planta</li>
+                    <li><b>Obra</b> abre o modo de planta: arraste no chão para <b>abrir</b> ou <b>tirar</b> piso de uma vez, ou para levantar <b>parede</b></li>
+                    <li>Na <b>obra</b> cada botão faz uma coisa: <b>esquerdo</b> desenha, <b>meio</b> arrasta a planta, <b>direito</b> gira a câmera (no 3D), <b>rodinha</b> dá zoom</li>
+                    <li><b>Tirar parede</b> apaga no clique, sem perguntar — o que fica vermelho é o que vai sumir, e <b>Ctrl+Z</b> traz de volta</li>
+                  </ul>
+                </div>
+              ) : (
+                <>
+                  <ScrollArea className="min-h-0 flex-1">
+                    <div className="space-y-4 p-3">
+                      {elementoSel && (
+                        <InspetorElemento
+                          el={elementoSel}
+                          setores={setores}
+                          onAlterar={(patch) => alterarElemento(elementoSel, patch)}
+                        />
+                      )}
+                      {ativoSel && (
+                        <InspetorAtivo
+                          ativo={ativoSel}
+                          podeEditar={podeGerenciarAtivo}
+                          onPosicao={(patch) => alterarAtivo(ativoSel, patch)}
+                          onCampo={(patch) => alterarAtivo(ativoSel, patch)}
+                          onAbrirFicha={() => setFichaAberta(ativoSel)}
+                          onDuplicar={podeIncluirAtivo ? duplicar : undefined}
+                          onTirarDoMapa={() => {
+                            posicionar.mutate({ id: ativoSel.id, planta_id: null, pos_x: null, pos_y: null });
+                            setSelecao(null);
+                          }}
+                        />
+                      )}
+                    </div>
+                  </ScrollArea>
+
+                  {/* Remover, lugar 2 de 3: rodapé fixo do inspetor. */}
+                  {podeRemoverAgora && (
+                    <div className="border-t p-3">
+                      <Button variant="destructive" className="w-full" onClick={pedirRemocao}>
+                        <Trash2 className="mr-1.5 h-4 w-4" />
+                        Remover {elementoSel ? "esta peça" : "este equipamento"}
+                      </Button>
+                    </div>
+                  )}
+                </>
+              )}
+            </Card>
+          </div>
+        </div>
+      )}
+
+      <AtivoDialog
+        aberto={fichaAberta !== undefined}
+        onFechar={() => setFichaAberta(undefined)}
+        ativo={fichaAberta ?? null}
+        plantas={plantas}
+        ativos={ativos}
+        podeEditar={fichaAberta ? podeGerenciarAtivo : podeIncluirAtivo}
+        podeExcluir={podeExcluirAtivo}
+        salvando={salvarAtivo.isPending}
+        onSalvar={(dados) => salvarAtivo.mutate(dados, { onSuccess: () => setFichaAberta(undefined) })}
+        onExcluir={(id) => {
+          const a = ativos.find((x) => x.id === id);
+          setConfirmar({ tipo: "ativo", id, nome: a?.nome ?? "equipamento" });
+          setFichaAberta(undefined);
+        }}
+      />
+
+      <PlantaDialog
+        valor={plantaDialog}
+        onFechar={() => setPlantaDialog(null)}
+        salvando={salvarPlanta.isPending}
+        onSalvar={(p) => salvarPlanta.mutate(p, { onSuccess: (id) => { setPlantaId(id); setPlantaDialog(null); } })}
+      />
+
+      <AlertDialog open={!!confirmar} onOpenChange={(o) => !o && setConfirmar(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              {confirmar?.tipo === "bloco" ? `Remover ${confirmar.nome}?` : `Remover “${confirmar?.nome}”?`}
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              {confirmar?.tipo === "bloco"
+                ? "Tudo que está marcado sai da planta de uma vez — peças e equipamentos. Diferente de remover uma peça só, isto NÃO volta com Ctrl+Z: equipamento apagado leva o histórico dele junto."
+                : confirmar?.tipo === "ativo"
+                ? "O equipamento sai do inventário junto com o histórico dele. Se a máquina só saiu de uso, o certo é mudar o status para Descartado — aí ela some do mapa e o histórico fica."
+                : "A peça some da planta. Os equipamentos que estavam sobre ela continuam onde estão, apoiados no chão."}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancelar</AlertDialogCancel>
+            <AlertDialogAction onClick={confirmarRemocao} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">
+              Remover
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </div>
+  );
+}
+
+// ── Inspetores ────────────────────────────────────────────────────────
+
+function InspetorElemento({
+  el,
+  setores,
+  onAlterar,
+}: {
+  el: TiElemento;
+  setores: string[];
+  onAlterar: (patch: Partial<TiElemento>) => void;
+}) {
+  const def = tipoElemento(el.tipo);
+  const [rotulo, setRotulo] = useState(el.rotulo ?? "");
+  useEffect(() => setRotulo(el.rotulo ?? ""), [el.id, el.rotulo]);
+
+  return (
+    <>
+      <div>
+        <p className="text-xs uppercase tracking-wide text-muted-foreground">Peça da planta</p>
+        <p className="text-base font-semibold">{def.label}</p>
+      </div>
+
+      <div className="space-y-1.5">
+        <Label className="text-xs text-muted-foreground">Nome (aparece no mapa)</Label>
+        <Input
+          value={rotulo}
+          onChange={(e) => setRotulo(e.target.value)}
+          onBlur={() => rotulo !== (el.rotulo ?? "") && onAlterar({ rotulo: rotulo || null })}
+          placeholder="Sala do Financeiro"
+        />
+      </div>
+
+      {/* Setor só faz sentido em área de piso: parede não pertence a um setor.
+          A lista vem de EMPREGADOS (fonte única de setor deste ERP), mas o
+          campo aceita texto livre — sala de setor que ainda não tem gente
+          alocada existe, e travar no combo impediria de nomeá-la. */}
+      {def.familia === "area" && (
+        <div className="space-y-1.5">
+          <Label className="text-xs text-muted-foreground">Setor desta sala</Label>
+          <Input
+            list="ti-setores"
+            defaultValue={el.setor ?? ""}
+            placeholder="Financeiro, RH, Comercial…"
+            onBlur={(e) => {
+              const v = e.target.value.trim();
+              if (v !== (el.setor ?? "")) onAlterar({ setor: v || null });
+            }}
+          />
+          <datalist id="ti-setores">
+            {setores.map((x) => <option key={x} value={x} />)}
+          </datalist>
+        </div>
+      )}
+
+      <div className="grid grid-cols-2 gap-2">
+        <Numero label="Largura (cm)" valor={Number(el.largura)} onChange={(v) => onAlterar({ largura: Math.max(5, v) })} />
+        <Numero label="Profundidade (cm)" valor={Number(el.altura)} onChange={(v) => onAlterar({ altura: Math.max(5, v) })} />
+        <Numero label="Altura (cm)" valor={alturaDoElemento(el)} onChange={(v) => onAlterar({ altura_z: Math.max(1, v) })} />
+        <Numero label="Giro (graus)" valor={Number(el.rotacao)} passo={15} onChange={(v) => onAlterar({ rotacao: v })} />
+      </div>
+
+      <div className="grid grid-cols-2 gap-2">
+        <Numero label="X (cm)" valor={Number(el.x)} onChange={(v) => onAlterar({ x: v })} />
+        <Numero label="Y (cm)" valor={Number(el.y)} onChange={(v) => onAlterar({ y: v })} />
+      </div>
+
+      <Cores valor={el.cor ?? def.cor} onEscolher={(cor) => onAlterar({ cor })} />
+
+      <p className="text-[11px] text-muted-foreground">
+        Ocupa {cmParaMetros(Number(el.largura))} × {cmParaMetros(Number(el.altura))} e tem{" "}
+        {cmParaMetros(alturaDoElemento(el))} de altura.
+      </p>
+    </>
+  );
+}
+
+function InspetorAtivo({
+  ativo,
+  podeEditar,
+  onPosicao,
+  onCampo,
+  onAbrirFicha,
+  onTirarDoMapa,
+  onDuplicar,
+}: {
+  ativo: TiAtivo;
+  podeEditar: boolean;
+  onPosicao: (patch: { pos_z?: number | null; rotacao?: number }) => void;
+  onCampo: (patch: Partial<TiAtivoInput>) => void;
+  onAbrirFicha: () => void;
+  onTirarDoMapa: () => void;
+  onDuplicar?: () => void;
+}) {
+  const def = tipoAtivo(ativo.tipo);
+  const Icone = def.icone;
+  return (
+    <>
+      <div className="flex items-start gap-2">
+        <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-white" style={{ background: ativo.cor || def.cor }}>
+          <Icone className="h-5 w-5" />
+        </span>
+        <div className="min-w-0">
+          <p className="truncate text-base font-semibold leading-tight">{ativo.nome}</p>
+          <p className="truncate text-xs text-muted-foreground">{ativo.codigo} · {def.label}</p>
+        </div>
+      </div>
+
+      <div className="space-y-1.5">
+        <Label className="text-xs text-muted-foreground">Status</Label>
+        <Select value={ativo.status} disabled={!podeEditar} onValueChange={(v) => onCampo({ status: v as TiAtivo["status"] })}>
+          <SelectTrigger><SelectValue /></SelectTrigger>
+          <SelectContent>
+            {STATUS_ATIVO.map((s) => (
+              <SelectItem key={s.valor} value={s.valor}>
+                <span className="flex items-center gap-2">
+                  <span className="h-2 w-2 rounded-full" style={{ background: s.cor }} />
+                  {s.label}
+                </span>
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      </div>
+
+      <div className="grid grid-cols-2 gap-2">
+        <Numero label="Giro (graus)" valor={Number(ativo.rotacao)} passo={15} onChange={(v) => onPosicao({ rotacao: v })} />
+        <Numero label="Tamanho" valor={Number(ativo.escala)} passo={0.1} onChange={(v) => onCampo({ escala: Math.min(3, Math.max(0.4, v)) })} />
+      </div>
+
+      <div className="space-y-1.5">
+        <Label className="text-xs text-muted-foreground">Altura de apoio</Label>
+        <div className="flex gap-2">
+          <Input
+            type="number"
+            className="h-8"
+            placeholder="automática"
+            value={ativo.pos_z ?? ""}
+            onChange={(e) => onPosicao({ pos_z: e.target.value === "" ? null : Number(e.target.value) })}
+          />
+          <Button variant="outline" size="sm" onClick={() => onPosicao({ pos_z: null })}>Auto</Button>
+        </div>
+        <p className="text-[11px] leading-tight text-muted-foreground">
+          Em automático, o equipamento pousa sozinho sobre a mesa ou o armário embaixo dele.
+        </p>
+      </div>
+
+      <Cores valor={ativo.cor ?? def.cor} onEscolher={(cor) => onCampo({ cor })} />
+
+      <div className="flex flex-col gap-1.5">
+        {onDuplicar && (
+          <Button variant="outline" size="sm" onClick={onDuplicar}>
+            <Copy className="mr-1.5 h-4 w-4" /> Duplicar equipamento
+          </Button>
+        )}
+        <Button variant="secondary" size="sm" onClick={onAbrirFicha}>Abrir ficha completa</Button>
+        <Button variant="outline" size="sm" onClick={onTirarDoMapa}>Tirar do mapa (volta para a bandeja)</Button>
+      </div>
+    </>
+  );
+}
+
+function Numero({
+  label, valor, onChange, passo = 5,
+}: { label: string; valor: number; onChange: (v: number) => void; passo?: number }) {
+  const [txt, setTxt] = useState(String(valor));
+  useEffect(() => setTxt(String(valor)), [valor]);
+  return (
+    <div className="space-y-1">
+      <Label className="text-[11px] text-muted-foreground">{label}</Label>
+      <Input
+        type="number" step={passo} className="h-8" value={txt}
+        onChange={(e) => setTxt(e.target.value)}
+        onBlur={() => {
+          const n = Number(txt);
+          if (Number.isFinite(n) && n !== valor) onChange(n);
+          else setTxt(String(valor));
+        }}
+      />
+    </div>
+  );
+}
+
+/**
+ * A cor da peça: os atalhos da paleta MAIS a cor livre.
+ *
+ * A paleta continua porque é o caminho de um clique para os tons que se
+ * repetem (o cinza de parede, o marrom de mesa). O que faltava era o resto:
+ * quem pinta a parede da sala com a cor do setor não tem por que ficar preso
+ * a dezesseis tons escolhidos por mim.
+ *
+ * O seletor livre é o `<input type="color">` do próprio navegador — sem
+ * dependência nova, com o conta-gotas e o histórico que o sistema já dá. Ao
+ * lado dele vai o hexadecimal digitável, que é o que serve para repetir a
+ * MESMA cor em várias peças: ninguém acerta o mesmo tom duas vezes no
+ * quadradinho, mas todo mundo copia e cola "#3f5c7a".
+ */
+function Cores({ valor, onEscolher }: { valor: string; onEscolher: (c: string) => void }) {
+  const atual = (valor || "").toLowerCase();
+  // O input de cor só aceita #rrggbb; um valor vazio ou fora do formato o
+  // deixaria em preto sem avisar, então o campo cai num cinza neutro.
+  const paraInput = /^#[0-9a-f]{6}$/i.test(atual) ? atual : "#94a3b8";
+
+  return (
+    <div className="space-y-1.5">
+      <Label className="text-xs text-muted-foreground">Cor</Label>
+      <div className="flex flex-wrap gap-1">
+        {PALETA.map((c) => (
+          <button
+            key={c}
+            type="button"
+            onClick={() => onEscolher(c)}
+            className={cn("h-5 w-5 rounded border transition", atual === c ? "ring-2 ring-primary ring-offset-1" : "hover:scale-110")}
+            style={{ background: c }}
+            title={c}
+          />
+        ))}
+      </div>
+
+      <div className="flex items-center gap-2 pt-1">
+        <input
+          type="color"
+          value={paraInput}
+          onChange={(e) => onEscolher(e.target.value)}
+          className="h-7 w-9 cursor-pointer rounded border bg-transparent p-0.5"
+          title="Escolher qualquer cor"
+          aria-label="Escolher qualquer cor"
+        />
+        <Input
+          value={valor ?? ""}
+          onChange={(e) => {
+            const v = e.target.value.trim();
+            // Só grava quando o hexadecimal está completo: a cada tecla o
+            // valor passa por "#3", "#3f"… e salvar isso pintaria a peça de
+            // preto no meio da digitação.
+            if (/^#[0-9a-f]{6}$/i.test(v)) onEscolher(v);
+          }}
+          placeholder="#3f5c7a"
+          className="h-7 w-24 font-mono text-xs"
+          aria-label="Cor em hexadecimal"
+        />
+      </div>
+    </div>
+  );
+}
+
+function PlantaDialog({
+  valor, onFechar, onSalvar, salvando,
+}: {
+  valor: Partial<TiPlanta> | null;
+  onFechar: () => void;
+  onSalvar: (p: Partial<TiPlanta> & { nome: string }) => void;
+  salvando: boolean;
+}) {
+  const [form, setForm] = useState<Partial<TiPlanta>>({});
+  useEffect(() => setForm(valor ?? {}), [valor]);
+
+  /**
+   * O que impede de salvar, em português — os mesmos limites que o CHECK do
+   * banco cobra (20260930000069). Validar aqui não substitui o banco: evita
+   * que a pessoa receba "violates check constraint" e fique sem saber o que
+   * corrigir, como aconteceu ao tentar uma planta de 1 m.
+   */
+  const problema = (() => {
+    if (!form.nome?.trim()) return "Dê um nome para a planta.";
+    const l = Number(form.largura_cm ?? 2400);
+    const a = Number(form.altura_cm ?? 1600);
+    if (!Number.isFinite(l) || !Number.isFinite(a)) return "Largura e profundidade precisam ser números.";
+    if (l < 100 || a < 100) return "Cada lado precisa ter pelo menos 1 metro.";
+    if (l > 20000 || a > 20000) return "O limite é 200 metros de cada lado.";
+    const pe = Number(form.pe_direito_cm ?? 280);
+    if (pe < 100 || pe > 1000) return "O pé-direito precisa ficar entre 1 e 10 metros.";
+    return null;
+  })();
+
+  return (
+    <Dialog open={!!valor} onOpenChange={(o) => !o && onFechar()}>
+      <DialogContent className="max-w-md">
+        <DialogHeader>
+          <DialogTitle>{valor?.id ? "Medidas da planta" : "Nova planta"}</DialogTitle>
+        </DialogHeader>
+        <div className="space-y-3">
+          <div className="space-y-1.5">
+            <Label className="text-xs text-muted-foreground">Nome</Label>
+            <Input value={form.nome ?? ""} onChange={(e) => setForm((f) => ({ ...f, nome: e.target.value }))}
+                   placeholder="Escritório — 2º andar" />
+          </div>
+          <div className="space-y-1.5">
+            <Label className="text-xs text-muted-foreground">Descrição</Label>
+            <Textarea rows={2} value={form.descricao ?? ""} onChange={(e) => setForm((f) => ({ ...f, descricao: e.target.value }))} />
+          </div>
+          {/* Em METROS, não em centímetros: quem mede escritório fala "24 por
+              16". O campo pedia cm e alguém digitou 260 querendo 26 m — a
+              planta virou uma sala de 2,6 m. A conversão fica aqui, na borda. */}
+          <div className="grid grid-cols-3 gap-2">
+            <div className="space-y-1.5">
+              <Label className="text-[11px] text-muted-foreground">Largura (m)</Label>
+              <Input
+                type="number" step="0.5" min="1"
+                value={((form.largura_cm ?? 2400) / 100).toString()}
+                onChange={(e) => setForm((f) => ({ ...f, largura_cm: Math.round(Number(e.target.value) * 100) }))}
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-[11px] text-muted-foreground">Profundidade (m)</Label>
+              <Input
+                type="number" step="0.5" min="1"
+                value={((form.altura_cm ?? 1600) / 100).toString()}
+                onChange={(e) => setForm((f) => ({ ...f, altura_cm: Math.round(Number(e.target.value) * 100) }))}
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-[11px] text-muted-foreground">Pé-direito (m)</Label>
+              <Input
+                type="number" step="0.1" min="1"
+                value={((form.pe_direito_cm ?? 280) / 100).toString()}
+                onChange={(e) => setForm((f) => ({ ...f, pe_direito_cm: Math.round(Number(e.target.value) * 100) }))}
+              />
+            </div>
+          </div>
+
+          <div className="space-y-1.5">
+            <Label className="text-xs text-muted-foreground">Andar</Label>
+            <Select
+              value={String(form.nivel ?? 0)}
+              onValueChange={(v) => setForm((f) => ({ ...f, nivel: Number(v) }))}
+            >
+              <SelectTrigger><SelectValue /></SelectTrigger>
+              <SelectContent>
+                {[-2, -1, 0, 1, 2, 3, 4, 5].map((n) => (
+                  <SelectItem key={n} value={String(n)}>{nomeDoAndar(n)}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <p className="text-[11px] leading-tight text-muted-foreground">
+              É por aqui que a cena empilha os andares: o 1º fica na altura do pé-direito do térreo.
+              Cada andar é uma planta — não dá para dois ocuparem o mesmo nível.
+            </p>
+          </div>
+
+          <p className="text-[11px] text-muted-foreground">
+            {cmParaMetros(Number(form.largura_cm ?? 2400))} × {cmParaMetros(Number(form.altura_cm ?? 1600))} de piso,
+            com {cmParaMetros(Number(form.pe_direito_cm ?? 280))} de altura.
+          </p>
+        </div>
+        {problema && (
+          <p className="rounded-md bg-destructive/10 p-2 text-xs font-medium text-destructive">{problema}</p>
+        )}
+        <DialogFooter>
+          <Button variant="outline" onClick={onFechar}>Cancelar</Button>
+          <Button
+            disabled={!!problema || salvando}
+            onClick={() => onSalvar({ ...form, nome: form.nome!.trim() })}
+          >
+            Salvar
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}

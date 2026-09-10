@@ -7,11 +7,13 @@ import {
   Coffee,
   Cpu,
   DoorOpen,
+  GalleryVerticalEnd,
   HardDrive,
   Laptop,
   Lightbulb,
   Monitor,
   Network,
+  PanelsTopLeft,
   PcCase,
   Phone,
   Printer,
@@ -33,6 +35,18 @@ import {
   Boxes,
   Headset,
   BatteryCharging,
+  Keyboard,
+  Mouse,
+  Webcam,
+  Cable as CableIcon,
+  Presentation,
+  Refrigerator,
+  GlassWater,
+  Armchair as ArmchairIcon,
+  LayoutPanelTop,
+  Archive,
+  Library,
+  Users,
   type LucideIcon,
 } from "lucide-react";
 
@@ -50,43 +64,90 @@ import {
  * parede de 12 cm, em vez de dois retângulos aleatórios.
  */
 
-export const GRID_CM = 25;
+/**
+ * O lado do quadrado do mapa, em cm.
+ *
+ * 1 metro: é o quadrado que aparece no piso e o passo com que tudo cresce e
+ * anda. Já foi 25 cm — mais preciso e pior de usar: quem monta um escritório
+ * pensa em "essa sala tem 6 por 4", não em múltiplos de vinte e cinco
+ * centímetros, e a peça nunca casava com o quadrado desenhado embaixo dela.
+ *
+ * Para medida quebrada (a parede de 3,40 m que existe de verdade) existe o
+ * Alt, que solta o grid enquanto se arrasta.
+ */
+export const GRID_CM = 100;
+
+/**
+ * O passo com que as PEÇAS andam ao serem arrastadas.
+ *
+ * Não confunda com `GRID_CM`: aquele é o quadrado do PISO, a unidade em que o
+ * escritório cresce. Este é a precisão de posicionamento, e são coisas
+ * diferentes — o piso anda de metro em metro porque sala se mede assim, mas
+ * encostar um monitor na quina da mesa pede centímetros.
+ *
+ * Os dois nasceram grudados (o piso virou 1 m e o movimento foi junto), e o
+ * resultado foi um editor em que só dava para largar o objeto de metro em
+ * metro.
+ */
+export const PASSOS_DE_MOVIMENTO = [
+  { cm: 5, label: "5 cm" },
+  { cm: 10, label: "10 cm" },
+  { cm: 25, label: "25 cm" },
+  { cm: 50, label: "50 cm" },
+  { cm: 100, label: "1 m" },
+] as const;
+
+/** 25 cm: fino para encaixar móvel, grosso para não virar posicionamento a dedo. */
+export const PASSO_PADRAO_CM = 25;
 
 export interface TipoAtivoDef {
   valor: string;
   label: string;
   icone: LucideIcon;
   cor: string;
-  /** Pegada no mapa, em cm. */
+  /** Pegada no mapa (vista de cima), em cm: largura × profundidade. */
   largura: number;
   altura: number;
+  /**
+   * Altura VERTICAL real, em cm — a terceira dimensão da cena 3D.
+   *
+   * Não confunda com `altura`, que é a profundidade vista de cima e existe
+   * desde a versão 2D. Um monitor tem 22 cm de profundidade e 45 cm de
+   * altura; trocar os dois deita a tela no chão.
+   */
+  alturaZ: number;
   /** Grupo usado nos filtros e no painel. */
   familia: "computador" | "periferico" | "rede" | "energia" | "outro";
 }
 
 export const TIPOS_ATIVO: TipoAtivoDef[] = [
-  { valor: "desktop", label: "Desktop", icone: PcCase, cor: "#2563eb", largura: 45, altura: 45, familia: "computador" },
-  { valor: "notebook", label: "Notebook", icone: Laptop, cor: "#0ea5e9", largura: 40, altura: 30, familia: "computador" },
-  { valor: "monitor", label: "Monitor", icone: Monitor, cor: "#6366f1", largura: 55, altura: 22, familia: "periferico" },
-  { valor: "impressora", label: "Impressora", icone: Printer, cor: "#7c3aed", largura: 55, altura: 45, familia: "periferico" },
-  { valor: "scanner", label: "Scanner", icone: ScanLine, cor: "#8b5cf6", largura: 45, altura: 35, familia: "periferico" },
-  { valor: "servidor", label: "Servidor", icone: Server, cor: "#0f766e", largura: 60, altura: 80, familia: "computador" },
-  { valor: "switch", label: "Switch", icone: Network, cor: "#059669", largura: 45, altura: 25, familia: "rede" },
-  { valor: "roteador", label: "Roteador", icone: Router, cor: "#10b981", largura: 30, altura: 22, familia: "rede" },
-  { valor: "access_point", label: "Access Point", icone: Wifi, cor: "#14b8a6", largura: 25, altura: 25, familia: "rede" },
-  { valor: "firewall", label: "Firewall", icone: ShieldCheck, cor: "#ef4444", largura: 45, altura: 25, familia: "rede" },
-  { valor: "nobreak", label: "Nobreak", icone: BatteryCharging, cor: "#f59e0b", largura: 30, altura: 20, familia: "energia" },
-  { valor: "estabilizador", label: "Estabilizador", icone: Zap, cor: "#eab308", largura: 28, altura: 18, familia: "energia" },
-  { valor: "telefone_ip", label: "Telefone IP", icone: Phone, cor: "#64748b", largura: 22, altura: 20, familia: "periferico" },
-  { valor: "celular", label: "Celular", icone: Smartphone, cor: "#94a3b8", largura: 12, altura: 16, familia: "periferico" },
-  { valor: "tablet", label: "Tablet", icone: Tablet, cor: "#a855f7", largura: 20, altura: 26, familia: "periferico" },
-  { valor: "projetor", label: "Projetor", icone: Projector, cor: "#d946ef", largura: 35, altura: 30, familia: "periferico" },
-  { valor: "tv", label: "TV / Painel", icone: Tv, cor: "#4f46e5", largura: 120, altura: 12, familia: "periferico" },
-  { valor: "camera", label: "Câmera", icone: Camera, cor: "#f43f5e", largura: 18, altura: 18, familia: "rede" },
-  { valor: "storage", label: "Storage / NAS", icone: HardDrive, cor: "#0891b2", largura: 40, altura: 40, familia: "computador" },
-  { valor: "rack", label: "Rack", icone: Boxes, cor: "#475569", largura: 60, altura: 60, familia: "rede" },
-  { valor: "periferico", label: "Periférico", icone: Headset, cor: "#78716c", largura: 20, altura: 20, familia: "periferico" },
-  { valor: "outro", label: "Outro", icone: Cable, cor: "#6b7280", largura: 30, altura: 30, familia: "outro" },
+  { valor: "desktop", label: "Desktop", icone: PcCase, cor: "#2563eb", largura: 45, altura: 45, alturaZ: 42, familia: "computador" },
+  { valor: "notebook", label: "Notebook", icone: Laptop, cor: "#0ea5e9", largura: 40, altura: 30, alturaZ: 2, familia: "computador" },
+  { valor: "monitor", label: "Monitor", icone: Monitor, cor: "#6366f1", largura: 55, altura: 22, alturaZ: 45, familia: "periferico" },
+  { valor: "impressora", label: "Impressora", icone: Printer, cor: "#7c3aed", largura: 55, altura: 45, alturaZ: 35, familia: "periferico" },
+  { valor: "scanner", label: "Scanner", icone: ScanLine, cor: "#8b5cf6", largura: 45, altura: 35, alturaZ: 20, familia: "periferico" },
+  { valor: "servidor", label: "Servidor", icone: Server, cor: "#0f766e", largura: 60, altura: 80, alturaZ: 110, familia: "computador" },
+  { valor: "switch", label: "Switch", icone: Network, cor: "#059669", largura: 45, altura: 25, alturaZ: 5, familia: "rede" },
+  { valor: "roteador", label: "Roteador", icone: Router, cor: "#10b981", largura: 30, altura: 22, alturaZ: 4, familia: "rede" },
+  { valor: "access_point", label: "Access Point", icone: Wifi, cor: "#14b8a6", largura: 25, altura: 25, alturaZ: 4, familia: "rede" },
+  { valor: "firewall", label: "Firewall", icone: ShieldCheck, cor: "#ef4444", largura: 45, altura: 25, alturaZ: 5, familia: "rede" },
+  { valor: "nobreak", label: "Nobreak", icone: BatteryCharging, cor: "#f59e0b", largura: 30, altura: 20, alturaZ: 18, familia: "energia" },
+  { valor: "estabilizador", label: "Estabilizador", icone: Zap, cor: "#eab308", largura: 28, altura: 18, alturaZ: 9, familia: "energia" },
+  { valor: "telefone_ip", label: "Telefone IP", icone: Phone, cor: "#64748b", largura: 22, altura: 20, alturaZ: 10, familia: "periferico" },
+  { valor: "celular", label: "Celular", icone: Smartphone, cor: "#94a3b8", largura: 12, altura: 16, alturaZ: 1, familia: "periferico" },
+  { valor: "tablet", label: "Tablet", icone: Tablet, cor: "#a855f7", largura: 20, altura: 26, alturaZ: 1, familia: "periferico" },
+  { valor: "projetor", label: "Projetor", icone: Projector, cor: "#d946ef", largura: 35, altura: 30, alturaZ: 12, familia: "periferico" },
+  { valor: "tv", label: "TV / Painel", icone: Tv, cor: "#4f46e5", largura: 120, altura: 12, alturaZ: 70, familia: "periferico" },
+  { valor: "camera", label: "Câmera", icone: Camera, cor: "#f43f5e", largura: 18, altura: 18, alturaZ: 10, familia: "rede" },
+  { valor: "storage", label: "Storage / NAS", icone: HardDrive, cor: "#0891b2", largura: 40, altura: 40, alturaZ: 25, familia: "computador" },
+  { valor: "rack", label: "Rack", icone: Boxes, cor: "#475569", largura: 60, altura: 60, alturaZ: 150, familia: "rede" },
+  { valor: "teclado", label: "Teclado", icone: Keyboard, cor: "#475569", largura: 44, altura: 15, alturaZ: 3, familia: "periferico" },
+  { valor: "mouse", label: "Mouse", icone: Mouse, cor: "#52525b", largura: 7, altura: 11, alturaZ: 4, familia: "periferico" },
+  { valor: "headset", label: "Headset", icone: Headset, cor: "#3f3f46", largura: 18, altura: 18, alturaZ: 20, familia: "periferico" },
+  { valor: "webcam", label: "Webcam", icone: Webcam, cor: "#334155", largura: 9, altura: 6, alturaZ: 6, familia: "periferico" },
+  { valor: "dock", label: "Dock / Hub", icone: CableIcon, cor: "#57534e", largura: 12, altura: 8, alturaZ: 3, familia: "periferico" },
+  { valor: "periferico", label: "Periférico", icone: Headset, cor: "#78716c", largura: 20, altura: 20, alturaZ: 8, familia: "periferico" },
+  { valor: "outro", label: "Outro", icone: Cable, cor: "#6b7280", largura: 30, altura: 30, alturaZ: 20, familia: "outro" },
 ];
 
 export const MAPA_TIPOS_ATIVO: Record<string, TipoAtivoDef> = Object.fromEntries(
@@ -138,28 +199,73 @@ export interface TipoElementoDef {
   cor: string;
   largura: number;
   altura: number;
+  /** Altura vertical em cm (parede 280, mesa 75, área de piso ~0). */
+  alturaZ: number;
   /** Elemento estrutural desenha borda dura; mobília desenha cantos moles. */
   familia: "estrutura" | "mobilia" | "area" | "texto";
+  /**
+   * Tem tampo? Equipamento largado em cima pousa na altura dele.
+   *
+   * Vive no catálogo, e não numa lista solta em outro arquivo, porque a lista
+   * ficou para trás quando o catálogo cresceu: mesa em L, mesa de reunião,
+   * bancada, gaveteiro e estante entraram e ninguém conseguia pôr uma
+   * impressora em cima delas.
+   */
+  apoia?: boolean;
+  /**
+   * A peça RECORTA a parede em que estiver encostada.
+   *
+   * Só a porta de vidro, por enquanto, e de propósito: ela tem a altura toda
+   * do pano, então o corte de piso a teto encaixa exatamente. Porta comum
+   * (210) e janela (120) num pé-direito de 280 precisariam de verga em cima
+   * do vão — sem isso o corte abriria um rasgo até o teto, que é pior do que
+   * não cortar.
+   */
+  recorta?: boolean;
+  /**
+   * A peça PODE ser recortada por uma abertura encostada nela.
+   *
+   * Só o que é pano de parede. Porta, janela e escada também são "estrutura",
+   * mas recortar uma escada porque passou uma porta perto seria só um bug com
+   * cara de recurso.
+   */
+  recortavel?: boolean;
 }
 
 export const TIPOS_ELEMENTO: TipoElementoDef[] = [
-  { valor: "parede", label: "Parede", icone: Square, cor: "#334155", largura: 400, altura: 15, familia: "estrutura" },
-  { valor: "divisoria", label: "Divisória", icone: Blocks, cor: "#94a3b8", largura: 200, altura: 8, familia: "estrutura" },
-  { valor: "porta", label: "Porta", icone: DoorOpen, cor: "#b45309", largura: 90, altura: 15, familia: "estrutura" },
-  { valor: "janela", label: "Janela", icone: Square, cor: "#7dd3fc", largura: 150, altura: 12, familia: "estrutura" },
-  { valor: "escada", label: "Escada", icone: Blocks, cor: "#a1a1aa", largura: 250, altura: 120, familia: "estrutura" },
-  { valor: "sala", label: "Sala / Setor", icone: Square, cor: "#dbeafe", largura: 500, altura: 400, familia: "area" },
-  { valor: "recepcao", label: "Recepção", icone: Armchair, cor: "#fef3c7", largura: 400, altura: 300, familia: "area" },
-  { valor: "copa", label: "Copa", icone: Coffee, cor: "#fce7f3", largura: 300, altura: 250, familia: "area" },
-  { valor: "banheiro", label: "Banheiro", icone: Bath, cor: "#e0f2fe", largura: 250, altura: 200, familia: "area" },
-  { valor: "impressora_area", label: "Área de impressão", icone: Printer, cor: "#ede9fe", largura: 200, altura: 150, familia: "area" },
-  { valor: "mesa", label: "Mesa", icone: Table2, cor: "#c8a06a", largura: 140, altura: 70, familia: "mobilia" },
-  { valor: "cadeira", label: "Cadeira", icone: Armchair, cor: "#64748b", largura: 50, altura: 50, familia: "mobilia" },
-  { valor: "armario", label: "Armário", icone: Blocks, cor: "#8b5e34", largura: 120, altura: 45, familia: "mobilia" },
-  { valor: "sofa", label: "Sofá", icone: Sofa, cor: "#7c6f64", largura: 180, altura: 80, familia: "mobilia" },
-  { valor: "rack", label: "Rack de rede", icone: Boxes, cor: "#1f2937", largura: 80, altura: 80, familia: "mobilia" },
-  { valor: "planta_decorativa", label: "Planta", icone: TreePine, cor: "#16a34a", largura: 45, altura: 45, familia: "mobilia" },
-  { valor: "texto", label: "Texto / etiqueta", icone: Type, cor: "#0f172a", largura: 200, altura: 40, familia: "texto" },
+  { valor: "parede", label: "Parede", icone: Square, cor: "#334155", largura: 400, altura: 15, alturaZ: 280, familia: "estrutura", recortavel: true },
+  { valor: "divisoria", label: "Divisória", icone: Blocks, cor: "#94a3b8", largura: 200, altura: 8, alturaZ: 160, familia: "estrutura", recortavel: true },
+  { valor: "porta", label: "Porta", icone: DoorOpen, cor: "#b45309", largura: 90, altura: 15, alturaZ: 210, familia: "estrutura", recorta: true },
+  { valor: "janela", label: "Janela", icone: Square, cor: "#7dd3fc", largura: 150, altura: 12, alturaZ: 120, familia: "estrutura" },
+  { valor: "parede_vidro", label: "Parede de vidro", icone: PanelsTopLeft, cor: "#bae6fd", largura: 400, altura: 10, alturaZ: 280, familia: "estrutura", recortavel: true },
+  // Mesma espessura e mesma altura do pano de vidro, de propósito: é o que
+  // faz a porta encostar na parede e virar uma divisória só (ver PortaVidro).
+  { valor: "porta_vidro", label: "Porta de vidro (correr)", icone: GalleryVerticalEnd, cor: "#7dd3fc", largura: 180, altura: 10, alturaZ: 280, familia: "estrutura", recorta: true },
+  // Planta quadrada e alta o bastante para VENCER UM ANDAR: com 60 cm de
+  // altura (o valor antigo) a escada não levava a lugar nenhum, e com 120 de
+  // profundidade não cabia a volta do L. Ver o modelo Escada.
+  { valor: "escada", label: "Escada", icone: Blocks, cor: "#a1a1aa", largura: 260, altura: 260, alturaZ: 280, familia: "estrutura", apoia: true },
+  { valor: "sala", label: "Sala / Setor", icone: Square, cor: "#dbeafe", largura: 500, altura: 400, alturaZ: 0.2, familia: "area" },
+  { valor: "recepcao", label: "Recepção", icone: Armchair, cor: "#fef3c7", largura: 400, altura: 300, alturaZ: 0.2, familia: "area" },
+  { valor: "copa", label: "Copa", icone: Coffee, cor: "#fce7f3", largura: 300, altura: 250, alturaZ: 0.2, familia: "area" },
+  { valor: "banheiro", label: "Banheiro", icone: Bath, cor: "#e0f2fe", largura: 250, altura: 200, alturaZ: 0.2, familia: "area" },
+  { valor: "impressora_area", label: "Área de impressão", icone: Printer, cor: "#ede9fe", largura: 200, altura: 150, alturaZ: 0.2, familia: "area" },
+  { valor: "mesa", label: "Mesa", icone: Table2, cor: "#c8a06a", largura: 140, altura: 70, alturaZ: 75, familia: "mobilia", apoia: true },
+  { valor: "cadeira", label: "Cadeira", icone: Armchair, cor: "#64748b", largura: 50, altura: 50, alturaZ: 95, familia: "mobilia" },
+  { valor: "armario", label: "Armário", icone: Blocks, cor: "#8b5e34", largura: 120, altura: 45, alturaZ: 180, familia: "mobilia", apoia: true },
+  { valor: "sofa", label: "Sofá", icone: Sofa, cor: "#7c6f64", largura: 180, altura: 80, alturaZ: 80, familia: "mobilia", apoia: true },
+  { valor: "rack", label: "Rack de rede", icone: Boxes, cor: "#1f2937", largura: 80, altura: 80, alturaZ: 150, familia: "mobilia", apoia: true },
+  { valor: "planta_decorativa", label: "Planta", icone: TreePine, cor: "#16a34a", largura: 45, altura: 45, alturaZ: 120, familia: "mobilia" },
+  { valor: "mesa_l", label: "Mesa em L", icone: LayoutPanelTop, cor: "#c8a06a", largura: 160, altura: 160, alturaZ: 75, familia: "mobilia", apoia: true },
+  { valor: "mesa_reuniao", label: "Mesa de reunião", icone: Users, cor: "#b08d5c", largura: 300, altura: 120, alturaZ: 75, familia: "mobilia", apoia: true },
+  { valor: "bancada", label: "Bancada", icone: Table2, cor: "#d0ad78", largura: 300, altura: 60, alturaZ: 75, familia: "mobilia", apoia: true },
+  { valor: "poltrona", label: "Poltrona", icone: ArmchairIcon, cor: "#6b7280", largura: 80, altura: 80, alturaZ: 85, familia: "mobilia" },
+  { valor: "gaveteiro", label: "Gaveteiro", icone: Archive, cor: "#8b5e34", largura: 45, altura: 50, alturaZ: 60, familia: "mobilia", apoia: true },
+  { valor: "estante", label: "Estante", icone: Library, cor: "#7a5230", largura: 90, altura: 35, alturaZ: 200, familia: "mobilia", apoia: true },
+  { valor: "quadro_branco", label: "Quadro branco", icone: Presentation, cor: "#f8fafc", largura: 200, altura: 8, alturaZ: 120, familia: "mobilia" },
+  { valor: "geladeira", label: "Geladeira", icone: Refrigerator, cor: "#e2e8f0", largura: 65, altura: 65, alturaZ: 170, familia: "mobilia", apoia: true },
+  { valor: "bebedouro", label: "Bebedouro", icone: GlassWater, cor: "#cbd5e1", largura: 35, altura: 35, alturaZ: 105, familia: "mobilia" },
+  { valor: "texto", label: "Texto / etiqueta", icone: Type, cor: "#0f172a", largura: 200, altura: 40, alturaZ: 1, familia: "texto" },
 ];
 
 export const MAPA_TIPOS_ELEMENTO: Record<string, TipoElementoDef> = Object.fromEntries(

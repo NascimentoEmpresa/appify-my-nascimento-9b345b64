@@ -36,6 +36,31 @@ export default defineConfig(({ mode }) => {
       },
     },
     plugins: [react(), mode === "development" && componentTagger()].filter(Boolean),
+    build: {
+      // O bundle era UM arquivo só, e cresceu até quebrar o build: ao entrar
+      // a engine 3D do Mapa de T.I (three + @react-three), o parser do
+      // Rollup estourou com "WebAssembly.Memory.grow(): Unable to grow
+      // instance memory" — o arquivo passou do que o analisador aguenta ler.
+      //
+      // Separar as bibliotecas pesadas resolve o build E o carregamento: o
+      // three só desce para quem abre o mapa 3D (as telas usam React.lazy),
+      // o xlsx só para quem exporta planilha, e assim por diante. Antes,
+      // todo usuário do ERP baixava tudo para abrir a tela inicial.
+      //
+      // Se aparecer outra lib grande, o lugar de registrar é aqui.
+      chunkSizeWarningLimit: 1500,
+      rollupOptions: {
+        output: {
+          manualChunks: {
+            "vendor-3d": ["three", "@react-three/fiber", "@react-three/drei"],
+            "vendor-planilha": ["xlsx"],
+            "vendor-pdf": ["jspdf", "jspdf-autotable"],
+            "vendor-graficos": ["recharts"],
+            "vendor-react": ["react", "react-dom", "react-router-dom"],
+          },
+        },
+      },
+    },
     resolve: {
       alias: {
         "@": path.resolve(__dirname, "./src"),

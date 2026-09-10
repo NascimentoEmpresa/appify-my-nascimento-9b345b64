@@ -44,6 +44,10 @@ export interface TiPlanta {
   largura_cm: number;
   altura_cm: number;
   cor_piso: string;
+  /** Altura das paredes do ambiente, em cm — a dimensão vertical da cena 3D. */
+  pe_direito_cm: number;
+  /** Andar: 0 = térreo, 1 = primeiro andar, -1 = subsolo. A cena empilha por aqui. */
+  nivel: number;
   ordem: number;
   ativo: boolean;
 }
@@ -58,7 +62,14 @@ export interface TiElemento {
   largura: number;
   altura: number;
   rotacao: number;
+  /**
+   * Altura VERTICAL do elemento em cm. NULL = usa o padrão do catálogo.
+   * Não confunda com `altura`, que é a profundidade vista de cima.
+   */
+  altura_z: number | null;
   cor: string | null;
+  /** Setor dono da área (mesmo vocabulário de EMPREGADOS.Setor_ERP). */
+  setor: string | null;
   z_index: number;
   meta: Record<string, unknown>;
 }
@@ -129,6 +140,8 @@ export interface TiAtivo {
   planta_id: string | null;
   pos_x: number | null;
   pos_y: number | null;
+  /** Altura de apoio em cm. NULL = a cena resolve (chão, ou o móvel embaixo). */
+  pos_z: number | null;
   rotacao: number;
   escala: number;
   cor: string | null;
@@ -189,7 +202,9 @@ function mapearElemento(e: any): TiElemento {
     largura: num(e.largura, 100),
     altura: num(e.altura, 100),
     rotacao: num(e.rotacao),
+    altura_z: numOuNulo(e.altura_z),
     cor: e.cor ?? null,
+    setor: e.setor ?? null,
     z_index: num(e.z_index),
     meta: e.meta ?? {},
   };
@@ -204,6 +219,7 @@ function mapearAtivo(a: any): TiAtivo {
     valor_aquisicao: numOuNulo(a.valor_aquisicao),
     pos_x: numOuNulo(a.pos_x),
     pos_y: numOuNulo(a.pos_y),
+    pos_z: numOuNulo(a.pos_z),
     rotacao: num(a.rotacao),
     escala: num(a.escala, 1),
     especificacoes: a.especificacoes ?? {},
@@ -219,9 +235,9 @@ export function usePlantasTi() {
     queryFn: async (): Promise<TiPlanta[]> => {
       const { data, error } = await sb
         .from("TI_PLANTA")
-        .select("id, nome, descricao, endereco, largura_cm, altura_cm, cor_piso, ordem, ativo")
+        .select("id, nome, descricao, endereco, largura_cm, altura_cm, cor_piso, pe_direito_cm, nivel, ordem, ativo")
         .eq("ativo", true)
-        .order("ordem")
+        .order("nivel")
         .order("nome");
       if (error) throw error;
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -229,6 +245,8 @@ export function usePlantasTi() {
         ...p,
         largura_cm: num(p.largura_cm, 2400),
         altura_cm: num(p.altura_cm, 1600),
+        pe_direito_cm: num(p.pe_direito_cm, 280),
+        nivel: num(p.nivel, 0),
       }));
     },
   });
@@ -245,6 +263,8 @@ export function useSalvarPlanta() {
         largura_cm: planta.largura_cm ?? 2400,
         altura_cm: planta.altura_cm ?? 1600,
         cor_piso: planta.cor_piso ?? "#f1f5f9",
+        pe_direito_cm: planta.pe_direito_cm ?? 280,
+        nivel: planta.nivel ?? 0,
         ordem: planta.ordem ?? 0,
       };
       if (planta.id) {
@@ -260,7 +280,17 @@ export function useSalvarPlanta() {
       qc.invalidateQueries({ queryKey: ["ti_plantas"] });
       toast.success("Planta salva.");
     },
-    onError: (e: Error) => toast.error(e.message || "Não foi possível salvar a planta."),
+    onError: (e: Error) => {
+      // O texto cru do Postgres ("violates check constraint
+      // TI_PLANTA_altura_cm_check") chegou ao toast e não dizia a ninguém o
+      // que corrigir. As medidas são o único CHECK desta tabela.
+      const medidas = /largura_cm_check|altura_cm_check/.test(e.message ?? "");
+      toast.error(
+        medidas
+          ? "A planta precisa ter entre 1 e 200 metros de cada lado."
+          : e.message || "Não foi possível salvar a planta.",
+      );
+    },
   });
 }
 
@@ -301,23 +331,30 @@ export function useElementosTi(plantaId: string | null | undefined) {
 
 type ElementoInput = Partial<TiElemento> & { planta_id: string; tipo: string };
 
+/** O que vai para o banco. Fora daqui porque o lote grava pelo mesmo molde. */
+function payloadElemento(el: ElementoInput) {
+  return {
+    planta_id: el.planta_id,
+    tipo: el.tipo,
+    rotulo: el.rotulo ?? null,
+    x: el.x ?? 0,
+    y: el.y ?? 0,
+    largura: el.largura ?? 100,
+    altura: el.altura ?? 100,
+    rotacao: el.rotacao ?? 0,
+    altura_z: el.altura_z ?? null,
+    cor: el.cor ?? null,
+    setor: el.setor ?? null,
+    z_index: el.z_index ?? 0,
+    meta: el.meta ?? {},
+  };
+}
+
 export function useSalvarElemento() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async (el: ElementoInput) => {
-      const payload = {
-        planta_id: el.planta_id,
-        tipo: el.tipo,
-        rotulo: el.rotulo ?? null,
-        x: el.x ?? 0,
-        y: el.y ?? 0,
-        largura: el.largura ?? 100,
-        altura: el.altura ?? 100,
-        rotacao: el.rotacao ?? 0,
-        cor: el.cor ?? null,
-        z_index: el.z_index ?? 0,
-        meta: el.meta ?? {},
-      };
+      const payload = payloadElemento(el);
       if (el.id) {
         const { data, error } = await sb.from("TI_PLANTA_ELEMENTO").update(payload).eq("id", el.id).select("*").single();
         if (error) throw error;
@@ -329,8 +366,109 @@ export function useSalvarElemento() {
     },
     onSuccess: (el) => {
       qc.invalidateQueries({ queryKey: ["ti_elementos", el.planta_id] });
+      qc.invalidateQueries({ queryKey: ["ti_elementos_varias"] });
     },
     onError: (e: Error) => toast.error(e.message || "Não foi possível salvar o elemento."),
+  });
+}
+
+/**
+ * Cria VÁRIAS peças numa requisição só.
+ *
+ * O caminho antigo — um `mutate` por peça, em paralelo — colar um bloco de
+ * 39 peças virava 39 inserts e 39 invalidações de cache: demorava tanto que
+ * parecia não ter funcionado, e quem estava do outro lado apertava Ctrl+V de
+ * novo. O mapa terminava com o bloco repetido três vezes.
+ *
+ * Em lote é uma ida ao banco e um refetch — e, o que mais importa, um
+ * resultado que ou entra inteiro ou não entra: meia colagem não existe.
+ */
+export function useCriarElementosEmLote() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (els: ElementoInput[]): Promise<TiElemento[]> => {
+      if (!els.length) return [];
+      const { data, error } = await sb
+        .from("TI_PLANTA_ELEMENTO")
+        .insert(els.map(payloadElemento))
+        .select("*");
+      if (error) throw error;
+      return (data ?? []).map(mapearElemento);
+    },
+    onSuccess: (criados) => {
+      const plantaId = criados[0]?.planta_id;
+      if (plantaId) qc.invalidateQueries({ queryKey: ["ti_elementos", plantaId] });
+      qc.invalidateQueries({ queryKey: ["ti_elementos_varias"] });
+    },
+    onError: (e: Error) => toast.error(e.message || "Não foi possível criar as peças."),
+  });
+}
+
+/**
+ * Grava a posição de VÁRIAS peças de uma vez — o arrasto de bloco.
+ *
+ * Era um UPDATE por peça, disparado no soltar. Com 22 peças pegas isso são
+ * 22 requisições e 22 invalidações: a prévia local (que segura a peça no
+ * lugar novo enquanto o banco responde) expira em 600 ms, um refetch chega
+ * no meio do caminho com metade das peças ainda na posição velha, e o bloco
+ * inteiro PULA DE VOLTA na tela. Quem estava mexendo conclui, com razão, que
+ * mover vários não funciona.
+ *
+ * Em lote é uma requisição: ou o bloco todo andou, ou nenhum andou.
+ *
+ * É `upsert` e não `update` porque o PostgREST não atualiza várias linhas
+ * com valores diferentes numa chamada só. O registro vai inteiro (o conflito
+ * de `id` sempre acontece, então nada é criado) — mandar só x e y esbarraria
+ * nas colunas NOT NULL, que o Postgres confere antes de olhar o conflito.
+ */
+export function useMoverElementosEmLote() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ els }: { els: ElementoInput[]; plantaId: string }) => {
+      if (!els.length) return;
+      const { error } = await sb
+        .from("TI_PLANTA_ELEMENTO")
+        .upsert(els.map((el) => ({ ...payloadElemento(el), id: el.id })));
+      if (error) throw error;
+    },
+    onSuccess: (_r, v) => {
+      qc.invalidateQueries({ queryKey: ["ti_elementos", v.plantaId] });
+      qc.invalidateQueries({ queryKey: ["ti_elementos_varias"] });
+    },
+    onError: (e: Error) => toast.error(e.message || "Não foi possível mover as peças."),
+  });
+}
+
+/** O mesmo, para equipamento — ver `useMoverElementosEmLote`. */
+export function useMoverAtivosEmLote() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (ativos: (TiAtivoInput & { id: string })[]) => {
+      if (!ativos.length) return;
+      const { error } = await sb
+        .from("TI_ATIVO")
+        .upsert(ativos.map(({ id, ...a }) => ({ ...limparPayloadAtivo(a as TiAtivoInput), id })));
+      if (error) throw error;
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["ti_ativos"] }),
+    onError: (e: Error) => toast.error(e.message || "Não foi possível mover os equipamentos."),
+  });
+}
+
+/** Apaga VÁRIAS peças numa requisição só — ver o lote de criação acima. */
+export function useExcluirElementosEmLote() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ ids }: { ids: string[]; plantaId: string }) => {
+      if (!ids.length) return;
+      const { error } = await sb.from("TI_PLANTA_ELEMENTO").delete().in("id", ids);
+      if (error) throw error;
+    },
+    onSuccess: (_r, v) => {
+      qc.invalidateQueries({ queryKey: ["ti_elementos", v.plantaId] });
+      qc.invalidateQueries({ queryKey: ["ti_elementos_varias"] });
+    },
+    onError: (e: Error) => toast.error(e.message || "Não foi possível remover as peças."),
   });
 }
 
@@ -341,7 +479,10 @@ export function useExcluirElemento() {
       const { error } = await sb.from("TI_PLANTA_ELEMENTO").delete().eq("id", id);
       if (error) throw error;
     },
-    onSuccess: (_r, v) => qc.invalidateQueries({ queryKey: ["ti_elementos", v.plantaId] }),
+    onSuccess: (_r, v) => {
+      qc.invalidateQueries({ queryKey: ["ti_elementos", v.plantaId] });
+      qc.invalidateQueries({ queryKey: ["ti_elementos_varias"] });
+    },
     onError: (e: Error) => toast.error(e.message || "Não foi possível excluir o elemento."),
   });
 }
@@ -426,6 +567,7 @@ export function usePosicionarAtivo() {
       planta_id: string | null;
       pos_x: number | null;
       pos_y: number | null;
+      pos_z?: number | null;
       rotacao?: number;
       escala?: number;
     }) => {
@@ -435,6 +577,44 @@ export function usePosicionarAtivo() {
     },
     onSuccess: () => qc.invalidateQueries({ queryKey: ["ti_ativos"] }),
     onError: (e: Error) => toast.error(e.message || "Não foi possível mover o equipamento."),
+  });
+}
+
+/**
+ * Cria VÁRIOS equipamentos numa requisição só.
+ *
+ * Sem toast por item, de propósito: o `useSalvarAtivo` avisa a cada gravação,
+ * e colar 39 peças empilhava 39 avisos na tela. Quem chama diz numa frase o
+ * que aconteceu.
+ */
+export function useCriarAtivosEmLote() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (ativos: TiAtivoInput[]): Promise<TiAtivo[]> => {
+      if (!ativos.length) return [];
+      const { data, error } = await sb
+        .from("TI_ATIVO")
+        .insert(ativos.map((a) => limparPayloadAtivo(a)))
+        .select("*");
+      if (error) throw error;
+      return (data ?? []).map(mapearAtivo);
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["ti_ativos"] }),
+    onError: (e: Error) => toast.error(e.message || "Não foi possível criar os equipamentos."),
+  });
+}
+
+/** Apaga VÁRIOS equipamentos numa requisição só. */
+export function useExcluirAtivosEmLote() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (ids: string[]) => {
+      if (!ids.length) return;
+      const { error } = await sb.from("TI_ATIVO").delete().in("id", ids);
+      if (error) throw error;
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["ti_ativos"] }),
+    onError: (e: Error) => toast.error(e.message || "Não foi possível excluir os equipamentos."),
   });
 }
 
@@ -585,6 +765,272 @@ export function useColaboradoresTi() {
         if (lote.length < PAGE) break;
       }
       return todos;
+    },
+  });
+}
+
+/**
+ * Elementos de VÁRIAS plantas de uma vez — o modo "ver todos os andares".
+ *
+ * Uma query só com `in`, e não uma por planta: são poucos andares, mas cada
+ * query extra é um round-trip antes de a cena poder desenhar.
+ */
+export function useElementosDeVariasTi(plantaIds: string[]) {
+  const chave = [...plantaIds].sort().join(",");
+  return useQuery({
+    queryKey: ["ti_elementos_varias", chave],
+    enabled: plantaIds.length > 0,
+    staleTime: 60_000,
+    queryFn: async (): Promise<TiElemento[]> => {
+      const { data, error } = await sb
+        .from("TI_PLANTA_ELEMENTO")
+        .select("*")
+        .in("planta_id", plantaIds)
+        .order("z_index");
+      if (error) throw error;
+      return (data ?? []).map(mapearElemento);
+    },
+  });
+}
+
+/**
+ * Recria um elemento COM O ID ORIGINAL — existe para o Ctrl+Z do editor.
+ *
+ * Um insert normal geraria id novo, e aí o Ctrl+Y seguinte removeria "o
+ * elemento errado" (o histórico guarda o id de antes). Reaproveitar o id
+ * mantém a linha do tempo coerente.
+ */
+export function useRecriarElemento() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (el: TiElemento) => {
+      const { error } = await sb.from("TI_PLANTA_ELEMENTO").insert({
+        id: el.id,
+        planta_id: el.planta_id,
+        tipo: el.tipo,
+        rotulo: el.rotulo,
+        x: el.x,
+        y: el.y,
+        largura: el.largura,
+        altura: el.altura,
+        rotacao: el.rotacao,
+        altura_z: el.altura_z,
+        cor: el.cor,
+        setor: el.setor,
+        z_index: el.z_index,
+        meta: el.meta ?? {},
+      });
+      if (error) throw error;
+      return el;
+    },
+    onSuccess: (el) => {
+      qc.invalidateQueries({ queryKey: ["ti_elementos", el.planta_id] });
+      qc.invalidateQueries({ queryKey: ["ti_elementos_varias"] });
+    },
+    onError: (e: Error) => toast.error(e.message || "Não foi possível restaurar a peça."),
+  });
+}
+
+/** Os setores que já existem no cadastro de pessoas — para marcar a sala. */
+export function useSetoresTi() {
+  return useQuery({
+    queryKey: ["ti_setores"],
+    staleTime: 10 * 60_000,
+    queryFn: async (): Promise<string[]> => {
+      const { data, error } = await sb
+        .from("EMPREGADOS")
+        .select('"Setor_ERP"')
+        .eq("Situação", "Trabalhando")
+        .not("Setor_ERP", "is", null)
+        .limit(5000);
+      if (error) throw error;
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const nomes = new Set<string>((data ?? []).map((e: any) => String(e.Setor_ERP ?? "").trim()).filter(Boolean));
+      return [...nomes].sort((a, b) => a.localeCompare(b, "pt-BR"));
+    },
+  });
+}
+
+/**
+ * Aumenta o piso 1 metro num dos lados (o "+" do chão, no editor).
+ *
+ * Passa por RPC porque crescer para o norte/oeste move a origem: além da
+ * planta, todas as peças e equipamentos precisam andar junto, em três tabelas,
+ * na mesma transação. Ver o cabeçalho de 20260930000067.
+ */
+export function useExpandirPlanta() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (p: { planta_id: string; lado: "norte" | "sul" | "leste" | "oeste"; metros?: number }) => {
+      const { error } = await sb.rpc("ti_expandir_planta", {
+        p_planta: p.planta_id,
+        p_lado: p.lado,
+        p_metros: p.metros ?? 1,
+      });
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["ti_plantas"] });
+      qc.invalidateQueries({ queryKey: ["ti_elementos"] });
+      qc.invalidateQueries({ queryKey: ["ti_elementos_varias"] });
+      qc.invalidateQueries({ queryKey: ["ti_ativos"] });
+    },
+    onError: (e: Error) => toast.error(e.message || "Não foi possível aumentar a planta."),
+  });
+}
+
+// ── Piso por células (o quadrado de 1 m²) ─────────────────────────────
+
+export interface TiCelula {
+  cx: number;
+  cy: number;
+}
+
+/**
+ * Os quadrados que formam o piso.
+ *
+ * Lista vazia NÃO quer dizer "sem piso": quer dizer planta antiga, ainda
+ * retangular — a tela desenha o retângulo inteiro nesse caso. A primeira
+ * edição materializa as células no banco.
+ */
+export function useCelulasTi(plantaId: string | null | undefined) {
+  return useQuery({
+    queryKey: ["ti_celulas", plantaId],
+    enabled: !!plantaId,
+    staleTime: 60_000,
+    queryFn: async (): Promise<TiCelula[]> => {
+      const { data, error } = await sb
+        .from("TI_PLANTA_CELULA")
+        .select("cx, cy")
+        .eq("planta_id", plantaId);
+      if (error) throw error;
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      return (data ?? []).map((c: any) => ({ cx: Number(c.cx), cy: Number(c.cy) }));
+    },
+  });
+}
+
+/** Ocupa (ou libera) um quadrado de 1 m² do piso. */
+export function useDefinirCelula() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (p: { planta_id: string; cx: number; cy: number; ocupar: boolean }) => {
+      const { error } = await sb.rpc("ti_celula_definir", {
+        p_planta: p.planta_id,
+        p_cx: p.cx,
+        p_cy: p.cy,
+        p_ocupar: p.ocupar,
+      });
+      if (error) throw error;
+    },
+    onSuccess: (_r, v) => {
+      qc.invalidateQueries({ queryKey: ["ti_celulas", v.planta_id] });
+      qc.invalidateQueries({ queryKey: ["ti_celulas_varias"] });
+      // A RPC pode ter empurrado o mundo (célula com índice negativo) e
+      // crescido a moldura: planta, peças e equipamentos podem ter mudado.
+      qc.invalidateQueries({ queryKey: ["ti_plantas"] });
+      qc.invalidateQueries({ queryKey: ["ti_elementos"] });
+      qc.invalidateQueries({ queryKey: ["ti_elementos_varias"] });
+      qc.invalidateQueries({ queryKey: ["ti_ativos"] });
+    },
+    onError: (e: Error) => toast.error(e.message || "Não foi possível mudar o piso."),
+  });
+}
+
+/**
+ * Vários quadrados de piso de uma vez — o que sai de um arrasto.
+ *
+ * SEQUENCIAL, de propósito. A RPC `ti_celula_definir` pode empurrar o mundo
+ * inteiro quando o quadrado tem índice negativo (crescer para cima ou para a
+ * esquerda renumera tudo e move as peças junto). Em paralelo, duas chamadas
+ * empurrariam o mesmo mundo ao mesmo tempo, cada uma partindo de uma origem
+ * diferente — o piso sai torto e as peças espalhadas.
+ *
+ * Uma invalidação só no fim, e não uma por quadrado: com `invalidateQueries`
+ * dentro do laço, um arrasto de 40 m² recarregaria a planta 40 vezes e a tela
+ * piscaria do começo ao fim do arrasto.
+ *
+ * O PISO APARECE ANTES DE O BANCO RESPONDER (`onMutate`), e é isso que torna
+ * a ferramenta usável. Sendo sequencial, um arrasto de 4×4 são dezesseis idas
+ * e voltas ao Supabase: pela VPN, dois segundos largos de tela parada depois
+ * de soltar o mouse, sem nada indicando que algo estava acontecendo. Desenhar
+ * planta é um gesto atrás do outro, e esperar entre eles mata o fluxo.
+ *
+ * O caso em que a prévia otimista e o banco divergem por um instante é o de
+ * crescer para CIMA ou para a ESQUERDA: ali a RPC renumera o mundo inteiro, e
+ * os índices que pintamos deixam de valer. Dura até o refetch do fim, que é a
+ * palavra final — por isso `invalidateQueries` continua onde está.
+ */
+export function useDefinirCelulas() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (p: { planta_id: string; celulas: { cx: number; cy: number }[]; ocupar: boolean }) => {
+      for (const c of p.celulas) {
+        const { error } = await sb.rpc("ti_celula_definir", {
+          p_planta: p.planta_id,
+          p_cx: c.cx,
+          p_cy: c.cy,
+          p_ocupar: p.ocupar,
+        });
+        if (error) throw error;
+      }
+    },
+    onMutate: async (v) => {
+      const chave = ["ti_celulas", v.planta_id];
+      // Sem cancelar, um refetch que já estava a caminho pousa DEPOIS da
+      // pintura otimista e a apaga — o piso aparecia e sumia.
+      await qc.cancelQueries({ queryKey: chave });
+      const anterior = qc.getQueryData<TiCelula[]>(chave);
+
+      const id = (c: { cx: number; cy: number }) => `${c.cx},${c.cy}`;
+      qc.setQueryData<TiCelula[]>(chave, (atual = []) => {
+        if (!v.ocupar) {
+          const tirar = new Set(v.celulas.map(id));
+          return atual.filter((c) => !tirar.has(id(c)));
+        }
+        const jaTem = new Set(atual.map(id));
+        return [...atual, ...v.celulas.filter((c) => !jaTem.has(id(c)))];
+      });
+
+      return { anterior };
+    },
+    onSuccess: (_r, v) => {
+      qc.invalidateQueries({ queryKey: ["ti_celulas", v.planta_id] });
+      qc.invalidateQueries({ queryKey: ["ti_celulas_varias"] });
+      qc.invalidateQueries({ queryKey: ["ti_plantas"] });
+      qc.invalidateQueries({ queryKey: ["ti_elementos"] });
+      qc.invalidateQueries({ queryKey: ["ti_elementos_varias"] });
+      qc.invalidateQueries({ queryKey: ["ti_ativos"] });
+    },
+    onError: (e: Error, v, ctx) => {
+      // Devolve o piso ao que era: pintura otimista que falha e fica na tela é
+      // pior que espera, porque some só no próximo F5 — e aí já se desenhou
+      // meia sala em cima de um chão que nunca existiu.
+      if (ctx?.anterior) qc.setQueryData(["ti_celulas", v.planta_id], ctx.anterior);
+      toast.error(e.message || "Não foi possível mudar o piso.");
+    },
+  });
+}
+
+/** Células de várias plantas — usado ao mostrar mais de um andar. */
+export function useCelulasDeVariasTi(plantaIds: string[]) {
+  const chave = [...plantaIds].sort().join(",");
+  return useQuery({
+    queryKey: ["ti_celulas_varias", chave],
+    enabled: plantaIds.length > 0,
+    staleTime: 60_000,
+    queryFn: async (): Promise<(TiCelula & { planta_id: string })[]> => {
+      const { data, error } = await sb
+        .from("TI_PLANTA_CELULA")
+        .select("planta_id, cx, cy")
+        .in("planta_id", plantaIds);
+      if (error) throw error;
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      return (data ?? []).map((c: any) => ({
+        planta_id: c.planta_id,
+        cx: Number(c.cx),
+        cy: Number(c.cy),
+      }));
     },
   });
 }
