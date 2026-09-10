@@ -108,6 +108,35 @@ export function useNotificacoes() {
     },
   });
 
+  /**
+   * Quantas pessoas há em cada setor — o formulário usa para dizer, ANTES de
+   * publicar, quantas pessoas o aviso vai alcançar.
+   *
+   * 10/09/2026: "mesmo não selecionando visitantes, apareceu o aviso pros
+   * visitantes". O recorte tinha funcionado; o que confundiu é que
+   * "Visitante" é NOME DE SETOR e `visitante` também é NOME DE PAPEL, e são
+   * coisas diferentes. Desmarcar o setor não tira quem tem o papel, se essa
+   * pessoa estiver num setor marcado. Contagem na tela é o que transforma
+   * essa regra invisível em algo conferível antes de publicar.
+   *
+   * `user_setor` é legível por qualquer autenticado (policy user_setor_select
+   * com USING true), então isto não depende de ser admin.
+   */
+  const pessoasPorSetorQ = useQuery({
+    queryKey: ["notificacoes_pessoas_por_setor"],
+    enabled: podeCriar || podeEditar,
+    staleTime: 10 * 60_000,
+    queryFn: async (): Promise<Record<string, number>> => {
+      const { data, error } = await sb.from("user_setor").select("setor,user_id");
+      if (error) throw error;
+      const conta: Record<string, number> = {};
+      for (const linha of (data ?? []) as { setor: string }[]) {
+        conta[linha.setor] = (conta[linha.setor] ?? 0) + 1;
+      }
+      return conta;
+    },
+  });
+
   /** O que EU já respondi — é o que decide se o modal aparece. */
   const minhasQ = useQuery({
     queryKey: ["notificacoes_minhas", user?.id],
@@ -257,6 +286,7 @@ export function useNotificacoes() {
     alvos: alvosQ.data ?? [],
     setores: setoresQ.data ?? [],
     pessoas: pessoasQ.data ?? [],
+    pessoasPorSetor: pessoasPorSetorQ.data ?? {},
     minhas,
     /** Pede ciência e ainda não foi respondido — aparece para a pessoa. */
     pendentes: pendentesDe(notificacoes, minhas),

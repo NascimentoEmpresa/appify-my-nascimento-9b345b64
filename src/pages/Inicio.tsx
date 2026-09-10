@@ -773,10 +773,15 @@ const CSS_INICIO = `
   color:#1d4ed8;text-decoration:none;}
 .ini-link-mais:hover{text-decoration:underline;}
 .ini-avisos{list-style:none;margin:14px 0 0;padding:0;display:flex;flex-direction:column;gap:8px;}
-.ini-aviso{display:flex;align-items:center;gap:12px;padding:11px 13px;border:1px solid #e8eef5;
+.ini-aviso{width:100%;text-align:left;font:inherit;background:transparent;cursor:pointer;
+  display:flex;align-items:center;gap:12px;padding:11px 13px;border:1px solid #e8eef5;
   border-radius:12px;background:#fff;transition:border-color .2s,box-shadow .2s;}
 .ini-aviso:hover{border-color:#cfe0f5;box-shadow:0 6px 18px rgba(15,23,42,.06);}
 .ini-aviso-ic{display:grid;place-items:center;width:34px;height:34px;border-radius:10px;flex-shrink:0;}
+/* Miniatura do cartaz. Ocupa a vaga do ícone da categoria — mostrar os dois
+   empurraria o título e o resumo para fora da linha. */
+.ini-aviso-mini{width:52px;height:34px;border-radius:8px;object-fit:cover;flex-shrink:0;
+  border:1px solid #e8eef5;background:#f1f5f9;}
 .ini-aviso-tx{display:flex;flex-direction:column;gap:2px;min-width:0;flex:1;}
 .ini-aviso-tx strong{font-size:.82rem;font-weight:700;color:#0f172a;}
 /* Uma linha só: o resumo é a chamada, o conteúdo inteiro está na tela do

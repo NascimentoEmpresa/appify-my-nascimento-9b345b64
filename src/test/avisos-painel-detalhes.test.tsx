@@ -45,6 +45,7 @@ beforeEach(() => {
     alvos: [],
     setores: [],
     pessoas: [{ id: "u1", nome: "Ana Souza" }, { id: "u2", nome: "Bruno Lima" }],
+    pessoasPorSetor: {},
     carregando: false,
     podeVerQuadro: true,
     podeCriar: true,

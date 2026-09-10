@@ -48,6 +48,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import { useNotificacoes } from "@/hooks/useNotificacoes";
+import { ImagemAviso } from "@/components/notificacoes/ImagemAviso";
 import {
   CATEGORIAS, FORM_VAZIO, erroDoFormulario, estaVigente, fmtDataHora, formDoAviso,
   panoramaDe, respostasComNome, type CienciaNotificacao, type Escolha,
@@ -69,7 +70,7 @@ type Aba = "todos" | "ativos" | "arquivados";
 
 export default function QuadroAvisos() {
   const {
-    notificacoes, historico, alvos, setores, pessoas, carregando,
+    notificacoes, historico, alvos, setores, pessoas, pessoasPorSetor, carregando,
     podeVerQuadro, podeCriar, podeEditar, podeExcluir,
     salvar, excluir, subirAnexo,
   } = useNotificacoes();
@@ -118,6 +119,18 @@ export default function QuadroAvisos() {
     if (qtdPessoas) partes.push(qtdPessoas + " pessoa(s)");
     return partes.join(" · ");
   };
+
+  /**
+   * Quantas pessoas o recorte atual do formulário alcança.
+   *
+   * Só uma estimativa, e a tela diz isso: alguém em dois setores marcados é
+   * contado duas vezes, porque a contagem vem de user_setor sem cruzar as
+   * listas. Ainda assim é o número que importa — a diferença entre "12" e
+   * "todo mundo" é o que faz alguém perceber que marcou demais ANTES de
+   * publicar.
+   */
+  const alcanceDoForm = (f: FormNotificacao): number =>
+    f.setores.reduce((soma, st) => soma + (pessoasPorSetor[st] ?? 0), 0) + f.usuarios.length;
 
   /** id → nome, para o painel poder dizer quem é cada resposta. */
   const nomePorId = useMemo(
@@ -449,7 +462,7 @@ export default function QuadroAvisos() {
                     </p>
                   </div>
                   {form.setores.length === 0 && form.usuarios.length === 0 ? (
-                    <Badge>Todos os colaboradores</Badge>
+                    <Badge variant="destructive">Todos os colaboradores</Badge>
                   ) : (
                     <Button
                       variant="ghost"
@@ -460,6 +473,22 @@ export default function QuadroAvisos() {
                     </Button>
                   )}
                 </div>
+
+                {/* Quem o recorte alcança, em número. A regra do alvo é
+                    invisível até o aviso já estar na frente das pessoas — e foi
+                    exatamente assim que "apareceu pra quem eu não marquei"
+                    virou uma descoberta pós-publicação em 10/09/2026. */}
+                <p className="mt-2 rounded-md bg-muted/60 px-2.5 py-1.5 text-xs text-muted-foreground">
+                  {form.setores.length === 0 && form.usuarios.length === 0
+                    ? "Este aviso vai para TODOS os usuários do ERP, visitantes inclusive."
+                    : `Alcança cerca de ${alcanceDoForm(form)} pessoa(s).`}
+                  {" "}
+                  {/* O aviso que faltava: setor e papel são listas diferentes
+                      que compartilham a palavra "Visitante". */}
+                  O recorte é por <b>setor</b> da pessoa — quem for de um setor
+                  marcado recebe o aviso, seja qual for o cargo ou papel dela no
+                  sistema.
+                </p>
 
                 <div className="mt-3 grid gap-3 sm:grid-cols-2">
                   <div>
@@ -476,7 +505,13 @@ export default function QuadroAvisos() {
                                 : form.setores.filter((x) => x !== st),
                             })}
                           />
-                          {st}
+                          <span className="flex-1">{st}</span>
+                          {/* O tamanho do setor na própria linha: "Operacional"
+                              com 400 pessoas e "SST" com 3 pesam diferente na
+                              hora de marcar, e a lista não dizia isso. */}
+                          <span className="shrink-0 text-xs text-muted-foreground">
+                            {pessoasPorSetor[st] ?? 0}
+                          </span>
                         </label>
                       ))}
                       {setores.length === 0 && (
@@ -665,10 +700,11 @@ export default function QuadroAvisos() {
           {vendo && (
             <div className="space-y-4">
               {vendo.anexo_url && (
-                <img
-                  src={vendo.anexo_url}
-                  alt={vendo.anexo_nome ?? ""}
-                  className="max-h-72 w-full rounded-lg border object-contain"
+                <ImagemAviso
+                  url={vendo.anexo_url}
+                  nome={vendo.anexo_nome}
+                  prioridade
+                  className="aspect-video w-full"
                 />
               )}
               <p className="whitespace-pre-wrap text-sm leading-relaxed">{vendo.mensagem}</p>
