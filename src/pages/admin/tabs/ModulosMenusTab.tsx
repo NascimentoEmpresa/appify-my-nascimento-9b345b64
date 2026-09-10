@@ -22,6 +22,22 @@ const REUNIOES_MENU_CODIGO = "central_servicos_reunioes";
 // Malote) um usuário pode ver em Aprovações do Malote — a mesma lista
 // também vale pra Meus Itens (uma lista só, não duplica configuração).
 const MALOTE_APROVACOES_MENU_CODIGO = "malote_aprovacoes";
+// SIS-2026-0330 (Iury): "fazer com que as permissões de Arquivos do Malote
+// sejam iguais as outras por setor" — Arquivos do Malote (ArquivosMalote.tsx,
+// SIS-2026-0290) usa a MESMA query/RLS de Aprovações/Meus Itens
+// (useItensAprovacoesMalote → malote_despesa_select →
+// malote_despesa_visivel_por_setor, contexto='aprovacoes') — a restrição já
+// funcionava sozinha por trás, só faltava o Gerenciamento de Acesso
+// oferecer o mesmo seletor de setor pra essa tela (sem isso, não tinha como
+// um admin configurar/saber quem via o quê aqui). Nenhuma migration:
+// reaproveita a tabela/função que já existem, tratado como o MESMO contexto
+// de Aprovações/Meus Itens (não um recorte independente, ver isOrcamento
+// abaixo).
+const MALOTE_ARQUIVOS_MENU_CODIGO = "malote_arquivos";
+// Os 2 menus cujo recorte de setor usa contexto='aprovacoes' (RLS de
+// malote_despesa) — qualquer outro menu em MALOTE_SETOR_MENU_CODIGOS é
+// tratado como 'orcamento' (ver isOrcamento nos componentes abaixo).
+const MALOTE_APROVACOES_CONTEXTO_MENU_CODIGOS = [MALOTE_APROVACOES_MENU_CODIGO, MALOTE_ARQUIVOS_MENU_CODIGO];
 // SIS-2026-0265 (achado real do Iury: "não aparece nenhuma identificação
 // que o financeiro possa visualizar" no Gerenciamento de Acesso): as telas
 // de Orçamento passaram a usar a MESMA tabela (malote_setor_visivel_usuario)
@@ -44,6 +60,7 @@ const MALOTE_APROVACOES_MENU_CODIGO = "malote_aprovacoes";
 // outros 3 menus de Orçamento).
 const MALOTE_SETOR_MENU_CODIGOS = [
   MALOTE_APROVACOES_MENU_CODIGO,
+  MALOTE_ARQUIVOS_MENU_CODIGO,
   "malote_orcamento_administrativo",
   "malote_orcamento_geral",
   "malote_detalhe_orcamento",
@@ -1156,14 +1173,16 @@ function PessoasComAcessoAoMenu({ menuCodigo, podeGerenciar }: { menuCodigo: str
 // mesma tabela que MaloteSetoresUsuario — não importa por qual tela a pessoa
 // foi marcada, o efeito é idêntico (RLS em Aprovações/Meus Itens, filtro no
 // client nas telas de Orçamento — ver SIS-2026-0265/useMaloteAcessoOrcamento.ts).
-// Renderizado nos 4 menus de MALOTE_SETOR_MENU_CODIGOS, não só Aprovações —
+// Renderizado nos 5 menus de MALOTE_SETOR_MENU_CODIGOS, não só Aprovações —
 // achado real do Iury: sem isso, não dava pra saber/gerenciar em massa quem
 // vê o quê nas telas de Orçamento (só existia o painel individual).
 function MaloteSetorPorModulo({ todasPessoas, temAcesso, podeGerenciar, menuCodigo }: { todasPessoas: ProfileRow[]; temAcesso: (userId: string) => boolean; podeGerenciar: boolean; menuCodigo?: string }) {
-  // Mesmo painel renderizado nos 4 menus de MALOTE_SETOR_MENU_CODIGOS — o
+  // Mesmo painel renderizado nos 5 menus de MALOTE_SETOR_MENU_CODIGOS — o
   // texto explicativo só faz sentido pro contexto de onde foi aberto (ver
-  // MaloteSetoresUsuario, mesmo critério).
-  const isOrcamento = menuCodigo !== undefined && menuCodigo !== MALOTE_APROVACOES_MENU_CODIGO;
+  // MaloteSetoresUsuario, mesmo critério). SIS-2026-0330: Arquivos do
+  // Malote entra no MESMO contexto de Aprovações (não em "orcamento") —
+  // ver MALOTE_APROVACOES_CONTEXTO_MENU_CODIGOS.
+  const isOrcamento = menuCodigo !== undefined && !MALOTE_APROVACOES_CONTEXTO_MENU_CODIGOS.includes(menuCodigo);
   // Achado do usuário (pós SIS-2026-0265): Aprovações e Orçamento
   // compartilhavam a MESMA linha (user_id, setor) — marcar aqui "puxava" pro
   // outro contexto sem pedir. Coluna `contexto` (20260930000028) separa.
@@ -1253,9 +1272,9 @@ function MaloteSetorPorModulo({ todasPessoas, temAcesso, podeGerenciar, menuCodi
       </p>
       {!isOrcamento && (
         <p className="mb-2 text-[11.5px] text-muted-foreground">
-          <b>Em Aprovações e Meus Itens</b>: restringe a pessoa a ver SÓ as despesas daquele setor (quem não
-          é marcado em nenhum setor continua vendo tudo da empresa, como hoje — não muda quem aprova,
-          Aprovador 1/2/3 continuam os mesmos).
+          <b>Em Aprovações, Meus Itens e Arquivos do Malote</b>: restringe a pessoa a ver SÓ as despesas
+          daquele setor (quem não é marcado em nenhum setor continua vendo tudo da empresa, como hoje — não
+          muda quem aprova, Aprovador 1/2/3 continuam os mesmos).
         </p>
       )}
       {isOrcamento && (
@@ -1401,8 +1420,10 @@ function MaloteSetoresUsuario({ userId, menuCodigo, onToast }: { userId: string;
   // Responsável ficam escondidas. Usar o MESMO placeholder genérico
   // "Todos os setores (sem restrição)" nas duas situações confundia quem
   // está gerenciando Orçamento (achado real do usuário) — varia o texto
-  // conforme o menu que abriu o painel.
-  const isOrcamento = menuCodigo !== undefined && menuCodigo !== MALOTE_APROVACOES_MENU_CODIGO;
+  // conforme o menu que abriu o painel. SIS-2026-0330: Arquivos do Malote
+  // entra no MESMO contexto de Aprovações (ver
+  // MALOTE_APROVACOES_CONTEXTO_MENU_CODIGOS).
+  const isOrcamento = menuCodigo !== undefined && !MALOTE_APROVACOES_CONTEXTO_MENU_CODIGOS.includes(menuCodigo);
   // Achado do usuário (pós SIS-2026-0265): Aprovações e Orçamento
   // compartilhavam a MESMA linha (user_id, setor) — marcar um setor num
   // "puxava" pro outro sem pedir. `contexto` (coluna nova, 20260930000028)
@@ -1462,9 +1483,9 @@ function MaloteSetoresUsuario({ userId, menuCodigo, onToast }: { userId: string;
     <div className="py-1">
       {!isOrcamento && (
         <p className="mb-1.5 text-[11px] text-muted-foreground">
-          <b>Aprovações do Malote e Meus Itens</b>: sem nenhum setor marcado, a pessoa continua vendo{" "}
-          <b>tudo</b> da empresa dela, como hoje; marcar 1+ setores restringe a visão SÓ a eles (não muda
-          quem aprova — Aprovador 1/2/3 continuam os mesmos).
+          <b>Aprovações do Malote, Meus Itens e Arquivos do Malote</b>: sem nenhum setor marcado, a pessoa
+          continua vendo <b>tudo</b> da empresa dela, como hoje; marcar 1+ setores restringe a visão SÓ a
+          eles (não muda quem aprova — Aprovador 1/2/3 continuam os mesmos).
         </p>
       )}
       {isOrcamento && (
