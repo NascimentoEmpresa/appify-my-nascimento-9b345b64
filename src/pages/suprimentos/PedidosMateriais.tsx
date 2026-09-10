@@ -35,6 +35,7 @@ import * as XLSX from "xlsx";
 import { buscarDeclaracaoCompleta } from "@/hooks/useCorreioDeclaracao";
 import { imprimirDeclaracao } from "@/lib/suprimentos/declaracaoPrint";
 import { abrirComprovacaoPdf } from "@/lib/suprimentos/comprovacaoPdf";
+import { ModalFotosComprovacao } from "@/components/suprimentos/ModalFotosComprovacao";
 import { useRastreioEmLote, resumirSituacao, type SituacaoObjeto } from "@/hooks/useCorreios";
 
 /**
@@ -204,8 +205,16 @@ export default function PedidosMateriais() {
   // Semeada por `?busca=`: o histórico de Estoque & Etiquetas linka o protocolo
   // do pedido para cá, e esta tela não tem rota de detalhe — chegar já filtrado
   // é o que evita o usuário ter que copiar o número e procurar na mão.
-  const [searchParams] = useSearchParams();
+  const [searchParams, setSearchParams] = useSearchParams();
   const [busca, setBusca] = useState(() => searchParams.get("busca") ?? "");
+  // `?fotos=<id do pedido>` é o destino do QR code e da frase clicável do PDF
+  // de comprovação de entrega: abre direto o modal com as fotos do formulário.
+  const fotosDe = searchParams.get("fotos");
+  const fecharFotos = () => {
+    const proximos = new URLSearchParams(searchParams);
+    proximos.delete("fotos");
+    setSearchParams(proximos, { replace: true });
+  };
   const [filtroStatus, setFiltroStatus] = useState("TODOS");
   const [filtroItem, setFiltroItem] = useState("TODOS");
   const [exportando, setExportando] = useState(false);
@@ -547,6 +556,8 @@ export default function PedidosMateriais() {
       <ModalEditarPedido pedido={editandoDe} onFechar={() => setEditandoDe(null)} />
 
       <ModalHistorico pedido={historicoDe} onFechar={() => setHistoricoDe(null)} />
+
+      <ModalFotosComprovacao pedidoId={fotosDe} onFechar={fecharFotos} />
 
       <ModalEtiquetaTermica pedido={etiquetaDe} onFechar={() => setEtiquetaDe(null)} />
 

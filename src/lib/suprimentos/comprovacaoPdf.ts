@@ -7,13 +7,13 @@ import logoGrupoNascimento from "@/assets/logo-grupo-nascimento.png";
 // As relações novas ainda não existem no types.ts até a migration remota.
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const sb = supabase as any;
-const BUCKET = "sup-comprovacoes";
 
 // Layout do comprovante segue o template aprovado pela operação (set/2026):
 // cabeçalho com marca + status, dois blocos de dados, tabela de itens e
-// rodapé de validação. As fotos enviadas no formulário viram páginas anexas,
-// e o rodapé linka para elas — por isso o QR/rodapé só é desenhado no fim,
-// quando já se sabe em que página a seção de fotos começou.
+// rodapé de validação. O PDF é SÓ a folha de comprovação — a primeira versão
+// anexava as fotos como páginas e a operação pediu para separar. O QR e a
+// frase do rodapé apontam para `pedidos-materiais?fotos=<id>`, que abre as
+// fotos num modal (ModalFotosComprovacao).
 const AZUL: [number, number, number] = [27, 54, 93];
 const CINZA_CAIXA: [number, number, number] = [228, 233, 240];
 const CINZA_BORDA: [number, number, number] = [190, 198, 210];
@@ -181,7 +181,7 @@ export async function abrirComprovacaoPdf(pedidoId: string) {
   const itens = [...(pedido.sup_pedido_item ?? [])].sort((a: any, b: any) => a.ordem - b.ordem);
   autoTable(doc, {
     startY: yItens + 4,
-    margin: { left: MARGEM, right: MARGEM, bottom: 45 },
+    margin: { left: MARGEM, right: MARGEM, bottom: 20 },
     head: [["DESCRIÇÃO DO ITEM", "TAMANHO", "QUANTIDADE"]],
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     body: itens.map((item: any) => [
@@ -199,84 +199,52 @@ export async function abrirComprovacaoPdf(pedidoId: string) {
     },
   });
 
-  // ── Fotos do formulário: uma por página, viram a "seção de fotos" ─────────
-  const fotos = [...(comprovacao.sup_pedido_comprovacao_foto ?? [])]
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    .sort((a: any, b: any) => a.ordem - b.ordem);
-  let paginaFotos = 0;
-  for (const [indice, foto] of fotos.entries()) {
-    const { data: assinada, error: erroUrl } = await supabase.storage
-      .from(BUCKET)
-      .createSignedUrl(foto.storage_path, 300);
-    if (erroUrl) throw erroUrl;
-    const resposta = await fetch(assinada.signedUrl);
-    if (!resposta.ok) throw new Error(`Não foi possível carregar a foto ${indice + 1}.`);
-    const blob = await resposta.blob();
-    const dataUrl = await blobParaDataUrl(blob);
-    const dimensoes = doc.getImageProperties(dataUrl);
-    const maxLargura = 180;
-    const maxAltura = 235;
-    const escala = Math.min(maxLargura / dimensoes.width, maxAltura / dimensoes.height);
-    const largura = dimensoes.width * escala;
-    const altura = dimensoes.height * escala;
-    const formato = blob.type.includes("png") ? "PNG" : blob.type.includes("webp") ? "WEBP" : "JPEG";
+  // ── Rodapé de validação: QR + frase clicável, ambos abrindo as fotos ──────
+  // Tudo alinhado à margem direita e o QR inteiro ACIMA da linha divisória —
+  // na primeira versão a linha cortava o QR e a frase (com uma seta "→" que a
+  // Helvetica do jsPDF não tem, o que espaçava as letras) vazava da página.
+  const totalFotos = (comprovacao.sup_pedido_comprovacao_foto ?? []).length;
+  const urlFotos = `${window.location.origin}/app/suprimentos/pedidos-materiais?fotos=${pedido.id}`;
+  const LADO_QR = 26;
+  const xQr = LARGURA_PAGINA - MARGEM - LADO_QR;
+  const yQr = ALTURA_PAGINA - 58;
+  // Pedido com muitos itens: a tabela pode descer até onde vai o rodapé. Aí o
+  // rodapé vai para uma página própria em vez de ser desenhado por cima dela.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const fimTabela = (doc as any).lastAutoTable?.finalY ?? 0;
+  if (fimTabela > yQr - 6) doc.addPage();
+  const qr = await QRCode.toDataURL(urlFotos, { margin: 0, width: 512 });
+  doc.addImage(qr, "PNG", xQr, yQr, LADO_QR, LADO_QR);
+  doc.link(xQr, yQr, LADO_QR, LADO_QR, { url: urlFotos });
 
-    doc.addPage();
-    if (!paginaFotos) paginaFotos = doc.getNumberOfPages();
+  const frase = totalFotos === 1 ? "Ver a foto da entrega" : `Ver as ${totalFotos} fotos da entrega`;
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(8);
+  doc.setTextColor(...AZUL);
+  const larguraFrase = doc.getTextWidth(frase);
+  const xFrase = LARGURA_PAGINA - MARGEM - larguraFrase;
+  const yFrase = yQr + LADO_QR + 4.5;
+  doc.text(frase, xFrase, yFrase);
+  doc.setDrawColor(...AZUL);
+  doc.setLineWidth(0.2);
+  doc.line(xFrase, yFrase + 0.8, xFrase + larguraFrase, yFrase + 0.8);
+  doc.link(xFrase, yFrase - 3, larguraFrase, 4.5, { url: urlFotos });
 
-    doc.setFont("helvetica", "bold");
-    doc.setFontSize(13);
-    doc.setTextColor(...AZUL);
-    doc.text(`FOTOS DA ENTREGA (${indice + 1}/${fotos.length})`, LARGURA_PAGINA / 2, 20, { align: "center" });
-    doc.setFont("helvetica", "normal");
-    doc.setFontSize(8.5);
-    doc.setTextColor(110, 110, 110);
-    doc.text(`Protocolo ${pedido.pedido_id}`, LARGURA_PAGINA / 2, 25.5, { align: "center" });
-
-    doc.addImage(dataUrl, formato, (LARGURA_PAGINA - largura) / 2, 30 + (maxAltura - altura) / 2, largura, altura);
-
-    doc.setFontSize(10);
-    doc.setTextColor(40, 40, 40);
-    doc.text(foto.colaborador_nome || `Foto ${indice + 1}`, LARGURA_PAGINA / 2, 275, { align: "center" });
-  }
-
-  // ── Rodapé de validação na primeira página (QR + link para as fotos) ──────
-  doc.setPage(1);
-  const yRodape = ALTURA_PAGINA - 40;
-  const urlPedido = `${window.location.origin}/app/suprimentos/pedidos-materiais?pedido=${pedido.id}`;
-  const qr = await QRCode.toDataURL(urlPedido, { margin: 0, width: 512 });
-  doc.addImage(qr, "PNG", LARGURA_PAGINA - MARGEM - 26, yRodape - 4, 26, 26);
-
+  const yLinha = yFrase + 4;
   doc.setDrawColor(...CINZA_BORDA);
-  doc.line(MARGEM, yRodape + 20, LARGURA_PAGINA - MARGEM, yRodape + 20);
+  doc.line(MARGEM, yLinha, LARGURA_PAGINA - MARGEM, yLinha);
   doc.setFont("helvetica", "bold");
   doc.setFontSize(8.5);
   doc.setTextColor(60, 60, 60);
-  doc.text("VALIDAÇÃO: ESCANEIE O QR CODE PARA AUTENTICIDADE", MARGEM, yRodape + 25);
+  doc.text("VALIDAÇÃO: ESCANEIE O QR CODE PARA AUTENTICIDADE", MARGEM, yLinha + 5);
   doc.setFont("helvetica", "normal");
   doc.setFontSize(7.5);
   doc.setTextColor(120, 120, 120);
   doc.text(
     `Geração: ${new Date().toLocaleString("pt-BR", { dateStyle: "short", timeStyle: "short" })}`,
     MARGEM,
-    yRodape + 30,
+    yLinha + 10,
   );
-
-  if (paginaFotos) {
-    const frase = `Ver as ${fotos.length} foto(s) da entrega →`;
-    doc.setFont("helvetica", "bold");
-    doc.setFontSize(8);
-    doc.setTextColor(...AZUL);
-    const larguraFrase = doc.getTextWidth(frase);
-    const xFrase = LARGURA_PAGINA - MARGEM - larguraFrase;
-    const yFrase = yRodape + 27;
-    doc.text(frase, xFrase, yFrase);
-    doc.setDrawColor(...AZUL);
-    doc.line(xFrase, yFrase + 0.8, xFrase + larguraFrase, yFrase + 0.8);
-    // Clicável tanto na frase quanto no próprio QR impresso.
-    doc.link(xFrase, yFrase - 3, larguraFrase, 4.5, { pageNumber: paginaFotos });
-    doc.link(LARGURA_PAGINA - MARGEM - 26, yRodape - 4, 26, 26, { pageNumber: paginaFotos });
-  }
 
   const url = doc.output("bloburl");
   const janela = window.open(url, "_blank");
