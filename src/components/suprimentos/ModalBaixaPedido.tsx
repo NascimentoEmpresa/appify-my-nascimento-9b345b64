@@ -13,7 +13,8 @@ import {
   useTagsDoPedido, useTagsDisponiveis, useSaldoMaterial, useValidarTags, useBaixarPedido,
   type TipoTag, type Baixa,
 } from "@/hooks/useSupEstoque";
-import { Lock, List, AlertTriangle, Loader2, Tag as TagIcon, MessageSquare } from "lucide-react";
+import { ModalTrajetoCorreio } from "@/components/suprimentos/ModalTrajetoCorreio";
+import { Lock, List, AlertTriangle, Loader2, Tag as TagIcon, MessageSquare, Map as MapIcon } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 
@@ -69,6 +70,7 @@ export function ModalBaixaPedido({
   const [itens, setItens] = useState<Record<string, EstadoItem>>({});
   const [idAtual, setIdAtual] = useState<string | null>(null);
   const [confirmandoSemBaixa, setConfirmandoSemBaixa] = useState(false);
+  const [vendoTrajeto, setVendoTrajeto] = useState(false);
 
   // Semeia o modal ao abrir/trocar de pedido, reconstruindo o que já foi
   // baixado antes — o legado fazia o mesmo, e é o que evita baixa em dobro.
@@ -282,7 +284,24 @@ export function ModalBaixaPedido({
                   </div>
                   {envioTipo === "CORREIO" && (
                     <div>
-                      <Label htmlFor="envio-rastreio">ID de Rastreio Correio *</Label>
+                      <div className="flex items-center justify-between gap-2">
+                        <Label htmlFor="envio-rastreio">ID de Rastreio Correio *</Label>
+                        {/* O mapa do trajeto. Fica aqui, colado no código, porque
+                            é o único lugar da tela onde alguém já está olhando
+                            para o objeto — e só faz sentido com código digitado. */}
+                        <Button
+                          type="button" variant="outline" size="icon"
+                          className="h-7 w-7 shrink-0"
+                          disabled={!envioRastreio.trim()}
+                          onClick={() => setVendoTrajeto(true)}
+                          title={envioRastreio.trim()
+                            ? "Ver no mapa por onde o objeto passou"
+                            : "Informe o código de rastreio para ver o trajeto"}
+                        >
+                          <MapIcon className="h-4 w-4" />
+                          <span className="sr-only">Ver trajeto no mapa</span>
+                        </Button>
+                      </div>
                       <Input
                         id="envio-rastreio"
                         value={envioRastreio}
@@ -367,6 +386,14 @@ export function ModalBaixaPedido({
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* Mapa do trajeto — lê o código que está NO CAMPO, não o gravado, para
+          conferir um código recém-digitado antes de salvar o despacho. */}
+      <ModalTrajetoCorreio
+        codigo={vendoTrajeto ? envioRastreio.trim().toUpperCase() : null}
+        protocolo={pedido?.pedido_id}
+        onFechar={() => setVendoTrajeto(false)}
+      />
     </>
   );
 }
