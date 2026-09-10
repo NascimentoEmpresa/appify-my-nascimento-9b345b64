@@ -35,6 +35,8 @@ import * as XLSX from "xlsx";
 import { buscarDeclaracaoCompleta } from "@/hooks/useCorreioDeclaracao";
 import { imprimirDeclaracao } from "@/lib/suprimentos/declaracaoPrint";
 import { abrirComprovacaoPdf } from "@/lib/suprimentos/comprovacaoPdf";
+import { ModalFotosComprovacao } from "@/components/suprimentos/ModalFotosComprovacao";
+import { useRastreioEmLote, resumirSituacao, type SituacaoObjeto } from "@/hooks/useCorreios";
 
 /**
  * Pedidos de Materiais — fila operacional do Supply.
@@ -203,8 +205,16 @@ export default function PedidosMateriais() {
   // Semeada por `?busca=`: o histórico de Estoque & Etiquetas linka o protocolo
   // do pedido para cá, e esta tela não tem rota de detalhe — chegar já filtrado
   // é o que evita o usuário ter que copiar o número e procurar na mão.
-  const [searchParams] = useSearchParams();
+  const [searchParams, setSearchParams] = useSearchParams();
   const [busca, setBusca] = useState(() => searchParams.get("busca") ?? "");
+  // `?fotos=<id do pedido>` é o destino do QR code e da frase clicável do PDF
+  // de comprovação de entrega: abre direto o modal com as fotos do formulário.
+  const fotosDe = searchParams.get("fotos");
+  const fecharFotos = () => {
+    const proximos = new URLSearchParams(searchParams);
+    proximos.delete("fotos");
+    setSearchParams(proximos, { replace: true });
+  };
   const [filtroStatus, setFiltroStatus] = useState("TODOS");
   const [filtroItem, setFiltroItem] = useState("TODOS");
   const [exportando, setExportando] = useState(false);
@@ -312,6 +322,28 @@ export default function PedidosMateriais() {
       ),
     );
   }, [porBusca, filtrandoPorItem, tagsFiltro, filtroItem]);
+
+  /**
+   * Situação dos objetos nos Correios, para os pedidos que estão na tela.
+   *
+   * Consulta só o que está FILTRADO, não a fila inteira: a API aceita 50
+   * códigos por chamada, e a fila tem mais de mil pedidos. Rastrear tudo
+   * gastaria dezenas de chamadas para pintar badges que ninguém está vendo.
+   *
+   * Falha aqui não quebra a tela — o hook não faz retry e os cards
+   * simplesmente ficam sem o badge de rastreio.
+   */
+  const codigosRastreio = useMemo(
+    () => filtrados
+      .filter((p) => p.envio_tipo === "CORREIO" && p.envio_rastreio)
+      .map((p) => p.envio_rastreio!.trim().toUpperCase()),
+    [filtrados],
+  );
+  // `situacoesCorreio`, e não `situacoes`: logo acima já existe um `situacoes`
+  // que é a situação de ATENDIMENTO do pedido (quanto já foi separado). São
+  // dois assuntos diferentes, e o nome curto pertence ao que veio primeiro.
+  const { data: situacoesCorreio = {}, isFetching: carregandoRastreio } =
+    useRastreioEmLote(codigosRastreio);
 
   /**
    * Exclusão de pedido. Existe porque no legado era rotina: o encarregado
@@ -502,6 +534,8 @@ export default function PedidosMateriais() {
               onHistorico={() => setHistoricoDe(p)}
               onExcluir={() => setExcluindo(p)}
               onEtiqueta={() => setEtiquetaDe(p)}
+              rastreio={p.envio_rastreio ? situacoesCorreio[p.envio_rastreio.trim().toUpperCase()] : undefined}
+              rastreioCarregando={carregandoRastreio}
             />
           ))}
         </div>
@@ -522,6 +556,8 @@ export default function PedidosMateriais() {
       <ModalEditarPedido pedido={editandoDe} onFechar={() => setEditandoDe(null)} />
 
       <ModalHistorico pedido={historicoDe} onFechar={() => setHistoricoDe(null)} />
+
+      <ModalFotosComprovacao pedidoId={fotosDe} onFechar={fecharFotos} />
 
       <ModalEtiquetaTermica pedido={etiquetaDe} onFechar={() => setEtiquetaDe(null)} />
 
@@ -558,14 +594,18 @@ function CardKpi({
 
 function CardPedido({
   pedido: p, situacao, onStatus, onPrePedido, onEditar, onHistorico, onExcluir, onEtiqueta,
+  rastreio, rastreioCarregando,
 }: {
   pedido: Pedido;
   situacao: SituacaoPedido | null;
   onStatus: () => void; onPrePedido: () => void; onEditar: () => void;
   onHistorico: () => void; onExcluir: () => void; onEtiqueta: () => void;
+  rastreio: SituacaoObjeto | undefined;
+  rastreioCarregando: boolean;
 }) {
   const apresentacaoStatus = apresentacaoStatusPedido(p, situacao);
   const statusVisivel = apresentacaoStatus.status;
+  const situacaoCorreio = resumirSituacao(rastreio);
 
   // Em AGUARDANDO COMPRA o card esconde o que já tem etiqueta, virando uma
   // lista viva do que ainda falta comprar. É a melhor ideia de UX do legado
@@ -640,7 +680,40 @@ function CardPedido({
           )}
           <dt className="text-muted-foreground">Solicitado</dt><dd>{fmtDataBR(p.data_solicitacao)}</dd>
           {p.data_despachado && (<><dt className="text-muted-foreground">Despachado</dt><dd>{fmtDataBR(p.data_despachado)}</dd></>)}
+          {p.envio_tipo && (
+            <>
+              <dt className="text-muted-foreground">Envio</dt>
+              <dd className="truncate">
+                {p.envio_tipo === "SUPERVISOR" ? "Via supervisor" : "Via Correios"}
+                {p.envio_rastreio && (
+                  <span className="ml-1.5 font-mono text-xs text-muted-foreground">{p.envio_rastreio}</span>
+                )}
+              </dd>
+            </>
+          )}
         </dl>
+
+        {/* Situação nos Correios: some para envio por supervisor e para pedido
+            sem código. Enquanto carrega não mostra esqueleto — o dado é
+            acessório, e um placeholder pulsando em vinte cards de uma vez
+            chama mais atenção do que a informação em si. */}
+        {p.envio_tipo === "CORREIO" && p.envio_rastreio && (
+          situacaoCorreio ? (
+            <div className="flex flex-wrap items-center gap-2 text-xs">
+              <Badge variant="outline" className={cn("shrink-0", situacaoCorreio.classe)}>
+                {situacaoCorreio.texto}
+              </Badge>
+              {rastreio?.data && (
+                <span className="text-muted-foreground">
+                  {new Date(rastreio.data).toLocaleString("pt-BR", { dateStyle: "short", timeStyle: "short" })}
+                  {rastreio.local ? ` · ${rastreio.local}` : ""}
+                </span>
+              )}
+            </div>
+          ) : rastreioCarregando ? (
+            <p className="text-xs text-muted-foreground">Consultando os Correios…</p>
+          ) : null
+        )}
 
         <div className="rounded-md border bg-muted/40 p-2">
           <p className="mb-1 flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">

@@ -22,7 +22,9 @@
 // na cara das pessoas, e o gate do AppShell teria de escolher um.
 
 import { useMemo, useState } from "react";
-import { Megaphone, Pencil, Plus, Search, Trash2, Eye, Loader2 } from "lucide-react";
+import {
+  Image as ImageIcon, Loader2, Megaphone, Pencil, Plus, Search, Trash2, Upload, Eye, X,
+} from "lucide-react";
 import { toast } from "sonner";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { Badge } from "@/components/ui/badge";
@@ -38,6 +40,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { ScrollArea } from "@/components/ui/scroll-area";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
@@ -64,9 +67,9 @@ type Aba = "todos" | "ativos" | "arquivados";
 
 export default function QuadroAvisos() {
   const {
-    notificacoes, historico, carregando,
+    notificacoes, historico, alvos, setores, pessoas, carregando,
     podeVerQuadro, podeCriar, podeEditar, podeExcluir,
-    salvar, excluir,
+    salvar, excluir, subirAnexo,
   } = useNotificacoes();
 
   const [aba, setAba] = useState<Aba>("todos");
@@ -75,6 +78,7 @@ export default function QuadroAvisos() {
   const [form, setForm] = useState<FormNotificacao | null>(null);
   const [vendo, setVendo] = useState<Notificacao | null>(null);
   const [apagando, setApagando] = useState<Notificacao | null>(null);
+  const [subindo, setSubindo] = useState(false);
 
   /** Respostas agrupadas por aviso — alimenta a contagem da lista. */
   const porAviso = useMemo(() => {
@@ -86,6 +90,24 @@ export default function QuadroAvisos() {
     }
     return mapa;
   }, [historico]);
+
+  /**
+   * O público em uma linha: "Todos os colaboradores" ou "RH, Financeiro · 2
+   * pessoa(s)".
+   *
+   * Vale para a lista e para o Visualizar. Sem nenhuma regra o aviso é de
+   * todos — restringir é o ato explícito, igual aos Links de BI.
+   */
+  const publicoDe = (id: number): string => {
+    const meus = alvos.filter((a) => a.notificacao_id === id);
+    if (!meus.length) return "Todos os colaboradores";
+    const st = meus.filter((a) => a.setor).map((a) => a.setor as string);
+    const qtdPessoas = meus.filter((a) => a.user_id).length;
+    const partes: string[] = [];
+    if (st.length) partes.push(st.join(", "));
+    if (qtdPessoas) partes.push(qtdPessoas + " pessoa(s)");
+    return partes.join(" · ");
+  };
 
   const lista = useMemo(() => {
     const termo = busca.trim().toLowerCase();
@@ -129,6 +151,34 @@ export default function QuadroAvisos() {
       setForm(null);
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Não deu para gravar o aviso.");
+    }
+  };
+
+  /**
+   * Sobe a imagem escolhida e guarda a URL no formulário.
+   *
+   * O arquivo vai para o storage NA HORA, antes de o aviso ser salvo: é o
+   * mesmo caminho da capa dos Links de BI, e segurar o File em memória até o
+   * SALVAR só adiantaria o problema de um upload que falha depois de a pessoa
+   * achar que terminou.
+   */
+  const escolherImagem = async (arquivo?: File | null) => {
+    if (!arquivo || !form) return;
+    // O bucket recusa o que passar disto (migration 082), mas a recusa de lá
+    // chega como erro técnico; aqui dá para dizer o que houve.
+    if (arquivo.size > 5 * 1024 * 1024) {
+      toast.error("A imagem passou de 5 MB. Reduza o arquivo e tente de novo.");
+      return;
+    }
+    setSubindo(true);
+    try {
+      const url = await subirAnexo(arquivo);
+      setForm({ ...form, anexo_url: url, anexo_nome: arquivo.name });
+      toast.success("Imagem enviada.");
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Não deu para enviar a imagem.");
+    } finally {
+      setSubindo(false);
     }
   };
 
@@ -244,6 +294,9 @@ export default function QuadroAvisos() {
                       )}>
                         {n.categoria ?? "—"}
                       </span>
+                      {/* Para quem foi. Fica sob a categoria porque é a mesma
+                          pergunta de triagem: "isto era para mim?" */}
+                      <div className="mt-1 text-[11px] text-muted-foreground">{publicoDe(n.id)}</div>
                     </TableCell>
                     <TableCell className="whitespace-nowrap text-sm">
                       <div>{fmtDataHora(n.publicado_em)}</div>
@@ -274,7 +327,7 @@ export default function QuadroAvisos() {
                           <Eye className="mr-1 h-3.5 w-3.5" /> Visualizar
                         </Button>
                         {podeEditar && (
-                          <Button variant="ghost" size="sm" onClick={() => setForm(formDoAviso(n))}>
+                          <Button variant="ghost" size="sm" onClick={() => setForm(formDoAviso(n, alvos))}>
                             <Pencil className="mr-1 h-3.5 w-3.5" /> Editar
                           </Button>
                         )}
@@ -359,17 +412,79 @@ export default function QuadroAvisos() {
                 </div>
               </div>
 
-              <div>
-                <Label>Exibir para *</Label>
-                <Select value={form.publico_alvo} onValueChange={(v) => setForm({ ...form, publico_alvo: v })}>
-                  <SelectTrigger><SelectValue /></SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="todos">Todos os colaboradores</SelectItem>
-                  </SelectContent>
-                </Select>
-                <p className="mt-1 text-xs text-muted-foreground">
-                  Define quem poderá visualizar este aviso.
-                </p>
+              {/* ── Exibir para ─────────────────────────────────────────
+                  Mesma pergunta e mesma resposta dos Links de BI: sem nada
+                  marcado o aviso é de todos, e restringir é o ato explícito.
+                  Duas telas que perguntam "quem vê isto?" têm que responder
+                  do mesmo jeito, senão quem administra aprende duas regras. */}
+              <div className="rounded-lg border p-3">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div>
+                    <div className="text-sm font-semibold">Exibir para</div>
+                    <p className="text-xs text-muted-foreground">
+                      Sem setor nem pessoa marcados, o aviso vai para <b>todos</b>.
+                    </p>
+                  </div>
+                  {form.setores.length === 0 && form.usuarios.length === 0 ? (
+                    <Badge>Todos os colaboradores</Badge>
+                  ) : (
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => setForm({ ...form, setores: [], usuarios: [] })}
+                    >
+                      Voltar para todos
+                    </Button>
+                  )}
+                </div>
+
+                <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                  <div>
+                    <Label className="text-xs">Setores</Label>
+                    <ScrollArea className="h-36 rounded-md border p-2">
+                      {setores.map((st) => (
+                        <label key={st} className="flex items-center gap-2 py-1 text-sm">
+                          <Checkbox
+                            checked={form.setores.includes(st)}
+                            onCheckedChange={(v) => setForm({
+                              ...form,
+                              setores: v === true
+                                ? [...form.setores, st]
+                                : form.setores.filter((x) => x !== st),
+                            })}
+                          />
+                          {st}
+                        </label>
+                      ))}
+                      {setores.length === 0 && (
+                        <p className="p-2 text-xs text-muted-foreground">Nenhum setor cadastrado.</p>
+                      )}
+                    </ScrollArea>
+                  </div>
+
+                  <div>
+                    <Label className="text-xs">Pessoas específicas</Label>
+                    <ScrollArea className="h-36 rounded-md border p-2">
+                      {pessoas.map((ps) => (
+                        <label key={ps.id} className="flex items-center gap-2 py-1 text-sm">
+                          <Checkbox
+                            checked={form.usuarios.includes(ps.id)}
+                            onCheckedChange={(v) => setForm({
+                              ...form,
+                              usuarios: v === true
+                                ? [...form.usuarios, ps.id]
+                                : form.usuarios.filter((x) => x !== ps.id),
+                            })}
+                          />
+                          <span className="truncate">{ps.nome}</span>
+                        </label>
+                      ))}
+                      {pessoas.length === 0 && (
+                        <p className="p-2 text-xs text-muted-foreground">Nenhuma pessoa encontrada.</p>
+                      )}
+                    </ScrollArea>
+                  </div>
+                </div>
               </div>
 
               <div>
@@ -393,6 +508,57 @@ export default function QuadroAvisos() {
                   onChange={(e) => setForm({ ...form, mensagem: e.target.value })}
                 />
                 <p className="mt-1 text-right text-xs text-muted-foreground">{form.mensagem.length}/5000</p>
+              </div>
+
+              {/* ── Imagem ───────────────────────────────────────────────
+                  Mesmo desenho da capa dos Links de BI: sobe o arquivo OU
+                  cola uma URL. O campo de URL não é sobra — cartaz que já
+                  está publicado em outro lugar não precisa de outra cópia. */}
+              <div>
+                <Label>Imagem do aviso</Label>
+                <div className="mt-1 flex flex-wrap items-center gap-3">
+                  <div className="h-16 w-28 shrink-0 overflow-hidden rounded-md border bg-muted">
+                    {form.anexo_url ? (
+                      <img src={form.anexo_url} alt="" className="h-full w-full object-cover" />
+                    ) : (
+                      <div className="flex h-full items-center justify-center text-muted-foreground">
+                        <ImageIcon className="h-5 w-5" />
+                      </div>
+                    )}
+                  </div>
+                  <label className="cursor-pointer">
+                    <input
+                      type="file"
+                      accept="image/png,image/jpeg,image/webp,image/gif"
+                      className="hidden"
+                      disabled={subindo}
+                      onChange={(e) => escolherImagem(e.target.files?.[0])}
+                    />
+                    <span className="inline-flex items-center gap-2 rounded-md border px-3 py-2 text-sm hover:bg-muted">
+                      {subindo ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
+                      Enviar imagem
+                    </span>
+                  </label>
+                  <Input
+                    className="min-w-[200px] flex-1"
+                    placeholder="ou cole a URL de uma imagem"
+                    value={form.anexo_url}
+                    onChange={(e) => setForm({ ...form, anexo_url: e.target.value })}
+                  />
+                  {form.anexo_url && (
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => setForm({ ...form, anexo_url: "", anexo_nome: "" })}
+                    >
+                      <X className="mr-1 h-3.5 w-3.5" /> Tirar
+                    </Button>
+                  )}
+                </div>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  PNG, JPG, WEBP ou GIF, até 5 MB. Aparece dentro do aviso, acima do texto.
+                  {form.anexo_nome ? ` Arquivo atual: ${form.anexo_nome}.` : ""}
+                </p>
               </div>
 
               {/* As três regras. Ficam juntas e nesta ordem porque uma depende
@@ -475,6 +641,13 @@ export default function QuadroAvisos() {
 
           {vendo && (
             <div className="space-y-4">
+              {vendo.anexo_url && (
+                <img
+                  src={vendo.anexo_url}
+                  alt={vendo.anexo_nome ?? ""}
+                  className="max-h-72 w-full rounded-lg border object-contain"
+                />
+              )}
               <p className="whitespace-pre-wrap text-sm leading-relaxed">{vendo.mensagem}</p>
 
               <div className="rounded-lg border p-3 text-sm">
@@ -484,6 +657,7 @@ export default function QuadroAvisos() {
                   <li>Bloquear acesso até responder: <b>{vendo.bloquear_acesso ? "Sim" : "Não"}</b></li>
                   <li>Permitir Concordo/Discordo: <b>{vendo.permitir_escolha ? "Sim" : "Não"}</b></li>
                   <li>Expira em: <b>{vendo.expira_em ? fmtDataHora(vendo.expira_em) : "não expira"}</b></li>
+                  <li>Exibido para: <b>{publicoDe(vendo.id)}</b></li>
                 </ul>
               </div>
 

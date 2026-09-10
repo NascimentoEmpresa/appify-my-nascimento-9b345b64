@@ -321,10 +321,126 @@ export function useRemoverArquivo() {
   });
 }
 
-/** Link temporário para abrir o anexo (bucket é privado). */
-export async function urlDoArquivo(caminho: string): Promise<string | null> {
-  const { data } = await supabase.storage.from("sup-patrimonio").createSignedUrl(caminho, 300);
-  return data?.signedUrl ?? null;
+const BUCKET_PATRIMONIO = "sup-patrimonio";
+
+export type MotivoErroUrlDoArquivo = "nao_encontrado" | "sem_permissao" | "desconhecido";
+
+export type ResultadoUrlDoArquivo =
+  | { url: string }
+  | { erro: string; motivo: MotivoErroUrlDoArquivo };
+
+function extrairChaveDoBucket(caminho: string): string {
+  const caminhoSemQuery = caminho.split(/[?#]/, 1)[0];
+  const marcadorStorage = new RegExp(
+    `(?:^|/)storage/v1/object/(?:sign|public|authenticated)/${BUCKET_PATRIMONIO}/(.+)$`,
+    "i",
+  );
+  const chaveNoStorage = caminhoSemQuery.match(marcadorStorage)?.[1];
+  if (chaveNoStorage) return chaveNoStorage;
+
+  if (/^https?:\/\//i.test(caminho)) {
+    try {
+      // URL antiga não pode chegar ao Storage como se fosse uma key. Quando ela
+      // não é uma URL do próprio Storage, sobra apenas o pathname para a
+      // tentativa legada abaixo.
+      return new URL(caminho).pathname.replace(/^\/+/, "");
+    } catch {
+      return caminho;
+    }
+  }
+
+  return caminho.replace(/^\/+/, "");
+}
+
+function decodificarCaminho(caminho: string): string {
+  try {
+    return decodeURIComponent(caminho);
+  } catch {
+    return caminho;
+  }
+}
+
+function repararMojibakeUtf8LidoComoLatin1(caminho: string): string {
+  // Só há algo para reparar quando bytes UTF-8 foram exibidos como Latin-1
+  // ("manutenção" virou "manutenÃ§Ã£o"). Caracteres fora de um byte não podem
+  // ter vindo desse erro de decodificação.
+  if (![...caminho].every((caractere) => caractere.charCodeAt(0) <= 0xff)) return caminho;
+
+  try {
+    return new TextDecoder("utf-8", { fatal: true }).decode(
+      Uint8Array.from(caminho, (caractere) => caractere.charCodeAt(0)),
+    );
+  } catch {
+    return caminho;
+  }
+}
+
+function motivoDoErroDeAssinatura(error: any): MotivoErroUrlDoArquivo {
+  const statusCode = error?.statusCode ?? error?.status;
+  const mensagem = String(error?.message ?? "");
+  if (statusCode === 401 || statusCode === 403 || /permission|authorized|policy|rls/i.test(mensagem)) {
+    return "sem_permissao";
+  }
+  // O etl.mjs gravou a URL do servidor antigo na coluna `caminho`; o Storage
+  // a rejeita como key inválida (HTTP 400), o mesmo caso de anexo legado não migrado.
+  if (statusCode === 404 || /not found|not exist|does not exist|resource not found|invalid key|invalid.*key/i.test(mensagem)) {
+    return "nao_encontrado";
+  }
+  return "desconhecido";
+}
+
+/**
+ * Link temporário para abrir o anexo (o bucket é privado).
+ *
+ * A migração de 17/08/2026, em `migracao-sistema-antigo/etl.mjs`, gravou
+ * `a.url` na coluna `caminho`, sem copiar o binário para este bucket. Além de
+ * URLs completas de outro servidor, alguns desses registros chegaram com a
+ * key percent-encoded ou com UTF-8 lido como Latin-1. O fallback existe para
+ * abrir a pequena parcela cujo objeto chegou ao bucket sob uma dessas grafias;
+ * quando nenhuma assina, a UI consegue explicar que o binário legado falta.
+ */
+export async function urlDoArquivo(caminho: string): Promise<ResultadoUrlDoArquivo> {
+  const chaveNormalizada = extrairChaveDoBucket(caminho.trim());
+  // A URL inteira também pode ter sido percent-encoded pelo servidor antigo;
+  // depois de decodificar, passa de novo pelo extrator para não assinar
+  // `/storage/v1/object/...` como se isso fosse a key do objeto.
+  const chaveDecodificada = extrairChaveDoBucket(decodificarCaminho(chaveNormalizada));
+  const candidatos = new Set([
+    chaveNormalizada,
+    chaveDecodificada,
+    repararMojibakeUtf8LidoComoLatin1(chaveDecodificada),
+  ].filter(Boolean));
+  let ultimoErro: any = null;
+  let encontrouErroDePermissao = false;
+
+  for (const chave of candidatos) {
+    const { data, error } = await supabase.storage
+      .from(BUCKET_PATRIMONIO)
+      .createSignedUrl(chave, 300);
+    if (data?.signedUrl) return { url: data.signedUrl };
+
+    if (error) {
+      const statusCode = error.statusCode ?? error.status;
+      console.error("Não foi possível assinar arquivo de patrimônio.", {
+        bucket: BUCKET_PATRIMONIO,
+        caminho: chave,
+        message: error.message,
+        statusCode,
+      });
+      ultimoErro = error;
+      encontrouErroDePermissao ||= motivoDoErroDeAssinatura(error) === "sem_permissao";
+    }
+  }
+
+  const motivo = encontrouErroDePermissao
+    ? "sem_permissao"
+    : ultimoErro
+      ? motivoDoErroDeAssinatura(ultimoErro)
+      : "desconhecido";
+  return {
+    erro: ultimoErro?.message ?? "O Storage não retornou um link para o arquivo.",
+    motivo,
+  };
 }
 
 // ── Foto do bem ──────────────────────────────────────────────────────

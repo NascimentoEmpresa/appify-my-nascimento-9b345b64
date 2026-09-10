@@ -25,20 +25,32 @@ import { cn } from "@/lib/utils";
 /**
  * Catálogo de Materiais — cascata Contrato → Posto → Função → Enxoval.
  *
- * O contrato NÃO é criado aqui: ele nasce em Licitações (public.contratos).
- * Só depois de existir é que se cadastram os postos, as funções e o enxoval
- * de uniformes/EPIs/insumos que o encarregado vai poder pedir.
+ * Os dois primeiros níveis são DERIVADOS e somente-leitura aqui:
  *
- * Nada entra em vigor direto — cada alteração vira rascunho e só vale depois
- * de o lote ser aprovado em "Aprovação de Catálogo".
+ *   • Contrato — nasce em Licitações (public.contratos).
+ *   • Posto    — nasce na Planilha de Custo (public.planilha_custo.posto).
+ *                A lista é sincronizada pela RPC sup_cat_postos_do_contrato
+ *                a cada vez que se seleciona um contrato.
+ *
+ * O que se cadastra aqui é Função e Enxoval — e nada disso entra em vigor
+ * direto: cada alteração vira rascunho e só vale depois de o lote ser
+ * aprovado em "Aprovação de Catálogo".
+ *
+ * Por que posto não é editável: cadastrar posto à mão aqui criava um segundo
+ * lugar da verdade, e o Suprimentos passava a enxergar posto que a planilha
+ * não tem. Ver migration 20260930000081_supply_catalogo_posto_da_planilha.
  */
 
-type NivelItem = { id: string; nome: string; aprovado: boolean };
+type NivelItem = { id: string; nome: string; aprovado: boolean; alerta?: string };
 
-/** Um nível da cascata: lista selecionável + criar/renomear/excluir. */
+/**
+ * Um nível da cascata: lista selecionável, com criar/renomear/excluir
+ * opcionais. Nível sem nenhum dos três handlers é somente-leitura — é o caso
+ * de Contrato e Posto, que vêm de fora.
+ */
 function NivelCascata({
   titulo, icone: Icone, itens, selecionadoId, onSelecionar,
-  onCriar, onRenomear, onExcluir, desabilitado, mensagemVazio, rotuloNovo,
+  onCriar, onRenomear, onExcluir, desabilitado, mensagemVazio, rotuloNovo, nota,
 }: {
   titulo: string;
   icone: any;
@@ -50,7 +62,9 @@ function NivelCascata({
   onExcluir?: (item: NivelItem) => void;
   desabilitado: boolean;
   mensagemVazio: string;
-  rotuloNovo: string;
+  rotuloNovo?: string;
+  /** Rodapé fixo do nível — usado para dizer de onde vêm os dados. */
+  nota?: string;
 }) {
   const [criando, setCriando] = useState(false);
   const [novoNome, setNovoNome] = useState("");
@@ -104,6 +118,15 @@ function NivelCascata({
                       pendente
                     </Badge>
                   )}
+                  {it.alerta && (
+                    <Badge
+                      variant="outline"
+                      className="shrink-0 border-orange-400/60 text-[10px] text-orange-600"
+                      title={it.alerta}
+                    >
+                      fora da planilha
+                    </Badge>
+                  )}
                 </button>
                 {onRenomear && (
                   <Button
@@ -151,12 +174,18 @@ function NivelCascata({
                 className="mt-1 h-8 w-full justify-start text-muted-foreground"
                 onClick={() => setCriando(true)}
               >
-                <Plus className="mr-1.5 h-3.5 w-3.5" /> {rotuloNovo}
+                <Plus className="mr-1.5 h-3.5 w-3.5" /> {rotuloNovo ?? "Novo"}
               </Button>
             ) : null}
           </>
         )}
       </CardContent>
+
+      {nota && (
+        <div className="border-t px-4 py-2 text-[11px] leading-snug text-muted-foreground">
+          {nota}
+        </div>
+      )}
 
       <Dialog open={!!editando} onOpenChange={(o) => !o && setEditando(null)}>
         <DialogContent className="max-w-md">
@@ -221,7 +250,7 @@ export default function CatalogoMateriais() {
     <div className="space-y-6">
       <PageHeader
         title="Catálogo de Materiais"
-        subtitle="Contrato → Posto → Função → enxoval de uniformes, EPIs e insumos. É este cadastro que o encarregado enxerga ao solicitar."
+        subtitle="Contrato e Posto vêm prontos de Licitações e da Planilha de Custo. Aqui você cadastra a Função e o enxoval de uniformes, EPIs e insumos que o encarregado enxerga ao solicitar."
         module="Suprimentos"
         breadcrumb={["Catálogo de Materiais"]}
         actions={
@@ -287,24 +316,31 @@ export default function CatalogoMateriais() {
           onSelecionar={selecionarContrato}
           desabilitado={false}
           mensagemVazio="Nenhum contrato. Cadastre em Licitações → Contratos."
-          rotuloNovo="—"
+          nota="Somente leitura. Contrato é cadastrado em Licitações → Contratos."
         />
 
+        {/* Posto é espelho da Planilha de Custo — sem criar/renomear/excluir.
+            A lista é sincronizada pela RPC a cada troca de contrato. */}
         <NivelCascata
           titulo="Posto"
           icone={MapPin}
-          itens={postos.map((p) => ({ id: p.id, nome: p.nome, aprovado: p.aprovado }))}
+          itens={postos.map((p) => ({
+            id: p.id,
+            nome: p.nome,
+            aprovado: p.aprovado,
+            alerta: p.na_planilha
+              ? undefined
+              : "A Planilha de Custo não declara mais este posto. Ele continua aqui porque tem função cadastrada.",
+          }))}
           selecionadoId={postoId}
           onSelecionar={selecionarPosto}
-          onCriar={(nome) =>
-            contrato && m.criarPosto.mutate({ contratoId: contrato.id, contratoNome: contrato.nome, nome })}
-          onRenomear={(it, nome) =>
-            m.renomearPosto.mutate({ id: it.id, nome, nomeAnterior: it.nome, contratoNome: ctx.contrato })}
-          onExcluir={(it) =>
-            m.excluirPosto.mutate({ id: it.id, nome: it.nome, contratoNome: ctx.contrato })}
           desabilitado={!contratoId}
-          mensagemVazio={contratoId ? "Nenhum posto neste contrato." : "Selecione um contrato."}
-          rotuloNovo="Novo posto"
+          mensagemVazio={
+            contratoId
+              ? "Nenhum posto na Planilha de Custo deste contrato."
+              : "Selecione um contrato."
+          }
+          nota="Somente leitura. Posto vem da Planilha de Custo (Licitações → Planilha de Custo)."
         />
 
         <NivelCascata

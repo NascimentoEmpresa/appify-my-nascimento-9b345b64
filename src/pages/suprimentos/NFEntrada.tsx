@@ -138,6 +138,11 @@ export default function NFEntrada() {
     if (file) await handleFile(file);
   };
 
+  const importarNotaSefaz = (xml: string) => {
+    setXmlContent(xml);
+    setOpenImport(true);
+  };
+
   const importar = async () => {
     if (!xmlContent) {
       toast.error("Selecione um XML");
@@ -418,7 +423,7 @@ export default function NFEntrada() {
         </TabsList>
 
         <TabsContent value="sefaz" className="pt-4">
-          <PainelNotasSefaz />
+          <PainelNotasSefaz onImportar={importarNotaSefaz} />
         </TabsContent>
 
         <TabsContent value="importadas" className="space-y-6 pt-4">
