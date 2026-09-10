@@ -323,9 +323,11 @@ export function useRemoverArquivo() {
 
 const BUCKET_PATRIMONIO = "sup-patrimonio";
 
+export type MotivoErroUrlDoArquivo = "nao_encontrado" | "sem_permissao" | "desconhecido";
+
 export type ResultadoUrlDoArquivo =
   | { url: string }
-  | { erro: string; motivo: "nao_encontrado" | "sem_permissao" | "desconhecido" };
+  | { erro: string; motivo: MotivoErroUrlDoArquivo };
 
 function extrairChaveDoBucket(caminho: string): string {
   const caminhoSemQuery = caminho.split(/[?#]/, 1)[0];
@@ -373,13 +375,15 @@ function repararMojibakeUtf8LidoComoLatin1(caminho: string): string {
   }
 }
 
-function motivoDoErroDeAssinatura(error: any): ResultadoUrlDoArquivo["motivo"] {
+function motivoDoErroDeAssinatura(error: any): MotivoErroUrlDoArquivo {
   const statusCode = error?.statusCode ?? error?.status;
   const mensagem = String(error?.message ?? "");
   if (statusCode === 401 || statusCode === 403 || /permission|authorized|policy|rls/i.test(mensagem)) {
     return "sem_permissao";
   }
-  if (statusCode === 404 || /not found|not exist|does not exist|resource not found/i.test(mensagem)) {
+  // O etl.mjs gravou a URL do servidor antigo na coluna `caminho`; o Storage
+  // a rejeita como key inválida (HTTP 400), o mesmo caso de anexo legado não migrado.
+  if (statusCode === 404 || /not found|not exist|does not exist|resource not found|invalid key|invalid.*key/i.test(mensagem)) {
     return "nao_encontrado";
   }
   return "desconhecido";
