@@ -6,7 +6,8 @@ import { usePermissoes } from "@/context/PermissoesContext";
 import { ESTADOS_BR, municipiosDe } from "@/data/municipios-brasil";
 import { ResumoDeFuncoes } from "@/components/fluxos/ResumoDeFuncoes";
 import {
-  MOTIVOS_VAGA, motivoLabel, ehSubstituicao, avaliarPrazo, dataMinimaVaga,
+  MOTIVOS_VAGA, motivoLabel, ehSubstituicao, maximoDeVagas, quantidadeValida,
+  avaliarPrazo, dataMinimaVaga,
   cargoExigeCnh, aplicarReqCnh, REQ_CNH_TEXTO, MIN_DIAS_UTEIS, fmtBr,
   rotuloReferencia, ajudaReferencia, mostraNomeReferencia, contratoDoEmpregado,
   SALARIO_MASCARA, substituidosComVagaViva, avisoSubstituidoPreso,
@@ -107,8 +108,8 @@ const ADV_RESET = {
 const VAGA_RESET = {
   motivo_vaga: "", administrativa: false, nome_substituido: "", contrato: "", cargo: "",
   estado: "", cidade: "", quantidade_vagas: "1", data_inicio_prevista: "",
-  escala: "", horario: "", salario: "", insalubridade_recebe: "Não",
-  insalubridade_quanto: "", beneficios: "", local_exato: "",
+  escala: "", salario: "", insalubridade_recebe: "Não", reserva_tecnica: "Não",
+  insalubridade_quanto: "", beneficios: "",
   grau_urgencia: "", alta_rotatividade: "Não", req_obrigatorios: "",
   req_desejaveis: "", exp_minima: "Não", exp_minima_qual: "",
   motivos_saida: "", recomendacao: "", observacao_importante: "",
@@ -421,7 +422,8 @@ export default function MinhasSolicitacoes({ abrir }: { abrir?: SolicitacaoInici
     if (!vagaValidar(1) || !vagaValidar(3)) return;
     const payload = {
       ...vaga,
-      quantidade_vagas: parseInt(vaga.quantidade_vagas) || 1,
+      quantidade_vagas: quantidadeValida(vaga.motivo_vaga, vaga.quantidade_vagas),
+      reserva_tecnica: vaga.reserva_tecnica === "Sim",
       // Grau e CNH saem das regras, não do que a pessoa digitou (o banco
       // recalcula os dois no trigger — aqui é só p/ a tela não mentir).
       grau_urgencia: prazo.grau ?? "",
@@ -440,7 +442,7 @@ export default function MinhasSolicitacoes({ abrir }: { abrir?: SolicitacaoInici
     let { error, data } = await (supabase as any).from("SISTEMA_RECRUTAMENTO").insert(payload).select("id").single();
     // Banco ainda sem as colunas novas: reenvia sem elas.
     if (error && /column|schema cache/i.test(error.message)) {
-      const { cnh_obrigatoria, substituido_id, administrativa, ...semColunasNovas } = payload as any;
+      const { cnh_obrigatoria, substituido_id, administrativa, reserva_tecnica, ...semColunasNovas } = payload as any;
       ({ error, data } = await (supabase as any).from("SISTEMA_RECRUTAMENTO").insert(semColunasNovas).select("id").single());
     }
     if (error) { toast("Erro ao solicitar vaga: " + error.message, "err"); return; }
@@ -982,7 +984,23 @@ export default function MinhasSolicitacoes({ abrir }: { abrir?: SolicitacaoInici
 
             {vagaStep === 2 && (<>
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-                <div className="ini-fg"><label>Quantidade de Vagas</label><input className="ini-fi" type="number" min={1} max={99} value={vaga.quantidade_vagas} onChange={e => setVaga(v => ({ ...v, quantidade_vagas: e.target.value }))} /></div>
+                {/* Substituição repõe UMA pessoa: a vaga aponta para um
+                    colaborador específico (substituido_id) e é esse id que
+                    trava a pessoa numa vaga só. O limite vem de maximoDeVagas,
+                    a mesma regra que o ModalNovaVaga usa. */}
+                <div className="ini-fg">
+                  <label>Quantidade de Vagas</label>
+                  <input className="ini-fi" type="number" min={1}
+                    max={maximoDeVagas(vaga.motivo_vaga)}
+                    value={ehSubstituicao(vaga.motivo_vaga) ? "1" : vaga.quantidade_vagas}
+                    disabled={ehSubstituicao(vaga.motivo_vaga)}
+                    onChange={e => setVaga(v => ({ ...v, quantidade_vagas: e.target.value }))} />
+                  {ehSubstituicao(vaga.motivo_vaga) && (
+                    <div style={{ marginTop: 4, fontSize: 11, color: "#64748b" }}>
+                      Substituição repõe uma pessoa por vez.
+                    </div>
+                  )}
+                </div>
                 <div className="ini-fg">
                   <label>Data de Início Prevista *</label>
                   <input className="ini-fi" type="date" min={dataMinimaVaga()} value={vaga.data_inicio_prevista}
@@ -990,10 +1008,9 @@ export default function MinhasSolicitacoes({ abrir }: { abrir?: SolicitacaoInici
                 </div>
               </div>
               <PrazoAviso prazo={prazo} />
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-                <div className="ini-fg"><label>Escala</label><input className="ini-fi" placeholder="Ex: 12x36, 5x2..." value={vaga.escala} onChange={e => setVaga(v => ({ ...v, escala: e.target.value }))} /></div>
-                <div className="ini-fg"><label>Horário</label><input className="ini-fi" placeholder="Ex: 07h às 19h..." value={vaga.horario} onChange={e => setVaga(v => ({ ...v, horario: e.target.value }))} /></div>
-              </div>
+              {/* Horário saiu: a escala do cadastro já traz a jornada dentro
+                  ("07:30-17:18 (1H)(08:48)"). */}
+              <div className="ini-fg"><label>Escala</label><input className="ini-fi" placeholder="Ex: 12x36, 5x2..." value={vaga.escala} onChange={e => setVaga(v => ({ ...v, escala: e.target.value }))} /></div>
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
                 {/* Salário: quem abre a vaga não vê o valor. Ele vem do cadastro
                     do colaborador escolhido e segue na solicitação — só o
@@ -1010,7 +1027,15 @@ export default function MinhasSolicitacoes({ abrir }: { abrir?: SolicitacaoInici
                 <div className="ini-fg"><label>Percentual de Insalubridade</label><input className="ini-fi" placeholder="Ex: 20%, 40%" value={vaga.insalubridade_quanto} onChange={e => setVaga(v => ({ ...v, insalubridade_quanto: e.target.value }))} /></div>
               )}
               <div className="ini-fg"><label>Benefícios</label><textarea className="ini-fi" rows={2} placeholder="VT, VR, Plano de Saúde..." value={vaga.beneficios} onChange={e => setVaga(v => ({ ...v, beneficios: e.target.value }))} /></div>
-              <div className="ini-fg"><label>Local Exato / Posto</label><input className="ini-fi" placeholder="Nome do posto ou endereço..." value={vaga.local_exato} onChange={e => setVaga(v => ({ ...v, local_exato: e.target.value }))} /></div>
+              {/* Local Exato / Posto saiu: o posto já vem do colaborador
+                  escolhido na etapa 1. */}
+              <div className="ini-fg">
+                <label>Essa é uma Vaga de Reserva Técnica (RT)?</label>
+                <select className="ini-fi" value={vaga.reserva_tecnica}
+                  onChange={e => setVaga(v => ({ ...v, reserva_tecnica: e.target.value }))}>
+                  <option>Não</option><option>Sim</option>
+                </select>
+              </div>
             </>)}
 
             {vagaStep === 3 && (<>
