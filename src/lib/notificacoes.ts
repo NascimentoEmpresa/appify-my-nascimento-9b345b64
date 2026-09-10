@@ -14,6 +14,16 @@
 
 export const TABELA = "SISTEMA_NOTIFICACOES";
 export const TABELA_CIENCIA = "SISTEMA_NOTIFICACAO_CIENCIA";
+export const TABELA_ALVO = "SISTEMA_NOTIFICACAO_ALVO";
+/**
+ * A imagem do aviso.
+ *
+ * Bucket público, como o das capas de BI: a imagem aparece dentro do aviso
+ * que para a tela de todo mundo, e URL assinada ali venceria justamente em
+ * quem deixou a aba aberta — imagem quebrada num aviso que trava a tela é o
+ * pior lugar para esse tipo de falha. Ver a migration 20260930000082.
+ */
+export const BUCKET_ANEXOS = "avisos-anexos";
 export const MENU_PUBLICAR = "novidades_publicar";
 /** A tela do Quadro de Avisos. Vale AO LADO de MENU_PUBLICAR, nunca no lugar. */
 export const MENU_QUADRO = "central_servicos_quadro_avisos";
@@ -47,7 +57,6 @@ export interface Notificacao {
   resumo: string | null;
   /** Depois disto o aviso some sozinho. NULL = não expira. */
   expira_em: string | null;
-  publico_alvo: string;
   anexo_url: string | null;
   anexo_nome: string | null;
   /** Precisa confirmar que leu? Desligado, é mural: aparece na lista e pronto. */
@@ -56,6 +65,20 @@ export interface Notificacao {
   bloquear_acesso: boolean;
   /** CONCORDO/DISCORDO (true) ou um "Estou ciente" só (false). */
   permitir_escolha: boolean;
+}
+
+/**
+ * Para quem é o aviso: setor OU pessoa, nunca os dois.
+ *
+ * Sem nenhuma linha, o aviso é de TODOS — restringir é o ato explícito. É o
+ * mesmo desenho dos links de BI, para que quem administra aprenda uma regra
+ * só (ver a migration 20260930000081).
+ */
+export interface AlvoNotificacao {
+  id: number;
+  notificacao_id: number;
+  setor: string | null;
+  user_id: string | null;
 }
 
 export interface CienciaNotificacao {
@@ -74,7 +97,14 @@ export interface FormNotificacao {
   resumo: string;
   /** "aaaa-mm-dd" do input date, ou vazio para "não expira". */
   expira_em: string;
-  publico_alvo: string;
+  /** URL da imagem do aviso. Vazio = aviso sem imagem. */
+  anexo_url: string;
+  /** Nome do arquivo que a pessoa subiu — a tela precisa de algo para mostrar. */
+  anexo_nome: string;
+  /** Setores que recebem o aviso. Vazio + sem pessoas = todo mundo. */
+  setores: string[];
+  /** Pessoas que recebem, por id do profile. */
+  usuarios: string[];
   exigir_ciencia: boolean;
   bloquear_acesso: boolean;
   permitir_escolha: boolean;
@@ -83,12 +113,22 @@ export interface FormNotificacao {
 /** Um aviso novo, em branco — o mesmo estado inicial em toda tela que cria. */
 export const FORM_VAZIO: FormNotificacao = {
   titulo: "", mensagem: "", publicado: true, categoria: "Comunicado", resumo: "",
-  expira_em: "", publico_alvo: "todos",
+  expira_em: "", anexo_url: "", anexo_nome: "", setores: [], usuarios: [],
   exigir_ciencia: true, bloquear_acesso: true, permitir_escolha: true,
 };
 
-/** Do banco para o formulário — o caminho de "Editar". */
-export function formDoAviso(n: Notificacao): FormNotificacao {
+/**
+ * Do banco para o formulário — o caminho de "Editar".
+ *
+ * Os alvos vêm à parte porque moram em outra tabela; quem chama passa o que
+ * já carregou. Sem eles o formulário abriria "para todos" e o SALVAR apagaria
+ * o recorte que o aviso tinha.
+ */
+export function formDoAviso(
+  n: Notificacao,
+  alvos: AlvoNotificacao[] = [],
+): FormNotificacao {
+  const meus = alvos.filter((a) => a.notificacao_id === n.id);
   return {
     id: n.id,
     titulo: n.titulo,
@@ -98,7 +138,10 @@ export function formDoAviso(n: Notificacao): FormNotificacao {
     resumo: n.resumo ?? "",
     // O input date só entende "aaaa-mm-dd"; o banco guarda timestamp.
     expira_em: n.expira_em ? n.expira_em.slice(0, 10) : "",
-    publico_alvo: n.publico_alvo ?? "todos",
+    anexo_url: n.anexo_url ?? "",
+    anexo_nome: n.anexo_nome ?? "",
+    setores: meus.filter((a) => a.setor).map((a) => a.setor as string),
+    usuarios: meus.filter((a) => a.user_id).map((a) => a.user_id as string),
     exigir_ciencia: n.exigir_ciencia,
     bloquear_acesso: n.bloquear_acesso,
     permitir_escolha: n.permitir_escolha,
