@@ -84,7 +84,11 @@ function soChave(texto: string): string {
   return texto.replace(/\D/g, "").slice(0, 44);
 }
 
-export function PainelNotasSefaz() {
+interface PainelNotasSefazProps {
+  onImportar: (xml: string) => void;
+}
+
+export function PainelNotasSefaz({ onImportar }: PainelNotasSefazProps) {
   const [aberta, setAberta] = useState<DocumentoSefaz | null>(null);
   const [busca, setBusca] = useState("");
 
@@ -239,10 +243,15 @@ export function PainelNotasSefaz() {
                   </TableCell>
                   <TableCell className="text-right">
                     {d.tipo === "completo" ? (
-                      <Button variant="ghost" size="sm" onClick={() => setAberta(d)}>
-                        <Eye className="mr-1.5 h-3.5 w-3.5" />
-                        Abrir
-                      </Button>
+                      <div className="flex justify-end gap-1">
+                        <Button variant="ghost" size="sm" onClick={() => setAberta(d)}>
+                          <Eye className="mr-1.5 h-3.5 w-3.5" />
+                          Abrir
+                        </Button>
+                        <Button variant="ghost" size="sm" onClick={() => d.xml && onImportar(d.xml)}>
+                          Importar
+                        </Button>
+                      </div>
                     ) : (
                       // Sem botão no resumo de propósito: não há o que abrir, e
                       // um botão que abre uma tela vazia parece defeito.
