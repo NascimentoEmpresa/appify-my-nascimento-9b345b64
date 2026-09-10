@@ -35,7 +35,7 @@ export function FotoDoBem({ bem, podeEditar = true }: { bem: Bem; podeEditar?: b
   const ocupado = salvar.isPending || remover.isPending;
   // Enquanto sobe, mostra a prévia local: o usuário vê o resultado na hora,
   // em vez de um vazio até o storage responder.
-  const mostrando = previa ?? resultadoUrl?.url ?? null;
+  const mostrando = previa ?? (resultadoUrl && "url" in resultadoUrl ? resultadoUrl.url : null);
 
   async function escolher(f: File | null) {
     if (!f) return;
