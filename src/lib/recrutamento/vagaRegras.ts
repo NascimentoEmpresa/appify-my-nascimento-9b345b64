@@ -39,6 +39,75 @@ export const maximoDeVagas = (motivo?: string | null): number =>
   ehSubstituicao(motivo) ? 1 : 99;
 
 /** A quantidade que realmente vai para o banco, já limitada pelo motivo. */
+// ── Recomendação ────────────────────────────────────────────────────────
+// "Você já tem recomendação para essa vaga?" — etapa 3. Dizendo que sim,
+// os três dados vêm juntos: nome, CPF e WhatsApp. Meia indicação (nome sem
+// telefone) não serve para ninguém ligar, e é exatamente o que um campo
+// opcional produz.
+
+/** Dígitos, sem máscara. É a forma que o banco guarda e que casa com EMPREGADOS. */
+export const soDigitos = (v?: string | null): string => String(v ?? "").replace(/\D/g, "");
+
+/** Máscara de digitação: 000.000.000-00. */
+export const maskCpf = (v?: string | null): string =>
+  soDigitos(v).slice(0, 11)
+    .replace(/(\d{3})(\d)/, "$1.$2")
+    .replace(/(\d{3})(\d)/, "$1.$2")
+    .replace(/(\d{3})(\d{1,2})$/, "$1-$2");
+
+/** CPF de verdade: tamanho, repetição e os dois dígitos verificadores. */
+export function cpfValido(v?: string | null): boolean {
+  const c = soDigitos(v);
+  if (c.length !== 11 || /^(\d)\1{10}$/.test(c)) return false;
+  let soma = 0;
+  for (let i = 0; i < 9; i++) soma += parseInt(c[i], 10) * (10 - i);
+  let d1 = 11 - (soma % 11); if (d1 >= 10) d1 = 0;
+  if (d1 !== parseInt(c[9], 10)) return false;
+  soma = 0;
+  for (let i = 0; i < 10; i++) soma += parseInt(c[i], 10) * (11 - i);
+  let d2 = 11 - (soma % 11); if (d2 >= 10) d2 = 0;
+  return d2 === parseInt(c[10], 10);
+}
+
+export interface RecomendacaoForm {
+  tem_recomendacao: string;   // "Sim" | "Não", que é o que o <select> devolve
+  recomendacao_nome: string;
+  recomendacao_cpf: string;
+  recomendacao_whatsapp: string;
+}
+
+/**
+ * O que impede de salvar, ou null se está tudo certo.
+ *
+ * Devolve a mensagem pronta para o toast em vez de um booleano: as duas telas
+ * que usam isto mostram o erro do mesmo jeito, e a frase é parte da regra —
+ * "informe o CPF" e "o CPF não confere" são problemas diferentes.
+ */
+export function erroDaRecomendacao(f: RecomendacaoForm): string | null {
+  if (f.tem_recomendacao !== "Sim") return null;
+  if (!f.recomendacao_nome.trim()) return "Informe o nome completo de quem você está indicando.";
+  if (f.recomendacao_nome.trim().length < 5) return "Escreva o nome COMPLETO de quem você está indicando.";
+  if (!f.recomendacao_cpf.trim()) return "Informe o CPF de quem você está indicando.";
+  if (!cpfValido(f.recomendacao_cpf)) return "O CPF da indicação não confere. Confira os números.";
+  const fone = soDigitos(f.recomendacao_whatsapp);
+  if (!fone) return "Informe o WhatsApp de quem você está indicando.";
+  if (fone.length < 10 || fone.length > 11) return "O WhatsApp da indicação está incompleto — informe com DDD.";
+  return null;
+}
+
+/** Os campos da indicação prontos para o banco: dígitos limpos, ou NULL se não há indicação. */
+export function recomendacaoParaBanco(f: RecomendacaoForm) {
+  const tem = f.tem_recomendacao === "Sim";
+  return {
+    tem_recomendacao: tem,
+    // Trocar "Sim" para "Não" tem que APAGAR o que já foi digitado: deixar
+    // o nome para trás com a flag falsa é a linha que ninguém entende depois.
+    recomendacao_nome: tem ? f.recomendacao_nome.trim() : null,
+    recomendacao_cpf: tem ? soDigitos(f.recomendacao_cpf) : null,
+    recomendacao_whatsapp: tem ? soDigitos(f.recomendacao_whatsapp) : null,
+  };
+}
+
 export const quantidadeValida = (motivo: string | null | undefined, digitado: string | number): number => {
   const n = typeof digitado === "number" ? digitado : parseInt(digitado, 10);
   const limpo = Number.isFinite(n) && n > 0 ? Math.floor(n) : 1;
