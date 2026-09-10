@@ -24,7 +24,7 @@ export function FotoDoBem({ bem, podeEditar = true }: { bem: Bem; podeEditar?: b
   const inputRef = useRef<HTMLInputElement>(null);
   const [previa, setPrevia] = useState<string | null>(null);
 
-  const { data: url } = useQuery({
+  const { data: resultadoUrl } = useQuery({
     queryKey: ["sup_patrimonio_foto", bem.foto_path],
     enabled: !!bem.foto_path,
     staleTime: 4 * 60_000,
@@ -35,7 +35,7 @@ export function FotoDoBem({ bem, podeEditar = true }: { bem: Bem; podeEditar?: b
   const ocupado = salvar.isPending || remover.isPending;
   // Enquanto sobe, mostra a prévia local: o usuário vê o resultado na hora,
   // em vez de um vazio até o storage responder.
-  const mostrando = previa ?? url ?? null;
+  const mostrando = previa ?? resultadoUrl?.url ?? null;
 
   async function escolher(f: File | null) {
     if (!f) return;
