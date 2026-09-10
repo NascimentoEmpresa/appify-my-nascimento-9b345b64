@@ -92,6 +92,16 @@ export function GateNotificacoes() {
         </div>
 
         <div className="max-h-[50vh] overflow-y-auto px-5 py-4">
+          {/* A imagem vem ANTES do texto: quando o aviso é um cartaz, ela é o
+              aviso, e o texto é a legenda. `object-contain` porque cartaz
+              cortado no meio deixa de comunicar o que veio comunicar. */}
+          {atual.anexo_url && (
+            <img
+              src={atual.anexo_url}
+              alt={atual.anexo_nome ?? ""}
+              className="mb-3 max-h-64 w-full rounded-lg border object-contain"
+            />
+          )}
           {/* `whitespace-pre-wrap`: quem escreve o aviso usa parágrafo e
               lista, e sem isto tudo virava um bloco único de texto. */}
           <p className="whitespace-pre-wrap text-sm leading-relaxed">{atual.mensagem}</p>

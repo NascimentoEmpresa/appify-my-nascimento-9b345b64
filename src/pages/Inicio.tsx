@@ -8,7 +8,7 @@ import { ACESSO_ABERTO_SEM_PERMISSOES, rotaSempreLiberada } from "@/lib/acesso";
 import { NAV_MODULOS } from "@/components/layout/Sidebar";
 import { MinhasReunioesCard } from "@/pages/central-servicos/reunioes/componentes/MinhasReunioesCard";
 import { AniversariantesCard } from "@/components/aniversarios/AniversariantesCard";
-import { NovidadesPainel } from "@/components/novidades/NovidadesPainel";
+import { AvisosCard } from "@/components/notificacoes/AvisosCard";
 import fachadaImg from "@/assets/fachada.jpg";
 import {
   CircleUserRound, Megaphone, Quote, Star, Search,
@@ -367,18 +367,17 @@ export default function Inicio() {
         </div>
       </header>
 
-      {/* ═══════ Corpo: o trabalho à esquerda, o recado à direita ════════ */}
-      {/* Favoritos e Reuniões são o que a pessoa VEM fazer; Novidades é o que
-          a empresa tem a DIZER. Lado a lado, o recado fica à vista o tempo
-          todo sem empurrar os atalhos para baixo da dobra.
+      {/* ═══════ Corpo: o trabalho à esquerda, as pessoas à direita ══════ */}
+      {/* Favoritos e Reuniões são o que a pessoa VEM fazer; o recado da
+          empresa desceu para o Quadro de Avisos, no fim desta coluna.
 
-          A ordem aqui no HTML é Novidades PRIMEIRO de propósito: é ela que
-          sobe quando a grade cai para uma coluna só, abaixo de 1100px —
-          novidade só vale enquanto é novidade. Na largura cheia o `order`
-          do CSS devolve o painel para a direita, sem markup duplicado. */}
+          NOVIDADES SAIU DAQUI (09/09/2026), a pedido: o changelog do ERP tem
+          menu próprio lá em cima ("Novidades do Sistema") e ocupava a coluna
+          inteira todo dia, mesmo sem nada novo. Quem quer ver, abre. O que
+          fica à vista agora é o que interessa ao dia: aniversário e aviso. */}
       <div className="ini-colunas">
         <aside className="ini-col-lado" data-reveal>
-          <NovidadesPainel limite={4} />
+          {!externo && <AniversariantesCard />}
         </aside>
 
         <div className="ini-col-principal">
@@ -478,18 +477,17 @@ export default function Inicio() {
             </div>
           )}
 
-          {/* ═════════════════════ Aniversariantes ══════════════════════ */}
-          {/* Fica por último de propósito: quem abre o ERP vem trabalhar, e o
-              atalho tem que estar acima da dobra — os parabéns esperam a
-              rolagem.
+          {/* ═════════════════════ Quadro de Avisos ═════════════════════ */}
+          {/* O MURAL, não o gate: o aviso que exige resposta continua vindo
+              por cima de tudo (GateNotificacoes, no layout do /app). Aqui
+              ficam os que já foram respondidos e os que nunca pediram
+              ciência — "quando mesmo era o prazo?" é a pergunta que este
+              bloco responde.
 
-              Some sozinho quando não há ninguém hoje nem nos próximos dias.
-              Por isso NÃO vai dentro de [data-reveal]: o observer da tela roda
-              uma vez na montagem, e um bloco que aparece depois ficaria preso
-              em opacity:0. Fora do modo externo pelo mesmo motivo das reuniões:
-              encarregado de obra não tem cadastro vinculado, então a lista
-              chegaria vazia de qualquer jeito. */}
-          {!externo && <AniversariantesCard />}
+              Some sozinho quando não há aviso vigente, e por isso NÃO vai
+              dentro de [data-reveal]: o observer roda uma vez na montagem, e
+              um bloco que aparece depois ficaria preso em opacity:0. */}
+          <AvisosCard />
         </div>
       </div>
     </div>
@@ -770,13 +768,38 @@ const CSS_INICIO = `
   font-size:.85rem;opacity:.5;padding:2px;transition:opacity .2s,transform .2s;}
 .ini-reuniao-remover:hover{opacity:1;transform:scale(1.15);}
 
+/* ─────────────────────── Quadro de Avisos ─────────────────────── */
+.ini-link-mais{display:inline-flex;align-items:center;gap:6px;font-size:.78rem;font-weight:700;
+  color:#1d4ed8;text-decoration:none;}
+.ini-link-mais:hover{text-decoration:underline;}
+.ini-avisos{list-style:none;margin:14px 0 0;padding:0;display:flex;flex-direction:column;gap:8px;}
+.ini-aviso{display:flex;align-items:center;gap:12px;padding:11px 13px;border:1px solid #e8eef5;
+  border-radius:12px;background:#fff;transition:border-color .2s,box-shadow .2s;}
+.ini-aviso:hover{border-color:#cfe0f5;box-shadow:0 6px 18px rgba(15,23,42,.06);}
+.ini-aviso-ic{display:grid;place-items:center;width:34px;height:34px;border-radius:10px;flex-shrink:0;}
+.ini-aviso-tx{display:flex;flex-direction:column;gap:2px;min-width:0;flex:1;}
+.ini-aviso-tx strong{font-size:.82rem;font-weight:700;color:#0f172a;}
+/* Uma linha só: o resumo é a chamada, o conteúdo inteiro está na tela do
+   Quadro. Cortar no CSS e não por JS evita cortar no meio da palavra. */
+.ini-aviso-tx span{font-size:.78rem;color:#64748b;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.ini-aviso-meta{display:flex;align-items:center;gap:10px;flex-shrink:0;}
+.ini-aviso-meta time{font-size:.74rem;color:#94a3b8;}
+.ini-aviso-cat{font-size:.68rem;font-weight:700;padding:3px 9px;border-radius:999px;white-space:nowrap;}
+
+@media (max-width:700px){
+  /* Em tela estreita a data e a tarja empurrariam o título para duas letras
+     por linha; elas descem para baixo do texto. */
+  .ini-aviso{flex-wrap:wrap;}
+  .ini-aviso-meta{width:100%;padding-left:46px;}
+}
+
 /* ─────────────────────── reveal no scroll ─────────────────────── */
 [data-reveal]{opacity:0;transform:translateY(22px);
   transition:opacity .6s cubic-bezier(.16,1,.3,1),transform .6s cubic-bezier(.16,1,.3,1);}
 [data-reveal].is-in{opacity:1;transform:none;}
 
 /* Abaixo de 1100px a coluna da direita só espreme os cartões de atalho:
-   vira uma coluna só, com Novidades de volta no topo. */
+   vira uma coluna só, com os aniversariantes no topo. */
 @media (max-width:1100px){
   .ini-colunas{grid-template-columns:minmax(0,1fr);}
   .ini-col-lado{order:0;margin-bottom:22px;}
