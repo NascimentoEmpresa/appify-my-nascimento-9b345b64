@@ -116,7 +116,10 @@ export const CSS_NOVIDADES = `
   box-shadow:0 18px 44px rgba(15,23,42,.18);
   transform-origin:top right;animation:nov-abre .22s cubic-bezier(.16,1,.3,1);}
 @keyframes nov-abre{from{opacity:0;transform:scale(.96) translateY(-6px)}to{opacity:1;transform:none}}
-.nov-pop .nov-lista{max-height:60vh;overflow-y:auto;}
+/* Espaço pras 4 novidades do resumo aparecerem inteiras (a descrição não é
+   truncada — quem quer o histórico todo vai em "Ver todas"). Scroll fica só
+   como rede de segurança em tela baixa. */
+.nov-pop .nov-lista{max-height:min(72vh,620px);overflow-y:auto;}
 
 /* ─────────────────────────────── modal ──────────────────────────────── */
 .nov-ov{position:fixed;inset:0;z-index:700;background:rgba(15,23,42,.45);backdrop-filter:blur(4px);
