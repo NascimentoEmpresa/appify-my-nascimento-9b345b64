@@ -1,7 +1,7 @@
 import { useEffect, useState, useCallback } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { ESTADOS_BR, municipiosDe } from "@/data/municipios-brasil";
-import logoGN from "@/assets/logo-grupo-nascimento.png";
+import arcoNascimento from "@/assets/logo-nascimento-icon.png";
 import { TrendingUp, Users, MapPin, Search, Inbox, CheckCircle2, Paperclip, Building2 } from "lucide-react";
 
 // =====================================================================
@@ -330,7 +330,7 @@ export default function Vagas() {
         .pv-nav{position:sticky;top:0;z-index:30;background:rgba(255,255,255,.85);backdrop-filter:blur(12px);border-bottom:1px solid #eef2f7}
         .pv-nav-in{max-width:1100px;margin:0 auto;padding:13px 22px;display:flex;align-items:center;justify-content:space-between;gap:12px}
         .pv-brand{display:flex;align-items:center;gap:11px;cursor:pointer}
-        .pv-logo{height:42px;width:42px;border-radius:11px;background:#0f3171;display:grid;place-items:center;padding:7px;flex-shrink:0}
+        .pv-logo{height:42px;width:42px;border-radius:11px;background:#0f3171;display:grid;place-items:center;padding:4px;flex-shrink:0}
         .pv-logo img{height:100%;width:100%;object-fit:contain}
         .pv-brand .nm{font-weight:800;font-size:15px;line-height:1.1}
         .pv-brand .sb{font-size:10px;text-transform:uppercase;letter-spacing:.18em;color:#94a3b8}
@@ -429,7 +429,7 @@ export default function Vagas() {
       <nav className="pv-nav">
         <div className="pv-nav-in">
           <div className="pv-brand" onClick={voltarInicio}>
-            <div className="pv-logo"><img src={logoGN} alt="Grupo Nascimento" /></div>
+            <div className="pv-logo"><img src={arcoNascimento} alt="Grupo Nascimento" /></div>
             <div><div className="nm">Grupo Nascimento</div><div className="sb">Trabalhe Conosco</div></div>
           </div>
           {naLanding
@@ -569,7 +569,7 @@ export default function Vagas() {
       <footer className="pv-foot">
         <div className="pv-foot-in">
           <div style={{ display: "flex", alignItems: "center", gap: 11 }}>
-            <div className="pv-logo" style={{ background: "rgba(255,255,255,.1)" }}><img src={logoGN} alt="" /></div>
+            <div className="pv-logo" style={{ background: "rgba(255,255,255,.1)" }}><img src={arcoNascimento} alt="" /></div>
             <div className="nm">Grupo Nascimento</div>
           </div>
           <div className="cp">© {new Date().getFullYear()} Grupo Nascimento · Todos os direitos reservados</div>
