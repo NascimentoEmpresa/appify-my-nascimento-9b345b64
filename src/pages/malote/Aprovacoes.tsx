@@ -21,6 +21,7 @@ import {
   useContratosAtivos,
   useClassificacaoIdsPorDespesaRateio,
   useEmpresaPrimeiraLinhaRateio,
+  useContratoPrimeiraLinhaRateio,
   nomesAprovadorNivel,
   souAprovadorDoNivel,
   STATUS_LABEL,
@@ -274,6 +275,13 @@ export default function Aprovacoes({ base = "/app/malote" }: { base?: string } =
   const { data: empresaPrimeiraLinhaPorDespesa } = useEmpresaPrimeiraLinhaRateio(despesaIdsTodos);
   function empresaIdResolvida(despesa: MaloteDespesaRow): string | null {
     return empresaPrimeiraLinhaPorDespesa?.get(despesa.id) ?? despesa.empresa_id ?? null;
+  }
+  // DM-2026-0515: contrato pode estar só na linha do rateio (SIS-2026-0341) —
+  // a coluna mostrava só a empresa. Prefere o contrato da despesa; cai pro da
+  // 1ª linha do rateio quando não tem no nível da despesa.
+  const { data: contratoPrimeiraLinhaPorDespesa } = useContratoPrimeiraLinhaRateio(despesaIdsTodos);
+  function contratoIdResolvido(despesa: MaloteDespesaRow): string | null {
+    return despesa.contrato_id ?? contratoPrimeiraLinhaPorDespesa?.get(despesa.id) ?? null;
   }
   const { data: classificacoesTodas = [] } = useClassificacoesOrcamentoAdmin();
   const classificacaoPorId = useMemo(
@@ -887,7 +895,7 @@ export default function Aprovacoes({ base = "/app/malote" }: { base?: string } =
                     item={item}
                     empresaId={empresaIdResolvida(item.despesa)}
                     nomeEmpresa={empresasMap.get(empresaIdResolvida(item.despesa) ?? "")}
-                    nomeContrato={item.despesa.contrato_id ? contratosMap.get(item.despesa.contrato_id) : undefined}
+                    nomeContrato={contratosMap.get(contratoIdResolvido(item.despesa) ?? "")}
                     aprovadorNomes={aprovadorNomes}
                     onAbrir={() => abrirItem(item.despesa)}
                   />

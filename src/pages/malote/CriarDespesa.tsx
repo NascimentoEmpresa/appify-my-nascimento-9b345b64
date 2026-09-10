@@ -8,7 +8,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { SearchableSelect } from "@/components/ui/searchable-select";
-import { LayoutGrid, Package, Lock, ShoppingCart, ArrowLeft } from "lucide-react";
+import { LayoutGrid, Package, Lock, ShoppingCart, ArrowLeft, Paperclip, ExternalLink } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { useEmpresaId } from "@/hooks/useEmpresaId";
@@ -26,6 +26,7 @@ import {
   STATUS_LABEL,
   ItemSolicitacao,
 } from "@/hooks/useMaloteDespesa";
+import { abrirAnexoMalote } from "@/hooks/useMaloteCotacao";
 import { ItensSolicitacao } from "@/components/malote/ItensSolicitacao";
 import { AnexosField } from "./AnexosField";
 import { Campo, PainelDespesaMalote, PainelHeader, PrefillDespesa } from "./PainelDespesaMalote";
@@ -258,7 +259,27 @@ function ConverterSolicitacaoEmDespesa({ solicitacaoId }: { solicitacaoId: strin
               <Campo label="Descrição" valor={solicitacao.descricao} />
               <div className="grid grid-cols-2 gap-4">
                 <Campo label="Valor estimado" valor={Number(solicitacao.valor_total).toLocaleString("pt-BR", { style: "currency", currency: "BRL" })} />
-                <Campo label="Link(s)" valor={solicitacao.links} />
+                <div>
+                  <p className="text-xs text-muted-foreground">Link(s)</p>
+                  {solicitacao.links ? (
+                    <div className="space-y-0.5">
+                      {solicitacao.links.split(/[\s,;]+/).filter(Boolean).map((url) => (
+                        <a
+                          key={url}
+                          href={url}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="flex items-start gap-1 text-xs text-primary hover:underline break-all"
+                        >
+                          <ExternalLink className="h-3 w-3 shrink-0 mt-0.5" />
+                          <span className="break-all">{url}</span>
+                        </a>
+                      ))}
+                    </div>
+                  ) : (
+                    <p>—</p>
+                  )}
+                </div>
               </div>
               <div className="grid grid-cols-2 gap-4">
                 <Campo label="Tipo" valor={solicitacao.tipo ? TIPO_SOLICITACAO_LABEL[solicitacao.tipo] : null} />
@@ -293,7 +314,62 @@ function ConverterSolicitacaoEmDespesa({ solicitacaoId }: { solicitacaoId: strin
               {solicitacao.arquivos.length > 0 && (
                 <div>
                   <p className="text-xs text-muted-foreground mb-1">Arquivos anexados</p>
-                  <p className="text-xs">{solicitacao.arquivos.length} arquivo(s)</p>
+                  <div className="space-y-0.5">
+                    {solicitacao.arquivos.map((path) => (
+                      <button
+                        key={path}
+                        type="button"
+                        onClick={() => abrirAnexoMalote(path)}
+                        className="flex items-center gap-1 text-xs text-primary hover:underline"
+                      >
+                        <Paperclip className="h-3 w-3 shrink-0" />
+                        <span className="truncate max-w-[280px]">{path.split("/").pop()}</span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+              {/* Cotação do Suprimentos: link + anexo de cada cotação recebida
+                  (pedido da galera — antes o criador não conseguia abrir). */}
+              {([1, 2, 3] as const)
+                .map((n) => ({
+                  n,
+                  fornecedor: solicitacao[`cot${n}_fornecedor`],
+                  link: solicitacao[`cot${n}_link`],
+                  anexoPath: solicitacao[`cot${n}_anexo_path`],
+                  anexoNome: solicitacao[`cot${n}_anexo_nome`],
+                }))
+                .filter((c) => c.fornecedor && (c.link || c.anexoPath)).length > 0 && (
+                <div>
+                  <p className="text-xs text-muted-foreground mb-1">Cotações (Suprimentos)</p>
+                  <div className="space-y-1">
+                    {([1, 2, 3] as const)
+                      .map((n) => ({
+                        n,
+                        fornecedor: solicitacao[`cot${n}_fornecedor`],
+                        link: solicitacao[`cot${n}_link`],
+                        anexoPath: solicitacao[`cot${n}_anexo_path`],
+                        anexoNome: solicitacao[`cot${n}_anexo_nome`],
+                      }))
+                      .filter((c) => c.fornecedor && (c.link || c.anexoPath))
+                      .map((c) => (
+                        <div key={c.n} className="flex flex-wrap items-center gap-x-3 gap-y-0.5 text-xs">
+                          <span className={cn("font-medium", solicitacao.cotacao_vencedor_num === c.n && "text-emerald-600 dark:text-emerald-400")}>
+                            {c.fornecedor}
+                          </span>
+                          {c.link && (
+                            <a href={c.link} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-primary hover:underline">
+                              <ExternalLink className="h-3 w-3" /> Ver link
+                            </a>
+                          )}
+                          {c.anexoPath && (
+                            <button type="button" onClick={() => abrirAnexoMalote(c.anexoPath!)} className="inline-flex items-center gap-1 text-primary hover:underline">
+                              <Paperclip className="h-3 w-3" /> {c.anexoNome || "Abrir anexo"}
+                            </button>
+                          )}
+                        </div>
+                      ))}
+                  </div>
                 </div>
               )}
             </div>

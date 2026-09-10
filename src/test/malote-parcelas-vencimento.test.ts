@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { gerarParcelas } from "@/hooks/useMaloteDespesa";
+import { gerarParcelas, mesclarDatasParcelas, validarOrdemParcelas } from "@/hooks/useMaloteDespesa";
 
 // SIS-2026-0259 (Iury): a parcela 1 vence na data de pagamento escolhida no
 // lançamento, não no dia do desconto — só as parcelas seguintes caem no dia
@@ -24,12 +24,16 @@ describe("gerarParcelas", () => {
     expect(parcelas[1].data_vencimento).toBe("2026-09-28");
   });
 
-  it("numera as parcelas sequencialmente e faz a última absorver o resto de arredondamento", () => {
+  // SIS-2026-0361 (Iury): parcela não dilui — replica o valor cheio.
+  it("numera as parcelas sequencialmente e replica o valor total em todas (não dilui)", () => {
     const parcelas = gerarParcelas(100, 3, "2026-01-31", 15);
     expect(parcelas.map((p) => p.numero_parcela)).toEqual([1, 2, 3]);
-    expect(parcelas[0].valor).toBe(33.33);
-    expect(parcelas[1].valor).toBe(33.33);
-    expect(parcelas[2].valor).toBe(33.34);
+    expect(parcelas.map((p) => p.valor)).toEqual([100, 100, 100]);
+  });
+
+  it("valor com centavos é replicado igual em todas as parcelas", () => {
+    const parcelas = gerarParcelas(39.95, 4, "2026-02-10", 10);
+    expect(parcelas.map((p) => p.valor)).toEqual([39.95, 39.95, 39.95, 39.95]);
   });
 
   it("retorna lista vazia quando o número de parcelas é zero ou negativo", () => {
@@ -92,5 +96,66 @@ describe("gerarParcelas", () => {
     // dez/2060; só confere que a data continua íntegra (YYYY-MM-DD) e não
     // estoura/quebra com um número alto de parcelas.
     expect(parcelas[419].data_vencimento).toBe("2060-12-15");
+  });
+});
+
+// SIS-2026-0361 (Iury): "tem boletos que a data não é a mesma todo mês" — o
+// cronograma linear vira sugestão; o usuário pode fixar datas de parcelas
+// específicas na mão.
+describe("mesclarDatasParcelas", () => {
+  const base = gerarParcelas(300, 3, "2026-08-28", 8); // 28/08, 08/09, 08/10
+
+  it("sem datas manuais, devolve o cronograma intacto", () => {
+    expect(mesclarDatasParcelas(base, {})).toEqual(base);
+  });
+
+  it("substitui só a data das parcelas informadas, sem tocar valor nem número", () => {
+    const out = mesclarDatasParcelas(base, { 2: "2026-09-15" });
+    expect(out[1].data_vencimento).toBe("2026-09-15");
+    expect(out[1].valor).toBe(base[1].valor);
+    expect(out[1].numero_parcela).toBe(2);
+    expect(out[0].data_vencimento).toBe("2026-08-28");
+    expect(out[2].data_vencimento).toBe("2026-10-08");
+  });
+
+  it("data manual entra exata, sem passar pelo ajuste de fim de semana", () => {
+    // 2026-09-12 é sábado — fica como está, é a data que a pessoa digitou.
+    const out = mesclarDatasParcelas(base, { 2: "2026-09-12" });
+    expect(out[1].data_vencimento).toBe("2026-09-12");
+  });
+});
+
+describe("validarOrdemParcelas", () => {
+  it("aceita parcelas em ordem crescente, mesmo com dia do mês variando", () => {
+    const ps = [
+      { numero_parcela: 1, valor: 100, data_vencimento: "2026-08-28" },
+      { numero_parcela: 2, valor: 100, data_vencimento: "2026-09-05" },
+      { numero_parcela: 3, valor: 100, data_vencimento: "2026-10-03" },
+    ];
+    expect(validarOrdemParcelas(ps)).toBeNull();
+  });
+
+  it("rejeita parcela que vence antes da anterior", () => {
+    const ps = [
+      { numero_parcela: 1, valor: 100, data_vencimento: "2026-08-28" },
+      { numero_parcela: 2, valor: 100, data_vencimento: "2026-08-20" },
+    ];
+    expect(validarOrdemParcelas(ps)).toMatch(/parcela 2/);
+  });
+
+  it("rejeita datas iguais em parcelas consecutivas", () => {
+    const ps = [
+      { numero_parcela: 1, valor: 100, data_vencimento: "2026-08-28" },
+      { numero_parcela: 2, valor: 100, data_vencimento: "2026-08-28" },
+    ];
+    expect(validarOrdemParcelas(ps)).not.toBeNull();
+  });
+
+  it("rejeita data vazia", () => {
+    const ps = [
+      { numero_parcela: 1, valor: 100, data_vencimento: "2026-08-28" },
+      { numero_parcela: 2, valor: 100, data_vencimento: "" },
+    ];
+    expect(validarOrdemParcelas(ps)).toMatch(/Informe a data da parcela 2/);
   });
 });

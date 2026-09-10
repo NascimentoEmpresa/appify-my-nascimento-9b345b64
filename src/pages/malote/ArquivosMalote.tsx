@@ -28,6 +28,7 @@ import {
   useEmpresasGrupo,
   useContratosAtivos,
   useEmpresaPrimeiraLinhaRateio,
+  useContratoPrimeiraLinhaRateio,
   useClassificacaoPrimeiraLinhaRateio,
   MaloteDespesaRow,
   ItemLinhaMalote,
@@ -124,8 +125,13 @@ export default function ArquivosMalote() {
   const despesaIds = useMemo(() => Array.from(new Set(todosItens.map((i) => i.despesa.id))), [todosItens]);
   const { data: empresaPrimeiraLinhaPorDespesa } = useEmpresaPrimeiraLinhaRateio(despesaIds);
   const { data: classificacaoPrimeiraLinhaPorDespesa } = useClassificacaoPrimeiraLinhaRateio(despesaIds);
+  const { data: contratoPrimeiraLinhaPorDespesa } = useContratoPrimeiraLinhaRateio(despesaIds);
   function empresaIdResolvida(despesa: MaloteDespesaRow): string | null {
     return empresaPrimeiraLinhaPorDespesa?.get(despesa.id) ?? despesa.empresa_id ?? null;
+  }
+  // DM-2026-0515: contrato pode estar só na linha do rateio.
+  function contratoIdResolvido(despesa: MaloteDespesaRow): string | null {
+    return despesa.contrato_id ?? contratoPrimeiraLinhaPorDespesa?.get(despesa.id) ?? null;
   }
   // SIS-2026-0335: setor_responsavel virou lista (mais de um setor por
   // Classificação) — filtro/opções passam a considerar QUALQUER um dos
@@ -229,7 +235,7 @@ export default function ArquivosMalote() {
           d.classificacao?.nome ?? "",
           setoresResolvidos(d).join(", "),
           empresasMap.get(empresaIdResolvida(d) ?? "") ?? "",
-          d.contrato_id ? contratosMap.get(d.contrato_id) ?? "" : "",
+          contratosMap.get(contratoIdResolvido(d) ?? "") ?? "",
           Number(valor).toFixed(2).replace(".", ","),
           dataPagamento ?? "",
           (d.arquivos ?? []).map(linkAssinado).join(" | "),
@@ -367,7 +373,7 @@ export default function ArquivosMalote() {
                     item={item}
                     setores={setoresResolvidos(item.despesa)}
                     empresaNome={empresasMap.get(empresaIdResolvida(item.despesa) ?? "")}
-                    nomeContrato={item.despesa.contrato_id ? contratosMap.get(item.despesa.contrato_id) : undefined}
+                    nomeContrato={contratosMap.get(contratoIdResolvido(item.despesa) ?? "")}
                   />
                 ))}
               </TableBody>

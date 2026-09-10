@@ -13,6 +13,8 @@ import { ConfirmacaoMalote } from "@/components/malote/ConfirmacaoMalote";
 import {
   buscarNumeroDespesa,
   gerarParcelas,
+  mesclarDatasParcelas,
+  validarOrdemParcelas,
   NovaParcela,
   OrigemDespesa,
   RateioLinha,
@@ -171,6 +173,9 @@ export function PainelDespesaMalote({
   const [parcelado, setParcelado] = useState<"nao" | "sim">("nao");
   const [diaDesconto, setDiaDesconto] = useState("");
   const [quantidadeParcelas, setQuantidadeParcelas] = useState("");
+  // SIS-2026-0361: datas de parcela fixadas na mão (numero_parcela → "YYYY-MM-DD").
+  // Zeradas sempre que dia/qtd/valor/data mudam — a edição manual é o último passo.
+  const [datasManuais, setDatasManuais] = useState<Record<number, string>>({});
   const [arquivos, setArquivos] = useState<File[]>([]);
   const [salvando, setSalvando] = useState<"rascunho" | "enviar" | null>(null);
 
@@ -222,6 +227,32 @@ export function PainelDespesaMalote({
   const exigeExcecao = !!dataPagamento && !!prazoNormal && dataPagamento < prazoNormal;
   const hoje = useMemo(() => new Date().toLocaleDateString("sv-SE"), []);
 
+  // SIS-2026-0361: sugere o Dia do desconto a partir da Data de pagamento
+  // (dia do mês dela; 31 vira 30, teto do Select). Só quando ainda está vazio
+  // — não sobrescreve escolha do usuário.
+  useEffect(() => {
+    if (dataPagamento && !diaDesconto) {
+      setDiaDesconto(String(Math.min(Number(dataPagamento.slice(8, 10)), 30)));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dataPagamento]);
+
+  // SIS-2026-0361: qualquer mudança estrutural regenera o cronograma do zero
+  // e descarta as datas editadas na mão (decisão confirmada com o usuário).
+  useEffect(() => {
+    setDatasManuais({});
+  }, [diaDesconto, quantidadeParcelas, totalMes, dataPagamento]);
+
+  const parcelasPreview = useMemo(() => {
+    if (parcelado !== "sim" || !diaDesconto || !quantidadeParcelas || !dataPagamento) return [];
+    const n = Number(quantidadeParcelas);
+    if (!Number.isInteger(n) || n < QUANTIDADE_PARCELAS_MIN || n > QUANTIDADE_PARCELAS_MAX) return [];
+    return mesclarDatasParcelas(
+      gerarParcelas(Number(totalMes) || 0, n, dataPagamento, Number(diaDesconto)),
+      datasManuais,
+    );
+  }, [parcelado, diaDesconto, quantidadeParcelas, dataPagamento, totalMes, datasManuais]);
+
   function validar(paraEnviar: boolean): string | null {
     if (!nome.trim()) return "Informe o nome da despesa.";
     if (!totalMes || Number(totalMes) <= 0) return "Informe o total do mês.";
@@ -247,6 +278,8 @@ export function PainelDespesaMalote({
         if (!Number.isInteger(n) || n < QUANTIDADE_PARCELAS_MIN || n > QUANTIDADE_PARCELAS_MAX) {
           return `Quantidade de parcelas deve ser entre ${QUANTIDADE_PARCELAS_MIN} e ${QUANTIDADE_PARCELAS_MAX}.`;
         }
+        const erroOrdem = validarOrdemParcelas(parcelasPreview);
+        if (erroOrdem) return erroOrdem;
       }
       if (pagamentoSoAnexo && arquivos.length === 0) return "Anexe ao menos um arquivo (Pagamento só por anexo está marcado).";
     }
@@ -266,10 +299,7 @@ export function PainelDespesaMalote({
     }
     setSalvando(acao);
     try {
-      const parcelas =
-        parcelado === "sim" && diaDesconto && quantidadeParcelas
-          ? gerarParcelas(Number(totalMes), Number(quantidadeParcelas), dataPagamento, Number(diaDesconto))
-          : [];
+      const parcelas = parcelado === "sim" ? parcelasPreview : [];
 
       const payloadBase: PayloadPainelDespesaMalote = {
         empresa_id: empresaId,
@@ -381,7 +411,7 @@ export function PainelDespesaMalote({
       if (!despesaIdExistente) {
         setNome(""); setTotalMes(""); setDataPagamento(""); setCompetencia(""); setFormaPagamento("");
         setInformacoesPagamento(""); setPagamentoSoAnexo(false); setLinhasRateio([]); setParcelado("nao"); setDiaDesconto("");
-        setQuantidadeParcelas(""); setArquivos([]);
+        setQuantidadeParcelas(""); setArquivos([]); setDatasManuais({});
       }
     } catch (e: unknown) {
       toast.error(e instanceof Error ? e.message : "Erro ao salvar despesa.");
@@ -422,8 +452,17 @@ export function PainelDespesaMalote({
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div>
-              <Label>Total do mês *</Label>
+              {/* SIS-2026-0361: parcelado replica este valor em cada parcela
+                  (não dilui) — o rótulo deixa isso explícito. */}
+              <Label>{parcelado === "sim" ? "Valor de cada parcela *" : "Total do mês *"}</Label>
               <Input type="number" step="0.01" value={totalMes} onChange={(e) => setTotalMes(e.target.value)} placeholder="Ex: R$ 5.000,00" disabled={!ativo || !!aoSalvar} />
+              {parcelado === "sim" && Number(totalMes) > 0 && Number(quantidadeParcelas) >= QUANTIDADE_PARCELAS_MIN && (
+                <p className="text-[11px] text-muted-foreground mt-1">
+                  Compromisso total: {quantidadeParcelas}× de{" "}
+                  {Number(totalMes).toLocaleString("pt-BR", { style: "currency", currency: "BRL" })} ={" "}
+                  {(Number(totalMes) * Number(quantidadeParcelas)).toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}
+                </p>
+              )}
             </div>
             <div>
               <Label>Data de pagamento *</Label>
@@ -503,6 +542,7 @@ export function PainelDespesaMalote({
                     <SelectTrigger><SelectValue placeholder="Selecione o dia" /></SelectTrigger>
                     <SelectContent>{DIAS_MES.map((d) => <SelectItem key={d} value={String(d)}>{d}</SelectItem>)}</SelectContent>
                   </Select>
+                  <p className="text-[11px] text-muted-foreground mt-1">Sugerido pela Data de pagamento — vale pras parcelas 2 em diante.</p>
                 </div>
                 <div>
                   <Label>Quantidade de parcelas *</Label>
@@ -517,6 +557,55 @@ export function PainelDespesaMalote({
                     disabled={!ativo}
                   />
                 </div>
+                {/* SIS-2026-0361: cronograma editável — parcela 1 travada na
+                    Data de pagamento, demais ajustáveis quando o boleto foge
+                    do Dia do desconto. */}
+                {parcelasPreview.length > 0 && (
+                  <div className="sm:col-span-3">
+                    <div className="flex items-center justify-between mb-1">
+                      <Label>Datas das parcelas</Label>
+                      {Object.keys(datasManuais).length > 0 && (
+                        <button
+                          type="button"
+                          className="text-xs text-primary hover:underline disabled:opacity-50"
+                          onClick={() => setDatasManuais({})}
+                          disabled={!ativo}
+                        >
+                          Restaurar datas sugeridas
+                        </button>
+                      )}
+                    </div>
+                    <div className="max-h-64 overflow-y-auto rounded-md border border-border divide-y divide-border">
+                      {parcelasPreview.map((p) => {
+                        const primeira = p.numero_parcela === 1;
+                        const manual = p.numero_parcela in datasManuais;
+                        return (
+                          <div key={p.numero_parcela} className="flex items-center gap-3 px-3 py-1.5 text-sm">
+                            <span className="w-12 shrink-0 text-muted-foreground">{p.numero_parcela}/{parcelasPreview.length}</span>
+                            <span className="w-28 shrink-0 tabular-nums">
+                              {p.valor.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}
+                            </span>
+                            {primeira ? (
+                              <span className="text-xs text-muted-foreground">{p.data_vencimento} · Data de pagamento</span>
+                            ) : (
+                              <>
+                                <Input
+                                  type="date"
+                                  className="h-8 w-40 text-xs"
+                                  value={p.data_vencimento}
+                                  min={dataPagamento || undefined}
+                                  onChange={(e) => setDatasManuais((atual) => ({ ...atual, [p.numero_parcela]: e.target.value }))}
+                                  disabled={!ativo}
+                                />
+                                {manual && <span className="text-[11px] text-amber-600 dark:text-amber-400">manual</span>}
+                              </>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
               </>
             )}
           </div>
