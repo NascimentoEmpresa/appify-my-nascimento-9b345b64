@@ -21,6 +21,7 @@ import {
   useEmpresasGrupo,
   useContratosAtivos,
   uploadAnexosMalote,
+  buscarNumeroDespesa,
   TipoSolicitacao,
   STATUS_LABEL,
   ItemSolicitacao,
@@ -458,8 +459,19 @@ function PainelSolicitacao({
         itens: itens.filter((i) => i.nome_item.trim() !== ""),
       });
       if (arquivos.length > 0) {
-        const paths = await uploadAnexosMalote(arquivos, despesaId, nome.trim());
-        await salvar.mutateAsync({ id: despesaId, empresa_id: empresaFinal, classificacao_id: classificacaoId, origem: "solicitacao", status, nome: nome.trim(), valor_total: Number(valorEstimado), arquivos: paths });
+        try {
+          const paths = await uploadAnexosMalote(arquivos, despesaId, nome.trim());
+          await salvar.mutateAsync({ id: despesaId, empresa_id: empresaFinal, classificacao_id: classificacaoId, origem: "solicitacao", status, nome: nome.trim(), valor_total: Number(valorEstimado), arquivos: paths });
+        } catch (erroUpload) {
+          // DM-2026-0446: solicitação JÁ criada — não desfaz. O anexo pode
+          // ser reenviado pela tela da despesa depois (SIS-2026-0339), sem
+          // recriar. Aviso claro em vez do "Failed to fetch" cru.
+          const num = await buscarNumeroDespesa(despesaId).catch(() => null);
+          toast.warning(
+            `Solicitação ${num ?? ""} criada, mas o anexo não subiu (provável falha de rede). ` +
+              `Abra a solicitação em Meus Itens e reenvie o anexo — não crie de novo.`,
+          );
+        }
       }
       toast.success(status === "rascunho" ? "Rascunho salvo." : "Solicitação enviada para aprovação inicial.");
       setNome(""); setMotivo(""); setDescricao(""); setValorEstimado(""); setLinks(""); setArquivos([]); setItens([]);

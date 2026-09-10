@@ -1428,10 +1428,47 @@ export function useItensAprovacoesMalote() {
 }
 
 // ── Upload de anexos ─────────────────────────────────────────────────
+
+// Achado real (DM-2026-0446, João do Jurídico): o upload do anexo pro
+// Storage falhava com "Failed to fetch" — um TypeError que o fetch do
+// browser lança quando a requisição é cortada antes de responder (oscilação
+// de wifi/proxy, ou o endpoint de Storage indisponível por um instante).
+// Não é erro de API (nome inválido, permissão): esses voltam no `.error` da
+// resposta, não como exceção. O arquivo era pequeno (161 KB) e o nome curto
+// — era rede mesmo, e funcionava ao repetir. Como a despesa é criada ANTES
+// do upload, cada soluço desses deixava a despesa órfã + um erro cru na
+// tela → o usuário reenviava e duplicava (0444/0445/0446 na mesma leva).
+//
+// `comRetentativaRede` reexecuta só quando a falha é uma exceção de rede
+// (fetch cortado), até 3 tentativas com espera crescente. Erro de API
+// passa direto na 1ª (não adianta repetir). Exportado pra teste.
+export function ehErroDeRede(e: unknown): boolean {
+  if (e instanceof TypeError) return true;
+  const msg = e instanceof Error ? e.message : String(e ?? "");
+  return /failed to fetch|network ?error|load failed|fetch failed/i.test(msg);
+}
+
+export async function comRetentativaRede<T>(
+  fn: () => Promise<T>,
+  { tentativas = 3, esperaMs = (n: number) => n * 800 }: { tentativas?: number; esperaMs?: (n: number) => number } = {},
+): Promise<T> {
+  let ultimoErro: unknown;
+  for (let n = 1; n <= tentativas; n++) {
+    try {
+      return await fn();
+    } catch (e) {
+      ultimoErro = e;
+      if (!ehErroDeRede(e) || n === tentativas) throw e;
+      await new Promise((r) => setTimeout(r, esperaMs(n)));
+    }
+  }
+  throw ultimoErro;
+}
+
 export async function uploadAnexoMalote(file: File, despesaFolderId: string): Promise<string> {
   const ext = file.name.split(".").pop();
   const path = `${despesaFolderId}/${novoUuid()}.${ext}`;
-  const { error } = await supabase.storage.from("malote-anexos").upload(path, file);
+  const { error } = await comRetentativaRede(() => supabase.storage.from("malote-anexos").upload(path, file));
   if (error) throw error;
   return path;
 }
@@ -1498,14 +1535,16 @@ export async function uploadAnexosMalote(files: File[], despesaFolderId: string,
     return Promise.all(files.map((f) => uploadAnexoMalote(f, despesaFolderId)));
   }
   const base = sanitizarNomeArquivo(nomeBase);
-  const { data: existentes } = await supabase.storage.from("malote-anexos").list(despesaFolderId);
+  const { data: existentes } = await comRetentativaRede(() =>
+    supabase.storage.from("malote-anexos").list(despesaFolderId),
+  );
   const usados = new Set((existentes ?? []).map((f) => f.name));
   const paths: string[] = [];
   for (const file of files) {
     const ext = file.name.split(".").pop() || "bin";
     const nomeArquivo = proximoNomeArquivoLivre(base, ext, usados);
     const path = `${despesaFolderId}/${nomeArquivo}`;
-    const { error } = await supabase.storage.from("malote-anexos").upload(path, file);
+    const { error } = await comRetentativaRede(() => supabase.storage.from("malote-anexos").upload(path, file));
     if (error) throw error;
     paths.push(path);
   }
