@@ -143,6 +143,45 @@ export default function NFEntrada() {
     setOpenImport(true);
   };
 
+  const importarNotasSefazLote = async (xmls: string[]) => {
+    let importadas = 0;
+    let jaExistiam = 0;
+    let erros = 0;
+    const funcoes = supabase.functions as unknown as {
+      invoke: (nome: string, opcoes: { body: { xml: string; destino: string; almoxarifado_id?: string } }) => Promise<{
+        data: { error?: unknown } | null;
+        error: { context?: { status?: number }; status?: number } | null;
+      }>;
+    };
+
+    for (const xml of xmls) {
+      try {
+        const { data, error } = await funcoes.invoke("nf-import-xml", {
+          body: { xml, destino: "estoque", almoxarifado_id: almoxarifados[0]?.id },
+        });
+        if (error) {
+          if (error.context?.status === 409 || error.status === 409) {
+            jaExistiam++;
+          } else {
+            erros++;
+          }
+          continue;
+        }
+        if (data?.error) {
+          erros++;
+          continue;
+        }
+        importadas++;
+      } catch {
+        erros++;
+      }
+    }
+
+    toast.success(`${importadas} importada(s), ${jaExistiam} já existiam, ${erros} com erro`);
+    qc.invalidateQueries({ queryKey: ["nf_entrada"] });
+    qc.invalidateQueries({ queryKey: ["produto"] });
+  };
+
   const importar = async () => {
     if (!xmlContent) {
       toast.error("Selecione um XML");
@@ -423,7 +462,7 @@ export default function NFEntrada() {
         </TabsList>
 
         <TabsContent value="sefaz" className="pt-4">
-          <PainelNotasSefaz onImportar={importarNotaSefaz} />
+          <PainelNotasSefaz onImportar={importarNotaSefaz} onImportarLote={importarNotasSefazLote} />
         </TabsContent>
 
         <TabsContent value="importadas" className="space-y-6 pt-4">

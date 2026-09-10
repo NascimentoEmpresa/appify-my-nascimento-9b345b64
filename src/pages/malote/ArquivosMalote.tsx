@@ -214,7 +214,7 @@ export default function ArquivosMalote() {
   // fora da tela — clicar "Abrir" só existe aqui dentro).
   function exportarExcel() {
     const linkAssinado = (path: string | null | undefined) => (path ? path : "");
-    const head = "Tipo;Nº do Malote;Parcela;Nome;Classificação;Empresa;Contrato;Valor;Data de Pagamento;Anexos;Comprovante\n";
+    const head = "Tipo;Nº do Malote;Parcela;Nome;Classificação;Setor;Empresa;Contrato;Valor;Data de Pagamento;Anexos;Comprovante\n";
     const body = filtrados
       .map((item) => {
         const d = item.despesa;
@@ -227,6 +227,7 @@ export default function ArquivosMalote() {
           item.parcela ? `${item.parcela.numero_parcela}/${d.numero_parcelas}` : "",
           d.nome.replace(/;/g, ","),
           d.classificacao?.nome ?? "",
+          setoresResolvidos(d).join(", "),
           empresasMap.get(empresaIdResolvida(d) ?? "") ?? "",
           d.contrato_id ? contratosMap.get(d.contrato_id) ?? "" : "",
           Number(valor).toFixed(2).replace(".", ","),
@@ -336,6 +337,7 @@ export default function ArquivosMalote() {
                   <TableHead>Parcela</TableHead>
                   <TableHead>Nome / Motivo</TableHead>
                   <TableHead>Classificação</TableHead>
+                  <TableHead>Setor</TableHead>
                   <TableHead>Empresa / Contrato</TableHead>
                   <TableHead className="text-right">Valor (R$)</TableHead>
                   <TableHead>Data de Pagamento</TableHead>
@@ -346,12 +348,12 @@ export default function ArquivosMalote() {
               <TableBody>
                 {isLoading && (
                   <TableRow>
-                    <TableCell colSpan={10} className="text-center text-muted-foreground py-10">Carregando...</TableCell>
+                    <TableCell colSpan={11} className="text-center text-muted-foreground py-10">Carregando...</TableCell>
                   </TableRow>
                 )}
                 {!isLoading && visiveis.length === 0 && (
                   <TableRow>
-                    <TableCell colSpan={10} className="text-center text-muted-foreground py-10">
+                    <TableCell colSpan={11} className="text-center text-muted-foreground py-10">
                       <div className="flex flex-col items-center gap-2">
                         <FileArchive className="h-8 w-8 text-muted-foreground/50" />
                         Nenhum arquivo encontrado com os filtros atuais.
@@ -363,6 +365,7 @@ export default function ArquivosMalote() {
                   <LinhaArquivo
                     key={`${item.despesa.id}-${item.parcela?.id ?? "unica"}`}
                     item={item}
+                    setores={setoresResolvidos(item.despesa)}
                     empresaNome={empresasMap.get(empresaIdResolvida(item.despesa) ?? "")}
                     nomeContrato={item.despesa.contrato_id ? contratosMap.get(item.despesa.contrato_id) : undefined}
                   />
@@ -390,7 +393,7 @@ export default function ArquivosMalote() {
   );
 }
 
-function LinhaArquivo({ item, empresaNome, nomeContrato }: { item: ItemLinhaMalote; empresaNome?: string; nomeContrato?: string }) {
+function LinhaArquivo({ item, setores, empresaNome, nomeContrato }: { item: ItemLinhaMalote; setores: string[]; empresaNome?: string; nomeContrato?: string }) {
   const { despesa, parcela } = item;
   const valor = parcela ? parcela.valor : despesa.valor_total;
   const dataPagamento = parcela ? parcela.data_pagamento_real ?? parcela.data_vencimento : despesa.data_pagamento;
@@ -407,6 +410,7 @@ function LinhaArquivo({ item, empresaNome, nomeContrato }: { item: ItemLinhaMalo
         {despesa.motivo && <p className="text-xs text-muted-foreground">{despesa.motivo}</p>}
       </TableCell>
       <TableCell className="text-sm">{despesa.classificacao?.nome ?? "—"}</TableCell>
+      <TableCell className="text-sm">{setores.length ? setores.join(", ") : "—"}</TableCell>
       <TableCell className="text-sm">
         <p>{empresaNome ?? "—"}</p>
         {nomeContrato && <p className="text-xs text-muted-foreground">{nomeContrato}</p>}
