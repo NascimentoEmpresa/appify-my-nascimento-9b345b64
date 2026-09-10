@@ -16,6 +16,10 @@ export interface SearchableOption {
   value: string;
   label: string;
   hint?: string;
+  // Reduz a proeminência visual da opção (ex.: contrato Encerrado) sem
+  // esconder nem desabilitar — mesmo tratamento usado em ContratosERP.tsx
+  // pra distinguir inativos numa lista, sem cortar a busca/seleção.
+  muted?: boolean;
 }
 
 interface SearchableSelectProps {
@@ -104,6 +108,7 @@ export function SearchableSelect({
                       onChange(opt.value);
                       setOpen(false);
                     }}
+                    className={cn(opt.muted && "opacity-50")}
                   >
                     <Check
                       className={cn(
