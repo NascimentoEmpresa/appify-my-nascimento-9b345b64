@@ -1,4 +1,4 @@
-import fs, { readFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
@@ -24,39 +24,10 @@ import {
  * alguém descobrir em produção.
  */
 
-const DIR_MIGRATIONS = resolve(__dirname, "../../supabase/migrations");
-
-/**
- * Junta as migrations em ordem cronológica.
- *
- * Não dá para fixar o arquivo: o CHECK de `tipo` nasceu na
- * 20260930000060_ti_mapa_hardware e foi REDEFINIDO na
- * 20260930000065_ti_catalogo_3d_ampliado, quando entraram teclado, mouse,
- * headset e a mobília nova. Um teste preso ao primeiro arquivo passaria a
- * cobrar uma lista que o banco não usa mais — e reprovaria justamente a
- * migration que ampliou o catálogo.
- *
- * Lendo tudo em ordem e ficando com a ÚLTIMA definição, o teste acompanha
- * sozinho a próxima ampliação.
- */
-const SQL = fs
-  .readdirSync(DIR_MIGRATIONS)
-  .filter((f) => f.endsWith(".sql"))
-  .sort()
-  .map((f) => readFileSync(resolve(DIR_MIGRATIONS, f), "utf-8"))
-  // SQL COMENTADO NÃO É SQL.
-  //
-  // As migrations deste projeto terminam com um bloco "-- ROLLBACK" que
-  // repete o DDL inverso comentado — e no caso de um CHECK isso significa a
-  // lista ANTIGA escrita logo DEPOIS da nova, no mesmo arquivo. Como
-  // `valoresDoCheck` fica com a ÚLTIMA ocorrência, o teste passou a cobrar a
-  // lista que a migration acabou de aposentar, e reprovou justamente a
-  // migration que ampliou o catálogo (parede e porta de vidro).
-  //
-  // Cortar do "--" até o fim da linha resolve para todo rollback futuro, sem
-  // exigir que quem escreve a migration lembre de despistar o teste.
-  .map((sql) => sql.replace(/--.*$/gm, ""))
-  .join("\n");
+const SQL = readFileSync(
+  resolve(__dirname, "../../supabase/migrations/20260930000060_ti_mapa_hardware.sql"),
+  "utf-8",
+);
 
 /**
  * Extrai a lista de um `CHECK (coluna IN ('a','b',…))` da migration.
@@ -70,8 +41,7 @@ function valoresDoCheck(coluna: string, ancora: string): string[] {
   // O CHECK quebra em várias linhas, daí o [\s\S].
   const re = new RegExp(`CHECK \\(${coluna} IN \\(([\\s\\S]*?)\\)\\)`, "g");
   const listas = [...SQL.matchAll(re)].map((m) => [...m[1].matchAll(/'([a-z_]+)'/g)].map((x) => x[1]));
-  // A última: migration posterior que redefine o CHECK manda sobre a anterior.
-  const achada = listas.filter((lista) => lista.includes(ancora)).pop();
+  const achada = listas.find((lista) => lista.includes(ancora));
   if (!achada) throw new Error(`CHECK de ${coluna} contendo '${ancora}' não encontrado na migration`);
   return achada;
 }
@@ -107,15 +77,12 @@ describe("tipo desconhecido não derruba o mapa", () => {
 });
 
 describe("geometria do mapa", () => {
-  it("gruda no quadrado de 1 m, para os dois lados", () => {
-    // O passo do editor é o quadrado desenhado no piso — foi 25 cm e virou
-    // 1 m, porque quem monta escritório mede a sala em metros inteiros.
-    expect(GRID_CM).toBe(100);
+  it("gruda no grid de 25 cm, para os dois lados", () => {
     expect(arredondarGrid(0)).toBe(0);
-    expect(arredondarGrid(49)).toBe(0);
-    expect(arredondarGrid(51)).toBe(GRID_CM);
-    expect(arredondarGrid(137)).toBe(100);
-    expect(arredondarGrid(-51)).toBe(-GRID_CM);
+    expect(arredondarGrid(12)).toBe(0);
+    expect(arredondarGrid(13)).toBe(GRID_CM);
+    expect(arredondarGrid(137)).toBe(125);
+    expect(arredondarGrid(-13)).toBe(-GRID_CM);
   });
 
   it("mostra centímetros como metros no formato brasileiro", () => {
