@@ -310,7 +310,7 @@ Deno.serve(async (req) => {
       });
     }
 
-    return json({ error: "Ação inválida. Use 'rastrear', 'cep' ou 'cotar'." }, 400);
+    return json({ error: "Ação inválida. Use 'rastrear', 'trajeto', 'cep' ou 'cotar'." }, 400);
   } catch (e) {
     return json({ error: (e as Error).message ?? "Erro inesperado." }, 500);
   }
