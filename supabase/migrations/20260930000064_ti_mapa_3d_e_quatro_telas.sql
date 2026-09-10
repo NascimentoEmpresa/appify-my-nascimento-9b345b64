@@ -78,37 +78,6 @@ SELECT m.id, x.codigo, x.nome, x.rota, x.ordem, true
    AND NOT EXISTS (SELECT 1 FROM public.app_menu a WHERE a.codigo = x.codigo)
 ;
 
--- ── POR QUE NÃO HÁ SEED EM perfil_acesso_permissao ──────────────────────
--- A revisão automática da PR #543 apontou isto como bloqueador: sem semear
--- os três menus novos num perfil, eles "nasceriam fechados para todos,
--- mesmo com o toggle ligado". Não é o caso, e fica registrado aqui para não
--- ser reaberto:
---
---   1. `list_accessible_menus` resolve o menu com
---      `COALESCE(o.allow, ct.ok OR pr.menu_codigo IS NOT NULL)`. O `o.allow`
---      é a linha de screen_permission_user — o toggle de "Acesso por
---      Usuário". Existindo essa linha, o COALESCE para nela e o perfil nem é
---      consultado. `has_screen_access` faz o mesmo: consulta o override
---      PRIMEIRO e retorna. O toggle sozinho basta, por construção.
---
---   2. Conferido no banco do app (10/09/2026): os SETE menus do módulo de
---      T.I — inclusive o `ti_mapa_hardware`, que é anterior a esta migration
---      — têm ZERO linhas em perfil_acesso_permissao e as mesmas 6 pessoas
---      com o toggle ligado. O módulo sempre foi administrado assim; os três
---      menus novos não são exceção nenhuma.
---
---   3. Teste de ponta a ponta, em transação com ROLLBACK, com um usuário SEM
---      perfil algum e só com os toggles: o menu apareceu em
---      list_accessible_menus, ti_pode_ver() deu true, ele leu 225 linhas de
---      TI_ATIVO (não a tela vazia) e fez incluir + alterar + excluir. Com
---      `ti_construir` desligado, ti_pode_construir() deu false — a separação
---      entre as quatro telas funciona.
---
--- Semear os menus num perfil daria acesso a T.I para gente que hoje não tem,
--- que é o contrário do que uma revisão de permissão deveria produzir. Se um
--- dia a equipe quiser um perfil "T.I" pronto, isso é decisão de quem
--- administra — pela tela de Acesso por Usuário, não por migration.
-
 -- 2) Colunas do 3D -------------------------------------------------------
 ALTER TABLE public."TI_PLANTA"
   ADD COLUMN IF NOT EXISTS pe_direito_cm integer NOT NULL DEFAULT 280;
