@@ -22,7 +22,9 @@
 // na cara das pessoas, e o gate do AppShell teria de escolher um.
 
 import { useMemo, useState } from "react";
-import { Megaphone, Pencil, Plus, Search, Trash2, Eye, Loader2 } from "lucide-react";
+import {
+  Image as ImageIcon, Loader2, Megaphone, Pencil, Plus, Search, Trash2, Upload, Eye, X,
+} from "lucide-react";
 import { toast } from "sonner";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { Badge } from "@/components/ui/badge";
@@ -67,7 +69,7 @@ export default function QuadroAvisos() {
   const {
     notificacoes, historico, alvos, setores, pessoas, carregando,
     podeVerQuadro, podeCriar, podeEditar, podeExcluir,
-    salvar, excluir,
+    salvar, excluir, subirAnexo,
   } = useNotificacoes();
 
   const [aba, setAba] = useState<Aba>("todos");
@@ -76,6 +78,7 @@ export default function QuadroAvisos() {
   const [form, setForm] = useState<FormNotificacao | null>(null);
   const [vendo, setVendo] = useState<Notificacao | null>(null);
   const [apagando, setApagando] = useState<Notificacao | null>(null);
+  const [subindo, setSubindo] = useState(false);
 
   /** Respostas agrupadas por aviso — alimenta a contagem da lista. */
   const porAviso = useMemo(() => {
@@ -148,6 +151,34 @@ export default function QuadroAvisos() {
       setForm(null);
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Não deu para gravar o aviso.");
+    }
+  };
+
+  /**
+   * Sobe a imagem escolhida e guarda a URL no formulário.
+   *
+   * O arquivo vai para o storage NA HORA, antes de o aviso ser salvo: é o
+   * mesmo caminho da capa dos Links de BI, e segurar o File em memória até o
+   * SALVAR só adiantaria o problema de um upload que falha depois de a pessoa
+   * achar que terminou.
+   */
+  const escolherImagem = async (arquivo?: File | null) => {
+    if (!arquivo || !form) return;
+    // O bucket recusa o que passar disto (migration 082), mas a recusa de lá
+    // chega como erro técnico; aqui dá para dizer o que houve.
+    if (arquivo.size > 5 * 1024 * 1024) {
+      toast.error("A imagem passou de 5 MB. Reduza o arquivo e tente de novo.");
+      return;
+    }
+    setSubindo(true);
+    try {
+      const url = await subirAnexo(arquivo);
+      setForm({ ...form, anexo_url: url, anexo_nome: arquivo.name });
+      toast.success("Imagem enviada.");
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Não deu para enviar a imagem.");
+    } finally {
+      setSubindo(false);
     }
   };
 
@@ -479,6 +510,57 @@ export default function QuadroAvisos() {
                 <p className="mt-1 text-right text-xs text-muted-foreground">{form.mensagem.length}/5000</p>
               </div>
 
+              {/* ── Imagem ───────────────────────────────────────────────
+                  Mesmo desenho da capa dos Links de BI: sobe o arquivo OU
+                  cola uma URL. O campo de URL não é sobra — cartaz que já
+                  está publicado em outro lugar não precisa de outra cópia. */}
+              <div>
+                <Label>Imagem do aviso</Label>
+                <div className="mt-1 flex flex-wrap items-center gap-3">
+                  <div className="h-16 w-28 shrink-0 overflow-hidden rounded-md border bg-muted">
+                    {form.anexo_url ? (
+                      <img src={form.anexo_url} alt="" className="h-full w-full object-cover" />
+                    ) : (
+                      <div className="flex h-full items-center justify-center text-muted-foreground">
+                        <ImageIcon className="h-5 w-5" />
+                      </div>
+                    )}
+                  </div>
+                  <label className="cursor-pointer">
+                    <input
+                      type="file"
+                      accept="image/png,image/jpeg,image/webp,image/gif"
+                      className="hidden"
+                      disabled={subindo}
+                      onChange={(e) => escolherImagem(e.target.files?.[0])}
+                    />
+                    <span className="inline-flex items-center gap-2 rounded-md border px-3 py-2 text-sm hover:bg-muted">
+                      {subindo ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
+                      Enviar imagem
+                    </span>
+                  </label>
+                  <Input
+                    className="min-w-[200px] flex-1"
+                    placeholder="ou cole a URL de uma imagem"
+                    value={form.anexo_url}
+                    onChange={(e) => setForm({ ...form, anexo_url: e.target.value })}
+                  />
+                  {form.anexo_url && (
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => setForm({ ...form, anexo_url: "", anexo_nome: "" })}
+                    >
+                      <X className="mr-1 h-3.5 w-3.5" /> Tirar
+                    </Button>
+                  )}
+                </div>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  PNG, JPG, WEBP ou GIF, até 5 MB. Aparece dentro do aviso, acima do texto.
+                  {form.anexo_nome ? ` Arquivo atual: ${form.anexo_nome}.` : ""}
+                </p>
+              </div>
+
               {/* As três regras. Ficam juntas e nesta ordem porque uma depende
                   da outra: sem ciência não há o que bloquear nem o que escolher. */}
               <div className="rounded-lg border bg-muted/30 p-3">
@@ -559,6 +641,13 @@ export default function QuadroAvisos() {
 
           {vendo && (
             <div className="space-y-4">
+              {vendo.anexo_url && (
+                <img
+                  src={vendo.anexo_url}
+                  alt={vendo.anexo_nome ?? ""}
+                  className="max-h-72 w-full rounded-lg border object-contain"
+                />
+              )}
               <p className="whitespace-pre-wrap text-sm leading-relaxed">{vendo.mensagem}</p>
 
               <div className="rounded-lg border p-3 text-sm">

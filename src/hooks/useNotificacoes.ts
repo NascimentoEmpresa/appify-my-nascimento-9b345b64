@@ -4,7 +4,7 @@ import { useAuth } from "@/hooks/useAuth";
 import { useMeuNome } from "@/hooks/useMeuNome";
 import { usePermissoes } from "@/context/PermissoesContext";
 import {
-  MENU_PUBLICAR, MENU_QUADRO, TABELA, TABELA_ALVO, TABELA_CIENCIA,
+  BUCKET_ANEXOS, MENU_PUBLICAR, MENU_QUADRO, TABELA, TABELA_ALVO, TABELA_CIENCIA,
   bloqueantesDe, pendentesDe,
   type AlvoNotificacao, type CienciaNotificacao, type Escolha,
   type FormNotificacao, type Notificacao,
@@ -138,6 +138,10 @@ export function useNotificacoes() {
         // Vazio é "não expira" — string vazia em coluna timestamptz estoura
         // no Postgres ("invalid input syntax"), a ausência é NULL.
         expira_em: f.expira_em ? f.expira_em : null,
+        // Sem imagem é NULL, não string vazia: a tela testa a coluna para
+        // decidir se desenha o bloco, e "" é um valor que passa no if.
+        anexo_url: f.anexo_url.trim() || null,
+        anexo_nome: f.anexo_nome.trim() || null,
         exigir_ciencia: f.exigir_ciencia,
         // publico_alvo saiu na 081: a verdade é a tabela de alvos, e ter as
         // duas era duas fontes para a mesma pergunta.
@@ -177,6 +181,23 @@ export function useNotificacoes() {
       qc.invalidateQueries({ queryKey: ["notificacoes_alvos"] });
     },
   });
+
+  /**
+   * Sobe a imagem do aviso e devolve a URL pública.
+   *
+   * Não apaga a anterior ao trocar: o arquivo velho pode estar sendo servido
+   * para quem já tem o aviso aberto na tela, e uma imagem que some no meio de
+   * um comunicado que trava o sistema é pior que um arquivo órfão no bucket.
+   */
+  const subirAnexo = async (arquivo: File): Promise<string> => {
+    const ext = arquivo.name.split(".").pop()?.toLowerCase() || "png";
+    const caminho = `avisos/${crypto.randomUUID()}.${ext}`;
+    const { error } = await supabase.storage
+      .from(BUCKET_ANEXOS)
+      .upload(caminho, arquivo, { upsert: false, contentType: arquivo.type || undefined });
+    if (error) throw error;
+    return supabase.storage.from(BUCKET_ANEXOS).getPublicUrl(caminho).data.publicUrl;
+  };
 
   const excluir = useMutation({
     mutationFn: async (id: number) => {
@@ -242,5 +263,6 @@ export function useNotificacoes() {
     salvar,
     excluir,
     responder,
+    subirAnexo,
   };
 }

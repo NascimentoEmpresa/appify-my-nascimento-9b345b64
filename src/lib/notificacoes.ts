@@ -15,6 +15,15 @@
 export const TABELA = "SISTEMA_NOTIFICACOES";
 export const TABELA_CIENCIA = "SISTEMA_NOTIFICACAO_CIENCIA";
 export const TABELA_ALVO = "SISTEMA_NOTIFICACAO_ALVO";
+/**
+ * A imagem do aviso.
+ *
+ * Bucket público, como o das capas de BI: a imagem aparece dentro do aviso
+ * que para a tela de todo mundo, e URL assinada ali venceria justamente em
+ * quem deixou a aba aberta — imagem quebrada num aviso que trava a tela é o
+ * pior lugar para esse tipo de falha. Ver a migration 20260930000082.
+ */
+export const BUCKET_ANEXOS = "avisos-anexos";
 export const MENU_PUBLICAR = "novidades_publicar";
 /** A tela do Quadro de Avisos. Vale AO LADO de MENU_PUBLICAR, nunca no lugar. */
 export const MENU_QUADRO = "central_servicos_quadro_avisos";
@@ -88,6 +97,10 @@ export interface FormNotificacao {
   resumo: string;
   /** "aaaa-mm-dd" do input date, ou vazio para "não expira". */
   expira_em: string;
+  /** URL da imagem do aviso. Vazio = aviso sem imagem. */
+  anexo_url: string;
+  /** Nome do arquivo que a pessoa subiu — a tela precisa de algo para mostrar. */
+  anexo_nome: string;
   /** Setores que recebem o aviso. Vazio + sem pessoas = todo mundo. */
   setores: string[];
   /** Pessoas que recebem, por id do profile. */
@@ -100,7 +113,7 @@ export interface FormNotificacao {
 /** Um aviso novo, em branco — o mesmo estado inicial em toda tela que cria. */
 export const FORM_VAZIO: FormNotificacao = {
   titulo: "", mensagem: "", publicado: true, categoria: "Comunicado", resumo: "",
-  expira_em: "", setores: [], usuarios: [],
+  expira_em: "", anexo_url: "", anexo_nome: "", setores: [], usuarios: [],
   exigir_ciencia: true, bloquear_acesso: true, permitir_escolha: true,
 };
 
@@ -125,6 +138,8 @@ export function formDoAviso(
     resumo: n.resumo ?? "",
     // O input date só entende "aaaa-mm-dd"; o banco guarda timestamp.
     expira_em: n.expira_em ? n.expira_em.slice(0, 10) : "",
+    anexo_url: n.anexo_url ?? "",
+    anexo_nome: n.anexo_nome ?? "",
     setores: meus.filter((a) => a.setor).map((a) => a.setor as string),
     usuarios: meus.filter((a) => a.user_id).map((a) => a.user_id as string),
     exigir_ciencia: n.exigir_ciencia,
