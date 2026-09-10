@@ -82,10 +82,18 @@ export function useNotificacoes() {
     },
   });
 
-  /** As pessoas, para mandar um aviso nominal. Só quem publica precisa. */
+  /**
+   * As pessoas: o formulário usa para mandar aviso nominal, e o painel de
+   * respostas para dizer QUEM respondeu o quê.
+   *
+   * Por isso `podeVerQuadro` entra na condição. Quem só tem `visualizar`
+   * enxerga o painel de respostas e sem isto veria uma lista inteira de
+   * "(usuário removido)" — o registro de ciência guarda user_id, o nome mora
+   * em profiles.
+   */
   const pessoasQ = useQuery({
     queryKey: ["notificacoes_pessoas"],
-    enabled: podeCriar || podeEditar,
+    enabled: podeVerQuadro || podeCriar || podeEditar,
     staleTime: 10 * 60_000,
     queryFn: async (): Promise<{ id: string; nome: string }[]> => {
       const { data, error } = await sb

@@ -23,7 +23,8 @@
 
 import { useMemo, useState } from "react";
 import {
-  Image as ImageIcon, Loader2, Megaphone, Pencil, Plus, Search, Trash2, Upload, Eye, X,
+  ChevronDown, ChevronUp, Image as ImageIcon, Loader2, Megaphone, Pencil, Plus, Search,
+  Trash2, Upload, Eye, X,
 } from "lucide-react";
 import { toast } from "sonner";
 import { PageHeader } from "@/components/layout/PageHeader";
@@ -49,7 +50,8 @@ import { Textarea } from "@/components/ui/textarea";
 import { useNotificacoes } from "@/hooks/useNotificacoes";
 import {
   CATEGORIAS, FORM_VAZIO, erroDoFormulario, estaVigente, fmtDataHora, formDoAviso,
-  panoramaDe, type CienciaNotificacao, type FormNotificacao, type Notificacao,
+  panoramaDe, respostasComNome, type CienciaNotificacao, type Escolha,
+  type FormNotificacao, type Notificacao,
 } from "@/lib/notificacoes";
 import { cn } from "@/lib/utils";
 
@@ -79,6 +81,14 @@ export default function QuadroAvisos() {
   const [vendo, setVendo] = useState<Notificacao | null>(null);
   const [apagando, setApagando] = useState<Notificacao | null>(null);
   const [subindo, setSubindo] = useState(false);
+  /**
+   * O painel de "quem respondeu o quê", dentro do Visualizar.
+   *
+   * Fecha ao trocar de aviso (o `setVendo` abaixo zera os dois): deixar aberto
+   * com o filtro do aviso anterior mostraria a lista certa sob o título errado.
+   */
+  const [verDetalhes, setVerDetalhes] = useState(false);
+  const [filtroEscolha, setFiltroEscolha] = useState<Escolha | "todas">("todas");
 
   /** Respostas agrupadas por aviso — alimenta a contagem da lista. */
   const porAviso = useMemo(() => {
@@ -108,6 +118,12 @@ export default function QuadroAvisos() {
     if (qtdPessoas) partes.push(qtdPessoas + " pessoa(s)");
     return partes.join(" · ");
   };
+
+  /** id → nome, para o painel poder dizer quem é cada resposta. */
+  const nomePorId = useMemo(
+    () => new Map(pessoas.map((p) => [p.id, p.nome])),
+    [pessoas],
+  );
 
   const lista = useMemo(() => {
     const termo = busca.trim().toLowerCase();
@@ -180,6 +196,13 @@ export default function QuadroAvisos() {
     } finally {
       setSubindo(false);
     }
+  };
+
+  /** Abrir um aviso sempre começa com o painel de respostas fechado. */
+  const abrirVisualizar = (n: Notificacao) => {
+    setVerDetalhes(false);
+    setFiltroEscolha("todas");
+    setVendo(n);
   };
 
   const confirmarExclusao = async () => {
@@ -323,7 +346,7 @@ export default function QuadroAvisos() {
                     </TableCell>
                     <TableCell className="text-right">
                       <div className="flex justify-end gap-1">
-                        <Button variant="ghost" size="sm" onClick={() => setVendo(n)}>
+                        <Button variant="ghost" size="sm" onClick={() => abrirVisualizar(n)}>
                           <Eye className="mr-1 h-3.5 w-3.5" /> Visualizar
                         </Button>
                         {podeEditar && (
@@ -662,20 +685,104 @@ export default function QuadroAvisos() {
               </div>
 
               {vendo.exigir_ciencia && (() => {
-                const p = panoramaDe(porAviso.get(vendo.id) ?? []);
+                const respostas = porAviso.get(vendo.id) ?? [];
+                const p = panoramaDe(respostas);
+                // Com o nome já resolvido e DISCORDO no topo — quem discordou é
+                // o único grupo que pede providência, e numa lista longa em
+                // ordem de data essa pessoa ficaria enterrada.
+                const detalhadas = respostasComNome(respostas, nomePorId);
+                const visiveis = filtroEscolha === "todas"
+                  ? detalhadas
+                  : detalhadas.filter((r) => r.escolha === filtroEscolha);
                 return (
-                  <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-                    {[
-                      { rotulo: "Responderam", valor: p.responderam },
-                      { rotulo: "Concordo", valor: p.concordaram },
-                      { rotulo: "Discordo", valor: p.discordaram },
-                      { rotulo: "Ciente", valor: p.cientes },
-                    ].map((c) => (
-                      <div key={c.rotulo} className="rounded-lg border p-3 text-center">
-                        <div className="text-xl font-bold">{c.valor}</div>
-                        <div className="text-xs text-muted-foreground">{c.rotulo}</div>
+                  <div>
+                    <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+                      {[
+                        { rotulo: "Responderam", valor: p.responderam },
+                        { rotulo: "Concordo", valor: p.concordaram },
+                        { rotulo: "Discordo", valor: p.discordaram },
+                        { rotulo: "Ciente", valor: p.cientes },
+                      ].map((c) => (
+                        <div key={c.rotulo} className="rounded-lg border p-3 text-center">
+                          <div className="text-xl font-bold">{c.valor}</div>
+                          <div className="text-xs text-muted-foreground">{c.rotulo}</div>
+                        </div>
+                      ))}
+                    </div>
+
+                    {/* O botão só aparece quando há o que detalhar: "Detalhes"
+                        que abre um vazio é uma promessa que a tela não cumpre. */}
+                    {p.responderam > 0 && (
+                      <Button
+                        variant="outline"
+                        className="mt-3 w-full"
+                        onClick={() => setVerDetalhes((v) => !v)}
+                      >
+                        {verDetalhes
+                          ? <ChevronUp className="mr-2 h-4 w-4" />
+                          : <ChevronDown className="mr-2 h-4 w-4" />}
+                        Detalhes
+                      </Button>
+                    )}
+
+                    {verDetalhes && p.responderam > 0 && (
+                      <div className="mt-3 rounded-lg border">
+                        <div className="flex flex-wrap gap-1.5 border-b p-2">
+                          {([
+                            ["todas", `Todas (${p.responderam})`],
+                            ["CONCORDO", `Concordo (${p.concordaram})`],
+                            ["DISCORDO", `Discordo (${p.discordaram})`],
+                            ["CIENTE", `Ciente (${p.cientes})`],
+                          ] as [Escolha | "todas", string][]).map(([valor, rotulo]) => (
+                            <Button
+                              key={valor}
+                              size="sm"
+                              variant={filtroEscolha === valor ? "default" : "ghost"}
+                              className="h-7 px-2.5 text-xs"
+                              onClick={() => setFiltroEscolha(valor)}
+                            >
+                              {rotulo}
+                            </Button>
+                          ))}
+                        </div>
+
+                        <ScrollArea className="max-h-64">
+                          <ul className="divide-y">
+                            {visiveis.map((r) => (
+                              <li key={r.user_id} className="flex flex-wrap items-start justify-between gap-2 p-2.5">
+                                <div className="min-w-0">
+                                  <div className="truncate text-sm font-medium">{r.nome}</div>
+                                  {/* O que a pessoa escreveu ao responder. Quase
+                                      sempre é o porquê de ter discordado, que é a
+                                      informação que faz alguém abrir esta lista. */}
+                                  {r.observacao && (
+                                    <p className="mt-0.5 whitespace-pre-wrap text-xs text-muted-foreground">
+                                      “{r.observacao}”
+                                    </p>
+                                  )}
+                                </div>
+                                <div className="flex shrink-0 items-center gap-2">
+                                  <span className="whitespace-nowrap text-xs text-muted-foreground">
+                                    {fmtDataHora(r.respondido_em)}
+                                  </span>
+                                  <Badge
+                                    variant={r.escolha === "DISCORDO" ? "destructive" : "secondary"}
+                                  >
+                                    {r.escolha === "CONCORDO" ? "Concordo"
+                                      : r.escolha === "DISCORDO" ? "Discordo" : "Ciente"}
+                                  </Badge>
+                                </div>
+                              </li>
+                            ))}
+                            {visiveis.length === 0 && (
+                              <li className="p-4 text-center text-xs text-muted-foreground">
+                                Ninguém respondeu assim neste aviso.
+                              </li>
+                            )}
+                          </ul>
+                        </ScrollArea>
                       </div>
-                    ))}
+                    )}
                   </div>
                 );
               })()}
