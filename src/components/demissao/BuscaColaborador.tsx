@@ -7,6 +7,7 @@ import {
 } from "@/components/ui/command";
 import { Check, ChevronsUpDown, Loader2, Search, UserRound } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { nomeContratoDe } from "@/lib/rh/colaboradoresUtils";
 
 const sb = supabase as any;
 
@@ -19,7 +20,15 @@ export interface EmpregadoEscolhido {
   posto: string;
   filial: string;
   nomeFilial: string;
-  /** Coluna "Descrição do Local" da EMPREGADOS — é ela que dá o contrato. */
+  /**
+   * O contrato: "1109 - POLICIA CIVIL RS LIMPEZA 066.2026" — a FILIAL do
+   * Senior com o código na frente (nomeContratoDe). Não é a "Descrição do
+   * Local": essa é o posto, e até 11/09/2026 a tela gravava ela como
+   * contrato ("1109 - PALÁCIO DA POLÍCIA" num pedido cujo contrato era a
+   * Polícia Civil inteira).
+   */
+  contrato: string;
+  /** Coluna "Descrição do Local" da EMPREGADOS — o POSTO do organograma. */
   descricaoLocal: string;
   escala: string;
   admissao: string | null;
@@ -46,6 +55,34 @@ const primeiroCampo = (linha: Record<string, any>, ...colunas: string[]) => {
   }
   return "";
 };
+
+/** Uma linha de EMPREGADOS no formato que a tela de demissão consome. */
+export function montarEmpregadoEscolhido(e: Record<string, any>): EmpregadoEscolhido {
+  return {
+    id: Number(e["ID"]),
+    nome: texto(e["Nome"]),
+    cpf: texto(e["CPF"]),
+    cargo: primeiroCampo(e, "Título do Cargo", "Nome do Cargo", "Cargo"),
+    posto: primeiroCampo(e, "Organograma", "Descrição do Local", "Titulo C.Custo", "Nome Filial"),
+    filial: texto(e["Filial"]),
+    nomeFilial: texto(e["Nome Filial"]),
+    contrato: nomeContratoDe(e),
+    descricaoLocal: texto(e["Descrição do Local"]),
+    escala: primeiroCampo(e, "Escala", "Escala de Trabalho"),
+    admissao: texto(e["Admissão"]) || null,
+    email: primeiroCampo(e, "email", "E-mail", "Email"),
+    telefone: primeiroCampo(e, "Telefone", "Celular", "Fone"),
+  };
+}
+
+/**
+ * Carrega alguém pelo ID de EMPREGADOS — para a tela abrir já com a pessoa
+ * escolhida (`?colaborador=ID`, vindo da vaga de Substituição).
+ */
+export async function carregarEmpregadoEscolhido(id: number): Promise<EmpregadoEscolhido | null> {
+  const { data } = await sb.from("EMPREGADOS").select("*").eq("ID", id).maybeSingle();
+  return data ? montarEmpregadoEscolhido(data) : null;
+}
 
 /**
  * Escolha do colaborador que vai ser desligado.
@@ -99,21 +136,7 @@ export function BuscaColaborador({
     // Cadastro completo da pessoa escolhida: é dele que saem posto, escala,
     // admissão e contato, que a tela mostra travados.
     const { data } = await sb.from("EMPREGADOS").select("*").eq("ID", linha.ID).maybeSingle();
-    const e = data ?? linha;
-    onEscolher({
-      id: Number(e["ID"]),
-      nome: texto(e["Nome"]),
-      cpf: texto(e["CPF"]),
-      cargo: primeiroCampo(e, "Título do Cargo", "Nome do Cargo", "Cargo"),
-      posto: primeiroCampo(e, "Organograma", "Descrição do Local", "Titulo C.Custo", "Nome Filial"),
-      filial: texto(e["Filial"]),
-      nomeFilial: texto(e["Nome Filial"]),
-      descricaoLocal: texto(e["Descrição do Local"]),
-      escala: primeiroCampo(e, "Escala", "Escala de Trabalho"),
-      admissao: texto(e["Admissão"]) || null,
-      email: primeiroCampo(e, "email", "E-mail", "Email"),
-      telefone: primeiroCampo(e, "Telefone", "Celular", "Fone"),
-    });
+    onEscolher(montarEmpregadoEscolhido(data ?? linha));
   };
 
   return (

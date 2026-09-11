@@ -79,7 +79,7 @@ const demissao: Fluxo = {
     },
   ],
   observacoes: [
-    "Dentro do SST a solicitação passa por dois status: primeiro \"Solicitação de agendamento de DEMISSIONAL recebida\" (o SST pegou o pedido) e depois \"Agendamento concluído\" (o exame tem data, hora e local). Só o painel do SST muda esses dois; as outras telas mostram.",
+    "Dentro do SST a solicitação passa por três status possíveis: primeiro \"Solicitação de agendamento de DEMISSIONAL recebida\" (o SST pegou o pedido) e depois \"Agendamento concluído\" (o exame tem data, hora e local) — ou \"ASO válido\", quando o colaborador fez ASO há menos de 60 dias e não precisa de exame. Só o painel do SST muda esses; as outras telas mostram.",
     "O SST e o RH podem DEVOLVER ao analista quando a solicitação vem com erro — ela volta para a fila dele com o motivo escrito, e o que já tinha sido carimbado nas etapas seguintes é desfeito. Quando voltar, passa pelo RH de novo. Depois de agendado o SST não devolve mais: já há exame marcado com o colaborador.",
     "O Operacional enxerga o fluxo inteiro em Operacional › Solicitações de Demissão, mas só para acompanhar — quem decide a primeira etapa é o analista.",
     "Reprovada pelo analista, a solicitação para e volta para o encarregado com o motivo.",

@@ -50,3 +50,29 @@ export const ehSaidaDe = (e: any) => /DEMIT|DESLIG|RESCIS|APOSENT/i.test(String(
 // cargo"/"AMBÍGUO" quando o código não está casado.
 export const nomeCargoDe = (e: any): string =>
   String(e?.["Título do Cargo"] ?? "").trim() || String(e?.["Nome do Cargo"] ?? "").trim() || "—";
+
+// O CONTRATO de uma pessoa é a FILIAL do Senior, com o código na frente:
+// "1109 - POLICIA CIVIL RS LIMPEZA 066.2026". Desde 11/09/2026 a coluna
+// "Nome Filial" já vem assim do banco (migration 20260930000089: a função
+// de enriquecimento grava com código e um trigger prefixa o que chegar sem)
+// — aqui só se garante o formato para linha que ainda não passou por lá.
+//
+// NÃO é "Descrição do Local". Essa coluna é o POSTO do organograma
+// ("1109 - PALÁCIO DA POLÍCIA", "1109 - DECA"...): um contrato tem dezenas
+// de postos, e a Solicitação de Demissão passou 10 dias gravando o posto
+// na coluna `contrato` por ler ela. No espelho do Senior:
+// BiFilial.apelido = contrato, BiOrganogramas.descricao_local = posto.
+const PREFIXO_CODIGO = /^\s*\d+\s*-\s*/;
+
+export const nomeContratoDe = (e: any): string => {
+  const codigo = String(e?.["Filial"] ?? "").trim();
+  const nome = String(e?.["Nome Filial"] ?? "").trim();
+  if (!nome) return codigo;
+  if (!codigo || PREFIXO_CODIGO.test(nome)) return nome;
+  return `${codigo} - ${nome}`;
+};
+
+// O nome sem o código, para comparar com CONTRATOS."NOME CONTRATO" — que
+// não leva código, só o nome ("POLICIA CIVIL RS LIMPEZA 066.2026").
+export const semCodigoFilial = (nome: unknown): string =>
+  String(nome ?? "").replace(PREFIXO_CODIGO, "").trim();

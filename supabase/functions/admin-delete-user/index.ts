@@ -1,6 +1,14 @@
 // Edge Function: admin-delete-user
-// Exclui completamente um usuário: user_roles + user_empresa + profiles + auth.users
+// Exclui completamente um usuário: vínculos + profiles + auth.users
 // Apenas admins podem chamar. Impede auto-exclusão.
+//
+// A limpeza dos vínculos NÃO é mais uma lista fixa de tabelas aqui dentro.
+// Quem faz é a RPC public.admin_excluir_usuario_completo (migration
+// 20260930000083), que varre pg_constraint em tempo de execução e zera/apaga
+// tudo que aponta pro usuário antes de apagar o perfil. Motivo, em resumo:
+// deletar o perfil direto disparava gatilho de auditoria que INSERIA linha nova
+// apontando pro perfil que estava sendo apagado (plano_acao_historico), e a FK
+// estourava no fim do comando. Detalhe completo no cabeçalho da migration.
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
 
@@ -72,35 +80,95 @@ Deno.serve(async (req) => {
       return jsonResponse({ error: "Você não pode excluir sua própria conta." }, 400);
     }
 
-    // 1) Remove roles
-    const { error: e1 } = await admin
-      .from("user_roles")
-      .delete()
-      .eq("user_id", targetId);
-    if (e1) return jsonResponse({ error: `Erro ao remover perfis: ${e1.message}` }, 500);
+    // 1) Limpa vínculos + remove o perfil, numa transação só (a RPC).
+    const { data: relatorio, error: eRpc } = await admin.rpc(
+      "admin_excluir_usuario_completo",
+      { p_user_id: targetId },
+    );
 
-    // 2) Remove vínculos com empresas
-    const { error: e2 } = await admin
-      .from("user_empresa")
-      .delete()
-      .eq("user_id", targetId);
-    if (e2) return jsonResponse({ error: `Erro ao remover vínculos de empresa: ${e2.message}` }, 500);
+    if (eRpc) {
+      // Migration 20260930000083 ainda não aplicada no projeto remoto:
+      // cai no caminho antigo, que resolve o caso simples (usuário sem
+      // vínculo em módulo de negócio).
+      const semRpc = eRpc.code === "PGRST202" || /does not exist/i.test(eRpc.message ?? "");
+      if (!semRpc) {
+        return jsonResponse({ error: `Erro ao remover vínculos: ${eRpc.message}` }, 500);
+      }
 
-    // 3) Remove profile
-    const { error: e3 } = await admin
-      .from("profiles")
-      .delete()
-      .eq("id", targetId);
-    if (e3) return jsonResponse({ error: `Erro ao remover perfil: ${e3.message}` }, 500);
+      const { error: e1 } = await admin.from("user_roles").delete().eq("user_id", targetId);
+      if (e1) return jsonResponse({ error: `Erro ao remover perfis: ${e1.message}` }, 500);
 
-    // 4) Remove da autenticação (auth.users) — requer service_role
-    // "User not found" = perfil órfão sem conta auth, não é erro — dados já foram limpos acima
-    const { error: e4 } = await admin.auth.admin.deleteUser(targetId);
-    if (e4 && !/not.found/i.test(e4.message)) {
-      return jsonResponse({ error: `Erro ao remover autenticação: ${e4.message}` }, 500);
+      const { error: e2 } = await admin.from("user_empresa").delete().eq("user_id", targetId);
+      if (e2) return jsonResponse({ error: `Erro ao remover vínculos de empresa: ${e2.message}` }, 500);
+
+      const { error: e3 } = await admin.from("profiles").delete().eq("id", targetId);
+      if (e3) {
+        return jsonResponse({
+          error:
+            `Erro ao remover perfil: ${e3.message}. ` +
+            "A migration 20260930000083 (exclusão de usuário sem bloqueio de FK) " +
+            "ainda não foi aplicada no SQL Editor do Supabase.",
+        }, 500);
+      }
     }
 
-    return jsonResponse({ ok: true });
+    // 2) Remove da autenticação (auth.users) — requer service_role
+    // Desde a migration 20260930000092 a própria RPC tenta apagar auth.users,
+    // justamente pra saber QUEM barra quando o banco recusa. Se ela conseguiu,
+    // aqui não sobra nada e o GoTrue só confirma.
+    //
+    // "User not found" = conta já removida (pela RPC) ou perfil órfão sem
+    // conta auth — os dois casos são sucesso, não erro.
+    const rel = relatorio as
+      | {
+          auth_removido?: boolean;
+          bloqueio?: Record<string, unknown> | null;
+          falhas?: Array<{ alvo?: string; erro?: string }>;
+        }
+      | null;
+
+    const { error: e4 } = await admin.auth.admin.deleteUser(targetId);
+    if (e4 && !/not.found/i.test(e4.message)) {
+      // "Database error deleting user" é o texto genérico do GoTrue: ele sabe
+      // que o Postgres recusou, mas não diz por quê. A RPC sabe — então a
+      // mensagem da tela carrega o motivo real.
+      //
+      // Dois formatos, porque são dois tipos de causa: violação de FK preenche
+      // schema/tabela/constraint; qualquer outra coisa (permissão negada, por
+      // exemplo) vem só com sqlstate + texto, e era esse caso que ficava
+      // aparecendo vazio na tela.
+      const b = rel?.bloqueio;
+      const alvo = b ? [b.schema, b.tabela].filter(Boolean).join(".") : "";
+      let detalhe = "";
+      if (alvo) {
+        detalhe = ` Quem está barrando: ${alvo}` +
+          (b?.constraint ? ` (constraint ${b.constraint})` : "") + ".";
+      } else if (b) {
+        detalhe = ` O banco recusou com ${b.sqlstate}: ${b.erro}`;
+      }
+
+      // Tabela que a varredura não conseguiu limpar é candidata natural a ser
+      // a causa — costuma ser permissão, não dado.
+      const falhas = rel?.falhas ?? [];
+      if (falhas.length > 0) {
+        detalhe += ` Não consegui limpar ${falhas.length} tabela(s): ` +
+          falhas.slice(0, 3).map((f) => `${f.alvo} → ${f.erro}`).join("; ") + ".";
+      }
+
+      return jsonResponse(
+        {
+          error: `Erro ao remover autenticação: ${e4.message}.${detalhe}`,
+          bloqueio: b ?? null,
+          falhas,
+        },
+        500,
+      );
+    }
+
+    // `falhas` só vem preenchido se algum gatilho de guarda barrou uma tabela;
+    // o perfil já saiu, mas o admin precisa saber que sobrou resíduo.
+    const falhas = (relatorio as { falhas?: unknown[] } | null)?.falhas ?? [];
+    return jsonResponse({ ok: true, relatorio, avisos: falhas });
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     return jsonResponse({ error: msg }, 500);

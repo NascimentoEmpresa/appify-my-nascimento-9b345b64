@@ -2,7 +2,7 @@ import { useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { useScreenAccess } from "@/hooks/useScreenAccess";
 import { Download, FileSpreadsheet, X, RefreshCw, CheckCircle2, AlertTriangle } from "lucide-react";
-import { empresaDe, parseSalario, fmtData, nomeCargoDe } from "@/lib/rh/colaboradoresUtils";
+import { empresaDe, parseSalario, fmtData, nomeCargoDe, nomeContratoDe } from "@/lib/rh/colaboradoresUtils";
 
 // =========================================================================
 // RH — Colaboradores: "Exportar Dados".
@@ -91,7 +91,10 @@ const rotuloComCodigo = (codigo: any, nome: any): string => {
 
 const valorDaColuna = (key: ColunaKey, e: any, contratoDe: (e: any) => string): string | number => {
   switch (key) {
-    case "filial": return rotuloComCodigo(e["Filial"], e["Nome Filial"]);
+    // "Nome Filial" já vem com o código na frente desde a migration
+    // 20260930000089 ("1109 - POLICIA CIVIL RS LIMPEZA 066.2026") — passar
+    // por rotuloComCodigo daria "1109 | 1109 - ...".
+    case "filial": return nomeContratoDe(e) || "—";
     case "nome": return String(e["Nome"] ?? "").trim();
     case "cpf": return String(e["CPF"] ?? "").trim();
     case "empresa": return empresaDe(e);
