@@ -849,7 +849,18 @@ export function ModalNovaVaga({ aberto, onFechar, onCriada, onToast, solicitacao
           {/* Horário saiu: a escala do cadastro já vem com a jornada dentro
               ("07:30-17:18 (1H)(08:48)"), então eram dois campos dizendo a
               mesma coisa — e o segundo, digitado à mão, era o que divergia. */}
-          <div className="nvg-fg"><label>Escala</label><input className="nvg-fi" placeholder="Ex: 12x36, 5x2..." value={vaga.escala} onChange={e => setVaga(v => ({ ...v, escala: e.target.value }))} /></div>
+          {/* A escala é a do cadastro do colaborador escolhido e não se edita
+              (11/09/2026): igual ao contrato e ao cargo da etapa 1, a vaga é
+              do posto dele. Só o modo manual (vaga do escritório, sem
+              colaborador de referência) digita. */}
+          <div className="nvg-fg">
+            <label>Escala{!vagaManual && <span style={{ color: "#94a3b8", fontWeight: 600 }}> — do colaborador escolhido</span>}</label>
+            <input className="nvg-fi"
+              placeholder={vagaManual ? "Ex: 12x36, 5x2..." : "Vem do cadastro do colaborador escolhido"}
+              value={vaga.escala} readOnly={!vagaManual}
+              onChange={e => setVaga(v => ({ ...v, escala: e.target.value }))}
+              style={vagaManual ? undefined : { background: "#f1f5f9", color: "#475569", cursor: "not-allowed" }} />
+          </div>
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
             <div className="nvg-fg"><label>Salário</label><input className="nvg-fi" placeholder="Ex: R$ 1.412,00" value={vaga.salario} onChange={e => setVaga(v => ({ ...v, salario: e.target.value }))} /></div>
             <div className="nvg-fg">
