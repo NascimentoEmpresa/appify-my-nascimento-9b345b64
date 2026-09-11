@@ -258,7 +258,21 @@ export interface SolicitacaoDemissao {
 
   criado_em: string | null;
   atualizado_em: string | null;
+
+  /**
+   * DEMISSÃO ↔ VAGA (11/09/2026). Toda demissão nova abre uma vaga de
+   * Substituição de quem sai — a vaga aponta para cá (demissao_id) e o
+   * banco devolve o id dela aqui. Sem a vaga, o pedido não sai de
+   * "Pendente Analista" (trigger demissao_exige_vaga); `vaga_obrigatoria`
+   * é false só nas solicitações anteriores à regra.
+   */
+  vaga_id?: number | null;
+  vaga_obrigatoria?: boolean | null;
 }
+
+/** A demissão que ainda não tem a vaga de reposição que a regra exige. */
+export const faltaVagaDeReposicao = (s: Pick<SolicitacaoDemissao, "vaga_id" | "vaga_obrigatoria" | "status">): boolean =>
+  !!s.vaga_obrigatoria && !s.vaga_id && s.status !== "Reprovada";
 
 export interface AnexoDemissao {
   id: number;
