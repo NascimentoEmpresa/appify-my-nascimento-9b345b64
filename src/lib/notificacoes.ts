@@ -86,6 +86,23 @@ export interface CienciaNotificacao {
   user_id: string;
   escolha: Escolha;
   respondido_em: string;
+  /** Quando o aviso abriu na frente da pessoa. A distância até
+   *  `respondido_em` separa quem leu de quem só tirou da frente. */
+  lido_em?: string | null;
+  /** O que a pessoa escreveu ao responder — normalmente por que discordou. */
+  observacao?: string | null;
+}
+
+/**
+ * Uma linha do "quem respondeu o quê", já com o nome resolvido.
+ *
+ * O nome não vem no registro de ciência (que guarda user_id) nem podia vir:
+ * congelar o nome na hora da resposta deixaria o painel mostrando gente com
+ * o nome antigo depois de qualquer correção de cadastro. Quem monta a lista
+ * cruza com `profiles` na hora.
+ */
+export interface RespostaComNome extends CienciaNotificacao {
+  nome: string;
 }
 
 export interface FormNotificacao {
@@ -218,6 +235,44 @@ export function panoramaDe(ciencias: CienciaNotificacao[]): PanoramaRespostas {
     discordaram: ciencias.filter((c) => c.escolha === "DISCORDO").length,
     cientes: ciencias.filter((c) => c.escolha === "CIENTE").length,
   };
+}
+
+/**
+ * Quem respondeu o quê, na ordem em que o painel precisa ler.
+ *
+ * DISCORDO PRIMEIRO, e não é capricho de ordenação: num aviso com 200
+ * respostas o que interessa a quem publicou é justamente quem discordou —
+ * é o único grupo que pede alguma providência. Deixar em ordem de data
+ * enterraria essa pessoa no meio da lista.
+ *
+ * Dentro de cada grupo, a mais recente primeiro: quem respondeu agora é
+ * quem ainda está com o assunto na cabeça.
+ */
+const PESO_ESCOLHA: Record<Escolha, number> = { DISCORDO: 0, CONCORDO: 1, CIENTE: 2 };
+
+export function ordenarRespostas<T extends CienciaNotificacao>(ciencias: T[]): T[] {
+  return [...ciencias].sort((a, b) => {
+    const peso = PESO_ESCOLHA[a.escolha] - PESO_ESCOLHA[b.escolha];
+    if (peso !== 0) return peso;
+    return (b.respondido_em ?? "").localeCompare(a.respondido_em ?? "");
+  });
+}
+
+/**
+ * As respostas de um aviso com o nome de cada pessoa, prontas para a lista.
+ *
+ * Quem não estiver no mapa de nomes aparece como "(usuário removido)" em vez
+ * de sumir: a resposta dele conta no total, e uma lista com 15 linhas embaixo
+ * de um cartão que diz 16 faz quem administra procurar bug onde não há.
+ */
+export function respostasComNome(
+  ciencias: CienciaNotificacao[],
+  nomePorId: Map<string, string>,
+): RespostaComNome[] {
+  return ordenarRespostas(ciencias).map((c) => ({
+    ...c,
+    nome: nomePorId.get(c.user_id) ?? "(usuário removido)",
+  }));
 }
 
 /** "12 de 30 responderam · 3 discordaram" — o histórico em uma linha. */

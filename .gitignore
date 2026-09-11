@@ -67,3 +67,6 @@ espelho-mysql/logs
 tsc-saida.txt
 tsc-da-pr.txt
 arquivos-da-pr.txt
+
+# Lixo do CLI do Supabase (gerado ao rodar qualquer comando logado)
+supabase/.temp/

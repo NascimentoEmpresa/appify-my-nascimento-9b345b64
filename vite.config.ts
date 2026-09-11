@@ -36,6 +36,31 @@ export default defineConfig(({ mode }) => {
       },
     },
     plugins: [react(), mode === "development" && componentTagger()].filter(Boolean),
+    build: {
+      // O bundle era UM arquivo so, e passou de 8,5 MB: todo mundo que abria
+      // a tela inicial do ERP baixava o gerador de PDF, a planilha e os
+      // graficos junto, mesmo sem nunca abrir essas telas.
+      //
+      // Separar as bibliotecas pesadas deixa cada uma descer so para quem
+      // usa. Se aparecer outra lib grande, o lugar de registrar e aqui.
+      //
+      // A entrada `vendor-3d` (three + @react-three) NAO esta aqui de
+      // proposito: o Mapa 3D de T.I saiu da pablo e vive na branch `ti`.
+      // Se o modulo voltar, ela volta junto — sem ela o build do 3D estoura
+      // o parser do Rollup ("WebAssembly.Memory.grow(): Unable to grow
+      // instance memory"), que foi como o problema apareceu da primeira vez.
+      chunkSizeWarningLimit: 1500,
+      rollupOptions: {
+        output: {
+          manualChunks: {
+            "vendor-planilha": ["xlsx"],
+            "vendor-pdf": ["jspdf", "jspdf-autotable"],
+            "vendor-graficos": ["recharts"],
+            "vendor-react": ["react", "react-dom", "react-router-dom"],
+          },
+        },
+      },
+    },
     resolve: {
       alias: {
         "@": path.resolve(__dirname, "./src"),

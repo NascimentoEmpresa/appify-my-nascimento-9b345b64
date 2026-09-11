@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { AlertCircle, Loader2, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { ImagemAviso } from "@/components/notificacoes/ImagemAviso";
 import { useNotificacoes } from "@/hooks/useNotificacoes";
 import { fmtDataHora, type Escolha } from "@/lib/notificacoes";
 import { toast } from "sonner";
@@ -94,13 +95,31 @@ export function GateNotificacoes() {
         <div className="max-h-[50vh] overflow-y-auto px-5 py-4">
           {/* A imagem vem ANTES do texto: quando o aviso é um cartaz, ela é o
               aviso, e o texto é a legenda. `object-contain` porque cartaz
-              cortado no meio deixa de comunicar o que veio comunicar. */}
+              cortado no meio deixa de comunicar o que veio comunicar.
+
+              `aspect-video` reserva a altura ANTES de o arquivo chegar. Sem
+              isso o aviso abria sem imagem nenhuma, o texto subia no lugar
+              dela, e num aviso que bloqueia a tela a pessoa respondia antes de
+              o cartaz aparecer — foi o "a imagem não aparece" de 10/09/2026. */}
           {atual.anexo_url && (
-            <img
-              src={atual.anexo_url}
-              alt={atual.anexo_nome ?? ""}
-              className="mb-3 max-h-64 w-full rounded-lg border object-contain"
-            />
+            <div className="mb-3">
+              <ImagemAviso
+                url={atual.anexo_url}
+                nome={atual.anexo_nome}
+                prioridade
+                className="aspect-video w-full"
+              />
+              {/* Cartaz costuma ter texto miúdo, e aqui ele cabe em pouco mais
+                  de 400px de largura. Quem precisa ler abre em tamanho real. */}
+              <a
+                href={atual.anexo_url}
+                target="_blank"
+                rel="noreferrer"
+                className="mt-1 inline-block text-xs text-muted-foreground underline underline-offset-2"
+              >
+                Ver imagem em tamanho real
+              </a>
+            </div>
           )}
           {/* `whitespace-pre-wrap`: quem escreve o aviso usa parágrafo e
               lista, e sem isto tudo virava um bloco único de texto. */}

@@ -31,19 +31,22 @@ import { useEmpresaAtiva } from "@/context/EmpresaAtivaContext";
 import { useContratosCatalogo, usePostos, useFuncoes } from "@/hooks/useSupCatalogo";
 import { ESTADOS_BR, municipiosDe } from "@/data/municipios-brasil";
 import {
-  MOTIVOS_VAGA, ehSubstituicao, avaliarPrazo, dataMinimaVaga,
+  MOTIVOS_VAGA, ehSubstituicao, maximoDeVagas, quantidadeValida, avaliarPrazo, dataMinimaVaga,
+  erroDaRecomendacao, recomendacaoParaBanco, cpfValido, soDigitos, maskCpf,
   cargoExigeCnh, aplicarReqCnh, REQ_CNH_TEXTO,
   rotuloReferencia, ajudaReferencia, mostraNomeReferencia, contratoDoEmpregado,
   faltamCamposManuais, podeVagaAdministrativa,
   substituidosComVagaViva, avisoSubstituidoPreso,
 } from "@/lib/recrutamento/vagaRegras";
+import { maskFone } from "@/lib/telefone";
 
 const VAGA_RESET = {
   motivo_vaga: "", administrativa: false, nome_substituido: "", contrato: "", cargo: "",
   contrato_id: "", posto_id: "", funcao_id: "",
   estado: "", cidade: "", quantidade_vagas: "1", data_inicio_prevista: "",
-  escala: "", horario: "", salario: "", insalubridade_recebe: "Não",
-  insalubridade_quanto: "", beneficios: "", local_exato: "",
+  escala: "", salario: "", insalubridade_recebe: "Não", reserva_tecnica: "Não",
+  insalubridade_quanto: "", beneficios: "",
+  tem_recomendacao: "Não", recomendacao_nome: "", recomendacao_cpf: "", recomendacao_whatsapp: "",
   grau_urgencia: "", alta_rotatividade: "Não", req_obrigatorios: "",
   req_desejaveis: "", exp_minima: "Não", exp_minima_qual: "",
   motivos_saida: "", recomendacao: "", observacao_importante: "",
@@ -173,6 +176,10 @@ export function ModalNovaVaga({ aberto, onFechar, onCriada, onToast, solicitacao
         preenchido[campo] = typeof VAGA_RESET[campo as keyof typeof VAGA_RESET] === "boolean" ? !!v : String(v);
       }
       preenchido.administrativa = !!dados.administrativa;
+      // O banco guarda boolean; este formulario fala "Sim"/"Não" porque o
+      // campo é um <select>, igual ao da insalubridade logo acima.
+      preenchido.reserva_tecnica = dados.reserva_tecnica ? "Sim" : "Não";
+      preenchido.tem_recomendacao = dados.tem_recomendacao ? "Sim" : "Não";
       setVaga(preenchido as unknown as typeof VAGA_RESET);
       // Vaga já gravada sem vínculo com o catálogo continua sem ele: exigir o
       // posto agora travaria a correção de uma vaga que foi criada à mão.
@@ -341,6 +348,10 @@ export function ModalNovaVaga({ aberto, onFechar, onCriada, onToast, solicitacao
       if (!prazo.ok) { toast(prazo.erro ?? "Revise a data de início prevista.", "err"); return false; }
     }
     if (step === 3) {
+      // A indicação é do passo 3: se disse que tem, os três campos vêm
+      // juntos. A regra é a mesma nas duas telas de vaga.
+      const erroRec = erroDaRecomendacao(vaga);
+      if (erroRec) { toast(erroRec, "err"); return false; }
       if (!prazo.ok) { toast(prazo.erro ?? "Revise a data de início prevista.", "err"); return false; }
       if (!vaga.req_obrigatorios.trim() && !cnhDoCargo) { toast("Informe os requisitos obrigatórios.", "err"); return false; }
     }
@@ -353,7 +364,12 @@ export function ModalNovaVaga({ aberto, onFechar, onCriada, onToast, solicitacao
     setSalvando(true);
     const payload: Record<string, unknown> = {
       ...vaga,
-      quantidade_vagas: parseInt(vaga.quantidade_vagas) || 1,
+      // A tela já trava o campo em 1 na substituição; aqui é o cinto de
+      // segurança, porque trocar o motivo depois de digitar 3 deixaria o 3
+      // no estado.
+      quantidade_vagas: quantidadeValida(vaga.motivo_vaga, vaga.quantidade_vagas),
+      ...recomendacaoParaBanco(vaga),
+      reserva_tecnica: vaga.reserva_tecnica === "Sim",
       // Grau e CNH saem das regras (o trigger recalcula os dois no banco).
       grau_urgencia: prazo.grau ?? "",
       req_obrigatorios: aplicarReqCnh(vaga.req_obrigatorios, vaga.cargo),
@@ -380,7 +396,7 @@ export function ModalNovaVaga({ aberto, onFechar, onCriada, onToast, solicitacao
     let { error, data } = await gravar(payload);
     // Banco ainda sem as colunas novas: reenvia sem elas.
     if (error && /column|schema cache/i.test(error.message)) {
-      const { cnh_obrigatoria, substituido_id, contrato_id, posto_id, funcao_id, ...semColunasNovas } = payload as any;
+      const { cnh_obrigatoria, substituido_id, contrato_id, posto_id, funcao_id, reserva_tecnica, tem_recomendacao, recomendacao_nome, recomendacao_cpf, recomendacao_whatsapp, ...semColunasNovas } = payload as any;
       ({ error, data } = await gravar(semColunasNovas));
     }
     setSalvando(false);
@@ -678,7 +694,24 @@ export function ModalNovaVaga({ aberto, onFechar, onCriada, onToast, solicitacao
         {/* Step 2 */}
         {vagaStep === 2 && (<>
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-            <div className="nvg-fg"><label>Quantidade de Vagas</label><input className="nvg-fi" type="number" min={1} max={99} value={vaga.quantidade_vagas} onChange={e => setVaga(v => ({ ...v, quantidade_vagas: e.target.value }))} /></div>
+            {/* Substituicao repoe UMA pessoa: a vaga aponta para um
+                colaborador especifico (substituido_id), e o banco usa esse id
+                para travar a pessoa numa vaga so. Pedir 3 vagas para repor um
+                unico colaborador nao tem leitura possivel — entao o campo fica
+                travado em 1 em vez de aceitar o numero e depois recusar. */}
+            <div className="nvg-fg">
+              <label>Quantidade de Vagas</label>
+              <input className="nvg-fi" type="number" min={1}
+                max={maximoDeVagas(vaga.motivo_vaga)}
+                value={ehSubstituicao(vaga.motivo_vaga) ? "1" : vaga.quantidade_vagas}
+                disabled={ehSubstituicao(vaga.motivo_vaga)}
+                onChange={e => setVaga(v => ({ ...v, quantidade_vagas: e.target.value }))} />
+              {ehSubstituicao(vaga.motivo_vaga) && (
+                <div style={{ fontSize: 11.5, color: "#64748b", marginTop: 4 }}>
+                  Substituição repõe uma pessoa por vez.
+                </div>
+              )}
+            </div>
             <div className="nvg-fg">
               <label>Data de Início Prevista *</label>
               <input className="nvg-fi" type="date" min={dataMinimaVaga()} value={vaga.data_inicio_prevista}
@@ -686,10 +719,10 @@ export function ModalNovaVaga({ aberto, onFechar, onCriada, onToast, solicitacao
             </div>
           </div>
           <PrazoAviso prazo={prazo} />
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-            <div className="nvg-fg"><label>Escala</label><input className="nvg-fi" placeholder="Ex: 12x36, 5x2..." value={vaga.escala} onChange={e => setVaga(v => ({ ...v, escala: e.target.value }))} /></div>
-            <div className="nvg-fg"><label>Horário</label><input className="nvg-fi" placeholder="Ex: 07h às 19h..." value={vaga.horario} onChange={e => setVaga(v => ({ ...v, horario: e.target.value }))} /></div>
-          </div>
+          {/* Horário saiu: a escala do cadastro já vem com a jornada dentro
+              ("07:30-17:18 (1H)(08:48)"), então eram dois campos dizendo a
+              mesma coisa — e o segundo, digitado à mão, era o que divergia. */}
+          <div className="nvg-fg"><label>Escala</label><input className="nvg-fi" placeholder="Ex: 12x36, 5x2..." value={vaga.escala} onChange={e => setVaga(v => ({ ...v, escala: e.target.value }))} /></div>
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
             <div className="nvg-fg"><label>Salário</label><input className="nvg-fi" placeholder="Ex: R$ 1.412,00" value={vaga.salario} onChange={e => setVaga(v => ({ ...v, salario: e.target.value }))} /></div>
             <div className="nvg-fg">
@@ -703,7 +736,15 @@ export function ModalNovaVaga({ aberto, onFechar, onCriada, onToast, solicitacao
             <div className="nvg-fg"><label>Percentual de Insalubridade</label><input className="nvg-fi" placeholder="Ex: 20%, 40%" value={vaga.insalubridade_quanto} onChange={e => setVaga(v => ({ ...v, insalubridade_quanto: e.target.value }))} /></div>
           )}
           <div className="nvg-fg"><label>Benefícios</label><textarea className="nvg-fi" rows={2} placeholder="VT, VR, Plano de Saúde..." value={vaga.beneficios} onChange={e => setVaga(v => ({ ...v, beneficios: e.target.value }))} /></div>
-          <div className="nvg-fg"><label>Local Exato / Posto</label><input className="nvg-fi" placeholder="Nome do posto ou endereço..." value={vaga.local_exato} onChange={e => setVaga(v => ({ ...v, local_exato: e.target.value }))} /></div>
+          {/* Local Exato / Posto saiu: o posto já vem do contrato escolhido na
+              etapa 1, e o campo livre só dava chance de escrever outro. */}
+          <div className="nvg-fg">
+            <label>Essa é uma Vaga de Reserva Técnica (RT)?</label>
+            <select className="nvg-fi" value={vaga.reserva_tecnica}
+              onChange={e => setVaga(v => ({ ...v, reserva_tecnica: e.target.value }))}>
+              <option>Não</option><option>Sim</option>
+            </select>
+          </div>
         </>)}
 
         {/* Step 3 */}
@@ -744,6 +785,36 @@ export function ModalNovaVaga({ aberto, onFechar, onCriada, onToast, solicitacao
               <div className="nvg-fg"><label>Qual experiência?</label><input className="nvg-fi" placeholder="Ex: 6 meses em limpeza" value={vaga.exp_minima_qual} onChange={e => setVaga(v => ({ ...v, exp_minima_qual: e.target.value }))} /></div>
             )}
           </div>
+                    {/* Indicação: quem abre a vaga muitas vezes JÁ tem alguém em mente, e
+              hoje isso chegava no Recrutamento por WhatsApp, solto. Dizendo
+              "Sim", os três dados vêm juntos — a regra está em
+              erroDaRecomendacao(), a mesma que a outra tela de vaga usa. */}
+          <div className="nvg-fg">
+            <label>Você já tem recomendação para essa vaga?</label>
+            <select className="nvg-fi" value={vaga.tem_recomendacao}
+              onChange={e => setVaga(v => ({ ...v, tem_recomendacao: e.target.value }))}>
+              <option>Não</option><option>Sim</option>
+            </select>
+          </div>
+          {vaga.tem_recomendacao === "Sim" && (
+            <div style={{ border: "1px solid #e2e8f0", borderRadius: 10, padding: 12, background: "#f8fafc" }}>
+              <div style={{ fontSize: 12, fontWeight: 800, color: "#334155", marginBottom: 8 }}>Dados de quem você está indicando</div>
+              <div className="nvg-fg"><label>Nome completo *</label>
+                <input className="nvg-fi" placeholder="Nome completo da pessoa indicada"
+                  value={vaga.recomendacao_nome} onChange={e => setVaga(v => ({ ...v, recomendacao_nome: e.target.value }))} /></div>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+                <div className="nvg-fg"><label>CPF *</label>
+                  <input className="nvg-fi" inputMode="numeric" placeholder="000.000.000-00"
+                    value={vaga.recomendacao_cpf} onChange={e => setVaga(v => ({ ...v, recomendacao_cpf: maskCpf(e.target.value) }))} />
+                  {soDigitos(vaga.recomendacao_cpf).length === 11 && !cpfValido(vaga.recomendacao_cpf) && (
+                    <div style={{ marginTop: 4, fontSize: 11, color: "#dc2626", fontWeight: 700 }}>CPF não confere.</div>
+                  )}</div>
+                <div className="nvg-fg"><label>WhatsApp *</label>
+                  <input className="nvg-fi" inputMode="numeric" placeholder="(51) 99999-9999"
+                    value={vaga.recomendacao_whatsapp} onChange={e => setVaga(v => ({ ...v, recomendacao_whatsapp: maskFone(e.target.value) }))} /></div>
+              </div>
+            </div>
+          )}
           <div className="nvg-fg"><label>Observação Importante</label><textarea className="nvg-fi" rows={2} placeholder="Opcional..." value={vaga.observacao_importante} onChange={e => setVaga(v => ({ ...v, observacao_importante: e.target.value }))} /></div>
         </>)}
 
