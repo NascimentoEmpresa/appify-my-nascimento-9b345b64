@@ -120,20 +120,47 @@ Deno.serve(async (req) => {
     // "User not found" = conta já removida (pela RPC) ou perfil órfão sem
     // conta auth — os dois casos são sucesso, não erro.
     const rel = relatorio as
-      | { auth_removido?: boolean; bloqueio?: Record<string, unknown> | null }
+      | {
+          auth_removido?: boolean;
+          bloqueio?: Record<string, unknown> | null;
+          falhas?: Array<{ alvo?: string; erro?: string }>;
+        }
       | null;
 
     const { error: e4 } = await admin.auth.admin.deleteUser(targetId);
     if (e4 && !/not.found/i.test(e4.message)) {
       // "Database error deleting user" é o texto genérico do GoTrue: ele sabe
-      // que o Postgres recusou, mas não diz qual constraint. A RPC sabe —
-      // então a mensagem da tela carrega o nome da tabela responsável.
+      // que o Postgres recusou, mas não diz por quê. A RPC sabe — então a
+      // mensagem da tela carrega o motivo real.
+      //
+      // Dois formatos, porque são dois tipos de causa: violação de FK preenche
+      // schema/tabela/constraint; qualquer outra coisa (permissão negada, por
+      // exemplo) vem só com sqlstate + texto, e era esse caso que ficava
+      // aparecendo vazio na tela.
       const b = rel?.bloqueio;
-      const detalhe = b
-        ? ` Quem está barrando: ${b.schema}.${b.tabela} (constraint ${b.constraint}).`
-        : "";
+      const alvo = b ? [b.schema, b.tabela].filter(Boolean).join(".") : "";
+      let detalhe = "";
+      if (alvo) {
+        detalhe = ` Quem está barrando: ${alvo}` +
+          (b?.constraint ? ` (constraint ${b.constraint})` : "") + ".";
+      } else if (b) {
+        detalhe = ` O banco recusou com ${b.sqlstate}: ${b.erro}`;
+      }
+
+      // Tabela que a varredura não conseguiu limpar é candidata natural a ser
+      // a causa — costuma ser permissão, não dado.
+      const falhas = rel?.falhas ?? [];
+      if (falhas.length > 0) {
+        detalhe += ` Não consegui limpar ${falhas.length} tabela(s): ` +
+          falhas.slice(0, 3).map((f) => `${f.alvo} → ${f.erro}`).join("; ") + ".";
+      }
+
       return jsonResponse(
-        { error: `Erro ao remover autenticação: ${e4.message}.${detalhe}`, bloqueio: b ?? null },
+        {
+          error: `Erro ao remover autenticação: ${e4.message}.${detalhe}`,
+          bloqueio: b ?? null,
+          falhas,
+        },
         500,
       );
     }
