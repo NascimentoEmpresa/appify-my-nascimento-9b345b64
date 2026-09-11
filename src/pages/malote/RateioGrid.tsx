@@ -14,6 +14,7 @@ import { toast } from "sonner";
 import { RateioLinha, useJustificarRateioLinha } from "@/hooks/useMaloteDespesa";
 import { useEmpresasGrupo, useContratosAtivos, useFornecedoresAtivos, useIntegrantes } from "@/hooks/useMaloteDespesa";
 import { useUtilizadoOrcamento } from "@/hooks/useUtilizadoOrcamento";
+import { useLigacoesClassificacaoMalote, mapaClassificacaoVinculada, classificacaoCanonica } from "@/hooks/useMaloteClassificacaoMaloteLink";
 import { useMeusContratosAnalista } from "@/hooks/useMaloteAnalistas";
 import { TipoClassificacaoOrcamento } from "@/hooks/usePlanejamentoOrcamentario";
 
@@ -154,6 +155,7 @@ export function RateioGrid({
   const { data: fornecedores = [] } = useFornecedoresAtivos();
   const { data: integrantes = [] } = useIntegrantes();
   const { data: utilizadoLinhas = [] } = useUtilizadoOrcamento();
+  const { data: ligacoesClassMalote = [] } = useLigacoesClassificacaoMalote();
   const { data: meusContratosAnalista } = useMeusContratosAnalista();
   const justificar = useJustificarRateioLinha();
 
@@ -183,18 +185,24 @@ export function RateioGrid({
   // pelo valor da linha sendo editada agora). Recalcula por MÊS SELECIONADO
   // (SIS-2026-0261), não fixo no mês da despesa — é o que permite navegar
   // entre parcelas e ver o Orçado/Utilizado real de cada mês.
+  // SIS-2026-0374: classificacaoId pode ser a ORIGEM de uma ligação (ex.
+  // Pensão) — u.classificacao_id já vem canonicalizado pro destino (ex.
+  // Salário) por useUtilizadoOrcamento, então o lado de cá também precisa
+  // ser canonicalizado pra bater.
+  const mapaVinculo = useMemo(() => mapaClassificacaoVinculada(ligacoesClassMalote), [ligacoesClassMalote]);
+  const classificacaoIdCanonica = useMemo(() => classificacaoCanonica(mapaVinculo, classificacaoId), [mapaVinculo, classificacaoId]);
   const utilizadoAntesPorContrato = useMemo(() => {
     const map = new Map<string, number>();
     if (!mostrarColunasOrcamento || !mesSelecionado) return map;
     for (const u of utilizadoLinhas) {
       if (u.despesa_id === despesaId) continue;
-      if (u.classificacao_id !== classificacaoId) continue;
+      if (u.classificacao_id !== classificacaoIdCanonica) continue;
       if (!u.competencia || u.competencia.slice(0, 7) !== mesSelecionado) continue;
       const chave = u.contrato_id ?? "__sem_contrato__";
       map.set(chave, (map.get(chave) ?? 0) + (Number(u.valor) || 0));
     }
     return map;
-  }, [mostrarColunasOrcamento, utilizadoLinhas, despesaId, classificacaoId, mesSelecionado]);
+  }, [mostrarColunasOrcamento, utilizadoLinhas, despesaId, classificacaoIdCanonica, mesSelecionado]);
 
   function abrirDialogJustificativa(linha: RateioLinha, edicao: boolean) {
     setDialogLinha(linha);

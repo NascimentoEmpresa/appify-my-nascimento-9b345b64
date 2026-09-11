@@ -2,6 +2,7 @@ import { AlertTriangle, Bell } from "lucide-react";
 import { MaloteDespesaRow, Parcela, RateioLinha, useNomeUsuario, useRateioLinhasEParcelas } from "@/hooks/useMaloteDespesa";
 import { useOrcadoClassificacaoMultiMes } from "@/hooks/useOrcadoClassificacao";
 import { useUtilizadoOrcamento } from "@/hooks/useUtilizadoOrcamento";
+import { useLigacoesClassificacaoMalote, mapaClassificacaoVinculada, classificacaoCanonica } from "@/hooks/useMaloteClassificacaoMaloteLink";
 import { useAnalistasDosContratos } from "@/hooks/useMaloteAnalistas";
 import { montarCombosAlcada, encontrarComboQueEstouraAlcada } from "./orcamentoUtils";
 
@@ -59,7 +60,14 @@ export function JustificativaPendenteBadge({
   const { data } = useRateioLinhasEParcelas(despesa.id, !!despesa.parcelado);
   const { resolver: resolverOrcadoMultiMes } = useOrcadoClassificacaoMultiMes(despesa.empresa_id);
   const { data: utilizadoLinhasGlobal = [] } = useUtilizadoOrcamento();
+  const { data: ligacoesClassMalote = [] } = useLigacoesClassificacaoMalote();
   const { data: nomeSolicitante } = useNomeUsuario(despesa.created_by);
+
+  // SIS-2026-0374: u.classificacao_id já vem canonicalizado (origem→destino
+  // de ligação) por useUtilizadoOrcamento; a classificação da despesa
+  // precisa da mesma resolução pra bater.
+  const mapaVinculo = mapaClassificacaoVinculada(ligacoesClassMalote);
+  const classificacaoIdCanonica = classificacaoCanonica(mapaVinculo, despesa.classificacao_id);
 
   const linhasPendentes = (() => {
     if (limitePct == null || !data?.linhas?.length) return [];
@@ -69,7 +77,7 @@ export function JustificativaPendenteBadge({
     function utilizadoAntesNoMes(contratoId: string | null, mes: string): number {
       return utilizadoLinhasGlobal.reduce((soma, u) => {
         if (u.despesa_id === despesa.id) return soma;
-        if (u.classificacao_id !== despesa.classificacao_id) return soma;
+        if (u.classificacao_id !== classificacaoIdCanonica) return soma;
         if (!u.competencia || u.competencia.slice(0, 7) !== mes) return soma;
         if ((u.contrato_id ?? null) !== contratoId) return soma;
         return soma + (Number(u.valor) || 0);
