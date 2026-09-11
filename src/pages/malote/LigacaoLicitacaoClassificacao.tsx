@@ -15,8 +15,11 @@ import {
   useSalvarLigacaoLicitacaoClassificacao,
   useSalvarLigacoesLicitacaoClassificacao,
   useExcluirLigacaoLicitacaoClassificacao,
-  LigacaoLicitacaoClassificacao,
 } from "@/hooks/useMaloteLicitacaoClassificacaoLink";
+// SIS-2026-0374 (achado, pré-existente): o tipo tem o MESMO nome da função
+// de componente declarada mais abaixo neste arquivo — import normal colide
+// (TS2865, isolatedModules). Só o tipo precisa de `import type`.
+import type { LigacaoLicitacaoClassificacao } from "@/hooks/useMaloteLicitacaoClassificacaoLink";
 import {
   useLigacoesAdministrativoClassificacao,
   useSalvarLigacaoAdministrativoClassificacao,
@@ -24,6 +27,12 @@ import {
   useExcluirLigacaoAdministrativoClassificacao,
   LigacaoAdministrativoClassificacao,
 } from "@/hooks/useMaloteAdministrativoClassificacaoLink";
+import {
+  useLigacoesClassificacaoMalote,
+  useSalvarLigacaoClassificacaoMalote,
+  useExcluirLigacaoClassificacaoMalote,
+  LigacaoClassificacaoMalote,
+} from "@/hooks/useMaloteClassificacaoMaloteLink";
 import { useClassificacoesOrcamentoAdmin } from "@/hooks/usePlanejamentoOrcamentario";
 import { useClassificacoesAdministrativoAdmin } from "@/hooks/useMaloteClassificacaoAdministrativo";
 import { useDescricoesOutros } from "@/hooks/usePlanilhaCusto";
@@ -45,6 +54,12 @@ const BANNER_COR = {
     border: "border-blue-200 dark:border-blue-900",
     icon: "text-blue-300 dark:text-blue-900",
     badge: "bg-blue-600 text-white",
+  },
+  violet: {
+    bg: "bg-violet-50 dark:bg-violet-950/20",
+    border: "border-violet-200 dark:border-violet-900",
+    icon: "text-violet-300 dark:text-violet-900",
+    badge: "bg-violet-600 text-white",
   },
 } as const;
 
@@ -589,6 +604,245 @@ export function LigacaoAdministrativoClassificacaoSection({ podeEditar }: { pode
             </Button>
             <Button onClick={handleSalvar} disabled={salvando}>
               {salvando ? "Salvando..." : "Adicionar ligação"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </Card>
+  );
+}
+
+// SIS-2026-0374 (Iury): terceiro par de Ligação — pra Classificação Malote
+// que não tem NENHUMA fonte de orçamento própria (nem rubrica de Licitação,
+// nem Orçamento Administrativo — ex. "Pensão"), liga ela a outra
+// Classificação Malote que TEM orçamento (ex. "Salário"). Dali em diante
+// despesas lançadas na origem consomem o orçado/utilizado do destino —
+// resolvido em useOrcadoClassificacao/useUtilizadoOrcamento, não aqui.
+//
+// Diferente das outras duas seções, os dois lados do formulário são a
+// MESMA lista de Classificações Malote — os filtros abaixo existem pra
+// não deixar a pessoa escolher uma combinação que o trigger do banco ia
+// rejeitar de qualquer forma (evita a viagem de ida e volta com erro).
+export function LigacaoClassificacaoMaloteSection({ podeEditar }: { podeEditar: boolean }) {
+  const { data: ligacoes = [], isLoading } = useLigacoesClassificacaoMalote();
+  const { data: ligacoesAdm = [] } = useLigacoesAdministrativoClassificacao();
+  const { data: ligacoesLicitacao = [] } = useLigacoesLicitacaoClassificacao();
+  const { data: classificacoesMalote = [] } = useClassificacoesOrcamentoAdmin();
+  const salvar = useSalvarLigacaoClassificacaoMalote();
+  const excluir = useExcluirLigacaoClassificacaoMalote();
+
+  const [open, setOpen] = useState(false);
+  const [editando, setEditando] = useState<{ id?: string; origemId: string; destinoId: string } | null>(null);
+  const [ordem, setOrdem] = useState<{ coluna: "origem" | "destino"; asc: boolean }>({ coluna: "origem", asc: true });
+
+  // Já tem orçamento próprio (Licitação OU Administrativo) — não pode ser
+  // origem: ficaria com duas fontes de orçado ao mesmo tempo, ambíguo.
+  const comOrcamentoProprio = useMemo(() => {
+    const set = new Set<string>();
+    for (const l of ligacoesAdm) set.add(l.classificacao_malote_id);
+    for (const l of ligacoesLicitacao) set.add(l.classificacao_malote_id);
+    return set;
+  }, [ligacoesAdm, ligacoesLicitacao]);
+  // Já é origem de outra ligação Malote→Malote — não pode ser origem de
+  // novo (cada uma só liga uma vez) nem, se for o destino escolhido, criaria
+  // corrente (o trigger do banco rejeita; filtra aqui só pra não deixar
+  // escolher e descobrir só depois de salvar).
+  const jaEhOrigem = useMemo(() => new Set(ligacoes.map((l) => l.classificacao_malote_id)), [ligacoes]);
+  // Já é destino de outra ligação — não pode virar origem (corrente).
+  const jaEhDestino = useMemo(() => new Set(ligacoes.map((l) => l.classificacao_malote_vinculada_id)), [ligacoes]);
+
+  const opcoesOrigem = classificacoesMalote
+    .filter((c) => !comOrcamentoProprio.has(c.id) && !jaEhOrigem.has(c.id) && !jaEhDestino.has(c.id))
+    .map((c) => ({ value: c.id, label: c.nome }));
+  const opcoesOrigemTodas = classificacoesMalote.map((c) => ({ value: c.id, label: c.nome }));
+  const opcoesDestino = classificacoesMalote
+    .filter((c) => c.id !== editando?.origemId && !jaEhOrigem.has(c.id))
+    .map((c) => ({ value: c.id, label: c.nome }));
+
+  const ordenadas = useMemo(() => {
+    const copia = [...ligacoes];
+    copia.sort((a, b) => {
+      const va = ordem.coluna === "origem" ? a.classificacao_malote?.nome ?? "" : a.classificacao_malote_vinculada?.nome ?? "";
+      const vb = ordem.coluna === "origem" ? b.classificacao_malote?.nome ?? "" : b.classificacao_malote_vinculada?.nome ?? "";
+      return ordem.asc ? va.localeCompare(vb, "pt-BR") : vb.localeCompare(va, "pt-BR");
+    });
+    return copia;
+  }, [ligacoes, ordem]);
+
+  function alternarOrdem(coluna: "origem" | "destino") {
+    setOrdem((o) => (o.coluna === coluna ? { coluna, asc: !o.asc } : { coluna, asc: true }));
+  }
+
+  function abrirNovo() {
+    setEditando({ origemId: "", destinoId: "" });
+    setOpen(true);
+  }
+
+  function abrirEditar(l: LigacaoClassificacaoMalote) {
+    setEditando({ id: l.id, origemId: l.classificacao_malote_id, destinoId: l.classificacao_malote_vinculada_id });
+    setOpen(true);
+  }
+
+  async function handleSalvar() {
+    if (!editando?.origemId) {
+      toast.error("Selecione a Classificação Malote de origem (sem orçamento próprio).");
+      return;
+    }
+    if (!editando?.destinoId) {
+      toast.error("Selecione a Classificação Malote de destino (com orçamento).");
+      return;
+    }
+    try {
+      await salvar.mutateAsync({
+        id: editando.id,
+        classificacao_malote_id: editando.origemId,
+        classificacao_malote_vinculada_id: editando.destinoId,
+      });
+      toast.success("Ligação salva.");
+      setOpen(false);
+    } catch (e: any) {
+      if (e.code === "23505") {
+        toast.error("Esta Classificação já está ligada — use editar para alterar o destino.");
+      } else {
+        toast.error(e.message ?? "Erro ao salvar ligação.");
+      }
+    }
+  }
+
+  async function handleExcluir(id: string) {
+    if (!confirm("Excluir esta ligação?")) return;
+    try {
+      await excluir.mutateAsync(id);
+      toast.success("Ligação excluída.");
+    } catch (e: any) {
+      toast.error(e.message ?? "Erro ao excluir.");
+    }
+  }
+
+  return (
+    <Card>
+      <CardHeader className="flex flex-row items-start justify-between gap-3">
+        <div>
+          <CardTitle className="text-base">Relações Cadastradas</CardTitle>
+          <CardDescription>
+            Gerencie as ligações entre Classificações do Malote sem orçamento próprio e a Classificação Malote que
+            vai fornecer o orçamento delas.
+          </CardDescription>
+        </div>
+        {podeEditar && (
+          <Button size="sm" onClick={abrirNovo} className="gap-1.5 shrink-0">
+            <Plus className="h-3.5 w-3.5" /> Adicionar ligação
+          </Button>
+        )}
+      </CardHeader>
+      <CardContent>
+        <div className="max-h-96 overflow-y-auto overflow-x-auto rounded-md border border-border">
+          <Table>
+            <TableHeader className="sticky top-0 z-10 bg-card">
+              <TableRow>
+                <TableHead className="h-9 py-2">
+                  <button type="button" className="inline-flex items-center gap-1 hover:text-foreground" onClick={() => alternarOrdem("origem")}>
+                    Classificação Malote (sem orçamento) <ArrowUpDown className="h-3 w-3" />
+                  </button>
+                </TableHead>
+                <TableHead className="h-9 py-2">
+                  <button type="button" className="inline-flex items-center gap-1 hover:text-foreground" onClick={() => alternarOrdem("destino")}>
+                    Classificação Malote (com orçamento) <ArrowUpDown className="h-3 w-3" />
+                  </button>
+                </TableHead>
+                {podeEditar && <TableHead className="h-9 py-2 text-right">Ações</TableHead>}
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {isLoading && (
+                <TableRow>
+                  <TableCell colSpan={3} className="text-center text-muted-foreground py-6">
+                    Carregando...
+                  </TableCell>
+                </TableRow>
+              )}
+              {!isLoading && ordenadas.length === 0 && (
+                <TableRow>
+                  <TableCell colSpan={3} className="text-center text-muted-foreground py-6">
+                    Nenhuma ligação cadastrada ainda.
+                  </TableCell>
+                </TableRow>
+              )}
+              {ordenadas.map((l) => (
+                <TableRow key={l.id}>
+                  <TableCell className="py-1.5">{l.classificacao_malote?.nome ?? "—"}</TableCell>
+                  <TableCell className="py-1.5">{l.classificacao_malote_vinculada?.nome ?? "—"}</TableCell>
+                  {podeEditar && (
+                    <TableCell className="py-1.5 text-right">
+                      <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => abrirEditar(l)}>
+                        <Pencil className="h-3.5 w-3.5" />
+                      </Button>
+                      <Button variant="ghost" size="icon" className="h-7 w-7 text-destructive" onClick={() => handleExcluir(l.id)}>
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </Button>
+                    </TableCell>
+                  )}
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </div>
+      </CardContent>
+
+      <Dialog open={open} onOpenChange={setOpen}>
+        <DialogContent className="sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle>{editando?.id ? "Editar ligação" : "Adicionar ligação"}</DialogTitle>
+          </DialogHeader>
+          <p className="text-sm text-muted-foreground">
+            Selecione a Classificação sem orçamento próprio (ex.: Pensão) e a Classificação que vai fornecer o
+            orçamento (ex.: Salário).
+          </p>
+          <div className="grid grid-cols-[1fr_auto_1fr] items-end gap-2">
+            <div className="min-w-0">
+              <Label className="block truncate">
+                Origem (sem orçamento) <span className="text-destructive">*</span>
+              </Label>
+              <SearchableSelect
+                value={editando?.origemId ?? ""}
+                onChange={(v) => setEditando((s) => (s ? { ...s, origemId: v, destinoId: s.destinoId === v ? "" : s.destinoId } : s))}
+                options={editando?.id ? opcoesOrigemTodas : opcoesOrigem}
+                placeholder="Selecione a classificação..."
+                searchPlaceholder="Buscar..."
+                disabled={!!editando?.id}
+              />
+            </div>
+            <span className="pb-2.5 text-muted-foreground">→</span>
+            <div className="min-w-0">
+              <Label className="block truncate">
+                Destino (com orçamento) <span className="text-destructive">*</span>
+              </Label>
+              <SearchableSelect
+                value={editando?.destinoId ?? ""}
+                onChange={(v) => setEditando((s) => (s ? { ...s, destinoId: v } : s))}
+                options={opcoesDestino}
+                placeholder="Selecione a classificação..."
+                searchPlaceholder="Buscar..."
+                disabled={!editando?.origemId}
+              />
+            </div>
+          </div>
+
+          <div className="flex items-start gap-2 rounded-lg border border-border bg-muted/30 p-3 text-xs">
+            <Info className="h-4 w-4 mt-0.5 text-muted-foreground shrink-0" />
+            <p className="text-muted-foreground">
+              Atenção: a origem não pode já estar ligada a rubricas de Licitação/Contrato ou a Orçamento
+              Administrativo — por isso não aparecem nessa lista. Só é permitido 1 nível de ligação: o destino não
+              pode ele mesmo já ser origem de outra ligação, nem a origem pode já ser destino de outra.
+            </p>
+          </div>
+
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setOpen(false)}>
+              Cancelar
+            </Button>
+            <Button onClick={handleSalvar} disabled={salvar.isPending}>
+              {salvar.isPending ? "Salvando..." : "Adicionar ligação"}
             </Button>
           </DialogFooter>
         </DialogContent>
