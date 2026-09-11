@@ -1483,9 +1483,11 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "anali
           );
         })}
         {podeEtiquetar && (
-          <button type="button" onClick={abrir} title="Etiquetas"
-            style={{ display: "inline-flex", alignItems: "center", gap: 4, padding: "2px 8px", borderRadius: 20, border: "1px dashed #cbd5e1", background: aberto ? "#eef4ff" : "#fff", color: "#64748b", fontSize: 11, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
-            🏷{marcadas.length === 0 ? " Etiqueta" : ""}
+          {/* Um botão de verdade, não um chip: a primeira versão (tracejado,
+              "🏷 Etiqueta") passou por rótulo vazio e ninguém clicou. */}
+          <button type="button" onClick={abrir} title={marcadas.length ? "Alterar etiquetas" : "Adicionar etiqueta"}
+            style={{ display: "inline-flex", alignItems: "center", gap: 4, padding: marcadas.length ? "2px 7px" : "3px 10px", borderRadius: 8, border: "1px solid #c7d7f5", background: aberto ? "#0f3171" : "#eef4ff", color: aberto ? "#fff" : "#0f3171", fontSize: 11, fontWeight: 800, cursor: "pointer", fontFamily: "inherit", lineHeight: 1.4 }}>
+            {marcadas.length === 0 ? "+ Etiqueta" : "✎"}
           </button>
         )}
         {!podeEtiquetar && marcadas.length === 0 && <span style={{ color: "#cbd5e1", fontSize: 11 }}>—</span>}
