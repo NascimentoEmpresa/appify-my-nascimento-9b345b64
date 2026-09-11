@@ -2,12 +2,13 @@
 //
 // Pedido de 11/09/2026: na Gestão Recrutamento (e na mesma tela do analista)
 // um botão para marcar cada solicitação com "confere", "visto", "ok",
-// "revisar", "digitar"... e poder filtrar por elas. É anotação de trabalho,
+// "revisar"... e poder filtrar por elas. É anotação de trabalho,
 // não etapa do fluxo: o STATUS continua dizendo onde a vaga está; a etiqueta
 // diz o que a pessoa que está olhando a fila quer lembrar dela.
 //
-// A lista vive aqui E na CHECK da coluna (migration 20260930000090). Para
-// entrar uma etiqueta nova, mexe nos dois — a tela não deixa marcar o que
+// A lista vive aqui E na CHECK da coluna (migrations 20260930000090 e 091 —
+// a 091 tirou "Digitar", no mesmo dia, a pedido). Para entrar ou sair uma
+// etiqueta, mexe nos dois — a tela não deixa marcar o que
 // não está aqui, e o banco não deixa gravar o que não está lá.
 export interface EtiquetaRecrutamento {
   valor: string;
@@ -20,7 +21,6 @@ export const ETIQUETAS_RECRUTAMENTO: EtiquetaRecrutamento[] = [
   { valor: "Visto",              cor: { bg: "#f1f5f9", borda: "#cbd5e1", texto: "#475569" } },
   { valor: "OK",                 cor: { bg: "#dcfce7", borda: "#86efac", texto: "#166534" } },
   { valor: "Revisar",            cor: { bg: "#fef3c7", borda: "#fcd34d", texto: "#92400e" } },
-  { valor: "Digitar",            cor: { bg: "#ede9fe", borda: "#c4b5fd", texto: "#5b21b6" } },
   { valor: "Aguardando retorno", cor: { bg: "#ffedd5", borda: "#fdba74", texto: "#9a3412" } },
   { valor: "Pendência",          cor: { bg: "#fee2e2", borda: "#fca5a5", texto: "#991b1b" } },
 ];

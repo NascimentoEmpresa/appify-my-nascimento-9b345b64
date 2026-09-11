@@ -5,7 +5,7 @@ import {
 
 describe("etiquetas da solicitação de vaga", () => {
   it("o catálogo tem o que foi pedido e não repete valor", () => {
-    for (const v of ["Confere", "Visto", "OK", "Revisar", "Digitar"]) expect(VALORES_ETIQUETAS).toContain(v);
+    for (const v of ["Confere", "Visto", "OK", "Revisar"]) expect(VALORES_ETIQUETAS).toContain(v);
     expect(new Set(VALORES_ETIQUETAS).size).toBe(ETIQUETAS_RECRUTAMENTO.length);
   });
 
@@ -21,7 +21,7 @@ describe("etiquetas da solicitação de vaga", () => {
   });
 
   it("etiquetasValidas filtra e ordena o que veio do banco", () => {
-    expect(etiquetasValidas(["Digitar", "xpto", "Confere"])).toEqual(["Confere", "Digitar"]);
+    expect(etiquetasValidas(["Revisar", "xpto", "Confere", "Digitar"])).toEqual(["Confere", "Revisar"]);
     expect(etiquetasValidas(null)).toEqual([]);
   });
 
