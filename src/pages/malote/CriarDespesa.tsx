@@ -15,6 +15,7 @@ import { useEmpresaId } from "@/hooks/useEmpresaId";
 import { useClassificacoesOrcamento, TipoClassificacaoOrcamento } from "@/hooks/usePlanejamentoOrcamentario";
 import { useOrcadoClassificacao } from "@/hooks/useOrcadoClassificacao";
 import { useUtilizadoOrcamento } from "@/hooks/useUtilizadoOrcamento";
+import { useLigacoesClassificacaoMalote, mapaClassificacaoVinculada, classificacaoCanonica } from "@/hooks/useMaloteClassificacaoMaloteLink";
 import {
   useSalvarDespesa,
   useDespesa,
@@ -453,16 +454,22 @@ function PainelSolicitacao({
   const anoMesAtual = useMemo(() => new Date().toISOString().slice(0, 7), []);
   const { resolver: resolverOrcado } = useOrcadoClassificacao(empresaId, anoMesAtual);
   const { data: utilizadoLinhas = [] } = useUtilizadoOrcamento();
+  const { data: ligacoesClassMalote = [] } = useLigacoesClassificacaoMalote();
+  // SIS-2026-0374: u.classificacao_id já vem canonicalizado (origem→destino
+  // de ligação, ex. Pensão→Salário) por useUtilizadoOrcamento; resolverOrcado
+  // já se auto-corrige, mas o filtro manual abaixo precisa da mesma resolução.
+  const mapaVinculo = useMemo(() => mapaClassificacaoVinculada(ligacoesClassMalote), [ligacoesClassMalote]);
+  const classificacaoIdCanonica = useMemo(() => classificacaoCanonica(mapaVinculo, classificacaoId), [mapaVinculo, classificacaoId]);
   const orcadoDoMes = classificacaoId ? resolverOrcado(classificacaoId, tipo === "contrato" ? contratoId || null : null) : null;
   const utilizadoDoMes = useMemo(() => {
     if (!classificacaoId) return 0;
     return utilizadoLinhas.reduce((soma, u) => {
-      if (u.classificacao_id !== classificacaoId) return soma;
+      if (u.classificacao_id !== classificacaoIdCanonica) return soma;
       if (!u.competencia || u.competencia.slice(0, 7) !== anoMesAtual) return soma;
       if (tipo === "contrato" && (u.contrato_id ?? null) !== (contratoId || null)) return soma;
       return soma + (Number(u.valor) || 0);
     }, 0);
-  }, [utilizadoLinhas, classificacaoId, anoMesAtual, tipo, contratoId]);
+  }, [utilizadoLinhas, classificacaoIdCanonica, anoMesAtual, tipo, contratoId]);
   const restanteDoMes = orcadoDoMes != null ? orcadoDoMes - utilizadoDoMes : null;
 
   useEffect(() => {

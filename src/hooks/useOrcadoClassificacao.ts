@@ -5,6 +5,7 @@ import { useOrcamentoContratos, computarGruposContrato } from "@/hooks/useOrcame
 import { useContratosERP } from "@/hooks/useContratosERP";
 import { usePlanilhaCustos, fimDoMes } from "@/hooks/usePlanilhaCusto";
 import { useLigacoesLicitacaoClassificacao } from "@/hooks/useMaloteLicitacaoClassificacaoLink";
+import { useLigacoesClassificacaoMalote, mapaClassificacaoVinculada, classificacaoCanonica } from "@/hooks/useMaloteClassificacaoMaloteLink";
 import { getStatusVigencia } from "@/pages/malote/orcamentoUtils";
 
 // Resolve o Orçado de UMA Classificação do Malote num Ano/Mês — mesma
@@ -27,6 +28,7 @@ export function useOrcadoClassificacao(empresaId: string | null | undefined, ano
   // orçamento batia), mesmo com isLoading=false liberando o botão Aprovar.
   const { data: ligacoesAdm = [], isLoading: carregandoLigacoes } = useLigacoesAdministrativoClassificacao();
   const { data: gruposContrato = [], isLoading: carregandoContrato } = useOrcamentoContratos(anoMes);
+  const { data: ligacoesClassMalote = [], isLoading: carregandoLigacoesClassMalote } = useLigacoesClassificacaoMalote();
 
   const classificacoesPorId = useMemo(() => new Map(classificacoes.map((c) => [c.id, c])), [classificacoes]);
   const maloteIdPorAdministrativa = useMemo(() => {
@@ -34,9 +36,14 @@ export function useOrcadoClassificacao(empresaId: string | null | undefined, ano
     for (const l of ligacoesAdm) map.set(l.classificacao_administrativa_id, l.classificacao_malote_id);
     return map;
   }, [ligacoesAdm]);
+  const mapaVinculo = useMemo(() => mapaClassificacaoVinculada(ligacoesClassMalote), [ligacoesClassMalote]);
   const referenciaPeriodo = useMemo(() => fimDoMes(anoMes), [anoMes]);
 
-  function resolver(classificacaoId: string | null | undefined, contratoId: string | null | undefined): number | null {
+  function resolver(classificacaoIdBruto: string | null | undefined, contratoId: string | null | undefined): number | null {
+    // SIS-2026-0374: Classificação sem orçamento próprio (ex. Pensão)
+    // resolve pelo destino da ligação (ex. Salário) — dali em diante é
+    // exatamente como se a despesa fosse da classificação destino.
+    const classificacaoId = classificacaoCanonica(mapaVinculo, classificacaoIdBruto);
     if (!classificacaoId) return null;
     const classificacao = classificacoesPorId.get(classificacaoId);
     if (!classificacao) return null;
@@ -57,7 +64,10 @@ export function useOrcadoClassificacao(empresaId: string | null | undefined, ano
     return soma;
   }
 
-  return { resolver, isLoading: carregandoClassificacoes || carregandoAdm || carregandoLigacoes || carregandoContrato };
+  return {
+    resolver,
+    isLoading: carregandoClassificacoes || carregandoAdm || carregandoLigacoes || carregandoContrato || carregandoLigacoesClassMalote,
+  };
 }
 
 // SIS-2026-0261 (Iury): a alçada de aprovação de uma despesa PARCELADA
@@ -87,6 +97,7 @@ export function useOrcadoClassificacaoMultiMes(empresaId: string | null | undefi
   const { data: contratos = [], isLoading: carregandoContratos } = useContratosERP({ todasEmpresas: true });
   const { data: planilha = [], isLoading: carregandoPlanilha } = usePlanilhaCustos({ todasEmpresas: true });
   const { data: ligacoesLicitacao = [], isLoading: carregandoLigacoesLicitacao } = useLigacoesLicitacaoClassificacao();
+  const { data: ligacoesClassMalote = [], isLoading: carregandoLigacoesClassMalote } = useLigacoesClassificacaoMalote();
 
   const classificacoesPorId = useMemo(() => new Map(classificacoes.map((c) => [c.id, c])), [classificacoes]);
   const maloteIdPorAdministrativa = useMemo(() => {
@@ -99,13 +110,16 @@ export function useOrcadoClassificacaoMultiMes(empresaId: string | null | undefi
     for (const l of ligacoesLicitacao) map.set(l.campo_planilha_custo, l.classificacao_malote_id);
     return map;
   }, [ligacoesLicitacao]);
+  const mapaVinculo = useMemo(() => mapaClassificacaoVinculada(ligacoesClassMalote), [ligacoesClassMalote]);
   // Cache por mês (não por classificação/contrato) — o custo de recalcular
   // TODOS os contratos é o mesmo pra resolver 1 ou N classificações daquele
   // mês, então vale a pena guardar o resultado inteiro do mês na 1ª vez que
   // ele é pedido, em vez de recalcular a cada parcela que cai no mesmo mês.
   const cacheGruposPorMes = useMemo(() => new Map<string, ReturnType<typeof computarGruposContrato>>(), [contratos, planilha, maloteIdPorCampo]);
 
-  function resolver(classificacaoId: string | null | undefined, contratoId: string | null | undefined, anoMes: string): number | null {
+  function resolver(classificacaoIdBruto: string | null | undefined, contratoId: string | null | undefined, anoMes: string): number | null {
+    // SIS-2026-0374: mesma resolução origem→destino do useOrcadoClassificacao.
+    const classificacaoId = classificacaoCanonica(mapaVinculo, classificacaoIdBruto);
     if (!classificacaoId) return null;
     const classificacao = classificacoesPorId.get(classificacaoId);
     if (!classificacao) return null;
@@ -135,6 +149,12 @@ export function useOrcadoClassificacaoMultiMes(empresaId: string | null | undefi
   return {
     resolver,
     isLoading:
-      carregandoClassificacoes || carregandoAdm || carregandoLigacoes || carregandoContratos || carregandoPlanilha || carregandoLigacoesLicitacao,
+      carregandoClassificacoes ||
+      carregandoAdm ||
+      carregandoLigacoes ||
+      carregandoContratos ||
+      carregandoPlanilha ||
+      carregandoLigacoesLicitacao ||
+      carregandoLigacoesClassMalote,
   };
 }

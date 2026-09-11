@@ -16,6 +16,7 @@ import { useClassificacaoMaloteVisivel } from "@/hooks/useMaloteAcessoOrcamento"
 import { SetorRestritoBadge } from "./SetorRestritoBadge";
 import { useOrcamentoContratos } from "@/hooks/useOrcamentoContratos";
 import { useUtilizadoOrcamento } from "@/hooks/useUtilizadoOrcamento";
+import { useLigacoesClassificacaoMalote, mapaClassificacaoVinculada, classificacaoCanonica } from "@/hooks/useMaloteClassificacaoMaloteLink";
 import { anoMesAtual, fimDoMes, formatBRL } from "@/hooks/usePlanilhaCusto";
 import { STATUS_LABEL, STATUS_BADGE_CLASS } from "@/hooks/useMaloteDespesa";
 import { getStatusVigencia, fmtMoney, fmtPct, fmtDate, competenciaNoPeriodo } from "./orcamentoUtils";
@@ -142,12 +143,28 @@ export default function DetalheOrcamento() {
   const { data: ligacoesAdm = [] } = useLigacoesAdministrativoClassificacao();
   const { data: gruposContrato = [], isLoading: carregandoContrato } = useOrcamentoContratos(filtro.anoMes);
   const { data: utilizadoLinhas = [], isLoading: carregandoUtilizado } = useUtilizadoOrcamento();
+  const { data: ligacoesClassMalote = [] } = useLigacoesClassificacaoMalote();
 
   const referenciaPeriodo = useMemo(() => fimDoMes(filtro.anoMes), [filtro.anoMes]);
+
+  // SIS-2026-0374: Classificação sem orçamento próprio (ex. Pensão), filtrada
+  // aqui, resolve pro destino da ligação (ex. Salário) — o drill-down mostra
+  // exatamente o mesmo detalhe de quem selecionar Salário direto. Usado só
+  // pra Orçado/Utilizado; o rótulo do filtro continua mostrando o que a
+  // pessoa escolheu (classificacaoSelecionada, abaixo, fica intacto).
+  const mapaVinculo = useMemo(() => mapaClassificacaoVinculada(ligacoesClassMalote), [ligacoesClassMalote]);
+  const classificacaoIdEfetivo = useMemo(
+    () => classificacaoCanonica(mapaVinculo, filtro.classificacaoId) ?? "",
+    [mapaVinculo, filtro.classificacaoId]
+  );
 
   const classificacaoSelecionada = useMemo(
     () => classificacoes.find((c) => c.id === filtro.classificacaoId) ?? null,
     [classificacoes, filtro.classificacaoId]
+  );
+  const classificacaoEfetiva = useMemo(
+    () => classificacoes.find((c) => c.id === classificacaoIdEfetivo) ?? null,
+    [classificacoes, classificacaoIdEfetivo]
   );
 
   const maloteIdPorAdministrativa = useMemo(() => {
@@ -164,38 +181,40 @@ export default function DetalheOrcamento() {
   // todas as rubricas ligadas daquele contrato (mesmo total de orcadoTotal
   // no accordion do Orçamento Geral). Sem nenhum dos dois, "—".
   const orcado = useMemo(() => {
-    if (!filtro.classificacaoId) {
+    if (!classificacaoIdEfetivo) {
       if (!filtro.contratoId) return null;
       const grupo = gruposContrato.find((g) => g.contrato.id === filtro.contratoId);
       if (!grupo) return 0;
       return grupo.rubricas.filter((r) => r.classificacaoMaloteId).reduce((s, r) => s + r.valor, 0);
     }
-    if (!classificacaoSelecionada) return null;
-    if (classificacaoSelecionada.tipo === "contrato") {
+    if (!classificacaoEfetiva) return null;
+    if (classificacaoEfetiva.tipo === "contrato") {
       if (!filtro.contratoId) return null;
       const grupo = gruposContrato.find((g) => g.contrato.id === filtro.contratoId);
       if (!grupo) return 0;
       return grupo.rubricas
-        .filter((r) => r.classificacaoMaloteId === filtro.classificacaoId)
+        .filter((r) => r.classificacaoMaloteId === classificacaoIdEfetivo)
         .reduce((s, r) => s + r.valor, 0);
     }
     let soma = 0;
     for (const o of orcamentosAdm) {
-      if (maloteIdPorAdministrativa.get(o.classificacao_id) !== filtro.classificacaoId) continue;
+      if (maloteIdPorAdministrativa.get(o.classificacao_id) !== classificacaoIdEfetivo) continue;
       if (getStatusVigencia(o.inicio_vigencia, o.fim_vigencia, referenciaPeriodo) !== "na_vigencia") continue;
       soma += Number(o.valor) || 0;
     }
     return soma;
-  }, [classificacaoSelecionada, filtro.classificacaoId, filtro.contratoId, gruposContrato, orcamentosAdm, maloteIdPorAdministrativa, referenciaPeriodo]);
+  }, [classificacaoEfetiva, classificacaoIdEfetivo, filtro.contratoId, gruposContrato, orcamentosAdm, maloteIdPorAdministrativa, referenciaPeriodo]);
 
   const itens = useMemo(() => {
     return utilizadoLinhas.filter((l) => {
       if (!competenciaNoPeriodo(l.competencia, filtro.anoMes)) return false;
-      if (filtro.classificacaoId && l.classificacao_id !== filtro.classificacaoId) return false;
+      // l.classificacao_id já vem canonicalizado por useUtilizadoOrcamento —
+      // compara contra o efetivo, não o bruto (SIS-2026-0374).
+      if (classificacaoIdEfetivo && l.classificacao_id !== classificacaoIdEfetivo) return false;
       if (filtro.contratoId && l.contrato_id !== filtro.contratoId) return false;
       return true;
     });
-  }, [utilizadoLinhas, filtro]);
+  }, [utilizadoLinhas, filtro.anoMes, filtro.contratoId, classificacaoIdEfetivo]);
 
   const utilizado = useMemo(() => itens.reduce((s, l) => s + (Number(l.valor) || 0), 0), [itens]);
   const qtdAguardando = useMemo(() => itens.filter((l) => l.status === "aguardando_pagamento").length, [itens]);

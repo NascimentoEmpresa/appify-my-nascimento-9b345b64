@@ -70,6 +70,7 @@ import { useTiposFormaPagamento } from "@/hooks/useMaloteFormaPagamento";
 import { useCartaoBancos, urlLogoCartao } from "@/hooks/useMaloteCartaoCredito";
 import { BancoBadge } from "@/components/financeiro/BancoBadge";
 import { useUtilizadoOrcamento } from "@/hooks/useUtilizadoOrcamento";
+import { useLigacoesClassificacaoMalote, mapaClassificacaoVinculada, classificacaoCanonica } from "@/hooks/useMaloteClassificacaoMaloteLink";
 import { anoMesAtual } from "@/hooks/usePlanilhaCusto";
 import { RateioGrid, DimensoesRateio } from "./RateioGrid";
 import { RateioAprovadorTable } from "./RateioAprovadorTable";
@@ -411,6 +412,17 @@ export default function DespesaVisualizar() {
   // dentroDaAlcada abaixo).
   const { resolver: resolverOrcadoMultiMes, isLoading: orcadoMultiMesCarregando } = useOrcadoClassificacaoMultiMes(despesa?.empresa_id);
   const { data: utilizadoLinhasGlobal = [] } = useUtilizadoOrcamento();
+  const { data: ligacoesClassMalote = [] } = useLigacoesClassificacaoMalote();
+  // SIS-2026-0374: u.classificacao_id já vem canonicalizado (origem→destino
+  // de ligação, ex. Pensão→Salário) por useUtilizadoOrcamento — a
+  // classificação da despesa precisa da mesma resolução pra bater, tanto na
+  // decisão de escalar (utilizadoAntesNoMes) quanto no snapshot do pagamento
+  // (calcularRateioSnapshot).
+  const mapaVinculo = useMemo(() => mapaClassificacaoVinculada(ligacoesClassMalote), [ligacoesClassMalote]);
+  const classificacaoIdCanonicaDespesa = useMemo(
+    () => classificacaoCanonica(mapaVinculo, despesa?.classificacao_id),
+    [mapaVinculo, despesa?.classificacao_id]
+  );
   // SIS-2026-0221: "Forma de pagamento" vem do catálogo cadastrável em
   // Configurações do Malote → Formas de Pagamento, não mais de um enum fixo.
   const { data: tiposFormaPagamento = [] } = useTiposFormaPagamento();
@@ -720,7 +732,7 @@ export default function DespesaVisualizar() {
   function utilizadoAntesNoMes(contratoId: string | null, mes: string): number {
     return utilizadoLinhasGlobal.reduce((soma, u) => {
       if (u.despesa_id === despesa!.id) return soma;
-      if (u.classificacao_id !== despesa!.classificacao_id) return soma;
+      if (u.classificacao_id !== classificacaoIdCanonicaDespesa) return soma;
       if (!u.competencia || u.competencia.slice(0, 7) !== mes) return soma;
       if ((u.contrato_id ?? null) !== contratoId) return soma;
       return soma + (Number(u.valor) || 0);
@@ -1011,7 +1023,7 @@ export default function DespesaVisualizar() {
     const utilizadoAntesPorContrato = new Map<string, number>();
     for (const u of utilizadoLinhasGlobal) {
       if (u.despesa_id === despesa!.id) continue;
-      if (u.classificacao_id !== despesa!.classificacao_id) continue;
+      if (u.classificacao_id !== classificacaoIdCanonicaDespesa) continue;
       if (!u.competencia || u.competencia.slice(0, 7) !== anoMesDespesa) continue;
       const chave = u.contrato_id ?? "__sem_contrato__";
       utilizadoAntesPorContrato.set(chave, (utilizadoAntesPorContrato.get(chave) ?? 0) + (Number(u.valor) || 0));

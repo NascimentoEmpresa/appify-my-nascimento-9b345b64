@@ -1,6 +1,8 @@
+import { useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { StatusDespesa } from "@/hooks/useMaloteDespesa";
+import { useLigacoesClassificacaoMalote, mapaClassificacaoVinculada, classificacaoCanonica } from "@/hooks/useMaloteClassificacaoMaloteLink";
 
 // SIS-2026-0168: "Utilizado" do Orçamento Geral / Detalhe Orçamento vem dos
 // lançamentos reais do Malote com status Aguardando Pagamento ou Despesa
@@ -25,7 +27,17 @@ export interface UtilizadoOrcamentoLinha {
 }
 
 export function useUtilizadoOrcamento() {
-  return useQuery({
+  // SIS-2026-0374: Classificação SEM orçamento próprio (ex. Pensão), ligada
+  // a outra COM orçamento (ex. Salário) — o "Utilizado" de Pensão tem que
+  // contar pra dentro do pool de Salário, senão o gasto de Pensão nunca é
+  // descontado de orçamento nenhum (ela não tem um). Remapeado AQUI, na
+  // única fonte que todo o resto do Malote lê (RateioGrid, Aprovações,
+  // Orçamento Geral, Detalhe Orçamento, JustificativaPendenteBadge...) —
+  // sem isso, cada tela teria que saber da ligação por conta própria.
+  const { data: ligacoes = [] } = useLigacoesClassificacaoMalote();
+  const mapaVinculo = useMemo(() => mapaClassificacaoVinculada(ligacoes), [ligacoes]);
+
+  const query = useQuery({
     queryKey: ["utilizado_orcamento"],
     queryFn: async () => {
       const { data, error } = await (supabase as any)
@@ -36,4 +48,14 @@ export function useUtilizadoOrcamento() {
       return (data ?? []) as UtilizadoOrcamentoLinha[];
     },
   });
+
+  const data = useMemo(() => {
+    if (!query.data || mapaVinculo.size === 0) return query.data;
+    return query.data.map((l) => ({
+      ...l,
+      classificacao_id: classificacaoCanonica(mapaVinculo, l.classificacao_id),
+    }));
+  }, [query.data, mapaVinculo]);
+
+  return { ...query, data };
 }
