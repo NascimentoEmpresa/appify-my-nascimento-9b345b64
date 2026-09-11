@@ -260,7 +260,10 @@ interface Pergunta {
   destacar?: string;
 }
 
-const seIdentificou = (f: Form) => f.identificado === "sim";
+// Identificar-se só existe fora da anônima: quem marcou "sim" em
+// identificado e DEPOIS escolheu anônima não pode continuar com nome/CPF na
+// numeração (nem na validação).
+const seIdentificou = (f: Form) => f.anonimo !== "sim" && f.identificado === "sim";
 
 const PERGUNTAS: Pergunta[] = [
   // Empresa e contrato abrem o formulário: é o que decide para qual comitê o
@@ -307,7 +310,9 @@ const PERGUNTAS: Pergunta[] = [
   { k: "email_acesso",        label: "Qual o seu e-mail?", req: true,
     quando: (f) => f.anonimo !== "sim" },
   { k: "senha",               label: "Escolha uma senha para acompanhar a denúncia", req: true },
-  { k: "celular",             label: "Qual o seu celular com WhatsApp?" },
+  // Anônima é "sem nenhum contato": o celular some junto com o e-mail.
+  { k: "celular",             label: "Qual o seu celular com WhatsApp?",
+    quando: (f) => f.anonimo !== "sim" },
   { k: "concordou_termo",     label: "Li e concordo com o termo acima.", req: true },
 ];
 
@@ -1424,6 +1429,11 @@ function Formulario({ onAcompanhar, onRegistrou, onProgresso }: {
           </div>
         </div>
         <div className="dn-card-b">
+          {/* E-mail e celular só existem na numeração fora da anônima (ver o
+              `quando` de cada um). Renderizar o Campo sem a pergunta era o
+              "Cannot read properties of undefined (reading 'k')" que
+              derrubava a tela inteira ao escolher "Anônima" (11/09/2026). */}
+          {f.anonimo !== "sim" && (
           <Campo
             p={perguntas.email_acesso} falta={falta("email_acesso")} para="dn-i-email_acesso"
             ajuda="Para você receber atualizações sobre a denúncia e acessar o seu processo quando quiser."
@@ -1435,6 +1445,7 @@ function Formulario({ onAcompanhar, onRegistrou, onProgresso }: {
               placeholder="voce@exemplo.com"
             />
           </Campo>
+          )}
 
           <Campo
             p={perguntas.senha} falta={falta("senha")} para="dn-i-senha"
@@ -1456,6 +1467,7 @@ function Formulario({ onAcompanhar, onRegistrou, onProgresso }: {
             </div>
           </Campo>
 
+          {f.anonimo !== "sim" && (
           <Campo
             p={perguntas.celular} para="dn-i-celular"
             ajuda="Se informar, enviamos o número do processo e o link de acompanhamento pelo WhatsApp."
@@ -1465,6 +1477,7 @@ function Formulario({ onAcompanhar, onRegistrou, onProgresso }: {
               onChange={(e) => set("celular", e.target.value)} placeholder="(00) 00000-0000"
             />
           </Campo>
+          )}
 
           <div className="dn-note">
             <Lock className="h-4 w-4" />
@@ -1791,7 +1804,8 @@ function Acompanhar({ onVoltar }: { onVoltar: () => void }) {
  * `dn-q-<campo>` porque é para ele que o aviso de pendência rola a tela.
  */
 function Campo({ p, falta = false, ajuda, para, className = "", children }: {
-  p: Pergunta & { n: number };
+  /** Pode vir undefined quando a pergunta está fora da numeração (`quando` falso). */
+  p?: Pergunta & { n: number };
   falta?: boolean;
   ajuda?: string;
   /** id do controle, quando a pergunta tem um só — dá clique no rótulo. */
@@ -1799,6 +1813,10 @@ function Campo({ p, falta = false, ajuda, para, className = "", children }: {
   className?: string;
   children: ReactNode;
 }) {
+  // Pergunta escondida pelo `quando` não tem número nem lugar na tela. Quem
+  // renderiza deveria checar antes, mas um descuido aqui não pode derrubar o
+  // formulário público inteiro.
+  if (!p) return null;
   return (
     <div className={`dn-q ${className}`} id={`dn-q-${p.k}`} data-falta={falta ? "1" : "0"}>
       <label className="dn-lab" htmlFor={para}>
