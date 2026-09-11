@@ -12,6 +12,7 @@ import {
 import {
   ETIQUETAS_RECRUTAMENTO, alternarEtiqueta, corDaEtiqueta, etiquetasValidas,
 } from "@/lib/recrutamento/etiquetas";
+import { AvisoProcessos, processosDe, useProcessosDosCandidatos } from "@/components/recrutamento/AvisoProcessos";
 
 // ── Tipos ──────────────────────────────────────────────────────────
 interface Solicitacao {
@@ -393,6 +394,8 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "anali
 
   // Kanban interno de candidatos (solicitação em "Seleção de Candidato")
   const [candidatos, setCandidatos]         = useState<Curriculo[]>([]);
+  // "Já processou a empresa?" para os cards do kanban — uma chamada pela lista.
+  const processosCand = useProcessosDosCandidatos(candidatos);
   const [buscaCand, setBuscaCand]           = useState(""); // busca no kanban de candidatos
   const [candModal, setCandModal]           = useState<{ id: number; novaEtapa: string; nome: string } | null>(null);
   const [candObs, setCandObs]               = useState("");
@@ -1791,6 +1794,7 @@ Isto não tem desfazer: o histórico e os candidatos ligados a ela vão junto.`)
                           <div style={{ padding: "9px 10px 8px" }}>
                             <div style={{ display: "flex", alignItems: "center", gap: 5 }}>
                               <div style={{ fontSize: 12, fontWeight: 800, color: "#0f172a", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", flex: 1 }}>{c.nome || "Sem nome"}</div>
+                              <AvisoProcessos processos={processosDe(processosCand, c)} compacto />
                               <button onClick={() => abrirDetalheCandidato(c)} title="Ver detalhes e procurar cadastro dele na empresa"
                                 style={{ flexShrink: 0, width: 20, height: 20, padding: 0, display: "inline-flex", alignItems: "center", justifyContent: "center", borderRadius: 6, border: "1px solid #e2e8f0", background: "#f8fafc", cursor: "pointer", fontSize: 10.5 }}>🔍</button>
                             </div>

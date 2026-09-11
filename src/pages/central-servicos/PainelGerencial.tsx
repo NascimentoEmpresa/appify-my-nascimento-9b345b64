@@ -83,7 +83,7 @@ export default function PainelGerencial() {
   }, []);
   const [viz, setViz] = useState<Record<string, Viz>>({ necessidades: "barras", distribuicao: "rosca", fortes: "barras", melhoria: "barras", evolucao: "linha" });
   // filtros
-  const [periodo, setPeriodo] = useState<"todos" | "90" | "180" | "365">("todos");
+  const [periodo, setPeriodo] = useState<"todos" | "30" | "90" | "180" | "365">("todos");
   const [fSetor, setFSetor] = useState("");
   const [fResp, setFResp] = useState("");
   const [fSituacao, setFSituacao] = useState("");
@@ -656,7 +656,7 @@ export default function PainelGerencial() {
           <>
           <div><label style={lbl}>Período</label>
             <select value={periodo} onChange={e => setPeriodo(e.target.value as any)} style={inp}>
-              <option value="todos">Todo o período</option><option value="90">Últimos 90 dias</option><option value="180">Últimos 180 dias</option><option value="365">Último ano</option>
+              <option value="todos">Todo o período</option><option value="30">Últimos 30 dias</option><option value="90">Últimos 90 dias</option><option value="180">Últimos 180 dias</option><option value="365">Último ano</option>
             </select></div>
           <MultiSelectEmpresa opcoes={empresasOpc} sel={fEmpresas} setSel={setFEmpresas} />
           <div><label style={lbl}>Diretoria</label>

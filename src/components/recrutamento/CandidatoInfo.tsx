@@ -1,5 +1,6 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
+import { AvisoProcessos, processosDe, useProcessosDosCandidatos } from "@/components/recrutamento/AvisoProcessos";
 
 // Bloco compartilhado: mostra TODAS as informações do candidato + da vaga +
 // restrição do CPF + perfil e anexos (CV/CTPS). Usado nas filas de Jurídico,
@@ -28,6 +29,9 @@ export function CandidatoInfo({ cand, hideCurriculo }: { cand: any; hideCurricul
   const [perfil, setPerfil] = useState<any | null>(null);
   const [arqs, setArqs] = useState<any[]>([]);
   const [aberto, setAberto] = useState(false);
+  // Já processou a empresa? Vai ao lado do nome, nos dois lugares (resumo e modal).
+  const candLista = useMemo(() => [{ cpf: cand?.cpf, nome: cand?.nome }], [cand?.cpf, cand?.nome]);
+  const processos = processosDe(useProcessosDosCandidatos(candLista), { cpf: cand?.cpf, nome: cand?.nome });
   useEffect(() => {
     let vivo = true;
     (async () => {
@@ -53,6 +57,7 @@ export function CandidatoInfo({ cand, hideCurriculo }: { cand: any; hideCurricul
         {cand.possui_restricao && (
           <span title={cand.restricao_motivo || ""} style={{ fontSize: 10, fontWeight: 800, padding: "2px 9px", borderRadius: 20, background: "#fef3c7", color: "#92400e", border: "1px solid #fde68a" }}>⚠️ Possui restrições</span>
         )}
+        <AvisoProcessos processos={processos} compacto />
       </div>
       <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
         <Field label="CPF" val={cand.cpf} />
@@ -80,6 +85,7 @@ export function CandidatoInfo({ cand, hideCurriculo }: { cand: any; hideCurricul
               <div style={{ fontSize: 18, fontWeight: 800, color: "#0f172a" }}>{cand.nome || "Sem nome"}</div>
               {cand.possui_restricao && <span style={{ fontSize: 10, fontWeight: 800, padding: "2px 9px", borderRadius: 20, background: "#fef3c7", color: "#92400e", border: "1px solid #fde68a" }}>⚠️ Possui restrições</span>}
             </div>
+            <AvisoProcessos processos={processos} />
             <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
               <Field label="CPF" val={cand.cpf} />
               <Field label="Fone" val={cand.telefone} />
