@@ -1,3 +1,4 @@
+import { semCodigoFilial } from "@/lib/rh/colaboradoresUtils";
 import { feriadosNacionais } from "@/lib/feriadosNacionais";
 
 /**
@@ -248,7 +249,9 @@ export const SALARIO_MASCARA = "****";
  * 1093, por exemplo, tem "LIMPEZA HUSM" e "ADM E ESTAGIARIOS - NH". Pegar o
  * primeiro que o `find` achava trazia o contrato errado para metade da
  * filial. No empate quem desempata é o `Nome Filial` do próprio empregado,
- * que é onde o Senior grava o contrato dele.
+ * que é onde o Senior grava o contrato dele — comparado SEM o código da
+ * frente ("1109 - "), porque desde 11/09/2026 a coluna vem com ele e
+ * CONTRATOS."NOME CONTRATO" não.
  */
 export function contratoDoEmpregado<T extends Record<string, any>>(
   contratos: T[], emp: Record<string, any> | null | undefined,
@@ -257,7 +260,7 @@ export function contratoDoEmpregado<T extends Record<string, any>>(
   if (!filial) return null;
   const daFilial = contratos.filter(c => String(c.Filial ?? "").trim() === filial);
   if (daFilial.length <= 1) return daFilial[0] ?? null;
-  const nomeFilial = String(emp?.["Nome Filial"] ?? "").trim().toUpperCase();
+  const nomeFilial = semCodigoFilial(emp?.["Nome Filial"]).toUpperCase();
   return daFilial.find(c => String(c["NOME CONTRATO"] ?? "").trim().toUpperCase() === nomeFilial)
       ?? daFilial[0];
 }
