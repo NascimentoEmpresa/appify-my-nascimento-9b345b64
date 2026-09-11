@@ -54,6 +54,7 @@ function badgeStatusCls(st: string) {
     // deles: é aqui que ele descobre que o ASO já tem data sem ligar para o SST.
     "Solicitação de agendamento de DEMISSIONAL recebida": "bg-sky-100 text-sky-800 border-sky-200",
     "Agendamento concluído": "bg-emerald-100 text-emerald-700 border-emerald-200",
+    "ASO válido": "bg-emerald-100 text-emerald-700 border-emerald-200",
     "Concluída": "bg-green-100 text-green-700 border-green-200",
     Pendente: "bg-yellow-100 text-yellow-800 border-yellow-200",
     Aprovada: "bg-green-100 text-green-700 border-green-200",

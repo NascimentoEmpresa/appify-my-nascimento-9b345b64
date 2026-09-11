@@ -119,6 +119,12 @@ export function erroDoArquivo(f: File): string | null {
  */
 export const STATUS_SST_RECEBIDA = "Solicitação de agendamento de DEMISSIONAL recebida";
 export const STATUS_SST_AGENDADO = "Agendamento concluído";
+/**
+ * O terceiro do SST (11/09/2026): o colaborador fez ASO há menos de 60 dias
+ * e o exame ainda vale — não precisa marcar outro. Conclui a demissão direto
+ * dali, sem data/hora/local, e é tão final quanto o agendado.
+ */
+export const STATUS_SST_ASO_VALIDO = "ASO válido";
 
 export type Status =
   | "Pendente Analista"
@@ -127,13 +133,14 @@ export type Status =
   | "Pendente SST"
   | typeof STATUS_SST_RECEBIDA
   | typeof STATUS_SST_AGENDADO
+  | typeof STATUS_SST_ASO_VALIDO
   | "Concluída"
   | "Cancelada";
 
 /** Na ordem do fluxo, que é a ordem em que fazem sentido em qualquer filtro. */
 export const STATUS_TODOS: Status[] = [
   "Pendente Analista", "Pendente RH", "Pendente SST",
-  STATUS_SST_RECEBIDA, STATUS_SST_AGENDADO,
+  STATUS_SST_RECEBIDA, STATUS_SST_AGENDADO, STATUS_SST_ASO_VALIDO,
   "Concluída", "Reprovada", "Cancelada",
 ];
 
@@ -144,7 +151,7 @@ export const STATUS_TODOS: Status[] = [
  * antigo, em que quem fechava era o RH. Nada novo cai nele — hoje o fluxo
  * termina no SST, com o agendamento feito.
  */
-export const STATUS_FINAIS: string[] = [STATUS_SST_AGENDADO, "Concluída"];
+export const STATUS_FINAIS: string[] = [STATUS_SST_AGENDADO, STATUS_SST_ASO_VALIDO, "Concluída"];
 
 /** Cor do selo de status — a mesma régua nas três telas. */
 export function corDoStatus(status: string): string {
@@ -157,6 +164,7 @@ export function corDoStatus(status: string): string {
     // agendado já é verde: é o fim da linha.
     [STATUS_SST_RECEBIDA]: "bg-sky-100 text-sky-800 border-sky-200",
     [STATUS_SST_AGENDADO]: "bg-emerald-100 text-emerald-700 border-emerald-200",
+    [STATUS_SST_ASO_VALIDO]: "bg-emerald-100 text-emerald-700 border-emerald-200",
     "Concluída": "bg-green-100 text-green-700 border-green-200",
     "Reprovada": "bg-red-100 text-red-700 border-red-200",
     "Cancelada": "bg-slate-100 text-slate-600 border-slate-200",
@@ -172,6 +180,7 @@ export function explicaStatus(status: string): string {
     "Pendente SST": "Liberada pelo RH. Aguardando o SST receber a solicitação.",
     [STATUS_SST_RECEBIDA]: "O SST recebeu a solicitação e está agendando o ASO demissional.",
     [STATUS_SST_AGENDADO]: "ASO demissional agendado — a data, a hora e o local estão na solicitação.",
+    [STATUS_SST_ASO_VALIDO]: "O ASO do colaborador ainda está válido (menos de 60 dias) — não precisa de exame demissional. Concluída pelo SST.",
     "Concluída": "O RH confirmou. Desligamento concluído.",
     "Reprovada": "O analista reprovou — veja o motivo.",
     "Cancelada": "A solicitação foi cancelada.",
@@ -258,7 +267,21 @@ export interface SolicitacaoDemissao {
 
   criado_em: string | null;
   atualizado_em: string | null;
+
+  /**
+   * DEMISSÃO ↔ VAGA (11/09/2026). Toda demissão nova abre uma vaga de
+   * Substituição de quem sai — a vaga aponta para cá (demissao_id) e o
+   * banco devolve o id dela aqui. Sem a vaga, o pedido não sai de
+   * "Pendente Analista" (trigger demissao_exige_vaga); `vaga_obrigatoria`
+   * é false só nas solicitações anteriores à regra.
+   */
+  vaga_id?: number | null;
+  vaga_obrigatoria?: boolean | null;
 }
+
+/** A demissão que ainda não tem a vaga de reposição que a regra exige. */
+export const faltaVagaDeReposicao = (s: Pick<SolicitacaoDemissao, "vaga_id" | "vaga_obrigatoria" | "status">): boolean =>
+  !!s.vaga_obrigatoria && !s.vaga_id && s.status !== "Reprovada";
 
 export interface AnexoDemissao {
   id: number;

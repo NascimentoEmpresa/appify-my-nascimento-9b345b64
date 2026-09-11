@@ -3,6 +3,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
 import { usePermissoes } from "@/context/PermissoesContext";
 import { Toasts, btnStyle, EtapaChip, Modal } from "@/components/recrutamento/CandidatoInfo";
+import { AvisoProcessos, processosDe, useProcessosDosCandidatos } from "@/components/recrutamento/AvisoProcessos";
 
 // =====================================================================
 // RH / RECRUTAMENTO — Banco de Talentos
@@ -57,6 +58,8 @@ export default function BancoTalentos() {
   const [aba, setAba] = useState<Aba>("banco");
   const [cargoFiltro, setCargoFiltro] = useState<string>("");
   const [rows, setRows] = useState<any[]>([]);
+  // "Já processou a empresa?" — uma chamada pela lista inteira, não por card.
+  const processosCand = useProcessosDosCandidatos(rows);
   const [arquivos, setArquivos] = useState<Record<number, any[]>>({});
   const [sols, setSols] = useState<any[]>([]);                 // solicitações (cargo/status)
   const [vagasComCand, setVagasComCand] = useState<{ vaga_id: number; n: number }[]>([]);
@@ -292,6 +295,7 @@ export default function BancoTalentos() {
                 <div style={{ padding: "14px 16px", display: "flex", flexDirection: "column", gap: 8 }}>
                   <div style={{ fontSize: 15, fontWeight: 800, color: "#0f172a", paddingRight: 28, display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
                     {c.nome || "Sem nome"}
+                    <AvisoProcessos processos={processosDe(processosCand, c)} compacto />
                     {g.n > 1 && <span style={{ fontSize: 10.5, fontWeight: 800, padding: "2px 9px", borderRadius: 20, background: "#eef4ff", border: "1px solid #dbe4f0", color: "#0f3171" }}>📩 {g.n} candidaturas</span>}
                   </div>
                   {(g.n > 1 || c.vaga_id) && (

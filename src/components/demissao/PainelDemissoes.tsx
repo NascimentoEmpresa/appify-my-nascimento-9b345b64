@@ -11,7 +11,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import {
-  BUCKET, MOTIVO_DEVOLUCAO_MIN, STATUS_SST_AGENDADO, STATUS_SST_RECEBIDA, acaoDoSST,
+  BUCKET, MOTIVO_DEVOLUCAO_MIN, STATUS_SST_AGENDADO, STATUS_SST_ASO_VALIDO, STATUS_SST_RECEBIDA, acaoDoSST,
   TABELA, TABELA_ANEXOS, corDoStatus, explicaStatus,
   fmtData, fmtDataHora, fmtTamanho, linkDoLocalASO, patchDevolucao, podeDevolver,
   resumoDevolucao, resumoDoASO,
@@ -67,7 +67,7 @@ export type Etapa = "analista" | "operacional" | "rh" | "sst";
 /** Os status que cada etapa enxerga, na ordem em que fazem sentido na fila. */
 const TODOS_OS_STATUS = [
   "Pendente Analista", "Pendente RH", "Pendente SST",
-  STATUS_SST_RECEBIDA, STATUS_SST_AGENDADO,
+  STATUS_SST_RECEBIDA, STATUS_SST_AGENDADO, STATUS_SST_ASO_VALIDO,
   "Concluída", "Reprovada", "Cancelada",
 ];
 
@@ -77,10 +77,10 @@ const STATUS_DA_ETAPA: Record<Etapa, string[]> = {
   // fluxo inteiro. O que ele não tem é `STATUS_DE_ACAO`.
   operacional: TODOS_OS_STATUS,
   // O SST é a última etapa: vê o que está chegando e o que ele já agendou.
-  sst: ["Pendente SST", STATUS_SST_RECEBIDA, STATUS_SST_AGENDADO],
+  sst: ["Pendente SST", STATUS_SST_RECEBIDA, STATUS_SST_AGENDADO, STATUS_SST_ASO_VALIDO],
   // O RH continua vendo o que despachou — a pergunta que mais chega depois de
   // liberar é "e aí, o SST agendou?".
-  rh: ["Pendente RH", "Pendente SST", STATUS_SST_RECEBIDA, STATUS_SST_AGENDADO],
+  rh: ["Pendente RH", "Pendente SST", STATUS_SST_RECEBIDA, STATUS_SST_AGENDADO, STATUS_SST_ASO_VALIDO],
 };
 
 /**
@@ -447,6 +447,25 @@ function DetalheSolicitacao({ solicitacao, etapa, quemSou, onFechar, onDecidir }
     setSalvando(false);
   };
 
+  /**
+   * O ASO ainda vale — conclui sem exame.
+   *
+   * Quem fez ASO há menos de 60 dias não precisa de demissional (NR-7). O
+   * SST confirma isso aqui e a demissão fecha na hora, sem data, hora nem
+   * local. Mesmo passo do agendamento (depois de "recebida"), pelo mesmo
+   * motivo: o SST precisa ter lido o pedido para saber que o exame vale.
+   */
+  const marcarASOValido = async () => {
+    setSalvando(true);
+    await onDecidir(s, {
+      status: STATUS_SST_ASO_VALIDO,
+      sst_data_exame: null, sst_hora_exame: null, sst_local_exame: null, sst_maps_url: null,
+      sst_observacao: observacao.trim() || null,
+      sst_por: quemSou, sst_em: new Date().toISOString(),
+    }, `ASO válido — solicitação #${s.id} concluída sem exame.`);
+    setSalvando(false);
+  };
+
   return (
     <Dialog open onOpenChange={(v) => { if (!v) onFechar(); }}>
       <DialogContent className="max-h-[90vh] max-w-3xl overflow-y-auto">
@@ -677,6 +696,22 @@ function DetalheSolicitacao({ solicitacao, etapa, quemSou, onFechar, onDecidir }
             <Button onClick={marcarASO} disabled={salvando}>
               <CheckCircle2 className="mr-2 h-4 w-4" /> Agendamento concluído
             </Button>
+
+            {/* A saída sem exame. Fica no mesmo bloco, abaixo, porque é a
+                mesma decisão do SST ("o que fazer com este ASO?") — só que a
+                resposta é "nada, o que ele tem ainda vale". */}
+            <div className="mt-2 space-y-2 rounded-lg border border-emerald-300 bg-emerald-50 p-3">
+              <h4 className="text-sm font-semibold text-emerald-900">ASO ainda válido (menos de 60 dias)</h4>
+              <p className="text-sm text-emerald-900/80">
+                O colaborador fez ASO há menos de 60 dias e o exame vale como demissional. Marcar
+                aqui <strong>conclui</strong> a demissão sem agendar nada — a observação acima, se
+                escrita, vai junto.
+              </p>
+              <Button variant="outline" className="border-emerald-400 bg-white text-emerald-800 hover:bg-emerald-100"
+                onClick={marcarASOValido} disabled={salvando}>
+                <CheckCircle2 className="mr-2 h-4 w-4" /> ASO válido — concluir sem exame
+              </Button>
+            </div>
           </div>
         )}
 

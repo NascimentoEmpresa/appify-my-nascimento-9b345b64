@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -11,11 +11,12 @@ import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { ResumoDeFuncoes } from "@/components/fluxos/ResumoDeFuncoes";
-import { BuscaColaborador, type EmpregadoEscolhido } from "@/components/demissao/BuscaColaborador";
+import { BuscaColaborador, carregarEmpregadoEscolhido, type EmpregadoEscolhido } from "@/components/demissao/BuscaColaborador";
+import { ModalNovaVaga } from "@/components/recrutamento/ModalNovaVaga";
 import {
   ACCEPT_ANEXO, BUCKET, MODELOS_AVISO, MOTIVOS_PEDIDO, MOTIVOS_SOLICITACAO,
   TABELA, TABELA_ANEXOS, TERMINOS_EXPERIENCIA,
-  corDoStatus, emailValido, erroDoArquivo, explicaStatus, fmtData, fmtTamanho,
+  corDoStatus, emailValido, erroDoArquivo, explicaStatus, faltaVagaDeReposicao, fmtData, fmtTamanho,
   hojeISO, mascaraTelefone, telefoneCompleto, type SolicitacaoDemissao,
 } from "@/lib/demissao/solicitacao";
 import {
@@ -78,6 +79,35 @@ export default function SolicitarDemissao() {
   const [enviando, setEnviando] = useState(false);
   const [protocolo, setProtocolo] = useState<number | null>(null);
   const inputArquivos = useRef<HTMLInputElement>(null);
+
+  // DEMISSÃO ↔ VAGA. Toda demissão abre uma vaga de Substituição de quem
+  // sai: gravou a demissão, o modal de vaga abre em seguida, já preenchido e
+  // travado nela. Fechar sem criar não some com a obrigação — a lista abaixo
+  // mostra "falta a vaga" com o botão, e o pedido não anda sem ela.
+  const [vagaDe, setVagaDe] = useState<{ demissaoId: number; substituidoId: number; nome: string } | null>(null);
+  const [vagaFechadaSemCriar, setVagaFechadaSemCriar] = useState(false);
+  const abrirVagaDe = (s: { id: number; colaborador_id: number | null; colaborador_nome: string | null }) => {
+    if (!s.colaborador_id) { toast.error("Esta solicitação não tem o colaborador vinculado — abra a vaga por Minhas Solicitações."); return; }
+    setVagaFechadaSemCriar(false);
+    setVagaDe({ demissaoId: s.id, substituidoId: s.colaborador_id, nome: s.colaborador_nome ?? "" });
+  };
+
+  // Veio da vaga de Substituição ("solicite a demissão primeiro"): abre com
+  // a pessoa já escolhida.
+  const [params, setParams] = useSearchParams();
+  useEffect(() => {
+    const id = Number(params.get("colaborador"));
+    if (!id) return;
+    (async () => {
+      const e = await carregarEmpregadoEscolhido(id);
+      if (e) {
+        escolherColaborador(e);
+        toast.info(`Solicitação de demissão de ${e.nome}. Ao enviar, a vaga de Substituição abre em seguida.`);
+      }
+      setParams({}, { replace: true });
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Quem está pedindo: nome oficial do perfil, não digitado.
   const [solicitante, setSolicitante] = useState({ nome: "", email: "" });
@@ -268,8 +298,9 @@ export default function SolicitarDemissao() {
 
     setEnviando(false);
     setProtocolo(criada.id);
-    toast.success(`Solicitação #${criada.id} enviada para o Operacional.`);
+    toast.success(`Solicitação #${criada.id} enviada. Agora a vaga de reposição.`);
     carregarMinhas(solicitante.email);
+    abrirVagaDe({ id: criada.id, colaborador_id: colaborador!.id, colaborador_nome: colaborador!.nome });
   };
 
   const recomecar = () => {
@@ -277,11 +308,30 @@ export default function SolicitarDemissao() {
     setColaborador(null); setArquivos([]);
   };
 
+  // O modal da vaga fica fora do `if (protocolo)`: aparece no recibo E na
+  // lista de acompanhamento (para a demissão que ficou sem vaga).
+  const modalVaga = (
+    <ModalNovaVaga
+      aberto={!!vagaDe}
+      vinculoDemissao={vagaDe}
+      onFechar={() => { setVagaDe(null); setVagaFechadaSemCriar(true); }}
+      onCriada={(id) => {
+        setVagaFechadaSemCriar(false);
+        toast.success(`Vaga #${id} aberta para repor ${vagaDe?.nome ?? "o colaborador"}.`);
+        carregarMinhas(solicitante.email);
+      }}
+      onToast={(msg, tipo) => (tipo === "err" ? toast.error(msg) : toast.success(msg))}
+    />
+  );
+  const demissaoDoRecibo = minhas.find((s) => s.id === protocolo);
+  const reciboSemVaga = !!protocolo && (vagaFechadaSemCriar || (demissaoDoRecibo ? faltaVagaDeReposicao(demissaoDoRecibo) : false));
+
   // ── Recibo ─────────────────────────────────────────────────────────
   if (protocolo) {
     return (
       <div className="mx-auto max-w-3xl">
         <PageHeader title="Solicitar Demissão" module="Encarregados" breadcrumb={["Recursos Humanos", "Solicitar Demissão"]} />
+        {modalVaga}
         <Card>
           <CardContent className="flex flex-col items-center gap-3 py-12 text-center">
             <CheckCircle2 className="h-12 w-12 text-emerald-500" />
@@ -291,6 +341,21 @@ export default function SolicitarDemissao() {
               demissional e o RH confirma o desligamento. Você acompanha o andamento em
               Minhas Solicitações.
             </p>
+            {reciboSemVaga ? (
+              <div className="max-w-md rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">
+                <b>Falta a vaga de reposição.</b> Toda demissão abre uma vaga de Substituição
+                de quem sai — sem ela, o pedido não sai da fila do analista.
+                <div className="mt-2">
+                  <Button size="sm" onClick={() => demissaoDoRecibo ? abrirVagaDe(demissaoDoRecibo) : setVagaDe(v => v)}>
+                    Solicitar a vaga de Substituição agora
+                  </Button>
+                </div>
+              </div>
+            ) : (
+              <p className="max-w-md text-sm text-emerald-700">
+                A vaga de Substituição foi aberta junto — ela aparece em Minhas Solicitações.
+              </p>
+            )}
             <div className="mt-2 flex gap-2">
               <Button onClick={recomecar}>Nova solicitação</Button>
               {/* Apontava para ESTA mesma rota: o clique não remontava a tela,
@@ -520,6 +585,8 @@ export default function SolicitarDemissao() {
         </CardContent>
       </Card>
 
+      {modalVaga}
+
       {/* Acompanhamento */}
       <Card className="mt-6">
         <CardHeader><CardTitle className="text-base">Minhas solicitações</CardTitle></CardHeader>
@@ -540,6 +607,14 @@ export default function SolicitarDemissao() {
                     {explicaStatus(s.status)}
                     {s.status === "Reprovada" && s.operacional_motivo ? ` Motivo: ${s.operacional_motivo}` : ""}
                   </p>
+                  {s.vaga_id ? (
+                    <p className="w-full text-xs text-muted-foreground">🔗 Vaga de Substituição #{s.vaga_id}</p>
+                  ) : faltaVagaDeReposicao(s) ? (
+                    <div className="flex w-full flex-wrap items-center gap-2 text-xs text-amber-800">
+                      <span>⚠ Falta a vaga de reposição — o pedido não sai da fila do analista sem ela.</span>
+                      <Button size="sm" variant="outline" className="h-7" onClick={() => abrirVagaDe(s)}>Solicitar vaga</Button>
+                    </div>
+                  ) : null}
                 </li>
               ))}
             </ul>
