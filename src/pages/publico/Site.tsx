@@ -423,13 +423,22 @@ export default function Site() {
             pessoa chega ao fim da página, e o Google Maps é o item mais pesado
             do site inteiro. */}
         <div className="st-mapa st-rev" style={{ transitionDelay: "240ms" }}>
-          <iframe
-            title="Sede da Nascimento no Google Maps"
-            src={MAPS_EMBED}
-            loading="lazy"
-            allowFullScreen
-            referrerPolicy="no-referrer-when-downgrade"
-          />
+          <div className="st-mapa-corpo">
+            {/* Foto da sede à esquerda, mapa à direita. Por enquanto é a
+                mesma foto do hero (pedido: "depois troco essas fotos"): para
+                trocar, é só apontar o `src` para outro arquivo em src/assets. */}
+            <figure className="st-mapa-foto">
+              <img src={fachada} alt="Fachada da sede da Nascimento em Triunfo/RS" loading="lazy" />
+              <figcaption>Sede administrativa</figcaption>
+            </figure>
+            <iframe
+              title="Sede da Nascimento no Google Maps"
+              src={MAPS_EMBED}
+              loading="lazy"
+              allowFullScreen
+              referrerPolicy="no-referrer-when-downgrade"
+            />
+          </div>
           <div className="st-mapa-bar">
             <span><MapPin className="h-4 w-4" /> Grupo Nascimento · Rua João Pessoa, 172 · Triunfo/RS</span>
             <div>
@@ -631,12 +640,16 @@ function Estilos() {
     .st-contato-card p { font-size: 14px; line-height: 1.65; color: var(--cinza); margin: 0; flex: 1; }
     @media (max-width: 720px) { .st-contato { grid-template-columns: 1fr; } }
     .st-mapa { margin-top: 22px; border-radius: 22px; overflow: hidden; border: 1px solid var(--borda); background: var(--fundo); box-shadow: 0 22px 50px rgba(15,23,42,.08); }
+    .st-mapa-corpo { display: grid; grid-template-columns: 1fr 1.25fr; }
+    .st-mapa-foto { margin: 0; position: relative; min-height: 380px; }
+    .st-mapa-foto img { display: block; width: 100%; height: 100%; object-fit: cover; position: absolute; inset: 0; }
+    .st-mapa-foto figcaption { position: absolute; left: 14px; bottom: 14px; font-size: 11.5px; font-weight: 700; color: #fff; background: rgba(15,23,42,.6); backdrop-filter: blur(6px); padding: 6px 10px; border-radius: 999px; }
     .st-mapa iframe { display: block; width: 100%; height: 380px; border: 0; }
     .st-mapa-bar { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; padding: 14px 18px; background: #fff; border-top: 1px solid var(--borda); }
     .st-mapa-bar > span { display: inline-flex; align-items: center; gap: 8px; font-size: 13.5px; font-weight: 700; color: var(--azul-ink); }
     .st-mapa-bar > span svg { color: var(--laranja); }
     .st-mapa-bar > div { display: flex; gap: 8px; flex-wrap: wrap; }
-    @media (max-width: 720px) { .st-mapa iframe { height: 280px; } }
+    @media (max-width: 860px) { .st-mapa-corpo { grid-template-columns: 1fr; } .st-mapa-foto { min-height: 0; aspect-ratio: 16/10; } .st-mapa iframe { height: 300px; } }
 
     /* ---- ética ---- */
     .st-etica { display: grid; grid-template-columns: 1.2fr .8fr; gap: 34px; align-items: center; }
