@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef, useCallback, type MouseEvent as ReactMouseEvent } from "react";
 import { useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
@@ -9,6 +9,9 @@ import {
   motivoLabel, fmtBr, mostraNomeReferencia,
   podeVagaAdministrativa, filtrarAdministrativas,
 } from "@/lib/recrutamento/vagaRegras";
+import {
+  ETIQUETAS_RECRUTAMENTO, alternarEtiqueta, corDaEtiqueta, etiquetasValidas,
+} from "@/lib/recrutamento/etiquetas";
 
 // ── Tipos ──────────────────────────────────────────────────────────
 interface Solicitacao {
@@ -53,6 +56,8 @@ interface Solicitacao {
   aprovado_por_nome?: string;
   created_at: string;
   status_changed_at?: string;
+  /** Anotações de quem trabalha a fila ("Confere", "Revisar"...). Ver lib/recrutamento/etiquetas. */
+  etiquetas?: string[] | null;
 }
 
 interface Mensagem {
@@ -300,6 +305,11 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "anali
   // na lista, para acompanhar, mas sem botão de decidir — senão as duas telas
   // aprovariam a mesma coisa e a última a salvar ganharia.
   const podeAprovarAnalista = escopo === "analista" && can("aprovar", undefined, menuAcesso);
+  // Etiquetar ("Confere", "Revisar"...) é de quem trabalha a fila: o
+  // Recrutamento e o analista. São as mesmas portas que a RLS e o gatilho
+  // sistema_recrutamento_guard já reconhecem como "gestor" — não existe
+  // capacidade nova para isso. O Operacional vê as etiquetas, sem botão.
+  const podeEtiquetar = podeRecrutar || podeAprovarAnalista;
   // Quem pode mover o candidato pra fora de cada etapa específica do kanban.
   // Vaga do escritório: só quem tem a capacidade vê, marca e decide.
   const podeAdministrativa = podeVagaAdministrativa(can);
@@ -334,6 +344,15 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "anali
   const [contratoFiltro, setContratoFiltro]         = useState<string[]>([]);
   const [contratoCounts, setContratoCounts]         = useState<{ contrato: string; n: number }[]>([]);
   const [showContratoFiltro, setShowContratoFiltro] = useState(false);
+  // Etiquetas: filtro (qualquer uma das marcadas), contagem por etiqueta
+  // para o menu do filtro, e qual solicitação está com o menu de marcar
+  // aberto (uma por vez — é um popover na linha da tabela / no drawer).
+  const [etiquetaFiltro, setEtiquetaFiltro]         = useState<string[]>([]);
+  const [etiquetaCounts, setEtiquetaCounts]         = useState<Record<string, number>>({});
+  const [showEtiquetaFiltro, setShowEtiquetaFiltro] = useState(false);
+  // O popover é position:fixed ancorado no botão (x/y da tela): a tabela
+  // tem overflow:hidden e um absolute na linha de baixo sairia cortado.
+  const [etiquetaMenu, setEtiquetaMenu]             = useState<{ id: number; x: number; y: number } | null>(null);
   const [search, setSearch]           = useState("");
   const [stats, setStats]             = useState({ total: 0, pendentes: 0, ag_treinamentos: 0, em_processo: 0, contratados: 0, reprovadas: 0 });
   const [kanbanData, setKanbanData]   = useState<Record<string, Solicitacao[]>>({});
@@ -487,6 +506,7 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "anali
       .select("*", { count: "exact" });
     q = aplicarFiltros(q);
     if (contratoFiltro.length) q = q.in("contrato", contratoFiltro);
+    if (etiquetaFiltro.length) q = q.overlaps("etiquetas", etiquetaFiltro);
 
     const from = (page - 1) * PER;
     const to   = from + PER - 1;
@@ -500,7 +520,7 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "anali
     const ct = count ?? 0;
     setTotal(ct);
     setPages(Math.max(1, Math.ceil(ct / PER)));
-  }, [aplicarFiltros, contratoFiltro, page, toast]);
+  }, [aplicarFiltros, contratoFiltro, etiquetaFiltro, page, toast]);
 
   // ── Carregar Kanban ───────────────────────────────────────────
   const kanbanReq = useRef(0);
@@ -513,6 +533,7 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "anali
       let q = (supabase as any).from("SISTEMA_RECRUTAMENTO").select(cols);
       q = aplicarFiltros(q);
       if (contratoFiltro.length) q = q.in("contrato", contratoFiltro);
+      if (etiquetaFiltro.length) q = q.overlaps("etiquetas", etiquetaFiltro);
       return q.order("created_at", { ascending: false });
     };
     let { data, error } = await kbQuery("id,cargo,contrato,cidade,status,grau_urgencia,quantidade_vagas,analista_nome,solicitante_nome,created_at,status_changed_at");
@@ -525,21 +546,41 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "anali
       grouped[row.status].push(row);
     }
     setKanbanData(grouped);
-  }, [aplicarFiltros, contratoFiltro]);
+  }, [aplicarFiltros, contratoFiltro, etiquetaFiltro]);
 
-  // Contagem de solicitações por contrato (respeita aba/status/busca; ignora o próprio filtro de contrato).
+  // Contagem de solicitações por contrato e por etiqueta (respeita
+  // aba/status/busca; ignora os dois filtros de faceta — o menu mostra quanto
+  // cada opção traria, não quanto sobrou depois de marcar a outra).
   const loadContratoCounts = useCallback(async () => {
-    let q = (supabase as any).from("SISTEMA_RECRUTAMENTO").select("contrato");
+    let q = (supabase as any).from("SISTEMA_RECRUTAMENTO").select("contrato,etiquetas");
     q = aplicarFiltros(q);
-    const { data, error } = await q;
+    let { data, error } = await q;
+    // Banco ainda sem a coluna (migration 20260930000090 não aplicada): refaz
+    // sem ela para o filtro de contratos continuar funcionando.
+    if (error) ({ data, error } = await aplicarFiltros((supabase as any).from("SISTEMA_RECRUTAMENTO").select("contrato")));
     if (error || !data) return;
     const map = new Map<string, number>();
+    const porEtiqueta: Record<string, number> = {};
     for (const r of data) {
       const c = String(r.contrato ?? "").trim();
       if (c) map.set(c, (map.get(c) ?? 0) + 1);
+      for (const e of etiquetasValidas(r.etiquetas)) porEtiqueta[e] = (porEtiqueta[e] ?? 0) + 1;
     }
     setContratoCounts(Array.from(map, ([contrato, n]) => ({ contrato, n })).sort((a, b) => a.contrato.localeCompare(b.contrato)));
+    setEtiquetaCounts(porEtiqueta);
   }, [aplicarFiltros]);
+
+  // ── Etiquetas ─────────────────────────────────────────────────
+  // Grava a lista inteira (não "adiciona uma"): o popover mostra o estado
+  // final e é ele que vai para o banco. Atualiza a linha na tabela e o
+  // drawer na hora; a contagem do filtro recarrega em seguida.
+  const salvarEtiquetas = async (id: number, etiquetas: string[]) => {
+    const { error } = await (supabase as any).from("SISTEMA_RECRUTAMENTO").update({ etiquetas }).eq("id", id);
+    if (error) { toast("Erro ao salvar etiqueta: " + error.message, "err"); return; }
+    setItems(prev => prev.map(i => i.id === id ? { ...i, etiquetas } : i));
+    setDrawerSol(prev => prev && prev.id === id ? { ...prev, etiquetas } : prev);
+    loadContratoCounts();
+  };
 
   useEffect(() => { loadStats(); }, [loadStats]);
   useEffect(() => { loadContratoCounts(); }, [loadContratoCounts]);
@@ -1416,6 +1457,64 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "anali
     );
   };
 
+  /**
+   * Chips das etiquetas da solicitação e, para quem pode etiquetar, o botão
+   * 🏷 que abre o popover de marcar/desmarcar. Serve à linha da tabela e ao
+   * cabeçalho do drawer — o mesmo desenho nos dois, senão a pessoa marca num
+   * lugar e não acha o botão no outro.
+   *
+   * Tudo aqui para o clique: a linha da tabela abre o drawer no onClick, e
+   * marcar uma etiqueta não pode abrir a solicitação junto.
+   */
+  const renderEtiquetas = (s: Solicitacao) => {
+    const marcadas = etiquetasValidas(s.etiquetas);
+    const aberto = etiquetaMenu?.id === s.id;
+    const abrir = (e: ReactMouseEvent<HTMLButtonElement>) => {
+      if (aberto) { setEtiquetaMenu(null); return; }
+      const r = e.currentTarget.getBoundingClientRect();
+      setEtiquetaMenu({ id: s.id, x: Math.max(8, Math.min(r.left, window.innerWidth - 236)), y: r.bottom + 6 });
+    };
+    return (
+      <div onClick={e => e.stopPropagation()} style={{ position: "relative", display: "inline-flex", alignItems: "center", gap: 4, flexWrap: "wrap" }}>
+        {marcadas.map(v => {
+          const c = corDaEtiqueta(v);
+          return (
+            <span key={v} style={{ fontSize: 10.5, fontWeight: 700, padding: "2px 8px", borderRadius: 20, background: c.bg, border: `1px solid ${c.borda}`, color: c.texto, whiteSpace: "nowrap" }}>{v}</span>
+          );
+        })}
+        {/* Um botão de verdade, não um chip: a primeira versão (tracejado,
+            "🏷 Etiqueta") passou por rótulo vazio e ninguém clicou. */}
+        {podeEtiquetar && (
+          <button type="button" onClick={abrir} title={marcadas.length ? "Alterar etiquetas" : "Adicionar etiqueta"}
+            style={{ display: "inline-flex", alignItems: "center", gap: 4, padding: marcadas.length ? "2px 7px" : "3px 10px", borderRadius: 8, border: "1px solid #c7d7f5", background: aberto ? "#0f3171" : "#eef4ff", color: aberto ? "#fff" : "#0f3171", fontSize: 11, fontWeight: 800, cursor: "pointer", fontFamily: "inherit", lineHeight: 1.4 }}>
+            {marcadas.length === 0 ? "+ Etiqueta" : "✎"}
+          </button>
+        )}
+        {!podeEtiquetar && marcadas.length === 0 && <span style={{ color: "#cbd5e1", fontSize: 11 }}>—</span>}
+        {aberto && (
+          <>
+            <div onClick={() => setEtiquetaMenu(null)} style={{ position: "fixed", inset: 0, zIndex: 40 }} />
+            <div style={{ position: "fixed", top: etiquetaMenu!.y, left: etiquetaMenu!.x, zIndex: 50, background: "#fff", border: "1px solid #e2e8f0", borderRadius: 12, boxShadow: "0 16px 40px rgba(15,23,42,.16)", padding: 8, width: 220 }}>
+              <div style={{ fontSize: 10.5, fontWeight: 700, color: "#94a3b8", textTransform: "uppercase", letterSpacing: ".5px", padding: "2px 6px 6px" }}>Etiquetas de #{s.id}</div>
+              {ETIQUETAS_RECRUTAMENTO.map(et => {
+                const checked = marcadas.includes(et.valor);
+                return (
+                  <label key={et.valor} style={{ display: "flex", alignItems: "center", gap: 8, padding: "6px 6px", borderRadius: 8, cursor: "pointer", background: checked ? "#f8fafc" : "transparent" }}>
+                    <input type="checkbox" checked={checked} onChange={() => salvarEtiquetas(s.id, alternarEtiqueta(marcadas, et.valor))} style={{ width: 14, height: 14, accentColor: "#0f3171", cursor: "pointer" }} />
+                    <span style={{ fontSize: 11, fontWeight: 700, padding: "2px 8px", borderRadius: 20, background: et.cor.bg, border: `1px solid ${et.cor.borda}`, color: et.cor.texto }}>{et.valor}</span>
+                  </label>
+                );
+              })}
+              {marcadas.length > 0 && (
+                <button type="button" onClick={() => salvarEtiquetas(s.id, [])} style={{ marginTop: 4, width: "100%", background: "none", border: "none", color: "#94a3b8", fontSize: 11, fontWeight: 700, cursor: "pointer", padding: "4px 0", fontFamily: "inherit" }}>Tirar todas</button>
+              )}
+            </div>
+          </>
+        )}
+      </div>
+    );
+  };
+
   const renderDetalhe = (s: Solicitacao) => {
     const di = (label: string, val: any, full = false) => (
       <div className={`rec-di${full ? " full" : ""}`} key={label}>
@@ -1916,6 +2015,39 @@ Isto não tem desfazer: o histórico e os candidatos ligados a ela vão junto.`)
           {contratoFiltro.length > 0 && (
             <button onClick={() => { setContratoFiltro([]); setPage(1); }} style={{ background: "none", border: "none", color: "#94a3b8", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>limpar</button>
           )}
+
+          {/* Filtro de Etiquetas — mesmo desenho do de contratos. Marcar
+              várias traz quem tem QUALQUER uma delas (overlaps). */}
+          <div style={{ position: "relative" }}>
+            <button onClick={() => setShowEtiquetaFiltro(v => !v)} style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "7px 14px", borderRadius: 10, border: "1px solid #e2e8f0", background: etiquetaFiltro.length ? "#0f3171" : "#fff", color: etiquetaFiltro.length ? "#fff" : "#475569", fontSize: 12, fontWeight: 700, cursor: "pointer", boxShadow: "0 8px 24px rgba(15,23,42,.06)" }}>
+              🏷 Etiquetas{etiquetaFiltro.length ? ` (${etiquetaFiltro.length})` : ""} ▾
+            </button>
+            {showEtiquetaFiltro && (
+              <>
+                <div onClick={() => setShowEtiquetaFiltro(false)} style={{ position: "fixed", inset: 0, zIndex: 40 }} />
+                <div style={{ position: "absolute", top: "100%", left: 0, zIndex: 50, marginTop: 6, background: "#fff", border: "1px solid #e2e8f0", borderRadius: 12, boxShadow: "0 16px 40px rgba(15,23,42,.16)", padding: 10, width: 260, maxWidth: "90vw" }}>
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8, padding: "0 4px" }}>
+                    <span style={{ fontSize: 11, fontWeight: 700, color: "#94a3b8", textTransform: "uppercase", letterSpacing: ".5px" }}>Mostrar só com estas etiquetas</span>
+                    {etiquetaFiltro.length > 0 && <button onClick={() => { setEtiquetaFiltro([]); setPage(1); }} style={{ background: "none", border: "none", color: "#0f3171", fontSize: 11, fontWeight: 700, cursor: "pointer" }}>Limpar</button>}
+                  </div>
+                  {ETIQUETAS_RECRUTAMENTO.map(et => {
+                    const checked = etiquetaFiltro.includes(et.valor);
+                    const n = etiquetaCounts[et.valor] ?? 0;
+                    return (
+                      <label key={et.valor} style={{ display: "flex", alignItems: "center", gap: 9, padding: "7px 6px", borderRadius: 8, cursor: "pointer", background: checked ? "#eef4ff" : "transparent" }}>
+                        <input type="checkbox" checked={checked} onChange={() => { setEtiquetaFiltro(prev => checked ? prev.filter(x => x !== et.valor) : [...prev, et.valor]); setPage(1); }} style={{ width: 15, height: 15, accentColor: "#0f3171", cursor: "pointer" }} />
+                        <span style={{ flex: 1, fontSize: 11, fontWeight: 700, padding: "2px 8px", borderRadius: 20, background: et.cor.bg, border: `1px solid ${et.cor.borda}`, color: et.cor.texto, textAlign: "center" }}>{et.valor}</span>
+                        <span style={{ fontSize: 11, fontWeight: 800, color: "#0f3171", background: "#fff", border: "1px solid #dbe4f0", borderRadius: 20, padding: "1px 9px", minWidth: 22, textAlign: "center" }}>{n}</span>
+                      </label>
+                    );
+                  })}
+                </div>
+              </>
+            )}
+          </div>
+          {etiquetaFiltro.length > 0 && (
+            <button onClick={() => { setEtiquetaFiltro([]); setPage(1); }} style={{ background: "none", border: "none", color: "#94a3b8", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>limpar</button>
+          )}
           {showContratoFiltro && (
             <>
               <div onClick={() => setShowContratoFiltro(false)} style={{ position: "fixed", inset: 0, zIndex: 40 }} />
@@ -1994,7 +2126,7 @@ Isto não tem desfazer: o histórico e os candidatos ligados a ela vão junto.`)
                   <thead>
                     <tr>
                       <th>#</th><th>Contrato</th><th>Cargo</th><th>Cidade</th>
-                      <th>Status</th><th>Urgência</th><th>Solicitante</th><th>Data</th>
+                      <th>Status</th><th>Etiquetas</th><th>Urgência</th><th>Solicitante</th><th>Data</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -2005,6 +2137,7 @@ Isto não tem desfazer: o histórico e os candidatos ligados a ela vão junto.`)
                         <td>{item.cargo || "—"}</td>
                         <td>{item.cidade || "—"}</td>
                         <td><span className={`rec-badge ${badgeStatusCls(item.status)}`}>{item.status || "—"}</span></td>
+                        <td>{renderEtiquetas(item)}</td>
                         <td>{item.grau_urgencia ? <span className={`rec-badge ${badgeUrgCls(item.grau_urgencia)}`}>{item.grau_urgencia.startsWith("Alta") ? "⚡ Alta" : item.grau_urgencia}</span> : "—"}</td>
                         <td>{item.solicitante_nome || "—"}</td>
                         <td style={{ color: "#94a3b8", fontSize: 11 }}>{fmtDt(item.created_at)}</td>
@@ -2037,6 +2170,7 @@ Isto não tem desfazer: o histórico e os candidatos ligados a ela vão junto.`)
                 <span style={{ fontSize: 13, color: "#94a3b8", fontWeight: 700 }}>Solicitação #{drawerId}</span>
                 {drawerSol && <span className={`rec-badge ${badgeStatusCls(drawerSol.status)}`}>{drawerSol.status}</span>}
                 {drawerSol?.grau_urgencia && <span className={`rec-badge ${badgeUrgCls(drawerSol.grau_urgencia)}`}>{drawerSol.grau_urgencia.startsWith("Alta") ? "⚡ Alta" : drawerSol.grau_urgencia}</span>}
+                {drawerSol && renderEtiquetas(drawerSol)}
               </div>
               <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
                 {drawerSol && renderActions(drawerSol)}

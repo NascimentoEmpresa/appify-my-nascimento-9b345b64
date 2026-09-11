@@ -122,6 +122,11 @@ describe("contrato do empregado", () => {
     expect(contratoDoEmpregado(contratos, emp)?.id).toBe(195);
   });
 
+  it("desempata mesmo com o código na frente do Nome Filial (formato do banco desde 11/09/2026)", () => {
+    const emp = { Filial: 1093, "Nome Filial": "1093 - ADM E ESTAGIARIOS - NH" };
+    expect(contratoDoEmpregado(contratos, emp)?.id).toBe(195);
+  });
+
   it("pega o único contrato quando a filial não tem empate", () => {
     expect(contratoDoEmpregado(contratos, { Filial: 1050, "Nome Filial": "qualquer" })?.id).toBe(12);
   });

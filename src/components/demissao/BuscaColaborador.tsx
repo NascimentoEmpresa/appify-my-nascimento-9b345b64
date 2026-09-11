@@ -7,6 +7,7 @@ import {
 } from "@/components/ui/command";
 import { Check, ChevronsUpDown, Loader2, Search, UserRound } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { nomeContratoDe } from "@/lib/rh/colaboradoresUtils";
 
 const sb = supabase as any;
 
@@ -19,7 +20,15 @@ export interface EmpregadoEscolhido {
   posto: string;
   filial: string;
   nomeFilial: string;
-  /** Coluna "Descrição do Local" da EMPREGADOS — é ela que dá o contrato. */
+  /**
+   * O contrato: "1109 - POLICIA CIVIL RS LIMPEZA 066.2026" — a FILIAL do
+   * Senior com o código na frente (nomeContratoDe). Não é a "Descrição do
+   * Local": essa é o posto, e até 11/09/2026 a tela gravava ela como
+   * contrato ("1109 - PALÁCIO DA POLÍCIA" num pedido cujo contrato era a
+   * Polícia Civil inteira).
+   */
+  contrato: string;
+  /** Coluna "Descrição do Local" da EMPREGADOS — o POSTO do organograma. */
   descricaoLocal: string;
   escala: string;
   admissao: string | null;
@@ -108,6 +117,7 @@ export function BuscaColaborador({
       posto: primeiroCampo(e, "Organograma", "Descrição do Local", "Titulo C.Custo", "Nome Filial"),
       filial: texto(e["Filial"]),
       nomeFilial: texto(e["Nome Filial"]),
+      contrato: nomeContratoDe(e),
       descricaoLocal: texto(e["Descrição do Local"]),
       escala: primeiroCampo(e, "Escala", "Escala de Trabalho"),
       admissao: texto(e["Admissão"]) || null,

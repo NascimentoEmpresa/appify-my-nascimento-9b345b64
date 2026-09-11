@@ -23,6 +23,7 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
+import { semCodigoFilial } from "@/lib/rh/colaboradoresUtils";
 
 const sb = supabase as any;
 
@@ -92,13 +93,20 @@ export default function SolicitarDemissao() {
     })();
   }, [user?.id, user?.email]);
 
-  // Contrato do colaborador: vem da coluna "Descrição do Local" da EMPREGADOS.
+  // Contrato do colaborador: é a FILIAL dele, com o código na frente —
+  // "1109 - POLICIA CIVIL RS LIMPEZA 066.2026" (EMPREGADOS."Nome Filial",
+  // que desde a migration 20260930000089 já vem nesse formato).
   //
-  // Antes a tela ligava EMPREGADOS.Filial → CONTRATOS.Filial e pegava o
-  // primeiro que casasse. Só que UMA FILIAL TEM MAIS DE UM CONTRATO — a 1093
-  // tem "LIMPEZA HUSM" e "ADM E ESTAGIARIOS - NH" — então o `find` devolvia
-  // o contrato de outra gente (era daí que saía o "LIMPEZA HUSM" num
-  // analista do administrativo).
+  // Três versões desta linha em duas semanas, cada uma errando de um jeito:
+  //   1. EMPREGADOS.Filial → CONTRATOS.Filial pegando o primeiro que casasse.
+  //      UMA FILIAL TEM MAIS DE UM CONTRATO (a 1093 tem "LIMPEZA HUSM" e
+  //      "ADM E ESTAGIARIOS - NH"), então saía "LIMPEZA HUSM" num analista
+  //      do administrativo.
+  //   2. "Descrição do Local". Só que isso é o POSTO do organograma — a
+  //      Vanessa (Polícia Civil) apareceu com contrato "1109 - PALÁCIO DA
+  //      POLÍCIA", a colega ao lado com "1109 - DECA", e o RH não achava o
+  //      contrato de ninguém.
+  //   3. Esta: a filial, que é o que o Senior chama de contrato.
   const [contratos, setContratos] = useState<any[]>([]);
   useEffect(() => {
     (async () => {
@@ -107,14 +115,18 @@ export default function SolicitarDemissao() {
       setContratos(data ?? []);
     })();
   }, []);
-  const nomeContrato = colaborador?.descricaoLocal || colaborador?.nomeFilial || "";
-  // O id só sai quando o nome bate mesmo com um contrato ativo — apontar para
+  const nomeContrato = colaborador?.contrato || "";
+  // O id só sai quando um contrato ativo da MESMA filial tem o mesmo nome
+  // (sem o código — CONTRATOS."NOME CONTRATO" não leva código). Apontar para
   // um id que não corresponde ao nome exibido é pior do que não apontar.
   const contratoDoColaborador = useMemo(() => {
-    const alvo = nomeContrato.trim().toUpperCase();
-    if (!alvo) return null;
-    return contratos.find((c: any) => String(c["NOME CONTRATO"] ?? "").trim().toUpperCase() === alvo) ?? null;
-  }, [contratos, nomeContrato]);
+    const alvo = semCodigoFilial(nomeContrato).toUpperCase();
+    const filial = colaborador?.filial ?? "";
+    if (!alvo || !filial) return null;
+    return contratos.find((c: any) =>
+      String(c.Filial ?? "").trim() === filial
+      && String(c["NOME CONTRATO"] ?? "").trim().toUpperCase() === alvo) ?? null;
+  }, [contratos, nomeContrato, colaborador?.filial]);
 
   // Minhas solicitações, para acompanhar o andamento sem sair da tela.
   const [minhas, setMinhas] = useState<SolicitacaoDemissao[]>([]);
