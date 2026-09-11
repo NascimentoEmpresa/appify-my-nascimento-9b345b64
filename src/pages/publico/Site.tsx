@@ -36,6 +36,14 @@ import fachada from "@/assets/fachada.jpg";
 
 const ANO = new Date().getFullYear();
 
+// A sede no Google Maps: a ficha "Grupo Nascimento - Soluções em Serviços"
+// (place id 0x951bbf007243fc99:0x4e14e73a217d1cd1) e as coordenadas dela.
+// O embed usa só as coordenadas + `output=embed`, que dispensa chave de API;
+// o link abre a ficha completa, com fotos, horário e rota.
+const MAPS_URL = "https://www.google.com/maps/place/Grupo+Nascimento+-+Solu%C3%A7%C3%B5es+em+Servi%C3%A7os/@-29.9312918,-51.7049241,16.5z/data=!4m6!3m5!1s0x951bbf007243fc99:0x4e14e73a217d1cd1!8m2!3d-29.9313134!4d-51.7074756!16s%2Fg%2F11ykh4lmql";
+const MAPS_EMBED = "https://www.google.com/maps?q=-29.9313134,-51.7074756&z=16&hl=pt-BR&output=embed";
+const MAPS_ROTA = "https://www.google.com/maps/dir/?api=1&destination=-29.9313134,-51.7074756";
+
 const NAV = [
   { href: "#servicos", label: "Serviços" },
   { href: "#sobre", label: "A empresa" },
@@ -393,8 +401,8 @@ export default function Site() {
             <MapPin className="h-6 w-6" />
             <h3>Sede administrativa</h3>
             <p>Rua João Pessoa, 172<br />Triunfo, RS · CEP 95840-000</p>
-            <a className="st-cta-link" href="https://www.google.com/maps/search/?api=1&query=Rua+Jo%C3%A3o+Pessoa+172+Triunfo+RS" target="_blank" rel="noopener noreferrer">
-              Ver no mapa <ArrowUpRight className="h-4 w-4" />
+            <a className="st-cta-link" href={MAPS_URL} target="_blank" rel="noopener noreferrer">
+              Abrir no Google Maps <ArrowUpRight className="h-4 w-4" />
             </a>
           </div>
           <div className="st-contato-card st-rev" style={{ transitionDelay: "80ms" }}>
@@ -408,6 +416,26 @@ export default function Site() {
             <h3>Recrutamento</h3>
             <p>Candidaturas e currículos são só pelo portal. É por lá que o time de seleção acompanha cada etapa.</p>
             <Link className="st-cta-link" to="/vagas">Ir para o portal de vagas <ArrowUpRight className="h-4 w-4" /></Link>
+          </div>
+        </div>
+
+        {/* O mapa da sede, embutido. `loading="lazy"`: só carrega quando a
+            pessoa chega ao fim da página, e o Google Maps é o item mais pesado
+            do site inteiro. */}
+        <div className="st-mapa st-rev" style={{ transitionDelay: "240ms" }}>
+          <iframe
+            title="Sede da Nascimento no Google Maps"
+            src={MAPS_EMBED}
+            loading="lazy"
+            allowFullScreen
+            referrerPolicy="no-referrer-when-downgrade"
+          />
+          <div className="st-mapa-bar">
+            <span><MapPin className="h-4 w-4" /> Grupo Nascimento · Rua João Pessoa, 172 · Triunfo/RS</span>
+            <div>
+              <a className="st-btn st-btn-ghost" href={MAPS_URL} target="_blank" rel="noopener noreferrer">Ver ficha <ArrowUpRight className="h-4 w-4" /></a>
+              <a className="st-btn st-btn-laranja" href={MAPS_ROTA} target="_blank" rel="noopener noreferrer">Como chegar <ArrowRight className="h-4 w-4" /></a>
+            </div>
           </div>
         </div>
       </Secao>
@@ -602,6 +630,13 @@ function Estilos() {
     .st-contato-card h3 { font-size: 17px; font-weight: 800; color: var(--azul-ink); }
     .st-contato-card p { font-size: 14px; line-height: 1.65; color: var(--cinza); margin: 0; flex: 1; }
     @media (max-width: 720px) { .st-contato { grid-template-columns: 1fr; } }
+    .st-mapa { margin-top: 22px; border-radius: 22px; overflow: hidden; border: 1px solid var(--borda); background: var(--fundo); box-shadow: 0 22px 50px rgba(15,23,42,.08); }
+    .st-mapa iframe { display: block; width: 100%; height: 380px; border: 0; }
+    .st-mapa-bar { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; padding: 14px 18px; background: #fff; border-top: 1px solid var(--borda); }
+    .st-mapa-bar > span { display: inline-flex; align-items: center; gap: 8px; font-size: 13.5px; font-weight: 700; color: var(--azul-ink); }
+    .st-mapa-bar > span svg { color: var(--laranja); }
+    .st-mapa-bar > div { display: flex; gap: 8px; flex-wrap: wrap; }
+    @media (max-width: 720px) { .st-mapa iframe { height: 280px; } }
 
     /* ---- ética ---- */
     .st-etica { display: grid; grid-template-columns: 1.2fr .8fr; gap: 34px; align-items: center; }
