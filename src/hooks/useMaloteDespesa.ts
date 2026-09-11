@@ -922,6 +922,40 @@ export function useAtualizarDatasParcelas() {
   });
 }
 
+// SIS-2026-0361 (complemento): corrigir o valor de parcelas ainda não pagas
+// depois da despesa criada (modo "compra" — parcelas com valores diferentes
+// que precisam somar o valor_total). Mesma régua cirúrgica do
+// useAtualizarDatasParcelas: UPDATE só de `valor`, só onde pago_em IS NULL —
+// nunca delete+reinsert, pra não tocar nas parcelas já quitadas. Quem chama
+// valida a soma antes (validarSomaParcelas contra despesa.valor_total).
+export function useAtualizarValoresParcelas() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (input: { despesaId: string; valores: Record<number, number>; descricaoEvento?: string | null }) => {
+      const entradas = Object.entries(input.valores);
+      for (const [numero, valor] of entradas) {
+        const { error } = await (supabase as any)
+          .from("malote_despesa_parcela")
+          .update({ valor })
+          .eq("despesa_id", input.despesaId)
+          .eq("numero_parcela", Number(numero))
+          .is("pago_em", null);
+        if (error) throw error;
+      }
+      if (entradas.length > 0) {
+        const fmt = (v: number) => v.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
+        await registrarEventoDespesa(
+          input.despesaId,
+          "edicao",
+          input.descricaoEvento ?? `Valores de parcela ajustados: ${entradas.map(([n, v]) => `${n}ª → ${fmt(Number(v))}`).join(", ")}.`,
+        );
+      }
+      return input.despesaId;
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: [DESPESA_KEY] }),
+  });
+}
+
 // ── Fluxo de aprovação da despesa (N1/N2/N3, ajuste, reprovação) ────────
 // SIS-2026-0132 Fase 1.
 /**
@@ -1652,9 +1686,29 @@ function ajustarParaDiaUtilAnterior(data: Date): Date {
  * (inclusive a 1ª) eram forçadas pro dia do desconto, ignorando a data de
  * pagamento escolhida quando ela não caía nesse dia.
  */
-export function gerarParcelas(valorTotal: number, numeroParcelas: number, dataPagamento: string, diaDesconto: number | null): NovaParcela[] {
+// SIS-2026-0361 (complemento, Iury): o valor digitado pode significar duas
+// coisas, escolhidas por toggle na tela:
+//   "parcela" — é o valor DE CADA parcela, replicado em todas (contrato/
+//               boleto mensal recorrente). É o default do código pra não
+//               quebrar chamadores/testes; a tela nova passa "compra".
+//   "compra"  — é o valor da COMPRA inteira, dividido entre as parcelas
+//               (floor por parcela, a última absorve os centavos de sobra).
+//               Nesse modo o usuário ainda pode editar parcela a parcela
+//               (mesclarValoresParcelas), desde que a soma bata (validarSomaParcelas).
+export type ModoValorParcela = "compra" | "parcela";
+
+export function gerarParcelas(
+  valorTotal: number,
+  numeroParcelas: number,
+  dataPagamento: string,
+  diaDesconto: number | null,
+  modo: ModoValorParcela = "parcela",
+): NovaParcela[] {
   if (numeroParcelas <= 0) return [];
-  const valorParcela = Math.round((Number(valorTotal) || 0) * 100) / 100;
+  const total = Number(valorTotal) || 0;
+  const valorCheio = Math.round(total * 100) / 100;
+  const valorDividido = Math.floor((total / numeroParcelas) * 100) / 100;
+  const ultimaDividida = Math.round((total - valorDividido * (numeroParcelas - 1)) * 100) / 100;
 
   const base = new Date(dataPagamento + "T00:00:00");
   const parcelas: NovaParcela[] = [];
@@ -1677,13 +1731,57 @@ export function gerarParcelas(valorTotal: number, numeroParcelas: number, dataPa
       const dataAlvo = ajustarParaDiaUtilAnterior(new Date(base.getFullYear(), mesAlvo, Math.min(diaAlvo, ultimoDiaDoMesAlvo)));
       dataVencimento = dataAlvo.toISOString().slice(0, 10);
     }
+    const valor = modo === "compra"
+      ? (i === numeroParcelas - 1 ? ultimaDividida : valorDividido)
+      : valorCheio;
     parcelas.push({
       numero_parcela: i + 1,
-      valor: valorParcela,
+      valor,
       data_vencimento: dataVencimento,
     });
   }
   return parcelas;
+}
+
+// SIS-2026-0361 (complemento): no modo "compra" o usuário pode fixar o valor
+// de parcelas específicas na mão. `valoresManuais` é numero_parcela → string
+// do input. Só mexe no valor; número e data seguem do que veio antes. Pura.
+export function mesclarValoresParcelas(
+  base: NovaParcela[],
+  valoresManuais: Record<number, string>,
+): NovaParcela[] {
+  return base.map((p) => {
+    const manual = valoresManuais[p.numero_parcela];
+    if (manual == null || manual === "") return p;
+    return { ...p, valor: Math.round((Number(manual) || 0) * 100) / 100 };
+  });
+}
+
+// SIS-2026-0361 (complemento): no modo "compra", a soma das parcelas tem que
+// bater com o valor da compra (tolerância de 1 centavo pra arredondamento).
+// Devolve a mensagem do problema, ou null se ok.
+export function validarSomaParcelas(parcelas: NovaParcela[], valorTotal: number): string | null {
+  const soma = parcelas.reduce((s, p) => s + (Number(p.valor) || 0), 0);
+  const alvo = Number(valorTotal) || 0;
+  if (Math.abs(soma - alvo) > 0.01) {
+    const fmt = (v: number) => v.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
+    return `A soma das parcelas (${fmt(soma)}) tem que bater com o valor da compra (${fmt(alvo)}).`;
+  }
+  return null;
+}
+
+// SIS-2026-0361 (complemento): decide, a partir das parcelas já gravadas, se
+// a despesa foi criada no modo "compra" (soma ≈ valor_total) ou "parcela"
+// (cada uma ≈ valor_total). Só o modo "compra" libera edição de valor por
+// parcela depois de criada — no modo "parcela" as parcelas são todas iguais
+// por definição. Empate (N=1) conta como "compra".
+export function parcelasSaoValorDaCompra(
+  parcelas: { valor: number }[],
+  valorTotal: number,
+): boolean {
+  if (parcelas.length <= 1) return true;
+  const soma = parcelas.reduce((s, p) => s + (Number(p.valor) || 0), 0);
+  return Math.abs(soma - (Number(valorTotal) || 0)) <= 0.02;
 }
 
 // SIS-2026-0361 (Iury): "tem boletos que a data não é a mesma todo mês" — o

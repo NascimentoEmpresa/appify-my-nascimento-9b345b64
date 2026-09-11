@@ -12,9 +12,10 @@ import { ArrowLeft, LayoutGrid, AlertTriangle } from "lucide-react";
 import { toast } from "sonner";
 import { useEmpresaId } from "@/hooks/useEmpresaId";
 import { useClassificacoesOrcamento } from "@/hooks/usePlanejamentoOrcamentario";
-import { useSalvarDespesa, uploadAnexosMalote, gerarParcelas, mesclarDatasParcelas, validarOrdemParcelas, RateioLinha } from "@/hooks/useMaloteDespesa";
+import { useSalvarDespesa, uploadAnexosMalote, gerarParcelas, mesclarDatasParcelas, mesclarValoresParcelas, validarOrdemParcelas, validarSomaParcelas, ModoValorParcela, RateioLinha } from "@/hooks/useMaloteDespesa";
 import { useMaloteConfig, usePrazoNormalInclusao, horaAtualPassouDe } from "@/hooks/useMaloteConfig";
 import { useTiposFormaPagamento } from "@/hooks/useMaloteFormaPagamento";
+import { cn } from "@/lib/utils";
 import { RateioGrid, DimensoesRateio } from "./RateioGrid";
 import { AnexosField } from "./AnexosField";
 import { DiaPagamentoPicker } from "./DiaPagamentoPicker";
@@ -63,9 +64,14 @@ export default function RatearClassificacao() {
   const [pagamentoSoAnexo, setPagamentoSoAnexo] = useState(false);
   const [diaDesconto, setDiaDesconto] = useState("");
   const [quantidadeParcelas, setQuantidadeParcelas] = useState("");
+  // SIS-2026-0361 (complemento): valor digitado é da compra (dividida) ou de
+  // cada parcela (replicada)? Default "compra".
+  const [modoValorParcela, setModoValorParcela] = useState<ModoValorParcela>("compra");
   // SIS-2026-0361: datas de parcela fixadas na mão; zeradas a cada mudança
   // estrutural (dia/qtd/valor/data).
   const [datasManuais, setDatasManuais] = useState<Record<number, string>>({});
+  // SIS-2026-0361 (complemento): valores de parcela na mão (só modo "compra").
+  const [valoresManuais, setValoresManuais] = useState<Record<number, string>>({});
   const [arquivos, setArquivos] = useState<File[]>([]);
   const [salvando, setSalvando] = useState<"rascunho" | "enviar" | null>(null);
   const { data: maloteConfig } = useMaloteConfig();
@@ -93,17 +99,24 @@ export default function RatearClassificacao() {
   }, [dataPagamento]);
   useEffect(() => {
     setDatasManuais({});
-  }, [diaDesconto, quantidadeParcelas, valorTotal, dataPagamento]);
+    setValoresManuais({});
+  }, [diaDesconto, quantidadeParcelas, valorTotal, dataPagamento, modoValorParcela]);
 
   const parcelasPreview = useMemo(() => {
     if (!parcelado || !diaDesconto || !quantidadeParcelas || !dataPagamento) return [];
     const n = Number(quantidadeParcelas);
     if (!Number.isInteger(n) || n < QUANTIDADE_PARCELAS_MIN || n > QUANTIDADE_PARCELAS_MAX) return [];
-    return mesclarDatasParcelas(
-      gerarParcelas(Number(valorTotal) || 0, n, dataPagamento, Number(diaDesconto)),
+    const comData = mesclarDatasParcelas(
+      gerarParcelas(Number(valorTotal) || 0, n, dataPagamento, Number(diaDesconto), modoValorParcela),
       datasManuais,
     );
-  }, [parcelado, diaDesconto, quantidadeParcelas, dataPagamento, valorTotal, datasManuais]);
+    return modoValorParcela === "compra" ? mesclarValoresParcelas(comData, valoresManuais) : comData;
+  }, [parcelado, diaDesconto, quantidadeParcelas, dataPagamento, valorTotal, datasManuais, valoresManuais, modoValorParcela]);
+
+  const somaParcelasPreview = useMemo(
+    () => parcelasPreview.reduce((s, p) => s + (Number(p.valor) || 0), 0),
+    [parcelasPreview],
+  );
 
   function validar(paraEnviar: boolean): string | null {
     if (!nome.trim()) return "Informe o nome da despesa.";
@@ -111,6 +124,9 @@ export default function RatearClassificacao() {
     if (!formaPagamento) return "Selecione a forma de pagamento.";
     if (!pagamentoSoAnexo && !dadosPagamento.trim()) return "Informe os dados de pagamento.";
     if (!dataPagamento) return "Informe a data de pagamento.";
+    // SIS-2026-0361 (complemento): piso absoluto, nem Exceção passa por
+    // cima — mesma regra do trigger malote_bloqueia_dia_pagamento.
+    if (dataPagamento < hoje) return "Data de pagamento é anterior a hoje — não é permitido, nem como exceção.";
     if (paraEnviar && exigeExcecao && !excecao) {
       return `Data de pagamento fora do prazo normal de inclusão (regra 1.1 — hoje o prazo normal é ${prazoNormal}) — marque "Lançar como exceção" para continuar.`;
     }
@@ -133,6 +149,10 @@ export default function RatearClassificacao() {
         }
         const erroOrdem = validarOrdemParcelas(parcelasPreview);
         if (erroOrdem) return erroOrdem;
+        if (modoValorParcela === "compra") {
+          const erroSoma = validarSomaParcelas(parcelasPreview, Number(valorTotal));
+          if (erroSoma) return erroSoma;
+        }
       }
       if (pagamentoSoAnexo && arquivos.length === 0) return "Anexe ao menos um arquivo (Pagamento só por anexo está marcado).";
     }
@@ -247,14 +267,29 @@ export default function RatearClassificacao() {
               <InputMaiusculo value={nome} onChange={(e) => setNome(e.target.value)} placeholder="Ex: Compra de materiais de escritório" />
             </div>
             <div>
-              {/* SIS-2026-0361: parcelado replica este valor em cada parcela. */}
-              <Label>{parcelado ? "Valor de cada parcela (R$) *" : "Valor Total da Despesa (R$) *"}</Label>
+              {/* SIS-2026-0361: rótulo segue o modo do valor da parcela. */}
+              <Label>
+                {!parcelado
+                  ? "Valor Total da Despesa (R$) *"
+                  : modoValorParcela === "compra"
+                    ? "Valor da compra (R$) *"
+                    : "Valor de cada parcela (R$) *"}
+              </Label>
               <Input type="number" step="0.01" value={valorTotal} onChange={(e) => setValorTotal(e.target.value)} placeholder="Ex: R$ 1.500,00" />
               {parcelado && Number(valorTotal) > 0 && Number(quantidadeParcelas) >= QUANTIDADE_PARCELAS_MIN && (
                 <p className="text-[11px] text-muted-foreground mt-1">
-                  Compromisso total: {quantidadeParcelas}× de{" "}
-                  {Number(valorTotal).toLocaleString("pt-BR", { style: "currency", currency: "BRL" })} ={" "}
-                  {(Number(valorTotal) * Number(quantidadeParcelas)).toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}
+                  {modoValorParcela === "compra" ? (
+                    <>
+                      {quantidadeParcelas}× — soma das parcelas:{" "}
+                      {somaParcelasPreview.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}
+                    </>
+                  ) : (
+                    <>
+                      Compromisso total: {quantidadeParcelas}× de{" "}
+                      {Number(valorTotal).toLocaleString("pt-BR", { style: "currency", currency: "BRL" })} ={" "}
+                      {(Number(valorTotal) * Number(quantidadeParcelas)).toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}
+                    </>
+                  )}
                 </p>
               )}
             </div>
@@ -373,32 +408,63 @@ export default function RatearClassificacao() {
                     Sugerido pela Data de pagamento. A parcela 1 vence na Data de pagamento; as demais seguem este dia.
                   </p>
                 </div>
-                {/* SIS-2026-0361: cronograma editável — ajuste as parcelas
-                    cujo boleto foge do dia do desconto. */}
-                {parcelasPreview.length > 0 && (
+                {/* SIS-2026-0361 (complemento): o valor acima é da compra
+                    (dividida) ou de cada parcela (replicada)? */}
+                <div className="sm:col-span-2">
+                  <Label>O valor informado é</Label>
+                  <div className="flex flex-wrap gap-4 mt-1">
+                    <label className="flex items-center gap-1.5 text-sm cursor-pointer">
+                      <input type="radio" name="modoValorParcela" checked={modoValorParcela === "compra"} onChange={() => setModoValorParcela("compra")} className="h-4 w-4" />
+                      Da compra inteira (dividir entre as parcelas)
+                    </label>
+                    <label className="flex items-center gap-1.5 text-sm cursor-pointer">
+                      <input type="radio" name="modoValorParcela" checked={modoValorParcela === "parcela"} onChange={() => setModoValorParcela("parcela")} className="h-4 w-4" />
+                      De cada parcela (replicar em todas)
+                    </label>
+                  </div>
+                </div>
+                {/* SIS-2026-0361: cronograma/valores editáveis — ajuste as
+                    parcelas cujo boleto foge do dia ou do valor médio. */}
+                {parcelasPreview.length > 0 && (() => {
+                  const somaOk = Math.abs(somaParcelasPreview - (Number(valorTotal) || 0)) <= 0.01;
+                  return (
                   <div className="sm:col-span-2">
                     <div className="flex items-center justify-between mb-1">
-                      <Label>Datas das parcelas</Label>
-                      {Object.keys(datasManuais).length > 0 && (
+                      <Label>Parcelas</Label>
+                      {(Object.keys(datasManuais).length > 0 || Object.keys(valoresManuais).length > 0) && (
                         <button
                           type="button"
                           className="text-xs text-primary hover:underline"
-                          onClick={() => setDatasManuais({})}
+                          onClick={() => { setDatasManuais({}); setValoresManuais({}); }}
                         >
-                          Restaurar datas sugeridas
+                          Restaurar sugestão
                         </button>
                       )}
                     </div>
                     <div className="max-h-64 overflow-y-auto rounded-md border border-border divide-y divide-border">
                       {parcelasPreview.map((p) => {
                         const primeira = p.numero_parcela === 1;
-                        const manual = p.numero_parcela in datasManuais;
+                        const dataManual = p.numero_parcela in datasManuais;
+                        const valorManual = p.numero_parcela in valoresManuais;
                         return (
                           <div key={p.numero_parcela} className="flex items-center gap-3 px-3 py-1.5 text-sm">
                             <span className="w-12 shrink-0 text-muted-foreground">{p.numero_parcela}/{parcelasPreview.length}</span>
-                            <span className="w-28 shrink-0 tabular-nums">
-                              {p.valor.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}
-                            </span>
+                            {modoValorParcela === "compra" ? (
+                              <span className="flex items-center gap-1.5 shrink-0">
+                                <Input
+                                  type="number"
+                                  step="0.01"
+                                  className="h-8 w-28 text-xs tabular-nums"
+                                  value={valoresManuais[p.numero_parcela] ?? String(p.valor)}
+                                  onChange={(e) => setValoresManuais((atual) => ({ ...atual, [p.numero_parcela]: e.target.value }))}
+                                />
+                                {valorManual && <span className="text-[11px] text-amber-600 dark:text-amber-400">manual</span>}
+                              </span>
+                            ) : (
+                              <span className="w-28 shrink-0 tabular-nums">
+                                {p.valor.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}
+                              </span>
+                            )}
                             {primeira ? (
                               <span className="text-xs text-muted-foreground">{p.data_vencimento} · Data de pagamento</span>
                             ) : (
@@ -410,15 +476,26 @@ export default function RatearClassificacao() {
                                   min={dataPagamento || undefined}
                                   onChange={(e) => setDatasManuais((atual) => ({ ...atual, [p.numero_parcela]: e.target.value }))}
                                 />
-                                {manual && <span className="text-[11px] text-amber-600 dark:text-amber-400">manual</span>}
+                                {dataManual && <span className="text-[11px] text-amber-600 dark:text-amber-400">manual</span>}
                               </>
                             )}
                           </div>
                         );
                       })}
                     </div>
+                    {modoValorParcela === "compra" && (
+                      <p className={cn("text-[11px] mt-1", somaOk ? "text-muted-foreground" : "text-destructive")}>
+                        Soma das parcelas:{" "}
+                        {somaParcelasPreview.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}
+                        {" / "}
+                        Valor da compra:{" "}
+                        {(Number(valorTotal) || 0).toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}
+                        {somaOk ? " ✓" : " — não bate"}
+                      </p>
+                    )}
                   </div>
-                )}
+                  );
+                })()}
               </div>
             )}
           </div>

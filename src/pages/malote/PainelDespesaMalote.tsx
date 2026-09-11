@@ -14,7 +14,10 @@ import {
   buscarNumeroDespesa,
   gerarParcelas,
   mesclarDatasParcelas,
+  mesclarValoresParcelas,
   validarOrdemParcelas,
+  validarSomaParcelas,
+  ModoValorParcela,
   NovaParcela,
   OrigemDespesa,
   RateioLinha,
@@ -173,9 +176,15 @@ export function PainelDespesaMalote({
   const [parcelado, setParcelado] = useState<"nao" | "sim">("nao");
   const [diaDesconto, setDiaDesconto] = useState("");
   const [quantidadeParcelas, setQuantidadeParcelas] = useState("");
+  // SIS-2026-0361 (complemento): o valor digitado é da compra inteira
+  // (dividida) ou de cada parcela (replicada)? Default "compra".
+  const [modoValorParcela, setModoValorParcela] = useState<ModoValorParcela>("compra");
   // SIS-2026-0361: datas de parcela fixadas na mão (numero_parcela → "YYYY-MM-DD").
   // Zeradas sempre que dia/qtd/valor/data mudam — a edição manual é o último passo.
   const [datasManuais, setDatasManuais] = useState<Record<number, string>>({});
+  // SIS-2026-0361 (complemento): valores de parcela ajustados na mão (só no
+  // modo "compra"). Mesma régua de reset das datas.
+  const [valoresManuais, setValoresManuais] = useState<Record<number, string>>({});
   const [arquivos, setArquivos] = useState<File[]>([]);
   const [salvando, setSalvando] = useState<"rascunho" | "enviar" | null>(null);
 
@@ -241,22 +250,32 @@ export function PainelDespesaMalote({
   // e descarta as datas editadas na mão (decisão confirmada com o usuário).
   useEffect(() => {
     setDatasManuais({});
-  }, [diaDesconto, quantidadeParcelas, totalMes, dataPagamento]);
+    setValoresManuais({});
+  }, [diaDesconto, quantidadeParcelas, totalMes, dataPagamento, modoValorParcela]);
 
   const parcelasPreview = useMemo(() => {
     if (parcelado !== "sim" || !diaDesconto || !quantidadeParcelas || !dataPagamento) return [];
     const n = Number(quantidadeParcelas);
     if (!Number.isInteger(n) || n < QUANTIDADE_PARCELAS_MIN || n > QUANTIDADE_PARCELAS_MAX) return [];
-    return mesclarDatasParcelas(
-      gerarParcelas(Number(totalMes) || 0, n, dataPagamento, Number(diaDesconto)),
+    const comData = mesclarDatasParcelas(
+      gerarParcelas(Number(totalMes) || 0, n, dataPagamento, Number(diaDesconto), modoValorParcela),
       datasManuais,
     );
-  }, [parcelado, diaDesconto, quantidadeParcelas, dataPagamento, totalMes, datasManuais]);
+    return modoValorParcela === "compra" ? mesclarValoresParcelas(comData, valoresManuais) : comData;
+  }, [parcelado, diaDesconto, quantidadeParcelas, dataPagamento, totalMes, datasManuais, valoresManuais, modoValorParcela]);
+
+  const somaParcelasPreview = useMemo(
+    () => parcelasPreview.reduce((s, p) => s + (Number(p.valor) || 0), 0),
+    [parcelasPreview],
+  );
 
   function validar(paraEnviar: boolean): string | null {
     if (!nome.trim()) return "Informe o nome da despesa.";
     if (!totalMes || Number(totalMes) <= 0) return "Informe o total do mês.";
     if (!dataPagamento) return "Informe a data de pagamento.";
+    // SIS-2026-0361 (complemento): piso absoluto, nem Exceção passa por
+    // cima — mesma regra do trigger malote_bloqueia_dia_pagamento.
+    if (dataPagamento < hoje) return "Data de pagamento é anterior a hoje — não é permitido, nem como exceção.";
     if (paraEnviar && exigeExcecao && !excecao) {
       return `Data de pagamento fora do prazo normal de inclusão (regra 1.1 — hoje o prazo normal é ${prazoNormal}) — marque "Lançar como exceção" para continuar.`;
     }
@@ -280,6 +299,10 @@ export function PainelDespesaMalote({
         }
         const erroOrdem = validarOrdemParcelas(parcelasPreview);
         if (erroOrdem) return erroOrdem;
+        if (modoValorParcela === "compra") {
+          const erroSoma = validarSomaParcelas(parcelasPreview, Number(totalMes));
+          if (erroSoma) return erroSoma;
+        }
       }
       if (pagamentoSoAnexo && arquivos.length === 0) return "Anexe ao menos um arquivo (Pagamento só por anexo está marcado).";
     }
@@ -411,7 +434,7 @@ export function PainelDespesaMalote({
       if (!despesaIdExistente) {
         setNome(""); setTotalMes(""); setDataPagamento(""); setCompetencia(""); setFormaPagamento("");
         setInformacoesPagamento(""); setPagamentoSoAnexo(false); setLinhasRateio([]); setParcelado("nao"); setDiaDesconto("");
-        setQuantidadeParcelas(""); setArquivos([]); setDatasManuais({});
+        setQuantidadeParcelas(""); setArquivos([]); setDatasManuais({}); setValoresManuais({}); setModoValorParcela("compra");
       }
     } catch (e: unknown) {
       toast.error(e instanceof Error ? e.message : "Erro ao salvar despesa.");
@@ -452,15 +475,31 @@ export function PainelDespesaMalote({
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div>
-              {/* SIS-2026-0361: parcelado replica este valor em cada parcela
-                  (não dilui) — o rótulo deixa isso explícito. */}
-              <Label>{parcelado === "sim" ? "Valor de cada parcela *" : "Total do mês *"}</Label>
+              {/* SIS-2026-0361: o rótulo segue o modo escolhido no bloco de
+                  parcelamento — "da compra" (dividido) ou "de cada parcela"
+                  (replicado). */}
+              <Label>
+                {parcelado !== "sim"
+                  ? "Total do mês *"
+                  : modoValorParcela === "compra"
+                    ? "Valor da compra *"
+                    : "Valor de cada parcela *"}
+              </Label>
               <Input type="number" step="0.01" value={totalMes} onChange={(e) => setTotalMes(e.target.value)} placeholder="Ex: R$ 5.000,00" disabled={!ativo || !!aoSalvar} />
               {parcelado === "sim" && Number(totalMes) > 0 && Number(quantidadeParcelas) >= QUANTIDADE_PARCELAS_MIN && (
                 <p className="text-[11px] text-muted-foreground mt-1">
-                  Compromisso total: {quantidadeParcelas}× de{" "}
-                  {Number(totalMes).toLocaleString("pt-BR", { style: "currency", currency: "BRL" })} ={" "}
-                  {(Number(totalMes) * Number(quantidadeParcelas)).toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}
+                  {modoValorParcela === "compra" ? (
+                    <>
+                      {quantidadeParcelas}× — soma das parcelas:{" "}
+                      {somaParcelasPreview.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}
+                    </>
+                  ) : (
+                    <>
+                      Compromisso total: {quantidadeParcelas}× de{" "}
+                      {Number(totalMes).toLocaleString("pt-BR", { style: "currency", currency: "BRL" })} ={" "}
+                      {(Number(totalMes) * Number(quantidadeParcelas)).toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}
+                    </>
+                  )}
                 </p>
               )}
             </div>
@@ -557,34 +596,69 @@ export function PainelDespesaMalote({
                     disabled={!ativo}
                   />
                 </div>
+                {/* SIS-2026-0361 (complemento): o valor digitado acima é da
+                    compra inteira (dividida entre as parcelas) ou de cada
+                    parcela (replicado)? */}
+                <div className="sm:col-span-3">
+                  <Label>O valor informado é</Label>
+                  <RadioGroup
+                    value={modoValorParcela}
+                    onValueChange={(v) => setModoValorParcela(v as ModoValorParcela)}
+                    className="flex flex-wrap gap-4 mt-1"
+                  >
+                    <label className="flex items-center gap-1.5 text-sm cursor-pointer">
+                      <RadioGroupItem value="compra" disabled={!ativo} /> Da compra inteira (dividir entre as parcelas)
+                    </label>
+                    <label className="flex items-center gap-1.5 text-sm cursor-pointer">
+                      <RadioGroupItem value="parcela" disabled={!ativo} /> De cada parcela (replicar em todas)
+                    </label>
+                  </RadioGroup>
+                </div>
                 {/* SIS-2026-0361: cronograma editável — parcela 1 travada na
                     Data de pagamento, demais ajustáveis quando o boleto foge
                     do Dia do desconto. */}
-                {parcelasPreview.length > 0 && (
+                {parcelasPreview.length > 0 && (() => {
+                  const somaOk = Math.abs(somaParcelasPreview - (Number(totalMes) || 0)) <= 0.01;
+                  return (
                   <div className="sm:col-span-3">
                     <div className="flex items-center justify-between mb-1">
-                      <Label>Datas das parcelas</Label>
-                      {Object.keys(datasManuais).length > 0 && (
+                      <Label>Parcelas</Label>
+                      {(Object.keys(datasManuais).length > 0 || Object.keys(valoresManuais).length > 0) && (
                         <button
                           type="button"
                           className="text-xs text-primary hover:underline disabled:opacity-50"
-                          onClick={() => setDatasManuais({})}
+                          onClick={() => { setDatasManuais({}); setValoresManuais({}); }}
                           disabled={!ativo}
                         >
-                          Restaurar datas sugeridas
+                          Restaurar sugestão
                         </button>
                       )}
                     </div>
                     <div className="max-h-64 overflow-y-auto rounded-md border border-border divide-y divide-border">
                       {parcelasPreview.map((p) => {
                         const primeira = p.numero_parcela === 1;
-                        const manual = p.numero_parcela in datasManuais;
+                        const dataManual = p.numero_parcela in datasManuais;
+                        const valorManual = p.numero_parcela in valoresManuais;
                         return (
                           <div key={p.numero_parcela} className="flex items-center gap-3 px-3 py-1.5 text-sm">
                             <span className="w-12 shrink-0 text-muted-foreground">{p.numero_parcela}/{parcelasPreview.length}</span>
-                            <span className="w-28 shrink-0 tabular-nums">
-                              {p.valor.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}
-                            </span>
+                            {modoValorParcela === "compra" ? (
+                              <span className="flex items-center gap-1.5 shrink-0">
+                                <Input
+                                  type="number"
+                                  step="0.01"
+                                  className="h-8 w-28 text-xs tabular-nums"
+                                  value={valoresManuais[p.numero_parcela] ?? String(p.valor)}
+                                  onChange={(e) => setValoresManuais((atual) => ({ ...atual, [p.numero_parcela]: e.target.value }))}
+                                  disabled={!ativo}
+                                />
+                                {valorManual && <span className="text-[11px] text-amber-600 dark:text-amber-400">manual</span>}
+                              </span>
+                            ) : (
+                              <span className="w-28 shrink-0 tabular-nums">
+                                {p.valor.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}
+                              </span>
+                            )}
                             {primeira ? (
                               <span className="text-xs text-muted-foreground">{p.data_vencimento} · Data de pagamento</span>
                             ) : (
@@ -597,15 +671,26 @@ export function PainelDespesaMalote({
                                   onChange={(e) => setDatasManuais((atual) => ({ ...atual, [p.numero_parcela]: e.target.value }))}
                                   disabled={!ativo}
                                 />
-                                {manual && <span className="text-[11px] text-amber-600 dark:text-amber-400">manual</span>}
+                                {dataManual && <span className="text-[11px] text-amber-600 dark:text-amber-400">manual</span>}
                               </>
                             )}
                           </div>
                         );
                       })}
                     </div>
+                    {modoValorParcela === "compra" && (
+                      <p className={cn("text-[11px] mt-1", somaOk ? "text-muted-foreground" : "text-destructive")}>
+                        Soma das parcelas:{" "}
+                        {somaParcelasPreview.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}
+                        {" / "}
+                        Valor da compra:{" "}
+                        {(Number(totalMes) || 0).toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}
+                        {somaOk ? " ✓" : " — não bate"}
+                      </p>
+                    )}
                   </div>
-                )}
+                  );
+                })()}
               </>
             )}
           </div>

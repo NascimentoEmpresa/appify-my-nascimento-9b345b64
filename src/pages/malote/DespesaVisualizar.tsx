@@ -42,7 +42,10 @@ import {
   usePagarDespesa,
   usePagarParcela,
   useAtualizarDatasParcelas,
+  useAtualizarValoresParcelas,
   validarOrdemParcelas,
+  validarSomaParcelas,
+  parcelasSaoValorDaCompra,
   NovaParcela,
   uploadAnexosMalote,
   aprovadoresDoNivel,
@@ -306,6 +309,7 @@ export default function DespesaVisualizar() {
   const reenviar = useMandarParaAprovacaoNovamente();
   const salvarEdicaoPosAprovacao = useSalvarEdicaoPosAprovacao();
   const atualizarDatasParcelas = useAtualizarDatasParcelas();
+  const atualizarValoresParcelas = useAtualizarValoresParcelas();
   const aprovar = useAprovarDespesa();
   const solicitarAjuste = useSolicitarAjusteDespesa();
   const reprovar = useReprovarDespesa();
@@ -328,6 +332,10 @@ export default function DespesaVisualizar() {
   // (numero_parcela → "YYYY-MM-DD"), pra corrigir boleto que remarcou depois
   // da despesa criada. Salvo por UPDATE cirúrgico (useAtualizarDatasParcelas).
   const [datasParcelaEditadas, setDatasParcelaEditadas] = useState<Record<number, string>>({});
+  // SIS-2026-0361 (complemento): valores de parcela reeditados (só quando a
+  // despesa foi criada no modo "compra" — parcelas com valores diferentes que
+  // somam o valor_total). Salvo por UPDATE cirúrgico (useAtualizarValoresParcelas).
+  const [valoresParcelaEditados, setValoresParcelaEditados] = useState<Record<number, string>>({});
   const [arquivosExistentes, setArquivosExistentes] = useState<string[]>([]);
   const [arquivosNovos, setArquivosNovos] = useState<File[]>([]);
   const [justificativa, setJustificativa] = useState("");
@@ -341,7 +349,7 @@ export default function DespesaVisualizar() {
   const [dimensoes, setDimensoes] = useState<DimensoesRateio>({ empresa: false, contrato: false, fornecedor: false, integrante: false });
   const [ratearPor, setRatearPor] = useState<"percentual" | "valor">("percentual");
   const [linhasRateio, setLinhasRateio] = useState<RateioLinha[]>([]);
-  const [enviando, setEnviando] = useState<"cancelar" | "reenviar" | "salvar" | "datas_parcela" | null>(null);
+  const [enviando, setEnviando] = useState<"cancelar" | "reenviar" | "salvar" | "datas_parcela" | "valores_parcela" | null>(null);
   const [acaoEmAndamento, setAcaoEmAndamento] = useState<"aprovar" | "reprovar" | "ajuste" | null>(null);
   const [acaoPagamentoEmAndamento, setAcaoPagamentoEmAndamento] = useState<"conferir" | "ajuste" | "reprovar" | null>(null);
   const [pagarAberto, setPagarAberto] = useState(false);
@@ -496,6 +504,12 @@ export default function DespesaVisualizar() {
     despesa.nivel_aprovacao_atual != null &&
     (souAprovadorDoNivel(despesa, despesa.nivel_aprovacao_atual, user?.id) || souGerenteFinanceiroDestaExcecao);
   const configurado = souAprovadorConfigurado(despesa, user?.id) || souGerenteFinanceiroDestaExcecao;
+  // SIS-2026-0361 (complemento, achado do Iury na prática): despesa com
+  // data de pagamento anterior a hoje não pode ser aprovada (nem como
+  // exceção) — só resta Solicitar ajuste ou Reprovar. Cobre despesa lançada
+  // antes desta regra existir/por brecha, sentada em pendente_aprovacao com
+  // uma data já vencida.
+  const dataPagamentoVencida = !!despesa.data_pagamento && despesa.data_pagamento < new Date().toLocaleDateString("sv-SE");
   // SIS-2026-0192: "Dados da Aprovação e Pagamento" e "Dados da Despesa"
   // só podem ser alterados pelo Solicitante — ninguém mais edita, nem
   // admin/supervisor/aprovador.
@@ -599,6 +613,12 @@ export default function DespesaVisualizar() {
   // dado, não valor/orçamento. `dadosDespesaPagamentoEditaveis` já exige
   // nenhuma parcela paga; o `!p.pago_em` por linha abaixo é reforço.
   const datasParcelasEditaveis = dadosDespesaPagamentoEditaveis && despesa.parcelado;
+  // SIS-2026-0361 (complemento): o valor de cada parcela só é editável se a
+  // despesa foi criada no modo "compra" (parcelas somam o valor_total). No
+  // modo "cada parcela" elas são iguais por definição — mexer numa quebraria
+  // essa premissa. Mesmo gate de status das datas.
+  const valoresParcelasEditaveis =
+    datasParcelasEditaveis && parcelasSaoValorDaCompra(data?.parcelas ?? [], despesa.valor_total);
   // [SEM-CHAMADO] (pedido do usuário, complemento ao SIS-2026-0339): aviso
   // dinâmico que só aparece quando algo de fato mudou nesta edição, pra
   // chamar atenção pra escolha entre "Salvar" e "Reenviar" no momento em
@@ -800,6 +820,12 @@ export default function DespesaVisualizar() {
       return "Informe os dados de pagamento (ou confira se há um arquivo anexado).";
     }
     if (!dataPagamento) return "Informe a data de pagamento.";
+    // SIS-2026-0361 (complemento): piso absoluto — nem editando o campo dá
+    // pra aprovar com data no passado. Backstop; o botão já fica oculto
+    // nesse caso (ver dataPagamentoVencida).
+    if (dataPagamento < new Date().toLocaleDateString("sv-SE")) {
+      return "Data de pagamento é anterior a hoje — não é possível aprovar. Use Solicitar ajuste.";
+    }
     if (!competencia) return "Informe a competência.";
     if (!valorAprovado || Number(valorAprovado) <= 0) return "Informe o Valor Total.";
     // SIS-2026-0212 (pedido do Iury): ao escalar de N1 pra N2 (estourou a
@@ -1084,6 +1110,41 @@ export default function DespesaVisualizar() {
       setDatasParcelaEditadas({});
     } catch (e: unknown) {
       toast.error(e instanceof Error ? e.message : "Erro ao atualizar as datas das parcelas.");
+    } finally {
+      setEnviando(null);
+    }
+  }
+
+  // SIS-2026-0361 (complemento): corrige o valor de parcelas ainda não pagas
+  // (só no modo "compra"). A soma de TODAS as parcelas (pagas + o novo valor
+  // das não pagas) tem que continuar batendo com o valor_total da despesa —
+  // senão o rateio/orçamento fica inconsistente. UPDATE cirúrgico, não mexe
+  // no valor_total nem nas parcelas pagas.
+  async function handleSalvarValoresParcelas() {
+    const editados = Object.keys(valoresParcelaEditados);
+    if (editados.length === 0) return;
+    const somaMesclada = (data?.parcelas ?? []).reduce((s, p) => {
+      const bruto = valoresParcelaEditados[p.numero_parcela];
+      const v = bruto != null && bruto !== "" ? Math.round((Number(bruto) || 0) * 100) / 100 : p.valor;
+      return s + v;
+    }, 0);
+    const erroSoma = validarSomaParcelas(
+      [{ numero_parcela: 0, valor: somaMesclada, data_vencimento: "" }],
+      despesa!.valor_total,
+    );
+    if (erroSoma) {
+      toast.error(erroSoma);
+      return;
+    }
+    const valores: Record<number, number> = {};
+    for (const n of editados) valores[Number(n)] = Math.round((Number(valoresParcelaEditados[Number(n)]) || 0) * 100) / 100;
+    setEnviando("valores_parcela");
+    try {
+      await atualizarValoresParcelas.mutateAsync({ despesaId: despesa!.id, valores });
+      toast.success("Valores das parcelas atualizados.");
+      setValoresParcelaEditados({});
+    } catch (e: unknown) {
+      toast.error(e instanceof Error ? e.message : "Erro ao atualizar os valores das parcelas.");
     } finally {
       setEnviando(null);
     }
@@ -1621,7 +1682,21 @@ export default function DespesaVisualizar() {
                           fmtDataResumo(p.data_vencimento)
                         )}
                       </TableCell>
-                      <TableCell className="text-right text-sm">{fmtMoneyResumo(p.valor)}</TableCell>
+                      <TableCell className="text-right text-sm">
+                        {valoresParcelasEditaveis && !p.pago_em ? (
+                          <Input
+                            type="number"
+                            step="0.01"
+                            className="h-8 w-28 text-xs tabular-nums ml-auto"
+                            value={valoresParcelaEditados[p.numero_parcela] ?? String(p.valor)}
+                            onChange={(e) =>
+                              setValoresParcelaEditados((atual) => ({ ...atual, [p.numero_parcela]: e.target.value }))
+                            }
+                          />
+                        ) : (
+                          fmtMoneyResumo(p.valor)
+                        )}
+                      </TableCell>
                       <TableCell>
                         {p.status === "paga" ? (
                           <Badge className={STATUS_BADGE_CLASS.despesa_paga}>Paga</Badge>
@@ -1669,6 +1744,25 @@ export default function DespesaVisualizar() {
                     </Button>
                     <Button size="sm" onClick={handleSalvarDatasParcelas} disabled={enviando !== null}>
                       {enviando === "datas_parcela" ? "Salvando..." : "Salvar datas"}
+                    </Button>
+                  </div>
+                )}
+              </div>
+            )}
+            {valoresParcelasEditaveis && (
+              <div className="flex items-center justify-between border-t border-border pt-3">
+                <p className="text-xs text-muted-foreground">
+                  {Object.keys(valoresParcelaEditados).length > 0
+                    ? "Valores alterados — a soma de todas as parcelas tem que continuar batendo com o valor total. Só as não pagas."
+                    : "Ajuste o valor de uma parcela quando ele mudar (a compra foi lançada com parcelas de valores diferentes)."}
+                </p>
+                {Object.keys(valoresParcelaEditados).length > 0 && (
+                  <div className="flex gap-2">
+                    <Button variant="ghost" size="sm" onClick={() => setValoresParcelaEditados({})} disabled={enviando !== null}>
+                      Desfazer
+                    </Button>
+                    <Button size="sm" onClick={handleSalvarValoresParcelas} disabled={enviando !== null}>
+                      {enviando === "valores_parcela" ? "Salvando..." : "Salvar valores"}
                     </Button>
                   </div>
                 )}
@@ -1963,10 +2057,16 @@ export default function DespesaVisualizar() {
         <Card>
           <CardContent className="p-4 space-y-2">
             <Label>Comentário</Label>
-            {despesa.excecao && souAprovadorNivelAtual && (
+            {despesa.excecao && souAprovadorNivelAtual && !dataPagamentoVencida && (
               <p className="text-xs text-muted-foreground">
                 Exceção: além de aprovar ou reprovar, dá pra usar "Solicitar ajuste" pra sugerir ao solicitante
                 reagendar pra uma data que não seja exceção.
+              </p>
+            )}
+            {souAprovadorNivelAtual && dataPagamentoVencida && (
+              <p className="text-xs text-destructive">
+                Data de pagamento ({fmtDataResumo(despesa.data_pagamento)}) é anterior a hoje — não pode ser
+                aprovada. Use "Solicitar ajuste" para pedir uma nova data ao solicitante.
               </p>
             )}
             <textarea
@@ -1999,14 +2099,16 @@ export default function DespesaVisualizar() {
           >
             <PenLine className="h-4 w-4" /> {acaoEmAndamento === "ajuste" ? "Enviando..." : "Solicitar ajuste"}
           </Button>
-          <Button className="gap-1.5" onClick={onClickAprovar} disabled={acaoEmAndamento !== null || orcadoCarregando || orcadoMultiMesCarregando}>
-            <Check className="h-4 w-4" />{" "}
-            {acaoEmAndamento === "aprovar"
-              ? "Aprovando..."
-              : orcadoCarregando || orcadoMultiMesCarregando
-                ? "Calculando orçamento..."
-                : "Aprovar despesa"}
-          </Button>
+          {!dataPagamentoVencida && (
+            <Button className="gap-1.5" onClick={onClickAprovar} disabled={acaoEmAndamento !== null || orcadoCarregando || orcadoMultiMesCarregando}>
+              <Check className="h-4 w-4" />{" "}
+              {acaoEmAndamento === "aprovar"
+                ? "Aprovando..."
+                : orcadoCarregando || orcadoMultiMesCarregando
+                  ? "Calculando orçamento..."
+                  : "Aprovar despesa"}
+            </Button>
+          )}
         </div>
       )}
 

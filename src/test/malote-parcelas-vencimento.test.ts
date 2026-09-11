@@ -1,5 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { gerarParcelas, mesclarDatasParcelas, validarOrdemParcelas } from "@/hooks/useMaloteDespesa";
+import {
+  gerarParcelas,
+  mesclarDatasParcelas,
+  mesclarValoresParcelas,
+  validarOrdemParcelas,
+  validarSomaParcelas,
+  parcelasSaoValorDaCompra,
+} from "@/hooks/useMaloteDespesa";
 
 // SIS-2026-0259 (Iury): a parcela 1 vence na data de pagamento escolhida no
 // lançamento, não no dia do desconto — só as parcelas seguintes caem no dia
@@ -34,6 +41,24 @@ describe("gerarParcelas", () => {
   it("valor com centavos é replicado igual em todas as parcelas", () => {
     const parcelas = gerarParcelas(39.95, 4, "2026-02-10", 10);
     expect(parcelas.map((p) => p.valor)).toEqual([39.95, 39.95, 39.95, 39.95]);
+  });
+
+  // SIS-2026-0361 (complemento, Iury): modo "compra" divide o valor entre as
+  // parcelas (a última absorve os centavos de sobra); modo "parcela" (default)
+  // replica.
+  it("modo 'compra' divide o valor entre as parcelas, com a última absorvendo a sobra", () => {
+    const parcelas = gerarParcelas(100, 3, "2026-01-31", 15, "compra");
+    expect(parcelas.map((p) => p.valor)).toEqual([33.33, 33.33, 33.34]);
+    expect(parcelas.reduce((s, p) => s + p.valor, 0)).toBeCloseTo(100, 2);
+  });
+
+  it("modo 'compra' com divisão exata dá parcelas iguais", () => {
+    const parcelas = gerarParcelas(300, 3, "2026-01-31", 15, "compra");
+    expect(parcelas.map((p) => p.valor)).toEqual([100, 100, 100]);
+  });
+
+  it("modo 'parcela' (default) replica mesmo passando explícito", () => {
+    expect(gerarParcelas(100, 3, "2026-01-31", 15, "parcela").map((p) => p.valor)).toEqual([100, 100, 100]);
   });
 
   it("retorna lista vazia quando o número de parcelas é zero ou negativo", () => {
@@ -157,5 +182,57 @@ describe("validarOrdemParcelas", () => {
       { numero_parcela: 2, valor: 100, data_vencimento: "" },
     ];
     expect(validarOrdemParcelas(ps)).toMatch(/Informe a data da parcela 2/);
+  });
+});
+
+// SIS-2026-0361 (complemento, Iury): no modo "compra" o usuário pode dar
+// valores diferentes a cada parcela, desde que a soma bata com o total.
+describe("mesclarValoresParcelas", () => {
+  const base = gerarParcelas(300, 3, "2026-08-28", 8, "compra"); // 100/100/100
+
+  it("sem valores manuais, devolve o cronograma intacto", () => {
+    expect(mesclarValoresParcelas(base, {})).toEqual(base);
+  });
+
+  it("substitui só o valor das parcelas informadas, sem tocar data nem número", () => {
+    const out = mesclarValoresParcelas(base, { 1: "150", 3: "50" });
+    expect(out.map((p) => p.valor)).toEqual([150, 100, 50]);
+    expect(out[0].data_vencimento).toBe(base[0].data_vencimento);
+    expect(out[0].numero_parcela).toBe(1);
+  });
+
+  it("string vazia é ignorada (mantém o valor sugerido)", () => {
+    expect(mesclarValoresParcelas(base, { 2: "" })[1].valor).toBe(100);
+  });
+});
+
+describe("validarSomaParcelas", () => {
+  const ps = (valores: number[]) =>
+    valores.map((v, i) => ({ numero_parcela: i + 1, valor: v, data_vencimento: "2026-01-01" }));
+
+  it("aceita quando a soma bate com o valor da compra", () => {
+    expect(validarSomaParcelas(ps([33.33, 33.33, 33.34]), 100)).toBeNull();
+  });
+
+  it("aceita diferença de até 1 centavo", () => {
+    expect(validarSomaParcelas(ps([50, 50.01]), 100)).toBeNull();
+  });
+
+  it("rejeita quando a soma não bate", () => {
+    expect(validarSomaParcelas(ps([50, 40]), 100)).toMatch(/soma das parcelas/i);
+  });
+});
+
+describe("parcelasSaoValorDaCompra", () => {
+  it("true quando a soma ≈ valor_total (modo compra)", () => {
+    expect(parcelasSaoValorDaCompra([{ valor: 33.33 }, { valor: 33.33 }, { valor: 33.34 }], 100)).toBe(true);
+  });
+
+  it("false quando cada parcela ≈ valor_total (modo replicado)", () => {
+    expect(parcelasSaoValorDaCompra([{ valor: 100 }, { valor: 100 }, { valor: 100 }], 100)).toBe(false);
+  });
+
+  it("true com uma parcela só (empate)", () => {
+    expect(parcelasSaoValorDaCompra([{ valor: 100 }], 100)).toBe(true);
   });
 });
