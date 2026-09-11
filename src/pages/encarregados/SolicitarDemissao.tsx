@@ -51,6 +51,10 @@ const VAZIO = {
   termino_experiencia: "",
   data_aviso: "",
   modelo_aviso: "",
+  // "Deseja solicitar a substituição desse colaborador?" — "sim" | "nao".
+  // Nem toda demissão repõe alguém (redução de quadro, posto que fecha):
+  // só o "sim" abre a vaga e prende o pedido a ela (vaga_obrigatoria).
+  solicitar_substituicao: "",
   colaborador_telefone: "",
   colaborador_email: "",
 };
@@ -221,10 +225,12 @@ export default function SolicitarDemissao() {
       if (!telefoneCompleto(form.colaborador_telefone)) return "Informe o telefone do colaborador com DDD.";
       if (!emailValido(form.colaborador_email)) return "Informe um e-mail válido do colaborador.";
       if (!arquivos.length) return "Anexe pelo menos 1 documento.";
+      if (!form.solicitar_substituicao) return "Responda se deseja solicitar a substituição do colaborador.";
       return null;
     }
     return null;
   };
+  const querSubstituicao = form.solicitar_substituicao === "sim";
 
   const avancar = () => {
     const falta = faltaNoPasso(passo);
@@ -265,6 +271,9 @@ export default function SolicitarDemissao() {
       termino_experiencia: form.termino_experiencia,
       data_aviso: form.data_aviso,
       modelo_aviso: form.modelo_aviso,
+      // Só com "sim" a demissão exige a vaga de Substituição (trigger
+      // demissao_exige_vaga). "Não" = redução de quadro: segue sem vaga.
+      vaga_obrigatoria: querSubstituicao,
       // Ver a nota igual em MinhasSolicitacoes: a etapa 1 passou para o
       // analista, e o status antigo não cai em fila nenhuma.
       status: "Pendente Analista",
@@ -298,9 +307,13 @@ export default function SolicitarDemissao() {
 
     setEnviando(false);
     setProtocolo(criada.id);
-    toast.success(`Solicitação #${criada.id} enviada. Agora a vaga de reposição.`);
     carregarMinhas(solicitante.email);
-    abrirVagaDe({ id: criada.id, colaborador_id: colaborador!.id, colaborador_nome: colaborador!.nome });
+    if (querSubstituicao) {
+      toast.success(`Solicitação #${criada.id} enviada. Agora a vaga de reposição.`);
+      abrirVagaDe({ id: criada.id, colaborador_id: colaborador!.id, colaborador_nome: colaborador!.nome });
+    } else {
+      toast.success(`Solicitação #${criada.id} enviada.`);
+    }
   };
 
   const recomecar = () => {
@@ -343,17 +356,21 @@ export default function SolicitarDemissao() {
             </p>
             {reciboSemVaga ? (
               <div className="max-w-md rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">
-                <b>Falta a vaga de reposição.</b> Toda demissão abre uma vaga de Substituição
-                de quem sai — sem ela, o pedido não sai da fila do analista.
+                <b>Falta a vaga de reposição.</b> Você pediu a substituição, então a demissão
+                só sai da fila do analista com a vaga de Substituição aberta.
                 <div className="mt-2">
                   <Button size="sm" onClick={() => demissaoDoRecibo ? abrirVagaDe(demissaoDoRecibo) : setVagaDe(v => v)}>
                     Solicitar a vaga de Substituição agora
                   </Button>
                 </div>
               </div>
-            ) : (
+            ) : querSubstituicao ? (
               <p className="max-w-md text-sm text-emerald-700">
                 A vaga de Substituição foi aberta junto — ela aparece em Minhas Solicitações.
+              </p>
+            ) : (
+              <p className="max-w-md text-sm text-muted-foreground">
+                Sem reposição: a demissão segue sozinha, sem vaga de Substituição.
               </p>
             )}
             <div className="mt-2 flex gap-2">
@@ -529,6 +546,30 @@ export default function SolicitarDemissao() {
                   </ul>
                 )}
               </div>
+
+              {/* Reposição. Nem toda demissão abre vaga — redução de quadro,
+                  posto que fecha — então quem pede diz. "Sim" abre a vaga de
+                  Substituição logo após o envio e o pedido só anda com ela;
+                  "Não" segue sem vaga. */}
+              <div className="rounded-lg border border-primary/30 bg-primary/5 p-4">
+                <Label className="text-sm font-semibold">Deseja solicitar a substituição desse colaborador? *</Label>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  Com "Sim", a vaga de Substituição abre logo depois do envio, já preenchida com
+                  {colaborador ? ` ${colaborador.nome.split(" ")[0]}` : " o colaborador"} — e a demissão
+                  só segue para o analista com a vaga aberta. Com "Não" (redução de quadro, posto que
+                  fecha), a demissão segue sozinha.
+                </p>
+                <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                  <Button type="button" variant={querSubstituicao ? "default" : "outline"}
+                    onClick={() => setCampo("solicitar_substituicao", "sim")}>
+                    Sim — abrir a vaga de Substituição
+                  </Button>
+                  <Button type="button" variant={form.solicitar_substituicao === "nao" ? "default" : "outline"}
+                    onClick={() => setCampo("solicitar_substituicao", "nao")}>
+                    Não — sem reposição
+                  </Button>
+                </div>
+              </div>
             </>
           )}
 
@@ -560,6 +601,7 @@ export default function SolicitarDemissao() {
                 ["Telefone", form.colaborador_telefone],
                 ["E-mail", form.colaborador_email],
                 ["Documentos", `${arquivos.length} arquivo(s)`],
+                ["Substituição", querSubstituicao ? "Sim — a vaga abre após o envio" : "Não — sem reposição"],
               ]} />
             </div>
           )}
