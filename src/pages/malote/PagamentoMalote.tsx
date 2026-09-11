@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useMemo } from "react";
 import { useNavigate } from "react-router-dom";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { Card, CardContent } from "@/components/ui/card";
@@ -26,6 +26,7 @@ import {
 } from "@/hooks/useMaloteDespesa";
 import { useClassificacoesOrcamentoAdmin } from "@/hooks/usePlanejamentoOrcamentario";
 import { useOrdenacaoTabela } from "@/hooks/useOrdenacaoTabela";
+import { useEstadoPersistido } from "@/hooks/useEstadoPersistido";
 import { ordenarPor } from "@/lib/ordenarTabela";
 
 // SIS-2026-0316: colunas ordenáveis. Fora: Parcela (composto X/Y) e
@@ -197,17 +198,21 @@ export default function PagamentoMalote() {
   // SIS-2026-0285 (Iury): filtro de data puxava só de "Última atualização" —
   // agora tem os dois períodos, independentes (E lógico quando os dois
   // estão preenchidos).
-  const [dataAtualizacaoDe, setDataAtualizacaoDe] = useState("");
-  const [dataAtualizacaoAte, setDataAtualizacaoAte] = useState("");
-  const [dataPagamentoDe, setDataPagamentoDe] = useState("");
-  const [dataPagamentoAte, setDataPagamentoAte] = useState("");
-  const [status, setStatus] = useState<StatusDespesa | "">("");
-  const [classificacao, setClassificacao] = useState("");
-  const [responsavelId, setResponsavelId] = useState("");
-  const [empresaId, setEmpresaId] = useState("");
-  const [setor, setSetor] = useState("");
-  const [busca, setBusca] = useState("");
-  const [pagina, setPagina] = useState(1);
+  // SIS-2026-0350 (Cálita): filtros e página persistem no sessionStorage pra
+  // sobreviver ao entrar numa despesa, pagar/anexar comprovante e voltar —
+  // o exemplo do chamado é exatamente este fluxo.
+  const F = "malote_pagamento";
+  const [dataAtualizacaoDe, setDataAtualizacaoDe] = useEstadoPersistido(F, "dataAtualizacaoDe", "");
+  const [dataAtualizacaoAte, setDataAtualizacaoAte] = useEstadoPersistido(F, "dataAtualizacaoAte", "");
+  const [dataPagamentoDe, setDataPagamentoDe] = useEstadoPersistido(F, "dataPagamentoDe", "");
+  const [dataPagamentoAte, setDataPagamentoAte] = useEstadoPersistido(F, "dataPagamentoAte", "");
+  const [status, setStatus] = useEstadoPersistido<StatusDespesa | "">(F, "status", "");
+  const [classificacao, setClassificacao] = useEstadoPersistido(F, "classificacao", "");
+  const [responsavelId, setResponsavelId] = useEstadoPersistido(F, "responsavelId", "");
+  const [empresaId, setEmpresaId] = useEstadoPersistido(F, "empresaId", "");
+  const [setor, setSetor] = useEstadoPersistido(F, "setor", "");
+  const [busca, setBusca] = useEstadoPersistido(F, "busca", "");
+  const [pagina, setPagina] = useEstadoPersistido(F, "pagina", 1);
   const ordenacao = useOrdenacaoTabela<ColunaPagamentoMalote>();
 
   const classificacoesDisponiveis = useMemo(() => {

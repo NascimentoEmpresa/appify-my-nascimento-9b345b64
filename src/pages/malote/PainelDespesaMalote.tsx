@@ -309,17 +309,31 @@ export function PainelDespesaMalote({
       }
 
       if (arquivos.length > 0) {
-        const paths = await uploadAnexosMalote(arquivos, despesaId, nome.trim());
-        await salvar.mutateAsync({
-          id: despesaId,
-          empresa_id: empresaId,
-          classificacao_id: classificacaoId,
-          origem,
-          status: paraEnviar ? "pendente_aprovacao" : despesaIdExistente ? "cotacao_aprovada" : "rascunho",
-          nome: nome.trim(),
-          valor_total: Number(totalMes),
-          arquivos: paths,
-        });
+        try {
+          const paths = await uploadAnexosMalote(arquivos, despesaId, nome.trim());
+          await salvar.mutateAsync({
+            id: despesaId,
+            empresa_id: empresaId,
+            classificacao_id: classificacaoId,
+            origem,
+            status: paraEnviar ? "pendente_aprovacao" : despesaIdExistente ? "cotacao_aprovada" : "rascunho",
+            nome: nome.trim(),
+            valor_total: Number(totalMes),
+            arquivos: paths,
+          });
+        } catch (erroUpload) {
+          // DM-2026-0446: a despesa JÁ está persistida — não desfaz (mesma
+          // lógica do vínculo de Patrimônio/Reembolso abaixo). O anexo pode
+          // ser reenviado depois pela própria tela da despesa (gate
+          // dadosDespesaPagamentoEditaveis, SIS-2026-0339), sem recriar nada.
+          // Aviso claro em vez do "Failed to fetch" cru, que fazia o usuário
+          // achar que tudo falhou e lançar de novo (duplicando a despesa).
+          const num = await buscarNumeroDespesa(despesaId).catch(() => null);
+          toast.warning(
+            `Despesa ${num ?? ""} criada, mas o anexo não subiu (provável falha de rede). ` +
+              `Abra a despesa em Meus Itens e reenvie o anexo — não crie de novo.`,
+          );
+        }
       }
 
       if (obrigacaoPatrimonio) {
