@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import {
-  STATUS_FINAIS, STATUS_SST_AGENDADO, STATUS_SST_RECEBIDA, STATUS_TODOS, acaoDoSST,
+  STATUS_FINAIS, STATUS_SST_AGENDADO, STATUS_SST_ASO_VALIDO, STATUS_SST_RECEBIDA, STATUS_TODOS, acaoDoSST,
   corDoStatus, explicaStatus, linkDoLocalASO, patchDevolucao,
   podeDevolver, resumoDevolucao, resumoDoASO,
 } from "@/lib/demissao/solicitacao";
@@ -28,6 +28,10 @@ describe("status do fluxo de demissão", () => {
     expect(STATUS_TODOS).toContain(STATUS_SST_RECEBIDA);
     expect(STATUS_TODOS).toContain(STATUS_SST_AGENDADO);
     expect(STATUS_FINAIS).toContain(STATUS_SST_AGENDADO);
+    // ASO válido (menos de 60 dias) conclui sem exame — é tão final quanto o agendado.
+    expect(STATUS_TODOS).toContain(STATUS_SST_ASO_VALIDO);
+    expect(STATUS_FINAIS).toContain(STATUS_SST_ASO_VALIDO);
+    expect(acaoDoSST(STATUS_SST_ASO_VALIDO)).toBeNull();
     // "Concluída" fica só por causa das demissões fechadas no desenho antigo.
     expect(STATUS_FINAIS).toContain("Concluída");
   });
