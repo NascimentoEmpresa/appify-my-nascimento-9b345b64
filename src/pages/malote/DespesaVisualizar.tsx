@@ -19,7 +19,7 @@ import {
   AlertDialogCancel,
 } from "@/components/ui/alert-dialog";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { ArrowLeft, Paperclip, Trash2, RotateCcw, Save, FileText, Package, DollarSign, Tag, Image as ImageIcon, FileSpreadsheet, File as FileIcon, Check, X, PenLine, ClipboardCheck, Banknote, Upload, AlertTriangle, Users } from "lucide-react";
+import { ArrowLeft, Paperclip, Trash2, RotateCcw, Save, FileText, Package, DollarSign, Tag, Image as ImageIcon, FileSpreadsheet, File as FileIcon, Check, X, PenLine, ClipboardCheck, Banknote, Upload, AlertTriangle, Users, ExternalLink } from "lucide-react";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
 import { cn } from "@/lib/utils";
@@ -41,6 +41,12 @@ import {
   useSolicitarAjustePagamentoDespesa,
   usePagarDespesa,
   usePagarParcela,
+  useAtualizarDatasParcelas,
+  useAtualizarValoresParcelas,
+  validarOrdemParcelas,
+  validarSomaParcelas,
+  parcelasSaoValorDaCompra,
+  NovaParcela,
   uploadAnexosMalote,
   aprovadoresDoNivel,
   nomesAprovadoresDoNivel,
@@ -267,7 +273,7 @@ function TileComprovante({ label, onClick }: { label: string; onClick: () => voi
     <button
       type="button"
       onClick={onClick}
-      className="relative overflow-hidden rounded-lg border border-emerald-300 bg-emerald-50 dark:border-emerald-800 dark:bg-emerald-950/30 p-3 text-left transition hover:bg-emerald-100 dark:hover:bg-emerald-950/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500"
+      className="relative block w-full overflow-hidden rounded-lg border border-emerald-300 bg-emerald-50 dark:border-emerald-800 dark:bg-emerald-950/30 p-3 text-left transition hover:bg-emerald-100 dark:hover:bg-emerald-950/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500"
     >
       <div
         className="pointer-events-none absolute right-0 top-1/2 -translate-y-1/2 translate-x-1"
@@ -302,6 +308,8 @@ export default function DespesaVisualizar() {
   const cancelar = useCancelarDespesa();
   const reenviar = useMandarParaAprovacaoNovamente();
   const salvarEdicaoPosAprovacao = useSalvarEdicaoPosAprovacao();
+  const atualizarDatasParcelas = useAtualizarDatasParcelas();
+  const atualizarValoresParcelas = useAtualizarValoresParcelas();
   const aprovar = useAprovarDespesa();
   const solicitarAjuste = useSolicitarAjusteDespesa();
   const reprovar = useReprovarDespesa();
@@ -320,6 +328,14 @@ export default function DespesaVisualizar() {
   // (dadosDespesaPagamentoEditaveis, abaixo).
   const [nomeEditado, setNomeEditado] = useState("");
   const [classificacaoIdEditado, setClassificacaoIdEditado] = useState("");
+  // SIS-2026-0361: datas de vencimento reeditadas na tabela de Parcelas
+  // (numero_parcela → "YYYY-MM-DD"), pra corrigir boleto que remarcou depois
+  // da despesa criada. Salvo por UPDATE cirúrgico (useAtualizarDatasParcelas).
+  const [datasParcelaEditadas, setDatasParcelaEditadas] = useState<Record<number, string>>({});
+  // SIS-2026-0361 (complemento): valores de parcela reeditados (só quando a
+  // despesa foi criada no modo "compra" — parcelas com valores diferentes que
+  // somam o valor_total). Salvo por UPDATE cirúrgico (useAtualizarValoresParcelas).
+  const [valoresParcelaEditados, setValoresParcelaEditados] = useState<Record<number, string>>({});
   const [arquivosExistentes, setArquivosExistentes] = useState<string[]>([]);
   const [arquivosNovos, setArquivosNovos] = useState<File[]>([]);
   const [justificativa, setJustificativa] = useState("");
@@ -333,7 +349,7 @@ export default function DespesaVisualizar() {
   const [dimensoes, setDimensoes] = useState<DimensoesRateio>({ empresa: false, contrato: false, fornecedor: false, integrante: false });
   const [ratearPor, setRatearPor] = useState<"percentual" | "valor">("percentual");
   const [linhasRateio, setLinhasRateio] = useState<RateioLinha[]>([]);
-  const [enviando, setEnviando] = useState<"cancelar" | "reenviar" | "salvar" | null>(null);
+  const [enviando, setEnviando] = useState<"cancelar" | "reenviar" | "salvar" | "datas_parcela" | "valores_parcela" | null>(null);
   const [acaoEmAndamento, setAcaoEmAndamento] = useState<"aprovar" | "reprovar" | "ajuste" | null>(null);
   const [acaoPagamentoEmAndamento, setAcaoPagamentoEmAndamento] = useState<"conferir" | "ajuste" | "reprovar" | null>(null);
   const [pagarAberto, setPagarAberto] = useState(false);
@@ -488,6 +504,12 @@ export default function DespesaVisualizar() {
     despesa.nivel_aprovacao_atual != null &&
     (souAprovadorDoNivel(despesa, despesa.nivel_aprovacao_atual, user?.id) || souGerenteFinanceiroDestaExcecao);
   const configurado = souAprovadorConfigurado(despesa, user?.id) || souGerenteFinanceiroDestaExcecao;
+  // SIS-2026-0361 (complemento, achado do Iury na prática): despesa com
+  // data de pagamento anterior a hoje não pode ser aprovada (nem como
+  // exceção) — só resta Solicitar ajuste ou Reprovar. Cobre despesa lançada
+  // antes desta regra existir/por brecha, sentada em pendente_aprovacao com
+  // uma data já vencida.
+  const dataPagamentoVencida = !!despesa.data_pagamento && despesa.data_pagamento < new Date().toLocaleDateString("sv-SE");
   // SIS-2026-0192: "Dados da Aprovação e Pagamento" e "Dados da Despesa"
   // só podem ser alterados pelo Solicitante — ninguém mais edita, nem
   // admin/supervisor/aprovador.
@@ -564,6 +586,18 @@ export default function DespesaVisualizar() {
   // de outros status como se fosse edição real do usuário.
   const rateioValorMudouNestaEdicao = rateioRestritoEditavel && rateioMudouValor(data?.rateio ?? [], linhasRateio);
   const rateioEmpresaMudouNestaEdicao = rateioRestritoEditavel && rateioMudouEmpresa(data?.rateio ?? [], linhasRateio);
+  // [SEM-CHAMADO] (DM-2026-0515, achado do usuário): em pendente_aprovacao/
+  // aguardando_pagamento o Valor Total virou editável (SIS-2026-0339) mas o
+  // Rateio ficava congelado — mudar o valor e reenviar deixava a despesa com
+  // `valor_total` ≠ soma do rateio, e o aprovador/orçamento viam os valores
+  // antigos por linha. Aqui NÃO é "redistribuir" (o que o 0339 travou de
+  // propósito): é só reescalar proporcionalmente pelos MESMOS percentuais,
+  // e só no caminho "Reenviar" (que já reinicia a aprovação). Não vale pra
+  // parcelada (rateio das parcelas já está congelado por snapshot).
+  const faseRateioCongelado =
+    dadosDespesaPagamentoEditaveis && !despesa.parcelado && !rateioBaseEditavel && !rateioRestritoEditavel;
+  const valorTotalMudouNaFaseCongelada =
+    faseRateioCongelado && Number(valorAprovado) > 0 && Number(valorAprovado) !== despesa.valor_total;
   // SIS-2026-0339 (achado real, confirmado com o usuário): "Data do
   // pagamento" deste bloco é malote_despesa.data_pagamento — campo da
   // MESTRA, sem nenhuma ligação com malote_despesa_parcela.data_vencimento
@@ -573,6 +607,18 @@ export default function DespesaVisualizar() {
   // parcelado, mesmo com dadosDespesaPagamentoEditaveis=true, pra não
   // deixar o solicitante "corrigir" um campo que não tem efeito real.
   const dataPagamentoEditavel = dadosDespesaPagamentoEditaveis && !despesa.parcelado;
+  // SIS-2026-0361: pra despesa parcelada, o solicitante pode corrigir a data
+  // de vencimento das parcelas na tabela "Parcelas" (só as não pagas) — no
+  // mesmo gate de status do SIS-2026-0339. É "salvar, mantém posição": data é
+  // dado, não valor/orçamento. `dadosDespesaPagamentoEditaveis` já exige
+  // nenhuma parcela paga; o `!p.pago_em` por linha abaixo é reforço.
+  const datasParcelasEditaveis = dadosDespesaPagamentoEditaveis && despesa.parcelado;
+  // SIS-2026-0361 (complemento): o valor de cada parcela só é editável se a
+  // despesa foi criada no modo "compra" (parcelas somam o valor_total). No
+  // modo "cada parcela" elas são iguais por definição — mexer numa quebraria
+  // essa premissa. Mesmo gate de status das datas.
+  const valoresParcelasEditaveis =
+    datasParcelasEditaveis && parcelasSaoValorDaCompra(data?.parcelas ?? [], despesa.valor_total);
   // [SEM-CHAMADO] (pedido do usuário, complemento ao SIS-2026-0339): aviso
   // dinâmico que só aparece quando algo de fato mudou nesta edição, pra
   // chamar atenção pra escolha entre "Salvar" e "Reenviar" no momento em
@@ -614,13 +660,14 @@ export default function DespesaVisualizar() {
     setValorAprovado(valor);
     const novoTotal = Number(valor);
     if (!novoTotal || novoTotal <= 0) return;
-    // SIS-2026-0339: Valor Total virou editável também em
-    // pendente_aprovacao/aguardando_pagamento, mas o Rateio continua
-    // travado nesses 2 status — reescalar linhasRateio aqui mostraria um
-    // preview não-salvo na tabela read-only (RateioAprovadorTable/
-    // RateioParceladoTable), sem nunca persistir. Só reescala quando o
-    // Rateio de fato é editável e vai ser enviado junto.
-    if (rateioEditavel) setLinhasRateio((atual) => rescalarRateioPorTotal(atual, novoTotal));
+    // SIS-2026-0339: Valor Total virou editável em pendente_aprovacao/
+    // aguardando_pagamento. DM-2026-0515: nessa fase (não-parcelada) o Rateio
+    // agora acompanha proporcionalmente — a tabela read-only mostra o preview
+    // reescalado e o "Reenviar" persiste. Fora disso (parcelada, ajuste sem
+    // Rateio editável), só reescala quando o Rateio de fato é editável.
+    if (rateioEditavel || faseRateioCongelado) {
+      setLinhasRateio((atual) => rescalarRateioPorTotal(atual, novoTotal));
+    }
   }
   // SIS-2026-0212 (pedido do Iury): a "Justificativa da aprovação" é o
   // único campo deste bloco que o aprovador do nível atual também precisa
@@ -773,6 +820,12 @@ export default function DespesaVisualizar() {
       return "Informe os dados de pagamento (ou confira se há um arquivo anexado).";
     }
     if (!dataPagamento) return "Informe a data de pagamento.";
+    // SIS-2026-0361 (complemento): piso absoluto — nem editando o campo dá
+    // pra aprovar com data no passado. Backstop; o botão já fica oculto
+    // nesse caso (ver dataPagamentoVencida).
+    if (dataPagamento < new Date().toLocaleDateString("sv-SE")) {
+      return "Data de pagamento é anterior a hoje — não é possível aprovar. Use Solicitar ajuste.";
+    }
     if (!competencia) return "Informe a competência.";
     if (!valorAprovado || Number(valorAprovado) <= 0) return "Informe o Valor Total.";
     // SIS-2026-0212 (pedido do Iury): ao escalar de N1 pra N2 (estourou a
@@ -1034,6 +1087,69 @@ export default function DespesaVisualizar() {
     }
   }
 
+  // SIS-2026-0361: salva só as datas de parcela reeditadas (UPDATE cirúrgico,
+  // nunca delete+reinsert — não toca nas parcelas já pagas). Valida a ordem
+  // cronológica no conjunto mesclado antes de gravar.
+  async function handleSalvarDatasParcelas() {
+    const editadas = Object.keys(datasParcelaEditadas);
+    if (editadas.length === 0) return;
+    const mescladas: NovaParcela[] = (data?.parcelas ?? []).map((p) => ({
+      numero_parcela: p.numero_parcela,
+      valor: p.valor,
+      data_vencimento: datasParcelaEditadas[p.numero_parcela] ?? p.data_vencimento,
+    }));
+    const erroOrdem = validarOrdemParcelas(mescladas);
+    if (erroOrdem) {
+      toast.error(erroOrdem);
+      return;
+    }
+    setEnviando("datas_parcela");
+    try {
+      await atualizarDatasParcelas.mutateAsync({ despesaId: despesa!.id, datas: datasParcelaEditadas });
+      toast.success("Datas das parcelas atualizadas.");
+      setDatasParcelaEditadas({});
+    } catch (e: unknown) {
+      toast.error(e instanceof Error ? e.message : "Erro ao atualizar as datas das parcelas.");
+    } finally {
+      setEnviando(null);
+    }
+  }
+
+  // SIS-2026-0361 (complemento): corrige o valor de parcelas ainda não pagas
+  // (só no modo "compra"). A soma de TODAS as parcelas (pagas + o novo valor
+  // das não pagas) tem que continuar batendo com o valor_total da despesa —
+  // senão o rateio/orçamento fica inconsistente. UPDATE cirúrgico, não mexe
+  // no valor_total nem nas parcelas pagas.
+  async function handleSalvarValoresParcelas() {
+    const editados = Object.keys(valoresParcelaEditados);
+    if (editados.length === 0) return;
+    const somaMesclada = (data?.parcelas ?? []).reduce((s, p) => {
+      const bruto = valoresParcelaEditados[p.numero_parcela];
+      const v = bruto != null && bruto !== "" ? Math.round((Number(bruto) || 0) * 100) / 100 : p.valor;
+      return s + v;
+    }, 0);
+    const erroSoma = validarSomaParcelas(
+      [{ numero_parcela: 0, valor: somaMesclada, data_vencimento: "" }],
+      despesa!.valor_total,
+    );
+    if (erroSoma) {
+      toast.error(erroSoma);
+      return;
+    }
+    const valores: Record<number, number> = {};
+    for (const n of editados) valores[Number(n)] = Math.round((Number(valoresParcelaEditados[Number(n)]) || 0) * 100) / 100;
+    setEnviando("valores_parcela");
+    try {
+      await atualizarValoresParcelas.mutateAsync({ despesaId: despesa!.id, valores });
+      toast.success("Valores das parcelas atualizados.");
+      setValoresParcelaEditados({});
+    } catch (e: unknown) {
+      toast.error(e instanceof Error ? e.message : "Erro ao atualizar os valores das parcelas.");
+    } finally {
+      setEnviando(null);
+    }
+  }
+
   // SIS-2026-0339 (correção do usuário sobre a versão anterior): a escolha
   // entre "reenviar pra aprovação" (reinicia em N1) e "salvar mantendo a
   // posição atual" NÃO pode ser automática por status — existem edições em
@@ -1146,7 +1262,9 @@ export default function DespesaVisualizar() {
       // DM-2026-0268) — em pendente_aprovacao/aguardando_pagamento ele está
       // travado, reportar "alterado" seria enganoso (linhasRateio pode ter
       // sido só reescalado localmente, ver handleValorTotalChange).
-      if (rateioBaseEditavel || rateioRestritoEditavel) partesResumo.push(...resumoAlteracoesRateio(data?.rateio ?? [], linhasRateio, contratos, empresas));
+      if (rateioBaseEditavel || rateioRestritoEditavel || valorTotalMudouNaFaseCongelada) {
+        partesResumo.push(...resumoAlteracoesRateio(data?.rateio ?? [], linhasRateio, contratos, empresas));
+      }
 
       const payloadBase = {
         id: despesa!.id,
@@ -1184,7 +1302,9 @@ export default function DespesaVisualizar() {
         // alterado — DM-2026-0268); nos outros casos o Rateio continua
         // travado e intocado mesmo reenviando.
         await reenviar.mutateAsync(
-          rateioBaseEditavel || rateioRestritoEditavel ? { ...payloadBase, rateio: linhasRateio } : payloadBase
+          rateioBaseEditavel || rateioRestritoEditavel || valorTotalMudouNaFaseCongelada
+            ? { ...payloadBase, rateio: linhasRateio }
+            : payloadBase
         );
         toast.success("Enviado para aprovação novamente (reiniciado em N1).");
       } else {
@@ -1440,6 +1560,12 @@ export default function DespesaVisualizar() {
                       Você alterou o <strong>Valor</strong> de uma linha do Rateio — isso muda o orçamento consumido,
                       por isso só dá pra <strong>"Reenviar para aprovação"</strong>, que reinicia em N1.
                     </>
+                  ) : valorTotalMudouNaFaseCongelada ? (
+                    <>
+                      Você alterou o <strong>Valor Total</strong> — o Rateio será <strong>reescalado
+                      proporcionalmente</strong> pelos mesmos percentuais e a despesa reinicia em N1 ao{" "}
+                      <strong>"Reenviar para aprovação"</strong>.
+                    </>
                   ) : (
                     <>
                       Você alterou dados desta despesa. Se for só uma correção sem impacto (ex. nomenclatura, dados de
@@ -1475,8 +1601,10 @@ export default function DespesaVisualizar() {
                       // dois caminhos possíveis, a escolha é do solicitante: "Salvar"
                       // mantém a posição atual (não reinicia aprovação); "Reenviar"
                       // volta pra N1 quando a mudança de fato precisa ser reavaliada.
-                      // O Rateio não muda em nenhum dos dois nesta fase.
-                      'Corrija o que precisar. "Salvar" mantém a despesa de onde estava, sem reiniciar a aprovação — use quando for só um ajuste sem impacto (ex. nomenclatura). "Reenviar para aprovação" reinicia em N1 — use quando a mudança precisa ser reavaliada. O Rateio não muda em nenhum dos dois nesta fase.'}
+                      // DM-2026-0515: mudar o Valor Total reescala o Rateio
+                      // (proporcional) e exige Reenviar; os outros campos não
+                      // tocam o Rateio.
+                      'Corrija o que precisar. "Salvar" mantém a despesa de onde estava, sem reiniciar a aprovação — use quando for só um ajuste sem impacto (ex. nomenclatura). "Reenviar para aprovação" reinicia em N1 — use quando a mudança precisa ser reavaliada. Mudar o Valor Total reescala o Rateio proporcionalmente e exige Reenviar.'}
             </p>
           </CardContent>
         </Card>
@@ -1512,7 +1640,17 @@ export default function DespesaVisualizar() {
       {despesa.parcelado && (
         <Card>
           <CardContent className="p-4 space-y-3">
-            <p className="text-sm font-semibold">Parcelas ({despesa.numero_parcelas}x)</p>
+            <div className="flex flex-wrap items-baseline justify-between gap-2">
+              <p className="text-sm font-semibold">Parcelas ({despesa.numero_parcelas}x)</p>
+              {/* SIS-2026-0361: cada parcela é cobrada pelo valor cheio — o
+                  compromisso total é a soma delas. */}
+              <p className="text-xs text-muted-foreground">
+                Compromisso total:{" "}
+                {(data?.parcelas ?? [])
+                  .reduce((s, p) => s + Number(p.valor || 0), 0)
+                  .toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}
+              </p>
+            </div>
             <div className="overflow-x-auto">
               <Table>
                 <TableHeader>
@@ -1530,8 +1668,35 @@ export default function DespesaVisualizar() {
                   {(data?.parcelas ?? []).map((p) => (
                     <TableRow key={p.id}>
                       <TableCell className="text-sm">{p.numero_parcela}/{despesa.numero_parcelas}</TableCell>
-                      <TableCell className="text-sm">{fmtDataResumo(p.data_vencimento)}</TableCell>
-                      <TableCell className="text-right text-sm">{fmtMoneyResumo(p.valor)}</TableCell>
+                      <TableCell className="text-sm">
+                        {datasParcelasEditaveis && !p.pago_em ? (
+                          <Input
+                            type="date"
+                            className="h-8 w-40 text-xs"
+                            value={datasParcelaEditadas[p.numero_parcela] ?? p.data_vencimento}
+                            onChange={(e) =>
+                              setDatasParcelaEditadas((atual) => ({ ...atual, [p.numero_parcela]: e.target.value }))
+                            }
+                          />
+                        ) : (
+                          fmtDataResumo(p.data_vencimento)
+                        )}
+                      </TableCell>
+                      <TableCell className="text-right text-sm">
+                        {valoresParcelasEditaveis && !p.pago_em ? (
+                          <Input
+                            type="number"
+                            step="0.01"
+                            className="h-8 w-28 text-xs tabular-nums ml-auto"
+                            value={valoresParcelaEditados[p.numero_parcela] ?? String(p.valor)}
+                            onChange={(e) =>
+                              setValoresParcelaEditados((atual) => ({ ...atual, [p.numero_parcela]: e.target.value }))
+                            }
+                          />
+                        ) : (
+                          fmtMoneyResumo(p.valor)
+                        )}
+                      </TableCell>
                       <TableCell>
                         {p.status === "paga" ? (
                           <Badge className={STATUS_BADGE_CLASS.despesa_paga}>Paga</Badge>
@@ -1565,6 +1730,106 @@ export default function DespesaVisualizar() {
                 </TableBody>
               </Table>
             </div>
+            {datasParcelasEditaveis && (
+              <div className="flex items-center justify-between border-t border-border pt-3">
+                <p className="text-xs text-muted-foreground">
+                  {Object.keys(datasParcelaEditadas).length > 0
+                    ? "Datas alteradas — salve para aplicar. Só as parcelas não pagas."
+                    : "Ajuste a data de vencimento de uma parcela quando o boleto remarcar."}
+                </p>
+                {Object.keys(datasParcelaEditadas).length > 0 && (
+                  <div className="flex gap-2">
+                    <Button variant="ghost" size="sm" onClick={() => setDatasParcelaEditadas({})} disabled={enviando !== null}>
+                      Desfazer
+                    </Button>
+                    <Button size="sm" onClick={handleSalvarDatasParcelas} disabled={enviando !== null}>
+                      {enviando === "datas_parcela" ? "Salvando..." : "Salvar datas"}
+                    </Button>
+                  </div>
+                )}
+              </div>
+            )}
+            {valoresParcelasEditaveis && (
+              <div className="flex items-center justify-between border-t border-border pt-3">
+                <p className="text-xs text-muted-foreground">
+                  {Object.keys(valoresParcelaEditados).length > 0
+                    ? "Valores alterados — a soma de todas as parcelas tem que continuar batendo com o valor total. Só as não pagas."
+                    : "Ajuste o valor de uma parcela quando ele mudar (a compra foi lançada com parcelas de valores diferentes)."}
+                </p>
+                {Object.keys(valoresParcelaEditados).length > 0 && (
+                  <div className="flex gap-2">
+                    <Button variant="ghost" size="sm" onClick={() => setValoresParcelaEditados({})} disabled={enviando !== null}>
+                      Desfazer
+                    </Button>
+                    <Button size="sm" onClick={handleSalvarValoresParcelas} disabled={enviando !== null}>
+                      {enviando === "valores_parcela" ? "Salvando..." : "Salvar valores"}
+                    </Button>
+                  </div>
+                )}
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      )}
+
+      {/* [SEM-CHAMADO] (pedido da galera): quem criou a despesa (e os
+          aprovadores) precisa abrir o link e o anexo da cotação que veio do
+          Suprimentos — o SolicitacaoVisualizar mostra as cotações, mas depois
+          da conversão em despesa essa informação sumia da tela. */}
+      {despesa.cotacao_vencedor_num != null && (
+        <Card>
+          <CardContent className="p-4 space-y-2">
+            <p className="text-sm font-semibold">Cotação aprovada (Suprimentos)</p>
+            {([1, 2, 3] as const)
+              .map((n) => ({
+                n,
+                fornecedor: despesa[`cot${n}_fornecedor`],
+                valor: despesa[`cot${n}_valor`],
+                prazo: despesa[`cot${n}_prazo`],
+                link: despesa[`cot${n}_link`],
+                anexoPath: despesa[`cot${n}_anexo_path`],
+                anexoNome: despesa[`cot${n}_anexo_nome`],
+              }))
+              .filter((c) => c.fornecedor)
+              .map((c) => {
+                const vencedora = despesa.cotacao_vencedor_num === c.n;
+                return (
+                  <div
+                    key={c.n}
+                    className={cn(
+                      "rounded-lg border p-3 text-sm",
+                      vencedora ? "border-emerald-400 bg-emerald-50/60 dark:bg-emerald-950/20" : "border-border opacity-70",
+                    )}
+                  >
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="font-medium">
+                        {c.fornecedor}
+                        {vencedora && <span className="ml-2 text-[10px] font-semibold text-emerald-600 dark:text-emerald-400">ESCOLHIDA</span>}
+                      </span>
+                      <span className="font-semibold">
+                        {c.valor != null ? Number(c.valor).toLocaleString("pt-BR", { style: "currency", currency: "BRL" }) : "—"}
+                      </span>
+                    </div>
+                    <div className="mt-1.5 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground">
+                      {c.prazo && <span>Entrega até {new Date(c.prazo + "T00:00:00").toLocaleDateString("pt-BR")}</span>}
+                      {c.link && (
+                        <a href={c.link} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-primary hover:underline">
+                          <ExternalLink className="h-3 w-3" /> Ver link
+                        </a>
+                      )}
+                      {c.anexoPath && (
+                        <button
+                          type="button"
+                          onClick={() => abrirAnexo(c.anexoPath!)}
+                          className="inline-flex items-center gap-1 text-primary hover:underline"
+                        >
+                          <Paperclip className="h-3 w-3" /> {c.anexoNome || "Abrir anexo"}
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
           </CardContent>
         </Card>
       )}
@@ -1792,10 +2057,16 @@ export default function DespesaVisualizar() {
         <Card>
           <CardContent className="p-4 space-y-2">
             <Label>Comentário</Label>
-            {despesa.excecao && souAprovadorNivelAtual && (
+            {despesa.excecao && souAprovadorNivelAtual && !dataPagamentoVencida && (
               <p className="text-xs text-muted-foreground">
                 Exceção: além de aprovar ou reprovar, dá pra usar "Solicitar ajuste" pra sugerir ao solicitante
                 reagendar pra uma data que não seja exceção.
+              </p>
+            )}
+            {souAprovadorNivelAtual && dataPagamentoVencida && (
+              <p className="text-xs text-destructive">
+                Data de pagamento ({fmtDataResumo(despesa.data_pagamento)}) é anterior a hoje — não pode ser
+                aprovada. Use "Solicitar ajuste" para pedir uma nova data ao solicitante.
               </p>
             )}
             <textarea
@@ -1828,14 +2099,16 @@ export default function DespesaVisualizar() {
           >
             <PenLine className="h-4 w-4" /> {acaoEmAndamento === "ajuste" ? "Enviando..." : "Solicitar ajuste"}
           </Button>
-          <Button className="gap-1.5" onClick={onClickAprovar} disabled={acaoEmAndamento !== null || orcadoCarregando || orcadoMultiMesCarregando}>
-            <Check className="h-4 w-4" />{" "}
-            {acaoEmAndamento === "aprovar"
-              ? "Aprovando..."
-              : orcadoCarregando || orcadoMultiMesCarregando
-                ? "Calculando orçamento..."
-                : "Aprovar despesa"}
-          </Button>
+          {!dataPagamentoVencida && (
+            <Button className="gap-1.5" onClick={onClickAprovar} disabled={acaoEmAndamento !== null || orcadoCarregando || orcadoMultiMesCarregando}>
+              <Check className="h-4 w-4" />{" "}
+              {acaoEmAndamento === "aprovar"
+                ? "Aprovando..."
+                : orcadoCarregando || orcadoMultiMesCarregando
+                  ? "Calculando orçamento..."
+                  : "Aprovar despesa"}
+            </Button>
+          )}
         </div>
       )}
 
@@ -2063,11 +2336,12 @@ export default function DespesaVisualizar() {
             <Button variant="outline" className="text-amber-700 border-amber-400 hover:bg-amber-50 gap-1.5" onClick={() => handleSalvarAlteracoes("reenviar")} disabled={enviando !== null || !dadosDespesaPagamentoEditaveis}>
               <RotateCcw className="h-4 w-4" /> {enviando === "reenviar" ? "Salvando..." : "Mandar para aprovação novamente"}
             </Button>
-          ) : rateioValorMudouNestaEdicao ? (
-            // DM-2026-0268: mudou o Valor de uma linha do Rateio nesta
-            // edição de ajuste_pagamento — isso afeta orçamento já
-            // consumido, então "Salvar" (sem reiniciar aprovação) some da
-            // tela; só resta reenviar pra passar de novo por N1→N2/N3.
+          ) : rateioValorMudouNestaEdicao || valorTotalMudouNaFaseCongelada ? (
+            // DM-2026-0268: mudou o Valor de uma linha do Rateio em
+            // ajuste_pagamento. DM-2026-0515: ou mudou o Valor Total em
+            // pendente_aprovacao/aguardando_pagamento (não-parcelada) — os
+            // dois afetam orçamento, então "Salvar" some e só resta reenviar
+            // (o Rateio é reescalado proporcionalmente e vai junto).
             <Button
               variant="outline"
               className="text-amber-700 border-amber-400 hover:bg-amber-50 gap-1.5"

@@ -83,6 +83,28 @@ ON CONFLICT (modulo_id, codigo) DO NOTHING;
 
 -- Excluir aviso é destrutivo (leva o histórico de ciência junto, por CASCADE),
 -- então ganha switch próprio — não vem no "liberar a tela".
+-- Conferido em 10/09/2026, depois de a revisao automatica apontar as duas
+-- coisas abaixo como bloqueadoras. Nenhuma das duas procede:
+--
+-- 1) "O toggle nao concede `excluir`, entao ninguem apaga aviso."
+--    O toggle nao concede mesmo — e o `ACOES_DO_TOGGLE_PADRAO` de
+--    ModulosMenusTab.tsx diz por que, na propria linha: "liberar a tela nao e
+--    autorizar apagar registro". Mas `excluir` NAO fica inalcancavel: acao
+--    fora do pacote ganha SWITCH PROPRIO na mesma tela de Acesso por Usuario,
+--    gravado pelo laco de `pendingAcoes`. O switch so aparece se o menu tiver
+--    a acao em `app_menu_acao` — que e exatamente o que o INSERT abaixo faz.
+--    Testado (transacao + ROLLBACK, usuario sem perfil nenhum):
+--      com o switch de excluir ligado  -> DELETE apagou 1 linha;
+--      sem o switch                    -> DELETE apagou 0. A RLS recusou.
+--
+-- 2) "Sem seed em perfil_acesso_permissao o menu fica aberto (fail-open)."
+--    E o contrario: sem permissao nenhuma o menu fica FECHADO, que e o
+--    `ACESSO_ABERTO_SEM_PERMISSOES = false` do src/lib/acesso.ts. Medido no
+--    banco com tres usuarios sem perfil e sem toggle: list_accessible_menus
+--    devolveu 0 para este codigo e pode_gerir_avisos() deu false nos tres.
+--    Semear o menu num perfil daria o Quadro de Avisos a quem hoje nao tem —
+--    o oposto do que uma revisao de permissao deveria produzir.
+
 INSERT INTO public.app_menu_acao (menu_codigo, acao)
 VALUES
   ('central_servicos_quadro_avisos', 'visualizar'::app_acao),

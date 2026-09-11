@@ -80,6 +80,10 @@ export function Topbar({ onToggleSidebar, onOpenMobile }: { onToggleSidebar: () 
   const notifQ = useQuery({
     queryKey: ["notificacoes", user?.id],
     enabled: !!user?.id,
+    // SIS-2026-0332: o sininho só atualizava no foco da aba. Com as
+    // notificações do Malote (aprovação/pagamento) o usuário fica parado
+    // na mesma tela esperando — sonda a cada 60s pra elas aparecerem.
+    refetchInterval: 60_000,
     queryFn: async () => {
       const { data, error } = await supabase
         .from("notificacoes" as any)
@@ -156,6 +160,25 @@ export function Topbar({ onToggleSidebar, onOpenMobile }: { onToggleSidebar: () 
 
   const fecharTodos = () => { setOpenSelector(false); setOpenNotif(false); setOpenHelp(false); setOpenSettings(false); setOpenProfile(false); setOpenAgenda(false); };
 
+  // Fechar ao clicar fora. O backdrop `fixed inset-0` que cada dropdown tinha
+  // NÃO funcionava pra isso: o <header> usa `backdrop-blur-md`, e
+  // backdrop-filter cria containing block pra position:fixed — o "inset-0" só
+  // cobria a faixa de 64px da barra, não a tela. Um listener no documento
+  // resolve de qualquer lugar; cliques no próprio trigger/painel (marcados
+  // com data-topbar-menu) são ignorados, então clicar no botão de novo
+  // continua alternando normalmente.
+  const algumMenuAberto = openSelector || openNotif || openHelp || openSettings || openProfile;
+  useEffect(() => {
+    if (!algumMenuAberto) return;
+    const aoClicar = (e: PointerEvent) => {
+      if ((e.target as Element | null)?.closest("[data-topbar-menu]")) return;
+      fecharTodos();
+    };
+    document.addEventListener("pointerdown", aoClicar, true);
+    return () => document.removeEventListener("pointerdown", aoClicar, true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [algumMenuAberto]);
+
   return (
     <header className="sticky top-0 z-20 flex h-16 items-center gap-2 border-b border-border/70 bg-surface/80 px-3 backdrop-blur-md sm:gap-4 sm:px-4 lg:px-6">
       {/* Hambúrguer: abre drawer no mobile, alterna colapso no desktop */}
@@ -178,7 +201,7 @@ export function Topbar({ onToggleSidebar, onOpenMobile }: { onToggleSidebar: () 
       {!externo && (
         <>
       {/* Empresa selector */}
-      <div className="relative min-w-0">
+      <div className="relative min-w-0" data-topbar-menu>
         <button
           onClick={() => { fecharTodos(); setOpenSelector((o) => !o); }}
           className="flex max-w-[60vw] items-center gap-2 rounded-lg border border-border bg-card px-2 py-1.5 text-left shadow-sm transition-colors hover:border-border-strong sm:max-w-none sm:gap-2.5 sm:px-3"
@@ -207,7 +230,6 @@ export function Topbar({ onToggleSidebar, onOpenMobile }: { onToggleSidebar: () 
 
         {openSelector && (
           <>
-            <div className="fixed inset-0 z-10" onClick={() => setOpenSelector(false)} />
             <div className="absolute left-0 top-full z-20 mt-2 w-96 overflow-hidden rounded-xl border border-border bg-popover shadow-xl animate-fade-in">
               <div className="border-b border-border bg-muted/40 px-3 py-2">
                 <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Empresas do Grupo Nascimento</p>
@@ -268,11 +290,10 @@ export function Topbar({ onToggleSidebar, onOpenMobile }: { onToggleSidebar: () 
         {!externo && (
           <>
         {/* Ajuda */}
-        <div className="relative">
+        <div className="relative" data-topbar-menu>
           <IconBtn aria-label="Ajuda" onClick={() => { fecharTodos(); setOpenHelp((o) => !o); }}><HelpCircle className="h-4 w-4" /></IconBtn>
           {openHelp && (
             <>
-              <div className="fixed inset-0 z-10" onClick={() => setOpenHelp(false)} />
               <div className="absolute right-0 top-full z-20 mt-2 w-72 overflow-hidden rounded-xl border border-border bg-popover shadow-xl">
                 <div className="border-b border-border bg-muted/40 px-3 py-2 text-xs font-semibold">Central de ajuda</div>
                 <ul className="text-sm">
@@ -286,11 +307,10 @@ export function Topbar({ onToggleSidebar, onOpenMobile }: { onToggleSidebar: () 
         </div>
 
         {/* Configurações */}
-        <div className="relative">
+        <div className="relative" data-topbar-menu>
           <IconBtn aria-label="Configurações" onClick={() => { fecharTodos(); setOpenSettings((o) => !o); }}><Settings className="h-4 w-4" /></IconBtn>
           {openSettings && (
             <>
-              <div className="fixed inset-0 z-10" onClick={() => setOpenSettings(false)} />
               <div className="absolute right-0 top-full z-20 mt-2 w-64 overflow-hidden rounded-xl border border-border bg-popover shadow-xl">
                 <div className="border-b border-border bg-muted/40 px-3 py-2 text-xs font-semibold">Configurações</div>
                 <ul className="text-sm">
@@ -309,7 +329,7 @@ export function Topbar({ onToggleSidebar, onOpenMobile }: { onToggleSidebar: () 
         <NovidadesSino aoAbrir={fecharTodos} />
 
         {/* Notificações */}
-        <div className="relative">
+        <div className="relative" data-topbar-menu>
           <IconBtn aria-label="Notificações" onClick={() => { fecharTodos(); setOpenNotif((o) => !o); }}>
             <Bell className="h-4 w-4" />
             {naoLidas > 0 && (
@@ -320,7 +340,6 @@ export function Topbar({ onToggleSidebar, onOpenMobile }: { onToggleSidebar: () 
           </IconBtn>
           {openNotif && (
             <>
-              <div className="fixed inset-0 z-10" onClick={() => setOpenNotif(false)} />
               <div className="absolute right-0 top-full z-20 mt-2 w-96 overflow-hidden rounded-xl border border-border bg-popover shadow-xl">
                 <div className="flex items-center justify-between border-b border-border bg-muted/40 px-3 py-2">
                   <p className="text-xs font-semibold">Notificações</p>
@@ -388,7 +407,7 @@ export function Topbar({ onToggleSidebar, onOpenMobile }: { onToggleSidebar: () 
         )}
 
         {/* Perfil/Sessões */}
-        <div className="relative">
+        <div className="relative" data-topbar-menu>
           <button
             onClick={() => { fecharTodos(); setOpenProfile((o) => !o); }}
             className="flex items-center gap-2.5 rounded-lg px-2 py-1 hover:bg-secondary" title={user?.email ?? ""}
@@ -413,7 +432,6 @@ export function Topbar({ onToggleSidebar, onOpenMobile }: { onToggleSidebar: () 
           </button>
           {openProfile && (
             <>
-              <div className="fixed inset-0 z-10" onClick={() => setOpenProfile(false)} />
               <div className="absolute right-0 top-full z-20 mt-2 w-80 overflow-hidden rounded-xl border border-border bg-popover shadow-xl">
                 <div className="border-b border-border bg-muted/40 px-3 py-3">
                   <p className="text-sm font-semibold">{nomeExibido}</p>
