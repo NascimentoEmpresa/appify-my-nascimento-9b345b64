@@ -148,15 +148,23 @@ export default function SolicitacaoVisualizar() {
   const statusComPainelDeAprovador = ["aguardando_aprovacao_inicial", "aguardando_cotacao", "cotacao_realizada"].includes(despesa.status);
   const painelOcultoPorNaoSerAprovador = statusComPainelDeAprovador && !souAprovadorDaClassificacao;
 
-  const cotacoes: { n: 1 | 2 | 3; fornecedor: string | null; valor: number | null; prazo: string | null; link: string | null }[] = (
-    [1, 2, 3] as const
-  )
+  const cotacoes: {
+    n: 1 | 2 | 3;
+    fornecedor: string | null;
+    valor: number | null;
+    prazo: string | null;
+    link: string | null;
+    anexoPath: string | null;
+    anexoNome: string | null;
+  }[] = ([1, 2, 3] as const)
     .map((n) => ({
       n,
       fornecedor: despesa[`cot${n}_fornecedor`],
       valor: despesa[`cot${n}_valor`],
       prazo: despesa[`cot${n}_prazo`],
       link: despesa[`cot${n}_link`],
+      anexoPath: despesa[`cot${n}_anexo_path`],
+      anexoNome: despesa[`cot${n}_anexo_nome`],
     }))
     .filter((c) => c.fornecedor);
 
@@ -710,6 +718,18 @@ export default function SolicitacaoVisualizar() {
                               >
                                 <ExternalLink className="h-3 w-3" /> Ver link
                               </a>
+                            )}
+                            {/* [SEM-CHAMADO] (pedido da galera): o anexo da
+                                cotação (vem do Suprimentos) nunca era exibido
+                                aqui — só o link. */}
+                            {c.anexoPath && (
+                              <button
+                                type="button"
+                                onClick={(e) => { e.stopPropagation(); abrirAnexo(c.anexoPath!); }}
+                                className="inline-flex items-center gap-1 text-primary hover:underline"
+                              >
+                                <Paperclip className="h-3 w-3" /> {c.anexoNome || "Abrir anexo"}
+                              </button>
                             )}
                           </div>
                         </div>
