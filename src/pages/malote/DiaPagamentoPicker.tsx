@@ -51,6 +51,14 @@ export function DiaPagamentoPicker({
   const diasPorData = useMemo(() => new Map(diasBloqueados.map((d) => [d.data, d])), [diasBloqueados]);
 
   function diaEstaBloqueado(date: Date): boolean {
+    // SIS-2026-0361 (complemento, achado do Iury na prática): piso absoluto
+    // — data anterior a hoje nunca é permitida, nem marcando Exceção
+    // (`permitirDiasBloqueados` é sobre pular dia bloqueado/fim de semana,
+    // não sobre ir pro passado). Mesma regra do trigger malote_bloqueia_
+    // dia_pagamento no banco.
+    const hoje = new Date();
+    hoje.setHours(0, 0, 0, 0);
+    if (date < hoje) return true;
     if (permitirDiasBloqueados) return false;
     if (!config?.bloqueio_impedir_lancamento) return false;
     const ymd = toYMD(date);

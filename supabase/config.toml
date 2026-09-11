@@ -1,5 +1,11 @@
 project_id = "fwmzeaztjxrxxzxzxmgc"
 
+# Exclui usuário (roda com service_role). Só chega aqui quem está logado, e a
+# própria função confere can_access(chamador, 'administracao', 'excluir') antes
+# de agir — o verify_jwt é a primeira tranca, não a única.
+[functions.admin-delete-user]
+verify_jwt = true
+
 [functions.nf-import-xml]
 verify_jwt = true
 
