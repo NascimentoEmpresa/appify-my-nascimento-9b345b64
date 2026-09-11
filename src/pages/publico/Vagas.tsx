@@ -199,11 +199,64 @@ export default function Vagas() {
   const naLanding = step === "cidade";
   const upd = (k: string, v: string) => setForm(s => ({ ...s, [k]: v }));
 
+  /**
+   * Nome preenchido sozinho a partir do CPF.
+   *
+   * Dispara quando CPF (válido) e data de nascimento estão os dois
+   * preenchidos — a RPC exige os dois de propósito: esta página é pública, e
+   * uma função que traduz CPF em nome sem mais nada seria uma máquina de
+   * descobrir nome alheio (ver a migration 20260930000085).
+   *
+   * Só PREENCHE, nunca sobrescreve: se a pessoa já digitou o nome, o que ela
+   * escreveu vale mais que o cadastro — pode ser justamente uma correção.
+   */
+  const [buscandoNome, setBuscandoNome] = useState(false);
+  const [nomeVeioDoCadastro, setNomeVeioDoCadastro] = useState(false);
+
+  useEffect(() => {
+    const cpfLimpo = form.cpf.replace(/\D/g, "");
+    if (cpfLimpo.length !== 11 || !isValidCpf(form.cpf) || !form.data_nascimento) return;
+    if (form.nome.trim() && !nomeVeioDoCadastro) return;
+
+    let cancelado = false;
+    // Espera a digitação parar: sem isto, cada tecla do CPF vira uma ida ao
+    // banco, e a última a responder poderia não ser a última digitada.
+    const t = setTimeout(async () => {
+      setBuscandoNome(true);
+      try {
+        const { data, error } = await (supabase as any).rpc("portal_nome_por_cpf", {
+          p_cpf: cpfLimpo, p_nascimento: form.data_nascimento,
+        });
+        if (cancelado) return;
+        // Não achou é o caso NORMAL (candidato de fora nunca esteve aqui):
+        // segue em silêncio, a pessoa digita o nome como sempre digitou.
+        if (!error && typeof data === "string" && data.trim()) {
+          setForm(s => ({ ...s, nome: data.trim() }));
+          setNomeVeioDoCadastro(true);
+        }
+      } finally {
+        if (!cancelado) setBuscandoNome(false);
+      }
+    }, 500);
+    return () => { cancelado = true; clearTimeout(t); };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [form.cpf, form.data_nascimento]);
+
   // ── Campos do formulário (compartilhado entre geral e vaga) ──────────
   const renderCampos = (modo: "geral" | "vaga") => (
     <>
       <div className="pv-fg"><label>Nome completo *</label>
-        <input className="pv-fi" value={form.nome} onChange={e => upd("nome", e.target.value)} placeholder="Seu nome completo" /></div>
+        <input className="pv-fi" value={form.nome}
+          onChange={e => { upd("nome", e.target.value); setNomeVeioDoCadastro(false); }}
+          placeholder="Seu nome completo" />
+        {buscandoNome && (
+          <div style={{ fontSize: 12, color: "#64748b", marginTop: 5 }}>Buscando seu nome pelo CPF...</div>
+        )}
+        {nomeVeioDoCadastro && !buscandoNome && (
+          <div style={{ fontSize: 12, color: "#047857", marginTop: 5, fontWeight: 600 }}>
+            Preenchemos pelo seu CPF — corrija se estiver diferente.
+          </div>
+        )}</div>
       <div className="pv-row">
         <div className="pv-fg"><label>E-mail *</label>
           <input className="pv-fi" type="email" value={form.email} onChange={e => upd("email", e.target.value)} placeholder="seu@email.com" /></div>
