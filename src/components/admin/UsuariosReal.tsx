@@ -425,7 +425,25 @@ function EditarUsuarioDialog({
       throw new Error(msg);
     }
     if ((data as any)?.error) throw new Error((data as any).error);
-    toast({ title: "Usuário excluído" });
+    // A exclusão desfaz os vínculos do usuário no resto do sistema (plano de
+    // ação, chamados, aprovações…): os registros continuam lá, só ficam sem o
+    // nome dele. `avisos` só vem preenchido se alguma tabela resistiu.
+    const relatorio = (data as any)?.relatorio;
+    const avisos: unknown[] = (data as any)?.avisos ?? [];
+    if (avisos.length > 0) {
+      toast({
+        title: "Usuário excluído, com pendências",
+        description: `Sobrou vínculo em ${avisos.length} tabela(s). Verifique o log da função admin-delete-user.`,
+        variant: "destructive",
+      });
+    } else {
+      toast({
+        title: "Usuário excluído",
+        description: relatorio?.vinculos
+          ? `${relatorio.vinculos} vínculo(s) no sistema foram desfeitos.`
+          : undefined,
+      });
+    }
     setOpen(false);
     onSaved();
   } catch (e: any) {
