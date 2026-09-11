@@ -707,7 +707,11 @@ function DetalheSolicitacao({ solicitacao, etapa, quemSou, onFechar, onDecidir }
                 aqui <strong>conclui</strong> a demissão sem agendar nada — a observação acima, se
                 escrita, vai junto.
               </p>
-              <Button variant="outline" className="border-emerald-400 bg-white text-emerald-800 hover:bg-emerald-100"
+              {/* Verde sólido, e não outline: é uma ação de CONCLUIR, do mesmo
+                  peso do "Agendamento concluído" logo acima — só que a que
+                  fecha sem exame. Botão apagado passava a ideia de opção
+                  secundária, quando é uma das duas saídas do passo. */}
+              <Button className="bg-emerald-600 text-white hover:bg-emerald-700"
                 onClick={marcarASOValido} disabled={salvando}>
                 <CheckCircle2 className="mr-2 h-4 w-4" /> ASO válido — concluir sem exame
               </Button>
