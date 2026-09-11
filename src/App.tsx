@@ -184,6 +184,7 @@ import PainelGerencialFormularios from "./pages/central-servicos/PainelGerencial
 import FormulariosConfig from "./pages/central-servicos/FormulariosConfig";
 import FormularioPublico from "./pages/publico/FormularioPublico";
 import Denuncia from "./pages/publico/Denuncia";
+import Site from "./pages/publico/Site";
 import FornecedorCadastro from "./pages/publico/FornecedorCadastro";
 import PedidoConfirmar from "./pages/publico/PedidoConfirmar";
 import FornecedoresPendentes from "./pages/suprimentos/FornecedoresPendentes";
@@ -298,6 +299,8 @@ const App = () => (
           {/* Fornecedor abre pelo link do e-mail, sem login: o token e a credencial. */}
           <Route path="/pedido/confirmar/:token" element={<PedidoConfirmar />} />
           <Route path="/admissao/enxoval/:token" element={<EnxovalAdmissao />} />
+          {/* Site institucional público — aponta para /vagas, /denuncia e /login */}
+          <Route path="/site" element={<Site />} />
           {/* Canal de Ética — registro e acompanhamento de denúncia, sem login */}
           <Route path="/denuncia" element={<Denuncia />} />
           <Route path="/denuncia/acompanhar" element={<Navigate to="/denuncia?acompanhar" replace />} />
