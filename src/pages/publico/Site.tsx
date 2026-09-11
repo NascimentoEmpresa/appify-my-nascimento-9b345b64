@@ -52,32 +52,32 @@ const SERVICOS: { icone: ReactNode; titulo: string; texto: string }[] = [
   { icone: <Droplets className="h-6 w-6" />, titulo: "Limpeza e conservação",
     texto: "Limpeza predial, hospitalar, escolar e de áreas comuns, com equipe própria, EPIs, produtos e supervisão em cada posto." },
   { icone: <UserRound className="h-6 w-6" />, titulo: "Portaria e recepção",
-    texto: "Controle de acesso, recepção, atendimento ao público e telefonia — o primeiro contato do seu prédio com quem chega." },
+    texto: "Controle de acesso, recepção, atendimento ao público e telefonia. O primeiro contato do seu prédio com quem chega." },
   { icone: <ShieldCheck className="h-6 w-6" />, titulo: "Vigias e zeladoria",
     texto: "Vigia desarmado, zeladoria e ronda em prédios públicos, escolas, parques e unidades administrativas." },
   { icone: <Flower2 className="h-6 w-6" />, titulo: "Jardinagem e áreas verdes",
     texto: "Manutenção de jardins, poda, roçada e paisagismo em campi universitários, hospitais e órgãos públicos." },
   { icone: <Bus className="h-6 w-6" />, titulo: "Motoristas e operação de frota",
-    texto: "Motoristas categoria B e D, operadores de máquina e coleta — a logística que mantém a cidade e a instituição andando." },
+    texto: "Motoristas categoria B e D, operadores de máquina e coleta. A logística que mantém a cidade e a instituição andando." },
   { icone: <WashingMachine className="h-6 w-6" />, titulo: "Lavanderia hospitalar",
     texto: "Processamento de roupas em ambiente hospitalar, com o rigor de higienização que um hospital universitário exige." },
   { icone: <Headset className="h-6 w-6" />, titulo: "Apoio administrativo",
     texto: "Auxiliares administrativos, digitadores, telefonistas (inclusive TARM/SAMU), almoxarifes, mensageiros e intérpretes de Libras." },
   { icone: <Sparkles className="h-6 w-6" />, titulo: "Serviços gerais e copa",
-    texto: "Copa e cozinha, carregadores e serviços gerais — o que falta para a rotina de uma instituição funcionar sem ruído." },
+    texto: "Copa e cozinha, carregadores e serviços gerais. O que falta para a rotina de uma instituição funcionar sem ruído." },
 ];
 
 const EMPRESAS = [
   { sigla: "Nascimento", nome: "Nascimento Serviços de Limpeza", texto: "A empresa-mãe: limpeza, portaria, jardinagem, motoristas e apoio administrativo para universidades, tribunais, hospitais e prefeituras." },
   { sigla: "SN", nome: "SN Serviços de Limpeza e Zeladoria Predial", texto: "Zeladoria e limpeza predial com foco em contratos municipais e unidades administrativas." },
-  { sigla: "NH", nome: "NH Prestação de Serviços", texto: "Vigias, portaria e serviços emergenciais — a resposta rápida do grupo para demandas urgentes." },
+  { sigla: "NH", nome: "NH Prestação de Serviços", texto: "Vigias, portaria e serviços emergenciais. A resposta rápida do grupo para demandas urgentes." },
   { sigla: "Canaã", nome: "Escola de Ensino Canaã", texto: "O braço de formação do grupo: educação e qualificação para quem entra e para quem cresce dentro da operação." },
 ];
 
 const NUMEROS = [
-  { valor: 2227, sufixo: "+", rotulo: "colaboradores", texto: "Pessoas trabalhando hoje nas operações do grupo — cada uma com cadastro, escala, uniforme e EPI." },
+  { valor: 2227, sufixo: "+", rotulo: "colaboradores", texto: "Pessoas trabalhando hoje nas operações do grupo. Cada uma com cadastro, escala, uniforme e EPI." },
   { valor: 58, sufixo: "", rotulo: "contratos ativos", texto: "Universidades federais, Tribunal de Justiça, Polícia Civil, hospitais universitários e dezenas de prefeituras." },
-  { valor: 4, sufixo: "", rotulo: "empresas do grupo", texto: "Nascimento, SN, NH e Canaã — cada uma com a sua especialidade, todas com a mesma gestão." },
+  { valor: 4, sufixo: "", rotulo: "empresas do grupo", texto: "Nascimento, SN, NH e Canaã. Cada uma com a sua especialidade, todas com a mesma gestão." },
   { valor: 3, sufixo: "", rotulo: "estados", texto: "Rio Grande do Sul, Santa Catarina e Paraná, da capital ao interior." },
 ];
 
@@ -89,10 +89,10 @@ const CLIENTES = [
 ];
 
 const VALORES = [
-  { titulo: "Gente na frente", texto: "Serviço é pessoa. Cada posto tem nome, supervisão e caminho para crescer — do encarregado ao analista." },
+  { titulo: "Gente na frente", texto: "Serviço é pessoa. Cada posto tem nome, supervisão e caminho para crescer, do encarregado ao analista." },
   { titulo: "Contrato é compromisso", texto: "Licitação ganha é operação que tem que funcionar no dia seguinte, com o quadro completo e o material no lugar." },
   { titulo: "Transparência de ponta a ponta", texto: "Canal de ética aberto ao público, apuração com prazo e retorno a quem relatou. Sem exceção." },
-  { titulo: "Tecnologia própria", texto: "Um ERP construído dentro de casa integra folha, recrutamento, suprimentos e operação — e é por ele que o grupo se gerencia." },
+  { titulo: "Tecnologia própria", texto: "Um ERP construído dentro de casa integra folha, recrutamento, suprimentos e operação. É por ele que o grupo se gerencia." },
 ];
 
 // ── Utilidades ────────────────────────────────────────────────────────────
@@ -140,7 +140,7 @@ function Contador({ valor, sufixo }: { valor: number; sufixo: string }) {
 
 function Logo({ claro = false }: { claro?: boolean }) {
   return (
-    <a href="#topo" className="st-logo" data-claro={claro ? "1" : "0"} aria-label="Nascimento — soluções em serviços">
+    <a href="#topo" className="st-logo" data-claro={claro ? "1" : "0"} aria-label="Nascimento, soluções em serviços">
       <img src={arcoNascimento} alt="" aria-hidden="true" />
       <span><b>Nascimento</b><i>soluções em serviços</i></span>
     </a>
@@ -172,7 +172,7 @@ export default function Site() {
   const [palavra, setPalavra] = useState(0);
 
   useEffect(() => {
-    document.title = "Nascimento — Soluções em Serviços";
+    document.title = "Nascimento | Soluções em Serviços";
     const onScroll = () => setRolou(window.scrollY > 24);
     onScroll();
     window.addEventListener("scroll", onScroll, { passive: true });
@@ -276,7 +276,7 @@ export default function Site() {
       {/* ── A empresa ── */}
       <Secao id="sobre" eyebrow="A empresa" escuro
         titulo={<>Nascimento.<br /><em>Soluções em serviços.</em></>}
-        sub="Uma empresa gaúcha que cresceu contrato a contrato: começou na limpeza, entrou na portaria, na jardinagem, na frota — e hoje sustenta a operação de algumas das maiores instituições públicas do Sul.">
+        sub="Uma empresa gaúcha que cresceu contrato a contrato: começou na limpeza, entrou na portaria, na jardinagem, na frota. Hoje sustenta a operação de algumas das maiores instituições públicas do Sul.">
         <div className="st-sobre">
           <figure className="st-sobre-foto st-rev">
             <img src={fachada} alt="Fachada da sede da Nascimento" loading="lazy" />
@@ -368,7 +368,7 @@ export default function Site() {
       {/* ── Ética ── */}
       <Secao id="etica" eyebrow="Ética e transparência" escuro
         titulo={<>Sua voz é protegida. <em>Relate com segurança.</em></>}
-        sub="O Canal de Ética recebe relatos de qualquer pessoa — colaborador, fornecedor, cliente ou cidadão — de forma anônima ou identificada. Cada caso tem comitê, prazo e retorno.">
+        sub="O Canal de Ética recebe relatos de qualquer pessoa (colaborador, fornecedor, cliente ou cidadão), de forma anônima ou identificada. Cada caso tem comitê, prazo e retorno.">
         <div className="st-etica">
           <div className="st-etica-txt st-rev">
             <ul>
@@ -387,12 +387,12 @@ export default function Site() {
       {/* ── Contato ── */}
       <Secao id="contato" eyebrow="Contato"
         titulo={<>Vamos <em>conversar.</em></>}
-        sub="Licitação, proposta comercial, parceria ou dúvida sobre um contrato em andamento — a sede fica em Triunfo, no Rio Grande do Sul.">
+        sub="Licitação, proposta comercial, parceria ou dúvida sobre um contrato em andamento: a sede fica em Triunfo, no Rio Grande do Sul.">
         <div className="st-contato">
           <div className="st-contato-card st-rev">
             <MapPin className="h-6 w-6" />
             <h3>Sede administrativa</h3>
-            <p>Rua João Pessoa, 172<br />Triunfo — RS · CEP 95840-000</p>
+            <p>Rua João Pessoa, 172<br />Triunfo, RS · CEP 95840-000</p>
             <a className="st-cta-link" href="https://www.google.com/maps/search/?api=1&query=Rua+Jo%C3%A3o+Pessoa+172+Triunfo+RS" target="_blank" rel="noopener noreferrer">
               Ver no mapa <ArrowUpRight className="h-4 w-4" />
             </a>
@@ -406,7 +406,7 @@ export default function Site() {
           <div className="st-contato-card st-rev" style={{ transitionDelay: "160ms" }}>
             <Briefcase className="h-6 w-6" />
             <h3>Recrutamento</h3>
-            <p>Candidaturas e currículos são só pelo portal — é por lá que o time de seleção acompanha cada etapa.</p>
+            <p>Candidaturas e currículos são só pelo portal. É por lá que o time de seleção acompanha cada etapa.</p>
             <Link className="st-cta-link" to="/vagas">Ir para o portal de vagas <ArrowUpRight className="h-4 w-4" /></Link>
           </div>
         </div>
