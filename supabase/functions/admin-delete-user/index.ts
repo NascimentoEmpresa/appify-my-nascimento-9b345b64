@@ -113,10 +113,29 @@ Deno.serve(async (req) => {
     }
 
     // 2) Remove da autenticação (auth.users) — requer service_role
-    // "User not found" = perfil órfão sem conta auth, não é erro — dados já foram limpos acima
+    // Desde a migration 20260930000092 a própria RPC tenta apagar auth.users,
+    // justamente pra saber QUEM barra quando o banco recusa. Se ela conseguiu,
+    // aqui não sobra nada e o GoTrue só confirma.
+    //
+    // "User not found" = conta já removida (pela RPC) ou perfil órfão sem
+    // conta auth — os dois casos são sucesso, não erro.
+    const rel = relatorio as
+      | { auth_removido?: boolean; bloqueio?: Record<string, unknown> | null }
+      | null;
+
     const { error: e4 } = await admin.auth.admin.deleteUser(targetId);
     if (e4 && !/not.found/i.test(e4.message)) {
-      return jsonResponse({ error: `Erro ao remover autenticação: ${e4.message}` }, 500);
+      // "Database error deleting user" é o texto genérico do GoTrue: ele sabe
+      // que o Postgres recusou, mas não diz qual constraint. A RPC sabe —
+      // então a mensagem da tela carrega o nome da tabela responsável.
+      const b = rel?.bloqueio;
+      const detalhe = b
+        ? ` Quem está barrando: ${b.schema}.${b.tabela} (constraint ${b.constraint}).`
+        : "";
+      return jsonResponse(
+        { error: `Erro ao remover autenticação: ${e4.message}.${detalhe}`, bloqueio: b ?? null },
+        500,
+      );
     }
 
     // `falhas` só vem preenchido se algum gatilho de guarda barrou uma tabela;
