@@ -52,6 +52,8 @@ import {
   nomesAprovadoresDoNivel,
   souAprovadorDoNivel,
   souAprovadorConfigurado,
+  souLancadorDespesa,
+  classificacaoTemLancadorConfigurado,
   STATUS_LABEL,
   STATUS_BADGE_CLASS,
   STATUS_TERMINAIS,
@@ -70,6 +72,7 @@ import { useTiposFormaPagamento } from "@/hooks/useMaloteFormaPagamento";
 import { useCartaoBancos, urlLogoCartao } from "@/hooks/useMaloteCartaoCredito";
 import { BancoBadge } from "@/components/financeiro/BancoBadge";
 import { useUtilizadoOrcamento } from "@/hooks/useUtilizadoOrcamento";
+import { useLigacoesClassificacaoMalote, mapaClassificacaoVinculada, classificacaoCanonica } from "@/hooks/useMaloteClassificacaoMaloteLink";
 import { anoMesAtual } from "@/hooks/usePlanilhaCusto";
 import { RateioGrid, DimensoesRateio } from "./RateioGrid";
 import { RateioAprovadorTable } from "./RateioAprovadorTable";
@@ -411,6 +414,17 @@ export default function DespesaVisualizar() {
   // dentroDaAlcada abaixo).
   const { resolver: resolverOrcadoMultiMes, isLoading: orcadoMultiMesCarregando } = useOrcadoClassificacaoMultiMes(despesa?.empresa_id);
   const { data: utilizadoLinhasGlobal = [] } = useUtilizadoOrcamento();
+  const { data: ligacoesClassMalote = [] } = useLigacoesClassificacaoMalote();
+  // SIS-2026-0374: u.classificacao_id já vem canonicalizado (origem→destino
+  // de ligação, ex. Pensão→Salário) por useUtilizadoOrcamento — a
+  // classificação da despesa precisa da mesma resolução pra bater, tanto na
+  // decisão de escalar (utilizadoAntesNoMes) quanto no snapshot do pagamento
+  // (calcularRateioSnapshot).
+  const mapaVinculo = useMemo(() => mapaClassificacaoVinculada(ligacoesClassMalote), [ligacoesClassMalote]);
+  const classificacaoIdCanonicaDespesa = useMemo(
+    () => classificacaoCanonica(mapaVinculo, despesa?.classificacao_id),
+    [mapaVinculo, despesa?.classificacao_id]
+  );
   // SIS-2026-0221: "Forma de pagamento" vem do catálogo cadastrável em
   // Configurações do Malote → Formas de Pagamento, não mais de um enum fixo.
   const { data: tiposFormaPagamento = [] } = useTiposFormaPagamento();
@@ -493,6 +507,17 @@ export default function DespesaVisualizar() {
 
   // Papéis do usuário logado em relação a esta despesa — SIS-2026-0132 Fase 1.
   const souSolicitante = despesa.created_by === user?.id;
+  // SIS-2026-0378 (Iury): "seja o criador da despesa após a cotação
+  // aprovada o responsável por fazer ajustes na despesa quando for
+  // solicitado" — faz mais sentido voltar pra quem lança a despesa, já que
+  // é ela quem vai corrigir. Mesma semântica de substituição do
+  // SIS-2026-0340 (uma vez configurado, só o lançador age — não os dois):
+  // em necessidade_de_ajuste, se a Classificação tem lançador configurado,
+  // é ele (não o solicitante) quem edita. Fora desse status, nada muda.
+  const podeCorrigirNecessidadeDeAjuste =
+    despesa.status === "necessidade_de_ajuste" && classificacaoTemLancadorConfigurado(despesa)
+      ? souLancadorDespesa(despesa, user?.id)
+      : souSolicitante;
   // SIS-2026-0250: Carol age em exceção como reforço a partir do Nível 2
   // (nunca no Nível 1 — a exceção sempre precisa passar pela avaliação
   // normal do N1 primeiro), mesmo sem estar configurada como aprovadora 2
@@ -543,7 +568,7 @@ export default function DespesaVisualizar() {
   // fase de pagamento. Fora do SIS-2026-0339 original por esquecimento: sem
   // isto, o solicitante fica sem NENHUM botão pra corrigir e devolver.
   const dadosDespesaPagamentoEditaveis =
-    souSolicitante &&
+    podeCorrigirNecessidadeDeAjuste &&
     !algumaParcelaJaPaga &&
     (despesa.status === "rascunho" ||
       despesa.status === "necessidade_de_ajuste" ||
@@ -552,7 +577,8 @@ export default function DespesaVisualizar() {
       despesa.status === "ajuste_pagamento");
   // Base do Rateio — deliberadamente mais estreita que a de cima (só
   // rascunho/ajuste), decisão confirmada no SIS-2026-0339.
-  const rateioBaseEditavel = souSolicitante && (despesa.status === "rascunho" || despesa.status === "necessidade_de_ajuste");
+  const rateioBaseEditavel =
+    podeCorrigirNecessidadeDeAjuste && (despesa.status === "rascunho" || despesa.status === "necessidade_de_ajuste");
   // DM-2026-0268 (financeiro, via Iury): achado real — em ajuste_pagamento
   // (correção pedida pela Conferência de Pagamento), o Valor Total já era
   // editável (dadosDespesaPagamentoEditaveis) mas a div de Rateio ficava
@@ -689,7 +715,11 @@ export default function DespesaVisualizar() {
     !souSolicitante &&
     configurado &&
     ((despesa.status === "pendente_aprovacao" && !souAprovadorNivelAtual) || despesa.status === "aguardando_pagamento");
-  const souAprovadorVendoAjuste = despesa.status === "necessidade_de_ajuste" && configurado && !souSolicitante;
+  // SIS-2026-0378: mesma colisão do DM-2026-0342 acima, mas agora contra
+  // quem de fato pode corrigir o ajuste (solicitante OU lançador
+  // configurado) — não só o solicitante — pra não duplicar a visão de
+  // "aguardando ajuste" quando o lançador também é aprovador configurado.
+  const souAprovadorVendoAjuste = despesa.status === "necessidade_de_ajuste" && configurado && !podeCorrigirNecessidadeDeAjuste;
   const proximoNivelExiste =
     despesa.nivel_aprovacao_atual != null && despesa.nivel_aprovacao_atual < 3
       ? aprovadoresDoNivel(despesa, (despesa.nivel_aprovacao_atual + 1) as 1 | 2 | 3).length > 0
@@ -720,7 +750,7 @@ export default function DespesaVisualizar() {
   function utilizadoAntesNoMes(contratoId: string | null, mes: string): number {
     return utilizadoLinhasGlobal.reduce((soma, u) => {
       if (u.despesa_id === despesa!.id) return soma;
-      if (u.classificacao_id !== despesa!.classificacao_id) return soma;
+      if (u.classificacao_id !== classificacaoIdCanonicaDespesa) return soma;
       if (!u.competencia || u.competencia.slice(0, 7) !== mes) return soma;
       if ((u.contrato_id ?? null) !== contratoId) return soma;
       return soma + (Number(u.valor) || 0);
@@ -1011,7 +1041,7 @@ export default function DespesaVisualizar() {
     const utilizadoAntesPorContrato = new Map<string, number>();
     for (const u of utilizadoLinhasGlobal) {
       if (u.despesa_id === despesa!.id) continue;
-      if (u.classificacao_id !== despesa!.classificacao_id) continue;
+      if (u.classificacao_id !== classificacaoIdCanonicaDespesa) continue;
       if (!u.competencia || u.competencia.slice(0, 7) !== anoMesDespesa) continue;
       const chave = u.contrato_id ?? "__sem_contrato__";
       utilizadoAntesPorContrato.set(chave, (utilizadoAntesPorContrato.get(chave) ?? 0) + (Number(u.valor) || 0));
@@ -2321,7 +2351,11 @@ export default function DespesaVisualizar() {
         </AlertDialogContent>
       </AlertDialog>
 
-      {!souAprovadorNivelAtual && !podeReprovarComoAprovadorPassado && !souAprovadorVendoAjuste && souSolicitante && podeAgir && (
+      {!souAprovadorNivelAtual &&
+        !podeReprovarComoAprovadorPassado &&
+        !souAprovadorVendoAjuste &&
+        podeCorrigirNecessidadeDeAjuste &&
+        podeAgir && (
         <div className="flex justify-end gap-2">
           <Button variant="outline" className="text-destructive border-destructive hover:bg-destructive/10 gap-1.5" onClick={handleCancelar} disabled={enviando !== null}>
             <Trash2 className="h-4 w-4" /> {enviando === "cancelar" ? "Cancelando..." : "Cancelar despesa"}
