@@ -35,7 +35,7 @@ import {
   MOTIVOS_VAGA, MOTIVO_SUBSTITUICAO, ehSubstituicao, maximoDeVagas, quantidadeValida, avaliarPrazo, dataMinimaVaga,
   erroDaRecomendacao, recomendacaoParaBanco, cpfValido, soDigitos, maskCpf,
   cargoExigeCnh, aplicarReqCnh, REQ_CNH_TEXTO,
-  rotuloReferencia, ajudaReferencia, mostraNomeReferencia, contratoDoEmpregado,
+  rotuloReferencia, ajudaReferencia, mostraNomeReferencia, contratoDoEmpregado, rotuloContrato,
   faltamCamposManuais, podeVagaAdministrativa,
   substituidosComVagaViva, avisoSubstituidoPreso,
 } from "@/lib/recrutamento/vagaRegras";
@@ -310,7 +310,7 @@ export function ModalNovaVaga({ aberto, onFechar, onCriada, onToast, solicitacao
       insalubridade_recebe: insal > 0 ? "Sim" : "Não",
       insalubridade_quanto: insal > 0 ? `${emp["% Insalubridade"]}%` : "",
       escala: emp["Escala"] ? String(emp["Escala"]) : v.escala,
-      contrato: contratoMatch ? contratoMatch["NOME CONTRATO"] : v.contrato,
+      contrato: contratoMatch ? rotuloContrato(contratoMatch) : v.contrato,
       contrato_id: "", posto_id: "", funcao_id: "",
     }));
     setEmpSearch(mostraNomeReferencia(motivo) ? emp.Nome : "");
@@ -709,7 +709,7 @@ export function ModalNovaVaga({ aberto, onFechar, onCriada, onToast, solicitacao
               <>
                 <datalist id="nvg-contratos">
                   {contratosFull.map((c: any, i: number) => (
-                    <option key={i} value={c["NOME CONTRATO"] ?? ""} />
+                    <option key={i} value={rotuloContrato(c)} />
                   ))}
                 </datalist>
                 <div style={{ marginTop: 4, fontSize: 11, color: "#94a3b8" }}>
@@ -756,9 +756,14 @@ export function ModalNovaVaga({ aberto, onFechar, onCriada, onToast, solicitacao
               <select className="nvg-fi" value={vaga.contrato_id} onChange={e => {
                 const id = e.target.value;
                 const contrato = contratosCatalogo.find(c => c.id === id);
+                // O catálogo de Suprimentos não tem o código da filial; a
+                // CONTRATOS tem. Casando pelo nome, o campo ganha o
+                // "1109 - " igual ao que o cadastro do colaborador daria.
+                const chave = (s: unknown) => String(s ?? "").trim().toUpperCase().replace(/\s+/g, " ");
+                const daFolha = contrato ? contratosFull.find((c: any) => chave(c["NOME CONTRATO"]) === chave(contrato.nome)) : null;
                 setVaga(v => ({
                   ...v, contrato_id: id, posto_id: "", funcao_id: "",
-                  contrato: contrato?.nome ?? v.contrato,
+                  contrato: daFolha ? rotuloContrato(daFolha) : (contrato?.nome ?? v.contrato),
                 }));
               }}>
                 <option value="">Contrato</option>

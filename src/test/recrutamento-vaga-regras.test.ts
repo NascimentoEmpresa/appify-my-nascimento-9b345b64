@@ -3,7 +3,7 @@ import {
   diasUteisEntre, somaDiasUteis, dataMinimaVaga, avaliarPrazo, grauPorDiasUteis,
   cargoExigeCnh, aplicarReqCnh, motivoLabel, MOTIVO_EXPANSAO,
   GRAU_ALTA, GRAU_MEDIA, GRAU_BAIXA, REQ_CNH_TEXTO,
-  contratoDoEmpregado, rotuloReferencia, mostraNomeReferencia,
+  contratoDoEmpregado, rotuloContrato, rotuloReferencia, mostraNomeReferencia,
   MENU_VAGA_ADMINISTRATIVA, podeVagaAdministrativa, filtrarAdministrativas,
   vagaSeguraSubstituido, substituidosComVagaViva,
   podePreencherVagaManual, faltamCamposManuais,
@@ -255,5 +255,17 @@ describe("faltamCamposManuais", () => {
   it("nulo e indefinido são o mesmo que vazio", () => {
     expect(faltamCamposManuais({})).toEqual(["Cargo", "Contrato"]);
     expect(faltamCamposManuais({ cargo: null, contrato: null })).toEqual(["Cargo", "Contrato"]);
+  });
+});
+
+describe("rotuloContrato — o contrato da vaga leva o código da filial", () => {
+  it("monta código + nome da CONTRATOS", () => {
+    expect(rotuloContrato({ Filial: 1109, "NOME CONTRATO": "POLÍCIA CIVIL RS LIMPEZA - 066/2026" }))
+      .toBe("1109 - POLÍCIA CIVIL RS LIMPEZA - 066/2026");
+  });
+  it("não duplica o código nem inventa um quando falta", () => {
+    expect(rotuloContrato({ Filial: 1109, "NOME CONTRATO": "1109 - X" })).toBe("1109 - X");
+    expect(rotuloContrato({ "NOME CONTRATO": "SEM FILIAL" })).toBe("SEM FILIAL");
+    expect(rotuloContrato(null)).toBe("");
   });
 });
