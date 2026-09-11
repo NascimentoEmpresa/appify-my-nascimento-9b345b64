@@ -212,7 +212,6 @@ import Ajuda from "./pages/ajuda/Ajuda";
 import AjudaTopico from "./pages/ajuda/AjudaTopico";
 import InboxAprovacoes from "./pages/aprovacoes/Inbox";
 import SolicitacoesErp from "./pages/sistemas/SolicitacoesErp";
-import MapaHardware from "./pages/ti/MapaHardware";
 import CentralServicos from "./pages/central-servicos/CentralServicos";
 import MeusChamados from "./pages/chamados/MeusChamados";
 import AbrirChamado from "./pages/chamados/AbrirChamado";
@@ -364,7 +363,6 @@ const App = () => (
                 app_menu é NEGADA pelo RouteGuard antes de o Navigate rodar, o
                 que trocaria um 404 honesto por um "Acesso negado" confuso. A
                 porta do módulo é o item da sidebar. */}
-            <Route path="ti/mapa-hardware" element={<MapaHardware />} />
             {/* Central de Serviços */}
             <Route path="central-servicos" element={<CentralServicos />} />
             <Route path="central-servicos/chamados" element={<MeusChamados base="/app/central-servicos/chamados" />} />

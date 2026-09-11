@@ -38,17 +38,28 @@ export function NovidadesSino({ aoAbrir }: { aoAbrir?: () => void }) {
     });
   }, [aoAbrir, marcarLidas]);
 
+  const raizRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     if (!aberto) return;
     const fecha = (e: KeyboardEvent) => { if (e.key === "Escape") setAberto(false); };
+    // Clique fora fecha. O backdrop `fixed inset-0` não servia: o <header> tem
+    // backdrop-blur, que vira containing block pra position:fixed, então o
+    // "inset-0" só cobria a faixa da barra. Listener no documento resolve.
+    const foraFecha = (e: PointerEvent) => {
+      if (!raizRef.current?.contains(e.target as Node)) setAberto(false);
+    };
     window.addEventListener("keydown", fecha);
-    return () => window.removeEventListener("keydown", fecha);
+    document.addEventListener("pointerdown", foraFecha, true);
+    return () => {
+      window.removeEventListener("keydown", fecha);
+      document.removeEventListener("pointerdown", foraFecha, true);
+    };
   }, [aberto]);
 
-  const visiveis = useMemo(() => novidades.slice(0, 6), [novidades]);
+  const visiveis = useMemo(() => novidades.slice(0, 4), [novidades]);
 
   return (
-    <div className="relative">
+    <div className="relative" ref={raizRef}>
       <button
         type="button"
         onClick={alternar}
@@ -65,7 +76,6 @@ export function NovidadesSino({ aoAbrir }: { aoAbrir?: () => void }) {
 
       {aberto && (
         <>
-          <div className="fixed inset-0 z-10" onClick={() => setAberto(false)} />
           <div className="nov-pop">
             <div className="nov-hd" style={{ padding: "13px 15px 9px" }}>
               <span className="nov-hd-ic" style={{ width: 30, height: 30 }}>

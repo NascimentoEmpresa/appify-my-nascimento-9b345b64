@@ -29,6 +29,14 @@ const FALLBACK_POR_TIPO: Record<string, string> = {
   aprovacao_pagamento: "/app/aprovacoes/inbox",
   sup_aprov_pendente: "/app/aprovacoes/inbox",
   aprovacao_sla: "/app/aprovacoes/inbox",
+  // SIS-2026-0332: notificações do Malote. Os produtores (triggers em
+  // malote_despesa/malote_despesa_parcela) sempre gravam o `link` com o id
+  // do registro; estes fallbacks só valem se a linha vier sem link.
+  malote_solicitacao_pendente: "/app/malote/aprovacoes",
+  malote_cotacao_suprimentos: "/app/suprimentos/cotacoes-malote",
+  malote_cotacao_decisao: "/app/malote/aprovacoes",
+  malote_aprovacao_pendente: "/app/malote/aprovacoes",
+  malote_status: "/app/malote/meus-itens",
 };
 
 /**
