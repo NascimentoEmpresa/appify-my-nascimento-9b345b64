@@ -397,7 +397,6 @@ export function ModalNovaVaga({ aberto, onFechar, onCriada, onToast, solicitacao
     const alvo = chaveNome(semCodigoFilial(vaga.contrato));
     if (!alvo) return null;
     return contratosCatalogo.find(c => chaveNome(c.nome) === alvo) ?? null;
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [vagaManual, substituidoId, vaga.contrato, contratosCatalogo]);
   const contratoCatalogoTravado = !vagaManual && !!substituidoId && !!contratoCatalogoDoColaborador;
   useEffect(() => {
