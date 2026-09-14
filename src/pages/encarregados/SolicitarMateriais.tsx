@@ -9,7 +9,6 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { PageHeader } from "@/components/layout/PageHeader";
-import { useEmpresaId } from "@/hooks/useEmpresaId";
 import { useModoExterno } from "@/hooks/useModoExterno";
 import { useContratosCatalogo } from "@/hooks/useSupCatalogo";
 import { ColaboradorCombobox, type Colaborador } from "@/components/encarregados/ColaboradorCombobox";
@@ -42,9 +41,11 @@ const PASSOS = ["Dados", "Posto e Função", "Materiais", "Confirmação"];
 
 export default function SolicitarMateriais() {
   const externo = useModoExterno();
-  const { data: empresaId } = useEmpresaId();
   const { data: sessao } = useSessaoExterna(externo);
-  const { data: contratosInternos = [] } = useContratosCatalogo(externo ? null : empresaId ?? null);
+  // Sem empresa de propósito: esperar o profiles.empresa_id deixava a lista
+  // vazia para quem não tem empresa no perfil. Quem pode ver cada contrato é
+  // decidido nas RPCs sup_ext_* (can_access), não pela empresa da topbar.
+  const { data: contratosInternos = [] } = useContratosCatalogo(!externo);
 
   const [passo, setPasso] = useState(0);
   const [contratoId, setContratoId] = useState<string | null>(null);

@@ -141,7 +141,7 @@ export function ModalNovaVaga({ aberto, onFechar, onCriada, onToast, solicitacao
   const empDebounce = useRef<ReturnType<typeof setTimeout> | null>(null); // debounce busca colaborador
   const empTermo = useRef("");  // último termo buscado (descarta respostas obsoletas)
 
-  const { data: contratosCatalogo = [] } = useContratosCatalogo(empresa?.id ?? null);
+  const { data: contratosCatalogo = [] } = useContratosCatalogo();
   const { data: postosCatalogo = [] } = usePostos(vaga.contrato_id || null);
   const { data: funcoesCatalogo = [] } = useFuncoes(vaga.posto_id || null);
 

@@ -68,7 +68,7 @@ export default function EpisAdmissoes() {
   const [carregandoEnxoval, setCarregandoEnxoval] = useState(false);
   const [salvandoEnxoval, setSalvandoEnxoval] = useState(false);
 
-  const { data: contratosCatalogo = [] } = useContratosCatalogo(empresa.id);
+  const { data: contratosCatalogo = [] } = useContratosCatalogo();
   const { data: postosCatalogo = [] } = usePostos(selecao.contrato_id || null);
   const { data: funcoesCatalogo = [] } = useFuncoes(selecao.posto_id || null);
 
