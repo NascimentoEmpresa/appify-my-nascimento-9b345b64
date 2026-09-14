@@ -115,6 +115,12 @@ export type PlanilhaCustoRow = {
   pis: number;
   irpj_csll: number;
   iss: number;
+  // Despesas Diretas (instalação) — hoje só o contrato CANAA usa
+  aluguel: number;
+  agua: number;
+  luz: number;
+  internet: number;
+  demais_despesas_diretas: number;
   total_por_empregado: number;
   encerrado: boolean;
   data_encerramento: string | null;
