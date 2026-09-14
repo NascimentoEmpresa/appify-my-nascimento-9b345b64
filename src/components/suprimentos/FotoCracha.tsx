@@ -76,7 +76,7 @@ export function FotoCracha({ caminho, protocolo }: { caminho: string | null; pro
       </button>
 
       <Dialog open={aberta} onOpenChange={setAberta}>
-        <DialogContent className="max-w-lg">
+        <DialogContent className="max-w-lg" aria-describedby={undefined}>
           <DialogHeader>
             <DialogTitle>Foto do crachá — {protocolo}</DialogTitle>
           </DialogHeader>
