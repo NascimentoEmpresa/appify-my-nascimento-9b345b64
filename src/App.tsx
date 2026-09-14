@@ -84,6 +84,7 @@ import PedidosCompraSupply from "./pages/suprimentos/PedidosCompraSupply";
 import CatalogoMateriais from "./pages/suprimentos/CatalogoMateriais";
 import CatalogoAprovacoes from "./pages/suprimentos/CatalogoAprovacoes";
 import PedidosMateriais from "./pages/suprimentos/PedidosMateriais";
+import RetiradaPedido from "./pages/suprimentos/RetiradaPedido";
 import EstoqueEtiquetas from "./pages/suprimentos/EstoqueEtiquetas";
 import SeparacaoMateriais from "./pages/suprimentos/SeparacaoMateriais";
 import Patrimonio from "./pages/suprimentos/Patrimonio";
@@ -535,6 +536,9 @@ const App = () => (
             <Route path="suprimentos/catalogo/aprovacoes" element={<CatalogoAprovacoes />} />
             <Route path="suprimentos/catalogo" element={<CatalogoMateriais />} />
             <Route path="suprimentos/pedidos-materiais" element={<PedidosMateriais />} />
+            {/* Destino do QR code da etiqueta térmica (menu sup_retirada_entrega). */}
+            <Route path="suprimentos/retirada" element={<RetiradaPedido />} />
+            <Route path="suprimentos/retirada/:ref" element={<RetiradaPedido />} />
             <Route path="suprimentos/separacao" element={<SeparacaoMateriais />} />
             <Route path="suprimentos/estoque-etiquetas" element={<EstoqueEtiquetas />} />
             <Route path="suprimentos/patrimonio" element={<Patrimonio />} />

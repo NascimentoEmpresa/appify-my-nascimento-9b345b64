@@ -21,6 +21,9 @@ export const STATUS_PEDIDO = [
   "EM SEPARACAO",
   "AGUARDANDO ENVIO",
   "AGUARDANDO COMPRA",
+  // Só nasce pela leitura do QR code da etiqueta (sup_retirada_confirmar);
+  // o banco recusa quem tentar pôr este status pelo modal.
+  "RETIRADO PARA ENTREGA",
   "DESPACHADO",
   "CANCELADO",
 ] as const;
@@ -31,6 +34,7 @@ export const ESTILO_STATUS: Record<string, { classe: string; rotulo: string }> =
   "EM PREPARACAO": { classe: "border-amber-400/50 bg-amber-50 text-amber-700 dark:bg-amber-950/30 dark:text-amber-300", rotulo: "Em preparação" },
   "EM SEPARACAO": { classe: "border-violet-400/50 bg-violet-50 text-violet-700 dark:bg-violet-950/30 dark:text-violet-300", rotulo: "Em separação" },
   "AGUARDANDO ENVIO": { classe: "border-blue-400/50 bg-blue-50 text-blue-700 dark:bg-blue-950/30 dark:text-blue-300", rotulo: "Aguardando envio" },
+  "RETIRADO PARA ENTREGA": { classe: "border-cyan-400/50 bg-cyan-50 text-cyan-800 dark:bg-cyan-950/30 dark:text-cyan-300", rotulo: "Retirado para entrega" },
   "AGUARDANDO COMPRA": { classe: "border-orange-400/50 bg-orange-50 text-orange-700 dark:bg-orange-950/30 dark:text-orange-300", rotulo: "Aguardando compra" },
   "DESPACHADO": { classe: "border-emerald-400/50 bg-emerald-50 text-emerald-700 dark:bg-emerald-950/30 dark:text-emerald-300", rotulo: "Despachado" },
   "CANCELADO": { classe: "border-slate-300 bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300", rotulo: "Cancelado" },
@@ -47,6 +51,7 @@ export type StatusVisivel =
   | "AGUARDANDO ENVIO"
   | "AGUARDANDO COMPRA"
   | "PARCIALMENTE DESPACHADO"
+  | "RETIRADO PARA ENTREGA"
   | "DESPACHADO_AGUARDANDO"
   | "DESPACHADO_ENTREGUE"
   | "CANCELADO";
@@ -71,6 +76,7 @@ export const STATUS_VISIVEL: StatusVisivel[] = [
   "AGUARDANDO ENVIO",
   "AGUARDANDO COMPRA",
   "PARCIALMENTE DESPACHADO",
+  "RETIRADO PARA ENTREGA",
   "DESPACHADO_AGUARDANDO",
   "DESPACHADO_ENTREGUE",
   "CANCELADO",
@@ -85,6 +91,7 @@ export const ESTILO_STATUS_VISIVEL: Record<StatusVisivel, { classe: string; rotu
     classe: "border-orange-400/50 bg-orange-50 text-orange-800 dark:bg-orange-950/30 dark:text-orange-300",
     rotulo: "Parcialmente despachado",
   },
+  "RETIRADO PARA ENTREGA": ESTILO_STATUS["RETIRADO PARA ENTREGA"],
   "DESPACHADO_AGUARDANDO": {
     classe: "border-amber-400/50 bg-amber-50 text-amber-800 dark:bg-amber-950/30 dark:text-amber-300",
     rotulo: "Despachado e Aguardando Confirmar Entrega",
@@ -102,6 +109,14 @@ export function derivarStatusVisivel(
   situacao?: SituacaoPedido | null,
 ): StatusVisivel {
   if (status === "EM SEPARACAO") return "EM SEPARACAO";
+
+  /**
+   * Retirado para entrega vence o "parcial" de propósito: é o estado em que
+   * existe uma ação pendente do Compras (informar o tipo de envio), e o card
+   * KPI dele é a fila dessa ação. A falta de mercadoria volta a aparecer
+   * assim que o pedido for despachado.
+   */
+  if (status === "RETIRADO PARA ENTREGA") return "RETIRADO PARA ENTREGA";
 
   /**
    * "Parcialmente despachado" — o caso que o gerente de Suprimentos
@@ -223,7 +238,12 @@ export interface SituacaoItem {
  */
 export function derivarStatusItem(statusPedido: string, item: SituacaoItem): StatusItem {
   if (statusPedido === "CANCELADO") return "CANCELADO";
-  if (item.saiu) return statusPedido === "DESPACHADO" ? "DESPACHADO" : "SEPARADO";
+  // Retirado para entrega: a peça já saiu do prédio com o supervisor. Para o
+  // item isso é despacho — "separado" diria que ela ainda está na doca.
+  if (item.saiu) {
+    return statusPedido === "DESPACHADO" || statusPedido === "RETIRADO PARA ENTREGA"
+      ? "DESPACHADO" : "SEPARADO";
+  }
   if (item.reservado) return "EM SEPARACAO";
   if (item.pendenteCompra) return "PENDENTE COMPRA";
   return statusPedido === "AGUARDANDO COMPRA" ? "AGUARDANDO COMPRA" : "PENDENTE";

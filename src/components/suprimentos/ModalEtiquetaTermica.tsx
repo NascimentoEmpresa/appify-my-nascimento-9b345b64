@@ -7,11 +7,12 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { ESTILO_STATUS } from "@/hooks/useSupPedidos";
 import {
-  MEDIDAS, cssEtiqueta, htmlEtiqueta, imprimirEtiqueta, textoItens,
+  MEDIDAS, cssEtiqueta, htmlEtiqueta, imprimirEtiqueta, textoItens, urlRetirada,
   type DadosEtiqueta, type TamanhoEtiqueta,
 } from "@/lib/suprimentos/etiquetaTermica";
 import { Eye, Printer } from "lucide-react";
 import { toast } from "sonner";
+import QRCode from "qrcode";
 
 /**
  * Emissão de etiqueta térmica do pedido.
@@ -27,6 +28,8 @@ import { toast } from "sonner";
  */
 
 export interface PedidoEtiqueta {
+  /** uuid do pedido — é o que o QR code de retirada carrega. */
+  id: string;
   pedido_id: string;
   status: string;
   nome_colaborador: string;
@@ -44,8 +47,9 @@ export interface PedidoEtiqueta {
   }>;
 }
 
-function paraDados(p: PedidoEtiqueta): DadosEtiqueta {
+function paraDados(p: PedidoEtiqueta, qrDataUrl: string | null): DadosEtiqueta {
   return {
+    qrDataUrl,
     pedido_id: p.pedido_id,
     status: p.status,
     statusRotulo: ESTILO_STATUS[p.status]?.rotulo ?? p.status,
@@ -72,15 +76,32 @@ export function ModalEtiquetaTermica({
   const [copias, setCopias] = useState(1);
   const [conteudo, setConteudo] = useState("");
   const [preview, setPreview] = useState<string | null>(null);
+  const [qr, setQr] = useState<string | null>(null);
+  const [gerandoQr, setGerandoQr] = useState(false);
 
-  const dados = useMemo(() => (pedido ? paraDados(pedido) : null), [pedido]);
+  const dados = useMemo(() => (pedido ? paraDados(pedido, qr) : null), [pedido, qr]);
 
   useEffect(() => {
     if (!pedido) return;
     setTamanho("PADRAO");
     setCopias(1);
-    setConteudo(textoItens(paraDados(pedido)));
+    setConteudo(textoItens(paraDados(pedido, null)));
     setPreview(null);
+  }, [pedido]);
+
+  // O QR é gerado aqui, e não em htmlEtiqueta, porque a geração é
+  // assíncrona. Se falhar, a etiqueta ainda sai — sem QR e com aviso: travar
+  // a impressão por causa dele pararia o almoxarifado.
+  useEffect(() => {
+    if (!pedido) return;
+    let ativo = true;
+    setQr(null);
+    setGerandoQr(true);
+    QRCode.toDataURL(urlRetirada(pedido.id, window.location.origin), { margin: 0, width: 512, errorCorrectionLevel: "M" })
+      .then((url) => { if (ativo) setQr(url); })
+      .catch(() => { if (ativo) toast.error("Não foi possível gerar o QR code de retirada. A etiqueta sairá sem ele."); })
+      .finally(() => { if (ativo) setGerandoQr(false); });
+    return () => { ativo = false; };
   }, [pedido]);
 
   const medidas = MEDIDAS[tamanho];
@@ -167,7 +188,7 @@ export function ModalEtiquetaTermica({
 
         <DialogFooter>
           <Button variant="outline" onClick={onFechar}>Fechar</Button>
-          <Button onClick={imprimir} disabled={!preview}>
+          <Button onClick={imprimir} disabled={!preview || gerandoQr}>
             <Printer className="mr-2 h-4 w-4" /> Imprimir etiqueta
           </Button>
         </DialogFooter>

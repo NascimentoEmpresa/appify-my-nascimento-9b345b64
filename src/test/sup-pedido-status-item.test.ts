@@ -72,7 +72,7 @@ describe("derivarStatusItem — status do item vem da etiqueta, não de coluna",
   it("só devolve status que existe na lista oficial", () => {
     const combinacoes = [
       "EM PREPARACAO", "EM SEPARACAO", "AGUARDANDO ENVIO", "AGUARDANDO COMPRA",
-      "DESPACHADO", "CANCELADO",
+      "RETIRADO PARA ENTREGA", "DESPACHADO", "CANCELADO",
     ].flatMap((s) => [
       derivarStatusItem(s, saiu(true)),
       derivarStatusItem(s, saiu(false)),
@@ -157,6 +157,30 @@ describe("derivarStatusVisivel — entrega vem da comprovação", () => {
   it("não altera os demais estados persistidos", () => {
     expect(derivarStatusVisivel("AGUARDANDO ENVIO", "PENDENTE")).toBe("AGUARDANDO ENVIO");
     expect(derivarStatusVisivel("CANCELADO", "ENVIADO")).toBe("CANCELADO");
+  });
+});
+
+/**
+ * Retirada pelo QR code da etiqueta: o supervisor da frota levou o volume e o
+ * Compras ainda precisa informar o tipo de envio.
+ */
+describe("retirado para entrega", () => {
+  it("tem status visível próprio, com rótulo legível", () => {
+    expect(derivarStatusVisivel("RETIRADO PARA ENTREGA", null)).toBe("RETIRADO PARA ENTREGA");
+    expect(ESTILO_STATUS_VISIVEL["RETIRADO PARA ENTREGA"].rotulo).toBe("Retirado para entrega");
+  });
+
+  it("vence o parcial: o card KPI é a fila de quem precisa informar o envio", () => {
+    expect(derivarStatusVisivel("RETIRADO PARA ENTREGA", null, { itens: 10, itens_atendidos: 9 }))
+      .toBe("RETIRADO PARA ENTREGA");
+  });
+
+  it("peça que saiu com o supervisor conta como despachada no item", () => {
+    expect(derivarStatusItem("RETIRADO PARA ENTREGA", saiu(true))).toBe("DESPACHADO");
+  });
+
+  it("item sem etiqueta continua pendente — não esconde a falta", () => {
+    expect(derivarStatusItem("RETIRADO PARA ENTREGA", saiu(false))).toBe("PENDENTE");
   });
 });
 
