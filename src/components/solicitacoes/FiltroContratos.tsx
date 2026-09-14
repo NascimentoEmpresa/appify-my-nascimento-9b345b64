@@ -11,25 +11,32 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Filter } from "lucide-react";
 import { cn } from "@/lib/utils";
 
-interface Props {
+// Genérico de propósito: as telas passam interfaces próprias
+// (SolicitacaoDemissao, SolicitacaoTroca, Adv...) sem index signature, e
+// `Record<string, unknown>[]` não aceita isso — o type-check da PR #566
+// reprovou justamente aí.
+interface Props<T> {
   /** Todas as linhas (antes dos outros filtros), pra contar por contrato. */
-  linhas: Record<string, unknown>[];
+  linhas: T[];
   /** Nome do campo que guarda o contrato, ou uma função que o extrai. */
-  campo: string | ((linha: any) => string | null | undefined);
+  campo: keyof T | ((linha: T) => string | null | undefined);
   selecionados: string[];
   onChange: (contratos: string[]) => void;
   rotulo?: string;
   className?: string;
 }
 
-export const contratoDaLinha = (linha: any, campo: Props["campo"]): string =>
-  String((typeof campo === "function" ? campo(linha) : linha?.[campo]) ?? "").trim();
+export function contratoDaLinha<T>(linha: T, campo: Props<T>["campo"]): string {
+  const v = typeof campo === "function" ? campo(linha) : (linha as any)?.[campo as string];
+  return String(v ?? "").trim();
+}
 
 /** Aplica o filtro: vazio deixa passar tudo. */
-export const passaNoFiltroContratos = (linha: any, campo: Props["campo"], selecionados: string[]): boolean =>
-  selecionados.length === 0 || selecionados.includes(contratoDaLinha(linha, campo));
+export function passaNoFiltroContratos<T>(linha: T, campo: Props<T>["campo"], selecionados: string[]): boolean {
+  return selecionados.length === 0 || selecionados.includes(contratoDaLinha(linha, campo));
+}
 
-export function FiltroContratos({ linhas, campo, selecionados, onChange, rotulo = "Filtros · Contratos", className }: Props) {
+export function FiltroContratos<T>({ linhas, campo, selecionados, onChange, rotulo = "Filtros · Contratos", className }: Props<T>) {
   const [aberto, setAberto] = useState(false);
   const [busca, setBusca] = useState("");
 
