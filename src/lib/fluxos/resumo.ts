@@ -63,9 +63,9 @@ const demissao: Fluxo = {
       onde: "Encarregados › Solicitar Demissão",
     },
     {
-      quem: "Analista", faz: "Aprova ou reprova. Reprovar exige motivo escrito — é o que o encarregado lê para corrigir.",
-      onde: "Licitações › Analistas Validações › Solicitações de Demissão",
-      status: "Pendente Analista",
+      quem: "Operacional", faz: "Aprova ou reprova. Reprovar exige motivo escrito — é o que o encarregado lê para corrigir.",
+      onde: "Operacional › Solicitações de Demissão",
+      status: "Pendente Operacional",
     },
     {
       quem: "RH", faz: "Confere o desligamento e libera para o SST agendar o ASO.",
@@ -80,9 +80,9 @@ const demissao: Fluxo = {
   ],
   observacoes: [
     "Dentro do SST a solicitação passa por três status possíveis: primeiro \"Solicitação de agendamento de DEMISSIONAL recebida\" (o SST pegou o pedido) e depois \"Agendamento concluído\" (o exame tem data, hora e local) — ou \"ASO válido\", quando o colaborador fez ASO há menos de 60 dias e não precisa de exame. Só o painel do SST muda esses; as outras telas mostram.",
-    "O SST e o RH podem DEVOLVER ao analista quando a solicitação vem com erro — ela volta para a fila dele com o motivo escrito, e o que já tinha sido carimbado nas etapas seguintes é desfeito. Quando voltar, passa pelo RH de novo. Depois de agendado o SST não devolve mais: já há exame marcado com o colaborador.",
-    "O Operacional enxerga o fluxo inteiro em Operacional › Solicitações de Demissão, mas só para acompanhar — quem decide a primeira etapa é o analista.",
-    "Reprovada pelo analista, a solicitação para e volta para o encarregado com o motivo.",
+    "O SST e o RH podem DEVOLVER ao Operacional quando a solicitação vem com erro — ela volta para a fila dele com o motivo escrito, e o que já tinha sido carimbado nas etapas seguintes é desfeito. Quando voltar, passa pelo RH de novo. Depois de agendado o SST não devolve mais: já há exame marcado com o colaborador.",
+    "Os analistas enxergam o fluxo inteiro em Licitações › Analistas Validações › Solicitações de Demissão, mas só para acompanhar — quem decide a primeira etapa é o Operacional.",
+    "Reprovada pelo Operacional, a solicitação para e volta para o encarregado com o motivo.",
     "O encarregado acompanha tudo em Minhas Solicitações, e a conversa da solicitação é a mesma para todos os setores.",
   ],
 };

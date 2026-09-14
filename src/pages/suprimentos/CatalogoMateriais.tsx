@@ -218,7 +218,7 @@ export default function CatalogoMateriais() {
   const [postoId, setPostoId] = useState<string | null>(null);
   const [funcaoId, setFuncaoId] = useState<string | null>(null);
 
-  const { data: contratos = [] } = useContratosCatalogo(empresaId ?? null);
+  const { data: contratos = [] } = useContratosCatalogo();
   useContratosCatalogoRealtime();
   const { data: postos = [] } = usePostos(contratoId);
   const { data: funcoes = [] } = useFuncoes(postoId);
@@ -381,8 +381,18 @@ export default function CatalogoMateriais() {
                     <div className="min-w-0 flex-1">
                       <div className="flex items-center gap-2">
                         <span className="truncate">{fi.sup_item?.nome ?? "—"}</span>
-                        {!fi.aprovado && (
-                          <Badge variant="outline" className="shrink-0 border-amber-400/50 text-[10px] text-amber-600">
+                        {/* São DUAS aprovações: a do vínculo e a do material.
+                            O encarregado (sup_ext_itens) exige as duas. Olhar só
+                            o vínculo escondeu o incidente do CEITEC (14/09/2026):
+                            enxoval sem "pendente" aqui e vazio na solicitação. */}
+                        {(!fi.aprovado || fi.sup_item?.aprovado === false) && (
+                          <Badge
+                            variant="outline"
+                            className="shrink-0 border-amber-400/50 text-[10px] text-amber-600"
+                            title={!fi.aprovado
+                              ? "Inclusão no enxoval aguardando aprovação."
+                              : "O material ainda não foi aprovado no catálogo — o encarregado não vê."}
+                          >
                             pendente
                           </Badge>
                         )}

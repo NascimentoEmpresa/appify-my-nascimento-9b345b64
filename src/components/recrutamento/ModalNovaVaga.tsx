@@ -141,7 +141,7 @@ export function ModalNovaVaga({ aberto, onFechar, onCriada, onToast, solicitacao
   const empDebounce = useRef<ReturnType<typeof setTimeout> | null>(null); // debounce busca colaborador
   const empTermo = useRef("");  // último termo buscado (descarta respostas obsoletas)
 
-  const { data: contratosCatalogo = [] } = useContratosCatalogo(empresa?.id ?? null);
+  const { data: contratosCatalogo = [] } = useContratosCatalogo();
   const { data: postosCatalogo = [] } = usePostos(vaga.contrato_id || null);
   const { data: funcoesCatalogo = [] } = useFuncoes(vaga.posto_id || null);
 
@@ -332,8 +332,9 @@ export function ModalNovaVaga({ aberto, onFechar, onCriada, onToast, solicitacao
         .from("SISTEMA_SOLICITACOES_DEMISSAO")
         .select("id, status, vaga_id")
         .eq("colaborador_id", substituidoId)
-        .neq("status", "Reprovada")
-        .is("vaga_id", null)
+        .not("status", "in", '("Reprovada","Cancelada")')
+        // Sem filtrar vaga_id: a vaga anterior pode ter sido reprovada ou
+        // cancelada. Quem trava quem já está numa vaga viva é `presos`.
         .order("criado_em", { ascending: false })
         .limit(1);
       if (!vivo) return;
