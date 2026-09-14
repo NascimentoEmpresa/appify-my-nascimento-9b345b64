@@ -26,6 +26,7 @@ import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { semCodigoFilial } from "@/lib/rh/colaboradoresUtils";
 import { usePostos } from "@/hooks/useSupCatalogo";
+import { solicitacaoEmAberto, type SolicitacaoEmAberto } from "@/lib/solicitacoes/duplicidade";
 
 const sb = supabase as any;
 
@@ -88,6 +89,16 @@ export default function SolicitarDemissao() {
   const [passo, setPasso] = useState(0);
   const [form, setForm] = useState({ ...VAZIO });
   const [colaborador, setColaborador] = useState<EmpregadoEscolhido | null>(null);
+  // Já tem demissão em aberto (ou concluída) para quem foi escolhido? O
+  // banco responde (solicitacao_em_aberto) e o passo 1 não avança.
+  const [duplicada, setDuplicada] = useState<SolicitacaoEmAberto | null>(null);
+  useEffect(() => {
+    let vivo = true;
+    setDuplicada(null);
+    if (!colaborador?.id) return;
+    solicitacaoEmAberto(sb, "demissao", colaborador.id).then((d) => { if (vivo) setDuplicada(d); });
+    return () => { vivo = false; };
+  }, [colaborador?.id]);
   const [arquivos, setArquivos] = useState<File[]>([]);
   const [enviando, setEnviando] = useState(false);
   const [protocolo, setProtocolo] = useState<number | null>(null);
@@ -251,6 +262,7 @@ export default function SolicitarDemissao() {
       if (!form.data_solicitacao) return "Informe a data da solicitação.";
       if (!solicitante.nome || !solicitante.email) return "Não consegui identificar você. Recarregue a página.";
       if (!colaborador) return "Escolha o colaborador na lista.";
+      if (duplicada) return duplicada.mensagem;
       if (temListaDePostos && !postoNome) return "Selecione o posto do colaborador.";
       return null;
     }
@@ -482,6 +494,12 @@ export default function SolicitarDemissao() {
                 <p className="mt-1 text-xs text-muted-foreground">
                   Escolha na lista. Contrato e escala vêm do cadastro e não podem ser trocados.
                 </p>
+                {duplicada && (
+                  <div className="mt-2 rounded-lg border border-destructive/40 bg-destructive/5 p-3 text-sm text-destructive">
+                    <p className="font-semibold">🚫 Este colaborador já tem solicitação de demissão.</p>
+                    <p className="mt-0.5 text-destructive/90">{duplicada.mensagem} Escolha outro colaborador ou acompanhe a que já existe.</p>
+                  </div>
+                )}
               </div>
               <div className="grid gap-4 sm:grid-cols-2">
                 {temListaDePostos ? (

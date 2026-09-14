@@ -16,6 +16,7 @@ import { BuscaColaborador, type EmpregadoEscolhido } from "@/components/demissao
 import { ArrowRight, Building2, CheckCircle2, Loader2, Send, UserCog } from "lucide-react";
 import { localEhEscritorio, statusInicial, TABELA, fmtData } from "@/lib/trocaFuncao/solicitacao";
 import { toast } from "sonner";
+import { solicitacaoEmAberto, type SolicitacaoEmAberto } from "@/lib/solicitacoes/duplicidade";
 
 const sb = supabase as any;
 
@@ -44,6 +45,16 @@ export default function SolicitarTrocaFuncao() {
   const nav = useNavigate();
 
   const [colaborador, setColaborador] = useState<EmpregadoEscolhido | null>(null);
+  // Já tem mudança de função em andamento para quem foi escolhido? O banco
+  // responde (solicitacao_em_aberto) e o envio não passa.
+  const [duplicada, setDuplicada] = useState<SolicitacaoEmAberto | null>(null);
+  useEffect(() => {
+    let vivo = true;
+    setDuplicada(null);
+    if (!colaborador?.id) return;
+    solicitacaoEmAberto(sb, "troca_funcao", colaborador.id).then((d) => { if (vivo) setDuplicada(d); });
+    return () => { vivo = false; };
+  }, [colaborador?.id]);
   const [cargoNovo, setCargoNovo] = useState("");
   const [motivo, setMotivo] = useState("");
   const [dataPretendida, setDataPretendida] = useState("");
@@ -74,6 +85,7 @@ export default function SolicitarTrocaFuncao() {
 
   const problema = (): string | null => {
     if (!colaborador) return "Escolha o colaborador na lista.";
+    if (duplicada) return duplicada.mensagem;
     if (!cargoNovo.trim()) return "Informe para qual cargo a pessoa vai.";
     if (mesmoCargo) return "O cargo novo é igual ao atual — não há o que trocar.";
     if (!motivo.trim()) return "Escreva o motivo da mudança.";
@@ -154,6 +166,12 @@ export default function SolicitarTrocaFuncao() {
           <div className="space-y-1.5">
             <Label>Colaborador <span className="text-destructive">*</span></Label>
             <BuscaColaborador valor={colaborador} onEscolher={setColaborador} />
+            {duplicada && (
+              <div className="rounded-lg border border-destructive/40 bg-destructive/5 p-3 text-sm text-destructive">
+                <p className="font-semibold">🚫 Este colaborador já tem mudança de função em andamento.</p>
+                <p className="mt-0.5 text-destructive/90">{duplicada.mensagem}</p>
+              </div>
+            )}
           </div>
 
           {colaborador && (

@@ -332,8 +332,9 @@ export function ModalNovaVaga({ aberto, onFechar, onCriada, onToast, solicitacao
         .from("SISTEMA_SOLICITACOES_DEMISSAO")
         .select("id, status, vaga_id")
         .eq("colaborador_id", substituidoId)
-        .neq("status", "Reprovada")
-        .is("vaga_id", null)
+        .not("status", "in", '("Reprovada","Cancelada")')
+        // Sem filtrar vaga_id: a vaga anterior pode ter sido reprovada ou
+        // cancelada. Quem trava quem já está numa vaga viva é `presos`.
         .order("criado_em", { ascending: false })
         .limit(1);
       if (!vivo) return;

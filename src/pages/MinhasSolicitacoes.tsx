@@ -15,6 +15,7 @@ import {
   podeVagaAdministrativa,
 } from "@/lib/recrutamento/vagaRegras";
 import { maskFone } from "@/lib/telefone";
+import { solicitacaoEmAberto, TITULO_DUPLICIDADE, type SolicitacaoEmAberto } from "@/lib/solicitacoes/duplicidade";
 
 // ── Helpers ────────────────────────────────────────────────────────
 function fmtDt(s?: string) {
@@ -376,6 +377,11 @@ export default function MinhasSolicitacoes({ abrir }: { abrir?: SolicitacaoInici
   const [demissaoBusca, setDemissaoBusca] = useState<"ocioso" | "buscando" | "achou" | "nenhuma">("ocioso");
   const [avisoDemissao, setAvisoDemissao] = useState(false);
 
+  // "Este colaborador já tem solicitação de X": o banco responde na escolha
+  // (solicitacao_em_aberto) e o card no meio da tela barra antes de a pessoa
+  // preencher o resto. O trigger recusaria o INSERT de qualquer jeito.
+  const [bloqueio, setBloqueio] = useState<SolicitacaoEmAberto | null>(null);
+
   useEffect(() => {
     if (!modalVaga || !ehSubstituicao(vaga.motivo_vaga) || !substituidoId) {
       setDemissaoId(null); setDemissaoBusca("ocioso"); setAvisoDemissao(false); return;
@@ -387,8 +393,10 @@ export default function MinhasSolicitacoes({ abrir }: { abrir?: SolicitacaoInici
         .from("SISTEMA_SOLICITACOES_DEMISSAO")
         .select("id, status, vaga_id")
         .eq("colaborador_id", substituidoId)
-        .neq("status", "Reprovada")
-        .is("vaga_id", null)
+        .not("status", "in", '("Reprovada","Cancelada")')
+        // Sem filtrar vaga_id: a demissão pode apontar para uma vaga que
+        // foi reprovada/cancelada, e aí a pessoa PODE ser reposta de novo.
+        // Quem trava quem já está numa vaga viva é `presos`.
         .order("criado_em", { ascending: false })
         .limit(1);
       if (!vivo) return;
@@ -545,7 +553,10 @@ export default function MinhasSolicitacoes({ abrir }: { abrir?: SolicitacaoInici
   };
 
   // ── Férias ──────────────────────────────────────────────────────────
-  const selecionarColabFerias = (emp: any) => {
+  const selecionarColabFerias = async (emp: any) => {
+    setShowEmpDrop(false);
+    const dup = await solicitacaoEmAberto(supabase, "ferias", emp.ID ?? null);
+    if (dup) { setBloqueio(dup); setEmpSearch(""); setEmpregados([]); return; }
     setFerias(f => ({
       ...f,
       colaborador_id: emp.ID ?? null,
@@ -600,6 +611,9 @@ export default function MinhasSolicitacoes({ abrir }: { abrir?: SolicitacaoInici
 
   // ── Advertência ─────────────────────────────────────────────────────
   const selecionarColabAdv = async (emp: any) => {
+    setShowEmpDrop(false);
+    const dup = await solicitacaoEmAberto(supabase, "advertencia", emp.ID ?? null);
+    if (dup) { setBloqueio(dup); setEmpSearch(""); setEmpregados([]); return; }
     const contratoMatch = contratoDoEmpregado(contratosFull, emp);
     setAdv(a => ({
       ...a,
@@ -1376,6 +1390,21 @@ export default function MinhasSolicitacoes({ abrir }: { abrir?: SolicitacaoInici
               <button onClick={() => setAdvExc({ open: false, justificativa: "" })} style={{ padding: "7px 14px", borderRadius: 10, border: "1px solid #e2e8f0", background: "#fff", color: "#475569", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>Cancelar</button>
               <button onClick={confirmarExcecao} style={{ padding: "7px 14px", borderRadius: 10, border: "none", background: "#d97706", color: "#fff", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>Confirmar como Exceção</button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Card: colaborador já está na fila (férias / advertência) ── */}
+      {bloqueio && (
+        <div className="ini-modal-ov" style={{ zIndex: 800 }} onClick={() => setBloqueio(null)}>
+          <div className="ini-modal" onClick={e => e.stopPropagation()} style={{ maxWidth: 480, textAlign: "center", padding: "28px 26px 22px" }}>
+            <div style={{ width: 56, height: 56, borderRadius: "50%", background: "#fee2e2", color: "#b91c1c", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 28, margin: "0 auto 14px" }}>🚫</div>
+            <div style={{ fontSize: 17, fontWeight: 800, color: "#0f172a", marginBottom: 8 }}>{TITULO_DUPLICIDADE[bloqueio.tipo]}</div>
+            <div style={{ fontSize: 13, color: "#475569", lineHeight: 1.55, marginBottom: 20 }}>{bloqueio.mensagem}</div>
+            <button type="button" onClick={() => setBloqueio(null)}
+              style={{ padding: "9px 26px", borderRadius: 10, border: "none", background: "#0f3171", color: "#fff", fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
+              OK
+            </button>
           </div>
         </div>
       )}
