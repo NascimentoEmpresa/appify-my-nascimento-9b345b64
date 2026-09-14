@@ -52,18 +52,23 @@ export interface NfEmissaoRow {
   created_at: string;
   nf_emissao_modelo_id: string | null;
   contrato: { id: string; nome: string; cliente: string } | null;
+  empresa: { id: string; nome_fantasia: string | null; razao_social: string } | null;
 }
 
-export function useNfsEmissao(empresaId: string | null | undefined) {
+// SIS-2026-0323: Relatório Geral e Dashboard precisam de NFs de TODAS as
+// empresas de uma vez — mesmo padrão de `useContratosERP({ todasEmpresas })`.
+export function useNfsEmissao(empresaId: string | null | undefined, opts?: { todasEmpresas?: boolean }) {
+  const todasEmpresas = opts?.todasEmpresas ?? false;
   return useQuery({
-    queryKey: [NF_EMISSAO_KEY, empresaId],
-    enabled: !!empresaId,
+    queryKey: todasEmpresas ? [NF_EMISSAO_KEY, "todas"] : [NF_EMISSAO_KEY, empresaId],
+    enabled: todasEmpresas || !!empresaId,
     queryFn: async () => {
-      const { data, error } = await (supabase as any)
+      let q = (supabase as any)
         .from("nf_emissao")
-        .select("*, contrato:contrato_id(id, nome, cliente)")
-        .eq("empresa_id", empresaId)
+        .select("*, contrato:contrato_id(id, nome, cliente), empresa:empresa_id(id, nome_fantasia, razao_social)")
         .order("created_at", { ascending: false });
+      if (!todasEmpresas) q = q.eq("empresa_id", empresaId);
+      const { data, error } = await q;
       if (error) throw error;
       return (data ?? []) as NfEmissaoRow[];
     },
@@ -367,6 +372,7 @@ export function useEnviarNfEmissao() {
 
 export interface NfEmissaoItemRow {
   id: string;
+  nf_emissao_id: string;
   ordem: number;
   identificacao: string | null;
   valor_contrato_exec: number;
@@ -412,6 +418,32 @@ export function useItensNfEmissao(nfEmissaoId: string | null | undefined) {
         .order("ordem");
       if (error) throw error;
       return (data ?? []) as NfEmissaoItemRow[];
+    },
+  });
+}
+
+// SIS-2026-0323: Dashboard/Relatório Geral precisam somar campos de
+// desconto que só existem a nível de ITEM (Faltas, Multas, Glosas...) pra
+// todas as NFs filtradas de uma vez — mesmo espírito "volume modesto,
+// agregação client-side" do `useResumoPendencias` do Checklist de Faturamento.
+export function useItensNfEmissaoEmLote(nfIds: string[]) {
+  const chave = [...nfIds].sort().join(",");
+  return useQuery({
+    queryKey: ["nf_emissao_item", "lote", chave],
+    enabled: nfIds.length > 0,
+    queryFn: async () => {
+      const { data, error } = await (supabase as any)
+        .from("nf_emissao_item")
+        .select("*")
+        .in("nf_emissao_id", nfIds);
+      if (error) throw error;
+      const porNf = new Map<string, NfEmissaoItemRow[]>();
+      for (const item of (data ?? []) as NfEmissaoItemRow[]) {
+        const arr = porNf.get(item.nf_emissao_id) ?? [];
+        arr.push(item);
+        porNf.set(item.nf_emissao_id, arr);
+      }
+      return porNf;
     },
   });
 }
