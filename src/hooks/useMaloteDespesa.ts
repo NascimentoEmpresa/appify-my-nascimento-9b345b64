@@ -1214,15 +1214,21 @@ export function usePagarDespesa() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async (input: PagarDespesaInput) => {
-      const { error } = await (supabase as any).rpc("malote_pagar_despesa", {
-        _id: input.id,
-        _data_pagamento: input.data_pagamento,
-        _comprovante_path: input.comprovante_path,
-        _observacao: input.observacao,
-        _rateio_snapshot: input.rateio_snapshot ?? [],
-        _forma_pagamento: input.forma_pagamento ?? null,
-        _banco_id: input.banco_id ?? null,
-      });
+      // O comprovante já sobe com retry de rede (uploadAnexosMalote); a RPC
+      // que confirma o pagamento em si também precisa, senão uma queda de
+      // rede bem nesse instante vaza "Failed to fetch" cru pro usuário em
+      // vez de tentar de novo.
+      const { error } = await comRetentativaRede<{ error: any }>(() =>
+        (supabase as any).rpc("malote_pagar_despesa", {
+          _id: input.id,
+          _data_pagamento: input.data_pagamento,
+          _comprovante_path: input.comprovante_path,
+          _observacao: input.observacao,
+          _rateio_snapshot: input.rateio_snapshot ?? [],
+          _forma_pagamento: input.forma_pagamento ?? null,
+          _banco_id: input.banco_id ?? null,
+        }),
+      );
       if (error) throw error;
     },
     onSuccess: () => qc.invalidateQueries({ queryKey: [DESPESA_KEY] }),
@@ -1250,16 +1256,18 @@ export function usePagarParcela() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async (input: PagarParcelaInput) => {
-      const { error } = await (supabase as any).rpc("malote_pagar_parcela", {
-        _despesa_id: input.despesaId,
-        _parcela_id: input.parcelaId,
-        _data_pagamento: input.data_pagamento,
-        _comprovante_path: input.comprovante_path,
-        _observacao: input.observacao,
-        _rateio_snapshot: input.rateio_snapshot ?? [],
-        _forma_pagamento: input.forma_pagamento ?? null,
-        _banco_id: input.banco_id ?? null,
-      });
+      const { error } = await comRetentativaRede<{ error: any }>(() =>
+        (supabase as any).rpc("malote_pagar_parcela", {
+          _despesa_id: input.despesaId,
+          _parcela_id: input.parcelaId,
+          _data_pagamento: input.data_pagamento,
+          _comprovante_path: input.comprovante_path,
+          _observacao: input.observacao,
+          _rateio_snapshot: input.rateio_snapshot ?? [],
+          _forma_pagamento: input.forma_pagamento ?? null,
+          _banco_id: input.banco_id ?? null,
+        }),
+      );
       if (error) throw error;
     },
     onSuccess: () => qc.invalidateQueries({ queryKey: [DESPESA_KEY] }),
