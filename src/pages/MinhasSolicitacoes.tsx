@@ -363,6 +363,46 @@ export default function MinhasSolicitacoes({ abrir }: { abrir?: SolicitacaoInici
   // lista, não só digitada.
   const [substituidoId, setSubstituidoId] = useState<number | null>(null);
 
+  // Substituição anda junto com a demissão de quem sai: o banco recusa a
+  // vaga sem `demissao_id` (trigger rec_vaga_exige_demissao). Em vez de
+  // deixar a pessoa preencher três etapas pra tomar o erro no final, a
+  // busca roda assim que o colaborador é escolhido — achou, vincula sozinho;
+  // não achou, abre o card no meio da tela (OK / Solicitar demissão).
+  const [demissaoId, setDemissaoId] = useState<number | null>(null);
+  const [demissaoBusca, setDemissaoBusca] = useState<"ocioso" | "buscando" | "achou" | "nenhuma">("ocioso");
+  const [avisoDemissao, setAvisoDemissao] = useState(false);
+
+  useEffect(() => {
+    if (!modalVaga || !ehSubstituicao(vaga.motivo_vaga) || !substituidoId) {
+      setDemissaoId(null); setDemissaoBusca("ocioso"); setAvisoDemissao(false); return;
+    }
+    let vivo = true;
+    setDemissaoBusca("buscando");
+    (async () => {
+      const { data, error } = await (supabase as any)
+        .from("SISTEMA_SOLICITACOES_DEMISSAO")
+        .select("id, status, vaga_id")
+        .eq("colaborador_id", substituidoId)
+        .neq("status", "Reprovada")
+        .is("vaga_id", null)
+        .order("criado_em", { ascending: false })
+        .limit(1);
+      if (!vivo) return;
+      const d = !error && data?.[0];
+      setDemissaoId(d ? Number(d.id) : null);
+      setDemissaoBusca(d ? "achou" : "nenhuma");
+      if (!d) setAvisoDemissao(true);
+    })();
+    return () => { vivo = false; };
+  }, [modalVaga, vaga.motivo_vaga, substituidoId]);
+
+  /** Vai solicitar a demissão de quem foi escolhido; a vaga abre a partir dela. */
+  const irSolicitarDemissao = () => {
+    const id = substituidoId;
+    setAvisoDemissao(false); setModalVaga(false);
+    nav(`/app/encarregados/solicitar-demissao?colaborador=${id}`);
+  };
+
   const selecionarEmpregado = (emp: any) => {
     const jaTem = ehSubstituicao(vaga.motivo_vaga) ? presos.get(Number(emp.ID)) : undefined;
     if (jaTem) { toast(avisoSubstituidoPreso(jaTem), "err"); return; }
@@ -409,6 +449,13 @@ export default function MinhasSolicitacoes({ abrir }: { abrir?: SolicitacaoInici
 
       const jaTem = ehSubstituicao(vaga.motivo_vaga) && substituidoId ? presos.get(substituidoId) : undefined;
       if (jaTem) { toast(avisoSubstituidoPreso(jaTem), "err"); return false; }
+      // Sem a demissão de quem sai o banco recusa a vaga — o card já avisou
+      // na escolha; aqui só impede de seguir e mostra de novo.
+      if (ehSubstituicao(vaga.motivo_vaga) && !demissaoId) {
+        if (demissaoBusca === "buscando") toast("Ainda procurando a solicitação de demissão — aguarde um instante.", "err");
+        else setAvisoDemissao(true);
+        return false;
+      }
       if (!vaga.contrato) { toast("Selecione o contrato.", "err"); return false; }
       if (!vaga.cargo.trim()) { toast("Informe o cargo.", "err"); return false; }
     }
@@ -440,6 +487,7 @@ export default function MinhasSolicitacoes({ abrir }: { abrir?: SolicitacaoInici
       cnh_obrigatoria: !!cnhDoCargo,
       // Só a substituição grava o id: é ele que trava a pessoa numa vaga só.
       substituido_id: ehSubstituicao(vaga.motivo_vaga) ? substituidoId : null,
+      demissao_id: ehSubstituicao(vaga.motivo_vaga) ? demissaoId : null,
       administrativa: podeAdministrativa ? !!vaga.administrativa : false,
       // A etapa 1 do recrutamento mudou de dono em 02/09/2026: quem decide é o
       // ANALISTA. Nascer em "Pendente Operacional" deixava a vaga num status
@@ -451,7 +499,7 @@ export default function MinhasSolicitacoes({ abrir }: { abrir?: SolicitacaoInici
     let { error, data } = await (supabase as any).from("SISTEMA_RECRUTAMENTO").insert(payload).select("id").single();
     // Banco ainda sem as colunas novas: reenvia sem elas.
     if (error && /column|schema cache/i.test(error.message)) {
-      const { cnh_obrigatoria, substituido_id, administrativa, reserva_tecnica, tem_recomendacao, recomendacao_nome, recomendacao_cpf, recomendacao_whatsapp, ...semColunasNovas } = payload as any;
+      const { cnh_obrigatoria, substituido_id, demissao_id, administrativa, reserva_tecnica, tem_recomendacao, recomendacao_nome, recomendacao_cpf, recomendacao_whatsapp, ...semColunasNovas } = payload as any;
       ({ error, data } = await (supabase as any).from("SISTEMA_RECRUTAMENTO").insert(semColunasNovas).select("id").single());
     }
     if (error) { toast("Erro ao solicitar vaga: " + error.message, "err"); return; }
@@ -939,6 +987,25 @@ export default function MinhasSolicitacoes({ abrir }: { abrir?: SolicitacaoInici
                       ✓ Colaborador escolhido — cargo, contrato e escala já vieram do cadastro dele.
                     </div>
                   )}
+                  {/* Substituição: mostra a demissão vinculada; sem nenhuma, a
+                      nota fica aqui depois que a pessoa fecha o card no OK. */}
+                  {ehSubstituicao(vaga.motivo_vaga) && !!substituidoId && demissaoBusca === "buscando" && (
+                    <div style={{ marginTop: 6, fontSize: 11.5, color: "#94a3b8" }}>Procurando a solicitação de demissão…</div>
+                  )}
+                  {ehSubstituicao(vaga.motivo_vaga) && !!substituidoId && demissaoBusca === "achou" && !!demissaoId && (
+                    <div style={{ marginTop: 6, fontSize: 11.5, fontWeight: 700, color: "#0f3171", background: "#eef4ff", border: "1px solid #c7d7f5", borderRadius: 8, padding: "6px 9px" }}>
+                      🔗 Vinculada à solicitação de demissão #{demissaoId} — a vaga repõe essa saída.
+                    </div>
+                  )}
+                  {ehSubstituicao(vaga.motivo_vaga) && !!substituidoId && demissaoBusca === "nenhuma" && (
+                    <div style={{ marginTop: 6, fontSize: 11.5, fontWeight: 700, color: "#92400e", background: "#fffbeb", border: "1px solid #fde68a", borderRadius: 8, padding: "6px 9px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
+                      <span>⚠️ Sem solicitação de demissão para esta pessoa.</span>
+                      <button type="button" onClick={() => setAvisoDemissao(true)}
+                        style={{ padding: "4px 10px", borderRadius: 8, border: "1px solid #fcd34d", background: "#fff", color: "#92400e", fontSize: 11.5, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
+                        Ver aviso
+                      </button>
+                    </div>
+                  )}
                 </div>
               )}
               {/* Contrato e cargo vêm do cadastro do escolhido e ficam travados
@@ -1254,6 +1321,35 @@ export default function MinhasSolicitacoes({ abrir }: { abrir?: SolicitacaoInici
             <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 8 }}>
               <button onClick={() => setAdvExc({ open: false, justificativa: "" })} style={{ padding: "7px 14px", borderRadius: 10, border: "1px solid #e2e8f0", background: "#fff", color: "#475569", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>Cancelar</button>
               <button onClick={confirmarExcecao} style={{ padding: "7px 14px", borderRadius: 10, border: "none", background: "#d97706", color: "#fff", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>Confirmar como Exceção</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Card: Substituição sem solicitação de demissão ──
+          Fica por cima do modal da vaga (z maior) e exige uma escolha: OK
+          (fecha, a pessoa troca o colaborador ou o motivo) ou ir solicitar a
+          demissão — a vaga abre sozinha a partir dela. */}
+      {avisoDemissao && modalVaga && (
+        <div className="ini-modal-ov" style={{ zIndex: 800 }} onClick={() => setAvisoDemissao(false)}>
+          <div className="ini-modal" onClick={e => e.stopPropagation()} style={{ maxWidth: 480, textAlign: "center", padding: "28px 26px 22px" }}>
+            <div style={{ width: 56, height: 56, borderRadius: "50%", background: "#fef3c7", color: "#b45309", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 28, margin: "0 auto 14px" }}>⚠️</div>
+            <div style={{ fontSize: 17, fontWeight: 800, color: "#0f172a", marginBottom: 8 }}>Falta a solicitação de demissão</div>
+            <div style={{ fontSize: 13, color: "#475569", lineHeight: 1.55, marginBottom: 6 }}>
+              <b>{vaga.nome_substituido || "Este colaborador"}</b> ainda não tem solicitação de demissão em andamento.
+            </div>
+            <div style={{ fontSize: 12.5, color: "#64748b", lineHeight: 1.55, marginBottom: 20 }}>
+              Vaga de <b>Substituição</b> é aberta a partir da demissão de quem sai. Solicite a demissão primeiro — ao enviar, a vaga abre sozinha, já preenchida.
+            </div>
+            <div style={{ display: "flex", justifyContent: "center", gap: 10, flexWrap: "wrap" }}>
+              <button type="button" onClick={() => setAvisoDemissao(false)}
+                style={{ padding: "9px 22px", borderRadius: 10, border: "1px solid #e2e8f0", background: "#fff", color: "#475569", fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
+                OK
+              </button>
+              <button type="button" onClick={irSolicitarDemissao}
+                style={{ padding: "9px 22px", borderRadius: 10, border: "none", background: "#0f3171", color: "#fff", fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
+                Solicitar demissão desse colaborador →
+              </button>
             </div>
           </div>
         </div>
