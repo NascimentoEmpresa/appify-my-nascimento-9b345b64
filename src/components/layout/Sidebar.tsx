@@ -161,7 +161,9 @@ const licitacoesModule: ModuleDef = {
       items: [
         { label: "Gestão Recrutamento", to: "/app/licitacoes/analistas/recrutamento", icon: UserCog },
         { label: "Mudança de Função", to: "/app/licitacoes/analistas/troca-funcao", icon: ArrowLeftRight, notif: "troca_funcao" },
-        { label: "Solicitações de Demissão", to: "/app/licitacoes/analistas/demissao", icon: UserMinus },
+        // Acompanhamento desde 14/09/2026: a aprovação da demissão voltou
+        // para o Operacional.
+        { label: "Solicitações de Demissão — Acompanhar", to: "/app/licitacoes/analistas/demissao", icon: UserMinus },
       ],
     },
     {
@@ -871,10 +873,9 @@ const operacionalModule: ModuleDef = {
       label: "Recursos Humanos",
       defaultOpen: true,
       items: [
-        // Também virou acompanhamento: a aprovação da demissão passou para o
-        // analista. A Mudança de Função abaixo, não — ali o Operacional
-        // continua aprovando, depois do analista.
-        { label: "Solicitações de Demissão — Acompanhar", to: "/app/operacional/solicitacoes-demissao", icon: UserMinus },
+        // A aprovação da demissão voltou para cá em 14/09/2026 (ficou com o
+        // analista entre 02/09 e 14/09).
+        { label: "Solicitações de Demissão", to: "/app/operacional/solicitacoes-demissao", icon: UserMinus },
         { label: "Conferência de Ponto", to: "/app/operacional/conferencia-ponto", icon: ClipboardCheck },
         { label: "Mudança de Função", to: "/app/operacional/troca-funcao", icon: ArrowLeftRight, notif: "troca_funcao" },
       ],

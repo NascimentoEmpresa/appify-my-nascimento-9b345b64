@@ -45,7 +45,7 @@ const sb = supabase as any;
  * o cadastro bate com um posto da lista, já vem selecionado; quando o
  * contrato não tem postos no catálogo, cai no valor do cadastro travado.
  *
- * Ao enviar, a solicitação nasce em "Pendente Analista". A tela também
+ * Ao enviar, a solicitação nasce em "Pendente Operacional". A tela também
  * lista o que este encarregado já pediu, com o status de cada uma: o pedido
  * era acompanhar do começo ao fim, não só abrir e esperar aviso.
  */
@@ -318,7 +318,7 @@ export default function SolicitarDemissao() {
       vaga_obrigatoria: querSubstituicao,
       // Ver a nota igual em MinhasSolicitacoes: a etapa 1 passou para o
       // analista, e o status antigo não cai em fila nenhuma.
-      status: "Pendente Analista",
+      status: "Pendente Operacional",
     };
 
     const { data: criada, error } = await sb.from(TABELA).insert(payload).select("id").single();
@@ -433,7 +433,7 @@ export default function SolicitarDemissao() {
     <div className="mx-auto max-w-3xl">
       <PageHeader
         title="Solicitar Demissão"
-        subtitle="Escolha o colaborador e preencha os dados do desligamento. O analista aprova, o SST marca o ASO demissional e o RH confirma."
+        subtitle="Escolha o colaborador e preencha os dados do desligamento. O Operacional aprova, o RH libera e o SST marca o ASO demissional."
         module="Encarregados"
         breadcrumb={["Recursos Humanos", "Solicitar Demissão"]}
         actions={<ResumoDeFuncoes fluxo="demissao" />}
