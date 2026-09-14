@@ -394,3 +394,18 @@ export function aplicarReqCnh(req: string, cargo?: string | null): string {
   const base = String(req ?? "").trim();
   return base ? `${REQ_CNH_TEXTO}\n${base}` : REQ_CNH_TEXTO;
 }
+
+/**
+ * O contrato como a vaga grava e mostra: "1109 - POLÍCIA CIVIL RS LIMPEZA - 066/2026".
+ *
+ * Mesma regra do "Nome Filial" de EMPREGADOS (11/09/2026): o RH fala do
+ * contrato pelo código da filial, e uma lista de vagas sem o código obriga a
+ * ler o nome inteiro para saber de qual se trata. CONTRATOS."NOME CONTRATO"
+ * não leva o código — quem monta o rótulo é isto aqui, e só isto.
+ */
+export const rotuloContrato = (c: { Filial?: unknown; ["NOME CONTRATO"]?: unknown } | null | undefined): string => {
+  const nome = String(c?.["NOME CONTRATO"] ?? "").trim();
+  const cod = String(c?.Filial ?? "").trim();
+  if (!nome) return cod;
+  return cod && !/^\d+\s*-/.test(nome) ? `${cod} - ${nome}` : nome;
+};

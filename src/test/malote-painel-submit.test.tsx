@@ -45,6 +45,15 @@ vi.mock("@/hooks/useUtilizadoOrcamento", () => ({
   useUtilizadoOrcamento: () => ({ data: [] }),
 }));
 
+// SIS-2026-0374: RateioGrid ganhou useLigacoesClassificacaoMalote (Ligação
+// Malote→Malote) — sem QueryClientProvider neste teste, mocka igual aos
+// outros hooks de dados acima.
+vi.mock("@/hooks/useMaloteClassificacaoMaloteLink", () => ({
+  useLigacoesClassificacaoMalote: () => ({ data: [] }),
+  mapaClassificacaoVinculada: () => new Map(),
+  classificacaoCanonica: (_mapa: unknown, id: string | null | undefined) => id ?? null,
+}));
+
 vi.mock("@/hooks/useMaloteAnalistas", () => ({
   useMeusContratosAnalista: () => ({ data: [] }),
 }));
