@@ -26,7 +26,7 @@ import { useTagsDoPedido, useTagsDePedidos, buscarTagsDePedidos, type TagEmLote 
 import {
   Search, Package, Boxes, Clock, ShoppingCart, Truck, History as HistoryIcon,
   RefreshCw, Inbox, Download, ShieldAlert, Trash2, AlertTriangle, Pencil, Printer, FileText,
-  PackageSearch, PackageOpen, Car,
+  PackageSearch, PackageOpen, Car, HardHat,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { toast } from "sonner";
@@ -36,6 +36,9 @@ import { buscarDeclaracaoCompleta } from "@/hooks/useCorreioDeclaracao";
 import { imprimirDeclaracao } from "@/lib/suprimentos/declaracaoPrint";
 import { abrirComprovacaoPdf } from "@/lib/suprimentos/comprovacaoPdf";
 import { ModalFotosComprovacao } from "@/components/suprimentos/ModalFotosComprovacao";
+import { ModalFichaEpi } from "@/components/suprimentos/ModalFichaEpi";
+import { FotoCracha } from "@/components/suprimentos/FotoCracha";
+import { calcularEnvioItens } from "@/lib/suprimentos/envioItens";
 import { useRastreioEmLote, resumirSituacao, type SituacaoObjeto } from "@/hooks/useCorreios";
 
 /**
@@ -71,11 +74,11 @@ interface Pedido {
   imagem_cracha_path: string | null;
   data_despachado: string | null; created_at: string;
   envio_tipo: "SUPERVISOR" | "CORREIO" | null; envio_rastreio: string | null;
+  // Carimbados pela leitura do QR da etiqueta (sup_retirada_confirmar).
+  retirado_em: string | null; retirado_por_nome: string | null;
   sup_pedido_comprovacao: { id: string; status: StatusComprovacao; respondido_em: string | null }[] | { id: string; status: StatusComprovacao; respondido_em: string | null } | null;
   sup_pedido_item: { id: string; item_id: string | null; nome_item: string; tipo_item: string; tamanho: string | null; quantidade: number; litros: string | null; ordem: number }[];
 }
-  // Carimbados pela leitura do QR da etiqueta (sup_retirada_confirmar).
-  retirado_em: string | null; retirado_por_nome: string | null;
 
 interface EventoHistorico {
   id: string; acao: string; status_anterior: string | null; status_novo: string | null;
@@ -107,13 +110,13 @@ const ROTULO_CAMPO: Record<string, string> = {
   item_removido: "Item removido",
 };
 
-/** `true`/`false` e vazio não se leem numa trilha; aqui viram texto. */
-function valorLegivel(v: string | null): string {
-  if (v === null || v === "") return "—";
 function fmtDataHora(iso: string) {
   return new Date(iso).toLocaleString("pt-BR", { dateStyle: "short", timeStyle: "short" });
 }
 
+/** `true`/`false` e vazio não se leem numa trilha; aqui viram texto. */
+function valorLegivel(v: string | null): string {
+  if (v === null || v === "") return "—";
   if (v === "true") return "Sim";
   if (v === "false") return "Não";
   return v;
@@ -172,11 +175,11 @@ function linhaExport(p: Pedido, i: ItemPedido | null, tags: TagEmLote[]) {
     Solicitante: p.solicitante_nome ?? p.solicitante_login,
     "Data solicitação": fmtDataBR(p.data_solicitacao),
     "Data despacho": fmtDataBR(p.data_despachado),
+    "Retirado por": p.retirado_por_nome ?? "",
+    "Retirado em": p.retirado_em ? fmtDataHora(p.retirado_em) : "",
     Admissão: p.admissao ? "Sim" : "Não",
     "Tipo admissão": p.tipo_admissao ?? "",
     "Data admissão": p.admissao ? fmtDataBR(p.data_admissao) : "",
-    "Retirado por": p.retirado_por_nome ?? "",
-    "Retirado em": p.retirado_em ? fmtDataHora(p.retirado_em) : "",
     Item: i?.nome_item ?? "",
     Tamanho: i?.tamanho ?? "",
     Litros: i?.litros ?? "",
@@ -202,10 +205,10 @@ const ICONE_STATUS: Record<StatusVisivel, LucideIcon> = {
   "AGUARDANDO ENVIO": Clock,
   "AGUARDANDO COMPRA": ShoppingCart,
   "PARCIALMENTE DESPACHADO": PackageSearch,
+  "RETIRADO PARA ENTREGA": Car,
   "DESPACHADO_AGUARDANDO": Truck,
   "DESPACHADO_ENTREGUE": Truck,
   "CANCELADO": Inbox,
-  "RETIRADO PARA ENTREGA": Car,
 };
 
 export default function PedidosMateriais() {
@@ -233,6 +236,7 @@ export default function PedidosMateriais() {
   const [prePedidoDe, setPrePedidoDe] = useState<Pedido | null>(null);
   const [excluindo, setExcluindo] = useState<Pedido | null>(null);
   const [etiquetaDe, setEtiquetaDe] = useState<Pedido | null>(null);
+  const [fichaDe, setFichaDe] = useState<Pedido | null>(null);
 
   const { data: pedidos = [], isLoading, error } = useQuery({
     queryKey: ["sup_pedido", empresaId],
@@ -302,11 +306,11 @@ export default function PedidosMateriais() {
         p.contrato_nome, p.posto_nome, p.funcao_nome,
         p.solicitante_login, p.solicitante_nome, p.nome_colaborador, p.matricula_colaborador,
         p.tipo_pedido, p.observacoes_solicitante, p.observacao, p.envio_rastreio,
+        p.retirado_por_nome,
         fmtDataBR(p.data_solicitacao), fmtDataBR(p.data_despachado),
         p.admissao ? "admissao admissão" : "",
         ...(p.sup_pedido_item ?? []).flatMap((i) => [i.nome_item, i.tamanho ?? ""]),
       ].filter(Boolean).join(" ").toLowerCase();
-        p.retirado_por_nome,
       return alvo.includes(t);
     });
   }, [pedidos, busca, filtroStatus, situacoes]);
@@ -544,6 +548,7 @@ export default function PedidosMateriais() {
               onHistorico={() => setHistoricoDe(p)}
               onExcluir={() => setExcluindo(p)}
               onEtiqueta={() => setEtiquetaDe(p)}
+              onFichaEpi={() => setFichaDe(p)}
               rastreio={p.envio_rastreio ? situacoesCorreio[p.envio_rastreio.trim().toUpperCase()] : undefined}
               rastreioCarregando={carregandoRastreio}
             />
@@ -570,6 +575,9 @@ export default function PedidosMateriais() {
       <ModalFotosComprovacao pedidoId={fotosDe} onFechar={fecharFotos} />
 
       <ModalEtiquetaTermica pedido={etiquetaDe} onFechar={() => setEtiquetaDe(null)} />
+
+      {/* Ficha de EPI com a empresa do contrato no cabeçalho (ver fichaEpi.ts). */}
+      <ModalFichaEpi pedido={fichaDe} onFechar={() => setFichaDe(null)} />
 
       <ModalExcluir
         pedido={excluindo}
@@ -603,13 +611,13 @@ function CardKpi({
 }
 
 function CardPedido({
-  pedido: p, situacao, onStatus, onPrePedido, onEditar, onHistorico, onExcluir, onEtiqueta,
+  pedido: p, situacao, onStatus, onPrePedido, onEditar, onHistorico, onExcluir, onEtiqueta, onFichaEpi,
   rastreio, rastreioCarregando,
 }: {
   pedido: Pedido;
   situacao: SituacaoPedido | null;
   onStatus: () => void; onPrePedido: () => void; onEditar: () => void;
-  onHistorico: () => void; onExcluir: () => void; onEtiqueta: () => void;
+  onHistorico: () => void; onExcluir: () => void; onEtiqueta: () => void; onFichaEpi: () => void;
   rastreio: SituacaoObjeto | undefined;
   rastreioCarregando: boolean;
 }) {
@@ -621,7 +629,15 @@ function CardPedido({
   // lista viva do que ainda falta comprar. É a melhor ideia de UX do legado
   // (REPLICAR §5.5) — só busca as etiquetas nesse status, para não pesar.
   const aguardandoCompra = p.status === "AGUARDANDO COMPRA";
-  const { data: tagsDoPedido = [] } = useTagsDoPedido(aguardandoCompra ? p.id : null);
+
+  // "Enviados" / "Pendentes envio": com despacho parcial, o Supply precisa ver
+  // no card o que já saiu e o que falta, sem abrir o pedido. Clicar de novo no
+  // botão ativo volta para a lista do que foi pedido. As etiquetas só são
+  // buscadas quando um dos dois é ligado — são vinte cards na tela, e a
+  // maioria nunca vai ser consultada.
+  const [visaoItens, setVisaoItens] = useState<"TODOS" | "ENVIADOS" | "PENDENTES">("TODOS");
+  const precisaTags = aguardandoCompra || visaoItens !== "TODOS";
+  const { data: tagsDoPedido = [], isLoading: carregandoTags } = useTagsDoPedido(precisaTags ? p.id : null);
   const itensComTag = useMemo(
     () => new Set(tagsDoPedido.map((t) => t.pedido_item_id)),
     [tagsDoPedido],
@@ -632,12 +648,25 @@ function CardPedido({
     return aguardandoCompra ? todos.filter((i) => !itensComTag.has(i.id)) : todos;
   }, [p.sup_pedido_item, aguardandoCompra, itensComTag]);
 
+  const envio = useMemo(
+    () => calcularEnvioItens(p.sup_pedido_item ?? [], tagsDoPedido),
+    [p.sup_pedido_item, tagsDoPedido],
+  );
+  const enviados = envio.filter((l) => l.enviada > 0);
+  const pendentes = envio.filter((l) => l.pendente > 0);
+
   const ocultos = (p.sup_pedido_item ?? []).length - itens.length;
 
-  const tituloItens = aguardandoCompra ? "Falta comprar"
+  const tituloItens = aguardandoCompra && visaoItens === "TODOS" ? "Falta comprar"
     : p.tipo_pedido === "uniforme" ? "Uniformes"
     : p.tipo_pedido === "insumos" ? "EPIs e Insumos"
     : "Materiais";
+
+  const alternarVisao = (v: "ENVIADOS" | "PENDENTES") =>
+    setVisaoItens((atual) => (atual === v ? "TODOS" : v));
+
+  const detalheItem = (i: { tamanho: string | null; litros: string | null }, qtd: string) =>
+    [i.tamanho && `Tam. ${i.tamanho}`, `Qtd. ${qtd}`, i.litros && `${i.litros} L`].filter(Boolean).join(" · ");
 
   return (
     <Card className={cn(
@@ -686,9 +715,20 @@ function CardPedido({
             <>
               <dt className="text-muted-foreground">Admissão</dt>
               <dd>{fmtDataBR(p.data_admissao)} ({p.tipo_admissao})</dd>
+              <dt className="text-muted-foreground">Foto crachá</dt>
+              <dd><FotoCracha caminho={p.imagem_cracha_path} protocolo={p.pedido_id} /></dd>
             </>
           )}
           <dt className="text-muted-foreground">Solicitado</dt><dd>{fmtDataBR(p.data_solicitacao)}</dd>
+          {/* Só enquanto a retirada ainda descreve o pedido: se o Compras
+              devolveu para "Aguardando envio", as colunas guardam uma retirada
+              que foi desfeita — a trilha completa fica no Histórico. */}
+          {p.retirado_em && (p.status === "RETIRADO PARA ENTREGA" || p.status === "DESPACHADO") && (
+            <>
+              <dt className="text-muted-foreground">Retirado</dt>
+              <dd className="truncate">{p.retirado_por_nome ?? "—"} · {fmtDataHora(p.retirado_em)}</dd>
+            </>
+          )}
           {p.data_despachado && (<><dt className="text-muted-foreground">Despachado</dt><dd>{fmtDataBR(p.data_despachado)}</dd></>)}
           {p.envio_tipo && (
             <>
@@ -720,43 +760,100 @@ function CardPedido({
                 </span>
               )}
             </div>
-          {/* Só enquanto a retirada ainda descreve o pedido: se o Compras
-              devolveu para "Aguardando envio", as colunas guardam uma retirada
-              que foi desfeita — a trilha completa fica no Histórico. */}
-          {p.retirado_em && (p.status === "RETIRADO PARA ENTREGA" || p.status === "DESPACHADO") && (
-            <>
-              <dt className="text-muted-foreground">Retirado</dt>
-              <dd className="truncate">{p.retirado_por_nome ?? "—"} · {fmtDataHora(p.retirado_em)}</dd>
-            </>
-          )}
           ) : rastreioCarregando ? (
             <p className="text-xs text-muted-foreground">Consultando os Correios…</p>
           ) : null
         )}
 
         <div className="rounded-md border bg-muted/40 p-2">
-          <p className="mb-1 flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-            {tituloItens}
-            {ocultos > 0 && (
-              <span className="font-normal normal-case text-emerald-600">
-                · {ocultos} já separado(s)
-              </span>
-            )}
-          </p>
-          {itens.length === 0 && (
-            <p className="py-1 text-xs text-emerald-600">Tudo separado — nada a comprar.</p>
-          )}
-          <ul className="space-y-0.5">
-            {itens.map((i) => (
-              <li key={i.id} className="flex justify-between gap-2 text-xs">
-                <span className="truncate">{i.nome_item}</span>
-                <span className="shrink-0 text-muted-foreground">
-                  {[i.tamanho && `Tam. ${i.tamanho}`, `Qtd. ${i.quantidade}`, i.litros && `${i.litros} L`]
-                    .filter(Boolean).join(" · ")}
+          <div className="mb-1 flex flex-wrap items-center gap-x-2 gap-y-1">
+            <p className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+              {tituloItens}
+              {visaoItens === "TODOS" && ocultos > 0 && (
+                <span className="font-normal normal-case text-emerald-600">
+                  · {ocultos} já separado(s)
                 </span>
-              </li>
-            ))}
-          </ul>
+              )}
+            </p>
+            <div className="flex items-center gap-1 text-[11px]">
+              <button
+                type="button"
+                aria-pressed={visaoItens === "ENVIADOS"}
+                onClick={() => alternarVisao("ENVIADOS")}
+                title="Mostrar só o que já saiu do estoque para este pedido"
+                className={cn(
+                  "rounded border px-1.5 py-0.5 transition-colors",
+                  visaoItens === "ENVIADOS"
+                    ? "border-emerald-500 bg-emerald-600 text-white"
+                    : "bg-background text-muted-foreground hover:bg-muted",
+                )}
+              >
+                Enviados
+              </button>
+              <span className="text-muted-foreground/60">|</span>
+              <button
+                type="button"
+                aria-pressed={visaoItens === "PENDENTES"}
+                onClick={() => alternarVisao("PENDENTES")}
+                title="Mostrar só o que ainda falta enviar para este pedido"
+                className={cn(
+                  "rounded border px-1.5 py-0.5 transition-colors",
+                  visaoItens === "PENDENTES"
+                    ? "border-amber-500 bg-amber-500 text-white"
+                    : "bg-background text-muted-foreground hover:bg-muted",
+                )}
+              >
+                Pendentes envio
+              </button>
+            </div>
+          </div>
+
+          {visaoItens === "TODOS" ? (
+            <>
+              {itens.length === 0 && (
+                <p className="py-1 text-xs text-emerald-600">Tudo separado — nada a comprar.</p>
+              )}
+              <ul className="space-y-0.5">
+                {itens.map((i) => (
+                  <li key={i.id} className="flex justify-between gap-2 text-xs">
+                    <span className="truncate">{i.nome_item}</span>
+                    <span className="shrink-0 text-muted-foreground">{detalheItem(i, String(i.quantidade))}</span>
+                  </li>
+                ))}
+              </ul>
+            </>
+          ) : carregandoTags ? (
+            <p className="py-1 text-xs text-muted-foreground">Conferindo o que já saiu…</p>
+          ) : (
+            (() => {
+              const enviando = visaoItens === "ENVIADOS";
+              const linhas = enviando ? enviados : pendentes;
+              if (linhas.length === 0) {
+                return (
+                  <p className={cn("py-1 text-xs", enviando ? "text-muted-foreground" : "text-emerald-600")}>
+                    {enviando ? "Nada enviado ainda para este pedido." : "Nada pendente — tudo já foi enviado."}
+                  </p>
+                );
+              }
+              return (
+                <ul className="space-y-0.5">
+                  {linhas.map((l) => {
+                    const qtd = enviando ? l.enviada : l.pendente;
+                    // "1 de 2" só quando é parcial — item inteiro fica igual à lista normal.
+                    const texto = qtd === l.quantidade ? String(qtd) : `${qtd} de ${l.quantidade}`;
+                    return (
+                      <li key={l.id} className="flex justify-between gap-2 text-xs">
+                        <span className="truncate">{l.nome_item}</span>
+                        <span className={cn("shrink-0", enviando ? "text-emerald-700 dark:text-emerald-400" : "text-amber-700 dark:text-amber-400")}>
+                          {detalheItem(l, texto)}
+                        </span>
+                      </li>
+                    );
+                  })}
+                </ul>
+              );
+            })()
+          )}
         </div>
 
         {p.observacoes_solicitante && (
@@ -772,9 +869,10 @@ function CardPedido({
       </CardContent>
 
       {/* As ações não cabem numa linha só num card de duas/três colunas:
-          Status e Editar (o que se faz o tempo todo) ficam em cima, consulta
-          e exclusão embaixo. */}
-      <div className="grid grid-cols-2 gap-2 border-t p-3">
+          Status e Editar (o que se faz o tempo todo) ficam em cima; consulta,
+          ficha de EPI, etiqueta e exclusão embaixo. Grade de 6 para a linha
+          de baixo caber 2 botões com texto + 2 só com ícone. */}
+      <div className="grid grid-cols-6 gap-2 border-t p-3">
         {/*
           Em EM PREPARACAO a ação principal deixa de ser "mudar status na mão"
           e passa a ser conferir o estoque e montar o pré-pedido — é o passo
@@ -785,18 +883,19 @@ function CardPedido({
             menu="sup_pedidos_materiais"
             acao="alterar"
             fallback={
-              <Button size="sm" onClick={onStatus}>
+              <Button size="sm" className="col-span-3" onClick={onStatus}>
                 <RefreshCw className="mr-1.5 h-3.5 w-3.5" /> Status
               </Button>
             }
           >
-            <Button size="sm" onClick={onPrePedido}>
+            <Button size="sm" className="col-span-3" onClick={onPrePedido}>
               <PackageSearch className="mr-1.5 h-3.5 w-3.5" /> Conferir e reservar
             </Button>
           </AcessoGate>
         ) : (
           <Button
             size="sm"
+            className="col-span-3"
             onClick={onStatus}
             disabled={p.status === "EM SEPARACAO"}
             title={p.status === "EM SEPARACAO"
@@ -807,27 +906,28 @@ function CardPedido({
           </Button>
         )}
         <AcessoGate menu="sup_pedidos_materiais" acao="alterar">
-          <Button size="sm" variant="secondary" onClick={onEditar}>
+          <Button size="sm" variant="secondary" className="col-span-3" onClick={onEditar}>
             <Pencil className="mr-1.5 h-3.5 w-3.5" /> Editar
           </Button>
         </AcessoGate>
-        <Button size="sm" variant="outline" onClick={onHistorico}>
-          <HistoryIcon className="mr-1.5 h-3.5 w-3.5" /> Histórico
+        <Button size="sm" variant="outline" className="col-span-2 px-2" onClick={onHistorico}>
+          <HistoryIcon className="mr-1.5 h-3.5 w-3.5 shrink-0" /> Histórico
         </Button>
-        <div className="flex gap-2">
-          <Button size="sm" variant="outline" className="flex-1" onClick={onEtiqueta} title="Emitir etiqueta térmica">
-            <Printer className="h-3.5 w-3.5" /><span className="sr-only">Etiqueta térmica</span>
-          </Button>
-          <Button
-            size="sm" variant="outline"
-            className="flex-1 border-destructive/40 text-destructive hover:bg-destructive/10"
-            onClick={onExcluir}
-            aria-label={`Excluir ${p.pedido_id}`}
-            title="Excluir pedido"
-          >
-            <Trash2 className="h-3.5 w-3.5" /><span className="sr-only">Excluir</span>
-          </Button>
-        </div>
+        <Button size="sm" variant="outline" className="col-span-2 px-2" onClick={onFichaEpi} title="Ficha de controle e entrega de EPI">
+          <HardHat className="mr-1.5 h-3.5 w-3.5 shrink-0" /> Ficha EPI
+        </Button>
+        <Button size="sm" variant="outline" className="px-0" onClick={onEtiqueta} title="Emitir etiqueta térmica">
+          <Printer className="h-3.5 w-3.5" /><span className="sr-only">Etiqueta térmica</span>
+        </Button>
+        <Button
+          size="sm" variant="outline"
+          className="border-destructive/40 px-0 text-destructive hover:bg-destructive/10"
+          onClick={onExcluir}
+          aria-label={`Excluir ${p.pedido_id}`}
+          title="Excluir pedido"
+        >
+          <Trash2 className="h-3.5 w-3.5" /><span className="sr-only">Excluir</span>
+        </Button>
       </div>
     </Card>
   );
@@ -977,6 +1077,7 @@ function ModalHistorico({ pedido, onFechar }: { pedido: Pedido | null; onFechar:
                   {e.acao === "CRIADO" ? "Pedido criado"
                     : e.acao === "DECLARACAO" ? `Declaração ${e.observacao ?? ""} gerada`
                     : e.acao === "COMPROVACAO" ? "Comprovação de entrega recebida"
+                    : e.acao === "RETIRADA" ? "Retirado para entrega (QR code)"
                     : e.campo
                       ? (ROTULO_CAMPO[e.campo] ?? e.campo)
                       : e.status_anterior
@@ -1022,4 +1123,3 @@ function ModalHistorico({ pedido, onFechar }: { pedido: Pedido | null; onFechar:
     </Dialog>
   );
 }
-                    : e.acao === "RETIRADA" ? "Retirado para entrega (QR code)"
