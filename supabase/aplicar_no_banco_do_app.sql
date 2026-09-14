@@ -21811,10 +21811,15 @@ LANGUAGE plpgsql
 SET search_path = public, pg_temp
 AS $fn$
 BEGIN
+  -- Os dois nomes da etapa 1 são aceitos de propósito: entre aplicar esta
+  -- migration e o deploy do front, a produção antiga ainda grava "Pendente
+  -- Analista" — e o trigger não pode deixar passar (nem estourar) por causa
+  -- de um nome em transição. Renomear a etapa (Analista ↔ Operacional) não
+  -- é fazer o pedido seguir.
   IF NEW.vaga_obrigatoria
      AND NEW.vaga_id IS NULL
-     AND OLD.status = 'Pendente Operacional'
-     AND NEW.status NOT IN ('Pendente Operacional', 'Reprovada') THEN
+     AND OLD.status IN ('Pendente Operacional', 'Pendente Analista')
+     AND NEW.status NOT IN ('Pendente Operacional', 'Pendente Analista', 'Reprovada') THEN
     RAISE EXCEPTION 'Esta demissão ainda não tem a vaga de reposição. Quem solicitou precisa abrir a vaga de Substituição de % antes de o pedido seguir.', NEW.colaborador_nome;
   END IF;
   RETURN NEW;
@@ -21826,6 +21831,12 @@ CREATE TRIGGER trg_demissao_exige_vaga
   FOR EACH ROW EXECUTE FUNCTION public.demissao_exige_vaga();
 
 -- 2) As paradas na etapa 1 ------------------------------------------------
+-- ⚠️ RODAR DE NOVO DEPOIS DO DEPLOY DO FRONT. A produção antiga grava
+-- "Pendente Analista" em toda solicitação nova até ser rebuildada; o front
+-- novo só lista "Pendente Operacional". Enquanto os dois convivem, o certo é
+-- o banco ficar no nome que a produção NO AR entende (14/09/2026: aplicada,
+-- revertida no mesmo dia porque o front ainda era o antigo — os analistas
+-- estavam vendo contagens diferentes conforme a hora em que abriam a tela).
 -- DEPOIS do trigger, de propósito: com a versão antiga ainda no ar, o UPDATE
 -- abaixo cai exatamente na condição dela (OLD = 'Pendente Analista', NEW fora
 -- de Analista/Reprovada) e estoura em quem ainda não tem vaga — foi o que
