@@ -4,6 +4,7 @@ import { useAuth } from "@/hooks/useAuth";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { FiltroContratos, passaNoFiltroContratos } from "@/components/solicitacoes/FiltroContratos";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Textarea } from "@/components/ui/textarea";
@@ -128,6 +129,8 @@ export function PainelDemissoes({ etapa }: { etapa: Etapa }) {
   const [carregando, setCarregando] = useState(true);
   const [busca, setBusca] = useState("");
   const [fStatus, setFStatus] = useState("");
+  // Filtros · Contratos (14/09/2026): o mesmo dropdown do Recrutamento.
+  const [fContratos, setFContratos] = useState<string[]>([]);
   const [aberta, setAberta] = useState<SolicitacaoDemissao | null>(null);
 
   const statusVisiveis = STATUS_DA_ETAPA[etapa];
@@ -151,11 +154,12 @@ export function PainelDemissoes({ etapa }: { etapa: Etapa }) {
     const q = busca.trim().toLowerCase();
     return linhas.filter((s) => {
       if (fStatus && s.status !== fStatus) return false;
+      if (!passaNoFiltroContratos(s, "contrato", fContratos)) return false;
       if (!q) return true;
       return [s.colaborador_nome, s.solicitante_nome, s.contrato, s.colaborador_posto, String(s.id)]
         .some((v) => String(v ?? "").toLowerCase().includes(q));
     });
-  }, [linhas, busca, fStatus]);
+  }, [linhas, busca, fStatus, fContratos]);
 
   const contar = (status: string) => linhas.filter((s) => s.status === status).length;
 
@@ -221,6 +225,7 @@ export function PainelDemissoes({ etapa }: { etapa: Etapa }) {
         <CardHeader className="gap-3 sm:flex-row sm:items-center sm:justify-between">
           <CardTitle className="text-base">Solicitações</CardTitle>
           <div className="flex flex-wrap items-center gap-2">
+            <FiltroContratos linhas={linhas} campo="contrato" selecionados={fContratos} onChange={setFContratos} />
             <div className="relative">
               <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
               <Input className="w-56 pl-8" placeholder="Colaborador, solicitante, contrato…"

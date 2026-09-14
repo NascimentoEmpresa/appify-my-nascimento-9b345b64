@@ -5,6 +5,7 @@ import { usePermissoes } from "@/context/PermissoesContext";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { FiltroContratos, passaNoFiltroContratos } from "@/components/solicitacoes/FiltroContratos";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -77,6 +78,8 @@ export function PainelTrocaFuncao({ etapa }: { etapa: Etapa }) {
   const [carregando, setCarregando] = useState(true);
   const [busca, setBusca] = useState("");
   const [fStatus, setFStatus] = useState("");
+  // Filtros · Contratos (14/09/2026): o "local" da troca é o contrato.
+  const [fContratos, setFContratos] = useState<string[]>([]);
   const [fOrigem, setFOrigem] = useState("");
   const [fSetor, setFSetor] = useState("");
   const [aberta, setAberta] = useState<SolicitacaoTroca | null>(null);
@@ -128,13 +131,14 @@ export function PainelTrocaFuncao({ etapa }: { etapa: Etapa }) {
     const q = busca.trim().toLowerCase();
     return linhas.filter(r => {
       if (fStatus && r.status !== fStatus) return false;
+      if (!passaNoFiltroContratos(r, "local", fContratos)) return false;
       if (fOrigem && origemDa(r) !== fOrigem) return false;
       if (fSetor && (r.setor ?? "") !== fSetor) return false;
       if (!q) return true;
       return [r.colaborador_nome, r.cargo_atual, r.cargo_novo, r.local, r.setor, r.solicitante_nome]
         .some(v => String(v ?? "").toLowerCase().includes(q));
     });
-  }, [linhas, busca, fStatus, fOrigem, fSetor]);
+  }, [linhas, busca, fStatus, fOrigem, fSetor, fContratos]);
 
   const pendentes = linhas.filter(r => podeAgirEm(r, etapa, origens)).length;
   const concluidas = linhas.filter(r => r.status === "Concluída").length;
@@ -219,6 +223,7 @@ export function PainelTrocaFuncao({ etapa }: { etapa: Etapa }) {
       </div>
 
       <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap">
+        <FiltroContratos linhas={linhas} campo="local" selecionados={fContratos} onChange={setFContratos} />
         <div className="relative min-w-[200px] flex-1">
           <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
           <Input className="pl-9" placeholder="Buscar por nome, cargo, contrato, setor…"

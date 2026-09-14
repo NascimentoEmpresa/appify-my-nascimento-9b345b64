@@ -1,4 +1,5 @@
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useRef, useMemo } from "react";
+import { FiltroContratos, passaNoFiltroContratos } from "@/components/solicitacoes/FiltroContratos";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
 import { ConversaSolicitacao } from "@/components/solicitacoes/ConversaSolicitacao";
@@ -33,6 +34,10 @@ export default function Ferias() {
   const [stats, setStats] = useState<Record<string, number>>({});
   const [statusFilter, setStatusFilter] = useState("");
   const [busca, setBusca] = useState("");
+  // Filtros · Contratos (14/09/2026). O contrato da férias é a filial do
+  // colaborador ("1109 - POLICIA CIVIL..."), gravada em colaborador_filial.
+  const [fContratos, setFContratos] = useState<string[]>([]);
+  const rowsFiltradas = useMemo(() => rows.filter(r => passaNoFiltroContratos(r, "colaborador_filial", fContratos)), [rows, fContratos]);
 
   const [drawerId, setDrawerId] = useState<number | null>(null);
   const [sol, setSol] = useState<any | null>(null);
@@ -135,8 +140,9 @@ export default function Ferias() {
             {f || "Todas"}
           </button>
         ))}
+        <div style={{ marginLeft: "auto" }}><FiltroContratos linhas={rows} campo="colaborador_filial" selecionados={fContratos} onChange={setFContratos} /></div>
         <input value={busca} onChange={e => setBusca(e.target.value)} placeholder="Buscar colaborador / solicitante..."
-          style={{ marginLeft: "auto", minWidth: 240, padding: "8px 12px", borderRadius: 10, border: "1px solid #e2e8f0", fontSize: 13, outline: "none" }} />
+          style={{ minWidth: 240, padding: "8px 12px", borderRadius: 10, border: "1px solid #e2e8f0", fontSize: 13, outline: "none" }} />
       </div>
 
       {/* Tabela */}
@@ -152,11 +158,11 @@ export default function Ferias() {
           <tbody>
             {loading ? (
               <tr><td colSpan={6} style={{ padding: 32, textAlign: "center", color: "#94a3b8", fontSize: 13 }}>Carregando...</td></tr>
-            ) : rows.length === 0 ? (
+            ) : rowsFiltradas.length === 0 ? (
               <tr><td colSpan={6} style={{ padding: 40, textAlign: "center", color: "#94a3b8", fontSize: 13 }}>
                 <div style={{ fontSize: 32, marginBottom: 8 }}>📭</div>Nenhuma solicitação de férias.
               </td></tr>
-            ) : rows.map(r => (
+            ) : rowsFiltradas.map(r => (
               <tr key={r.id} onClick={() => abrirDrawer(r)} style={{ cursor: "pointer", borderBottom: "1px solid #f1f5f9" }}
                 onMouseEnter={e => (e.currentTarget.style.background = "#f8fbff")}
                 onMouseLeave={e => (e.currentTarget.style.background = "#fff")}>
