@@ -167,7 +167,10 @@ export default function Ferias() {
                 <td style={{ padding: "11px 14px", fontSize: 12, color: "#475569" }}>{fmtDt(r.data_saida)} → {fmtDt(r.data_retorno)}</td>
                 <td style={{ padding: "11px 14px", fontSize: 12, color: "#475569" }}>{r.dias_ferias}d{r.dias_vendidos ? ` +${r.dias_vendidos} abono` : ""}</td>
                 <td style={{ padding: "11px 14px", fontSize: 12, color: "#475569" }}>{r.solicitante_nome || "—"}</td>
-                <td style={{ padding: "11px 14px" }}><StatusBadge status={r.status} /></td>
+                <td style={{ padding: "11px 14px" }}>
+                  <StatusBadge status={r.status} />
+                  {r.excecao && <span title="Solicitada com menos de 30 dias de antecedência" style={{ display: "inline-block", marginLeft: 6, padding: "2px 8px", borderRadius: 999, fontSize: 10, fontWeight: 800, background: "#fef3c7", color: "#b45309", border: "1px solid #fde68a" }}>FORA DO PRAZO</span>}
+                </td>
                 <td style={{ padding: "11px 14px", fontSize: 11, color: "#94a3b8" }}>{fmtDt(r.criado_em)}</td>
               </tr>
             ))}
@@ -211,6 +214,14 @@ export default function Ferias() {
                   </div>
                 ))}
               </div>
+              {/* Exceção: o solicitante foi avisado e confirmou mesmo assim —
+                  quem aprova precisa ver isso antes de decidir. */}
+              {sol.excecao && (
+                <div style={{ marginBottom: 18, background: "#fffbeb", border: "1px solid #fde68a", borderRadius: 10, padding: "10px 12px" }}>
+                  <div style={{ fontSize: 10, fontWeight: 700, color: "#b45309", textTransform: "uppercase", letterSpacing: ".5px", marginBottom: 4 }}>⚠️ Fora do prazo — exceção</div>
+                  <div style={{ fontSize: 13, color: "#92400e", lineHeight: 1.5 }}>Solicitada com menos de 30 dias de antecedência. O solicitante foi avisado de que pode ser recusada e confirmou mesmo assim.</div>
+                </div>
+              )}
               {sol.observacoes && (
                 <div style={{ marginBottom: 18 }}>
                   <div style={{ fontSize: 10, fontWeight: 700, color: "#94a3b8", textTransform: "uppercase", letterSpacing: ".5px", marginBottom: 4 }}>Observações</div>

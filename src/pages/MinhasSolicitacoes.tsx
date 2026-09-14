@@ -200,6 +200,10 @@ export default function MinhasSolicitacoes({ abrir }: { abrir?: SolicitacaoInici
   // Modal férias
   const [modalFerias, setModalFerias] = useState(false);
   const [ferias, setFerias] = useState({ ...FERIAS_RESET });
+  // Saída com menos de 30 dias: até 14/09/2026 a tela barrava; agora deixa
+  // passar como EXCEÇÃO, mas só depois que a pessoa confirma no card
+  // (Cancelar / Solicitar mesmo assim) sabendo que pode ser recusada.
+  const [feriasExc, setFeriasExc] = useState(false);
 
   // Modal advertência
   const [modalAdv, setModalAdv] = useState(false);
@@ -246,7 +250,7 @@ export default function MinhasSolicitacoes({ abrir }: { abrir?: SolicitacaoInici
     if (vg.error) vg = await vagaQuery("id, cargo, contrato, status, created_at, nome_substituido, quantidade_vagas, motivo_vaga, status_changed_at");
     if (vg.error) vg = await vagaQuery("id, cargo, contrato, status, created_at, nome_substituido, quantidade_vagas, motivo_vaga");
 
-    const fr = await (supabase as any).from("SISTEMA_SOLICITACOES_FERIAS").select("id, colaborador_nome, status, criado_em").eq("solicitante_email", email).order("criado_em", { ascending: false }).limit(30);
+    const fr = await (supabase as any).from("SISTEMA_SOLICITACOES_FERIAS").select("id, colaborador_nome, status, criado_em, excecao").eq("solicitante_email", email).order("criado_em", { ascending: false }).limit(30);
     const ad = await (supabase as any).from("SISTEMA_SOLICITACOES_ADVERTENCIA").select("id, colaborador_nome, tipo_advertencia, status, created_at, status_changed_at, excecao").eq("solicitante_email", email).order("created_at", { ascending: false }).limit(30);
     // Demissão morava só na tela dedicada: quem pedia não a via no histórico,
     // e por isso não tinha como acompanhar o andamento junto do resto.
@@ -282,7 +286,7 @@ export default function MinhasSolicitacoes({ abrir }: { abrir?: SolicitacaoInici
         dataInicio: r.data_inicio_prevista || "", grau: r.grau_urgencia || "",
         alteracoes: Array.isArray(r.data_inicio_alteracoes) ? r.data_inicio_alteracoes : [],
       })),
-      ...(fr.data ?? []).map((r: any) => ({ tipo: "Férias", icon: "📅", id: r.id, titulo: `Férias — ${r.colaborador_nome || ""}`, status: r.status, data: r.criado_em, statusDesde: r.criado_em })),
+      ...(fr.data ?? []).map((r: any) => ({ tipo: "Férias", icon: "📅", id: r.id, titulo: `Férias — ${r.colaborador_nome || ""}`, status: r.status, data: r.criado_em, statusDesde: r.criado_em, excecao: !!r.excecao })),
       ...(ad.data ?? []).map((r: any) => ({ tipo: "Advertência", icon: "⚠️", id: r.id, titulo: `Advertência ${r.tipo_advertencia || ""} — ${r.colaborador_nome || ""}`, status: r.status, data: r.created_at, statusDesde: r.status_changed_at || r.created_at, excecao: r.excecao })),
       ...(tf.data ?? []).map((r: any) => ({
         tipo: "Mudança de Função", icon: "🔀", id: r.id,
@@ -558,10 +562,17 @@ export default function MinhasSolicitacoes({ abrir }: { abrir?: SolicitacaoInici
     setModalFerias(true); setFerias({ ...FERIAS_RESET }); setEmpSearch(""); setShowEmpDrop(false); setEmpregados([]);
   };
 
+  const feriasForaDoPrazo = () => !!ferias.data_saida && ferias.data_saida < hojeMaisDias(30);
+
   const submitFerias = async () => {
     if (!ferias.colaborador_id) { toast("Selecione o colaborador.", "err"); return; }
     if (!ferias.data_saida) { toast("Informe a data de saída.", "err"); return; }
-    if (ferias.data_saida < hojeMaisDias(30)) { toast("A saída precisa de no mínimo 30 dias de antecedência.", "err"); return; }
+    if (ferias.data_saida < hojeMaisDias(0)) { toast("A data de saída não pode ficar no passado.", "err"); return; }
+    if (feriasForaDoPrazo()) { setFeriasExc(true); return; }  // card: Cancelar / Solicitar mesmo assim
+    await doSubmitFerias(false);
+  };
+
+  const doSubmitFerias = async (excecao: boolean) => {
     const dias = parseInt(ferias.dias_ferias) || 30;
     const vend = parseInt(ferias.dias_vendidos) || 0;
     const payload = {
@@ -571,10 +582,19 @@ export default function MinhasSolicitacoes({ abrir }: { abrir?: SolicitacaoInici
       colaborador_admissao: brToISO(ferias.colaborador_admissao),
       data_saida: ferias.data_saida, data_retorno: addDaysISO(ferias.data_saida, dias),
       dias_ferias: dias, dias_vendidos: vend, observacoes: ferias.observacoes.trim() || null, status: "Pendente",
+      excecao,
     };
-    const { error, data } = await (supabase as any).from("SISTEMA_SOLICITACOES_FERIAS").insert(payload).select("id").single();
+    let { error, data } = await (supabase as any).from("SISTEMA_SOLICITACOES_FERIAS").insert(payload).select("id").single();
+    // Banco ainda sem a coluna excecao (mig 20260930000101): reenvia sem ela.
+    if (error && /excecao/i.test(error.message)) {
+      const { excecao: _e, ...semExcecao } = payload as any;
+      ({ error, data } = await (supabase as any).from("SISTEMA_SOLICITACOES_FERIAS").insert(semExcecao).select("id").single());
+    }
     if (error) { toast("Erro ao solicitar férias: " + error.message, "err"); return; }
-    toast(`Férias solicitadas para ${ferias.colaborador_nome}! (#${data?.id})`, "ok");
+    setFeriasExc(false);
+    toast(excecao
+      ? `Férias solicitadas para ${ferias.colaborador_nome} como EXCEÇÃO (fora do prazo) — pode ser recusada. (#${data?.id})`
+      : `Férias solicitadas para ${ferias.colaborador_nome}! (#${data?.id})`, "ok");
     setModalFerias(false); setFerias({ ...FERIAS_RESET }); setEmpSearch(""); carregarMinhasSols();
   };
 
@@ -1213,7 +1233,13 @@ export default function MinhasSolicitacoes({ abrir }: { abrir?: SolicitacaoInici
               </div>
             )}
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-              <div className="ini-fg"><label>Data de Saída *</label><input className="ini-fi" type="date" min={hojeMaisDias(30)} value={ferias.data_saida} onChange={e => setFerias(f => ({ ...f, data_saida: e.target.value }))} /></div>
+              <div className="ini-fg"><label>Data de Saída *</label><input className="ini-fi" type="date" min={hojeMaisDias(0)} value={ferias.data_saida} onChange={e => setFerias(f => ({ ...f, data_saida: e.target.value }))} />
+                {feriasForaDoPrazo() && (
+                  <div style={{ marginTop: 6, fontSize: 11.5, fontWeight: 700, color: "#92400e", background: "#fffbeb", border: "1px solid #fde68a", borderRadius: 8, padding: "6px 9px" }}>
+                    ⚠️ Fora do prazo: menos de 30 dias de antecedência. Vai entrar como exceção e pode ser recusada.
+                  </div>
+                )}
+              </div>
               <div className="ini-fg"><label>Dias de Férias</label><select className="ini-fi" value={ferias.dias_ferias} onChange={e => setFerias(f => ({ ...f, dias_ferias: e.target.value }))}>{["30", "20", "15", "10"].map(o => <option key={o} value={o}>{o} dias</option>)}</select></div>
             </div>
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
@@ -1306,6 +1332,34 @@ export default function MinhasSolicitacoes({ abrir }: { abrir?: SolicitacaoInici
             <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 8, paddingTop: 14, borderTop: "1px solid #e2e8f0" }}>
               <button onClick={() => setModalAdv(false)} style={{ padding: "7px 14px", borderRadius: 10, border: "1px solid #e2e8f0", background: "#fff", color: "#475569", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>Cancelar</button>
               <button onClick={submitAdv} disabled={advBloqueada} style={{ padding: "7px 14px", borderRadius: 10, border: "none", background: advBloqueada ? "#cbd5e1" : "#16a34a", color: "#fff", fontSize: 12, fontWeight: 700, cursor: advBloqueada ? "not-allowed" : "pointer" }}>✓ Solicitar Advertência</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Card: Férias fora do prazo (saída a menos de 30 dias) ──
+          Não barra mais: avisa que vai entrar como exceção e pode ser
+          recusada, e a pessoa decide — Cancelar ou Solicitar mesmo assim. */}
+      {feriasExc && modalFerias && (
+        <div className="ini-modal-ov" style={{ zIndex: 800 }} onClick={() => setFeriasExc(false)}>
+          <div className="ini-modal" onClick={e => e.stopPropagation()} style={{ maxWidth: 480, textAlign: "center", padding: "28px 26px 22px" }}>
+            <div style={{ width: 56, height: 56, borderRadius: "50%", background: "#fef3c7", color: "#b45309", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 28, margin: "0 auto 14px" }}>⚠️</div>
+            <div style={{ fontSize: 17, fontWeight: 800, color: "#0f172a", marginBottom: 8 }}>Solicitação fora do prazo</div>
+            <div style={{ fontSize: 13, color: "#475569", lineHeight: 1.55, marginBottom: 6 }}>
+              A saída em <b>{fmtDt(ferias.data_saida)}</b> tem menos de <b>30 dias</b> de antecedência.
+            </div>
+            <div style={{ fontSize: 12.5, color: "#64748b", lineHeight: 1.55, marginBottom: 20 }}>
+              A solicitação vai para aprovação marcada como <b>exceção</b> e <b>pode ser recusada</b>. Deseja solicitar mesmo assim?
+            </div>
+            <div style={{ display: "flex", justifyContent: "center", gap: 10, flexWrap: "wrap" }}>
+              <button type="button" onClick={() => setFeriasExc(false)}
+                style={{ padding: "9px 22px", borderRadius: 10, border: "1px solid #e2e8f0", background: "#fff", color: "#475569", fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
+                Cancelar
+              </button>
+              <button type="button" onClick={() => doSubmitFerias(true)}
+                style={{ padding: "9px 22px", borderRadius: 10, border: "none", background: "#d97706", color: "#fff", fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
+                Solicitar mesmo assim
+              </button>
             </div>
           </div>
         </div>
