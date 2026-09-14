@@ -25,6 +25,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { semCodigoFilial } from "@/lib/rh/colaboradoresUtils";
+import { buscarCustoDoPosto, insalubridadeDoCusto, beneficiosDoCusto, notaDoCusto, type CustoPosto } from "@/lib/recrutamento/custoPosto";
 import { useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
@@ -296,11 +297,19 @@ export function ModalNovaVaga({ aberto, onFechar, onCriada, onToast, solicitacao
 
   // `motivo` pode vir por parâmetro: quando a demissão abre o modal, o
   // motivo acabou de ser setado e o estado ainda não fechou o ciclo.
+  // Insalubridade e benefícios vêm da Planilha de Custo do contrato
+  // (14/09/2026) — ver custoPosto.ts. Com colaborador escolhido os campos
+  // ficam só leitura; no modo manual (escritório) continuam editáveis.
+  const [custoPosto, setCustoPosto] = useState<CustoPosto | null>(null);
+  const [custoNota, setCustoNota] = useState("");
+  const [custoBuscando, setCustoBuscando] = useState(false);
+
   const selecionarEmpregado = (emp: any, motivo: string = vaga.motivo_vaga, contratos: any[] = contratosFull) => {
     const jaTem = ehSubstituicao(motivo) ? presos.get(Number(emp.ID)) : undefined;
     if (jaTem) { toast(avisoSubstituidoPreso(jaTem), "err"); return; }
     const contratoMatch = contratoDoEmpregado(contratos, emp);
-    const insal = parseFloat(String(emp["% Insalubridade"] ?? "0").replace(",", ".")) || 0;
+    const insalCadastro = insalubridadeDoCusto(null, emp["% Insalubridade"]);
+    const contratoRotulo = contratoMatch ? rotuloContrato(contratoMatch) : "";
     setSubstituidoId(emp.ID ?? null);
     setVaga(v => ({
       ...v,
@@ -308,14 +317,28 @@ export function ModalNovaVaga({ aberto, onFechar, onCriada, onToast, solicitacao
       nome_substituido: mostraNomeReferencia(motivo) ? emp.Nome : "",
       cargo: emp["Título do Cargo"] ?? "",
       salario: emp["Valor Salário"] ? `R$ ${String(emp["Valor Salário"]).replace(".", ",")}` : "",
-      insalubridade_recebe: insal > 0 ? "Sim" : "Não",
-      insalubridade_quanto: insal > 0 ? `${emp["% Insalubridade"]}%` : "",
+      insalubridade_recebe: insalCadastro.recebe,
+      insalubridade_quanto: insalCadastro.quanto,
+      beneficios: "",
       escala: emp["Escala"] ? String(emp["Escala"]) : v.escala,
-      contrato: contratoMatch ? rotuloContrato(contratoMatch) : v.contrato,
+      contrato: contratoRotulo || v.contrato,
       contrato_id: "", posto_id: "", funcao_id: "",
     }));
     setEmpSearch(mostraNomeReferencia(motivo) ? emp.Nome : "");
     setShowEmpDrop(false);
+    setCustoPosto(null); setCustoNota(""); setCustoBuscando(true);
+    const idEscolhido = emp.ID;
+    buscarCustoDoPosto(supabase, {
+      contrato: contratoRotulo || emp["Nome Filial"] || "", cargo: emp["Título do Cargo"], salario: emp["Valor Salário"], cidade: vaga.cidade || null,
+    }).then(custo => {
+      setSubstituidoId(atual => {
+        if (atual !== idEscolhido) return atual;   // trocou de pessoa no meio
+        const insal = insalubridadeDoCusto(custo, emp["% Insalubridade"], emp["Valor Salário"]);
+        setVaga(v => ({ ...v, insalubridade_recebe: insal.recebe, insalubridade_quanto: insal.quanto, beneficios: beneficiosDoCusto(custo) }));
+        setCustoPosto(custo); setCustoNota(notaDoCusto(custo, insal.origem));
+        return atual;
+      });
+    }).finally(() => setCustoBuscando(false));
   };
 
   // Substituição sem vínculo vindo da demissão: procura a demissão de quem
@@ -470,7 +493,6 @@ export function ModalNovaVaga({ aberto, onFechar, onCriada, onToast, solicitacao
       const erroRec = erroDaRecomendacao(vaga);
       if (erroRec) { toast(erroRec, "err"); return false; }
       if (!prazo.ok) { toast(prazo.erro ?? "Revise a data de início prevista.", "err"); return false; }
-      if (!vaga.req_obrigatorios.trim() && !cnhDoCargo) { toast("Informe os requisitos obrigatórios.", "err"); return false; }
     }
     return true;
   };
@@ -897,17 +919,39 @@ export function ModalNovaVaga({ aberto, onFechar, onCriada, onToast, solicitacao
           </div>
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
             <div className="nvg-fg"><label>Salário</label><input className="nvg-fi" placeholder="Ex: R$ 1.412,00" value={vaga.salario} onChange={e => setVaga(v => ({ ...v, salario: e.target.value }))} /></div>
-            <div className="nvg-fg">
-              <label>Insalubridade</label>
-              <select className="nvg-fi" value={vaga.insalubridade_recebe} onChange={e => setVaga(v => ({ ...v, insalubridade_recebe: e.target.value }))}>
-                <option>Não</option><option>Sim</option>
-              </select>
-            </div>
+            {vagaManual ? (
+              <div className="nvg-fg">
+                <label>Insalubridade</label>
+                <select className="nvg-fi" value={vaga.insalubridade_recebe} onChange={e => setVaga(v => ({ ...v, insalubridade_recebe: e.target.value }))}>
+                  <option>Não</option><option>Sim</option>
+                </select>
+              </div>
+            ) : (
+              /* Com colaborador: vem da Planilha de Custo, só leitura. */
+              <div className="nvg-fg">
+                <label>Insalubridade <span style={{ color: "#94a3b8", fontWeight: 600 }}>— da Planilha de Custo</span></label>
+                <input className="nvg-fi" readOnly
+                  value={custoBuscando ? "Consultando a planilha…" : vaga.insalubridade_recebe === "Sim" ? `Sim — ${vaga.insalubridade_quanto}` : substituidoId ? "Não" : ""}
+                  placeholder="Escolha o colaborador acima"
+                  style={{ background: "#f1f5f9", color: "#475569", cursor: "not-allowed" }} />
+              </div>
+            )}
           </div>
-          {vaga.insalubridade_recebe === "Sim" && (
+          {vagaManual && vaga.insalubridade_recebe === "Sim" && (
             <div className="nvg-fg"><label>Percentual de Insalubridade</label><input className="nvg-fi" placeholder="Ex: 20%, 40%" value={vaga.insalubridade_quanto} onChange={e => setVaga(v => ({ ...v, insalubridade_quanto: e.target.value }))} /></div>
           )}
-          <div className="nvg-fg"><label>Benefícios</label><textarea className="nvg-fi" rows={2} placeholder="VT, VR, Plano de Saúde..." value={vaga.beneficios} onChange={e => setVaga(v => ({ ...v, beneficios: e.target.value }))} /></div>
+          {vagaManual ? (
+            <div className="nvg-fg"><label>Benefícios</label><textarea className="nvg-fi" rows={2} placeholder="VT, VR, Plano de Saúde..." value={vaga.beneficios} onChange={e => setVaga(v => ({ ...v, beneficios: e.target.value }))} /></div>
+          ) : (
+            <div className="nvg-fg">
+              <label>Benefícios <span style={{ color: "#94a3b8", fontWeight: 600 }}>— VT e VA do contrato</span></label>
+              <input className="nvg-fi" readOnly
+                value={custoBuscando ? "Consultando a planilha…" : vaga.beneficios}
+                placeholder={substituidoId ? "Contrato sem Planilha de Custo — o Recrutamento completa" : "Escolha o colaborador acima"}
+                style={{ background: "#f1f5f9", color: "#475569", cursor: "not-allowed" }} />
+              {custoNota && <div style={{ marginTop: 4, fontSize: 11, color: custoPosto?.ambiguo ? "#92400e" : "#94a3b8" }}>{custoNota}</div>}
+            </div>
+          )}
           {/* Local Exato / Posto saiu: o posto já vem do contrato escolhido na
               etapa 1, e o campo livre só dava chance de escrever outro. */}
           <div className="nvg-fg">
@@ -936,27 +980,14 @@ export function ModalNovaVaga({ aberto, onFechar, onCriada, onToast, solicitacao
             </div>
           </div>
           <PrazoAviso prazo={prazo} />
-          <div className="nvg-fg">
-            <label>Requisitos Obrigatórios *</label>
-            {cnhDoCargo && (
-              <div style={{ display: "flex", alignItems: "center", gap: 7, fontSize: 12, fontWeight: 700, color: "#b45309", background: "#fffbeb", border: "1px solid #fde68a", borderRadius: 8, padding: "7px 10px", marginBottom: 6 }}>
-                <span>🚗</span><span>{REQ_CNH_TEXTO} <span style={{ fontWeight: 600, color: "#92400e" }}>(automático para {cnhDoCargo.toLowerCase()} — vai junto mesmo que você não escreva)</span></span>
-              </div>
-            )}
-            <textarea className="nvg-fi" rows={3} placeholder="Experiência comprovada, curso específico..." value={vaga.req_obrigatorios} onChange={e => setVaga(v => ({ ...v, req_obrigatorios: e.target.value }))} />
-          </div>
-          <div className="nvg-fg"><label>Requisitos Desejáveis</label><textarea className="nvg-fi" rows={2} placeholder="Inglês básico, curso técnico... (opcional)" value={vaga.req_desejaveis} onChange={e => setVaga(v => ({ ...v, req_desejaveis: e.target.value }))} /></div>
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-            <div className="nvg-fg">
-              <label>Experiência Mínima?</label>
-              <select className="nvg-fi" value={vaga.exp_minima} onChange={e => setVaga(v => ({ ...v, exp_minima: e.target.value }))}>
-                <option>Não</option><option>Sim</option>
-              </select>
+          {/* Requisitos obrigatórios e experiência mínima SAÍRAM (14/09/2026):
+              vão vir da licitação/planilha. A CNH segue automática pelo cargo. */}
+          {cnhDoCargo && (
+            <div style={{ display: "flex", alignItems: "center", gap: 7, fontSize: 12, fontWeight: 700, color: "#b45309", background: "#fffbeb", border: "1px solid #fde68a", borderRadius: 8, padding: "7px 10px", marginBottom: 10 }}>
+              <span>🚗</span><span>{REQ_CNH_TEXTO} <span style={{ fontWeight: 600, color: "#92400e" }}>(automático para {cnhDoCargo.toLowerCase()})</span></span>
             </div>
-            {vaga.exp_minima === "Sim" && (
-              <div className="nvg-fg"><label>Qual experiência?</label><input className="nvg-fi" placeholder="Ex: 6 meses em limpeza" value={vaga.exp_minima_qual} onChange={e => setVaga(v => ({ ...v, exp_minima_qual: e.target.value }))} /></div>
-            )}
-          </div>
+          )}
+          <div className="nvg-fg"><label>Requisitos Desejáveis</label><textarea className="nvg-fi" rows={2} placeholder="Inglês básico, curso técnico... (opcional)" value={vaga.req_desejaveis} onChange={e => setVaga(v => ({ ...v, req_desejaveis: e.target.value }))} /></div>
                     {/* Indicação: quem abre a vaga muitas vezes JÁ tem alguém em mente, e
               hoje isso chegava no Recrutamento por WhatsApp, solto. Dizendo
               "Sim", os três dados vêm juntos — a regra está em
