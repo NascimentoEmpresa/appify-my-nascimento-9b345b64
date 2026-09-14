@@ -367,6 +367,7 @@ const financeiroModule: ModuleDef = {
         // do usuário, são módulos migrados de sistema externo, não fazem
         // parte da Gestão Financeira "nativa" do ERP.
         { label: "Checklist de Faturamento", to: "/app/financeiro/checklist-faturamento", icon: ListChecks, badge: "Novo" },
+        { label: "Solicitações de Ajuste", to: "/app/financeiro/solicitacoes-ajuste", icon: ClipboardList, badge: "Novo" },
       ],
     },
   ],
