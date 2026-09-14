@@ -21804,22 +21804,22 @@ NOTIFY pgrst, 'reload schema';
 -- Idempotente. Aplicar no banco do app.
 -- =========================================================================
 
--- 1) O trigger que segura a demissão sem vaga -----------------------------
+-- 1) As paradas na etapa 1 ------------------------------------------------
+UPDATE public."SISTEMA_SOLICITACOES_DEMISSAO"
+   SET status = 'Pendente Operacional'
+ WHERE status = 'Pendente Analista';
+
+-- 2) O trigger que segura a demissão sem vaga -----------------------------
 CREATE OR REPLACE FUNCTION public.demissao_exige_vaga()
 RETURNS trigger
 LANGUAGE plpgsql
 SET search_path = public, pg_temp
 AS $fn$
 BEGIN
-  -- Os dois nomes da etapa 1 são aceitos de propósito: entre aplicar esta
-  -- migration e o deploy do front, a produção antiga ainda grava "Pendente
-  -- Analista" — e o trigger não pode deixar passar (nem estourar) por causa
-  -- de um nome em transição. Renomear a etapa (Analista ↔ Operacional) não
-  -- é fazer o pedido seguir.
   IF NEW.vaga_obrigatoria
      AND NEW.vaga_id IS NULL
-     AND OLD.status IN ('Pendente Operacional', 'Pendente Analista')
-     AND NEW.status NOT IN ('Pendente Operacional', 'Pendente Analista', 'Reprovada') THEN
+     AND OLD.status = 'Pendente Operacional'
+     AND NEW.status NOT IN ('Pendente Operacional', 'Reprovada') THEN
     RAISE EXCEPTION 'Esta demissão ainda não tem a vaga de reposição. Quem solicitou precisa abrir a vaga de Substituição de % antes de o pedido seguir.', NEW.colaborador_nome;
   END IF;
   RETURN NEW;
@@ -21829,22 +21829,6 @@ DROP TRIGGER IF EXISTS trg_demissao_exige_vaga ON public."SISTEMA_SOLICITACOES_D
 CREATE TRIGGER trg_demissao_exige_vaga
   BEFORE UPDATE OF status ON public."SISTEMA_SOLICITACOES_DEMISSAO"
   FOR EACH ROW EXECUTE FUNCTION public.demissao_exige_vaga();
-
--- 2) As paradas na etapa 1 ------------------------------------------------
--- ⚠️ RODAR DE NOVO DEPOIS DO DEPLOY DO FRONT. A produção antiga grava
--- "Pendente Analista" em toda solicitação nova até ser rebuildada; o front
--- novo só lista "Pendente Operacional". Enquanto os dois convivem, o certo é
--- o banco ficar no nome que a produção NO AR entende (14/09/2026: aplicada,
--- revertida no mesmo dia porque o front ainda era o antigo — os analistas
--- estavam vendo contagens diferentes conforme a hora em que abriam a tela).
--- DEPOIS do trigger, de propósito: com a versão antiga ainda no ar, o UPDATE
--- abaixo cai exatamente na condição dela (OLD = 'Pendente Analista', NEW fora
--- de Analista/Reprovada) e estoura em quem ainda não tem vaga — foi o que
--- aconteceu na primeira aplicação, 14/09/2026 ("MARIA APARECIDA KUNZLER").
--- Renomear a etapa não é fazer o pedido seguir.
-UPDATE public."SISTEMA_SOLICITACOES_DEMISSAO"
-   SET status = 'Pendente Operacional'
- WHERE status = 'Pendente Analista';
 
 COMMENT ON COLUMN public."SISTEMA_SOLICITACOES_DEMISSAO".vaga_obrigatoria IS
   'TRUE quando quem pediu respondeu "Sim" a "Deseja solicitar a substituição?": a vaga de Substituição abre em seguida e o pedido não sai de Pendente Operacional sem ela (trigger demissao_exige_vaga). FALSE = sem reposição (redução de quadro) ou pedido da tela antiga.';
@@ -22824,3 +22808,69 @@ NOTIFY pgrst, 'reload schema';
 -- DROP FUNCTION IF EXISTS public.rec_custo_do_posto(text, text, numeric, text);
 -- DROP FUNCTION IF EXISTS public.rec_norm_txt(text);
 -- NOTIFY pgrst, 'reload schema';
+
+-- ===== 20260930000110_demissao_trigger_aceita_os_dois_nomes =====
+-- =========================================================================
+-- Demissão: trigger da vaga aceita os dois nomes da etapa 1; rename refeito
+--
+-- Complemento da 20260930000103 (que já rodou em produção — por isso esta é
+-- uma migration NOVA, regra R4: migration é append-only).
+--
+-- O QUE ACONTECEU (14/09/2026)
+--   1. A 103 rodava o UPDATE de status ANTES de recriar demissao_exige_vaga.
+--      A versão antiga do trigger viu "saiu de Pendente Analista sem vaga"
+--      e estourou na #57 (MARIA APARECIDA KUNZLER). Renomear a etapa não é
+--      fazer o pedido seguir — o trigger não pode barrar isso.
+--   2. A 103 foi aplicada no banco antes do deploy do front; a produção
+--      antiga (que lista só "Pendente Analista") deixou de ver as pendentes
+--      e os analistas viam contagens diferentes conforme a hora. O banco
+--      foi revertido pra "Pendente Analista" até o deploy, e depois do
+--      deploy o rename foi refeito.
+--
+-- O QUE ESTA MIGRATION FAZ
+--   • demissao_exige_vaga aceita 'Pendente Operacional' E 'Pendente
+--     Analista' como etapa 1 — cobre qualquer front (antigo ou novo) e
+--     qualquer ordem de aplicação/deploy.
+--   • Refaz o UPDATE Analista → Operacional, idempotente: é o que vale com
+--     o front novo no ar. Se por algum motivo o front antigo voltar, é este
+--     UPDATE invertido que devolve a visibilidade — não edite a 103.
+--
+-- Idempotente. Aplicar no banco do app (já aplicada em 14/09/2026).
+-- =========================================================================
+
+CREATE OR REPLACE FUNCTION public.demissao_exige_vaga()
+RETURNS trigger
+LANGUAGE plpgsql
+SET search_path = public, pg_temp
+AS $fn$
+BEGIN
+  -- Os dois nomes da etapa 1 são aceitos de propósito (ver cabeçalho).
+  IF NEW.vaga_obrigatoria
+     AND NEW.vaga_id IS NULL
+     AND OLD.status IN ('Pendente Operacional', 'Pendente Analista')
+     AND NEW.status NOT IN ('Pendente Operacional', 'Pendente Analista', 'Reprovada') THEN
+    RAISE EXCEPTION 'Esta demissão ainda não tem a vaga de reposição. Quem solicitou precisa abrir a vaga de Substituição de % antes de o pedido seguir.', NEW.colaborador_nome;
+  END IF;
+  RETURN NEW;
+END $fn$;
+
+DROP TRIGGER IF EXISTS trg_demissao_exige_vaga ON public."SISTEMA_SOLICITACOES_DEMISSAO";
+CREATE TRIGGER trg_demissao_exige_vaga
+  BEFORE UPDATE OF status ON public."SISTEMA_SOLICITACOES_DEMISSAO"
+  FOR EACH ROW EXECUTE FUNCTION public.demissao_exige_vaga();
+
+-- Depois do trigger, de propósito (ver item 1 do cabeçalho).
+UPDATE public."SISTEMA_SOLICITACOES_DEMISSAO"
+   SET status = 'Pendente Operacional'
+ WHERE status = 'Pendente Analista';
+
+NOTIFY pgrst, 'reload schema';
+
+-- Conferência: deve devolver 0.
+-- SELECT count(*) FROM public."SISTEMA_SOLICITACOES_DEMISSAO" WHERE status = 'Pendente Analista';
+
+-- =========================================================================
+-- ROLLBACK
+-- =========================================================================
+-- Reaplicar o bloco CREATE OR REPLACE FUNCTION public.demissao_exige_vaga()
+-- da 20260930000103 (só 'Pendente Operacional') e NOTIFY pgrst, 'reload schema';
