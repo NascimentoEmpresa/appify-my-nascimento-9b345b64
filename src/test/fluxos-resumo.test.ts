@@ -43,7 +43,8 @@ describe("catálogo de fluxos", () => {
   it("a sequência sai na ordem dos passos", () => {
     const f = fluxoPorCodigo("demissao")!;
     // Ordem trocada em 08/09/2026: o RH libera e o SST fecha agendando o ASO.
-    expect(sequenciaDe(f)).toBe("Encarregado → Analista → RH → SST");
+    // Em 14/09/2026 a etapa 1 voltou do analista para o Operacional.
+    expect(sequenciaDe(f)).toBe("Encarregado → Operacional → RH → SST");
   });
 });
 
@@ -51,7 +52,7 @@ describe("o resumo não pode divergir da regra", () => {
   it("os status citados na demissão existem no fluxo da demissão", () => {
     const citados = fluxoPorCodigo("demissao")!.passos
       .map(p => p.status).filter(Boolean) as string[];
-    expect(citados).toEqual(["Pendente Analista", "Pendente RH", "Pendente SST"]);
+    expect(citados).toEqual(["Pendente Operacional", "Pendente RH", "Pendente SST"]);
     for (const s of citados) expect(STATUS_DEMISSAO).toContain(s);
   });
 
@@ -64,10 +65,11 @@ describe("o resumo não pode divergir da regra", () => {
     for (const s of citados) expect(daRegra).toContain(s);
   });
 
-  it("os três fluxos que ganharam o analista dizem isso no texto", () => {
-    // "Pendente Analista" na demissão e na troca; no recrutamento o status tem
-    // o mesmo nome, mas ele não vem de uma lib — está no Recrutamento.tsx.
-    for (const codigo of ["demissao", "troca_funcao", "vaga"]) {
+  it("os fluxos que ficaram com o analista dizem isso no texto", () => {
+    // "Pendente Analista" na troca; no recrutamento o status tem o mesmo
+    // nome, mas ele não vem de uma lib — está no Recrutamento.tsx. A demissão
+    // saiu daqui em 14/09/2026: a etapa 1 dela voltou para o Operacional.
+    for (const codigo of ["troca_funcao", "vaga"]) {
       const f = fluxoPorCodigo(codigo)!;
       const temAnalista = f.passos.some(p => p.quem === "Analista");
       expect(temAnalista, `${codigo} deveria ter a etapa do analista`).toBe(true);
@@ -77,9 +79,16 @@ describe("o resumo não pode divergir da regra", () => {
   it("onde o analista aparece, ele é o primeiro a decidir", () => {
     // O pedido foi explícito: "PRIMEIRO o analista aprova". O passo 1 é sempre
     // o encarregado abrindo, então o analista tem que ser o passo 2.
-    for (const codigo of ["demissao", "troca_funcao", "vaga"]) {
+    for (const codigo of ["troca_funcao", "vaga"]) {
       const f = fluxoPorCodigo(codigo)!;
       expect(f.passos[1].quem, codigo).toBe("Analista");
     }
+  });
+
+  it("na demissão quem decide primeiro é o Operacional, e o analista só acompanha", () => {
+    // 14/09/2026: "agora o OPERACIONAL aprova e os analistas só veem".
+    const f = fluxoPorCodigo("demissao")!;
+    expect(f.passos[1].quem).toBe("Operacional");
+    expect(f.passos.some(p => p.quem === "Analista")).toBe(false);
   });
 });

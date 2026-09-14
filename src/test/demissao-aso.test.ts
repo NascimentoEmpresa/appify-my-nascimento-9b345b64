@@ -18,7 +18,7 @@ import {
 describe("status do fluxo de demissão", () => {
   it("o RH vem antes do SST, e o SST fecha", () => {
     const i = (s: string) => STATUS_TODOS.indexOf(s as (typeof STATUS_TODOS)[number]);
-    expect(i("Pendente Analista")).toBeLessThan(i("Pendente RH"));
+    expect(i("Pendente Operacional")).toBeLessThan(i("Pendente RH"));
     expect(i("Pendente RH")).toBeLessThan(i("Pendente SST"));
     expect(i("Pendente SST")).toBeLessThan(i(STATUS_SST_RECEBIDA));
     expect(i(STATUS_SST_RECEBIDA)).toBeLessThan(i(STATUS_SST_AGENDADO));
@@ -36,10 +36,10 @@ describe("status do fluxo de demissão", () => {
     expect(STATUS_FINAIS).toContain("Concluída");
   });
 
-  it("a primeira etapa é do analista, não do Operacional", () => {
-    expect(STATUS_TODOS).toContain("Pendente Analista");
-    expect(STATUS_TODOS).not.toContain("Pendente Operacional");
-    expect(explicaStatus("Pendente Analista")).toMatch(/analista/i);
+  it("a primeira etapa é do Operacional, não do analista (voltou em 14/09/2026)", () => {
+    expect(STATUS_TODOS).toContain("Pendente Operacional");
+    expect(STATUS_TODOS).not.toContain("Pendente Analista");
+    expect(explicaStatus("Pendente Operacional")).toMatch(/operacional/i);
   });
 
   it("cada status se explica sozinho para quem só acompanha", () => {
@@ -128,14 +128,14 @@ describe("podeDevolver", () => {
     expect(podeDevolver("sst", "Pendente RH")).toBe(false);
     expect(podeDevolver("rh", "Pendente SST")).toBe(false);
     expect(podeDevolver("rh", "Concluída")).toBe(false);
-    expect(podeDevolver("sst", "Pendente Analista")).toBe(false);
+    expect(podeDevolver("sst", "Pendente Operacional")).toBe(false);
   });
 
   it("o analista e o Operacional não devolvem", () => {
     // O analista REPROVA (a solicitação morre); devolver é dele para trás, e
     // atrás dele só tem o encarregado. O Operacional não decide nada.
-    expect(podeDevolver("analista", "Pendente Analista")).toBe(false);
-    expect(podeDevolver("operacional", "Pendente Analista")).toBe(false);
+    expect(podeDevolver("analista", "Pendente Operacional")).toBe(false);
+    expect(podeDevolver("operacional", "Pendente Operacional")).toBe(false);
   });
 });
 
@@ -145,7 +145,7 @@ describe("patchDevolucao", () => {
   it("volta para a fila do analista, não para o Operacional", () => {
     // O Operacional é somente-leitura na demissão: devolver para lá encalharia
     // o card onde ninguém pode mexer.
-    expect(p.status).toBe("Pendente Analista");
+    expect(p.status).toBe("Pendente Operacional");
   });
 
   it("grava quem devolveu, de onde e por quê", () => {

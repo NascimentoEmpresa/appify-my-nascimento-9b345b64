@@ -25,6 +25,8 @@ import {
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { semCodigoFilial } from "@/lib/rh/colaboradoresUtils";
+import { usePostos } from "@/hooks/useSupCatalogo";
+import { solicitacaoEmAberto, type SolicitacaoEmAberto } from "@/lib/solicitacoes/duplicidade";
 
 const sb = supabase as any;
 
@@ -32,11 +34,19 @@ const sb = supabase as any;
  * Solicitar Demissão — wizard do encarregado (4 passos).
  *
  * O caminho é o mesmo de Solicitar Vaga: o encarregado ESCOLHE o colaborador
- * e o cadastro preenche o resto. Posto, contrato e escala chegam travados de
- * propósito — se dessem para editar, a demissão poderia apontar para um posto
- * que a pessoa não ocupa, e é o operacional que descobriria isso depois.
+ * e o cadastro preenche o resto. Contrato e escala chegam travados de
+ * propósito — se dessem para editar, a demissão poderia apontar para um
+ * contrato que a pessoa não ocupa, e é o operacional que descobriria isso
+ * depois.
  *
- * Ao enviar, a solicitação nasce em "Pendente Analista". A tela também
+ * O POSTO (14/09/2026) é escolhido na lista do catálogo de Suprimentos do
+ * contrato do colaborador — a mesma que a vaga usa. O cadastro do Senior
+ * ("Organograma"/"Descrição do Local") vem vazio ou desatualizado em muita
+ * gente, e o campo travado ficava em branco sem jeito de preencher. Quando
+ * o cadastro bate com um posto da lista, já vem selecionado; quando o
+ * contrato não tem postos no catálogo, cai no valor do cadastro travado.
+ *
+ * Ao enviar, a solicitação nasce em "Pendente Operacional". A tela também
  * lista o que este encarregado já pediu, com o status de cada uma: o pedido
  * era acompanhar do começo ao fim, não só abrir e esperar aviso.
  */
@@ -79,6 +89,16 @@ export default function SolicitarDemissao() {
   const [passo, setPasso] = useState(0);
   const [form, setForm] = useState({ ...VAZIO });
   const [colaborador, setColaborador] = useState<EmpregadoEscolhido | null>(null);
+  // Já tem demissão em aberto (ou concluída) para quem foi escolhido? O
+  // banco responde (solicitacao_em_aberto) e o passo 1 não avança.
+  const [duplicada, setDuplicada] = useState<SolicitacaoEmAberto | null>(null);
+  useEffect(() => {
+    let vivo = true;
+    setDuplicada(null);
+    if (!colaborador?.id) return;
+    solicitacaoEmAberto(sb, "demissao", colaborador.id).then((d) => { if (vivo) setDuplicada(d); });
+    return () => { vivo = false; };
+  }, [colaborador?.id]);
   const [arquivos, setArquivos] = useState<File[]>([]);
   const [enviando, setEnviando] = useState(false);
   const [protocolo, setProtocolo] = useState<number | null>(null);
@@ -162,6 +182,38 @@ export default function SolicitarDemissao() {
       && String(c["NOME CONTRATO"] ?? "").trim().toUpperCase() === alvo) ?? null;
   }, [contratos, nomeContrato, colaborador?.filial]);
 
+  // Posto: lista do catálogo de Suprimentos (contratos → sup_posto) do
+  // contrato do colaborador. O catálogo não tem o código da filial e a
+  // CONTRATOS não tem o id do catálogo — o casamento é pelo nome, igual ao
+  // que ModalNovaVaga faz no sentido inverso.
+  const [contratosCatalogo, setContratosCatalogo] = useState<{ id: string; nome: string }[]>([]);
+  useEffect(() => {
+    (async () => {
+      const { data } = await sb.from("contratos").select("id, nome").order("nome");
+      setContratosCatalogo(data ?? []);
+    })();
+  }, []);
+  const chaveNome = (s: unknown) => String(s ?? "").trim().toUpperCase().replace(/\s+/g, " ");
+  const contratoCatalogoId = useMemo(() => {
+    const alvo = chaveNome(semCodigoFilial(nomeContrato));
+    if (!alvo) return null;
+    return contratosCatalogo.find((c) => chaveNome(c.nome) === alvo)?.id ?? null;
+  }, [contratosCatalogo, nomeContrato]);
+  const { data: postosCatalogo = [] } = usePostos(contratoCatalogoId);
+  const [postoNome, setPostoNome] = useState("");
+  // Trocou de colaborador ou chegou a lista: pré-seleciona o posto do
+  // cadastro quando ele existe no catálogo (comparando sem o "1109 - ").
+  useEffect(() => {
+    const doCadastro = chaveNome(semCodigoFilial(colaborador?.posto ?? ""));
+    const achou = postosCatalogo.find((p) => chaveNome(p.nome) === doCadastro);
+    setPostoNome(achou ? achou.nome : "");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [colaborador?.id, postosCatalogo]);
+  const temListaDePostos = postosCatalogo.length > 0;
+  // O que vai gravado em colaborador_posto: o escolhido na lista, ou o do
+  // cadastro quando o contrato não tem postos no catálogo.
+  const postoFinal = temListaDePostos ? postoNome : (colaborador?.posto ?? "");
+
   // Minhas solicitações, para acompanhar o andamento sem sair da tela.
   const [minhas, setMinhas] = useState<SolicitacaoDemissao[]>([]);
   const carregarMinhas = async (email: string) => {
@@ -210,6 +262,8 @@ export default function SolicitarDemissao() {
       if (!form.data_solicitacao) return "Informe a data da solicitação.";
       if (!solicitante.nome || !solicitante.email) return "Não consegui identificar você. Recarregue a página.";
       if (!colaborador) return "Escolha o colaborador na lista.";
+      if (duplicada) return duplicada.mensagem;
+      if (temListaDePostos && !postoNome) return "Selecione o posto do colaborador.";
       return null;
     }
     if (p === 1) {
@@ -256,7 +310,7 @@ export default function SolicitarDemissao() {
       colaborador_id: colaborador!.id,
       colaborador_nome: colaborador!.nome,
       colaborador_cpf: colaborador!.cpf || null,
-      colaborador_posto: colaborador!.posto || null,
+      colaborador_posto: postoFinal || null,
       colaborador_cargo: colaborador!.cargo || null,
       colaborador_filial: colaborador!.nomeFilial || colaborador!.filial || null,
       colaborador_admissao: colaborador!.admissao,
@@ -276,7 +330,7 @@ export default function SolicitarDemissao() {
       vaga_obrigatoria: querSubstituicao,
       // Ver a nota igual em MinhasSolicitacoes: a etapa 1 passou para o
       // analista, e o status antigo não cai em fila nenhuma.
-      status: "Pendente Analista",
+      status: "Pendente Operacional",
     };
 
     const { data: criada, error } = await sb.from(TABELA).insert(payload).select("id").single();
@@ -391,7 +445,7 @@ export default function SolicitarDemissao() {
     <div className="mx-auto max-w-3xl">
       <PageHeader
         title="Solicitar Demissão"
-        subtitle="Escolha o colaborador e preencha os dados do desligamento. O analista aprova, o SST marca o ASO demissional e o RH confirma."
+        subtitle="Escolha o colaborador e preencha os dados do desligamento. O Operacional aprova, o RH libera e o SST marca o ASO demissional."
         module="Encarregados"
         breadcrumb={["Recursos Humanos", "Solicitar Demissão"]}
         actions={<ResumoDeFuncoes fluxo="demissao" />}
@@ -438,11 +492,33 @@ export default function SolicitarDemissao() {
                 <Label>Nome completo do(a) colaborador(a) *</Label>
                 <BuscaColaborador valor={colaborador} onEscolher={escolherColaborador} />
                 <p className="mt-1 text-xs text-muted-foreground">
-                  Escolha na lista. Posto, contrato e escala vêm do cadastro e não podem ser trocados.
+                  Escolha na lista. Contrato e escala vêm do cadastro e não podem ser trocados.
                 </p>
+                {duplicada && (
+                  <div className="mt-2 rounded-lg border border-destructive/40 bg-destructive/5 p-3 text-sm text-destructive">
+                    <p className="font-semibold">🚫 Este colaborador já tem solicitação de demissão.</p>
+                    <p className="mt-0.5 text-destructive/90">{duplicada.mensagem} Escolha outro colaborador ou acompanhe a que já existe.</p>
+                  </div>
+                )}
               </div>
               <div className="grid gap-4 sm:grid-cols-2">
-                <CampoTravado label="Posto do(a) colaborador(a)" valor={colaborador?.posto ?? ""} />
+                {temListaDePostos ? (
+                  <div>
+                    <Label>Posto do(a) colaborador(a) *</Label>
+                    <Select value={postoNome} onValueChange={setPostoNome}>
+                      <SelectTrigger className="mt-1"><SelectValue placeholder="Selecione o posto" /></SelectTrigger>
+                      <SelectContent>
+                        {postosCatalogo.map((p) => <SelectItem key={p.id} value={p.nome}>{p.nome}</SelectItem>)}
+                      </SelectContent>
+                    </Select>
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      Postos do contrato no catálogo de Suprimentos.
+                      {colaborador?.posto && !postoNome ? ` No cadastro consta "${colaborador.posto}".` : ""}
+                    </p>
+                  </div>
+                ) : (
+                  <CampoTravado label="Posto do(a) colaborador(a)" valor={colaborador?.posto ?? ""} />
+                )}
                 <CampoTravado label="Contrato" valor={nomeContrato} />
                 <CampoTravado label="Escala que trabalha" valor={colaborador?.escala ?? ""} />
                 <CampoTravado label="Cargo" valor={colaborador?.cargo ?? ""} />
@@ -584,7 +660,7 @@ export default function SolicitarDemissao() {
                 ["Solicitante", solicitante.nome],
                 ["E-mail do solicitante", solicitante.email],
                 ["Colaborador", colaborador?.nome ?? "—"],
-                ["Posto", colaborador?.posto || "—"],
+                ["Posto", postoFinal || "—"],
                 ["Contrato", nomeContrato || "—"],
                 ["Escala", colaborador?.escala || "—"],
                 ["Cargo", colaborador?.cargo || "—"],
