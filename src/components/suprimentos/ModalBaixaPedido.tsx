@@ -14,7 +14,7 @@ import {
   type TipoTag, type Baixa,
 } from "@/hooks/useSupEstoque";
 import { ModalTrajetoCorreio } from "@/components/suprimentos/ModalTrajetoCorreio";
-import { Lock, List, AlertTriangle, Loader2, Tag as TagIcon, MessageSquare, Map as MapIcon } from "lucide-react";
+import { Lock, List, AlertTriangle, Loader2, Tag as TagIcon, MessageSquare, Map as MapIcon, Car } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 
@@ -45,6 +45,7 @@ export interface PedidoParaBaixa {
   id: string; pedido_id: string; status: string; observacao: string | null;
   envio_tipo: "SUPERVISOR" | "CORREIO" | null; envio_rastreio: string | null;
   tipo_pedido: string; nome_colaborador: string; observacoes_solicitante: string | null;
+  retirado_em?: string | null; retirado_por_nome?: string | null;
   sup_pedido_item: ItemPedido[];
 }
 
@@ -77,7 +78,10 @@ export function ModalBaixaPedido({
   const chave = `${pedido?.id ?? ""}|${carregandoTags ? "…" : jaBaixadas.length}`;
   if (pedido && chave !== idAtual && !carregandoTags) {
     setIdAtual(chave);
-    setStatus(pedido.status);
+    // Pedido retirado pelo supervisor: o único passo que falta é despachar
+    // informando o tipo de envio. Já abre nele — é para isso que a pessoa
+    // clicou em Status.
+    setStatus(pedido.status === "RETIRADO PARA ENTREGA" ? "DESPACHADO" : pedido.status);
     setObservacao(pedido.observacao ?? "");
     setEnvioTipo(pedido.envio_tipo ?? "");
     setEnvioRastreio(pedido.envio_rastreio ?? "");
@@ -235,6 +239,16 @@ export function ModalBaixaPedido({
                   </Badge>
                 </span>
               </div>
+              {pedido?.status === "RETIRADO PARA ENTREGA" && (
+                <div className="mt-2 flex items-start gap-2 rounded-md border border-cyan-400/40 bg-cyan-50/60 p-2 text-xs dark:bg-cyan-950/20">
+                  <Car className="mt-0.5 h-3.5 w-3.5 shrink-0 text-cyan-700" />
+                  <p>
+                    Retirado por <strong>{pedido.retirado_por_nome ?? "—"}</strong>
+                    {pedido.retirado_em && <> em {new Date(pedido.retirado_em).toLocaleString("pt-BR", { dateStyle: "short", timeStyle: "short" })}</>}
+                    {" "}pelo QR code da etiqueta. Informe o tipo de envio para concluir o despacho.
+                  </p>
+                </div>
+              )}
               {pedido?.observacoes_solicitante && (
                 <div className="mt-2 flex items-start gap-2 rounded-md border border-amber-400/40 bg-amber-50/60 p-2 text-xs dark:bg-amber-950/20">
                   <MessageSquare className="mt-0.5 h-3.5 w-3.5 shrink-0 text-amber-600" />
@@ -249,9 +263,14 @@ export function ModalBaixaPedido({
                 <Select value={status} onValueChange={setStatus}>
                   <SelectTrigger><SelectValue /></SelectTrigger>
                   <SelectContent>
-                    {STATUS_PEDIDO.map((s) => (
-                      <SelectItem key={s} value={s}>{ESTILO_STATUS[s].rotulo}</SelectItem>
-                    ))}
+                    {/* "Retirado para entrega" só nasce do QR code — o banco
+                        recusa pelo modal. Aparece só para o pedido que já
+                        está nele, senão o Select ficaria sem opção marcada. */}
+                    {STATUS_PEDIDO
+                      .filter((s) => s !== "RETIRADO PARA ENTREGA" || pedido?.status === s)
+                      .map((s) => (
+                        <SelectItem key={s} value={s}>{ESTILO_STATUS[s].rotulo}</SelectItem>
+                      ))}
                   </SelectContent>
                 </Select>
               </div>

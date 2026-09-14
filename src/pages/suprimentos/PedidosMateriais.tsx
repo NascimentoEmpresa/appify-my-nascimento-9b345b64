@@ -26,7 +26,7 @@ import { useTagsDoPedido, useTagsDePedidos, buscarTagsDePedidos, type TagEmLote 
 import {
   Search, Package, Boxes, Clock, ShoppingCart, Truck, History as HistoryIcon,
   RefreshCw, Inbox, Download, ShieldAlert, Trash2, AlertTriangle, Pencil, Printer, FileText,
-  PackageSearch, PackageOpen,
+  PackageSearch, PackageOpen, Car,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { toast } from "sonner";
@@ -74,6 +74,8 @@ interface Pedido {
   sup_pedido_comprovacao: { id: string; status: StatusComprovacao; respondido_em: string | null }[] | { id: string; status: StatusComprovacao; respondido_em: string | null } | null;
   sup_pedido_item: { id: string; item_id: string | null; nome_item: string; tipo_item: string; tamanho: string | null; quantidade: number; litros: string | null; ordem: number }[];
 }
+  // Carimbados pela leitura do QR da etiqueta (sup_retirada_confirmar).
+  retirado_em: string | null; retirado_por_nome: string | null;
 
 interface EventoHistorico {
   id: string; acao: string; status_anterior: string | null; status_novo: string | null;
@@ -108,6 +110,10 @@ const ROTULO_CAMPO: Record<string, string> = {
 /** `true`/`false` e vazio não se leem numa trilha; aqui viram texto. */
 function valorLegivel(v: string | null): string {
   if (v === null || v === "") return "—";
+function fmtDataHora(iso: string) {
+  return new Date(iso).toLocaleString("pt-BR", { dateStyle: "short", timeStyle: "short" });
+}
+
   if (v === "true") return "Sim";
   if (v === "false") return "Não";
   return v;
@@ -169,6 +175,8 @@ function linhaExport(p: Pedido, i: ItemPedido | null, tags: TagEmLote[]) {
     Admissão: p.admissao ? "Sim" : "Não",
     "Tipo admissão": p.tipo_admissao ?? "",
     "Data admissão": p.admissao ? fmtDataBR(p.data_admissao) : "",
+    "Retirado por": p.retirado_por_nome ?? "",
+    "Retirado em": p.retirado_em ? fmtDataHora(p.retirado_em) : "",
     Item: i?.nome_item ?? "",
     Tamanho: i?.tamanho ?? "",
     Litros: i?.litros ?? "",
@@ -197,6 +205,7 @@ const ICONE_STATUS: Record<StatusVisivel, LucideIcon> = {
   "DESPACHADO_AGUARDANDO": Truck,
   "DESPACHADO_ENTREGUE": Truck,
   "CANCELADO": Inbox,
+  "RETIRADO PARA ENTREGA": Car,
 };
 
 export default function PedidosMateriais() {
@@ -297,6 +306,7 @@ export default function PedidosMateriais() {
         p.admissao ? "admissao admissão" : "",
         ...(p.sup_pedido_item ?? []).flatMap((i) => [i.nome_item, i.tamanho ?? ""]),
       ].filter(Boolean).join(" ").toLowerCase();
+        p.retirado_por_nome,
       return alvo.includes(t);
     });
   }, [pedidos, busca, filtroStatus, situacoes]);
@@ -710,6 +720,15 @@ function CardPedido({
                 </span>
               )}
             </div>
+          {/* Só enquanto a retirada ainda descreve o pedido: se o Compras
+              devolveu para "Aguardando envio", as colunas guardam uma retirada
+              que foi desfeita — a trilha completa fica no Histórico. */}
+          {p.retirado_em && (p.status === "RETIRADO PARA ENTREGA" || p.status === "DESPACHADO") && (
+            <>
+              <dt className="text-muted-foreground">Retirado</dt>
+              <dd className="truncate">{p.retirado_por_nome ?? "—"} · {fmtDataHora(p.retirado_em)}</dd>
+            </>
+          )}
           ) : rastreioCarregando ? (
             <p className="text-xs text-muted-foreground">Consultando os Correios…</p>
           ) : null
@@ -1003,3 +1022,4 @@ function ModalHistorico({ pedido, onFechar }: { pedido: Pedido | null; onFechar:
     </Dialog>
   );
 }
+                    : e.acao === "RETIRADA" ? "Retirado para entrega (QR code)"
