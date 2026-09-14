@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { CurrencyInput } from "@/components/ui/CurrencyInput";
@@ -11,7 +11,7 @@ import {
   AlertDialogContent, AlertDialogDescription, AlertDialogFooter,
   AlertDialogHeader, AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { Search, FileCheck, CircleDollarSign } from "lucide-react";
+import { Search, FileCheck, CircleDollarSign, FileDown, ListChecks, TrendingUp, CheckCircle2, AlertTriangle } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { useEmpresaAtiva } from "@/context/EmpresaAtivaContext";
@@ -21,14 +21,19 @@ import {
   NfEmissaoItemRow,
   useNfsEmissao,
   useItensNfEmissao,
+  useItensNfEmissaoEmLote,
   useRegistrarPagamentoNf,
   TIPOS_NOTA,
 } from "@/hooks/useNfEmissao";
 import { calcularItem, calcularTotaisNf, pctEfetivo, ItemCalculado } from "@/pages/financeiro/nf-emissao/calculos";
-import { fmtMoney, fmtDate, situacaoEspecial } from "@/pages/financeiro/nf-emissao/shared";
+import {
+  fmtMoney, fmtDate, situacaoEspecial, statusDaNota, pendenteHaMaisDe30Dias, moneyTextContains, valorPendenteNf,
+} from "@/pages/financeiro/nf-emissao/shared";
 import { ItensNfEditor, ItemForm } from "@/pages/financeiro/nf-emissao/ItensNfEditor";
 import { registrarLogNf } from "@/pages/financeiro/nf-emissao/registrarLogNf";
 import { HistoricoNfPainel } from "@/pages/financeiro/nf-emissao/HistoricoNfPainel";
+import { KpiTile } from "@/components/financeiro/KpiTile";
+import { ColumnFilterHead } from "./ColumnFilterHead";
 
 type StatusFiltro = "todos" | "pendente" | "pago" | "substituida" | "cancelada";
 
@@ -39,13 +44,6 @@ const STATUS_FILTRO_LABEL: Record<StatusFiltro, string> = {
   substituida: "Substituída",
   cancelada: "Cancelada",
 };
-
-function statusDaNota(n: NfEmissaoRow): Exclude<StatusFiltro, "todos"> {
-  const esp = situacaoEspecial(n);
-  if (esp === "CANCELADA") return "cancelada";
-  if (esp === "SUBSTITUIDA") return "substituida";
-  return n.data_pagamento ? "pago" : "pendente";
-}
 
 function PagamentoBadge({ nf }: { nf: NfEmissaoRow }) {
   if (nf.data_pagamento) {
@@ -113,6 +111,20 @@ export default function NotasConcluidasTab() {
   const [nfSelecionada, setNfSelecionada] = useState<NfEmissaoRow | null>(null);
   const [filtroStatus, setFiltroStatus] = useState<StatusFiltro>("todos");
   const [buscaNf, setBuscaNf] = useState("");
+  // SIS-2026-0323 (mockup do Ruan/Discord, pedido explícito do usuário):
+  // filtro por cabeçalho de coluna (funil), não faixa de filtros inline —
+  // o usuário achou a faixa inline "estranha" e preferiu o padrão do protótipo.
+  const [colFiltros, setColFiltros] = useState<Record<string, string>>({});
+  const [filtroOver30, setFiltroOver30] = useState(false);
+
+  function setColFiltro(chave: string, valor: string) {
+    setColFiltros((prev) => {
+      const next = { ...prev };
+      if (valor) next[chave] = valor;
+      else delete next[chave];
+      return next;
+    });
+  }
 
   const concluidas = useMemo(() => nfs.filter((n) => n.status === "concluida"), [nfs]);
   const contratoPorId = useMemo(() => new Map(contratos.map((c) => [c.id, c])), [contratos]);
@@ -140,15 +152,34 @@ export default function NotasConcluidasTab() {
     return (n.variacao ?? "").toLowerCase().includes(termo) || (n.numero_nf ?? "").toLowerCase().includes(termo);
   }
 
+  function bateColFiltros(n: NfEmissaoRow) {
+    const cf = colFiltros;
+    if (cf.nf && !(n.numero_nf ?? "").toLowerCase().includes(cf.nf.toLowerCase())) return false;
+    if (cf.codigo && n.tipo_nota !== cf.codigo) return false;
+    if (cf.emissao && n.data_emissao !== cf.emissao) return false;
+    if (cf.competencia && n.competencia !== cf.competencia) return false;
+    if (cf.variacao && !(n.variacao ?? "").toLowerCase().includes(cf.variacao.toLowerCase())) return false;
+    if (cf.executado && !moneyTextContains(n.valor_contrato_exec_total, cf.executado)) return false;
+    if (cf.contabil && !moneyTextContains(n.vlr_bruto_total, cf.contabil)) return false;
+    if (cf.liquido && !moneyTextContains(n.vlr_liquido_total, cf.liquido)) return false;
+    if (cf.pagamento && n.data_pagamento !== cf.pagamento) return false;
+    if (cf.recebido && !moneyTextContains(n.valor_pago ?? 0, cf.recebido)) return false;
+    if (cf.contaVinculada && !moneyTextContains(n.desconto_conta_vinculada, cf.contaVinculada)) return false;
+    if (cf.status && STATUS_FILTRO_LABEL[statusDaNota(n)] !== cf.status) return false;
+    if (filtroOver30 && !pendenteHaMaisDe30Dias(n)) return false;
+    return true;
+  }
+
   const nfsDoContrato = useMemo(() => {
     const termo = buscaNf.trim().toLowerCase();
     return concluidas.filter(
       (n) =>
         n.contrato_id === contratoSel &&
         (filtroStatus === "todos" || statusDaNota(n) === filtroStatus) &&
-        bateBuscaNf(n, termo)
+        bateBuscaNf(n, termo) &&
+        bateColFiltros(n)
     );
-  }, [concluidas, contratoSel, filtroStatus, buscaNf]);
+  }, [concluidas, contratoSel, filtroStatus, buscaNf, colFiltros, filtroOver30]);
 
   // Sem contrato selecionado, mas com filtro de status e/ou busca de NF ativos:
   // lista achatada cruzando todos os contratos (ex: "me mostra todas as
@@ -158,13 +189,94 @@ export default function NotasConcluidasTab() {
     if (contratoSel || (filtroStatus === "todos" && !buscaNf.trim())) return [];
     const termo = buscaNf.trim().toLowerCase();
     return concluidas
-      .filter((n) => (filtroStatus === "todos" || statusDaNota(n) === filtroStatus) && bateBuscaNf(n, termo))
+      .filter((n) => (filtroStatus === "todos" || statusDaNota(n) === filtroStatus) && bateBuscaNf(n, termo) && bateColFiltros(n))
       .sort((a, b) => b.competencia.localeCompare(a.competencia));
-  }, [concluidas, contratoSel, filtroStatus, buscaNf]);
+  }, [concluidas, contratoSel, filtroStatus, buscaNf, colFiltros, filtroOver30]);
+
+  const linhasVisiveis = contratoAtual ? nfsDoContrato : nfsFlatFiltradas;
+
+  const opcoesFiltro = useMemo(() => {
+    const base = contratoSel ? concluidas.filter((n) => n.contrato_id === contratoSel) : concluidas;
+    return {
+      competencias: [...new Set(base.map((n) => n.competencia))].sort().reverse(),
+      variacoes: [...new Set(base.map((n) => n.variacao).filter(Boolean))].sort() as string[],
+    };
+  }, [concluidas, contratoSel]);
+
+  // KPIs do contrato selecionado (mesmos 4 do protótipo) — precisa dos
+  // itens de cada NF pra calcular o "Valor pendente de recebimento" certo.
+  const { data: itensContrato } = useItensNfEmissaoEmLote(nfsDoContrato.map((n) => n.id));
+  const kpisContrato = useMemo(() => {
+    let executado = 0, faturado = 0, recebido = 0, pendente = 0;
+    for (const n of nfsDoContrato) {
+      executado += n.valor_contrato_exec_total;
+      faturado += n.vlr_bruto_total;
+      recebido += n.valor_pago ?? 0;
+      pendente += valorPendenteNf(n, itensContrato?.get(n.id) ?? []);
+    }
+    return { executado, faturado, recebido, pendente };
+  }, [nfsDoContrato, itensContrato]);
+
+  // SIS-2026-0323 (pedido do usuário): mesmo divisor arrastável já usado
+  // em PlanilhaCusto.tsx entre a lista de contratos e a tabela.
+  const [leftWidth, setLeftWidth] = useState(340);
+  const dragging = useRef(false);
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  function onMouseDownResize(e: React.MouseEvent) {
+    dragging.current = true;
+    e.preventDefault();
+    function onMove(ev: MouseEvent) {
+      if (!dragging.current || !containerRef.current) return;
+      const rect = containerRef.current.getBoundingClientRect();
+      const newW = Math.min(Math.max(ev.clientX - rect.left, 220), rect.width - 320);
+      setLeftWidth(newW);
+    }
+    function onUp() {
+      dragging.current = false;
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onUp);
+    }
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+  }
+
+  function limparFiltrosExtras() {
+    setColFiltros({});
+    setFiltroOver30(false);
+  }
+
+  function exportarExcel() {
+    if (linhasVisiveis.length === 0) {
+      toast.error("Não há registros para exportar com os filtros atuais.");
+      return;
+    }
+    import("xlsx").then((XLSX) => {
+      const linhas = linhasVisiveis.map((nf) => ({
+        Contrato: nf.contrato?.nome ?? "-",
+        Competência: nf.competencia,
+        Variação: nf.variacao ?? "-",
+        "Nº NF": nf.numero_nf ?? "-",
+        Código: nf.tipo_nota,
+        "Data de emissão": fmtDate(nf.data_emissao),
+        "Valor executado": nf.valor_contrato_exec_total,
+        "Valor Bruto": nf.vlr_bruto_total,
+        "Valor Líquido": nf.vlr_liquido_total,
+        "Data de pagamento": fmtDate(nf.data_pagamento),
+        "Valor Pago": nf.valor_pago ?? 0,
+        "Desconto conta vinculada": nf.desconto_conta_vinculada,
+        "Status atual": STATUS_FILTRO_LABEL[statusDaNota(nf)],
+      }));
+      const ws = XLSX.utils.json_to_sheet(linhas);
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, ws, "Por Contrato");
+      XLSX.writeFile(wb, `Relatorio_de_Servicos_${new Date().toISOString().slice(0, 10)}.xlsx`);
+    });
+  }
 
   return (
-    <div className="grid grid-cols-5 gap-4 h-[calc(100vh-220px)] min-h-[480px]">
-      <div className="col-span-2 card-elevated flex flex-col overflow-hidden">
+    <div ref={containerRef} className="flex h-[calc(100vh-220px)] min-h-[480px]">
+      <div style={{ width: leftWidth }} className="shrink-0 card-elevated flex flex-col overflow-hidden">
         <div className="border-b border-border p-3">
           <div className="relative">
             <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
@@ -221,7 +333,12 @@ export default function NotasConcluidasTab() {
         </div>
       </div>
 
-      <div className="col-span-3 card-elevated flex flex-col overflow-hidden">
+      <div
+        onMouseDown={onMouseDownResize}
+        className="w-1.5 shrink-0 cursor-col-resize hover:bg-primary/30 transition-colors border-x border-border mx-1"
+      />
+
+      <div className="flex-1 min-w-0 card-elevated flex flex-col overflow-hidden">
         <div className="border-b border-border px-4 py-3 flex items-center gap-2 flex-wrap">
           <span className="text-xs font-medium text-muted-foreground mr-1">Status:</span>
           {(Object.keys(STATUS_FILTRO_LABEL) as StatusFiltro[]).map((s) => (
@@ -249,42 +366,84 @@ export default function NotasConcluidasTab() {
           </div>
         </div>
 
+        {/* SIS-2026-0323 (pedido explícito do usuário): filtro por
+            coluna (funil no cabeçalho, igual ao protótipo) substitui a
+            faixa de filtros inline — só sobra aqui o que não tem coluna
+            própria (Pendência >30d) + limpar + exportar. */}
+        <div className="border-b border-border px-4 py-2 flex items-center gap-2 flex-wrap text-xs">
+          <button
+            onClick={() => setFiltroOver30((v) => !v)}
+            className={cn(
+              "px-2.5 py-1 rounded-full border font-medium transition-colors",
+              filtroOver30 ? "bg-primary text-primary-foreground border-primary" : "bg-background border-border text-muted-foreground hover:border-primary/50"
+            )}
+          >
+            Pendente há mais de 30 dias
+          </button>
+          {(Object.keys(colFiltros).length > 0 || filtroOver30) && (
+            <button onClick={limparFiltrosExtras} className="text-muted-foreground hover:text-destructive">Limpar filtros</button>
+          )}
+          <Button size="sm" variant="outline" className="h-7 ml-auto text-xs" onClick={exportarExcel}>
+            <FileDown className="h-3.5 w-3.5 mr-1.5" /> Exportar Excel
+          </Button>
+        </div>
+
         {contratoAtual ? (
           <>
-            <div className="border-b border-border px-4 py-3">
-              <p className="text-sm font-semibold">{contratoAtual.nome}</p>
-              <p className="text-xs text-muted-foreground">{contratoAtual.cliente}</p>
+            <div className="border-b border-border px-4 py-3 space-y-3">
+              <div>
+                <p className="text-sm font-semibold">{contratoAtual.nome}</p>
+                <p className="text-xs text-muted-foreground">{contratoAtual.cliente}</p>
+              </div>
+              <div className="grid grid-cols-4 gap-2">
+                <KpiTile label="Valor Executado" valor={fmtMoney(kpisContrato.executado)} icon={<ListChecks />} cor="slate" />
+                <KpiTile label="Valor Faturado" valor={fmtMoney(kpisContrato.faturado)} icon={<TrendingUp />} cor="sky" />
+                <KpiTile label="Valor Recebido" valor={fmtMoney(kpisContrato.recebido)} icon={<CheckCircle2 />} cor="emerald" valorClass="text-emerald-600 dark:text-emerald-400" />
+                <KpiTile label="Val. Pendente de Recebimento" valor={fmtMoney(kpisContrato.pendente)} icon={<AlertTriangle />} cor="red" valorClass="text-red-600 dark:text-red-400" />
+              </div>
             </div>
             <div className="overflow-auto flex-1">
               <Table>
                 <TableHeader>
                   <TableRow>
-                    <TableHead>Competência</TableHead>
-                    <TableHead>Variação</TableHead>
-                    <TableHead>Nº NF</TableHead>
-                    <TableHead>Valor Bruto</TableHead>
-                    <TableHead>Valor Líquido</TableHead>
-                    <TableHead>Pagamento</TableHead>
+                    <ColumnFilterHead label="Nº NF" value={colFiltros.nf ?? ""} onApply={(v) => setColFiltro("nf", v)} />
+                    <ColumnFilterHead label="Código" value={colFiltros.codigo ?? ""} onApply={(v) => setColFiltro("codigo", v)} type="select" options={Object.keys(TIPOS_NOTA)} />
+                    <ColumnFilterHead label="Data de emissão" value={colFiltros.emissao ?? ""} onApply={(v) => setColFiltro("emissao", v)} type="date" />
+                    <ColumnFilterHead label="Competência" value={colFiltros.competencia ?? ""} onApply={(v) => setColFiltro("competencia", v)} type="select" options={opcoesFiltro.competencias} />
+                    <ColumnFilterHead label="Variação" value={colFiltros.variacao ?? ""} onApply={(v) => setColFiltro("variacao", v)} />
+                    <ColumnFilterHead label="Valor executado" value={colFiltros.executado ?? ""} onApply={(v) => setColFiltro("executado", v)} type="money" />
+                    <ColumnFilterHead label="Valor contábil" value={colFiltros.contabil ?? ""} onApply={(v) => setColFiltro("contabil", v)} type="money" />
+                    <ColumnFilterHead label="Valor líquido" value={colFiltros.liquido ?? ""} onApply={(v) => setColFiltro("liquido", v)} type="money" />
+                    <ColumnFilterHead label="Data de pagamento" value={colFiltros.pagamento ?? ""} onApply={(v) => setColFiltro("pagamento", v)} type="date" />
+                    <ColumnFilterHead label="Recebido" value={colFiltros.recebido ?? ""} onApply={(v) => setColFiltro("recebido", v)} type="money" />
+                    <ColumnFilterHead label="Desconto conta vinculada" value={colFiltros.contaVinculada ?? ""} onApply={(v) => setColFiltro("contaVinculada", v)} type="money" />
+                    <ColumnFilterHead label="Status" value={colFiltros.status ?? ""} onApply={(v) => setColFiltro("status", v)} type="select" options={Object.values(STATUS_FILTRO_LABEL).filter((l) => l !== "Todos")} />
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {nfsDoContrato.length === 0 && (
                     <TableRow>
-                      <TableCell colSpan={6} className="text-center text-muted-foreground py-8">
+                      <TableCell colSpan={12} className="text-center text-muted-foreground py-8">
                         Nenhuma NF {filtroStatus === "todos" ? "concluída" : STATUS_FILTRO_LABEL[filtroStatus].toLowerCase()} para este contrato{buscaNf.trim() ? " com essa busca" : ""}.
                       </TableCell>
                     </TableRow>
                   )}
                   {nfsDoContrato.map((nf) => (
                     <TableRow key={nf.id} className="cursor-pointer hover:bg-muted/50" onClick={() => setNfSelecionada(nf)}>
-                      <TableCell>
+                      <TableCell className="text-center font-medium">{nf.numero_nf ?? "-"}</TableCell>
+                      <TableCell className="text-center"><Badge variant="outline">{nf.tipo_nota}</Badge></TableCell>
+                      <TableCell className="text-center whitespace-nowrap">{fmtDate(nf.data_emissao)}</TableCell>
+                      <TableCell className="text-center whitespace-nowrap">
                         {new Date(nf.competencia + "T00:00:00").toLocaleDateString("pt-BR", { month: "2-digit", year: "numeric" })}
                       </TableCell>
-                      <TableCell>{nf.variacao ?? "-"}</TableCell>
-                      <TableCell>{nf.numero_nf ?? "-"}</TableCell>
-                      <TableCell>{fmtMoney(nf.vlr_bruto_total)}</TableCell>
-                      <TableCell>{fmtMoney(nf.vlr_liquido_total)}</TableCell>
-                      <TableCell>
+                      <TableCell className="text-center">{nf.variacao ?? "-"}</TableCell>
+                      <TableCell className="text-center whitespace-nowrap">{fmtMoney(nf.valor_contrato_exec_total)}</TableCell>
+                      <TableCell className="text-center whitespace-nowrap">{fmtMoney(nf.vlr_bruto_total)}</TableCell>
+                      <TableCell className="text-center whitespace-nowrap">{fmtMoney(nf.vlr_liquido_total)}</TableCell>
+                      <TableCell className="text-center whitespace-nowrap">{fmtDate(nf.data_pagamento)}</TableCell>
+                      <TableCell className="text-center whitespace-nowrap">{fmtMoney(nf.valor_pago ?? 0)}</TableCell>
+                      <TableCell className="text-center whitespace-nowrap">{fmtMoney(nf.desconto_conta_vinculada)}</TableCell>
+                      <TableCell className="text-center">
                         <PagamentoBadge nf={nf} />
                       </TableCell>
                     </TableRow>
@@ -298,34 +457,46 @@ export default function NotasConcluidasTab() {
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead>Contrato</TableHead>
-                  <TableHead>Competência</TableHead>
-                  <TableHead>Variação</TableHead>
-                  <TableHead>Nº NF</TableHead>
-                  <TableHead>Valor Bruto</TableHead>
-                  <TableHead>Valor Líquido</TableHead>
-                  <TableHead>Pagamento</TableHead>
+                  <TableHead className="text-center">Contrato</TableHead>
+                  <ColumnFilterHead label="Nº NF" value={colFiltros.nf ?? ""} onApply={(v) => setColFiltro("nf", v)} />
+                  <ColumnFilterHead label="Código" value={colFiltros.codigo ?? ""} onApply={(v) => setColFiltro("codigo", v)} type="select" options={Object.keys(TIPOS_NOTA)} />
+                  <ColumnFilterHead label="Data de emissão" value={colFiltros.emissao ?? ""} onApply={(v) => setColFiltro("emissao", v)} type="date" />
+                  <ColumnFilterHead label="Competência" value={colFiltros.competencia ?? ""} onApply={(v) => setColFiltro("competencia", v)} type="select" options={opcoesFiltro.competencias} />
+                  <ColumnFilterHead label="Variação" value={colFiltros.variacao ?? ""} onApply={(v) => setColFiltro("variacao", v)} />
+                  <ColumnFilterHead label="Valor executado" value={colFiltros.executado ?? ""} onApply={(v) => setColFiltro("executado", v)} type="money" />
+                  <ColumnFilterHead label="Valor contábil" value={colFiltros.contabil ?? ""} onApply={(v) => setColFiltro("contabil", v)} type="money" />
+                  <ColumnFilterHead label="Valor líquido" value={colFiltros.liquido ?? ""} onApply={(v) => setColFiltro("liquido", v)} type="money" />
+                  <ColumnFilterHead label="Data de pagamento" value={colFiltros.pagamento ?? ""} onApply={(v) => setColFiltro("pagamento", v)} type="date" />
+                  <ColumnFilterHead label="Recebido" value={colFiltros.recebido ?? ""} onApply={(v) => setColFiltro("recebido", v)} type="money" />
+                  <ColumnFilterHead label="Desconto conta vinculada" value={colFiltros.contaVinculada ?? ""} onApply={(v) => setColFiltro("contaVinculada", v)} type="money" />
+                  <ColumnFilterHead label="Status" value={colFiltros.status ?? ""} onApply={(v) => setColFiltro("status", v)} type="select" options={Object.values(STATUS_FILTRO_LABEL).filter((l) => l !== "Todos")} />
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {nfsFlatFiltradas.length === 0 && (
                   <TableRow>
-                    <TableCell colSpan={7} className="text-center text-muted-foreground py-8">
+                    <TableCell colSpan={13} className="text-center text-muted-foreground py-8">
                       Nenhuma NF encontrada com esse filtro/busca.
                     </TableCell>
                   </TableRow>
                 )}
                 {nfsFlatFiltradas.map((nf) => (
                   <TableRow key={nf.id} className="cursor-pointer hover:bg-muted/50" onClick={() => setNfSelecionada(nf)}>
-                    <TableCell className="max-w-[220px] truncate">{contratoPorId.get(nf.contrato_id)?.nome ?? "-"}</TableCell>
-                    <TableCell>
+                    <TableCell className="max-w-[220px] truncate text-center">{contratoPorId.get(nf.contrato_id)?.nome ?? "-"}</TableCell>
+                    <TableCell className="text-center font-medium">{nf.numero_nf ?? "-"}</TableCell>
+                    <TableCell className="text-center"><Badge variant="outline">{nf.tipo_nota}</Badge></TableCell>
+                    <TableCell className="text-center whitespace-nowrap">{fmtDate(nf.data_emissao)}</TableCell>
+                    <TableCell className="text-center whitespace-nowrap">
                       {new Date(nf.competencia + "T00:00:00").toLocaleDateString("pt-BR", { month: "2-digit", year: "numeric" })}
                     </TableCell>
-                    <TableCell>{nf.variacao ?? "-"}</TableCell>
-                    <TableCell>{nf.numero_nf ?? "-"}</TableCell>
-                    <TableCell>{fmtMoney(nf.vlr_bruto_total)}</TableCell>
-                    <TableCell>{fmtMoney(nf.vlr_liquido_total)}</TableCell>
-                    <TableCell>
+                    <TableCell className="text-center">{nf.variacao ?? "-"}</TableCell>
+                    <TableCell className="text-center whitespace-nowrap">{fmtMoney(nf.valor_contrato_exec_total)}</TableCell>
+                    <TableCell className="text-center whitespace-nowrap">{fmtMoney(nf.vlr_bruto_total)}</TableCell>
+                    <TableCell className="text-center whitespace-nowrap">{fmtMoney(nf.vlr_liquido_total)}</TableCell>
+                    <TableCell className="text-center whitespace-nowrap">{fmtDate(nf.data_pagamento)}</TableCell>
+                    <TableCell className="text-center whitespace-nowrap">{fmtMoney(nf.valor_pago ?? 0)}</TableCell>
+                    <TableCell className="text-center whitespace-nowrap">{fmtMoney(nf.desconto_conta_vinculada)}</TableCell>
+                    <TableCell className="text-center">
                       <PagamentoBadge nf={nf} />
                     </TableCell>
                   </TableRow>

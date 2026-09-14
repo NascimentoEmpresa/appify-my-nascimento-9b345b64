@@ -48,6 +48,65 @@ export function situacaoEspecial(n: {
   return null;
 }
 
+// SIS-2026-0323: movida de NotasConcluidasTab.tsx pra cá — Relatório Geral
+// e Dashboard também precisam classificar o status de cada NF.
+export type StatusNota = "pendente" | "pago" | "substituida" | "cancelada";
+
+export function statusDaNota(n: {
+  situacao_site_pmt?: string | null;
+  situacao_dominio?: string | null;
+  data_pagamento?: string | null;
+}): StatusNota {
+  const esp = situacaoEspecial(n);
+  if (esp === "CANCELADA") return "cancelada";
+  if (esp === "SUBSTITUIDA") return "substituida";
+  return n.data_pagamento ? "pago" : "pendente";
+}
+
+// SIS-2026-0323 (mockup do Ruan/Discord): descontos aplicados DEPOIS da
+// emissão da NF (multas/glosas/outros) só existem a nível de item — soma
+// todos os itens de uma NF.
+export function somaDescontosPosEmissao(itens: { multas_pos_emissao: number; glosas_pos_emissao: number; outros_descontos_pos_emissao: number }[]): number {
+  return itens.reduce((s, it) => s + (it.multas_pos_emissao || 0) + (it.glosas_pos_emissao || 0) + (it.outros_descontos_pos_emissao || 0), 0);
+}
+
+// Fórmula do protótipo de referência, confirmada com o usuário: valor
+// pendente de recebimento NÃO incorpora os campos de reconciliação manual
+// (Falta receber/Pago a mais/Recebimento extra) — só líquido, valor pago,
+// desconto de conta vinculada e descontos pós-emissão dos itens.
+// SIS-2026-0323: filtro "Pendência > 30 dias" do mockup — dias corridos
+// desde a data de emissão até hoje.
+export function diasDesdeEmissao(dataEmissao: string | null | undefined): number | null {
+  if (!dataEmissao) return null;
+  const emissao = new Date(dataEmissao + "T00:00:00");
+  if (isNaN(emissao.getTime())) return null;
+  const hoje = new Date();
+  hoje.setHours(0, 0, 0, 0);
+  return Math.floor((hoje.getTime() - emissao.getTime()) / 86_400_000);
+}
+
+// SIS-2026-0323 (mockup do Ruan/Discord): filtro por cabeçalho de coluna
+// pra campos monetários faz "contém" no texto formatado em BRL (mesma
+// lógica do protótipo — busca solta, não faixa numérica).
+export function moneyTextContains(valor: number, termo: string): boolean {
+  if (!termo.trim()) return true;
+  return fmtMoney(valor).toLowerCase().includes(termo.trim().toLowerCase());
+}
+
+export function pendenteHaMaisDe30Dias(n: { situacao_site_pmt?: string | null; situacao_dominio?: string | null; data_pagamento?: string | null; data_emissao?: string | null }): boolean {
+  if (statusDaNota(n) !== "pendente") return false;
+  const dias = diasDesdeEmissao(n.data_emissao);
+  return dias !== null && dias > 30;
+}
+
+export function valorPendenteNf(
+  nf: { vlr_liquido_total: number; valor_pago: number | null; desconto_conta_vinculada: number },
+  itens: { multas_pos_emissao: number; glosas_pos_emissao: number; outros_descontos_pos_emissao: number }[],
+): number {
+  const pos = somaDescontosPosEmissao(itens);
+  return Math.max(0, nf.vlr_liquido_total - (nf.valor_pago ?? 0) - nf.desconto_conta_vinculada - pos);
+}
+
 export function itemVazio(ordem: number) {
   return {
     identificacao: `Item ${ordem}`,
