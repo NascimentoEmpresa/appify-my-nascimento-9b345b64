@@ -2,7 +2,8 @@
 // ETL — sistema antigo (Postgres na Render) -> Supabase
 //
 // Uso:  node etl.mjs <fase> [--commit]
-//       fases: referencias | pedidos | estoque | patrimonio | catalogo | cotacoes
+//       fases: referencias | pedidos | estoque | estoque_sync | patrimonio | catalogo | cotacoes
+//       (depois de 14/09/2026, recarga de estoque é `estoque_sync`, não `estoque`)
 //       sem --commit é SIMULAÇÃO: faz tudo e dá ROLLBACK no fim.
 //
 // A origem é lida em REPEATABLE READ: o sistema antigo continua em uso e as
@@ -20,7 +21,7 @@ const FASE = process.argv[2];
 const COMMIT = process.argv.includes('--commit');
 const BASE = 'c:/Users/Eduardo Monteiro/Desktop/Projeto_ERP_LOVABLE/migracao-sistema-antigo';
 
-const FASES = ['referencias', 'pedidos', 'estoque', 'patrimonio', 'catalogo', 'cotacoes'];
+const FASES = ['referencias', 'pedidos', 'estoque', 'estoque_sync', 'patrimonio', 'catalogo', 'cotacoes'];
 if (!FASES.includes(FASE)) {
   console.error(`fase invalida. use uma de: ${FASES.join(' | ')}`);
   process.exit(1);
@@ -71,6 +72,11 @@ const CONTRATO_MANUAL = {
   'BENTO GONÇALVES LIMPEZA 0672019': 'e30b03a4-9ecc-4cd1-8e71-8e68c93ab202',
   'CANOINHAS - EMBRAPA': 'f372953a-9a98-43ef-978d-0d63fb930d4d',
   'VERANOPOLIS RECEPÇÃO-011.2026': '5ad2d171-6855-470a-ab22-747e2a6e18f8',
+  // Recarga de 14/09/2026: contratos que o legado passou a usar depois de
+  // agosto. Mesmo nome no destino, só com "/" no lugar de "." no número.
+  'IRGA APOIO ADMINISTRATIVO - 049.2026': '00f6d3d1-77f3-4a49-98ff-46c877cc1543',
+  'CEITEC LIMPEZA - 025.2026': '7ff2a4a6-e909-433f-8b9b-a9346a1f4624',
+  'UFRGS COPA E COZINHA - 025.2025': '204ec86a-9d2b-4ed0-a472-161c4e946227',
 };
 const POSTO_MANUAL = { // origem "CAT (Centro de Atenção ao Turista) Praça Dante Alighieri"
   'CAT (Centro de Atenção ao Turista) Praça Dante Alighieri': 'CAT PRAÇAS',
@@ -150,7 +156,7 @@ async function main() {
   await destino.query('BEGIN');
   try {
     await carregarDestino();
-    const fn = { referencias, pedidos, estoque, patrimonio, catalogo, cotacoes }[FASE];
+    const fn = { referencias, pedidos, estoque, estoque_sync: estoqueSync, patrimonio, catalogo, cotacoes }[FASE];
     await fn();
 
     console.log(`\n=== ${FASE.toUpperCase()} ===`);
@@ -279,6 +285,16 @@ async function referencias() {
 // `tags` é ignorada de propósito: NULL nas 1.230 linhas, coluna morta.
 // =====================================================================
 async function pedidos() {
+  // Recarga de 14/09/2026: depois da carga de agosto nasceram gatilhos em
+  // sup_pedido que não conhecem o legado. trg_sup_pedido_validar_envio exige
+  // envio_tipo em todo INSERT com status DESPACHADO — o legado nunca teve esse
+  // campo (os 1.084 despachados de agosto estão com NULL), e um único pedido
+  // despachado abortava a fase inteira. Em vez de inventar 'SUPERVISOR', os
+  // gatilhos ficam desligados SÓ nesta transação (SET LOCAL não alcança
+  // nenhuma outra sessão). Como isso desliga também as FKs, a integridade é
+  // conferida à mão no fim da fase, antes do COMMIT.
+  await destino.query('SET LOCAL session_replication_role = replica');
+
   const dc = deparaContratos();
   const rows = (await origem.query(`
     select id, pedido_id, nome_solicitante, nome_colaborador, matricula_colaborador,
@@ -297,6 +313,7 @@ async function pedidos() {
     if (!cid) semContrato++;
     if (!posto) semPosto++;
     if (!funcao) semFuncao++;
+    const criadoEm = p.data_criacao ?? new Date();
 
     const r = await destino.query(`
       insert into public.sup_pedido (
@@ -322,7 +339,7 @@ async function pedidos() {
       p.imagem_cracha_url ?? null, p.data_solicitacao, p.tipo_pedido ?? 'uniforme',
       p.observacoes_solicitante ?? null, p.observacao ?? null,
       p.status ?? 'EM PREPARACAO', p.data_despachado ?? null,
-      p.data_criacao ?? new Date(), p.data_atualizacao ?? new Date(), p.id,
+      criadoEm, p.data_atualizacao ?? new Date(), p.id,
     ]);
 
     if (!r.rows.length) { jaExistia++; continue; }
@@ -336,21 +353,67 @@ async function pedidos() {
       if (!nome) semNome++;
       const item = nome ? D.itemPorEmpresa.get(empresaId)?.get(frouxa(nome)) : null;
       const qtd = Number.parseInt(e.quantidade, 10);
+      // created_at igual ao do pedido: é assim que trg_sup_pedido_item_log_edicao
+      // reconhece item que nasceu junto com o pedido (e não uma edição posterior).
       await destino.query(`
         insert into public.sup_pedido_item
-          (pedido_id, item_id, nome_item, tipo_item, tamanho, quantidade, litros, ordem, legado_origem)
-        values ($1,$2,$3,$4,$5,$6,$7,$8,'pedidos_site_externo.equipamentos')`, [
+          (pedido_id, item_id, nome_item, tipo_item, tamanho, quantidade, litros, ordem, legado_origem, created_at)
+        values ($1,$2,$3,$4,$5,$6,$7,$8,'pedidos_site_externo.equipamentos',$9)`, [
         pedidoUuid, item?.id ?? null,
         nome ?? '(sem nome no legado)',
         item?.tipo ?? (tipoDoPedido[p.tipo_pedido] || 'uniforme'),
         vazio(e.tamanho) ? null : String(e.tamanho).trim(),
         Number.isFinite(qtd) && qtd > 0 ? qtd : 1,
         vazio(e.litros) ? null : String(e.litros).trim(),
-        i,
+        i, criadoEm,
       ]);
       itens++;
     }
   }
+
+  // ── status que andou no legado depois da migração ─────────────────
+  // O INSERT acima é "do nothing" no conflito, então um pedido migrado como
+  // AGUARDANDO COMPRA e despachado depois no sistema antigo ficava parado
+  // (199 casos em 14/09/2026). Só se sobrescreve pedido que ninguém operou no
+  // sistema novo — ter linha em sup_pedido_historico é o sinal de que alguém
+  // mexeu lá, e aí quem decide é gente, não o script.
+  const origemPorId = new Map(rows.map((p) => [String(p.id), p]));
+  const migrados = (await destino.query(`
+    select p.id, p.legado_id, p.pedido_id, p.status,
+           exists (select 1 from public.sup_pedido_historico h where h.pedido_id = p.id) mexido
+      from public.sup_pedido p where p.legado_origem = 'pedidos_site_externo'`)).rows;
+  let statusAtualizado = 0; const mexidos = [];
+  for (const m of migrados) {
+    const p = origemPorId.get(String(m.legado_id));
+    const statusOrigem = p?.status ?? 'EM PREPARACAO';
+    if (!p || statusOrigem === m.status) continue;
+    if (m.mexido) { mexidos.push(`${m.pedido_id}: novo=${m.status} antigo=${statusOrigem}`); continue; }
+    await destino.query(`
+      update public.sup_pedido
+         set status = $2, data_despachado = $3, observacao = $4,
+             updated_at = coalesce($5, updated_at)
+       where id = $1`, [m.id, statusOrigem, p.data_despachado ?? null, p.observacao ?? null, p.data_atualizacao]);
+    statusAtualizado++;
+  }
+
+  // ── integridade: as FKs ficaram desligadas nesta transação ─────────
+  const fks = (await destino.query(`
+    select c.conrelid::regclass::text tabela, a.attname coluna,
+           c.confrelid::regclass::text alvo, af.attname alvo_col
+      from pg_constraint c
+      join pg_attribute a  on a.attrelid  = c.conrelid  and a.attnum  = c.conkey[1]
+      join pg_attribute af on af.attrelid = c.confrelid and af.attnum = c.confkey[1]
+     where c.contype = 'f' and array_length(c.conkey, 1) = 1
+       and c.conrelid in ('public.sup_pedido'::regclass, 'public.sup_pedido_item'::regclass)`)).rows;
+  for (const fk of fks) {
+    const n = +(await destino.query(`
+      select count(*) n from ${fk.tabela} t
+       where t."${fk.coluna}" is not null
+         and not exists (select 1 from ${fk.alvo} x where x."${fk.alvo_col}" = t."${fk.coluna}")`)).rows[0].n;
+    if (n) throw new Error(`${n} linha(s) de ${fk.tabela}.${fk.coluna} sem par em ${fk.alvo}`);
+  }
+  conta(`FKs conferidas sem órfão (${fks.length} chaves)`, fks.length);
+
   conta('pedidos inseridos', novos);
   conta('pedidos que já estavam lá (rodada repetida)', jaExistia);
   conta('itens de pedido inseridos', itens);
@@ -358,6 +421,9 @@ async function pedidos() {
   conta('  — pedidos sem posto ligado', semPosto);
   conta('  — pedidos sem função ligada', semFuncao);
   conta('  — itens sem nome na origem', semNome);
+  conta('já migrados com STATUS ATUALIZADO pelo legado', statusAtualizado);
+  conta('status divergente NÃO tocado (operado no sistema novo)', mexidos.length);
+  for (const x of mexidos) console.log('  [não tocado]', x);
 }
 // =====================================================================
 // FASE 3 — estoque: ficha -> material, e o detalhe desce para a etiqueta
@@ -563,6 +629,284 @@ async function estoque() {
   conta('  — com pedido religado', cComPedido);
   conta('  — com pedido só no texto', cSemPedido);
   conta('  — sem material (item apagado na origem)', cSemItem);
+}
+
+// =====================================================================
+// FASE 3b — estoque_sync: espelha o estado ATUAL de cada etiqueta do legado
+//
+// Recarga de 14/09/2026. A fase `estoque` só insere ("do nothing" no
+// conflito), então tudo o que o sistema antigo movimentou depois de 19/08 —
+// 1.117 peças únicas usadas e 1.798 unidades em massa consumidas — nunca
+// desceu, e o saldo novo mostrava 2.281 unidades a mais que o antigo.
+// Decisão do Eduardo: o saldo novo passa a ser o do antigo, descontado o que
+// só o sistema novo movimentou.
+//
+// É por etiqueta, e não por saldo agregado, porque cada peça usada no antigo
+// fica usada aqui ligada ao pedido (que a fase `pedidos` trouxe) — e é esse
+// vínculo peça → colaborador que o alerta de EPI vencendo usa.
+//
+// Etiqueta TOCADA pelo sistema novo (baixa, consumo, remoção, reserva) não é
+// sobrescrita: a única fica como está; a em massa recebe a quantidade do
+// antigo menos o que o novo já tirou dela.
+//
+// Ficha antiga -> material novo é pelo RASTRO (legado_id das etiquetas de
+// agosto), não pelo nome: a Aprovação de Catálogo renomeou itens ("3,6X300"
+// virou "300X3,6"), e casar por nome criaria o material de novo.
+//
+// Material que o legado criou depois de agosto nasce APROVADO (decisão do
+// Eduardo, 14/09): pendente, ninguém veria nem baixaria — foi o incidente do
+// enxoval no mesmo dia. O código de 7 dígitos vem do trg_sup_item_gerar_codigo.
+// =====================================================================
+async function estoqueSync() {
+  const q = async (sql, p) => (await destino.query(sql, p)).rows;
+
+  const reservasAtivas = +(await q(`select count(*) n from public.sup_estoque_reserva where situacao = 'ATIVA'`))[0].n;
+  if (reservasAtivas) throw new Error(`${reservasAtivas} reserva(s) ativa(s): o acerto desliga a guarda de reserva, então recusa rodar`);
+
+  const pedidoPorProtocolo = new Map((await q('select id, pedido_id from public.sup_pedido')).map((r) => [r.pedido_id, r.id]));
+  const fichas = (await origem.query(`
+    select id, nome, tipo_item, localizacao, valor_unitario, estoque_minimo, validade, fornecedor, estado
+      from estoque_items`)).rows;
+  const fichaInfo = new Map(fichas.map((f) => [f.id, f]));
+  const tags = (await origem.query(`
+    select id, item_id, tag_id, tamanho, sequencia, usado, pedido_id, usado_em, usado_por,
+           tipo_tag, quantidade_massa, quantidade_original_massa, valor_unitario
+      from estoque_tags order by id`)).rows;
+  const idsNaOrigem = new Set(tags.map((t) => String(t.id)));
+
+  // ── estado do destino ─────────────────────────────────────────────
+  const dTags = await q(`
+    select t.id, t.codigo, t.legado_origem, t.legado_id, t.item_estoque_id, t.tipo, t.usado,
+           t.quantidade_massa, t.tamanho, t.pedido_id_legado, t.usado_por, ei.sup_item_id, ei.empresa_id
+      from public.sup_estoque_tag t join public.sup_estoque_item ei on ei.id = t.item_estoque_id`);
+  const dPorLegado = new Map(dTags.filter((t) => t.legado_origem === 'estoque_tags' && t.legado_id != null)
+    .map((t) => [String(t.legado_id), t]));
+  const dPorCodigo = new Map(dTags.map((t) => [t.codigo, t]));
+
+  // o que o sistema novo tirou de cada etiqueta, e quem ele tocou
+  const tiradoNoNovo = new Map();
+  const tirou = (cod, n) => tiradoNoNovo.set(cod, (tiradoNoNovo.get(cod) ?? 0) + n);
+  for (const r of await q(`select codigo, sum(quantidade)::int n from public.sup_estoque_consumo
+                            where legado_origem is null group by 1`)) tirou(r.codigo, r.n);
+  for (const r of await q(`select codigo, sum(quantidade)::int n from public.sup_estoque_movimento
+                            where tipo = 'remocao' group by 1`)) tirou(r.codigo, r.n);
+  const tocadoCod = new Set([...tiradoNoNovo.keys(),
+    ...(await q(`select distinct codigo from public.sup_estoque_movimento where codigo is not null`)).map((r) => r.codigo)]);
+  const tocadoId = new Set((await q(`select distinct tag_id from public.sup_estoque_reserva where tag_id is not null`)).map((r) => r.tag_id));
+  const tocada = (d) => tocadoCod.has(d.codigo) || tocadoId.has(d.id) || d.usado_por != null;
+
+  // ── ficha antiga -> material novo ─────────────────────────────────
+  const votos = new Map();
+  for (const t of tags) {
+    const d = dPorLegado.get(String(t.id)); if (!d) continue;
+    const v = votos.get(t.item_id) ?? new Map(); votos.set(t.item_id, v);
+    v.set(d.sup_item_id, (v.get(d.sup_item_id) ?? 0) + 1);
+  }
+  const eiLegado = new Map((await q(`select legado_id, sup_item_id from public.sup_estoque_item
+    where legado_origem = 'estoque_items'`)).map((r) => [String(r.legado_id), r.sup_item_id]));
+  const itensHAGG = D.itemPorEmpresa.get(D.HAGG) ?? new Map();
+  const fichaParaItem = new Map();
+  const lig = { rastro: 0, ficha: 0, nome: 0, criado: 0, lixo: 0, semEtiqueta: 0 };
+  const criados = [];
+  const fichasComEtiqueta = new Set(tags.map((t) => t.item_id));
+  // para apontar possível duplicata: o material do catálogo com mais palavras em comum
+  const palavras = (s) => new Set(norm(s).split(/[^A-Z0-9]+/).filter((w) => w.length >= 3));
+  const catalogoHAGG = [...itensHAGG.values()].map((i) => ({ i, p: palavras(i.nome) }));
+  const parecido = (nome) => {
+    const p = palavras(nome); let melhor = null, nota = 0;
+    for (const c of catalogoHAGG) {
+      const comum = [...p].filter((w) => c.p.has(w)).length;
+      const j = comum / (new Set([...p, ...c.p]).size || 1);
+      if (j > nota) { nota = j; melhor = c.i; }
+    }
+    return nota >= 0.5 ? `${melhor.codigo ?? ''} ${melhor.nome} (${Math.round(nota * 100)}%)` : '';
+  };
+  for (const f of fichas) {
+    const v = votos.get(f.id);
+    if (v?.size) { fichaParaItem.set(f.id, [...v].sort((a, b) => b[1] - a[1])[0][0]); lig.rastro++; continue; }
+    if (eiLegado.has(String(f.id))) { fichaParaItem.set(f.id, eiLegado.get(String(f.id))); lig.ficha++; continue; }
+    const k = frouxa(f.nome);
+    if (!k || k.length < 2 || /^[0-9]*$/.test(k)) { lig.lixo++; continue; }  // nome-lixo, como em agosto
+    const achado = itensHAGG.get(k);
+    if (achado) { fichaParaItem.set(f.id, achado.id); lig.nome++; continue; }
+    // ficha sem nenhuma etiqueta não põe nada no estoque: criar o material só
+    // sujaria o catálogo
+    if (!fichasComEtiqueta.has(f.id)) { lig.semEtiqueta++; continue; }
+    const dica = parecido(f.nome);
+    // gatilhos ainda LIGADOS aqui: é o trg_sup_item_gerar_codigo que dá o código
+    const r = (await q(`insert into public.sup_item (empresa_id, nome, tipo, ativo, aprovado, legado_origem)
+      values ($1,$2,$3,true,true,'legado') returning id, nome, codigo`, [D.HAGG, f.nome.trim(), tipoItem(f.tipo_item)]))[0];
+    itensHAGG.set(k, r); fichaParaItem.set(f.id, r.id); lig.criado++;
+    criados.push(`${r.codigo}  ${r.nome}${dica ? `   <-- parecido com ${dica}` : ''}`);
+  }
+
+  // ── material -> ficha de estoque no almoxarifado da HAGG ──────────
+  const eiPorItem = new Map((await q(`select id, sup_item_id from public.sup_estoque_item where almoxarifado_id = $1`,
+    [D.almoxHAGG])).map((r) => [r.sup_item_id, r.id]));
+  const eiMap = new Map(); // ficha antiga -> { ei, sid }
+  let eiCriados = 0;
+  for (const fid of new Set(tags.map((t) => t.item_id))) {
+    const sid = fichaParaItem.get(fid); if (!sid) continue;
+    if (!eiPorItem.has(sid)) {
+      const f = fichaInfo.get(fid);
+      await q(`insert into public.sup_estoque_item
+          (empresa_id, almoxarifado_id, sup_item_id, valor_unitario, estoque_minimo, fornecedor, validade, localizacao)
+        values ($1,$2,$3,$4,$5,$6,$7,$8) on conflict do nothing`, [D.HAGG, D.almoxHAGG, sid,
+        f?.valor_unitario ?? 0, f?.estoque_minimo ?? 0, vazio(f?.fornecedor) ? null : f.fornecedor.trim(),
+        f?.validade ?? null, vazio(f?.localizacao) ? null : f.localizacao.trim()]);
+      eiPorItem.set(sid, (await q(`select id from public.sup_estoque_item where almoxarifado_id = $1 and sup_item_id = $2`,
+        [D.almoxHAGG, sid]))[0].id);
+      eiCriados++;
+    }
+    eiMap.set(fid, { ei: eiPorItem.get(sid), sid });
+  }
+
+  // Daqui em diante os gatilhos ficam desligados SÓ nesta transação.
+  // sst_ca_guard_baixa barraria baixar lote de EPI com CA vencido — mas isto é
+  // acerto de inventário, não entrega a colaborador. A guarda de reserva foi
+  // coberta acima (zero reserva ativa). As FKs são conferidas no fim.
+  await destino.query('SET LOCAL session_replication_role = replica');
+  const AUTOR = 'Acerto com o sistema antigo (14/09/2026)';
+
+  let tNova = 0, tAtual = 0, tIgual = 0, tTocMassa = 0, tTocUnica = 0, tPulada = 0, tRepontada = 0, tConflito = 0;
+  const repontadas = new Set();
+  for (const t of tags) {
+    const m = eiMap.get(t.item_id);
+    if (!m) { tPulada++; continue; }
+    const f = fichaInfo.get(t.item_id);
+    const massa = norm(t.tipo_tag) === 'MASSA';
+    const qtd = massa ? Math.max(t.quantidade_massa ?? 0, 0) : null;
+    const tamanho = vazio(t.tamanho) ? null : t.tamanho.trim();
+    const pedidoUuid = t.pedido_id ? pedidoPorProtocolo.get(t.pedido_id) ?? null : null;
+    const usadoPor = vazio(t.usado_por) ? null : t.usado_por.trim();
+    const d = dPorLegado.get(String(t.id));
+
+    if (d) {
+      if (tocada(d)) {
+        if (d.tipo !== 'massa' || !massa) { tTocUnica++; continue; }
+        const alvo = Math.max(qtd - (tiradoNoNovo.get(d.codigo) ?? 0), 0);
+        if (alvo === d.quantidade_massa) { tIgual++; continue; }
+        await q(`update public.sup_estoque_tag set quantidade_massa = $2, usado = ($2 = 0) where id = $1`, [d.id, alvo]);
+        tTocMassa++; continue;
+      }
+      const igual = d.tipo === (massa ? 'massa' : 'unico') && d.usado === (t.usado ?? false)
+        && (d.quantidade_massa ?? null) === qtd && (d.tamanho ?? null) === tamanho
+        && (d.pedido_id_legado ?? null) === (t.pedido_id ?? null);
+      if (igual) { tIgual++; continue; }
+      await q(`update public.sup_estoque_tag
+          set tipo = $2, usado = $3, quantidade_massa = $4, quantidade_original_massa = $5, tamanho = $6,
+              pedido_id = $7, pedido_id_legado = $8, usado_em = $9, usado_por_nome = $10
+        where id = $1`, [d.id, massa ? 'massa' : 'unico', t.usado ?? false, qtd,
+        massa ? t.quantidade_original_massa ?? null : null, tamanho, pedidoUuid, t.pedido_id ?? null,
+        t.usado_em ?? null, usadoPor]);
+      tAtual++; continue;
+    }
+
+    const valores = [m.ei, t.tag_id, tamanho, t.sequencia ?? 1, massa ? 'massa' : 'unico', qtd,
+      massa ? t.quantidade_original_massa ?? null : null, t.valor_unitario ?? f?.valor_unitario ?? null,
+      norm(f?.estado) === 'HIGIENIZADO' ? 'higienizado' : 'novo', t.usado ?? false, pedidoUuid,
+      t.pedido_id ?? null, t.usado_em ?? null, usadoPor,
+      vazio(f?.localizacao) ? null : f.localizacao.trim(), vazio(f?.fornecedor) ? null : f.fornecedor.trim(), t.id];
+
+    // código reaproveitado pelo antigo (ver a fase `estoque`): reponta a linha órfã
+    const dono = dPorCodigo.get(t.tag_id);
+    if (dono) {
+      const orfa = dono.legado_origem === 'estoque_tags' && !idsNaOrigem.has(String(dono.legado_id));
+      // Órfã que o novo já movimentou: foi o caso de EPI-0022 e EPI-0013 em
+      // 14/09 (lote apagado e recriado no antigo, e 1 unidade baixada aqui).
+      // Mesma regra de qualquer lote tocado: quantidade do antigo menos o que
+      // o novo tirou, sem apagar o histórico que o novo gravou nela.
+      if (orfa && tocada(dono) && dono.tipo === 'massa' && massa) {
+        const alvo = Math.max(qtd - (tiradoNoNovo.get(dono.codigo) ?? 0), 0);
+        await q(`update public.sup_estoque_tag set quantidade_massa = $2, usado = ($2 = 0), legado_id = $3 where id = $1`,
+          [dono.id, alvo, t.id]);
+        repontadas.add(dono.id); tRepontada++; continue;
+      }
+      if (!orfa || tocada(dono)) {
+        console.warn(`  ! código ${t.tag_id} já pertence a outra etiqueta viva no destino — pulada`);
+        tConflito++; continue;
+      }
+      await q(`update public.sup_estoque_tag
+          set item_estoque_id=$1, tamanho=$3, sequencia=$4, tipo=$5, quantidade_massa=$6,
+              quantidade_original_massa=$7, valor_unitario=$8, estado=$9, usado=$10, pedido_id=$11,
+              pedido_id_legado=$12, usado_em=$13, usado_por_nome=$14, localizacao=$15, fornecedor=$16, legado_id=$17
+        where codigo=$2`, valores);
+      repontadas.add(dono.id); tRepontada++; continue;
+    }
+    await q(`insert into public.sup_estoque_tag
+        (item_estoque_id, codigo, tamanho, sequencia, tipo, quantidade_massa, quantidade_original_massa,
+         valor_unitario, estado, usado, pedido_id, pedido_id_legado, usado_em, usado_por_nome,
+         localizacao, fornecedor, legado_id, legado_origem)
+      values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,'estoque_tags')`, valores);
+    tNova++;
+  }
+
+  // ── etiqueta que o antigo APAGOU: mesma remoção que a tela faz ─────
+  // (sup_est_remover_tag: movimento 'remocao' + DELETE). Usada ou tocada pelo
+  // novo fica — ela é histórico de entrega, não saldo.
+  let apagadas = 0, apagadasMantidas = 0;
+  for (const d of dTags) {
+    if (d.legado_origem !== 'estoque_tags' || idsNaOrigem.has(String(d.legado_id)) || repontadas.has(d.id)) continue;
+    if (tocada(d) || d.usado) { apagadasMantidas++; continue; }
+    const n = d.tipo === 'massa' ? (d.quantidade_massa ?? 0) : 1;
+    if (n > 0) await q(`insert into public.sup_estoque_movimento
+        (empresa_id, item_estoque_id, sup_item_id, codigo, tipo, quantidade, tamanho, observacao, usuario_nome)
+      values ($1,$2,$3,$4,'remocao',$5,$6,'Etiqueta apagada no sistema antigo',$7)`,
+      [d.empresa_id, d.item_estoque_id, d.sup_item_id, d.codigo, n, d.tamanho, AUTOR]);
+    await q('delete from public.sup_estoque_tag where id = $1', [d.id]);
+    apagadas++;
+  }
+
+  // ── consumo das etiquetas em massa: só o que falta ────────────────
+  const jaTem = new Set((await q(`select legado_id from public.sup_estoque_consumo
+    where legado_origem = 'estoque_tags_consumo'`)).map((r) => String(r.legado_id)));
+  const cons = (await origem.query(`select id, tag_id, item_id, pedido_id, quantidade, consumido_em, consumido_por
+    from estoque_tags_consumo order by id`)).rows;
+  let cOk = 0;
+  for (const c of cons) {
+    if (jaTem.has(String(c.id))) continue;
+    await q(`insert into public.sup_estoque_consumo
+        (codigo, item_estoque_id, pedido_id, pedido_item_id, quantidade,
+         consumido_em, consumido_por_nome, pedido_id_legado, legado_origem, legado_id)
+      values ($1,$2,$3,null,$4,$5,$6,$7,'estoque_tags_consumo',$8)`, [
+      c.tag_id, eiMap.get(c.item_id)?.ei ?? null, c.pedido_id ? pedidoPorProtocolo.get(c.pedido_id) ?? null : null,
+      c.quantidade ?? 1, c.consumido_em ?? null, vazio(c.consumido_por) ? null : c.consumido_por.trim(),
+      c.pedido_id ?? null, c.id]);
+    cOk++;
+  }
+
+  // ── integridade: FKs ficaram desligadas nesta transação ───────────
+  const fks = await q(`
+    select c.conrelid::regclass::text tabela, a.attname coluna, c.confrelid::regclass::text alvo, af.attname alvo_col
+      from pg_constraint c
+      join pg_attribute a  on a.attrelid  = c.conrelid  and a.attnum  = c.conkey[1]
+      join pg_attribute af on af.attrelid = c.confrelid and af.attnum = c.confkey[1]
+     where c.contype = 'f' and array_length(c.conkey, 1) = 1
+       and (c.conrelid  = any (array['public.sup_estoque_tag','public.sup_estoque_item','public.sup_estoque_consumo','public.sup_estoque_movimento']::regclass[])
+         or c.confrelid = any (array['public.sup_estoque_tag','public.sup_estoque_item']::regclass[]))`);
+  for (const fk of fks) {
+    const n = +(await q(`select count(*) n from ${fk.tabela} t where t."${fk.coluna}" is not null
+      and not exists (select 1 from ${fk.alvo} x where x."${fk.alvo_col}" = t."${fk.coluna}")`))[0].n;
+    if (n) throw new Error(`${n} linha(s) de ${fk.tabela}.${fk.coluna} sem par em ${fk.alvo}`);
+  }
+  await destino.query('SET LOCAL session_replication_role = origin');
+
+  conta(`fichas: rastro ${lig.rastro} · ficha ${lig.ficha} · nome ${lig.nome} · lixo ${lig.lixo} · sem etiqueta ${lig.semEtiqueta}`, fichas.length);
+  conta('materiais CRIADOS (aprovados, com código)', lig.criado);
+  conta('fichas de estoque criadas no almoxarifado', eiCriados);
+  conta('etiquetas iguais nos dois lados', tIgual);
+  conta('etiquetas ATUALIZADAS pelo estado do antigo', tAtual);
+  conta('etiquetas NOVAS trazidas do antigo', tNova);
+  conta('  — código reaproveitado: órfã repontada', tRepontada);
+  conta('  — código disputado (pulada)', tConflito);
+  conta('tocadas pelo novo: em massa recalculadas', tTocMassa);
+  conta('tocadas pelo novo: únicas mantidas como estão', tTocUnica);
+  conta('apagadas no antigo: removidas aqui', apagadas);
+  conta('apagadas no antigo: mantidas (usadas/tocadas)', apagadasMantidas);
+  conta('etiquetas puladas (ficha de nome-lixo)', tPulada);
+  conta('linhas de consumo novas', cOk);
+  conta(`FKs conferidas sem órfão`, fks.length);
+  for (const c of criados) console.log('  [material criado]', c);
 }
 // =====================================================================
 // FASE 4 — patrimônio: só o que falta, mais anexos e logs
