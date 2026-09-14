@@ -188,13 +188,33 @@ export function useItens(empresaId: string | null) {
     queryKey: ["sup_item", empresaId],
     enabled: !!empresaId,
     queryFn: async (): Promise<Item[]> => {
-      const { data, error } = await sb
-        .from("sup_item")
-        .select("id, nome, tipo, ativo, aprovado")
-        .eq("ativo", true)
-        .order("nome");
-      if (error) throw error;
-      return data ?? [];
+      /**
+       * Paginado de propósito. Sem `.range()` o PostgREST devolve no máximo
+       * 1000 linhas e não avisa. A migração do sistema antigo criou um
+       * sup_item por empresa, o catálogo passou de 1000, e em ordem alfabética
+       * o corte caía por volta do "L": LUVA DE LATEX, LUVA GREEN etc. estavam
+       * no Estoque, mas "sumiam" ao adicionar material no enxoval (14/09/2026).
+       * Mesmo sintoma do SIS-2026-0201 em Pedidos de Materiais.
+       *
+       * `id` como desempate: sem ele, nomes repetidos entre empresas podem
+       * trocar de página entre uma consulta e outra e um deles se perder.
+       */
+      const PAGINA = 1000;
+      const todos: Item[] = [];
+      for (let de = 0; ; de += PAGINA) {
+        const { data, error } = await sb
+          .from("sup_item")
+          .select("id, nome, tipo, ativo, aprovado")
+          .eq("ativo", true)
+          .order("nome")
+          .order("id")
+          .range(de, de + PAGINA - 1);
+        if (error) throw error;
+        const lote = data ?? [];
+        todos.push(...lote);
+        if (lote.length < PAGINA) break;
+      }
+      return todos;
     },
   });
 }
