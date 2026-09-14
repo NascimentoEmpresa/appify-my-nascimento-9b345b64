@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useMemo } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
 import { ConversaSolicitacao } from "@/components/solicitacoes/ConversaSolicitacao";
+import { FiltroContratos, passaNoFiltroContratos } from "@/components/solicitacoes/FiltroContratos";
 import { useVinculoEmpregado } from "@/hooks/useVinculoEmpregado";
 import { ResumoDeFuncoes } from "@/components/fluxos/ResumoDeFuncoes";
 
@@ -45,7 +46,8 @@ export default function Advertencias() {
   const [analistaPorContrato, setAnalistaPorContrato] = useState<Record<string, string>>({});
   const [aba, setAba] = useState("Aguardando Aprovação");
   const [busca, setBusca] = useState("");
-  const [fContrato, setFContrato] = useState("");
+  // Filtros · Contratos (14/09/2026): multi, com contagem — era um select de um só.
+  const [fContratos, setFContratos] = useState<string[]>([]);
   const [toasts, setToasts] = useState<{ id: number; msg: string; t: string }[]>([]);
 
   // modais de ação
@@ -78,13 +80,12 @@ export default function Advertencias() {
   }, [empregado?.id, analistaPorContrato]);
 
   const counts = useMemo(() => { const c: Record<string, number> = {}; for (const r of rows) c[r.status] = (c[r.status] || 0) + 1; return c; }, [rows]);
-  const contratosDistintos = useMemo(() => [...new Set(rows.map(r => r.contrato).filter(Boolean))].sort(), [rows]);
   const filtradas = useMemo(() => rows.filter(r => {
     if (aba && r.status !== aba) return false;
-    if (fContrato && r.contrato !== fContrato) return false;
+    if (!passaNoFiltroContratos(r, "contrato", fContratos)) return false;
     if (busca) { const q = busca.toLowerCase(); return [r.colaborador_nome, r.contrato, r.tipo_advertencia, r.grau, r.solicitante_nome].some(x => String(x || "").toLowerCase().includes(q)); }
     return true;
-  }), [rows, aba, busca, fContrato]);
+  }), [rows, aba, busca, fContratos]);
 
   const aprovarAdv = async (a: Adv) => {
     if (!confirm(`Aprovar a advertência de ${a.colaborador_nome}? Vai para o Jurídico.`)) return;
@@ -138,10 +139,7 @@ export default function Advertencias() {
               {s}{counts[s] ? ` (${counts[s]})` : ""}
             </button>
           ))}
-          <select value={fContrato} onChange={e => setFContrato(e.target.value)} style={{ marginLeft: "auto", height: 36, border: `1px solid ${fContrato ? "#0f3171" : "#cbd5e1"}`, borderRadius: 9, padding: "0 11px", fontSize: 13, minWidth: 200, fontWeight: fContrato ? 700 : 400, color: fContrato ? "#0f3171" : "#475569" }}>
-            <option value="">Todos os contratos</option>
-            {contratosDistintos.map(c => <option key={c} value={c}>{c}</option>)}
-          </select>
+          <div style={{ marginLeft: "auto" }}><FiltroContratos linhas={rows} campo="contrato" selecionados={fContratos} onChange={setFContratos} /></div>
           <input value={busca} onChange={e => setBusca(e.target.value)} placeholder="Buscar colaborador, contrato, tipo…" style={{ height: 36, border: "1px solid #cbd5e1", borderRadius: 9, padding: "0 11px", fontSize: 13, minWidth: 220 }} />
         </div>
 
