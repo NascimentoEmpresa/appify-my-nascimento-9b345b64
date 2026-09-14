@@ -21626,3 +21626,387 @@ NOTIFY pgrst, 'reload schema';
 -- DELETE FROM public.app_menu_acao WHERE menu_codigo IN ('recrutamento_solicitacao_editar','recrutamento_solicitacao_excluir');
 -- DELETE FROM public.app_menu       WHERE codigo      IN ('recrutamento_solicitacao_editar','recrutamento_solicitacao_excluir');
 -- NOTIFY pgrst, 'reload schema';
+
+-- ===== 20260930000101_ferias_excecao_prazo =====
+-- =========================================================================
+-- RH — Férias: exceção de prazo (saída com menos de 30 dias)
+--
+-- Até 14/09/2026 a tela barrava a solicitação com saída a menos de 30 dias
+-- da data de hoje. Agora ela deixa passar, mas avisa que está FORA DO PRAZO
+-- e que pode ser recusada; quem confirma ("Solicitar mesmo assim") manda a
+-- solicitação marcada como exceção, pra quem aprova ver de cara.
+--
+--  excecao — true quando a saída foi pedida com menos de 30 dias de
+--            antecedência e o solicitante confirmou mesmo assim.
+--
+-- Idempotente.
+-- =========================================================================
+
+ALTER TABLE public."SISTEMA_SOLICITACOES_FERIAS" ADD COLUMN IF NOT EXISTS excecao boolean NOT NULL DEFAULT false;
+
+NOTIFY pgrst, 'reload schema';
+
+-- ROLLBACK
+-- ALTER TABLE public."SISTEMA_SOLICITACOES_FERIAS" DROP COLUMN IF EXISTS excecao;
+-- NOTIFY pgrst, 'reload schema';
+
+-- ===== 20260930000102_postos_do_contrato_para_demissao =====
+-- =========================================================================
+-- Catálogo: postos do contrato também para quem solicita demissão/vaga
+--
+-- O SINTOMA (14/09/2026)
+--   Em Solicitar Demissão o campo "Posto" era travado com o que o Senior
+--   traz em "Organograma"/"Descrição do Local" — vazio ou velho em muita
+--   gente — e não havia como escolher, embora os postos existam no catálogo
+--   de Suprimentos (contratos → sup_posto, derivados da Planilha de Custo).
+--
+-- A CORREÇÃO
+--   A tela passa a listar os postos pelo mesmo caminho da vaga
+--   (sup_cat_postos_do_contrato). Só que a RPC exigia 'sup_catalogo' +
+--   visualizar, que o encarregado não tem — mesmo com a policy de leitura de
+--   sup_posto já aberta para quem solicita vaga desde a 20260930000049.
+--   Aqui o gate da RPC ganha os mesmos OR da policy, mais as telas de
+--   demissão do encarregado. O corpo é o da 20260930000081, sem mudança.
+--
+-- Idempotente. Aplicar no banco do app.
+-- =========================================================================
+
+CREATE OR REPLACE FUNCTION public.sup_cat_postos_do_contrato(p_contrato_id uuid)
+RETURNS TABLE (
+  id          uuid,
+  contrato_id uuid,
+  nome        text,
+  ativo       boolean,
+  aprovado    boolean,
+  na_planilha boolean
+)
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp AS $fn$
+-- Os parâmetros de saída do RETURNS TABLE (id, nome, ativo, aprovado) têm o
+-- mesmo nome de colunas de sup_posto que aparecem no INSERT e no ON CONFLICT
+-- abaixo. Sem este pragma, plpgsql pode resolver o nome para a variável e
+-- recusar a instrução por ambiguidade. Nenhuma dessas variáveis é lida aqui
+-- (a devolução é por RETURN QUERY), então preferir a coluna é sempre o certo.
+#variable_conflict use_column
+DECLARE
+  v_empresa   uuid;
+  v_contrato  text;
+  v_nomes     text[];   -- nomes de posto como a planilha escreveu
+  v_norm      text[];   -- os mesmos, normalizados, para casar sem acento/caixa
+BEGIN
+  IF NOT (public.can_access(auth.uid(), 'sup_catalogo', 'visualizar')
+          OR public.can_access(auth.uid(), 'central_servicos_solicitar_vaga', 'visualizar')
+          OR public.can_access(auth.uid(), 'recrutamento_gestao', 'visualizar')
+          OR public.can_access(auth.uid(), 'encarregados_solicitar_demissao', 'visualizar')
+          OR public.can_access(auth.uid(), 'encarregados_minhas_solicitacoes', 'visualizar')) THEN
+    RAISE EXCEPTION 'Sem permissão para o Catálogo de Materiais.';
+  END IF;
+
+  SELECT c.empresa_id, c.nome INTO v_empresa, v_contrato
+    FROM public.contratos c WHERE c.id = p_contrato_id;
+  IF v_empresa IS NULL THEN
+    RETURN;
+  END IF;
+
+  -- Os postos que a planilha declara para este contrato.
+  --
+  -- O casamento aceita contrato_id OU nome porque planilha_custo.contrato_id
+  -- foi preenchido por um UPDATE de uma vez (20260714000002) e não há
+  -- trigger que o mantenha: linha importada depois disso pode ter o FK
+  -- nulo e só o nome do contrato em texto.
+  SELECT array_agg(p.nome), array_agg(public.sup_norm_nome(p.nome))
+    INTO v_nomes, v_norm
+    FROM (
+      SELECT DISTINCT btrim(pc.posto) AS nome
+        FROM public.planilha_custo pc
+       WHERE btrim(coalesce(pc.posto, '')) <> ''
+         AND (pc.contrato_id = p_contrato_id
+              OR (pc.contrato_id IS NULL
+                  AND pc.empresa_id = v_empresa
+                  AND public.sup_norm_nome(pc.contrato) = public.sup_norm_nome(v_contrato)))
+    ) p;
+
+  v_nomes := coalesce(v_nomes, ARRAY[]::text[]);
+  v_norm  := coalesce(v_norm,  ARRAY[]::text[]);
+
+  -- (a) novos
+  INSERT INTO public.sup_posto (empresa_id, contrato_id, nome, ativo, aprovado)
+  SELECT v_empresa, p_contrato_id, n, true, true
+    FROM unnest(v_nomes) AS n
+   WHERE NOT EXISTS (
+     SELECT 1 FROM public.sup_posto sp
+      WHERE sp.contrato_id = p_contrato_id
+        AND public.sup_norm_nome(sp.nome) = public.sup_norm_nome(n))
+  ON CONFLICT (contrato_id, nome) DO NOTHING;
+
+  -- (b) reativados
+  UPDATE public.sup_posto sp
+     SET ativo = true, aprovado = true, updated_at = now()
+   WHERE sp.contrato_id = p_contrato_id
+     AND (sp.ativo IS FALSE OR sp.aprovado IS FALSE)
+     AND public.sup_norm_nome(sp.nome) = ANY (v_norm);
+
+  -- (c) saiu da planilha e não tem função -- sai da lista
+  IF array_length(v_norm, 1) > 0 THEN
+    UPDATE public.sup_posto sp
+       SET ativo = false, updated_at = now()
+     WHERE sp.contrato_id = p_contrato_id
+       AND sp.ativo
+       AND NOT (public.sup_norm_nome(sp.nome) = ANY (v_norm))
+       AND NOT EXISTS (
+         SELECT 1 FROM public.sup_funcao f
+          WHERE f.posto_id = sp.id AND f.ativo);
+  END IF;
+
+  RETURN QUERY
+  SELECT sp.id, sp.contrato_id, sp.nome, sp.ativo, sp.aprovado,
+         (public.sup_norm_nome(sp.nome) = ANY (v_norm)) AS na_planilha
+    FROM public.sup_posto sp
+   WHERE sp.contrato_id = p_contrato_id
+     AND sp.ativo
+   ORDER BY sp.nome;
+END $fn$;
+
+REVOKE ALL ON FUNCTION public.sup_cat_postos_do_contrato(uuid) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.sup_cat_postos_do_contrato(uuid) TO authenticated;
+
+NOTIFY pgrst, 'reload schema';
+
+-- ROLLBACK
+--   Reaplicar o bloco CREATE OR REPLACE FUNCTION public.sup_cat_postos_do_contrato
+--   da 20260930000081_supply_catalogo_posto_da_planilha.sql (gate só com
+--   'sup_catalogo') e NOTIFY pgrst, 'reload schema';
+
+-- ===== 20260930000103_demissao_etapa1_volta_ao_operacional =====
+-- =========================================================================
+-- Demissão: a etapa 1 VOLTA para o Operacional; os analistas só acompanham
+--
+-- Pedido do Pablo em 14/09/2026: "agora o OPERACIONAL aprova as solicitações
+-- de demissão, e os analistas só veem. Antes era assim: Operacional só
+-- visualizava e analistas aprovavam."
+--
+-- É o inverso do bloco 4 da 20260930000042 (02/09/2026), que levou a
+-- decisão para o analista e renomeou "Pendente Operacional" → "Pendente
+-- Analista". Aqui:
+--
+--   1. As linhas paradas na etapa 1 voltam ao nome antigo. Sem isso elas
+--      somem das telas — o `.in("status", ...)` do front não pede mais
+--      "Pendente Analista", e a solicitação vira um registro invisível.
+--   2. O trigger demissao_exige_vaga (20260930000092) segura a demissão na
+--      etapa 1 enquanto a vaga de reposição não existe — ele testava o
+--      nome do status, então precisa aprender o nome novo. O corpo é o
+--      mesmo, só o literal muda.
+--
+-- Não há policy por etapa a mexer: ssd_all_auth é aberta para authenticated
+-- (20260909000005) e quem pode decidir é decidido na tela pelo menu
+-- (operacional_demissoes vs licitacoes_analistas_demissao). As colunas
+-- `operacional_*` voltam a bater com quem decide.
+--
+-- Idempotente. Aplicar no banco do app.
+-- =========================================================================
+
+-- 1) As paradas na etapa 1 ------------------------------------------------
+UPDATE public."SISTEMA_SOLICITACOES_DEMISSAO"
+   SET status = 'Pendente Operacional'
+ WHERE status = 'Pendente Analista';
+
+-- 2) O trigger que segura a demissão sem vaga -----------------------------
+CREATE OR REPLACE FUNCTION public.demissao_exige_vaga()
+RETURNS trigger
+LANGUAGE plpgsql
+SET search_path = public, pg_temp
+AS $fn$
+BEGIN
+  IF NEW.vaga_obrigatoria
+     AND NEW.vaga_id IS NULL
+     AND OLD.status = 'Pendente Operacional'
+     AND NEW.status NOT IN ('Pendente Operacional', 'Reprovada') THEN
+    RAISE EXCEPTION 'Esta demissão ainda não tem a vaga de reposição. Quem solicitou precisa abrir a vaga de Substituição de % antes de o pedido seguir.', NEW.colaborador_nome;
+  END IF;
+  RETURN NEW;
+END $fn$;
+
+DROP TRIGGER IF EXISTS trg_demissao_exige_vaga ON public."SISTEMA_SOLICITACOES_DEMISSAO";
+CREATE TRIGGER trg_demissao_exige_vaga
+  BEFORE UPDATE OF status ON public."SISTEMA_SOLICITACOES_DEMISSAO"
+  FOR EACH ROW EXECUTE FUNCTION public.demissao_exige_vaga();
+
+COMMENT ON COLUMN public."SISTEMA_SOLICITACOES_DEMISSAO".vaga_obrigatoria IS
+  'TRUE quando quem pediu respondeu "Sim" a "Deseja solicitar a substituição?": a vaga de Substituição abre em seguida e o pedido não sai de Pendente Operacional sem ela (trigger demissao_exige_vaga). FALSE = sem reposição (redução de quadro) ou pedido da tela antiga.';
+
+NOTIFY pgrst, 'reload schema';
+
+-- =========================================================================
+-- ROLLBACK
+-- =========================================================================
+-- UPDATE public."SISTEMA_SOLICITACOES_DEMISSAO" SET status = 'Pendente Analista'
+--  WHERE status = 'Pendente Operacional';
+-- Reaplicar o bloco "A demissão não anda sem a vaga" da
+-- 20260930000092_recrutamento_cpf_processos_demissao.sql (literal
+-- 'Pendente Analista') e NOTIFY pgrst, 'reload schema';
+
+-- ===== 20260930000104_solicitacoes_sem_duplicidade =====
+-- =========================================================================
+-- Solicitações do encarregado: um colaborador não entra duas vezes na fila
+--
+-- Pedido do Pablo em 14/09/2026: "em solicitar demissão consigo fazer a
+-- solicitação do mesmo colaborador diversas vezes — se eu fiz uma vez tem
+-- que bloquear 'esse colaborador já tem solicitação de demissão'. O mesmo
+-- pra todas as outras solicitações, não pode duplicar. Pra férias 'esse
+-- colaborador já tem solicitação de férias nesses últimos 150 dias'."
+--
+-- UMA função decide (solicitacao_em_aberto) e é chamada dos dois lados:
+--   • pelo trigger BEFORE INSERT de cada tabela — é o que garante, mesmo
+--     numa tela antiga ainda no ar em produção;
+--   • pela tela, via RPC, na hora em que o colaborador é escolhido — pra
+--     avisar antes de a pessoa preencher o formulário inteiro.
+--
+-- O que conta como "já tem":
+--   demissao      status fora de Reprovada/Cancelada (viva ou já concluída —
+--                 quem saiu não pede demissão de novo; reprovada libera).
+--   ferias        status fora de Reprovada/Cancelada, aberta nos últimos
+--                 150 dias.
+--   troca_funcao  status fora de Reprovada/Concluída (uma mudança por vez).
+--   advertencia   ainda aguardando decisão (Aguardando Aprovação/Jurídico).
+--                 Advertência REPETE de propósito — verbal, escrita,
+--                 suspensão —, então só a que ainda não foi decidida trava.
+--
+-- SECURITY DEFINER porque a advertência tem RLS por tela (adv_select): o
+-- encarregado não enxerga a de outro encarregado, mas a duplicidade tem que
+-- ser vista por cima disso. A função só devolve id/status/data — nada do
+-- conteúdo.
+--
+-- Idempotente. Aplicar no banco do app.
+-- =========================================================================
+
+CREATE OR REPLACE FUNCTION public.solicitacao_em_aberto(p_tipo text, p_colaborador_id bigint)
+RETURNS jsonb
+LANGUAGE plpgsql
+STABLE
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $fn$
+DECLARE
+  r record;
+BEGIN
+  IF p_colaborador_id IS NULL THEN
+    RETURN NULL;
+  END IF;
+
+  IF p_tipo = 'demissao' THEN
+    SELECT id, status, criado_em INTO r
+      FROM public."SISTEMA_SOLICITACOES_DEMISSAO"
+     WHERE colaborador_id = p_colaborador_id
+       AND status NOT IN ('Reprovada', 'Cancelada')
+     ORDER BY criado_em DESC LIMIT 1;
+    IF r.id IS NOT NULL THEN
+      RETURN jsonb_build_object(
+        'tipo', 'demissao', 'id', r.id, 'status', r.status, 'criado_em', r.criado_em,
+        'mensagem', format('Este colaborador já tem solicitação de demissão (#%s, %s, aberta em %s).',
+                           r.id, r.status, to_char(r.criado_em, 'DD/MM/YYYY')));
+    END IF;
+
+  ELSIF p_tipo = 'ferias' THEN
+    SELECT id, status, criado_em, data_saida INTO r
+      FROM public."SISTEMA_SOLICITACOES_FERIAS"
+     WHERE colaborador_id = p_colaborador_id
+       AND status NOT IN ('Reprovada', 'Cancelada')
+       AND criado_em >= now() - interval '150 days'
+     ORDER BY criado_em DESC LIMIT 1;
+    IF r.id IS NOT NULL THEN
+      RETURN jsonb_build_object(
+        'tipo', 'ferias', 'id', r.id, 'status', r.status, 'criado_em', r.criado_em,
+        'mensagem', format('Este colaborador já tem solicitação de férias nos últimos 150 dias (#%s, %s, saída em %s).',
+                           r.id, r.status, to_char(r.data_saida, 'DD/MM/YYYY')));
+    END IF;
+
+  ELSIF p_tipo = 'troca_funcao' THEN
+    SELECT id, status, criado_em INTO r
+      FROM public."SISTEMA_SOLICITACOES_TROCA_FUNCAO"
+     WHERE colaborador_id = p_colaborador_id
+       AND status NOT IN ('Reprovada', 'Concluída')
+     ORDER BY criado_em DESC LIMIT 1;
+    IF r.id IS NOT NULL THEN
+      RETURN jsonb_build_object(
+        'tipo', 'troca_funcao', 'id', r.id, 'status', r.status, 'criado_em', r.criado_em,
+        'mensagem', format('Este colaborador já tem solicitação de mudança de função em andamento (#%s, %s, aberta em %s).',
+                           r.id, r.status, to_char(r.criado_em, 'DD/MM/YYYY')));
+    END IF;
+
+  ELSIF p_tipo = 'advertencia' THEN
+    SELECT id, status, created_at AS criado_em INTO r
+      FROM public."SISTEMA_SOLICITACOES_ADVERTENCIA"
+     WHERE colaborador_id = p_colaborador_id
+       AND status IN ('Aguardando Aprovação', 'Aguardando Jurídico')
+     ORDER BY created_at DESC LIMIT 1;
+    IF r.id IS NOT NULL THEN
+      RETURN jsonb_build_object(
+        'tipo', 'advertencia', 'id', r.id, 'status', r.status, 'criado_em', r.criado_em,
+        'mensagem', format('Este colaborador já tem advertência aguardando decisão (#%s, %s, aberta em %s). Espere ela ser decidida antes de abrir outra.',
+                           r.id, r.status, to_char(r.criado_em, 'DD/MM/YYYY')));
+    END IF;
+  END IF;
+
+  RETURN NULL;
+END $fn$;
+
+REVOKE ALL ON FUNCTION public.solicitacao_em_aberto(text, bigint) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.solicitacao_em_aberto(text, bigint) FROM anon;
+GRANT EXECUTE ON FUNCTION public.solicitacao_em_aberto(text, bigint) TO authenticated;
+
+-- ── Triggers: a mesma regra, no INSERT de cada tabela ────────────────────
+-- BEFORE INSERT: a linha nova ainda não está na tabela, então a busca não
+-- encontra ela mesma. TG_ARGV[0] diz o tipo.
+CREATE OR REPLACE FUNCTION public.solicitacao_bloqueia_duplicada()
+RETURNS trigger
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $fn$
+DECLARE
+  dup jsonb;
+BEGIN
+  dup := public.solicitacao_em_aberto(TG_ARGV[0], NEW.colaborador_id);
+  IF dup IS NOT NULL THEN
+    RAISE EXCEPTION '%', dup->>'mensagem';
+  END IF;
+  RETURN NEW;
+END $fn$;
+
+DROP TRIGGER IF EXISTS trg_demissao_sem_duplicidade ON public."SISTEMA_SOLICITACOES_DEMISSAO";
+CREATE TRIGGER trg_demissao_sem_duplicidade
+  BEFORE INSERT ON public."SISTEMA_SOLICITACOES_DEMISSAO"
+  FOR EACH ROW EXECUTE FUNCTION public.solicitacao_bloqueia_duplicada('demissao');
+
+DROP TRIGGER IF EXISTS trg_ferias_sem_duplicidade ON public."SISTEMA_SOLICITACOES_FERIAS";
+CREATE TRIGGER trg_ferias_sem_duplicidade
+  BEFORE INSERT ON public."SISTEMA_SOLICITACOES_FERIAS"
+  FOR EACH ROW EXECUTE FUNCTION public.solicitacao_bloqueia_duplicada('ferias');
+
+DROP TRIGGER IF EXISTS trg_troca_funcao_sem_duplicidade ON public."SISTEMA_SOLICITACOES_TROCA_FUNCAO";
+CREATE TRIGGER trg_troca_funcao_sem_duplicidade
+  BEFORE INSERT ON public."SISTEMA_SOLICITACOES_TROCA_FUNCAO"
+  FOR EACH ROW EXECUTE FUNCTION public.solicitacao_bloqueia_duplicada('troca_funcao');
+
+DROP TRIGGER IF EXISTS trg_advertencia_sem_duplicidade ON public."SISTEMA_SOLICITACOES_ADVERTENCIA";
+CREATE TRIGGER trg_advertencia_sem_duplicidade
+  BEFORE INSERT ON public."SISTEMA_SOLICITACOES_ADVERTENCIA"
+  FOR EACH ROW EXECUTE FUNCTION public.solicitacao_bloqueia_duplicada('advertencia');
+
+NOTIFY pgrst, 'reload schema';
+
+-- ── Conferência: duplicadas que JÁ existem (o trigger não mexe no passado) ──
+-- SELECT colaborador_id, colaborador_nome, count(*), array_agg(id ORDER BY id)
+--   FROM public."SISTEMA_SOLICITACOES_DEMISSAO"
+--  WHERE status NOT IN ('Reprovada','Cancelada')
+--  GROUP BY 1, 2 HAVING count(*) > 1;
+
+-- =========================================================================
+-- ROLLBACK
+-- =========================================================================
+-- DROP TRIGGER IF EXISTS trg_demissao_sem_duplicidade     ON public."SISTEMA_SOLICITACOES_DEMISSAO";
+-- DROP TRIGGER IF EXISTS trg_ferias_sem_duplicidade       ON public."SISTEMA_SOLICITACOES_FERIAS";
+-- DROP TRIGGER IF EXISTS trg_troca_funcao_sem_duplicidade ON public."SISTEMA_SOLICITACOES_TROCA_FUNCAO";
+-- DROP TRIGGER IF EXISTS trg_advertencia_sem_duplicidade  ON public."SISTEMA_SOLICITACOES_ADVERTENCIA";
+-- DROP FUNCTION IF EXISTS public.solicitacao_bloqueia_duplicada();
+-- DROP FUNCTION IF EXISTS public.solicitacao_em_aberto(text, bigint);
+-- NOTIFY pgrst, 'reload schema';
