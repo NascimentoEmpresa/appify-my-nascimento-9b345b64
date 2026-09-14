@@ -197,6 +197,8 @@ import RhSolicitacoesDemissao from "./pages/rh/SolicitacoesDemissao";
 import MinhasSolicitacoes from "./pages/MinhasSolicitacoes";
 import BIDashboard from "./pages/bi/Dashboard";
 import LinksBIs from "./pages/bi/LinksBIs";
+import BiEstudioPaineis from "./pages/bi/estudio/Paineis";
+import BiEstudioPainel from "./pages/bi/estudio/Painel";
 import Fiscal from "./pages/Fiscal";
 import IntegracaoBatches from "./pages/integracao/Batches";
 import BatchDetalhe from "./pages/integracao/BatchDetalhe";
@@ -644,6 +646,8 @@ const App = () => (
             {/* BI */}
             <Route path="bi" element={<BIDashboard />} />
             <Route path="bi/links" element={<LinksBIs />} />
+            <Route path="bi/estudio" element={<BiEstudioPaineis />} />
+            <Route path="bi/estudio/:id" element={<BiEstudioPainel />} />
             {/* Integração & Migração */}
             <Route path="integracao" element={<IntegracaoBatches />} />
             <Route path="integracao/aliases" element={<IntegracaoAliases />} />
