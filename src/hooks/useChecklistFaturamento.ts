@@ -373,6 +373,11 @@ export interface ResumoContratoChecklist {
   total_docs: number;
   ok: number;
   pendentes: number;
+  // SIS-2026-0343: quebra de `ok` nas duas categorias que ele engloba,
+  // pro Dashboard (donut de 4 categorias) — `ok` continua com o
+  // significado de sempre ("não pendente") pros consumidores já existentes.
+  aConferir: number;
+  naoAplicavel: number;
   // SIS-2026-0325 (Iury): "abrir modal com contratos + docs faltantes" —
   // precisa do nome de cada doc pendente, não só a contagem.
   docsPendentes: { doc_id: string; nome: string }[];
@@ -383,19 +388,35 @@ export function useResumoPendencias(competenciaISO: string | null) {
     queryKey: ["checklist_fat_resumo", competenciaISO],
     enabled: !!competenciaISO,
     queryFn: async () => {
-      const [{ data: vinculos, error: e1 }, { data: marcacoes, error: e2 }] = await Promise.all([
+      const [{ data: vinculos, error: e1 }, { data: marcacoes, error: e2 }, { data: contratosInfo, error: e3 }] = await Promise.all([
         (supabase as any).from("contrato_docs_config").select("contrato_id, doc_tipo_id, doc:doc_tipos(nome)").eq("posto", ""),
         (supabase as any).from("CHECKLIST_FATURAMENTO_MARCACAO").select("contrato_id, doc_id, status").eq("competencia", competenciaISO),
+        (supabase as any).from("contratos").select("id, data_inicio"),
       ]);
       if (e1) throw e1;
       if (e2) throw e2;
+      if (e3) throw e3;
+
+      // SIS-2026-0343 (achado do usuário testando): contrato aparecia com
+      // pendência em competências ANTERIORES ao início do contrato (ex.
+      // contrato começou em 06/2026 mas 05/2026 já contava como pendente).
+      // `data_inicio` é o campo real do cadastro do contrato (não o
+      // `comp_inicio` do Checklist, que nunca chegou a ganhar UI) —
+      // competência anterior ao mês de início simplesmente não conta.
+      const mesInicioPorContrato = new Map<string, string>();
+      for (const c of contratosInfo ?? []) if (c.data_inicio) mesInicioPorContrato.set(c.id, String(c.data_inicio).slice(0, 7));
+      const mesCompetencia = (competenciaISO ?? "").slice(0, 7);
 
       const statusPorChave = new Map<string, StatusMarcacao>();
       for (const m of marcacoes ?? []) statusPorChave.set(`${m.contrato_id}:${m.doc_id}`, m.status);
 
       const porContrato = new Map<string, ResumoContratoChecklist>();
       for (const v of vinculos ?? []) {
-        const atual = porContrato.get(v.contrato_id) ?? { contrato_id: v.contrato_id, total_docs: 0, ok: 0, pendentes: 0, docsPendentes: [] };
+        const mesInicio = mesInicioPorContrato.get(v.contrato_id);
+        if (mesInicio && mesInicio > mesCompetencia) continue;
+        const atual = porContrato.get(v.contrato_id) ?? {
+          contrato_id: v.contrato_id, total_docs: 0, ok: 0, pendentes: 0, aConferir: 0, naoAplicavel: 0, docsPendentes: [],
+        };
         atual.total_docs++;
         const status = statusPorChave.get(`${v.contrato_id}:${v.doc_tipo_id}`) ?? "pendente";
         if (status === "pendente") {
@@ -403,10 +424,82 @@ export function useResumoPendencias(competenciaISO: string | null) {
           atual.docsPendentes.push({ doc_id: v.doc_tipo_id, nome: v.doc?.nome ?? "—" });
         } else {
           atual.ok++;
+          if (status === "a_conferir") atual.aConferir++;
+          else if (status === "nao_aplicavel") atual.naoAplicavel++;
         }
         porContrato.set(v.contrato_id, atual);
       }
       return porContrato;
     },
   });
+}
+
+// ── Prazo e envio agregados (Dashboard) — SIS-2026-0343 ──────────────────
+// A Carol pediu "prazo para envio, data que foi enviada" numa visão
+// agregada pra poder cobrar quem está atrasado — os dois dados já existem
+// (dia_limite_padrao configurado por contrato, baixado_em gravado no
+// "Concluir e baixar"), só nunca apareciam fora do detalhe de 1 contrato.
+
+export function useConfigsChecklist() {
+  return useQuery({
+    queryKey: ["checklist_fat_configs"],
+    staleTime: 5 * 60_000,
+    queryFn: async () => {
+      const { data, error } = await (supabase as any)
+        .from("CHECKLIST_FATURAMENTO_CONTRATO_CONFIG")
+        .select("contrato_id, dia_limite_padrao");
+      if (error) throw error;
+      const mapa = new Map<string, number | null>();
+      for (const c of data ?? []) mapa.set(c.contrato_id, c.dia_limite_padrao);
+      return mapa;
+    },
+  });
+}
+
+export function useEnviosCompetencia(competenciaISO: string | null) {
+  return useQuery({
+    queryKey: [ENVIOS_KEY, "todos", competenciaISO],
+    enabled: !!competenciaISO,
+    queryFn: async () => {
+      const { data, error } = await (supabase as any)
+        .from("CHECKLIST_FATURAMENTO_ENVIO")
+        .select("*")
+        .eq("competencia", competenciaISO);
+      if (error) throw error;
+      const mapa = new Map<string, EnvioChecklist>();
+      for (const e of (data ?? []) as EnvioChecklist[]) mapa.set(e.contrato_id, e);
+      return mapa;
+    },
+  });
+}
+
+// Prazo = dia `diaLimitePadrao` do mês SEGUINTE à competência (mesma regra
+// do legado, já documentada no comentário da CHECKLIST_FATURAMENTO_CONTRATO_CONFIG).
+export function calcularPrazoChecklist(competenciaISO: string, diaLimitePadrao: number | null): Date | null {
+  if (!diaLimitePadrao) return null;
+  const [ano, mes] = competenciaISO.split("-").map(Number);
+  // mes (1-12) já É o mês seguinte quando usado como índice 0-based do Date.
+  return new Date(ano, mes, diaLimitePadrao, 23, 59, 59);
+}
+
+export type StatusPrazoChecklist = "ok" | "warn" | "late" | "neutral";
+
+export function situacaoPrazoChecklist(
+  prazo: Date | null,
+  envio: EnvioChecklist | null,
+  hoje: Date = new Date(),
+): { status: StatusPrazoChecklist; label: string } {
+  if (!prazo) return { status: "neutral", label: "Prazo não informado" };
+
+  if (envio) {
+    const noPrazo = new Date(envio.baixado_em).getTime() <= prazo.getTime();
+    return noPrazo
+      ? { status: "ok", label: "Enviado no prazo" }
+      : { status: "late", label: "Enviado fora do prazo" };
+  }
+
+  const diasRestantes = Math.ceil((prazo.getTime() - hoje.getTime()) / 86_400_000);
+  if (diasRestantes < 0) return { status: "late", label: "Atrasado" };
+  if (diasRestantes <= 5) return { status: "warn", label: diasRestantes === 0 ? "Vence hoje" : `Vence em ${diasRestantes}d` };
+  return { status: "ok", label: "No prazo" };
 }

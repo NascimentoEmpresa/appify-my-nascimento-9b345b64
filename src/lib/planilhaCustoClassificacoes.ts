@@ -109,6 +109,13 @@ export const CLASSIFICACOES_LICITACAO: ClassificacaoLicitacao[] = [
   { campo: "pis", label: "PIS", grupo: "Custos Indiretos / Lucro / Tributos" },
   { campo: "irpj_csll", label: "IRPJ / CSLL", grupo: "Custos Indiretos / Lucro / Tributos" },
   { campo: "iss", label: "ISS", grupo: "Custos Indiretos / Lucro / Tributos" },
+
+  // Despesas Diretas (instalação) — hoje só o contrato CANAA usa
+  { campo: "aluguel", label: "Aluguel", grupo: "Despesas Diretas" },
+  { campo: "agua", label: "Água", grupo: "Despesas Diretas" },
+  { campo: "luz", label: "Luz", grupo: "Despesas Diretas" },
+  { campo: "internet", label: "Internet", grupo: "Despesas Diretas" },
+  { campo: "demais_despesas_diretas", label: "Demais Despesas Diretas", grupo: "Despesas Diretas" },
 ];
 
 export function labelClassificacaoLicitacao(campo: string): string {
