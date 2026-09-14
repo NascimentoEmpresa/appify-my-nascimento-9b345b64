@@ -23,7 +23,8 @@
 // governa o checkbox "Vaga é administrativa?". Nenhuma chave de acesso nova
 // foi criada para isto.
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { semCodigoFilial } from "@/lib/rh/colaboradoresUtils";
 import { useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
@@ -382,6 +383,28 @@ export function ModalNovaVaga({ aberto, onFechar, onCriada, onToast, solicitacao
       return !atual;
     });
   };
+
+  // Com colaborador escolhido, o contrato do CATÁLOGO é o dele — e ponto.
+  // O select ficava livre e deixava apontar o vínculo de Suprimentos para
+  // outro contrato (14/09/2026: Eduardo, do "1093 - ADM E ESTAGIARIOS - NH",
+  // com o catálogo em "SAMU PE"), e pior: o onChange reescrevia o campo
+  // "Contrato — do colaborador escolhido" com o escolhido à mão. Aqui o
+  // catálogo é casado pelo nome (sem o "1093 - ", que o catálogo não tem) e
+  // o select trava; sobra escolher posto e função dentro dele.
+  const chaveNome = (s: unknown) => String(s ?? "").trim().toUpperCase().replace(/\s+/g, " ");
+  const contratoCatalogoDoColaborador = useMemo(() => {
+    if (vagaManual || !substituidoId) return null;
+    const alvo = chaveNome(semCodigoFilial(vaga.contrato));
+    if (!alvo) return null;
+    return contratosCatalogo.find(c => chaveNome(c.nome) === alvo) ?? null;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [vagaManual, substituidoId, vaga.contrato, contratosCatalogo]);
+  const contratoCatalogoTravado = !vagaManual && !!substituidoId && !!contratoCatalogoDoColaborador;
+  useEffect(() => {
+    if (!contratoCatalogoDoColaborador) return;
+    const id = contratoCatalogoDoColaborador.id;
+    setVaga(v => v.contrato_id === id ? v : { ...v, contrato_id: id, posto_id: "", funcao_id: "" });
+  }, [contratoCatalogoDoColaborador]);
 
   // Prazo/grau da data escolhida — o grau não é mais escolhido na mão.
   const prazo = avaliarPrazo(vaga.data_inicio_prevista);
@@ -754,7 +777,10 @@ export function ModalNovaVaga({ aberto, onFechar, onCriada, onToast, solicitacao
                 : " *"}
             </label>
             <div style={{ display: "grid", gridTemplateColumns: "repeat(3,minmax(0,1fr))", gap: 8 }}>
-              <select className="nvg-fi" value={vaga.contrato_id} onChange={e => {
+              <select className="nvg-fi" value={vaga.contrato_id} disabled={contratoCatalogoTravado}
+                title={contratoCatalogoTravado ? "É o contrato do colaborador escolhido — não pode ser trocado." : undefined}
+                style={contratoCatalogoTravado ? { background: "#f1f5f9", color: "#475569", cursor: "not-allowed" } : undefined}
+                onChange={e => {
                 const id = e.target.value;
                 const contrato = contratosCatalogo.find(c => c.id === id);
                 // O catálogo de Suprimentos não tem o código da filial; a
@@ -788,6 +814,9 @@ export function ModalNovaVaga({ aberto, onFechar, onCriada, onToast, solicitacao
             </div>
             <div style={{ marginTop: 5, fontSize: 11, color: "#64748b" }}>
               Este vínculo define automaticamente os uniformes e EPIs da admissão.
+              {contratoCatalogoTravado && " O contrato é o do colaborador escolhido — escolha só o posto e a função."}
+              {!vagaManual && !!substituidoId && !contratoCatalogoDoColaborador && !!vaga.contrato && contratosCatalogo.length > 0 &&
+                ` Não achei "${semCodigoFilial(vaga.contrato)}" no catálogo de Suprimentos — escolha o contrato correspondente.`}
               {vagaManual && " Preenchendo à mão ele é opcional — sem posto no catálogo, o Compras monta a lista na admissão."}
             </div>
           </div>
