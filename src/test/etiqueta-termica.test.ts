@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  MEDIDAS, htmlEtiqueta, linhaItem, textoItens, type DadosEtiqueta,
+  MEDIDAS, htmlEtiqueta, linhaItem, textoItens, urlRetirada, type DadosEtiqueta,
 } from "@/lib/suprimentos/etiquetaTermica";
 
 /**
@@ -95,6 +95,36 @@ describe("etiqueta térmica — compacta", () => {
     expect(html).not.toContain("Aguardando compra");
     expect(html).not.toContain("TIAGO COELHO NUNES");
     expect(html).not.toContain("BABUCHE");
+  });
+});
+
+/**
+ * QR code de retirada: o supervisor da frota lê na rua, fora do horário, e
+ * confirma que levou o volume. Sem ele na etiqueta padrão, a retirada volta a
+ * não ter dono.
+ */
+describe("etiqueta térmica — QR code de retirada", () => {
+  const qr = "data:image/png;base64,iVBORw0KGgo=";
+
+  it("a etiqueta padrão imprime o QR quando ele vem pronto", () => {
+    const html = htmlEtiqueta({ ...dados, qrDataUrl: qr }, "PADRAO", "");
+    expect(html).toContain(`<img src="${qr}"`);
+    expect(html).toContain("leia ao retirar");
+  });
+
+  it("sem QR gerado, a etiqueta sai normalmente — sem imagem quebrada", () => {
+    const html = htmlEtiqueta({ ...dados, qrDataUrl: null }, "PADRAO", "");
+    expect(html).not.toContain("<img");
+    expect(html).toContain("PED-MTKBLVDD-W486CZ8");
+  });
+
+  it("a compacta não leva QR: em 4x5 cm ele tomaria o lugar do nome", () => {
+    expect(htmlEtiqueta({ ...dados, qrDataUrl: qr }, "COMPACTO", "")).not.toContain("<img");
+  });
+
+  it("o QR aponta para a tela de retirada pelo id do pedido", () => {
+    expect(urlRetirada("7b1e0c1a-0000-4000-8000-000000000001", "https://erp.exemplo"))
+      .toBe("https://erp.exemplo/app/suprimentos/retirada/7b1e0c1a-0000-4000-8000-000000000001");
   });
 });
 

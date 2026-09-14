@@ -13,6 +13,10 @@
  * SOLICITANTE tinham sumido na primeira versão — e solicitante é o que
  * distingue quem pediu de para quem é, que na etiqueta nova apareciam
  * confundidos num campo só.
+ *
+ * O QR code no canto inferior (só no modelo padrão) é a retirada para
+ * entrega: o supervisor que busca o volume fora do horário lê com o celular
+ * e confirma que levou — ver src/pages/suprimentos/RetiradaPedido.tsx.
  */
 
 export type TamanhoEtiqueta = "PADRAO" | "COMPACTO";
@@ -33,6 +37,21 @@ export interface DadosEtiqueta {
     quantidade: number;
     litros: string | null;
   }>;
+  /**
+   * PNG (data URL) do QR code de retirada. Vem pronto de fora porque a
+   * geração é assíncrona e esta função monta HTML de forma síncrona — é o
+   * mesmo HTML da prévia e da impressão.
+   */
+  qrDataUrl?: string | null;
+}
+
+/**
+ * Endereço que o QR code abre. Leva o id (uuid) do pedido, e não o
+ * protocolo: é inequívoco e não depende do formato do protocolo, que mudou
+ * entre o legado e o sistema novo.
+ */
+export function urlRetirada(pedidoUuid: string, origem: string) {
+  return `${origem}/app/suprimentos/retirada/${encodeURIComponent(pedidoUuid)}`;
 }
 
 /** Medidas reais das duas etiquetas, em milímetros. */
@@ -100,6 +119,9 @@ export function htmlEtiqueta(dados: DadosEtiqueta, tamanho: TamanhoEtiqueta, tex
         ${campo("POSTO", dados.posto_nome)}
         ${!compacto && extra ? `<div class="livre">${escaparHtml(extra)}</div>` : ""}
       </div>
+      ${!compacto && dados.qrDataUrl
+        ? `<div class="qr"><span>Supervisor: leia ao retirar o pedido</span><img src="${escaparHtml(dados.qrDataUrl)}" alt=""></div>`
+        : ""}
       ${compacto ? "" : `<div class="rodape">Gerado automaticamente via ERP | ${MEDIDAS[tamanho].largura}x${MEDIDAS[tamanho].altura}mm</div>`}
     </section>
   `;
@@ -147,6 +169,14 @@ export function cssEtiqueta(tamanho: TamanhoEtiqueta) {
       margin-top: 2mm; padding-top: 1.5mm; border-top: 0.3mm dashed #000;
       font-size: 7pt; line-height: 1.25; white-space: pre-wrap; overflow-wrap: anywhere;
     }
+    .qr {
+      display: flex; align-items: flex-end; justify-content: flex-end; gap: 2mm;
+      padding: 0 3mm 2mm;
+    }
+    .qr span { font-size: 6pt; text-align: right; max-width: 30mm; line-height: 1.2; }
+    /* 24 mm é folgado para a câmera de celular a um palmo; pixelated evita o
+       borrão que a térmica transforma em módulo ilegível. */
+    .qr img { width: 24mm; height: 24mm; image-rendering: pixelated; }
     .rodape {
       text-align: center; font-size: 5pt; padding: 1mm;
       border-top: 0.3mm solid #000;

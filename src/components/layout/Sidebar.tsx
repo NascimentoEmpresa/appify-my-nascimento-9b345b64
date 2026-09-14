@@ -269,6 +269,9 @@ const suprimentosModule: ModuleDef = {
         { label: "Aprovação de Catálogo", to: "/app/suprimentos/catalogo/aprovacoes", icon: ClipboardCheck },
         { label: "Pedidos de Materiais", to: "/app/suprimentos/pedidos-materiais", icon: PackageCheck },
         { label: "Separação de Pedidos", to: "/app/suprimentos/separacao", icon: PackageCheck },
+        // O caminho normal é o QR code da etiqueta; o item existe para digitar
+        // o protocolo quando a etiqueta não lê.
+        { label: "Retirada para Entrega", to: "/app/suprimentos/retirada", icon: Car },
         { label: "Estoque & Etiquetas", to: "/app/suprimentos/estoque-etiquetas", icon: Boxes },
         { label: "Declaração de Conteúdo", to: "/app/suprimentos/correio-declaracao", icon: FileText },
         { label: "Cotações do Malote", to: "/app/suprimentos/cotacoes-malote", icon: FileClock },
@@ -369,6 +372,7 @@ const financeiroModule: ModuleDef = {
         // do usuário, são módulos migrados de sistema externo, não fazem
         // parte da Gestão Financeira "nativa" do ERP.
         { label: "Checklist de Faturamento", to: "/app/financeiro/checklist-faturamento", icon: ListChecks, badge: "Novo" },
+        { label: "Solicitações de Ajuste", to: "/app/financeiro/solicitacoes-ajuste", icon: ClipboardList, badge: "Novo" },
       ],
     },
   ],
