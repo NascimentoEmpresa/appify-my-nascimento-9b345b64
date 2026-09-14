@@ -34,6 +34,7 @@ import {
 } from "@/hooks/useMaloteDespesa";
 import { useOrcadoClassificacao } from "@/hooks/useOrcadoClassificacao";
 import { useUtilizadoOrcamento } from "@/hooks/useUtilizadoOrcamento";
+import { useLigacoesClassificacaoMalote, mapaClassificacaoVinculada, classificacaoCanonica } from "@/hooks/useMaloteClassificacaoMaloteLink";
 import { anoMesAtual } from "@/hooks/usePlanilhaCusto";
 import { AnexosField } from "./AnexosField";
 import { ComprasPassadas } from "@/components/malote/ComprasPassadas";
@@ -121,6 +122,8 @@ export default function SolicitacaoVisualizar() {
   const anoMesRef = anoMesAtual();
   const { resolver: resolverOrcado } = useOrcadoClassificacao(despesa?.empresa_id, anoMesRef);
   const { data: utilizadoLinhas = [] } = useUtilizadoOrcamento();
+  const { data: ligacoesClassMalote = [] } = useLigacoesClassificacaoMalote();
+  const mapaVinculo = mapaClassificacaoVinculada(ligacoesClassMalote);
 
   if (isLoading || !despesa) {
     return <div className="p-6 text-muted-foreground">Carregando...</div>;
@@ -173,10 +176,14 @@ export default function SolicitacaoVisualizar() {
   // Despesa Paga naquele mês + o valor que o aprovador está avaliando
   // agora — dá visibilidade do impacto ANTES da solicitação virar despesa.
   const orcadoClassificacao = resolverOrcado(despesa.classificacao_id, despesa.contrato_id);
+  // SIS-2026-0374: u.classificacao_id já vem canonicalizado (origem→destino
+  // de ligação) por useUtilizadoOrcamento; a classificação da despesa
+  // precisa da mesma resolução pra bater.
+  const classificacaoIdCanonica = classificacaoCanonica(mapaVinculo, despesa.classificacao_id);
   const utilizadoAtual = utilizadoLinhas
     .filter(
       (u) =>
-        u.classificacao_id === despesa.classificacao_id &&
+        u.classificacao_id === classificacaoIdCanonica &&
         (u.contrato_id ?? null) === (despesa.contrato_id ?? null) &&
         !!u.competencia &&
         u.competencia.slice(0, 7) === anoMesRef

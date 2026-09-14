@@ -10,7 +10,7 @@ import {
   erroDaRecomendacao, recomendacaoParaBanco, cpfValido, soDigitos, maskCpf,
   avaliarPrazo, dataMinimaVaga,
   cargoExigeCnh, aplicarReqCnh, REQ_CNH_TEXTO, MIN_DIAS_UTEIS, fmtBr,
-  rotuloReferencia, ajudaReferencia, mostraNomeReferencia, contratoDoEmpregado,
+  rotuloReferencia, ajudaReferencia, mostraNomeReferencia, contratoDoEmpregado, rotuloContrato,
   SALARIO_MASCARA, substituidosComVagaViva, avisoSubstituidoPreso,
   podeVagaAdministrativa,
 } from "@/lib/recrutamento/vagaRegras";
@@ -378,7 +378,7 @@ export default function MinhasSolicitacoes({ abrir }: { abrir?: SolicitacaoInici
       insalubridade_recebe: insal > 0 ? "Sim" : "Não",
       insalubridade_quanto: insal > 0 ? `${emp["% Insalubridade"]}%` : "",
       escala: emp["Escala"] ? String(emp["Escala"]) : v.escala,
-      contrato: contratoMatch ? contratoMatch["NOME CONTRATO"] : v.contrato,
+      contrato: contratoMatch ? rotuloContrato(contratoMatch) : v.contrato,
     }));
     setEmpSearch(mostraNomeReferencia(vaga.motivo_vaga) ? emp.Nome : "");
     setShowEmpDrop(false);
@@ -537,7 +537,7 @@ export default function MinhasSolicitacoes({ abrir }: { abrir?: SolicitacaoInici
       ...a,
       colaborador_id: emp.ID ?? null, colaborador_nome: emp.Nome ?? "", colaborador_cpf: emp.CPF ?? "",
       colaborador_cargo: emp["Título do Cargo"] ?? "", colaborador_filial: emp["Nome Filial"] ?? "",
-      contrato: contratoMatch ? contratoMatch["NOME CONTRATO"] : "",
+      contrato: contratoMatch ? rotuloContrato(contratoMatch) : "",
       contrato_id: contratoMatch ? (contratoMatch.id ?? null) : null,
     }));
     setEmpSearch(emp.Nome ?? ""); setShowEmpDrop(false);

@@ -269,8 +269,11 @@ const PERGUNTAS: Pergunta[] = [
   // Empresa e contrato abrem o formulário: é o que decide para qual comitê o
   // caso vai e qual operação está envolvida — perguntar isso no fim faria a
   // pessoa recontar o caso já pensando em outra coisa.
-  { k: "empresa_id",          label: "Em qual empresa do grupo ocorreu o fato?", req: true },
-  { k: "contrato_informado",  label: "Em qual contrato ou local de trabalho?" },
+  { k: "empresa_id",          label: "Em qual empresa ocorreu o fato?", req: true },
+  // Obrigatório desde 11/09/2026: sem o local, a triagem não sabe para
+  // qual operação o caso vai. A lista é de FILIAIS ativas da empresa
+  // escolhida (denuncia_contratos); quem não acha a sua escreve.
+  { k: "contrato_informado",  label: "Qual o seu local de trabalho?", req: true },
   { k: "anonimo",             label: "Você quer registrar esta denúncia de forma anônima?", req: true },
   { k: "identificado",        label: "Você gostaria de informar seu nome ao comitê?", req: true,
     quando: (f) => f.anonimo !== "sim" },
@@ -278,14 +281,14 @@ const PERGUNTAS: Pergunta[] = [
   { k: "cpf",                 label: "CPF", quando: seIdentificou },
   { k: "data_nascimento",     label: "Data de nascimento", quando: seIdentificou },
   { k: "telefone_fixo",       label: "Telefone fixo", quando: seIdentificou },
-  { k: "relacao",             label: "Qual a sua relação com o Grupo Nascimento?", req: true },
+  { k: "relacao",             label: "Qual a sua relação com a Empresa Nascimento?", req: true },
   { k: "tipo_denuncia",       label: "Qual o tipo de denúncia melhor se enquadra ao fato que você está registrando?", req: true },
   { k: "local_ocorrencia",    label: "Em que local exatamente aconteceu?" },
   { k: "ocorrencia_data",     label: "Em que dia aconteceu? Se não lembrar a data exata, use a mais próxima." },
   { k: "ocorrencia_hora",     label: "Por volta de que horário?" },
   { k: "ocorrencia_frequencia", label: "Isso aconteceu uma vez ou se repete?" },
   { k: "como_soube",          label: "Como você tomou conhecimento deste fato?", req: true },
-  { k: "denunciado_informado", label: "Quem é a pessoa denunciada?" },
+  { k: "denunciado_informado", label: "Quem é a pessoa denunciada?", req: true },
   { k: "denunciado_funcao",   label: "Qual a função dela?", quando: (f) => !!f.denunciado_informado.trim() },
   { k: "risco_imediato",      label: "Existe risco imediato à segurança ou à saúde de alguém?", destacar: "risco imediato" },
   { k: "risco_imediato_detalhe", label: "Explique o risco. Isso faz o caso furar a fila.",
@@ -680,7 +683,7 @@ export default function Denuncia() {
             <h1>Sua voz é protegida.<br /><em>Relate com segurança.</em></h1>
             <p>
               Um espaço reservado para relatar condutas contrárias aos nossos valores e ao Código de
-              Conduta. Você informa um e-mail e escolhe uma senha — é com eles que acompanha a
+              Conduta. Você informa um e-mail e escolhe uma senha. É com eles que acompanha a
               apuração e recebe as atualizações do caso.
             </p>
             <div className="dn-selos">
@@ -798,12 +801,17 @@ function Formulario({ onAcompanhar, onRegistrou, onProgresso }: {
       if (p) pend.push({ k, n: p.n, label: p.label, motivo });
     };
     if (!f.empresa_id) add("empresa_id", "selecione a empresa");
+    // Local: ou escolhido na lista, ou escrito (quem não achou o seu).
+    if (!f.contrato_informado.trim() || f.contrato_informado === "__nao_localizado") {
+      add("contrato_informado", contratos.length ? "escolha o seu local na lista — ou escreva, se não achar" : "escreva o seu local de trabalho");
+    }
     if (f.anonimo === "") add("anonimo", "escolha uma das duas opções");
     if (f.anonimo !== "sim" && f.identificado === "") add("identificado", "escolha uma das duas opções");
     if (f.identificado === "sim" && !f.nome_completo.trim()) add("nome_completo", "digite seu nome completo");
     if (!f.relacao) add("relacao", "selecione uma opção na lista");
     if (!f.tipo_denuncia) add("tipo_denuncia", "toque em um dos tipos");
     if (!f.como_soube) add("como_soube", "selecione uma opção na lista");
+    if (!f.denunciado_informado.trim()) add("denunciado_informado", "informe quem é a pessoa denunciada");
     // 30 é o mínimo que a RPC exige — avisar aqui evita o erro vir do servidor.
     const n = f.descricao.trim().length;
     if (n < 30) {
@@ -824,7 +832,7 @@ function Formulario({ onAcompanhar, onRegistrou, onProgresso }: {
     else if (f.senha !== f.senha2) add("senha", "as duas senhas digitadas não são iguais");
     if (!f.concordou_termo) add("concordou_termo", "marque a caixa de aceite");
     return pend;
-  }, [f, perguntas]);
+  }, [f, perguntas, contratos]);
 
   /** Vermelho só nas que continuam pendentes depois de um envio recusado. */
   const falta = (k: keyof Form) => tentou && faltando.some((x) => x.k === k);
@@ -1040,15 +1048,15 @@ function Formulario({ onAcompanhar, onRegistrou, onProgresso }: {
         <div className="dn-card-b">
           <Campo
             p={perguntas.empresa_id} falta={falta("empresa_id")} para="dn-i-empresa"
-            ajuda="O grupo tem empresas diferentes, e cada uma tem o seu comitê. É por aqui que a denúncia chega a quem pode apurar."
+            ajuda="Cada empresa tem o seu comitê. É por aqui que a denúncia chega a quem pode apurar."
           >
             <Sel id="dn-i-empresa" valor={f.empresa_id} onChange={(v) => set("empresa_id", v)}
                  opcoes={empresas.map((e) => ({ value: e.id, label: e.rotulo }))} />
           </Campo>
 
           <Campo
-            p={perguntas.contrato_informado} para="dn-i-contrato"
-            ajuda="Se não encontrar na lista, escolha “Não localizei” e escreva do seu jeito — ninguém precisa saber o nome oficial do contrato."
+            p={perguntas.contrato_informado} falta={falta("contrato_informado")} para="dn-i-contrato"
+            ajuda="A lista tem os locais em atividade da empresa escolhida. Se não encontrar o seu, escolha “Não localizei” e escreva do seu jeito."
           >
             {contratos.length > 0 && (
               <Sel
@@ -1059,8 +1067,7 @@ function Formulario({ onAcompanhar, onRegistrou, onProgresso }: {
                 }))}
                 opcoes={[
                   ...contratos.map((c) => ({ value: c, label: c })),
-                  { value: "__nao_localizado", label: "Não localizei meu contrato na lista" },
-                  { value: "__nao_sei", label: "Não sei informar" },
+                  { value: "__nao_localizado", label: "Não localizei meu local na lista" },
                 ]}
               />
             )}
@@ -1210,7 +1217,7 @@ function Formulario({ onAcompanhar, onRegistrou, onProgresso }: {
           </Campo>
 
           <Campo
-            p={perguntas.denunciado_informado} para="dn-i-denunciado"
+            p={perguntas.denunciado_informado} falta={falta("denunciado_informado")} para="dn-i-denunciado"
             ajuda="Se não souber o nome, descreva do jeito que der: “o encarregado do turno da noite” já ajuda."
           >
             <input id="dn-i-denunciado" className="dn-in" value={f.denunciado_informado}
