@@ -22,7 +22,12 @@ export function ProtectedRoute({ children }: { children: React.ReactNode }) {
   }
 
   if (!user && !isDemo) {
-    return <Navigate to="/login" replace />;
+    // Leva junto para onde a pessoa ia (?next=, que o Login já sabe ler e
+    // valida contra open-redirect). Nasceu para o QR code de retirada da
+    // etiqueta: o supervisor lê o código, cai no login na primeira vez, e
+    // precisa voltar para o pedido — não para o painel geral.
+    const destino = location.pathname + location.search;
+    return <Navigate to={destino === "/app" ? "/login" : `/login?next=${encodeURIComponent(destino)}`} replace />;
   }
 
   // Usuário real precisa trocar a senha (reset feito por admin).

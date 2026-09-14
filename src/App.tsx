@@ -84,6 +84,7 @@ import PedidosCompraSupply from "./pages/suprimentos/PedidosCompraSupply";
 import CatalogoMateriais from "./pages/suprimentos/CatalogoMateriais";
 import CatalogoAprovacoes from "./pages/suprimentos/CatalogoAprovacoes";
 import PedidosMateriais from "./pages/suprimentos/PedidosMateriais";
+import RetiradaPedido from "./pages/suprimentos/RetiradaPedido";
 import EstoqueEtiquetas from "./pages/suprimentos/EstoqueEtiquetas";
 import SeparacaoMateriais from "./pages/suprimentos/SeparacaoMateriais";
 import Patrimonio from "./pages/suprimentos/Patrimonio";
@@ -105,6 +106,7 @@ import FluxoCaixaGestao from "./pages/financeiro/FluxoCaixaGestao";
 import CartaoCredito from "./pages/financeiro/CartaoCredito";
 import DebitoAutomatico from "./pages/financeiro/DebitoAutomatico";
 import ChecklistFaturamento from "./pages/financeiro/ChecklistFaturamento";
+import SolicitacoesAjuste from "./pages/financeiro/SolicitacoesAjuste";
 import ContaGarantida from "./pages/financeiro/ContaGarantida";
 import FluxoCaixaDiario from "./pages/financeiro/FluxoCaixaDiario";
 import CapitalGiro from "./pages/financeiro/CapitalGiro";
@@ -534,6 +536,9 @@ const App = () => (
             <Route path="suprimentos/catalogo/aprovacoes" element={<CatalogoAprovacoes />} />
             <Route path="suprimentos/catalogo" element={<CatalogoMateriais />} />
             <Route path="suprimentos/pedidos-materiais" element={<PedidosMateriais />} />
+            {/* Destino do QR code da etiqueta térmica (menu sup_retirada_entrega). */}
+            <Route path="suprimentos/retirada" element={<RetiradaPedido />} />
+            <Route path="suprimentos/retirada/:ref" element={<RetiradaPedido />} />
             <Route path="suprimentos/separacao" element={<SeparacaoMateriais />} />
             <Route path="suprimentos/estoque-etiquetas" element={<EstoqueEtiquetas />} />
             <Route path="suprimentos/patrimonio" element={<Patrimonio />} />
@@ -550,6 +555,7 @@ const App = () => (
             <Route path="financeiro/gestao-financeira/fluxo-caixa" element={<FluxoCaixaGestao />} />
             <Route path="financeiro/gestao-financeira/debito-automatico" element={<DebitoAutomatico />} />
             <Route path="financeiro/checklist-faturamento" element={<ChecklistFaturamento />} />
+            <Route path="financeiro/solicitacoes-ajuste" element={<SolicitacoesAjuste />} />
             <Route path="financeiro/gestao-financeira/cartao-credito" element={<CartaoCredito />} />
             <Route path="financeiro/fluxo-caixa-diario" element={<FluxoCaixaDiario />} />
             <Route path="financeiro/capital-giro" element={<CapitalGiro />} />
