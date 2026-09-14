@@ -15,6 +15,7 @@ import {
   useRascunhos, useCatalogoMutations, OPCOES_PREDEFINIDAS, LABEL_TIPO_ITEM,
   type TipoItem, type Item,
 } from "@/hooks/useSupCatalogo";
+import { useEstoqueLista, type LinhaEstoque } from "@/hooks/useSupEstoque";
 import { AutorAlteracao } from "@/components/suprimentos/HistoricoLote";
 import {
   Plus, Pencil, Trash2, Settings2, Send, ChevronRight, Building2, MapPin,
@@ -224,6 +225,7 @@ export default function CatalogoMateriais() {
   const { data: funcoes = [] } = useFuncoes(postoId);
   const { data: enxoval = [] } = useFuncaoItens(funcaoId);
   const { data: catalogo = [] } = useItens(empresaId ?? null);
+  const { data: estoque = [] } = useEstoqueLista(empresaId ?? null);
   const { data: rascunhos = [] } = useRascunhos(empresaId ?? null);
 
   const m = useCatalogoMutations(empresaId ?? null);
@@ -442,6 +444,7 @@ export default function CatalogoMateriais() {
         aberto={addItemAberto}
         onFechar={() => setAddItemAberto(false)}
         catalogo={catalogo}
+        estoque={estoque}
         jaNoEnxoval={new Set(enxoval.map((e) => e.item_id))}
         onAdicionar={(itemId, itemNome) =>
           funcaoId && m.adicionarAoEnxoval.mutate({
@@ -455,13 +458,29 @@ export default function CatalogoMateriais() {
   );
 }
 
-/** Escolhe um material do catálogo mestre — ou cria um novo na hora. */
+type OpcaoMaterial = {
+  id: string; nome: string; tipo: TipoItem;
+  codigo: string | null;
+  /** null = material sem ficha de estoque; número = disponível somado entre almoxarifados. */
+  disponivel: number | null;
+};
+
+/**
+ * Escolhe um material do catálogo mestre ou do estoque — ou cria um novo na hora.
+ *
+ * O estoque entra junto do catálogo, e sem corte nenhum: o pedido foi "o que
+ * está no Estoque tem que dar para pôr no enxoval". Material com estoque vem
+ * primeiro e mostra código e saldo, porque é o sup_item_id dele que a
+ * separação vai procurar na prateleira. Pôr no enxoval o homônimo de outra
+ * empresa, sem estoque, travaria a entrega.
+ */
 function DialogAdicionarMaterial({
-  aberto, onFechar, catalogo, jaNoEnxoval, onAdicionar, onCriarMaterial,
+  aberto, onFechar, catalogo, estoque, jaNoEnxoval, onAdicionar, onCriarMaterial,
 }: {
   aberto: boolean;
   onFechar: () => void;
   catalogo: Item[];
+  estoque: LinhaEstoque[];
   jaNoEnxoval: Set<string>;
   onAdicionar: (itemId: string, itemNome: string) => void;
   onCriarMaterial: (nome: string, tipo: TipoItem) => Promise<string>;
@@ -470,12 +489,40 @@ function DialogAdicionarMaterial({
   const [novoNome, setNovoNome] = useState("");
   const [novoTipo, setNovoTipo] = useState<TipoItem>("uniforme");
 
-  const disponiveis = useMemo(
-    () => catalogo
-      .filter((i) => !jaNoEnxoval.has(i.id))
-      .filter((i) => i.nome.toLowerCase().includes(busca.toLowerCase())),
-    [catalogo, jaNoEnxoval, busca],
-  );
+  const disponiveis = useMemo(() => {
+    // Um material pode ter ficha em mais de um almoxarifado: soma o saldo.
+    const noEstoque = new Map<string, OpcaoMaterial>();
+    for (const l of estoque) {
+      if (!l.sup_item_id) continue;
+      const ja = noEstoque.get(l.sup_item_id);
+      if (ja) ja.disponivel = (ja.disponivel ?? 0) + l.disponivel;
+      else noEstoque.set(l.sup_item_id, {
+        id: l.sup_item_id, nome: l.material, tipo: l.tipo_material as TipoItem,
+        codigo: l.codigo_item, disponivel: l.disponivel,
+      });
+    }
+
+    const todas = new Map<string, OpcaoMaterial>();
+    for (const i of catalogo) {
+      const e = noEstoque.get(i.id);
+      todas.set(i.id, {
+        id: i.id, nome: i.nome, tipo: i.tipo,
+        codigo: e?.codigo ?? null, disponivel: e?.disponivel ?? null,
+      });
+    }
+    // Com estoque mas fora do catálogo ativo: entra mesmo assim.
+    for (const [id, e] of noEstoque) if (!todas.has(id)) todas.set(id, e);
+
+    const termo = busca.trim().toLowerCase();
+    return [...todas.values()]
+      .filter((o) => !jaNoEnxoval.has(o.id))
+      .filter((o) => !termo
+        || o.nome.toLowerCase().includes(termo)
+        || (o.codigo ?? "").toLowerCase().includes(termo))
+      .sort((a, b) =>
+        Number(a.disponivel === null) - Number(b.disponivel === null)
+        || a.nome.localeCompare(b.nome, "pt-BR"));
+  }, [catalogo, estoque, jaNoEnxoval, busca]);
 
   const criarEIncluir = async () => {
     if (!novoNome.trim()) return;
@@ -494,8 +541,8 @@ function DialogAdicionarMaterial({
 
         <div className="min-w-0 space-y-4 py-2">
           <div className="min-w-0">
-            <Label>Buscar no catálogo</Label>
-            <Input value={busca} onChange={(e) => setBusca(e.target.value)} placeholder="Ex.: camiseta, botina, luva…" />
+            <Label>Buscar no catálogo e no estoque</Label>
+            <Input value={busca} onChange={(e) => setBusca(e.target.value)} placeholder="Nome ou código — ex.: luva, botina, 0000400…" />
             <div className="mt-2 max-h-72 space-y-1 overflow-y-auto overflow-x-hidden rounded-md border p-1">
               {disponiveis.length === 0 && (
                 <p className="py-6 text-center text-xs text-muted-foreground">
@@ -509,8 +556,18 @@ function DialogAdicionarMaterial({
                   onClick={() => { onAdicionar(i.id, i.nome); onFechar(); }}
                   className="flex w-full min-w-0 items-center gap-2 rounded px-2 py-1.5 text-left text-sm hover:bg-muted"
                 >
+                  {i.codigo && (
+                    <span className="shrink-0 font-mono text-[11px] text-muted-foreground">{i.codigo}</span>
+                  )}
                   <span className="min-w-0 flex-1 truncate">{i.nome}</span>
-                  <Badge variant="secondary" className="shrink-0 text-[10px]">{LABEL_TIPO_ITEM[i.tipo]}</Badge>
+                  {i.disponivel !== null && (
+                    <Badge variant="outline" className="shrink-0 text-[10px]">
+                      Em estoque: {i.disponivel}
+                    </Badge>
+                  )}
+                  <Badge variant="secondary" className="shrink-0 text-[10px]">
+                    {LABEL_TIPO_ITEM[i.tipo] ?? i.tipo}
+                  </Badge>
                 </button>
               ))}
             </div>
