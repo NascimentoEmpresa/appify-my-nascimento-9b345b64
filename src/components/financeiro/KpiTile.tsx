@@ -17,6 +17,7 @@ const KPI_TILE_ICONE: Record<string, string> = {
 export function KpiTile({
   label,
   valor,
+  sub,
   icon,
   cor,
   valorClass,
@@ -24,6 +25,9 @@ export function KpiTile({
 }: {
   label: string;
   valor: string;
+  // SIS-2026-0343: linha pequena e muted abaixo do valor (ex. "42 de 51
+  // itens totais") — opcional, os outros usos continuam iguais sem passar.
+  sub?: string;
   icon: React.ReactNode;
   cor: keyof typeof KPI_TILE_ICONE;
   valorClass?: string;
@@ -52,6 +56,7 @@ export function KpiTile({
         </div>
         <p className="relative z-10 text-xs font-medium uppercase tracking-wide text-muted-foreground">{label}</p>
         <p className={cn("relative z-10 text-2xl font-bold mt-1", valorClass)}>{valor}</p>
+        {sub && <p className="relative z-10 text-[11px] text-muted-foreground mt-0.5">{sub}</p>}
       </CardContent>
     </Card>
   );

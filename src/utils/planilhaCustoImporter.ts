@@ -86,6 +86,12 @@ export interface PlanilhaCustoImportada {
   pis: number;
   irpj_csll: number;
   iss: number;
+  // Despesas Diretas (instalação) — hoje só o contrato CANAA usa
+  aluguel: number;
+  agua: number;
+  luz: number;
+  internet: number;
+  demais_despesas_diretas: number;
   total_por_empregado: number;
   sheetNames: string[];
 }
@@ -388,6 +394,14 @@ function extractFields(sheet: Sheet): Omit<PlanilhaCustoImportada, "sheetNames">
   const irpj_csll = sumTerms(s, ["IRPJ", "CSLL"]);
   const iss = findAND(s, ["ISS"], ["PROFISSIONAL", "DEMISSOES"]);
 
+  // Despesas Diretas (instalação) — hoje só o CANAA. findWord p/ AGUA/LUZ
+  // evita casar dentro de outras palavras.
+  const aluguel = findAND(s, ["ALUGUEL"], []);
+  const agua = findWord(s, "AGUA");
+  const luz = findWord(s, "LUZ");
+  const internet = findAND(s, ["INTERNET"], []);
+  const demais_despesas_diretas = findAND(s, ["DEMAIS", "DESPESAS", "DIRETAS"], []);
+
   // Total por empregado
   const total_por_empregado =
     findAND_OR(s, ["TOTAL"], ["POSTO", "VALOR", "EMPREGADO", "PRECO"], [
@@ -415,6 +429,7 @@ function extractFields(sheet: Sheet): Omit<PlanilhaCustoImportada, "sheetNames">
     uniforme, epi, epc, materiais, equipamentos, relogio_digital,
     ponto_eletronico, outros_insumos,
     custos_indiretos, lucro, cofins, pis, irpj_csll, iss,
+    aluguel, agua, luz, internet, demais_despesas_diretas,
     total_por_empregado,
   };
 }
