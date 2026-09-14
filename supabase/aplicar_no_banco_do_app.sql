@@ -21804,12 +21804,7 @@ NOTIFY pgrst, 'reload schema';
 -- Idempotente. Aplicar no banco do app.
 -- =========================================================================
 
--- 1) As paradas na etapa 1 ------------------------------------------------
-UPDATE public."SISTEMA_SOLICITACOES_DEMISSAO"
-   SET status = 'Pendente Operacional'
- WHERE status = 'Pendente Analista';
-
--- 2) O trigger que segura a demissão sem vaga -----------------------------
+-- 1) O trigger que segura a demissão sem vaga -----------------------------
 CREATE OR REPLACE FUNCTION public.demissao_exige_vaga()
 RETURNS trigger
 LANGUAGE plpgsql
@@ -21829,6 +21824,16 @@ DROP TRIGGER IF EXISTS trg_demissao_exige_vaga ON public."SISTEMA_SOLICITACOES_D
 CREATE TRIGGER trg_demissao_exige_vaga
   BEFORE UPDATE OF status ON public."SISTEMA_SOLICITACOES_DEMISSAO"
   FOR EACH ROW EXECUTE FUNCTION public.demissao_exige_vaga();
+
+-- 2) As paradas na etapa 1 ------------------------------------------------
+-- DEPOIS do trigger, de propósito: com a versão antiga ainda no ar, o UPDATE
+-- abaixo cai exatamente na condição dela (OLD = 'Pendente Analista', NEW fora
+-- de Analista/Reprovada) e estoura em quem ainda não tem vaga — foi o que
+-- aconteceu na primeira aplicação, 14/09/2026 ("MARIA APARECIDA KUNZLER").
+-- Renomear a etapa não é fazer o pedido seguir.
+UPDATE public."SISTEMA_SOLICITACOES_DEMISSAO"
+   SET status = 'Pendente Operacional'
+ WHERE status = 'Pendente Analista';
 
 COMMENT ON COLUMN public."SISTEMA_SOLICITACOES_DEMISSAO".vaga_obrigatoria IS
   'TRUE quando quem pediu respondeu "Sim" a "Deseja solicitar a substituição?": a vaga de Substituição abre em seguida e o pedido não sai de Pendente Operacional sem ela (trigger demissao_exige_vaga). FALSE = sem reposição (redução de quadro) ou pedido da tela antiga.';
