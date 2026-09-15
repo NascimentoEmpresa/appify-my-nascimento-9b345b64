@@ -38,6 +38,9 @@ interface SituacaoCatalogo {
   enviado_por_nome: string | null;
   processando: boolean;
   ultimo_erro: string | null;
+  /** Lotes do estoque cujo CA a última carga sobrescreveu (20260930000161). */
+  lotes_atualizados: number | null;
+  estoque_erro: string | null;
 }
 
 export function PainelCatalogoCa() {
@@ -104,6 +107,12 @@ export function PainelCatalogoCa() {
             <h3 className="font-medium">Lista oficial de CA</h3>
             <p className="text-sm text-muted-foreground">
               É contra esta lista que o sistema confere o CA digitado nas entradas de EPI.
+            </p>
+            {/* Quem anexa precisa saber que o arquivo mexe no estoque, e não
+                só na conferência — inclusive no CA digitado à mão lá. */}
+            <p className="text-sm text-muted-foreground">
+              Ao carregar, ela também substitui o número e a validade do CA dos lotes em estoque
+              que estiverem na lista — inclusive o que foi digitado à mão em Estoque &amp; Etiquetas.
             </p>
           </div>
 
@@ -182,6 +191,19 @@ export function PainelCatalogoCa() {
                   <p className="text-xs opacity-80">
                     Enviado por {situacao!.enviado_por_nome}
                     {situacao!.arquivo_nome ? ` — ${situacao!.arquivo_nome}` : ""}
+                  </p>
+                )}
+                {/* Nulo nas cargas anteriores a 20260930000161: nada a dizer. */}
+                {situacao!.lotes_atualizados != null && (
+                  <p className="text-xs opacity-80">
+                    {situacao!.lotes_atualizados === 0
+                      ? "Nenhum lote do estoque precisou ter o CA corrigido nesta carga."
+                      : `${situacao!.lotes_atualizados.toLocaleString("pt-BR")} lote(s) do estoque tiveram o CA substituído pelo oficial nesta carga — está no histórico de cada material.`}
+                  </p>
+                )}
+                {situacao!.estoque_erro && (
+                  <p className="text-xs font-medium">
+                    A lista carregou, mas não foi possível atualizar o CA do estoque: {situacao!.estoque_erro}
                   </p>
                 )}
               </>

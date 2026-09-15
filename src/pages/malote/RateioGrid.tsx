@@ -593,23 +593,22 @@ export function RateioGrid({
                 </TableCell>
                 {dimensoes.fornecedor && (
                   <TableCell>
-                    <Select
+                    {/* SIS-2026-0399: cadastro é feito pelo próprio fornecedor, sem
+                        padrão de nome nenhum — combobox pesquisável (mesmo padrão do
+                        Contrato/Integrante acima), com CNPJ/CPF como hint de busca. */}
+                    <SearchableSelect
                       value={linha.fornecedor_id ?? "none"}
-                      onValueChange={(v) => atualizarLinha(idx, { fornecedor_id: v === "none" ? null : v })}
+                      onChange={(v) => atualizarLinha(idx, { fornecedor_id: v === "none" ? null : v })}
+                      options={[
+                        { value: "none", label: "—" },
+                        ...fornecedores.map((f) => ({ value: f.id, label: f.nome, hint: f.cnpj_cpf })),
+                      ]}
+                      placeholder="—"
+                      searchPlaceholder="Buscar fornecedor..."
                       disabled={disabled || travarEstrutura}
-                    >
-                      <SelectTrigger className="h-8 w-36 text-xs">
-                        <SelectValue placeholder="—" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="none">—</SelectItem>
-                        {fornecedores.map((f) => (
-                          <SelectItem key={f.id} value={f.id}>
-                            {f.nome}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
+                      className="w-36"
+                      triggerClassName="h-8 text-xs"
+                    />
                   </TableCell>
                 )}
                 {dimensoes.integrante && (
