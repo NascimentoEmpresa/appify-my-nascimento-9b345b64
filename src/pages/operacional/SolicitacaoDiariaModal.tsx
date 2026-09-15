@@ -564,6 +564,13 @@ export function SolicitacaoDiariaModal({
       >
         <Clock className="h-3.5 w-3.5" /> Solicitada
       </Badge>
+    ) : solicitacao?.status === "paga" ? (
+      <Badge
+        variant="outline"
+        className="gap-1.5 border-primary/40 bg-primary/10 px-2.5 py-1 text-xs font-semibold text-primary"
+      >
+        <CheckCircle2 className="h-3.5 w-3.5" /> Paga
+      </Badge>
     ) : (
       <Badge
         variant="outline"
@@ -1156,7 +1163,9 @@ export function SolicitacaoDiariaModal({
               <UserX className="h-3.5 w-3.5" />
               {s?.status === "reprovada"
                 ? "Solicitação reprovada — somente visualização."
-                : s?.status === "aprovada"
+                : s?.status === "paga"
+                  ? "Solicitação paga no Malote — somente visualização."
+                  : s?.status === "aprovada"
                   ? "Solicitação aprovada — somente visualização."
                   : "Solicitação aguardando aprovação — a decisão deve ser feita por outro usuário autorizado."}
             </p>
