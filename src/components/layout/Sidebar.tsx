@@ -697,6 +697,22 @@ const centralServicosModule: ModuleDef = {
         { label: "Quadro de Avisos", to: "/app/central-servicos/quadro-avisos", icon: Megaphone },
       ],
     },
+    {
+      // Solicitações (15/09/2026): as mesmas telas do módulo Encarregados,
+      // em rota própria da Central. Um menu só no banco
+      // (central_servicos_solicitacoes, rota /app/central-servicos/solicitacoes)
+      // governa todos os itens por prefixo — liberou, aparece o grupo inteiro.
+      label: "Solicitações",
+      defaultOpen: true,
+      items: [
+        { label: "Minhas Solicitações", to: "/app/central-servicos/solicitacoes", icon: ClipboardList },
+        { label: "Solicitar Vaga", to: "/app/central-servicos/solicitacoes/vaga", icon: UserCog },
+        { label: "Solicitar Férias", to: "/app/central-servicos/solicitacoes/ferias", icon: CalendarRange },
+        { label: "Solicitar Demissão", to: "/app/central-servicos/solicitacoes/demissao", icon: UserMinus },
+        { label: "Mudança de Função", to: "/app/central-servicos/solicitacoes/mudanca-funcao", icon: ArrowLeftRight, notif: "troca_funcao" },
+        { label: "Solicitar Advertência", to: "/app/central-servicos/solicitacoes/advertencia", icon: ShieldAlert },
+      ],
+    },
   ],
 };
 

@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Link, useSearchParams } from "react-router-dom";
+import { Link, useLocation, useSearchParams } from "react-router-dom";
+import { baseDaUrl, rotasSolicitacoes } from "@/lib/solicitacoes/rotas";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -85,6 +86,9 @@ function CampoTravado({ label, valor }: { label: string; valor: string }) {
 }
 
 export default function SolicitarDemissao() {
+  // Mesma tela em Encarregados e em Central de Serviços › Solicitações
+  // (15/09/2026): a base sai da URL, e é ela que diz pra onde voltar.
+  const rotas = rotasSolicitacoes(baseDaUrl(useLocation().pathname));
   const { user } = useAuth();
   const [passo, setPasso] = useState(0);
   const [form, setForm] = useState({ ...VAZIO });
@@ -433,7 +437,7 @@ export default function SolicitarDemissao() {
                   o estado de sucesso continuava na frente e nada acontecia.
                   A lista completa (demissão, vaga, férias, advertência) mora
                   em Minhas Solicitações — é para lá que o botão promete ir. */}
-              <Button variant="outline" asChild><Link to="/app/encarregados/minhas-solicitacoes">Ver minhas solicitações</Link></Button>
+              <Button variant="outline" asChild><Link to={rotas.minhas}>Ver minhas solicitações</Link></Button>
             </div>
           </CardContent>
         </Card>
