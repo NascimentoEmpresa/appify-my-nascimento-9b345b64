@@ -194,7 +194,7 @@ export default function ReuniaoDetalhe() {
   const excluirLote = useExcluirReunioesEmMassa();
 
   const {
-    reuniao, isLoading, pauta, respostas, convidados, anexos, pautaAnexos, comentarios, assinaturas, logs,
+    reuniao, isLoading, pauta, respostas, convidados, anexos, pautaAnexos, comentarios, assinaturas, logs, assuntosForaPauta,
     cancelarReuniao, excluirReuniao, encerrarReuniao, atualizarCampos,
     salvarPautaItem, atualizarPautaItem, reordenarPauta, removerPautaItem, salvarResposta,
     uploadAnexo, removerAnexo, downloadAnexo, uploadPautaAnexo, removerPautaAnexo,
@@ -592,7 +592,7 @@ export default function ReuniaoDetalhe() {
                 <Button size="sm" variant="outline" className="gap-1.5" onClick={() => exportarConvocacaoPdf(reuniao, pauta)}>
                   <FileDown className="h-3.5 w-3.5" /> PDF de convocação
                 </Button>
-                <Button size="sm" variant="outline" className="gap-1.5" onClick={() => exportarAtaFinalPdf(reuniao, pauta, respostas, assinaturas, usuarios, comentarios)}>
+                <Button size="sm" variant="outline" className="gap-1.5" onClick={() => exportarAtaFinalPdf(reuniao, pauta, respostas, assinaturas, usuarios, comentarios, assuntosForaPauta)}>
                   <FileDown className="h-3.5 w-3.5" /> PDF final da ata
                 </Button>
               </div>

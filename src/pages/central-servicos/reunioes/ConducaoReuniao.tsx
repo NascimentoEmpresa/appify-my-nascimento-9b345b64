@@ -22,6 +22,7 @@ export default function ConducaoReuniao() {
   const { user } = useAuth();
   const { data: usuarios = [] } = useUsuariosAtivos();
   const [assuntoOpen, setAssuntoOpen] = useState(false);
+  const [focoPautaId, setFocoPautaId] = useState<string | null>(null);
   const [iniciando, setIniciando] = useState(false);
   const [encerrando, setEncerrando] = useState(false);
 
@@ -136,6 +137,8 @@ export default function ConducaoReuniao() {
               onCriarAcaoPlanoAcao={criarAcaoPlanoAcao}
               onAtualizarDecisaoAcao={atualizarDecisaoAcao}
               onRemoverDecisaoAcao={removerDecisaoAcao}
+              focoPautaId={focoPautaId}
+              onFocoAplicado={() => setFocoPautaId(null)}
             />
           </Card>
 
@@ -151,14 +154,24 @@ export default function ConducaoReuniao() {
                   <div key={a.id} className={`rounded border border-border p-2 text-xs ${a.concluido ? "opacity-60" : ""}`}>
                     <div className="flex items-start justify-between gap-2">
                       <p className="font-medium">{a.assunto_estacionado || TRATATIVA_ASSUNTO_LABEL[a.tratativa]}</p>
-                      {a.tratativa === "estacionar" && (
-                        <Button
-                          type="button" size="sm" variant={a.concluido ? "outline" : "default"} className="h-6 shrink-0 px-2 text-[10px]"
-                          onClick={() => marcarAssuntoForaPautaConcluido(a.id, !a.concluido)}
-                        >
-                          {a.concluido ? "Reabrir" : "Marcar como resolvido"}
-                        </Button>
-                      )}
+                      <div className="flex shrink-0 gap-1">
+                        {a.pauta_id && (
+                          <Button
+                            type="button" size="sm" variant="outline" className="h-6 px-2 text-[10px]"
+                            onClick={() => setFocoPautaId(a.pauta_id)}
+                          >
+                            Tratar agora
+                          </Button>
+                        )}
+                        {a.tratativa === "estacionar" && (
+                          <Button
+                            type="button" size="sm" variant={a.concluido ? "outline" : "default"} className="h-6 px-2 text-[10px]"
+                            onClick={() => marcarAssuntoForaPautaConcluido(a.id, !a.concluido)}
+                          >
+                            {a.concluido ? "Reabrir" : "Marcar como resolvido"}
+                          </Button>
+                        )}
+                      </div>
                     </div>
                     <p className="text-muted-foreground">
                       {TRATATIVA_ASSUNTO_LABEL[a.tratativa]}
@@ -190,7 +203,16 @@ export default function ConducaoReuniao() {
       )}
 
       {podeGerenciar && (
-        <AssuntoForaPautaModal open={assuntoOpen} onOpenChange={setAssuntoOpen} usuarios={usuarios} onSalvar={criarAssuntoForaPauta} />
+        <AssuntoForaPautaModal
+          open={assuntoOpen}
+          onOpenChange={setAssuntoOpen}
+          usuarios={usuarios}
+          onSalvar={async (dados) => {
+            const pautaId = await criarAssuntoForaPauta(dados);
+            if (pautaId) setFocoPautaId(pautaId);
+            return pautaId !== null;
+          }}
+        />
       )}
     </div>
   );

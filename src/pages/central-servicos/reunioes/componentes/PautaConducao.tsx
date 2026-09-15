@@ -1,4 +1,5 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -91,8 +92,11 @@ function RespostaDecisaoItem({
 export function PautaConducao({
   pauta, respostas, decisoesAcoes, usuarios, setorPadrao, pautaAnexos,
   onAtualizarNatureza, onAtualizarPrazo, onSalvarChecklist, onSalvarResposta, onCriarDecisaoAcao, onCriarAcaoPlanoAcao, onAtualizarDecisaoAcao, onRemoverDecisaoAcao,
-  onUploadPautaAnexo, onDownloadAnexo, onRemoverPautaAnexo,
+  onUploadPautaAnexo, onDownloadAnexo, onRemoverPautaAnexo, focoPautaId, onFocoAplicado,
 }: {
+  /** Item pra onde a condução deve pular (ex.: assunto fora da pauta recém-registrado). */
+  focoPautaId?: string | null;
+  onFocoAplicado?: () => void;
   pauta: ReuniaoPauta[];
   respostas: ReuniaoResposta[];
   decisoesAcoes: ReuniaoDecisaoAcao[];
@@ -124,6 +128,17 @@ export function PautaConducao({
   const [sinalAbrirAcao, setSinalAbrirAcao] = useState(0);
   const item = pauta[indice];
 
+  // Espera o item aparecer na pauta (refetch após o insert) antes de pular e
+  // só então limpa o foco — senão todo refetch da pauta puxaria de volta.
+  useEffect(() => {
+    if (!focoPautaId) return;
+    const i = pauta.findIndex((p) => p.id === focoPautaId);
+    if (i === -1) return;
+    setIndice(i);
+    onFocoAplicado?.();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [focoPautaId, pauta]);
+
   if (!item) return <p className="text-sm text-muted-foreground">Nenhum item de pauta cadastrado.</p>;
 
   const resposta = respostas.find((r) => r.pauta_id === item.id);
@@ -140,7 +155,10 @@ export function PautaConducao({
       </div>
 
       <div>
-        <p className="text-base font-semibold">{item.titulo_topico}</p>
+        <div className="flex flex-wrap items-center gap-2">
+          <p className="text-base font-semibold">{item.titulo_topico}</p>
+          {item.fora_pauta && <Badge variant="outline" className="border-amber-200 bg-amber-100 text-amber-800">Fora da pauta</Badge>}
+        </div>
         <p className="text-xs text-muted-foreground">
           Responsável pelo item: {nomeUsuario(usuarios, item.responsavel_user_id) ?? "—"}
           {item.prazo && ` · Prazo: ${new Date(item.prazo).toLocaleDateString("pt-BR")}`}
