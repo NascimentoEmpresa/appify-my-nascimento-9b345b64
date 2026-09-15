@@ -38,7 +38,9 @@ export function AssuntoForaPautaModal({
   const opcoesUsuarios = usuarios.map((u) => ({ value: u.id, label: u.display_name ?? "—" }));
 
   const precisaEstacionamento = form.tratativa === "estacionar";
-  const valido = form.surgiu && form.classificacao && form.tratativa
+  // Assunto é sempre obrigatório: vira o título do item de pauta criado junto
+  // (é por ele que o assunto é conduzido, recebe ações e aparece na ata).
+  const valido = form.surgiu && form.classificacao && form.tratativa && form.assuntoEstacionado.trim()
     && (!precisaEstacionamento || (form.responsavel && form.dataPrevista));
 
   const salvar = async () => {
@@ -101,7 +103,7 @@ export function AssuntoForaPautaModal({
               </div>
 
               <div className="space-y-1.5">
-                <Label>Assunto {precisaEstacionamento && "*"}</Label>
+                <Label>Assunto *</Label>
                 <Textarea
                   value={form.assuntoEstacionado}
                   maxLength={250}
@@ -145,6 +147,7 @@ export function AssuntoForaPautaModal({
 
               <div className="rounded-md border border-dashed border-border p-3 text-xs text-muted-foreground">
                 <p className="mb-1 font-semibold text-foreground">Resumo</p>
+                <p className="mb-1">O assunto entra no fim da pauta desta reunião: pode ser conduzido, gerar decisões e ações no Plano de Ações e sai na ata final.</p>
                 <p>Classificação: {form.classificacao ? CLASSIFICACAO_ASSUNTO_LABEL[form.classificacao] : "—"}</p>
                 <p>Tratativa: {form.tratativa ? TRATATIVA_ASSUNTO_LABEL[form.tratativa] : "—"}</p>
                 <p>Responsável: {form.responsavel ? nomeUsuario(usuarios, form.responsavel) ?? "—" : "—"}</p>

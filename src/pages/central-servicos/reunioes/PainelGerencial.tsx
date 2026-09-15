@@ -101,7 +101,8 @@ export default function PainelGerencial() {
     const iniciadas = reunioesFiltradas.filter((r) => r.hora_inicio_real);
     const concluidas = reunioesFiltradas.filter((r) => r.etapa === "concluida");
 
-    const iniciadasComPauta = iniciadas.filter((r) => pautaFiltrada.some((p) => p.reuniao_id === r.id));
+    // Item nascido de assunto fora da pauta não conta como "iniciou com pauta" — ele surge durante a reunião.
+    const iniciadasComPauta = iniciadas.filter((r) => pautaFiltrada.some((p) => p.reuniao_id === r.id && !p.fora_pauta));
     const concluidasNoTempo = concluidas.filter((r) => r.duracao_real_minutos != null && r.duracao_real_minutos <= r.duracao_minutos);
     const duracoesReais = concluidas.map((r) => r.duracao_real_minutos).filter((d): d is number => d != null);
     const tempoMedio = duracoesReais.length ? Math.round(duracoesReais.reduce((a, b) => a + b, 0) / duracoesReais.length) : null;

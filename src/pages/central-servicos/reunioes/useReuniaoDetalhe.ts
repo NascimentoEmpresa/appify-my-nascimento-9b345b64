@@ -36,7 +36,7 @@ export function useReuniaoDetalhe(id: string | undefined) {
     queryFn: async () => {
       const { data, error } = await (supabase as any)
         .from("reuniao_pauta")
-        .select("id, reuniao_id, ordem, titulo_topico, descricao, responsavel_user_id, prazo, tempo_previsto_minutos, status, natureza, created_at")
+        .select("id, reuniao_id, ordem, titulo_topico, descricao, responsavel_user_id, prazo, tempo_previsto_minutos, status, natureza, fora_pauta, created_at")
         .eq("reuniao_id", id)
         .order("ordem", { ascending: true });
       if (error) throw error;
@@ -161,7 +161,7 @@ export function useReuniaoDetalhe(id: string | undefined) {
     queryFn: async () => {
       const { data, error } = await (supabase as any)
         .from("reuniao_assunto_fora_pauta")
-        .select("id, reuniao_id, classificacao, tratativa, assunto_estacionado, responsavel_tratativa_user_id, data_prevista, reuniao_futura_necessaria, observacoes, concluido, criado_por, created_at")
+        .select("id, reuniao_id, classificacao, tratativa, assunto_estacionado, responsavel_tratativa_user_id, data_prevista, reuniao_futura_necessaria, observacoes, concluido, pauta_id, criado_por, created_at")
         .eq("reuniao_id", id)
         .order("created_at", { ascending: true });
       if (error) throw error;
@@ -245,7 +245,7 @@ export function useReuniaoDetalhe(id: string | undefined) {
   const encerrarReuniao = async (usuarios: Usuario[], checklistEncerramento?: Record<string, string>): Promise<boolean> => {
     if (!id || !reuniao) return false;
     try {
-      const blob = gerarAtaFinalPdfBlob(reuniao, pauta, respostas, assinaturas, usuarios, comentarios);
+      const blob = gerarAtaFinalPdfBlob(reuniao, pauta, respostas, assinaturas, usuarios, comentarios, assuntosForaPauta);
       const path = `${id}/ata-final.pdf`;
       const up = await supabase.storage.from(BUCKET).upload(path, blob, {
         contentType: "application/pdf",
@@ -353,6 +353,7 @@ export function useReuniaoDetalhe(id: string | undefined) {
       return false;
     }
     qc.invalidateQueries({ queryKey: ["reuniao_pauta", id] });
+    qc.invalidateQueries({ queryKey: ["reuniao_assunto_fora_pauta", id] });
     if (id) registrarLog(id, "pauta_topico_removido", `Tópico removido: "${titulo}"`);
     return true;
   };
@@ -650,9 +651,12 @@ export function useReuniaoDetalhe(id: string | undefined) {
     data_prevista?: string | null;
     reuniao_futura_necessaria?: boolean;
     observacoes?: string | null;
-  }): Promise<boolean> => {
-    if (!id) return false;
-    const { error } = await (supabase as any).from("reuniao_assunto_fora_pauta").insert({
+  }): Promise<string | null> => {
+    if (!id) return null;
+    // O trigger reuniao_assunto_fora_pauta_criar_item_pauta cria, na mesma
+    // transação, o item de pauta (fora_pauta = true) que dá ao assunto a
+    // mesma tratativa dos itens de pauta: condução, decisões/ações e ata.
+    const { data, error } = await (supabase as any).from("reuniao_assunto_fora_pauta").insert({
       reuniao_id: id,
       classificacao: dados.classificacao,
       tratativa: dados.tratativa,
@@ -661,14 +665,16 @@ export function useReuniaoDetalhe(id: string | undefined) {
       data_prevista: dados.data_prevista ?? null,
       reuniao_futura_necessaria: dados.reuniao_futura_necessaria ?? false,
       observacoes: dados.observacoes ?? null,
-    });
+    }).select("pauta_id").single();
     if (error) {
       toast({ title: "Erro ao registrar assunto fora da pauta", description: error.message, variant: "destructive" });
-      return false;
+      return null;
     }
     qc.invalidateQueries({ queryKey: ["reuniao_assunto_fora_pauta", id] });
-    registrarLog(id, "assunto_fora_pauta_registrado", "Registrou um assunto fora da pauta");
-    return true;
+    qc.invalidateQueries({ queryKey: ["reuniao_pauta", id] });
+    registrarLog(id, "assunto_fora_pauta_registrado", `Registrou um assunto fora da pauta: "${dados.assunto_estacionado ?? ""}"`);
+    toast({ title: "Assunto fora da pauta registrado", description: "Adicionado ao fim da pauta para ser tratado na reunião." });
+    return (data?.pauta_id as string | null) ?? null;
   };
 
   const marcarAssuntoForaPautaConcluido = async (assuntoId: string, concluido: boolean): Promise<boolean> => {
@@ -682,12 +688,17 @@ export function useReuniaoDetalhe(id: string | undefined) {
   };
 
   const removerAssuntoForaPauta = async (assuntoId: string): Promise<boolean> => {
-    const { error } = await (supabase as any).from("reuniao_assunto_fora_pauta").delete().eq("id", assuntoId);
+    // Com item de pauta vinculado, apaga o item — o assunto vai junto (FK ON DELETE CASCADE).
+    const pautaId = assuntosForaPauta.find((a) => a.id === assuntoId)?.pauta_id;
+    const { error } = pautaId
+      ? await (supabase as any).from("reuniao_pauta").delete().eq("id", pautaId)
+      : await (supabase as any).from("reuniao_assunto_fora_pauta").delete().eq("id", assuntoId);
     if (error) {
       toast({ title: "Erro ao remover assunto", description: error.message, variant: "destructive" });
       return false;
     }
     qc.invalidateQueries({ queryKey: ["reuniao_assunto_fora_pauta", id] });
+    qc.invalidateQueries({ queryKey: ["reuniao_pauta", id] });
     return true;
   };
 

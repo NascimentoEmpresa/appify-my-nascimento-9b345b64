@@ -180,7 +180,10 @@ function PautaRow({
         <div className="flex items-start gap-1">
           <div className="min-w-0">
             <p className="text-sm font-medium">{item.titulo_topico}</p>
-            {item.descricao && <p className="text-xs text-muted-foreground">{item.descricao}</p>}
+            {item.fora_pauta && (
+              <span className="mt-0.5 inline-flex rounded-full border border-amber-200 bg-amber-100 px-2 py-0.5 text-[10px] text-amber-800">Fora da pauta</span>
+            )}
+            {item.descricao &&<p className="text-xs text-muted-foreground">{item.descricao}</p>}
           </div>
           {podeGerenciarGeral && (
             <EditarTopicoPopover item={item} onSalvar={(titulo, descricao) => onAtualizarTopico(item.id, { titulo_topico: titulo, descricao: descricao || null })} />
