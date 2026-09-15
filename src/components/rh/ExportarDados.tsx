@@ -23,10 +23,23 @@ import { empresaDe, parseSalario, fmtData, nomeCargoDe, nomeContratoDe } from "@
 // Empresa e Contrato são filtrados DEPOIS de ler, com a mesma lógica da tela
 // (empresaDe/contratoPorFilial) — "Empresa" é código+fallback de texto, não
 // dá pra empurrar pro SQL sem duplicar essa regra.
+//
+// AJUSTE FINO (15/09/2026, chamado da conferência da Protege):
+//   • O código de FILIAL se repete entre empresas (1064 é "TRIUNFO VIGIAS"
+//     na SN; a NH tem outra 1064). O contrato era casado só pela filial, e
+//     colaborador da NH saía com contrato da SN. Agora a chave é
+//     (Empresa, Filial) — cada pessoa só casa com contrato da própria empresa.
+//   • Filial sem contrato ativo em CONTRATOS (ex.: 1098 na SN, "CEITEC
+//     LIMPEZA") saía só com o número. Agora cai no "Nome Filial" do cadastro
+//     do colaborador, que já vem "1098 - CEITEC LIMPEZA - 025.2026".
+//   • O filtro de contrato só lista os contratos da empresa escolhida — e a
+//     opção leva a empresa junto, pra 1064 da SN não virar 1064 da NH.
+//   • Coluna "Vínculo": "Contrato ativo" / "Só cadastro" / "Sem contrato",
+//     pra quem confere a fatura ver de onde veio o nome.
 // =========================================================================
 
 type ColunaKey =
-  | "filial" | "nome" | "cpf" | "empresa" | "contrato" | "cargo" | "setor"
+  | "filial" | "nome" | "cpf" | "empresa" | "contrato" | "vinculo" | "cargo" | "setor"
   | "situacao" | "admissao" | "data_afastamento" | "pis" | "email" | "centro_custo" | "salario";
 
 const COLUNAS: { key: ColunaKey; label: string; padrao: boolean; salario?: boolean }[] = [
@@ -37,7 +50,8 @@ const COLUNAS: { key: ColunaKey; label: string; padrao: boolean; salario?: boole
   { key: "admissao", label: "Data de admissão", padrao: true },
   { key: "situacao", label: "Situação atual", padrao: true },
   { key: "cargo", label: "Cargo", padrao: false },
-  { key: "contrato", label: "Contrato", padrao: false },
+  { key: "contrato", label: "Contrato", padrao: true },
+  { key: "vinculo", label: "Vínculo do contrato", padrao: false },
   { key: "setor", label: "Setor", padrao: false },
   { key: "data_afastamento", label: "Data de afastamento", padrao: false },
   { key: "centro_custo", label: "Centro de custo", padrao: false },
@@ -48,11 +62,12 @@ const COLUNAS: { key: ColunaKey; label: string; padrao: boolean; salario?: boole
 
 // Campos do banco que cada coluna precisa ler.
 const CAMPOS_POR_COLUNA: Record<ColunaKey, string[]> = {
-  filial: ["Nome Filial", "Filial"],
+  filial: ["Nome Filial", "Filial", "Empresa", "Nome da Empresa"],
   nome: ["Nome"],
   cpf: ["CPF"],
   empresa: ["Empresa", "Nome da Empresa"],
-  contrato: ["Filial"],
+  contrato: ["Empresa", "Nome da Empresa", "Filial", "Nome Filial"],
+  vinculo: ["Empresa", "Nome da Empresa", "Filial", "Nome Filial"],
   cargo: ["Título do Cargo", "Nome do Cargo"],
   setor: ["Setor_ERP"],
   situacao: ["Situação"],
@@ -89,7 +104,12 @@ const rotuloComCodigo = (codigo: any, nome: any): string => {
   return cod ? `${cod} | ${nm}` : nm;
 };
 
-const valorDaColuna = (key: ColunaKey, e: any, contratoDe: (e: any) => string): string | number => {
+/** Chave do contrato: EMPRESA + FILIAL — o código de filial repete entre empresas. */
+const chaveEmpresaFilial = (empresa: string, filial: any) => `${empresa}|${String(filial ?? "").trim()}`;
+
+type Vinculo = { contrato: string; origem: "Contrato ativo" | "Só cadastro" | "Sem contrato" };
+
+const valorDaColuna = (key: ColunaKey, e: any, vinculoDe: (e: any) => Vinculo): string | number => {
   switch (key) {
     // "Nome Filial" já vem com o código na frente desde a migration
     // 20260930000089 ("1109 - POLICIA CIVIL RS LIMPEZA 066.2026") — passar
@@ -98,7 +118,8 @@ const valorDaColuna = (key: ColunaKey, e: any, contratoDe: (e: any) => string): 
     case "nome": return String(e["Nome"] ?? "").trim();
     case "cpf": return String(e["CPF"] ?? "").trim();
     case "empresa": return empresaDe(e);
-    case "contrato": return contratoDe(e);
+    case "contrato": return vinculoDe(e).contrato;
+    case "vinculo": return vinculoDe(e).origem;
     case "cargo": return nomeCargoDe(e);
     case "setor": return String(e["Setor_ERP"] ?? "").trim() || "—";
     case "situacao": return String(e["Situação"] ?? "").trim() || "—";
@@ -130,7 +151,9 @@ export default function ExportarDados() {
   // Opções de filtro. Empresa é fixa (só 4 no grupo); contrato e situação
   // vêm do banco, carregados uma vez na primeira abertura.
   const EMPRESAS = ["HAGG", "SN", "CANAÃ", "NH"];
-  const [contratos, setContratos] = useState<string[]>([]);
+  // Cada opção leva a empresa junto: o mesmo código de filial existe em
+  // empresas diferentes, e o filtro precisa distinguir.
+  const [contratos, setContratos] = useState<{ empresa: string; rotulo: string }[]>([]);
   const [situacoesDisponiveis, setSituacoesDisponiveis] = useState<string[]>([]);
   const [carregandoOpcoes, setCarregandoOpcoes] = useState(false);
 
@@ -140,11 +163,22 @@ export default function ExportarDados() {
     setCarregandoOpcoes(true);
     try {
       const [ct, st] = await Promise.all([
-        (supabase as any).from("CONTRATOS").select('"NOME CONTRATO", Filial').eq("ATIVO", "SIM").order('"NOME CONTRATO"'),
+        (supabase as any).from("CONTRATOS").select('"NOME CONTRATO", Filial, Empresa, "NOME EMPRESA"').eq("ATIVO", "SIM").order('"NOME CONTRATO"'),
         (supabase as any).from("EMPREGADOS").select('"Situação"').limit(20000),
       ]);
       // Mesmo rótulo da coluna exportada — o filtro compara com o que sai lá.
-      if (ct.data) setContratos([...new Set(ct.data.map((c: any) => rotuloComCodigo(c.Filial, c["NOME CONTRATO"])).filter((x: string) => x && x !== "—"))] as string[]);
+      if (ct.data) {
+        const vistos = new Set<string>();
+        const lista: { empresa: string; rotulo: string }[] = [];
+        for (const c of ct.data) {
+          const rotulo = rotuloComCodigo(c.Filial, c["NOME CONTRATO"]);
+          const empresa = empresaDe({ Empresa: c.Empresa, "Nome da Empresa": c["NOME EMPRESA"] });
+          const k = `${empresa}|${rotulo}`;
+          if (!rotulo || rotulo === "—" || vistos.has(k)) continue;
+          vistos.add(k); lista.push({ empresa, rotulo });
+        }
+        setContratos(lista);
+      }
       if (st.data) setSituacoesDisponiveis(
         [...new Set(st.data.map((r: any) => String(r["Situação"] ?? "").trim()).filter(Boolean))].sort() as string[],
       );
@@ -172,18 +206,32 @@ export default function ExportarDados() {
       // Contrato do colaborador sai da CONTRATOS, casado pela Filial — igual
       // à tela principal.
       const { data: ctData, error: ctErro } = await (supabase as any)
-        .from("CONTRATOS").select('"NOME CONTRATO", Filial').eq("ATIVO", "SIM");
+        .from("CONTRATOS").select('"NOME CONTRATO", Filial, Empresa, "NOME EMPRESA"').eq("ATIVO", "SIM");
       if (ctErro) throw new Error("Falha ao ler CONTRATOS: " + ctErro.message);
-      const contratoPorFilial: Record<string, string> = {};
-      for (const c of ctData ?? []) if (c.Filial != null) contratoPorFilial[String(c.Filial)] = rotuloComCodigo(c.Filial, c["NOME CONTRATO"]);
-      const contratoDe = (e: any) => contratoPorFilial[String(e?.["Filial"] ?? "")] || "—";
+      // Chave (empresa, filial): 1064 da SN não é a 1064 da NH.
+      const contratoPorEmpresaFilial: Record<string, string> = {};
+      for (const c of ctData ?? []) {
+        if (c.Filial == null) continue;
+        const empresa = empresaDe({ Empresa: c.Empresa, "Nome da Empresa": c["NOME EMPRESA"] });
+        contratoPorEmpresaFilial[chaveEmpresaFilial(empresa, c.Filial)] = rotuloComCodigo(c.Filial, c["NOME CONTRATO"]);
+      }
+      const vinculoDe = (e: any): Vinculo => {
+        const emContratos = contratoPorEmpresaFilial[chaveEmpresaFilial(empresaDe(e), e?.["Filial"])];
+        if (emContratos) return { contrato: emContratos, origem: "Contrato ativo" };
+        // Sem contrato ativo nessa (empresa, filial): o cadastro do colaborador
+        // ainda diz onde ele está ("1098 - CEITEC LIMPEZA - 025.2026").
+        const doCadastro = String(e?.["Nome Filial"] ?? "").trim();
+        if (doCadastro) return { contrato: doCadastro.replace(/^(\d+)\s*-\s*/, "$1 | "), origem: "Só cadastro" };
+        const cod = String(e?.["Filial"] ?? "").trim();
+        return { contrato: cod ? `${cod} | (sem contrato)` : "—", origem: "Sem contrato" };
+      };
 
       // Campos a buscar: os das colunas escolhidas + os que os filtros de
       // Empresa/Contrato precisam pra decidir depois de ler.
       const camposNecessarios = new Set<string>(["Situação"]); // sempre, p/ o filtro .in()
       for (const key of colunas) for (const c of CAMPOS_POR_COLUNA[key]) camposNecessarios.add(c);
-      if (fEmpresa) { camposNecessarios.add("Empresa"); camposNecessarios.add("Nome da Empresa"); }
-      if (fContrato) camposNecessarios.add("Filial");
+      // Empresa e Filial entram sempre: o contrato é casado por (empresa, filial).
+      for (const c of ["Empresa", "Nome da Empresa", "Filial", "Nome Filial"]) camposNecessarios.add(c);
 
       const selecionar = (excluir: Set<string>) =>
         [...camposNecessarios].filter(c => !excluir.has(c)).map(c => `"${c}"`).join(",");
@@ -220,7 +268,7 @@ export default function ExportarDados() {
       // fallback de texto pra Empresa; Filial casada em CONTRATOS pro Contrato).
       const filtrados = todos.filter(e =>
         (!fEmpresa || empresaDe(e) === fEmpresa) &&
-        (!fContrato || contratoDe(e) === fContrato),
+        (!fContrato || vinculoDe(e).contrato === fContrato),
       );
 
       if (filtrados.length === 0) { setErro("Nenhum colaborador encontrado para esse filtro."); setFase("idle"); return; }
@@ -229,7 +277,7 @@ export default function ExportarDados() {
       const ordemColunas = COLUNAS.filter(c => colunas.has(c.key));
       const linhas = filtrados.map(e => {
         const linha: Record<string, string | number> = {};
-        for (const c of ordemColunas) linha[c.label] = valorDaColuna(c.key, e, contratoDe);
+        for (const c of ordemColunas) linha[c.label] = valorDaColuna(c.key, e, vinculoDe);
         return linha;
       });
 
@@ -283,13 +331,15 @@ export default function ExportarDados() {
                 <>
                   <div style={{ fontSize: 11, fontWeight: 800, color: "#94a3b8", textTransform: "uppercase", letterSpacing: ".4px", marginBottom: 8 }}>Filtro</div>
                   <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 14 }}>
-                    <select className="col-fi" value={fEmpresa} onChange={e => setFEmpresa(e.target.value)}>
+                    <select className="col-fi" value={fEmpresa} onChange={e => { setFEmpresa(e.target.value); setFContrato(""); }}>
                       <option value="">Todas as empresas</option>
                       {EMPRESAS.map(x => <option key={x} value={x}>{x}</option>)}
                     </select>
                     <select className="col-fi" style={{ maxWidth: 260 }} value={fContrato} onChange={e => setFContrato(e.target.value)} disabled={carregandoOpcoes}>
-                      <option value="">Todos os contratos</option>
-                      {contratos.map(x => <option key={x} value={x}>{x}</option>)}
+                      <option value="">{fEmpresa ? `Todos os contratos da ${fEmpresa}` : "Todos os contratos"}</option>
+                      {contratos
+                        .filter(c => !fEmpresa || c.empresa === fEmpresa)
+                        .map(c => <option key={`${c.empresa}|${c.rotulo}`} value={c.rotulo}>{fEmpresa ? c.rotulo : `${c.empresa} · ${c.rotulo}`}</option>)}
                     </select>
                   </div>
 
