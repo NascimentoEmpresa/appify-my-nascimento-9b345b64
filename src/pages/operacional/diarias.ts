@@ -1,7 +1,9 @@
 // Domínio do Controle de Diárias (módulo Operacional).
 
 export type TurnoDiaria = "manha" | "tarde" | "noite" | "dia_inteiro";
-export type StatusSolicitacao = "solicitada" | "aprovada" | "reprovada";
+// "paga" NÃO existe no banco: é "aprovada" cuja despesa do Malote já está
+// despesa_paga, derivado na leitura (ver 20260930000151_diaria_status_paga.sql).
+export type StatusSolicitacao = "solicitada" | "aprovada" | "paga" | "reprovada";
 
 export const TURNOS: { value: TurnoDiaria; label: string }[] = [
   { value: "manha", label: "Manhã" },
@@ -15,6 +17,7 @@ export const labelTurno = (t: TurnoDiaria) => TURNOS.find((x) => x.value === t)?
 export const STATUS_SOLICITACAO: Record<StatusSolicitacao, { label: string; cls: string }> = {
   solicitada: { label: "Solicitada", cls: "border-warning/40 bg-warning/10 text-warning" },
   aprovada: { label: "Aprovada", cls: "border-success/40 bg-success/10 text-success" },
+  paga: { label: "Paga", cls: "border-primary/40 bg-primary/10 text-primary" },
   reprovada: { label: "Reprovada", cls: "border-destructive/40 bg-destructive/10 text-destructive" },
 };
 

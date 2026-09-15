@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { useNavigate } from "react-router-dom";
+import { rotasSolicitacoes, type BaseSolicitacoes } from "@/lib/solicitacoes/rotas";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
 import { usePermissoes } from "@/context/PermissoesContext";
@@ -174,7 +175,10 @@ const vagaEditavel = (s: SolItem) =>
 // modal deixa a pessoa no histórico, que é o resto da página.
 export type SolicitacaoInicial = "vaga" | "ferias" | "advertencia";
 
-export default function MinhasSolicitacoes({ abrir }: { abrir?: SolicitacaoInicial }) {
+// `base` (15/09/2026): a mesma tela vive em Encarregados e em Central de
+// Serviços › Solicitações; só as rotas de destino mudam (ver lib/solicitacoes/rotas).
+export default function MinhasSolicitacoes({ abrir, base = "encarregados" }: { abrir?: SolicitacaoInicial; base?: BaseSolicitacoes }) {
+  const rotas = rotasSolicitacoes(base);
   const { user } = useAuth();
   const { can } = usePermissoes();
   const nav = useNavigate();
@@ -318,7 +322,7 @@ export default function MinhasSolicitacoes({ abrir }: { abrir?: SolicitacaoInici
         titulo: `Materiais — ${r.nome_colaborador || r.posto_nome || r.contrato_nome || ""}`.trim(),
         status: r.status, data: r.created_at || r.data_solicitacao,
         statusDesde: r.created_at || r.data_solicitacao,
-        rota: "/app/encarregados/meus-pedidos",
+        rota: rotas.meusPedidos,
         // Pedido de material não tem conversa; prometer "chat" aqui seria
         // mandar o encarregado procurar algo que não existe.
         acao: "📦 Ver pedido",
@@ -421,7 +425,7 @@ export default function MinhasSolicitacoes({ abrir }: { abrir?: SolicitacaoInici
   const irSolicitarDemissao = () => {
     const id = substituidoId;
     setAvisoDemissao(false); setModalVaga(false);
-    nav(`/app/encarregados/solicitar-demissao?colaborador=${id}`);
+    nav(`${rotas.demissao}?colaborador=${id}`);
   };
 
   const selecionarEmpregado = (emp: any) => {
@@ -786,24 +790,26 @@ export default function MinhasSolicitacoes({ abrir }: { abrir?: SolicitacaoInici
             {/* O menu de "preencher à mão" fica DENTRO do modal, não aqui: o
                 que ele oferece muda a solicitação aberta, não a decisão de
                 abrir uma. */}
-            <button onClick={abrirModalVaga} className="ini-sol-create"><span className="icon">🎯</span><span>Solicitar Vaga</span></button>
+            {/* Na Central a vaga é a tela da Gestão de Recrutamento (com o
+                catálogo), não este modal — o card só leva pra lá. */}
+            <button onClick={base === "central" ? () => nav(rotas.vaga) : abrirModalVaga} className="ini-sol-create"><span className="icon">🎯</span><span>Solicitar Vaga</span></button>
             <button onClick={abrirModalFerias} className="ini-sol-create"><span className="icon">📅</span><span>Solicitar Férias</span></button>
             <button onClick={abrirModalAdv} className="ini-sol-create"><span className="icon">⚠️</span><span>Advertência</span></button>
             {/* Demissão estava como "Em breve" — mas a tela existe e funciona
                 desde sempre, só não estava ligada aqui. Vai para a página
                 dedicada em vez de virar modal: é um formulário de vários
                 passos, com anexos, e não cabe num card. */}
-            <button onClick={() => nav("/app/encarregados/solicitar-demissao")} className="ini-sol-create">
+            <button onClick={() => nav(rotas.demissao)} className="ini-sol-create">
               <span className="icon">🚪</span><span>Solicitar Demissão</span>
             </button>
             {/* Materiais e Chamado entram no mesmo padrão dos demais cards.
                 O card só leva para a tela do módulo, que é onde o fluxo
                 próprio vive (carrinho de itens, anexo, categoria): refazer o
                 formulário aqui seria uma segunda versão para manter. */}
-            <button onClick={() => nav("/app/encarregados/solicitar-materiais")} className="ini-sol-create">
+            <button onClick={() => nav(rotas.materiais)} className="ini-sol-create">
               <span className="icon">📦</span><span>Solicitar Materiais</span>
             </button>
-            <button onClick={() => nav("/app/encarregados/chamados/novo")} className="ini-sol-create">
+            <button onClick={() => nav(rotas.chamadoNovo)} className="ini-sol-create">
               <span className="icon">🎧</span><span>Abrir Chamado</span>
             </button>
             {/* Mudança de Função já aparecia no histórico e no chat, mas não
@@ -811,7 +817,7 @@ export default function MinhasSolicitacoes({ abrir }: { abrir?: SolicitacaoInici
                 tela no menu do RH. Mesmo padrão de Demissão e Materiais: leva
                 para a tela do módulo, que tem o fluxo próprio (cargo atual,
                 cargo novo, ASO do SST). */}
-            <button onClick={() => nav("/app/encarregados/troca-funcao")} className="ini-sol-create">
+            <button onClick={() => nav(rotas.trocaFuncao)} className="ini-sol-create">
               <span className="icon">🔀</span><span>Mudança de Função</span>
             </button>
           </div>

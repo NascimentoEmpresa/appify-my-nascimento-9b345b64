@@ -3,6 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import type { PlanoAcaoRow } from "@/hooks/usePlanoAcoes";
 import type { SearchableOption } from "@/components/ui/searchable-select";
+import { chaveTextoPlanoAcao } from "@/lib/chaveTextoPlanoAcao";
 
 /**
  * Extrai opções de filtro (Responsável, Comitê, Área, Setor) a partir das
@@ -11,9 +12,16 @@ import type { SearchableOption } from "@/components/ui/searchable-select";
  * texto congelado em responsavel_nome_origem, pra não desalinhar o rótulo
  * do filtro do texto exibido nas linhas.
  *
+ * Comitê/Área/Setor: value = chaveTextoPlanoAcao(texto) — grafias diferentes
+ * do mesmo setor ("Jurídico"/"JURIDICO", "Licitações"/"LICITACAO") viram UMA
+ * opção só (SIS-2026-0392). Filtre com matchTexto(), nunca por igualdade
+ * direta com o texto da row.
+ *
  * Responsável tem dois caminhos:
  *  - canônico: value = `pid:${responsavel_profile_id}` (representa o usuário)
- *  - legado:   value = `nome:${responsavel_nome_origem}` (texto livre, marcado)
+ *  - legado:   value = `nome:${chave do responsavel_nome_origem}` (texto livre, marcado)
+ *
+ * Todos os filtros aceitam vários valores (string[]); lista vazia = sem filtro.
  */
 export interface PlanoAcaoFilterOptions {
   comites: SearchableOption[];
@@ -28,13 +36,27 @@ export interface PlanoAcaoFilterOptions {
 const cmp = (a: SearchableOption, b: SearchableOption) =>
   a.label.localeCompare(b.label, "pt-BR", { sensitivity: "base" });
 
-function uniqText(rows: PlanoAcaoRow[], pick: (r: PlanoAcaoRow) => string | null | undefined): SearchableOption[] {
-  const set = new Set<string>();
+// Entre as grafias de um mesmo grupo, mostra a mais usada; no empate, a que
+// não está toda em maiúsculas e tem acento ("Jurídico" antes de "JURIDICO").
+function melhorRotulo(contagem: Map<string, number>): string {
+  const pontos = (s: string) => (s !== s.toUpperCase() ? 2 : 0) + (/[À-ɏ]/.test(s) ? 1 : 0);
+  return Array.from(contagem.entries()).sort(([a, na], [b, nb]) =>
+    nb - na || pontos(b) - pontos(a) || a.localeCompare(b, "pt-BR"),
+  )[0][0];
+}
+
+function agruparTexto(rows: PlanoAcaoRow[], pick: (r: PlanoAcaoRow) => string | null | undefined): SearchableOption[] {
+  const grupos = new Map<string, Map<string, number>>();
   rows.forEach((r) => {
-    const v = pick(r);
-    if (v && v.trim()) set.add(v.trim());
+    const v = pick(r)?.trim();
+    if (!v) return;
+    const k = chaveTextoPlanoAcao(v);
+    if (!k) return;
+    const g = grupos.get(k) ?? new Map<string, number>();
+    g.set(v, (g.get(v) ?? 0) + 1);
+    grupos.set(k, g);
   });
-  return Array.from(set).map((v) => ({ value: v, label: v })).sort(cmp);
+  return Array.from(grupos.entries()).map(([value, g]) => ({ value, label: melhorRotulo(g) })).sort(cmp);
 }
 
 export function usePlanoAcaoFilterOptions(rows: PlanoAcaoRow[]): PlanoAcaoFilterOptions {
@@ -80,9 +102,9 @@ export function usePlanoAcaoFilterOptions(rows: PlanoAcaoRow[]): PlanoAcaoFilter
   });
 
   return useMemo(() => {
-    const comites = uniqText(rows, (r) => r.comite);
-    const areas = uniqText(rows, (r) => r.area);
-    const setores = uniqText(rows, (r) => r.setor);
+    const comites = agruparTexto(rows, (r) => r.comite);
+    const areas = agruparTexto(rows, (r) => r.area);
+    const setores = agruparTexto(rows, (r) => r.setor);
 
     // Empresa: value = empresa_id (não o código), pra não colidir se dois
     // códigos coincidirem por acaso.
@@ -93,7 +115,7 @@ export function usePlanoAcaoFilterOptions(rows: PlanoAcaoRow[]): PlanoAcaoFilter
 
     // Responsável: canônico (profile_id) preferencial; agrupar por id.
     const canonicos = new Map<string, string>(); // profile_id -> label
-    const legados = new Set<string>();
+    const legados = new Map<string, Map<string, number>>(); // chave -> grafias
     rows.forEach((r) => {
       if (r.responsavel_profile_id) {
         const label = profileNames[r.responsavel_profile_id]?.trim()
@@ -101,7 +123,11 @@ export function usePlanoAcaoFilterOptions(rows: PlanoAcaoRow[]): PlanoAcaoFilter
           || "Usuário vinculado";
         canonicos.set(r.responsavel_profile_id, label);
       } else if (r.responsavel_nome_origem && r.responsavel_nome_origem.trim()) {
-        legados.add(r.responsavel_nome_origem.trim());
+        const nome = r.responsavel_nome_origem.trim();
+        const k = chaveTextoPlanoAcao(nome);
+        const g = legados.get(k) ?? new Map<string, number>();
+        g.set(nome, (g.get(nome) ?? 0) + 1);
+        legados.set(k, g);
       }
     });
 
@@ -110,9 +136,9 @@ export function usePlanoAcaoFilterOptions(rows: PlanoAcaoRow[]): PlanoAcaoFilter
         value: `pid:${pid}`,
         label,
       })),
-      ...Array.from(legados).map((nome) => ({
-        value: `nome:${nome}`,
-        label: nome,
+      ...Array.from(legados.entries()).map(([k, g]) => ({
+        value: `nome:${k}`,
+        label: melhorRotulo(g),
         hint: "legado / sem vínculo",
       })),
     ].sort(cmp);
@@ -121,18 +147,43 @@ export function usePlanoAcaoFilterOptions(rows: PlanoAcaoRow[]): PlanoAcaoFilter
   }, [rows, profileNames, empresaLabels]);
 }
 
+/** Filtro de Comitê/Área/Setor com vários valores (chaves do hook acima). Vazio = sem filtro. */
+export function matchTexto(valorRow: string | null | undefined, selecionados: string[]): boolean {
+  if (selecionados.length === 0) return true;
+  return selecionados.includes(chaveTextoPlanoAcao(valorRow));
+}
+
 /**
- * Aplica filtro de responsável usando o value codificado pelo hook acima.
+ * Aplica filtro de responsável usando os values codificados pelo hook acima.
  *  - "pid:<uuid>"  → match por responsavel_profile_id
  *  - "nome:<txt>"  → match por responsavel_nome_origem (sem profile_id)
+ * Vários valores = OU entre eles; vazio = sem filtro.
  */
-export function matchResponsavel(row: PlanoAcaoRow, value: string | "__all"): boolean {
-  if (!value || value === "__all") return true;
-  if (value.startsWith("pid:")) {
-    return row.responsavel_profile_id === value.slice(4);
-  }
-  if (value.startsWith("nome:")) {
-    return !row.responsavel_profile_id && (row.responsavel_nome_origem ?? "").trim() === value.slice(5);
-  }
-  return true;
+export function matchResponsavel(row: PlanoAcaoRow, selecionados: string[]): boolean {
+  if (selecionados.length === 0) return true;
+  return selecionados.some((value) => {
+    if (value.startsWith("pid:")) return row.responsavel_profile_id === value.slice(4);
+    if (value.startsWith("nome:")) {
+      return !row.responsavel_profile_id && chaveTextoPlanoAcao(row.responsavel_nome_origem) === chaveTextoPlanoAcao(value.slice(5));
+    }
+    return false;
+  });
+}
+
+/**
+ * Normaliza valores vindos de fora (URL/sessionStorage salvos antes da chave
+ * existir, ex. "?comite=Comitê Diretivo" ou "?resp=nome:Fulano") pra chave
+ * atual — sem isso o reset de "valor que não existe mais" apagaria o filtro.
+ */
+export function normalizarValorTexto(v: string): string {
+  return chaveTextoPlanoAcao(v);
+}
+export function normalizarValorResponsavel(v: string): string {
+  return v.startsWith("nome:") ? `nome:${chaveTextoPlanoAcao(v.slice(5))}` : v;
+}
+
+/** Remove da seleção valores que não existem mais nas opções. Devolve a MESMA referência quando nada muda (seguro em useEffect). */
+export function manterValidos(selecionados: string[], opcoes: SearchableOption[]): string[] {
+  const validos = selecionados.filter((v) => opcoes.some((o) => o.value === v));
+  return validos.length === selecionados.length ? selecionados : validos;
 }

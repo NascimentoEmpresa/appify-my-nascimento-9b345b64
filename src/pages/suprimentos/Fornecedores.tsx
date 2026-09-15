@@ -11,11 +11,17 @@ import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { Plus, Pencil, Trash2, Package, Search, Building2, ShieldAlert } from "lucide-react";
+import { Plus, Pencil, Trash2, Package, Search, Building2, ShieldAlert, FileSpreadsheet } from "lucide-react";
 import { toast } from "sonner";
 import { useEmpresaId } from "@/hooks/useEmpresaId";
 import { MateriaisFornecedorDialog } from "@/components/suprimentos/MateriaisFornecedorDialog";
 import { FORMAS_PAGAMENTO } from "@/hooks/useFornecedorCadastro";
+import * as XLSX from "xlsx";
+import {
+  montarDadosExcelFornecedores,
+  type ContaFornecedorExcel,
+  type MaterialFornecedorExcel,
+} from "@/lib/suprimentos/fornecedoresExcel";
 
 /**
  * Fornecedores — recorte de Compras/Suprimentos.
@@ -45,9 +51,14 @@ const sb = supabase as any;
 interface Fornecedor {
   id: string; tipo: string; cnpj_cpf: string | null;
   razao_social: string; nome_fantasia: string | null;
+  inscricao_estadual: string | null; cnae_principal: string | null; socios: unknown;
   contato: string | null; telefone: string | null; email: string | null;
   cidade: string | null; uf: string | null;
+  endereco: string | null; cep: string | null; logradouro: string | null;
+  numero: string | null; complemento: string | null; bairro: string | null;
+  pix_tipo: string | null; pix_chave: string | null;
   observacoes: string | null; ativo: boolean;
+  is_global: boolean; created_at: string; updated_at: string;
   // SIS-2026-0209: o que antes vivia solto dentro de `observacoes` — e o que o
   // fornecedor passa a preencher sozinho pelo link público.
   email_financeiro: string | null; email_nota_fiscal: string | null;
@@ -87,26 +98,87 @@ function mascararTelefone(v: string): string {
   return d;
 }
 
+const TAMANHO_PAGINA = 1_000;
+
+async function buscarTodosFornecedores(): Promise<Fornecedor[]> {
+  const todos: Fornecedor[] = [];
+  let inicio = 0;
+
+  while (true) {
+    const { data, error } = await sb
+      .from("fornecedor")
+      .select(`id, tipo, cnpj_cpf, razao_social, nome_fantasia, inscricao_estadual,
+               cnae_principal, socios, contato, telefone, email, endereco, cep, logradouro,
+               numero, complemento, bairro, cidade, uf, pix_tipo, pix_chave, observacoes,
+               ativo, is_global, created_at, updated_at,
+               email_financeiro, email_nota_fiscal, telefone_vendedor, formas_pagamento,
+               condicao_pagamento, prazo_entrega_dias, devolucao_prazo_dias, devolucao_procedimento`)
+      .order("razao_social")
+      .order("id")
+      .range(inicio, inicio + TAMANHO_PAGINA - 1);
+    if (error) throw error;
+
+    const pagina = (data ?? []) as Fornecedor[];
+    todos.push(...pagina);
+    if (pagina.length < TAMANHO_PAGINA) return todos;
+    inicio += TAMANHO_PAGINA;
+  }
+}
+
+async function buscarDetalhesDaExportacao(fornecedorIds: string[]) {
+  const contas: ContaFornecedorExcel[] = [];
+  const materiais: MaterialFornecedorExcel[] = [];
+  const tamanhoLote = 100;
+
+  for (let inicio = 0; inicio < fornecedorIds.length; inicio += tamanhoLote) {
+    const lote = fornecedorIds.slice(inicio, inicio + tamanhoLote);
+    const [resultadoContas, resultadoMateriais] = await Promise.all([
+      sb
+        .from("fornecedor_conta_bancaria")
+        .select("fornecedor_id, banco_codigo, banco_nome, agencia, agencia_digito, conta, conta_digito, tipo, titular_nome, titular_documento, pix_tipo, pix_chave, principal, ativa, observacoes")
+        .in("fornecedor_id", lote)
+        .order("principal", { ascending: false }),
+      sb
+        .from("sup_fornecedor_item")
+        .select("fornecedor_id, codigo_fornecedor, sup_item:sup_item_id(nome, tipo)")
+        .in("fornecedor_id", lote),
+    ]);
+
+    if (resultadoContas.error) throw resultadoContas.error;
+    if (resultadoMateriais.error) throw resultadoMateriais.error;
+    contas.push(...((resultadoContas.data ?? []) as ContaFornecedorExcel[]));
+    materiais.push(...((resultadoMateriais.data ?? []) as MaterialFornecedorExcel[]));
+  }
+
+  return { contas, materiais };
+}
+
+function ajustarPlanilha(ws: XLSX.WorkSheet, larguras: number[]) {
+  ws["!cols"] = larguras.map((wch) => ({ wch }));
+  if (ws["!ref"]) ws["!autofilter"] = { ref: ws["!ref"] };
+}
+
+function mensagemErro(e: unknown): string {
+  return e instanceof Error ? e.message : "Não foi possível exportar os fornecedores.";
+}
+
+function planilhaComCabecalho<T extends Record<string, unknown>>(linhas: T[], cabecalhos: string[]) {
+  return linhas.length > 0
+    ? XLSX.utils.json_to_sheet(linhas)
+    : XLSX.utils.aoa_to_sheet([cabecalhos]);
+}
+
 export default function Fornecedores() {
   const qc = useQueryClient();
   const { data: empresaId } = useEmpresaId();
   const [editando, setEditando] = useState<Partial<Fornecedor> | null>(null);
   const [materiaisDe, setMateriaisDe] = useState<Fornecedor | null>(null);
   const [busca, setBusca] = useState("");
+  const [exportando, setExportando] = useState(false);
 
   const { data: rows = [], isLoading, error } = useQuery({
     queryKey: ["fornecedor", "list"],
-    queryFn: async (): Promise<Fornecedor[]> => {
-      const { data, error } = await sb
-        .from("fornecedor")
-        .select(`id, tipo, cnpj_cpf, razao_social, nome_fantasia, contato, telefone, email,
-                 cidade, uf, observacoes, ativo,
-                 email_financeiro, email_nota_fiscal, telefone_vendedor, formas_pagamento,
-                 condicao_pagamento, prazo_entrega_dias, devolucao_prazo_dias, devolucao_procedimento`)
-        .order("razao_social");
-      if (error) throw error;
-      return data ?? [];
-    },
+    queryFn: buscarTodosFornecedores,
   });
 
   const filtrados = useMemo(() => {
@@ -171,6 +243,46 @@ export default function Fornecedores() {
         : e?.message ?? "Não foi possível remover."),
   });
 
+  const exportarExcel = async () => {
+    setExportando(true);
+    try {
+      const { contas, materiais } = await buscarDetalhesDaExportacao(rows.map((fornecedor) => fornecedor.id));
+      const { abaFornecedores, abaContas, abaMateriais } = montarDadosExcelFornecedores(rows, contas, materiais);
+
+      const wsFornecedores = XLSX.utils.json_to_sheet(abaFornecedores);
+      const wsContas = planilhaComCabecalho(abaContas, [
+        "Fornecedor", "CNPJ / CPF", "Código do banco", "Banco", "Agência", "Conta",
+        "Tipo de conta", "Titular", "Documento do titular", "Tipo da chave PIX", "Chave PIX",
+        "Principal", "Status", "Observações",
+      ]);
+      const wsMateriais = planilhaComCabecalho(abaMateriais, [
+        "Fornecedor", "CNPJ / CPF", "Material", "Tipo", "Código do fornecedor",
+      ]);
+
+      ajustarPlanilha(wsFornecedores, [18, 20, 32, 28, 20, 18, 36, 24, 18, 30, 22, 8, 12, 32, 12, 24, 22, 30, 30, 20, 28, 24, 22, 23, 42, 18, 36, 42, 12, 18, 20, 20]);
+      ajustarPlanilha(wsContas, [32, 20, 16, 26, 16, 18, 16, 30, 22, 18, 36, 12, 12, 36]);
+      ajustarPlanilha(wsMateriais, [32, 20, 36, 18, 22]);
+
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, wsFornecedores, "Fornecedores");
+      XLSX.utils.book_append_sheet(wb, wsContas, "Dados bancários");
+      XLSX.utils.book_append_sheet(wb, wsMateriais, "Materiais fornecidos");
+
+      const hoje = new Date();
+      const dataArquivo = [
+        hoje.getFullYear(),
+        String(hoje.getMonth() + 1).padStart(2, "0"),
+        String(hoje.getDate()).padStart(2, "0"),
+      ].join("-");
+      XLSX.writeFile(wb, `fornecedores-${dataArquivo}.xlsx`);
+      toast.success(`Planilha exportada com ${rows.length} fornecedor${rows.length === 1 ? "" : "es"}.`);
+    } catch (e: unknown) {
+      toast.error(mensagemErro(e));
+    } finally {
+      setExportando(false);
+    }
+  };
+
   return (
     <div className="space-y-6">
       <PageHeader
@@ -179,9 +291,15 @@ export default function Fornecedores() {
         module="Suprimentos"
         breadcrumb={["Fornecedores"]}
         actions={
-          <Button onClick={() => setEditando({ ...VAZIO })}>
-            <Plus className="mr-2 h-4 w-4" /> Novo fornecedor
-          </Button>
+          <>
+            <Button variant="outline" onClick={exportarExcel} disabled={rows.length === 0 || exportando}>
+              <FileSpreadsheet className="mr-2 h-4 w-4" />
+              {exportando ? "Exportando…" : "Exportar Excel"}
+            </Button>
+            <Button onClick={() => setEditando({ ...VAZIO })}>
+              <Plus className="mr-2 h-4 w-4" /> Novo fornecedor
+            </Button>
+          </>
         }
       />
 

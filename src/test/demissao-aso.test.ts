@@ -28,7 +28,7 @@ describe("status do fluxo de demissão", () => {
     expect(STATUS_TODOS).toContain(STATUS_SST_RECEBIDA);
     expect(STATUS_TODOS).toContain(STATUS_SST_AGENDADO);
     expect(STATUS_FINAIS).toContain(STATUS_SST_AGENDADO);
-    // ASO válido (menos de 60 dias) conclui sem exame — é tão final quanto o agendado.
+    // ASO válido (menos de 90 dias) conclui sem exame — é tão final quanto o agendado.
     expect(STATUS_TODOS).toContain(STATUS_SST_ASO_VALIDO);
     expect(STATUS_FINAIS).toContain(STATUS_SST_ASO_VALIDO);
     expect(acaoDoSST(STATUS_SST_ASO_VALIDO)).toBeNull();

@@ -461,7 +461,7 @@ function DetalheSolicitacao({ solicitacao, etapa, quemSou, onFechar, onDecidir }
   /**
    * O ASO ainda vale — conclui sem exame.
    *
-   * Quem fez ASO há menos de 60 dias não precisa de demissional (NR-7). O
+   * Quem fez ASO há menos de 90 dias não precisa de demissional (NR-7; era 60 até 15/09/2026). O
    * SST confirma isso aqui e a demissão fecha na hora, sem data, hora nem
    * local. Mesmo passo do agendamento (depois de "recebida"), pelo mesmo
    * motivo: o SST precisa ter lido o pedido para saber que o exame vale.
@@ -712,9 +712,9 @@ function DetalheSolicitacao({ solicitacao, etapa, quemSou, onFechar, onDecidir }
                 mesma decisão do SST ("o que fazer com este ASO?") — só que a
                 resposta é "nada, o que ele tem ainda vale". */}
             <div className="mt-2 space-y-2 rounded-lg border border-emerald-300 bg-emerald-50 p-3">
-              <h4 className="text-sm font-semibold text-emerald-900">ASO ainda válido (menos de 60 dias)</h4>
+              <h4 className="text-sm font-semibold text-emerald-900">ASO ainda válido (menos de 90 dias)</h4>
               <p className="text-sm text-emerald-900/80">
-                O colaborador fez ASO há menos de 60 dias e o exame vale como demissional. Marcar
+                O colaborador fez ASO há menos de 90 dias e o exame vale como demissional. Marcar
                 aqui <strong>conclui</strong> a demissão sem agendar nada — a observação acima, se
                 escrita, vai junto.
               </p>

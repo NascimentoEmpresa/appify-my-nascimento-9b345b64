@@ -26,7 +26,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { semCodigoFilial } from "@/lib/rh/colaboradoresUtils";
 import { buscarCustoDoPosto, insalubridadeDoCusto, beneficiosDoCusto, notaDoCusto, type CustoPosto } from "@/lib/recrutamento/custoPosto";
-import { useNavigate } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
+import { baseDaUrl, rotasSolicitacoes } from "@/lib/solicitacoes/rotas";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
 import { usePermissoes } from "@/context/PermissoesContext";
@@ -138,6 +139,7 @@ export function ModalNovaVaga({ aberto, onFechar, onCriada, onToast, solicitacao
   const [demissaoId, setDemissaoId] = useState<number | null>(null);
   const [demissaoBusca, setDemissaoBusca] = useState<"ocioso" | "buscando" | "achou" | "nenhuma">("ocioso");
   const navigate = useNavigate();
+  const rotasSol = rotasSolicitacoes(baseDaUrl(useLocation().pathname));
   const [salvando, setSalvando] = useState(false);
 
   const empDebounce = useRef<ReturnType<typeof setTimeout> | null>(null); // debounce busca colaborador
@@ -373,7 +375,7 @@ export function ModalNovaVaga({ aberto, onFechar, onCriada, onToast, solicitacao
   /** Vai solicitar a demissão de quem foi escolhido; a vaga abre sozinha depois dela. */
   const irSolicitarDemissao = () => {
     onFechar();
-    navigate(`/app/encarregados/solicitar-demissao?colaborador=${substituidoId}`);
+    navigate(`${rotasSol.demissao}?colaborador=${substituidoId}`);
   };
 
   /**
