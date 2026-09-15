@@ -2,6 +2,9 @@ import { describe, expect, it } from "vitest";
 import {
   conclusaoExibicao,
   dataLocalISO,
+  diaSemana,
+  formatarData,
+  formatarDataHora,
   formatarDuracao,
   linhasExcel,
   mediaConclusao,
@@ -128,4 +131,12 @@ describe("regras de hora extra", () => {
     ]);
     expect(linhas[0].Adicional).toBe("Sim");
   });
+
+  // A tela inteira caiu em produção (15/09/2026) porque formatarDataHora usava
+  // `dateStyle` junto com `hour`/`minute`, combinação que o Intl recusa.
+  it("formata data e hora da solicitação sem lançar erro", () =>
+    expect(formatarDataHora("2026-09-15T11:32:00Z")).toMatch(new RegExp("^[0-9]{2}/[0-9]{2}/[0-9]{4} [0-9]{2}:[0-9]{2}$")));
+  it("formata a data da HE", () => expect(formatarData("2026-09-15")).toBe("15/09/2026"));
+  it("escreve o dia da semana com inicial maiúscula", () => expect(diaSemana("2026-09-15")).toBe("Terça-feira"));
+  it("mostra traço quando não há data", () => expect(formatarDataHora(null)).toBe("—"));
 });
