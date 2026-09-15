@@ -26,9 +26,12 @@ import {
   TipoSolicitacao,
   STATUS_LABEL,
   ItemSolicitacao,
+  LinkSolicitacao,
+  useLinksDaDespesa,
 } from "@/hooks/useMaloteDespesa";
 import { abrirAnexoMalote } from "@/hooks/useMaloteCotacao";
 import { ItensSolicitacao } from "@/components/malote/ItensSolicitacao";
+import { LinksSolicitacao } from "@/components/malote/LinksSolicitacao";
 import { AnexosField } from "./AnexosField";
 import { Campo, PainelDespesaMalote, PainelHeader, PrefillDespesa } from "./PainelDespesaMalote";
 
@@ -206,6 +209,7 @@ function ConverterSolicitacaoEmDespesa({ solicitacaoId }: { solicitacaoId: strin
   const { data, isLoading } = useDespesa(solicitacaoId);
   const { data: empresas = [] } = useEmpresasGrupo();
   const { data: contratos = [] } = useContratosAtivos();
+  const { data: linksEstruturados = [] } = useLinksDaDespesa(solicitacaoId);
   const solicitacao = data?.despesa;
 
   if (isLoading) {
@@ -262,7 +266,11 @@ function ConverterSolicitacaoEmDespesa({ solicitacaoId }: { solicitacaoId: strin
                 <Campo label="Valor estimado" valor={Number(solicitacao.valor_total).toLocaleString("pt-BR", { style: "currency", currency: "BRL" })} />
                 <div>
                   <p className="text-xs text-muted-foreground">Link(s)</p>
-                  {solicitacao.links ? (
+                  {linksEstruturados.length > 0 ? (
+                    // SIS-2026-0398: solicitação nova, com rótulo por link.
+                    <LinksSolicitacao links={linksEstruturados} editavel={false} />
+                  ) : solicitacao.links ? (
+                    // Solicitação antiga (coluna de texto legada, sem rótulo).
                     <div className="space-y-0.5">
                       {solicitacao.links.split(/[\s,;]+/).filter(Boolean).map((url) => (
                         <a
@@ -423,7 +431,7 @@ function PainelSolicitacao({
   const [motivo, setMotivo] = useState("");
   const [descricao, setDescricao] = useState("");
   const [valorEstimado, setValorEstimado] = useState("");
-  const [links, setLinks] = useState("");
+  const [links, setLinks] = useState<LinkSolicitacao[]>([]);
   // Itens do que está sendo pedido (SIS-2026-0207). Opcional: solicitação de
   // serviço ou despesa avulsa continua valendo só com a descrição.
   const [itens, setItens] = useState<ItemSolicitacao[]>([]);
@@ -534,7 +542,10 @@ function PainelSolicitacao({
         valor_total: Number(valorEstimado),
         motivo: motivo.trim(),
         descricao: descricao.trim(),
-        links: links.trim() || null,
+        // SIS-2026-0398: links_estruturados substitui o campo `links` (texto
+        // legado) pra solicitações novas — mesmo filtro de linha vazia que
+        // os itens já fazem.
+        links_estruturados: links.filter((l) => l.url.trim() !== ""),
         tipo: tipo || null,
         contrato_id: tipo === "contrato" ? contratoId : null,
         // Linha sem material descrito não vai: o usuário pode ter clicado em
@@ -543,7 +554,9 @@ function PainelSolicitacao({
       });
       if (arquivos.length > 0) {
         try {
-          const paths = await uploadAnexosMalote(arquivos, despesaId, nome.trim());
+          // SIS-2026-0398: cada arquivo mantém o próprio nome (sanitizado)
+          // em vez de todos virarem "Nome da solicitação (2).pdf", "(3).jpg".
+          const paths = await uploadAnexosMalote(arquivos, despesaId, (file) => file.name.replace(/\.[^.]+$/, ""));
           await salvar.mutateAsync({ id: despesaId, empresa_id: empresaFinal, classificacao_id: classificacaoId, origem: "solicitacao", status, nome: nome.trim(), valor_total: Number(valorEstimado), arquivos: paths });
         } catch (erroUpload) {
           // DM-2026-0446: solicitação JÁ criada — não desfaz. O anexo pode
@@ -557,7 +570,7 @@ function PainelSolicitacao({
         }
       }
       toast.success(status === "rascunho" ? "Rascunho salvo." : "Solicitação enviada para aprovação inicial.");
-      setNome(""); setMotivo(""); setDescricao(""); setValorEstimado(""); setLinks(""); setArquivos([]); setItens([]);
+      setNome(""); setMotivo(""); setDescricao(""); setValorEstimado(""); setLinks([]); setArquivos([]); setItens([]);
       setEmpresaContratoId(""); setContratoId("");
       if (!tipoTravado) setTipo("");
     } catch (e: unknown) {
@@ -652,26 +665,31 @@ function PainelSolicitacao({
             </div>
           )}
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            <div>
-              <Label>Valor estimado *</Label>
-              <Input
-                type="number"
-                step="0.01"
-                value={valorEstimado}
-                onChange={(e) => setValorEstimado(e.target.value)}
-                placeholder="Ex: R$ 1.500,00"
-                disabled={!ativo}
-              />
-              {classificacaoId && orcadoDoMes != null && (
-                <p className="text-[11px] text-muted-foreground mt-1">
-                  Orçado do mês: {fmtMoney(orcadoDoMes)} · Restante: {fmtMoney(restanteDoMes)}
-                </p>
-              )}
-            </div>
-            <div>
-              <Label>Link(s)</Label>
-              <Input value={links} onChange={(e) => setLinks(e.target.value)} placeholder="https://..." disabled={!ativo} />
+          <div>
+            <Label>Valor estimado *</Label>
+            <Input
+              type="number"
+              step="0.01"
+              value={valorEstimado}
+              onChange={(e) => setValorEstimado(e.target.value)}
+              placeholder="Ex: R$ 1.500,00"
+              disabled={!ativo}
+              className="sm:max-w-xs"
+            />
+            {classificacaoId && orcadoDoMes != null && (
+              <p className="text-[11px] text-muted-foreground mt-1">
+                Orçado do mês: {fmtMoney(orcadoDoMes)} · Restante: {fmtMoney(restanteDoMes)}
+              </p>
+            )}
+          </div>
+
+          {/* SIS-2026-0398: pode ter itens de fornecedores/kits diferentes,
+              cada um com seu próprio link de compra — lista em vez de um
+              campo único, cada linha com rótulo pra identificar de qual é. */}
+          <div className={cn(!ativo && "opacity-40 pointer-events-none select-none")}>
+            <Label>Link(s)</Label>
+            <div className="mt-2">
+              <LinksSolicitacao links={links} onChange={setLinks} editavel={ativo} />
             </div>
           </div>
 

@@ -582,6 +582,16 @@ export interface ItemSolicitacao {
   ordem?: number;
 }
 
+// SIS-2026-0398: link identificado (rótulo livre — na solicitação o
+// fornecedor muitas vezes ainda não foi escolhido/cotado, então não
+// vincula ao cadastro de Fornecedor, só ItemSolicitacao/rateio fazem isso).
+export interface LinkSolicitacao {
+  id?: string;
+  rotulo?: string | null;
+  url: string;
+  ordem?: number;
+}
+
 export interface SalvarDespesaInput {
   id?: string;
   empresa_id: string;
@@ -612,6 +622,10 @@ export interface SalvarDespesaInput {
   parcelas?: NovaParcela[];
   /** Itens pedidos na solicitação (SIS-2026-0207). */
   itens?: ItemSolicitacao[];
+  // SIS-2026-0398: nome diferente de `links` (coluna de texto legada, que
+  // continua existindo e sendo lida em solicitações antigas) de propósito —
+  // os dois convivem no mesmo input sem colidir.
+  links_estruturados?: LinkSolicitacao[];
   nivel_aprovacao_atual?: 1 | 2 | 3 | null;
   // SIS-2026-0211: marca a despesa como exceção — passa por cima do
   // bloqueio de dia (data_pagamento em dia bloqueado), só pra ela.
@@ -635,7 +649,7 @@ export function useSalvarDespesa() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async (input: SalvarDespesaInput) => {
-      const { rateio, parcelas, itens, id: despesaIdInput, ...despesaFields } = input;
+      const { rateio, parcelas, itens, links_estruturados, id: despesaIdInput, ...despesaFields } = input;
       const { data: u } = await supabase.auth.getUser();
       if (!u.user) throw new Error("Sessão expirada.");
 
@@ -686,6 +700,16 @@ export function useSalvarDespesa() {
         }
       }
 
+      // SIS-2026-0398: mesma estratégia dos itens acima — apaga e regrava.
+      if (links_estruturados) {
+        await (supabase as any).from("malote_despesa_link").delete().eq("despesa_id", despesaId);
+        if (links_estruturados.length > 0) {
+          const rows = links_estruturados.map(({ id: _id, ...l }, ordem) => ({ ...l, despesa_id: despesaId, ordem }));
+          const { error: lErr } = await (supabase as any).from("malote_despesa_link").insert(rows);
+          if (lErr) throw lErr;
+        }
+      }
+
       if (parcelas) {
         await (supabase as any).from("malote_despesa_parcela").delete().eq("despesa_id", despesaId);
         if (parcelas.length > 0) {
@@ -720,6 +744,23 @@ export function useItensDaDespesa(despesaId: string | undefined) {
         .order("ordem");
       if (error) throw error;
       return (data ?? []).map((r: any) => ({ ...r, quantidade: Number(r.quantidade ?? 0) }));
+    },
+  });
+}
+
+/** Links identificados de uma solicitação (SIS-2026-0398). */
+export function useLinksDaDespesa(despesaId: string | undefined) {
+  return useQuery({
+    queryKey: [DESPESA_KEY, despesaId, "links"],
+    enabled: !!despesaId,
+    queryFn: async (): Promise<LinkSolicitacao[]> => {
+      const { data, error } = await (supabase as any)
+        .from("malote_despesa_link")
+        .select("id, rotulo, url, ordem")
+        .eq("despesa_id", despesaId)
+        .order("ordem");
+      if (error) throw error;
+      return (data ?? []) as LinkSolicitacao[];
     },
   });
 }
@@ -1648,21 +1689,37 @@ export function proximoNomeArquivoLivre(base: string, ext: string, usados: Set<s
   return nomeArquivo;
 }
 
-export async function uploadAnexosMalote(files: File[], despesaFolderId: string, nomeBase?: string): Promise<string[]> {
+// SIS-2026-0398: `nomeBase` aceita uma função (nome-base POR arquivo), não só
+// uma string compartilhada por todo o lote. Solicitação de compra anexa
+// vários arquivos heterogêneos de uma vez (orçamento, print, PDF de
+// fornecedores diferentes) — forçar todos pro mesmo nome-base (o da
+// despesa/solicitação) fazia o segundo/terceiro arquivo virar "Nome (2).pdf",
+// "Nome (3).pdf", perdendo a identificação que o nome original do arquivo já
+// dava no seletor antes do envio (AnexosField.tsx). Chamadores que só têm UM
+// documento com propósito conhecido (ex.: comprovante de pagamento) continuam
+// passando string, sem mudança de comportamento.
+export async function uploadAnexosMalote(
+  files: File[],
+  despesaFolderId: string,
+  nomeBase?: string | ((file: File) => string),
+): Promise<string[]> {
   if (files.length === 0) return [];
-  if (!nomeBase?.trim()) {
+  const baseCompartilhada = typeof nomeBase === "string" ? nomeBase : undefined;
+  if (!baseCompartilhada?.trim() && typeof nomeBase !== "function") {
     // Fallback (UUID) pros poucos fluxos que ainda não tenham o nome da
     // despesa disponível no momento do upload — não deveria acontecer nos
     // caminhos atuais, mas não trava o envio se acontecer.
     return Promise.all(files.map((f) => uploadAnexoMalote(f, despesaFolderId)));
   }
-  const base = sanitizarNomeArquivo(nomeBase);
   const { data: existentes } = await comRetentativaRede(() =>
     supabase.storage.from("malote-anexos").list(despesaFolderId),
   );
   const usados = new Set((existentes ?? []).map((f) => f.name));
   const paths: string[] = [];
   for (const file of files) {
+    const base = typeof nomeBase === "function"
+      ? sanitizarNomeArquivo(nomeBase(file))
+      : sanitizarNomeArquivo(baseCompartilhada!);
     const ext = file.name.split(".").pop() || "bin";
     const nomeArquivo = proximoNomeArquivoLivre(base, ext, usados);
     const path = `${despesaFolderId}/${nomeArquivo}`;
