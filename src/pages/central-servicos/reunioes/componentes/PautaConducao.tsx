@@ -6,6 +6,7 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { DecisoesAcoesPainel } from "./DecisoesAcoesPainel";
 import { AnexoPautaCelula } from "./PautaTabela";
+import { TextoResumido } from "./PautaVinculos";
 import {
   NATUREZA_ITEM_LABEL, PERGUNTAS_CONDUCAO_ITEM, nomeUsuario,
   type NaturezaItem, type PerguntaChecklist, type ReuniaoDecisaoAcao, type ReuniaoPauta, type ReuniaoPautaAnexo, type ReuniaoResposta,
@@ -163,6 +164,8 @@ export function PautaConducao({
           Responsável pelo item: {nomeUsuario(usuarios, item.responsavel_user_id) ?? "—"}
           {item.prazo && ` · Prazo: ${new Date(item.prazo).toLocaleDateString("pt-BR")}`}
         </p>
+        {/* A descrição não aparecia na condução (SIS-2026-0373) — resumida, com "ver mais". */}
+        {item.descricao && <TextoResumido key={item.id} texto={item.descricao} linhas={3} className="mt-1.5 text-sm text-muted-foreground" />}
       </div>
 
       <div className="flex flex-wrap gap-4">
