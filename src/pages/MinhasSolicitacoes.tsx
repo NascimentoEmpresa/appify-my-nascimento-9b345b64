@@ -17,8 +17,8 @@ import {
 } from "@/lib/recrutamento/vagaRegras";
 import { maskFone } from "@/lib/telefone";
 import { solicitacaoEmAberto, TITULO_DUPLICIDADE, type SolicitacaoEmAberto } from "@/lib/solicitacoes/duplicidade";
-import { buscarCustoDoPosto, insalubridadeDoCusto, beneficiosDoCusto, notaDoCusto, type CustoPosto } from "@/lib/recrutamento/custoPosto";
-import { VinculoCatalogoVaga } from "@/components/recrutamento/VinculoCatalogoVaga";
+import { buscarCustoDoPosto, insalubridadeDoCusto, beneficiosDoCusto, notaDoCusto, AVISO_SEM_POSTO, type CustoPosto } from "@/lib/recrutamento/custoPosto";
+import { VinculoCatalogoVaga, type ListasCatalogo } from "@/components/recrutamento/VinculoCatalogoVaga";
 
 // ── Helpers ────────────────────────────────────────────────────────
 function fmtDt(s?: string) {
@@ -382,6 +382,8 @@ export default function MinhasSolicitacoes({ abrir, base = "encarregados" }: { a
   // de origem embaixo dos campos ("da planilha, posto X" / "sem planilha").
   const [custoPosto, setCustoPosto] = useState<CustoPosto | null>(null);
   const [custoNota, setCustoNota] = useState("");
+  const [catListas, setCatListas] = useState<ListasCatalogo>({ postos: [], funcoes: [] });
+  const [empEscolhido, setEmpEscolhido] = useState<any>(null);
   const [custoBuscando, setCustoBuscando] = useState(false);
 
   // Substituição anda junto com a demissão de quem sai: o banco recusa a
@@ -454,25 +456,49 @@ export default function MinhasSolicitacoes({ abrir, base = "encarregados" }: { a
     }));
     setEmpSearch(mostraNomeReferencia(vaga.motivo_vaga) ? emp.Nome : "");
     setShowEmpDrop(false);
-    setCustoPosto(null); setCustoNota(""); setCustoBuscando(true);
-    const idEscolhido = emp.ID;
-    buscarCustoDoPosto(supabase, {
-      contrato: contratoRotulo || emp["Nome Filial"] || "", cargo: emp["Título do Cargo"], salario: emp["Valor Salário"], cidade: vaga.cidade || null,
-    }).then(custo => {
-      // Trocou de pessoa no meio da busca: a resposta é de outro colaborador.
-      setSubstituidoId(atual => {
-        if (atual !== idEscolhido) return atual;
-        const insal = insalubridadeDoCusto(custo, emp["% Insalubridade"], emp["Valor Salário"]);
-        setVaga(v => ({ ...v, insalubridade_recebe: insal.recebe, insalubridade_quanto: insal.quanto, beneficios: beneficiosDoCusto(custo) }));
-        setCustoPosto(custo); setCustoNota(notaDoCusto(custo, insal.origem));
-        return atual;
-      });
-    }).finally(() => setCustoBuscando(false));
+    // A planilha só é consultada quando o posto do catálogo for escolhido
+    // (efeito abaixo) — até lá, aviso e V.A/V.T em branco.
+    setEmpEscolhido(emp);
+    setCustoPosto(null); setCustoNota(AVISO_SEM_POSTO); setCustoBuscando(false);
   };
+
+  // Planilha de Custo pelo POSTO do catálogo (15/09/2026). Antes a consulta
+  // saía ao escolher o colaborador e a RPC adivinhava o posto por salário/
+  // cargo/cidade — e errou (ASG com o V.A do supervisor). Agora só consulta
+  // com posto escolhido; sem posto, V.A/V.T ficam em branco com aviso e a
+  // insalubridade volta pro cadastro do colaborador.
+  const postoNomeEscolhido = catListas.postos.find(p => p.id === vaga.posto_id)?.nome ?? "";
+  useEffect(() => {
+    if (!vaga.contrato) return;
+    const emp = empEscolhido;
+    if (!postoNomeEscolhido) {
+      // Sem posto: só mexe se foi um colaborador escolhido nesta sessão —
+      // vaga aberta pra edição fica com o que está gravado.
+      if (!emp) return;
+      const insal = insalubridadeDoCusto(null, emp["% Insalubridade"]);
+      setVaga(v => ({ ...v, insalubridade_recebe: insal.recebe, insalubridade_quanto: insal.quanto, beneficios: "" }));
+      setCustoPosto(null); setCustoNota(AVISO_SEM_POSTO); setCustoBuscando(false);
+      return;
+    }
+    let vivo = true;
+    setCustoBuscando(true);
+    buscarCustoDoPosto(supabase, {
+      contrato: vaga.contrato, posto: postoNomeEscolhido,
+      cargo: emp?.["Título do Cargo"] ?? vaga.cargo, salario: emp?.["Valor Salário"] ?? vaga.salario, cidade: vaga.cidade || null,
+    }).then(custo => {
+      if (!vivo) return;
+      const insal = insalubridadeDoCusto(custo, emp?.["% Insalubridade"], emp?.["Valor Salário"]);
+      setVaga(v => ({ ...v, insalubridade_recebe: insal.recebe, insalubridade_quanto: insal.quanto, beneficios: beneficiosDoCusto(custo) }));
+      setCustoPosto(custo); setCustoNota(notaDoCusto(custo, insal.origem, postoNomeEscolhido));
+    }).finally(() => { if (vivo) setCustoBuscando(false); });
+    return () => { vivo = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [postoNomeEscolhido, vaga.contrato, empEscolhido]);
+
 
   const abrirModalVaga = () => {
     setModalVaga(true); setVagaStep(1); setEmpSearch(""); setShowEmpDrop(false); setVaga({ ...VAGA_RESET });
-    setSubstituidoId(null); setCustoPosto(null); setCustoNota("");
+    setSubstituidoId(null); setCustoPosto(null); setCustoNota(""); setEmpEscolhido(null);
     if (!contratosFull.length) carregarContratos();
   };
 
@@ -504,6 +530,10 @@ export default function MinhasSolicitacoes({ abrir, base = "encarregados" }: { a
       }
       if (!vaga.contrato) { toast("Selecione o contrato.", "err"); return false; }
       if (!vaga.cargo.trim()) { toast("Informe o cargo.", "err"); return false; }
+      // Posto e função do catálogo (15/09/2026): obrigatórios quando o
+      // contrato tem posto no catálogo — é do posto que vêm o V.A e o V.T.
+      if (vaga.contrato_id && catListas.postos.length > 0 && !vaga.posto_id) { toast("Selecione o posto no catálogo de Suprimentos — é dele que vêm o V.A e o V.T da vaga.", "err"); return false; }
+      if (vaga.posto_id && catListas.funcoes.length > 0 && !vaga.funcao_id) { toast("Selecione a função do posto no catálogo de Suprimentos.", "err"); return false; }
       // Estado e cidade obrigatórios (15/09/2026) — mesma regra do Recrutamento.
       if (!vaga.estado) { toast("Selecione o estado (UF) da vaga.", "err"); return false; }
       if (!vaga.cidade) { toast("Selecione a cidade da vaga.", "err"); return false; }
@@ -1099,12 +1129,15 @@ export default function MinhasSolicitacoes({ abrir, base = "encarregados" }: { a
                   </div>
                 )}
               </div>
-              {/* Vínculo com o catálogo de Suprimentos (15/09/2026): opcional;
-                  o contrato é o do colaborador e não muda. */}
+              {/* Vínculo com o catálogo de Suprimentos (15/09/2026): posto e
+                  função obrigatórios quando o contrato tem posto no catálogo —
+                  é do posto que vêm o V.A e o V.T. O contrato é o do
+                  colaborador e não muda. */}
               <VinculoCatalogoVaga
                 contratoNome={vaga.contrato}
                 valor={{ contrato_id: vaga.contrato_id, posto_id: vaga.posto_id, funcao_id: vaga.funcao_id }}
                 onChange={v => setVaga(x => ({ ...x, ...v }))}
+                onListas={setCatListas}
                 classeInput="ini-fi" classeGrupo="ini-fg" />
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
                 <div className="ini-fg">
@@ -1192,10 +1225,10 @@ export default function MinhasSolicitacoes({ abrir, base = "encarregados" }: { a
                 <label>Benefícios <span style={{ color: "#94a3b8", fontWeight: 600 }}>— VT e VA do contrato</span></label>
                 <input className="ini-fi" readOnly
                   value={custoBuscando ? "Consultando a planilha…" : vaga.beneficios}
-                  placeholder={substituidoId ? "Contrato sem Planilha de Custo — o Recrutamento completa" : "Escolha o colaborador na etapa 1"}
+                  placeholder={!substituidoId ? "Escolha o colaborador na etapa 1" : !vaga.posto_id ? "Selecione o posto no catálogo (etapa 1) para puxar o V.A e o V.T" : "Posto sem Planilha de Custo — o Recrutamento completa"}
                   style={{ background: "#f1f5f9", color: "#475569", cursor: "not-allowed" }} />
                 {custoNota && (
-                  <div style={{ marginTop: 4, fontSize: 11, color: custoPosto?.ambiguo ? "#92400e" : "#94a3b8" }}>{custoNota}</div>
+                  <div style={{ marginTop: 4, fontSize: 11, fontWeight: custoPosto ? 400 : 600, color: custoPosto && !custoPosto.ambiguo ? "#94a3b8" : "#92400e" }}>{custoNota}</div>
                 )}
               </div>
               {/* Local Exato / Posto saiu: o posto já vem do colaborador
