@@ -18,6 +18,7 @@ import {
 import { maskFone } from "@/lib/telefone";
 import { solicitacaoEmAberto, TITULO_DUPLICIDADE, type SolicitacaoEmAberto } from "@/lib/solicitacoes/duplicidade";
 import { buscarCustoDoPosto, insalubridadeDoCusto, beneficiosDoCusto, notaDoCusto, type CustoPosto } from "@/lib/recrutamento/custoPosto";
+import { VinculoCatalogoVaga } from "@/components/recrutamento/VinculoCatalogoVaga";
 
 // ── Helpers ────────────────────────────────────────────────────────
 function fmtDt(s?: string) {
@@ -113,6 +114,8 @@ const ADV_RESET = {
 };
 const VAGA_RESET = {
   motivo_vaga: "", administrativa: false, nome_substituido: "", contrato: "", cargo: "",
+  // Vínculo com o catálogo de Suprimentos (opcional; contrato travado no da vaga).
+  contrato_id: "", posto_id: "", funcao_id: "",
   estado: "", cidade: "", quantidade_vagas: "1", data_inicio_prevista: "",
   escala: "", salario: "", insalubridade_recebe: "Não", reserva_tecnica: "Não",
   insalubridade_quanto: "", beneficios: "",
@@ -530,6 +533,7 @@ export default function MinhasSolicitacoes({ abrir, base = "encarregados" }: { a
       // Só a substituição grava o id: é ele que trava a pessoa numa vaga só.
       substituido_id: ehSubstituicao(vaga.motivo_vaga) ? substituidoId : null,
       demissao_id: ehSubstituicao(vaga.motivo_vaga) ? demissaoId : null,
+      contrato_id: vaga.contrato_id || null, posto_id: vaga.posto_id || null, funcao_id: vaga.funcao_id || null,
       administrativa: podeAdministrativa ? !!vaga.administrativa : false,
       // A etapa 1 do recrutamento mudou de dono em 02/09/2026: quem decide é o
       // ANALISTA. Nascer em "Pendente Operacional" deixava a vaga num status
@@ -541,7 +545,7 @@ export default function MinhasSolicitacoes({ abrir, base = "encarregados" }: { a
     let { error, data } = await (supabase as any).from("SISTEMA_RECRUTAMENTO").insert(payload).select("id").single();
     // Banco ainda sem as colunas novas: reenvia sem elas.
     if (error && /column|schema cache/i.test(error.message)) {
-      const { cnh_obrigatoria, substituido_id, demissao_id, administrativa, reserva_tecnica, tem_recomendacao, recomendacao_nome, recomendacao_cpf, recomendacao_whatsapp, ...semColunasNovas } = payload as any;
+      const { cnh_obrigatoria, substituido_id, demissao_id, contrato_id, posto_id, funcao_id, administrativa, reserva_tecnica, tem_recomendacao, recomendacao_nome, recomendacao_cpf, recomendacao_whatsapp, ...semColunasNovas } = payload as any;
       ({ error, data } = await (supabase as any).from("SISTEMA_RECRUTAMENTO").insert(semColunasNovas).select("id").single());
     }
     if (error) { toast("Erro ao solicitar vaga: " + error.message, "err"); return; }
@@ -1092,6 +1096,13 @@ export default function MinhasSolicitacoes({ abrir, base = "encarregados" }: { a
                   </div>
                 )}
               </div>
+              {/* Vínculo com o catálogo de Suprimentos (15/09/2026): opcional;
+                  o contrato é o do colaborador e não muda. */}
+              <VinculoCatalogoVaga
+                contratoNome={vaga.contrato}
+                valor={{ contrato_id: vaga.contrato_id, posto_id: vaga.posto_id, funcao_id: vaga.funcao_id }}
+                onChange={v => setVaga(x => ({ ...x, ...v }))}
+                classeInput="ini-fi" classeGrupo="ini-fg" />
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
                 <div className="ini-fg">
                   <label>Estado (UF)</label>
