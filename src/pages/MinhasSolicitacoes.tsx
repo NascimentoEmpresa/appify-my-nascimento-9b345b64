@@ -1328,7 +1328,7 @@ export default function MinhasSolicitacoes({ abrir, base = "encarregados" }: { a
           <div className="ini-modal" onClick={e => e.stopPropagation()} style={{ maxWidth: 560 }}>
             <button onClick={() => setModalAdv(false)} style={{ position: "absolute", top: 14, right: 14, background: "none", border: "none", color: "#94a3b8", fontSize: 20, cursor: "pointer" }}>✕</button>
             <div style={{ fontSize: 17, fontWeight: 800, marginBottom: 4 }}>⚠️ Solicitar Advertência</div>
-            <div style={{ fontSize: 12, color: "#94a3b8", marginBottom: 16 }}>Selecione o colaborador e responda as questões. Segue para o analista do contrato aprovar e depois para o Jurídico.</div>
+            <div style={{ fontSize: 12, color: "#94a3b8", marginBottom: 16 }}>Selecione o colaborador e responda as questões. Segue para o Operacional aprovar e depois para o Jurídico.</div>
 
             <div className="ini-fg" style={{ position: "relative" }} onBlur={() => setTimeout(() => setShowEmpDrop(false), 150)}>
               <label>Colaborador *</label>
