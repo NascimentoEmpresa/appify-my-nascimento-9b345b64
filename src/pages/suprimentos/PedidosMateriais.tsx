@@ -108,6 +108,9 @@ const ROTULO_CAMPO: Record<string, string> = {
   item_adicionado: "Item incluído",
   item_alterado: "Item alterado",
   item_removido: "Item removido",
+  // Gravados por sup_est_baixar / sup_est_desvincular (20260930000114).
+  estoque_designado: "Código(s) designado(s) do estoque",
+  estoque_desvinculado: "Código desvinculado — voltou ao estoque",
 };
 
 function fmtDataHora(iso: string) {

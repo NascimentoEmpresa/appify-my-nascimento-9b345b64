@@ -7,14 +7,20 @@ import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import { CampoBipagem } from "@/components/suprimentos/CampoBipagem";
+import { separarCodigos } from "@/components/suprimentos/CampoBipagem";
 import { STATUS_PEDIDO, ESTILO_STATUS } from "@/hooks/useSupPedidos";
 import {
   useTagsDoPedido, useTagsDisponiveis, useSaldoMaterial, useValidarTags, useBaixarPedido,
-  type TipoTag, type Baixa,
+  useDesvincularCodigo, useCaDosCodigos, useResolucaoDaLinha,
+  conferirLinhas, codigosDasLinhas, montarBaixasDasLinhas, expandirCodigosDeProduto,
+  resolverCodigos, chaveResolucao, normalizarCodigo,
+  type Baixa, type LinhaCodigo, type ItemComLinhas, type TiposDosCodigos, type ResolucaoCodigo,
 } from "@/hooks/useSupEstoque";
 import { ModalTrajetoCorreio } from "@/components/suprimentos/ModalTrajetoCorreio";
-import { Lock, List, AlertTriangle, Loader2, Tag as TagIcon, MessageSquare, Map as MapIcon, Car } from "lucide-react";
+import {
+  Lock, List, AlertTriangle, Loader2, Tag as TagIcon, MessageSquare, Map as MapIcon, Car,
+  Plus, X, ScanLine, Undo2,
+} from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 
@@ -27,14 +33,25 @@ import { cn } from "@/lib/utils";
  *   • uma chamada só (sup_est_baixar) grava status e consumo na MESMA
  *     transação. No legado eram duas requisições e, se a segunda falhasse, as
  *     peças já tinham saído do estoque (§12.6);
- *   • o saldo disponível daquele material aparece ao lado de cada item, e a
- *     etiqueta de material errado é recusada — o legado não conferia nada disso;
- *   • as etiquetas são bipadas com pistola (Enter confirma), com a lista de
+ *   • o saldo disponível daquele material aparece ao lado de cada item, e o
+ *     código de material errado é recusado — o legado não conferia nada disso;
+ *   • os códigos são bipados com pistola (Enter confirma), com a lista de
  *     disponíveis a um clique para quem estiver sem o leitor.
  *
- * Etiqueta já gravada aparece TRAVADA: impede o operador de trocar a etiqueta
- * de uma peça que já saiu do estoque. Só a quantidade do modo massa continua
- * editável, porque é ela que o algoritmo de delta sabe ajustar.
+ * CÓDIGO + QUANTIDADE (15/09/2026). O seletor "única / em massa" saiu: depois
+ * do ajuste 7 esses dois tipos não existem mais para quem está no balcão.
+ * Cada item tem linhas de código + quantidade, e o "+" abre outra linha para
+ * quando as unidades saem de códigos diferentes (duas jaquetas, dois lotes).
+ * O campo aceita o código do LOTE ou o do PRODUTO (os 7 dígitos). Com o do
+ * produto, o banco escolhe os lotes — CA vencendo primeiro, pulando CA
+ * bloqueado — e o CA de cada lote aparece na linha, sem ninguém digitar.
+ * Quem descobre se o código é lote ou etiqueta antiga de peça única é a
+ * validação no banco, não o operador — ver montarBaixasDasLinhas.
+ *
+ * Código já gravado aparece TRAVADO: impede trocar por baixo o código de uma
+ * peça que já saiu do estoque. A saída oficial é "Desvincular", que devolve a
+ * quantidade ao estoque na hora e deixa a troca no histórico do pedido
+ * (sup_est_desvincular, migration 20260930000114).
  */
 
 interface ItemPedido {
@@ -49,35 +66,62 @@ export interface PedidoParaBaixa {
   sup_pedido_item: ItemPedido[];
 }
 
-/** Estado de edição de um item do pedido dentro do modal. */
-interface EstadoItem {
-  tipo: TipoTag;
-  novos: string[];            // etiquetas bipadas agora
-  travadas: { codigo: string; quantidade: number }[]; // já gravadas
-  qtdMassa: string;
+/** Código já baixado para um item, com quanto saiu dele e o CA do lote. */
+interface Designado { codigo: string; quantidade: number; ca: string | null }
+
+/**
+ * Linha do modal. `confirmado` marca que a leitura terminou (Enter, sair do
+ * campo, escolha da lista) — é o que libera a prévia "sai do lote X, CA Y".
+ */
+type LinhaDoModal = LinhaCodigo & { confirmado?: boolean };
+
+let seqLinha = 0;
+/** Linha nova de código + quantidade. O id só serve de `key` para o React. */
+function novaLinha(quantidade: number, codigo = ""): LinhaDoModal {
+  seqLinha += 1;
+  return {
+    id: `linha-${seqLinha}`, codigo, confirmado: !!codigo,
+    quantidade: String(Math.max(quantidade, 1)),
+  };
 }
+
+const somaLinhas = (ls: LinhaCodigo[]) => ls.reduce((s, l) => s + (Number(l.quantidade) || 0), 0);
+const SEM_CA: Record<string, string> = {};
 
 export function ModalBaixaPedido({
   pedido, onFechar,
 }: { pedido: PedidoParaBaixa | null; onFechar: () => void }) {
   const { data: jaBaixadas = [], isLoading: carregandoTags } = useTagsDoPedido(pedido?.id ?? null);
+  const { data: caPorCodigo = SEM_CA } = useCaDosCodigos(jaBaixadas.map((t) => t.codigo));
   const validar = useValidarTags();
   const baixar = useBaixarPedido();
+  const desvincular = useDesvincularCodigo();
 
   const [status, setStatus] = useState("");
   const [observacao, setObservacao] = useState("");
   const [envioTipo, setEnvioTipo] = useState<"" | "SUPERVISOR" | "CORREIO">("");
   const [envioRastreio, setEnvioRastreio] = useState("");
-  const [itens, setItens] = useState<Record<string, EstadoItem>>({});
+  const [linhas, setLinhas] = useState<Record<string, LinhaDoModal[]>>({});
   const [idAtual, setIdAtual] = useState<string | null>(null);
   const [confirmandoSemBaixa, setConfirmandoSemBaixa] = useState(false);
+  const [conferindo, setConferindo] = useState(false);
   const [vendoTrajeto, setVendoTrajeto] = useState(false);
 
-  // Semeia o modal ao abrir/trocar de pedido, reconstruindo o que já foi
-  // baixado antes — o legado fazia o mesmo, e é o que evita baixa em dobro.
-  const chave = `${pedido?.id ?? ""}|${carregandoTags ? "…" : jaBaixadas.length}`;
-  if (pedido && chave !== idAtual && !carregandoTags) {
-    setIdAtual(chave);
+  // Os códigos já baixados vêm do banco a cada render, sem cópia no estado:
+  // desvincular um código atualiza esta lista sem apagar o que o operador já
+  // digitou nas outras linhas nem o status escolhido.
+  const designadosPorItem = useMemo(() => {
+    const m: Record<string, Designado[]> = {};
+    for (const t of jaBaixadas) {
+      (m[t.pedido_item_id] = m[t.pedido_item_id] ?? [])
+        .push({ codigo: t.codigo, quantidade: Number(t.quantidade), ca: caPorCodigo[t.codigo] ?? null });
+    }
+    return m;
+  }, [jaBaixadas, caPorCodigo]);
+
+  // Semeia o modal ao abrir/trocar de pedido — uma vez por pedido.
+  if (pedido && pedido.id !== idAtual && !carregandoTags) {
+    setIdAtual(pedido.id);
     // Pedido retirado pelo supervisor: o único passo que falta é despachar
     // informando o tipo de envio. Já abre nele — é para isso que a pessoa
     // clicou em Status.
@@ -85,18 +129,17 @@ export function ModalBaixaPedido({
     setObservacao(pedido.observacao ?? "");
     setEnvioTipo(pedido.envio_tipo ?? "");
     setEnvioRastreio(pedido.envio_rastreio ?? "");
-    const inicial: Record<string, EstadoItem> = {};
+    // Uma linha por item que ainda tem unidade a baixar, já com o que falta:
+    // o caso comum é "tudo sai de um código só".
+    const inicial: Record<string, LinhaDoModal[]> = {};
     for (const it of pedido.sup_pedido_item ?? []) {
-      const doItem = jaBaixadas.filter((t) => t.pedido_item_id === it.id);
-      const emMassa = doItem.find((t) => t.tipo === "massa");
-      inicial[it.id] = {
-        tipo: emMassa ? "massa" : "unico",
-        novos: [],
-        travadas: doItem.map((t) => ({ codigo: t.codigo, quantidade: t.quantidade })),
-        qtdMassa: String(emMassa?.quantidade ?? it.quantidade),
-      };
+      const ja = jaBaixadas
+        .filter((t) => t.pedido_item_id === it.id)
+        .reduce((s, t) => s + Number(t.quantidade), 0);
+      const faltam = it.quantidade - ja;
+      inicial[it.id] = faltam > 0 ? [novaLinha(faltam)] : [];
     }
-    setItens(inicial);
+    setLinhas(inicial);
   }
 
   const itensPedido = useMemo(
@@ -105,42 +148,108 @@ export function ModalBaixaPedido({
   );
 
   const semBaixa = useMemo(
-    () => itensPedido.filter((it) => {
-      const e = itens[it.id];
-      return !e || (e.travadas.length === 0 && e.novos.length === 0);
-    }),
-    [itensPedido, itens],
+    () => itensPedido.filter((it) =>
+      (designadosPorItem[it.id] ?? []).length === 0
+      && !(linhas[it.id] ?? []).some((l) => l.codigo.trim())),
+    [itensPedido, designadosPorItem, linhas],
   );
 
-  const alterar = (itemId: string, patch: Partial<EstadoItem>) =>
-    setItens((s) => ({ ...s, [itemId]: { ...s[itemId], ...patch } }));
+  const itensComLinhas = (): ItemComLinhas[] => itensPedido.map((it) => ({
+    pedido_item_id: it.id,
+    nome: it.nome_item,
+    pedida: it.quantidade,
+    designados: designadosPorItem[it.id] ?? [],
+    linhas: linhas[it.id] ?? [],
+  }));
 
-  /** Monta as baixas: etiquetas novas + massa já gravada cuja quantidade mudou. */
-  const montarBaixas = (): Baixa[] => {
-    const out: Baixa[] = [];
-    for (const it of itensPedido) {
-      const e = itens[it.id];
-      if (!e) continue;
-      if (e.tipo === "massa") {
-        const qtd = Math.max(Number(e.qtdMassa || 0), 0);
-        const codigo = e.novos[0] ?? e.travadas[0]?.codigo;
-        if (!codigo) continue;
-        const anterior = e.travadas[0]?.quantidade;
-        // Só envia se é nova ou se a quantidade mudou — delta 0 não faz nada
-        // no banco, mas evitar a ida já deixa a resposta mais limpa.
-        if (e.novos.length > 0 || anterior !== qtd) {
-          out.push({ pedido_item_id: it.id, codigo, tipo: "massa", quantidade: qtd });
-        }
-      } else {
-        for (const c of e.novos) out.push({ pedido_item_id: it.id, codigo: c, tipo: "unico" });
-      }
+  /**
+   * Desfaz a designação na hora, sem esperar o "Confirmar": a pessoa quer ver
+   * a unidade de volta no estoque e o código liberado antes de bipar o certo.
+   */
+  const desvincularCodigo = async (itemId: string, d: Designado, motivo: string): Promise<boolean> => {
+    if (!pedido) return false;
+    try {
+      const r = await desvincular.mutateAsync({
+        pedido_id: pedido.id, pedido_item_id: itemId, codigo: d.codigo, motivo,
+      });
+      // O próximo passo natural é bipar o código certo: abre uma linha vazia
+      // com a quantidade que voltou, se o item ainda não tiver uma.
+      setLinhas((s) => {
+        const atuais = s[itemId] ?? [];
+        if (atuais.some((l) => !l.codigo.trim())) return s;
+        return { ...s, [itemId]: [...atuais, novaLinha(r.quantidade)] };
+      });
+      return true;
+    } catch {
+      return false;   // o hook já mostrou o motivo
     }
-    return out;
+  };
+
+  /** Recusa com a lista de motivos e devolve o operador ao modal. */
+  const falhar = (titulo: string, erros: string[]) => {
+    setConfirmandoSemBaixa(false);
+    toast.error(titulo, { description: erros.join(" · "), duration: 12000 });
+  };
+
+  /**
+   * Linhas digitadas → baixas prontas para sup_est_baixar, ou null se algo
+   * foi recusado (o motivo já foi mostrado). Nada é gravado aqui.
+   */
+  const prepararBaixas = async (itensDigitados: ItemComLinhas[]): Promise<Baixa[] | null> => {
+    if (!pedido) return null;
+
+    // 1) Código do PRODUTO vira lotes — o banco escolhe, CA vencendo
+    //    primeiro, e o CA de cada lote vem junto. Código de lote passa direto.
+    const consultas = itensDigitados.flatMap((it) => it.linhas
+      .filter((l) => l.codigo.trim())
+      .map((l) => ({
+        pedido_item_id: it.pedido_item_id,
+        codigo: normalizarCodigo(l.codigo),
+        quantidade: Number(l.quantidade),
+      })));
+    let respostas: ResolucaoCodigo[] = [];
+    try {
+      respostas = await resolverCodigos(consultas);
+    } catch (e: unknown) {
+      // Banco ainda sem a migration 0114: segue aceitando só código de lote,
+      // como antes, em vez de travar a baixa inteira.
+      if ((e as { code?: string })?.code !== "PGRST202") throw e;
+    }
+    const resolucoes: Record<string, ResolucaoCodigo> = {};
+    respostas.forEach((r, i) => {
+      resolucoes[chaveResolucao(consultas[i].pedido_item_id, consultas[i].codigo)] = r;
+    });
+    const expandido = expandirCodigosDeProduto(itensDigitados, resolucoes);
+    if (expandido.erros.length > 0) {
+      falhar("Confira os códigos — nada foi salvo.", expandido.erros);
+      return null;
+    }
+
+    // 2) Valida ANTES de tocar no estoque (§6.8): assim o operador vê o
+    //    motivo exato e nada é gravado pela metade. A validação também diz o
+    //    tipo de cada código, que o operador não escolhe mais.
+    const res = await validar.mutateAsync({
+      codigos: codigosDasLinhas(expandido.itens), pedido_id: pedido.id,
+    });
+    const ruins = res.filter((r) => !r.valido);
+    if (ruins.length > 0) {
+      falhar("Código inválido — nada foi baixado.", ruins.map((r) => `${r.codigo}: ${r.motivo}`));
+      return null;
+    }
+    const tipos: TiposDosCodigos = {};
+    for (const r of res) {
+      if (r.tipo) tipos[normalizarCodigo(r.codigo)] = { tipo: r.tipo, disponivel: Number(r.disponivel ?? 0) };
+    }
+    const montado = montarBaixasDasLinhas(expandido.itens, tipos);
+    if (montado.erros.length > 0) {
+      falhar("Confira os códigos — nada foi salvo.", montado.erros);
+      return null;
+    }
+    return montado.baixas;
   };
 
   const enviar = async (pularAvisoDespacho = false) => {
     if (!pedido) return;
-    const baixas = montarBaixas();
 
     // Esta validação antecede inclusive o aviso de baixa incompleta. A mesma
     // guarda existe na RPC porque outros caminhos também conseguem despachar.
@@ -153,41 +262,44 @@ export function ModalBaixaPedido({
       return;
     }
 
+    // Erro de digitação primeiro, sem ir ao banco.
+    const itensDigitados = itensComLinhas();
+    const errosLocais = conferirLinhas(itensDigitados);
+    if (errosLocais.length > 0) {
+      falhar("Confira os códigos — nada foi salvo.", errosLocais);
+      return;
+    }
+    const temCodigo = codigosDasLinhas(itensDigitados).length > 0;
+
     const mudouStatus = status !== pedido.status;
     const mudouObs = (observacao || "") !== (pedido.observacao || "");
     const mudouEnvio = status === "DESPACHADO" && (
       envioTipo !== (pedido.envio_tipo ?? "")
       || (envioTipo === "CORREIO" ? envioRastreio.trim() : "") !== (pedido.envio_rastreio ?? "")
     );
-    if (!mudouStatus && !mudouObs && !mudouEnvio && baixas.length === 0) {
+    if (!mudouStatus && !mudouObs && !mudouEnvio && !temCodigo) {
       toast.info("Nada mudou.");
       return;
     }
 
-    // Despachar com item sem etiqueta avisa, mas não trava — decisão de produto.
+    // Despachar com item sem código avisa, mas não trava — decisão de produto.
     if (!pularAvisoDespacho && status === "DESPACHADO" && semBaixa.length > 0) {
       setConfirmandoSemBaixa(true);
       return;
     }
 
-    // Valida ANTES de tocar no estoque (§6.8): assim o operador vê o motivo
-    // exato e nada é gravado pela metade.
-    if (baixas.length > 0) {
-      const novos = baixas.filter((b) =>
-        itens[b.pedido_item_id]?.novos.includes(b.codigo));
-      if (novos.length > 0) {
-        const res = await validar.mutateAsync({
-          codigos: novos.map((b) => b.codigo),
-          pedido_id: pedido.id,
-        });
-        const ruins = res.filter((r) => !r.valido);
-        if (ruins.length > 0) {
-          toast.error("Etiqueta inválida — nada foi baixado.", {
-            description: ruins.map((r) => `${r.codigo}: ${r.motivo}`).join(" · "),
-            duration: 12000,
-          });
-          return;
-        }
+    let baixas: Baixa[] = [];
+    if (temCodigo) {
+      setConferindo(true);
+      try {
+        const prontas = await prepararBaixas(itensDigitados);
+        if (!prontas) return;
+        baixas = prontas;
+      } catch (e: unknown) {
+        falhar("Não foi possível conferir os códigos.", [(e as { message?: string })?.message ?? String(e)]);
+        return;
+      } finally {
+        setConferindo(false);
       }
     }
 
@@ -205,7 +317,7 @@ export function ModalBaixaPedido({
     onFechar();
   };
 
-  const ocupado = validar.isPending || baixar.isPending;
+  const ocupado = conferindo || validar.isPending || baixar.isPending || desvincular.isPending;
   const motivoBloqueio = status === "DESPACHADO" && !envioTipo
     ? "Informe o tipo de envio."
     : status === "DESPACHADO" && envioTipo === "CORREIO" && !envioRastreio.trim()
@@ -343,24 +455,28 @@ export function ModalBaixaPedido({
             <div>
               <p className="mb-1 flex items-center gap-1.5 text-sm font-semibold">
                 <TagIcon className="h-4 w-4 text-muted-foreground" />
-                Etiquetas do estoque
+                Códigos do estoque
                 <span className="font-normal text-muted-foreground">(opcional)</span>
               </p>
               <p className="mb-3 text-xs text-muted-foreground">
-                Bipe a etiqueta de cada peça para dar baixa. O campo aceita o leitor de código
-                de barras — cada leitura confirma com Enter.
+                Bipe ou digite o código do produto ou do lote e informe quantas unidades saem.
+                Com o código do produto, o sistema escolhe o lote (CA que vence primeiro) e mostra
+                o CA. Se as unidades saem de códigos diferentes, use o +.
               </p>
 
               {carregandoTags ? (
-                <p className="py-6 text-center text-sm text-muted-foreground">Carregando etiquetas…</p>
+                <p className="py-6 text-center text-sm text-muted-foreground">Carregando códigos…</p>
               ) : (
                 <div className="space-y-3">
                   {itensPedido.map((it) => (
                     <BlocoItem
                       key={it.id}
                       item={it}
-                      estado={itens[it.id]}
-                      onAlterar={(patch) => alterar(it.id, patch)}
+                      designados={designadosPorItem[it.id] ?? []}
+                      linhas={linhas[it.id] ?? []}
+                      onLinhas={(ls) => setLinhas((s) => ({ ...s, [it.id]: ls }))}
+                      onDesvincular={(d, motivo) => desvincularCodigo(it.id, d, motivo)}
+                      ocupado={ocupado}
                     />
                   ))}
                 </div>
@@ -389,7 +505,7 @@ export function ModalBaixaPedido({
             <div className="text-sm">
               <p>
                 <strong>{semBaixa.length}</strong> de <strong>{itensPedido.length}</strong> itens
-                não têm etiqueta atribuída:
+                não têm código designado:
               </p>
               <ul className="mt-1 list-disc pl-4 text-muted-foreground">
                 {semBaixa.map((it) => <li key={it.id}>{it.nome_item}</li>)}
@@ -417,20 +533,61 @@ export function ModalBaixaPedido({
   );
 }
 
-/** Uma sub-seção por item do pedido, com saldo, modo e leitura das etiquetas. */
+/** Uma sub-seção por item do pedido: saldo, códigos já baixados e linhas de código + quantidade. */
 function BlocoItem({
-  item, estado, onAlterar,
+  item, designados, linhas, onLinhas, onDesvincular, ocupado,
 }: {
   item: ItemPedido;
-  estado: EstadoItem | undefined;
-  onAlterar: (patch: Partial<EstadoItem>) => void;
+  designados: Designado[];
+  linhas: LinhaDoModal[];
+  onLinhas: (linhas: LinhaDoModal[]) => void;
+  onDesvincular: (d: Designado, motivo: string) => Promise<boolean>;
+  ocupado: boolean;
 }) {
   const { data: saldo } = useSaldoMaterial(item.item_id, item.tamanho);
   const { data: disponiveis = [] } = useTagsDisponiveis(item.item_id, item.tamanho);
-  if (!estado) return null;
+  /** Código com a confirmação de "desvincular" aberta. */
+  const [desfazendo, setDesfazendo] = useState<string | null>(null);
+  const [motivo, setMotivo] = useState("");
 
-  const faltam = Math.max(item.quantidade - estado.travadas.length, 0);
+  // Quanto cada lote livre ainda tem, e o CA dele — só uma dica ao lado da
+  // linha. Quem decide de verdade é sup_est_baixar, que desconta a reserva.
+  const lotesLivres = useMemo(
+    () => new Map(disponiveis.map((t) => [t.codigo, {
+      livre: t.tipo === "massa" ? Number(t.quantidade_massa ?? 0) : 1,
+      ca: t.ca_numero?.trim() || null,
+    }] as const)),
+    [disponiveis],
+  );
+
+  const jaBaixado = designados.reduce((s, d) => s + d.quantidade, 0);
+  const faltam = Math.max(item.quantidade - jaBaixado, 0);
+  const informado = somaLinhas(linhas.filter((l) => l.codigo.trim()));
+  const passou = jaBaixado + informado > item.quantidade;
   const semEstoque = saldo != null && saldo <= 0;
+  const noCampo = new Set(linhas.map((l) => normalizarCodigo(l.codigo)));
+
+  const alterarLinha = (id: string, patch: Partial<LinhaDoModal>) =>
+    onLinhas(linhas.map((l) => (l.id === id ? { ...l, ...patch } : l)));
+  const removerLinha = (id: string) => onLinhas(linhas.filter((l) => l.id !== id));
+  /** Linha nova já com o que ainda falta distribuir (mínimo 1). */
+  const adicionarLinha = (codigo = "") =>
+    onLinhas([...linhas, novaLinha(faltam - somaLinhas(linhas), codigo)]);
+  const escolherDaLista = (codigo: string) => {
+    const vazia = linhas.find((l) => !l.codigo.trim());
+    if (vazia) alterarLinha(vazia.id, { codigo, confirmado: true });
+    else adicionarLinha(codigo);
+  };
+  /** Colou uma lista: o primeiro código fica na linha, os demais ganham linha própria. */
+  const colarVarios = (id: string, codigos: string[]) => {
+    const i = linhas.findIndex((l) => l.id === id);
+    if (i < 0) return;
+    const [primeiro, ...resto] = codigos;
+    const novas = [...linhas];
+    novas[i] = { ...novas[i], codigo: primeiro, quantidade: "1", confirmado: true };
+    novas.splice(i + 1, 0, ...resto.map((c) => novaLinha(1, c)));
+    onLinhas(novas);
+  };
 
   return (
     <div className="rounded-lg border p-3">
@@ -449,93 +606,139 @@ function BlocoItem({
         </Badge>
       </div>
 
-      {/* Etiquetas já baixadas: travadas de propósito. */}
-      {estado.travadas.length > 0 && (
+      {/* Códigos já baixados: travados de propósito. A única saída é
+          desvincular, que devolve ao estoque e fica no histórico. */}
+      {designados.length > 0 && (
         <div className="mb-2 space-y-1">
-          {estado.travadas.map((t) => (
-            <div key={t.codigo}
-              className="flex items-center gap-2 rounded-md border border-emerald-400/50 bg-emerald-50 px-2 py-1.5 text-xs dark:bg-emerald-950/30">
-              <Lock className="h-3 w-3 shrink-0 text-emerald-600" />
-              <span className="font-mono">{t.codigo}</span>
-              {estado.tipo === "massa" && <span className="text-muted-foreground">· {t.quantidade} un.</span>}
-              <span className="ml-auto text-muted-foreground">já baixada</span>
+          {designados.map((d) => (
+            <div key={d.codigo}
+              className="rounded-md border border-emerald-400/50 bg-emerald-50 px-2 py-1.5 text-xs dark:bg-emerald-950/30">
+              <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                <Lock className="h-3 w-3 shrink-0 text-emerald-600" />
+                <span className="truncate font-mono">{d.codigo}</span>
+                <span className="shrink-0 text-muted-foreground">· {d.quantidade} un.</span>
+                {d.ca && <Badge variant="outline" className="h-5 px-1.5 text-[10px]">CA {d.ca}</Badge>}
+                <span className="ml-auto shrink-0 text-muted-foreground">já baixada</span>
+                {desfazendo !== d.codigo && (
+                  <Button
+                    type="button" variant="ghost" size="sm"
+                    className="h-6 shrink-0 px-2 text-xs text-muted-foreground hover:text-destructive"
+                    disabled={ocupado}
+                    onClick={() => { setDesfazendo(d.codigo); setMotivo(""); }}
+                  >
+                    <Undo2 className="mr-1 h-3 w-3" /> Desvincular
+                  </Button>
+                )}
+              </div>
+              {desfazendo === d.codigo && (
+                <div className="mt-2 space-y-2 border-t border-emerald-400/40 pt-2">
+                  <p className="text-foreground">
+                    {d.quantidade === 1 ? "A unidade volta" : `As ${d.quantidade} unidades voltam`} para o
+                    estoque na hora, e a troca fica registrada no histórico do pedido.
+                  </p>
+                  <Input
+                    autoFocus
+                    value={motivo}
+                    onChange={(e) => setMotivo(e.target.value)}
+                    onKeyDown={(e) => { if (e.key === "Enter") e.preventDefault(); }}
+                    placeholder="Motivo (opcional) — ex.: código errado"
+                    className="h-8 bg-background text-xs"
+                  />
+                  <div className="flex flex-wrap justify-end gap-2">
+                    <Button type="button" variant="ghost" size="sm" className="h-7 text-xs"
+                            onClick={() => setDesfazendo(null)}>
+                      Cancelar
+                    </Button>
+                    <Button
+                      type="button" variant="destructive" size="sm" className="h-7 text-xs"
+                      disabled={ocupado}
+                      onClick={async () => { if (await onDesvincular(d, motivo)) setDesfazendo(null); }}
+                    >
+                      {ocupado
+                        ? <Loader2 className="mr-1 h-3 w-3 animate-spin" />
+                        : <Undo2 className="mr-1 h-3 w-3" />}
+                      Desvincular e devolver ao estoque
+                    </Button>
+                  </div>
+                </div>
+              )}
             </div>
           ))}
         </div>
       )}
 
-      {faltam === 0 && estado.tipo === "unico" ? (
-        <p className="text-xs text-muted-foreground">Todas as unidades já foram baixadas.</p>
+      {faltam === 0 && linhas.length === 0 ? (
+        <p className="text-xs text-muted-foreground">
+          Todas as unidades já foram baixadas. Para trocar um código, desvincule-o acima.
+        </p>
       ) : (
         <>
-          <div className="mb-2 grid gap-2 sm:grid-cols-[1fr_auto]">
-            <div>
-              <Label className="text-xs">Tipo de etiqueta</Label>
-              <Select
-                value={estado.tipo}
-                // Trocar o modo preserva o que já foi bipado (§5.6).
-                onValueChange={(v) => onAlterar({ tipo: v as TipoTag })}
-                disabled={estado.travadas.length > 0}
-              >
-                <SelectTrigger className="h-9"><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="unico">🔵 Única — 1 etiqueta por peça</SelectItem>
-                  <SelectItem value="massa">🟠 Em massa — 1 etiqueta para várias unidades</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-            {estado.tipo === "massa" && (
-              <div>
-                <Label className="text-xs">Quantidade</Label>
-                <Input
-                  type="number" min={0} max={item.quantidade}
-                  value={estado.qtdMassa}
-                  onChange={(e) => onAlterar({ qtdMassa: e.target.value })}
-                  className="h-9 w-28"
-                />
-              </div>
-            )}
+          <div className="mb-1 flex items-center gap-2 text-xs text-muted-foreground">
+            <span className="flex-1">Código</span>
+            <span className="w-20">Quantidade</span>
+            <span className="w-9 shrink-0" aria-hidden />
+          </div>
+          <div className="space-y-1.5">
+            {linhas.map((l) => (
+              <LinhaDeCodigo
+                key={l.id}
+                itemId={item.id}
+                linha={l}
+                lote={lotesLivres.get(normalizarCodigo(l.codigo))}
+                podeRemover={linhas.length > 1}
+                onAlterar={(patch) => alterarLinha(l.id, patch)}
+                onRemover={() => removerLinha(l.id)}
+                onColar={(cods) => colarVarios(l.id, cods)}
+              />
+            ))}
           </div>
 
-          <p className="mb-1.5 text-xs text-muted-foreground">
-            {estado.tipo === "unico"
-              ? `Bipe ${faltam} etiqueta(s), uma por unidade.`
-              : "Bipe 1 etiqueta e informe quantas unidades saem dela."}
-          </p>
-
-          <CampoBipagem
-            codigos={estado.novos}
-            onChange={(c) => onAlterar({ novos: c })}
-            max={estado.tipo === "massa" ? 1 : faltam}
-            autoFoco={false}
-          />
-
-          {disponiveis.length > 0 && (
-            <Popover>
-              <PopoverTrigger asChild>
-                <Button variant="ghost" size="sm" className="mt-1.5 h-7 text-xs text-muted-foreground">
-                  <List className="mr-1.5 h-3.5 w-3.5" /> Escolher da lista ({disponiveis.length} livres)
-                </Button>
-              </PopoverTrigger>
-              <PopoverContent className="max-h-64 w-72 overflow-y-auto p-1">
-                {disponiveis.map((t) => (
-                  <button
-                    key={t.id}
-                    type="button"
-                    disabled={estado.novos.includes(t.codigo)}
-                    onClick={() => onAlterar({ novos: [...estado.novos, t.codigo] })}
-                    className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-xs hover:bg-muted disabled:opacity-40"
-                  >
-                    <span className="flex-1 truncate font-mono">{t.codigo}</span>
-                    {t.tamanho && <Badge variant="secondary" className="text-[10px]">{t.tamanho}</Badge>}
-                    {t.tipo === "massa" && (
-                      <Badge variant="outline" className="text-[10px]">{t.quantidade_massa} un.</Badge>
-                    )}
-                  </button>
-                ))}
-              </PopoverContent>
-            </Popover>
+          {passou && (
+            <p className="mt-1.5 text-xs text-amber-600">
+              {jaBaixado + informado} un. informada(s) para {item.quantidade} pedida(s) — ajuste as quantidades.
+            </p>
           )}
+
+          <div className="mt-1.5 flex flex-wrap items-center gap-1">
+            <Button
+              type="button" variant="ghost" size="sm"
+              className="h-7 px-2 text-xs text-muted-foreground"
+              onClick={() => adicionarLinha()}
+              title="Adicionar outro código para este item"
+            >
+              <Plus className="mr-1 h-3.5 w-3.5" /> Adicionar código
+            </Button>
+
+            {disponiveis.length > 0 && (
+              <Popover>
+                <PopoverTrigger asChild>
+                  <Button type="button" variant="ghost" size="sm" className="h-7 px-2 text-xs text-muted-foreground">
+                    <List className="mr-1.5 h-3.5 w-3.5" /> Escolher da lista ({disponiveis.length} livres)
+                  </Button>
+                </PopoverTrigger>
+                <PopoverContent className="max-h-64 w-80 overflow-y-auto p-1">
+                  {disponiveis.map((t) => (
+                    <button
+                      key={t.id}
+                      type="button"
+                      disabled={noCampo.has(t.codigo)}
+                      onClick={() => escolherDaLista(t.codigo)}
+                      className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-xs hover:bg-muted disabled:opacity-40"
+                    >
+                      <span className="flex-1 truncate font-mono">{t.codigo}</span>
+                      {t.tamanho && <Badge variant="secondary" className="text-[10px]">{t.tamanho}</Badge>}
+                      {t.ca_numero?.trim() && (
+                        <Badge variant="outline" className="text-[10px]">CA {t.ca_numero.trim()}</Badge>
+                      )}
+                      {t.tipo === "massa" && (
+                        <Badge variant="outline" className="text-[10px]">{t.quantidade_massa} un.</Badge>
+                      )}
+                    </button>
+                  ))}
+                </PopoverContent>
+              </Popover>
+            )}
+          </div>
 
           {semEstoque && (
             <p className="mt-1.5 text-xs text-amber-600">
@@ -545,6 +748,113 @@ function BlocoItem({
           )}
         </>
       )}
+    </div>
+  );
+}
+
+/** Uma linha "código + quantidade". A pistola digita o código e manda Enter. */
+function LinhaDeCodigo({
+  itemId, linha, lote, podeRemover, onAlterar, onRemover, onColar,
+}: {
+  itemId: string;
+  linha: LinhaDoModal;
+  /** Livre e CA do código, quando ele é um dos lotes livres do item. */
+  lote: { livre: number; ca: string | null } | undefined;
+  podeRemover: boolean;
+  onAlterar: (patch: Partial<LinhaDoModal>) => void;
+  onRemover: () => void;
+  onColar: (codigos: string[]) => void;
+}) {
+  // Código que não é um lote conhecido pode ser o do PRODUTO: pergunta ao
+  // banco de onde sairia, para o CA aparecer antes do Confirmar.
+  const { data: previa } = useResolucaoDaLinha(
+    itemId, linha.codigo, Number(linha.quantidade) || 1, !!linha.confirmado && !lote,
+  );
+
+  const confirmarLeitura = () => {
+    const n = normalizarCodigo(linha.codigo);
+    if (n !== linha.codigo || linha.confirmado !== !!n) onAlterar({ codigo: n, confirmado: !!n });
+  };
+
+  return (
+    <div>
+      <div className="flex items-center gap-2">
+        <div className="relative min-w-0 flex-1">
+          <ScanLine className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+          <Input
+            value={linha.codigo}
+            onChange={(e) => onAlterar({ codigo: e.target.value, confirmado: false })}
+            onKeyDown={(e) => {
+              // A pistola manda Enter ao fim da leitura. preventDefault evita
+              // que o Enter submeta o modal em volta.
+              if (e.key === "Enter") { e.preventDefault(); confirmarLeitura(); }
+            }}
+            onBlur={confirmarLeitura}
+            onPaste={(e) => {
+              // Lista colada de planilha: o navegador achataria as quebras de
+              // linha num <input>, então o texto vem da área de transferência.
+              const codigos = separarCodigos(e.clipboardData.getData("text"));
+              if (codigos.length < 2) return;   // colagem simples segue o fluxo normal
+              e.preventDefault();
+              onColar(codigos);
+            }}
+            placeholder="Bipe ou digite o código…"
+            className="h-9 pl-9 font-mono"
+            autoComplete="off"
+            spellCheck={false}
+          />
+        </div>
+        <Input
+          type="number"
+          inputMode="numeric"
+          min={1}
+          value={linha.quantidade}
+          onChange={(e) => onAlterar({ quantidade: e.target.value })}
+          className="h-9 w-20"
+          aria-label="Quantidade"
+        />
+        {podeRemover ? (
+          <Button
+            type="button" variant="ghost" size="icon" className="h-9 w-9 shrink-0"
+            onClick={onRemover} aria-label="Remover esta linha" title="Remover esta linha"
+          >
+            <X className="h-4 w-4" />
+          </Button>
+        ) : (
+          <span className="w-9 shrink-0" aria-hidden />
+        )}
+      </div>
+
+      {lote ? (
+        <p className="mt-0.5 pl-1 text-[11px] text-muted-foreground">
+          {lote.livre} un. livre(s) neste lote{lote.ca && <> · CA {lote.ca}</>}
+        </p>
+      ) : previa?.tipo === "produto" ? (
+        <div className="mt-0.5 pl-1 text-[11px]">
+          <p className="text-muted-foreground">
+            Produto {previa.produto.codigo} · {previa.produto.nome}
+            {previa.lotes.length > 0 && " — sai de:"}
+          </p>
+          {previa.lotes.map((l) => (
+            <p key={l.codigo} className="text-muted-foreground">
+              <span className="font-mono">{l.codigo}</span> · {l.quantidade} un.
+              {l.ca_numero ? <> · <strong className="font-medium text-foreground">CA {l.ca_numero}</strong></> : " · sem CA"}
+            </p>
+          ))}
+          {previa.faltam > 0 && (
+            <p className="text-amber-600">
+              Faltam {previa.faltam} un. livre(s) deste produto
+              {previa.bloqueadas > 0 && ` — ${previa.bloqueadas} un. estão em lote com CA bloqueado`}.
+            </p>
+          )}
+        </div>
+      ) : previa?.tipo === "outro_produto" ? (
+        <p className="mt-0.5 pl-1 text-[11px] text-destructive">
+          Este é o código de "{previa.produto.nome}", não deste item.
+        </p>
+      ) : previa?.tipo === "desconhecido" ? (
+        <p className="mt-0.5 pl-1 text-[11px] text-destructive">Código não encontrado no estoque.</p>
+      ) : null}
     </div>
   );
 }
