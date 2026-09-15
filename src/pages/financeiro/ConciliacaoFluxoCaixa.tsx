@@ -467,7 +467,11 @@ function ImportarExtratoDialog({
       };
       const dt = get("DTPOSTED") ?? "";
       const dataIso = dt ? `${dt.slice(0, 4)}-${dt.slice(4, 6)}-${dt.slice(6, 8)}` : "";
-      const valor = parseFloat(get("TRNAMT") ?? "0");
+      // SIS-2026-0344: mesmo bug do ConciliacaoBancaria.tsx — bancos como o
+      // Bradesco exportam TRNAMT em formato BR (vírgula decimal, "10000,00"),
+      // e parseFloat direto trunca na vírgula ("0,06" virava 0).
+      const trnamt = get("TRNAMT") ?? "0";
+      const valor = trnamt.includes(",") ? parseFloat(trnamt.replace(/\./g, "").replace(",", ".")) : parseFloat(trnamt);
       tx.push({
         data_movimento: dataIso,
         descricao: get("MEMO") ?? get("NAME") ?? "",
