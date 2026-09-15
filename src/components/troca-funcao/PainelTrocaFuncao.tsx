@@ -271,56 +271,61 @@ export function PainelTrocaFuncao({ etapa }: { etapa: Etapa }) {
             </p>
           ) : (
             <div className="overflow-x-auto">
-              <Table>
+              {/* Largura fixa por coluna (15/09/2026): a tabela cabe na tela sem
+                  rolagem lateral — a "Troca" quebra linha em vez de esticar, e o
+                  nome do colaborador não some atrás da borda. */}
+              <Table className="w-full table-fixed">
                 <TableHeader>
                   <TableRow>
-                    <TableHead>#</TableHead>
-                    <TableHead>Colaborador</TableHead>
-                    <TableHead>Troca</TableHead>
-                    <TableHead>Local</TableHead>
-                    <TableHead>Setor</TableHead>
-                    <TableHead>Pedido por</TableHead>
-                    <TableHead>Status</TableHead>
-                    <TableHead className="text-right">Aberta em</TableHead>
+                    <TableHead className="w-11 px-2">#</TableHead>
+                    <TableHead className="w-[17%] px-2">Colaborador</TableHead>
+                    <TableHead className="px-2">Troca</TableHead>
+                    <TableHead className="w-[13%] px-2">Local</TableHead>
+                    <TableHead className="w-[11%] px-2">Setor</TableHead>
+                    <TableHead className="w-[12%] px-2">Pedido por</TableHead>
+                    <TableHead className="w-[112px] px-2">Status</TableHead>
+                    <TableHead className="w-[84px] px-2 text-right">Aberta em</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {filtradas.map(r => (
                     <TableRow key={r.id} className="cursor-pointer" onClick={() => abrir(r)}>
-                      <TableCell className="font-mono text-xs text-muted-foreground">{r.id}</TableCell>
-                      <TableCell className="font-medium">{r.colaborador_nome}</TableCell>
-                      <TableCell className="whitespace-nowrap text-sm">
+                      <TableCell className="px-2 font-mono text-xs text-muted-foreground">{r.id}</TableCell>
+                      <TableCell className="px-2 text-sm font-medium leading-snug">{r.colaborador_nome}</TableCell>
+                      <TableCell className="px-2 text-sm leading-snug">
                         {r.tipo === "horario" ? (
                           <>
                             <span className="mr-1.5 rounded-full border border-sky-300 bg-sky-50 px-1.5 text-[10px] font-semibold text-sky-800">Só horário</span>
                             <span className="text-muted-foreground">{r.horario_atual || "—"}</span>
-                            <ArrowRight className="mx-1.5 inline h-3 w-3" />
+                            <ArrowRight className="mx-1 inline h-3 w-3" />
                             <span className="font-medium">{r.horario_novo || "—"}</span>
                           </>
                         ) : (
                           <>
                             <span className="text-muted-foreground">{r.cargo_atual || "—"}</span>
-                            <ArrowRight className="mx-1.5 inline h-3 w-3" />
+                            <ArrowRight className="mx-1 inline h-3 w-3 shrink-0" />
                             <span className="font-medium">{r.cargo_novo}</span>
-                            {r.horario_novo && <span className="ml-1.5 text-xs text-muted-foreground">· {r.horario_novo}</span>}
+                            {r.horario_novo && <div className="text-xs text-muted-foreground">{r.horario_novo}</div>}
                           </>
                         )}
                       </TableCell>
-                      <TableCell className="text-sm">
-                        <span className="flex items-center gap-1.5">
-                          {r.e_escritorio ? <Building2 className="h-3.5 w-3.5 text-muted-foreground" />
-                                          : <UserCog className="h-3.5 w-3.5 text-muted-foreground" />}
-                          {r.local || "—"}
+                      <TableCell className="px-2 text-sm leading-snug">
+                        <span className="flex items-start gap-1.5">
+                          {r.e_escritorio ? <Building2 className="mt-0.5 h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                                          : <UserCog className="mt-0.5 h-3.5 w-3.5 shrink-0 text-muted-foreground" />}
+                          <span className="min-w-0 break-words">{r.local || "—"}</span>
                         </span>
                       </TableCell>
-                      <TableCell className="text-sm text-muted-foreground">{r.setor || "—"}</TableCell>
-                      <TableCell className="text-sm text-muted-foreground">{r.solicitante_nome || "—"}</TableCell>
-                      <TableCell>
-                        <span className={cn("rounded-full px-2 py-0.5 text-xs font-semibold", corDoStatus(r.status))}>
+                      <TableCell className="px-2 text-sm leading-snug text-muted-foreground">{r.setor || "—"}</TableCell>
+                      <TableCell className="px-2 text-sm leading-snug text-muted-foreground" title={r.solicitante_nome || undefined}>{r.solicitante_nome || "—"}</TableCell>
+                      <TableCell className="px-2">
+                        <span className={cn("inline-block rounded-full px-2 py-0.5 text-xs font-semibold leading-tight", corDoStatus(r.status))}>
                           {r.status}
                         </span>
                       </TableCell>
-                      <TableCell className="text-right text-xs text-muted-foreground">{fmtDataHora(r.criado_em)}</TableCell>
+                      <TableCell className="whitespace-nowrap px-2 text-right text-xs leading-snug text-muted-foreground">
+                        {fmtDataHora(r.criado_em).split(", ").map((t, i) => <div key={i}>{t}</div>)}
+                      </TableCell>
                     </TableRow>
                   ))}
                 </TableBody>
