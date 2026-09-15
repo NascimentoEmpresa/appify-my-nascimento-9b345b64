@@ -149,6 +149,9 @@ export default function PlanoAcaoDetalhe() {
   // dispararia ao carregar uma ação existente. Preenche o líder automático
   // (fixo por nome pras opções "Gestor"/"Sistemas", vindo do cadastro do
   // comitê pros demais) — Setor é campo independente, não reseta mais aqui.
+  // Se o Responsável ainda estiver vazio, o líder do comitê entra também
+  // como Responsável (SIS-2026-0392) — nunca sobrescreve um já escolhido
+  // (pela pessoa ou pelo mapa Setor → Responsável).
   const handleComiteChange = (v: string) => {
     const novoComite = v === "__none" ? "" : v;
     setForm((f: any) => {
@@ -162,6 +165,10 @@ export default function PlanoAcaoDetalhe() {
         const info = novoComite ? comitesMap[novoComite] : undefined;
         next.lider_comite_profile_id = info?.liderProfileId ?? null;
         next.lider_comite_nome_origem = info?.lider ?? null;
+      }
+      if (!next.responsavel_profile_id && next.lider_comite_profile_id) {
+        next.responsavel_profile_id = next.lider_comite_profile_id;
+        next.responsavel_nome_origem = next.lider_comite_nome_origem;
       }
       return next;
     });
@@ -282,7 +289,10 @@ export default function PlanoAcaoDetalhe() {
         ? Array.from(new Set([...(user?.id ? [user.id] : []), ...usuariosVisibilidade]))
         : null;
 
-      const { data: novoId, error } = await supabase.rpc("criar_plano_acao", {
+      // `as any`: criar_plano_acao não está nos tipos gerados do Supabase
+      // (types.ts) — mesmo tratamento de criar_acao_reuniao_plano_acao em
+      // useReuniaoDetalhe.ts. Sem isso o type-check do CI reprova o arquivo.
+      const { data: novoId, error } = await (supabase as any).rpc("criar_plano_acao", {
         _empresa_id: empresaId,
         _titulo: form.titulo,
         _problema: form.problema || null,
@@ -371,7 +381,7 @@ export default function PlanoAcaoDetalhe() {
   const excluir = async () => {
     if (!can("excluir") || isNew) return;
     if (!confirm("Excluir logicamente esta ação?")) return;
-    const { error } = await supabase.rpc("excluir_plano_acao", { _id: id! } as any);
+    const { error } = await (supabase as any).rpc("excluir_plano_acao", { _id: id! });
     if (error) toast({ title: "Erro", description: error.message, variant: "destructive" });
     else { toast({ title: "Excluída" }); nav("/app/plano-acoes"); }
   };
