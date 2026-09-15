@@ -389,9 +389,15 @@ export function useFornecedoresAtivos() {
     queryKey: ["malote_fornecedores_ativos"],
     staleTime: 5 * 60_000,
     queryFn: async () => {
-      const { data, error } = await (supabase as any).from("fornecedor").select("id, razao_social, nome_fantasia").order("razao_social");
+      const { data, error } = await (supabase as any)
+        .from("fornecedor")
+        .select("id, razao_social, nome_fantasia, cnpj_cpf")
+        .order("razao_social");
       if (error) throw error;
-      return (data ?? []).map((f: any) => ({ id: f.id, nome: f.nome_fantasia || f.razao_social }));
+      // SIS-2026-0399: cnpj_cpf exposto pra virar hint de busca no combobox
+      // do Rateio — o cadastro é feito pelo próprio fornecedor, então o
+      // nome não segue padrão nenhum, mas o CNPJ/CPF é estável.
+      return (data ?? []).map((f: any) => ({ id: f.id, nome: f.nome_fantasia || f.razao_social, cnpj_cpf: f.cnpj_cpf as string }));
     },
   });
 }
