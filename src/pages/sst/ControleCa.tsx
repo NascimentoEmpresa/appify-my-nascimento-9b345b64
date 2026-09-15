@@ -206,8 +206,11 @@ export default function ControleCa() {
                   <TableHead>Dias restantes</TableHead><TableHead>Entregue em</TableHead>
                 </TableRow></TableHeader>
                 <TableBody>
-                  {(entregues.data ?? []).map((linha) => (
-                    <TableRow key={linha.codigo}>
+                  {/* O mesmo lote sai para vários colaboradores (sst_ca_entregue
+                      lê o ledger desde a migration 20260930000114), então o
+                      código sozinho deixou de ser chave única da linha. */}
+                  {(entregues.data ?? []).map((linha, i) => (
+                    <TableRow key={`${linha.codigo}-${i}`}>
                       <TableCell><Situacao situacao={linha.situacao} /></TableCell>
                       <TableCell className="font-medium">{linha.colaborador}</TableCell>
                       <TableCell>{linha.matricula || "—"}</TableCell>
