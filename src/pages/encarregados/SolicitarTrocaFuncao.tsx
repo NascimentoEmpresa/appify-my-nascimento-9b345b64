@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
+import { baseDaUrl, rotasSolicitacoes } from "@/lib/solicitacoes/rotas";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
 import { useMeuNome } from "@/hooks/useMeuNome";
@@ -40,6 +41,8 @@ const sb = supabase as any;
  * um aviso ao lado do checkbox, e quem decide é quem está pedindo.
  */
 export default function SolicitarTrocaFuncao() {
+  // Mesma tela em Encarregados e em Central de Serviços › Solicitações.
+  const rotas = rotasSolicitacoes(baseDaUrl(useLocation().pathname));
   const { user } = useAuth();
   const meuNome = useMeuNome();
   const nav = useNavigate();
@@ -140,7 +143,7 @@ export default function SolicitarTrocaFuncao() {
             </p>
             <div className="mt-2 flex gap-2">
               <Button onClick={recomecar}>Nova solicitação</Button>
-              <Button variant="outline" onClick={() => nav("/app/encarregados/minhas-solicitacoes")}>
+              <Button variant="outline" onClick={() => nav(rotas.minhas)}>
                 Ver minhas solicitações
               </Button>
             </div>
@@ -278,7 +281,7 @@ export default function SolicitarTrocaFuncao() {
       )}
 
       <div className="flex justify-end gap-2">
-        <Button variant="outline" onClick={() => nav("/app/encarregados/minhas-solicitacoes")}>Cancelar</Button>
+        <Button variant="outline" onClick={() => nav(rotas.minhas)}>Cancelar</Button>
         <Button onClick={enviar} disabled={enviando || !!problema()}>
           {enviando ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Enviando…</>
                     : <><Send className="mr-2 h-4 w-4" /> Enviar solicitação</>}
