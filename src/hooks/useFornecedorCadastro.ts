@@ -57,6 +57,7 @@ export interface CadastroPendente {
   motivo_reprovacao: string | null;
   empresa_id: string | null;
   fornecedor_id: string | null;
+  is_global: boolean;
   decidido_por_nome: string | null;
   decidido_em: string | null;
   created_at: string;
@@ -70,7 +71,7 @@ export interface Convite {
 
 /** Fornecedor já existente com o mesmo CNPJ — decide se a aprovação é atualização. */
 export interface FornecedorExistente {
-  id: string; empresa_id: string; razao_social: string; ativo: boolean;
+  id: string; empresa_id: string; razao_social: string; ativo: boolean; is_global: boolean;
 }
 
 export const FORMAS_PAGAMENTO = [
@@ -113,24 +114,48 @@ export function soDigitos(v?: string | null): string {
 
 export type Destino =
   | { tipo: "novo"; existeEmOutras: FornecedorExistente[] }
-  | { tipo: "atualizacao"; alvo: FornecedorExistente; existeEmOutras: FornecedorExistente[] };
+  /** promoveParaGlobal: o cadastro local da empresa de origem passa a valer para todas as empresas. */
+  | { tipo: "atualizacao"; alvo: FornecedorExistente; promoveParaGlobal: boolean; existeEmOutras: FornecedorExistente[] }
+  /** Empresa específica com o CNPJ já global nessa mesma empresa — só dá para aprovar como "Todas as empresas". */
+  | { tipo: "bloqueado"; alvo: FornecedorExistente; existeEmOutras: FornecedorExistente[] };
 
 /**
- * Decide se aprovar aquele cadastro cria um fornecedor NOVO ou ATUALIZA o que
- * já existe.
+ * Decide se aprovar aquele cadastro cria um fornecedor NOVO, ATUALIZA o que
+ * já existe ou não pode seguir nesse escopo — espelho exato de
+ * sup_forn_aprovar (migration 20260930000113).
  *
- * A pergunta só tem resposta depois de escolhida a empresa: `public.fornecedor`
- * é UNIQUE (empresa_id, cnpj_cpf), então o MESMO CNPJ pode — e costuma —
- * existir em mais de uma empresa do grupo. Achar o CNPJ em qualquer lugar não
- * basta; tem de ser na empresa que vai receber o cadastro.
+ * `empresaId` é a empresa de origem: a escolhida, ou a empresa ativa quando a
+ * abrangência é "Todas as empresas". Ela importa nos dois casos porque
+ * public.fornecedor é UNIQUE (empresa_id, cnpj_cpf) — inclusive para o
+ * global, que ocupa a vaga da empresa de origem:
+ * - "Todas as empresas": atualiza o global que já existe; sem global, o
+ *   cadastro local da empresa de origem é promovido (criar outro ali bateria
+ *   no UNIQUE); sem nenhum dos dois, é novo.
+ * - Empresa específica: atualiza o local daquela empresa; se o que ocupa a
+ *   vaga é um global, bloqueia (não se rebaixa global a local).
  */
 export function decidirDestino(
   existentes: FornecedorExistente[],
   empresaId: string | null,
+  todasEmpresas = false,
 ): Destino {
-  const alvo = empresaId ? existentes.find((f) => f.empresa_id === empresaId) : undefined;
-  const existeEmOutras = existentes.filter((f) => f.empresa_id !== empresaId);
-  return alvo ? { tipo: "atualizacao", alvo, existeEmOutras } : { tipo: "novo", existeEmOutras };
+  const outros = (alvo: FornecedorExistente) => existentes.filter((f) => f.id !== alvo.id);
+  const localNaEmpresa = empresaId ? existentes.find((f) => !f.is_global && f.empresa_id === empresaId) : undefined;
+
+  if (todasEmpresas) {
+    const alvo = existentes.find((f) => f.is_global) ?? localNaEmpresa;
+    return alvo
+      ? { tipo: "atualizacao", alvo, promoveParaGlobal: !alvo.is_global, existeEmOutras: outros(alvo) }
+      : { tipo: "novo", existeEmOutras: existentes };
+  }
+
+  if (localNaEmpresa) {
+    return { tipo: "atualizacao", alvo: localNaEmpresa, promoveParaGlobal: false, existeEmOutras: outros(localNaEmpresa) };
+  }
+  const globalNaEmpresa = empresaId ? existentes.find((f) => f.is_global && f.empresa_id === empresaId) : undefined;
+  return globalNaEmpresa
+    ? { tipo: "bloqueado", alvo: globalNaEmpresa, existeEmOutras: outros(globalNaEmpresa) }
+    : { tipo: "novo", existeEmOutras: existentes };
 }
 
 export function fmtDataHora(v?: string | null): string {
@@ -224,10 +249,11 @@ export function useGerarConvite() {
 export function useAprovarCadastro() {
   const invalidar = useInvalidar();
   return useMutation({
-    mutationFn: async (p: { id: string; empresaId: string; campos?: string[] | null }) => {
+    mutationFn: async (p: { id: string; empresaId: string; isGlobal?: boolean; campos?: string[] | null }) => {
       const { data, error } = await sb.rpc("sup_forn_aprovar", {
         p_id: p.id,
         p_empresa_id: p.empresaId,
+        p_is_global: p.isGlobal ?? false,
         // null = traz tudo que não é nulo. Lista = só o que o aprovador marcou.
         p_campos: p.campos ? Object.fromEntries(p.campos.map((c) => [c, true])) : null,
       });

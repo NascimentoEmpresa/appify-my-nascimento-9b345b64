@@ -11,6 +11,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useEmpresasGrupo } from "@/hooks/useMaloteDespesa";
+import { useEmpresaAtiva } from "@/context/EmpresaAtivaContext";
 import {
   useCadastrosPendentes, useConvites, useCnpjExistente, useGerarConvite,
   useAprovarCadastro, useReprovarCadastro, linkDoConvite, fmtDataHora, fmtDoc,
@@ -18,7 +19,7 @@ import {
   type CadastroPendente,
 } from "@/hooks/useFornecedorCadastro";
 import {
-  Link2, Copy, Inbox, CheckCircle2, XCircle, Clock, AlertTriangle, Building2, Loader2, PencilLine,
+  Link2, Copy, Inbox, CheckCircle2, XCircle, Clock, AlertTriangle, Building2, Globe2, Loader2, PencilLine,
 } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
@@ -27,6 +28,7 @@ import { cn } from "@/lib/utils";
 // RPC nova, ainda fora do types.ts gerado.
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const sb = supabase as any;
+const TODAS_EMPRESAS = "__todas_empresas__";
 
 /**
  * Cadastros de Fornecedor — a fila do que veio de fora (SIS-2026-0209).
@@ -278,6 +280,7 @@ function CardPendente({ p, onAbrir }: { p: CadastroPendente; onAbrir: () => void
 /** Decisão do cadastro: escolhe a empresa, vê o de-para e aprova ou reprova. */
 function ModalDecisao({ pendente: p, onFechar }: { pendente: CadastroPendente | null; onFechar: () => void }) {
   const { data: empresas = [], isLoading: carregandoEmpresas } = useEmpresasGrupo();
+  const { empresa: empresaAtiva } = useEmpresaAtiva();
   const { data: existentes = [] } = useCnpjExistente(p?.cnpj_cpf ?? null);
   const aprovar = useAprovarCadastro();
   const reprovar = useReprovarCadastro();
@@ -290,14 +293,26 @@ function ModalDecisao({ pendente: p, onFechar }: { pendente: CadastroPendente | 
   if (!p) return null;
   const decidido = p.status !== "pendente";
 
-  // Já existe esse CNPJ NA EMPRESA escolhida? Então é atualização.
-  const destino = decidirDestino(existentes, empresaId || null);
+  const todasEmpresas = empresaId === TODAS_EMPRESAS;
+  // Global nasce na empresa ativa (empresa de origem) — é ela que decide se
+  // há um cadastro local a promover. Mesma regra de sup_forn_aprovar.
+  const empresaOrigemId = (todasEmpresas ? empresaAtiva?.id : empresaId) || null;
+  const destino = decidirDestino(existentes, empresaOrigemId, todasEmpresas);
   const jaExiste = destino.tipo === "atualizacao" ? destino.alvo : undefined;
+  const promove = destino.tipo === "atualizacao" && destino.promoveParaGlobal;
+  const bloqueado = destino.tipo === "bloqueado" ? destino.alvo : undefined;
   const emOutras = destino.existeEmOutras;
 
   const confirmar = async () => {
     if (!empresaId) { toast.error("Escolha a empresa do cadastro."); return; }
-    await aprovar.mutateAsync({ id: p.id, empresaId, campos: jaExiste ? campos : null });
+    const empresaDestinoId = todasEmpresas ? empresaAtiva?.id : empresaId;
+    if (!empresaDestinoId) { toast.error("Selecione uma empresa ativa no topo."); return; }
+    await aprovar.mutateAsync({
+      id: p.id,
+      empresaId: empresaDestinoId,
+      isGlobal: todasEmpresas,
+      campos: jaExiste ? campos : null,
+    });
     onFechar();
   };
 
@@ -351,6 +366,16 @@ function ModalDecisao({ pendente: p, onFechar }: { pendente: CadastroPendente | 
             ["Observações", p.observacoes],
           ]} />
 
+          {decidido && (
+            <Bloco titulo="Aprovação" itens={[
+              ["Abrangência", p.is_global
+                ? "Todas as empresas"
+                : empresas.find((e) => e.id === p.empresa_id)?.nome ?? "Empresa específica"],
+              ["Decidido por", p.decidido_por_nome],
+              ["Decidido em", fmtDataHora(p.decidido_em)],
+            ]} />
+          )}
+
           {p.contas_bancarias?.length > 0 && (
             <div>
               <h4 className="mb-2 text-sm font-semibold">Contas bancárias</h4>
@@ -386,24 +411,55 @@ function ModalDecisao({ pendente: p, onFechar }: { pendente: CadastroPendente | 
                         Nenhuma empresa disponível para o seu usuário
                       </div>
                     )}
+                    <SelectItem value={TODAS_EMPRESAS}>
+                      <span className="flex items-center gap-2">
+                        <Globe2 className="h-4 w-4" /> Todas as empresas
+                      </span>
+                    </SelectItem>
                     {empresas.map((e) => (
                       <SelectItem key={e.id} value={e.id}>{e.nome}</SelectItem>
                     ))}
                   </SelectContent>
                 </Select>
+                {todasEmpresas && (
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    O fornecedor ficará disponível para todas as empresas atuais e futuras do grupo.
+                  </p>
+                )}
                 {emOutras.length > 0 && empresaId && !jaExiste && (
                   <p className="mt-1 text-xs text-muted-foreground">
-                    Existe em outra empresa do grupo, mas não nesta — será um cadastro novo aqui.
+                    {todasEmpresas
+                      ? "Já existem cadastros locais com este CNPJ; será criado um cadastro global."
+                      : "Existe em outra empresa do grupo, mas não nesta — será um cadastro novo aqui."}
                   </p>
                 )}
               </div>
 
+              {bloqueado && (
+                <div className="flex gap-2 rounded-md border border-destructive/40 bg-destructive/5 p-3 text-sm">
+                  <AlertTriangle className="h-4 w-4 shrink-0 text-destructive" />
+                  <p className="text-xs">
+                    "{bloqueado.razao_social}" já está cadastrado para <strong>todas as empresas</strong>.
+                    Para atualizar esse cadastro, escolha "Todas as empresas".
+                  </p>
+                </div>
+              )}
+
               {jaExiste && (
                 <div className="rounded-md border border-blue-400/40 bg-blue-50/60 p-3 dark:bg-blue-950/20">
                   <div className="mb-2 flex items-center gap-2">
-                    <Building2 className="h-4 w-4 text-blue-600" />
-                    <p className="text-sm font-medium">Atualização de "{jaExiste.razao_social}"</p>
+                    {todasEmpresas
+                      ? <Globe2 className="h-4 w-4 text-blue-600" />
+                      : <Building2 className="h-4 w-4 text-blue-600" />}
+                    <p className="text-sm font-medium">
+                      Atualização de "{jaExiste.razao_social}"{todasEmpresas && !promove ? " (todas as empresas)" : ""}
+                    </p>
                   </div>
+                  {promove && (
+                    <p className="mb-2 text-xs text-blue-800 dark:text-blue-300">
+                      O cadastro de {empresas.find((e) => e.id === jaExiste.empresa_id)?.nome ?? "empresa ativa"} passa a valer para todas as empresas.
+                    </p>
+                  )}
                   <p className="mb-2 text-xs text-muted-foreground">
                     Marque o que deve sobrescrever o cadastro atual. Sem marcar
                     nada, tudo que o fornecedor preencheu é aplicado.
@@ -454,10 +510,12 @@ function ModalDecisao({ pendente: p, onFechar }: { pendente: CadastroPendente | 
           ) : (
             <>
               <Button variant="destructive" onClick={() => setReprovando(true)}>Reprovar</Button>
-              <Button onClick={confirmar} disabled={aprovar.isPending || !empresaId}>
+              <Button onClick={confirmar} disabled={aprovar.isPending || !empresaId || !!bloqueado}>
                 {aprovar.isPending
                   ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Aprovando…</>
-                  : jaExiste ? "Aprovar atualização" : "Aprovar cadastro"}
+                  : jaExiste
+                    ? todasEmpresas ? "Aprovar atualização global" : "Aprovar atualização"
+                    : todasEmpresas ? "Aprovar cadastro global" : "Aprovar cadastro"}
               </Button>
             </>
           ))}
