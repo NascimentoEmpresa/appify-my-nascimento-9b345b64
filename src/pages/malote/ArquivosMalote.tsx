@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { SearchableSelect } from "@/components/ui/searchable-select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { DateRangeFilter } from "@/components/ui/date-range-filter";
 import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem } from "@/components/ui/dropdown-menu";
@@ -35,6 +36,7 @@ import {
   OrigemDespesa,
 } from "@/hooks/useMaloteDespesa";
 import { useClassificacoesOrcamentoAdmin } from "@/hooks/usePlanejamentoOrcamentario";
+import { competenciaNoPeriodo } from "./orcamentoUtils";
 
 // SIS-2026-0290 (Iury): "Criar um submódulo onde o usuário consegue buscar
 // os arquivos do malote como o de pagamento e o comprovante". Item de
@@ -156,6 +158,8 @@ export default function ArquivosMalote() {
   const [classificacao, setClassificacao] = useState("");
   const [empresaId, setEmpresaId] = useState("");
   const [contratoId, setContratoId] = useState("");
+  // SIS-2026-0397: mesmo formato "YYYY-MM" do Orçamento Geral.
+  const [competenciaFiltro, setCompetenciaFiltro] = useState("");
   const [busca, setBusca] = useState("");
   const [pagina, setPagina] = useState(1);
 
@@ -186,7 +190,7 @@ export default function ArquivosMalote() {
 
   function limparFiltros() {
     setDataDe(""); setDataAte(""); setSetor(""); setClassificacao("");
-    setEmpresaId(""); setContratoId(""); setBusca(""); setPagina(1);
+    setEmpresaId(""); setContratoId(""); setCompetenciaFiltro(""); setBusca(""); setPagina(1);
   }
 
   const filtrados = useMemo(() => {
@@ -195,7 +199,12 @@ export default function ArquivosMalote() {
       if (classificacao && d.classificacao?.nome !== classificacao) return false;
       if (empresaId && empresaIdResolvida(d) !== empresaId) return false;
       if (setor && !setoresResolvidos(d).includes(setor)) return false;
-      if (contratoId && d.contrato_id !== contratoId) return false;
+      // SIS-2026-0397: despesa de rateio multi-empresa/classificação só tem
+      // o contrato na linha do rateio (contratoIdResolvido) — comparar com
+      // d.contrato_id (cru) zerava o resultado pra esses casos, mesmo com o
+      // contrato certo aparecendo na tabela (que já usa o resolvido).
+      if (contratoId && contratoIdResolvido(d) !== contratoId) return false;
+      if (competenciaFiltro && !competenciaNoPeriodo(d.competencia, competenciaFiltro)) return false;
       if (dataDe || dataAte) {
         const dp = item.parcela ? item.parcela.data_pagamento_real ?? item.parcela.data_vencimento : d.data_pagamento;
         if (dataDe && (!dp || dp < dataDe)) return false;
@@ -208,7 +217,7 @@ export default function ArquivosMalote() {
       return true;
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [itens, classificacao, empresaId, empresaPrimeiraLinhaPorDespesa, setor, classificacaoPrimeiraLinhaPorDespesa, setorPorClassificacaoId, contratoId, dataDe, dataAte, busca]);
+  }, [itens, classificacao, empresaId, empresaPrimeiraLinhaPorDespesa, setor, classificacaoPrimeiraLinhaPorDespesa, setorPorClassificacaoId, contratoId, contratoPrimeiraLinhaPorDespesa, competenciaFiltro, dataDe, dataAte, busca]);
 
   const totalPaginas = Math.max(1, Math.ceil(filtrados.length / PAGE_SIZE));
   const paginaAtual = Math.min(pagina, totalPaginas);
@@ -271,13 +280,22 @@ export default function ArquivosMalote() {
               <X className="h-3.5 w-3.5" /> Limpar filtros
             </Button>
           </div>
-          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-7 gap-3">
             <DateRangeFilter
               label="Data de pagamento"
               de={dataDe}
               ate={dataAte}
               onChange={(de, ate) => { setDataDe(de); setDataAte(ate); setPagina(1); }}
             />
+            <div>
+              <Label className="text-xs">Competência</Label>
+              <Input
+                type="month"
+                className="h-8 text-xs"
+                value={competenciaFiltro}
+                onChange={(e) => { setCompetenciaFiltro(e.target.value); setPagina(1); }}
+              />
+            </div>
             <div>
               <Label className="text-xs">Setor</Label>
               <Select value={setor || "todos"} onValueChange={(v) => { setSetor(v === "todos" ? "" : v); setPagina(1); }}>
@@ -310,13 +328,18 @@ export default function ArquivosMalote() {
             </div>
             <div>
               <Label className="text-xs">Contrato</Label>
-              <Select value={contratoId || "todos"} onValueChange={(v) => { setContratoId(v === "todos" ? "" : v); setPagina(1); }}>
-                <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="todos">Todos</SelectItem>
-                  {contratosDaEmpresa.map((c) => <SelectItem key={c.id} value={c.id}>{c.nome}</SelectItem>)}
-                </SelectContent>
-              </Select>
+              {/* SIS-2026-0397: lista de contratos é grande — combobox
+                  pesquisável, mesmo padrão já usado no Fornecedor do Rateio. */}
+              <SearchableSelect
+                value={contratoId || "todos"}
+                onChange={(v) => { setContratoId(v === "todos" ? "" : v); setPagina(1); }}
+                options={[
+                  { value: "todos", label: "Todos" },
+                  ...contratosDaEmpresa.map((c) => ({ value: c.id, label: c.nome })),
+                ]}
+                searchPlaceholder="Buscar contrato..."
+                triggerClassName="h-8 text-xs"
+              />
             </div>
             <div>
               <Label className="text-xs">Buscar por nº do malote ou nome</Label>
