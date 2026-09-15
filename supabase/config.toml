@@ -27,6 +27,10 @@ verify_jwt = true
 [functions.diagnostico-feedback-ia]
 verify_jwt = true
 
+# Diagnóstico por IA de qualquer formulário (15/09/2026) — irmã da de feedback.
+[functions.diagnostico-formulario-ia]
+verify_jwt = true
+
 [functions.fcr-load]
 verify_jwt = true
 

@@ -1,23 +1,23 @@
+// Diagnóstico por IA de QUALQUER formulário (15/09/2026) — irmão do
+// useDiagnosticoFeedback. Mesma Edge Function de arquitetura (agregado anônimo
+// no servidor, RLS do usuário), mesma tabela CS_FORM_DIAGNOSTICOS com
+// tipo = 'formulario'. Setor é opcional: vazio = todas as respostas visíveis.
 import { useCallback, useRef, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
+import type { ForcaDiagnostico } from "@/hooks/useDiagnosticoFeedback";
 
-export type ForcaDiagnostico = "Alta" | "Média" | "Baixa";
-
-export interface DiagnosticoFeedback {
+export interface DiagnosticoFormulario {
+  titulo: string;
   setor: string;
   qtd_respostas: number;
-  liderados_para_lider: { tema: string; evidencia: string; forca: ForcaDiagnostico }[];
-  lider_para_liderados: { tema: string; evidencia: string; forca: ForcaDiagnostico }[];
-  convergencias: { tema: string; leitura: string }[];
-  plano_de_acao: {
-    acao: string;
-    porque: string;
-    prazo_sugerido_dias: number;
-    prioridade: ForcaDiagnostico;
-  }[];
+  resumo: string;
+  pontos_fortes: { tema: string; evidencia: string; forca: ForcaDiagnostico }[];
+  pontos_de_atencao: { tema: string; evidencia: string; forca: ForcaDiagnostico }[];
+  leitura_por_pergunta: { pergunta: string; leitura: string }[];
+  plano_de_acao: { acao: string; porque: string; prazo_sugerido_dias: number; prioridade: ForcaDiagnostico }[];
 }
 
-export interface DiagnosticoFeedbackSalvo extends DiagnosticoFeedback {
+export interface DiagnosticoFormularioSalvo extends DiagnosticoFormulario {
   id?: string;
   formulario_id?: string;
   setor_norm?: string;
@@ -52,19 +52,11 @@ interface LinhaDiagnostico {
   gerado_por_nome?: string | null;
   qtd_respostas?: number;
   modelo?: string | null;
-  conteudo?: DiagnosticoFeedback;
+  conteudo?: DiagnosticoFormulario;
 }
 
-interface ConsultaDiagnostico {
-  select(colunas: string): ConsultaDiagnostico;
-  eq(coluna: string, valor: string): ConsultaDiagnostico;
-  order(coluna: string, opcoes: { ascending: boolean }): ConsultaDiagnostico;
-  limit(qtd: number): ConsultaDiagnostico;
-  maybeSingle(): Promise<{ data: LinhaDiagnostico | null; error: unknown }>;
-}
-
-const daLinha = (linha: LinhaDiagnostico): DiagnosticoFeedbackSalvo => ({
-  ...(linha.conteudo as DiagnosticoFeedback),
+const daLinha = (linha: LinhaDiagnostico): DiagnosticoFormularioSalvo => ({
+  ...(linha.conteudo as DiagnosticoFormulario),
   id: linha.id,
   formulario_id: linha.formulario_id,
   setor: linha.setor ?? linha.conteudo?.setor ?? "",
@@ -75,8 +67,8 @@ const daLinha = (linha: LinhaDiagnostico): DiagnosticoFeedbackSalvo => ({
   modelo: linha.modelo,
 });
 
-export function useDiagnosticoFeedback() {
-  const [data, setData] = useState<DiagnosticoFeedbackSalvo | null>(null);
+export function useDiagnosticoFormulario() {
+  const [data, setData] = useState<DiagnosticoFormularioSalvo | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const requisicaoAtual = useRef(0);
@@ -86,13 +78,13 @@ export function useDiagnosticoFeedback() {
     setLoading(true);
     setError(null);
     try {
-      const { data: resposta, error: erro } = await supabase.functions.invoke("diagnostico-feedback-ia", {
+      const { data: resposta, error: erro } = await supabase.functions.invoke("diagnostico-formulario-ia", {
         body: { formulario_id: formularioId, setor },
       });
       if (erro) throw new Error(await mensagemErroFuncao(erro, "Falha ao gerar diagnóstico."));
       const erroResposta = (resposta as { error?: unknown } | null)?.error;
       if (erroResposta) throw new Error(String(erroResposta));
-      const diagnostico = resposta as DiagnosticoFeedbackSalvo;
+      const diagnostico = resposta as DiagnosticoFormularioSalvo;
       if (requisicao === requisicaoAtual.current) setData(diagnostico);
       return diagnostico;
     } catch (e: unknown) {
@@ -110,20 +102,17 @@ export function useDiagnosticoFeedback() {
     setError(null);
     setData(null);
     try {
-      const banco = supabase as unknown as { from(tabela: string): ConsultaDiagnostico };
-      const { data: linha, error: erro } = await banco
+      const { data: linha, error: erro } = await (supabase as any)
         .from("CS_FORM_DIAGNOSTICOS")
         .select("id, formulario_id, setor, setor_norm, gerado_em, gerado_por_nome, qtd_respostas, modelo, conteudo")
         .eq("formulario_id", formularioId)
-        // Desde 15/09/2026 a tabela também guarda o diagnóstico genérico de
-        // formulário (tipo = formulario); aqui só o de feedback.
-        .eq("tipo", "feedback")
+        .eq("tipo", "formulario")
         .eq("setor_norm", setorNorm)
         .order("gerado_em", { ascending: false })
         .limit(1)
         .maybeSingle();
       if (erro) throw erro;
-      const diagnostico = linha ? daLinha(linha) : null;
+      const diagnostico = linha ? daLinha(linha as LinhaDiagnostico) : null;
       if (requisicao === requisicaoAtual.current) setData(diagnostico);
       return diagnostico;
     } catch (e: unknown) {
