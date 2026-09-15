@@ -44,7 +44,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Plus, Pencil, Trash2, FileText, Eye, History, Upload, CheckCircle2, XCircle, Trophy } from "lucide-react";
+import { Plus, Pencil, Trash2, FileText, Eye, History, Upload, CheckCircle2, XCircle, Trophy, Building2 } from "lucide-react";
 import * as XLSX from "xlsx";
 
 const normName = (s: string) =>
@@ -92,7 +92,7 @@ const ANOS = [2024, 2025, 2026, 2027];
 // ── Componente principal ───────────────────────────────────────────────────
 
 export default function Pipeline() {
-  const { empresa } = useEmpresaAtiva();
+  const { empresa, empresas } = useEmpresaAtiva();
   const empresaAtivaId = empresa.id;
   const { can } = usePermissoes();
 
@@ -100,7 +100,13 @@ export default function Pipeline() {
   const canAlterar = can("alterar", "licitacoes", "pipeline");
   const canExcluir = can("excluir", "licitacoes", "pipeline");
 
-  const { data: items = [], isLoading, error } = useGrade(empresaAtivaId ?? null);
+  // SIS-2026-0359: modo "todas as empresas" — leitura consolidada das ganhas do
+  // grupo (Lucas/gerente). Escrita continua por empresa ativa, então nesse modo
+  // a tela fica read-only (ver escritaBloqueada abaixo).
+  const [todasEmpresas, setTodasEmpresas] = useState(false);
+  const escritaBloqueada = todasEmpresas;
+
+  const { data: items = [], isLoading, error } = useGrade(empresaAtivaId ?? null, { todasEmpresas });
   const insert = useGradeInsert(empresaAtivaId ?? "");
   const update = useGradeUpdate(empresaAtivaId ?? "");
   const remove = useGradeDelete(empresaAtivaId ?? "");
@@ -132,6 +138,29 @@ export default function Pipeline() {
       if (i.posicao != null) seen.add(i.posicao);
     }
     return Array.from(seen).sort((a, b) => a - b);
+  }, [items]);
+
+  // Mapa empresa_id -> sigla, para o badge no modo "todas as empresas"
+  const empresaNome = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const e of empresas) m.set(e.id, e.sigla || e.razao);
+    return m;
+  }, [empresas]);
+
+  // Totais das ganhas do conjunto atual (respeita o modo todas-empresas)
+  const totaisGanhos = useMemo(() => {
+    const parse = (v: string | null) => {
+      if (!v) return 0;
+      const s = v.replace(/[R$\s]/g, "");
+      const n = s.includes(",") ? parseFloat(s.replace(/\./g, "").replace(",", ".")) : parseFloat(s);
+      return isNaN(n) ? 0 : n;
+    };
+    const ganhos = items.filter((i) => i.fase === "Finalizada" && i.posicao === 1);
+    return {
+      qtd: ganhos.length,
+      valor: ganhos.reduce((s, i) => s + parse(i.valor_global), 0),
+      pessoas: ganhos.reduce((s, i) => s + (i.qtd_pessoas ?? 0), 0),
+    };
   }, [items]);
 
   // modais
@@ -217,7 +246,7 @@ export default function Pipeline() {
         breadcrumb={["Licitações", "Grade de Licitações"]}
         subtitle="Pré-análise de editais — acompanhe cada oportunidade antes da Capa de Edital."
         actions={
-          canIncluir ? (
+          canIncluir && !escritaBloqueada ? (
             <div className="flex gap-2">
               <Button size="sm" variant="outline" onClick={() => setImportOpen(true)} className="gap-2">
                 <Upload className="h-4 w-4" /> Importar Excel
@@ -271,7 +300,40 @@ export default function Pipeline() {
             Todas
           </button>
         )}
+
+        {/* SIS-2026-0359: toggle "Todas as empresas" (leitura consolidada do grupo) */}
+        <button
+          onClick={() => setTodasEmpresas((v) => !v)}
+          className={cn(
+            "ml-auto inline-flex items-center gap-2 rounded-lg border px-3 py-2 text-xs font-medium transition",
+            todasEmpresas
+              ? "border-primary bg-primary/10 text-primary"
+              : "border-border bg-card text-muted-foreground hover:bg-secondary"
+          )}
+          title="Ver licitações de todas as empresas do grupo (somente leitura)"
+        >
+          <Building2 className="h-3.5 w-3.5" />
+          {todasEmpresas ? "Todas as empresas" : "Só empresa ativa"}
+        </button>
       </div>
+
+      {/* Aviso do modo consolidado + totais das ganhas do grupo */}
+      {todasEmpresas && (
+        <div className="flex flex-wrap items-center gap-x-6 gap-y-2 rounded-lg border border-primary/30 bg-primary/5 px-4 py-2.5 text-xs">
+          <span className="inline-flex items-center gap-1.5 font-medium text-primary">
+            <Building2 className="h-3.5 w-3.5" /> Grupo (todas as empresas) · somente leitura
+          </span>
+          <span className="text-muted-foreground">
+            Ganhas: <strong className="tabular-nums text-foreground">{totaisGanhos.qtd}</strong>
+          </span>
+          <span className="text-muted-foreground">
+            Valor global: <strong className="tabular-nums text-foreground">{totaisGanhos.valor.toLocaleString("pt-BR", { style: "currency", currency: "BRL", maximumFractionDigits: 0 })}</strong>
+          </span>
+          <span className="text-muted-foreground">
+            Pessoas: <strong className="tabular-nums text-foreground">{totaisGanhos.pessoas}</strong>
+          </span>
+        </div>
+      )}
 
       {/* Filtros rápidos */}
       <div className="card-elevated flex flex-wrap items-center gap-3 p-3">
@@ -396,8 +458,9 @@ export default function Pipeline() {
             <GradeCard
               key={item.id}
               item={item}
-              canAlterar={canAlterar}
-              canExcluir={canExcluir}
+              empresaLabel={todasEmpresas ? empresaNome.get(item.empresa_id) : undefined}
+              canAlterar={canAlterar && !escritaBloqueada}
+              canExcluir={canExcluir && !escritaBloqueada}
               onEdit={() => openEdit(item)}
               onView={() => setViewItem(item)}
               onDelete={() => setDeleteTarget(item)}
@@ -752,6 +815,7 @@ function aberturaUrgencia(d: string | null): "critica" | "proxima" | "normal" | 
 
 function GradeCard({
   item,
+  empresaLabel,
   canAlterar,
   canExcluir,
   onEdit,
@@ -761,6 +825,7 @@ function GradeCard({
   promovendo,
 }: {
   item: GradeItem;
+  empresaLabel?: string;
   canAlterar: boolean;
   canExcluir: boolean;
   onEdit: () => void;
@@ -786,6 +851,11 @@ function GradeCard({
           <p className="mt-0.5 line-clamp-2 text-sm font-semibold leading-snug">{item.objeto || "—"}</p>
         </div>
         <div className="flex items-center gap-1.5 shrink-0">
+          {empresaLabel && (
+            <span className="inline-flex items-center gap-1 rounded-full border border-primary/40 bg-primary/10 px-2 py-0.5 text-[10px] font-semibold text-primary">
+              <Building2 className="h-3 w-3" /> {empresaLabel}
+            </span>
+          )}
           {isGanho && (
             <span className="inline-flex items-center gap-1 rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-semibold text-emerald-700">
               <Trophy className="h-3 w-3" /> Ganho

@@ -4,10 +4,11 @@ import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/hooks/useAuth";
 import type {
   Reuniao, ReuniaoAnexo, ReuniaoAssinatura, ReuniaoAssuntoForaPauta, ReuniaoComentario, ReuniaoConvidado, ReuniaoDecisaoAcao,
-  ReuniaoEtapa, ReuniaoLog, ReuniaoPauta, ReuniaoPautaAnexo, ReuniaoResposta, RespostaConducaoItem, Usuario,
+  ReuniaoEtapa, ReuniaoLog, ReuniaoPauta, ReuniaoPautaAnexo, ReuniaoResposta, ReuniaoTransferenciaRef, RespostaConducaoItem, Usuario,
 } from "./types";
 import { gerarAtaFinalPdfBlob } from "./pdf/ataFinalPdf";
 import { registrarLog } from "./registrarLog";
+import { mensagemErroTransferencia } from "./transferenciaPauta";
 
 const BUCKET = "reunioes";
 
@@ -36,11 +37,36 @@ export function useReuniaoDetalhe(id: string | undefined) {
     queryFn: async () => {
       const { data, error } = await (supabase as any)
         .from("reuniao_pauta")
-        .select("id, reuniao_id, ordem, titulo_topico, descricao, responsavel_user_id, prazo, tempo_previsto_minutos, status, natureza, created_at")
+        .select("id, reuniao_id, ordem, titulo_topico, descricao, responsavel_user_id, prazo, tempo_previsto_minutos, status, natureza, fora_pauta, transferida_para_pauta_id, transferida_de_pauta_id, created_at")
         .eq("reuniao_id", id)
         .order("ordem", { ascending: true });
       if (error) throw error;
       return (data ?? []) as ReuniaoPauta[];
+    },
+  });
+
+  // Reunião do outro lado de cada transferência (SIS-2026-0373), indexada pelo
+  // id do item de lá — a RLS esconde a que o usuário não acessa, e a tela cai
+  // num rótulo genérico ("Transferida para outra reunião").
+  const idsPautaTransferencia = pauta
+    .flatMap((p) => [p.transferida_para_pauta_id, p.transferida_de_pauta_id])
+    .filter((x): x is string => !!x);
+  const { data: reunioesTransferencia = {} } = useQuery({
+    queryKey: ["reuniao_pauta_transferencias", id, idsPautaTransferencia.join(",")],
+    enabled: idsPautaTransferencia.length > 0,
+    queryFn: async () => {
+      const { data, error } = await (supabase as any)
+        .from("reuniao_pauta")
+        .select("id, reuniao:reuniao_id (id, numero, titulo, data_hora)")
+        .in("id", idsPautaTransferencia);
+      if (error) throw error;
+      const mapa: Record<string, ReuniaoTransferenciaRef> = {};
+      for (const linha of (data ?? []) as { id: string; reuniao: { id: string; numero: string; titulo: string; data_hora: string } | null }[]) {
+        if (linha.reuniao) {
+          mapa[linha.id] = { reuniao_id: linha.reuniao.id, numero: linha.reuniao.numero, titulo: linha.reuniao.titulo, data_hora: linha.reuniao.data_hora };
+        }
+      }
+      return mapa;
     },
   });
 
@@ -161,7 +187,7 @@ export function useReuniaoDetalhe(id: string | undefined) {
     queryFn: async () => {
       const { data, error } = await (supabase as any)
         .from("reuniao_assunto_fora_pauta")
-        .select("id, reuniao_id, classificacao, tratativa, assunto_estacionado, responsavel_tratativa_user_id, data_prevista, reuniao_futura_necessaria, observacoes, concluido, criado_por, created_at")
+        .select("id, reuniao_id, classificacao, tratativa, assunto_estacionado, responsavel_tratativa_user_id, data_prevista, reuniao_futura_necessaria, observacoes, concluido, pauta_id, criado_por, created_at")
         .eq("reuniao_id", id)
         .order("created_at", { ascending: true });
       if (error) throw error;
@@ -245,7 +271,7 @@ export function useReuniaoDetalhe(id: string | undefined) {
   const encerrarReuniao = async (usuarios: Usuario[], checklistEncerramento?: Record<string, string>): Promise<boolean> => {
     if (!id || !reuniao) return false;
     try {
-      const blob = gerarAtaFinalPdfBlob(reuniao, pauta, respostas, assinaturas, usuarios, comentarios);
+      const blob = gerarAtaFinalPdfBlob(reuniao, pauta, respostas, assinaturas, usuarios, comentarios, assuntosForaPauta);
       const path = `${id}/ata-final.pdf`;
       const up = await supabase.storage.from(BUCKET).upload(path, blob, {
         contentType: "application/pdf",
@@ -353,6 +379,7 @@ export function useReuniaoDetalhe(id: string | undefined) {
       return false;
     }
     qc.invalidateQueries({ queryKey: ["reuniao_pauta", id] });
+    qc.invalidateQueries({ queryKey: ["reuniao_assunto_fora_pauta", id] });
     if (id) registrarLog(id, "pauta_topico_removido", `Tópico removido: "${titulo}"`);
     return true;
   };
@@ -650,9 +677,12 @@ export function useReuniaoDetalhe(id: string | undefined) {
     data_prevista?: string | null;
     reuniao_futura_necessaria?: boolean;
     observacoes?: string | null;
-  }): Promise<boolean> => {
-    if (!id) return false;
-    const { error } = await (supabase as any).from("reuniao_assunto_fora_pauta").insert({
+  }): Promise<string | null> => {
+    if (!id) return null;
+    // O trigger reuniao_assunto_fora_pauta_criar_item_pauta cria, na mesma
+    // transação, o item de pauta (fora_pauta = true) que dá ao assunto a
+    // mesma tratativa dos itens de pauta: condução, decisões/ações e ata.
+    const { data, error } = await (supabase as any).from("reuniao_assunto_fora_pauta").insert({
       reuniao_id: id,
       classificacao: dados.classificacao,
       tratativa: dados.tratativa,
@@ -661,14 +691,16 @@ export function useReuniaoDetalhe(id: string | undefined) {
       data_prevista: dados.data_prevista ?? null,
       reuniao_futura_necessaria: dados.reuniao_futura_necessaria ?? false,
       observacoes: dados.observacoes ?? null,
-    });
+    }).select("pauta_id").single();
     if (error) {
       toast({ title: "Erro ao registrar assunto fora da pauta", description: error.message, variant: "destructive" });
-      return false;
+      return null;
     }
     qc.invalidateQueries({ queryKey: ["reuniao_assunto_fora_pauta", id] });
-    registrarLog(id, "assunto_fora_pauta_registrado", "Registrou um assunto fora da pauta");
-    return true;
+    qc.invalidateQueries({ queryKey: ["reuniao_pauta", id] });
+    registrarLog(id, "assunto_fora_pauta_registrado", `Registrou um assunto fora da pauta: "${dados.assunto_estacionado ?? ""}"`);
+    toast({ title: "Assunto fora da pauta registrado", description: "Adicionado ao fim da pauta para ser tratado na reunião." });
+    return (data?.pauta_id as string | null) ?? null;
   };
 
   const marcarAssuntoForaPautaConcluido = async (assuntoId: string, concluido: boolean): Promise<boolean> => {
@@ -682,12 +714,59 @@ export function useReuniaoDetalhe(id: string | undefined) {
   };
 
   const removerAssuntoForaPauta = async (assuntoId: string): Promise<boolean> => {
-    const { error } = await (supabase as any).from("reuniao_assunto_fora_pauta").delete().eq("id", assuntoId);
+    // Com item de pauta vinculado, apaga o item — o assunto vai junto (FK ON DELETE CASCADE).
+    const pautaId = assuntosForaPauta.find((a) => a.id === assuntoId)?.pauta_id;
+    const { error } = pautaId
+      ? await (supabase as any).from("reuniao_pauta").delete().eq("id", pautaId)
+      : await (supabase as any).from("reuniao_assunto_fora_pauta").delete().eq("id", assuntoId);
     if (error) {
       toast({ title: "Erro ao remover assunto", description: error.message, variant: "destructive" });
       return false;
     }
     qc.invalidateQueries({ queryKey: ["reuniao_assunto_fora_pauta", id] });
+    qc.invalidateQueries({ queryKey: ["reuniao_pauta", id] });
+    return true;
+  };
+
+  /**
+   * SIS-2026-0373: transfere o item pra outra reunião agendada, com rastro nos
+   * dois lados (RPC transferir_pauta_reuniao, que também grava o Histórico
+   * das duas reuniões). Os anexos são copiados aqui porque a RPC não alcança
+   * o Storage: o path novo começa com o id do item de destino, então quem só
+   * participa da reunião de destino também consegue baixar.
+   */
+  const transferirPauta = async (pautaId: string, reuniaoDestinoId: string): Promise<boolean> => {
+    const { data: novaPautaId, error } = await (supabase as any).rpc("transferir_pauta_reuniao", {
+      _pauta_id: pautaId,
+      _reuniao_destino_id: reuniaoDestinoId,
+    });
+    if (error || !novaPautaId) {
+      toast({ title: "Erro ao transferir pauta", description: mensagemErroTransferencia(error?.message ?? ""), variant: "destructive" });
+      return false;
+    }
+
+    const falhas: string[] = [];
+    for (const a of pautaAnexos.filter((x) => x.pauta_id === pautaId)) {
+      const destino = `${novaPautaId}/${a.storage_path.split("/").pop()}`;
+      const copia = await supabase.storage.from(BUCKET).copy(a.storage_path, destino);
+      const { error: erroRegistro } = copia.error
+        ? { error: copia.error }
+        : await (supabase as any).from("reuniao_pauta_anexo").insert({
+            pauta_id: novaPautaId,
+            storage_path: destino,
+            nome_arquivo: a.nome_arquivo,
+            mime_type: a.mime_type,
+            tamanho_bytes: a.tamanho_bytes,
+          });
+      if (erroRegistro) falhas.push(a.nome_arquivo);
+    }
+
+    // Prefixo ["reuniao_pauta"] cobre a pauta desta reunião e a do destino, se estiver em cache.
+    qc.invalidateQueries({ queryKey: ["reuniao_pauta"] });
+    qc.invalidateQueries({ queryKey: ["reuniao_log", id] });
+    toast(falhas.length === 0
+      ? { title: "Pauta transferida", description: "O item foi incluído na outra reunião e ficou marcado como transferido aqui." }
+      : { title: "Pauta transferida, mas alguns anexos não foram copiados", description: `Anexe de novo na outra reunião: ${falhas.join(", ")}.`, variant: "destructive" });
     return true;
   };
 
@@ -708,12 +787,12 @@ export function useReuniaoDetalhe(id: string | undefined) {
 
   return {
     reuniao, isLoading, pauta, respostas, convidados, anexos, pautaAnexos, comentarios, assinaturas, logs,
-    decisoesAcoes, assuntosForaPauta,
+    decisoesAcoes, assuntosForaPauta, reunioesTransferencia,
     mudarEtapa, cancelarReuniao, excluirReuniao, iniciarReuniao, encerrarReuniao, atualizarCampos,
     salvarPautaItem, atualizarPautaItem, reordenarPauta, removerPautaItem, salvarResposta, salvarChecklistConducaoItem,
     uploadAnexo, removerAnexo, downloadAnexo, uploadPautaAnexo, removerPautaAnexo,
     adicionarConvidado, removerConvidado, marcarPresenca, adicionarComentario, removerComentario, salvarAssinatura,
     criarDecisaoAcao, criarAcaoPlanoAcao, atualizarDecisaoAcao, removerDecisaoAcao, criarAssuntoForaPauta, removerAssuntoForaPauta,
-    marcarAssuntoForaPautaConcluido,
+    marcarAssuntoForaPautaConcluido, transferirPauta,
   };
 }

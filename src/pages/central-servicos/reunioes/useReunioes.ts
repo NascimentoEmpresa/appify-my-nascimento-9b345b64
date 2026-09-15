@@ -165,14 +165,14 @@ export function useObservadoresAutomaticos() {
   });
 }
 
-interface NovaPauta {
+export interface NovaPauta {
   titulo_topico: string;
   descricao: string;
   responsavel_user_id?: string | null;
   tempo_previsto_minutos?: number | null;
 }
 
-interface NovaReuniao {
+export interface NovaReuniao {
   titulo: string;
   objetivo: string;
   data_hora: string;

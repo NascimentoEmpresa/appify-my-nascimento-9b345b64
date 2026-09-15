@@ -13,17 +13,21 @@ import {
  *
  * O ponto que engana: o MESMO CNPJ existir no banco não quer dizer nada
  * sozinho. O grupo tem várias empresas e o mesmo fornecedor costuma atender
- * mais de uma. Só a empresa escolhida na aprovação responde a pergunta.
+ * mais de uma. A abrangência escolhida responde a pergunta: empresa específica
+ * procura um cadastro local; todas as empresas procura o cadastro global.
  */
 
 const NASCIMENTO = "empresa-1";
 const HAGG = "empresa-2";
 
 const roverim: FornecedorExistente = {
-  id: "f1", empresa_id: NASCIMENTO, razao_social: "Roverim Uniformes", ativo: true,
+  id: "f1", empresa_id: NASCIMENTO, razao_social: "Roverim Uniformes", ativo: true, is_global: false,
 };
 const roverimNaHagg: FornecedorExistente = {
-  id: "f2", empresa_id: HAGG, razao_social: "Roverim Uniformes", ativo: true,
+  id: "f2", empresa_id: HAGG, razao_social: "Roverim Uniformes", ativo: true, is_global: false,
+};
+const roverimGlobal: FornecedorExistente = {
+  id: "f3", empresa_id: NASCIMENTO, razao_social: "Roverim Uniformes", ativo: true, is_global: true,
 };
 
 describe("decidirDestino — novo cadastro ou atualização", () => {
@@ -62,6 +66,58 @@ describe("decidirDestino — novo cadastro ou atualização", () => {
     const d = decidirDestino([roverim, roverimNaHagg], null);
     expect(d.tipo).toBe("novo");
     expect(d.existeEmOutras).toHaveLength(2);
+  });
+
+  it("todas as empresas cria um cadastro global quando ainda só existem locais", () => {
+    const d = decidirDestino([roverim, roverimNaHagg], null, true);
+    expect(d.tipo).toBe("novo");
+    expect(d.existeEmOutras).toHaveLength(2);
+  });
+
+  it("todas as empresas atualiza o cadastro global que já existe", () => {
+    const d = decidirDestino([roverim, roverimGlobal], null, true);
+    expect(d.tipo).toBe("atualizacao");
+    if (d.tipo === "atualizacao") {
+      expect(d.alvo.id).toBe("f3");
+      expect(d.existeEmOutras).toEqual([roverim]);
+    }
+  });
+
+  it("todas as empresas promove o cadastro local da empresa de origem (UNIQUE não deixa criar outro ali)", () => {
+    const d = decidirDestino([roverim, roverimNaHagg], NASCIMENTO, true);
+    expect(d.tipo).toBe("atualizacao");
+    if (d.tipo === "atualizacao") {
+      expect(d.alvo.id).toBe("f1");
+      expect(d.promoveParaGlobal).toBe(true);
+      expect(d.existeEmOutras).toEqual([roverimNaHagg]);
+    }
+  });
+
+  it("todas as empresas prefere o global existente a promover um local", () => {
+    const d = decidirDestino([roverim, roverimGlobal], NASCIMENTO, true);
+    expect(d.tipo).toBe("atualizacao");
+    if (d.tipo === "atualizacao") {
+      expect(d.alvo.id).toBe("f3");
+      expect(d.promoveParaGlobal).toBe(false);
+    }
+  });
+
+  it("todas as empresas com o CNPJ só em outra empresa cria um global novo", () => {
+    const d = decidirDestino([roverimNaHagg], NASCIMENTO, true);
+    expect(d.tipo).toBe("novo");
+    expect(d.existeEmOutras).toEqual([roverimNaHagg]);
+  });
+
+  it("empresa específica com o CNPJ já global nessa empresa é bloqueada (não rebaixa global a local)", () => {
+    const d = decidirDestino([roverimGlobal], NASCIMENTO);
+    expect(d.tipo).toBe("bloqueado");
+    if (d.tipo === "bloqueado") expect(d.alvo.id).toBe("f3");
+  });
+
+  it("empresa específica com o global nascido em outra empresa cria o local normalmente", () => {
+    const d = decidirDestino([roverimGlobal], HAGG);
+    expect(d.tipo).toBe("novo");
+    expect(d.existeEmOutras).toEqual([roverimGlobal]);
   });
 });
 
