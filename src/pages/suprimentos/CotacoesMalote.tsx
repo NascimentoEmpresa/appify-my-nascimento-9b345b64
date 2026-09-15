@@ -12,7 +12,7 @@ import {
 } from "@/hooks/useMaloteCotacao";
 import { STATUS_BADGE_CLASS, souLancadorDespesa, type StatusDespesa, type MaloteDespesaRow } from "@/hooks/useMaloteDespesa";
 import {
-  Hourglass, RefreshCw, XCircle, CheckCircle2, Ban, Search, Inbox, ShieldAlert, FilterX, PackageCheck,
+  Hourglass, RefreshCw, XCircle, CheckCircle2, Ban, Search, Inbox, ShieldAlert, FilterX, PackageCheck, UserRound,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -83,7 +83,7 @@ export default function CotacoesMalote() {
       if (status !== TODOS && i.status !== status) return false;
       if (classificacao !== TODOS && i.classificacao_id !== classificacao) return false;
       if (!t) return true;
-      return [i.numero, i.nome, i.motivo, i.classificacao?.nome, String(i.valor_total)]
+      return [i.numero, i.nome, i.motivo, i.classificacao?.nome, i.cotacao_enviada_por_nome, String(i.valor_total)]
         .filter(Boolean).join(" ").toLowerCase().includes(t);
     });
   }, [itens, status, classificacao, busca]);
@@ -278,6 +278,13 @@ function CardCotacao({
 
         {i.motivo && (
           <p className="line-clamp-2 text-xs text-muted-foreground">{i.motivo}</p>
+        )}
+
+        {i.cotacao_enviada_por_nome && (
+          <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
+            <UserRound className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+            <span className="truncate">Cotado por {i.cotacao_enviada_por_nome}</span>
+          </p>
         )}
 
         <div className="mt-auto space-y-0.5 pt-2 text-[11px] text-muted-foreground">
