@@ -139,9 +139,13 @@ export function formatarData(data?: string | null): string {
 
 export function formatarDataHora(data?: string | null): string {
   if (!data) return "—";
-  return new Intl.DateTimeFormat("pt-BR", { dateStyle: "short", hour: "2-digit", minute: "2-digit" }).format(
-    new Date(data),
-  );
+  // Data e hora em dois formatadores de propósito: `dateStyle` não pode ser
+  // combinado com `hour`/`minute` — o navegador lança "Invalid option : option"
+  // e derrubou a tela inteira de Hora Extra em produção (15/09/2026).
+  const valor = new Date(data);
+  const dia = new Intl.DateTimeFormat("pt-BR", { day: "2-digit", month: "2-digit", year: "numeric" }).format(valor);
+  const hora = new Intl.DateTimeFormat("pt-BR", { hour: "2-digit", minute: "2-digit" }).format(valor);
+  return `${dia} ${hora}`;
 }
 
 export function somenteHora(valor?: string | null): string {
