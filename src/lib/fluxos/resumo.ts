@@ -182,10 +182,17 @@ const advertencia: Fluxo = {
     {
       quem: "Encarregado", faz: "Registra a ocorrência com o relato e as testemunhas.",
       onde: "Encarregados › Advertência",
+      status: "Aguardando Aprovação",
+    },
+    {
+      quem: "Operacional", faz: "Aprova ou reprova. Reprovar exige motivo — é o que o encarregado lê.",
+      onde: "Operacional › Advertências Solicitadas",
+      status: "Aguardando Jurídico",
     },
     {
       quem: "Jurídico", faz: "Analisa, decide o enquadramento e emite o documento.",
       onde: "Jurídico › Advertências",
+      status: "Concluída",
     },
   ],
   observacoes: [

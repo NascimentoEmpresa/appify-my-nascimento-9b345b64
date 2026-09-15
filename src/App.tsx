@@ -622,7 +622,10 @@ const App = () => (
             <Route path="juridico/processos/dashboard" element={<Processos view="dashboard" />} />
             <Route path="juridico/processos" element={<Processos view="processos" />} />
             <Route path="juridico/processos/audiencias" element={<Processos view="audiencias" />} />
-            <Route path="juridico/advertencias" element={<Advertencias />} />
+            <Route path="juridico/advertencias" element={<Advertencias etapa="juridico" />} />
+            {/* Operacional aprova a advertência antes do Jurídico (15/09/2026).
+                Sem menu próprio: cai em operacional_home por prefixo. */}
+            <Route path="operacional/advertencias" element={<Advertencias etapa="operacional" />} />
             <Route path="juridico/candidatos" element={<VerificacaoCandidatos />} />
             <Route path="juridico/duvidas" element={<CentralDuvidas />} />
             {/* Treinamentos */}
