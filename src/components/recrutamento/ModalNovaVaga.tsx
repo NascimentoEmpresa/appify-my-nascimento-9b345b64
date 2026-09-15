@@ -32,7 +32,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
 import { usePermissoes } from "@/context/PermissoesContext";
 import { useEmpresaAtiva } from "@/context/EmpresaAtivaContext";
-import { useContratosCatalogo, usePostos, useFuncoes } from "@/hooks/useSupCatalogo";
+import { VinculoCatalogoVaga } from "@/components/recrutamento/VinculoCatalogoVaga";
 import { ESTADOS_BR, municipiosDe } from "@/data/municipios-brasil";
 import {
   MOTIVOS_VAGA, MOTIVO_SUBSTITUICAO, ehSubstituicao, maximoDeVagas, quantidadeValida, avaliarPrazo, dataMinimaVaga,
@@ -145,9 +145,6 @@ export function ModalNovaVaga({ aberto, onFechar, onCriada, onToast, solicitacao
   const empDebounce = useRef<ReturnType<typeof setTimeout> | null>(null); // debounce busca colaborador
   const empTermo = useRef("");  // último termo buscado (descarta respostas obsoletas)
 
-  const { data: contratosCatalogo = [] } = useContratosCatalogo();
-  const { data: postosCatalogo = [] } = usePostos(vaga.contrato_id || null);
-  const { data: funcoesCatalogo = [] } = useFuncoes(vaga.posto_id || null);
 
   // Toast próprio, usado só quando a tela de quem chamou não tem um.
   const [toasts, setToasts] = useState<{ id: number; msg: string; type: string }[]>([]);
@@ -409,27 +406,6 @@ export function ModalNovaVaga({ aberto, onFechar, onCriada, onToast, solicitacao
     });
   };
 
-  // Com colaborador escolhido, o contrato do CATÁLOGO é o dele — e ponto.
-  // O select ficava livre e deixava apontar o vínculo de Suprimentos para
-  // outro contrato (14/09/2026: Eduardo, do "1093 - ADM E ESTAGIARIOS - NH",
-  // com o catálogo em "SAMU PE"), e pior: o onChange reescrevia o campo
-  // "Contrato — do colaborador escolhido" com o escolhido à mão. Aqui o
-  // catálogo é casado pelo nome (sem o "1093 - ", que o catálogo não tem) e
-  // o select trava; sobra escolher posto e função dentro dele.
-  const chaveNome = (s: unknown) => String(s ?? "").trim().toUpperCase().replace(/\s+/g, " ");
-  const contratoCatalogoDoColaborador = useMemo(() => {
-    if (vagaManual || !substituidoId) return null;
-    const alvo = chaveNome(semCodigoFilial(vaga.contrato));
-    if (!alvo) return null;
-    return contratosCatalogo.find(c => chaveNome(c.nome) === alvo) ?? null;
-  }, [vagaManual, substituidoId, vaga.contrato, contratosCatalogo]);
-  const contratoCatalogoTravado = !vagaManual && !!substituidoId && !!contratoCatalogoDoColaborador;
-  useEffect(() => {
-    if (!contratoCatalogoDoColaborador) return;
-    const id = contratoCatalogoDoColaborador.id;
-    setVaga(v => v.contrato_id === id ? v : { ...v, contrato_id: id, posto_id: "", funcao_id: "" });
-  }, [contratoCatalogoDoColaborador]);
-
   // Prazo/grau da data escolhida — o grau não é mais escolhido na mão.
   const prazo = avaliarPrazo(vaga.data_inicio_prevista);
   const cnhDoCargo = cargoExigeCnh(vaga.cargo);
@@ -475,16 +451,9 @@ export function ModalNovaVaga({ aberto, onFechar, onCriada, onToast, solicitacao
       if (jaTem && jaTem !== solicitacao?.id) { toast(avisoSubstituidoPreso(jaTem), "err"); return false; }
       if (!vaga.contrato)    { toast("Selecione o contrato.", "err"); return false; }
       if (!vaga.cargo.trim()){ toast("Informe o cargo.", "err"); return false; }
-      // O vínculo com o catálogo só é obrigatório quando a vaga copia um posto
-      // de campo: é ele que traz uniformes e EPIs prontos. Vaga do escritório
-      // preenchida à mão muitas vezes NÃO tem posto no catálogo — exigir o
-      // vínculo ali era travar o pedido por causa de um cadastro que ninguém
-      // vai criar só para abrir a vaga.
-      if (!vagaManual) {
-        if (!vaga.contrato_id) { toast("Selecione o contrato do catálogo de Suprimentos.", "err"); return false; }
-        if (!vaga.posto_id)    { toast("Selecione o posto do catálogo de Suprimentos.", "err"); return false; }
-        if (!vaga.funcao_id)   { toast("Selecione a função do catálogo de Suprimentos.", "err"); return false; }
-      }
+      // O vínculo com o catálogo de Suprimentos é OPCIONAL (15/09/2026): sem
+      // posto no catálogo, o Compras monta uniformes/EPIs na admissão. O
+      // contrato do vínculo é sempre o da vaga (VinculoCatalogoVaga).
     }
     if (step === 2) {
       if (!prazo.ok) { toast(prazo.erro ?? "Revise a data de início prevista.", "err"); return false; }
@@ -792,57 +761,15 @@ export function ModalNovaVaga({ aberto, onFechar, onCriada, onToast, solicitacao
               </div>
             )}
           </div>
-          <div className="nvg-fg" style={{ gridColumn: "1 / -1" }}>
-            <label>
-              Vínculo com o catálogo de Suprimentos
-              {vagaManual
-                ? <span style={{ color: "#94a3b8", fontWeight: 600 }}> — opcional</span>
-                : " *"}
-            </label>
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(3,minmax(0,1fr))", gap: 8 }}>
-              <select className="nvg-fi" value={vaga.contrato_id} disabled={contratoCatalogoTravado}
-                title={contratoCatalogoTravado ? "É o contrato do colaborador escolhido — não pode ser trocado." : undefined}
-                style={contratoCatalogoTravado ? { background: "#f1f5f9", color: "#475569", cursor: "not-allowed" } : undefined}
-                onChange={e => {
-                const id = e.target.value;
-                const contrato = contratosCatalogo.find(c => c.id === id);
-                // O catálogo de Suprimentos não tem o código da filial; a
-                // CONTRATOS tem. Casando pelo nome, o campo ganha o
-                // "1109 - " igual ao que o cadastro do colaborador daria.
-                const chave = (s: unknown) => String(s ?? "").trim().toUpperCase().replace(/\s+/g, " ");
-                const daFolha = contrato ? contratosFull.find((c: any) => chave(c["NOME CONTRATO"]) === chave(contrato.nome)) : null;
-                setVaga(v => ({
-                  ...v, contrato_id: id, posto_id: "", funcao_id: "",
-                  contrato: daFolha ? rotuloContrato(daFolha) : (contrato?.nome ?? v.contrato),
-                }));
-              }}>
-                <option value="">Contrato</option>
-                {contratosCatalogo.map(c => <option key={c.id} value={c.id}>{c.nome}</option>)}
-              </select>
-              <select className="nvg-fi" value={vaga.posto_id} disabled={!vaga.contrato_id} onChange={e => {
-                const id = e.target.value;
-                setVaga(v => ({ ...v, posto_id: id, funcao_id: "" }));
-              }}>
-                <option value="">{vaga.contrato_id ? "Posto" : "Escolha o contrato"}</option>
-                {postosCatalogo.map(p => <option key={p.id} value={p.id}>{p.nome}</option>)}
-              </select>
-              <select className="nvg-fi" value={vaga.funcao_id} disabled={!vaga.posto_id} onChange={e => {
-                const id = e.target.value;
-                const funcao = funcoesCatalogo.find(f => f.id === id);
-                setVaga(v => ({ ...v, funcao_id: id, cargo: funcao?.nome ?? v.cargo }));
-              }}>
-                <option value="">{vaga.posto_id ? "Função" : "Escolha o posto"}</option>
-                {funcoesCatalogo.map(f => <option key={f.id} value={f.id}>{f.nome}</option>)}
-              </select>
-            </div>
-            <div style={{ marginTop: 5, fontSize: 11, color: "#64748b" }}>
-              Este vínculo define automaticamente os uniformes e EPIs da admissão.
-              {contratoCatalogoTravado && " O contrato é o do colaborador escolhido — escolha só o posto e a função."}
-              {!vagaManual && !!substituidoId && !contratoCatalogoDoColaborador && !!vaga.contrato && contratosCatalogo.length > 0 &&
-                ` Não achei "${semCodigoFilial(vaga.contrato)}" no catálogo de Suprimentos — escolha o contrato correspondente.`}
-              {vagaManual && " Preenchendo à mão ele é opcional — sem posto no catálogo, o Compras monta a lista na admissão."}
-            </div>
-          </div>
+          {/* Vínculo com o catálogo (15/09/2026): opcional em todo caso, e o
+              contrato nunca é escolhido aqui — é o da vaga, travado. Só o
+              modo manual usa a função pra sugerir o cargo. */}
+          <VinculoCatalogoVaga
+            contratoNome={vaga.contrato}
+            valor={{ contrato_id: vaga.contrato_id, posto_id: vaga.posto_id, funcao_id: vaga.funcao_id }}
+            onChange={v => setVaga(x => ({ ...x, ...v }))}
+            onFuncaoNome={vagaManual ? (nome => setVaga(x => ({ ...x, cargo: x.cargo || nome }))) : undefined}
+            classeInput="nvg-fi" classeGrupo="nvg-fg" />
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
             <div className="nvg-fg">
               <label>Estado (UF)</label>
