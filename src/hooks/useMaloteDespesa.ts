@@ -389,9 +389,15 @@ export function useFornecedoresAtivos() {
     queryKey: ["malote_fornecedores_ativos"],
     staleTime: 5 * 60_000,
     queryFn: async () => {
-      const { data, error } = await (supabase as any).from("fornecedor").select("id, razao_social, nome_fantasia").order("razao_social");
+      const { data, error } = await (supabase as any)
+        .from("fornecedor")
+        .select("id, razao_social, nome_fantasia, cnpj_cpf")
+        .order("razao_social");
       if (error) throw error;
-      return (data ?? []).map((f: any) => ({ id: f.id, nome: f.nome_fantasia || f.razao_social }));
+      // SIS-2026-0399: cnpj_cpf exposto pra virar hint de busca no combobox
+      // do Rateio — o cadastro é feito pelo próprio fornecedor, então o
+      // nome não segue padrão nenhum, mas o CNPJ/CPF é estável.
+      return (data ?? []).map((f: any) => ({ id: f.id, nome: f.nome_fantasia || f.razao_social, cnpj_cpf: f.cnpj_cpf as string }));
     },
   });
 }
@@ -1609,8 +1615,18 @@ export function sanitizarNomeArquivo(nome: string): string {
   // "/" quebraria o path (viraria subpasta) e os demais são reservados em
   // Windows — troca por "-" pra quem baixa o anexo não ter problema ao
   // salvar localmente.
+  //
+  // Achado real (Calita, DM-2026-0472): "Failed to fetch"/CORS no upload do
+  // comprovante — a lib @supabase/storage-js instalada não faz
+  // `encodeURIComponent` da key nenhuma vez ao montar a URL do upload (a
+  // Storage aceitar # % & como caractere de key não significa que o CLIENTE
+  // consiga chegar lá com eles crus: # corta pra fragment, % quebra
+  // percent-decoding e & vira delimitador de query se vier antes de um "?"
+  // sobrevivente em qualquer parte da URL) — a requisição sai malformada
+  // antes de sair da máquina, e o navegador reporta isso como bloqueio de
+  // CORS (a URL truncada não bate rota nenhuma pra devolver o header).
   return semAcento
-    .replace(/[\\/:*?"<>|]/g, "-")
+    .replace(/[\\/:*?"<>|#%&]/g, "-")
     .replace(/[^\x20-\x7e]/g, "-")
     .trim()
     .replace(/\s+/g, " ")
