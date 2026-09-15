@@ -97,6 +97,10 @@ export interface SolicitacaoTroca {
   /** Cargo de hoje, puxado de EMPREGADOS — o encarregado não digita. */
   cargo_atual: string | null;
   cargo_novo: string | null;
+  /** 'funcao' (troca de cargo, horário informado junto) | 'horario' (só carga horária). */
+  tipo?: "funcao" | "horario" | null;
+  horario_atual?: string | null;
+  horario_novo?: string | null;
   local: string | null;
   posto: string | null;
   filial: string | null;

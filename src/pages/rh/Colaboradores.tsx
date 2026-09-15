@@ -111,19 +111,24 @@ type Dash = {
   por_empresa: KV[]; folha_empresa: KV[]; por_situacao: KV[]; por_cargo: KV[]; por_contrato: KV[];
   por_faixa: { label: string; n: number }[];
   timeline: { ano: number; adm: number; desl: number }[];
-  opcoes: { empresas: string[]; contratos: string[]; situacoes: string[]; setores: string[] };
+  opcoes: { empresas: string[]; contratos: string[]; situacoes: string[]; setores: string[]; cargos?: string[] };
 };
 type Linha = {
   id: any; nome: string; cpf: string; cargo: string; empresa: string; contrato: string;
   filial: string; situacao: string; setor: string; admissao: string | null; salario: number;
 };
-type Filtro = { ini: Date; fim: Date; empresa: string; contrato: string; situacao: string; busca: string };
+// Filtros multi-valor (15/09/2026): vazio = todos. Pra RPC vão como texto
+// com U+001F entre os valores (ver migration 20260930000114).
+type Filtro = { ini: Date; fim: Date; empresa: string[]; contrato: string[]; situacao: string[]; cargo: string[]; busca: string };
+const SEP = "\u001F";
+const paraRpc = (v: string[]) => v.join(SEP);
+const EH_SAIDA = /DEMIT|DESLIG|RESCIS|APOSENT/i;
 
 const DASH_VAZIO: Dash = {
   kpis: { ativos_mes: 0, no_recorte: 0, total: 0, folha: 0, admitidos: 0, desligados: 0 },
   por_empresa: [], folha_empresa: [], por_situacao: [], por_cargo: [], por_contrato: [],
   por_faixa: FAIXAS.map(f => ({ label: f.label, n: 0 })), timeline: [],
-  opcoes: { empresas: [], contratos: [], situacoes: [], setores: [] },
+  opcoes: { empresas: [], contratos: [], situacoes: [], setores: [], cargos: [] },
 };
 
 const ehSaidaDe = (e: any) => /DEMIT|DESLIG|RESCIS|APOSENT/i.test(String(e?.["Situação"] ?? ""));
@@ -163,18 +168,20 @@ const recortesClient = (rows: any[], contratoDe: (e: any) => string, f: Filtro) 
     }
     return true;
   };
-  const casaEmp = (e: any) => !f.empresa || empresaDe(e) === f.empresa;
-  const casaCtr = (e: any) => !f.contrato || contratoDe(e) === f.contrato;
+  const casaEmp = (e: any) => !f.empresa.length || f.empresa.includes(empresaDe(e));
+  const casaCtr = (e: any) => !f.contrato.length || f.contrato.includes(contratoDe(e));
+  const casaCar = (e: any) => !f.cargo.length || f.cargo.includes(nomeCargoDe(e));
+  const casaSit = (e: any) => !f.situacao.length || f.situacao.includes(String(e["Situação"] ?? "").trim());
 
-  const semsit = rows.filter(e => noMesQuadro(e) && casaEmp(e) && casaCtr(e) && casaBusca(e));
+  const semsit = rows.filter(e => noMesQuadro(e) && casaEmp(e) && casaCtr(e) && casaCar(e) && casaBusca(e));
   // Filtrar por uma situação de SAÍDA = navegar TODOS com aquela situação
   // (consulta/edição do histórico), sem o recorte de presença no mês. O
   // dashboard usa `semsit`, então continua com a régua de presença.
-  const ehSaidaSit = /DEMIT|DESLIG|RESCIS|APOSENT/i.test(f.situacao || "");
+  const ehSaidaSit = f.situacao.some(s => EH_SAIDA.test(s));
   const fil = ehSaidaSit
-    ? rows.filter(e => casaEmp(e) && casaCtr(e) && casaBusca(e) && String(e["Situação"] ?? "").trim() === f.situacao)
-    : semsit.filter(e => !f.situacao || String(e["Situação"] ?? "").trim() === f.situacao);
-  const tempo = rows.filter(e => casaEmp(e) && casaCtr(e));
+    ? rows.filter(e => casaEmp(e) && casaCtr(e) && casaCar(e) && casaBusca(e) && casaSit(e))
+    : semsit.filter(casaSit);
+  const tempo = rows.filter(e => casaEmp(e) && casaCtr(e) && casaCar(e));
   return { fil, semsit, tempo };
 };
 
@@ -212,6 +219,7 @@ const calcDashClient = (rows: any[], contratoDe: (e: any) => string, f: Filtro, 
       contratos: uniq(rows.map(contratoDe)),
       situacoes: uniq(rows.map(e => String(e["Situação"] ?? "").trim())),
       setores: uniq(rows.map(e => String(e["Setor_ERP"] ?? "").trim())),
+      cargos: uniq(rows.map(nomeCargoDe)).filter(c => c !== "—"),
     },
   };
 };
@@ -231,9 +239,12 @@ export default function Colaboradores() {
   const [busca, setBusca] = useState("");
   // Busca aplicada: refiltrar 12 mil linhas a cada tecla travava a digitação.
   const [buscaQ, setBuscaQ] = useState("");
-  const [fEmpresa, setFEmpresa] = useState("");
-  const [fContrato, setFContrato] = useState("");
-  const [fSituacao, setFSituacao] = useState(""); // Situação = status atual; no quadro do mês começa em "Todas"
+  // Multi-seleção (15/09/2026): mais de uma empresa, contrato, situação e
+  // cargo de uma vez. Vazio = todos.
+  const [fEmpresa, setFEmpresa] = useState<string[]>([]);
+  const [fContrato, setFContrato] = useState<string[]>([]);
+  const [fSituacao, setFSituacao] = useState<string[]>([]); // Situação = status atual; no quadro do mês começa em "Todas"
+  const [fCargo, setFCargo] = useState<string[]>([]);
   const [pagina, setPagina] = useState(1);
   const [porPagina, setPorPagina] = useState(50); // 50 (padrão) ou 100
   const [sitIdx, setSitIdx] = useState(0); // card rotativo de situação
@@ -325,12 +336,12 @@ export default function Colaboradores() {
     setLoading(false); terminar();
   };
   useEffect(() => { const t = setTimeout(() => setBuscaQ(busca), 180); return () => clearTimeout(t); }, [busca]);
-  useEffect(() => { setPagina(1); }, [buscaQ, fEmpresa, fContrato, fSituacao, porPagina, mesRef]);
+  useEffect(() => { setPagina(1); }, [buscaQ, fEmpresa, fContrato, fSituacao, fCargo, porPagina, mesRef]);
 
   // ── Caminho rápido: o banco entrega o dashboard e a página da lista ──
   const argsRpc = () => ({
     _ano: mesRef.ano, _mes: mesRef.mes + 1,
-    _empresa: fEmpresa, _contrato: fContrato, _situacao: fSituacao, _busca: buscaQ,
+    _empresa: paraRpc(fEmpresa), _contrato: paraRpc(fContrato), _situacao: paraRpc(fSituacao), _cargo: paraRpc(fCargo), _busca: buscaQ,
   });
   // Migration ainda não aplicada neste banco → cai no modo antigo em vez de
   // mostrar erro (a `main` em produção pode rodar sem o SQL por um tempo).
@@ -349,7 +360,7 @@ export default function Colaboradores() {
   const iniciar = () => { emVoo.current++; setAtualizando(true); };
   const terminar = () => { emVoo.current = Math.max(0, emVoo.current - 1); if (!emVoo.current) setAtualizando(false); };
 
-  const ehPadrao = () => !fEmpresa && !fContrato && !fSituacao && !buscaQ && pagina === 1 && porPagina === 50
+  const ehPadrao = () => !fEmpresa.length && !fContrato.length && !fSituacao.length && !fCargo.length && !buscaQ && pagina === 1 && porPagina === 50
     && mesRef.ano === hoje.getFullYear() && mesRef.mes === hoje.getMonth();
 
   // Dashboard e lista são consultas independentes: trocar de página não
@@ -395,7 +406,7 @@ export default function Colaboradores() {
       if (ok) setLoading(false);
     })();
     return () => { vivo = false; };
-  }, [modo, mesRef, fEmpresa, fContrato, fSituacao, buscaQ]);
+  }, [modo, mesRef, fEmpresa, fContrato, fSituacao, fCargo, buscaQ]);
 
   // O véu só aparece se a consulta passar de ~250ms: com o banco respondendo
   // em milissegundos, mostrar sempre viraria um piscar a cada clique.
@@ -410,7 +421,7 @@ export default function Colaboradores() {
   useEffect(() => {
     if (modo !== "rpc") return;
     buscarLista();
-  }, [modo, mesRef, fEmpresa, fContrato, fSituacao, buscaQ, pagina, porPagina]);
+  }, [modo, mesRef, fEmpresa, fContrato, fSituacao, fCargo, buscaQ, pagina, porPagina]);
 
   // Modo antigo: baixa a tabela inteira uma vez e calcula tudo aqui.
   useEffect(() => { if (modo === "client") load(!!cacheRows); }, [modo]);
@@ -434,8 +445,8 @@ export default function Colaboradores() {
   // ── Números da tela ──────────────────────────────────────────────────
   // No modo RPC vêm prontos do banco; no fallback são calculados aqui no mesmo
   // formato. Daqui pra baixo a tela não sabe (nem precisa saber) a origem.
-  const filtro = useMemo<Filtro>(() => ({ ini: inicioMes, fim: fimMes, empresa: fEmpresa, contrato: fContrato, situacao: fSituacao, busca: buscaQ }),
-    [inicioMes, fimMes, fEmpresa, fContrato, fSituacao, buscaQ]);
+  const filtro = useMemo<Filtro>(() => ({ ini: inicioMes, fim: fimMes, empresa: fEmpresa, contrato: fContrato, situacao: fSituacao, cargo: fCargo, busca: buscaQ }),
+    [inicioMes, fimMes, fEmpresa, fContrato, fSituacao, fCargo, buscaQ]);
   const recClient = useMemo(() => modo === "client" ? recortesClient(rows, contratoDe, filtro) : null,
     [modo, rows, contratoPorFilial, filtro]);
   const dashClient = useMemo(() => recClient ? calcDashClient(rows, contratoDe, filtro, recClient) : null,
@@ -445,6 +456,7 @@ export default function Colaboradores() {
   const empresas = dash.opcoes.empresas;
   const contratos = dash.opcoes.contratos;
   const situacoes = dash.opcoes.situacoes;
+  const cargos = dash.opcoes.cargos ?? [];
   // opções de Setor: tabela SETORES ∪ valores reais da EMPREGADOS, sempre com PADRAO.
   const setorOptions = useMemo(() => [...new Set(["PADRAO", ...setoresTabela, ...dash.opcoes.setores])].sort(), [setoresTabela, dash]);
 
@@ -484,7 +496,9 @@ export default function Colaboradores() {
     : (recClient?.fil ?? []).slice((pagina - 1) * porPagina, pagina * porPagina).map(e => linhaDe(e, contratoDe)),
     [modo, listaRpc, recClient, pagina, porPagina, contratoPorFilial]);
 
-  const limparFiltros = () => { setBusca(""); setFEmpresa(""); setFContrato(""); setFSituacao(""); };
+  const limparFiltros = () => { setBusca(""); setFEmpresa([]); setFContrato([]); setFSituacao([]); setFCargo([]); };
+  const alternar = (set: (f: (v: string[]) => string[]) => void, valor: string) =>
+    set(v => v.includes(valor) ? v.filter(x => x !== valor) : [...v, valor]);
 
   // ── Edição de campos RH na EMPREGADOS ────────────────────────────────
   // A lista traz só o necessário p/ a tabela; o cadastro completo (PIS, e-mail,
@@ -595,16 +609,11 @@ export default function Colaboradores() {
       <div style={{ display: loading ? "none" : "block", background: "#fff", border: "1px solid #e2e8f0", borderRadius: 14, padding: 14, marginBottom: 16, boxShadow: "0 8px 24px rgba(15,23,42,.05)" }}>
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
           <input className="col-fi" style={{ minWidth: 240, flex: 1 }} placeholder="Buscar por nome, CPF, cargo, filial, setor…" value={busca} onChange={e => setBusca(e.target.value)} />
-          <select className="col-fi" value={fEmpresa} onChange={e => setFEmpresa(e.target.value)}>
-            <option value="">Todas as empresas</option>{empresas.map(x => <option key={x} value={x}>{x}</option>)}
-          </select>
-          <select className="col-fi" style={{ maxWidth: 240 }} value={fContrato} onChange={e => setFContrato(e.target.value)}>
-            <option value="">Todos os contratos</option>{contratos.map(x => <option key={x} value={x}>{x}</option>)}
-          </select>
-          <select className="col-fi" value={fSituacao} onChange={e => setFSituacao(e.target.value)}>
-            <option value="">Todas as situações</option>{situacoes.map(x => <option key={x} value={x}>{x}</option>)}
-          </select>
-          {(busca || fEmpresa || fContrato || fSituacao) && <button className="col-btn" onClick={limparFiltros} style={{ background: "#f1f5f9" }}>Limpar</button>}
+          <MultiFiltro rotulo="empresas" singular="empresa" opcoes={empresas} valor={fEmpresa} onChange={setFEmpresa} />
+          <MultiFiltro rotulo="contratos" singular="contrato" opcoes={contratos} valor={fContrato} onChange={setFContrato} largura={260} />
+          <MultiFiltro rotulo="situações" singular="situação" opcoes={situacoes} valor={fSituacao} onChange={setFSituacao} />
+          <MultiFiltro rotulo="cargos" singular="cargo" opcoes={cargos} valor={fCargo} onChange={setFCargo} largura={260} />
+          {(busca || fEmpresa.length || fContrato.length || fSituacao.length || fCargo.length) ? <button className="col-btn" onClick={limparFiltros} style={{ background: "#f1f5f9" }}>Limpar</button> : null}
         </div>
       </div>
 
@@ -624,7 +633,7 @@ export default function Colaboradores() {
               </div>
             )}
             {sitAtual && (
-              <div key={sitAtual.k} onClick={() => setFSituacao(sitAtual.k === fSituacao ? "" : sitAtual.k)}
+              <div key={sitAtual.k} onClick={() => alternar(setFSituacao, sitAtual.k)}
                 style={{ cursor: "pointer", marginBottom: 14, padding: "12px 14px", borderRadius: 12, background: corSituacao(sitAtual.k) + "12", border: "1px solid " + corSituacao(sitAtual.k) + "33", animation: "col-fade .5s ease, col-float 4.5s ease-in-out infinite" }}>
                 <div style={{ fontSize: 10, fontWeight: 700, color: "#94a3b8", textTransform: "uppercase", letterSpacing: ".5px" }}>Em destaque · alterna a cada 3s</div>
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginTop: 4 }}>
@@ -637,9 +646,9 @@ export default function Colaboradores() {
             {porSituacao.length === 0 ? <Vazio /> : porSituacao.map(x => {
               const pct = porSituacao[0].v ? Math.round((x.v / porSituacao[0].v) * 100) : 0;
               return (
-                <div key={x.k} className="col-sit-row" onClick={() => setFSituacao(x.k === fSituacao ? "" : x.k)} title="Clique para filtrar">
+                <div key={x.k} className="col-sit-row" onClick={() => alternar(setFSituacao, x.k)} title="Clique para filtrar (pode marcar mais de uma)">
                   <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, marginBottom: 3 }}>
-                    <span style={{ color: x.k === fSituacao ? "#0f172a" : "#334155", fontWeight: x.k === fSituacao ? 800 : 600 }}>{x.k}{x.k === fSituacao ? " ✓" : ""}</span>
+                    <span style={{ color: fSituacao.includes(x.k) ? "#0f172a" : "#334155", fontWeight: fSituacao.includes(x.k) ? 800 : 600 }}>{x.k}{fSituacao.includes(x.k) ? " ✓" : ""}</span>
                     <span style={{ color: "#0f172a", fontWeight: 800 }}>{x.v}</span>
                   </div>
                   <div style={{ height: 8, background: "#eef2f7", borderRadius: 20, overflow: "hidden" }}>
@@ -800,6 +809,53 @@ function Campo({ label, value, onChange }: { label: string; value: string; onCha
     <div>
       <label style={{ fontSize: 11, fontWeight: 700, color: "#475569" }}>{label}</label>
       <input className="col-fi" style={{ width: "100%" }} value={value} onChange={e => onChange(e.target.value)} />
+    </div>
+  );
+}
+
+/**
+ * Menu suspenso de múltipla escolha (15/09/2026) — o mesmo desenho do
+ * "Filtros · Contratos" das solicitações, no estilo desta tela. Fechado
+ * mostra "Todas as empresas" ou "2 empresas"; aberto, checkbox por opção e
+ * busca quando são muitas.
+ */
+function MultiFiltro({ rotulo, singular, opcoes, valor, onChange, largura = 200 }: {
+  rotulo: string; singular: string; opcoes: string[]; valor: string[]; onChange: (v: string[]) => void; largura?: number;
+}) {
+  const [aberto, setAberto] = useState(false);
+  const [q, setQ] = useState("");
+  const visiveis = q.trim() ? opcoes.filter(o => o.toLowerCase().includes(q.trim().toLowerCase())) : opcoes;
+  const texto = valor.length === 0 ? `Tod${rotulo.endsWith("s") && /^(empresas|situações)$/.test(rotulo) ? "as as" : "os os"} ${rotulo}`
+    : valor.length === 1 ? valor[0] : `${valor.length} ${rotulo}`;
+  return (
+    <div style={{ position: "relative" }}>
+      <button type="button" className="col-fi" onClick={() => setAberto(v => !v)} title={valor.join(", ") || undefined}
+        style={{ maxWidth: largura, minWidth: 150, display: "flex", alignItems: "center", gap: 6, cursor: "pointer", borderColor: valor.length ? "#0f3171" : "#cbd5e1", color: valor.length ? "#0f3171" : "#334155", fontWeight: valor.length ? 700 : 400 }}>
+        <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1, textAlign: "left" }}>{texto}</span>
+        <span style={{ fontSize: 10, opacity: .7 }}>▼</span>
+      </button>
+      {aberto && (<>
+        <div onClick={() => setAberto(false)} style={{ position: "fixed", inset: 0, zIndex: 40 }} />
+        <div style={{ position: "absolute", left: 0, top: "100%", marginTop: 4, zIndex: 50, width: Math.max(largura, 260), maxHeight: 340, display: "flex", flexDirection: "column", background: "#fff", border: "1px solid #e2e8f0", borderRadius: 12, boxShadow: "0 12px 32px rgba(15,23,42,.14)", padding: 8 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "2px 6px 6px" }}>
+            <span style={{ fontSize: 10, fontWeight: 700, color: "#94a3b8", textTransform: "uppercase", letterSpacing: ".5px" }}>Mostrar só est{/^(empresas|situações)$/.test(rotulo) ? "as" : "es"} {rotulo}</span>
+            {valor.length > 0 && <button type="button" onClick={() => onChange([])} style={{ background: "none", border: "none", color: "#0f3171", fontSize: 11, fontWeight: 700, cursor: "pointer" }}>Limpar</button>}
+          </div>
+          {opcoes.length > 8 && <input className="col-fi" style={{ height: 30, margin: "0 4px 6px", fontSize: 12 }} placeholder={`Buscar ${singular}…`} value={q} onChange={e => setQ(e.target.value)} />}
+          <div style={{ overflowY: "auto", minHeight: 0 }}>
+            {visiveis.length === 0 && <div style={{ padding: 10, fontSize: 12, color: "#94a3b8" }}>Nenhuma opção.</div>}
+            {visiveis.map(o => {
+              const on = valor.includes(o);
+              return (
+                <label key={o} style={{ display: "flex", alignItems: "center", gap: 8, padding: "6px 8px", borderRadius: 8, fontSize: 13, cursor: "pointer", background: on ? "#eef4ff" : "transparent" }}>
+                  <input type="checkbox" checked={on} onChange={() => onChange(on ? valor.filter(x => x !== o) : [...valor, o])} />
+                  <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={o}>{o}</span>
+                </label>
+              );
+            })}
+          </div>
+        </div>
+      </>)}
     </div>
   );
 }

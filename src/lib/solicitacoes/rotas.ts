@@ -29,7 +29,9 @@ export const rotasSolicitacoes = (base: BaseSolicitacoes = "encarregados"): Rota
     ? {
         base,
         minhas: "/app/central-servicos/solicitacoes",
-        vaga: "/app/central-servicos/solicitacoes/vaga",
+        // Vaga na Central é a tela da Gestão de Recrutamento (com catálogo),
+        // não o card do encarregado — por isso a rota antiga.
+        vaga: "/app/central-servicos/solicitar-vaga",
         ferias: "/app/central-servicos/solicitacoes/ferias",
         advertencia: "/app/central-servicos/solicitacoes/advertencia",
         demissao: "/app/central-servicos/solicitacoes/demissao",
