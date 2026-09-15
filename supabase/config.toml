@@ -119,3 +119,9 @@ verify_jwt = false
 # das funcoes chamadas pelo CI.
 [functions.worker-notificar-whatsapp]
 verify_jwt = false
+
+# Estudio de BI: a IA que escreve o grafico a partir de um texto. JWT do
+# usuario: a funcao roda o SQL gerado com a sessao dele (bi_executar_sql), e
+# a permissao (bi_estudio + executar_ia) e conferida la dentro.
+[functions.bi-ia]
+verify_jwt = true

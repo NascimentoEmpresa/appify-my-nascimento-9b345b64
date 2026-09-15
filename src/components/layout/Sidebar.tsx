@@ -63,8 +63,7 @@ import {
   UserMinus,
   UserPlus,
   CalendarCheck2,
-  AlertTriangle,
-} from "lucide-react";
+  AlertTriangle, WandSparkles } from "lucide-react";
 import { useTemAlcada } from "@/hooks/useTemAlcada";
 import { useAccessibleMenus, matchMenuCode } from "@/hooks/useAccessibleMenus";
 import { useModoExterno, rotaPermitidaExterno } from "@/hooks/useModoExterno";
@@ -819,6 +818,9 @@ const biModule: ModuleDef = {
       items: [
         { label: "Resumo do Grupo", to: "/app/bi", icon: BarChart3 },
         { label: "Links dos BIs", to: "/app/bi/links", icon: ExternalLink },
+        // Estúdio (14/09/2026): painéis montados dentro do ERP, à mão (SQL) ou
+        // por texto com a IA. Menu bi_estudio; a rota /:id é o painel aberto.
+        { label: "Estúdio de BI", to: "/app/bi/estudio", icon: WandSparkles },
       ],
     },
   ],
