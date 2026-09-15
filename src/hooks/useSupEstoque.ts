@@ -1065,6 +1065,8 @@ export interface EdicaoLote {
 export interface EdicaoMaterial {
   /** Nome do catálogo: vale para todos os almoxarifados e pedidos. */
   nome?: string;
+  /** Tipo do catálogo (uniforme, epi...): também vale para o sistema todo. */
+  tipo?: string;
   valor_unitario?: number;
   preco_valido_ate?: string | null;
   estoque_minimo?: number;
@@ -1076,7 +1078,8 @@ export interface EdicaoMaterial {
 /**
  * Edita o material e os lotes livres dele numa transação só, com motivo.
  * Cada campo alterado vira uma linha em sup_estoque_alteracao (antes, depois,
- * quem, quando e por quê). Ver 20260930000107_sup_estoque_editar_material.sql.
+ * quem, quando e por quê). Ver 20260930000107_sup_estoque_editar_material.sql
+ * e 20260930000161 (tipo).
  */
 export function useEditarItemEstoque() {
   const invalidar = useInvalidarEstoque();
@@ -1106,6 +1109,11 @@ export interface AlteracaoEstoque {
   codigo: string | null;
   usuario_nome: string | null;
   created_at: string;
+  /**
+   * 'edicao' = pessoa, pelo Editar · 'sst_catalogo' = a lista oficial de CA
+   * que o SST anexou sobrescreveu o CA do lote (20260930000161).
+   */
+  origem: "edicao" | "sst_catalogo";
 }
 
 /** Edições do material. Por `sup_item_id`, pelo mesmo motivo do histórico abaixo. */
@@ -1116,7 +1124,7 @@ export function useAlteracoesDoMaterial(supItemId: string | null) {
     queryFn: async (): Promise<AlteracaoEstoque[]> => {
       const { data, error } = await sb
         .from("sup_estoque_alteracao")
-        .select("id, campo, valor_anterior, valor_novo, motivo, codigo, usuario_nome, created_at")
+        .select("id, campo, valor_anterior, valor_novo, motivo, codigo, usuario_nome, created_at, origem")
         .eq("sup_item_id", supItemId)
         .order("created_at", { ascending: false })
         .limit(500);
