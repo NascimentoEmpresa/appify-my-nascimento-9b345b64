@@ -111,6 +111,8 @@ export default function CentralDuvidas() {
     setDuvidas(x => x.filter(i => i.id !== d.id)); toast("Dúvida excluída.", "ok");
   };
 
+  // Biblioteca de respostas já dadas — o Jurídico reaproveita ao responder.
+  const respondidasLib = duvidas.filter(d => d.status === "Respondida" && d.resposta);
   const nAberta = duvidas.filter(d => d.status === "Aberta").length;
   const nAprovada = duvidas.filter(d => d.status === "Aprovada").length;
   const nResp = duvidas.filter(d => d.status === "Respondida").length;
