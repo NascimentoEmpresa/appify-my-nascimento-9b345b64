@@ -27,7 +27,7 @@ import {
 import {
   PackagePlus, Search, AlertTriangle, Boxes, Undo2, Trash2, ShieldAlert, Plus, X, Tag,
   ClipboardCheck, History, ArrowDownToLine, ArrowUpFromLine, RotateCcw, Check, Coins,
-  PackageOpen, ClipboardList, Pencil,
+  PackageOpen, ClipboardList, Pencil, ShieldCheck,
   type LucideIcon,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -360,12 +360,13 @@ function FormEditarMaterial({ linha, empresaId, onFechar }: {
   const editar = useEditarItemEstoque();
   const { data: tags = [], isLoading } = useTagsDoItem(linha.item_estoque_id);
   const { data: fornecedores = [] } = useFornecedores(empresaId);
-  // O nome é do catálogo, e o banco só deixa quem altera o catálogo mexer nele.
+  // Nome e tipo são do catálogo, e o banco só deixa quem altera o catálogo
+  // mexer neles (sup_est_editar_item, 20260930000161).
   const { data: acessoAlterar } = useAccessibleMenus("alterar");
   const podeRenomear = acessoAlterar?.codes.has("sup_catalogo") ?? false;
-  const ehEpi = linha.tipo_material === "epi";
 
   const [nome, setNome] = useState(linha.material);
+  const [tipoItem, setTipoItem] = useState(linha.tipo_material);
   const [valor, setValor] = useState(linha.valor_unitario ? String(linha.valor_unitario) : "");
   const [precoValidoAte, setPrecoValidoAte] = useState(linha.preco_valido_ate ?? "");
   const [minimo, setMinimo] = useState(String(linha.estoque_minimo));
@@ -385,6 +386,7 @@ function FormEditarMaterial({ linha, empresaId, onFechar }: {
     if (podeRenomear && nome.trim() && normalizarNome(nome) !== normalizarNome(linha.material)) {
       e.nome = normalizarNome(nome);
     }
+    if (podeRenomear && tipoItem && tipoItem !== linha.tipo_material) e.tipo = tipoItem;
     const v = Number(valor || 0);
     if (v !== linha.valor_unitario) e.valor_unitario = v;
     if ((precoValidoAte || null) !== (linha.preco_valido_ate ?? null)) e.preco_valido_ate = precoValidoAte || null;
@@ -410,7 +412,7 @@ function FormEditarMaterial({ linha, empresaId, onFechar }: {
     }
     if (ls.length) e.lotes = ls;
     return e;
-  }, [podeRenomear, nome, valor, precoValidoAte, minimo, fornecedor, observacoes, lotes, livres, linha]);
+  }, [podeRenomear, nome, tipoItem, valor, precoValidoAte, minimo, fornecedor, observacoes, lotes, livres, linha]);
 
   const nadaMudou = Object.keys(edicao).length === 0;
 
@@ -426,13 +428,38 @@ function FormEditarMaterial({ linha, empresaId, onFechar }: {
 
       <div className="space-y-4 py-1">
         <div>
-          <Label>Nome do material</Label>
-          <Input value={nome} onChange={(e) => setNome(e.target.value)} disabled={!podeRenomear} />
+          <div className="grid gap-4 sm:grid-cols-3">
+            <div className="sm:col-span-2">
+              <Label>Nome do material</Label>
+              <Input value={nome} onChange={(e) => setNome(e.target.value)} disabled={!podeRenomear} />
+            </div>
+            <div>
+              <Label>Tipo</Label>
+              <Select value={tipoItem} onValueChange={setTipoItem} disabled={!podeRenomear}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  {TIPOS_MATERIAL.map((t) => (
+                    <SelectItem key={t.valor} value={t.valor}>{t.rotulo}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
           <p className="mt-1 text-[11px] text-muted-foreground">
             {podeRenomear
-              ? "O nome é do catálogo: muda em todos os almoxarifados, pedidos e enxovais que usam este material."
-              : "Renomear exige permissão de alterar no Catálogo."}
+              ? "Nome e tipo são do catálogo: mudam em todos os almoxarifados, pedidos e enxovais que usam este material."
+              : "Renomear ou trocar o tipo exige permissão de alterar no Catálogo."}
           </p>
+          {/* EPI é o único tipo com efeito de regra (tiposMaterial.ts). Trocar
+              para dentro ou para fora dele muda o que o sistema deixa sair —
+              quem troca precisa saber disso antes de salvar. */}
+          {tipoItem !== linha.tipo_material && (tipoItem === "epi" || linha.tipo_material === "epi") && (
+            <p className="mt-2 rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-800 dark:bg-amber-950/20 dark:text-amber-300">
+              {tipoItem === "epi"
+                ? "Como EPI, o material entra no Controle de CA do SST, e lote com CA vencido, suspenso ou cancelado deixa de poder sair em pedido."
+                : "Deixando de ser EPI, o material sai do Controle de CA do SST, e a trava de CA vencido deixa de valer para ele."}
+            </p>
+          )}
         </div>
 
         <div className="grid gap-4 sm:grid-cols-3">
@@ -476,6 +503,16 @@ function FormEditarMaterial({ linha, empresaId, onFechar }: {
           <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
             Lotes na prateleira ({livres.length})
           </p>
+          {/* A regra combinada em 15/09/2026: o digitado à mão vale até a
+              próxima lista do SST, que sobrescreve (trg_sst_ca_aplicar_no_estoque).
+              Dito aqui para ninguém estranhar o CA "mudando sozinho". */}
+          {livres.length > 0 && (
+            <p className="mb-2 text-[11px] text-muted-foreground">
+              O CA pode ser digitado à mão em qualquer tipo de material. Quando o SST atualizar a
+              lista oficial de CA, o lote cujo número estiver na lista recebe o número e a validade
+              do Ministério no lugar do que foi digitado aqui.
+            </p>
+          )}
           {isLoading ? (
             <p className="py-4 text-center text-sm text-muted-foreground">Carregando…</p>
           ) : livres.length === 0 ? (
@@ -492,20 +529,19 @@ function FormEditarMaterial({ linha, empresaId, onFechar }: {
                       <Input className="h-8" value={ed.tamanho ?? t.tamanho ?? ""}
                              onChange={(e) => alterarLote(t.id, { tamanho: e.target.value })} />
                     </div>
-                    {ehEpi && (
-                      <>
-                        <div className="w-28">
-                          <Label className="text-xs">Nº do CA</Label>
-                          <Input className="h-8" value={ed.ca_numero ?? t.ca_numero ?? ""}
-                                 onChange={(e) => alterarLote(t.id, { ca_numero: e.target.value })} />
-                        </div>
-                        <div className="w-36">
-                          <Label className="text-xs">Validade do CA</Label>
-                          <Input className="h-8" type="date" value={ed.ca_validade ?? t.ca_validade ?? ""}
-                                 onChange={(e) => alterarLote(t.id, { ca_validade: e.target.value })} />
-                        </div>
-                      </>
-                    )}
+                    {/* Em qualquer tipo, não só EPI (15/09/2026): há material
+                        com CA cadastrado em outro tipo, como o avental de napa
+                        em Uniforme. O banco nunca restringiu por tipo. */}
+                    <div className="w-28">
+                      <Label className="text-xs">Nº do CA</Label>
+                      <Input className="h-8" value={ed.ca_numero ?? t.ca_numero ?? ""}
+                             onChange={(e) => alterarLote(t.id, { ca_numero: e.target.value })} />
+                    </div>
+                    <div className="w-36">
+                      <Label className="text-xs">Validade do CA</Label>
+                      <Input className="h-8" type="date" value={ed.ca_validade ?? t.ca_validade ?? ""}
+                             onChange={(e) => alterarLote(t.id, { ca_validade: e.target.value })} />
+                    </div>
                     {t.tipo === "massa" ? (
                       <div className="w-24">
                         <Label className="text-xs">Quantidade</Label>
@@ -1341,10 +1377,18 @@ function LinhaDoTempo({ supItemId }: { supItemId: string | null }) {
   // mesmo "Salvar" (mesmo instante, mesma pessoa) viram UM evento — trocar
   // cinco campos não pode virar cinco bolinhas.
   const itens = useMemo(() => {
-    const grupos = new Map<string, { created_at: string; usuario_nome: string | null; motivo: string | null; campos: AlteracaoEstoque[] }>();
+    const grupos = new Map<string, {
+      created_at: string; usuario_nome: string | null; motivo: string | null;
+      origem: AlteracaoEstoque["origem"]; campos: AlteracaoEstoque[];
+    }>();
     for (const a of alteracoes) {
-      const k = `${a.created_at}|${a.usuario_nome ?? ""}`;
-      const g = grupos.get(k) ?? { created_at: a.created_at, usuario_nome: a.usuario_nome, motivo: a.motivo, campos: [] };
+      // A origem entra na chave: o SST sobrescrevendo o CA e uma pessoa
+      // editando nunca podem virar o mesmo evento.
+      const k = `${a.created_at}|${a.usuario_nome ?? ""}|${a.origem}`;
+      const g = grupos.get(k) ?? {
+        created_at: a.created_at, usuario_nome: a.usuario_nome, motivo: a.motivo,
+        origem: a.origem, campos: [],
+      };
       g.campos.push(a);
       grupos.set(k, g);
     }
@@ -1377,13 +1421,17 @@ function LinhaDoTempo({ supItemId }: { supItemId: string | null }) {
         if (it.tipo === "edicao") {
           const g = it.g;
           return (
-            <div key={`ed-${g.created_at}-${g.usuario_nome ?? ""}`} className="relative flex gap-3 pb-5 pl-1">
+            <div key={`ed-${g.created_at}-${g.usuario_nome ?? ""}-${g.origem}`} className="relative flex gap-3 pb-5 pl-1">
               {fio}
               <div className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full border bg-background">
-                <Pencil className="h-3.5 w-3.5 text-primary" />
+                {g.origem === "sst_catalogo"
+                  ? <ShieldCheck className="h-3.5 w-3.5 text-emerald-600 dark:text-emerald-400" />
+                  : <Pencil className="h-3.5 w-3.5 text-primary" />}
               </div>
               <div className="min-w-0 flex-1 text-sm">
-                <p className="font-medium">Edição</p>
+                <p className="font-medium">
+                  {g.origem === "sst_catalogo" ? "CA atualizado pela lista oficial (SST)" : "Edição"}
+                </p>
                 <ul className="space-y-0.5">
                   {g.campos.map((c) => (
                     <li key={c.id} className="break-words">
