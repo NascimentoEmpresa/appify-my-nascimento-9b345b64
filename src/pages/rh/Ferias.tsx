@@ -6,6 +6,11 @@ import { ConversaSolicitacao } from "@/components/solicitacoes/ConversaSolicitac
 import { ResumoDeFuncoes } from "@/components/fluxos/ResumoDeFuncoes";
 
 // ── Helpers ──────────────────────────────────────────────────────────
+function fmtDtHora(s?: string) {
+  if (!s) return "—";
+  const d = new Date(s);
+  return Number.isNaN(d.getTime()) ? "—" : d.toLocaleString("pt-BR", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" });
+}
 function fmtDt(s?: string) {
   if (!s) return "—";
   const d = new Date(s.length <= 10 ? s + "T12:00:00" : s);
@@ -41,6 +46,15 @@ export default function Ferias() {
 
   const [drawerId, setDrawerId] = useState<number | null>(null);
   const [sol, setSol] = useState<any | null>(null);
+  // Histórico (15/09/2026): quem criou, aprovou, reprovou, cancelou — lido
+  // de SISTEMA_SOLICITACOES_FERIAS_HISTORICO (trigger grava a cada troca).
+  const [hist, setHist] = useState<any[]>([]);
+  const [verHist, setVerHist] = useState(false);
+  const carregarHist = async (id: number) => {
+    const { data } = await (supabase as any).from("SISTEMA_SOLICITACOES_FERIAS_HISTORICO")
+      .select("*").eq("solicitacao_id", id).order("criado_em", { ascending: true });
+    setHist(data ?? []);
+  };
   const [reprovando, setReprovando] = useState(false);
   const [motivo, setMotivo] = useState("");
 
@@ -87,8 +101,10 @@ export default function Ferias() {
     setSol(row);
     setReprovando(false);
     setMotivo("");
+    setVerHist(false);
+    carregarHist(row.id);
   };
-  const fecharDrawer = () => { setDrawerId(null); setSol(null); };
+  const fecharDrawer = () => { setDrawerId(null); setSol(null); setHist([]); setVerHist(false); };
 
   const recarregarTudo = () => { carregar(); carregarStats(); };
 
@@ -100,6 +116,7 @@ export default function Ferias() {
     if (error) { toast("Erro: " + error.message, "err"); return; }
     toast(`Solicitação ${novo.toLowerCase()}.`, "ok");
     setSol((s: any) => ({ ...s, ...patch }));
+    if (drawerId) carregarHist(drawerId);
     setReprovando(false);
     setMotivo("");
     recarregarTudo();
@@ -196,10 +213,53 @@ export default function Ferias() {
                 <div style={{ fontSize: 12, color: "#94a3b8", marginTop: 2 }}>#{sol.id} · {sol.colaborador_cargo}{sol.colaborador_filial ? ` · ${sol.colaborador_filial}` : ""}</div>
               </div>
               <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
-                <StatusBadge status={sol.status} />
+                <button onClick={() => setVerHist(v => !v)} title="Quem criou, aprovou, reprovou — com data e hora"
+                  style={{ display: "flex", alignItems: "center", gap: 6, padding: "6px 12px", borderRadius: 10, border: `1px solid ${verHist ? "#0f3171" : "#e2e8f0"}`, background: verHist ? "#eef4ff" : "#fff", color: verHist ? "#0f3171" : "#475569", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>
+                  🕘 Histórico{hist.length ? ` (${hist.length})` : ""}
+                </button>
+                {/* Clicar no selo também abre o histórico — é onde a pergunta
+                    "aprovada por quem?" nasce. */}
+                <span onClick={() => setVerHist(v => !v)} style={{ cursor: "pointer" }} title="Ver quem aprovou e o histórico"><StatusBadge status={sol.status} /></span>
                 <button onClick={fecharDrawer} style={{ background: "none", border: "none", color: "#94a3b8", fontSize: 22, cursor: "pointer" }}>✕</button>
               </div>
             </div>
+            {/* Quem decidiu, sempre à vista — o selo sozinho não dizia. */}
+            {sol.status !== "Pendente" && (sol.aprovado_por || sol.aprovado_em) && (
+              <div style={{ padding: "8px 24px", background: sol.status === "Aprovada" ? "#f0fdf4" : sol.status === "Reprovada" ? "#fef2f2" : "#f8fafc", borderBottom: "1px solid #e2e8f0", fontSize: 12.5, color: "#334155" }}>
+                <b>{sol.status}</b> por <b>{sol.aprovado_por || "—"}</b> em {fmtDtHora(sol.aprovado_em)}
+              </div>
+            )}
+            {verHist && (
+              <div style={{ padding: "14px 24px", borderBottom: "1px solid #e2e8f0", background: "#fafbfd" }}>
+                <div style={{ fontSize: 10, fontWeight: 700, color: "#94a3b8", textTransform: "uppercase", letterSpacing: ".5px", marginBottom: 8 }}>Histórico da solicitação</div>
+                {hist.length === 0 ? (
+                  <div style={{ fontSize: 12.5, color: "#94a3b8" }}>Sem eventos registrados.</div>
+                ) : (
+                  <div style={{ display: "flex", flexDirection: "column", gap: 0 }}>
+                    {hist.map((h, i) => {
+                      const cor = h.evento === "Aprovada" ? "#16a34a" : h.evento === "Reprovada" ? "#dc2626" : h.evento === "Cancelada" ? "#64748b" : "#0f3171";
+                      return (
+                        <div key={h.id} style={{ display: "grid", gridTemplateColumns: "18px 1fr", gap: 10 }}>
+                          <div style={{ display: "flex", flexDirection: "column", alignItems: "center" }}>
+                            <span style={{ width: 10, height: 10, borderRadius: "50%", background: cor, marginTop: 5, flexShrink: 0 }} />
+                            {i < hist.length - 1 && <span style={{ width: 2, flex: 1, background: "#e2e8f0", minHeight: 18 }} />}
+                          </div>
+                          <div style={{ paddingBottom: 12 }}>
+                            <div style={{ fontSize: 13, color: "#0f172a" }}>
+                              <b style={{ color: cor }}>{h.evento}</b>
+                              {h.por_nome ? <> por <b>{h.por_nome}</b></> : ""}
+                              {h.de_status && h.para_status && h.de_status !== h.para_status ? <span style={{ color: "#94a3b8" }}> · {h.de_status} → {h.para_status}</span> : ""}
+                            </div>
+                            <div style={{ fontSize: 11.5, color: "#94a3b8" }}>{fmtDtHora(h.criado_em)}</div>
+                            {h.motivo && <div style={{ fontSize: 12.5, color: "#7f1d1d", marginTop: 3 }}>Motivo: {h.motivo}</div>}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            )}
 
             <div style={{ flex: 1, overflowY: "auto", padding: 24 }}>
               {/* Resumo */}

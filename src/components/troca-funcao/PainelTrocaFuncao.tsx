@@ -290,9 +290,21 @@ export function PainelTrocaFuncao({ etapa }: { etapa: Etapa }) {
                       <TableCell className="font-mono text-xs text-muted-foreground">{r.id}</TableCell>
                       <TableCell className="font-medium">{r.colaborador_nome}</TableCell>
                       <TableCell className="whitespace-nowrap text-sm">
-                        <span className="text-muted-foreground">{r.cargo_atual || "—"}</span>
-                        <ArrowRight className="mx-1.5 inline h-3 w-3" />
-                        <span className="font-medium">{r.cargo_novo}</span>
+                        {r.tipo === "horario" ? (
+                          <>
+                            <span className="mr-1.5 rounded-full border border-sky-300 bg-sky-50 px-1.5 text-[10px] font-semibold text-sky-800">Só horário</span>
+                            <span className="text-muted-foreground">{r.horario_atual || "—"}</span>
+                            <ArrowRight className="mx-1.5 inline h-3 w-3" />
+                            <span className="font-medium">{r.horario_novo || "—"}</span>
+                          </>
+                        ) : (
+                          <>
+                            <span className="text-muted-foreground">{r.cargo_atual || "—"}</span>
+                            <ArrowRight className="mx-1.5 inline h-3 w-3" />
+                            <span className="font-medium">{r.cargo_novo}</span>
+                            {r.horario_novo && <span className="ml-1.5 text-xs text-muted-foreground">· {r.horario_novo}</span>}
+                          </>
+                        )}
                       </TableCell>
                       <TableCell className="text-sm">
                         <span className="flex items-center gap-1.5">
@@ -340,17 +352,34 @@ export function PainelTrocaFuncao({ etapa }: { etapa: Etapa }) {
                   <span className="text-sm text-muted-foreground">{explicaStatus(aberta.status)}</span>
                 </div>
 
-                <div className="flex items-center justify-center gap-4 rounded-xl border bg-muted/30 p-4">
-                  <div className="text-center">
-                    <p className="text-xs uppercase text-muted-foreground">Cargo atual</p>
-                    <p className="font-semibold">{aberta.cargo_atual || "—"}</p>
+                {aberta.tipo !== "horario" && (
+                  <div className="flex items-center justify-center gap-4 rounded-xl border bg-muted/30 p-4">
+                    <div className="text-center">
+                      <p className="text-xs uppercase text-muted-foreground">Cargo atual</p>
+                      <p className="font-semibold">{aberta.cargo_atual || "—"}</p>
+                    </div>
+                    <ArrowRight className="h-5 w-5 text-primary" />
+                    <div className="text-center">
+                      <p className="text-xs uppercase text-muted-foreground">Cargo novo</p>
+                      <p className="font-semibold text-primary">{aberta.cargo_novo}</p>
+                    </div>
                   </div>
-                  <ArrowRight className="h-5 w-5 text-primary" />
-                  <div className="text-center">
-                    <p className="text-xs uppercase text-muted-foreground">Cargo novo</p>
-                    <p className="font-semibold text-primary">{aberta.cargo_novo}</p>
+                )}
+                {/* Horário (15/09/2026): sempre que informado; na troca só de
+                    horário é o bloco principal. */}
+                {(aberta.horario_novo || aberta.tipo === "horario") && (
+                  <div className="flex items-center justify-center gap-4 rounded-xl border bg-muted/30 p-4">
+                    <div className="text-center">
+                      <p className="text-xs uppercase text-muted-foreground">Horário atual</p>
+                      <p className="font-semibold">{aberta.horario_atual || "—"}</p>
+                    </div>
+                    <ArrowRight className="h-5 w-5 text-primary" />
+                    <div className="text-center">
+                      <p className="text-xs uppercase text-muted-foreground">{aberta.tipo === "horario" ? "Horário novo (só horário — cargo continua " + (aberta.cargo_atual || "o mesmo") + ")" : "Horário no cargo novo"}</p>
+                      <p className="font-semibold text-primary">{aberta.horario_novo || "—"}</p>
+                    </div>
                   </div>
-                </div>
+                )}
 
                 <div className="grid gap-3 sm:grid-cols-2">
                   <Info rotulo="CPF" valor={aberta.colaborador_cpf} />

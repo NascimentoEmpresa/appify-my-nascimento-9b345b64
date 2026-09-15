@@ -387,7 +387,6 @@ const App = () => (
                 do módulo Encarregados, em rota própria. Todas caem no menu
                 central_servicos_solicitacoes por prefixo. */}
             <Route path="central-servicos/solicitacoes" element={<MinhasSolicitacoes base="central" />} />
-            <Route path="central-servicos/solicitacoes/vaga" element={<MinhasSolicitacoes base="central" abrir="vaga" />} />
             <Route path="central-servicos/solicitacoes/ferias" element={<MinhasSolicitacoes base="central" abrir="ferias" />} />
             <Route path="central-servicos/solicitacoes/advertencia" element={<MinhasSolicitacoes base="central" abrir="advertencia" />} />
             <Route path="central-servicos/solicitacoes/demissao" element={<SolicitarDemissao />} />
