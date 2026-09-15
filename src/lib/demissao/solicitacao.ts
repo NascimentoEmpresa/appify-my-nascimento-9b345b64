@@ -1,20 +1,26 @@
 // Solicitação de Demissão — as regras que as telas compartilham.
 //
-// O encarregado abre → o ANALISTA aprova → o RH libera → o SST agenda o ASO
-// demissional:
+// O encarregado abre → o OPERACIONAL aprova → o RH libera → o SST agenda o
+// ASO demissional:
 //
-//   Pendente Analista → Pendente RH → Pendente SST
+//   Pendente Operacional → Pendente RH → Pendente SST
 //        → Solicitação de agendamento de DEMISSIONAL recebida
 //        → Agendamento concluído
 //          ↘ Reprovada
 //
+// A ETAPA 1 VOLTOU PARA O OPERACIONAL EM 14/09/2026 (migration
+// 20260930000103). Tinha ido para o analista em 02/09/2026 ("Pendente
+// Operacional" virou "Pendente Analista", o Operacional ficou só olhando);
+// o pedido do Pablo inverteu: "agora o OPERACIONAL aprova e os analistas só
+// veem". A tela dos analistas continua de pé, para acompanhar — o mesmo
+// desenho de antes, com os papéis trocados. As colunas `operacional_*`
+// voltaram a dizer o que o nome diz.
+//
 // DUAS MUDANÇAS EM 02/09/2026, no mesmo movimento que criou o submódulo
 // "Analistas Validações" em Licitações:
 //
-//   1. Quem decide a etapa 1 passou a ser o ANALISTA, não o Operacional.
-//      "Pendente Operacional" virou "Pendente Analista". O Operacional
-//      continua com a tela, só que para ACOMPANHAR — abre o card e lê, sem
-//      botão de decidir. Mesmo desenho da Gestão Recrutamento.
+//   1. Quem decide a etapa 1 passou a ser o ANALISTA, não o Operacional
+//      (desfeito em 14/09/2026, ver acima).
 //
 //   2. SST e RH TROCARAM DE LUGAR. Era RH → SST ("Concluída" era o fim no
 //      SST desde 25/08/2026); passou a ser SST → RH.
@@ -127,7 +133,7 @@ export const STATUS_SST_AGENDADO = "Agendamento concluído";
 export const STATUS_SST_ASO_VALIDO = "ASO válido";
 
 export type Status =
-  | "Pendente Analista"
+  | "Pendente Operacional"
   | "Reprovada"
   | "Pendente RH"
   | "Pendente SST"
@@ -139,7 +145,7 @@ export type Status =
 
 /** Na ordem do fluxo, que é a ordem em que fazem sentido em qualquer filtro. */
 export const STATUS_TODOS: Status[] = [
-  "Pendente Analista", "Pendente RH", "Pendente SST",
+  "Pendente Operacional", "Pendente RH", "Pendente SST",
   STATUS_SST_RECEBIDA, STATUS_SST_AGENDADO, STATUS_SST_ASO_VALIDO,
   "Concluída", "Reprovada", "Cancelada",
 ];
@@ -156,7 +162,7 @@ export const STATUS_FINAIS: string[] = [STATUS_SST_AGENDADO, STATUS_SST_ASO_VALI
 /** Cor do selo de status — a mesma régua nas três telas. */
 export function corDoStatus(status: string): string {
   const cores: Record<string, string> = {
-    "Pendente Analista": "bg-yellow-100 text-yellow-800 border-yellow-200",
+    "Pendente Operacional": "bg-yellow-100 text-yellow-800 border-yellow-200",
     "Pendente RH": "bg-purple-100 text-purple-700 border-purple-200",
     "Pendente SST": "bg-cyan-100 text-cyan-800 border-cyan-200",
     // Os dois do SST puxam para o mesmo lado do círculo cromático que
@@ -175,14 +181,14 @@ export function corDoStatus(status: string): string {
 /** O que ainda falta acontecer, em uma frase, para quem só acompanha. */
 export function explicaStatus(status: string): string {
   const textos: Record<string, string> = {
-    "Pendente Analista": "Aguardando a aprovação do analista.",
-    "Pendente RH": "Aprovada pelo analista. Aguardando o RH liberar.",
+    "Pendente Operacional": "Aguardando a aprovação do Operacional.",
+    "Pendente RH": "Aprovada pelo Operacional. Aguardando o RH liberar.",
     "Pendente SST": "Liberada pelo RH. Aguardando o SST receber a solicitação.",
     [STATUS_SST_RECEBIDA]: "O SST recebeu a solicitação e está agendando o ASO demissional.",
     [STATUS_SST_AGENDADO]: "ASO demissional agendado — a data, a hora e o local estão na solicitação.",
     [STATUS_SST_ASO_VALIDO]: "O ASO do colaborador ainda está válido (menos de 60 dias) — não precisa de exame demissional. Concluída pelo SST.",
     "Concluída": "O RH confirmou. Desligamento concluído.",
-    "Reprovada": "O analista reprovou — veja o motivo.",
+    "Reprovada": "O Operacional reprovou — veja o motivo.",
     "Cancelada": "A solicitação foi cancelada.",
   };
   return textos[status] ?? "";
@@ -218,11 +224,11 @@ export interface SolicitacaoDemissao {
 
   status: string;
   /**
-   * A decisão da ETAPA 1. As colunas mantêm o nome `operacional_*` de
-   * propósito: desde 02/09/2026 quem decide ali é o analista, mas renomear
-   * três colunas com histórico gravado só para acertar o rótulo trocaria uma
-   * confusão de nome por uma migração de dados — e o painel já mostra
-   * "Analista" na tela, que é onde alguém lê.
+   * A decisão da ETAPA 1 — do Operacional. Entre 02/09 e 14/09/2026 quem
+   * decidia era o analista e as colunas guardaram a decisão dele com este
+   * mesmo nome (renomear três colunas com histórico gravado só para acertar
+   * o rótulo não valia a migração). Desde 14/09/2026 o nome voltou a bater
+   * com o dono.
    */
   operacional_por: string | null;
   operacional_em: string | null;
@@ -244,19 +250,18 @@ export interface SolicitacaoDemissao {
   sst_em: string | null;
 
   /**
-   * A DEVOLUÇÃO ao analista (02/09/2026).
+   * A DEVOLUÇÃO à etapa 1 (02/09/2026).
    *
    * O erro na solicitação costuma aparecer no fim — o RH é a última etapa e é
    * lá que se percebe que o aviso está errado, que falta documento, que a
    * data não bate. Antes disso as únicas saídas eram concluir um desligamento
    * errado ou abandonar o card.
    *
-   * Devolver leva de volta para `Pendente Analista`, e não para o
-   * Operacional: o Operacional acompanha a demissão mas não decide nada nela,
-   * então um card devolvido para lá ficaria encalhado onde ninguém pode
-   * mexer. Ver o cabeçalho da migration 20260930000045.
+   * Devolver leva de volta para `Pendente Operacional` — a primeira porta,
+   * que desde 14/09/2026 é de novo o Operacional (era o analista entre 02/09
+   * e 14/09; ver o cabeçalho da migration 20260930000045).
    *
-   * Colunas próprias, e não `operacional_motivo`: aquela é do analista, e
+   * Colunas próprias, e não `operacional_motivo`: aquela é da etapa 1, e
    * escrever a devolução do RH lá faria o histórico mentir sobre quem recusou.
    */
   devolvido_por: string | null;
@@ -272,7 +277,7 @@ export interface SolicitacaoDemissao {
    * DEMISSÃO ↔ VAGA (11/09/2026). Toda demissão nova abre uma vaga de
    * Substituição de quem sai — a vaga aponta para cá (demissao_id) e o
    * banco devolve o id dela aqui. Sem a vaga, o pedido não sai de
-   * "Pendente Analista" (trigger demissao_exige_vaga); `vaga_obrigatoria`
+   * "Pendente Operacional" (trigger demissao_exige_vaga); `vaga_obrigatoria`
    * é false só nas solicitações anteriores à regra.
    */
   vaga_id?: number | null;
@@ -317,7 +322,7 @@ export const hojeISO = () => new Date().toISOString().slice(0, 10);
 
 // ── Devolução ────────────────────────────────────────────────────────
 
-/** As etapas que podem mandar a solicitação de volta para o analista. */
+/** As etapas que podem mandar a solicitação de volta para o Operacional. */
 export const ETAPAS_QUE_DEVOLVEM = ["sst", "rh"] as const;
 export type EtapaQueDevolve = (typeof ETAPAS_QUE_DEVOLVEM)[number];
 
@@ -359,11 +364,11 @@ export function podeDevolver(etapa: string, status: string): etapa is EtapaQueDe
 /**
  * O que fica gravado quando alguém devolve.
  *
- * O status volta para o começo da linha de decisão — `Pendente Analista` — e
- * os carimbos das etapas seguintes são LIMPOS: se o SST tinha marcado o ASO e
- * a solicitação voltou, aquele exame não vale mais como etapa cumprida. Sem
- * isso a solicitação voltaria ao analista já "meio aprovada", e ao seguir de
- * novo pularia o SST.
+ * O status volta para o começo da linha de decisão — `Pendente Operacional`
+ * — e os carimbos das etapas seguintes são LIMPOS: se o SST tinha marcado o
+ * ASO e a solicitação voltou, aquele exame não vale mais como etapa cumprida.
+ * Sem isso a solicitação voltaria ao Operacional já "meio aprovada", e ao
+ * seguir de novo pularia o SST.
  */
 export function patchDevolucao(
   etapa: EtapaQueDevolve,
@@ -371,12 +376,12 @@ export function patchDevolucao(
   motivo: string,
 ): Record<string, unknown> {
   return {
-    status: "Pendente Analista" as Status,
+    status: "Pendente Operacional" as Status,
     devolvido_por: quem,
     devolvido_em: new Date().toISOString(),
     devolvido_motivo: motivo.trim(),
     devolvido_de: etapa,
-    // A decisão do analista também sai: ele vai decidir de novo, e manter a
+    // A decisão do Operacional também sai: ele vai decidir de novo, e manter a
     // anterior faria a tela mostrar "aprovado por" numa solicitação pendente.
     operacional_por: null, operacional_em: null, operacional_motivo: null,
     // O que a etapa que devolveu (e as seguintes) tinham carimbado.

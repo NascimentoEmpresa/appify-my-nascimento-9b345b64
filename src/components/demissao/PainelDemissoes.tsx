@@ -4,6 +4,7 @@ import { useAuth } from "@/hooks/useAuth";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { FiltroContratos, passaNoFiltroContratos } from "@/components/solicitacoes/FiltroContratos";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Textarea } from "@/components/ui/textarea";
@@ -31,16 +32,22 @@ const sb = supabase as any;
 /**
  * Painel das solicitações de demissão — a mesma tela para as três etapas.
  *
- *   analista    → aprova (segue para o SST) ou reprova COM MOTIVO;
- *   sst         → marca o ASO demissional e manda para o RH;
- *   rh          → confirma, e aí sim a demissão fecha;
- *   operacional → SÓ ACOMPANHA. Abre o card, lê tudo, e não decide nada.
+ *   operacional → aprova (segue para o RH) ou reprova COM MOTIVO;
+ *   rh          → libera para o SST;
+ *   sst         → marca o ASO demissional, que fecha a demissão;
+ *   analista    → SÓ ACOMPANHA. Abre o card, lê tudo, e não decide nada.
  *
- * SST e RH também DEVOLVEM ao analista (02/09/2026). O erro na solicitação
+ * OPERACIONAL E ANALISTA TROCARAM DE PAPEL EM 14/09/2026: entre 02/09 e
+ * 14/09 o analista decidia e o Operacional olhava; o Pablo pediu o inverso
+ * ("o OPERACIONAL aprova e os analistas só veem"). O status voltou a ser
+ * "Pendente Operacional" (migration 20260930000103). O que está escrito
+ * abaixo sobre "o analista" naquela data vale hoje para o Operacional.
+ *
+ * SST e RH também DEVOLVEM à etapa 1 (02/09/2026). O erro na solicitação
  * costuma aparecer no fim — é o RH que percebe que o aviso está errado ou que
  * falta documento —, e até então as únicas saídas eram concluir um
  * desligamento errado ou abandonar o card. Devolver volta para `Pendente
- * Analista` com o motivo escrito, e desfaz o que as etapas seguintes já
+ * Operacional` com o motivo escrito, e desfaz o que as etapas seguintes já
  * tinham carimbado (ver `patchDevolucao`).
  *
  * Um componente só porque a lista, os filtros, o detalhe e os anexos são
@@ -57,25 +64,25 @@ const sb = supabase as any;
  * `STATUS_DE_ACAO` virou LISTA: o SST é a única etapa que age em mais de um
  * status, e comparar com um valor só deixava o segundo botão inalcançável.
  *
- * O OPERACIONAL virou leitura pura no mesmo dia. Ele não perdeu a tela: a
- * pergunta "e a demissão do fulano, andou?" continua sendo dele, só a decisão
- * é que passou para o analista. É o mesmo desenho da Gestão Recrutamento.
+ * O ANALISTA é leitura pura desde 14/09/2026 (antes era o Operacional, ver
+ * acima). Ele não perdeu a tela: a pergunta "e a demissão do fulano, andou?"
+ * continua chegando nele, só a decisão é que voltou para o Operacional.
  */
 
 export type Etapa = "analista" | "operacional" | "rh" | "sst";
 
 /** Os status que cada etapa enxerga, na ordem em que fazem sentido na fila. */
 const TODOS_OS_STATUS = [
-  "Pendente Analista", "Pendente RH", "Pendente SST",
+  "Pendente Operacional", "Pendente RH", "Pendente SST",
   STATUS_SST_RECEBIDA, STATUS_SST_AGENDADO, STATUS_SST_ASO_VALIDO,
   "Concluída", "Reprovada", "Cancelada",
 ];
 
 const STATUS_DA_ETAPA: Record<Etapa, string[]> = {
-  analista: TODOS_OS_STATUS,
-  // O Operacional enxerga o mesmo que o analista de propósito: ele acompanha o
-  // fluxo inteiro. O que ele não tem é `STATUS_DE_ACAO`.
   operacional: TODOS_OS_STATUS,
+  // O analista enxerga o mesmo que o Operacional de propósito: ele acompanha
+  // o fluxo inteiro. O que ele não tem é `STATUS_DE_ACAO`.
+  analista: TODOS_OS_STATUS,
   // O SST é a última etapa: vê o que está chegando e o que ele já agendou.
   sst: ["Pendente SST", STATUS_SST_RECEBIDA, STATUS_SST_AGENDADO, STATUS_SST_ASO_VALIDO],
   // O RH continua vendo o que despachou — a pergunta que mais chega depois de
@@ -86,14 +93,14 @@ const STATUS_DA_ETAPA: Record<Etapa, string[]> = {
 /**
  * Os status em que a etapa TEM trabalho a fazer.
  *
- * Lista vazia no Operacional é o que torna a tela dele somente-leitura:
+ * Lista vazia no analista é o que torna a tela dele somente-leitura:
  * `podeAgir` pergunta se o status está aqui, e em lista vazia nunca está.
  *
  * Só o SST tem dois: ele recebe a solicitação e, depois, agenda o ASO.
  */
 const STATUS_DE_ACAO: Record<Etapa, string[]> = {
-  analista: ["Pendente Analista"],
-  operacional: [],
+  operacional: ["Pendente Operacional"],
+  analista: [],
   sst: ["Pendente SST", STATUS_SST_RECEBIDA],
   rh: ["Pendente RH"],
 };
@@ -122,6 +129,8 @@ export function PainelDemissoes({ etapa }: { etapa: Etapa }) {
   const [carregando, setCarregando] = useState(true);
   const [busca, setBusca] = useState("");
   const [fStatus, setFStatus] = useState("");
+  // Filtros · Contratos (14/09/2026): o mesmo dropdown do Recrutamento.
+  const [fContratos, setFContratos] = useState<string[]>([]);
   const [aberta, setAberta] = useState<SolicitacaoDemissao | null>(null);
 
   const statusVisiveis = STATUS_DA_ETAPA[etapa];
@@ -145,11 +154,12 @@ export function PainelDemissoes({ etapa }: { etapa: Etapa }) {
     const q = busca.trim().toLowerCase();
     return linhas.filter((s) => {
       if (fStatus && s.status !== fStatus) return false;
+      if (!passaNoFiltroContratos(s, "contrato", fContratos)) return false;
       if (!q) return true;
       return [s.colaborador_nome, s.solicitante_nome, s.contrato, s.colaborador_posto, String(s.id)]
         .some((v) => String(v ?? "").toLowerCase().includes(q));
     });
-  }, [linhas, busca, fStatus]);
+  }, [linhas, busca, fStatus, fContratos]);
 
   const contar = (status: string) => linhas.filter((s) => s.status === status).length;
 
@@ -175,7 +185,7 @@ export function PainelDemissoes({ etapa }: { etapa: Etapa }) {
 
   return (
     <>
-      {/* 5 cartões para quem vê o fluxo inteiro (analista e Operacional), 3 no
+      {/* 5 cartões para quem vê o fluxo inteiro (Operacional e analista), 3 no
           SST e 2 no RH — o grid acompanha em vez de espremer todo mundo em
           quatro colunas fixas, que deixavam o RH com dois cartões perdidos. */}
       <div className={cn("mb-5 grid gap-3 sm:grid-cols-2",
@@ -183,8 +193,8 @@ export function PainelDemissoes({ etapa }: { etapa: Etapa }) {
         : etapa === "sst" || etapa === "rh" ? "lg:grid-cols-3" : "")}>
         {etapa === "analista" || etapa === "operacional" ? (
           <>
-            <Kpi titulo={etapa === "analista" ? "Aguardando você" : "Com o analista"}
-                 valor={contar("Pendente Analista")} icone={Clock} cor="bg-yellow-100 text-yellow-700" />
+            <Kpi titulo={etapa === "operacional" ? "Aguardando você" : "Com o Operacional"}
+                 valor={contar("Pendente Operacional")} icone={Clock} cor="bg-yellow-100 text-yellow-700" />
             <Kpi titulo="No RH" valor={contar("Pendente RH")} icone={FileText} cor="bg-purple-100 text-purple-700" />
             {/* "No SST" soma os dois status da etapa: para quem acompanha de
                 fora, recebida e a agendar são o mesmo lugar da fila. */}
@@ -215,6 +225,7 @@ export function PainelDemissoes({ etapa }: { etapa: Etapa }) {
         <CardHeader className="gap-3 sm:flex-row sm:items-center sm:justify-between">
           <CardTitle className="text-base">Solicitações</CardTitle>
           <div className="flex flex-wrap items-center gap-2">
+            <FiltroContratos linhas={linhas} campo="contrato" selecionados={fContratos} onChange={setFContratos} />
             <div className="relative">
               <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
               <Input className="w-56 pl-8" placeholder="Colaborador, solicitante, contrato…"
@@ -270,7 +281,7 @@ export function PainelDemissoes({ etapa }: { etapa: Etapa }) {
                         <div className="flex flex-wrap items-center gap-1">
                           <Badge variant="outline" className={corDoStatus(s.status)}>{s.status}</Badge>
                           {/* Um card devolvido está no MESMO status de um que
-                              nunca saiu do analista. Sem o selo, os dois se
+                              nunca saiu do Operacional. Sem o selo, os dois se
                               parecem na lista e o retrabalho some no meio. */}
                           {s.devolvido_em && (
                             <Badge variant="outline" className="border-amber-300 bg-amber-100 text-amber-800">
@@ -354,8 +365,8 @@ function DetalheSolicitacao({ solicitacao, etapa, quemSou, onFechar, onDecidir }
     window.open(data.signedUrl, "_blank", "noopener");
   };
 
-  // O ANALISTA é a primeira porta. As colunas continuam `operacional_*` — ver
-  // a nota em SolicitacaoDemissao: o dono mudou, o nome da coluna não.
+  // O OPERACIONAL é a primeira porta (de novo, desde 14/09/2026) — as
+  // colunas `operacional_*` voltaram a bater com quem decide.
   const aprovar = async () => {
     setSalvando(true);
     await onDecidir(s, {
@@ -406,7 +417,7 @@ function DetalheSolicitacao({ solicitacao, etapa, quemSou, onFechar, onDecidir }
   };
 
   /**
-   * Devolve ao analista, com o motivo escrito.
+   * Devolve ao Operacional, com o motivo escrito.
    *
    * É o "reprovar" do SST e do RH: a solicitação volta para a primeira porta
    * em vez de ser concluída errada ou abandonada. `patchDevolucao` limpa os
@@ -414,14 +425,14 @@ function DetalheSolicitacao({ solicitacao, etapa, quemSou, onFechar, onDecidir }
    */
   const devolver = async () => {
     if (motivoDevolucao.trim().length < MOTIVO_DEVOLUCAO_MIN) {
-      toast.error(`Escreva o que precisa ser corrigido (mín. ${MOTIVO_DEVOLUCAO_MIN} caracteres) — é o que o analista vai ler.`);
+      toast.error(`Escreva o que precisa ser corrigido (mín. ${MOTIVO_DEVOLUCAO_MIN} caracteres) — é o que o Operacional vai ler.`);
       return;
     }
     setSalvando(true);
     await onDecidir(
       s,
       patchDevolucao(etapa as EtapaQueDevolve, quemSou, motivoDevolucao),
-      `Solicitação #${s.id} devolvida ao analista.`,
+      `Solicitação #${s.id} devolvida ao Operacional.`,
     );
     setSalvando(false);
   };
@@ -555,7 +566,7 @@ function DetalheSolicitacao({ solicitacao, etapa, quemSou, onFechar, onDecidir }
 
         {/* A devolução vem PRIMEIRO no detalhe, antes de qualquer campo: é a
             única coisa que importa num card que voltou, e enterrá-la no meio
-            faria o analista reaprovar o mesmo erro. */}
+            faria o Operacional reaprovar o mesmo erro. */}
         {s.devolvido_em && (
           <div className="space-y-1 rounded-lg border border-amber-300 bg-amber-50 p-4 text-sm text-amber-900">
             <p className="flex items-center gap-2 font-semibold">
@@ -565,22 +576,22 @@ function DetalheSolicitacao({ solicitacao, etapa, quemSou, onFechar, onDecidir }
           </div>
         )}
 
-        {/* O Operacional acompanha, não decide. Dizer isso é melhor do que
+        {/* O analista acompanha, não decide. Dizer isso é melhor do que
             simplesmente não desenhar botão nenhum: sem a frase, quem abria o
             card ficava procurando onde clicar. */}
-        {etapa === "operacional" && (
+        {etapa === "analista" && (
           <div className="flex items-start gap-2 rounded-lg border bg-muted/40 p-4 text-sm text-muted-foreground">
             <Eye className="mt-0.5 h-4 w-4 shrink-0" />
             <span>
               Esta tela é de <strong>acompanhamento</strong>. Quem aprova a demissão é o
-              analista, em Licitações › Analistas Validações. Aqui você vê o andamento
-              completo e a conversa da solicitação.
+              Operacional, em Operacional › Solicitações de Demissão. Aqui você vê o
+              andamento completo e a conversa da solicitação.
             </span>
           </div>
         )}
 
         {/* Ações da etapa */}
-        {podeAgir && etapa === "analista" && (
+        {podeAgir && etapa === "operacional" && (
           <div className="space-y-3 rounded-lg border border-primary/30 bg-primary/5 p-4">
             <h3 className="text-sm font-semibold">Sua decisão</h3>
             <div>
@@ -707,7 +718,11 @@ function DetalheSolicitacao({ solicitacao, etapa, quemSou, onFechar, onDecidir }
                 aqui <strong>conclui</strong> a demissão sem agendar nada — a observação acima, se
                 escrita, vai junto.
               </p>
-              <Button variant="outline" className="border-emerald-400 bg-white text-emerald-800 hover:bg-emerald-100"
+              {/* Verde sólido, e não outline: é uma ação de CONCLUIR, do mesmo
+                  peso do "Agendamento concluído" logo acima — só que a que
+                  fecha sem exame. Botão apagado passava a ideia de opção
+                  secundária, quando é uma das duas saídas do passo. */}
+              <Button className="bg-emerald-600 text-white hover:bg-emerald-700"
                 onClick={marcarASOValido} disabled={salvando}>
                 <CheckCircle2 className="mr-2 h-4 w-4" /> ASO válido — concluir sem exame
               </Button>
@@ -715,16 +730,16 @@ function DetalheSolicitacao({ solicitacao, etapa, quemSou, onFechar, onDecidir }
           </div>
         )}
 
-        {/* DEVOLVER AO ANALISTA — o "reprovar" do SST e do RH.
+        {/* DEVOLVER AO OPERACIONAL — o "reprovar" do SST e do RH.
             Fica fora dos blocos de cada etapa porque é a mesma ação nas duas,
             e recolhido por padrão: devolver é a exceção, não o caminho. */}
         {podeDevolver(etapa, s.status) && (
           <div className="space-y-3 rounded-lg border border-destructive/30 bg-destructive/5 p-4">
             <h3 className="flex items-center gap-2 text-sm font-semibold">
-              <Undo2 className="h-4 w-4" /> Devolver ao analista
+              <Undo2 className="h-4 w-4" /> Devolver ao Operacional
             </h3>
             <p className="text-sm text-muted-foreground">
-              Use quando a solicitação vier com erro. Ela volta para a fila do analista com o que
+              Use quando a solicitação vier com erro. Ela volta para a fila do Operacional com o que
               você escrever aqui, e o que já tinha sido carimbado nas etapas seguintes é desfeito —
               quando voltar, passa pelo RH e pelo SST de novo.
             </p>
@@ -742,7 +757,7 @@ function DetalheSolicitacao({ solicitacao, etapa, quemSou, onFechar, onDecidir }
             </div>
             {!devolvendo ? (
               <Button variant="outline" onClick={() => setDevolvendo(true)} disabled={salvando}>
-                <Undo2 className="mr-2 h-4 w-4" /> Devolver ao analista
+                <Undo2 className="mr-2 h-4 w-4" /> Devolver ao Operacional
               </Button>
             ) : (
               <div className="flex flex-wrap items-center gap-2">

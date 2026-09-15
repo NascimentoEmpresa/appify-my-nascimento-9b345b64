@@ -10,11 +10,13 @@ import {
   erroDaRecomendacao, recomendacaoParaBanco, cpfValido, soDigitos, maskCpf,
   avaliarPrazo, dataMinimaVaga,
   cargoExigeCnh, aplicarReqCnh, REQ_CNH_TEXTO, MIN_DIAS_UTEIS, fmtBr,
-  rotuloReferencia, ajudaReferencia, mostraNomeReferencia, contratoDoEmpregado,
+  rotuloReferencia, ajudaReferencia, mostraNomeReferencia, contratoDoEmpregado, rotuloContrato,
   SALARIO_MASCARA, substituidosComVagaViva, avisoSubstituidoPreso,
   podeVagaAdministrativa,
 } from "@/lib/recrutamento/vagaRegras";
 import { maskFone } from "@/lib/telefone";
+import { solicitacaoEmAberto, TITULO_DUPLICIDADE, type SolicitacaoEmAberto } from "@/lib/solicitacoes/duplicidade";
+import { buscarCustoDoPosto, insalubridadeDoCusto, beneficiosDoCusto, notaDoCusto, type CustoPosto } from "@/lib/recrutamento/custoPosto";
 
 // ── Helpers ────────────────────────────────────────────────────────
 function fmtDt(s?: string) {
@@ -200,6 +202,10 @@ export default function MinhasSolicitacoes({ abrir }: { abrir?: SolicitacaoInici
   // Modal férias
   const [modalFerias, setModalFerias] = useState(false);
   const [ferias, setFerias] = useState({ ...FERIAS_RESET });
+  // Saída com menos de 30 dias: até 14/09/2026 a tela barrava; agora deixa
+  // passar como EXCEÇÃO, mas só depois que a pessoa confirma no card
+  // (Cancelar / Solicitar mesmo assim) sabendo que pode ser recusada.
+  const [feriasExc, setFeriasExc] = useState(false);
 
   // Modal advertência
   const [modalAdv, setModalAdv] = useState(false);
@@ -246,7 +252,7 @@ export default function MinhasSolicitacoes({ abrir }: { abrir?: SolicitacaoInici
     if (vg.error) vg = await vagaQuery("id, cargo, contrato, status, created_at, nome_substituido, quantidade_vagas, motivo_vaga, status_changed_at");
     if (vg.error) vg = await vagaQuery("id, cargo, contrato, status, created_at, nome_substituido, quantidade_vagas, motivo_vaga");
 
-    const fr = await (supabase as any).from("SISTEMA_SOLICITACOES_FERIAS").select("id, colaborador_nome, status, criado_em").eq("solicitante_email", email).order("criado_em", { ascending: false }).limit(30);
+    const fr = await (supabase as any).from("SISTEMA_SOLICITACOES_FERIAS").select("id, colaborador_nome, status, criado_em, excecao").eq("solicitante_email", email).order("criado_em", { ascending: false }).limit(30);
     const ad = await (supabase as any).from("SISTEMA_SOLICITACOES_ADVERTENCIA").select("id, colaborador_nome, tipo_advertencia, status, created_at, status_changed_at, excecao").eq("solicitante_email", email).order("created_at", { ascending: false }).limit(30);
     // Demissão morava só na tela dedicada: quem pedia não a via no histórico,
     // e por isso não tinha como acompanhar o andamento junto do resto.
@@ -282,7 +288,7 @@ export default function MinhasSolicitacoes({ abrir }: { abrir?: SolicitacaoInici
         dataInicio: r.data_inicio_prevista || "", grau: r.grau_urgencia || "",
         alteracoes: Array.isArray(r.data_inicio_alteracoes) ? r.data_inicio_alteracoes : [],
       })),
-      ...(fr.data ?? []).map((r: any) => ({ tipo: "Férias", icon: "📅", id: r.id, titulo: `Férias — ${r.colaborador_nome || ""}`, status: r.status, data: r.criado_em, statusDesde: r.criado_em })),
+      ...(fr.data ?? []).map((r: any) => ({ tipo: "Férias", icon: "📅", id: r.id, titulo: `Férias — ${r.colaborador_nome || ""}`, status: r.status, data: r.criado_em, statusDesde: r.criado_em, excecao: !!r.excecao })),
       ...(ad.data ?? []).map((r: any) => ({ tipo: "Advertência", icon: "⚠️", id: r.id, titulo: `Advertência ${r.tipo_advertencia || ""} — ${r.colaborador_nome || ""}`, status: r.status, data: r.created_at, statusDesde: r.status_changed_at || r.created_at, excecao: r.excecao })),
       ...(tf.data ?? []).map((r: any) => ({
         tipo: "Mudança de Função", icon: "🔀", id: r.id,
@@ -363,30 +369,103 @@ export default function MinhasSolicitacoes({ abrir }: { abrir?: SolicitacaoInici
   // lista, não só digitada.
   const [substituidoId, setSubstituidoId] = useState<number | null>(null);
 
+  // Insalubridade e benefícios vêm da Planilha de Custo (14/09/2026): o
+  // encarregado não preenche nem edita — escolheu o colaborador, a RPC acha o
+  // posto no contrato e os campos aparecem preenchidos. `custoNota` é a linha
+  // de origem embaixo dos campos ("da planilha, posto X" / "sem planilha").
+  const [custoPosto, setCustoPosto] = useState<CustoPosto | null>(null);
+  const [custoNota, setCustoNota] = useState("");
+  const [custoBuscando, setCustoBuscando] = useState(false);
+
+  // Substituição anda junto com a demissão de quem sai: o banco recusa a
+  // vaga sem `demissao_id` (trigger rec_vaga_exige_demissao). Em vez de
+  // deixar a pessoa preencher três etapas pra tomar o erro no final, a
+  // busca roda assim que o colaborador é escolhido — achou, vincula sozinho;
+  // não achou, abre o card no meio da tela (OK / Solicitar demissão).
+  const [demissaoId, setDemissaoId] = useState<number | null>(null);
+  const [demissaoBusca, setDemissaoBusca] = useState<"ocioso" | "buscando" | "achou" | "nenhuma">("ocioso");
+  const [avisoDemissao, setAvisoDemissao] = useState(false);
+
+  // "Este colaborador já tem solicitação de X": o banco responde na escolha
+  // (solicitacao_em_aberto) e o card no meio da tela barra antes de a pessoa
+  // preencher o resto. O trigger recusaria o INSERT de qualquer jeito.
+  const [bloqueio, setBloqueio] = useState<SolicitacaoEmAberto | null>(null);
+
+  useEffect(() => {
+    if (!modalVaga || !ehSubstituicao(vaga.motivo_vaga) || !substituidoId) {
+      setDemissaoId(null); setDemissaoBusca("ocioso"); setAvisoDemissao(false); return;
+    }
+    let vivo = true;
+    setDemissaoBusca("buscando");
+    (async () => {
+      const { data, error } = await (supabase as any)
+        .from("SISTEMA_SOLICITACOES_DEMISSAO")
+        .select("id, status, vaga_id")
+        .eq("colaborador_id", substituidoId)
+        .not("status", "in", '("Reprovada","Cancelada")')
+        // Sem filtrar vaga_id: a demissão pode apontar para uma vaga que
+        // foi reprovada/cancelada, e aí a pessoa PODE ser reposta de novo.
+        // Quem trava quem já está numa vaga viva é `presos`.
+        .order("criado_em", { ascending: false })
+        .limit(1);
+      if (!vivo) return;
+      const d = !error && data?.[0];
+      setDemissaoId(d ? Number(d.id) : null);
+      setDemissaoBusca(d ? "achou" : "nenhuma");
+      if (!d) setAvisoDemissao(true);
+    })();
+    return () => { vivo = false; };
+  }, [modalVaga, vaga.motivo_vaga, substituidoId]);
+
+  /** Vai solicitar a demissão de quem foi escolhido; a vaga abre a partir dela. */
+  const irSolicitarDemissao = () => {
+    const id = substituidoId;
+    setAvisoDemissao(false); setModalVaga(false);
+    nav(`/app/encarregados/solicitar-demissao?colaborador=${id}`);
+  };
+
   const selecionarEmpregado = (emp: any) => {
     const jaTem = ehSubstituicao(vaga.motivo_vaga) ? presos.get(Number(emp.ID)) : undefined;
     if (jaTem) { toast(avisoSubstituidoPreso(jaTem), "err"); return; }
     const contratoMatch = contratoDoEmpregado(contratosFull, emp);
-    const insal = parseFloat(String(emp["% Insalubridade"] ?? "0").replace(",", ".")) || 0;
+    // Enquanto a planilha não responde, vale o cadastro do colaborador.
+    const insalCadastro = insalubridadeDoCusto(null, emp["% Insalubridade"]);
+    const contratoRotulo = contratoMatch ? rotuloContrato(contratoMatch) : "";
+    const salarioTxt = emp["Valor Salário"] ? `R$ ${String(emp["Valor Salário"]).replace(".", ",")}` : "";
     setSubstituidoId(emp.ID ?? null);
     setVaga(v => ({
       ...v,
       // Nos outros motivos o escolhido é só o molde: o nome não entra na vaga.
       nome_substituido: mostraNomeReferencia(v.motivo_vaga) ? emp.Nome : "",
       cargo: emp["Título do Cargo"] ?? "",
-      salario: emp["Valor Salário"] ? `R$ ${String(emp["Valor Salário"]).replace(".", ",")}` : "",
-      insalubridade_recebe: insal > 0 ? "Sim" : "Não",
-      insalubridade_quanto: insal > 0 ? `${emp["% Insalubridade"]}%` : "",
+      salario: salarioTxt,
+      insalubridade_recebe: insalCadastro.recebe,
+      insalubridade_quanto: insalCadastro.quanto,
+      beneficios: "",
       escala: emp["Escala"] ? String(emp["Escala"]) : v.escala,
-      contrato: contratoMatch ? contratoMatch["NOME CONTRATO"] : v.contrato,
+      contrato: contratoRotulo || v.contrato,
     }));
     setEmpSearch(mostraNomeReferencia(vaga.motivo_vaga) ? emp.Nome : "");
     setShowEmpDrop(false);
+    setCustoPosto(null); setCustoNota(""); setCustoBuscando(true);
+    const idEscolhido = emp.ID;
+    buscarCustoDoPosto(supabase, {
+      contrato: contratoRotulo || emp["Nome Filial"] || "", cargo: emp["Título do Cargo"], salario: emp["Valor Salário"], cidade: vaga.cidade || null,
+    }).then(custo => {
+      // Trocou de pessoa no meio da busca: a resposta é de outro colaborador.
+      setSubstituidoId(atual => {
+        if (atual !== idEscolhido) return atual;
+        const insal = insalubridadeDoCusto(custo, emp["% Insalubridade"], emp["Valor Salário"]);
+        setVaga(v => ({ ...v, insalubridade_recebe: insal.recebe, insalubridade_quanto: insal.quanto, beneficios: beneficiosDoCusto(custo) }));
+        setCustoPosto(custo); setCustoNota(notaDoCusto(custo, insal.origem));
+        return atual;
+      });
+    }).finally(() => setCustoBuscando(false));
   };
 
   const abrirModalVaga = () => {
     setModalVaga(true); setVagaStep(1); setEmpSearch(""); setShowEmpDrop(false); setVaga({ ...VAGA_RESET });
-    setSubstituidoId(null);
+    setSubstituidoId(null); setCustoPosto(null); setCustoNota("");
     if (!contratosFull.length) carregarContratos();
   };
 
@@ -409,6 +488,13 @@ export default function MinhasSolicitacoes({ abrir }: { abrir?: SolicitacaoInici
 
       const jaTem = ehSubstituicao(vaga.motivo_vaga) && substituidoId ? presos.get(substituidoId) : undefined;
       if (jaTem) { toast(avisoSubstituidoPreso(jaTem), "err"); return false; }
+      // Sem a demissão de quem sai o banco recusa a vaga — o card já avisou
+      // na escolha; aqui só impede de seguir e mostra de novo.
+      if (ehSubstituicao(vaga.motivo_vaga) && !demissaoId) {
+        if (demissaoBusca === "buscando") toast("Ainda procurando a solicitação de demissão — aguarde um instante.", "err");
+        else setAvisoDemissao(true);
+        return false;
+      }
       if (!vaga.contrato) { toast("Selecione o contrato.", "err"); return false; }
       if (!vaga.cargo.trim()) { toast("Informe o cargo.", "err"); return false; }
     }
@@ -421,7 +507,6 @@ export default function MinhasSolicitacoes({ abrir }: { abrir?: SolicitacaoInici
       const erroRec = erroDaRecomendacao(vaga);
       if (erroRec) { toast(erroRec, "err"); return false; }
       if (!prazo.ok) { toast(prazo.erro ?? "Revise a data de início prevista.", "err"); return false; }
-      if (!vaga.req_obrigatorios.trim() && !cnhDoCargo) { toast("Informe os requisitos obrigatórios.", "err"); return false; }
     }
     return true;
   };
@@ -440,6 +525,7 @@ export default function MinhasSolicitacoes({ abrir }: { abrir?: SolicitacaoInici
       cnh_obrigatoria: !!cnhDoCargo,
       // Só a substituição grava o id: é ele que trava a pessoa numa vaga só.
       substituido_id: ehSubstituicao(vaga.motivo_vaga) ? substituidoId : null,
+      demissao_id: ehSubstituicao(vaga.motivo_vaga) ? demissaoId : null,
       administrativa: podeAdministrativa ? !!vaga.administrativa : false,
       // A etapa 1 do recrutamento mudou de dono em 02/09/2026: quem decide é o
       // ANALISTA. Nascer em "Pendente Operacional" deixava a vaga num status
@@ -451,7 +537,7 @@ export default function MinhasSolicitacoes({ abrir }: { abrir?: SolicitacaoInici
     let { error, data } = await (supabase as any).from("SISTEMA_RECRUTAMENTO").insert(payload).select("id").single();
     // Banco ainda sem as colunas novas: reenvia sem elas.
     if (error && /column|schema cache/i.test(error.message)) {
-      const { cnh_obrigatoria, substituido_id, administrativa, reserva_tecnica, tem_recomendacao, recomendacao_nome, recomendacao_cpf, recomendacao_whatsapp, ...semColunasNovas } = payload as any;
+      const { cnh_obrigatoria, substituido_id, demissao_id, administrativa, reserva_tecnica, tem_recomendacao, recomendacao_nome, recomendacao_cpf, recomendacao_whatsapp, ...semColunasNovas } = payload as any;
       ({ error, data } = await (supabase as any).from("SISTEMA_RECRUTAMENTO").insert(semColunasNovas).select("id").single());
     }
     if (error) { toast("Erro ao solicitar vaga: " + error.message, "err"); return; }
@@ -493,7 +579,10 @@ export default function MinhasSolicitacoes({ abrir }: { abrir?: SolicitacaoInici
   };
 
   // ── Férias ──────────────────────────────────────────────────────────
-  const selecionarColabFerias = (emp: any) => {
+  const selecionarColabFerias = async (emp: any) => {
+    setShowEmpDrop(false);
+    const dup = await solicitacaoEmAberto(supabase, "ferias", emp.ID ?? null);
+    if (dup) { setBloqueio(dup); setEmpSearch(""); setEmpregados([]); return; }
     setFerias(f => ({
       ...f,
       colaborador_id: emp.ID ?? null,
@@ -510,10 +599,17 @@ export default function MinhasSolicitacoes({ abrir }: { abrir?: SolicitacaoInici
     setModalFerias(true); setFerias({ ...FERIAS_RESET }); setEmpSearch(""); setShowEmpDrop(false); setEmpregados([]);
   };
 
+  const feriasForaDoPrazo = () => !!ferias.data_saida && ferias.data_saida < hojeMaisDias(30);
+
   const submitFerias = async () => {
     if (!ferias.colaborador_id) { toast("Selecione o colaborador.", "err"); return; }
     if (!ferias.data_saida) { toast("Informe a data de saída.", "err"); return; }
-    if (ferias.data_saida < hojeMaisDias(30)) { toast("A saída precisa de no mínimo 30 dias de antecedência.", "err"); return; }
+    if (ferias.data_saida < hojeMaisDias(0)) { toast("A data de saída não pode ficar no passado.", "err"); return; }
+    if (feriasForaDoPrazo()) { setFeriasExc(true); return; }  // card: Cancelar / Solicitar mesmo assim
+    await doSubmitFerias(false);
+  };
+
+  const doSubmitFerias = async (excecao: boolean) => {
     const dias = parseInt(ferias.dias_ferias) || 30;
     const vend = parseInt(ferias.dias_vendidos) || 0;
     const payload = {
@@ -523,21 +619,33 @@ export default function MinhasSolicitacoes({ abrir }: { abrir?: SolicitacaoInici
       colaborador_admissao: brToISO(ferias.colaborador_admissao),
       data_saida: ferias.data_saida, data_retorno: addDaysISO(ferias.data_saida, dias),
       dias_ferias: dias, dias_vendidos: vend, observacoes: ferias.observacoes.trim() || null, status: "Pendente",
+      excecao,
     };
-    const { error, data } = await (supabase as any).from("SISTEMA_SOLICITACOES_FERIAS").insert(payload).select("id").single();
+    let { error, data } = await (supabase as any).from("SISTEMA_SOLICITACOES_FERIAS").insert(payload).select("id").single();
+    // Banco ainda sem a coluna excecao (mig 20260930000101): reenvia sem ela.
+    if (error && /excecao/i.test(error.message)) {
+      const { excecao: _e, ...semExcecao } = payload as any;
+      ({ error, data } = await (supabase as any).from("SISTEMA_SOLICITACOES_FERIAS").insert(semExcecao).select("id").single());
+    }
     if (error) { toast("Erro ao solicitar férias: " + error.message, "err"); return; }
-    toast(`Férias solicitadas para ${ferias.colaborador_nome}! (#${data?.id})`, "ok");
+    setFeriasExc(false);
+    toast(excecao
+      ? `Férias solicitadas para ${ferias.colaborador_nome} como EXCEÇÃO (fora do prazo) — pode ser recusada. (#${data?.id})`
+      : `Férias solicitadas para ${ferias.colaborador_nome}! (#${data?.id})`, "ok");
     setModalFerias(false); setFerias({ ...FERIAS_RESET }); setEmpSearch(""); carregarMinhasSols();
   };
 
   // ── Advertência ─────────────────────────────────────────────────────
   const selecionarColabAdv = async (emp: any) => {
+    setShowEmpDrop(false);
+    const dup = await solicitacaoEmAberto(supabase, "advertencia", emp.ID ?? null);
+    if (dup) { setBloqueio(dup); setEmpSearch(""); setEmpregados([]); return; }
     const contratoMatch = contratoDoEmpregado(contratosFull, emp);
     setAdv(a => ({
       ...a,
       colaborador_id: emp.ID ?? null, colaborador_nome: emp.Nome ?? "", colaborador_cpf: emp.CPF ?? "",
       colaborador_cargo: emp["Título do Cargo"] ?? "", colaborador_filial: emp["Nome Filial"] ?? "",
-      contrato: contratoMatch ? contratoMatch["NOME CONTRATO"] : "",
+      contrato: contratoMatch ? rotuloContrato(contratoMatch) : "",
       contrato_id: contratoMatch ? (contratoMatch.id ?? null) : null,
     }));
     setEmpSearch(emp.Nome ?? ""); setShowEmpDrop(false);
@@ -939,6 +1047,25 @@ export default function MinhasSolicitacoes({ abrir }: { abrir?: SolicitacaoInici
                       ✓ Colaborador escolhido — cargo, contrato e escala já vieram do cadastro dele.
                     </div>
                   )}
+                  {/* Substituição: mostra a demissão vinculada; sem nenhuma, a
+                      nota fica aqui depois que a pessoa fecha o card no OK. */}
+                  {ehSubstituicao(vaga.motivo_vaga) && !!substituidoId && demissaoBusca === "buscando" && (
+                    <div style={{ marginTop: 6, fontSize: 11.5, color: "#94a3b8" }}>Procurando a solicitação de demissão…</div>
+                  )}
+                  {ehSubstituicao(vaga.motivo_vaga) && !!substituidoId && demissaoBusca === "achou" && !!demissaoId && (
+                    <div style={{ marginTop: 6, fontSize: 11.5, fontWeight: 700, color: "#0f3171", background: "#eef4ff", border: "1px solid #c7d7f5", borderRadius: 8, padding: "6px 9px" }}>
+                      🔗 Vinculada à solicitação de demissão #{demissaoId} — a vaga repõe essa saída.
+                    </div>
+                  )}
+                  {ehSubstituicao(vaga.motivo_vaga) && !!substituidoId && demissaoBusca === "nenhuma" && (
+                    <div style={{ marginTop: 6, fontSize: 11.5, fontWeight: 700, color: "#92400e", background: "#fffbeb", border: "1px solid #fde68a", borderRadius: 8, padding: "6px 9px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
+                      <span>⚠️ Sem solicitação de demissão para esta pessoa.</span>
+                      <button type="button" onClick={() => setAvisoDemissao(true)}
+                        style={{ padding: "4px 10px", borderRadius: 8, border: "1px solid #fcd34d", background: "#fff", color: "#92400e", fontSize: 11.5, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
+                        Ver aviso
+                      </button>
+                    </div>
+                  )}
                 </div>
               )}
               {/* Contrato e cargo vêm do cadastro do escolhido e ficam travados
@@ -1030,12 +1157,27 @@ export default function MinhasSolicitacoes({ abrir }: { abrir?: SolicitacaoInici
                     style={{ background: "#f1f5f9", color: "#475569", cursor: "not-allowed", letterSpacing: 2 }} />
                   <div style={{ marginTop: 4, fontSize: 11, color: "#94a3b8" }}>Visível só para o Operacional e o Recrutamento.</div>
                 </div>
-                <div className="ini-fg"><label>Insalubridade</label><select className="ini-fi" value={vaga.insalubridade_recebe} onChange={e => setVaga(v => ({ ...v, insalubridade_recebe: e.target.value }))}><option>Não</option><option>Sim</option></select></div>
+                {/* Insalubridade e benefícios vêm da Planilha de Custo do
+                    contrato (pelo colaborador escolhido). Só leitura: o
+                    encarregado não escolhe nem edita — ver custoPosto.ts. */}
+                <div className="ini-fg">
+                  <label>Insalubridade <span style={{ color: "#94a3b8", fontWeight: 600 }}>— da Planilha de Custo</span></label>
+                  <input className="ini-fi" readOnly
+                    value={custoBuscando ? "Consultando a planilha…" : vaga.insalubridade_recebe === "Sim" ? `Sim — ${vaga.insalubridade_quanto}` : substituidoId ? "Não" : ""}
+                    placeholder="Escolha o colaborador na etapa 1"
+                    style={{ background: "#f1f5f9", color: "#475569", cursor: "not-allowed" }} />
+                </div>
               </div>
-              {vaga.insalubridade_recebe === "Sim" && (
-                <div className="ini-fg"><label>Percentual de Insalubridade</label><input className="ini-fi" placeholder="Ex: 20%, 40%" value={vaga.insalubridade_quanto} onChange={e => setVaga(v => ({ ...v, insalubridade_quanto: e.target.value }))} /></div>
-              )}
-              <div className="ini-fg"><label>Benefícios</label><textarea className="ini-fi" rows={2} placeholder="VT, VR, Plano de Saúde..." value={vaga.beneficios} onChange={e => setVaga(v => ({ ...v, beneficios: e.target.value }))} /></div>
+              <div className="ini-fg">
+                <label>Benefícios <span style={{ color: "#94a3b8", fontWeight: 600 }}>— VT e VA do contrato</span></label>
+                <input className="ini-fi" readOnly
+                  value={custoBuscando ? "Consultando a planilha…" : vaga.beneficios}
+                  placeholder={substituidoId ? "Contrato sem Planilha de Custo — o Recrutamento completa" : "Escolha o colaborador na etapa 1"}
+                  style={{ background: "#f1f5f9", color: "#475569", cursor: "not-allowed" }} />
+                {custoNota && (
+                  <div style={{ marginTop: 4, fontSize: 11, color: custoPosto?.ambiguo ? "#92400e" : "#94a3b8" }}>{custoNota}</div>
+                )}
+              </div>
               {/* Local Exato / Posto saiu: o posto já vem do colaborador
                   escolhido na etapa 1. */}
               <div className="ini-fg">
@@ -1058,20 +1200,15 @@ export default function MinhasSolicitacoes({ abrir }: { abrir?: SolicitacaoInici
                 <div className="ini-fg"><label>Alta Rotatividade?</label><select className="ini-fi" value={vaga.alta_rotatividade} onChange={e => setVaga(v => ({ ...v, alta_rotatividade: e.target.value }))}><option>Não</option><option>Sim</option></select></div>
               </div>
               <PrazoAviso prazo={prazo} />
-              <div className="ini-fg">
-                <label>Requisitos Obrigatórios *</label>
-                {cnhDoCargo && (
-                  <div style={{ display: "flex", alignItems: "center", gap: 7, fontSize: 12, fontWeight: 700, color: "#b45309", background: "#fffbeb", border: "1px solid #fde68a", borderRadius: 8, padding: "7px 10px", marginBottom: 6 }}>
-                    <span>🚗</span><span>{REQ_CNH_TEXTO} <span style={{ fontWeight: 600, color: "#92400e" }}>(automático para {cnhDoCargo.toLowerCase()} — vai junto mesmo que você não escreva)</span></span>
-                  </div>
-                )}
-                <textarea className="ini-fi" rows={3} placeholder="Experiência comprovada, curso específico..." value={vaga.req_obrigatorios} onChange={e => setVaga(v => ({ ...v, req_obrigatorios: e.target.value }))} />
-              </div>
+              {/* Requisitos obrigatórios e experiência mínima SAÍRAM do
+                  formulário (14/09/2026): vão vir da licitação/planilha, não
+                  do encarregado. A CNH continua automática pelo cargo. */}
+              {cnhDoCargo && (
+                <div style={{ display: "flex", alignItems: "center", gap: 7, fontSize: 12, fontWeight: 700, color: "#b45309", background: "#fffbeb", border: "1px solid #fde68a", borderRadius: 8, padding: "7px 10px", marginBottom: 10 }}>
+                  <span>🚗</span><span>{REQ_CNH_TEXTO} <span style={{ fontWeight: 600, color: "#92400e" }}>(automático para {cnhDoCargo.toLowerCase()})</span></span>
+                </div>
+              )}
               <div className="ini-fg"><label>Requisitos Desejáveis</label><textarea className="ini-fi" rows={2} placeholder="Inglês básico, curso técnico..." value={vaga.req_desejaveis} onChange={e => setVaga(v => ({ ...v, req_desejaveis: e.target.value }))} /></div>
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-                <div className="ini-fg"><label>Experiência Mínima?</label><select className="ini-fi" value={vaga.exp_minima} onChange={e => setVaga(v => ({ ...v, exp_minima: e.target.value }))}><option>Não</option><option>Sim</option></select></div>
-                {vaga.exp_minima === "Sim" && (<div className="ini-fg"><label>Qual experiência?</label><input className="ini-fi" placeholder="Ex: 6 meses em limpeza" value={vaga.exp_minima_qual} onChange={e => setVaga(v => ({ ...v, exp_minima_qual: e.target.value }))} /></div>)}
-              </div>
                             {/* Indicação: quem abre a vaga muitas vezes JÁ tem alguém em mente, e
                   hoje isso chegava no Recrutamento por WhatsApp, solto. Dizendo
                   "Sim", os três dados vêm juntos — a regra está em
@@ -1146,7 +1283,13 @@ export default function MinhasSolicitacoes({ abrir }: { abrir?: SolicitacaoInici
               </div>
             )}
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-              <div className="ini-fg"><label>Data de Saída *</label><input className="ini-fi" type="date" min={hojeMaisDias(30)} value={ferias.data_saida} onChange={e => setFerias(f => ({ ...f, data_saida: e.target.value }))} /></div>
+              <div className="ini-fg"><label>Data de Saída *</label><input className="ini-fi" type="date" min={hojeMaisDias(0)} value={ferias.data_saida} onChange={e => setFerias(f => ({ ...f, data_saida: e.target.value }))} />
+                {feriasForaDoPrazo() && (
+                  <div style={{ marginTop: 6, fontSize: 11.5, fontWeight: 700, color: "#92400e", background: "#fffbeb", border: "1px solid #fde68a", borderRadius: 8, padding: "6px 9px" }}>
+                    ⚠️ Fora do prazo: menos de 30 dias de antecedência. Vai entrar como exceção e pode ser recusada.
+                  </div>
+                )}
+              </div>
               <div className="ini-fg"><label>Dias de Férias</label><select className="ini-fi" value={ferias.dias_ferias} onChange={e => setFerias(f => ({ ...f, dias_ferias: e.target.value }))}>{["30", "20", "15", "10"].map(o => <option key={o} value={o}>{o} dias</option>)}</select></div>
             </div>
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
@@ -1244,6 +1387,34 @@ export default function MinhasSolicitacoes({ abrir }: { abrir?: SolicitacaoInici
         </div>
       )}
 
+      {/* ── Card: Férias fora do prazo (saída a menos de 30 dias) ──
+          Não barra mais: avisa que vai entrar como exceção e pode ser
+          recusada, e a pessoa decide — Cancelar ou Solicitar mesmo assim. */}
+      {feriasExc && modalFerias && (
+        <div className="ini-modal-ov" style={{ zIndex: 800 }} onClick={() => setFeriasExc(false)}>
+          <div className="ini-modal" onClick={e => e.stopPropagation()} style={{ maxWidth: 480, textAlign: "center", padding: "28px 26px 22px" }}>
+            <div style={{ width: 56, height: 56, borderRadius: "50%", background: "#fef3c7", color: "#b45309", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 28, margin: "0 auto 14px" }}>⚠️</div>
+            <div style={{ fontSize: 17, fontWeight: 800, color: "#0f172a", marginBottom: 8 }}>Solicitação fora do prazo</div>
+            <div style={{ fontSize: 13, color: "#475569", lineHeight: 1.55, marginBottom: 6 }}>
+              A saída em <b>{fmtDt(ferias.data_saida)}</b> tem menos de <b>30 dias</b> de antecedência.
+            </div>
+            <div style={{ fontSize: 12.5, color: "#64748b", lineHeight: 1.55, marginBottom: 20 }}>
+              A solicitação vai para aprovação marcada como <b>exceção</b> e <b>pode ser recusada</b>. Deseja solicitar mesmo assim?
+            </div>
+            <div style={{ display: "flex", justifyContent: "center", gap: 10, flexWrap: "wrap" }}>
+              <button type="button" onClick={() => setFeriasExc(false)}
+                style={{ padding: "9px 22px", borderRadius: 10, border: "1px solid #e2e8f0", background: "#fff", color: "#475569", fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
+                Cancelar
+              </button>
+              <button type="button" onClick={() => doSubmitFerias(true)}
+                style={{ padding: "9px 22px", borderRadius: 10, border: "none", background: "#d97706", color: "#fff", fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
+                Solicitar mesmo assim
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* ── Modal Confirmação de Exceção (advertência fora do prazo de 3 dias) ── */}
       {advExc.open && (
         <div className="ini-modal-ov">
@@ -1254,6 +1425,50 @@ export default function MinhasSolicitacoes({ abrir }: { abrir?: SolicitacaoInici
             <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 8 }}>
               <button onClick={() => setAdvExc({ open: false, justificativa: "" })} style={{ padding: "7px 14px", borderRadius: 10, border: "1px solid #e2e8f0", background: "#fff", color: "#475569", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>Cancelar</button>
               <button onClick={confirmarExcecao} style={{ padding: "7px 14px", borderRadius: 10, border: "none", background: "#d97706", color: "#fff", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>Confirmar como Exceção</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Card: colaborador já está na fila (férias / advertência) ── */}
+      {bloqueio && (
+        <div className="ini-modal-ov" style={{ zIndex: 800 }} onClick={() => setBloqueio(null)}>
+          <div className="ini-modal" onClick={e => e.stopPropagation()} style={{ maxWidth: 480, textAlign: "center", padding: "28px 26px 22px" }}>
+            <div style={{ width: 56, height: 56, borderRadius: "50%", background: "#fee2e2", color: "#b91c1c", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 28, margin: "0 auto 14px" }}>🚫</div>
+            <div style={{ fontSize: 17, fontWeight: 800, color: "#0f172a", marginBottom: 8 }}>{TITULO_DUPLICIDADE[bloqueio.tipo]}</div>
+            <div style={{ fontSize: 13, color: "#475569", lineHeight: 1.55, marginBottom: 20 }}>{bloqueio.mensagem}</div>
+            <button type="button" onClick={() => setBloqueio(null)}
+              style={{ padding: "9px 26px", borderRadius: 10, border: "none", background: "#0f3171", color: "#fff", fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
+              OK
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* ── Card: Substituição sem solicitação de demissão ──
+          Fica por cima do modal da vaga (z maior) e exige uma escolha: OK
+          (fecha, a pessoa troca o colaborador ou o motivo) ou ir solicitar a
+          demissão — a vaga abre sozinha a partir dela. */}
+      {avisoDemissao && modalVaga && (
+        <div className="ini-modal-ov" style={{ zIndex: 800 }} onClick={() => setAvisoDemissao(false)}>
+          <div className="ini-modal" onClick={e => e.stopPropagation()} style={{ maxWidth: 480, textAlign: "center", padding: "28px 26px 22px" }}>
+            <div style={{ width: 56, height: 56, borderRadius: "50%", background: "#fef3c7", color: "#b45309", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 28, margin: "0 auto 14px" }}>⚠️</div>
+            <div style={{ fontSize: 17, fontWeight: 800, color: "#0f172a", marginBottom: 8 }}>Falta a solicitação de demissão</div>
+            <div style={{ fontSize: 13, color: "#475569", lineHeight: 1.55, marginBottom: 6 }}>
+              <b>{vaga.nome_substituido || "Este colaborador"}</b> ainda não tem solicitação de demissão em andamento.
+            </div>
+            <div style={{ fontSize: 12.5, color: "#64748b", lineHeight: 1.55, marginBottom: 20 }}>
+              Vaga de <b>Substituição</b> é aberta a partir da demissão de quem sai. Solicite a demissão primeiro — ao enviar, a vaga abre sozinha, já preenchida.
+            </div>
+            <div style={{ display: "flex", justifyContent: "center", gap: 10, flexWrap: "wrap" }}>
+              <button type="button" onClick={() => setAvisoDemissao(false)}
+                style={{ padding: "9px 22px", borderRadius: 10, border: "1px solid #e2e8f0", background: "#fff", color: "#475569", fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
+                OK
+              </button>
+              <button type="button" onClick={irSolicitarDemissao}
+                style={{ padding: "9px 22px", borderRadius: 10, border: "none", background: "#0f3171", color: "#fff", fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
+                Solicitar demissão desse colaborador →
+              </button>
             </div>
           </div>
         </div>

@@ -21626,3 +21626,1251 @@ NOTIFY pgrst, 'reload schema';
 -- DELETE FROM public.app_menu_acao WHERE menu_codigo IN ('recrutamento_solicitacao_editar','recrutamento_solicitacao_excluir');
 -- DELETE FROM public.app_menu       WHERE codigo      IN ('recrutamento_solicitacao_editar','recrutamento_solicitacao_excluir');
 -- NOTIFY pgrst, 'reload schema';
+
+-- ===== 20260930000101_ferias_excecao_prazo =====
+-- =========================================================================
+-- RH — Férias: exceção de prazo (saída com menos de 30 dias)
+--
+-- Até 14/09/2026 a tela barrava a solicitação com saída a menos de 30 dias
+-- da data de hoje. Agora ela deixa passar, mas avisa que está FORA DO PRAZO
+-- e que pode ser recusada; quem confirma ("Solicitar mesmo assim") manda a
+-- solicitação marcada como exceção, pra quem aprova ver de cara.
+--
+--  excecao — true quando a saída foi pedida com menos de 30 dias de
+--            antecedência e o solicitante confirmou mesmo assim.
+--
+-- Idempotente.
+-- =========================================================================
+
+ALTER TABLE public."SISTEMA_SOLICITACOES_FERIAS" ADD COLUMN IF NOT EXISTS excecao boolean NOT NULL DEFAULT false;
+
+NOTIFY pgrst, 'reload schema';
+
+-- ROLLBACK
+-- ALTER TABLE public."SISTEMA_SOLICITACOES_FERIAS" DROP COLUMN IF EXISTS excecao;
+-- NOTIFY pgrst, 'reload schema';
+
+-- ===== 20260930000102_postos_do_contrato_para_demissao =====
+-- =========================================================================
+-- Catálogo: postos do contrato também para quem solicita demissão/vaga
+--
+-- O SINTOMA (14/09/2026)
+--   Em Solicitar Demissão o campo "Posto" era travado com o que o Senior
+--   traz em "Organograma"/"Descrição do Local" — vazio ou velho em muita
+--   gente — e não havia como escolher, embora os postos existam no catálogo
+--   de Suprimentos (contratos → sup_posto, derivados da Planilha de Custo).
+--
+-- A CORREÇÃO
+--   A tela passa a listar os postos pelo mesmo caminho da vaga
+--   (sup_cat_postos_do_contrato). Só que a RPC exigia 'sup_catalogo' +
+--   visualizar, que o encarregado não tem — mesmo com a policy de leitura de
+--   sup_posto já aberta para quem solicita vaga desde a 20260930000049.
+--   Aqui o gate da RPC ganha os mesmos OR da policy, mais as telas de
+--   demissão do encarregado. O corpo é o da 20260930000081, sem mudança.
+--
+-- Idempotente. Aplicar no banco do app.
+-- =========================================================================
+
+CREATE OR REPLACE FUNCTION public.sup_cat_postos_do_contrato(p_contrato_id uuid)
+RETURNS TABLE (
+  id          uuid,
+  contrato_id uuid,
+  nome        text,
+  ativo       boolean,
+  aprovado    boolean,
+  na_planilha boolean
+)
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp AS $fn$
+-- Os parâmetros de saída do RETURNS TABLE (id, nome, ativo, aprovado) têm o
+-- mesmo nome de colunas de sup_posto que aparecem no INSERT e no ON CONFLICT
+-- abaixo. Sem este pragma, plpgsql pode resolver o nome para a variável e
+-- recusar a instrução por ambiguidade. Nenhuma dessas variáveis é lida aqui
+-- (a devolução é por RETURN QUERY), então preferir a coluna é sempre o certo.
+#variable_conflict use_column
+DECLARE
+  v_empresa   uuid;
+  v_contrato  text;
+  v_nomes     text[];   -- nomes de posto como a planilha escreveu
+  v_norm      text[];   -- os mesmos, normalizados, para casar sem acento/caixa
+BEGIN
+  IF NOT (public.can_access(auth.uid(), 'sup_catalogo', 'visualizar')
+          OR public.can_access(auth.uid(), 'central_servicos_solicitar_vaga', 'visualizar')
+          OR public.can_access(auth.uid(), 'recrutamento_gestao', 'visualizar')
+          OR public.can_access(auth.uid(), 'encarregados_solicitar_demissao', 'visualizar')
+          OR public.can_access(auth.uid(), 'encarregados_minhas_solicitacoes', 'visualizar')) THEN
+    RAISE EXCEPTION 'Sem permissão para o Catálogo de Materiais.';
+  END IF;
+
+  SELECT c.empresa_id, c.nome INTO v_empresa, v_contrato
+    FROM public.contratos c WHERE c.id = p_contrato_id;
+  IF v_empresa IS NULL THEN
+    RETURN;
+  END IF;
+
+  -- Os postos que a planilha declara para este contrato.
+  --
+  -- O casamento aceita contrato_id OU nome porque planilha_custo.contrato_id
+  -- foi preenchido por um UPDATE de uma vez (20260714000002) e não há
+  -- trigger que o mantenha: linha importada depois disso pode ter o FK
+  -- nulo e só o nome do contrato em texto.
+  SELECT array_agg(p.nome), array_agg(public.sup_norm_nome(p.nome))
+    INTO v_nomes, v_norm
+    FROM (
+      SELECT DISTINCT btrim(pc.posto) AS nome
+        FROM public.planilha_custo pc
+       WHERE btrim(coalesce(pc.posto, '')) <> ''
+         AND (pc.contrato_id = p_contrato_id
+              OR (pc.contrato_id IS NULL
+                  AND pc.empresa_id = v_empresa
+                  AND public.sup_norm_nome(pc.contrato) = public.sup_norm_nome(v_contrato)))
+    ) p;
+
+  v_nomes := coalesce(v_nomes, ARRAY[]::text[]);
+  v_norm  := coalesce(v_norm,  ARRAY[]::text[]);
+
+  -- (a) novos
+  INSERT INTO public.sup_posto (empresa_id, contrato_id, nome, ativo, aprovado)
+  SELECT v_empresa, p_contrato_id, n, true, true
+    FROM unnest(v_nomes) AS n
+   WHERE NOT EXISTS (
+     SELECT 1 FROM public.sup_posto sp
+      WHERE sp.contrato_id = p_contrato_id
+        AND public.sup_norm_nome(sp.nome) = public.sup_norm_nome(n))
+  ON CONFLICT (contrato_id, nome) DO NOTHING;
+
+  -- (b) reativados
+  UPDATE public.sup_posto sp
+     SET ativo = true, aprovado = true, updated_at = now()
+   WHERE sp.contrato_id = p_contrato_id
+     AND (sp.ativo IS FALSE OR sp.aprovado IS FALSE)
+     AND public.sup_norm_nome(sp.nome) = ANY (v_norm);
+
+  -- (c) saiu da planilha e não tem função -- sai da lista
+  IF array_length(v_norm, 1) > 0 THEN
+    UPDATE public.sup_posto sp
+       SET ativo = false, updated_at = now()
+     WHERE sp.contrato_id = p_contrato_id
+       AND sp.ativo
+       AND NOT (public.sup_norm_nome(sp.nome) = ANY (v_norm))
+       AND NOT EXISTS (
+         SELECT 1 FROM public.sup_funcao f
+          WHERE f.posto_id = sp.id AND f.ativo);
+  END IF;
+
+  RETURN QUERY
+  SELECT sp.id, sp.contrato_id, sp.nome, sp.ativo, sp.aprovado,
+         (public.sup_norm_nome(sp.nome) = ANY (v_norm)) AS na_planilha
+    FROM public.sup_posto sp
+   WHERE sp.contrato_id = p_contrato_id
+     AND sp.ativo
+   ORDER BY sp.nome;
+END $fn$;
+
+REVOKE ALL ON FUNCTION public.sup_cat_postos_do_contrato(uuid) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.sup_cat_postos_do_contrato(uuid) TO authenticated;
+
+NOTIFY pgrst, 'reload schema';
+
+-- ROLLBACK
+--   Reaplicar o bloco CREATE OR REPLACE FUNCTION public.sup_cat_postos_do_contrato
+--   da 20260930000081_supply_catalogo_posto_da_planilha.sql (gate só com
+--   'sup_catalogo') e NOTIFY pgrst, 'reload schema';
+
+-- ===== 20260930000103_demissao_etapa1_volta_ao_operacional =====
+-- =========================================================================
+-- Demissão: a etapa 1 VOLTA para o Operacional; os analistas só acompanham
+--
+-- Pedido do Pablo em 14/09/2026: "agora o OPERACIONAL aprova as solicitações
+-- de demissão, e os analistas só veem. Antes era assim: Operacional só
+-- visualizava e analistas aprovavam."
+--
+-- É o inverso do bloco 4 da 20260930000042 (02/09/2026), que levou a
+-- decisão para o analista e renomeou "Pendente Operacional" → "Pendente
+-- Analista". Aqui:
+--
+--   1. As linhas paradas na etapa 1 voltam ao nome antigo. Sem isso elas
+--      somem das telas — o `.in("status", ...)` do front não pede mais
+--      "Pendente Analista", e a solicitação vira um registro invisível.
+--   2. O trigger demissao_exige_vaga (20260930000092) segura a demissão na
+--      etapa 1 enquanto a vaga de reposição não existe — ele testava o
+--      nome do status, então precisa aprender o nome novo. O corpo é o
+--      mesmo, só o literal muda.
+--
+-- Não há policy por etapa a mexer: ssd_all_auth é aberta para authenticated
+-- (20260909000005) e quem pode decidir é decidido na tela pelo menu
+-- (operacional_demissoes vs licitacoes_analistas_demissao). As colunas
+-- `operacional_*` voltam a bater com quem decide.
+--
+-- Idempotente. Aplicar no banco do app.
+-- =========================================================================
+
+-- 1) As paradas na etapa 1 ------------------------------------------------
+UPDATE public."SISTEMA_SOLICITACOES_DEMISSAO"
+   SET status = 'Pendente Operacional'
+ WHERE status = 'Pendente Analista';
+
+-- 2) O trigger que segura a demissão sem vaga -----------------------------
+CREATE OR REPLACE FUNCTION public.demissao_exige_vaga()
+RETURNS trigger
+LANGUAGE plpgsql
+SET search_path = public, pg_temp
+AS $fn$
+BEGIN
+  IF NEW.vaga_obrigatoria
+     AND NEW.vaga_id IS NULL
+     AND OLD.status = 'Pendente Operacional'
+     AND NEW.status NOT IN ('Pendente Operacional', 'Reprovada') THEN
+    RAISE EXCEPTION 'Esta demissão ainda não tem a vaga de reposição. Quem solicitou precisa abrir a vaga de Substituição de % antes de o pedido seguir.', NEW.colaborador_nome;
+  END IF;
+  RETURN NEW;
+END $fn$;
+
+DROP TRIGGER IF EXISTS trg_demissao_exige_vaga ON public."SISTEMA_SOLICITACOES_DEMISSAO";
+CREATE TRIGGER trg_demissao_exige_vaga
+  BEFORE UPDATE OF status ON public."SISTEMA_SOLICITACOES_DEMISSAO"
+  FOR EACH ROW EXECUTE FUNCTION public.demissao_exige_vaga();
+
+COMMENT ON COLUMN public."SISTEMA_SOLICITACOES_DEMISSAO".vaga_obrigatoria IS
+  'TRUE quando quem pediu respondeu "Sim" a "Deseja solicitar a substituição?": a vaga de Substituição abre em seguida e o pedido não sai de Pendente Operacional sem ela (trigger demissao_exige_vaga). FALSE = sem reposição (redução de quadro) ou pedido da tela antiga.';
+
+NOTIFY pgrst, 'reload schema';
+
+-- =========================================================================
+-- ROLLBACK
+-- =========================================================================
+-- UPDATE public."SISTEMA_SOLICITACOES_DEMISSAO" SET status = 'Pendente Analista'
+--  WHERE status = 'Pendente Operacional';
+-- Reaplicar o bloco "A demissão não anda sem a vaga" da
+-- 20260930000092_recrutamento_cpf_processos_demissao.sql (literal
+-- 'Pendente Analista') e NOTIFY pgrst, 'reload schema';
+
+-- ===== 20260930000104_solicitacoes_sem_duplicidade =====
+-- =========================================================================
+-- Solicitações do encarregado: um colaborador não entra duas vezes na fila
+--
+-- Pedido do Pablo em 14/09/2026: "em solicitar demissão consigo fazer a
+-- solicitação do mesmo colaborador diversas vezes — se eu fiz uma vez tem
+-- que bloquear 'esse colaborador já tem solicitação de demissão'. O mesmo
+-- pra todas as outras solicitações, não pode duplicar. Pra férias 'esse
+-- colaborador já tem solicitação de férias nesses últimos 150 dias'."
+--
+-- UMA função decide (solicitacao_em_aberto) e é chamada dos dois lados:
+--   • pelo trigger BEFORE INSERT de cada tabela — é o que garante, mesmo
+--     numa tela antiga ainda no ar em produção;
+--   • pela tela, via RPC, na hora em que o colaborador é escolhido — pra
+--     avisar antes de a pessoa preencher o formulário inteiro.
+--
+-- O que conta como "já tem":
+--   demissao      status fora de Reprovada/Cancelada (viva ou já concluída —
+--                 quem saiu não pede demissão de novo; reprovada libera).
+--   ferias        status fora de Reprovada/Cancelada, aberta nos últimos
+--                 150 dias.
+--   troca_funcao  status fora de Reprovada/Concluída (uma mudança por vez).
+--   advertencia   ainda aguardando decisão (Aguardando Aprovação/Jurídico).
+--                 Advertência REPETE de propósito — verbal, escrita,
+--                 suspensão —, então só a que ainda não foi decidida trava.
+--
+-- SECURITY DEFINER porque a advertência tem RLS por tela (adv_select): o
+-- encarregado não enxerga a de outro encarregado, mas a duplicidade tem que
+-- ser vista por cima disso. A função só devolve id/status/data — nada do
+-- conteúdo.
+--
+-- Idempotente. Aplicar no banco do app.
+-- =========================================================================
+
+CREATE OR REPLACE FUNCTION public.solicitacao_em_aberto(p_tipo text, p_colaborador_id bigint)
+RETURNS jsonb
+LANGUAGE plpgsql
+STABLE
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $fn$
+DECLARE
+  r record;
+BEGIN
+  IF p_colaborador_id IS NULL THEN
+    RETURN NULL;
+  END IF;
+
+  IF p_tipo = 'demissao' THEN
+    SELECT id, status, criado_em INTO r
+      FROM public."SISTEMA_SOLICITACOES_DEMISSAO"
+     WHERE colaborador_id = p_colaborador_id
+       AND status NOT IN ('Reprovada', 'Cancelada')
+     ORDER BY criado_em DESC LIMIT 1;
+    IF r.id IS NOT NULL THEN
+      RETURN jsonb_build_object(
+        'tipo', 'demissao', 'id', r.id, 'status', r.status, 'criado_em', r.criado_em,
+        'mensagem', format('Este colaborador já tem solicitação de demissão (#%s, %s, aberta em %s).',
+                           r.id, r.status, to_char(r.criado_em, 'DD/MM/YYYY')));
+    END IF;
+
+  ELSIF p_tipo = 'ferias' THEN
+    SELECT id, status, criado_em, data_saida INTO r
+      FROM public."SISTEMA_SOLICITACOES_FERIAS"
+     WHERE colaborador_id = p_colaborador_id
+       AND status NOT IN ('Reprovada', 'Cancelada')
+       AND criado_em >= now() - interval '150 days'
+     ORDER BY criado_em DESC LIMIT 1;
+    IF r.id IS NOT NULL THEN
+      RETURN jsonb_build_object(
+        'tipo', 'ferias', 'id', r.id, 'status', r.status, 'criado_em', r.criado_em,
+        'mensagem', format('Este colaborador já tem solicitação de férias nos últimos 150 dias (#%s, %s, saída em %s).',
+                           r.id, r.status, to_char(r.data_saida, 'DD/MM/YYYY')));
+    END IF;
+
+  ELSIF p_tipo = 'troca_funcao' THEN
+    SELECT id, status, criado_em INTO r
+      FROM public."SISTEMA_SOLICITACOES_TROCA_FUNCAO"
+     WHERE colaborador_id = p_colaborador_id
+       AND status NOT IN ('Reprovada', 'Concluída')
+     ORDER BY criado_em DESC LIMIT 1;
+    IF r.id IS NOT NULL THEN
+      RETURN jsonb_build_object(
+        'tipo', 'troca_funcao', 'id', r.id, 'status', r.status, 'criado_em', r.criado_em,
+        'mensagem', format('Este colaborador já tem solicitação de mudança de função em andamento (#%s, %s, aberta em %s).',
+                           r.id, r.status, to_char(r.criado_em, 'DD/MM/YYYY')));
+    END IF;
+
+  ELSIF p_tipo = 'advertencia' THEN
+    SELECT id, status, created_at AS criado_em INTO r
+      FROM public."SISTEMA_SOLICITACOES_ADVERTENCIA"
+     WHERE colaborador_id = p_colaborador_id
+       AND status IN ('Aguardando Aprovação', 'Aguardando Jurídico')
+     ORDER BY created_at DESC LIMIT 1;
+    IF r.id IS NOT NULL THEN
+      RETURN jsonb_build_object(
+        'tipo', 'advertencia', 'id', r.id, 'status', r.status, 'criado_em', r.criado_em,
+        'mensagem', format('Este colaborador já tem advertência aguardando decisão (#%s, %s, aberta em %s). Espere ela ser decidida antes de abrir outra.',
+                           r.id, r.status, to_char(r.criado_em, 'DD/MM/YYYY')));
+    END IF;
+  END IF;
+
+  RETURN NULL;
+END $fn$;
+
+REVOKE ALL ON FUNCTION public.solicitacao_em_aberto(text, bigint) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.solicitacao_em_aberto(text, bigint) FROM anon;
+GRANT EXECUTE ON FUNCTION public.solicitacao_em_aberto(text, bigint) TO authenticated;
+
+-- ── Triggers: a mesma regra, no INSERT de cada tabela ────────────────────
+-- BEFORE INSERT: a linha nova ainda não está na tabela, então a busca não
+-- encontra ela mesma. TG_ARGV[0] diz o tipo.
+CREATE OR REPLACE FUNCTION public.solicitacao_bloqueia_duplicada()
+RETURNS trigger
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $fn$
+DECLARE
+  dup jsonb;
+BEGIN
+  dup := public.solicitacao_em_aberto(TG_ARGV[0], NEW.colaborador_id);
+  IF dup IS NOT NULL THEN
+    RAISE EXCEPTION '%', dup->>'mensagem';
+  END IF;
+  RETURN NEW;
+END $fn$;
+
+DROP TRIGGER IF EXISTS trg_demissao_sem_duplicidade ON public."SISTEMA_SOLICITACOES_DEMISSAO";
+CREATE TRIGGER trg_demissao_sem_duplicidade
+  BEFORE INSERT ON public."SISTEMA_SOLICITACOES_DEMISSAO"
+  FOR EACH ROW EXECUTE FUNCTION public.solicitacao_bloqueia_duplicada('demissao');
+
+DROP TRIGGER IF EXISTS trg_ferias_sem_duplicidade ON public."SISTEMA_SOLICITACOES_FERIAS";
+CREATE TRIGGER trg_ferias_sem_duplicidade
+  BEFORE INSERT ON public."SISTEMA_SOLICITACOES_FERIAS"
+  FOR EACH ROW EXECUTE FUNCTION public.solicitacao_bloqueia_duplicada('ferias');
+
+DROP TRIGGER IF EXISTS trg_troca_funcao_sem_duplicidade ON public."SISTEMA_SOLICITACOES_TROCA_FUNCAO";
+CREATE TRIGGER trg_troca_funcao_sem_duplicidade
+  BEFORE INSERT ON public."SISTEMA_SOLICITACOES_TROCA_FUNCAO"
+  FOR EACH ROW EXECUTE FUNCTION public.solicitacao_bloqueia_duplicada('troca_funcao');
+
+DROP TRIGGER IF EXISTS trg_advertencia_sem_duplicidade ON public."SISTEMA_SOLICITACOES_ADVERTENCIA";
+CREATE TRIGGER trg_advertencia_sem_duplicidade
+  BEFORE INSERT ON public."SISTEMA_SOLICITACOES_ADVERTENCIA"
+  FOR EACH ROW EXECUTE FUNCTION public.solicitacao_bloqueia_duplicada('advertencia');
+
+NOTIFY pgrst, 'reload schema';
+
+-- ── Conferência: duplicadas que JÁ existem (o trigger não mexe no passado) ──
+-- SELECT colaborador_id, colaborador_nome, count(*), array_agg(id ORDER BY id)
+--   FROM public."SISTEMA_SOLICITACOES_DEMISSAO"
+--  WHERE status NOT IN ('Reprovada','Cancelada')
+--  GROUP BY 1, 2 HAVING count(*) > 1;
+
+-- =========================================================================
+-- ROLLBACK
+-- =========================================================================
+-- DROP TRIGGER IF EXISTS trg_demissao_sem_duplicidade     ON public."SISTEMA_SOLICITACOES_DEMISSAO";
+-- DROP TRIGGER IF EXISTS trg_ferias_sem_duplicidade       ON public."SISTEMA_SOLICITACOES_FERIAS";
+-- DROP TRIGGER IF EXISTS trg_troca_funcao_sem_duplicidade ON public."SISTEMA_SOLICITACOES_TROCA_FUNCAO";
+-- DROP TRIGGER IF EXISTS trg_advertencia_sem_duplicidade  ON public."SISTEMA_SOLICITACOES_ADVERTENCIA";
+-- DROP FUNCTION IF EXISTS public.solicitacao_bloqueia_duplicada();
+-- DROP FUNCTION IF EXISTS public.solicitacao_em_aberto(text, bigint);
+-- NOTIFY pgrst, 'reload schema';
+
+-- ===== 20260930000105_demissao_numeracao_sem_buracos =====
+-- =========================================================================
+-- Demissão: numeração 1..N sem buracos — agora e daqui pra frente
+--
+-- Pedido do Pablo em 14/09/2026: "preciso que fique do 1 até o último em
+-- sequência certinho". A lista pulava (1, 4, 5, 7, 8...) porque o id era
+-- BIGSERIAL: a sequência avança na hora do INSERT, e se o INSERT falha (um
+-- trigger recusou) ou a linha é apagada depois (teste), o número some.
+--
+-- DUAS PARTES
+--   1. RENUMERA o que existe, em ordem de id (= ordem de criação): 1, 4, 5,
+--      7 → 1, 2, 3, 4... As referências vão junto:
+--        • SISTEMA_SOL_DEMISSAO_ANEXOS.solicitacao_id  (FK → ON UPDATE CASCADE)
+--        • SISTEMA_RECRUTAMENTO.demissao_id            (FK → ON UPDATE CASCADE)
+--        • SISTEMA_COMENTARIOS.entidade_id (texto, modulo = 'demissao')
+--      Os arquivos no bucket demissoes-docs NÃO mudam de lugar: o caminho
+--      gravado em storage_path continua o mesmo, só o número da linha muda.
+--
+--   2. O id NOVO deixa de vir da sequência e passa a ser max(id) + 1,
+--      calculado na hora (demissao_proximo_id). Se o INSERT falhar, a
+--      transação volta e o número não é gasto — sem buraco. O advisory lock
+--      serializa dois encarregados clicando ao mesmo tempo (sem ele os dois
+--      pegariam o mesmo número e o segundo tomaria PK duplicada).
+--
+-- O que ainda ABRE buraco: apagar uma linha. Ninguém apaga demissão pela
+-- tela; se acontecer no Table Editor, é rodar a parte 1 de novo (ela é
+-- idempotente: com a numeração já certa, não mexe em nada).
+--
+-- ⚠️ Os números que as pessoas já citaram mudam: a #7 (CRISTIANE) vira #4,
+-- e assim por diante. Foi o pedido.
+--
+-- Triggers das duas tabelas ficam desligados durante a renumeração:
+--   • trg_sistema_recrutamento_guard recusa UPDATE sem auth.uid() (migration
+--     não tem) — o mesmo motivo da 20260930000042;
+--   • rec_vaga_avisa_demissao zeraria vaga_id ao ver demissao_id "mudar";
+--   • demissao_contrato_pelo_cadastro reescreveria contrato — inócuo, mas
+--     não é o que esta migration faz.
+--
+-- Idempotente. Aplicar no banco do app.
+-- =========================================================================
+
+-- ── 1) FKs passam a acompanhar o id (ON UPDATE CASCADE) ────────────────
+DO $$
+DECLARE c record;
+BEGIN
+  FOR c IN
+    SELECT conname, conrelid::regclass AS tabela
+      FROM pg_constraint
+     WHERE contype = 'f'
+       AND confrelid = 'public."SISTEMA_SOLICITACOES_DEMISSAO"'::regclass
+       AND conrelid IN ('public."SISTEMA_SOL_DEMISSAO_ANEXOS"'::regclass,
+                        'public."SISTEMA_RECRUTAMENTO"'::regclass)
+  LOOP
+    EXECUTE format('ALTER TABLE %s DROP CONSTRAINT %I', c.tabela, c.conname);
+  END LOOP;
+END $$;
+
+ALTER TABLE public."SISTEMA_SOL_DEMISSAO_ANEXOS"
+  ADD CONSTRAINT sistema_sol_demissao_anexos_solicitacao_id_fkey
+  FOREIGN KEY (solicitacao_id) REFERENCES public."SISTEMA_SOLICITACOES_DEMISSAO"(id)
+  ON UPDATE CASCADE ON DELETE CASCADE;
+
+ALTER TABLE public."SISTEMA_RECRUTAMENTO"
+  ADD CONSTRAINT sistema_recrutamento_demissao_id_fkey
+  FOREIGN KEY (demissao_id) REFERENCES public."SISTEMA_SOLICITACOES_DEMISSAO"(id)
+  ON UPDATE CASCADE ON DELETE SET NULL;
+
+-- ── 2) Renumera 1..N em ordem de criação ───────────────────────────────
+ALTER TABLE public."SISTEMA_SOLICITACOES_DEMISSAO" DISABLE TRIGGER USER;
+ALTER TABLE public."SISTEMA_RECRUTAMENTO"          DISABLE TRIGGER USER;
+
+DO $$
+DECLARE
+  r record;
+  n bigint := 0;
+BEGIN
+  -- Em ordem crescente o destino n é sempre <= r.id e está livre: todo id
+  -- menor que r.id já foi movido para um n menor que este.
+  FOR r IN SELECT id FROM public."SISTEMA_SOLICITACOES_DEMISSAO" ORDER BY id LOOP
+    n := n + 1;
+    IF r.id <> n THEN
+      UPDATE public."SISTEMA_SOLICITACOES_DEMISSAO" SET id = n WHERE id = r.id;  -- FKs vão junto
+      UPDATE public."SISTEMA_COMENTARIOS"
+         SET entidade_id = n::text
+       WHERE modulo = 'demissao' AND entidade_id = r.id::text;
+    END IF;
+  END LOOP;
+  PERFORM setval('public."SISTEMA_SOLICITACOES_DEMISSAO_id_seq"', GREATEST(n, 1), n > 0);
+END $$;
+
+ALTER TABLE public."SISTEMA_RECRUTAMENTO"          ENABLE TRIGGER USER;
+ALTER TABLE public."SISTEMA_SOLICITACOES_DEMISSAO" ENABLE TRIGGER USER;
+
+-- ── 3) Daqui pra frente: max(id) + 1, sem gastar número em INSERT que falha ─
+CREATE OR REPLACE FUNCTION public.demissao_proximo_id()
+RETURNS bigint
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $fn$
+BEGIN
+  -- Serializa quem está inserindo ao mesmo tempo; solta no fim da transação.
+  PERFORM pg_advisory_xact_lock(hashtext('SISTEMA_SOLICITACOES_DEMISSAO.id'));
+  RETURN (SELECT coalesce(max(id), 0) + 1 FROM public."SISTEMA_SOLICITACOES_DEMISSAO");
+END $fn$;
+
+REVOKE ALL ON FUNCTION public.demissao_proximo_id() FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.demissao_proximo_id() FROM anon;
+GRANT EXECUTE ON FUNCTION public.demissao_proximo_id() TO authenticated;
+
+ALTER TABLE public."SISTEMA_SOLICITACOES_DEMISSAO"
+  ALTER COLUMN id SET DEFAULT public.demissao_proximo_id();
+
+NOTIFY pgrst, 'reload schema';
+
+-- ── Conferência ────────────────────────────────────────────────────────
+-- SELECT count(*) = max(id) AS sem_buracos FROM public."SISTEMA_SOLICITACOES_DEMISSAO";
+
+-- =========================================================================
+-- ROLLBACK (só a parte 3 — a renumeração não se desfaz)
+-- =========================================================================
+-- ALTER TABLE public."SISTEMA_SOLICITACOES_DEMISSAO"
+--   ALTER COLUMN id SET DEFAULT nextval('public."SISTEMA_SOLICITACOES_DEMISSAO_id_seq"');
+-- DROP FUNCTION IF EXISTS public.demissao_proximo_id();
+-- NOTIFY pgrst, 'reload schema';
+
+-- ===== 20260930000107_canal_denuncia_update_precisa_ler_id =====
+-- =========================================================================
+-- Canal de Denúncias: "permission denied for table CANAL_DENUNCIA" ao SALVAR
+--
+-- SINTOMA (14/09/2026)
+--   Salvar a ficha (FichaDenuncia.tsx) ou os blocos de apuração
+--   (BlocosApuracao.tsx) falha com `permission denied for table
+--   CANAL_DENUNCIA`. Conferido no banco: `authenticated` tem
+--   INSERT,UPDATE,DELETE na tabela e SELECT em NENHUMA coluna.
+--
+-- CAUSA
+--   A 20260914000002 revogou o SELECT da tabela (a leitura é pela visão
+--   v_canal_denuncia, que mascara o denunciante) e deixou só o UPDATE. Só
+--   que o Postgres exige SELECT em toda coluna que o UPDATE LÊ: o `WHERE id
+--   = ...` lê `id`, e a policy canal_denuncia_update lê `empresa_id`. Sem
+--   privilégio nessas duas colunas, o UPDATE morre antes de olhar a RLS.
+--   (A 20260916000001 corrigiu o mesmo erro nas policies das tabelas
+--   FILHAS — este é o irmão dele, na própria tabela.)
+--
+-- CORREÇÃO
+--   GRANT SELECT por COLUNA, só em `id` e `empresa_id` — nada de identidade.
+--   A visão continua sendo o único caminho de leitura do conteúdo: um
+--   `select=*` direto na tabela segue negado (faltam as outras colunas).
+--
+-- Idempotente. Aplicar no banco do app.
+-- =========================================================================
+
+GRANT SELECT (id, empresa_id) ON public."CANAL_DENUNCIA" TO authenticated;
+
+NOTIFY pgrst, 'reload schema';
+
+-- Conferência: deve devolver id,empresa_id (e nada mais).
+-- SELECT string_agg(column_name, ',') FROM information_schema.column_privileges
+--  WHERE grantee = 'authenticated' AND table_name = 'CANAL_DENUNCIA' AND privilege_type = 'SELECT';
+
+-- ROLLBACK
+-- REVOKE SELECT (id, empresa_id) ON public."CANAL_DENUNCIA" FROM authenticated;
+-- NOTIFY pgrst, 'reload schema';
+
+-- ===== 20260930000106_bi_estudio =====
+-- =========================================================================
+-- BI › ESTÚDIO — painéis e gráficos criados pelo analista de dados, à mão
+-- (SQL) ou por texto (IA)
+--
+-- Pedido do Pablo em 14/09/2026: "módulo completo de B.I e integra uma I.A
+-- pra criar B.I por textos, o Analista de Dados tem que conseguir criar B.I
+-- do jeito que ele quiser, com gráficos da forma que ele quiser".
+--
+-- O DESENHO
+--   BI_PAINEL   um painel = uma tela; tem dono, pode ser público (quem tem
+--               o menu vê) ou privado (só o dono), e uma lista de FILTROS
+--               (jsonb) que viram controles no topo — data, texto, lista.
+--   BI_WIDGET   um gráfico/KPI/tabela do painel. O dado vem de um SELECT
+--               escrito pelo analista (ou pela IA); a forma vem de `config`
+--               (eixo, séries, formato). Os filtros do painel entram no SQL
+--               como {{chave}} e são substituídos com quote_literal — nunca
+--               por concatenação.
+--   BI_IA_LOG   cada pedido à IA fica registrado (quem, o texto, o que ela
+--               devolveu) — auditoria e material pra melhorar o prompt.
+--
+-- QUEM RODA O SQL — e como isso não vira um buraco
+--   bi_executar_sql(p_sql, p_params)   → livre, só pra quem tem 'alterar'
+--                                        (o analista, no editor)
+--   bi_widget_dados(p_widget_id, ...)  → roda o SQL GRAVADO no widget, pra
+--                                        quem pode ver o painel (viewer não
+--                                        escreve SQL nenhum)
+--   Os dois passam por bi_sql_seguro(): só SELECT/WITH, uma instrução, sem
+--   auth/storage/vault/pg_catalog, sem tabelas da lista bloqueada (senha,
+--   token, denúncia do canal de ética...), transação READ ONLY, timeout de
+--   20 s, teto de 5.000 linhas. SECURITY DEFINER de propósito: o analista
+--   precisa enxergar o dado inteiro pra montar BI — a RLS de cada tela não
+--   é o recorte certo aqui; o recorte é o menu 'bi_estudio' + a ação.
+--
+-- Menus (README: toda tela nova ganha 1 linha em app_menu):
+--   bi_estudio     /app/bi/estudio    visualizar (vê painéis públicos),
+--                                     incluir/alterar/excluir (o analista),
+--                                     executar_ia (pode pedir pra IA)
+--
+-- Idempotente. Aplicar no banco do app.
+-- =========================================================================
+
+-- ── 1) Menu e ações ─────────────────────────────────────────────────────
+INSERT INTO public.app_menu (modulo_id, codigo, nome, rota, ordem, ativo)
+SELECT m.id, 'bi_estudio', 'Estúdio de BI', '/app/bi/estudio', 20, true
+  FROM public.app_modulo m
+ WHERE m.codigo = 'bi'
+ON CONFLICT (modulo_id, codigo) DO NOTHING;
+
+INSERT INTO public.app_menu_acao (menu_codigo, acao)
+VALUES
+  ('bi_estudio', 'visualizar'::app_acao),
+  ('bi_estudio', 'incluir'::app_acao),
+  ('bi_estudio', 'alterar'::app_acao),
+  ('bi_estudio', 'excluir'::app_acao),
+  ('bi_estudio', 'executar_ia'::app_acao),
+  ('bi_estudio', 'exportar'::app_acao)
+ON CONFLICT (menu_codigo, acao) DO NOTHING;
+
+-- ── 2) Tabelas ───────────────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS public."BI_PAINEL" (
+  id            bigint GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY,
+  nome          text NOT NULL,
+  descricao     text,
+  dono_id       uuid NOT NULL DEFAULT auth.uid(),
+  dono_nome     text,
+  publico       boolean NOT NULL DEFAULT false,
+  -- [{chave, rotulo, tipo: 'texto'|'data'|'numero'|'lista', padrao, opcoes: [..], opcoes_sql}]
+  filtros       jsonb NOT NULL DEFAULT '[]'::jsonb,
+  -- {tema: 'claro'|'escuro', colunas: 12, atualizar_a_cada_seg?: number}
+  config        jsonb NOT NULL DEFAULT '{}'::jsonb,
+  criado_em     timestamptz NOT NULL DEFAULT now(),
+  atualizado_em timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS public."BI_WIDGET" (
+  id            bigint GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY,
+  painel_id     bigint NOT NULL REFERENCES public."BI_PAINEL"(id) ON DELETE CASCADE,
+  titulo        text NOT NULL,
+  subtitulo     text,
+  -- kpi | barras | barras_h | barras_empilhadas | linha | area | pizza | rosca | dispersao | tabela
+  tipo          text NOT NULL DEFAULT 'barras',
+  sql           text NOT NULL,
+  -- {x, series: [{coluna, rotulo, cor}], formato: 'numero'|'moeda'|'percentual'|'inteiro',
+  --  casas, mostrar_rotulos, ordenar, limite, kpi: {coluna, comparar_coluna, sufixo}, ...}
+  config        jsonb NOT NULL DEFAULT '{}'::jsonb,
+  largura       int  NOT NULL DEFAULT 6  CHECK (largura BETWEEN 3 AND 12),
+  altura        int  NOT NULL DEFAULT 2  CHECK (altura  BETWEEN 1 AND 4),
+  ordem         int  NOT NULL DEFAULT 0,
+  criado_por_ia boolean NOT NULL DEFAULT false,
+  criado_em     timestamptz NOT NULL DEFAULT now(),
+  atualizado_em timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_bi_widget_painel ON public."BI_WIDGET"(painel_id, ordem);
+
+CREATE TABLE IF NOT EXISTS public."BI_IA_LOG" (
+  id          bigint GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY,
+  user_id     uuid DEFAULT auth.uid(),
+  painel_id   bigint,
+  pedido      text NOT NULL,
+  resposta    jsonb,
+  erro        text,
+  modelo      text,
+  duracao_ms  int,
+  criado_em   timestamptz NOT NULL DEFAULT now()
+);
+
+-- set_updated_at() escreve em updated_at; estas tabelas são em português.
+CREATE OR REPLACE FUNCTION public.bi_set_atualizado_em()
+RETURNS trigger LANGUAGE plpgsql SET search_path = public, pg_temp AS $fn$
+BEGIN NEW.atualizado_em := now(); RETURN NEW; END $fn$;
+DROP TRIGGER IF EXISTS trg_bi_painel_updated ON public."BI_PAINEL";
+CREATE TRIGGER trg_bi_painel_updated BEFORE UPDATE ON public."BI_PAINEL"
+  FOR EACH ROW EXECUTE FUNCTION public.bi_set_atualizado_em();
+DROP TRIGGER IF EXISTS trg_bi_widget_updated ON public."BI_WIDGET";
+CREATE TRIGGER trg_bi_widget_updated BEFORE UPDATE ON public."BI_WIDGET"
+  FOR EACH ROW EXECUTE FUNCTION public.bi_set_atualizado_em();
+
+GRANT SELECT, INSERT, UPDATE, DELETE ON public."BI_PAINEL", public."BI_WIDGET", public."BI_IA_LOG" TO authenticated;
+
+-- ── 3) RLS ───────────────────────────────────────────────────────────────
+ALTER TABLE public."BI_PAINEL"  ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public."BI_WIDGET"  ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public."BI_IA_LOG"  ENABLE ROW LEVEL SECURITY;
+
+-- Vê: dono, ou público + menu. Edita: dono, ou 'alterar' (o analista pode
+-- mexer em painel público de outro — o Estúdio é compartilhado por desenho).
+DROP POLICY IF EXISTS bi_painel_select ON public."BI_PAINEL";
+CREATE POLICY bi_painel_select ON public."BI_PAINEL" FOR SELECT TO authenticated
+  USING (dono_id = auth.uid()
+         OR (publico AND public.has_screen_access(auth.uid(), 'bi_estudio', 'visualizar'::app_acao)));
+DROP POLICY IF EXISTS bi_painel_insert ON public."BI_PAINEL";
+CREATE POLICY bi_painel_insert ON public."BI_PAINEL" FOR INSERT TO authenticated
+  WITH CHECK (public.has_screen_access(auth.uid(), 'bi_estudio', 'incluir'::app_acao));
+DROP POLICY IF EXISTS bi_painel_update ON public."BI_PAINEL";
+CREATE POLICY bi_painel_update ON public."BI_PAINEL" FOR UPDATE TO authenticated
+  USING (dono_id = auth.uid() OR public.has_screen_access(auth.uid(), 'bi_estudio', 'alterar'::app_acao))
+  WITH CHECK (dono_id = auth.uid() OR public.has_screen_access(auth.uid(), 'bi_estudio', 'alterar'::app_acao));
+DROP POLICY IF EXISTS bi_painel_delete ON public."BI_PAINEL";
+CREATE POLICY bi_painel_delete ON public."BI_PAINEL" FOR DELETE TO authenticated
+  USING (dono_id = auth.uid() OR public.has_screen_access(auth.uid(), 'bi_estudio', 'excluir'::app_acao));
+
+-- Widget segue o painel.
+DROP POLICY IF EXISTS bi_widget_select ON public."BI_WIDGET";
+CREATE POLICY bi_widget_select ON public."BI_WIDGET" FOR SELECT TO authenticated
+  USING (EXISTS (SELECT 1 FROM public."BI_PAINEL" p WHERE p.id = painel_id));
+DROP POLICY IF EXISTS bi_widget_write ON public."BI_WIDGET";
+CREATE POLICY bi_widget_write ON public."BI_WIDGET" FOR ALL TO authenticated
+  USING (EXISTS (SELECT 1 FROM public."BI_PAINEL" p WHERE p.id = painel_id
+                   AND (p.dono_id = auth.uid() OR public.has_screen_access(auth.uid(), 'bi_estudio', 'alterar'::app_acao))))
+  WITH CHECK (EXISTS (SELECT 1 FROM public."BI_PAINEL" p WHERE p.id = painel_id
+                   AND (p.dono_id = auth.uid() OR public.has_screen_access(auth.uid(), 'bi_estudio', 'alterar'::app_acao))));
+
+DROP POLICY IF EXISTS bi_ia_log_select ON public."BI_IA_LOG";
+CREATE POLICY bi_ia_log_select ON public."BI_IA_LOG" FOR SELECT TO authenticated
+  USING (user_id = auth.uid());
+DROP POLICY IF EXISTS bi_ia_log_insert ON public."BI_IA_LOG";
+CREATE POLICY bi_ia_log_insert ON public."BI_IA_LOG" FOR INSERT TO authenticated
+  WITH CHECK (user_id = auth.uid());
+
+-- ── 4) O SQL é seguro? ───────────────────────────────────────────────────
+-- Uma instrução, só leitura, sem esquemas de sistema nem tabelas da lista
+-- bloqueada. Devolve NULL quando pode rodar, ou o motivo quando não pode.
+CREATE OR REPLACE FUNCTION public.bi_sql_seguro(p_sql text)
+RETURNS text
+LANGUAGE plpgsql
+IMMUTABLE
+SET search_path = public, pg_temp
+AS $fn$
+DECLARE
+  s text := btrim(coalesce(p_sql, ''));
+  sem_comentario text;
+BEGIN
+  IF s = '' THEN RETURN 'SQL vazio.'; END IF;
+  -- tira comentários pra ninguém esconder nada atrás de -- ou /* */
+  sem_comentario := regexp_replace(s, '--[^\n]*', '', 'g');
+  sem_comentario := regexp_replace(sem_comentario, '/\*.*?\*/', '', 'gs');
+  sem_comentario := btrim(sem_comentario);
+  IF sem_comentario !~* '^(select|with)\s' THEN
+    RETURN 'Só SELECT (ou WITH ... SELECT) pode rodar aqui.';
+  END IF;
+  -- ; no meio = segunda instrução; ; no fim é tolerado
+  IF regexp_replace(sem_comentario, ';\s*$', '') ~ ';' THEN
+    RETURN 'Uma instrução por vez — tire o ";" do meio.';
+  END IF;
+  IF sem_comentario ~* '\m(insert|update|delete|truncate|drop|alter|create|grant|revoke|copy|vacuum|analyze|refresh|call|execute|listen|notify|reset|lock|comment|security|cluster|reindex)\M' THEN
+    RETURN 'Comando não permitido no BI (só leitura).';
+  END IF;
+  IF sem_comentario ~* '\m(pg_sleep|pg_read_file|pg_ls_dir|dblink|lo_import|lo_export|pg_terminate_backend|pg_cancel_backend|set_config|current_setting)\M' THEN
+    RETURN 'Função não permitida no BI.';
+  END IF;
+  IF sem_comentario ~* '\m(auth|storage|vault|pg_catalog|information_schema|net|supabase_functions|extensions|realtime|graphql)\s*\.' THEN
+    RETURN 'Esquema de sistema não pode ser consultado no BI.';
+  END IF;
+  IF sem_comentario ~* '\mpg_[a-z_]+' THEN
+    RETURN 'Catálogo do Postgres não pode ser consultado no BI.';
+  END IF;
+  -- tabelas que não entram em BI: segredo, credencial, canal de ética, permissão
+  IF sem_comentario ~* '(WA_BOT_CONFIG|DENUNCIA|COMITE_ETICA|CANAL_ETICA|senha|token|secret|credencial|screen_permission|access_audit|perfil_acesso|app_menu_acao|profiles)' THEN
+    RETURN 'Essa tabela não pode entrar em BI (dado sensível).';
+  END IF;
+  RETURN NULL;
+END $fn$;
+
+-- ── 5) Substitui {{chave}} pelos filtros, sempre com quote_literal ───────
+CREATE OR REPLACE FUNCTION public.bi_aplicar_params(p_sql text, p_params jsonb)
+RETURNS text
+LANGUAGE plpgsql
+IMMUTABLE
+SET search_path = public, pg_temp
+AS $fn$
+DECLARE
+  s text := p_sql;
+  k text;
+  v text;
+BEGIN
+  FOR k IN SELECT m[1] FROM regexp_matches(p_sql, '\{\{\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*\}\}', 'g') AS m LOOP
+    v := CASE WHEN p_params IS NULL THEN NULL
+              WHEN jsonb_typeof(p_params -> k) = 'null' THEN NULL
+              ELSE p_params ->> k END;
+    s := regexp_replace(s, '\{\{\s*' || k || '\s*\}\}',
+                        CASE WHEN v IS NULL OR v = '' THEN 'NULL' ELSE quote_literal(v) END, 'g');
+  END LOOP;
+  RETURN s;
+END $fn$;
+
+-- ── 6) Executa (o miolo, compartilhado) ──────────────────────────────────
+-- Devolve {colunas: [{nome, tipo}], linhas: [...], total, truncado, ms}.
+CREATE OR REPLACE FUNCTION public.bi_rodar(p_sql text, p_params jsonb, p_limite int DEFAULT 5000)
+RETURNS jsonb
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $fn$
+DECLARE
+  motivo   text;
+  sql_fin  text;
+  linhas   jsonb;
+  colunas  jsonb;
+  t0       timestamptz := clock_timestamp();
+  total    int;
+BEGIN
+  motivo := public.bi_sql_seguro(p_sql);
+  IF motivo IS NOT NULL THEN
+    RAISE EXCEPTION '%', motivo USING ERRCODE = '42501';
+  END IF;
+  sql_fin := regexp_replace(public.bi_aplicar_params(p_sql, p_params), ';\s*$', '');
+
+  -- Só leitura e com prazo: um SELECT pesado não pode segurar o banco.
+  PERFORM set_config('transaction_read_only', 'on', true);
+  PERFORM set_config('statement_timeout', '20000', true);
+
+  -- Duas camadas: a de dentro é o SQL do analista (pode ter ORDER BY/LIMIT
+  -- próprios), a de fora impõe o teto.
+  EXECUTE format('SELECT coalesce(jsonb_agg(to_jsonb(q)), ''[]''::jsonb) FROM (SELECT * FROM (%s) s LIMIT %s) q',
+                 sql_fin, p_limite + 1)
+     INTO linhas;
+
+  total := jsonb_array_length(linhas);
+  -- Tipos das colunas: pela primeira linha (json não guarda tipo numérico vs texto
+  -- de forma confiável, mas o suficiente pra tela sugerir eixo/série).
+  SELECT coalesce(jsonb_agg(jsonb_build_object('nome', k, 'tipo', jsonb_typeof(v))), '[]'::jsonb)
+    INTO colunas
+    FROM jsonb_each(coalesce(linhas -> 0, '{}'::jsonb)) AS e(k, v);
+
+  RETURN jsonb_build_object(
+    'colunas',  colunas,
+    'linhas',   CASE WHEN total > p_limite
+                     THEN (SELECT jsonb_agg(e.x) FROM (SELECT x FROM jsonb_array_elements(linhas) AS a(x) LIMIT p_limite) e)
+                     ELSE linhas END,
+    'total',    LEAST(total, p_limite),
+    'truncado', total > p_limite,
+    'ms',       (extract(epoch FROM clock_timestamp() - t0) * 1000)::int
+  );
+END $fn$;
+REVOKE ALL ON FUNCTION public.bi_rodar(text, jsonb, int) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.bi_rodar(text, jsonb, int) FROM anon;
+REVOKE ALL ON FUNCTION public.bi_rodar(text, jsonb, int) FROM authenticated;  -- só pelas duas abaixo
+
+-- SQL livre: o analista, no editor.
+CREATE OR REPLACE FUNCTION public.bi_executar_sql(p_sql text, p_params jsonb DEFAULT '{}'::jsonb, p_limite int DEFAULT 500)
+RETURNS jsonb
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $fn$
+BEGIN
+  IF NOT public.has_screen_access(auth.uid(), 'bi_estudio', 'alterar'::app_acao) THEN
+    RAISE EXCEPTION 'Sem permissão para executar SQL no Estúdio de BI.' USING ERRCODE = '42501';
+  END IF;
+  RETURN public.bi_rodar(p_sql, p_params, LEAST(GREATEST(p_limite, 1), 5000));
+END $fn$;
+REVOKE ALL ON FUNCTION public.bi_executar_sql(text, jsonb, int) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.bi_executar_sql(text, jsonb, int) FROM anon;
+GRANT EXECUTE ON FUNCTION public.bi_executar_sql(text, jsonb, int) TO authenticated;
+
+-- O SQL gravado no widget: quem vê o painel.
+CREATE OR REPLACE FUNCTION public.bi_widget_dados(p_widget_id bigint, p_params jsonb DEFAULT '{}'::jsonb)
+RETURNS jsonb
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $fn$
+DECLARE
+  w record;
+BEGIN
+  SELECT w1.sql, p.id AS painel_id, p.dono_id, p.publico INTO w
+    FROM public."BI_WIDGET" w1 JOIN public."BI_PAINEL" p ON p.id = w1.painel_id
+   WHERE w1.id = p_widget_id;
+  IF w.sql IS NULL THEN
+    RAISE EXCEPTION 'Gráfico #% não existe.', p_widget_id;
+  END IF;
+  IF NOT (w.dono_id = auth.uid()
+          OR (w.publico AND public.has_screen_access(auth.uid(), 'bi_estudio', 'visualizar'::app_acao))) THEN
+    RAISE EXCEPTION 'Sem permissão para ver este painel.' USING ERRCODE = '42501';
+  END IF;
+  RETURN public.bi_rodar(w.sql, p_params, 5000);
+END $fn$;
+REVOKE ALL ON FUNCTION public.bi_widget_dados(bigint, jsonb) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.bi_widget_dados(bigint, jsonb) FROM anon;
+GRANT EXECUTE ON FUNCTION public.bi_widget_dados(bigint, jsonb) TO authenticated;
+
+-- ── 7) Catálogo: o que existe pra consultar (pra tela e pra IA) ──────────
+-- Tabelas e views do public, menos as bloqueadas, com colunas e tipos. É o
+-- que a IA recebe pra escrever SQL certo — sem isso ela inventa coluna.
+CREATE OR REPLACE FUNCTION public.bi_catalogo()
+RETURNS jsonb
+LANGUAGE sql
+STABLE
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $fn$
+  SELECT CASE
+    WHEN NOT public.has_screen_access(auth.uid(), 'bi_estudio', 'visualizar'::app_acao) THEN '[]'::jsonb
+    ELSE coalesce((
+      SELECT jsonb_agg(jsonb_build_object(
+               'nome', t.table_name,
+               'tipo', CASE WHEN t.table_type = 'VIEW' THEN 'view' ELSE 'tabela' END,
+               'colunas', (SELECT jsonb_agg(jsonb_build_object('nome', c.column_name, 'tipo', c.data_type) ORDER BY c.ordinal_position)
+                             FROM information_schema.columns c
+                            WHERE c.table_schema = 'public' AND c.table_name = t.table_name)
+             ) ORDER BY t.table_name)
+        FROM information_schema.tables t
+       WHERE t.table_schema = 'public'
+         AND t.table_type IN ('BASE TABLE', 'VIEW')
+         AND public.bi_sql_seguro('select 1 from "' || t.table_name || '"') IS NULL
+         AND t.table_name NOT LIKE 'pg\_%'
+         AND t.table_name NOT IN ('BI_IA_LOG')
+    ), '[]'::jsonb)
+  END;
+$fn$;
+REVOKE ALL ON FUNCTION public.bi_catalogo() FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.bi_catalogo() FROM anon;
+GRANT EXECUTE ON FUNCTION public.bi_catalogo() TO authenticated;
+
+NOTIFY pgrst, 'reload schema';
+
+-- =========================================================================
+-- ROLLBACK
+-- =========================================================================
+-- DROP FUNCTION IF EXISTS public.bi_catalogo();
+-- DROP FUNCTION IF EXISTS public.bi_widget_dados(bigint, jsonb);
+-- DROP FUNCTION IF EXISTS public.bi_executar_sql(text, jsonb, int);
+-- DROP FUNCTION IF EXISTS public.bi_rodar(text, jsonb, int);
+-- DROP FUNCTION IF EXISTS public.bi_aplicar_params(text, jsonb);
+-- DROP FUNCTION IF EXISTS public.bi_sql_seguro(text);
+-- DROP FUNCTION IF EXISTS public.bi_set_atualizado_em();
+-- DROP TABLE IF EXISTS public."BI_IA_LOG";
+-- DROP TABLE IF EXISTS public."BI_WIDGET";
+-- DROP TABLE IF EXISTS public."BI_PAINEL";
+-- DELETE FROM public.app_menu_acao WHERE menu_codigo = 'bi_estudio';
+-- DELETE FROM public.app_menu WHERE codigo = 'bi_estudio';
+-- NOTIFY pgrst, 'reload schema';
+
+-- ===== 20260930000108_patrimonio_parcelas_numeradas_pelo_vencimento =====
+-- =========================================================================
+-- Patrimônio › Contas/Obrigações: parcela numerada pela ORDEM DO VENCIMENTO
+--
+-- SINTOMA (14/09/2026, MURANO PARCELAS)
+--   A lista, ordenada por vencimento, mostrava 22/78 (ago/26), 61/78
+--   (set/26), 60/78 (out/26), 62/78... e lá na frente 23/78 em out/2030.
+--   O número da parcela (parcela_numero e o "· Parcela N/T" gravado na
+--   descrição) não acompanhava a data: quem edita vencimento "uma a uma",
+--   ou reordena na mão, deixa o número onde estava.
+--
+-- REGRA
+--   Dentro de um contrato (contrato_uid), a parcela N é a N-ésima pelo
+--   vencimento (empate: id). parcela_total = quantidade de parcelas do
+--   contrato. A descrição que termina em "· Parcela N/T" é reescrita junto.
+--
+--   1. Corrige o que existe (todos os contratos, não só o Murano).
+--   2. Trigger mantém: qualquer INSERT/UPDATE/DELETE renumera o contrato
+--      afetado (no-op quando já está certo). Statement-level, com guarda de
+--      profundidade pra não se chamar de novo.
+--
+-- Idempotente. Aplicar no banco do app.
+-- =========================================================================
+
+CREATE OR REPLACE FUNCTION public.jur_parcelas_renumerar(p_contrato uuid)
+RETURNS void
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $fn$
+BEGIN
+  IF p_contrato IS NULL THEN RETURN; END IF;
+  WITH ordem AS (
+    SELECT id,
+           row_number() OVER (ORDER BY vencimento NULLS LAST, parcela_numero NULLS LAST, id) AS n,
+           count(*)     OVER ()                                                             AS total
+      FROM public."JUR_PATRIMONIO_OBRIGACOES"
+     WHERE contrato_uid = p_contrato
+  )
+  UPDATE public."JUR_PATRIMONIO_OBRIGACOES" o
+     SET parcela_numero = ordem.n,
+         parcela_total  = ordem.total,
+         descricao      = CASE
+                            WHEN o.descricao ~ '\s·\s*Parcela\s+\d+\s*/\s*\d+\s*$'
+                              THEN regexp_replace(o.descricao, '\s·\s*Parcela\s+\d+\s*/\s*\d+\s*$', ' · Parcela ' || ordem.n || '/' || ordem.total)
+                            ELSE o.descricao
+                          END
+    FROM ordem
+   WHERE o.id = ordem.id
+     AND (o.parcela_numero IS DISTINCT FROM ordem.n
+          OR o.parcela_total IS DISTINCT FROM ordem.total
+          OR (o.descricao ~ '\s·\s*Parcela\s+\d+\s*/\s*\d+\s*$'
+              AND o.descricao !~ ('\s·\s*Parcela\s+' || ordem.n || '\s*/\s*' || ordem.total || '\s*$')));
+END $fn$;
+REVOKE ALL ON FUNCTION public.jur_parcelas_renumerar(uuid) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.jur_parcelas_renumerar(uuid) FROM anon;
+GRANT EXECUTE ON FUNCTION public.jur_parcelas_renumerar(uuid) TO authenticated;
+
+-- ── 1) Corrige o estoque ────────────────────────────────────────────────
+DO $$
+DECLARE c uuid;
+BEGIN
+  FOR c IN SELECT DISTINCT contrato_uid FROM public."JUR_PATRIMONIO_OBRIGACOES" WHERE contrato_uid IS NOT NULL LOOP
+    PERFORM public.jur_parcelas_renumerar(c);
+  END LOOP;
+END $$;
+
+-- ── 2) Mantém ───────────────────────────────────────────────────────────
+CREATE OR REPLACE FUNCTION public.jur_parcelas_renumerar_trg()
+RETURNS trigger
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $fn$
+DECLARE c uuid;
+BEGIN
+  -- A renumeração faz UPDATE na mesma tabela; sem esta guarda o trigger se
+  -- chamaria de novo (e de novo).
+  IF pg_trigger_depth() > 1 THEN RETURN NULL; END IF;
+  FOR c IN
+    SELECT DISTINCT contrato_uid FROM (
+      SELECT contrato_uid FROM novas  WHERE contrato_uid IS NOT NULL
+      UNION ALL
+      SELECT contrato_uid FROM velhas WHERE contrato_uid IS NOT NULL
+    ) x
+  LOOP
+    PERFORM public.jur_parcelas_renumerar(c);
+  END LOOP;
+  RETURN NULL;
+END $fn$;
+
+DROP TRIGGER IF EXISTS trg_jur_parcelas_renumerar_ins ON public."JUR_PATRIMONIO_OBRIGACOES";
+CREATE TRIGGER trg_jur_parcelas_renumerar_ins
+  AFTER INSERT ON public."JUR_PATRIMONIO_OBRIGACOES"
+  REFERENCING NEW TABLE AS novas
+  FOR EACH STATEMENT EXECUTE FUNCTION public.jur_parcelas_renumerar_trg();
+
+DROP TRIGGER IF EXISTS trg_jur_parcelas_renumerar_upd ON public."JUR_PATRIMONIO_OBRIGACOES";
+-- Sem lista de colunas: transition table não aceita "UPDATE OF". A função
+-- renumera só se algo estiver fora do lugar, então UPDATE de status/valor
+-- passa sem escrever nada.
+CREATE TRIGGER trg_jur_parcelas_renumerar_upd
+  AFTER UPDATE ON public."JUR_PATRIMONIO_OBRIGACOES"
+  REFERENCING OLD TABLE AS velhas NEW TABLE AS novas
+  FOR EACH STATEMENT EXECUTE FUNCTION public.jur_parcelas_renumerar_trg();
+
+DROP TRIGGER IF EXISTS trg_jur_parcelas_renumerar_del ON public."JUR_PATRIMONIO_OBRIGACOES";
+CREATE TRIGGER trg_jur_parcelas_renumerar_del
+  AFTER DELETE ON public."JUR_PATRIMONIO_OBRIGACOES"
+  REFERENCING OLD TABLE AS velhas
+  FOR EACH STATEMENT EXECUTE FUNCTION public.jur_parcelas_renumerar_trg();
+
+NOTIFY pgrst, 'reload schema';
+
+-- Conferência: contratos em que o número não segue a data (deve dar 0).
+-- SELECT count(*) FROM (
+--   SELECT id, parcela_numero, row_number() OVER (PARTITION BY contrato_uid ORDER BY vencimento, id) AS n
+--     FROM public."JUR_PATRIMONIO_OBRIGACOES" WHERE contrato_uid IS NOT NULL) x
+--  WHERE parcela_numero <> n;
+
+-- =========================================================================
+-- ROLLBACK (a renumeração não se desfaz)
+-- =========================================================================
+-- DROP TRIGGER IF EXISTS trg_jur_parcelas_renumerar_ins ON public."JUR_PATRIMONIO_OBRIGACOES";
+-- DROP TRIGGER IF EXISTS trg_jur_parcelas_renumerar_upd ON public."JUR_PATRIMONIO_OBRIGACOES";
+-- DROP TRIGGER IF EXISTS trg_jur_parcelas_renumerar_del ON public."JUR_PATRIMONIO_OBRIGACOES";
+-- DROP FUNCTION IF EXISTS public.jur_parcelas_renumerar_trg();
+-- DROP FUNCTION IF EXISTS public.jur_parcelas_renumerar(uuid);
+
+-- ===== 20260930000109_recrutamento_custo_do_posto =====
+-- =========================================================================
+-- Recrutamento: insalubridade e benefícios da vaga vêm da PLANILHA DE CUSTO
+--
+-- Pedido do Pablo em 14/09/2026: "a insalubridade do cargo puxa automática
+-- nas vagas, o encarregado não preenche — só escolhe o colaborador. Tem
+-- tudo na Planilha de Custo, por contrato: VT, VA, insalubridade. Benefícios
+-- a mesma coisa: V.T e V.A mensal do contrato. Usuário não seleciona nem
+-- edita, só vê."
+--
+-- A RPC recebe o que a vaga já sabe (contrato, cargo, salário e cidade do
+-- colaborador escolhido) e devolve a linha da planilha que melhor casa:
+--   contrato  → nome igual ao de CONTRATOS."NOME CONTRATO" (sem acento/pontuação)
+--   posto     → pontua: salário igual (peso 100), cidade no nome do posto
+--               (20), palavras do cargo no posto (5 cada; ASG ≙ AUXILIAR DE
+--               SERVIÇOS GERAIS), e desempata pela vigência mais nova.
+-- Devolve também `ambiguo`: true quando os melhores candidatos divergem em
+-- insalubridade/VT/VA — aí a tela avisa "confira" em vez de fingir certeza.
+--
+-- SECURITY DEFINER: planilha_custo é de Licitações; o encarregado não lê a
+-- tabela, lê só estes quatro números do posto dele.
+--
+-- Idempotente. Aplicar no banco do app.
+-- =========================================================================
+
+CREATE OR REPLACE FUNCTION public.rec_norm_txt(p text)
+RETURNS text
+LANGUAGE sql
+IMMUTABLE
+SET search_path = public, pg_temp
+AS $fn$
+  SELECT btrim(regexp_replace(
+           upper(translate(coalesce(p, ''),
+             'ÁÀÂÃÄÉÈÊËÍÌÎÏÓÒÔÕÖÚÙÛÜÇÑáàâãäéèêëíìîïóòôõöúùûüçñ',
+             'AAAAAEEEEIIIIOOOOOUUUUCNAAAAAEEEEIIIIOOOOOUUUUCN')),
+           '[^A-Z0-9]+', ' ', 'g'));
+$fn$;
+
+CREATE OR REPLACE FUNCTION public.rec_custo_do_posto(
+  p_contrato text,
+  p_cargo    text DEFAULT NULL,
+  p_salario  numeric DEFAULT NULL,
+  p_cidade   text DEFAULT NULL
+)
+RETURNS jsonb
+LANGUAGE plpgsql
+STABLE
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $fn$
+DECLARE
+  v_contrato text := public.rec_norm_txt(regexp_replace(coalesce(p_contrato, ''), '^\s*\d+\s*-\s*', ''));
+  v_cargo    text := public.rec_norm_txt(p_cargo);
+  v_cidade   text := public.rec_norm_txt(p_cidade);
+  v_tokens   text[];
+  melhor     record;
+  n_cand     int;
+  ambiguo    boolean;
+BEGIN
+  IF NOT (public.has_screen_access(auth.uid(), 'encarregados_minhas_solicitacoes', 'visualizar'::app_acao)
+          OR public.has_screen_access(auth.uid(), 'central_servicos_solicitar_vaga', 'visualizar'::app_acao)
+          OR public.has_screen_access(auth.uid(), 'recrutamento_gestao', 'visualizar'::app_acao)
+          OR public.has_screen_access(auth.uid(), 'licitacoes_analistas_recrutamento', 'visualizar'::app_acao)
+          OR public.has_screen_access(auth.uid(), 'operacional_recrutamento', 'visualizar'::app_acao)) THEN
+    RAISE EXCEPTION 'Sem permissão.' USING ERRCODE = '42501';
+  END IF;
+  IF v_contrato = '' THEN RETURN NULL; END IF;
+
+  -- ASG é como a planilha chama o Auxiliar de Serviços Gerais.
+  v_cargo := replace(replace(v_cargo, 'AUXILIAR DE SERVICOS GERAIS', 'ASG'), 'AUX SERVICOS GERAIS', 'ASG');
+  v_tokens := ARRAY(SELECT t FROM unnest(string_to_array(v_cargo, ' ')) t WHERE length(t) >= 3 AND t NOT IN ('DOS','DAS','DE','DA','DO'));
+
+  WITH base AS (
+    SELECT pc.*, public.rec_norm_txt(pc.posto) AS posto_n
+      FROM public.planilha_custo pc
+     WHERE coalesce(pc.encerrado, false) = false
+       AND public.rec_norm_txt(pc.contrato) = v_contrato
+  ), pontos AS (
+    SELECT b.*,
+           (CASE WHEN p_salario IS NOT NULL AND abs(coalesce(b.salario, 0) - p_salario) < 0.01 THEN 100 ELSE 0 END)
+         + (CASE WHEN v_cidade <> '' AND b.posto_n LIKE '%' || v_cidade || '%' THEN 20 ELSE 0 END)
+         + 5 * (SELECT count(*) FROM unnest(v_tokens) t WHERE b.posto_n LIKE '%' || t || '%')::int AS score
+      FROM base b
+  ), topo AS (
+    SELECT * FROM pontos WHERE score = (SELECT max(score) FROM pontos)
+  )
+  SELECT t.posto, t.servico, t.salario, t.insalubridade, t.periculosidade, t.transporte, t.transporte_desconto,
+         t.aux_alimentacao, t.aux_alimentacao_desconto, t.aux_refeicao, t.cesta_basica, t.assistencia_medica,
+         t.data_vigencia, t.score,
+         (SELECT count(*) FROM pontos) AS total,
+         (SELECT count(DISTINCT (x.insalubridade, x.transporte, x.aux_alimentacao)) FROM topo x) AS variantes_no_topo
+    INTO melhor
+    FROM topo t
+   ORDER BY t.data_vigencia DESC NULLS LAST, t.salario DESC
+   LIMIT 1;
+
+  IF melhor.posto IS NULL THEN RETURN NULL; END IF;
+
+  RETURN jsonb_build_object(
+    'posto',              melhor.posto,
+    'servico',            melhor.servico,
+    'salario',            melhor.salario,
+    'insalubridade',      melhor.insalubridade,
+    'periculosidade',     melhor.periculosidade,
+    'vt',                 melhor.transporte,
+    'vt_desconto',        melhor.transporte_desconto,
+    'va',                 melhor.aux_alimentacao,
+    'va_desconto',        melhor.aux_alimentacao_desconto,
+    'vr',                 melhor.aux_refeicao,
+    'cesta_basica',       melhor.cesta_basica,
+    'assistencia_medica', melhor.assistencia_medica,
+    'vigencia',           melhor.data_vigencia,
+    'score',              melhor.score,
+    'candidatos',         melhor.total,
+    'ambiguo',            coalesce(melhor.variantes_no_topo, 1) > 1,
+    'casou_salario',      melhor.score >= 100
+  );
+END $fn$;
+
+REVOKE ALL ON FUNCTION public.rec_custo_do_posto(text, text, numeric, text) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.rec_custo_do_posto(text, text, numeric, text) FROM anon;
+GRANT EXECUTE ON FUNCTION public.rec_custo_do_posto(text, text, numeric, text) TO authenticated;
+
+NOTIFY pgrst, 'reload schema';
+
+-- ROLLBACK
+-- DROP FUNCTION IF EXISTS public.rec_custo_do_posto(text, text, numeric, text);
+-- DROP FUNCTION IF EXISTS public.rec_norm_txt(text);
+-- NOTIFY pgrst, 'reload schema';
+
+-- ===== 20260930000110_demissao_trigger_aceita_os_dois_nomes =====
+-- =========================================================================
+-- Demissão: trigger da vaga aceita os dois nomes da etapa 1; rename refeito
+--
+-- Complemento da 20260930000103 (que já rodou em produção — por isso esta é
+-- uma migration NOVA, regra R4: migration é append-only).
+--
+-- O QUE ACONTECEU (14/09/2026)
+--   1. A 103 rodava o UPDATE de status ANTES de recriar demissao_exige_vaga.
+--      A versão antiga do trigger viu "saiu de Pendente Analista sem vaga"
+--      e estourou na #57 (MARIA APARECIDA KUNZLER). Renomear a etapa não é
+--      fazer o pedido seguir — o trigger não pode barrar isso.
+--   2. A 103 foi aplicada no banco antes do deploy do front; a produção
+--      antiga (que lista só "Pendente Analista") deixou de ver as pendentes
+--      e os analistas viam contagens diferentes conforme a hora. O banco
+--      foi revertido pra "Pendente Analista" até o deploy, e depois do
+--      deploy o rename foi refeito.
+--
+-- O QUE ESTA MIGRATION FAZ
+--   • demissao_exige_vaga aceita 'Pendente Operacional' E 'Pendente
+--     Analista' como etapa 1 — cobre qualquer front (antigo ou novo) e
+--     qualquer ordem de aplicação/deploy.
+--   • Refaz o UPDATE Analista → Operacional, idempotente: é o que vale com
+--     o front novo no ar. Se por algum motivo o front antigo voltar, é este
+--     UPDATE invertido que devolve a visibilidade — não edite a 103.
+--
+-- Idempotente. Aplicar no banco do app (já aplicada em 14/09/2026).
+-- =========================================================================
+
+CREATE OR REPLACE FUNCTION public.demissao_exige_vaga()
+RETURNS trigger
+LANGUAGE plpgsql
+SET search_path = public, pg_temp
+AS $fn$
+BEGIN
+  -- Os dois nomes da etapa 1 são aceitos de propósito (ver cabeçalho).
+  IF NEW.vaga_obrigatoria
+     AND NEW.vaga_id IS NULL
+     AND OLD.status IN ('Pendente Operacional', 'Pendente Analista')
+     AND NEW.status NOT IN ('Pendente Operacional', 'Pendente Analista', 'Reprovada') THEN
+    RAISE EXCEPTION 'Esta demissão ainda não tem a vaga de reposição. Quem solicitou precisa abrir a vaga de Substituição de % antes de o pedido seguir.', NEW.colaborador_nome;
+  END IF;
+  RETURN NEW;
+END $fn$;
+
+DROP TRIGGER IF EXISTS trg_demissao_exige_vaga ON public."SISTEMA_SOLICITACOES_DEMISSAO";
+CREATE TRIGGER trg_demissao_exige_vaga
+  BEFORE UPDATE OF status ON public."SISTEMA_SOLICITACOES_DEMISSAO"
+  FOR EACH ROW EXECUTE FUNCTION public.demissao_exige_vaga();
+
+-- Depois do trigger, de propósito (ver item 1 do cabeçalho).
+UPDATE public."SISTEMA_SOLICITACOES_DEMISSAO"
+   SET status = 'Pendente Operacional'
+ WHERE status = 'Pendente Analista';
+
+NOTIFY pgrst, 'reload schema';
+
+-- Conferência: deve devolver 0.
+-- SELECT count(*) FROM public."SISTEMA_SOLICITACOES_DEMISSAO" WHERE status = 'Pendente Analista';
+
+-- =========================================================================
+-- ROLLBACK
+-- =========================================================================
+-- Reaplicar o bloco CREATE OR REPLACE FUNCTION public.demissao_exige_vaga()
+-- da 20260930000103 (só 'Pendente Operacional') e NOTIFY pgrst, 'reload schema';

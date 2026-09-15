@@ -1,4 +1,5 @@
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useRef, useMemo } from "react";
+import { FiltroContratos, passaNoFiltroContratos } from "@/components/solicitacoes/FiltroContratos";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
 import { ConversaSolicitacao } from "@/components/solicitacoes/ConversaSolicitacao";
@@ -33,6 +34,10 @@ export default function Ferias() {
   const [stats, setStats] = useState<Record<string, number>>({});
   const [statusFilter, setStatusFilter] = useState("");
   const [busca, setBusca] = useState("");
+  // Filtros · Contratos (14/09/2026). O contrato da férias é a filial do
+  // colaborador ("1109 - POLICIA CIVIL..."), gravada em colaborador_filial.
+  const [fContratos, setFContratos] = useState<string[]>([]);
+  const rowsFiltradas = useMemo(() => rows.filter(r => passaNoFiltroContratos(r, "colaborador_filial", fContratos)), [rows, fContratos]);
 
   const [drawerId, setDrawerId] = useState<number | null>(null);
   const [sol, setSol] = useState<any | null>(null);
@@ -135,8 +140,9 @@ export default function Ferias() {
             {f || "Todas"}
           </button>
         ))}
+        <div style={{ marginLeft: "auto" }}><FiltroContratos linhas={rows} campo="colaborador_filial" selecionados={fContratos} onChange={setFContratos} /></div>
         <input value={busca} onChange={e => setBusca(e.target.value)} placeholder="Buscar colaborador / solicitante..."
-          style={{ marginLeft: "auto", minWidth: 240, padding: "8px 12px", borderRadius: 10, border: "1px solid #e2e8f0", fontSize: 13, outline: "none" }} />
+          style={{ minWidth: 240, padding: "8px 12px", borderRadius: 10, border: "1px solid #e2e8f0", fontSize: 13, outline: "none" }} />
       </div>
 
       {/* Tabela */}
@@ -152,11 +158,11 @@ export default function Ferias() {
           <tbody>
             {loading ? (
               <tr><td colSpan={6} style={{ padding: 32, textAlign: "center", color: "#94a3b8", fontSize: 13 }}>Carregando...</td></tr>
-            ) : rows.length === 0 ? (
+            ) : rowsFiltradas.length === 0 ? (
               <tr><td colSpan={6} style={{ padding: 40, textAlign: "center", color: "#94a3b8", fontSize: 13 }}>
                 <div style={{ fontSize: 32, marginBottom: 8 }}>📭</div>Nenhuma solicitação de férias.
               </td></tr>
-            ) : rows.map(r => (
+            ) : rowsFiltradas.map(r => (
               <tr key={r.id} onClick={() => abrirDrawer(r)} style={{ cursor: "pointer", borderBottom: "1px solid #f1f5f9" }}
                 onMouseEnter={e => (e.currentTarget.style.background = "#f8fbff")}
                 onMouseLeave={e => (e.currentTarget.style.background = "#fff")}>
@@ -167,7 +173,10 @@ export default function Ferias() {
                 <td style={{ padding: "11px 14px", fontSize: 12, color: "#475569" }}>{fmtDt(r.data_saida)} → {fmtDt(r.data_retorno)}</td>
                 <td style={{ padding: "11px 14px", fontSize: 12, color: "#475569" }}>{r.dias_ferias}d{r.dias_vendidos ? ` +${r.dias_vendidos} abono` : ""}</td>
                 <td style={{ padding: "11px 14px", fontSize: 12, color: "#475569" }}>{r.solicitante_nome || "—"}</td>
-                <td style={{ padding: "11px 14px" }}><StatusBadge status={r.status} /></td>
+                <td style={{ padding: "11px 14px" }}>
+                  <StatusBadge status={r.status} />
+                  {r.excecao && <span title="Solicitada com menos de 30 dias de antecedência" style={{ display: "inline-block", marginLeft: 6, padding: "2px 8px", borderRadius: 999, fontSize: 10, fontWeight: 800, background: "#fef3c7", color: "#b45309", border: "1px solid #fde68a" }}>FORA DO PRAZO</span>}
+                </td>
                 <td style={{ padding: "11px 14px", fontSize: 11, color: "#94a3b8" }}>{fmtDt(r.criado_em)}</td>
               </tr>
             ))}
@@ -211,6 +220,14 @@ export default function Ferias() {
                   </div>
                 ))}
               </div>
+              {/* Exceção: o solicitante foi avisado e confirmou mesmo assim —
+                  quem aprova precisa ver isso antes de decidir. */}
+              {sol.excecao && (
+                <div style={{ marginBottom: 18, background: "#fffbeb", border: "1px solid #fde68a", borderRadius: 10, padding: "10px 12px" }}>
+                  <div style={{ fontSize: 10, fontWeight: 700, color: "#b45309", textTransform: "uppercase", letterSpacing: ".5px", marginBottom: 4 }}>⚠️ Fora do prazo — exceção</div>
+                  <div style={{ fontSize: 13, color: "#92400e", lineHeight: 1.5 }}>Solicitada com menos de 30 dias de antecedência. O solicitante foi avisado de que pode ser recusada e confirmou mesmo assim.</div>
+                </div>
+              )}
               {sol.observacoes && (
                 <div style={{ marginBottom: 18 }}>
                   <div style={{ fontSize: 10, fontWeight: 700, color: "#94a3b8", textTransform: "uppercase", letterSpacing: ".5px", marginBottom: 4 }}>Observações</div>

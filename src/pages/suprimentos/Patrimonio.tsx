@@ -351,7 +351,7 @@ function CardBem({
 function DialogBem({
   bem, empresaId, onFechar,
 }: { bem: Partial<Bem> | null; empresaId: string | null; onFechar: () => void }) {
-  const { data: contratos = [] } = useContratosCatalogo(empresaId);
+  const { data: contratos = [] } = useContratosCatalogo();
   const salvar = useSalvarBem();
   const excluir = useExcluirBem();
   const [form, setForm] = useState<Partial<Bem>>({});

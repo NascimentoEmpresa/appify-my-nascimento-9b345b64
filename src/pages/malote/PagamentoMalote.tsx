@@ -18,6 +18,8 @@ import {
   useEmpresasGrupo,
   useEmpresaPrimeiraLinhaRateio,
   useClassificacaoPrimeiraLinhaRateio,
+  useContratosAtivos,
+  useContratoPrimeiraLinhaRateio,
   STATUS_LABEL,
   STATUS_BADGE_CLASS,
   StatusDespesa,
@@ -28,6 +30,7 @@ import { useClassificacoesOrcamentoAdmin } from "@/hooks/usePlanejamentoOrcament
 import { useOrdenacaoTabela } from "@/hooks/useOrdenacaoTabela";
 import { useEstadoPersistido } from "@/hooks/useEstadoPersistido";
 import { ordenarPor } from "@/lib/ordenarTabela";
+import { EmpresaContratoBadge } from "./EmpresaContratoBadge";
 
 // SIS-2026-0316: colunas ordenáveis. Fora: Parcela (composto X/Y) e
 // Responsável (nome resolvido por hook próprio dentro de cada linha, não
@@ -174,6 +177,17 @@ export default function PagamentoMalote() {
   const { data: empresaPrimeiraLinhaPorDespesa } = useEmpresaPrimeiraLinhaRateio(despesaIds);
   function empresaIdResolvida(despesa: MaloteDespesaRow): string | null {
     return empresaPrimeiraLinhaPorDespesa?.get(despesa.id) ?? despesa.empresa_id ?? null;
+  }
+
+  // SIS-2026-0382 (Iury): "colocar o centro de custo (contrato) no pagamento
+  // de malote" — mesmo padrão de Aprovacoes.tsx: contrato_id da despesa,
+  // com fallback pra 1ª linha do rateio quando a despesa não tem contrato
+  // no nível dela (classificação administrativa multi-contrato/rateio).
+  const { data: contratos = [] } = useContratosAtivos();
+  const contratosMap = useMemo(() => new Map(contratos.map((c) => [c.id, c.nome])), [contratos]);
+  const { data: contratoPrimeiraLinhaPorDespesa } = useContratoPrimeiraLinhaRateio(despesaIds);
+  function contratoIdResolvido(despesa: MaloteDespesaRow): string | null {
+    return despesa.contrato_id ?? contratoPrimeiraLinhaPorDespesa?.get(despesa.id) ?? null;
   }
 
   // SIS-2026-0286 (Iury): coluna/filtro de "Setor" — o setor_responsavel é
@@ -525,18 +539,18 @@ export default function PagamentoMalote() {
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHeadOrdenavel coluna="numero" ordenacao={ordenacao}>Nº ID</TableHeadOrdenavel>
-                  <TableHeadOrdenavel coluna="empresa" ordenacao={ordenacao}>Empresa</TableHeadOrdenavel>
-                  <TableHeadOrdenavel coluna="setor" ordenacao={ordenacao}>Setor</TableHeadOrdenavel>
-                  <TableHead>Parcela</TableHead>
-                  <TableHeadOrdenavel coluna="data_pagamento" ordenacao={ordenacao}>Data de Pagamento</TableHeadOrdenavel>
-                  <TableHeadOrdenavel coluna="nome" ordenacao={ordenacao}>Nome / Histórico</TableHeadOrdenavel>
-                  <TableHeadOrdenavel coluna="classificacao" ordenacao={ordenacao}>Classificação</TableHeadOrdenavel>
-                  <TableHeadOrdenavel coluna="valor" ordenacao={ordenacao} className="text-right">Valor (R$)</TableHeadOrdenavel>
-                  <TableHeadOrdenavel coluna="forma_pagamento" ordenacao={ordenacao}>Forma de Pagamento</TableHeadOrdenavel>
-                  <TableHead>Responsável</TableHead>
-                  <TableHeadOrdenavel coluna="status" ordenacao={ordenacao}>Status</TableHeadOrdenavel>
-                  <TableHeadOrdenavel coluna="atualizacao" ordenacao={ordenacao}>Atualizado em</TableHeadOrdenavel>
+                  <TableHeadOrdenavel coluna="numero" ordenacao={ordenacao} className="text-center">Nº ID</TableHeadOrdenavel>
+                  <TableHeadOrdenavel coluna="empresa" ordenacao={ordenacao} className="text-center">Empresa / Contrato</TableHeadOrdenavel>
+                  <TableHeadOrdenavel coluna="setor" ordenacao={ordenacao} className="text-center">Setor</TableHeadOrdenavel>
+                  <TableHead className="text-center">Parcela</TableHead>
+                  <TableHeadOrdenavel coluna="data_pagamento" ordenacao={ordenacao} className="text-center">Data de Pagamento</TableHeadOrdenavel>
+                  <TableHeadOrdenavel coluna="nome" ordenacao={ordenacao} className="text-center">Nome / Histórico</TableHeadOrdenavel>
+                  <TableHeadOrdenavel coluna="classificacao" ordenacao={ordenacao} className="text-center">Classificação</TableHeadOrdenavel>
+                  <TableHeadOrdenavel coluna="valor" ordenacao={ordenacao} className="text-center">Valor (R$)</TableHeadOrdenavel>
+                  <TableHeadOrdenavel coluna="forma_pagamento" ordenacao={ordenacao} className="text-center">Forma de Pagamento</TableHeadOrdenavel>
+                  <TableHead className="text-center">Responsável</TableHead>
+                  <TableHeadOrdenavel coluna="status" ordenacao={ordenacao} className="text-center">Status</TableHeadOrdenavel>
+                  <TableHeadOrdenavel coluna="atualizacao" ordenacao={ordenacao} className="text-center">Atualizado em</TableHeadOrdenavel>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -559,7 +573,9 @@ export default function PagamentoMalote() {
                   <LinhaItem
                     key={`${item.despesa.id}-${item.parcela?.id ?? "unica"}`}
                     item={item}
-                    empresaNome={empresasMap.get(empresaIdResolvida(item.despesa) ?? "") ?? "—"}
+                    empresaId={empresaIdResolvida(item.despesa)}
+                    empresaNome={empresasMap.get(empresaIdResolvida(item.despesa) ?? "")}
+                    contratoNome={contratosMap.get(contratoIdResolvido(item.despesa) ?? "")}
                     setorNome={setoresResolvidos(item.despesa).join(", ") || "—"}
                     onAbrir={() => abrirItem(item.despesa)}
                   />
@@ -591,12 +607,16 @@ export default function PagamentoMalote() {
 
 function LinhaItem({
   item,
+  empresaId,
   empresaNome,
+  contratoNome,
   setorNome,
   onAbrir,
 }: {
   item: ItemLinhaMalote;
-  empresaNome: string;
+  empresaId: string | null;
+  empresaNome?: string;
+  contratoNome?: string;
   setorNome: string;
   onAbrir: () => void;
 }) {
@@ -607,27 +627,33 @@ function LinhaItem({
   const dataPagamento = parcela ? parcela.data_pagamento_real ?? parcela.data_vencimento : despesa.data_pagamento;
   return (
     <TableRow className="cursor-pointer hover:bg-muted/50" onClick={onAbrir}>
-      <TableCell className="font-mono text-xs">{despesa.numero}</TableCell>
-      <TableCell className="text-sm">{empresaNome}</TableCell>
-      <TableCell className="text-sm">{setorNome}</TableCell>
-      <TableCell className="text-sm">
+      <TableCell className="text-center font-mono text-xs">{despesa.numero}</TableCell>
+      <TableCell className="text-center text-sm">
+        <div className="flex justify-center">
+          <EmpresaContratoBadge nomeEmpresa={empresaNome} nomeContrato={contratoNome} empresaId={empresaId} />
+        </div>
+      </TableCell>
+      <TableCell className="text-center text-sm">{setorNome}</TableCell>
+      <TableCell className="text-center text-sm">
         {parcela ? `${parcela.numero_parcela}/${despesa.numero_parcelas}` : <span className="text-muted-foreground">—</span>}
       </TableCell>
-      <TableCell className="text-sm">{dataPagamento ? new Date(dataPagamento + "T00:00:00").toLocaleDateString("pt-BR") : "—"}</TableCell>
-      <TableCell className="text-sm">
-        <p>{despesa.nome}</p>
-        {despesa.motivo && <p className="text-xs text-muted-foreground">{despesa.motivo}</p>}
+      <TableCell className="text-center text-sm">{dataPagamento ? new Date(dataPagamento + "T00:00:00").toLocaleDateString("pt-BR") : "—"}</TableCell>
+      <TableCell className="text-center text-sm">
+        <div className="flex flex-col items-center">
+          <p>{despesa.nome}</p>
+          {despesa.motivo && <p className="text-xs text-muted-foreground">{despesa.motivo}</p>}
+        </div>
       </TableCell>
-      <TableCell className="text-sm">{despesa.classificacao?.nome ?? "—"}</TableCell>
-      <TableCell className="text-right text-sm">
+      <TableCell className="text-center text-sm">{despesa.classificacao?.nome ?? "—"}</TableCell>
+      <TableCell className="text-center text-sm">
         {Number(valor).toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}
       </TableCell>
-      <TableCell className="text-sm">{despesa.forma_pagamento ?? "—"}</TableCell>
-      <TableCell className="text-sm">{solicitanteNome ?? "—"}</TableCell>
-      <TableCell>
+      <TableCell className="text-center text-sm">{despesa.forma_pagamento ?? "—"}</TableCell>
+      <TableCell className="text-center text-sm">{solicitanteNome ?? "—"}</TableCell>
+      <TableCell className="text-center">
         <Badge className={STATUS_BADGE_CLASS[status]}>{STATUS_LABEL[status]}</Badge>
       </TableCell>
-      <TableCell className="text-xs text-muted-foreground">{new Date(despesa.updated_at).toLocaleString("pt-BR")}</TableCell>
+      <TableCell className="text-center text-xs text-muted-foreground">{new Date(despesa.updated_at).toLocaleString("pt-BR")}</TableCell>
     </TableRow>
   );
 }

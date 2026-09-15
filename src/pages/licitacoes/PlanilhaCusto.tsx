@@ -59,6 +59,7 @@ const EMPTY_FORM: FormData = {
   uniforme: 0, epi: 0, epc: 0, materiais: 0, equipamentos: 0,
   relogio_digital: 0, ponto_eletronico: 0, outros_insumos: 0,
   custos_indiretos: 0, lucro: 0, cofins: 0, pis: 0, irpj_csll: 0, iss: 0,
+  aluguel: 0, agua: 0, luz: 0, internet: 0, demais_despesas_diretas: 0,
   total_por_empregado: 0,
 };
 
@@ -1828,6 +1829,8 @@ function FormDrawer({
           outros_insumos: sourceRow.outros_insumos, custos_indiretos: sourceRow.custos_indiretos,
           lucro: sourceRow.lucro, cofins: sourceRow.cofins, pis: sourceRow.pis,
           irpj_csll: sourceRow.irpj_csll, iss: sourceRow.iss,
+          aluguel: sourceRow.aluguel, agua: sourceRow.agua, luz: sourceRow.luz,
+          internet: sourceRow.internet, demais_despesas_diretas: sourceRow.demais_despesas_diretas,
           total_por_empregado: sourceRow.total_por_empregado,
         }
       : { ...EMPTY_FORM },
@@ -1837,6 +1840,9 @@ function FormDrawer({
   const [selectedSheet, setSelectedSheet] = useState<string>("");
   const [pendingFile, setPendingFile] = useState<File | null>(null);
   const [importing, setImporting] = useState(false);
+  // Despesas Diretas (instalação): grupo condicional — só aparece quando o
+  // contrato já tem valores (hoje só CANAA) ou quando o usuário revela p/ cadastrar.
+  const [mostrarDespesasDiretas, setMostrarDespesasDiretas] = useState(false);
 
   function set(k: keyof FormData, v: string | number | null) {
     setForm((prev) => ({ ...prev, [k]: v }));
@@ -1995,6 +2001,11 @@ function FormDrawer({
       pis: r.pis,
       irpj_csll: r.irpj_csll,
       iss: r.iss,
+      aluguel: r.aluguel,
+      agua: r.agua,
+      luz: r.luz,
+      internet: r.internet,
+      demais_despesas_diretas: r.demais_despesas_diretas,
       total_por_empregado: r.total_por_empregado,
     }));
     toast.success(`Planilha "${fileName}" importada. Revise e ajuste os campos.`);
@@ -2066,9 +2077,12 @@ function FormDrawer({
   const somaCustos =
     form.custos_indiretos + form.lucro + form.cofins + form.pis + form.irpj_csll + form.iss;
 
+  const somaDespesasDiretas =
+    form.aluguel + form.agua + form.luz + form.internet + form.demais_despesas_diretas;
+
   const somaTotal =
     somaRemuneracao + somaEncargos + somaBeneficios + somaReposicao +
-    somaRescisao + somaInsumos + somaCustos;
+    somaRescisao + somaInsumos + somaCustos + somaDespesasDiretas;
 
   return (
     <div className="flex flex-col">
@@ -2352,6 +2366,28 @@ function FormDrawer({
               </div>
             </Section>
 
+            {/* Seção 9 - Despesas Diretas (condicional: só aparece com valor ou ao revelar) */}
+            {(somaDespesasDiretas > 0 || mostrarDespesasDiretas) ? (
+              <Section title="9 — Despesas Diretas" soma={somaDespesasDiretas}>
+                <div className="grid grid-cols-3 gap-3">
+                  {numField("aluguel", "Aluguel")}
+                  {numField("agua", "Água")}
+                  {numField("luz", "Luz")}
+                  {numField("internet", "Internet")}
+                  {numField("demais_despesas_diretas", "Demais Despesas Diretas")}
+                </div>
+              </Section>
+            ) : (
+              <button
+                type="button"
+                onClick={() => setMostrarDespesasDiretas(true)}
+                className="inline-flex items-center gap-1.5 rounded-md border border-dashed border-border px-3 py-2 text-xs font-medium text-muted-foreground hover:bg-muted"
+              >
+                <Plus className="h-3.5 w-3.5" />
+                Adicionar despesas diretas (aluguel, água, luz…)
+              </button>
+            )}
+
             {/* Valor por empregado */}
             <div className="rounded-lg border border-border bg-muted/30 p-4">
               <h4 className="mb-3 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
@@ -2365,6 +2401,9 @@ function FormDrawer({
                   <CompRow label="Grupo 6 — Rescisão" soma={somaRescisao} />
                   <CompRow label="Grupo 7 — Insumos" soma={somaInsumos} />
                   <CompRow label="Grupo 8 — Indireto/Lucro/Tributo" soma={somaCustos} />
+                  {somaDespesasDiretas > 0 && (
+                    <CompRow label="Grupo 9 — Despesas Diretas" soma={somaDespesasDiretas} />
+                  )}
                   <div className="border-t border-border pt-1.5">
                     <CompRow label="SOMA TOTAL CALCULADA" soma={somaTotal} highlight />
                   </div>
@@ -2778,6 +2817,13 @@ const IDX_MAP: Array<[number, keyof Omit<PlanilhaCustoRow, "id" | "empresa_id" |
   // Dedução de Vale Transporte: fica isolada lá na coluna DB do arquivo do
   // José, fora da sequência dos benefícios (por isso o salto de índice).
   [105, "transporte_desconto"],       // DB
+  // Despesas Diretas (instalação) — colunas DE–DI, hoje só o CANAA preenche.
+  // DC (DEDUÇÕES TOTAIS) e DD (MATERIAIS PEDAGÓGICOS) ficam de fora de propósito.
+  [108, "aluguel"],                   // DE
+  [109, "agua"],                      // DF
+  [110, "luz"],                       // DG
+  [111, "internet"],                  // DH
+  [112, "demais_despesas_diretas"],   // DI
 ];
 
 const TEXT_FIELDS = new Set([
@@ -3064,7 +3110,8 @@ function ViewModal({
   const somaInsumos = row.uniforme + row.epi + row.epc + row.materiais + row.equipamentos +
     row.relogio_digital + row.ponto_eletronico + row.outros_insumos;
   const somaCustos = row.custos_indiretos + row.lucro + row.cofins + row.pis + row.irpj_csll + row.iss;
-  const somaTotal = somaRemuneracao + somaEncargos + somaBeneficios + somaReposicao + somaRescisao + somaInsumos + somaCustos;
+  const somaDespesasDiretas = row.aluguel + row.agua + row.luz + row.internet + row.demais_despesas_diretas;
+  const somaTotal = somaRemuneracao + somaEncargos + somaBeneficios + somaReposicao + somaRescisao + somaInsumos + somaCustos + somaDespesasDiretas;
 
   function VRow({ label, value }: { label: string; value: number }) {
     if (!value) return null;
@@ -3230,6 +3277,16 @@ function ViewModal({
               <VRow label="IRPJ + CSLL" value={row.irpj_csll} />
               <VRow label="ISS" value={row.iss} />
             </VSec>
+
+            {somaDespesasDiretas > 0 && (
+              <VSec title="9 — Despesas Diretas" soma={somaDespesasDiretas}>
+                <VRow label="Aluguel" value={row.aluguel} />
+                <VRow label="Água" value={row.agua} />
+                <VRow label="Luz" value={row.luz} />
+                <VRow label="Internet" value={row.internet} />
+                <VRow label="Demais Despesas Diretas" value={row.demais_despesas_diretas} />
+              </VSec>
+            )}
 
             {/* Total */}
             <div className="rounded-lg border border-primary/30 bg-primary/5 px-4 py-3">

@@ -63,8 +63,7 @@ import {
   UserMinus,
   UserPlus,
   CalendarCheck2,
-  AlertTriangle,
-} from "lucide-react";
+  AlertTriangle, WandSparkles } from "lucide-react";
 import { useTemAlcada } from "@/hooks/useTemAlcada";
 import { useAccessibleMenus, matchMenuCode } from "@/hooks/useAccessibleMenus";
 import { useModoExterno, rotaPermitidaExterno } from "@/hooks/useModoExterno";
@@ -161,7 +160,9 @@ const licitacoesModule: ModuleDef = {
       items: [
         { label: "Gestão Recrutamento", to: "/app/licitacoes/analistas/recrutamento", icon: UserCog },
         { label: "Mudança de Função", to: "/app/licitacoes/analistas/troca-funcao", icon: ArrowLeftRight, notif: "troca_funcao" },
-        { label: "Solicitações de Demissão", to: "/app/licitacoes/analistas/demissao", icon: UserMinus },
+        // Acompanhamento desde 14/09/2026: a aprovação da demissão voltou
+        // para o Operacional.
+        { label: "Solicitações de Demissão — Acompanhar", to: "/app/licitacoes/analistas/demissao", icon: UserMinus },
       ],
     },
     {
@@ -267,6 +268,9 @@ const suprimentosModule: ModuleDef = {
         { label: "Aprovação de Catálogo", to: "/app/suprimentos/catalogo/aprovacoes", icon: ClipboardCheck },
         { label: "Pedidos de Materiais", to: "/app/suprimentos/pedidos-materiais", icon: PackageCheck },
         { label: "Separação de Pedidos", to: "/app/suprimentos/separacao", icon: PackageCheck },
+        // O caminho normal é o QR code da etiqueta; o item existe para digitar
+        // o protocolo quando a etiqueta não lê.
+        { label: "Retirada para Entrega", to: "/app/suprimentos/retirada", icon: Car },
         { label: "Estoque & Etiquetas", to: "/app/suprimentos/estoque-etiquetas", icon: Boxes },
         { label: "Declaração de Conteúdo", to: "/app/suprimentos/correio-declaracao", icon: FileText },
         { label: "Cotações do Malote", to: "/app/suprimentos/cotacoes-malote", icon: FileClock },
@@ -367,6 +371,7 @@ const financeiroModule: ModuleDef = {
         // do usuário, são módulos migrados de sistema externo, não fazem
         // parte da Gestão Financeira "nativa" do ERP.
         { label: "Checklist de Faturamento", to: "/app/financeiro/checklist-faturamento", icon: ListChecks, badge: "Novo" },
+        { label: "Solicitações de Ajuste", to: "/app/financeiro/solicitacoes-ajuste", icon: ClipboardList, badge: "Novo" },
       ],
     },
   ],
@@ -813,6 +818,9 @@ const biModule: ModuleDef = {
       items: [
         { label: "Resumo do Grupo", to: "/app/bi", icon: BarChart3 },
         { label: "Links dos BIs", to: "/app/bi/links", icon: ExternalLink },
+        // Estúdio (14/09/2026): painéis montados dentro do ERP, à mão (SQL) ou
+        // por texto com a IA. Menu bi_estudio; a rota /:id é o painel aberto.
+        { label: "Estúdio de BI", to: "/app/bi/estudio", icon: WandSparkles },
       ],
     },
   ],
@@ -871,10 +879,9 @@ const operacionalModule: ModuleDef = {
       label: "Recursos Humanos",
       defaultOpen: true,
       items: [
-        // Também virou acompanhamento: a aprovação da demissão passou para o
-        // analista. A Mudança de Função abaixo, não — ali o Operacional
-        // continua aprovando, depois do analista.
-        { label: "Solicitações de Demissão — Acompanhar", to: "/app/operacional/solicitacoes-demissao", icon: UserMinus },
+        // A aprovação da demissão voltou para cá em 14/09/2026 (ficou com o
+        // analista entre 02/09 e 14/09).
+        { label: "Solicitações de Demissão", to: "/app/operacional/solicitacoes-demissao", icon: UserMinus },
         { label: "Conferência de Ponto", to: "/app/operacional/conferencia-ponto", icon: ClipboardCheck },
         { label: "Mudança de Função", to: "/app/operacional/troca-funcao", icon: ArrowLeftRight, notif: "troca_funcao" },
       ],

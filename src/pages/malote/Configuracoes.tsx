@@ -28,10 +28,15 @@ import {
   PrazoPagamentoUnidade,
   BloqueioRegra,
 } from "@/hooks/useMaloteConfig";
-import { LigacaoLicitacaoClassificacao, LigacaoAdministrativoClassificacaoSection, LigacaoSectionBanner } from "./LigacaoLicitacaoClassificacao";
+import {
+  LigacaoLicitacaoClassificacao,
+  LigacaoAdministrativoClassificacaoSection,
+  LigacaoClassificacaoMaloteSection,
+  LigacaoSectionBanner,
+} from "./LigacaoLicitacaoClassificacao";
 import { AnalistasContratos } from "./AnalistasContratos";
 import { FormasPagamento } from "./FormasPagamento";
-import { Briefcase, Building2 } from "lucide-react";
+import { Briefcase, Building2, ArrowLeftRight } from "lucide-react";
 
 const DIAS_UTEIS_OPCOES = Array.from({ length: 15 }, (_, i) => i + 1);
 const ANO_ATUAL = new Date().getFullYear();
@@ -346,6 +351,15 @@ export default function Configuracoes() {
               cor="blue"
             />
             <LigacaoAdministrativoClassificacaoSection podeEditar={podeEditar} />
+          </div>
+          <div>
+            <LigacaoSectionBanner
+              titulo="Classificação do Malote → Classificação do Malote"
+              subtitulo="Liga uma Classificação sem orçamento próprio (ex.: Pensão) a outra que já tem (ex.: Salário) — as despesas da primeira passam a consumir o orçamento da segunda."
+              icon={<ArrowLeftRight />}
+              cor="violet"
+            />
+            <LigacaoClassificacaoMaloteSection podeEditar={podeEditar} />
           </div>
         </TabsContent>
 

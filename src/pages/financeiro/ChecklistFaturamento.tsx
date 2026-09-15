@@ -8,9 +8,10 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { KpiTile } from "@/components/financeiro/KpiTile";
 import { AcessoGate } from "@/components/auth/AcessoGate";
-import { Settings, Paperclip, FileDown, CheckCircle2, AlertTriangle, ListChecks, Trash2, Upload, ExternalLink } from "lucide-react";
+import { Settings, Paperclip, FileDown, CheckCircle2, AlertTriangle, ListChecks, Trash2, Upload, ExternalLink, Send } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
@@ -23,6 +24,7 @@ import {
 } from "@/hooks/useChecklistFaturamento";
 import { DocsPadraoModal } from "./checklist-faturamento/DocsPadraoModal";
 import { ContratoConfigModal } from "./checklist-faturamento/ContratoConfigModal";
+import { DashboardChecklist } from "./checklist-faturamento/DashboardChecklist";
 
 const MENU_CODIGO = "financeiro-checklist-faturamento";
 
@@ -156,6 +158,7 @@ function MatrizContrato({ contrato, competenciaISO }: { contrato: ContratoCheckl
   const marcarBaixado = useMarcarBaixado();
   const atualizar = useAtualizarMarcacao();
   const [baixando, setBaixando] = useState(false);
+  const [marcandoEnviado, setMarcandoEnviado] = useState(false);
   const [aplicandoEmMassa, setAplicandoEmMassa] = useState(false);
   const [selecionados, setSelecionados] = useState<Set<string>>(new Set());
 
@@ -193,6 +196,22 @@ function MatrizContrato({ contrato, competenciaISO }: { contrato: ContratoCheckl
       toast.error(e.message ?? "Erro ao atualizar em massa.");
     } finally {
       setAplicandoEmMassa(false);
+    }
+  }
+
+  // SIS-2026-0343 (pedido do usuário): opção separada pra quem já enviou
+  // os documentos por fora (ex. e-mail manual) e só quer registrar a
+  // data/horário do envio, sem precisar gerar e baixar o .zip de novo.
+  // Grava na mesma CHECKLIST_FATURAMENTO_ENVIO que "Concluir e baixar" já usa.
+  async function marcarComoEnviado() {
+    setMarcandoEnviado(true);
+    try {
+      await marcarBaixado.mutateAsync({ contratoId: contrato.id, competenciaISO });
+      toast.success("Marcado como enviado.");
+    } catch (e: any) {
+      toast.error(e.message ?? "Erro ao marcar como enviado.");
+    } finally {
+      setMarcandoEnviado(false);
     }
   }
 
@@ -247,13 +266,18 @@ function MatrizContrato({ contrato, competenciaISO }: { contrato: ContratoCheckl
             <p className="text-sm font-semibold">{contrato.nome}</p>
             {envio && (
               <p className="text-xs text-muted-foreground">
-                Baixado em {new Date(envio.baixado_em).toLocaleString("pt-BR")}
+                Enviado em {new Date(envio.baixado_em).toLocaleString("pt-BR")}
               </p>
             )}
           </div>
-          <Button size="sm" onClick={concluirEBaixar} disabled={baixando}>
-            <FileDown className="h-3.5 w-3.5 mr-1.5" /> {baixando ? "Gerando..." : "Concluir e baixar"}
-          </Button>
+          <div className="flex items-center gap-2">
+            <Button size="sm" variant="outline" onClick={marcarComoEnviado} disabled={marcandoEnviado}>
+              <Send className="h-3.5 w-3.5 mr-1.5" /> {marcandoEnviado ? "Marcando..." : "Marcar como enviado"}
+            </Button>
+            <Button size="sm" onClick={concluirEBaixar} disabled={baixando}>
+              <FileDown className="h-3.5 w-3.5 mr-1.5" /> {baixando ? "Gerando..." : "Concluir e baixar"}
+            </Button>
+          </div>
         </div>
 
         {isLoading && <p className="text-xs text-muted-foreground shrink-0 mt-3">Carregando...</p>}
@@ -410,6 +434,8 @@ export default function ChecklistFaturamento() {
   const { data: empresas = [] } = useEmpresasGrupo();
   const { data: resumo } = useResumoPendencias(competenciaISO);
   const [contratoSelecionadoId, setContratoSelecionadoId] = useState<string | null>(null);
+  // SIS-2026-0343 (pedido do usuário): módulo abre direto no Dashboard.
+  const [aba, setAba] = useState<"checklist" | "dashboard">("dashboard");
   const [openDocsPadrao, setOpenDocsPadrao] = useState(false);
   const [contratoConfigurar, setContratoConfigurar] = useState<ContratoChecklist | null>(null);
   // SIS-2026-0325 (Iury): tiles "Com Pendência" e "Documentos Pendentes" clicáveis.
@@ -468,59 +494,80 @@ export default function ChecklistFaturamento() {
           }
         />
 
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-          <KpiTile label="Contratos" valor={String(kpis.totalContratos)} icon={<ListChecks />} cor="slate" />
-          <KpiTile label="Com Pendência" valor={String(kpis.comPendencia)} icon={<AlertTriangle />} cor="amber" valorClass="text-amber-600 dark:text-amber-400" onClick={() => setModalPendencia(true)} />
-          <KpiTile label="Documentos Pendentes" valor={String(kpis.totalPendentes)} icon={<AlertTriangle />} cor="red" valorClass="text-red-600 dark:text-red-400" onClick={() => setModalDocsPendentes(true)} />
-          <KpiTile label="Documentos OK" valor={String(kpis.totalOk)} icon={<CheckCircle2 />} cor="emerald" valorClass="text-emerald-600 dark:text-emerald-400" />
-        </div>
+        <Tabs value={aba} onValueChange={(v) => setAba(v as "checklist" | "dashboard")}>
+          <TabsList>
+            <TabsTrigger value="checklist">Checklist</TabsTrigger>
+            <TabsTrigger value="dashboard">Dashboard</TabsTrigger>
+          </TabsList>
 
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 items-start">
-          {/* SIS-2026-0304 (pedido do usuário): mesma mecânica de altura
-              fixa + scroll interno do card da matriz ao lado, pra ficarem
-              com a altura idêntica. */}
-          <Card className="lg:col-span-1 lg:sticky lg:top-6 lg:h-[75vh] flex flex-col">
-            <CardContent className="p-3 space-y-1 flex-1 min-h-0 overflow-y-auto">
-              {contratos.map((c) => {
-                const r = resumo?.get(c.id);
-                const pendente = (r?.pendentes ?? 0) > 0;
-                return (
-                  <div
-                    key={c.id}
-                    className={cn(
-                      "flex items-center justify-between gap-2 rounded-md px-2 py-2 cursor-pointer text-sm",
-                      contratoSelecionadoId === c.id ? "bg-primary/10" : "hover:bg-muted/50",
-                    )}
-                    onClick={() => setContratoSelecionadoId(c.id)}
-                  >
-                    <div className="min-w-0">
-                      <p className="truncate font-medium">{c.nome}</p>
-                      <p className="text-[11px] text-muted-foreground">{empresas.find((e) => e.id === c.empresa_id)?.nome ?? "—"}</p>
-                    </div>
-                    <div className="flex items-center gap-1 shrink-0">
-                      {r && (pendente ? <Badge variant="destructive" className="text-[10px]">{r.pendentes} pend.</Badge> : <Badge className="text-[10px] bg-emerald-600 hover:bg-emerald-600">OK</Badge>)}
-                      <AcessoGate menu={MENU_CODIGO} acao="alterar">
-                        <Button variant="ghost" size="icon" className="h-6 w-6" onClick={(e) => { e.stopPropagation(); setContratoConfigurar(c); }}>
-                          <Settings className="h-3 w-3" />
-                        </Button>
-                      </AcessoGate>
-                    </div>
-                  </div>
-                );
-              })}
-            </CardContent>
-          </Card>
+          <TabsContent value="checklist" className="space-y-4 mt-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+              <KpiTile label="Contratos" valor={String(kpis.totalContratos)} icon={<ListChecks />} cor="slate" />
+              <KpiTile label="Com Pendência" valor={String(kpis.comPendencia)} icon={<AlertTriangle />} cor="amber" valorClass="text-amber-600 dark:text-amber-400" onClick={() => setModalPendencia(true)} />
+              <KpiTile label="Documentos Pendentes" valor={String(kpis.totalPendentes)} icon={<AlertTriangle />} cor="red" valorClass="text-red-600 dark:text-red-400" onClick={() => setModalDocsPendentes(true)} />
+              <KpiTile label="Documentos OK" valor={String(kpis.totalOk)} icon={<CheckCircle2 />} cor="emerald" valorClass="text-emerald-600 dark:text-emerald-400" />
+            </div>
 
-          <div className="lg:col-span-2">
-            {contratoSelecionado ? (
-              <MatrizContrato contrato={contratoSelecionado} competenciaISO={competenciaISO} />
-            ) : (
-              <Card>
-                <CardContent className="p-8 text-center text-sm text-muted-foreground">Selecione um contrato na lista ao lado.</CardContent>
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 items-start">
+              {/* SIS-2026-0304 (pedido do usuário): mesma mecânica de altura
+                  fixa + scroll interno do card da matriz ao lado, pra ficarem
+                  com a altura idêntica. */}
+              <Card className="lg:col-span-1 lg:sticky lg:top-6 lg:h-[75vh] flex flex-col">
+                <CardContent className="p-3 space-y-1 flex-1 min-h-0 overflow-y-auto">
+                  {contratos.map((c) => {
+                    const r = resumo?.get(c.id);
+                    const pendente = (r?.pendentes ?? 0) > 0;
+                    return (
+                      <div
+                        key={c.id}
+                        className={cn(
+                          "flex items-center justify-between gap-2 rounded-md px-2 py-2 cursor-pointer text-sm",
+                          contratoSelecionadoId === c.id ? "bg-primary/10" : "hover:bg-muted/50",
+                        )}
+                        onClick={() => setContratoSelecionadoId(c.id)}
+                      >
+                        <div className="min-w-0">
+                          <p className="truncate font-medium">{c.nome}</p>
+                          <p className="text-[11px] text-muted-foreground">{empresas.find((e) => e.id === c.empresa_id)?.nome ?? "—"}</p>
+                        </div>
+                        <div className="flex items-center gap-1 shrink-0">
+                          {r && (pendente ? <Badge variant="destructive" className="text-[10px]">{r.pendentes} pend.</Badge> : <Badge className="text-[10px] bg-emerald-600 hover:bg-emerald-600">OK</Badge>)}
+                          <AcessoGate menu={MENU_CODIGO} acao="alterar">
+                            <Button variant="ghost" size="icon" className="h-6 w-6" onClick={(e) => { e.stopPropagation(); setContratoConfigurar(c); }}>
+                              <Settings className="h-3 w-3" />
+                            </Button>
+                          </AcessoGate>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </CardContent>
               </Card>
-            )}
-          </div>
-        </div>
+
+              <div className="lg:col-span-2">
+                {contratoSelecionado ? (
+                  <MatrizContrato contrato={contratoSelecionado} competenciaISO={competenciaISO} />
+                ) : (
+                  <Card>
+                    <CardContent className="p-8 text-center text-sm text-muted-foreground">Selecione um contrato na lista ao lado.</CardContent>
+                  </Card>
+                )}
+              </div>
+            </div>
+          </TabsContent>
+
+          <TabsContent value="dashboard" className="mt-4">
+            <DashboardChecklist
+              contratos={contratos}
+              empresas={empresas}
+              competenciaISO={competenciaISO}
+              onAbrirContrato={(id) => { setAba("checklist"); setContratoSelecionadoId(id); }}
+              onIrParaChecklist={() => setAba("checklist")}
+              onVerContratosPendencia={() => setModalPendencia(true)}
+              onVerDocumentosPendentes={() => setModalDocsPendentes(true)}
+            />
+          </TabsContent>
+        </Tabs>
       </div>
 
       <DocsPadraoModal open={openDocsPadrao} onClose={() => setOpenDocsPadrao(false)} />

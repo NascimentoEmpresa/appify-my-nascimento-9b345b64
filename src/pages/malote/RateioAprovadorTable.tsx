@@ -7,6 +7,7 @@ import { CheckCircle2, Eye, Pencil, XCircle } from "lucide-react";
 import { toast } from "sonner";
 import { RateioLinha, useEmpresasGrupo, useContratosAtivos, useFornecedoresAtivos, useIntegrantes, useJustificarRateioLinha } from "@/hooks/useMaloteDespesa";
 import { useUtilizadoOrcamento } from "@/hooks/useUtilizadoOrcamento";
+import { useLigacoesClassificacaoMalote, mapaClassificacaoVinculada, classificacaoCanonica } from "@/hooks/useMaloteClassificacaoMaloteLink";
 import { useMeusContratosAnalista } from "@/hooks/useMaloteAnalistas";
 import { DimensoesRateio } from "./RateioGrid";
 
@@ -61,6 +62,7 @@ export function RateioAprovadorTable({
   const { data: fornecedores = [] } = useFornecedoresAtivos();
   const { data: integrantes = [] } = useIntegrantes();
   const { data: utilizadoLinhas = [] } = useUtilizadoOrcamento();
+  const { data: ligacoesClassMalote = [] } = useLigacoesClassificacaoMalote();
   const { data: meusContratosAnalista } = useMeusContratosAnalista();
   const justificar = useJustificarRateioLinha();
 
@@ -79,17 +81,22 @@ export function RateioAprovadorTable({
   // o filtro por despesa_id != despesaId. Sem isso, o valor dela entrava
   // contado 2x: uma vez vindo da view (já aprovada) e outra somado como
   // "+ lançamento" logo abaixo.
+  // SIS-2026-0374: u.classificacao_id já vem canonicalizado (origem→destino
+  // de ligação) por useUtilizadoOrcamento; classificacaoId aqui também
+  // precisa ser canonicalizado pra bater.
+  const mapaVinculo = useMemo(() => mapaClassificacaoVinculada(ligacoesClassMalote), [ligacoesClassMalote]);
+  const classificacaoIdCanonica = useMemo(() => classificacaoCanonica(mapaVinculo, classificacaoId), [mapaVinculo, classificacaoId]);
   const utilizadoAntesPorContrato = useMemo(() => {
     const map = new Map<string, number>();
     for (const u of utilizadoLinhas) {
       if (u.despesa_id === despesaId) continue;
-      if (u.classificacao_id !== classificacaoId) continue;
+      if (u.classificacao_id !== classificacaoIdCanonica) continue;
       if (!u.competencia || u.competencia.slice(0, 7) !== anoMesDespesa) continue;
       const chave = u.contrato_id ?? "__sem_contrato__";
       map.set(chave, (map.get(chave) ?? 0) + (Number(u.valor) || 0));
     }
     return map;
-  }, [utilizadoLinhas, despesaId, classificacaoId, anoMesDespesa]);
+  }, [utilizadoLinhas, despesaId, classificacaoIdCanonica, anoMesDespesa]);
 
   function abrirDialog(linha: RateioLinha, edicao: boolean) {
     setDialogLinha(linha);
