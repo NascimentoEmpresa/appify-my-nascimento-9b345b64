@@ -488,6 +488,11 @@ export function ModalNovaVaga({ aberto, onFechar, onCriada, onToast, solicitacao
       // Só a substituição grava o id: é ele que trava a pessoa numa vaga só.
       substituido_id: ehSubstituicao(vaga.motivo_vaga) ? substituidoId : null,
       demissao_id: ehSubstituicao(vaga.motivo_vaga) ? demissaoId : null,
+      // Catálogo (opcional desde 15/09/2026): as colunas são uuid, e "" não é
+      // uuid — vazio tem que ir como NULL ("invalid input syntax for type uuid").
+      contrato_id: vaga.contrato_id || null,
+      posto_id: vaga.posto_id || null,
+      funcao_id: vaga.funcao_id || null,
     };
 
     // Status, solicitante e data de abertura são da SOLICITAÇÃO, não deste
