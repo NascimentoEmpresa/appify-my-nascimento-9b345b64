@@ -63,7 +63,7 @@ import {
   UserMinus,
   UserPlus,
   CalendarCheck2,
-  AlertTriangle, WandSparkles } from "lucide-react";
+  AlertTriangle, WandSparkles, Clock } from "lucide-react";
 import { useTemAlcada } from "@/hooks/useTemAlcada";
 import { useAccessibleMenus, matchMenuCode } from "@/hooks/useAccessibleMenus";
 import { useModoExterno, rotaPermitidaExterno } from "@/hooks/useModoExterno";
@@ -648,6 +648,14 @@ const sistemasModule: ModuleDef = {
         { label: "Painel de Distribuição", to: "/app/sistemas/chamados/painel", icon: BarChart3 },
         { label: "Dashboard de Chamados", to: "/app/sistemas/chamados/dashboard-tv", icon: LayoutDashboard },
         { label: "Painel do Desenvolvedor", to: "/app/sistemas/chamados/dev", icon: ClipboardList, notif: "dev" },
+      ],
+    },
+    {
+      label: "Hora Extra",
+      defaultOpen: true,
+      items: [
+        { label: "Hora Extra", to: "/app/sistemas/hora-extra", icon: Clock },
+        { label: "Liberação de HE", to: "/app/sistemas/hora-extra/liberacao", icon: CheckCircle2 },
       ],
     },
   ],
