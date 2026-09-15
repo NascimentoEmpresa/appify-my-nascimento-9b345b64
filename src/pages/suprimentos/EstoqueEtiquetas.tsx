@@ -19,14 +19,15 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Link } from "react-router-dom";
 import {
   useAlmoxarifados, useEstoqueLista, useTagsDoItem, useEntradaPorQuantidade, useDevolverTags,
-  useRemoverTag, useFornecedores, useHistoricoDoMaterial, useInventario,
-  useHistoricoPreco, fmtBRL,
+  useRemoverTag, useExcluirItemEstoque, useFornecedores, useHistoricoDoMaterial, useInventario,
+  useHistoricoPreco, fmtBRL, useEditarItemEstoque, useAlteracoesDoMaterial,
   type LinhaEstoque, type RemessaEntrada, type Movimento, type ResultadoInventario,
+  type EdicaoMaterial, type EdicaoLote, type AlteracaoEstoque,
 } from "@/hooks/useSupEstoque";
 import {
   PackagePlus, Search, AlertTriangle, Boxes, Undo2, Trash2, ShieldAlert, Plus, X, Tag,
   ClipboardCheck, History, ArrowDownToLine, ArrowUpFromLine, RotateCcw, Check, Coins,
-  PackageOpen, ClipboardList,
+  PackageOpen, ClipboardList, Pencil,
   type LucideIcon,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -58,9 +59,15 @@ export default function EstoqueEtiquetas() {
   // tudo e nao mexe em nada — e o modo consulta que o Cassio pediu.
   const { data: acessoAlterar } = useAccessibleMenus("alterar");
   const podeAlterar = acessoAlterar?.codes.has("sup_estoque") ?? false;
+  // Mesma ação da lixeira do lote (sup_est_remover_tag): tirar o material
+  // inteiro é só a versão de tirar todos os lotes de uma vez.
+  const { data: acessoExcluir } = useAccessibleMenus("excluir");
+  const podeExcluir = acessoExcluir?.codes.has("sup_estoque") ?? false;
   const [entradaAberta, setEntradaAberta] = useState(false);
   const [devolucaoAberta, setDevolucaoAberta] = useState(false);
   const [detalhe, setDetalhe] = useState<LinhaEstoque | null>(null);
+  const [excluindo, setExcluindo] = useState<LinhaEstoque | null>(null);
+  const [editando, setEditando] = useState<LinhaEstoque | null>(null);
 
   const filtradas = useMemo(() => {
     const t = busca.trim().toLowerCase();
@@ -212,6 +219,7 @@ export default function EstoqueEtiquetas() {
                       voltava para a tela. É o último valor pago. */}
                   <TableHead className="text-right">Custo unit.</TableHead>
                   <TableHead className="text-right">Valor total</TableHead>
+                  {(podeAlterar || podeExcluir) && <TableHead className="w-20" />}
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -279,6 +287,25 @@ export default function EstoqueEtiquetas() {
                       <TableCell className="text-right font-medium">
                         {l.valor_total > 0 ? fmtBRL(l.valor_total) : <span className="text-muted-foreground">—</span>}
                       </TableCell>
+                      {(podeAlterar || podeExcluir) && (
+                        <TableCell className="whitespace-nowrap p-1 text-right">
+                          {/* stopPropagation: o clique na linha abre o detalhe. */}
+                          {podeAlterar && (
+                            <Button variant="ghost" size="icon" className="h-8 w-8"
+                                    title="Editar material"
+                                    onClick={(e) => { e.stopPropagation(); setEditando(l); }}>
+                              <Pencil className="h-4 w-4" />
+                            </Button>
+                          )}
+                          {podeExcluir && (
+                            <Button variant="ghost" size="icon" className="h-8 w-8 text-destructive"
+                                    title="Excluir material do estoque"
+                                    onClick={(e) => { e.stopPropagation(); setExcluindo(l); }}>
+                              <Trash2 className="h-4 w-4" />
+                            </Button>
+                          )}
+                        </TableCell>
+                      )}
                     </TableRow>
                   );
                 })}
@@ -292,7 +319,281 @@ export default function EstoqueEtiquetas() {
                      empresaId={empresaId ?? null} podeAlterar={podeAlterar} />
       <DialogDevolucao aberto={devolucaoAberta} onFechar={() => setDevolucaoAberta(false)} />
       <DialogDetalhe linha={detalhe} onFechar={() => setDetalhe(null)} />
+      <DialogExcluirMaterial linha={excluindo} onFechar={() => setExcluindo(null)} />
+      <DialogEditarMaterial linha={editando} empresaId={empresaId ?? null} onFechar={() => setEditando(null)} />
     </div>
+  );
+}
+
+/** Estado editável de um lote. Vazio = campo não mexido. */
+type LoteEditado = { tamanho?: string; ca_numero?: string; ca_validade?: string; quantidade?: string };
+
+/** Nome do catálogo como o catálogo grava: sem espaço sobrando, em maiúsculas. */
+const normalizarNome = (s: string) => s.trim().replace(/\s+/g, " ").toUpperCase();
+
+/**
+ * Editar o material e os lotes livres dele, com motivo obrigatório.
+ *
+ * Cada campo que muda vira uma linha de histórico — antes, depois, quem,
+ * quando e por quê — que aparece na aba Histórico do material. Quantidade só
+ * se corrige em lote por quantidade, e vira movimento de "correção" na mesma
+ * trilha: o inventário continua só registrando, e a correção é o passo humano
+ * depois da apuração.
+ */
+function DialogEditarMaterial({ linha, empresaId, onFechar }: {
+  linha: LinhaEstoque | null; empresaId: string | null; onFechar: () => void;
+}) {
+  return (
+    <Dialog open={!!linha} onOpenChange={(o) => { if (!o) onFechar(); }}>
+      <DialogContent className="max-h-[90vh] max-w-2xl overflow-y-auto">
+        {/* key: trocar de material zera o formulário em vez de herdar o anterior. */}
+        {linha && <FormEditarMaterial key={linha.item_estoque_id} linha={linha}
+                                      empresaId={empresaId} onFechar={onFechar} />}
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function FormEditarMaterial({ linha, empresaId, onFechar }: {
+  linha: LinhaEstoque; empresaId: string | null; onFechar: () => void;
+}) {
+  const editar = useEditarItemEstoque();
+  const { data: tags = [], isLoading } = useTagsDoItem(linha.item_estoque_id);
+  const { data: fornecedores = [] } = useFornecedores(empresaId);
+  // O nome é do catálogo, e o banco só deixa quem altera o catálogo mexer nele.
+  const { data: acessoAlterar } = useAccessibleMenus("alterar");
+  const podeRenomear = acessoAlterar?.codes.has("sup_catalogo") ?? false;
+  const ehEpi = linha.tipo_material === "epi";
+
+  const [nome, setNome] = useState(linha.material);
+  const [valor, setValor] = useState(linha.valor_unitario ? String(linha.valor_unitario) : "");
+  const [precoValidoAte, setPrecoValidoAte] = useState(linha.preco_valido_ate ?? "");
+  const [minimo, setMinimo] = useState(String(linha.estoque_minimo));
+  const [fornecedor, setFornecedor] = useState(linha.fornecedor_id ?? "");
+  const [observacoes, setObservacoes] = useState(linha.observacoes ?? "");
+  const [lotes, setLotes] = useState<Record<string, LoteEditado>>({});
+  const [motivo, setMotivo] = useState("");
+
+  // Etiqueta usada pertence ao pedido que a levou — editar ali reescreveria o
+  // que o pedido recebeu. Só o que está livre na prateleira entra.
+  const livres = tags.filter((t) => !t.usado);
+  const alterarLote = (id: string, patch: LoteEditado) =>
+    setLotes((s) => ({ ...s, [id]: { ...s[id], ...patch } }));
+
+  const edicao = useMemo((): EdicaoMaterial => {
+    const e: EdicaoMaterial = {};
+    if (podeRenomear && nome.trim() && normalizarNome(nome) !== normalizarNome(linha.material)) {
+      e.nome = normalizarNome(nome);
+    }
+    const v = Number(valor || 0);
+    if (v !== linha.valor_unitario) e.valor_unitario = v;
+    if ((precoValidoAte || null) !== (linha.preco_valido_ate ?? null)) e.preco_valido_ate = precoValidoAte || null;
+    const m = Math.max(Number(minimo || 0), 0);
+    if (m !== linha.estoque_minimo) e.estoque_minimo = m;
+    if ((fornecedor || null) !== (linha.fornecedor_id ?? null)) e.fornecedor_id = fornecedor || null;
+    const obs = observacoes.trim() || null;
+    if (obs !== (linha.observacoes ?? null)) e.observacoes = obs;
+
+    const ls: EdicaoLote[] = [];
+    for (const t of livres) {
+      const ed = lotes[t.id];
+      if (!ed) continue;
+      const l: EdicaoLote = { id: t.id };
+      if (ed.tamanho !== undefined && (ed.tamanho.trim() || null) !== (t.tamanho ?? null)) l.tamanho = ed.tamanho.trim() || null;
+      if (ed.ca_numero !== undefined && (ed.ca_numero.trim() || null) !== (t.ca_numero ?? null)) l.ca_numero = ed.ca_numero.trim() || null;
+      if (ed.ca_validade !== undefined && (ed.ca_validade || null) !== (t.ca_validade ?? null)) l.ca_validade = ed.ca_validade || null;
+      if (t.tipo === "massa" && ed.quantidade !== undefined && ed.quantidade !== ""
+          && Math.max(Number(ed.quantidade), 0) !== (t.quantidade_massa ?? 0)) {
+        l.quantidade = Math.max(Math.trunc(Number(ed.quantidade)), 0);
+      }
+      if (Object.keys(l).length > 1) ls.push(l);
+    }
+    if (ls.length) e.lotes = ls;
+    return e;
+  }, [podeRenomear, nome, valor, precoValidoAte, minimo, fornecedor, observacoes, lotes, livres, linha]);
+
+  const nadaMudou = Object.keys(edicao).length === 0;
+
+  const salvar = async () => {
+    if (nadaMudou || !motivo.trim()) return;
+    await editar.mutateAsync({ itemEstoqueId: linha.item_estoque_id, edicao, motivo });
+    onFechar();
+  };
+
+  return (
+    <>
+      <DialogHeader><DialogTitle>Editar {linha.material}</DialogTitle></DialogHeader>
+
+      <div className="space-y-4 py-1">
+        <div>
+          <Label>Nome do material</Label>
+          <Input value={nome} onChange={(e) => setNome(e.target.value)} disabled={!podeRenomear} />
+          <p className="mt-1 text-[11px] text-muted-foreground">
+            {podeRenomear
+              ? "O nome é do catálogo: muda em todos os almoxarifados, pedidos e enxovais que usam este material."
+              : "Renomear exige permissão de alterar no Catálogo."}
+          </p>
+        </div>
+
+        <div className="grid gap-4 sm:grid-cols-3">
+          <div>
+            <Label>Valor unitário</Label>
+            <Input type="number" step="0.01" min="0" value={valor}
+                   onChange={(e) => setValor(e.target.value)} placeholder="0,00" />
+          </div>
+          <div>
+            <Label>Preço válido até</Label>
+            <Input type="date" value={precoValidoAte} onChange={(e) => setPrecoValidoAte(e.target.value)} />
+          </div>
+          <div>
+            <Label>Estoque mínimo</Label>
+            <Input type="number" min="0" value={minimo} onChange={(e) => setMinimo(e.target.value)} />
+          </div>
+        </div>
+
+        <div className="grid gap-4 sm:grid-cols-2">
+          <div>
+            <Label>Fornecedor</Label>
+            {/* O Select do Radix não aceita valor vazio num item — "__nenhum__" é o "sem fornecedor". */}
+            <Select value={fornecedor || "__nenhum__"}
+                    onValueChange={(v) => setFornecedor(v === "__nenhum__" ? "" : v)}>
+              <SelectTrigger><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="__nenhum__">Sem fornecedor</SelectItem>
+                {fornecedores.map((f) => (
+                  <SelectItem key={f.id} value={f.id}>{f.nome_fantasia || f.razao_social}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          <div>
+            <Label>Observações</Label>
+            <Input value={observacoes} onChange={(e) => setObservacoes(e.target.value)} />
+          </div>
+        </div>
+
+        <div>
+          <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+            Lotes na prateleira ({livres.length})
+          </p>
+          {isLoading ? (
+            <p className="py-4 text-center text-sm text-muted-foreground">Carregando…</p>
+          ) : livres.length === 0 ? (
+            <p className="py-4 text-center text-sm text-muted-foreground">Nenhum lote livre para editar.</p>
+          ) : (
+            <div className="space-y-2">
+              {livres.map((t) => {
+                const ed = lotes[t.id] ?? {};
+                return (
+                  <div key={t.id} className="flex flex-wrap items-end gap-2 rounded-md border p-2">
+                    <span className="w-8 shrink-0 pb-2 text-xs text-muted-foreground">#{t.sequencia}</span>
+                    <div className="w-20">
+                      <Label className="text-xs">Tamanho</Label>
+                      <Input className="h-8" value={ed.tamanho ?? t.tamanho ?? ""}
+                             onChange={(e) => alterarLote(t.id, { tamanho: e.target.value })} />
+                    </div>
+                    {ehEpi && (
+                      <>
+                        <div className="w-28">
+                          <Label className="text-xs">Nº do CA</Label>
+                          <Input className="h-8" value={ed.ca_numero ?? t.ca_numero ?? ""}
+                                 onChange={(e) => alterarLote(t.id, { ca_numero: e.target.value })} />
+                        </div>
+                        <div className="w-36">
+                          <Label className="text-xs">Validade do CA</Label>
+                          <Input className="h-8" type="date" value={ed.ca_validade ?? t.ca_validade ?? ""}
+                                 onChange={(e) => alterarLote(t.id, { ca_validade: e.target.value })} />
+                        </div>
+                      </>
+                    )}
+                    {t.tipo === "massa" ? (
+                      <div className="w-24">
+                        <Label className="text-xs">Quantidade</Label>
+                        <Input className="h-8" type="number" min="0"
+                               value={ed.quantidade ?? String(t.quantidade_massa ?? 0)}
+                               onChange={(e) => alterarLote(t.id, { quantidade: e.target.value })} />
+                      </div>
+                    ) : (
+                      <span className="pb-2 text-xs text-muted-foreground">etiqueta antiga · 1 un</span>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+
+        <div>
+          <Label className="text-sm">Motivo *</Label>
+          <Textarea rows={2} value={motivo} onChange={(e) => setMotivo(e.target.value)}
+                    placeholder="Ex.: contagem de 14/09 achou 7, não 10; nome digitado errado na entrada…"
+                    className="mt-1" />
+        </div>
+      </div>
+
+      <DialogFooter className="items-center">
+        {nadaMudou && <span className="mr-auto text-xs text-muted-foreground">Nada alterado ainda.</span>}
+        <Button variant="outline" onClick={onFechar}>Cancelar</Button>
+        <Button disabled={nadaMudou || !motivo.trim() || editar.isPending} onClick={salvar}>
+          {editar.isPending ? "Salvando…" : "Salvar alterações"}
+        </Button>
+      </DialogFooter>
+    </>
+  );
+}
+
+/**
+ * Excluir o material inteiro do estoque, com motivo obrigatório.
+ *
+ * Antes só dava para apagar lote por lote no modal de detalhe, e o material
+ * zerado continuava na lista. O motivo vai para a trilha de cada lote
+ * removido — é o que responde depois "quem tirou e por quê".
+ */
+function DialogExcluirMaterial({ linha, onFechar }: { linha: LinhaEstoque | null; onFechar: () => void }) {
+  const excluir = useExcluirItemEstoque();
+  const [motivo, setMotivo] = useState("");
+  const fechar = () => { setMotivo(""); onFechar(); };
+  // O banco barra do mesmo jeito; aqui é para não oferecer o que vai falhar.
+  const reservado = (linha?.reservado ?? 0) > 0;
+
+  return (
+    <Dialog open={!!linha} onOpenChange={(o) => { if (!o) fechar(); }}>
+      <DialogContent className="max-w-md">
+        <DialogHeader><DialogTitle>Excluir {linha?.material} do estoque?</DialogTitle></DialogHeader>
+        <div className="space-y-3 text-sm">
+          <p className="text-muted-foreground">
+            {linha?.fisico
+              ? <>Todas as <strong className="text-foreground">{linha.fisico}</strong> unidade(s) na prateleira
+                  de <strong className="text-foreground">{linha.almoxarifado}</strong> saem do estoque.</>
+              : <>O material não tem saldo e sai da lista de <strong className="text-foreground">{linha?.almoxarifado}</strong>.</>}
+            {" "}Pedidos que ele já atendeu continuam registrados, e a exclusão fica no histórico do material.
+          </p>
+          {reservado && (
+            <p className="rounded-md border border-destructive/40 bg-destructive/5 px-3 py-2 text-xs font-medium text-destructive">
+              {linha?.reservado} unidade(s) estão reservadas para separação de pedido.
+              Conclua ou libere a separação antes de excluir.
+            </p>
+          )}
+          <div>
+            <Label className="text-sm">Motivo *</Label>
+            <Textarea rows={2} value={motivo} onChange={(e) => setMotivo(e.target.value)}
+                      placeholder="Ex.: cadastrado no almoxarifado errado, lote descartado por CA vencido…"
+                      className="mt-1" />
+          </div>
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={fechar}>Cancelar</Button>
+          <Button variant="destructive"
+                  disabled={!motivo.trim() || reservado || excluir.isPending}
+                  onClick={async () => {
+                    await excluir.mutateAsync({ itemEstoqueId: linha!.item_estoque_id, motivo });
+                    fechar();
+                  }}>
+            {excluir.isPending ? "Excluindo…" : "Excluir do estoque"}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -355,7 +656,7 @@ function HistoricoDePrecos({ linha }: { linha: LinhaEstoque | null }) {
                     p.fornecedor_nome,
                     p.almoxarifado,
                     p.origem === "nf" ? "por nota fiscal"
-                      : p.origem === "ajuste" ? "cadastro anterior" : "entrada",
+                      : p.origem === "ajuste" ? "ajuste de cadastro" : "entrada",
                     p.registrado_por_nome,
                   ].filter(Boolean).join(" · ")}
                 </p>
@@ -1022,6 +1323,7 @@ const ESTILO_MOV: Record<Movimento["tipo"], { rotulo: string; Icone: typeof Tag;
   // ela aparece na trilha com peso visual menor que uma saída de verdade.
   reserva:   { rotulo: "Reservado",  Icone: PackageOpen,     cor: "text-violet-600 dark:text-violet-400" },
   liberacao: { rotulo: "Reserva liberada", Icone: Undo2,     cor: "text-muted-foreground" },
+  correcao:  { rotulo: "Correção de quantidade", Icone: Pencil, cor: "text-amber-600 dark:text-amber-400" },
 };
 
 /**
@@ -1033,10 +1335,28 @@ const ESTILO_MOV: Record<Movimento["tipo"], { rotulo: string; Icone: typeof Tag;
  */
 function LinhaDoTempo({ supItemId }: { supItemId: string | null }) {
   const { data: eventos = [], isLoading } = useHistoricoDoMaterial(supItemId);
+  const { data: alteracoes = [], isLoading: carregandoEdicoes } = useAlteracoesDoMaterial(supItemId);
 
-  if (isLoading) return <p className="py-8 text-center text-sm text-muted-foreground">Carregando…</p>;
+  // Edições entram na mesma trilha das entradas e saídas. Os campos de um
+  // mesmo "Salvar" (mesmo instante, mesma pessoa) viram UM evento — trocar
+  // cinco campos não pode virar cinco bolinhas.
+  const itens = useMemo(() => {
+    const grupos = new Map<string, { created_at: string; usuario_nome: string | null; motivo: string | null; campos: AlteracaoEstoque[] }>();
+    for (const a of alteracoes) {
+      const k = `${a.created_at}|${a.usuario_nome ?? ""}`;
+      const g = grupos.get(k) ?? { created_at: a.created_at, usuario_nome: a.usuario_nome, motivo: a.motivo, campos: [] };
+      g.campos.push(a);
+      grupos.set(k, g);
+    }
+    return [
+      ...eventos.map((e) => ({ tipo: "mov" as const, quando: e.created_at, e })),
+      ...[...grupos.values()].map((g) => ({ tipo: "edicao" as const, quando: g.created_at, g })),
+    ].sort((a, b) => new Date(b.quando).getTime() - new Date(a.quando).getTime());
+  }, [eventos, alteracoes]);
 
-  if (eventos.length === 0) {
+  if (isLoading || carregandoEdicoes) return <p className="py-8 text-center text-sm text-muted-foreground">Carregando…</p>;
+
+  if (itens.length === 0) {
     return (
       <div className="rounded-md border border-dashed px-4 py-8 text-center">
         <History className="mx-auto mb-2 h-5 w-5 text-muted-foreground" />
@@ -1052,11 +1372,41 @@ function LinhaDoTempo({ supItemId }: { supItemId: string | null }) {
 
   return (
     <div className="max-h-[55vh] overflow-y-auto pr-1">
-      {eventos.map((e, i) => {
+      {itens.map((it, i) => {
+        const fio = i < itens.length - 1 && <div className="absolute left-[13px] top-7 h-full w-px bg-border" />;
+        if (it.tipo === "edicao") {
+          const g = it.g;
+          return (
+            <div key={`ed-${g.created_at}-${g.usuario_nome ?? ""}`} className="relative flex gap-3 pb-5 pl-1">
+              {fio}
+              <div className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full border bg-background">
+                <Pencil className="h-3.5 w-3.5 text-primary" />
+              </div>
+              <div className="min-w-0 flex-1 text-sm">
+                <p className="font-medium">Edição</p>
+                <ul className="space-y-0.5">
+                  {g.campos.map((c) => (
+                    <li key={c.id} className="break-words">
+                      <span className="text-muted-foreground">
+                        {c.campo}{c.codigo ? ` (lote ${c.codigo})` : ""}:
+                      </span>{" "}
+                      {c.valor_anterior ?? "—"} → <strong>{c.valor_novo ?? "—"}</strong>
+                    </li>
+                  ))}
+                </ul>
+                {g.motivo && <p className="text-muted-foreground">Motivo: {g.motivo}</p>}
+                <p className="text-xs text-muted-foreground">
+                  {g.usuario_nome ?? "—"} · {new Date(g.created_at).toLocaleString("pt-BR")}
+                </p>
+              </div>
+            </div>
+          );
+        }
+        const e = it.e;
         const { rotulo, Icone, cor } = ESTILO_MOV[e.tipo] ?? ESTILO_MOV.ajuste;
         return (
           <div key={e.id} className="relative flex gap-3 pb-5 pl-1">
-            {i < eventos.length - 1 && <div className="absolute left-[13px] top-7 h-full w-px bg-border" />}
+            {fio}
             <div className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full border bg-background">
               <Icone className={cn("h-3.5 w-3.5", cor)} />
             </div>
@@ -1064,7 +1414,8 @@ function LinhaDoTempo({ supItemId }: { supItemId: string | null }) {
               <p className="flex flex-wrap items-center gap-x-2 gap-y-1">
                 <span className="font-medium">{rotulo}</span>
                 <span className="text-muted-foreground">·</span>
-                <span>{e.quantidade} un</span>
+                {/* Correção guarda a diferença com sinal: "+3" achou mais, "-3" faltou. */}
+                <span>{e.tipo === "correcao" && e.quantidade > 0 ? "+" : ""}{e.quantidade} un</span>
                 {e.codigo && (
                   <Badge variant="outline" className="font-mono text-[10px]">{e.codigo}</Badge>
                 )}

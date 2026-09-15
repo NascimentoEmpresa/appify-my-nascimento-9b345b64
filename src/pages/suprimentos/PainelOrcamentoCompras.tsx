@@ -5,6 +5,9 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { BarraOrcamentoDupla } from "@/components/orcamento/BarraOrcamento";
+import { useOrcamentoContratos, somarOrcadoContratosPorClassificacao } from "@/hooks/useOrcamentoContratos";
+import { useClassificacoesOrcamentoAdmin } from "@/hooks/usePlanejamentoOrcamentario";
+import { useClassificacaoMaloteVisivel } from "@/hooks/useMaloteAcessoOrcamento";
 import { Info } from "lucide-react";
 
 // Views novas, ainda fora do types.ts gerado.
@@ -42,14 +45,6 @@ interface LinhaUtilizado {
   classificacao_nome: string | null;
   contrato_id: string | null;
   competencia: string | null;
-  valor: number | null;
-}
-
-interface LinhaOrcamento {
-  classificacao_id: string | null;
-  classificacao_nome: string | null;
-  inicio_vigencia: string;
-  fim_vigencia: string | null;
   valor: number | null;
 }
 
@@ -93,14 +88,15 @@ export function PainelOrcamentoCompras() {
     },
   });
 
-  const orcamentos = useQuery({
-    queryKey: ["v_orcamento_classificacao"],
-    queryFn: async (): Promise<LinhaOrcamento[]> => {
-      const { data, error } = await sb.from("v_orcamento_classificacao").select("*");
-      if (error) throw error;
-      return data ?? [];
-    },
-  });
+  // SIS-2026-0379 (Iury): o Orçado vem das classificações de cada contrato,
+  // resolvido exatamente como o bloco Contratos do Orçamento Geral
+  // (/app/malote/orcamento-geral) — rubricas da Planilha de Custo vigentes no
+  // mês, ligadas à Classificação do Malote. Antes vinha de
+  // v_orcamento_classificacao, que só enxerga o orçamento Administrativo, e a
+  // mesma classificação mostrava um Orçado aqui e outro lá.
+  const orcamentoContratos = useOrcamentoContratos(mes);
+  const { data: classificacoes = [], isLoading: carregandoClassificacoes } = useClassificacoesOrcamentoAdmin();
+  const classificacaoVisivel = useClassificacaoMaloteVisivel();
 
   /** Agrupa por classificação, somando só o que cai no mês escolhido. */
   const linhas = useMemo(() => {
@@ -109,23 +105,14 @@ export function PainelOrcamentoCompras() {
       { nome: string; comprometido: number; pago: number; pedidos: number; orcado: number }
     >();
 
-    // O orçamento vale pelo período que a vigência COBRE, não por "hoje": uma
-    // vigência já encerrada continua sendo a régua correta para um mês passado.
-    const primeiroDia = `${mes}-01`;
-    for (const o of orcamentos.data ?? []) {
-      if (o.inicio_vigencia > primeiroDia) continue;
-      if (o.fim_vigencia && o.fim_vigencia < primeiroDia) continue;
-      const k = o.classificacao_id ?? `sem-classificacao:${o.classificacao_nome ?? ""}`;
-      const atual = mapa.get(k) ?? {
-        nome: o.classificacao_nome ?? "Sem classificação",
-        comprometido: 0,
-        pago: 0,
-        pedidos: 0,
-        orcado: 0,
-      };
-      atual.orcado += Number(o.valor) || 0;
-      mapa.set(k, atual);
-    }
+    // Mesmo recorte por setor do Orçamento Geral (SIS-2026-0265): sem ele,
+    // quem não enxerga uma classificação restrita lá veria o Orçado dela aqui.
+    const classificacoesPorId = new Map(classificacoes.map((c) => [c.id, c]));
+    somarOrcadoContratosPorClassificacao(orcamentoContratos.data).forEach((orcado, classificacaoId) => {
+      const classificacao = classificacoesPorId.get(classificacaoId);
+      if (!classificacao || !classificacaoVisivel(classificacao)) return;
+      mapa.set(classificacaoId, { nome: classificacao.nome, comprometido: 0, pago: 0, pedidos: 0, orcado });
+    });
 
     const chave = (id: string | null, nome: string | null) =>
       id ?? `sem-classificacao:${nome ?? ""}`;
@@ -165,7 +152,7 @@ export function PainelOrcamentoCompras() {
     return [...mapa.values()].sort(
       (a, b) => b.comprometido + b.pago - (a.comprometido + a.pago),
     );
-  }, [comprometido.data, utilizado.data, orcamentos.data, mes]);
+  }, [comprometido.data, utilizado.data, orcamentoContratos.data, classificacoes, classificacaoVisivel, mes]);
 
   const totais = useMemo(
     () =>
@@ -180,7 +167,8 @@ export function PainelOrcamentoCompras() {
     [linhas],
   );
 
-  const carregando = comprometido.isLoading || utilizado.isLoading || orcamentos.isLoading;
+  const carregando =
+    comprometido.isLoading || utilizado.isLoading || orcamentoContratos.isLoading || carregandoClassificacoes;
 
   return (
     <div className="space-y-4">

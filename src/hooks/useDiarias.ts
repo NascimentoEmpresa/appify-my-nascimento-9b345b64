@@ -136,7 +136,9 @@ interface AnexoDiariaBanco {
 interface SolicitacaoDiariaBanco {
   id: string;
   numero: string | null;
-  status: StatusSolicitacao;
+  status: Exclude<StatusSolicitacao, "paga">;
+  /** Campo computado: a despesa do Malote gerada na aprovação já foi paga. */
+  malote_despesa_paga: boolean | null;
   contrato_id: string;
   contrato_nome: string;
   contrato_cliente: string | null;
@@ -249,7 +251,7 @@ export function useSolicitacoesDiaria() {
            faltante_empregado_id, faltante_nome, faltante_cpf,
            diarista_empregado_id, diarista_nome, diarista_cpf, pix,
            observacoes, valor_total_centavos, solicitante_id, solicitante_nome,
-           malote_motivo, malote_data_pagamento, created_at,
+           malote_motivo, malote_data_pagamento, created_at, malote_despesa_paga,
            linhas:DIARIA_LINHA ( id, data, turno, qt_vt, valor_unit_vt_centavos, valor_diaria_centavos ),
            anexos:DIARIA_ANEXO ( id, categoria, storage_path, nome_arquivo, mime_type, tamanho_bytes, created_at )`,
         )
@@ -569,7 +571,9 @@ function mapearSolicitacao(s: SolicitacaoDiariaBanco): SolicitacaoDiaria {
     uuid: s.id,
     id: s.numero ?? s.id,
     criadoEm: new Date(s.created_at).toLocaleString("pt-BR"),
-    status: s.status as StatusSolicitacao,
+    // O pagamento acontece só no Malote; a diária continua 'aprovada' no
+    // banco e vira "Paga" aqui quando a despesa dela chega a despesa_paga.
+    status: s.status === "aprovada" && s.malote_despesa_paga ? "paga" : s.status,
     contratoId: s.contrato_id,
     contratoNome: s.contrato_nome ?? "—",
     contratoCliente: s.contrato_cliente ?? "—",

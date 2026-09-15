@@ -1,5 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
+import { chaveTextoPlanoAcao } from "@/lib/chaveTextoPlanoAcao";
 
 /**
  * Lista de setores da empresa pra dropdown — união da tabela SETORES
@@ -29,7 +30,17 @@ export function useSetoresEmpresa() {
         doEmpregados.push(...emp.data.map((r: any) => String(r.setor ?? "").trim()).filter(Boolean));
       }
 
-      return [...new Set(["PADRAO", ...doCatalogo, ...doEmpregados])].sort((a, b) => a.localeCompare(b, "pt-BR"));
+      // Dedupe pela chave do Plano de Ações, não por igualdade exata — o
+      // catálogo diz "Jurídico"/"Licitações" e a EMPREGADOS diz "JURIDICO"/
+      // "LICITACAO"; com Set simples o dropdown mostrava os dois e cada ação
+      // era gravada com uma grafia, duplicando o filtro da Lista
+      // (SIS-2026-0392). Fica a primeira grafia vista: a do catálogo.
+      const porChave = new Map<string, string>();
+      for (const s of ["PADRAO", ...doCatalogo, ...doEmpregados]) {
+        const k = chaveTextoPlanoAcao(s);
+        if (k && !porChave.has(k)) porChave.set(k, s);
+      }
+      return Array.from(porChave.values()).sort((a, b) => a.localeCompare(b, "pt-BR"));
     },
   });
 }

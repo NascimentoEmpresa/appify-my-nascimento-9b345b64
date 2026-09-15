@@ -46,18 +46,25 @@ export type GradeUpdate = Partial<Omit<GradeItem, "id" | "empresa_id" | "created
 
 const QK = (empresaId: string) => ["grade", empresaId];
 
-export function useGrade(empresaId: string | null) {
+// SIS-2026-0359: `todasEmpresas: true` lê a grade de TODAS as empresas do grupo
+// (Lucas/gerente quer as ganhas unificadas). A RLS da grade já é só
+// can_access('pipeline','visualizar') — sem filtro de empresa no banco —,
+// então dropar o `.eq empresa_id` é seguro. Só p/ LEITURA; escrita continua
+// por empresa ativa (ver Pipeline.tsx).
+export function useGrade(empresaId: string | null, opts?: { todasEmpresas?: boolean }) {
+  const todasEmpresas = opts?.todasEmpresas ?? false;
   return useQuery({
-    queryKey: QK(empresaId ?? ""),
-    enabled: !!empresaId && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(empresaId ?? ""),
+    queryKey: todasEmpresas ? ["grade", "todas"] : QK(empresaId ?? ""),
+    enabled: todasEmpresas || (!!empresaId && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(empresaId ?? "")),
     // Evita refetch enquanto o usuário está editando o formulário
     staleTime: 30_000,
     queryFn: async () => {
-      const { data, error } = await supabase
+      let q = supabase
         .from("grade")
         .select("*")
-        .eq("empresa_id", empresaId!)
         .order("data", { ascending: true, nullsFirst: false });
+      if (!todasEmpresas) q = q.eq("empresa_id", empresaId!);
+      const { data, error } = await q;
       if (error) throw error;
       return (data ?? []) as GradeItem[];
     },

@@ -21,7 +21,7 @@ export function usePainelGerencialDados() {
     queryFn: async () => {
       const { data, error } = await (supabase as any)
         .from("reuniao_pauta")
-        .select("id, reuniao_id, ordem, titulo_topico, descricao, responsavel_user_id, prazo, tempo_previsto_minutos, status, natureza, created_at")
+        .select("id, reuniao_id, ordem, titulo_topico, descricao, responsavel_user_id, prazo, tempo_previsto_minutos, status, natureza, fora_pauta, created_at")
         .in("reuniao_id", reuniaoIds);
       if (error) throw error;
       return (data ?? []) as ReuniaoPauta[];
@@ -49,7 +49,7 @@ export function usePainelGerencialDados() {
     queryFn: async () => {
       const { data, error } = await (supabase as any)
         .from("reuniao_assunto_fora_pauta")
-        .select("id, reuniao_id, classificacao, tratativa, assunto_estacionado, responsavel_tratativa_user_id, data_prevista, reuniao_futura_necessaria, observacoes, concluido, criado_por, created_at")
+        .select("id, reuniao_id, classificacao, tratativa, assunto_estacionado, responsavel_tratativa_user_id, data_prevista, reuniao_futura_necessaria, observacoes, concluido, pauta_id, criado_por, created_at")
         .in("reuniao_id", reuniaoIds);
       if (error) throw error;
       return (data ?? []) as ReuniaoAssuntoForaPauta[];

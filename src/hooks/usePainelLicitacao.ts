@@ -33,9 +33,10 @@ export interface PainelFilters {
   responsavel: string | null;
 }
 
-export function usePainelLicitacao(filters?: PainelFilters) {
+export function usePainelLicitacao(filters?: PainelFilters, opts?: { todasEmpresas?: boolean }) {
   const { empresa } = useEmpresaAtiva();
-  const { data: allItems = [], isLoading } = useGrade(empresa?.id ?? null);
+  // SIS-2026-0359: modo grupo — KPIs de licitação somando todas as empresas.
+  const { data: allItems = [], isLoading } = useGrade(empresa?.id ?? null, { todasEmpresas: opts?.todasEmpresas });
 
 
   const stats = useMemo(() => {

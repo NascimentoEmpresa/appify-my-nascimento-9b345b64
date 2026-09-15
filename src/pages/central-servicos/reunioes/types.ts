@@ -242,6 +242,8 @@ export interface ReuniaoAssuntoForaPauta {
   reuniao_futura_necessaria: boolean;
   observacoes: string | null;
   concluido: boolean;
+  /** Item de pauta criado junto com o assunto (trigger no banco) — é por ele que o assunto é conduzido, recebe decisões/ações e entra na ata. */
+  pauta_id: string | null;
   criado_por: string;
   created_at: string;
 }
@@ -315,7 +317,21 @@ export interface ReuniaoPauta {
   tempo_previsto_minutos: number | null;
   status: PautaStatus;
   natureza: NaturezaItem | null;
+  /** true = item nasceu de um "assunto fora da pauta" registrado durante a condução. */
+  fora_pauta: boolean;
+  /** Item criado na reunião de destino quando esta pauta foi transferida (SIS-2026-0373) — a origem fica com o rastro. */
+  transferida_para_pauta_id: string | null;
+  /** Item de origem, quando esta pauta chegou por transferência de outra reunião. */
+  transferida_de_pauta_id: string | null;
   created_at: string;
+}
+
+/** Reunião do outro lado de uma transferência de pauta — ausente do mapa quando o usuário não tem acesso a ela (RLS). */
+export interface ReuniaoTransferenciaRef {
+  reuniao_id: string;
+  numero: string;
+  titulo: string;
+  data_hora: string;
 }
 
 export interface RespostaConducaoItem {

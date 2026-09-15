@@ -3,12 +3,13 @@ import { Link } from "react-router-dom";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { SearchableSelect } from "@/components/ui/searchable-select";
+import { SearchableMultiSelect } from "@/components/ui/searchable-multi-select";
 import { usePlanoAcoes } from "@/hooks/usePlanoAcoes";
 import { usePlanoAcaoPermissao } from "@/hooks/usePlanoAcaoPermissao";
-import { usePlanoAcaoFilterOptions, matchResponsavel } from "@/hooks/usePlanoAcaoFilterOptions";
+import { usePlanoAcaoFilterOptions, matchResponsavel, matchTexto, manterValidos } from "@/hooks/usePlanoAcaoFilterOptions";
 import { STATUS_LABELS, STATUS_COR, PRIORIDADE_LABEL, PRIORIDADE_COR } from "@/types/planoAcao";
 import { ForbiddenCard } from "./Lista";
+import { KpiCard as Kpi } from "./KpiCard";
 import {
   Activity, AlertTriangle, CheckCircle2, Clock, FileQuestion,
   Users, ListChecks, Target, Layers,
@@ -21,27 +22,28 @@ export default function PlanoAcoesDashboard() {
   const { data: rows = [], isLoading } = usePlanoAcoes();
   const { can, loading } = usePlanoAcaoPermissao();
 
-  const [fComite, setFComite] = useState<string>("__all");
-  const [fArea, setFArea] = useState<string>("__all");
-  const [fSetor, setFSetor] = useState<string>("__all");
-  const [fResp, setFResp] = useState<string>("__all");
-  const [fEmpresa, setFEmpresa] = useState<string>("__all");
+  const [fComite, setFComite] = useState<string[]>([]);
+  const [fArea, setFArea] = useState<string[]>([]);
+  const [fSetor, setFSetor] = useState<string[]>([]);
+  const [fResp, setFResp] = useState<string[]>([]);
+  const [fEmpresa, setFEmpresa] = useState<string[]>([]);
   const { comites, areas, setores, responsaveis, empresas } = usePlanoAcaoFilterOptions(rows);
 
+  // manterValidos devolve a mesma referência quando nada muda — sem re-render.
   useEffect(() => {
-    if (fComite !== "__all" && !comites.some(o => o.value === fComite)) setFComite("__all");
-    if (fArea !== "__all" && !areas.some(o => o.value === fArea)) setFArea("__all");
-    if (fSetor !== "__all" && !setores.some(o => o.value === fSetor)) setFSetor("__all");
-    if (fResp !== "__all" && !responsaveis.some(o => o.value === fResp)) setFResp("__all");
-    if (fEmpresa !== "__all" && !empresas.some(o => o.value === fEmpresa)) setFEmpresa("__all");
-  }, [comites, areas, setores, responsaveis, empresas, fComite, fArea, fSetor, fResp, fEmpresa]);
+    setFComite(prev => manterValidos(prev, comites));
+    setFArea(prev => manterValidos(prev, areas));
+    setFSetor(prev => manterValidos(prev, setores));
+    setFResp(prev => manterValidos(prev, responsaveis));
+    setFEmpresa(prev => manterValidos(prev, empresas));
+  }, [comites, areas, setores, responsaveis, empresas]);
 
   const filteredRows = useMemo(() => rows.filter(r => {
-    if (fComite !== "__all" && r.comite !== fComite) return false;
-    if (fArea !== "__all" && r.area !== fArea) return false;
-    if (fSetor !== "__all" && r.setor !== fSetor) return false;
+    if (!matchTexto(r.comite, fComite)) return false;
+    if (!matchTexto(r.area, fArea)) return false;
+    if (!matchTexto(r.setor, fSetor)) return false;
     if (!matchResponsavel(r, fResp)) return false;
-    if (fEmpresa !== "__all" && r.empresa_id !== fEmpresa) return false;
+    if (fEmpresa.length > 0 && !fEmpresa.includes(r.empresa_id)) return false;
     return true;
   }), [rows, fComite, fArea, fSetor, fResp, fEmpresa]);
 
@@ -92,11 +94,11 @@ export default function PlanoAcoesDashboard() {
 
       <Card className="mb-4 p-3">
         <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
-          <SearchableSelect value={fComite === "__all" ? "" : fComite} onChange={v => setFComite(v || "__all")} options={comites} placeholder="Todos os comitês" searchPlaceholder="Buscar comitê..." allowClear />
-          <SearchableSelect value={fArea === "__all" ? "" : fArea} onChange={v => setFArea(v || "__all")} options={areas} placeholder="Todas as áreas" searchPlaceholder="Buscar área..." allowClear />
-          <SearchableSelect value={fSetor === "__all" ? "" : fSetor} onChange={v => setFSetor(v || "__all")} options={setores} placeholder="Todos os setores" searchPlaceholder="Buscar setor..." allowClear />
-          <SearchableSelect value={fResp === "__all" ? "" : fResp} onChange={v => setFResp(v || "__all")} options={responsaveis} placeholder="Todos os responsáveis" searchPlaceholder="Buscar responsável..." allowClear />
-          <SearchableSelect value={fEmpresa === "__all" ? "" : fEmpresa} onChange={v => setFEmpresa(v || "__all")} options={empresas} placeholder="Todas as empresas" searchPlaceholder="Buscar empresa..." allowClear />
+          <SearchableMultiSelect value={fComite} onChange={setFComite} options={comites} placeholder="Todos os comitês" searchPlaceholder="Buscar comitê..." maxBadges={2} />
+          <SearchableMultiSelect value={fArea} onChange={setFArea} options={areas} placeholder="Todas as áreas" searchPlaceholder="Buscar área..." maxBadges={2} />
+          <SearchableMultiSelect value={fSetor} onChange={setFSetor} options={setores} placeholder="Todos os setores" searchPlaceholder="Buscar setor..." maxBadges={2} />
+          <SearchableMultiSelect value={fResp} onChange={setFResp} options={responsaveis} placeholder="Todos os responsáveis" searchPlaceholder="Buscar responsável..." maxBadges={2} />
+          <SearchableMultiSelect value={fEmpresa} onChange={setFEmpresa} options={empresas} placeholder="Todas as empresas" searchPlaceholder="Buscar empresa..." maxBadges={2} />
         </div>
         <p className="mt-2 text-[11px] text-muted-foreground">{filteredRows.length} de {rows.length} ações</p>
       </Card>
@@ -208,16 +210,4 @@ function STATUS_COR_HEX(key: string) {
     case "cancelada": return "#475569";
     default: return "hsl(var(--primary))";
   }
-}
-
-function Kpi({ label, value, icon: Icon, tone }: { label: string; value: number; icon: any; tone?: "primary"|"success"|"warning"|"destructive" }) {
-  const toneCls = tone === "destructive" ? "text-destructive" : tone === "success" ? "text-emerald-600 dark:text-emerald-400" : tone === "warning" ? "text-amber-600 dark:text-amber-400" : tone === "primary" ? "text-primary" : "text-foreground";
-  return (
-    <Card className="p-3">
-      <div className="flex items-center gap-2 text-[11px] uppercase tracking-wider text-muted-foreground">
-        <Icon className={`h-3.5 w-3.5 ${toneCls}`} /> {label}
-      </div>
-      <div className={`mt-1 font-display text-2xl font-bold ${toneCls}`}>{value}</div>
-    </Card>
-  );
 }

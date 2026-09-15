@@ -172,7 +172,8 @@ export default function ControleDiarias({
 
   // Cards de resumo — sempre sobre a base inteira, como nas telas aprovadas.
   const resumo = useMemo(() => {
-    const aprovadas = solicitacoes.filter((s) => s.status === "aprovada");
+    // "Paga" continua sendo uma diária aprovada — entra no card e no valor.
+    const aprovadas = solicitacoes.filter((s) => s.status === "aprovada" || s.status === "paga");
     return {
       total: solicitacoes.length,
       solicitadas: solicitacoes.filter((s) => s.status === "solicitada").length,
