@@ -577,13 +577,12 @@ export function SolicitacaoDiariaModal({
 
   return (
     <Dialog open={aberto} onOpenChange={(o) => !o && onFechar()}>
-      {/* `overflow-y-auto` sozinho faz o navegador promover o eixo X para
-          "auto" também: qualquer conteúdo mais largo passa a rolar o modal
-          inteiro para o lado. O modal acompanha a largura da viewport e trava
-          o eixo X — quem encolhe é o conteúdo, não o campo que some. */}
-      <DialogContent className="max-h-[92vh] w-[min(96vw,68rem)] max-w-none overflow-y-auto overflow-x-hidden p-0">
+      {/* O conteúdo conserva a largura em que a grade de diárias permanece
+          legível. Em telas menores, o próprio modal oferece rolagem horizontal
+          em vez de comprimir ou esconder campos. */}
+      <DialogContent className="max-h-[92vh] w-[min(96vw,68rem)] max-w-none overflow-x-auto overflow-y-auto p-0">
         {/* Cabeçalho */}
-        <div className="sticky top-0 z-10 border-b border-border bg-background px-6 pb-4 pt-5">
+        <div className="sticky top-0 z-10 min-w-[68rem] border-b border-border bg-background px-6 pb-4 pt-5">
           <DialogTitle className="font-display text-xl font-bold tracking-tight">
             Solicitação de Pagamento de Diária
           </DialogTitle>
@@ -595,7 +594,7 @@ export function SolicitacaoDiariaModal({
           <p className="text-[11px] text-muted-foreground">{legendaId}</p>
         </div>
 
-        <div className="space-y-4 px-6 pb-6">
+        <div className="min-w-[68rem] space-y-4 px-6 pb-6">
           {/* 1. Informações gerais */}
           <Secao numero={1} titulo="Informações gerais">
             <div className="grid gap-4 sm:grid-cols-2">
@@ -1113,7 +1112,7 @@ export function SolicitacaoDiariaModal({
 
         {/* Rodapé */}
         {modo === "nova" && (
-          <div className="sticky bottom-0 border-t border-border bg-background px-6 py-4">
+          <div className="sticky bottom-0 min-w-[68rem] border-t border-border bg-background px-6 py-4">
             <div className="flex flex-wrap items-center justify-end gap-3">
               <Button variant="outline" onClick={onFechar}>
                 Cancelar
@@ -1132,7 +1131,7 @@ export function SolicitacaoDiariaModal({
         )}
 
         {modo === "aprovar" && s && (
-          <div className="sticky bottom-0 flex flex-wrap items-center justify-center gap-3 border-t border-border bg-background px-6 py-4">
+          <div className="sticky bottom-0 flex min-w-[68rem] flex-wrap items-center justify-center gap-3 border-t border-border bg-background px-6 py-4">
             <Button
               variant="outline"
               className="border-destructive/50 text-destructive hover:bg-destructive/10 hover:text-destructive"
@@ -1152,7 +1151,7 @@ export function SolicitacaoDiariaModal({
         )}
 
         {modo === "visualizar" && (
-          <div className="sticky bottom-0 flex items-center justify-between gap-3 border-t border-border bg-background px-6 py-4">
+          <div className="sticky bottom-0 flex min-w-[68rem] items-center justify-between gap-3 border-t border-border bg-background px-6 py-4">
             <p className="flex items-center gap-2 text-xs text-muted-foreground">
               <UserX className="h-3.5 w-3.5" />
               {s?.status === "reprovada"
