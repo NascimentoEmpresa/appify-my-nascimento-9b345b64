@@ -1609,8 +1609,18 @@ export function sanitizarNomeArquivo(nome: string): string {
   // "/" quebraria o path (viraria subpasta) e os demais são reservados em
   // Windows — troca por "-" pra quem baixa o anexo não ter problema ao
   // salvar localmente.
+  //
+  // Achado real (Calita, DM-2026-0472): "Failed to fetch"/CORS no upload do
+  // comprovante — a lib @supabase/storage-js instalada não faz
+  // `encodeURIComponent` da key nenhuma vez ao montar a URL do upload (a
+  // Storage aceitar # % & como caractere de key não significa que o CLIENTE
+  // consiga chegar lá com eles crus: # corta pra fragment, % quebra
+  // percent-decoding e & vira delimitador de query se vier antes de um "?"
+  // sobrevivente em qualquer parte da URL) — a requisição sai malformada
+  // antes de sair da máquina, e o navegador reporta isso como bloqueio de
+  // CORS (a URL truncada não bate rota nenhuma pra devolver o header).
   return semAcento
-    .replace(/[\\/:*?"<>|]/g, "-")
+    .replace(/[\\/:*?"<>|#%&]/g, "-")
     .replace(/[^\x20-\x7e]/g, "-")
     .trim()
     .replace(/\s+/g, " ")
