@@ -23,6 +23,8 @@ interface SearchableMultiSelectProps {
   emptyLabel?: string;
   disabled?: boolean;
   className?: string;
+  /** Mostra no máximo N badges e resume o resto em "+K" — mantém a altura em grades de filtro. */
+  maxBadges?: number;
 }
 
 export function SearchableMultiSelect({
@@ -34,6 +36,7 @@ export function SearchableMultiSelect({
   emptyLabel = "Nenhum resultado",
   disabled,
   className,
+  maxBadges,
 }: SearchableMultiSelectProps) {
   const [open, setOpen] = React.useState(false);
 
@@ -47,6 +50,8 @@ export function SearchableMultiSelect({
   };
 
   const selectedOptions = options.filter((o) => value.includes(o.value));
+  const visibleOptions = maxBadges !== undefined ? selectedOptions.slice(0, maxBadges) : selectedOptions;
+  const hiddenCount = selectedOptions.length - visibleOptions.length;
 
   return (
     <div className={cn("relative", className)}>
@@ -64,7 +69,7 @@ export function SearchableMultiSelect({
               {selectedOptions.length === 0 ? (
                 <span className="text-muted-foreground">{placeholder}</span>
               ) : (
-                selectedOptions.map((o) => (
+                visibleOptions.map((o) => (
                   <Badge key={o.value} variant="secondary" className="text-xs gap-1 pr-1">
                     {o.label}
                     {!disabled && (
@@ -79,6 +84,9 @@ export function SearchableMultiSelect({
                     )}
                   </Badge>
                 ))
+              )}
+              {hiddenCount > 0 && (
+                <Badge variant="outline" className="text-xs">+{hiddenCount}</Badge>
               )}
             </span>
             <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />

@@ -149,6 +149,9 @@ export default function PlanoAcaoDetalhe() {
   // dispararia ao carregar uma ação existente. Preenche o líder automático
   // (fixo por nome pras opções "Gestor"/"Sistemas", vindo do cadastro do
   // comitê pros demais) — Setor é campo independente, não reseta mais aqui.
+  // Se o Responsável ainda estiver vazio, o líder do comitê entra também
+  // como Responsável (SIS-2026-0392) — nunca sobrescreve um já escolhido
+  // (pela pessoa ou pelo mapa Setor → Responsável).
   const handleComiteChange = (v: string) => {
     const novoComite = v === "__none" ? "" : v;
     setForm((f: any) => {
@@ -162,6 +165,10 @@ export default function PlanoAcaoDetalhe() {
         const info = novoComite ? comitesMap[novoComite] : undefined;
         next.lider_comite_profile_id = info?.liderProfileId ?? null;
         next.lider_comite_nome_origem = info?.lider ?? null;
+      }
+      if (!next.responsavel_profile_id && next.lider_comite_profile_id) {
+        next.responsavel_profile_id = next.lider_comite_profile_id;
+        next.responsavel_nome_origem = next.lider_comite_nome_origem;
       }
       return next;
     });

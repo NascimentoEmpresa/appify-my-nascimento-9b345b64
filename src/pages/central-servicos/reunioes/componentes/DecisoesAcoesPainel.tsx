@@ -10,6 +10,7 @@ import { Plus, Trash2, ExternalLink } from "lucide-react";
 import { useComitesMap } from "@/hooks/useComitesMap";
 import { useSetoresEmpresa } from "@/hooks/useSetoresEmpresa";
 import { acharUsuarioPorNome } from "@/lib/acharUsuarioPorNome";
+import { SETOR_RESPONSAVEL_MAP, normalizeSetorNome } from "@/data/planoAcaoSetorResponsavel";
 import {
   STATUS_LABELS, STATUS_ORDEM, PRIORIDADES, PRIORIDADE_LABEL, VISIBILIDADE_OPTIONS, VISIBILIDADE_LABEL,
   TIPO_ACAO_OPTIONS, TIPO_ACAO_LABEL,
@@ -108,16 +109,42 @@ export function DecisoesAcoesPainel({
   // — preenche o líder automaticamente (fixo pra "Gestor"/"Sistemas", vindo
   // do cadastro do comitê pros demais), mas ele continua editável depois.
   // Setor não depende mais de Comitê — são campos independentes.
+  // Mesmas regras do formulário do módulo (Detalhe.tsx), que a reunião não
+  // seguia (SIS-2026-0392): o líder do comitê também vira Responsável quando
+  // este ainda está vazio, e o Setor puxa o responsável padrão do setor.
   const handleComiteChange = (v: string) => {
     const novoComite = v === "__none" ? "" : v;
     setAcaoComite(novoComite);
     const nomeLiderFixo = COMITE_LIDER_FIXO[novoComite];
-    if (nomeLiderFixo) {
-      setAcaoLider(acharUsuarioPorNome(opcoesUsuarios, nomeLiderFixo)?.value ?? "");
-    } else {
-      setAcaoLider(comitesMap[novoComite]?.liderProfileId ?? "");
-    }
+    const liderId = nomeLiderFixo
+      ? acharUsuarioPorNome(opcoesUsuarios, nomeLiderFixo)?.value ?? ""
+      : comitesMap[novoComite]?.liderProfileId ?? "";
+    setAcaoLider(liderId);
+    if (!acaoResponsavel && liderId) setAcaoResponsavel(liderId);
   };
+
+  const responsavelDoSetor = (setor: string): string | undefined => {
+    const mapeado = SETOR_RESPONSAVEL_MAP[normalizeSetorNome(setor)];
+    return mapeado ? acharUsuarioPorNome(opcoesUsuarios, mapeado.nome)?.value : undefined;
+  };
+
+  // Setor -> Responsável: setor sem mapeamento não mexe no Responsável.
+  const handleSetorChange = (v: string) => {
+    const novoSetor = v === "__none" ? "" : v;
+    setAcaoArea(novoSetor);
+    const achado = responsavelDoSetor(novoSetor);
+    if (achado) setAcaoResponsavel(achado);
+  };
+
+  // O Setor já vem preenchido com o setor da reunião (setorPadrao) — ao abrir
+  // o formulário de Ação, puxa o responsável desse setor, como se tivesse
+  // sido escolhido. Só quando o Responsável ainda está vazio.
+  useEffect(() => {
+    if (!novoOpen || tipo !== "acao" || acaoResponsavel || !acaoArea) return;
+    const achado = responsavelDoSetor(acaoArea);
+    if (achado) setAcaoResponsavel(achado);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [novoOpen, tipo, usuarios.length]);
 
   useEffect(() => {
     if (sinalAbrirAcao === undefined || sinalAbrirAcao === 0) return;
@@ -147,7 +174,9 @@ export function DecisoesAcoesPainel({
   };
 
   const adicionarAcao = async () => {
-    if (!acaoTitulo.trim()) return;
+    // Responsável é obrigatório como no formulário do módulo — o banco também
+    // recusa (criar_acao_reuniao_plano_acao → responsavel_obrigatorio).
+    if (!acaoTitulo.trim() || !acaoResponsavel) return;
     setSalvandoAcao(true);
     const ok = await onCriarAcao({
       pauta_id: pautaId,
@@ -319,11 +348,12 @@ export function DecisoesAcoesPainel({
               <div className="grid grid-cols-2 gap-2">
                 <div className="space-y-1">
                   <label className="text-xs text-muted-foreground">Setor</label>
-                  <Select value={acaoArea || "__none"} onValueChange={(v) => setAcaoArea(v === "__none" ? "" : v)}>
+                  <Select value={acaoArea || "__none"} onValueChange={handleSetorChange}>
                     <SelectTrigger className="h-9 text-sm"><SelectValue placeholder="Selecione o setor" /></SelectTrigger>
                     <SelectContent>
                       <SelectItem value="__none">—</SelectItem>
                       {setoresDisponiveis.map((s) => <SelectItem key={s} value={s}>{s}</SelectItem>)}
+                      {acaoArea && !setoresDisponiveis.includes(acaoArea) && <SelectItem value={acaoArea}>{acaoArea}</SelectItem>}
                     </SelectContent>
                   </Select>
                 </div>
@@ -332,7 +362,8 @@ export function DecisoesAcoesPainel({
                   <Select value={acaoStatus} onValueChange={setAcaoStatus}>
                     <SelectTrigger className="h-9 text-sm"><SelectValue /></SelectTrigger>
                     <SelectContent>
-                      {STATUS_ORDEM.map((s) => (
+                      {/* "Atrasada" só é definida automaticamente (cron) — igual ao Detalhe. */}
+                      {STATUS_ORDEM.filter((s) => s !== "atrasada").map((s) => (
                         <SelectItem key={s} value={s}>{STATUS_LABELS[s]}</SelectItem>
                       ))}
                     </SelectContent>
@@ -364,13 +395,13 @@ export function DecisoesAcoesPainel({
                   <Input type="date" value={acaoDataFim} onChange={(e) => setAcaoDataFim(e.target.value)} />
                 </div>
                 <div className="space-y-1">
-                  <label className="text-xs text-muted-foreground">Responsável</label>
+                  <label className="text-xs text-muted-foreground">Responsável <span className="text-destructive">*</span></label>
                   <SearchableSelect value={acaoResponsavel} onChange={setAcaoResponsavel} options={opcoesUsuarios} placeholder="Selecione um usuário" />
                 </div>
               </div>
 
               <div className="space-y-1">
-                <label className="text-xs text-muted-foreground">Líder da Conta</label>
+                <label className="text-xs text-muted-foreground">Líder do Comitê</label>
                 <SearchableSelect value={acaoLider} onChange={setAcaoLider} options={opcoesUsuarios} placeholder="Selecione o líder" />
               </div>
 
@@ -388,9 +419,10 @@ export function DecisoesAcoesPainel({
 
               <Textarea value={acaoComentarios} onChange={(e) => setAcaoComentarios(e.target.value)} placeholder="Comentários" className="min-h-12 text-sm" />
 
-              <div className="flex justify-end gap-2">
+              <div className="flex items-center justify-end gap-2">
+                {!acaoResponsavel && <span className="mr-auto text-xs text-destructive">Selecione o responsável para salvar a ação.</span>}
                 <Button type="button" size="sm" variant="ghost" onClick={limpar}>Cancelar</Button>
-                <Button type="button" size="sm" onClick={adicionarAcao} disabled={!acaoTitulo.trim() || salvandoAcao}>
+                <Button type="button" size="sm" onClick={adicionarAcao} disabled={!acaoTitulo.trim() || !acaoResponsavel || salvandoAcao}>
                   {salvandoAcao ? "Salvando…" : "Salvar"}
                 </Button>
               </div>

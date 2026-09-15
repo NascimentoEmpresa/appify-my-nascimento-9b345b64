@@ -7,12 +7,37 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { SearchableSelect } from "@/components/ui/searchable-select";
+import { SearchableMultiSelect } from "@/components/ui/searchable-multi-select";
+import type { SearchableOption } from "@/components/ui/searchable-select";
 import { usePlanoAcoes } from "@/hooks/usePlanoAcoes";
 import { usePlanoAcaoPermissao } from "@/hooks/usePlanoAcaoPermissao";
-import { usePlanoAcaoFilterOptions, matchResponsavel } from "@/hooks/usePlanoAcaoFilterOptions";
+import {
+  usePlanoAcaoFilterOptions, matchResponsavel, matchTexto, manterValidos, normalizarValorTexto, normalizarValorResponsavel,
+} from "@/hooks/usePlanoAcaoFilterOptions";
 import { STATUS_LABELS, STATUS_COR, PRIORIDADE_LABEL, PRIORIDADE_COR, STATUS_ORDEM, PRIORIDADES } from "@/types/planoAcao";
-import { Plus, Search, AlertTriangle, Clock, CheckCircle2, ArrowUp, ArrowDown } from "lucide-react";
+import { KpiCard, type KpiTone } from "./KpiCard";
+import {
+  Plus, Search, AlertTriangle, Clock, CheckCircle2, ArrowUp, ArrowDown, ListChecks, ListTodo, FileQuestion,
+  CircleDashed, Activity, FileWarning, Ban, X,
+} from "lucide-react";
+
+const OPCOES_STATUS: SearchableOption[] = STATUS_ORDEM.map(s => ({ value: s, label: STATUS_LABELS[s] }));
+const OPCOES_PRIORIDADE: SearchableOption[] = PRIORIDADES.map(p => ({ value: p, label: PRIORIDADE_LABEL[p] }));
+
+// Cards acima dos filtros (SIS-2026-0392) — um por status, mesmo visual do
+// Dashboard. Clicar liga/desliga aquele status no filtro.
+const KPI_STATUS: Record<string, { icon: typeof ListChecks; tone?: KpiTone }> = {
+  a_definir: { icon: FileQuestion },
+  nao_iniciada: { icon: CircleDashed },
+  em_andamento: { icon: Activity, tone: "primary" },
+  aguardando_validacao: { icon: Clock, tone: "warning" },
+  atrasada: { icon: AlertTriangle, tone: "destructive" },
+  concluida_pendente_evidencia: { icon: FileWarning, tone: "warning" },
+  concluida_validada: { icon: CheckCircle2, tone: "success" },
+  cancelada: { icon: Ban, tone: "muted" },
+};
+// "Em aberto" = ainda exige trabalho de alguém (não concluída nem cancelada).
+const STATUS_EM_ABERTO = ["a_definir", "nao_iniciada", "em_andamento", "aguardando_validacao", "atrasada"];
 
 const fmtDate = (s: string | null) => {
   if (!s) return "—";
@@ -71,14 +96,19 @@ export default function PlanoAcoesLista() {
   const location = useLocation();
   const firstRenderRef = useRef(true);
 
-  // Filtros persistidos na URL — sobrevivem à navegação via botão Voltar do browser
+  // Filtros persistidos na URL — sobrevivem à navegação via botão Voltar do browser.
+  // Os de menu suspenso aceitam vários valores (?status=a&status=b); URL
+  // antiga com valor único continua valendo (getAll devolve [valor]).
   const busca   = searchParams.get("q")      ?? "";
-  const fStatus = searchParams.get("status") ?? "__all";
-  const fPrior  = searchParams.get("prior")  ?? "__all";
-  const fComite = searchParams.get("comite") ?? "__all";
-  const fArea   = searchParams.get("area")   ?? "__all";
-  const fResp   = searchParams.get("resp")   ?? "__all";
-  const fEmpresa = searchParams.get("empresa") ?? "__all";
+  const filtros = useMemo(() => ({
+    status:  searchParams.getAll("status"),
+    prior:   searchParams.getAll("prior"),
+    comite:  searchParams.getAll("comite").map(normalizarValorTexto),
+    area:    searchParams.getAll("area").map(normalizarValorTexto),
+    resp:    searchParams.getAll("resp").map(normalizarValorResponsavel),
+    empresa: searchParams.getAll("empresa"),
+  }), [searchParams]);
+  const { status: fStatus, prior: fPrior, comite: fComite, area: fArea, resp: fResp, empresa: fEmpresa } = filtros;
   const fPeriodo = (searchParams.get("periodo") as FiltroInclusao | null) ?? "todos";
   const fDataIni = searchParams.get("dataIni") ?? "";
   const fDataFim = searchParams.get("dataFim") ?? "";
@@ -95,6 +125,21 @@ export default function PlanoAcoesLista() {
       return next;
     }, { replace: true });
   };
+
+  // Troca vários filtros multi de uma vez num único setSearchParams — chamadas
+  // seguidas no mesmo tick não se compõem no react-router (a 2ª lê o "prev"
+  // antigo e desfaz a 1ª).
+  const setFiltrosMulti = (trocas: Record<string, string[]>) => {
+    setSearchParams(prev => {
+      const next = new URLSearchParams(prev);
+      for (const [key, values] of Object.entries(trocas)) {
+        next.delete(key);
+        values.forEach(v => next.append(key, v));
+      }
+      return next;
+    }, { replace: true });
+  };
+  const setFilterMulti = (key: string, values: string[]) => setFiltrosMulti({ [key]: values });
 
   const { comites, areas, responsaveis, empresas, empresaLabelById } = usePlanoAcaoFilterOptions(rows);
 
@@ -117,26 +162,49 @@ export default function PlanoAcoesLista() {
   // Só executa após os dados estarem carregados para não limpar filtros válidos
   useEffect(() => {
     if (isLoading || rows.length === 0) return;
-    if (fComite !== "__all" && !comites.some(o => o.value === fComite)) setFilter("comite", "__all");
-    if (fArea   !== "__all" && !areas.some(o => o.value === fArea))     setFilter("area",   "__all");
-    if (fResp   !== "__all" && !responsaveis.some(o => o.value === fResp)) setFilter("resp", "__all");
-    if (fEmpresa !== "__all" && !empresas.some(o => o.value === fEmpresa)) setFilter("empresa", "__all");
+    const candidatos: [string, string[], SearchableOption[]][] = [
+      ["comite", fComite, comites], ["area", fArea, areas], ["resp", fResp, responsaveis], ["empresa", fEmpresa, empresas],
+    ];
+    const trocas: Record<string, string[]> = {};
+    for (const [key, sel, opts] of candidatos) {
+      const validos = manterValidos(sel, opts);
+      if (validos !== sel) trocas[key] = validos;
+    }
+    if (Object.keys(trocas).length > 0) setFiltrosMulti(trocas);
   }, [comites, areas, responsaveis, empresas, isLoading, rows.length]);
 
-  const filtered = useMemo(() => {
+  // Todos os filtros MENOS status — base dos cards (a contagem de cada status
+  // respeita busca/comitê/setor/etc., e clicar num card não zera os outros).
+  const semStatus = useMemo(() => {
     const q = busca.trim().toLowerCase();
-    const base = rows.filter(r => {
-      if (fStatus !== "__all" && r.status_normalizado !== fStatus) return false;
-      if (fPrior  !== "__all" && r.prioridade_normalizada !== fPrior) return false;
-      if (fComite !== "__all" && r.comite !== fComite) return false;
-      if (fArea   !== "__all" && r.area !== fArea) return false;
+    return rows.filter(r => {
+      if (fPrior.length > 0 && !fPrior.includes(r.prioridade_normalizada ?? "nao_informada")) return false;
+      if (!matchTexto(r.comite, fComite)) return false;
+      if (!matchTexto(r.area, fArea)) return false;
       if (!matchResponsavel(r, fResp)) return false;
-      if (fEmpresa !== "__all" && r.empresa_id !== fEmpresa) return false;
+      if (fEmpresa.length > 0 && !fEmpresa.includes(r.empresa_id)) return false;
       if (!dentroPeriodoInclusao(r.created_at, fPeriodo, fDataIni, fDataFim)) return false;
       if (!q) return true;
       return [r.titulo, r.problema, r.acao, r.responsavel_nome_origem, r.id_importacao]
         .filter(Boolean).some(s => (s as string).toLowerCase().includes(q));
     });
+  }, [rows, busca, fPrior, fComite, fArea, fResp, fEmpresa, fPeriodo, fDataIni, fDataFim]);
+
+  const contagemStatus = useMemo(() => {
+    const m = new Map<string, number>();
+    semStatus.forEach(r => m.set(r.status_normalizado, (m.get(r.status_normalizado) ?? 0) + 1));
+    return m;
+  }, [semStatus]);
+  const totalEmAberto = STATUS_EM_ABERTO.reduce((acc, s) => acc + (contagemStatus.get(s) ?? 0), 0);
+  const emAbertoAtivo = fStatus.length === STATUS_EM_ABERTO.length && STATUS_EM_ABERTO.every(s => fStatus.includes(s));
+  const toggleStatus = (s: string) =>
+    setFilterMulti("status", fStatus.includes(s) ? fStatus.filter(x => x !== s) : [...fStatus, s]);
+
+  const temFiltroAtivo = !!busca || fPeriodo !== "todos"
+    || [fStatus, fPrior, fComite, fArea, fResp, fEmpresa].some(f => f.length > 0);
+
+  const filtered = useMemo(() => {
+    const base = fStatus.length > 0 ? semStatus.filter(r => fStatus.includes(r.status_normalizado)) : semStatus;
     if (!sort) return base;
     const sorted = [...base];
     const dirMul = sort.dir === "asc" ? 1 : -1;
@@ -153,7 +221,7 @@ export default function PlanoAcoesLista() {
       return cmpTexto(a.responsavel_nome_origem, b.responsavel_nome_origem, dirMul);
     });
     return sorted;
-  }, [rows, busca, fStatus, fPrior, fComite, fArea, fResp, fEmpresa, fPeriodo, fDataIni, fDataFim, sort]);
+  }, [semStatus, fStatus, sort]);
 
   if (lp) return null;
   if (!can("visualizar")) return <ForbiddenCard />;
@@ -175,6 +243,22 @@ export default function PlanoAcoesLista() {
         }
       />
 
+      <div className="mb-4 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
+        <KpiCard label="Total de ações" value={semStatus.length} icon={ListChecks} ativo={fStatus.length === 0} onClick={() => setFilterMulti("status", [])} />
+        <KpiCard label="Em aberto" value={totalEmAberto} icon={ListTodo} tone="primary" ativo={emAbertoAtivo} onClick={() => setFilterMulti("status", emAbertoAtivo ? [] : STATUS_EM_ABERTO)} />
+        {STATUS_ORDEM.map(s => (
+          <KpiCard
+            key={s}
+            label={STATUS_LABELS[s]}
+            value={contagemStatus.get(s) ?? 0}
+            icon={KPI_STATUS[s].icon}
+            tone={KPI_STATUS[s].tone}
+            ativo={!emAbertoAtivo && fStatus.includes(s)}
+            onClick={() => toggleStatus(s)}
+          />
+        ))}
+      </div>
+
       <Card className="mb-4 p-4">
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
           <div className="relative lg:col-span-2">
@@ -186,24 +270,12 @@ export default function PlanoAcoesLista() {
               onChange={e => setFilter("q", e.target.value)}
             />
           </div>
-          <Select value={fStatus} onValueChange={v => setFilter("status", v)}>
-            <SelectTrigger><SelectValue placeholder="Status" /></SelectTrigger>
-            <SelectContent>
-              <SelectItem value="__all">Todos os status</SelectItem>
-              {STATUS_ORDEM.map(s => <SelectItem key={s} value={s}>{STATUS_LABELS[s]}</SelectItem>)}
-            </SelectContent>
-          </Select>
-          <Select value={fPrior} onValueChange={v => setFilter("prior", v)}>
-            <SelectTrigger><SelectValue placeholder="Prioridade" /></SelectTrigger>
-            <SelectContent>
-              <SelectItem value="__all">Todas as prioridades</SelectItem>
-              {PRIORIDADES.map(p => <SelectItem key={p} value={p}>{PRIORIDADE_LABEL[p]}</SelectItem>)}
-            </SelectContent>
-          </Select>
-          <SearchableSelect value={fComite === "__all" ? "" : fComite} onChange={v => setFilter("comite", v || "__all")} options={comites} placeholder="Todos os comitês" searchPlaceholder="Buscar comitê..." allowClear />
-          <SearchableSelect value={fArea === "__all" ? "" : fArea}     onChange={v => setFilter("area",   v || "__all")} options={areas}   placeholder="Todos os setores"  searchPlaceholder="Buscar setor..."  allowClear />
-          <SearchableSelect value={fResp  === "__all" ? "" : fResp}    onChange={v => setFilter("resp",   v || "__all")} options={responsaveis} placeholder="Todos os responsáveis" searchPlaceholder="Buscar responsável..." allowClear />
-          <SearchableSelect value={fEmpresa === "__all" ? "" : fEmpresa} onChange={v => setFilter("empresa", v || "__all")} options={empresas} placeholder="Todas as empresas" searchPlaceholder="Buscar empresa..." allowClear />
+          <SearchableMultiSelect value={fStatus}  onChange={v => setFilterMulti("status", v)}  options={OPCOES_STATUS}     placeholder="Todos os status"        searchPlaceholder="Buscar status..."      maxBadges={2} />
+          <SearchableMultiSelect value={fPrior}   onChange={v => setFilterMulti("prior", v)}   options={OPCOES_PRIORIDADE} placeholder="Todas as prioridades"   searchPlaceholder="Buscar prioridade..."  maxBadges={2} />
+          <SearchableMultiSelect value={fComite}  onChange={v => setFilterMulti("comite", v)}  options={comites}           placeholder="Todos os comitês"       searchPlaceholder="Buscar comitê..."      maxBadges={2} />
+          <SearchableMultiSelect value={fArea}    onChange={v => setFilterMulti("area", v)}    options={areas}             placeholder="Todos os setores"       searchPlaceholder="Buscar setor..."       maxBadges={2} />
+          <SearchableMultiSelect value={fResp}    onChange={v => setFilterMulti("resp", v)}    options={responsaveis}      placeholder="Todos os responsáveis"  searchPlaceholder="Buscar responsável..." maxBadges={2} />
+          <SearchableMultiSelect value={fEmpresa} onChange={v => setFilterMulti("empresa", v)} options={empresas}          placeholder="Todas as empresas"      searchPlaceholder="Buscar empresa..."     maxBadges={2} />
           <Select value={fPeriodo} onValueChange={v => setFilter("periodo", v === "todos" ? "" : v)}>
             <SelectTrigger><SelectValue placeholder="Data de inclusão" /></SelectTrigger>
             <SelectContent>
@@ -223,11 +295,11 @@ export default function PlanoAcoesLista() {
         </div>
         <div className="mt-3 flex flex-col gap-2 text-xs text-muted-foreground sm:flex-row sm:items-center sm:justify-between">
           <span>{filtered.length} de {rows.length} ações</span>
-          <span className="flex flex-wrap items-center gap-3">
-            <span className="flex items-center gap-1"><AlertTriangle className="h-3 w-3 text-destructive" /> {rows.filter(r => r.status_normalizado === "atrasada").length} atrasadas</span>
-            <span className="flex items-center gap-1"><Clock className="h-3 w-3 text-amber-600" /> {rows.filter(r => r.pendencia_evidencia).length} aguardam evidência</span>
-            <span className="flex items-center gap-1"><CheckCircle2 className="h-3 w-3 text-emerald-600" /> {rows.filter(r => r.status_normalizado === "concluida_validada").length} validadas</span>
-          </span>
+          {temFiltroAtivo && (
+            <Button variant="ghost" size="sm" className="h-7 gap-1 self-start px-2 text-xs sm:self-auto" onClick={() => setSearchParams(new URLSearchParams(), { replace: true })}>
+              <X className="h-3.5 w-3.5" /> Limpar filtros
+            </Button>
+          )}
         </div>
       </Card>
 
