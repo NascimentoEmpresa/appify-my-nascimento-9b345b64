@@ -31,7 +31,10 @@ import {
   STATUS_BADGE_CLASS,
   STATUS_FASE_SOLICITACAO,
   TipoSolicitacao,
+  LinkSolicitacao,
+  useLinksDaDespesa,
 } from "@/hooks/useMaloteDespesa";
+import { LinksSolicitacao } from "@/components/malote/LinksSolicitacao";
 import { useOrcadoClassificacao } from "@/hooks/useOrcadoClassificacao";
 import { useUtilizadoOrcamento } from "@/hooks/useUtilizadoOrcamento";
 import { useLigacoesClassificacaoMalote, mapaClassificacaoVinculada, classificacaoCanonica } from "@/hooks/useMaloteClassificacaoMaloteLink";
@@ -85,7 +88,7 @@ export default function SolicitacaoVisualizar() {
   const [motivo, setMotivo] = useState("");
   const [descricao, setDescricao] = useState("");
   const [valorEstimado, setValorEstimado] = useState("");
-  const [links, setLinks] = useState("");
+  const [links, setLinks] = useState<LinkSolicitacao[]>([]);
   const [tipo, setTipo] = useState<TipoSolicitacao | "">("");
   const [empresaContratoId, setEmpresaContratoId] = useState("");
   const [contratoId, setContratoId] = useState("");
@@ -95,6 +98,7 @@ export default function SolicitacaoVisualizar() {
   const [cancelando, setCancelando] = useState(false);
 
   const contratosDaEmpresa = contratos.filter((c) => !empresaContratoId || c.empresa_id === empresaContratoId);
+  const { data: linksEstruturados } = useLinksDaDespesa(data?.despesa?.id);
 
   useEffect(() => {
     if (!data?.despesa) return;
@@ -103,14 +107,23 @@ export default function SolicitacaoVisualizar() {
     setMotivo(d.motivo ?? "");
     setDescricao(d.descricao ?? "");
     setValorEstimado(String(d.valor_total ?? ""));
-    setLinks(d.links ?? "");
+    // SIS-2026-0398: solicitação nova já traz links_estruturados; solicitação
+    // antiga (coluna de texto legada) entra aqui só pra não desaparecer da
+    // edição — vira linha editável sem rótulo, nada é regravado sozinho.
+    if (linksEstruturados && linksEstruturados.length > 0) {
+      setLinks(linksEstruturados);
+    } else if (d.links) {
+      setLinks(d.links.split(/[\s,;]+/).filter(Boolean).map((url) => ({ rotulo: "", url })));
+    } else {
+      setLinks([]);
+    }
     setTipo(d.tipo ?? "");
     if (d.tipo === "contrato") {
       setEmpresaContratoId(d.empresa_id);
       setContratoId(d.contrato_id ?? "");
     }
     setArquivosExistentes(d.arquivos ?? []);
-  }, [data?.despesa]);
+  }, [data?.despesa, linksEstruturados]);
 
   const despesa = data?.despesa;
 
@@ -274,7 +287,11 @@ export default function SolicitacaoVisualizar() {
 
     setSalvando(true);
     try {
-      const novosPaths = arquivosNovos.length > 0 ? await uploadAnexosMalote(arquivosNovos, despesa!.id, nome.trim()) : [];
+      // SIS-2026-0398: cada arquivo mantém o próprio nome (sanitizado) em
+      // vez de todos virarem "Nome da solicitação (2).pdf", "(3).jpg".
+      const novosPaths = arquivosNovos.length > 0
+        ? await uploadAnexosMalote(arquivosNovos, despesa!.id, (file) => file.name.replace(/\.[^.]+$/, ""))
+        : [];
       await salvar.mutateAsync({
         id: despesa!.id,
         empresa_id: tipo === "contrato" ? empresaContratoId : despesa!.empresa_id,
@@ -285,7 +302,7 @@ export default function SolicitacaoVisualizar() {
         valor_total: Number(valorEstimado),
         motivo: motivo.trim(),
         descricao: descricao.trim(),
-        links: links.trim() || null,
+        links_estruturados: links.filter((l) => l.url.trim() !== ""),
         tipo: tipo || null,
         contrato_id: tipo === "contrato" ? contratoId : null,
         arquivos: [...arquivosExistentes, ...novosPaths],
@@ -385,16 +402,19 @@ export default function SolicitacaoVisualizar() {
                 <Textarea value={descricao} onChange={(e) => setDescricao(e.target.value)} disabled={!editavel} rows={3} />
               </div>
 
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <Label>
-                    Valor estimado <span className="text-destructive">*</span>
-                  </Label>
-                  <Input type="number" step="0.01" value={valorEstimado} onChange={(e) => setValorEstimado(e.target.value)} disabled={!editavel} />
-                </div>
-                <div>
-                  <Label>Link(s)</Label>
-                  <Input value={links} onChange={(e) => setLinks(e.target.value)} placeholder="https://..." disabled={!editavel} />
+              <div>
+                <Label>
+                  Valor estimado <span className="text-destructive">*</span>
+                </Label>
+                <Input type="number" step="0.01" value={valorEstimado} onChange={(e) => setValorEstimado(e.target.value)} disabled={!editavel} className="sm:max-w-xs" />
+              </div>
+
+              {/* SIS-2026-0398: pode ter itens de fornecedores/kits
+                  diferentes, cada um com seu próprio link de compra. */}
+              <div>
+                <Label>Link(s)</Label>
+                <div className="mt-2">
+                  <LinksSolicitacao links={links} onChange={setLinks} editavel={editavel} />
                 </div>
               </div>
 
