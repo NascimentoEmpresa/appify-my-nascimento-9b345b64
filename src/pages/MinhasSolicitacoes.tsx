@@ -504,6 +504,9 @@ export default function MinhasSolicitacoes({ abrir, base = "encarregados" }: { a
       }
       if (!vaga.contrato) { toast("Selecione o contrato.", "err"); return false; }
       if (!vaga.cargo.trim()) { toast("Informe o cargo.", "err"); return false; }
+      // Estado e cidade obrigatórios (15/09/2026) — mesma regra do Recrutamento.
+      if (!vaga.estado) { toast("Selecione o estado (UF) da vaga.", "err"); return false; }
+      if (!vaga.cidade) { toast("Selecione a cidade da vaga.", "err"); return false; }
     }
     if (step === 2) {
       if (!prazo.ok) { toast(prazo.erro ?? "Revise a data de início prevista.", "err"); return false; }
@@ -1105,14 +1108,14 @@ export default function MinhasSolicitacoes({ abrir, base = "encarregados" }: { a
                 classeInput="ini-fi" classeGrupo="ini-fg" />
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
                 <div className="ini-fg">
-                  <label>Estado (UF)</label>
+                  <label>Estado (UF) <span style={{ color: "#dc2626" }}>*</span></label>
                   <select className="ini-fi" value={vaga.estado} onChange={e => setVaga(v => ({ ...v, estado: e.target.value, cidade: "" }))}>
                     <option value="">— Selecione —</option>
                     {ESTADOS_BR.map(e => <option key={e.uf} value={e.uf}>{e.uf} — {e.nome}</option>)}
                   </select>
                 </div>
                 <div className="ini-fg">
-                  <label>Cidade</label>
+                  <label>Cidade <span style={{ color: "#dc2626" }}>*</span></label>
                   <select className="ini-fi" value={vaga.cidade} disabled={!vaga.estado} onChange={e => setVaga(v => ({ ...v, cidade: e.target.value }))}>
                     <option value="">{vaga.estado ? "— Selecione —" : "Selecione o estado primeiro"}</option>
                     {municipiosDe(vaga.estado).map(c => <option key={c} value={c}>{c}</option>)}

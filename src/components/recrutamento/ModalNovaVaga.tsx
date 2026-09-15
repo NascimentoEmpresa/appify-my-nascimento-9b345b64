@@ -451,6 +451,10 @@ export function ModalNovaVaga({ aberto, onFechar, onCriada, onToast, solicitacao
       if (jaTem && jaTem !== solicitacao?.id) { toast(avisoSubstituidoPreso(jaTem), "err"); return false; }
       if (!vaga.contrato)    { toast("Selecione o contrato.", "err"); return false; }
       if (!vaga.cargo.trim()){ toast("Informe o cargo.", "err"); return false; }
+      // Estado e cidade obrigatórios (15/09/2026): é o local da vaga, e sem
+      // ele o Recrutamento não sabe onde divulgar nem de onde é o candidato.
+      if (!vaga.estado) { toast("Selecione o estado (UF) da vaga.", "err"); return false; }
+      if (!vaga.cidade) { toast("Selecione a cidade da vaga.", "err"); return false; }
       // O vínculo com o catálogo de Suprimentos é OPCIONAL (15/09/2026): sem
       // posto no catálogo, o Compras monta uniformes/EPIs na admissão. O
       // contrato do vínculo é sempre o da vaga (VinculoCatalogoVaga).
@@ -777,14 +781,14 @@ export function ModalNovaVaga({ aberto, onFechar, onCriada, onToast, solicitacao
             classeInput="nvg-fi" classeGrupo="nvg-fg" />
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
             <div className="nvg-fg">
-              <label>Estado (UF)</label>
+              <label>Estado (UF) <span style={{ color: "#dc2626" }}>*</span></label>
               <select className="nvg-fi" value={vaga.estado} onChange={e => setVaga(v => ({ ...v, estado: e.target.value, cidade: "" }))}>
                 <option value="">— Selecione —</option>
                 {ESTADOS_BR.map(e => <option key={e.uf} value={e.uf}>{e.uf} — {e.nome}</option>)}
               </select>
             </div>
             <div className="nvg-fg">
-              <label>Cidade</label>
+              <label>Cidade <span style={{ color: "#dc2626" }}>*</span></label>
               <select className="nvg-fi" value={vaga.cidade} disabled={!vaga.estado} onChange={e => setVaga(v => ({ ...v, cidade: e.target.value }))}>
                 <option value="">{vaga.estado ? "— Selecione —" : "Selecione o estado primeiro"}</option>
                 {municipiosDe(vaga.estado).map(c => <option key={c} value={c}>{c}</option>)}
