@@ -790,7 +790,9 @@ export default function MinhasSolicitacoes({ abrir, base = "encarregados" }: { a
             {/* O menu de "preencher à mão" fica DENTRO do modal, não aqui: o
                 que ele oferece muda a solicitação aberta, não a decisão de
                 abrir uma. */}
-            <button onClick={abrirModalVaga} className="ini-sol-create"><span className="icon">🎯</span><span>Solicitar Vaga</span></button>
+            {/* Na Central a vaga é a tela da Gestão de Recrutamento (com o
+                catálogo), não este modal — o card só leva pra lá. */}
+            <button onClick={base === "central" ? () => nav(rotas.vaga) : abrirModalVaga} className="ini-sol-create"><span className="icon">🎯</span><span>Solicitar Vaga</span></button>
             <button onClick={abrirModalFerias} className="ini-sol-create"><span className="icon">📅</span><span>Solicitar Férias</span></button>
             <button onClick={abrirModalAdv} className="ini-sol-create"><span className="icon">⚠️</span><span>Advertência</span></button>
             {/* Demissão estava como "Em breve" — mas a tela existe e funciona
