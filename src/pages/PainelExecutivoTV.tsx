@@ -170,7 +170,11 @@ const BRASIL_PATH =
 export default function PainelExecutivoTV() {
   const navigate = useNavigate();
   const { empresa } = useEmpresaAtiva();
-  const { stats, isLoading, items } = usePainelLicitacao();
+  // SIS-2026-0359: TV pode mostrar o grupo inteiro com ?grupo=1 na URL
+  // (default mantém o comportamento atual: só a empresa ativa).
+  const grupoTV = typeof window !== "undefined" &&
+    /[?&]grupo=1\b/.test(window.location.search);
+  const { stats, isLoading, items } = usePainelLicitacao(undefined, { todasEmpresas: grupoTV });
   const [slide, setSlide] = useState(0);
   const [paused, setPaused] = useState(false);
   const [fullscreen, setFullscreen] = useState(false);

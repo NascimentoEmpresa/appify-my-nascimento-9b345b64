@@ -210,6 +210,8 @@ export default function PainelExecutivo() {
   const [dateTo, setDateTo] = useState("");
   const [responsavelFiltro, setResponsavelFiltro] = useState("");
   const [incluiSR, setIncluiSR] = useState(false);
+  // SIS-2026-0359: KPIs do grupo (todas as empresas) num só painel.
+  const [todasEmpresas, setTodasEmpresas] = useState(false);
 
   const filters: PainelFilters = {
     dateFrom: dateFrom || null,
@@ -218,7 +220,7 @@ export default function PainelExecutivo() {
   };
 
   const { empresa } = useEmpresaAtiva();
-  const { stats, isLoading } = usePainelLicitacao(filters);
+  const { stats, isLoading } = usePainelLicitacao(filters, { todasEmpresas });
 
   if (isLoading) {
     return (
@@ -272,6 +274,18 @@ export default function PainelExecutivo() {
               <option value="">Todos os responsáveis</option>
               {stats.responsaveis.map((r) => <option key={r} value={r}>{r}</option>)}
             </select>
+            <button
+              onClick={() => setTodasEmpresas((v) => !v)}
+              className={
+                "rounded-lg border px-3 py-1.5 text-xs font-medium shadow-sm outline-none transition " +
+                (todasEmpresas
+                  ? "border-indigo-300 bg-indigo-50 text-indigo-700"
+                  : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50")
+              }
+              title="Somar as licitações de todas as empresas do grupo"
+            >
+              {todasEmpresas ? "Grupo (todas as empresas)" : `Só ${empresa.sigla}`}
+            </button>
             <div className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-[11px] text-slate-400 shadow-sm whitespace-nowrap">
               Última atualização: <strong className="text-slate-600">{dataFmt}</strong>
             </div>
