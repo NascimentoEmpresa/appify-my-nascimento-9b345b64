@@ -109,6 +109,10 @@ type KV = { k: string; v: number };
 type Dash = {
   kpis: { ativos_mes: number; no_recorte: number; total: number; folha: number; admitidos: number; desligados: number };
   por_empresa: KV[]; folha_empresa: KV[]; por_situacao: KV[]; por_cargo: KV[]; por_contrato: KV[];
+  /** Todos os contratos (não só top 10) — card "Colaboradores por contrato" (15/09/2026). */
+  por_contrato_todos?: KV[];
+  /** Admitidos/desligados hoje, esta semana, este mês — datas reais, não competência. */
+  movimentacao?: { adm_hoje: number; adm_semana: number; adm_mes: number; desl_hoje: number; desl_semana: number; desl_mes: number };
   por_faixa: { label: string; n: number }[];
   timeline: { ano: number; adm: number; desl: number }[];
   opcoes: { empresas: string[]; contratos: string[]; situacoes: string[]; setores: string[]; cargos?: string[] };
@@ -126,7 +130,8 @@ const EH_SAIDA = /DEMIT|DESLIG|RESCIS|APOSENT/i;
 
 const DASH_VAZIO: Dash = {
   kpis: { ativos_mes: 0, no_recorte: 0, total: 0, folha: 0, admitidos: 0, desligados: 0 },
-  por_empresa: [], folha_empresa: [], por_situacao: [], por_cargo: [], por_contrato: [],
+  por_empresa: [], folha_empresa: [], por_situacao: [], por_cargo: [], por_contrato: [], por_contrato_todos: [],
+  movimentacao: { adm_hoje: 0, adm_semana: 0, adm_mes: 0, desl_hoje: 0, desl_semana: 0, desl_mes: 0 },
   por_faixa: FAIXAS.map(f => ({ label: f.label, n: 0 })), timeline: [],
   opcoes: { empresas: [], contratos: [], situacoes: [], setores: [], cargos: [] },
 };
@@ -208,6 +213,16 @@ const calcDashClient = (rows: any[], contratoDe: (e: any) => string, f: Filtro, 
     por_situacao: agrupar(semsit, e => String(e["Situação"] ?? "").trim() || "—"),
     por_cargo: agrupar(semsit, nomeCargoDe),
     por_contrato: agrupar(fil, contratoDe).slice(0, 10),
+    por_contrato_todos: agrupar(fil, contratoDe),
+    movimentacao: (() => {
+      const hoje = new Date(); hoje.setHours(0, 0, 0, 0);
+      const semana = new Date(hoje); semana.setDate(hoje.getDate() - ((hoje.getDay() + 6) % 7)); // segunda
+      const mes = new Date(hoje.getFullYear(), hoje.getMonth(), 1);
+      const entre = (d: Date | null, ini: Date) => !!d && d.getTime() >= ini.getTime() && d.getTime() <= hoje.getTime();
+      const adm = (ini: Date) => rec.tempo.filter(e => entre(parseData(e["Admissão"]), ini)).length;
+      const desl = (ini: Date) => rec.tempo.filter(e => ehSaidaDe(e) && entre(parseData(e["Data Afastamento"]), ini)).length;
+      return { adm_hoje: adm(hoje), adm_semana: adm(semana), adm_mes: adm(mes), desl_hoje: desl(hoje), desl_semana: desl(semana), desl_mes: desl(mes) };
+    })(),
     por_faixa: FAIXAS.map(x => ({
       label: x.label,
       n: fil.filter(e => { const a = anosDeCasa(e["Admissão"]); return a != null && a >= x.min && a < x.max; }).length,
@@ -247,6 +262,8 @@ export default function Colaboradores() {
   const [fCargo, setFCargo] = useState<string[]>([]);
   const [pagina, setPagina] = useState(1);
   const [porPagina, setPorPagina] = useState(50); // 50 (padrão) ou 100
+  // Ordem da lista (15/09/2026): admissão (mais recentes primeiro) é o padrão; nome A–Z é a outra.
+  const [ordem, setOrdem] = useState<"admissao" | "nome">("admissao");
   const [sitIdx, setSitIdx] = useState(0); // card rotativo de situação
   const hoje = new Date();
   const [mesRef, setMesRef] = useState<{ ano: number; mes: number }>({ ano: hoje.getFullYear(), mes: hoje.getMonth() }); // competência
@@ -360,7 +377,7 @@ export default function Colaboradores() {
   const iniciar = () => { emVoo.current++; setAtualizando(true); };
   const terminar = () => { emVoo.current = Math.max(0, emVoo.current - 1); if (!emVoo.current) setAtualizando(false); };
 
-  const ehPadrao = () => !fEmpresa.length && !fContrato.length && !fSituacao.length && !fCargo.length && !buscaQ && pagina === 1 && porPagina === 50
+  const ehPadrao = () => !fEmpresa.length && !fContrato.length && !fSituacao.length && !fCargo.length && !buscaQ && pagina === 1 && porPagina === 50 && ordem === "admissao"
     && mesRef.ano === hoje.getFullYear() && mesRef.mes === hoje.getMonth();
 
   // Dashboard e lista são consultas independentes: trocar de página não
@@ -381,7 +398,7 @@ export default function Colaboradores() {
   const buscarLista = async (): Promise<boolean> => {
     const meu = ++pedidoLista.current;
     iniciar();
-    const l = await (supabase as any).rpc("rh_colaboradores_lista", { ...argsRpc(), _offset: (pagina - 1) * porPagina, _limite: porPagina });
+    const l = await (supabase as any).rpc("rh_colaboradores_lista", { ...argsRpc(), _offset: (pagina - 1) * porPagina, _limite: porPagina, _ordem: ordem });
     terminar();
     if (semRpc(l.error)) return false;
     if (meu !== pedidoLista.current) return true;
@@ -421,7 +438,7 @@ export default function Colaboradores() {
   useEffect(() => {
     if (modo !== "rpc") return;
     buscarLista();
-  }, [modo, mesRef, fEmpresa, fContrato, fSituacao, fCargo, buscaQ, pagina, porPagina]);
+  }, [modo, mesRef, fEmpresa, fContrato, fSituacao, fCargo, buscaQ, pagina, porPagina, ordem]);
 
   // Modo antigo: baixa a tabela inteira uma vez e calcula tudo aqui.
   useEffect(() => { if (modo === "client") load(!!cacheRows); }, [modo]);
@@ -472,6 +489,8 @@ export default function Colaboradores() {
   const porEmpresa = dash.por_empresa;
   const porSituacao = dash.por_situacao;
   const porContrato = dash.por_contrato;
+  const porContratoTodos = dash.por_contrato_todos ?? dash.por_contrato;
+  const mov = dash.movimentacao ?? { adm_hoje: 0, adm_semana: 0, adm_mes: 0, desl_hoje: 0, desl_semana: 0, desl_mes: 0 };
   // card rotativo: passa por cada situação a cada 3s (movimento leve).
   useEffect(() => {
     if (porSituacao.length <= 1) return;
@@ -493,8 +512,12 @@ export default function Colaboradores() {
   const totalPag = Math.max(1, Math.ceil(totalFiltrado / porPagina));
   const visiveis: Linha[] = useMemo(() => modo === "rpc"
     ? (listaRpc?.linhas ?? [])
-    : (recClient?.fil ?? []).slice((pagina - 1) * porPagina, pagina * porPagina).map(e => linhaDe(e, contratoDe)),
-    [modo, listaRpc, recClient, pagina, porPagina, contratoPorFilial]);
+    : [...(recClient?.fil ?? [])]
+        .sort((a, b) => ordem === "nome"
+          ? String(a["Nome"] ?? "").localeCompare(String(b["Nome"] ?? ""), "pt-BR")
+          : ((parseData(b["Admissão"])?.getTime() ?? -1) - (parseData(a["Admissão"])?.getTime() ?? -1)) || String(a["Nome"] ?? "").localeCompare(String(b["Nome"] ?? ""), "pt-BR"))
+        .slice((pagina - 1) * porPagina, pagina * porPagina).map(e => linhaDe(e, contratoDe)),
+    [modo, listaRpc, recClient, pagina, porPagina, contratoPorFilial, ordem]);
 
   const limparFiltros = () => { setBusca(""); setFEmpresa([]); setFContrato([]); setFSituacao([]); setFCargo([]); };
   const alternar = (set: (f: (v: string[]) => string[]) => void, valor: string) =>
@@ -605,6 +628,17 @@ export default function Colaboradores() {
         {card("Desligados no mês", String(desligadosMes), "#dc2626", `${MESES_ABREV[mesRef.mes]}/${mesRef.ano}`)}
       </div>
 
+      {/* Movimentação (15/09/2026): hoje / esta semana / este mês, por data
+          real de admissão e de afastamento — independe da competência escolhida. */}
+      <div style={{ display: loading ? "none" : "flex", gap: 12, flexWrap: "wrap", marginBottom: 14, opacity: veu ? .4 : 1, transition: "opacity .2s ease" }}>
+        {card("Admitidos hoje", String(mov.adm_hoje), "#2563eb", "data de admissão = hoje")}
+        {card("Admitidos na semana", String(mov.adm_semana), "#2563eb", "de segunda até hoje")}
+        {card("Admitidos no mês atual", String(mov.adm_mes), "#2563eb", "do dia 1º até hoje")}
+        {card("Desligados hoje", String(mov.desl_hoje), "#dc2626", "data de afastamento = hoje")}
+        {card("Desligados na semana", String(mov.desl_semana), "#dc2626", "de segunda até hoje")}
+        {card("Desligados no mês atual", String(mov.desl_mes), "#dc2626", "do dia 1º até hoje")}
+      </div>
+
       {/* Filtros — ficam fora do véu: dá pra trocar de filtro enquanto recalcula */}
       <div style={{ display: loading ? "none" : "block", background: "#fff", border: "1px solid #e2e8f0", borderRadius: 14, padding: 14, marginBottom: 16, boxShadow: "0 8px 24px rgba(15,23,42,.05)" }}>
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
@@ -667,7 +701,11 @@ export default function Colaboradores() {
             {ativosPorCargo.map(x => <div key={x.k}>{barRow(x.k, x.v, ativosPorCargo[0].v, "#0e7490", String(x.v))}</div>)}
           </div>
         ))}
-        {painel("Top contratos (headcount)", porContrato.length === 0 ? <Vazio /> : porContrato.map(x => <div key={x.k}>{barRow(x.k, x.v, porContrato[0].v, "#7c3aed", String(x.v))}</div>))}
+        {painel(`Colaboradores por contrato (${porContratoTodos.length} contratos)`, porContratoTodos.length === 0 ? <Vazio /> : (
+          <div style={{ maxHeight: 285, overflowY: "auto", paddingRight: 4 }}>
+            {porContratoTodos.map(x => <div key={x.k}>{barRow(x.k, x.v, porContratoTodos[0].v, "#7c3aed", String(x.v))}</div>)}
+          </div>
+        ))}
         {painel("Tempo de casa", <div>{porFaixa.map(f => <div key={f.label}>{barRow(f.label, f.n, Math.max(1, ...porFaixa.map(z => z.n)), "#2563eb", String(f.n))}</div>)}</div>)}
         {painel(`Admissões × Desligamentos (por ano)`, timeline.length === 0 ? <Vazio /> : (
           <div style={{ display: "flex", alignItems: "flex-end", gap: 10, height: 150, paddingTop: 8 }}>
@@ -690,6 +728,11 @@ export default function Colaboradores() {
           <span style={{ fontSize: 13, fontWeight: 800, color: "#0f172a" }}>{totalFiltrado} colaborador(es)</span>
           <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
             {erro && <span style={{ fontSize: 12, color: "#dc2626" }}>⚠ {erro}</span>}
+            <span style={{ fontSize: 12, color: "#94a3b8" }}>Ordenar:</span>
+            <select className="col-fi" style={{ height: 32 }} value={ordem} onChange={e => { setOrdem(e.target.value as "admissao" | "nome"); setPagina(1); }}>
+              <option value="admissao">Admissão (mais recentes)</option>
+              <option value="nome">Nome (A–Z)</option>
+            </select>
             <span style={{ fontSize: 12, color: "#94a3b8" }}>Por página:</span>
             <select className="col-fi" style={{ height: 32 }} value={porPagina} onChange={e => setPorPagina(Number(e.target.value))}>
               <option value={50}>50</option>
