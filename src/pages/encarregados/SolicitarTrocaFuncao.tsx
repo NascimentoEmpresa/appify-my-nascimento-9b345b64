@@ -17,6 +17,7 @@ import { BuscaColaborador, type EmpregadoEscolhido } from "@/components/demissao
 import { ArrowRight, Building2, CheckCircle2, Loader2, Send, UserCog } from "lucide-react";
 import { localEhEscritorio, statusInicial, TABELA, fmtData } from "@/lib/trocaFuncao/solicitacao";
 import { toast } from "sonner";
+import { cn } from "@/lib/utils";
 import { solicitacaoEmAberto, type SolicitacaoEmAberto } from "@/lib/solicitacoes/duplicidade";
 
 const sb = supabase as any;
@@ -59,6 +60,10 @@ export default function SolicitarTrocaFuncao() {
     return () => { vivo = false; };
   }, [colaborador?.id]);
   const [cargoNovo, setCargoNovo] = useState("");
+  // Só horário (15/09/2026): a função fica a mesma e o que muda é a carga
+  // horária/escala. Na troca de função o horário novo também é obrigatório.
+  const [soHorario, setSoHorario] = useState(false);
+  const [horarioNovo, setHorarioNovo] = useState("");
   const [motivo, setMotivo] = useState("");
   const [dataPretendida, setDataPretendida] = useState("");
   const [setor, setSetor] = useState("");
@@ -83,14 +88,19 @@ export default function SolicitarTrocaFuncao() {
   }, []);
 
   const cargoAtual = colaborador?.cargo ?? "";
-  const mesmoCargo = cargoAtual.trim().toUpperCase() === cargoNovo.trim().toUpperCase()
+  const horarioAtual = colaborador?.escala ?? "";
+  const mesmoCargo = !soHorario && cargoAtual.trim().toUpperCase() === cargoNovo.trim().toUpperCase()
                   && cargoNovo.trim().length > 0;
+  const mesmoHorario = soHorario && horarioAtual.trim().toUpperCase() === horarioNovo.trim().toUpperCase()
+                  && horarioNovo.trim().length > 0;
 
   const problema = (): string | null => {
     if (!colaborador) return "Escolha o colaborador na lista.";
     if (duplicada) return duplicada.mensagem;
-    if (!cargoNovo.trim()) return "Informe para qual cargo a pessoa vai.";
-    if (mesmoCargo) return "O cargo novo é igual ao atual — não há o que trocar.";
+    if (!soHorario && !cargoNovo.trim()) return "Informe para qual cargo a pessoa vai.";
+    if (mesmoCargo) return "O cargo novo é igual ao atual — se é só o horário que muda, marque \"Só troca de horário\".";
+    if (!horarioNovo.trim()) return soHorario ? "Informe o horário novo que a pessoa vai fazer." : "Informe a carga horária/escala que a pessoa vai fazer no cargo novo.";
+    if (mesmoHorario) return "O horário novo é igual ao atual — não há o que trocar.";
     if (!motivo.trim()) return "Escreva o motivo da mudança.";
     return null;
   };
@@ -107,7 +117,12 @@ export default function SolicitarTrocaFuncao() {
       colaborador_cpf: colaborador!.cpf,
       colaborador_admissao: colaborador!.admissao,
       cargo_atual: cargoAtual || null,
-      cargo_novo: cargoNovo.trim(),
+      // Só horário: o cargo "novo" é o mesmo — a coluna é NOT NULL e o
+      // painel mostra "Só horário" pelo tipo.
+      cargo_novo: soHorario ? (cargoAtual || "—") : cargoNovo.trim(),
+      tipo: soHorario ? "horario" : "funcao",
+      horario_atual: horarioAtual || null,
+      horario_novo: horarioNovo.trim(),
       local: local || null,
       posto: colaborador!.posto || null,
       filial: colaborador!.nomeFilial || null,
@@ -123,7 +138,7 @@ export default function SolicitarTrocaFuncao() {
   };
 
   const recomecar = () => {
-    setColaborador(null); setCargoNovo(""); setMotivo("");
+    setColaborador(null); setCargoNovo(""); setMotivo(""); setSoHorario(false); setHorarioNovo("");
     setDataPretendida(""); setSetor(""); setEEscritorio(false); setProtocolo(null);
   };
 
@@ -157,14 +172,14 @@ export default function SolicitarTrocaFuncao() {
     <div className="mx-auto max-w-3xl space-y-4">
       <PageHeader
         title="Mudança de Função"
-        subtitle="Peça a troca de cargo de alguém da sua equipe. O cargo atual vem do cadastro. Passa pelo analista, pela aprovação, pelo SST e termina no RH."
+        subtitle="Peça a troca de cargo ou só de horário de alguém da sua equipe. O cargo e o horário atuais vêm do cadastro. Passa pelo analista, pela aprovação, pelo SST e termina no RH."
         module="Encarregados"
         breadcrumb={["Mudança de Função"]}
         actions={<ResumoDeFuncoes fluxo="troca_funcao" />}
       />
 
       <Card>
-        <CardHeader><CardTitle className="text-base">Quem vai mudar de função</CardTitle></CardHeader>
+        <CardHeader><CardTitle className="text-base">Quem vai mudar</CardTitle></CardHeader>
         <CardContent className="space-y-4">
           <div className="space-y-1.5">
             <Label>Colaborador <span className="text-destructive">*</span></Label>
@@ -191,24 +206,68 @@ export default function SolicitarTrocaFuncao() {
       <Card>
         <CardHeader><CardTitle className="text-base">A troca</CardTitle></CardHeader>
         <CardContent className="space-y-4">
+          {/* Só horário: muita gente só aumenta/reduz a carga horária sem
+              mudar de função. Marcado, o cargo some e fica só o horário. */}
+          <div className={cn("rounded-lg border p-3 transition-colors", soHorario && "border-primary/40 bg-primary/5")}>
+            <div className="flex items-start gap-2.5">
+              <Checkbox id="so-horario" checked={soHorario}
+                        onCheckedChange={v => { setSoHorario(v === true); if (v === true) setCargoNovo(""); }} className="mt-0.5" />
+              <div className="space-y-1">
+                <Label htmlFor="so-horario" className="cursor-pointer font-medium">
+                  Só troca de horário (a função continua a mesma)
+                </Label>
+                <p className="text-xs text-muted-foreground">
+                  Aumento ou redução de carga horária, mudança de escala ou de turno. O cargo fica como está.
+                </p>
+              </div>
+            </div>
+          </div>
+
+          {!soHorario && (
+            <div className="grid items-end gap-3 sm:grid-cols-[1fr_auto_1fr]">
+              <div className="space-y-1.5">
+                <Label>Cargo atual</Label>
+                {/* Travado de propósito: sai de EMPREGADOS. */}
+                <Input value={cargoAtual} readOnly disabled
+                       placeholder="Escolha o colaborador para preencher"
+                       className="bg-muted/60" />
+              </div>
+              <ArrowRight className="mb-2 hidden h-5 w-5 text-muted-foreground sm:block" />
+              <div className="space-y-1.5">
+                <Label>Cargo novo <span className="text-destructive">*</span></Label>
+                <Input value={cargoNovo} onChange={e => setCargoNovo(e.target.value)}
+                       placeholder="Ex.: Encarregado de Limpeza" />
+              </div>
+            </div>
+          )}
+
+          {mesmoCargo && (
+            <p className="text-sm text-destructive">O cargo novo é igual ao atual — se é só o horário que muda, marque “Só troca de horário”.</p>
+          )}
+
+          {/* Horário: obrigatório nos dois casos. Na troca de função é o
+              que a pessoa vai fazer no cargo novo (pode ser o mesmo). */}
           <div className="grid items-end gap-3 sm:grid-cols-[1fr_auto_1fr]">
             <div className="space-y-1.5">
-              <Label>Cargo atual</Label>
-              {/* Travado de propósito: sai de EMPREGADOS. */}
-              <Input value={cargoAtual} readOnly disabled
+              <Label>Horário / carga horária atual</Label>
+              <Input value={horarioAtual} readOnly disabled
                      placeholder="Escolha o colaborador para preencher"
                      className="bg-muted/60" />
             </div>
             <ArrowRight className="mb-2 hidden h-5 w-5 text-muted-foreground sm:block" />
             <div className="space-y-1.5">
-              <Label>Cargo novo <span className="text-destructive">*</span></Label>
-              <Input value={cargoNovo} onChange={e => setCargoNovo(e.target.value)}
-                     placeholder="Ex.: Encarregado de Limpeza" />
+              <Label>Horário / carga horária nova <span className="text-destructive">*</span></Label>
+              <Input value={horarioNovo} onChange={e => setHorarioNovo(e.target.value)}
+                     placeholder="Ex.: 40h 5x2, 08:00–17:00" />
+              {!soHorario && horarioAtual && !horarioNovo && (
+                <button type="button" className="text-xs text-primary hover:underline" onClick={() => setHorarioNovo(horarioAtual)}>
+                  Mantém o mesmo horário
+                </button>
+              )}
             </div>
           </div>
-
-          {mesmoCargo && (
-            <p className="text-sm text-destructive">O cargo novo é igual ao atual — não há o que trocar.</p>
+          {mesmoHorario && (
+            <p className="text-sm text-destructive">O horário novo é igual ao atual — não há o que trocar.</p>
           )}
 
           <div className="space-y-1.5">
