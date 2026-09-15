@@ -58,6 +58,9 @@ export interface LinhaEstoque {
   consumido: number;
   etiquetas: number;
   tamanhos: string[];
+  /** Só para a edição abrir preenchida. */
+  fornecedor_id: string | null;
+  observacoes: string | null;
 }
 
 /**
@@ -98,6 +101,7 @@ export interface TagEstoque {
   tipo: TipoTag; quantidade_massa: number | null; quantidade_original_massa: number | null;
   valor_unitario: number | null; estado: string; usado: boolean;
   pedido_id: string | null; pedido_item_id: string | null; usado_por_nome: string | null;
+  ca_numero: string | null; ca_validade: string | null;
 }
 
 export interface TagDoPedido {
@@ -205,11 +209,15 @@ export function useEstoqueLista(empresaId: string | null) {
     queryFn: async (): Promise<LinhaEstoque[]> => {
       const { data, error } = await sb
         .from("sup_estoque_item")
-        .select(`id, valor_unitario, estoque_minimo, preco_valido_ate,
+        .select(`id, valor_unitario, estoque_minimo, preco_valido_ate, fornecedor_id, observacoes,
                  sup_item:sup_item_id (id, nome, tipo, codigo),
                  almoxarifado:almoxarifado_id (nome),
                  sup_estoque_tag (codigo, tamanho, tipo, usado, quantidade_massa, quantidade_original_massa, valor_unitario,
-                                  sup_estoque_reserva (quantidade, situacao))`);
+                                  sup_estoque_reserva (quantidade, situacao))`)
+        // Material excluído que já atendeu pedido não é apagado, é arquivado
+        // (ver sup_est_excluir_item) — a linha fica para os pedidos antigos
+        // continuarem sabendo o que receberam. Na lista, ele não existe mais.
+        .is("arquivado_em", null);
       if (error) throw error;
 
       // Mesma fórmula da view sup_estoque_saldo — aqui só para evitar um
@@ -252,6 +260,8 @@ export function useEstoqueLista(empresaId: string | null) {
           preco_valido_ate: r.preco_valido_ate ?? null,
           preco_vencido: precoVencido(r.preco_valido_ate),
           estoque_minimo: Number(r.estoque_minimo ?? 0),
+          fornecedor_id: r.fornecedor_id ?? null,
+          observacoes: r.observacoes ?? null,
           disponivel, reservado, fisico, consumido,
           etiquetas: tags.length,
           tamanhos: [...new Set(tags.filter((t: any) => !t.usado && t.tamanho).map((t: any) => t.tamanho))] as string[],
@@ -484,7 +494,7 @@ export function useInvalidarEstoque() {
     ["sup_estoque_lista", "sup_estoque_tag", "sup_tags_disponiveis", "sup_saldo_material",
      "sup_est_tags_do_pedido", "sup_pedido", "sup_pedido_historico",
      "sup_estoque_movimento", "sup_pedido_situacao", "sup_sep_fila", "sup_sep_sugerir",
-     "sup_contagem_fila"]
+     "sup_contagem_fila", "sup_estoque_alteracao", "sup_item_precos", "sup_item"]
       .forEach((k) => qc.invalidateQueries({ queryKey: [k] }));
   };
 }
@@ -748,6 +758,109 @@ export function useRemoverTag() {
   });
 }
 
+/**
+ * Tira o MATERIAL inteiro do estoque — todos os lotes com saldo de uma vez.
+ *
+ * Material que já atendeu pedido não é apagado, é arquivado: a linha fica
+ * para o pedido antigo continuar sabendo o que recebeu e quanto custou. Ver
+ * 20260930000106_sup_estoque_excluir_material.sql.
+ */
+export function useExcluirItemEstoque() {
+  const invalidar = useInvalidarEstoque();
+  return useMutation({
+    mutationFn: async (v: { itemEstoqueId: string; motivo: string }) => {
+      const { data, error } = await sb.rpc("sup_est_excluir_item", {
+        p_item_estoque_id: v.itemEstoqueId, p_motivo: v.motivo.trim(),
+      });
+      if (error) throw error;
+      return data as { acao: "apagou" | "arquivou"; unidades: number; lotes: number };
+    },
+    onSuccess: (r) => {
+      invalidar();
+      const saiu = r.unidades === 1 ? "1 unidade saiu" : `${r.unidades} unidades saíram`;
+      toast.success(r.acao === "arquivou"
+        ? `Material excluído do estoque (${saiu}). Os pedidos que ele já atendeu continuam registrados.`
+        : `Material excluído do estoque (${saiu}).`);
+    },
+    onError: (e: any) => toast.error(e?.message ?? "Não foi possível excluir o material."),
+  });
+}
+
+// ── Edição do material ───────────────────────────────────────────────
+
+/** Só vai no payload o que mudou — o banco registra no histórico campo a campo. */
+export interface EdicaoLote {
+  id: string;
+  tamanho?: string | null;
+  ca_numero?: string | null;
+  ca_validade?: string | null;
+  /** Só lote por quantidade. Corrigir o saldo gera movimento de 'correcao'. */
+  quantidade?: number;
+}
+export interface EdicaoMaterial {
+  /** Nome do catálogo: vale para todos os almoxarifados e pedidos. */
+  nome?: string;
+  valor_unitario?: number;
+  preco_valido_ate?: string | null;
+  estoque_minimo?: number;
+  fornecedor_id?: string | null;
+  observacoes?: string | null;
+  lotes?: EdicaoLote[];
+}
+
+/**
+ * Edita o material e os lotes livres dele numa transação só, com motivo.
+ * Cada campo alterado vira uma linha em sup_estoque_alteracao (antes, depois,
+ * quem, quando e por quê). Ver 20260930000107_sup_estoque_editar_material.sql.
+ */
+export function useEditarItemEstoque() {
+  const invalidar = useInvalidarEstoque();
+  return useMutation({
+    mutationFn: async (v: { itemEstoqueId: string; edicao: EdicaoMaterial; motivo: string }) => {
+      const { data, error } = await sb.rpc("sup_est_editar_item", {
+        p_item_estoque_id: v.itemEstoqueId, p_payload: v.edicao, p_motivo: v.motivo.trim(),
+      });
+      if (error) throw error;
+      return data as { alteracoes: number };
+    },
+    onSuccess: (r) => {
+      invalidar();
+      toast.success(r.alteracoes === 1 ? "1 alteração salva." : `${r.alteracoes} alterações salvas.`);
+    },
+    onError: (e: any) => toast.error(e?.message ?? "Não foi possível salvar a edição."),
+  });
+}
+
+export interface AlteracaoEstoque {
+  id: string;
+  campo: string;
+  valor_anterior: string | null;
+  valor_novo: string | null;
+  motivo: string | null;
+  /** Lote a que o campo pertence; nulo quando é do material. */
+  codigo: string | null;
+  usuario_nome: string | null;
+  created_at: string;
+}
+
+/** Edições do material. Por `sup_item_id`, pelo mesmo motivo do histórico abaixo. */
+export function useAlteracoesDoMaterial(supItemId: string | null) {
+  return useQuery({
+    queryKey: ["sup_estoque_alteracao", supItemId],
+    enabled: !!supItemId,
+    queryFn: async (): Promise<AlteracaoEstoque[]> => {
+      const { data, error } = await sb
+        .from("sup_estoque_alteracao")
+        .select("id, campo, valor_anterior, valor_novo, motivo, codigo, usuario_nome, created_at")
+        .eq("sup_item_id", supItemId)
+        .order("created_at", { ascending: false })
+        .limit(500);
+      if (error) throw error;
+      return data ?? [];
+    },
+  });
+}
+
 // ── Histórico do material ────────────────────────────────────────────
 
 export type TipoMovimento =
@@ -755,7 +868,13 @@ export type TipoMovimento =
   /** Reservado para separação — saiu do disponível, não da prateleira. */
   | "reserva"
   /** Reserva desfeita: pedido cancelado, excluído, ou liberado pela supervisora. */
-  | "liberacao";
+  | "liberacao"
+  /**
+   * Quantidade do lote corrigida à mão, na edição do material. `quantidade`
+   * é a diferença, com sinal. Tipo próprio para não se confundir com o
+   * inventário, que só registra e não corrige nada.
+   */
+  | "correcao";
 
 export interface Movimento {
   id: string;
