@@ -94,21 +94,33 @@ const MEMOS_IGNORAR = ["RENDE FACIL", "BB RENDE", "RENDE F"];
 
 // ── Parser OFX ─────────────────────────────────────────────────────────────
 
-function parseOFX(text: string, origem: string): OFXTransaction[] {
+// SIS-2026-0344: o padrão OFX usa "." como separador decimal, mas o Bradesco
+// (achado real, ao testar os .OFX da usuária) exporta em formato BR — vírgula
+// decimal, ponto como separador de milhar ("10000,00", "-7.191,44"). O regex
+// antigo só aceitava dígito/"-"/"." e cortava o valor exatamente na vírgula
+// ("-183,60" virava "-183") — não era arredondamento, era truncamento.
+export function parseOfxAmount(raw: string): number {
+  if (raw.includes(",")) {
+    return parseFloat(raw.replace(/\./g, "").replace(",", "."));
+  }
+  return parseFloat(raw);
+}
+
+export function parseOFX(text: string, origem: string): OFXTransaction[] {
   const txns: OFXTransaction[] = [];
   const regex = /<STMTTRN>([\s\S]*?)<\/STMTTRN>/g;
   let m: RegExpExecArray | null;
   while ((m = regex.exec(text)) !== null) {
     const block = m[1];
     const dt  = block.match(/<DTPOSTED>(\d{8})/)?.[1];
-    const amt = block.match(/<TRNAMT>([-\d.]+)/)?.[1];
+    const amt = block.match(/<TRNAMT>([-\d.,]+)/)?.[1];
     const memo = (block.match(/<MEMO>([^\n<\r]*)/)?.[1] ?? "").trim();
     const name = (block.match(/<NAME>([^\n<\r]*)/)?.[1] ?? "").trim();
     if (!dt || !amt) continue;
     const hist = memo || name;
     const upper = hist.toUpperCase();
     if (MEMOS_IGNORAR.some((t) => upper.includes(t))) continue;
-    const rawAmt = parseFloat(amt);
+    const rawAmt = parseOfxAmount(amt);
     txns.push({
       dia: `${dt.slice(0, 4)}-${dt.slice(4, 6)}-${dt.slice(6, 8)}`,
       valor: Math.abs(rawAmt),
