@@ -38,7 +38,12 @@ function montarAtaFinalPdf(
       const resposta = respostas.find((r) => r.pauta_id === p.id);
       const assunto = p.fora_pauta ? assuntosForaPauta.find((a) => a.pauta_id === p.id) : undefined;
       pdf.garantirEspaco(24);
-      pdf.paragrafo(`${i + 1}. ${p.titulo_topico}${p.fora_pauta ? " (Assunto fora da pauta)" : ""}`, { negrito: true, tamanho: 10.5, espacoDepois: 1 });
+      const marcas = [
+        p.fora_pauta ? " (Assunto fora da pauta)" : "",
+        p.transferida_para_pauta_id ? " (Transferido para outra reunião)" : "",
+        p.transferida_de_pauta_id ? " (Transferido de reunião anterior)" : "",
+      ].join("");
+      pdf.paragrafo(`${i + 1}. ${p.titulo_topico}${marcas}`, { negrito: true, tamanho: 10.5, espacoDepois: 1 });
       if (p.descricao) pdf.paragrafo(p.descricao, { tamanho: 9, cor: [120, 120, 120], espacoDepois: 1.5 });
       if (assunto) {
         const detalhes = [

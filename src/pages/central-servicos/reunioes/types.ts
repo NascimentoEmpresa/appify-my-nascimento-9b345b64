@@ -319,7 +319,19 @@ export interface ReuniaoPauta {
   natureza: NaturezaItem | null;
   /** true = item nasceu de um "assunto fora da pauta" registrado durante a condução. */
   fora_pauta: boolean;
+  /** Item criado na reunião de destino quando esta pauta foi transferida (SIS-2026-0373) — a origem fica com o rastro. */
+  transferida_para_pauta_id: string | null;
+  /** Item de origem, quando esta pauta chegou por transferência de outra reunião. */
+  transferida_de_pauta_id: string | null;
   created_at: string;
+}
+
+/** Reunião do outro lado de uma transferência de pauta — ausente do mapa quando o usuário não tem acesso a ela (RLS). */
+export interface ReuniaoTransferenciaRef {
+  reuniao_id: string;
+  numero: string;
+  titulo: string;
+  data_hora: string;
 }
 
 export interface RespostaConducaoItem {

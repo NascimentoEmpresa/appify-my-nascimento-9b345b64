@@ -29,6 +29,7 @@ import { usePushNotifications } from "@/hooks/usePushNotifications";
 import { useReuniaoDetalhe } from "./useReuniaoDetalhe";
 import { useUsuariosAtivos, useEditarSerieRecorrente, useExcluirReunioesEmMassa, verificarConflitoSala, verificarConflitoParticipante } from "./useReunioes";
 import { PautaTabela } from "./componentes/PautaTabela";
+import { TransferirPautaDialog } from "./componentes/TransferirPautaDialog";
 import { EditarDiaHorarioDialog } from "./componentes/EditarDiaHorarioDialog";
 import { PresencaBadge } from "./componentes/PresencaBadge";
 import { AssinaturasPanel } from "./componentes/AssinaturasPanel";
@@ -38,7 +39,7 @@ import { HistoricoPainel } from "./componentes/HistoricoPainel";
 import { exportarConvocacaoPdf } from "./pdf/convocacaoPdf";
 import { exportarAtaFinalPdf } from "./pdf/ataFinalPdf";
 import { buildGoogleCalendarUrl, baixarIcs } from "@/lib/calendarExport";
-import { ETAPA_COR, ETAPA_LABEL, nomeUsuario, SALAS_PRESENCIAIS, TIPO_REUNIAO_LABEL, type TipoLocalReuniao } from "./types";
+import { ETAPA_COR, ETAPA_LABEL, nomeUsuario, SALAS_PRESENCIAIS, TIPO_REUNIAO_LABEL, type ReuniaoPauta, type TipoLocalReuniao } from "./types";
 
 function iniciaisUsuario(nome: string): string {
   return nome.split(/\s+/).filter(Boolean).slice(0, 2).map((p) => p[0]?.toUpperCase()).join("");
@@ -190,15 +191,18 @@ export default function ReuniaoDetalhe() {
   const [participantesOpen, setParticipantesOpen] = useState(false);
   const [excluindo, setExcluindo] = useState(false);
   const [serieOpen, setSerieOpen] = useState(false);
+  const [pautaTransferindo, setPautaTransferindo] = useState<ReuniaoPauta | null>(null);
   const editarSerie = useEditarSerieRecorrente();
   const excluirLote = useExcluirReunioesEmMassa();
 
   const {
     reuniao, isLoading, pauta, respostas, convidados, anexos, pautaAnexos, comentarios, assinaturas, logs, assuntosForaPauta,
+    decisoesAcoes, reunioesTransferencia,
     cancelarReuniao, excluirReuniao, encerrarReuniao, atualizarCampos,
     salvarPautaItem, atualizarPautaItem, reordenarPauta, removerPautaItem, salvarResposta,
     uploadAnexo, removerAnexo, downloadAnexo, uploadPautaAnexo, removerPautaAnexo,
     adicionarConvidado, removerConvidado, marcarPresenca, adicionarComentario, removerComentario, salvarAssinatura,
+    transferirPauta,
   } = useReuniaoDetalhe(id);
 
   const confirmacoes = useMemo(() => ({
@@ -567,6 +571,9 @@ export default function ReuniaoDetalhe() {
                 pauta={pauta}
                 respostas={respostas}
                 pautaAnexos={pautaAnexos}
+                decisoesAcoes={decisoesAcoes}
+                reunioesTransferencia={reunioesTransferencia}
+                onPedirTransferencia={podeGerenciar ? setPautaTransferindo : undefined}
                 usuarios={usuarios}
                 podeGerenciarGeral={podeGerenciar}
                 userId={user?.id}
@@ -625,6 +632,16 @@ export default function ReuniaoDetalhe() {
           />
         </Card>
       </div>
+
+      <TransferirPautaDialog
+        pauta={pautaTransferindo}
+        reuniaoOrigem={reuniao}
+        convidadosOrigem={convidados}
+        usuarios={usuarios}
+        userId={user?.id}
+        onFechar={() => setPautaTransferindo(null)}
+        onTransferir={transferirPauta}
+      />
 
       <Dialog open={participantesOpen} onOpenChange={setParticipantesOpen}>
         <DialogContent>

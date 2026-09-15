@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   DndContext, type DragEndEvent, PointerSensor, closestCenter, useSensor, useSensors,
 } from "@dnd-kit/core";
@@ -10,9 +10,14 @@ import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { SearchableSelect } from "@/components/ui/searchable-select";
-import { GripVertical, Paperclip, Pencil, Plus, Search, Trash2 } from "lucide-react";
+import { ArrowRightLeft, GripVertical, Paperclip, Pencil, Plus, Search, Trash2 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
-import { nomeUsuario, PAUTA_STATUS_COR, PAUTA_STATUS_LABEL, type PautaStatus, type ReuniaoPauta, type ReuniaoPautaAnexo, type ReuniaoResposta, type Usuario } from "../types";
+import { PautaDetalheDialog } from "./PautaDetalheDialog";
+import { AcoesVinculadasPauta, SeloTransferencia, TextoResumido } from "./PautaVinculos";
+import {
+  nomeUsuario, PAUTA_STATUS_COR, PAUTA_STATUS_LABEL,
+  type PautaStatus, type ReuniaoDecisaoAcao, type ReuniaoPauta, type ReuniaoPautaAnexo, type ReuniaoResposta, type ReuniaoTransferenciaRef, type Usuario,
+} from "../types";
 
 const MAX_ANEXOS_POR_PAUTA = 5;
 const MAX_TAMANHO_ANEXO_MB = 10;
@@ -21,6 +26,11 @@ interface Props {
   pauta: ReuniaoPauta[];
   respostas: ReuniaoResposta[];
   pautaAnexos: ReuniaoPautaAnexo[];
+  /** Decisões/ações de todos os itens — cada linha lista as suas, com link pro Plano de Ações (SIS-2026-0373). */
+  decisoesAcoes: ReuniaoDecisaoAcao[];
+  reunioesTransferencia: Record<string, ReuniaoTransferenciaRef>;
+  /** Abre o diálogo de transferência pra outra reunião — ausente quando o usuário não organiza a reunião. */
+  onPedirTransferencia?: (item: ReuniaoPauta) => void;
   usuarios: Usuario[];
   podeGerenciarGeral: boolean;
   userId: string | undefined;
@@ -141,13 +151,17 @@ function EditarTopicoPopover({ item, onSalvar }: { item: ReuniaoPauta; onSalvar:
 }
 
 function PautaRow({
-  item, indice, resposta, anexos, usuarios, podeEditarLinha, podeResponderLinha, podeGerenciarGeral, opcoesUsuarios,
-  onAtualizarTopico, onRemoverTopico, onSalvarResposta, onUploadPautaAnexo, onDownloadAnexo, onRemoverPautaAnexo,
+  item, indice, resposta, anexos, itensDecisaoAcao, reunioesTransferencia, usuarios, podeEditarLinha, podeResponderLinha, podeGerenciarGeral, opcoesUsuarios,
+  onAtualizarTopico, onRemoverTopico, onSalvarResposta, onUploadPautaAnexo, onDownloadAnexo, onRemoverPautaAnexo, onAbrirDetalhe, onTransferir,
 }: {
   item: ReuniaoPauta;
   indice: number;
   resposta: ReuniaoResposta | undefined;
   anexos: ReuniaoPautaAnexo[];
+  itensDecisaoAcao: ReuniaoDecisaoAcao[];
+  reunioesTransferencia: Record<string, ReuniaoTransferenciaRef>;
+  onAbrirDetalhe: () => void;
+  onTransferir?: () => void;
   usuarios: Usuario[];
   podeEditarLinha: boolean;
   podeResponderLinha: boolean;
@@ -163,6 +177,10 @@ function PautaRow({
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: item.id });
   const [texto, setTexto] = useState(resposta?.texto_resposta ?? "");
   const [obs, setObs] = useState(resposta?.encaminhamento ?? "");
+  // A resposta também pode ser salva pelo diálogo de detalhe — mantém a linha
+  // em dia quando o valor salvo muda por fora (inputs agora são controlados).
+  useEffect(() => { setTexto(resposta?.texto_resposta ?? ""); }, [resposta?.texto_resposta]);
+  useEffect(() => { setObs(resposta?.encaminhamento ?? ""); }, [resposta?.encaminhamento]);
 
   const style = { transform: CSS.Transform.toString(transform), transition, opacity: isDragging ? 0.5 : 1 };
 
@@ -176,14 +194,27 @@ function PautaRow({
         )}
       </td>
       <td className="w-8 py-2 text-sm text-muted-foreground">{indice + 1}</td>
-      <td className="min-w-[180px] py-2 pr-2">
+      <td className="min-w-[220px] py-2 pr-2">
         <div className="flex items-start gap-1">
-          <div className="min-w-0">
-            <p className="text-sm font-medium">{item.titulo_topico}</p>
-            {item.fora_pauta && (
-              <span className="mt-0.5 inline-flex rounded-full border border-amber-200 bg-amber-100 px-2 py-0.5 text-[10px] text-amber-800">Fora da pauta</span>
+          <div className="min-w-0 flex-1 space-y-0.5">
+            <button
+              type="button"
+              onClick={onAbrirDetalhe}
+              title="Abrir detalhe da pauta"
+              className="text-left text-sm font-medium hover:text-primary hover:underline"
+            >
+              {item.titulo_topico}
+            </button>
+            {(item.fora_pauta || item.transferida_para_pauta_id || item.transferida_de_pauta_id) && (
+              <div className="flex flex-wrap gap-1">
+                {item.fora_pauta && (
+                  <span className="inline-flex rounded-full border border-amber-200 bg-amber-100 px-2 py-0.5 text-[10px] text-amber-800">Fora da pauta</span>
+                )}
+                <SeloTransferencia item={item} reunioes={reunioesTransferencia} />
+              </div>
             )}
-            {item.descricao &&<p className="text-xs text-muted-foreground">{item.descricao}</p>}
+            {item.descricao && <TextoResumido texto={item.descricao} linhas={2} className="text-xs text-muted-foreground" onVerMais={onAbrirDetalhe} />}
+            <AcoesVinculadasPauta itens={itensDecisaoAcao} className="mt-1" />
           </div>
           {podeGerenciarGeral && (
             <EditarTopicoPopover item={item} onSalvar={(titulo, descricao) => onAtualizarTopico(item.id, { titulo_topico: titulo, descricao: descricao || null })} />
@@ -233,31 +264,31 @@ function PautaRow({
       <td className="min-w-[180px] py-2 pr-2">
         {podeResponderLinha ? (
           <Input
-            defaultValue={texto}
+            value={texto}
             placeholder="Resposta / decisão"
             className="h-8 text-xs"
             onChange={(e) => setTexto(e.target.value)}
             onBlur={() => onSalvarResposta(item.id, texto, obs)}
           />
-        ) : podeEditarLinha ? (
-          <span className="text-xs text-muted-foreground">{resposta?.texto_resposta || "Disponível durante a reunião"}</span>
+        ) : resposta?.texto_resposta ? (
+          <TextoResumido texto={resposta.texto_resposta} linhas={4} className="text-sm" onVerMais={onAbrirDetalhe} />
         ) : (
-          <span className="text-sm">{resposta?.texto_resposta || "—"}</span>
+          <span className={podeEditarLinha ? "text-xs text-muted-foreground" : "text-sm"}>{podeEditarLinha ? "Disponível durante a reunião" : "—"}</span>
         )}
       </td>
       <td className="min-w-[160px] py-2 pr-2">
         {podeResponderLinha ? (
           <Input
-            defaultValue={obs}
+            value={obs}
             placeholder="Observações"
             className="h-8 text-xs"
             onChange={(e) => setObs(e.target.value)}
             onBlur={() => onSalvarResposta(item.id, texto, obs)}
           />
-        ) : podeEditarLinha ? (
-          <span className="text-xs text-muted-foreground">{resposta?.encaminhamento || "Disponível durante a reunião"}</span>
+        ) : resposta?.encaminhamento ? (
+          <TextoResumido texto={resposta.encaminhamento} linhas={4} className="text-sm" onVerMais={onAbrirDetalhe} />
         ) : (
-          <span className="text-sm">{resposta?.encaminhamento || "—"}</span>
+          <span className={podeEditarLinha ? "text-xs text-muted-foreground" : "text-sm"}>{podeEditarLinha ? "Disponível durante a reunião" : "—"}</span>
         )}
       </td>
       <td className="w-20 py-2 pr-2">
@@ -271,18 +302,29 @@ function PautaRow({
         />
       </td>
       <td className="w-10 py-2 pr-2">
-        {podeGerenciarGeral && (
-          <Button size="icon" variant="ghost" className="h-7 w-7 text-muted-foreground hover:text-destructive" onClick={() => onRemoverTopico(item.id)}>
-            <Trash2 className="h-3.5 w-3.5" />
-          </Button>
-        )}
+        <div className="flex flex-col items-center gap-0.5">
+          {onTransferir && (
+            <Button
+              size="icon" variant="ghost" className="h-7 w-7 text-muted-foreground hover:text-primary"
+              title="Mover para outra reunião" aria-label="Mover para outra reunião" onClick={onTransferir}
+            >
+              <ArrowRightLeft className="h-3.5 w-3.5" />
+            </Button>
+          )}
+          {podeGerenciarGeral && (
+            <Button size="icon" variant="ghost" className="h-7 w-7 text-muted-foreground hover:text-destructive" onClick={() => onRemoverTopico(item.id)}>
+              <Trash2 className="h-3.5 w-3.5" />
+            </Button>
+          )}
+        </div>
       </td>
     </tr>
   );
 }
 
 export function PautaTabela({
-  pauta, respostas, pautaAnexos, usuarios, podeGerenciarGeral, userId, reuniaoEncerrada, emAndamento,
+  pauta, respostas, pautaAnexos, decisoesAcoes, reunioesTransferencia, onPedirTransferencia,
+  usuarios, podeGerenciarGeral, userId, reuniaoEncerrada, emAndamento,
   onAdicionarTopico, onAtualizarTopico, onReordenar, onRemoverTopico, onSalvarResposta,
   onUploadPautaAnexo, onDownloadAnexo, onRemoverPautaAnexo,
 }: Props) {
@@ -292,6 +334,7 @@ export function PautaTabela({
   const [novoTitulo, setNovoTitulo] = useState("");
   const [novaDescricao, setNovaDescricao] = useState("");
   const [novoResponsavel, setNovoResponsavel] = useState("");
+  const [detalheId, setDetalheId] = useState<string | null>(null);
 
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 4 } }));
   const opcoesUsuarios = usuarios.map((u) => ({ value: u.id, label: u.display_name ?? "—" }));
@@ -300,12 +343,13 @@ export function PautaTabela({
     const buscaLc = busca.trim().toLowerCase();
     return pauta.filter((p) => {
       if (filtroStatus !== "todas" && p.status !== filtroStatus) return false;
-      if (buscaLc && !p.titulo_topico.toLowerCase().includes(buscaLc)) return false;
+      if (buscaLc && !`${p.titulo_topico} ${p.descricao ?? ""}`.toLowerCase().includes(buscaLc)) return false;
       return true;
     });
   }, [pauta, busca, filtroStatus]);
 
   const podeEditarPodeCriar = podeGerenciarGeral && !reuniaoEncerrada;
+  const detalheItem = detalheId ? pauta.find((p) => p.id === detalheId) : undefined;
 
   const onDragEnd = (event: DragEndEvent) => {
     const { active, over } = event;
@@ -391,6 +435,10 @@ export function PautaTabela({
                     indice={i}
                     resposta={respostas.find((r) => r.pauta_id === item.id)}
                     anexos={pautaAnexos.filter((a) => a.pauta_id === item.id)}
+                    itensDecisaoAcao={decisoesAcoes.filter((d) => d.pauta_id === item.id)}
+                    reunioesTransferencia={reunioesTransferencia}
+                    onAbrirDetalhe={() => setDetalheId(item.id)}
+                    onTransferir={onPedirTransferencia && !item.transferida_para_pauta_id ? () => onPedirTransferencia(item) : undefined}
                     usuarios={usuarios}
                     podeEditarLinha={!reuniaoEncerrada && (podeGerenciarGeral || item.responsavel_user_id === userId)}
                     podeResponderLinha={emAndamento && (podeGerenciarGeral || item.responsavel_user_id === userId)}
@@ -411,6 +459,21 @@ export function PautaTabela({
         {filtrada.length === 0 && <p className="p-4 text-center text-sm text-muted-foreground">Nenhuma pauta encontrada.</p>}
       </div>
       <p className="text-xs text-muted-foreground">Mostrando 1 a {filtrada.length} de {pauta.length} pautas</p>
+
+      <PautaDetalheDialog
+        item={detalheItem}
+        indice={!detalheItem ? 0 : filtrada.includes(detalheItem) ? filtrada.indexOf(detalheItem) : pauta.indexOf(detalheItem)}
+        open={!!detalheItem}
+        onOpenChange={(o) => { if (!o) setDetalheId(null); }}
+        resposta={detalheItem ? respostas.find((r) => r.pauta_id === detalheItem.id) : undefined}
+        anexos={detalheItem ? pautaAnexos.filter((a) => a.pauta_id === detalheItem.id) : []}
+        itensDecisaoAcao={detalheItem ? decisoesAcoes.filter((d) => d.pauta_id === detalheItem.id) : []}
+        usuarios={usuarios}
+        reunioesTransferencia={reunioesTransferencia}
+        podeResponder={!!detalheItem && emAndamento && (podeGerenciarGeral || detalheItem.responsavel_user_id === userId)}
+        onSalvarResposta={onSalvarResposta}
+        onDownloadAnexo={onDownloadAnexo}
+      />
     </div>
   );
 }
