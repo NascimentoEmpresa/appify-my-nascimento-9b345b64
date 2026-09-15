@@ -11,6 +11,8 @@
 // não bater, o campo simplesmente não é preenchido, sem risco de vincular
 // o usuário errado.
 
+import { chaveTextoPlanoAcao } from "@/lib/chaveTextoPlanoAcao";
+
 export interface SetorResponsavel {
   nome: string;
 }
@@ -33,10 +35,8 @@ export const SETOR_RESPONSAVEL_MAP: Record<string, SetorResponsavel> = {
   "treinamentos":           { nome: "francieli silva do nascimento" },
 };
 
+// Mesma chave dos filtros da Lista — assim "Diretor Adm", "Licitações" etc.
+// também acham o responsável padrão (antes só a grafia exata da chave batia).
 export function normalizeSetorNome(s: string | null | undefined): string {
-  return String(s ?? "")
-    .toLowerCase()
-    .normalize("NFD")
-    .replace(/[̀-ͯ]/g, "")
-    .trim();
+  return chaveTextoPlanoAcao(s);
 }

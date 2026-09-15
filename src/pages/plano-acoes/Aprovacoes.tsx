@@ -5,11 +5,11 @@ import { PageHeader } from "@/components/layout/PageHeader";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { SearchableSelect } from "@/components/ui/searchable-select";
+import { SearchableMultiSelect } from "@/components/ui/searchable-multi-select";
 import { supabase } from "@/integrations/supabase/client";
 import { usePlanoAcoes } from "@/hooks/usePlanoAcoes";
 import { usePlanoAcaoPermissao } from "@/hooks/usePlanoAcaoPermissao";
-import { usePlanoAcaoFilterOptions, matchResponsavel } from "@/hooks/usePlanoAcaoFilterOptions";
+import { usePlanoAcaoFilterOptions, matchResponsavel, matchTexto, manterValidos } from "@/hooks/usePlanoAcaoFilterOptions";
 import { ForbiddenCard } from "./Lista";
 import { STATUS_LABELS, STATUS_COR } from "@/types/planoAcao";
 import { useToast } from "@/hooks/use-toast";
@@ -23,24 +23,25 @@ export default function PlanoAcoesAprovacoes() {
   const qc = useQueryClient();
   const { toast } = useToast();
 
-  const [fComite, setFComite] = useState<string>("__all");
-  const [fArea, setFArea] = useState<string>("__all");
-  const [fResp, setFResp] = useState<string>("__all");
-  const [fEmpresa, setFEmpresa] = useState<string>("__all");
+  const [fComite, setFComite] = useState<string[]>([]);
+  const [fArea, setFArea] = useState<string[]>([]);
+  const [fResp, setFResp] = useState<string[]>([]);
+  const [fEmpresa, setFEmpresa] = useState<string[]>([]);
   const { comites, areas, responsaveis, empresas } = usePlanoAcaoFilterOptions(rows);
 
+  // manterValidos devolve a mesma referência quando nada muda — sem re-render.
   useEffect(() => {
-    if (fComite !== "__all" && !comites.some(o => o.value === fComite)) setFComite("__all");
-    if (fArea !== "__all" && !areas.some(o => o.value === fArea)) setFArea("__all");
-    if (fResp !== "__all" && !responsaveis.some(o => o.value === fResp)) setFResp("__all");
-    if (fEmpresa !== "__all" && !empresas.some(o => o.value === fEmpresa)) setFEmpresa("__all");
-  }, [comites, areas, responsaveis, empresas, fComite, fArea, fResp, fEmpresa]);
+    setFComite(prev => manterValidos(prev, comites));
+    setFArea(prev => manterValidos(prev, areas));
+    setFResp(prev => manterValidos(prev, responsaveis));
+    setFEmpresa(prev => manterValidos(prev, empresas));
+  }, [comites, areas, responsaveis, empresas]);
 
   const filteredRows = useMemo(() => rows.filter(r => {
-    if (fComite !== "__all" && r.comite !== fComite) return false;
-    if (fArea !== "__all" && r.area !== fArea) return false;
+    if (!matchTexto(r.comite, fComite)) return false;
+    if (!matchTexto(r.area, fArea)) return false;
     if (!matchResponsavel(r, fResp)) return false;
-    if (fEmpresa !== "__all" && r.empresa_id !== fEmpresa) return false;
+    if (fEmpresa.length > 0 && !fEmpresa.includes(r.empresa_id)) return false;
     return true;
   }), [rows, fComite, fArea, fResp, fEmpresa]);
 
@@ -106,10 +107,10 @@ export default function PlanoAcoesAprovacoes() {
       />
       <Card className="mb-4 p-3">
         <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
-          <SearchableSelect value={fComite === "__all" ? "" : fComite} onChange={v => setFComite(v || "__all")} options={comites} placeholder="Todos os comitês" searchPlaceholder="Buscar comitê..." allowClear />
-          <SearchableSelect value={fArea === "__all" ? "" : fArea} onChange={v => setFArea(v || "__all")} options={areas} placeholder="Todas as áreas" searchPlaceholder="Buscar área..." allowClear />
-          <SearchableSelect value={fResp === "__all" ? "" : fResp} onChange={v => setFResp(v || "__all")} options={responsaveis} placeholder="Todos os responsáveis" searchPlaceholder="Buscar responsável..." allowClear />
-          <SearchableSelect value={fEmpresa === "__all" ? "" : fEmpresa} onChange={v => setFEmpresa(v || "__all")} options={empresas} placeholder="Todas as empresas" searchPlaceholder="Buscar empresa..." allowClear />
+          <SearchableMultiSelect value={fComite} onChange={setFComite} options={comites} placeholder="Todos os comitês" searchPlaceholder="Buscar comitê..." maxBadges={2} />
+          <SearchableMultiSelect value={fArea} onChange={setFArea} options={areas} placeholder="Todas as áreas" searchPlaceholder="Buscar área..." maxBadges={2} />
+          <SearchableMultiSelect value={fResp} onChange={setFResp} options={responsaveis} placeholder="Todos os responsáveis" searchPlaceholder="Buscar responsável..." maxBadges={2} />
+          <SearchableMultiSelect value={fEmpresa} onChange={setFEmpresa} options={empresas} placeholder="Todas as empresas" searchPlaceholder="Buscar empresa..." maxBadges={2} />
         </div>
       </Card>
       <div className="grid gap-4 lg:grid-cols-2">

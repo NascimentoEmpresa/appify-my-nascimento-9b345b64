@@ -242,6 +242,8 @@ export interface ReuniaoAssuntoForaPauta {
   reuniao_futura_necessaria: boolean;
   observacoes: string | null;
   concluido: boolean;
+  /** Item de pauta criado junto com o assunto (trigger no banco) — é por ele que o assunto é conduzido, recebe decisões/ações e entra na ata. */
+  pauta_id: string | null;
   criado_por: string;
   created_at: string;
 }
@@ -315,6 +317,8 @@ export interface ReuniaoPauta {
   tempo_previsto_minutos: number | null;
   status: PautaStatus;
   natureza: NaturezaItem | null;
+  /** true = item nasceu de um "assunto fora da pauta" registrado durante a condução. */
+  fora_pauta: boolean;
   created_at: string;
 }
 
