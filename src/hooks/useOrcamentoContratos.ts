@@ -125,6 +125,22 @@ export function computarGruposContrato(
   return resultado;
 }
 
+// SIS-2026-0379 (Iury): Orçado por Classificação do Malote somando TODOS os
+// contratos — o mesmo número que o bloco Contratos do Orçamento Geral mostra
+// contrato a contrato, só que agregado (usado em Suprimentos → Pedidos de
+// Compra). Rubrica sem ligação não entra, igual lá: sem ligação não há
+// Classificação do Malote pra somar.
+export function somarOrcadoContratosPorClassificacao(grupos: OrcamentoContratoGrupo[]): Map<string, number> {
+  const soma = new Map<string, number>();
+  for (const g of grupos) {
+    for (const r of g.rubricas) {
+      if (!r.classificacaoMaloteId) continue;
+      soma.set(r.classificacaoMaloteId, (soma.get(r.classificacaoMaloteId) ?? 0) + r.valor);
+    }
+  }
+  return soma;
+}
+
 export function useOrcamentoContratos(anoMes?: string) {
   // SIS-2026-0337: resolução de Orçado precisa achar o contrato/planilha
   // independente de qual empresa está ativa no seletor da barra superior
