@@ -494,7 +494,12 @@ export function useInvalidarEstoque() {
     ["sup_estoque_lista", "sup_estoque_tag", "sup_tags_disponiveis", "sup_saldo_material",
      "sup_est_tags_do_pedido", "sup_pedido", "sup_pedido_historico",
      "sup_estoque_movimento", "sup_pedido_situacao", "sup_sep_fila", "sup_sep_sugerir",
-     "sup_contagem_fila", "sup_estoque_alteracao", "sup_item_precos", "sup_item"]
+     "sup_contagem_fila", "sup_estoque_alteracao", "sup_item_precos", "sup_item",
+     // Abas "Enviados / Pendentes envio" da lista de pedidos: desvincular um
+     // código devolve o item para pendente.
+     "sup_tags_de_pedidos",
+     // Prévia "sai do lote X, CA Y" e CA dos códigos baixados, no modal.
+     "sup_est_resolver_codigos", "sup_ca_dos_codigos"]
       .forEach((k) => qc.invalidateQueries({ queryKey: [k] }));
   };
 }
@@ -668,6 +673,236 @@ export interface Baixa {
   quantidade?: number;
 }
 
+// ── Baixa por código + quantidade (15/09/2026) ───────────────────────
+//
+// O modal de baixa deixou de pedir "etiqueta única / em massa": depois do
+// ajuste 7 esses dois tipos não existem mais para quem está no balcão. O
+// operador informa código + quantidade, e o tipo de cada código vem da
+// validação (sup_est_validar). Funções puras, testadas em
+// src/test/sup-baixa-por-codigo.test.ts.
+
+/** Uma linha "código + quantidade" do modal de baixa. `quantidade` é o texto do campo. */
+export interface LinhaCodigo { id: string; codigo: string; quantidade: string }
+
+/** Um item do pedido como o modal o entrega para montar a baixa. */
+export interface ItemComLinhas {
+  pedido_item_id: string;
+  nome: string;
+  pedida: number;
+  /** Códigos já baixados para este item, com quanto saiu de cada um. */
+  designados: { codigo: string; quantidade: number }[];
+  linhas: LinhaCodigo[];
+}
+
+/** O que a validação disse de cada código (chave já normalizada). */
+export type TiposDosCodigos = Record<string, { tipo: TipoTag; disponivel: number }>;
+
+export const normalizarCodigo = (c: string) => c.trim().toUpperCase();
+
+/** Só as linhas com código — linha vazia com quantidade não é baixa. */
+function linhasPreenchidas(it: ItemComLinhas) {
+  return it.linhas
+    .map((l) => ({ codigo: normalizarCodigo(l.codigo), texto: l.quantidade.trim() }))
+    .filter((l) => l.codigo);
+}
+
+/** Todos os códigos distintos das linhas, para uma validação só. */
+export function codigosDasLinhas(itens: ItemComLinhas[]): string[] {
+  return [...new Set(itens.flatMap((it) => linhasPreenchidas(it).map((l) => l.codigo)))];
+}
+
+/**
+ * O que dá para barrar sem ir ao banco: quantidade inválida, código repetido
+ * no mesmo item e total acima do pedido (contando o que já foi baixado).
+ */
+export function conferirLinhas(itens: ItemComLinhas[]): string[] {
+  const erros: string[] = [];
+  for (const it of itens) {
+    const vistos = new Set<string>();
+    let novas = 0;
+    for (const l of linhasPreenchidas(it)) {
+      if (vistos.has(l.codigo)) {
+        erros.push(`${it.nome}: código ${l.codigo} repetido — use uma linha só e ajuste a quantidade.`);
+        continue;
+      }
+      vistos.add(l.codigo);
+      if (!/^\d+$/.test(l.texto) || Number(l.texto) < 1) {
+        erros.push(`${it.nome}: informe a quantidade do código ${l.codigo}.`);
+        continue;
+      }
+      novas += Number(l.texto);
+    }
+    const jaDesignadas = it.designados.reduce((s, d) => s + d.quantidade, 0);
+    if (novas > 0 && jaDesignadas + novas > it.pedida) {
+      erros.push(`${it.nome}: ${jaDesignadas + novas} un. para ${it.pedida} pedida(s).`);
+    }
+  }
+  return erros;
+}
+
+/**
+ * Linhas → baixas de sup_est_baixar, com o tipo que a validação devolveu.
+ *
+ *   • lote: sup_est_baixar trabalha por DELTA sobre o total do código no
+ *     item, então um código que já tinha 1 un. ali e recebe mais 1 vai como 2;
+ *   • etiqueta antiga de peça única: vale exatamente 1, e não pode ser bipada
+ *     de novo no item em que já está — a RPC "reatribuiria" e gravaria uma
+ *     segunda saída da mesma peça.
+ */
+export function montarBaixasDasLinhas(
+  itens: ItemComLinhas[], tipos: TiposDosCodigos,
+): { baixas: Baixa[]; erros: string[] } {
+  const baixas: Baixa[] = [];
+  const erros: string[] = [];
+  for (const it of itens) {
+    for (const l of linhasPreenchidas(it)) {
+      const qtd = Number(l.texto);
+      const info = tipos[l.codigo];
+      if (!info) { erros.push(`${l.codigo}: código não validado.`); continue; }
+      const existente = it.designados.find((d) => d.codigo === l.codigo)?.quantidade ?? 0;
+
+      if (info.tipo === "unico") {
+        if (existente > 0) { erros.push(`${l.codigo} já está designado a ${it.nome}.`); continue; }
+        if (qtd !== 1) {
+          erros.push(`${l.codigo} é etiqueta antiga de peça única: vale 1 unidade, não ${qtd}.`);
+          continue;
+        }
+        baixas.push({ pedido_item_id: it.pedido_item_id, codigo: l.codigo, tipo: "unico" });
+      } else {
+        if (qtd > info.disponivel) {
+          erros.push(`${l.codigo}: ${qtd} un. informada(s), só ${info.disponivel} disponível(is).`);
+          continue;
+        }
+        baixas.push({ pedido_item_id: it.pedido_item_id, codigo: l.codigo, tipo: "massa", quantidade: existente + qtd });
+      }
+    }
+  }
+  return { baixas, erros };
+}
+
+// ── Código do PRODUTO no campo de bipar (15/09/2026) ─────────────────
+//
+// O operador pode bipar o código do produto (os 7 dígitos do ajuste 7, ou o
+// EAN da caixa) em vez do código do lote. Quem escolhe de quais lotes sai é o
+// banco — CA vencendo primeiro, pulando lote com CA bloqueado —, e o CA de
+// cada lote vem junto. Ver sup_est_resolver_codigos em
+// 20260930000114_sup_pedido_baixa_por_codigo_e_ca.sql.
+
+export interface LoteResolvido {
+  codigo: string;
+  quantidade: number;
+  ca_numero: string | null;
+  ca_validade: string | null;
+}
+
+/** O que o banco disse de um código bipado. */
+export type ResolucaoCodigo =
+  | { codigo: string; tipo: "lote" | "desconhecido" }
+  | { codigo: string; tipo: "outro_produto"; produto: { codigo: string; nome: string } }
+  | {
+      codigo: string; tipo: "produto"; produto: { codigo: string; nome: string };
+      lotes: LoteResolvido[];
+      /** Unidades que não couberam em nenhum lote livre. */
+      faltam: number;
+      /** Unidades livres que ficaram de fora por estarem em lote com CA bloqueado. */
+      bloqueadas: number;
+    };
+
+export const chaveResolucao = (pedidoItemId: string, codigo: string) =>
+  `${pedidoItemId}|${normalizarCodigo(codigo)}`;
+
+/** Uma ida só ao banco para todas as linhas; a resposta vem na mesma ordem. */
+export async function resolverCodigos(
+  linhas: { pedido_item_id: string; codigo: string; quantidade: number }[],
+): Promise<ResolucaoCodigo[]> {
+  if (linhas.length === 0) return [];
+  const { data, error } = await sb.rpc("sup_est_resolver_codigos", { p_linhas: linhas });
+  if (error) throw error;
+  return (data ?? []) as ResolucaoCodigo[];
+}
+
+/**
+ * Prévia de uma linha: "sai do lote X, CA Y". Só roda depois que a leitura
+ * foi confirmada (Enter/sair do campo) — senão cada tecla da pistola viraria
+ * uma consulta.
+ */
+export function useResolucaoDaLinha(pedidoItemId: string, codigo: string, quantidade: number, habilitado: boolean) {
+  const cod = normalizarCodigo(codigo);
+  return useQuery({
+    queryKey: ["sup_est_resolver_codigos", pedidoItemId, cod, quantidade],
+    enabled: habilitado && !!cod,
+    staleTime: 15_000,
+    retry: false,
+    queryFn: async () =>
+      (await resolverCodigos([{ pedido_item_id: pedidoItemId, codigo: cod, quantidade }]))[0] ?? null,
+  });
+}
+
+/** CA de cada código já baixado, para aparecer ao lado dele no modal. */
+export function useCaDosCodigos(codigos: string[]) {
+  const chave = [...new Set(codigos)].sort();
+  return useQuery({
+    queryKey: ["sup_ca_dos_codigos", chave.join(",")],
+    enabled: chave.length > 0,
+    queryFn: async (): Promise<Record<string, string>> => {
+      const { data, error } = await sb
+        .from("sup_estoque_tag").select("codigo, ca_numero").in("codigo", chave);
+      if (error) throw error;
+      const m: Record<string, string> = {};
+      for (const t of (data ?? []) as { codigo: string; ca_numero: string | null }[]) {
+        if (t.ca_numero?.trim()) m[t.codigo] = t.ca_numero.trim();
+      }
+      return m;
+    },
+  });
+}
+
+/**
+ * Troca cada linha com código do PRODUTO pelos lotes que o banco escolheu,
+ * somando com o que o operador já bipou do mesmo lote naquele item. Linha de
+ * lote, ou sem resposta do banco, passa como está — quem julga é a validação.
+ *
+ * Produto sem saldo suficiente é recusado inteiro, e não baixado pela metade:
+ * o operador precisa saber que faltou, e quanto ficou de fora por CA.
+ */
+export function expandirCodigosDeProduto(
+  itens: ItemComLinhas[], resolucoes: Record<string, ResolucaoCodigo>,
+): { itens: ItemComLinhas[]; erros: string[] } {
+  const erros: string[] = [];
+  const saida = itens.map((it) => {
+    const porCodigo = new Map<string, number>();
+    const somar = (codigo: string, qtd: number) =>
+      porCodigo.set(codigo, (porCodigo.get(codigo) ?? 0) + qtd);
+
+    for (const l of linhasPreenchidas(it)) {
+      const qtd = Number(l.texto);
+      const r = resolucoes[chaveResolucao(it.pedido_item_id, l.codigo)];
+      if (r?.tipo === "outro_produto") {
+        erros.push(`${l.codigo} é o código de "${r.produto.nome}", não de ${it.nome}.`);
+        continue;
+      }
+      if (r?.tipo === "produto") {
+        if (r.faltam > 0) {
+          erros.push(`${it.nome}: o produto ${l.codigo} só tem ${qtd - r.faltam} un. livre(s) para ${qtd} informada(s)`
+            + (r.bloqueadas > 0 ? ` — ${r.bloqueadas} un. estão em lote com CA bloqueado.` : "."));
+          continue;
+        }
+        for (const lote of r.lotes) somar(lote.codigo, lote.quantidade);
+        continue;
+      }
+      somar(l.codigo, qtd);
+    }
+
+    return {
+      ...it,
+      linhas: [...porCodigo].map(([codigo, qtd], i) => ({
+        id: `${it.pedido_item_id}-${i}`, codigo, quantidade: String(qtd),
+      })),
+    };
+  });
+  return { itens: saida, erros };
+}
+
 export interface EnvioPedido {
   tipo: "SUPERVISOR" | "CORREIO";
   rastreio: string | null;
@@ -698,17 +933,47 @@ export function useBaixarPedido() {
     onSuccess: (r) => {
       invalidar();
       if (r.rejeitadas?.length) {
-        toast.warning(`Pedido atualizado, mas ${r.rejeitadas.length} etiqueta(s) foram recusadas.`, {
+        toast.warning(`Pedido atualizado, mas ${r.rejeitadas.length} código(s) foram recusados.`, {
           description: r.rejeitadas.map((x) => `${x.codigo}: ${x.motivo}`).join(" · "),
           duration: 10000,
         });
       } else {
         toast.success(r.baixadas > 0
-          ? `Pedido atualizado e ${r.baixadas} etiqueta(s) baixada(s).`
+          ? `Pedido atualizado e ${r.baixadas} código(s) baixado(s).`
           : "Pedido atualizado.");
       }
     },
     onError: (e: any) => toast.error(e?.message ?? "Não foi possível atualizar o pedido."),
+  });
+}
+
+/**
+ * Desfaz a designação de um código num item de pedido: a quantidade volta ao
+ * estoque na mesma transação, com trilha no histórico do pedido e no do
+ * material. É a saída oficial para "designei o código errado" — o código
+ * baixado continua travado no modal justamente para não ser trocado por baixo.
+ * Ver 20260930000114_sup_pedido_baixa_por_codigo_e_ca.sql.
+ */
+export function useDesvincularCodigo() {
+  const invalidar = useInvalidarEstoque();
+  return useMutation({
+    mutationFn: async (v: { pedido_id: string; pedido_item_id: string; codigo: string; motivo?: string | null }) => {
+      const { data, error } = await sb.rpc("sup_est_desvincular", {
+        p_pedido_id: v.pedido_id,
+        p_pedido_item_id: v.pedido_item_id,
+        p_codigo: v.codigo,
+        p_motivo: v.motivo?.trim() || null,
+      });
+      if (error) throw error;
+      return data as { codigo: string; quantidade: number };
+    },
+    onSuccess: (r) => {
+      invalidar();
+      toast.success(r.quantidade === 1
+        ? `${r.codigo} desvinculado — 1 unidade voltou ao estoque.`
+        : `${r.codigo} desvinculado — ${r.quantidade} unidades voltaram ao estoque.`);
+    },
+    onError: (e: any) => toast.error(e?.message ?? "Não foi possível desvincular o código."),
   });
 }
 
