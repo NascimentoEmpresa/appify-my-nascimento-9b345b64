@@ -126,7 +126,7 @@ export function erroDoArquivo(f: File): string | null {
 export const STATUS_SST_RECEBIDA = "Solicitação de agendamento de DEMISSIONAL recebida";
 export const STATUS_SST_AGENDADO = "Agendamento concluído";
 /**
- * O terceiro do SST (11/09/2026): o colaborador fez ASO há menos de 60 dias
+ * O terceiro do SST (11/09/2026): o colaborador fez ASO há menos de 90 dias
  * e o exame ainda vale — não precisa marcar outro. Conclui a demissão direto
  * dali, sem data/hora/local, e é tão final quanto o agendado.
  */
@@ -186,7 +186,7 @@ export function explicaStatus(status: string): string {
     "Pendente SST": "Liberada pelo RH. Aguardando o SST receber a solicitação.",
     [STATUS_SST_RECEBIDA]: "O SST recebeu a solicitação e está agendando o ASO demissional.",
     [STATUS_SST_AGENDADO]: "ASO demissional agendado — a data, a hora e o local estão na solicitação.",
-    [STATUS_SST_ASO_VALIDO]: "O ASO do colaborador ainda está válido (menos de 60 dias) — não precisa de exame demissional. Concluída pelo SST.",
+    [STATUS_SST_ASO_VALIDO]: "O ASO do colaborador ainda está válido (menos de 90 dias) — não precisa de exame demissional. Concluída pelo SST.",
     "Concluída": "O RH confirmou. Desligamento concluído.",
     "Reprovada": "O Operacional reprovou — veja o motivo.",
     "Cancelada": "A solicitação foi cancelada.",

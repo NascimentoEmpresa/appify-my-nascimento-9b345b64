@@ -383,6 +383,15 @@ const App = () => (
                 AcessoGate dentro da própria tela, não por rota, para quem cai
                 no link entender que existe e falta permissão. */}
             <Route path="central-servicos/solicitar-vaga" element={<SolicitarVagaCentral />} />
+            {/* Central de Serviços › Solicitações (15/09/2026): as mesmas telas
+                do módulo Encarregados, em rota própria. Todas caem no menu
+                central_servicos_solicitacoes por prefixo. */}
+            <Route path="central-servicos/solicitacoes" element={<MinhasSolicitacoes base="central" />} />
+            <Route path="central-servicos/solicitacoes/vaga" element={<MinhasSolicitacoes base="central" abrir="vaga" />} />
+            <Route path="central-servicos/solicitacoes/ferias" element={<MinhasSolicitacoes base="central" abrir="ferias" />} />
+            <Route path="central-servicos/solicitacoes/advertencia" element={<MinhasSolicitacoes base="central" abrir="advertencia" />} />
+            <Route path="central-servicos/solicitacoes/demissao" element={<SolicitarDemissao />} />
+            <Route path="central-servicos/solicitacoes/mudanca-funcao" element={<SolicitarTrocaFuncao />} />
             <Route path="central-servicos/quadro-avisos" element={<QuadroAvisos />} />
             {/* Mesma tela de /app/treinamentos/erp, ancorada na Central de
                 Serviços: mesmo componente e mesmos treinamentos, com menu
