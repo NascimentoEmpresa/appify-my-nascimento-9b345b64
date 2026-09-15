@@ -23,6 +23,18 @@ describe("sanitizarNomeArquivo", () => {
     expect(sanitizarNomeArquivo('NF 123/2026: "urgente" <pago>')).toBe("NF 123-2026- -urgente- -pago-");
   });
 
+  // Achado real (Calita, DM-2026-0472): "Failed to fetch"/CORS no upload —
+  // a lib @supabase/storage-js instalada não faz `encodeURIComponent` da
+  // key ao montar a URL do upload, então # (corta pra fragment), % (quebra
+  // percent-decoding) e & (delimitador de query) sobrevivendo no nome
+  // mandam uma URL malformada, que o navegador reporta como bloqueio de
+  // CORS em vez do erro real.
+  it("troca # % & por hífen (quebram a URL do upload, mesmo sendo aceitos pela chave do Storage)", () => {
+    expect(sanitizarNomeArquivo("Conta de luz #123 (50% desconto) & água")).toBe(
+      "Conta de luz -123 (50- desconto) - agua",
+    );
+  });
+
   it("troca qualquer outro caractere fora do ASCII imprimível por hífen (aspas curvas, travessão...)", () => {
     expect(sanitizarNomeArquivo("Nome “bonito” — assim")).toBe("Nome -bonito- - assim");
   });
