@@ -289,7 +289,10 @@ export default function PlanoAcaoDetalhe() {
         ? Array.from(new Set([...(user?.id ? [user.id] : []), ...usuariosVisibilidade]))
         : null;
 
-      const { data: novoId, error } = await supabase.rpc("criar_plano_acao", {
+      // `as any`: criar_plano_acao não está nos tipos gerados do Supabase
+      // (types.ts) — mesmo tratamento de criar_acao_reuniao_plano_acao em
+      // useReuniaoDetalhe.ts. Sem isso o type-check do CI reprova o arquivo.
+      const { data: novoId, error } = await (supabase as any).rpc("criar_plano_acao", {
         _empresa_id: empresaId,
         _titulo: form.titulo,
         _problema: form.problema || null,
@@ -378,7 +381,7 @@ export default function PlanoAcaoDetalhe() {
   const excluir = async () => {
     if (!can("excluir") || isNew) return;
     if (!confirm("Excluir logicamente esta ação?")) return;
-    const { error } = await supabase.rpc("excluir_plano_acao", { _id: id! } as any);
+    const { error } = await (supabase as any).rpc("excluir_plano_acao", { _id: id! });
     if (error) toast({ title: "Erro", description: error.message, variant: "destructive" });
     else { toast({ title: "Excluída" }); nav("/app/plano-acoes"); }
   };
