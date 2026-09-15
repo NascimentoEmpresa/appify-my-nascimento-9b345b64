@@ -13,7 +13,9 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { SearchableSelect } from "@/components/ui/searchable-select";
 import { DateRangeFilter } from "@/components/ui/date-range-filter";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import { Plus, ListChecks, Search, X } from "lucide-react";
+import { Download, Plus, ListChecks, Search, X } from "lucide-react";
+import * as XLSX from "xlsx";
+import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/hooks/useAuth";
 import {
@@ -23,7 +25,6 @@ import {
   useEmpresaPrimeiraLinhaRateio,
   MaloteDespesaRow,
   ItemLinhaMalote,
-  StatusDespesa,
   STATUS_LABEL,
   STATUS_BADGE_CLASS,
   STATUS_FASE_SOLICITACAO,
@@ -35,6 +36,17 @@ import { useOrdenacaoTabela } from "@/hooks/useOrdenacaoTabela";
 import { useEstadoPersistido } from "@/hooks/useEstadoPersistido";
 import { ordenarPor } from "@/lib/ordenarTabela";
 import { JustificativaPendenteBadge } from "./JustificativaPendenteBadge";
+import {
+  CABECALHOS_EXCEL_MEUS_ITENS,
+  aindaESolicitacao,
+  aprovadoresPendentes,
+  dataPagamentoDe,
+  montarLinhasExcelMeusItens,
+  nomeArquivoMeusItens,
+  statusEfetivo,
+  tipoLabelDe,
+  valorDe,
+} from "./meusItensUtils";
 
 // SIS-2026-0316: colunas ordenáveis (clicar no cabeçalho, mesmo padrão do
 // Windows Explorer). Ficam de fora as que não têm um valor único e
@@ -52,12 +64,6 @@ type ColunaMeusItens =
   | "status"
   | "excecao"
   | "atualizacao";
-
-const ORIGEM_LABEL: Record<string, string> = {
-  solicitacao: "Solicitação",
-  despesa_unica: "Despesa",
-  despesa_multi_classificacao: "Rateio de Classificação",
-};
 
 type ChipKey =
   | "todos"
@@ -86,30 +92,6 @@ const CHIPS: { key: ChipKey; label: string }[] = [
   { key: "despesa_reprovada", label: "Despesa Reprovada" },
 ];
 
-// SIS-2026-0223: despesa parcelada vira N linhas (1 por parcela) a partir de
-// "aguardando_pagamento" — pros chips/status de pagamento, o que conta é o
-// status da PARCELA (paga/pendente), não o bruto da despesa, senão as N
-// linhas cairiam sempre no mesmo chip (todas "aguardando" até a despesa
-// inteira ficar paga na última parcela).
-function statusEfetivo(item: ItemLinhaMalote): StatusDespesa {
-  // pronto_para_pagar/ajuste_pagamento continuam sendo decisão sobre a
-  // despesa inteira (parcela só tem pendente/paga) — só aguardando_pagamento
-  // e despesa_paga refletem o progresso real de CADA parcela.
-  if (item.parcela && (item.despesa.status === "aguardando_pagamento" || item.despesa.status === "despesa_paga")) {
-    return item.parcela.status === "paga" ? "despesa_paga" : "aguardando_pagamento";
-  }
-  return item.despesa.status;
-}
-
-function dataPagamentoDe(item: ItemLinhaMalote): string | null {
-  const { despesa, parcela } = item;
-  return parcela ? parcela.data_pagamento_real ?? parcela.data_vencimento : despesa.data_pagamento;
-}
-
-function valorDe(item: ItemLinhaMalote): number {
-  return Number(item.parcela ? item.parcela.valor : item.despesa.valor_total);
-}
-
 function itemMatchesChip(item: ItemLinhaMalote, chip: ChipKey): boolean {
   const status = statusEfetivo(item);
   switch (chip) {
@@ -136,33 +118,6 @@ function itemMatchesChip(item: ItemLinhaMalote, chip: ChipKey): boolean {
     case "despesa_reprovada":
       return status === "despesa_reprovada";
   }
-}
-
-// `origem` não muda depois que a Solicitação vira Despesa (fica "solicitacao"
-// pra sempre) — quem decide se ainda é Solicitação é o status atual, mesma
-// lógica de Aprovacoes.tsx: a partir de cotacao_aprovada em diante já é
-// Despesa (Tipo e agrupamento das abas Solicitações/Despesas do Malote).
-function aindaESolicitacao(despesa: MaloteDespesaRow): boolean {
-  return despesa.origem === "solicitacao" && STATUS_FASE_SOLICITACAO.includes(despesa.status);
-}
-
-function tipoLabelDe(despesa: MaloteDespesaRow): string {
-  if (despesa.origem === "solicitacao") return aindaESolicitacao(despesa) ? "Solicitação" : "Despesa";
-  return ORIGEM_LABEL[despesa.origem] ?? despesa.origem;
-}
-
-// SIS-2026-0236: nível pode ter mais de um aprovador — mostra o primeiro
-// + indicador "+N" (mesmo padrão de ClassificacoesMalote.tsx/OrcamentoGeral.tsx).
-// A lista completa vai no tooltip do <AprovadorPendenteCell> abaixo — achado
-// do usuário: em "Meus Itens" só dava pra ver o primeiro nome (ex. "Yuri Rosa"),
-// sem jeito de saber os demais aprovadores daquele nível.
-function aprovadoresPendentes(despesa: MaloteDespesaRow): string[] | null {
-  if (despesa.status !== "pendente_aprovacao" || !despesa.nivel_aprovacao_atual) return null;
-  const c = despesa.classificacao;
-  if (!c) return null;
-  const nomes =
-    despesa.nivel_aprovacao_atual === 1 ? c.aprovador1_nomes : despesa.nivel_aprovacao_atual === 2 ? c.aprovador2_nomes : c.aprovador3_nomes;
-  return nomes && nomes.length > 0 ? nomes : null;
 }
 
 function AprovadorPendenteCell({ despesa }: { despesa: MaloteDespesaRow }) {
@@ -308,6 +263,27 @@ export default function MeusItens() {
     return ordenacao.coluna ? ordenarPor(filtrados, acessores[ordenacao.coluna], ordenacao.direcao) : filtrados;
   }, [filtrados, ordenacao.coluna, ordenacao.direcao, empresas, empresaPrimeiraLinhaPorDespesa]);
 
+  function exportar(escopo: "filtrado" | "completo") {
+    const lista = escopo === "filtrado" ? ordenados : itens;
+    try {
+      const linhas = montarLinhasExcelMeusItens(
+        lista,
+        (despesa) => empresas.find((empresa) => empresa.id === empresaIdResolvida(despesa))?.nome ?? "",
+      );
+      const ws = linhas.length > 0
+        ? XLSX.utils.json_to_sheet(linhas)
+        : XLSX.utils.aoa_to_sheet([CABECALHOS_EXCEL_MEUS_ITENS]);
+      ws["!cols"] = [16, 16, 12, 20, 28, 36, 28, 24, 16, 28, 32, 12, 36, 22].map((wch) => ({ wch }));
+      if (ws["!ref"]) ws["!autofilter"] = { ref: ws["!ref"] };
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, ws, "Meus Itens");
+      XLSX.writeFile(wb, nomeArquivoMeusItens(escopo));
+      toast.success(`Planilha exportada com ${lista.length} ite${lista.length === 1 ? "m" : "ns"}.`);
+    } catch (erro) {
+      toast.error(erro instanceof Error ? erro.message : "Não foi possível exportar a planilha.");
+    }
+  }
+
   function limparFiltros() {
     setPeriodoInicio("");
     setPeriodoFim("");
@@ -350,11 +326,29 @@ export default function MeusItens() {
         module="Malote"
         breadcrumb={["Malote", "Meus Itens"]}
         actions={
-          <Button asChild>
-            <Link to="/app/malote/criar-despesa">
-              <Plus className="h-4 w-4 mr-2" /> Criar Despesa
-            </Link>
-          </Button>
+          <div className="flex flex-wrap gap-2">
+            <Button
+              variant="outline"
+              onClick={() => exportar("filtrado")}
+              disabled={isLoading || ordenados.length === 0}
+              title="Exporta só o que está na tela, com os filtros e a ordem atuais"
+            >
+              <Download className="h-4 w-4 mr-2" /> Exportar filtrado
+            </Button>
+            <Button
+              variant="outline"
+              onClick={() => exportar("completo")}
+              disabled={isLoading || itens.length === 0}
+              title="Exporta todos os seus itens, ignorando filtros, aba e status"
+            >
+              <Download className="h-4 w-4 mr-2" /> Exportar tudo
+            </Button>
+            <Button asChild>
+              <Link to="/app/malote/criar-despesa">
+                <Plus className="h-4 w-4 mr-2" /> Criar Despesa
+              </Link>
+            </Button>
+          </div>
         }
       />
 
