@@ -55,7 +55,9 @@ ALTER TABLE public."SISTEMA_APROVADOR_SETOR" ENABLE ROW LEVEL SECURITY;
 REVOKE ALL ON public."SISTEMA_APROVADOR_SETOR" FROM PUBLIC, anon;
 GRANT SELECT, INSERT, DELETE ON public."SISTEMA_APROVADOR_SETOR" TO authenticated;
 
+-- portaria-ok: R3 — a tabela foi renomeada (era SISTEMA_TROCA_FUNCAO_APROVADOR_SETOR); as duas policies voltam logo abaixo com o nome genérico aprovador_setor_select / aprovador_setor_write, mesmo USING/WITH CHECK
 DROP POLICY IF EXISTS stf_aprovador_setor_select ON public."SISTEMA_APROVADOR_SETOR";
+-- portaria-ok: R3 — recriada abaixo como aprovador_setor_write (mesma regra: can_access administracao/alterar)
 DROP POLICY IF EXISTS stf_aprovador_setor_write ON public."SISTEMA_APROVADOR_SETOR";
 DROP POLICY IF EXISTS aprovador_setor_select ON public."SISTEMA_APROVADOR_SETOR";
 CREATE POLICY aprovador_setor_select ON public."SISTEMA_APROVADOR_SETOR"
