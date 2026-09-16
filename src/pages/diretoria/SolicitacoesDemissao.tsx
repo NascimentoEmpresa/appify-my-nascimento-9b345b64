@@ -1,6 +1,7 @@
 import { PageHeader } from "@/components/layout/PageHeader";
 import { PainelDemissoes } from "@/components/demissao/PainelDemissoes";
 import { ResumoDeFuncoes } from "@/components/fluxos/ResumoDeFuncoes";
+import { AcessoGate } from "@/components/auth/AcessoGate";
 
 /**
  * Diretoria › Solicitações de Demissão (16/09/2026).
@@ -21,7 +22,12 @@ export default function DiretoriaSolicitacoesDemissao() {
         breadcrumb={["Solicitações de Demissão"]}
         actions={<ResumoDeFuncoes fluxo="demissao" />}
       />
-      <PainelDemissoes etapa="diretoria" />
+      {/* O RouteGuard já nega a rota a quem não tem o menu; o gate aqui é o
+          mesmo padrão das outras telas (J1.F) e trava o miolo também. */}
+      <AcessoGate menu="diretoria_solicitacoes_demissao" acao="visualizar"
+        fallback={<p className="p-6 text-sm text-muted-foreground">Sem acesso a esta tela. Peça a liberação em Administração › Acesso por Usuário.</p>}>
+        <PainelDemissoes etapa="diretoria" />
+      </AcessoGate>
     </div>
   );
 }
