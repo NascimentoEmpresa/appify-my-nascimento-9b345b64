@@ -6,7 +6,8 @@ const EVENTO_LABEL: Record<TipoEventoDebito, string> = {
   criacao: "Criado",
   edicao: "Editado",
   pagamento: "Marcado como pago",
-  exclusao: "Excluído",
+  exclusao: "Movido para a lixeira",
+  restauracao: "Restaurado da lixeira",
 };
 
 const EVENTO_COR: Record<TipoEventoDebito, string> = {
@@ -14,6 +15,7 @@ const EVENTO_COR: Record<TipoEventoDebito, string> = {
   edicao: "bg-amber-500",
   pagamento: "bg-emerald-500",
   exclusao: "bg-red-500",
+  restauracao: "bg-emerald-500",
 };
 
 // SIS-2026-0256: item "pago" continua editável (decisão do Iury) — este
