@@ -515,6 +515,80 @@ export function useTagsDePedidos(pedidoIds: string[], enabled = true) {
   });
 }
 
+// ── Pré-Entrada ──────────────────────────────────────────────────────
+
+/**
+ * Uma linha da fila de Pré-Entrada: material aprovado no Catálogo que ainda
+ * não tem ficha de estoque (sup_pre_entrada, 20260930000165).
+ */
+export interface PreEntrada {
+  id: string;
+  sup_item_id: string;
+  nome: string;
+  /** Os 7 dígitos. Já existe desde o cadastro — o material nasce com ele. */
+  codigo: string | null;
+  tipo: string;
+  origem: string;
+  created_at: string;
+  /** {contrato, posto, funcao, item} copiado do rascunho aprovado. */
+  contexto: Record<string, string>;
+}
+
+/**
+ * A fila. Só o que está PENDENTE: concluído e dispensado ficam na tabela
+ * para o histórico, mas não são trabalho de ninguém.
+ *
+ * Não filtra por empresa — o módulo inteiro deixou de recortar por empresa
+ * na 20260901000001, e a RLS de sup_pre_entrada segue a mesma regra.
+ */
+export function usePreEntradaPendentes(empresaId: string | null) {
+  return useQuery({
+    queryKey: ["sup_pre_entrada", empresaId],
+    enabled: !!empresaId,
+    queryFn: async (): Promise<PreEntrada[]> => {
+      const { data, error } = await sb
+        .from("sup_pre_entrada")
+        .select(`id, sup_item_id, origem, contexto, created_at,
+                 sup_item:sup_item_id (nome, tipo, codigo)`)
+        .eq("situacao", "PENDENTE")
+        .order("created_at", { ascending: false });
+      if (error) throw error;
+      return (data ?? []).map((r: any) => ({
+        id: r.id,
+        sup_item_id: r.sup_item_id,
+        nome: r.sup_item?.nome ?? "—",
+        codigo: r.sup_item?.codigo ?? null,
+        tipo: r.sup_item?.tipo ?? "insumo",
+        origem: r.origem,
+        created_at: r.created_at,
+        contexto: r.contexto ?? {},
+      }));
+    },
+  });
+}
+
+/**
+ * Tira da fila o que nunca vai para a prateleira — material entregue direto
+ * no contrato, ou cadastrado por engano. Sem esta saída a fila só cresce, e
+ * fila que só cresce é fila que ninguém abre.
+ */
+export function useDispensarPreEntrada() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (v: { id: string; motivo: string }) => {
+      const { error } = await sb.rpc("sup_pre_entrada_dispensar", {
+        p_id: v.id, p_motivo: v.motivo || null,
+      });
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["sup_pre_entrada"] });
+      toast.success("Item retirado da pré-entrada.");
+    },
+    onError: (e: any) => toast.error(e?.message ?? "Não foi possível dispensar o item."),
+  });
+}
+
 // ── Escrita ──────────────────────────────────────────────────────────
 
 /**
@@ -534,7 +608,11 @@ export function useInvalidarEstoque() {
      // código devolve o item para pendente.
      "sup_tags_de_pedidos",
      // Prévia "sai do lote X, CA Y" e CA dos códigos baixados, no modal.
-     "sup_est_resolver_codigos", "sup_ca_dos_codigos"]
+     "sup_est_resolver_codigos", "sup_ca_dos_codigos",
+     // Fila da Pré-Entrada: dar entrada fecha a pendência no banco (gatilho
+     // trg_sup_pre_entrada_concluir). Sem esta chave, o item continuaria na
+     // fila na tela depois de já ter entrado no estoque.
+     "sup_pre_entrada"]
       .forEach((k) => qc.invalidateQueries({ queryKey: [k] }));
   };
 }
@@ -589,7 +667,7 @@ export function useEntradaPorQuantidade() {
        * remessa (sup_est_criar_material, 20260930000163) — antes a tela só
        * aceitava o que já estava no catálogo e o botão ficava cinza.
        */
-      novo_material?: { nome: string; tipo: string } | null;
+      novo_material?: { nome: string; tipo: string; forcar?: boolean } | null;
       valor_unitario?: number; estoque_minimo?: number;
       fornecedor_id?: string | null;
       validade?: string | null; observacao?: string | null;
@@ -604,6 +682,10 @@ export function useEntradaPorQuantidade() {
           p_almoxarifado_id: p.almoxarifado_id,
           p_nome: p.novo_material.nome,
           p_tipo: p.novo_material.tipo,
+          // "Não é tamanho, é material próprio" (20260930000164). Só vem
+          // true depois de a tela ter mostrado "é o tamanho X de Y" e a
+          // pessoa ter respondido que não é — nunca por conta própria.
+          p_forcar: p.novo_material.forcar ?? false,
         });
         if (error) throw error;
         supItemId = (data as { id: string }).id;
