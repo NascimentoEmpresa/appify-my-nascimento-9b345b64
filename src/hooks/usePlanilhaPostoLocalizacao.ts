@@ -29,16 +29,18 @@ export type PostoLocalizacaoUpdate = Partial<Omit<PostoLocalizacao, "id" | "empr
 
 const QK = (planilhaCustoId: string) => ["posto_localizacao", planilhaCustoId];
 
-export function usePlanilhaPostoLocalizacaoAll(empresaId: string | null) {
+// SIS-2026-0309: `todasEmpresas` lê os postos de TODAS as empresas do
+// grupo, mesmo padrão de useGrade/useCapaEdital/useImplantacaoContratos.
+export function usePlanilhaPostoLocalizacaoAll(empresaId: string | null, opts?: { todasEmpresas?: boolean }) {
+  const todasEmpresas = opts?.todasEmpresas ?? false;
   return useQuery({
-    queryKey: ["posto_localizacao_all", empresaId ?? ""],
-    enabled: !!empresaId,
+    queryKey: todasEmpresas ? ["posto_localizacao_all", "todas"] : ["posto_localizacao_all", empresaId ?? ""],
+    enabled: todasEmpresas || !!empresaId,
     staleTime: 30_000,
     queryFn: async () => {
-      const { data, error } = await (supabase as any)
-        .from("planilha_posto_localizacao")
-        .select("*")
-        .eq("empresa_id", empresaId!);
+      let q = (supabase as any).from("planilha_posto_localizacao").select("*");
+      if (!todasEmpresas) q = q.eq("empresa_id", empresaId!);
+      const { data, error } = await q;
       if (error) throw error;
       return (data ?? []) as PostoLocalizacao[];
     },

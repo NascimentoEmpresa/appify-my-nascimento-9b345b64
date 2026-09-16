@@ -298,9 +298,12 @@ export function usePlanilhaCustos(filtros?: { cliente?: string; contrato?: strin
   });
 }
 
+// SIS-2026-0309: em INSERT, `empresa_id` vem obrigatoriamente do payload
+// (o chamador resolve pelo contrato escolhido/linha de origem — ver
+// PlanilhaCusto.tsx), não mais da empresa "ativa" do seletor. UPDATE nunca
+// tocou empresa_id (a linha já tem a certa), continua assim.
 export function useSavePlanilhaCusto() {
   const qc = useQueryClient();
-  const { empresa } = useEmpresaAtiva();
   return useMutation({
     mutationFn: async (payload: Partial<PlanilhaCustoRow> & { id?: string }) => {
       const { id, ...rest } = payload;
@@ -314,9 +317,10 @@ export function useSavePlanilhaCusto() {
         if (error) throw error;
         return data;
       } else {
+        if (!rest.empresa_id) throw new Error("Empresa é obrigatória (defina o contrato).");
         const { data, error } = await (supabase as any)
           .from("planilha_custo")
-          .insert({ ...rest, empresa_id: empresa.id })
+          .insert(rest)
           .select()
           .single();
         if (error) throw error;
@@ -389,13 +393,15 @@ export function useSalvarJustificativaDivergencia() {
   });
 }
 
+// SIS-2026-0309: cada linha já vem com seu próprio `empresa_id` resolvido
+// pelo chamador (o Excel da migração tem uma coluna "Empresa" por linha —
+// linhas de empresas diferentes no mesmo arquivo não podem mais ser
+// forçadas pra uma única empresa "ativa" do seletor).
 export function useBulkInsertPlanilhaCusto() {
   const qc = useQueryClient();
-  const { empresa } = useEmpresaAtiva();
   return useMutation({
-    mutationFn: async (rows: Omit<PlanilhaCustoInsert, "empresa_id">[]) => {
-      const payload = rows.map((r) => ({ ...r, empresa_id: empresa.id }));
-      const { error } = await (supabase as any).from("planilha_custo").insert(payload);
+    mutationFn: async (rows: PlanilhaCustoInsert[]) => {
+      const { error } = await (supabase as any).from("planilha_custo").insert(rows);
       if (error) throw error;
     },
     onSuccess: () => qc.invalidateQueries({ queryKey: ["planilha_custo"] }),

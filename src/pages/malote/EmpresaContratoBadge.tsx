@@ -16,11 +16,35 @@ const EMPRESA_BADGE_PALETTE = [
   "border-orange-200 bg-orange-50 text-orange-700 dark:border-orange-900 dark:bg-orange-950/30 dark:text-orange-400",
 ];
 
-export function corEmpresa(empresaId: string | null | undefined): string {
-  if (!empresaId) return "border-border bg-muted/40 text-muted-foreground";
+function hashEmpresaId(empresaId: string): number {
   let hash = 0;
   for (let i = 0; i < empresaId.length; i++) hash = (hash * 31 + empresaId.charCodeAt(i)) >>> 0;
-  return EMPRESA_BADGE_PALETTE[hash % EMPRESA_BADGE_PALETTE.length];
+  return hash;
+}
+
+export function corEmpresa(empresaId: string | null | undefined): string {
+  if (!empresaId) return "border-border bg-muted/40 text-muted-foreground";
+  return EMPRESA_BADGE_PALETTE[hashEmpresaId(empresaId) % EMPRESA_BADGE_PALETTE.length];
+}
+
+// Mesmo hash/índice da paleta de badge acima, só que como um "wash" de fundo
+// bem sutil — pra pintar telas/modais inteiros (ex. FormDrawer da Planilha de
+// Custo) sem competir com o conteúdo. Mantém a mesma cor por empresa em toda
+// a UI (badge e fundo sempre caem no mesmo índice da paleta).
+const EMPRESA_FUNDO_PALETTE = [
+  "bg-sky-50/60 dark:bg-sky-950/10",
+  "bg-emerald-50/60 dark:bg-emerald-950/10",
+  "bg-violet-50/60 dark:bg-violet-950/10",
+  "bg-amber-50/60 dark:bg-amber-950/10",
+  "bg-rose-50/60 dark:bg-rose-950/10",
+  "bg-teal-50/60 dark:bg-teal-950/10",
+  "bg-indigo-50/60 dark:bg-indigo-950/10",
+  "bg-orange-50/60 dark:bg-orange-950/10",
+];
+
+export function corEmpresaFundo(empresaId: string | null | undefined): string {
+  if (!empresaId) return "";
+  return EMPRESA_FUNDO_PALETTE[hashEmpresaId(empresaId) % EMPRESA_FUNDO_PALETTE.length];
 }
 
 // Contratos "ADMINISTRATIVO - <sigla da empresa>" são um tipo genérico

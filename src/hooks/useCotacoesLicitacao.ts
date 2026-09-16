@@ -102,13 +102,13 @@ async function gravarAnexos(
   if (error) throw error;
 }
 
+// SIS-2026-0309: a query em si já era cross-empresa (sem `.eq("empresa_id")`,
+// confia na RLS) — só o `enabled`/queryKey ficavam presos à empresa "ativa"
+// do seletor, travando o carregamento até o contexto resolver e refazendo a
+// busca a cada troca de empresa sem necessidade nenhuma.
 export function useCotacoesLicitacao() {
-  const { empresa } = useEmpresaAtiva();
-  const empresaId = empresa?.id ?? null;
-
   return useQuery({
-    queryKey: ["cotacoes_licitacao", empresaId],
-    enabled: !!empresaId,
+    queryKey: ["cotacoes_licitacao"],
     staleTime: 30_000,
     queryFn: async (): Promise<CotacaoLicitacao[]> => {
       const { data, error } = await sb
@@ -147,21 +147,25 @@ export function useCotacoesLicitacao() {
   });
 }
 
+// SIS-2026-0309: `empresa_id` passa a ser campo explícito do payload
+// (obrigatório na criação), não mais herdado da empresa "ativa" do
+// seletor global — a tela já lê cross-empresa, então nada indicava pro
+// usuário qual empresa a cotação nova ia receber.
 export function useCotacaoInsert() {
   const qc = useQueryClient();
-  const { empresa } = useEmpresaAtiva();
   const { user } = useAuth();
 
   return useMutation({
     mutationFn: async (payload: {
+      empresa_id: string;
       tipo: string;
       comentario: string;
       arquivos: File[];
       remetente_nome: string;
     }) => {
-      const subidos = await uploadArquivos(payload.arquivos, empresa.id);
+      const subidos = await uploadArquivos(payload.arquivos, payload.empresa_id);
       const { data, error } = await sb.from("cotacoes_licitacao").insert({
-        empresa_id: empresa.id,
+        empresa_id: payload.empresa_id,
         tipo: payload.tipo,
         comentario: payload.comentario,
         remetente_id: user?.id ?? null,
@@ -175,19 +179,22 @@ export function useCotacaoInsert() {
   });
 }
 
+// empresa_id vem da PRÓPRIA cotação sendo editada (propagação pela
+// origem) — é só o prefixo da pasta no Storage, mantém os anexos de uma
+// mesma cotação juntos, mesmo que a empresa "ativa" tenha mudado.
 export function useCotacaoUpdate() {
   const qc = useQueryClient();
-  const { empresa } = useEmpresaAtiva();
 
   return useMutation({
     mutationFn: async (payload: {
       id: string;
+      empresa_id: string;
       comentario: string;
       arquivos: File[];
       editado_por_nome: string;
       editado_por_id: string;
     }) => {
-      const subidos = await uploadArquivos(payload.arquivos, empresa.id);
+      const subidos = await uploadArquivos(payload.arquivos, payload.empresa_id);
       const { error } = await sb
         .from("cotacoes_licitacao")
         .update({
@@ -266,13 +273,14 @@ export function useCotacaoMarcarVisualizada() {
  *
  * O nome do respondente sai de `profiles` dentro da RPC, nunca daqui.
  */
+// empresa_id vem da PRÓPRIA cotação sendo respondida (propagação pela
+// origem), mesmo motivo do useCotacaoUpdate acima.
 export function useCotacaoResponder() {
   const qc = useQueryClient();
-  const { empresa } = useEmpresaAtiva();
 
   return useMutation({
-    mutationFn: async (payload: { id: string; comentario: string; arquivos: File[] }) => {
-      const subidos = await uploadArquivos(payload.arquivos, empresa.id);
+    mutationFn: async (payload: { id: string; empresa_id: string; comentario: string; arquivos: File[] }) => {
+      const subidos = await uploadArquivos(payload.arquivos, payload.empresa_id);
       const { error } = await sb.rpc("sup_cot_responder", {
         p_id: payload.id,
         p_comentario: payload.comentario,

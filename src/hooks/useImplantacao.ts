@@ -140,16 +140,17 @@ export function calcPrazo(item: ChecklistItem, contrato: ImplantacaoContrato): s
 
 // ── Contratos ──────────────────────────────────────────────────────────────
 
-export function useImplantacaoContratos(empresaId: string | null) {
+// SIS-2026-0309: `todasEmpresas` lê a Implantação de TODAS as empresas do
+// grupo, mesmo padrão já usado em useGrade/useCapaEdital/useContratosERP.
+export function useImplantacaoContratos(empresaId: string | null, opts?: { todasEmpresas?: boolean }) {
+  const todasEmpresas = opts?.todasEmpresas ?? false;
   return useQuery({
-    queryKey: ["implantacao", empresaId],
-    enabled: !!empresaId,
+    queryKey: todasEmpresas ? ["implantacao", "todas"] : ["implantacao", empresaId],
+    enabled: todasEmpresas || !!empresaId,
     queryFn: async () => {
-      const { data, error } = await supabase
-        .from("implantacao_contrato")
-        .select("*")
-        .eq("empresa_id", empresaId!)
-        .order("created_at", { ascending: false });
+      let q = supabase.from("implantacao_contrato").select("*").order("created_at", { ascending: false });
+      if (!todasEmpresas) q = q.eq("empresa_id", empresaId!);
+      const { data, error } = await q;
       if (error) throw error;
       return (data ?? []) as ImplantacaoContrato[];
     },

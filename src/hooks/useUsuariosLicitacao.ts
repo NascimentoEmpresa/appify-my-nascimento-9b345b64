@@ -1,6 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
-import { useEmpresaAtiva } from "@/context/EmpresaAtivaContext";
 
 export type UsuarioOption = {
   id: string;
@@ -8,22 +7,23 @@ export type UsuarioOption = {
   email: string | null;
 };
 
-const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
-
-export function useUsuariosLicitacao(options?: { enabled?: boolean }) {
-  const { empresa } = useEmpresaAtiva();
-  const empresaId = empresa?.id ?? null;
+// SIS-2026-0309: sem `empresaId` (ou com `todasEmpresas: true`) lê quem tem
+// Setor "Licitações" em TODAS as empresas do grupo — a RPC trata
+// `_empresa_id` nulo como "sem filtro" (migration 20260930000162). Filtra
+// por Setor (user_setor), não por role: já é o critério que a própria tela
+// de Gestão de Usuários usa pra mostrar "quem é da licitação" — role
+// 'comercial' e has_screen_access foram tentados antes e devolviam gente
+// errada (ver comentário da migration).
+export function useUsuariosLicitacao(options?: { enabled?: boolean; empresaId?: string | null; todasEmpresas?: boolean }) {
+  const empresaId = options?.todasEmpresas ? null : options?.empresaId ?? null;
 
   return useQuery({
-    queryKey: ["usuarios_licitacao", empresaId],
-    // Até o EmpresaAtivaContext carregar as empresas reais, `empresa.id` é o id
-    // mockado de empresasGrupo ("HAGG", "SN"…), que não é UUID — mandar isso na
-    // RPC devolve 400 (invalid input syntax for type uuid). Mesma guarda do useGrade.
-    enabled: !!empresaId && UUID_RE.test(empresaId) && (options?.enabled ?? true),
+    queryKey: ["usuarios_licitacao", empresaId ?? "todas"],
+    enabled: options?.enabled ?? true,
     staleTime: 60_000,
     queryFn: async (): Promise<UsuarioOption[]> => {
       const { data, error } = await supabase.rpc("list_usuarios_comercial_empresa", {
-        _empresa_id: empresaId!,
+        _empresa_id: empresaId,
       });
       if (error) throw error;
       return (data ?? []) as UsuarioOption[];

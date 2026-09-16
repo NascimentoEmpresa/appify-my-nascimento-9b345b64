@@ -66,31 +66,36 @@ export interface CapaEdital {
 
 const QK = (empresaId: string) => ["capa-edital", empresaId];
 
-export function useCapaEdital(empresaId: string | null) {
+// SIS-2026-0309: `todasEmpresas` (mesmo padrão de useGrade/useContratosERP)
+// lê a Capa de Edital de TODAS as empresas do grupo — usuário já tem acesso
+// a todas, o filtro por empresa ativa só limitava a visão.
+export function useCapaEdital(empresaId: string | null, opts?: { todasEmpresas?: boolean }) {
+  const todasEmpresas = opts?.todasEmpresas ?? false;
   return useQuery({
-    queryKey: QK(empresaId ?? ""),
-    enabled: !!empresaId,
+    queryKey: todasEmpresas ? ["capa-edital", "todas"] : QK(empresaId ?? ""),
+    enabled: todasEmpresas || !!empresaId,
     queryFn: async () => {
-      const { data, error } = await supabase
-        .from("capa_edital")
-        .select("*")
-        .eq("empresa_id", empresaId!)
-        .order("created_at", { ascending: false });
+      let q = supabase.from("capa_edital").select("*").order("created_at", { ascending: false });
+      if (!todasEmpresas) q = q.eq("empresa_id", empresaId!);
+      const { data, error } = await q;
       if (error) throw error;
       return (data ?? []) as CapaEdital[];
     },
   });
 }
 
-export function useCapaInsert(empresaId: string) {
+// SIS-2026-0309: `empresa_id` passa a ser campo explícito do payload
+// (obrigatório na criação), não mais herdado da empresa "ativa" do
+// seletor global.
+export function useCapaInsert() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async (payload: Partial<CapaEdital>) => {
+      if (!payload.empresa_id) throw new Error("Empresa é obrigatória.");
       const { data, error } = await supabase
         .from("capa_edital")
         .insert({
           ...payload,
-          empresa_id: empresaId,
           status: "Em andamento",
           historico: [],
           preenchido_em: new Date().toISOString().slice(0, 10),
@@ -101,14 +106,14 @@ export function useCapaInsert(empresaId: string) {
       return data as CapaEdital;
     },
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: QK(empresaId) });
+      qc.invalidateQueries({ queryKey: ["capa-edital"] });
       toast({ title: "Licitação cadastrada!" });
     },
     onError: (e: Error) => toast({ title: "Erro", description: e.message, variant: "destructive" }),
   });
 }
 
-export function useCapaUpdate(empresaId: string) {
+export function useCapaUpdate() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async ({
@@ -200,14 +205,14 @@ export function useCapaUpdate(empresaId: string) {
       return data as CapaEdital;
     },
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: QK(empresaId) });
+      qc.invalidateQueries({ queryKey: ["capa-edital"] });
       toast({ title: "Licitação atualizada!" });
     },
     onError: (e: Error) => toast({ title: "Erro", description: e.message, variant: "destructive" }),
   });
 }
 
-export function useCapaDelete(empresaId: string) {
+export function useCapaDelete() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async (id: string) => {
@@ -215,14 +220,19 @@ export function useCapaDelete(empresaId: string) {
       if (error) throw error;
     },
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: QK(empresaId) });
+      qc.invalidateQueries({ queryKey: ["capa-edital"] });
       toast({ title: "Excluído." });
     },
     onError: (e: Error) => toast({ title: "Erro", description: e.message, variant: "destructive" }),
   });
 }
 
-export function useCapaPromover(empresaId: string) {
+// SIS-2026-0309 (raiz do bug real do contrato CEITEC, que nasceu na
+// empresa errada): a empresa do contrato/implantação promovido vem da
+// PRÓPRIA Capa (capa.empresa_id) — origem da cadeia — nunca mais de um
+// parâmetro externo sourced da empresa "ativa" do seletor. Sem isso, promover
+// uma Capa enquanto a empresa ativa era outra criava tudo na empresa errada.
+export function useCapaPromover() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async ({
@@ -241,7 +251,7 @@ export function useCapaPromover(empresaId: string) {
       const { data: contrato, error: cErr } = await supabase
         .from("implantacao_contrato")
         .insert({
-          empresa_id: empresaId,
+          empresa_id: capa.empresa_id,
           nome,
           capa_id: capa.id,
           status: "ativo",
@@ -258,7 +268,7 @@ export function useCapaPromover(empresaId: string) {
       // Financeiro/NF/Cobrança usam. Aditivo: não altera nada do fluxo de
       // Implantação acima, só acrescenta esse insert.
       const { error: pcErr } = await (supabase as any).from("contratos").insert({
-        empresa_id: empresaId,
+        empresa_id: capa.empresa_id,
         nome,
         cliente: capa.cliente.trim(),
         data_inicio: capa.data_inicio,
@@ -281,9 +291,9 @@ export function useCapaPromover(empresaId: string) {
       return contrato;
     },
     onSuccess: (contrato) => {
-      qc.invalidateQueries({ queryKey: QK(empresaId) });
-      qc.invalidateQueries({ queryKey: ["implantacao", empresaId] });
-      qc.invalidateQueries({ queryKey: ["contratos_erp", empresaId] });
+      qc.invalidateQueries({ queryKey: ["capa-edital"] });
+      qc.invalidateQueries({ queryKey: ["implantacao"] });
+      qc.invalidateQueries({ queryKey: ["contratos_erp"] });
       toast({ title: `Contrato "${contrato.nome}" criado no módulo de Implantação e em Contratos!` });
     },
     onError: (e: Error) => toast({ title: "Erro", description: e.message, variant: "destructive" }),

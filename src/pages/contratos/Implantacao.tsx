@@ -1,6 +1,5 @@
 import { useState, useMemo, useEffect } from "react";
 import { PageHeader } from "@/components/layout/PageHeader";
-import { useEmpresaAtiva } from "@/context/EmpresaAtivaContext";
 import { cn } from "@/lib/utils";
 import {
   useImplantacaoContratos,
@@ -43,11 +42,12 @@ import {
 import { Label } from "@/components/ui/label";
 
 export default function Implantacao() {
-  const { empresa } = useEmpresaAtiva();
-  const empresaAtivaId = empresa.id;
   const { can } = usePermissoes();
   const podeExcluir = can("excluir", undefined, "implantacao");
-  const { data: contratos = [], isLoading, error } = useImplantacaoContratos(empresaAtivaId);
+  // SIS-2026-0309: lê a implantação de todas as empresas do grupo — o
+  // filtro de "empresa ativa" só limitava a visão, sem proteger nada
+  // (acesso já é 100% por usuário, nunca por empresa).
+  const { data: contratos = [], isLoading, error } = useImplantacaoContratos(null, { todasEmpresas: true });
   const { data: checklistItems = [] } = useChecklistItems();
 
   const [contratoSelecionado, setContratoSelecionado] = useState<string | null>(null);
@@ -84,8 +84,10 @@ export default function Implantacao() {
 
   const responsaveisFiltrados = useMemo(() => [...new Set(itensFiltrados.map((i) => i.responsavel_acao))], [itensFiltrados]);
 
-  const { data: respostas = [] } = useRespostas(contratoSelecionado, empresaAtivaId ?? null);
-  const upsert = useRespostaUpsert(empresaAtivaId ?? "");
+  // SIS-2026-0309: empresa vem do próprio contrato selecionado (propagação
+  // pela origem), não mais da empresa "ativa" do seletor global.
+  const { data: respostas = [] } = useRespostas(contratoSelecionado, contrato?.empresa_id ?? null);
+  const upsert = useRespostaUpsert(contrato?.empresa_id ?? "");
   const { data: usuarios = [] } = useUsuariosEmpresa();
   const usuariosMap = useMemo(() => {
     const m: Record<string, string> = {};
@@ -97,11 +99,11 @@ export default function Implantacao() {
     const { error } = await supabase.from("implantacao_contrato").delete().eq("id", id);
     if (error) { toast({ title: "Erro ao excluir", description: error.message, variant: "destructive" }); return; }
     toast({ title: "Contrato excluído." });
-    qc.removeQueries({ queryKey: ["implantacao", empresaAtivaId] });
+    qc.removeQueries({ queryKey: ["implantacao", "todas"] });
     const restantes = contratos.filter((c) => c.id !== id);
     setContratoSelecionado(restantes[0]?.id ?? null);
     setDeleteTarget(null);
-    qc.invalidateQueries({ queryKey: ["implantacao", empresaAtivaId] });
+    qc.invalidateQueries({ queryKey: ["implantacao", "todas"] });
   }
 
   const respostaMap = useMemo(() => {
@@ -137,9 +139,7 @@ export default function Implantacao() {
         <Kpi label="Progresso"         value={`${pct}%`} highlight={pct === 100} />
       </div>
 
-      {!empresaAtivaId ? (
-        <Empty title="Selecione uma empresa" message="" />
-      ) : isLoading ? (
+      {isLoading ? (
         <Empty title="Carregando contratos…" message="" />
       ) : error ? (
         <Empty title="Erro" message={(error as Error).message} tone="error" />
@@ -277,7 +277,7 @@ export default function Implantacao() {
           contrato={contrato}
           onClose={() => setEditandoNome(false)}
           onSaved={() => {
-            qc.invalidateQueries({ queryKey: ["implantacao", empresaAtivaId] });
+            qc.invalidateQueries({ queryKey: ["implantacao", "todas"] });
             confirmarNome(contrato.id);
           }}
         />
