@@ -15,6 +15,7 @@ import { SearchableMultiSelect } from "@/components/ui/searchable-multi-select";
 import { ReembolsoSetoresUsuario } from "@/components/admin/ReembolsoSetoresUsuario";
 import { TrocaFuncaoSetoresUsuario } from "@/components/admin/TrocaFuncaoSetoresUsuario";
 import { rotaVisivelNoGerenciamento } from "@/lib/menusOcultosGerenciamento";
+import { acoesGravadasPeloToggle } from "@/lib/acoesDoToggleAcesso";
 
 const FORM_MENU_CODIGO = "central_servicos_formularios";
 const REUNIOES_MENU_CODIGO = "central_servicos_reunioes";
@@ -370,11 +371,12 @@ type AppAcao = "visualizar" | "incluir" | "alterar" | "excluir" | "aprovar" | "e
 //   • excluir      — liberar a tela não é autorizar apagar registro;
 //   • executar_ia / alterar_dre — capacidades caras/sensíveis, concedidas caso
 //     a caso, nunca de brinde junto com a tela.
-const ACOES_DO_TOGGLE_PADRAO: readonly AppAcao[] =
-  ["visualizar", "incluir", "alterar", "aprovar", "exportar"];
-
-// eslint-disable-next-line @typescript-eslint/no-unused-vars -- assinatura mantida: os dois lugares que gravam permissão chamam por menu.
-const ACOES_DO_TOGGLE = (_codigo: string): AppAcao[] => [...ACOES_DO_TOGGLE_PADRAO];
+// A regra de o que o toggle da tela grava (e o que ele deliberadamente NÃO
+// grava) vive em src/lib/acoesDoToggleAcesso.ts, com teste: é lógica de
+// permissão, e o projeto guarda essa classe de regra em `lib` — mesmo desenho
+// de menusOcultosGerenciamento.ts.
+const ACOES_DO_TOGGLE = (codigo: string): AppAcao[] =>
+  acoesGravadasPeloToggle(codigo, true) as AppAcao[];
 
 // Ordem canônica de exibição dos switches de ação. Serve só pra apresentação:
 // quais ações cada menu realmente tem vem da tabela `app_menu_acao`, populada
@@ -570,17 +572,20 @@ function UserAccessPanel({ podeGerenciar, modulos, menus }: { podeGerenciar: boo
     setIsSaving(true);
     try {
       for (const [codigo, allow] of pending) {
-        // O toggle da tela vale pelo pacote inteiro de trabalho, não só "ver"
-        // (ACOES_DO_TOGGLE_PADRAO). As ações de fora do pacote têm switch
-        // próprio e são gravadas no laço de `pendingAcoes`, logo abaixo.
-        const acoes = ACOES_DO_TOGGLE(codigo);
+        // O toggle da tela vale pelo pacote inteiro de trabalho, não só "ver".
+        // Ligar concede o pacote menos as ações com switch próprio; DESLIGAR
+        // revoga tudo, essas incluídas — a assimetria e o porquê dela estão em
+        // acoesGravadasPeloToggle(). As ações de switch próprio que continuam
+        // ligadas são gravadas no laço de `pendingAcoes`, logo abaixo.
+        const alvo = acoesGravadasPeloToggle(codigo, allow) as AppAcao[];
+
         const { error: delErr } = await supabase.from("screen_permission_user").delete()
           .eq("user_id", selectedUserId).eq("menu_codigo", codigo)
-          .in("acao", acoes).is("empresa_id", null);
+          .in("acao", alvo).is("empresa_id", null);
         if (delErr) console.warn("delete perm error", delErr);
 
         const { error } = await supabase.from("screen_permission_user").insert(
-          acoes.map((acao) => ({
+          alvo.map((acao) => ({
             user_id: selectedUserId, menu_codigo: codigo, acao, allow, empresa_id: null,
           })),
         );

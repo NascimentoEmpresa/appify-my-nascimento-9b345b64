@@ -37,6 +37,11 @@ const FALLBACK_POR_TIPO: Record<string, string> = {
   malote_cotacao_decisao: "/app/malote/aprovacoes",
   malote_aprovacao_pendente: "/app/malote/aprovacoes",
   malote_status: "/app/malote/meus-itens",
+  // Diária devolvida para ajuste (20260930000153). A RPC sempre grava o link
+  // com `?solicitacao=<uuid>`; este fallback só vale para linha sem link. A
+  // rota é a de ENCARREGADOS de propósito: é lá que quem criou a diária a
+  // ajusta e reenvia.
+  diaria_ajuste: "/app/encarregados/diarias",
 };
 
 /**
