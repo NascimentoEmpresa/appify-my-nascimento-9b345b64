@@ -1,6 +1,7 @@
 import { useState, useMemo, useEffect } from "react";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { useEmpresaAtiva } from "@/context/EmpresaAtivaContext";
+import type { EmpresaGrupo } from "@/data/controladoria";
 import { usePermissoes } from "@/context/PermissoesContext";
 import { cn } from "@/lib/utils";
 import {
@@ -107,10 +108,12 @@ export default function Pipeline() {
   const escritaBloqueada = todasEmpresas;
 
   const { data: items = [], isLoading, error } = useGrade(empresaAtivaId ?? null, { todasEmpresas });
-  const insert = useGradeInsert(empresaAtivaId ?? "");
-  const update = useGradeUpdate(empresaAtivaId ?? "");
-  const remove = useGradeDelete(empresaAtivaId ?? "");
-  const promover = useGradePromover(empresaAtivaId ?? "");
+  // SIS-2026-0309: empresa é campo explícito no formulário (GradeSheet),
+  // não mais herdada do seletor global.
+  const insert = useGradeInsert();
+  const update = useGradeUpdate();
+  const remove = useGradeDelete();
+  const promover = useGradePromover();
   const { data: usuarios = [] } = useUsuariosLicitacao();
 
   // filtros
@@ -477,6 +480,7 @@ export default function Pipeline() {
         onOpenChange={setSheetOpen}
         editing={editing}
         usuarios={usuarios}
+        empresas={empresas}
         onSave={(payload) => {
           if (editing) {
             update.mutate(
@@ -612,7 +616,7 @@ function ImportModal({ empresaId, onClose }: { empresaId: string; onClose: () =>
   const [rows, setRows] = useState<ImportRow[]>([]);
   const [importing, setImporting] = useState(false);
   const [done, setDone] = useState(false);
-  const insert = useGradeInsert(empresaId);
+  const insert = useGradeInsert();
 
   function handleFile(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
@@ -677,6 +681,7 @@ function ImportModal({ empresaId, onClose }: { empresaId: string; onClose: () =>
       const r = rows[i];
       try {
         await insert.mutateAsync({
+          empresa_id: empresaId,
           edital: r.edital,
           objeto: r.objeto || null,
           cidade: r.cidade || null,
@@ -953,13 +958,14 @@ function GradeCard({
 
 
 const EMPTY_FORM = {
+  empresa_id: "",
   edital: "", fase: "À Iniciar" as GradeFase, responsavel: "", cidade: "",
   uf: "", data: "", horario: "", objeto: "", qtd_pessoas: "",
   valor_global: "", posicao: "", status_obs: "", data_captacao: "",
 };
 
 function GradeSheet({
-  open, onOpenChange, editing, onSave, isSaving, usuarios,
+  open, onOpenChange, editing, onSave, isSaving, usuarios, empresas,
 }: {
   open: boolean;
   onOpenChange: (v: boolean) => void;
@@ -967,6 +973,7 @@ function GradeSheet({
   onSave: (p: Partial<GradeItem>) => void;
   isSaving: boolean;
   usuarios: UsuarioOption[];
+  empresas: EmpresaGrupo[];
 }) {
   const [f, setF] = useState({ ...EMPTY_FORM });
   const { cidadesPorUF, isLoading: ibgeLoading } = useIBGEMunicipios();
@@ -977,6 +984,7 @@ function GradeSheet({
     if (!open) return;
     if (editing) {
       setF({
+        empresa_id: editing.empresa_id,
         edital: editing.edital ?? "",
         fase: editing.fase,
         responsavel: editing.responsavel ?? "",
@@ -1007,7 +1015,12 @@ function GradeSheet({
       alert("Qtd. Pessoas é obrigatório.");
       return;
     }
+    if (!f.empresa_id) {
+      alert("Selecione a empresa.");
+      return;
+    }
     onSave({
+      empresa_id: f.empresa_id,
       edital: f.edital || null,
       fase: f.fase,
       responsavel: f.responsavel || null,
@@ -1045,6 +1058,25 @@ function GradeSheet({
           <DialogTitle>{editing ? "Editar Entrada" : "Nova Entrada"}</DialogTitle>
         </DialogHeader>
         <form onSubmit={handleSubmit} className="mt-2 space-y-4">
+          {/* SIS-2026-0309: empresa é campo explícito — deixou de ser
+              herdada do seletor "empresa ativa". Este é o único ponto de
+              entrada real da cadeia (Grade → Capa → Implantação →
+              Contrato); acertar aqui evita a classe inteira de erro do bug
+              real do contrato CEITEC. */}
+          <div className="space-y-1">
+            <Label className="text-xs">Empresa <span className="text-destructive">*</span></Label>
+            <Select
+              value={f.empresa_id}
+              onValueChange={(v) => setF((p) => ({ ...p, empresa_id: v }))}
+              disabled={!!editing}
+            >
+              <SelectTrigger className="h-9"><SelectValue placeholder="Selecione a empresa..." /></SelectTrigger>
+              <SelectContent>
+                {empresas.map((e) => <SelectItem key={e.id} value={e.id}>{e.razao}</SelectItem>)}
+              </SelectContent>
+            </Select>
+          </div>
+
           {field("Nº do Edital", "edital")}
 
           <div className="space-y-1">

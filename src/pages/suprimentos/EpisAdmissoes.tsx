@@ -2,7 +2,6 @@ import { useState, useCallback, useEffect } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
 import { usePermissoes } from "@/context/PermissoesContext";
-import { useEmpresaAtiva } from "@/context/EmpresaAtivaContext";
 import { useContratosCatalogo, usePostos, useFuncoes } from "@/hooks/useSupCatalogo";
 import {
   CandidatoInfo, Modal, Campo, Acoes, Toasts, btnStyle, PendToggle, EtapaChip, HistoricoCandidato,
@@ -51,7 +50,6 @@ interface EnxovalDetalhe {
 export default function EpisAdmissoes() {
   const { user } = useAuth();
   const { can } = usePermissoes();
-  const { empresa } = useEmpresaAtiva();
   const podeAgir = can("alterar", undefined, "sup_epis_admissao");
   const nome = user?.user_metadata?.nome ?? user?.email ?? "";
 

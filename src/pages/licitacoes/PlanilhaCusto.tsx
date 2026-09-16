@@ -19,6 +19,8 @@ import {
 import { importarPlanilha, type PlanilhaCustoImportada } from "@/utils/planilhaCustoImporter";
 import { useEmpresaAtiva } from "@/context/EmpresaAtivaContext";
 import { useContratosERP, type ContratoERP } from "@/hooks/useContratosERP";
+import { useEmpresasGrupo } from "@/hooks/useMaloteDespesa";
+import { corEmpresa, corEmpresaFundo } from "@/pages/malote/EmpresaContratoBadge";
 import { supabase } from "@/integrations/supabase/client";
 import { CurrencyInput } from "@/components/ui/CurrencyInput";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -139,24 +141,39 @@ export default function PlanilhaCusto() {
   const [contratosOpen, setContratosOpen] = useState(false);
   const [clientesOpen, setClientesOpen] = useState(false);
   const [postosViewOpen, setPostosViewOpen] = useState(false);
+  const [empresaModalOpen, setEmpresaModalOpen] = useState(false);
+  const [filtroEmpresaId, setFiltroEmpresaId] = useState<string | null>(null);
   const [showHistorico, setShowHistorico] = useState(false);
   const [filtroOrexec, setFiltroOrexec] = useState<"" | "ORÇADO" | "EXECUTADO">("");
   const [filtroVigencia, setFiltroVigencia] = useState<"" | "EM VIGÊNCIA" | "HISTÓRICO" | "A INICIAR">("");
   const [updateFromRow, setUpdateFromRow] = useState<PlanilhaCustoRow | undefined>();
   const [postosRow, setPostosRow] = useState<PlanilhaCustoRow | null>(null);
-  const { empresa } = useEmpresaAtiva();
 
-  const { data: rows = [], isLoading } = usePlanilhaCustos();
+  // SIS-2026-0309: lê a planilha/contratos de todas as empresas do grupo —
+  // o filtro de "empresa ativa" só limitava a visão, sem proteger nada.
+  const { data: rows = [], isLoading } = usePlanilhaCustos({ todasEmpresas: true });
   const del = useDeletePlanilhaCusto();
+  const { data: empresasGrupo = [] } = useEmpresasGrupo();
 
   // Contratos ativos (tabela oficial `contratos`) — fonte autoritativa da
   // contagem de contratos. Um contrato ativo sem execução na planilha (ex.:
   // recém-iniciado) conta aqui mas não teria linha vigente; por isso a
   // contagem vem daqui e não do texto distinto das linhas.
-  const { data: contratosErp = [] } = useContratosERP();
+  const { data: contratosErp = [] } = useContratosERP({ todasEmpresas: true });
   const contratosAtivos = React.useMemo(
     () => contratosErp.filter((c) => c.status === "ativo"),
     [contratosErp],
+  );
+
+  // Recorte pela empresa selecionada no KPI "Empresa" — os outros KPIs
+  // (e os modais de breakdown que eles abrem) seguem esse mesmo filtro.
+  const rowsEmpresa = React.useMemo(
+    () => (filtroEmpresaId ? rows.filter((r) => r.empresa_id === filtroEmpresaId) : rows),
+    [rows, filtroEmpresaId],
+  );
+  const contratosAtivosEmpresa = React.useMemo(
+    () => (filtroEmpresaId ? contratosAtivos.filter((c) => c.empresa_id === filtroEmpresaId) : contratosAtivos),
+    [contratosAtivos, filtroEmpresaId],
   );
 
   // Computa status de vigência para cada linha (client-side)
@@ -167,6 +184,7 @@ export default function PlanilhaCusto() {
     if (!showHistorico && status === "HISTÓRICO" && !filtroVigencia) return false;
     if (filtroVigencia && status !== filtroVigencia) return false;
     if (filtroOrexec && r.orexec !== filtroOrexec) return false;
+    if (filtroEmpresaId && r.empresa_id !== filtroEmpresaId) return false;
     return (
       r.cliente.toLowerCase().includes(q.toLowerCase()) ||
       r.contrato.toLowerCase().includes(q.toLowerCase()) ||
@@ -244,23 +262,28 @@ export default function PlanilhaCusto() {
 
       {/* KPIs */}
       <div className="grid gap-4 md:grid-cols-5">
-        <Kpi label="Total de registros" v={String(rows.length)} />
-        <Kpi label="Empresa ativa" v={empresa.sigla} />
+        <Kpi label="Total de registros" v={String(rowsEmpresa.length)} />
+        <Kpi
+          label="Empresa"
+          v={filtroEmpresaId ? (empresasGrupo.find((e) => e.id === filtroEmpresaId)?.nome ?? "—") : "Grupo (todas)"}
+          onClick={() => setEmpresaModalOpen(true)}
+          clickable
+        />
         <Kpi
           label="Contratos ativos"
-          v={String(contratosAtivos.length)}
+          v={String(contratosAtivosEmpresa.length)}
           onClick={() => setContratosOpen(true)}
           clickable
         />
         <Kpi
           label="Postos cadastrados"
-          v={String(rows.filter((r) => statusMap.get(r.id) === "EM VIGÊNCIA" && r.orexec === "EXECUTADO").length)}
+          v={String(rowsEmpresa.filter((r) => statusMap.get(r.id) === "EM VIGÊNCIA" && r.orexec === "EXECUTADO").length)}
           onClick={() => setPostosViewOpen(true)}
           clickable
         />
         <Kpi
           label="Clientes distintos"
-          v={String(new Set(rows.map((r) => r.cliente)).size)}
+          v={String(new Set(rowsEmpresa.map((r) => r.cliente)).size)}
           onClick={() => setClientesOpen(true)}
           clickable
         />
@@ -484,7 +507,6 @@ export default function PlanilhaCusto() {
           {importPostosOpen && (
             <ImportPostosModal
               rows={rows}
-              empresaId={empresa.id}
               onClose={() => setImportPostosOpen(false)}
             />
           )}
@@ -514,21 +536,59 @@ export default function PlanilhaCusto() {
       {/* Modal de breakdown por contrato */}
       <Dialog open={contratosOpen} onOpenChange={(o) => !o && setContratosOpen(false)}>
         <DialogContent className="max-w-5xl max-h-[85vh] overflow-y-auto">
-          <ContratosModal rows={rows} statusMap={statusMap} contratosAtivos={contratosAtivos} />
+          <ContratosModal rows={rowsEmpresa} statusMap={statusMap} contratosAtivos={contratosAtivosEmpresa} />
         </DialogContent>
       </Dialog>
 
       {/* Modal de visão de postos */}
       <Dialog open={postosViewOpen} onOpenChange={(o) => !o && setPostosViewOpen(false)}>
         <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
-          {postosViewOpen && <PostosViewModal rows={rows} statusMap={statusMap} empresaId={empresa.id} />}
+          {postosViewOpen && <PostosViewModal rows={rowsEmpresa} statusMap={statusMap} />}
+        </DialogContent>
+      </Dialog>
+
+      {/* Modal de filtro por empresa do grupo */}
+      <Dialog open={empresaModalOpen} onOpenChange={(o) => !o && setEmpresaModalOpen(false)}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Filtrar por empresa</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-1.5">
+            <button
+              onClick={() => { setFiltroEmpresaId(null); setEmpresaModalOpen(false); }}
+              className={`flex w-full items-center justify-between rounded-md border px-3 py-2 text-sm transition-colors ${
+                !filtroEmpresaId
+                  ? "border-primary bg-primary/10 font-semibold text-primary"
+                  : "border-border hover:bg-muted"
+              }`}
+            >
+              <span>Grupo (todas)</span>
+              <span className="text-xs text-muted-foreground">{rows.length} registros</span>
+            </button>
+            {empresasGrupo.map((e) => (
+              <button
+                key={e.id}
+                onClick={() => { setFiltroEmpresaId(e.id); setEmpresaModalOpen(false); }}
+                className={`flex w-full items-center justify-between rounded-md border px-3 py-2 text-sm transition-colors ${
+                  filtroEmpresaId === e.id
+                    ? "border-primary bg-primary/10 font-semibold text-primary"
+                    : "border-border hover:bg-muted"
+                }`}
+              >
+                <span>{e.nome}</span>
+                <span className="text-xs text-muted-foreground">
+                  {rows.filter((r) => r.empresa_id === e.id).length} registros
+                </span>
+              </button>
+            ))}
+          </div>
         </DialogContent>
       </Dialog>
 
       {/* Modal de breakdown por cliente */}
       <Dialog open={clientesOpen} onOpenChange={(o) => !o && setClientesOpen(false)}>
         <DialogContent className="max-w-4xl max-h-[85vh] overflow-y-auto">
-          <ClientesModal rows={rows} statusMap={statusMap} />
+          <ClientesModal rows={rowsEmpresa} statusMap={statusMap} />
         </DialogContent>
       </Dialog>
 
@@ -538,7 +598,7 @@ export default function PlanilhaCusto() {
           {postosRow && (
             <PostosModal
               row={postosRow}
-              empresaId={empresa.id}
+              empresaId={postosRow.empresa_id}
               onClose={() => setPostosRow(null)}
             />
           )}
@@ -553,18 +613,18 @@ export default function PlanilhaCusto() {
 function PostosViewModal({
   rows,
   statusMap,
-  empresaId,
 }: {
   rows: PlanilhaCustoRow[];
   statusMap: Map<string, string>;
-  empresaId: string;
 }) {
   const [searchContrato, setSearchContrato] = useState("");
   const [search, setSearch] = useState("");
   const [contratoSelecionado, setContratoSelecionado] = useState<string | null>(null);
   const [expandido, setExpandido] = useState<string | null>(null);
 
-  const { data: todasLocalizacoes = [] } = usePlanilhaPostoLocalizacaoAll(empresaId);
+  // SIS-2026-0309: índice por planilha_custo_id, não por empresa — lê de
+  // todas as empresas do grupo (não filtra mais por uma "ativa").
+  const { data: todasLocalizacoes = [] } = usePlanilhaPostoLocalizacaoAll(null, { todasEmpresas: true });
 
   // Apenas EXECUTADO vigente
   const postosVigentes = rows.filter(
@@ -1767,7 +1827,11 @@ function FormDrawer({
   onClose: () => void;
 }) {
   const save = useSavePlanilhaCusto();
-  const { empresa } = useEmpresaAtiva();
+  // SIS-2026-0309: lista cross-empresa — a empresa da linha nova vem do
+  // contrato escolhido no combobox abaixo (propagação pela origem), não
+  // mais da empresa "ativa" do seletor.
+  const { data: contratosErp = [] } = useContratosERP({ todasEmpresas: true });
+  const { data: empresasGrupo = [] } = useEmpresasGrupo();
   const fileRef = useRef<HTMLInputElement>(null);
 
   // updateFromRow = clonar registro com nova vigência (INSERT, sem id)
@@ -1847,6 +1911,13 @@ function FormDrawer({
   function set(k: keyof FormData, v: string | number | null) {
     setForm((prev) => ({ ...prev, [k]: v }));
   }
+
+  // SIS-2026-0309: empresa exibida/gravada vem do contrato escolhido (ou,
+  // ao clonar, da própria linha de origem) — nunca mais de estado ambiente.
+  const empresaResolvidaId = form.contrato_id
+    ? contratosErp.find((c) => c.id === form.contrato_id)?.empresa_id
+    : sourceRow?.empresa_id;
+  const empresaResolvidaNome = empresasGrupo.find((e) => e.id === empresaResolvidaId)?.nome;
 
   function numField(k: keyof FormData, label: string, span = 1) {
     return (
@@ -2021,6 +2092,10 @@ function FormDrawer({
       toast.error("Informe a nova Data de Vigência para registrar a atualização.");
       return;
     }
+    if (!editRow && !empresaResolvidaId) {
+      toast.error("Selecione um Contrato válido (a empresa é definida por ele).");
+      return;
+    }
     try {
       const payload = {
         ...form,
@@ -2032,7 +2107,10 @@ function FormDrawer({
         sindicato: form.sindicato || null,
         servico: form.servico || null,
       };
-      await save.mutateAsync({ ...(editRow ? { id: editRow.id } : {}), ...payload });
+      await save.mutateAsync({
+        ...(editRow ? { id: editRow.id } : { empresa_id: empresaResolvidaId }),
+        ...payload,
+      });
       toast.success(editRow ? "Registro atualizado." : updateFromRow ? "Nova vigência lançada com sucesso." : "Registro lançado com sucesso.");
       onClose();
     } catch (err: any) {
@@ -2085,7 +2163,7 @@ function FormDrawer({
     somaRescisao + somaInsumos + somaCustos + somaDespesasDiretas;
 
   return (
-    <div className="flex flex-col">
+    <div className={cn("flex flex-col", corEmpresaFundo(empresaResolvidaId))}>
         {/* Header */}
         <div className="flex items-center justify-between border-b border-border px-6 py-4">
           <div>
@@ -2098,9 +2176,14 @@ function FormDrawer({
                 : "Inclusão e/ou Atualização do Banco de Dados"}
             </p>
           </div>
-          <span className="inline-flex items-center gap-1.5 rounded-full border border-primary/30 bg-primary/10 px-3 py-1 text-xs font-semibold text-primary">
+          <span
+            className={cn(
+              "inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-semibold",
+              empresaResolvidaId ? corEmpresa(empresaResolvidaId) : "border-primary/30 bg-primary/10 text-primary",
+            )}
+          >
             <Building2 className="h-3.5 w-3.5" />
-            {empresa.sigla}
+            {empresaResolvidaNome ?? "Selecione o contrato"}
           </span>
         </div>
 
@@ -2155,6 +2238,22 @@ function FormDrawer({
             {/* Seção 1 - Cadastro */}
             <Section title="1 — Cadastro do Contrato">
               <div className="grid grid-cols-4 gap-3">
+                <div className="col-span-4">
+                  <label className="mb-1 flex min-h-[2rem] items-end text-[10px] font-semibold uppercase leading-tight tracking-wider text-muted-foreground">
+                    Empresa
+                  </label>
+                  <div
+                    className={cn(
+                      "flex h-9 items-center gap-2 rounded border px-3 text-sm font-semibold",
+                      empresaResolvidaId
+                        ? corEmpresa(empresaResolvidaId)
+                        : "border-dashed border-border bg-muted/40 text-muted-foreground",
+                    )}
+                  >
+                    <Building2 className="h-4 w-4 shrink-0" />
+                    {empresaResolvidaNome ?? "Definida automaticamente pelo Contrato selecionado"}
+                  </div>
+                </div>
                 <div>
                   <label className="mb-1 flex min-h-[2rem] items-end text-[10px] font-semibold uppercase leading-tight tracking-wider text-muted-foreground">
                     Orçado / Executado
@@ -2471,11 +2570,9 @@ type PostoImportRow = {
 
 function ImportPostosModal({
   rows,
-  empresaId,
   onClose,
 }: {
   rows: PlanilhaCustoRow[];
-  empresaId: string;
   onClose: () => void;
 }) {
   const fileRef = useRef<HTMLInputElement>(null);
@@ -2570,10 +2667,15 @@ function ImportPostosModal({
     if (!vinculados.length) return;
     setImporting(true);
     try {
+      // SIS-2026-0309: rows agora é cross-empresa — cada planilha_custo_id
+      // pode pertencer a uma empresa diferente, então a empresa vem da
+      // PRÓPRIA linha (propagação pela origem), não mais de um valor
+      // ambiente único pra toda a importação.
+      const empresaPorPlanilhaId = new Map(rows.map((r) => [r.id, r.empresa_id]));
       // gera uma entrada para cada planilha_custo_id (orçado + executado)
       const payload = vinculados.flatMap((r) =>
         r.planilha_custo_ids.map((pid) => ({
-          empresa_id: empresaId,
+          empresa_id: empresaPorPlanilhaId.get(pid)!,
           planilha_custo_id: pid,
           nome: r.local,
           qt_pessoas_orcadas: r.qt_orcado,
@@ -2899,7 +3001,13 @@ function parseExcelRows(aoa: unknown[][]): { empresa: string; row: any }[] {
 
 function MigracaoModal({ rows: erpRows, onClose }: { rows: PlanilhaCustoRow[]; onClose: () => void }) {
   const bulk = useBulkInsertPlanilhaCusto();
-  const { empresa } = useEmpresaAtiva();
+  // SIS-2026-0309: usado só pra resolver o texto de empresa de cada linha
+  // do Excel (coluna "Empresa") pro id real — nunca mais a empresa "ativa".
+  const { empresas } = useEmpresaAtiva();
+  const empresaIdPorSigla = React.useMemo(
+    () => new Map(empresas.map((e) => [e.sigla.toUpperCase(), e.id])),
+    [empresas],
+  );
   const fileRef = useRef<HTMLInputElement>(null);
   const [allParsed, setAllParsed] = useState<{ empresa: string; row: any }[]>([]);
   const [empresasNoArquivo, setEmpresasNoArquivo] = useState<string[]>([]);
@@ -2924,8 +3032,16 @@ function MigracaoModal({ rows: erpRows, onClose }: { rows: PlanilhaCustoRow[]; o
 
   const keyOf = (row: any) =>
     `${String(row.contrato ?? "").trim().toLowerCase()}||${String(row.posto ?? "").trim().toLowerCase()}||${row.data_vigencia ?? ""}||${String(row.orexec ?? "").trim().toLowerCase()}`;
-  const jaNoERP   = filtrados.filter((r) => erpKeys.has(keyOf(r.row)));
-  const pendingRows = filtrados.filter((r) => !erpKeys.has(keyOf(r.row))).map((r) => r.row);
+  const jaNoERP = filtrados.filter((r) => erpKeys.has(keyOf(r.row)));
+  // SIS-2026-0309: empresa_id vem da coluna "Empresa" da PRÓPRIA linha do
+  // Excel (via sigla), não mais de um valor único pra todo o lote — linhas
+  // sem sigla reconhecida são descartadas aqui (contadas em semEmpresa) em
+  // vez de caírem silenciosamente na empresa ativa.
+  const pendentesFiltrados = filtrados.filter((r) => !erpKeys.has(keyOf(r.row)));
+  const semEmpresa = pendentesFiltrados.filter((r) => !empresaIdPorSigla.has(r.empresa.toUpperCase()));
+  const pendingRows = pendentesFiltrados
+    .filter((r) => empresaIdPorSigla.has(r.empresa.toUpperCase()))
+    .map((r) => ({ ...r.row, empresa_id: empresaIdPorSigla.get(r.empresa.toUpperCase())! }));
 
   async function handleFile(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
@@ -2943,11 +3059,9 @@ function MigracaoModal({ rows: erpRows, onClose }: { rows: PlanilhaCustoRow[]; o
       const parsed = parseExcelRows(aoa);
       setAllParsed(parsed);
 
-      const empresas = [...new Set(parsed.map((r) => r.empresa).filter(Boolean))].sort();
-      setEmpresasNoArquivo(empresas);
-      // Pré-seleciona empresa ativa se existir no arquivo
-      const match = empresas.find((e) => e === empresa.sigla.toUpperCase() || e === empresa.sigla);
-      setFiltroEmpresa(match ?? "TODOS");
+      const empresasDoArquivo = [...new Set(parsed.map((r) => r.empresa).filter(Boolean))].sort();
+      setEmpresasNoArquivo(empresasDoArquivo);
+      setFiltroEmpresa("TODOS");
     } catch (err: any) {
       toast.error("Erro ao ler arquivo: " + err.message);
     } finally {
@@ -2984,8 +3098,14 @@ function MigracaoModal({ rows: erpRows, onClose }: { rows: PlanilhaCustoRow[]; o
           <div className="px-6 py-5 space-y-4">
             <div className="rounded-lg border border-amber-300/50 bg-amber-50/50 px-4 py-3 text-xs text-amber-800">
               <strong>Atenção:</strong> Salve o arquivo <strong>.xlsm</strong> como <strong>.xlsx</strong> antes de selecionar.
-              Os registros serão vinculados à empresa ativa: <strong>{empresa.sigla}</strong>.
+              A empresa de cada registro vem da coluna "Empresa" (A) do próprio Excel, não da empresa ativa do seletor.
             </div>
+
+            {semEmpresa.length > 0 && (
+              <div className="rounded-lg border border-destructive/40 bg-destructive/5 px-4 py-3 text-xs text-destructive">
+                <strong>{semEmpresa.length} registro(s)</strong> com empresa não reconhecida (sigla na coluna A não bate com nenhuma empresa do grupo) — não serão importados.
+              </div>
+            )}
 
             <div className="rounded-lg border border-dashed border-border bg-muted/20 p-6 text-center">
               <DatabaseZap className="mx-auto mb-2 h-8 w-8 text-muted-foreground/50" />

@@ -140,16 +140,17 @@ export function calcPrazo(item: ChecklistItem, contrato: ImplantacaoContrato): s
 
 // ── Contratos ──────────────────────────────────────────────────────────────
 
-export function useImplantacaoContratos(empresaId: string | null) {
+// SIS-2026-0309: `todasEmpresas` lê a Implantação de TODAS as empresas do
+// grupo, mesmo padrão já usado em useGrade/useCapaEdital/useContratosERP.
+export function useImplantacaoContratos(empresaId: string | null, opts?: { todasEmpresas?: boolean }) {
+  const todasEmpresas = opts?.todasEmpresas ?? false;
   return useQuery({
-    queryKey: ["implantacao", empresaId],
-    enabled: !!empresaId,
+    queryKey: todasEmpresas ? ["implantacao", "todas"] : ["implantacao", empresaId],
+    enabled: todasEmpresas || !!empresaId,
     queryFn: async () => {
-      const { data, error } = await supabase
-        .from("implantacao_contrato")
-        .select("*")
-        .eq("empresa_id", empresaId!)
-        .order("created_at", { ascending: false });
+      let q = (supabase as any).from("implantacao_contrato").select("*").order("created_at", { ascending: false });
+      if (!todasEmpresas) q = q.eq("empresa_id", empresaId!);
+      const { data, error } = await q;
       if (error) throw error;
       return (data ?? []) as ImplantacaoContrato[];
     },
@@ -163,7 +164,7 @@ export function useChecklistItems() {
     queryKey: ["checklist-items"],
     staleTime: Infinity,
     queryFn: async () => {
-      const { data, error } = await supabase
+      const { data, error } = await (supabase as any)
         .from("checklist_items")
         .select("*")
         .order("ordem");
@@ -180,7 +181,7 @@ export function useRespostas(contratoId: string | null, empresaId: string | null
     queryKey: ["respostas", contratoId],
     enabled: !!contratoId && !!empresaId,
     queryFn: async () => {
-      const { data, error } = await supabase
+      const { data, error } = await (supabase as any)
         .from("checklist_respostas")
         .select("*")
         .eq("contrato_id", contratoId!)
@@ -208,7 +209,7 @@ export function useRespostaUpsert(empresaId: string) {
       const { data: { user } } = await supabase.auth.getUser();
 
       // Busca resposta atual para empurrar no histórico
-      const { data: atual } = await supabase
+      const { data: atual } = await (supabase as any)
         .from("checklist_respostas")
         .select("resposta, obs, historico, updated_by")
         .eq("contrato_id", contratoId)
@@ -228,7 +229,7 @@ export function useRespostaUpsert(empresaId: string) {
           ]
         : historicoAtual;
 
-      const { error } = await supabase.from("checklist_respostas").upsert(
+      const { error } = await (supabase as any).from("checklist_respostas").upsert(
         {
           empresa_id: empresaId,
           contrato_id: contratoId,

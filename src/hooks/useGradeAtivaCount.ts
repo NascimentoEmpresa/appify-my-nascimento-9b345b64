@@ -3,16 +3,17 @@ import { supabase } from "@/integrations/supabase/client";
 
 const FASES_ATIVAS = ["À Iniciar", "Iniciado", "Em Andamento"];
 
-export function useGradeAtivaCount(empresaId: string | null) {
+// SIS-2026-0309: `todasEmpresas` conta a grade ativa de TODAS as empresas
+// do grupo — mesmo padrão de useGrade/useCapaEdital.
+export function useGradeAtivaCount(empresaId: string | null, opts?: { todasEmpresas?: boolean }) {
+  const todasEmpresas = opts?.todasEmpresas ?? false;
   return useQuery({
-    queryKey: ["grade_ativa_count", empresaId],
-    enabled: !!empresaId,
+    queryKey: todasEmpresas ? ["grade_ativa_count", "todas"] : ["grade_ativa_count", empresaId],
+    enabled: todasEmpresas || !!empresaId,
     queryFn: async () => {
-      const { count, error } = await (supabase as any)
-        .from("grade")
-        .select("id", { count: "exact", head: true })
-        .eq("empresa_id", empresaId!)
-        .in("fase", FASES_ATIVAS);
+      let q = (supabase as any).from("grade").select("id", { count: "exact", head: true }).in("fase", FASES_ATIVAS);
+      if (!todasEmpresas) q = q.eq("empresa_id", empresaId!);
+      const { count, error } = await q;
       if (error) throw error;
       return count as number;
     },

@@ -12,6 +12,9 @@ import {
 
 export type UseLicitacoesPipelineInput = {
   empresaId: string | null;
+  // SIS-2026-0309: lê todas as empresas do grupo — o filtro por empresa
+  // ativa só limitava a visão, sem proteger nada.
+  todasEmpresas?: boolean;
 };
 
 const SELECT_COLUMNS =
@@ -19,14 +22,15 @@ const SELECT_COLUMNS =
 
 const HARD_LIMIT = 2000;
 
-async function fetchLicitacoes(empresaId: string): Promise<LicitacaoPipeline[]> {
-  const { data, error } = await supabase
+async function fetchLicitacoes(empresaId: string | null, todasEmpresas: boolean): Promise<LicitacaoPipeline[]> {
+  let q = supabase
     .from("licitacao")
     .select(SELECT_COLUMNS)
-    .eq("empresa_id", empresaId)
     .order("abertura", { ascending: true, nullsFirst: false })
     .order("updated_at", { ascending: false })
     .limit(HARD_LIMIT);
+  if (!todasEmpresas) q = q.eq("empresa_id", empresaId!);
+  const { data, error } = await q;
 
   if (error) throw error;
   const rows = (data ?? []) as DbLicitacaoRow[];
@@ -78,12 +82,13 @@ async function fetchLicitacoes(empresaId: string): Promise<LicitacaoPipeline[]> 
 
 export function useLicitacoesPipeline({
   empresaId,
+  todasEmpresas = false,
 }: UseLicitacoesPipelineInput) {
   const q = useQuery({
-    queryKey: ["licitacoes-pipeline", empresaId],
-    enabled: !!empresaId,
+    queryKey: todasEmpresas ? ["licitacoes-pipeline", "todas"] : ["licitacoes-pipeline", empresaId],
+    enabled: todasEmpresas || !!empresaId,
     staleTime: 30_000,
-    queryFn: () => fetchLicitacoes(empresaId as string),
+    queryFn: () => fetchLicitacoes(empresaId, todasEmpresas),
   });
   return {
     data: q.data ?? [],
