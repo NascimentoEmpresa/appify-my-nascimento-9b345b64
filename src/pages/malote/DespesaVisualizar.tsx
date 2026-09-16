@@ -202,6 +202,8 @@ const EVENTO_LABEL: Record<TipoEvento, string> = {
   despesa_paga: "Despesa paga",
   despesa_reprovada: "Despesa reprovada",
   cancelamento: "Cancelada",
+  exclusao: "Movida para a lixeira",
+  restauracao: "Restaurada da lixeira",
 };
 
 function LinhaHistorico({ evento, criadoPor }: { evento: DespesaEvento; criadoPor: string }) {

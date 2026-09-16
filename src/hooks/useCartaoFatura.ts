@@ -36,7 +36,8 @@ export function useFaturaExistente(cartaoId: string | null, competenciaISO: stri
       const { data: itens, error: erroItens } = await (supabase as any)
         .from("malote_cartao_fatura_item")
         .select("id, compra_id, descricao, data_compra, valor, parcela_atual, parcela_total, origem, status")
-        .eq("fatura_id", fatura.id);
+        .eq("fatura_id", fatura.id)
+        .is("deleted_at", null);
       if (erroItens) throw erroItens;
 
       return { fatura: fatura as FaturaCartao, itens: (itens ?? []) as ItemExistente[] };
@@ -61,6 +62,93 @@ export function useFaturasResumoPorCartao() {
         if (!porCartao.has(row.cartao_id)) porCartao.set(row.cartao_id, { competencia: row.competencia });
       }
       return porCartao;
+    },
+  });
+}
+
+// SIS-2026-0413: itens na lixeira (soft-deleted) — usado pelo modal de
+// Lixeira do Fluxo de Caixa. Junta com a fatura/cartão pra dar contexto
+// (nome do cartão, competência) igual v_cartao_fatura_fluxo_caixa resolve.
+export interface ItemFaturaLixeira {
+  id: string;
+  fatura_id: string;
+  compra_id: string;
+  descricao: string;
+  data_compra: string | null;
+  valor: number;
+  deleted_at: string;
+  nome_cartao: string;
+  competencia: string;
+}
+
+export function useCartaoFaturaLixeira() {
+  return useQuery({
+    queryKey: [FATURA_KEY, "lixeira"],
+    queryFn: async () => {
+      const { data, error } = await (supabase as any)
+        .from("malote_cartao_fatura_item")
+        .select("id, fatura_id, compra_id, descricao, data_compra, valor, deleted_at, malote_cartao_fatura(competencia, malote_cartao_credito(nome_cartao))")
+        .not("deleted_at", "is", null)
+        .order("deleted_at", { ascending: false });
+      if (error) throw error;
+      return ((data ?? []) as any[]).map((r) => ({
+        id: r.id,
+        fatura_id: r.fatura_id,
+        compra_id: r.compra_id,
+        descricao: r.descricao,
+        data_compra: r.data_compra,
+        valor: r.valor,
+        deleted_at: r.deleted_at,
+        nome_cartao: r.malote_cartao_fatura?.malote_cartao_credito?.nome_cartao ?? "—",
+        competencia: r.malote_cartao_fatura?.competencia ?? "",
+      })) as ItemFaturaLixeira[];
+    },
+  });
+}
+
+// Excluir (soft) 1 item direto do Fluxo de Caixa, sem passar pela tela de
+// revisão de importação.
+export function useExcluirItemFatura() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (id: string) => {
+      const { error } = await (supabase as any).rpc("cartao_fatura_item_excluir", { _id: id });
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: [FATURA_KEY] });
+      qc.invalidateQueries({ queryKey: ["fluxo_caixa_combinado"] });
+    },
+  });
+}
+
+// SIS-2026-0413 (complemento): forma_pagamento/banco são do CARTÃO
+// (malote_cartao_credito), não existem em malote_cartao_fatura_item — só
+// a Data da Compra é campo de verdade por item.
+export function useEditarDataItemFatura() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ id, dataCompra }: { id: string; dataCompra: string | null }) => {
+      const { error } = await (supabase as any).rpc("cartao_fatura_item_editar_data", { _id: id, _data_compra: dataCompra });
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: [FATURA_KEY] });
+      qc.invalidateQueries({ queryKey: ["fluxo_caixa_combinado"] });
+    },
+  });
+}
+
+export function useRestaurarItemFatura() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (id: string) => {
+      const { error } = await (supabase as any).rpc("cartao_fatura_item_restaurar", { _id: id });
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: [FATURA_KEY] });
+      qc.invalidateQueries({ queryKey: ["fluxo_caixa_combinado"] });
     },
   });
 }

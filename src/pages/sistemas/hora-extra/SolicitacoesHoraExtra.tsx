@@ -43,6 +43,7 @@ import { BadgeStatus, BreadcrumbHoraExtra, CartaoMetrica, PaginacaoHoraExtra } f
 import ConcluirHoraExtraDialog from "./ConcluirHoraExtraDialog";
 import DecisaoHoraExtraDialog from "./DecisaoHoraExtraDialog";
 import DetalhesHoraExtraDialog from "./DetalhesHoraExtraDialog";
+import EscalasHoraExtraDialog from "./EscalasHoraExtraDialog";
 import NovaSolicitacaoDialog from "./NovaSolicitacaoDialog";
 import type { SolicitacaoHoraExtra, StatusHoraExtra } from "./types";
 
@@ -76,6 +77,7 @@ export default function SolicitacoesHoraExtra() {
   const [aba, setAba] = useState<Aba>(podeAprovar ? "todas" : "minhas");
   const [pagina, setPagina] = useState(1),
     [porPagina, setPorPagina] = useState(10);
+  const [escalas, setEscalas] = useState(false);
   const [novo, setNovo] = useState(false),
     [editar, setEditar] = useState<SolicitacaoHoraExtra | null>(null),
     [detalhes, setDetalhes] = useState<SolicitacaoHoraExtra | null>(null),
@@ -157,11 +159,19 @@ export default function SolicitacoesHoraExtra() {
             Acompanhe, solicite e conclua horas extras da sua equipe, com total controle e transparência.
           </p>
         </div>
-        {(podeIncluir || podeAprovar) && (
-          <Button className="bg-orange-500 hover:bg-orange-600" onClick={() => setNovo(true)}>
-            + &nbsp; Nova Solicitação de HE
-          </Button>
-        )}
+        <div className="flex flex-wrap gap-2">
+          {podeAprovar && (
+            <Button variant="outline" onClick={() => setEscalas(true)}>
+              <CalendarClock className="mr-2 h-4 w-4" />
+              Escalas de trabalho
+            </Button>
+          )}
+          {(podeIncluir || podeAprovar) && (
+            <Button className="bg-orange-500 hover:bg-orange-600" onClick={() => setNovo(true)}>
+              + &nbsp; Nova Solicitação de HE
+            </Button>
+          )}
+        </div>
       </div>
       <div className="mb-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
         <CartaoMetrica
@@ -493,6 +503,7 @@ export default function SolicitacoesHoraExtra() {
       <DetalhesHoraExtraDialog aberto={!!detalhes} aoFechar={() => setDetalhes(null)} solicitacao={detalhes} />
       <ConcluirHoraExtraDialog aberto={!!concluir} aoFechar={() => setConcluir(null)} solicitacao={concluir} />
       <DecisaoHoraExtraDialog aberto={!!decisao} aoFechar={() => setDecisao(null)} solicitacao={decisao} />
+      <EscalasHoraExtraDialog aberto={escalas} aoFechar={() => setEscalas(false)} />
     </div>
   );
 }

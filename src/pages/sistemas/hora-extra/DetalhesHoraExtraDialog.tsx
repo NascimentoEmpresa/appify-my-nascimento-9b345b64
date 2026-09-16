@@ -45,6 +45,14 @@ export default function DetalhesHoraExtraDialog({
           <Info rotulo="Colaborador" valor={solicitacao.colaborador_nome} />
           <Info rotulo="Data da HE" valor={formatarData(solicitacao.data_he)} />
           <Info rotulo="Tipo" valor={solicitacao.tipo === "normal" ? "Normal" : "Emergencial"} />
+          <Info rotulo="Escala de trabalho" valor={solicitacao.escala_nome || "—"} />
+          <Info
+            rotulo="Jornada / trabalhado no dia"
+            valor={
+              `${formatarDuracao(solicitacao.jornada_minutos ?? 0, true)} / ` +
+              formatarDuracao(solicitacao.trabalhado_real_min ?? solicitacao.trabalhado_previsto_min ?? 0, true)
+            }
+          />
         </div>
         <div className="grid grid-cols-2 gap-3">
           <div className="rounded-lg bg-blue-50 p-4 text-blue-700">

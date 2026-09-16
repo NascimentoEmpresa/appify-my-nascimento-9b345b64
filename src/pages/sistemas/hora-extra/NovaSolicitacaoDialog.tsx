@@ -7,15 +7,23 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { useAuth } from "@/hooks/useAuth";
 import { useVinculoEmpregado } from "@/hooks/useVinculoEmpregado";
-import { enviarAnexosHoraExtra, useColaboradoresHoraExtra, useSalvarHoraExtra } from "@/hooks/useHoraExtra";
+import {
+  enviarAnexosHoraExtra,
+  useColaboradoresHoraExtra,
+  useEscalasHoraExtra,
+  useSalvarHoraExtra,
+} from "@/hooks/useHoraExtra";
 import { cn } from "@/lib/utils";
 import {
+  calcularHoraExtra,
   dataLocalISO,
   diaSemana,
   formatarData,
   formatarDuracao,
+  JORNADA_PADRAO_MIN,
+  limitarPercentual,
+  mediaConclusao,
   mensagemErro,
-  totalHe,
   validarSolicitacao,
 } from "./horaExtraUtils";
 import { Campo, DropzoneAnexos, SecaoForm, TotalHoras } from "./HoraExtraUI";
@@ -32,12 +40,11 @@ const estadoInicial = {
   setor: "",
   data_he: dataLocalISO(),
   tipo: "normal" as TipoHoraExtra,
-  ponto_entrada: "08:00",
+  escala_id: "",
+  ponto_entrada: "07:30",
   ponto_saida_intervalo: "12:00",
   ponto_retorno_intervalo: "13:00",
-  ponto_saida: "18:00",
-  he_inicio_previsto: "18:00",
-  he_fim_previsto: "22:00",
+  ponto_saida: "17:18",
   justificativa: "",
 };
 
@@ -55,6 +62,7 @@ export default function NovaSolicitacaoDialog({
   const { user } = useAuth();
   const { empregado } = useVinculoEmpregado();
   const { data: colaboradoresRpc = [] } = useColaboradoresHoraExtra();
+  const { data: escalas = [] } = useEscalasHoraExtra();
   const salvar = useSalvarHoraExtra();
   const colaboradores = useMemo(() => {
     if (!user || colaboradoresRpc.some((c) => c.id === user.id)) return colaboradoresRpc;
@@ -83,12 +91,11 @@ export default function NovaSolicitacaoDialog({
         setor: solicitacao.setor ?? "",
         data_he: solicitacao.data_he,
         tipo: solicitacao.tipo,
+        escala_id: solicitacao.escala_id ?? "",
         ponto_entrada: solicitacao.ponto_entrada.slice(0, 5),
         ponto_saida_intervalo: solicitacao.ponto_saida_intervalo.slice(0, 5),
         ponto_retorno_intervalo: solicitacao.ponto_retorno_intervalo.slice(0, 5),
         ponto_saida: solicitacao.ponto_saida.slice(0, 5),
-        he_inicio_previsto: solicitacao.he_inicio_previsto.slice(0, 5),
-        he_fim_previsto: solicitacao.he_fim_previsto.slice(0, 5),
         justificativa: solicitacao.justificativa,
       });
       setChamados(
@@ -117,26 +124,62 @@ export default function NovaSolicitacaoDialog({
     const c = colaboradores.find((x) => x.id === form.colaborador_id);
     if (c) setForm((atual) => ({ ...atual, setor: c.setor ?? "" }));
   }, [aberto, colaboradores, form.colaborador_id, solicitacao]);
+  // Escala nova (ou primeira carga): os horários do dia começam iguais aos
+  // dela, e o usuário só mexe na saída para dizer até que hora ficou.
+  const trocarEscala = (id: string) => {
+    const nova = escalas.find((e) => e.id === id);
+    setForm((atual) => ({
+      ...atual,
+      escala_id: id,
+      ...(nova && !solicitacao
+        ? {
+            ponto_entrada: nova.entrada.slice(0, 5),
+            ponto_saida_intervalo: nova.saida_intervalo.slice(0, 5),
+            ponto_retorno_intervalo: nova.retorno_intervalo.slice(0, 5),
+            ponto_saida: nova.saida.slice(0, 5),
+          }
+        : {}),
+    }));
+  };
+  useEffect(() => {
+    if (!aberto || form.escala_id || !escalas.length) return;
+    const padrao = escalas.find((e) => e.padrao) ?? escalas[0];
+    trocarEscala(padrao.id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [aberto, escalas, form.escala_id]);
   const colaborador = colaboradores.find((c) => c.id === form.colaborador_id);
   const setores = useMemo(
     () => Array.from(new Set(colaboradores.map((item) => item.setor).filter(Boolean) as string[])).sort(),
     [colaboradores],
   );
-  const minutos = totalHe(form.he_inicio_previsto, form.he_fim_previsto);
-  const soma = chamados.reduce((s, c) => s + Number(c.percentual_previsto || 0), 0);
+  const escala = escalas.find((e) => e.id === form.escala_id);
+  const jornada = escala?.minutos_jornada ?? solicitacao?.jornada_minutos ?? JORNADA_PADRAO_MIN;
+  const calculo = calcularHoraExtra(
+    {
+      entrada: form.ponto_entrada,
+      saida_intervalo: form.ponto_saida_intervalo,
+      retorno_intervalo: form.ponto_retorno_intervalo,
+      saida: form.ponto_saida,
+    },
+    jornada,
+  );
+  const minutos = calculo.excedente;
+  const media = mediaConclusao(chamados.map((c) => c.percentual_previsto));
   const gerencial = podeAprovar && !!user && form.colaborador_id !== user.id && !solicitacao;
   const alterar = (campo: keyof typeof form, valor: string) => setForm((atual) => ({ ...atual, [campo]: valor }));
   const adicionar = (item: ChamadoDisponivel) =>
-    setChamados((atual) => [
-      ...atual,
-      {
-        ...item,
-        percentual_previsto: Math.max(0, 100 - atual.reduce((s, c) => s + c.percentual_previsto, 0)),
-        prioridade_he: item.prioridade,
-      },
-    ]);
+    setChamados((atual) => [...atual, { ...item, percentual_previsto: 100, prioridade_he: item.prioridade }]);
   const enviar = async () => {
-    const erros = validarSolicitacao({ ...form, chamados });
+    const erros = validarSolicitacao({
+      chamados,
+      jornadaMinutos: jornada,
+      ponto: {
+        entrada: form.ponto_entrada,
+        saida_intervalo: form.ponto_saida_intervalo,
+        retorno_intervalo: form.ponto_retorno_intervalo,
+        saida: form.ponto_saida,
+      },
+    });
     if (!form.setor.trim()) erros.push("Informe o setor.");
     if (!form.justificativa.trim()) erros.push("Informe a justificativa.");
     if (erros.length) {
@@ -148,6 +191,8 @@ export default function NovaSolicitacaoDialog({
         p: {
           ...form,
           id: solicitacao?.id,
+          he_inicio_previsto: calculo.inicio,
+          he_fim_previsto: calculo.fim,
           chamados: chamados.map((c) => ({
             chamado_id: c.id,
             prioridade: c.prioridade_he,
@@ -248,7 +293,33 @@ export default function NovaSolicitacaoDialog({
                   </Campo>
                 </div>
               </SecaoForm>
-              <SecaoForm titulo="2. Horário de ponto do dia" icone={<Clock3 className="h-5 w-5" />}>
+              <SecaoForm
+                titulo="2. Horário de ponto do dia"
+                subtitulo={
+                  "A hora extra é calculada sozinha: conta só o tempo que passar " +
+                  "da jornada da escala de trabalho."
+                }
+                icone={<Clock3 className="h-5 w-5" />}
+              >
+                <div className="mb-3 flex flex-wrap items-end gap-3">
+                  <Campo rotulo="Escala de trabalho" className="min-w-[260px] flex-1">
+                    <select
+                      className="h-10 w-full rounded-md border bg-white px-3 text-sm"
+                      value={form.escala_id}
+                      onChange={(e) => trocarEscala(e.target.value)}
+                    >
+                      {!escalas.length && <option value="">Padrão (07:30 às 17:18)</option>}
+                      {escalas.map((item) => (
+                        <option key={item.id} value={item.id}>
+                          {item.nome}
+                        </option>
+                      ))}
+                    </select>
+                  </Campo>
+                  <div className="pb-2 text-xs text-slate-500">
+                    Jornada: <strong className="text-[#07194b]">{formatarDuracao(jornada, true)}</strong> por dia
+                  </div>
+                </div>
                 <div className="grid gap-3 lg:grid-cols-[1.45fr_.85fr_.55fr]">
                   <div className="grid grid-cols-2 gap-3 rounded-lg bg-slate-50 p-3 md:grid-cols-4">
                     {campoHora("Entrada", "ponto_entrada")}
@@ -259,12 +330,16 @@ export default function NovaSolicitacaoDialog({
                   <div className="grid grid-cols-2 gap-3 rounded-lg bg-blue-50 p-3">
                     <div className="col-span-2 flex items-center gap-1 text-xs font-semibold text-blue-700">
                       <Clock3 className="h-4 w-4" />
-                      Horário da HE
+                      Horário da HE (calculado)
                     </div>
-                    {campoHora("Início da HE", "he_inicio_previsto")}
-                    {campoHora("Término da HE", "he_fim_previsto")}
+                    <Campo rotulo="Início da HE">
+                      <Input readOnly value={calculo.excedente ? calculo.inicio : "—"} className="bg-white" />
+                    </Campo>
+                    <Campo rotulo="Término da HE">
+                      <Input readOnly value={calculo.excedente ? calculo.fim : "—"} className="bg-white" />
+                    </Campo>
                   </div>
-                  <TotalHoras minutos={minutos} />
+                  <TotalHoras minutos={minutos} trabalhado={calculo.trabalhado} />
                 </div>
               </SecaoForm>
               <SecaoForm
@@ -331,7 +406,9 @@ export default function NovaSolicitacaoDialog({
                                 onChange={(e) =>
                                   setChamados((xs) =>
                                     xs.map((x, j) =>
-                                      j === i ? { ...x, percentual_previsto: Number(e.target.value) } : x,
+                                      j === i
+                                        ? { ...x, percentual_previsto: limitarPercentual(e.target.value) }
+                                        : x,
                                     ),
                                   )
                                 }
@@ -362,9 +439,9 @@ export default function NovaSolicitacaoDialog({
                     <tfoot>
                       <tr className="bg-blue-50 font-bold text-[#07194b]">
                         <td colSpan={3} className="p-3">
-                          Total
+                          Total (média dos chamados)
                         </td>
-                        <td className={cn("p-3", soma !== 100 && "text-red-600")}>{soma} %</td>
+                        <td className="p-3">{media} %</td>
                         <td />
                       </tr>
                     </tfoot>
@@ -398,13 +475,18 @@ export default function NovaSolicitacaoDialog({
                     rotulo="Data"
                     valor={form.data_he ? `${formatarData(form.data_he)} (${diaSemana(form.data_he)})` : "—"}
                   />
-                  <Resumo rotulo="Horário da HE" valor={`${form.he_inicio_previsto} - ${form.he_fim_previsto}`} />
-                  <Resumo rotulo="Total de horas" valor={formatarDuracao(minutos)} />
+                  <Resumo rotulo="Escala de trabalho" valor={escala?.nome || "Padrão (07:30 às 17:18)"} />
+                  <Resumo
+                    rotulo="Horário da HE"
+                    valor={calculo.excedente ? `${calculo.inicio} - ${calculo.fim}` : "—"}
+                  />
+                  <Resumo rotulo="Total trabalhado" valor={formatarDuracao(calculo.trabalhado)} />
+                  <Resumo rotulo="Total de hora extra" valor={formatarDuracao(minutos)} />
                   <Resumo
                     rotulo="Chamados"
                     valor={`${chamados.length} ${chamados.length === 1 ? "chamado" : "chamados"}`}
                   />
-                  <Resumo rotulo="Expectativa total" valor={`${soma}%`} />
+                  <Resumo rotulo="Expectativa média" valor={`${media}%`} />
                 </dl>
               </div>
               <div className="rounded-lg border border-orange-200 bg-orange-50 p-5 text-sm text-[#07194b]">
@@ -418,7 +500,10 @@ export default function NovaSolicitacaoDialog({
                   </li>
                   <li>Informe apenas chamados que serão tratados no período da HE.</li>
                   <li>
-                    A expectativa de conclusão deve totalizar <strong>100%</strong>.
+                    A expectativa de cada chamado vai de <strong>0 a 100%</strong>; o total é a média entre eles.
+                  </li>
+                  <li>
+                    Só conta como hora extra o tempo que passar da <strong>jornada da escala</strong>.
                   </li>
                   <li>Em caso de alteração nos horários, comunique o gestor.</li>
                 </ul>

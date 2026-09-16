@@ -42,6 +42,9 @@ export interface FluxoCaixaMaloteLinha {
   // soma entrada também (Nota Recebida, Movimentação Financeira "linha de
   // entrada").
   tipo: "entrada" | "saida";
+  // SIS-2026-0413: de qual tabela/RPC esta linha vem — usado pra escolher
+  // o botão/mutation certos de Excluir na tela de Fluxo de Caixa.
+  origem: "malote" | "debito_automatico" | "cartao_fatura";
 }
 
 export function useFluxoCaixaMalote() {

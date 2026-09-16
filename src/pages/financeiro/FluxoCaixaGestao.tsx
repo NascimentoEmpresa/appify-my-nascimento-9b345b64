@@ -1,4 +1,5 @@
 import { useMemo, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -7,24 +8,145 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { TrendingDown, TrendingUp, Wallet, LineChart, X } from "lucide-react";
-import { useFluxoCaixaCombinado } from "@/hooks/useFluxoCaixaMalote";
+import {
+  AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
+  AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
+import { TrendingDown, TrendingUp, Wallet, LineChart, X, Trash2, RotateCcw, Pencil } from "lucide-react";
+import { toast } from "sonner";
+import { AcessoGate } from "@/components/auth/AcessoGate";
+import { useFluxoCaixaCombinado, type FluxoCaixaMaloteLinha } from "@/hooks/useFluxoCaixaMalote";
 import { formatBRL } from "@/hooks/usePlanilhaCusto";
 import { useTiposFormaPagamento } from "@/hooks/useMaloteFormaPagamento";
+import { useExcluirDespesaSoft, useRestaurarDespesa, useDespesasLixeira, useEditarPagamentoDespesa } from "@/hooks/useMaloteDespesa";
+import { useExcluirDebito, useRestaurarDebito, useDebitoAutomaticoLixeira } from "@/hooks/useDebitoAutomatico";
+import { useExcluirItemFatura, useRestaurarItemFatura, useCartaoFaturaLixeira, useEditarDataItemFatura } from "@/hooks/useCartaoFatura";
 import { KpiTile } from "@/components/financeiro/KpiTile";
 import { BancoBadge } from "@/components/financeiro/BancoBadge";
-import { urlLogoCartao } from "@/hooks/useMaloteCartaoCredito";
+import { urlLogoCartao, useCartaoBancos } from "@/hooks/useMaloteCartaoCredito";
+
+// SIS-2026-0413: menu_codigo de cada origem, pra gatear o botão Excluir de
+// cada linha (não existe um menu_codigo próprio do Fluxo de Caixa pra
+// "excluir" — a ação é gateada pela tela dona do dado, igual o resto do
+// ERP faz pra qualquer ação em cascata entre telas).
+const MENU_POR_ORIGEM: Record<FluxoCaixaMaloteLinha["origem"], string> = {
+  malote: "malote_despesa_visualizar",
+  debito_automatico: "financeiro-debito-automatico",
+  cartao_fatura: "financeiro-cartao-credito",
+};
+
+const LABEL_ORIGEM: Record<FluxoCaixaMaloteLinha["origem"], string> = {
+  malote: "Pagamento Malote",
+  debito_automatico: "Débito Automático",
+  cartao_fatura: "Fatura Cartão de Crédito",
+};
+
+// SIS-2026-0413 (complemento): a tabela renderizava todas as linhas
+// filtradas de uma vez — mesmo padrão de paginação de PlanilhaCusto.tsx.
+const PAGE_SIZE = 50;
 
 // SIS-2026-0160: início do Fluxo de Caixa. SIS-2026-0256 somou o Débito
 // Automático (entrada e saída) ao Pagamento Malote (só saída) como segunda
 // fonte — os cards de Entradas/Saldo ainda ficam zerados (nenhuma das duas
 // fontes hoje resolve saldo bancário real).
 export default function FluxoCaixaGestao() {
+  const navigate = useNavigate();
   const { data: linhas = [], isLoading } = useFluxoCaixaCombinado();
   // SIS-2026-0221: "Forma de pagamento" vem do catálogo cadastrável em
   // Configurações do Malote → Formas de Pagamento, não mais de um enum fixo.
   const { data: tiposFormaPagamento = [] } = useTiposFormaPagamento();
   const tiposFormaPagamentoAtivos = useMemo(() => tiposFormaPagamento.filter((t) => t.ativo), [tiposFormaPagamento]);
+
+  // SIS-2026-0413: 1 mutation de excluir/restaurar por origem — a linha
+  // sabe de qual tabela ela veio (l.origem), o handler escolhe a certa.
+  const excluirDespesa = useExcluirDespesaSoft();
+  const excluirDebito = useExcluirDebito();
+  const excluirItemFatura = useExcluirItemFatura();
+  const restaurarDespesa = useRestaurarDespesa();
+  const restaurarDebito = useRestaurarDebito();
+  const restaurarItemFatura = useRestaurarItemFatura();
+
+  const [itemExcluir, setItemExcluir] = useState<FluxoCaixaMaloteLinha | null>(null);
+  const [excluindo, setExcluindo] = useState(false);
+  const [lixeiraAberta, setLixeiraAberta] = useState(false);
+
+  const { data: despesasLixeira = [] } = useDespesasLixeira();
+  const { data: debitosLixeira = [] } = useDebitoAutomaticoLixeira();
+  const { data: itensFaturaLixeira = [] } = useCartaoFaturaLixeira();
+
+  // SIS-2026-0413 (complemento): Editar — só Forma de Pagamento/Banco/Data
+  // de Pagamento (Malote) e Data da Compra (Cartão); Débito Automático já
+  // tem tela própria de edição completa, o botão só leva pra lá.
+  const editarPagamentoDespesa = useEditarPagamentoDespesa();
+  const editarDataItemFatura = useEditarDataItemFatura();
+  const { data: bancosCartao = [] } = useCartaoBancos();
+  const [itemEditar, setItemEditar] = useState<FluxoCaixaMaloteLinha | null>(null);
+  const [salvandoEdicao, setSalvandoEdicao] = useState(false);
+  const [editFormaPagamento, setEditFormaPagamento] = useState("");
+  const [editBancoId, setEditBancoId] = useState("");
+  const [editData, setEditData] = useState("");
+
+  function abrirEditar(l: FluxoCaixaMaloteLinha) {
+    if (l.origem === "debito_automatico") {
+      navigate(`/app/financeiro/gestao-financeira/debito-automatico?editar=${l.despesa_id}`);
+      return;
+    }
+    setItemEditar(l);
+    setEditFormaPagamento(l.forma_pagamento ?? "");
+    setEditBancoId(l.banco_id ?? "");
+    setEditData(l.data_pagamento ?? "");
+  }
+
+  async function confirmarEditar() {
+    if (!itemEditar) return;
+    setSalvandoEdicao(true);
+    try {
+      if (itemEditar.origem === "malote") {
+        await editarPagamentoDespesa.mutateAsync({
+          id: itemEditar.despesa_id,
+          formaPagamento: editFormaPagamento || null,
+          bancoId: editBancoId || null,
+          dataPagamento: editData || null,
+        });
+      } else {
+        await editarDataItemFatura.mutateAsync({ id: itemEditar.despesa_id, dataCompra: editData || null });
+      }
+      toast.success("Atualizado.");
+      setItemEditar(null);
+    } catch (e: any) {
+      toast.error(e.message ?? "Erro ao salvar.");
+    } finally {
+      setSalvandoEdicao(false);
+    }
+  }
+
+  async function confirmarExcluir() {
+    if (!itemExcluir) return;
+    setExcluindo(true);
+    try {
+      if (itemExcluir.origem === "malote") await excluirDespesa.mutateAsync(itemExcluir.despesa_id);
+      else if (itemExcluir.origem === "debito_automatico") await excluirDebito.mutateAsync(itemExcluir.despesa_id);
+      else await excluirItemFatura.mutateAsync(itemExcluir.despesa_id);
+      toast.success("Lançamento movido para a lixeira.");
+      setItemExcluir(null);
+    } catch (e: any) {
+      toast.error(e.message ?? "Erro ao excluir lançamento.");
+    } finally {
+      setExcluindo(false);
+    }
+  }
+
+  async function restaurar(origem: FluxoCaixaMaloteLinha["origem"], id: string) {
+    try {
+      if (origem === "malote") await restaurarDespesa.mutateAsync(id);
+      else if (origem === "debito_automatico") await restaurarDebito.mutateAsync(id);
+      else await restaurarItemFatura.mutateAsync(id);
+      toast.success("Restaurado.");
+    } catch (e: any) {
+      toast.error(e.message ?? "Erro ao restaurar.");
+    }
+  }
 
   const [dataDe, setDataDe] = useState("");
   const [dataAte, setDataAte] = useState("");
@@ -36,6 +158,7 @@ export default function FluxoCaixaGestao() {
   // SIS-2026-0307: "após o pagamento alimentamos o fluxo de caixa" (usuário)
   // — Banco entra aqui, não em Pagamento Malote/Meus Itens.
   const [bancoId, setBancoId] = useState("");
+  const [page, setPage] = useState(1);
 
   const empresasDisponiveis = useMemo(() => {
     const map = new Map<string, string>();
@@ -73,6 +196,7 @@ export default function FluxoCaixaGestao() {
     setClassificacaoId("");
     setFormaPagamento("");
     setBancoId("");
+    setPage(1);
   }
 
   const filtradas = useMemo(() => {
@@ -95,6 +219,10 @@ export default function FluxoCaixaGestao() {
   const totalSaidas = useMemo(() => filtradas.filter((l) => l.tipo === "saida").reduce((s, l) => s + Number(l.valor), 0), [filtradas]);
   const totalEntradas = useMemo(() => filtradas.filter((l) => l.tipo === "entrada").reduce((s, l) => s + Number(l.valor), 0), [filtradas]);
 
+  const totalPages = Math.max(1, Math.ceil(filtradas.length / PAGE_SIZE));
+  const currentPage = Math.min(page, totalPages);
+  const pageRows = filtradas.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE);
+
   return (
     <div className="space-y-6 p-6">
       <PageHeader
@@ -102,6 +230,11 @@ export default function FluxoCaixaGestao() {
         subtitle="Acompanhe as entradas e saídas financeiras provenientes do Pagamento Malote e do Débito Automático."
         module="Financeiro"
         breadcrumb={["Financeiro", "Gestão Financeira", "Fluxo de Caixa"]}
+        actions={
+          <Button variant="outline" size="sm" className="gap-1.5" onClick={() => setLixeiraAberta(true)}>
+            <Trash2 className="h-3.5 w-3.5" /> Lixeira
+          </Button>
+        }
       />
 
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
@@ -238,17 +371,18 @@ export default function FluxoCaixaGestao() {
                   <TableHead className="text-center">Banco</TableHead>
                   <TableHead className="text-center">Forma de Pagamento</TableHead>
                   <TableHead className="text-center">Valor (R$)</TableHead>
+                  <TableHead className="text-center">Ações</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {isLoading && (
                   <TableRow>
-                    <TableCell colSpan={11} className="text-center text-muted-foreground py-10">Carregando...</TableCell>
+                    <TableCell colSpan={12} className="text-center text-muted-foreground py-10">Carregando...</TableCell>
                   </TableRow>
                 )}
                 {!isLoading && filtradas.length === 0 && (
                   <TableRow>
-                    <TableCell colSpan={11} className="text-center text-muted-foreground py-10">
+                    <TableCell colSpan={12} className="text-center text-muted-foreground py-10">
                       <div className="flex flex-col items-center gap-2">
                         <TrendingDown className="h-8 w-8 text-muted-foreground/50" />
                         Nenhuma movimentação encontrada com os filtros atuais.
@@ -256,7 +390,7 @@ export default function FluxoCaixaGestao() {
                     </TableCell>
                   </TableRow>
                 )}
-                {filtradas.map((l) => (
+                {pageRows.map((l) => (
                   // SIS-2026-0254: despesa parcelada agora pode gerar mais
                   // de 1 linha (1 por parcela paga) com o mesmo
                   // despesa_id — key precisa incluir o número da parcela.
@@ -280,16 +414,258 @@ export default function FluxoCaixaGestao() {
                     </TableCell>
                     <TableCell className="text-center text-sm">{l.forma_pagamento ?? "—"}</TableCell>
                     <TableCell className="text-center text-sm font-medium">{formatBRL(l.valor)}</TableCell>
+                    <TableCell className="text-center">
+                      <div className="flex items-center justify-center gap-0.5">
+                        <AcessoGate menu={MENU_POR_ORIGEM[l.origem]} acao="alterar">
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-7 w-7 text-muted-foreground hover:text-foreground"
+                            disabled={l.origem === "malote" && l.numero_parcela != null}
+                            title={
+                              l.origem === "malote" && l.numero_parcela != null
+                                ? "Despesa parcelada — edite pela tela do Malote"
+                                : l.origem === "debito_automatico"
+                                  ? "Editar (abre o Débito Automático)"
+                                  : "Editar"
+                            }
+                            onClick={() => abrirEditar(l)}
+                          >
+                            <Pencil className="h-3.5 w-3.5" />
+                          </Button>
+                        </AcessoGate>
+                        <AcessoGate menu={MENU_POR_ORIGEM[l.origem]} acao="excluir">
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-7 w-7 text-muted-foreground hover:text-destructive"
+                            disabled={l.origem === "malote" && l.numero_parcela != null}
+                            title={
+                              l.origem === "malote" && l.numero_parcela != null
+                                ? "Despesa parcelada — exclua a despesa inteira pela tela do Malote"
+                                : "Excluir"
+                            }
+                            onClick={() => setItemExcluir(l)}
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </Button>
+                        </AcessoGate>
+                      </div>
+                    </TableCell>
                   </TableRow>
                 ))}
               </TableBody>
             </Table>
           </div>
-          {filtradas.length > 0 && (
+          {totalPages > 1 && (
+            <div className="flex items-center justify-between border-t border-border pt-3 text-sm">
+              <span className="text-muted-foreground">
+                {(currentPage - 1) * PAGE_SIZE + 1}–{Math.min(currentPage * PAGE_SIZE, filtradas.length)} de {filtradas.length} registros
+              </span>
+              <div className="flex items-center gap-1">
+                <button
+                  onClick={() => setPage(1)}
+                  disabled={currentPage === 1}
+                  className="inline-flex h-7 w-7 items-center justify-center rounded border border-border text-xs hover:bg-muted disabled:opacity-40"
+                >«</button>
+                <button
+                  onClick={() => setPage((p) => Math.max(1, p - 1))}
+                  disabled={currentPage === 1}
+                  className="inline-flex h-7 w-7 items-center justify-center rounded border border-border text-xs hover:bg-muted disabled:opacity-40"
+                >‹</button>
+                {Array.from({ length: Math.min(5, totalPages) }, (_, i) => {
+                  const start = Math.max(1, Math.min(currentPage - 2, totalPages - 4));
+                  const p = start + i;
+                  return (
+                    <button
+                      key={p}
+                      onClick={() => setPage(p)}
+                      className={`inline-flex h-7 w-7 items-center justify-center rounded border text-xs font-medium ${
+                        p === currentPage
+                          ? "border-primary bg-primary text-primary-foreground"
+                          : "border-border hover:bg-muted"
+                      }`}
+                    >{p}</button>
+                  );
+                })}
+                <button
+                  onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+                  disabled={currentPage === totalPages}
+                  className="inline-flex h-7 w-7 items-center justify-center rounded border border-border text-xs hover:bg-muted disabled:opacity-40"
+                >›</button>
+                <button
+                  onClick={() => setPage(totalPages)}
+                  disabled={currentPage === totalPages}
+                  className="inline-flex h-7 w-7 items-center justify-center rounded border border-border text-xs hover:bg-muted disabled:opacity-40"
+                >»</button>
+              </div>
+            </div>
+          )}
+          {totalPages === 1 && filtradas.length > 0 && (
             <p className="text-xs text-muted-foreground pt-1">Mostrando {filtradas.length} registro{filtradas.length === 1 ? "" : "s"}</p>
           )}
         </CardContent>
       </Card>
+
+      {/* Confirmar exclusão (soft — vai pra lixeira, dá pra restaurar) */}
+      <AlertDialog open={!!itemExcluir} onOpenChange={(o) => !o && setItemExcluir(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Excluir lançamento?</AlertDialogTitle>
+            <AlertDialogDescription>
+              {itemExcluir?.id_malote} — {itemExcluir?.descricao}. Vai para a lixeira ({itemExcluir && LABEL_ORIGEM[itemExcluir.origem]}) —
+              dá pra restaurar depois pelo botão Lixeira aqui em cima.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={excluindo}>Cancelar</AlertDialogCancel>
+            <AlertDialogAction onClick={confirmarExcluir} disabled={excluindo}>
+              {excluindo ? "Excluindo…" : "Excluir"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* Editar — Forma de Pagamento/Banco/Data (Malote) ou só Data da
+          Compra (Cartão); Débito Automático nem chega a abrir isso, o
+          clique já navega direto pra tela própria (abrirEditar). */}
+      <Dialog open={!!itemEditar} onOpenChange={(o) => !o && setItemEditar(null)}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Editar lançamento</DialogTitle>
+          </DialogHeader>
+          <p className="text-xs text-muted-foreground -mt-2">
+            {itemEditar?.id_malote} — {itemEditar?.descricao}
+          </p>
+          <div className="space-y-3">
+            {itemEditar?.origem === "malote" && (
+              <>
+                <div>
+                  <Label className="text-xs">Forma de Pagamento</Label>
+                  <Select value={editFormaPagamento || "_"} onValueChange={(v) => setEditFormaPagamento(v === "_" ? "" : v)}>
+                    <SelectTrigger className="h-9"><SelectValue placeholder="Selecione…" /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="_">—</SelectItem>
+                      {tiposFormaPagamentoAtivos.map((t) => (
+                        <SelectItem key={t.nome} value={t.nome}>{t.nome}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div>
+                  <Label className="text-xs">Banco</Label>
+                  <Select value={editBancoId || "_"} onValueChange={(v) => setEditBancoId(v === "_" ? "" : v)}>
+                    <SelectTrigger className="h-9"><SelectValue placeholder="Selecione…" /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="_">—</SelectItem>
+                      {bancosCartao.filter((b) => b.ativo).map((b) => (
+                        <SelectItem key={b.id} value={b.id}>{b.nome}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div>
+                  <Label className="text-xs">Data de Pagamento</Label>
+                  <Input type="date" className="h-9" value={editData} onChange={(e) => setEditData(e.target.value)} />
+                </div>
+              </>
+            )}
+            {itemEditar?.origem === "cartao_fatura" && (
+              <div>
+                <Label className="text-xs">Data da Compra</Label>
+                <Input type="date" className="h-9" value={editData} onChange={(e) => setEditData(e.target.value)} />
+                <p className="text-xs text-muted-foreground mt-1">
+                  Forma de pagamento e banco são do cartão, não do lançamento — edite em Cartão de Crédito.
+                </p>
+              </div>
+            )}
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setItemEditar(null)} disabled={salvandoEdicao}>Cancelar</Button>
+            <Button onClick={confirmarEditar} disabled={salvandoEdicao}>{salvandoEdicao ? "Salvando…" : "Salvar"}</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Lixeira — itens excluídos das 3 origens, cada um com Restaurar */}
+      <Dialog open={lixeiraAberta} onOpenChange={setLixeiraAberta}>
+        <DialogContent className="max-w-2xl max-h-[80vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Lixeira do Fluxo de Caixa</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-5">
+            {despesasLixeira.length === 0 && debitosLixeira.length === 0 && itensFaturaLixeira.length === 0 && (
+              <p className="text-sm text-muted-foreground py-6 text-center">A lixeira está vazia.</p>
+            )}
+
+            {despesasLixeira.length > 0 && (
+              <div className="space-y-1.5">
+                <p className="text-xs font-semibold text-muted-foreground uppercase">Pagamento Malote</p>
+                {despesasLixeira.map((d) => (
+                  <div key={d.id} className="flex items-center justify-between gap-2 rounded-md border border-border px-3 py-2 text-sm">
+                    <div className="min-w-0">
+                      <p className="font-mono text-xs text-muted-foreground">{d.numero}</p>
+                      <p className="truncate">{d.nome}</p>
+                    </div>
+                    <div className="flex items-center gap-2 shrink-0">
+                      <span className="font-medium">{formatBRL(d.valor_total)}</span>
+                      <AcessoGate menu="malote_despesa_visualizar" acao="excluir">
+                        <Button variant="outline" size="sm" className="gap-1.5" onClick={() => restaurar("malote", d.id)}>
+                          <RotateCcw className="h-3.5 w-3.5" /> Restaurar
+                        </Button>
+                      </AcessoGate>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {debitosLixeira.length > 0 && (
+              <div className="space-y-1.5">
+                <p className="text-xs font-semibold text-muted-foreground uppercase">Débito Automático</p>
+                {debitosLixeira.map((d) => (
+                  <div key={d.id} className="flex items-center justify-between gap-2 rounded-md border border-border px-3 py-2 text-sm">
+                    <div className="min-w-0">
+                      <p className="font-mono text-xs text-muted-foreground">{d.numero}</p>
+                      <p className="truncate">{d.descricao}</p>
+                    </div>
+                    <div className="flex items-center gap-2 shrink-0">
+                      <span className="font-medium">{formatBRL(d.valor)}</span>
+                      <AcessoGate menu="financeiro-debito-automatico" acao="excluir">
+                        <Button variant="outline" size="sm" className="gap-1.5" onClick={() => restaurar("debito_automatico", d.id)}>
+                          <RotateCcw className="h-3.5 w-3.5" /> Restaurar
+                        </Button>
+                      </AcessoGate>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {itensFaturaLixeira.length > 0 && (
+              <div className="space-y-1.5">
+                <p className="text-xs font-semibold text-muted-foreground uppercase">Fatura Cartão de Crédito</p>
+                {itensFaturaLixeira.map((i) => (
+                  <div key={i.id} className="flex items-center justify-between gap-2 rounded-md border border-border px-3 py-2 text-sm">
+                    <div className="min-w-0">
+                      <p className="font-mono text-xs text-muted-foreground">{i.nome_cartao}</p>
+                      <p className="truncate">{i.descricao}</p>
+                    </div>
+                    <div className="flex items-center gap-2 shrink-0">
+                      <span className="font-medium">{formatBRL(i.valor)}</span>
+                      <AcessoGate menu="financeiro-cartao-credito" acao="excluir">
+                        <Button variant="outline" size="sm" className="gap-1.5" onClick={() => restaurar("cartao_fatura", i.id)}>
+                          <RotateCcw className="h-3.5 w-3.5" /> Restaurar
+                        </Button>
+                      </AcessoGate>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
