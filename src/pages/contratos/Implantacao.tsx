@@ -96,7 +96,7 @@ export default function Implantacao() {
   }, [usuarios]);
 
   async function handleDeleteContrato(id: string) {
-    const { error } = await supabase.from("implantacao_contrato").delete().eq("id", id);
+    const { error } = await (supabase as any).from("implantacao_contrato").delete().eq("id", id);
     if (error) { toast({ title: "Erro ao excluir", description: error.message, variant: "destructive" }); return; }
     toast({ title: "Contrato excluído." });
     qc.removeQueries({ queryKey: ["implantacao", "todas"] });
@@ -636,7 +636,7 @@ function EditarNomeModal({ contrato, onClose, onSaved }: {
   async function handleSave() {
     if (!nome.trim()) return;
     setSaving(true);
-    const { error } = await supabase.from("implantacao_contrato").update({ nome: nome.trim() }).eq("id", contrato.id);
+    const { error } = await (supabase as any).from("implantacao_contrato").update({ nome: nome.trim() }).eq("id", contrato.id);
     setSaving(false);
     if (error) {
       toast({ title: "Erro ao salvar", description: error.message, variant: "destructive" });

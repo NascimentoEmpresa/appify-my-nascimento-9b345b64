@@ -22,7 +22,7 @@ export function useUsuariosLicitacao(options?: { enabled?: boolean; empresaId?: 
     enabled: options?.enabled ?? true,
     staleTime: 60_000,
     queryFn: async (): Promise<UsuarioOption[]> => {
-      const { data, error } = await supabase.rpc("list_usuarios_comercial_empresa", {
+      const { data, error } = await (supabase as any).rpc("list_usuarios_comercial_empresa", {
         _empresa_id: empresaId,
       });
       if (error) throw error;

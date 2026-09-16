@@ -296,7 +296,7 @@ export default function ChecklistImplantacao() {
   const { data: contratos = [] } = useQuery({
     queryKey: ["implantacao-contratos", "todas"],
     queryFn: async () => {
-      const { data, error } = await supabase
+      const { data, error } = await (supabase as any)
         .from("implantacao_contrato")
         .select("id, nome, data_inicio, status, empresa_id")
         .eq("status", "ativo")

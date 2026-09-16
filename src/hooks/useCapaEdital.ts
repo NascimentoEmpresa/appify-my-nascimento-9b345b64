@@ -75,7 +75,7 @@ export function useCapaEdital(empresaId: string | null, opts?: { todasEmpresas?:
     queryKey: todasEmpresas ? ["capa-edital", "todas"] : QK(empresaId ?? ""),
     enabled: todasEmpresas || !!empresaId,
     queryFn: async () => {
-      let q = supabase.from("capa_edital").select("*").order("created_at", { ascending: false });
+      let q = (supabase as any).from("capa_edital").select("*").order("created_at", { ascending: false });
       if (!todasEmpresas) q = q.eq("empresa_id", empresaId!);
       const { data, error } = await q;
       if (error) throw error;
@@ -92,7 +92,7 @@ export function useCapaInsert() {
   return useMutation({
     mutationFn: async (payload: Partial<CapaEdital>) => {
       if (!payload.empresa_id) throw new Error("Empresa é obrigatória.");
-      const { data, error } = await supabase
+      const { data, error } = await (supabase as any)
         .from("capa_edital")
         .insert({
           ...payload,
@@ -167,7 +167,7 @@ export function useCapaUpdate() {
         if (gradeChanges && novaFaseGrade) {
           // Busca estado atual da grade e usuário para registrar no histórico
           const [{ data: gradeAtual }, { data: authData }] = await Promise.all([
-            supabase.from("grade").select("fase, posicao, historico").eq("id", current.grade_id).single(),
+            (supabase as any).from("grade").select("fase, posicao, historico").eq("id", current.grade_id).single(),
             supabase.auth.getUser(),
           ]);
           const { data: profile } = authData?.user
@@ -182,7 +182,7 @@ export function useCapaUpdate() {
             gradeHistorico.push({ ts: now, usuario, campo: "Posição", de: posAnterior ? `${posAnterior}º` : "—", para: "1º" });
           }
 
-          await supabase.from("grade").update({ ...gradeChanges, historico: gradeHistorico }).eq("id", current.grade_id);
+          await (supabase as any).from("grade").update({ ...gradeChanges, historico: gradeHistorico }).eq("id", current.grade_id);
         }
       }
 
@@ -195,7 +195,7 @@ export function useCapaUpdate() {
         changes.preenchido_em = new Date().toISOString().slice(0, 10);
       }
 
-      const { data, error } = await supabase
+      const { data, error } = await (supabase as any)
         .from("capa_edital")
         .update({ ...changes, historico })
         .eq("id", id)
@@ -216,7 +216,7 @@ export function useCapaDelete() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async (id: string) => {
-      const { error } = await supabase.from("capa_edital").delete().eq("id", id);
+      const { error } = await (supabase as any).from("capa_edital").delete().eq("id", id);
       if (error) throw error;
     },
     onSuccess: () => {
@@ -248,7 +248,7 @@ export function useCapaPromover() {
 
       const nome = [capa.cidade, capa.objeto].filter(Boolean).join(" — ").trim() || "Contrato sem nome";
 
-      const { data: contrato, error: cErr } = await supabase
+      const { data: contrato, error: cErr } = await (supabase as any)
         .from("implantacao_contrato")
         .insert({
           empresa_id: capa.empresa_id,
@@ -282,7 +282,7 @@ export function useCapaPromover() {
       const historico = [...(capa.historico ?? [])];
       historico.push({ ts: now, campo: "Reunião de alinhamento", de: "—", para: reuniaoAlinhamento });
 
-      const { error: capaErr } = await supabase
+      const { error: capaErr } = await (supabase as any)
         .from("capa_edital")
         .update({ contrato_id: contrato.id, reuniao_alinhamento: reuniaoAlinhamento, historico })
         .eq("id", capa.id);

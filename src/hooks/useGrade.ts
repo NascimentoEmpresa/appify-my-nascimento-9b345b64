@@ -59,7 +59,7 @@ export function useGrade(empresaId: string | null, opts?: { todasEmpresas?: bool
     // Evita refetch enquanto o usuário está editando o formulário
     staleTime: 30_000,
     queryFn: async () => {
-      let q = supabase
+      let q = (supabase as any)
         .from("grade")
         .select("*")
         .order("data", { ascending: true, nullsFirst: false });
@@ -80,7 +80,7 @@ export function useGradeInsert() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async (payload: GradeInsert) => {
-      const { data, error } = await supabase
+      const { data, error } = await (supabase as any)
         .from("grade")
         .insert({ ...payload, historico: [] })
         .select()
@@ -128,7 +128,7 @@ export function useGradeUpdate() {
         }
       }
 
-      const { data, error } = await supabase
+      const { data, error } = await (supabase as any)
         .from("grade")
         .update({ ...changes, historico })
         .eq("id", id)
@@ -143,7 +143,7 @@ export function useGradeUpdate() {
         const novoStatus =
           changes.fase === "Não Participado" ? "Não Participado" :
           updated.posicao === 1 ? "Ganhamos" : "Perdemos";
-        await supabase
+        await (supabase as any)
           .from("capa_edital")
           .update({ status: novoStatus })
           .eq("id", updated.capa_id);
@@ -164,7 +164,7 @@ export function useGradeDelete() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async (id: string) => {
-      const { error } = await supabase.from("grade").delete().eq("id", id);
+      const { error } = await (supabase as any).from("grade").delete().eq("id", id);
       if (error) throw error;
     },
     onSuccess: () => {
@@ -186,7 +186,7 @@ export function useGradePromover() {
 
       const abertura = [item.data, item.horario].filter(Boolean).join(" ").trim();
 
-      const { data: capa, error: capaErr } = await supabase
+      const { data: capa, error: capaErr } = await (supabase as any)
         .from("capa_edital")
         .insert({
           empresa_id: item.empresa_id,
@@ -208,7 +208,7 @@ export function useGradePromover() {
         .single();
       if (capaErr) throw capaErr;
 
-      const { error: gradeErr } = await supabase
+      const { error: gradeErr } = await (supabase as any)
         .from("grade")
         .update({ capa_id: capa.id })
         .eq("id", item.id);
