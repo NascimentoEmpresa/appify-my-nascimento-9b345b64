@@ -34,7 +34,11 @@ export interface ContratoERP {
   updated_at: string;
 }
 
-export type ContratoERPInput = Omit<ContratoERP, "id" | "empresa_id" | "created_at" | "updated_at">;
+// SIS-2026-0309: `empresa_id` passa a ser campo explícito do formulário
+// (obrigatório na criação), não mais herdado da empresa "ativa" do
+// seletor global — era exatamente esse padrão que causou o contrato
+// CEITEC nascer na empresa errada.
+export type ContratoERPInput = Omit<ContratoERP, "id" | "created_at" | "updated_at">;
 
 // SIS-2026-0337 (achado real): resolução de Orçado (useOrcamentoContratos/
 // useOrcadoClassificacaoMultiMes) usava este hook sem opção, sempre
@@ -67,8 +71,6 @@ export function useContratosERP(opts?: { todasEmpresas?: boolean }) {
 }
 
 export function useContratoERPUpsert() {
-  const { empresa } = useEmpresaAtiva();
-  const empresaId = empresa?.id ?? "";
   const qc = useQueryClient();
 
   return useMutation({
@@ -80,14 +82,15 @@ export function useContratoERPUpsert() {
           .eq("id", id);
         if (error) throw error;
       } else {
-        const { error } = await sb
-          .from("contratos")
-          .insert({ ...input, empresa_id: empresaId });
+        const { error } = await sb.from("contratos").insert(input);
         if (error) throw error;
       }
     },
+    // SIS-2026-0309: invalida por prefixo (sem 2º elemento) — a leitura
+    // pode estar em modo `todasEmpresas` ("todas") ou por empresa, e o
+    // prefixo casa com os dois.
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["contratos_erp", empresaId] });
+      qc.invalidateQueries({ queryKey: ["contratos_erp"] });
       toast({ title: "Contrato salvo." });
     },
     onError: (e: Error) =>
@@ -96,8 +99,6 @@ export function useContratoERPUpsert() {
 }
 
 export function useContratoERPDelete() {
-  const { empresa } = useEmpresaAtiva();
-  const empresaId = empresa?.id ?? "";
   const qc = useQueryClient();
 
   return useMutation({
@@ -106,7 +107,7 @@ export function useContratoERPDelete() {
       if (error) throw error;
     },
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["contratos_erp", empresaId] });
+      qc.invalidateQueries({ queryKey: ["contratos_erp"] });
       toast({ title: "Contrato excluído." });
     },
     onError: (e: Error) =>

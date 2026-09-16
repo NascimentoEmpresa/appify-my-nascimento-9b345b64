@@ -1,5 +1,4 @@
 import { useState, useMemo } from "react";
-import { useEmpresaId } from "@/hooks/useEmpresaId";
 import { useChecklistItems, useChecklistRespostas, useChecklistSalvar } from "@/hooks/useChecklist";
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
@@ -284,23 +283,22 @@ function CardChecklist({
 }
 
 export default function ChecklistImplantacao() {
-  const empresaId = useEmpresaId();
   const [contratoId, setContratoId] = useState<string>("");
   const [momentoFiltro, setMomentoFiltro] = useState<string>("");
   const [responsavelFiltro, setResponsavelFiltro] = useState<string>("");
 
   const { data: items = [] } = useChecklistItems();
   const { data: respostas = [] } = useChecklistRespostas(contratoId || null);
-  const salvar = useChecklistSalvar(empresaId ?? "");
 
+  // SIS-2026-0309: lista de contratos passa a ser de todas as empresas do
+  // grupo (antes usava useEmpresaId — empresa do PRÓPRIO usuário, não o
+  // seletor global, mas mesma classe de limitação de visão).
   const { data: contratos = [] } = useQuery({
-    queryKey: ["implantacao-contratos", empresaId],
-    enabled: !!empresaId,
+    queryKey: ["implantacao-contratos", "todas"],
     queryFn: async () => {
-      const { data, error } = await supabase
+      const { data, error } = await (supabase as any)
         .from("implantacao_contrato")
-        .select("id, nome, data_inicio, status")
-        .eq("empresa_id", empresaId!)
+        .select("id, nome, data_inicio, status, empresa_id")
         .eq("status", "ativo")
         .order("created_at", { ascending: false });
       if (error) throw error;
@@ -309,6 +307,9 @@ export default function ChecklistImplantacao() {
   });
 
   const contrato = contratos.find((c) => c.id === contratoId);
+  // Empresa vem do contrato selecionado (propagação pela origem), não mais
+  // de uma empresa ambiente.
+  const salvar = useChecklistSalvar(contrato?.empresa_id ?? "");
 
   const respostaMap = useMemo(() => {
     const m: Record<number, { resposta: string | null; obs: string | null }> = {};

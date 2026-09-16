@@ -14,6 +14,7 @@ import {
   AlertDialogHeader, AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { cn } from "@/lib/utils";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Plus, Pencil, Trash2, Building2, CalendarDays, TrendingUp, Download, FileText, ExternalLink, Archive } from "lucide-react";
 import {
   useContratosERP,
@@ -22,11 +23,12 @@ import {
 } from "@/hooks/useContratosERP";
 import type { ContratoERP, ContratoERPInput } from "@/hooks/useContratosERP";
 import { usePlanilhaCustos } from "@/hooks/usePlanilhaCusto";
-import { useEmpresaAtiva } from "@/context/EmpresaAtivaContext";
+import { useEmpresasGrupo } from "@/hooks/useMaloteDespesa";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "@/hooks/use-toast";
 import { useContratoDocsPorContrato } from "@/hooks/useDocumentos";
 import { BADGE as DOC_BADGE, periodLabel } from "@/pages/Documentos";
+import { corEmpresa } from "@/pages/malote/EmpresaContratoBadge";
 
 const STATUS_LABEL: Record<string, string> = {
   ativo: "Ativo",
@@ -59,6 +61,7 @@ type FiscalFields =
 type ContratoFormState = Omit<ContratoERPInput, FiscalFields>;
 
 const EMPTY: ContratoFormState = {
+  empresa_id: "",
   nome: "",
   cliente: "",
   cnpj_cliente: null,
@@ -109,14 +112,19 @@ function fiscalParaForm(d: ContratoERP | null | undefined): FiscalForm {
 
 export default function ContratosERP() {
   const navigate = useNavigate();
-  const { empresa } = useEmpresaAtiva();
-  const { data: contratos = [], isLoading } = useContratosERP();
-  const { data: planilha = [] } = usePlanilhaCustos();
+  // SIS-2026-0309: lê contratos/planilha de todas as empresas do grupo — o
+  // filtro de "empresa ativa" só limitava a visão. A empresa de um contrato
+  // novo agora é campo explícito do formulário (ver EMPTY/Select abaixo),
+  // não mais herdada do seletor global.
+  const { data: contratos = [], isLoading } = useContratosERP({ todasEmpresas: true });
+  const { data: planilha = [] } = usePlanilhaCustos({ todasEmpresas: true });
+  const { data: empresasGrupo = [] } = useEmpresasGrupo();
   const upsert = useContratoERPUpsert();
   const del = useContratoERPDelete();
 
   const [busca, setBusca] = useState("");
   const [filtroStatus, setFiltroStatus] = useState<string>("todos");
+  const [filtroEmpresaId, setFiltroEmpresaId] = useState<string>("todas");
   const [modalOpen, setModalOpen] = useState(false);
   const [editando, setEditando] = useState<ContratoERP | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<ContratoERP | null>(null);
@@ -186,45 +194,49 @@ export default function ContratosERP() {
           .map((r) => r.id)
       );
 
-      // Agrupa por contrato só as linhas EXECUTADO EM VIGÊNCIA ou A INICIAR
+      // Agrupa por contrato só as linhas EXECUTADO EM VIGÊNCIA ou A INICIAR.
+      // SIS-2026-0309: chave inclui empresa_id (não só o nome do contrato) —
+      // agora que a planilha é lida de todas as empresas do grupo, um mesmo
+      // nome de contrato em empresas diferentes não pode mais ser agrupado
+      // junto (empresa vem da própria linha da planilha, não da "ativa").
       const ativos = planilha.filter((r) => r.orexec === "EXECUTADO" && emVigencia.has(r.id));
-      const porContrato = new Map<string, { cliente: string; dataInicio: string | null }>();
+      const porContrato = new Map<string, { empresaId: string; nome: string; cliente: string; dataInicio: string | null }>();
       for (const r of ativos) {
-        const key = r.contrato;
+        const key = `${r.empresa_id}||${r.contrato}`;
         if (!porContrato.has(key)) {
-          porContrato.set(key, { cliente: r.cliente, dataInicio: r.data_vigencia ?? null });
+          porContrato.set(key, { empresaId: r.empresa_id, nome: r.contrato, cliente: r.cliente, dataInicio: r.data_vigencia ?? null });
         }
       }
 
-      // Filtra os que já existem
-      const nomesExistentes = new Set(contratos.map((c) => c.nome));
-      const novos = [...porContrato.entries()].filter(([nome]) => !nomesExistentes.has(nome));
+      // Filtra os que já existem (mesma empresa + mesmo nome)
+      const existentes = new Set(contratos.map((c) => `${c.empresa_id}||${c.nome}`));
+      const novos = [...porContrato.values()].filter((v) => !existentes.has(`${v.empresaId}||${v.nome}`));
 
       if (novos.length === 0) {
         toast({ title: "Nenhum contrato novo para importar.", description: "Todos já estão cadastrados." });
         return;
       }
 
-      const inserts = novos.map(([nome, v]) => ({
-        empresa_id: empresa.id,
-        nome,
+      const inserts = novos.map((v) => ({
+        empresa_id: v.empresaId,
+        nome: v.nome,
         cliente: v.cliente,
         data_inicio: v.dataInicio,
         status: "ativo" as const,
       }));
 
-      const { data: criados, error } = await (supabase as any).from("contratos").insert(inserts).select("id, nome");
+      const { data: criados, error } = await (supabase as any).from("contratos").insert(inserts).select("id, nome, empresa_id");
       if (error) throw error;
 
       // Vincula de volta as linhas da planilha de custo ao contrato recém-criado
       // (senão "Vlr. Mensal" e o autopreenchimento de Nova NF ficam sem valor,
       // já que dependem de planilha_custo.contrato_id, não do nome em texto).
       await Promise.all(
-        (criados ?? []).map((c: { id: string; nome: string }) =>
+        (criados ?? []).map((c: { id: string; nome: string; empresa_id: string }) =>
           (supabase as any)
             .from("planilha_custo")
             .update({ contrato_id: c.id })
-            .eq("empresa_id", empresa.id)
+            .eq("empresa_id", c.empresa_id)
             .eq("contrato", c.nome)
             .is("contrato_id", null)
         )
@@ -243,13 +255,14 @@ export default function ContratosERP() {
   const filtered = useMemo(() => {
     return contratos.filter((c) => {
       if (filtroStatus !== "todos" && c.status !== filtroStatus) return false;
+      if (filtroEmpresaId !== "todas" && c.empresa_id !== filtroEmpresaId) return false;
       if (busca) {
         const q = busca.toLowerCase();
         return c.nome.toLowerCase().includes(q) || c.cliente.toLowerCase().includes(q);
       }
       return true;
     });
-  }, [contratos, busca, filtroStatus]);
+  }, [contratos, busca, filtroStatus, filtroEmpresaId]);
 
   const ativos    = contratos.filter((c) => c.status === "ativo").length;
   const suspensos = contratos.filter((c) => c.status === "suspenso").length;
@@ -268,6 +281,7 @@ export default function ContratosERP() {
   function abrirEditar(c: ContratoERP) {
     setEditando(c);
     setForm({
+      empresa_id: c.empresa_id,
       nome: c.nome,
       cliente: c.cliente,
       cnpj_cliente: c.cnpj_cliente,
@@ -282,6 +296,10 @@ export default function ContratosERP() {
   }
 
   async function handleSalvar() {
+    if (!form.empresa_id) {
+      toast({ title: "Selecione a empresa do contrato.", variant: "destructive" });
+      return;
+    }
     const pctToNum = (v: string) => (v.trim() ? Number(v) / 100 : 0);
     await upsert.mutateAsync({
       ...form,
@@ -367,6 +385,13 @@ export default function ContratosERP() {
             {s === "todos" ? "Todos" : STATUS_LABEL[s]}
           </button>
         ))}
+        <Select value={filtroEmpresaId} onValueChange={setFiltroEmpresaId}>
+          <SelectTrigger className="h-8 w-48 text-xs"><SelectValue placeholder="Empresa" /></SelectTrigger>
+          <SelectContent>
+            <SelectItem value="todas">Todas as empresas</SelectItem>
+            {empresasGrupo.map((e) => <SelectItem key={e.id} value={e.id}>{e.nome}</SelectItem>)}
+          </SelectContent>
+        </Select>
       </div>
 
       {/* Tabela */}
@@ -384,6 +409,7 @@ export default function ContratosERP() {
             <thead className="bg-muted/50">
               <tr className="text-left text-xs text-muted-foreground">
                 <th className="px-4 py-3 font-medium">Contrato</th>
+                <th className="px-4 py-3 font-medium">Empresa</th>
                 <th className="px-4 py-3 font-medium">Cliente</th>
                 <th className="px-4 py-3 font-medium">Início</th>
                 <th className="px-4 py-3 font-medium">Prazo</th>
@@ -399,6 +425,11 @@ export default function ContratosERP() {
                   className={cn("hover:bg-muted/30 transition-colors", c.status === "encerrado" && "opacity-50")}
                 >
                   <td className="px-4 py-3 font-medium">{c.nome}</td>
+                  <td className="px-4 py-3">
+                    <span className={cn("inline-flex rounded-full border px-2 py-0.5 text-[11px] font-semibold", corEmpresa(c.empresa_id))}>
+                      {empresasGrupo.find((e) => e.id === c.empresa_id)?.nome ?? "—"}
+                    </span>
+                  </td>
                   <td className="px-4 py-3 text-muted-foreground">{c.cliente}</td>
                   <td className="px-4 py-3 text-muted-foreground">{fmtData(c.data_inicio)}</td>
                   <td className="px-4 py-3 text-muted-foreground">
@@ -440,6 +471,19 @@ export default function ContratosERP() {
             <DialogTitle>{editando ? "Editar Contrato" : "Novo Contrato"}</DialogTitle>
           </DialogHeader>
           <div className="grid grid-cols-2 gap-3 py-2">
+            {/* SIS-2026-0309: empresa passa a ser campo explícito na
+                criação/edição — deixou de ser herdada do seletor "empresa
+                ativa" (era exatamente esse padrão que causou o contrato
+                CEITEC nascer na empresa errada). */}
+            <div className="col-span-2 flex flex-col gap-1">
+              <Label className="text-xs">Empresa *</Label>
+              <Select value={form.empresa_id} onValueChange={(v) => setForm((f) => ({ ...f, empresa_id: v }))}>
+                <SelectTrigger className="h-9"><SelectValue placeholder="Selecione a empresa..." /></SelectTrigger>
+                <SelectContent>
+                  {empresasGrupo.map((e) => <SelectItem key={e.id} value={e.id}>{e.nome}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            </div>
             <div className="col-span-2">{field("Nome / Objeto", "nome", { required: true })}</div>
             <div className="col-span-2">{field("Cliente (Órgão)", "cliente", { required: true })}</div>
             {field("CNPJ do Cliente", "cnpj_cliente")}

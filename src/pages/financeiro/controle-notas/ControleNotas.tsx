@@ -16,7 +16,6 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Search } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
-import { useEmpresaAtiva } from "@/context/EmpresaAtivaContext";
 import {
   NfEmissaoRow,
   NfEmissaoItemRow,
@@ -56,9 +55,9 @@ function StatusBadge({ nf }: { nf: NfEmissaoRow }) {
 }
 
 export default function ControleNotas() {
-  const { empresa } = useEmpresaAtiva();
-  const empresaId = empresa?.id ?? null;
-  const { data: nfs = [], isLoading } = useNfsEmissao(empresaId);
+  // SIS-2026-0309: lê NFs de todas as empresas do grupo, sem filtro pela
+  // empresa "ativa" do seletor global (tela é só de leitura/validação).
+  const { data: nfs = [], isLoading } = useNfsEmissao(null, { todasEmpresas: true });
 
   const [aba, setAba] = useState<"pendentes" | "historico">("pendentes");
   const [nfSelecionada, setNfSelecionada] = useState<NfEmissaoRow | null>(null);

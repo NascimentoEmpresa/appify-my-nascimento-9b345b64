@@ -59,7 +59,7 @@ export function useGrade(empresaId: string | null, opts?: { todasEmpresas?: bool
     // Evita refetch enquanto o usuário está editando o formulário
     staleTime: 30_000,
     queryFn: async () => {
-      let q = supabase
+      let q = (supabase as any)
         .from("grade")
         .select("*")
         .order("data", { ascending: true, nullsFirst: false });
@@ -71,27 +71,32 @@ export function useGrade(empresaId: string | null, opts?: { todasEmpresas?: bool
   });
 }
 
-export function useGradeInsert(empresaId: string) {
+// SIS-2026-0309: `empresa_id` vem do próprio payload (campo explícito do
+// formulário — GradeSheet), não mais de um parâmetro externo sourced da
+// empresa "ativa" do seletor. É o ponto de entrada real da cadeia de
+// licitação (Grade → Capa → Implantação → Contrato); acertar aqui evita a
+// classe inteira de erro do bug real do contrato CEITEC.
+export function useGradeInsert() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async (payload: GradeInsert) => {
-      const { data, error } = await supabase
+      const { data, error } = await (supabase as any)
         .from("grade")
-        .insert({ ...payload, empresa_id: empresaId, historico: [] })
+        .insert({ ...payload, historico: [] })
         .select()
         .single();
       if (error) throw error;
       return data as GradeItem;
     },
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: QK(empresaId) });
+      qc.invalidateQueries({ queryKey: ["grade"] });
       toast({ title: "Entrada cadastrada!" });
     },
     onError: (e: Error) => toast({ title: "Erro", description: e.message, variant: "destructive" }),
   });
 }
 
-export function useGradeUpdate(empresaId: string) {
+export function useGradeUpdate() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async ({ id, changes, current }: { id: string; changes: GradeUpdate; current: GradeItem }) => {
@@ -123,7 +128,7 @@ export function useGradeUpdate(empresaId: string) {
         }
       }
 
-      const { data, error } = await supabase
+      const { data, error } = await (supabase as any)
         .from("grade")
         .update({ ...changes, historico })
         .eq("id", id)
@@ -138,39 +143,42 @@ export function useGradeUpdate(empresaId: string) {
         const novoStatus =
           changes.fase === "Não Participado" ? "Não Participado" :
           updated.posicao === 1 ? "Ganhamos" : "Perdemos";
-        await supabase
+        await (supabase as any)
           .from("capa_edital")
           .update({ status: novoStatus })
           .eq("id", updated.capa_id);
-        qc.invalidateQueries({ queryKey: ["capa-edital", empresaId] });
+        qc.invalidateQueries({ queryKey: ["capa-edital"] });
       }
 
       return updated;
     },
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: QK(empresaId) });
+      qc.invalidateQueries({ queryKey: ["grade"] });
       toast({ title: "Entrada atualizada!" });
     },
     onError: (e: Error) => toast({ title: "Erro", description: e.message, variant: "destructive" }),
   });
 }
 
-export function useGradeDelete(empresaId: string) {
+export function useGradeDelete() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async (id: string) => {
-      const { error } = await supabase.from("grade").delete().eq("id", id);
+      const { error } = await (supabase as any).from("grade").delete().eq("id", id);
       if (error) throw error;
     },
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: QK(empresaId) });
+      qc.invalidateQueries({ queryKey: ["grade"] });
       toast({ title: "Excluído." });
     },
     onError: (e: Error) => toast({ title: "Erro", description: e.message, variant: "destructive" }),
   });
 }
 
-export function useGradePromover(empresaId: string) {
+// SIS-2026-0309 (mesma classe do bug real do CEITEC): a empresa da Capa
+// criada vem da PRÓPRIA grade (item.empresa_id) — origem da cadeia —, não
+// mais de um parâmetro externo sourced da empresa "ativa" do seletor.
+export function useGradePromover() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async (item: GradeItem) => {
@@ -178,10 +186,10 @@ export function useGradePromover(empresaId: string) {
 
       const abertura = [item.data, item.horario].filter(Boolean).join(" ").trim();
 
-      const { data: capa, error: capaErr } = await supabase
+      const { data: capa, error: capaErr } = await (supabase as any)
         .from("capa_edital")
         .insert({
-          empresa_id: empresaId,
+          empresa_id: item.empresa_id,
           grade_id: item.id,
           cidade: item.cidade,
           uf: item.uf,
@@ -200,7 +208,7 @@ export function useGradePromover(empresaId: string) {
         .single();
       if (capaErr) throw capaErr;
 
-      const { error: gradeErr } = await supabase
+      const { error: gradeErr } = await (supabase as any)
         .from("grade")
         .update({ capa_id: capa.id })
         .eq("id", item.id);
@@ -209,8 +217,8 @@ export function useGradePromover(empresaId: string) {
       return capa;
     },
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: QK(empresaId) });
-      qc.invalidateQueries({ queryKey: ["capa-edital", empresaId] });
+      qc.invalidateQueries({ queryKey: ["grade"] });
+      qc.invalidateQueries({ queryKey: ["capa-edital"] });
       toast({ title: "Capa de Edital criada!", description: "Acesse o módulo Capa para completar." });
     },
     onError: (e: Error) => toast({ title: "Erro", description: e.message, variant: "destructive" }),

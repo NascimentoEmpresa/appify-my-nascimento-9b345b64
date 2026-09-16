@@ -71,8 +71,7 @@ import { ACESSO_ABERTO_SEM_PERMISSOES, rotaSempreLiberada } from "@/lib/acesso";
 import { useGradeAtivaCount } from "@/hooks/useGradeAtivaCount";
 import { useChamadosNotif } from "@/hooks/useChamadosNotif";
 import { useTrocaFuncaoNotif } from "@/hooks/useTrocaFuncaoNotif";
-import { EmpresaAtivaContext } from "@/context/EmpresaAtivaContext";
-import { Inbox } from "lucide-react";
+import { Inbox, type LucideIcon } from "lucide-react";
 import { Target } from "lucide-react";
 import { GitBranch, GitMerge } from "lucide-react";
 import { MessageSquare } from "lucide-react";
@@ -83,12 +82,12 @@ import { CreditCard } from "lucide-react";
 import { Network } from "lucide-react";
 import { useNovidades } from "@/hooks/useNovidades";
 import { cn } from "@/lib/utils";
-import { useCallback, useEffect, useMemo, useState, useContext } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 
 interface NavItem {
   label: string;
   to: string;
-  icon: any;
+  icon: LucideIcon;
   badge?: string;
   // Bolinha de notificação (novidade). Resolvida em runtime pelo useChamadosNotif.
   notif?: "meus" | "dev" | "troca_funcao";
@@ -103,7 +102,7 @@ interface ModuleDef {
   id: string;
   label: string;
   description: string;
-  icon: any;
+  icon: LucideIcon;
   basePath: string;
   badge?: string;
   status: "active" | "soon";
@@ -909,10 +908,9 @@ const operacionalModule: ModuleDef = {
         { label: "Solicitações de Demissão", to: "/app/operacional/solicitacoes-demissao", icon: UserMinus },
         { label: "Conferência de Ponto", to: "/app/operacional/conferencia-ponto", icon: ClipboardCheck },
         { label: "Mudança de Função", to: "/app/operacional/troca-funcao", icon: ArrowLeftRight, notif: "troca_funcao" },
-        // Advertências (15/09/2026): o Operacional aprova antes do Jurídico.
-        // Sem menu próprio de propósito (pedido: "usa o que já tem") — a rota
-        // cai em operacional_home, o menu raiz do módulo.
-        { label: "Advertências Solicitadas", to: "/app/operacional/advertencias", icon: ShieldAlert },
+        // Advertências passaram pelo Operacional só em 15/09/2026 (mig 117);
+        // em 16/09 voltaram a ser só do Jurídico, com aprovador pelo Acesso
+        // por Usuário (mig 124).
       ],
     },
   ],
@@ -1028,12 +1026,9 @@ export function Sidebar({ collapsed, mobileOpen = false, onMobileClose }: Sideba
   const { temAlcada, pendentes } = useTemAlcada();
   const { data: access } = useAccessibleMenus("visualizar");
   const externo = useModoExterno();
-  const empresaCtx = useContext(EmpresaAtivaContext);
-  // Antes do EmpresaAtivaContext carregar a empresa real do banco, empresa.id
-  // é o placeholder estático de src/data/controladoria.ts (ex: "HAGG" — um
-  // código curto, não um uuid) — passar isso pra uma coluna uuid derruba a
-  // query com 400. Só busca depois que o contexto termina de carregar.
-  const { data: gradeAtivaCount } = useGradeAtivaCount(!empresaCtx?.loading ? empresaCtx?.empresa?.id ?? null : null);
+  // SIS-2026-0309: contador do sidebar passa a somar a grade ativa de
+  // todas as empresas do grupo, não só a empresa "ativa" do seletor.
+  const { data: gradeAtivaCount } = useGradeAtivaCount(null, { todasEmpresas: true });
   const chamadosNotif = useChamadosNotif();
   const trocaFuncaoNotif = useTrocaFuncaoNotif();
   // Contador das Novidades do Sistema: o mesmo número da bolinha do topo.

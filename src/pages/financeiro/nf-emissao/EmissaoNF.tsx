@@ -31,7 +31,6 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
-import { useEmpresaAtiva } from "@/context/EmpresaAtivaContext";
 import {
   NfEmissaoRow,
   useNfsEmissao,
@@ -99,10 +98,11 @@ function temRetencaoPropria(x: {
 }
 
 export default function EmissaoNF() {
-  const { empresa } = useEmpresaAtiva();
-  const empresaId = empresa?.id ?? null;
-  const { data: nfs = [], isLoading } = useNfsEmissao(empresaId);
-  const { data: contratosTodos = [] } = useContratosERP();
+  // SIS-2026-0309: lê NFs/contratos de todas as empresas do grupo — a
+  // empresa de cada NF nova passa a vir do contrato selecionado (propagação
+  // pela origem), não mais da empresa "ativa" do seletor.
+  const { data: nfs = [], isLoading } = useNfsEmissao(null, { todasEmpresas: true });
+  const { data: contratosTodos = [] } = useContratosERP({ todasEmpresas: true });
   // Esconde contratos encerrados/suspensos do fluxo operacional — a não ser
   // que já tenham NF emitida aqui, pra não sumir com histórico existente.
   const contratos = useMemo(() => {
@@ -119,7 +119,7 @@ export default function EmissaoNF() {
   const [modeloConfigOpen, setModeloConfigOpen] = useState(false);
   const [seedNovaNf, setSeedNovaNf] = useState<NovaNfSeed | null>(null);
 
-  const { data: planilha = [] } = usePlanilhaCustos();
+  const { data: planilha = [] } = usePlanilhaCustos({ todasEmpresas: true });
   const { data: modelosContratoSel = [] } = useModelosNf(contratoSel);
   const modelosAtivos = useMemo(() => modelosContratoSel.filter((m) => m.ativo), [modelosContratoSel]);
 
@@ -359,7 +359,6 @@ export default function EmissaoNF() {
             setSeedNovaNf(null);
           }
         }}
-        empresaId={empresaId}
         contratos={contratos}
         nfParaEditar={nfEmEdicao}
         contratoIdInicial={novaNfContratoId}
@@ -643,20 +642,19 @@ function ContratoNfsPanel({
 interface NovaNfDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  empresaId: string | null;
   contratos: ContratoERP[];
   nfParaEditar?: NfEmissaoRow | null;
   contratoIdInicial?: string | null;
   seed?: NovaNfSeed | null;
 }
 
-function NovaNfDialog({ open, onOpenChange, empresaId, contratos, nfParaEditar, contratoIdInicial, seed }: NovaNfDialogProps) {
+function NovaNfDialog({ open, onOpenChange, contratos, nfParaEditar, contratoIdInicial, seed }: NovaNfDialogProps) {
   const editando = !!nfParaEditar;
   const contratoTravado = editando || !!contratoIdInicial;
   const salvar = useSalvarNfEmissao();
   const atualizar = useAtualizarNfEmissao();
   const enviar = useEnviarNfEmissao();
-  const { data: planilha = [] } = usePlanilhaCustos();
+  const { data: planilha = [] } = usePlanilhaCustos({ todasEmpresas: true });
   const { data: itensExistentes = [] } = useItensNfEmissao(editando ? nfParaEditar?.id : undefined);
   const { data: anexosExistentes = [] } = useAnexosNfEmissao(editando ? nfParaEditar?.id : undefined);
 
@@ -830,7 +828,6 @@ function NovaNfDialog({ open, onOpenChange, empresaId, contratos, nfParaEditar, 
   }
 
   function validar(): string | null {
-    if (!empresaId) return "Empresa não identificada.";
     if (!contratoId) return "Selecione o Contrato.";
     // Retenção do contrato não é mais pré-requisito — se a nota ou pelo
     // menos um item já define seus próprios percentuais, isso já cobre a
@@ -861,7 +858,9 @@ function NovaNfDialog({ open, onOpenChange, empresaId, contratos, nfParaEditar, 
       if (editando && nfParaEditar) {
         await atualizar.mutateAsync({
           id: nfParaEditar.id,
-          empresa_id: empresaId!,
+          // SIS-2026-0309: empresa vem do contrato selecionado (propagação
+          // pela origem), não mais da empresa "ativa" do seletor global.
+          empresa_id: contratoSelecionado!.empresa_id,
           contrato_id: contratoId,
           variacao: variacao || null,
           competencia,
@@ -882,7 +881,7 @@ function NovaNfDialog({ open, onOpenChange, empresaId, contratos, nfParaEditar, 
         toast.success(status === "enviada" ? "NF atualizada e enviada para o Financeiro." : "Alterações salvas.");
       } else {
         const nfId = await salvar.mutateAsync({
-          empresa_id: empresaId!,
+          empresa_id: contratoSelecionado!.empresa_id,
           contrato_id: contratoId,
           variacao: variacao || null,
           competencia,

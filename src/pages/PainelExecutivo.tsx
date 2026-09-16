@@ -153,8 +153,8 @@ async function geocodeAddress(loc: { logradouro: string | null; numero: string |
   }
 }
 
-function MapaContratos({ empresaId }: { empresaId: string }) {
-  const { data: localizacoes = [] } = usePlanilhaPostoLocalizacaoAll(empresaId);
+function MapaContratos({ empresaId, todasEmpresas }: { empresaId: string; todasEmpresas?: boolean }) {
+  const { data: localizacoes = [] } = usePlanilhaPostoLocalizacaoAll(empresaId, { todasEmpresas });
   const { mutate: saveCoords } = usePostoLocalizacaoCoords();
   const geocodingRef = useRef(false);
 
@@ -582,7 +582,7 @@ export default function PainelExecutivo() {
         {/* ── Linha 4: Mapa + Últimos finalizados ──────────────────────────── */}
         <div className="grid gap-4 xl:grid-cols-2 xl:items-stretch">
           <Card title="Mapa de Contratos (Cidades)" subtitle="Postos EXECUTADO vigentes por município">
-            {empresa?.id && <MapaContratos empresaId={empresa.id} />}
+            {empresa?.id && <MapaContratos empresaId={empresa.id} todasEmpresas={todasEmpresas} />}
           </Card>
 
           <Card title="Últimos Editais Finalizados" className="justify-between">
