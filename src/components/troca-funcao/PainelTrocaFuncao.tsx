@@ -1,7 +1,9 @@
 import { useEffect, useMemo, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { useMeuNome } from "@/hooks/useMeuNome";
+import { useAuth } from "@/hooks/useAuth";
 import { usePermissoes } from "@/context/PermissoesContext";
+import { TABELA_STF_APROVADOR_SETOR } from "@/components/admin/TrocaFuncaoSetoresUsuario";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -71,9 +73,25 @@ function Kpi({ titulo, valor, icone: Icone, cor }: {
   );
 }
 
+// Mesma régua do banco (cs_reembolso_norm_setor): sem acento, caixa alta, sem espaços nas pontas.
+const normSetorTF = (s: string | null | undefined) =>
+  String(s ?? "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim().toUpperCase();
+
 export function PainelTrocaFuncao({ etapa }: { etapa: Etapa }) {
   const meuNome = useMeuNome();
+  const { user } = useAuth();
   const { can } = usePermissoes();
+  // Setores que EU aprovo (16/09/2026) — marcados em Administração › Acesso
+  // por Usuário. Só pesa na etapa de aprovação e só em solicitação com setor;
+  // o banco faz valer a mesma regra no trigger trg_stf_guard_aprovador_setor.
+  const [meusSetores, setMeusSetores] = useState<Set<string> | null>(null);
+  useEffect(() => {
+    if (etapa !== "aprovacao" || !user?.id) { setMeusSetores(null); return; }
+    sb.from(TABELA_STF_APROVADOR_SETOR).select("setor").eq("user_id", user.id)
+      .then(({ data }) => setMeusSetores(new Set((data ?? []).map((r: { setor: string }) => normSetorTF(r.setor)))));
+  }, [etapa, user?.id]);
+  const aprovoSetor = (s: SolicitacaoTroca) =>
+    etapa !== "aprovacao" || !normSetorTF(s.setor) || !!meusSetores?.has(normSetorTF(s.setor));
   const [linhas, setLinhas] = useState<SolicitacaoTroca[]>([]);
   const [carregando, setCarregando] = useState(true);
   const [busca, setBusca] = useState("");
@@ -140,7 +158,7 @@ export function PainelTrocaFuncao({ etapa }: { etapa: Etapa }) {
     });
   }, [linhas, busca, fStatus, fOrigem, fSetor, fContratos]);
 
-  const pendentes = linhas.filter(r => podeAgirEm(r, etapa, origens)).length;
+  const pendentes = linhas.filter(r => podeAgirEm(r, etapa, origens) && aprovoSetor(r)).length;
   const concluidas = linhas.filter(r => r.status === "Concluída").length;
   const reprovadas = linhas.filter(r => r.status === "Reprovada").length;
 
@@ -208,7 +226,8 @@ export function PainelTrocaFuncao({ etapa }: { etapa: Etapa }) {
     setAberta(null); carregar();
   };
 
-  const podeAgir = !!aberta && podeAgirEm(aberta, etapa, origens);
+  const naEtapa = !!aberta && podeAgirEm(aberta, etapa, origens);
+  const podeAgir = naEtapa && !!aberta && aprovoSetor(aberta);
   const rot = ROTULO[etapa];
   // O seletor de origem só faz sentido para quem enxerga mais de uma. Para a
   // Fernanda, que só vê administrativo, um filtro de uma opção só é ruído.
@@ -465,6 +484,12 @@ export function PainelTrocaFuncao({ etapa }: { etapa: Etapa }) {
                       </div>
                     )}
                   </div>
+                ) : naEtapa ? (
+                  <p className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-300">
+                    Esta solicitação é do setor <b>{aberta?.setor}</b> e você não aprova esse setor. Quem
+                    aprova cada setor é marcado em Administração › Acesso por Usuário, no menu de
+                    aprovação da Mudança de Função.
+                  </p>
                 ) : (
                   <p className="rounded-lg bg-muted/50 p-3 text-sm text-muted-foreground">
                     Esta solicitação não está na sua etapa — você está acompanhando o andamento.

@@ -13,6 +13,7 @@ import type { FormCap } from "@/hooks/useFormPerms";
 import { useSetoresCatalogo } from "@/hooks/usePlanejamentoOrcamentario";
 import { SearchableMultiSelect } from "@/components/ui/searchable-multi-select";
 import { ReembolsoSetoresUsuario } from "@/components/admin/ReembolsoSetoresUsuario";
+import { TrocaFuncaoSetoresUsuario } from "@/components/admin/TrocaFuncaoSetoresUsuario";
 import { rotaVisivelNoGerenciamento } from "@/lib/menusOcultosGerenciamento";
 
 const FORM_MENU_CODIGO = "central_servicos_formularios";
@@ -68,6 +69,10 @@ const MALOTE_SETOR_MENU_CODIGOS = [
 // Reembolso: painel irmao do do Malote, mas OPT-OUT (sem setor marcado, nao
 // aprova nada) - ver ReembolsoSetoresUsuario.tsx.
 const REEMBOLSO_APROVACAO_MENU_CODIGO = "central_servicos_reembolso_aprovacao";
+// Mudança de Função (16/09/2026): quem aprova, aprova só os setores marcados
+// (SISTEMA_TROCA_FUNCAO_APROVADOR_SETOR). Uma configuração por pessoa, que
+// aparece ao lado dos dois menus de aprovação — contrato e escritório.
+const TROCA_FUNCAO_APROVACAO_MENU_CODIGOS = ["operacional_troca_funcao", "escritorio_troca_funcao"];
 
 interface Modulo { id: string; codigo: string; nome: string; ordem: number; ativo: boolean; icone: string | null }
 interface Menu { id: string; modulo_id: string; codigo: string; nome: string; rota: string | null; ordem: number; ativo: boolean }
@@ -746,6 +751,7 @@ function UserAccessPanel({ podeGerenciar, modulos, menus }: { podeGerenciar: boo
                       const isReunioes = mn.codigo === REUNIOES_MENU_CODIGO;
                       const isMaloteSetor = MALOTE_SETOR_MENU_CODIGOS.includes(mn.codigo);
                       const isReembolsoSetor = mn.codigo === REEMBOLSO_APROVACAO_MENU_CODIGO;
+                      const isTrocaFuncaoSetor = TROCA_FUNCAO_APROVACAO_MENU_CODIGOS.includes(mn.codigo);
                       const capsOpen = expanded.has(mn.id);
                       const acoesDesteMenu = acoesDoMenu(mn.codigo);
                       const comAcoesExtras = acoesDesteMenu.length > 0;
@@ -754,7 +760,7 @@ function UserAccessPanel({ podeGerenciar, modulos, menus }: { podeGerenciar: boo
                       return (
                         <div key={mn.id}>
                           <div className={cn("flex items-center gap-2 px-12 py-2.5 hover:bg-muted/40", isPending && "bg-amber-50/50 dark:bg-amber-950/20")}>
-                            {(isForm || isReunioes || isMaloteSetor || isReembolsoSetor) && podeGerenciar ? (
+                            {(isForm || isReunioes || isMaloteSetor || isReembolsoSetor || isTrocaFuncaoSetor) && podeGerenciar ? (
                               <button onClick={() => toggleExpand(mn.id)} className="text-muted-foreground" title="Permissões do usuário neste menu">
                                 {capsOpen ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
                               </button>
@@ -799,6 +805,11 @@ function UserAccessPanel({ podeGerenciar, modulos, menus }: { podeGerenciar: boo
                           {isReembolsoSetor && podeGerenciar && capsOpen && (
                             <div className="border-t border-border/60 bg-background px-12 py-2">
                               <ReembolsoSetoresUsuario userId={selectedUserId} onToast={(m, t) => toast({ title: m, variant: t === "err" ? "destructive" : "default" })} />
+                            </div>
+                          )}
+                          {isTrocaFuncaoSetor && podeGerenciar && capsOpen && (
+                            <div className="border-t border-border/60 bg-background px-12 py-2">
+                              <TrocaFuncaoSetoresUsuario userId={selectedUserId} onToast={(m, t) => toast({ title: m, variant: t === "err" ? "destructive" : "default" })} />
                             </div>
                           )}
                           {comAcoesExtras && podeGerenciar && acoesOpen && (
