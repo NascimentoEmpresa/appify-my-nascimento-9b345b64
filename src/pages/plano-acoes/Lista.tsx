@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useSearchParams, useLocation } from "react-router-dom";
 import { isSameDay, isWithinInterval, subDays } from "date-fns";
+import { toast } from "sonner";
+import * as XLSX from "xlsx";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -17,8 +19,14 @@ import {
 import { STATUS_LABELS, STATUS_COR, PRIORIDADE_LABEL, PRIORIDADE_COR, STATUS_ORDEM, PRIORIDADES } from "@/types/planoAcao";
 import { KpiCard, type KpiTone } from "./KpiCard";
 import {
+  CABECALHOS_EXCEL_PLANO_ACOES,
+  LARGURAS_EXCEL_PLANO_ACOES,
+  montarLinhasExcelPlanoAcoes,
+  nomeArquivoPlanoAcoes,
+} from "./listaExcelUtils";
+import {
   Plus, Search, AlertTriangle, Clock, CheckCircle2, ArrowUp, ArrowDown, ListChecks, ListTodo, FileQuestion,
-  CircleDashed, Activity, FileWarning, Ban, X,
+  CircleDashed, Activity, FileWarning, Ban, X, Download,
 } from "lucide-react";
 
 const OPCOES_STATUS: SearchableOption[] = STATUS_ORDEM.map(s => ({ value: s, label: STATUS_LABELS[s] }));
@@ -223,6 +231,30 @@ export default function PlanoAcoesLista() {
     return sorted;
   }, [semStatus, fStatus, sort]);
 
+  // Exportação Excel (mesmo par de botões de Malote › Meus Itens):
+  // "filtrado" = exatamente o que está na tela, com filtros e ordenação
+  // atuais; "completo" = todas as ações que o usuário enxerga, ignorando os
+  // filtros. Não existe escopo maior que esse: `rows` já vem recortado pela
+  // RLS de plano_acao, então "tudo" é sempre "tudo o que este usuário pode
+  // ver", nunca a base inteira.
+  function exportar(escopo: "filtrado" | "completo") {
+    const lista = escopo === "filtrado" ? filtered : rows;
+    try {
+      const linhas = montarLinhasExcelPlanoAcoes(lista, empresaLabelById);
+      const ws = linhas.length > 0
+        ? XLSX.utils.json_to_sheet(linhas)
+        : XLSX.utils.aoa_to_sheet([CABECALHOS_EXCEL_PLANO_ACOES]);
+      ws["!cols"] = LARGURAS_EXCEL_PLANO_ACOES.map(wch => ({ wch }));
+      if (ws["!ref"]) ws["!autofilter"] = { ref: ws["!ref"] };
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, ws, "Plano de Ações");
+      XLSX.writeFile(wb, nomeArquivoPlanoAcoes(escopo));
+      toast.success(`Planilha exportada com ${lista.length} ${lista.length === 1 ? "ação" : "ações"}.`);
+    } catch (erro) {
+      toast.error(erro instanceof Error ? erro.message : "Não foi possível exportar a planilha.");
+    }
+  }
+
   if (lp) return null;
   if (!can("visualizar")) return <ForbiddenCard />;
 
@@ -235,6 +267,24 @@ export default function PlanoAcoesLista() {
         breadcrumb={["Lista geral"]}
         actions={
           <div className="flex flex-wrap gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => exportar("filtrado")}
+              disabled={isLoading || filtered.length === 0}
+              title="Exporta só o que está na tela, com os filtros e a ordem atuais"
+            >
+              <Download className="mr-1 h-4 w-4" />Exportar filtrado
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => exportar("completo")}
+              disabled={isLoading || rows.length === 0}
+              title="Exporta todas as ações que você tem permissão de ver, ignorando os filtros"
+            >
+              <Download className="mr-1 h-4 w-4" />Exportar tudo
+            </Button>
             <Button asChild variant="outline" size="sm"><Link to="/app/plano-acoes/dashboard">Dashboard</Link></Button>
             <Button asChild variant="outline" size="sm"><Link to="/app/plano-acoes/kanban">Kanban</Link></Button>
             {can("importar") && <Button asChild variant="outline" size="sm"><Link to="/app/plano-acoes/importar">Importar</Link></Button>}
