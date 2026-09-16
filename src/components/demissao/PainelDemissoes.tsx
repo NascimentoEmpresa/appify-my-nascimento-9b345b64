@@ -14,8 +14,8 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import {
   BUCKET, MOTIVO_DEVOLUCAO_MIN, STATUS_SST_AGENDADO, STATUS_SST_ASO_VALIDO, STATUS_SST_RECEBIDA, acaoDoSST,
   TABELA, TABELA_ANEXOS, corDoStatus, explicaStatus,
-  fmtData, fmtDataHora, fmtTamanho, linkDoLocalASO, patchDevolucao, podeDevolver,
-  resumoDevolucao, resumoDoASO,
+  fmtData, fmtDataHora, fmtTamanho, linkDoLocalASO, normSetorDemissao, patchDevolucao, podeDevolver,
+  resumoDevolucao, resumoDoASO, statusDaEtapa1, visivelNaEtapaDemissao,
   type AnexoDemissao, type EtapaQueDevolve, type SolicitacaoDemissao,
 } from "@/lib/demissao/solicitacao";
 import { MapaPicker } from "@/components/sst/MapaPicker";
@@ -24,6 +24,7 @@ import {
   ThumbsDown, ThumbsUp, Undo2, XCircle,
 } from "lucide-react";
 import { ConversaSolicitacao } from "@/components/solicitacoes/ConversaSolicitacao";
+import { TABELA_APROVADOR_SETOR } from "@/components/admin/TrocaFuncaoSetoresUsuario";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 
@@ -69,17 +70,20 @@ const sb = supabase as any;
  * continua chegando nele, só a decisão é que voltou para o Operacional.
  */
 
-export type Etapa = "analista" | "operacional" | "rh" | "sst";
+export type Etapa = "analista" | "operacional" | "diretoria" | "rh" | "sst";
 
 /** Os status que cada etapa enxerga, na ordem em que fazem sentido na fila. */
 const TODOS_OS_STATUS = [
-  "Pendente Operacional", "Pendente RH", "Pendente SST",
+  "Pendente Operacional", "Pendente Diretoria", "Pendente RH", "Pendente SST",
   STATUS_SST_RECEBIDA, STATUS_SST_AGENDADO, STATUS_SST_ASO_VALIDO,
   "Concluída", "Reprovada", "Cancelada",
 ];
 
 const STATUS_DA_ETAPA: Record<Etapa, string[]> = {
   operacional: TODOS_OS_STATUS,
+  // A Diretoria vê o fluxo inteiro das administrativas (o recorte por
+  // escritório/setor é visivelNaEtapaDemissao, não o status).
+  diretoria: TODOS_OS_STATUS,
   // O analista enxerga o mesmo que o Operacional de propósito: ele acompanha
   // o fluxo inteiro. O que ele não tem é `STATUS_DE_ACAO`.
   analista: TODOS_OS_STATUS,
@@ -100,6 +104,7 @@ const STATUS_DA_ETAPA: Record<Etapa, string[]> = {
  */
 const STATUS_DE_ACAO: Record<Etapa, string[]> = {
   operacional: ["Pendente Operacional"],
+  diretoria: ["Pendente Diretoria"],
   analista: [],
   sst: ["Pendente SST", STATUS_SST_RECEBIDA],
   rh: ["Pendente RH"],
@@ -139,16 +144,33 @@ export function PainelDemissoes({ etapa }: { etapa: Etapa }) {
   // inclusive as que a etapa tinha para resolver.
   const statusDeAcao = STATUS_DE_ACAO[etapa];
 
+  // Setores que EU trato (16/09/2026), marcados em Acesso por Usuário —
+  // a mesma configuração da Mudança de Função. Solicitação com setor só
+  // aparece (e só se decide) pra quem tem o setor; o banco repete a regra
+  // no trigger trg_ssd_guard_aprovador_setor.
+  const [meusSetores, setMeusSetores] = useState<Set<string>>(new Set());
+  useEffect(() => {
+    if (etapa !== "diretoria" || !user?.id) { setMeusSetores(new Set()); return; }
+    sb.from(TABELA_APROVADOR_SETOR).select("setor").eq("user_id", user.id)
+      .then(({ data }: { data: { setor: string }[] | null }) =>
+        setMeusSetores(new Set((data ?? []).map((r) => normSetorDemissao(r.setor)))));
+  }, [etapa, user?.id]);
+
+  const [todas, setTodas] = useState<SolicitacaoDemissao[]>([]);
   const carregar = async () => {
     setCarregando(true);
     const { data, error } = await sb.from(TABELA)
       .select("*").in("status", statusVisiveis)
       .order("criado_em", { ascending: false }).limit(500);
     if (error) toast.error("Erro ao carregar as solicitações: " + error.message);
-    setLinhas(data ?? []);
+    setTodas(data ?? []);
     setCarregando(false);
   };
   useEffect(() => { carregar(); }, [etapa]);
+  // Recorte por escritório/setor em memória: os setores chegam depois das linhas.
+  useEffect(() => {
+    setLinhas(todas.filter((s) => visivelNaEtapaDemissao(s, etapa, meusSetores)));
+  }, [todas, etapa, meusSetores]);
 
   const filtradas = useMemo(() => {
     const q = busca.trim().toLowerCase();
@@ -189,12 +211,13 @@ export function PainelDemissoes({ etapa }: { etapa: Etapa }) {
           SST e 2 no RH — o grid acompanha em vez de espremer todo mundo em
           quatro colunas fixas, que deixavam o RH com dois cartões perdidos. */}
       <div className={cn("mb-5 grid gap-3 sm:grid-cols-2",
-        etapa === "analista" || etapa === "operacional" ? "lg:grid-cols-3 xl:grid-cols-5"
+        etapa === "analista" || etapa === "operacional" || etapa === "diretoria" ? "lg:grid-cols-3 xl:grid-cols-5"
         : etapa === "sst" || etapa === "rh" ? "lg:grid-cols-3" : "")}>
-        {etapa === "analista" || etapa === "operacional" ? (
+        {etapa === "analista" || etapa === "operacional" || etapa === "diretoria" ? (
           <>
-            <Kpi titulo={etapa === "operacional" ? "Aguardando você" : "Com o Operacional"}
-                 valor={contar("Pendente Operacional")} icone={Clock} cor="bg-yellow-100 text-yellow-700" />
+            <Kpi titulo={etapa === "analista" ? "Em aprovação" : "Aguardando você"}
+                 valor={etapa === "diretoria" ? contar("Pendente Diretoria") : etapa === "operacional" ? contar("Pendente Operacional") : contar("Pendente Operacional") + contar("Pendente Diretoria")}
+                 icone={Clock} cor="bg-yellow-100 text-yellow-700" />
             <Kpi titulo="No RH" valor={contar("Pendente RH")} icone={FileText} cor="bg-purple-100 text-purple-700" />
             {/* "No SST" soma os dois status da etapa: para quem acompanha de
                 fora, recebida e a agendar são o mesmo lugar da fila. */}
@@ -429,10 +452,11 @@ function DetalheSolicitacao({ solicitacao, etapa, quemSou, onFechar, onDecidir }
       return;
     }
     setSalvando(true);
+    const volta = statusDaEtapa1(s);
     await onDecidir(
       s,
-      patchDevolucao(etapa as EtapaQueDevolve, quemSou, motivoDevolucao),
-      `Solicitação #${s.id} devolvida ao Operacional.`,
+      patchDevolucao(etapa as EtapaQueDevolve, quemSou, motivoDevolucao, volta),
+      `Solicitação #${s.id} devolvida ${volta === "Pendente Diretoria" ? "à Diretoria" : "ao Operacional"}.`,
     );
     setSalvando(false);
   };
@@ -583,15 +607,15 @@ function DetalheSolicitacao({ solicitacao, etapa, quemSou, onFechar, onDecidir }
           <div className="flex items-start gap-2 rounded-lg border bg-muted/40 p-4 text-sm text-muted-foreground">
             <Eye className="mt-0.5 h-4 w-4 shrink-0" />
             <span>
-              Esta tela é de <strong>acompanhamento</strong>. Quem aprova a demissão é o
-              Operacional, em Operacional › Solicitações de Demissão. Aqui você vê o
-              andamento completo e a conversa da solicitação.
+              Esta tela é de <strong>acompanhamento</strong> das demissões de contrato. Quem aprova é o
+              Operacional (Operacional › Solicitações de Demissão); as do administrativo ou com setor
+              ficam com a Diretoria e não aparecem aqui.
             </span>
           </div>
         )}
 
         {/* Ações da etapa */}
-        {podeAgir && etapa === "operacional" && (
+        {podeAgir && (etapa === "operacional" || etapa === "diretoria") && (
           <div className="space-y-3 rounded-lg border border-primary/30 bg-primary/5 p-4">
             <h3 className="text-sm font-semibold">Sua decisão</h3>
             <div>

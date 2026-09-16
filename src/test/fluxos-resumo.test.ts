@@ -43,8 +43,9 @@ describe("catálogo de fluxos", () => {
   it("a sequência sai na ordem dos passos", () => {
     const f = fluxoPorCodigo("demissao")!;
     // Ordem trocada em 08/09/2026: o RH libera e o SST fecha agendando o ASO.
-    // Em 14/09/2026 a etapa 1 voltou do analista para o Operacional.
-    expect(sequenciaDe(f)).toBe("Encarregado → Operacional → RH → SST");
+    // Em 14/09/2026 a etapa 1 voltou do analista para o Operacional; em
+    // 16/09/2026 a Diretoria entrou como etapa 1 do escritório / com setor.
+    expect(sequenciaDe(f)).toBe("Encarregado → Operacional → Diretoria → RH → SST");
   });
 });
 
@@ -52,7 +53,7 @@ describe("o resumo não pode divergir da regra", () => {
   it("os status citados na demissão existem no fluxo da demissão", () => {
     const citados = fluxoPorCodigo("demissao")!.passos
       .map(p => p.status).filter(Boolean) as string[];
-    expect(citados).toEqual(["Pendente Operacional", "Pendente RH", "Pendente SST"]);
+    expect(citados).toEqual(["Pendente Operacional", "Pendente Diretoria", "Pendente RH", "Pendente SST"]);
     for (const s of citados) expect(STATUS_DEMISSAO).toContain(s);
   });
 

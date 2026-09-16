@@ -164,6 +164,8 @@ import AnalistasRecrutamento from "./pages/licitacoes/analistas/Recrutamento";
 import AnalistasTrocaFuncao from "./pages/licitacoes/analistas/TrocaFuncao";
 import AnalistasSolicitacoesDemissao from "./pages/licitacoes/analistas/SolicitacoesDemissao";
 import RhTrocaFuncaoEscritorio from "./pages/rh/TrocaFuncaoEscritorio";
+import DiretoriaSolicitacoesDemissao from "./pages/diretoria/SolicitacoesDemissao";
+import DiretoriaRecrutamento from "./pages/diretoria/Recrutamento";
 import SstTrocaFuncao from "./pages/sst/TrocaFuncao";
 import RhTrocaFuncao from "./pages/rh/TrocaFuncao";
 import AsoCandidatos from "./pages/sst/AsoCandidatos";
@@ -515,6 +517,9 @@ const App = () => (
             <Route path="diretoria/despesa/:id" element={<MaloteDespesaVisualizar />} />
             <Route path="diretoria/solicitacao/:id" element={<MaloteSolicitacaoVisualizar />} />
             <Route path="diretoria/troca-funcao-escritorio" element={<RhTrocaFuncaoEscritorio />} />
+            {/* Diretoria (16/09/2026): demissão e vaga do escritório / com setor. */}
+            <Route path="diretoria/solicitacoes-demissao" element={<DiretoriaSolicitacoesDemissao />} />
+            <Route path="diretoria/recrutamento" element={<DiretoriaRecrutamento />} />
             <Route path="orcamento" element={<Orcamento />} />
             {/* Suprimentos */}
             {/* Mais específica primeiro: o React Router casa na ordem declarada,

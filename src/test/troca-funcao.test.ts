@@ -151,12 +151,16 @@ describe("recorte por setor (16/09/2026)", () => {
   const com = (setor: string, status: StatusTroca = "Pendente Escritório") => ({ status, e_escritorio: false, setor });
   const FIN = new Set(["FINANCEIRO"]);
 
-  it("solicitação com setor só aparece pra quem tem o setor marcado — em qualquer menu", () => {
+  it("a tela decide a origem: com setor é administrativa, só na Diretoria", () => {
     expect(pertenceAFila(com("Financeiro"), "aprovacao", ESCRITORIO, FIN)).toBe(true);
-    expect(pertenceAFila(com("Financeiro"), "aprovacao", CONTRATO, FIN)).toBe(true);   // Operacional liberado no acesso
-    expect(pertenceAFila(com("Operacional"), "aprovacao", ESCRITORIO, FIN)).toBe(false);
-    expect(pertenceAFila(com("Financeiro"), "aprovacao", AMBAS, new Set())).toBe(false); // sem setor marcado, não vê
-    expect(pertenceAFila(com("Financeiro"), "aprovacao", AMBAS, null)).toBe(false);
+    expect(pertenceAFila(com("Financeiro"), "aprovacao", CONTRATO, FIN)).toBe(false);   // Operacional nunca vê com setor
+    expect(pertenceAFila(com("Operacional"), "aprovacao", ESCRITORIO, FIN)).toBe(false); // setor fora do filtro
+  });
+
+  it("setores marcados são FILTRO: sem nenhum marcado, a Diretoria vê todas", () => {
+    expect(pertenceAFila(com("Financeiro"), "aprovacao", ESCRITORIO, new Set())).toBe(true);
+    expect(pertenceAFila(com("Financeiro"), "aprovacao", ESCRITORIO, null)).toBe(true);
+    expect(pertenceAFila({ status: "Pendente Escritório", e_escritorio: true, setor: null }, "aprovacao", ESCRITORIO, FIN)).toBe(true); // sem setor passa
   });
 
   it("casa acento e caixa (Licitações ≙ LICITACOES)", () => {
@@ -165,7 +169,8 @@ describe("recorte por setor (16/09/2026)", () => {
 
   it("decidir segue a mesma régua", () => {
     expect(podeAgirEm(com("Financeiro"), "aprovacao", ESCRITORIO, FIN)).toBe(true);
-    expect(podeAgirEm(com("Financeiro"), "aprovacao", ESCRITORIO, new Set())).toBe(false);
+    expect(podeAgirEm(com("Financeiro"), "aprovacao", ESCRITORIO, new Set(["OPERACIONAL"]))).toBe(false);
+    expect(podeAgirEm(com("Financeiro"), "aprovacao", ESCRITORIO, new Set())).toBe(true);
   });
 
   it("Licitações nunca vê administrativa nem com setor; SST e RH veem tudo", () => {
