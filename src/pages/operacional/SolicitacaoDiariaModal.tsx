@@ -32,6 +32,7 @@ import { cn } from "@/lib/utils";
 import { useToast } from "@/hooks/use-toast";
 import {
   EmpregadoDiaria,
+  MIN_BUSCA_EMPREGADO_DIARIA,
   NovaSolicitacaoDiaria,
   DespesaAprovacaoDiaria,
   mensagemErroDiaria,
@@ -294,6 +295,13 @@ function Dropzone({
   );
 }
 
+/** Situações do cadastro que significam que a pessoa não está mais na empresa. */
+const SITUACOES_DESLIGADO = ["DEMITIDO", "DEMITIDA", "RESCISÃO", "DESLIGADO", "DESLIGADA"];
+
+function estaDesligado(situacao: string | null) {
+  return SITUACOES_DESLIGADO.includes((situacao ?? "").trim().toUpperCase());
+}
+
 /**
  * Campo de nome que busca no cadastro de EMPREGADOS e devolve a pessoa
  * inteira — é o que preenche o CPF ao lado.
@@ -302,6 +310,11 @@ function Dropzone({
  * da casa, e travar o campo no cadastro impediria justamente o caso mais comum
  * de diária. Quando é gente de fora, o CPF é digitado à mão e validado pelo
  * dígito verificador; quando é do cadastro, o CPF vem de lá e não se digita.
+ *
+ * A lista inclui quem já foi desligado — a diária existe muitas vezes para
+ * cobrir o posto que ficou vago — com a situação escrita em cada sugestão.
+ * A busca só sai daqui a partir de MIN_BUSCA_EMPREGADO_DIARIA caracteres:
+ * EMPREGADOS passa de 10 mil linhas e uma consulta por tecla não se paga.
  */
 function BuscaEmpregado({
   valor,
@@ -337,7 +350,14 @@ function BuscaEmpregado({
         placeholder={placeholder}
         autoComplete="off"
       />
-      {aberto && valor.trim().length >= 2 && (
+      {aberto && valor.trim().length > 0 && valor.trim().length < MIN_BUSCA_EMPREGADO_DIARIA && (
+        <div className="absolute z-50 mt-1 w-full rounded-md border border-border bg-popover p-1 shadow-md">
+          <p className="px-2 py-1.5 text-xs text-muted-foreground">
+            Digite pelo menos {MIN_BUSCA_EMPREGADO_DIARIA} caracteres para buscar no cadastro.
+          </p>
+        </div>
+      )}
+      {aberto && valor.trim().length >= MIN_BUSCA_EMPREGADO_DIARIA && (
         <div className="absolute z-50 mt-1 max-h-56 w-full overflow-y-auto rounded-md border border-border bg-popover p-1 shadow-md">
           {isFetching && achados.length === 0 && (
             <p className="px-2 py-1.5 text-xs text-muted-foreground">Buscando...</p>
@@ -362,7 +382,17 @@ function BuscaEmpregado({
                 setAberto(false);
               }}
             >
-              <span className="text-sm">{e.nome}</span>
+              <span className="flex w-full items-center gap-1.5 text-sm">
+                <span className="truncate">{e.nome}</span>
+                {estaDesligado(e.situacao) && (
+                  <Badge
+                    variant="outline"
+                    className="shrink-0 border-amber-300 bg-amber-50 px-1.5 py-0 text-[10px] font-medium text-amber-700"
+                  >
+                    {e.situacao}
+                  </Badge>
+                )}
+              </span>
               <span className="text-[11px] text-muted-foreground">
                 {e.cpf}
                 {e.cargo ? ` • ${e.cargo}` : ""}
@@ -698,7 +728,7 @@ export function SolicitacaoDiariaModal({
                   >
                     <BuscaEmpregado
                       valor={faltanteNome}
-                      placeholder="Digite o nome ou o CPF do faltante"
+                      placeholder={`Digite o nome do faltante (mínimo ${MIN_BUSCA_EMPREGADO_DIARIA} caracteres para iniciar a busca)`}
                       onDigitar={(v) => {
                         setFaltanteNome(v);
                         setFaltanteCpf("");
@@ -759,7 +789,7 @@ export function SolicitacaoDiariaModal({
                   >
                     <BuscaEmpregado
                       valor={diaristaNome}
-                      placeholder="Digite o nome ou o CPF do diarista"
+                      placeholder={`Digite o nome do diarista (mínimo ${MIN_BUSCA_EMPREGADO_DIARIA} caracteres para iniciar a busca)`}
                       onDigitar={(v) => {
                         setDiaristaNome(v);
                         setDiaristaCpf("");
