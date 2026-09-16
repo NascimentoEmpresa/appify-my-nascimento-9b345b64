@@ -6,6 +6,22 @@ export type TipoHoraExtra = "normal" | "emergencial";
 export type PrioridadeHoraExtra = "alta" | "media" | "baixa";
 export type StatusExecucao = "concluido" | "parcial" | "nao_iniciado";
 
+/** Os quatro registros de ponto do dia, na ordem em que são batidos. */
+export interface PontoDia {
+  entrada: string;
+  saida_intervalo: string;
+  retorno_intervalo: string;
+  saida: string;
+}
+
+export interface EscalaHoraExtra extends PontoDia {
+  id: string;
+  nome: string;
+  minutos_jornada: number;
+  padrao: boolean;
+  ativo: boolean;
+}
+
 export interface ChamadoHoraExtra {
   id: string;
   solicitacao_id?: string;
@@ -46,8 +62,14 @@ export interface SolicitacaoHoraExtra {
   ponto_saida_intervalo: string;
   ponto_retorno_intervalo: string;
   ponto_saida: string;
+  escala_id?: string | null;
+  escala_nome?: string | null;
+  jornada_minutos?: number | null;
+  trabalhado_previsto_min?: number | null;
+  trabalhado_real_min?: number | null;
   he_inicio_previsto: string;
   he_fim_previsto: string;
+  /** Minutos de hora extra: o que passou da jornada da escala. */
   total_previsto_min: number;
   justificativa: string;
   status: StatusHoraExtra;
