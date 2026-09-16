@@ -119,10 +119,10 @@ export function ModalNovaVaga({ aberto, onFechar, onCriada, onToast, solicitacao
   const [vagaStep, setVagaStep] = useState(1);
   // Vaga do escritório preenchida à mão, sem colaborador de referência.
   const [vagaManual, setVagaManual] = useState(false);
-  const [contratosFull, setContratosFull] = useState<any[]>([]);
+  const [contratosFull, setContratosFull] = useState<Record<string, unknown>[]>([]);
   // Cargos do cadastro (tabela "CARGOS"): sugestão para o modo manual, nunca
   // uma lista fechada — ver o datalist do campo Cargo.
-  const [cargosFull, setCargosFull] = useState<any[]>([]);
+  const [cargosFull, setCargosFull] = useState<Record<string, unknown>[]>([]);
   // Empregado -> nº da vaga de substituição que já o segura (regra do banco).
   const [presos, setPresos] = useState<Map<number, number>>(new Map());
   const [empregados, setEmpregados] = useState<any[]>([]);
@@ -763,7 +763,7 @@ export function ModalNovaVaga({ aberto, onFechar, onCriada, onToast, solicitacao
             {vagaManual && (
               <>
                 <datalist id="nvg-contratos">
-                  {contratosFull.map((c: any, i: number) => (
+                  {contratosFull.map((c, i) => (
                     <option key={i} value={rotuloContrato(c)} />
                   ))}
                 </datalist>
@@ -785,8 +785,8 @@ export function ModalNovaVaga({ aberto, onFechar, onCriada, onToast, solicitacao
             {vagaManual && (
               <>
                 <datalist id="nvg-cargos">
-                  {cargosFull.map((c: any, i: number) => (
-                    <option key={i} value={c["Nome do Cargo"] ?? ""} />
+                  {cargosFull.map((c, i) => (
+                    <option key={i} value={String(c["Nome do Cargo"] ?? "")} />
                   ))}
                 </datalist>
                 <div style={{ marginTop: 4, fontSize: 11, color: "#94a3b8" }}>

@@ -2,6 +2,18 @@ import { useCallback, useEffect, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { SearchableMultiSelect } from "@/components/ui/searchable-multi-select";
 
+// O client tipado não conhece as tabelas novas — cast num lugar só.
+const sb = supabase as unknown as {
+  from(tabela: string): {
+    select(colunas: string): {
+      eq(coluna: string, valor: string): Promise<{ data: { setor: string }[] | null; error: unknown }>;
+      order(coluna: string): Promise<{ data: { nome: string }[] | null; error: unknown }>;
+    };
+    insert(linhas: { user_id: string; setor: string }[]): Promise<{ error: { message: string } | null }>;
+    delete(): { eq(coluna: string, valor: string): { in(coluna: string, valores: string[]): Promise<{ error: { message: string } | null }> } };
+  };
+};
+
 /**
  * De quais SETORES este usuário aprova MUDANÇA DE FUNÇÃO (16/09/2026).
  *
@@ -33,11 +45,11 @@ export function TrocaFuncaoSetoresUsuario({ userId, onToast }: {
   const load = useCallback(async () => {
     setLoading(true);
     const [meus, todos] = await Promise.all([
-      (supabase as any).from(TABELA_STF_APROVADOR_SETOR).select("setor").eq("user_id", userId),
-      (supabase as any).from("setor_catalogo").select("nome").order("nome"),
+      sb.from(TABELA_STF_APROVADOR_SETOR).select("setor").eq("user_id", userId),
+      sb.from("setor_catalogo").select("nome").order("nome"),
     ]);
-    setSetores(new Set((meus.data ?? []).map((r: any) => r.setor as string)));
-    setCatalogo((todos.data ?? []).map((r: any) => r.nome as string).filter(Boolean));
+    setSetores(new Set((meus.data ?? []).map((r) => r.setor)));
+    setCatalogo((todos.data ?? []).map((r) => r.nome).filter(Boolean));
     setLoading(false);
   }, [userId]);
 
@@ -49,13 +61,13 @@ export function TrocaFuncaoSetoresUsuario({ userId, onToast }: {
     const paraRemover = [...setores].filter((s) => !novo.has(s));
 
     if (paraAdicionar.length) {
-      const { error } = await (supabase as any)
+      const { error } = await sb
         .from(TABELA_STF_APROVADOR_SETOR)
         .insert(paraAdicionar.map((setor) => ({ user_id: userId, setor })));
       if (error) { onToast("Erro: " + error.message, "err"); return; }
     }
     if (paraRemover.length) {
-      const { error } = await (supabase as any)
+      const { error } = await sb
         .from(TABELA_STF_APROVADOR_SETOR)
         .delete().eq("user_id", userId).in("setor", paraRemover);
       if (error) { onToast("Erro: " + error.message, "err"); return; }

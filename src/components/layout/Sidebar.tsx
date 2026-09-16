@@ -71,7 +71,7 @@ import { ACESSO_ABERTO_SEM_PERMISSOES, rotaSempreLiberada } from "@/lib/acesso";
 import { useGradeAtivaCount } from "@/hooks/useGradeAtivaCount";
 import { useChamadosNotif } from "@/hooks/useChamadosNotif";
 import { useTrocaFuncaoNotif } from "@/hooks/useTrocaFuncaoNotif";
-import { Inbox } from "lucide-react";
+import { Inbox, type LucideIcon } from "lucide-react";
 import { Target } from "lucide-react";
 import { GitBranch, GitMerge } from "lucide-react";
 import { MessageSquare } from "lucide-react";
@@ -87,7 +87,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 interface NavItem {
   label: string;
   to: string;
-  icon: any;
+  icon: LucideIcon;
   badge?: string;
   // Bolinha de notificação (novidade). Resolvida em runtime pelo useChamadosNotif.
   notif?: "meus" | "dev" | "troca_funcao";
@@ -102,7 +102,7 @@ interface ModuleDef {
   id: string;
   label: string;
   description: string;
-  icon: any;
+  icon: LucideIcon;
   basePath: string;
   badge?: string;
   status: "active" | "soon";
