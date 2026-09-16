@@ -17,8 +17,8 @@ export default function TrocaFuncaoEscritorio() {
     <div className="mx-auto max-w-6xl">
       <PageHeader
         title="Mudança de Função"
-        subtitle="Aprove as trocas de função. O que você aprovar segue para o SST."
-        module="RH"
+        subtitle="Aprove as trocas de função do administrativo e das que têm setor — só dos setores liberados pra você em Acesso por Usuário. O que você aprovar segue para o SST."
+        module="Diretoria"
         breadcrumb={["Mudança de Função"]}
         actions={<ResumoDeFuncoes fluxo="troca_funcao" />}
       />

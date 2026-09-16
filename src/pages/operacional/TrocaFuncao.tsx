@@ -16,7 +16,7 @@ export default function TrocaFuncao() {
     <div className="mx-auto max-w-6xl">
       <PageHeader
         title="Mudança de Função"
-        subtitle="Aprove as trocas de função pedidas pelos encarregados. O que você aprovar segue para o SST."
+        subtitle="Aprove as trocas de função dos contratos (sem setor). O que você aprovar segue para o SST. Solicitação com setor só aparece se o setor estiver liberado pra você em Acesso por Usuário."
         module="Operacional"
         breadcrumb={["Mudança de Função"]}
         actions={<ResumoDeFuncoes fluxo="troca_funcao" />}

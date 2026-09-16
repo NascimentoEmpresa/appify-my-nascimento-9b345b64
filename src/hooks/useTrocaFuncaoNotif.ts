@@ -50,9 +50,10 @@ export function useTrocaFuncaoNotif(): TrocaFuncaoNotif {
 
       return {
         porRota: {
-          "/app/licitacoes/analistas/troca-funcao": tem(l => l.status === "Pendente Analista"),
-          "/app/operacional/troca-funcao":      tem(l => l.status === "Pendente Operacional"),
-          "/app/rh/troca-funcao-escritorio":    tem(l => l.status === "Pendente Escritório"),
+          // Licitações só acompanha desde 16/09/2026 — sem bolinha.
+          "/app/operacional/troca-funcao":         tem(l => l.status === "Pendente Operacional"),
+          "/app/rh/troca-funcao-escritorio":       tem(l => l.status === "Pendente Escritório"),
+          "/app/diretoria/troca-funcao-escritorio": tem(l => l.status === "Pendente Escritório"),
           "/app/sst/troca-funcao":              tem(l => l.status === "Pendente SST"),
           "/app/rh/troca-funcao":               tem(l => l.status === "Pendente RH"),
         },
