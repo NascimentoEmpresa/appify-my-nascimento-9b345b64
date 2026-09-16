@@ -14,7 +14,6 @@ import {
 import { Search, FileCheck, CircleDollarSign, FileDown, ListChecks, TrendingUp, CheckCircle2, AlertTriangle } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
-import { useEmpresaAtiva } from "@/context/EmpresaAtivaContext";
 import { useContratosERP } from "@/hooks/useContratosERP";
 import {
   NfEmissaoRow,
@@ -101,10 +100,10 @@ function itemRowParaForm(r: NfEmissaoItemRow): ItemForm {
 }
 
 export default function NotasConcluidasTab() {
-  const { empresa } = useEmpresaAtiva();
-  const empresaId = empresa?.id ?? null;
-  const { data: nfs = [], isLoading } = useNfsEmissao(empresaId);
-  const { data: contratos = [] } = useContratosERP();
+  // SIS-2026-0309: lê NFs/contratos de todas as empresas do grupo — o
+  // filtro de "empresa ativa" só limitava a visão, sem proteger nada.
+  const { data: nfs = [], isLoading } = useNfsEmissao(null, { todasEmpresas: true });
+  const { data: contratos = [] } = useContratosERP({ todasEmpresas: true });
 
   const [busca, setBusca] = useState("");
   const [contratoSel, setContratoSel] = useState<string | null>(null);

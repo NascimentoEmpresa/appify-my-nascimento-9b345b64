@@ -1,6 +1,5 @@
 import { useState, useMemo, useEffect, useCallback } from "react";
 import { PageHeader } from "@/components/layout/PageHeader";
-import { useEmpresaAtiva } from "@/context/EmpresaAtivaContext";
 import { usePermissoes } from "@/context/PermissoesContext";
 import { cn } from "@/lib/utils";
 import {
@@ -40,7 +39,9 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Plus, Pencil, Trash2, Eye, History, FileText, AlertCircle } from "lucide-react";
+import { toast } from "@/hooks/use-toast";
 import { useUsuariosLicitacao } from "@/hooks/useUsuariosLicitacao";
+import { useEmpresasGrupo } from "@/hooks/useMaloteDespesa";
 import { useIBGEMunicipios, UFS } from "@/hooks/useIBGEMunicipios";
 import { CidadeCombobox } from "@/components/ui/CidadeCombobox";
 import { CurrencyInput } from "@/components/ui/CurrencyInput";
@@ -121,19 +122,20 @@ function needs48hAlert(capa: CapaEdital): boolean {
 // ── Componente principal ───────────────────────────────────────────────────
 
 export default function CadastroEdital() {
-  const { empresa } = useEmpresaAtiva();
-  const empresaAtivaId = empresa.id;
   const { can } = usePermissoes();
 
   const canIncluir = can("incluir", "licitacoes", "editais");
   const canAlterar = can("alterar", "licitacoes", "editais");
   const canExcluir = can("excluir", "licitacoes", "editais");
 
-  const { data: capas = [], isLoading, error } = useCapaEdital(empresaAtivaId ?? null);
-  const insert = useCapaInsert(empresaAtivaId ?? "");
-  const update = useCapaUpdate(empresaAtivaId ?? "");
-  const remove = useCapaDelete(empresaAtivaId ?? "");
-  const promover = useCapaPromover(empresaAtivaId ?? "");
+  // SIS-2026-0309: lê licitações de todas as empresas do grupo — a empresa
+  // de uma Capa nova agora é campo explícito do formulário (ver Sheet mais
+  // abaixo), não mais herdada do seletor global.
+  const { data: capas = [], isLoading, error } = useCapaEdital(null, { todasEmpresas: true });
+  const insert = useCapaInsert();
+  const update = useCapaUpdate();
+  const remove = useCapaDelete();
+  const promover = useCapaPromover();
 
   const [statusFiltro, setStatusFiltro] = useState<CapaStatus | "Todas">("Todas");
   const [busca, setBusca] = useState("");
@@ -252,9 +254,7 @@ export default function CadastroEdital() {
       </div>
 
       {/* Conteúdo */}
-      {!empresaAtivaId ? (
-        <Empty title="Selecione uma empresa" message="Escolha uma empresa para ver as licitações." />
-      ) : isLoading ? (
+      {isLoading ? (
         <Empty title="Carregando…" message="Buscando licitações." />
       ) : error ? (
         <Empty title="Erro" message={(error as Error).message} tone="error" />
@@ -513,6 +513,7 @@ function CapaSheet({
 }) {
   const [f, setF] = useState<Partial<CapaEdital>>({ ...EMPTY });
   const { data: usuarios = [] } = useUsuariosLicitacao();
+  const { data: empresasGrupo = [] } = useEmpresasGrupo();
   const { cidadesPorUF, isLoading: ibgeLoading } = useIBGEMunicipios();
   const cidadesUF = f.uf ? cidadesPorUF(f.uf) : [];
 
@@ -531,6 +532,12 @@ function CapaSheet({
 
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
+    // SIS-2026-0309: empresa é campo explícito (raiz do bug real do CEITEC,
+    // que nasceu na empresa errada por herdar do seletor global).
+    if (!f.empresa_id) {
+      toast({ title: "Selecione a empresa da licitação.", variant: "destructive" });
+      return;
+    }
     onSave(f);
   }
 
@@ -544,6 +551,25 @@ function CapaSheet({
 
           <Secao title="Identificação">
             <Grid2>
+              {/* SIS-2026-0309: empresa é campo explícito — deixou de ser
+                  herdada do seletor "empresa ativa" (raiz do bug real do
+                  contrato CEITEC, que nasceu na empresa errada). */}
+              <F label="Empresa *">
+                <Select
+                  value={f.empresa_id ?? ""}
+                  onValueChange={(v) => setF((p) => ({ ...p, empresa_id: v }))}
+                  disabled={!!editing}
+                >
+                  <SelectTrigger className="h-9">
+                    <SelectValue placeholder="— Selecione —" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {empresasGrupo.map((e) => (
+                      <SelectItem key={e.id} value={e.id}>{e.nome}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </F>
               <F label="UF">
                 <Select
                   value={f.uf ?? ""}

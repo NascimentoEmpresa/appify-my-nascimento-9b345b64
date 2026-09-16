@@ -31,7 +31,6 @@ import { baseDaUrl, rotasSolicitacoes } from "@/lib/solicitacoes/rotas";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
 import { usePermissoes } from "@/context/PermissoesContext";
-import { useEmpresaAtiva } from "@/context/EmpresaAtivaContext";
 import { VinculoCatalogoVaga } from "@/components/recrutamento/VinculoCatalogoVaga";
 import { ESTADOS_BR, municipiosDe } from "@/data/municipios-brasil";
 import {
@@ -112,7 +111,6 @@ export function ModalNovaVaga({ aberto, onFechar, onCriada, onToast, solicitacao
   const editando = !!solicitacao?.id;
   const { user } = useAuth();
   const { can } = usePermissoes();
-  const { empresa } = useEmpresaAtiva();
   // Vaga do escritório: só quem enxerga esse tipo pode marcar uma como tal —
   // e é a mesma capacidade que libera preencher à mão.
   const podeAdministrativa = podeVagaAdministrativa(can);

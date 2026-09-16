@@ -28,6 +28,7 @@ import {
   type CotacaoLicitacao,
 } from "@/hooks/useCotacoesLicitacao";
 import { useAccessibleMenus } from "@/hooks/useAccessibleMenus";
+import { useEmpresasGrupo } from "@/hooks/useMaloteDespesa";
 // Paleta, badge, formatação e agrupamento moram em um só lugar: esta tela e a
 // de Compras (/app/suprimentos/cotacoes) mostram a MESMA linha do banco, e
 // divergir na aparência confundiria os dois setores sobre o mesmo item.
@@ -189,7 +190,9 @@ function CotacaoModal({
 }) {
   const insert = useCotacaoInsert();
   const update = useCotacaoUpdate();
+  const { data: empresasGrupo = [] } = useEmpresasGrupo();
   const [tipo, setTipo] = useState(editing?.tipo ?? "Cotação");
+  const [empresaId, setEmpresaId] = useState("");
   const [comentario, setComentario] = useState(editing?.comentario ?? "");
   const [arquivos, setArquivos] = useState<File[]>([]);
 
@@ -198,15 +201,19 @@ function CotacaoModal({
   // Ao editar, os anexos já enviados continuam lá (dá para removê-los pelo
   // card); aqui só se ACRESCENTA. Por isso o obrigatório vale só na criação.
   const jaTemAnexo = (editing?.anexosSolicitacao.length ?? 0) > 0;
-  const pronto = !!comentario.trim() && (arquivos.length > 0 || jaTemAnexo) && !loading;
+  // SIS-2026-0309: empresa é campo explícito só na criação — a tela já lê
+  // cross-empresa, então precisa perguntar (não tinha antes: vinha oculto
+  // da empresa "ativa" do seletor global).
+  const pronto = !!comentario.trim() && (arquivos.length > 0 || jaTemAnexo) && (!!editing || !!empresaId) && !loading;
 
   async function handleSave() {
     if (!pronto) return;
     try {
       if (editing) {
-        await update.mutateAsync({ id: editing.id, comentario, arquivos, editado_por_nome: remetenteNome, editado_por_id: remetenteId });
+        await update.mutateAsync({ id: editing.id, empresa_id: editing.empresa_id, comentario, arquivos, editado_por_nome: remetenteNome, editado_por_id: remetenteId });
       } else {
-        await insert.mutateAsync({ tipo, comentario, arquivos, remetente_nome: remetenteNome });
+        if (!empresaId) { toast.error("Selecione a empresa."); return; }
+        await insert.mutateAsync({ empresa_id: empresaId, tipo, comentario, arquivos, remetente_nome: remetenteNome });
       }
       onClose();
     } catch (e) {
@@ -222,15 +229,26 @@ function CotacaoModal({
         </DialogHeader>
         <div className="space-y-4">
           {!editing && (
-            <div className="space-y-1.5">
-              <Label>Tipo de Solicitação *</Label>
-              <Select value={tipo} onValueChange={setTipo}>
-                <SelectTrigger><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  {TIPOS.map((t) => <SelectItem key={t} value={t}>{t}</SelectItem>)}
-                </SelectContent>
-              </Select>
-            </div>
+            <>
+              <div className="space-y-1.5">
+                <Label>Empresa *</Label>
+                <Select value={empresaId} onValueChange={setEmpresaId}>
+                  <SelectTrigger><SelectValue placeholder="Selecione a empresa..." /></SelectTrigger>
+                  <SelectContent>
+                    {empresasGrupo.map((e) => <SelectItem key={e.id} value={e.id}>{e.nome}</SelectItem>)}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-1.5">
+                <Label>Tipo de Solicitação *</Label>
+                <Select value={tipo} onValueChange={setTipo}>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    {TIPOS.map((t) => <SelectItem key={t} value={t}>{t}</SelectItem>)}
+                  </SelectContent>
+                </Select>
+              </div>
+            </>
           )}
           <div className="space-y-1.5">
             <Label>Comentário *</Label>

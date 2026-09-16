@@ -267,7 +267,7 @@ function FormularioResposta({ cotacao }: { cotacao: CotacaoLicitacao }) {
   async function enviar() {
     if (!comentario.trim() || !arquivos.length) return;
     try {
-      await responder.mutateAsync({ id: cotacao.id, comentario, arquivos });
+      await responder.mutateAsync({ id: cotacao.id, empresa_id: cotacao.empresa_id, comentario, arquivos });
       toast.success(
         arquivos.length === 1
           ? "Resposta enviada para a Licitação."

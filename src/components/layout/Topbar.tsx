@@ -1,4 +1,4 @@
-import { Bell, Search, PanelLeft, ChevronDown, Building2, HelpCircle, Settings, LogOut, ShieldAlert, Check, ExternalLink, User as UserIcon, Monitor, ShieldCheck, Contact } from "lucide-react";
+import { Bell, Search, PanelLeft, ChevronDown, Building2, HelpCircle, Settings, LogOut, Check, ExternalLink, User as UserIcon, Monitor, ShieldCheck, Contact } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { cn } from "@/lib/utils";
@@ -36,8 +36,10 @@ type Sessao = {
 };
 
 export function Topbar({ onToggleSidebar, onOpenMobile }: { onToggleSidebar: () => void; onOpenMobile?: () => void }) {
-  const { empresa, empresas, setEmpresa } = useEmpresaAtiva();
-  const [openSelector, setOpenSelector] = useState(false);
+  // SIS-2026-0309: `empresa` continua sendo lida (label de perfil/role), mas
+  // o botão de TROCAR empresa saiu do topo — deixou de proteger algo (acesso
+  // já é 100% por usuário) e só limitava a visão de grupo.
+  const { empresa } = useEmpresaAtiva();
   const [openNotif, setOpenNotif] = useState(false);
   const [openHelp, setOpenHelp] = useState(false);
   const [openSettings, setOpenSettings] = useState(false);
@@ -158,7 +160,7 @@ export function Topbar({ onToggleSidebar, onOpenMobile }: { onToggleSidebar: () 
     ? "Acesso externo"
     : isAdmin ? "Admin Master" : (roles?.[0] ? roles[0].replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase()) : "Usuário");
 
-  const fecharTodos = () => { setOpenSelector(false); setOpenNotif(false); setOpenHelp(false); setOpenSettings(false); setOpenProfile(false); setOpenAgenda(false); };
+  const fecharTodos = () => { setOpenNotif(false); setOpenHelp(false); setOpenSettings(false); setOpenProfile(false); setOpenAgenda(false); };
 
   // Fechar ao clicar fora. O backdrop `fixed inset-0` que cada dropdown tinha
   // NÃO funcionava pra isso: o <header> usa `backdrop-blur-md`, e
@@ -167,7 +169,7 @@ export function Topbar({ onToggleSidebar, onOpenMobile }: { onToggleSidebar: () 
   // resolve de qualquer lugar; cliques no próprio trigger/painel (marcados
   // com data-topbar-menu) são ignorados, então clicar no botão de novo
   // continua alternando normalmente.
-  const algumMenuAberto = openSelector || openNotif || openHelp || openSettings || openProfile;
+  const algumMenuAberto = openNotif || openHelp || openSettings || openProfile;
   useEffect(() => {
     if (!algumMenuAberto) return;
     const aoClicar = (e: PointerEvent) => {
@@ -200,85 +202,17 @@ export function Topbar({ onToggleSidebar, onOpenMobile }: { onToggleSidebar: () 
           busca global não alcança nada que ele possa abrir. */}
       {!externo && (
         <>
-      {/* Empresa selector */}
-      <div className="relative min-w-0" data-topbar-menu>
-        <button
-          onClick={() => { fecharTodos(); setOpenSelector((o) => !o); }}
-          className="flex max-w-[60vw] items-center gap-2 rounded-lg border border-border bg-card px-2 py-1.5 text-left shadow-sm transition-colors hover:border-border-strong sm:max-w-none sm:gap-2.5 sm:px-3"
-        >
-          <div className="grid h-7 w-7 shrink-0 place-items-center rounded-md bg-primary text-primary-foreground">
-            <Building2 className="h-3.5 w-3.5" />
-          </div>
-          <div className="min-w-0">
-            <p className="hidden text-[10px] font-semibold uppercase tracking-wider text-muted-foreground sm:block">Empresa ativa</p>
-            <p className="truncate text-xs font-semibold text-foreground">
-              {empresa.sigla}
-              <span className="hidden sm:inline"> · <span className="font-mono">{empresa.cnpj}</span></span>
-            </p>
-          </div>
-          <span className="hidden rounded-md bg-primary-soft px-1.5 py-0.5 text-[10px] font-semibold text-primary md:inline-block">
-            {empresa.regime}
-          </span>
-          {empresa.validacaoDocumentalObrigatoria && (
-            <span className="hidden items-center gap-1 rounded-md bg-warning-soft px-1.5 py-0.5 text-[10px] font-semibold text-warning md:inline-flex" title="Validação documental obrigatória">
-              <ShieldAlert className="h-3 w-3" />
-              Validar
-            </span>
-          )}
-          <ChevronDown className="hidden h-3.5 w-3.5 shrink-0 text-muted-foreground sm:block" />
-        </button>
-
-        {openSelector && (
-          <>
-            <div className="absolute left-0 top-full z-20 mt-2 w-96 overflow-hidden rounded-xl border border-border bg-popover shadow-xl animate-fade-in">
-              <div className="border-b border-border bg-muted/40 px-3 py-2">
-                <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Empresas do Grupo Nascimento</p>
-              </div>
-              <ul className="max-h-96 overflow-y-auto py-1">
-                {empresas.map((e) => (
-                  <li key={e.id}>
-                    <button
-                      onClick={() => { setEmpresa(e.id); setOpenSelector(false); }}
-                      className={cn(
-                        "flex w-full items-start gap-3 px-3 py-2.5 text-left text-sm hover:bg-secondary",
-                        empresa.id === e.id && "bg-primary-soft",
-                      )}
-                    >
-                      <div className="grid h-9 w-9 shrink-0 place-items-center rounded-md bg-primary/10 text-primary text-[11px] font-bold">
-                        {e.sigla}
-                      </div>
-                      <div className="min-w-0 flex-1">
-                        <p className="truncate text-sm font-semibold">{e.razao}</p>
-                        <p className="truncate font-mono text-[11px] text-muted-foreground">{e.cnpj}</p>
-                        <div className="mt-1 flex flex-wrap items-center gap-1">
-                          <span className="rounded bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">{e.regime}</span>
-                          <span className="rounded bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">{e.papel}</span>
-                          {e.validacaoDocumentalObrigatoria && (
-                            <span className="inline-flex items-center gap-1 rounded bg-warning-soft px-1.5 py-0.5 text-[10px] font-semibold text-warning">
-                              <ShieldAlert className="h-2.5 w-2.5" />
-                              Validação documental
-                            </span>
-                          )}
-                        </div>
-                      </div>
-                      {empresa.id === e.id && <span className="mt-1 h-2 w-2 shrink-0 rounded-full bg-accent" />}
-                    </button>
-                  </li>
-                ))}
-              </ul>
-            </div>
-          </>
-        )}
-      </div>
-
-      {/* Search */}
-      <div className="relative ml-2 hidden flex-1 max-w-xl md:block">
-        <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-        <input
-          placeholder="Buscar em todos os módulos · editais, contratos, lançamentos, fornecedores…"
-          className="h-9 w-full rounded-md border border-border bg-card pl-9 pr-16 text-sm shadow-sm placeholder:text-muted-foreground focus:border-ring focus:outline-none focus:ring-2 focus:ring-ring/30"
-        />
-        <kbd className="absolute right-2 top-1/2 -translate-y-1/2 rounded border border-border bg-muted px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground">⌘K</kbd>
+      {/* Search — flex-1 centraliza a caixa no espaço livre entre o
+          hambúrguer e o grupo de ícones (ml-auto) à direita. */}
+      <div className="ml-2 hidden flex-1 md:flex md:justify-center">
+        <div className="relative w-full max-w-xl">
+          <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+          <input
+            placeholder="Buscar em todos os módulos · editais, contratos, lançamentos, fornecedores…"
+            className="h-9 w-full rounded-md border border-border bg-card pl-9 pr-16 text-sm shadow-sm placeholder:text-muted-foreground focus:border-ring focus:outline-none focus:ring-2 focus:ring-ring/30"
+          />
+          <kbd className="absolute right-2 top-1/2 -translate-y-1/2 rounded border border-border bg-muted px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground">⌘K</kbd>
+        </div>
       </div>
         </>
       )}
