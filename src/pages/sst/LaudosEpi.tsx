@@ -85,7 +85,9 @@ export default function LaudosEpi() {
     queryKey: ["sst_laudos_epi"],
     queryFn: async (): Promise<{ materiais: MaterialEpi[]; laudos: LaudoEpi[] }> => {
       const [materiaisResposta, laudosResposta] = await Promise.all([
-        sb.from("sup_item").select("id, nome").eq("tipo", "epi").eq("ativo", true).order("nome"),
+        // Só o material base: o laudo vale para todos os tamanhos dele
+        // (20260930000163), e sst_ca_estoque o procura no base.
+        sb.from("sup_item").select("id, nome").eq("tipo", "epi").eq("ativo", true).is("item_pai_id", null).order("nome"),
         sb.from("sst_laudo_epi").select("*").order("emitido_em", { ascending: false }),
       ]);
       if (materiaisResposta.error) throw materiaisResposta.error;
