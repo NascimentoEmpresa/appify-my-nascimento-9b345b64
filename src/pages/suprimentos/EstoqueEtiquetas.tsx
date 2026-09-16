@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { Card, CardContent } from "@/components/ui/card";
@@ -22,9 +22,12 @@ import {
   useAlmoxarifados, useEstoqueLista, useTagsDoItem, useEntradaPorQuantidade, useDevolverTags,
   useRemoverTag, useExcluirItemEstoque, useFornecedores, useHistoricoDoMaterial, useInventario,
   useHistoricoPreco, fmtBRL, useEditarItemEstoque, useAlteracoesDoMaterial,
+  usePreEntradaPendentes, useDispensarPreEntrada,
   type LinhaEstoque, type RemessaEntrada, type Movimento, type ResultadoInventario,
   type EdicaoMaterial, type EdicaoLote, type AlteracaoEstoque, type TagEstoque,
+  type PreEntrada,
 } from "@/hooks/useSupEstoque";
+import { motivoBloqueioEntrada } from "@/lib/suprimentos/entradaEstoque";
 import {
   PackagePlus, Search, AlertTriangle, Boxes, Undo2, Trash2, ShieldAlert, Plus, X, Tag,
   ClipboardCheck, History, ArrowDownToLine, ArrowUpFromLine, RotateCcw, Check, Coins,
@@ -65,7 +68,16 @@ export default function EstoqueEtiquetas() {
   const { data: acessoExcluir } = useAccessibleMenus("excluir");
   const podeExcluir = acessoExcluir?.codes.has("sup_estoque") ?? false;
   const [entradaAberta, setEntradaAberta] = useState(false);
+  // Em qual aba o modal abre. "Consultar" e "Entrada" são o MESMO modal, e
+  // sem isto o botão Consultar abriria em "Dar entrada" para quem tem
+  // permissão — o oposto do que o botão promete.
+  const [abaDaEntrada, setAbaDaEntrada] = useState<"consultar" | "entrada">("consultar");
   const [devolucaoAberta, setDevolucaoAberta] = useState(false);
+  const [preEntradaAberta, setPreEntradaAberta] = useState(false);
+  // Material escolhido na fila de Pré-Entrada: abre o modal de Entrada já
+  // com ele selecionado. É a entrada de sempre — o que muda é a origem.
+  const [materialDaFila, setMaterialDaFila] = useState<{ id: string; nome: string } | null>(null);
+  const { data: preEntradas = [] } = usePreEntradaPendentes(empresaId ?? null);
   const [detalhe, setDetalhe] = useState<LinhaEstoque | null>(null);
   const [excluindo, setExcluindo] = useState<LinhaEstoque | null>(null);
   const [editando, setEditando] = useState<LinhaEstoque | null>(null);
@@ -122,15 +134,26 @@ export default function EstoqueEtiquetas() {
           // pessoa não sabe se errou ou se o sistema quebrou.
           <>
             {/* Consultar é de todo mundo. É o botão que o estoquista usa. */}
-            <Button variant="outline" onClick={() => setEntradaAberta(true)}>
+            <Button variant="outline"
+                    onClick={() => { setAbaDaEntrada("consultar"); setEntradaAberta(true); }}>
               <Search className="mr-2 h-4 w-4" /> Consultar
+            </Button>
+            {/* Pré-Entrada também é de todo mundo: é leitura de estoque, e
+                saber o que o Catálogo aprovou e ainda não chegou interessa a
+                quem só consulta. Dar entrada por ali continua pedindo
+                `alterar`, como os outros dois botões. */}
+            <Button variant="outline" onClick={() => setPreEntradaAberta(true)}>
+              <ClipboardList className="mr-2 h-4 w-4" /> Pré-Entrada de Itens
+              {preEntradas.length > 0 && (
+                <Badge variant="secondary" className="ml-2">{preEntradas.length}</Badge>
+              )}
             </Button>
             {podeAlterar && (
               <>
                 <Button variant="outline" onClick={() => setDevolucaoAberta(true)}>
                   <Undo2 className="mr-2 h-4 w-4" /> Devolução
                 </Button>
-                <Button onClick={() => setEntradaAberta(true)}>
+                <Button onClick={() => { setAbaDaEntrada("entrada"); setEntradaAberta(true); }}>
                   <PackagePlus className="mr-2 h-4 w-4" /> Entrada
                 </Button>
               </>
@@ -319,9 +342,24 @@ export default function EstoqueEtiquetas() {
         </Card>
       )}
 
-      <DialogEntrada aberto={entradaAberta} onFechar={() => setEntradaAberta(false)}
-                     empresaId={empresaId ?? null} podeAlterar={podeAlterar} />
+      <DialogEntrada aberto={entradaAberta}
+                     onFechar={() => { setEntradaAberta(false); setMaterialDaFila(null); }}
+                     empresaId={empresaId ?? null} podeAlterar={podeAlterar}
+                     materialInicial={materialDaFila} abaInicial={abaDaEntrada} />
       <DialogDevolucao aberto={devolucaoAberta} onFechar={() => setDevolucaoAberta(false)} />
+      <DialogPreEntrada
+        aberto={preEntradaAberta}
+        onFechar={() => setPreEntradaAberta(false)}
+        itens={preEntradas}
+        podeAlterar={podeAlterar}
+        onDarEntrada={(item) => {
+          // Fecha a fila e abre a entrada de sempre, já com o material.
+          setPreEntradaAberta(false);
+          setMaterialDaFila({ id: item.sup_item_id, nome: item.nome });
+          setAbaDaEntrada("entrada");
+          setEntradaAberta(true);
+        }}
+      />
       <DialogDetalhe linha={detalhe} onFechar={() => setDetalhe(null)} />
       <DialogExcluirMaterial linha={excluindo} onFechar={() => setExcluindo(null)} />
       <DialogEditarMaterial linha={editando} empresaId={empresaId ?? null} onFechar={() => setEditando(null)} />
@@ -813,11 +851,15 @@ function DestinoDoTamanho({ base, tamanho, existentes, materialNovo }: {
   );
 }
 
-function DialogEntrada({ aberto, onFechar, empresaId, podeAlterar }: {
+function DialogEntrada({ aberto, onFechar, empresaId, podeAlterar, materialInicial, abaInicial }: {
   aberto: boolean; onFechar: () => void; empresaId: string | null; podeAlterar: boolean;
+  /** Material já escolhido — vem da fila de Pré-Entrada. */
+  materialInicial?: { id: string; nome: string } | null;
+  /** Aba em que o modal abre: o botão que foi clicado decide. */
+  abaInicial?: "consultar" | "entrada";
 }) {
   // Sem permissão de alterar só existe a consulta, então ela é a aba inicial.
-  const [abaModal, setAbaModal] = useState(podeAlterar ? "entrada" : "consultar");
+  const [abaModal, setAbaModal] = useState("consultar");
   const { data: almoxarifados = [] } = useAlmoxarifados(empresaId);
   const { data: materiais = [] } = useItens(empresaId);
   const { data: fornecedores = [] } = useFornecedores(empresaId);
@@ -832,11 +874,11 @@ function DialogEntrada({ aberto, onFechar, empresaId, podeAlterar }: {
   const [minimo, setMinimo] = useState("");
   const [fornecedor, setFornecedor] = useState("");
   const [blocos, setBlocos] = useState<BlocoUnidade[]>([{ ...BLOCO_VAZIO }]);
-  // Material digitado que não está no catálogo, cadastrado no "Dar entrada"
-  // (sup_est_criar_material, 20260930000163). Antes a lista só oferecia o que
-  // já existia: "Nada encontrado." e o botão cinza, sem dizer por quê.
-  const [novoMaterial, setNovoMaterial] = useState<string | null>(null);
   const [novoTipo, setNovoTipo] = useState("");
+  // "Não é tamanho, é material próprio" — a resposta da pessoa à sugestão
+  // "TESTE EDUARDO é o tamanho EDUARDO de TESTE". Vira p_forcar na RPC
+  // (sup_est_criar_material, 20260930000164).
+  const [forcarNovo, setForcarNovo] = useState(false);
 
   const matSelecionado = materiais.find((m) => m.id === material);
   const materialEhEpi = matSelecionado ? matSelecionado.tipo === "epi" : novoTipo === "epi";
@@ -848,6 +890,28 @@ function DialogEntrada({ aberto, onFechar, empresaId, podeAlterar }: {
   const tamanhoDeOutro = useMemo(
     () => (nomeDigitado && !jaExiste ? separarTamanhoDoNome(nomeDigitado, materiais) : null),
     [nomeDigitado, jaExiste, materiais]);
+
+  // Pergunta aberta na tela: o nome digitado parece "BASE + TAMANHO" e a
+  // pessoa ainda não disse qual dos dois é. Enquanto não disser, não há
+  // material escolhido — mas o motivo do bloqueio é essa pergunta, não
+  // "escolha um material".
+  const decisaoDeTamanhoPendente = !material && !!tamanhoDeOutro && !forcarNovo;
+
+  /**
+   * Material novo é o que foi DIGITADO, sem precisar de clique nenhum.
+   *
+   * Antes isto era um state que só o clique no cartão tracejado preenchia, e
+   * era a causa do relato de 16/09/2026: a pessoa preenchia o formulário
+   * inteiro, o cartão passava despercebido, e o botão ficava cinza sem dizer
+   * nada. Derivado do texto, o formulário passa a se comportar como parece:
+   * escreveu um nome que não existe, é material novo.
+   *
+   * Clicar num item da lista continua tendo prioridade — `material` cheio
+   * zera isto.
+   */
+  const novoMaterial = !material && nomeDigitado.length >= 2 && !jaExiste && !decisaoDeTamanhoPendente
+    ? nomeDigitado
+    : null;
   const laudoAtivo = useQuery({
     queryKey: ["sst_laudo_ativo", material],
     enabled: aberto && !!material && materialEhEpi,
@@ -903,11 +967,38 @@ function DialogEntrada({ aberto, onFechar, empresaId, podeAlterar }: {
   const limpar = () => {
     setAlmox(""); setMaterial(""); setBuscaMat(""); setValor(""); setMinimo("");
     setPrecoValidoAte(""); setFornecedor(""); setBlocos([{ ...BLOCO_VAZIO }]);
-    setNovoMaterial(null); setNovoTipo("");
+    setNovoTipo(""); setForcarNovo(false);
   };
 
-  /** Tem o que dar entrada: um material do catálogo, ou um novo com tipo escolhido. */
-  const temMaterial = !!material || (!!novoMaterial && !!novoTipo);
+  /**
+   * O que falta para gravar, em uma frase — ou null, e aí o botão habilita.
+   * Uma fonte só para o texto do rodapé e para o `disabled`: duas acabariam
+   * discordando, e o sintoma seria um botão cinza dizendo "tudo certo".
+   */
+  const bloqueio = motivoBloqueioEntrada({
+    almoxarifado: almox,
+    materialId: material,
+    nomeNovo: novoMaterial,
+    tipoNovo: novoTipo,
+    decisaoDeTamanhoPendente,
+    total,
+    erroCa,
+    laudoCarregando: laudoAtivo.isLoading,
+    enviando: entrada.isPending,
+  });
+
+  // Material vindo da fila de Pré-Entrada, e a aba certa ao abrir.
+  //
+  // A aba precisa ser acertada aqui, e não no useState: este modal é montado
+  // junto com a página, quando useAccessibleMenus ainda não respondeu e
+  // `podeAlterar` é false. O valor inicial de um useState só vale na
+  // montagem, então quem tinha permissão abria na aba errada — de forma
+  // intermitente, porque depende de o cache estar quente.
+  useEffect(() => {
+    if (!aberto) return;
+    setAbaModal(podeAlterar ? (abaInicial ?? "entrada") : "consultar");
+    if (materialInicial) setMaterial(materialInicial.id);
+  }, [aberto, podeAlterar, abaInicial, materialInicial]);
 
   const enviar = async () => {
     const remessas: RemessaEntrada[] = blocos
@@ -921,11 +1012,11 @@ function DialogEntrada({ aberto, onFechar, empresaId, podeAlterar }: {
           ? { ca_numero: b.ca_numero.trim() || null, ca_validade: b.ca_validade || null }
           : {}),
       }));
-    if (!almox || !temMaterial || remessas.length === 0 || erroCa) return;
+    if (bloqueio || remessas.length === 0) return;
 
     await entrada.mutateAsync({
       almoxarifado_id: almox, sup_item_id: material || null,
-      novo_material: material ? null : { nome: novoMaterial!, tipo: novoTipo },
+      novo_material: material ? null : { nome: novoMaterial!, tipo: novoTipo, forcar: forcarNovo },
       valor_unitario: Number(valor || 0), estoque_minimo: Number(minimo || 0),
       preco_valido_ate: precoValidoAte || null,
       fornecedor_id: fornecedor || null, remessas,
@@ -1003,42 +1094,17 @@ function DialogEntrada({ aberto, onFechar, empresaId, podeAlterar }: {
                   <X className="h-3.5 w-3.5" />
                 </Button>
               </div>
-            ) : novoMaterial ? (
-              /* Material que ainda não existe. Falta só o tipo: o banco exige
-                 (sup_est_criar_material) e ele muda o que o sistema deixa sair
-                 depois — EPI pede CA na entrada e trava saída com CA vencido. */
-              <div className="mt-1 space-y-2 rounded-md border border-dashed p-3">
-                <div className="flex items-center gap-2 text-sm">
-                  <span className="flex-1 font-medium">{novoMaterial}</span>
-                  <Badge variant="outline" className="text-[10px]">novo no catálogo</Badge>
-                  <Button variant="ghost" size="icon" className="h-6 w-6"
-                          onClick={() => { setNovoMaterial(null); setNovoTipo(""); }}>
-                    <X className="h-3.5 w-3.5" />
-                  </Button>
-                </div>
-                <div className="sm:w-60">
-                  <Label className="text-xs">Tipo do material *</Label>
-                  <Select value={novoTipo} onValueChange={setNovoTipo}>
-                    <SelectTrigger className="h-9"><SelectValue placeholder="Selecione" /></SelectTrigger>
-                    <SelectContent>
-                      {TIPOS_MATERIAL.map((t) => (
-                        <SelectItem key={t.valor} value={t.valor}>{t.rotulo}</SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-                <p className="text-[11px] text-muted-foreground">
-                  O material entra no catálogo com código próprio ao dar entrada. Para o encarregado
-                  poder pedir, ele ainda precisa entrar no enxoval de uma função, pelo Catálogo.
-                </p>
-              </div>
             ) : (
               <>
                 {/* Filtrar por tipo antes de procurar pelo nome: o catálogo
                     passa de mil itens, e quem dá entrada normalmente sabe se
                     está mexendo com EPI, uniforme ou material de limpeza. */}
                 <div className="flex gap-2">
-                  <Input value={buscaMat} onChange={(e) => setBuscaMat(e.target.value)}
+                  {/* Mexeu no nome, a decisão "não é tamanho" morre junto:
+                      ela valia para o texto anterior, e carregá-la adiante
+                      cadastraria o próximo nome sem perguntar nada. */}
+                  <Input value={buscaMat}
+                         onChange={(e) => { setBuscaMat(e.target.value); setForcarNovo(false); }}
                          placeholder="Buscar no catálogo…" className="flex-1" />
                   <Select value={tipoMat} onValueChange={setTipoMat}>
                     <SelectTrigger className="w-44"><SelectValue /></SelectTrigger>
@@ -1066,39 +1132,72 @@ function DialogEntrada({ aberto, onFechar, empresaId, podeAlterar }: {
                     ordem: se o que ele digitou é um TAMANHO de um material que
                     já existe ("JAQUETA M"), usar o material certo — cadastrar
                     à parte criaria o item solto que o código por tamanho veio
-                    acabar, e o banco recusaria depois do clique. Senão,
-                    cadastrar na hora. */}
-                {tamanhoDeOutro ? (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setMaterial(tamanhoDeOutro.base.id);
-                      setBuscaMat("");
-                      setBlocos((s) => s.map((b, j) => (
-                        j === 0 && !b.tamanho.trim() ? { ...b, tamanho: tamanhoDeOutro.tamanho } : b)));
-                    }}
-                    className="mt-1 flex w-full items-start gap-2 rounded-md border border-dashed px-3 py-2 text-left text-xs hover:bg-muted"
-                  >
-                    <Tag className="mt-0.5 h-3.5 w-3.5 shrink-0 text-primary" />
-                    <span>
-                      “{nomeDigitado}” é o tamanho <strong>{tamanhoDeOutro.tamanho}</strong> de{" "}
-                      <strong>{tamanhoDeOutro.base.nome}</strong>. Usar esse material com o tamanho{" "}
-                      {tamanhoDeOutro.tamanho}.
-                    </span>
-                  </button>
-                ) : nomeDigitado.length >= 2 && !jaExiste ? (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setNovoMaterial(nomeDigitado);
-                      setNovoTipo(tipoMat !== TODOS_OS_TIPOS ? tipoMat : "");
-                    }}
-                    className="mt-1 flex w-full items-center gap-2 rounded-md border border-dashed px-3 py-2 text-left text-xs hover:bg-muted"
-                  >
-                    <Plus className="h-3.5 w-3.5 shrink-0 text-primary" />
-                    <span>Cadastrar “{nomeDigitado}” como material novo</span>
-                  </button>
-                ) : null}
+                    acabar. Mas a regra do tamanho aceita QUALQUER palavra
+                    ("ÁLCOOL GEL" vira tamanho GEL de "ÁLCOOL"), então a
+                    segunda saída tem de existir junto: cadastrar como material
+                    próprio, que é o que manda p_forcar para o banco. */}
+                {decisaoDeTamanhoPendente && tamanhoDeOutro && (
+                  <div className="mt-1 space-y-1.5">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setMaterial(tamanhoDeOutro.base.id);
+                        setBuscaMat("");
+                        setBlocos((s) => s.map((b, j) => (
+                          j === 0 && !b.tamanho.trim() ? { ...b, tamanho: tamanhoDeOutro.tamanho } : b)));
+                      }}
+                      className="flex w-full items-start gap-2 rounded-md border border-dashed px-3 py-2 text-left text-xs hover:bg-muted"
+                    >
+                      <Tag className="mt-0.5 h-3.5 w-3.5 shrink-0 text-primary" />
+                      <span>
+                        “{nomeDigitado}” é o tamanho <strong>{tamanhoDeOutro.tamanho}</strong> de{" "}
+                        <strong>{tamanhoDeOutro.base.nome}</strong>. Usar esse material com o tamanho{" "}
+                        {tamanhoDeOutro.tamanho}.
+                      </span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setForcarNovo(true);
+                        setNovoTipo(tipoMat !== TODOS_OS_TIPOS ? tipoMat : "");
+                      }}
+                      className="flex w-full items-start gap-2 rounded-md border border-dashed px-3 py-2 text-left text-xs hover:bg-muted"
+                    >
+                      <Plus className="mt-0.5 h-3.5 w-3.5 shrink-0 text-primary" />
+                      <span>
+                        Não é tamanho — cadastrar “{nomeDigitado}” como material próprio.
+                      </span>
+                    </button>
+                  </div>
+                )}
+
+                {/* Material novo: nasce do que foi digitado, sem clique. Falta
+                    só o tipo — o banco exige (sup_est_criar_material) e ele
+                    muda o que o sistema deixa sair depois: EPI pede CA na
+                    entrada e trava saída com CA vencido. */}
+                {novoMaterial && (
+                  <div className="mt-1 space-y-2 rounded-md border border-dashed p-3">
+                    <div className="flex items-center gap-2 text-sm">
+                      <span className="flex-1 font-medium">{novoMaterial}</span>
+                      <Badge variant="outline" className="text-[10px]">novo no catálogo</Badge>
+                    </div>
+                    <div className="sm:w-60">
+                      <Label className="text-xs">Tipo do material *</Label>
+                      <Select value={novoTipo} onValueChange={setNovoTipo}>
+                        <SelectTrigger className="h-9"><SelectValue placeholder="Selecione" /></SelectTrigger>
+                        <SelectContent>
+                          {TIPOS_MATERIAL.map((t) => (
+                            <SelectItem key={t.valor} value={t.valor}>{t.rotulo}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <p className="text-[11px] text-muted-foreground">
+                      O material entra no catálogo com código próprio ao dar entrada. Para o encarregado
+                      poder pedir, ele ainda precisa entrar no enxoval de uma função, pelo Catálogo.
+                    </p>
+                  </div>
+                )}
               </>
             )}
           </div>
@@ -1200,10 +1299,17 @@ function DialogEntrada({ aberto, onFechar, empresaId, podeAlterar }: {
             <span className="text-sm text-muted-foreground">
               Total: <strong>{total}</strong> unidade(s)
             </span>
-            {erroCa && <p className="mt-1 max-w-sm text-xs font-medium text-destructive">{erroCa}</p>}
+            {/* O que falta, escrito. Um botão cinza sem motivo é pior que um
+                botão que falha: falhando, pelo menos vem mensagem. */}
+            {bloqueio && (
+              <p className={cn("mt-1 max-w-sm text-xs font-medium",
+                               erroCa ? "text-destructive" : "text-muted-foreground")}>
+                {bloqueio}
+              </p>
+            )}
           </div>
           <Button variant="outline" onClick={() => { limpar(); onFechar(); }}>Cancelar</Button>
-          <Button disabled={!almox || !temMaterial || total === 0 || !!erroCa || laudoAtivo.isLoading || entrada.isPending} onClick={enviar}>
+          <Button disabled={!!bloqueio} onClick={enviar}>
             Dar entrada
           </Button>
         </DialogFooter>
@@ -1211,6 +1317,171 @@ function DialogEntrada({ aberto, onFechar, empresaId, podeAlterar }: {
         </Tabs>
       </DialogContent>
     </Dialog>
+  );
+}
+
+// ── Pré-Entrada ──────────────────────────────────────────────────────
+
+/**
+ * A fila do que o Catálogo aprovou e o almoxarifado ainda não tem.
+ *
+ * Antes desta tela, material aprovado no Catálogo era invisível para o
+ * Estoque: existia em sup_item, com código e tudo, mas sem ficha em
+ * sup_estoque_item — e é a ficha que a lista de estoque lê. Ninguém no
+ * almoxarifado ficava sabendo que passou a existir um material que vão ter de
+ * comprar e guardar; a primeira notícia era o encarregado pedindo e faltando.
+ *
+ * Entrar na fila é automático (sup_cat_decidir_lote, 20260930000165). Sair
+ * também: dar entrada fecha a pendência por gatilho, não por esta tela — o
+ * que vale para qualquer caminho de entrada, inclusive a NF de Entrada.
+ * "Dispensar" é a saída para o que nunca vai para a prateleira.
+ */
+function DialogPreEntrada({ aberto, onFechar, itens, podeAlterar, onDarEntrada }: {
+  aberto: boolean; onFechar: () => void; itens: PreEntrada[]; podeAlterar: boolean;
+  onDarEntrada: (item: PreEntrada) => void;
+}) {
+  const [busca, setBusca] = useState("");
+  const [dispensando, setDispensando] = useState<PreEntrada | null>(null);
+  const [motivo, setMotivo] = useState("");
+  const dispensar = useDispensarPreEntrada();
+
+  const achados = useMemo(() => {
+    const t = busca.trim().toLowerCase();
+    if (!t) return itens;
+    return itens.filter((i) => `${i.nome} ${i.codigo ?? ""}`.toLowerCase().includes(t));
+  }, [itens, busca]);
+
+  /** "Contrato · Posto · Função" — sem isto, a fila é uma lista de nomes soltos. */
+  const origemDoItem = (i: PreEntrada) =>
+    [i.contexto?.contrato, i.contexto?.posto, i.contexto?.funcao].filter(Boolean).join(" · ");
+
+  return (
+    <>
+      <Dialog open={aberto} onOpenChange={(o) => { if (!o) { setBusca(""); onFechar(); } }}>
+        <DialogContent className="max-h-[90vh] max-w-3xl overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Pré-Entrada de Itens</DialogTitle>
+          </DialogHeader>
+
+          <p className="text-sm text-muted-foreground">
+            Materiais aprovados no Catálogo que ainda não existem no estoque. Dar entrada aqui é a
+            entrada de sempre — o material passa a existir na prateleira, com o código dele, e sai
+            desta lista sozinho.
+          </p>
+
+          {itens.length > 0 && (
+            <div className="relative">
+              <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+              <Input value={busca} onChange={(e) => setBusca(e.target.value)}
+                     placeholder="Buscar material ou código…" className="pl-9" />
+            </div>
+          )}
+
+          {itens.length === 0 ? (
+            <div className="rounded-lg border border-dashed py-10 text-center">
+              <ClipboardList className="mx-auto h-8 w-8 text-muted-foreground" />
+              <p className="mt-2 text-sm font-medium">Nada aguardando entrada.</p>
+              <p className="mt-1 text-xs text-muted-foreground">
+                Esta lista se enche sozinha quando um lote é aprovado em{" "}
+                <Link to="/app/suprimentos/catalogo/aprovacoes" className="underline">
+                  Aprovação de Catálogo
+                </Link>{" "}
+                com material que ainda não tem estoque.
+              </p>
+            </div>
+          ) : (
+            <div className="rounded-lg border">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead className="w-24">Código</TableHead>
+                    <TableHead>Material</TableHead>
+                    <TableHead>Veio de</TableHead>
+                    <TableHead className="w-44" />
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {achados.map((i) => (
+                    <TableRow key={i.id}>
+                      <TableCell className="font-mono text-xs text-muted-foreground">
+                        {i.codigo ?? "—"}
+                      </TableCell>
+                      <TableCell>
+                        <div className="flex items-center gap-2">
+                          <span className="font-medium">{i.nome}</span>
+                          <Badge variant="secondary" className="text-[10px]">
+                            {LABEL_TIPO_ITEM[i.tipo as TipoItem] ?? i.tipo}
+                          </Badge>
+                        </div>
+                      </TableCell>
+                      <TableCell className="text-xs text-muted-foreground">
+                        {origemDoItem(i) || "Catálogo"}
+                      </TableCell>
+                      <TableCell>
+                        {podeAlterar && (
+                          <div className="flex justify-end gap-1">
+                            <Button size="sm" onClick={() => onDarEntrada(i)}>
+                              <PackagePlus className="mr-1.5 h-3.5 w-3.5" /> Dar entrada
+                            </Button>
+                            <Button size="sm" variant="ghost" className="text-muted-foreground"
+                                    onClick={() => { setDispensando(i); setMotivo(""); }}>
+                              Dispensar
+                            </Button>
+                          </div>
+                        )}
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                  {achados.length === 0 && (
+                    <TableRow>
+                      <TableCell colSpan={4} className="py-6 text-center text-xs text-muted-foreground">
+                        Nada encontrado.
+                      </TableCell>
+                    </TableRow>
+                  )}
+                </TableBody>
+              </Table>
+            </div>
+          )}
+
+          <DialogFooter>
+            <Button variant="outline" onClick={() => { setBusca(""); onFechar(); }}>Fechar</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Dispensar pede motivo: daqui a três meses alguém vai perguntar por que
+          o material aprovado nunca entrou no estoque, e a resposta tem de estar
+          gravada em algum lugar. */}
+      <Dialog open={!!dispensando} onOpenChange={(o) => { if (!o) setDispensando(null); }}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Tirar da pré-entrada</DialogTitle>
+          </DialogHeader>
+          <p className="text-sm text-muted-foreground">
+            <strong>{dispensando?.nome}</strong> sai da lista sem entrar no estoque. O material
+            continua no Catálogo — só deixa de ser cobrado do almoxarifado.
+          </p>
+          <div>
+            <Label>Por quê?</Label>
+            <Textarea value={motivo} onChange={(e) => setMotivo(e.target.value)}
+                      placeholder="Ex.: entregue direto no contrato, não passa pelo almoxarifado." />
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setDispensando(null)}>Cancelar</Button>
+            <Button
+              disabled={!motivo.trim() || dispensar.isPending}
+              onClick={async () => {
+                await dispensar.mutateAsync({ id: dispensando!.id, motivo: motivo.trim() });
+                setDispensando(null);
+              }}
+            >
+              Tirar da lista
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </>
   );
 }
 
