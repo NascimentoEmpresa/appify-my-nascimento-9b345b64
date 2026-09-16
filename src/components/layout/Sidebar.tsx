@@ -901,10 +901,9 @@ const operacionalModule: ModuleDef = {
         { label: "Solicitações de Demissão", to: "/app/operacional/solicitacoes-demissao", icon: UserMinus },
         { label: "Conferência de Ponto", to: "/app/operacional/conferencia-ponto", icon: ClipboardCheck },
         { label: "Mudança de Função", to: "/app/operacional/troca-funcao", icon: ArrowLeftRight, notif: "troca_funcao" },
-        // Advertências (15/09/2026): o Operacional aprova antes do Jurídico.
-        // Sem menu próprio de propósito (pedido: "usa o que já tem") — a rota
-        // cai em operacional_home, o menu raiz do módulo.
-        { label: "Advertências Solicitadas", to: "/app/operacional/advertencias", icon: ShieldAlert },
+        // Advertências passaram pelo Operacional só em 15/09/2026 (mig 117);
+        // em 16/09 voltaram a ser só do Jurídico, com aprovador pelo Acesso
+        // por Usuário (mig 124).
       ],
     },
   ],

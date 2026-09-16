@@ -185,12 +185,12 @@ const advertencia: Fluxo = {
       status: "Aguardando Aprovação",
     },
     {
-      quem: "Operacional", faz: "Aprova ou reprova. Reprovar exige motivo — é o que o encarregado lê.",
-      onde: "Operacional › Advertências Solicitadas",
+      quem: "Aprovador (Acesso por Usuário)", faz: "Aprova ou reprova. Reprovar exige motivo — é o que o encarregado lê. Quem aprova tem a ação Aprovar no menu Advertências.",
+      onde: "Jurídico › Advertências",
       status: "Aguardando Jurídico",
     },
     {
-      quem: "Jurídico", faz: "Analisa, decide o enquadramento e emite o documento.",
+      quem: "Jurídico", faz: "Analisa, decide o enquadramento, registra o parecer e emite o documento.",
       onde: "Jurídico › Advertências",
       status: "Concluída",
     },
