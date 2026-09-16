@@ -133,7 +133,7 @@ export default function SolicitarTrocaFuncao() {
       setor: setor || null,
       motivo: motivo.trim(),
       data_pretendida: dataPretendida || null,
-      status: statusInicial(eEscritorio),
+      status: statusInicial(eEscritorio, setor || null),
     }).select("id").single();
     setEnviando(false);
     if (error) { toast.error("Não deu para enviar: " + error.message); return; }

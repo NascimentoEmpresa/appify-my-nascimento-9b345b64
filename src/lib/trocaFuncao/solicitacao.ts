@@ -1,22 +1,27 @@
 // =====================================================================
 // TROCA DE FUNÇÃO — o fluxo, longe do React
 //
-// Encarregado abre → ANALISTA valida → o Operacional aprova → SST → RH
-// altera na Senior.
+// Encarregado abre → quem aprova decide → SST → RH altera na Senior.
 //
-//                            ┌─ Pendente Operacional ─┐
-//   Pendente Analista ──────┤                         ├→ Pendente SST
-//                            └─ Pendente Escritório ──┘      ↓
-//                                                      Pendente RH
-//                                                            ↓
-//                                                       Concluída
-//          ↘ Reprovada (em qualquer uma das três filas de decisão)
+//   contrato simples ──→ Pendente Operacional ─┐
+//                                              ├→ Pendente SST → Pendente RH → Concluída
+//   administrativa ────→ Pendente Escritório ──┘
+//          ↘ Reprovada (em qualquer uma das duas filas de decisão)
 //
-// A ETAPA DO ANALISTA entrou em 02/09/2026, junto com o submódulo
-// "Analistas Validações" em Licitações. Ela é a PRIMEIRA porta: nada chega
-// ao Operacional sem passar por ela. O analista enxerga as DUAS origens —
-// foi o mesmo movimento que tirou a aprovação do escritório do RH, que ficou
-// só com a etapa final (alterar o cargo na Senior).
+// ADMINISTRATIVA (16/09/2026) = solicitação do ESCRITÓRIO **ou** com SETOR
+// informado. Vai pra Diretoria › Mudança de Função, e lá só enxerga (e
+// decide) quem tem o setor dela marcado em Administração › Acesso por
+// Usuário (SISTEMA_TROCA_FUNCAO_APROVADOR_SETOR). O Operacional fica com
+// a troca de contrato SEM setor — e só passa a ver alguma com setor se o
+// admin marcar o setor pra ele. Pedido do Pablo: "na Licitação ninguém pode
+// ver as do administrativo e quando tiver setor; vai pra Diretoria; no
+// Operacional só a de contrato, a menos que eu libere no acesso".
+//
+// A ETAPA DO ANALISTA (02/09/2026 → 16/09/2026) validava tudo antes da
+// aprovação. Saiu: Licitações › Analistas Validações › Mudança de Função
+// virou ACOMPANHAMENTO das trocas de contrato simples, sem botão. As
+// solicitações nascem direto na fila de quem decide. "Pendente Analista"
+// fica no tipo só pelo histórico (nada nasce mais assim).
 //
 // CONTRATO x ESCRITÓRIO não é mais tela separada (25/08/2026). Eram duas
 // telas idênticas com o mesmo painel, e quem tinha as duas permissões
@@ -64,8 +69,16 @@ export type Etapa = "analista" | "aprovacao" | "sst" | "rh";
 /** De onde a solicitação veio. É o filtro da tela de aprovação. */
 export type Origem = "contrato" | "escritorio";
 
-export const origemDa = (s: Pick<SolicitacaoTroca, "e_escritorio">): Origem =>
-  s.e_escritorio ? "escritorio" : "contrato";
+/** Administrativa = do escritório OU com setor informado. É o que vai pra Diretoria. */
+export const ehAdministrativa = (s: Pick<SolicitacaoTroca, "e_escritorio" | "setor">): boolean =>
+  !!s.e_escritorio || !!String(s.setor ?? "").trim();
+
+export const origemDa = (s: Pick<SolicitacaoTroca, "e_escritorio" | "setor">): Origem =>
+  ehAdministrativa(s) ? "escritorio" : "contrato";
+
+/** Mesma régua do banco (cs_reembolso_norm_setor): sem acento, caixa alta, sem espaços nas pontas. */
+export const normSetorTroca = (s: string | null | undefined): string =>
+  String(s ?? "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim().toUpperCase();
 
 export const ROTULO_ORIGEM: Record<Origem, string> = {
   contrato: "Contrato",
@@ -171,8 +184,9 @@ export function localEhEscritorio(local?: string | null): boolean {
  * tinha que ir no banco. `localEhEscritorio` continua aqui, mas só para a
  * tela sugerir — ver SolicitarTrocaFuncao.
  */
-export function statusInicial(_eEscritorio: boolean): StatusTroca {
-  return "Pendente Analista";
+export function statusInicial(eEscritorio: boolean, setor?: string | null): StatusTroca {
+  // Desde 16/09/2026 nasce direto na fila de quem decide (o analista saiu).
+  return ehAdministrativa({ e_escritorio: eEscritorio, setor }) ? "Pendente Escritório" : "Pendente Operacional";
 }
 
 /**
@@ -194,7 +208,8 @@ export function statusAposAnalista(eEscritorio: boolean): StatusTroca {
  * (ver `podeAgirEm`).
  */
 const STATUS_DE_ACAO: Record<Etapa, StatusTroca[]> = {
-  analista:  ["Pendente Analista"],
+  // Licitações só acompanha (16/09/2026): nenhum botão.
+  analista:  [],
   aprovacao: ["Pendente Operacional", "Pendente Escritório"],
   sst:       ["Pendente SST"],
   rh:        ["Pendente RH"],
@@ -230,13 +245,36 @@ export const statusVisiveis = (etapa: Etapa) => STATUS_VISIVEIS[etapa];
  * que estar entre as que a permissão libera. Sem a segunda, juntar as duas
  * telas em uma daria ao Operacional a fila do administrativo de brinde.
  */
-export function pertenceAFila(
-  s: Pick<SolicitacaoTroca, "status" | "e_escritorio">,
+/**
+ * O recorte de quem está olhando (16/09/2026):
+ *   • SST e RH tratam tudo.
+ *   • Licitações (analista) só acompanha a troca de CONTRATO SIMPLES — nada
+ *     do administrativo nem com setor aparece lá.
+ *   • Aprovação: solicitação COM SETOR só aparece pra quem tem aquele setor
+ *     marcado no Acesso por Usuário (`setores`, já normalizados) — vale pra
+ *     Diretoria e pro Operacional. Sem setor, manda a origem do menu.
+ */
+export function visivelNoRecorte(
+  s: Pick<SolicitacaoTroca, "e_escritorio" | "setor">,
   etapa: Etapa,
   origens: Origem[],
+  setores: ReadonlySet<string> | null = null,
+): boolean {
+  if (etapa === "sst" || etapa === "rh") return true;
+  if (etapa === "analista") return !ehAdministrativa(s);
+  const setor = normSetorTroca(s.setor);
+  if (setor) return !!setores?.has(setor);
+  return origens.includes(origemDa(s));
+}
+
+export function pertenceAFila(
+  s: Pick<SolicitacaoTroca, "status" | "e_escritorio" | "setor">,
+  etapa: Etapa,
+  origens: Origem[],
+  setores: ReadonlySet<string> | null = null,
 ): boolean {
   if (!STATUS_VISIVEIS[etapa].includes(s.status)) return false;
-  return origens.includes(origemDa(s));
+  return visivelNoRecorte(s, etapa, origens, setores);
 }
 
 /**
@@ -246,12 +284,13 @@ export function pertenceAFila(
  * saiu da mão dele, e no SST/RH a origem não separa ninguém.
  */
 export function podeAgirEm(
-  s: Pick<SolicitacaoTroca, "status" | "e_escritorio">,
+  s: Pick<SolicitacaoTroca, "status" | "e_escritorio" | "setor">,
   etapa: Etapa,
   origens: Origem[],
+  setores: ReadonlySet<string> | null = null,
 ): boolean {
   if (!STATUS_DE_ACAO[etapa].includes(s.status)) return false;
-  return origens.includes(origemDa(s));
+  return visivelNoRecorte(s, etapa, origens, setores);
 }
 
 export type Acao = "aprovar" | "reprovar" | "aso" | "dispensar_aso" | "concluir";
@@ -294,9 +333,9 @@ export function corDoStatus(s: StatusTroca): string {
 /** O que o status quer dizer, em português de gente. */
 export function explicaStatus(s: StatusTroca): string {
   switch (s) {
-    case "Pendente Analista":    return "Aguardando o analista validar a troca.";
-    case "Pendente Operacional": return "Validada pelo analista. Aguardando o Operacional aprovar.";
-    case "Pendente Escritório":  return "Validada pelo analista. Aguardando a aprovação do administrativo.";
+    case "Pendente Analista":    return "Aguardando validação (etapa antiga — não nasce mais assim).";
+    case "Pendente Operacional": return "Aguardando o Operacional aprovar.";
+    case "Pendente Escritório":  return "Aguardando a aprovação da Diretoria (administrativo / setor).";
     case "Pendente SST":         return "Aprovada. O SST vai avaliar se precisa de ASO.";
     case "Pendente RH":          return "Liberada pelo SST. O RH vai fazer a alteração na Senior.";
     case "Concluída":            return "Alteração feita na Senior. Troca concluída.";

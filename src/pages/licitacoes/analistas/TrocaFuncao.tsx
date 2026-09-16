@@ -3,19 +3,20 @@ import { PainelTrocaFuncao } from "@/components/troca-funcao/PainelTrocaFuncao";
 import { ResumoDeFuncoes } from "@/components/fluxos/ResumoDeFuncoes";
 
 /**
- * Analistas Validações › Mudança de Função — a PRIMEIRA porta do fluxo.
+ * Analistas Validações › Mudança de Função — ACOMPANHAMENTO.
  *
- * O analista vê as duas origens (contrato e escritório): a validação do
- * administrativo saiu do RH em 02/09/2026 e veio para cá junto com a de
- * contrato. Validar aqui manda para a aprovação do Operacional; só depois
- * vai para o SST e, por último, para o RH alterar na Senior.
+ * Entre 02/09 e 16/09/2026 o analista validava tudo antes da aprovação. A
+ * pedido do Pablo (16/09/2026) a validação saiu: a solicitação nasce direto
+ * na fila de quem decide, e aqui só se acompanha a troca de CONTRATO SIMPLES
+ * (sem setor). Nada do administrativo ou com setor aparece nesta tela — isso
+ * é da Diretoria › Mudança de Função.
  */
 export default function AnalistasTrocaFuncao() {
   return (
     <div className="mx-auto max-w-6xl">
       <PageHeader
         title="Mudança de Função"
-        subtitle="Valide as trocas de função pedidas pelos encarregados. O que você validar segue para a aprovação do Operacional."
+        subtitle="Acompanhe as trocas de função dos contratos. Quem aprova é o Operacional; as do administrativo ou com setor vão para a Diretoria."
         module="Licitações"
         breadcrumb={["Analistas Validações", "Mudança de Função"]}
         actions={<ResumoDeFuncoes fluxo="troca_funcao" />}

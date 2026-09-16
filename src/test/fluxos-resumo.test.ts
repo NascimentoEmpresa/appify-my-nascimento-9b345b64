@@ -66,10 +66,10 @@ describe("o resumo não pode divergir da regra", () => {
   });
 
   it("os fluxos que ficaram com o analista dizem isso no texto", () => {
-    // "Pendente Analista" na troca; no recrutamento o status tem o mesmo
-    // nome, mas ele não vem de uma lib — está no Recrutamento.tsx. A demissão
-    // saiu daqui em 14/09/2026: a etapa 1 dela voltou para o Operacional.
-    for (const codigo of ["troca_funcao", "vaga"]) {
+    // No recrutamento o status tem o mesmo nome, mas ele não vem de uma lib —
+    // está no Recrutamento.tsx. A demissão saiu daqui em 14/09/2026 e a troca
+    // de função em 16/09/2026 (Licitações só acompanha).
+    for (const codigo of ["vaga"]) {
       const f = fluxoPorCodigo(codigo)!;
       const temAnalista = f.passos.some(p => p.quem === "Analista");
       expect(temAnalista, `${codigo} deveria ter a etapa do analista`).toBe(true);
@@ -79,10 +79,17 @@ describe("o resumo não pode divergir da regra", () => {
   it("onde o analista aparece, ele é o primeiro a decidir", () => {
     // O pedido foi explícito: "PRIMEIRO o analista aprova". O passo 1 é sempre
     // o encarregado abrindo, então o analista tem que ser o passo 2.
-    for (const codigo of ["troca_funcao", "vaga"]) {
+    for (const codigo of ["vaga"]) {
       const f = fluxoPorCodigo(codigo)!;
       expect(f.passos[1].quem, codigo).toBe("Analista");
     }
+  });
+
+  it("na troca de função quem decide primeiro é o Operacional ou a Diretoria — Licitações só acompanha (16/09/2026)", () => {
+    const f = fluxoPorCodigo("troca_funcao")!;
+    expect(f.passos[1].quem).toBe("Operacional");
+    expect(f.passos.some(p => p.quem === "Diretoria")).toBe(true);
+    expect(f.passos.some(p => p.quem === "Analista")).toBe(false);
   });
 
   it("na demissão quem decide primeiro é o Operacional, e o analista só acompanha", () => {

@@ -975,7 +975,7 @@ const diretoriaModule: ModuleDef = {
       defaultOpen: true,
       items: [
         { label: "Aprovacoes do Malote", to: "/app/diretoria/malote-aprovacoes", icon: CheckCircle2 },
-        { label: "Mudanca de Funcao", to: "/app/diretoria/troca-funcao-escritorio", icon: ArrowLeftRight, notif: "troca_funcao" },
+        { label: "Mudança de Função", to: "/app/diretoria/troca-funcao-escritorio", icon: ArrowLeftRight, notif: "troca_funcao" },
       ],
     },
   ],

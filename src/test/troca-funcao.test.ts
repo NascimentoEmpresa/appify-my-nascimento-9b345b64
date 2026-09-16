@@ -54,12 +54,13 @@ describe("localEhEscritorio", () => {
 });
 
 describe("statusInicial", () => {
-  it("toda troca nasce na mão do analista, venha de onde vier", () => {
-    // A etapa do analista (02/09/2026) é a PRIMEIRA porta: a origem deixou de
-    // decidir onde a solicitação nasce e passou a decidir só para onde ela vai
-    // depois que o analista libera.
-    expect(statusInicial(false)).toBe("Pendente Analista");
-    expect(statusInicial(true)).toBe("Pendente Analista");
+  it("nasce direto na fila de quem decide (16/09/2026): contrato simples → Operacional", () => {
+    expect(statusInicial(false)).toBe("Pendente Operacional");
+    expect(statusInicial(false, "")).toBe("Pendente Operacional");
+  });
+  it("administrativa (escritório OU com setor) → Diretoria", () => {
+    expect(statusInicial(true)).toBe("Pendente Escritório");
+    expect(statusInicial(false, "Financeiro")).toBe("Pendente Escritório");
   });
 });
 
@@ -136,14 +137,48 @@ describe("origensVisiveis", () => {
 });
 
 describe("origemDa", () => {
-  it("é o flag do pedido, e nada mais", () => {
-    expect(origemDa({ e_escritorio: true })).toBe("escritorio");
-    expect(origemDa({ e_escritorio: false })).toBe("contrato");
+  it("escritório é administrativa", () => {
+    expect(origemDa({ e_escritorio: true, setor: null })).toBe("escritorio");
+    expect(origemDa({ e_escritorio: false, setor: null })).toBe("contrato");
+  });
+  it("contrato COM setor também é administrativa (16/09/2026) — vai pra Diretoria", () => {
+    expect(origemDa({ e_escritorio: false, setor: "Operacional" })).toBe("escritorio");
+    expect(origemDa({ e_escritorio: false, setor: "   " })).toBe("contrato");
+  });
+});
+
+describe("recorte por setor (16/09/2026)", () => {
+  const com = (setor: string, status: StatusTroca = "Pendente Escritório") => ({ status, e_escritorio: false, setor });
+  const FIN = new Set(["FINANCEIRO"]);
+
+  it("solicitação com setor só aparece pra quem tem o setor marcado — em qualquer menu", () => {
+    expect(pertenceAFila(com("Financeiro"), "aprovacao", ESCRITORIO, FIN)).toBe(true);
+    expect(pertenceAFila(com("Financeiro"), "aprovacao", CONTRATO, FIN)).toBe(true);   // Operacional liberado no acesso
+    expect(pertenceAFila(com("Operacional"), "aprovacao", ESCRITORIO, FIN)).toBe(false);
+    expect(pertenceAFila(com("Financeiro"), "aprovacao", AMBAS, new Set())).toBe(false); // sem setor marcado, não vê
+    expect(pertenceAFila(com("Financeiro"), "aprovacao", AMBAS, null)).toBe(false);
+  });
+
+  it("casa acento e caixa (Licitações ≙ LICITACOES)", () => {
+    expect(pertenceAFila(com("Licitações"), "aprovacao", ESCRITORIO, new Set(["LICITACOES"]))).toBe(true);
+  });
+
+  it("decidir segue a mesma régua", () => {
+    expect(podeAgirEm(com("Financeiro"), "aprovacao", ESCRITORIO, FIN)).toBe(true);
+    expect(podeAgirEm(com("Financeiro"), "aprovacao", ESCRITORIO, new Set())).toBe(false);
+  });
+
+  it("Licitações nunca vê administrativa nem com setor; SST e RH veem tudo", () => {
+    expect(pertenceAFila(com("Financeiro", "Pendente Escritório"), "analista", CONTRATO, FIN)).toBe(false);
+    expect(pertenceAFila({ status: "Pendente Escritório", e_escritorio: true, setor: null }, "analista", CONTRATO, FIN)).toBe(false);
+    expect(pertenceAFila({ status: "Pendente Operacional", e_escritorio: false, setor: null }, "analista", CONTRATO)).toBe(true);
+    expect(pertenceAFila(com("Financeiro", "Pendente SST"), "sst", AMBAS, null)).toBe(true);
+    expect(pertenceAFila(com("Financeiro", "Pendente RH"), "rh", AMBAS, null)).toBe(true);
   });
 });
 
 describe("pertenceAFila", () => {
-  const sol = (status: StatusTroca, e_escritorio: boolean) => ({ status, e_escritorio });
+  const sol = (status: StatusTroca, e_escritorio: boolean) => ({ status, e_escritorio, setor: null });
 
   it("uma tela só, mas cada permissão vê a sua fila", () => {
     expect(pertenceAFila(sol("Pendente Operacional", false), "aprovacao", CONTRATO)).toBe(true);
@@ -181,7 +216,7 @@ describe("pertenceAFila", () => {
 });
 
 describe("podeAgirEm", () => {
-  const sol = (status: StatusTroca, e_escritorio: boolean) => ({ status, e_escritorio });
+  const sol = (status: StatusTroca, e_escritorio: boolean) => ({ status, e_escritorio, setor: null });
 
   it("ver não é decidir: acompanha o que já saiu da mão dele, sem poder mexer", () => {
     expect(pertenceAFila(sol("Pendente SST", false), "aprovacao", CONTRATO)).toBe(true);
@@ -214,8 +249,8 @@ describe("statusVisiveis / statusDeAcao", () => {
     expect(statusDeAcao("aprovacao")).toEqual(["Pendente Operacional", "Pendente Escritório"]);
   });
 
-  it("o analista age só na fila dele", () => {
-    expect(statusDeAcao("analista")).toEqual(["Pendente Analista"]);
+  it("Licitações só acompanha (16/09/2026): nenhum status de ação", () => {
+    expect(statusDeAcao("analista")).toEqual([]);
   });
 
   it("o Operacional VÊ a fila do analista, mas não decide nada nela", () => {
