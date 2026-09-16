@@ -216,6 +216,8 @@ import Ajuda from "./pages/ajuda/Ajuda";
 import AjudaTopico from "./pages/ajuda/AjudaTopico";
 import InboxAprovacoes from "./pages/aprovacoes/Inbox";
 import SolicitacoesErp from "./pages/sistemas/SolicitacoesErp";
+import SolicitacoesHoraExtra from "./pages/sistemas/hora-extra/SolicitacoesHoraExtra";
+import LiberacaoHoraExtra from "./pages/sistemas/hora-extra/LiberacaoHoraExtra";
 import CentralServicos from "./pages/central-servicos/CentralServicos";
 import MeusChamados from "./pages/chamados/MeusChamados";
 import AbrirChamado from "./pages/chamados/AbrirChamado";
@@ -344,6 +346,8 @@ const App = () => (
             <Route path="operacional/diarias" element={<ControleDiarias />} />
             {/* Sistemas */}
             <Route path="sistemas/solicitacoes-erp" element={<SolicitacoesErp />} />
+            <Route path="sistemas/hora-extra" element={<SolicitacoesHoraExtra />} />
+            <Route path="sistemas/hora-extra/liberacao" element={<LiberacaoHoraExtra />} />
             {/* Chamados de Sistemas (help desk) — telas de abrir/meus chamados também
                 aparecem na Central de Serviços; gestão fica só aqui em Sistemas. */}
             {/* A tela do solicitante mora na Central de Serviços. Estas duas
@@ -622,7 +626,10 @@ const App = () => (
             <Route path="juridico/processos/dashboard" element={<Processos view="dashboard" />} />
             <Route path="juridico/processos" element={<Processos view="processos" />} />
             <Route path="juridico/processos/audiencias" element={<Processos view="audiencias" />} />
-            <Route path="juridico/advertencias" element={<Advertencias />} />
+            <Route path="juridico/advertencias" element={<Advertencias etapa="juridico" />} />
+            {/* Operacional aprova a advertência antes do Jurídico (15/09/2026).
+                Sem menu próprio: cai em operacional_home por prefixo. */}
+            <Route path="operacional/advertencias" element={<Advertencias etapa="operacional" />} />
             <Route path="juridico/candidatos" element={<VerificacaoCandidatos />} />
             <Route path="juridico/duvidas" element={<CentralDuvidas />} />
             {/* Treinamentos */}

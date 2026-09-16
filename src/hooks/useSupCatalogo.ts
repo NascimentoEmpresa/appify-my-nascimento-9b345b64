@@ -28,6 +28,8 @@ export interface Posto {
 export interface Funcao { id: string; posto_id: string; nome: string; ativo: boolean; aprovado: boolean }
 export interface Item {
   id: string; nome: string; tipo: TipoItem; ativo: boolean; aprovado: boolean;
+  /** Código de 7 dígitos (20260930000018). Só vem de useItens. */
+  codigo?: string | null;
 }
 export interface FuncaoItem {
   id: string; funcao_id: string; item_id: string; ordem: number; ativo: boolean; aprovado: boolean;
@@ -204,8 +206,14 @@ export function useItens(empresaId: string | null) {
       for (let de = 0; ; de += PAGINA) {
         const { data, error } = await sb
           .from("sup_item")
-          .select("id, nome, tipo, ativo, aprovado")
+          .select("id, nome, tipo, ativo, aprovado, codigo")
           .eq("ativo", true)
+          // Só o material BASE. Desde 20260930000163 cada tamanho é um
+          // sup_item filho ("JAQUETA M"), que tem estoque e código mas não vai
+          // para catálogo, enxoval nem pedido — é o base que vai, e o pedido
+          // acha o tamanho sozinho. Sem este filtro o enxoval ofereceria
+          // "JAQUETA", "JAQUETA M", "JAQUETA P"... como materiais diferentes.
+          .is("item_pai_id", null)
           .order("nome")
           .order("id")
           .range(de, de + PAGINA - 1);
@@ -228,6 +236,27 @@ export function useItemOpcoes(itemId: string | null) {
         .from("sup_item_opcao")
         .select("id, item_id, tipo, opcoes")
         .eq("item_id", itemId);
+      if (error) throw error;
+      return data ?? [];
+    },
+  });
+}
+
+/**
+ * Os tamanhos de um material que já viraram item, com o código de cada um
+ * (20260930000163). A entrada usa para dizer, antes de gravar, "vai para
+ * JAQUETA M · 0001780" ou "JAQUETA GG · código novo".
+ */
+export function useTamanhosDoItem(itemId: string | null) {
+  return useQuery({
+    queryKey: ["sup_item", "tamanhos", itemId],
+    enabled: !!itemId,
+    queryFn: async (): Promise<{ id: string; tamanho: string; codigo: string | null }[]> => {
+      const { data, error } = await sb
+        .from("sup_item")
+        .select("id, tamanho, codigo")
+        .eq("item_pai_id", itemId)
+        .order("tamanho");
       if (error) throw error;
       return data ?? [];
     },

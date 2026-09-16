@@ -63,7 +63,7 @@ import {
   UserMinus,
   UserPlus,
   CalendarCheck2,
-  AlertTriangle, WandSparkles } from "lucide-react";
+  AlertTriangle, WandSparkles, Clock } from "lucide-react";
 import { useTemAlcada } from "@/hooks/useTemAlcada";
 import { useAccessibleMenus, matchMenuCode } from "@/hooks/useAccessibleMenus";
 import { useModoExterno, rotaPermitidaExterno } from "@/hooks/useModoExterno";
@@ -649,6 +649,14 @@ const sistemasModule: ModuleDef = {
         { label: "Painel do Desenvolvedor", to: "/app/sistemas/chamados/dev", icon: ClipboardList, notif: "dev" },
       ],
     },
+    {
+      label: "Hora Extra",
+      defaultOpen: true,
+      items: [
+        { label: "Hora Extra", to: "/app/sistemas/hora-extra", icon: Clock },
+        { label: "Liberação de HE", to: "/app/sistemas/hora-extra/liberacao", icon: CheckCircle2 },
+      ],
+    },
   ],
 };
 
@@ -900,6 +908,10 @@ const operacionalModule: ModuleDef = {
         { label: "Solicitações de Demissão", to: "/app/operacional/solicitacoes-demissao", icon: UserMinus },
         { label: "Conferência de Ponto", to: "/app/operacional/conferencia-ponto", icon: ClipboardCheck },
         { label: "Mudança de Função", to: "/app/operacional/troca-funcao", icon: ArrowLeftRight, notif: "troca_funcao" },
+        // Advertências (15/09/2026): o Operacional aprova antes do Jurídico.
+        // Sem menu próprio de propósito (pedido: "usa o que já tem") — a rota
+        // cai em operacional_home, o menu raiz do módulo.
+        { label: "Advertências Solicitadas", to: "/app/operacional/advertencias", icon: ShieldAlert },
       ],
     },
   ],

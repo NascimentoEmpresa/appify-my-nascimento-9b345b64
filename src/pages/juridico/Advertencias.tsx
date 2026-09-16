@@ -7,10 +7,18 @@ import { useVinculoEmpregado } from "@/hooks/useVinculoEmpregado";
 import { ResumoDeFuncoes } from "@/components/fluxos/ResumoDeFuncoes";
 
 // =====================================================================
-// JURÍDICO — Gestão de Advertências
-// Encarregado cria (em Minhas Solicitações) → Analista do contrato aprova/
-// reprova → Jurídico conclui. Tabela SISTEMA_SOLICITACOES_ADVERTENCIA.
-// Aprovador = analista do contrato (CONTRATOS.analista = EMPREGADOS."ID").
+// Gestão de Advertências — a MESMA tela em duas etapas (15/09/2026):
+//   etapa="operacional" → Operacional › Advertências Solicitadas: aprova ou
+//                         reprova o que chega ("Aguardando Aprovação").
+//   etapa="juridico"    → Jurídico › Advertências: conclui o que o
+//                         Operacional aprovou ("Aguardando Jurídico").
+// Encarregado cria (em Minhas Solicitações) → OPERACIONAL aprova/reprova →
+// Jurídico conclui. Tabela SISTEMA_SOLICITACOES_ADVERTENCIA.
+//
+// Até 15/09/2026 quem aprovava era o analista do contrato, pela tela do
+// Jurídico (CONTRATOS.analista = EMPREGADOS."ID"). Pedido do Pablo: "vai
+// pro Operacional primeiro; o Operacional aprova e vai pro Jurídico". Sem
+// menu novo: /app/operacional/advertencias cai no menu raiz do Operacional.
 // =====================================================================
 
 interface Adv {
@@ -35,15 +43,15 @@ const statusCor = (s: string): { bg: string; c: string } => ({
 const grauCor = (g: string): string => ({ "Baixo": "#16a34a", "Médio": "#d97706", "Alto": "#dc2626" }[g] || "#64748b");
 const fmtDt = (s?: string) => { if (!s) return "—"; const d = new Date(String(s).length <= 10 ? s + "T12:00:00" : s); return isNaN(+d) ? String(s) : d.toLocaleDateString("pt-BR"); };
 
-export default function Advertencias() {
+export default function Advertencias({ etapa = "juridico" }: { etapa?: "operacional" | "juridico" }) {
   const { user } = useAuth();
   const { empregado } = useVinculoEmpregado();
   const meuNome = empregado?.nome || (user?.user_metadata as any)?.nome || user?.email || "Usuário";
   const souJuridico = empregado?.setor === "JURIDICO" && empregado?.situacao === "Trabalhando";
+  const ehOperacional = etapa === "operacional";
 
   const [rows, setRows] = useState<Adv[]>([]);
   const [loading, setLoading] = useState(true);
-  const [analistaPorContrato, setAnalistaPorContrato] = useState<Record<string, string>>({});
   const [aba, setAba] = useState("Aguardando Aprovação");
   const [busca, setBusca] = useState("");
   // Filtros · Contratos (14/09/2026): multi, com contagem — era um select de um só.
@@ -64,20 +72,9 @@ export default function Advertencias() {
     setLoading(true);
     const { data } = await (supabase as any).from("SISTEMA_SOLICITACOES_ADVERTENCIA").select("*").order("created_at", { ascending: false });
     setRows(data ?? []);
-    // mapa contrato_id -> analista (EMPREGADOS.ID) para travar quem aprova
-    let ct = await (supabase as any).from("CONTRATOS").select('id, analista');
-    if (ct.error) ct = { data: [] }; // coluna analista pode ter outro nome — gate fica só p/ Jurídico
-    const map: Record<string, string> = {};
-    for (const c of (ct.data ?? [])) if (c.id != null && c.analista != null) map[String(c.id)] = String(c.analista);
-    setAnalistaPorContrato(map);
     setLoading(false);
   }, []);
   useEffect(() => { load(); }, [load]);
-
-  const souAnalista = useCallback((a: Adv) => {
-    if (!empregado?.id || a.contrato_id == null) return false;
-    return analistaPorContrato[String(a.contrato_id)] === String(empregado.id);
-  }, [empregado?.id, analistaPorContrato]);
 
   const counts = useMemo(() => { const c: Record<string, number> = {}; for (const r of rows) c[r.status] = (c[r.status] || 0) + 1; return c; }, [rows]);
   const filtradas = useMemo(() => rows.filter(r => {
@@ -88,7 +85,7 @@ export default function Advertencias() {
   }), [rows, aba, busca, fContratos]);
 
   const aprovarAdv = async (a: Adv) => {
-    if (!confirm(`Aprovar a advertência de ${a.colaborador_nome}? Vai para o Jurídico.`)) return;
+    if (!confirm(`Aprovar a advertência de ${a.colaborador_nome}? Vai para o Jurídico responder.`)) return;
     const { error } = await (supabase as any).from("SISTEMA_SOLICITACOES_ADVERTENCIA").update({ status: "Aguardando Jurídico", aprovado_por_nome: meuNome }).eq("id", a.id);
     if (error) { toast("Erro: " + error.message, "err"); return; }
     toast("Advertência aprovada e enviada ao Jurídico.", "ok"); load();
@@ -118,7 +115,14 @@ export default function Advertencias() {
   return (
     <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", background: "#f5f7fb" }}>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "16px 22px", margin: "18px 24px 0", border: "1px solid #e2e8f0", borderRadius: 16, background: "linear-gradient(135deg,#fff,#f8fbff)", boxShadow: "0 8px 24px rgba(15,23,42,.06)", gap: 12, flexWrap: "wrap" }}>
-        <div style={{ fontSize: 18, fontWeight: 800, color: "#0f3171" }}>⚠️ Gestão de Advertências</div>
+        <div>
+          <div style={{ fontSize: 18, fontWeight: 800, color: "#0f3171" }}>⚠️ {ehOperacional ? "Advertências Solicitadas" : "Gestão de Advertências"}</div>
+          <div style={{ fontSize: 12, color: "#64748b", marginTop: 2 }}>
+            {ehOperacional
+              ? "O que os encarregados pediram. Aprove ou reprove — o aprovado segue para o Jurídico responder."
+              : "O que o Operacional aprovou chega aqui para o Jurídico concluir. O que ainda está com o Operacional aparece só para acompanhar."}
+          </div>
+        </div>
         <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
           <ResumoDeFuncoes fluxo="advertencia" />
           <button onClick={() => load()} style={{ border: "none", borderRadius: 9, fontWeight: 700, cursor: "pointer", fontSize: 12, padding: "8px 14px", background: "#0f3171", color: "#fff" }}>↻ Atualizar</button>
@@ -127,7 +131,7 @@ export default function Advertencias() {
 
       <div style={{ flex: 1, overflowY: "auto", padding: "18px 24px 28px" }}>
         <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginBottom: 16 }}>
-          {kpiBox("Aguardando aprovação", counts["Aguardando Aprovação"] || 0, "#d97706")}
+          {kpiBox(ehOperacional ? "Aguardando você" : "Com o Operacional", counts["Aguardando Aprovação"] || 0, "#d97706")}
           {kpiBox("Aguardando jurídico", counts["Aguardando Jurídico"] || 0, "#7c3aed")}
           {kpiBox("Concluídas", counts["Concluída"] || 0, "#15803d")}
           {kpiBox("Reprovadas", counts["Reprovada"] || 0, "#dc2626")}
@@ -147,7 +151,7 @@ export default function Advertencias() {
           : filtradas.length === 0 ? <div style={{ ...card, padding: 46, textAlign: "center", color: "#94a3b8" }}>Nenhuma advertência neste status.</div>
             : (
               <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(340px,1fr))", gap: 14 }}>
-                {filtradas.map(a => { const sc = statusCor(a.status); const podeAprovar = a.status === "Aguardando Aprovação" && souAnalista(a); const podeConcluir = a.status === "Aguardando Jurídico" && souJuridico; return (
+                {filtradas.map(a => { const sc = statusCor(a.status); const podeAprovar = ehOperacional && a.status === "Aguardando Aprovação"; const podeConcluir = !ehOperacional && a.status === "Aguardando Jurídico" && souJuridico; return (
                   <div key={a.id} style={{ ...card, borderLeft: `4px solid ${grauCor(a.grau)}`, display: "flex", flexDirection: "column", ...(a.excecao ? { border: "1.5px solid #fbbf24", borderLeft: `4px solid ${grauCor(a.grau)}`, background: "#fffdf7" } : {}) }}>
                     {a.excecao && <div style={{ background: "#fef3c7", color: "#b45309", fontSize: 11, fontWeight: 800, padding: "5px 9px", borderRadius: 7, marginBottom: 8, overflowWrap: "break-word", wordBreak: "break-word" }}>⚠️ EXCEÇÃO — aplicada fora do prazo de 3 dias{a.justificativa_excecao ? `: ${a.justificativa_excecao}` : ""}</div>}
                     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 8 }}>
@@ -171,7 +175,8 @@ export default function Advertencias() {
                         <button onClick={() => { setReprovar(a); setMotivoRep(""); }} style={{ border: "none", borderRadius: 8, fontWeight: 700, cursor: "pointer", fontSize: 12, padding: "7px 12px", background: "#fee2e2", color: "#b91c1c" }}>Reprovar</button>
                       </>}
                       {podeConcluir && <button onClick={() => { setConcluir(a); setParecer(""); setResultado("Advertência aplicada"); }} style={{ border: "none", borderRadius: 8, fontWeight: 700, cursor: "pointer", fontSize: 12, padding: "7px 12px", background: "#7c3aed", color: "#fff" }}>Concluir</button>}
-                      {a.status === "Aguardando Aprovação" && !podeAprovar && <span style={{ fontSize: 11, color: "#94a3b8", alignSelf: "center" }}>Aguardando o analista do contrato</span>}
+                      {a.status === "Aguardando Aprovação" && !podeAprovar && <span style={{ fontSize: 11, color: "#94a3b8", alignSelf: "center" }}>Aguardando o Operacional</span>}
+                      {ehOperacional && a.status === "Aguardando Jurídico" && <span style={{ fontSize: 11, color: "#94a3b8", alignSelf: "center" }}>Com o Jurídico</span>}
                     </div>
                   </div>
                 ); })}

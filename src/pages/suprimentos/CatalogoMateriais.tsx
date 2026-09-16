@@ -494,11 +494,16 @@ function DialogAdicionarMaterial({
     const noEstoque = new Map<string, OpcaoMaterial>();
     for (const l of estoque) {
       if (!l.sup_item_id) continue;
-      const ja = noEstoque.get(l.sup_item_id);
+      // Um tamanho (JAQUETA M) conta no material base. É o base que entra no
+      // enxoval — o pedido acha o tamanho sozinho (20260930000163). Sem isto,
+      // "JAQUETA M" apareceria aqui como material à parte e iria para o
+      // enxoval, e o pedido nasceria preso a um tamanho só.
+      const id = l.base?.id ?? l.sup_item_id;
+      const ja = noEstoque.get(id);
       if (ja) ja.disponivel = (ja.disponivel ?? 0) + l.disponivel;
-      else noEstoque.set(l.sup_item_id, {
-        id: l.sup_item_id, nome: l.material, tipo: l.tipo_material as TipoItem,
-        codigo: l.codigo_item, disponivel: l.disponivel,
+      else noEstoque.set(id, {
+        id, nome: l.base?.nome ?? l.material, tipo: l.tipo_material as TipoItem,
+        codigo: l.base ? l.base.codigo : l.codigo_item, disponivel: l.disponivel,
       });
     }
 
