@@ -8,14 +8,16 @@ import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
 import { enviarAnexosHoraExtra, useConcluirHoraExtra } from "@/hooks/useHoraExtra";
 import {
+  calcularHoraExtra,
   diaSemana,
   formatarData,
   formatarDuracao,
   formatarQuantidadeChamados,
+  JORNADA_PADRAO_MIN,
+  limitarPercentual,
   mediaConclusao,
   mensagemErro,
   statusExecucaoPorPercentual,
-  totalHe,
   validarConclusao,
 } from "./horaExtraUtils";
 import { Campo, DropzoneAnexos, SecaoForm, TotalHoras } from "./HoraExtraUI";
@@ -52,14 +54,11 @@ export default function ConcluirHoraExtraDialog({
   const [seletor, setSeletor] = useState(false);
   const [resumo, setResumo] = useState("");
   const [horarios, setHorarios] = useState({
-    ponto_entrada_real: "08:00",
+    ponto_entrada_real: "07:30",
     ponto_saida_intervalo_real: "12:00",
     ponto_retorno_intervalo_real: "13:00",
-    ponto_saida_real: "18:00",
-    he_inicio_real: "18:00",
-    he_fim_real: "18:00",
+    ponto_saida_real: "17:18",
   });
-  const [fimEditado, setFimEditado] = useState(false);
   useEffect(() => {
     if (!aberto || !solicitacao) return;
     setHorarios({
@@ -71,11 +70,8 @@ export default function ConcluirHoraExtraDialog({
       ponto_retorno_intervalo_real: (
         solicitacao.ponto_retorno_intervalo_real || solicitacao.ponto_retorno_intervalo
       ).slice(0, 5),
-      ponto_saida_real: (solicitacao.ponto_saida_real || solicitacao.he_fim_previsto).slice(0, 5),
-      he_inicio_real: (solicitacao.he_inicio_real || solicitacao.he_inicio_previsto).slice(0, 5),
-      he_fim_real: (solicitacao.he_fim_real || solicitacao.ponto_saida_real || solicitacao.he_fim_previsto).slice(0, 5),
+      ponto_saida_real: (solicitacao.ponto_saida_real || solicitacao.ponto_saida).slice(0, 5),
     });
-    setFimEditado(!!solicitacao.he_fim_real);
     setResumo(solicitacao.resumo_conclusao || "");
     const converter = (c: ChamadoHoraExtra): LinhaConclusao => ({
       id: c.id,
@@ -93,16 +89,20 @@ export default function ConcluirHoraExtraDialog({
     setAdicionais((solicitacao.chamados || []).filter((c) => c.adicional).map(converter));
     setArquivos([]);
   }, [aberto, solicitacao]);
-  const minutos = totalHe(horarios.he_inicio_real, horarios.he_fim_real);
+  const jornada = solicitacao?.jornada_minutos ?? JORNADA_PADRAO_MIN;
+  const calculo = calcularHoraExtra(
+    {
+      entrada: horarios.ponto_entrada_real,
+      saida_intervalo: horarios.ponto_saida_intervalo_real,
+      retorno_intervalo: horarios.ponto_retorno_intervalo_real,
+      saida: horarios.ponto_saida_real,
+    },
+    jornada,
+  );
+  const minutos = calculo.excedente;
   const media = mediaConclusao([...linhas, ...adicionais].map((l) => l.concluido));
   if (!solicitacao) return null;
-  const mudarHorario = (campo: keyof typeof horarios, valor: string) => {
-    setHorarios((a) => ({
-      ...a,
-      [campo]: valor,
-      ...(campo === "ponto_saida_real" && !fimEditado ? { he_fim_real: valor } : {}),
-    }));
-  };
+  const mudarHorario = (campo: keyof typeof horarios, valor: string) => setHorarios((a) => ({ ...a, [campo]: valor }));
   const mudarLinha = (
     grupo: "originais" | "adicionais",
     indice: number,
@@ -136,7 +136,15 @@ export default function ConcluirHoraExtraDialog({
       },
     ]);
   const enviar = async () => {
-    const erros = validarConclusao(horarios);
+    const erros = validarConclusao(
+      {
+        entrada: horarios.ponto_entrada_real,
+        saida_intervalo: horarios.ponto_saida_intervalo_real,
+        retorno_intervalo: horarios.ponto_retorno_intervalo_real,
+        saida: horarios.ponto_saida_real,
+      },
+      jornada,
+    );
     if (erros.length) {
       erros.forEach((erro) => toast.error(erro));
       return;
@@ -150,6 +158,8 @@ export default function ConcluirHoraExtraDialog({
         p: {
           id: solicitacao.id,
           ...horarios,
+          he_inicio_real: calculo.inicio,
+          he_fim_real: calculo.fim,
           resumo_conclusao: resumo,
           chamados: linhas.map((l) => ({
             id: l.id,
@@ -175,14 +185,7 @@ export default function ConcluirHoraExtraDialog({
   };
   const inputHora = (rotulo: string, campo: keyof typeof horarios) => (
     <Campo rotulo={rotulo}>
-      <Input
-        type="time"
-        value={horarios[campo]}
-        onChange={(e) => {
-          if (campo === "he_fim_real") setFimEditado(true);
-          mudarHorario(campo, e.target.value);
-        }}
-      />
+      <Input type="time" value={horarios[campo]} onChange={(e) => mudarHorario(campo, e.target.value)} />
     </Campo>
   );
   return (
@@ -245,11 +248,17 @@ export default function ConcluirHoraExtraDialog({
                     {inputHora("Saída", "ponto_saida_real")}
                   </div>
                   <div className="grid grid-cols-2 gap-3 rounded-lg bg-blue-50 p-3">
-                    <div className="col-span-2 text-xs font-semibold text-blue-700">Horário da HE (calculado)</div>
-                    {inputHora("Início real", "he_inicio_real")}
-                    {inputHora("Término real", "he_fim_real")}
+                    <div className="col-span-2 text-xs font-semibold text-blue-700">
+                      Horário da HE (calculado pela escala de {formatarDuracao(jornada, true)})
+                    </div>
+                    <Campo rotulo="Início real">
+                      <Input readOnly value={calculo.excedente ? calculo.inicio : "—"} className="bg-white" />
+                    </Campo>
+                    <Campo rotulo="Término real">
+                      <Input readOnly value={calculo.excedente ? calculo.fim : "—"} className="bg-white" />
+                    </Campo>
                   </div>
-                  <TotalHoras minutos={minutos} real />
+                  <TotalHoras minutos={minutos} trabalhado={calculo.trabalhado} />
                 </div>
               </SecaoForm>
               <SecaoForm
@@ -328,8 +337,12 @@ export default function ConcluirHoraExtraDialog({
                 <Resumo rotulo="Tipo de HE" valor={solicitacao.tipo === "normal" ? "Normal" : "Emergencial"} />
                 <hr className="my-4 border-blue-200" />
                 <h3 className="mb-4 font-bold text-[#07194b]">Resumo da Conclusão</h3>
-                <Resumo rotulo="Horário da HE" valor={`${horarios.he_inicio_real} - ${horarios.he_fim_real}`} />
-                <Resumo rotulo="Total de horas" valor={formatarDuracao(minutos)} />
+                <Resumo
+                  rotulo="Horário da HE"
+                  valor={calculo.excedente ? `${calculo.inicio} - ${calculo.fim}` : "—"}
+                />
+                <Resumo rotulo="Total trabalhado" valor={formatarDuracao(calculo.trabalhado)} />
+                <Resumo rotulo="Total de hora extra" valor={formatarDuracao(minutos)} />
                 <Resumo rotulo="Chamados originais" valor={formatarQuantidadeChamados(linhas.length)} />
                 <Resumo
                   rotulo="Chamados adicionais"
@@ -344,6 +357,9 @@ export default function ConcluirHoraExtraDialog({
                 </h3>
                 <ul className="list-disc space-y-2 pl-5">
                   <li>Informe os horários exatamente como registrados no seu ponto.</li>
+                  <li>
+                    A hora extra é <strong>calculada</strong>: conta só o tempo que passar da jornada da escala.
+                  </li>
                   <li>Preencha o percentual concluído de cada chamado.</li>
                   <li>
                     Os percentuais previstos na solicitação <strong>não podem</strong> ser alterados.
@@ -431,7 +447,7 @@ function TabelaConclusao({
                   min="0"
                   max="100"
                   value={l.concluido}
-                  onChange={(e) => aoMudar(i, "concluido", Number(e.target.value))}
+                  onChange={(e) => aoMudar(i, "concluido", limitarPercentual(e.target.value))}
                 />
               </td>
               <td className="p-2">
@@ -471,9 +487,9 @@ function TabelaConclusao({
           <tfoot>
             <tr className="bg-blue-50 font-bold">
               <td colSpan={2} className="p-2">
-                Total
+                Média
               </td>
-              <td className="p-2 text-center">{linhas.reduce((s, l) => s + Number(l.previsto || 0), 0)} %</td>
+              <td className="p-2 text-center">{mediaConclusao(linhas.map((l) => l.previsto))} %</td>
               <td className="p-2">{mediaConclusao(linhas.map((l) => l.concluido))} %</td>
               <td colSpan={2} />
             </tr>
