@@ -1,4 +1,5 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -98,6 +99,19 @@ export default function DebitoAutomatico() {
     return { saldoAtual, debitosHoje, debitosEmAberto, debitosVencidos };
   }, [linhas]);
 
+  // SIS-2026-0413: o botão Editar do Fluxo de Caixa traz o usuário pra cá
+  // com ?editar=<id> — assim que a lista carrega, abre direto no modal de
+  // edição desse registro (em vez de deixar a pessoa procurar na tabela).
+  const [searchParams, setSearchParams] = useSearchParams();
+  useEffect(() => {
+    const idParaEditar = searchParams.get("editar");
+    if (!idParaEditar || linhas.length === 0) return;
+    const registro = linhas.find((l) => l.id === idParaEditar);
+    if (registro) abrirEdicao(registro);
+    setSearchParams((prev) => { prev.delete("editar"); return prev; }, { replace: true });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [linhas]);
+
   function abrirEdicao(registro: DebitoAutomaticoLinha) {
     const par = registro.movimentacao_par_id ? linhas.find((l) => l.id === registro.movimentacao_par_id) ?? null : null;
     setRegistroEditar(registro);
@@ -109,7 +123,7 @@ export default function DebitoAutomatico() {
     if (!registroExcluir) return;
     try {
       await excluir.mutateAsync(registroExcluir.id);
-      toast.success("Lançamento excluído.");
+      toast.success("Lançamento movido para a lixeira.");
       setRegistroExcluir(null);
     } catch (e: any) {
       toast.error(e.message ?? "Erro ao excluir lançamento.");
@@ -303,11 +317,9 @@ export default function DebitoAutomatico() {
                             <AcessoGate menu={MENU_CODIGO} acao="excluir">
                               <DropdownMenuItem
                                 className="text-destructive focus:text-destructive"
-                                disabled={l.status === "pago"}
                                 onClick={() => setRegistroExcluir(l)}
                               >
-                                <Trash2 className="mr-2 h-3.5 w-3.5" />
-                                {l.status === "pago" ? "Pago — não pode excluir" : "Excluir"}
+                                <Trash2 className="mr-2 h-3.5 w-3.5" /> Excluir
                               </DropdownMenuItem>
                             </AcessoGate>
                           </DropdownMenuContent>
@@ -347,8 +359,8 @@ export default function DebitoAutomatico() {
             <AlertDialogTitle>Excluir lançamento?</AlertDialogTitle>
             <AlertDialogDescription>
               {registroExcluir?.numero} — {registroExcluir?.descricao}.
-              {registroExcluir?.tipo_origem === "movimentacao_financeira" && " As 2 linhas dessa Movimentação Financeira (saída e entrada) serão excluídas juntas."}
-              {" "}Esta ação não pode ser desfeita.
+              {registroExcluir?.tipo_origem === "movimentacao_financeira" && " As 2 linhas dessa Movimentação Financeira (saída e entrada) vão junto."}
+              {" "}Vai para a lixeira — dá pra restaurar depois pelo Fluxo de Caixa.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>

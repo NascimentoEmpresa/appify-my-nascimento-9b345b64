@@ -22,7 +22,7 @@ import { supabase } from "@/integrations/supabase/client";
 export type TipoOrigemDebito = "debito_automatico" | "movimentacao_financeira" | "nota_recebida";
 export type TipoDebito = "entrada" | "saida";
 export type StatusDebito = "pendente" | "pago";
-export type TipoEventoDebito = "criacao" | "edicao" | "pagamento" | "exclusao";
+export type TipoEventoDebito = "criacao" | "edicao" | "pagamento" | "exclusao" | "restauracao";
 
 export interface DebitoAutomaticoLinha {
   id: string;
@@ -53,6 +53,9 @@ export interface DebitoAutomaticoLinha {
   banco_id: string;
   banco_nome: string | null;
   banco_logo_path: string | null;
+  // SIS-2026-0413: lixeira do Fluxo de Caixa — null = item ativo.
+  deleted_at: string | null;
+  deleted_por: string | null;
 }
 
 export interface DebitoAutomaticoEvento {
@@ -74,7 +77,25 @@ export function useDebitoAutomaticoLista() {
       const { data, error } = await (supabase as any)
         .from("v_debito_automatico_lista")
         .select("*")
+        .is("deleted_at", null)
         .order("data_pagamento", { ascending: false });
+      if (error) throw error;
+      return (data ?? []) as DebitoAutomaticoLinha[];
+    },
+  });
+}
+
+// SIS-2026-0413: itens na lixeira (soft-deleted) — usado pelo modal de
+// Lixeira do Fluxo de Caixa.
+export function useDebitoAutomaticoLixeira() {
+  return useQuery({
+    queryKey: [LISTA_KEY, "lixeira"],
+    queryFn: async () => {
+      const { data, error } = await (supabase as any)
+        .from("v_debito_automatico_lista")
+        .select("*")
+        .not("deleted_at", "is", null)
+        .order("deleted_at", { ascending: false });
       if (error) throw error;
       return (data ?? []) as DebitoAutomaticoLinha[];
     },
@@ -220,8 +241,9 @@ export function useEditarDebito() {
   });
 }
 
-// Bloqueado no banco pra item "pago" — Movimentação Financeira exclui o par
-// junto (as 2 linhas nascem e morrem juntas).
+// SIS-2026-0413: soft-delete (lixeira) — reversível, inclusive pra item
+// "pago" (a trava que bloqueava totalmente a exclusão de pago não faz mais
+// sentido: virou reversível). Movimentação Financeira move o par junto.
 export function useExcluirDebito() {
   const qc = useQueryClient();
   return useMutation({
@@ -229,6 +251,23 @@ export function useExcluirDebito() {
       const { error } = await (supabase as any).rpc("debito_automatico_excluir", { _id: id });
       if (error) throw error;
     },
-    onSuccess: () => qc.invalidateQueries({ queryKey: [LISTA_KEY] }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: [LISTA_KEY] });
+      qc.invalidateQueries({ queryKey: ["fluxo_caixa_combinado"] });
+    },
+  });
+}
+
+export function useRestaurarDebito() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (id: string) => {
+      const { error } = await (supabase as any).rpc("debito_automatico_restaurar", { _id: id });
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: [LISTA_KEY] });
+      qc.invalidateQueries({ queryKey: ["fluxo_caixa_combinado"] });
+    },
   });
 }

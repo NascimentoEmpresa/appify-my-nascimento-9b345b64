@@ -37,7 +37,9 @@ export type TipoEvento =
   | "ajuste_pagamento_solicitado"
   | "despesa_paga"
   | "despesa_reprovada"
-  | "cancelamento";
+  | "cancelamento"
+  | "exclusao"
+  | "restauracao";
 
 // Status ainda dentro da fase "Solicitação" — item abre em modal.
 // A partir daqui em diante (pendente_aprovacao em diante) o item já é
@@ -233,6 +235,9 @@ export interface MaloteDespesaRow {
   created_at: string;
   created_by: string;
   updated_at: string;
+  // SIS-2026-0413: lixeira do Fluxo de Caixa — null = item ativo.
+  deleted_at: string | null;
+  deleted_por: string | null;
   classificacao?: {
     id: string;
     nome: string;
@@ -346,7 +351,7 @@ const DESPESA_COLUMNS =
   "cotacao_enviada_em, cotacao_enviada_por, cotacao_enviada_por_nome, cotacao_decidida_em, cotacao_decidida_por, cotacao_decidida_por_nome, " +
   "cotacao_reprovada_motivo, cotacao_observacoes, cotacao_vencedor_num, " +
   "comprovante_pagamento_path, observacao_pagamento, pago_em, pago_por, conferido_em, conferido_por, " +
-  "arquivos, created_at, created_by, updated_at, " +
+  "arquivos, created_at, created_by, updated_at, deleted_at, deleted_por, " +
   "classificacao:classificacao_id(id, nome, setor_responsavel, aprovador1_nomes, aprovador2_nomes, aprovador3_nomes, aprovador1_user_ids, aprovador2_user_ids, aprovador3_user_ids, " +
   "aprovador1_limite_pct, aprovador1_sem_limite, aprovador2_limite_pct, aprovador2_sem_limite, aprovador3_limite_pct, aprovador3_sem_limite, " +
   "aprovador_solicitacao_user_id, aprovador_solicitacao_nome, lancador_despesa_user_ids, lancador_despesa_nomes, limite_justificativa_pct)";
@@ -530,6 +535,7 @@ export function useMinhasDespesas() {
         query = query.or(orParts.join(","));
       }
 
+      query = query.is("deleted_at", null);
       const { data, error } = await query;
       if (error) throw error;
       const despesas = (data ?? []) as MaloteDespesaRow[];
@@ -836,6 +842,91 @@ export function useExcluirPermanentemente() {
       if (error) throw error;
     },
     onSuccess: () => qc.invalidateQueries({ queryKey: [DESPESA_KEY] }),
+  });
+}
+
+// SIS-2026-0413: exclusão da lixeira (soft) — reversível, ao contrário de
+// useExcluirPermanentemente. Usada pelo Fluxo de Caixa e por qualquer tela
+// que queira permitir "excluir" um item vivo do Malote sem apagar de
+// verdade. RPC valida a permissão de novo no banco.
+export function useExcluirDespesaSoft() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (id: string) => {
+      const { error } = await (supabase as any).rpc("malote_despesa_excluir", { _id: id });
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: [DESPESA_KEY] });
+      qc.invalidateQueries({ queryKey: ["fluxo_caixa_combinado"] });
+    },
+  });
+}
+
+// SIS-2026-0413: itens na lixeira (soft-deleted) — usado pelo modal de
+// Lixeira do Fluxo de Caixa. Colunas mínimas pra listagem, não o
+// DESPESA_COLUMNS inteiro (a lixeira não precisa do formulário completo).
+export interface DespesaLixeira {
+  id: string;
+  numero: string;
+  nome: string;
+  origem: OrigemDespesa;
+  valor_total: number;
+  deleted_at: string;
+}
+
+export function useDespesasLixeira() {
+  return useQuery({
+    queryKey: [DESPESA_KEY, "lixeira"],
+    queryFn: async () => {
+      const { data, error } = await (supabase as any)
+        .from("malote_despesa")
+        .select("id, numero, nome, origem, valor_total, deleted_at")
+        .not("deleted_at", "is", null)
+        .order("deleted_at", { ascending: false });
+      if (error) throw error;
+      return (data ?? []) as DespesaLixeira[];
+    },
+  });
+}
+
+// SIS-2026-0413 (complemento): despesa_paga era terminal (nenhum campo
+// editável) — abre só forma de pagamento/banco/data de pagamento, os 3
+// campos "sutis" confirmados com o usuário (nunca valor/empresa/
+// contrato/classificação, que já entraram no cálculo de Orçamento
+// Utilizado/DRE).
+export function useEditarPagamentoDespesa() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({
+      id, formaPagamento, bancoId, dataPagamento,
+    }: { id: string; formaPagamento: string | null; bancoId: string | null; dataPagamento: string | null }) => {
+      const { error } = await (supabase as any).rpc("malote_despesa_editar_pagamento", {
+        _id: id,
+        _forma_pagamento: formaPagamento,
+        _banco_id: bancoId,
+        _data_pagamento: dataPagamento,
+      });
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: [DESPESA_KEY] });
+      qc.invalidateQueries({ queryKey: ["fluxo_caixa_combinado"] });
+    },
+  });
+}
+
+export function useRestaurarDespesa() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (id: string) => {
+      const { error } = await (supabase as any).rpc("malote_despesa_restaurar", { _id: id });
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: [DESPESA_KEY] });
+      qc.invalidateQueries({ queryKey: ["fluxo_caixa_combinado"] });
+    },
   });
 }
 
@@ -1391,6 +1482,7 @@ export function useItensAguardandoMinhaAprovacao() {
         .from("malote_despesa")
         .select(DESPESA_COLUMNS)
         .in("status", ["aguardando_aprovacao_inicial", "aguardando_cotacao", "cotacao_realizada", "pendente_aprovacao"])
+        .is("deleted_at", null)
         .order("created_at", { ascending: false });
       if (error) throw error;
       const despesas = (data ?? []) as MaloteDespesaRow[];
@@ -1571,6 +1663,7 @@ export function useItensAprovacoesMalote() {
       const { data, error } = await (supabase as any)
         .from("malote_despesa")
         .select(DESPESA_COLUMNS)
+        .is("deleted_at", null)
         .order("updated_at", { ascending: false });
       if (error) throw error;
       const despesas = (data ?? []) as MaloteDespesaRow[];
