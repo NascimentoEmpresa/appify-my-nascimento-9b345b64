@@ -193,16 +193,19 @@ export function CartaoMetrica({
   );
 }
 
-export function TotalHoras({ minutos, real = false }: { minutos: number; real?: boolean }) {
+/**
+ * Caixa verde do formulário. Mostra só a hora extra — o que passou da
+ * jornada da escala —, com o total trabalhado embaixo para o usuário
+ * conferir de onde saiu a conta.
+ */
+export function TotalHoras({ minutos, trabalhado }: { minutos: number; trabalhado?: number }) {
   return (
-    <div
-      className={cn(
-        "flex h-full min-h-[92px] flex-col justify-center rounded-lg px-5",
-        real ? "bg-emerald-50" : "bg-emerald-50",
+    <div className="flex h-full min-h-[92px] flex-col justify-center rounded-lg bg-emerald-50 px-5">
+      <span className="text-xs font-semibold text-emerald-700">Total de hora extra</span>
+      <strong className="mt-1 text-2xl text-emerald-800">{formatarDuracao(minutos)}</strong>
+      {trabalhado != null && (
+        <span className="mt-1 text-[11px] text-emerald-700">Trabalhado no dia: {formatarDuracao(trabalhado, true)}</span>
       )}
-    >
-      <span className="text-xs font-semibold text-emerald-700">Total de horas</span>
-      <strong className="mt-2 text-2xl text-emerald-800">{formatarDuracao(minutos)}</strong>
     </div>
   );
 }

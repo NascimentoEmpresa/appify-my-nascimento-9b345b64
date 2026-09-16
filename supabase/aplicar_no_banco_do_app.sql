@@ -24090,3 +24090,511 @@ NOTIFY pgrst, 'reload schema';
 --   DROP da lista com a assinatura nova e reaplicar o bloco das RPCs da
 --   20260930000114_rh_colaboradores_filtros_multi.sql.
 -- =========================================================================
+
+
+-- =========================================================================
+-- Jurídico › Processos: "Valores à parte"
+--
+-- Pedido do Pablo em 15/09/2026: "preciso conseguir cadastrar valores à
+-- parte sem ser dos motivos — tem que ter um motivo, mas separado dos
+-- valores dos motivos".
+--
+-- Cada lançamento tem um motivo (texto livre, obrigatório) e um valor.
+-- Não se mistura com as linhas de motivo (JUR_PROCESSOS tem 1 linha por
+-- motivo do processo): mora numa coluna própria do PROCESSO, no mesmo
+-- formato do propostas_json — text com JSON, repetido em toda linha de
+-- motivo, lido de uma linha só na tela.
+--
+--   [{ "motivo": "Honorários periciais", "valor": 1500, "descricao": "" }]
+--
+-- Entra no custo final do processo (é desembolso real), salvo quando o
+-- "Valor final" foi fechado à mão — aí ele manda, como já era.
+--
+-- Idempotente. Aplicar no banco do app.
+-- =========================================================================
+
+ALTER TABLE public."JUR_PROCESSOS"
+  ADD COLUMN IF NOT EXISTS valores_a_parte_json text;
+
+COMMENT ON COLUMN public."JUR_PROCESSOS".valores_a_parte_json IS
+  'Valores à parte (fora dos motivos): [{motivo,valor,descricao}]. Campo do PROCESSO (repetido nas linhas de motivo). Migration 20260930000121.';
+
+NOTIFY pgrst, 'reload schema';
+
+-- ROLLBACK
+-- ALTER TABLE public."JUR_PROCESSOS" DROP COLUMN IF EXISTS valores_a_parte_json;
+
+
+-- =========================================================================
+-- Recrutamento: V.A / V.T / insalubridade da vaga vêm do POSTO escolhido
+--
+-- Pedido do Pablo em 15/09/2026: solicitando vaga pra uma ASG da UFRGS, o
+-- V.A e o V.T vieram do "SUP. 5D POA" (supervisor) em vez do "ASG 5D POA".
+-- A rec_custo_do_posto (109) ADIVINHAVA o posto por salário/cidade/cargo:
+-- o salário do cadastro (1.203,99) não bateu com o da planilha (1.204,00),
+-- "SERVENTE DE LIMPEZA" não aparece em "ASG 5D POA", a cidade também não,
+-- e o empate foi decidido pelo maior salário — o do supervisor.
+--
+-- AGORA a vaga escolhe o posto no catálogo de Suprimentos (que é espelho
+-- da Planilha de Custo — migration 081: sup_posto.nome = planilha_custo.posto)
+-- e a RPC recebe esse nome em `p_posto`. Com p_posto:
+--   • casa o posto pelo nome exato (normalizado) dentro do contrato;
+--   • pega a vigência mais nova; nada de pontuação nem adivinhação;
+--   • não achou o posto na planilha → NULL (a tela avisa; não inventa).
+-- Sem p_posto continua a heurística antiga (ninguém da tela de vagas
+-- chama assim mais; fica pra compatibilidade).
+--
+-- Assinatura mudou (parâmetro novo): a anterior é derrubada antes, senão
+-- o PostgREST vê duas e recusa por ambiguidade.
+-- Idempotente. Aplicar no banco do app.
+-- =========================================================================
+
+DROP FUNCTION IF EXISTS public.rec_custo_do_posto(text, text, numeric, text);
+
+CREATE OR REPLACE FUNCTION public.rec_custo_do_posto(
+  p_contrato text,
+  p_cargo    text DEFAULT NULL,
+  p_salario  numeric DEFAULT NULL,
+  p_cidade   text DEFAULT NULL,
+  p_posto    text DEFAULT NULL
+)
+RETURNS jsonb
+LANGUAGE plpgsql
+STABLE
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $fn$
+DECLARE
+  v_contrato text := public.rec_norm_txt(regexp_replace(coalesce(p_contrato, ''), '^\s*\d+\s*-\s*', ''));
+  v_posto    text := public.rec_norm_txt(p_posto);
+  v_cargo    text := public.rec_norm_txt(p_cargo);
+  v_cidade   text := public.rec_norm_txt(p_cidade);
+  v_tokens   text[];
+  melhor     record;
+BEGIN
+  IF NOT (public.has_screen_access(auth.uid(), 'encarregados_minhas_solicitacoes', 'visualizar'::app_acao)
+          OR public.has_screen_access(auth.uid(), 'central_servicos_solicitar_vaga', 'visualizar'::app_acao)
+          OR public.has_screen_access(auth.uid(), 'central_servicos_solicitacoes', 'visualizar'::app_acao)
+          OR public.has_screen_access(auth.uid(), 'recrutamento_gestao', 'visualizar'::app_acao)
+          OR public.has_screen_access(auth.uid(), 'licitacoes_analistas_recrutamento', 'visualizar'::app_acao)
+          OR public.has_screen_access(auth.uid(), 'operacional_recrutamento', 'visualizar'::app_acao)) THEN
+    RAISE EXCEPTION 'Sem permissão.' USING ERRCODE = '42501';
+  END IF;
+  IF v_contrato = '' THEN RETURN NULL; END IF;
+
+  -- ── Caminho certo (15/09/2026): posto escolhido no catálogo ──────────
+  IF v_posto <> '' THEN
+    SELECT pc.posto, pc.servico, pc.salario, pc.insalubridade, pc.periculosidade, pc.transporte, pc.transporte_desconto,
+           pc.aux_alimentacao, pc.aux_alimentacao_desconto, pc.aux_refeicao, pc.aux_lanche, pc.cesta_basica, pc.assistencia_medica,
+           pc.data_vigencia,
+           (SELECT count(*) FROM public.planilha_custo x
+             WHERE coalesce(x.encerrado, false) = false
+               AND public.rec_norm_txt(x.contrato) = v_contrato
+               AND public.rec_norm_txt(x.posto) = v_posto) AS total
+      INTO melhor
+      FROM public.planilha_custo pc
+     WHERE coalesce(pc.encerrado, false) = false
+       AND public.rec_norm_txt(pc.contrato) = v_contrato
+       AND public.rec_norm_txt(pc.posto) = v_posto
+     ORDER BY pc.data_vigencia DESC NULLS LAST, pc.salario DESC
+     LIMIT 1;
+
+    IF melhor.posto IS NULL THEN RETURN NULL; END IF;
+
+    RETURN jsonb_build_object(
+      'posto',              melhor.posto,
+      'servico',            melhor.servico,
+      'salario',            melhor.salario,
+      'insalubridade',      melhor.insalubridade,
+      'periculosidade',     melhor.periculosidade,
+      'vt',                 melhor.transporte,
+      'vt_desconto',        melhor.transporte_desconto,
+      'va',                 melhor.aux_alimentacao,
+      'va_desconto',        melhor.aux_alimentacao_desconto,
+      'vr',                 melhor.aux_refeicao,
+      'lanche',             melhor.aux_lanche,
+      'cesta_basica',       melhor.cesta_basica,
+      'assistencia_medica', melhor.assistencia_medica,
+      'vigencia',           melhor.data_vigencia,
+      'score',              1000,
+      'candidatos',         melhor.total,
+      'ambiguo',            false,
+      'casou_salario',      true,
+      'por_posto',          true
+    );
+  END IF;
+
+  -- ── Heurística antiga (sem posto): mantida só por compatibilidade ─────
+  v_cargo := replace(replace(v_cargo, 'AUXILIAR DE SERVICOS GERAIS', 'ASG'), 'AUX SERVICOS GERAIS', 'ASG');
+  v_tokens := ARRAY(SELECT t FROM unnest(string_to_array(v_cargo, ' ')) t WHERE length(t) >= 3 AND t NOT IN ('DOS','DAS','DE','DA','DO'));
+
+  WITH base AS (
+    SELECT pc.*, public.rec_norm_txt(pc.posto) AS posto_n
+      FROM public.planilha_custo pc
+     WHERE coalesce(pc.encerrado, false) = false
+       AND public.rec_norm_txt(pc.contrato) = v_contrato
+  ), pontos AS (
+    SELECT b.*,
+           (CASE WHEN p_salario IS NOT NULL AND abs(coalesce(b.salario, 0) - p_salario) < 0.01 THEN 100 ELSE 0 END)
+         + (CASE WHEN v_cidade <> '' AND b.posto_n LIKE '%' || v_cidade || '%' THEN 20 ELSE 0 END)
+         + 5 * (SELECT count(*) FROM unnest(v_tokens) t WHERE b.posto_n LIKE '%' || t || '%')::int AS score
+      FROM base b
+  ), topo AS (
+    SELECT * FROM pontos WHERE score = (SELECT max(score) FROM pontos)
+  )
+  SELECT t.posto, t.servico, t.salario, t.insalubridade, t.periculosidade, t.transporte, t.transporte_desconto,
+         t.aux_alimentacao, t.aux_alimentacao_desconto, t.aux_refeicao, t.aux_lanche, t.cesta_basica, t.assistencia_medica,
+         t.data_vigencia, t.score,
+         (SELECT count(*) FROM pontos) AS total,
+         (SELECT count(DISTINCT (x.insalubridade, x.transporte, x.aux_alimentacao)) FROM topo x) AS variantes_no_topo
+    INTO melhor
+    FROM topo t
+   ORDER BY t.data_vigencia DESC NULLS LAST, t.salario DESC
+   LIMIT 1;
+
+  IF melhor.posto IS NULL THEN RETURN NULL; END IF;
+
+  RETURN jsonb_build_object(
+    'posto',              melhor.posto,
+    'servico',            melhor.servico,
+    'salario',            melhor.salario,
+    'insalubridade',      melhor.insalubridade,
+    'periculosidade',     melhor.periculosidade,
+    'vt',                 melhor.transporte,
+    'vt_desconto',        melhor.transporte_desconto,
+    'va',                 melhor.aux_alimentacao,
+    'va_desconto',        melhor.aux_alimentacao_desconto,
+    'vr',                 melhor.aux_refeicao,
+    'lanche',             melhor.aux_lanche,
+    'cesta_basica',       melhor.cesta_basica,
+    'assistencia_medica', melhor.assistencia_medica,
+    'vigencia',           melhor.data_vigencia,
+    'score',              melhor.score,
+    'candidatos',         melhor.total,
+    'ambiguo',            coalesce(melhor.variantes_no_topo, 1) > 1,
+    'casou_salario',      melhor.score >= 100,
+    'por_posto',          false
+  );
+END $fn$;
+
+REVOKE ALL ON FUNCTION public.rec_custo_do_posto(text, text, numeric, text, text) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.rec_custo_do_posto(text, text, numeric, text, text) FROM anon;
+GRANT EXECUTE ON FUNCTION public.rec_custo_do_posto(text, text, numeric, text, text) TO authenticated;
+
+NOTIFY pgrst, 'reload schema';
+
+-- ROLLBACK
+-- DROP FUNCTION IF EXISTS public.rec_custo_do_posto(text, text, numeric, text, text);
+-- e reaplicar o bloco da 20260930000109_rec_custo_do_posto.sql.
+
+
+-- =========================================================================
+-- NASCIMENTO FORMULÁRIOS — diagnóstico por IA em TODOS os formulários
+--
+-- Pedido do Pablo em 15/09/2026: "diagnóstico por IA igual o dos feedbacks
+-- em todos os outros formulários".
+--
+-- A Edge Function diagnostico-formulario-ia agrega TODAS as perguntas de um
+-- formulário (sem os eixos liderados/líder do feedback guiado) e grava o
+-- resultado na mesma CS_FORM_DIAGNOSTICOS. Duas coisas mudam na tabela:
+--
+--   1. `tipo` ('feedback' | 'formulario') — o conteúdo tem formato diferente
+--      e a tela precisa saber qual é. Tudo o que já existe é 'feedback'.
+--   2. setor_norm = '' passa a significar "todas as respostas do formulário".
+--      As policies conferiam qtd_respostas contra as respostas DO SETOR;
+--      com setor vazio a conta era contra respostas sem setor e o diagnóstico
+--      geral nunca passaria. Agora: setor vazio → conta todas as respostas
+--      visíveis do formulário. A garantia continua a mesma — só lê o
+--      diagnóstico quem enxerga, pela RLS, ao menos as respostas usadas nele.
+--
+-- Capacidade: a mesma `diagnostico_feedback` (CS_FORM_ACESSOS.papel) — sem
+-- gerenciamento de acesso novo.
+--
+-- Idempotente. Aplicar no banco do app. ROLLBACK no fim.
+-- =========================================================================
+
+ALTER TABLE public."CS_FORM_DIAGNOSTICOS"
+  ADD COLUMN IF NOT EXISTS tipo text NOT NULL DEFAULT 'feedback';
+
+ALTER TABLE public."CS_FORM_DIAGNOSTICOS" DROP CONSTRAINT IF EXISTS cs_form_diag_tipo_chk;
+ALTER TABLE public."CS_FORM_DIAGNOSTICOS"
+  ADD CONSTRAINT cs_form_diag_tipo_chk CHECK (tipo IN ('feedback', 'formulario'));
+
+CREATE INDEX IF NOT EXISTS cs_form_diag_tipo_idx
+  ON public."CS_FORM_DIAGNOSTICOS" (formulario_id, tipo, setor_norm, gerado_em DESC);
+
+-- Quantas respostas o usuário atual enxerga do formulário, no recorte pedido
+-- (setor_norm vazio = todas). SECURITY INVOKER de propósito: a contagem tem
+-- que respeitar a RLS de CS_FORM_RESPOSTAS de quem está lendo.
+CREATE OR REPLACE FUNCTION public.cs_form_diag_respostas_visiveis(_formulario_id uuid, _setor_norm text)
+RETURNS bigint
+LANGUAGE sql
+STABLE
+SET search_path = public, pg_temp
+AS $fn$
+  SELECT count(*)
+    FROM public."CS_FORM_RESPOSTAS" r
+   WHERE r.formulario_id = _formulario_id
+     AND (coalesce(_setor_norm, '') = ''
+          OR regexp_replace(
+               translate(upper(btrim(coalesce(r.setor, ''))),
+                 'ÁÀÂÃÄÉÈÊËÍÌÎÏÓÒÔÕÖÚÙÛÜÇ',
+                 'AAAAAEEEEIIIIOOOOOUUUUC'),
+               '\s+', ' ', 'g') = _setor_norm);
+$fn$;
+
+REVOKE ALL ON FUNCTION public.cs_form_diag_respostas_visiveis(uuid, text) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.cs_form_diag_respostas_visiveis(uuid, text) TO authenticated;
+
+DROP POLICY IF EXISTS cs_form_diag_select ON public."CS_FORM_DIAGNOSTICOS";
+CREATE POLICY cs_form_diag_select ON public."CS_FORM_DIAGNOSTICOS"
+  FOR SELECT TO authenticated
+  USING (
+    public.cs_form_cap('diagnostico_feedback')
+    AND qtd_respostas <= public.cs_form_diag_respostas_visiveis(formulario_id, setor_norm)
+  );
+
+DROP POLICY IF EXISTS cs_form_diag_insert ON public."CS_FORM_DIAGNOSTICOS";
+CREATE POLICY cs_form_diag_insert ON public."CS_FORM_DIAGNOSTICOS"
+  FOR INSERT TO authenticated
+  WITH CHECK (
+    public.cs_form_cap('diagnostico_feedback')
+    AND gerado_por = auth.uid()
+    AND qtd_respostas <= public.cs_form_diag_respostas_visiveis(formulario_id, setor_norm)
+  );
+
+NOTIFY pgrst, 'reload schema';
+
+-- =========================================================================
+-- ROLLBACK
+--   Recriar as policies da 20260930000038 (conta por setor) e:
+--   DROP FUNCTION IF EXISTS public.cs_form_diag_respostas_visiveis(uuid, text);
+--   DROP INDEX IF EXISTS public.cs_form_diag_tipo_idx;
+--   ALTER TABLE public."CS_FORM_DIAGNOSTICOS" DROP CONSTRAINT IF EXISTS cs_form_diag_tipo_chk;
+--   ALTER TABLE public."CS_FORM_DIAGNOSTICOS" DROP COLUMN IF EXISTS tipo;
+-- =========================================================================
+
+
+-- =========================================================================
+-- Advertências: sai do Operacional; só o Jurídico, com aprovador pelo
+-- Acesso por Usuário
+--
+-- Pedido do Pablo em 16/09/2026: "tire as advertências pro Operacional,
+-- deixa somente pro Jurídico, e lá vai ter quem pode aprovar também".
+--
+-- ANTES (117, 15/09) encarregado → "Aguardando Aprovação" (OPERACIONAL, em
+--        /app/operacional/advertencias) → "Aguardando Jurídico" → Concluída
+-- AGORA  encarregado → "Aguardando Aprovação" (quem tem a ação `aprovar` no
+--        menu `advertencias`, na tela Jurídico › Advertências) →
+--        "Aguardando Jurídico" (Jurídico conclui) → Concluída/Reprovada
+--
+-- Mesmo desenho do Parecer Jurídico (119): a ação entra no menu que já
+-- existe, marcada em Administração › Acesso por Usuário. Sem menu novo.
+--
+-- Quem já tinha `alterar` em advertencias ganha `aprovar` — ninguém perde o
+-- que podia. operacional_home sai das policies; eh_analista_advertencia()
+-- fica (hotfix 3 vias), como estava antes da 117.
+--
+-- Idempotente. Aplicar no banco do app.
+-- =========================================================================
+
+-- 1) A ação no menu que já existe
+INSERT INTO public.app_menu_acao (menu_codigo, acao)
+VALUES ('advertencias', 'aprovar'::app_acao)
+ON CONFLICT (menu_codigo, acao) DO NOTHING;
+
+-- 2) Quem alterava passa a aprovar também
+INSERT INTO public.screen_permission_user (user_id, menu_codigo, acao, allow, motivo)
+SELECT s.user_id, 'advertencias', 'aprovar'::app_acao, true,
+       'Migração 20260930000124: tinha alterar em advertencias (aprovador antes era o Operacional)'
+  FROM public.screen_permission_user s
+ WHERE s.menu_codigo = 'advertencias' AND s.acao = 'alterar'::app_acao AND s.allow
+   AND NOT EXISTS (
+     SELECT 1 FROM public.screen_permission_user x
+      WHERE x.user_id = s.user_id AND x.menu_codigo = 'advertencias' AND x.acao = 'aprovar'::app_acao);
+
+-- 3) RLS sem o Operacional; aprovar entra no UPDATE
+DROP POLICY IF EXISTS adv_select ON public."SISTEMA_SOLICITACOES_ADVERTENCIA";
+CREATE POLICY adv_select ON public."SISTEMA_SOLICITACOES_ADVERTENCIA" FOR SELECT TO authenticated
+USING (
+  public.has_screen_access(auth.uid(), 'advertencias', 'visualizar'::app_acao)
+  OR solicitante_email = auth.email()
+  OR public.eh_analista_advertencia(contrato_id)
+);
+
+DROP POLICY IF EXISTS adv_update ON public."SISTEMA_SOLICITACOES_ADVERTENCIA";
+CREATE POLICY adv_update ON public."SISTEMA_SOLICITACOES_ADVERTENCIA" FOR UPDATE TO authenticated
+USING (
+  public.has_screen_access(auth.uid(), 'advertencias', 'alterar'::app_acao)
+  OR public.has_screen_access(auth.uid(), 'advertencias', 'aprovar'::app_acao)
+  OR public.eh_analista_advertencia(contrato_id)
+)
+WITH CHECK (
+  public.has_screen_access(auth.uid(), 'advertencias', 'alterar'::app_acao)
+  OR public.has_screen_access(auth.uid(), 'advertencias', 'aprovar'::app_acao)
+  OR public.eh_analista_advertencia(contrato_id)
+);
+
+NOTIFY pgrst, 'reload schema';
+
+-- Conferência
+-- SELECT p.email FROM public.screen_permission_user s JOIN public.profiles p ON p.id = s.user_id
+--  WHERE s.menu_codigo = 'advertencias' AND s.acao = 'aprovar' AND s.allow;
+
+-- ROLLBACK
+-- Reaplicar as policies da 20260930000117 (com operacional_home);
+-- DELETE FROM public.screen_permission_user WHERE menu_codigo = 'advertencias' AND acao = 'aprovar' AND motivo LIKE 'Migração 20260930000124%';
+-- DELETE FROM public.app_menu_acao WHERE menu_codigo = 'advertencias' AND acao = 'aprovar';
+
+
+-- =========================================================================
+-- Mudança de Função: quem aprova, aprova SÓ os setores marcados
+--
+-- Pedido do Pablo em 16/09/2026: "na troca de função, em gerenciamento de
+-- acesso por usuário, tem que ter quem aprova de qual setor — e somente
+-- quem tem permissão pra aprovar do setor marcado vai poder aprovar".
+--
+-- Mesmo molde do Reembolso (CS_REEMBOLSO_APROVADOR_SETOR, migration 007):
+-- um painel a mais em Administração › Acesso por Usuário, ao lado dos
+-- menus de aprovação da Mudança de Função (operacional_troca_funcao /
+-- escritorio_troca_funcao). Não é tela de permissão nova.
+--
+-- REGRA: na etapa de APROVAÇÃO (status "Pendente Operacional" ou "Pendente
+-- Escritório"), a pessoa só decide (aprovar/reprovar) se o SETOR da
+-- solicitação estiver entre os setores marcados pra ela. Opt-out: sem setor
+-- marcado, não aprova nenhuma solicitação que tenha setor.
+--   • Solicitação SEM setor (contrato, campo opcional) não tem o que casar:
+--     continua governada só pelo menu, como hoje. Escritório sempre tem
+--     setor (obrigatório desde 15/09/2026).
+--   • Analista, SST e RH não mudam — o pedido foi sobre quem aprova.
+--
+-- A tabela SISTEMA_SOLICITACOES_TROCA_FUNCAO tem RLS aberta (quem gateia é o
+-- menu), então a regra vai num trigger BEFORE UPDATE — vale pra tela e pra
+-- qualquer outro caminho autenticado. Sem auth.uid() (service role,
+-- automações) o trigger não interfere.
+--
+-- Idempotente. Aplicar no banco do app. ROLLBACK no fim.
+-- =========================================================================
+
+-- 1) Quem aprova qual setor
+CREATE TABLE IF NOT EXISTS public."SISTEMA_TROCA_FUNCAO_APROVADOR_SETOR" (
+  id         uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id    uuid NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
+  setor      text NOT NULL,
+  created_by uuid DEFAULT auth.uid(),
+  created_at timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (user_id, setor)
+);
+CREATE INDEX IF NOT EXISTS idx_stf_aprovador_setor_user
+  ON public."SISTEMA_TROCA_FUNCAO_APROVADOR_SETOR"(user_id);
+
+ALTER TABLE public."SISTEMA_TROCA_FUNCAO_APROVADOR_SETOR" ENABLE ROW LEVEL SECURITY;
+REVOKE ALL ON public."SISTEMA_TROCA_FUNCAO_APROVADOR_SETOR" FROM PUBLIC, anon;
+GRANT SELECT, INSERT, DELETE ON public."SISTEMA_TROCA_FUNCAO_APROVADOR_SETOR" TO authenticated;
+
+-- A própria configuração a pessoa vê (a tela diz "você aprova: X, Y"); a dos
+-- outros é de quem administra acesso.
+DROP POLICY IF EXISTS stf_aprovador_setor_select ON public."SISTEMA_TROCA_FUNCAO_APROVADOR_SETOR";
+CREATE POLICY stf_aprovador_setor_select ON public."SISTEMA_TROCA_FUNCAO_APROVADOR_SETOR"
+  FOR SELECT TO authenticated
+  USING (user_id = auth.uid() OR public.can_access(auth.uid(), 'administracao', 'alterar'));
+
+-- Mesmo gate da tela de Gerenciamento de Acesso (podeGerenciar).
+DROP POLICY IF EXISTS stf_aprovador_setor_write ON public."SISTEMA_TROCA_FUNCAO_APROVADOR_SETOR";
+CREATE POLICY stf_aprovador_setor_write ON public."SISTEMA_TROCA_FUNCAO_APROVADOR_SETOR"
+  FOR ALL TO authenticated
+  USING (public.can_access(auth.uid(), 'administracao', 'alterar'))
+  WITH CHECK (public.can_access(auth.uid(), 'administracao', 'alterar'));
+
+-- 2) Esta pessoa aprova troca de função deste setor?
+--    Setor vazio → não há o que casar → true. Reusa a normalização do
+--    Reembolso (acento/caixa) pra "Licitações" casar com "LICITACAO".
+CREATE OR REPLACE FUNCTION public.stf_aprova_setor(_setor text)
+RETURNS boolean
+LANGUAGE sql
+STABLE
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $fn$
+  SELECT public.cs_reembolso_norm_setor(_setor) IS NULL
+      OR EXISTS (
+        SELECT 1 FROM public."SISTEMA_TROCA_FUNCAO_APROVADOR_SETOR" a
+         WHERE a.user_id = auth.uid()
+           AND public.cs_reembolso_norm_setor(a.setor) = public.cs_reembolso_norm_setor(_setor)
+      );
+$fn$;
+REVOKE ALL ON FUNCTION public.stf_aprova_setor(text) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.stf_aprova_setor(text) TO authenticated;
+
+-- 3) O trigger que faz valer: decidir na etapa de aprovação exige o setor.
+CREATE OR REPLACE FUNCTION public.stf_guard_aprovador_setor()
+RETURNS trigger
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $fn$
+BEGIN
+  IF auth.uid() IS NULL THEN RETURN NEW; END IF;          -- service role / automação
+  IF OLD.status IN ('Pendente Operacional', 'Pendente Escritório')
+     AND NEW.status IS DISTINCT FROM OLD.status
+     AND NOT public.stf_aprova_setor(OLD.setor) THEN
+    RAISE EXCEPTION 'Você não aprova mudanças de função do setor "%". Peça ao administrador para marcar o setor em Acesso por Usuário.', coalesce(OLD.setor, '—')
+      USING ERRCODE = '42501';
+  END IF;
+  RETURN NEW;
+END $fn$;
+
+DROP TRIGGER IF EXISTS trg_stf_guard_aprovador_setor ON public."SISTEMA_SOLICITACOES_TROCA_FUNCAO";
+CREATE TRIGGER trg_stf_guard_aprovador_setor
+  BEFORE UPDATE ON public."SISTEMA_SOLICITACOES_TROCA_FUNCAO"
+  FOR EACH ROW EXECUTE FUNCTION public.stf_guard_aprovador_setor();
+
+NOTIFY pgrst, 'reload schema';
+
+-- =========================================================================
+-- ROLLBACK
+--   DROP TRIGGER IF EXISTS trg_stf_guard_aprovador_setor ON public."SISTEMA_SOLICITACOES_TROCA_FUNCAO";
+--   DROP FUNCTION IF EXISTS public.stf_guard_aprovador_setor();
+--   DROP FUNCTION IF EXISTS public.stf_aprova_setor(text);
+--   DROP TABLE IF EXISTS public."SISTEMA_TROCA_FUNCAO_APROVADOR_SETOR";
+-- =========================================================================
+
+
+-- =========================================================================
+-- Mudança de Função: a etapa do analista sai; o que estava nela vai pra
+-- fila de quem decide
+--
+-- Pedido do Pablo em 16/09/2026: "na Licitação ninguém pode ver as do
+-- administrativo nem as com setor; na Licitação não pode aparecer o botão
+-- de validar, apenas na tela do Operacional; quando tiver setor vai pra
+-- Diretoria › Mudança de Função".
+--
+-- A regra nova mora na tela (src/lib/trocaFuncao/solicitacao.ts):
+--   • administrativa = escritório OU com setor → "Pendente Escritório"
+--     (Diretoria), visível/decidível só por quem tem o setor marcado em
+--     SISTEMA_TROCA_FUNCAO_APROVADOR_SETOR (mig 125);
+--   • contrato sem setor → "Pendente Operacional";
+--   • Licitações › Analistas Validações só acompanha as de contrato.
+--
+-- O que este arquivo faz é só o ESTOQUE: nada nasce mais em "Pendente
+-- Analista", e o que estava lá (3 linhas em 16/09/2026) não pode ficar
+-- órfão — Licitações perdeu o botão. Cada uma vai pra fila certa pela mesma
+-- regra da tela. O status "Pendente Analista" continua aceito pelo CHECK
+-- (mig 118) só pelo histórico.
+--
+-- Idempotente. Aplicar no banco do app.
+-- =========================================================================
+
+UPDATE public."SISTEMA_SOLICITACOES_TROCA_FUNCAO"
+   SET status = CASE
+                  WHEN coalesce(e_escritorio, false) OR nullif(btrim(coalesce(setor, '')), '') IS NOT NULL
+                    THEN 'Pendente Escritório'
+                  ELSE 'Pendente Operacional'
+                END
+ WHERE status = 'Pendente Analista';
+
+-- Conferência
+-- SELECT id, colaborador_nome, e_escritorio, setor, status FROM public."SISTEMA_SOLICITACOES_TROCA_FUNCAO"
+--  WHERE status IN ('Pendente Operacional', 'Pendente Escritório') ORDER BY id;
+
+-- ROLLBACK: não se desfaz sozinho (as linhas podem já ter andado).

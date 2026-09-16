@@ -1,13 +1,18 @@
 import { describe, expect, it } from "vitest";
 import {
+  calcularHoraExtra,
   conclusaoExibicao,
   dataLocalISO,
   diaSemana,
   formatarData,
   formatarDataHora,
   formatarDuracao,
+  limitarPercentual,
   linhasExcel,
   mediaConclusao,
+  mensagemErro,
+  minutosJornada,
+  minutosTrabalhados,
   sobrepoe,
   statusExecucaoPorPercentual,
   statusExibicao,
@@ -16,56 +21,103 @@ import {
   validarSolicitacao,
 } from "@/pages/sistemas/hora-extra/horaExtraUtils";
 
+// Escala oficial da empresa: 07:30-12:00-13:00-17:18, ou seja 8h48.
+const ESCALA = { entrada: "07:30", saida_intervalo: "12:00", retorno_intervalo: "13:00", saida: "17:18" };
+const JORNADA = minutosTrabalhados(ESCALA);
+
 describe("regras de hora extra", () => {
   it("calcula 18:05 até 21:27", () => expect(formatarDuracao(totalHe("18:05", "21:27"))).toBe("3h 22min"));
   it("calcula HE que cruza meia-noite", () => expect(totalHe("22:00", "02:00")).toBe(240));
   it("formata a data no fuso local", () => expect(dataLocalISO(new Date(2026, 8, 15, 23, 30))).toBe("2026-09-15"));
   it("formata duração curta", () => expect(formatarDuracao(180, true)).toBe("3h00"));
-  it("recusa horários iguais na solicitação", () =>
+  // --- cálculo pela escala de trabalho (16/09/2026) -------------------
+  it("a escala padrão dá 8h48 de jornada", () => expect(formatarDuracao(JORNADA, true)).toBe("8h48"));
+  it("lê a jornada de uma escala diferente", () =>
     expect(
-      validarSolicitacao({
-        chamados: [{ percentual_previsto: 100 }],
-        ponto_entrada: "08:00",
-        ponto_saida: "18:00",
-        he_inicio_previsto: "18:00",
-        he_fim_previsto: "18:00",
-      }),
-    ).toContain("O início e o término da HE não podem ser iguais."));
-  it("recusa horários iguais na conclusão", () =>
-    expect(validarConclusao({ he_inicio_real: "18:00", he_fim_real: "18:00" })).toContain(
-      "O início e o término da HE não podem ser iguais.",
-    ));
-  it.each([99, 101])("recusa soma %s", (valor) =>
+      minutosJornada({ entrada: "08:00", saida_intervalo: "12:00", retorno_intervalo: "14:00", saida: "18:00" }),
+    ).toBe(480));
+  it("conta 1h42 de HE em 08:00-12:00-13:00-19:30", () => {
+    const calculo = calcularHoraExtra(
+      { entrada: "08:00", saida_intervalo: "12:00", retorno_intervalo: "13:00", saida: "19:30" },
+      JORNADA,
+    );
+    expect(formatarDuracao(calculo.trabalhado, true)).toBe("10h30");
+    expect(formatarDuracao(calculo.excedente, true)).toBe("1h42");
+    expect(calculo.inicio).toBe("17:48");
+    expect(calculo.fim).toBe("19:30");
+  });
+  it("não dá hora extra em 08:10-11:55-13:05-18:00", () => {
+    const calculo = calcularHoraExtra(
+      { entrada: "08:10", saida_intervalo: "11:55", retorno_intervalo: "13:05", saida: "18:00" },
+      JORNADA,
+    );
+    expect(formatarDuracao(calculo.trabalhado, true)).toBe("8h40");
+    expect(calculo.excedente).toBe(0);
+  });
+  it("conta HE que vira o dia", () => {
+    const calculo = calcularHoraExtra(
+      { entrada: "13:00", saida_intervalo: "17:00", retorno_intervalo: "18:00", saida: "01:00" },
+      JORNADA,
+    );
+    expect(calculo.trabalhado).toBe(660);
+    expect(calculo.excedente).toBe(132);
+    expect(calculo.inicio).toBe("22:48");
+  });
+  it("volta para antes do intervalo quando a HE passa do turno da tarde", () =>
+    expect(
+      calcularHoraExtra(
+        { entrada: "02:00", saida_intervalo: "12:00", retorno_intervalo: "13:00", saida: "14:00" },
+        JORNADA,
+      ).inicio,
+    ).toBe("10:48"));
+  it("recusa solicitação sem hora extra", () =>
+    expect(
+      validarSolicitacao({ chamados: [{ percentual_previsto: 100 }], ponto: ESCALA, jornadaMinutos: JORNADA }),
+    ).toContain("Os horários informados somam 8h48, dentro da jornada de 8h48. Não há hora extra."));
+  it("recusa conclusão sem hora extra", () =>
+    expect(validarConclusao(ESCALA, JORNADA)).toHaveLength(1));
+  it("aceita conclusão com hora extra", () =>
+    expect(
+      validarConclusao(
+        { entrada: "07:30", saida_intervalo: "12:00", retorno_intervalo: "13:00", saida: "19:00" },
+        JORNADA,
+      ),
+    ).toHaveLength(0));
+  it.each([-10, 101, 150])("recusa expectativa de %s%%", (valor) =>
     expect(
       validarSolicitacao({
         chamados: [{ percentual_previsto: valor }],
-        ponto_entrada: "08:00",
-        ponto_saida: "18:00",
-        he_inicio_previsto: "18:00",
-        he_fim_previsto: "22:00",
+        ponto: { entrada: "07:30", saida_intervalo: "12:00", retorno_intervalo: "13:00", saida: "19:00" },
+        jornadaMinutos: JORNADA,
       }),
-    ).toContain("A expectativa de conclusão deve totalizar 100%."),
+    ).toContain("A expectativa de conclusão de cada chamado deve ficar entre 0% e 100%."),
   );
+  it("aceita 0 e 100 na expectativa", () =>
+    expect(
+      validarSolicitacao({
+        chamados: [{ percentual_previsto: 0 }, { percentual_previsto: 100 }],
+        ponto: { entrada: "07:30", saida_intervalo: "12:00", retorno_intervalo: "13:00", saida: "19:00" },
+        jornadaMinutos: JORNADA,
+      }),
+    ).toHaveLength(0));
   it("recusa solicitação sem chamado", () =>
     expect(
       validarSolicitacao({
         chamados: [],
-        ponto_entrada: "08:00",
-        ponto_saida: "18:00",
-        he_inicio_previsto: "18:00",
-        he_fim_previsto: "22:00",
+        ponto: { entrada: "07:30", saida_intervalo: "12:00", retorno_intervalo: "13:00", saida: "19:00" },
+        jornadaMinutos: JORNADA,
       })[0],
     ).toContain("pelo menos um chamado"));
-  it("recusa HE dentro da jornada", () =>
-    expect(
-      validarSolicitacao({
-        chamados: [{ percentual_previsto: 100 }],
-        ponto_entrada: "08:00",
-        ponto_saida: "18:00",
-        he_inicio_previsto: "16:00",
-        he_fim_previsto: "17:00",
-      }),
-    ).toContain("O horário da HE deve ficar fora da jornada informada."));
+  it.each([
+    [150, 100],
+    [-5, 0],
+    [42, 42],
+  ])("limita o campo de porcentagem %s", (entrada, saida) => expect(limitarPercentual(entrada)).toBe(saida));
+  it("a média de três chamados nunca passa de 100", () => expect(mediaConclusao([100, 100, 100])).toBe(100));
+  it("mostra a mensagem do banco mesmo sem Error", () =>
+    expect(mensagemErro({ message: "O chamado já foi designado a outro usuário: Ana" }, "falhou")).toBe(
+      "O chamado já foi designado a outro usuário: Ana",
+    ));
   it("detecta sobreposição", () => expect(sobrepoe("18:00", "21:00", "20:00", "22:00")).toBe(true));
   it("não acusa horários adjacentes", () => expect(sobrepoe("18:00", "20:00", "20:00", "22:00")).toBe(false));
   it("detecta sobreposição cruzando meia-noite", () => expect(sobrepoe("22:00", "02:00", "23:00", "01:00")).toBe(true));

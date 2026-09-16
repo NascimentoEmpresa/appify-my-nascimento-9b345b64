@@ -97,14 +97,14 @@ const trocaFuncao: Fluxo = {
       onde: "Encarregados › Mudança de Função",
     },
     {
-      quem: "Analista", faz: "Valida a troca. Vale para contrato e para escritório — a validação do administrativo saiu do RH e veio para cá.",
-      onde: "Licitações › Analistas Validações › Mudança de Função",
-      status: "Pendente Analista",
-    },
-    {
-      quem: "Operacional", faz: "Aprova a troca do contrato dele.",
+      quem: "Operacional", faz: "Aprova a troca de contrato (sem setor). Com setor, só se o setor estiver liberado pra ele em Acesso por Usuário.",
       onde: "Operacional › Mudança de Função",
       status: "Pendente Operacional",
+    },
+    {
+      quem: "Diretoria", faz: "Aprova a troca do administrativo ou com setor — cada aprovador só vê e decide os setores marcados pra ele em Acesso por Usuário.",
+      onde: "Diretoria › Mudança de Função",
+      status: "Pendente Escritório",
     },
     {
       quem: "SST", faz: "Marca o ASO — ou dispensa, quando a função nova não exige exame novo.",
@@ -118,7 +118,7 @@ const trocaFuncao: Fluxo = {
     },
   ],
   observacoes: [
-    "Troca do escritório/administrativo segue o mesmo caminho, mas a aprovação da etapa 3 é de quem tem a permissão do administrativo (status \"Pendente Escritório\").",
+    "Licitações › Analistas Validações › Mudança de Função só acompanha as trocas de contrato (sem setor) — não valida nem vê as do administrativo.",
     "Dispensar o ASO exige o porquê escrito: o RH recebe a troca sem exame e precisa saber que foi decisão, não esquecimento.",
     "Reprovar exige motivo. Depois de aprovada, não se reprova — o caminho é abrir outra.",
   ],
@@ -185,12 +185,12 @@ const advertencia: Fluxo = {
       status: "Aguardando Aprovação",
     },
     {
-      quem: "Operacional", faz: "Aprova ou reprova. Reprovar exige motivo — é o que o encarregado lê.",
-      onde: "Operacional › Advertências Solicitadas",
+      quem: "Aprovador (Acesso por Usuário)", faz: "Aprova ou reprova. Reprovar exige motivo — é o que o encarregado lê. Quem aprova tem a ação Aprovar no menu Advertências.",
+      onde: "Jurídico › Advertências",
       status: "Aguardando Jurídico",
     },
     {
-      quem: "Jurídico", faz: "Analisa, decide o enquadramento e emite o documento.",
+      quem: "Jurídico", faz: "Analisa, decide o enquadramento, registra o parecer e emite o documento.",
       onde: "Jurídico › Advertências",
       status: "Concluída",
     },

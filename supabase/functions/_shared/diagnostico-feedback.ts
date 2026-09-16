@@ -95,7 +95,8 @@ export type ResultadoValidacao =
 export const MINIMO_RESPOSTAS_DIAGNOSTICO = 1;
 export const MAX_ITENS_POR_BLOCO = 5;
 
-const TIPOS_FECHADOS = new Set([
+// Exportado (15/09/2026): o diagnóstico genérico de formulário (diagnostico-formulario.ts) usa a mesma régua.
+export const TIPOS_FECHADOS = new Set([
   "multipla_escolha", "caixas_selecao", "lista_suspensa", "escala", "escala_trabalho",
 ]);
 
@@ -149,7 +150,7 @@ function destinoDaPergunta(pergunta: PerguntaDiagnostico): DestinoPergunta {
   return null;
 }
 
-const textoDe = (valor: unknown): string[] => {
+export const textoDe = (valor: unknown): string[] => {
   if (valor == null || valor === "") return [];
   const valores = Array.isArray(valor) ? valor : [valor];
   return valores
@@ -240,7 +241,7 @@ export function limparNomesProprios(
 const percentual = (n: number, total: number): number =>
   total > 0 ? Math.round((n / total) * 1000) / 10 : 0;
 
-function agregarPerguntaFechada(
+export function agregarPerguntaFechada(
   pergunta: PerguntaDiagnostico,
   respostas: RespostaDiagnostico[],
 ): PerguntaFechadaAgregada {
@@ -269,7 +270,7 @@ function agregarPerguntaFechada(
   };
 }
 
-function agregarPerguntaAberta(
+export function agregarPerguntaAberta(
   pergunta: PerguntaDiagnostico,
   respostas: RespostaDiagnostico[],
   dicionarioNomes: ReadonlySet<string>,

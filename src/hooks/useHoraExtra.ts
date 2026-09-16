@@ -3,6 +3,7 @@ import { supabase } from "@/integrations/supabase/client";
 import type {
   ChamadoDisponivel,
   ColaboradorHoraExtra,
+  EscalaHoraExtra,
   SolicitacaoHoraExtra,
   StatsHoraExtra,
 } from "@/pages/sistemas/hora-extra/types";
@@ -80,6 +81,23 @@ export function useChamadosDisponiveisHoraExtra(colaboradorId?: string | null, c
   });
 }
 
+/** Escalas de trabalho: a jornada que define a partir de quando é HE. */
+export function useEscalasHoraExtra() {
+  return useQuery({
+    queryKey: ["hora-extra", "escalas"],
+    queryFn: async () => {
+      const { data, error } = await db
+        .from("HORA_EXTRA_ESCALA")
+        .select("*")
+        .eq("ativo", true)
+        .order("padrao", { ascending: false })
+        .order("nome");
+      if (error) throw error;
+      return (data ?? []) as EscalaHoraExtra[];
+    },
+  });
+}
+
 function useRpcHoraExtra(nome: string) {
   const cliente = useQueryClient();
   return useMutation({
@@ -97,6 +115,8 @@ export const useLiberarHoraExtra = () => useRpcHoraExtra("hora_extra_liberar");
 export const useConcluirHoraExtra = () => useRpcHoraExtra("hora_extra_concluir");
 export const useValidarHoraExtra = () => useRpcHoraExtra("hora_extra_validar");
 export const useExcluirHoraExtra = () => useRpcHoraExtra("hora_extra_excluir");
+export const useSalvarEscalaHoraExtra = () => useRpcHoraExtra("hora_extra_escala_salvar");
+export const useExcluirEscalaHoraExtra = () => useRpcHoraExtra("hora_extra_escala_excluir");
 
 export async function enviarAnexosHoraExtra(
   solicitacaoId: string,

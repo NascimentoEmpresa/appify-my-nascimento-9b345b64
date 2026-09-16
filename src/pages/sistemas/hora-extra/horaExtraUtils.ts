@@ -1,7 +1,23 @@
-import type { ChamadoHoraExtra, SolicitacaoHoraExtra, StatusExecucao, StatusHoraExtra } from "./types";
+import type {
+  ChamadoHoraExtra,
+  EscalaHoraExtra,
+  PontoDia,
+  SolicitacaoHoraExtra,
+  StatusExecucao,
+  StatusHoraExtra,
+} from "./types";
 
 export function mensagemErro(erro: unknown, fallback: string): string {
-  return erro instanceof Error ? erro.message : fallback;
+  // O Supabase nem sempre devolve um Error de verdade: dependendo da versão
+  // do postgrest-js o erro vem como objeto simples com `message`. Sem este
+  // segundo caminho a tela engolia o texto do banco (ex. "O chamado já foi
+  // designado a outro usuário") e mostrava só a mensagem genérica.
+  if (erro instanceof Error && erro.message) return erro.message;
+  if (erro && typeof erro === "object") {
+    const texto = (erro as { message?: unknown }).message;
+    if (typeof texto === "string" && texto.trim()) return texto;
+  }
+  return fallback;
 }
 
 export function paraMinutos(horario?: string | null): number {
@@ -36,37 +52,94 @@ export function totalHe(inicio?: string | null, fim?: string | null): number {
   return b - a;
 }
 
+// ---------------------------------------------------------------------
+// Cálculo da hora extra (16/09/2026)
+//
+// Hora extra não é mais a janela que o usuário digita: é o tempo que
+// passou da jornada da escala de trabalho. A escala da empresa é
+// 07:30-12:00-13:00-17:18, ou seja 8h48. Quem bate 08:00-12:00-13:00-19:30
+// trabalhou 10h30 e tem 1h42 de HE, começando às 17:48. Quem bate
+// 08:10-11:55-13:05-18:00 trabalhou 8h40 e não tem hora extra nenhuma.
+// ---------------------------------------------------------------------
+
+export const JORNADA_PADRAO_MIN = 528;
+
+/** Minutos entre dois horários, virando o dia quando o fim é menor. */
+export function minutosEntre(inicio?: string | null, fim?: string | null): number {
+  return (((paraMinutos(fim) - paraMinutos(inicio)) % 1440) + 1440) % 1440;
+}
+
+export function minutosTrabalhados(ponto: PontoDia): number {
+  return (
+    minutosEntre(ponto.entrada, ponto.saida_intervalo) + minutosEntre(ponto.retorno_intervalo, ponto.saida)
+  );
+}
+
+export function minutosJornada(escala?: Pick<EscalaHoraExtra, keyof PontoDia> | null): number {
+  return escala ? minutosTrabalhados(escala) : JORNADA_PADRAO_MIN;
+}
+
+export function minutosParaHorario(minutos: number): string {
+  const total = ((Math.round(minutos) % 1440) + 1440) % 1440;
+  return `${String(Math.floor(total / 60)).padStart(2, "0")}:${String(total % 60).padStart(2, "0")}`;
+}
+
+export interface CalculoHoraExtra {
+  trabalhado: number;
+  excedente: number;
+  inicio: string;
+  fim: string;
+}
+
+/**
+ * Espelha `hora_extra_excedente` e `hora_extra_inicio` do banco. O início
+ * é contado para trás a partir da saída; se o excedente for maior que o
+ * turno da tarde, o que sobra veio da manhã.
+ */
+export function calcularHoraExtra(ponto: PontoDia, jornadaMinutos = JORNADA_PADRAO_MIN): CalculoHoraExtra {
+  const trabalhado = minutosTrabalhados(ponto);
+  const excedente = Math.max(0, trabalhado - Math.max(0, jornadaMinutos || 0));
+  const tarde = minutosEntre(ponto.retorno_intervalo, ponto.saida);
+  const inicio =
+    excedente <= 0
+      ? ponto.saida
+      : excedente <= tarde
+        ? minutosParaHorario(paraMinutos(ponto.saida) - excedente)
+        : minutosParaHorario(paraMinutos(ponto.saida_intervalo) - (excedente - tarde));
+  return { trabalhado, excedente, inicio, fim: ponto.saida };
+}
+
 export interface DadosValidacaoSolicitacao {
   chamados: Array<{ percentual_previsto: number | string | null }>;
-  ponto_entrada: string;
-  ponto_saida: string;
-  he_inicio_previsto: string;
-  he_fim_previsto: string;
+  ponto: PontoDia;
+  jornadaMinutos: number;
 }
 
-export interface HorariosConclusao {
-  he_inicio_real: string;
-  he_fim_real: string;
-}
+const ERRO_PERCENTUAL = "A expectativa de conclusão de cada chamado deve ficar entre 0% e 100%.";
 
-const ERRO_HORARIOS_IGUAIS = "O início e o término da HE não podem ser iguais.";
+function erroSemHoraExtra(trabalhado: number, jornadaMinutos: number): string {
+  return (
+    `Os horários informados somam ${formatarDuracao(trabalhado, true)}, ` +
+    `dentro da jornada de ${formatarDuracao(jornadaMinutos, true)}. Não há hora extra.`
+  );
+}
 
 export function validarSolicitacao(dados: DadosValidacaoSolicitacao): string[] {
   const erros: string[] = [];
   if (!dados.chamados.length) erros.push("Adicione pelo menos um chamado.");
-  const soma = dados.chamados.reduce((total, chamado) => total + Number(chamado.percentual_previsto || 0), 0);
-  if (dados.chamados.length && soma !== 100) erros.push("A expectativa de conclusão deve totalizar 100%.");
-  const inicioHe = paraMinutos(dados.he_inicio_previsto);
-  const fimHe = paraMinutos(dados.he_fim_previsto);
-  const entrada = paraMinutos(dados.ponto_entrada);
-  const saida = paraMinutos(dados.ponto_saida);
-  if (inicioHe === fimHe) erros.push(ERRO_HORARIOS_IGUAIS);
-  if (!(inicioHe >= saida || fimHe <= entrada)) erros.push("O horário da HE deve ficar fora da jornada informada.");
+  const forade = dados.chamados.some((chamado) => {
+    const valor = Number(chamado.percentual_previsto);
+    return !Number.isFinite(valor) || valor < 0 || valor > 100;
+  });
+  if (forade) erros.push(ERRO_PERCENTUAL);
+  const calculo = calcularHoraExtra(dados.ponto, dados.jornadaMinutos);
+  if (calculo.excedente <= 0) erros.push(erroSemHoraExtra(calculo.trabalhado, dados.jornadaMinutos));
   return erros;
 }
 
-export function validarConclusao(horarios: HorariosConclusao): string[] {
-  return paraMinutos(horarios.he_inicio_real) === paraMinutos(horarios.he_fim_real) ? [ERRO_HORARIOS_IGUAIS] : [];
+export function validarConclusao(ponto: PontoDia, jornadaMinutos: number): string[] {
+  const calculo = calcularHoraExtra(ponto, jornadaMinutos);
+  return calculo.excedente <= 0 ? [erroSemHoraExtra(calculo.trabalhado, jornadaMinutos)] : [];
 }
 
 export function sobrepoe(inicioA: string, fimA: string, inicioB: string, fimB: string): boolean {
@@ -114,6 +187,13 @@ export function conclusaoExibicao(
     return { label: "Pendente de preenchimento", classe: "bg-amber-100 text-amber-700" };
   }
   return { label: "Não iniciada", classe: "bg-red-100 text-red-700" };
+}
+
+/** Campo de porcentagem: nunca sai de 0 a 100, nem por digitação. */
+export function limitarPercentual(valor: number | string): number {
+  const numero = Math.round(Number(valor));
+  if (!Number.isFinite(numero)) return 0;
+  return Math.min(100, Math.max(0, numero));
 }
 
 export function statusExecucaoPorPercentual(percentual: number): StatusExecucao {

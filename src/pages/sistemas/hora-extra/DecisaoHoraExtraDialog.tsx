@@ -99,6 +99,14 @@ export default function DecisaoHoraExtraDialog({
             icone={<Timer />}
             rotulo="Quantidade de HE"
             valor={formatarDuracao(solicitacao.total_real_min ?? solicitacao.total_previsto_min, true)}
+            detalhe={
+              solicitacao.jornada_minutos
+                ? "Trabalhado " +
+                  formatarDuracao(solicitacao.trabalhado_real_min ?? solicitacao.trabalhado_previsto_min ?? 0, true) +
+                  " · jornada de " +
+                  formatarDuracao(solicitacao.jornada_minutos, true)
+                : undefined
+            }
           />
           <InfoItem
             icone={<FileText />}

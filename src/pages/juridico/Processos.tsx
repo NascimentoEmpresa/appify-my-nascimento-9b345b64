@@ -31,6 +31,10 @@ interface MotivoItem { ordem: number; motivo: string; valor_pedidos: number; val
 export const PROPOSTA_TIPOS = ["Judicial", "Extrajudicial"] as const;
 export const PROPOSTA_QUEM = ["Juiz", "Reclamante", "Reclamada"] as const;
 interface Proposta { valor: number; descricao: string; tipo: string; quem: string; data?: string }
+// Valor à parte (15/09/2026): lançamento que não pertence a nenhum motivo do
+// processo — honorários periciais, custas avulsas… Tem motivo próprio
+// (obrigatório) e não se mistura com os valores POR MOTIVO acima.
+interface ValorAParte { motivo: string; valor: number; descricao: string }
 interface Audiencia { ordem: number; data: string; tipo_audiencia?: string; modalidade_audiencia?: string; horario?: string; propostas?: Proposta[]; }
 interface Processo {
   id: number;
@@ -49,6 +53,8 @@ interface Processo {
   houve_pericia_medica: string; valor_perito_judicial: number; valor_assistente_tecnico: number;
   // Propostas fora de audiência ("no decorrer do processo")
   propostas: Proposta[];
+  // Valores à parte (fora dos motivos)
+  valores_a_parte: ValorAParte[];
 }
 interface Comentario { id: number; entidade_id?: string; autor_nome?: string; texto: string; created_at?: string; }
 
@@ -201,8 +207,10 @@ export function cidadeDoContrato(nomeContrato: string): { cidade: string; noInic
 const custosDoProcesso = (p: any) => PROC_VAL_FIELDS.reduce((s, k) => s + toFloat(p[k]), 0);
 // `valor_final` preenchido continua mandando: é o fechamento lançado à mão, e
 // quem o preenche já está dizendo qual foi o custo total.
+// Valores à parte também são desembolso: entram no custo final (15/09/2026).
+const valoresAParteTotal = (p: any) => ((p.valores_a_parte || []) as ValorAParte[]).reduce((s, v) => s + toFloat(v.valor), 0);
 const custoTotal = (p: any) => p.valor_final > 0 ? p.valor_final
-  : p.valor_acordo + p.valor_sentenca + p.valor_outros_custos + p.valor_deposito_recursal + p.valor_custas_processuais + custosDoProcesso(p);
+  : p.valor_acordo + p.valor_sentenca + p.valor_outros_custos + p.valor_deposito_recursal + p.valor_custas_processuais + custosDoProcesso(p) + valoresAParteTotal(p);
 const motivoTotal = (i: MotivoItem) => VAL_FIELDS_MOTIVO.reduce((s, k) => s + toFloat(i[k]), 0);
 
 // Vínculo reclamante ⇄ EMPREGADOS. Lê a tabela direto (mesmo padrão do Recrutamento).
@@ -306,6 +314,23 @@ function parsePropostasProcesso(rs: any[]): Proposta[] {
   return [];
 }
 
+// Valores à parte: mesma mecânica do propostas_json (text, repetido em toda
+// linha de motivo, vale a primeira linha com conteúdo).
+function parseValoresAParte(rs: any[]): ValorAParte[] {
+  for (const r of rs) {
+    const raw = r.valores_a_parte_json;
+    if (!raw || !String(raw).trim() || String(raw).trim() === "[]") continue;
+    try {
+      const arr = typeof raw === "string" ? JSON.parse(raw) : raw;
+      const lista: ValorAParte[] = Array.isArray(arr)
+        ? arr.map((v: any) => ({ motivo: String(v.motivo ?? "").trim(), valor: toFloat(v.valor), descricao: String(v.descricao ?? "").trim() })).filter((v: ValorAParte) => v.motivo || v.valor)
+        : [];
+      if (lista.length) return lista;
+    } catch { /* json inválido */ }
+  }
+  return [];
+}
+
 // Uma proposta na tela de detalhe. O selo diz de quem partiu e a cor separa as
 // três origens de relance — antes era um "PROPOSTA DO JUIZ" fixo no código,
 // que mentia assim que passasse a existir proposta da reclamada.
@@ -370,6 +395,7 @@ function agrupar(rows: any[]): Processo[] {
       vai_recorrer: first("vai_recorrer"),
       houve_pericia_medica: first("houve_pericia_medica"),
       propostas: parsePropostasProcesso(rs),
+      valores_a_parte: parseValoresAParte(rs),
       id: Number.isFinite(minId) ? minId : 0,
       id_sequencial: maxN("id_sequencial"),
       numero_processo: numero, reclamante: first("reclamante"), reclamada: first("reclamada"), comarca: first("comarca"), municipio_origem: first("municipio_origem"),
@@ -447,6 +473,7 @@ export default function Processos({ view = "processos" }: { view?: "dashboard" |
   const [editNumero, setEditNumero] = useState<string | null>(null);
   const [form, setForm] = useState(FORM_RESET());
   const [motivos, setMotivos] = useState<MotivoItem[]>([MOTIVO_RESET()]);
+  const [valoresAParte, setValoresAParte] = useState<ValorAParte[]>([]);
   const [auds, setAuds] = useState<Audiencia[]>([]);
   // Propostas fora de audiência — "no decorrer do processo".
   const [propostas, setPropostas] = useState<Proposta[]>([]);
@@ -660,7 +687,7 @@ export default function Processos({ view = "processos" }: { view?: "dashboard" |
   };
 
   // ── CRUD ───────────────────────────────────────────────────────
-  const abrirNovo = () => { setEditNumero(null); contratoManual.current = false; setForm(FORM_RESET()); setMotivos([MOTIVO_RESET()]); setAuds([]); setPropostas([]); setEmpBusca(""); setEmpResultados([]); setEmpSelKey(null); setModal(true); };
+  const abrirNovo = () => { setEditNumero(null); contratoManual.current = false; setForm(FORM_RESET()); setMotivos([MOTIVO_RESET()]); setValoresAParte([]); setAuds([]); setPropostas([]); setEmpBusca(""); setEmpResultados([]); setEmpSelKey(null); setModal(true); };
   const abrirEditar = (p: Processo) => {
     setEditNumero(p.numero_processo);
     // Processo que já tem contrato salvo: a sugestão não pode sobrescrever o
@@ -672,6 +699,7 @@ export default function Processos({ view = "processos" }: { view?: "dashboard" |
     setMotivos(p.motivo_items.length ? p.motivo_items.map(m => ({ ...m })) : [MOTIVO_RESET()]);
     setAuds(p.audiencias.map(a => ({ ...a, propostas: (a.propostas || []).map(pr => ({ ...pr })) })));
     setPropostas((p.propostas || []).map(pr => ({ ...pr })));
+    setValoresAParte((p.valores_a_parte || []).map(v => ({ ...v })));
     setEmpBusca(p.reclamante || ""); setEmpResultados([]); setEmpSelKey(null); setModal(true);
   };
   const salvar = async () => {
@@ -688,6 +716,12 @@ export default function Processos({ view = "processos" }: { view?: "dashboard" |
       .map(pr => ({ valor: pr.valor || 0, descricao: pr.descricao.trim(), tipo: pr.tipo || "Judicial", quem: pr.quem || "Juiz", ...(pr.data ? { data: pr.data } : {}) }));
     const audsJson = auds.length ? JSON.stringify(auds.map((a, i) => ({ ordem: i + 1, data: a.data, tipo_audiencia: a.tipo_audiencia || "Instrução", modalidade_audiencia: a.modalidade_audiencia, horario: a.horario || null, propostas: limparPropostas(a.propostas || []) }))) : null;
     const propostasJson = (() => { const l = limparPropostas(propostas); return l.length ? JSON.stringify(l) : null; })();
+    // Valor à parte sem motivo não passa: o motivo é o que diz do que se trata.
+    const valoresAParteLimpos = valoresAParte
+      .map(v => ({ motivo: v.motivo.trim(), valor: v.valor || 0, descricao: (v.descricao || "").trim() }))
+      .filter(v => v.motivo || v.valor || v.descricao);
+    if (valoresAParteLimpos.some(v => !v.motivo)) { toast("Todo valor à parte precisa de um motivo.", "err"); return; }
+    const valoresAParteJson = valoresAParteLimpos.length ? JSON.stringify(valoresAParteLimpos) : null;
     // Nº sequencial: na edição mantém o que o processo já tem; num cadastro novo
     // pega o próximo da base (lido na hora, não do estado em memória).
     const seqAtual = editNumero ? (processos.find(p => p.numero_processo === editNumero)?.id_sequencial || 0) : 0;
@@ -720,6 +754,7 @@ export default function Processos({ view = "processos" }: { view?: "dashboard" |
       valor_perito_judicial: form.houve_pericia_medica === "Sim" ? (form.valor_perito_judicial || 0) : 0,
       valor_assistente_tecnico: form.houve_pericia_medica === "Sim" ? (form.valor_assistente_tecnico || 0) : 0,
       propostas_json: propostasJson,
+      valores_a_parte_json: valoresAParteJson,
     }));
     if (editNumero && editNumero !== numero && processos.some(p => p.numero_processo === numero)) { toast("Já existe outro processo com esse número.", "err"); return; }
     const del = await (supabase as any).from("JUR_PROCESSOS").delete().eq("numero_processo", editNumero || numero);
@@ -784,6 +819,17 @@ export default function Processos({ view = "processos" }: { view?: "dashboard" |
   const setPropostaProc = (j: number, patch: Partial<Proposta>) => setPropostas(ps => ps.map((p, idx) => idx === j ? { ...p, ...patch } : p));
   const addPropostaProc = () => setPropostas(ps => [...ps, { valor: 0, descricao: "", tipo: "Extrajudicial", quem: "Reclamante", data: "" }]);
   const delPropostaProc = (j: number) => setPropostas(ps => ps.filter((_, idx) => idx !== j));
+
+  // Valores à parte (fora dos motivos). Updater funcional pelo mesmo motivo
+  // das propostas: digitar rápido não pode reintroduzir lista antiga.
+  const setValorAParte = (j: number, patch: Partial<ValorAParte>) => setValoresAParte(vs => vs.map((v, idx) => idx === j ? { ...v, ...patch } : v));
+  const addValorAParte = () => setValoresAParte(vs => [...vs, { motivo: "", valor: 0, descricao: "" }]);
+  const delValorAParte = (j: number) => setValoresAParte(vs => vs.filter((_, idx) => idx !== j));
+  const valoresAParteSoma = useMemo(() => valoresAParte.reduce((s, v) => s + toFloat(v.valor), 0), [valoresAParte]);
+  // Motivos já usados em valores à parte de outros processos — sugestão no
+  // campo (datalist), sem travar: continua texto livre.
+  const motivosAParteDistintos = useMemo(
+    () => [...new Set(processos.flatMap(p => (p.valores_a_parte || []).map(v => v.motivo)).filter(Boolean))].sort(), [processos]);
 
   // Depósito recursal continua lançado POR MOTIVO (decisão do Pablo): a aba de
   // recurso mostra a soma, em leitura, para não haver dois lugares somando a
@@ -1157,6 +1203,21 @@ export default function Processos({ view = "processos" }: { view?: "dashboard" |
             <div style={{ border: "1px solid #eef2f7", borderRadius: 10, overflow: "hidden", marginBottom: 14 }}>
               {sel.motivo_items.map((m, i) => (<div key={i} style={{ display: "flex", justifyContent: "space-between", gap: 8, padding: "8px 11px", borderTop: i ? "1px solid #f1f5f9" : "none" }}><span style={{ fontSize: 12.5, color: "#0f172a" }}>{m.motivo}</span><span style={{ fontSize: 12, fontWeight: 700, color: "#475569", whiteSpace: "nowrap" }}>{money(motivoTotal(m))}</span></div>))}
             </div>
+            {sel.valores_a_parte.length > 0 && (<>
+              <div style={{ fontSize: 11, fontWeight: 800, color: "#0f3171", textTransform: "uppercase", letterSpacing: ".4px", marginBottom: 6 }}>Valores à parte ({sel.valores_a_parte.length})</div>
+              <div style={{ border: "1px solid #eef2f7", borderRadius: 10, overflow: "hidden", marginBottom: 14 }}>
+                {sel.valores_a_parte.map((v, i) => (
+                  <div key={i} style={{ display: "flex", justifyContent: "space-between", gap: 8, padding: "8px 11px", borderTop: i ? "1px solid #f1f5f9" : "none" }}>
+                    <span style={{ fontSize: 12.5, color: "#0f172a" }}>{v.motivo}{v.descricao && <span style={{ color: "#94a3b8" }}> — {v.descricao}</span>}</span>
+                    <span style={{ fontSize: 12, fontWeight: 700, color: "#475569", whiteSpace: "nowrap" }}>{money(v.valor)}</span>
+                  </div>
+                ))}
+                <div style={{ display: "flex", justifyContent: "space-between", gap: 8, padding: "8px 11px", borderTop: "1px solid #e2e8f0", background: "#f8fafc" }}>
+                  <span style={{ fontSize: 12, fontWeight: 700, color: "#64748b" }}>Total à parte</span>
+                  <span style={{ fontSize: 12, fontWeight: 800, color: "#0f172a", whiteSpace: "nowrap" }}>{money(valoresAParteTotal(sel))}</span>
+                </div>
+              </div>
+            </>)}
             {sel.audiencias.length > 0 && (<>
               <div style={{ fontSize: 11, fontWeight: 800, color: "#0f3171", textTransform: "uppercase", letterSpacing: ".4px", marginBottom: 6 }}>Audiências</div>
               <div style={{ marginBottom: 14, display: "flex", flexDirection: "column", gap: 7 }}>{sel.audiencias.map((a, i) => (
@@ -1420,6 +1481,27 @@ export default function Processos({ view = "processos" }: { view?: "dashboard" |
                 </div>
               </div>
             ))}
+            {/* Valores à parte (15/09/2026): fora dos motivos, cada um com o
+                seu próprio motivo. Não entram nos cards por motivo. */}
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", margin: "10px 0 6px" }}>
+              <div style={{ fontSize: 11, fontWeight: 800, color: "#0f3171", textTransform: "uppercase", letterSpacing: ".4px" }}>
+                Valores à parte{valoresAParte.length > 0 && <span style={{ fontWeight: 600, color: "#64748b", textTransform: "none", letterSpacing: 0, marginLeft: 8 }}>· total {money(valoresAParteSoma)}</span>}
+              </div>
+              <button className="jpr-btn" onClick={addValorAParte} style={{ background: "#eef4ff", color: "#0f3171", padding: "5px 10px" }}>+ Valor à parte</button>
+            </div>
+            {valoresAParte.length === 0
+              ? <div style={{ fontSize: 11.5, color: "#94a3b8", marginBottom: 6 }}>Nenhum valor à parte. Use para lançamentos que não pertencem a um motivo do processo (ex.: honorários periciais) — cada um com o seu motivo.</div>
+              : (<>
+                <datalist id="jpr-motivos-a-parte">{motivosAParteDistintos.map(m => <option key={m} value={m} />)}</datalist>
+                {valoresAParte.map((v, j) => (
+                  <div key={j} style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center", marginBottom: 6 }}>
+                    <input className="jpr-fi" style={{ height: 34, flex: 1, minWidth: 180 }} list="jpr-motivos-a-parte" placeholder="Motivo (obrigatório) — ex.: Honorários periciais" value={v.motivo} onChange={e => setValorAParte(j, { motivo: e.target.value })} />
+                    <MoedaInput value={v.valor} onChange={n => setValorAParte(j, { valor: n })} />
+                    <input className="jpr-fi" style={{ height: 34, flex: 1, minWidth: 160 }} placeholder="Observação (opcional)" value={v.descricao} onChange={e => setValorAParte(j, { descricao: e.target.value })} />
+                    <button className="jpr-btn" onClick={() => delValorAParte(j)} style={{ background: "none", color: "#dc2626" }}>✕</button>
+                  </div>
+                ))}
+              </>)}
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", margin: "10px 0 6px" }}>
               <div style={{ fontSize: 11, fontWeight: 800, color: "#0f3171", textTransform: "uppercase", letterSpacing: ".4px" }}>Audiências</div>
               <button className="jpr-btn" onClick={() => setAuds(a => [...a, { ordem: a.length + 1, data: "", horario: "", tipo_audiencia: "Instrução", modalidade_audiencia: "Presencial", propostas: [] }])} style={{ background: "#eef4ff", color: "#0f3171", padding: "5px 10px" }}>+ Audiência</button>
