@@ -70,6 +70,8 @@ export interface EmpregadoDiaria {
   nome: string;
   cpf: string;
   cargo: string | null;
+  /** "Situação" do cadastro: Trabalhando, Demitido, Férias... Demitido aparece na busca. */
+  situacao: string | null;
 }
 
 export interface NovaLinhaDiaria {
@@ -114,6 +116,7 @@ interface EmpregadoDiariaRpc {
   nome: string | null;
   cpf: string | null;
   cargo: string | null;
+  situacao: string | null;
 }
 
 interface LinhaDiariaBanco {
@@ -210,16 +213,26 @@ export function usePostosDiaria(contratoId: string | null) {
   });
 }
 
+/** Piso de caracteres para consultar EMPREGADOS — o mesmo checado na RPC. */
+export const MIN_BUSCA_EMPREGADO_DIARIA = 3;
+
 /**
  * Busca de empregado para os campos de Faltante e Diarista. A RPC casa nome
  * sem acento em qualquer ordem e CPF pelos dígitos — é ela que preenche o CPF,
  * porque digitar CPF na mão é como se paga a pessoa errada.
+ *
+ * Traz também quem já foi desligado: a diária costuma cobrir justamente o
+ * posto que ficou vago (chamado #SIS-2026-0410). A tela mostra a situação em
+ * cada sugestão.
+ *
+ * O piso de 3 caracteres é o que evita varrer as mais de 10 mil linhas de
+ * EMPREGADOS a cada tecla.
  */
 export function useBuscaEmpregadosDiaria(termo: string) {
   const busca = termo.trim();
   return useQuery({
     queryKey: ["diaria_empregados", busca],
-    enabled: busca.length >= 2,
+    enabled: busca.length >= MIN_BUSCA_EMPREGADO_DIARIA,
     staleTime: 60_000,
     queryFn: async (): Promise<EmpregadoDiaria[]> => {
       const { data, error } = await sb.rpc("diaria_buscar_empregados", { p_termo: busca });
@@ -229,6 +242,7 @@ export function useBuscaEmpregadosDiaria(termo: string) {
         nome: e.nome ?? "",
         cpf: e.cpf ?? "",
         cargo: e.cargo ?? null,
+        situacao: e.situacao ?? null,
       }));
     },
   });
