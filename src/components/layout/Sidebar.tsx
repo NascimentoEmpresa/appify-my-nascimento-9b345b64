@@ -71,7 +71,7 @@ import { ACESSO_ABERTO_SEM_PERMISSOES, rotaSempreLiberada } from "@/lib/acesso";
 import { useGradeAtivaCount } from "@/hooks/useGradeAtivaCount";
 import { useChamadosNotif } from "@/hooks/useChamadosNotif";
 import { useTrocaFuncaoNotif } from "@/hooks/useTrocaFuncaoNotif";
-import { Inbox } from "lucide-react";
+import { Inbox, type LucideIcon } from "lucide-react";
 import { Target } from "lucide-react";
 import { GitBranch, GitMerge } from "lucide-react";
 import { MessageSquare } from "lucide-react";
@@ -87,7 +87,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 interface NavItem {
   label: string;
   to: string;
-  icon: any;
+  icon: LucideIcon;
   badge?: string;
   // Bolinha de notificação (novidade). Resolvida em runtime pelo useChamadosNotif.
   notif?: "meus" | "dev" | "troca_funcao";
@@ -102,7 +102,7 @@ interface ModuleDef {
   id: string;
   label: string;
   description: string;
-  icon: any;
+  icon: LucideIcon;
   basePath: string;
   badge?: string;
   status: "active" | "soon";
@@ -908,10 +908,9 @@ const operacionalModule: ModuleDef = {
         { label: "Solicitações de Demissão", to: "/app/operacional/solicitacoes-demissao", icon: UserMinus },
         { label: "Conferência de Ponto", to: "/app/operacional/conferencia-ponto", icon: ClipboardCheck },
         { label: "Mudança de Função", to: "/app/operacional/troca-funcao", icon: ArrowLeftRight, notif: "troca_funcao" },
-        // Advertências (15/09/2026): o Operacional aprova antes do Jurídico.
-        // Sem menu próprio de propósito (pedido: "usa o que já tem") — a rota
-        // cai em operacional_home, o menu raiz do módulo.
-        { label: "Advertências Solicitadas", to: "/app/operacional/advertencias", icon: ShieldAlert },
+        // Advertências passaram pelo Operacional só em 15/09/2026 (mig 117);
+        // em 16/09 voltaram a ser só do Jurídico, com aprovador pelo Acesso
+        // por Usuário (mig 124).
       ],
     },
   ],

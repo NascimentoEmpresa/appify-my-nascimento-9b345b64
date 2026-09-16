@@ -21,6 +21,8 @@ import { CAT_CORES, Chart, EvolucaoChart, FiltroFuturo, Kpi, MultiSelectEmpresa,
 import PainelLideranca from "./painel/AbaLideranca";
 import PainelAlinhamento from "./painel/AbaAlinhamento";
 import AbaDiagnostico from "./painel/AbaDiagnostico";
+import AbaDiagnosticoFormulario from "./painel/AbaDiagnosticoFormulario";
+import { ehFeedbackGuiado } from "@/lib/formularios/feedbackGuiado";
 import ChatPainel from "./painel/ChatPainel";
 import { insightForte, insightNec, insightSit } from "./painel/insights";
 
@@ -145,6 +147,10 @@ export default function PainelGerencial() {
   useEffect(() => { load(); }, [load]);
 
   const form = useMemo(() => forms.find(f => f.id === formSel) ?? null, [forms, formSel]);
+  // Diagnóstico IA (15/09/2026): o feedback guiado tem o diagnóstico de
+  // liderança (liderados ↔ líder); qualquer outro formulário ganha o
+  // diagnóstico genérico (todas as perguntas). Mesma aba, mesma capacidade.
+  const formEhFeedback = useMemo(() => ehFeedbackGuiado(form?.perguntas), [form]);
   const pergs = useMemo(() => form ? normalizaPerguntas(form.perguntas) : [], [form]);
 
   // carrega/gera o mapeamento ao trocar de formulário (localStorage por form).
@@ -871,7 +877,9 @@ export default function PainelGerencial() {
             temMapa={!!(alinP || entP || contP)} ultima={ultimaAtualizacao} onExport={exportarCsvAlin}
             viz={viz} onViz={mudaViz} onAbrirMapa={abrirMapa} />
         ) : tab === "Diagnóstico IA" && canForm("diagnostico_feedback") ? (
-          <AbaDiagnostico formularioId={formSel} setor={fSetor} respostas={respsForm} />
+          formEhFeedback
+            ? <AbaDiagnostico formularioId={formSel} setor={fSetor} respostas={respsForm} />
+            : <AbaDiagnosticoFormulario formularioId={formSel} tituloFormulario={form?.titulo ?? ""} setor={fSetor} respostas={respsForm} />
         ) : tab === "Planos de Ação" ? (
           <PainelPlanosAcao
             formId={formSel} ultima={ultimaAtualizacao} respostas={pessoasForm}

@@ -102,6 +102,9 @@ export default function SolicitarTrocaFuncao() {
     if (!horarioNovo.trim()) return soHorario ? "Informe o horário novo que a pessoa vai fazer." : "Informe a carga horária/escala que a pessoa vai fazer no cargo novo.";
     if (mesmoHorario) return "O horário novo é igual ao atual — não há o que trocar.";
     if (!motivo.trim()) return "Escreva o motivo da mudança.";
+    // Escritório (15/09/2026): o setor é obrigatório — é por ele que o
+    // administrativo acha o pedido na fila. Em contrato continua opcional.
+    if (eEscritorio && !setor) return "Pedido do escritório administrativo precisa do setor.";
     return null;
   };
 
@@ -282,19 +285,21 @@ export default function SolicitarTrocaFuncao() {
                    onChange={e => setDataPretendida(e.target.value)} />
           </div>
 
-          {/* Setor e origem: os dois opcionais, os dois só para quem aprova
-              conseguir achar o que é dele numa fila grande. */}
+          {/* Setor: opcional em contrato, OBRIGATÓRIO no escritório (15/09/2026)
+              — é por ele que o administrativo acha o pedido na fila. */}
           <div className="space-y-1.5">
-            <Label>Setor (opcional)</Label>
+            <Label>Setor {eEscritorio ? <span className="text-destructive">*</span> : "(opcional)"}</Label>
             <Select value={setor || "nenhum"} onValueChange={v => setSetor(v === "nenhum" ? "" : v)}>
-              <SelectTrigger className="sm:w-72"><SelectValue placeholder="Não informar" /></SelectTrigger>
+              <SelectTrigger className={"sm:w-72" + (eEscritorio && !setor ? " border-destructive" : "")}><SelectValue placeholder="Não informar" /></SelectTrigger>
               <SelectContent>
-                <SelectItem value="nenhum">Não informar</SelectItem>
+                <SelectItem value="nenhum">{eEscritorio ? "Selecione o setor" : "Não informar"}</SelectItem>
                 {setores.map(s => <SelectItem key={s} value={s}>{s}</SelectItem>)}
               </SelectContent>
             </Select>
-            <p className="text-xs text-muted-foreground">
-              Serve para os gerentes filtrarem a fila por setor. Não muda quem aprova.
+            <p className={"text-xs " + (eEscritorio && !setor ? "font-medium text-destructive" : "text-muted-foreground")}>
+              {eEscritorio
+                ? "Pedido do escritório administrativo: o setor é obrigatório."
+                : "Serve para os gerentes filtrarem a fila por setor. Não muda quem aprova."}
             </p>
           </div>
 

@@ -5,20 +5,28 @@ import { ConversaSolicitacao } from "@/components/solicitacoes/ConversaSolicitac
 import { FiltroContratos, passaNoFiltroContratos } from "@/components/solicitacoes/FiltroContratos";
 import { useVinculoEmpregado } from "@/hooks/useVinculoEmpregado";
 import { ResumoDeFuncoes } from "@/components/fluxos/ResumoDeFuncoes";
+import { useScreenAccess } from "@/hooks/useScreenAccess";
+import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip, Cell, PieChart, Pie, Legend, CartesianGrid } from "recharts";
 
 // =====================================================================
-// Gestão de Advertências — a MESMA tela em duas etapas (15/09/2026):
-//   etapa="operacional" → Operacional › Advertências Solicitadas: aprova ou
-//                         reprova o que chega ("Aguardando Aprovação").
-//   etapa="juridico"    → Jurídico › Advertências: conclui o que o
-//                         Operacional aprovou ("Aguardando Jurídico").
-// Encarregado cria (em Minhas Solicitações) → OPERACIONAL aprova/reprova →
-// Jurídico conclui. Tabela SISTEMA_SOLICITACOES_ADVERTENCIA.
+// Gestão de Advertências — Jurídico › Advertências (tela única).
 //
-// Até 15/09/2026 quem aprovava era o analista do contrato, pela tela do
-// Jurídico (CONTRATOS.analista = EMPREGADOS."ID"). Pedido do Pablo: "vai
-// pro Operacional primeiro; o Operacional aprova e vai pro Jurídico". Sem
-// menu novo: /app/operacional/advertencias cai no menu raiz do Operacional.
+// Encarregado cria (em Minhas Solicitações) → quem tem a ação "aprovar" no
+// menu `advertencias` (Administração › Acesso por Usuário) aprova/reprova
+// ("Aguardando Aprovação") → o Jurídico conclui com parecer ("Aguardando
+// Jurídico") → Concluída/Reprovada. Tabela SISTEMA_SOLICITACOES_ADVERTENCIA.
+//
+// Histórico de quem aprovava:
+//   até 15/09/2026  analista do contrato (CONTRATOS.analista), por esta tela;
+//   15/09/2026      Operacional, em /app/operacional/advertencias (mig 117);
+//   16/09/2026      pedido do Pablo: "tira do Operacional, deixa só pro
+//                   Jurídico, e lá vai ter quem pode aprovar" → ação
+//                   `aprovar` no menu que já existe (mig 124), igual ao
+//                   Parecer Jurídico. A rota do Operacional saiu.
+//
+// A mesma tela tem a aba DASHBOARD (16/09/2026): status, grau, tipo,
+// contratos, meses e tempo de resposta — sempre no recorte do
+// "Filtros · Contratos", o mesmo do Recrutamento.
 // =====================================================================
 
 interface Adv {
@@ -43,15 +51,20 @@ const statusCor = (s: string): { bg: string; c: string } => ({
 const grauCor = (g: string): string => ({ "Baixo": "#16a34a", "Médio": "#d97706", "Alto": "#dc2626" }[g] || "#64748b");
 const fmtDt = (s?: string) => { if (!s) return "—"; const d = new Date(String(s).length <= 10 ? s + "T12:00:00" : s); return isNaN(+d) ? String(s) : d.toLocaleDateString("pt-BR"); };
 
-export default function Advertencias({ etapa = "juridico" }: { etapa?: "operacional" | "juridico" }) {
+export default function Advertencias() {
   const { user } = useAuth();
   const { empregado } = useVinculoEmpregado();
   const meuNome = empregado?.nome || (user?.user_metadata as any)?.nome || user?.email || "Usuário";
   const souJuridico = empregado?.setor === "JURIDICO" && empregado?.situacao === "Trabalhando";
-  const ehOperacional = etapa === "operacional";
+  // Quem aprova/reprova: ação "aprovar" no menu advertencias (Acesso por Usuário).
+  const { data: temAprovar } = useScreenAccess("advertencias", "aprovar");
+  const podeAprovar = !!temAprovar;
+  // Quem conclui com parecer: o Jurídico — e o aprovador também pode.
+  const podeConcluir = souJuridico || podeAprovar;
 
   const [rows, setRows] = useState<Adv[]>([]);
   const [loading, setLoading] = useState(true);
+  const [visao, setVisao] = useState<"lista" | "dashboard">("lista");
   const [aba, setAba] = useState("Aguardando Aprovação");
   const [busca, setBusca] = useState("");
   // Filtros · Contratos (14/09/2026): multi, com contagem — era um select de um só.
@@ -76,19 +89,57 @@ export default function Advertencias({ etapa = "juridico" }: { etapa?: "operacio
   }, []);
   useEffect(() => { load(); }, [load]);
 
-  const counts = useMemo(() => { const c: Record<string, number> = {}; for (const r of rows) c[r.status] = (c[r.status] || 0) + 1; return c; }, [rows]);
-  const filtradas = useMemo(() => rows.filter(r => {
+  // Recorte do "Filtros · Contratos": vale pros KPIs, pra lista e pro dashboard.
+  const noRecorte = useMemo(() => rows.filter(r => passaNoFiltroContratos(r, "contrato", fContratos)), [rows, fContratos]);
+  const counts = useMemo(() => { const c: Record<string, number> = {}; for (const r of noRecorte) c[r.status] = (c[r.status] || 0) + 1; return c; }, [noRecorte]);
+  const filtradas = useMemo(() => noRecorte.filter(r => {
     if (aba && r.status !== aba) return false;
-    if (!passaNoFiltroContratos(r, "contrato", fContratos)) return false;
     if (busca) { const q = busca.toLowerCase(); return [r.colaborador_nome, r.contrato, r.tipo_advertencia, r.grau, r.solicitante_nome].some(x => String(x || "").toLowerCase().includes(q)); }
     return true;
-  }), [rows, aba, busca, fContratos]);
+  }), [noRecorte, aba, busca]);
+
+  // ── Dashboard (16/09/2026) ─────────────────────────────────────────
+  const dash = useMemo(() => {
+    const porChave = (f: (a: Adv) => string) => {
+      const m = new Map<string, number>();
+      for (const a of noRecorte) { const k = f(a) || "—"; m.set(k, (m.get(k) || 0) + 1); }
+      return [...m.entries()].map(([nome, n]) => ({ nome, n })).sort((x, y) => y.n - x.n);
+    };
+    const porStatus = STATUS.map(s => ({ nome: s, n: counts[s] || 0 })).filter(x => x.n > 0);
+    const porGrau = ["Baixo", "Médio", "Alto"].map(g => ({ nome: g, n: noRecorte.filter(a => a.grau === g).length }));
+    const porTipo = porChave(a => a.tipo_advertencia);
+    const porContrato = porChave(a => a.contrato).slice(0, 12);
+    const porResultado = porChave(a => a.status === "Concluída" ? (a.resultado || "Sem resultado") : "").filter(x => x.nome !== "—");
+    // Últimos 12 meses (pela abertura), empilhado por status final.
+    const meses: { chave: string; rotulo: string; abertas: number; concluidas: number; reprovadas: number; pendentes: number }[] = [];
+    const hoje = new Date();
+    for (let i = 11; i >= 0; i--) {
+      const d = new Date(hoje.getFullYear(), hoje.getMonth() - i, 1);
+      meses.push({ chave: `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`, rotulo: d.toLocaleDateString("pt-BR", { month: "short", year: "2-digit" }).replace(".", ""), abertas: 0, concluidas: 0, reprovadas: 0, pendentes: 0 });
+    }
+    for (const a of noRecorte) {
+      const k = String(a.created_at || "").slice(0, 7);
+      const m = meses.find(x => x.chave === k); if (!m) continue;
+      m.abertas++;
+      if (a.status === "Concluída") m.concluidas++; else if (a.status === "Reprovada") m.reprovadas++; else m.pendentes++;
+    }
+    // Tempo médio (dias) da abertura até a decisão final.
+    const dias = (a: Adv) => (+new Date(a.status_changed_at || a.created_at) - +new Date(a.created_at)) / 86400000;
+    const finais = noRecorte.filter(a => a.status === "Concluída" || a.status === "Reprovada");
+    const tempoMedio = finais.length ? finais.reduce((s, a) => s + Math.max(0, dias(a)), 0) / finais.length : 0;
+    const pendentes = noRecorte.filter(a => a.status === "Aguardando Aprovação" || a.status === "Aguardando Jurídico");
+    const pendentesVelhas = pendentes.filter(a => (+hoje - +new Date(a.created_at)) / 86400000 > 7).length;
+    const taxaReprovacao = finais.length ? Math.round((noRecorte.filter(a => a.status === "Reprovada").length / finais.length) * 100) : 0;
+    const excecoes = noRecorte.filter(a => a.excecao).length;
+    const reincidentes = (() => { const m = new Map<string, number>(); for (const a of noRecorte) { const k = a.colaborador_cpf || a.colaborador_nome; if (k) m.set(k, (m.get(k) || 0) + 1); } return [...m.values()].filter(n => n > 1).length; })();
+    return { porStatus, porGrau, porTipo, porContrato, porResultado, meses, tempoMedio, pendentes: pendentes.length, pendentesVelhas, taxaReprovacao, excecoes, reincidentes };
+  }, [noRecorte, counts]);
 
   const aprovarAdv = async (a: Adv) => {
-    if (!confirm(`Aprovar a advertência de ${a.colaborador_nome}? Vai para o Jurídico responder.`)) return;
+    if (!confirm(`Aprovar a advertência de ${a.colaborador_nome}? Segue para o parecer do Jurídico.`)) return;
     const { error } = await (supabase as any).from("SISTEMA_SOLICITACOES_ADVERTENCIA").update({ status: "Aguardando Jurídico", aprovado_por_nome: meuNome }).eq("id", a.id);
     if (error) { toast("Erro: " + error.message, "err"); return; }
-    toast("Advertência aprovada e enviada ao Jurídico.", "ok"); load();
+    toast("Advertência aprovada — segue para o parecer.", "ok"); load();
   };
   const confirmarReprovar = async () => {
     if (!reprovar) return;
@@ -105,7 +156,7 @@ export default function Advertencias({ etapa = "juridico" }: { etapa?: "operacio
   };
 
   const card: React.CSSProperties = { background: "#fff", border: "1px solid #e2e8f0", borderRadius: 14, padding: 14, boxShadow: "0 8px 24px rgba(15,23,42,.05)" };
-  const kpiBox = (label: string, n: number, cor: string) => (
+  const kpiBox = (label: string, n: number | string, cor: string) => (
     <div style={{ ...card, flex: 1, minWidth: 150, borderTop: `3px solid ${cor}` }}>
       <div style={{ fontSize: 10.5, fontWeight: 700, color: "#94a3b8", textTransform: "uppercase", letterSpacing: ".5px" }}>{label}</div>
       <div style={{ fontSize: 22, fontWeight: 800, color: cor, marginTop: 3 }}>{n}</div>
@@ -116,42 +167,149 @@ export default function Advertencias({ etapa = "juridico" }: { etapa?: "operacio
     <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", background: "#f5f7fb" }}>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "16px 22px", margin: "18px 24px 0", border: "1px solid #e2e8f0", borderRadius: 16, background: "linear-gradient(135deg,#fff,#f8fbff)", boxShadow: "0 8px 24px rgba(15,23,42,.06)", gap: 12, flexWrap: "wrap" }}>
         <div>
-          <div style={{ fontSize: 18, fontWeight: 800, color: "#0f3171" }}>⚠️ {ehOperacional ? "Advertências Solicitadas" : "Gestão de Advertências"}</div>
+          <div style={{ fontSize: 18, fontWeight: 800, color: "#0f3171" }}>⚠️ Gestão de Advertências</div>
           <div style={{ fontSize: 12, color: "#64748b", marginTop: 2 }}>
-            {ehOperacional
-              ? "O que os encarregados pediram. Aprove ou reprove — o aprovado segue para o Jurídico responder."
-              : "O que o Operacional aprovou chega aqui para o Jurídico concluir. O que ainda está com o Operacional aparece só para acompanhar."}
+            {podeAprovar
+              ? "O que os encarregados pediram chega aqui. Aprove ou reprove; o aprovado segue para o parecer do Jurídico."
+              : "O que os encarregados pediram. Quem aprova é definido em Administração › Acesso por Usuário (ação Aprovar); o Jurídico conclui com parecer."}
           </div>
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+          <div style={{ display: "inline-flex", border: "1px solid #e2e8f0", borderRadius: 10, overflow: "hidden" }}>
+            {(["lista", "dashboard"] as const).map(v => (
+              <button key={v} onClick={() => setVisao(v)} style={{ border: "none", padding: "8px 14px", fontSize: 12, fontWeight: 700, cursor: "pointer", background: visao === v ? "#0f3171" : "#fff", color: visao === v ? "#fff" : "#475569" }}>
+                {v === "lista" ? "☰ Lista" : "📊 Dashboard"}
+              </button>
+            ))}
+          </div>
           <ResumoDeFuncoes fluxo="advertencia" />
           <button onClick={() => load()} style={{ border: "none", borderRadius: 9, fontWeight: 700, cursor: "pointer", fontSize: 12, padding: "8px 14px", background: "#0f3171", color: "#fff" }}>↻ Atualizar</button>
         </div>
       </div>
 
       <div style={{ flex: 1, overflowY: "auto", padding: "18px 24px 28px" }}>
+        {/* Filtros · Contratos — o mesmo do Recrutamento; recorta KPIs, lista e dashboard. */}
+        <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", marginBottom: 12 }}>
+          <FiltroContratos linhas={rows} campo="contrato" selecionados={fContratos} onChange={setFContratos} />
+          {fContratos.length > 0 && <span style={{ fontSize: 12, color: "#64748b" }}>{noRecorte.length} de {rows.length} advertência(s) no recorte</span>}
+        </div>
         <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginBottom: 16 }}>
-          {kpiBox(ehOperacional ? "Aguardando você" : "Com o Operacional", counts["Aguardando Aprovação"] || 0, "#d97706")}
-          {kpiBox("Aguardando jurídico", counts["Aguardando Jurídico"] || 0, "#7c3aed")}
+          {kpiBox(podeAprovar ? "Aguardando você" : "Aguardando aprovação", counts["Aguardando Aprovação"] || 0, "#d97706")}
+          {kpiBox("Aguardando parecer", counts["Aguardando Jurídico"] || 0, "#7c3aed")}
           {kpiBox("Concluídas", counts["Concluída"] || 0, "#15803d")}
           {kpiBox("Reprovadas", counts["Reprovada"] || 0, "#dc2626")}
         </div>
 
+        {visao === "dashboard" ? (
+          loading ? <div style={{ padding: 50, textAlign: "center", color: "#94a3b8" }}>Carregando…</div> : noRecorte.length === 0 ? <div style={{ ...card, padding: 46, textAlign: "center", color: "#94a3b8" }}>Nenhuma advertência no recorte.</div> : (
+          <>
+            <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginBottom: 16 }}>
+              {kpiBox("Total no recorte", noRecorte.length, "#0f3171")}
+              {kpiBox("Pendentes", dash.pendentes, "#d97706")}
+              {kpiBox("Pendentes há +7 dias", dash.pendentesVelhas, dash.pendentesVelhas ? "#dc2626" : "#64748b")}
+              {kpiBox("Tempo médio até decisão", dash.tempoMedio ? `${dash.tempoMedio.toFixed(1)} d` : "—", "#2563eb")}
+              {kpiBox("Taxa de reprovação", `${dash.taxaReprovacao}%`, "#b91c1c")}
+              {kpiBox("Fora do prazo (exceções)", dash.excecoes, dash.excecoes ? "#b45309" : "#64748b")}
+              {kpiBox("Colaboradores reincidentes", dash.reincidentes, dash.reincidentes ? "#7c3aed" : "#64748b")}
+            </div>
+
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(320px,1fr))", gap: 14, marginBottom: 14 }}>
+              <div style={card}>
+                <div style={{ fontSize: 13, fontWeight: 800, color: "#0f172a", marginBottom: 8 }}>Por status</div>
+                <ResponsiveContainer width="100%" height={230}>
+                  <PieChart>
+                    <Pie data={dash.porStatus} dataKey="n" nameKey="nome" innerRadius={55} outerRadius={85} paddingAngle={2}>
+                      {dash.porStatus.map(x => <Cell key={x.nome} fill={statusCor(x.nome).c} />)}
+                    </Pie>
+                    <Tooltip formatter={(v: any) => [v, "advertências"]} />
+                    <Legend wrapperStyle={{ fontSize: 11 }} />
+                  </PieChart>
+                </ResponsiveContainer>
+              </div>
+              <div style={card}>
+                <div style={{ fontSize: 13, fontWeight: 800, color: "#0f172a", marginBottom: 8 }}>Por grau</div>
+                <ResponsiveContainer width="100%" height={230}>
+                  <BarChart data={dash.porGrau} margin={{ left: 0, right: 10 }}>
+                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
+                    <XAxis dataKey="nome" tick={{ fontSize: 11 }} />
+                    <YAxis allowDecimals={false} tick={{ fontSize: 11 }} width={28} />
+                    <Tooltip formatter={(v: any) => [v, "advertências"]} />
+                    <Bar dataKey="n" radius={[6, 6, 0, 0]}>{dash.porGrau.map(x => <Cell key={x.nome} fill={grauCor(x.nome)} />)}</Bar>
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+              <div style={card}>
+                <div style={{ fontSize: 13, fontWeight: 800, color: "#0f172a", marginBottom: 8 }}>Resultado das concluídas</div>
+                {dash.porResultado.length === 0 ? <div style={{ color: "#94a3b8", fontSize: 12, padding: 30, textAlign: "center" }}>Nenhuma concluída no recorte.</div> : (
+                  <ResponsiveContainer width="100%" height={230}>
+                    <PieChart>
+                      <Pie data={dash.porResultado} dataKey="n" nameKey="nome" outerRadius={85}>
+                        {dash.porResultado.map((x, i) => <Cell key={x.nome} fill={["#15803d", "#d97706", "#64748b", "#dc2626", "#2563eb"][i % 5]} />)}
+                      </Pie>
+                      <Tooltip formatter={(v: any) => [v, "advertências"]} />
+                      <Legend wrapperStyle={{ fontSize: 11 }} />
+                    </PieChart>
+                  </ResponsiveContainer>
+                )}
+              </div>
+            </div>
+
+            <div style={{ ...card, marginBottom: 14 }}>
+              <div style={{ fontSize: 13, fontWeight: 800, color: "#0f172a", marginBottom: 8 }}>Abertas por mês (últimos 12 meses)</div>
+              <ResponsiveContainer width="100%" height={260}>
+                <BarChart data={dash.meses} margin={{ left: 0, right: 10 }}>
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
+                  <XAxis dataKey="rotulo" tick={{ fontSize: 11 }} />
+                  <YAxis allowDecimals={false} tick={{ fontSize: 11 }} width={28} />
+                  <Tooltip />
+                  <Legend wrapperStyle={{ fontSize: 11 }} />
+                  <Bar dataKey="concluidas" name="Concluídas" stackId="a" fill="#15803d" />
+                  <Bar dataKey="reprovadas" name="Reprovadas" stackId="a" fill="#dc2626" />
+                  <Bar dataKey="pendentes" name="Pendentes" stackId="a" fill="#d97706" radius={[6, 6, 0, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(340px,1fr))", gap: 14 }}>
+              <div style={card}>
+                <div style={{ fontSize: 13, fontWeight: 800, color: "#0f172a", marginBottom: 8 }}>Por tipo de advertência</div>
+                <ResponsiveContainer width="100%" height={Math.max(200, dash.porTipo.length * 34)}>
+                  <BarChart data={dash.porTipo} layout="vertical" margin={{ left: 10, right: 30 }}>
+                    <XAxis type="number" allowDecimals={false} hide />
+                    <YAxis type="category" dataKey="nome" width={150} tick={{ fontSize: 11 }} />
+                    <Tooltip formatter={(v: any) => [v, "advertências"]} />
+                    <Bar dataKey="n" fill="#0f3171" radius={[0, 6, 6, 0]} label={{ position: "right", fontSize: 11 }} />
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+              <div style={card}>
+                <div style={{ fontSize: 13, fontWeight: 800, color: "#0f172a", marginBottom: 8 }}>Por contrato (top 12)</div>
+                <ResponsiveContainer width="100%" height={Math.max(200, dash.porContrato.length * 34)}>
+                  <BarChart data={dash.porContrato} layout="vertical" margin={{ left: 10, right: 30 }}>
+                    <XAxis type="number" allowDecimals={false} hide />
+                    <YAxis type="category" dataKey="nome" width={190} tick={{ fontSize: 11 }} />
+                    <Tooltip formatter={(v: any) => [v, "advertências"]} />
+                    <Bar dataKey="n" fill="#7c3aed" radius={[0, 6, 6, 0]} label={{ position: "right", fontSize: 11 }} />
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+            </div>
+          </>
+        )) : (<>
         <div style={{ ...card, marginBottom: 16, display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
           {STATUS.map(s => (
             <button key={s} onClick={() => setAba(s)} style={{ padding: "6px 12px", borderRadius: 18, fontSize: 12, fontWeight: 700, cursor: "pointer", border: `1px solid ${aba === s ? "#0f3171" : "#e2e8f0"}`, background: aba === s ? "#0f3171" : "#fff", color: aba === s ? "#fff" : "#475569" }}>
               {s}{counts[s] ? ` (${counts[s]})` : ""}
             </button>
           ))}
-          <div style={{ marginLeft: "auto" }}><FiltroContratos linhas={rows} campo="contrato" selecionados={fContratos} onChange={setFContratos} /></div>
-          <input value={busca} onChange={e => setBusca(e.target.value)} placeholder="Buscar colaborador, contrato, tipo…" style={{ height: 36, border: "1px solid #cbd5e1", borderRadius: 9, padding: "0 11px", fontSize: 13, minWidth: 220 }} />
+          <input value={busca} onChange={e => setBusca(e.target.value)} placeholder="Buscar colaborador, contrato, tipo…" style={{ marginLeft: "auto", height: 36, border: "1px solid #cbd5e1", borderRadius: 9, padding: "0 11px", fontSize: 13, minWidth: 220 }} />
         </div>
 
         {loading ? <div style={{ padding: 50, textAlign: "center", color: "#94a3b8" }}>Carregando…</div>
           : filtradas.length === 0 ? <div style={{ ...card, padding: 46, textAlign: "center", color: "#94a3b8" }}>Nenhuma advertência neste status.</div>
             : (
               <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(340px,1fr))", gap: 14 }}>
-                {filtradas.map(a => { const sc = statusCor(a.status); const podeAprovar = ehOperacional && a.status === "Aguardando Aprovação"; const podeConcluir = !ehOperacional && a.status === "Aguardando Jurídico" && souJuridico; return (
+                {filtradas.map(a => { const sc = statusCor(a.status); const mostraAprovar = podeAprovar && a.status === "Aguardando Aprovação"; const mostraConcluir = podeConcluir && a.status === "Aguardando Jurídico"; return (
                   <div key={a.id} style={{ ...card, borderLeft: `4px solid ${grauCor(a.grau)}`, display: "flex", flexDirection: "column", ...(a.excecao ? { border: "1.5px solid #fbbf24", borderLeft: `4px solid ${grauCor(a.grau)}`, background: "#fffdf7" } : {}) }}>
                     {a.excecao && <div style={{ background: "#fef3c7", color: "#b45309", fontSize: 11, fontWeight: 800, padding: "5px 9px", borderRadius: 7, marginBottom: 8, overflowWrap: "break-word", wordBreak: "break-word" }}>⚠️ EXCEÇÃO — aplicada fora do prazo de 3 dias{a.justificativa_excecao ? `: ${a.justificativa_excecao}` : ""}</div>}
                     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 8 }}>
@@ -170,18 +328,19 @@ export default function Advertencias({ etapa = "juridico" }: { etapa?: "operacio
                     {a.status === "Concluída" && <div style={{ fontSize: 11.5, color: "#15803d", marginTop: 6, background: "#f0fdf4", borderRadius: 8, padding: "6px 9px" }}>Resultado: <b>{a.resultado || "—"}</b>{a.parecer_juridico ? ` · ${a.parecer_juridico}` : ""}</div>}
                     <div style={{ display: "flex", gap: 6, marginTop: 10, flexWrap: "wrap" }}>
                       <button onClick={() => setDetalhe(a)} style={{ border: "none", borderRadius: 8, fontWeight: 700, cursor: "pointer", fontSize: 12, padding: "7px 12px", background: "#eef4ff", color: "#0f3171" }}>Detalhes</button>
-                      {podeAprovar && <>
+                      {mostraAprovar && <>
                         <button onClick={() => aprovarAdv(a)} style={{ border: "none", borderRadius: 8, fontWeight: 700, cursor: "pointer", fontSize: 12, padding: "7px 12px", background: "#16a34a", color: "#fff" }}>Aprovar</button>
                         <button onClick={() => { setReprovar(a); setMotivoRep(""); }} style={{ border: "none", borderRadius: 8, fontWeight: 700, cursor: "pointer", fontSize: 12, padding: "7px 12px", background: "#fee2e2", color: "#b91c1c" }}>Reprovar</button>
                       </>}
-                      {podeConcluir && <button onClick={() => { setConcluir(a); setParecer(""); setResultado("Advertência aplicada"); }} style={{ border: "none", borderRadius: 8, fontWeight: 700, cursor: "pointer", fontSize: 12, padding: "7px 12px", background: "#7c3aed", color: "#fff" }}>Concluir</button>}
-                      {a.status === "Aguardando Aprovação" && !podeAprovar && <span style={{ fontSize: 11, color: "#94a3b8", alignSelf: "center" }}>Aguardando o Operacional</span>}
-                      {ehOperacional && a.status === "Aguardando Jurídico" && <span style={{ fontSize: 11, color: "#94a3b8", alignSelf: "center" }}>Com o Jurídico</span>}
+                      {mostraConcluir && <button onClick={() => { setConcluir(a); setParecer(""); setResultado("Advertência aplicada"); }} style={{ border: "none", borderRadius: 8, fontWeight: 700, cursor: "pointer", fontSize: 12, padding: "7px 12px", background: "#7c3aed", color: "#fff" }}>Concluir</button>}
+                      {a.status === "Aguardando Aprovação" && !mostraAprovar && <span style={{ fontSize: 11, color: "#94a3b8", alignSelf: "center" }}>Aguardando quem aprova</span>}
+                      {a.status === "Aguardando Jurídico" && !mostraConcluir && <span style={{ fontSize: 11, color: "#94a3b8", alignSelf: "center" }}>Aguardando o parecer do Jurídico</span>}
                     </div>
                   </div>
                 ); })}
               </div>
             )}
+        </>)}
       </div>
 
       {/* Detalhe */}
