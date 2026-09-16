@@ -14,7 +14,8 @@ import { PageHeader } from "@/components/layout/PageHeader";
 import { CampoBipagem } from "@/components/suprimentos/CampoBipagem";
 import { useEmpresaId } from "@/hooks/useEmpresaId";
 import { TIPOS_MATERIAL, TODOS_OS_TIPOS } from "@/lib/suprimentos/tiposMaterial";
-import { useItens, LABEL_TIPO_ITEM, type TipoItem } from "@/hooks/useSupCatalogo";
+import { normalizarNomeMaterial, separarTamanhoDoNome, destinoDoTamanho } from "@/lib/suprimentos/tamanhoDoItem";
+import { useItens, useTamanhosDoItem, LABEL_TIPO_ITEM, type TipoItem } from "@/hooks/useSupCatalogo";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Link } from "react-router-dom";
 import {
@@ -22,7 +23,7 @@ import {
   useRemoverTag, useExcluirItemEstoque, useFornecedores, useHistoricoDoMaterial, useInventario,
   useHistoricoPreco, fmtBRL, useEditarItemEstoque, useAlteracoesDoMaterial,
   type LinhaEstoque, type RemessaEntrada, type Movimento, type ResultadoInventario,
-  type EdicaoMaterial, type EdicaoLote, type AlteracaoEstoque,
+  type EdicaoMaterial, type EdicaoLote, type AlteracaoEstoque, type TagEstoque,
 } from "@/hooks/useSupEstoque";
 import {
   PackagePlus, Search, AlertTriangle, Boxes, Undo2, Trash2, ShieldAlert, Plus, X, Tag,
@@ -74,7 +75,10 @@ export default function EstoqueEtiquetas() {
     return linhas.filter((l) => {
       if (tipo !== TODOS_OS_TIPOS && l.tipo_material !== tipo) return false;
       if (!t) return true;
-      return `${l.codigo_item ?? ""} ${l.material} ${l.almoxarifado} ${l.tamanhos.join(" ")}`.toLowerCase().includes(t);
+      // O base entra na busca: "JAQUETA" ou o código antigo dela (0001001)
+      // tem de achar todos os tamanhos, que agora são linhas próprias.
+      return `${l.codigo_item ?? ""} ${l.material} ${l.almoxarifado} ${l.tamanhos.join(" ")} ${l.base?.codigo ?? ""}`
+        .toLowerCase().includes(t);
     });
   }, [linhas, busca, tipo]);
 
@@ -101,7 +105,7 @@ export default function EstoqueEtiquetas() {
     <div className="space-y-6">
       <PageHeader
         title="Estoque & Etiquetas"
-        subtitle="Cada material tem um código próprio, que não muda. A entrada é por quantidade; devolução e baixa continuam por bipagem."
+        subtitle="Cada material — e cada tamanho dele — tem um código próprio, que não muda. A entrada é por quantidade; devolução e baixa continuam por bipagem."
         module="Suprimentos"
         breadcrumb={["Estoque & Etiquetas"]}
         actions={
@@ -209,7 +213,7 @@ export default function EstoqueEtiquetas() {
                   <TableHead className="w-28">Código</TableHead>
                   <TableHead>Material</TableHead>
                   <TableHead>Almoxarifado</TableHead>
-                  <TableHead>Tamanhos livres</TableHead>
+                  <TableHead>Tamanho</TableHead>
                   <TableHead className="text-right">Disponível</TableHead>
                   <TableHead className="text-right">Reservado</TableHead>
                   <TableHead className="text-right">Físico</TableHead>
@@ -365,7 +369,11 @@ function FormEditarMaterial({ linha, empresaId, onFechar }: {
   const { data: acessoAlterar } = useAccessibleMenus("alterar");
   const podeRenomear = acessoAlterar?.codes.has("sup_catalogo") ?? false;
 
-  const [nome, setNome] = useState(linha.material);
+  // Linha de um tamanho ("JAQUETA M"): o nome editável é o do base. É o base
+  // que o banco renomeia (sup_est_editar_item, 20260930000163), e o gatilho
+  // leva o nome novo a todos os tamanhos.
+  const nomeBase = linha.base?.nome ?? linha.material;
+  const [nome, setNome] = useState(nomeBase);
   const [tipoItem, setTipoItem] = useState(linha.tipo_material);
   const [valor, setValor] = useState(linha.valor_unitario ? String(linha.valor_unitario) : "");
   const [precoValidoAte, setPrecoValidoAte] = useState(linha.preco_valido_ate ?? "");
@@ -383,7 +391,7 @@ function FormEditarMaterial({ linha, empresaId, onFechar }: {
 
   const edicao = useMemo((): EdicaoMaterial => {
     const e: EdicaoMaterial = {};
-    if (podeRenomear && nome.trim() && normalizarNome(nome) !== normalizarNome(linha.material)) {
+    if (podeRenomear && nome.trim() && normalizarNome(nome) !== normalizarNome(nomeBase)) {
       e.nome = normalizarNome(nome);
     }
     if (podeRenomear && tipoItem && tipoItem !== linha.tipo_material) e.tipo = tipoItem;
@@ -450,6 +458,15 @@ function FormEditarMaterial({ linha, empresaId, onFechar }: {
               ? "Nome e tipo são do catálogo: mudam em todos os almoxarifados, pedidos e enxovais que usam este material."
               : "Renomear ou trocar o tipo exige permissão de alterar no Catálogo."}
           </p>
+          {/* Nome e tipo de um tamanho são os do base (20260930000163): quem
+              edita a JAQUETA M precisa saber que está mexendo em todas. */}
+          {linha.base && (
+            <p className="mt-1 text-[11px] text-muted-foreground">
+              Este é o tamanho <strong className="text-foreground">{linha.tamanho_item}</strong> de{" "}
+              <strong className="text-foreground">{linha.base.nome}</strong>. Nome e tipo valem para todos os
+              tamanhos — este item se chama “{normalizarNome(nome || nomeBase)} {linha.tamanho_item}”.
+            </p>
+          )}
           {/* EPI é o único tipo com efeito de regra (tiposMaterial.ts). Trocar
               para dentro ou para fora dele muda o que o sistema deixa sair —
               quem troca precisa saber disso antes de salvar. */}
@@ -511,6 +528,14 @@ function FormEditarMaterial({ linha, empresaId, onFechar }: {
               O CA pode ser digitado à mão em qualquer tipo de material. Quando o SST atualizar a
               lista oficial de CA, o lote cujo número estiver na lista recebe o número e a validade
               do Ministério no lugar do que foi digitado aqui.
+            </p>
+          )}
+          {/* Cada tamanho é um item (20260930000163): corrigir o tamanho de um
+              lote é dizer que ele é de OUTRO item, e é para lá que ele vai. */}
+          {livres.length > 0 && (
+            <p className="mb-2 text-[11px] text-muted-foreground">
+              Trocar o tamanho de um lote leva o lote para o item daquele tamanho, com o código dele
+              (o item é criado se ainda não existir). As duas linhas registram a passagem no histórico.
             </p>
           )}
           {isLoading ? (
@@ -757,6 +782,37 @@ const BLOCO_VAZIO: BlocoUnidade = {
   tamanho: "", quantidade: "1", ca_numero: "", ca_validade: "",
 };
 
+/**
+ * Em qual item aquele bloco vai cair — dito ANTES de gravar.
+ *
+ * Cada tamanho é um item com código próprio (20260930000163). Quem digita "M"
+ * precisa ver que a entrada vai para "JAQUETA M", e se o código é o que já
+ * está na prateleira ou um que nasce agora — é esse número que vira a etiqueta
+ * de gôndola. "X", "U" e "ÚNICO" não são tamanho: ali a entrada fica no
+ * próprio material, e a tela diz isso em vez de criar "JAQUETA X".
+ */
+function DestinoDoTamanho({ base, tamanho, existentes, materialNovo }: {
+  base: { nome: string; codigo: string | null };
+  tamanho: string;
+  existentes: { tamanho: string; codigo: string | null }[];
+  materialNovo: boolean;
+}) {
+  const destino = destinoDoTamanho(base, tamanho, existentes);
+  const codigoNovo = materialNovo || destino.novo || !destino.codigo;
+  return (
+    <p className="mb-2 flex flex-wrap items-center gap-1.5 text-[11px] text-muted-foreground">
+      <span>Entra em</span>
+      <strong className="text-foreground">{destino.nome}</strong>
+      {codigoNovo
+        ? <Badge variant="outline" className="text-[10px]">código novo</Badge>
+        : <span className="font-mono">{destino.codigo}</span>}
+      {destino.semTamanho && !!tamanho.trim() && (
+        <span>— “{tamanho.trim()}” é o “sem tamanho” antigo, não vira item próprio</span>
+      )}
+    </p>
+  );
+}
+
 function DialogEntrada({ aberto, onFechar, empresaId, podeAlterar }: {
   aberto: boolean; onFechar: () => void; empresaId: string | null; podeAlterar: boolean;
 }) {
@@ -776,9 +832,22 @@ function DialogEntrada({ aberto, onFechar, empresaId, podeAlterar }: {
   const [minimo, setMinimo] = useState("");
   const [fornecedor, setFornecedor] = useState("");
   const [blocos, setBlocos] = useState<BlocoUnidade[]>([{ ...BLOCO_VAZIO }]);
+  // Material digitado que não está no catálogo, cadastrado no "Dar entrada"
+  // (sup_est_criar_material, 20260930000163). Antes a lista só oferecia o que
+  // já existia: "Nada encontrado." e o botão cinza, sem dizer por quê.
+  const [novoMaterial, setNovoMaterial] = useState<string | null>(null);
+  const [novoTipo, setNovoTipo] = useState("");
 
   const matSelecionado = materiais.find((m) => m.id === material);
-  const materialEhEpi = matSelecionado?.tipo === "epi";
+  const materialEhEpi = matSelecionado ? matSelecionado.tipo === "epi" : novoTipo === "epi";
+  // Tamanhos que já viraram item, para a prévia de cada bloco mostrar o código.
+  const { data: tamanhosExistentes = [] } = useTamanhosDoItem(aberto && material ? material : null);
+  const nomeDigitado = normalizarNomeMaterial(buscaMat);
+  const jaExiste = !!nomeDigitado && materiais.some((m) => normalizarNomeMaterial(m.nome) === nomeDigitado);
+  // "JAQUETA M" com JAQUETA no catálogo é o tamanho M dela, não material novo.
+  const tamanhoDeOutro = useMemo(
+    () => (nomeDigitado && !jaExiste ? separarTamanhoDoNome(nomeDigitado, materiais) : null),
+    [nomeDigitado, jaExiste, materiais]);
   const laudoAtivo = useQuery({
     queryKey: ["sst_laudo_ativo", material],
     enabled: aberto && !!material && materialEhEpi,
@@ -834,7 +903,11 @@ function DialogEntrada({ aberto, onFechar, empresaId, podeAlterar }: {
   const limpar = () => {
     setAlmox(""); setMaterial(""); setBuscaMat(""); setValor(""); setMinimo("");
     setPrecoValidoAte(""); setFornecedor(""); setBlocos([{ ...BLOCO_VAZIO }]);
+    setNovoMaterial(null); setNovoTipo("");
   };
+
+  /** Tem o que dar entrada: um material do catálogo, ou um novo com tipo escolhido. */
+  const temMaterial = !!material || (!!novoMaterial && !!novoTipo);
 
   const enviar = async () => {
     const remessas: RemessaEntrada[] = blocos
@@ -848,10 +921,11 @@ function DialogEntrada({ aberto, onFechar, empresaId, podeAlterar }: {
           ? { ca_numero: b.ca_numero.trim() || null, ca_validade: b.ca_validade || null }
           : {}),
       }));
-    if (!almox || !material || remessas.length === 0 || erroCa) return;
+    if (!almox || !temMaterial || remessas.length === 0 || erroCa) return;
 
     await entrada.mutateAsync({
-      almoxarifado_id: almox, sup_item_id: material,
+      almoxarifado_id: almox, sup_item_id: material || null,
+      novo_material: material ? null : { nome: novoMaterial!, tipo: novoTipo },
       valor_unitario: Number(valor || 0), estoque_minimo: Number(minimo || 0),
       preco_valido_ate: precoValidoAte || null,
       fornecedor_id: fornecedor || null, remessas,
@@ -921,10 +995,42 @@ function DialogEntrada({ aberto, onFechar, empresaId, podeAlterar }: {
             {matSelecionado ? (
               <div className="mt-1 flex items-center gap-2 rounded-md border px-3 py-2 text-sm">
                 <span className="flex-1 font-medium">{matSelecionado.nome}</span>
+                {matSelecionado.codigo && (
+                  <span className="font-mono text-[11px] text-muted-foreground">{matSelecionado.codigo}</span>
+                )}
                 <Badge variant="secondary" className="text-[10px]">{LABEL_TIPO_ITEM[matSelecionado.tipo]}</Badge>
                 <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => setMaterial("")}>
                   <X className="h-3.5 w-3.5" />
                 </Button>
+              </div>
+            ) : novoMaterial ? (
+              /* Material que ainda não existe. Falta só o tipo: o banco exige
+                 (sup_est_criar_material) e ele muda o que o sistema deixa sair
+                 depois — EPI pede CA na entrada e trava saída com CA vencido. */
+              <div className="mt-1 space-y-2 rounded-md border border-dashed p-3">
+                <div className="flex items-center gap-2 text-sm">
+                  <span className="flex-1 font-medium">{novoMaterial}</span>
+                  <Badge variant="outline" className="text-[10px]">novo no catálogo</Badge>
+                  <Button variant="ghost" size="icon" className="h-6 w-6"
+                          onClick={() => { setNovoMaterial(null); setNovoTipo(""); }}>
+                    <X className="h-3.5 w-3.5" />
+                  </Button>
+                </div>
+                <div className="sm:w-60">
+                  <Label className="text-xs">Tipo do material *</Label>
+                  <Select value={novoTipo} onValueChange={setNovoTipo}>
+                    <SelectTrigger className="h-9"><SelectValue placeholder="Selecione" /></SelectTrigger>
+                    <SelectContent>
+                      {TIPOS_MATERIAL.map((t) => (
+                        <SelectItem key={t.valor} value={t.valor}>{t.rotulo}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <p className="text-[11px] text-muted-foreground">
+                  O material entra no catálogo com código próprio ao dar entrada. Para o encarregado
+                  poder pedir, ele ainda precisa entrar no enxoval de uma função, pelo Catálogo.
+                </p>
               </div>
             ) : (
               <>
@@ -956,6 +1062,43 @@ function DialogEntrada({ aberto, onFechar, empresaId, podeAlterar }: {
                     <p className="py-4 text-center text-xs text-muted-foreground">Nada encontrado.</p>
                   )}
                 </div>
+                {/* Digitou nome que não está no catálogo. Duas saídas, nesta
+                    ordem: se o que ele digitou é um TAMANHO de um material que
+                    já existe ("JAQUETA M"), usar o material certo — cadastrar
+                    à parte criaria o item solto que o código por tamanho veio
+                    acabar, e o banco recusaria depois do clique. Senão,
+                    cadastrar na hora. */}
+                {tamanhoDeOutro ? (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setMaterial(tamanhoDeOutro.base.id);
+                      setBuscaMat("");
+                      setBlocos((s) => s.map((b, j) => (
+                        j === 0 && !b.tamanho.trim() ? { ...b, tamanho: tamanhoDeOutro.tamanho } : b)));
+                    }}
+                    className="mt-1 flex w-full items-start gap-2 rounded-md border border-dashed px-3 py-2 text-left text-xs hover:bg-muted"
+                  >
+                    <Tag className="mt-0.5 h-3.5 w-3.5 shrink-0 text-primary" />
+                    <span>
+                      “{nomeDigitado}” é o tamanho <strong>{tamanhoDeOutro.tamanho}</strong> de{" "}
+                      <strong>{tamanhoDeOutro.base.nome}</strong>. Usar esse material com o tamanho{" "}
+                      {tamanhoDeOutro.tamanho}.
+                    </span>
+                  </button>
+                ) : nomeDigitado.length >= 2 && !jaExiste ? (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setNovoMaterial(nomeDigitado);
+                      setNovoTipo(tipoMat !== TODOS_OS_TIPOS ? tipoMat : "");
+                    }}
+                    className="mt-1 flex w-full items-center gap-2 rounded-md border border-dashed px-3 py-2 text-left text-xs hover:bg-muted"
+                  >
+                    <Plus className="h-3.5 w-3.5 shrink-0 text-primary" />
+                    <span>Cadastrar “{nomeDigitado}” como material novo</span>
+                  </button>
+                ) : null}
               </>
             )}
           </div>
@@ -1003,6 +1146,14 @@ function DialogEntrada({ aberto, onFechar, empresaId, podeAlterar }: {
                     </Button>
                   )}
                 </div>
+                {(matSelecionado || novoMaterial) && (
+                  <DestinoDoTamanho
+                    base={{ nome: matSelecionado?.nome ?? novoMaterial ?? "", codigo: matSelecionado?.codigo ?? null }}
+                    tamanho={b.tamanho}
+                    existentes={tamanhosExistentes}
+                    materialNovo={!matSelecionado}
+                  />
+                )}
                 {materialEhEpi && (
                   <div className="mb-3 space-y-2">
                     {laudoAtivo.data !== null && laudoAtivo.data !== undefined && (
@@ -1037,6 +1188,10 @@ function DialogEntrada({ aberto, onFechar, empresaId, podeAlterar }: {
             <Button variant="outline" size="sm" onClick={() => setBlocos((s) => [...s, { ...BLOCO_VAZIO }])}>
               <Plus className="mr-1.5 h-3.5 w-3.5" /> Outro tamanho
             </Button>
+            <p className="text-[11px] text-muted-foreground">
+              Cada tamanho é um item com código próprio, e é ele que aparece na lista do estoque.
+              Valor, validade do preço e estoque mínimo acima valem para cada um deles.
+            </p>
           </div>
         </div>
 
@@ -1048,7 +1203,7 @@ function DialogEntrada({ aberto, onFechar, empresaId, podeAlterar }: {
             {erroCa && <p className="mt-1 max-w-sm text-xs font-medium text-destructive">{erroCa}</p>}
           </div>
           <Button variant="outline" onClick={() => { limpar(); onFechar(); }}>Cancelar</Button>
-          <Button disabled={!almox || !material || total === 0 || !!erroCa || laudoAtivo.isLoading || entrada.isPending} onClick={enviar}>
+          <Button disabled={!almox || !temMaterial || total === 0 || !!erroCa || laudoAtivo.isLoading || entrada.isPending} onClick={enviar}>
             Dar entrada
           </Button>
         </DialogFooter>
@@ -1076,7 +1231,11 @@ function ConsultaEstoque({ empresaId }: { empresaId: string | null | undefined }
     if (!t) return [];
     return linhas
       .filter((l) => {
-        if (`${l.codigo_item ?? ""} ${l.material} ${l.almoxarifado}`.toLowerCase().includes(t)) return true;
+        // O código do base entra junto: ele continua colado em prateleira e em
+        // caixa, e agora o saldo mora nos tamanhos (20260930000163). Sem isto,
+        // bipar o código antigo da JAQUETA não acharia a JAQUETA M.
+        if (`${l.codigo_item ?? ""} ${l.base?.codigo ?? ""} ${l.material} ${l.almoxarifado}`
+              .toLowerCase().includes(t)) return true;
         // Código de lote/etiqueta antiga: o rótulo físico continua colado na
         // peça em 9.248 casos, e o estoquista vai bipar o que está na mão.
         // Sem isto ele bipa, não acha nada e conclui que o item sumiu.
@@ -1145,7 +1304,8 @@ function ConsultaEstoque({ empresaId }: { empresaId: string | null | undefined }
 
           <div>
             <p className="mb-1 text-xs font-medium text-muted-foreground">Últimas movimentações</p>
-            <LinhaDoTempo supItemId={escolhido.sup_item_id} />
+            <LinhaDoTempo supItemId={escolhido.sup_item_id} codigoItem={escolhido.codigo_item}
+                          ocultarTamanho={!!escolhido.tamanho_item} />
           </div>
 
           <Button variant="ghost" size="sm" onClick={() => setEscolhido(null)}>
@@ -1224,7 +1384,9 @@ function DialogDetalhe({ linha, onFechar }: { linha: LinhaEstoque | null; onFech
   const podeExcluir = acessoExcluir?.codes.has("sup_estoque") ?? false;
   const [filtro, setFiltro] = useState("");
   const [inventariando, setInventariando] = useState(false);
-  const [removendo, setRemovendo] = useState<{ codigo: string } | null>(null);
+  // O lote inteiro, não só o código: quem confirma a remoção lê "entrada de
+  // 15/09, 3 un", que é como a entrada aparece na tela desde 20260930000163.
+  const [removendo, setRemovendo] = useState<TagEstoque | null>(null);
 
   // Inventário virou capacidade separada de "mexer no estoque": conferir a
   // prateleira não deveria exigir poder alterar saldo (ver
@@ -1239,7 +1401,9 @@ function DialogDetalhe({ linha, onFechar }: { linha: LinhaEstoque | null; onFech
 
   const visiveis = useMemo(() => {
     const t = filtro.trim().toLowerCase();
-    return t ? tags.filter((x) => `${x.codigo} ${x.tamanho ?? ""}`.toLowerCase().includes(t)) : tags;
+    // Sem o código do lote: ele é interno e saiu da tela (20260930000163).
+    // O que a pessoa tem na mão para procurar é o tamanho ou o CA.
+    return t ? tags.filter((x) => `${x.tamanho ?? ""} ${x.ca_numero ?? ""}`.toLowerCase().includes(t)) : tags;
   }, [tags, filtro]);
 
   return (
@@ -1249,6 +1413,11 @@ function DialogDetalhe({ linha, onFechar }: { linha: LinhaEstoque | null; onFech
           <DialogHeader>
             <DialogTitle className="flex flex-wrap items-center gap-2">
               {linha?.material}
+              {/* O código do ITEM, que é o que se bipa e o que vai na etiqueta
+                  de gôndola deste tamanho. */}
+              {linha?.codigo_item && (
+                <Badge variant="outline" className="font-mono text-[11px]">{linha.codigo_item}</Badge>
+              )}
               <Badge variant="outline">{linha?.disponivel} disponível(is)</Badge>
               {(linha?.consumido ?? 0) > 0 && (
                 <Badge variant="secondary">{linha?.consumido} já usada(s)</Badge>
@@ -1276,7 +1445,7 @@ function DialogDetalhe({ linha, onFechar }: { linha: LinhaEstoque | null; onFech
             <TabsContent value="etiquetas" className="mt-3">
               <div className="mb-2 flex gap-2">
                 <Input value={filtro} onChange={(e) => setFiltro(e.target.value)}
-                       placeholder="Filtrar por código ou tamanho…" className="flex-1" />
+                       placeholder="Filtrar por tamanho ou CA…" className="flex-1" />
                 {podeInventariar && (
                   <Button variant="outline" className="gap-1.5 whitespace-nowrap"
                           onClick={() => setInventariando(true)}>
@@ -1294,8 +1463,19 @@ function DialogDetalhe({ linha, onFechar }: { linha: LinhaEstoque | null; onFech
                       className={cn("flex items-center gap-2 rounded-md border px-3 py-2 text-sm",
                         t.usado && "bg-muted/50 text-muted-foreground")}>
                       <span className="w-8 shrink-0 text-xs text-muted-foreground">#{t.sequencia}</span>
-                      <span className="flex-1 truncate font-mono text-[11px] text-muted-foreground">{t.codigo}</span>
-                      {t.tamanho && <Badge variant="outline" className="text-[10px]">{t.tamanho}</Badge>}
+                      {/* A entrada se identifica pela DATA, não pelo código do
+                          lote: ele é interno, ninguém imprime nem bipa, e ver
+                          "L260915-3723…" na tela só confunde. O que identifica
+                          o material é o código do item, no título. */}
+                      <span className="flex-1 truncate text-xs text-muted-foreground">
+                        Entrada de {new Date(t.created_at).toLocaleDateString("pt-BR")}
+                        {t.ca_numero ? ` · CA ${t.ca_numero}` : ""}
+                      </span>
+                      {/* Numa linha que já É um tamanho, repetir "M" em toda
+                          entrada é ruído. */}
+                      {t.tamanho && !linha?.tamanho_item && (
+                        <Badge variant="outline" className="text-[10px]">{t.tamanho}</Badge>
+                      )}
                       <Badge variant="secondary" className="text-[10px]">
                         {t.tipo === "massa"
                           ? `${t.quantidade_massa} de ${t.quantidade_original_massa} un`
@@ -1306,7 +1486,7 @@ function DialogDetalhe({ linha, onFechar }: { linha: LinhaEstoque | null; onFech
                         ? <span className="text-[11px]">usada{t.usado_por_nome ? ` · ${t.usado_por_nome}` : ""}</span>
                         : podeExcluir && (
                           <Button variant="ghost" size="icon" className="h-6 w-6 text-destructive"
-                            onClick={() => setRemovendo({ codigo: t.codigo })}>
+                            onClick={() => setRemovendo(t)}>
                             <Trash2 className="h-3.5 w-3.5" />
                           </Button>
                         )}
@@ -1320,7 +1500,8 @@ function DialogDetalhe({ linha, onFechar }: { linha: LinhaEstoque | null; onFech
             </TabsContent>
 
             <TabsContent value="historico" className="mt-3">
-              <LinhaDoTempo supItemId={linha?.sup_item_id ?? null} />
+              <LinhaDoTempo supItemId={linha?.sup_item_id ?? null} codigoItem={linha?.codigo_item}
+                            ocultarTamanho={!!linha?.tamanho_item} />
             </TabsContent>
 
             <TabsContent value="precos" className="mt-3">
@@ -1337,7 +1518,7 @@ function DialogDetalhe({ linha, onFechar }: { linha: LinhaEstoque | null; onFech
       />
 
       <DialogRemoverTag
-        codigo={removendo?.codigo ?? null}
+        lote={removendo}
         onFechar={() => setRemovendo(null)}
         onConfirmar={(motivo) => {
           remover.mutate({ codigo: removendo!.codigo, motivo });
@@ -1369,7 +1550,13 @@ const ESTILO_MOV: Record<Movimento["tipo"], { rotulo: string; Icone: typeof Tag;
  * bolinha, fio vertical, autor e data — para as duas trilhas do módulo não
  * terem cara diferente.
  */
-function LinhaDoTempo({ supItemId }: { supItemId: string | null }) {
+function LinhaDoTempo({ supItemId, codigoItem, ocultarTamanho }: {
+  supItemId: string | null;
+  /** Código do ITEM, que a trilha mostra em cada evento no lugar do código do lote. */
+  codigoItem?: string | null;
+  /** Numa linha que já É um tamanho, repetir o tamanho em cada evento é ruído. */
+  ocultarTamanho?: boolean;
+}) {
   const { data: eventos = [], isLoading } = useHistoricoDoMaterial(supItemId);
   const { data: alteracoes = [], isLoading: carregandoEdicoes } = useAlteracoesDoMaterial(supItemId);
 
@@ -1435,9 +1622,10 @@ function LinhaDoTempo({ supItemId }: { supItemId: string | null }) {
                 <ul className="space-y-0.5">
                   {g.campos.map((c) => (
                     <li key={c.id} className="break-words">
-                      <span className="text-muted-foreground">
-                        {c.campo}{c.codigo ? ` (lote ${c.codigo})` : ""}:
-                      </span>{" "}
+                      {/* Sem "(lote L2609…)": o código do lote é interno e saiu
+                          da tela (20260930000163). Qual lote mudou se lê pela
+                          data e pelo tamanho na aba Entradas. */}
+                      <span className="text-muted-foreground">{c.campo}:</span>{" "}
                       {c.valor_anterior ?? "—"} → <strong>{c.valor_novo ?? "—"}</strong>
                     </li>
                   ))}
@@ -1464,10 +1652,15 @@ function LinhaDoTempo({ supItemId }: { supItemId: string | null }) {
                 <span className="text-muted-foreground">·</span>
                 {/* Correção guarda a diferença com sinal: "+3" achou mais, "-3" faltou. */}
                 <span>{e.tipo === "correcao" && e.quantidade > 0 ? "+" : ""}{e.quantidade} un</span>
-                {e.codigo && (
-                  <Badge variant="outline" className="font-mono text-[10px]">{e.codigo}</Badge>
+                {/* O código do ITEM, não o do lote (20260930000163). O pedido
+                    foi literal: "somente o histórico, que quantidade do item e
+                    seu código próprio existe e foi adicionado ou removido". */}
+                {codigoItem && (
+                  <Badge variant="outline" className="font-mono text-[10px]">{codigoItem}</Badge>
                 )}
-                {e.tamanho && <Badge variant="secondary" className="text-[10px]">{e.tamanho}</Badge>}
+                {e.tamanho && !ocultarTamanho && (
+                  <Badge variant="secondary" className="text-[10px]">{e.tamanho}</Badge>
+                )}
                 {e.pedido_protocolo && (
                   <Link
                     to={`/app/suprimentos/pedidos-materiais?busca=${encodeURIComponent(e.pedido_protocolo)}`}
@@ -1498,7 +1691,8 @@ function LinhaDoTempo({ supItemId }: { supItemId: string | null }) {
  */
 function DialogInventario({ linha, tagsLivres, onFechar }: {
   linha: LinhaEstoque | null;
-  tagsLivres: { id: string; codigo: string; tamanho: string | null }[];
+  /** O lote inteiro: a conferência se identifica por data e quantidade, não pelo código interno. */
+  tagsLivres: TagEstoque[];
   onFechar: () => void;
 }) {
   const inventariar = useInventario();
@@ -1596,7 +1790,12 @@ function DialogInventario({ linha, tagsLivres, onFechar }: {
                       marcadas.has(t.codigo) && "border-emerald-500 bg-emerald-500 text-white")}>
                       {marcadas.has(t.codigo) && <Check className="h-3 w-3" />}
                     </span>
-                    <span className="flex-1 truncate font-mono text-xs">{t.codigo}</span>
+                    {/* Data e quantidade no lugar do código do lote: é o que a
+                        pessoa consegue casar com a caixa na prateleira. */}
+                    <span className="flex-1 truncate text-xs">
+                      Entrada de {new Date(t.created_at).toLocaleDateString("pt-BR")}
+                      {t.tipo === "massa" ? ` · ${t.quantidade_massa} un` : ""}
+                    </span>
                     {t.tamanho && <Badge variant="outline" className="text-[10px]">{t.tamanho}</Badge>}
                   </button>
                 ))}
@@ -1635,16 +1834,25 @@ function DialogInventario({ linha, tagsLivres, onFechar }: {
 }
 
 /** Remoção com justificativa — o motivo vai para a trilha. */
-function DialogRemoverTag({ codigo, onFechar, onConfirmar }: {
-  codigo: string | null; onFechar: () => void; onConfirmar: (motivo: string) => void;
+function DialogRemoverTag({ lote, onFechar, onConfirmar }: {
+  lote: TagEstoque | null; onFechar: () => void; onConfirmar: (motivo: string) => void;
 }) {
   const [motivo, setMotivo] = useState("");
+  // Data, quantidade e tamanho: é assim que a entrada aparece na tela desde
+  // 20260930000163 — o código do lote é interno e ninguém o reconhece.
+  const quantas = lote ? (lote.tipo === "massa" ? lote.quantidade_massa ?? 0 : 1) : 0;
   return (
-    <Dialog open={!!codigo} onOpenChange={(o) => { if (!o) { setMotivo(""); onFechar(); } }}>
+    <Dialog open={!!lote} onOpenChange={(o) => { if (!o) { setMotivo(""); onFechar(); } }}>
       <DialogContent className="max-w-md">
-        <DialogHeader><DialogTitle>Remover a etiqueta {codigo}?</DialogTitle></DialogHeader>
+        <DialogHeader>
+          <DialogTitle>
+            Remover a entrada de {lote ? new Date(lote.created_at).toLocaleDateString("pt-BR") : "—"}?
+          </DialogTitle>
+        </DialogHeader>
         <p className="text-sm text-muted-foreground">
-          A etiqueta sai do estoque. O registro da remoção fica no histórico do material.
+          <strong className="text-foreground">{quantas}</strong> unidade(s)
+          {lote?.tamanho ? ` do tamanho ${lote.tamanho}` : ""} saem do estoque.
+          O registro da remoção fica no histórico do material.
         </p>
         <div>
           <Label className="text-sm">Motivo</Label>
@@ -1699,7 +1907,8 @@ function PainelContagemRotativa() {
             <div key={l.id} className="flex flex-wrap items-baseline gap-x-3 gap-y-1 rounded-md border bg-background p-2.5 text-sm">
               <span className="font-medium">{l.material?.nome ?? "—"}</span>
               {l.tamanho && <span className="text-xs text-muted-foreground">({l.tamanho})</span>}
-              {l.codigo && <span className="font-mono text-xs text-muted-foreground">lote {l.codigo}</span>}
+              {/* Sem o código do lote: é interno (20260930000163). O material e
+                  o tamanho já dizem o que contar na prateleira. */}
               {l.quantidade_faltante != null && (
                 <Badge variant="outline" className="text-[10px]">faltaram {l.quantidade_faltante}</Badge>
               )}

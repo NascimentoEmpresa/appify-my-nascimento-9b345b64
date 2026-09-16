@@ -24,6 +24,17 @@ export interface LinhaEstoque {
   /** Código interno do produto, imutável — o que se bipa (ajuste 7 do Cassio). */
   codigo_item: string | null;
   /**
+   * Tamanho que este item É ("JAQUETA M" → "M"). Desde 20260930000163 cada
+   * tamanho é um item com código próprio; nulo no material sem grade.
+   */
+  tamanho_item: string | null;
+  /**
+   * O material base de um tamanho: nome e código de "JAQUETA" na linha da
+   * "JAQUETA M". Serve à busca (quem digita "JAQUETA" ou o código antigo acha
+   * todos os tamanhos) e à edição, onde nome e tipo são do base.
+   */
+  base: { id: string; nome: string; codigo: string | null } | null;
+  /**
    * Códigos dos lotes/etiquetas ainda disponíveis deste item.
    *
    * Existe só para a BUSCA. Há 9.248 etiquetas antigas com rótulo físico ainda
@@ -102,6 +113,8 @@ export interface TagEstoque {
   valor_unitario: number | null; estado: string; usado: boolean;
   pedido_id: string | null; pedido_item_id: string | null; usado_por_nome: string | null;
   ca_numero: string | null; ca_validade: string | null;
+  /** Quando o lote entrou — é assim que a tela o identifica, não pelo código interno. */
+  created_at: string;
 }
 
 export interface TagDoPedido {
@@ -210,7 +223,7 @@ export function useEstoqueLista(empresaId: string | null) {
       const { data, error } = await sb
         .from("sup_estoque_item")
         .select(`id, valor_unitario, estoque_minimo, preco_valido_ate, fornecedor_id, observacoes,
-                 sup_item:sup_item_id (id, nome, tipo, codigo),
+                 sup_item:sup_item_id (id, nome, tipo, codigo, tamanho, pai:item_pai_id (id, nome, codigo)),
                  almoxarifado:almoxarifado_id (nome),
                  sup_estoque_tag (codigo, tamanho, tipo, usado, quantidade_massa, quantidade_original_massa, valor_unitario,
                                   sup_estoque_reserva (quantidade, situacao))`)
@@ -248,6 +261,10 @@ export function useEstoqueLista(empresaId: string | null) {
           item_estoque_id: r.id,
           sup_item_id: r.sup_item?.id,
           codigo_item: r.sup_item?.codigo ?? null,
+          tamanho_item: r.sup_item?.tamanho ?? null,
+          base: r.sup_item?.pai
+            ? { id: r.sup_item.pai.id, nome: r.sup_item.pai.nome, codigo: r.sup_item.pai.codigo ?? null }
+            : null,
           codigos_lote: tags.filter((t: any) => !t.usado && t.codigo).map((t: any) => String(t.codigo)),
           material: r.sup_item?.nome ?? "—",
           tipo_material: r.sup_item?.tipo ?? "",
@@ -264,7 +281,11 @@ export function useEstoqueLista(empresaId: string | null) {
           observacoes: r.observacoes ?? null,
           disponivel, reservado, fisico, consumido,
           etiquetas: tags.length,
-          tamanhos: [...new Set(tags.filter((t: any) => !t.usado && t.tamanho).map((t: any) => t.tamanho))] as string[],
+          // Item de tamanho É aquele tamanho. A lista dos lotes só sobra para
+          // material sem grade ou com lote "X"/"U" do sistema antigo.
+          tamanhos: r.sup_item?.tamanho
+            ? [r.sup_item.tamanho as string]
+            : [...new Set(tags.filter((t: any) => !t.usado && t.tamanho).map((t: any) => t.tamanho))] as string[],
         };
       }).sort((a, b) => a.material.localeCompare(b.material, "pt-BR"));
     },
@@ -296,10 +317,21 @@ export function useTagsDisponiveis(supItemId: string | null, tamanho?: string | 
     queryKey: ["sup_tags_disponiveis", supItemId, tamanho ?? null],
     enabled: !!supItemId,
     queryFn: async (): Promise<TagEstoque[]> => {
+      // O pedido aponta para o BASE ("JAQUETA") e, desde 20260930000163, o
+      // estoque mora nos tamanhos ("JAQUETA M"). As fichas da família vêm da
+      // view de saldo (sup_item_base_id), e os lotes, delas.
+      const { data: fichas, error: e1 } = await sb
+        .from("sup_estoque_saldo")
+        .select("item_estoque_id")
+        .or(`sup_item_id.eq.${supItemId},sup_item_base_id.eq.${supItemId}`);
+      if (e1) throw e1;
+      const ids = [...new Set((fichas ?? []).map((f: any) => f.item_estoque_id as string))];
+      if (ids.length === 0) return [];
+
       let q = sb
         .from("sup_estoque_tag")
-        .select("*, sup_estoque_item!inner(sup_item_id)")
-        .eq("sup_estoque_item.sup_item_id", supItemId)
+        .select("*")
+        .in("item_estoque_id", ids)
         .eq("usado", false)
         .order("sequencia");
       if (tamanho) q = q.eq("tamanho", tamanho);
@@ -316,7 +348,10 @@ export function useSaldoMaterial(supItemId: string | null, tamanho?: string | nu
     queryKey: ["sup_saldo_material", supItemId, tamanho ?? null],
     enabled: !!supItemId,
     queryFn: async (): Promise<number> => {
-      let q = sb.from("sup_estoque_saldo").select("disponivel").eq("sup_item_id", supItemId);
+      // Base OU tamanho dele: sem o sup_item_base_id, "JAQUETA, tam. M" daria
+      // 0 com dez jaquetas M na prateleira (20260930000163).
+      let q = sb.from("sup_estoque_saldo").select("disponivel")
+        .or(`sup_item_id.eq.${supItemId},sup_item_base_id.eq.${supItemId}`);
       if (tamanho) q = q.eq("tamanho", tamanho);
       const { data, error } = await q;
       if (error) throw error;
@@ -546,21 +581,46 @@ export function useEntradaPorQuantidade() {
   const invalidar = useInvalidarEstoque();
   return useMutation({
     mutationFn: async (p: {
-      almoxarifado_id: string; sup_item_id: string;
+      almoxarifado_id: string;
+      /** Material do catálogo. Nulo quando é material novo, digitado na entrada. */
+      sup_item_id: string | null;
+      /**
+       * Material que ainda não existia. Cadastrado aqui, antes da primeira
+       * remessa (sup_est_criar_material, 20260930000163) — antes a tela só
+       * aceitava o que já estava no catálogo e o botão ficava cinza.
+       */
+      novo_material?: { nome: string; tipo: string } | null;
       valor_unitario?: number; estoque_minimo?: number;
       fornecedor_id?: string | null;
       validade?: string | null; observacao?: string | null;
       preco_valido_ate?: string | null;
       remessas: RemessaEntrada[];
     }) => {
+      let supItemId = p.sup_item_id;
+      if (!supItemId && p.novo_material) {
+        // Nome que já existe devolve o existente: tentar de novo depois de uma
+        // remessa recusada não cria o material duas vezes.
+        const { data, error } = await sb.rpc("sup_est_criar_material", {
+          p_almoxarifado_id: p.almoxarifado_id,
+          p_nome: p.novo_material.nome,
+          p_tipo: p.novo_material.tipo,
+        });
+        if (error) throw error;
+        supItemId = (data as { id: string }).id;
+      }
+      if (!supItemId) throw new Error("Escolha o material ou cadastre um novo.");
+
       let gravadas = 0;
       const falhas: string[] = [];
+      // O item que recebeu cada remessa: o do TAMANHO ("JAQUETA M"), que o
+      // banco escolhe ou cria (20260930000163). Vai para o aviso, com o código.
+      const destinos = new Map<string, string>();
 
       for (const r of p.remessas) {
-        const { error } = await sb.rpc("sup_est_entrada_quantidade", {
+        const { data, error } = await sb.rpc("sup_est_entrada_quantidade", {
           p_payload: {
             almoxarifado_id: p.almoxarifado_id,
-            sup_item_id: p.sup_item_id,
+            sup_item_id: supItemId,
             quantidade: r.quantidade,
             tamanho: r.tamanho || null,
             valor_unitario: p.valor_unitario ?? null,
@@ -572,23 +632,35 @@ export function useEntradaPorQuantidade() {
             ca_validade: r.ca_validade ?? null,
           },
         });
-        if (error) falhas.push(`${r.tamanho || "sem tamanho"}: ${error.message}`);
-        else gravadas += r.quantidade;
+        if (error) {
+          falhas.push(`${r.tamanho || "sem tamanho"}: ${error.message}`);
+          continue;
+        }
+        gravadas += r.quantidade;
+        const d = data as { sup_item_id?: string; nome_item?: string; codigo_item?: string | null } | null;
+        if (d?.sup_item_id) {
+          destinos.set(d.sup_item_id, `${d.nome_item ?? ""}${d.codigo_item ? ` (${d.codigo_item})` : ""}`);
+        }
       }
 
       // Mesma decisão de useEntradaEstoque: a validade do preço é uma chamada à
       // parte, e falhar nela não desfaz a entrada — o material já está lá.
+      // Uma por item que recebeu: cada tamanho tem a sua ficha, e o preço é dela.
       if (gravadas > 0 && p.preco_valido_ate) {
-        const { error: e2 } = await sb.rpc("sup_est_validade_preco", {
-          p_almoxarifado_id: p.almoxarifado_id,
-          p_sup_item_id: p.sup_item_id,
-          p_valido_ate: p.preco_valido_ate,
-        });
-        if (e2) toast.warning("Entrada gravada, mas a validade do preço não foi salva.");
+        let falhou = false;
+        for (const id of destinos.size ? [...destinos.keys()] : [supItemId]) {
+          const { error: e2 } = await sb.rpc("sup_est_validade_preco", {
+            p_almoxarifado_id: p.almoxarifado_id,
+            p_sup_item_id: id,
+            p_valido_ate: p.preco_valido_ate,
+          });
+          if (e2) falhou = true;
+        }
+        if (falhou) toast.warning("Entrada gravada, mas a validade do preço não foi salva.");
       }
 
       if (gravadas === 0 && falhas.length) throw new Error(falhas.join(" · "));
-      return { gravadas, falhas };
+      return { gravadas, falhas, itens: [...destinos.values()] };
     },
     onSuccess: (r) => {
       invalidar();
@@ -598,7 +670,10 @@ export function useEntradaPorQuantidade() {
           duration: 10000,
         });
       } else {
-        toast.success(`${r.gravadas} unidade(s) adicionada(s) ao estoque.`);
+        // Diz em qual item (e código) cada tamanho caiu — o código novo de um
+        // tamanho que apareceu agora é o que vai para a etiqueta da prateleira.
+        toast.success(`${r.gravadas} unidade(s) adicionada(s) ao estoque.`,
+          r.itens.length ? { description: r.itens.join(" · "), duration: 8000 } : undefined);
       }
     },
     onError: (e: any) => toast.error(e?.message ?? "Não foi possível dar entrada."),
