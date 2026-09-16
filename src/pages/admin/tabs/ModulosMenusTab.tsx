@@ -72,7 +72,11 @@ const REEMBOLSO_APROVACAO_MENU_CODIGO = "central_servicos_reembolso_aprovacao";
 // Mudança de Função (16/09/2026): quem aprova, aprova só os setores marcados
 // (SISTEMA_TROCA_FUNCAO_APROVADOR_SETOR). Uma configuração por pessoa, que
 // aparece ao lado dos dois menus de aprovação — contrato e escritório.
-const TROCA_FUNCAO_APROVACAO_MENU_CODIGOS = ["operacional_troca_funcao", "escritorio_troca_funcao"];
+const TROCA_FUNCAO_APROVACAO_MENU_CODIGOS = [
+  "escritorio_troca_funcao", "diretoria_troca_funcao",
+  // Diretoria (16/09/2026): a mesma configuração vale pra demissão e vaga.
+  "diretoria_solicitacoes_demissao", "diretoria_recrutamento",
+];
 
 interface Modulo { id: string; codigo: string; nome: string; ordem: number; ativo: boolean; icone: string | null }
 interface Menu { id: string; modulo_id: string; codigo: string; nome: string; rota: string | null; ordem: number; ativo: boolean }

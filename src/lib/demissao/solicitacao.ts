@@ -1,9 +1,12 @@
 // Solicitação de Demissão — as regras que as telas compartilham.
 //
-// O encarregado abre → o OPERACIONAL aprova → o RH libera → o SST agenda o
-// ASO demissional:
+// O encarregado abre → o OPERACIONAL (contrato) ou a DIRETORIA (escritório /
+// com setor, desde 16/09/2026) aprova → o RH libera → o SST agenda o ASO
+// demissional:
 //
-//   Pendente Operacional → Pendente RH → Pendente SST
+//   Pendente Operacional ─┐
+//                         ├→ Pendente RH → Pendente SST
+//   Pendente Diretoria  ──┘
 //        → Solicitação de agendamento de DEMISSIONAL recebida
 //        → Agendamento concluído
 //          ↘ Reprovada
@@ -45,6 +48,8 @@
 // opções dos campos, os status e quem pode agir em cada um) mora aqui —
 // assim o painel do RH não pode discordar do formulário do encarregado
 // sobre o que é uma solicitação válida.
+
+import { localEhEscritorio } from "@/lib/trocaFuncao/solicitacao";
 
 export const TABELA = "SISTEMA_SOLICITACOES_DEMISSAO";
 export const TABELA_ANEXOS = "SISTEMA_SOL_DEMISSAO_ANEXOS";
@@ -134,6 +139,9 @@ export const STATUS_SST_ASO_VALIDO = "ASO válido";
 
 export type Status =
   | "Pendente Operacional"
+  // Diretoria (16/09/2026): demissão do escritório OU com setor nasce aqui e
+  // é aprovada por quem tem o setor marcado em Acesso por Usuário.
+  | "Pendente Diretoria"
   | "Reprovada"
   | "Pendente RH"
   | "Pendente SST"
@@ -145,7 +153,7 @@ export type Status =
 
 /** Na ordem do fluxo, que é a ordem em que fazem sentido em qualquer filtro. */
 export const STATUS_TODOS: Status[] = [
-  "Pendente Operacional", "Pendente RH", "Pendente SST",
+  "Pendente Operacional", "Pendente Diretoria", "Pendente RH", "Pendente SST",
   STATUS_SST_RECEBIDA, STATUS_SST_AGENDADO, STATUS_SST_ASO_VALIDO,
   "Concluída", "Reprovada", "Cancelada",
 ];
@@ -163,6 +171,7 @@ export const STATUS_FINAIS: string[] = [STATUS_SST_AGENDADO, STATUS_SST_ASO_VALI
 export function corDoStatus(status: string): string {
   const cores: Record<string, string> = {
     "Pendente Operacional": "bg-yellow-100 text-yellow-800 border-yellow-200",
+    "Pendente Diretoria": "bg-amber-100 text-amber-800 border-amber-200",
     "Pendente RH": "bg-purple-100 text-purple-700 border-purple-200",
     "Pendente SST": "bg-cyan-100 text-cyan-800 border-cyan-200",
     // Os dois do SST puxam para o mesmo lado do círculo cromático que
@@ -182,16 +191,61 @@ export function corDoStatus(status: string): string {
 export function explicaStatus(status: string): string {
   const textos: Record<string, string> = {
     "Pendente Operacional": "Aguardando a aprovação do Operacional.",
-    "Pendente RH": "Aprovada pelo Operacional. Aguardando o RH liberar.",
+    "Pendente Diretoria": "Aguardando a aprovação da Diretoria (administrativo / setor).",
+    "Pendente RH": "Aprovada. Aguardando o RH liberar.",
     "Pendente SST": "Liberada pelo RH. Aguardando o SST receber a solicitação.",
     [STATUS_SST_RECEBIDA]: "O SST recebeu a solicitação e está agendando o ASO demissional.",
     [STATUS_SST_AGENDADO]: "ASO demissional agendado — a data, a hora e o local estão na solicitação.",
     [STATUS_SST_ASO_VALIDO]: "O ASO do colaborador ainda está válido (menos de 90 dias) — não precisa de exame demissional. Concluída pelo SST.",
     "Concluída": "O RH confirmou. Desligamento concluído.",
-    "Reprovada": "O Operacional reprovou — veja o motivo.",
+    "Reprovada": "Reprovada na aprovação — veja o motivo.",
     "Cancelada": "A solicitação foi cancelada.",
   };
   return textos[status] ?? "";
+}
+
+/**
+ * Administrativa = escritório OU com setor (16/09/2026). Nasce em "Pendente
+ * Diretoria" e só aparece pra quem tem o setor marcado em Acesso por Usuário.
+ * Mesma regra da Mudança de Função (lib/trocaFuncao/solicitacao.ts).
+ */
+export const ehAdministrativaDemissao = (s: { e_escritorio?: boolean | null; setor?: string | null; colaborador_posto?: string | null }): boolean =>
+  !!s.e_escritorio || !!String(s.setor ?? "").trim()
+  // Pedidos antigos (antes do checkbox) e cadastro que já diz "ADMINISTRATIVO"
+  // / "ESCRITÓRIO" no posto: é do escritório mesmo sem ninguém ter marcado.
+  || localEhEscritorio(s.colaborador_posto);
+
+export const statusInicialDemissao = (eEscritorio: boolean, setor?: string | null): Status =>
+  ehAdministrativaDemissao({ e_escritorio: eEscritorio, setor }) ? "Pendente Diretoria" : "Pendente Operacional";
+
+/** Pra onde a devolução leva: a etapa 1 de cada tipo. */
+export const statusDaEtapa1 = (s: { e_escritorio?: boolean | null; setor?: string | null; colaborador_posto?: string | null }): Status =>
+  ehAdministrativaDemissao(s) ? "Pendente Diretoria" : "Pendente Operacional";
+
+/** Sem acento, caixa alta — a régua do banco (cs_reembolso_norm_setor). */
+export const normSetorDemissao = (s: string | null | undefined): string =>
+  String(s ?? "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim().toUpperCase();
+
+/**
+ * A linha entra na tela desta etapa? (16/09/2026)
+ *   • Diretoria: só administrativa (escritório ou com setor). Os setores
+ *     marcados em Acesso por Usuário são FILTRO: sem nenhum, vê todas; com
+ *     algum, só as daqueles setores.
+ *   • Operacional: só contrato sem setor.
+ *   • Analista (Licitações): só contrato simples, acompanhamento.
+ *   • SST e RH: tudo.
+ */
+export function visivelNaEtapaDemissao(
+  s: { e_escritorio?: boolean | null; setor?: string | null; colaborador_posto?: string | null },
+  etapa: "analista" | "operacional" | "diretoria" | "rh" | "sst",
+  setores: ReadonlySet<string> | null = null,
+): boolean {
+  if (etapa === "sst" || etapa === "rh") return true;
+  const adm = ehAdministrativaDemissao(s);
+  if (etapa !== "diretoria") return !adm;
+  if (!adm) return false;
+  const setor = normSetorDemissao(s.setor);
+  return !setor || !setores || setores.size === 0 || setores.has(setor);
 }
 
 // ── A solicitação ────────────────────────────────────────────────────
@@ -213,6 +267,9 @@ export interface SolicitacaoDemissao {
   contrato: string | null;
   contrato_id: number | null;
   escala: string | null;
+  /** Escritório administrativo / setor (16/09/2026) — decide se vai pra Diretoria. */
+  e_escritorio?: boolean | null;
+  setor?: string | null;
 
   motivo_solicitacao: string | null;
   motivo_pedido: string | null;
@@ -374,9 +431,11 @@ export function patchDevolucao(
   etapa: EtapaQueDevolve,
   quem: string,
   motivo: string,
+  // Administrativa volta pra Diretoria, não pro Operacional (16/09/2026).
+  voltaPara: Status = "Pendente Operacional",
 ): Record<string, unknown> {
   return {
-    status: "Pendente Operacional" as Status,
+    status: voltaPara,
     devolvido_por: quem,
     devolvido_em: new Date().toISOString(),
     devolvido_motivo: motivo.trim(),

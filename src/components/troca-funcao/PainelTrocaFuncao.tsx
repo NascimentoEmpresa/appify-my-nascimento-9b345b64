@@ -3,7 +3,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { useMeuNome } from "@/hooks/useMeuNome";
 import { useAuth } from "@/hooks/useAuth";
 import { usePermissoes } from "@/context/PermissoesContext";
-import { TABELA_STF_APROVADOR_SETOR } from "@/components/admin/TrocaFuncaoSetoresUsuario";
+import { TABELA_APROVADOR_SETOR } from "@/components/admin/TrocaFuncaoSetoresUsuario";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -74,7 +74,13 @@ function Kpi({ titulo, valor, icone: Icone, cor }: {
   );
 }
 
-export function PainelTrocaFuncao({ etapa }: { etapa: Etapa }) {
+/**
+ * `origem` (16/09/2026): a TELA diz o que a fila de aprovação mostra —
+ * Operacional › Mudança de Função passa "contrato" (só contrato sem setor),
+ * Diretoria › Mudança de Função passa "escritorio" (administrativo / com
+ * setor). Sem a prop, cai nos menus da pessoa (comportamento antigo).
+ */
+export function PainelTrocaFuncao({ etapa, origem }: { etapa: Etapa; origem?: Origem }) {
   const meuNome = useMeuNome();
   const { user } = useAuth();
   const { can } = usePermissoes();
@@ -86,7 +92,7 @@ export function PainelTrocaFuncao({ etapa }: { etapa: Etapa }) {
   const [meusSetores, setMeusSetores] = useState<Set<string>>(new Set());
   useEffect(() => {
     if (etapa !== "aprovacao" || !user?.id) { setMeusSetores(new Set()); return; }
-    sb.from(TABELA_STF_APROVADOR_SETOR).select("setor").eq("user_id", user.id)
+    sb.from(TABELA_APROVADOR_SETOR).select("setor").eq("user_id", user.id)
       .then(({ data }) => setMeusSetores(new Set((data ?? []).map((r: { setor: string }) => normSetorTroca(r.setor)))));
   }, [etapa, user?.id]);
   const [todas, setTodas] = useState<SolicitacaoTroca[]>([]);
@@ -115,12 +121,13 @@ export function PainelTrocaFuncao({ etapa }: { etapa: Etapa }) {
     // de contrato simples — visivelNoRecorte corta o resto de qualquer jeito.
     if (etapa === "analista") return ["contrato"];
     if (etapa !== "aprovacao") return ["contrato", "escritorio"];
+    if (origem) return [origem];
     return origensVisiveis(
       can("visualizar", undefined, "operacional_troca_funcao"),
       can("visualizar", undefined, "escritorio_troca_funcao"),
     );
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [etapa, can]);
+  }, [etapa, can, origem]);
 
   const carregar = async () => {
     setCarregando(true);

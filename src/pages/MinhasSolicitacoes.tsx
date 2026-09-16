@@ -13,7 +13,7 @@ import {
   cargoExigeCnh, aplicarReqCnh, REQ_CNH_TEXTO, MIN_DIAS_UTEIS, fmtBr,
   rotuloReferencia, ajudaReferencia, mostraNomeReferencia, contratoDoEmpregado, rotuloContrato,
   SALARIO_MASCARA, substituidosComVagaViva, avisoSubstituidoPreso,
-  podeVagaAdministrativa,
+  podeVagaAdministrativa, statusInicialVaga,
 } from "@/lib/recrutamento/vagaRegras";
 import { maskFone } from "@/lib/telefone";
 import { solicitacaoEmAberto, TITULO_DUPLICIDADE, type SolicitacaoEmAberto } from "@/lib/solicitacoes/duplicidade";
@@ -43,6 +43,7 @@ function badgeStatusCls(st: string) {
   const m: Record<string, string> = {
     "Aguardando Aprovação": "bg-yellow-100 text-yellow-800 border-yellow-200",
     "Pendente Analista": "bg-yellow-100 text-yellow-800 border-yellow-200",
+    "Pendente Diretoria": "bg-amber-100 text-amber-800 border-amber-200",
     // As solicitações abertas antes de 02/09/2026 e já decididas continuam
     // gravadas com o nome antigo; sem esta linha o selo delas ficava cinza.
     "Pendente Operacional": "bg-yellow-100 text-yellow-800 border-yellow-200",
@@ -113,7 +114,7 @@ const ADV_RESET = {
   advertencia_verbal_dada: "Não", data_advertencia_verbal: "",
 };
 const VAGA_RESET = {
-  motivo_vaga: "", administrativa: false, nome_substituido: "", contrato: "", cargo: "",
+  motivo_vaga: "", administrativa: false, setor: "", nome_substituido: "", contrato: "", cargo: "",
   // Vínculo com o catálogo de Suprimentos (opcional; contrato travado no da vaga).
   contrato_id: "", posto_id: "", funcao_id: "",
   estado: "", cidade: "", quantidade_vagas: "1", data_inicio_prevista: "",
@@ -383,6 +384,11 @@ export default function MinhasSolicitacoes({ abrir, base = "encarregados" }: { a
   const [custoPosto, setCustoPosto] = useState<CustoPosto | null>(null);
   const [custoNota, setCustoNota] = useState("");
   const [catListas, setCatListas] = useState<ListasCatalogo>({ postos: [], funcoes: [] });
+  const [setoresCatalogo, setSetoresCatalogo] = useState<string[]>([]);
+  useEffect(() => {
+    (supabase as any).from("setor_catalogo").select("nome").order("nome")
+      .then(({ data }: { data: { nome: string }[] | null }) => setSetoresCatalogo((data ?? []).map(r => r.nome).filter(Boolean)));
+  }, []);
   const [empEscolhido, setEmpEscolhido] = useState<any>(null);
   const [custoBuscando, setCustoBuscando] = useState(false);
 
@@ -568,10 +574,9 @@ export default function MinhasSolicitacoes({ abrir, base = "encarregados" }: { a
       demissao_id: ehSubstituicao(vaga.motivo_vaga) ? demissaoId : null,
       contrato_id: vaga.contrato_id || null, posto_id: vaga.posto_id || null, funcao_id: vaga.funcao_id || null,
       administrativa: podeAdministrativa ? !!vaga.administrativa : false,
-      // A etapa 1 do recrutamento mudou de dono em 02/09/2026: quem decide é o
-      // ANALISTA. Nascer em "Pendente Operacional" deixava a vaga num status
-      // que nenhuma fila filtra — invisível para todo mundo menos quem pediu.
-      status: "Pendente Analista",
+      setor: vaga.setor || null,
+      // Administrativa ou com setor → Diretoria (16/09/2026); o resto → analista.
+      status: statusInicialVaga(podeAdministrativa ? !!vaga.administrativa : false, vaga.setor || null),
       solicitante_nome: user?.user_metadata?.nome ?? user?.email ?? "",
       solicitante_cpf: user?.email ?? "",
     };
@@ -1139,6 +1144,15 @@ export default function MinhasSolicitacoes({ abrir, base = "encarregados" }: { a
                 onChange={v => setVaga(x => ({ ...x, ...v }))}
                 onListas={setCatListas}
                 classeInput="ini-fi" classeGrupo="ini-fg" />
+              {/* Setor (16/09/2026): com setor a vaga é administrativa e vai pra
+                  Diretoria aprovar antes de chegar ao Recrutamento. */}
+              <div className="ini-fg">
+                <label>Setor <span style={{ color: "#94a3b8", fontWeight: 600 }}>— opcional; com setor, a aprovação é da Diretoria</span></label>
+                <select className="ini-fi" value={vaga.setor} onChange={e => setVaga(v => ({ ...v, setor: e.target.value }))}>
+                  <option value="">Sem setor (vaga de contrato)</option>
+                  {setoresCatalogo.map(s => <option key={s} value={s}>{s}</option>)}
+                </select>
+              </div>
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
                 <div className="ini-fg">
                   <label>Estado (UF) <span style={{ color: "#dc2626" }}>*</span></label>

@@ -38,13 +38,13 @@ import {
   erroDaRecomendacao, recomendacaoParaBanco, cpfValido, soDigitos, maskCpf,
   cargoExigeCnh, aplicarReqCnh, REQ_CNH_TEXTO,
   rotuloReferencia, ajudaReferencia, mostraNomeReferencia, contratoDoEmpregado, rotuloContrato,
-  faltamCamposManuais, podeVagaAdministrativa,
+  faltamCamposManuais, podeVagaAdministrativa, statusInicialVaga,
   substituidosComVagaViva, avisoSubstituidoPreso,
 } from "@/lib/recrutamento/vagaRegras";
 import { maskFone } from "@/lib/telefone";
 
 const VAGA_RESET = {
-  motivo_vaga: "", administrativa: false, nome_substituido: "", contrato: "", cargo: "",
+  motivo_vaga: "", administrativa: false, setor: "", nome_substituido: "", contrato: "", cargo: "",
   contrato_id: "", posto_id: "", funcao_id: "",
   estado: "", cidade: "", quantidade_vagas: "1", data_inicio_prevista: "",
   escala: "", salario: "", insalubridade_recebe: "Não", reserva_tecnica: "Não",
@@ -303,6 +303,12 @@ export function ModalNovaVaga({ aberto, onFechar, onCriada, onToast, solicitacao
   // O que o catálogo oferece pro contrato da vaga (postos/funções) e o
   // colaborador escolhido nesta sessão (pro fallback do cadastro).
   const [catListas, setCatListas] = useState<ListasCatalogo>({ postos: [], funcoes: [] });
+  // Catálogo de setores do ERP (o mesmo do Acesso por Usuário e da troca de função).
+  const [setoresCatalogo, setSetoresCatalogo] = useState<string[]>([]);
+  useEffect(() => {
+    (supabase as any).from("setor_catalogo").select("nome").order("nome")
+      .then(({ data }: { data: { nome: string }[] | null }) => setSetoresCatalogo((data ?? []).map(r => r.nome).filter(Boolean)));
+  }, []);
   const [empEscolhido, setEmpEscolhido] = useState<any>(null);
 
   // Planilha de Custo pelo POSTO do catálogo (15/09/2026). Antes a consulta
@@ -519,6 +525,7 @@ export function ModalNovaVaga({ aberto, onFechar, onCriada, onToast, solicitacao
       req_obrigatorios: aplicarReqCnh(vaga.req_obrigatorios, vaga.cargo),
       cnh_obrigatoria: !!cnhDoCargo,
       administrativa: podeAdministrativa ? !!vaga.administrativa : false,
+      setor: vaga.setor || null,
       // Só a substituição grava o id: é ele que trava a pessoa numa vaga só.
       substituido_id: ehSubstituicao(vaga.motivo_vaga) ? substituidoId : null,
       demissao_id: ehSubstituicao(vaga.motivo_vaga) ? demissaoId : null,
@@ -533,7 +540,8 @@ export function ModalNovaVaga({ aberto, onFechar, onCriada, onToast, solicitacao
     // formulário: corrigir o cargo de um pedido não pode devolvê-lo para
     // "Pendente Analista" nem trocar o nome de quem pediu.
     if (!editando) {
-      payload.status = "Pendente Analista";
+      // Administrativa ou com setor → Diretoria (16/09/2026); o resto → analista.
+      payload.status = statusInicialVaga(podeAdministrativa ? !!vaga.administrativa : false, vaga.setor || null);
       payload.solicitante_nome = user?.user_metadata?.nome ?? user?.email ?? "";
       payload.solicitante_cpf = user?.email ?? "";
     }
@@ -811,6 +819,15 @@ export function ModalNovaVaga({ aberto, onFechar, onCriada, onToast, solicitacao
             onListas={setCatListas}
             onFuncaoNome={vagaManual ? (nome => setVaga(x => ({ ...x, cargo: x.cargo || nome }))) : undefined}
             classeInput="nvg-fi" classeGrupo="nvg-fg" />
+          {/* Setor (16/09/2026): com setor a vaga é administrativa e vai pra
+              Diretoria aprovar antes de chegar ao Recrutamento. */}
+          <div className="nvg-fg">
+            <label>Setor <span style={{ color: "#94a3b8", fontWeight: 600 }}>— opcional; com setor, a aprovação é da Diretoria</span></label>
+            <select className="nvg-fi" value={vaga.setor} onChange={e => setVaga(v => ({ ...v, setor: e.target.value }))}>
+              <option value="">Sem setor (vaga de contrato)</option>
+              {setoresCatalogo.map(s => <option key={s} value={s}>{s}</option>)}
+            </select>
+          </div>
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
             <div className="nvg-fg">
               <label>Estado (UF) <span style={{ color: "#dc2626" }}>*</span></label>

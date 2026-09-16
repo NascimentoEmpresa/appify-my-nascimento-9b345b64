@@ -63,9 +63,14 @@ const demissao: Fluxo = {
       onde: "Encarregados › Solicitar Demissão",
     },
     {
-      quem: "Operacional", faz: "Aprova ou reprova. Reprovar exige motivo escrito — é o que o encarregado lê para corrigir.",
+      quem: "Operacional", faz: "Aprova ou reprova a demissão de contrato. Reprovar exige motivo escrito — é o que o encarregado lê para corrigir.",
       onde: "Operacional › Solicitações de Demissão",
       status: "Pendente Operacional",
+    },
+    {
+      quem: "Diretoria", faz: "Aprova ou reprova a demissão do escritório / com setor — só ela vê essas; aprovada, segue pro RH.",
+      onde: "Diretoria › Solicitações de Demissão",
+      status: "Pendente Diretoria",
     },
     {
       quem: "RH", faz: "Confere o desligamento e libera para o SST agendar o ASO.",
@@ -134,9 +139,14 @@ const vaga: Fluxo = {
       onde: "Encarregados › Solicitar Vaga",
     },
     {
-      quem: "Analista", faz: "Aprova ou reprova a solicitação antes de ela virar vaga.",
+      quem: "Analista", faz: "Aprova ou reprova a solicitação de contrato antes de ela virar vaga.",
       onde: "Licitações › Analistas Validações › Gestão Recrutamento",
       status: "Pendente Analista",
+    },
+    {
+      quem: "Diretoria", faz: "Aprova ou reprova a vaga administrativa / com setor — só depois dela o Recrutamento vê.",
+      onde: "Diretoria › Gestão Recrutamento",
+      status: "Pendente Diretoria",
     },
     {
       quem: "Recrutamento", faz: "Confirma a abertura, publica no portal e recebe os currículos.",

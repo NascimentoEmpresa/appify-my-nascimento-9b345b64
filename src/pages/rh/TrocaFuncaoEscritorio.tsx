@@ -22,7 +22,7 @@ export default function TrocaFuncaoEscritorio() {
         breadcrumb={["Mudança de Função"]}
         actions={<ResumoDeFuncoes fluxo="troca_funcao" />}
       />
-      <PainelTrocaFuncao etapa="aprovacao" />
+      <PainelTrocaFuncao etapa="aprovacao" origem="escritorio" />
     </div>
   );
 }

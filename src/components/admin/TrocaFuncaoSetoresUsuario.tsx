@@ -15,12 +15,17 @@ const sb = supabase as unknown as {
 };
 
 /**
- * De quais SETORES este usuário aprova MUDANÇA DE FUNÇÃO (16/09/2026).
+ * De quais SETORES este usuário aprova na DIRETORIA (16/09/2026): mudança
+ * de função, demissão e vaga do escritório / com setor — a mesma
+ * configuração vale pros três fluxos.
  *
  * Painel condicional dentro de Administração › Acesso por Usuário, ao lado
- * dos menus de aprovação da Mudança de Função (operacional_troca_funcao e
- * escritorio_troca_funcao) — mesmo molde do `ReembolsoSetoresUsuario`. Uma
- * configuração só por pessoa: marcar aqui vale pras duas origens.
+ * dos menus de aprovação da Diretoria e da Mudança de Função — mesmo molde
+ * do `ReembolsoSetoresUsuario`. Uma configuração só por pessoa.
+ *
+ * É um FILTRO, não um gate: sem setor marcado a pessoa vê e decide todas as
+ * administrativas; com algum marcado, só as daqueles setores. O banco
+ * repete a régua em aprova_setor() (mig 128).
  *
  * Opt-out, como no Reembolso: sem setor marcado, a pessoa não aprova nenhuma
  * solicitação que tenha setor — mesmo com o menu de aprovação liberado. O
@@ -32,7 +37,9 @@ const sb = supabase as unknown as {
  * encarregado escolhe ao pedir a troca. Oferecer outra lista faria o admin
  * marcar um setor que nunca casaria.
  */
-export const TABELA_STF_APROVADOR_SETOR = "SISTEMA_TROCA_FUNCAO_APROVADOR_SETOR";
+export const TABELA_APROVADOR_SETOR = "SISTEMA_APROVADOR_SETOR";
+/** Nome antigo (mig 125) — a tabela foi renomeada na 127; fica pra quem ainda importa. */
+export const TABELA_STF_APROVADOR_SETOR = TABELA_APROVADOR_SETOR;
 
 export function TrocaFuncaoSetoresUsuario({ userId, onToast }: {
   userId: string;
@@ -80,17 +87,15 @@ export function TrocaFuncaoSetoresUsuario({ userId, onToast }: {
   return (
     <div className="py-1">
       <p className="mb-1.5 text-[11px] text-muted-foreground">
-        Setores cujas mudanças de função <b>este usuário</b> pode aprovar ou reprovar. Vale pras duas
-        origens (contrato e escritório) — é uma configuração só por pessoa.{" "}
-        <b>Sem nenhum setor marcado, a pessoa não aprova nenhuma solicitação que tenha setor</b>, mesmo
-        com o menu de aprovação liberado. Solicitação de contrato sem setor informado continua liberada
-        pelo menu.
+        Setores que <b>este usuário</b> trata na Diretoria — mudança de função, demissão e vaga do
+        escritório / com setor. É um <b>filtro</b>: sem nenhum setor marcado, a pessoa vê e decide todas;
+        com algum marcado, só as daqueles setores. Uma configuração só, que vale pros três fluxos.
       </p>
       <SearchableMultiSelect
         value={[...setores]}
         onChange={aplicar}
         options={catalogo.map((s) => ({ value: s, label: s }))}
-        placeholder="Nenhum setor (não aprova nada com setor)..."
+        placeholder="Todos os setores (sem filtro)..."
       />
     </div>
   );

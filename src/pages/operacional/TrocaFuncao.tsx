@@ -21,7 +21,7 @@ export default function TrocaFuncao() {
         breadcrumb={["Mudança de Função"]}
         actions={<ResumoDeFuncoes fluxo="troca_funcao" />}
       />
-      <PainelTrocaFuncao etapa="aprovacao" />
+      <PainelTrocaFuncao etapa="aprovacao" origem="contrato" />
     </div>
   );
 }
