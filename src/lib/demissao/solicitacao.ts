@@ -182,7 +182,8 @@ export function corDoStatus(status: string): string {
     [STATUS_SST_ASO_VALIDO]: "bg-emerald-100 text-emerald-700 border-emerald-200",
     "Concluída": "bg-green-100 text-green-700 border-green-200",
     "Reprovada": "bg-red-100 text-red-700 border-red-200",
-    "Cancelada": "bg-slate-100 text-slate-600 border-slate-200",
+    // Vermelho (17/09/2026): reconsiderada pelo encarregado — tem que saltar aos olhos.
+    "Cancelada": "bg-red-100 text-red-700 border-red-300",
   };
   return cores[status] ?? "bg-blue-100 text-blue-700 border-blue-200";
 }
@@ -295,6 +296,10 @@ export interface SolicitacaoDemissao {
   rh_observacao: string | null;
   /** Última data trabalhada, informada pelo RH ao liberar pro SST (17/09/2026, mig 181). */
   rh_ultima_data_trabalhada?: string | null;
+  /** Reconsiderada pelo encarregado (17/09/2026, mig 182 — RPC demissao_cancelar). */
+  cancelado_por?: string | null;
+  cancelado_em?: string | null;
+  cancelado_motivo?: string | null;
 
   // ASO demissional. Os nomes são os MESMOS do ASO de admissão
   // (WA_CURRICULOS.sst_*) de propósito: quem trabalha no SST preenche a mesma
@@ -520,3 +525,21 @@ export function mascaraTelefone(v: string): string {
 
 export const telefoneCompleto = (v: string) => v.replace(/\D/g, "").length >= 10;
 export const emailValido = (v: string) => /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(v.trim());
+
+// ── Cancelar (reconsiderar) pelo encarregado ─────────────────────────
+/**
+ * O encarregado pode cancelar a própria solicitação até o SST agendar o ASO:
+ * depois disso o exame já tem custo, e a resposta é a mensagem do banco
+ * (RPC demissao_cancelar repete a regra). `motivo` é o que a tela mostra ao
+ * clicar em Cancelar quando não pode.
+ */
+export const MOTIVO_CANCELAMENTO_MIN = 10;
+export function podeCancelarDemissao(s: Pick<SolicitacaoDemissao, "status">): { ok: boolean; motivo?: string } {
+  if (s.status === STATUS_SST_AGENDADO || s.status === STATUS_SST_ASO_VALIDO) {
+    return { ok: false, motivo: "O ASO demissional já foi agendado — a solicitação não pode mais ser cancelada, porque o exame já tem custo. Fale com o SST." };
+  }
+  if (s.status === "Cancelada") return { ok: false, motivo: "Esta solicitação já foi cancelada." };
+  if (s.status === "Reprovada") return { ok: false, motivo: "Esta solicitação foi reprovada — não há o que cancelar." };
+  if (s.status === "Concluída") return { ok: false, motivo: "Esta demissão já foi concluída." };
+  return { ok: true };
+}

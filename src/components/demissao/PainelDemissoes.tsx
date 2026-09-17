@@ -27,6 +27,7 @@ import {
   ThumbsDown, ThumbsUp, Undo2, XCircle,
 } from "lucide-react";
 import { ConversaSolicitacao } from "@/components/solicitacoes/ConversaSolicitacao";
+import { AvisoCancelada } from "@/components/demissao/CancelarDemissao";
 import { TABELA_APROVADOR_SETOR } from "@/components/admin/TrocaFuncaoSetoresUsuario";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
@@ -639,6 +640,9 @@ function DetalheSolicitacao({ solicitacao, etapa, quemSou, onFechar, onDecidir }
             ["SST (ASO)", s.sst_por ? `${s.sst_por} · ${fmtDataHora(s.sst_em)}` : "—"],
           ]} />
         )}
+
+        {/* Cancelada pelo encarregado (17/09/2026): em vermelho, com o motivo. */}
+        <AvisoCancelada solicitacao={s} />
 
         {/* A devolução vem PRIMEIRO no detalhe, antes de qualquer campo: é a
             única coisa que importa num card que voltou, e enterrá-la no meio

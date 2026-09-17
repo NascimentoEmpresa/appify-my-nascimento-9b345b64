@@ -130,6 +130,7 @@ const VAGA_RESET = {
 
 import { DetalheSolicitacao, type TipoSolicitacao } from "./encarregados/DetalheSolicitacao";
 import { AVISO_REFAZER, podeRefazerFerias } from "@/lib/solicitacoes/feriasRefazer";
+import { BotaoCancelarDemissao } from "@/components/demissao/CancelarDemissao";
 
 // SISTEMA_SOLICITACOES_*, EMPREGADOS, CONTRATOS... não estão no types.ts
 // gerado; mesmo padrão de comite-etica/db.ts — a exceção fica num lugar só.
@@ -1058,6 +1059,11 @@ export default function MinhasSolicitacoes({ abrir, base = "encarregados" }: { a
                           style={{ padding: "4px 10px", borderRadius: 8, border: "1px solid #dbe4f0", background: "#fff", color: "#0f3171", fontSize: 11, fontWeight: 700, cursor: "pointer" }}>
                           📆 Alterar data
                         </button>
+                      )}
+                      {/* Demissão (17/09/2026): reconsiderar — cancela até o ASO ser agendado. */}
+                      {s.tipo === "Demissão" && typeof s.id === "number" && (
+                        <BotaoCancelarDemissao compacto solicitacao={{ id: s.id, status: s.status, colaborador_nome: s.titulo.replace(/^Demissão — /, "") }}
+                          onCancelada={carregarMinhasSols} avisar={(m, t) => toast(m, t)} />
                       )}
                       {/* Reler o que foi pedido e falar com quem está tratando.
                           A conversa é a MESMA que o outro lado enxerga — ver
