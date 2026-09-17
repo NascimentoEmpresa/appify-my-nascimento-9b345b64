@@ -106,6 +106,14 @@ interface Props {
   visualizacoes?: VisualizacaoDiaria[];
   /** `operacional_diarias/aprovar`: decidir, devolver para ajuste. */
   podeDecidir?: boolean;
+  /**
+   * O usuário logado é quem criou esta solicitação. Chega separado de
+   * `podeDecidir` porque o motivo de uma decisão sumir muda o que a tela tem
+   * que dizer: "você não tem permissão" e "esta solicitação é sua" são
+   * recados diferentes, e engolir os dois no mesmo booleano foi o que fez a
+   * tela parecer quebrada (relato de 17/09/2026).
+   */
+  souOSolicitante?: boolean;
   /** `operacional_diarias/excluir`: sem ela, a opção de excluir nem aparece. */
   podeExcluir?: boolean;
   onFechar: () => void;
@@ -483,6 +491,7 @@ export function SolicitacaoDiariaModal({
   salvando,
   visualizacoes = [],
   podeDecidir = false,
+  souOSolicitante = false,
   podeExcluir = false,
   onFechar,
   onSalvar,
@@ -820,9 +829,13 @@ export function SolicitacaoDiariaModal({
    *   excluir  → de tudo menos 'aprovada'/'paga' (virou despesa no Malote;
    *              desfazer é por lá) e 'excluida' (já está).
    */
-  const podeReprovarAgora = podeDecidir && s?.status === "solicitada";
+  // Decidir exige a permissão E não ser o próprio solicitante: diaria_guard()
+  // recusa "quem solicitou não aprova nem reprova a própria" no banco, então
+  // mostrar o botão aqui só produziria um erro no clique.
+  const podeDecidirEsta = podeDecidir && !souOSolicitante;
+  const podeReprovarAgora = podeDecidirEsta && s?.status === "solicitada";
   const podePedirAjusteAgora =
-    podeDecidir && (s?.status === "solicitada" || s?.status === "reprovada");
+    podeDecidirEsta && (s?.status === "solicitada" || s?.status === "reprovada");
   const podeExcluirAgora =
     podeExcluir &&
     !!s &&
@@ -1633,7 +1646,46 @@ export function SolicitacaoDiariaModal({
                 </div>
               </div>
             ) : (
-              <div className="flex flex-wrap items-center justify-center gap-3">
+              <div className="space-y-3">
+                {/* POR QUE faltam opções no menu.
+                    Sem esta linha, quem criou a diária e depois a abria pelo
+                    Operacional via só "Excluir" e nenhuma explicação — parecia
+                    tela quebrada (relato de 17/09/2026). A regra é antiga e é
+                    do banco (diaria_guard); o que faltava era dizê-la. */}
+                {podeDecidir && souOSolicitante && (
+                  <p className="flex items-start gap-2 rounded-md border border-info/30 bg-info/5 px-3 py-2 text-xs text-muted-foreground">
+                    <Info className="mt-0.5 h-3.5 w-3.5 shrink-0 text-info" />
+                    <span>
+                      Aprovar, reprovar e devolver para ajuste não aparecem porque{" "}
+                      <strong className="font-semibold">esta solicitação foi criada por você</strong>.
+                      Quem pede a diária não decide a própria — a decisão é de outro usuário
+                      autorizado do Operacional.
+                    </span>
+                  </p>
+                )}
+                {!podeDecidir && podeExcluirAgora && (
+                  <p className="flex items-start gap-2 rounded-md border border-info/30 bg-info/5 px-3 py-2 text-xs text-muted-foreground">
+                    <Info className="mt-0.5 h-3.5 w-3.5 shrink-0 text-info" />
+                    <span>
+                      Você não tem a permissão de <strong className="font-semibold">Aprovar</strong>{" "}
+                      em Controle de Diárias, então só a exclusão aparece aqui.
+                    </span>
+                  </p>
+                )}
+                {/* O status também tinha explicação no rodapé antigo, e ela
+                    sumia sempre que este menu aparecia. */}
+                {modo !== "aprovar" && s.status === "reprovada" && (
+                  <p className="text-center text-xs text-muted-foreground">
+                    Solicitação reprovada. Devolver para ajuste deixa o solicitante corrigir e
+                    reenviar.
+                  </p>
+                )}
+                {modo !== "aprovar" && s.status === "em_ajuste" && (
+                  <p className="text-center text-xs text-muted-foreground">
+                    Aguardando o ajuste do solicitante — somente ele pode corrigir e reenviar.
+                  </p>
+                )}
+                <div className="flex flex-wrap items-center justify-center gap-3">
                 <DropdownMenu>
                   <DropdownMenuTrigger asChild>
                     <Button
@@ -1700,6 +1752,7 @@ export function SolicitacaoDiariaModal({
                     Fechar
                   </Button>
                 )}
+                </div>
               </div>
             )}
           </div>
