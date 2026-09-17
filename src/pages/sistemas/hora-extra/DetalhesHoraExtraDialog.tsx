@@ -1,12 +1,9 @@
-import { useState } from "react";
-import { Clock3, FileText, Link2, Paperclip } from "lucide-react";
-import { toast } from "sonner";
+import { Clock3, FileText, Link2 } from "lucide-react";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
-import { urlAssinadaHoraExtra } from "@/hooks/useHoraExtra";
-import { cn } from "@/lib/utils";
-import { formatarData, formatarDuracao, mensagemErro, somenteHora } from "./horaExtraUtils";
-import { BadgeExecucao, BadgeStatus } from "./HoraExtraUI";
+import { useDetalheHoraExtra } from "@/hooks/useHoraExtra";
+import { formatarData, formatarDuracao, somenteHora } from "./horaExtraUtils";
+import { BadgeExecucao, BadgeStatus, ListaAnexos } from "./HoraExtraUI";
 import type { SolicitacaoHoraExtra } from "./types";
 
 export default function DetalhesHoraExtraDialog({
@@ -18,39 +15,32 @@ export default function DetalhesHoraExtraDialog({
   aoFechar: () => void;
   solicitacao: SolicitacaoHoraExtra | null;
 }) {
-  const [abrindo, setAbrindo] = useState<string | null>(null);
+  // A linha que veio da lista pode ter sido carregada antes de o upload do
+  // anexo terminar. Reler o detalhe ao abrir é o que garante os arquivos aqui.
+  const { data: atual } = useDetalheHoraExtra(aberto ? solicitacao?.id : null);
   if (!solicitacao) return null;
-  const abrir = async (id: string, caminho: string) => {
-    try {
-      setAbrindo(id);
-      window.open(await urlAssinadaHoraExtra(caminho), "_blank", "noopener,noreferrer");
-    } catch (e: unknown) {
-      toast.error(mensagemErro(e, "Não foi possível abrir o anexo."));
-    } finally {
-      setAbrindo(null);
-    }
-  };
+  const dados = atual ?? solicitacao;
   return (
     <Dialog open={aberto} onOpenChange={(v) => !v && aoFechar()}>
       <DialogContent className="max-h-[92vh] max-w-xl overflow-y-auto">
         <DialogHeader>
           <div className="flex items-center justify-between gap-3 pr-8">
             <DialogTitle className="text-xl text-[#07194b]">Detalhes da Solicitação de HE</DialogTitle>
-            <BadgeStatus solicitacao={solicitacao} />
+            <BadgeStatus solicitacao={dados} />
           </div>
           <DialogDescription>Informações registradas na solicitação e na conclusão.</DialogDescription>
         </DialogHeader>
         <div className="grid grid-cols-2 gap-x-8 gap-y-4 text-sm">
-          <Info rotulo="ID" valor={`#${solicitacao.numero}`} />
-          <Info rotulo="Colaborador" valor={solicitacao.colaborador_nome} />
-          <Info rotulo="Data da HE" valor={formatarData(solicitacao.data_he)} />
-          <Info rotulo="Tipo" valor={solicitacao.tipo === "normal" ? "Normal" : "Emergencial"} />
-          <Info rotulo="Escala de trabalho" valor={solicitacao.escala_nome || "—"} />
+          <Info rotulo="ID" valor={`#${dados.numero}`} />
+          <Info rotulo="Colaborador" valor={dados.colaborador_nome} />
+          <Info rotulo="Data da HE" valor={formatarData(dados.data_he)} />
+          <Info rotulo="Tipo" valor={dados.tipo === "normal" ? "Normal" : "Emergencial"} />
+          <Info rotulo="Escala de trabalho" valor={dados.escala_nome || "—"} />
           <Info
             rotulo="Jornada / trabalhado no dia"
             valor={
-              `${formatarDuracao(solicitacao.jornada_minutos ?? 0, true)} / ` +
-              formatarDuracao(solicitacao.trabalhado_real_min ?? solicitacao.trabalhado_previsto_min ?? 0, true)
+              `${formatarDuracao(dados.jornada_minutos ?? 0, true)} / ` +
+              formatarDuracao(dados.trabalhado_real_min ?? dados.trabalhado_previsto_min ?? 0, true)
             }
           />
         </div>
@@ -60,7 +50,7 @@ export default function DetalhesHoraExtraDialog({
               <FileText className="h-4 w-4" />
               Total previsto
             </div>
-            <div className="mt-2 text-xl font-extrabold">{formatarDuracao(solicitacao.total_previsto_min)}</div>
+            <div className="mt-2 text-xl font-extrabold">{formatarDuracao(dados.total_previsto_min)}</div>
           </div>
           <div className="rounded-lg bg-emerald-50 p-4 text-emerald-700">
             <div className="flex items-center gap-2 text-xs font-semibold">
@@ -68,7 +58,7 @@ export default function DetalhesHoraExtraDialog({
               Total real
             </div>
             <div className="mt-2 text-xl font-extrabold">
-              {solicitacao.total_real_min == null ? "—" : formatarDuracao(solicitacao.total_real_min)}
+              {dados.total_real_min == null ? "—" : formatarDuracao(dados.total_real_min)}
             </div>
           </div>
         </div>
@@ -79,12 +69,12 @@ export default function DetalhesHoraExtraDialog({
           </h3>
           <div className="grid grid-cols-4 gap-2 rounded-lg bg-slate-50 p-3 text-center text-xs">
             {[
-              ["Entrada", solicitacao.ponto_entrada_real || solicitacao.ponto_entrada],
-              ["Saída", solicitacao.ponto_saida_intervalo_real || solicitacao.ponto_saida_intervalo],
-              ["Retorno", solicitacao.ponto_retorno_intervalo_real || solicitacao.ponto_retorno_intervalo],
-              ["Saída", solicitacao.ponto_saida_real || solicitacao.ponto_saida],
-              ["Início da HE", solicitacao.he_inicio_real || solicitacao.he_inicio_previsto],
-              ["Término da HE", solicitacao.he_fim_real || solicitacao.he_fim_previsto],
+              ["Entrada", dados.ponto_entrada_real || dados.ponto_entrada],
+              ["Saída", dados.ponto_saida_intervalo_real || dados.ponto_saida_intervalo],
+              ["Retorno", dados.ponto_retorno_intervalo_real || dados.ponto_retorno_intervalo],
+              ["Saída", dados.ponto_saida_real || dados.ponto_saida],
+              ["Início da HE", dados.he_inicio_real || dados.he_inicio_previsto],
+              ["Término da HE", dados.he_fim_real || dados.he_fim_previsto],
             ].map(([r, v]) => (
               <div key={`${r}-${v}`}>
                 <div className="text-slate-500">{r}</div>
@@ -109,7 +99,7 @@ export default function DetalhesHoraExtraDialog({
                 </tr>
               </thead>
               <tbody>
-                {solicitacao.chamados?.map((c) => (
+                {dados.chamados?.map((c) => (
                   <tr key={c.id} className="border-t">
                     <td className="p-2 font-semibold text-blue-700">
                       #{c.chamado_numero}
@@ -129,33 +119,10 @@ export default function DetalhesHoraExtraDialog({
         <section>
           <h3 className="mb-2 font-bold text-[#07194b]">Observações</h3>
           <div className="rounded-lg border bg-slate-50 p-3 text-sm text-slate-600">
-            {solicitacao.resumo_conclusao || solicitacao.justificativa || "Nenhuma observação informada."}
+            {dados.resumo_conclusao || dados.justificativa || "Nenhuma observação informada."}
           </div>
         </section>
-        {!!solicitacao.anexos?.length && (
-          <section>
-            <h3 className="mb-2 flex items-center gap-2 font-bold text-[#07194b]">
-              <Paperclip className="h-4 w-4" />
-              Anexos
-            </h3>
-            <div className="space-y-2">
-              {solicitacao.anexos.map((a) => (
-                <button
-                  key={a.id}
-                  disabled={abrindo === a.id}
-                  onClick={() => abrir(a.id, a.storage_path)}
-                  className={cn(
-                    "flex w-full items-center justify-between rounded border px-3 py-2",
-                    "text-left text-sm text-blue-700 hover:bg-blue-50",
-                  )}
-                >
-                  <span>{a.nome_arquivo}</span>
-                  <span className="text-xs text-slate-400">{a.fase}</span>
-                </button>
-              ))}
-            </div>
-          </section>
-        )}
+        <ListaAnexos anexos={dados.anexos} />
         <div className="text-right">
           <Button variant="outline" onClick={aoFechar}>
             Fechar

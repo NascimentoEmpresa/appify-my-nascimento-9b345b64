@@ -232,6 +232,11 @@ export function somenteHora(valor?: string | null): string {
   return valor ? valor.slice(0, 5) : "—";
 }
 
+/** Em que etapa o arquivo foi anexado, para a lista de anexos. */
+export function rotuloFaseAnexo(fase: string): string {
+  return fase === "conclusao" ? "Conclusão" : "Solicitação";
+}
+
 export function linhasExcel(solicitacoes: SolicitacaoHoraExtra[]) {
   return solicitacoes.flatMap((solicitacao) => {
     const chamados = solicitacao.chamados?.length ? solicitacao.chamados : [null];
