@@ -6,7 +6,7 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } f
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
-import { enviarAnexosHoraExtra, useConcluirHoraExtra } from "@/hooks/useHoraExtra";
+import { useConcluirHoraExtra, useEnviarAnexosHoraExtra } from "@/hooks/useHoraExtra";
 import {
   calcularHoraExtra,
   diaSemana,
@@ -51,6 +51,7 @@ export default function ConcluirHoraExtraDialog({
   const [linhas, setLinhas] = useState<LinhaConclusao[]>([]);
   const [adicionais, setAdicionais] = useState<LinhaConclusao[]>([]);
   const [arquivos, setArquivos] = useState<File[]>([]);
+  const enviarAnexos = useEnviarAnexosHoraExtra();
   const [seletor, setSeletor] = useState(false);
   const [resumo, setResumo] = useState("");
   const [horarios, setHorarios] = useState({
@@ -175,7 +176,7 @@ export default function ConcluirHoraExtraDialog({
           })),
         },
       });
-      const falhas = await enviarAnexosHoraExtra(solicitacao.id, "conclusao", arquivos);
+      const falhas = await enviarAnexos(solicitacao.id, "conclusao", arquivos);
       if (falhas.length) toast.warning(`Não foi possível anexar: ${falhas.join(", ")}`);
       toast.success("Conclusão enviada para aprovação.");
       aoFechar();
