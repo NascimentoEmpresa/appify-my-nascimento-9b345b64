@@ -2,11 +2,13 @@ import { useMemo, useRef, useState } from "react";
 import {
   AlertCircle,
   CheckCircle2,
+  ChevronDown,
   Clock,
   Eye,
   FileImage,
   FileText,
   Info,
+  PenLine,
   Plus,
   Send,
   Trash2,
@@ -18,6 +20,12 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
@@ -51,13 +59,21 @@ import {
   AnexoDiaria,
   LinhaDiaria,
   SolicitacaoDiaria,
+  StatusSolicitacao,
+  TIPOS_PIX,
   TURNOS,
+  TipoPix,
   TurnoDiaria,
+  VisualizacaoDiaria,
   avaliarConflitos,
   cpfValido,
+  erroChavePix,
   fmtBRL,
+  labelTipoPix,
   labelTurno,
   mascaraCpf,
+  mascaraPix,
+  placeholderPix,
   soDigitos,
   textoConflito,
   valorTotalLinha,
@@ -65,13 +81,19 @@ import {
 } from "./diarias";
 
 /**
- * Um único modal para as três telas aprovadas:
+ * Um único modal para as quatro telas:
  *  - "nova"       → 1.2  formulário editável, com validação de CPF e duplicidade
- *  - "visualizar" → 1.3  solicitação reprovada, somente leitura, sem ações
+ *  - "ajustar"    → o MESMO formulário, preenchido, para quem criou corrigir uma
+ *                   solicitação devolvida pelo Operacional e reenviá-la
+ *  - "visualizar" → 1.3  solicitação decidida, somente leitura, sem ações
  *  - "aprovar"    → 1.4  solicitação solicitada, somente leitura + pré-visualização
- *                        do Malote e os botões de reprovar / aprovar
+ *                        do Malote e as decisões (aprovar / reprovar / devolver
+ *                        para ajuste / excluir)
  */
-export type ModoModalDiaria = "nova" | "visualizar" | "aprovar";
+export type ModoModalDiaria = "nova" | "ajustar" | "visualizar" | "aprovar";
+
+/** O que o Operacional pode fazer além de aprovar, quando clica em "Reprovar". */
+export type DecisaoNegativaDiaria = "reprovar" | "ajuste" | "excluir";
 
 interface Props {
   aberto: boolean;
@@ -80,11 +102,21 @@ interface Props {
   /** Base para checar duplicidade das linhas digitadas. */
   existentes: SolicitacaoDiaria[];
   salvando?: boolean;
+  /** Quem já abriu esta solicitação — o rodapé "Visualizada por...". */
+  visualizacoes?: VisualizacaoDiaria[];
+  /** `operacional_diarias/aprovar`: decidir, devolver para ajuste. */
+  podeDecidir?: boolean;
+  /** `operacional_diarias/excluir`: sem ela, a opção de excluir nem aparece. */
+  podeExcluir?: boolean;
   onFechar: () => void;
   onSalvar: (s: NovaSolicitacaoDiaria) => void;
+  /** Reenvio depois do ajuste. Só existe no modo "ajustar". */
+  onReenviar?: (s: NovaSolicitacaoDiaria & { anexosRemovidos: string[] }) => void;
   /** Recebem o uuid da solicitação (a chave no banco), não o número exibido. */
   onAprovar: (uuid: string, despesa: DespesaAprovacaoDiaria) => Promise<void> | void;
   onReprovar: (uuid: string) => void;
+  onSolicitarAjuste?: (uuid: string, motivo: string) => void;
+  onExcluir?: (uuid: string, motivo: string) => void;
 }
 
 // Zerada: os valores de diária e VT variam por contrato e por dissídio, então
@@ -295,6 +327,42 @@ function Dropzone({
   );
 }
 
+/**
+ * "Visualizada por Fulano em dd/mm/aaaa - hh:mm", no pé da solicitação.
+ *
+ * Uma linha por pessoa, com a PRIMEIRA vez que ela abriu — quem leu, e desde
+ * quando. Da mais recente para a mais antiga, porque a pergunta de quem olha
+ * é "isso já chegou em alguém?", não "quem foi o primeiro".
+ *
+ * Mostra cinco e esconde o resto atrás de um "+N": em solicitação que circulou
+ * pelo Operacional inteiro, a lista completa empurraria o rodapé de ações para
+ * fora da tela — e ela é rodapé, não conteúdo.
+ */
+function VisualizacoesDiaria({ lista }: { lista: VisualizacaoDiaria[] }) {
+  const [tudo, setTudo] = useState(false);
+  if (lista.length === 0) return null;
+  const visiveis = tudo ? lista : lista.slice(0, 5);
+  const ocultas = lista.length - visiveis.length;
+  return (
+    <div className="pt-1">
+      {visiveis.map((v) => (
+        <p key={v.userId} className="text-[10px] leading-relaxed text-muted-foreground">
+          Visualizada por {v.nome} em {v.quando}
+        </p>
+      ))}
+      {ocultas > 0 && (
+        <button
+          type="button"
+          onClick={() => setTudo(true)}
+          className="text-[10px] font-medium text-muted-foreground underline underline-offset-2 hover:text-foreground"
+        >
+          +{ocultas} {ocultas === 1 ? "visualização" : "visualizações"}
+        </button>
+      )}
+    </div>
+  );
+}
+
 /** Situações do cadastro que significam que a pessoa não está mais na empresa. */
 const SITUACOES_DESLIGADO = ["DEMITIDO", "DEMITIDA", "RESCISÃO", "DESLIGADO", "DESLIGADA"];
 
@@ -413,13 +481,23 @@ export function SolicitacaoDiariaModal({
   solicitacao,
   existentes,
   salvando,
+  visualizacoes = [],
+  podeDecidir = false,
+  podeExcluir = false,
   onFechar,
   onSalvar,
+  onReenviar,
   onAprovar,
   onReprovar,
+  onSolicitarAjuste,
+  onExcluir,
 }: Props) {
   const { toast } = useToast();
-  const somenteLeitura = modo !== "nova";
+  // "ajustar" é o MESMO formulário de "nova", preenchido — daí os dois
+  // ficarem do lado editável desta linha. É o que evita manter duas telas de
+  // lançamento de diária que precisariam ser corrigidas em dobro.
+  const editavel = modo === "nova" || modo === "ajustar";
+  const somenteLeitura = !editavel;
 
   // --- estado do formulário (modo "nova") ---------------------------------
   const [contratoId, setContratoId] = useState("");
@@ -431,11 +509,19 @@ export function SolicitacaoDiariaModal({
   const [diaristaCpf, setDiaristaCpf] = useState("");
   const [diaristaEmpregadoId, setDiaristaEmpregadoId] = useState<number | null>(null);
   const [pix, setPix] = useState("");
+  const [pixTipo, setPixTipo] = useState<TipoPix | "">("");
   const [linhas, setLinhas] = useState<LinhaDiaria[]>([linhaVazia()]);
   const [comprovante, setComprovante] = useState<File[]>([]);
   const [documentos, setDocumentos] = useState<File[]>([]);
   const [observacoes, setObservacoes] = useState("");
   const [tentouSalvar, setTentouSalvar] = useState(false);
+  // Anexos que JÁ estão no bucket e a pessoa tirou durante o ajuste. Só saem
+  // do Storage depois de a RPC aceitar o reenvio (ver useAjustarSolicitacaoDiaria).
+  const [anexosRemovidos, setAnexosRemovidos] = useState<string[]>([]);
+  // A decisão negativa em curso (reprovar / devolver / excluir) e o motivo que
+  // o Operacional está escrevendo para ela.
+  const [decisaoNegativa, setDecisaoNegativa] = useState<DecisaoNegativaDiaria | null>(null);
+  const [motivoDecisao, setMotivoDecisao] = useState("");
 
   // Contratos e postos vêm do banco (ver src/hooks/useDiarias.ts). O posto só
   // é buscado depois de escolher o contrato — é uma cascata.
@@ -467,33 +553,92 @@ export function SolicitacaoDiariaModal({
   );
 
   // Reinicia tudo a cada abertura — o modal só existe enquanto `aberto`.
+  //
+  // No modo "ajustar" o formulário nasce PREENCHIDO com o que foi lançado: a
+  // pessoa está corrigindo um ponto específico que o Operacional apontou, não
+  // redigitando a solicitação. Redigitar é onde nasce o segundo erro.
   const chave = `${modo}-${solicitacao?.id ?? "nova"}-${aberto}`;
   const [chaveAtual, setChaveAtual] = useState(chave);
   if (chave !== chaveAtual) {
+    const base = modo === "ajustar" ? solicitacao : null;
     setChaveAtual(chave);
-    setContratoId("");
+    // Contrato e posto são cascata (o posto depende do contrato carregado), e
+    // o posto é escolhido por id — que a solicitação não guarda, só o nome.
+    // Um efeito adiante casa o nome de volta com o id assim que a lista chega.
+    setContratoId(base?.contratoId ?? "");
     setPostoId("");
-    setFaltanteNome("");
-    setFaltanteCpf("");
+    // Os ids de EMPREGADOS voltam nulos porque a solicitação guarda nome e CPF
+    // gravados, não o id (o snapshot é de propósito: o cadastro muda e o
+    // pagamento antigo tem que continuar mostrando para quem foi pago). Isso
+    // deixa os CPFs editáveis no ajuste, o que é o comportamento certo —
+    // trocar a pessoa é justamente um dos motivos de devolver a solicitação.
+    setFaltanteNome(base?.faltanteNome ?? "");
+    setFaltanteCpf(base?.faltanteCpf ?? "");
     setFaltanteEmpregadoId(null);
-    setDiaristaNome("");
-    setDiaristaCpf("");
+    setDiaristaNome(base?.diaristaNome ?? "");
+    setDiaristaCpf(base?.diaristaCpf ?? "");
     setDiaristaEmpregadoId(null);
-    setPix("");
-    setLinhas([linhaVazia()]);
+    setPix(base?.pix ?? "");
+    setPixTipo(base?.pixTipo ?? "");
+    setLinhas(
+      base && base.diarias.length > 0
+        ? base.diarias.map((l) => ({ ...l }))
+        : [linhaVazia()],
+    );
     setComprovante([]);
     setDocumentos([]);
-    setObservacoes("");
+    setAnexosRemovidos([]);
+    setObservacoes(base?.observacoes ?? "");
     setTentouSalvar(false);
+    setDecisaoNegativa(null);
+    setMotivoDecisao("");
   }
+
+  // O posto vem gravado por NOME na solicitação (de propósito: posto renomeado
+  // não pode reescrever o histórico). Para o Select funcionar no ajuste, o id
+  // precisa ser recuperado do catálogo — o que só dá para fazer depois de a
+  // lista do contrato chegar. Se o posto foi desativado no meio do caminho, o
+  // campo fica vazio e a pessoa escolhe outro, que é o comportamento certo.
+  const [postoCasado, setPostoCasado] = useState("");
+  if (modo === "ajustar" && postoCasado !== chave && postos.length > 0 && !postoId) {
+    setPostoCasado(chave);
+    const achado = postos.find((p) => p.nome === solicitacao?.posto);
+    if (achado) setPostoId(achado.id);
+  }
+
+  // Os anexos que já estavam gravados e continuam valendo depois das remoções
+  // feitas nesta sessão de ajuste.
+  const comprovantesMantidos = (solicitacao?.comprovantePonto ?? []).filter(
+    (a) => !anexosRemovidos.includes(a.storagePath),
+  );
+  const documentosMantidos = (solicitacao?.documentos ?? []).filter(
+    (a) => !anexosRemovidos.includes(a.storagePath),
+  );
+
+  /**
+   * A base contra a qual as linhas digitadas são conferidas.
+   *
+   * No ajuste, a própria solicitação sai da base: ela está "em_ajuste", que
+   * OCUPA escala (vai voltar), então deixá-la aqui faria cada linha acusar
+   * duplicidade contra a versão antiga dela mesma — e o reenvio ficaria
+   * travado sem que houvesse conflito nenhum. No banco isso não acontece
+   * porque diaria_editar_solicitacao() apaga as linhas antes de regravar.
+   */
+  const baseConflito = useMemo(
+    () =>
+      modo === "ajustar" && solicitacao
+        ? existentes.filter((x) => x.uuid !== solicitacao.uuid)
+        : existentes,
+    [modo, existentes, solicitacao],
+  );
 
   const conflitos = useMemo(
     () =>
       avaliarConflitos(
         { faltanteCpf, diaristaCpf, linhas: linhas.map((l) => ({ data: l.data, turno: l.turno })) },
-        existentes,
+        baseConflito,
       ),
-    [faltanteCpf, diaristaCpf, linhas, existentes],
+    [faltanteCpf, diaristaCpf, linhas, baseConflito],
   );
 
   const temConflito = conflitos.some(Boolean);
@@ -501,17 +646,22 @@ export function SolicitacaoDiariaModal({
   const cpfsOk = cpfValido(faltanteCpf) && cpfValido(diaristaCpf);
   const pessoasDiferentes =
     soDigitos(faltanteCpf) !== "" && soDigitos(faltanteCpf) !== soDigitos(diaristaCpf);
+  const erroPix = erroChavePix(pixTipo, pix);
+  // No ajuste, o anexo que já está gravado conta: exigir upload novo obrigaria
+  // a pessoa a reenviar o comprovante de ponto para corrigir um valor de VT.
+  const totalComprovantes = comprovante.length + comprovantesMantidos.length;
+  const totalDocumentos = documentos.length + documentosMantidos.length;
   const camposOk =
     !!contratoId &&
     !!postoId &&
     !!faltanteNome.trim() &&
     !!diaristaNome.trim() &&
-    !!pix.trim() &&
+    !erroPix &&
     cpfsOk &&
     pessoasDiferentes &&
     linhasPreenchidas &&
-    comprovante.length > 0 &&
-    documentos.length > 0;
+    totalComprovantes > 0 &&
+    totalDocumentos > 0;
   const podeSalvar = camposOk && !temConflito;
 
   const totalGeral = linhas.reduce((acc, l) => acc + valorTotalLinha(l), 0);
@@ -546,7 +696,7 @@ export function SolicitacaoDiariaModal({
       });
       return;
     }
-    onSalvar({
+    const dados: NovaSolicitacaoDiaria = {
       contratoId,
       postoId: postoId || null,
       postoNome: posto,
@@ -557,6 +707,7 @@ export function SolicitacaoDiariaModal({
       diaristaNome: diaristaNome.trim(),
       diaristaCpf,
       pix: pix.trim(),
+      pixTipo,
       observacoes: observacoes.trim(),
       linhas: linhas.map((l) => ({
         data: l.data,
@@ -567,7 +718,37 @@ export function SolicitacaoDiariaModal({
       })),
       comprovantePonto: comprovante,
       documentos,
-    });
+    };
+    if (modo === "ajustar") onReenviar?.({ ...dados, anexosRemovidos });
+    else onSalvar(dados);
+  };
+
+  /**
+   * Confirma a decisão negativa escolhida no menu de "Reprovar".
+   *
+   * Devolver para ajuste e excluir EXIGEM motivo escrito — o primeiro porque é
+   * literalmente a instrução que o solicitante vai seguir, o segundo porque é
+   * o que fica na trilha de uma solicitação de pagamento que sumiu da lista.
+   * Reprovar continua sem campo, como sempre foi: o banco não guarda motivo de
+   * reprovação, e inventar um aqui seria texto que ninguém leria.
+   */
+  const confirmarDecisao = () => {
+    if (!solicitacao || !decisaoNegativa) return;
+    if (decisaoNegativa === "reprovar") {
+      onReprovar(solicitacao.uuid);
+      return;
+    }
+    const motivo = motivoDecisao.trim();
+    if (!motivo) {
+      toast({
+        title: "Escreva o motivo",
+        description: "É o que o solicitante vai ler para saber o que fazer.",
+        variant: "destructive",
+      });
+      return;
+    }
+    if (decisaoNegativa === "ajuste") onSolicitarAjuste?.(solicitacao.uuid, motivo);
+    else onExcluir?.(solicitacao.uuid, motivo);
   };
 
   // --- cabeçalho -----------------------------------------------------------
@@ -579,38 +760,85 @@ export function SolicitacaoDiariaModal({
       ? "Gerado automaticamente ao salvar"
       : `Criado em ${solicitacao?.criadoEm ?? ""}`;
 
-  const badgeStatus =
-    modo === "nova" ? null : solicitacao?.status === "reprovada" ? (
-      <Badge
-        variant="outline"
-        className="gap-1.5 border-destructive/40 bg-destructive/10 px-2.5 py-1 text-xs font-semibold text-destructive"
-      >
-        <XCircle className="h-3.5 w-3.5" /> Reprovado
-      </Badge>
-    ) : solicitacao?.status === "solicitada" ? (
-      <Badge
-        variant="outline"
-        className="gap-1.5 border-warning/40 bg-warning/10 px-2.5 py-1 text-xs font-semibold text-warning"
-      >
-        <Clock className="h-3.5 w-3.5" /> Solicitada
-      </Badge>
-    ) : solicitacao?.status === "paga" ? (
-      <Badge
-        variant="outline"
-        className="gap-1.5 border-primary/40 bg-primary/10 px-2.5 py-1 text-xs font-semibold text-primary"
-      >
-        <CheckCircle2 className="h-3.5 w-3.5" /> Paga
-      </Badge>
-    ) : (
-      <Badge
-        variant="outline"
-        className="gap-1.5 border-success/40 bg-success/10 px-2.5 py-1 text-xs font-semibold text-success"
-      >
-        <CheckCircle2 className="h-3.5 w-3.5" /> Aprovada
+  // Um mapa em vez da escada de ternários que existia aqui: com seis status,
+  // a escada ficou ilegível e cada novo estado pedia mais um degrau.
+  const BADGE_STATUS: Record<
+    StatusSolicitacao,
+    { icone: typeof Clock; texto: string; cls: string }
+  > = {
+    solicitada: {
+      icone: Clock,
+      texto: "Solicitada",
+      cls: "border-warning/40 bg-warning/10 text-warning",
+    },
+    em_ajuste: {
+      icone: PenLine,
+      texto: "Em ajuste",
+      cls: "border-info/40 bg-info/10 text-info",
+    },
+    aprovada: {
+      icone: CheckCircle2,
+      texto: "Aprovada",
+      cls: "border-success/40 bg-success/10 text-success",
+    },
+    paga: {
+      icone: CheckCircle2,
+      texto: "Paga",
+      cls: "border-primary/40 bg-primary/10 text-primary",
+    },
+    reprovada: {
+      icone: XCircle,
+      texto: "Reprovado",
+      cls: "border-destructive/40 bg-destructive/10 text-destructive",
+    },
+    excluida: {
+      icone: Trash2,
+      texto: "Excluída",
+      cls: "border-muted-foreground/40 bg-muted text-muted-foreground",
+    },
+  };
+
+  const badgeStatus = (() => {
+    if (modo === "nova" || !solicitacao) return null;
+    const { icone: Icone, texto, cls } = BADGE_STATUS[solicitacao.status];
+    return (
+      <Badge variant="outline" className={cn("gap-1.5 px-2.5 py-1 text-xs font-semibold", cls)}>
+        <Icone className="h-3.5 w-3.5" /> {texto}
       </Badge>
     );
+  })();
 
   const s = solicitacao;
+
+  /**
+   * Quais decisões negativas cabem NESTE estado. Espelham exatamente o que o
+   * banco aceita — oferecer um botão que a RPC vai recusar é pior do que não
+   * ter botão:
+   *
+   *   reprovar → só de 'solicitada' (diaria_guard exige OLD.status assim).
+   *   ajuste   → de 'solicitada' e de 'reprovada' (diaria_solicitar_ajuste).
+   *   excluir  → de tudo menos 'aprovada'/'paga' (virou despesa no Malote;
+   *              desfazer é por lá) e 'excluida' (já está).
+   */
+  const podeReprovarAgora = podeDecidir && s?.status === "solicitada";
+  const podePedirAjusteAgora =
+    podeDecidir && (s?.status === "solicitada" || s?.status === "reprovada");
+  const podeExcluirAgora =
+    podeExcluir &&
+    !!s &&
+    s.status !== "aprovada" &&
+    s.status !== "paga" &&
+    s.status !== "excluida";
+
+  /**
+   * A reprovada "fica ali parada" — era o relato. Abrir uma solicitação já
+   * reprovada não oferecia saída nenhuma: nem devolver para ajuste, nem tirar
+   * da lista. A devolvida para ajuste tinha o mesmo destino se o solicitante
+   * simplesmente nunca a corrigisse.
+   */
+  const mostraDecisoes =
+    modo === "visualizar" &&
+    (podeReprovarAgora || podePedirAjusteAgora || podeExcluirAgora);
 
   return (
     <Dialog open={aberto} onOpenChange={(o) => !o && onFechar()}>
@@ -632,6 +860,41 @@ export function SolicitacaoDiariaModal({
         </div>
 
         <div className="min-w-[68rem] space-y-4 px-6 pb-6">
+          {/* O que o Operacional pediu. Fica ANTES da seção 1 de propósito:
+              quem abre uma solicitação devolvida está procurando exatamente
+              isto, e achar depois de rolar seis seções é achar tarde. */}
+          {s?.status === "em_ajuste" && s.ajusteMotivo && (
+            <div className="flex items-start gap-2.5 rounded-lg border border-info/40 bg-info/5 px-4 py-3">
+              <PenLine className="mt-0.5 h-4 w-4 shrink-0 text-info" />
+              <div className="min-w-0">
+                <p className="text-sm font-semibold text-info">
+                  {modo === "ajustar"
+                    ? "Esta solicitação voltou para ajuste"
+                    : "Devolvida para ajuste do solicitante"}
+                </p>
+                <p className="mt-0.5 whitespace-pre-line text-sm">{s.ajusteMotivo}</p>
+                <p className="mt-1 text-[11px] text-muted-foreground">
+                  Pedido por {s.ajustePedidoPor ?? "—"}
+                  {s.ajustePedidoEm ? ` em ${s.ajustePedidoEm}` : ""}
+                </p>
+              </div>
+            </div>
+          )}
+
+          {s?.status === "excluida" && (
+            <div className="flex items-start gap-2.5 rounded-lg border border-border bg-muted px-4 py-3">
+              <Trash2 className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
+              <div className="min-w-0">
+                <p className="text-sm font-semibold">Solicitação excluída</p>
+                <p className="mt-0.5 whitespace-pre-line text-sm">{s.exclusaoMotivo ?? "—"}</p>
+                <p className="mt-1 text-[11px] text-muted-foreground">
+                  Excluída por {s.excluidaPor ?? "—"}
+                  {s.excluidaEm ? ` em ${s.excluidaEm}` : ""}
+                </p>
+              </div>
+            </div>
+          )}
+
           {/* 1. Informações gerais */}
           <Secao numero={1} titulo="Informações gerais">
             <div className="grid gap-4 sm:grid-cols-2">
@@ -778,7 +1041,13 @@ export function SolicitacaoDiariaModal({
                 <>
                   <Leitura label="Nome do diarista" valor={s?.diaristaNome} />
                   <Leitura label="CPF do diarista" valor={s?.diaristaCpf} />
-                  <Leitura label="Pix" valor={s?.pix} />
+                  {/* O tipo entra no rótulo, não numa linha só dele: quem
+                      confere o pagamento precisa saber se aquele número é CPF
+                      ou telefone, e isso não cabe adivinhar pelo formato. */}
+                  <Leitura
+                    label={s?.pixTipo ? `Pix (${labelTipoPix(s.pixTipo)})` : "Pix"}
+                    valor={s?.pix}
+                  />
                 </>
               ) : (
                 <>
@@ -829,12 +1098,51 @@ export function SolicitacaoDiariaModal({
                       )}
                     />
                   </Campo>
-                  <Campo label="Pix" obrigatorio erro={erro(!pix.trim(), "Informe a chave Pix.")}>
-                    <Input
-                      value={pix}
-                      onChange={(e) => setPix(e.target.value)}
-                      placeholder="Digite o e-mail, CPF, telefone ou chave Pix"
-                    />
+                  {/* O tipo vem ANTES da chave: é ele que decide o que o campo
+                      pede, como formata e o que recusa. Chave Pix errada é
+                      dinheiro na conta de outra pessoa, e o erro só aparece
+                      depois do pagamento. */}
+                  <Campo label="Chave Pix" obrigatorio erro={erro(!!erroPix, erroPix ?? "")}>
+                    <div className="flex gap-2">
+                      <Select
+                        value={pixTipo}
+                        onValueChange={(v) => {
+                          const novo = v as TipoPix;
+                          setPixTipo(novo);
+                          // A chave digitada para o tipo anterior não vale para
+                          // o novo (um CPF mascarado não vira e-mail). Reformata
+                          // o que dá e deixa o resto para a validação.
+                          setPix((atual) => mascaraPix(novo, atual));
+                        }}
+                      >
+                        <SelectTrigger className="w-32 shrink-0">
+                          <SelectValue placeholder="Tipo" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {TIPOS_PIX.map((t) => (
+                            <SelectItem key={t.value} value={t.value}>
+                              {t.label}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                      <Input
+                        value={pix}
+                        onChange={(e) => setPix(mascaraPix(pixTipo, e.target.value))}
+                        placeholder={placeholderPix(pixTipo)}
+                        disabled={!pixTipo}
+                        inputMode={
+                          pixTipo === "email" || !pixTipo ? undefined : "numeric"
+                        }
+                        className={cn(
+                          "min-w-0 flex-1",
+                          // Erra só depois de a pessoa ter digitado algo: campo
+                          // vazio com borda vermelha ao abrir o modal é ruído.
+                          !!pix.trim() && !!erroPix &&
+                            "border-destructive focus-visible:ring-destructive",
+                        )}
+                      />
+                    </div>
                   </Campo>
                 </>
               )}
@@ -1070,18 +1378,87 @@ export function SolicitacaoDiariaModal({
                 <p className="text-right text-[11px] text-muted-foreground">
                   Ambos os anexos são obrigatórios para aceitar a solicitação.
                 </p>
+                {/* No ajuste, o que já subiu CONTINUA valendo: exigir reenvio do
+                    comprovante de ponto para corrigir um valor de VT faria a
+                    pessoa caçar de novo um arquivo que já está lá. Remover é
+                    ato explícito, e só acontece de verdade depois que o
+                    reenvio é aceito. */}
+                {modo === "ajustar" &&
+                  (comprovantesMantidos.length > 0 || documentosMantidos.length > 0) && (
+                    <div className="space-y-3 rounded-md border border-border bg-muted/30 p-3">
+                      {/* Separado por categoria porque AnexoLinha não diz qual
+                          é qual, e o que o Operacional devolve costuma ser
+                          exatamente "o comprovante de ponto está errado". */}
+                      {(
+                        [
+                          ["Comprovante do ponto já anexado", comprovantesMantidos],
+                          ["Documentos já anexados", documentosMantidos],
+                        ] as const
+                      ).map(([titulo, itens]) =>
+                        itens.length === 0 ? null : (
+                          <div key={titulo} className="space-y-2">
+                            <p className="text-[11px] font-medium text-muted-foreground">
+                              {titulo}
+                            </p>
+                            {itens.map((a) => (
+                              <div key={a.storagePath} className="flex items-center gap-2">
+                                <div className="min-w-0 flex-1">
+                                  <AnexoLinha a={a} />
+                                </div>
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  className="h-8 w-8 shrink-0 text-destructive"
+                                  onClick={() =>
+                                    setAnexosRemovidos((p) => [...p, a.storagePath])
+                                  }
+                                  aria-label={`Remover ${a.nome}`}
+                                >
+                                  <Trash2 className="h-4 w-4" />
+                                </Button>
+                              </div>
+                            ))}
+                          </div>
+                        ),
+                      )}
+                    </div>
+                  )}
+                {modo === "ajustar" && anexosRemovidos.length > 0 && (
+                  <div className="flex items-center justify-between gap-3 rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2">
+                    <p className="text-[11px] text-destructive">
+                      {anexosRemovidos.length}{" "}
+                      {anexosRemovidos.length === 1 ? "anexo será removido" : "anexos serão removidos"}{" "}
+                      ao reenviar.
+                    </p>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="h-7 text-[11px]"
+                      onClick={() => setAnexosRemovidos([])}
+                    >
+                      Desfazer
+                    </Button>
+                  </div>
+                )}
                 <Dropzone
-                  label="Comprovante do ponto"
+                  label={modo === "ajustar" ? "Novo comprovante do ponto" : "Comprovante do ponto"}
                   arquivos={comprovante}
                   onAdicionar={(f) => anexarArquivos(f, setComprovante)}
                   onRemover={(n) => setComprovante((p) => p.filter((a) => a.nome !== n))}
                 />
                 <Dropzone
-                  label="Documentos"
+                  label={modo === "ajustar" ? "Novos documentos" : "Documentos"}
                   arquivos={documentos}
                   onAdicionar={(f) => anexarArquivos(f, setDocumentos)}
                   onRemover={(n) => setDocumentos((p) => p.filter((a) => a.nome !== n))}
                 />
+                {tentouSalvar && (totalComprovantes === 0 || totalDocumentos === 0) && (
+                  <p className="text-[11px] font-medium text-destructive">
+                    {totalComprovantes === 0
+                      ? "Anexe o comprovante do ponto."
+                      : "Anexe ao menos um documento."}
+                  </p>
+                )}
               </div>
             )}
           </Secao>
@@ -1145,6 +1522,8 @@ export function SolicitacaoDiariaModal({
               )}
             </Secao>
           )}
+
+          <VisualizacoesDiaria lista={visualizacoes} />
         </div>
 
         {/* Rodapé */}
@@ -1167,37 +1546,180 @@ export function SolicitacaoDiariaModal({
           </div>
         )}
 
-        {modo === "aprovar" && s && (
-          <div className="sticky bottom-0 flex min-w-[68rem] flex-wrap items-center justify-center gap-3 border-t border-border bg-background px-6 py-4">
-            <Button
-              variant="outline"
-              className="border-destructive/50 text-destructive hover:bg-destructive/10 hover:text-destructive"
-              disabled={salvando}
-              onClick={() => onReprovar(s.uuid)}
-            >
-              <X className="mr-2 h-4 w-4" /> Reprovar solicitação
-            </Button>
-            <Button
-              type="submit"
-              form={FORM_ID_PAINEL_DESPESA_DIARIA}
-              disabled={salvando || !empresaContratoId || !classificacaoDiaria}
-            >
-              <Send className="mr-2 h-4 w-4" /> Aprovar e enviar para malote
-            </Button>
+        {modo === "ajustar" && (
+          <div className="sticky bottom-0 min-w-[68rem] border-t border-border bg-background px-6 py-4">
+            <div className="flex flex-wrap items-center justify-end gap-3">
+              <Button variant="outline" onClick={onFechar}>
+                Cancelar
+              </Button>
+              <Button onClick={salvar} disabled={temConflito || salvando}>
+                <Send className="mr-2 h-4 w-4" />
+                {salvando ? "Enviando anexos e salvando..." : "Reenviar para aprovação"}
+              </Button>
+            </div>
+            <p className="mt-2 text-right text-[11px] text-muted-foreground">
+              Ao reenviar, a solicitação volta para “Solicitada” e o Operacional decide de novo.
+            </p>
+            {temConflito && (
+              <p className="mt-1 text-right text-[11px] font-medium text-destructive">
+                Corrija as duplicidades para habilitar o reenvio.
+              </p>
+            )}
           </div>
         )}
 
-        {modo === "visualizar" && (
+        {(modo === "aprovar" || mostraDecisoes) && s && (
+          <div className="sticky bottom-0 min-w-[68rem] border-t border-border bg-background px-6 py-4">
+            {/* O painel de motivo toma o lugar dos botões enquanto está aberto:
+                as duas decisões que pedem texto (devolver e excluir) são as que
+                mais precisam de um momento de parada antes do clique final. */}
+            {decisaoNegativa ? (
+              <div className="space-y-3">
+                <p className="text-sm font-semibold">
+                  {decisaoNegativa === "reprovar"
+                    ? "Reprovar esta solicitação?"
+                    : decisaoNegativa === "ajuste"
+                      ? "O que precisa ser ajustado?"
+                      : "Por que esta solicitação está sendo excluída?"}
+                </p>
+                {decisaoNegativa === "reprovar" ? (
+                  <p className="text-xs text-muted-foreground">
+                    Ela fica registrada como reprovada. Se a ideia é que o solicitante corrija e
+                    reenvie, use “Solicitar ajuste” — ele recebe uma notificação com o que mudar.
+                  </p>
+                ) : (
+                  <>
+                    <Textarea
+                      value={motivoDecisao}
+                      maxLength={500}
+                      rows={3}
+                      autoFocus
+                      onChange={(e) => setMotivoDecisao(e.target.value)}
+                      placeholder={
+                        decisaoNegativa === "ajuste"
+                          ? "Ex.: o comprovante de ponto é de outro dia; corrija e reenvie."
+                          : "Ex.: lançamento duplicado do mesmo diarista."
+                      }
+                    />
+                    <p className="text-[11px] text-muted-foreground">
+                      {decisaoNegativa === "ajuste"
+                        ? `${s.solicitante} recebe este texto como notificação e ajusta a solicitação pela tela de Encarregados.`
+                        : "A solicitação sai da lista, mas continua no histórico com este motivo."}
+                    </p>
+                  </>
+                )}
+                <div className="flex flex-wrap items-center justify-end gap-3">
+                  <Button
+                    variant="outline"
+                    disabled={salvando}
+                    onClick={() => {
+                      setDecisaoNegativa(null);
+                      setMotivoDecisao("");
+                    }}
+                  >
+                    Voltar
+                  </Button>
+                  <Button
+                    variant={decisaoNegativa === "ajuste" ? "default" : "destructive"}
+                    disabled={salvando}
+                    onClick={confirmarDecisao}
+                  >
+                    {decisaoNegativa === "reprovar"
+                      ? "Confirmar reprovação"
+                      : decisaoNegativa === "ajuste"
+                        ? "Devolver para ajuste"
+                        : "Excluir solicitação"}
+                  </Button>
+                </div>
+              </div>
+            ) : (
+              <div className="flex flex-wrap items-center justify-center gap-3">
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button
+                      variant="outline"
+                      className="border-destructive/50 text-destructive hover:bg-destructive/10 hover:text-destructive"
+                      disabled={salvando}
+                    >
+                      <X className="mr-2 h-4 w-4" />
+                      {/* Na decisão do dia (modo "aprovar") o botão é o par do
+                          "Aprovar", e o rótulo tem que ser "Reprovar" — foi
+                          exatamente daí que veio o pedido. Numa solicitação já
+                          decidida, reprovar não é mais uma das opções, e
+                          chamar o menu de "Reprovar" seria mentira. */}
+                      {modo === "aprovar" ? "Reprovar" : "Ações"}
+                      <ChevronDown className="ml-2 h-4 w-4" />
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="center" className="w-72">
+                    {podeReprovarAgora && (
+                      <DropdownMenuItem onClick={() => setDecisaoNegativa("reprovar")}>
+                        <XCircle className="mr-2 h-4 w-4 text-destructive" />
+                        <div>
+                          <p className="text-sm">Reprovar solicitação</p>
+                          <p className="text-[11px] text-muted-foreground">
+                            Encerra o pedido como reprovado.
+                          </p>
+                        </div>
+                      </DropdownMenuItem>
+                    )}
+                    {podePedirAjusteAgora && (
+                      <DropdownMenuItem onClick={() => setDecisaoNegativa("ajuste")}>
+                        <PenLine className="mr-2 h-4 w-4 text-info" />
+                        <div>
+                          <p className="text-sm">Solicitar ajuste</p>
+                          <p className="text-[11px] text-muted-foreground">
+                            Devolve a quem criou, com o que precisa mudar.
+                          </p>
+                        </div>
+                      </DropdownMenuItem>
+                    )}
+                    {podeExcluirAgora && (
+                      <DropdownMenuItem onClick={() => setDecisaoNegativa("excluir")}>
+                        <Trash2 className="mr-2 h-4 w-4 text-destructive" />
+                        <div>
+                          <p className="text-sm">Excluir solicitação</p>
+                          <p className="text-[11px] text-muted-foreground">
+                            Tira da lista; o histórico continua registrado.
+                          </p>
+                        </div>
+                      </DropdownMenuItem>
+                    )}
+                  </DropdownMenuContent>
+                </DropdownMenu>
+                {modo === "aprovar" ? (
+                  <Button
+                    type="submit"
+                    form={FORM_ID_PAINEL_DESPESA_DIARIA}
+                    disabled={salvando || !empresaContratoId || !classificacaoDiaria}
+                  >
+                    <Send className="mr-2 h-4 w-4" /> Aprovar e enviar para malote
+                  </Button>
+                ) : (
+                  <Button variant="outline" onClick={onFechar}>
+                    Fechar
+                  </Button>
+                )}
+              </div>
+            )}
+          </div>
+        )}
+
+        {modo === "visualizar" && !mostraDecisoes && (
           <div className="sticky bottom-0 flex min-w-[68rem] items-center justify-between gap-3 border-t border-border bg-background px-6 py-4">
             <p className="flex items-center gap-2 text-xs text-muted-foreground">
               <UserX className="h-3.5 w-3.5" />
               {s?.status === "reprovada"
                 ? "Solicitação reprovada — somente visualização."
-                : s?.status === "paga"
-                  ? "Solicitação paga no Malote — somente visualização."
-                  : s?.status === "aprovada"
-                  ? "Solicitação aprovada — somente visualização."
-                  : "Solicitação aguardando aprovação — a decisão deve ser feita por outro usuário autorizado."}
+                : s?.status === "excluida"
+                  ? "Solicitação excluída — somente visualização."
+                  : s?.status === "em_ajuste"
+                    ? "Aguardando o ajuste do solicitante — somente ele pode corrigir e reenviar."
+                    : s?.status === "paga"
+                      ? "Solicitação paga no Malote — somente visualização."
+                      : s?.status === "aprovada"
+                        ? "Solicitação aprovada — somente visualização."
+                        : "Solicitação aguardando aprovação — a decisão deve ser feita por outro usuário autorizado."}
             </p>
             <Button variant="outline" onClick={onFechar}>
               Fechar
