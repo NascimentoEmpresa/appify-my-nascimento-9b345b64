@@ -64,18 +64,17 @@ describe("Diárias — 'aprovar' não pega carona no toggle", () => {
 });
 
 describe("catálogo de exceções", () => {
-  it("só as duas portas de Diárias abrem exceção hoje", () => {
+  it("Diárias (as duas portas) e o Parecer Jurídico são as exceções hoje", () => {
     expect(Object.keys(ACOES_FORA_DO_TOGGLE).sort()).toEqual([
+      "duvidas",
       "encarregados_diarias",
       "operacional_diarias",
     ]);
   });
 
-  it("toda ação excluída pertence ao pacote — excluir o que não está nele não faria nada", () => {
-    for (const acoes of Object.values(ACOES_FORA_DO_TOGGLE)) {
-      for (const acao of acoes) {
-        expect(ACOES_DO_TOGGLE_PADRAO).toContain(acao);
-      }
-    }
+  it("ação fora do pacote (responder) pode estar na exceção: ligar não a concede, DESLIGAR revoga", () => {
+    expect(acoesGravadasPeloToggle("duvidas", true)).not.toContain("responder");
+    expect(acoesGravadasPeloToggle("duvidas", true)).toEqual([...ACOES_DO_TOGGLE_PADRAO]);
+    expect(acoesGravadasPeloToggle("duvidas", false)).toContain("responder");
   });
 });

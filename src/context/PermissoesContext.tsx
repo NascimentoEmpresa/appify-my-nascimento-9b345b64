@@ -41,7 +41,8 @@ export type Acao =
   | "excluir"
   | "aprovar"
   | "exportar"
-  | "executar_ia";
+  | "executar_ia"
+  | "responder";
 
 interface UserOverride {
   menu: string;

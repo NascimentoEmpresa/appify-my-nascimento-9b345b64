@@ -583,6 +583,10 @@ const encarregadosModule: ModuleDef = {
       defaultOpen: true,
       items: [
         { label: "Solicitar Advertência", to: "/app/encarregados/advertencia", icon: ShieldAlert },
+        // A mesma tela da Central de Serviços, com menu próprio
+        // (`encarregados_orientacoes`): o encarregado vê todas as respostas do
+        // Jurídico e as próprias perguntas sem sair do módulo dele (17/09/2026).
+        { label: "Orientações Jurídicas", to: "/app/encarregados/orientacoes-juridicas", icon: BookOpen },
       ],
     },
     {
