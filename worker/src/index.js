@@ -10,6 +10,7 @@ const { sincronizarNfe } = require("./nfe");
 const { darCienciaPendentes } = require("./nfeCiencia");
 const { enviarPedidosPendentes } = require("./pedidoFornecedor");
 const { alertarErroWhatsapp } = require("./discordAlert");
+const { processarJobsExtratorBeneficios } = require("./extratorBeneficios");
 
 const CICLO_MS = 60_000;
 
@@ -82,6 +83,13 @@ async function rodarTarefas(waClient, transportador) {
     await darCienciaPendentes(supabase);
   } catch (e) {
     console.error("[worker] erro no ciclo de Ciencia da Operacao:", e);
+  }
+  try {
+    // SIS-2026-0427: extrator de VA/VT (UFRGS/SAMU/SMS/TJ) — le PDF/Excel
+    // do Storage, gera a planilha final, grava o resultado no job.
+    await processarJobsExtratorBeneficios(supabase);
+  } catch (e) {
+    console.error("[worker] erro no ciclo do extrator de beneficios:", e);
   }
 }
 
