@@ -7,6 +7,7 @@ import {
   ClipboardList,
   Eye,
   MoreVertical,
+  Paperclip,
   PenLine,
   Plus,
   RotateCcw,
@@ -575,9 +576,20 @@ export default function ControleDiarias({
                     <TableCell className="text-right">{fmtBRL(l.valorDiaria)}</TableCell>
                     <TableCell className="text-right font-medium">{fmtBRL(l.valorTotal)}</TableCell>
                     <TableCell>
-                      <Badge variant="outline" className={cn("text-[10px] font-semibold", st.cls)}>
-                        {st.label}
-                      </Badge>
+                      <span className="flex items-center gap-1">
+                        <Badge variant="outline" className={cn("text-[10px] font-semibold", st.cls)}>
+                          {st.label}
+                        </Badge>
+                        {/* "Paga" sozinho não diz se o comprovante chegou — e
+                            é o comprovante que fecha a conferência. O clipe
+                            aparece só quando o arquivo existe de verdade. */}
+                        {l.solicitacao.comprovantesPagamento.length > 0 && (
+                          <Paperclip
+                            className="h-3 w-3 shrink-0 text-success"
+                            aria-label="Comprovante de pagamento anexado"
+                          />
+                        )}
+                      </span>
                     </TableCell>
                     <TableCell className="text-right" onClick={(e) => e.stopPropagation()}>
                       <div className="flex items-center justify-end gap-0.5">

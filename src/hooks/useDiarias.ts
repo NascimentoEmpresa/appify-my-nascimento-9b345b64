@@ -179,9 +179,19 @@ interface SolicitacaoDiariaBanco {
   exclusao_motivo: string | null;
   excluida_por_nome: string | null;
   excluida_em: string | null;
+  /** Coluna computada (20260930000169): os comprovantes do pagamento no Malote. */
+  diaria_comprovantes_pagamento: ComprovantePagamentoBanco[] | null;
   created_at: string;
   linhas: LinhaDiariaBanco[] | null;
   anexos: AnexoDiariaBanco[] | null;
+}
+
+interface ComprovantePagamentoBanco {
+  rotulo: string | null;
+  storage_path: string | null;
+  pago_em: string | null;
+  pago_por: string | null;
+  observacao: string | null;
 }
 
 interface VisualizacaoDiariaBanco {
@@ -312,7 +322,7 @@ export function useSolicitacoesDiaria(apenasMinhas = false) {
            observacoes, valor_total_centavos, solicitante_id, solicitante_nome,
            malote_motivo, malote_data_pagamento, created_at, malote_despesa_paga,
            ajuste_motivo, ajuste_pedido_por_nome, ajuste_pedido_em,
-           exclusao_motivo, excluida_por_nome, excluida_em,
+           exclusao_motivo, excluida_por_nome, excluida_em, diaria_comprovantes_pagamento,
            linhas:DIARIA_LINHA ( id, data, turno, qt_vt, valor_unit_vt_centavos, valor_diaria_centavos ),
            anexos:DIARIA_ANEXO ( id, categoria, storage_path, nome_arquivo, mime_type, tamanho_bytes, created_at )`,
         )
@@ -661,6 +671,23 @@ export async function urlAnexoDiaria(storagePath: string) {
   return data.signedUrl;
 }
 
+/**
+ * Link temporário para o comprovante de pagamento.
+ *
+ * Bucket DIFERENTE do resto: o comprovante é do Malote e nunca foi copiado
+ * para cá (o porquê está no cabeçalho de 20260930000169). Quem libera a
+ * leitura é a policy "diaria comprovante pagamento select", que permite
+ * exatamente os objetos que são comprovante de uma diária que a pessoa já
+ * enxerga — um encarregado só abre o da própria diária.
+ */
+export async function urlComprovantePagamentoDiaria(storagePath: string) {
+  const { data, error } = await supabase.storage
+    .from("malote-anexos")
+    .createSignedUrl(storagePath, 300);
+  if (error) throw error;
+  return data.signedUrl;
+}
+
 // ── Apoio ────────────────────────────────────────────────────────────
 
 /** O que a cópia para o Malote precisa saber de cada anexo da diária. */
@@ -831,5 +858,16 @@ function mapearSolicitacao(s: SolicitacaoDiariaBanco): SolicitacaoDiaria {
     exclusaoMotivo: s.exclusao_motivo ?? undefined,
     excluidaPor: s.excluida_por_nome ?? undefined,
     excluidaEm: s.excluida_em ? new Date(s.excluida_em).toLocaleString("pt-BR") : undefined,
+    // Sem comprovante enquanto a despesa não chega a "Despesa Paga" no Malote:
+    // a coluna computada só devolve pagamento realmente feito.
+    comprovantesPagamento: (s.diaria_comprovantes_pagamento ?? [])
+      .filter((c) => !!c.storage_path)
+      .map((c) => ({
+        rotulo: c.rotulo ?? "Comprovante de pagamento",
+        storagePath: c.storage_path as string,
+        pagoEm: c.pago_em ? new Date(c.pago_em).toLocaleString("pt-BR") : "",
+        pagoPor: c.pago_por ?? "—",
+        observacao: c.observacao ?? "",
+      })),
   };
 }
