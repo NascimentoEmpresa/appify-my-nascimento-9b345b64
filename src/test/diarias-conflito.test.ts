@@ -46,6 +46,7 @@ const solicitacao = (over: Partial<SolicitacaoDiaria> = {}): SolicitacaoDiaria =
   observacoes: "",
   solicitanteId: "solicitante-1",
   solicitante: "Fulano",
+  comprovantesPagamento: [],
   ...over,
 });
 
