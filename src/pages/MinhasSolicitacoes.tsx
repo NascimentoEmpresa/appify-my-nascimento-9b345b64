@@ -4,6 +4,7 @@ import { rotasSolicitacoes, type BaseSolicitacoes } from "@/lib/solicitacoes/rot
 import { supabase } from "@/integrations/supabase/client";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { useAuth } from "@/hooks/useAuth";
+import { useVinculoEmpregado } from "@/hooks/useVinculoEmpregado";
 import { usePermissoes } from "@/context/PermissoesContext";
 import { ESTADOS_BR, municipiosDe } from "@/data/municipios-brasil";
 import { ResumoDeFuncoes } from "@/components/fluxos/ResumoDeFuncoes";
@@ -213,6 +214,8 @@ export type SolicitacaoInicial = "vaga" | "ferias" | "advertencia";
 export default function MinhasSolicitacoes({ abrir, base = "encarregados" }: { abrir?: SolicitacaoInicial; base?: BaseSolicitacoes }) {
   const rotas = rotasSolicitacoes(base);
   const { user } = useAuth();
+  // Quem sou eu em EMPREGADOS (17/09/2026): ninguém aplica advertência em si mesmo.
+  const { empregado: euEmpregado } = useVinculoEmpregado();
   const { can } = usePermissoes();
   const nav = useNavigate();
   // Vaga do escritório: só quem enxerga esse tipo pode marcar uma como tal.
@@ -768,6 +771,11 @@ export default function MinhasSolicitacoes({ abrir, base = "encarregados" }: { a
 
   // ── Advertência ─────────────────────────────────────────────────────
   const selecionarColabAdv = async (emp: EmpregadoRef) => {
+    // Advertência em si mesmo não existe (17/09/2026): pelo vínculo (ID) ou
+    // pelo CPF, pra pegar também quem ainda não vinculou o login.
+    const souEu = (euEmpregado?.id != null && emp.ID === euEmpregado.id)
+      || (!!euEmpregado?.cpf && !!emp.CPF && emp.CPF.replace(/\D/g, "") === euEmpregado.cpf.replace(/\D/g, ""));
+    if (souEu) { setShowEmpDrop(false); setEmpSearch(""); setEmpregados([]); toast("Você não pode aplicar uma advertência em si mesmo.", "err"); return; }
     setShowEmpDrop(false);
     const dup = await solicitacaoEmAberto(supabase, "advertencia", emp.ID ?? null);
     if (dup) { setBloqueio(dup); setEmpSearch(""); setEmpregados([]); return; }
