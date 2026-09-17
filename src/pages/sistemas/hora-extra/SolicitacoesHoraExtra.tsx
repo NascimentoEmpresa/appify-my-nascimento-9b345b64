@@ -36,6 +36,7 @@ import {
   formatarQuantidadeChamados,
   linhasExcel,
   mensagemErro,
+  podeEditarHoraExtra,
   somenteHora,
   statusExibicao,
 } from "./horaExtraUtils";
@@ -311,8 +312,11 @@ export default function SolicitacoesHoraExtra() {
                   paginaItens.map((s) => {
                     const podeConcluir =
                       s.status === "aprovada" && s.data_he <= hojeIso && s.colaborador_id === user?.id;
-                    const podeEditar =
-                      podeAlterar && s.colaborador_id === user?.id && s.status === "aguardando_liberacao";
+                    const podeEditar = podeEditarHoraExtra({
+                      status: s.status,
+                      ehDono: s.colaborador_id === user?.id,
+                      podeAlterar,
+                    });
                     const podeApagar =
                       (podeAprovar && s.status !== "concluida") ||
                       (podeExcluir &&
@@ -372,7 +376,11 @@ export default function SolicitacoesHoraExtra() {
                                 </Button>
                               </DropdownMenuTrigger>
                               <DropdownMenuContent align="end">
-                                {podeEditar && <DropdownMenuItem onClick={() => setEditar(s)}>Editar</DropdownMenuItem>}
+                                {podeEditar && (
+                                  <DropdownMenuItem onClick={() => setEditar(s)}>
+                                    {s.status === "reprovada" ? "Corrigir e reenviar" : "Editar"}
+                                  </DropdownMenuItem>
+                                )}
                                 {podeAprovar && ["aguardando_liberacao", "aguardando_validacao"].includes(s.status) && (
                                   <DropdownMenuItem onClick={() => setDecisao(s)}>Analisar</DropdownMenuItem>
                                 )}

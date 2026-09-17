@@ -167,6 +167,9 @@ export default function NovaSolicitacaoDialog({
   const minutos = calculo.excedente;
   const media = mediaConclusao(chamados.map((c) => c.percentual_previsto));
   const gerencial = podeAprovar && !!user && form.colaborador_id !== user.id && !solicitacao;
+  // HE reprovada sendo corrigida: o banco devolve a solicitação para a fila
+  // de liberação ao salvar, então a tela fala de reenvio, não de edição.
+  const reenvio = solicitacao?.status === "reprovada";
   const alterar = (campo: keyof typeof form, valor: string) => setForm((atual) => ({ ...atual, [campo]: valor }));
   const adicionar = (item: ChamadoDisponivel) =>
     setChamados((atual) => [...atual, { ...item, percentual_previsto: 100, prioridade_he: item.prioridade }]);
@@ -206,9 +209,11 @@ export default function NovaSolicitacaoDialog({
       toast.success(
         gerencial
           ? "HE criada e aprovada."
-          : solicitacao
-            ? "Solicitação atualizada."
-            : "Solicitação enviada para aprovação.",
+          : reenvio
+            ? "Solicitação corrigida e reenviada para aprovação."
+            : solicitacao
+              ? "Solicitação atualizada."
+              : "Solicitação enviada para aprovação.",
       );
       aoFechar();
     } catch (erro: unknown) {
@@ -236,16 +241,28 @@ export default function NovaSolicitacaoDialog({
               </span>
               <div>
                 <DialogTitle className="text-2xl text-[#07194b]">
-                  {solicitacao ? "Editar Solicitação de Hora Extra" : "Nova Solicitação de Hora Extra"}
+                  {reenvio
+                    ? "Corrigir e Reenviar Hora Extra"
+                    : solicitacao
+                      ? "Editar Solicitação de Hora Extra"
+                      : "Nova Solicitação de Hora Extra"}
                 </DialogTitle>
                 <DialogDescription>
-                  Preencha as informações abaixo para solicitar a liberação da hora extra.
+                  {reenvio
+                    ? "Ajuste o que o gestor apontou e reenvie a solicitação para aprovação."
+                    : "Preencha as informações abaixo para solicitar a liberação da hora extra."}
                 </DialogDescription>
               </div>
             </div>
           </DialogHeader>
           <div className="grid gap-4 px-5 py-4 lg:grid-cols-[minmax(0,1fr)_270px]">
             <div className="space-y-3">
+              {reenvio && (
+                <div className="rounded-lg border border-red-300 bg-red-50 p-3 text-sm text-red-800">
+                  <strong>Motivo da rejeição:</strong>{" "}
+                  {solicitacao?.motivo_reprovacao || "O gestor não informou o motivo."}
+                </div>
+              )}
               <SecaoForm titulo="1. Colaborador e data" icone={<UserRound className="h-5 w-5" />}>
                 <div className="grid gap-3 md:grid-cols-4">
                   <Campo rotulo="Colaborador" obrigatorio>
@@ -517,7 +534,13 @@ export default function NovaSolicitacaoDialog({
             </Button>
             <Button disabled={salvar.isPending} onClick={enviar} className="bg-orange-500 px-7 hover:bg-orange-600">
               <Send className="mr-2 h-4 w-4" />
-              {salvar.isPending ? "Salvando..." : gerencial ? "Criar HE Aprovada" : "Enviar para Aprovação"}
+              {salvar.isPending
+                ? "Salvando..."
+                : gerencial
+                  ? "Criar HE Aprovada"
+                  : reenvio
+                    ? "Reenviar para Aprovação"
+                    : "Enviar para Aprovação"}
             </Button>
           </div>
         </DialogContent>
