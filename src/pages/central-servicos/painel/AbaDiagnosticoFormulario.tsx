@@ -6,7 +6,7 @@
 // sem filtro, o diagnóstico é de todas as respostas visíveis. A Edge
 // Function relê as respostas sob a RLS do usuário e monta o agregado anônimo;
 // nada de pessoa sai do navegador.
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useDiagnosticoFormulario } from "@/hooks/useDiagnosticoFormulario";
 import type { ForcaDiagnostico } from "@/hooks/useDiagnosticoFeedback";
 import { normSetor } from "../LideresSetor";
@@ -71,14 +71,19 @@ const formatarData = (valor?: string) => {
   return Number.isNaN(+data) ? valor : data.toLocaleString("pt-BR", { dateStyle: "short", timeStyle: "short" });
 };
 
-export default function AbaDiagnosticoFormulario({ formularioId, tituloFormulario, setor, respostas }: {
+export default function AbaDiagnosticoFormulario({ formularioId, tituloFormulario, setor, respostas, automatico = false }: {
   formularioId: string;
   tituloFormulario: string;
   setor: string;
   respostas: Resp[];
+  /** Dashboard de Formulários (16/09/2026): gera sozinho quando não há
+   *  diagnóstico salvo ou chegaram respostas depois do último — uma vez por
+   *  formulário/setor na sessão da tela, pra não gastar IA a cada render. */
+  automatico?: boolean;
 }) {
   const { data, loading, error, run, reset, carregarUltimo } = useDiagnosticoFormulario();
   const [gerando, setGerando] = useState(false);
+  const autoRodou = useRef(new Set<string>());
   const setorNorm = normSetor(setor);
   // Sem setor no filtro: todas as respostas visíveis do formulário.
   const respostasDoRecorte = useMemo(
@@ -90,14 +95,35 @@ export default function AbaDiagnosticoFormulario({ formularioId, tituloFormulari
   const amostraPequena = qtd > 0 && qtd < 5;
   const rotuloRecorte = setorNorm ? <>do setor <b>{setor}</b></> : <>de <b>todas as respostas</b></>;
 
+  // As respostas do recorte ficam numa ref: o efeito abaixo não deve rodar de
+  // novo a cada resposta que chega, só quando muda o formulário/setor.
+  const respostasRef = useRef(respostasDoRecorte);
+  respostasRef.current = respostasDoRecorte;
+
   useEffect(() => {
     setGerando(false);
     if (!formularioId || !elegivel) {
       reset();
       return;
     }
-    carregarUltimo(formularioId, setorNorm);
-  }, [formularioId, setorNorm, elegivel, carregarUltimo, reset]);
+    let cancelado = false;
+    (async () => {
+      const ultimo = await carregarUltimo(formularioId, setorNorm);
+      if (cancelado || !automatico) return;
+      const chave = `${formularioId}|${setorNorm}`;
+      if (autoRodou.current.has(chave)) return;
+      const rs = respostasRef.current;
+      const novasDepois = !ultimo ? rs.length
+        : ultimo.gerado_em ? rs.filter((r) => +new Date(r.enviado_em) > +new Date(ultimo.gerado_em as string)).length
+        : Math.max(0, rs.length - ultimo.qtd_respostas);
+      if (ultimo && novasDepois === 0) return;
+      autoRodou.current.add(chave);
+      setGerando(true);
+      try { await run(formularioId, setor); }
+      finally { if (!cancelado) setGerando(false); }
+    })();
+    return () => { cancelado = true; };
+  }, [formularioId, setorNorm, elegivel, automatico, setor, carregarUltimo, reset, run]);
 
   const gerar = async () => {
     setGerando(true);
@@ -133,12 +159,12 @@ export default function AbaDiagnosticoFormulario({ formularioId, tituloFormulari
           <div style={{ fontSize: 21, fontWeight: 800, color: "#0f172a" }}>DIAGNÓSTICO IA</div>
           <div style={{ fontSize: 12.5, color: "#64748b" }}>
             Leitura anônima {rotuloRecorte} de <b>{tituloFormulario}</b>: pontos fortes, pontos de atenção e próximos passos.
-            {!setorNorm && <> Use o filtro <b>Setor</b> acima para um recorte.</>}
+            {automatico ? <> Gerado automaticamente quando chegam respostas novas.</> : !setorNorm && <> Use o filtro <b>Setor</b> acima para um recorte.</>}
           </div>
         </div>
         <button onClick={gerar} disabled={loading}
           style={{ ...btn("#0f3171"), opacity: loading ? .65 : 1, cursor: loading ? "wait" : "pointer" }}>
-          {gerando ? "Gerando diagnóstico…" : loading ? "Carregando…" : "Gerar diagnóstico"}
+          {gerando ? "Gerando diagnóstico…" : loading ? "Carregando…" : data ? "Gerar de novo" : "Gerar diagnóstico"}
         </button>
       </div>
 
