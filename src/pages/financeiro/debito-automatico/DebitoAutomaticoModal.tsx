@@ -124,10 +124,15 @@ export function DebitoAutomaticoModal({
     if (tipoOrigem === "movimentacao_financeira") {
       if (!empresaSaidaId) return "Informe a Empresa de Saída.";
       if (!empresaEntradaId) return "Informe a Empresa de Entrada.";
-      if (empresaSaidaId === empresaEntradaId) return "Empresa de Saída e de Entrada não podem ser a mesma.";
       if (!classificacaoId) return "Informe a Classificação.";
       if (!bancoSaidaId) return "Informe o Banco de Saída.";
       if (!bancoEntradaId) return "Informe o Banco de Entrada.";
+      // SIS-2026-0426: mesma empresa nos dois lados é normal (transferência
+      // entre bancos da própria empresa) — só é inválido se banco também
+      // for o mesmo, porque nesse caso seria a mesma conta se pagando.
+      if (empresaSaidaId === empresaEntradaId && bancoSaidaId === bancoEntradaId) {
+        return "Empresa e Banco de Saída não podem ser iguais aos de Entrada (seria a mesma conta).";
+      }
     } else {
       if (!empresaId) return "Informe a Empresa.";
       if (!classificacaoId) return "Informe a Classificação.";
