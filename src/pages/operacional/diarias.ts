@@ -104,6 +104,29 @@ export interface SolicitacaoDiaria {
   exclusaoMotivo?: string;
   excluidaPor?: string;
   excluidaEm?: string;
+  /**
+   * Comprovantes do pagamento feito no Malote. Vazio até a despesa chegar a
+   * "Despesa Paga" — é o que diferencia "Aprovada" de "Paga de verdade, com
+   * papel". Lista porque diária parcelada tem um comprovante por parcela.
+   */
+  comprovantesPagamento: ComprovantePagamentoDiaria[];
+}
+
+/**
+ * O comprovante que o Malote anexou ao pagar de verdade.
+ *
+ * Vem de `malote_despesa.comprovante_pagamento_path` (ou de cada parcela,
+ * quando a diária foi aprovada parcelada) pela coluna computada
+ * `diaria_comprovantes_pagamento` — ver 20260930000169. Mora no bucket
+ * `malote-anexos`, NÃO no `diarias`: por isso tem abertura própria.
+ */
+export interface ComprovantePagamentoDiaria {
+  rotulo: string;
+  storagePath: string;
+  /** Já formatado em pt-BR. */
+  pagoEm: string;
+  pagoPor: string;
+  observacao: string;
 }
 
 /** Uma abertura da solicitação, carimbada na primeira vez que a pessoa entrou. */
