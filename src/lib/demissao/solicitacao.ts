@@ -339,11 +339,34 @@ export interface SolicitacaoDemissao {
    */
   vaga_id?: number | null;
   vaga_obrigatoria?: boolean | null;
+  /**
+   * EXCEÇÃO (17/09/2026, mig 000169): a etapa 1 aprovou SEM a vaga de
+   * Substituição e escreveu por quê. Preenchido, o trigger deixa o pedido
+   * seguir mesmo com `vaga_obrigatoria`; a tela pede o motivo em QUALQUER
+   * aprovação sem vaga, para a exceção ficar registrada no card.
+   */
+  sem_vaga_motivo?: string | null;
 }
 
-/** A demissão que ainda não tem a vaga de reposição que a regra exige. */
-export const faltaVagaDeReposicao = (s: Pick<SolicitacaoDemissao, "vaga_id" | "vaga_obrigatoria" | "status">): boolean =>
-  !!s.vaga_obrigatoria && !s.vaga_id && s.status !== "Reprovada";
+/**
+ * A demissão que ainda não tem a vaga de reposição que a regra exige. Com o
+ * motivo da exceção gravado a vaga deixou de ser exigida — não é mais
+ * "falta", é decisão.
+ */
+export const faltaVagaDeReposicao = (s: Pick<SolicitacaoDemissao, "vaga_id" | "vaga_obrigatoria" | "status" | "sem_vaga_motivo">): boolean =>
+  !!s.vaga_obrigatoria && !s.vaga_id && s.status !== "Reprovada" && !temMotivoSemVaga(s.sem_vaga_motivo);
+
+/** Mínimo do motivo da exceção — a mesma régua do motivo da reprovação e do trigger. */
+export const MOTIVO_SEM_VAGA_MIN = 10;
+export const temMotivoSemVaga = (motivo?: string | null): boolean =>
+  String(motivo ?? "").trim().length >= MOTIVO_SEM_VAGA_MIN;
+
+/**
+ * Aprovar na etapa 1 sem vaga de Substituição pede o motivo da exceção —
+ * vale para o pedido que respondeu "Sim" (preso pelo banco) e para o que
+ * respondeu "Não" (o banco deixa passar, mas a tela registra por quê).
+ */
+export const aprovarPedeMotivoSemVaga = (s: Pick<SolicitacaoDemissao, "vaga_id">): boolean => !s.vaga_id;
 
 export interface AnexoDemissao {
   id: number;
