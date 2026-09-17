@@ -17,7 +17,7 @@ import {
   BUCKET, MOTIVO_DEVOLUCAO_MIN, MOTIVO_SEM_VAGA_MIN, STATUS_SST_AGENDADO, STATUS_SST_ASO_VALIDO, STATUS_SST_RECEBIDA, acaoDoSST,
   aprovarPedeMotivoSemVaga, temMotivoSemVaga,
   TABELA, TABELA_ANEXOS, corDoStatus, explicaStatus,
-  fmtData, fmtDataHora, fmtTamanho, linkDoLocalASO, normSetorDemissao, patchDevolucao, podeDevolver,
+  fmtData, fmtDataHora, fmtTamanho, hojeISO, linkDoLocalASO, normSetorDemissao, patchDevolucao, podeDevolver,
   resumoDevolucao, resumoDoASO, statusDaEtapa1, visivelNaEtapaDemissao,
   type AnexoDemissao, type EtapaQueDevolve, type SolicitacaoDemissao,
 } from "@/lib/demissao/solicitacao";
@@ -27,6 +27,7 @@ import {
   ThumbsDown, ThumbsUp, Undo2, XCircle,
 } from "lucide-react";
 import { ConversaSolicitacao } from "@/components/solicitacoes/ConversaSolicitacao";
+import { AvisoCancelada } from "@/components/demissao/CancelarDemissao";
 import { TABELA_APROVADOR_SETOR } from "@/components/admin/TrocaFuncaoSetoresUsuario";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
@@ -351,6 +352,10 @@ function DetalheSolicitacao({ solicitacao, etapa, quemSou, onFechar, onDecidir }
   const [anexos, setAnexos] = useState<AnexoDemissao[]>([]);
   const [motivo, setMotivo] = useState("");
   const [observacao, setObservacao] = useState("");
+  // RH → SST (17/09/2026): a última data trabalhada é obrigatória e passa por
+  // confirmação antes de liberar — é a data que o SST usa pro ASO demissional.
+  const [ultimaData, setUltimaData] = useState("");
+  const [confirmandoData, setConfirmandoData] = useState(false);
   const [salvando, setSalvando] = useState(false);
   // O motivo da DEVOLUÇÃO é campo à parte do motivo da reprovação: são duas
   // recusas diferentes, de gente diferente, e um estado só faria o texto de
@@ -367,7 +372,7 @@ function DetalheSolicitacao({ solicitacao, etapa, quemSou, onFechar, onDecidir }
   const [mapPrev, setMapPrev] = useState("");
 
   useEffect(() => {
-    setMotivo(""); setObservacao(""); setMotivoSemVaga(""); setAnexos([]);
+    setMotivo(""); setObservacao(""); setMotivoSemVaga(""); setUltimaData(""); setConfirmandoData(false); setAnexos([]);
     // Reabrir uma já marcada mostra o que está gravado — reagendar é editar o
     // que está lá, não redigitar do zero.
     setAso({
@@ -439,13 +444,23 @@ function DetalheSolicitacao({ solicitacao, etapa, quemSou, onFechar, onDecidir }
   // 08/09/2026 ele não é mais quem fecha, é quem passa a bola para a última
   // etapa. O carimbo continua em `rh_*`: a coluna diz quando o RH falou, não
   // que ele encerrou.
+  // Primeiro clique valida a data e abre a confirmação ("Confirma?"); o
+  // segundo grava. A data vai junto pro SST (rh_ultima_data_trabalhada).
+  const pedirConfirmacaoData = () => {
+    if (!ultimaData) { toast.error("Informe a última data trabalhada do colaborador antes de liberar."); return; }
+    if (ultimaData > hojeISO()) { toast.error("A última data trabalhada não pode ser no futuro."); return; }
+    setConfirmandoData(true);
+  };
   const liberarParaSST = async () => {
+    if (!ultimaData) { toast.error("Informe a última data trabalhada do colaborador."); return; }
     setSalvando(true);
     await onDecidir(s, {
       status: "Pendente SST", rh_por: quemSou,
       rh_em: new Date().toISOString(), rh_observacao: observacao.trim() || null,
+      rh_ultima_data_trabalhada: ultimaData,
     }, `Solicitação #${s.id} liberada pelo RH — segue para o SST agendar o ASO.`);
     setSalvando(false);
+    setConfirmandoData(false);
   };
 
   /**
@@ -601,6 +616,18 @@ function DetalheSolicitacao({ solicitacao, etapa, quemSou, onFechar, onDecidir }
           </div>
         )}
 
+        {/* A última data trabalhada, em destaque pra quem vem depois do RH —
+            o SST agenda o ASO demissional a partir dela (17/09/2026). */}
+        {s.rh_ultima_data_trabalhada && (
+          <div className="flex items-center gap-3 rounded-lg border-2 border-amber-400 bg-amber-50 p-3">
+            <Clock className="h-5 w-5 shrink-0 text-amber-700" />
+            <div>
+              <div className="text-[12px] font-bold uppercase tracking-wide text-amber-900">Última data trabalhada (informada pelo RH)</div>
+              <div className="text-lg font-black text-amber-950">{fmtData(s.rh_ultima_data_trabalhada)}</div>
+            </div>
+          </div>
+        )}
+
         {/* Histórico das decisões já tomadas */}
         {(s.operacional_em || s.rh_em || s.sst_em) && (
           <Secao titulo="Decisões" itens={[
@@ -608,10 +635,14 @@ function DetalheSolicitacao({ solicitacao, etapa, quemSou, onFechar, onDecidir }
             ["Motivo da reprovação", s.operacional_motivo],
             ["⚠ Aprovada SEM vaga de Substituição — motivo", s.sem_vaga_motivo],
             ["RH", s.rh_por ? `${s.rh_por} · ${fmtDataHora(s.rh_em)}` : "—"],
+            ["Última data trabalhada (RH)", s.rh_ultima_data_trabalhada ? fmtData(s.rh_ultima_data_trabalhada) : null],
             ["Observação do RH", s.rh_observacao],
             ["SST (ASO)", s.sst_por ? `${s.sst_por} · ${fmtDataHora(s.sst_em)}` : "—"],
           ]} />
         )}
+
+        {/* Cancelada pelo encarregado (17/09/2026): em vermelho, com o motivo. */}
+        <AvisoCancelada solicitacao={s} />
 
         {/* A devolução vem PRIMEIRO no detalhe, antes de qualquer campo: é a
             única coisa que importa num card que voltou, e enterrá-la no meio
@@ -683,17 +714,40 @@ function DetalheSolicitacao({ solicitacao, etapa, quemSou, onFechar, onDecidir }
               Confira o desligamento e libere: o SST recebe a solicitação e agenda o ASO
               demissional, que é a última etapa.
             </p>
+            {/* Última data trabalhada (17/09/2026): obrigatória, confirmada, e vai
+                pro SST — é a data que baliza o ASO demissional. */}
+            <div className="rounded-lg border-2 border-amber-400 bg-amber-50 p-3">
+              <Label htmlFor="ultima-data" className="text-[13px] font-bold uppercase tracking-wide text-amber-900">
+                Qual foi a última data trabalhada do colaborador? *
+              </Label>
+              <Input id="ultima-data" type="date" className="mt-1 max-w-xs bg-white" max={hojeISO()}
+                value={ultimaData} onChange={(e) => { setUltimaData(e.target.value); setConfirmandoData(false); }} />
+              <p className="mt-1 text-xs text-amber-800">Essa data vai junto pro SST e aparece no card dele.</p>
+            </div>
             <div>
               <Label htmlFor="obs">Observação (opcional)</Label>
               <Textarea id="obs" className="mt-1" placeholder="O que foi feito, datas do acerto, pendências…"
                 value={observacao} onChange={(e) => setObservacao(e.target.value)} />
             </div>
-            <Button onClick={liberarParaSST} disabled={salvando}>
-              <CheckCircle2 className="mr-2 h-4 w-4" /> Liberar e enviar ao SST
-            </Button>
+            {!confirmandoData ? (
+              <Button onClick={pedirConfirmacaoData} disabled={salvando}>
+                <CheckCircle2 className="mr-2 h-4 w-4" /> Liberar e enviar ao SST
+              </Button>
+            ) : (
+              <div className="flex flex-wrap items-center gap-3 rounded-lg border border-primary bg-white p-3">
+                <div className="text-sm">
+                  <span className="font-bold">Confirma?</span> Última data trabalhada de <b>{s.colaborador_nome}</b>: <b>{fmtData(ultimaData)}</b>.
+                </div>
+                <div className="flex gap-2">
+                  <Button variant="outline" onClick={() => setConfirmandoData(false)} disabled={salvando}>Corrigir</Button>
+                  <Button onClick={liberarParaSST} disabled={salvando}>
+                    <CheckCircle2 className="mr-2 h-4 w-4" /> Confirmo — liberar
+                  </Button>
+                </div>
+              </div>
+            )}
           </div>
         )}
-
         {/* SST — os MESMOS campos do ASO de admissão (pages/sst/AsoCandidatos),
             inclusive o seletor no mapa: é a mesma ficha, na outra ponta. */}
         {/* PASSO 1 do SST — receber. Enquanto a solicitação está em

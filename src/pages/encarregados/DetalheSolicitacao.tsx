@@ -7,6 +7,7 @@ import { AVISO_REFAZER, diasRestantesParaRefazer, podeRefazerFerias } from "@/li
 import { ConversaSolicitacao, type ModuloConversa } from "@/components/solicitacoes/ConversaSolicitacao";
 import { AnexosSolicitacao } from "@/components/solicitacoes/AnexosSolicitacao";
 import { tempoDeEmpresa } from "@/lib/rh/colaboradoresUtils";
+import { AvisoCancelada } from "@/components/demissao/CancelarDemissao";
 
 // `integrations/supabase/types.ts` é gerado e não conhece as tabelas de
 // solicitações. O resto do ERP resolve isso com um cast solto em cada
@@ -121,6 +122,8 @@ const ROTULO: Record<string, string> = {
   parecer_juridico: "Parecer do Jurídico", resultado: "Resultado", concluido_por_nome: "Concluído por",
   devolvido_por: "Devolvido por", devolvido_em: "Devolvido em", devolvido_motivo: "Motivo da devolução",
   sem_vaga_motivo: "Exceção — sem vaga de substituição",
+  cancelado_por: "Cancelado por", cancelado_em: "Cancelado em", cancelado_motivo: "Motivo do cancelamento",
+  rh_ultima_data_trabalhada: "Última data trabalhada (RH)",
 };
 
 /** Colunas que não interessam a quem solicitou. */
@@ -281,7 +284,7 @@ export function DetalheSolicitacao({ tipo, id, titulo, status, onFechar, onRefaz
       : /^\d{4}-\d{2}-\d{2}/.test(String(v)) ? fmtData(String(v)) : String(v)] as [string, string, string]);
   const ehColaborador = (k: string) => k.startsWith("colaborador_") || k === "tempo_de_empresa" || k === "contrato" || k === "nome_substituido"
     || ["cargo_atual", "cargo_novo", "local", "posto", "filial", "horario_atual", "horario_novo"].includes(k);
-  const ehDecisao = (k: string) => /^(aprovado_|aprovador_|operacional_|rh_|sst_|devolvido_|concluido_|analista_)/.test(k)
+  const ehDecisao = (k: string) => /^(aprovado_|aprovador_|operacional_|rh_|sst_|devolvido_|concluido_|analista_|cancelado_)/.test(k)
     || ["motivo_reprovacao", "parecer_juridico", "resultado", "sem_vaga_motivo", "refeita_em"].includes(k);
   const grupos: { titulo: string; icone: string; itens: [string, string, string][] }[] = [
     { titulo: "Colaborador", icone: "👤", itens: linhas.filter(([k]) => ehColaborador(k)) },
@@ -308,6 +311,11 @@ export function DetalheSolicitacao({ tipo, id, titulo, status, onFechar, onRefaz
             )}
           </div>
         </div>
+
+        {/* Demissão cancelada (17/09/2026): o motivo em vermelho, antes de tudo. */}
+        {tipo === "Demissão" && ficha?.status === "Cancelada" && (
+          <div style={{ marginBottom: 14 }}><AvisoCancelada solicitacao={ficha as { status: string; cancelado_por?: string | null; cancelado_em?: string | null; cancelado_motivo?: string | null }} /></div>
+        )}
 
         {/* ── Refazer (Férias) ── */}
         {tipo === "Férias" && onRefazer && ficha && (() => {
