@@ -16,14 +16,14 @@ import { CATEGORIAS_DUVIDA as CATEGORIAS, agruparComplementos, complementoPenden
 // Quem aprova (15/09/2026): a ação "aprovar" do menu "duvidas", marcada em
 // Administração › Acesso por Usuário — o botão "Quem aprova/responde" e a
 // tabela JUR_DUVIDAS_APROVADORES saíram de cena (migration 20260930000119).
-// Quem responde continua: setor JURIDICO ou JUR_DUVIDAS_RESPONSAVEIS.
+// Quem responde (17/09/2026, mig 173): a ação "responder" do mesmo menu, também
+// no Acesso por Usuário — setor JURIDICO / JUR_DUVIDAS_RESPONSAVEIS saíram.
 // DEPOIS DA RESPOSTA (17/09/2026, mig 20260930000170): quem perguntou avalia
 // (resolveu / em parte / não resolveu) e pode perguntar mais no mesmo fio,
 // sem nova aprovação; o Jurídico complementa ali. Card "Pedem complemento" =
 // fios cujo último item é uma pergunta. Componente: FioDuvida.
 // =====================================================================
 
-interface Aprovador { empregado_id: number; nome?: string }
 
 // JUR_DUVIDAS* não estão no types.ts gerado; mesmo padrão de comite-etica/db.ts.
 const db = supabase as unknown as SupabaseClient;
@@ -43,12 +43,13 @@ export default function CentralDuvidas() {
   const { empregado } = useVinculoEmpregado();
   const { can } = usePermissoes();
   const autor = empregado?.nome || user?.user_metadata?.nome || user?.email || "Usuário";
-  const trabalhando = empregado?.situacao === "Trabalhando";
   const podeGerenciar = can("alterar", undefined, "duvidas");
   const { data: temAprovar } = useScreenAccess("duvidas", "aprovar");
+  // Quem responde (17/09/2026, mig 173): a ação "responder" do menu, marcada
+  // no Acesso por Usuário — antes era setor JURIDICO / JUR_DUVIDAS_RESPONSAVEIS.
+  const { data: temResponder } = useScreenAccess("duvidas", "responder");
 
   const [duvidas, setDuvidas] = useState<Duvida[]>([]);
-  const [responsaveis, setResponsaveis] = useState<Aprovador[]>([]);
   // Fio de complementos por dúvida (17/09/2026) — ver lib/juridico/duvidas.ts.
   const [fios, setFios] = useState<Map<number, Complemento[]>>(new Map());
   const [loading, setLoading] = useState(true);
@@ -67,18 +68,16 @@ export default function CentralDuvidas() {
 
   const toast = (msg: string, t = "info") => { const id = Date.now() + Math.random(); setToasts(x => [...x, { id, msg, t }]); setTimeout(() => setToasts(x => x.filter(i => i.id !== id)), 3600); };
 
-  const responsaveisIds = responsaveis.map(r => r.empregado_id);
   const podeAprovar = !!temAprovar;
-  const podeResponder = (empregado?.setor === "JURIDICO" && trabalhando) || (empregado?.id != null && responsaveisIds.includes(empregado.id));
+  const podeResponder = !!temResponder;
 
   const load = useCallback(async () => {
     setLoading(true);
-    const [d, r, c] = await Promise.all([
+    const [d, c] = await Promise.all([
       db.from("JUR_DUVIDAS").select("*").order("created_at", { ascending: false }).limit(1000),
-      db.from("JUR_DUVIDAS_RESPONSAVEIS").select("empregado_id, nome"),
       db.from("JUR_DUVIDAS_COMPLEMENTOS").select("*").order("id", { ascending: false }).limit(1000),
     ]);
-    setDuvidas(d.data ?? []); setResponsaveis(r.data ?? []); setFios(agruparComplementos(c.data ?? [])); setLoading(false);
+    setDuvidas(d.data ?? []); setFios(agruparComplementos(c.data ?? [])); setLoading(false);
   }, []);
   useEffect(() => { load(); }, [load]);
 

@@ -37,10 +37,30 @@ export const parseData = (v: any): Date | null => {
   if (!v) return null;
   const s = String(v).trim();
   const br = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})/);
-  const d = br ? new Date(+br[3], +br[2] - 1, +br[1]) : new Date(s);
+  // ISO só com a data ("2026-08-26"): o `new Date` lê como UTC e, no Brasil,
+  // vira 25/08 às 21h — dia errado na tela e no banco. Monta como data local.
+  const iso = !br && s.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  const d = br ? new Date(+br[3], +br[2] - 1, +br[1]) : iso ? new Date(+iso[1], +iso[2] - 1, +iso[3]) : new Date(s);
   return isNaN(d.getTime()) || d.getFullYear() < 1900 ? null : d;
 };
 export const fmtData = (v: any) => { const d = parseData(v); return d ? d.toLocaleDateString("pt-BR") : "—"; };
+
+/**
+ * Data de EMPREGADOS pronta para uma coluna `date` do Postgres ("AAAA-MM-DD").
+ *
+ * "Admissão" (como "Nascimento") vem em DOIS formatos: ISO na maioria e
+ * "DD/MM/AAAA" numa minoria (105 de 2.217 Trabalhando em 17/09/2026). Mandar
+ * a string crua pro banco estourava `date/time field value out of range:
+ * "26/08/2026"` na Solicitação de Demissão — e o `brToISO` que Férias usava
+ * fazia o inverso: devolvia NULL para quem estava em ISO. Um conversor só,
+ * que aceita os dois e devolve NULL para vazio/inválido/ano < 1900.
+ */
+export const dataParaIso = (v: unknown): string | null => {
+  const d = parseData(v);
+  if (!d) return null;
+  const p = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+};
 
 export const ehSaidaDe = (e: any) => /DEMIT|DESLIG|RESCIS|APOSENT/i.test(String(e?.["Situação"] ?? ""));
 
@@ -76,3 +96,20 @@ export const nomeContratoDe = (e: any): string => {
 // não leva código, só o nome ("POLICIA CIVIL RS LIMPEZA 066.2026").
 export const semCodigoFilial = (nome: unknown): string =>
   String(nome ?? "").replace(PREFIXO_CODIGO, "").trim();
+
+/**
+ * "2 anos e 3 meses" desde a admissão — a ficha do advertido mostra isso ao
+ * lado da data (17/09/2026). Menos de um mês vira "menos de 1 mês"; sem
+ * admissão (ou admissão no futuro) devolve "".
+ */
+export const tempoDeEmpresa = (admissao: unknown, hoje: Date = new Date()): string => {
+  const d = parseData(admissao);
+  if (!d || d > hoje) return "";
+  let meses = (hoje.getFullYear() - d.getFullYear()) * 12 + (hoje.getMonth() - d.getMonth());
+  if (hoje.getDate() < d.getDate()) meses -= 1;
+  if (meses < 1) return "menos de 1 mês";
+  const anos = Math.floor(meses / 12), resto = meses % 12;
+  const pa = anos ? `${anos} ano${anos > 1 ? "s" : ""}` : "";
+  const pm = resto ? `${resto} ${resto > 1 ? "meses" : "mês"}` : "";
+  return [pa, pm].filter(Boolean).join(" e ");
+};

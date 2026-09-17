@@ -181,11 +181,14 @@ export function ModalNovaVaga({ aberto, onFechar, onCriada, onToast, solicitacao
     style.id = "nvg-styles";
     style.textContent = `
       .nvg-modal-ov{position:fixed;inset:0;z-index:700;background:rgba(15,23,42,.42);backdrop-filter:blur(4px);display:flex;align-items:center;justify-content:center;padding:16px}
-      .nvg-modal{background:#fff;border:1px solid #e2e8f0;border-radius:18px;padding:24px;width:100%;max-width:600px;max-height:90vh;overflow-y:auto;position:relative;box-shadow:0 16px 40px rgba(15,23,42,.1)}
-      .nvg-fi{width:100%;background:#fff;border:1px solid #e2e8f0;border-radius:12px;color:#0f172a;font-size:13px;padding:8px 12px;outline:none;font-family:inherit;transition:.15s}
-      .nvg-fi:focus{border-color:#0f3171;box-shadow:0 0 0 4px rgba(15,49,113,.08)}
-      .nvg-fg{margin-bottom:14px}
-      .nvg-fg label{display:block;font-size:11px;font-weight:600;color:#94a3b8;text-transform:uppercase;letter-spacing:.5px;margin-bottom:5px}
+      /* Legibilidade (17/09/2026): mesmo ajuste dos modais de Minhas Solicitações — maior, rótulo escuro, campo com borda visível. */
+      .nvg-modal{background:#fff;border:1px solid #cbd5e1;border-radius:18px;padding:28px 30px;width:100%;max-width:760px;max-height:92vh;overflow-y:auto;position:relative;box-shadow:0 20px 50px rgba(15,23,42,.22);color:#0f172a}
+      .nvg-fi{width:100%;background:#fff;border:1.5px solid #94a3b8;border-radius:12px;color:#0f172a;font-size:14.5px;padding:11px 13px;outline:none;font-family:inherit;transition:.15s}
+      .nvg-fi::placeholder{color:#64748b}
+      .nvg-fi[readonly]{background:#f1f5f9;color:#334155}
+      .nvg-fi:focus{border-color:#0f3171;box-shadow:0 0 0 4px rgba(15,49,113,.14)}
+      .nvg-fg{margin-bottom:16px}
+      .nvg-fg label{display:block;font-size:13px;font-weight:800;color:#1e293b;text-transform:uppercase;letter-spacing:.4px;margin-bottom:6px}
     `;
     document.head.appendChild(style);
   }, []);
@@ -596,12 +599,12 @@ export function ModalNovaVaga({ aberto, onFechar, onCriada, onToast, solicitacao
   return (
     <div className="nvg-modal-ov">
       <div className="nvg-modal" onClick={e => e.stopPropagation()}>
-        <button onClick={onFechar} style={{ position: "absolute", top: 14, right: 14, background: "none", border: "none", color: "#94a3b8", fontSize: 20, cursor: "pointer" }}>✕</button>
+        <button onClick={onFechar} style={{ position: "absolute", top: 14, right: 14, background: "none", border: "none", color: "#64748b", fontSize: 20, cursor: "pointer" }}>✕</button>
 
-        <div style={{ fontSize: 17, fontWeight: 800, marginBottom: 4 }}>
+        <div style={{ fontSize: 20, fontWeight: 800, marginBottom: 4 }}>
           {editando ? `Editar solicitação #${solicitacao!.id}` : "Solicitar Nova Vaga"}
         </div>
-        <div style={{ fontSize: 12, color: "#94a3b8", marginBottom: 14 }}>
+        <div style={{ fontSize: 13.5, color: "#64748b", marginBottom: 14 }}>
           {vagaStep === 1 ? "Etapa 1 de 3 — Identificação da Vaga" : vagaStep === 2 ? "Etapa 2 de 3 — Detalhes do Posto" : "Etapa 3 de 3 — Requisitos e Urgência"}
         </div>
 
@@ -635,10 +638,10 @@ export function ModalNovaVaga({ aberto, onFechar, onCriada, onToast, solicitacao
           >
             <span style={{ fontSize: 15, lineHeight: 1.2 }}>{vagaManual ? "↩️" : "✍️"}</span>
             <span>
-              <span style={{ display: "block", fontSize: 12.5, fontWeight: 800, color: vagaManual ? "#0f3171" : "#0f172a" }}>
+              <span style={{ display: "block", fontSize: 14, fontWeight: 800, color: vagaManual ? "#0f3171" : "#0f172a" }}>
                 {vagaManual ? "Voltar a puxar do cadastro" : "Preencher manualmente"}
               </span>
-              <span style={{ display: "block", marginTop: 3, fontSize: 11, fontWeight: 500, color: "#64748b", lineHeight: 1.4 }}>
+              <span style={{ display: "block", marginTop: 3, fontSize: 14, fontWeight: 500, color: "#64748b", lineHeight: 1.4 }}>
                 {vagaManual
                   ? "Volta a escolher um colaborador; cargo, contrato, escala e salário vêm do cadastro dele."
                   : "Vaga do escritório: você digita cargo, contrato, escala e salário em vez de copiar de um colaborador."}
@@ -673,7 +676,7 @@ export function ModalNovaVaga({ aberto, onFechar, onCriada, onToast, solicitacao
               regime, senão estranha os campos que antes vinham prontos. */}
           {vagaManual && (
             <div className="nvg-fg" style={{ gridColumn: "1 / -1" }}>
-              <div style={{ fontSize: 11.5, fontWeight: 600, color: "#0f3171", background: "#eef4ff", border: "1px solid #c7d7fe", borderRadius: 9, padding: "8px 11px" }}>
+              <div style={{ fontSize: 13, fontWeight: 600, color: "#0f3171", background: "#eef4ff", border: "1px solid #c7d7fe", borderRadius: 9, padding: "8px 11px" }}>
                 ✍️ <b>Preenchendo à mão</b> — vaga do escritório. Cargo, contrato, escala e salário
                 são digitados por você, e não copiados de um colaborador.
               </div>
@@ -713,31 +716,31 @@ export function ModalNovaVaga({ aberto, onFechar, onCriada, onToast, solicitacao
               {showEmpDrop && empSearch.length >= 2 && (
                 <div style={{ position: "absolute", top: "100%", left: 0, right: 0, zIndex: 999, background: "#fff", border: "1px solid #e2e8f0", borderRadius: 10, boxShadow: "0 8px 24px rgba(15,23,42,.14)", maxHeight: 220, overflowY: "auto", marginTop: 2 }}>
                   {loadingEmps ? (
-                    <div style={{ padding: "12px", fontSize: 12, color: "#94a3b8", textAlign: "center" }}>Buscando...</div>
+                    <div style={{ padding: "12px", fontSize: 13.5, color: "#64748b", textAlign: "center" }}>Buscando...</div>
                   ) : empregados.length === 0 ? (
-                    <div style={{ padding: "12px", fontSize: 12, color: "#94a3b8", textAlign: "center" }}>Nenhum colaborador encontrado.</div>
+                    <div style={{ padding: "12px", fontSize: 13.5, color: "#64748b", textAlign: "center" }}>Nenhum colaborador encontrado.</div>
                   ) : empregados.slice(0, 40).map((emp, i) => {
                     // Já tem vaga de substituição em pé: fica na lista
                     // para a pessoa entender por que não pode escolher.
                     const preso = ehSubstituicao(vaga.motivo_vaga) ? presos.get(Number(emp.ID)) : undefined;
                     return (
                       <div key={i} onMouseDown={() => selecionarEmpregado(emp)}
-                        style={{ padding: "8px 12px", fontSize: 13, cursor: preso ? "not-allowed" : "pointer", borderBottom: "1px solid #f1f5f9", color: preso ? "#94a3b8" : "#0f172a", background: preso ? "#f8fafc" : "#fff" }}
+                        style={{ padding: "8px 12px", fontSize: 13, cursor: preso ? "not-allowed" : "pointer", borderBottom: "1px solid #f1f5f9", color: preso ? "#64748b" : "#0f172a", background: preso ? "#f8fafc" : "#fff" }}
                         onMouseEnter={e => { if (!preso) e.currentTarget.style.background = "#f0f4ff"; }}
                         onMouseLeave={e => { e.currentTarget.style.background = preso ? "#f8fafc" : "#fff"; }}>
                         <div style={{ fontWeight: 600 }}>{emp.Nome}</div>
-                        <div style={{ fontSize: 11, color: "#94a3b8" }}>{emp["Título do Cargo"]}{emp["Nome Filial"] ? ` · ${emp["Nome Filial"]}` : ""}</div>
-                        {preso && <div style={{ fontSize: 10.5, fontWeight: 800, color: "#b91c1c", marginTop: 2 }}>🚫 já está na vaga de substituição #{preso}</div>}
+                        <div style={{ fontSize: 14, color: "#64748b" }}>{emp["Título do Cargo"]}{emp["Nome Filial"] ? ` · ${emp["Nome Filial"]}` : ""}</div>
+                        {preso && <div style={{ fontSize: 13.5, fontWeight: 800, color: "#b91c1c", marginTop: 2 }}>🚫 já está na vaga de substituição #{preso}</div>}
                       </div>
                     );
                   })}
                 </div>
               )}
-              <div style={{ marginTop: 6, fontSize: 11.5, color: "#94a3b8" }}>{ajudaReferencia(vaga.motivo_vaga)}</div>
+              <div style={{ marginTop: 6, fontSize: 13, color: "#64748b" }}>{ajudaReferencia(vaga.motivo_vaga)}</div>
               {/* Sem nome: nos motivos que não são Substituição o escolhido
                   é só o molde da vaga, e é isso que a tela confirma. */}
               {!!substituidoId && !mostraNomeReferencia(vaga.motivo_vaga) && (
-                <div style={{ marginTop: 6, fontSize: 11.5, fontWeight: 700, color: "#15803d", background: "#f0fdf4", border: "1px solid #bbf7d0", borderRadius: 8, padding: "6px 9px" }}>
+                <div style={{ marginTop: 6, fontSize: 13, fontWeight: 700, color: "#15803d", background: "#f0fdf4", border: "1px solid #bbf7d0", borderRadius: 8, padding: "6px 9px" }}>
                   ✓ Colaborador escolhido — cargo, contrato, escala e salário já vieram do cadastro dele.
                 </div>
               )}
@@ -746,19 +749,19 @@ export function ModalNovaVaga({ aberto, onFechar, onCriada, onToast, solicitacao
                   mostra qual; sem nenhuma, manda solicitar primeiro. */}
               {!editando && !vinculoDemissao && ehSubstituicao(vaga.motivo_vaga) && !!substituidoId && demissaoBusca !== "ocioso" && (
                 demissaoBusca === "buscando" ? (
-                  <div style={{ marginTop: 6, fontSize: 11.5, color: "#94a3b8" }}>Procurando a solicitação de demissão…</div>
+                  <div style={{ marginTop: 6, fontSize: 13, color: "#64748b" }}>Procurando a solicitação de demissão…</div>
                 ) : demissaoId ? (
-                  <div style={{ marginTop: 6, fontSize: 11.5, fontWeight: 700, color: "#0f3171", background: "#eef4ff", border: "1px solid #c7d7f5", borderRadius: 8, padding: "6px 9px" }}>
+                  <div style={{ marginTop: 6, fontSize: 13, fontWeight: 700, color: "#0f3171", background: "#eef4ff", border: "1px solid #c7d7f5", borderRadius: 8, padding: "6px 9px" }}>
                     🔗 Vinculada à solicitação de demissão #{demissaoId} — a vaga repõe essa saída.
                   </div>
                 ) : (
-                  <div style={{ marginTop: 6, fontSize: 11.5, color: "#92400e", background: "#fffbeb", border: "1px solid #fde68a", borderRadius: 8, padding: "8px 10px" }}>
+                  <div style={{ marginTop: 6, fontSize: 13, color: "#92400e", background: "#fffbeb", border: "1px solid #fde68a", borderRadius: 8, padding: "8px 10px" }}>
                     <b>Não existe solicitação de demissão para esta pessoa.</b> Vaga de Substituição
                     é aberta a partir da demissão de quem sai — solicite a demissão primeiro; ao
                     enviar, esta vaga abre sozinha, já preenchida.
                     <div style={{ marginTop: 6 }}>
                       <button type="button" onClick={irSolicitarDemissao}
-                        style={{ padding: "6px 12px", borderRadius: 8, border: "none", background: "#0f3171", color: "#fff", fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
+                        style={{ padding: "6px 12px", borderRadius: 8, border: "none", background: "#0f3171", color: "#fff", fontSize: 13.5, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
                         Solicitar a demissão de {(vaga.nome_substituido || "quem sai").split(" ")[0]} →
                       </button>
                     </div>
@@ -766,7 +769,7 @@ export function ModalNovaVaga({ aberto, onFechar, onCriada, onToast, solicitacao
                 )
               )}
               {!!vinculoDemissao && (
-                <div style={{ marginTop: 6, fontSize: 11.5, fontWeight: 700, color: "#0f3171", background: "#eef4ff", border: "1px solid #c7d7f5", borderRadius: 8, padding: "6px 9px" }}>
+                <div style={{ marginTop: 6, fontSize: 13, fontWeight: 700, color: "#0f3171", background: "#eef4ff", border: "1px solid #c7d7f5", borderRadius: 8, padding: "6px 9px" }}>
                   🔗 Vaga aberta a partir da solicitação de demissão #{vinculoDemissao.demissaoId} — motivo e colaborador vêm de lá e não mudam aqui.
                 </div>
               )}
@@ -783,7 +786,7 @@ export function ModalNovaVaga({ aberto, onFechar, onCriada, onToast, solicitacao
               "ANALISTA ADM" e "Analista Administrativo" como coisas
               diferentes. */}
           <div className="nvg-fg">
-            <label>Contrato *{!vagaManual && <span style={{ color: "#94a3b8", fontWeight: 600 }}> — do colaborador escolhido</span>}</label>
+            <label>Contrato *{!vagaManual && <span style={{ color: "#64748b", fontWeight: 600 }}> — do colaborador escolhido</span>}</label>
             <input className="nvg-fi"
               list={vagaManual ? "nvg-contratos" : undefined}
               placeholder={vagaManual ? "Escolha na lista ou digite" : "Escolha o colaborador acima"}
@@ -797,7 +800,7 @@ export function ModalNovaVaga({ aberto, onFechar, onCriada, onToast, solicitacao
                     <option key={i} value={rotuloContrato(c)} />
                   ))}
                 </datalist>
-                <div style={{ marginTop: 4, fontSize: 11, color: "#94a3b8" }}>
+                <div style={{ marginTop: 4, fontSize: 14, color: "#64748b" }}>
                   Escolha um contrato da lista ou digite outro. Escolher no catálogo de
                   Suprimentos, abaixo, também preenche este campo.
                 </div>
@@ -805,7 +808,7 @@ export function ModalNovaVaga({ aberto, onFechar, onCriada, onToast, solicitacao
             )}
           </div>
           <div className="nvg-fg">
-            <label>Cargo *{!vagaManual && <span style={{ color: "#94a3b8", fontWeight: 600 }}> — do colaborador escolhido</span>}</label>
+            <label>Cargo *{!vagaManual && <span style={{ color: "#64748b", fontWeight: 600 }}> — do colaborador escolhido</span>}</label>
             <input className="nvg-fi"
               list={vagaManual ? "nvg-cargos" : undefined}
               placeholder={vagaManual ? "Escolha na lista ou digite" : "Escolha o colaborador acima"}
@@ -819,13 +822,13 @@ export function ModalNovaVaga({ aberto, onFechar, onCriada, onToast, solicitacao
                     <option key={i} value={String(c["Nome do Cargo"] ?? "")} />
                   ))}
                 </datalist>
-                <div style={{ marginTop: 4, fontSize: 11, color: "#94a3b8" }}>
+                <div style={{ marginTop: 4, fontSize: 14, color: "#64748b" }}>
                   Escolha um cargo da lista ou digite outro, se o que você precisa ainda não existe.
                 </div>
               </>
             )}
             {cnhDoCargo && (
-              <div style={{ marginTop: 6, fontSize: 11.5, fontWeight: 700, color: "#b45309", background: "#fffbeb", border: "1px solid #fde68a", borderRadius: 8, padding: "6px 9px" }}>
+              <div style={{ marginTop: 6, fontSize: 13, fontWeight: 700, color: "#b45309", background: "#fffbeb", border: "1px solid #fde68a", borderRadius: 8, padding: "6px 9px" }}>
                 🚗 {cnhDoCargo}: CNH obrigatória — já entra sozinha nos requisitos e não pode ser tirada.
               </div>
             )}
@@ -844,7 +847,7 @@ export function ModalNovaVaga({ aberto, onFechar, onCriada, onToast, solicitacao
           {/* Setor (16/09/2026): com setor a vaga é administrativa e vai pra
               Diretoria aprovar antes de chegar ao Recrutamento. */}
           <div className="nvg-fg">
-            <label>Setor <span style={{ color: "#94a3b8", fontWeight: 600 }}>— opcional; com setor, a aprovação é da Diretoria</span></label>
+            <label>Setor <span style={{ color: "#64748b", fontWeight: 600 }}>— opcional; com setor, a aprovação é da Diretoria</span></label>
             <select className="nvg-fi" value={vaga.setor} onChange={e => setVaga(v => ({ ...v, setor: e.target.value }))}>
               <option value="">Sem setor (vaga de contrato)</option>
               {setoresCatalogo.map(s => <option key={s} value={s}>{s}</option>)}
@@ -873,8 +876,8 @@ export function ModalNovaVaga({ aberto, onFechar, onCriada, onToast, solicitacao
                 <input type="checkbox" checked={!!vaga.administrativa} style={{ marginTop: 2, width: 15, height: 15, accentColor: "#0f3171", cursor: "pointer" }}
                   onChange={e => setVaga(v => ({ ...v, administrativa: e.target.checked }))} />
                 <span>
-                  <span style={{ display: "block", fontSize: 12.5, fontWeight: 800, color: "#0f172a" }}>Vaga é administrativa?</span>
-                  <span style={{ display: "block", fontSize: 11, color: "#94a3b8", marginTop: 3, lineHeight: 1.45 }}>
+                  <span style={{ display: "block", fontSize: 14, fontWeight: 800, color: "#0f172a" }}>Vaga é administrativa?</span>
+                  <span style={{ display: "block", fontSize: 14, color: "#64748b", marginTop: 3, lineHeight: 1.45 }}>
                     Vaga do escritório. Só quem tem “Ver vaga administrativa?” enxerga, aprova ou reprova — os demais nem veem que ela existe.
                   </span>
                 </span>
@@ -899,7 +902,7 @@ export function ModalNovaVaga({ aberto, onFechar, onCriada, onToast, solicitacao
                 disabled={ehSubstituicao(vaga.motivo_vaga)}
                 onChange={e => setVaga(v => ({ ...v, quantidade_vagas: e.target.value }))} />
               {ehSubstituicao(vaga.motivo_vaga) && (
-                <div style={{ fontSize: 11.5, color: "#64748b", marginTop: 4 }}>
+                <div style={{ fontSize: 13, color: "#64748b", marginTop: 4 }}>
                   Substituição repõe uma pessoa por vez.
                 </div>
               )}
@@ -920,7 +923,7 @@ export function ModalNovaVaga({ aberto, onFechar, onCriada, onToast, solicitacao
               Recrutamento não sabia qual turno contratar. O cadastro continua
               sendo o ponto de partida; o encarregado corrige se estiver errado. */}
           <div className="nvg-fg">
-            <label>Escala / horário *{!vagaManual && <span style={{ color: "#94a3b8", fontWeight: 600 }}> — vem do cadastro do colaborador; corrija se não bater</span>}</label>
+            <label>Escala / horário *{!vagaManual && <span style={{ color: "#64748b", fontWeight: 600 }}> — vem do cadastro do colaborador; corrija se não bater</span>}</label>
             <input className="nvg-fi"
               placeholder={vagaManual ? "Ex: 12x36, 5x2..." : "Ex: 07:30-17:18 (1H) · 12x36 diurno"}
               value={vaga.escala}
@@ -938,7 +941,7 @@ export function ModalNovaVaga({ aberto, onFechar, onCriada, onToast, solicitacao
             ) : (
               /* Com colaborador: vem da Planilha de Custo, só leitura. */
               <div className="nvg-fg">
-                <label>Insalubridade <span style={{ color: "#94a3b8", fontWeight: 600 }}>— da Planilha de Custo</span></label>
+                <label>Insalubridade <span style={{ color: "#64748b", fontWeight: 600 }}>— da Planilha de Custo</span></label>
                 <input className="nvg-fi" readOnly
                   value={custoBuscando ? "Consultando a planilha…" : vaga.insalubridade_recebe === "Sim" ? `Sim — ${vaga.insalubridade_quanto}` : substituidoId ? "Não" : ""}
                   placeholder="Escolha o colaborador acima"
@@ -954,11 +957,11 @@ export function ModalNovaVaga({ aberto, onFechar, onCriada, onToast, solicitacao
               deixou de ser só leitura (16/09/2026) — a planilha nem sempre
               batia com o posto real e a vaga abria com benefício errado. */}
           <div className="nvg-fg">
-            <label>Benefícios{!vagaManual && <span style={{ color: "#94a3b8", fontWeight: 600 }}> — VT e VA da Planilha de Custo; corrija se não bater</span>}</label>
+            <label>Benefícios{!vagaManual && <span style={{ color: "#64748b", fontWeight: 600 }}> — VT e VA da Planilha de Custo; corrija se não bater</span>}</label>
             <textarea className="nvg-fi" rows={2}
               placeholder={vagaManual ? "VT, VR, Plano de Saúde..." : custoBuscando ? "Consultando a planilha…" : !vaga.posto_id ? "Selecione o posto no catálogo (etapa 1) para puxar o V.A e o V.T, ou descreva aqui" : "VT, VA, Plano de Saúde..."}
               value={vaga.beneficios} onChange={e => setVaga(v => ({ ...v, beneficios: e.target.value }))} />
-            {!vagaManual && custoNota && <div style={{ marginTop: 4, fontSize: 11, fontWeight: custoPosto ? 400 : 600, color: custoPosto && !custoPosto.ambiguo ? "#94a3b8" : "#92400e" }}>{custoNota}</div>}
+            {!vagaManual && custoNota && <div style={{ marginTop: 4, fontSize: 14, fontWeight: custoPosto ? 400 : 600, color: custoPosto && !custoPosto.ambiguo ? "#64748b" : "#92400e" }}>{custoNota}</div>}
           </div>
           {/* Local exato voltou (16/09/2026), obrigatório e sempre manual: o
               posto do catálogo identifica o contrato, não a unidade/endereço
@@ -986,7 +989,7 @@ export function ModalNovaVaga({ aberto, onFechar, onCriada, onToast, solicitacao
             <div className="nvg-fg">
               <label>Grau de Urgência — calculado pelo prazo</label>
               <input className="nvg-fi" readOnly value={prazo.grau ?? "— informe a data de início —"}
-                style={{ background: "#f1f5f9", color: prazo.grau ? "#0f172a" : "#94a3b8", fontWeight: 700, cursor: "not-allowed" }} />
+                style={{ background: "#f1f5f9", color: prazo.grau ? "#0f172a" : "#64748b", fontWeight: 700, cursor: "not-allowed" }} />
             </div>
             <div className="nvg-fg">
               <label>Alta Rotatividade?</label>
@@ -999,7 +1002,7 @@ export function ModalNovaVaga({ aberto, onFechar, onCriada, onToast, solicitacao
           {/* Requisitos obrigatórios e experiência mínima SAÍRAM (14/09/2026):
               vão vir da licitação/planilha. A CNH segue automática pelo cargo. */}
           {cnhDoCargo && (
-            <div style={{ display: "flex", alignItems: "center", gap: 7, fontSize: 12, fontWeight: 700, color: "#b45309", background: "#fffbeb", border: "1px solid #fde68a", borderRadius: 8, padding: "7px 10px", marginBottom: 10 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 7, fontSize: 13.5, fontWeight: 700, color: "#b45309", background: "#fffbeb", border: "1px solid #fde68a", borderRadius: 8, padding: "7px 10px", marginBottom: 10 }}>
               <span>🚗</span><span>{REQ_CNH_TEXTO} <span style={{ fontWeight: 600, color: "#92400e" }}>(automático para {cnhDoCargo.toLowerCase()})</span></span>
             </div>
           )}
@@ -1017,7 +1020,7 @@ export function ModalNovaVaga({ aberto, onFechar, onCriada, onToast, solicitacao
           </div>
           {vaga.tem_recomendacao === "Sim" && (
             <div style={{ border: "1px solid #e2e8f0", borderRadius: 10, padding: 12, background: "#f8fafc" }}>
-              <div style={{ fontSize: 12, fontWeight: 800, color: "#334155", marginBottom: 8 }}>Dados de quem você está indicando</div>
+              <div style={{ fontSize: 13.5, fontWeight: 800, color: "#334155", marginBottom: 8 }}>Dados de quem você está indicando</div>
               <div className="nvg-fg"><label>Nome completo *</label>
                 <input className="nvg-fi" placeholder="Nome completo da pessoa indicada"
                   value={vaga.recomendacao_nome} onChange={e => setVaga(v => ({ ...v, recomendacao_nome: e.target.value }))} /></div>
@@ -1026,7 +1029,7 @@ export function ModalNovaVaga({ aberto, onFechar, onCriada, onToast, solicitacao
                   <input className="nvg-fi" inputMode="numeric" placeholder="000.000.000-00"
                     value={vaga.recomendacao_cpf} onChange={e => setVaga(v => ({ ...v, recomendacao_cpf: maskCpf(e.target.value) }))} />
                   {soDigitos(vaga.recomendacao_cpf).length === 11 && !cpfValido(vaga.recomendacao_cpf) && (
-                    <div style={{ marginTop: 4, fontSize: 11, color: "#dc2626", fontWeight: 700 }}>CPF não confere.</div>
+                    <div style={{ marginTop: 4, fontSize: 14, color: "#dc2626", fontWeight: 700 }}>CPF não confere.</div>
                   )}</div>
                 <div className="nvg-fg"><label>WhatsApp *</label>
                   <input className="nvg-fi" inputMode="numeric" placeholder="(51) 99999-9999"
@@ -1041,9 +1044,9 @@ export function ModalNovaVaga({ aberto, onFechar, onCriada, onToast, solicitacao
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 16, paddingTop: 14, borderTop: "1px solid #e2e8f0" }}>
           <div />
           <div style={{ display: "flex", gap: 8 }}>
-            {vagaStep > 1 && <button onClick={() => setVagaStep(s => s - 1)} style={{ padding: "7px 14px", borderRadius: 10, border: "1px solid #e2e8f0", background: "#fff", color: "#475569", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>← Anterior</button>}
-            {vagaStep < 3 && <button onClick={() => { if (vagaValidar(vagaStep)) setVagaStep(s => s + 1); }} style={{ padding: "7px 14px", borderRadius: 10, border: "none", background: "#0f3171", color: "#fff", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>Próximo →</button>}
-            {vagaStep === 3 && <button onClick={submitVaga} disabled={salvando} style={{ padding: "7px 14px", borderRadius: 10, border: "none", background: salvando ? "#94a3b8" : "#16a34a", color: "#fff", fontSize: 12, fontWeight: 700, cursor: salvando ? "default" : "pointer" }}>{salvando ? (editando ? "Salvando…" : "Enviando…") : editando ? "✓ Salvar alterações" : "✓ Solicitar Vaga"}</button>}
+            {vagaStep > 1 && <button onClick={() => setVagaStep(s => s - 1)} style={{ padding: "7px 14px", borderRadius: 10, border: "1px solid #e2e8f0", background: "#fff", color: "#475569", fontSize: 13.5, fontWeight: 700, cursor: "pointer" }}>← Anterior</button>}
+            {vagaStep < 3 && <button onClick={() => { if (vagaValidar(vagaStep)) setVagaStep(s => s + 1); }} style={{ padding: "7px 14px", borderRadius: 10, border: "none", background: "#0f3171", color: "#fff", fontSize: 13.5, fontWeight: 700, cursor: "pointer" }}>Próximo →</button>}
+            {vagaStep === 3 && <button onClick={submitVaga} disabled={salvando} style={{ padding: "7px 14px", borderRadius: 10, border: "none", background: salvando ? "#64748b" : "#16a34a", color: "#fff", fontSize: 13.5, fontWeight: 700, cursor: salvando ? "default" : "pointer" }}>{salvando ? (editando ? "Salvando…" : "Enviando…") : editando ? "✓ Salvar alterações" : "✓ Solicitar Vaga"}</button>}
           </div>
         </div>
       </div>

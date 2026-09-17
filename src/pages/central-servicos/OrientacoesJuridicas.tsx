@@ -107,7 +107,7 @@ export default function OrientacoesJuridicas() {
       <div style={{ flex: 1, overflowY: "auto", padding: "18px 24px 28px" }}>
         <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginBottom: 14 }}>
           {card("Respostas na biblioteca", respondidas.length, "#15803d")}
-          {card("Minhas perguntas", minhas.length, "#0f3171")}
+          {card("Minhas solicitações", minhas.length, "#0f3171")}
         </div>
 
         <div style={{ display: "flex", gap: 8, marginBottom: 10, flexWrap: "wrap", alignItems: "center" }}>
@@ -117,14 +117,14 @@ export default function OrientacoesJuridicas() {
           </select>
         </div>
         <div style={{ display: "flex", gap: 7, marginBottom: 16, flexWrap: "wrap" }}>
-          <button className="oj-chip" onClick={() => setAba("biblioteca")} style={{ background: aba === "biblioteca" ? "#0f3171" : "#fff", color: aba === "biblioteca" ? "#fff" : "#475569", borderColor: aba === "biblioteca" ? "#0f3171" : "#e2e8f0" }}>Biblioteca (respondidas)</button>
-          <button className="oj-chip" onClick={() => setAba("minhas")} style={{ background: aba === "minhas" ? "#0f3171" : "#fff", color: aba === "minhas" ? "#fff" : "#475569", borderColor: aba === "minhas" ? "#0f3171" : "#e2e8f0" }}>Minhas perguntas</button>
+          <button className="oj-chip" onClick={() => setAba("biblioteca")} style={{ background: aba === "biblioteca" ? "#0f3171" : "#fff", color: aba === "biblioteca" ? "#fff" : "#475569", borderColor: aba === "biblioteca" ? "#0f3171" : "#e2e8f0" }}>Todas as respostas</button>
+          <button className="oj-chip" onClick={() => setAba("minhas")} style={{ background: aba === "minhas" ? "#0f3171" : "#fff", color: aba === "minhas" ? "#fff" : "#475569", borderColor: aba === "minhas" ? "#0f3171" : "#e2e8f0" }}>Minhas solicitações</button>
         </div>
 
         {loading ? <div style={{ padding: 50, textAlign: "center", color: "#94a3b8" }}>Carregando…</div>
           : filtradas.length === 0 ? (
             <div style={{ background: "#fff", border: "1px solid #e2e8f0", borderRadius: 14, padding: 46, textAlign: "center", color: "#94a3b8", boxShadow: "0 8px 24px rgba(15,23,42,.05)" }}>
-              {aba === "minhas" ? "Você ainda não enviou perguntas." : "Ainda não há respostas na biblioteca."}
+              {aba === "minhas" ? "Você ainda não enviou nenhuma solicitação." : "Ainda não há respostas na biblioteca."}
             </div>
           ) : (
             <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>

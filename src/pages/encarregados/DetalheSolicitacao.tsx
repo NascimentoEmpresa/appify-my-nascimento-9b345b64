@@ -4,6 +4,9 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { useAuth } from "@/hooks/useAuth";
 import { useMeuNome } from "@/hooks/useMeuNome";
 import { AVISO_REFAZER, diasRestantesParaRefazer, podeRefazerFerias } from "@/lib/solicitacoes/feriasRefazer";
+import { ConversaSolicitacao, type ModuloConversa } from "@/components/solicitacoes/ConversaSolicitacao";
+import { AnexosSolicitacao } from "@/components/solicitacoes/AnexosSolicitacao";
+import { tempoDeEmpresa } from "@/lib/rh/colaboradoresUtils";
 
 // `integrations/supabase/types.ts` é gerado e não conhece as tabelas de
 // solicitações. O resto do ERP resolve isso com um cast solto em cada
@@ -79,9 +82,10 @@ const ROTULO: Record<string, string> = {
   req_desejaveis: "Requisitos desejáveis", exp_minima: "Experiência mínima",
   alta_rotatividade: "Alta rotatividade", observacao_importante: "Observação",
   analista_nome: "Analista", motivo_reprovacao: "Motivo da reprovação",
-  colaborador_nome: "Colaborador", tipo_advertencia: "Tipo de advertência",
+  colaborador_nome: "Colaborador", colaborador_cpf: "CPF", tipo_advertencia: "Tipo de advertência",
   colaborador_cargo: "Cargo do colaborador", colaborador_posto: "Posto",
-  colaborador_filial: "Filial", colaborador_admissao: "Admissão",
+  colaborador_filial: "Filial / contrato", colaborador_admissao: "Admissão", colaborador_escala: "Escala",
+  tempo_de_empresa: "Tempo de empresa",
   colaborador_telefone: "Telefone", colaborador_email: "E-mail do colaborador",
   motivo_solicitacao: "Motivo da solicitação", motivo_pedido: "Motivo do pedido",
   relato: "Relato", termino_experiencia: "Término de experiência",
@@ -201,14 +205,9 @@ export function DetalheSolicitacao({ tipo, id, titulo, status, onFechar, onRefaz
     // Consultas separadas por tipo: as duas tabelas não têm as mesmas colunas
     // (`texto` x `mensagem`, `entidade_id` x `solicitacao_id`), e um select
     // genérico esconderia isso.
-    if (fio.modulo) {
-      const { data } = await db.from("SISTEMA_COMENTARIOS")
-        .select("id, texto, autor_nome, autor_cpf, created_at")
-        .eq("modulo", fio.modulo).eq("entidade_id", String(id))
-        .order("created_at");
-      setMsgs((data ?? []).map((m: LinhaMensagem) => paraMensagem(m, m.texto, user?.email)));
-      return;
-    }
+    // Os módulos do SISTEMA_COMENTARIOS são lidos pela ConversaSolicitacao
+    // (17/09/2026) — aqui só a Vaga, que tem fio próprio.
+    if (fio.modulo) { setMsgs([]); return; }
     const { data } = await db.from("WA_MENSAGENS_RECRUTAMENTO")
       .select("id, mensagem, autor_nome, autor_cpf, created_at")
       .eq("solicitacao_id", id).order("created_at");
@@ -251,28 +250,41 @@ export function DetalheSolicitacao({ tipo, id, titulo, status, onFechar, onRefaz
     carregarMsgs();
   };
 
+  // Advertência (17/09/2026): o CPF do advertido aparece (é a identificação
+  // dele no documento) e o tempo de empresa entra como linha calculada logo
+  // depois da admissão.
+  const fichaExibida: Record<string, unknown> | null = ficha && (() => {
+    const out: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(ficha)) {
+      out[k] = v;
+      if (k === "colaborador_admissao" && v) out.tempo_de_empresa = tempoDeEmpresa(v) || undefined;
+    }
+    return out;
+  })();
+  const ocultas = tipo === "Advertência" ? new Set([...OCULTAS].filter(k => k !== "colaborador_cpf")) : OCULTAS;
+
   // As colunas preenchidas, na ordem em que o formulário as pede.
-  const linhas = Object.entries(ficha ?? {})
-    .filter(([k, v]) => !OCULTAS.has(k) && v !== null && v !== "" && v !== undefined && !Array.isArray(v))
+  const linhas = Object.entries(fichaExibida ?? {})
+    .filter(([k, v]) => !ocultas.has(k) && v !== null && v !== "" && v !== undefined && !Array.isArray(v))
     .map(([k, v]) => [ROTULO[k] ?? k.replace(/_/g, " "), typeof v === "boolean" ? (v ? "Sim" : "Não")
       : /^\d{4}-\d{2}-\d{2}/.test(String(v)) ? fmtData(String(v)) : String(v)] as [string, string]);
 
   return (
     <div className="ini-modal-bg" onClick={onFechar}>
       <div className="ini-modal" onClick={(e) => e.stopPropagation()}
-           style={{ maxWidth: 860, width: "96vw", maxHeight: "92vh", display: "flex", flexDirection: "column" }}>
+           style={{ maxWidth: 980, width: "96vw", maxHeight: "92vh", display: "flex", flexDirection: "column" }}>
         <button onClick={onFechar} aria-label="Fechar"
-                style={{ position: "absolute", top: 14, right: 14, background: "none", border: "none", color: "#94a3b8", fontSize: 20, cursor: "pointer" }}>✕</button>
+                style={{ position: "absolute", top: 14, right: 14, background: "none", border: "none", color: "#64748b", fontSize: 20, cursor: "pointer" }}>✕</button>
 
         <div style={{ borderBottom: "1px solid #e2e8f0", paddingBottom: 12, marginBottom: 14 }}>
-          <div style={{ fontSize: 11, color: "#94a3b8", fontWeight: 700, letterSpacing: ".6px", textTransform: "uppercase" }}>
+          <div style={{ fontSize: 13.5, color: "#64748b", fontWeight: 700, letterSpacing: ".6px", textTransform: "uppercase" }}>
             {tipo} · #{id}
           </div>
-          <div style={{ fontSize: 17, fontWeight: 800, color: "#0f172a", marginTop: 2 }}>{titulo}</div>
+          <div style={{ fontSize: 20, fontWeight: 800, color: "#0f172a", marginTop: 2 }}>{titulo}</div>
           <div style={{ marginTop: 6, display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
             <span className="ini-badge">{status}</span>
             {tipo === "Férias" && !!ficha?.refeita_em && (
-              <span title={`Refeita em ${fmt(String(ficha.refeita_em))}`} style={{ fontSize: 10.5, fontWeight: 800, padding: "2px 8px", borderRadius: 20, background: "#ede9fe", color: "#6d28d9" }}>🔁 Refeita</span>
+              <span title={`Refeita em ${fmt(String(ficha.refeita_em))}`} style={{ fontSize: 13.5, fontWeight: 800, padding: "2px 8px", borderRadius: 20, background: "#ede9fe", color: "#6d28d9" }}>🔁 Refeita</span>
             )}
           </div>
         </div>
@@ -283,13 +295,13 @@ export function DetalheSolicitacao({ tipo, id, titulo, status, onFechar, onRefaz
           const dias = diasRestantesParaRefazer(ficha.criado_em as string | null);
           return (
             <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap", marginBottom: 14, padding: "10px 14px", borderRadius: 12, border: `1px solid ${regra.ok ? "#c7d2fe" : "#e2e8f0"}`, background: regra.ok ? "#eef2ff" : "#f8fafc" }}>
-              <div style={{ flex: 1, minWidth: 220, fontSize: 12, color: regra.ok ? "#3730a3" : "#64748b", lineHeight: 1.5 }}>
+              <div style={{ flex: 1, minWidth: 220, fontSize: 13.5, color: regra.ok ? "#3730a3" : "#64748b", lineHeight: 1.5 }}>
                 {regra.ok
                   ? <><b>Precisa corrigir algo?</b> {AVISO_REFAZER} {dias > 0 && <>Prazo: <b>{dias} dia{dias === 1 ? "" : "s"}</b>.</>}</>
                   : <><b>Refazer indisponível.</b> {regra.motivo}</>}
               </div>
               <button onClick={() => onRefazer(ficha)} disabled={!regra.ok}
-                style={{ padding: "8px 14px", borderRadius: 10, border: "none", background: regra.ok ? "#4f46e5" : "#cbd5e1", color: "#fff", fontSize: 12, fontWeight: 800, cursor: regra.ok ? "pointer" : "not-allowed", fontFamily: "inherit", whiteSpace: "nowrap" }}>
+                style={{ padding: "8px 14px", borderRadius: 10, border: "none", background: regra.ok ? "#4f46e5" : "#cbd5e1", color: "#fff", fontSize: 13.5, fontWeight: 800, cursor: regra.ok ? "pointer" : "not-allowed", fontFamily: "inherit", whiteSpace: "nowrap" }}>
                 🔁 Refazer solicitação
               </button>
             </div>
@@ -299,52 +311,62 @@ export function DetalheSolicitacao({ tipo, id, titulo, status, onFechar, onRefaz
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 18, flex: 1, minHeight: 0 }}>
           {/* ── Detalhes ── */}
           <div style={{ overflowY: "auto", paddingRight: 4 }}>
-            <h4 style={{ fontSize: 12, fontWeight: 800, color: "#475569", margin: "0 0 10px" }}>Detalhes da solicitação</h4>
+            <h4 style={{ fontSize: 13.5, fontWeight: 800, color: "#475569", margin: "0 0 10px" }}>Detalhes da solicitação</h4>
             {!ficha ? (
-              <p style={{ fontSize: 12, color: "#94a3b8" }}>Carregando…</p>
+              <p style={{ fontSize: 13.5, color: "#64748b" }}>Carregando…</p>
             ) : linhas.length === 0 ? (
-              <p style={{ fontSize: 12, color: "#94a3b8" }}>Sem informações adicionais.</p>
+              <p style={{ fontSize: 13.5, color: "#64748b" }}>Sem informações adicionais.</p>
             ) : (
               <dl style={{ margin: 0, display: "flex", flexDirection: "column", gap: 9 }}>
                 {linhas.map(([rot, val]) => (
                   <div key={rot}>
-                    <dt style={{ fontSize: 10, color: "#94a3b8", fontWeight: 700, textTransform: "uppercase", letterSpacing: ".5px" }}>{rot}</dt>
-                    <dd style={{ margin: 0, fontSize: 12.5, color: "#0f172a", whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>{val}</dd>
+                    <dt style={{ fontSize: 13.5, color: "#64748b", fontWeight: 700, textTransform: "uppercase", letterSpacing: ".5px" }}>{rot}</dt>
+                    <dd style={{ margin: 0, fontSize: 13.5, color: "#0f172a", whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>{val}</dd>
                   </div>
                 ))}
               </dl>
             )}
+            {/* Anexos da advertência (17/09/2026): quem pediu anexa quando quiser — opcional. */}
+            {tipo === "Advertência" && <AnexosSolicitacao modulo="advertencia" entidadeId={id} podeAnexar titulo="Anexos da solicitação" />}
           </div>
 
           {/* ── Conversa ── */}
           <div style={{ display: "flex", flexDirection: "column", minHeight: 0, borderLeft: "1px solid #e2e8f0", paddingLeft: 18 }}>
-            <h4 style={{ fontSize: 12, fontWeight: 800, color: "#475569", margin: "0 0 4px" }}>Conversa</h4>
-            <p style={{ fontSize: 11, color: "#94a3b8", margin: "0 0 10px" }}>
-              {tipo === "Vaga"
-                ? "A mesma conversa que o Operacional e o Recrutamento leem."
-                : tipo === "Férias"
-                  ? "A mesma conversa que o RH lê na tela de Férias."
-                  : tipo === "Demissão"
-                    ? "A mesma conversa que o Operacional e o RH leem na tela de Demissões."
-                    : tipo === "Mudança de Função"
-                      ? "A mesma conversa que quem aprova, o SST e o RH leem na tela de Mudança de Função."
-                      : "A mesma conversa que o Jurídico lê na tela de Advertências."}
+            {/* Férias, Advertência, Demissão e Mudança de Função usam o MESMO
+                componente que o outro lado (17/09/2026): é ele que tem
+                anexos, foto colada com Ctrl+V e cópia com Ctrl+C. Só a Vaga
+                continua com o fio próprio (WA_MENSAGENS_RECRUTAMENTO). */}
+            {FIO[tipo].modulo ? (
+              <div style={{ overflowY: "auto", minHeight: 0 }}>
+                <ConversaSolicitacao modulo={FIO[tipo].modulo as ModuloConversa} entidadeId={id}
+                  aviso={tipo === "Férias"
+                    ? "A mesma conversa que o RH lê na tela de Férias."
+                    : tipo === "Demissão"
+                      ? "A mesma conversa que o Operacional e o RH leem na tela de Demissões."
+                      : tipo === "Mudança de Função"
+                        ? "A mesma conversa que quem aprova, o SST e o RH leem na tela de Mudança de Função."
+                        : "A mesma conversa que o Jurídico lê na tela de Advertências. Dá pra mandar foto e anexo, inclusive colando com Ctrl+V."} />
+              </div>
+            ) : (<>
+            <h4 style={{ fontSize: 13.5, fontWeight: 800, color: "#475569", margin: "0 0 4px" }}>Conversa</h4>
+            <p style={{ fontSize: 13.5, color: "#64748b", margin: "0 0 10px" }}>
+              A mesma conversa que o Operacional e o Recrutamento leem.
             </p>
 
             <div style={{ flex: 1, overflowY: "auto", background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: 12, padding: 10, minHeight: 180 }}>
               {msgs.length === 0 ? (
-                <p style={{ fontSize: 12, color: "#94a3b8", textAlign: "center", padding: "24px 0" }}>
+                <p style={{ fontSize: 13.5, color: "#64748b", textAlign: "center", padding: "24px 0" }}>
                   Nenhuma mensagem ainda. Escreva abaixo para falar com quem está tratando.
                 </p>
               ) : msgs.map((m) => (
                 <div key={m.id} style={{ display: "flex", justifyContent: m.minha ? "flex-end" : "flex-start", marginBottom: 8 }}>
                   <div style={{
-                    maxWidth: "85%", borderRadius: 12, padding: "7px 10px", fontSize: 12.5,
+                    maxWidth: "85%", borderRadius: 12, padding: "7px 10px", fontSize: 13.5,
                     background: m.minha ? "#0f3171" : "#fff",
                     color: m.minha ? "#fff" : "#0f172a",
                     border: m.minha ? "none" : "1px solid #e2e8f0",
                   }}>
-                    <div style={{ fontSize: 10, fontWeight: 700, opacity: .75, marginBottom: 2 }}>
+                    <div style={{ fontSize: 13.5, fontWeight: 700, opacity: .75, marginBottom: 2 }}>
                       {m.autor} · {fmt(m.quando)}
                     </div>
                     <div style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>{m.texto}</div>
@@ -354,20 +376,21 @@ export function DetalheSolicitacao({ tipo, id, titulo, status, onFechar, onRefaz
               <div ref={fimRef} />
             </div>
 
-            {erro && <p style={{ fontSize: 11, color: "#dc2626", marginTop: 6 }}>{erro}</p>}
+            {erro && <p style={{ fontSize: 13.5, color: "#dc2626", marginTop: 6 }}>{erro}</p>}
 
             <div style={{ display: "flex", gap: 6, marginTop: 10 }}>
               <input
                 value={texto} onChange={(e) => setTexto(e.target.value)}
                 onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); enviar(); } }}
                 placeholder="Escreva uma mensagem…"
-                style={{ flex: 1, background: "#fff", border: "1px solid #e2e8f0", borderRadius: 10, padding: "8px 11px", fontSize: 12.5, outline: "none", fontFamily: "inherit" }}
+                style={{ flex: 1, background: "#fff", border: "1px solid #e2e8f0", borderRadius: 10, padding: "8px 11px", fontSize: 13.5, outline: "none", fontFamily: "inherit" }}
               />
               <button onClick={enviar} disabled={enviando || !texto.trim()}
-                style={{ padding: "8px 15px", borderRadius: 10, border: "none", background: texto.trim() ? "#0f3171" : "#cbd5e1", color: "#fff", fontSize: 12, fontWeight: 700, cursor: texto.trim() ? "pointer" : "default", fontFamily: "inherit" }}>
+                style={{ padding: "8px 15px", borderRadius: 10, border: "none", background: texto.trim() ? "#0f3171" : "#cbd5e1", color: "#fff", fontSize: 13.5, fontWeight: 700, cursor: texto.trim() ? "pointer" : "default", fontFamily: "inherit" }}>
                 {enviando ? "…" : "Enviar"}
               </button>
             </div>
+            </>)}
           </div>
         </div>
       </div>

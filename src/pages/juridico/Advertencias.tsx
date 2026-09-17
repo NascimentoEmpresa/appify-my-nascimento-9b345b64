@@ -2,6 +2,8 @@ import { useState, useEffect, useCallback, useMemo } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
 import { ConversaSolicitacao } from "@/components/solicitacoes/ConversaSolicitacao";
+import { AnexosSolicitacao } from "@/components/solicitacoes/AnexosSolicitacao";
+import { tempoDeEmpresa } from "@/lib/rh/colaboradoresUtils";
 import { FiltroContratos, passaNoFiltroContratos } from "@/components/solicitacoes/FiltroContratos";
 import { useVinculoEmpregado } from "@/hooks/useVinculoEmpregado";
 import { ResumoDeFuncoes } from "@/components/fluxos/ResumoDeFuncoes";
@@ -33,6 +35,8 @@ interface Adv {
   id: number; created_at: string; status_changed_at: string;
   solicitante_nome: string; solicitante_email: string;
   colaborador_nome: string; colaborador_cpf: string; colaborador_cargo: string; colaborador_filial: string;
+  // Ficha do advertido (17/09/2026, mig 175).
+  colaborador_admissao?: string | null; colaborador_posto?: string | null; colaborador_escala?: string | null;
   contrato: string; contrato_id: number | null;
   tipo_advertencia: string; grau: string; descricao_ocorrido: string; data_ocorrido: string;
   ja_advertencia_anterior: boolean; detalhe_anterior: string; advertencia_verbal_dada: boolean; data_advertencia_verbal: string;
@@ -348,8 +352,21 @@ export default function Advertencias() {
         <div onClick={e => { if (e.target === e.currentTarget) setDetalhe(null); }} style={{ position: "fixed", inset: 0, zIndex: 700, background: "rgba(15,23,42,.45)", backdropFilter: "blur(4px)", display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
           <div style={{ background: "#fff", borderRadius: 16, padding: 22, width: "100%", maxWidth: 620, maxHeight: "92vh", overflowY: "auto", position: "relative" }}>
             <button onClick={() => setDetalhe(null)} style={{ position: "absolute", top: 14, right: 16, border: "none", background: "none", fontSize: 20, color: "#94a3b8", cursor: "pointer" }}>✕</button>
+            <div style={{ fontSize: 10.5, fontWeight: 800, color: "#b45309", textTransform: "uppercase", letterSpacing: ".4px" }}>⚠️ Colaborador advertido</div>
             <div style={{ fontSize: 18, fontWeight: 800, color: "#0f172a" }}>{detalhe.colaborador_nome}</div>
-            <div style={{ fontSize: 12.5, color: "#475569", marginBottom: 12 }}>{detalhe.colaborador_cargo || "—"} · CPF {detalhe.colaborador_cpf || "—"}{detalhe.contrato ? ` · ${detalhe.contrato}` : ""}</div>
+            {/* A ficha de quem recebe a advertência, explícita (17/09/2026):
+                CPF, admissão e tempo de empresa, contrato, posto, escala. */}
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: "4px 12px", margin: "6px 0 12px", padding: "9px 12px", borderRadius: 10, background: "#fff7ed", border: "1px solid #fed7aa", fontSize: 12, color: "#475569" }}>
+              {([
+                ["CPF", detalhe.colaborador_cpf], ["Cargo", detalhe.colaborador_cargo],
+                ["Contrato", detalhe.contrato || detalhe.colaborador_filial], ["Posto", detalhe.colaborador_posto],
+                ["Admissão", detalhe.colaborador_admissao ? fmtDt(detalhe.colaborador_admissao) : ""],
+                ["Tempo de empresa", tempoDeEmpresa(detalhe.colaborador_admissao)],
+                ["Escala", detalhe.colaborador_escala],
+              ] as [string, string | null | undefined][]).map(([l, v]) => (
+                <div key={l}><span style={{ fontSize: 9.5, fontWeight: 700, color: "#94a3b8", textTransform: "uppercase" }}>{l}</span><div style={{ fontWeight: 600, color: "#334155" }}>{v || "—"}</div></div>
+              ))}
+            </div>
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
               {[["Tipo", detalhe.tipo_advertencia], ["Grau", detalhe.grau], ["Data do ocorrido", fmtDt(detalhe.data_ocorrido)], ["Status", detalhe.status], ["Advertência verbal já foi dada para o mesmo fato?", detalhe.advertencia_verbal_dada ? "Sim" : "Não"], ["Data da advertência verbal", detalhe.advertencia_verbal_dada ? fmtDt(detalhe.data_advertencia_verbal) : "—"], ["Solicitante", detalhe.solicitante_nome], ["Aprovado/decidido por", detalhe.aprovado_por_nome || "—"]].map(([l, v]) => (
                 <div key={String(l)} style={{ background: "#f8fafc", border: "1px solid #eef2f7", borderRadius: 9, padding: "7px 10px" }}>
@@ -367,6 +384,8 @@ export default function Advertencias() {
             <div style={{ fontSize: 11, fontWeight: 800, color: "#0f3171", textTransform: "uppercase", letterSpacing: ".4px", margin: "14px 0 4px" }}>Descrição do ocorrido</div>
             <div style={{ fontSize: 13, color: "#0f172a", whiteSpace: "pre-wrap", overflowWrap: "break-word", wordBreak: "break-word", background: "#f8fafc", borderRadius: 9, padding: "9px 12px" }}>{detalhe.descricao_ocorrido || "—"}</div>
             {detalhe.detalhe_anterior && <><div style={{ fontSize: 11, fontWeight: 800, color: "#0f3171", textTransform: "uppercase", margin: "12px 0 4px" }}>Advertência anterior</div><div style={{ fontSize: 12.5, color: "#475569" }}>{detalhe.detalhe_anterior}</div></>}
+            {/* Anexos de quem pediu (17/09/2026). O Jurídico só lê — anexa quem solicitou, pelo card dele. */}
+            <AnexosSolicitacao modulo="advertencia" entidadeId={detalhe.id} podeAnexar={false} titulo="Anexos da solicitação" />
             {detalhe.parecer_juridico && <><div style={{ fontSize: 11, fontWeight: 800, color: "#0f3171", textTransform: "uppercase", margin: "12px 0 4px" }}>Parecer do Jurídico</div><div style={{ fontSize: 12.5, color: "#475569" }}>{detalhe.parecer_juridico}</div></>}
 
             {/* O encarregado que pediu a advertência escreve do lado dele, em

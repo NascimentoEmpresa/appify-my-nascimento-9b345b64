@@ -352,7 +352,7 @@ function MenusEditor({ moduloId, menus, podeGerenciar, onChange }: { moduloId: s
 
 // O enum app_acao do banco. Tipado aqui porque o insert em
 // screen_permission_user exige a união exata, não `string`.
-type AppAcao = "visualizar" | "incluir" | "alterar" | "excluir" | "aprovar" | "exportar" | "executar_ia" | "alterar_dre";
+type AppAcao = "visualizar" | "incluir" | "alterar" | "excluir" | "aprovar" | "exportar" | "executar_ia" | "alterar_dre" | "responder";
 
 // LIBERAR A TELA É LIBERAR A TELA.
 //
@@ -388,11 +388,11 @@ const ACOES_DO_TOGGLE = (codigo: string): AppAcao[] =>
 // Suprimentos. Pior, 'executar_ia' e 'alterar_dre' não são checadas em canto
 // nenhum do sistema — aqueles dois switches nunca controlaram nada.
 const ORDEM_ACOES: readonly AppAcao[] = [
-  "visualizar", "incluir", "alterar", "excluir", "aprovar", "exportar", "executar_ia", "alterar_dre",
+  "visualizar", "incluir", "alterar", "excluir", "aprovar", "responder", "exportar", "executar_ia", "alterar_dre",
 ];
 const ACAO_LABEL: Record<AppAcao, string> = {
   visualizar: "Visualizar", incluir: "Incluir", alterar: "Alterar", excluir: "Excluir",
-  aprovar: "Aprovar", exportar: "Exportar", executar_ia: "Executar IA", alterar_dre: "Alterar DRE",
+  aprovar: "Aprovar", responder: "Responder", exportar: "Exportar", executar_ia: "Executar IA", alterar_dre: "Alterar DRE",
 };
 
 function UserAccessPanel({ podeGerenciar, modulos, menus }: { podeGerenciar: boolean; modulos: Modulo[]; menus: Menu[] }) {
