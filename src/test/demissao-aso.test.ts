@@ -3,6 +3,7 @@ import {
   STATUS_FINAIS, STATUS_SST_AGENDADO, STATUS_SST_ASO_VALIDO, STATUS_SST_RECEBIDA, STATUS_TODOS, acaoDoSST,
   corDoStatus, explicaStatus, linkDoLocalASO, patchDevolucao,
   podeDevolver, resumoDevolucao, resumoDoASO,
+  aprovarPedeMotivoSemVaga, faltaVagaDeReposicao, temMotivoSemVaga,
 } from "@/lib/demissao/solicitacao";
 
 // O ASO demissional marca data/hora/local do exame — os MESMOS campos do ASO
@@ -189,5 +190,31 @@ describe("resumoDevolucao", () => {
     expect(sst).toContain("Ana");
     expect(rh).toContain("pelo RH");
     expect(rh).toContain("Melissa");
+  });
+});
+
+// Aprovar SEM a vaga de Substituição (17/09/2026): o Operacional pode, desde
+// que descreva o motivo da exceção. O que trava aqui é a régua do motivo e o
+// fato de a exceção gravada tirar o pedido do "falta a vaga".
+describe("aprovar sem vaga de substituição", () => {
+  it("a tela pede motivo em qualquer pedido sem vaga, respondeu Sim ou Não", () => {
+    expect(aprovarPedeMotivoSemVaga({ vaga_id: null })).toBe(true);
+    expect(aprovarPedeMotivoSemVaga({ vaga_id: undefined })).toBe(true);
+    expect(aprovarPedeMotivoSemVaga({ vaga_id: 41 })).toBe(false);
+  });
+
+  it("motivo curto não conta — mesma régua do motivo da reprovação (10 caracteres)", () => {
+    expect(temMotivoSemVaga("")).toBe(false);
+    expect(temMotivoSemVaga("   ok    ")).toBe(false);
+    expect(temMotivoSemVaga("123456789")).toBe(false);
+    expect(temMotivoSemVaga("Posto fecha em outubro")).toBe(true);
+  });
+
+  it("com a exceção gravada o pedido deixa de 'faltar' a vaga na lista do encarregado", () => {
+    const presa = { vaga_id: null, vaga_obrigatoria: true, status: "Pendente Operacional", sem_vaga_motivo: null };
+    expect(faltaVagaDeReposicao(presa)).toBe(true);
+    expect(faltaVagaDeReposicao({ ...presa, status: "Pendente RH", sem_vaga_motivo: "Posto fecha em outubro" })).toBe(false);
+    expect(faltaVagaDeReposicao({ ...presa, sem_vaga_motivo: "curto" })).toBe(true);
+    expect(faltaVagaDeReposicao({ ...presa, vaga_obrigatoria: false })).toBe(false);
   });
 });

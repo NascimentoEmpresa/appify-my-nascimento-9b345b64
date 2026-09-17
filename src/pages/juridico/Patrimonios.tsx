@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
+import type { SupabaseClient } from "@supabase/supabase-js";
 import {
   ehContratoParcelado, gerarParcelas, renumerar, somaParcelas, totalGeral, MODOS_PARCELA,
   validarParcelas, mapaValorQueFalta, numero as numParc, somaMeses,
@@ -19,6 +20,10 @@ import {
   PARAM_ORIGEM, despesaEstaPaga, statusDaConta, corDaConta, podeEnviarAoMalote,
   podeBaixarManualmente, entraNoAlerta, STATUS_SUSPENSA, type StatusConta,
 } from "./patrimonio/vinculoMalote";
+
+// JUR_PATRIMONIO* e SISTEMA_COMENTARIOS não estão no types.ts gerado; mesmo
+// padrão de comite-etica/db.ts — a exceção fica num lugar só.
+const db = supabase as unknown as SupabaseClient;
 
 // =====================================================================
 // JURÍDICO — Gestão Patrimonial e Obrigações
@@ -60,7 +65,7 @@ interface Obrigacao {
 interface Parcela {
   id: number; patrimonio_id: number; ordem?: number; numero?: number; rotulo?: string;
   vencimento?: string; valor?: number; valor_pago?: number; situacao?: string;
-  detalhes?: Record<string, any>; origem?: string;
+  detalhes?: Record<string, unknown>; origem?: string;
 }
 interface Acesso { id: number; patrimonio_id: number; servico?: string; link?: string; usuario?: string; local_senha?: string; observacao?: string; }
 interface Contato { id: number; patrimonio_id: number; tipo?: string; nome?: string; telefone?: string; email?: string; observacao?: string; }
@@ -174,10 +179,10 @@ export default function Patrimonios() {
   const carregarStatusMalote = useCallback(async (linhas: Obrigacao[]) => {
     const ids = [...new Set(linhas.map(x => x.malote_despesa_id).filter(Boolean))] as string[];
     if (!ids.length) { setMalotePago(new Map()); return; }
-    const { data, error } = await (supabase as any).rpc("jur_patrimonio_status_malote", { _ids: ids });
+    const { data, error } = await db.rpc("jur_patrimonio_status_malote", { _ids: ids });
     if (error) { console.warn("status do malote:", error.message); return; }
     const m = new Map<string, boolean>();
-    (data ?? []).forEach((d: any) => m.set(String(d.despesa_id), despesaEstaPaga(d)));
+    (data ?? []).forEach((d: { despesa_id: string; status?: string | null; pago_em?: string | null }) => m.set(String(d.despesa_id), despesaEstaPaga(d)));
     setMalotePago(m);
   }, []);
 
@@ -190,14 +195,14 @@ export default function Patrimonios() {
    * falta" de metade da carteira passaria a sair errado — e errado para MENOS,
    * que é o jeito pior de errar aqui.
    */
-  const todas = useCallback(async (tabela: string, colunas: string) => {
+  const todas = useCallback(async <T,>(tabela: string, colunas: string): Promise<T[]> => {
     const PAGINA = 1000;
-    const acc: any[] = [];
+    const acc: T[] = [];
     for (let de = 0; ; de += PAGINA) {
-      const { data, error } = await (supabase as any)
+      const { data, error } = await db
         .from(tabela).select(colunas).order("id", { ascending: true }).range(de, de + PAGINA - 1);
       if (error) { console.warn(tabela + ":", error.message); break; }
-      acc.push(...(data ?? []));
+      acc.push(...((data ?? []) as T[]));
       if (!data || data.length < PAGINA) break;
     }
     return acc;
@@ -207,8 +212,8 @@ export default function Patrimonios() {
   const load = useCallback(async () => {
     setLoading(true);
     const [{ data: p }, o] = await Promise.all([
-      (supabase as any).from("JUR_PATRIMONIOS").select("*").order("created_at", { ascending: false }),
-      todas("JUR_PATRIMONIO_OBRIGACOES",
+      db.from("JUR_PATRIMONIOS").select("*").order("created_at", { ascending: false }),
+      todas<Obrigacao>("JUR_PATRIMONIO_OBRIGACOES",
         "id,patrimonio_id,categoria,descricao,valor,vencimento,status,pago_em,vigencia_fim,onde_pagar,comprovante_path,comprovante_nome,malote_despesa_id,enviado_malote_em"),
     ]);
     setPats(p ?? []); setObrAll(o ?? []);
@@ -220,24 +225,24 @@ export default function Patrimonios() {
   // Empregados do setor Jurídico que estão Trabalhando (para o select de responsável).
   useEffect(() => {
     (async () => {
-      const { data } = await (supabase as any)
+      const { data } = await db
         .from("EMPREGADOS")
         .select('"ID","Nome"')
         .eq("Setor_ERP", "JURIDICO")
         .eq("Situação", "Trabalhando")
         .order('"Nome"');
-      setEmpsJuridico((data ?? []).map((e: any) => ({ id: e["ID"], nome: e["Nome"] ?? "" })).filter((e: EmpJuridico) => e.nome));
+      setEmpsJuridico((data ?? []).map((e: { ID: number; Nome?: string | null }) => ({ id: e["ID"], nome: e["Nome"] ?? "" })).filter((e: EmpJuridico) => e.nome));
     })();
   }, []);
 
   const logHist = async (patId: number, acao: string, detalhe?: string) => {
-    await (supabase as any).from("JUR_PATRIMONIO_ITENS").insert({ patrimonio_id: patId, kind: "historico", acao, detalhe, autor });
+    await db.from("JUR_PATRIMONIO_ITENS").insert({ patrimonio_id: patId, kind: "historico", acao, detalhe, autor });
   };
 
   // O mapa acha a coordenada e devolve por aqui. Grava uma linha de cada vez:
   // fechar a tela no meio da busca não perde o que já foi localizado.
-  const gravarCoordenada = useCallback(async (id: number, dados: any) => {
-    const { error } = await (supabase as any).from("JUR_PATRIMONIOS")
+  const gravarCoordenada = useCallback(async (id: number, dados: Partial<Patrimonio>) => {
+    const { error } = await db.from("JUR_PATRIMONIOS")
       .update({ ...dados, geo_em: new Date().toISOString() }).eq("id", id);
     if (error) throw new Error(error.message);
     setPats(atual => atual.map(p => p.id === id ? { ...p, ...dados } : p));
@@ -277,7 +282,7 @@ export default function Patrimonios() {
       matricula: txt(p.matricula),
       especie_escritura: txt(p.especie_escritura),
       situacao_pagamento: txt(p.situacao_pagamento),
-    } as any);
+    } as typeof PATRIM_RESET);
     setModalPat(true);
   };
   const salvarPat = async () => {
@@ -307,12 +312,12 @@ export default function Patrimonios() {
       updated_at: new Date().toISOString(),
     };
     if (editId) {
-      const { error } = await (supabase as any).from("JUR_PATRIMONIOS").update(payload).eq("id", editId);
+      const { error } = await db.from("JUR_PATRIMONIOS").update(payload).eq("id", editId);
       if (error) { toast("Erro: " + error.message, "err"); return; }
       await logHist(editId, "Patrimônio atualizado");
       toast("Patrimônio atualizado.", "ok");
     } else {
-      const { data, error } = await (supabase as any).from("JUR_PATRIMONIOS").insert(payload).select("id").single();
+      const { data, error } = await db.from("JUR_PATRIMONIOS").insert(payload).select("id").single();
       if (error) { toast("Erro: " + error.message, "err"); return; }
       if (data?.id) await logHist(data.id, "Patrimônio cadastrado");
       toast("Patrimônio cadastrado.", "ok");
@@ -323,10 +328,10 @@ export default function Patrimonios() {
     if (!editId) return;
     if (!confirm(`Excluir o patrimônio "${pat.descricao}" e TODOS os dados vinculados (obrigações, contas, acessos, contatos, documentos, histórico e comentários)? Esta ação não pode ser desfeita.`)) return;
     // Remove os arquivos do storage (as linhas do banco somem por CASCADE, os arquivos não).
-    const { data: dd } = await (supabase as any).from("JUR_PATRIMONIO_ITENS").select("storage_path").eq("kind", "documento").eq("patrimonio_id", editId);
-    const paths = (dd ?? []).map((x: any) => x.storage_path).filter(Boolean);
+    const { data: dd } = await db.from("JUR_PATRIMONIO_ITENS").select("storage_path").eq("kind", "documento").eq("patrimonio_id", editId);
+    const paths = (dd ?? []).map((x: { storage_path?: string | null }) => x.storage_path).filter(Boolean);
     if (paths.length) await supabase.storage.from("juridico-docs").remove(paths);
-    const { error } = await (supabase as any).from("JUR_PATRIMONIOS").delete().eq("id", editId);
+    const { error } = await db.from("JUR_PATRIMONIOS").delete().eq("id", editId);
     if (error) { toast("Erro: " + error.message, "err"); return; }
     setModalPat(false); setSel(null); toast("Patrimônio excluído.", "ok"); load();
   };
@@ -336,21 +341,21 @@ export default function Patrimonios() {
     setSel(p); setTab("obrigacoes"); setNovoComentario("");
     setObrs([]); setParcelas([]); setAcessos([]); setContatos([]); setDocs([]); setHist([]); setComentarios([]);
     const [o, pc, a, c, d, h, cm] = await Promise.all([
-      (supabase as any).from("JUR_PATRIMONIO_OBRIGACOES").select("*").eq("patrimonio_id", p.id).order("vencimento", { ascending: true }),
+      db.from("JUR_PATRIMONIO_OBRIGACOES").select("*").eq("patrimonio_id", p.id).order("vencimento", { ascending: true }),
       // As parcelas do financiamento vêm na mesma leva; são centenas por
       // contrato, então ordena pela posição original da planilha.
-      (supabase as any).from("JUR_PATRIMONIO_PARCELAS").select("*").eq("patrimonio_id", p.id).order("ordem", { ascending: true }).limit(1000),
-      (supabase as any).from("JUR_PATRIMONIO_ITENS").select("*").eq("kind", "acesso").eq("patrimonio_id", p.id).order("id"),
-      (supabase as any).from("JUR_PATRIMONIO_ITENS").select("*").eq("kind", "contato").eq("patrimonio_id", p.id).order("id"),
-      (supabase as any).from("JUR_PATRIMONIO_ITENS").select("*").eq("kind", "documento").eq("patrimonio_id", p.id).order("created_at", { ascending: false }),
-      (supabase as any).from("JUR_PATRIMONIO_ITENS").select("*").eq("kind", "historico").eq("patrimonio_id", p.id).order("created_at", { ascending: false }).limit(50),
-      (supabase as any).from("SISTEMA_COMENTARIOS").select("*").eq("modulo", "patrimonio").eq("entidade_id", String(p.id)).order("created_at", { ascending: false }),
+      db.from("JUR_PATRIMONIO_PARCELAS").select("*").eq("patrimonio_id", p.id).order("ordem", { ascending: true }).limit(1000),
+      db.from("JUR_PATRIMONIO_ITENS").select("*").eq("kind", "acesso").eq("patrimonio_id", p.id).order("id"),
+      db.from("JUR_PATRIMONIO_ITENS").select("*").eq("kind", "contato").eq("patrimonio_id", p.id).order("id"),
+      db.from("JUR_PATRIMONIO_ITENS").select("*").eq("kind", "documento").eq("patrimonio_id", p.id).order("created_at", { ascending: false }),
+      db.from("JUR_PATRIMONIO_ITENS").select("*").eq("kind", "historico").eq("patrimonio_id", p.id).order("created_at", { ascending: false }).limit(50),
+      db.from("SISTEMA_COMENTARIOS").select("*").eq("modulo", "patrimonio").eq("entidade_id", String(p.id)).order("created_at", { ascending: false }),
     ]);
     setObrs(o.data ?? []); setParcelas(pc.data ?? []); setAcessos(a.data ?? []); setContatos(c.data ?? []); setDocs(d.data ?? []); setHist(h.data ?? []); setComentarios(cm.data ?? []);
   };
-  const recarregarObrs = async () => { if (!sel) return; const { data } = await (supabase as any).from("JUR_PATRIMONIO_OBRIGACOES").select("*").eq("patrimonio_id", sel.id).order("vencimento"); setObrs(data ?? []); load(); };
-  const recarregarHist = async () => { if (!sel) return; const { data } = await (supabase as any).from("JUR_PATRIMONIO_ITENS").select("*").eq("kind", "historico").eq("patrimonio_id", sel.id).order("created_at", { ascending: false }).limit(50); setHist(data ?? []); };
-  const recarregarComentarios = async () => { if (!sel) return; const { data } = await (supabase as any).from("SISTEMA_COMENTARIOS").select("*").eq("modulo", "patrimonio").eq("entidade_id", String(sel.id)).order("created_at", { ascending: false }); setComentarios(data ?? []); };
+  const recarregarObrs = async () => { if (!sel) return; const { data } = await db.from("JUR_PATRIMONIO_OBRIGACOES").select("*").eq("patrimonio_id", sel.id).order("vencimento"); setObrs(data ?? []); load(); };
+  const recarregarHist = async () => { if (!sel) return; const { data } = await db.from("JUR_PATRIMONIO_ITENS").select("*").eq("kind", "historico").eq("patrimonio_id", sel.id).order("created_at", { ascending: false }).limit(50); setHist(data ?? []); };
+  const recarregarComentarios = async () => { if (!sel) return; const { data } = await db.from("SISTEMA_COMENTARIOS").select("*").eq("modulo", "patrimonio").eq("entidade_id", String(sel.id)).order("created_at", { ascending: false }); setComentarios(data ?? []); };
 
   const estaPagaNoMalote = useCallback((id?: string | null) => !!id && malotePago.get(String(id)) === true, [malotePago]);
   /** O selo desta conta, já com o "pago" que veio do Malote. */
@@ -414,14 +419,14 @@ export default function Patrimonios() {
       // Linha lançada antes da coluna existir vem sem tipo: sugere pelo rótulo
       // da descrição ("A) SINAL" → sinal), o mesmo critério da migration.
       tipo_lancamento: o.tipo_lancamento || tipoPelaDescricao(o.descricao),
-    } as any);
+    } as typeof OBR_RESET);
     setParcelasContrato([]);
     setModalObr(true);
   };
   const salvarObr = async () => {
     if (!sel) return;
     if (!obr.categoria) { toast("Selecione a categoria.", "err"); return; }
-    const payload: any = {
+    const payload: Record<string, unknown> = {
       patrimonio_id: sel.id, categoria: obr.categoria, descricao: obr.descricao || null,
       valor: obr.valor ? Number(obr.valor) : null, vencimento: obr.vencimento || null,
       periodicidade: obr.periodicidade || null, forma_pagamento: obr.forma_pagamento || null,
@@ -457,7 +462,7 @@ export default function Patrimonios() {
         // senão o mesmo valor apareceria somado N vezes.
         valor_entrada: l.numero === 1 ? payload.valor_entrada : null,
       }));
-      const { error } = await (supabase as any).from("JUR_PATRIMONIO_OBRIGACOES").insert(linhas);
+      const { error } = await db.from("JUR_PATRIMONIO_OBRIGACOES").insert(linhas);
       if (error) { toast("Erro ao gravar as parcelas: " + error.message, "err"); return; }
       await logHist(sel.id, "Contrato parcelado cadastrado",
         obr.categoria + " · " + linhas.length + "x · total " + money(totalGeral(parcelasContrato, obr.valor_entrada)));
@@ -470,11 +475,11 @@ export default function Patrimonios() {
     const reps = parseInt(obr.repetir, 10) || 0;
     // 1) Cria ou atualiza a conta base.
     if (obrEditId) {
-      const { error } = await (supabase as any).from("JUR_PATRIMONIO_OBRIGACOES").update(payload).eq("id", obrEditId);
+      const { error } = await db.from("JUR_PATRIMONIO_OBRIGACOES").update(payload).eq("id", obrEditId);
       if (error) { toast("Erro: " + error.message, "err"); return; }
       await logHist(sel.id, "Obrigação atualizada", `${obr.categoria}`);
     } else {
-      const { error } = await (supabase as any).from("JUR_PATRIMONIO_OBRIGACOES").insert({ ...payload, status: "Pendente" });
+      const { error } = await db.from("JUR_PATRIMONIO_OBRIGACOES").insert({ ...payload, status: "Pendente" });
       if (error) { toast("Erro: " + error.message, "err"); return; }
       await logHist(sel.id, "Obrigação cadastrada", `${obr.categoria}${obr.vencimento ? " · venc. " + fmtDt(obr.vencimento) : ""}`);
     }
@@ -482,10 +487,10 @@ export default function Patrimonios() {
     if (step > 0 && obr.vencimento && reps > 0) {
       const jaTem = new Set(obrs.filter(o => o.id !== obrEditId && o.categoria === obr.categoria && String(o.descricao || "") === String(obr.descricao || "")).map(o => o.vencimento));
       jaTem.add(obr.vencimento);
-      const novas: any[] = [];
+      const novas: Record<string, unknown>[] = [];
       for (let i = 1; i <= reps; i++) { const v = addMonthsISO(obr.vencimento, i * step); if (!jaTem.has(v)) { novas.push({ ...payload, vencimento: v, status: "Pendente" }); jaTem.add(v); } }
       if (novas.length) {
-        const { error } = await (supabase as any).from("JUR_PATRIMONIO_OBRIGACOES").insert(novas);
+        const { error } = await db.from("JUR_PATRIMONIO_OBRIGACOES").insert(novas);
         if (error) { toast("Erro ao gerar recorrência: " + error.message, "err"); return; }
         await logHist(sel.id, "Contas recorrentes geradas", `${obr.categoria} · ${novas.length} meses (${obr.periodicidade})`);
       }
@@ -535,7 +540,7 @@ export default function Patrimonios() {
     if (suspender && !window.confirm(
       `Suspender a parcela de ${money(o.valor)} com vencimento em ${fmtDt(o.vencimento)}?\n\n` +
       "Ela deixa de aparecer como vencida e não poderá ser enviada ao Malote até você retomar.")) return;
-    const { error } = await (supabase as any).from("JUR_PATRIMONIO_OBRIGACOES")
+    const { error } = await db.from("JUR_PATRIMONIO_OBRIGACOES")
       .update({ status: suspender ? STATUS_SUSPENSA : "Pendente" }).eq("id", o.id);
     if (error) { toast("Erro ao mudar a parcela: " + error.message, "err"); return; }
     toast(suspender ? "Parcela suspensa." : "Parcela retomada.", "ok");
@@ -546,15 +551,15 @@ export default function Patrimonios() {
     if (!pagarFile) { toast("Anexe o comprovante para registrar o pagamento.", "err"); return; }
     let cPath: string | null = null, cNome: string | null = null;
     if (pagarFile) {
-      const safe = pagarFile.name.replace(/[^\w.\-]+/g, "_");
+      const safe = pagarFile.name.replace(/[^\w.-]+/g, "_");
       const path = `${o.patrimonio_id}/comprovantes/${Date.now()}_${safe}`;
       const { error: up } = await supabase.storage.from("juridico-docs").upload(path, pagarFile, { upsert: false });
       if (up) { toast("Falha no upload do comprovante: " + up.message, "err"); return; }
       cPath = path; cNome = pagarFile.name;
     }
-    const patch: any = { status: "Pago", pago_em: hoje() };
+    const patch: Partial<Obrigacao> = { status: "Pago", pago_em: hoje() };
     if (cPath) { patch.comprovante_path = cPath; patch.comprovante_nome = cNome; }
-    const { error } = await (supabase as any).from("JUR_PATRIMONIO_OBRIGACOES").update(patch).eq("id", o.id);
+    const { error } = await db.from("JUR_PATRIMONIO_OBRIGACOES").update(patch).eq("id", o.id);
     if (error) { toast("Erro: " + error.message, "err"); return; }
     await logHist(o.patrimonio_id, "Obrigação paga", `${o.categoria} · ${money(o.valor)}`);
     if (cNome) await logHist(o.patrimonio_id, "Comprovante anexado", `${o.categoria} · ${cNome}`);
@@ -571,7 +576,7 @@ export default function Patrimonios() {
     if (o.status === "Pago" && o.comprovante_path) { toast("Conta paga com comprovante não pode ser excluída.", "err"); return; }
     if (!confirm("Excluir esta obrigação?")) return;
     await logHist(o.patrimonio_id, "Obrigação excluída", `${o.categoria}${o.vencimento ? " · venc. " + fmtDt(o.vencimento) : ""} · ${money(o.valor)}`);
-    await (supabase as any).from("JUR_PATRIMONIO_OBRIGACOES").delete().eq("id", o.id);
+    await db.from("JUR_PATRIMONIO_OBRIGACOES").delete().eq("id", o.id);
     recarregarObrs(); if (sel) recarregarHist();
   };
 
@@ -580,40 +585,40 @@ export default function Patrimonios() {
     if (!sel) return;
     const texto = novoComentario.trim();
     if (!texto) return;
-    const { error } = await (supabase as any).from("SISTEMA_COMENTARIOS").insert({ modulo: "patrimonio", entidade_id: String(sel.id), texto, autor_nome: autor });
+    const { error } = await db.from("SISTEMA_COMENTARIOS").insert({ modulo: "patrimonio", entidade_id: String(sel.id), texto, autor_nome: autor });
     if (error) { toast("Erro: " + error.message, "err"); return; }
     setNovoComentario(""); toast("Comentário adicionado.", "ok"); recarregarComentarios();
   };
   const excluirComentario = async (c: Comentario) => {
     if (!confirm("Excluir este comentário?")) return;
-    await (supabase as any).from("SISTEMA_COMENTARIOS").delete().eq("id", c.id);
+    await db.from("SISTEMA_COMENTARIOS").delete().eq("id", c.id);
     setComentarios(x => x.filter(i => i.id !== c.id));
   };
 
   // ── Acessos / Contatos (add inline) ────────────────────────────
   const addAcesso = async () => {
     if (!sel) return;
-    const { data } = await (supabase as any).from("JUR_PATRIMONIO_ITENS").insert({ patrimonio_id: sel.id, kind: "acesso", servico: "", link: "", usuario: "", local_senha: "" }).select("*").single();
+    const { data } = await db.from("JUR_PATRIMONIO_ITENS").insert({ patrimonio_id: sel.id, kind: "acesso", servico: "", link: "", usuario: "", local_senha: "" }).select("*").single();
     if (data) setAcessos(a => [...a, data]);
   };
-  const salvarAcesso = async (a: Acesso) => { await (supabase as any).from("JUR_PATRIMONIO_ITENS").update({ servico: a.servico, link: a.link, usuario: a.usuario, local_senha: a.local_senha, observacao: a.observacao }).eq("id", a.id); };
-  const excluirAcesso = async (id: number) => { await (supabase as any).from("JUR_PATRIMONIO_ITENS").delete().eq("id", id); setAcessos(a => a.filter(x => x.id !== id)); };
+  const salvarAcesso = async (a: Acesso) => { await db.from("JUR_PATRIMONIO_ITENS").update({ servico: a.servico, link: a.link, usuario: a.usuario, local_senha: a.local_senha, observacao: a.observacao }).eq("id", a.id); };
+  const excluirAcesso = async (id: number) => { await db.from("JUR_PATRIMONIO_ITENS").delete().eq("id", id); setAcessos(a => a.filter(x => x.id !== id)); };
   const addContato = async () => {
     if (!sel) return;
-    const { data } = await (supabase as any).from("JUR_PATRIMONIO_ITENS").insert({ patrimonio_id: sel.id, kind: "contato", tipo: "", nome: "", telefone: "", email: "" }).select("*").single();
+    const { data } = await db.from("JUR_PATRIMONIO_ITENS").insert({ patrimonio_id: sel.id, kind: "contato", tipo: "", nome: "", telefone: "", email: "" }).select("*").single();
     if (data) setContatos(c => [...c, data]);
   };
-  const salvarContato = async (c: Contato) => { await (supabase as any).from("JUR_PATRIMONIO_ITENS").update({ tipo: c.tipo, nome: c.nome, telefone: c.telefone, email: c.email, observacao: c.observacao }).eq("id", c.id); };
-  const excluirContato = async (id: number) => { await (supabase as any).from("JUR_PATRIMONIO_ITENS").delete().eq("id", id); setContatos(c => c.filter(x => x.id !== id)); };
+  const salvarContato = async (c: Contato) => { await db.from("JUR_PATRIMONIO_ITENS").update({ tipo: c.tipo, nome: c.nome, telefone: c.telefone, email: c.email, observacao: c.observacao }).eq("id", c.id); };
+  const excluirContato = async (id: number) => { await db.from("JUR_PATRIMONIO_ITENS").delete().eq("id", id); setContatos(c => c.filter(x => x.id !== id)); };
 
   // ── Documentos ─────────────────────────────────────────────────
   const uploadDoc = async (file: File, tipo: string) => {
     if (!sel || !file) return;
-    const safe = file.name.replace(/[^\w.\-]+/g, "_");
+    const safe = file.name.replace(/[^\w.-]+/g, "_");
     const path = `${sel.id}/${Date.now()}_${safe}`;
     const { error: up } = await supabase.storage.from("juridico-docs").upload(path, file, { upsert: false });
     if (up) { toast("Falha no upload: " + up.message, "err"); return; }
-    const { data } = await (supabase as any).from("JUR_PATRIMONIO_ITENS").insert({ patrimonio_id: sel.id, kind: "documento", tipo, nome: file.name, storage_path: path, criado_por: autor }).select("*").single();
+    const { data } = await db.from("JUR_PATRIMONIO_ITENS").insert({ patrimonio_id: sel.id, kind: "documento", tipo, nome: file.name, storage_path: path, criado_por: autor }).select("*").single();
     if (data) setDocs(d => [data, ...d]);
     await logHist(sel.id, "Documento anexado", `${tipo}: ${file.name}`); recarregarHist();
     toast("Documento anexado.", "ok");
@@ -627,7 +632,7 @@ export default function Patrimonios() {
   const excluirDoc = async (d: Documento) => {
     if (!confirm("Excluir este documento?")) return;
     if (d.storage_path) await supabase.storage.from("juridico-docs").remove([d.storage_path]);
-    await (supabase as any).from("JUR_PATRIMONIO_ITENS").delete().eq("id", d.id);
+    await db.from("JUR_PATRIMONIO_ITENS").delete().eq("id", d.id);
     setDocs(x => x.filter(i => i.id !== d.id));
   };
 

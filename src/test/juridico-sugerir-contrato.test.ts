@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { sugerirContrato, cidadeDoContrato } from "@/pages/juridico/Processos";
+import { sugerirContrato, cidadeDoContrato } from "@/pages/juridico/processos/contratoMunicipio";
 
 // Nomes reais da CONTRATOS (coluna "NOME CONTRATO"): quase sempre começam
 // pela cidade, mas nem sempre — daí a necessidade de pontuar em vez de só

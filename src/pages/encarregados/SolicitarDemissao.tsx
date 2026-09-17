@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useLocation, useSearchParams } from "react-router-dom";
 import { baseDaUrl, rotasSolicitacoes } from "@/lib/solicitacoes/rotas";
 import { supabase } from "@/integrations/supabase/client";
+import type { SupabaseClient } from "@supabase/supabase-js";
 import { useAuth } from "@/hooks/useAuth";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -31,7 +32,8 @@ import { semCodigoFilial } from "@/lib/rh/colaboradoresUtils";
 import { usePostos } from "@/hooks/useSupCatalogo";
 import { solicitacaoEmAberto, type SolicitacaoEmAberto } from "@/lib/solicitacoes/duplicidade";
 
-const sb = supabase as any;
+// Tabelas de negócio fora do types.ts gerado; mesmo padrão de comite-etica/db.ts.
+const sb = supabase as unknown as SupabaseClient;
 
 /**
  * Solicitar Demissão — wizard do encarregado (4 passos).
@@ -102,7 +104,7 @@ export default function SolicitarDemissao() {
   const [setores, setSetores] = useState<string[]>([]);
   useEffect(() => {
     (async () => {
-      const { data } = await (supabase as any).from("setor_catalogo").select("nome").order("nome");
+      const { data } = await sb.from("setor_catalogo").select("nome").order("nome");
       setSetores((data ?? []).map((r: { nome: string }) => r.nome).filter(Boolean));
     })();
   }, []);
@@ -179,7 +181,7 @@ export default function SolicitarDemissao() {
   //      POLÍCIA", a colega ao lado com "1109 - DECA", e o RH não achava o
   //      contrato de ninguém.
   //   3. Esta: a filial, que é o que o Senior chama de contrato.
-  const [contratos, setContratos] = useState<any[]>([]);
+  const [contratos, setContratos] = useState<{ id?: number | null; Filial?: string | null; "NOME CONTRATO"?: string | null }[]>([]);
   useEffect(() => {
     (async () => {
       const { data } = await sb.from("CONTRATOS")
@@ -195,7 +197,7 @@ export default function SolicitarDemissao() {
     const alvo = semCodigoFilial(nomeContrato).toUpperCase();
     const filial = colaborador?.filial ?? "";
     if (!alvo || !filial) return null;
-    return contratos.find((c: any) =>
+    return contratos.find(c =>
       String(c.Filial ?? "").trim() === filial
       && String(c["NOME CONTRATO"] ?? "").trim().toUpperCase() === alvo) ?? null;
   }, [contratos, nomeContrato, colaborador?.filial]);
@@ -366,7 +368,7 @@ export default function SolicitarDemissao() {
 
     const enviados: string[] = [];
     for (const arquivo of arquivos) {
-      const limpo = arquivo.name.replace(/[^\w.\-]+/g, "_");
+      const limpo = arquivo.name.replace(/[^\w.-]+/g, "_");
       const caminho = `${criada.id}/${Date.now()}-${limpo}`;
       const { error: erroUpload } = await supabase.storage.from(BUCKET).upload(caminho, arquivo);
       if (erroUpload) {
@@ -795,9 +797,12 @@ export default function SolicitarDemissao() {
                     <p className="w-full text-xs text-muted-foreground">🔗 Vaga de Substituição #{s.vaga_id}</p>
                   ) : faltaVagaDeReposicao(s) ? (
                     <div className="flex w-full flex-wrap items-center gap-2 text-xs text-amber-800">
-                      <span>⚠ Falta a vaga de reposição — o pedido não sai da fila do analista sem ela.</span>
+                      <span>⚠ Falta a vaga de reposição — o pedido não sai da fila do Operacional sem ela.</span>
                       <Button size="sm" variant="outline" className="h-7" onClick={() => abrirVagaDe(s)}>Solicitar vaga</Button>
                     </div>
+                  ) : s.sem_vaga_motivo ? (
+                    // O Operacional aprovou sem a vaga e disse por quê (17/09/2026).
+                    <p className="w-full text-xs text-amber-800">⚠ Aprovada sem vaga de Substituição — motivo: {s.sem_vaga_motivo}</p>
                   ) : null}
                 </li>
               ))}

@@ -1,9 +1,14 @@
 import { useState, useEffect, useCallback, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
+import type { SupabaseClient } from "@supabase/supabase-js";
 import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip, PieChart, Pie, Cell } from "recharts";
 import { Formulario, Pergunta, fmtDt, normalizaPerguntas } from "./Formularios";
 import AbaDiagnosticoFormulario from "./painel/AbaDiagnosticoFormulario";
+
+// CS_FORMULARIOS / CS_FORM_RESPOSTAS / CS_FORM_ACESSOS não estão no types.ts
+// gerado; mesmo padrão de comite-etica/db.ts — a exceção fica num lugar só.
+const db = supabase as unknown as SupabaseClient;
 
 // =====================================================================
 // NASCIMENTO FORMULÁRIOS - 📊 Dashboard customizável
@@ -42,14 +47,14 @@ interface Widget {
   largura?: 1 | 2 | 3;
 }
 type Perg = Pergunta & { formulario_id: string };
-interface Resp { id: string; formulario_id: string; enviado_em: string; respondente_nome?: string | null; itens: Record<string, any>; }
+interface Resp { id: string; formulario_id: string; enviado_em: string; respondente_nome?: string | null; itens: Record<string, unknown>; }
 /** Config salvo em CS_FORM_ACESSOS (papel 'dashboard'). */
 interface ConfigPaineis { geral: Widget[]; por_formulario: Record<string, Widget[]> }
 const PAINEL_GERAL = "geral";
 /** Lê o config gravado: array (formato antigo) vira o painel geral. */
 function lerConfig(cfg: unknown): ConfigPaineis | null {
   if (Array.isArray(cfg)) return cfg.length ? { geral: cfg as Widget[], por_formulario: {} } : null;
-  if (cfg && typeof cfg === "object" && Array.isArray((cfg as any).geral)) {
+  if (cfg && typeof cfg === "object" && Array.isArray((cfg as { geral?: unknown }).geral)) {
     const c = cfg as ConfigPaineis;
     return { geral: c.geral, por_formulario: c.por_formulario && typeof c.por_formulario === "object" ? c.por_formulario : {} };
   }
@@ -106,16 +111,16 @@ export default function FormulariosDashboard() {
   const load = useCallback(async () => {
     setLoading(true);
     const [fRes, rRes, dRes] = await Promise.all([
-      (supabase as any).from("CS_FORMULARIOS").select("*").is("deleted_at", null).order("created_at", { ascending: false }),
-      (supabase as any).from("CS_FORM_RESPOSTAS").select("id, formulario_id, enviado_em, respondente_nome, itens").order("enviado_em", { ascending: false }).limit(5000),
-      (supabase as any).from("CS_FORM_ACESSOS").select("config").eq("papel", "dashboard").maybeSingle(),  // RLS: só a linha do próprio usuário
+      db.from("CS_FORMULARIOS").select("*").is("deleted_at", null).order("created_at", { ascending: false }),
+      db.from("CS_FORM_RESPOSTAS").select("id, formulario_id, enviado_em, respondente_nome, itens").order("enviado_em", { ascending: false }).limit(5000),
+      db.from("CS_FORM_ACESSOS").select("config").eq("papel", "dashboard").maybeSingle(),  // RLS: só a linha do próprio usuário
     ]);
     const fs: Formulario[] = fRes.data ?? [];
     setForms(fs);
     setFormSel(prev => prev || (fs[0]?.id ?? ""));  // 1º formulário como padrão do painel auto
     // respostas de formulário apagado (lixeira) não entram em nenhum indicador.
     const vivos = new Set(fs.map(f => f.id));
-    setResps((rRes.data ?? []).filter((r: any) => vivos.has(r.formulario_id)).map((r: any) => ({ ...r, itens: r.itens ?? {} })));
+    setResps((rRes.data ?? []).filter(r => vivos.has(r.formulario_id)).map(r => ({ ...r, itens: r.itens ?? {} })));
     setPaineis(lerConfig(dRes.data?.config) ?? { geral: WIDGETS_PADRAO, por_formulario: {} });
     setLoading(false);
   }, []);
@@ -145,11 +150,11 @@ export default function FormulariosDashboard() {
   const salvar = async () => {
     const { data: u } = await supabase.auth.getUser();
     if (!u.user) return;
-    const { data: atual } = await (supabase as any).from("CS_FORM_ACESSOS")
+    const { data: atual } = await db.from("CS_FORM_ACESSOS")
       .select("id").eq("papel", "dashboard").eq("user_id", u.user.id).maybeSingle();
     const { error } = atual
-      ? await (supabase as any).from("CS_FORM_ACESSOS").update({ config: paineis }).eq("id", atual.id)
-      : await (supabase as any).from("CS_FORM_ACESSOS").insert({ papel: "dashboard", user_id: u.user.id, config: paineis });
+      ? await db.from("CS_FORM_ACESSOS").update({ config: paineis }).eq("id", atual.id)
+      : await db.from("CS_FORM_ACESSOS").insert({ papel: "dashboard", user_id: u.user.id, config: paineis });
     if (error) { toast("Erro ao salvar: " + error.message, "err"); return; }
     setSujo(false);
     toast("Painéis salvos.", "ok");
@@ -228,7 +233,7 @@ export default function FormulariosDashboard() {
           </div>
           <div style={{ minWidth: 150 }}>
             <label style={lbl}>Período</label>
-            <select value={periodo} onChange={e => setPeriodo(e.target.value as any)} style={inp}>
+            <select value={periodo} onChange={e => setPeriodo(e.target.value as typeof periodo)} style={inp}>
               <option value="todos">Todo o período</option>
               <option value="7">Últimos 7 dias</option>
               <option value="30">Últimos 30 dias</option>
@@ -327,7 +332,7 @@ function CorpoWidget({ w, resps, pergs, forms }: { w: Widget; resps: Resp[]; per
         <BarChart data={buckets} margin={{ top: 4, right: 4, left: -26, bottom: 0 }}>
           <XAxis dataKey="dia" tick={{ fontSize: 10 }} interval="preserveStartEnd" />
           <YAxis tick={{ fontSize: 10 }} allowDecimals={false} />
-          <Tooltip formatter={(v: any) => [v, "respostas"]} />
+          <Tooltip formatter={v => [v, "respostas"]} />
           <Bar dataKey="n" fill="#0f3171" radius={[4, 4, 0, 0]} />
         </BarChart>
       </ResponsiveContainer>
@@ -372,10 +377,10 @@ function CorpoWidget({ w, resps, pergs, forms }: { w: Widget; resps: Resp[]; per
     return (
       <ResponsiveContainer width="100%" height={200}>
         <PieChart>
-          <Pie data={dados.filter(d => d.n)} dataKey="n" nameKey="nome" cx="50%" cy="50%" outerRadius={70} label={(e: any) => e.nome}>
+          <Pie data={dados.filter(d => d.n)} dataKey="n" nameKey="nome" cx="50%" cy="50%" outerRadius={70} label={e => e.nome}>
             {dados.filter(d => d.n).map((_, i) => <Cell key={i} fill={CORES[i % CORES.length]} />)}
           </Pie>
-          <Tooltip contentStyle={TIP_CONTENT} wrapperStyle={TIP_WRAP} formatter={(v: any, _n: any, e: any) => [v, e?.payload?.completo]} />
+          <Tooltip contentStyle={TIP_CONTENT} wrapperStyle={TIP_WRAP} formatter={(v, _n, e) => [v, e?.payload?.completo]} />
         </PieChart>
       </ResponsiveContainer>
     );
@@ -385,7 +390,7 @@ function CorpoWidget({ w, resps, pergs, forms }: { w: Widget; resps: Resp[]; per
       <BarChart data={dados} layout="vertical" margin={{ top: 0, right: 10, left: 10, bottom: 0 }}>
         <XAxis type="number" tick={{ fontSize: 10 }} allowDecimals={false} />
         <YAxis type="category" dataKey="nome" width={140} tick={{ fontSize: 10.5 }} />
-        <Tooltip contentStyle={TIP_CONTENT} wrapperStyle={TIP_WRAP} formatter={(v: any, _n: any, e: any) => [v, e?.payload?.completo]} />
+        <Tooltip contentStyle={TIP_CONTENT} wrapperStyle={TIP_WRAP} formatter={(v, _n, e) => [v, e?.payload?.completo]} />
         <Bar dataKey="n" fill="#0f3171" radius={[0, 4, 4, 0]} />
       </BarChart>
     </ResponsiveContainer>
@@ -502,7 +507,7 @@ function SecaoDiagnostico({ form, respostas }: { form: Formulario; respostas: Re
         formularioId={form.id}
         tituloFormulario={form.titulo}
         setor=""
-        respostas={respostas as any}
+        respostas={respostas}
         automatico
       />
     </div>
@@ -559,7 +564,7 @@ function PainelAuto({ form, respsForm, respsPeriodo }: { form: Formulario; resps
               <div key={p.id} style={{ background: "#fff", border: "1px solid #e2e8f0", borderRadius: 14, padding: "14px 16px", boxShadow: "0 8px 24px rgba(15,23,42,.05)" }}>
                 <div style={{ fontSize: 13, fontWeight: 800, color: "#0f172a", marginBottom: 2 }}>{p.titulo || "Pergunta"}</div>
                 <div style={{ fontSize: 11, color: "#94a3b8", marginBottom: 10 }}>{respondidas} resposta(s){media != null ? ` · média ${media.toFixed(2)}` : ""}</div>
-                <GraficoPergunta dados={dados} tipo={((p.config?.grafico as any) ?? "barras")} />
+                <GraficoPergunta dados={dados} tipo={p.config?.grafico ?? "barras"} />
                 {top && respondidas > 0 && <div style={{ fontSize: 11.5, color: "#475569", marginTop: 8 }}>🏆 Mais escolhida: <b>{top.completo}</b> ({Math.round((top.n / respondidas) * 100)}%)</div>}
               </div>
             );
@@ -594,10 +599,10 @@ function GraficoPergunta({ dados, tipo }: { dados: { nome: string; completo: str
     return (
       <ResponsiveContainer width="100%" height={210}>
         <PieChart>
-          <Pie data={comDados} dataKey="n" nameKey="nome" cx="50%" cy="50%" innerRadius={tipo === "rosca" ? 48 : 0} outerRadius={78} label={(e: any) => e.nome}>
+          <Pie data={comDados} dataKey="n" nameKey="nome" cx="50%" cy="50%" innerRadius={tipo === "rosca" ? 48 : 0} outerRadius={78} label={e => e.nome}>
             {comDados.map((_, i) => <Cell key={i} fill={CORES[i % CORES.length]} />)}
           </Pie>
-          <Tooltip contentStyle={TIP_CONTENT} wrapperStyle={TIP_WRAP} formatter={(v: any, _n: any, e: any) => [v, e?.payload?.completo]} />
+          <Tooltip contentStyle={TIP_CONTENT} wrapperStyle={TIP_WRAP} formatter={(v, _n, e) => [v, e?.payload?.completo]} />
         </PieChart>
       </ResponsiveContainer>
     );
@@ -608,7 +613,7 @@ function GraficoPergunta({ dados, tipo }: { dados: { nome: string; completo: str
         <BarChart data={dados} margin={{ top: 6, right: 6, left: -20, bottom: 0 }}>
           <XAxis dataKey="nome" tick={{ fontSize: 10 }} interval={0} angle={dados.length > 5 ? -25 : 0} textAnchor={dados.length > 5 ? "end" : "middle"} height={dados.length > 5 ? 48 : 24} />
           <YAxis tick={{ fontSize: 10 }} allowDecimals={false} />
-          <Tooltip contentStyle={TIP_CONTENT} wrapperStyle={TIP_WRAP} formatter={(v: any, _n: any, e: any) => [v, e?.payload?.completo]} />
+          <Tooltip contentStyle={TIP_CONTENT} wrapperStyle={TIP_WRAP} formatter={(v, _n, e) => [v, e?.payload?.completo]} />
           <Bar dataKey="n" radius={[4, 4, 0, 0]}>
             {dados.map((_, i) => <Cell key={i} fill={CORES[i % CORES.length]} />)}
           </Bar>
@@ -622,7 +627,7 @@ function GraficoPergunta({ dados, tipo }: { dados: { nome: string; completo: str
       <BarChart data={dados} layout="vertical" margin={{ top: 0, right: 12, left: 8, bottom: 0 }}>
         <XAxis type="number" tick={{ fontSize: 10 }} allowDecimals={false} />
         <YAxis type="category" dataKey="nome" width={130} tick={{ fontSize: 10.5 }} />
-        <Tooltip contentStyle={TIP_CONTENT} wrapperStyle={TIP_WRAP} formatter={(v: any, _n: any, e: any) => [v, e?.payload?.completo]} />
+        <Tooltip contentStyle={TIP_CONTENT} wrapperStyle={TIP_WRAP} formatter={(v, _n, e) => [v, e?.payload?.completo]} />
         <Bar dataKey="n" radius={[0, 4, 4, 0]}>
           {dados.map((_, i) => <Cell key={i} fill={CORES[i % CORES.length]} />)}
         </Bar>
