@@ -96,3 +96,20 @@ export const nomeContratoDe = (e: any): string => {
 // não leva código, só o nome ("POLICIA CIVIL RS LIMPEZA 066.2026").
 export const semCodigoFilial = (nome: unknown): string =>
   String(nome ?? "").replace(PREFIXO_CODIGO, "").trim();
+
+/**
+ * "2 anos e 3 meses" desde a admissão — a ficha do advertido mostra isso ao
+ * lado da data (17/09/2026). Menos de um mês vira "menos de 1 mês"; sem
+ * admissão (ou admissão no futuro) devolve "".
+ */
+export const tempoDeEmpresa = (admissao: unknown, hoje: Date = new Date()): string => {
+  const d = parseData(admissao);
+  if (!d || d > hoje) return "";
+  let meses = (hoje.getFullYear() - d.getFullYear()) * 12 + (hoje.getMonth() - d.getMonth());
+  if (hoje.getDate() < d.getDate()) meses -= 1;
+  if (meses < 1) return "menos de 1 mês";
+  const anos = Math.floor(meses / 12), resto = meses % 12;
+  const pa = anos ? `${anos} ano${anos > 1 ? "s" : ""}` : "";
+  const pm = resto ? `${resto} ${resto > 1 ? "meses" : "mês"}` : "";
+  return [pa, pm].filter(Boolean).join(" e ");
+};

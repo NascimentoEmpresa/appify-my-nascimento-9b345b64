@@ -4,6 +4,9 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { useAuth } from "@/hooks/useAuth";
 import { useMeuNome } from "@/hooks/useMeuNome";
 import { AVISO_REFAZER, diasRestantesParaRefazer, podeRefazerFerias } from "@/lib/solicitacoes/feriasRefazer";
+import { ConversaSolicitacao, type ModuloConversa } from "@/components/solicitacoes/ConversaSolicitacao";
+import { AnexosSolicitacao } from "@/components/solicitacoes/AnexosSolicitacao";
+import { tempoDeEmpresa } from "@/lib/rh/colaboradoresUtils";
 
 // `integrations/supabase/types.ts` é gerado e não conhece as tabelas de
 // solicitações. O resto do ERP resolve isso com um cast solto em cada
@@ -79,9 +82,10 @@ const ROTULO: Record<string, string> = {
   req_desejaveis: "Requisitos desejáveis", exp_minima: "Experiência mínima",
   alta_rotatividade: "Alta rotatividade", observacao_importante: "Observação",
   analista_nome: "Analista", motivo_reprovacao: "Motivo da reprovação",
-  colaborador_nome: "Colaborador", tipo_advertencia: "Tipo de advertência",
+  colaborador_nome: "Colaborador", colaborador_cpf: "CPF", tipo_advertencia: "Tipo de advertência",
   colaborador_cargo: "Cargo do colaborador", colaborador_posto: "Posto",
-  colaborador_filial: "Filial", colaborador_admissao: "Admissão",
+  colaborador_filial: "Filial / contrato", colaborador_admissao: "Admissão", colaborador_escala: "Escala",
+  tempo_de_empresa: "Tempo de empresa",
   colaborador_telefone: "Telefone", colaborador_email: "E-mail do colaborador",
   motivo_solicitacao: "Motivo da solicitação", motivo_pedido: "Motivo do pedido",
   relato: "Relato", termino_experiencia: "Término de experiência",
@@ -201,14 +205,9 @@ export function DetalheSolicitacao({ tipo, id, titulo, status, onFechar, onRefaz
     // Consultas separadas por tipo: as duas tabelas não têm as mesmas colunas
     // (`texto` x `mensagem`, `entidade_id` x `solicitacao_id`), e um select
     // genérico esconderia isso.
-    if (fio.modulo) {
-      const { data } = await db.from("SISTEMA_COMENTARIOS")
-        .select("id, texto, autor_nome, autor_cpf, created_at")
-        .eq("modulo", fio.modulo).eq("entidade_id", String(id))
-        .order("created_at");
-      setMsgs((data ?? []).map((m: LinhaMensagem) => paraMensagem(m, m.texto, user?.email)));
-      return;
-    }
+    // Os módulos do SISTEMA_COMENTARIOS são lidos pela ConversaSolicitacao
+    // (17/09/2026) — aqui só a Vaga, que tem fio próprio.
+    if (fio.modulo) { setMsgs([]); return; }
     const { data } = await db.from("WA_MENSAGENS_RECRUTAMENTO")
       .select("id, mensagem, autor_nome, autor_cpf, created_at")
       .eq("solicitacao_id", id).order("created_at");
@@ -251,9 +250,22 @@ export function DetalheSolicitacao({ tipo, id, titulo, status, onFechar, onRefaz
     carregarMsgs();
   };
 
+  // Advertência (17/09/2026): o CPF do advertido aparece (é a identificação
+  // dele no documento) e o tempo de empresa entra como linha calculada logo
+  // depois da admissão.
+  const fichaExibida: Record<string, unknown> | null = ficha && (() => {
+    const out: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(ficha)) {
+      out[k] = v;
+      if (k === "colaborador_admissao" && v) out.tempo_de_empresa = tempoDeEmpresa(v) || undefined;
+    }
+    return out;
+  })();
+  const ocultas = tipo === "Advertência" ? new Set([...OCULTAS].filter(k => k !== "colaborador_cpf")) : OCULTAS;
+
   // As colunas preenchidas, na ordem em que o formulário as pede.
-  const linhas = Object.entries(ficha ?? {})
-    .filter(([k, v]) => !OCULTAS.has(k) && v !== null && v !== "" && v !== undefined && !Array.isArray(v))
+  const linhas = Object.entries(fichaExibida ?? {})
+    .filter(([k, v]) => !ocultas.has(k) && v !== null && v !== "" && v !== undefined && !Array.isArray(v))
     .map(([k, v]) => [ROTULO[k] ?? k.replace(/_/g, " "), typeof v === "boolean" ? (v ? "Sim" : "Não")
       : /^\d{4}-\d{2}-\d{2}/.test(String(v)) ? fmtData(String(v)) : String(v)] as [string, string]);
 
@@ -314,21 +326,31 @@ export function DetalheSolicitacao({ tipo, id, titulo, status, onFechar, onRefaz
                 ))}
               </dl>
             )}
+            {/* Anexos da advertência (17/09/2026): quem pediu anexa quando quiser — opcional. */}
+            {tipo === "Advertência" && <AnexosSolicitacao modulo="advertencia" entidadeId={id} podeAnexar titulo="Anexos da solicitação" />}
           </div>
 
           {/* ── Conversa ── */}
           <div style={{ display: "flex", flexDirection: "column", minHeight: 0, borderLeft: "1px solid #e2e8f0", paddingLeft: 18 }}>
+            {/* Férias, Advertência, Demissão e Mudança de Função usam o MESMO
+                componente que o outro lado (17/09/2026): é ele que tem
+                anexos, foto colada com Ctrl+V e cópia com Ctrl+C. Só a Vaga
+                continua com o fio próprio (WA_MENSAGENS_RECRUTAMENTO). */}
+            {FIO[tipo].modulo ? (
+              <div style={{ overflowY: "auto", minHeight: 0 }}>
+                <ConversaSolicitacao modulo={FIO[tipo].modulo as ModuloConversa} entidadeId={id}
+                  aviso={tipo === "Férias"
+                    ? "A mesma conversa que o RH lê na tela de Férias."
+                    : tipo === "Demissão"
+                      ? "A mesma conversa que o Operacional e o RH leem na tela de Demissões."
+                      : tipo === "Mudança de Função"
+                        ? "A mesma conversa que quem aprova, o SST e o RH leem na tela de Mudança de Função."
+                        : "A mesma conversa que o Jurídico lê na tela de Advertências. Dá pra mandar foto e anexo, inclusive colando com Ctrl+V."} />
+              </div>
+            ) : (<>
             <h4 style={{ fontSize: 12, fontWeight: 800, color: "#475569", margin: "0 0 4px" }}>Conversa</h4>
             <p style={{ fontSize: 11, color: "#94a3b8", margin: "0 0 10px" }}>
-              {tipo === "Vaga"
-                ? "A mesma conversa que o Operacional e o Recrutamento leem."
-                : tipo === "Férias"
-                  ? "A mesma conversa que o RH lê na tela de Férias."
-                  : tipo === "Demissão"
-                    ? "A mesma conversa que o Operacional e o RH leem na tela de Demissões."
-                    : tipo === "Mudança de Função"
-                      ? "A mesma conversa que quem aprova, o SST e o RH leem na tela de Mudança de Função."
-                      : "A mesma conversa que o Jurídico lê na tela de Advertências."}
+              A mesma conversa que o Operacional e o Recrutamento leem.
             </p>
 
             <div style={{ flex: 1, overflowY: "auto", background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: 12, padding: 10, minHeight: 180 }}>
@@ -368,6 +390,7 @@ export function DetalheSolicitacao({ tipo, id, titulo, status, onFechar, onRefaz
                 {enviando ? "…" : "Enviar"}
               </button>
             </div>
+            </>)}
           </div>
         </div>
       </div>

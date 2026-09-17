@@ -17,7 +17,8 @@ import {
   podeVagaAdministrativa, statusInicialVaga,
 } from "@/lib/recrutamento/vagaRegras";
 import { maskFone } from "@/lib/telefone";
-import { dataParaIso } from "@/lib/rh/colaboradoresUtils";
+import { dataParaIso, tempoDeEmpresa } from "@/lib/rh/colaboradoresUtils";
+import { BUCKET_ANEXOS, caminhoAnexo, erroDoAnexo, fmtTamanho } from "@/lib/solicitacoes/anexos";
 import { solicitacaoEmAberto, TITULO_DUPLICIDADE, type SolicitacaoEmAberto } from "@/lib/solicitacoes/duplicidade";
 import { buscarCustoDoPosto, insalubridadeDoCusto, beneficiosDoCusto, notaDoCusto, AVISO_SEM_POSTO, type CustoPosto } from "@/lib/recrutamento/custoPosto";
 import { VinculoCatalogoVaga, type ListasCatalogo } from "@/components/recrutamento/VinculoCatalogoVaga";
@@ -108,6 +109,8 @@ const FERIAS_RESET = {
 const ADV_RESET = {
   colaborador_id: null as number | null, colaborador_nome: "", colaborador_cpf: "",
   colaborador_cargo: "", colaborador_filial: "", contrato: "", contrato_id: null as number | null,
+  // Ficha do advertido (17/09/2026): admissão, posto e escala vão gravados como as outras colunas colaborador_*.
+  colaborador_admissao: "", colaborador_posto: "", colaborador_escala: "",
   tipo_advertencia: "", grau: "", data_ocorrido: "", descricao_ocorrido: "",
   advertencia_verbal_dada: "Não", data_advertencia_verbal: "",
 };
@@ -142,6 +145,7 @@ type EmpregadoRef = {
   "Valor Salário"?: number | string | null;
   "% Insalubridade"?: number | string | null;
   "Admissão"?: string | null;
+  "Descrição do Local"?: string | null;
   Escala?: string | null;
 };
 /** Linha de CONTRATOS (só o que a tela usa para casar e rotular). */
@@ -249,6 +253,8 @@ export default function MinhasSolicitacoes({ abrir, base = "encarregados" }: { a
   const [adv, setAdv] = useState({ ...ADV_RESET });
   const [advHistorico, setAdvHistorico] = useState<AdvertenciaAnterior[]>([]);
   const [advExc, setAdvExc] = useState({ open: false, justificativa: "" });
+  // Anexos escolhidos no formulário (opcionais): sobem depois do insert, quando existe o id.
+  const [advArquivos, setAdvArquivos] = useState<File[]>([]);
 
   // Histórico unificado
   const [minhasSols, setMinhasSols] = useState<SolItem[]>([]);
@@ -382,7 +388,7 @@ export default function MinhasSolicitacoes({ abrir, base = "encarregados" }: { a
     empDebounce.current = setTimeout(async () => {
       const { data, error } = await db
         .from("EMPREGADOS")
-        .select('"ID", "Nome", "CPF", "Filial", "Nome Filial", "Título do Cargo", "Valor Salário", "% Insalubridade", "Admissão", "Escala"')
+        .select('"ID", "Nome", "CPF", "Filial", "Nome Filial", "Título do Cargo", "Valor Salário", "% Insalubridade", "Admissão", "Escala", "Descrição do Local"')
         .eq("Situação", "Trabalhando")
         .ilike("Nome", `%${term}%`)
         .order('"Nome"')
@@ -770,6 +776,7 @@ export default function MinhasSolicitacoes({ abrir, base = "encarregados" }: { a
       ...a,
       colaborador_id: emp.ID ?? null, colaborador_nome: emp.Nome ?? "", colaborador_cpf: emp.CPF ?? "",
       colaborador_cargo: emp["Título do Cargo"] ?? "", colaborador_filial: emp["Nome Filial"] ?? "",
+      colaborador_admissao: dataParaIso(emp["Admissão"]) ?? "", colaborador_posto: emp["Descrição do Local"] ?? "", colaborador_escala: emp.Escala ? String(emp.Escala) : "",
       contrato: contratoMatch ? rotuloContrato(contratoMatch) : "",
       contrato_id: contratoMatch ? (contratoMatch.id ?? null) : null,
     }));
@@ -785,7 +792,7 @@ export default function MinhasSolicitacoes({ abrir, base = "encarregados" }: { a
   };
 
   const abrirModalAdv = () => {
-    setModalAdv(true); setAdv({ ...ADV_RESET }); setEmpSearch(""); setShowEmpDrop(false); setEmpregados([]); setAdvHistorico([]);
+    setModalAdv(true); setAdv({ ...ADV_RESET }); setAdvArquivos([]); setEmpSearch(""); setShowEmpDrop(false); setEmpregados([]); setAdvHistorico([]);
     if (!contratosFull.length) carregarContratos();
   };
 
@@ -837,6 +844,7 @@ export default function MinhasSolicitacoes({ abrir, base = "encarregados" }: { a
       solicitante_nome: displayName || user?.email || "", solicitante_email: user?.email ?? "",
       colaborador_id: adv.colaborador_id, colaborador_nome: adv.colaborador_nome, colaborador_cpf: adv.colaborador_cpf,
       colaborador_cargo: adv.colaborador_cargo, colaborador_filial: adv.colaborador_filial,
+      colaborador_admissao: adv.colaborador_admissao || null, colaborador_posto: adv.colaborador_posto || null, colaborador_escala: adv.colaborador_escala || null,
       contrato: adv.contrato || null, contrato_id: adv.contrato_id,
       tipo_advertencia: adv.tipo_advertencia, grau: adv.grau, data_ocorrido: adv.data_ocorrido,
       descricao_ocorrido: adv.descricao_ocorrido.trim(),
@@ -847,9 +855,26 @@ export default function MinhasSolicitacoes({ abrir, base = "encarregados" }: { a
     };
     const { error, data } = await db.from("SISTEMA_SOLICITACOES_ADVERTENCIA").insert(payload).select("id").single();
     if (error) { toast("Erro ao solicitar advertência: " + error.message, "err"); return; }
+    // Anexos opcionais (17/09/2026): sobem depois do insert, com o id da
+    // solicitação no caminho. Falha aqui não desfaz o pedido — a pessoa
+    // anexa de novo pelo card (Minhas Solicitações › Detalhes).
+    if (data?.id && advArquivos.length) {
+      let falhas = 0;
+      for (const f of advArquivos) {
+        const path = caminhoAnexo("advertencia", data.id, f.name);
+        const { error: up } = await supabase.storage.from(BUCKET_ANEXOS).upload(path, f, { upsert: false, contentType: f.type || undefined });
+        if (up) { falhas++; continue; }
+        const { error: reg } = await db.from("SISTEMA_SOLICITACOES_ANEXOS").insert({
+          modulo: "advertencia", entidade_id: String(data.id), nome: f.name, storage_path: path,
+          tipo: f.type || null, tamanho: f.size, autor_nome: displayName || user?.email || "", autor_email: user?.email ?? null, autor_id: user?.id ?? null,
+        });
+        if (reg) falhas++;
+      }
+      if (falhas) toast(`${falhas} anexo(s) não subiram — anexe de novo pelo card da solicitação.`, "err");
+    }
     toast(`Advertência solicitada${excecao ? " (EXCEÇÃO)" : ""} para ${adv.colaborador_nome}! (#${data?.id})`, "ok");
     setAdvExc({ open: false, justificativa: "" });
-    setModalAdv(false); setAdv({ ...ADV_RESET }); setEmpSearch(""); carregarMinhasSols();
+    setModalAdv(false); setAdv({ ...ADV_RESET }); setAdvArquivos([]); setEmpSearch(""); carregarMinhasSols();
   };
 
   // ── CSS ─────────────────────────────────────────────────────────────
@@ -1473,11 +1498,16 @@ export default function MinhasSolicitacoes({ abrir, base = "encarregados" }: { a
           <div className="ini-modal" onClick={e => e.stopPropagation()} style={{ maxWidth: 560 }}>
             <button onClick={() => setModalAdv(false)} style={{ position: "absolute", top: 14, right: 14, background: "none", border: "none", color: "#94a3b8", fontSize: 20, cursor: "pointer" }}>✕</button>
             <div style={{ fontSize: 17, fontWeight: 800, marginBottom: 4 }}>⚠️ Solicitar Advertência</div>
-            <div style={{ fontSize: 12, color: "#94a3b8", marginBottom: 16 }}>Selecione o colaborador e responda as questões. Segue para o Operacional aprovar e depois para o Jurídico.</div>
+            <div style={{ fontSize: 12, color: "#94a3b8", marginBottom: 12 }}>Informe quem recebe a advertência e responda as questões. Vai direto para o <b>Jurídico</b>, que aprova, reprova e dá o parecer.</div>
+            {/* Quem pede vem do login — não se digita (17/09/2026). */}
+            <div style={{ margin: "0 0 14px", padding: "8px 12px", borderRadius: 10, background: "#f8fafc", border: "1px solid #e2e8f0", fontSize: 12, color: "#475569" }}>
+              <span style={{ fontSize: 10.5, fontWeight: 800, color: "#94a3b8", textTransform: "uppercase", letterSpacing: ".4px" }}>Solicitante</span><br />
+              <strong style={{ color: "#0f172a" }}>{displayName || user?.email || "—"}</strong>{user?.email ? <span style={{ color: "#94a3b8" }}> · {user.email}</span> : null}
+            </div>
 
             <div className="ini-fg" style={{ position: "relative" }} onBlur={() => setTimeout(() => setShowEmpDrop(false), 150)}>
-              <label>Colaborador *</label>
-              <input className="ini-fi" placeholder="Digite o nome do colaborador..." value={empSearch} autoComplete="off"
+              <label>Quem recebe a advertência (colaborador advertido) *</label>
+              <input className="ini-fi" placeholder="Digite o nome do colaborador que será advertido..." value={empSearch} autoComplete="off"
                 onChange={e => { const v = e.target.value; setEmpSearch(v); setAdv(a => ({ ...a, colaborador_id: null })); if (v.length >= 2) { setShowEmpDrop(true); buscarEmpregados(v); } else { setShowEmpDrop(false); setEmpregados([]); } }} />
               {showEmpDrop && empSearch.length >= 2 && (
                 <div style={{ position: "absolute", top: "100%", left: 0, right: 0, zIndex: 999, background: "#fff", border: "1px solid #e2e8f0", borderRadius: 10, boxShadow: "0 8px 24px rgba(15,23,42,.14)", maxHeight: 220, overflowY: "auto", marginTop: 2 }}>
@@ -1494,8 +1524,21 @@ export default function MinhasSolicitacoes({ abrir, base = "encarregados" }: { a
               )}
             </div>
             {adv.colaborador_id && (
-              <div style={{ margin: "-6px 0 14px", padding: "8px 12px", borderRadius: 10, background: "#f0f4ff", border: "1px solid #dbe4f0", fontSize: 12, color: "#475569" }}>
-                <strong style={{ color: "#0f172a" }}>{adv.colaborador_nome}</strong>{adv.colaborador_cargo ? ` · ${adv.colaborador_cargo}` : ""}{adv.colaborador_filial ? ` · ${adv.colaborador_filial}` : ""}
+              // A ficha de quem vai ser advertido, na hora de escolher (17/09/2026):
+              // é o que confirma que a pessoa certa foi selecionada.
+              <div style={{ margin: "-6px 0 14px", padding: "10px 12px", borderRadius: 10, background: "#f0f4ff", border: "1px solid #dbe4f0", fontSize: 12, color: "#475569" }}>
+                <div style={{ fontSize: 10.5, fontWeight: 800, color: "#0f3171", textTransform: "uppercase", letterSpacing: ".4px", marginBottom: 4 }}>⚠️ Advertido</div>
+                <strong style={{ color: "#0f172a", fontSize: 13 }}>{adv.colaborador_nome}</strong>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "2px 12px", marginTop: 6 }}>
+                  {([
+                    ["CPF", adv.colaborador_cpf], ["Cargo", adv.colaborador_cargo],
+                    ["Contrato", adv.contrato || adv.colaborador_filial], ["Posto", adv.colaborador_posto],
+                    ["Admissão", adv.colaborador_admissao ? `${fmtDt(adv.colaborador_admissao)}${tempoDeEmpresa(adv.colaborador_admissao) ? ` · ${tempoDeEmpresa(adv.colaborador_admissao)} de empresa` : ""}` : ""],
+                    ["Escala", adv.colaborador_escala],
+                  ] as [string, string][]).filter(([, v]) => v).map(([l, v]) => (
+                    <div key={l}><span style={{ color: "#94a3b8", fontWeight: 700 }}>{l}:</span> {v}</div>
+                  ))}
+                </div>
               </div>
             )}
 
@@ -1540,6 +1583,29 @@ export default function MinhasSolicitacoes({ abrir, base = "encarregados" }: { a
                 Primeiro dê a advertência verbal para dar a escrita.
               </div>
             )}
+
+            {/* Anexos opcionais (17/09/2026): foto, print, documento. Sobem
+                depois que a solicitação existe (ver doSubmitAdv). */}
+            <div className="ini-fg">
+              <label>Anexos (opcional)</label>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 6, alignItems: "center" }}>
+                <label style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "7px 12px", borderRadius: 10, border: "1px dashed #cbd5e1", background: "#f8fafc", color: "#0f3171", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>
+                  📎 Escolher arquivos
+                  <input type="file" multiple style={{ display: "none" }} onChange={e => {
+                    const lista = Array.from(e.target.files ?? []);
+                    for (const f of lista) { const err = erroDoAnexo(f); if (err) { toast(err, "err"); e.target.value = ""; return; } }
+                    setAdvArquivos(a => [...a, ...lista]); e.target.value = "";
+                  }} />
+                </label>
+                {advArquivos.map((f, i) => (
+                  <span key={i} style={{ display: "inline-flex", alignItems: "center", gap: 6, background: "#eef4ff", border: "1px solid #dbe4f0", borderRadius: 8, padding: "5px 9px", fontSize: 11.5, color: "#0f3171", fontWeight: 700 }}>
+                    {f.name} <span style={{ fontWeight: 500, color: "#64748b" }}>{fmtTamanho(f.size)}</span>
+                    <button onClick={() => setAdvArquivos(a => a.filter((_, j) => j !== i))} title="Remover" style={{ border: "none", background: "none", color: "#94a3b8", cursor: "pointer", padding: 0 }}>✕</button>
+                  </span>
+                ))}
+                {advArquivos.length === 0 && <span style={{ fontSize: 11.5, color: "#94a3b8" }}>Fotos, prints ou documentos que ajudem o Jurídico. Até 25 MB cada.</span>}
+              </div>
+            </div>
 
             <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 8, paddingTop: 14, borderTop: "1px solid #e2e8f0" }}>
               <button onClick={() => setModalAdv(false)} style={{ padding: "7px 14px", borderRadius: 10, border: "1px solid #e2e8f0", background: "#fff", color: "#475569", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>Cancelar</button>
