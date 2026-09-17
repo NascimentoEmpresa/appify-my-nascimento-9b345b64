@@ -28,7 +28,7 @@
 --      A biblioteca pública mostra o fio sem o nome de quem perguntou, como
 --      já faz com a pergunta original.
 --
--- Idempotente. Aplicada no banco do app em 17/09/2026. ROLLBACK no fim.
+-- Idempotente. Aplicar no banco do app. ROLLBACK no fim.
 -- =========================================================================
 
 -- ── 1) Avaliação ──────────────────────────────────────────────────────────

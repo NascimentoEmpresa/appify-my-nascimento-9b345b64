@@ -12,7 +12,7 @@
 -- 'responder'::app_acao) tem que rodar em OUTRA execução — primeiro esta,
 -- depois aquela. Não junte as duas num SQL Editor só.
 --
--- Idempotente. Aplicada no banco do app em 17/09/2026.
+-- Idempotente. Aplicar no banco do app.
 -- =========================================================================
 ALTER TYPE public.app_acao ADD VALUE IF NOT EXISTS 'responder';
 

@@ -16,7 +16,7 @@
 -- não ficar sem dono. Item estático no Sidebar.tsx e rota no App.tsx vão
 -- na mesma PR.
 --
--- Idempotente. Aplicada no banco do app em 17/09/2026. ROLLBACK no fim.
+-- Idempotente. Aplicar no banco do app. ROLLBACK no fim.
 -- =========================================================================
 
 INSERT INTO public.app_menu (modulo_id, codigo, nome, rota, ordem)

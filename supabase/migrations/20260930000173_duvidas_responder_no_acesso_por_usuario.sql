@@ -21,7 +21,7 @@
 -- ⚠ Precisa da mig 172 aplicada ANTES, em execução separada (valor novo de
 -- enum não pode ser usado na transação em que foi criado).
 --
--- Idempotente. Aplicada no banco do app em 17/09/2026.
+-- Idempotente. Aplicar no banco do app.
 -- =========================================================================
 
 -- 1) A ação no menu que já existe (aparece como switch no Acesso por Usuário)
