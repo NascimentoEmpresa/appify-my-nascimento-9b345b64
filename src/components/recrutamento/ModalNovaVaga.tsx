@@ -52,6 +52,7 @@ const db = supabase as unknown as SupabaseClient;
 type EmpregadoRef = {
   ID: number;
   Nome: string;
+  Empresa?: number | string | null;
   Filial?: string | null;
   "Nome Filial"?: string | null;
   "Título do Cargo"?: string | null;
@@ -239,13 +240,13 @@ export function ModalNovaVaga({ aberto, onFechar, onCriada, onToast, solicitacao
         let cts = contratosFull;
         if (!cts.length) {
           const { data } = await db
-            .from("CONTRATOS").select('"NOME CONTRATO", Filial').eq("ATIVO", "SIM").order('"NOME CONTRATO"');
+            .from("CONTRATOS").select('"NOME CONTRATO", Filial, Empresa').eq("ATIVO", "SIM").order('"NOME CONTRATO"');
           cts = data ?? [];
           setContratosFull(cts);
         }
         const { data } = await db
           .from("EMPREGADOS")
-          .select('"ID", "Nome", "Filial", "Nome Filial", "Título do Cargo", "Valor Salário", "% Insalubridade", "Escala"')
+          .select('"ID", "Nome", "Empresa", "Filial", "Nome Filial", "Título do Cargo", "Valor Salário", "% Insalubridade", "Escala"')
           .eq("ID", vinculoDemissao.substituidoId)
           .maybeSingle();
         if (data) selecionarEmpregado(data, MOTIVO_SUBSTITUICAO, cts);
@@ -266,7 +267,7 @@ export function ModalNovaVaga({ aberto, onFechar, onCriada, onToast, solicitacao
       (async () => {
         const { data } = await db
           .from("CONTRATOS")
-          .select('"NOME CONTRATO", Filial')
+          .select('"NOME CONTRATO", Filial, Empresa')
           .eq("ATIVO", "SIM")
           .order('"NOME CONTRATO"');
         if (data) setContratosFull(data);
@@ -295,7 +296,7 @@ export function ModalNovaVaga({ aberto, onFechar, onCriada, onToast, solicitacao
     setLoadingEmps(true);
     const { data, error } = await db
       .from("EMPREGADOS")
-      .select('"ID", "Nome", "Filial", "Nome Filial", "Título do Cargo", "Valor Salário", "% Insalubridade", "Escala"')
+      .select('"ID", "Nome", "Empresa", "Filial", "Nome Filial", "Título do Cargo", "Valor Salário", "% Insalubridade", "Escala"')
       .eq("Situação", "Trabalhando")
       .ilike("Nome", `%${term}%`)
       .order('"Nome"')

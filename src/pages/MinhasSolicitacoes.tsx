@@ -140,6 +140,7 @@ type EmpregadoRef = {
   ID: number;
   Nome?: string | null;
   CPF?: string | null;
+  Empresa?: number | string | null;
   Filial?: string | null;
   "Nome Filial"?: string | null;
   "Título do Cargo"?: string | null;
@@ -150,7 +151,7 @@ type EmpregadoRef = {
   Escala?: string | null;
 };
 /** Linha de CONTRATOS (só o que a tela usa para casar e rotular). */
-type ContratoRow = { id?: number | null; Filial?: string | null; "NOME CONTRATO"?: string | null };
+type ContratoRow = { id?: number | null; Empresa?: number | string | null; Filial?: string | null; "NOME CONTRATO"?: string | null };
 /** Mudança de data de início gravada em SISTEMA_RECRUTAMENTO.data_inicio_alteracoes. */
 interface AlteracaoDataInicio { de?: string; para?: string; em?: string; por_nome?: string; justificativa?: string }
 /** Colunas de SISTEMA_RECRUTAMENTO que o histórico lê (a lista de `select` é dinâmica). */
@@ -379,7 +380,7 @@ export default function MinhasSolicitacoes({ abrir, base = "encarregados" }: { a
   // ── Contratos ───────────────────────────────────────────────────────
   const carregarContratos = async () => {
     const { data } = await db
-      .from("CONTRATOS").select('id, "NOME CONTRATO", Filial').eq("ATIVO", "SIM").order('"NOME CONTRATO"');
+      .from("CONTRATOS").select('id, "NOME CONTRATO", Filial, Empresa').eq("ATIVO", "SIM").order('"NOME CONTRATO"');
     if (data) setContratosFull(data);
   };
 
@@ -391,7 +392,7 @@ export default function MinhasSolicitacoes({ abrir, base = "encarregados" }: { a
     empDebounce.current = setTimeout(async () => {
       const { data, error } = await db
         .from("EMPREGADOS")
-        .select('"ID", "Nome", "CPF", "Filial", "Nome Filial", "Título do Cargo", "Valor Salário", "% Insalubridade", "Admissão", "Escala", "Descrição do Local"')
+        .select('"ID", "Nome", "CPF", "Empresa", "Filial", "Nome Filial", "Título do Cargo", "Valor Salário", "% Insalubridade", "Admissão", "Escala", "Descrição do Local"')
         .eq("Situação", "Trabalhando")
         .ilike("Nome", `%${term}%`)
         .order('"Nome"')

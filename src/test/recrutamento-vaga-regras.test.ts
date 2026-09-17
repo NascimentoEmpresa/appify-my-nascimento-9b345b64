@@ -3,7 +3,7 @@ import {
   diasUteisEntre, somaDiasUteis, dataMinimaVaga, avaliarPrazo, grauPorDiasUteis,
   cargoExigeCnh, aplicarReqCnh, motivoLabel, MOTIVO_EXPANSAO,
   GRAU_ALTA, GRAU_MEDIA, GRAU_BAIXA, REQ_CNH_TEXTO,
-  contratoDoEmpregado, rotuloContrato, rotuloReferencia, mostraNomeReferencia,
+  contratoDoEmpregado, chaveContrato, rotuloContrato, rotuloReferencia, mostraNomeReferencia,
   MENU_VAGA_ADMINISTRATIVA, podeVagaAdministrativa, filtrarAdministrativas,
   vagaSeguraSubstituido, substituidosComVagaViva,
   podePreencherVagaManual, faltamCamposManuais,
@@ -267,5 +267,26 @@ describe("rotuloContrato — o contrato da vaga leva o código da filial", () =>
     expect(rotuloContrato({ Filial: 1109, "NOME CONTRATO": "1109 - X" })).toBe("1109 - X");
     expect(rotuloContrato({ "NOME CONTRATO": "SEM FILIAL" })).toBe("SEM FILIAL");
     expect(rotuloContrato(null)).toBe("");
+  });
+});
+
+describe("contrato do empregado — empresa e nome abreviado (17/09/2026)", () => {
+  // A filial 1097 existe em TRÊS empresas ao mesmo tempo (chave do Senior é
+  // empresa + filial). E o Senior abrevia o nome: "LIMP", "063.2026".
+  const contratos = [
+    { id: 15,  Empresa: 1, "NOME CONTRATO": "SAMU TELEFONISTAS - 96397/2025",              Filial: 1097 },
+    { id: 108, Empresa: 2, "NOME CONTRATO": "ROSARIO DO SUL - 048.2025",                   Filial: 1097 },
+    { id: 197, Empresa: 5, "NOME CONTRATO": "GUAPORÉ LIMPEZA SMED EMERGENCIAL - 063/2026", Filial: 1097 },
+  ];
+  it("com Empresa nos dois lados, é a empresa que decide", () => {
+    expect(contratoDoEmpregado(contratos, { Empresa: 5, Filial: 1097, "Nome Filial": "1097 - GUAPORÉ LIMP SMED EMERGENCIAL - 063.2026" })?.id).toBe(197);
+    expect(contratoDoEmpregado(contratos, { Empresa: 2, Filial: 1097, "Nome Filial": "1097 - ROSARIO DO SUL - 048.2025" })?.id).toBe(108);
+  });
+  it("sem Empresa, o nome abreviado do Senior ainda casa com o nome completo do contrato", () => {
+    expect(contratoDoEmpregado(contratos, { Filial: 1097, "Nome Filial": "1097 - GUAPORÉ LIMP SMED EMERGENCIAL - 063.2026" })?.id).toBe(197);
+  });
+  it("chaveContrato desfaz abreviação, acento e pontuação", () => {
+    expect(chaveContrato("GUAPORÉ LIMP SMED EMERGENCIAL - 063.2026")).toBe(chaveContrato("Guapore LIMPEZA SMED Emergencial 063/2026"));
+    expect(chaveContrato("VERANOPÓLIS RECEP EMERGENCIAL - 151.2026")).toBe(chaveContrato("VERANOPOLIS RECEPCAO EMERGENCIAL - 151/2026"));
   });
 });
