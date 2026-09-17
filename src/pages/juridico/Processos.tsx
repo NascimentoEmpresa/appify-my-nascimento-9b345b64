@@ -1,10 +1,16 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { createPortal } from "react-dom";
 import { supabase } from "@/integrations/supabase/client";
+import type { SupabaseClient } from "@supabase/supabase-js";
 import { useAuth } from "@/hooks/useAuth";
 import { useVinculoEmpregado } from "@/hooks/useVinculoEmpregado";
-import { MUNICIPIOS_POR_UF } from "@/data/municipios-brasil";
+import { sugerirContrato, cidadeDoContrato } from "./processos/contratoMunicipio";
 import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip, Cell, PieChart, Pie, Legend, CartesianGrid } from "recharts";
+
+// JUR_PROCESSOS, EMPREGADOS, CONTRATOS e SISTEMA_COMENTARIOS não estão no
+// types.ts gerado; mesmo padrão de comite-etica/db.ts — a exceção fica num
+// lugar só.
+const db = supabase as unknown as SupabaseClient;
 
 // =====================================================================
 // JURÍDICO — Processos (adaptado ao layout do ERP)
@@ -29,13 +35,26 @@ interface MotivoItem { ordem: number; motivo: string; valor_pedidos: number; val
 
 // Proposta de acordo. Pode ter saído de uma audiência (fica dentro daquela
 // audiência) ou do decorrer do processo (lista à parte, com data própria).
-export const PROPOSTA_TIPOS = ["Judicial", "Extrajudicial"] as const;
-export const PROPOSTA_QUEM = ["Juiz", "Reclamante", "Reclamada"] as const;
+const PROPOSTA_TIPOS = ["Judicial", "Extrajudicial"] as const;
+const PROPOSTA_QUEM = ["Juiz", "Reclamante", "Reclamada"] as const;
 interface Proposta { valor: number; descricao: string; tipo: string; quem: string; data?: string }
 // Valor à parte (15/09/2026): lançamento que não pertence a nenhum motivo do
 // processo — honorários periciais, custas avulsas… Tem motivo próprio
 // (obrigatório) e não se mistura com os valores POR MOTIVO acima.
-interface ValorAParte { motivo: string; valor: number; descricao: string }
+//
+// DESTINO (17/09/2026, pedido do Pablo): cada valor à parte diz PARA ONDE
+// vai — Pedidos, Acordo, Sentença ou Custo final — e soma no cartão
+// escolhido. Registro gravado antes disso (sem `destino`) continua indo
+// para o custo final, que era o único lugar onde ele entrava.
+const DESTINOS_VALOR_A_PARTE = [
+  ["pedidos", "Pedidos"], ["acordo", "Acordo"], ["sentenca", "Sentença"], ["custo_final", "Custo final"],
+] as const;
+type DestinoValorAParte = (typeof DESTINOS_VALOR_A_PARTE)[number][0];
+const DESTINO_PADRAO: DestinoValorAParte = "custo_final";
+const ehDestinoValorAParte = (v: unknown): v is DestinoValorAParte =>
+  DESTINOS_VALOR_A_PARTE.some(([d]) => d === v);
+const rotuloDestino = (d: DestinoValorAParte) => DESTINOS_VALOR_A_PARTE.find(([k]) => k === d)?.[1] ?? d;
+interface ValorAParte { motivo: string; valor: number; descricao: string; destino: DestinoValorAParte }
 interface Audiencia { ordem: number; data: string; tipo_audiencia?: string; modalidade_audiencia?: string; horario?: string; propostas?: Proposta[]; }
 interface Processo {
   id: number;
@@ -58,6 +77,31 @@ interface Processo {
   valores_a_parte: ValorAParte[];
 }
 interface Comentario { id: number; entidade_id?: string; autor_nome?: string; texto: string; created_at?: string; }
+
+/**
+ * Linha crua de JUR_PROCESSOS (uma por motivo), como o PostgREST devolve. A
+ * tabela não está no types.ts gerado; só as colunas que o agrupamento lê pelo
+ * nome ganham tipo, o resto entra pelo índice (lido com toFloat/String).
+ */
+interface LinhaProcesso {
+  id?: number | null; id_sequencial?: number | null; numero_processo?: string | null;
+  motivos?: string | null; motivo_ordem?: number | null;
+  audiencias_json?: string | null; propostas_json?: string | null; valores_a_parte_json?: string | null;
+  tipo_audiencia?: string | null; modalidade_audiencia?: string | null;
+  [coluna: string]: unknown;
+}
+/** Colunas de EMPREGADOS que o vínculo do reclamante lê (ver EMP_COLS). */
+type EmpregadoRow = {
+  ID?: number; Nome?: string | null; CPF?: string | null; "Situação"?: string | null;
+  "Descrição do Local"?: string | null; "Admissão"?: string | null; "Data Afastamento"?: string | null;
+  "Valor Salário"?: string | number | null; PIS?: string | null; "C.Custo"?: string | null;
+  "Titulo C.Custo"?: string | null; "Título do Cargo"?: string | null; "Nome da Empresa"?: string | null;
+  "Nome Filial"?: string | null;
+  // Estados do modal de detalhe do reclamante — não vêm do banco.
+  _loading?: boolean; _vazio?: boolean;
+};
+/** Uma audiência achatada com o processo dela, para a tela de Audiências. */
+interface AudienciaLinha { p: Processo; data: string; horario: string; tipo: string; modalidade: string; futuro: boolean; }
 
 /**
  * Os status de um processo.
@@ -91,127 +135,31 @@ const STATUS_CURTO: Record<string, string> = {
 const PAGE_SIZE = 50;
 const PALETTE = ["#f97316", "#14b8a6", "#eab308", "#a78bfa", "#2563eb", "#dc2626", "#16a34a", "#0f3171", "#ec4899", "#0891b2"];
 
-const toFloat = (v: any) => { const n = parseFloat(v); return isNaN(n) ? 0 : n; };
+const toFloat = (v: unknown) => { const n = parseFloat(String(v)); return isNaN(n) ? 0 : n; };
 const money = (v?: number) => (v == null || isNaN(Number(v))) ? "R$ 0,00" : Number(v).toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
 const moneyShort = (v: number) => { const a = Math.abs(v); if (a >= 1e6) return "R$ " + (v / 1e6).toLocaleString("pt-BR", { maximumFractionDigits: 1 }) + "M"; if (a >= 1e3) return "R$ " + (v / 1e3).toLocaleString("pt-BR", { maximumFractionDigits: 0 }) + "k"; return money(v); };
 const fmtDt = (s?: string) => { if (!s) return "—"; const d = new Date(String(s).length <= 10 ? s + "T12:00:00" : s); return isNaN(+d) ? String(s) : d.toLocaleDateString("pt-BR"); };
 const hojeISO = () => new Date().toISOString().slice(0, 10);
 const anoDoNumero = (n: string) => { const m = String(n || "").match(/\.(\d{4})\.\d\.\d{2}\./); return m ? Number(m[1]) : null; };
 
-// ── Contrato a partir do município ─────────────────────────────────
-// Os nomes em CONTRATOS."NOME CONTRATO" quase sempre começam pela cidade
-// ("CHARQUEADAS - 005.2021", "BENTO GONÇALVES - LIMPEZA - 048.2026"), então
-// dá para sugerir o contrato a partir do município digitado. É sugestão: o
-// campo continua editável, e a mesma cidade pode ter vários contratos.
-const semAcento = (s: string) =>
-  String(s || "").normalize("NFD").replace(/[̀-ͯ]/g, "").toUpperCase().trim();
-const PALAVRA_CURTA = new Set(["DE", "DA", "DO", "DOS", "DAS", "E", "-"]);
-const tokens = (s: string) => semAcento(s).split(/[^A-Z0-9]+/).filter(t => t.length > 1 && !PALAVRA_CURTA.has(t));
-
-// O número do contrato ("062/2025", "95.2026") não identifica nada: é o que
-// sobra depois dele que diz de qual contrato se trata.
-const tokensNome = (s: string) => tokens(s).filter(t => !/^\d+$/.test(t));
-
-// Pontua o quanto um nome de contrato "casa" com o texto do município.
-//
-// O campo guarda duas coisas na prática: cidade ("CHARQUEADAS") e descrição de
-// posto ("UFRGS - JARDINAGEM CAMPUS SAUDE TRI"). Por isso a comparação olha
-// nos DOIS sentidos e fica com o mais forte:
-//   • quanto do MUNICÍPIO aparece no contrato — resolve "RIO GRANDE" →
-//     "CAMARA DE RIO GRANDE-LIMPEZA";
-//   • quanto do CONTRATO é explicado pelo município — resolve
-//     "UFRGS - JARDINAGEM CAMPUS SAUDE TRI" → "UFRGS - JARDINAGEM - 062/2025",
-//     que só ganha das outras 9 linhas da UFRGS porque é a única cujo nome
-//     inteiro (UFRGS + JARDINAGEM) está no texto.
-// Exigir os dois lados altos rejeitaria o primeiro caso; exigir só um lado
-// baixo aceitaria "SANTA MARIA" como "SANTA CRUZ".
-function pontuarContrato(municipio: string, nomeContrato: string): number {
-  const m = semAcento(municipio), c = semAcento(nomeContrato);
-  if (!m || !c) return 0;
-  // Sem nenhuma palavra significativa não há o que casar. Fica ANTES das
-  // comparações de texto: "DE" casaria por substring com "CAMARA DE RIO
-  // GRANDE" e sugeriria um contrato sem nada a ver.
-  const tm = tokensNome(municipio), tc = tokensNome(nomeContrato);
-  if (!tm.length || !tc.length) return 0;
-  if (c === m) return 1000;
-  if (c.startsWith(m)) return 900 - c.length / 100;     // prefixo: o mais curto ganha
-  if (c.includes(m)) return 800 - c.length / 100;
-
-  const sm = new Set(tm), sc = new Set(tc);
-  const covMunicipio = [...sm].filter(t => sc.has(t)).length / sm.size;
-  const covContrato  = [...sc].filter(t => sm.has(t)).length / sc.size;
-  const forte = Math.max(covMunicipio, covContrato);
-  if (forte < 0.6) return 0;
-  // Cobertura forte manda; a outra desempata; nome curto desempata por último.
-  return forte * 500 + Math.min(covMunicipio, covContrato) * 100 - c.length / 100;
-}
-
-export function sugerirContrato(municipio: string, contratos: string[]): string {
-  let melhor = "", pontos = 0;
-  for (const c of contratos) {
-    const p = pontuarContrato(municipio, c);
-    if (p > pontos) { pontos = p; melhor = c; }
-  }
-  return pontos > 0 ? melhor : "";
-}
-
-// ── Município a partir do contrato ─────────────────────────────────
-// O caminho inverso do de cima, e o que a tela usa hoje: o contrato vem da
-// Sênior (CONTRATOS) e o município tem que ser a cidade DAQUELE contrato.
-//
-// A CONTRATOS não tem coluna de cidade — só "Endereço" (logradouro) e "CEP" —,
-// então a cidade sai do próprio nome do contrato, casando-o contra a lista de
-// municípios do IBGE. Quando nada casa, o campo fica em branco e a validação do
-// Salvar cobra o preenchimento (é obrigatório).
-const partesNome = (s: string) => semAcento(s).split(/[^A-Z0-9']+/).filter(Boolean);
-
-// Índice nome-normalizado → nome com acento. Ignora nomes com menos de 4 letras
-// ("Ipê", "Iuiú"): curtos demais para casar sem falso positivo. Montado uma vez.
-let MUN_IDX: Map<string, string> | null = null;
-function municipiosIndexados(): Map<string, string> {
-  if (!MUN_IDX) {
-    MUN_IDX = new Map();
-    for (const lista of Object.values(MUNICIPIOS_POR_UF))
-      for (const nome of lista) {
-        const chave = partesNome(nome).join(" ");
-        if (chave.replace(/[^A-Z]/g, "").length >= 4 && !MUN_IDX.has(chave)) MUN_IDX.set(chave, nome);
-      }
-  }
-  return MUN_IDX;
-}
-
-/**
- * Procura um município dentro do nome do contrato, do trecho mais longo para o
- * mais curto ("SALTO DO JACUI" antes de "SALTO").
- *
- * `noInicio` diz se a cidade ABRE o nome ("CAXIAS DO SUL - 2026/95"). Só nesse
- * caso a tela preenche o município sozinha: aí a cidade é a identidade do
- * contrato, e nos 57 contratos ativos os 8 casos assim estão todos certos.
- * Casado no meio do nome, vira sugestão de um clique — acerta "UFFS CHAPECO" e
- * "HUSM SANTA MARIA", mas também tira "Saúde" (município de SC) de "UFRGS -
- * AUXILIAR DE SAÚDE BUCAL". Gravar esse chute sozinho seria erro silencioso:
- * ninguém desconfia de campo já preenchido.
- */
-export function cidadeDoContrato(nomeContrato: string): { cidade: string; noInicio: boolean } {
-  const idx = municipiosIndexados();
-  const t = partesNome(nomeContrato);
-  for (let n = Math.min(5, t.length); n >= 1; n--)
-    for (let i = 0; i + n <= t.length; i++) {
-      const m = idx.get(t.slice(i, i + n).join(" "));
-      if (m) return { cidade: m, noInicio: i === 0 };
-    }
-  return { cidade: "", noInicio: false };
-}
-
 // Custos do processo que não vêm dos motivos: recurso e perícia médica.
 // Somam no custo final (decisão do Pablo, 17/08/2026) — são desembolso real.
-const custosDoProcesso = (p: any) => PROC_VAL_FIELDS.reduce((s, k) => s + toFloat(p[k]), 0);
+const custosDoProcesso = (p: Processo) => PROC_VAL_FIELDS.reduce((s, k) => s + toFloat(p[k]), 0);
 // `valor_final` preenchido continua mandando: é o fechamento lançado à mão, e
 // quem o preenche já está dizendo qual foi o custo total.
 // Valores à parte também são desembolso: entram no custo final (15/09/2026).
-const valoresAParteTotal = (p: any) => ((p.valores_a_parte || []) as ValorAParte[]).reduce((s, v) => s + toFloat(v.valor), 0);
-const custoTotal = (p: any) => p.valor_final > 0 ? p.valor_final
-  : p.valor_acordo + p.valor_sentenca + p.valor_outros_custos + p.valor_deposito_recursal + p.valor_custas_processuais + custosDoProcesso(p) + valoresAParteTotal(p);
+// Desde 17/09/2026 cada um tem DESTINO: o que foi para Pedidos soma no
+// cartão de pedidos (e só nele — pedido não é custo); Acordo e Sentença
+// somam no cartão deles e, por tabela, no custo final; "Custo final" entra
+// só no custo final, como todos entravam antes.
+const valoresAParteTotal = (p: Processo) => ((p.valores_a_parte || []) as ValorAParte[]).reduce((s, v) => s + toFloat(v.valor), 0);
+const valoresAParteDestino = (p: Processo, destino: DestinoValorAParte) =>
+  ((p.valores_a_parte || []) as ValorAParte[]).filter(v => (v.destino ?? DESTINO_PADRAO) === destino).reduce((s, v) => s + toFloat(v.valor), 0);
+const pedidosTotal  = (p: Processo) => p.valor_pedidos  + valoresAParteDestino(p, "pedidos");
+const acordoTotal   = (p: Processo) => p.valor_acordo   + valoresAParteDestino(p, "acordo");
+const sentencaTotal = (p: Processo) => p.valor_sentenca + valoresAParteDestino(p, "sentenca");
+const custoTotal = (p: Processo) => p.valor_final > 0 ? p.valor_final
+  : acordoTotal(p) + sentencaTotal(p) + p.valor_outros_custos + p.valor_deposito_recursal + p.valor_custas_processuais + custosDoProcesso(p) + valoresAParteDestino(p, "custo_final");
 const motivoTotal = (i: MotivoItem) => VAL_FIELDS_MOTIVO.reduce((s, k) => s + toFloat(i[k]), 0);
 
 // Vínculo reclamante ⇄ EMPREGADOS. Lê a tabela direto (mesmo padrão do Recrutamento).
@@ -290,7 +238,7 @@ function MotivoSelect({ value, options, onChange }: { value: string; options: st
 // Antes de 17/08/2026 toda proposta era, por definição, do juiz na audiência —
 // a tela nem perguntava. Os registros antigos vêm sem `tipo`/`quem`, então o
 // padrão reproduz o que a tela dizia deles: proposta judicial, do juiz.
-const parsePropostas = (raw: any): Proposta[] =>
+const parsePropostas = (raw: unknown): Proposta[] =>
   Array.isArray(raw)
     ? raw.filter(p => p && (p.descricao || p.valor)).map(p => ({
         valor: toFloat(p.valor), descricao: String(p.descricao ?? ""),
@@ -302,7 +250,7 @@ const parsePropostas = (raw: any): Proposta[] =>
 // As propostas fora de audiência moram numa coluna própria (propostas_json),
 // mas o campo é text e vem repetido em toda linha de motivo: basta a primeira
 // linha que tenha conteúdo.
-function parsePropostasProcesso(rs: any[]): Proposta[] {
+function parsePropostasProcesso(rs: LinhaProcesso[]): Proposta[] {
   for (const r of rs) {
     const raw = r.propostas_json;
     if (!raw || !String(raw).trim() || String(raw).trim() === "[]") continue;
@@ -317,14 +265,14 @@ function parsePropostasProcesso(rs: any[]): Proposta[] {
 
 // Valores à parte: mesma mecânica do propostas_json (text, repetido em toda
 // linha de motivo, vale a primeira linha com conteúdo).
-function parseValoresAParte(rs: any[]): ValorAParte[] {
+function parseValoresAParte(rs: LinhaProcesso[]): ValorAParte[] {
   for (const r of rs) {
     const raw = r.valores_a_parte_json;
     if (!raw || !String(raw).trim() || String(raw).trim() === "[]") continue;
     try {
       const arr = typeof raw === "string" ? JSON.parse(raw) : raw;
       const lista: ValorAParte[] = Array.isArray(arr)
-        ? arr.map((v: any) => ({ motivo: String(v.motivo ?? "").trim(), valor: toFloat(v.valor), descricao: String(v.descricao ?? "").trim() })).filter((v: ValorAParte) => v.motivo || v.valor)
+        ? arr.map(v => ({ motivo: String(v.motivo ?? "").trim(), valor: toFloat(v.valor), descricao: String(v.descricao ?? "").trim(), destino: ehDestinoValorAParte(v.destino) ? v.destino : DESTINO_PADRAO })).filter((v: ValorAParte) => v.motivo || v.valor)
         : [];
       if (lista.length) return lista;
     } catch { /* json inválido */ }
@@ -354,13 +302,13 @@ function LinhaProposta({ pr, comData }: { pr: Proposta; comData?: boolean }) {
   );
 }
 
-function parseAudiencias(rs: any[]): Audiencia[] {
+function parseAudiencias(rs: LinhaProcesso[]): Audiencia[] {
   for (const r of rs) {
     const raw = r.audiencias_json;
     if (raw && String(raw).trim() && String(raw).trim() !== "[]") {
       try {
         const arr = typeof raw === "string" ? JSON.parse(raw) : raw;
-        if (Array.isArray(arr) && arr.length) return arr.filter((a: any) => a && (a.data || a.data_audiencia)).map((a: any, i: number) => ({ ordem: i + 1, data: String(a.data || a.data_audiencia).slice(0, 10), tipo_audiencia: a.tipo_audiencia || a.tipo || "Audiência", modalidade_audiencia: a.modalidade_audiencia || a.modalidade, horario: a.horario, propostas: parsePropostas(a.propostas) })).sort((a, b) => a.data.localeCompare(b.data));
+        if (Array.isArray(arr) && arr.length) return arr.filter(a => a && (a.data || a.data_audiencia)).map((a, i: number) => ({ ordem: i + 1, data: String(a.data || a.data_audiencia).slice(0, 10), tipo_audiencia: a.tipo_audiencia || a.tipo || "Audiência", modalidade_audiencia: a.modalidade_audiencia || a.modalidade, horario: a.horario, propostas: parsePropostas(a.propostas) })).sort((a, b) => a.data.localeCompare(b.data));
       } catch { /* json inválido */ }
     }
   }
@@ -374,10 +322,10 @@ function parseAudiencias(rs: any[]): Audiencia[] {
   if (d) out.push({ ordem: 1, data: d, tipo_audiencia: rs[0]?.tipo_audiencia || inferido || "Audiência", modalidade_audiencia: rs[0]?.modalidade_audiencia });
   return out;
 }
-function agrupar(rows: any[]): Processo[] {
-  const seen = new Map<string, any>();
+function agrupar(rows: LinhaProcesso[]): Processo[] {
+  const seen = new Map<string, LinhaProcesso>();
   for (const r of rows) { const key = `${r.numero_processo}|${String(r.motivos || "").trim()}|${r.motivo_ordem ?? 0}`; const prev = seen.get(key); if (!prev || Number(r.id || 0) < Number(prev.id || 0)) seen.set(key, r); }
-  const groups = new Map<string, any[]>();
+  const groups = new Map<string, LinhaProcesso[]>();
   for (const r of seen.values()) { const n = r.numero_processo; if (!n) continue; if (!groups.has(n)) groups.set(n, []); groups.get(n)!.push(r); }
   const out: Processo[] = [];
   for (const [numero, rs] of groups) {
@@ -386,10 +334,10 @@ function agrupar(rows: any[]): Processo[] {
     const sum = (k: string) => rs.reduce((s, r) => s + toFloat(r[k]), 0);
     const maxN = (k: string) => rs.reduce((m, r) => Math.max(m, Number(r[k]) || 0), 0);
     const minId = rs.reduce((m, r) => Math.min(m, Number(r.id) || Infinity), Infinity);
-    const motivo_items: MotivoItem[] = rs.map((r, i) => { const o: any = { ordem: Number(r.motivo_ordem ?? i + 1), motivo: String(r.motivos ?? "").trim() || "Sem motivo" }; VAL_FIELDS_MOTIVO.forEach(k => o[k] = toFloat(r[k])); return o; });
+    const motivo_items: MotivoItem[] = rs.map((r, i) => { const o: MotivoItem = { ...MOTIVO_RESET(), ordem: Number(r.motivo_ordem ?? i + 1), motivo: String(r.motivos ?? "").trim() || "Sem motivo" }; VAL_FIELDS_MOTIVO.forEach(k => o[k] = toFloat(r[k])); return o; });
     // Custos do processo: maxN (uma linha), nunca sum. O valor está repetido
     // em todas as linhas de motivo, então somar multiplicaria pelo nº de motivos.
-    const procVals: any = {};
+    const procVals = {} as Record<(typeof PROC_VAL_FIELDS)[number], number>;
     PROC_VAL_FIELDS.forEach(k => procVals[k] = maxN(k));
     out.push({
       ...procVals,
@@ -418,6 +366,9 @@ function agrupar(rows: any[]): Processo[] {
 }
 
 const ativo = (p: Processo) => p.status !== "ARQUIVADO";
+// motivo "predominante" = o 1º motivo do processo (o que aparece na coluna Motivos)
+const SEM_MOTIVO = ["", "Sem motivo", "Não especificado"];
+const ehSemMotivo = (p: Processo) => SEM_MOTIVO.includes((p.motivo_items[0]?.motivo || "").trim());
 const FORM_RESET = () => ({
   numero_processo: "", reclamante: "", reclamada: "", status: "EM ANDAMENTO", comarca: "", municipio_origem: "", data_entrada_reclamatoria: "", contrato: "", reclamante_vinculado_cpf: "", status_sentenca: "", status_recursos: "", houve_acordo: "Não", motivo_acordo: "", havera_pericia: "Não", local_pericia: "", data_pericia: "", hora_pericia: "", motivos_outros_custos: "",
   // Recurso da condenação
@@ -428,7 +379,7 @@ const FORM_RESET = () => ({
 const STATUS_SENTENCA_OPC = ["", "PROCEDENTE", "IMPROCEDENTE", "PARCIALMENTE PROCEDENTE", "EM ANDAMENTO", "ACORDO", "EXTINTO", "ARQUIVADO"];
 const STATUS_RECURSO_OPC = ["", "SEM RECURSO", "EM ANDAMENTO", "PROVIDO", "IMPROVIDO", "ARQUIVADO"];
 // Salário vem de EMPREGADOS como texto pt-BR ("2.002,6900"): normaliza e devolve número.
-const parseSalario = (v: any): number | null => {
+const parseSalario = (v: unknown): number | null => {
   if (v == null || v === "") return null;
   if (typeof v === "number") return isNaN(v) ? null : v;
   let s = String(v).trim().replace(/[^\d.,-]/g, "");
@@ -443,9 +394,9 @@ const TITULOS: Record<string, string> = { dashboard: "📊 Dashboard - Processos
 export default function Processos({ view = "processos" }: { view?: "dashboard" | "processos" | "audiencias" }) {
   const { user } = useAuth();
   const { empregado } = useVinculoEmpregado();
-  const autor = empregado?.nome || (user?.user_metadata as any)?.nome || user?.email || "Usuário";
+  const autor = empregado?.nome || user?.user_metadata?.nome || user?.email || "Usuário";
 
-  const [rows, setRows] = useState<any[]>([]);
+  const [rows, setRows] = useState<LinhaProcesso[]>([]);
   const [loading, setLoading] = useState(true);
   const [erro, setErro] = useState<string | null>(null);
   const [busca, setBusca] = useState("");
@@ -480,10 +431,10 @@ export default function Processos({ view = "processos" }: { view?: "dashboard" |
   const [propostas, setPropostas] = useState<Proposta[]>([]);
   // vínculo do reclamante com EMPREGADOS
   const [empBusca, setEmpBusca] = useState("");
-  const [empResultados, setEmpResultados] = useState<any[]>([]);
+  const [empResultados, setEmpResultados] = useState<EmpregadoRow[]>([]);
   const [empLoading, setEmpLoading] = useState(false);
   const [empSelKey, setEmpSelKey] = useState<string | null>(null);
-  const [detalheEmp, setDetalheEmp] = useState<any | null>(null);
+  const [detalheEmp, setDetalheEmp] = useState<EmpregadoRow | null>(null);
   // Contratos ativos, para sugerir o Contrato a partir do município.
   const [contratosNomes, setContratosNomes] = useState<string[]>([]);
   // Assim que alguém mexe no Contrato à mão, a sugestão para de sobrescrever.
@@ -493,9 +444,9 @@ export default function Processos({ view = "processos" }: { view?: "dashboard" |
 
   const load = useCallback(async () => {
     setLoading(true); setErro(null);
-    const all: any[] = []; const chunk = 1000;
+    const all: LinhaProcesso[] = []; const chunk = 1000;
     for (let from = 0; from <= 300000; from += chunk) {
-      const { data, error } = await (supabase as any).from("JUR_PROCESSOS").select("*").order("id", { ascending: true }).range(from, from + chunk - 1);
+      const { data, error } = await db.from("JUR_PROCESSOS").select("*").order("id", { ascending: true }).range(from, from + chunk - 1);
       if (error) { setErro(error.message); setRows([]); setLoading(false); return; }
       all.push(...(data ?? [])); if (!data || data.length < chunk) break;
     }
@@ -507,10 +458,10 @@ export default function Processos({ view = "processos" }: { view?: "dashboard" |
   // nomes repetidos (mesma linha em anos diferentes), então deduplica.
   useEffect(() => {
     (async () => {
-      const { data, error } = await (supabase as any).from("CONTRATOS")
+      const { data, error } = await db.from("CONTRATOS")
         .select('"NOME CONTRATO"').eq("ATIVO", "SIM");
       if (error) { console.warn("CONTRATOS:", error.message); return; }
-      const nomes = [...new Set((data ?? []).map((c: any) => String(c["NOME CONTRATO"] ?? "").trim()).filter(Boolean))] as string[];
+      const nomes = [...new Set((data ?? []).map((c: { "NOME CONTRATO"?: string | null }) => String(c["NOME CONTRATO"] ?? "").trim()).filter(Boolean))] as string[];
       setContratosNomes(nomes.sort());
     })();
   }, []);
@@ -518,26 +469,26 @@ export default function Processos({ view = "processos" }: { view?: "dashboard" |
   const processos = useMemo(() => agrupar(rows), [rows]);
   const resumo = useMemo(() => {
     const r = { processos: processos.length, em_andamento: 0, pedidos: 0, acordos: 0, sentencas: 0, final: 0, causa_rt: 0 };
-    for (const p of processos) { if (ativo(p)) r.em_andamento++; r.pedidos += p.valor_pedidos; r.acordos += p.valor_acordo; r.sentencas += p.valor_sentenca; r.final += custoTotal(p); if (p.origem === "rtgeral") r.causa_rt += p.valor_causa; }
+    for (const p of processos) { if (ativo(p)) r.em_andamento++; r.pedidos += pedidosTotal(p); r.acordos += acordoTotal(p); r.sentencas += sentencaTotal(p); r.final += custoTotal(p); if (p.origem === "rtgeral") r.causa_rt += p.valor_causa; }
     return r;
   }, [processos]);
   const porMotivo = useMemo(() => {
-    const acc = new Map<string, any>();
+    const acc = new Map<string, { motivo: string; count: number; processos: Set<string>; total: number }>();
     for (const p of processos) for (const it of p.motivo_items) { const m = it.motivo || "Não especificado"; const s = acc.get(m) || { motivo: m, count: 0, processos: new Set(), total: 0 }; s.count++; s.processos.add(p.numero_processo); s.total += motivoTotal(it); acc.set(m, s); }
     return [...acc.values()].map(v => ({ motivo: v.motivo, count: v.count, processos: v.processos.size, total: v.total })).sort((a, b) => b.total - a.total).slice(0, 10);
   }, [processos]);
   const porAno = useMemo(() => {
-    const acc = new Map<number, any>();
-    for (const p of processos) { if (!p.ano_processo) continue; const s = acc.get(p.ano_processo) || { ano: String(p.ano_processo), count: 0, pedidos: 0, acordos: 0, total: 0 }; s.count++; s.pedidos += p.valor_pedidos; s.acordos += p.valor_acordo; s.total += custoTotal(p); acc.set(p.ano_processo, s); }
+    const acc = new Map<number, { ano: string; count: number; pedidos: number; acordos: number; total: number }>();
+    for (const p of processos) { if (!p.ano_processo) continue; const s = acc.get(p.ano_processo) || { ano: String(p.ano_processo), count: 0, pedidos: 0, acordos: 0, total: 0 }; s.count++; s.pedidos += pedidosTotal(p); s.acordos += acordoTotal(p); s.total += custoTotal(p); acc.set(p.ano_processo, s); }
     return [...acc.values()].sort((a, b) => Number(a.ano) - Number(b.ano));
   }, [processos]);
   const porReclamada = useMemo(() => {
-    const acc = new Map<string, any>();
+    const acc = new Map<string, { empresa: string; num: number; total: number }>();
     for (const p of processos) { const e = p.reclamada || "Não informado"; const s = acc.get(e) || { empresa: e, num: 0, total: 0 }; s.num++; s.total += custoTotal(p); acc.set(e, s); }
     return [...acc.values()].sort((a, b) => b.num - a.num).slice(0, 8);
   }, [processos]);
   const audiencias = useMemo(() => {
-    const out: any[] = []; const hoje = hojeISO();
+    const out: AudienciaLinha[] = []; const hoje = hojeISO();
     for (const p of processos) for (const a of p.audiencias) { if (!a.data) continue; out.push({ p, data: a.data, horario: a.horario || "", tipo: a.tipo_audiencia || "Audiência", modalidade: a.modalidade_audiencia || "", futuro: a.data >= hoje }); }
     out.sort((a, b) => (a.futuro === b.futuro ? (a.futuro ? a.data.localeCompare(b.data) : b.data.localeCompare(a.data)) : (a.futuro ? -1 : 1)));
     return out;
@@ -567,8 +518,6 @@ export default function Processos({ view = "processos" }: { view?: "dashboard" |
     return true;
   }), [audiencias, aStatus, aModal, aTipo, aSit, aMes]);
   // motivo "predominante" = o 1º motivo do processo (o que aparece na coluna Motivos)
-  const SEM_MOTIVO = ["", "Sem motivo", "Não especificado"];
-  const ehSemMotivo = (p: Processo) => SEM_MOTIVO.includes((p.motivo_items[0]?.motivo || "").trim());
   // Só dígitos: "0020035-59.2024…" acha tanto digitando com pontuação quanto sem.
   const soDigitos = (s: string) => String(s || "").replace(/\D/g, "");
   const contem = (campo: string, termo: string) => String(campo || "").toLowerCase().includes(termo.trim().toLowerCase());
@@ -613,16 +562,16 @@ export default function Processos({ view = "processos" }: { view?: "dashboard" |
   // ── comentários ────────────────────────────────────────────────
   const abrirDetalhe = async (p: Processo) => {
     setSel(p); setComents([]); setNovoComent("");
-    const { data } = await (supabase as any).from("SISTEMA_COMENTARIOS").select("*").eq("modulo", "processo").eq("entidade_id", p.numero_processo).order("created_at", { ascending: false });
+    const { data } = await db.from("SISTEMA_COMENTARIOS").select("*").eq("modulo", "processo").eq("entidade_id", p.numero_processo).order("created_at", { ascending: false });
     setComents(data ?? []);
   };
   const addComent = async () => {
     if (!sel || !novoComent.trim()) return;
-    const { data, error } = await (supabase as any).from("SISTEMA_COMENTARIOS").insert({ modulo: "processo", entidade_id: sel.numero_processo, autor_nome: autor, texto: novoComent.trim() }).select("*").single();
+    const { data, error } = await db.from("SISTEMA_COMENTARIOS").insert({ modulo: "processo", entidade_id: sel.numero_processo, autor_nome: autor, texto: novoComent.trim() }).select("*").single();
     if (error) { toast("Erro ao comentar: " + error.message, "err"); return; }
     setComents(c => [data, ...c]); setNovoComent("");
   };
-  const delComent = async (c: Comentario) => { if (!confirm("Excluir este comentário?")) return; const { error } = await (supabase as any).from("SISTEMA_COMENTARIOS").delete().eq("id", c.id); if (error) { toast("Erro: " + error.message, "err"); return; } setComents(x => x.filter(i => i.id !== c.id)); };
+  const delComent = async (c: Comentario) => { if (!confirm("Excluir este comentário?")) return; const { error } = await db.from("SISTEMA_COMENTARIOS").delete().eq("id", c.id); if (error) { toast("Erro: " + error.message, "err"); return; } setComents(x => x.filter(i => i.id !== c.id)); };
 
   // ── Vínculo do reclamante com EMPREGADOS ───────────────────────
   // Busca por nome tolerante (mesmo grafado errado): casa TODAS as palavras
@@ -631,14 +580,14 @@ export default function Processos({ view = "processos" }: { view?: "dashboard" |
     const tokens = String(term || "").toUpperCase().split(/\s+/).filter(t => t.length >= 3 && !EMP_STOP.has(t));
     if (!tokens.length) { setEmpResultados([]); toast("Digite ao menos um nome/sobrenome.", "err"); return; }
     setEmpLoading(true); setEmpSelKey(null);
-    let q = (supabase as any).from("EMPREGADOS").select(EMP_COLS);
+    let q = db.from("EMPREGADOS").select(EMP_COLS);
     for (const t of tokens) q = q.ilike("Nome", `%${t}%`);
     const { data, error } = await q.order('"Nome"').limit(30);
     setEmpLoading(false);
     if (error) { toast("EMPREGADOS: " + error.message, "err"); return; }
     setEmpResultados(data ?? []);
   };
-  const confirmarVinculo = async (emp: any) => {
+  const confirmarVinculo = async (emp: EmpregadoRow) => {
     const cpf = emp["CPF"] || "";
     // O CONTRATO do empregado é "Nome Filial", não "Descrição do Local".
     //
@@ -667,10 +616,10 @@ export default function Processos({ view = "processos" }: { view?: "dashboard" |
     setEmpResultados([]); setEmpSelKey(null);
     // Processo já existente: grava o vínculo na hora (não depende do "Salvar processo").
     if (editNumero) {
-      const patch: any = { reclamante_vinculado_cpf: cpf || null };
+      const patch: Record<string, unknown> = { reclamante_vinculado_cpf: cpf || null };
       if (local) patch.contrato = local;
       if (cidadeNova) patch.municipio_origem = cidadeNova;
-      const { error } = await (supabase as any).from("JUR_PROCESSOS").update(patch).eq("numero_processo", editNumero);
+      const { error } = await db.from("JUR_PROCESSOS").update(patch).eq("numero_processo", editNumero);
       if (error) { toast("Erro ao salvar vínculo: " + error.message, "err"); return; }
       await load();
       toast("Vínculo salvo: " + (emp["Nome"] || cpf) + ".", "ok");
@@ -682,7 +631,7 @@ export default function Processos({ view = "processos" }: { view?: "dashboard" |
   const verDetalhesReclamante = async (cpf: string) => {
     if (!cpf) return;
     setDetalheEmp({ _loading: true, CPF: cpf });
-    const { data, error } = await (supabase as any).from("EMPREGADOS").select(EMP_COLS).eq("CPF", cpf).limit(1);
+    const { data, error } = await db.from("EMPREGADOS").select(EMP_COLS).eq("CPF", cpf).limit(1);
     if (error) { toast("EMPREGADOS: " + error.message, "err"); setDetalheEmp(null); return; }
     setDetalheEmp((data && data[0]) || { _vazio: true, CPF: cpf });
   };
@@ -719,7 +668,7 @@ export default function Processos({ view = "processos" }: { view?: "dashboard" |
     const propostasJson = (() => { const l = limparPropostas(propostas); return l.length ? JSON.stringify(l) : null; })();
     // Valor à parte sem motivo não passa: o motivo é o que diz do que se trata.
     const valoresAParteLimpos = valoresAParte
-      .map(v => ({ motivo: v.motivo.trim(), valor: v.valor || 0, descricao: (v.descricao || "").trim() }))
+      .map(v => ({ motivo: v.motivo.trim(), valor: v.valor || 0, descricao: (v.descricao || "").trim(), destino: ehDestinoValorAParte(v.destino) ? v.destino : DESTINO_PADRAO }))
       .filter(v => v.motivo || v.valor || v.descricao);
     if (valoresAParteLimpos.some(v => !v.motivo)) { toast("Todo valor à parte precisa de um motivo.", "err"); return; }
     const valoresAParteJson = valoresAParteLimpos.length ? JSON.stringify(valoresAParteLimpos) : null;
@@ -728,7 +677,7 @@ export default function Processos({ view = "processos" }: { view?: "dashboard" |
     const seqAtual = editNumero ? (processos.find(p => p.numero_processo === editNumero)?.id_sequencial || 0) : 0;
     let idSequencial = seqAtual;
     if (!idSequencial) {
-      const { data: ult, error: errSeq } = await (supabase as any).from("JUR_PROCESSOS").select("id_sequencial").not("id_sequencial", "is", null).order("id_sequencial", { ascending: false }).limit(1);
+      const { data: ult, error: errSeq } = await db.from("JUR_PROCESSOS").select("id_sequencial").not("id_sequencial", "is", null).order("id_sequencial", { ascending: false }).limit(1);
       if (errSeq) { toast("Erro ao gerar o nº sequencial: " + errSeq.message, "err"); return; }
       idSequencial = Number(ult?.[0]?.id_sequencial || 0) + 1;
     }
@@ -758,15 +707,15 @@ export default function Processos({ view = "processos" }: { view?: "dashboard" |
       valores_a_parte_json: valoresAParteJson,
     }));
     if (editNumero && editNumero !== numero && processos.some(p => p.numero_processo === numero)) { toast("Já existe outro processo com esse número.", "err"); return; }
-    const del = await (supabase as any).from("JUR_PROCESSOS").delete().eq("numero_processo", editNumero || numero);
+    const del = await db.from("JUR_PROCESSOS").delete().eq("numero_processo", editNumero || numero);
     if (del.error) { toast("Erro ao salvar: " + del.error.message, "err"); return; }
-    const ins = await (supabase as any).from("JUR_PROCESSOS").insert(novas);
+    const ins = await db.from("JUR_PROCESSOS").insert(novas);
     if (ins.error) { toast("Erro ao salvar: " + ins.error.message, "err"); return; }
     setModal(false); toast(editNumero ? "Processo atualizado." : "Processo cadastrado.", "ok"); load();
   };
   const excluir = async (p: Processo) => {
     if (!confirm(`Excluir o processo ${p.numero_processo} e todos os seus lançamentos?`)) return;
-    const { error } = await (supabase as any).from("JUR_PROCESSOS").delete().eq("numero_processo", p.numero_processo);
+    const { error } = await db.from("JUR_PROCESSOS").delete().eq("numero_processo", p.numero_processo);
     if (error) { toast("Erro ao excluir: " + error.message, "err"); return; }
     setSel(null); toast("Processo excluído.", "ok"); load();
   };
@@ -824,7 +773,7 @@ export default function Processos({ view = "processos" }: { view?: "dashboard" |
   // Valores à parte (fora dos motivos). Updater funcional pelo mesmo motivo
   // das propostas: digitar rápido não pode reintroduzir lista antiga.
   const setValorAParte = (j: number, patch: Partial<ValorAParte>) => setValoresAParte(vs => vs.map((v, idx) => idx === j ? { ...v, ...patch } : v));
-  const addValorAParte = () => setValoresAParte(vs => [...vs, { motivo: "", valor: 0, descricao: "" }]);
+  const addValorAParte = () => setValoresAParte(vs => [...vs, { motivo: "", valor: 0, descricao: "", destino: DESTINO_PADRAO }]);
   const delValorAParte = (j: number) => setValoresAParte(vs => vs.filter((_, idx) => idx !== j));
   const valoresAParteSoma = useMemo(() => valoresAParte.reduce((s, v) => s + toFloat(v.valor), 0), [valoresAParte]);
   // Motivos já usados em valores à parte de outros processos — sugestão no
@@ -958,7 +907,7 @@ export default function Processos({ view = "processos" }: { view?: "dashboard" |
                       <CartesianGrid horizontal={false} stroke="#eef2f7" />
                       <XAxis type="number" tickFormatter={(v) => moneyShort(v)} tick={{ fontSize: 10, fill: "#94a3b8" }} />
                       <YAxis type="category" dataKey="motivo" width={150} tick={{ fontSize: 10.5, fill: "#475569" }} />
-                      <Tooltip formatter={(v: any) => money(Number(v))} />
+                      <Tooltip formatter={v => money(Number(v))} />
                       <Bar dataKey="total" fill="#f97316" radius={[0, 5, 5, 0]} />
                     </BarChart>
                   </ResponsiveContainer>
@@ -973,7 +922,7 @@ export default function Processos({ view = "processos" }: { view?: "dashboard" |
                       <Pie data={porReclamada} dataKey="num" nameKey="empresa" innerRadius={62} outerRadius={95} paddingAngle={2}>
                         {porReclamada.map((_, i) => <Cell key={i} fill={PALETTE[i % PALETTE.length]} />)}
                       </Pie>
-                      <Tooltip formatter={(v: any) => `${v} processo(s)`} />
+                      <Tooltip formatter={v => `${v} processo(s)`} />
                       <Legend wrapperStyle={{ fontSize: 11 }} />
                     </PieChart>
                   </ResponsiveContainer>
@@ -989,7 +938,7 @@ export default function Processos({ view = "processos" }: { view?: "dashboard" |
                     <CartesianGrid vertical={false} stroke="#eef2f7" />
                     <XAxis dataKey="ano" tick={{ fontSize: 11, fill: "#475569" }} />
                     <YAxis tickFormatter={(v) => moneyShort(v)} tick={{ fontSize: 10, fill: "#94a3b8" }} />
-                    <Tooltip formatter={(v: any) => money(Number(v))} />
+                    <Tooltip formatter={v => money(Number(v))} />
                     <Legend wrapperStyle={{ fontSize: 11 }} />
                     <Bar dataKey="pedidos" name="Pedidos" fill="#0f3171" radius={[4, 4, 0, 0]} />
                     <Bar dataKey="acordos" name="Acordos" fill="#dc2626" radius={[4, 4, 0, 0]} />
@@ -1009,7 +958,7 @@ export default function Processos({ view = "processos" }: { view?: "dashboard" |
                       <CartesianGrid vertical={false} stroke="#eef2f7" />
                       <XAxis dataKey="mes" tick={{ fontSize: 10.5, fill: "#475569" }} />
                       <YAxis allowDecimals={false} tick={{ fontSize: 10, fill: "#94a3b8" }} />
-                      <Tooltip formatter={(v: any) => [`${v} audiência(s)`, "Total"]} />
+                      <Tooltip formatter={v => [`${v} audiência(s)`, "Total"]} />
                       <Bar dataKey="audiencias" name="Audiências" fill="#2563eb" radius={[4, 4, 0, 0]} />
                     </BarChart>
                   </ResponsiveContainer>
@@ -1024,7 +973,7 @@ export default function Processos({ view = "processos" }: { view?: "dashboard" |
                       <Pie data={audPorTipo} dataKey="n" nameKey="tipo" innerRadius={55} outerRadius={88} paddingAngle={2}>
                         {audPorTipo.map((_, i) => <Cell key={i} fill={PALETTE[i % PALETTE.length]} />)}
                       </Pie>
-                      <Tooltip formatter={(v: any) => `${v} audiência(s)`} />
+                      <Tooltip formatter={v => `${v} audiência(s)`} />
                       <Legend wrapperStyle={{ fontSize: 11 }} />
                     </PieChart>
                   </ResponsiveContainer>
@@ -1096,7 +1045,7 @@ export default function Processos({ view = "processos" }: { view?: "dashboard" |
                       <td style={{ padding: "10px 14px" }}><div style={{ fontWeight: 700, color: "#0f172a" }}>{p.reclamante || "—"}</div><div style={{ fontSize: 11.5, color: "#94a3b8" }}>{p.numero_processo}{p.ano_processo ? ` · ${p.ano_processo}` : ""}</div></td>
                       <td style={{ padding: "10px 14px", color: "#475569" }}>{p.reclamada || "—"}</td>
                       <td style={{ padding: "10px 14px" }}><span style={{ fontSize: 11.5, color: "#0f172a" }}>{p.motivo_items[0]?.motivo || "—"}</span>{p.motivo_items.length > 1 && <span style={{ fontSize: 11, color: "#0f3171", fontWeight: 700 }}> +{p.motivo_items.length - 1}</span>}</td>
-                      <td style={{ padding: "10px 14px", textAlign: "right", color: "#475569" }}>{money(p.valor_pedidos)}</td>
+                      <td style={{ padding: "10px 14px", textAlign: "right", color: "#475569" }}>{money(pedidosTotal(p))}</td>
                       <td style={{ padding: "10px 14px", textAlign: "right", fontWeight: 700, color: "#0f172a" }}>{money(custoTotal(p))}</td>
                       <td style={{ padding: "10px 14px" }}><span title={p.status} style={{ fontSize: 11, fontWeight: 800, padding: "2px 9px", borderRadius: 20, background: sc.bg, color: sc.c, whiteSpace: "nowrap" }}>{STATUS_CURTO[p.status] ?? p.status}</span></td>
                       <td style={{ padding: "10px 14px", textAlign: "right", whiteSpace: "nowrap" }}>
@@ -1228,7 +1177,7 @@ export default function Processos({ view = "processos" }: { view?: "dashboard" |
               ? <div style={{ marginTop: 8 }}><button className="jpr-btn" onClick={() => verDetalhesReclamante(sel.reclamante_vinculado_cpf)} style={{ background: "#eef4ff", color: "#0f3171" }}>👤 Todos os detalhes do reclamante</button></div>
               : <div style={{ marginTop: 8, fontSize: 11.5, color: "#94a3b8" }}>Reclamante não vinculado a um cadastro. Use “Editar” para vincular.</div>}
             <div style={{ display: "flex", gap: 8, flexWrap: "wrap", margin: "14px 0" }}>
-              {[["Pedidos", sel.valor_pedidos, "#ea580c"], ["Acordo", sel.valor_acordo, "#dc2626"], ["Sentença", sel.valor_sentenca, "#2563eb"], ["Custo final", custoTotal(sel), "#15803d"]].map(([l, v, c]: any) => (
+              {[["Pedidos", pedidosTotal(sel), "#ea580c"], ["Acordo", acordoTotal(sel), "#dc2626"], ["Sentença", sentencaTotal(sel), "#2563eb"], ["Custo final", custoTotal(sel), "#15803d"]].map(([l, v, c]: [string, number, string]) => (
                 <div key={l} style={{ flex: 1, minWidth: 120, background: "#f8fafc", border: "1px solid #eef2f7", borderRadius: 10, padding: "8px 11px" }}>
                   <div style={{ fontSize: 10, fontWeight: 700, color: "#94a3b8", textTransform: "uppercase" }}>{l}</div><div style={{ fontSize: 14, fontWeight: 800, color: c }}>{money(v)}</div>
                 </div>
@@ -1243,7 +1192,11 @@ export default function Processos({ view = "processos" }: { view?: "dashboard" |
               <div style={{ border: "1px solid #eef2f7", borderRadius: 10, overflow: "hidden", marginBottom: 14 }}>
                 {sel.valores_a_parte.map((v, i) => (
                   <div key={i} style={{ display: "flex", justifyContent: "space-between", gap: 8, padding: "8px 11px", borderTop: i ? "1px solid #f1f5f9" : "none" }}>
-                    <span style={{ fontSize: 12.5, color: "#0f172a" }}>{v.motivo}{v.descricao && <span style={{ color: "#94a3b8" }}> — {v.descricao}</span>}</span>
+                    <span style={{ fontSize: 12.5, color: "#0f172a" }}>
+                      {v.motivo}{v.descricao && <span style={{ color: "#94a3b8" }}> — {v.descricao}</span>}
+                      {/* Em qual cartão este valor está somado. */}
+                      <span style={{ marginLeft: 8, padding: "1px 7px", borderRadius: 999, fontSize: 10.5, fontWeight: 700, background: "#eef4ff", color: "#0f3171", whiteSpace: "nowrap" }}>→ {rotuloDestino(v.destino ?? DESTINO_PADRAO)}</span>
+                    </span>
                     <span style={{ fontSize: 12, fontWeight: 700, color: "#475569", whiteSpace: "nowrap" }}>{money(v.valor)}</span>
                   </div>
                 ))}
@@ -1277,7 +1230,7 @@ export default function Processos({ view = "processos" }: { view?: "dashboard" |
             {sel.vai_recorrer === "Sim" && (<>
               <div style={{ fontSize: 11, fontWeight: 800, color: "#0f3171", textTransform: "uppercase", letterSpacing: ".4px", marginBottom: 6 }}>Recurso</div>
               <div style={{ marginBottom: 14, display: "flex", gap: 8, flexWrap: "wrap" }}>
-                {[["Custas recursais", sel.valor_custas_recursais], ["Seguro garantia", sel.valor_seguro_garantia], ["Depósito recursal", sel.valor_deposito_recursal]].map(([l, v]: any) => (
+                {[["Custas recursais", sel.valor_custas_recursais], ["Seguro garantia", sel.valor_seguro_garantia], ["Depósito recursal", sel.valor_deposito_recursal]].map(([l, v]: [string, number]) => (
                   <div key={l} style={{ flex: 1, minWidth: 130, background: "#f8fafc", border: "1px solid #eef2f7", borderRadius: 10, padding: "8px 11px" }}>
                     <div style={{ fontSize: 10, fontWeight: 700, color: "#94a3b8", textTransform: "uppercase" }}>{l}</div>
                     <div style={{ fontSize: 13.5, fontWeight: 800, color: "#0f172a" }}>{money(v)}</div>
@@ -1530,7 +1483,7 @@ export default function Processos({ view = "processos" }: { view?: "dashboard" |
                 </div>
                 <div className="jpr-grid3">
                   {([["valor_pedidos", "Valor pedido"], ["valor_acordo", "Valor acordo"], ["valor_sentenca", "Valor sentença"], ["valor_final", "Valor final"], ["valor_outros_custos", "Outros custos"]] as const).map(([k, l]) => (
-                    <div key={k}><label className="jpr-lbl">{l}</label><MoedaInput value={m[k] || 0} onChange={n => setMotivo(i, { [k]: n } as any)} /></div>
+                    <div key={k}><label className="jpr-lbl">{l}</label><MoedaInput value={m[k] || 0} onChange={n => setMotivo(i, { [k]: n } as Partial<MotivoItem>)} /></div>
                   ))}
                 </div>
               </div>
@@ -1551,9 +1504,15 @@ export default function Processos({ view = "processos" }: { view?: "dashboard" |
                 <datalist id="jpr-motivos-a-parte">{motivosAParteDistintos.map(m => <option key={m} value={m} />)}</datalist>
                 {valoresAParte.map((v, j) => (
                   <div key={j} className="jpr-item">
-                    <div className="jpr-linha" style={{ gridTemplateColumns: "1.4fr 170px 1.2fr auto" }}>
+                    <div className="jpr-linha" style={{ gridTemplateColumns: "1.4fr 150px 150px 1fr auto" }}>
                       <div><label className="jpr-lbl">Motivo *</label><input className="jpr-fi" list="jpr-motivos-a-parte" placeholder="Ex.: Honorários periciais" value={v.motivo} onChange={e => setValorAParte(j, { motivo: e.target.value })} /></div>
                       <div><label className="jpr-lbl">Valor (R$)</label><MoedaInput value={v.valor} onChange={n => setValorAParte(j, { valor: n })} /></div>
+                      {/* Para onde o valor soma (17/09/2026): Pedidos, Acordo, Sentença ou Custo final. */}
+                      <div><label className="jpr-lbl">Soma em *</label>
+                        <select className="jpr-fi" value={v.destino ?? DESTINO_PADRAO} onChange={e => setValorAParte(j, { destino: ehDestinoValorAParte(e.target.value) ? e.target.value : DESTINO_PADRAO })}>
+                          {DESTINOS_VALOR_A_PARTE.map(([d, l]) => <option key={d} value={d}>{l}</option>)}
+                        </select>
+                      </div>
                       <div><label className="jpr-lbl">Observação</label><input className="jpr-fi" placeholder="Opcional" value={v.descricao} onChange={e => setValorAParte(j, { descricao: e.target.value })} /></div>
                       <button className="jpr-x" onClick={() => delValorAParte(j)} title="Remover">✕</button>
                     </div>

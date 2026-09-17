@@ -29,6 +29,7 @@ import { buscarCustoDoPosto, insalubridadeDoCusto, beneficiosDoCusto, notaDoCust
 import { useLocation, useNavigate } from "react-router-dom";
 import { baseDaUrl, rotasSolicitacoes } from "@/lib/solicitacoes/rotas";
 import { supabase } from "@/integrations/supabase/client";
+import type { SupabaseClient } from "@supabase/supabase-js";
 import { useAuth } from "@/hooks/useAuth";
 import { usePermissoes } from "@/context/PermissoesContext";
 import { VinculoCatalogoVaga, type ListasCatalogo } from "@/components/recrutamento/VinculoCatalogoVaga";
@@ -42,6 +43,22 @@ import {
   substituidosComVagaViva, avisoSubstituidoPreso,
 } from "@/lib/recrutamento/vagaRegras";
 import { maskFone } from "@/lib/telefone";
+
+// EMPREGADOS, CONTRATOS, CARGOS e SISTEMA_* não estão no types.ts gerado;
+// mesmo padrão de comite-etica/db.ts — a exceção fica num lugar só.
+const db = supabase as unknown as SupabaseClient;
+
+/** Colunas de EMPREGADOS que o wizard lê do colaborador de referência. */
+type EmpregadoRef = {
+  ID: number;
+  Nome: string;
+  Filial?: string | null;
+  "Nome Filial"?: string | null;
+  "Título do Cargo"?: string | null;
+  "Valor Salário"?: number | string | null;
+  "% Insalubridade"?: number | string | null;
+  Escala?: string | null;
+};
 
 const VAGA_RESET = {
   motivo_vaga: "", administrativa: false, setor: "", nome_substituido: "", contrato: "", cargo: "",
@@ -125,7 +142,7 @@ export function ModalNovaVaga({ aberto, onFechar, onCriada, onToast, solicitacao
   const [cargosFull, setCargosFull] = useState<Record<string, unknown>[]>([]);
   // Empregado -> nº da vaga de substituição que já o segura (regra do banco).
   const [presos, setPresos] = useState<Map<number, number>>(new Map());
-  const [empregados, setEmpregados] = useState<any[]>([]);
+  const [empregados, setEmpregados] = useState<EmpregadoRef[]>([]);
   const [empSearch, setEmpSearch] = useState("");
   const [showEmpDrop, setShowEmpDrop] = useState(false);
   const [loadingEmps, setLoadingEmps] = useState(false);
@@ -218,12 +235,12 @@ export function ModalNovaVaga({ aberto, onFechar, onCriada, onToast, solicitacao
         // escolher antes dela deixaria o contrato (travado) em branco.
         let cts = contratosFull;
         if (!cts.length) {
-          const { data } = await (supabase as any)
+          const { data } = await db
             .from("CONTRATOS").select('"NOME CONTRATO", Filial').eq("ATIVO", "SIM").order('"NOME CONTRATO"');
           cts = data ?? [];
           setContratosFull(cts);
         }
-        const { data } = await (supabase as any)
+        const { data } = await db
           .from("EMPREGADOS")
           .select('"ID", "Nome", "Filial", "Nome Filial", "Título do Cargo", "Valor Salário", "% Insalubridade", "Escala"')
           .eq("ID", vinculoDemissao.substituidoId)
@@ -244,7 +261,7 @@ export function ModalNovaVaga({ aberto, onFechar, onCriada, onToast, solicitacao
     setEmpregados([]);
     if (!contratosFull.length) {
       (async () => {
-        const { data } = await (supabase as any)
+        const { data } = await db
           .from("CONTRATOS")
           .select('"NOME CONTRATO", Filial')
           .eq("ATIVO", "SIM")
@@ -257,7 +274,7 @@ export function ModalNovaVaga({ aberto, onFechar, onCriada, onToast, solicitacao
     // clique de quem liga o preenchimento à mão.
     if (!cargosFull.length) {
       (async () => {
-        const { data } = await (supabase as any)
+        const { data } = await db
           .from("CARGOS")
           .select('"Nome do Cargo"')
           .order('"Nome do Cargo"');
@@ -273,7 +290,7 @@ export function ModalNovaVaga({ aberto, onFechar, onCriada, onToast, solicitacao
   const buscarEmpregados = async (term: string) => {
     empTermo.current = term;
     setLoadingEmps(true);
-    const { data, error } = await (supabase as any)
+    const { data, error } = await db
       .from("EMPREGADOS")
       .select('"ID", "Nome", "Filial", "Nome Filial", "Título do Cargo", "Valor Salário", "% Insalubridade", "Escala"')
       .eq("Situação", "Trabalhando")
@@ -283,12 +300,12 @@ export function ModalNovaVaga({ aberto, onFechar, onCriada, onToast, solicitacao
     if (empTermo.current !== term) return; // resposta de uma busca antiga — descarta
     setLoadingEmps(false);
     if (error) { toast("EMPREGADOS: " + error.message + " (" + (error.code ?? "?") + ")", "err"); return; }
-    const lista = data ?? [];
+    const lista: EmpregadoRef[] = data ?? [];
     setEmpregados(lista);
     // Só a substituição trava: nos outros motivos a pessoa é molde e pode
     // servir de molde quantas vezes for.
     setPresos(ehSubstituicao(vaga.motivo_vaga)
-      ? await substituidosComVagaViva(supabase, lista.map((e: any) => Number(e.ID)))
+      ? await substituidosComVagaViva(supabase, lista.map(e => Number(e.ID)))
       : new Map());
   };
 
@@ -306,10 +323,10 @@ export function ModalNovaVaga({ aberto, onFechar, onCriada, onToast, solicitacao
   // Catálogo de setores do ERP (o mesmo do Acesso por Usuário e da troca de função).
   const [setoresCatalogo, setSetoresCatalogo] = useState<string[]>([]);
   useEffect(() => {
-    (supabase as any).from("setor_catalogo").select("nome").order("nome")
+    db.from("setor_catalogo").select("nome").order("nome")
       .then(({ data }: { data: { nome: string }[] | null }) => setSetoresCatalogo((data ?? []).map(r => r.nome).filter(Boolean)));
   }, []);
-  const [empEscolhido, setEmpEscolhido] = useState<any>(null);
+  const [empEscolhido, setEmpEscolhido] = useState<EmpregadoRef | null>(null);
 
   // Planilha de Custo pelo POSTO do catálogo (15/09/2026). Antes a consulta
   // saía ao escolher o colaborador e a RPC adivinhava o posto por salário/
@@ -344,7 +361,7 @@ export function ModalNovaVaga({ aberto, onFechar, onCriada, onToast, solicitacao
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [postoNomeEscolhido, vaga.contrato, empEscolhido, vagaManual]);
 
-  const selecionarEmpregado = (emp: any, motivo: string = vaga.motivo_vaga, contratos: any[] = contratosFull) => {
+  const selecionarEmpregado = (emp: EmpregadoRef, motivo: string = vaga.motivo_vaga, contratos: Record<string, unknown>[] = contratosFull) => {
     const jaTem = ehSubstituicao(motivo) ? presos.get(Number(emp.ID)) : undefined;
     if (jaTem) { toast(avisoSubstituidoPreso(jaTem), "err"); return; }
     const contratoMatch = contratoDoEmpregado(contratos, emp);
@@ -383,7 +400,7 @@ export function ModalNovaVaga({ aberto, onFechar, onCriada, onToast, solicitacao
     let vivo = true;
     setDemissaoBusca("buscando");
     (async () => {
-      const { data, error } = await (supabase as any)
+      const { data, error } = await db
         .from("SISTEMA_SOLICITACOES_DEMISSAO")
         .select("id, status, vaga_id")
         .eq("colaborador_id", substituidoId)
@@ -553,13 +570,13 @@ export function ModalNovaVaga({ aberto, onFechar, onCriada, onToast, solicitacao
 
     const gravar = (corpo: Record<string, unknown>) =>
       editando
-        ? (supabase as any).from("SISTEMA_RECRUTAMENTO").update(corpo).eq("id", solicitacao!.id).select("id").single()
-        : (supabase as any).from("SISTEMA_RECRUTAMENTO").insert(corpo).select("id").single();
+        ? db.from("SISTEMA_RECRUTAMENTO").update(corpo).eq("id", solicitacao!.id).select("id").single()
+        : db.from("SISTEMA_RECRUTAMENTO").insert(corpo).select("id").single();
 
     let { error, data } = await gravar(payload);
     // Banco ainda sem as colunas novas: reenvia sem elas.
     if (error && /column|schema cache/i.test(error.message)) {
-      const { cnh_obrigatoria, substituido_id, demissao_id, contrato_id, posto_id, funcao_id, reserva_tecnica, tem_recomendacao, recomendacao_nome, recomendacao_cpf, recomendacao_whatsapp, ...semColunasNovas } = payload as any;
+      const { cnh_obrigatoria, substituido_id, demissao_id, contrato_id, posto_id, funcao_id, reserva_tecnica, tem_recomendacao, recomendacao_nome, recomendacao_cpf, recomendacao_whatsapp, ...semColunasNovas } = payload;
       ({ error, data } = await gravar(semColunasNovas));
     }
     setSalvando(false);
