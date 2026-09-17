@@ -193,6 +193,7 @@ export default function Ferias() {
                 <td style={{ padding: "11px 14px" }}>
                   <StatusBadge status={r.status} />
                   {r.excecao && <span title="Solicitada com menos de 30 dias de antecedência" style={{ display: "inline-block", marginLeft: 6, padding: "2px 8px", borderRadius: 999, fontSize: 10, fontWeight: 800, background: "#fef3c7", color: "#b45309", border: "1px solid #fde68a" }}>FORA DO PRAZO</span>}
+                  {r.refeita_em && <span title={`Refeita pelo encarregado em ${fmtDt(r.refeita_em)} — precisa de nova avaliação`} style={{ display: "inline-block", marginLeft: 6, padding: "2px 8px", borderRadius: 999, fontSize: 10, fontWeight: 800, background: "#ede9fe", color: "#6d28d9", border: "1px solid #ddd6fe" }}>🔁 REFEITA</span>}
                 </td>
                 <td style={{ padding: "11px 14px", fontSize: 11, color: "#94a3b8" }}>{fmtDt(r.criado_em)}</td>
               </tr>
@@ -237,7 +238,7 @@ export default function Ferias() {
                 ) : (
                   <div style={{ display: "flex", flexDirection: "column", gap: 0 }}>
                     {hist.map((h, i) => {
-                      const cor = h.evento === "Aprovada" ? "#16a34a" : h.evento === "Reprovada" ? "#dc2626" : h.evento === "Cancelada" ? "#64748b" : "#0f3171";
+                      const cor = h.evento === "Aprovada" ? "#16a34a" : h.evento === "Reprovada" ? "#dc2626" : h.evento === "Cancelada" ? "#64748b" : h.evento === "Refeita" ? "#6d28d9" : "#0f3171";
                       return (
                         <div key={h.id} style={{ display: "grid", gridTemplateColumns: "18px 1fr", gap: 10 }}>
                           <div style={{ display: "flex", flexDirection: "column", alignItems: "center" }}>
