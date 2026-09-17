@@ -334,10 +334,15 @@ export default function ControleDiarias({
   const { data: visualizacoes = [] } = useVisualizacoesDiaria(modal?.s?.uuid);
 
   // Decidir é sempre sobre a solicitação DE OUTRO — diaria_guard() recusa
-  // "quem solicitou a diária não pode aprovar ou reprovar a própria". Sem
-  // este recorte, o funcionário interno que lançou a própria diária veria os
-  // botões de decisão e só descobriria a regra no erro do banco.
-  const podeDecidirEsta = podeDecidir && !!modal?.s && modal.s.solicitanteId !== user?.id;
+  // "quem solicitou a diária não pode aprovar ou reprovar a própria".
+  //
+  // As duas coisas viajam SEPARADAS para o modal de propósito. Antes elas iam
+  // fundidas num `podeDecidir` só, e o resultado foi o relato de 17/09/2026:
+  // quem criou a diária e depois a abria pelo Operacional via só "Excluir" no
+  // menu, sem uma palavra sobre o porquê — parecia tela quebrada. O modal
+  // precisa distinguir "você não tem permissão" de "esta é sua" para dizer
+  // qual dos dois é.
+  const souOSolicitante = !!modal?.s && modal.s.solicitanteId === user?.id;
 
   return (
     <div className="space-y-6">
@@ -697,7 +702,8 @@ export default function ControleDiarias({
             excluir.isPending
           }
           visualizacoes={visualizacoes}
-          podeDecidir={podeDecidirEsta}
+          podeDecidir={podeDecidir}
+          souOSolicitante={souOSolicitante}
           podeExcluir={podeExcluirAqui}
           onFechar={() => setModal(null)}
           onSalvar={async (nova) => {
