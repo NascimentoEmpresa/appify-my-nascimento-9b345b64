@@ -15,7 +15,8 @@ import {
 } from "@/components/ui/alert-dialog";
 import { cn } from "@/lib/utils";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
+import { ContratosDashboardTab, type FiltroDashboard } from "./contratos/ContratosDashboardTab";
 import { Plus, Pencil, Trash2, Building2, CalendarDays, TrendingUp, FileText, ExternalLink, Archive, ChevronDown, ChevronUp } from "lucide-react";
 import {
   useContratosERP,
@@ -37,36 +38,36 @@ import { useContratoDocsPorContrato } from "@/hooks/useDocumentos";
 import { BADGE as DOC_BADGE, periodLabel } from "@/pages/Documentos";
 import { corEmpresa, corEmpresaFundo } from "@/pages/malote/EmpresaContratoBadge";
 
-const STATUS_LABEL: Record<string, string> = {
+export const STATUS_LABEL: Record<string, string> = {
   ativo: "Ativo",
   encerrado: "Encerrado",
   suspenso: "Suspenso",
 };
 
-const STATUS_COLOR: Record<string, string> = {
+export const STATUS_COLOR: Record<string, string> = {
   ativo: "bg-emerald-100 text-emerald-700",
   encerrado: "bg-slate-100 text-slate-500",
   suspenso: "bg-amber-100 text-amber-700",
 };
 
-function fmt(v: number | null) {
+export function fmt(v: number | null) {
   if (!v) return "—";
   return v.toLocaleString("pt-BR", { style: "currency", currency: "BRL", minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
-function fmtData(d: string | null) {
+export function fmtData(d: string | null) {
   if (!d) return "—";
   const [y, m, day] = d.split("-");
   return `${day}/${m}/${y}`;
 }
 
-const AVISO_VIGENCIA_LABEL: Record<string, string> = {
+export const AVISO_VIGENCIA_LABEL: Record<string, string> = {
   em_vigencia: "Em vigência",
   a_vencer: "A vencer",
   vencido: "Vencido",
 };
 
-const AVISO_VIGENCIA_COLOR: Record<string, string> = {
+export const AVISO_VIGENCIA_COLOR: Record<string, string> = {
   em_vigencia: "bg-emerald-500",
   a_vencer: "bg-amber-500",
   vencido: "bg-rose-500",
@@ -74,8 +75,9 @@ const AVISO_VIGENCIA_COLOR: Record<string, string> = {
 
 // Coluna "Aviso de Vigência" do mockup 2 — mesmo critério de dias restantes
 // já usado nas abas Em Vigência/A Vencer (>90 dias = em vigência, 0-90 =
-// a vencer, negativo = vencido).
-function vigenciaInfo(c: Pick<ContratoERP, "vigencia_inicial" | "vigencia_final">) {
+// a vencer, negativo = vencido). Exportado: reaproveitado também pelo
+// ContratosDashboardTab.tsx (SIS-2026-0325, dashboard).
+export function vigenciaInfo(c: Pick<ContratoERP, "vigencia_inicial" | "vigencia_final">) {
   const hoje = new Date(); hoje.setHours(0, 0, 0, 0);
   const inicio = c.vigencia_inicial ? new Date(c.vigencia_inicial + "T00:00:00") : null;
   const fim = c.vigencia_final ? new Date(c.vigencia_final + "T00:00:00") : null;
@@ -172,6 +174,11 @@ export default function ContratosERP() {
   const upsert = useContratoERPUpsert();
   const del = useContratoERPDelete();
 
+  // SIS-2026-0325 (dashboard, achado tardio): "dashboard" é a landing —
+  // mockup batizou a página de "Controle de Contratos" e o dashboard é a
+  // cara principal dela; "lista" é a tela de KPIs/abas/tabela já entregue,
+  // virou o destino de "Ver detalhes"/"Ver todos" dos cards do dashboard.
+  const [viewTab, setViewTab] = useState<"dashboard" | "lista">("dashboard");
   const [busca, setBusca] = useState("");
   const [filtroStatus, setFiltroStatus] = useState<string>("todos");
   const [filtroEmpresaId, setFiltroEmpresaId] = useState<string>("todas");
@@ -289,6 +296,12 @@ export default function ContratosERP() {
     .filter((g) => g.linhas.length > 0)
     .map((g) => ({ empresa: g.empresa, ...subtotalCampos(g.linhas) }));
 
+  function irParaLista(filtro?: FiltroDashboard) {
+    if (filtro?.aba) setAba(filtro.aba);
+    if (filtro?.empresaId) setFiltroEmpresaId(filtro.empresaId);
+    setViewTab("lista");
+  }
+
   function abrirNovo() {
     setEditando(null);
     setForm(EMPTY);
@@ -381,8 +394,29 @@ export default function ContratosERP() {
         }
       />
 
+      {/* SIS-2026-0325 (dashboard): Dashboard convive com a Lista via aba no
+          topo — os cards do Dashboard levam pra Lista com filtro aplicado
+          via irParaLista(). */}
+      <Tabs value={viewTab} onValueChange={(v) => setViewTab(v as typeof viewTab)}>
+        <TabsList>
+          <TabsTrigger value="dashboard">Dashboard</TabsTrigger>
+          <TabsTrigger value="lista">Lista</TabsTrigger>
+        </TabsList>
+
+        <TabsContent value="dashboard" className="pt-4">
+          <ContratosDashboardTab
+            contratos={contratos}
+            empresasGrupo={empresasGrupo}
+            agregadosPorContrato={agregadosPorContrato}
+            onVerLista={irParaLista}
+          />
+        </TabsContent>
+
+        <TabsContent value="lista" className="flex flex-col gap-6 pt-4">
+
       {/* KPIs — SIS-2026-0325 (mockup 2): somados sobre a aba/filtro atual. */}
-      <div className="grid grid-cols-2 xl:grid-cols-4 gap-4">
+      <div className="grid grid-cols-2 xl:grid-cols-5 gap-4">
+        <KpiCard icon={<FileText />} label="Total de Contratos" value={String(filtered.length)} color="slate" />
         <KpiCard icon={<Building2 />} label="Valor Mensal Ano Atual" value={fmt(kpiValorMensalContratado)} color="blue" />
         <KpiCard icon={<TrendingUp />} label="Valor Executado Ano Atual" value={fmt(kpiValorExecutadoAnoAtual)} color="emerald" />
         <KpiCard icon={<CalendarDays />} label="Lucro Mensal" value={fmt(kpiLucroMensal)} color="amber" />
@@ -613,6 +647,8 @@ export default function ContratosERP() {
           </table>
         </div>
       )}
+        </TabsContent>
+      </Tabs>
 
       {/* Modal "Novo Contrato" — SIS-2026-0325: reorganizado nas 6 seções
           numeradas do mockup do Iury (não é mais o dialog simples de
