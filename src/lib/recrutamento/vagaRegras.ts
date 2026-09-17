@@ -293,18 +293,52 @@ export const SALARIO_MASCARA = "****";
  * que é onde o Senior grava o contrato dele — comparado SEM o código da
  * frente ("1109 - "), porque desde 11/09/2026 a coluna vem com ele e
  * CONTRATOS."NOME CONTRATO" não.
+ *
+ * EMPRESA PRIMEIRO (17/09/2026). O código de filial se repete ENTRE
+ * EMPRESAS — a 1097 é SAMU (HAGG), ROSÁRIO (SN) e GUAPORÉ (NH) ao mesmo
+ * tempo, e a chave do Senior é (empresa, filial). Quando os dois lados
+ * trazem a Empresa, o contrato é o da mesma empresa e filial; só sem ela é
+ * que se cai no desempate pelo nome. E o nome é comparado NORMALIZADO
+ * (`chaveContrato`): "GUAPORÉ LIMP SMED EMERGENCIAL - 063.2026" e
+ * "GUAPORÉ LIMPEZA SMED EMERGENCIAL - 063/2026" são o mesmo contrato — o
+ * Senior abrevia e troca "/" por "." — e a comparação exata caía no
+ * primeiro da filial, que era o errado.
  */
-export function contratoDoEmpregado<T extends Record<string, any>>(
-  contratos: T[], emp: Record<string, any> | null | undefined,
+export function contratoDoEmpregado<T extends Record<string, unknown>>(
+  contratos: T[], emp: Record<string, unknown> | null | undefined,
 ): T | null {
   const filial = String(emp?.["Filial"] ?? "").trim();
   if (!filial) return null;
   const daFilial = contratos.filter(c => String(c.Filial ?? "").trim() === filial);
   if (daFilial.length <= 1) return daFilial[0] ?? null;
-  const nomeFilial = semCodigoFilial(emp?.["Nome Filial"]).toUpperCase();
-  return daFilial.find(c => String(c["NOME CONTRATO"] ?? "").trim().toUpperCase() === nomeFilial)
-      ?? daFilial[0];
+  const empresa = String(emp?.["Empresa"] ?? "").trim();
+  if (empresa) {
+    const daEmpresa = daFilial.filter(c => String(c.Empresa ?? "").trim() === empresa);
+    if (daEmpresa.length === 1) return daEmpresa[0];
+    if (daEmpresa.length > 1) return porNome(daEmpresa, emp) ?? daEmpresa[0];
+  }
+  return porNome(daFilial, emp) ?? daFilial[0];
 }
+
+function porNome<T extends Record<string, unknown>>(lista: T[], emp: Record<string, unknown> | null | undefined): T | null {
+  const alvo = chaveContrato(semCodigoFilial(emp?.["Nome Filial"]));
+  if (!alvo) return null;
+  const exato = lista.find(c => String(c["NOME CONTRATO"] ?? "").trim().toUpperCase() === semCodigoFilial(emp?.["Nome Filial"]).toUpperCase());
+  if (exato) return exato;
+  return lista.find(c => chaveContrato(String(c["NOME CONTRATO"] ?? "")) === alvo) ?? null;
+}
+
+/**
+ * Nome de contrato reduzido ao que identifica: sem acento, maiúsculo, só
+ * letras/dígitos, com as abreviações do Senior desfeitas ("LIMP"→"LIMPEZA",
+ * "RECEP"→"RECEPCAO", "AUX"→"AUXILIAR") e o número com "." e "/" iguais.
+ */
+export const chaveContrato = (s: unknown): string =>
+  String(s ?? "")
+    .normalize("NFD").replace(/[̀-ͯ]/g, "").toUpperCase()
+    .replace(/\bLIMP\b/g, "LIMPEZA").replace(/\bRECEP\b/g, "RECEPCAO").replace(/\bAUX\b/g, "AUXILIAR")
+    .replace(/\bSERV\b/g, "SERVICOS").replace(/\bADM\b/g, "ADMINISTRATIVO")
+    .replace(/[^A-Z0-9]+/g, "");
 
 // ── Dias úteis ──────────────────────────────────────────────────────────
 // Seg–sex menos feriados NACIONAIS (ponto facultativo não conta como

@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useMemo } from "react";
 import { supabase } from "@/integrations/supabase/client";
+import type { SupabaseClient } from "@supabase/supabase-js";
 import { useAuth } from "@/hooks/useAuth";
 import { ConversaSolicitacao } from "@/components/solicitacoes/ConversaSolicitacao";
 import { AnexosSolicitacao } from "@/components/solicitacoes/AnexosSolicitacao";
@@ -45,6 +46,10 @@ interface Adv {
   excecao?: boolean; justificativa_excecao?: string;
 }
 
+// SISTEMA_SOLICITACOES_ADVERTENCIA e vizinhas não estão no types.ts gerado;
+// mesmo padrão de comite-etica/db.ts.
+const db = supabase as unknown as SupabaseClient;
+
 const STATUS = ["Aguardando Aprovação", "Aguardando Jurídico", "Concluída", "Reprovada"];
 const statusCor = (s: string): { bg: string; c: string } => ({
   "Aguardando Aprovação": { bg: "#fef3c7", c: "#b45309" },
@@ -58,7 +63,7 @@ const fmtDt = (s?: string) => { if (!s) return "—"; const d = new Date(String(
 export default function Advertencias() {
   const { user } = useAuth();
   const { empregado } = useVinculoEmpregado();
-  const meuNome = empregado?.nome || (user?.user_metadata as any)?.nome || user?.email || "Usuário";
+  const meuNome = empregado?.nome || user?.user_metadata?.nome || user?.email || "Usuário";
   const souJuridico = empregado?.setor === "JURIDICO" && empregado?.situacao === "Trabalhando";
   // Quem aprova/reprova: ação "aprovar" no menu advertencias (Acesso por Usuário).
   const { data: temAprovar } = useScreenAccess("advertencias", "aprovar");
@@ -82,12 +87,25 @@ export default function Advertencias() {
   const [parecer, setParecer] = useState("");
   const [resultado, setResultado] = useState("Advertência aplicada");
   const [detalhe, setDetalhe] = useState<Adv | null>(null);
+  // Botão "Anexos" em cada card (17/09/2026): tudo que foi anexado — na
+  // solicitação e na conversa. A contagem vem em bloco pra não fazer 2
+  // consultas por card.
+  const [anexosDe, setAnexosDe] = useState<Adv | null>(null);
+  const [nAnexos, setNAnexos] = useState<Map<number, number>>(new Map());
 
   const toast = (msg: string, t = "info") => { const id = Date.now() + Math.random(); setToasts(x => [...x, { id, msg, t }]); setTimeout(() => setToasts(x => x.filter(i => i.id !== id)), 3600); };
 
   const load = useCallback(async () => {
     setLoading(true);
-    const { data } = await (supabase as any).from("SISTEMA_SOLICITACOES_ADVERTENCIA").select("*").order("created_at", { ascending: false });
+    const [{ data }, { data: anx }, { data: coms }] = await Promise.all([
+      db.from("SISTEMA_SOLICITACOES_ADVERTENCIA").select("*").order("created_at", { ascending: false }),
+      db.from("SISTEMA_SOLICITACOES_ANEXOS").select("entidade_id").eq("modulo", "advertencia").limit(5000),
+      db.from("SISTEMA_COMENTARIOS").select("entidade_id, anexos").eq("modulo", "advertencia").neq("anexos", "[]").limit(5000),
+    ]);
+    const m = new Map<number, number>();
+    for (const r of (anx ?? []) as { entidade_id: string }[]) m.set(Number(r.entidade_id), (m.get(Number(r.entidade_id)) ?? 0) + 1);
+    for (const r of (coms ?? []) as { entidade_id: string; anexos?: unknown[] }[]) m.set(Number(r.entidade_id), (m.get(Number(r.entidade_id)) ?? 0) + (r.anexos?.length ?? 0));
+    setNAnexos(m);
     setRows(data ?? []);
     setLoading(false);
   }, []);
@@ -141,20 +159,20 @@ export default function Advertencias() {
 
   const aprovarAdv = async (a: Adv) => {
     if (!confirm(`Aprovar a advertência de ${a.colaborador_nome}? Segue para o parecer do Jurídico.`)) return;
-    const { error } = await (supabase as any).from("SISTEMA_SOLICITACOES_ADVERTENCIA").update({ status: "Aguardando Jurídico", aprovado_por_nome: meuNome }).eq("id", a.id);
+    const { error } = await db.from("SISTEMA_SOLICITACOES_ADVERTENCIA").update({ status: "Aguardando Jurídico", aprovado_por_nome: meuNome }).eq("id", a.id);
     if (error) { toast("Erro: " + error.message, "err"); return; }
     toast("Advertência aprovada — segue para o parecer.", "ok"); load();
   };
   const confirmarReprovar = async () => {
     if (!reprovar) return;
     if (!motivoRep.trim()) { toast("Informe o motivo da reprovação.", "err"); return; }
-    const { error } = await (supabase as any).from("SISTEMA_SOLICITACOES_ADVERTENCIA").update({ status: "Reprovada", motivo_reprovacao: motivoRep.trim(), aprovado_por_nome: meuNome }).eq("id", reprovar.id);
+    const { error } = await db.from("SISTEMA_SOLICITACOES_ADVERTENCIA").update({ status: "Reprovada", motivo_reprovacao: motivoRep.trim(), aprovado_por_nome: meuNome }).eq("id", reprovar.id);
     if (error) { toast("Erro: " + error.message, "err"); return; }
     setReprovar(null); setMotivoRep(""); toast("Advertência reprovada.", "ok"); load();
   };
   const confirmarConcluir = async () => {
     if (!concluir) return;
-    const { error } = await (supabase as any).from("SISTEMA_SOLICITACOES_ADVERTENCIA").update({ status: "Concluída", parecer_juridico: parecer.trim() || null, resultado, concluido_por_nome: meuNome }).eq("id", concluir.id);
+    const { error } = await db.from("SISTEMA_SOLICITACOES_ADVERTENCIA").update({ status: "Concluída", parecer_juridico: parecer.trim() || null, resultado, concluido_por_nome: meuNome }).eq("id", concluir.id);
     if (error) { toast("Erro: " + error.message, "err"); return; }
     setConcluir(null); setParecer(""); setResultado("Advertência aplicada"); toast("Advertência concluída.", "ok"); load();
   };
@@ -225,7 +243,7 @@ export default function Advertencias() {
                     <Pie data={dash.porStatus} dataKey="n" nameKey="nome" innerRadius={55} outerRadius={85} paddingAngle={2}>
                       {dash.porStatus.map(x => <Cell key={x.nome} fill={statusCor(x.nome).c} />)}
                     </Pie>
-                    <Tooltip formatter={(v: any) => [v, "advertências"]} />
+                    <Tooltip formatter={v => [v, "advertências"]} />
                     <Legend wrapperStyle={{ fontSize: 11 }} />
                   </PieChart>
                 </ResponsiveContainer>
@@ -237,7 +255,7 @@ export default function Advertencias() {
                     <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
                     <XAxis dataKey="nome" tick={{ fontSize: 11 }} />
                     <YAxis allowDecimals={false} tick={{ fontSize: 11 }} width={28} />
-                    <Tooltip formatter={(v: any) => [v, "advertências"]} />
+                    <Tooltip formatter={v => [v, "advertências"]} />
                     <Bar dataKey="n" radius={[6, 6, 0, 0]}>{dash.porGrau.map(x => <Cell key={x.nome} fill={grauCor(x.nome)} />)}</Bar>
                   </BarChart>
                 </ResponsiveContainer>
@@ -250,7 +268,7 @@ export default function Advertencias() {
                       <Pie data={dash.porResultado} dataKey="n" nameKey="nome" outerRadius={85}>
                         {dash.porResultado.map((x, i) => <Cell key={x.nome} fill={["#15803d", "#d97706", "#64748b", "#dc2626", "#2563eb"][i % 5]} />)}
                       </Pie>
-                      <Tooltip formatter={(v: any) => [v, "advertências"]} />
+                      <Tooltip formatter={v => [v, "advertências"]} />
                       <Legend wrapperStyle={{ fontSize: 11 }} />
                     </PieChart>
                   </ResponsiveContainer>
@@ -281,7 +299,7 @@ export default function Advertencias() {
                   <BarChart data={dash.porTipo} layout="vertical" margin={{ left: 10, right: 30 }}>
                     <XAxis type="number" allowDecimals={false} hide />
                     <YAxis type="category" dataKey="nome" width={150} tick={{ fontSize: 11 }} />
-                    <Tooltip formatter={(v: any) => [v, "advertências"]} />
+                    <Tooltip formatter={v => [v, "advertências"]} />
                     <Bar dataKey="n" fill="#0f3171" radius={[0, 6, 6, 0]} label={{ position: "right", fontSize: 11 }} />
                   </BarChart>
                 </ResponsiveContainer>
@@ -292,7 +310,7 @@ export default function Advertencias() {
                   <BarChart data={dash.porContrato} layout="vertical" margin={{ left: 10, right: 30 }}>
                     <XAxis type="number" allowDecimals={false} hide />
                     <YAxis type="category" dataKey="nome" width={190} tick={{ fontSize: 11 }} />
-                    <Tooltip formatter={(v: any) => [v, "advertências"]} />
+                    <Tooltip formatter={v => [v, "advertências"]} />
                     <Bar dataKey="n" fill="#7c3aed" radius={[0, 6, 6, 0]} label={{ position: "right", fontSize: 11 }} />
                   </BarChart>
                 </ResponsiveContainer>
@@ -332,6 +350,7 @@ export default function Advertencias() {
                     {a.status === "Concluída" && <div style={{ fontSize: 11.5, color: "#15803d", marginTop: 6, background: "#f0fdf4", borderRadius: 8, padding: "6px 9px" }}>Resultado: <b>{a.resultado || "—"}</b>{a.parecer_juridico ? ` · ${a.parecer_juridico}` : ""}</div>}
                     <div style={{ display: "flex", gap: 6, marginTop: 10, flexWrap: "wrap" }}>
                       <button onClick={() => setDetalhe(a)} style={{ border: "none", borderRadius: 8, fontWeight: 700, cursor: "pointer", fontSize: 12, padding: "7px 12px", background: "#eef4ff", color: "#0f3171" }}>Detalhes</button>
+                      <button onClick={() => setAnexosDe(a)} title="Tudo que foi anexado: na solicitação e na conversa" style={{ border: "1px solid #cbd5e1", borderRadius: 8, fontWeight: 700, cursor: "pointer", fontSize: 12, padding: "6px 12px", background: "#fff", color: "#0f3171" }}>📎 Anexos{nAnexos.get(a.id) ? ` (${nAnexos.get(a.id)})` : ""}</button>
                       {mostraAprovar && <>
                         <button onClick={() => aprovarAdv(a)} style={{ border: "none", borderRadius: 8, fontWeight: 700, cursor: "pointer", fontSize: 12, padding: "7px 12px", background: "#16a34a", color: "#fff" }}>Aprovar</button>
                         <button onClick={() => { setReprovar(a); setMotivoRep(""); }} style={{ border: "none", borderRadius: 8, fontWeight: 700, cursor: "pointer", fontSize: 12, padding: "7px 12px", background: "#fee2e2", color: "#b91c1c" }}>Reprovar</button>
@@ -397,6 +416,18 @@ export default function Advertencias() {
                 aviso="Quem solicitou a advertência lê e responde por Encarregados › Minhas Solicitações."
               />
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Anexos da solicitação + da conversa, num lugar só (17/09/2026) */}
+      {anexosDe && (
+        <div onClick={e => { if (e.target === e.currentTarget) setAnexosDe(null); }} style={{ position: "fixed", inset: 0, zIndex: 710, background: "rgba(15,23,42,.5)", backdropFilter: "blur(4px)", display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
+          <div style={{ background: "#fff", borderRadius: 16, padding: 24, width: "100%", maxWidth: 640, maxHeight: "88vh", overflowY: "auto", position: "relative" }}>
+            <button onClick={() => setAnexosDe(null)} style={{ position: "absolute", top: 14, right: 16, border: "none", background: "none", fontSize: 20, color: "#64748b", cursor: "pointer" }}>✕</button>
+            <div style={{ fontSize: 17, fontWeight: 800, color: "#0f172a" }}>Anexos · #{anexosDe.id}</div>
+            <div style={{ fontSize: 13, color: "#64748b", marginBottom: 6 }}>{anexosDe.colaborador_nome} — tudo que foi anexado na solicitação e mandado na conversa.</div>
+            <AnexosSolicitacao modulo="advertencia" entidadeId={anexosDe.id} podeAnexar={false} titulo="Anexos" compacto />
           </div>
         </div>
       )}

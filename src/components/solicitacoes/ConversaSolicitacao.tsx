@@ -73,13 +73,15 @@ function paraPng(blob: Blob): Promise<Blob> {
   });
 }
 
-export function ConversaSolicitacao({ modulo, entidadeId, aviso }: {
+export function ConversaSolicitacao({ modulo, entidadeId, aviso, preencher }: {
   modulo: ModuloConversa;
   /** id da solicitação. Vai como texto — o feed é compartilhado por módulos
    *  cujas PKs nem sempre são do mesmo tipo. */
   entidadeId: number | string | null | undefined;
   /** Uma linha explicando a quem a mensagem chega. */
   aviso?: string;
+  /** Ocupa a altura do pai: mensagens rolam no meio e a caixa de escrever fica presa embaixo (card do encarregado). */
+  preencher?: boolean;
 }) {
   const { user } = useAuth();
   const [msgs, setMsgs] = useState<Comentario[]>([]);
@@ -173,13 +175,15 @@ export function ConversaSolicitacao({ modulo, entidadeId, aviso }: {
   const podeEnviar = !!texto.trim() || pendentes.length > 0;
 
   return (
-    <div style={{ borderTop: "1px solid #e2e8f0", paddingTop: 16 }} onKeyDown={aoTeclar} tabIndex={-1}>
+    <div style={preencher ? { display: "flex", flexDirection: "column", height: "100%", minHeight: 0 } : { borderTop: "1px solid #e2e8f0", paddingTop: 16 }} onKeyDown={aoTeclar} tabIndex={-1}>
       <div style={{ fontSize: 12, fontWeight: 700, color: "#475569", marginBottom: aviso ? 4 : 10 }}>
         💬 Conversa
       </div>
       {aviso && <div style={{ fontSize: 12.5, color: "#64748b", marginBottom: 10 }}>{aviso}</div>}
 
-      <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 12, maxHeight: 320, overflowY: "auto" }}>
+      <div style={preencher
+        ? { display: "flex", flexDirection: "column", gap: 8, marginBottom: 12, flex: 1, minHeight: 180, overflowY: "auto", background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: 12, padding: 10 }
+        : { display: "flex", flexDirection: "column", gap: 8, marginBottom: 12, maxHeight: 320, overflowY: "auto" }}>
         {msgs.length === 0 ? (
           <div style={{ fontSize: 12, color: "#64748b", textAlign: "center", padding: "12px 0" }}>
             Nenhuma mensagem ainda.
