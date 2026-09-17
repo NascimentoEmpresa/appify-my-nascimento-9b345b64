@@ -63,7 +63,7 @@ import {
   UserMinus,
   UserPlus,
   CalendarCheck2,
-  AlertTriangle, WandSparkles, Clock } from "lucide-react";
+  AlertTriangle, WandSparkles, Clock, FileSpreadsheet } from "lucide-react";
 import { useTemAlcada } from "@/hooks/useTemAlcada";
 import { useAccessibleMenus, matchMenuCode } from "@/hooks/useAccessibleMenus";
 import { useModoExterno, rotaPermitidaExterno } from "@/hooks/useModoExterno";
@@ -358,6 +358,7 @@ const financeiroModule: ModuleDef = {
         { label: "Fluxo de Caixa", to: "/app/financeiro/gestao-financeira/fluxo-caixa", icon: TrendingDown },
         { label: "Débito Automático", to: "/app/financeiro/gestao-financeira/debito-automatico", icon: ArrowLeftRight, badge: "Novo" },
         { label: "Cartão de Crédito", to: "/app/financeiro/gestao-financeira/cartao-credito", icon: CreditCard, badge: "Novo" },
+        { label: "Extrator de Benefícios (VA/VT)", to: "/app/financeiro/gestao-financeira/extrator-beneficios", icon: FileSpreadsheet, badge: "Novo" },
       ],
     },
     {
