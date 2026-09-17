@@ -30,6 +30,27 @@ export interface ContratoERP {
   conta_pagamento: string | null;
   email_envio_nf: string | null;
   instrucoes_envio: string | null;
+  // SIS-2026-0325: campos do módulo Controle de Contratos — preenchidos
+  // pelo formulário "Novo Contrato". `quant_func_exec` e
+  // `valor_executado_mensal` são MANUAIS (digitados) — diferente dos
+  // agregados calculados ao vivo da Planilha de Custo (ver
+  // usePlanilhaCusto.ts: somarQuantFuncExecContrato/
+  // somarValorExecutadoMensalContrato/somarCustoIndiretoMensalContrato/
+  // somarLucroMensalContrato), que existem em paralelo pra conferência.
+  cidade: string | null;
+  numero_edital: string | null;
+  data_fim_vigencia: string | null;
+  vigencia_inicial: string | null;
+  vigencia_final: string | null;
+  quant_func_estipulado: number | null;
+  quant_func_exec: number | null;
+  quant_func_exec_real: number | null;
+  valor_mensal_contratado: number | null;
+  valor_executado_mensal: number | null;
+  valor_mensal_ano_anterior: number | null;
+  valor_garantia_contratual: number | null;
+  custo_anual_insumos: number | null;
+  status_solicitacao: string | null;
   created_at: string;
   updated_at: string;
 }

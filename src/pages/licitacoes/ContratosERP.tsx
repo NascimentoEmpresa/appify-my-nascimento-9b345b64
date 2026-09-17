@@ -15,20 +15,27 @@ import {
 } from "@/components/ui/alert-dialog";
 import { cn } from "@/lib/utils";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Plus, Pencil, Trash2, Building2, CalendarDays, TrendingUp, Download, FileText, ExternalLink, Archive } from "lucide-react";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Plus, Pencil, Trash2, Building2, CalendarDays, TrendingUp, FileText, ExternalLink, Archive, ChevronDown, ChevronUp } from "lucide-react";
 import {
   useContratosERP,
   useContratoERPUpsert,
   useContratoERPDelete,
 } from "@/hooks/useContratosERP";
 import type { ContratoERP, ContratoERPInput } from "@/hooks/useContratosERP";
-import { usePlanilhaCustos } from "@/hooks/usePlanilhaCusto";
+import {
+  usePlanilhaCustos,
+  somarValorExecutadoMensalContrato,
+  somarCustoIndiretoMensalContrato,
+  somarLucroMensalContrato,
+  somarQuantFuncExecContrato,
+} from "@/hooks/usePlanilhaCusto";
 import { useEmpresasGrupo } from "@/hooks/useMaloteDespesa";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "@/hooks/use-toast";
 import { useContratoDocsPorContrato } from "@/hooks/useDocumentos";
 import { BADGE as DOC_BADGE, periodLabel } from "@/pages/Documentos";
-import { corEmpresa } from "@/pages/malote/EmpresaContratoBadge";
+import { corEmpresa, corEmpresaFundo } from "@/pages/malote/EmpresaContratoBadge";
 
 const STATUS_LABEL: Record<string, string> = {
   ativo: "Ativo",
@@ -53,6 +60,35 @@ function fmtData(d: string | null) {
   return `${day}/${m}/${y}`;
 }
 
+const AVISO_VIGENCIA_LABEL: Record<string, string> = {
+  em_vigencia: "Em vigência",
+  a_vencer: "A vencer",
+  vencido: "Vencido",
+};
+
+const AVISO_VIGENCIA_COLOR: Record<string, string> = {
+  em_vigencia: "bg-emerald-500",
+  a_vencer: "bg-amber-500",
+  vencido: "bg-rose-500",
+};
+
+// Coluna "Aviso de Vigência" do mockup 2 — mesmo critério de dias restantes
+// já usado nas abas Em Vigência/A Vencer (>90 dias = em vigência, 0-90 =
+// a vencer, negativo = vencido).
+function vigenciaInfo(c: Pick<ContratoERP, "vigencia_inicial" | "vigencia_final">) {
+  const hoje = new Date(); hoje.setHours(0, 0, 0, 0);
+  const inicio = c.vigencia_inicial ? new Date(c.vigencia_inicial + "T00:00:00") : null;
+  const fim = c.vigencia_final ? new Date(c.vigencia_final + "T00:00:00") : null;
+
+  const mesesExecucao = inicio && fim
+    ? Math.max(0, Math.round((fim.getTime() - inicio.getTime()) / (1000 * 60 * 60 * 24 * 30)))
+    : 0;
+  const diasParaFinalizar = fim ? Math.round((fim.getTime() - hoje.getTime()) / (1000 * 60 * 60 * 24)) : null;
+  const avisoVigencia = diasParaFinalizar === null ? null : diasParaFinalizar < 0 ? "vencido" : diasParaFinalizar <= 90 ? "a_vencer" : "em_vigencia";
+
+  return { mesesExecucao, diasParaFinalizar, avisoVigencia };
+}
+
 type FiscalFields =
   | "issqn_pct" | "ir_pct" | "cofins_pct" | "pis_pct" | "csll_pct"
   | "prazo_pagamento" | "codigo_servico_lc116" | "codigo_servico_municipal_cnae"
@@ -70,6 +106,20 @@ const EMPTY: ContratoFormState = {
   status: "ativo",
   grade_id: null,
   capa_id: null,
+  cidade: null,
+  numero_edital: null,
+  data_fim_vigencia: null,
+  vigencia_inicial: null,
+  vigencia_final: null,
+  quant_func_estipulado: null,
+  quant_func_exec: null,
+  quant_func_exec_real: null,
+  valor_mensal_contratado: null,
+  valor_executado_mensal: null,
+  valor_mensal_ano_anterior: null,
+  valor_garantia_contratual: null,
+  custo_anual_insumos: null,
+  status_solicitacao: null,
 };
 
 interface FiscalForm {
@@ -128,148 +178,116 @@ export default function ContratosERP() {
   const [modalOpen, setModalOpen] = useState(false);
   const [editando, setEditando] = useState<ContratoERP | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<ContratoERP | null>(null);
+  const [mostrarSubtotalPorEmpresa, setMostrarSubtotalPorEmpresa] = useState(false);
   const [form, setForm] = useState<ContratoFormState>(EMPTY);
   const [fiscal, setFiscal] = useState<FiscalForm>(FISCAL_EMPTY);
-  const [importando, setImportando] = useState(false);
 
   const { data: docsContrato = [] } = useContratoDocsPorContrato(editando?.id);
 
-  // Calcula valor mensal EM VIGÊNCIA por contrato_id a partir da planilha
-  const valorPorContratoId = useMemo(() => {
-    const today = new Date(); today.setHours(0, 0, 0, 0);
-    const groupDates = new Map<string, Date[]>();
-    for (const r of planilha) {
-      if (r.encerrado || !r.data_vigencia) continue;
-      const key = `${r.contrato}||${r.posto}`;
-      const d = new Date(r.data_vigencia + "T00:00:00");
-      const arr = groupDates.get(key) ?? [];
-      arr.push(d);
-      groupDates.set(key, arr);
-    }
-    const vigente = new Map<string, Date | null>();
-    groupDates.forEach((dates, key) => {
-      const past = dates.filter((d) => d <= today).sort((a, b) => b.getTime() - a.getTime());
-      vigente.set(key, past[0] ?? null);
-    });
-    const map = new Map<string, number>();
-    for (const r of planilha) {
-      if (r.encerrado || !r.data_vigencia || r.orexec !== "EXECUTADO" || !r.contrato_id) continue;
-      const key = `${r.contrato}||${r.posto}`;
-      const rowDate = new Date(r.data_vigencia + "T00:00:00");
-      const v = vigente.get(key) ?? null;
-      if (!v || rowDate.getTime() !== v.getTime()) continue;
-      map.set(r.contrato_id, (map.get(r.contrato_id) ?? 0) + (r.total_por_empregado ?? 0) * (r.qt_postos || 0));
+  // SIS-2026-0325: agregados por contrato (execução real/custo indireto/
+  // lucro mensal, vindos ao vivo da Planilha de Custo) — substitui o
+  // cálculo duplicado que existia só pra "Vlr. Mensal", reaproveitando os
+  // helpers genéricos de usePlanilhaCusto.ts.
+  const agregadosPorContrato = useMemo(() => {
+    const map = new Map<string, { valorExecMensal: number; custoIndiretoMensal: number; lucroMensal: number; quantExecCalc: number }>();
+    for (const c of contratos) {
+      map.set(c.id, {
+        valorExecMensal: somarValorExecutadoMensalContrato(planilha, c.id),
+        custoIndiretoMensal: somarCustoIndiretoMensalContrato(planilha, c.id),
+        lucroMensal: somarLucroMensalContrato(planilha, c.id),
+        quantExecCalc: somarQuantFuncExecContrato(planilha, c.id),
+      });
     }
     return map;
-  }, [planilha]);
+  }, [contratos, planilha]);
 
-  async function handleImportar() {
-    setImportando(true);
-    try {
-      // Calcula quais linhas estão EM VIGÊNCIA (replica lógica de computeVigenciaStatus)
-      const today = new Date(); today.setHours(0, 0, 0, 0);
-      const groupDates = new Map<string, Date[]>();
-      for (const r of planilha) {
-        if (r.encerrado || !r.data_vigencia) continue;
-        const key = `${r.contrato}||${r.posto}`;
-        const d = new Date(r.data_vigencia + "T00:00:00");
-        const arr = groupDates.get(key) ?? [];
-        arr.push(d);
-        groupDates.set(key, arr);
-      }
-      const vigente = new Map<string, Date | null>();
-      groupDates.forEach((dates, key) => {
-        const past = dates.filter((d) => d <= today).sort((a, b) => b.getTime() - a.getTime());
-        vigente.set(key, past[0] ?? null);
-      });
-      const emVigencia = new Set(
-        planilha
-          .filter((r) => {
-            if (r.encerrado || !r.data_vigencia) return false;
-            const key = `${r.contrato}||${r.posto}`;
-            const rowDate = new Date(r.data_vigencia + "T00:00:00");
-            const v = vigente.get(key) ?? null;
-            return !!(v && rowDate.getTime() === v.getTime());
-          })
-          .map((r) => r.id)
-      );
+  // Agregado do contrato em edição no modal — "—" em contrato novo (sem
+  // linhas na Planilha de Custo ainda vinculadas).
+  const agregadoEditando = editando ? agregadosPorContrato.get(editando.id) : undefined;
 
-      // Agrupa por contrato só as linhas EXECUTADO EM VIGÊNCIA ou A INICIAR.
-      // SIS-2026-0309: chave inclui empresa_id (não só o nome do contrato) —
-      // agora que a planilha é lida de todas as empresas do grupo, um mesmo
-      // nome de contrato em empresas diferentes não pode mais ser agrupado
-      // junto (empresa vem da própria linha da planilha, não da "ativa").
-      const ativos = planilha.filter((r) => r.orexec === "EXECUTADO" && emVigencia.has(r.id));
-      const porContrato = new Map<string, { empresaId: string; nome: string; cliente: string; dataInicio: string | null }>();
-      for (const r of ativos) {
-        const key = `${r.empresa_id}||${r.contrato}`;
-        if (!porContrato.has(key)) {
-          porContrato.set(key, { empresaId: r.empresa_id, nome: r.contrato, cliente: r.cliente, dataInicio: r.data_vigencia ?? null });
-        }
-      }
+  // Campos calculados do modal — derivados do `form` em edição, não
+  // persistidos. Fórmulas seguem exatamente as legendas do mockup do
+  // Iury (seções 2, 4, 5 e 6).
+  const mesesExecucao = useMemo(() => {
+    // "Calculado pela diferença entre vigência inicial e final"
+    if (!form.vigencia_inicial || !form.vigencia_final) return 0;
+    const inicio = new Date(form.vigencia_inicial + "T00:00:00");
+    const fim = new Date(form.vigencia_final + "T00:00:00");
+    return Math.max(0, Math.round((fim.getTime() - inicio.getTime()) / (1000 * 60 * 60 * 24 * 30)));
+  }, [form.vigencia_inicial, form.vigencia_final]);
 
-      // Filtra os que já existem (mesma empresa + mesmo nome)
-      const existentes = new Set(contratos.map((c) => `${c.empresa_id}||${c.nome}`));
-      const novos = [...porContrato.values()].filter((v) => !existentes.has(`${v.empresaId}||${v.nome}`));
+  const diasParaFinalizar = useMemo(() => {
+    // "Calculado em relação à data atual"
+    if (!form.vigencia_final) return 0;
+    const hoje = new Date(); hoje.setHours(0, 0, 0, 0);
+    const fim = new Date(form.vigencia_final + "T00:00:00");
+    return Math.round((fim.getTime() - hoje.getTime()) / (1000 * 60 * 60 * 24));
+  }, [form.vigencia_final]);
 
-      if (novos.length === 0) {
-        toast({ title: "Nenhum contrato novo para importar.", description: "Todos já estão cadastrados." });
-        return;
-      }
+  // "Valor mensal ano atual contratado - Valor mensal ano anterior"
+  const diferencaMensal = (form.valor_mensal_contratado ?? 0) - (form.valor_mensal_ano_anterior ?? 0);
 
-      const inserts = novos.map((v) => ({
-        empresa_id: v.empresaId,
-        nome: v.nome,
-        cliente: v.cliente,
-        data_inicio: v.dataInicio,
-        status: "ativo" as const,
-      }));
+  // Seção 5/6 — "Campos calculados automaticamente" a partir da Planilha
+  // de Custo (agregadoEditando) + dos campos manuais do form.
+  const valorExecMensalCalc = agregadoEditando?.valorExecMensal ?? 0;
+  const custoIndiretoMensalCalc = agregadoEditando?.custoIndiretoMensal ?? 0;
+  const lucroMensalCalc = agregadoEditando?.lucroMensal ?? 0;
+  const totalLucroCustoMensal = custoIndiretoMensalCalc + lucroMensalCalc; // "Custo ind. mensal + Lucro mensal"
+  // "Valor executado ano atual / Quant. Func. Exec."
+  const valorPorColaborador = form.quant_func_exec ? (form.valor_executado_mensal ?? 0) / form.quant_func_exec : 0;
+  // "Total lucro e custo mensal / Quant. Func. Estip."
+  const mediaCustoLucroPorFuncionario = form.quant_func_estipulado ? totalLucroCustoMensal / form.quant_func_estipulado : 0;
 
-      const { data: criados, error } = await (supabase as any).from("contratos").insert(inserts).select("id, nome, empresa_id");
-      if (error) throw error;
+  const [aba, setAba] = useState<"execucao_real" | "em_vigencia" | "a_vencer" | "finalizados">("execucao_real");
 
-      // Vincula de volta as linhas da planilha de custo ao contrato recém-criado
-      // (senão "Vlr. Mensal" e o autopreenchimento de Nova NF ficam sem valor,
-      // já que dependem de planilha_custo.contrato_id, não do nome em texto).
-      await Promise.all(
-        (criados ?? []).map((c: { id: string; nome: string; empresa_id: string }) =>
-          (supabase as any)
-            .from("planilha_custo")
-            .update({ contrato_id: c.id })
-            .eq("empresa_id", c.empresa_id)
-            .eq("contrato", c.nome)
-            .is("contrato_id", null)
-        )
-      );
-
-      toast({ title: `${novos.length} contrato(s) importado(s) com sucesso!` });
-      // Força refetch
-      window.location.reload();
-    } catch (e: any) {
-      toast({ title: "Erro ao importar", description: e.message, variant: "destructive" });
-    } finally {
-      setImportando(false);
-    }
-  }
-
+  // Critério de cada aba — provisório, a ajustar com o usuário depois de
+  // ver a tela funcionando (ver "Perguntas em Aberto" do plano do
+  // SIS-2026-0325: não veio no texto do chamado, só no mockup visual).
   const filtered = useMemo(() => {
+    const hoje = new Date(); hoje.setHours(0, 0, 0, 0);
+    const em90dias = new Date(hoje); em90dias.setDate(em90dias.getDate() + 90);
     return contratos.filter((c) => {
       if (filtroStatus !== "todos" && c.status !== filtroStatus) return false;
       if (filtroEmpresaId !== "todas" && c.empresa_id !== filtroEmpresaId) return false;
       if (busca) {
         const q = busca.toLowerCase();
-        return c.nome.toLowerCase().includes(q) || c.cliente.toLowerCase().includes(q);
+        if (!c.nome.toLowerCase().includes(q) && !c.cliente.toLowerCase().includes(q)) return false;
       }
+      const fimVigencia = c.vigencia_final ? new Date(c.vigencia_final + "T00:00:00") : null;
+      if (aba === "finalizados") return c.status === "encerrado";
+      if (c.status === "encerrado") return false;
+      if (aba === "execucao_real") return true;
+      if (aba === "em_vigencia") return !fimVigencia || fimVigencia >= hoje;
+      if (aba === "a_vencer") return !!fimVigencia && fimVigencia >= hoje && fimVigencia <= em90dias;
       return true;
     });
-  }, [contratos, busca, filtroStatus, filtroEmpresaId]);
+  }, [contratos, busca, filtroStatus, filtroEmpresaId, aba]);
 
-  const ativos    = contratos.filter((c) => c.status === "ativo").length;
-  const suspensos = contratos.filter((c) => c.status === "suspenso").length;
-  const encerrados = contratos.filter((c) => c.status === "encerrado").length;
-  const valorTotal = contratos
-    .filter((c) => c.status === "ativo")
-    .reduce((s, c) => s + (valorPorContratoId.get(c.id) ?? 0), 0);
+  // KPIs do mockup 2 — somados sobre a aba/filtro atual (`filtered`), não
+  // sobre todos os contratos, pra bater com o que a tabela abaixo mostra.
+  const kpiValorMensalContratado = filtered.reduce((s, c) => s + (c.valor_mensal_contratado ?? 0), 0);
+  const kpiValorExecutadoAnoAtual = filtered.reduce((s, c) => s + (c.valor_executado_mensal ?? 0), 0);
+  const kpiLucroMensal = filtered.reduce((s, c) => s + (agregadosPorContrato.get(c.id)?.lucroMensal ?? 0), 0);
+  const kpiLucroECustoMensal = filtered.reduce((s, c) => {
+    const ag = agregadosPorContrato.get(c.id);
+    return s + (ag?.custoIndiretoMensal ?? 0) + (ag?.lucroMensal ?? 0);
+  }, 0);
+
+  // Subtotais da tabela — "TOTAL GERAL" + 1 linha por empresa, sobre o
+  // conjunto atualmente filtrado/exibido (mesma lógica dos KPIs acima).
+  const subtotalCampos = (rows: ContratoERP[]) => ({
+    mesesExecucao: rows.reduce((s, c) => s + vigenciaInfo(c).mesesExecucao, 0),
+    diasParaFinalizar: rows.reduce((s, c) => s + (vigenciaInfo(c).diasParaFinalizar ?? 0), 0),
+    valorGarantia: rows.reduce((s, c) => s + (c.valor_garantia_contratual ?? 0), 0),
+    quantFuncEstip: rows.reduce((s, c) => s + (c.quant_func_estipulado ?? 0), 0),
+    valorMensalContratado: rows.reduce((s, c) => s + (c.valor_mensal_contratado ?? 0), 0),
+    valorExecutadoAnoAtual: rows.reduce((s, c) => s + (c.valor_executado_mensal ?? 0), 0),
+  });
+  const totalGeral = subtotalCampos(filtered);
+  const subtotaisPorEmpresa = empresasGrupo
+    .map((e) => ({ empresa: e, linhas: filtered.filter((c) => c.empresa_id === e.id) }))
+    .filter((g) => g.linhas.length > 0)
+    .map((g) => ({ empresa: g.empresa, ...subtotalCampos(g.linhas) }));
 
   function abrirNovo() {
     setEditando(null);
@@ -290,6 +308,20 @@ export default function ContratosERP() {
       status: c.status,
       grade_id: c.grade_id,
       capa_id: c.capa_id,
+      cidade: c.cidade,
+      numero_edital: c.numero_edital,
+      data_fim_vigencia: c.data_fim_vigencia,
+      vigencia_inicial: c.vigencia_inicial,
+      vigencia_final: c.vigencia_final,
+      quant_func_estipulado: c.quant_func_estipulado,
+      quant_func_exec: c.quant_func_exec,
+      quant_func_exec_real: c.quant_func_exec_real,
+      valor_mensal_contratado: c.valor_mensal_contratado,
+      valor_executado_mensal: c.valor_executado_mensal,
+      valor_mensal_ano_anterior: c.valor_mensal_ano_anterior,
+      valor_garantia_contratual: c.valor_garantia_contratual,
+      custo_anual_insumos: c.custo_anual_insumos,
+      status_solicitacao: c.status_solicitacao,
     });
     setFiscal(fiscalParaForm(c));
     setModalOpen(true);
@@ -343,25 +375,29 @@ export default function ContratosERP() {
         title="Contratos"
         subtitle="Gestão dos contratos ativos da empresa."
         actions={
-          <div className="flex gap-2">
-            <Button size="sm" variant="outline" onClick={handleImportar} disabled={importando}>
-              <Download className="h-4 w-4 mr-1" />
-              {importando ? "Importando…" : "Importar da Planilha"}
-            </Button>
-            <Button size="sm" onClick={abrirNovo}>
-              <Plus className="h-4 w-4 mr-1" /> Novo Contrato
-            </Button>
-          </div>
+          <Button size="sm" onClick={abrirNovo}>
+            <Plus className="h-4 w-4 mr-1" /> Novo Contrato
+          </Button>
         }
       />
 
-      {/* KPIs */}
+      {/* KPIs — SIS-2026-0325 (mockup 2): somados sobre a aba/filtro atual. */}
       <div className="grid grid-cols-2 xl:grid-cols-4 gap-4">
-        <KpiCard icon={<Building2 />} label="Contratos Ativos" value={String(ativos)} color="emerald" />
-        <KpiCard icon={<TrendingUp />} label="Faturamento Mensal" value={fmt(valorTotal)} color="blue" />
-        <KpiCard icon={<Archive />} label="Encerrados" value={String(encerrados)} color="slate" />
-        <KpiCard icon={<CalendarDays />} label="Suspensos" value={String(suspensos)} color="amber" />
+        <KpiCard icon={<Building2 />} label="Valor Mensal Ano Atual" value={fmt(kpiValorMensalContratado)} color="blue" />
+        <KpiCard icon={<TrendingUp />} label="Valor Executado Ano Atual" value={fmt(kpiValorExecutadoAnoAtual)} color="emerald" />
+        <KpiCard icon={<CalendarDays />} label="Lucro Mensal" value={fmt(kpiLucroMensal)} color="amber" />
+        <KpiCard icon={<Archive />} label="Lucro e Custo Mensal" value={fmt(kpiLucroECustoMensal)} color="slate" />
       </div>
+
+      {/* Abas */}
+      <Tabs value={aba} onValueChange={(v) => setAba(v as typeof aba)}>
+        <TabsList>
+          <TabsTrigger value="execucao_real">Execução Real</TabsTrigger>
+          <TabsTrigger value="em_vigencia">Em Vigência</TabsTrigger>
+          <TabsTrigger value="a_vencer">A Vencer</TabsTrigger>
+          <TabsTrigger value="finalizados">Finalizados</TabsTrigger>
+        </TabsList>
+      </Tabs>
 
       {/* Filtros */}
       <div className="flex flex-wrap gap-2 items-center">
@@ -404,78 +440,199 @@ export default function ContratosERP() {
           <Button size="sm" variant="outline" onClick={abrirNovo}>Cadastrar primeiro contrato</Button>
         </div>
       ) : (
-        <div className="overflow-x-auto rounded-xl border border-border">
+        <div className="overflow-x-auto overflow-y-auto max-h-[78vh] rounded-xl border border-border">
           <table className="w-full text-sm">
-            <thead className="bg-muted/50">
-              <tr className="text-left text-xs text-muted-foreground">
-                <th className="px-4 py-3 font-medium">Contrato</th>
+            <thead className="bg-muted/50 sticky top-0 z-10">
+              <tr className="text-left text-xs text-muted-foreground whitespace-nowrap">
                 <th className="px-4 py-3 font-medium">Empresa</th>
+                <th className="px-4 py-3 font-medium">Contrato</th>
+                <th className="px-4 py-3 font-medium">Cidade</th>
+                <th className="px-4 py-3 font-medium">Data Início</th>
+                <th className="px-4 py-3 font-medium">Data Fim Vigência</th>
+                <th className="px-4 py-3 font-medium">Aviso de Vigência</th>
+                <th className="px-4 py-3 font-medium">Vigência Inicial</th>
+                <th className="px-4 py-3 font-medium">Vigência Final</th>
+                <th className="px-4 py-3 font-medium text-right">Meses de Execução</th>
+                <th className="px-4 py-3 font-medium text-right">Dias p/ Finalizar</th>
+                <th className="px-4 py-3 font-medium text-right">Vlr. Garantia Contratual</th>
+                <th className="px-4 py-3 font-medium">Nº Edital</th>
+                <th className="px-4 py-3 font-medium text-right">Qtd. Func. Estip.</th>
+                <th className="px-4 py-3 font-medium text-right">Vlr. Mensal Ano Atual Contratado</th>
+                <th className="px-4 py-3 font-medium text-right">Vlr. Executado Ano Atual</th>
+                <th className="px-4 py-3 font-medium text-right">Custo Indireto Mensal</th>
+                <th className="px-4 py-3 font-medium text-right">Custo Indireto Global</th>
+                <th className="px-4 py-3 font-medium text-right">Lucro Mensal</th>
+                <th className="px-4 py-3 font-medium text-right">Lucro Global</th>
                 <th className="px-4 py-3 font-medium">Cliente</th>
-                <th className="px-4 py-3 font-medium">Início</th>
-                <th className="px-4 py-3 font-medium">Prazo</th>
-                <th className="px-4 py-3 font-medium">Vlr. Mensal</th>
+                <th className="px-4 py-3 font-medium">Status Solicitação</th>
                 <th className="px-4 py-3 font-medium">Status</th>
-                <th className="px-4 py-3 font-medium w-20"></th>
+                <th className="sticky right-0 z-[15] w-20 bg-muted/50 px-3 py-3 font-medium shadow-[-4px_0_6px_-4px_rgba(0,0,0,0.15)]"></th>
               </tr>
             </thead>
             <tbody className="divide-y divide-border">
-              {filtered.map((c) => (
+              {filtered.map((c) => {
+                const ag = agregadosPorContrato.get(c.id);
+                const vi = vigenciaInfo(c);
+                return (
                 <tr
                   key={c.id}
-                  className={cn("hover:bg-muted/30 transition-colors", c.status === "encerrado" && "opacity-50")}
+                  className={cn(
+                    "transition-colors whitespace-nowrap hover:brightness-95 dark:hover:brightness-125",
+                    corEmpresaFundo(c.empresa_id),
+                    c.status === "encerrado" && "opacity-50"
+                  )}
                 >
-                  <td className="px-4 py-3 font-medium">{c.nome}</td>
                   <td className="px-4 py-3">
                     <span className={cn("inline-flex rounded-full border px-2 py-0.5 text-[11px] font-semibold", corEmpresa(c.empresa_id))}>
                       {empresasGrupo.find((e) => e.id === c.empresa_id)?.nome ?? "—"}
                     </span>
                   </td>
-                  <td className="px-4 py-3 text-muted-foreground">{c.cliente}</td>
+                  <td className="px-4 py-3 font-medium">{c.nome}</td>
+                  <td className="px-4 py-3 text-muted-foreground">{c.cidade ?? "—"}</td>
                   <td className="px-4 py-3 text-muted-foreground">{fmtData(c.data_inicio)}</td>
-                  <td className="px-4 py-3 text-muted-foreground">
-                    {c.vigencia_meses ? `${c.vigencia_meses} meses` : "—"}
+                  <td className="px-4 py-3 text-muted-foreground">{fmtData(c.data_fim_vigencia)}</td>
+                  <td className="px-4 py-3">
+                    {vi.avisoVigencia ? (
+                      <span className="inline-flex items-center gap-1.5 text-xs font-medium">
+                        <span className={cn("h-2 w-2 rounded-full", AVISO_VIGENCIA_COLOR[vi.avisoVigencia])} />
+                        {AVISO_VIGENCIA_LABEL[vi.avisoVigencia]}
+                      </span>
+                    ) : "—"}
                   </td>
-                  <td className="px-4 py-3 font-mono text-xs">{fmt(valorPorContratoId.get(c.id) ?? null)}</td>
+                  <td className="px-4 py-3 text-muted-foreground">{fmtData(c.vigencia_inicial)}</td>
+                  <td className="px-4 py-3 text-muted-foreground">{fmtData(c.vigencia_final)}</td>
+                  <td className="px-4 py-3 text-right text-muted-foreground">{vi.mesesExecucao}</td>
+                  <td className="px-4 py-3 text-right text-muted-foreground">{vi.diasParaFinalizar ?? "—"}</td>
+                  <td className="px-4 py-3 text-right font-mono text-xs">{fmt(c.valor_garantia_contratual)}</td>
+                  <td className="px-4 py-3 text-muted-foreground">{c.numero_edital ?? "—"}</td>
+                  <td className="px-4 py-3 text-right text-muted-foreground">{c.quant_func_estipulado ?? "—"}</td>
+                  <td className="px-4 py-3 text-right font-mono text-xs">{fmt(c.valor_mensal_contratado)}</td>
+                  <td className="px-4 py-3 text-right font-mono text-xs">{fmt(c.valor_executado_mensal)}</td>
+                  <td className="px-4 py-3 text-right font-mono text-xs">{fmt(ag?.custoIndiretoMensal ?? null)}</td>
+                  <td className="px-4 py-3 text-right font-mono text-xs">{fmt((ag?.custoIndiretoMensal ?? 0) * 12)}</td>
+                  <td className="px-4 py-3 text-right font-mono text-xs">{fmt(ag?.lucroMensal ?? null)}</td>
+                  <td className="px-4 py-3 text-right font-mono text-xs">{fmt((ag?.lucroMensal ?? 0) * 12)}</td>
+                  <td className="px-4 py-3 text-muted-foreground">{c.cliente}</td>
+                  <td className="px-4 py-3 text-muted-foreground max-w-[200px] truncate" title={c.status_solicitacao ?? undefined}>{c.status_solicitacao ?? "—"}</td>
                   <td className="px-4 py-3">
                     <span className={cn("px-2 py-0.5 rounded-full text-xs font-medium", STATUS_COLOR[c.status])}>
                       {STATUS_LABEL[c.status]}
                     </span>
                   </td>
-                  <td className="px-4 py-3">
-                    <div className="flex gap-1">
+                  {/* Coluna de ações fixa na direita — com 23 colunas na
+                      tabela, deixar solta no fim exigia rolar até lá pra
+                      editar/excluir, e os ícones (text-muted-foreground,
+                      3.5) ficavam quase invisíveis em cima do fundo colorido
+                      por empresa (corEmpresaFundo). */}
+                  <td className="sticky right-0 z-[5] bg-background px-3 py-3 shadow-[-4px_0_6px_-4px_rgba(0,0,0,0.15)]">
+                    <div className="flex gap-1.5">
+                      {/* Fundo sólido + ícone branco de propósito (não um
+                          tom pastel com ícone na mesma cor) — um ícone
+                          escuro sobre fundo claro da mesma família de cor
+                          estava sumindo em telas/capturas pequenas por
+                          baixo contraste. Branco sobre cor sólida é o
+                          contraste máximo possível aqui. */}
                       <button
                         onClick={() => abrirEditar(c)}
-                        className="p-1.5 rounded hover:bg-muted text-muted-foreground hover:text-foreground"
+                        className="flex items-center justify-center rounded-md bg-blue-600/60 p-1.5 text-white hover:bg-blue-600/90"
+                        title="Editar contrato"
                       >
-                        <Pencil className="h-3.5 w-3.5" />
+                        <Pencil className="h-4 w-4 shrink-0 text-white" strokeWidth={2.5} />
                       </button>
                       <button
                         onClick={() => setDeleteTarget(c)}
-                        className="p-1.5 rounded hover:bg-muted text-muted-foreground hover:text-destructive"
+                        className="flex items-center justify-center rounded-md bg-red-600/60 p-1.5 text-white hover:bg-red-600/90"
+                        title="Excluir contrato"
                       >
-                        <Trash2 className="h-3.5 w-3.5" />
+                        <Trash2 className="h-4 w-4 shrink-0 text-white" strokeWidth={2.5} />
                       </button>
                     </div>
                   </td>
                 </tr>
-              ))}
+                );
+              })}
             </tbody>
+            {/* SIS-2026-0325 (mockup 2): linha de total geral + 1 por
+                empresa, somando o mesmo conjunto filtrado da tabela. O
+                detalhe por empresa vem recolhido por padrão — com várias
+                empresas ele sozinho já empurra o rodapé pra fora da tela,
+                então só o TOTAL GERAL fica sempre visível. */}
+            <tfoot className="sticky bottom-0 z-10 divide-y divide-border border-t-2 border-border bg-background text-xs font-semibold">
+              <tr
+                className="whitespace-nowrap cursor-pointer hover:bg-muted/50 transition-colors"
+                onClick={() => setMostrarSubtotalPorEmpresa((v) => !v)}
+                title={mostrarSubtotalPorEmpresa ? "Ocultar detalhe por empresa" : "Ver detalhe por empresa"}
+              >
+                <td className="px-4 py-1.5">
+                  <span className="inline-flex items-center gap-1.5 rounded-full border border-border bg-muted/60 px-2.5 py-1 hover:border-primary/50 hover:text-primary">
+                    {mostrarSubtotalPorEmpresa ? <ChevronUp className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}
+                    TOTAL GERAL
+                    <span className="rounded-full bg-background px-1.5 py-0.5 text-[10px] font-semibold text-muted-foreground">
+                      {subtotaisPorEmpresa.length} {subtotaisPorEmpresa.length === 1 ? "empresa" : "empresas"}
+                    </span>
+                  </span>
+                </td>
+                <td className="px-4 py-1.5" />
+                <td className="px-4 py-1.5" />
+                <td className="px-4 py-1.5" />
+                <td className="px-4 py-1.5" />
+                <td className="px-4 py-1.5" />
+                <td className="px-4 py-1.5" />
+                <td className="px-4 py-1.5" />
+                <td className="px-4 py-1.5 text-right">{totalGeral.mesesExecucao}</td>
+                <td className="px-4 py-1.5 text-right">{totalGeral.diasParaFinalizar}</td>
+                <td className="px-4 py-1.5 text-right font-mono">{fmt(totalGeral.valorGarantia)}</td>
+                <td className="px-4 py-1.5" />
+                <td className="px-4 py-1.5 text-right">{totalGeral.quantFuncEstip}</td>
+                <td className="px-4 py-1.5 text-right font-mono">{fmt(totalGeral.valorMensalContratado)}</td>
+                <td className="px-4 py-1.5 text-right font-mono">{fmt(totalGeral.valorExecutadoAnoAtual)}</td>
+                <td className="px-4 py-1.5" colSpan={7} />
+                <td className="sticky right-0 z-[5] bg-background px-3 py-1.5 shadow-[-4px_0_6px_-4px_rgba(0,0,0,0.15)]" />
+              </tr>
+              {mostrarSubtotalPorEmpresa && subtotaisPorEmpresa.map((s) => (
+                <tr key={s.empresa.id} className="whitespace-nowrap text-muted-foreground font-normal">
+                  <td className="px-4 py-1.5" colSpan={2}>{s.empresa.nome}</td>
+                  <td className="px-4 py-1.5" />
+                  <td className="px-4 py-1.5" />
+                  <td className="px-4 py-1.5" />
+                  <td className="px-4 py-1.5" />
+                  <td className="px-4 py-1.5" />
+                  <td className="px-4 py-1.5" />
+                  <td className="px-4 py-1.5 text-right">{s.mesesExecucao}</td>
+                  <td className="px-4 py-1.5 text-right">{s.diasParaFinalizar}</td>
+                  <td className="px-4 py-1.5 text-right font-mono">{fmt(s.valorGarantia)}</td>
+                  <td className="px-4 py-1.5" />
+                  <td className="px-4 py-1.5 text-right">{s.quantFuncEstip}</td>
+                  <td className="px-4 py-1.5 text-right font-mono">{fmt(s.valorMensalContratado)}</td>
+                  <td className="px-4 py-1.5 text-right font-mono">{fmt(s.valorExecutadoAnoAtual)}</td>
+                  <td className="px-4 py-1.5" colSpan={7} />
+                  <td className="sticky right-0 z-[5] bg-background px-3 py-1.5 shadow-[-4px_0_6px_-4px_rgba(0,0,0,0.15)]" />
+                </tr>
+              ))}
+            </tfoot>
           </table>
         </div>
       )}
 
-      {/* Modal cadastro/edição */}
+      {/* Modal "Novo Contrato" — SIS-2026-0325: reorganizado nas 6 seções
+          numeradas do mockup do Iury (não é mais o dialog simples de
+          antes). Dados Fiscais e Documentos seguem depois, como seções
+          extras — são funcionalidade real (Emissão de NF) que não estava
+          no mockup, mas precisa continuar existindo em algum lugar. */}
       <Dialog open={modalOpen} onOpenChange={setModalOpen}>
-        <DialogContent className="max-w-2xl max-h-[85vh] overflow-y-auto">
+        <DialogContent className="max-w-4xl max-h-[88vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>{editando ? "Editar Contrato" : "Novo Contrato"}</DialogTitle>
           </DialogHeader>
-          <div className="grid grid-cols-2 gap-3 py-2">
+
+          <div className="space-y-3">
+          <SectionHeader n={1} title="Dados do Contrato" />
+          <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
             {/* SIS-2026-0309: empresa passa a ser campo explícito na
                 criação/edição — deixou de ser herdada do seletor "empresa
                 ativa" (era exatamente esse padrão que causou o contrato
                 CEITEC nascer na empresa errada). */}
-            <div className="col-span-2 flex flex-col gap-1">
+            <div className="flex flex-col gap-1">
               <Label className="text-xs">Empresa *</Label>
               <Select value={form.empresa_id} onValueChange={(v) => setForm((f) => ({ ...f, empresa_id: v }))}>
                 <SelectTrigger className="h-9"><SelectValue placeholder="Selecione a empresa..." /></SelectTrigger>
@@ -484,11 +641,18 @@ export default function ContratosERP() {
                 </SelectContent>
               </Select>
             </div>
-            <div className="col-span-2">{field("Nome / Objeto", "nome", { required: true })}</div>
-            <div className="col-span-2">{field("Cliente (Órgão)", "cliente", { required: true })}</div>
-            {field("CNPJ do Cliente", "cnpj_cliente")}
-            {field("Data de Início", "data_inicio", { type: "date" })}
-            {field("Prazo (meses)", "vigencia_meses", { type: "number" })}
+            {field("Contrato", "nome", { required: true })}
+            {field("Nº Edital", "numero_edital", { required: true })}
+            {field("Cidade", "cidade", { required: true })}
+            <div className="flex flex-col gap-1">
+              <Label className="text-xs">Status da Solicitação *</Label>
+              <Input
+                className="h-9"
+                placeholder="Ex: OK - EMITIDO, AGUARDANDO EMPENHO..."
+                value={form.status_solicitacao ?? ""}
+                onChange={(e) => setForm((f) => ({ ...f, status_solicitacao: e.target.value || null }))}
+              />
+            </div>
             <div className="flex flex-col gap-1">
               <Label className="text-xs">Status</Label>
               <select
@@ -501,6 +665,77 @@ export default function ContratosERP() {
                 <option value="encerrado">Encerrado</option>
               </select>
             </div>
+            {/* Não está no mockup — mas `cliente` é obrigatório no banco e
+                usado na Emissão de NF (decisão confirmada com o usuário:
+                manter mesmo fora da grade de 5 colunas do Iury). */}
+            <div className="col-span-2 md:col-span-3">{field("Cliente (Órgão)", "cliente", { required: true })}</div>
+            <div className="col-span-2 md:col-span-3">{field("CNPJ do Cliente", "cnpj_cliente")}</div>
+          </div>
+
+          <SectionHeader n={2} title="Vigência e Prazos" />
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+            {field("Data Início", "data_inicio", { type: "date", required: true })}
+            {field("Data Fim Vigência", "data_fim_vigencia", { type: "date", required: true })}
+            {field("Vigência Inicial", "vigencia_inicial", { type: "date", required: true })}
+            {field("Vigência Final", "vigencia_final", { type: "date", required: true })}
+          </div>
+          <div className="grid grid-cols-2 gap-3 rounded-lg bg-muted/40 p-3">
+            <CalculoField label="Meses de Execução" value={String(mesesExecucao)} hint="Calculado pela diferença entre vigência inicial e final" />
+            <CalculoField label="Dias para Finalizar Contrato" value={String(diasParaFinalizar)} hint="Calculado em relação à data atual" />
+          </div>
+
+          <SectionHeader n={3} title="Equipe e Execução" />
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+            {field("Qtd. Func. Estip.", "quant_func_estipulado", { type: "number", required: true })}
+            {field("Qtd. Func. Exec.", "quant_func_exec", { type: "number", required: true })}
+            {field("Qtd. Func. Exec. Real", "quant_func_exec_real", { type: "number" })}
+            {field("Valor da Garantia Contratual", "valor_garantia_contratual", { type: "number" })}
+          </div>
+
+          <SectionHeader n={4} title="Valores Mensais" />
+          <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+            {field("Valor Mensal Contratado", "valor_mensal_contratado", { type: "number", required: true })}
+            {field("Valor Executado Mensal", "valor_executado_mensal", { type: "number", required: true })}
+            {field("Valor Mensal (Ano Anterior)", "valor_mensal_ano_anterior", { type: "number" })}
+          </div>
+          <div className="grid grid-cols-2 gap-3 rounded-lg bg-muted/40 p-3">
+            <CalculoField label="Diferença Mensal" value={fmt(diferencaMensal)} hint="Valor mensal ano atual contratado - Valor mensal ano anterior" />
+          </div>
+          {/* Excluído do v1 por pedido explícito do usuário: "Diferença até
+              apostilamento" e "Valor efetivo faturado". */}
+
+          {/* SIS-2026-0325: banner "Campos calculados automaticamente" do
+              mockup — custo indireto/lucro/valor executado (conferência)
+              saem ao vivo da Planilha de Custo (agregadoEditando) e só
+              existem depois que o contrato já tem linhas vinculadas (por
+              isso ficam zerados em contrato novo, antes de salvar).
+              `custo_anual_insumos` é exceção: continua manual (decisão já
+              confirmada antes), só está posicionado aqui por ficar perto
+              dos outros campos de custo no mockup. */}
+          <SectionHeader n={5} title="Custos, Lucro e Indicadores" />
+          <div className="rounded-lg bg-blue-50 text-blue-700 text-xs px-3 py-2">
+            Campos calculados automaticamente — os valores abaixo são calculados com base nos dados informados
+            (exceto "Custo anual de insumos", que é manual).
+          </div>
+          <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+            <CalculoField label="Valor Mão de Obra / Valor Mensal" value={fmt(valorExecMensalCalc)} />
+            {field("Custo Anual de Insumos", "custo_anual_insumos", { type: "number" })}
+            <CalculoField label="Custo Ind. Mensal" value={fmt(custoIndiretoMensalCalc)} />
+            <CalculoField label="Lucro Mensal" value={fmt(lucroMensalCalc)} />
+            <CalculoField label="Total Lucro e Custo Mensal" value={fmt(totalLucroCustoMensal)} hint="Custo ind. mensal + Lucro mensal" />
+          </div>
+          <div className="grid grid-cols-2 md:grid-cols-3 gap-3 rounded-lg bg-muted/40 p-3">
+            <CalculoField label="Valor por Colaborador" value={fmt(valorPorColaborador)} hint="Valor executado ano atual / Quant. Func. Exec." />
+            <CalculoField label="Média Custo e Lucro por Funcionário" value={fmt(mediaCustoLucroPorFuncionario)} hint="Total lucro e custo mensal / Quant. Func. Estip." />
+            <CalculoField label="Valor Lucro c/Cto Mensal" value={fmt(totalLucroCustoMensal)} />
+          </div>
+
+          <SectionHeader n={6} title="Totais Globais" />
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3 rounded-lg bg-muted/40 p-3">
+            <CalculoField label="Total Global" value={fmt(valorExecMensalCalc * 12)} />
+            <CalculoField label="Custo Global" value={fmt(custoIndiretoMensalCalc * 12)} />
+            <CalculoField label="Lucro Global" value={fmt(lucroMensalCalc * 12)} />
+            <CalculoField label="Total Lucro e Custo Global" value={fmt(totalLucroCustoMensal * 12)} />
           </div>
 
           <div className="space-y-3 border-t border-border pt-4">
@@ -622,6 +857,7 @@ export default function ContratosERP() {
               )}
             </div>
           )}
+          </div>
 
           <DialogFooter>
             <Button variant="outline" onClick={() => setModalOpen(false)}>Cancelar</Button>
@@ -682,6 +918,32 @@ function KpiCard({ icon, label, value, color }: { icon: React.ReactNode; label: 
       </div>
       <p className="relative z-10 text-[10px] font-semibold uppercase tracking-widest text-slate-400 mb-2">{label}</p>
       <p className="relative z-10 text-2xl font-bold text-slate-900 leading-none">{value}</p>
+    </div>
+  );
+}
+
+// Cabeçalho numerado das 6 seções do modal "Novo Contrato" — mesma
+// estrutura do mockup do Iury (SIS-2026-0325).
+function SectionHeader({ n, title }: { n: number; title: string }) {
+  return (
+    <div className="flex items-center gap-2 border-t border-border pt-4 first:border-t-0 first:pt-0">
+      <span className="flex h-5 w-5 items-center justify-center rounded-full bg-primary text-[11px] font-semibold text-primary-foreground">
+        {n}
+      </span>
+      <h4 className="text-sm font-semibold">{title}</h4>
+    </div>
+  );
+}
+
+// Campo somente-leitura calculado ao vivo da Planilha de Custo — usado no
+// modal de edição pra mostrar valor executado/custo indireto/lucro sem
+// permitir edição direta (a fonte é planilha_custo, não `contratos`).
+function CalculoField({ label, value, hint }: { label: string; value: string; hint?: string }) {
+  return (
+    <div className="flex flex-col gap-0.5">
+      <span className="text-[10px] uppercase tracking-wide text-muted-foreground">{label}</span>
+      <span className="font-mono text-xs font-medium">{value}</span>
+      {hint && <span className="text-[10px] italic text-muted-foreground">{hint}</span>}
     </div>
   );
 }
