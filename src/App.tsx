@@ -523,6 +523,8 @@ const App = () => (
             {/* Diretoria (16/09/2026): demissão e vaga do escritório / com setor. */}
             <Route path="diretoria/solicitacoes-demissao" element={<DiretoriaSolicitacoesDemissao />} />
             <Route path="diretoria/recrutamento" element={<DiretoriaRecrutamento />} />
+            {/* O MESMO dashboard do RH, com menu próprio na Diretoria (17/09/2026). */}
+            <Route path="diretoria/recrutamento-dashboard" element={<RecrutamentoDashboard />} />
             <Route path="orcamento" element={<Orcamento />} />
             {/* Suprimentos */}
             {/* Mais específica primeiro: o React Router casa na ordem declarada,

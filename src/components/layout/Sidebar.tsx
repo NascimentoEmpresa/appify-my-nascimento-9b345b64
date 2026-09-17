@@ -988,6 +988,8 @@ const diretoriaModule: ModuleDef = {
         // só aparecem aqui; aprovadas, seguem pro RH e pro Recrutamento.
         { label: "Solicitações de Demissão", to: "/app/diretoria/solicitacoes-demissao", icon: UserMinus },
         { label: "Gestão Recrutamento", to: "/app/diretoria/recrutamento", icon: Users2 },
+        // O mesmo Dashboard de Recrutamento do RH, com menu próprio (17/09/2026).
+        { label: "Dashboard de Recrutamento", to: "/app/diretoria/recrutamento-dashboard", icon: BarChart3 },
       ],
     },
   ],
