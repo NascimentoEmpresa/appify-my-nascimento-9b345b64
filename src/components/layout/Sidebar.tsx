@@ -487,7 +487,9 @@ const rhModule: ModuleDef = {
         { label: "Gestão de Férias", to: "/app/rh/ferias", icon: CalendarRange },
         { label: "Solicitações de Demissão", to: "/app/rh/solicitacoes-demissao", icon: UserMinus },
         { label: "Conferência de Ponto", to: "/app/rh/conferencia-ponto", icon: ClipboardCheck },
-        { label: "Conferência de Ponto — Painel", to: "/app/rh/conferencia-ponto/painel", icon: BarChart3 },
+        // Sem o "— Painel" no rótulo (pedido do Pablo, 17/09/2026): só o título;
+        // o ícone de gráfico é o que distingue do item de cima.
+        { label: "Conferência de Ponto", to: "/app/rh/conferencia-ponto/painel", icon: BarChart3 },
         // Uma só, desde 02/09/2026: a etapa do RH é ALTERAR NA SENIOR. A
         // aprovação do administrativo, que era o segundo item aqui, foi para o
         // analista junto com a de contrato. A rota
@@ -901,7 +903,8 @@ const operacionalModule: ModuleDef = {
         // Acompanhamento, não decisão (02/09/2026): quem aprova é o analista,
         // em Licitações › Analistas Validações. O rótulo diz isso para a
         // pessoa não abrir a tela procurando um botão que saiu.
-        { label: "Gestão Recrutamento — Acompanhar", to: "/app/operacional/recrutamento", icon: UserCog },
+        // Sem o "— Acompanhar" (pedido do Pablo, 17/09/2026): só o título.
+        { label: "Gestão Recrutamento", to: "/app/operacional/recrutamento", icon: UserCog },
       ],
     },
     {

@@ -821,7 +821,7 @@ function Bloco({ titulo, itens }: { titulo: string; itens: [string, string][] })
       <dl className="grid gap-x-4 gap-y-2 sm:grid-cols-2">
         {itens.map(([rotulo, valor]) => (
           <div key={rotulo} className="min-w-0">
-            <dt className="text-xs uppercase tracking-wide text-muted-foreground">{rotulo}</dt>
+            <dt className="text-[13px] font-bold uppercase tracking-wide text-slate-700">{rotulo}</dt>
             <dd className="break-words">{valor || "—"}</dd>
           </div>
         ))}

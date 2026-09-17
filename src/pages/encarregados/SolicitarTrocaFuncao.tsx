@@ -358,7 +358,7 @@ export default function SolicitarTrocaFuncao() {
 function Campo({ rotulo, valor }: { rotulo: string; valor: string }) {
   return (
     <div>
-      <p className="text-xs uppercase tracking-wide text-muted-foreground">{rotulo}</p>
+      <p className="text-[13px] font-bold uppercase tracking-wide text-slate-700">{rotulo}</p>
       <p className="text-sm font-medium">{valor || "—"}</p>
     </div>
   );

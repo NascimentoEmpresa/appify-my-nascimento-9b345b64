@@ -7,7 +7,7 @@ import {
 } from "@/components/ui/command";
 import { Check, ChevronsUpDown, Loader2, Search, UserRound } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { nomeContratoDe } from "@/lib/rh/colaboradoresUtils";
+import { dataParaIso, nomeContratoDe } from "@/lib/rh/colaboradoresUtils";
 
 const sb = supabase as any;
 
@@ -69,7 +69,8 @@ export function montarEmpregadoEscolhido(e: Record<string, any>): EmpregadoEscol
     contrato: nomeContratoDe(e),
     descricaoLocal: texto(e["Descrição do Local"]),
     escala: primeiroCampo(e, "Escala", "Escala de Trabalho"),
-    admissao: texto(e["Admissão"]) || null,
+    // Já em ISO: vai direto pra coluna `date` (Demissão e Mudança de Função).
+    admissao: dataParaIso(e["Admissão"]),
     email: primeiroCampo(e, "email", "E-mail", "Email"),
     telefone: primeiroCampo(e, "Telefone", "Celular", "Fone"),
   };
