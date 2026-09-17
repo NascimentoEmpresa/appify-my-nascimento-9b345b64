@@ -17,6 +17,7 @@ import {
   podeVagaAdministrativa, statusInicialVaga,
 } from "@/lib/recrutamento/vagaRegras";
 import { maskFone } from "@/lib/telefone";
+import { dataParaIso } from "@/lib/rh/colaboradoresUtils";
 import { solicitacaoEmAberto, TITULO_DUPLICIDADE, type SolicitacaoEmAberto } from "@/lib/solicitacoes/duplicidade";
 import { buscarCustoDoPosto, insalubridadeDoCusto, beneficiosDoCusto, notaDoCusto, AVISO_SEM_POSTO, type CustoPosto } from "@/lib/recrutamento/custoPosto";
 import { VinculoCatalogoVaga, type ListasCatalogo } from "@/components/recrutamento/VinculoCatalogoVaga";
@@ -88,10 +89,6 @@ function PrazoAviso({ prazo }: { prazo: ReturnType<typeof avaliarPrazo> }) {
   );
 }
 
-function brToISO(d?: string): string | null {
-  const m = String(d ?? "").match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
-  return m ? `${m[3]}-${m[2]}-${m[1]}` : null;
-}
 function addDaysISO(iso: string, days: number): string {
   const dt = new Date(iso + "T12:00:00");
   dt.setDate(dt.getDate() + days);
@@ -716,7 +713,7 @@ export default function MinhasSolicitacoes({ abrir, base = "encarregados" }: { a
       solicitante_nome: displayName || user?.email || "", solicitante_email: user?.email ?? "",
       colaborador_id: ferias.colaborador_id, colaborador_nome: ferias.colaborador_nome, colaborador_cpf: ferias.colaborador_cpf,
       colaborador_cargo: ferias.colaborador_cargo, colaborador_filial: ferias.colaborador_filial,
-      colaborador_admissao: brToISO(ferias.colaborador_admissao),
+      colaborador_admissao: dataParaIso(ferias.colaborador_admissao),
       data_saida: ferias.data_saida, data_retorno: addDaysISO(ferias.data_saida, dias),
       dias_ferias: dias, dias_vendidos: vend, observacoes: ferias.observacoes.trim() || null, status: "Pendente",
       excecao,
