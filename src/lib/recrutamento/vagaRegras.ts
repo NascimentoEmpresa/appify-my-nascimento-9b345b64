@@ -238,14 +238,22 @@ export function filtrarAdministrativas<T extends { administrativa?: boolean | nu
 
 // ── Diretoria (16/09/2026) ──────────────────────────────────────────────
 /**
- * Vaga administrativa pro FLUXO = flag "administrativa" OU setor informado.
- * Nasce em "Pendente Diretoria", e só a Diretoria (quem tem o setor marcado
- * em Acesso por Usuário) vê e aprova; aprovada, cai em "Pendente
- * Recrutamento" como qualquer outra. Mesma regra da Mudança de Função e da
- * Demissão. O analista (Licitações) e o Operacional não veem essas.
+ * Vaga administrativa pro FLUXO = SÓ a flag "administrativa" (a caixa "Vaga é
+ * administrativa?"). Nasce em "Pendente Diretoria", e só a Diretoria (quem
+ * tem o setor marcado em Acesso por Usuário) vê e aprova; aprovada, cai em
+ * "Pendente Recrutamento" como qualquer outra. O analista (Licitações) e o
+ * Operacional não veem essas.
+ *
+ * 17/09/2026: o SETOR deixou de mandar pra Diretoria. Entre 16 e 17/09 valia
+ * "administrativa OU setor", e encarregado de contrato preenchia "Setor:
+ * Operacional" numa vaga de servente da UFRGS — e a vaga ia parar na
+ * Diretoria (#198, #210). O setor continua gravado (é o setor de quem a
+ * Diretoria aprova, só faz sentido na administrativa); quem decide a fila é
+ * a caixa. O banco repete a regra (mig 184: sem a flag, nasce Pendente
+ * Analista mesmo que o front antigo mande Diretoria).
  */
 export const ehVagaAdministrativa = (v: { administrativa?: boolean | null; setor?: string | null }): boolean =>
-  !!v.administrativa || !!String(v.setor ?? "").trim();
+  !!v.administrativa;
 
 export const STATUS_VAGA_DIRETORIA = "Pendente Diretoria";
 
