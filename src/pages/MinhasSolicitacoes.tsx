@@ -944,6 +944,12 @@ export default function MinhasSolicitacoes({ abrir, base = "encarregados" }: { a
                 tela no menu do RH. Mesmo padrão de Demissão e Materiais: leva
                 para a tela do módulo, que tem o fluxo próprio (cargo atual,
                 cargo novo, ASO do SST). */}
+            {/* Orientações Jurídicas (17/09/2026): perguntar ao Jurídico e ver
+                todas as respostas + as próprias — cada módulo tem a sua porta
+                (rotas.orientacoes). */}
+            <button onClick={() => nav(rotas.orientacoes)} className="ini-sol-create">
+              <span className="icon">⚖️</span><span>Orientações Jurídicas</span>
+            </button>
             <button onClick={() => nav(rotas.trocaFuncao)} className="ini-sol-create">
               <span className="icon">🔀</span><span>Mudança de Função</span>
             </button>

@@ -22,6 +22,8 @@ export interface RotasSolicitacoes {
   materiais: string;
   chamadoNovo: string;
   meusPedidos: string;
+  /** Orientações Jurídicas (biblioteca + minhas perguntas) — cada módulo tem a sua porta (17/09/2026). */
+  orientacoes: string;
 }
 
 export const rotasSolicitacoes = (base: BaseSolicitacoes = "encarregados"): RotasSolicitacoes =>
@@ -39,6 +41,7 @@ export const rotasSolicitacoes = (base: BaseSolicitacoes = "encarregados"): Rota
         materiais: "/app/encarregados/solicitar-materiais",
         chamadoNovo: "/app/central-servicos/chamados/novo",
         meusPedidos: "/app/encarregados/meus-pedidos",
+        orientacoes: "/app/central-servicos/orientacoes-juridicas",
       }
     : {
         base,
@@ -51,6 +54,7 @@ export const rotasSolicitacoes = (base: BaseSolicitacoes = "encarregados"): Rota
         materiais: "/app/encarregados/solicitar-materiais",
         chamadoNovo: "/app/encarregados/chamados/novo",
         meusPedidos: "/app/encarregados/meus-pedidos",
+        orientacoes: "/app/encarregados/orientacoes-juridicas",
       };
 
 /** Descobre a base pela URL atual — pra componente compartilhado que não recebe prop. */

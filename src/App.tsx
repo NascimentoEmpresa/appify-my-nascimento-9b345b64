@@ -321,6 +321,8 @@ const App = () => (
             <Route path="encarregados/solicitar-vaga" element={<MinhasSolicitacoes abrir="vaga" />} />
             <Route path="encarregados/solicitar-ferias" element={<MinhasSolicitacoes abrir="ferias" />} />
             <Route path="encarregados/advertencia" element={<MinhasSolicitacoes abrir="advertencia" />} />
+            {/* Mesma tela de Orientações Jurídicas da Central de Serviços, ancorada aqui (17/09/2026): menu próprio (`encarregados_orientacoes`), a biblioteca e as perguntas são as mesmas. */}
+            <Route path="encarregados/orientacoes-juridicas" element={<OrientacoesJuridicas />} />
             {/* Demissão tem tela própria: são 4 passos e documentos obrigatórios,
                 que não cabem no modal de Minhas Solicitações. */}
             <Route path="encarregados/solicitar-demissao" element={<SolicitarDemissao />} />
