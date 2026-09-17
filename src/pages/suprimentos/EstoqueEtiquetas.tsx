@@ -31,7 +31,7 @@ import { motivoBloqueioEntrada } from "@/lib/suprimentos/entradaEstoque";
 import {
   PackagePlus, Search, AlertTriangle, Boxes, Undo2, Trash2, ShieldAlert, Plus, X, Tag,
   ClipboardCheck, History, ArrowDownToLine, ArrowUpFromLine, RotateCcw, Check, Coins,
-  PackageOpen, ClipboardList, Pencil, ShieldCheck,
+  PackageOpen, ClipboardList, Pencil, ShieldCheck, MapPin,
   type LucideIcon,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -89,7 +89,9 @@ export default function EstoqueEtiquetas() {
       if (!t) return true;
       // O base entra na busca: "JAQUETA" ou o código antigo dela (0001001)
       // tem de achar todos os tamanhos, que agora são linhas próprias.
-      return `${l.codigo_item ?? ""} ${l.material} ${l.almoxarifado} ${l.tamanhos.join(" ")} ${l.base?.codigo ?? ""}`
+      // A localização entra na busca pelo caminho inverso do normal: quem
+      // está na frente da estante "F-04" quer saber o que deveria estar ali.
+      return `${l.codigo_item ?? ""} ${l.material} ${l.almoxarifado} ${l.tamanhos.join(" ")} ${l.base?.codigo ?? ""} ${l.localizacao ?? ""}`
         .toLowerCase().includes(t);
     });
   }, [linhas, busca, tipo]);
@@ -189,7 +191,7 @@ export default function EstoqueEtiquetas() {
         <div className="relative min-w-[260px] flex-1 max-w-md">
           <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
           <Input value={busca} onChange={(e) => setBusca(e.target.value)}
-                 placeholder="Buscar material, almoxarifado, tamanho…" className="pl-9" />
+                 placeholder="Buscar material, almoxarifado, tamanho, localização…" className="pl-9" />
         </div>
 
         {/* O contador em cada opção evita o filtro que zera a tela sem
@@ -266,7 +268,18 @@ export default function EstoqueEtiquetas() {
                           {LABEL_TIPO_ITEM[l.tipo_material as TipoItem] ?? l.tipo_material}
                         </Badge>
                       </TableCell>
-                      <TableCell className="text-muted-foreground">{l.almoxarifado}</TableCell>
+                      {/* A prateleira fica sob o almoxarifado, que é o outro
+                          "onde está" da linha — e some quando não foi
+                          informada, para não encher a coluna de travessão. */}
+                      <TableCell className="text-muted-foreground">
+                        {l.almoxarifado}
+                        {l.localizacao && (
+                          <span className="mt-0.5 flex items-center gap-1 text-[11px]">
+                            <MapPin className="h-3 w-3 shrink-0" />
+                            <span className="font-mono">{l.localizacao}</span>
+                          </span>
+                        )}
+                      </TableCell>
                       <TableCell>
                         <div className="flex flex-wrap gap-1">
                           {l.tamanhos.length === 0
@@ -418,6 +431,7 @@ function FormEditarMaterial({ linha, empresaId, onFechar }: {
   const [minimo, setMinimo] = useState(String(linha.estoque_minimo));
   const [fornecedor, setFornecedor] = useState(linha.fornecedor_id ?? "");
   const [observacoes, setObservacoes] = useState(linha.observacoes ?? "");
+  const [localizacao, setLocalizacao] = useState(linha.localizacao ?? "");
   const [lotes, setLotes] = useState<Record<string, LoteEditado>>({});
   const [motivo, setMotivo] = useState("");
 
@@ -441,6 +455,10 @@ function FormEditarMaterial({ linha, empresaId, onFechar }: {
     if ((fornecedor || null) !== (linha.fornecedor_id ?? null)) e.fornecedor_id = fornecedor || null;
     const obs = observacoes.trim() || null;
     if (obs !== (linha.observacoes ?? null)) e.observacoes = obs;
+    // Apagar o campo apaga a prateleira: aqui a chave vazia é intencional
+    // (na entrada ela preserva), e é como se diz "não tem lugar fixo".
+    const loc = localizacao.trim() || null;
+    if (loc !== (linha.localizacao ?? null)) e.localizacao = loc;
 
     const ls: EdicaoLote[] = [];
     for (const t of livres) {
@@ -458,7 +476,8 @@ function FormEditarMaterial({ linha, empresaId, onFechar }: {
     }
     if (ls.length) e.lotes = ls;
     return e;
-  }, [podeRenomear, nome, tipoItem, valor, precoValidoAte, minimo, fornecedor, observacoes, lotes, livres, linha]);
+  }, [podeRenomear, nome, tipoItem, valor, precoValidoAte, minimo, fornecedor, observacoes,
+      localizacao, lotes, livres, linha]);
 
   const nadaMudou = Object.keys(edicao).length === 0;
 
@@ -552,6 +571,15 @@ function FormEditarMaterial({ linha, empresaId, onFechar }: {
             <Label>Observações</Label>
             <Input value={observacoes} onChange={(e) => setObservacoes(e.target.value)} />
           </div>
+        </div>
+
+        <div className="sm:w-72">
+          <Label>Localização</Label>
+          <Input value={localizacao} onChange={(e) => setLocalizacao(e.target.value)}
+                 placeholder="Diga a localização física do item" />
+          <p className="mt-1 text-[11px] text-muted-foreground">
+            Prateleira deste código. Apagar o campo tira o endereço do item.
+          </p>
         </div>
 
         <div>
@@ -873,6 +901,11 @@ function DialogEntrada({ aberto, onFechar, empresaId, podeAlterar, materialInici
   const [precoValidoAte, setPrecoValidoAte] = useState("");
   const [minimo, setMinimo] = useState("");
   const [fornecedor, setFornecedor] = useState("");
+  // Prateleira onde o material vai ficar (pedido de 17/09/2026). Texto livre
+  // de propósito: no sistema antigo os endereços são "F-04-08", "D4.10" e "A3",
+  // e cada almoxarifado numera do seu jeito — uma lista fechada obrigaria a
+  // cadastrar estante antes de dar entrada, o que trava quem está recebendo.
+  const [localizacao, setLocalizacao] = useState("");
   const [blocos, setBlocos] = useState<BlocoUnidade[]>([{ ...BLOCO_VAZIO }]);
   const [novoTipo, setNovoTipo] = useState("");
   // "Não é tamanho, é material próprio" — a resposta da pessoa à sugestão
@@ -966,7 +999,7 @@ function DialogEntrada({ aberto, onFechar, empresaId, podeAlterar, materialInici
 
   const limpar = () => {
     setAlmox(""); setMaterial(""); setBuscaMat(""); setValor(""); setMinimo("");
-    setPrecoValidoAte(""); setFornecedor(""); setBlocos([{ ...BLOCO_VAZIO }]);
+    setPrecoValidoAte(""); setFornecedor(""); setLocalizacao(""); setBlocos([{ ...BLOCO_VAZIO }]);
     setNovoTipo(""); setForcarNovo(false);
   };
 
@@ -1019,6 +1052,7 @@ function DialogEntrada({ aberto, onFechar, empresaId, podeAlterar, materialInici
       novo_material: material ? null : { nome: novoMaterial!, tipo: novoTipo, forcar: forcarNovo },
       valor_unitario: Number(valor || 0), estoque_minimo: Number(minimo || 0),
       preco_valido_ate: precoValidoAte || null,
+      localizacao: localizacao.trim() || null,
       fornecedor_id: fornecedor || null, remessas,
     });
     limpar();
@@ -1222,6 +1256,23 @@ function DialogEntrada({ aberto, onFechar, empresaId, podeAlterar, materialInici
             </div>
           </div>
 
+          {/* Onde o material fica na prateleira. Pedido de 17/09/2026: a
+              coluna existia desde a carga do sistema antigo (endereços como
+              "F-04-08") e nunca teve onde ser digitada, então quem procurava
+              na estante não tinha a informação no sistema. É do item/código,
+              não da remessa — ver 20260930000174. */}
+          <div className="sm:w-72">
+            <Label>Localização</Label>
+            <Input value={localizacao} onChange={(e) => setLocalizacao(e.target.value)}
+                   placeholder="Diga a localização física do item" />
+            {/* Dito na tela porque é o que o banco faz: em branco, o COALESCE
+                da entrada preserva o endereço que a ficha já tinha — senão
+                toda entrada feita sem preencher apagaria a prateleira. */}
+            <p className="mt-1 text-[11px] text-muted-foreground">
+              Ex.: F-04-08, D4.10, A3. Em branco, mantém a localização que o item já tem.
+            </p>
+          </div>
+
           {/* Um bloco por tamanho recebido. */}
           <div className="space-y-3">
             {blocos.map((b, i) => (
@@ -1289,7 +1340,7 @@ function DialogEntrada({ aberto, onFechar, empresaId, podeAlterar, materialInici
             </Button>
             <p className="text-[11px] text-muted-foreground">
               Cada tamanho é um item com código próprio, e é ele que aparece na lista do estoque.
-              Valor, validade do preço e estoque mínimo acima valem para cada um deles.
+              Valor, validade do preço, estoque mínimo e localização acima valem para cada um deles.
             </p>
           </div>
         </div>
@@ -1690,6 +1741,13 @@ function DialogDetalhe({ linha, onFechar }: { linha: LinhaEstoque | null; onFech
                 <Badge variant="outline" className="font-mono text-[11px]">{linha.codigo_item}</Badge>
               )}
               <Badge variant="outline">{linha?.disponivel} disponível(is)</Badge>
+              {/* Onde pegar. Fica no título porque é a primeira pergunta de
+                  quem abre o item com uma lista de separação na mão. */}
+              {linha?.localizacao && (
+                <Badge variant="secondary" className="gap-1 font-mono text-[11px]">
+                  <MapPin className="h-3 w-3" /> {linha.localizacao}
+                </Badge>
+              )}
               {(linha?.consumido ?? 0) > 0 && (
                 <Badge variant="secondary">{linha?.consumido} já usada(s)</Badge>
               )}

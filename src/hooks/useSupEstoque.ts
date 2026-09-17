@@ -72,6 +72,13 @@ export interface LinhaEstoque {
   /** Só para a edição abrir preenchida. */
   fornecedor_id: string | null;
   observacoes: string | null;
+  /**
+   * Endereço físico na prateleira deste código ("F-04-08", "A3", "12").
+   * Texto livre, informado na entrada. É da ficha (almoxarifado, item), não do
+   * lote: cada tamanho é um item com código próprio, e é o código que a pessoa
+   * procura na prateleira.
+   */
+  localizacao: string | null;
 }
 
 /**
@@ -222,7 +229,7 @@ export function useEstoqueLista(empresaId: string | null) {
     queryFn: async (): Promise<LinhaEstoque[]> => {
       const { data, error } = await sb
         .from("sup_estoque_item")
-        .select(`id, valor_unitario, estoque_minimo, preco_valido_ate, fornecedor_id, observacoes,
+        .select(`id, valor_unitario, estoque_minimo, preco_valido_ate, fornecedor_id, observacoes, localizacao,
                  sup_item:sup_item_id (id, nome, tipo, codigo, tamanho, pai:item_pai_id (id, nome, codigo)),
                  almoxarifado:almoxarifado_id (nome),
                  sup_estoque_tag (codigo, tamanho, tipo, usado, quantidade_massa, quantidade_original_massa, valor_unitario,
@@ -279,6 +286,7 @@ export function useEstoqueLista(empresaId: string | null) {
           estoque_minimo: Number(r.estoque_minimo ?? 0),
           fornecedor_id: r.fornecedor_id ?? null,
           observacoes: r.observacoes ?? null,
+          localizacao: r.localizacao ?? null,
           disponivel, reservado, fisico, consumido,
           etiquetas: tags.length,
           // Item de tamanho É aquele tamanho. A lista dos lotes só sobra para
@@ -672,6 +680,12 @@ export function useEntradaPorQuantidade() {
       fornecedor_id?: string | null;
       validade?: string | null; observacao?: string | null;
       preco_valido_ate?: string | null;
+      /**
+       * Prateleira onde o material fica. Vale para cada item que a entrada
+       * criar (um por tamanho), como valor e mínimo: é a mesma estante.
+       * Vazio não apaga o endereço que a ficha já tinha (20260930000174).
+       */
+      localizacao?: string | null;
       remessas: RemessaEntrada[];
     }) => {
       let supItemId = p.sup_item_id;
@@ -712,6 +726,7 @@ export function useEntradaPorQuantidade() {
             observacao: p.observacao ?? null,
             ca_numero: r.ca_numero ?? null,
             ca_validade: r.ca_validade ?? null,
+            localizacao: p.localizacao ?? null,
           },
         });
         if (error) {
@@ -1229,6 +1244,8 @@ export interface EdicaoMaterial {
   estoque_minimo?: number;
   fornecedor_id?: string | null;
   observacoes?: string | null;
+  /** Prateleira. Chave presente e vazia limpa o endereço (20260930000174). */
+  localizacao?: string | null;
   lotes?: EdicaoLote[];
 }
 
