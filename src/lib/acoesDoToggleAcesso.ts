@@ -21,7 +21,8 @@ export type AppAcao =
   | "aprovar"
   | "exportar"
   | "executar_ia"
-  | "alterar_dre";
+  | "alterar_dre"
+  | "responder";
 
 /** O pacote de trabalho que ligar uma tela concede, quando não há exceção. */
 export const ACOES_DO_TOGGLE_PADRAO: readonly AppAcao[] = [
@@ -52,6 +53,9 @@ export const ACOES_DO_TOGGLE_PADRAO: readonly AppAcao[] = [
  */
 export const ACOES_FORA_DO_TOGGLE: Readonly<Record<string, readonly AppAcao[]>> = {
   operacional_diarias: ["aprovar"],
+  // Parecer Jurídico (17/09/2026): responder dúvida é decisão do Jurídico,
+  // não vem de brinde com a tela — mas desligar a tela revoga junto.
+  duvidas: ["responder"],
   encarregados_diarias: ["aprovar"],
 };
 

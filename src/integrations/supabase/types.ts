@@ -18632,6 +18632,7 @@ export type Database = {
         | "exportar"
         | "executar_ia"
         | "alterar_dre"
+        | "responder"
       app_role:
         | "admin"
         | "controladoria"
@@ -19206,6 +19207,7 @@ export const Constants = {
         "exportar",
         "executar_ia",
         "alterar_dre",
+        "responder",
       ],
       app_role: [
         "admin",
