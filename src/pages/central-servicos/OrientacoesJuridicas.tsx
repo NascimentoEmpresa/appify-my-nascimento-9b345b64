@@ -2,21 +2,23 @@ import { useState, useEffect, useCallback } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
 import { useVinculoEmpregado } from "@/hooks/useVinculoEmpregado";
+import type { SupabaseClient } from "@supabase/supabase-js";
+import { FioDuvida } from "@/components/juridico/FioDuvida";
+import { CATEGORIAS_DUVIDA as CATEGORIAS, agruparComplementos, complementoPendente, type Complemento, type Duvida } from "@/lib/juridico/duvidas";
 
 // =====================================================================
 // CENTRAL DE SERVIÇOS — Orientações Jurídicas (biblioteca pública)
 // Todos veem perguntas + respostas (SEM o nome de quem perguntou) e podem
 // enviar novas. A pergunta passa por aprovação (Diretor Administrativo) e só
 // então o Jurídico responde (em Jurídico → Parecer Jurídico).
+// Respondida, quem perguntou AVALIA a resposta e pode PERGUNTAR MAIS no mesmo
+// fio (17/09/2026) — o fio aparece na biblioteca, sem o nome de quem perguntou.
 // =====================================================================
 
-interface Duvida {
-  id: number; created_at?: string; autor_id?: string;
-  titulo: string; pergunta: string; categoria?: string; status: string;
-  resposta?: string; respondido_em?: string; motivo_reprovacao?: string;
-}
 
-const CATEGORIAS = ["Trabalhista", "Contratos", "Processos", "Tributário", "Cível", "Administrativo", "Compliance", "LGPD", "Outros"];
+// JUR_DUVIDAS* não estão no types.ts gerado; mesmo padrão de comite-etica/db.ts.
+const db = supabase as unknown as SupabaseClient;
+
 const fmtDt = (s?: string) => { if (!s) return "—"; const d = new Date(s); return isNaN(+d) ? s : d.toLocaleDateString("pt-BR"); };
 const statusBadge = (s: string): { bg: string; c: string; label: string } => ({
   "Respondida": { bg: "#dcfce7", c: "#15803d", label: "Respondida" },
@@ -32,6 +34,8 @@ export default function OrientacoesJuridicas() {
   const autor = empregado?.nome || user?.user_metadata?.nome || user?.email || "Usuário";
 
   const [duvidas, setDuvidas] = useState<Duvida[]>([]);
+  // Fio de complementos por dúvida (17/09/2026) — ver lib/juridico/duvidas.ts.
+  const [fios, setFios] = useState<Map<number, Complemento[]>>(new Map());
   const [loading, setLoading] = useState(true);
   const [busca, setBusca] = useState("");
   const [fCat, setFCat] = useState("");
@@ -44,14 +48,18 @@ export default function OrientacoesJuridicas() {
 
   const load = useCallback(async () => {
     setLoading(true);
-    const { data } = await (supabase as any).from("JUR_DUVIDAS").select("id, created_at, autor_id, titulo, pergunta, categoria, status, resposta, respondido_em, motivo_reprovacao").order("created_at", { ascending: false }).limit(1000);
+    const [{ data }, c] = await Promise.all([
+      db.from("JUR_DUVIDAS").select("id, created_at, autor_id, titulo, pergunta, categoria, status, resposta, respondido_em, motivo_reprovacao, avaliacao, avaliacao_comentario, avaliado_em").order("created_at", { ascending: false }).limit(1000),
+      db.from("JUR_DUVIDAS_COMPLEMENTOS").select("*").order("id", { ascending: false }).limit(1000),
+    ]);
+    setFios(agruparComplementos(c.data ?? []));
     setDuvidas(data ?? []); setLoading(false);
   }, []);
   useEffect(() => { load(); }, [load]);
 
   const enviar = async () => {
     if (!ask.titulo.trim() || !ask.pergunta.trim()) { toast("Preencha o assunto e a pergunta.", "err"); return; }
-    const { error } = await (supabase as any).from("JUR_DUVIDAS").insert({
+    const { error } = await db.from("JUR_DUVIDAS").insert({
       titulo: ask.titulo.trim(), pergunta: ask.pergunta.trim(), categoria: ask.categoria || null,
       autor_id: user?.id ?? null, autor_nome: autor, status: "Aberta",
     });
@@ -120,7 +128,7 @@ export default function OrientacoesJuridicas() {
             </div>
           ) : (
             <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-              {filtradas.map(d => { const sb = statusBadge(d.status); const respondida = d.status === "Respondida"; return (
+              {filtradas.map(d => { const respondida = d.status === "Respondida"; const sb = respondida && complementoPendente(fios.get(d.id) ?? []) ? { bg: "#ede9fe", c: "#7c3aed", label: "Complemento com o Jurídico" } : statusBadge(d.status); return (
                 <div key={d.id} style={{ background: "#fff", border: "1px solid #e2e8f0", borderRadius: 14, overflow: "hidden", boxShadow: "0 8px 24px rgba(15,23,42,.05)" }}>
                   <div style={{ padding: "14px 16px" }}>
                     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 10, flexWrap: "wrap" }}>
@@ -136,6 +144,13 @@ export default function OrientacoesJuridicas() {
                         <div style={{ fontSize: 11, fontWeight: 800, color: "#15803d", textTransform: "uppercase", letterSpacing: ".4px", marginBottom: 4 }}>✅ Resposta do Jurídico</div>
                         <div style={{ fontSize: 13, color: "#0f172a", whiteSpace: "pre-wrap" }}>{d.resposta}</div>
                       </div>
+                    )}
+                    {/* Quem perguntou avalia e pode perguntar mais; o fio aparece
+                        pra todo mundo na biblioteca, sem o nome de quem perguntou
+                        (17/09/2026). */}
+                    {respondida && (
+                      <FioDuvida duvida={d} fio={fios.get(d.id) ?? []} userId={user?.id} autorNome={autor}
+                        podeResponder={false} mostrarNomes={false} onMudou={load} toast={toast} />
                     )}
                     {aba === "minhas" && d.status === "Reprovada" && d.motivo_reprovacao && (
                       <div style={{ marginTop: 12, background: "#fef2f2", border: "1px solid #fecaca", borderRadius: 11, padding: "9px 12px", fontSize: 12.5, color: "#b91c1c" }}>Reprovada: {d.motivo_reprovacao}</div>
