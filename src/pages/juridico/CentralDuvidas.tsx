@@ -6,6 +6,7 @@ import { usePermissoes } from "@/context/PermissoesContext";
 import { useScreenAccess } from "@/hooks/useScreenAccess";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { FioDuvida } from "@/components/juridico/FioDuvida";
+import { DashboardDuvidas } from "@/components/juridico/DashboardDuvidas";
 import { CATEGORIAS_DUVIDA as CATEGORIAS, agruparComplementos, complementoPendente, type Complemento, type Duvida } from "@/lib/juridico/duvidas";
 
 // =====================================================================
@@ -48,6 +49,10 @@ export default function CentralDuvidas() {
   // Quem responde (17/09/2026, mig 173): a ação "responder" do menu, marcada
   // no Acesso por Usuário — antes era setor JURIDICO / JUR_DUVIDAS_RESPONSAVEIS.
   const { data: temResponder } = useScreenAccess("duvidas", "responder");
+  // Dashboard de avaliações e categorias (17/09/2026, mig 176): menu fantasma
+  // `duvidas_dashboard`, marcado no Acesso por Usuário — só quem tem vê a aba.
+  const { data: temDashboard } = useScreenAccess("duvidas_dashboard", "visualizar");
+  const [visao, setVisao] = useState<"lista" | "dashboard">("lista");
 
   const [duvidas, setDuvidas] = useState<Duvida[]>([]);
   // Fio de complementos por dúvida (17/09/2026) — ver lib/juridico/duvidas.ts.
@@ -166,11 +171,17 @@ export default function CentralDuvidas() {
           <div style={{ fontSize: 12.5, color: "#64748b", marginTop: 2 }}>Aprovação das dúvidas e respostas do Jurídico. Respondidas viram a biblioteca pública (Central de Serviços).</div>
         </div>
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+          {temDashboard && (
+            <button className="jd-btn" onClick={() => setVisao(v => v === "lista" ? "dashboard" : "lista")} style={{ background: visao === "dashboard" ? "#0f3171" : "#fff", color: visao === "dashboard" ? "#fff" : "#0f3171", border: "1px solid #0f3171" }}>
+              {visao === "dashboard" ? "☰ Lista" : "📊 Dashboard"}
+            </button>
+          )}
           <button className="jd-btn" onClick={() => { setAsk({ ...ASK_RESET }); setAskModal(true); }} style={{ background: "#0f3171", color: "#fff", boxShadow: "0 10px 22px rgba(15,49,113,.18)" }}>+ Nova dúvida</button>
         </div>
       </div>
 
       <div style={{ flex: 1, overflowY: "auto", padding: "18px 24px 28px" }}>
+        {visao === "dashboard" && temDashboard ? <DashboardDuvidas duvidas={duvidas} /> : (<>
         <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginBottom: 14 }}>
           {card("Aguardando aprovação", nAberta, nAberta > 0 ? "#ea580c" : "#16a34a")}
           {card("Aguardando resposta", nAprovada, "#7c3aed")}
@@ -249,6 +260,7 @@ export default function CentralDuvidas() {
               ); })}
             </div>
           )}
+        </>)}
       </div>
 
       {/* Nova dúvida */}

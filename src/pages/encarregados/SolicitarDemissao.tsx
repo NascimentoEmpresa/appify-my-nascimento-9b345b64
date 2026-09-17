@@ -29,6 +29,7 @@ import {
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { semCodigoFilial } from "@/lib/rh/colaboradoresUtils";
+import { chaveContrato } from "@/lib/recrutamento/vagaRegras";
 import { usePostos } from "@/hooks/useSupCatalogo";
 import { solicitacaoEmAberto, type SolicitacaoEmAberto } from "@/lib/solicitacoes/duplicidade";
 
@@ -194,12 +195,14 @@ export default function SolicitarDemissao() {
   // (sem o código — CONTRATOS."NOME CONTRATO" não leva código). Apontar para
   // um id que não corresponde ao nome exibido é pior do que não apontar.
   const contratoDoColaborador = useMemo(() => {
-    const alvo = semCodigoFilial(nomeContrato).toUpperCase();
+    // Comparação normalizada (17/09/2026): o Senior abrevia ("LIMP") e troca
+    // "/" por "." — a exata deixava o id vazio e a lista de postos em branco.
+    const alvo = chaveContrato(semCodigoFilial(nomeContrato));
     const filial = colaborador?.filial ?? "";
     if (!alvo || !filial) return null;
     return contratos.find(c =>
       String(c.Filial ?? "").trim() === filial
-      && String(c["NOME CONTRATO"] ?? "").trim().toUpperCase() === alvo) ?? null;
+      && chaveContrato(String(c["NOME CONTRATO"] ?? "")) === alvo) ?? null;
   }, [contratos, nomeContrato, colaborador?.filial]);
 
   // Posto: lista do catálogo de Suprimentos (contratos → sup_posto) do

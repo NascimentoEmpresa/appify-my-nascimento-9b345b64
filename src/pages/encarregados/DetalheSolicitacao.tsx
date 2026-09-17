@@ -114,6 +114,13 @@ const ROTULO: Record<string, string> = {
   periodo_inicio: "Início do período", periodo_fim: "Fim do período",
   dias: "Dias", observacao: "Observação", excecao: "Exceção",
   justificativa_excecao: "Justificativa da exceção",
+  // Advertência (17/09/2026): as colunas que saíam com o nome cru.
+  descricao_ocorrido: "Descrição do ocorrido", ja_advertencia_anterior: "Já teve advertência anterior",
+  detalhe_anterior: "Detalhe da anterior", advertencia_verbal_dada: "Advertência verbal já dada",
+  data_advertencia_verbal: "Data da advertência verbal", aprovado_por_nome: "Aprovado por",
+  parecer_juridico: "Parecer do Jurídico", resultado: "Resultado", concluido_por_nome: "Concluído por",
+  devolvido_por: "Devolvido por", devolvido_em: "Devolvido em", devolvido_motivo: "Motivo da devolução",
+  sem_vaga_motivo: "Exceção — sem vaga de substituição",
 };
 
 /** Colunas que não interessam a quem solicitou. */
@@ -263,11 +270,24 @@ export function DetalheSolicitacao({ tipo, id, titulo, status, onFechar, onRefaz
   })();
   const ocultas = tipo === "Advertência" ? new Set([...OCULTAS].filter(k => k !== "colaborador_cpf")) : OCULTAS;
 
-  // As colunas preenchidas, na ordem em que o formulário as pede.
+  // As colunas preenchidas, na ordem em que o formulário as pede — em três
+  // caixas contornadas (17/09/2026, pedido do Pablo): quem é o colaborador,
+  // o que foi pedido e o que já foi decidido.
   const linhas = Object.entries(fichaExibida ?? {})
     .filter(([k, v]) => !ocultas.has(k) && v !== null && v !== "" && v !== undefined && !Array.isArray(v))
-    .map(([k, v]) => [ROTULO[k] ?? k.replace(/_/g, " "), typeof v === "boolean" ? (v ? "Sim" : "Não")
-      : /^\d{4}-\d{2}-\d{2}/.test(String(v)) ? fmtData(String(v)) : String(v)] as [string, string]);
+    // "Filial / contrato" repete "Contrato" quando os dois estão preenchidos.
+    .filter(([k]) => !(k === "colaborador_filial" && fichaExibida?.contrato))
+    .map(([k, v]) => [k, ROTULO[k] ?? k.replace(/_/g, " "), typeof v === "boolean" ? (v ? "Sim" : "Não")
+      : /^\d{4}-\d{2}-\d{2}/.test(String(v)) ? fmtData(String(v)) : String(v)] as [string, string, string]);
+  const ehColaborador = (k: string) => k.startsWith("colaborador_") || k === "tempo_de_empresa" || k === "contrato" || k === "nome_substituido"
+    || ["cargo_atual", "cargo_novo", "local", "posto", "filial", "horario_atual", "horario_novo"].includes(k);
+  const ehDecisao = (k: string) => /^(aprovado_|aprovador_|operacional_|rh_|sst_|devolvido_|concluido_|analista_)/.test(k)
+    || ["motivo_reprovacao", "parecer_juridico", "resultado", "sem_vaga_motivo", "refeita_em"].includes(k);
+  const grupos: { titulo: string; icone: string; itens: [string, string, string][] }[] = [
+    { titulo: "Colaborador", icone: "👤", itens: linhas.filter(([k]) => ehColaborador(k)) },
+    { titulo: "Solicitação", icone: "📝", itens: linhas.filter(([k]) => !ehColaborador(k) && !ehDecisao(k)) },
+    { titulo: "Decisões", icone: "✅", itens: linhas.filter(([k]) => ehDecisao(k)) },
+  ].filter(g => g.itens.length > 0);
 
   return (
     <div className="ini-modal-bg" onClick={onFechar}>
@@ -317,14 +337,21 @@ export function DetalheSolicitacao({ tipo, id, titulo, status, onFechar, onRefaz
             ) : linhas.length === 0 ? (
               <p style={{ fontSize: 13.5, color: "#64748b" }}>Sem informações adicionais.</p>
             ) : (
-              <dl style={{ margin: 0, display: "flex", flexDirection: "column", gap: 9 }}>
-                {linhas.map(([rot, val]) => (
-                  <div key={rot}>
-                    <dt style={{ fontSize: 13.5, color: "#64748b", fontWeight: 700, textTransform: "uppercase", letterSpacing: ".5px" }}>{rot}</dt>
-                    <dd style={{ margin: 0, fontSize: 13.5, color: "#0f172a", whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>{val}</dd>
-                  </div>
+              <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+                {grupos.map(g => (
+                  <section key={g.titulo} style={{ border: "2px solid #0f172a", borderRadius: 14, padding: "12px 14px 10px", background: "#fff" }}>
+                    <h5 style={{ margin: "0 0 10px", fontSize: 13, fontWeight: 900, color: "#0f172a", textTransform: "uppercase", letterSpacing: ".5px" }}>{g.icone} {g.titulo}</h5>
+                    <dl style={{ margin: 0, display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(180px, 1fr))", gap: "10px 16px" }}>
+                      {g.itens.map(([k, rot, val]) => (
+                        <div key={k} style={val.length > 80 ? { gridColumn: "1 / -1" } : undefined}>
+                          <dt style={{ fontSize: 12, color: "#475569", fontWeight: 800, textTransform: "uppercase", letterSpacing: ".5px" }}>{rot}</dt>
+                          <dd style={{ margin: 0, fontSize: 14, color: "#0f172a", whiteSpace: "pre-wrap", overflowWrap: "anywhere", fontWeight: 600 }}>{val}</dd>
+                        </div>
+                      ))}
+                    </dl>
+                  </section>
                 ))}
-              </dl>
+              </div>
             )}
             {/* Anexos da advertência (17/09/2026): quem pediu anexa quando quiser — opcional. */}
             {tipo === "Advertência" && <AnexosSolicitacao modulo="advertencia" entidadeId={id} podeAnexar titulo="Anexos da solicitação" />}
@@ -337,8 +364,8 @@ export function DetalheSolicitacao({ tipo, id, titulo, status, onFechar, onRefaz
                 anexos, foto colada com Ctrl+V e cópia com Ctrl+C. Só a Vaga
                 continua com o fio próprio (WA_MENSAGENS_RECRUTAMENTO). */}
             {FIO[tipo].modulo ? (
-              <div style={{ overflowY: "auto", minHeight: 0 }}>
-                <ConversaSolicitacao modulo={FIO[tipo].modulo as ModuloConversa} entidadeId={id}
+              <div style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
+                <ConversaSolicitacao modulo={FIO[tipo].modulo as ModuloConversa} entidadeId={id} preencher
                   aviso={tipo === "Férias"
                     ? "A mesma conversa que o RH lê na tela de Férias."
                     : tipo === "Demissão"
