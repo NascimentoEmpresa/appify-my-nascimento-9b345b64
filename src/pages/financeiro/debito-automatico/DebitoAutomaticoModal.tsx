@@ -112,6 +112,22 @@ export function DebitoAutomaticoModal({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, registroEditar?.id]);
 
+  // SIS-2026-0440: o reset acima roda em [open, registroEditar?.id], sem
+  // depender de `classificacoes` (de propósito, pra não resetar a escolha
+  // do usuário a cada refetch). Só que pra "Nota Recebida" isso criava uma
+  // corrida real: se a query de classificações ainda não tivesse resolvido
+  // no instante em que o modal abre, o auto-preenchimento de
+  // "RECEBIMENTO DE NOTA" achava lista vazia, travava `classificacaoId`
+  // em "" pra sempre — e como o campo é um <Input disabled> (não um
+  // Select), o usuário não tinha nenhum jeito de corrigir manualmente.
+  // Este efeito reconcilia assim que a lista chega, só se ainda estiver
+  // vazio (não sobrescreve edição nem escolha já feita).
+  useEffect(() => {
+    if (!open || registroEditar || tipoOrigem !== "nota_recebida" || classificacaoId) return;
+    const rec = classificacoes.find((c) => c.nome.toUpperCase() === "RECEBIMENTO DE NOTA");
+    if (rec) setClassificacaoId(rec.id);
+  }, [open, registroEditar, tipoOrigem, classificacaoId, classificacoes]);
+
   const titulo =
     tipoOrigem === "debito_automatico" ? "Débito Automático" : tipoOrigem === "movimentacao_financeira" ? "Movimentação Financeira" : "Nota Recebida";
 
@@ -135,7 +151,16 @@ export function DebitoAutomaticoModal({
       }
     } else {
       if (!empresaId) return "Informe a Empresa.";
-      if (!classificacaoId) return "Informe a Classificação.";
+      if (!classificacaoId) {
+        // SIS-2026-0440: pra Nota Recebida o campo é preenchido sozinho
+        // (não dá pra "informar" nada, é <Input disabled>) — se ainda
+        // assim está vazio, a classificação "RECEBIMENTO DE NOTA" não
+        // existe no cadastro, não é o usuário que esqueceu de preencher.
+        if (tipoOrigem === "nota_recebida") {
+          return "Classificação \"RECEBIMENTO DE NOTA\" não encontrada. Peça pra alguém criá-la em Configurações → Classificações.";
+        }
+        return "Informe a Classificação.";
+      }
       if (!formaPagamento) return "Informe a Forma de Pagamento.";
       if (!bancoId) return "Informe o Banco.";
     }
