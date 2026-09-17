@@ -36,3 +36,52 @@ describe("quem pode avaliar e perguntar mais", () => {
     expect(infoAvaliacao(null)).toBeNull();
   });
 });
+
+// Biblioteca, avaliação obrigatória e dashboard (17/09/2026, mig 176).
+import { diasParaResponder, entraNaBiblioteca, pendentesDeAvaliacao, podePerguntarNova, resumoDashboard, type Duvida } from "@/lib/juridico/duvidas";
+
+const dv = (p: Partial<Duvida>): Duvida => ({ id: 1, titulo: "t", pergunta: "p", status: "Respondida", ...p });
+
+describe("biblioteca e avaliação obrigatória", () => {
+  it("'Não resolveu' fica fora da biblioteca; as outras respondidas entram", () => {
+    expect(entraNaBiblioteca(dv({ avaliacao: null }))).toBe(true);
+    expect(entraNaBiblioteca(dv({ avaliacao: "resolveu" }))).toBe(true);
+    expect(entraNaBiblioteca(dv({ avaliacao: "parcial" }))).toBe(true);
+    expect(entraNaBiblioteca(dv({ avaliacao: "nao_resolveu" }))).toBe(false);
+    expect(entraNaBiblioteca(dv({ status: "Aprovada" }))).toBe(false);
+  });
+  it("perguntar de novo exige avaliar as respondidas do próprio autor", () => {
+    const lista = [
+      dv({ id: 1, autor_id: "u1", avaliacao: null }),
+      dv({ id: 2, autor_id: "u1", avaliacao: "resolveu" }),
+      dv({ id: 3, autor_id: "u2", avaliacao: null }),
+      dv({ id: 4, autor_id: "u1", status: "Aprovada" }),
+    ];
+    expect(pendentesDeAvaliacao(lista, "u1").map(d => d.id)).toEqual([1]);
+    expect(podePerguntarNova(lista, "u1")).toBe(false);
+    expect(podePerguntarNova(lista, "u2")).toBe(false);
+    expect(podePerguntarNova(lista, "u3")).toBe(true);
+    expect(podePerguntarNova(lista, null)).toBe(true);
+  });
+});
+
+describe("dashboard do Parecer Jurídico", () => {
+  it("dias para responder", () => {
+    expect(diasParaResponder({ created_at: "2026-09-01T10:00:00Z", respondido_em: "2026-09-03T22:00:00Z" })).toBe(2.5);
+    expect(diasParaResponder({ created_at: "2026-09-01T10:00:00Z", respondido_em: undefined })).toBeNull();
+  });
+  it("soma por categoria com satisfação só entre as avaliadas", () => {
+    const r = resumoDashboard([
+      dv({ id: 1, categoria: "Trabalhista", avaliacao: "resolveu", created_at: "2026-09-01T00:00:00Z", respondido_em: "2026-09-02T00:00:00Z" }),
+      dv({ id: 2, categoria: "Trabalhista", avaliacao: "nao_resolveu", created_at: "2026-09-01T00:00:00Z", respondido_em: "2026-09-04T00:00:00Z" }),
+      dv({ id: 3, categoria: "Trabalhista", avaliacao: null }),
+      dv({ id: 4, categoria: "LGPD", status: "Aberta" }),
+    ]);
+    expect(r.total).toBe(4); expect(r.respondidas).toBe(3); expect(r.avaliadas).toBe(2);
+    expect(r.satisfacao).toBe(50); expect(r.semAvaliacao).toBe(1); expect(r.tempoMedioDias).toBe(2);
+    const trab = r.porCategoria.find(c => c.categoria === "Trabalhista")!;
+    expect(trab).toMatchObject({ total: 3, respondidas: 3, resolveu: 1, nao_resolveu: 1, sem_avaliacao: 1, satisfacao: 50 });
+    expect(r.porCategoria.find(c => c.categoria === "LGPD")!.satisfacao).toBeNull();
+    expect(r.naoResolvidas.map(d => d.id)).toEqual([2]);
+  });
+});
