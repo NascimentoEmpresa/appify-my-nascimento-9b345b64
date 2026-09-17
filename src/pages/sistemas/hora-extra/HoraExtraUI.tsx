@@ -1,8 +1,10 @@
-import type { ReactNode } from "react";
-import { CheckCircle2, CircleX, Clock3, Hourglass, Paperclip, UploadCloud, X } from "lucide-react";
+import { useState, type ReactNode } from "react";
+import { CheckCircle2, CircleX, Clock3, Download, Hourglass, Paperclip, UploadCloud, X } from "lucide-react";
+import { toast } from "sonner";
+import { urlAssinadaHoraExtra } from "@/hooks/useHoraExtra";
 import { cn } from "@/lib/utils";
-import { formatarDuracao, statusExibicao } from "./horaExtraUtils";
-import type { SolicitacaoHoraExtra, StatusExecucao } from "./types";
+import { formatarDuracao, mensagemErro, rotuloFaseAnexo, statusExibicao } from "./horaExtraUtils";
+import type { AnexoHoraExtra, SolicitacaoHoraExtra, StatusExecucao } from "./types";
 import { STATUS_EXECUCAO } from "./types";
 
 export function BreadcrumbHoraExtra({ atual }: { atual: string }) {
@@ -104,6 +106,64 @@ export function Campo({
       </span>
       {children}
     </label>
+  );
+}
+
+/**
+ * Arquivos já enviados. O bucket é privado, então cada arquivo abre por URL
+ * assinada na hora do clique. A seção aparece sempre, inclusive vazia: sumir
+ * em silêncio foi o que fez parecer que o anexo tinha se perdido.
+ */
+export function ListaAnexos({ anexos, titulo = "Anexos" }: { anexos?: AnexoHoraExtra[] | null; titulo?: string }) {
+  const [abrindo, setAbrindo] = useState<string | null>(null);
+  const lista = anexos ?? [];
+  const abrir = async (id: string, caminho: string) => {
+    try {
+      setAbrindo(id);
+      window.open(await urlAssinadaHoraExtra(caminho), "_blank", "noopener,noreferrer");
+    } catch (e: unknown) {
+      toast.error(mensagemErro(e, "Não foi possível abrir o anexo."));
+    } finally {
+      setAbrindo(null);
+    }
+  };
+  return (
+    <section>
+      <h3 className="mb-2 flex items-center gap-2 font-bold text-[#07194b]">
+        <Paperclip className="h-4 w-4" />
+        {titulo}
+        {!!lista.length && <span className="text-xs font-normal text-slate-500">({lista.length})</span>}
+      </h3>
+      {lista.length === 0 ? (
+        <p className="rounded-lg border border-dashed bg-slate-50 p-3 text-xs text-slate-500">
+          Nenhum arquivo anexado a esta solicitação.
+        </p>
+      ) : (
+        <div className="space-y-2">
+          {lista.map((anexo) => (
+            <button
+              key={anexo.id}
+              type="button"
+              disabled={abrindo === anexo.id}
+              onClick={() => abrir(anexo.id, anexo.storage_path)}
+              className={cn(
+                "flex w-full items-center justify-between gap-3 rounded border px-3 py-2",
+                "text-left text-sm text-blue-700 hover:bg-blue-50 disabled:opacity-60",
+              )}
+            >
+              <span className="flex min-w-0 items-center gap-2">
+                <Paperclip className="h-4 w-4 shrink-0" />
+                <span className="truncate">{anexo.nome_arquivo}</span>
+              </span>
+              <span className="flex shrink-0 items-center gap-2 text-xs text-slate-500">
+                {rotuloFaseAnexo(anexo.fase)}
+                <Download className="h-4 w-4" />
+              </span>
+            </button>
+          ))}
+        </div>
+      )}
+    </section>
   );
 }
 

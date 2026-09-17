@@ -118,6 +118,11 @@ export const useExcluirHoraExtra = () => useRpcHoraExtra("hora_extra_excluir");
 export const useSalvarEscalaHoraExtra = () => useRpcHoraExtra("hora_extra_escala_salvar");
 export const useExcluirEscalaHoraExtra = () => useRpcHoraExtra("hora_extra_escala_excluir");
 
+/**
+ * Sobe cada arquivo e grava a linha em HORA_EXTRA_ANEXO. Devolve as falhas já
+ * com o motivo: antes o aviso dizia só o nome do arquivo e não dava para saber
+ * se quem recusou foi o storage ou a RLS da tabela.
+ */
 export async function enviarAnexosHoraExtra(
   solicitacaoId: string,
   fase: "solicitacao" | "conclusao",
@@ -132,7 +137,7 @@ export async function enviarAnexosHoraExtra(
     const caminho = `${solicitacaoId}/${Date.now()}-${nomeSeguro}`;
     const upload = await supabase.storage.from("hora-extra").upload(caminho, arquivo, { contentType: arquivo.type });
     if (upload.error) {
-      falhas.push(arquivo.name);
+      falhas.push(`${arquivo.name} (${upload.error.message})`);
       continue;
     }
     const { error } = await db.from("HORA_EXTRA_ANEXO").insert({
@@ -143,9 +148,25 @@ export async function enviarAnexosHoraExtra(
       mime_type: arquivo.type || null,
       tamanho_bytes: arquivo.size,
     });
-    if (error) falhas.push(arquivo.name);
+    if (error) falhas.push(`${arquivo.name} (${error.message})`);
   }
   return falhas;
+}
+
+/**
+ * O upload roda DEPOIS da RPC, então o invalidateQueries da mutation já passou
+ * quando o anexo entra no banco: a lista em cache continuava sem ele e o modal
+ * abria sem nenhum arquivo, mesmo com a linha gravada (incidente de 17/09/2026,
+ * HE-2026-0004). Por isso a recarga acontece aqui, no fim do envio.
+ */
+export function useEnviarAnexosHoraExtra() {
+  const cliente = useQueryClient();
+  return async (solicitacaoId: string, fase: "solicitacao" | "conclusao", arquivos: File[]) => {
+    if (!arquivos.length) return [];
+    const falhas = await enviarAnexosHoraExtra(solicitacaoId, fase, arquivos);
+    await cliente.invalidateQueries({ queryKey: ["hora-extra"] });
+    return falhas;
+  };
 }
 
 export async function urlAssinadaHoraExtra(caminho: string) {
