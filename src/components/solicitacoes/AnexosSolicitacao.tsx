@@ -81,21 +81,21 @@ export function AnexosSolicitacao({ modulo, entidadeId, podeAnexar, titulo = "An
   return (
     <div style={{ marginTop: compacto ? 8 : 14 }}>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, marginBottom: 6 }}>
-        <div style={{ fontSize: 11, fontWeight: 800, color: "#0f3171", textTransform: "uppercase", letterSpacing: ".4px" }}>
+        <div style={{ fontSize: 12.5, fontWeight: 800, color: "#0f3171", textTransform: "uppercase", letterSpacing: ".4px" }}>
           📎 {titulo}{itens.length ? ` (${itens.length})` : ""}
         </div>
         {podeAnexar && (
           <>
             <input ref={inputRef} type="file" multiple style={{ display: "none" }} onChange={(e) => { if (e.target.files?.length) subir(e.target.files); }} />
             <button onClick={() => inputRef.current?.click()} disabled={subindo}
-              style={{ border: "1px solid #cbd5e1", background: "#fff", borderRadius: 9, fontSize: 11.5, fontWeight: 700, color: "#0f3171", padding: "5px 10px", cursor: "pointer" }}>
+              style={{ border: "1px solid #cbd5e1", background: "#fff", borderRadius: 9, fontSize: 13, fontWeight: 700, color: "#0f3171", padding: "5px 10px", cursor: "pointer" }}>
               {subindo ? "Enviando…" : "+ Anexar arquivo"}
             </button>
           </>
         )}
       </div>
       {itens.length === 0 ? (
-        <div style={{ fontSize: 11.5, color: "#94a3b8" }}>Nenhum anexo. {podeAnexar ? "Opcional — foto, documento, print…" : ""}</div>
+        <div style={{ fontSize: 13, color: "#64748b" }}>Nenhum anexo. {podeAnexar ? "Opcional — foto, documento, print…" : ""}</div>
       ) : (
         <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
           {itens.map(a => (
@@ -104,15 +104,15 @@ export function AnexosSolicitacao({ modulo, entidadeId, podeAnexar, titulo = "An
               <button onClick={() => abrir(a)} title="Abrir" style={{ flex: 1, minWidth: 0, textAlign: "left", border: "none", background: "none", color: "#0f3171", fontWeight: 700, fontSize: 12.5, cursor: "pointer", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", padding: 0 }}>
                 {a.nome}
               </button>
-              <span style={{ fontSize: 11, color: "#94a3b8", whiteSpace: "nowrap" }}>{fmtTamanho(a.tamanho)}{a.autor_nome ? ` · ${a.autor_nome}` : ""}</span>
+              <span style={{ fontSize: 12.5, color: "#64748b", whiteSpace: "nowrap" }}>{fmtTamanho(a.tamanho)}{a.autor_nome ? ` · ${a.autor_nome}` : ""}</span>
               {a.autor_id === user?.id && (
-                <button onClick={() => excluir(a)} title="Excluir" style={{ border: "none", background: "none", color: "#94a3b8", cursor: "pointer", fontSize: 13 }}>✕</button>
+                <button onClick={() => excluir(a)} title="Excluir" style={{ border: "none", background: "none", color: "#64748b", cursor: "pointer", fontSize: 13 }}>✕</button>
               )}
             </div>
           ))}
         </div>
       )}
-      {erro && <div style={{ fontSize: 11, color: "#dc2626", marginTop: 6 }}>{erro}</div>}
+      {erro && <div style={{ fontSize: 12.5, color: "#dc2626", marginTop: 6 }}>{erro}</div>}
     </div>
   );
 }

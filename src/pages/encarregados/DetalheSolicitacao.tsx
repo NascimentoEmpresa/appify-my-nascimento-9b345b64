@@ -272,19 +272,19 @@ export function DetalheSolicitacao({ tipo, id, titulo, status, onFechar, onRefaz
   return (
     <div className="ini-modal-bg" onClick={onFechar}>
       <div className="ini-modal" onClick={(e) => e.stopPropagation()}
-           style={{ maxWidth: 860, width: "96vw", maxHeight: "92vh", display: "flex", flexDirection: "column" }}>
+           style={{ maxWidth: 980, width: "96vw", maxHeight: "92vh", display: "flex", flexDirection: "column" }}>
         <button onClick={onFechar} aria-label="Fechar"
-                style={{ position: "absolute", top: 14, right: 14, background: "none", border: "none", color: "#94a3b8", fontSize: 20, cursor: "pointer" }}>✕</button>
+                style={{ position: "absolute", top: 14, right: 14, background: "none", border: "none", color: "#64748b", fontSize: 20, cursor: "pointer" }}>✕</button>
 
         <div style={{ borderBottom: "1px solid #e2e8f0", paddingBottom: 12, marginBottom: 14 }}>
-          <div style={{ fontSize: 11, color: "#94a3b8", fontWeight: 700, letterSpacing: ".6px", textTransform: "uppercase" }}>
+          <div style={{ fontSize: 13.5, color: "#64748b", fontWeight: 700, letterSpacing: ".6px", textTransform: "uppercase" }}>
             {tipo} · #{id}
           </div>
-          <div style={{ fontSize: 17, fontWeight: 800, color: "#0f172a", marginTop: 2 }}>{titulo}</div>
+          <div style={{ fontSize: 20, fontWeight: 800, color: "#0f172a", marginTop: 2 }}>{titulo}</div>
           <div style={{ marginTop: 6, display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
             <span className="ini-badge">{status}</span>
             {tipo === "Férias" && !!ficha?.refeita_em && (
-              <span title={`Refeita em ${fmt(String(ficha.refeita_em))}`} style={{ fontSize: 10.5, fontWeight: 800, padding: "2px 8px", borderRadius: 20, background: "#ede9fe", color: "#6d28d9" }}>🔁 Refeita</span>
+              <span title={`Refeita em ${fmt(String(ficha.refeita_em))}`} style={{ fontSize: 13.5, fontWeight: 800, padding: "2px 8px", borderRadius: 20, background: "#ede9fe", color: "#6d28d9" }}>🔁 Refeita</span>
             )}
           </div>
         </div>
@@ -295,13 +295,13 @@ export function DetalheSolicitacao({ tipo, id, titulo, status, onFechar, onRefaz
           const dias = diasRestantesParaRefazer(ficha.criado_em as string | null);
           return (
             <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap", marginBottom: 14, padding: "10px 14px", borderRadius: 12, border: `1px solid ${regra.ok ? "#c7d2fe" : "#e2e8f0"}`, background: regra.ok ? "#eef2ff" : "#f8fafc" }}>
-              <div style={{ flex: 1, minWidth: 220, fontSize: 12, color: regra.ok ? "#3730a3" : "#64748b", lineHeight: 1.5 }}>
+              <div style={{ flex: 1, minWidth: 220, fontSize: 13.5, color: regra.ok ? "#3730a3" : "#64748b", lineHeight: 1.5 }}>
                 {regra.ok
                   ? <><b>Precisa corrigir algo?</b> {AVISO_REFAZER} {dias > 0 && <>Prazo: <b>{dias} dia{dias === 1 ? "" : "s"}</b>.</>}</>
                   : <><b>Refazer indisponível.</b> {regra.motivo}</>}
               </div>
               <button onClick={() => onRefazer(ficha)} disabled={!regra.ok}
-                style={{ padding: "8px 14px", borderRadius: 10, border: "none", background: regra.ok ? "#4f46e5" : "#cbd5e1", color: "#fff", fontSize: 12, fontWeight: 800, cursor: regra.ok ? "pointer" : "not-allowed", fontFamily: "inherit", whiteSpace: "nowrap" }}>
+                style={{ padding: "8px 14px", borderRadius: 10, border: "none", background: regra.ok ? "#4f46e5" : "#cbd5e1", color: "#fff", fontSize: 13.5, fontWeight: 800, cursor: regra.ok ? "pointer" : "not-allowed", fontFamily: "inherit", whiteSpace: "nowrap" }}>
                 🔁 Refazer solicitação
               </button>
             </div>
@@ -311,17 +311,17 @@ export function DetalheSolicitacao({ tipo, id, titulo, status, onFechar, onRefaz
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 18, flex: 1, minHeight: 0 }}>
           {/* ── Detalhes ── */}
           <div style={{ overflowY: "auto", paddingRight: 4 }}>
-            <h4 style={{ fontSize: 12, fontWeight: 800, color: "#475569", margin: "0 0 10px" }}>Detalhes da solicitação</h4>
+            <h4 style={{ fontSize: 13.5, fontWeight: 800, color: "#475569", margin: "0 0 10px" }}>Detalhes da solicitação</h4>
             {!ficha ? (
-              <p style={{ fontSize: 12, color: "#94a3b8" }}>Carregando…</p>
+              <p style={{ fontSize: 13.5, color: "#64748b" }}>Carregando…</p>
             ) : linhas.length === 0 ? (
-              <p style={{ fontSize: 12, color: "#94a3b8" }}>Sem informações adicionais.</p>
+              <p style={{ fontSize: 13.5, color: "#64748b" }}>Sem informações adicionais.</p>
             ) : (
               <dl style={{ margin: 0, display: "flex", flexDirection: "column", gap: 9 }}>
                 {linhas.map(([rot, val]) => (
                   <div key={rot}>
-                    <dt style={{ fontSize: 10, color: "#94a3b8", fontWeight: 700, textTransform: "uppercase", letterSpacing: ".5px" }}>{rot}</dt>
-                    <dd style={{ margin: 0, fontSize: 12.5, color: "#0f172a", whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>{val}</dd>
+                    <dt style={{ fontSize: 13.5, color: "#64748b", fontWeight: 700, textTransform: "uppercase", letterSpacing: ".5px" }}>{rot}</dt>
+                    <dd style={{ margin: 0, fontSize: 13.5, color: "#0f172a", whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>{val}</dd>
                   </div>
                 ))}
               </dl>
@@ -348,25 +348,25 @@ export function DetalheSolicitacao({ tipo, id, titulo, status, onFechar, onRefaz
                         : "A mesma conversa que o Jurídico lê na tela de Advertências. Dá pra mandar foto e anexo, inclusive colando com Ctrl+V."} />
               </div>
             ) : (<>
-            <h4 style={{ fontSize: 12, fontWeight: 800, color: "#475569", margin: "0 0 4px" }}>Conversa</h4>
-            <p style={{ fontSize: 11, color: "#94a3b8", margin: "0 0 10px" }}>
+            <h4 style={{ fontSize: 13.5, fontWeight: 800, color: "#475569", margin: "0 0 4px" }}>Conversa</h4>
+            <p style={{ fontSize: 13.5, color: "#64748b", margin: "0 0 10px" }}>
               A mesma conversa que o Operacional e o Recrutamento leem.
             </p>
 
             <div style={{ flex: 1, overflowY: "auto", background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: 12, padding: 10, minHeight: 180 }}>
               {msgs.length === 0 ? (
-                <p style={{ fontSize: 12, color: "#94a3b8", textAlign: "center", padding: "24px 0" }}>
+                <p style={{ fontSize: 13.5, color: "#64748b", textAlign: "center", padding: "24px 0" }}>
                   Nenhuma mensagem ainda. Escreva abaixo para falar com quem está tratando.
                 </p>
               ) : msgs.map((m) => (
                 <div key={m.id} style={{ display: "flex", justifyContent: m.minha ? "flex-end" : "flex-start", marginBottom: 8 }}>
                   <div style={{
-                    maxWidth: "85%", borderRadius: 12, padding: "7px 10px", fontSize: 12.5,
+                    maxWidth: "85%", borderRadius: 12, padding: "7px 10px", fontSize: 13.5,
                     background: m.minha ? "#0f3171" : "#fff",
                     color: m.minha ? "#fff" : "#0f172a",
                     border: m.minha ? "none" : "1px solid #e2e8f0",
                   }}>
-                    <div style={{ fontSize: 10, fontWeight: 700, opacity: .75, marginBottom: 2 }}>
+                    <div style={{ fontSize: 13.5, fontWeight: 700, opacity: .75, marginBottom: 2 }}>
                       {m.autor} · {fmt(m.quando)}
                     </div>
                     <div style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>{m.texto}</div>
@@ -376,17 +376,17 @@ export function DetalheSolicitacao({ tipo, id, titulo, status, onFechar, onRefaz
               <div ref={fimRef} />
             </div>
 
-            {erro && <p style={{ fontSize: 11, color: "#dc2626", marginTop: 6 }}>{erro}</p>}
+            {erro && <p style={{ fontSize: 13.5, color: "#dc2626", marginTop: 6 }}>{erro}</p>}
 
             <div style={{ display: "flex", gap: 6, marginTop: 10 }}>
               <input
                 value={texto} onChange={(e) => setTexto(e.target.value)}
                 onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); enviar(); } }}
                 placeholder="Escreva uma mensagem…"
-                style={{ flex: 1, background: "#fff", border: "1px solid #e2e8f0", borderRadius: 10, padding: "8px 11px", fontSize: 12.5, outline: "none", fontFamily: "inherit" }}
+                style={{ flex: 1, background: "#fff", border: "1px solid #e2e8f0", borderRadius: 10, padding: "8px 11px", fontSize: 13.5, outline: "none", fontFamily: "inherit" }}
               />
               <button onClick={enviar} disabled={enviando || !texto.trim()}
-                style={{ padding: "8px 15px", borderRadius: 10, border: "none", background: texto.trim() ? "#0f3171" : "#cbd5e1", color: "#fff", fontSize: 12, fontWeight: 700, cursor: texto.trim() ? "pointer" : "default", fontFamily: "inherit" }}>
+                style={{ padding: "8px 15px", borderRadius: 10, border: "none", background: texto.trim() ? "#0f3171" : "#cbd5e1", color: "#fff", fontSize: 13.5, fontWeight: 700, cursor: texto.trim() ? "pointer" : "default", fontFamily: "inherit" }}>
                 {enviando ? "…" : "Enviar"}
               </button>
             </div>

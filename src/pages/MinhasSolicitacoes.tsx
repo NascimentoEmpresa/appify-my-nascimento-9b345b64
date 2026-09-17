@@ -899,18 +899,24 @@ export default function MinhasSolicitacoes({ abrir, base = "encarregados" }: { a
       .ini-sol-icon{width:34px;height:34px;border-radius:9px;flex-shrink:0;display:flex;align-items:center;justify-content:center;font-size:15px;background:rgba(8,145,178,.1);}
       .ini-sol-info{flex:1;min-width:0;}
       .ini-sol-title{font-size:.85rem;font-weight:600;color:#0f172a;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
-      .ini-sol-meta{font-size:.72rem;color:#94a3b8;margin-top:2px;}
+      .ini-sol-meta{font-size:.72rem;color:#64748b;margin-top:2px;}
       .ini-sol-top{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:4px;}
       .ini-sol-tag{display:inline-flex;align-items:center;gap:4px;font-size:11px;color:#475569;background:#eef4ff;border:1px solid #dbe4f0;border-radius:6px;padding:1px 7px;line-height:1.5;}
       .ini-sol-tag strong{color:#0f172a;font-weight:700;}
-      .ini-sol-dias{font-size:10px;color:#94a3b8;white-space:nowrap;font-weight:600;}
+      .ini-sol-dias{font-size:10px;color:#64748b;white-space:nowrap;font-weight:600;}
       .ini-badge{display:inline-flex;align-items:center;padding:2px 8px;border-radius:20px;font-size:10px;font-weight:700;white-space:nowrap;border:1px solid transparent;}
-      .ini-modal-ov{position:fixed;inset:0;z-index:700;background:rgba(15,23,42,.42);backdrop-filter:blur(4px);display:flex;align-items:center;justify-content:center;}
-      .ini-modal{background:#fff;border:1px solid #e2e8f0;border-radius:18px;padding:24px;width:100%;max-width:600px;max-height:92vh;overflow-y:auto;position:relative;box-shadow:0 16px 40px rgba(15,23,42,.12);}
-      .ini-fi{width:100%;background:#fff;border:1px solid #e2e8f0;border-radius:12px;color:#0f172a;font-size:13px;padding:8px 12px;outline:none;font-family:inherit;transition:.15s;}
-      .ini-fi:focus{border-color:#0f3171;box-shadow:0 0 0 4px rgba(15,49,113,.08);}
-      .ini-fg{margin-bottom:14px;}
-      .ini-fg label{display:block;font-size:11px;font-weight:600;color:#94a3b8;text-transform:uppercase;letter-spacing:.5px;margin-bottom:5px;}
+      /* Legibilidade (17/09/2026, pedido do Pablo): modal maior, rótulo escuro
+         e maior, campo com borda visível e fonte 14px. Antes: rótulo 11px
+         #64748b sobre branco — "mal dá pra ver". */
+      .ini-modal-ov,.ini-modal-bg{position:fixed;inset:0;z-index:700;background:rgba(15,23,42,.5);backdrop-filter:blur(4px);display:flex;align-items:center;justify-content:center;padding:16px;}
+      .ini-modal{background:#fff;border:1px solid #cbd5e1;border-radius:18px;padding:28px 30px;width:100%;max-width:720px;max-height:92vh;overflow-y:auto;position:relative;box-shadow:0 20px 50px rgba(15,23,42,.22);color:#0f172a;}
+      .ini-fi{width:100%;background:#fff;border:1.5px solid #64748b;border-radius:12px;color:#0f172a;font-size:14.5px;padding:11px 13px;outline:none;font-family:inherit;transition:.15s;}
+      .ini-fi::placeholder{color:#64748b;}
+      .ini-fi[readonly]{background:#f1f5f9;color:#334155;}
+      .ini-fi:focus{border-color:#0f3171;box-shadow:0 0 0 4px rgba(15,49,113,.14);}
+      .ini-fg{margin-bottom:16px;}
+      .ini-fg label{display:block;font-size:13px;font-weight:800;color:#1e293b;text-transform:uppercase;letter-spacing:.4px;margin-bottom:6px;}
+      .ini-modal .ini-badge{font-size:11.5px;padding:3px 10px;}
     `;
     document.head.appendChild(style);
     return () => { document.getElementById("mns-styles")?.remove(); };
@@ -995,9 +1001,9 @@ export default function MinhasSolicitacoes({ abrir, base = "encarregados" }: { a
         </div>
         <div className="ini-card-body">
           {loadingSols ? (
-            <div style={{ padding: "24px 0", textAlign: "center", color: "#94a3b8", fontSize: 13 }}>Carregando...</div>
+            <div style={{ padding: "24px 0", textAlign: "center", color: "#64748b", fontSize: 13 }}>Carregando...</div>
           ) : lista.length === 0 ? (
-            <div style={{ padding: "24px 0", textAlign: "center", color: "#94a3b8", fontSize: 13 }}>
+            <div style={{ padding: "24px 0", textAlign: "center", color: "#64748b", fontSize: 13 }}>
               <div style={{ fontSize: 28, marginBottom: 8 }}>✅</div>Nenhuma solicitação ainda.
             </div>
           ) : (
@@ -1079,9 +1085,9 @@ export default function MinhasSolicitacoes({ abrir, base = "encarregados" }: { a
       {editData && prazoEdicao && (
         <div className="ini-modal-ov">
           <div className="ini-modal" onClick={e => e.stopPropagation()} style={{ maxWidth: 520 }}>
-            <button onClick={() => setEditData(null)} style={{ position: "absolute", top: 14, right: 14, background: "none", border: "none", color: "#94a3b8", fontSize: 20, cursor: "pointer" }}>✕</button>
-            <div style={{ fontSize: 17, fontWeight: 800, marginBottom: 4 }}>📆 Alterar data de início</div>
-            <div style={{ fontSize: 12, color: "#94a3b8", marginBottom: 14 }}>
+            <button onClick={() => setEditData(null)} style={{ position: "absolute", top: 14, right: 14, background: "none", border: "none", color: "#64748b", fontSize: 20, cursor: "pointer" }}>✕</button>
+            <div style={{ fontSize: 20, fontWeight: 800, marginBottom: 4 }}>📆 Alterar data de início</div>
+            <div style={{ fontSize: 14.5, color: "#64748b", marginBottom: 14 }}>
               Vaga #{editData.sol.id} — {editData.sol.titulo}. Esta é a única informação que você altera depois de solicitar; o resto é com o Recrutamento.
             </div>
 
@@ -1102,20 +1108,20 @@ export default function MinhasSolicitacoes({ abrir, base = "encarregados" }: { a
               <label>Por que a data mudou? *</label>
               <textarea className="ini-fi" rows={3} placeholder="Explique o motivo da alteração (mínimo 10 caracteres)…"
                 value={editData.justificativa} onChange={e => setEditData(d => d && ({ ...d, justificativa: e.target.value }))} />
-              <div style={{ fontSize: 11, color: "#94a3b8", marginTop: 4 }}>
+              <div style={{ fontSize: 14.5, color: "#64748b", marginTop: 4 }}>
                 A justificativa fica registrada na vaga, com o seu nome e a data — o Recrutamento vê o histórico completo.
               </div>
             </div>
 
             {(editData.sol.alteracoes?.length ?? 0) > 0 && (
               <div style={{ marginTop: 6, border: "1px solid #e2e8f0", borderRadius: 10, padding: "9px 11px", background: "#f8fafc" }}>
-                <div style={{ fontSize: 11, fontWeight: 800, color: "#94a3b8", textTransform: "uppercase", letterSpacing: ".4px", marginBottom: 6 }}>Alterações anteriores</div>
+                <div style={{ fontSize: 14.5, fontWeight: 800, color: "#64748b", textTransform: "uppercase", letterSpacing: ".4px", marginBottom: 6 }}>Alterações anteriores</div>
                 <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
                   {editData.sol.alteracoes!.map((a, i) => (
-                    <div key={i} style={{ fontSize: 11.5, color: "#475569" }}>
+                    <div key={i} style={{ fontSize: 14, color: "#475569" }}>
                       <b>{fmtBr(a?.de) || "—"} → {fmtBr(a?.para)}</b>
-                      {a?.em ? <span style={{ color: "#94a3b8" }}> · {fmtDt(a.em)}</span> : null}
-                      {a?.por_nome ? <span style={{ color: "#94a3b8" }}> · {a.por_nome}</span> : null}
+                      {a?.em ? <span style={{ color: "#64748b" }}> · {fmtDt(a.em)}</span> : null}
+                      {a?.por_nome ? <span style={{ color: "#64748b" }}> · {a.por_nome}</span> : null}
                       <div style={{ fontStyle: "italic" }}>{a?.justificativa}</div>
                     </div>
                   ))}
@@ -1124,9 +1130,9 @@ export default function MinhasSolicitacoes({ abrir, base = "encarregados" }: { a
             )}
 
             <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 16, paddingTop: 14, borderTop: "1px solid #e2e8f0" }}>
-              <button onClick={() => setEditData(null)} style={{ padding: "7px 14px", borderRadius: 10, border: "1px solid #e2e8f0", background: "#fff", color: "#475569", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>Cancelar</button>
+              <button onClick={() => setEditData(null)} style={{ padding: "7px 14px", borderRadius: 10, border: "1px solid #e2e8f0", background: "#fff", color: "#475569", fontSize: 14.5, fontWeight: 700, cursor: "pointer" }}>Cancelar</button>
               <button onClick={salvarNovaData} disabled={salvandoData}
-                style={{ padding: "7px 14px", borderRadius: 10, border: "none", background: salvandoData ? "#94a3b8" : "#0f3171", color: "#fff", fontSize: 12, fontWeight: 700, cursor: salvandoData ? "default" : "pointer" }}>
+                style={{ padding: "7px 14px", borderRadius: 10, border: "none", background: salvandoData ? "#64748b" : "#0f3171", color: "#fff", fontSize: 14.5, fontWeight: 700, cursor: salvandoData ? "default" : "pointer" }}>
                 {salvandoData ? "Salvando…" : "✓ Salvar nova data"}
               </button>
             </div>
@@ -1138,7 +1144,7 @@ export default function MinhasSolicitacoes({ abrir, base = "encarregados" }: { a
       {modalVaga && (
         <div className="ini-modal-ov">
           <div className="ini-modal" onClick={e => e.stopPropagation()}>
-            <button onClick={() => setModalVaga(false)} style={{ position: "absolute", top: 14, right: 14, background: "none", border: "none", color: "#94a3b8", fontSize: 20, cursor: "pointer" }}>✕</button>
+            <button onClick={() => setModalVaga(false)} style={{ position: "absolute", top: 14, right: 14, background: "none", border: "none", color: "#64748b", fontSize: 20, cursor: "pointer" }}>✕</button>
 
             {/* Sem "Preencher manualmente" aqui, de propósito (03/09/2026).
                 É vaga do escritório — coisa da Central de Serviços e da Gestão
@@ -1146,8 +1152,8 @@ export default function MinhasSolicitacoes({ abrir, base = "encarregados" }: { a
                 Nesta tela nem escondida atrás de capacidade ela cabia: o modo
                 à mão precisa do catálogo de Suprimentos, que o formulário do
                 encarregado não tem. */}
-            <div style={{ fontSize: 17, fontWeight: 800, marginBottom: 4 }}>Solicitar Nova Vaga</div>
-            <div style={{ fontSize: 12, color: "#94a3b8", marginBottom: 14 }}>
+            <div style={{ fontSize: 20, fontWeight: 800, marginBottom: 4 }}>Solicitar Nova Vaga</div>
+            <div style={{ fontSize: 14.5, color: "#64748b", marginBottom: 14 }}>
               {vagaStep === 1 ? "Etapa 1 de 3 — Identificação da Vaga" : vagaStep === 2 ? "Etapa 2 de 3 — Detalhes do Posto" : "Etapa 3 de 3 — Requisitos e Urgência"}
             </div>
             <div style={{ display: "flex", gap: 6, marginBottom: 16 }}>
@@ -1184,46 +1190,46 @@ export default function MinhasSolicitacoes({ abrir, base = "encarregados" }: { a
                     onChange={e => { const v = e.target.value; setEmpSearch(v); setSubstituidoId(null); setVaga(prev => ({ ...prev, nome_substituido: "", cargo: "", contrato: "", salario: "", escala: "" })); if (v.length >= 2) { setShowEmpDrop(true); buscarEmpregados(v); } else { setShowEmpDrop(false); setEmpregados([]); } }} />
                   {showEmpDrop && empSearch.length >= 2 && (
                     <div style={{ position: "absolute", top: "100%", left: 0, right: 0, zIndex: 999, background: "#fff", border: "1px solid #e2e8f0", borderRadius: 10, boxShadow: "0 8px 24px rgba(15,23,42,.14)", maxHeight: 220, overflowY: "auto", marginTop: 2 }}>
-                      {loadingEmps ? <div style={{ padding: "12px", fontSize: 12, color: "#94a3b8", textAlign: "center" }}>Buscando...</div>
-                        : empregados.length === 0 ? <div style={{ padding: "12px", fontSize: 12, color: "#94a3b8", textAlign: "center" }}>Nenhum colaborador encontrado.</div>
+                      {loadingEmps ? <div style={{ padding: "12px", fontSize: 14.5, color: "#64748b", textAlign: "center" }}>Buscando...</div>
+                        : empregados.length === 0 ? <div style={{ padding: "12px", fontSize: 14.5, color: "#64748b", textAlign: "center" }}>Nenhum colaborador encontrado.</div>
                           : empregados.slice(0, 40).map((emp, i) => {
                             // Já tem vaga de substituição em pé: fica na lista
                             // para a pessoa entender por que não pode escolher.
                             const preso = ehSubstituicao(vaga.motivo_vaga) ? presos.get(Number(emp.ID)) : undefined;
                             return (
-                            <div key={i} onMouseDown={() => selecionarEmpregado(emp)} style={{ padding: "8px 12px", fontSize: 13, cursor: preso ? "not-allowed" : "pointer", borderBottom: "1px solid #f1f5f9", color: preso ? "#94a3b8" : "#0f172a", background: preso ? "#f8fafc" : "#fff" }}
+                            <div key={i} onMouseDown={() => selecionarEmpregado(emp)} style={{ padding: "8px 12px", fontSize: 14, cursor: preso ? "not-allowed" : "pointer", borderBottom: "1px solid #f1f5f9", color: preso ? "#64748b" : "#0f172a", background: preso ? "#f8fafc" : "#fff" }}
                               onMouseEnter={e => { if (!preso) e.currentTarget.style.background = "#f0f4ff"; }} onMouseLeave={e => { e.currentTarget.style.background = preso ? "#f8fafc" : "#fff"; }}>
                               <div style={{ fontWeight: 600 }}>{emp.Nome}</div>
-                              <div style={{ fontSize: 11, color: "#94a3b8" }}>{emp["Título do Cargo"]}{emp["Nome Filial"] ? ` · ${emp["Nome Filial"]}` : ""}</div>
-                              {preso && <div style={{ fontSize: 10.5, fontWeight: 800, color: "#b91c1c", marginTop: 2 }}>🚫 já está na vaga de substituição #{preso}</div>}
+                              <div style={{ fontSize: 14.5, color: "#64748b" }}>{emp["Título do Cargo"]}{emp["Nome Filial"] ? ` · ${emp["Nome Filial"]}` : ""}</div>
+                              {preso && <div style={{ fontSize: 14.5, fontWeight: 800, color: "#b91c1c", marginTop: 2 }}>🚫 já está na vaga de substituição #{preso}</div>}
                             </div>
                             );
                           })}
                     </div>
                   )}
-                  <div style={{ marginTop: 6, fontSize: 11.5, color: "#94a3b8" }}>{ajudaReferencia(vaga.motivo_vaga)}</div>
+                  <div style={{ marginTop: 6, fontSize: 14, color: "#64748b" }}>{ajudaReferencia(vaga.motivo_vaga)}</div>
                   {/* Sem nome: fora da Substituição o escolhido é só o molde da
                       vaga, e é isso que a tela confirma. */}
                   {!!substituidoId && !mostraNomeReferencia(vaga.motivo_vaga) && (
-                    <div style={{ marginTop: 6, fontSize: 11.5, fontWeight: 700, color: "#15803d", background: "#f0fdf4", border: "1px solid #bbf7d0", borderRadius: 8, padding: "6px 9px" }}>
+                    <div style={{ marginTop: 6, fontSize: 14, fontWeight: 700, color: "#15803d", background: "#f0fdf4", border: "1px solid #bbf7d0", borderRadius: 8, padding: "6px 9px" }}>
                       ✓ Colaborador escolhido — cargo, contrato e escala já vieram do cadastro dele.
                     </div>
                   )}
                   {/* Substituição: mostra a demissão vinculada; sem nenhuma, a
                       nota fica aqui depois que a pessoa fecha o card no OK. */}
                   {ehSubstituicao(vaga.motivo_vaga) && !!substituidoId && demissaoBusca === "buscando" && (
-                    <div style={{ marginTop: 6, fontSize: 11.5, color: "#94a3b8" }}>Procurando a solicitação de demissão…</div>
+                    <div style={{ marginTop: 6, fontSize: 14, color: "#64748b" }}>Procurando a solicitação de demissão…</div>
                   )}
                   {ehSubstituicao(vaga.motivo_vaga) && !!substituidoId && demissaoBusca === "achou" && !!demissaoId && (
-                    <div style={{ marginTop: 6, fontSize: 11.5, fontWeight: 700, color: "#0f3171", background: "#eef4ff", border: "1px solid #c7d7f5", borderRadius: 8, padding: "6px 9px" }}>
+                    <div style={{ marginTop: 6, fontSize: 14, fontWeight: 700, color: "#0f3171", background: "#eef4ff", border: "1px solid #c7d7f5", borderRadius: 8, padding: "6px 9px" }}>
                       🔗 Vinculada à solicitação de demissão #{demissaoId} — a vaga repõe essa saída.
                     </div>
                   )}
                   {ehSubstituicao(vaga.motivo_vaga) && !!substituidoId && demissaoBusca === "nenhuma" && (
-                    <div style={{ marginTop: 6, fontSize: 11.5, fontWeight: 700, color: "#92400e", background: "#fffbeb", border: "1px solid #fde68a", borderRadius: 8, padding: "6px 9px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
+                    <div style={{ marginTop: 6, fontSize: 14, fontWeight: 700, color: "#92400e", background: "#fffbeb", border: "1px solid #fde68a", borderRadius: 8, padding: "6px 9px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
                       <span>⚠️ Sem solicitação de demissão para esta pessoa.</span>
                       <button type="button" onClick={() => setAvisoDemissao(true)}
-                        style={{ padding: "4px 10px", borderRadius: 8, border: "1px solid #fcd34d", background: "#fff", color: "#92400e", fontSize: 11.5, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
+                        style={{ padding: "4px 10px", borderRadius: 8, border: "1px solid #fcd34d", background: "#fff", color: "#92400e", fontSize: 14, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
                         Ver aviso
                       </button>
                     </div>
@@ -1233,17 +1239,17 @@ export default function MinhasSolicitacoes({ abrir, base = "encarregados" }: { a
               {/* Contrato e cargo vêm do cadastro do escolhido e ficam travados
                   — a vaga é do posto dele, não de outro. */}
               <div className="ini-fg">
-                <label>Contrato *<span style={{ color: "#94a3b8", fontWeight: 600 }}> — do colaborador escolhido</span></label>
+                <label>Contrato *<span style={{ color: "#64748b", fontWeight: 600 }}> — do colaborador escolhido</span></label>
                 <input className="ini-fi" readOnly value={vaga.contrato} placeholder="Escolha o colaborador acima"
                   style={{ background: "#f1f5f9", color: "#475569", cursor: "not-allowed" }} />
               </div>
               <div className="ini-fg">
-                <label>Cargo *<span style={{ color: "#94a3b8", fontWeight: 600 }}> — do colaborador escolhido</span></label>
+                <label>Cargo *<span style={{ color: "#64748b", fontWeight: 600 }}> — do colaborador escolhido</span></label>
                 <input className="ini-fi" placeholder="Escolha o colaborador acima"
                   value={vaga.cargo} readOnly
                   style={{ background: "#f1f5f9", color: "#475569", cursor: "not-allowed" }} />
                 {cnhDoCargo && (
-                  <div style={{ marginTop: 6, fontSize: 11.5, fontWeight: 700, color: "#b45309", background: "#fffbeb", border: "1px solid #fde68a", borderRadius: 8, padding: "6px 9px" }}>
+                  <div style={{ marginTop: 6, fontSize: 14, fontWeight: 700, color: "#b45309", background: "#fffbeb", border: "1px solid #fde68a", borderRadius: 8, padding: "6px 9px" }}>
                     🚗 {cnhDoCargo}: CNH obrigatória — já entra sozinha nos requisitos e não pode ser tirada.
                   </div>
                 )}
@@ -1261,7 +1267,7 @@ export default function MinhasSolicitacoes({ abrir, base = "encarregados" }: { a
               {/* Setor (16/09/2026): com setor a vaga é administrativa e vai pra
                   Diretoria aprovar antes de chegar ao Recrutamento. */}
               <div className="ini-fg">
-                <label>Setor <span style={{ color: "#94a3b8", fontWeight: 600 }}>— opcional; com setor, a aprovação é da Diretoria</span></label>
+                <label>Setor <span style={{ color: "#64748b", fontWeight: 600 }}>— opcional; com setor, a aprovação é da Diretoria</span></label>
                 <select className="ini-fi" value={vaga.setor} onChange={e => setVaga(v => ({ ...v, setor: e.target.value }))}>
                   <option value="">Sem setor (vaga de contrato)</option>
                   {setoresCatalogo.map(s => <option key={s} value={s}>{s}</option>)}
@@ -1289,8 +1295,8 @@ export default function MinhasSolicitacoes({ abrir, base = "encarregados" }: { a
                     <input type="checkbox" checked={!!vaga.administrativa} style={{ marginTop: 2, width: 15, height: 15, accentColor: "#0f3171", cursor: "pointer" }}
                       onChange={e => setVaga(v => ({ ...v, administrativa: e.target.checked }))} />
                     <span>
-                      <span style={{ display: "block", fontSize: 12.5, fontWeight: 800, color: "#0f172a" }}>Vaga é administrativa?</span>
-                      <span style={{ display: "block", fontSize: 11, color: "#94a3b8", marginTop: 3, lineHeight: 1.45 }}>
+                      <span style={{ display: "block", fontSize: 14.5, fontWeight: 800, color: "#0f172a" }}>Vaga é administrativa?</span>
+                      <span style={{ display: "block", fontSize: 14.5, color: "#64748b", marginTop: 3, lineHeight: 1.45 }}>
                         Vaga do escritório. Só quem tem “Ver vaga administrativa?” enxerga, aprova ou reprova — os demais nem veem que ela existe.
                       </span>
                     </span>
@@ -1313,7 +1319,7 @@ export default function MinhasSolicitacoes({ abrir, base = "encarregados" }: { a
                     disabled={ehSubstituicao(vaga.motivo_vaga)}
                     onChange={e => setVaga(v => ({ ...v, quantidade_vagas: e.target.value }))} />
                   {ehSubstituicao(vaga.motivo_vaga) && (
-                    <div style={{ marginTop: 4, fontSize: 11, color: "#64748b" }}>
+                    <div style={{ marginTop: 4, fontSize: 14.5, color: "#64748b" }}>
                       Substituição repõe uma pessoa por vez.
                     </div>
                   )}
@@ -1336,13 +1342,13 @@ export default function MinhasSolicitacoes({ abrir, base = "encarregados" }: { a
                   <label>Salário</label>
                   <input className="ini-fi" readOnly value={vaga.salario ? SALARIO_MASCARA : ""} placeholder="Vem do cadastro do colaborador"
                     style={{ background: "#f1f5f9", color: "#475569", cursor: "not-allowed", letterSpacing: 2 }} />
-                  <div style={{ marginTop: 4, fontSize: 11, color: "#94a3b8" }}>Visível só para o Operacional e o Recrutamento.</div>
+                  <div style={{ marginTop: 4, fontSize: 14.5, color: "#64748b" }}>Visível só para o Operacional e o Recrutamento.</div>
                 </div>
                 {/* Insalubridade e benefícios vêm da Planilha de Custo do
                     contrato (pelo colaborador escolhido). Só leitura: o
                     encarregado não escolhe nem edita — ver custoPosto.ts. */}
                 <div className="ini-fg">
-                  <label>Insalubridade <span style={{ color: "#94a3b8", fontWeight: 600 }}>— da Planilha de Custo</span></label>
+                  <label>Insalubridade <span style={{ color: "#64748b", fontWeight: 600 }}>— da Planilha de Custo</span></label>
                   <input className="ini-fi" readOnly
                     value={custoBuscando ? "Consultando a planilha…" : vaga.insalubridade_recebe === "Sim" ? `Sim — ${vaga.insalubridade_quanto}` : substituidoId ? "Não" : ""}
                     placeholder="Escolha o colaborador na etapa 1"
@@ -1350,13 +1356,13 @@ export default function MinhasSolicitacoes({ abrir, base = "encarregados" }: { a
                 </div>
               </div>
               <div className="ini-fg">
-                <label>Benefícios <span style={{ color: "#94a3b8", fontWeight: 600 }}>— VT e VA do contrato</span></label>
+                <label>Benefícios <span style={{ color: "#64748b", fontWeight: 600 }}>— VT e VA do contrato</span></label>
                 <input className="ini-fi" readOnly
                   value={custoBuscando ? "Consultando a planilha…" : vaga.beneficios}
                   placeholder={!substituidoId ? "Escolha o colaborador na etapa 1" : !vaga.posto_id ? "Selecione o posto no catálogo (etapa 1) para puxar o V.A e o V.T" : "Posto sem Planilha de Custo — o Recrutamento completa"}
                   style={{ background: "#f1f5f9", color: "#475569", cursor: "not-allowed" }} />
                 {custoNota && (
-                  <div style={{ marginTop: 4, fontSize: 11, fontWeight: custoPosto ? 400 : 600, color: custoPosto && !custoPosto.ambiguo ? "#94a3b8" : "#92400e" }}>{custoNota}</div>
+                  <div style={{ marginTop: 4, fontSize: 14.5, fontWeight: custoPosto ? 400 : 600, color: custoPosto && !custoPosto.ambiguo ? "#64748b" : "#92400e" }}>{custoNota}</div>
                 )}
               </div>
               {/* Local Exato / Posto saiu: o posto já vem do colaborador
@@ -1376,7 +1382,7 @@ export default function MinhasSolicitacoes({ abrir, base = "encarregados" }: { a
                 <div className="ini-fg">
                   <label>Grau de Urgência — calculado pelo prazo</label>
                   <input className="ini-fi" readOnly value={prazo.grau ?? "— informe a data de início —"}
-                    style={{ background: "#f1f5f9", color: prazo.grau ? "#0f172a" : "#94a3b8", fontWeight: 700, cursor: "not-allowed" }} />
+                    style={{ background: "#f1f5f9", color: prazo.grau ? "#0f172a" : "#64748b", fontWeight: 700, cursor: "not-allowed" }} />
                 </div>
                 <div className="ini-fg"><label>Alta Rotatividade?</label><select className="ini-fi" value={vaga.alta_rotatividade} onChange={e => setVaga(v => ({ ...v, alta_rotatividade: e.target.value }))}><option>Não</option><option>Sim</option></select></div>
               </div>
@@ -1385,7 +1391,7 @@ export default function MinhasSolicitacoes({ abrir, base = "encarregados" }: { a
                   formulário (14/09/2026): vão vir da licitação/planilha, não
                   do encarregado. A CNH continua automática pelo cargo. */}
               {cnhDoCargo && (
-                <div style={{ display: "flex", alignItems: "center", gap: 7, fontSize: 12, fontWeight: 700, color: "#b45309", background: "#fffbeb", border: "1px solid #fde68a", borderRadius: 8, padding: "7px 10px", marginBottom: 10 }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 7, fontSize: 14.5, fontWeight: 700, color: "#b45309", background: "#fffbeb", border: "1px solid #fde68a", borderRadius: 8, padding: "7px 10px", marginBottom: 10 }}>
                   <span>🚗</span><span>{REQ_CNH_TEXTO} <span style={{ fontWeight: 600, color: "#92400e" }}>(automático para {cnhDoCargo.toLowerCase()})</span></span>
                 </div>
               )}
@@ -1403,7 +1409,7 @@ export default function MinhasSolicitacoes({ abrir, base = "encarregados" }: { a
               </div>
               {vaga.tem_recomendacao === "Sim" && (
                 <div style={{ border: "1px solid #e2e8f0", borderRadius: 10, padding: 12, background: "#f8fafc" }}>
-                  <div style={{ fontSize: 12, fontWeight: 800, color: "#334155", marginBottom: 8 }}>Dados de quem você está indicando</div>
+                  <div style={{ fontSize: 14.5, fontWeight: 800, color: "#334155", marginBottom: 8 }}>Dados de quem você está indicando</div>
                   <div className="ini-fg"><label>Nome completo *</label>
                     <input className="ini-fi" placeholder="Nome completo da pessoa indicada"
                       value={vaga.recomendacao_nome} onChange={e => setVaga(v => ({ ...v, recomendacao_nome: e.target.value }))} /></div>
@@ -1412,7 +1418,7 @@ export default function MinhasSolicitacoes({ abrir, base = "encarregados" }: { a
                       <input className="ini-fi" inputMode="numeric" placeholder="000.000.000-00"
                         value={vaga.recomendacao_cpf} onChange={e => setVaga(v => ({ ...v, recomendacao_cpf: maskCpf(e.target.value) }))} />
                       {soDigitos(vaga.recomendacao_cpf).length === 11 && !cpfValido(vaga.recomendacao_cpf) && (
-                        <div style={{ marginTop: 4, fontSize: 11, color: "#dc2626", fontWeight: 700 }}>CPF não confere.</div>
+                        <div style={{ marginTop: 4, fontSize: 14.5, color: "#dc2626", fontWeight: 700 }}>CPF não confere.</div>
                       )}</div>
                     <div className="ini-fg"><label>WhatsApp *</label>
                       <input className="ini-fi" inputMode="numeric" placeholder="(51) 99999-9999"
@@ -1424,9 +1430,9 @@ export default function MinhasSolicitacoes({ abrir, base = "encarregados" }: { a
             </>)}
 
             <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 16, paddingTop: 14, borderTop: "1px solid #e2e8f0" }}>
-              {vagaStep > 1 && <button onClick={() => setVagaStep(s => s - 1)} style={{ padding: "7px 14px", borderRadius: 10, border: "1px solid #e2e8f0", background: "#fff", color: "#475569", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>← Anterior</button>}
-              {vagaStep < 3 && <button onClick={() => { if (vagaValidar(vagaStep)) setVagaStep(s => s + 1); }} style={{ padding: "7px 14px", borderRadius: 10, border: "none", background: "#0f3171", color: "#fff", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>Próximo →</button>}
-              {vagaStep === 3 && <button onClick={submitVaga} style={{ padding: "7px 14px", borderRadius: 10, border: "none", background: "#16a34a", color: "#fff", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>✓ Solicitar Vaga</button>}
+              {vagaStep > 1 && <button onClick={() => setVagaStep(s => s - 1)} style={{ padding: "7px 14px", borderRadius: 10, border: "1px solid #e2e8f0", background: "#fff", color: "#475569", fontSize: 14.5, fontWeight: 700, cursor: "pointer" }}>← Anterior</button>}
+              {vagaStep < 3 && <button onClick={() => { if (vagaValidar(vagaStep)) setVagaStep(s => s + 1); }} style={{ padding: "7px 14px", borderRadius: 10, border: "none", background: "#0f3171", color: "#fff", fontSize: 14.5, fontWeight: 700, cursor: "pointer" }}>Próximo →</button>}
+              {vagaStep === 3 && <button onClick={submitVaga} style={{ padding: "7px 14px", borderRadius: 10, border: "none", background: "#16a34a", color: "#fff", fontSize: 14.5, fontWeight: 700, cursor: "pointer" }}>✓ Solicitar Vaga</button>}
             </div>
           </div>
         </div>
@@ -1436,11 +1442,11 @@ export default function MinhasSolicitacoes({ abrir, base = "encarregados" }: { a
       {modalFerias && (
         <div className="ini-modal-ov">
           <div className="ini-modal" onClick={e => e.stopPropagation()} style={{ maxWidth: 520 }}>
-            <button onClick={() => setModalFerias(false)} style={{ position: "absolute", top: 14, right: 14, background: "none", border: "none", color: "#94a3b8", fontSize: 20, cursor: "pointer" }}>✕</button>
-            <div style={{ fontSize: 17, fontWeight: 800, marginBottom: 4 }}>{feriasRefazerId ? `🔁 Refazer solicitação de férias #${feriasRefazerId}` : "📅 Solicitar Férias"}</div>
-            <div style={{ fontSize: 12, color: "#94a3b8", marginBottom: 16 }}>Antecedência mínima de 30 dias · abono (venda) de até 10 dias.</div>
+            <button onClick={() => setModalFerias(false)} style={{ position: "absolute", top: 14, right: 14, background: "none", border: "none", color: "#64748b", fontSize: 20, cursor: "pointer" }}>✕</button>
+            <div style={{ fontSize: 20, fontWeight: 800, marginBottom: 4 }}>{feriasRefazerId ? `🔁 Refazer solicitação de férias #${feriasRefazerId}` : "📅 Solicitar Férias"}</div>
+            <div style={{ fontSize: 14.5, color: "#64748b", marginBottom: 16 }}>Antecedência mínima de 30 dias · abono (venda) de até 10 dias.</div>
             {feriasRefazerId && (
-              <div style={{ margin: "-6px 0 14px", padding: "9px 12px", borderRadius: 10, background: "#eef2ff", border: "1px solid #c7d2fe", fontSize: 12, color: "#3730a3", lineHeight: 1.5 }}>
+              <div style={{ margin: "-6px 0 14px", padding: "9px 12px", borderRadius: 10, background: "#eef2ff", border: "1px solid #c7d2fe", fontSize: 14.5, color: "#3730a3", lineHeight: 1.5 }}>
                 ⚠️ {AVISO_REFAZER}
               </div>
             )}
@@ -1451,20 +1457,20 @@ export default function MinhasSolicitacoes({ abrir, base = "encarregados" }: { a
                 onChange={e => { const v = e.target.value; setEmpSearch(v); setFerias(f => ({ ...f, colaborador_id: null })); if (v.length >= 2) { setShowEmpDrop(true); buscarEmpregados(v); } else { setShowEmpDrop(false); setEmpregados([]); } }} />
               {showEmpDrop && empSearch.length >= 2 && (
                 <div style={{ position: "absolute", top: "100%", left: 0, right: 0, zIndex: 999, background: "#fff", border: "1px solid #e2e8f0", borderRadius: 10, boxShadow: "0 8px 24px rgba(15,23,42,.14)", maxHeight: 220, overflowY: "auto", marginTop: 2 }}>
-                  {loadingEmps ? <div style={{ padding: "12px", fontSize: 12, color: "#94a3b8", textAlign: "center" }}>Buscando...</div>
-                    : empregados.length === 0 ? <div style={{ padding: "12px", fontSize: 12, color: "#94a3b8", textAlign: "center" }}>Nenhum colaborador encontrado.</div>
+                  {loadingEmps ? <div style={{ padding: "12px", fontSize: 14.5, color: "#64748b", textAlign: "center" }}>Buscando...</div>
+                    : empregados.length === 0 ? <div style={{ padding: "12px", fontSize: 14.5, color: "#64748b", textAlign: "center" }}>Nenhum colaborador encontrado.</div>
                       : empregados.slice(0, 40).map((emp, i) => (
-                        <div key={i} onMouseDown={() => selecionarColabFerias(emp)} style={{ padding: "8px 12px", fontSize: 13, cursor: "pointer", borderBottom: "1px solid #f1f5f9", color: "#0f172a" }}
+                        <div key={i} onMouseDown={() => selecionarColabFerias(emp)} style={{ padding: "8px 12px", fontSize: 14, cursor: "pointer", borderBottom: "1px solid #f1f5f9", color: "#0f172a" }}
                           onMouseEnter={e => (e.currentTarget.style.background = "#f0f4ff")} onMouseLeave={e => (e.currentTarget.style.background = "#fff")}>
                           <div style={{ fontWeight: 600 }}>{emp.Nome}</div>
-                          <div style={{ fontSize: 11, color: "#94a3b8" }}>{emp["Título do Cargo"]}{emp["Nome Filial"] ? ` · ${emp["Nome Filial"]}` : ""}</div>
+                          <div style={{ fontSize: 14.5, color: "#64748b" }}>{emp["Título do Cargo"]}{emp["Nome Filial"] ? ` · ${emp["Nome Filial"]}` : ""}</div>
                         </div>
                       ))}
                 </div>
               )}
             </div>
             {ferias.colaborador_id && (
-              <div style={{ margin: "-6px 0 14px", padding: "8px 12px", borderRadius: 10, background: "#f0f4ff", border: "1px solid #dbe4f0", fontSize: 12, color: "#475569" }}>
+              <div style={{ margin: "-6px 0 14px", padding: "8px 12px", borderRadius: 10, background: "#f0f4ff", border: "1px solid #dbe4f0", fontSize: 14.5, color: "#475569" }}>
                 <strong style={{ color: "#0f172a" }}>{ferias.colaborador_nome}</strong>
                 {ferias.colaborador_cargo ? ` · ${ferias.colaborador_cargo}` : ""}{ferias.colaborador_filial ? ` · ${ferias.colaborador_filial}` : ""}
               </div>
@@ -1472,7 +1478,7 @@ export default function MinhasSolicitacoes({ abrir, base = "encarregados" }: { a
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
               <div className="ini-fg"><label>Data de Saída *</label><input className="ini-fi" type="date" min={hojeMaisDias(0)} value={ferias.data_saida} onChange={e => setFerias(f => ({ ...f, data_saida: e.target.value }))} />
                 {feriasForaDoPrazo() && (
-                  <div style={{ marginTop: 6, fontSize: 11.5, fontWeight: 700, color: "#92400e", background: "#fffbeb", border: "1px solid #fde68a", borderRadius: 8, padding: "6px 9px" }}>
+                  <div style={{ marginTop: 6, fontSize: 14, fontWeight: 700, color: "#92400e", background: "#fffbeb", border: "1px solid #fde68a", borderRadius: 8, padding: "6px 9px" }}>
                     ⚠️ Fora do prazo: menos de 30 dias de antecedência. Vai entrar como exceção e pode ser recusada.
                   </div>
                 )}
@@ -1485,8 +1491,8 @@ export default function MinhasSolicitacoes({ abrir, base = "encarregados" }: { a
             </div>
             <div className="ini-fg"><label>Observações</label><textarea className="ini-fi" rows={2} value={ferias.observacoes} onChange={e => setFerias(f => ({ ...f, observacoes: e.target.value }))} placeholder="Opcional..." /></div>
             <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 8, paddingTop: 14, borderTop: "1px solid #e2e8f0" }}>
-              <button onClick={() => setModalFerias(false)} style={{ padding: "7px 14px", borderRadius: 10, border: "1px solid #e2e8f0", background: "#fff", color: "#475569", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>Cancelar</button>
-              <button onClick={submitFerias} style={{ padding: "7px 14px", borderRadius: 10, border: "none", background: feriasRefazerId ? "#4f46e5" : "#16a34a", color: "#fff", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>{feriasRefazerId ? "🔁 Refazer e enviar ao RH" : "✓ Solicitar Férias"}</button>
+              <button onClick={() => setModalFerias(false)} style={{ padding: "7px 14px", borderRadius: 10, border: "1px solid #e2e8f0", background: "#fff", color: "#475569", fontSize: 14.5, fontWeight: 700, cursor: "pointer" }}>Cancelar</button>
+              <button onClick={submitFerias} style={{ padding: "7px 14px", borderRadius: 10, border: "none", background: feriasRefazerId ? "#4f46e5" : "#16a34a", color: "#fff", fontSize: 14.5, fontWeight: 700, cursor: "pointer" }}>{feriasRefazerId ? "🔁 Refazer e enviar ao RH" : "✓ Solicitar Férias"}</button>
             </div>
           </div>
         </div>
@@ -1496,13 +1502,13 @@ export default function MinhasSolicitacoes({ abrir, base = "encarregados" }: { a
       {modalAdv && (
         <div className="ini-modal-ov">
           <div className="ini-modal" onClick={e => e.stopPropagation()} style={{ maxWidth: 560 }}>
-            <button onClick={() => setModalAdv(false)} style={{ position: "absolute", top: 14, right: 14, background: "none", border: "none", color: "#94a3b8", fontSize: 20, cursor: "pointer" }}>✕</button>
-            <div style={{ fontSize: 17, fontWeight: 800, marginBottom: 4 }}>⚠️ Solicitar Advertência</div>
-            <div style={{ fontSize: 12, color: "#94a3b8", marginBottom: 12 }}>Informe quem recebe a advertência e responda as questões. Vai direto para o <b>Jurídico</b>, que aprova, reprova e dá o parecer.</div>
+            <button onClick={() => setModalAdv(false)} style={{ position: "absolute", top: 14, right: 14, background: "none", border: "none", color: "#64748b", fontSize: 20, cursor: "pointer" }}>✕</button>
+            <div style={{ fontSize: 20, fontWeight: 800, marginBottom: 4 }}>⚠️ Solicitar Advertência</div>
+            <div style={{ fontSize: 14.5, color: "#64748b", marginBottom: 12 }}>Informe quem recebe a advertência e responda as questões. Vai direto para o <b>Jurídico</b>, que aprova, reprova e dá o parecer.</div>
             {/* Quem pede vem do login — não se digita (17/09/2026). */}
-            <div style={{ margin: "0 0 14px", padding: "8px 12px", borderRadius: 10, background: "#f8fafc", border: "1px solid #e2e8f0", fontSize: 12, color: "#475569" }}>
-              <span style={{ fontSize: 10.5, fontWeight: 800, color: "#94a3b8", textTransform: "uppercase", letterSpacing: ".4px" }}>Solicitante</span><br />
-              <strong style={{ color: "#0f172a" }}>{displayName || user?.email || "—"}</strong>{user?.email ? <span style={{ color: "#94a3b8" }}> · {user.email}</span> : null}
+            <div style={{ margin: "0 0 14px", padding: "8px 12px", borderRadius: 10, background: "#f8fafc", border: "1px solid #e2e8f0", fontSize: 14.5, color: "#475569" }}>
+              <span style={{ fontSize: 14.5, fontWeight: 800, color: "#64748b", textTransform: "uppercase", letterSpacing: ".4px" }}>Solicitante</span><br />
+              <strong style={{ color: "#0f172a" }}>{displayName || user?.email || "—"}</strong>{user?.email ? <span style={{ color: "#64748b" }}> · {user.email}</span> : null}
             </div>
 
             <div className="ini-fg" style={{ position: "relative" }} onBlur={() => setTimeout(() => setShowEmpDrop(false), 150)}>
@@ -1511,13 +1517,13 @@ export default function MinhasSolicitacoes({ abrir, base = "encarregados" }: { a
                 onChange={e => { const v = e.target.value; setEmpSearch(v); setAdv(a => ({ ...a, colaborador_id: null })); if (v.length >= 2) { setShowEmpDrop(true); buscarEmpregados(v); } else { setShowEmpDrop(false); setEmpregados([]); } }} />
               {showEmpDrop && empSearch.length >= 2 && (
                 <div style={{ position: "absolute", top: "100%", left: 0, right: 0, zIndex: 999, background: "#fff", border: "1px solid #e2e8f0", borderRadius: 10, boxShadow: "0 8px 24px rgba(15,23,42,.14)", maxHeight: 220, overflowY: "auto", marginTop: 2 }}>
-                  {loadingEmps ? <div style={{ padding: "12px", fontSize: 12, color: "#94a3b8", textAlign: "center" }}>Buscando...</div>
-                    : empregados.length === 0 ? <div style={{ padding: "12px", fontSize: 12, color: "#94a3b8", textAlign: "center" }}>Nenhum colaborador encontrado.</div>
+                  {loadingEmps ? <div style={{ padding: "12px", fontSize: 14.5, color: "#64748b", textAlign: "center" }}>Buscando...</div>
+                    : empregados.length === 0 ? <div style={{ padding: "12px", fontSize: 14.5, color: "#64748b", textAlign: "center" }}>Nenhum colaborador encontrado.</div>
                       : empregados.slice(0, 40).map((emp, i) => (
-                        <div key={i} onMouseDown={() => selecionarColabAdv(emp)} style={{ padding: "8px 12px", fontSize: 13, cursor: "pointer", borderBottom: "1px solid #f1f5f9", color: "#0f172a" }}
+                        <div key={i} onMouseDown={() => selecionarColabAdv(emp)} style={{ padding: "8px 12px", fontSize: 14, cursor: "pointer", borderBottom: "1px solid #f1f5f9", color: "#0f172a" }}
                           onMouseEnter={e => (e.currentTarget.style.background = "#f0f4ff")} onMouseLeave={e => (e.currentTarget.style.background = "#fff")}>
                           <div style={{ fontWeight: 600 }}>{emp.Nome}</div>
-                          <div style={{ fontSize: 11, color: "#94a3b8" }}>{emp["Título do Cargo"]}{emp["Nome Filial"] ? ` · ${emp["Nome Filial"]}` : ""}</div>
+                          <div style={{ fontSize: 14.5, color: "#64748b" }}>{emp["Título do Cargo"]}{emp["Nome Filial"] ? ` · ${emp["Nome Filial"]}` : ""}</div>
                         </div>
                       ))}
                 </div>
@@ -1526,9 +1532,9 @@ export default function MinhasSolicitacoes({ abrir, base = "encarregados" }: { a
             {adv.colaborador_id && (
               // A ficha de quem vai ser advertido, na hora de escolher (17/09/2026):
               // é o que confirma que a pessoa certa foi selecionada.
-              <div style={{ margin: "-6px 0 14px", padding: "10px 12px", borderRadius: 10, background: "#f0f4ff", border: "1px solid #dbe4f0", fontSize: 12, color: "#475569" }}>
-                <div style={{ fontSize: 10.5, fontWeight: 800, color: "#0f3171", textTransform: "uppercase", letterSpacing: ".4px", marginBottom: 4 }}>⚠️ Advertido</div>
-                <strong style={{ color: "#0f172a", fontSize: 13 }}>{adv.colaborador_nome}</strong>
+              <div style={{ margin: "-6px 0 14px", padding: "10px 12px", borderRadius: 10, background: "#f0f4ff", border: "1px solid #dbe4f0", fontSize: 14.5, color: "#475569" }}>
+                <div style={{ fontSize: 14.5, fontWeight: 800, color: "#0f3171", textTransform: "uppercase", letterSpacing: ".4px", marginBottom: 4 }}>⚠️ Advertido</div>
+                <strong style={{ color: "#0f172a", fontSize: 14 }}>{adv.colaborador_nome}</strong>
                 <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "2px 12px", marginTop: 6 }}>
                   {([
                     ["CPF", adv.colaborador_cpf], ["Cargo", adv.colaborador_cargo],
@@ -1536,14 +1542,14 @@ export default function MinhasSolicitacoes({ abrir, base = "encarregados" }: { a
                     ["Admissão", adv.colaborador_admissao ? `${fmtDt(adv.colaborador_admissao)}${tempoDeEmpresa(adv.colaborador_admissao) ? ` · ${tempoDeEmpresa(adv.colaborador_admissao)} de empresa` : ""}` : ""],
                     ["Escala", adv.colaborador_escala],
                   ] as [string, string][]).filter(([, v]) => v).map(([l, v]) => (
-                    <div key={l}><span style={{ color: "#94a3b8", fontWeight: 700 }}>{l}:</span> {v}</div>
+                    <div key={l}><span style={{ color: "#64748b", fontWeight: 700 }}>{l}:</span> {v}</div>
                   ))}
                 </div>
               </div>
             )}
 
             {adv.colaborador_id && advHistorico.length > 0 && (
-              <div style={{ margin: "-6px 0 14px", padding: "8px 12px", borderRadius: 10, background: "#fff7ed", border: "1px solid #fed7aa", fontSize: 12, color: "#9a3412" }}>
+              <div style={{ margin: "-6px 0 14px", padding: "8px 12px", borderRadius: 10, background: "#fff7ed", border: "1px solid #fed7aa", fontSize: 14.5, color: "#9a3412" }}>
                 <div style={{ fontWeight: 700, marginBottom: 4 }}>⚠️ {advHistorico.length} advertência(s) anterior(es) deste colaborador:</div>
                 {advHistorico.slice(0, 5).map(h => (
                   <div key={h.id} style={{ display: "flex", justifyContent: "space-between", gap: 8, borderTop: "1px solid #fed7aa", padding: "3px 0" }}>
@@ -1564,11 +1570,11 @@ export default function MinhasSolicitacoes({ abrir, base = "encarregados" }: { a
               <div className="ini-fg"><label>Grau *</label><select className="ini-fi" value={adv.grau} onChange={e => setAdv(a => ({ ...a, grau: e.target.value }))}><option value="">— Selecione —</option>{["Baixo", "Médio", "Alto"].map(o => <option key={o}>{o}</option>)}</select></div>
             </div>
 
-            <div className="ini-fg"><label>Data do ocorrido *</label><input className="ini-fi" type="date" max={hojeMaisDias(0)} value={adv.data_ocorrido} onChange={e => setAdv(a => ({ ...a, data_ocorrido: e.target.value }))} /><div style={{ fontSize: 11, color: advForaDoPrazo() ? "#dc2626" : "#94a3b8", marginTop: 3, fontWeight: 600 }}>{advForaDoPrazo() ? "⚠️ Mais de 3 dias atrás — será registrada como Exceção (com justificativa)." : "Prazo ideal: até 3 dias atrás."}</div></div>
+            <div className="ini-fg"><label>Data do ocorrido *</label><input className="ini-fi" type="date" max={hojeMaisDias(0)} value={adv.data_ocorrido} onChange={e => setAdv(a => ({ ...a, data_ocorrido: e.target.value }))} /><div style={{ fontSize: 14.5, color: advForaDoPrazo() ? "#dc2626" : "#64748b", marginTop: 3, fontWeight: 600 }}>{advForaDoPrazo() ? "⚠️ Mais de 3 dias atrás — será registrada como Exceção (com justificativa)." : "Prazo ideal: até 3 dias atrás."}</div></div>
             <div className="ini-fg">
               <label>Descrição do ocorrido * (mín. 50 caracteres)</label>
               <textarea className="ini-fi" rows={4} placeholder="Descreva o que aconteceu, com detalhes..." value={adv.descricao_ocorrido} onChange={e => setAdv(a => ({ ...a, descricao_ocorrido: e.target.value }))} />
-              <div style={{ fontSize: 11, color: adv.descricao_ocorrido.trim().length >= 50 ? "#16a34a" : "#94a3b8", marginTop: 3, fontWeight: 600 }}>{adv.descricao_ocorrido.trim().length}/50 caracteres</div>
+              <div style={{ fontSize: 14.5, color: adv.descricao_ocorrido.trim().length >= 50 ? "#16a34a" : "#64748b", marginTop: 3, fontWeight: 600 }}>{adv.descricao_ocorrido.trim().length}/50 caracteres</div>
             </div>
 
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
@@ -1579,7 +1585,7 @@ export default function MinhasSolicitacoes({ abrir, base = "encarregados" }: { a
             </div>
 
             {advBloqueada && (
-              <div style={{ background: "#fef2f2", border: "1px solid #fecaca", color: "#b91c1c", borderRadius: 12, padding: "10px 14px", fontSize: 12.5, marginBottom: 14, fontWeight: 600 }}>
+              <div style={{ background: "#fef2f2", border: "1px solid #fecaca", color: "#b91c1c", borderRadius: 12, padding: "10px 14px", fontSize: 14.5, marginBottom: 14, fontWeight: 600 }}>
                 Primeiro dê a advertência verbal para dar a escrita.
               </div>
             )}
@@ -1589,7 +1595,7 @@ export default function MinhasSolicitacoes({ abrir, base = "encarregados" }: { a
             <div className="ini-fg">
               <label>Anexos (opcional)</label>
               <div style={{ display: "flex", flexWrap: "wrap", gap: 6, alignItems: "center" }}>
-                <label style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "7px 12px", borderRadius: 10, border: "1px dashed #cbd5e1", background: "#f8fafc", color: "#0f3171", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>
+                <label style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "7px 12px", borderRadius: 10, border: "1px dashed #cbd5e1", background: "#f8fafc", color: "#0f3171", fontSize: 14.5, fontWeight: 700, cursor: "pointer" }}>
                   📎 Escolher arquivos
                   <input type="file" multiple style={{ display: "none" }} onChange={e => {
                     const lista = Array.from(e.target.files ?? []);
@@ -1598,18 +1604,18 @@ export default function MinhasSolicitacoes({ abrir, base = "encarregados" }: { a
                   }} />
                 </label>
                 {advArquivos.map((f, i) => (
-                  <span key={i} style={{ display: "inline-flex", alignItems: "center", gap: 6, background: "#eef4ff", border: "1px solid #dbe4f0", borderRadius: 8, padding: "5px 9px", fontSize: 11.5, color: "#0f3171", fontWeight: 700 }}>
+                  <span key={i} style={{ display: "inline-flex", alignItems: "center", gap: 6, background: "#eef4ff", border: "1px solid #dbe4f0", borderRadius: 8, padding: "5px 9px", fontSize: 14, color: "#0f3171", fontWeight: 700 }}>
                     {f.name} <span style={{ fontWeight: 500, color: "#64748b" }}>{fmtTamanho(f.size)}</span>
-                    <button onClick={() => setAdvArquivos(a => a.filter((_, j) => j !== i))} title="Remover" style={{ border: "none", background: "none", color: "#94a3b8", cursor: "pointer", padding: 0 }}>✕</button>
+                    <button onClick={() => setAdvArquivos(a => a.filter((_, j) => j !== i))} title="Remover" style={{ border: "none", background: "none", color: "#64748b", cursor: "pointer", padding: 0 }}>✕</button>
                   </span>
                 ))}
-                {advArquivos.length === 0 && <span style={{ fontSize: 11.5, color: "#94a3b8" }}>Fotos, prints ou documentos que ajudem o Jurídico. Até 25 MB cada.</span>}
+                {advArquivos.length === 0 && <span style={{ fontSize: 14, color: "#64748b" }}>Fotos, prints ou documentos que ajudem o Jurídico. Até 25 MB cada.</span>}
               </div>
             </div>
 
             <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 8, paddingTop: 14, borderTop: "1px solid #e2e8f0" }}>
-              <button onClick={() => setModalAdv(false)} style={{ padding: "7px 14px", borderRadius: 10, border: "1px solid #e2e8f0", background: "#fff", color: "#475569", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>Cancelar</button>
-              <button onClick={submitAdv} disabled={advBloqueada} style={{ padding: "7px 14px", borderRadius: 10, border: "none", background: advBloqueada ? "#cbd5e1" : "#16a34a", color: "#fff", fontSize: 12, fontWeight: 700, cursor: advBloqueada ? "not-allowed" : "pointer" }}>✓ Solicitar Advertência</button>
+              <button onClick={() => setModalAdv(false)} style={{ padding: "7px 14px", borderRadius: 10, border: "1px solid #e2e8f0", background: "#fff", color: "#475569", fontSize: 14.5, fontWeight: 700, cursor: "pointer" }}>Cancelar</button>
+              <button onClick={submitAdv} disabled={advBloqueada} style={{ padding: "7px 14px", borderRadius: 10, border: "none", background: advBloqueada ? "#cbd5e1" : "#16a34a", color: "#fff", fontSize: 14.5, fontWeight: 700, cursor: advBloqueada ? "not-allowed" : "pointer" }}>✓ Solicitar Advertência</button>
             </div>
           </div>
         </div>
@@ -1622,20 +1628,20 @@ export default function MinhasSolicitacoes({ abrir, base = "encarregados" }: { a
         <div className="ini-modal-ov" style={{ zIndex: 800 }} onClick={() => setFeriasExc(false)}>
           <div className="ini-modal" onClick={e => e.stopPropagation()} style={{ maxWidth: 480, textAlign: "center", padding: "28px 26px 22px" }}>
             <div style={{ width: 56, height: 56, borderRadius: "50%", background: "#fef3c7", color: "#b45309", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 28, margin: "0 auto 14px" }}>⚠️</div>
-            <div style={{ fontSize: 17, fontWeight: 800, color: "#0f172a", marginBottom: 8 }}>Solicitação fora do prazo</div>
-            <div style={{ fontSize: 13, color: "#475569", lineHeight: 1.55, marginBottom: 6 }}>
+            <div style={{ fontSize: 20, fontWeight: 800, color: "#0f172a", marginBottom: 8 }}>Solicitação fora do prazo</div>
+            <div style={{ fontSize: 14, color: "#475569", lineHeight: 1.55, marginBottom: 6 }}>
               A saída em <b>{fmtDt(ferias.data_saida)}</b> tem menos de <b>30 dias</b> de antecedência.
             </div>
-            <div style={{ fontSize: 12.5, color: "#64748b", lineHeight: 1.55, marginBottom: 20 }}>
+            <div style={{ fontSize: 14.5, color: "#64748b", lineHeight: 1.55, marginBottom: 20 }}>
               A solicitação vai para aprovação marcada como <b>exceção</b> e <b>pode ser recusada</b>. Deseja solicitar mesmo assim?
             </div>
             <div style={{ display: "flex", justifyContent: "center", gap: 10, flexWrap: "wrap" }}>
               <button type="button" onClick={() => setFeriasExc(false)}
-                style={{ padding: "9px 22px", borderRadius: 10, border: "1px solid #e2e8f0", background: "#fff", color: "#475569", fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
+                style={{ padding: "9px 22px", borderRadius: 10, border: "1px solid #e2e8f0", background: "#fff", color: "#475569", fontSize: 14, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
                 Cancelar
               </button>
               <button type="button" onClick={() => doSubmitFerias(true)}
-                style={{ padding: "9px 22px", borderRadius: 10, border: "none", background: "#d97706", color: "#fff", fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
+                style={{ padding: "9px 22px", borderRadius: 10, border: "none", background: "#d97706", color: "#fff", fontSize: 14, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
                 Solicitar mesmo assim
               </button>
             </div>
@@ -1648,11 +1654,11 @@ export default function MinhasSolicitacoes({ abrir, base = "encarregados" }: { a
         <div className="ini-modal-ov">
           <div className="ini-modal" onClick={e => e.stopPropagation()} style={{ maxWidth: 460 }}>
             <div style={{ fontSize: 16, fontWeight: 800, marginBottom: 4, color: "#b45309" }}>⚠️ Advertência fora do prazo</div>
-            <div style={{ fontSize: 12.5, color: "#475569", marginBottom: 14, lineHeight: 1.5 }}>A advertência está sendo aplicada fora do período correto (mais de 3 dias após o ocorrido). Poderá ser aceita como <b>Exceção</b>. Justifique:</div>
+            <div style={{ fontSize: 14.5, color: "#475569", marginBottom: 14, lineHeight: 1.5 }}>A advertência está sendo aplicada fora do período correto (mais de 3 dias após o ocorrido). Poderá ser aceita como <b>Exceção</b>. Justifique:</div>
             <div className="ini-fg"><label>Justificativa da exceção *</label><textarea className="ini-fi" rows={3} placeholder="Explique por que está sendo solicitada fora do prazo…" value={advExc.justificativa} onChange={e => setAdvExc(s => ({ ...s, justificativa: e.target.value }))} /></div>
             <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 8 }}>
-              <button onClick={() => setAdvExc({ open: false, justificativa: "" })} style={{ padding: "7px 14px", borderRadius: 10, border: "1px solid #e2e8f0", background: "#fff", color: "#475569", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>Cancelar</button>
-              <button onClick={confirmarExcecao} style={{ padding: "7px 14px", borderRadius: 10, border: "none", background: "#d97706", color: "#fff", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>Confirmar como Exceção</button>
+              <button onClick={() => setAdvExc({ open: false, justificativa: "" })} style={{ padding: "7px 14px", borderRadius: 10, border: "1px solid #e2e8f0", background: "#fff", color: "#475569", fontSize: 14.5, fontWeight: 700, cursor: "pointer" }}>Cancelar</button>
+              <button onClick={confirmarExcecao} style={{ padding: "7px 14px", borderRadius: 10, border: "none", background: "#d97706", color: "#fff", fontSize: 14.5, fontWeight: 700, cursor: "pointer" }}>Confirmar como Exceção</button>
             </div>
           </div>
         </div>
@@ -1663,10 +1669,10 @@ export default function MinhasSolicitacoes({ abrir, base = "encarregados" }: { a
         <div className="ini-modal-ov" style={{ zIndex: 800 }} onClick={() => setBloqueio(null)}>
           <div className="ini-modal" onClick={e => e.stopPropagation()} style={{ maxWidth: 480, textAlign: "center", padding: "28px 26px 22px" }}>
             <div style={{ width: 56, height: 56, borderRadius: "50%", background: "#fee2e2", color: "#b91c1c", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 28, margin: "0 auto 14px" }}>🚫</div>
-            <div style={{ fontSize: 17, fontWeight: 800, color: "#0f172a", marginBottom: 8 }}>{TITULO_DUPLICIDADE[bloqueio.tipo]}</div>
-            <div style={{ fontSize: 13, color: "#475569", lineHeight: 1.55, marginBottom: 20 }}>{bloqueio.mensagem}</div>
+            <div style={{ fontSize: 20, fontWeight: 800, color: "#0f172a", marginBottom: 8 }}>{TITULO_DUPLICIDADE[bloqueio.tipo]}</div>
+            <div style={{ fontSize: 14, color: "#475569", lineHeight: 1.55, marginBottom: 20 }}>{bloqueio.mensagem}</div>
             <button type="button" onClick={() => setBloqueio(null)}
-              style={{ padding: "9px 26px", borderRadius: 10, border: "none", background: "#0f3171", color: "#fff", fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
+              style={{ padding: "9px 26px", borderRadius: 10, border: "none", background: "#0f3171", color: "#fff", fontSize: 14, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
               OK
             </button>
           </div>
@@ -1681,20 +1687,20 @@ export default function MinhasSolicitacoes({ abrir, base = "encarregados" }: { a
         <div className="ini-modal-ov" style={{ zIndex: 800 }} onClick={() => setAvisoDemissao(false)}>
           <div className="ini-modal" onClick={e => e.stopPropagation()} style={{ maxWidth: 480, textAlign: "center", padding: "28px 26px 22px" }}>
             <div style={{ width: 56, height: 56, borderRadius: "50%", background: "#fef3c7", color: "#b45309", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 28, margin: "0 auto 14px" }}>⚠️</div>
-            <div style={{ fontSize: 17, fontWeight: 800, color: "#0f172a", marginBottom: 8 }}>Falta a solicitação de demissão</div>
-            <div style={{ fontSize: 13, color: "#475569", lineHeight: 1.55, marginBottom: 6 }}>
+            <div style={{ fontSize: 20, fontWeight: 800, color: "#0f172a", marginBottom: 8 }}>Falta a solicitação de demissão</div>
+            <div style={{ fontSize: 14, color: "#475569", lineHeight: 1.55, marginBottom: 6 }}>
               <b>{vaga.nome_substituido || "Este colaborador"}</b> ainda não tem solicitação de demissão em andamento.
             </div>
-            <div style={{ fontSize: 12.5, color: "#64748b", lineHeight: 1.55, marginBottom: 20 }}>
+            <div style={{ fontSize: 14.5, color: "#64748b", lineHeight: 1.55, marginBottom: 20 }}>
               Vaga de <b>Substituição</b> é aberta a partir da demissão de quem sai. Solicite a demissão primeiro — ao enviar, a vaga abre sozinha, já preenchida.
             </div>
             <div style={{ display: "flex", justifyContent: "center", gap: 10, flexWrap: "wrap" }}>
               <button type="button" onClick={() => setAvisoDemissao(false)}
-                style={{ padding: "9px 22px", borderRadius: 10, border: "1px solid #e2e8f0", background: "#fff", color: "#475569", fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
+                style={{ padding: "9px 22px", borderRadius: 10, border: "1px solid #e2e8f0", background: "#fff", color: "#475569", fontSize: 14, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
                 OK
               </button>
               <button type="button" onClick={irSolicitarDemissao}
-                style={{ padding: "9px 22px", borderRadius: 10, border: "none", background: "#0f3171", color: "#fff", fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
+                style={{ padding: "9px 22px", borderRadius: 10, border: "none", background: "#0f3171", color: "#fff", fontSize: 14, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
                 Solicitar demissão desse colaborador →
               </button>
             </div>
@@ -1706,7 +1712,7 @@ export default function MinhasSolicitacoes({ abrir, base = "encarregados" }: { a
       <div style={{ position: "fixed", bottom: 24, left: "50%", transform: "translateX(-50%)", zIndex: 9999, pointerEvents: "none", display: "flex", flexDirection: "column", gap: 6, alignItems: "center" }}>
         {toasts.map(t => (
           <div key={t.id} style={{
-            padding: "10px 18px", borderRadius: 9, fontSize: 13, fontWeight: 600, boxShadow: "0 16px 40px rgba(15,23,42,.1)",
+            padding: "10px 18px", borderRadius: 9, fontSize: 14, fontWeight: 600, boxShadow: "0 16px 40px rgba(15,23,42,.1)",
             background: t.type === "ok" ? "#ecfdf3" : t.type === "err" ? "#fef2f2" : "#eff6ff",
             color: t.type === "ok" ? "#15803d" : t.type === "err" ? "#b91c1c" : "#1d4ed8",
             border: `1px solid ${t.type === "ok" ? "#86efac" : t.type === "err" ? "#fecaca" : "#bfdbfe"}`,

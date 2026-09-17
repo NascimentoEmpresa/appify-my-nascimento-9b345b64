@@ -177,11 +177,11 @@ export function ConversaSolicitacao({ modulo, entidadeId, aviso }: {
       <div style={{ fontSize: 12, fontWeight: 700, color: "#475569", marginBottom: aviso ? 4 : 10 }}>
         💬 Conversa
       </div>
-      {aviso && <div style={{ fontSize: 11, color: "#94a3b8", marginBottom: 10 }}>{aviso}</div>}
+      {aviso && <div style={{ fontSize: 12.5, color: "#64748b", marginBottom: 10 }}>{aviso}</div>}
 
       <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 12, maxHeight: 320, overflowY: "auto" }}>
         {msgs.length === 0 ? (
-          <div style={{ fontSize: 12, color: "#94a3b8", textAlign: "center", padding: "12px 0" }}>
+          <div style={{ fontSize: 12, color: "#64748b", textAlign: "center", padding: "12px 0" }}>
             Nenhuma mensagem ainda.
           </div>
         ) : msgs.map((m) => {
@@ -189,7 +189,7 @@ export function ConversaSolicitacao({ modulo, entidadeId, aviso }: {
           const anexos = m.anexos ?? [];
           return (
             <div key={m.id} style={{ alignSelf: minha ? "flex-end" : "flex-start", maxWidth: "75%" }}>
-              <div style={{ fontSize: 10, color: "#94a3b8", padding: "0 2px", textAlign: minha ? "right" : "left" }}>
+              <div style={{ fontSize: 13, color: "#64748b", padding: "0 2px", textAlign: minha ? "right" : "left" }}>
                 {m.autor_nome}
               </div>
               <div style={{
@@ -210,11 +210,11 @@ export function ConversaSolicitacao({ modulo, entidadeId, aviso }: {
                               <img src={url} alt={a.nome} title={`${a.nome} — clique e Ctrl+C para copiar`}
                                 onClick={() => setSelecionada(sel ? null : a.path)}
                                 style={{ maxWidth: "100%", maxHeight: 260, borderRadius: 8, display: "block", cursor: "pointer", outline: sel ? "3px solid #f59e0b" : "none" }} />
-                            ) : <span style={{ fontSize: 11, opacity: .7 }}>carregando imagem…</span>}
+                            ) : <span style={{ fontSize: 12.5, opacity: .7 }}>carregando imagem…</span>}
                             <div style={{ display: "flex", gap: 6, marginTop: 3 }}>
                               <button onClick={async () => { const ok = await copiarImagem(url ?? ""); setAviso2(ok ? "Imagem copiada." : "Não consegui copiar a imagem."); setTimeout(() => setAviso2(""), 2500); }}
-                                style={{ border: "none", borderRadius: 6, background: minha ? "rgba(255,255,255,.18)" : "#e2e8f0", color: "inherit", fontSize: 10.5, fontWeight: 700, padding: "2px 8px", cursor: "pointer" }}>📋 Copiar</button>
-                              {url && <a href={url} target="_blank" rel="noopener noreferrer" style={{ borderRadius: 6, background: minha ? "rgba(255,255,255,.18)" : "#e2e8f0", color: "inherit", fontSize: 10.5, fontWeight: 700, padding: "2px 8px", textDecoration: "none" }}>Abrir</a>}
+                                style={{ border: "none", borderRadius: 6, background: minha ? "rgba(255,255,255,.18)" : "#e2e8f0", color: "inherit", fontSize: 13.5, fontWeight: 700, padding: "2px 8px", cursor: "pointer" }}>📋 Copiar</button>
+                              {url && <a href={url} target="_blank" rel="noopener noreferrer" style={{ borderRadius: 6, background: minha ? "rgba(255,255,255,.18)" : "#e2e8f0", color: "inherit", fontSize: 13.5, fontWeight: 700, padding: "2px 8px", textDecoration: "none" }}>Abrir</a>}
                             </div>
                           </div>
                         );
@@ -229,7 +229,7 @@ export function ConversaSolicitacao({ modulo, entidadeId, aviso }: {
                   </div>
                 )}
               </div>
-              <div style={{ fontSize: 10, color: "#94a3b8", padding: "0 2px", textAlign: minha ? "right" : "left" }}>
+              <div style={{ fontSize: 13, color: "#64748b", padding: "0 2px", textAlign: minha ? "right" : "left" }}>
                 {fmt(m.created_at)}
               </div>
             </div>
@@ -241,15 +241,15 @@ export function ConversaSolicitacao({ modulo, entidadeId, aviso }: {
       {pendentes.length > 0 && (
         <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 8 }}>
           {pendentes.map((f, i) => (
-            <span key={i} style={{ display: "inline-flex", alignItems: "center", gap: 6, background: "#eef4ff", border: "1px solid #dbe4f0", borderRadius: 8, padding: "4px 8px", fontSize: 11.5, color: "#0f3171", fontWeight: 700 }}>
+            <span key={i} style={{ display: "inline-flex", alignItems: "center", gap: 6, background: "#eef4ff", border: "1px solid #dbe4f0", borderRadius: 8, padding: "4px 8px", fontSize: 13, color: "#0f3171", fontWeight: 700 }}>
               {ehImagem(f.type, f.name) ? "🖼️" : "📎"} {f.name} <span style={{ fontWeight: 500, color: "#64748b" }}>{fmtTamanho(f.size)}</span>
-              <button onClick={() => setPendentes(p => p.filter((_, j) => j !== i))} title="Remover" style={{ border: "none", background: "none", color: "#94a3b8", cursor: "pointer", padding: 0 }}>✕</button>
+              <button onClick={() => setPendentes(p => p.filter((_, j) => j !== i))} title="Remover" style={{ border: "none", background: "none", color: "#64748b", cursor: "pointer", padding: 0 }}>✕</button>
             </span>
           ))}
         </div>
       )}
-      {erro && <div style={{ fontSize: 11, color: "#dc2626", marginBottom: 8 }}>{erro}</div>}
-      {aviso2 && <div style={{ fontSize: 11, color: "#15803d", marginBottom: 8 }}>{aviso2}</div>}
+      {erro && <div style={{ fontSize: 12.5, color: "#dc2626", marginBottom: 8 }}>{erro}</div>}
+      {aviso2 && <div style={{ fontSize: 12.5, color: "#15803d", marginBottom: 8 }}>{aviso2}</div>}
 
       <div style={{ display: "flex", gap: 8 }}>
         <input ref={inputRef} type="file" multiple style={{ display: "none" }}
