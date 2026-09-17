@@ -232,6 +232,30 @@ export function somarCamposEmLinhas(linhasVigentes: PlanilhaCustoRow[], campos: 
   }, 0);
 }
 
+// SIS-2026-0325 (Controle de Contratos): agregados por contrato — mesma
+// resolução de vigência de resolverPostosVigentes, só somando
+// custos_indiretos/lucro em vez de total_por_empregado. `linhas` é o
+// array inteiro de planilha_custo (todas as empresas/contratos); a função
+// resolve vigência internamente por `contratoId`.
+export function somarValorExecutadoMensalContrato(linhas: PlanilhaCustoRow[], contratoId: string): number {
+  return somarCamposEmLinhas(resolverLinhasVigentes(linhas, contratoId), ["total_por_empregado"]);
+}
+
+export function somarCustoIndiretoMensalContrato(linhas: PlanilhaCustoRow[], contratoId: string): number {
+  return somarCamposEmLinhas(resolverLinhasVigentes(linhas, contratoId), ["custos_indiretos"]);
+}
+
+export function somarLucroMensalContrato(linhas: PlanilhaCustoRow[], contratoId: string): number {
+  return somarCamposEmLinhas(resolverLinhasVigentes(linhas, contratoId), ["lucro"]);
+}
+
+// Quantidade de postos executados (soma de qt_postos das linhas
+// vigentes) — mesma base de resolverPostosVigentes, só que o total em
+// vez do detalhe por posto.
+export function somarQuantFuncExecContrato(linhas: PlanilhaCustoRow[], contratoId: string): number {
+  return resolverLinhasVigentes(linhas, contratoId).reduce((soma, r) => soma + (r.qt_postos || 0), 0);
+}
+
 export interface DescricaoOutros {
   campo: string; // chaveCampoOutros(descricao) — mesma chave usada em useOrcamentoContratos
   label: string; // descrição original (primeira grafia encontrada)
