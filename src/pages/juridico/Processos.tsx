@@ -41,7 +41,20 @@ interface Proposta { valor: number; descricao: string; tipo: string; quem: strin
 // Valor à parte (15/09/2026): lançamento que não pertence a nenhum motivo do
 // processo — honorários periciais, custas avulsas… Tem motivo próprio
 // (obrigatório) e não se mistura com os valores POR MOTIVO acima.
-interface ValorAParte { motivo: string; valor: number; descricao: string }
+//
+// DESTINO (17/09/2026, pedido do Pablo): cada valor à parte diz PARA ONDE
+// vai — Pedidos, Acordo, Sentença ou Custo final — e soma no cartão
+// escolhido. Registro gravado antes disso (sem `destino`) continua indo
+// para o custo final, que era o único lugar onde ele entrava.
+const DESTINOS_VALOR_A_PARTE = [
+  ["pedidos", "Pedidos"], ["acordo", "Acordo"], ["sentenca", "Sentença"], ["custo_final", "Custo final"],
+] as const;
+type DestinoValorAParte = (typeof DESTINOS_VALOR_A_PARTE)[number][0];
+const DESTINO_PADRAO: DestinoValorAParte = "custo_final";
+const ehDestinoValorAParte = (v: unknown): v is DestinoValorAParte =>
+  DESTINOS_VALOR_A_PARTE.some(([d]) => d === v);
+const rotuloDestino = (d: DestinoValorAParte) => DESTINOS_VALOR_A_PARTE.find(([k]) => k === d)?.[1] ?? d;
+interface ValorAParte { motivo: string; valor: number; descricao: string; destino: DestinoValorAParte }
 interface Audiencia { ordem: number; data: string; tipo_audiencia?: string; modalidade_audiencia?: string; horario?: string; propostas?: Proposta[]; }
 interface Processo {
   id: number;
@@ -135,9 +148,18 @@ const custosDoProcesso = (p: Processo) => PROC_VAL_FIELDS.reduce((s, k) => s + t
 // `valor_final` preenchido continua mandando: é o fechamento lançado à mão, e
 // quem o preenche já está dizendo qual foi o custo total.
 // Valores à parte também são desembolso: entram no custo final (15/09/2026).
+// Desde 17/09/2026 cada um tem DESTINO: o que foi para Pedidos soma no
+// cartão de pedidos (e só nele — pedido não é custo); Acordo e Sentença
+// somam no cartão deles e, por tabela, no custo final; "Custo final" entra
+// só no custo final, como todos entravam antes.
 const valoresAParteTotal = (p: Processo) => ((p.valores_a_parte || []) as ValorAParte[]).reduce((s, v) => s + toFloat(v.valor), 0);
+const valoresAParteDestino = (p: Processo, destino: DestinoValorAParte) =>
+  ((p.valores_a_parte || []) as ValorAParte[]).filter(v => (v.destino ?? DESTINO_PADRAO) === destino).reduce((s, v) => s + toFloat(v.valor), 0);
+const pedidosTotal  = (p: Processo) => p.valor_pedidos  + valoresAParteDestino(p, "pedidos");
+const acordoTotal   = (p: Processo) => p.valor_acordo   + valoresAParteDestino(p, "acordo");
+const sentencaTotal = (p: Processo) => p.valor_sentenca + valoresAParteDestino(p, "sentenca");
 const custoTotal = (p: Processo) => p.valor_final > 0 ? p.valor_final
-  : p.valor_acordo + p.valor_sentenca + p.valor_outros_custos + p.valor_deposito_recursal + p.valor_custas_processuais + custosDoProcesso(p) + valoresAParteTotal(p);
+  : acordoTotal(p) + sentencaTotal(p) + p.valor_outros_custos + p.valor_deposito_recursal + p.valor_custas_processuais + custosDoProcesso(p) + valoresAParteDestino(p, "custo_final");
 const motivoTotal = (i: MotivoItem) => VAL_FIELDS_MOTIVO.reduce((s, k) => s + toFloat(i[k]), 0);
 
 // Vínculo reclamante ⇄ EMPREGADOS. Lê a tabela direto (mesmo padrão do Recrutamento).
@@ -250,7 +272,7 @@ function parseValoresAParte(rs: LinhaProcesso[]): ValorAParte[] {
     try {
       const arr = typeof raw === "string" ? JSON.parse(raw) : raw;
       const lista: ValorAParte[] = Array.isArray(arr)
-        ? arr.map(v => ({ motivo: String(v.motivo ?? "").trim(), valor: toFloat(v.valor), descricao: String(v.descricao ?? "").trim() })).filter((v: ValorAParte) => v.motivo || v.valor)
+        ? arr.map(v => ({ motivo: String(v.motivo ?? "").trim(), valor: toFloat(v.valor), descricao: String(v.descricao ?? "").trim(), destino: ehDestinoValorAParte(v.destino) ? v.destino : DESTINO_PADRAO })).filter((v: ValorAParte) => v.motivo || v.valor)
         : [];
       if (lista.length) return lista;
     } catch { /* json inválido */ }
@@ -447,7 +469,7 @@ export default function Processos({ view = "processos" }: { view?: "dashboard" |
   const processos = useMemo(() => agrupar(rows), [rows]);
   const resumo = useMemo(() => {
     const r = { processos: processos.length, em_andamento: 0, pedidos: 0, acordos: 0, sentencas: 0, final: 0, causa_rt: 0 };
-    for (const p of processos) { if (ativo(p)) r.em_andamento++; r.pedidos += p.valor_pedidos; r.acordos += p.valor_acordo; r.sentencas += p.valor_sentenca; r.final += custoTotal(p); if (p.origem === "rtgeral") r.causa_rt += p.valor_causa; }
+    for (const p of processos) { if (ativo(p)) r.em_andamento++; r.pedidos += pedidosTotal(p); r.acordos += acordoTotal(p); r.sentencas += sentencaTotal(p); r.final += custoTotal(p); if (p.origem === "rtgeral") r.causa_rt += p.valor_causa; }
     return r;
   }, [processos]);
   const porMotivo = useMemo(() => {
@@ -457,7 +479,7 @@ export default function Processos({ view = "processos" }: { view?: "dashboard" |
   }, [processos]);
   const porAno = useMemo(() => {
     const acc = new Map<number, { ano: string; count: number; pedidos: number; acordos: number; total: number }>();
-    for (const p of processos) { if (!p.ano_processo) continue; const s = acc.get(p.ano_processo) || { ano: String(p.ano_processo), count: 0, pedidos: 0, acordos: 0, total: 0 }; s.count++; s.pedidos += p.valor_pedidos; s.acordos += p.valor_acordo; s.total += custoTotal(p); acc.set(p.ano_processo, s); }
+    for (const p of processos) { if (!p.ano_processo) continue; const s = acc.get(p.ano_processo) || { ano: String(p.ano_processo), count: 0, pedidos: 0, acordos: 0, total: 0 }; s.count++; s.pedidos += pedidosTotal(p); s.acordos += acordoTotal(p); s.total += custoTotal(p); acc.set(p.ano_processo, s); }
     return [...acc.values()].sort((a, b) => Number(a.ano) - Number(b.ano));
   }, [processos]);
   const porReclamada = useMemo(() => {
@@ -646,7 +668,7 @@ export default function Processos({ view = "processos" }: { view?: "dashboard" |
     const propostasJson = (() => { const l = limparPropostas(propostas); return l.length ? JSON.stringify(l) : null; })();
     // Valor à parte sem motivo não passa: o motivo é o que diz do que se trata.
     const valoresAParteLimpos = valoresAParte
-      .map(v => ({ motivo: v.motivo.trim(), valor: v.valor || 0, descricao: (v.descricao || "").trim() }))
+      .map(v => ({ motivo: v.motivo.trim(), valor: v.valor || 0, descricao: (v.descricao || "").trim(), destino: ehDestinoValorAParte(v.destino) ? v.destino : DESTINO_PADRAO }))
       .filter(v => v.motivo || v.valor || v.descricao);
     if (valoresAParteLimpos.some(v => !v.motivo)) { toast("Todo valor à parte precisa de um motivo.", "err"); return; }
     const valoresAParteJson = valoresAParteLimpos.length ? JSON.stringify(valoresAParteLimpos) : null;
@@ -751,7 +773,7 @@ export default function Processos({ view = "processos" }: { view?: "dashboard" |
   // Valores à parte (fora dos motivos). Updater funcional pelo mesmo motivo
   // das propostas: digitar rápido não pode reintroduzir lista antiga.
   const setValorAParte = (j: number, patch: Partial<ValorAParte>) => setValoresAParte(vs => vs.map((v, idx) => idx === j ? { ...v, ...patch } : v));
-  const addValorAParte = () => setValoresAParte(vs => [...vs, { motivo: "", valor: 0, descricao: "" }]);
+  const addValorAParte = () => setValoresAParte(vs => [...vs, { motivo: "", valor: 0, descricao: "", destino: DESTINO_PADRAO }]);
   const delValorAParte = (j: number) => setValoresAParte(vs => vs.filter((_, idx) => idx !== j));
   const valoresAParteSoma = useMemo(() => valoresAParte.reduce((s, v) => s + toFloat(v.valor), 0), [valoresAParte]);
   // Motivos já usados em valores à parte de outros processos — sugestão no
@@ -1023,7 +1045,7 @@ export default function Processos({ view = "processos" }: { view?: "dashboard" |
                       <td style={{ padding: "10px 14px" }}><div style={{ fontWeight: 700, color: "#0f172a" }}>{p.reclamante || "—"}</div><div style={{ fontSize: 11.5, color: "#94a3b8" }}>{p.numero_processo}{p.ano_processo ? ` · ${p.ano_processo}` : ""}</div></td>
                       <td style={{ padding: "10px 14px", color: "#475569" }}>{p.reclamada || "—"}</td>
                       <td style={{ padding: "10px 14px" }}><span style={{ fontSize: 11.5, color: "#0f172a" }}>{p.motivo_items[0]?.motivo || "—"}</span>{p.motivo_items.length > 1 && <span style={{ fontSize: 11, color: "#0f3171", fontWeight: 700 }}> +{p.motivo_items.length - 1}</span>}</td>
-                      <td style={{ padding: "10px 14px", textAlign: "right", color: "#475569" }}>{money(p.valor_pedidos)}</td>
+                      <td style={{ padding: "10px 14px", textAlign: "right", color: "#475569" }}>{money(pedidosTotal(p))}</td>
                       <td style={{ padding: "10px 14px", textAlign: "right", fontWeight: 700, color: "#0f172a" }}>{money(custoTotal(p))}</td>
                       <td style={{ padding: "10px 14px" }}><span title={p.status} style={{ fontSize: 11, fontWeight: 800, padding: "2px 9px", borderRadius: 20, background: sc.bg, color: sc.c, whiteSpace: "nowrap" }}>{STATUS_CURTO[p.status] ?? p.status}</span></td>
                       <td style={{ padding: "10px 14px", textAlign: "right", whiteSpace: "nowrap" }}>
@@ -1155,7 +1177,7 @@ export default function Processos({ view = "processos" }: { view?: "dashboard" |
               ? <div style={{ marginTop: 8 }}><button className="jpr-btn" onClick={() => verDetalhesReclamante(sel.reclamante_vinculado_cpf)} style={{ background: "#eef4ff", color: "#0f3171" }}>👤 Todos os detalhes do reclamante</button></div>
               : <div style={{ marginTop: 8, fontSize: 11.5, color: "#94a3b8" }}>Reclamante não vinculado a um cadastro. Use “Editar” para vincular.</div>}
             <div style={{ display: "flex", gap: 8, flexWrap: "wrap", margin: "14px 0" }}>
-              {[["Pedidos", sel.valor_pedidos, "#ea580c"], ["Acordo", sel.valor_acordo, "#dc2626"], ["Sentença", sel.valor_sentenca, "#2563eb"], ["Custo final", custoTotal(sel), "#15803d"]].map(([l, v, c]: [string, number, string]) => (
+              {[["Pedidos", pedidosTotal(sel), "#ea580c"], ["Acordo", acordoTotal(sel), "#dc2626"], ["Sentença", sentencaTotal(sel), "#2563eb"], ["Custo final", custoTotal(sel), "#15803d"]].map(([l, v, c]: [string, number, string]) => (
                 <div key={l} style={{ flex: 1, minWidth: 120, background: "#f8fafc", border: "1px solid #eef2f7", borderRadius: 10, padding: "8px 11px" }}>
                   <div style={{ fontSize: 10, fontWeight: 700, color: "#94a3b8", textTransform: "uppercase" }}>{l}</div><div style={{ fontSize: 14, fontWeight: 800, color: c }}>{money(v)}</div>
                 </div>
@@ -1170,7 +1192,11 @@ export default function Processos({ view = "processos" }: { view?: "dashboard" |
               <div style={{ border: "1px solid #eef2f7", borderRadius: 10, overflow: "hidden", marginBottom: 14 }}>
                 {sel.valores_a_parte.map((v, i) => (
                   <div key={i} style={{ display: "flex", justifyContent: "space-between", gap: 8, padding: "8px 11px", borderTop: i ? "1px solid #f1f5f9" : "none" }}>
-                    <span style={{ fontSize: 12.5, color: "#0f172a" }}>{v.motivo}{v.descricao && <span style={{ color: "#94a3b8" }}> — {v.descricao}</span>}</span>
+                    <span style={{ fontSize: 12.5, color: "#0f172a" }}>
+                      {v.motivo}{v.descricao && <span style={{ color: "#94a3b8" }}> — {v.descricao}</span>}
+                      {/* Em qual cartão este valor está somado. */}
+                      <span style={{ marginLeft: 8, padding: "1px 7px", borderRadius: 999, fontSize: 10.5, fontWeight: 700, background: "#eef4ff", color: "#0f3171", whiteSpace: "nowrap" }}>→ {rotuloDestino(v.destino ?? DESTINO_PADRAO)}</span>
+                    </span>
                     <span style={{ fontSize: 12, fontWeight: 700, color: "#475569", whiteSpace: "nowrap" }}>{money(v.valor)}</span>
                   </div>
                 ))}
@@ -1478,9 +1504,15 @@ export default function Processos({ view = "processos" }: { view?: "dashboard" |
                 <datalist id="jpr-motivos-a-parte">{motivosAParteDistintos.map(m => <option key={m} value={m} />)}</datalist>
                 {valoresAParte.map((v, j) => (
                   <div key={j} className="jpr-item">
-                    <div className="jpr-linha" style={{ gridTemplateColumns: "1.4fr 170px 1.2fr auto" }}>
+                    <div className="jpr-linha" style={{ gridTemplateColumns: "1.4fr 150px 150px 1fr auto" }}>
                       <div><label className="jpr-lbl">Motivo *</label><input className="jpr-fi" list="jpr-motivos-a-parte" placeholder="Ex.: Honorários periciais" value={v.motivo} onChange={e => setValorAParte(j, { motivo: e.target.value })} /></div>
                       <div><label className="jpr-lbl">Valor (R$)</label><MoedaInput value={v.valor} onChange={n => setValorAParte(j, { valor: n })} /></div>
+                      {/* Para onde o valor soma (17/09/2026): Pedidos, Acordo, Sentença ou Custo final. */}
+                      <div><label className="jpr-lbl">Soma em *</label>
+                        <select className="jpr-fi" value={v.destino ?? DESTINO_PADRAO} onChange={e => setValorAParte(j, { destino: ehDestinoValorAParte(e.target.value) ? e.target.value : DESTINO_PADRAO })}>
+                          {DESTINOS_VALOR_A_PARTE.map(([d, l]) => <option key={d} value={d}>{l}</option>)}
+                        </select>
+                      </div>
                       <div><label className="jpr-lbl">Observação</label><input className="jpr-fi" placeholder="Opcional" value={v.descricao} onChange={e => setValorAParte(j, { descricao: e.target.value })} /></div>
                       <button className="jpr-x" onClick={() => delValorAParte(j)} title="Remover">✕</button>
                     </div>
