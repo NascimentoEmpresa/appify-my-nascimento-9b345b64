@@ -293,6 +293,8 @@ export interface SolicitacaoDemissao {
   rh_por: string | null;
   rh_em: string | null;
   rh_observacao: string | null;
+  /** Última data trabalhada, informada pelo RH ao liberar pro SST (17/09/2026, mig 181). */
+  rh_ultima_data_trabalhada?: string | null;
 
   // ASO demissional. Os nomes são os MESMOS do ASO de admissão
   // (WA_CURRICULOS.sst_*) de propósito: quem trabalha no SST preenche a mesma
@@ -469,7 +471,7 @@ export function patchDevolucao(
     // O que a etapa que devolveu (e as seguintes) tinham carimbado.
     sst_data_exame: null, sst_hora_exame: null, sst_local_exame: null,
     sst_maps_url: null, sst_observacao: null, sst_por: null, sst_em: null,
-    rh_por: null, rh_em: null, rh_observacao: null,
+    rh_por: null, rh_em: null, rh_observacao: null, rh_ultima_data_trabalhada: null,
   };
 }
 
