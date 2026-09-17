@@ -45,6 +45,7 @@ import {
   DespesaAprovacaoDiaria,
   mensagemErroDiaria,
   urlAnexoDiaria,
+  urlComprovantePagamentoDiaria,
   useBuscaEmpregadosDiaria,
   useContratosDiaria,
   useEmpresaContratoDiaria,
@@ -200,14 +201,25 @@ function Leitura({ label, valor }: { label: string; valor: React.ReactNode }) {
   );
 }
 
-function AnexoLinha({ a }: { a: AnexoDiaria }) {
+function AnexoLinha({
+  a,
+  obterUrl = urlAnexoDiaria,
+}: {
+  a: AnexoDiaria;
+  /**
+   * De onde sai o link assinado. O padrão é o bucket "diarias"; o comprovante
+   * de pagamento vive em "malote-anexos" e passa o seu próprio — mesma linha
+   * na tela, buckets diferentes por baixo.
+   */
+  obterUrl?: (storagePath: string) => Promise<string>;
+}) {
   const { toast } = useToast();
   const ehImagem = a.tipo !== "PDF";
   // O bucket é privado: o "olhinho" pede um link assinado de curta duração em
   // vez de montar uma URL pública, que não existiria.
   const abrir = async () => {
     try {
-      window.open(await urlAnexoDiaria(a.storagePath), "_blank", "noopener");
+      window.open(await obterUrl(a.storagePath), "_blank", "noopener");
     } catch (e: unknown) {
       toast({
         title: "Não foi possível abrir o anexo",
@@ -566,8 +578,18 @@ export function SolicitacaoDiariaModal({
   // No modo "ajustar" o formulário nasce PREENCHIDO com o que foi lançado: a
   // pessoa está corrigindo um ponto específico que o Operacional apontou, não
   // redigitando a solicitação. Redigitar é onde nasce o segundo erro.
+  //
+  // `chaveAtual` começa em null, NÃO em `chave`. Era esse o bug de 17/09/2026:
+  // com `useState(chave)` a comparação já nascia igual, então o bloco abaixo
+  // não rodava na primeira renderização — e como o modal é montado do zero a
+  // cada abertura (`{modal && <SolicitacaoDiariaModal …>}` em ControleDiarias),
+  // "primeira renderização" é a única que existe. O reset nunca foi executado.
+  // Passou despercebido enquanto os modos eram só "nova" (que quer campos
+  // vazios mesmo, e vazio é o valor inicial) e os de leitura (que não usam
+  // este estado). "ajustar" foi o primeiro a depender de ele rodar de verdade,
+  // e abria o formulário inteiro em branco.
   const chave = `${modo}-${solicitacao?.id ?? "nova"}-${aberto}`;
-  const [chaveAtual, setChaveAtual] = useState(chave);
+  const [chaveAtual, setChaveAtual] = useState<string | null>(null);
   if (chave !== chaveAtual) {
     const base = modo === "ajustar" ? solicitacao : null;
     setChaveAtual(chave);
@@ -1475,6 +1497,48 @@ export function SolicitacaoDiariaModal({
               </div>
             )}
           </Secao>
+
+          {/* Comprovante do pagamento — o que o Malote anexou ao pagar.
+              Vem depois dos Documentos de propósito: a papelada da seção 5 é o
+              que JUSTIFICA o pedido; esta é a prova de que ele foi honrado.
+              Sem número de seção porque não é etapa do formulário — só existe
+              depois que o dinheiro saiu, e nunca em solicitação nova. */}
+          {(s?.comprovantesPagamento?.length ?? 0) > 0 && (
+            <section className="rounded-lg border border-success/40 bg-success/5 p-4">
+              <div className="mb-3 flex items-center gap-2">
+                <CheckCircle2 className="h-4 w-4 text-success" />
+                <h3 className="text-sm font-semibold text-success">
+                  Comprovante de pagamento
+                </h3>
+              </div>
+              <div className="space-y-3">
+                {s!.comprovantesPagamento.map((c) => (
+                  <div key={c.storagePath}>
+                    <AnexoLinha
+                      a={{
+                        nome: c.storagePath.split("/").pop() || c.rotulo,
+                        tipo:
+                          c.storagePath.split(".").pop()?.toUpperCase() || "ARQ",
+                        // O Malote não devolve o tamanho junto do path, e ir
+                        // buscá-lo pediria mais um round-trip por linha só
+                        // para escrever "310 KB" — quem precisa, abre.
+                        tamanho: "—",
+                        enviadoEm: c.pagoEm,
+                        categoria: "documento",
+                        storagePath: c.storagePath,
+                      }}
+                      obterUrl={urlComprovantePagamentoDiaria}
+                    />
+                    <p className="mt-1 text-[11px] text-muted-foreground">
+                      {c.rotulo} • pago por {c.pagoPor}
+                      {c.pagoEm ? ` em ${c.pagoEm}` : ""}
+                      {c.observacao ? ` • ${c.observacao}` : ""}
+                    </p>
+                  </div>
+                ))}
+              </div>
+            </section>
+          )}
 
           {/* 6. Observações gerais */}
           <Secao numero={6} titulo="Observações gerais">

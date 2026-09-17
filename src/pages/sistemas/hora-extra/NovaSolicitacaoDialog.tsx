@@ -8,8 +8,8 @@ import { Textarea } from "@/components/ui/textarea";
 import { useAuth } from "@/hooks/useAuth";
 import { useVinculoEmpregado } from "@/hooks/useVinculoEmpregado";
 import {
-  enviarAnexosHoraExtra,
   useColaboradoresHoraExtra,
+  useEnviarAnexosHoraExtra,
   useEscalasHoraExtra,
   useSalvarHoraExtra,
 } from "@/hooks/useHoraExtra";
@@ -82,6 +82,7 @@ export default function NovaSolicitacaoDialog({
   const [form, setForm] = useState(estadoInicial);
   const [chamados, setChamados] = useState<LinhaChamado[]>([]);
   const [arquivos, setArquivos] = useState<File[]>([]);
+  const enviarAnexos = useEnviarAnexosHoraExtra();
   const [seletor, setSeletor] = useState(false);
   useEffect(() => {
     if (!aberto) return;
@@ -200,7 +201,7 @@ export default function NovaSolicitacaoDialog({
           })),
         },
       })) as string;
-      const falhas = await enviarAnexosHoraExtra(id, "solicitacao", arquivos);
+      const falhas = await enviarAnexos(id, "solicitacao", arquivos);
       if (falhas.length) toast.warning(`Não foi possível anexar: ${falhas.join(", ")}`);
       toast.success(
         gerencial

@@ -13,6 +13,7 @@ import {
   mensagemErro,
   minutosJornada,
   minutosTrabalhados,
+  rotuloFaseAnexo,
   sobrepoe,
   statusExecucaoPorPercentual,
   statusExibicao,
@@ -118,6 +119,10 @@ describe("regras de hora extra", () => {
     expect(mensagemErro({ message: "O chamado já foi designado a outro usuário: Ana" }, "falhou")).toBe(
       "O chamado já foi designado a outro usuário: Ana",
     ));
+  it.each([
+    ["solicitacao", "Solicitação"],
+    ["conclusao", "Conclusão"],
+  ])("rotula o anexo da fase %s", (fase, rotulo) => expect(rotuloFaseAnexo(fase)).toBe(rotulo));
   it("detecta sobreposição", () => expect(sobrepoe("18:00", "21:00", "20:00", "22:00")).toBe(true));
   it("não acusa horários adjacentes", () => expect(sobrepoe("18:00", "20:00", "20:00", "22:00")).toBe(false));
   it("detecta sobreposição cruzando meia-noite", () => expect(sobrepoe("22:00", "02:00", "23:00", "01:00")).toBe(true));
