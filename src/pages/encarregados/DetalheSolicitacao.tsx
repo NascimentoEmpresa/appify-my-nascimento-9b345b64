@@ -3,6 +3,7 @@ import { supabase } from "@/integrations/supabase/client";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { useAuth } from "@/hooks/useAuth";
 import { useMeuNome } from "@/hooks/useMeuNome";
+import { AVISO_REFAZER, diasRestantesParaRefazer, podeRefazerFerias } from "@/lib/solicitacoes/feriasRefazer";
 
 // `integrations/supabase/types.ts` é gerado e não conhece as tabelas de
 // solicitações. O resto do ERP resolve isso com um cast solto em cada
@@ -95,6 +96,8 @@ const ROTULO: Record<string, string> = {
   sst_aso_dispensado: "ASO dispensado",
   aprovador_nome: "Aprovado por", aprovador_em: "Aprovado em",
   aprovador_motivo: "Retorno de quem aprovou",
+  refeita_em: "Refeita em", data_saida: "Data de saída", data_retorno: "Retorno previsto",
+  dias_ferias: "Dias de férias", dias_vendidos: "Abono (dias vendidos)", observacoes: "Observações",
   sst_por: "SST", sst_em: "SST em", sst_aso_data: "Data do ASO",
   sst_observacao: "Observação do SST",
   // Demissão: o ASO demissional, com os mesmos nomes de coluna do ASO de
@@ -117,6 +120,8 @@ const OCULTAS = new Set([
   "salario",
   "id", "created_at", "criado_em", "updated_at", "status", "status_changed_at",
   "solicitante_email", "solicitante_cpf", "solicitante_nome", "data_inicio_alteracoes",
+  // Férias refeita: contagem interna; a ficha mostra "Refeita em".
+  "refeita_vezes",
   // Mudança de função: roteamento interno, não informação para quem pediu.
   "e_escritorio", "atualizado_em",
   "administrativa", "cnh_obrigatoria",
@@ -153,7 +158,7 @@ function paraMensagem(m: LinhaMensagem, texto: string | null | undefined, email?
   };
 }
 
-export function DetalheSolicitacao({ tipo, id, titulo, status, onFechar }: {
+export function DetalheSolicitacao({ tipo, id, titulo, status, onFechar, onRefazer }: {
   tipo: TipoSolicitacao;
   /**
    * `number | string` porque as duas coisas chegam: as solicitações antigas
@@ -166,6 +171,12 @@ export function DetalheSolicitacao({ tipo, id, titulo, status, onFechar }: {
   titulo: string;
   status: string;
   onFechar: () => void;
+  /**
+   * Férias (16/09/2026): o encarregado refaz a solicitação daqui. Recebe a
+   * ficha carregada; quem abre o formulário é a tela de Minhas Solicitações.
+   * Só aparece quando a regra deixa (podeRefazerFerias).
+   */
+  onRefazer?: (ficha: Record<string, unknown>) => void;
 }) {
   const { user } = useAuth();
   const [ficha, setFicha] = useState<Record<string, unknown> | null>(null);
@@ -258,10 +269,32 @@ export function DetalheSolicitacao({ tipo, id, titulo, status, onFechar }: {
             {tipo} · #{id}
           </div>
           <div style={{ fontSize: 17, fontWeight: 800, color: "#0f172a", marginTop: 2 }}>{titulo}</div>
-          <div style={{ marginTop: 6 }}>
+          <div style={{ marginTop: 6, display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
             <span className="ini-badge">{status}</span>
+            {tipo === "Férias" && !!ficha?.refeita_em && (
+              <span title={`Refeita em ${fmt(String(ficha.refeita_em))}`} style={{ fontSize: 10.5, fontWeight: 800, padding: "2px 8px", borderRadius: 20, background: "#ede9fe", color: "#6d28d9" }}>🔁 Refeita</span>
+            )}
           </div>
         </div>
+
+        {/* ── Refazer (Férias) ── */}
+        {tipo === "Férias" && onRefazer && ficha && (() => {
+          const regra = podeRefazerFerias({ criado_em: ficha.criado_em as string | null, status: ficha.status as string | null });
+          const dias = diasRestantesParaRefazer(ficha.criado_em as string | null);
+          return (
+            <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap", marginBottom: 14, padding: "10px 14px", borderRadius: 12, border: `1px solid ${regra.ok ? "#c7d2fe" : "#e2e8f0"}`, background: regra.ok ? "#eef2ff" : "#f8fafc" }}>
+              <div style={{ flex: 1, minWidth: 220, fontSize: 12, color: regra.ok ? "#3730a3" : "#64748b", lineHeight: 1.5 }}>
+                {regra.ok
+                  ? <><b>Precisa corrigir algo?</b> {AVISO_REFAZER} {dias > 0 && <>Prazo: <b>{dias} dia{dias === 1 ? "" : "s"}</b>.</>}</>
+                  : <><b>Refazer indisponível.</b> {regra.motivo}</>}
+              </div>
+              <button onClick={() => onRefazer(ficha)} disabled={!regra.ok}
+                style={{ padding: "8px 14px", borderRadius: 10, border: "none", background: regra.ok ? "#4f46e5" : "#cbd5e1", color: "#fff", fontSize: 12, fontWeight: 800, cursor: regra.ok ? "pointer" : "not-allowed", fontFamily: "inherit", whiteSpace: "nowrap" }}>
+                🔁 Refazer solicitação
+              </button>
+            </div>
+          );
+        })()}
 
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 18, flex: 1, minHeight: 0 }}>
           {/* ── Detalhes ── */}

@@ -4,7 +4,8 @@ import { supabase } from "@/integrations/supabase/client";
 import {
   ehContratoParcelado, gerarParcelas, renumerar, somaParcelas, totalGeral, MODOS_PARCELA,
   validarParcelas, mapaValorQueFalta, numero as numParc, somaMeses,
-  type LinhaParcela, type ModoParcelas,
+  TIPOS_LANCAMENTO, ehParcelaNumerada, rotuloTipoLancamento, tipoPelaDescricao,
+  type LinhaParcela, type ModoParcelas, type TipoLancamento,
 } from "@/pages/juridico/patrimonio/parcelas";
 import { useAuth } from "@/hooks/useAuth";
 import { useMeuNome } from "@/hooks/useMeuNome";
@@ -49,6 +50,10 @@ interface Obrigacao {
   vigencia_inicio?: string; vigencia_fim?: string; premio?: number; parcelas?: string;
   onde_pagar?: string; comprovante_path?: string; comprovante_nome?: string;
   valor_entrada?: number;
+  // Contrato parcelado (migration 20260910000005) e o que a linha é dentro
+  // dele (20260930000167): só tipo 'parcela' recebe número N/T.
+  contrato_uid?: string | null; parcela_numero?: number | null; parcela_total?: number | null;
+  tipo_lancamento?: TipoLancamento | null;
   // Despesa criada no Malote a partir desta conta (migration 20260912000003).
   malote_despesa_id?: string | null; enviado_malote_em?: string | null;
 }
@@ -96,7 +101,7 @@ const mesLabel = (ym: string) => { const [y, m] = String(ym).split("-"); return 
 const statusObr = (o: Obrigacao, malotePaga?: (id?: string | null) => boolean): StatusConta =>
   statusDaConta(o, malotePaga, hoje());
 
-const OBR_RESET = { categoria: "", modo_parcelas: "igual" as ModoParcelas, qtd_parcelas: "", descricao: "", valor: "", valor_entrada: "", vencimento: "", periodicidade: "Mensal", repetir: "0", onde_pagar: "", forma_pagamento: "", responsavel: "", seguradora: "", apolice: "", vigencia_inicio: "", vigencia_fim: "", premio: "", parcelas: "" };
+const OBR_RESET = { categoria: "", modo_parcelas: "igual" as ModoParcelas, qtd_parcelas: "", tipo_lancamento: "parcela" as TipoLancamento, descricao: "", valor: "", valor_entrada: "", vencimento: "", periodicidade: "Mensal", repetir: "0", onde_pagar: "", forma_pagamento: "", responsavel: "", seguradora: "", apolice: "", vigencia_inicio: "", vigencia_fim: "", premio: "", parcelas: "" };
 const ehLink = (s?: string) => !!s && /^https?:\/\//i.test(s.trim());
 
 export default function Patrimonios() {
@@ -406,6 +411,9 @@ export default function Patrimonios() {
       valor: o.valor != null ? String(o.valor) : "",
       premio: o.premio != null ? String(o.premio) : "",
       valor_entrada: o.valor_entrada != null ? String(o.valor_entrada) : "",
+      // Linha lançada antes da coluna existir vem sem tipo: sugere pelo rótulo
+      // da descrição ("A) SINAL" → sinal), o mesmo critério da migration.
+      tipo_lancamento: o.tipo_lancamento || tipoPelaDescricao(o.descricao),
     } as any);
     setParcelasContrato([]);
     setModalObr(true);
@@ -425,6 +433,9 @@ export default function Patrimonios() {
       // Entrada só existe em financiamento/consórcio; nas outras vai null, senão
       // um valor digitado antes de trocar a categoria ficaria gravado escondido.
       valor_entrada: ehContratoParcelado(obr.categoria) && obr.valor_entrada ? Number(obr.valor_entrada) : null,
+      // Sinal/entrada/reforço/quitação só fazem sentido dentro de um contrato.
+      // Quem renumera as parcelas ao trocar o tipo é o trigger do banco.
+      tipo_lancamento: ehContratoParcelado(obr.categoria) && obr.tipo_lancamento ? obr.tipo_lancamento : "parcela",
     };
     // 1-A) Contrato parcelado: uma LINHA POR PARCELA, amarradas por
     // contrato_uid. Cada parcela é uma conta de verdade — aparece na lista,
@@ -1234,6 +1245,7 @@ export default function Patrimonios() {
                         <div>
                           <span style={{ fontWeight: 800, color: "#0f172a" }}>{o.categoria}</span>
                           {o.descricao && <span style={{ color: "#64748b" }}> · {o.descricao}</span>}
+                          {!ehParcelaNumerada(o.tipo_lancamento) && <span title="Não conta como parcela do contrato" style={{ marginLeft: 8, fontSize: 10.5, fontWeight: 800, padding: "1px 8px", borderRadius: 20, background: "#fef3c7", color: "#92400e", verticalAlign: "middle" }}>{rotuloTipoLancamento(o.tipo_lancamento)}</span>}
                           <div style={{ fontSize: 12, color: "#475569", marginTop: 3, display: "flex", flexWrap: "wrap", gap: "2px 12px" }}>
                             <span><b>{money(o.valor)}</b></span>
                             {o.vencimento && <span>Venc.: {fmtDt(o.vencimento)}</span>}
@@ -1432,6 +1444,15 @@ export default function Patrimonios() {
                 <div className="jp-fg" style={{ gridColumn: "2" }}>
                   <label>Valor de entrada</label>
                   <input className="jp-fi" type="number" step="0.01" value={obr.valor_entrada} onChange={e => setObr(v => ({ ...v, valor_entrada: e.target.value }))} placeholder="R$ 0,00" />
+                </div>
+              )}
+              {ehContratoParcelado(obr.categoria) && !!obrEditId && (
+                <div className="jp-fg">
+                  <label>Tipo do lançamento</label>
+                  <select className="jp-fi" value={obr.tipo_lancamento} onChange={e => setObr(v => ({ ...v, tipo_lancamento: e.target.value as TipoLancamento }))}>
+                    {TIPOS_LANCAMENTO.map(t => <option key={t.v} value={t.v}>{t.t}</option>)}
+                  </select>
+                  <div style={{ fontSize: 10.5, color: "#94a3b8", marginTop: 3 }}>Sinal, entrada, reforço e quitação não contam como parcela — a numeração N/T considera só as linhas do tipo Parcela.</div>
                 </div>
               )}
               <div className="jp-fg"><label>Vencimento *</label><input className="jp-fi" type="date" value={obr.vencimento} onChange={e => setObr(v => ({ ...v, vencimento: e.target.value }))} /></div>

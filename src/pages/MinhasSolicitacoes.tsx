@@ -127,6 +127,7 @@ const VAGA_RESET = {
 };
 
 import { DetalheSolicitacao, type TipoSolicitacao } from "./encarregados/DetalheSolicitacao";
+import { AVISO_REFAZER, podeRefazerFerias } from "@/lib/solicitacoes/feriasRefazer";
 
 interface SolItem {
   tipo: string; icon: string;
@@ -210,6 +211,10 @@ export default function MinhasSolicitacoes({ abrir, base = "encarregados" }: { a
   // Modal férias
   const [modalFerias, setModalFerias] = useState(false);
   const [ferias, setFerias] = useState({ ...FERIAS_RESET });
+  // Refazer (16/09/2026): id da solicitação que está sendo refeita. O mesmo
+  // modal de férias serve pros dois casos; com id, Salvar faz UPDATE e a
+  // solicitação volta a Pendente pro RH avaliar de novo.
+  const [feriasRefazerId, setFeriasRefazerId] = useState<number | null>(null);
   // Saída com menos de 30 dias: até 14/09/2026 a tela barrava; agora deixa
   // passar como EXCEÇÃO, mas só depois que a pessoa confirma no card
   // (Cancelar / Solicitar mesmo assim) sabendo que pode ser recusada.
@@ -642,7 +647,28 @@ export default function MinhasSolicitacoes({ abrir, base = "encarregados" }: { a
   };
 
   const abrirModalFerias = () => {
+    setFeriasRefazerId(null);
     setModalFerias(true); setFerias({ ...FERIAS_RESET }); setEmpSearch(""); setShowEmpDrop(false); setEmpregados([]);
+  };
+
+  /** Abre o modal de férias preenchido com a solicitação, em modo REFAZER. */
+  const abrirRefazerFerias = (ficha: Record<string, unknown>) => {
+    const regra = podeRefazerFerias({ criado_em: ficha.criado_em as string | null, status: ficha.status as string | null });
+    if (!regra.ok) { toast(regra.motivo, "err"); return; }
+    setDetalhe(null);
+    setFeriasRefazerId(Number(ficha.id));
+    setFerias({
+      ...FERIAS_RESET,
+      colaborador_id: ficha.colaborador_id != null ? Number(ficha.colaborador_id) : null,
+      colaborador_nome: String(ficha.colaborador_nome ?? ""), colaborador_cpf: String(ficha.colaborador_cpf ?? ""),
+      colaborador_cargo: String(ficha.colaborador_cargo ?? ""), colaborador_filial: String(ficha.colaborador_filial ?? ""),
+      colaborador_admissao: ficha.colaborador_admissao ? fmtDt(String(ficha.colaborador_admissao)) : "",
+      data_saida: String(ficha.data_saida ?? "").slice(0, 10),
+      dias_ferias: String(ficha.dias_ferias ?? "30"), dias_vendidos: String(ficha.dias_vendidos ?? "0"),
+      observacoes: String(ficha.observacoes ?? ""),
+    });
+    setEmpSearch(String(ficha.colaborador_nome ?? "")); setShowEmpDrop(false); setEmpregados([]);
+    setModalFerias(true);
   };
 
   const feriasForaDoPrazo = () => !!ferias.data_saida && ferias.data_saida < hojeMaisDias(30);
@@ -658,6 +684,7 @@ export default function MinhasSolicitacoes({ abrir, base = "encarregados" }: { a
   const doSubmitFerias = async (excecao: boolean) => {
     const dias = parseInt(ferias.dias_ferias) || 30;
     const vend = parseInt(ferias.dias_vendidos) || 0;
+    if (feriasRefazerId) { await doRefazerFerias(feriasRefazerId, dias, vend, excecao); return; }
     const payload = {
       solicitante_nome: displayName || user?.email || "", solicitante_email: user?.email ?? "",
       colaborador_id: ferias.colaborador_id, colaborador_nome: ferias.colaborador_nome, colaborador_cpf: ferias.colaborador_cpf,
@@ -679,6 +706,34 @@ export default function MinhasSolicitacoes({ abrir, base = "encarregados" }: { a
       ? `Férias solicitadas para ${ferias.colaborador_nome} como EXCEÇÃO (fora do prazo) — pode ser recusada. (#${data?.id})`
       : `Férias solicitadas para ${ferias.colaborador_nome}! (#${data?.id})`, "ok");
     setModalFerias(false); setFerias({ ...FERIAS_RESET }); setEmpSearch(""); carregarMinhasSols();
+  };
+
+  /**
+   * Refazer: UPDATE na mesma solicitação. Volta a Pendente e limpa a decisão
+   * anterior; o trigger do banco registra 'Refeita' no histórico e recusa se
+   * já passou uma semana da criação (a tela só esconde o botão).
+   */
+  const doRefazerFerias = async (id: number, dias: number, vend: number, excecao: boolean) => {
+    const agora = new Date().toISOString();
+    const { data: atual } = await (supabase as any).from("SISTEMA_SOLICITACOES_FERIAS").select("refeita_vezes, status").eq("id", id).maybeSingle();
+    const { error } = await (supabase as any).from("SISTEMA_SOLICITACOES_FERIAS").update({
+      data_saida: ferias.data_saida, data_retorno: addDaysISO(ferias.data_saida, dias),
+      dias_ferias: dias, dias_vendidos: vend, observacoes: ferias.observacoes.trim() || null,
+      excecao,
+      status: "Pendente", aprovado_por: null, aprovado_em: null, motivo_reprovacao: null,
+      refeita_em: agora, refeita_vezes: (Number(atual?.refeita_vezes) || 0) + 1,
+      atualizado_em: agora,
+    }).eq("id", id);
+    if (error) { toast("Erro ao refazer a solicitação: " + error.message, "err"); return; }
+    // Fica na conversa também, pra quem aprova ver sem abrir o histórico.
+    await (supabase as any).from("SISTEMA_COMENTARIOS").insert({
+      modulo: "ferias", entidade_id: String(id),
+      texto: `🔁 Solicitação refeita pelo encarregado: saída ${fmtDt(ferias.data_saida)}, ${dias} dias${vend ? `, abono de ${vend} dias` : ""}${excecao ? " (fora do prazo — exceção)" : ""}. Voltou para avaliação do RH.`,
+      autor_nome: displayName || user?.email || "Encarregado", autor_cpf: user?.email ?? "",
+    });
+    setFeriasExc(false);
+    toast(`Solicitação #${id} refeita e enviada de novo para o RH avaliar.`, "ok");
+    setModalFerias(false); setFeriasRefazerId(null); setFerias({ ...FERIAS_RESET }); setEmpSearch(""); carregarMinhasSols();
   };
 
   // ── Advertência ─────────────────────────────────────────────────────
@@ -959,6 +1014,7 @@ export default function MinhasSolicitacoes({ abrir, base = "encarregados" }: { a
           titulo={detalhe.titulo}
           status={detalhe.status}
           onFechar={() => setDetalhe(null)}
+          onRefazer={detalhe.tipo === "Férias" ? abrirRefazerFerias : undefined}
         />
       )}
 
@@ -1323,9 +1379,15 @@ export default function MinhasSolicitacoes({ abrir, base = "encarregados" }: { a
         <div className="ini-modal-ov">
           <div className="ini-modal" onClick={e => e.stopPropagation()} style={{ maxWidth: 520 }}>
             <button onClick={() => setModalFerias(false)} style={{ position: "absolute", top: 14, right: 14, background: "none", border: "none", color: "#94a3b8", fontSize: 20, cursor: "pointer" }}>✕</button>
-            <div style={{ fontSize: 17, fontWeight: 800, marginBottom: 4 }}>📅 Solicitar Férias</div>
+            <div style={{ fontSize: 17, fontWeight: 800, marginBottom: 4 }}>{feriasRefazerId ? `🔁 Refazer solicitação de férias #${feriasRefazerId}` : "📅 Solicitar Férias"}</div>
             <div style={{ fontSize: 12, color: "#94a3b8", marginBottom: 16 }}>Antecedência mínima de 30 dias · abono (venda) de até 10 dias.</div>
-            <div className="ini-fg" style={{ position: "relative" }} onBlur={() => setTimeout(() => setShowEmpDrop(false), 150)}>
+            {feriasRefazerId && (
+              <div style={{ margin: "-6px 0 14px", padding: "9px 12px", borderRadius: 10, background: "#eef2ff", border: "1px solid #c7d2fe", fontSize: 12, color: "#3730a3", lineHeight: 1.5 }}>
+                ⚠️ {AVISO_REFAZER}
+              </div>
+            )}
+            {/* Refazendo, o colaborador é o mesmo — muda só o pedido. */}
+            <div className="ini-fg" style={{ position: "relative", display: feriasRefazerId ? "none" : undefined }} onBlur={() => setTimeout(() => setShowEmpDrop(false), 150)}>
               <label>Colaborador *</label>
               <input className="ini-fi" placeholder="Digite o nome do colaborador..." value={empSearch} autoComplete="off"
                 onChange={e => { const v = e.target.value; setEmpSearch(v); setFerias(f => ({ ...f, colaborador_id: null })); if (v.length >= 2) { setShowEmpDrop(true); buscarEmpregados(v); } else { setShowEmpDrop(false); setEmpregados([]); } }} />
@@ -1366,7 +1428,7 @@ export default function MinhasSolicitacoes({ abrir, base = "encarregados" }: { a
             <div className="ini-fg"><label>Observações</label><textarea className="ini-fi" rows={2} value={ferias.observacoes} onChange={e => setFerias(f => ({ ...f, observacoes: e.target.value }))} placeholder="Opcional..." /></div>
             <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 8, paddingTop: 14, borderTop: "1px solid #e2e8f0" }}>
               <button onClick={() => setModalFerias(false)} style={{ padding: "7px 14px", borderRadius: 10, border: "1px solid #e2e8f0", background: "#fff", color: "#475569", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>Cancelar</button>
-              <button onClick={submitFerias} style={{ padding: "7px 14px", borderRadius: 10, border: "none", background: "#16a34a", color: "#fff", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>✓ Solicitar Férias</button>
+              <button onClick={submitFerias} style={{ padding: "7px 14px", borderRadius: 10, border: "none", background: feriasRefazerId ? "#4f46e5" : "#16a34a", color: "#fff", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>{feriasRefazerId ? "🔁 Refazer e enviar ao RH" : "✓ Solicitar Férias"}</button>
             </div>
           </div>
         </div>

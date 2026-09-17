@@ -48,7 +48,7 @@ const VAGA_RESET = {
   contrato_id: "", posto_id: "", funcao_id: "",
   estado: "", cidade: "", quantidade_vagas: "1", data_inicio_prevista: "",
   escala: "", salario: "", insalubridade_recebe: "Não", reserva_tecnica: "Não",
-  insalubridade_quanto: "", beneficios: "",
+  insalubridade_quanto: "", beneficios: "", local_exato: "",
   tem_recomendacao: "Não", recomendacao_nome: "", recomendacao_cpf: "", recomendacao_whatsapp: "",
   grau_urgencia: "", alta_rotatividade: "Não", req_obrigatorios: "",
   req_desejaveis: "", exp_minima: "Não", exp_minima_qual: "",
@@ -497,6 +497,11 @@ export function ModalNovaVaga({ aberto, onFechar, onCriada, onToast, solicitacao
     }
     if (step === 2) {
       if (!prazo.ok) { toast(prazo.erro ?? "Revise a data de início prevista.", "err"); return false; }
+      // Local exato obrigatório (16/09/2026): o posto do catálogo não diz em
+      // qual unidade/endereço a pessoa vai trabalhar, e sem isso a vaga
+      // abria "errada" — o Recrutamento não sabia pra onde contratar.
+      if (!vaga.local_exato.trim()) { toast("Descreva o local exato da vaga (unidade, endereço, ponto de referência).", "err"); return false; }
+      if (!vaga.escala.trim()) { toast("Informe a escala/horário da vaga.", "err"); return false; }
     }
     if (step === 3) {
       // A indicação é do passo 3: se disse que tem, os três campos vêm
@@ -510,7 +515,7 @@ export function ModalNovaVaga({ aberto, onFechar, onCriada, onToast, solicitacao
 
   const submitVaga = async () => {
     if (salvando) return;
-    if (!vagaValidar(1) || !vagaValidar(3)) return;
+    if (!vagaValidar(1) || !vagaValidar(2) || !vagaValidar(3)) return;
     setSalvando(true);
     const payload: Record<string, unknown> = {
       ...vaga,
@@ -892,17 +897,17 @@ export function ModalNovaVaga({ aberto, onFechar, onCriada, onToast, solicitacao
           {/* Horário saiu: a escala do cadastro já vem com a jornada dentro
               ("07:30-17:18 (1H)(08:48)"), então eram dois campos dizendo a
               mesma coisa — e o segundo, digitado à mão, era o que divergia. */}
-          {/* A escala é a do cadastro do colaborador escolhido e não se edita
-              (11/09/2026): igual ao contrato e ao cargo da etapa 1, a vaga é
-              do posto dele. Só o modo manual (vaga do escritório, sem
-              colaborador de referência) digita. */}
+          {/* A escala vinha travada do cadastro do colaborador (11/09/2026).
+              Voltou a ser editável (16/09/2026): em vários cadastros ela não
+              vinha (ou vinha de outro posto) e a vaga abria sem horário — o
+              Recrutamento não sabia qual turno contratar. O cadastro continua
+              sendo o ponto de partida; o encarregado corrige se estiver errado. */}
           <div className="nvg-fg">
-            <label>Escala{!vagaManual && <span style={{ color: "#94a3b8", fontWeight: 600 }}> — do colaborador escolhido</span>}</label>
+            <label>Escala / horário *{!vagaManual && <span style={{ color: "#94a3b8", fontWeight: 600 }}> — vem do cadastro do colaborador; corrija se não bater</span>}</label>
             <input className="nvg-fi"
-              placeholder={vagaManual ? "Ex: 12x36, 5x2..." : "Vem do cadastro do colaborador escolhido"}
-              value={vaga.escala} readOnly={!vagaManual}
-              onChange={e => setVaga(v => ({ ...v, escala: e.target.value }))}
-              style={vagaManual ? undefined : { background: "#f1f5f9", color: "#475569", cursor: "not-allowed" }} />
+              placeholder={vagaManual ? "Ex: 12x36, 5x2..." : "Ex: 07:30-17:18 (1H) · 12x36 diurno"}
+              value={vaga.escala}
+              onChange={e => setVaga(v => ({ ...v, escala: e.target.value }))} />
           </div>
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
             <div className="nvg-fg"><label>Salário</label><input className="nvg-fi" placeholder="Ex: R$ 1.412,00" value={vaga.salario} onChange={e => setVaga(v => ({ ...v, salario: e.target.value }))} /></div>
@@ -927,20 +932,27 @@ export function ModalNovaVaga({ aberto, onFechar, onCriada, onToast, solicitacao
           {vagaManual && vaga.insalubridade_recebe === "Sim" && (
             <div className="nvg-fg"><label>Percentual de Insalubridade</label><input className="nvg-fi" placeholder="Ex: 20%, 40%" value={vaga.insalubridade_quanto} onChange={e => setVaga(v => ({ ...v, insalubridade_quanto: e.target.value }))} /></div>
           )}
-          {vagaManual ? (
-            <div className="nvg-fg"><label>Benefícios</label><textarea className="nvg-fi" rows={2} placeholder="VT, VR, Plano de Saúde..." value={vaga.beneficios} onChange={e => setVaga(v => ({ ...v, beneficios: e.target.value }))} /></div>
-          ) : (
-            <div className="nvg-fg">
-              <label>Benefícios <span style={{ color: "#94a3b8", fontWeight: 600 }}>— VT e VA do contrato</span></label>
-              <input className="nvg-fi" readOnly
-                value={custoBuscando ? "Consultando a planilha…" : vaga.beneficios}
-                placeholder={!substituidoId ? "Escolha o colaborador acima" : !vaga.posto_id ? "Selecione o posto no catálogo (acima) para puxar o V.A e o V.T" : "Posto sem Planilha de Custo — o Recrutamento completa"}
-                style={{ background: "#f1f5f9", color: "#475569", cursor: "not-allowed" }} />
-              {custoNota && <div style={{ marginTop: 4, fontSize: 11, fontWeight: custoPosto ? 400 : 600, color: custoPosto && !custoPosto.ambiguo ? "#94a3b8" : "#92400e" }}>{custoNota}</div>}
-            </div>
-          )}
-          {/* Local Exato / Posto saiu: o posto já vem do contrato escolhido na
-              etapa 1, e o campo livre só dava chance de escrever outro. */}
+          {/* Benefícios: o V.A e o V.T da Planilha de Custo continuam sendo
+              puxados quando o posto do catálogo é escolhido, mas o campo
+              deixou de ser só leitura (16/09/2026) — a planilha nem sempre
+              batia com o posto real e a vaga abria com benefício errado. */}
+          <div className="nvg-fg">
+            <label>Benefícios{!vagaManual && <span style={{ color: "#94a3b8", fontWeight: 600 }}> — VT e VA da Planilha de Custo; corrija se não bater</span>}</label>
+            <textarea className="nvg-fi" rows={2}
+              placeholder={vagaManual ? "VT, VR, Plano de Saúde..." : custoBuscando ? "Consultando a planilha…" : !vaga.posto_id ? "Selecione o posto no catálogo (etapa 1) para puxar o V.A e o V.T, ou descreva aqui" : "VT, VA, Plano de Saúde..."}
+              value={vaga.beneficios} onChange={e => setVaga(v => ({ ...v, beneficios: e.target.value }))} />
+            {!vagaManual && custoNota && <div style={{ marginTop: 4, fontSize: 11, fontWeight: custoPosto ? 400 : 600, color: custoPosto && !custoPosto.ambiguo ? "#94a3b8" : "#92400e" }}>{custoNota}</div>}
+          </div>
+          {/* Local exato voltou (16/09/2026), obrigatório e sempre manual: o
+              posto do catálogo identifica o contrato, não a unidade/endereço
+              onde a pessoa vai trabalhar. Sem isso o Recrutamento não sabia
+              pra onde contratar. */}
+          <div className="nvg-fg">
+            <label>Local exato da vaga *</label>
+            <textarea className="nvg-fi" rows={2}
+              placeholder="Unidade, endereço, bloco/andar, ponto de referência — onde a pessoa vai trabalhar"
+              value={vaga.local_exato} onChange={e => setVaga(v => ({ ...v, local_exato: e.target.value }))} />
+          </div>
           <div className="nvg-fg">
             <label>Essa é uma Vaga de Reserva Técnica (RT)?</label>
             <select className="nvg-fi" value={vaga.reserva_tecnica}

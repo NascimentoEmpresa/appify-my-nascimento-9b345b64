@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
+import { createPortal } from "react-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
 import { useVinculoEmpregado } from "@/hooks/useVinculoEmpregado";
@@ -223,7 +224,7 @@ function MoedaInput({ value, onChange }: { value: number; onChange: (n: number) 
   const [txt, setTxt] = useState(fmt(value));
   const focused = useRef(false);
   useEffect(() => { if (!focused.current) setTxt(fmt(value)); }, [value]);
-  return <input className="jpr-fi" style={{ height: 34 }} inputMode="decimal" value={txt}
+  return <input className="jpr-fi" inputMode="decimal" value={txt}
     onFocus={() => { focused.current = true; }}
     onChange={e => { setTxt(e.target.value); const n = parseFloat(e.target.value.replace(/\./g, "").replace(",", ".")); onChange(isNaN(n) ? 0 : n); }}
     onBlur={() => { focused.current = false; setTxt(fmt(value)); }} />;
@@ -873,13 +874,43 @@ export default function Processos({ view = "processos" }: { view?: "dashboard" |
         .jpr-btn{border:none;border-radius:9px;font-weight:700;cursor:pointer;font-size:12px;padding:8px 14px}
         .jpr-ov{position:fixed;inset:0;z-index:700;background:rgba(15,23,42,.45);backdrop-filter:blur(4px);display:flex;align-items:center;justify-content:center;padding:16px}
         .jpr-modal{background:#fff;border-radius:16px;padding:22px;width:100%;max-width:780px;max-height:94vh;overflow-y:auto;position:relative;box-shadow:0 16px 40px rgba(15,23,42,.18)}
+        /* Formulário de cadastro (16/09/2026): era uma coluna corrida de 780px
+           com 6px entre campos — "tudo muito junto". Virou um modal mais largo,
+           com cabeçalho e rodapé fixos, cada bloco num cartão próprio, campos
+           maiores e respiro entre eles. */
+        .jpr-modal.jpr-form{max-width:1040px;padding:0;display:flex;flex-direction:column;overflow:hidden}
+        .jpr-form-h{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:18px 26px;border-bottom:1px solid #e8edf5;background:#fff}
+        .jpr-form-h h2{margin:0;font-size:19px;font-weight:800;color:#0f172a}
+        .jpr-form-h p{margin:3px 0 0;font-size:12.5px;color:#64748b}
+        .jpr-form-b{overflow-y:auto;padding:20px 26px 8px;background:#f6f8fc}
+        .jpr-form-f{display:flex;justify-content:flex-end;align-items:center;gap:10px;padding:14px 26px;border-top:1px solid #e8edf5;background:#fff}
+        .jpr-form-f .jpr-btn{padding:11px 20px;font-size:13px}
+        .jpr-sec{background:#fff;border:1px solid #e2e8f0;border-radius:14px;padding:18px 20px;margin-bottom:16px;box-shadow:0 1px 2px rgba(15,23,42,.04)}
+        .jpr-sec-h{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:14px}
+        .jpr-sec-t{font-size:13px;font-weight:800;color:#0f3171;text-transform:uppercase;letter-spacing:.5px;display:flex;align-items:center;gap:8px}
+        .jpr-sec-t::before{content:"";width:4px;height:16px;border-radius:2px;background:#0f3171}
+        .jpr-sec-d{font-size:12px;color:#94a3b8;margin:-8px 0 12px}
+        .jpr-form .jpr-fi{height:44px;font-size:14px;padding:0 13px}
+        .jpr-form textarea.jpr-fi{height:auto;padding:10px 13px}
+        .jpr-form .jpr-fg label{font-size:11.5px;margin-bottom:6px}
+        .jpr-form .jpr-grid2{gap:16px 20px}
+        .jpr-form .jpr-grid3{display:grid;grid-template-columns:repeat(3,1fr);gap:14px 18px}
+        @media(max-width:760px){.jpr-form .jpr-grid3{grid-template-columns:1fr}}
+        .jpr-form .jpr-item{border:1px solid #e2e8f0;border-radius:12px;padding:14px 16px;margin-bottom:12px;background:#fbfcfe}
+        .jpr-form .jpr-item-h{display:flex;justify-content:space-between;align-items:center;gap:10px;margin-bottom:10px}
+        .jpr-form .jpr-item-n{font-size:12px;font-weight:800;color:#475569;background:#eef2f7;border-radius:20px;padding:3px 10px}
+        .jpr-form .jpr-lbl{display:block;font-size:11px;font-weight:700;color:#64748b;text-transform:uppercase;letter-spacing:.4px;margin-bottom:5px}
+        .jpr-form .jpr-linha{display:grid;grid-template-columns:150px 150px 150px 1fr auto;gap:10px;align-items:end}
+        @media(max-width:900px){.jpr-form .jpr-linha{grid-template-columns:1fr 1fr}}
+        .jpr-form .jpr-x{border:none;background:#fff1f2;color:#dc2626;border-radius:9px;height:44px;min-width:44px;font-weight:800;cursor:pointer}
+        .jpr-form .jpr-vazio{font-size:12.5px;color:#94a3b8;padding:10px 12px;background:#f8fafc;border:1px dashed #e2e8f0;border-radius:10px}
         .jpr-grid2{display:grid;grid-template-columns:1fr 1fr;gap:10px}
         @media(max-width:760px){.jpr-grid2{grid-template-columns:1fr}}
         .jpr-filtros{display:grid;grid-template-columns:repeat(4,1fr);gap:10px 12px}
         @media(max-width:1100px){.jpr-filtros{grid-template-columns:repeat(2,1fr)}}
         @media(max-width:620px){.jpr-filtros{grid-template-columns:1fr}}
         .jpr-aud{border:1px solid #eef2f7;border-radius:10px;padding:10px;margin-bottom:8px;background:#fbfdff}
-        .jpr-aud-l{display:grid;grid-template-columns:1.1fr .8fr 1fr 1fr auto;gap:6px;align-items:center}
+        .jpr-aud-l{display:grid;grid-template-columns:1.1fr .8fr 1fr 1fr auto;gap:10px;align-items:end}
         @media(max-width:760px){.jpr-aud-l{grid-template-columns:1fr 1fr}}
         .jpr-prop{display:grid;grid-template-columns:150px 1fr auto;gap:6px;align-items:center;margin-top:6px}
         @media(max-width:760px){.jpr-prop{grid-template-columns:1fr}}
@@ -1176,7 +1207,11 @@ export default function Processos({ view = "processos" }: { view?: "dashboard" |
           clique que caísse fora do cartão derrubava o processo aberto — e
           havia como isso acontecer sem o usuário mirar no fundo (ver a nota
           no modal de cadastro, abaixo). */}
-      {sel && (
+      {/* Portal para o <body> (16/09/2026): o wrapper animado da rota
+          (`.sh-entra`, com transform) vira containing block do `position:
+          fixed` e o modal ficava preso/cortado dentro da área de conteúdo,
+          rolando junto com a página. No body não há ancestral que interfira. */}
+      {sel && createPortal(
         <div className="jpr-ov">
           <div className="jpr-modal">
             <button onClick={() => setSel(null)} style={{ position: "absolute", top: 14, right: 16, border: "none", background: "none", fontSize: 20, color: "#94a3b8", cursor: "pointer" }}>✕</button>
@@ -1280,7 +1315,7 @@ export default function Processos({ view = "processos" }: { view?: "dashboard" |
             ))}
           </div>
         </div>
-      )}
+      , document.body)}
 
       {/* ── Modal Criar/Editar ──
           Fecha SÓ no ✕ (ou em Cancelar, embaixo). O clique no fundo fechava um
@@ -1290,11 +1325,19 @@ export default function Processos({ view = "processos" }: { view?: "dashboard" |
           a lista de opções já fechou, caindo sobre o fundo do modal. Resultado:
           digitar o motivo novo derrubava o cadastro com tudo que já havia sido
           preenchido. Sem o handler, não há como. */}
-      {modal && (
+      {modal && createPortal(
         <div className="jpr-ov">
-          <div className="jpr-modal">
-            <button onClick={() => setModal(false)} style={{ position: "absolute", top: 14, right: 16, border: "none", background: "none", fontSize: 20, color: "#94a3b8", cursor: "pointer" }}>✕</button>
-            <div style={{ fontSize: 17, fontWeight: 800, marginBottom: 14 }}>{editNumero ? "Editar processo" : "Novo processo"}</div>
+          <div className="jpr-modal jpr-form">
+            <div className="jpr-form-h">
+              <div>
+                <h2>{editNumero ? "Editar processo" : "Novo processo"}</h2>
+                <p>{editNumero ? `Nº ${editNumero}` : "Preencha por blocos: identificação, dados jurídicos, valores e audiências."}</p>
+              </div>
+              <button onClick={() => setModal(false)} title="Fechar" style={{ border: "none", background: "#f1f5f9", borderRadius: 10, width: 38, height: 38, fontSize: 18, color: "#64748b", cursor: "pointer" }}>✕</button>
+            </div>
+            <div className="jpr-form-b">
+            <div className="jpr-sec">
+            <div className="jpr-sec-h"><div className="jpr-sec-t">Identificação</div></div>
             <div className="jpr-grid2">
               <div className="jpr-fg"><label>Nº do processo *</label><input className="jpr-fi" value={form.numero_processo} onChange={e => setForm(v => ({ ...v, numero_processo: e.target.value }))} placeholder="0000000-00.0000.5.00.0000" /></div>
               <div className="jpr-fg"><label>Status</label><select className="jpr-fi" value={form.status} onChange={e => setForm(v => ({ ...v, status: e.target.value }))}>{STATUS_OPC.map(s => <option key={s}>{s}</option>)}</select></div>
@@ -1340,9 +1383,11 @@ export default function Processos({ view = "processos" }: { view?: "dashboard" |
                 )}
               </div>
             </div>
+            </div>
 
             {/* Dados jurídicos do processo */}
-            <div style={{ fontSize: 11, fontWeight: 800, color: "#0f3171", textTransform: "uppercase", letterSpacing: ".4px", margin: "10px 0 6px" }}>Dados jurídicos</div>
+            <div className="jpr-sec">
+            <div className="jpr-sec-h"><div className="jpr-sec-t">Dados jurídicos</div></div>
             <div className="jpr-grid2">
               <div className="jpr-fg"><label>Status da sentença</label><select className="jpr-fi" value={form.status_sentenca} onChange={e => setForm(v => ({ ...v, status_sentenca: e.target.value }))}>{STATUS_SENTENCA_OPC.map(s => <option key={s} value={s}>{s || "— Selecione —"}</option>)}</select></div>
               <div className="jpr-fg"><label>Status do recurso</label><select className="jpr-fi" value={form.status_recursos} onChange={e => setForm(v => ({ ...v, status_recursos: e.target.value }))}>{STATUS_RECURSO_OPC.map(s => <option key={s} value={s}>{s || "— Selecione —"}</option>)}</select></div>
@@ -1351,25 +1396,26 @@ export default function Processos({ view = "processos" }: { view?: "dashboard" |
               <div className="jpr-fg"><label>Haverá perícia?</label><select className="jpr-fi" value={form.havera_pericia} onChange={e => setForm(v => ({ ...v, havera_pericia: e.target.value }))}><option>Não</option><option>Sim</option></select></div>
               <div className="jpr-fg"><label>Motivo de outros custos</label><input className="jpr-fi" value={form.motivos_outros_custos} onChange={e => setForm(v => ({ ...v, motivos_outros_custos: e.target.value }))} placeholder="Ex.: Honorários" /></div>
             </div>
+            </div>
 
             {/* Agendamento da perícia. Aparece com "Haverá perícia? = Sim" e
                 também quando o processo já traz esses dados (a carga do sistema
                 antigo veio com perícia marcada e o "Haverá perícia?" em branco):
                 escondê-los deixaria a data agendada invisível na tela. */}
-            {temPericia && (<>
-              <div style={{ fontSize: 11, fontWeight: 800, color: "#0f3171", textTransform: "uppercase", letterSpacing: ".4px", margin: "10px 0 6px" }}>Perícia</div>
+            {temPericia && (<div className="jpr-sec">
+              <div className="jpr-sec-h"><div className="jpr-sec-t">Perícia</div></div>
               <div className="jpr-grid2">
                 <div className="jpr-fg"><label>Data da perícia</label><input className="jpr-fi" type="date" value={form.data_pericia} onChange={e => setForm(v => ({ ...v, data_pericia: e.target.value }))} /></div>
                 <div className="jpr-fg"><label>Horário da perícia</label><input className="jpr-fi" type="time" value={form.hora_pericia} onChange={e => setForm(v => ({ ...v, hora_pericia: e.target.value }))} /></div>
               </div>
               {/* Textarea porque o local vem como endereço inteiro, com ponto de
                   encontro junto ("…Rua Felizardo, 750 — recepção principal"). */}
-              <div className="jpr-fg"><label>Local da perícia</label><textarea className="jpr-fi" rows={2} style={{ resize: "vertical" }} value={form.local_pericia} onChange={e => setForm(v => ({ ...v, local_pericia: e.target.value }))} placeholder="Endereço e ponto de encontro" /></div>
+              <div className="jpr-fg" style={{ marginTop: 16 }}><label>Local da perícia</label><textarea className="jpr-fi" rows={2} style={{ resize: "vertical" }} value={form.local_pericia} onChange={e => setForm(v => ({ ...v, local_pericia: e.target.value }))} placeholder="Endereço e ponto de encontro" /></div>
 
               {/* Perícia médica: os honorários só aparecem com "Sim", porque
                   perícia contábil/de engenharia não tem perito médico nem
                   assistente técnico, e campo de dinheiro à toa acaba preenchido. */}
-              <div className="jpr-grid2">
+              <div className="jpr-grid2" style={{ marginTop: 16 }}>
                 <div className="jpr-fg">
                   <label>Houve perícia médica?</label>
                   <select className="jpr-fi" value={form.houve_pericia_medica} onChange={e => setForm(v => ({ ...v, houve_pericia_medica: e.target.value }))}>
@@ -1378,7 +1424,7 @@ export default function Processos({ view = "processos" }: { view?: "dashboard" |
                 </div>
               </div>
               {form.houve_pericia_medica === "Sim" && (
-                <div className="jpr-grid2">
+                <div className="jpr-grid2" style={{ marginTop: 16 }}>
                   <div className="jpr-fg">
                     <label>Perito judicial (R$)</label>
                     <MoedaInput value={form.valor_perito_judicial} onChange={n => setForm(v => ({ ...v, valor_perito_judicial: n }))} />
@@ -1389,10 +1435,11 @@ export default function Processos({ view = "processos" }: { view?: "dashboard" |
                   </div>
                 </div>
               )}
-            </>)}
+            </div>)}
 
             {/* ── Recurso da condenação ── */}
-            <div style={{ fontSize: 11, fontWeight: 800, color: "#0f3171", textTransform: "uppercase", letterSpacing: ".4px", margin: "10px 0 6px" }}>Recurso</div>
+            <div className="jpr-sec">
+            <div className="jpr-sec-h"><div className="jpr-sec-t">Recurso</div></div>
             <div className="jpr-grid2">
               <div className="jpr-fg">
                 <label>A empresa vai recorrer?</label>
@@ -1402,7 +1449,7 @@ export default function Processos({ view = "processos" }: { view?: "dashboard" |
               </div>
             </div>
             {form.vai_recorrer === "Sim" && (<>
-              <div className="jpr-grid2">
+              <div className="jpr-grid2" style={{ marginTop: 16 }}>
                 <div className="jpr-fg">
                   <label>Custas recursais (R$)</label>
                   <MoedaInput value={form.valor_custas_recursais} onChange={n => setForm(v => ({ ...v, valor_custas_recursais: n }))} />
@@ -1415,18 +1462,19 @@ export default function Processos({ view = "processos" }: { view?: "dashboard" |
               {/* Depósito recursal é lançado por motivo, lá embaixo. Aqui vai só
                   o total, em leitura: dois campos editáveis para o mesmo dinheiro
                   entrariam duas vezes no custo final. */}
-              <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 8, flexWrap: "wrap", background: "#f8fafc", border: "1px solid #eef2f7", borderRadius: 9, padding: "8px 11px" }}>
-                <span style={{ fontSize: 11.5, color: "#64748b" }}>
+              <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 8, flexWrap: "wrap", background: "#f8fafc", border: "1px solid #eef2f7", borderRadius: 10, padding: "10px 14px", marginTop: 16 }}>
+                <span style={{ fontSize: 12.5, color: "#64748b" }}>
                   Depósito recursal <b style={{ color: "#0f172a" }}>{money(depositoRecursalTotal)}</b>
                 </span>
-                <span style={{ fontSize: 11, color: "#94a3b8" }}>lançado por motivo, em “Motivos e valores”</span>
+                <span style={{ fontSize: 11.5, color: "#94a3b8" }}>lançado por motivo, em “Motivos e valores”</span>
               </div>
             </>)}
+            </div>
 
             {/* Vínculo do reclamante com EMPREGADOS */}
-            <div style={{ border: "1px solid #e6eefc", background: "#f8fbff", borderRadius: 10, padding: 12, margin: "10px 0 6px" }}>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8, gap: 8, flexWrap: "wrap" }}>
-                <div style={{ fontSize: 11, fontWeight: 800, color: "#0f3171", textTransform: "uppercase", letterSpacing: ".4px" }}>Vincular reclamante ao cadastro (EMPREGADOS)</div>
+            <div className="jpr-sec" style={{ background: "#f8fbff", borderColor: "#dbe6f8" }}>
+              <div className="jpr-sec-h">
+                <div className="jpr-sec-t">Vincular reclamante ao cadastro (EMPREGADOS)</div>
                 {form.reclamante_vinculado_cpf && <button className="jpr-btn" onClick={() => verDetalhesReclamante(form.reclamante_vinculado_cpf)} style={{ background: "#eef4ff", color: "#0f3171", padding: "5px 10px" }}>👤 Todos os detalhes</button>}
               </div>
               {form.reclamante_vinculado_cpf ? (
@@ -1464,117 +1512,138 @@ export default function Processos({ view = "processos" }: { view?: "dashboard" |
               </>)}
             </div>
 
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", margin: "8px 0 6px" }}>
-              <div style={{ fontSize: 11, fontWeight: 800, color: "#0f3171", textTransform: "uppercase", letterSpacing: ".4px" }}>Motivos e valores</div>
-              <button className="jpr-btn" onClick={() => setMotivos(ms => [...ms, { ...MOTIVO_RESET(), ordem: ms.length + 1 }])} style={{ background: "#eef4ff", color: "#0f3171", padding: "5px 10px" }}>+ Motivo</button>
+            <div className="jpr-sec">
+            <div className="jpr-sec-h">
+              <div className="jpr-sec-t">Motivos e valores</div>
+              <button className="jpr-btn" onClick={() => setMotivos(ms => [...ms, { ...MOTIVO_RESET(), ordem: ms.length + 1 }])} style={{ background: "#eef4ff", color: "#0f3171", padding: "8px 14px" }}>+ Motivo</button>
             </div>
+            <div className="jpr-sec-d">Um bloco por motivo do processo. Os valores de cada motivo ficam separados — é assim que o dashboard soma por motivo.</div>
             {motivos.map((m, i) => (
-              <div key={i} style={{ border: "1px solid #eef2f7", borderRadius: 10, padding: 10, marginBottom: 8, background: "#fbfdff" }}>
-                <div style={{ display: "flex", gap: 6, marginBottom: 6 }}>
-                  <MotivoSelect value={m.motivo} options={motivosDistintos} onChange={v => setMotivo(i, { motivo: v })} />
-                  {motivos.length > 1 && <button className="jpr-btn" onClick={() => setMotivos(ms => ms.filter((_, idx) => idx !== i))} style={{ background: "none", color: "#dc2626" }}>✕</button>}
+              <div key={i} className="jpr-item">
+                <div className="jpr-item-h">
+                  <span className="jpr-item-n">Motivo {i + 1}</span>
+                  {motivos.length > 1 && <button className="jpr-x" onClick={() => setMotivos(ms => ms.filter((_, idx) => idx !== i))} title="Remover motivo" style={{ height: 32, minWidth: 32 }}>✕</button>}
                 </div>
-                <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 6 }}>
+                <div style={{ marginBottom: 14 }}>
+                  <label className="jpr-lbl">Motivo</label>
+                  <MotivoSelect value={m.motivo} options={motivosDistintos} onChange={v => setMotivo(i, { motivo: v })} />
+                </div>
+                <div className="jpr-grid3">
                   {([["valor_pedidos", "Valor pedido"], ["valor_acordo", "Valor acordo"], ["valor_sentenca", "Valor sentença"], ["valor_final", "Valor final"], ["valor_outros_custos", "Outros custos"]] as const).map(([k, l]) => (
-                    <div key={k}><label style={{ fontSize: 10, color: "#94a3b8", fontWeight: 700 }}>{l}</label><MoedaInput value={m[k] || 0} onChange={n => setMotivo(i, { [k]: n } as any)} /></div>
+                    <div key={k}><label className="jpr-lbl">{l}</label><MoedaInput value={m[k] || 0} onChange={n => setMotivo(i, { [k]: n } as any)} /></div>
                   ))}
                 </div>
               </div>
             ))}
+            </div>
             {/* Valores à parte (15/09/2026): fora dos motivos, cada um com o
                 seu próprio motivo. Não entram nos cards por motivo. */}
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", margin: "10px 0 6px" }}>
-              <div style={{ fontSize: 11, fontWeight: 800, color: "#0f3171", textTransform: "uppercase", letterSpacing: ".4px" }}>
-                Valores à parte{valoresAParte.length > 0 && <span style={{ fontWeight: 600, color: "#64748b", textTransform: "none", letterSpacing: 0, marginLeft: 8 }}>· total {money(valoresAParteSoma)}</span>}
+            <div className="jpr-sec">
+            <div className="jpr-sec-h">
+              <div className="jpr-sec-t">
+                Valores à parte{valoresAParte.length > 0 && <span style={{ fontWeight: 600, color: "#64748b", textTransform: "none", letterSpacing: 0 }}>· total {money(valoresAParteSoma)}</span>}
               </div>
-              <button className="jpr-btn" onClick={addValorAParte} style={{ background: "#eef4ff", color: "#0f3171", padding: "5px 10px" }}>+ Valor à parte</button>
+              <button className="jpr-btn" onClick={addValorAParte} style={{ background: "#eef4ff", color: "#0f3171", padding: "8px 14px" }}>+ Valor à parte</button>
             </div>
             {valoresAParte.length === 0
-              ? <div style={{ fontSize: 11.5, color: "#94a3b8", marginBottom: 6 }}>Nenhum valor à parte. Use para lançamentos que não pertencem a um motivo do processo (ex.: honorários periciais) — cada um com o seu motivo.</div>
+              ? <div className="jpr-vazio">Nenhum valor à parte. Use para lançamentos que não pertencem a um motivo do processo (ex.: honorários periciais) — cada um com o seu motivo.</div>
               : (<>
                 <datalist id="jpr-motivos-a-parte">{motivosAParteDistintos.map(m => <option key={m} value={m} />)}</datalist>
                 {valoresAParte.map((v, j) => (
-                  <div key={j} style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center", marginBottom: 6 }}>
-                    <input className="jpr-fi" style={{ height: 34, flex: 1, minWidth: 180 }} list="jpr-motivos-a-parte" placeholder="Motivo (obrigatório) — ex.: Honorários periciais" value={v.motivo} onChange={e => setValorAParte(j, { motivo: e.target.value })} />
-                    <MoedaInput value={v.valor} onChange={n => setValorAParte(j, { valor: n })} />
-                    <input className="jpr-fi" style={{ height: 34, flex: 1, minWidth: 160 }} placeholder="Observação (opcional)" value={v.descricao} onChange={e => setValorAParte(j, { descricao: e.target.value })} />
-                    <button className="jpr-btn" onClick={() => delValorAParte(j)} style={{ background: "none", color: "#dc2626" }}>✕</button>
+                  <div key={j} className="jpr-item">
+                    <div className="jpr-linha" style={{ gridTemplateColumns: "1.4fr 170px 1.2fr auto" }}>
+                      <div><label className="jpr-lbl">Motivo *</label><input className="jpr-fi" list="jpr-motivos-a-parte" placeholder="Ex.: Honorários periciais" value={v.motivo} onChange={e => setValorAParte(j, { motivo: e.target.value })} /></div>
+                      <div><label className="jpr-lbl">Valor (R$)</label><MoedaInput value={v.valor} onChange={n => setValorAParte(j, { valor: n })} /></div>
+                      <div><label className="jpr-lbl">Observação</label><input className="jpr-fi" placeholder="Opcional" value={v.descricao} onChange={e => setValorAParte(j, { descricao: e.target.value })} /></div>
+                      <button className="jpr-x" onClick={() => delValorAParte(j)} title="Remover">✕</button>
+                    </div>
                   </div>
                 ))}
               </>)}
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", margin: "10px 0 6px" }}>
-              <div style={{ fontSize: 11, fontWeight: 800, color: "#0f3171", textTransform: "uppercase", letterSpacing: ".4px" }}>Audiências</div>
-              <button className="jpr-btn" onClick={() => setAuds(a => [...a, { ordem: a.length + 1, data: "", horario: "", tipo_audiencia: "Instrução", modalidade_audiencia: "Presencial", propostas: [] }])} style={{ background: "#eef4ff", color: "#0f3171", padding: "5px 10px" }}>+ Audiência</button>
             </div>
+
+            <div className="jpr-sec">
+            <div className="jpr-sec-h">
+              <div className="jpr-sec-t">Audiências</div>
+              <button className="jpr-btn" onClick={() => setAuds(a => [...a, { ordem: a.length + 1, data: "", horario: "", tipo_audiencia: "Instrução", modalidade_audiencia: "Presencial", propostas: [] }])} style={{ background: "#eef4ff", color: "#0f3171", padding: "8px 14px" }}>+ Audiência</button>
+            </div>
+            {auds.length === 0 && <div className="jpr-vazio">Nenhuma audiência marcada. Adicione a data, o horário, o tipo e a modalidade — as propostas feitas nela ficam dentro da própria audiência.</div>}
             {auds.map((a, i) => (
-              <div key={i} className="jpr-aud">
+              <div key={i} className="jpr-item">
+                <div className="jpr-item-h"><span className="jpr-item-n">Audiência {i + 1}</span></div>
                 <div className="jpr-aud-l">
-                  <input className="jpr-fi" type="date" value={a.data} onChange={e => setAud(i, { data: e.target.value })} />
-                  <input className="jpr-fi" type="time" value={a.horario || ""} onChange={e => setAud(i, { horario: e.target.value })} />
-                  <select className="jpr-fi" value={a.tipo_audiencia} onChange={e => setAud(i, { tipo_audiencia: e.target.value })}>{["Instrução", "Conciliação", "Una", "De instrução e julgamento"].map(o => <option key={o}>{o}</option>)}</select>
-                  <select className="jpr-fi" value={a.modalidade_audiencia} onChange={e => setAud(i, { modalidade_audiencia: e.target.value })}>{["Presencial", "Online"].map(o => <option key={o}>{o}</option>)}</select>
-                  <button className="jpr-btn" onClick={() => setAuds(x => x.filter((_, idx) => idx !== i))} style={{ background: "none", color: "#dc2626" }}>✕</button>
+                  <div><label className="jpr-lbl">Data</label><input className="jpr-fi" type="date" value={a.data} onChange={e => setAud(i, { data: e.target.value })} /></div>
+                  <div><label className="jpr-lbl">Horário</label><input className="jpr-fi" type="time" value={a.horario || ""} onChange={e => setAud(i, { horario: e.target.value })} /></div>
+                  <div><label className="jpr-lbl">Tipo</label><select className="jpr-fi" value={a.tipo_audiencia} onChange={e => setAud(i, { tipo_audiencia: e.target.value })}>{["Instrução", "Conciliação", "Una", "De instrução e julgamento"].map(o => <option key={o}>{o}</option>)}</select></div>
+                  <div><label className="jpr-lbl">Modalidade</label><select className="jpr-fi" value={a.modalidade_audiencia} onChange={e => setAud(i, { modalidade_audiencia: e.target.value })}>{["Presencial", "Online"].map(o => <option key={o}>{o}</option>)}</select></div>
+                  <button className="jpr-x" onClick={() => setAuds(x => x.filter((_, idx) => idx !== i))} title="Remover audiência">✕</button>
                 </div>
                 {/* Propostas feitas pelo juiz na audiência dessa data. */}
-                <div style={{ borderTop: "1px dashed #e2e8f0", marginTop: 9, paddingTop: 8 }}>
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-                    <span style={{ fontSize: 10, fontWeight: 800, color: "#64748b", textTransform: "uppercase", letterSpacing: ".4px" }}>
+                <div style={{ borderTop: "1px dashed #e2e8f0", marginTop: 14, paddingTop: 12 }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, flexWrap: "wrap", marginBottom: 8 }}>
+                    <span style={{ fontSize: 11.5, fontWeight: 800, color: "#64748b", textTransform: "uppercase", letterSpacing: ".4px" }}>
                       Propostas {a.data ? `em ${fmtDt(a.data)}` : "nesta audiência"}
                     </span>
-                    <button className="jpr-btn" onClick={() => addProposta(i)} style={{ background: "#eef4ff", color: "#0f3171", padding: "4px 9px" }}>+ Proposta</button>
+                    <button className="jpr-btn" onClick={() => addProposta(i)} style={{ background: "#eef4ff", color: "#0f3171", padding: "6px 12px" }}>+ Proposta</button>
                   </div>
                   {(a.propostas || []).length === 0
-                    ? <div style={{ fontSize: 11, color: "#94a3b8", marginTop: 5 }}>Nenhuma proposta registrada para esta data.</div>
+                    ? <div style={{ fontSize: 12, color: "#94a3b8" }}>Nenhuma proposta registrada para esta data.</div>
                     : (a.propostas || []).map((pr, j) => (
-                      <div key={j} style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center", marginTop: 5 }}>
-                        <select className="jpr-fi" style={{ height: 34, width: 128 }} value={pr.quem} onChange={e => setProposta(i, j, { quem: e.target.value })}>
+                      <div key={j} className="jpr-linha" style={{ gridTemplateColumns: "150px 160px 170px 1fr auto", marginTop: j ? 10 : 0 }}>
+                        <div><label className="jpr-lbl">Quem</label><select className="jpr-fi" value={pr.quem} onChange={e => setProposta(i, j, { quem: e.target.value })}>
                           {PROPOSTA_QUEM.map(o => <option key={o}>{o}</option>)}
-                        </select>
-                        <select className="jpr-fi" style={{ height: 34, width: 138 }} value={pr.tipo} onChange={e => setProposta(i, j, { tipo: e.target.value })}>
+                        </select></div>
+                        <div><label className="jpr-lbl">Tipo</label><select className="jpr-fi" value={pr.tipo} onChange={e => setProposta(i, j, { tipo: e.target.value })}>
                           {PROPOSTA_TIPOS.map(o => <option key={o}>{o}</option>)}
-                        </select>
-                        <MoedaInput value={pr.valor} onChange={n => setProposta(i, j, { valor: n })} />
-                        <input className="jpr-fi" style={{ height: 34, flex: 1, minWidth: 160 }} placeholder="O que foi proposto nesta data" value={pr.descricao} onChange={e => setProposta(i, j, { descricao: e.target.value })} />
-                        <button className="jpr-btn" onClick={() => delProposta(i, j)} style={{ background: "none", color: "#dc2626" }}>✕</button>
+                        </select></div>
+                        <div><label className="jpr-lbl">Valor (R$)</label><MoedaInput value={pr.valor} onChange={n => setProposta(i, j, { valor: n })} /></div>
+                        <div><label className="jpr-lbl">Descrição</label><input className="jpr-fi" placeholder="O que foi proposto nesta data" value={pr.descricao} onChange={e => setProposta(i, j, { descricao: e.target.value })} /></div>
+                        <button className="jpr-x" onClick={() => delProposta(i, j)} title="Remover proposta">✕</button>
                       </div>
                     ))}
                 </div>
               </div>
             ))}
+            </div>
             {/* Propostas que não saíram de audiência. Ficam fora do bloco de
                 audiências de propósito: elas não têm audiência a que pertencer,
                 e pendurá-las na mais próxima falsearia a data. */}
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", margin: "10px 0 6px" }}>
-              <div style={{ fontSize: 11, fontWeight: 800, color: "#0f3171", textTransform: "uppercase", letterSpacing: ".4px" }}>Propostas no decorrer do processo</div>
-              <button className="jpr-btn" onClick={addPropostaProc} style={{ background: "#eef4ff", color: "#0f3171", padding: "5px 10px" }}>+ Proposta</button>
+            <div className="jpr-sec">
+            <div className="jpr-sec-h">
+              <div className="jpr-sec-t">Propostas no decorrer do processo</div>
+              <button className="jpr-btn" onClick={addPropostaProc} style={{ background: "#eef4ff", color: "#0f3171", padding: "8px 14px" }}>+ Proposta</button>
             </div>
             {propostas.length === 0
-              ? <div style={{ fontSize: 11.5, color: "#94a3b8", marginBottom: 6 }}>Nenhuma proposta fora de audiência. As feitas em audiência ficam na audiência correspondente, acima.</div>
+              ? <div className="jpr-vazio">Nenhuma proposta fora de audiência. As feitas em audiência ficam na audiência correspondente, acima.</div>
               : propostas.map((pr, j) => (
-                <div key={j} style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center", marginBottom: 6 }}>
-                  <input className="jpr-fi" style={{ height: 34, width: 140 }} type="date" value={pr.data || ""} onChange={e => setPropostaProc(j, { data: e.target.value })} />
-                  <select className="jpr-fi" style={{ height: 34, width: 128 }} value={pr.quem} onChange={e => setPropostaProc(j, { quem: e.target.value })}>
-                    {PROPOSTA_QUEM.map(o => <option key={o}>{o}</option>)}
-                  </select>
-                  <select className="jpr-fi" style={{ height: 34, width: 138 }} value={pr.tipo} onChange={e => setPropostaProc(j, { tipo: e.target.value })}>
-                    {PROPOSTA_TIPOS.map(o => <option key={o}>{o}</option>)}
-                  </select>
-                  <MoedaInput value={pr.valor} onChange={n => setPropostaProc(j, { valor: n })} />
-                  <input className="jpr-fi" style={{ height: 34, flex: 1, minWidth: 160 }} placeholder="O que foi proposto" value={pr.descricao} onChange={e => setPropostaProc(j, { descricao: e.target.value })} />
-                  <button className="jpr-btn" onClick={() => delPropostaProc(j)} style={{ background: "none", color: "#dc2626" }}>✕</button>
+                <div key={j} className="jpr-item">
+                  <div className="jpr-linha" style={{ gridTemplateColumns: "150px 150px 160px 170px 1fr auto" }}>
+                    <div><label className="jpr-lbl">Data</label><input className="jpr-fi" type="date" value={pr.data || ""} onChange={e => setPropostaProc(j, { data: e.target.value })} /></div>
+                    <div><label className="jpr-lbl">Quem</label><select className="jpr-fi" value={pr.quem} onChange={e => setPropostaProc(j, { quem: e.target.value })}>
+                      {PROPOSTA_QUEM.map(o => <option key={o}>{o}</option>)}
+                    </select></div>
+                    <div><label className="jpr-lbl">Tipo</label><select className="jpr-fi" value={pr.tipo} onChange={e => setPropostaProc(j, { tipo: e.target.value })}>
+                      {PROPOSTA_TIPOS.map(o => <option key={o}>{o}</option>)}
+                    </select></div>
+                    <div><label className="jpr-lbl">Valor (R$)</label><MoedaInput value={pr.valor} onChange={n => setPropostaProc(j, { valor: n })} /></div>
+                    <div><label className="jpr-lbl">Descrição</label><input className="jpr-fi" placeholder="O que foi proposto" value={pr.descricao} onChange={e => setPropostaProc(j, { descricao: e.target.value })} /></div>
+                    <button className="jpr-x" onClick={() => delPropostaProc(j)} title="Remover proposta">✕</button>
+                  </div>
                 </div>
               ))}
+            </div>
+            </div>
 
-            <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 12 }}>
+            <div className="jpr-form-f">
               <button className="jpr-btn" onClick={() => setModal(false)} style={{ background: "#fff", border: "1px solid #e2e8f0", color: "#475569" }}>Cancelar</button>
               <button className="jpr-btn" onClick={salvar} style={{ background: "#0f3171", color: "#fff" }}>Salvar processo</button>
             </div>
           </div>
         </div>
-      )}
+      , document.body)}
 
       {/* ── Detalhes do reclamante (EMPREGADOS) ── */}
-      {detalheEmp && (
+      {detalheEmp && createPortal(
         <div className="jpr-ov" onClick={e => { if (e.target === e.currentTarget) setDetalheEmp(null); }}>
           <div className="jpr-modal" onClick={e => e.stopPropagation()} style={{ maxWidth: 620 }}>
             <button onClick={() => setDetalheEmp(null)} style={{ position: "absolute", top: 14, right: 16, border: "none", background: "none", fontSize: 20, color: "#94a3b8", cursor: "pointer" }}>✕</button>
@@ -1598,7 +1667,7 @@ export default function Processos({ view = "processos" }: { view?: "dashboard" |
               </>)}
           </div>
         </div>
-      )}
+      , document.body)}
 
       <div style={{ position: "fixed", bottom: 24, left: "50%", transform: "translateX(-50%)", zIndex: 9999, display: "flex", flexDirection: "column", gap: 6, alignItems: "center" }}>
         {toasts.map(t => (<div key={t.id} style={{ padding: "10px 18px", borderRadius: 9, fontSize: 13, fontWeight: 600, boxShadow: "0 16px 40px rgba(15,23,42,.12)", background: t.t === "ok" ? "#ecfdf3" : t.t === "err" ? "#fef2f2" : "#eff6ff", color: t.t === "ok" ? "#15803d" : t.t === "err" ? "#b91c1c" : "#1d4ed8", border: `1px solid ${t.t === "ok" ? "#86efac" : t.t === "err" ? "#fecaca" : "#bfdbfe"}` }}>{t.msg}</div>))}
