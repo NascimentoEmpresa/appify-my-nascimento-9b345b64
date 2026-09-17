@@ -1444,13 +1444,13 @@ export function SolicitacaoDiariaModal({
                   label={modo === "ajustar" ? "Novo comprovante do ponto" : "Comprovante do ponto"}
                   arquivos={comprovante}
                   onAdicionar={(f) => anexarArquivos(f, setComprovante)}
-                  onRemover={(n) => setComprovante((p) => p.filter((a) => a.nome !== n))}
+                  onRemover={(n) => setComprovante((p) => p.filter((a) => a.name !== n))}
                 />
                 <Dropzone
                   label={modo === "ajustar" ? "Novos documentos" : "Documentos"}
                   arquivos={documentos}
                   onAdicionar={(f) => anexarArquivos(f, setDocumentos)}
-                  onRemover={(n) => setDocumentos((p) => p.filter((a) => a.nome !== n))}
+                  onRemover={(n) => setDocumentos((p) => p.filter((a) => a.name !== n))}
                 />
                 {tentouSalvar && (totalComprovantes === 0 || totalDocumentos === 0) && (
                   <p className="text-[11px] font-medium text-destructive">
