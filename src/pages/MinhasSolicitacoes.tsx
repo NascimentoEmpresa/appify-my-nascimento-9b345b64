@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import { rotasSolicitacoes, type BaseSolicitacoes } from "@/lib/solicitacoes/rotas";
 import { supabase } from "@/integrations/supabase/client";
+import type { SupabaseClient } from "@supabase/supabase-js";
 import { useAuth } from "@/hooks/useAuth";
 import { usePermissoes } from "@/context/PermissoesContext";
 import { ESTADOS_BR, municipiosDe } from "@/data/municipios-brasil";
@@ -13,7 +14,7 @@ import {
   cargoExigeCnh, aplicarReqCnh, REQ_CNH_TEXTO, MIN_DIAS_UTEIS, fmtBr,
   rotuloReferencia, ajudaReferencia, mostraNomeReferencia, contratoDoEmpregado, rotuloContrato,
   SALARIO_MASCARA, substituidosComVagaViva, avisoSubstituidoPreso,
-  podeVagaAdministrativa,
+  podeVagaAdministrativa, statusInicialVaga,
 } from "@/lib/recrutamento/vagaRegras";
 import { maskFone } from "@/lib/telefone";
 import { solicitacaoEmAberto, TITULO_DUPLICIDADE, type SolicitacaoEmAberto } from "@/lib/solicitacoes/duplicidade";
@@ -43,6 +44,7 @@ function badgeStatusCls(st: string) {
   const m: Record<string, string> = {
     "Aguardando Aprovação": "bg-yellow-100 text-yellow-800 border-yellow-200",
     "Pendente Analista": "bg-yellow-100 text-yellow-800 border-yellow-200",
+    "Pendente Diretoria": "bg-amber-100 text-amber-800 border-amber-200",
     // As solicitações abertas antes de 02/09/2026 e já decididas continuam
     // gravadas com o nome antigo; sem esta linha o selo delas ficava cinza.
     "Pendente Operacional": "bg-yellow-100 text-yellow-800 border-yellow-200",
@@ -113,7 +115,7 @@ const ADV_RESET = {
   advertencia_verbal_dada: "Não", data_advertencia_verbal: "",
 };
 const VAGA_RESET = {
-  motivo_vaga: "", administrativa: false, nome_substituido: "", contrato: "", cargo: "",
+  motivo_vaga: "", administrativa: false, setor: "", nome_substituido: "", contrato: "", cargo: "",
   // Vínculo com o catálogo de Suprimentos (opcional; contrato travado no da vaga).
   contrato_id: "", posto_id: "", funcao_id: "",
   estado: "", cidade: "", quantidade_vagas: "1", data_inicio_prevista: "",
@@ -126,6 +128,33 @@ const VAGA_RESET = {
 };
 
 import { DetalheSolicitacao, type TipoSolicitacao } from "./encarregados/DetalheSolicitacao";
+import { AVISO_REFAZER, podeRefazerFerias } from "@/lib/solicitacoes/feriasRefazer";
+
+// SISTEMA_SOLICITACOES_*, EMPREGADOS, CONTRATOS... não estão no types.ts
+// gerado; mesmo padrão de comite-etica/db.ts — a exceção fica num lugar só.
+const db = supabase as unknown as SupabaseClient;
+
+/** Colunas de EMPREGADOS que os modais leem do colaborador escolhido. */
+type EmpregadoRef = {
+  ID: number;
+  Nome?: string | null;
+  CPF?: string | null;
+  Filial?: string | null;
+  "Nome Filial"?: string | null;
+  "Título do Cargo"?: string | null;
+  "Valor Salário"?: number | string | null;
+  "% Insalubridade"?: number | string | null;
+  "Admissão"?: string | null;
+  Escala?: string | null;
+};
+/** Linha de CONTRATOS (só o que a tela usa para casar e rotular). */
+type ContratoRow = { id?: number | null; Filial?: string | null; "NOME CONTRATO"?: string | null };
+/** Mudança de data de início gravada em SISTEMA_RECRUTAMENTO.data_inicio_alteracoes. */
+interface AlteracaoDataInicio { de?: string; para?: string; em?: string; por_nome?: string; justificativa?: string }
+/** Colunas de SISTEMA_RECRUTAMENTO que o histórico lê (a lista de `select` é dinâmica). */
+interface VagaResumo { id: number; cargo?: string | null; contrato?: string | null; status: string; created_at: string; nome_substituido?: string | null; quantidade_vagas?: number | string | null; motivo_vaga?: string | null; status_changed_at?: string | null; data_inicio_prevista?: string | null; grau_urgencia?: string | null; data_inicio_alteracoes?: unknown }
+/** Advertência anterior do colaborador (histórico do modal). */
+interface AdvertenciaAnterior { id: number; tipo_advertencia?: string | null; grau?: string | null; status?: string | null; data_ocorrido?: string | null; created_at?: string | null }
 
 interface SolItem {
   tipo: string; icon: string;
@@ -133,7 +162,7 @@ interface SolItem {
   id: number | string;
   titulo: string; status: string; data: string;
   substituido?: string; motivo?: string; qtdVagas?: number; statusDesde?: string; excecao?: boolean;
-  dataInicio?: string; grau?: string; alteracoes?: any[];
+  dataInicio?: string; grau?: string; alteracoes?: AlteracaoDataInicio[];
   /**
    * Para onde o botão leva, quando o tipo JÁ TEM tela própria.
    *
@@ -198,10 +227,10 @@ export default function MinhasSolicitacoes({ abrir, base = "encarregados" }: { a
   // pedida na Central de Serviços ou na Gestão de Recrutamento, que têm o
   // botão de "Preencher manualmente" — e o catálogo de Suprimentos junto, que
   // esta tela não tem. Ver src/components/recrutamento/ModalNovaVaga.tsx.
-  const [contratosFull, setContratosFull] = useState<any[]>([]);
+  const [contratosFull, setContratosFull] = useState<ContratoRow[]>([]);
   // Empregado -> nº da vaga de substituição que já o segura (regra do banco).
   const [presos, setPresos] = useState<Map<number, number>>(new Map());
-  const [empregados, setEmpregados] = useState<any[]>([]);
+  const [empregados, setEmpregados] = useState<EmpregadoRef[]>([]);
   const [empSearch, setEmpSearch] = useState("");
   const [showEmpDrop, setShowEmpDrop] = useState(false);
   const [loadingEmps, setLoadingEmps] = useState(false);
@@ -209,6 +238,10 @@ export default function MinhasSolicitacoes({ abrir, base = "encarregados" }: { a
   // Modal férias
   const [modalFerias, setModalFerias] = useState(false);
   const [ferias, setFerias] = useState({ ...FERIAS_RESET });
+  // Refazer (16/09/2026): id da solicitação que está sendo refeita. O mesmo
+  // modal de férias serve pros dois casos; com id, Salvar faz UPDATE e a
+  // solicitação volta a Pendente pro RH avaliar de novo.
+  const [feriasRefazerId, setFeriasRefazerId] = useState<number | null>(null);
   // Saída com menos de 30 dias: até 14/09/2026 a tela barrava; agora deixa
   // passar como EXCEÇÃO, mas só depois que a pessoa confirma no card
   // (Cancelar / Solicitar mesmo assim) sabendo que pode ser recusada.
@@ -217,7 +250,7 @@ export default function MinhasSolicitacoes({ abrir, base = "encarregados" }: { a
   // Modal advertência
   const [modalAdv, setModalAdv] = useState(false);
   const [adv, setAdv] = useState({ ...ADV_RESET });
-  const [advHistorico, setAdvHistorico] = useState<any[]>([]);
+  const [advHistorico, setAdvHistorico] = useState<AdvertenciaAnterior[]>([]);
   const [advExc, setAdvExc] = useState({ open: false, justificativa: "" });
 
   // Histórico unificado
@@ -243,7 +276,7 @@ export default function MinhasSolicitacoes({ abrir, base = "encarregados" }: { a
     if (!user?.id) return;
     supabase.from("profiles").select("display_name, email").eq("id", user.id).maybeSingle()
       .then(({ data }) => setDisplayName(data?.display_name || data?.email || user.email || ""));
-  }, [user?.id]);
+  }, [user?.id, user?.email]);
 
   // ── Histórico (vaga + férias) ───────────────────────────────────────
   const carregarMinhasSols = useCallback(async () => {
@@ -252,30 +285,30 @@ export default function MinhasSolicitacoes({ abrir, base = "encarregados" }: { a
     const email = user.email;
 
     // Vaga: tenta com status_changed_at; se a coluna ainda não existir, refaz sem ela.
-    const vagaQuery = (cols: string) => (supabase as any)
-      .from("SISTEMA_RECRUTAMENTO").select(cols)
+    const vagaQuery = (cols: string) => db
+      .from("SISTEMA_RECRUTAMENTO").select<string, VagaResumo>(cols)
       .eq("solicitante_cpf", email).order("created_at", { ascending: false }).limit(30);
     let vg = await vagaQuery("id, cargo, contrato, status, created_at, nome_substituido, quantidade_vagas, motivo_vaga, status_changed_at, data_inicio_prevista, grau_urgencia, data_inicio_alteracoes");
     if (vg.error) vg = await vagaQuery("id, cargo, contrato, status, created_at, nome_substituido, quantidade_vagas, motivo_vaga, status_changed_at");
     if (vg.error) vg = await vagaQuery("id, cargo, contrato, status, created_at, nome_substituido, quantidade_vagas, motivo_vaga");
 
-    const fr = await (supabase as any).from("SISTEMA_SOLICITACOES_FERIAS").select("id, colaborador_nome, status, criado_em, excecao").eq("solicitante_email", email).order("criado_em", { ascending: false }).limit(30);
-    const ad = await (supabase as any).from("SISTEMA_SOLICITACOES_ADVERTENCIA").select("id, colaborador_nome, tipo_advertencia, status, created_at, status_changed_at, excecao").eq("solicitante_email", email).order("created_at", { ascending: false }).limit(30);
+    const fr = await db.from("SISTEMA_SOLICITACOES_FERIAS").select("id, colaborador_nome, status, criado_em, excecao").eq("solicitante_email", email).order("criado_em", { ascending: false }).limit(30);
+    const ad = await db.from("SISTEMA_SOLICITACOES_ADVERTENCIA").select("id, colaborador_nome, tipo_advertencia, status, created_at, status_changed_at, excecao").eq("solicitante_email", email).order("created_at", { ascending: false }).limit(30);
     // Demissão morava só na tela dedicada: quem pedia não a via no histórico,
     // e por isso não tinha como acompanhar o andamento junto do resto.
-    const dm = await (supabase as any).from("SISTEMA_SOLICITACOES_DEMISSAO")
+    const dm = await db.from("SISTEMA_SOLICITACOES_DEMISSAO")
       .select("id, colaborador_nome, motivo_solicitacao, status, criado_em, data_solicitacao")
       .eq("solicitante_email", email).order("criado_em", { ascending: false }).limit(30);
 
     // Mudança de função: mesmo caminho da demissão — quem pede acompanha aqui
     // em vez de ter que perguntar com quem a solicitação está.
-    const tf = await (supabase as any).from("SISTEMA_SOLICITACOES_TROCA_FUNCAO")
+    const tf = await db.from("SISTEMA_SOLICITACOES_TROCA_FUNCAO")
       .select("id, colaborador_nome, cargo_atual, cargo_novo, status, criado_em, atualizado_em")
       .eq("solicitante_email", email).order("criado_em", { ascending: false }).limit(30);
 
     // Chamado é por auth.uid (a tabela usa solicitante_id), não por e-mail.
     const ch = user?.id
-      ? await (supabase as any).from("CHAMADO_SISTEMA")
+      ? await db.from("CHAMADO_SISTEMA")
           .select("id, numero, assunto, status, created_at")
           .eq("solicitante_id", user.id).order("created_at", { ascending: false }).limit(30)
       : { data: [] };
@@ -283,9 +316,9 @@ export default function MinhasSolicitacoes({ abrir, base = "encarregados" }: { a
     // Materiais vem por RPC do próprio módulo (sup_ext_meus_pedidos), que já
     // devolve só os pedidos de quem está logado. Não consulto as tabelas de
     // Suprimentos direto — a regra de quem vê o quê é de lá.
-    const mt = await (supabase as any).rpc("sup_ext_meus_pedidos");
+    const mt = await db.rpc("sup_ext_meus_pedidos");
     const itens: SolItem[] = [
-      ...(vg.data ?? []).map((r: any) => ({
+      ...(vg.data ?? []).map(r => ({
         tipo: "Vaga", icon: "🎯", id: r.id,
         titulo: `${r.cargo || "Vaga"}${r.contrato ? ` — ${r.contrato}` : ""}`,
         status: r.status, data: r.created_at,
@@ -295,15 +328,15 @@ export default function MinhasSolicitacoes({ abrir, base = "encarregados" }: { a
         dataInicio: r.data_inicio_prevista || "", grau: r.grau_urgencia || "",
         alteracoes: Array.isArray(r.data_inicio_alteracoes) ? r.data_inicio_alteracoes : [],
       })),
-      ...(fr.data ?? []).map((r: any) => ({ tipo: "Férias", icon: "📅", id: r.id, titulo: `Férias — ${r.colaborador_nome || ""}`, status: r.status, data: r.criado_em, statusDesde: r.criado_em, excecao: !!r.excecao })),
-      ...(ad.data ?? []).map((r: any) => ({ tipo: "Advertência", icon: "⚠️", id: r.id, titulo: `Advertência ${r.tipo_advertencia || ""} — ${r.colaborador_nome || ""}`, status: r.status, data: r.created_at, statusDesde: r.status_changed_at || r.created_at, excecao: r.excecao })),
-      ...(tf.data ?? []).map((r: any) => ({
+      ...(fr.data ?? []).map(r => ({ tipo: "Férias", icon: "📅", id: r.id, titulo: `Férias — ${r.colaborador_nome || ""}`, status: r.status, data: r.criado_em, statusDesde: r.criado_em, excecao: !!r.excecao })),
+      ...(ad.data ?? []).map(r => ({ tipo: "Advertência", icon: "⚠️", id: r.id, titulo: `Advertência ${r.tipo_advertencia || ""} — ${r.colaborador_nome || ""}`, status: r.status, data: r.created_at, statusDesde: r.status_changed_at || r.created_at, excecao: r.excecao })),
+      ...(tf.data ?? []).map(r => ({
         tipo: "Mudança de Função", icon: "🔀", id: r.id,
         titulo: `${r.colaborador_nome || ""} — ${r.cargo_atual || "?"} → ${r.cargo_novo || "?"}`,
         status: r.status, data: r.criado_em,
         statusDesde: r.atualizado_em || r.criado_em,
       })),
-      ...(dm.data ?? []).map((r: any) => ({
+      ...(dm.data ?? []).map(r => ({
         tipo: "Demissão", icon: "🚪", id: r.id,
         titulo: `Demissão — ${r.colaborador_nome || ""}`,
         status: r.status,
@@ -313,14 +346,14 @@ export default function MinhasSolicitacoes({ abrir, base = "encarregados" }: { a
         statusDesde: r.criado_em || r.data_solicitacao,
         motivo: r.motivo_solicitacao || "",
       })),
-      ...(ch.data ?? []).map((r: any) => ({
+      ...(ch.data ?? []).map(r => ({
         tipo: "Chamado", icon: "🎧", id: r.id,
         titulo: `${r.numero ? r.numero + " — " : ""}${r.assunto || "Chamado"}`,
         status: r.status, data: r.created_at, statusDesde: r.created_at,
         rota: `/app/encarregados/chamados/${r.id}/acompanhar`,
         acao: "💬 Detalhes e chat",
       })),
-      ...(Array.isArray(mt.data) ? mt.data : []).map((r: any) => ({
+      ...(Array.isArray(mt.data) ? mt.data : []).map(r => ({
         tipo: "Materiais", icon: "📦", id: r.id,
         titulo: `Materiais — ${r.nome_colaborador || r.posto_nome || r.contrato_nome || ""}`.trim(),
         status: r.status, data: r.created_at || r.data_solicitacao,
@@ -333,13 +366,13 @@ export default function MinhasSolicitacoes({ abrir, base = "encarregados" }: { a
     ].sort((a, b) => String(b.data || "").localeCompare(String(a.data || "")));
     setLoadingSols(false);
     setMinhasSols(itens);
-  }, [user?.email, user?.id]);
+  }, [user?.email, user?.id, rotas.meusPedidos]);
 
   useEffect(() => { carregarMinhasSols(); }, [carregarMinhasSols]);
 
   // ── Contratos ───────────────────────────────────────────────────────
   const carregarContratos = async () => {
-    const { data } = await (supabase as any)
+    const { data } = await db
       .from("CONTRATOS").select('id, "NOME CONTRATO", Filial').eq("ATIVO", "SIM").order('"NOME CONTRATO"');
     if (data) setContratosFull(data);
   };
@@ -350,7 +383,7 @@ export default function MinhasSolicitacoes({ abrir, base = "encarregados" }: { a
     setLoadingEmps(true);
     if (empDebounce.current) clearTimeout(empDebounce.current);
     empDebounce.current = setTimeout(async () => {
-      const { data, error } = await (supabase as any)
+      const { data, error } = await db
         .from("EMPREGADOS")
         .select('"ID", "Nome", "CPF", "Filial", "Nome Filial", "Título do Cargo", "Valor Salário", "% Insalubridade", "Admissão", "Escala"')
         .eq("Situação", "Trabalhando")
@@ -360,12 +393,12 @@ export default function MinhasSolicitacoes({ abrir, base = "encarregados" }: { a
       if (empTermo.current !== term) return;
       setLoadingEmps(false);
       if (error) console.error("[EMPREGADOS] erro:", error.message, error.code);
-      const lista = data ?? [];
+      const lista: EmpregadoRef[] = data ?? [];
       setEmpregados(lista);
       // Só a substituição trava: nos outros motivos a pessoa é molde e pode
       // servir de molde quantas vezes for.
       setPresos(modalVaga && ehSubstituicao(vaga.motivo_vaga)
-        ? await substituidosComVagaViva(supabase, lista.map((e: any) => Number(e.ID)))
+        ? await substituidosComVagaViva(supabase, lista.map(e => Number(e.ID)))
         : new Map());
     }, 350);
   };
@@ -383,7 +416,12 @@ export default function MinhasSolicitacoes({ abrir, base = "encarregados" }: { a
   const [custoPosto, setCustoPosto] = useState<CustoPosto | null>(null);
   const [custoNota, setCustoNota] = useState("");
   const [catListas, setCatListas] = useState<ListasCatalogo>({ postos: [], funcoes: [] });
-  const [empEscolhido, setEmpEscolhido] = useState<any>(null);
+  const [setoresCatalogo, setSetoresCatalogo] = useState<string[]>([]);
+  useEffect(() => {
+    db.from("setor_catalogo").select("nome").order("nome")
+      .then(({ data }: { data: { nome: string }[] | null }) => setSetoresCatalogo((data ?? []).map(r => r.nome).filter(Boolean)));
+  }, []);
+  const [empEscolhido, setEmpEscolhido] = useState<EmpregadoRef | null>(null);
   const [custoBuscando, setCustoBuscando] = useState(false);
 
   // Substituição anda junto com a demissão de quem sai: o banco recusa a
@@ -407,7 +445,7 @@ export default function MinhasSolicitacoes({ abrir, base = "encarregados" }: { a
     let vivo = true;
     setDemissaoBusca("buscando");
     (async () => {
-      const { data, error } = await (supabase as any)
+      const { data, error } = await db
         .from("SISTEMA_SOLICITACOES_DEMISSAO")
         .select("id, status, vaga_id")
         .eq("colaborador_id", substituidoId)
@@ -433,7 +471,7 @@ export default function MinhasSolicitacoes({ abrir, base = "encarregados" }: { a
     nav(`${rotas.demissao}?colaborador=${id}`);
   };
 
-  const selecionarEmpregado = (emp: any) => {
+  const selecionarEmpregado = (emp: EmpregadoRef) => {
     const jaTem = ehSubstituicao(vaga.motivo_vaga) ? presos.get(Number(emp.ID)) : undefined;
     if (jaTem) { toast(avisoSubstituidoPreso(jaTem), "err"); return; }
     const contratoMatch = contratoDoEmpregado(contratosFull, emp);
@@ -568,18 +606,17 @@ export default function MinhasSolicitacoes({ abrir, base = "encarregados" }: { a
       demissao_id: ehSubstituicao(vaga.motivo_vaga) ? demissaoId : null,
       contrato_id: vaga.contrato_id || null, posto_id: vaga.posto_id || null, funcao_id: vaga.funcao_id || null,
       administrativa: podeAdministrativa ? !!vaga.administrativa : false,
-      // A etapa 1 do recrutamento mudou de dono em 02/09/2026: quem decide é o
-      // ANALISTA. Nascer em "Pendente Operacional" deixava a vaga num status
-      // que nenhuma fila filtra — invisível para todo mundo menos quem pediu.
-      status: "Pendente Analista",
+      setor: vaga.setor || null,
+      // Administrativa ou com setor → Diretoria (16/09/2026); o resto → analista.
+      status: statusInicialVaga(podeAdministrativa ? !!vaga.administrativa : false, vaga.setor || null),
       solicitante_nome: user?.user_metadata?.nome ?? user?.email ?? "",
       solicitante_cpf: user?.email ?? "",
     };
-    let { error, data } = await (supabase as any).from("SISTEMA_RECRUTAMENTO").insert(payload).select("id").single();
+    let { error, data } = await db.from("SISTEMA_RECRUTAMENTO").insert(payload).select("id").single();
     // Banco ainda sem as colunas novas: reenvia sem elas.
     if (error && /column|schema cache/i.test(error.message)) {
-      const { cnh_obrigatoria, substituido_id, demissao_id, contrato_id, posto_id, funcao_id, administrativa, reserva_tecnica, tem_recomendacao, recomendacao_nome, recomendacao_cpf, recomendacao_whatsapp, ...semColunasNovas } = payload as any;
-      ({ error, data } = await (supabase as any).from("SISTEMA_RECRUTAMENTO").insert(semColunasNovas).select("id").single());
+      const { cnh_obrigatoria, substituido_id, demissao_id, contrato_id, posto_id, funcao_id, administrativa, reserva_tecnica, tem_recomendacao, recomendacao_nome, recomendacao_cpf, recomendacao_whatsapp, ...semColunasNovas } = payload as Record<string, unknown>;
+      ({ error, data } = await db.from("SISTEMA_RECRUTAMENTO").insert(semColunasNovas).select("id").single());
     }
     if (error) { toast("Erro ao solicitar vaga: " + error.message, "err"); return; }
     toast(`Solicitação #${data?.id} criada com sucesso!`, "ok");
@@ -607,7 +644,7 @@ export default function MinhasSolicitacoes({ abrir, base = "encarregados" }: { a
         por_nome: displayName || user?.email || "",
       },
     ];
-    const { error } = await (supabase as any).from("SISTEMA_RECRUTAMENTO").update({
+    const { error } = await db.from("SISTEMA_RECRUTAMENTO").update({
       data_inicio_prevista: editData.data,
       grau_urgencia: prazoEdicao.grau,
       data_inicio_alteracoes: historico,
@@ -620,7 +657,7 @@ export default function MinhasSolicitacoes({ abrir, base = "encarregados" }: { a
   };
 
   // ── Férias ──────────────────────────────────────────────────────────
-  const selecionarColabFerias = async (emp: any) => {
+  const selecionarColabFerias = async (emp: EmpregadoRef) => {
     setShowEmpDrop(false);
     const dup = await solicitacaoEmAberto(supabase, "ferias", emp.ID ?? null);
     if (dup) { setBloqueio(dup); setEmpSearch(""); setEmpregados([]); return; }
@@ -637,7 +674,28 @@ export default function MinhasSolicitacoes({ abrir, base = "encarregados" }: { a
   };
 
   const abrirModalFerias = () => {
+    setFeriasRefazerId(null);
     setModalFerias(true); setFerias({ ...FERIAS_RESET }); setEmpSearch(""); setShowEmpDrop(false); setEmpregados([]);
+  };
+
+  /** Abre o modal de férias preenchido com a solicitação, em modo REFAZER. */
+  const abrirRefazerFerias = (ficha: Record<string, unknown>) => {
+    const regra = podeRefazerFerias({ criado_em: ficha.criado_em as string | null, status: ficha.status as string | null });
+    if (!regra.ok) { toast(regra.motivo, "err"); return; }
+    setDetalhe(null);
+    setFeriasRefazerId(Number(ficha.id));
+    setFerias({
+      ...FERIAS_RESET,
+      colaborador_id: ficha.colaborador_id != null ? Number(ficha.colaborador_id) : null,
+      colaborador_nome: String(ficha.colaborador_nome ?? ""), colaborador_cpf: String(ficha.colaborador_cpf ?? ""),
+      colaborador_cargo: String(ficha.colaborador_cargo ?? ""), colaborador_filial: String(ficha.colaborador_filial ?? ""),
+      colaborador_admissao: ficha.colaborador_admissao ? fmtDt(String(ficha.colaborador_admissao)) : "",
+      data_saida: String(ficha.data_saida ?? "").slice(0, 10),
+      dias_ferias: String(ficha.dias_ferias ?? "30"), dias_vendidos: String(ficha.dias_vendidos ?? "0"),
+      observacoes: String(ficha.observacoes ?? ""),
+    });
+    setEmpSearch(String(ficha.colaborador_nome ?? "")); setShowEmpDrop(false); setEmpregados([]);
+    setModalFerias(true);
   };
 
   const feriasForaDoPrazo = () => !!ferias.data_saida && ferias.data_saida < hojeMaisDias(30);
@@ -653,6 +711,7 @@ export default function MinhasSolicitacoes({ abrir, base = "encarregados" }: { a
   const doSubmitFerias = async (excecao: boolean) => {
     const dias = parseInt(ferias.dias_ferias) || 30;
     const vend = parseInt(ferias.dias_vendidos) || 0;
+    if (feriasRefazerId) { await doRefazerFerias(feriasRefazerId, dias, vend, excecao); return; }
     const payload = {
       solicitante_nome: displayName || user?.email || "", solicitante_email: user?.email ?? "",
       colaborador_id: ferias.colaborador_id, colaborador_nome: ferias.colaborador_nome, colaborador_cpf: ferias.colaborador_cpf,
@@ -662,11 +721,11 @@ export default function MinhasSolicitacoes({ abrir, base = "encarregados" }: { a
       dias_ferias: dias, dias_vendidos: vend, observacoes: ferias.observacoes.trim() || null, status: "Pendente",
       excecao,
     };
-    let { error, data } = await (supabase as any).from("SISTEMA_SOLICITACOES_FERIAS").insert(payload).select("id").single();
+    let { error, data } = await db.from("SISTEMA_SOLICITACOES_FERIAS").insert(payload).select("id").single();
     // Banco ainda sem a coluna excecao (mig 20260930000101): reenvia sem ela.
     if (error && /excecao/i.test(error.message)) {
-      const { excecao: _e, ...semExcecao } = payload as any;
-      ({ error, data } = await (supabase as any).from("SISTEMA_SOLICITACOES_FERIAS").insert(semExcecao).select("id").single());
+      const { excecao: _e, ...semExcecao } = payload;
+      ({ error, data } = await db.from("SISTEMA_SOLICITACOES_FERIAS").insert(semExcecao).select("id").single());
     }
     if (error) { toast("Erro ao solicitar férias: " + error.message, "err"); return; }
     setFeriasExc(false);
@@ -676,8 +735,36 @@ export default function MinhasSolicitacoes({ abrir, base = "encarregados" }: { a
     setModalFerias(false); setFerias({ ...FERIAS_RESET }); setEmpSearch(""); carregarMinhasSols();
   };
 
+  /**
+   * Refazer: UPDATE na mesma solicitação. Volta a Pendente e limpa a decisão
+   * anterior; o trigger do banco registra 'Refeita' no histórico e recusa se
+   * já passou uma semana da criação (a tela só esconde o botão).
+   */
+  const doRefazerFerias = async (id: number, dias: number, vend: number, excecao: boolean) => {
+    const agora = new Date().toISOString();
+    const { data: atual } = await db.from("SISTEMA_SOLICITACOES_FERIAS").select("refeita_vezes, status").eq("id", id).maybeSingle();
+    const { error } = await db.from("SISTEMA_SOLICITACOES_FERIAS").update({
+      data_saida: ferias.data_saida, data_retorno: addDaysISO(ferias.data_saida, dias),
+      dias_ferias: dias, dias_vendidos: vend, observacoes: ferias.observacoes.trim() || null,
+      excecao,
+      status: "Pendente", aprovado_por: null, aprovado_em: null, motivo_reprovacao: null,
+      refeita_em: agora, refeita_vezes: (Number(atual?.refeita_vezes) || 0) + 1,
+      atualizado_em: agora,
+    }).eq("id", id);
+    if (error) { toast("Erro ao refazer a solicitação: " + error.message, "err"); return; }
+    // Fica na conversa também, pra quem aprova ver sem abrir o histórico.
+    await db.from("SISTEMA_COMENTARIOS").insert({
+      modulo: "ferias", entidade_id: String(id),
+      texto: `🔁 Solicitação refeita pelo encarregado: saída ${fmtDt(ferias.data_saida)}, ${dias} dias${vend ? `, abono de ${vend} dias` : ""}${excecao ? " (fora do prazo — exceção)" : ""}. Voltou para avaliação do RH.`,
+      autor_nome: displayName || user?.email || "Encarregado", autor_cpf: user?.email ?? "",
+    });
+    setFeriasExc(false);
+    toast(`Solicitação #${id} refeita e enviada de novo para o RH avaliar.`, "ok");
+    setModalFerias(false); setFeriasRefazerId(null); setFerias({ ...FERIAS_RESET }); setEmpSearch(""); carregarMinhasSols();
+  };
+
   // ── Advertência ─────────────────────────────────────────────────────
-  const selecionarColabAdv = async (emp: any) => {
+  const selecionarColabAdv = async (emp: EmpregadoRef) => {
     setShowEmpDrop(false);
     const dup = await solicitacaoEmAberto(supabase, "advertencia", emp.ID ?? null);
     if (dup) { setBloqueio(dup); setEmpSearch(""); setEmpregados([]); return; }
@@ -693,7 +780,7 @@ export default function MinhasSolicitacoes({ abrir, base = "encarregados" }: { a
     // Histórico de advertências do colaborador (2ª advertência reabre o mesmo histórico).
     setAdvHistorico([]);
     if (emp.ID != null) {
-      const { data } = await (supabase as any).from("SISTEMA_SOLICITACOES_ADVERTENCIA")
+      const { data } = await db.from("SISTEMA_SOLICITACOES_ADVERTENCIA")
         .select("id, tipo_advertencia, grau, status, data_ocorrido, created_at")
         .eq("colaborador_id", emp.ID).order("created_at", { ascending: false }).limit(20);
       setAdvHistorico(data ?? []);
@@ -716,6 +803,9 @@ export default function MinhasSolicitacoes({ abrir, base = "encarregados" }: { a
     if (abrir === "vaga") abrirModalVaga();
     else if (abrir === "ferias") abrirModalFerias();
     else if (abrir === "advertencia") abrirModalAdv();
+    // Só `abrir` nas deps, de propósito: os abrirModal* são recriados a cada
+    // render e o ref acima já garante "abre uma vez por valor de `abrir`".
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [abrir]);
 
   // Trava: grau Baixo exige advertência verbal antes da escrita.
@@ -758,7 +848,7 @@ export default function MinhasSolicitacoes({ abrir, base = "encarregados" }: { a
       status: "Aguardando Aprovação",
       excecao, justificativa_excecao: justificativa,
     };
-    const { error, data } = await (supabase as any).from("SISTEMA_SOLICITACOES_ADVERTENCIA").insert(payload).select("id").single();
+    const { error, data } = await db.from("SISTEMA_SOLICITACOES_ADVERTENCIA").insert(payload).select("id").single();
     if (error) { toast("Erro ao solicitar advertência: " + error.message, "err"); return; }
     toast(`Advertência solicitada${excecao ? " (EXCEÇÃO)" : ""} para ${adv.colaborador_nome}! (#${data?.id})`, "ok");
     setAdvExc({ open: false, justificativa: "" });
@@ -954,6 +1044,7 @@ export default function MinhasSolicitacoes({ abrir, base = "encarregados" }: { a
           titulo={detalhe.titulo}
           status={detalhe.status}
           onFechar={() => setDetalhe(null)}
+          onRefazer={detalhe.tipo === "Férias" ? abrirRefazerFerias : undefined}
         />
       )}
 
@@ -992,7 +1083,7 @@ export default function MinhasSolicitacoes({ abrir, base = "encarregados" }: { a
               <div style={{ marginTop: 6, border: "1px solid #e2e8f0", borderRadius: 10, padding: "9px 11px", background: "#f8fafc" }}>
                 <div style={{ fontSize: 11, fontWeight: 800, color: "#94a3b8", textTransform: "uppercase", letterSpacing: ".4px", marginBottom: 6 }}>Alterações anteriores</div>
                 <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-                  {editData.sol.alteracoes!.map((a: any, i: number) => (
+                  {editData.sol.alteracoes!.map((a, i) => (
                     <div key={i} style={{ fontSize: 11.5, color: "#475569" }}>
                       <b>{fmtBr(a?.de) || "—"} → {fmtBr(a?.para)}</b>
                       {a?.em ? <span style={{ color: "#94a3b8" }}> · {fmtDt(a.em)}</span> : null}
@@ -1139,6 +1230,15 @@ export default function MinhasSolicitacoes({ abrir, base = "encarregados" }: { a
                 onChange={v => setVaga(x => ({ ...x, ...v }))}
                 onListas={setCatListas}
                 classeInput="ini-fi" classeGrupo="ini-fg" />
+              {/* Setor (16/09/2026): com setor a vaga é administrativa e vai pra
+                  Diretoria aprovar antes de chegar ao Recrutamento. */}
+              <div className="ini-fg">
+                <label>Setor <span style={{ color: "#94a3b8", fontWeight: 600 }}>— opcional; com setor, a aprovação é da Diretoria</span></label>
+                <select className="ini-fi" value={vaga.setor} onChange={e => setVaga(v => ({ ...v, setor: e.target.value }))}>
+                  <option value="">Sem setor (vaga de contrato)</option>
+                  {setoresCatalogo.map(s => <option key={s} value={s}>{s}</option>)}
+                </select>
+              </div>
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
                 <div className="ini-fg">
                   <label>Estado (UF) <span style={{ color: "#dc2626" }}>*</span></label>
@@ -1309,9 +1409,15 @@ export default function MinhasSolicitacoes({ abrir, base = "encarregados" }: { a
         <div className="ini-modal-ov">
           <div className="ini-modal" onClick={e => e.stopPropagation()} style={{ maxWidth: 520 }}>
             <button onClick={() => setModalFerias(false)} style={{ position: "absolute", top: 14, right: 14, background: "none", border: "none", color: "#94a3b8", fontSize: 20, cursor: "pointer" }}>✕</button>
-            <div style={{ fontSize: 17, fontWeight: 800, marginBottom: 4 }}>📅 Solicitar Férias</div>
+            <div style={{ fontSize: 17, fontWeight: 800, marginBottom: 4 }}>{feriasRefazerId ? `🔁 Refazer solicitação de férias #${feriasRefazerId}` : "📅 Solicitar Férias"}</div>
             <div style={{ fontSize: 12, color: "#94a3b8", marginBottom: 16 }}>Antecedência mínima de 30 dias · abono (venda) de até 10 dias.</div>
-            <div className="ini-fg" style={{ position: "relative" }} onBlur={() => setTimeout(() => setShowEmpDrop(false), 150)}>
+            {feriasRefazerId && (
+              <div style={{ margin: "-6px 0 14px", padding: "9px 12px", borderRadius: 10, background: "#eef2ff", border: "1px solid #c7d2fe", fontSize: 12, color: "#3730a3", lineHeight: 1.5 }}>
+                ⚠️ {AVISO_REFAZER}
+              </div>
+            )}
+            {/* Refazendo, o colaborador é o mesmo — muda só o pedido. */}
+            <div className="ini-fg" style={{ position: "relative", display: feriasRefazerId ? "none" : undefined }} onBlur={() => setTimeout(() => setShowEmpDrop(false), 150)}>
               <label>Colaborador *</label>
               <input className="ini-fi" placeholder="Digite o nome do colaborador..." value={empSearch} autoComplete="off"
                 onChange={e => { const v = e.target.value; setEmpSearch(v); setFerias(f => ({ ...f, colaborador_id: null })); if (v.length >= 2) { setShowEmpDrop(true); buscarEmpregados(v); } else { setShowEmpDrop(false); setEmpregados([]); } }} />
@@ -1352,7 +1458,7 @@ export default function MinhasSolicitacoes({ abrir, base = "encarregados" }: { a
             <div className="ini-fg"><label>Observações</label><textarea className="ini-fi" rows={2} value={ferias.observacoes} onChange={e => setFerias(f => ({ ...f, observacoes: e.target.value }))} placeholder="Opcional..." /></div>
             <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 8, paddingTop: 14, borderTop: "1px solid #e2e8f0" }}>
               <button onClick={() => setModalFerias(false)} style={{ padding: "7px 14px", borderRadius: 10, border: "1px solid #e2e8f0", background: "#fff", color: "#475569", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>Cancelar</button>
-              <button onClick={submitFerias} style={{ padding: "7px 14px", borderRadius: 10, border: "none", background: "#16a34a", color: "#fff", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>✓ Solicitar Férias</button>
+              <button onClick={submitFerias} style={{ padding: "7px 14px", borderRadius: 10, border: "none", background: feriasRefazerId ? "#4f46e5" : "#16a34a", color: "#fff", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>{feriasRefazerId ? "🔁 Refazer e enviar ao RH" : "✓ Solicitar Férias"}</button>
             </div>
           </div>
         </div>
@@ -1393,7 +1499,7 @@ export default function MinhasSolicitacoes({ abrir, base = "encarregados" }: { a
             {adv.colaborador_id && advHistorico.length > 0 && (
               <div style={{ margin: "-6px 0 14px", padding: "8px 12px", borderRadius: 10, background: "#fff7ed", border: "1px solid #fed7aa", fontSize: 12, color: "#9a3412" }}>
                 <div style={{ fontWeight: 700, marginBottom: 4 }}>⚠️ {advHistorico.length} advertência(s) anterior(es) deste colaborador:</div>
-                {advHistorico.slice(0, 5).map((h: any) => (
+                {advHistorico.slice(0, 5).map(h => (
                   <div key={h.id} style={{ display: "flex", justifyContent: "space-between", gap: 8, borderTop: "1px solid #fed7aa", padding: "3px 0" }}>
                     <span>{h.tipo_advertencia || "—"} · grau {h.grau || "—"}</span>
                     <span style={{ color: "#b45309" }}>{fmtDt(h.data_ocorrido || h.created_at)} · {h.status}</span>

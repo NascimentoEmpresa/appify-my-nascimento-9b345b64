@@ -253,8 +253,21 @@ for (const ct of CONTRATOS) {
   const somaAberto = parcelas.filter((p) => !estaPaga(p.situacao)).reduce((s, p) => s + (p.valor ?? p.valor_pago ?? 0), 0);
   const semData = parcelas.filter((p) => !p.vencimento).length;
 
+  // 20260930000167: sinal, entrada, reforço e quitação NÃO são parcela — vão
+  // com `tipo_lancamento` próprio e sem número. O banco renumera as parcelas
+  // (só as do tipo 'parcela') pelo vencimento ao inserir.
+  const numeradas = parcelas.filter((x) => x.numero != null).length;
+  const tipoDoRotulo = (r) => {
+    const t = semAcento(r);
+    if (/SINAL/.test(t)) return "sinal";
+    if (/ENTRADA/.test(t)) return "entrada";
+    if (/REFORCO/.test(t)) return "reforco";
+    if (/QUITACAO/.test(t)) return "quitacao";
+    return "parcela";
+  };
   const linhas = parcelas.map((p) => {
-    const rotulo = p.rotulo ? p.rotulo : `Parcela ${p.numero ?? p.ordem}/${parcelas.length}`;
+    const tipo = p.rotulo ? tipoDoRotulo(p.rotulo) : "parcela";
+    const rotulo = p.rotulo ? p.rotulo : `Parcela ${p.numero ?? p.ordem}/${numeradas}`;
     return {
       patrimonio_id: id,
       categoria: ct.categoria,
@@ -268,8 +281,9 @@ for (const ct of CONTRATOS) {
       // pago_em fica nulo de propósito: a planilha diz QUE foi paga, não QUANDO.
       pago_em: null,
       contrato_uid: contratoUid,
-      parcela_numero: p.numero ?? p.ordem,
-      parcela_total: parcelas.length,
+      tipo_lancamento: tipo,
+      parcela_numero: tipo === "parcela" ? (p.numero ?? p.ordem) : null,
+      parcela_total: tipo === "parcela" ? numeradas : null,
     };
   });
 
@@ -282,7 +296,6 @@ for (const ct of CONTRATOS) {
   // entrada, reforço e quitação são linhas à parte. Comparar com o total lido
   // acusaria diferença em toda aba que tem extras — e elas são contas iguais
   // às outras: têm data, valor e alguém para pagar.
-  const numeradas = parcelas.filter((x) => x.numero != null).length;
   const extras = parcelas.length - numeradas;
   const confereQtd = lv.qtd == null || lv.qtd === numeradas ? "" : `  ⚠ parcelas numeradas: li ${numeradas}, planilha diz ${lv.qtd}`;
   const confereAberto = lv.aberto == null || Math.abs(lv.aberto - somaAberto) < 1 ? "" : `  ⚠ em aberto: li ${brl(somaAberto)}, planilha diz ${brl(lv.aberto)}`;

@@ -22,6 +22,49 @@ export const ehContratoParcelado = (categoria?: string | null): boolean =>
 
 export type ModoParcelas = "igual" | "uma_a_uma";
 
+/**
+ * O que cada linha É dentro do contrato (coluna `tipo_lancamento`, migration
+ * 20260930000167). Só `parcela` entra na numeração N/T: sinal e entrada
+ * pagos antes do carnê começar (e reforço/quitação no meio ou no fim) são
+ * contas do contrato, mas não são parcela — a 1ª parcela de verdade é a
+ * primeira linha do tipo `parcela` pelo vencimento. Quem numera é o banco
+ * (jur_parcelas_renumerar); a tela só grava o tipo.
+ */
+export type TipoLancamento = "parcela" | "sinal" | "entrada" | "reforco" | "quitacao";
+
+export const TIPOS_LANCAMENTO: { v: TipoLancamento; t: string }[] = [
+  { v: "parcela",  t: "Parcela" },
+  { v: "sinal",    t: "Sinal" },
+  { v: "entrada",  t: "Entrada" },
+  { v: "reforco",  t: "Reforço" },
+  { v: "quitacao", t: "Quitação" },
+];
+
+export const rotuloTipoLancamento = (tipo?: string | null): string =>
+  TIPOS_LANCAMENTO.find(t => t.v === String(tipo ?? "").trim())?.t ?? "Parcela";
+
+/** Linha numerada do contrato (o que a numeração N/T conta). */
+export const ehParcelaNumerada = (tipo?: string | null): boolean =>
+  !tipo || String(tipo).trim() === "" || String(tipo).trim() === "parcela";
+
+/**
+ * Deduz o tipo pelo rótulo da descrição — o mesmo critério da migration que
+ * classificou o estoque: o rótulo fica depois do " · " (ou é a descrição
+ * inteira), às vezes com letra na frente ("GREEN PARCELAS · A) SINAL").
+ * "· Parcela N/T" é sempre parcela.
+ */
+export function tipoPelaDescricao(descricao?: string | null): TipoLancamento {
+  const d = String(descricao ?? "");
+  if (/·\s*Parcela\s+\d+\s*\/\s*\d+\s*$/i.test(d)) return "parcela";
+  const rotulo = (palavra: string) => new RegExp("(^|·)\\s*([a-z][).\\-]\\s*)?" + palavra + "(\\W|$)", "i").test(d);
+  if (rotulo("sinal")) return "sinal";
+  if (rotulo("entrada")) return "entrada";
+  if (rotulo("refor[cç]o")) return "reforco";
+  if (rotulo("quita[cç][aã]o")) return "quitacao";
+  return "parcela";
+}
+
+
 /** As duas formas de cadastrar, com o texto que a tela mostra em cada cartão. */
 export const MODOS_PARCELA: { v: ModoParcelas; t: string; d: string }[] = [
   { v: "igual", t: "Gerar parcelas com valor igual",

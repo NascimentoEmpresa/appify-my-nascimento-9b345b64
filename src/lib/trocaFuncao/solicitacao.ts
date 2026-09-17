@@ -246,13 +246,29 @@ export const statusVisiveis = (etapa: Etapa) => STATUS_VISIVEIS[etapa];
  * telas em uma daria ao Operacional a fila do administrativo de brinde.
  */
 /**
+ * Os setores marcados pra pessoa em Acesso por Usuário são um FILTRO
+ * (16/09/2026, segunda leitura do Pablo: "podendo filtrar por setor"):
+ *   • nenhum setor marcado → vê/decide todas as administrativas da tela;
+ *   • setores marcados     → só as daqueles setores (e as sem setor).
+ * O banco aplica a mesma régua em aprova_setor() (mig 128).
+ */
+export function passaNoFiltroDeSetor(
+  s: Pick<SolicitacaoTroca, "setor">,
+  setores: ReadonlySet<string> | null = null,
+): boolean {
+  const setor = normSetorTroca(s.setor);
+  if (!setor || !setores || setores.size === 0) return true;
+  return setores.has(setor);
+}
+
+/**
  * O recorte de quem está olhando (16/09/2026):
  *   • SST e RH tratam tudo.
  *   • Licitações (analista) só acompanha a troca de CONTRATO SIMPLES — nada
  *     do administrativo nem com setor aparece lá.
- *   • Aprovação: solicitação COM SETOR só aparece pra quem tem aquele setor
- *     marcado no Acesso por Usuário (`setores`, já normalizados) — vale pra
- *     Diretoria e pro Operacional. Sem setor, manda a origem do menu.
+ *   • Aprovação: a TELA diz a origem (Operacional → contrato simples;
+ *     Diretoria → administrativa = escritório ou com setor), e os setores
+ *     marcados filtram as administrativas.
  */
 export function visivelNoRecorte(
   s: Pick<SolicitacaoTroca, "e_escritorio" | "setor">,
@@ -262,9 +278,8 @@ export function visivelNoRecorte(
 ): boolean {
   if (etapa === "sst" || etapa === "rh") return true;
   if (etapa === "analista") return !ehAdministrativa(s);
-  const setor = normSetorTroca(s.setor);
-  if (setor) return !!setores?.has(setor);
-  return origens.includes(origemDa(s));
+  if (!origens.includes(origemDa(s))) return false;
+  return !ehAdministrativa(s) || passaNoFiltroDeSetor(s, setores);
 }
 
 export function pertenceAFila(

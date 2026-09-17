@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useLocation, useSearchParams } from "react-router-dom";
 import { baseDaUrl, rotasSolicitacoes } from "@/lib/solicitacoes/rotas";
 import { supabase } from "@/integrations/supabase/client";
+import type { SupabaseClient } from "@supabase/supabase-js";
 import { useAuth } from "@/hooks/useAuth";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -18,8 +19,10 @@ import {
   ACCEPT_ANEXO, BUCKET, MODELOS_AVISO, MOTIVOS_PEDIDO, MOTIVOS_SOLICITACAO,
   TABELA, TABELA_ANEXOS, TERMINOS_EXPERIENCIA,
   corDoStatus, emailValido, erroDoArquivo, explicaStatus, faltaVagaDeReposicao, fmtData, fmtTamanho,
-  hojeISO, mascaraTelefone, telefoneCompleto, type SolicitacaoDemissao,
+  hojeISO, mascaraTelefone, statusInicialDemissao, telefoneCompleto, type SolicitacaoDemissao,
 } from "@/lib/demissao/solicitacao";
+import { localEhEscritorio } from "@/lib/trocaFuncao/solicitacao";
+import { Checkbox } from "@/components/ui/checkbox";
 import {
   CheckCircle2, ChevronLeft, ChevronRight, FileText, Loader2, Lock, Paperclip, Trash2, UserMinus,
 } from "lucide-react";
@@ -29,7 +32,8 @@ import { semCodigoFilial } from "@/lib/rh/colaboradoresUtils";
 import { usePostos } from "@/hooks/useSupCatalogo";
 import { solicitacaoEmAberto, type SolicitacaoEmAberto } from "@/lib/solicitacoes/duplicidade";
 
-const sb = supabase as any;
+// Tabelas de negócio fora do types.ts gerado; mesmo padrão de comite-etica/db.ts.
+const sb = supabase as unknown as SupabaseClient;
 
 /**
  * Solicitar Demissão — wizard do encarregado (4 passos).
@@ -92,6 +96,18 @@ export default function SolicitarDemissao() {
   const { user } = useAuth();
   const [passo, setPasso] = useState(0);
   const [form, setForm] = useState({ ...VAZIO });
+  // Escritório administrativo / setor (16/09/2026): decide se a demissão vai
+  // pro Operacional ou pra Diretoria — mesma regra da Mudança de Função.
+  // O encarregado marca; o cadastro só sugere (o espelho da Senior erra).
+  const [eEscritorio, setEEscritorio] = useState(false);
+  const [setor, setSetor] = useState("");
+  const [setores, setSetores] = useState<string[]>([]);
+  useEffect(() => {
+    (async () => {
+      const { data } = await sb.from("setor_catalogo").select("nome").order("nome");
+      setSetores((data ?? []).map((r: { nome: string }) => r.nome).filter(Boolean));
+    })();
+  }, []);
   const [colaborador, setColaborador] = useState<EmpregadoEscolhido | null>(null);
   // Já tem demissão em aberto (ou concluída) para quem foi escolhido? O
   // banco responde (solicitacao_em_aberto) e o passo 1 não avança.
@@ -165,7 +181,7 @@ export default function SolicitarDemissao() {
   //      POLÍCIA", a colega ao lado com "1109 - DECA", e o RH não achava o
   //      contrato de ninguém.
   //   3. Esta: a filial, que é o que o Senior chama de contrato.
-  const [contratos, setContratos] = useState<any[]>([]);
+  const [contratos, setContratos] = useState<{ id?: number | null; Filial?: string | null; "NOME CONTRATO"?: string | null }[]>([]);
   useEffect(() => {
     (async () => {
       const { data } = await sb.from("CONTRATOS")
@@ -181,7 +197,7 @@ export default function SolicitarDemissao() {
     const alvo = semCodigoFilial(nomeContrato).toUpperCase();
     const filial = colaborador?.filial ?? "";
     if (!alvo || !filial) return null;
-    return contratos.find((c: any) =>
+    return contratos.find(c =>
       String(c.Filial ?? "").trim() === filial
       && String(c["NOME CONTRATO"] ?? "").trim().toUpperCase() === alvo) ?? null;
   }, [contratos, nomeContrato, colaborador?.filial]);
@@ -236,6 +252,9 @@ export default function SolicitarDemissao() {
   // pode corrigir telefone/e-mail, que é o dado que mais desatualiza.
   const escolherColaborador = (e: EmpregadoEscolhido | null) => {
     setColaborador(e);
+    // Cadastro que diz ADMINISTRATIVO/ESCRITÓRIO no posto já vem marcado como
+    // escritório — o encarregado pode desmarcar.
+    if (e && localEhEscritorio(e.posto)) setEEscritorio(true);
     if (e) {
       setForm((f) => ({
         ...f,
@@ -268,6 +287,8 @@ export default function SolicitarDemissao() {
       if (!colaborador) return "Escolha o colaborador na lista.";
       if (duplicada) return duplicada.mensagem;
       if (temListaDePostos && !postoNome) return "Selecione o posto do colaborador.";
+      // Escritório: o setor é obrigatório — é por ele que a Diretoria acha o pedido.
+      if (eEscritorio && !setor) return "Demissão do escritório administrativo precisa do setor.";
       return null;
     }
     if (p === 1) {
@@ -332,9 +353,10 @@ export default function SolicitarDemissao() {
       // Só com "sim" a demissão exige a vaga de Substituição (trigger
       // demissao_exige_vaga). "Não" = redução de quadro: segue sem vaga.
       vaga_obrigatoria: querSubstituicao,
-      // Ver a nota igual em MinhasSolicitacoes: a etapa 1 passou para o
-      // analista, e o status antigo não cai em fila nenhuma.
-      status: "Pendente Operacional",
+      // Escritório ou com setor → Diretoria; contrato simples → Operacional (16/09/2026).
+      e_escritorio: eEscritorio,
+      setor: setor || null,
+      status: statusInicialDemissao(eEscritorio, setor || null),
     };
 
     const { data: criada, error } = await sb.from(TABELA).insert(payload).select("id").single();
@@ -346,7 +368,7 @@ export default function SolicitarDemissao() {
 
     const enviados: string[] = [];
     for (const arquivo of arquivos) {
-      const limpo = arquivo.name.replace(/[^\w.\-]+/g, "_");
+      const limpo = arquivo.name.replace(/[^\w.-]+/g, "_");
       const caminho = `${criada.id}/${Date.now()}-${limpo}`;
       const { error: erroUpload } = await supabase.storage.from(BUCKET).upload(caminho, arquivo);
       if (erroUpload) {
@@ -527,6 +549,47 @@ export default function SolicitarDemissao() {
                 <CampoTravado label="Escala que trabalha" valor={colaborador?.escala ?? ""} />
                 <CampoTravado label="Cargo" valor={colaborador?.cargo ?? ""} />
               </div>
+
+              {/* Escritório / setor (16/09/2026): decide quem aprova. Escritório
+                  ou com setor → Diretoria; contrato sem setor → Operacional. */}
+              <div className="grid gap-4 sm:grid-cols-2">
+                <div className="rounded-lg border p-3">
+                  <div className="flex items-start gap-2.5">
+                    <Checkbox id="dem-escritorio" checked={eEscritorio}
+                              onCheckedChange={(v) => setEEscritorio(v === true)} className="mt-0.5" />
+                    <div className="space-y-1">
+                      <Label htmlFor="dem-escritorio" className="cursor-pointer font-medium">
+                        É do escritório administrativo
+                      </Label>
+                      <p className="text-xs text-muted-foreground">
+                        Marcado, a aprovação é da Diretoria. Desmarcado (e sem setor), é do Operacional.
+                      </p>
+                      {colaborador && !eEscritorio && localEhEscritorio(colaborador.posto || nomeContrato) && (
+                        <p className="text-xs font-medium text-amber-700 dark:text-amber-400">
+                          O cadastro diz que {colaborador.nome} está em “{colaborador.posto || nomeContrato}” — parece escritório. Confira.
+                        </p>
+                      )}
+                    </div>
+                  </div>
+                </div>
+                <div>
+                  <Label>Setor {eEscritorio ? <span className="text-destructive">*</span> : "(opcional)"}</Label>
+                  <Select value={setor || "nenhum"} onValueChange={(v) => setSetor(v === "nenhum" ? "" : v)}>
+                    <SelectTrigger className={"mt-1" + (eEscritorio && !setor ? " border-destructive" : "")}>
+                      <SelectValue placeholder="Não informar" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="nenhum">{eEscritorio ? "Selecione o setor" : "Não informar"}</SelectItem>
+                      {setores.map((s) => <SelectItem key={s} value={s}>{s}</SelectItem>)}
+                    </SelectContent>
+                  </Select>
+                  <p className={"mt-1 text-xs " + (eEscritorio && !setor ? "font-medium text-destructive" : "text-muted-foreground")}>
+                    {eEscritorio
+                      ? "Demissão do escritório: o setor é obrigatório — é por ele que a Diretoria acha o pedido."
+                      : "Com setor, a aprovação passa a ser da Diretoria (só de quem aprova esse setor)."}
+                  </p>
+                </div>
+              </div>
             </>
           )}
 
@@ -682,6 +745,7 @@ export default function SolicitarDemissao() {
                 ["E-mail", form.colaborador_email],
                 ["Documentos", `${arquivos.length} arquivo(s)`],
                 ["Substituição", querSubstituicao ? "Sim — a vaga abre após o envio" : "Não — sem reposição"],
+                ["Quem aprova", eEscritorio || setor ? `Diretoria${setor ? ` · setor ${setor}` : ""}` : "Operacional"],
               ]} />
             </div>
           )}
@@ -733,9 +797,12 @@ export default function SolicitarDemissao() {
                     <p className="w-full text-xs text-muted-foreground">🔗 Vaga de Substituição #{s.vaga_id}</p>
                   ) : faltaVagaDeReposicao(s) ? (
                     <div className="flex w-full flex-wrap items-center gap-2 text-xs text-amber-800">
-                      <span>⚠ Falta a vaga de reposição — o pedido não sai da fila do analista sem ela.</span>
+                      <span>⚠ Falta a vaga de reposição — o pedido não sai da fila do Operacional sem ela.</span>
                       <Button size="sm" variant="outline" className="h-7" onClick={() => abrirVagaDe(s)}>Solicitar vaga</Button>
                     </div>
+                  ) : s.sem_vaga_motivo ? (
+                    // O Operacional aprovou sem a vaga e disse por quê (17/09/2026).
+                    <p className="w-full text-xs text-amber-800">⚠ Aprovada sem vaga de Substituição — motivo: {s.sem_vaga_motivo}</p>
                   ) : null}
                 </li>
               ))}

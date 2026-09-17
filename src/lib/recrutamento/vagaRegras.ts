@@ -236,6 +236,47 @@ export function filtrarAdministrativas<T extends { administrativa?: boolean | nu
   return podeVer ? vagas : vagas.filter(v => !v.administrativa);
 }
 
+// ── Diretoria (16/09/2026) ──────────────────────────────────────────────
+/**
+ * Vaga administrativa pro FLUXO = flag "administrativa" OU setor informado.
+ * Nasce em "Pendente Diretoria", e só a Diretoria (quem tem o setor marcado
+ * em Acesso por Usuário) vê e aprova; aprovada, cai em "Pendente
+ * Recrutamento" como qualquer outra. Mesma regra da Mudança de Função e da
+ * Demissão. O analista (Licitações) e o Operacional não veem essas.
+ */
+export const ehVagaAdministrativa = (v: { administrativa?: boolean | null; setor?: string | null }): boolean =>
+  !!v.administrativa || !!String(v.setor ?? "").trim();
+
+export const STATUS_VAGA_DIRETORIA = "Pendente Diretoria";
+
+export const statusInicialVaga = (administrativa: boolean, setor?: string | null): string =>
+  ehVagaAdministrativa({ administrativa, setor }) ? STATUS_VAGA_DIRETORIA : "Pendente Analista";
+
+export const normSetorVaga = (s: string | null | undefined): string =>
+  String(s ?? "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim().toUpperCase();
+
+export type EscopoVaga = "rh" | "analista" | "operacional" | "diretoria";
+
+/** A vaga aparece neste escopo? (o RH vê tudo que a RLS entregar). */
+export function vagaVisivelNoEscopo(
+  v: { administrativa?: boolean | null; setor?: string | null },
+  escopo: EscopoVaga,
+  setores: ReadonlySet<string> | null = null,
+): boolean {
+  if (escopo === "rh") return true;
+  const adm = ehVagaAdministrativa(v);
+  if (escopo === "analista" || escopo === "operacional") return !adm;
+  // diretoria: só administrativa. Setores marcados são FILTRO: sem nenhum,
+  // vê todas; com algum, só as daqueles setores (e as sem setor).
+  if (!adm) return false;
+  const setor = normSetorVaga(v.setor);
+  return !setor || !setores || setores.size === 0 || setores.has(setor);
+}
+
+export const filtrarPorEscopo = <T extends { administrativa?: boolean | null; setor?: string | null }>(
+  vagas: T[], escopo: EscopoVaga, setores: ReadonlySet<string> | null = null,
+): T[] => vagas.filter(v => vagaVisivelNoEscopo(v, escopo, setores));
+
 // ── Salário ─────────────────────────────────────────────────────────────
 // Quem ABRE a vaga (encarregado/solicitante) não vê salário — vê a máscara.
 // Operacional e Recrutamento, que aprovam, veem o valor.

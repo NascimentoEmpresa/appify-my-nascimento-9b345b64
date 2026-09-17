@@ -29,6 +29,7 @@ import { buscarCustoDoPosto, insalubridadeDoCusto, beneficiosDoCusto, notaDoCust
 import { useLocation, useNavigate } from "react-router-dom";
 import { baseDaUrl, rotasSolicitacoes } from "@/lib/solicitacoes/rotas";
 import { supabase } from "@/integrations/supabase/client";
+import type { SupabaseClient } from "@supabase/supabase-js";
 import { useAuth } from "@/hooks/useAuth";
 import { usePermissoes } from "@/context/PermissoesContext";
 import { VinculoCatalogoVaga, type ListasCatalogo } from "@/components/recrutamento/VinculoCatalogoVaga";
@@ -38,17 +39,33 @@ import {
   erroDaRecomendacao, recomendacaoParaBanco, cpfValido, soDigitos, maskCpf,
   cargoExigeCnh, aplicarReqCnh, REQ_CNH_TEXTO,
   rotuloReferencia, ajudaReferencia, mostraNomeReferencia, contratoDoEmpregado, rotuloContrato,
-  faltamCamposManuais, podeVagaAdministrativa,
+  faltamCamposManuais, podeVagaAdministrativa, statusInicialVaga,
   substituidosComVagaViva, avisoSubstituidoPreso,
 } from "@/lib/recrutamento/vagaRegras";
 import { maskFone } from "@/lib/telefone";
 
+// EMPREGADOS, CONTRATOS, CARGOS e SISTEMA_* não estão no types.ts gerado;
+// mesmo padrão de comite-etica/db.ts — a exceção fica num lugar só.
+const db = supabase as unknown as SupabaseClient;
+
+/** Colunas de EMPREGADOS que o wizard lê do colaborador de referência. */
+type EmpregadoRef = {
+  ID: number;
+  Nome: string;
+  Filial?: string | null;
+  "Nome Filial"?: string | null;
+  "Título do Cargo"?: string | null;
+  "Valor Salário"?: number | string | null;
+  "% Insalubridade"?: number | string | null;
+  Escala?: string | null;
+};
+
 const VAGA_RESET = {
-  motivo_vaga: "", administrativa: false, nome_substituido: "", contrato: "", cargo: "",
+  motivo_vaga: "", administrativa: false, setor: "", nome_substituido: "", contrato: "", cargo: "",
   contrato_id: "", posto_id: "", funcao_id: "",
   estado: "", cidade: "", quantidade_vagas: "1", data_inicio_prevista: "",
   escala: "", salario: "", insalubridade_recebe: "Não", reserva_tecnica: "Não",
-  insalubridade_quanto: "", beneficios: "",
+  insalubridade_quanto: "", beneficios: "", local_exato: "",
   tem_recomendacao: "Não", recomendacao_nome: "", recomendacao_cpf: "", recomendacao_whatsapp: "",
   grau_urgencia: "", alta_rotatividade: "Não", req_obrigatorios: "",
   req_desejaveis: "", exp_minima: "Não", exp_minima_qual: "",
@@ -125,7 +142,7 @@ export function ModalNovaVaga({ aberto, onFechar, onCriada, onToast, solicitacao
   const [cargosFull, setCargosFull] = useState<Record<string, unknown>[]>([]);
   // Empregado -> nº da vaga de substituição que já o segura (regra do banco).
   const [presos, setPresos] = useState<Map<number, number>>(new Map());
-  const [empregados, setEmpregados] = useState<any[]>([]);
+  const [empregados, setEmpregados] = useState<EmpregadoRef[]>([]);
   const [empSearch, setEmpSearch] = useState("");
   const [showEmpDrop, setShowEmpDrop] = useState(false);
   const [loadingEmps, setLoadingEmps] = useState(false);
@@ -218,12 +235,12 @@ export function ModalNovaVaga({ aberto, onFechar, onCriada, onToast, solicitacao
         // escolher antes dela deixaria o contrato (travado) em branco.
         let cts = contratosFull;
         if (!cts.length) {
-          const { data } = await (supabase as any)
+          const { data } = await db
             .from("CONTRATOS").select('"NOME CONTRATO", Filial').eq("ATIVO", "SIM").order('"NOME CONTRATO"');
           cts = data ?? [];
           setContratosFull(cts);
         }
-        const { data } = await (supabase as any)
+        const { data } = await db
           .from("EMPREGADOS")
           .select('"ID", "Nome", "Filial", "Nome Filial", "Título do Cargo", "Valor Salário", "% Insalubridade", "Escala"')
           .eq("ID", vinculoDemissao.substituidoId)
@@ -244,7 +261,7 @@ export function ModalNovaVaga({ aberto, onFechar, onCriada, onToast, solicitacao
     setEmpregados([]);
     if (!contratosFull.length) {
       (async () => {
-        const { data } = await (supabase as any)
+        const { data } = await db
           .from("CONTRATOS")
           .select('"NOME CONTRATO", Filial')
           .eq("ATIVO", "SIM")
@@ -257,7 +274,7 @@ export function ModalNovaVaga({ aberto, onFechar, onCriada, onToast, solicitacao
     // clique de quem liga o preenchimento à mão.
     if (!cargosFull.length) {
       (async () => {
-        const { data } = await (supabase as any)
+        const { data } = await db
           .from("CARGOS")
           .select('"Nome do Cargo"')
           .order('"Nome do Cargo"');
@@ -273,7 +290,7 @@ export function ModalNovaVaga({ aberto, onFechar, onCriada, onToast, solicitacao
   const buscarEmpregados = async (term: string) => {
     empTermo.current = term;
     setLoadingEmps(true);
-    const { data, error } = await (supabase as any)
+    const { data, error } = await db
       .from("EMPREGADOS")
       .select('"ID", "Nome", "Filial", "Nome Filial", "Título do Cargo", "Valor Salário", "% Insalubridade", "Escala"')
       .eq("Situação", "Trabalhando")
@@ -283,12 +300,12 @@ export function ModalNovaVaga({ aberto, onFechar, onCriada, onToast, solicitacao
     if (empTermo.current !== term) return; // resposta de uma busca antiga — descarta
     setLoadingEmps(false);
     if (error) { toast("EMPREGADOS: " + error.message + " (" + (error.code ?? "?") + ")", "err"); return; }
-    const lista = data ?? [];
+    const lista: EmpregadoRef[] = data ?? [];
     setEmpregados(lista);
     // Só a substituição trava: nos outros motivos a pessoa é molde e pode
     // servir de molde quantas vezes for.
     setPresos(ehSubstituicao(vaga.motivo_vaga)
-      ? await substituidosComVagaViva(supabase, lista.map((e: any) => Number(e.ID)))
+      ? await substituidosComVagaViva(supabase, lista.map(e => Number(e.ID)))
       : new Map());
   };
 
@@ -303,7 +320,13 @@ export function ModalNovaVaga({ aberto, onFechar, onCriada, onToast, solicitacao
   // O que o catálogo oferece pro contrato da vaga (postos/funções) e o
   // colaborador escolhido nesta sessão (pro fallback do cadastro).
   const [catListas, setCatListas] = useState<ListasCatalogo>({ postos: [], funcoes: [] });
-  const [empEscolhido, setEmpEscolhido] = useState<any>(null);
+  // Catálogo de setores do ERP (o mesmo do Acesso por Usuário e da troca de função).
+  const [setoresCatalogo, setSetoresCatalogo] = useState<string[]>([]);
+  useEffect(() => {
+    db.from("setor_catalogo").select("nome").order("nome")
+      .then(({ data }: { data: { nome: string }[] | null }) => setSetoresCatalogo((data ?? []).map(r => r.nome).filter(Boolean)));
+  }, []);
+  const [empEscolhido, setEmpEscolhido] = useState<EmpregadoRef | null>(null);
 
   // Planilha de Custo pelo POSTO do catálogo (15/09/2026). Antes a consulta
   // saía ao escolher o colaborador e a RPC adivinhava o posto por salário/
@@ -338,7 +361,7 @@ export function ModalNovaVaga({ aberto, onFechar, onCriada, onToast, solicitacao
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [postoNomeEscolhido, vaga.contrato, empEscolhido, vagaManual]);
 
-  const selecionarEmpregado = (emp: any, motivo: string = vaga.motivo_vaga, contratos: any[] = contratosFull) => {
+  const selecionarEmpregado = (emp: EmpregadoRef, motivo: string = vaga.motivo_vaga, contratos: Record<string, unknown>[] = contratosFull) => {
     const jaTem = ehSubstituicao(motivo) ? presos.get(Number(emp.ID)) : undefined;
     if (jaTem) { toast(avisoSubstituidoPreso(jaTem), "err"); return; }
     const contratoMatch = contratoDoEmpregado(contratos, emp);
@@ -377,7 +400,7 @@ export function ModalNovaVaga({ aberto, onFechar, onCriada, onToast, solicitacao
     let vivo = true;
     setDemissaoBusca("buscando");
     (async () => {
-      const { data, error } = await (supabase as any)
+      const { data, error } = await db
         .from("SISTEMA_SOLICITACOES_DEMISSAO")
         .select("id, status, vaga_id")
         .eq("colaborador_id", substituidoId)
@@ -491,6 +514,11 @@ export function ModalNovaVaga({ aberto, onFechar, onCriada, onToast, solicitacao
     }
     if (step === 2) {
       if (!prazo.ok) { toast(prazo.erro ?? "Revise a data de início prevista.", "err"); return false; }
+      // Local exato obrigatório (16/09/2026): o posto do catálogo não diz em
+      // qual unidade/endereço a pessoa vai trabalhar, e sem isso a vaga
+      // abria "errada" — o Recrutamento não sabia pra onde contratar.
+      if (!vaga.local_exato.trim()) { toast("Descreva o local exato da vaga (unidade, endereço, ponto de referência).", "err"); return false; }
+      if (!vaga.escala.trim()) { toast("Informe a escala/horário da vaga.", "err"); return false; }
     }
     if (step === 3) {
       // A indicação é do passo 3: se disse que tem, os três campos vêm
@@ -504,7 +532,7 @@ export function ModalNovaVaga({ aberto, onFechar, onCriada, onToast, solicitacao
 
   const submitVaga = async () => {
     if (salvando) return;
-    if (!vagaValidar(1) || !vagaValidar(3)) return;
+    if (!vagaValidar(1) || !vagaValidar(2) || !vagaValidar(3)) return;
     setSalvando(true);
     const payload: Record<string, unknown> = {
       ...vaga,
@@ -519,6 +547,7 @@ export function ModalNovaVaga({ aberto, onFechar, onCriada, onToast, solicitacao
       req_obrigatorios: aplicarReqCnh(vaga.req_obrigatorios, vaga.cargo),
       cnh_obrigatoria: !!cnhDoCargo,
       administrativa: podeAdministrativa ? !!vaga.administrativa : false,
+      setor: vaga.setor || null,
       // Só a substituição grava o id: é ele que trava a pessoa numa vaga só.
       substituido_id: ehSubstituicao(vaga.motivo_vaga) ? substituidoId : null,
       demissao_id: ehSubstituicao(vaga.motivo_vaga) ? demissaoId : null,
@@ -533,20 +562,21 @@ export function ModalNovaVaga({ aberto, onFechar, onCriada, onToast, solicitacao
     // formulário: corrigir o cargo de um pedido não pode devolvê-lo para
     // "Pendente Analista" nem trocar o nome de quem pediu.
     if (!editando) {
-      payload.status = "Pendente Analista";
+      // Administrativa ou com setor → Diretoria (16/09/2026); o resto → analista.
+      payload.status = statusInicialVaga(podeAdministrativa ? !!vaga.administrativa : false, vaga.setor || null);
       payload.solicitante_nome = user?.user_metadata?.nome ?? user?.email ?? "";
       payload.solicitante_cpf = user?.email ?? "";
     }
 
     const gravar = (corpo: Record<string, unknown>) =>
       editando
-        ? (supabase as any).from("SISTEMA_RECRUTAMENTO").update(corpo).eq("id", solicitacao!.id).select("id").single()
-        : (supabase as any).from("SISTEMA_RECRUTAMENTO").insert(corpo).select("id").single();
+        ? db.from("SISTEMA_RECRUTAMENTO").update(corpo).eq("id", solicitacao!.id).select("id").single()
+        : db.from("SISTEMA_RECRUTAMENTO").insert(corpo).select("id").single();
 
     let { error, data } = await gravar(payload);
     // Banco ainda sem as colunas novas: reenvia sem elas.
     if (error && /column|schema cache/i.test(error.message)) {
-      const { cnh_obrigatoria, substituido_id, demissao_id, contrato_id, posto_id, funcao_id, reserva_tecnica, tem_recomendacao, recomendacao_nome, recomendacao_cpf, recomendacao_whatsapp, ...semColunasNovas } = payload as any;
+      const { cnh_obrigatoria, substituido_id, demissao_id, contrato_id, posto_id, funcao_id, reserva_tecnica, tem_recomendacao, recomendacao_nome, recomendacao_cpf, recomendacao_whatsapp, ...semColunasNovas } = payload;
       ({ error, data } = await gravar(semColunasNovas));
     }
     setSalvando(false);
@@ -811,6 +841,15 @@ export function ModalNovaVaga({ aberto, onFechar, onCriada, onToast, solicitacao
             onListas={setCatListas}
             onFuncaoNome={vagaManual ? (nome => setVaga(x => ({ ...x, cargo: x.cargo || nome }))) : undefined}
             classeInput="nvg-fi" classeGrupo="nvg-fg" />
+          {/* Setor (16/09/2026): com setor a vaga é administrativa e vai pra
+              Diretoria aprovar antes de chegar ao Recrutamento. */}
+          <div className="nvg-fg">
+            <label>Setor <span style={{ color: "#94a3b8", fontWeight: 600 }}>— opcional; com setor, a aprovação é da Diretoria</span></label>
+            <select className="nvg-fi" value={vaga.setor} onChange={e => setVaga(v => ({ ...v, setor: e.target.value }))}>
+              <option value="">Sem setor (vaga de contrato)</option>
+              {setoresCatalogo.map(s => <option key={s} value={s}>{s}</option>)}
+            </select>
+          </div>
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
             <div className="nvg-fg">
               <label>Estado (UF) <span style={{ color: "#dc2626" }}>*</span></label>
@@ -875,17 +914,17 @@ export function ModalNovaVaga({ aberto, onFechar, onCriada, onToast, solicitacao
           {/* Horário saiu: a escala do cadastro já vem com a jornada dentro
               ("07:30-17:18 (1H)(08:48)"), então eram dois campos dizendo a
               mesma coisa — e o segundo, digitado à mão, era o que divergia. */}
-          {/* A escala é a do cadastro do colaborador escolhido e não se edita
-              (11/09/2026): igual ao contrato e ao cargo da etapa 1, a vaga é
-              do posto dele. Só o modo manual (vaga do escritório, sem
-              colaborador de referência) digita. */}
+          {/* A escala vinha travada do cadastro do colaborador (11/09/2026).
+              Voltou a ser editável (16/09/2026): em vários cadastros ela não
+              vinha (ou vinha de outro posto) e a vaga abria sem horário — o
+              Recrutamento não sabia qual turno contratar. O cadastro continua
+              sendo o ponto de partida; o encarregado corrige se estiver errado. */}
           <div className="nvg-fg">
-            <label>Escala{!vagaManual && <span style={{ color: "#94a3b8", fontWeight: 600 }}> — do colaborador escolhido</span>}</label>
+            <label>Escala / horário *{!vagaManual && <span style={{ color: "#94a3b8", fontWeight: 600 }}> — vem do cadastro do colaborador; corrija se não bater</span>}</label>
             <input className="nvg-fi"
-              placeholder={vagaManual ? "Ex: 12x36, 5x2..." : "Vem do cadastro do colaborador escolhido"}
-              value={vaga.escala} readOnly={!vagaManual}
-              onChange={e => setVaga(v => ({ ...v, escala: e.target.value }))}
-              style={vagaManual ? undefined : { background: "#f1f5f9", color: "#475569", cursor: "not-allowed" }} />
+              placeholder={vagaManual ? "Ex: 12x36, 5x2..." : "Ex: 07:30-17:18 (1H) · 12x36 diurno"}
+              value={vaga.escala}
+              onChange={e => setVaga(v => ({ ...v, escala: e.target.value }))} />
           </div>
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
             <div className="nvg-fg"><label>Salário</label><input className="nvg-fi" placeholder="Ex: R$ 1.412,00" value={vaga.salario} onChange={e => setVaga(v => ({ ...v, salario: e.target.value }))} /></div>
@@ -910,20 +949,27 @@ export function ModalNovaVaga({ aberto, onFechar, onCriada, onToast, solicitacao
           {vagaManual && vaga.insalubridade_recebe === "Sim" && (
             <div className="nvg-fg"><label>Percentual de Insalubridade</label><input className="nvg-fi" placeholder="Ex: 20%, 40%" value={vaga.insalubridade_quanto} onChange={e => setVaga(v => ({ ...v, insalubridade_quanto: e.target.value }))} /></div>
           )}
-          {vagaManual ? (
-            <div className="nvg-fg"><label>Benefícios</label><textarea className="nvg-fi" rows={2} placeholder="VT, VR, Plano de Saúde..." value={vaga.beneficios} onChange={e => setVaga(v => ({ ...v, beneficios: e.target.value }))} /></div>
-          ) : (
-            <div className="nvg-fg">
-              <label>Benefícios <span style={{ color: "#94a3b8", fontWeight: 600 }}>— VT e VA do contrato</span></label>
-              <input className="nvg-fi" readOnly
-                value={custoBuscando ? "Consultando a planilha…" : vaga.beneficios}
-                placeholder={!substituidoId ? "Escolha o colaborador acima" : !vaga.posto_id ? "Selecione o posto no catálogo (acima) para puxar o V.A e o V.T" : "Posto sem Planilha de Custo — o Recrutamento completa"}
-                style={{ background: "#f1f5f9", color: "#475569", cursor: "not-allowed" }} />
-              {custoNota && <div style={{ marginTop: 4, fontSize: 11, fontWeight: custoPosto ? 400 : 600, color: custoPosto && !custoPosto.ambiguo ? "#94a3b8" : "#92400e" }}>{custoNota}</div>}
-            </div>
-          )}
-          {/* Local Exato / Posto saiu: o posto já vem do contrato escolhido na
-              etapa 1, e o campo livre só dava chance de escrever outro. */}
+          {/* Benefícios: o V.A e o V.T da Planilha de Custo continuam sendo
+              puxados quando o posto do catálogo é escolhido, mas o campo
+              deixou de ser só leitura (16/09/2026) — a planilha nem sempre
+              batia com o posto real e a vaga abria com benefício errado. */}
+          <div className="nvg-fg">
+            <label>Benefícios{!vagaManual && <span style={{ color: "#94a3b8", fontWeight: 600 }}> — VT e VA da Planilha de Custo; corrija se não bater</span>}</label>
+            <textarea className="nvg-fi" rows={2}
+              placeholder={vagaManual ? "VT, VR, Plano de Saúde..." : custoBuscando ? "Consultando a planilha…" : !vaga.posto_id ? "Selecione o posto no catálogo (etapa 1) para puxar o V.A e o V.T, ou descreva aqui" : "VT, VA, Plano de Saúde..."}
+              value={vaga.beneficios} onChange={e => setVaga(v => ({ ...v, beneficios: e.target.value }))} />
+            {!vagaManual && custoNota && <div style={{ marginTop: 4, fontSize: 11, fontWeight: custoPosto ? 400 : 600, color: custoPosto && !custoPosto.ambiguo ? "#94a3b8" : "#92400e" }}>{custoNota}</div>}
+          </div>
+          {/* Local exato voltou (16/09/2026), obrigatório e sempre manual: o
+              posto do catálogo identifica o contrato, não a unidade/endereço
+              onde a pessoa vai trabalhar. Sem isso o Recrutamento não sabia
+              pra onde contratar. */}
+          <div className="nvg-fg">
+            <label>Local exato da vaga *</label>
+            <textarea className="nvg-fi" rows={2}
+              placeholder="Unidade, endereço, bloco/andar, ponto de referência — onde a pessoa vai trabalhar"
+              value={vaga.local_exato} onChange={e => setVaga(v => ({ ...v, local_exato: e.target.value }))} />
+          </div>
           <div className="nvg-fg">
             <label>Essa é uma Vaga de Reserva Técnica (RT)?</label>
             <select className="nvg-fi" value={vaga.reserva_tecnica}

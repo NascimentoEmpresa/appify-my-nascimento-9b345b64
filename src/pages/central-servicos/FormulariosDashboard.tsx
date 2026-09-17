@@ -1,8 +1,14 @@
 import { useState, useEffect, useCallback, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
+import type { SupabaseClient } from "@supabase/supabase-js";
 import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip, PieChart, Pie, Cell } from "recharts";
 import { Formulario, Pergunta, fmtDt, normalizaPerguntas } from "./Formularios";
+import AbaDiagnosticoFormulario from "./painel/AbaDiagnosticoFormulario";
+
+// CS_FORMULARIOS / CS_FORM_RESPOSTAS / CS_FORM_ACESSOS não estão no types.ts
+// gerado; mesmo padrão de comite-etica/db.ts — a exceção fica num lugar só.
+const db = supabase as unknown as SupabaseClient;
 
 // =====================================================================
 // NASCIMENTO FORMULÁRIOS - 📊 Dashboard customizável
@@ -14,6 +20,17 @@ import { Formulario, Pergunta, fmtDt, normalizaPerguntas } from "./Formularios";
 // Cada widget tem título, formulário, largura (1/3, 2/3, cheia) e pode ser
 // reordenado. O layout é salvo por usuário em CS_FORM_ACESSOS
 // (papel 'dashboard', config jsonb).
+//
+// PAINÉIS POR RELATÓRIO (16/09/2026): "Meu painel" deixou de ser um só.
+// Há o painel GERAL (todos os formulários, o que existia) e um painel por
+// FORMULÁRIO, montado conforme a necessidade de cada relatório. O config
+// passou de Widget[] para { geral, por_formulario } — config antigo em
+// array continua lendo como o painel geral.
+//
+// DIAGNÓSTICO IA (16/09/2026): o mesmo diagnóstico do Painel Gerencial
+// (AbaDiagnosticoFormulario / Edge Function diagnostico-formulario-ia)
+// aparece embaixo do painel automático e do painel do formulário — e roda
+// sozinho quando não há diagnóstico salvo ou chegaram respostas novas.
 // Os dados respeitam a RLS: só aparecem formulários que o usuário vê.
 // =====================================================================
 
@@ -30,7 +47,19 @@ interface Widget {
   largura?: 1 | 2 | 3;
 }
 type Perg = Pergunta & { formulario_id: string };
-interface Resp { id: string; formulario_id: string; enviado_em: string; respondente_nome?: string | null; itens: Record<string, any>; }
+interface Resp { id: string; formulario_id: string; enviado_em: string; respondente_nome?: string | null; itens: Record<string, unknown>; }
+/** Config salvo em CS_FORM_ACESSOS (papel 'dashboard'). */
+interface ConfigPaineis { geral: Widget[]; por_formulario: Record<string, Widget[]> }
+const PAINEL_GERAL = "geral";
+/** Lê o config gravado: array (formato antigo) vira o painel geral. */
+function lerConfig(cfg: unknown): ConfigPaineis | null {
+  if (Array.isArray(cfg)) return cfg.length ? { geral: cfg as Widget[], por_formulario: {} } : null;
+  if (cfg && typeof cfg === "object" && Array.isArray((cfg as { geral?: unknown }).geral)) {
+    const c = cfg as ConfigPaineis;
+    return { geral: c.geral, por_formulario: c.por_formulario && typeof c.por_formulario === "object" ? c.por_formulario : {} };
+  }
+  return null;
+}
 
 const CORES = ["#0f3171", "#2563eb", "#0891b2", "#16a34a", "#eab308", "#ea580c", "#dc2626", "#9333ea", "#db2777", "#64748b"];
 // Rótulos de opção são longos: sem isto o balão do gráfico estoura o card e
@@ -48,12 +77,27 @@ const WIDGETS_PADRAO: Widget[] = [
   { id: novoId(), tipo: "kpi", metrica: "7dias", formulario_id: "todos", largura: 1 },
   { id: novoId(), tipo: "tempo", formulario_id: "todos", dias: 14, largura: 1 },
 ];
+const CHART_TIPOS = ["multipla_escolha", "caixas_selecao", "lista_suspensa", "escala", "escala_trabalho"];
+
+/** Ponto de partida do painel de UM formulário: KPIs, um gráfico por
+ *  pergunta de escolha/escala e as últimas respostas. A pessoa ajusta depois. */
+function painelInicialDoFormulario(f: Formulario): Widget[] {
+  const pergs = normalizaPerguntas(f.perguntas).filter(p => CHART_TIPOS.includes(p.tipo));
+  return [
+    { id: novoId(), tipo: "kpi", metrica: "total", formulario_id: f.id, largura: 1 },
+    { id: novoId(), tipo: "kpi", metrica: "30dias", formulario_id: f.id, largura: 1 },
+    { id: novoId(), tipo: "tempo", formulario_id: f.id, dias: 30, largura: 1 },
+    ...pergs.map(p => ({ id: novoId(), tipo: "grafico" as const, formulario_id: f.id, pergunta_id: p.id, estilo: (p.tipo === "escala" ? "barras" : "pizza") as Widget["estilo"], largura: 1 as const })),
+    { id: novoId(), tipo: "ultimas", formulario_id: f.id, limite: 10, largura: 3 },
+  ];
+}
 
 export default function FormulariosDashboard() {
   const nav = useNavigate();
   const [forms, setForms] = useState<Formulario[]>([]);
   const [resps, setResps] = useState<Resp[]>([]);
-  const [widgets, setWidgets] = useState<Widget[]>([]);
+  const [paineis, setPaineis] = useState<ConfigPaineis>({ geral: WIDGETS_PADRAO, por_formulario: {} });
+  const [painelSel, setPainelSel] = useState<string>(PAINEL_GERAL);   // "geral" ou id do formulário
   const [loading, setLoading] = useState(true);
   const [sujo, setSujo] = useState(false);
   const [editando, setEditando] = useState<Widget | null>(null);
@@ -67,18 +111,17 @@ export default function FormulariosDashboard() {
   const load = useCallback(async () => {
     setLoading(true);
     const [fRes, rRes, dRes] = await Promise.all([
-      (supabase as any).from("CS_FORMULARIOS").select("*").is("deleted_at", null).order("created_at", { ascending: false }),
-      (supabase as any).from("CS_FORM_RESPOSTAS").select("id, formulario_id, enviado_em, respondente_nome, itens").order("enviado_em", { ascending: false }).limit(5000),
-      (supabase as any).from("CS_FORM_ACESSOS").select("config").eq("papel", "dashboard").maybeSingle(),  // RLS: só a linha do próprio usuário
+      db.from("CS_FORMULARIOS").select("*").is("deleted_at", null).order("created_at", { ascending: false }),
+      db.from("CS_FORM_RESPOSTAS").select("id, formulario_id, enviado_em, respondente_nome, itens").order("enviado_em", { ascending: false }).limit(5000),
+      db.from("CS_FORM_ACESSOS").select("config").eq("papel", "dashboard").maybeSingle(),  // RLS: só a linha do próprio usuário
     ]);
     const fs: Formulario[] = fRes.data ?? [];
     setForms(fs);
     setFormSel(prev => prev || (fs[0]?.id ?? ""));  // 1º formulário como padrão do painel auto
     // respostas de formulário apagado (lixeira) não entram em nenhum indicador.
     const vivos = new Set(fs.map(f => f.id));
-    setResps((rRes.data ?? []).filter((r: any) => vivos.has(r.formulario_id)).map((r: any) => ({ ...r, itens: r.itens ?? {} })));
-    const cfg = dRes.data?.config;
-    setWidgets(Array.isArray(cfg) && cfg.length ? cfg : WIDGETS_PADRAO);
+    setResps((rRes.data ?? []).filter(r => vivos.has(r.formulario_id)).map(r => ({ ...r, itens: r.itens ?? {} })));
+    setPaineis(lerConfig(dRes.data?.config) ?? { geral: WIDGETS_PADRAO, por_formulario: {} });
     setLoading(false);
   }, []);
   useEffect(() => { load(); }, [load]);
@@ -97,20 +140,33 @@ export default function FormulariosDashboard() {
     return rs;
   }, [respsForm, periodo, buscaResp]);
 
+  // Widgets do painel escolhido (geral ou de um formulário).
+  const widgets = useMemo<Widget[]>(
+    () => painelSel === PAINEL_GERAL ? paineis.geral : (paineis.por_formulario[painelSel] ?? []),
+    [paineis, painelSel],
+  );
+  const formDoPainel = useMemo(() => painelSel === PAINEL_GERAL ? null : (forms.find(f => f.id === painelSel) ?? null), [forms, painelSel]);
+
   const salvar = async () => {
     const { data: u } = await supabase.auth.getUser();
     if (!u.user) return;
-    const { data: atual } = await (supabase as any).from("CS_FORM_ACESSOS")
+    const { data: atual } = await db.from("CS_FORM_ACESSOS")
       .select("id").eq("papel", "dashboard").eq("user_id", u.user.id).maybeSingle();
     const { error } = atual
-      ? await (supabase as any).from("CS_FORM_ACESSOS").update({ config: widgets }).eq("id", atual.id)
-      : await (supabase as any).from("CS_FORM_ACESSOS").insert({ papel: "dashboard", user_id: u.user.id, config: widgets });
+      ? await db.from("CS_FORM_ACESSOS").update({ config: paineis }).eq("id", atual.id)
+      : await db.from("CS_FORM_ACESSOS").insert({ papel: "dashboard", user_id: u.user.id, config: paineis });
     if (error) { toast("Erro ao salvar: " + error.message, "err"); return; }
     setSujo(false);
-    toast("Dashboard salvo.", "ok");
+    toast("Painéis salvos.", "ok");
   };
 
-  const muda = (w: Widget[]) => { setWidgets(w); setSujo(true); };
+  const muda = (w: Widget[]) => {
+    setPaineis(p => painelSel === PAINEL_GERAL
+      ? { ...p, geral: w }
+      : { ...p, por_formulario: { ...p.por_formulario, [painelSel]: w } });
+    setSujo(true);
+  };
+  const novoWidget = () => setEditando({ id: novoId(), tipo: "kpi", metrica: "total", formulario_id: formDoPainel ? formDoPainel.id : "todos", largura: 1 });
   const move = (i: number, dir: -1 | 1) => { const a = [...widgets]; const j = i + dir; if (j < 0 || j >= a.length) return; [a[i], a[j]] = [a[j], a[i]]; muda(a); };
   const remove = (i: number) => muda(widgets.filter((_, j) => j !== i));
   const aplicaEdicao = (w: Widget) => {
@@ -141,10 +197,30 @@ export default function FormulariosDashboard() {
           ))}
         </div>
         {modo === "custom" && <>
-          <button onClick={() => setEditando({ id: novoId(), tipo: "kpi", metrica: "total", formulario_id: "todos", largura: 1 })} style={btn("#fff", "#0f3171", "1px solid #0f3171")}>+ Widget</button>
-          <button onClick={salvar} style={btn(sujo ? "#0f3171" : "#94a3b8")}>💾 Salvar layout</button>
+          <button onClick={novoWidget} style={btn("#fff", "#0f3171", "1px solid #0f3171")}>+ Widget</button>
+          <button onClick={salvar} style={btn(sujo ? "#0f3171" : "#94a3b8")}>💾 Salvar painéis</button>
         </>}
       </div>
+
+      {modo === "custom" && (
+        <div style={{ display: "flex", alignItems: "flex-end", gap: 10, padding: "12px 22px", margin: "12px 24px 0", border: "1px solid #e2e8f0", borderRadius: 14, background: "#fff", boxShadow: "0 8px 24px rgba(15,23,42,.06)", flexShrink: 0, flexWrap: "wrap" }}>
+          <div style={{ flex: 1, minWidth: 240 }}>
+            <label style={lbl}>Painel</label>
+            <select value={painelSel} onChange={e => setPainelSel(e.target.value)} style={inp}>
+              <option value={PAINEL_GERAL}>Painel geral — todos os formulários</option>
+              {forms.map(f => <option key={f.id} value={f.id}>{f.titulo}{(paineis.por_formulario[f.id]?.length ?? 0) > 0 ? " ✓" : ""}</option>)}
+            </select>
+          </div>
+          <div style={{ fontSize: 11.5, color: "#64748b", flex: 2, minWidth: 220, paddingBottom: 6 }}>
+            {formDoPainel
+              ? <>Painel do relatório <b>{formDoPainel.titulo}</b>: os widgets ficam presos a este formulário. Quem tem o ✓ já foi montado.</>
+              : <>Painel geral: widgets sobre qualquer formulário. Escolha um formulário na lista para montar o painel dele.</>}
+          </div>
+          {formDoPainel && widgets.length === 0 && (
+            <button onClick={() => muda(painelInicialDoFormulario(formDoPainel))} style={btn("#0f3171")}>✨ Montar painel inicial</button>
+          )}
+        </div>
+      )}
 
       {modo === "auto" && (
         <div style={{ display: "flex", alignItems: "flex-end", gap: 10, padding: "12px 22px", margin: "12px 24px 0", border: "1px solid #e2e8f0", borderRadius: 14, background: "#fff", boxShadow: "0 8px 24px rgba(15,23,42,.06)", flexShrink: 0, flexWrap: "wrap" }}>
@@ -157,7 +233,7 @@ export default function FormulariosDashboard() {
           </div>
           <div style={{ minWidth: 150 }}>
             <label style={lbl}>Período</label>
-            <select value={periodo} onChange={e => setPeriodo(e.target.value as any)} style={inp}>
+            <select value={periodo} onChange={e => setPeriodo(e.target.value as typeof periodo)} style={inp}>
               <option value="todos">Todo o período</option>
               <option value="7">Últimos 7 dias</option>
               <option value="30">Últimos 30 dias</option>
@@ -177,11 +253,16 @@ export default function FormulariosDashboard() {
           !formAtual ? (
             <div style={{ padding: 60, textAlign: "center", color: "#94a3b8" }}>Selecione um formulário para ver o painel.</div>
           ) : (
-            <PainelAuto form={formAtual} respsForm={respsForm} respsPeriodo={respsPeriodo} />
+            <>
+              <PainelAuto form={formAtual} respsForm={respsForm} respsPeriodo={respsPeriodo} />
+              <SecaoDiagnostico form={formAtual} respostas={respsForm} />
+            </>
           )
         ) : widgets.length === 0 ? (
-          <div style={{ padding: 60, textAlign: "center", color: "#94a3b8" }}>Painel vazio - clique em <b>+ Widget</b> para começar.</div>
-        ) : (
+          <div style={{ padding: 60, textAlign: "center", color: "#94a3b8" }}>
+            Painel vazio - clique em <b>+ Widget</b> para começar{formDoPainel ? <> ou em <b>✨ Montar painel inicial</b> para partir dos gráficos do formulário</> : null}.
+          </div>
+        ) : (<>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 14 }}>
             {widgets.map((w, i) => (
               <div key={w.id} style={{ gridColumn: `span ${Math.min(w.largura ?? 1, 3)}`, background: "#fff", border: "1px solid #e2e8f0", borderRadius: 14, boxShadow: "0 8px 24px rgba(15,23,42,.06)", display: "flex", flexDirection: "column", minWidth: 0 }}>
@@ -198,10 +279,11 @@ export default function FormulariosDashboard() {
               </div>
             ))}
           </div>
-        )}
+          {formDoPainel && <SecaoDiagnostico form={formDoPainel} respostas={respsDe(formDoPainel.id)} />}
+        </>)}
       </div>
 
-      {editando && <ModalWidget w={editando} forms={forms} pergs={pergs} onClose={() => setEditando(null)} onOk={aplicaEdicao} />}
+      {editando && <ModalWidget w={editando} forms={forms} pergs={pergs} formFixo={formDoPainel?.id} onClose={() => setEditando(null)} onOk={aplicaEdicao} />}
 
       <div style={{ position: "fixed", bottom: 18, right: 18, display: "flex", flexDirection: "column", gap: 8, zIndex: 999 }}>
         {toasts.map(t => (
@@ -250,7 +332,7 @@ function CorpoWidget({ w, resps, pergs, forms }: { w: Widget; resps: Resp[]; per
         <BarChart data={buckets} margin={{ top: 4, right: 4, left: -26, bottom: 0 }}>
           <XAxis dataKey="dia" tick={{ fontSize: 10 }} interval="preserveStartEnd" />
           <YAxis tick={{ fontSize: 10 }} allowDecimals={false} />
-          <Tooltip formatter={(v: any) => [v, "respostas"]} />
+          <Tooltip formatter={v => [v, "respostas"]} />
           <Bar dataKey="n" fill="#0f3171" radius={[4, 4, 0, 0]} />
         </BarChart>
       </ResponsiveContainer>
@@ -295,10 +377,10 @@ function CorpoWidget({ w, resps, pergs, forms }: { w: Widget; resps: Resp[]; per
     return (
       <ResponsiveContainer width="100%" height={200}>
         <PieChart>
-          <Pie data={dados.filter(d => d.n)} dataKey="n" nameKey="nome" cx="50%" cy="50%" outerRadius={70} label={(e: any) => e.nome}>
+          <Pie data={dados.filter(d => d.n)} dataKey="n" nameKey="nome" cx="50%" cy="50%" outerRadius={70} label={e => e.nome}>
             {dados.filter(d => d.n).map((_, i) => <Cell key={i} fill={CORES[i % CORES.length]} />)}
           </Pie>
-          <Tooltip contentStyle={TIP_CONTENT} wrapperStyle={TIP_WRAP} formatter={(v: any, _n: any, e: any) => [v, e?.payload?.completo]} />
+          <Tooltip contentStyle={TIP_CONTENT} wrapperStyle={TIP_WRAP} formatter={(v, _n, e) => [v, e?.payload?.completo]} />
         </PieChart>
       </ResponsiveContainer>
     );
@@ -308,15 +390,16 @@ function CorpoWidget({ w, resps, pergs, forms }: { w: Widget; resps: Resp[]; per
       <BarChart data={dados} layout="vertical" margin={{ top: 0, right: 10, left: 10, bottom: 0 }}>
         <XAxis type="number" tick={{ fontSize: 10 }} allowDecimals={false} />
         <YAxis type="category" dataKey="nome" width={140} tick={{ fontSize: 10.5 }} />
-        <Tooltip contentStyle={TIP_CONTENT} wrapperStyle={TIP_WRAP} formatter={(v: any, _n: any, e: any) => [v, e?.payload?.completo]} />
+        <Tooltip contentStyle={TIP_CONTENT} wrapperStyle={TIP_WRAP} formatter={(v, _n, e) => [v, e?.payload?.completo]} />
         <Bar dataKey="n" fill="#0f3171" radius={[0, 4, 4, 0]} />
       </BarChart>
     </ResponsiveContainer>
   );
 }
 
-function ModalWidget({ w, forms, pergs, onClose, onOk }: { w: Widget; forms: Formulario[]; pergs: Perg[]; onClose: () => void; onOk: (w: Widget) => void }) {
-  const [cfg, setCfg] = useState<Widget>({ ...w });
+function ModalWidget({ w, forms, pergs, formFixo, onClose, onOk }: { w: Widget; forms: Formulario[]; pergs: Perg[]; formFixo?: string; onClose: () => void; onOk: (w: Widget) => void }) {
+  // Painel de um formulário: o widget é sempre daquele formulário.
+  const [cfg, setCfg] = useState<Widget>({ ...w, ...(formFixo ? { formulario_id: formFixo } : {}) });
   const m = (patch: Partial<Widget>) => setCfg(x => ({ ...x, ...patch }));
   const pergsDoForm = pergs.filter(p => p.formulario_id === cfg.formulario_id && ["multipla_escolha", "caixas_selecao", "lista_suspensa", "escala"].includes(p.tipo));
 
@@ -338,13 +421,20 @@ function ModalWidget({ w, forms, pergs, onClose, onOk }: { w: Widget; forms: For
             <label style={lbl}>Título (opcional - vazio usa o automático)</label>
             <input value={cfg.titulo ?? ""} onChange={e => m({ titulo: e.target.value })} style={inp} placeholder="Ex.: Clima - satisfação geral" />
           </div>
-          <div>
-            <label style={lbl}>Formulário</label>
-            <select value={cfg.formulario_id ?? "todos"} onChange={e => m({ formulario_id: e.target.value, pergunta_id: undefined })} style={inp}>
-              {cfg.tipo !== "grafico" && <option value="todos">Todos os formulários</option>}
-              {forms.map(f => <option key={f.id} value={f.id}>{f.titulo}</option>)}
-            </select>
-          </div>
+          {formFixo ? (
+            <div>
+              <label style={lbl}>Formulário</label>
+              <div style={{ ...inp, background: "#f8fafc", color: "#475569" }}>{forms.find(f => f.id === formFixo)?.titulo ?? "Formulário"}</div>
+            </div>
+          ) : (
+            <div>
+              <label style={lbl}>Formulário</label>
+              <select value={cfg.formulario_id ?? "todos"} onChange={e => m({ formulario_id: e.target.value, pergunta_id: undefined })} style={inp}>
+                {cfg.tipo !== "grafico" && <option value="todos">Todos os formulários</option>}
+                {forms.map(f => <option key={f.id} value={f.id}>{f.titulo}</option>)}
+              </select>
+            </div>
+          )}
           {cfg.tipo === "kpi" && (
             <div>
               <label style={lbl}>Métrica</label>
@@ -409,8 +499,22 @@ function ModalWidget({ w, forms, pergs, onClose, onOk }: { w: Widget; forms: For
   );
 }
 
+// ── Diagnóstico IA do formulário (o mesmo do Painel Gerencial), automático ──
+function SecaoDiagnostico({ form, respostas }: { form: Formulario; respostas: Resp[] }) {
+  return (
+    <div style={{ marginTop: 22, paddingTop: 18, borderTop: "1px dashed #cbd5e1" }}>
+      <AbaDiagnosticoFormulario
+        formularioId={form.id}
+        tituloFormulario={form.titulo}
+        setor=""
+        respostas={respostas}
+        automatico
+      />
+    </div>
+  );
+}
+
 // ── Painel automático de UM formulário: KPIs + 1 gráfico por pergunta ──────
-const CHART_TIPOS = ["multipla_escolha", "caixas_selecao", "lista_suspensa", "escala", "escala_trabalho"];
 
 function distrib(p: Pergunta, resps: Resp[]) {
   const cont: Record<string, number> = {};
@@ -460,7 +564,7 @@ function PainelAuto({ form, respsForm, respsPeriodo }: { form: Formulario; resps
               <div key={p.id} style={{ background: "#fff", border: "1px solid #e2e8f0", borderRadius: 14, padding: "14px 16px", boxShadow: "0 8px 24px rgba(15,23,42,.05)" }}>
                 <div style={{ fontSize: 13, fontWeight: 800, color: "#0f172a", marginBottom: 2 }}>{p.titulo || "Pergunta"}</div>
                 <div style={{ fontSize: 11, color: "#94a3b8", marginBottom: 10 }}>{respondidas} resposta(s){media != null ? ` · média ${media.toFixed(2)}` : ""}</div>
-                <GraficoPergunta dados={dados} tipo={((p.config?.grafico as any) ?? "barras")} />
+                <GraficoPergunta dados={dados} tipo={p.config?.grafico ?? "barras"} />
                 {top && respondidas > 0 && <div style={{ fontSize: 11.5, color: "#475569", marginTop: 8 }}>🏆 Mais escolhida: <b>{top.completo}</b> ({Math.round((top.n / respondidas) * 100)}%)</div>}
               </div>
             );
@@ -495,10 +599,10 @@ function GraficoPergunta({ dados, tipo }: { dados: { nome: string; completo: str
     return (
       <ResponsiveContainer width="100%" height={210}>
         <PieChart>
-          <Pie data={comDados} dataKey="n" nameKey="nome" cx="50%" cy="50%" innerRadius={tipo === "rosca" ? 48 : 0} outerRadius={78} label={(e: any) => e.nome}>
+          <Pie data={comDados} dataKey="n" nameKey="nome" cx="50%" cy="50%" innerRadius={tipo === "rosca" ? 48 : 0} outerRadius={78} label={e => e.nome}>
             {comDados.map((_, i) => <Cell key={i} fill={CORES[i % CORES.length]} />)}
           </Pie>
-          <Tooltip contentStyle={TIP_CONTENT} wrapperStyle={TIP_WRAP} formatter={(v: any, _n: any, e: any) => [v, e?.payload?.completo]} />
+          <Tooltip contentStyle={TIP_CONTENT} wrapperStyle={TIP_WRAP} formatter={(v, _n, e) => [v, e?.payload?.completo]} />
         </PieChart>
       </ResponsiveContainer>
     );
@@ -509,7 +613,7 @@ function GraficoPergunta({ dados, tipo }: { dados: { nome: string; completo: str
         <BarChart data={dados} margin={{ top: 6, right: 6, left: -20, bottom: 0 }}>
           <XAxis dataKey="nome" tick={{ fontSize: 10 }} interval={0} angle={dados.length > 5 ? -25 : 0} textAnchor={dados.length > 5 ? "end" : "middle"} height={dados.length > 5 ? 48 : 24} />
           <YAxis tick={{ fontSize: 10 }} allowDecimals={false} />
-          <Tooltip contentStyle={TIP_CONTENT} wrapperStyle={TIP_WRAP} formatter={(v: any, _n: any, e: any) => [v, e?.payload?.completo]} />
+          <Tooltip contentStyle={TIP_CONTENT} wrapperStyle={TIP_WRAP} formatter={(v, _n, e) => [v, e?.payload?.completo]} />
           <Bar dataKey="n" radius={[4, 4, 0, 0]}>
             {dados.map((_, i) => <Cell key={i} fill={CORES[i % CORES.length]} />)}
           </Bar>
@@ -523,7 +627,7 @@ function GraficoPergunta({ dados, tipo }: { dados: { nome: string; completo: str
       <BarChart data={dados} layout="vertical" margin={{ top: 0, right: 12, left: 8, bottom: 0 }}>
         <XAxis type="number" tick={{ fontSize: 10 }} allowDecimals={false} />
         <YAxis type="category" dataKey="nome" width={130} tick={{ fontSize: 10.5 }} />
-        <Tooltip contentStyle={TIP_CONTENT} wrapperStyle={TIP_WRAP} formatter={(v: any, _n: any, e: any) => [v, e?.payload?.completo]} />
+        <Tooltip contentStyle={TIP_CONTENT} wrapperStyle={TIP_WRAP} formatter={(v, _n, e) => [v, e?.payload?.completo]} />
         <Bar dataKey="n" radius={[0, 4, 4, 0]}>
           {dados.map((_, i) => <Cell key={i} fill={CORES[i % CORES.length]} />)}
         </Bar>

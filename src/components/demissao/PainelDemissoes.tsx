@@ -1,4 +1,6 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import type { SupabaseClient } from "@supabase/supabase-js";
+import type { LucideIcon } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -12,10 +14,11 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import {
-  BUCKET, MOTIVO_DEVOLUCAO_MIN, STATUS_SST_AGENDADO, STATUS_SST_ASO_VALIDO, STATUS_SST_RECEBIDA, acaoDoSST,
+  BUCKET, MOTIVO_DEVOLUCAO_MIN, MOTIVO_SEM_VAGA_MIN, STATUS_SST_AGENDADO, STATUS_SST_ASO_VALIDO, STATUS_SST_RECEBIDA, acaoDoSST,
+  aprovarPedeMotivoSemVaga, temMotivoSemVaga,
   TABELA, TABELA_ANEXOS, corDoStatus, explicaStatus,
-  fmtData, fmtDataHora, fmtTamanho, linkDoLocalASO, patchDevolucao, podeDevolver,
-  resumoDevolucao, resumoDoASO,
+  fmtData, fmtDataHora, fmtTamanho, linkDoLocalASO, normSetorDemissao, patchDevolucao, podeDevolver,
+  resumoDevolucao, resumoDoASO, statusDaEtapa1, visivelNaEtapaDemissao,
   type AnexoDemissao, type EtapaQueDevolve, type SolicitacaoDemissao,
 } from "@/lib/demissao/solicitacao";
 import { MapaPicker } from "@/components/sst/MapaPicker";
@@ -24,10 +27,13 @@ import {
   ThumbsDown, ThumbsUp, Undo2, XCircle,
 } from "lucide-react";
 import { ConversaSolicitacao } from "@/components/solicitacoes/ConversaSolicitacao";
+import { TABELA_APROVADOR_SETOR } from "@/components/admin/TrocaFuncaoSetoresUsuario";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 
-const sb = supabase as any;
+// SISTEMA_SOLICITACOES_DEMISSAO e os anexos não estão no types.ts gerado;
+// mesmo padrão de comite-etica/db.ts — a exceção fica num lugar só.
+const sb = supabase as unknown as SupabaseClient;
 
 /**
  * Painel das solicitações de demissão — a mesma tela para as três etapas.
@@ -69,17 +75,20 @@ const sb = supabase as any;
  * continua chegando nele, só a decisão é que voltou para o Operacional.
  */
 
-export type Etapa = "analista" | "operacional" | "rh" | "sst";
+export type Etapa = "analista" | "operacional" | "diretoria" | "rh" | "sst";
 
 /** Os status que cada etapa enxerga, na ordem em que fazem sentido na fila. */
 const TODOS_OS_STATUS = [
-  "Pendente Operacional", "Pendente RH", "Pendente SST",
+  "Pendente Operacional", "Pendente Diretoria", "Pendente RH", "Pendente SST",
   STATUS_SST_RECEBIDA, STATUS_SST_AGENDADO, STATUS_SST_ASO_VALIDO,
   "Concluída", "Reprovada", "Cancelada",
 ];
 
 const STATUS_DA_ETAPA: Record<Etapa, string[]> = {
   operacional: TODOS_OS_STATUS,
+  // A Diretoria vê o fluxo inteiro das administrativas (o recorte por
+  // escritório/setor é visivelNaEtapaDemissao, não o status).
+  diretoria: TODOS_OS_STATUS,
   // O analista enxerga o mesmo que o Operacional de propósito: ele acompanha
   // o fluxo inteiro. O que ele não tem é `STATUS_DE_ACAO`.
   analista: TODOS_OS_STATUS,
@@ -100,13 +109,14 @@ const STATUS_DA_ETAPA: Record<Etapa, string[]> = {
  */
 const STATUS_DE_ACAO: Record<Etapa, string[]> = {
   operacional: ["Pendente Operacional"],
+  diretoria: ["Pendente Diretoria"],
   analista: [],
   sst: ["Pendente SST", STATUS_SST_RECEBIDA],
   rh: ["Pendente RH"],
 };
 
 function Kpi({ titulo, valor, icone: Icone, cor }: {
-  titulo: string; valor: number; icone: any; cor: string;
+  titulo: string; valor: number; icone: LucideIcon; cor: string;
 }) {
   return (
     <Card>
@@ -139,16 +149,33 @@ export function PainelDemissoes({ etapa }: { etapa: Etapa }) {
   // inclusive as que a etapa tinha para resolver.
   const statusDeAcao = STATUS_DE_ACAO[etapa];
 
-  const carregar = async () => {
+  // Setores que EU trato (16/09/2026), marcados em Acesso por Usuário —
+  // a mesma configuração da Mudança de Função. Solicitação com setor só
+  // aparece (e só se decide) pra quem tem o setor; o banco repete a regra
+  // no trigger trg_ssd_guard_aprovador_setor.
+  const [meusSetores, setMeusSetores] = useState<Set<string>>(new Set());
+  useEffect(() => {
+    if (etapa !== "diretoria" || !user?.id) { setMeusSetores(new Set()); return; }
+    sb.from(TABELA_APROVADOR_SETOR).select("setor").eq("user_id", user.id)
+      .then(({ data }: { data: { setor: string }[] | null }) =>
+        setMeusSetores(new Set((data ?? []).map((r) => normSetorDemissao(r.setor)))));
+  }, [etapa, user?.id]);
+
+  const [todas, setTodas] = useState<SolicitacaoDemissao[]>([]);
+  const carregar = useCallback(async () => {
     setCarregando(true);
     const { data, error } = await sb.from(TABELA)
       .select("*").in("status", statusVisiveis)
       .order("criado_em", { ascending: false }).limit(500);
     if (error) toast.error("Erro ao carregar as solicitações: " + error.message);
-    setLinhas(data ?? []);
+    setTodas(data ?? []);
     setCarregando(false);
-  };
-  useEffect(() => { carregar(); }, [etapa]);
+  }, [statusVisiveis]);
+  useEffect(() => { carregar(); }, [carregar]);
+  // Recorte por escritório/setor em memória: os setores chegam depois das linhas.
+  useEffect(() => {
+    setLinhas(todas.filter((s) => visivelNaEtapaDemissao(s, etapa, meusSetores)));
+  }, [todas, etapa, meusSetores]);
 
   const filtradas = useMemo(() => {
     const q = busca.trim().toLowerCase();
@@ -173,7 +200,7 @@ export function PainelDemissoes({ etapa }: { etapa: Etapa }) {
     })();
   }, [user?.id, user?.email]);
 
-  const decidir = async (s: SolicitacaoDemissao, patch: Record<string, any>, aviso: string) => {
+  const decidir = async (s: SolicitacaoDemissao, patch: Record<string, unknown>, aviso: string) => {
     const { error } = await sb.from(TABELA)
       .update({ ...patch, atualizado_em: new Date().toISOString() }).eq("id", s.id);
     if (error) { toast.error("Erro ao salvar: " + error.message); return false; }
@@ -189,12 +216,13 @@ export function PainelDemissoes({ etapa }: { etapa: Etapa }) {
           SST e 2 no RH — o grid acompanha em vez de espremer todo mundo em
           quatro colunas fixas, que deixavam o RH com dois cartões perdidos. */}
       <div className={cn("mb-5 grid gap-3 sm:grid-cols-2",
-        etapa === "analista" || etapa === "operacional" ? "lg:grid-cols-3 xl:grid-cols-5"
+        etapa === "analista" || etapa === "operacional" || etapa === "diretoria" ? "lg:grid-cols-3 xl:grid-cols-5"
         : etapa === "sst" || etapa === "rh" ? "lg:grid-cols-3" : "")}>
-        {etapa === "analista" || etapa === "operacional" ? (
+        {etapa === "analista" || etapa === "operacional" || etapa === "diretoria" ? (
           <>
-            <Kpi titulo={etapa === "operacional" ? "Aguardando você" : "Com o Operacional"}
-                 valor={contar("Pendente Operacional")} icone={Clock} cor="bg-yellow-100 text-yellow-700" />
+            <Kpi titulo={etapa === "analista" ? "Em aprovação" : "Aguardando você"}
+                 valor={etapa === "diretoria" ? contar("Pendente Diretoria") : etapa === "operacional" ? contar("Pendente Operacional") : contar("Pendente Operacional") + contar("Pendente Diretoria")}
+                 icone={Clock} cor="bg-yellow-100 text-yellow-700" />
             <Kpi titulo="No RH" valor={contar("Pendente RH")} icone={FileText} cor="bg-purple-100 text-purple-700" />
             {/* "No SST" soma os dois status da etapa: para quem acompanha de
                 fora, recebida e a agendar são o mesmo lugar da fila. */}
@@ -318,7 +346,7 @@ function DetalheSolicitacao({ solicitacao, etapa, quemSou, onFechar, onDecidir }
   etapa: Etapa;
   quemSou: string;
   onFechar: () => void;
-  onDecidir: (s: SolicitacaoDemissao, patch: Record<string, any>, aviso: string) => Promise<boolean>;
+  onDecidir: (s: SolicitacaoDemissao, patch: Record<string, unknown>, aviso: string) => Promise<boolean>;
 }) {
   const [anexos, setAnexos] = useState<AnexoDemissao[]>([]);
   const [motivo, setMotivo] = useState("");
@@ -328,6 +356,9 @@ function DetalheSolicitacao({ solicitacao, etapa, quemSou, onFechar, onDecidir }
   // recusas diferentes, de gente diferente, e um estado só faria o texto de
   // uma aparecer no formulário da outra.
   const [motivoDevolucao, setMotivoDevolucao] = useState("");
+  // Aprovar SEM a vaga de Substituição (17/09/2026) exige o motivo da
+  // exceção — campo próprio, porque o `motivo` acima é o da reprovação.
+  const [motivoSemVaga, setMotivoSemVaga] = useState("");
   const [devolvendo, setDevolvendo] = useState(false);
   // O ASO demissional — os mesmos quatro campos do ASO de admissão.
   const [aso, setAso] = useState({ data: "", hora: "", local: "", maps: "" });
@@ -336,7 +367,7 @@ function DetalheSolicitacao({ solicitacao, etapa, quemSou, onFechar, onDecidir }
   const [mapPrev, setMapPrev] = useState("");
 
   useEffect(() => {
-    setMotivo(""); setObservacao(""); setAnexos([]);
+    setMotivo(""); setObservacao(""); setMotivoSemVaga(""); setAnexos([]);
     // Reabrir uma já marcada mostra o que está gravado — reagendar é editar o
     // que está lá, não redigitar do zero.
     setAso({
@@ -352,11 +383,18 @@ function DetalheSolicitacao({ solicitacao, etapa, quemSou, onFechar, onDecidir }
         .select("*").eq("solicitacao_id", solicitacao.id).order("id");
       setAnexos(data ?? []);
     })();
+    // Só o id nas deps, de propósito: o card recarrega ao TROCAR de solicitação,
+    // não a cada refresh da lista (que zeraria o que está sendo digitado).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [solicitacao?.id]);
 
   if (!solicitacao) return null;
   const s = solicitacao;
   const podeAgir = STATUS_DE_ACAO[etapa].includes(s.status);
+  // Sem vaga de Substituição aberta, a etapa 1 só aprova com o motivo da
+  // exceção escrito (o banco trava o pedido que respondeu "Sim"; o que
+  // respondeu "Não" passa, mas fica registrado por quê).
+  const semVaga = aprovarPedeMotivoSemVaga(s);
 
   // O bucket é privado: o documento abre por URL assinada, válida por 1 hora.
   const abrirAnexo = async (a: AnexoDemissao) => {
@@ -368,11 +406,20 @@ function DetalheSolicitacao({ solicitacao, etapa, quemSou, onFechar, onDecidir }
   // O OPERACIONAL é a primeira porta (de novo, desde 14/09/2026) — as
   // colunas `operacional_*` voltaram a bater com quem decide.
   const aprovar = async () => {
+    // Sem a vaga, o motivo da exceção é obrigatório — e é ele que o trigger
+    // demissao_exige_vaga aceita no lugar do vaga_id (mig 000169).
+    if (semVaga && !temMotivoSemVaga(motivoSemVaga)) {
+      toast.error(`Descreva o motivo da exceção — essa demissão não tem vaga de Substituição aberta (mín. ${MOTIVO_SEM_VAGA_MIN} caracteres).`);
+      return;
+    }
     setSalvando(true);
     await onDecidir(s, {
       status: "Pendente RH", operacional_por: quemSou,
       operacional_em: new Date().toISOString(), operacional_motivo: null,
-    }, `Solicitação #${s.id} aprovada e enviada ao RH.`);
+      ...(semVaga ? { sem_vaga_motivo: motivoSemVaga.trim() } : {}),
+    }, semVaga
+      ? `Solicitação #${s.id} aprovada SEM vaga de Substituição e enviada ao RH.`
+      : `Solicitação #${s.id} aprovada e enviada ao RH.`);
     setSalvando(false);
   };
 
@@ -429,10 +476,11 @@ function DetalheSolicitacao({ solicitacao, etapa, quemSou, onFechar, onDecidir }
       return;
     }
     setSalvando(true);
+    const volta = statusDaEtapa1(s);
     await onDecidir(
       s,
-      patchDevolucao(etapa as EtapaQueDevolve, quemSou, motivoDevolucao),
-      `Solicitação #${s.id} devolvida ao Operacional.`,
+      patchDevolucao(etapa as EtapaQueDevolve, quemSou, motivoDevolucao, volta),
+      `Solicitação #${s.id} devolvida ${volta === "Pendente Diretoria" ? "à Diretoria" : "ao Operacional"}.`,
     );
     setSalvando(false);
   };
@@ -558,6 +606,7 @@ function DetalheSolicitacao({ solicitacao, etapa, quemSou, onFechar, onDecidir }
           <Secao titulo="Decisões" itens={[
             ["Operacional", s.operacional_por ? `${s.operacional_por} · ${fmtDataHora(s.operacional_em)}` : "—"],
             ["Motivo da reprovação", s.operacional_motivo],
+            ["⚠ Aprovada SEM vaga de Substituição — motivo", s.sem_vaga_motivo],
             ["RH", s.rh_por ? `${s.rh_por} · ${fmtDataHora(s.rh_em)}` : "—"],
             ["Observação do RH", s.rh_observacao],
             ["SST (ASO)", s.sst_por ? `${s.sst_por} · ${fmtDataHora(s.sst_em)}` : "—"],
@@ -583,17 +632,34 @@ function DetalheSolicitacao({ solicitacao, etapa, quemSou, onFechar, onDecidir }
           <div className="flex items-start gap-2 rounded-lg border bg-muted/40 p-4 text-sm text-muted-foreground">
             <Eye className="mt-0.5 h-4 w-4 shrink-0" />
             <span>
-              Esta tela é de <strong>acompanhamento</strong>. Quem aprova a demissão é o
-              Operacional, em Operacional › Solicitações de Demissão. Aqui você vê o
-              andamento completo e a conversa da solicitação.
+              Esta tela é de <strong>acompanhamento</strong> das demissões de contrato. Quem aprova é o
+              Operacional (Operacional › Solicitações de Demissão); as do administrativo ou com setor
+              ficam com a Diretoria e não aparecem aqui.
             </span>
           </div>
         )}
 
         {/* Ações da etapa */}
-        {podeAgir && etapa === "operacional" && (
+        {podeAgir && (etapa === "operacional" || etapa === "diretoria") && (
           <div className="space-y-3 rounded-lg border border-primary/30 bg-primary/5 p-4">
             <h3 className="text-sm font-semibold">Sua decisão</h3>
+            {/* Sem vaga de Substituição aberta: aviso em destaque e o motivo
+                da exceção obrigatório para aprovar (17/09/2026). Fica ANTES
+                do motivo da reprovação para não passar batido. */}
+            {semVaga && (
+              <div className="space-y-2 rounded-lg border border-amber-300 bg-amber-50 p-3">
+                <p className="text-sm font-bold uppercase tracking-wide text-amber-900">
+                  ⚠ Essa demissão não tem vaga de Substituição aberta. Descreva o motivo da exceção:
+                </p>
+                <Textarea id="motivo-sem-vaga" className="bg-white"
+                  placeholder={`Obrigatório para aprovar sem a vaga — por que não haverá substituição? (mín. ${MOTIVO_SEM_VAGA_MIN} caracteres)`}
+                  value={motivoSemVaga} onChange={(e) => setMotivoSemVaga(e.target.value)} />
+                <p className="text-xs text-amber-800">
+                  O motivo fica gravado na solicitação e aparece para o RH e o SST.
+                  {s.vaga_obrigatoria ? " Quem solicitou tinha pedido a substituição — a vaga ainda pode ser aberta depois em Encarregados › Solicitações de Demissão." : ""}
+                </p>
+              </div>
+            )}
             <div>
               <Label htmlFor="motivo">Motivo da reprovação</Label>
               <Textarea id="motivo" className="mt-1" placeholder="Obrigatório só para reprovar — explique o que precisa ser corrigido."

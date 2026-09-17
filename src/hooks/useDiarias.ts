@@ -1,13 +1,16 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
+import { useAuth } from "@/hooks/useAuth";
 import { NovaParcela, RateioLinha, uploadAnexoMalote } from "@/hooks/useMaloteDespesa";
 import {
   AnexoDiaria,
   LinhaDiaria,
   SolicitacaoDiaria,
   StatusSolicitacao,
+  TipoPix,
   TurnoDiaria,
+  VisualizacaoDiaria,
 } from "@/pages/operacional/diarias";
 
 /**
@@ -70,6 +73,8 @@ export interface EmpregadoDiaria {
   nome: string;
   cpf: string;
   cargo: string | null;
+  /** "Situação" do cadastro: Trabalhando, Demitido, Férias... Demitido aparece na busca. */
+  situacao: string | null;
 }
 
 export interface NovaLinhaDiaria {
@@ -91,10 +96,22 @@ export interface NovaSolicitacaoDiaria {
   diaristaNome: string;
   diaristaCpf: string;
   pix: string;
+  pixTipo: TipoPix | "";
   observacoes: string;
   linhas: NovaLinhaDiaria[];
   comprovantePonto: File[];
   documentos: File[];
+}
+
+/**
+ * O que o reenvio depois do ajuste manda. É a solicitação inteira outra vez
+ * (contrato e posto inclusive — decisão de 16/09/2026), mais o que fazer com
+ * os anexos que já estavam lá: `anexosRemovidos` são os storage_path que a
+ * pessoa tirou; os que ela manteve não viajam, continuam onde estão.
+ */
+export interface AjusteSolicitacaoDiaria extends NovaSolicitacaoDiaria {
+  uuid: string;
+  anexosRemovidos: string[];
 }
 
 interface ContratoDiariaRpc {
@@ -114,6 +131,7 @@ interface EmpregadoDiariaRpc {
   nome: string | null;
   cpf: string | null;
   cargo: string | null;
+  situacao: string | null;
 }
 
 interface LinhaDiariaBanco {
@@ -149,14 +167,37 @@ interface SolicitacaoDiariaBanco {
   diarista_nome: string;
   diarista_cpf: string;
   pix: string;
+  pix_tipo: TipoPix | null;
   observacoes: string | null;
   solicitante_id: string;
   solicitante_nome: string | null;
   malote_motivo: string | null;
   malote_data_pagamento: string | null;
+  ajuste_motivo: string | null;
+  ajuste_pedido_por_nome: string | null;
+  ajuste_pedido_em: string | null;
+  exclusao_motivo: string | null;
+  excluida_por_nome: string | null;
+  excluida_em: string | null;
+  /** Coluna computada (20260930000169): os comprovantes do pagamento no Malote. */
+  diaria_comprovantes_pagamento: ComprovantePagamentoBanco[] | null;
   created_at: string;
   linhas: LinhaDiariaBanco[] | null;
   anexos: AnexoDiariaBanco[] | null;
+}
+
+interface ComprovantePagamentoBanco {
+  rotulo: string | null;
+  storage_path: string | null;
+  pago_em: string | null;
+  pago_por: string | null;
+  observacao: string | null;
+}
+
+interface VisualizacaoDiariaBanco {
+  user_id: string;
+  user_nome: string | null;
+  visualizada_em: string;
 }
 
 interface AnexoEnviado {
@@ -210,16 +251,26 @@ export function usePostosDiaria(contratoId: string | null) {
   });
 }
 
+/** Piso de caracteres para consultar EMPREGADOS — o mesmo checado na RPC. */
+export const MIN_BUSCA_EMPREGADO_DIARIA = 3;
+
 /**
  * Busca de empregado para os campos de Faltante e Diarista. A RPC casa nome
  * sem acento em qualquer ordem e CPF pelos dígitos — é ela que preenche o CPF,
  * porque digitar CPF na mão é como se paga a pessoa errada.
+ *
+ * Traz também quem já foi desligado: a diária costuma cobrir justamente o
+ * posto que ficou vago (chamado #SIS-2026-0410). A tela mostra a situação em
+ * cada sugestão.
+ *
+ * O piso de 3 caracteres é o que evita varrer as mais de 10 mil linhas de
+ * EMPREGADOS a cada tecla.
  */
 export function useBuscaEmpregadosDiaria(termo: string) {
   const busca = termo.trim();
   return useQuery({
     queryKey: ["diaria_empregados", busca],
-    enabled: busca.length >= 2,
+    enabled: busca.length >= MIN_BUSCA_EMPREGADO_DIARIA,
     staleTime: 60_000,
     queryFn: async (): Promise<EmpregadoDiaria[]> => {
       const { data, error } = await sb.rpc("diaria_buscar_empregados", { p_termo: busca });
@@ -229,6 +280,7 @@ export function useBuscaEmpregadosDiaria(termo: string) {
         nome: e.nome ?? "",
         cpf: e.cpf ?? "",
         cargo: e.cargo ?? null,
+        situacao: e.situacao ?? null,
       }));
     },
   });
@@ -238,28 +290,110 @@ export function useBuscaEmpregadosDiaria(termo: string) {
  * Todas as solicitações que o usuário enxerga, já no formato do domínio da
  * tela. A lista vem inteira de propósito: os filtros, a paginação e o aviso de
  * duplicidade do modal são calculados em cima da base toda, e é ela também que
- * alimenta os quatro cards de resumo.
+ * alimenta os cards de resumo.
+ *
+ * `apenasMinhas` é o que separa as DUAS PORTAS da mesma tela:
+ *
+ *   /app/encarregados/diarias → true. "Verificar somente as diárias que você
+ *     mesmo criou" (pedido de 16/09/2026). Não é redundância com a RLS: a
+ *     policy diaria_solicitacao_select já recorta o usuário externo, mas ela
+ *     libera quem TAMBÉM tem `operacional_diarias/visualizar` — e essa pessoa,
+ *     entrando pela porta de Encarregados, via a base inteira. O filtro é da
+ *     ROTA, não da permissão: aquela porta é "minhas solicitações", seja quem
+ *     for que a abriu.
+ *
+ *   /app/operacional/diarias → false. A RLS decide, e quem tem o menu vê tudo.
  */
-export function useSolicitacoesDiaria() {
+export function useSolicitacoesDiaria(apenasMinhas = false) {
+  const { user } = useAuth();
+  const meuId = user?.id ?? null;
   return useQuery({
-    queryKey: ["diaria_solicitacoes"],
+    queryKey: ["diaria_solicitacoes", apenasMinhas ? meuId : "todas"],
+    // Sem usuário resolvido, "só as minhas" não tem resposta honesta — melhor
+    // não consultar do que devolver a base inteira por um instante.
+    enabled: !apenasMinhas || !!meuId,
     queryFn: async (): Promise<SolicitacaoDiaria[]> => {
-      const { data, error } = await sb
+      let q = sb
         .from("DIARIA_SOLICITACAO")
         .select(
           `id, numero, status, contrato_id, contrato_nome, contrato_cliente, contrato_empresa, posto_id, posto_nome,
            faltante_empregado_id, faltante_nome, faltante_cpf,
-           diarista_empregado_id, diarista_nome, diarista_cpf, pix,
+           diarista_empregado_id, diarista_nome, diarista_cpf, pix, pix_tipo,
            observacoes, valor_total_centavos, solicitante_id, solicitante_nome,
            malote_motivo, malote_data_pagamento, created_at, malote_despesa_paga,
+           ajuste_motivo, ajuste_pedido_por_nome, ajuste_pedido_em,
+           exclusao_motivo, excluida_por_nome, excluida_em, diaria_comprovantes_pagamento,
            linhas:DIARIA_LINHA ( id, data, turno, qt_vt, valor_unit_vt_centavos, valor_diaria_centavos ),
            anexos:DIARIA_ANEXO ( id, categoria, storage_path, nome_arquivo, mime_type, tamanho_bytes, created_at )`,
         )
         .order("created_at", { ascending: false })
         .limit(2000);
+      if (apenasMinhas && meuId) q = q.eq("solicitante_id", meuId);
+      const { data, error } = await q;
       if (error) throw error;
       return ((data ?? []) as SolicitacaoDiariaBanco[]).map(mapearSolicitacao);
     },
+  });
+}
+
+/**
+ * Quem já abriu esta solicitação, do mais recente para o mais antigo.
+ *
+ * Fica fora da consulta da lista de propósito: a lista traz até 2000
+ * solicitações com linhas e anexos aninhados, e pendurar mais uma tabela nela
+ * para desenhar um rodapé que só aparece com o modal aberto sairia caro em
+ * toda abertura de tela.
+ */
+export function useVisualizacoesDiaria(solicitacaoId: string | null | undefined) {
+  return useQuery({
+    queryKey: ["diaria_visualizacoes", solicitacaoId],
+    enabled: !!solicitacaoId,
+    queryFn: async (): Promise<VisualizacaoDiaria[]> => {
+      const { data, error } = await sb
+        .from("DIARIA_VISUALIZACAO")
+        .select("user_id, user_nome, visualizada_em")
+        .eq("solicitacao_id", solicitacaoId)
+        .order("visualizada_em", { ascending: false });
+      if (error) throw error;
+      return ((data ?? []) as VisualizacaoDiariaBanco[]).map((v) => ({
+        userId: v.user_id,
+        nome: v.user_nome ?? "Usuário",
+        quando: new Date(v.visualizada_em)
+          .toLocaleString("pt-BR", {
+            day: "2-digit",
+            month: "2-digit",
+            year: "numeric",
+            hour: "2-digit",
+            minute: "2-digit",
+          })
+          // "16/09/2026, 09:24" → "16/09/2026 - 09:24", o formato pedido.
+          .replace(", ", " - "),
+      }));
+    },
+  });
+}
+
+/**
+ * Carimba que o usuário logado abriu a solicitação.
+ *
+ * A RPC grava só a PRIMEIRA vez (ON CONFLICT DO NOTHING), então chamar a cada
+ * abertura de modal é barato e idempotente — e é o único jeito de o carimbo
+ * existir sem a tela ter que saber se já registrou antes.
+ */
+export function useRegistrarVisualizacaoDiaria() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (solicitacaoId: string) => {
+      const { error } = await sb.rpc("diaria_registrar_visualizacao", {
+        p_solicitacao_id: solicitacaoId,
+      });
+      if (error) throw error;
+      return solicitacaoId;
+    },
+    onSuccess: (solicitacaoId) =>
+      qc.invalidateQueries({ queryKey: ["diaria_visualizacoes", solicitacaoId] }),
+    // Sem onError: registrar leitura é telemetria. Uma falha aqui não pode
+    // virar toast vermelho por cima de uma solicitação que abriu normalmente.
   });
 }
 
@@ -298,6 +432,7 @@ export function useCriarSolicitacaoDiaria() {
             diarista_nome: input.diaristaNome,
             diarista_cpf: input.diaristaCpf,
             pix: input.pix,
+            pix_tipo: input.pixTipo,
             observacoes: input.observacoes,
             diarias: input.linhas.map((l) => ({
               data: l.data,
@@ -319,6 +454,109 @@ export function useCriarSolicitacaoDiaria() {
         await removerArquivosSilenciosamente(caminhosEnviados);
         throw erro;
       }
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["diaria_solicitacoes"] }),
+  });
+}
+
+/**
+ * Ajustar e reenviar — só quem criou a solicitação, e só enquanto ela está
+ * "Em ajuste" (a RPC recusa o resto; isto aqui é a borda de upload).
+ *
+ * Mesma coreografia da criação, ao contrário: os arquivos NOVOS sobem antes
+ * (o caminho no bucket depende do id, que já existe), a RPC grava tudo numa
+ * transação, e só DEPOIS de ela aceitar é que os anexos removidos saem do
+ * Storage. Apagar antes deixaria a solicitação sem comprovante caso a RPC
+ * recusasse o reenvio — e não há como desfazer um delete de bucket.
+ */
+export function useAjustarSolicitacaoDiaria() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (input: AjusteSolicitacaoDiaria) => {
+      const caminhosEnviados: string[] = [];
+      try {
+        const comprovantes = await enviarArquivos(
+          input.uuid,
+          "comprovante_ponto",
+          input.comprovantePonto,
+        );
+        caminhosEnviados.push(...comprovantes.map((a) => a.storage_path));
+        const documentos = await enviarArquivos(input.uuid, "documento", input.documentos);
+        caminhosEnviados.push(...documentos.map((a) => a.storage_path));
+
+        const { error } = await sb.rpc("diaria_editar_solicitacao", {
+          p_dados: {
+            id: input.uuid,
+            contrato_id: input.contratoId,
+            posto_id: input.postoId ?? "",
+            posto_nome: input.postoNome,
+            faltante_empregado_id: input.faltanteEmpregadoId ?? "",
+            faltante_nome: input.faltanteNome,
+            faltante_cpf: input.faltanteCpf,
+            diarista_empregado_id: input.diaristaEmpregadoId ?? "",
+            diarista_nome: input.diaristaNome,
+            diarista_cpf: input.diaristaCpf,
+            pix: input.pix,
+            pix_tipo: input.pixTipo,
+            observacoes: input.observacoes,
+            diarias: input.linhas.map((l) => ({
+              data: l.data,
+              turno: l.turno,
+              qt_vt: l.qtVt,
+              valor_unit_vt_centavos: paraCentavos(l.valorUnitVt),
+              valor_diaria_centavos: paraCentavos(l.valorDiaria),
+            })),
+            anexos_novos: [...comprovantes, ...documentos],
+            anexos_removidos: input.anexosRemovidos,
+          },
+        });
+        if (error) throw error;
+
+        await removerArquivosSilenciosamente(input.anexosRemovidos);
+      } catch (erro) {
+        // A RPC recusou (duplicidade de escala, anexo obrigatório que sumiu):
+        // os arquivos que acabaram de subir viram lixo no bucket.
+        await removerArquivosSilenciosamente(caminhosEnviados);
+        throw erro;
+      }
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["diaria_solicitacoes"] }),
+  });
+}
+
+/**
+ * Devolver para ajuste. A saída que faltava para a solicitação reprovada que
+ * "fica ali parada" — e também a alternativa a reprovar de cara, quando o que
+ * falta é só uma correção.
+ */
+export function useSolicitarAjusteDiaria() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (input: { id: string; motivo: string }) => {
+      const { error } = await sb.rpc("diaria_solicitar_ajuste", {
+        p_solicitacao_id: input.id,
+        p_motivo: input.motivo,
+      });
+      if (error) throw error;
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["diaria_solicitacoes"] }),
+  });
+}
+
+/**
+ * Excluir — LOGICAMENTE. A linha continua no banco e some da lista; o que a
+ * RPC recusa é excluir uma solicitação já aprovada, que virou despesa no
+ * Malote (desfazer aquilo é pelo Malote, não por aqui).
+ */
+export function useExcluirSolicitacaoDiaria() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (input: { id: string; motivo: string }) => {
+      const { error } = await sb.rpc("diaria_excluir", {
+        p_solicitacao_id: input.id,
+        p_motivo: input.motivo,
+      });
+      if (error) throw error;
     },
     onSuccess: () => qc.invalidateQueries({ queryKey: ["diaria_solicitacoes"] }),
   });
@@ -429,6 +667,23 @@ export function useDecidirSolicitacaoDiaria() {
 /** Link temporário para abrir um anexo — o bucket é privado. */
 export async function urlAnexoDiaria(storagePath: string) {
   const { data, error } = await supabase.storage.from(BUCKET).createSignedUrl(storagePath, 300);
+  if (error) throw error;
+  return data.signedUrl;
+}
+
+/**
+ * Link temporário para o comprovante de pagamento.
+ *
+ * Bucket DIFERENTE do resto: o comprovante é do Malote e nunca foi copiado
+ * para cá (o porquê está no cabeçalho de 20260930000169). Quem libera a
+ * leitura é a policy "diaria comprovante pagamento select", que permite
+ * exatamente os objetos que são comprovante de uma diária que a pessoa já
+ * enxerga — um encarregado só abre o da própria diária.
+ */
+export async function urlComprovantePagamentoDiaria(storagePath: string) {
+  const { data, error } = await supabase.storage
+    .from("malote-anexos")
+    .createSignedUrl(storagePath, 300);
   if (error) throw error;
   return data.signedUrl;
 }
@@ -584,6 +839,7 @@ function mapearSolicitacao(s: SolicitacaoDiariaBanco): SolicitacaoDiaria {
     diaristaNome: s.diarista_nome ?? "",
     diaristaCpf: s.diarista_cpf ?? "",
     pix: s.pix ?? "",
+    pixTipo: s.pix_tipo ?? null,
     // Ordenadas por data: a grade do modal e a lista da tela mostram a
     // sequência da escala, não a ordem em que foram digitadas.
     diarias: (s.linhas ?? []).map(mapearLinha).sort((a, b) => a.data.localeCompare(b.data)),
@@ -594,5 +850,24 @@ function mapearSolicitacao(s: SolicitacaoDiariaBanco): SolicitacaoDiaria {
     solicitante: s.solicitante_nome ?? "—",
     maloteMotivo: s.malote_motivo ?? undefined,
     maloteDataPagamento: s.malote_data_pagamento ?? undefined,
+    ajusteMotivo: s.ajuste_motivo ?? undefined,
+    ajustePedidoPor: s.ajuste_pedido_por_nome ?? undefined,
+    ajustePedidoEm: s.ajuste_pedido_em
+      ? new Date(s.ajuste_pedido_em).toLocaleString("pt-BR")
+      : undefined,
+    exclusaoMotivo: s.exclusao_motivo ?? undefined,
+    excluidaPor: s.excluida_por_nome ?? undefined,
+    excluidaEm: s.excluida_em ? new Date(s.excluida_em).toLocaleString("pt-BR") : undefined,
+    // Sem comprovante enquanto a despesa não chega a "Despesa Paga" no Malote:
+    // a coluna computada só devolve pagamento realmente feito.
+    comprovantesPagamento: (s.diaria_comprovantes_pagamento ?? [])
+      .filter((c) => !!c.storage_path)
+      .map((c) => ({
+        rotulo: c.rotulo ?? "Comprovante de pagamento",
+        storagePath: c.storage_path as string,
+        pagoEm: c.pago_em ? new Date(c.pago_em).toLocaleString("pt-BR") : "",
+        pagoPor: c.pago_por ?? "—",
+        observacao: c.observacao ?? "",
+      })),
   };
 }

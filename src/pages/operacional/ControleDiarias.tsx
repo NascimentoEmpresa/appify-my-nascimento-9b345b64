@@ -1,4 +1,5 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import {
   CalendarCheck2,
   CalendarDays,
@@ -6,6 +7,8 @@ import {
   ClipboardList,
   Eye,
   MoreVertical,
+  Paperclip,
+  PenLine,
   Plus,
   RotateCcw,
   Search,
@@ -45,11 +48,16 @@ import { AcessoGate } from "@/components/auth/AcessoGate";
 import { useScreenAccess } from "@/hooks/useScreenAccess";
 import {
   mensagemErroDiaria,
+  useAjustarSolicitacaoDiaria,
   useContratosDiaria,
   useCriarSolicitacaoDiaria,
   useDecidirSolicitacaoDiaria,
+  useExcluirSolicitacaoDiaria,
   usePostosDiaria,
+  useRegistrarVisualizacaoDiaria,
   useSolicitacoesDiaria,
+  useSolicitarAjusteDiaria,
+  useVisualizacoesDiaria,
 } from "@/hooks/useDiarias";
 import { ModoModalDiaria, SolicitacaoDiariaModal } from "./SolicitacaoDiariaModal";
 import {
@@ -58,10 +66,12 @@ import {
   StatusSolicitacao,
   fmtBRL,
   fmtData,
+  labelTipoPix,
   labelTurno,
   soDigitos,
   valorTotalLinha,
   valorTotalSolicitacao,
+  visivelNaLista,
 } from "./diarias";
 
 /** Uma linha da tabela = uma diária dentro de uma solicitação (tela 1.1). */
@@ -85,17 +95,19 @@ function StatCard({
   icon: typeof ClipboardList;
   label: string;
   value: string;
-  tone: "primary" | "warning" | "success" | "muted";
+  tone: "primary" | "warning" | "info" | "success" | "muted";
 }) {
   const tones = {
     primary: "bg-primary/10 text-primary",
     warning: "bg-warning/10 text-warning",
+    info: "bg-info/10 text-info",
     success: "bg-success/10 text-success",
     muted: "bg-muted text-muted-foreground",
   };
   const fundo = {
     primary: "",
     warning: "bg-warning/5",
+    info: "bg-info/5",
     success: "",
     muted: "",
   };
@@ -123,15 +135,25 @@ export default function ControleDiarias({
 }: { menuCodigo?: MenuDiarias } = {}) {
   const { toast } = useToast();
   const { user } = useAuth();
+  // A porta de Encarregados é "minhas solicitações": ela mostra só o que o
+  // próprio usuário criou, e isso é da ROTA, não da permissão. A RLS já
+  // recorta o usuário externo (que não tem `operacional_diarias`), mas quem
+  // tem os dois menus entrava por aqui e via a base inteira — que é
+  // exatamente o que o pedido de 16/09/2026 diz que não pode acontecer.
+  const apenasMinhas = menuCodigo === "encarregados_diarias";
   const {
     data: solicitacoes = [],
     isLoading,
     isError: falhaSolicitacoes,
     error: erroSolicitacoes,
-  } = useSolicitacoesDiaria();
+  } = useSolicitacoesDiaria(apenasMinhas);
   const { data: contratos = [] } = useContratosDiaria();
   const criar = useCriarSolicitacaoDiaria();
   const decidir = useDecidirSolicitacaoDiaria();
+  const ajustar = useAjustarSolicitacaoDiaria();
+  const pedirAjuste = useSolicitarAjusteDiaria();
+  const excluir = useExcluirSolicitacaoDiaria();
+  const registrarVisualizacao = useRegistrarVisualizacaoDiaria();
   // Aprovar é SEMPRE do Operacional, nunca do menu da porta pela qual a tela
   // foi aberta — por isso o código aqui é fixo, e não `menuCodigo`. O toggle
   // padrão do Gerenciamento de Acesso grava o pacote inteiro
@@ -141,7 +163,21 @@ export default function ControleDiarias({
   // 'aprovar' para `encarregados_diarias`, e diaria_guard() só reconhece
   // `operacional_diarias`. Se este hook seguisse `menuCodigo`, o encarregado
   // veria os botões de aprovar/reprovar e levaria erro do banco ao clicar.
+  //
+  // 16/09/2026: e agora a permissão também EXISTE no painel de acesso. Antes
+  // não havia switch de 'aprovar' em Diária nenhuma (nenhum dos dois menus
+  // tinha linha em `app_menu_acao`), então ligar a tela do Operacional ligava
+  // junto o poder de decidir — não dava para liberar "só para conferir".
+  // Ver 20260930000153.
   const { data: podeAprovar = false } = useScreenAccess("operacional_diarias", "aprovar");
+  // Excluir é ação própria, fora do pacote do toggle: quem confere e quem
+  // decide não são necessariamente quem pode apagar da lista.
+  const { data: podeExcluir = false } = useScreenAccess("operacional_diarias", "excluir");
+  // Mas a porta de Encarregados nunca decide, tenha o usuário a permissão que
+  // tiver: aquela rota é de quem SOLICITA. Um admin abrindo-a por engano não
+  // pode ver botão de aprovar ali.
+  const podeDecidir = podeAprovar && !apenasMinhas;
+  const podeExcluirAqui = podeExcluir && !apenasMinhas;
 
   // Filtros
   const [busca, setBusca] = useState("");
@@ -174,9 +210,13 @@ export default function ControleDiarias({
   const resumo = useMemo(() => {
     // "Paga" continua sendo uma diária aprovada — entra no card e no valor.
     const aprovadas = solicitacoes.filter((s) => s.status === "aprovada" || s.status === "paga");
+    // A excluída sai de TODOS os números: ela existe só como histórico, e
+    // contá-la faria "Total de solicitações" divergir da lista abaixo.
+    const vivas = solicitacoes.filter((s) => s.status !== "excluida");
     return {
-      total: solicitacoes.length,
-      solicitadas: solicitacoes.filter((s) => s.status === "solicitada").length,
+      total: vivas.length,
+      solicitadas: vivas.filter((s) => s.status === "solicitada").length,
+      emAjuste: vivas.filter((s) => s.status === "em_ajuste").length,
       aprovadas: aprovadas.length,
       valorAprovado: aprovadas.reduce((acc, s) => acc + valorTotalSolicitacao(s), 0),
     };
@@ -200,6 +240,9 @@ export default function ControleDiarias({
 
     const out: LinhaTabela[] = [];
     for (const s of solicitacoes) {
+      // Exclusão lógica: some da lista de trabalho e só reaparece quando
+      // alguém filtra por "Excluída" de propósito.
+      if (!visivelNaLista(s, status)) continue;
       if (!casaBusca(s)) continue;
       if (contrato !== "todos" && s.contratoId !== contrato) continue;
       if (posto !== "todos" && s.posto !== posto) continue;
@@ -234,20 +277,73 @@ export default function ControleDiarias({
     return [...p, "...", totalPaginas] as (number | "...")[];
   }, [totalPaginas, paginaAtual]);
 
-  const abrir = (s: SolicitacaoDiaria) =>
-    setModal({
-      modo:
-        s.status === "solicitada" && podeAprovar && s.solicitanteId !== user?.id
-          ? "aprovar"
-          : "visualizar",
-      s,
-    });
+  /**
+   * Com que cara a solicitação abre.
+   *
+   * "ajustar" vem primeiro porque é o único modo que pertence ao DONO: uma
+   * solicitação devolvida é dele para corrigir, mesmo que ele também tenha
+   * permissão de aprovar (caso do funcionário interno que lançou a própria).
+   */
+  const modoDe = (s: SolicitacaoDiaria): ModoModalDiaria => {
+    if (s.status === "em_ajuste" && s.solicitanteId === user?.id) return "ajustar";
+    if (s.status === "solicitada" && podeDecidir && s.solicitanteId !== user?.id) return "aprovar";
+    return "visualizar";
+  };
+
+  const abrir = (s: SolicitacaoDiaria) => {
+    // "Qualquer usuário que entrar nela" — o carimbo é de quem ABRE, não de
+    // quem decide. A RPC só grava a primeira vez de cada pessoa.
+    registrarVisualizacao.mutate(s.uuid);
+    setModal({ modo: modoDe(s), s });
+  };
+
+  // Notificação de "diária para ajustar" leva para
+  // /app/encarregados/diarias?solicitacao=<uuid>. Abrir a solicitação certa é
+  // o que faz a notificação valer a pena; sem isto ela largaria a pessoa numa
+  // lista para procurar de novo o que já tinha sido apontado.
+  const [params, setParams] = useSearchParams();
+  const idDaUrl = params.get("solicitacao");
+  const [linkConsumido, setLinkConsumido] = useState<string | null>(null);
+  useEffect(() => {
+    if (!idDaUrl || idDaUrl === linkConsumido || solicitacoes.length === 0) return;
+    setLinkConsumido(idDaUrl);
+    const alvo = solicitacoes.find((s) => s.uuid === idDaUrl);
+    if (alvo) abrir(alvo);
+    else
+      toast({
+        title: "Solicitação não encontrada",
+        description: "Ela pode ter sido excluída ou não estar visível para você.",
+        variant: "destructive",
+      });
+    // O parâmetro sai da URL depois de usado: recarregar a página não pode
+    // reabrir um modal que a pessoa já fechou.
+    const limpo = new URLSearchParams(params);
+    limpo.delete("solicitacao");
+    setParams(limpo, { replace: true });
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- roda uma vez por id; incluir `abrir`/`params` reabriria o modal a cada render.
+  }, [idDaUrl, linkConsumido, solicitacoes]);
 
   // Só faz sentido filtrar por posto depois de escolher o contrato — posto é
   // do contrato, e a lista de "todos os postos da casa" não ajudaria ninguém.
   const { data: postosDisponiveis = [] } = usePostosDiaria(
     contrato === "todos" ? null : contrato,
   );
+
+  // Quem já abriu a solicitação que está no modal. Consulta própria, por
+  // solicitação: pendurar isto na lista (até 2000 linhas com anexos
+  // aninhados) sairia caro para desenhar um rodapé.
+  const { data: visualizacoes = [] } = useVisualizacoesDiaria(modal?.s?.uuid);
+
+  // Decidir é sempre sobre a solicitação DE OUTRO — diaria_guard() recusa
+  // "quem solicitou a diária não pode aprovar ou reprovar a própria".
+  //
+  // As duas coisas viajam SEPARADAS para o modal de propósito. Antes elas iam
+  // fundidas num `podeDecidir` só, e o resultado foi o relato de 17/09/2026:
+  // quem criou a diária e depois a abria pelo Operacional via só "Excluir" no
+  // menu, sem uma palavra sobre o porquê — parecia tela quebrada. O modal
+  // precisa distinguir "você não tem permissão" de "esta é sua" para dizer
+  // qual dos dois é.
+  const souOSolicitante = !!modal?.s && modal.s.solicitanteId === user?.id;
 
   return (
     <div className="space-y-6">
@@ -259,9 +355,17 @@ export default function ControleDiarias({
       />
 
       {/* Cards de resumo */}
-      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-5">
         <StatCard icon={ClipboardList} label="Total de solicitações" value={String(resumo.total)} tone="primary" />
         <StatCard icon={CalendarCheck2} label="Solicitadas" value={String(resumo.solicitadas)} tone="warning" />
+        {/* Na porta de Encarregados este card é a lista de tarefas da pessoa;
+            na do Operacional, o que está parado esperando o solicitante. */}
+        <StatCard
+          icon={PenLine}
+          label={apenasMinhas ? "Para você ajustar" : "Em ajuste"}
+          value={String(resumo.emAjuste)}
+          tone="info"
+        />
         <StatCard icon={CheckCircle2} label="Aprovadas" value={String(resumo.aprovadas)} tone="success" />
         <StatCard icon={Wallet} label="Valor total aprovado" value={`R$ ${fmtBRL(resumo.valorAprovado)}`} tone="muted" />
       </div>
@@ -457,7 +561,14 @@ export default function ControleDiarias({
                     <TableCell className="whitespace-nowrap">{l.solicitacao.faltanteCpf}</TableCell>
                     <TableCell className="min-w-[7rem]">{l.solicitacao.diaristaNome}</TableCell>
                     <TableCell className="whitespace-nowrap">{l.solicitacao.diaristaCpf}</TableCell>
-                    <TableCell className="break-all">{l.solicitacao.pix}</TableCell>
+                    <TableCell className="break-all">
+                      {l.solicitacao.pixTipo && (
+                        <span className="mr-1 text-[10px] font-semibold uppercase text-muted-foreground">
+                          {labelTipoPix(l.solicitacao.pixTipo)}
+                        </span>
+                      )}
+                      {l.solicitacao.pix}
+                    </TableCell>
                     <TableCell className="whitespace-nowrap">{fmtData(l.data)}</TableCell>
                     <TableCell className="whitespace-nowrap">{l.turno}</TableCell>
                     <TableCell className="text-right">{l.qtVt}</TableCell>
@@ -465,9 +576,20 @@ export default function ControleDiarias({
                     <TableCell className="text-right">{fmtBRL(l.valorDiaria)}</TableCell>
                     <TableCell className="text-right font-medium">{fmtBRL(l.valorTotal)}</TableCell>
                     <TableCell>
-                      <Badge variant="outline" className={cn("text-[10px] font-semibold", st.cls)}>
-                        {st.label}
-                      </Badge>
+                      <span className="flex items-center gap-1">
+                        <Badge variant="outline" className={cn("text-[10px] font-semibold", st.cls)}>
+                          {st.label}
+                        </Badge>
+                        {/* "Paga" sozinho não diz se o comprovante chegou — e
+                            é o comprovante que fecha a conferência. O clipe
+                            aparece só quando o arquivo existe de verdade. */}
+                        {l.solicitacao.comprovantesPagamento.length > 0 && (
+                          <Paperclip
+                            className="h-3 w-3 shrink-0 text-success"
+                            aria-label="Comprovante de pagamento anexado"
+                          />
+                        )}
+                      </span>
                     </TableCell>
                     <TableCell className="text-right" onClick={(e) => e.stopPropagation()}>
                       <div className="flex items-center justify-end gap-0.5">
@@ -584,7 +706,17 @@ export default function ControleDiarias({
           modo={modal.modo}
           solicitacao={modal.s}
           existentes={solicitacoes}
-          salvando={criar.isPending || decidir.isPending}
+          salvando={
+            criar.isPending ||
+            decidir.isPending ||
+            ajustar.isPending ||
+            pedirAjuste.isPending ||
+            excluir.isPending
+          }
+          visualizacoes={visualizacoes}
+          podeDecidir={podeDecidir}
+          souOSolicitante={souOSolicitante}
+          podeExcluir={podeExcluirAqui}
           onFechar={() => setModal(null)}
           onSalvar={async (nova) => {
             try {
@@ -630,6 +762,55 @@ export default function ControleDiarias({
               toast({
                 title: "Não foi possível reprovar",
                 description: mensagemErroDiaria(e, "Erro ao reprovar."),
+                variant: "destructive",
+              });
+            }
+          }}
+          onSolicitarAjuste={async (uuid, motivo) => {
+            try {
+              await pedirAjuste.mutateAsync({ id: uuid, motivo });
+              setModal(null);
+              toast({
+                title: "Devolvida para ajuste",
+                description: `${modal.s?.solicitante ?? "O solicitante"} foi notificado do que precisa mudar.`,
+              });
+            } catch (e: unknown) {
+              toast({
+                title: "Não foi possível devolver para ajuste",
+                description: mensagemErroDiaria(e, "Erro ao solicitar o ajuste."),
+                variant: "destructive",
+              });
+            }
+          }}
+          onExcluir={async (uuid, motivo) => {
+            try {
+              await excluir.mutateAsync({ id: uuid, motivo });
+              setModal(null);
+              toast({
+                title: "Solicitação excluída",
+                description: "Ela sai da lista, mas continua no histórico.",
+              });
+            } catch (e: unknown) {
+              toast({
+                title: "Não foi possível excluir",
+                description: mensagemErroDiaria(e, "Erro ao excluir a solicitação."),
+                variant: "destructive",
+              });
+            }
+          }}
+          onReenviar={async (dados) => {
+            if (!modal.s) return;
+            try {
+              await ajustar.mutateAsync({ ...dados, uuid: modal.s.uuid });
+              setModal(null);
+              toast({
+                title: "Solicitação reenviada",
+                description: `${modal.s.id} voltou para a fila com status Solicitada.`,
+              });
+            } catch (e: unknown) {
+              toast({
+                title: "Não foi possível reenviar",
+                description: mensagemErroDiaria(e, "Erro ao gravar o ajuste."),
                 variant: "destructive",
               });
             }

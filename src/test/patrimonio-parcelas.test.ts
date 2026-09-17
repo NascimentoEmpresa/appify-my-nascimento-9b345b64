@@ -2,7 +2,8 @@ import { describe, it, expect } from "vitest";
 import {
   dividirEmParcelas, gerarParcelas, somaParcelas, totalGeral, validarParcelas,
   renumerar, somaMeses, passoDaPeriodicidade, ehContratoParcelado,
-  valorQueFalta, mapaValorQueFalta, type LinhaParcela,
+  valorQueFalta, mapaValorQueFalta, tipoPelaDescricao, ehParcelaNumerada, rotuloTipoLancamento,
+  type LinhaParcela,
 } from "@/pages/juridico/patrimonio/parcelas";
 
 describe("dividir sem perder centavo", () => {
@@ -137,5 +138,37 @@ describe("valor que falta do patrimônio", () => {
     expect(ehContratoParcelado("IPTU")).toBe(false);
     expect(ehContratoParcelado("")).toBe(false);
     expect(ehContratoParcelado(null)).toBe(false);
+  });
+});
+
+describe("sinal e entrada não são parcela (16/09/2026, GREEN PARCELAS / Turim)", () => {
+  it("deduz o tipo pelo rótulo da descrição, com ou sem letra na frente", () => {
+    expect(tipoPelaDescricao("GREEN PARCELAS · A) SINAL")).toBe("sinal");
+    expect(tipoPelaDescricao("GREEN PARCELAS · B) ENTRADA")).toBe("entrada");
+    expect(tipoPelaDescricao("D1 LITORAL EMPREENDIM E I R-26 · Entrada")).toBe("entrada");
+    expect(tipoPelaDescricao("Sinal")).toBe("sinal");
+    expect(tipoPelaDescricao("CASA CADU · Reforço")).toBe("reforco");
+    expect(tipoPelaDescricao("CASA CADU · QUITAÇÃO")).toBe("quitacao");
+  });
+
+  it("'· Parcela N/T' é sempre parcela, mesmo que a aba se chame Entrada", () => {
+    expect(tipoPelaDescricao("GREEN PARCELAS · Parcela 3/69")).toBe("parcela");
+    expect(tipoPelaDescricao("ENTRADA DO CONDOMINIO · Parcela 1/10")).toBe("parcela");
+    expect(tipoPelaDescricao("")).toBe("parcela");
+    expect(tipoPelaDescricao(null)).toBe("parcela");
+  });
+
+  it("só o tipo parcela entra na numeração; linha sem tipo é parcela (legado)", () => {
+    expect(ehParcelaNumerada("parcela")).toBe(true);
+    expect(ehParcelaNumerada(undefined)).toBe(true);
+    expect(ehParcelaNumerada(null)).toBe(true);
+    expect(ehParcelaNumerada("sinal")).toBe(false);
+    expect(ehParcelaNumerada("entrada")).toBe(false);
+  });
+
+  it("rótulo pra tela", () => {
+    expect(rotuloTipoLancamento("sinal")).toBe("Sinal");
+    expect(rotuloTipoLancamento("quitacao")).toBe("Quitação");
+    expect(rotuloTipoLancamento(undefined)).toBe("Parcela");
   });
 });

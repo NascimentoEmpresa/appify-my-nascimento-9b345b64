@@ -1,9 +1,47 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { FiltroContratos, passaNoFiltroContratos } from "@/components/solicitacoes/FiltroContratos";
 import { supabase } from "@/integrations/supabase/client";
+import type { SupabaseClient } from "@supabase/supabase-js";
 import { useAuth } from "@/hooks/useAuth";
 import { ConversaSolicitacao } from "@/components/solicitacoes/ConversaSolicitacao";
 import { ResumoDeFuncoes } from "@/components/fluxos/ResumoDeFuncoes";
+
+// SISTEMA_SOLICITACOES_FERIAS e o histórico não estão no types.ts gerado;
+// mesmo padrão de comite-etica/db.ts — a exceção fica num lugar só.
+const db = supabase as unknown as SupabaseClient;
+
+interface SolicitacaoFerias {
+  id: number;
+  status: string;
+  colaborador_nome?: string | null;
+  colaborador_cargo?: string | null;
+  colaborador_filial?: string | null;
+  colaborador_cpf?: string | null;
+  colaborador_admissao?: string | null;
+  solicitante_nome?: string | null;
+  data_saida?: string | null;
+  data_retorno?: string | null;
+  dias_ferias?: number | null;
+  dias_vendidos?: number | null;
+  excecao?: boolean | null;
+  observacoes?: string | null;
+  motivo_reprovacao?: string | null;
+  aprovado_por?: string | null;
+  aprovado_em?: string | null;
+  refeita_em?: string | null;
+  criado_em?: string | null;
+  atualizado_em?: string | null;
+}
+
+interface HistoricoFerias {
+  id: number;
+  evento: string;
+  por_nome?: string | null;
+  de_status?: string | null;
+  para_status?: string | null;
+  motivo?: string | null;
+  criado_em?: string | null;
+}
 
 // ── Helpers ──────────────────────────────────────────────────────────
 function fmtDtHora(s?: string) {
@@ -34,7 +72,7 @@ export default function Ferias() {
   const { user } = useAuth();
   const [nome, setNome] = useState("");
 
-  const [rows, setRows] = useState<any[]>([]);
+  const [rows, setRows] = useState<SolicitacaoFerias[]>([]);
   const [loading, setLoading] = useState(true);
   const [stats, setStats] = useState<Record<string, number>>({});
   const [statusFilter, setStatusFilter] = useState("");
@@ -45,13 +83,13 @@ export default function Ferias() {
   const rowsFiltradas = useMemo(() => rows.filter(r => passaNoFiltroContratos(r, "colaborador_filial", fContratos)), [rows, fContratos]);
 
   const [drawerId, setDrawerId] = useState<number | null>(null);
-  const [sol, setSol] = useState<any | null>(null);
+  const [sol, setSol] = useState<SolicitacaoFerias | null>(null);
   // Histórico (15/09/2026): quem criou, aprovou, reprovou, cancelou — lido
   // de SISTEMA_SOLICITACOES_FERIAS_HISTORICO (trigger grava a cada troca).
-  const [hist, setHist] = useState<any[]>([]);
+  const [hist, setHist] = useState<HistoricoFerias[]>([]);
   const [verHist, setVerHist] = useState(false);
   const carregarHist = async (id: number) => {
-    const { data } = await (supabase as any).from("SISTEMA_SOLICITACOES_FERIAS_HISTORICO")
+    const { data } = await db.from("SISTEMA_SOLICITACOES_FERIAS_HISTORICO")
       .select("*").eq("solicitacao_id", id).order("criado_em", { ascending: true });
     setHist(data ?? []);
   };
@@ -70,12 +108,12 @@ export default function Ferias() {
     if (!user?.id) return;
     supabase.from("profiles").select("display_name, email").eq("id", user.id).maybeSingle()
       .then(({ data }) => setNome(data?.display_name || data?.email || user.email || ""));
-  }, [user?.id]);
+  }, [user?.id, user?.email]);
 
   // ── Carregar lista + stats ──────────────────────────────────────────
   const carregar = useCallback(async () => {
     setLoading(true);
-    let q = (supabase as any).from("SISTEMA_SOLICITACOES_FERIAS").select("*").order("criado_em", { ascending: false }).limit(200);
+    let q = db.from("SISTEMA_SOLICITACOES_FERIAS").select("*").order("criado_em", { ascending: false }).limit(200);
     if (statusFilter) q = q.eq("status", statusFilter);
     if (busca.trim()) q = q.or(`colaborador_nome.ilike.%${busca.trim()}%,solicitante_nome.ilike.%${busca.trim()}%`);
     const { data, error } = await q;
@@ -85,7 +123,7 @@ export default function Ferias() {
   }, [statusFilter, busca, toast]);
 
   const carregarStats = useCallback(async () => {
-    const { data } = await (supabase as any).from("SISTEMA_SOLICITACOES_FERIAS").select("status").limit(2000);
+    const { data } = await db.from("SISTEMA_SOLICITACOES_FERIAS").select("status").limit(2000);
     if (!data) return;
     const m: Record<string, number> = { total: data.length };
     for (const r of data) m[r.status] = (m[r.status] ?? 0) + 1;
@@ -96,7 +134,7 @@ export default function Ferias() {
   useEffect(() => { carregarStats(); }, [carregarStats]);
 
   // ── Drawer ──────────────────────────────────────────────────────────
-  const abrirDrawer = async (row: any) => {
+  const abrirDrawer = async (row: SolicitacaoFerias) => {
     setDrawerId(row.id);
     setSol(row);
     setReprovando(false);
@@ -110,12 +148,12 @@ export default function Ferias() {
 
   const acao = async (novo: string, motivoTxt?: string) => {
     if (!drawerId) return;
-    const patch: any = { status: novo, aprovado_por: nome || user?.email || "", aprovado_em: new Date().toISOString(), atualizado_em: new Date().toISOString() };
+    const patch: Partial<SolicitacaoFerias> = { status: novo, aprovado_por: nome || user?.email || "", aprovado_em: new Date().toISOString(), atualizado_em: new Date().toISOString() };
     if (motivoTxt !== undefined) patch.motivo_reprovacao = motivoTxt;
-    const { error } = await (supabase as any).from("SISTEMA_SOLICITACOES_FERIAS").update(patch).eq("id", drawerId);
+    const { error } = await db.from("SISTEMA_SOLICITACOES_FERIAS").update(patch).eq("id", drawerId);
     if (error) { toast("Erro: " + error.message, "err"); return; }
     toast(`Solicitação ${novo.toLowerCase()}.`, "ok");
-    setSol((s: any) => ({ ...s, ...patch }));
+    setSol(s => (s ? { ...s, ...patch } : s));
     if (drawerId) carregarHist(drawerId);
     setReprovando(false);
     setMotivo("");
@@ -193,6 +231,7 @@ export default function Ferias() {
                 <td style={{ padding: "11px 14px" }}>
                   <StatusBadge status={r.status} />
                   {r.excecao && <span title="Solicitada com menos de 30 dias de antecedência" style={{ display: "inline-block", marginLeft: 6, padding: "2px 8px", borderRadius: 999, fontSize: 10, fontWeight: 800, background: "#fef3c7", color: "#b45309", border: "1px solid #fde68a" }}>FORA DO PRAZO</span>}
+                  {r.refeita_em && <span title={`Refeita pelo encarregado em ${fmtDt(r.refeita_em)} — precisa de nova avaliação`} style={{ display: "inline-block", marginLeft: 6, padding: "2px 8px", borderRadius: 999, fontSize: 10, fontWeight: 800, background: "#ede9fe", color: "#6d28d9", border: "1px solid #ddd6fe" }}>🔁 REFEITA</span>}
                 </td>
                 <td style={{ padding: "11px 14px", fontSize: 11, color: "#94a3b8" }}>{fmtDt(r.criado_em)}</td>
               </tr>
@@ -237,7 +276,7 @@ export default function Ferias() {
                 ) : (
                   <div style={{ display: "flex", flexDirection: "column", gap: 0 }}>
                     {hist.map((h, i) => {
-                      const cor = h.evento === "Aprovada" ? "#16a34a" : h.evento === "Reprovada" ? "#dc2626" : h.evento === "Cancelada" ? "#64748b" : "#0f3171";
+                      const cor = h.evento === "Aprovada" ? "#16a34a" : h.evento === "Reprovada" ? "#dc2626" : h.evento === "Cancelada" ? "#64748b" : h.evento === "Refeita" ? "#6d28d9" : "#0f3171";
                       return (
                         <div key={h.id} style={{ display: "grid", gridTemplateColumns: "18px 1fr", gap: 10 }}>
                           <div style={{ display: "flex", flexDirection: "column", alignItems: "center" }}>

@@ -977,6 +977,10 @@ const diretoriaModule: ModuleDef = {
       items: [
         { label: "Aprovacoes do Malote", to: "/app/diretoria/malote-aprovacoes", icon: CheckCircle2 },
         { label: "Mudança de Função", to: "/app/diretoria/troca-funcao-escritorio", icon: ArrowLeftRight, notif: "troca_funcao" },
+        // Diretoria (16/09/2026): demissão e vaga do escritório / com setor
+        // só aparecem aqui; aprovadas, seguem pro RH e pro Recrutamento.
+        { label: "Solicitações de Demissão", to: "/app/diretoria/solicitacoes-demissao", icon: UserMinus },
+        { label: "Gestão Recrutamento", to: "/app/diretoria/recrutamento", icon: Users2 },
       ],
     },
   ],

@@ -19,7 +19,7 @@
 // arquivo portaria-resultado.json pro job seguinte.
 
 import { execFileSync } from "node:child_process";
-import { writeFileSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 
 // ---------------------------------------------------------------- utilidades
 
@@ -487,7 +487,20 @@ if (dispensas.length > 0) {
     console.log(`  ${d.regra} dispensada em ${d.arquivo}:${d.linha} — ${d.motivo}`);
   }
 
-  writeFileSync("portaria-comentario.md", linhas.join("\n"));
+  // `linhas` só existe dentro do bloco das violações: com justificativa
+  // aceita e zero violação, isto estourava com ReferenceError e a Portaria
+  // reprovava a PR justamente por ter sido justificada (16/09/2026, PR #596).
+  // O registro vai pro arquivo — anexado ao comentário quando há violação;
+  // quando não há, fica só no log da execução.
+  const registro = [
+    "",
+    `### Justificativas aceitas (${dispensas.length})`,
+    "",
+    ...dispensas.map((d) => `- ${d.regra} dispensada em \`${d.arquivo}:${d.linha}\` — ${d.motivo}`),
+    "",
+  ];
+  const anterior = existsSync("portaria-comentario.md") ? readFileSync("portaria-comentario.md", "utf8") : "";
+  writeFileSync("portaria-comentario.md", anterior + registro.join("\n"));
 }
 
 if (violacoes.length > 0) {

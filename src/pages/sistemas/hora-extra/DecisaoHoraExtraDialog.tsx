@@ -5,10 +5,10 @@ import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Progress } from "@/components/ui/progress";
 import { Textarea } from "@/components/ui/textarea";
-import { useLiberarHoraExtra, useValidarHoraExtra } from "@/hooks/useHoraExtra";
+import { useDetalheHoraExtra, useLiberarHoraExtra, useValidarHoraExtra } from "@/hooks/useHoraExtra";
 import { cn } from "@/lib/utils";
 import { diaSemana, formatarData, formatarDuracao, mensagemErro } from "./horaExtraUtils";
-import { BadgeStatus } from "./HoraExtraUI";
+import { BadgeStatus, ListaAnexos } from "./HoraExtraUI";
 import type { SolicitacaoHoraExtra } from "./types";
 
 export default function DecisaoHoraExtraDialog({
@@ -24,8 +24,12 @@ export default function DecisaoHoraExtraDialog({
   const validar = useValidarHoraExtra();
   const [rejeitando, setRejeitando] = useState(false);
   const [motivo, setMotivo] = useState("");
+  // Mesma releitura do modal de detalhes: sem ela o anexo enviado logo antes
+  // não aparece para quem vai aprovar.
+  const { data: atual } = useDetalheHoraExtra(aberto ? solicitacao?.id : null);
   if (!solicitacao) return null;
-  const conclusao = solicitacao.status === "aguardando_validacao";
+  const dados = atual ?? solicitacao;
+  const conclusao = dados.status === "aguardando_validacao";
   const decidir = async (aprovar: boolean) => {
     if (!aprovar && !motivo.trim()) {
       setRejeitando(true);
@@ -33,8 +37,8 @@ export default function DecisaoHoraExtraDialog({
       return;
     }
     try {
-      if (conclusao) await validar.mutateAsync({ p_id: solicitacao.id, p_aprovar: aprovar, p_motivo: motivo || null });
-      else await liberar.mutateAsync({ p_id: solicitacao.id, p_aprovar: aprovar, p_motivo: motivo || null });
+      if (conclusao) await validar.mutateAsync({ p_id: dados.id, p_aprovar: aprovar, p_motivo: motivo || null });
+      else await liberar.mutateAsync({ p_id: dados.id, p_aprovar: aprovar, p_motivo: motivo || null });
       toast.success(
         aprovar
           ? conclusao
@@ -65,8 +69,8 @@ export default function DecisaoHoraExtraDialog({
           <div>
             <div className="text-xs text-slate-500">ID da Solicitação</div>
             <div className="flex items-center gap-3 text-lg font-bold text-[#07194b]">
-              {solicitacao.numero}
-              <BadgeStatus solicitacao={solicitacao} />
+              {dados.numero}
+              <BadgeStatus solicitacao={dados} />
             </div>
           </div>
         </div>
@@ -74,23 +78,23 @@ export default function DecisaoHoraExtraDialog({
           <InfoItem
             icone={<UserRound />}
             rotulo="Colaborador"
-            valor={solicitacao.colaborador_nome}
-            detalhe={solicitacao.colaborador_cargo}
+            valor={dados.colaborador_nome}
+            detalhe={dados.colaborador_cargo}
           />
-          <InfoItem icone={<UsersRound />} rotulo="Setor" valor={solicitacao.setor || "—"} />
+          <InfoItem icone={<UsersRound />} rotulo="Setor" valor={dados.setor || "—"} />
           <InfoItem
             icone={<CalendarDays />}
             rotulo="Data da HE"
-            valor={`${formatarData(solicitacao.data_he)} (${diaSemana(solicitacao.data_he)})`}
+            valor={`${formatarData(dados.data_he)} (${diaSemana(dados.data_he)})`}
           />
           <InfoItem
             icone={<Clock3 />}
             rotulo="Horário de ponto do dia"
             valor={[
-              solicitacao.ponto_entrada,
-              solicitacao.ponto_saida_intervalo,
-              solicitacao.ponto_retorno_intervalo,
-              solicitacao.ponto_saida,
+              dados.ponto_entrada,
+              dados.ponto_saida_intervalo,
+              dados.ponto_retorno_intervalo,
+              dados.ponto_saida,
             ]
               .map((x) => x.slice(0, 5))
               .join(" | ")}
@@ -98,20 +102,20 @@ export default function DecisaoHoraExtraDialog({
           <InfoItem
             icone={<Timer />}
             rotulo="Quantidade de HE"
-            valor={formatarDuracao(solicitacao.total_real_min ?? solicitacao.total_previsto_min, true)}
+            valor={formatarDuracao(dados.total_real_min ?? dados.total_previsto_min, true)}
             detalhe={
-              solicitacao.jornada_minutos
+              dados.jornada_minutos
                 ? "Trabalhado " +
-                  formatarDuracao(solicitacao.trabalhado_real_min ?? solicitacao.trabalhado_previsto_min ?? 0, true) +
+                  formatarDuracao(dados.trabalhado_real_min ?? dados.trabalhado_previsto_min ?? 0, true) +
                   " · jornada de " +
-                  formatarDuracao(solicitacao.jornada_minutos, true)
+                  formatarDuracao(dados.jornada_minutos, true)
                 : undefined
             }
           />
           <InfoItem
             icone={<FileText />}
             rotulo={conclusao ? "Resumo" : "Motivo"}
-            valor={(conclusao ? solicitacao.resumo_conclusao : solicitacao.justificativa) || "—"}
+            valor={(conclusao ? dados.resumo_conclusao : dados.justificativa) || "—"}
           />
         </div>
         <hr />
@@ -134,7 +138,7 @@ export default function DecisaoHoraExtraDialog({
                 </tr>
               </thead>
               <tbody>
-                {solicitacao.chamados?.map((c) => (
+                {dados.chamados?.map((c) => (
                   <tr key={c.id} className="border-t">
                     <td className="p-3 text-blue-600">
                       <Link2 className="h-4 w-4" />
@@ -160,11 +164,12 @@ export default function DecisaoHoraExtraDialog({
             </table>
           </div>
         </div>
-        {conclusao && solicitacao.resumo_conclusao && (
+        {conclusao && dados.resumo_conclusao && (
           <div className="rounded-lg bg-slate-50 p-3 text-sm">
-            <strong>Resumo da conclusão:</strong> {solicitacao.resumo_conclusao}
+            <strong>Resumo da conclusão:</strong> {dados.resumo_conclusao}
           </div>
         )}
+        <ListaAnexos anexos={dados.anexos} />
         <div className="flex gap-2 rounded-lg border border-blue-200 bg-blue-50 p-3 text-xs text-blue-700">
           <Info className="h-4 w-4 shrink-0" />
           <span>

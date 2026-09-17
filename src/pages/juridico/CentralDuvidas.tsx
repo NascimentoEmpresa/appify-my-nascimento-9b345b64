@@ -4,6 +4,9 @@ import { useAuth } from "@/hooks/useAuth";
 import { useVinculoEmpregado } from "@/hooks/useVinculoEmpregado";
 import { usePermissoes } from "@/context/PermissoesContext";
 import { useScreenAccess } from "@/hooks/useScreenAccess";
+import type { SupabaseClient } from "@supabase/supabase-js";
+import { FioDuvida } from "@/components/juridico/FioDuvida";
+import { CATEGORIAS_DUVIDA as CATEGORIAS, agruparComplementos, complementoPendente, type Complemento, type Duvida } from "@/lib/juridico/duvidas";
 
 // =====================================================================
 // JURÍDICO — Parecer Jurídico (gestão das dúvidas)
@@ -14,17 +17,17 @@ import { useScreenAccess } from "@/hooks/useScreenAccess";
 // Administração › Acesso por Usuário — o botão "Quem aprova/responde" e a
 // tabela JUR_DUVIDAS_APROVADORES saíram de cena (migration 20260930000119).
 // Quem responde continua: setor JURIDICO ou JUR_DUVIDAS_RESPONSAVEIS.
+// DEPOIS DA RESPOSTA (17/09/2026, mig 20260930000170): quem perguntou avalia
+// (resolveu / em parte / não resolveu) e pode perguntar mais no mesmo fio,
+// sem nova aprovação; o Jurídico complementa ali. Card "Pedem complemento" =
+// fios cujo último item é uma pergunta. Componente: FioDuvida.
 // =====================================================================
 
-interface Duvida {
-  id: number; created_at?: string; autor_id?: string; autor_nome?: string;
-  titulo: string; pergunta: string; categoria?: string; status: string;
-  resposta?: string; respondido_por?: string; respondido_em?: string;
-  aprovado_por?: string; aprovado_em?: string; motivo_reprovacao?: string;
-}
 interface Aprovador { empregado_id: number; nome?: string }
 
-const CATEGORIAS = ["Trabalhista", "Contratos", "Processos", "Tributário", "Cível", "Administrativo", "Compliance", "LGPD", "Outros"];
+// JUR_DUVIDAS* não estão no types.ts gerado; mesmo padrão de comite-etica/db.ts.
+const db = supabase as unknown as SupabaseClient;
+
 const fmtDt = (s?: string) => { if (!s) return "—"; const d = new Date(s); return isNaN(+d) ? s : d.toLocaleDateString("pt-BR"); };
 const fmtDtHora = (s?: string) => { if (!s) return "—"; const d = new Date(s); return isNaN(+d) ? s : d.toLocaleDateString("pt-BR") + " às " + d.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" }); };
 const statusInfo = (s: string): { bg: string; c: string; label: string } => ({
@@ -46,6 +49,8 @@ export default function CentralDuvidas() {
 
   const [duvidas, setDuvidas] = useState<Duvida[]>([]);
   const [responsaveis, setResponsaveis] = useState<Aprovador[]>([]);
+  // Fio de complementos por dúvida (17/09/2026) — ver lib/juridico/duvidas.ts.
+  const [fios, setFios] = useState<Map<number, Complemento[]>>(new Map());
   const [loading, setLoading] = useState(true);
   const [busca, setBusca] = useState("");
   const [fStatus, setFStatus] = useState("todas");
@@ -68,30 +73,31 @@ export default function CentralDuvidas() {
 
   const load = useCallback(async () => {
     setLoading(true);
-    const [d, r] = await Promise.all([
-      (supabase as any).from("JUR_DUVIDAS").select("*").order("created_at", { ascending: false }).limit(1000),
-      (supabase as any).from("JUR_DUVIDAS_RESPONSAVEIS").select("empregado_id, nome"),
+    const [d, r, c] = await Promise.all([
+      db.from("JUR_DUVIDAS").select("*").order("created_at", { ascending: false }).limit(1000),
+      db.from("JUR_DUVIDAS_RESPONSAVEIS").select("empregado_id, nome"),
+      db.from("JUR_DUVIDAS_COMPLEMENTOS").select("*").order("id", { ascending: false }).limit(1000),
     ]);
-    setDuvidas(d.data ?? []); setResponsaveis(r.data ?? []); setLoading(false);
+    setDuvidas(d.data ?? []); setResponsaveis(r.data ?? []); setFios(agruparComplementos(c.data ?? [])); setLoading(false);
   }, []);
   useEffect(() => { load(); }, [load]);
 
   const enviarPergunta = async () => {
     if (!ask.titulo.trim() || !ask.pergunta.trim()) { toast("Preencha o título e a pergunta.", "err"); return; }
-    const { error } = await (supabase as any).from("JUR_DUVIDAS").insert({ titulo: ask.titulo.trim(), pergunta: ask.pergunta.trim(), categoria: ask.categoria || null, autor_id: user?.id ?? null, autor_nome: autor, status: "Aberta" });
+    const { error } = await db.from("JUR_DUVIDAS").insert({ titulo: ask.titulo.trim(), pergunta: ask.pergunta.trim(), categoria: ask.categoria || null, autor_id: user?.id ?? null, autor_nome: autor, status: "Aberta" });
     if (error) { toast("Erro ao enviar: " + error.message, "err"); return; }
     setAskModal(false); setAsk({ ...ASK_RESET }); toast("Dúvida enviada (passa por aprovação).", "ok"); load();
   };
 
   const aprovar = async (d: Duvida) => {
-    const { error } = await (supabase as any).from("JUR_DUVIDAS").update({ status: "Aprovada", aprovado_por: autor, aprovado_em: new Date().toISOString(), motivo_reprovacao: null, updated_at: new Date().toISOString() }).eq("id", d.id);
+    const { error } = await db.from("JUR_DUVIDAS").update({ status: "Aprovada", aprovado_por: autor, aprovado_em: new Date().toISOString(), motivo_reprovacao: null, updated_at: new Date().toISOString() }).eq("id", d.id);
     if (error) { toast("Erro: " + error.message, "err"); return; }
     toast("Dúvida aprovada — segue para o Jurídico responder.", "ok"); load();
   };
   const confirmarReprovar = async () => {
     if (!reprAlvo) return;
     if (!motivoRep.trim()) { toast("Informe o motivo da reprovação.", "err"); return; }
-    const { error } = await (supabase as any).from("JUR_DUVIDAS").update({ status: "Reprovada", motivo_reprovacao: motivoRep.trim(), aprovado_por: autor, aprovado_em: new Date().toISOString(), updated_at: new Date().toISOString() }).eq("id", reprAlvo.id);
+    const { error } = await db.from("JUR_DUVIDAS").update({ status: "Reprovada", motivo_reprovacao: motivoRep.trim(), aprovado_por: autor, aprovado_em: new Date().toISOString(), updated_at: new Date().toISOString() }).eq("id", reprAlvo.id);
     if (error) { toast("Erro: " + error.message, "err"); return; }
     setReprAlvo(null); setMotivoRep(""); toast("Dúvida reprovada.", "ok"); load();
   };
@@ -100,13 +106,13 @@ export default function CentralDuvidas() {
   const responder = async () => {
     if (!respAlvo) return;
     if (!resp.trim()) { toast("Escreva a resposta.", "err"); return; }
-    const { error } = await (supabase as any).from("JUR_DUVIDAS").update({ resposta: resp.trim(), status: "Respondida", respondido_por: autor, respondido_em: new Date().toISOString(), updated_at: new Date().toISOString() }).eq("id", respAlvo.id);
+    const { error } = await db.from("JUR_DUVIDAS").update({ resposta: resp.trim(), status: "Respondida", respondido_por: autor, respondido_em: new Date().toISOString(), updated_at: new Date().toISOString() }).eq("id", respAlvo.id);
     if (error) { toast("Erro ao responder: " + error.message, "err"); return; }
     setRespAlvo(null); setResp(""); toast("Resposta publicada na biblioteca.", "ok"); load();
   };
   const excluir = async (d: Duvida) => {
     if (!confirm(`Excluir a dúvida "${d.titulo}"?`)) return;
-    const { error } = await (supabase as any).from("JUR_DUVIDAS").delete().eq("id", d.id);
+    const { error } = await db.from("JUR_DUVIDAS").delete().eq("id", d.id);
     if (error) { toast("Erro ao excluir: " + error.message, "err"); return; }
     setDuvidas(x => x.filter(i => i.id !== d.id)); toast("Dúvida excluída.", "ok");
   };
@@ -117,11 +123,14 @@ export default function CentralDuvidas() {
   const nAprovada = duvidas.filter(d => d.status === "Aprovada").length;
   const nResp = duvidas.filter(d => d.status === "Respondida").length;
   const nReprov = duvidas.filter(d => d.status === "Reprovada").length;
+  // Respondidas em que quem perguntou pediu mais e o Jurídico ainda não complementou.
+  const nComplementar = duvidas.filter(d => d.status === "Respondida" && complementoPendente(fios.get(d.id) ?? [])).length;
 
   const filtradas = duvidas.filter(d => {
     if (fStatus === "aprovacao" && d.status !== "Aberta") return false;
     if (fStatus === "resposta" && d.status !== "Aprovada") return false;
     if (fStatus === "respondidas" && d.status !== "Respondida") return false;
+    if (fStatus === "complementar" && !(d.status === "Respondida" && complementoPendente(fios.get(d.id) ?? []))) return false;
     if (fStatus === "reprovadas" && d.status !== "Reprovada") return false;
     if (fStatus === "minhas" && d.autor_id !== user?.id) return false;
     if (fCat && d.categoria !== fCat) return false;
@@ -166,6 +175,7 @@ export default function CentralDuvidas() {
         <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginBottom: 14 }}>
           {card("Aguardando aprovação", nAberta, nAberta > 0 ? "#ea580c" : "#16a34a")}
           {card("Aguardando resposta", nAprovada, "#7c3aed")}
+          {card("Pedem complemento", nComplementar, nComplementar > 0 ? "#7c3aed" : "#94a3b8")}
           {card("Respondidas", nResp, "#15803d")}
           {card("Reprovadas", nReprov, "#dc2626")}
         </div>
@@ -180,6 +190,7 @@ export default function CentralDuvidas() {
           {chip("todas", "Todas")}
           {chip("aprovacao", "Aguardando aprovação", nAberta)}
           {chip("resposta", "Aguardando resposta", nAprovada)}
+          {chip("complementar", "Pedem complemento", nComplementar)}
           {chip("respondidas", "Respondidas")}
           {chip("reprovadas", "Reprovadas", nReprov)}
           {chip("minhas", "Minhas")}
@@ -188,7 +199,7 @@ export default function CentralDuvidas() {
         {(podeAprovar || podeResponder) && (
           <div style={{ background: "#eff6ff", border: "1px solid #bfdbfe", borderRadius: 12, padding: "10px 14px", fontSize: 12.5, color: "#1d4ed8", marginBottom: 14 }}>
             {podeAprovar && <>Você <b>aprova/reprova</b> as dúvidas em <b>Aguardando aprovação</b>. </>}
-            {podeResponder && <>Você <b>responde</b> as em <b>Aguardando resposta</b>.</>}
+            {podeResponder && <>Você <b>responde</b> as em <b>Aguardando resposta</b> e os complementos em <b>Pedem complemento</b>.</>}
           </div>
         )}
 
@@ -215,6 +226,11 @@ export default function CentralDuvidas() {
                         <div style={{ fontSize: 13, color: "#0f172a", whiteSpace: "pre-wrap" }}>{d.resposta}</div>
                         <div style={{ fontSize: 11, color: "#94a3b8", marginTop: 6 }}>{d.respondido_por || "Jurídico"}{d.respondido_em ? " · " + fmtDt(d.respondido_em) : ""}</div>
                       </div>
+                    )}
+                    {/* Avaliação de quem perguntou + fio de complementos (17/09/2026). */}
+                    {d.status === "Respondida" && (
+                      <FioDuvida duvida={d} fio={fios.get(d.id) ?? []} userId={user?.id} autorNome={autor}
+                        podeResponder={podeResponder} mostrarNomes onMudou={load} toast={toast} />
                     )}
                     {d.status === "Reprovada" && d.motivo_reprovacao && (
                       <div style={{ marginTop: 12, background: "#fef2f2", border: "1px solid #fecaca", borderRadius: 11, padding: "9px 12px", fontSize: 12.5, color: "#b91c1c" }}>Reprovada por {d.aprovado_por || "—"}: {d.motivo_reprovacao}</div>
