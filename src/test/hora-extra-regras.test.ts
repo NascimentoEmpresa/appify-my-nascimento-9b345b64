@@ -143,9 +143,10 @@ describe("regras de hora extra", () => {
   it.each([
     ["aguardando_liberacao", true, true],
     ["aguardando_liberacao", false, false],
-    ["aguardando_validacao", true, false],
+    ["aguardando_validacao", true, true],
+    ["aguardando_validacao", false, false],
     ["aprovada", true, false],
-  ])("só libera ajuste do ponto na análise quando tem alterar (%s, %s)", (status, podeAlterar, esperado) =>
+  ])("libera ajuste do ponto na liberação ou validação somente com alterar (%s, %s)", (status, podeAlterar, esperado) =>
     expect(podeAlterarHorariosNaLiberacao({ status, podeAlterar })).toBe(esperado),
   );
   it("detecta sobreposição", () => expect(sobrepoe("18:00", "21:00", "20:00", "22:00")).toBe(true));

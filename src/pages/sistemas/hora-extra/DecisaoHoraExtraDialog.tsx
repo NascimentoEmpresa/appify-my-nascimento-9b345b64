@@ -8,7 +8,7 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } f
 import { Input } from "@/components/ui/input";
 import { Progress } from "@/components/ui/progress";
 import { Textarea } from "@/components/ui/textarea";
-import { useDetalheHoraExtra, useLiberarHoraExtra, useLiberarHoraExtraComHorarios, useValidarHoraExtra } from "@/hooks/useHoraExtra";
+import { useDetalheHoraExtra, useLiberarHoraExtra, useLiberarHoraExtraComHorarios, useValidarHoraExtra, useValidarHoraExtraComHorarios } from "@/hooks/useHoraExtra";
 import { useScreenAccess } from "@/hooks/useScreenAccess";
 import { cn } from "@/lib/utils";
 import {
@@ -36,6 +36,7 @@ export default function DecisaoHoraExtraDialog({
   const liberar = useLiberarHoraExtra();
   const liberarComHorarios = useLiberarHoraExtraComHorarios();
   const validar = useValidarHoraExtra();
+  const validarComHorarios = useValidarHoraExtraComHorarios();
   const { data: podeAlterar = false } = useScreenAccess("sistemas_hora_extra", "alterar");
   const [rejeitando, setRejeitando] = useState(false);
   const [motivo, setMotivo] = useState("");
@@ -46,33 +47,34 @@ export default function DecisaoHoraExtraDialog({
   const { data: atual } = useDetalheHoraExtra(aberto ? solicitacao?.id : null);
   const dados = atual ?? solicitacao;
   const solicitacaoId = dados?.id;
-  const pontoEntradaOriginal = somenteHora(dados?.ponto_entrada);
-  const pontoSaidaIntervaloOriginal = somenteHora(dados?.ponto_saida_intervalo);
-  const pontoRetornoIntervaloOriginal = somenteHora(dados?.ponto_retorno_intervalo);
-  const pontoSaidaOriginal = somenteHora(dados?.ponto_saida);
+  const conclusao = dados?.status === "aguardando_validacao";
+  const pontoEntradaOriginal = somenteHora(conclusao ? dados?.ponto_entrada_real || dados?.ponto_entrada : dados?.ponto_entrada);
+  const pontoSaidaIntervaloOriginal = somenteHora(conclusao ? dados?.ponto_saida_intervalo_real || dados?.ponto_saida_intervalo : dados?.ponto_saida_intervalo);
+  const pontoRetornoIntervaloOriginal = somenteHora(conclusao ? dados?.ponto_retorno_intervalo_real || dados?.ponto_retorno_intervalo : dados?.ponto_retorno_intervalo);
+  const pontoSaidaOriginal = somenteHora(conclusao ? dados?.ponto_saida_real || dados?.ponto_saida : dados?.ponto_saida);
   useEffect(() => {
     if (!aberto || !solicitacaoId) return;
     setHorarios({ entrada: pontoEntradaOriginal, saida_intervalo: pontoSaidaIntervaloOriginal, retorno_intervalo: pontoRetornoIntervaloOriginal, saida: pontoSaidaOriginal });
     setMotivoExpandido(false);
   }, [aberto, pontoEntradaOriginal, pontoRetornoIntervaloOriginal, pontoSaidaIntervaloOriginal, pontoSaidaOriginal, solicitacaoId]);
   if (!dados) return null;
-  const conclusao = dados.status === "aguardando_validacao";
   const podeEditarHorarios = podeAlterarHorariosNaLiberacao({ status: dados.status, podeAlterar });
   const calculo = calcularHoraExtra(horarios, dados.jornada_minutos ?? JORNADA_PADRAO_MIN);
   const horariosAlterados = horarios.entrada !== pontoEntradaOriginal || horarios.saida_intervalo !== pontoSaidaIntervaloOriginal || horarios.retorno_intervalo !== pontoRetornoIntervaloOriginal || horarios.saida !== pontoSaidaOriginal;
-  const processando = liberar.isPending || liberarComHorarios.isPending || validar.isPending;
+  const processando = liberar.isPending || liberarComHorarios.isPending || validar.isPending || validarComHorarios.isPending;
   const decidir = async (aprovar: boolean) => {
     if (!aprovar && !motivo.trim()) {
       setRejeitando(true);
       toast.error(conclusao ? "Informe o motivo da devolução." : "Informe o motivo da rejeição.");
       return;
     }
-    if (!conclusao && aprovar && horariosAlterados && calculo.excedente <= 0) {
-      toast.error("Os horários ajustados não geram hora extra para a jornada da escala.");
+    if (aprovar && podeEditarHorarios && horariosAlterados && calculo.excedente <= 0) {
+      toast.error(`Os horários ${conclusao ? "efetivos" : "ajustados"} não geram hora extra para a jornada da escala.`);
       return;
     }
     try {
-      if (conclusao) await validar.mutateAsync({ p_id: dados.id, p_aprovar: aprovar, p_motivo: motivo || null });
+      if (conclusao && aprovar && podeEditarHorarios && horariosAlterados) await validarComHorarios.mutateAsync({ p_id: dados.id, p_horarios: horarios });
+      else if (conclusao) await validar.mutateAsync({ p_id: dados.id, p_aprovar: aprovar, p_motivo: motivo || null });
       else if (aprovar && podeEditarHorarios && horariosAlterados) await liberarComHorarios.mutateAsync({ p_id: dados.id, p_horarios: horarios });
       else await liberar.mutateAsync({ p_id: dados.id, p_aprovar: aprovar, p_motivo: motivo || null });
       toast.success(
@@ -126,7 +128,7 @@ export default function DecisaoHoraExtraDialog({
           />
           {podeEditarHorarios ? (
             <div className="rounded-lg border border-blue-200 bg-blue-50 p-3">
-              <div className="mb-2 flex items-center gap-2 text-sm font-semibold text-[#07194b]"><Clock3 className="h-4 w-4 text-blue-700" />Horário de ponto do dia</div>
+              <div className="mb-2 flex items-center gap-2 text-sm font-semibold text-[#07194b]"><Clock3 className="h-4 w-4 text-blue-700" />{conclusao ? "Horário de ponto efetivo" : "Horário de ponto do dia"}</div>
               <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
                 {[["Entrada", "entrada"], ["Saída (intervalo)", "saida_intervalo"], ["Retorno (intervalo)", "retorno_intervalo"], ["Saída", "saida"]].map(([rotulo, campo]) => (
                   <label key={campo} className="min-w-0 text-xs text-slate-600">{rotulo}<Input type="time" value={horarios[campo as keyof typeof horarios]} onChange={(event) => mudarHorario(campo as keyof typeof horarios, event.target.value)} className="mt-1 bg-white font-semibold text-[#07194b]" /></label>
@@ -135,7 +137,7 @@ export default function DecisaoHoraExtraDialog({
               <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-xs text-blue-800"><span>HE calculada automaticamente: <strong>{formatarDuracao(calculo.excedente, true)}</strong></span><span>Trabalhado no dia: {formatarDuracao(calculo.trabalhado, true)}</span></div>
             </div>
           ) : (
-            <InfoItem icone={<Clock3 />} rotulo="Horário de ponto do dia" valor={[dados.ponto_entrada, dados.ponto_saida_intervalo, dados.ponto_retorno_intervalo, dados.ponto_saida].map((x) => x.slice(0, 5)).join(" | ")} />
+            <InfoItem icone={<Clock3 />} rotulo={conclusao ? "Horário de ponto efetivo" : "Horário de ponto do dia"} valor={conclusao ? [dados.ponto_entrada_real || dados.ponto_entrada, dados.ponto_saida_intervalo_real || dados.ponto_saida_intervalo, dados.ponto_retorno_intervalo_real || dados.ponto_retorno_intervalo, dados.ponto_saida_real || dados.ponto_saida].map((x) => x.slice(0, 5)).join(" | ") : [dados.ponto_entrada, dados.ponto_saida_intervalo, dados.ponto_retorno_intervalo, dados.ponto_saida].map((x) => x.slice(0, 5)).join(" | ")} />
           )}
           <InfoItem
             icone={<Timer />}
