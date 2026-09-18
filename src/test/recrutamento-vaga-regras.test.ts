@@ -4,7 +4,7 @@ import {
   cargoExigeCnh, aplicarReqCnh, motivoLabel, MOTIVO_EXPANSAO,
   GRAU_ALTA, GRAU_MEDIA, GRAU_BAIXA, REQ_CNH_TEXTO,
   contratoDoEmpregado, chaveContrato, rotuloContrato, rotuloReferencia, mostraNomeReferencia,
-  ehVagaAdministrativa, statusInicialVaga, STATUS_VAGA_DIRETORIA, contratoEhAdministrativo,
+  ehVagaAdministrativa, statusInicialVaga, STATUS_VAGA_DIRETORIA, contratoEhAdministrativo, setorDoCatalogo,
   MENU_VAGA_ADMINISTRATIVA, podeVagaAdministrativa, filtrarAdministrativas,
   vagaSeguraSubstituido, substituidosComVagaViva,
   podePreencherVagaManual, faltamCamposManuais,
@@ -317,5 +317,20 @@ describe("contratoEhAdministrativo", () => {
     expect(contratoEhAdministrativo("ADM CONDOMÍNIO CENTRAL")).toBe(false);
     expect(contratoEhAdministrativo("")).toBe(false);
     expect(contratoEhAdministrativo(null)).toBe(false);
+  });
+});
+
+// Setor puxado do cadastro (18/09/2026): "SISTEMAS" (Setor_ERP) vira
+// "Sistemas" (catálogo); sem match, fica vazio pra pessoa escolher.
+describe("setorDoCatalogo", () => {
+  const cat = ["Controladoria", "Juridico", "RH", "Sistemas", "SST"];
+  it("casa sem acento e sem caixa", () => {
+    expect(setorDoCatalogo(cat, "SISTEMAS")).toBe("Sistemas");
+    expect(setorDoCatalogo(cat, "jurídico")).toBe("Juridico");
+    expect(setorDoCatalogo(cat, " rh ")).toBe("RH");
+  });
+  it("sem match ou vazio: vazio", () => {
+    expect(setorDoCatalogo(cat, "SEGURANCA")).toBe("");
+    expect(setorDoCatalogo(cat, null)).toBe("");
   });
 });

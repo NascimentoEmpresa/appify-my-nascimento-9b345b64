@@ -31,6 +31,8 @@ export interface EmpregadoEscolhido {
   /** Coluna "Descrição do Local" da EMPREGADOS — o POSTO do organograma. */
   descricaoLocal: string;
   escala: string;
+  /** EMPREGADOS."Setor_ERP" (caixa alta) — pra puxar o setor do escritório sozinho. */
+  setor: string;
   admissao: string | null;
   email: string;
   telefone: string;
@@ -69,6 +71,7 @@ export function montarEmpregadoEscolhido(e: Record<string, any>): EmpregadoEscol
     contrato: nomeContratoDe(e),
     descricaoLocal: texto(e["Descrição do Local"]),
     escala: primeiroCampo(e, "Escala", "Escala de Trabalho"),
+    setor: texto(e["Setor_ERP"]),
     // Já em ISO: vai direto pra coluna `date` (Demissão e Mudança de Função).
     admissao: dataParaIso(e["Admissão"]),
     email: primeiroCampo(e, "email", "E-mail", "Email"),
