@@ -44,6 +44,13 @@ export interface TipoReembolso {
   hora_inicio: string | null;
   /** Fim da janela, "HH:MM". `null` = dia todo. */
   hora_fim: string | null;
+  /**
+   * Dias depois da viagem em que a despesa ainda pode ser lançada. `null` =
+   * sem prazo (o padrão — 17/09/2026). Ver `avisoDePrazo`.
+   */
+  prazo_dias: number | null;
+  /** Fora do prazo: `true` recusa o lançamento; `false` só avisa. */
+  prazo_bloqueia: boolean;
   ativo: boolean;
   ordem: number;
 }
@@ -222,7 +229,7 @@ export function totalEmCentavos(itens: Array<{ valor_centavos: number }>): numbe
 }
 
 // ── A pergunta que a tela faz ────────────────────────────────────────
-export type MotivoRecusa = "tipo_inativo" | "fora_da_janela" | "valor_invalido";
+export type MotivoRecusa = "tipo_inativo" | "fora_da_janela" | "valor_invalido" | "fora_do_prazo";
 
 export interface Veredito {
   ok: boolean;
@@ -253,6 +260,13 @@ export function podeLancar(
   valorCentavos: number | null,
   saida: string,
   chegada: string,
+  /**
+   * Data da viagem (ISO) e "agora" — só para o PRAZO do tipo. Opcionais
+   * porque as chamadas que não os têm simplesmente não avaliam o prazo aqui
+   * (a trigger continua avaliando).
+   */
+  dataViagemISO?: string | null,
+  agora: Date = new Date(),
 ): Veredito {
   if (!tipo || !tipo.ativo) {
     return { ok: false, motivo: "tipo_inativo", mensagem: "Esse tipo de despesa não está disponível." };
@@ -266,6 +280,21 @@ export function podeLancar(
         `${tipo.nome} vale para viagem que passe entre ${tipo.hora_inicio} e ${tipo.hora_fim}. ` +
         `A sua foi de ${saida} às ${chegada}.`,
     };
+  }
+
+  // Prazo só recusa quando o tipo pede (`prazo_bloqueia`); senão é aviso,
+  // igual ao teto — ver `avisoDePrazo`. Mesma ordem da trigger.
+  if (dataViagemISO && tipo.prazo_bloqueia) {
+    const prazo = situacaoDoPrazo(tipo, dataViagemISO, agora);
+    if (prazo?.atrasado) {
+      return {
+        ok: false,
+        motivo: "fora_do_prazo",
+        mensagem:
+          `${tipo.nome} só pode ser lançado até ${tipo.prazo_dias} dia(s) depois da viagem. ` +
+          `A viagem foi em ${dataParaBR(dataViagemISO)} (há ${prazo.dias} dias).`,
+      };
+    }
   }
 
   if (valorCentavos === null || valorCentavos <= 0) {
@@ -294,6 +323,103 @@ export function avisoDeTeto(
     `Acima do teto de ${fmtBRL(tipo.valor_maximo_centavos)} — ` +
     `${fmtBRL(excedente)} a mais. Pode enviar assim; o aprovador decide.`
   );
+}
+
+// ── Prazo ────────────────────────────────────────────────────────────
+/**
+ * Dias corridos entre a data da viagem e um instante, em data LOCAL.
+ *
+ * Espelho de `cs_reembolso_dias_desde` no banco. A conta é em dias de
+ * calendário, não em blocos de 24h: viagem dia 1º, lançamento dia 2 às 23h é
+ * 1 dia, mesmo que tenham passado 40 horas. É o que "até N dias depois"
+ * significa para quem lê a regra.
+ */
+export function diasDesdeViagem(dataViagemISO: string, em: Date = new Date()): number | null {
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(dataViagemISO ?? ""));
+  if (!m) return null;
+  const viagem = Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+  const hoje = Date.UTC(em.getFullYear(), em.getMonth(), em.getDate());
+  return Math.round((hoje - viagem) / 86_400_000);
+}
+
+export interface SituacaoPrazo {
+  /** Dias entre a viagem e o lançamento. */
+  dias: number;
+  /** Passou do `prazo_dias` do tipo. */
+  atrasado: boolean;
+  /** O tipo pede recusa (e não só aviso) quando atrasado. */
+  bloqueia: boolean;
+}
+
+/**
+ * Onde este lançamento está em relação ao prazo do tipo. `null` quando o
+ * tipo não tem prazo, ou a data não é legível — nos dois casos não há o que
+ * dizer.
+ *
+ * `em` é QUANDO a despesa foi/está sendo lançada: `new Date()` no formulário,
+ * `created_at` da solicitação nas listas. Usar "hoje" na lista faria uma
+ * solicitação lançada dentro do prazo virar "atrasada" só por ter ficado
+ * parada na fila — que é atraso de quem aprova, não de quem pediu (ver
+ * `atrasoNaAprovacao`).
+ */
+export function situacaoDoPrazo(
+  tipo: Pick<TipoReembolso, "prazo_dias" | "prazo_bloqueia"> | undefined,
+  dataViagemISO: string | null | undefined,
+  em: Date = new Date(),
+): SituacaoPrazo | null {
+  if (!tipo || tipo.prazo_dias === null || tipo.prazo_dias === undefined) return null;
+  if (!dataViagemISO) return null;
+  const dias = diasDesdeViagem(dataViagemISO, em);
+  if (dias === null) return null;
+  return { dias, atrasado: dias > tipo.prazo_dias, bloqueia: !!tipo.prazo_bloqueia };
+}
+
+/**
+ * O recado ao lado da despesa quando o lançamento passou do prazo do tipo.
+ *
+ * Mesmo desenho do `avisoDeTeto`: texto, não impedimento — a menos que o tipo
+ * esteja com `prazo_bloqueia`, e aí quem recusa é `podeLancar` (e a trigger).
+ * `null` quando não há o que avisar.
+ */
+export function avisoDePrazo(
+  tipo: Pick<TipoReembolso, "nome" | "prazo_dias" | "prazo_bloqueia"> | undefined,
+  dataViagemISO: string | null | undefined,
+  em: Date = new Date(),
+): string | null {
+  const p = situacaoDoPrazo(tipo, dataViagemISO, em);
+  if (!p || !p.atrasado || !tipo) return null;
+  return (
+    `Fora do prazo de ${tipo.prazo_dias} dia(s) depois da viagem — lançado com ${p.dias} dias. ` +
+    (p.bloqueia ? "Este tipo não aceita lançamento atrasado." : "Pode enviar assim; o aprovador decide.")
+  );
+}
+
+/** Como o prazo aparece na configuração e no seletor de tipo. */
+export function descrevePrazo(tipo: Pick<TipoReembolso, "prazo_dias" | "prazo_bloqueia">): string {
+  if (tipo.prazo_dias === null || tipo.prazo_dias === undefined) return "Sem prazo";
+  return `Até ${tipo.prazo_dias} dia(s) depois da viagem${tipo.prazo_bloqueia ? " (bloqueia)" : " (avisa)"}`;
+}
+
+// ── Meta de aprovação ────────────────────────────────────────────────
+/** Quanto tempo uma solicitação pode ficar pendente antes de contar como atrasada. */
+export const META_APROVACAO_HORAS = 24;
+
+/**
+ * Horas (inteiras) que a solicitação está esperando decisão, quando isso já
+ * passou da meta; `null` quando não está atrasada ou já foi decidida.
+ *
+ * É a "meta de 24h" pedida em 17/09/2026: sinaliza na fila e no resumo da
+ * alçada, não bloqueia nada — atraso de quem decide não pode punir quem pediu.
+ */
+export function atrasoNaAprovacao(
+  r: { status: StatusReembolso; created_at: string },
+  agora: Date = new Date(),
+): number | null {
+  if (r.status !== "pendente") return null;
+  const t = new Date(r.created_at).getTime();
+  if (Number.isNaN(t)) return null;
+  const horas = (agora.getTime() - t) / 3_600_000;
+  return horas > META_APROVACAO_HORAS ? Math.floor(horas) : null;
 }
 
 /**

@@ -11,8 +11,9 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
 import { useDecidirReembolso, useReembolsos } from "@/hooks/useReembolso";
+import { useReembolsoNotif } from "@/hooks/useReembolsoNotif";
 import {
-  ROTULO_STATUS, STATUS_TODOS, type StatusReembolso,
+  META_APROVACAO_HORAS, ROTULO_STATUS, STATUS_TODOS, type StatusReembolso,
 } from "@/lib/reembolso/regras";
 import { ListaReembolsos } from "./componentes/ListaReembolsos";
 
@@ -43,6 +44,9 @@ export default function AprovacaoReembolso() {
   const [status, setStatus] = useState<StatusReembolso | "todos">("pendente");
   const { data: lista = [], isLoading } = useReembolsos("fila", undefined, status);
   const decidir = useDecidirReembolso();
+  // Os mesmos números da bolinha da sidebar: quantos esperam decisão e
+  // quantos já passaram da meta de 24h (17/09/2026).
+  const resumo = useReembolsoNotif();
 
   // O motivo é por linha: com um estado só, abrir a segunda solicitação
   // herdava o texto digitado na primeira e o motivo saía trocado.
@@ -76,7 +80,12 @@ export default function AprovacaoReembolso() {
     <div className="mx-auto max-w-6xl">
       <PageHeader
         title="Reembolso — Aprovação"
-        subtitle="As solicitações de reembolso que estão na sua alçada."
+        subtitle={
+          resumo.pendentes > 0
+            ? `${resumo.pendentes} aguardando sua decisão` +
+              (resumo.atrasados > 0 ? ` — ${resumo.atrasados} há mais de ${META_APROVACAO_HORAS}h.` : ".")
+            : "As solicitações de reembolso que estão na sua alçada."
+        }
         module="Central de Serviços"
         breadcrumb={["Solicitar Reembolso", "Aprovação"]}
         actions={
