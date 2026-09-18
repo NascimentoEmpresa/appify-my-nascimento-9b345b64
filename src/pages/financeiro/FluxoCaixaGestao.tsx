@@ -52,7 +52,34 @@ const PAGE_SIZE = 50;
 // fontes hoje resolve saldo bancário real).
 export default function FluxoCaixaGestao() {
   const navigate = useNavigate();
-  const { data: linhas = [], isLoading } = useFluxoCaixaCombinado();
+  const { data: linhasBrutas = [], isLoading } = useFluxoCaixaCombinado();
+
+  // SIS-2026-0464: a view de origem já entrega 1 linha por linha de RATEIO
+  // (JOIN com malote_despesa_rateio_linha) — uma despesa dividida entre
+  // vários contratos aparecia repetida no Fluxo de Caixa, uma vez por
+  // contrato, cada uma com sua fatia do valor. Agrupa de volta em 1 linha
+  // por lançamento (mesmo despesa_id + mesma parcela, quando parcelado),
+  // somando o valor; se o grupo tiver mais de 1 contrato distinto, mostra
+  // "Rateio" em vez de escolher um dos nomes arbitrariamente.
+  const linhas = useMemo(() => {
+    const grupos = new Map<string, { base: FluxoCaixaMaloteLinha; valor: number; contratos: Map<string, string> }>();
+    for (const l of linhasBrutas) {
+      const chave = `${l.despesa_id}::${l.numero_parcela ?? ""}`;
+      let grupo = grupos.get(chave);
+      if (!grupo) {
+        grupo = { base: l, valor: 0, contratos: new Map() };
+        grupos.set(chave, grupo);
+      }
+      grupo.valor += Number(l.valor) || 0;
+      if (l.contrato_id && l.contrato_nome) grupo.contratos.set(l.contrato_id, l.contrato_nome);
+    }
+    return Array.from(grupos.values()).map(({ base, valor, contratos }) => {
+      if (contratos.size > 1) {
+        return { ...base, valor, contrato_id: null, contrato_nome: "Rateio" };
+      }
+      return { ...base, valor };
+    });
+  }, [linhasBrutas]);
   // SIS-2026-0221: "Forma de pagamento" vem do catálogo cadastrável em
   // Configurações do Malote → Formas de Pagamento, não mais de um enum fixo.
   const { data: tiposFormaPagamento = [] } = useTiposFormaPagamento();
@@ -185,6 +212,18 @@ export default function FluxoCaixaGestao() {
     const map = new Map<string, string>();
     linhas.forEach((l) => l.banco_id && l.banco_nome && map.set(l.banco_id, l.banco_nome));
     return Array.from(map.entries()).sort((a, b) => a[1].localeCompare(b[1], "pt-BR"));
+  }, [linhas]);
+
+  // SIS-2026-0464: achado real — o filtro usava tiposFormaPagamentoAtivos
+  // (catálogo malote_tipo_forma_pagamento, só os `ativo`), mas
+  // malote_despesa.forma_pagamento é texto livre, SEM FK pro catálogo — um
+  // tipo desativado/renomeado depois de já usado some do filtro só, nunca
+  // do dado. Igual aos outros filtros desta tela, deriva as opções direto
+  // das linhas carregadas: garante que toda opção do filtro bate com algo.
+  const formasPagamentoDisponiveis = useMemo(() => {
+    const set = new Set<string>();
+    linhas.forEach((l) => l.forma_pagamento && set.add(l.forma_pagamento));
+    return Array.from(set).sort((a, b) => a.localeCompare(b, "pt-BR"));
   }, [linhas]);
 
   function limparFiltros() {
@@ -324,8 +363,8 @@ export default function FluxoCaixaGestao() {
                 <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="todas">Todas</SelectItem>
-                  {tiposFormaPagamentoAtivos.map((t) => (
-                    <SelectItem key={t.nome} value={t.nome}>{t.nome}</SelectItem>
+                  {formasPagamentoDisponiveis.map((nome) => (
+                    <SelectItem key={nome} value={nome}>{nome}</SelectItem>
                   ))}
                 </SelectContent>
               </Select>
