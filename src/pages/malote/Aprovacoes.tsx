@@ -627,22 +627,35 @@ export default function Aprovacoes({ base = "/app/malote" }: { base?: string } =
                   termo" entre o card grande de antes e os botões neutros —
                   cada nível já vem com a própria cor tingida mesmo inativo
                   (não só cinza), fica mais saturado só quando ativo. */}
-              <div className="flex h-8 items-center gap-1">
+              <div className="flex items-center gap-1">
                 {([1, 2, 3] as const).map((n) => {
                   const pendentes = n === 1 ? pendentesN1 : n === 2 ? pendentesN2 : pendentesN3;
                   const ativo = nivelAprovacao === n;
+                  // Com o nome do aprovador N2 embaixo, o botão precisa de 2
+                  // linhas — tentar caber "N2 (39) · Fernanda" numa linha só
+                  // dentro do botão estreito quebrava o texto pra fora da
+                  // borda (h-8 fixo não acompanhava o wrap).
+                  const mostrarNomeN2 = n === 2 && temSubfiltroN2 && ativo && !!aprovadorN2;
                   const classe = cn(
-                    "flex-1 inline-flex items-center justify-center gap-0.5 rounded-md border px-1.5 h-8 text-xs font-semibold transition-colors",
+                    "flex-1 inline-flex items-center justify-center gap-0.5 rounded-md border px-1.5 text-xs font-semibold transition-colors",
+                    mostrarNomeN2 ? "h-auto min-h-8 py-1" : "h-8",
                     ativo ? NIVEL_APROVACAO_FILTRO_ATIVO[n] : NIVEL_APROVACAO_FILTRO_TINT[n],
                     ativo && "ring-1 ring-offset-1 ring-offset-background"
                   );
-                  const conteudo = (
+                  const conteudo = mostrarNomeN2 ? (
+                    <span className="flex flex-col items-center leading-tight">
+                      <span>
+                        N{n}
+                        {pendentes > 0 && <span className="font-normal opacity-80"> ({pendentes})</span>}
+                      </span>
+                      <span className="max-w-[72px] truncate text-[10px] font-normal opacity-80">
+                        {aprovadorN2.trim().split(/\s+/)[0]}
+                      </span>
+                    </span>
+                  ) : (
                     <>
                       N{n}
                       {pendentes > 0 && <span className="font-normal opacity-80"> ({pendentes})</span>}
-                      {n === 2 && temSubfiltroN2 && ativo && aprovadorN2 && (
-                        <span className="font-normal opacity-80"> · {abreviarNome(aprovadorN2)}</span>
-                      )}
                     </>
                   );
                   // SIS-2026-0358: com mais de um N2, o botão N2 abre um popover
