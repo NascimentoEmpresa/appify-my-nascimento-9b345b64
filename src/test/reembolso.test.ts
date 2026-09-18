@@ -1,9 +1,9 @@
 import { describe, it, expect } from "vitest";
 import {
-  avisoDeTeto, competenciaDe, competenciaLegivel, dataParaBR, dataParaISO,
-  descreveJanela, descreveTeto,
-  ROTULO_STATUS, STATUS_TODOS, emMinutos, fmtBRL, normalizaHora, podeEnviarAoMalote,
-  podeLancar, proximoStatus, tiposDisponiveis,
+  META_APROVACAO_HORAS, atrasoNaAprovacao, avisoDePrazo, avisoDeTeto, competenciaDe,
+  competenciaLegivel, dataParaBR, dataParaISO, descreveJanela, descrevePrazo, descreveTeto,
+  diasDesdeViagem, ROTULO_STATUS, STATUS_TODOS, emMinutos, fmtBRL, normalizaHora,
+  podeEnviarAoMalote, podeLancar, proximoStatus, situacaoDoPrazo, tiposDisponiveis,
   totalEmCentavos, valorEmCentavos, viagemAlcancaJanela,
   type StatusReembolso, type TipoReembolso,
 } from "@/lib/reembolso/regras";
@@ -20,6 +20,8 @@ const tipo = (over: Partial<TipoReembolso> = {}): TipoReembolso => ({
   valor_maximo_centavos: 3500,
   hora_inicio: "11:00",
   hora_fim: "13:00",
+  prazo_dias: null,
+  prazo_bloqueia: false,
   ativo: true,
   ordem: 3,
   ...over,
@@ -373,5 +375,75 @@ describe("rótulos da tela", () => {
     expect(descreveJanela(tipo({ hora_inicio: null, hora_fim: null }))).toBe("Qualquer horário");
     expect(descreveTeto(tipo({ valor_maximo_centavos: null }))).toBe("Sem teto");
     expect(fmtBRL(3500)).toContain("35,00");
+  });
+});
+
+// 17/09/2026: prazo por tipo para lançar a despesa, e meta de 24h para o
+// aprovador decidir. Os dois SINALIZAM por padrão; o prazo só recusa quando o
+// tipo está com `prazo_bloqueia`.
+describe("prazo por tipo — até N dias depois da viagem", () => {
+  const viagem = "2026-09-01";
+  const dia = (d: number, h = 10) => new Date(2026, 8, d, h, 0, 0); // setembro
+
+  it("conta dias de calendário, não blocos de 24h", () => {
+    expect(diasDesdeViagem(viagem, dia(1))).toBe(0);
+    expect(diasDesdeViagem(viagem, dia(2, 23))).toBe(1);   // 37h depois, mas 1 dia
+    expect(diasDesdeViagem(viagem, dia(11))).toBe(10);
+    expect(diasDesdeViagem("lixo", dia(11))).toBeNull();
+  });
+
+  it("tipo sem prazo não tem o que dizer", () => {
+    expect(situacaoDoPrazo(tipo(), viagem, dia(30))).toBeNull();
+    expect(avisoDePrazo(tipo(), viagem, dia(30))).toBeNull();
+    expect(descrevePrazo(tipo())).toBe("Sem prazo");
+  });
+
+  it("dentro do prazo: nada; no último dia ainda vale", () => {
+    const t = tipo({ prazo_dias: 5 });
+    expect(situacaoDoPrazo(t, viagem, dia(6))?.atrasado).toBe(false);
+    expect(avisoDePrazo(t, viagem, dia(6))).toBeNull();
+  });
+
+  it("passou do prazo e o tipo só avisa: o lançamento segue com aviso", () => {
+    const t = tipo({ prazo_dias: 5 });
+    expect(situacaoDoPrazo(t, viagem, dia(7))).toEqual({ dias: 6, atrasado: true, bloqueia: false });
+    expect(avisoDePrazo(t, viagem, dia(7))).toContain("Fora do prazo de 5 dia(s)");
+    expect(avisoDePrazo(t, viagem, dia(7))).toContain("o aprovador decide");
+    expect(podeLancar(t, 3000, "09:00", "15:00", viagem, dia(7)).ok).toBe(true);
+    expect(descrevePrazo(t)).toBe("Até 5 dia(s) depois da viagem (avisa)");
+  });
+
+  it("passou do prazo e o tipo bloqueia: recusa, com a data e os dias na mensagem", () => {
+    const t = tipo({ prazo_dias: 5, prazo_bloqueia: true });
+    const v = podeLancar(t, 3000, "09:00", "15:00", viagem, dia(7));
+    expect(v.ok).toBe(false);
+    expect(v.motivo).toBe("fora_do_prazo");
+    expect(v.mensagem).toContain("01/09/2026");
+    expect(v.mensagem).toContain("há 6 dias");
+    expect(avisoDePrazo(t, viagem, dia(7))).toContain("não aceita lançamento atrasado");
+    expect(descrevePrazo(t)).toBe("Até 5 dia(s) depois da viagem (bloqueia)");
+  });
+
+  it("janela fora vence o prazo: a pessoa corrige a coisa certa primeiro", () => {
+    const t = tipo({ prazo_dias: 5, prazo_bloqueia: true });
+    expect(podeLancar(t, 3000, "14:00", "18:00", viagem, dia(7)).motivo).toBe("fora_da_janela");
+  });
+
+  it("sem a data da viagem, o prazo não é avaliado (chamadas antigas)", () => {
+    const t = tipo({ prazo_dias: 5, prazo_bloqueia: true });
+    expect(podeLancar(t, 3000, "09:00", "15:00").ok).toBe(true);
+  });
+});
+
+describe("meta de 24h para decidir", () => {
+  const criada = new Date(2026, 8, 1, 10, 0, 0).toISOString();
+
+  it("só pendente conta, e só depois da meta", () => {
+    expect(META_APROVACAO_HORAS).toBe(24);
+    expect(atrasoNaAprovacao({ status: "pendente", created_at: criada }, new Date(2026, 8, 2, 9))).toBeNull();
+    expect(atrasoNaAprovacao({ status: "pendente", created_at: criada }, new Date(2026, 8, 2, 10, 30))).toBe(24);
+    expect(atrasoNaAprovacao({ status: "pendente", created_at: criada }, new Date(2026, 8, 3, 10))).toBe(48);
+    expect(atrasoNaAprovacao({ status: "aprovado", created_at: criada }, new Date(2026, 8, 5))).toBeNull();
+    expect(atrasoNaAprovacao({ status: "pendente", created_at: "lixo" }, new Date(2026, 8, 5))).toBeNull();
   });
 });

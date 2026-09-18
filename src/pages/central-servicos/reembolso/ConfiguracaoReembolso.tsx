@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
-import { Clock, Loader2, Plus, Save, Send, Settings2, Wallet } from "lucide-react";
+import { CalendarClock, Clock, Loader2, Plus, Save, Send, Settings2, Wallet } from "lucide-react";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { AcessoGate } from "@/components/auth/AcessoGate";
 import { Button } from "@/components/ui/button";
@@ -18,7 +18,7 @@ import {
   type ConfigReembolso,
 } from "@/hooks/useReembolso";
 import {
-  fmtBRL, normalizaHora, valorEmCentavos, type TipoReembolso,
+  descrevePrazo, fmtBRL, normalizaHora, valorEmCentavos, type TipoReembolso,
 } from "@/lib/reembolso/regras";
 
 // =====================================================================
@@ -41,6 +41,11 @@ import {
 //   JANELA  — de que horas a que horas a VIAGEM precisa passar para o tipo
 //             valer. Vazio = qualquer horário. É a regra do "almoço das 11 às
 //             13; quem saiu às 14h não pede almoço".
+//   PRAZO   — até quantos dias depois da viagem a despesa ainda pode ser
+//             lançada (17/09/2026). Vazio = sem prazo, que é o padrão. Com
+//             prazo, passar dele AVISA nas duas telas; "bloquear" faz a
+//             trigger recusar, como a janela. Mesmo desenho do teto: regra
+//             como informação, barreira só se quem configura pedir.
 // =====================================================================
 
 /**
@@ -90,8 +95,11 @@ function PadroesMalote() {
       </p>
       <p className="mb-3 text-xs text-muted-foreground">
         <b>Tudo opcional.</b> São sugestões para o formulário do Malote já vir preenchido
-        quando um reembolso aprovado é enviado. Quem envia confere e troca o que quiser lá —
-        inclusive a classificação, que é escolha por despesa, não do módulo inteiro.
+        quando um reembolso aprovado é enviado. Quem envia confere e troca o que quiser lá.
+        A <b>classificação</b> escolhida aqui é o padrão de lançamento de todo reembolso:
+        uma solicitação junta almoço, estacionamento e hospedagem numa despesa só do Malote,
+        então a categoria precisa ser genérica (ex.: "Reembolso de Despesas"), não o nome de
+        uma refeição — é o que evita cada aprovador classificar de um jeito.
       </p>
 
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
@@ -153,6 +161,8 @@ interface Rascunho {
   teto: string;
   inicio: string;
   fim: string;
+  prazo: string;
+  prazoBloqueia: boolean;
   ativo: boolean;
   ordem: string;
   novo?: boolean;
@@ -164,6 +174,8 @@ const paraRascunho = (t: TipoReembolso): Rascunho => ({
   teto: t.valor_maximo_centavos === null ? "" : (t.valor_maximo_centavos / 100).toFixed(2).replace(".", ","),
   inicio: t.hora_inicio ?? "",
   fim: t.hora_fim ?? "",
+  prazo: t.prazo_dias === null ? "" : String(t.prazo_dias),
+  prazoBloqueia: t.prazo_bloqueia,
   ativo: t.ativo,
   ordem: String(t.ordem),
 });
@@ -208,6 +220,16 @@ export default function ConfiguracaoReembolso() {
     const ordem = Number(r.ordem);
     if (!Number.isInteger(ordem)) return toast.error(`Ordem inválida em ${r.nome}.`);
 
+    // Prazo vazio = sem prazo. Zero não serve: "até 0 dias depois" recusaria
+    // toda despesa lançada no dia seguinte, e o banco tem CHECK (> 0).
+    let prazo: number | null = null;
+    if (r.prazo.trim()) {
+      prazo = Number(r.prazo);
+      if (!Number.isInteger(prazo) || prazo <= 0) {
+        return toast.error(`Prazo inválido em ${r.nome}. Use um número de dias maior que zero.`);
+      }
+    }
+
     try {
       await salvar.mutateAsync({
         codigo: r.codigo.trim(),
@@ -215,6 +237,9 @@ export default function ConfiguracaoReembolso() {
         valor_maximo_centavos: teto,
         hora_inicio: inicio,
         hora_fim: fim,
+        prazo_dias: prazo,
+        // Bloquear sem prazo não significa nada — grava desligado.
+        prazo_bloqueia: prazo !== null && r.prazoBloqueia,
         ativo: r.ativo,
         ordem,
         novo: r.novo,
@@ -228,7 +253,7 @@ export default function ConfiguracaoReembolso() {
   const adicionar = () =>
     setRascunhos((a) => [
       ...a,
-      { codigo: "", nome: "", teto: "", inicio: "", fim: "", ativo: true, ordem: "100", novo: true },
+      { codigo: "", nome: "", teto: "", inicio: "", fim: "", prazo: "", prazoBloqueia: false, ativo: true, ordem: "100", novo: true },
     ]);
 
   return (
@@ -263,6 +288,18 @@ export default function ConfiguracaoReembolso() {
           </p>
         </Card>
 
+        <Card className="mb-4 p-4 text-sm text-muted-foreground">
+          <p className="mb-1 flex items-center gap-2 font-medium text-foreground">
+            <CalendarClock className="h-4 w-4" /> Como o prazo funciona
+          </p>
+          <p>
+            <strong>Prazo</strong> é até quantos dias depois da viagem a despesa ainda pode ser
+            lançada. Vazio = sem prazo. Passou do prazo, a despesa entra marcada como{" "}
+            <strong>fora do prazo</strong> para quem aprova decidir — a menos que{" "}
+            <strong>Bloquear</strong> esteja ligado: aí o lançamento é recusado.
+          </p>
+        </Card>
+
         <PadroesMalote />
 
         {isLoading ? (
@@ -273,7 +310,7 @@ export default function ConfiguracaoReembolso() {
           <div className="space-y-3">
             {rascunhos.map((r, i) => (
               <Card key={r.novo ? `novo-${i}` : r.codigo} className="p-4">
-                <div className="grid gap-3 lg:grid-cols-[1fr_1.2fr_140px_110px_110px_90px]">
+                <div className="grid gap-3 lg:grid-cols-[1fr_1.2fr_130px_100px_100px_110px_80px]">
                   <div className="space-y-1.5">
                     <Label className="text-xs">Código</Label>
                     <Input value={r.codigo} disabled={!r.novo}
@@ -300,6 +337,11 @@ export default function ConfiguracaoReembolso() {
                            onChange={(e) => alterar(i, { fim: e.target.value })} />
                   </div>
                   <div className="space-y-1.5">
+                    <Label className="text-xs">Prazo (dias)</Label>
+                    <Input inputMode="numeric" value={r.prazo} placeholder="sem prazo"
+                           onChange={(e) => alterar(i, { prazo: e.target.value })} />
+                  </div>
+                  <div className="space-y-1.5">
                     <Label className="text-xs">Ordem</Label>
                     <Input inputMode="numeric" value={r.ordem}
                            onChange={(e) => alterar(i, { ordem: e.target.value })} />
@@ -307,10 +349,18 @@ export default function ConfiguracaoReembolso() {
                 </div>
 
                 <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
-                  <label className="flex items-center gap-2 text-sm">
-                    <Switch checked={r.ativo} onCheckedChange={(v) => alterar(i, { ativo: v })} />
-                    {r.ativo ? "Disponível para solicitação" : "Desativado"}
-                  </label>
+                  <div className="flex flex-wrap items-center gap-4">
+                    <label className="flex items-center gap-2 text-sm">
+                      <Switch checked={r.ativo} onCheckedChange={(v) => alterar(i, { ativo: v })} />
+                      {r.ativo ? "Disponível para solicitação" : "Desativado"}
+                    </label>
+                    <label className="flex items-center gap-2 text-sm"
+                           title={r.prazo.trim() ? "Fora do prazo, o lançamento é recusado em vez de só avisado." : "Defina um prazo primeiro."}>
+                      <Switch checked={r.prazoBloqueia && !!r.prazo.trim()} disabled={!r.prazo.trim()}
+                              onCheckedChange={(v) => alterar(i, { prazoBloqueia: v })} />
+                      Bloquear fora do prazo
+                    </label>
+                  </div>
                   <div className="flex items-center gap-3">
                     <p className="text-xs text-muted-foreground">
                       <Wallet className="mr-1 inline h-3 w-3" />
@@ -318,6 +368,8 @@ export default function ConfiguracaoReembolso() {
                         ? `Até ${fmtBRL(valorEmCentavos(r.teto) ?? 0)}`
                         : "Sem teto"}
                       {r.inicio.trim() && r.fim.trim() ? ` · ${r.inicio} às ${r.fim}` : " · qualquer horário"}
+                      {" · "}
+                      {descrevePrazo({ prazo_dias: r.prazo.trim() ? Number(r.prazo) : null, prazo_bloqueia: r.prazoBloqueia })}
                     </p>
                     <Button size="sm" disabled={salvar.isPending} onClick={() => gravar(r)}>
                       <Save className="mr-2 h-4 w-4" /> Salvar

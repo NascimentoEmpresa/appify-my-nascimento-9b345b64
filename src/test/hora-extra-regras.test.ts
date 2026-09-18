@@ -13,6 +13,7 @@ import {
   mensagemErro,
   minutosJornada,
   minutosTrabalhados,
+  podeEditarHoraExtra,
   rotuloFaseAnexo,
   sobrepoe,
   statusExecucaoPorPercentual,
@@ -123,6 +124,21 @@ describe("regras de hora extra", () => {
     ["solicitacao", "Solicitação"],
     ["conclusao", "Conclusão"],
   ])("rotula o anexo da fase %s", (fase, rotulo) => expect(rotuloFaseAnexo(fase)).toBe(rotulo));
+  // A HE reprovada tinha só "Excluir": corrigir obrigava a digitar tudo de
+  // novo, com número novo (pedido de 17/09/2026).
+  it.each([
+    ["aguardando_liberacao", true],
+    ["reprovada", true],
+    ["aprovada", false],
+    ["aguardando_validacao", false],
+    ["concluida", false],
+  ])("dono com alterar edita a HE em %s: %s", (status, esperado) =>
+    expect(podeEditarHoraExtra({ status, ehDono: true, podeAlterar: true })).toBe(esperado),
+  );
+  it("não deixa editar a HE reprovada de outra pessoa", () =>
+    expect(podeEditarHoraExtra({ status: "reprovada", ehDono: false, podeAlterar: true })).toBe(false));
+  it("não deixa editar sem a ação alterar", () =>
+    expect(podeEditarHoraExtra({ status: "reprovada", ehDono: true, podeAlterar: false })).toBe(false));
   it("detecta sobreposição", () => expect(sobrepoe("18:00", "21:00", "20:00", "22:00")).toBe(true));
   it("não acusa horários adjacentes", () => expect(sobrepoe("18:00", "20:00", "20:00", "22:00")).toBe(false));
   it("detecta sobreposição cruzando meia-noite", () => expect(sobrepoe("22:00", "02:00", "23:00", "01:00")).toBe(true));
