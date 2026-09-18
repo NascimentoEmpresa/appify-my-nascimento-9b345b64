@@ -14,6 +14,7 @@ import {
   ETIQUETAS_RECRUTAMENTO, alternarEtiqueta, corDaEtiqueta, etiquetasValidas,
 } from "@/lib/recrutamento/etiquetas";
 import { AvisoProcessos, processosDe, useProcessosDosCandidatos } from "@/components/recrutamento/AvisoProcessos";
+import { FichaAso } from "@/components/recrutamento/FichaAso";
 
 // ── Tipos ──────────────────────────────────────────────────────────
 interface Solicitacao {
@@ -56,6 +57,9 @@ interface Solicitacao {
   solicitante_nome?: string;
   solicitante_cpf?: string;
   aprovado_por_nome?: string;
+  aprovado_por_email?: string | null;
+  /** Setor da Diretoria que aprova — só na vaga administrativa. */
+  setor?: string | null;
   created_at: string;
   status_changed_at?: string;
   /** Anotações de quem trabalha a fila ("Confere", "Revisar"...). Ver lib/recrutamento/etiquetas. */
@@ -134,6 +138,10 @@ async function nomesPorEmail(emails: (string | null | undefined)[]): Promise<Rec
   (data ?? []).forEach((e: any) => { if (e.email && e["Nome"]) mapa[e.email] = e["Nome"]; });
   return mapa;
 }
+
+/** O e-mail de quem aprovou/reprovou: a coluna própria (mig 187) ou o nome legado quando era um e-mail. */
+const emailAprovador = (s: { aprovado_por_email?: string | null; aprovado_por_nome?: string | null }) =>
+  [s.aprovado_por_email, s.aprovado_por_nome].find((v) => String(v ?? "").includes("@")) ?? "";
 
 /** O e-mail de quem solicitou — mora em `solicitante_cpf` (nome de coluna legado). */
 const emailSolicitante = (s: { solicitante_cpf?: string; solicitante_nome?: string }) =>
@@ -429,6 +437,13 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "anali
   const [historico, setHistorico]           = useState<any[]>([]);
   const [nomesPorEmailHist, setNomesPorEmailHist] = useState<Record<string, string>>({}); // nome real (EMPREGADOS) por e-mail, p/ histórico
   const [nomeSolicitante, setNomeSolicitante] = useState("");  // nome real de quem pediu a vaga (quando só ficou o e-mail)
+  const [nomeAprovador, setNomeAprovador]     = useState("");  // idem pra "Aprovado/Reprovado por" (18/09/2026)
+  // Quem aprova/reprova fica gravado com nome E e-mail (mig 187): o nome do
+  // metadata quando existe, senão o e-mail — e a tela traduz por EMPREGADOS.
+  const carimboAprovador = () => ({
+    aprovado_por_nome: user?.user_metadata?.nome ?? user?.email ?? "",
+    aprovado_por_email: user?.email ?? null,
+  });
   // Roteiro de entrevista (ENTREVISTA / ENTREVISTA GESTOR)
   const [roteiroModal, setRoteiroModal]     = useState<{ id: number; nome: string; etapa: string } | null>(null);
   const [roteiroRows, setRoteiroRows]       = useState<{ pergunta: string; resposta: string }[]>([]);
@@ -699,11 +714,16 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "anali
     // "Solicitado por": quando ficou gravado só com o e-mail, traduz para o
     // nome de EMPREGADOS. Só consulta quando precisa — solicitação criada por
     // quem tem nome no metadata já vem pronta.
-    setNomeSolicitante("");
+    setNomeSolicitante(""); setNomeAprovador("");
     const nomeGravado = String(sol?.solicitante_nome ?? "").trim();
-    if (sol && (!nomeGravado || nomeGravado.includes("@"))) {
-      const email = emailSolicitante(sol);
-      if (email) setNomeSolicitante((await nomesPorEmail([email]))[email] ?? "");
+    const aprovGravado = String(sol?.aprovado_por_nome ?? "").trim();
+    const emailAprov = emailAprovador(sol ?? {});
+    const precisaSolic = !!sol && (!nomeGravado || nomeGravado.includes("@"));
+    const precisaAprov = !!sol && !!emailAprov && (!aprovGravado || aprovGravado.includes("@"));
+    if (precisaSolic || precisaAprov) {
+      const nomes = await nomesPorEmail([precisaSolic ? emailSolicitante(sol) : null, precisaAprov ? emailAprov : null]);
+      if (precisaSolic) setNomeSolicitante(nomes[emailSolicitante(sol)] ?? "");
+      if (precisaAprov) setNomeAprovador(nomes[emailAprov] ?? "");
     }
     if (sol && (STATUS_PROCESSO.includes(sol.status) || sol.status === "Contratado" || String(sol.status ?? "").startsWith("Concluído"))) loadCandidatos(id);
     if (mensagens) setMsgs(mensagens);
@@ -761,7 +781,7 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "anali
 
     const { error } = await (supabase as any)
       .from("SISTEMA_RECRUTAMENTO")
-      .update({ status: novoStatus, aprovado_por_nome: user?.user_metadata?.nome ?? user?.email ?? "" })
+      .update({ status: novoStatus, ...carimboAprovador() })
       .eq("id", drawerId);
 
     if (error) { toast("Erro ao aprovar: " + error.message, "err"); return; }
@@ -801,7 +821,7 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "anali
     if (!reprovarMotivo.trim()) { toast("Informe o motivo.", "err"); return; }
     const { error } = await (supabase as any)
       .from("SISTEMA_RECRUTAMENTO")
-      .update({ status: "Reprovada", motivo_reprovacao: reprovarMotivo.trim(), aprovado_por_nome: user?.user_metadata?.nome ?? "" })
+      .update({ status: "Reprovada", motivo_reprovacao: reprovarMotivo.trim(), ...carimboAprovador() })
       .eq("id", drawerId);
     if (error) { toast("Erro ao reprovar: " + error.message, "err"); return; }
     if (drawerId) {
@@ -1390,7 +1410,7 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "anali
     if (novoStatus === "Reprovada") {
       if (!moverExtra.motivo) { toast("Informe o motivo.", "err"); return; }
       extra.motivo_reprovacao = moverExtra.motivo;
-      extra.aprovado_por_nome = user?.user_metadata?.nome ?? "";
+      Object.assign(extra, carimboAprovador());
     }
     setModalMoverKb(false);
     setPendMover(null);
@@ -1471,6 +1491,21 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "anali
    * O e-mail continua ali porque é o que identifica homônimos e o que aparece
    * nas outras telas; o que muda é a ordem de leitura — o nome vem primeiro.
    */
+  // "Aprovado/Reprovado por": nome em cima, e-mail embaixo — o mesmo desenho
+  // do "Solicitado por". Linha antiga só com o e-mail traduz por EMPREGADOS.
+  const quemAprovou = (s: Solicitacao) => {
+    const email = emailAprovador(s);
+    const gravado = String(s.aprovado_por_nome ?? "").trim();
+    const nome = (gravado && !gravado.includes("@") ? gravado : "") || nomeAprovador;
+    if (!nome) return email;
+    return (
+      <span style={{ display: "inline-flex", flexDirection: "column", lineHeight: 1.35 }}>
+        <span>{nome}</span>
+        {email && <span style={{ fontSize: 11, fontWeight: 600, color: "#94a3b8" }}>{email}</span>}
+      </span>
+    );
+  };
+
   const quemSolicitou = (s: Solicitacao) => {
     const email = emailSolicitante(s);
     const gravado = String(s.solicitante_nome ?? "").trim();
@@ -1564,6 +1599,8 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "anali
           {di("Cidade", s.cidade)}
           {di("Motivo da Vaga", motivoLabel(s.motivo_vaga))}
           {s.administrativa ? di("Tipo de vaga", "Administrativa (escritório)") : null}
+          {/* O setor só existe na vaga administrativa: é o da Diretoria que aprova. */}
+          {s.administrativa ? di("Setor", s.setor) : null}
           {di("Escala", s.escala)}
           {di("Horário", s.horario)}
           {di("Salário", s.salario)}
@@ -1573,7 +1610,7 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "anali
           {di("Data Início Prevista", fmtBr(s.data_inicio_prevista))}
           {di("Solicitado por", quemSolicitou(s))}
           {di("Data Solicitação", fmtDt(s.created_at))}
-          {s.aprovado_por_nome ? di("Aprovado/Reprovado por", s.aprovado_por_nome) : null}
+          {(s.aprovado_por_nome || s.aprovado_por_email) ? di("Aprovado/Reprovado por", quemAprovou(s)) : null}
         </div>
         {mostraNomeReferencia(s.motivo_vaga) ? dd("Colaborador Substituído", s.nome_substituido) : null}
         {/* Remarcações da data de início — quem pediu, quando e por quê. */}
@@ -1863,6 +1900,12 @@ Isto não tem desfazer: o histórico e os candidatos ligados a ela vão junto.`)
                               </div>
                             )}
                             {etapa === "DOCUMENTAÇÃO" && (docsCount[c.id] ?? 0) > 0 && <div style={{ fontSize: 9.5, color: "#0e7490", marginTop: 4, fontWeight: 700 }}>📎 {docsCount[c.id]} documento{docsCount[c.id] > 1 ? "s" : ""}</div>}
+                            {/* Ficha do ASO (18/09/2026): a partir de APROVADO o
+                                Recrutamento vê o que o SST vai receber e completa
+                                o que o automático não achou (PIS, mãe, posto…). */}
+                            {["APROVADO", "DOCUMENTAÇÃO", ETAPA_SST_COMPRAS, "EXAME SST", "ADMISSÃO"].includes(etapa) && (
+                              <div style={{ marginTop: 6 }}><FichaAso candidatoId={c.id} compacto editar={podeRecrutar} /></div>
+                            )}
                             {etapa === "ADMISSÃO" && c.enviado_admissao_em && <div style={{ fontSize: 9.5, color: "#15803d", marginTop: 4, fontWeight: 700 }}>✓ Contratado — na Admissão (RH)</div>}
                             <div style={{ display: "flex", flexDirection: "column", gap: 5, marginTop: 10 }}>
                               {/* ENTREVISTA/GESTOR: roteiro de entrevista */}

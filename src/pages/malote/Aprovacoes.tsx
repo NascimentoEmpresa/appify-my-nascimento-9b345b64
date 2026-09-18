@@ -378,7 +378,15 @@ export default function Aprovacoes({ base = "/app/malote" }: { base?: string } =
       }
       if (nivelAprovacao && (d.status !== "pendente_aprovacao" || d.nivel_aprovacao_atual !== nivelAprovacao)) return false;
       // SIS-2026-0358: subfiltro por aprovador N2 (só quando N2 está ativo).
-      if (nivelAprovacao === 2 && aprovadorN2 && !aprovadorNomes(d, 2).includes(aprovadorN2)) return false;
+      // SIS-2026-0464 (pedido da Fernanda): o filtro por aprovador N2 casa só
+      // pelo PRIMEIRO nome do nível (o "titular" da classificação) — com
+      // Fernanda e Senilton virando backup um do outro no mesmo N2 (array
+      // [Senilton, Fernanda] ou [Fernanda, Senilton] conforme quem foi
+      // incluído por último, ver ClassificacoesMalote.tsx), ela não quer ver
+      // as classificações que são "do Senilton" só porque também pode
+      // aprová-las — a aba "Minhas" continua mostrando TUDO que ela pode
+      // agir (aprovadorNomes completo), só este filtro específico restringe.
+      if (nivelAprovacao === 2 && aprovadorN2 && aprovadorNomes(d, 2)[0] !== aprovadorN2) return false;
       if (somenteMinhas) {
         const souAprovadorPendente = d.status === "pendente_aprovacao" && d.nivel_aprovacao_atual != null && souAprovadorDoNivel(d, d.nivel_aprovacao_atual, user?.id);
         const minhaJustificativaPendente = minhasDespesasJustificativaPendente.has(d.id);
@@ -481,7 +489,9 @@ export default function Aprovacoes({ base = "/app/malote" }: { base?: string } =
     const nomes = new Set<string>();
     itensComFiltrosDoPainel.forEach(({ despesa: d }) => {
       if (d.status === "pendente_aprovacao" && d.nivel_aprovacao_atual === 2) {
-        aprovadorNomes(d, 2).forEach((n) => nomes.add(n));
+        // Só o titular (1º nome) — mesma regra do filtro em si, ver comentário lá.
+        const [titular] = aprovadorNomes(d, 2);
+        if (titular) nomes.add(titular);
       }
     });
     return Array.from(nomes).sort();
@@ -532,7 +542,13 @@ export default function Aprovacoes({ base = "/app/malote" }: { base?: string } =
     return itensComFiltrosDoPainel.filter(({ despesa: d }) => d.status === "pendente_aprovacao" && d.nivel_aprovacao_atual === n).length;
   }
   const pendentesN1 = contarNivel(1);
-  const pendentesN2 = contarNivel(2);
+  // SIS-2026-0464 (pedido da Fernanda): com o subfiltro de aprovador N2
+  // ativo, o número no botão precisa bater com o que a tabela mostra —
+  // antes contava TODO N2 pendente (ex. 41), mesmo filtrando só as
+  // classificações da Fernanda como titular (9), o que parecia bug.
+  const pendentesN2 = itensComFiltrosDoPainel.filter(
+    ({ despesa: d }) => d.status === "pendente_aprovacao" && d.nivel_aprovacao_atual === 2 && (!aprovadorN2 || aprovadorNomes(d, 2)[0] === aprovadorN2)
+  ).length;
   const pendentesN3 = contarNivel(3);
 
   const tilesSolicitacoes: TileInfo[] = [
@@ -627,22 +643,35 @@ export default function Aprovacoes({ base = "/app/malote" }: { base?: string } =
                   termo" entre o card grande de antes e os botões neutros —
                   cada nível já vem com a própria cor tingida mesmo inativo
                   (não só cinza), fica mais saturado só quando ativo. */}
-              <div className="flex h-8 items-center gap-1">
+              <div className="flex items-center gap-1">
                 {([1, 2, 3] as const).map((n) => {
                   const pendentes = n === 1 ? pendentesN1 : n === 2 ? pendentesN2 : pendentesN3;
                   const ativo = nivelAprovacao === n;
+                  // Com o nome do aprovador N2 embaixo, o botão precisa de 2
+                  // linhas — tentar caber "N2 (39) · Fernanda" numa linha só
+                  // dentro do botão estreito quebrava o texto pra fora da
+                  // borda (h-8 fixo não acompanhava o wrap).
+                  const mostrarNomeN2 = n === 2 && temSubfiltroN2 && ativo && !!aprovadorN2;
                   const classe = cn(
-                    "flex-1 inline-flex items-center justify-center gap-0.5 rounded-md border px-1.5 h-8 text-xs font-semibold transition-colors",
+                    "flex-1 inline-flex items-center justify-center gap-0.5 rounded-md border px-1.5 text-xs font-semibold transition-colors",
+                    mostrarNomeN2 ? "h-auto min-h-8 py-1" : "h-8",
                     ativo ? NIVEL_APROVACAO_FILTRO_ATIVO[n] : NIVEL_APROVACAO_FILTRO_TINT[n],
                     ativo && "ring-1 ring-offset-1 ring-offset-background"
                   );
-                  const conteudo = (
+                  const conteudo = mostrarNomeN2 ? (
+                    <span className="flex flex-col items-center leading-tight">
+                      <span>
+                        N{n}
+                        {pendentes > 0 && <span className="font-normal opacity-80"> ({pendentes})</span>}
+                      </span>
+                      <span className="max-w-[72px] truncate text-[10px] font-normal opacity-80">
+                        {aprovadorN2.trim().split(/\s+/)[0]}
+                      </span>
+                    </span>
+                  ) : (
                     <>
                       N{n}
                       {pendentes > 0 && <span className="font-normal opacity-80"> ({pendentes})</span>}
-                      {n === 2 && temSubfiltroN2 && ativo && aprovadorN2 && (
-                        <span className="font-normal opacity-80"> · {abreviarNome(aprovadorN2)}</span>
-                      )}
                     </>
                   );
                   // SIS-2026-0358: com mais de um N2, o botão N2 abre um popover
@@ -946,8 +975,14 @@ function LinhaItem({
             <span className="flex items-center gap-1 text-xs font-bold">
               <User className="h-3 w-3" />
               {(() => {
+                // SIS-2026-0464 (pedido da Fernanda): no N2, mostrar só o
+                // titular (1º nome) no badge da linha — mesma regra do
+                // filtro (ver comentário em `filtrados`). Antes juntava
+                // todos os aprovadores do nível ("FERNANDA · SENILTON"),
+                // o que expunha o backup em toda despesa do titular.
                 const nomes = aprovadorNomes(despesa, despesa.nivel_aprovacao_atual);
-                return nomes.length > 0 ? nomes.map(abreviarNome).join(" · ") : "Sem aprovador";
+                const exibidos = despesa.nivel_aprovacao_atual === 2 ? nomes.slice(0, 1) : nomes;
+                return exibidos.length > 0 ? exibidos.map(abreviarNome).join(" · ") : "Sem aprovador";
               })()}
             </span>
           </div>

@@ -3,6 +3,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { useScreenAccess } from "@/hooks/useScreenAccess";
 import { Download, FileSpreadsheet, X, RefreshCw, CheckCircle2, AlertTriangle } from "lucide-react";
 import { empresaDe, parseSalario, fmtData, nomeCargoDe, nomeContratoDe } from "@/lib/rh/colaboradoresUtils";
+import { COLS_TIPO_CONTRATO_EMPREGADOS, ehMEI } from "@/lib/rh/mei";
 
 // =========================================================================
 // RH — Colaboradores: "Exportar Dados".
@@ -83,7 +84,7 @@ const CAMPOS_POR_COLUNA: Record<ColunaKey, string[]> = {
 // deixam a exportação sair (o resto continua). Espelha a robustez que a tela
 // principal já tem contra "Empresa"/"Cargo"/"Nome do Cargo" ausentes em
 // algum ambiente.
-const CAMPOS_OPCIONAIS = new Set(["Empresa", "Cargo", "Nome do Cargo"]);
+const CAMPOS_OPCIONAIS = new Set(["Empresa", "Cargo", "Nome do Cargo", ...COLS_TIPO_CONTRATO_EMPREGADOS]);
 
 /**
  * "1107 | UFRGS INTERPRETE DE LIBRAS C. 009.2026" — código junto do nome.
@@ -232,6 +233,8 @@ export default function ExportarDados() {
       for (const key of colunas) for (const c of CAMPOS_POR_COLUNA[key]) camposNecessarios.add(c);
       // Empresa e Filial entram sempre: o contrato é casado por (empresa, filial).
       for (const c of ["Empresa", "Nome da Empresa", "Filial", "Nome Filial"]) camposNecessarios.add(c);
+      // Tipo de contrato entra sempre: MEI fica fora do relatório (18/09/2026).
+      for (const c of COLS_TIPO_CONTRATO_EMPREGADOS) camposNecessarios.add(c);
 
       const selecionar = (excluir: Set<string>) =>
         [...camposNecessarios].filter(c => !excluir.has(c)).map(c => `"${c}"`).join(",");
@@ -266,7 +269,11 @@ export default function ExportarDados() {
 
       // Empresa/Contrato: filtrados aqui, com a mesma regra da tela (código +
       // fallback de texto pra Empresa; Filial casada em CONTRATOS pro Contrato).
-      const filtrados = todos.filter(e =>
+      // MEI não é colaborador da folha: não entra no relatório, em nenhum
+      // filtro (18/09/2026) — a mesma regra que o Importar usa pra não tocar.
+      const semMei = todos.filter(e => !ehMEI(e));
+      const meiForaTotal = todos.length - semMei.length;
+      const filtrados = semMei.filter(e =>
         (!fEmpresa || empresaDe(e) === fEmpresa) &&
         (!fContrato || vinculoDe(e).contrato === fContrato),
       );
@@ -289,7 +296,7 @@ export default function ExportarDados() {
       XLSX.writeFile(wb, `colaboradores-${hoje}.xlsx`);
 
       setTotalLinhas(filtrados.length);
-      setProg(`${filtrados.length.toLocaleString("pt-BR")} colaborador(es) exportado(s).`);
+      setProg(`${filtrados.length.toLocaleString("pt-BR")} colaborador(es) exportado(s).${meiForaTotal > 0 ? ` ${meiForaTotal} MEI ficou(aram) de fora, como manda a regra.` : ""}`);
       setFase("fim");
     } catch (e: any) {
       setErro(e?.message || String(e)); setFase("idle");
@@ -317,6 +324,7 @@ export default function ExportarDados() {
               </div>
               <div style={{ fontSize: 12.5, color: "#64748b", marginTop: 2 }}>
                 Escolha as colunas e o filtro e baixe um Excel com exatamente os dados que você precisa.
+                <b style={{ color: "#b45309" }}> Colaborador MEI não entra no relatório.</b>
               </div>
             </div>
 

@@ -4,7 +4,7 @@ import {
   cargoExigeCnh, aplicarReqCnh, motivoLabel, MOTIVO_EXPANSAO,
   GRAU_ALTA, GRAU_MEDIA, GRAU_BAIXA, REQ_CNH_TEXTO,
   contratoDoEmpregado, chaveContrato, rotuloContrato, rotuloReferencia, mostraNomeReferencia,
-  ehVagaAdministrativa, statusInicialVaga, STATUS_VAGA_DIRETORIA,
+  ehVagaAdministrativa, statusInicialVaga, STATUS_VAGA_DIRETORIA, contratoEhAdministrativo,
   MENU_VAGA_ADMINISTRATIVA, podeVagaAdministrativa, filtrarAdministrativas,
   vagaSeguraSubstituido, substituidosComVagaViva,
   podePreencherVagaManual, faltamCamposManuais,
@@ -300,5 +300,22 @@ describe("vaga administrativa — só a caixa manda pra Diretoria (17/09/2026)",
   it("a caixa marcada é administrativa, com ou sem setor", () => {
     expect(ehVagaAdministrativa({ administrativa: true, setor: null })).toBe(true);
     expect(statusInicialVaga(true, "Financeiro")).toBe(STATUS_VAGA_DIRETORIA);
+  });
+});
+
+// Contrato do escritório (18/09/2026): "ADM E ESTAGIARIOS" marca a vaga como
+// administrativa sozinho — é o contrato que diz, não quem preenche.
+describe("contratoEhAdministrativo", () => {
+  it("reconhece o rótulo do contrato do escritório, com ou sem número/acento", () => {
+    expect(contratoEhAdministrativo("1093 - ADM E ESTAGIARIOS - NH")).toBe(true);
+    expect(contratoEhAdministrativo("ADM E ESTAGIÁRIOS")).toBe(true);
+    expect(contratoEhAdministrativo("adm e estagiarios - sn")).toBe(true);
+    expect(contratoEhAdministrativo("ADMINISTRATIVO E ESTAGIARIOS")).toBe(true);
+  });
+  it("contrato de posto não é administrativo", () => {
+    expect(contratoEhAdministrativo("1099 - PREF POA SMS RECEPÇÃO - 98672/2025")).toBe(false);
+    expect(contratoEhAdministrativo("ADM CONDOMÍNIO CENTRAL")).toBe(false);
+    expect(contratoEhAdministrativo("")).toBe(false);
+    expect(contratoEhAdministrativo(null)).toBe(false);
   });
 });
