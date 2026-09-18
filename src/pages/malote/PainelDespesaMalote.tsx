@@ -291,6 +291,17 @@ export function PainelDespesaMalote({
     if (paraEnviar) {
       if (linhasRateio.length === 0) return "Adicione ao menos uma linha de rateio.";
       if (Math.abs(totalRateado - Number(totalMes)) > 0.01) return "O total do rateio deve ser igual ao Total do mês.";
+      // SIS-2026-0457: pelo menos um dos dois (Fornecedor OU Integrante) em
+      // CADA linha do rateio — o usuário escolhe qual marcar (dimensoes),
+      // mas depois de marcado precisa estar de fato preenchido, não só a
+      // coluna visível com "—". Checagem por linha, não só "existe alguma
+      // linha preenchida" — decisão confirmada com o usuário.
+      if (!dimensoes.fornecedor && !dimensoes.integrante) {
+        return "Marque \"Fornecedor\" ou \"Integrante\" no Rateio e informe pelo menos um deles em cada linha.";
+      }
+      if (linhasRateio.some((l) => !l.fornecedor_id && !l.integrante_empregado_id)) {
+        return "Informe o Fornecedor ou o Integrante em todas as linhas do rateio.";
+      }
       if (parcelado === "sim") {
         if (!diaDesconto || !quantidadeParcelas) return "Informe o dia do desconto e a quantidade de parcelas.";
         const n = Number(quantidadeParcelas);
@@ -561,6 +572,7 @@ export function PainelDespesaMalote({
               contratoPorClassificacao
               classificacaoTipoUnica={classificacaoTipo ?? null}
               mostrarResumoValorTotal
+              exigirFornecedorOuIntegrante
             />
           </div>
 

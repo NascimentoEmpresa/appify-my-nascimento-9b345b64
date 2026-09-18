@@ -120,6 +120,11 @@ interface RateioGridProps {
   // se isso força reenvio é DespesaVisualizar.tsx (rateioMudouValor), não
   // esta grade.
   apenasValorEEmpresa?: boolean;
+  // SIS-2026-0457: mostra o aviso de que Fornecedor ou Integrante é
+  // obrigatório em cada linha — só quem valida isso no submit (hoje,
+  // PainelDespesaMalote) passa true. RatearClassificacao/DespesaVisualizar
+  // não exigem isso, então não mostram o aviso.
+  exigirFornecedorOuIntegrante?: boolean;
 }
 
 export function RateioGrid({
@@ -149,6 +154,7 @@ export function RateioGrid({
   podeJustificarComoAprovador,
   souSolicitante,
   apenasValorEEmpresa,
+  exigirFornecedorOuIntegrante,
 }: RateioGridProps) {
   const { data: empresas = [] } = useEmpresasGrupo();
   const { data: contratos = [] } = useContratosAtivos();
@@ -355,13 +361,18 @@ export function RateioGrid({
             )}
             <label className="flex items-center gap-1.5 text-sm cursor-pointer">
               <Checkbox checked={dimensoes.fornecedor} onCheckedChange={(c) => atualizarDimensao("fornecedor", c === true)} disabled={disabled || travarEstrutura} />
-              Fornecedor (opcional)
+              Fornecedor{!exigirFornecedorOuIntegrante && " (opcional)"}
             </label>
             <label className="flex items-center gap-1.5 text-sm cursor-pointer">
               <Checkbox checked={dimensoes.integrante} onCheckedChange={(c) => atualizarDimensao("integrante", c === true)} disabled={disabled || travarEstrutura} />
-              Integrante (opcional)
+              Integrante{!exigirFornecedorOuIntegrante && " (opcional)"}
             </label>
           </div>
+          {exigirFornecedorOuIntegrante && (
+            <p className="mt-1.5 text-xs text-muted-foreground">
+              Marque Fornecedor e/ou Integrante — pelo menos um dos dois precisa ser informado em cada linha do rateio.
+            </p>
+          )}
         </div>
         <div className="flex items-center gap-4">
           <div>
@@ -439,8 +450,12 @@ export function RateioGrid({
               {mostrarColunaEmpresa && <TableHead>Empresa {colunaContratoAtiva && !dimensoes.empresa ? "" : "*"}</TableHead>}
               {mostrarColunaContrato && <TableHead>Contrato {colunaContratoAtiva ? "*" : "(opcional)"}</TableHead>}
               <TableHead>{ratearPor === "percentual" ? "% Rateio *" : "Valor (R$) *"}</TableHead>
-              {dimensoes.fornecedor && <TableHead>Fornecedor (opcional)</TableHead>}
-              {dimensoes.integrante && <TableHead>Integrante (opcional)</TableHead>}
+              {dimensoes.fornecedor && (
+                <TableHead>Fornecedor{!exigirFornecedorOuIntegrante && " (opcional)"}</TableHead>
+              )}
+              {dimensoes.integrante && (
+                <TableHead>Integrante{!exigirFornecedorOuIntegrante && " (opcional)"}</TableHead>
+              )}
               {mostrarColunasOrcamento && mostrarValorParcela1 && (
                 <TableHead className="text-center">Valor da parcela {parcelaSelecionada?.numero_parcela ?? 1}</TableHead>
               )}
