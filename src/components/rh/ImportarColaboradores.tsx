@@ -64,11 +64,10 @@ const COLS_FALLBACK = [
 
 const COL = { cpf: "CPF", nome: "Nome", situ: "Descrição (Situação)" } as const;
 
-// Colunas onde o "tipo de contrato" pode aparecer (varia entre exports; a
-// primeira é a da própria EMPREGADOS). Regra: MEI não é tocado.
-const COLS_TIPO_CONTRATO = ["TIPO DE CONTRATO", "Descrição (T. Contrato)", "Descrição (Tipo)", "Descrição (Categoria Contribuinte)", "Descrição (Cat. eSocial)", "Descrição (Categoria Sefip)"];
-export const ehMEI = (r: any): boolean =>
-  COLS_TIPO_CONTRATO.some(c => { const v = r?.[c]; return typeof v === "string" && (/\bMEI\b/i.test(v) || /MICROEMPREEND/i.test(v)); });
+// Regra: MEI não é tocado. A detecção mora em lib/rh/mei.ts — a mesma que
+// o Exportar Dados usa pra deixar o MEI fora do relatório (18/09/2026).
+import { ehMEI } from "@/lib/rh/mei";
+export { ehMEI };
 
 // Ranking de "atual" para consolidar múltiplas linhas do mesmo CPF.
 const rankSituacao = (s: string): number => {
