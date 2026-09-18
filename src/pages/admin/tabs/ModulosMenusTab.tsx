@@ -352,7 +352,7 @@ function MenusEditor({ moduloId, menus, podeGerenciar, onChange }: { moduloId: s
 
 // O enum app_acao do banco. Tipado aqui porque o insert em
 // screen_permission_user exige a união exata, não `string`.
-type AppAcao = "visualizar" | "incluir" | "alterar" | "excluir" | "aprovar" | "exportar" | "executar_ia" | "alterar_dre" | "responder";
+type AppAcao = "visualizar" | "incluir" | "alterar" | "excluir" | "aprovar" | "enviar_malote" | "exportar" | "executar_ia" | "alterar_dre" | "responder";
 
 // LIBERAR A TELA É LIBERAR A TELA.
 //
@@ -388,12 +388,21 @@ const ACOES_DO_TOGGLE = (codigo: string): AppAcao[] =>
 // Suprimentos. Pior, 'executar_ia' e 'alterar_dre' não são checadas em canto
 // nenhum do sistema — aqueles dois switches nunca controlaram nada.
 const ORDEM_ACOES: readonly AppAcao[] = [
-  "visualizar", "incluir", "alterar", "excluir", "aprovar", "responder", "exportar", "executar_ia", "alterar_dre",
+  "visualizar", "incluir", "alterar", "excluir", "aprovar", "enviar_malote", "responder", "exportar", "executar_ia", "alterar_dre",
 ];
 const ACAO_LABEL: Record<AppAcao, string> = {
   visualizar: "Visualizar", incluir: "Incluir", alterar: "Alterar", excluir: "Excluir",
-  aprovar: "Aprovar", responder: "Responder", exportar: "Exportar", executar_ia: "Executar IA", alterar_dre: "Alterar DRE",
+  aprovar: "Aprovar", enviar_malote: "Enviar para malote", responder: "Responder", exportar: "Exportar", executar_ia: "Executar IA", alterar_dre: "Alterar DRE",
 };
+
+const ACAO_LABEL_POR_MENU: Readonly<Record<string, Partial<Record<AppAcao, string>>>> = {
+  operacional_diarias: { incluir: "Incluir / Editar" },
+  encarregados_diarias: { incluir: "Incluir / Editar" },
+  financeiro_diarias: { incluir: "Incluir / Editar" },
+};
+
+const rotuloAcao = (menuCodigo: string, acao: AppAcao) =>
+  ACAO_LABEL_POR_MENU[menuCodigo]?.[acao] ?? ACAO_LABEL[acao];
 
 function UserAccessPanel({ podeGerenciar, modulos, menus }: { podeGerenciar: boolean; modulos: Modulo[]; menus: Menu[] }) {
   const [selectedUserId, setSelectedUserId] = useState<string>("");
@@ -790,7 +799,7 @@ function UserAccessPanel({ podeGerenciar, modulos, menus }: { podeGerenciar: boo
                               <button
                                 onClick={() => toggleExpand(acoesKey)}
                                 className={cn("text-muted-foreground hover:text-foreground", acoesOpen && "text-foreground")}
-                                title={`Ações desta tela: ${acoesDesteMenu.map((a) => ACAO_LABEL[a]).join(" · ")}`}
+                                title={`Ações desta tela: ${acoesDesteMenu.map((a) => rotuloAcao(mn.codigo, a)).join(" · ")}`}
                               >
                                 <SlidersHorizontal className="h-3.5 w-3.5" />
                               </button>
@@ -832,9 +841,9 @@ function UserAccessPanel({ podeGerenciar, modulos, menus }: { podeGerenciar: boo
                                       <Switch
                                         checked={on}
                                         onCheckedChange={() => stageAcao(mn.codigo, acao, !on)}
-                                        aria-label={`${ACAO_LABEL[acao]} em ${mn.nome}`}
+                                        aria-label={`${rotuloAcao(mn.codigo, acao)} em ${mn.nome}`}
                                       />
-                                      {ACAO_LABEL[acao]}
+                                      {rotuloAcao(mn.codigo, acao)}
                                     </label>
                                   );
                                 })}
@@ -1139,7 +1148,7 @@ function PessoasComAcessoAoMenu({ menuCodigo, podeGerenciar }: { menuCodigo: str
                 acao === a ? "bg-background shadow-sm text-foreground" : "text-muted-foreground hover:text-foreground",
               )}
             >
-              {ACAO_LABEL[a]}
+              {rotuloAcao(menuCodigo, a)}
             </button>
           ))}
         </div>

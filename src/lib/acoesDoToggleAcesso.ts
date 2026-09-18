@@ -19,6 +19,7 @@ export type AppAcao =
   | "alterar"
   | "excluir"
   | "aprovar"
+  | "enviar_malote"
   | "exportar"
   | "executar_ia"
   | "alterar_dre"
@@ -52,11 +53,12 @@ export const ACOES_DO_TOGGLE_PADRAO: readonly AppAcao[] = [
  * auditoria de "quem pode aprovar diária?" responder errado.
  */
 export const ACOES_FORA_DO_TOGGLE: Readonly<Record<string, readonly AppAcao[]>> = {
-  operacional_diarias: ["aprovar"],
+  operacional_diarias: ["aprovar", "enviar_malote"],
   // Parecer Jurídico (17/09/2026): responder dúvida é decisão do Jurídico,
   // não vem de brinde com a tela — mas desligar a tela revoga junto.
   duvidas: ["responder"],
-  encarregados_diarias: ["aprovar"],
+  encarregados_diarias: ["aprovar", "enviar_malote"],
+  financeiro_diarias: ["aprovar", "enviar_malote"],
 };
 
 /**
