@@ -1,6 +1,7 @@
-import { useState, useEffect, useRef, useCallback, type MouseEvent as ReactMouseEvent, type CSSProperties } from "react";
+import { useState, useEffect, useRef, useCallback, type MouseEvent as ReactMouseEvent, type CSSProperties, type ReactNode } from "react";
 import { useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
+import type { SupabaseClient } from "@supabase/supabase-js";
 import { useAuth } from "@/hooks/useAuth";
 import { usePermissoes } from "@/context/PermissoesContext";
 import { ResumoDeFuncoes } from "@/components/fluxos/ResumoDeFuncoes";
@@ -20,6 +21,8 @@ import { StatusSolicitacao } from "@/components/recrutamento/StatusSolicitacao";
 // ── Tipos ──────────────────────────────────────────────────────────
 interface Solicitacao {
   id: number;
+  /** Remarcações da data de início (jsonb na vaga). */
+  data_inicio_alteracoes?: AlteracaoDataInicio[] | null;
   contrato: string;
   cargo: string;
   cidade: string;
@@ -110,8 +113,24 @@ interface Curriculo {
   enviado_admissao_em?: string | null;
 }
 
+// Tabelas fora do types.ts gerado: mesmo padrão de comite-etica/db.ts. As
+// linhas chegam sem tipo (any implícito do client), sem `any` escrito aqui.
+const sb = supabase as unknown as SupabaseClient;
+/** Linha genérica de tabela/RPC — o que o client devolve. */
+type Linha = Record<string, unknown>;
+/** Evento do RECRUTAMENTO_HISTORICO (o que a timeline lê). */
+interface EventoHist { id?: number; created_at: string; evento?: string | null; papel?: string | null; usuario_nome?: string | null; usuario_email?: string | null; de_status?: string | null; para_status?: string | null; detalhe?: string | null; candidato_nome?: string | null }
+/** Arquivo do candidato (RECRUTAMENTO_CANDIDATO_ARQUIVOS). */
+interface DocCand { id: number; nome?: string | null; titulo?: string | null; storage_path: string; etapa?: string | null; created_at?: string | null; enviado_por?: string | null; tipo?: string | null }
+/** Remarcação da data de início gravada na vaga. */
+interface AlteracaoDataInicio { de?: string | null; para?: string | null; por_nome?: string | null; em?: string | null; justificativa?: string | null }
+/** Cadastro em EMPREGADOS devolvido por empregados_por_cpfs (só o que a tela lê). */
+interface EmpCadastro { cpf_match?: string | null; situacao?: string | null; cargo?: string | null; admissao?: string | null; empresa?: string | null; filial?: string | null; lider?: string | null; perfil?: string | null; setor?: string | null; [k: string]: unknown }
+/** Configuração de mensagem automática por etapa (RECRUTAMENTO_MENSAGENS). */
+interface MsgCfg { etapa: string; template_nome?: string | null; template_idioma?: string | null; texto_previa?: string | null; ativo?: boolean | null; texto?: string | null; [k: string]: unknown }
+
 // ── Helpers ────────────────────────────────────────────────────────
-function esc(s: any): string {
+function esc(s: unknown): string {
   return String(s ?? "")
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")
@@ -134,9 +153,9 @@ function fmtDt(s?: string) {
 async function nomesPorEmail(emails: (string | null | undefined)[]): Promise<Record<string, string>> {
   const lista = Array.from(new Set(emails.filter((e): e is string => !!e && e.includes("@"))));
   if (!lista.length) return {};
-  const { data } = await (supabase as any).from("EMPREGADOS").select('"Nome","email"').in("email", lista);
+  const { data } = await sb.from("EMPREGADOS").select('"Nome","email"').in("email", lista);
   const mapa: Record<string, string> = {};
-  (data ?? []).forEach((e: any) => { if (e.email && e["Nome"]) mapa[e.email] = e["Nome"]; });
+  (data ?? []).forEach((e) => { if (e.email && e["Nome"]) mapa[e.email] = e["Nome"]; });
   return mapa;
 }
 
@@ -328,7 +347,7 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "anali
   const [meusSetores, setMeusSetores] = useState<Set<string>>(new Set());
   useEffect(() => {
     if (escopo !== "diretoria" || !user?.id) { setMeusSetores(new Set()); return; }
-    (supabase as any).from(TABELA_APROVADOR_SETOR).select("setor").eq("user_id", user.id)
+    sb.from(TABELA_APROVADOR_SETOR).select("setor").eq("user_id", user.id)
       .then(({ data }: { data: { setor: string }[] | null }) =>
         setMeusSetores(new Set((data ?? []).map((r) => normSetorVaga(r.setor)))));
   }, [escopo, user?.id]);
@@ -416,11 +435,11 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "anali
   const [vagaEditando, setVagaEditando]     = useState<Solicitacao | null>(null);
   const [curriculos, setCurriculos]         = useState<Curriculo[]>([]);
   const [showCurriculos, setShowCurriculos] = useState(false);
-  const [empCpf, setEmpCpf]                 = useState<Record<string, any[]>>({});   // CPF dígitos → cadastros EMPREGADOS
+  const [empCpf, setEmpCpf]                 = useState<Record<string, EmpCadastro[]>>({});   // CPF dígitos → cadastros EMPREGADOS
   const [blacklist, setBlacklist]           = useState<Record<string, { motivo: string; criado_em?: string }>>({});
   const [blockModal, setBlockModal]         = useState<{ digits: string; fmt: string } | null>(null);
   const [blockMotivo, setBlockMotivo]       = useState("");
-  const [detalheEmp, setDetalheEmp]         = useState<{ nome: string; cpf: string; telefone?: string; email?: string; itens: Curriculo[]; emps: any[] } | null>(null);
+  const [detalheEmp, setDetalheEmp]         = useState<{ nome: string; cpf: string; telefone?: string; email?: string; itens: Curriculo[]; emps: EmpCadastro[] } | null>(null);
 
   // Kanban drag
   const [dragId, setDragId]                 = useState<number | null>(null);
@@ -443,7 +462,7 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "anali
   const [candMateriais, setCandMateriais]   = useState("");
   const [showKanbanCand, setShowKanbanCand] = useState(false);   // painel dedicado do kanban
   const [showHistorico, setShowHistorico]   = useState(false);   // painel de histórico
-  const [historico, setHistorico]           = useState<any[]>([]);
+  const [historico, setHistorico]           = useState<EventoHist[]>([]);
   const [nomesPorEmailHist, setNomesPorEmailHist] = useState<Record<string, string>>({}); // nome real (EMPREGADOS) por e-mail, p/ histórico
   const [nomeSolicitante, setNomeSolicitante] = useState("");  // nome real de quem pediu a vaga (quando só ficou o e-mail)
   const [nomeAprovador, setNomeAprovador]     = useState("");  // idem pra "Aprovado/Reprovado por" (18/09/2026)
@@ -458,17 +477,17 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "anali
   const [roteiroRows, setRoteiroRows]       = useState<{ pergunta: string; resposta: string }[]>([]);
   // Documentos do candidato (etapa DOCUMENTAÇÃO)
   const [docsModal, setDocsModal]           = useState<{ id: number; nome: string } | null>(null);
-  const [docs, setDocs]                     = useState<any[]>([]);
+  const [docs, setDocs]                     = useState<DocCand[]>([]);
   const [docsCount, setDocsCount]           = useState<Record<number, number>>({}); // p/ o contador no card
   const [docTitulo, setDocTitulo]           = useState("");
   const [docFile, setDocFile]               = useState<File | null>(null);
   const [docSubindo, setDocSubindo]         = useState(false);
   // Configuração das mensagens automáticas de WhatsApp
   const [msgModal, setMsgModal]             = useState(false);
-  const [msgCfgs, setMsgCfgs]               = useState<any[]>([]);
+  const [msgCfgs, setMsgCfgs]               = useState<MsgCfg[]>([]);
   const [msgSalvando, setMsgSalvando]       = useState(false);
   // Status de cada template na Meta (APPROVED / PENDING / REJECTED / NAO_CRIADO)
-  const [msgStatus, setMsgStatus]           = useState<Record<string, any>>({});
+  const [msgStatus, setMsgStatus]           = useState<Record<string, Linha>>({});
   const [msgMetaBusy, setMsgMetaBusy]       = useState(false);
 
 
@@ -504,7 +523,7 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "anali
 
   // ── Carregar Stats ────────────────────────────────────────────
   const loadStats = useCallback(async () => {
-    const { data, error } = await (supabase as any)
+    const { data, error } = await sb
       .from("SISTEMA_RECRUTAMENTO")
       .select("status, administrativa, setor");
     if (error || !data) return;
@@ -522,6 +541,7 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "anali
   // ── Filtros compartilhados ────────────────────────────────────
   // Tabela e Kanban são a MESMA consulta, só muda a apresentação — então os
   // dois aplicam exatamente os mesmos filtros (aba/status/busca).
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- builder do PostgREST; o tipo exato muda a cada .select()
   const aplicarFiltros = useCallback((q: any) => {
     if (statusFilter === "em_processo") {
       q = q.in("status", STATUS_PROCESSO);
@@ -549,7 +569,7 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "anali
     const myReq = ++listaReq.current;   // descarta respostas antigas (race ao trocar de aba/filtro)
     setLoading(true);
     const PER = 20;
-    let q = (supabase as any)
+    let q = sb
       .from("SISTEMA_RECRUTAMENTO")
       .select("*", { count: "exact" });
     q = aplicarFiltros(q);
@@ -568,7 +588,7 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "anali
     const ct = count ?? 0;
     setTotal(ct);
     setPages(Math.max(1, Math.ceil(ct / PER)));
-  }, [aplicarFiltros, contratoFiltro, etiquetaFiltro, page, toast, noEscopo]);
+  }, [aplicarFiltros, contratoFiltro, etiquetaFiltro, page, toast, noEscopoLista, podeAdministrativa]);
 
   // ── Carregar Kanban ───────────────────────────────────────────
   const kanbanReq = useRef(0);
@@ -578,7 +598,7 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "anali
     // Tenta trazer status_changed_at (tempo na etapa atual); se a coluna ainda
     // não existir no ambiente, refaz a consulta sem ela.
     const kbQuery = (cols: string) => {
-      let q = (supabase as any).from("SISTEMA_RECRUTAMENTO").select(cols);
+      let q = sb.from("SISTEMA_RECRUTAMENTO").select(cols);
       q = aplicarFiltros(q);
       if (contratoFiltro.length) q = q.in("contrato", contratoFiltro);
       if (etiquetaFiltro.length) q = q.overlaps("etiquetas", etiquetaFiltro);
@@ -586,27 +606,27 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "anali
     };
     let { data, error } = await kbQuery("id,cargo,contrato,cidade,status,grau_urgencia,quantidade_vagas,analista_nome,solicitante_nome,created_at,status_changed_at,administrativa,setor");
     if (error) ({ data, error } = await kbQuery("id,cargo,contrato,cidade,status,grau_urgencia,quantidade_vagas,analista_nome,solicitante_nome,created_at,administrativa,setor"));
-    if (data) data = noEscopo(data);
     if (myReq !== kanbanReq.current) return;
     if (error || !data) return;
+    const linhas = noEscopo(data as unknown as Solicitacao[]);
     const grouped: Record<string, Solicitacao[]> = {};
-    for (const row of data) {
+    for (const row of linhas) {
       if (!grouped[row.status]) grouped[row.status] = [];
       grouped[row.status].push(row);
     }
     setKanbanData(grouped);
-  }, [aplicarFiltros, contratoFiltro, etiquetaFiltro]);
+  }, [aplicarFiltros, contratoFiltro, etiquetaFiltro, noEscopo]);
 
   // Contagem de solicitações por contrato e por etiqueta (respeita
   // aba/status/busca; ignora os dois filtros de faceta — o menu mostra quanto
   // cada opção traria, não quanto sobrou depois de marcar a outra).
   const loadContratoCounts = useCallback(async () => {
-    let q = (supabase as any).from("SISTEMA_RECRUTAMENTO").select("contrato,etiquetas");
+    let q = sb.from("SISTEMA_RECRUTAMENTO").select("contrato,etiquetas");
     q = aplicarFiltros(q);
     let { data, error } = await q;
     // Banco ainda sem a coluna (migration 20260930000090 não aplicada): refaz
     // sem ela para o filtro de contratos continuar funcionando.
-    if (error) ({ data, error } = await aplicarFiltros((supabase as any).from("SISTEMA_RECRUTAMENTO").select("contrato")));
+    if (error) ({ data, error } = await aplicarFiltros(sb.from("SISTEMA_RECRUTAMENTO").select("contrato")));
     if (error || !data) return;
     const map = new Map<string, number>();
     const porEtiqueta: Record<string, number> = {};
@@ -624,7 +644,7 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "anali
   // final e é ele que vai para o banco. Atualiza a linha na tabela e o
   // drawer na hora; a contagem do filtro recarrega em seguida.
   const salvarEtiquetas = async (id: number, etiquetas: string[]) => {
-    const { error } = await (supabase as any).from("SISTEMA_RECRUTAMENTO").update({ etiquetas }).eq("id", id);
+    const { error } = await sb.from("SISTEMA_RECRUTAMENTO").update({ etiquetas }).eq("id", id);
     if (error) { toast("Erro ao salvar etiqueta: " + error.message, "err"); return; }
     setItems(prev => prev.map(i => i.id === id ? { ...i, etiquetas } : i));
     setDrawerSol(prev => prev && prev.id === id ? { ...prev, etiquetas } : prev);
@@ -642,17 +662,17 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "anali
   };
 
   // ── Candidatos no processo (kanban interno) ───────────────────
-  const mapCurriculo = (c: any): Curriculo => ({
+  const mapCurriculo = (c: Curriculo & Record<string, string | number | null | undefined>): Curriculo => ({
     ...c,
     nome: String(c.nome ?? c.nome_cand ?? c.nome_candidato ?? "").trim().toUpperCase(),
-    email: c.email ?? c.email_cand ?? "",
-    cpf: c.cpf ?? c.cpf_cand ?? "",
-    storage_path: c.storage_path ?? c.arquivo_path ?? c.path ?? "",
+    email: String(c.email ?? c.email_cand ?? ""),
+    cpf: String(c.cpf ?? c.cpf_cand ?? ""),
+    storage_path: String(c.storage_path ?? c.arquivo_path ?? c.path ?? ""),
     tem_pdf: !!(c.storage_path ?? c.arquivo_path ?? c.path ?? c.arquivo_url),
   });
 
   const loadCandidatos = useCallback(async (vagaId: number) => {
-    const { data } = await (supabase as any)
+    const { data } = await sb
       .from("WA_CURRICULOS")
       .select("*")
       .eq("vaga_id", vagaId)
@@ -664,11 +684,11 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "anali
     // do quadro, senão seriam N chamadas a cada render do kanban.
     const ids = lista.map((c: Curriculo) => c.id);
     if (!ids.length) { setDocsCount({}); return; }
-    const { data: arqs } = await (supabase as any)
+    const { data: arqs } = await sb
       .from("RECRUTAMENTO_CANDIDATO_ARQUIVOS")
       .select("candidato_id").in("candidato_id", ids).eq("tipo", "documento");
     const cont: Record<number, number> = {};
-    (arqs ?? []).forEach((a: any) => { cont[a.candidato_id] = (cont[a.candidato_id] ?? 0) + 1; });
+    (arqs ?? []).forEach((a) => { cont[a.candidato_id] = (cont[a.candidato_id] ?? 0) + 1; });
     setDocsCount(cont);
   }, []);
 
@@ -679,7 +699,7 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "anali
     opts: { de?: string; para?: string; papel?: string; detalhe?: string; candidatoId?: number; candidatoNome?: string } = {},
   ) => {
     try {
-      await (supabase as any).from("RECRUTAMENTO_HISTORICO").insert({
+      await sb.from("RECRUTAMENTO_HISTORICO").insert({
         solicitacao_id: solicitacaoId,
         candidato_id: opts.candidatoId ?? null,
         candidato_nome: opts.candidatoNome ?? null,
@@ -695,7 +715,7 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "anali
   }, [user]);
 
   const loadHistorico = useCallback(async (solicitacaoId: number) => {
-    const { data } = await (supabase as any)
+    const { data } = await sb
       .from("RECRUTAMENTO_HISTORICO")
       .select("*")
       .eq("solicitacao_id", solicitacaoId)
@@ -703,7 +723,7 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "anali
     const eventos = data ?? [];
     // usuario_nome pode ter ficado só com o e-mail (usuário sem nome no metadata)
     // — busca o nome completo real em EMPREGADOS pra exibir no lugar.
-    setNomesPorEmailHist(await nomesPorEmail(eventos.map((r: any) => r.usuario_email)));
+    setNomesPorEmailHist(await nomesPorEmail(eventos.map((r) => r.usuario_email)));
     setHistorico(eventos);
   }, []);
 
@@ -716,8 +736,8 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "anali
     if (pollTimer.current) clearInterval(pollTimer.current);
 
     const [{ data: sol }, { data: mensagens }] = await Promise.all([
-      (supabase as any).from("SISTEMA_RECRUTAMENTO").select("*").eq("id", id).single(),
-      (supabase as any).from("WA_MENSAGENS_RECRUTAMENTO").select("*").eq("solicitacao_id", id).order("created_at"),
+      sb.from("SISTEMA_RECRUTAMENTO").select("*").eq("id", id).single(),
+      sb.from("WA_MENSAGENS_RECRUTAMENTO").select("*").eq("solicitacao_id", id).order("created_at"),
     ]);
     if (sol) setDrawerSol(sol);
     // "Solicitado por": quando ficou gravado só com o e-mail, traduz para o
@@ -738,7 +758,7 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "anali
     if (mensagens) setMsgs(mensagens);
 
     pollTimer.current = setInterval(async () => {
-      const { data: nm } = await (supabase as any)
+      const { data: nm } = await sb
         .from("WA_MENSAGENS_RECRUTAMENTO").select("*").eq("solicitacao_id", id).order("created_at");
       if (nm) setMsgs(nm);
     }, 5000);
@@ -762,7 +782,7 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "anali
   const enviarMsg = async () => {
     if (!chatInput.trim() || !drawerId || isRH) return;
     setSendingMsg(true);
-    const { error } = await (supabase as any).from("WA_MENSAGENS_RECRUTAMENTO").insert({
+    const { error } = await sb.from("WA_MENSAGENS_RECRUTAMENTO").insert({
       solicitacao_id: drawerId,
       mensagem: chatInput.trim(),
       autor_nome: user?.user_metadata?.nome ?? user?.email ?? "Usuário",
@@ -772,7 +792,7 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "anali
     setSendingMsg(false);
     if (error) { toast("Erro ao enviar mensagem: " + error.message, "err"); return; }
     setChatInput("");
-    const { data } = await (supabase as any)
+    const { data } = await sb
       .from("WA_MENSAGENS_RECRUTAMENTO").select("*").eq("solicitacao_id", drawerId).order("created_at");
     if (data) setMsgs(data);
   };
@@ -788,7 +808,7 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "anali
     const novoStatus = ehAbertura ? "Vaga aberta - Seleção de Currículos" : "Pendente Recrutamento";
     const papelEtapa1 = escopo === "diretoria" ? "Diretoria" : "Analista";
 
-    const { error } = await (supabase as any)
+    const { error } = await sb
       .from("SISTEMA_RECRUTAMENTO")
       .update({ status: novoStatus, ...carimboAprovador() })
       .eq("id", drawerId);
@@ -809,7 +829,7 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "anali
     const admitido = candidatos.find(c => c.etapa_processo === "Admissão");
     if (!admitido) { toast("Conclua só após admitir um candidato (etapa Admissão).", "err"); return; }
     if (!confirm(`Concluir a solicitação #${drawerId}? Ela sai da seleção de candidatos.`)) return;
-    const { error } = await (supabase as any)
+    const { error } = await sb
       .from("SISTEMA_RECRUTAMENTO")
       .update({ status: "Concluída" })
       .eq("id", drawerId);
@@ -828,7 +848,7 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "anali
   // ── Reprovar ──────────────────────────────────────────────────
   const confirmarReprovar = async () => {
     if (!reprovarMotivo.trim()) { toast("Informe o motivo.", "err"); return; }
-    const { error } = await (supabase as any)
+    const { error } = await sb
       .from("SISTEMA_RECRUTAMENTO")
       .update({ status: "Reprovada", motivo_reprovacao: reprovarMotivo.trim(), ...carimboAprovador() })
       .eq("id", drawerId);
@@ -850,7 +870,7 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "anali
   // ── Atualizar Status ──────────────────────────────────────────
   const confirmarStatus = async () => {
     if (!statusSel) { toast("Selecione um status.", "err"); return; }
-    const payload: Record<string, any> = { status: statusSel };
+    const payload: Record<string, unknown> = { status: statusSel };
     if (statusSel === "Funcionário Selecionado") {
       if (!statusExtra.nome) { toast("Informe o nome.", "err"); return; }
       payload.funcionario_selecionado = statusExtra.nome;
@@ -860,7 +880,7 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "anali
       payload.contratado_contato     = statusExtra.contato;
       payload.contratado_data_inicio = statusExtra.data;
     }
-    const { error } = await (supabase as any).from("SISTEMA_RECRUTAMENTO").update(payload).eq("id", drawerId);
+    const { error } = await sb.from("SISTEMA_RECRUTAMENTO").update(payload).eq("id", drawerId);
     if (error) { toast("Erro ao atualizar status: " + error.message, "err"); return; }
     toast("Status atualizado!", "ok");
     setModalStatus(false);
@@ -877,13 +897,13 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "anali
   const abrirCurriculos = async () => {
     setShowCurriculos(true);
     setCurriculos([]); setEmpCpf({}); setBlacklist({});
-    const { data } = await (supabase as any)
+    const { data } = await sb
       .from("WA_CURRICULOS")
       .select("*")
       .eq("vaga_id", drawerId)
       .order("created_at", { ascending: false });
     if (!data) return;
-    const mapped: Curriculo[] = data.map((c: any) => ({
+    const mapped: Curriculo[] = data.map((c) => ({
       ...c,
       nome: c.nome ?? c.nome_cand ?? c.nome_candidato ?? "",
       email: c.email ?? c.email_cand ?? "",
@@ -897,32 +917,32 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "anali
     const cpfs = Array.from(new Set(mapped.map(c => c.cpf).filter(Boolean))) as string[];
     const digits = Array.from(new Set(mapped.map(c => digitsOf(c.cpf)).filter(d => d.length === 11)));
     if (cpfs.length) {
-      const { data: emps } = await (supabase as any).rpc("empregados_por_cpfs", { p_cpfs: cpfs });
-      const byCpf: Record<string, any[]> = {};
-      (emps ?? []).forEach((e: any) => { (byCpf[e.cpf_match] = byCpf[e.cpf_match] || []).push(e); });
+      const { data: emps } = await sb.rpc("empregados_por_cpfs", { p_cpfs: cpfs });
+      const byCpf: Record<string, EmpCadastro[]> = {};
+      (emps ?? []).forEach((e) => { (byCpf[e.cpf_match] = byCpf[e.cpf_match] || []).push(e); });
       setEmpCpf(byCpf);
     }
     if (digits.length) {
-      const { data: bl } = await (supabase as any)
+      const { data: bl } = await sb
         .from("RECRUTAMENTO_CPF_BLACKLIST").select("cpf_digits,motivo,criado_em").in("cpf_digits", digits);
       const blMap: Record<string, { motivo: string; criado_em?: string }> = {};
-      (bl ?? []).forEach((b: any) => { blMap[b.cpf_digits] = { motivo: b.motivo, criado_em: b.criado_em }; });
+      (bl ?? []).forEach((b) => { blMap[b.cpf_digits] = { motivo: b.motivo, criado_em: b.criado_em }; });
       setBlacklist(blMap);
     }
   };
 
   // O candidato tem WhatsApp utilizável? (só valida o telefone; a conversa em
   // si é resolvida no clique)
-  const temWhatsApp = (c: any): boolean =>
+  const temWhatsApp = (c: Curriculo): boolean =>
     String(c.telefone ?? "").replace(/\D/g, "").length >= 10;
 
   // Abre a conversa do candidato na NOSSA Caixa de Entrada.
   // Antes isso apontava para wa.me e tirava o recrutador do sistema: a conversa
   // ficava no celular dele, fora do histórico e invisível para o próximo
   // atendente. A RPC acha (ou cria) a conversa e a Caixa abre já nela.
-  const abrirWhatsAppInterno = async (c: any) => {
+  const abrirWhatsAppInterno = async (c: Curriculo) => {
     if (!temWhatsApp(c)) { toast("Candidato sem telefone válido.", "err"); return; }
-    const { data, error } = await (supabase as any).rpc("recrutamento_abrir_conversa", { p_candidato_id: c.id });
+    const { data, error } = await sb.rpc("recrutamento_abrir_conversa", { p_candidato_id: c.id });
     if (error || !data) { toast("Não consegui abrir a conversa: " + (error?.message ?? "conversa não encontrada"), "err"); return; }
     navigate(`/app/whatsapp?conversa=${data}`);
   };
@@ -944,7 +964,7 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "anali
   const confirmarBloqueio = async () => {
     if (!blockModal) return;
     if (!blockMotivo.trim()) { toast("Informe o motivo do bloqueio.", "err"); return; }
-    const { error } = await (supabase as any).from("RECRUTAMENTO_CPF_BLACKLIST").upsert({
+    const { error } = await sb.from("RECRUTAMENTO_CPF_BLACKLIST").upsert({
       cpf_digits: blockModal.digits, cpf_fmt: blockModal.fmt, motivo: blockMotivo.trim(),
       criado_por: user?.user_metadata?.nome ?? user?.email ?? "",
     }, { onConflict: "cpf_digits" });
@@ -954,7 +974,7 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "anali
   };
   const desbloquearCpf = async (digits: string) => {
     if (!confirm("Remover este CPF da lista negra?")) return;
-    const { error } = await (supabase as any).from("RECRUTAMENTO_CPF_BLACKLIST").delete().eq("cpf_digits", digits);
+    const { error } = await sb.from("RECRUTAMENTO_CPF_BLACKLIST").delete().eq("cpf_digits", digits);
     if (error) { toast("Erro ao remover: " + error.message, "err"); return; }
     setBlacklist(prev => { const n = { ...prev }; delete n[digits]; return n; });
     toast("CPF removido da lista negra.", "ok");
@@ -1011,7 +1031,7 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "anali
     if (!confirm(`Contratar ${cv.nome || "o candidato"}?\n\nEle vai para a Admissão (RH), a vaga é ENCERRADA como "Contratado" e sai do portal público /vagas.`)) return;
     const nowIso = new Date().toISOString();
     const nome = user?.user_metadata?.nome ?? user?.email ?? "";
-    const { error } = await (supabase as any).from("WA_CURRICULOS")
+    const { error } = await sb.from("WA_CURRICULOS")
       .update({ enviado_admissao_por: nome, enviado_admissao_em: nowIso }).eq("id", cv.id);
     if (error) { toast("Erro: " + error.message, "err"); return; }
     if (drawerId) await logHistorico(drawerId, "Contratado — enviado à Admissão (RH)", {
@@ -1040,17 +1060,17 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "anali
   };
   const novaLinhaRot = () => ({ pergunta: "", resposta: "" });
   const abrirRoteiro = async (cv: Curriculo, etapa: string) => {
-    const { data } = await (supabase as any).from("RECRUTAMENTO_ENTREVISTA").select("*").eq("candidato_id", cv.id).eq("etapa", etapa).order("ordem");
-    const rows = (data ?? []).map((r: any) => ({ pergunta: r.pergunta || "", resposta: r.resposta || "" }));
+    const { data } = await sb.from("RECRUTAMENTO_ENTREVISTA").select("*").eq("candidato_id", cv.id).eq("etapa", etapa).order("ordem");
+    const rows = (data ?? []).map((r) => ({ pergunta: r.pergunta || "", resposta: r.resposta || "" }));
     setRoteiroRows(rows.length ? rows : (ROTEIRO_PADRAO[etapa] || []).map(p => ({ pergunta: p, resposta: "" })));
     setRoteiroModal({ id: cv.id, nome: cv.nome || "Candidato", etapa });
   };
   const salvarRoteiro = async () => {
     if (!roteiroModal) return;
     const rows = roteiroRows.filter(r => r.pergunta.trim());
-    await (supabase as any).from("RECRUTAMENTO_ENTREVISTA").delete().eq("candidato_id", roteiroModal.id).eq("etapa", roteiroModal.etapa);
+    await sb.from("RECRUTAMENTO_ENTREVISTA").delete().eq("candidato_id", roteiroModal.id).eq("etapa", roteiroModal.etapa);
     if (rows.length) {
-      const { error } = await (supabase as any).from("RECRUTAMENTO_ENTREVISTA").insert(rows.map((r, i) => ({
+      const { error } = await sb.from("RECRUTAMENTO_ENTREVISTA").insert(rows.map((r, i) => ({
         candidato_id: roteiroModal.id, etapa: roteiroModal.etapa, ordem: i, pergunta: r.pergunta.trim(), resposta: r.resposta.trim() || null,
       })));
       if (error) { toast("Erro ao salvar roteiro: " + error.message, "err"); return; }
@@ -1065,7 +1085,7 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "anali
   // ainda não existe — ele só nasce na Admissão. Quando nascer, o vínculo
   // WA_CURRICULOS.empregado_id faz esses anexos aparecerem no cadastro dele.
   const loadDocs = async (candidatoId: number) => {
-    const { data } = await (supabase as any)
+    const { data } = await sb
       .from("RECRUTAMENTO_CANDIDATO_ARQUIVOS")
       .select("*").eq("candidato_id", candidatoId).eq("tipo", "documento")
       .order("created_at", { ascending: false });
@@ -1087,7 +1107,7 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "anali
     const path = `documentos/${docsModal.id}/${Date.now()}${ext ? "." + ext : ""}`;
     const { error: upErr } = await supabase.storage.from("curriculos").upload(path, docFile);
     if (upErr) { toast("Erro ao subir o arquivo: " + upErr.message, "err"); setDocSubindo(false); return; }
-    const { error } = await (supabase as any).from("RECRUTAMENTO_CANDIDATO_ARQUIVOS").insert({
+    const { error } = await sb.from("RECRUTAMENTO_CANDIDATO_ARQUIVOS").insert({
       candidato_id: docsModal.id, tipo: "documento", etapa: "DOCUMENTAÇÃO",
       titulo: docTitulo.trim(), nome: docFile.name, storage_path: path,
       enviado_por: user?.user_metadata?.nome ?? user?.email ?? "",
@@ -1102,14 +1122,14 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "anali
     await loadDocs(docsModal.id);
     setDocsCount(p => ({ ...p, [docsModal.id]: (p[docsModal.id] ?? 0) + 1 }));
   };
-  const baixarDoc = async (d: any) => {
+  const baixarDoc = async (d: DocCand) => {
     const { data, error } = await supabase.storage.from("curriculos").createSignedUrl(d.storage_path, 3600);
     if (error || !data?.signedUrl) { toast("Não foi possível abrir o arquivo.", "err"); return; }
     window.open(data.signedUrl, "_blank", "noopener");
   };
-  const removerDoc = async (d: any) => {
+  const removerDoc = async (d: DocCand) => {
     if (!confirm(`Remover o documento "${d.titulo || d.nome}"?`)) return;
-    const { error } = await (supabase as any).from("RECRUTAMENTO_CANDIDATO_ARQUIVOS").delete().eq("id", d.id);
+    const { error } = await sb.from("RECRUTAMENTO_CANDIDATO_ARQUIVOS").delete().eq("id", d.id);
     if (error) { toast("Erro ao remover: " + error.message, "err"); return; }
     await supabase.storage.from("curriculos").remove([d.storage_path]);
     toast("Documento removido.", "ok");
@@ -1121,9 +1141,9 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "anali
 
   // ── Configuração das mensagens automáticas ─────────────────────
   const abrirMsgConfig = async () => {
-    const { data } = await (supabase as any).from("RECRUTAMENTO_MENSAGENS").select("*");
+    const { data } = await sb.from("RECRUTAMENTO_MENSAGENS").select("*");
     // Ordena pela ordem do funil, não alfabética — é assim que o RH lê o fluxo.
-    const porEtapa = new Map((data ?? []).map((r: any) => [r.etapa, r]));
+    const porEtapa = new Map((data ?? []).map((r) => [r.etapa, r]));
     setMsgCfgs(ETAPAS_COM_MENSAGEM.map(e => porEtapa.get(e) ?? {
       etapa: e, ativo: false, template_nome: "", template_idioma: "pt_BR",
       parametros: ["primeiro_nome", "cargo"], texto_previa: "",
@@ -1139,9 +1159,9 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "anali
     try {
       const { data, error } = await supabase.functions.invoke("whatsapp-templates", { body: { acao: "listar" } });
       if (error) return; // sem WhatsApp configurado ou sem permissão: a tela segue utilizável
-      const mapa: Record<string, any> = {};
-      ((data as any)?.templates ?? []).forEach((t: any) => { mapa[t.etapa] = t; });
-      setMsgStatus(mapa);
+      const mapa: Record<string, unknown> = {};
+      (((data as { templates?: Linha[] } | null)?.templates) ?? []).forEach((t) => { mapa[String(t.etapa)] = t; });
+      setMsgStatus(mapa as Record<string, Linha>);
     } catch { /* consulta é informativa; falha nela não trava a configuração */ }
   };
 
@@ -1151,11 +1171,11 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "anali
     try {
       const { data, error } = await supabase.functions.invoke("whatsapp-templates", { body: { acao: "criar" } });
       if (error) { toast("Não consegui falar com a Meta: " + (error.message ?? ""), "err"); return; }
-      const r = (data as any)?.resultado ?? [];
-      const criados = r.filter((x: any) => x.acao === "criado").length;
-      const jaExistiam = r.filter((x: any) => x.acao === "ja_existia").length;
-      const erros = r.filter((x: any) => x.acao === "erro");
-      if (erros.length) toast(`${erros.length} template(s) recusado(s): ${erros.map((e: any) => `${e.etapa} — ${e.erro}`).join(" | ")}`, "err");
+      const r = ((data as { resultado?: { acao?: string; etapa?: string; erro?: string }[] } | null)?.resultado) ?? [];
+      const criados = r.filter((x) => x.acao === "criado").length;
+      const jaExistiam = r.filter((x) => x.acao === "ja_existia").length;
+      const erros = r.filter((x) => x.acao === "erro");
+      if (erros.length) toast(`${erros.length} template(s) recusado(s): ${erros.map((e) => `${e.etapa} — ${e.erro}`).join(" | ")}`, "err");
       else toast(`${criados} enviado(s) para aprovação${jaExistiam ? `, ${jaExistiam} já existia(m)` : ""}. A revisão da Meta costuma levar de minutos a algumas horas.`, "ok");
       await consultarTemplates();
     } finally { setMsgMetaBusy(false); }
@@ -1180,7 +1200,7 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "anali
       texto_previa: String(c.texto_previa ?? "").trim() || null,
       updated_at: new Date().toISOString(), updated_por: nome,
     }));
-    const { error } = await (supabase as any).from("RECRUTAMENTO_MENSAGENS").upsert(rows, { onConflict: "etapa" });
+    const { error } = await sb.from("RECRUTAMENTO_MENSAGENS").upsert(rows, { onConflict: "etapa" });
     setMsgSalvando(false);
     if (error) { toast("Erro ao salvar: " + error.message, "err"); return; }
     // "Salvo" sozinho já enganou: dá a entender que passou a enviar, quando o
@@ -1197,7 +1217,7 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "anali
   const selecionarCandidato = async (cv: Curriculo) => {
     if (cv.etapa_processo) { toast("Candidato já está no processo.", "info"); return; }
     const nowIso = new Date().toISOString();
-    const { error } = await (supabase as any).from("WA_CURRICULOS").update({
+    const { error } = await sb.from("WA_CURRICULOS").update({
       etapa_processo: "ENTRADA",
       etapa_changed_at: nowIso,
       selecionado_por: user?.user_metadata?.nome ?? user?.email ?? "",
@@ -1218,24 +1238,24 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "anali
     setCandModal({ id: cv.id, novaEtapa, nome: cv.nome || "Candidato" });
   };
 
-  const executarMoverCand = async (id: number, novaEtapa: string, extra: Record<string, any> = {}) => {
+  const executarMoverCand = async (id: number, novaEtapa: string, extra: Record<string, unknown> = {}) => {
     const nowIso = new Date().toISOString();
     const nome = user?.user_metadata?.nome ?? user?.email ?? "";
     const cand = candidatos.find(c => c.id === id);
     const origem = cand?.etapa_processo || "";
     const reprovado = novaEtapa === "Reprovado";
-    const payload: Record<string, any> = { etapa_processo: novaEtapa, etapa_changed_at: nowIso, ...extra };
+    const payload: Record<string, unknown> = { etapa_processo: novaEtapa, etapa_changed_at: nowIso, ...extra };
     // Carimba quem completou a etapa de ORIGEM (e decisão do Jurídico colore o card).
     if (origem === "JURÍDICO")  { payload.juridico_ok = !reprovado; payload.juridico_por = nome; payload.juridico_em = nowIso; }
     // Na etapa paralela quem carimba é aprovarParalelo, setor por setor —
     // aqui só passa a movimentação final para ADMISSÃO.
-    const { error } = await (supabase as any).from("WA_CURRICULOS").update(payload).eq("id", id);
+    const { error } = await sb.from("WA_CURRICULOS").update(payload).eq("id", id);
     if (error) { toast("Erro ao mover candidato: " + error.message, "err"); return; }
     // Reprova do Jurídico vira restrição do CPF (vale para qualquer vaga).
     if (origem === "JURÍDICO" && reprovado) {
       const d = digitsOf(cand?.cpf);
       if (d.length === 11) {
-        await (supabase as any).from("RECRUTAMENTO_CPF_BLACKLIST").upsert({
+        await sb.from("RECRUTAMENTO_CPF_BLACKLIST").upsert({
           cpf_digits: d, cpf_fmt: cand?.cpf, motivo: extra.motivo_reprovacao || "Reprovado pelo Jurídico", criado_por: nome,
         }, { onConflict: "cpf_digits" });
       }
@@ -1254,7 +1274,7 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "anali
     if (drawerId) await logHistorico(drawerId, eventoTxt[novaEtapa] || `Movido para ${novaEtapa}`, {
       de: origem, para: novaEtapa, papel: PAPEL_ETAPA[origem] || "Recrutamento",
       candidatoId: id, candidatoNome: cand?.nome,
-      detalhe: extra.motivo_reprovacao || extra.juridico_obs || extra.sst_obs || undefined,
+      detalhe: String(extra.motivo_reprovacao || extra.juridico_obs || extra.sst_obs || "") || undefined,
     });
     toast(`Candidato movido para "${novaEtapa}".`, "ok");
     if (!reprovado) await dispararMensagemEtapa(id, novaEtapa, cand?.nome);
@@ -1269,7 +1289,7 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "anali
     const base = { nome: c.nome || "Candidato", cpf: c.cpf || "", telefone: c.telefone, email: c.email, itens: [c] };
     setDetalheEmp({ ...base, emps: [] });
     if (!c.cpf) return;
-    const { data } = await (supabase as any).rpc("empregados_por_cpfs", { p_cpfs: [c.cpf] });
+    const { data } = await sb.rpc("empregados_por_cpfs", { p_cpfs: [c.cpf] });
     if (data?.length) setDetalheEmp({ ...base, emps: data });
   };
 
@@ -1292,7 +1312,7 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "anali
     const nowIso = new Date().toISOString();
     const nome = user?.user_metadata?.nome ?? user?.email ?? "";
     const { id, etapa } = desistModal;
-    const { error } = await (supabase as any).from("WA_CURRICULOS").update({
+    const { error } = await sb.from("WA_CURRICULOS").update({
       desistiu: true, desistencia_motivo: desistMotivo.trim(), desistencia_em: nowIso,
       desistencia_por: nome, desistencia_etapa: etapa,
       etapa_processo: "Reprovado", etapa_changed_at: nowIso,
@@ -1317,7 +1337,7 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "anali
     if (!motivo.trim()) { toast("Informe o parecer.", "err"); return; }
     const nowIso = new Date().toISOString();
     const nome = user?.user_metadata?.nome ?? user?.email ?? "";
-    const { error } = await (supabase as any).from("WA_CURRICULOS").update({
+    const { error } = await sb.from("WA_CURRICULOS").update({
       juridico_ok: false, juridico_obs: motivo.trim(), juridico_por: nome, juridico_em: nowIso,
       etapa_processo: "TRIAGEM", etapa_changed_at: nowIso,
     }).eq("id", cv.id);
@@ -1365,7 +1385,7 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "anali
     if (novaEtapa === ETAPA_SST_COMPRAS && !candMateriais.trim()) {
       toast("Descreva os materiais/EPIs necessários — o Compras precisa disso.", "err"); return;
     }
-    const extra: Record<string, any> = {};
+    const extra: Record<string, unknown> = {};
     const origem = candidatos.find(c => c.id === id)?.etapa_processo;
     if (novaEtapa === ETAPA_SST_COMPRAS) {
       extra.compras_necessidades = candMateriais.trim();
@@ -1383,9 +1403,9 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "anali
   };
 
   // ── Kanban Mover ──────────────────────────────────────────────
-  const executarMover = async (id: number, novoStatus: string, oldSt: string, extra: Record<string, any>) => {
-    const payload: Record<string, any> = { status: novoStatus, ...extra };
-    const { error } = await (supabase as any).from("SISTEMA_RECRUTAMENTO").update(payload).eq("id", id);
+  const executarMover = async (id: number, novoStatus: string, oldSt: string, extra: Record<string, unknown>) => {
+    const payload: Record<string, unknown> = { status: novoStatus, ...extra };
+    const { error } = await sb.from("SISTEMA_RECRUTAMENTO").update(payload).eq("id", id);
     if (error) { toast("Erro ao mover card: " + error.message, "err"); loadKanban(); return; }
     toast(`Card movido para "${novoStatus}"`, "ok");
     loadStats();
@@ -1414,7 +1434,7 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "anali
   const confirmarMoverKb = async () => {
     if (!pendMover) return;
     const { id, novoStatus, oldSt } = pendMover;
-    const extra: Record<string, any> = {};
+    const extra: Record<string, unknown> = {};
 
     if (novoStatus === "Reprovada") {
       if (!moverExtra.motivo) { toast("Informe o motivo.", "err"); return; }
@@ -1607,7 +1627,7 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "anali
   };
 
   const renderDetalhe = (s: Solicitacao) => {
-    const di = (label: string, val: any, full = false) => (
+    const di = (label: string, val: ReactNode, full = false) => (
       <div className={`rec-di${full ? " full" : ""}`} key={label}>
         <label>{label}</label>
         <span>{val || "—"}</span>
@@ -1643,11 +1663,11 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "anali
         </div>
         {mostraNomeReferencia(s.motivo_vaga) ? dd("Colaborador Substituído", s.nome_substituido) : null}
         {/* Remarcações da data de início — quem pediu, quando e por quê. */}
-        {Array.isArray((s as any).data_inicio_alteracoes) && (s as any).data_inicio_alteracoes.length > 0 && (
+        {Array.isArray((s.data_inicio_alteracoes ?? [])) && (s.data_inicio_alteracoes ?? []).length > 0 && (
           <div style={{ marginBottom: 12 }}>
-            <div className="rec-dd-label">Alterações da Data de Início ({(s as any).data_inicio_alteracoes.length})</div>
+            <div className="rec-dd-label">Alterações da Data de Início ({(s.data_inicio_alteracoes ?? []).length})</div>
             <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-              {(s as any).data_inicio_alteracoes.map((a: any, i: number) => (
+              {(s.data_inicio_alteracoes ?? []).map((a: AlteracaoDataInicio, i: number) => (
                 <div key={i} style={{ background: "#fffbeb", border: "1px solid #fde68a", borderRadius: 9, padding: "8px 11px", fontSize: 12.5, color: "#78350f" }}>
                   <div style={{ fontWeight: 800 }}>
                     {fmtBr(a?.de) || "—"} → {fmtBr(a?.para)}
@@ -1741,7 +1761,7 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "anali
     if (!confirm(`Apagar a solicitação ${rotulo}?
 
 Isto não tem desfazer: o histórico e os candidatos ligados a ela vão junto.`)) return;
-    const { error } = await (supabase as any).from("SISTEMA_RECRUTAMENTO").delete().eq("id", drawerId);
+    const { error } = await sb.from("SISTEMA_RECRUTAMENTO").delete().eq("id", drawerId);
     if (error) { toast("Erro ao apagar: " + error.message, "err"); return; }
     toast(`Solicitação ${rotulo} apagada.`, "ok");
     fecharDrawer();
@@ -1758,7 +1778,7 @@ Isto não tem desfazer: o histórico e os candidatos ligados a ela vão junto.`)
   } as Record<string, string>)[p || ""] || "#64748b");
 
   const renderHistorico = () => {
-    const criada = drawerSol ? [{
+    const criada: EventoHist[] = drawerSol ? [{
       created_at: drawerSol.created_at,
       evento: "Solicitação criada",
       papel: "Solicitante",
@@ -1768,14 +1788,14 @@ Isto não tem desfazer: o histórico e os candidatos ligados a ela vão junto.`)
         ? (drawerSol.nome_substituido ? `Substituindo: ${drawerSol.nome_substituido}` : "Substituição")
         : (drawerSol.motivo_vaga ? `Aumento de quadro — ${drawerSol.motivo_vaga}` : null),
     }] : [];
-    const eventos = [...criada, ...historico].sort((a: any, b: any) => String(a.created_at).localeCompare(String(b.created_at)));
+    const eventos = [...criada, ...historico].sort((a, b) => String(a.created_at).localeCompare(String(b.created_at)));
     if (eventos.length === 0) return <div style={{ textAlign: "center", color: "#94a3b8", padding: "40px 16px", fontSize: 13 }}>Sem movimentações registradas.</div>;
     return (
       <div style={{ display: "flex", flexDirection: "column" }}>
-        {eventos.map((e: any, i: number) => {
+        {eventos.map((e, i) => {
           const cor = papelCor(e.papel);
           const dthora = String(e.created_at ?? "").replace("T", " ").slice(0, 16);
-          const nomeExibido = nomesPorEmailHist[e.usuario_email] || e.usuario_nome || "—";
+          const nomeExibido = nomesPorEmailHist[e.usuario_email ?? ""] || e.usuario_nome || "—";
           return (
             <div key={i} style={{ display: "flex", gap: 12, paddingBottom: i === eventos.length - 1 ? 0 : 18 }}>
               <div style={{ display: "flex", flexDirection: "column", alignItems: "center", flexShrink: 0 }}>
@@ -1803,7 +1823,7 @@ Isto não tem desfazer: o histórico e os candidatos ligados a ela vão junto.`)
   const renderCandidatosKanban = () => {
     const grupos: Record<string, Curriculo[]> = {};
     // Arrastar para rolar a coluna verticalmente (sem selecionar texto).
-    const dragScrollCol = (e: any) => {
+    const dragScrollCol = (e: ReactMouseEvent<HTMLDivElement>) => {
       if (e.button !== 0) return;
       if ((e.target as HTMLElement).closest("button, a, input, textarea, select")) return;
       const el = e.currentTarget as HTMLDivElement;
@@ -1825,7 +1845,7 @@ Isto não tem desfazer: o histórico e os candidatos ligados a ela vão junto.`)
     // Busca: filtra os cards em todas as colunas (nome, CPF ou telefone).
     const q = buscaCand.trim().toLowerCase();
     const candVisiveis = q
-      ? candidatos.filter(c => [c.nome, c.cpf, (c as any).telefone].some(v => String(v ?? "").toLowerCase().includes(q)))
+      ? candidatos.filter(c => [c.nome, c.cpf, c.telefone].some(v => String(v ?? "").toLowerCase().includes(q)))
       : candidatos;
     for (const c of candVisiveis) {
       const e = c.etapa_processo || "Selecionado";
@@ -2058,7 +2078,7 @@ Isto não tem desfazer: o histórico e os candidatos ligados a ela vão junto.`)
         <div className="rec-hero-acoes">
           {/* Vale para os três escopos: o fluxo é o mesmo, muda só onde a
               pessoa entra nele. */}
-          <ResumoDeFuncoes fluxo="vaga" />
+          <ResumoDeFuncoes fluxo="vaga" className="border-white/40 bg-white/15 text-white hover:bg-white hover:text-[#0f3171]" />
           {podeRecrutar && (
             <button onClick={copiarLinkPortal} title="Copia o link público (/vagas) para os candidatos escolherem a cidade e enviarem o currículo" style={{ display: "inline-flex", alignItems: "center", gap: 5, padding: "10px 16px", borderRadius: 12, border: "1.5px solid rgba(255,255,255,.4)", background: "rgba(255,255,255,.14)", color: "#fff", fontSize: 12.5, fontWeight: 800, cursor: "pointer" }}>
               🔗 {portalCopiado ? "Link copiado!" : "Copiar link de candidatura"}
@@ -2579,7 +2599,7 @@ Isto não tem desfazer: o histórico e os candidatos ligados a ela vão junto.`)
 
             <div style={{ display: "flex", flexDirection: "column", gap: 12, maxHeight: "52vh", overflowY: "auto" }}>
               {msgCfgs.map((c, i) => {
-                const upd = (k: string, v: any) => setMsgCfgs(cs => cs.map((x, j) => j === i ? { ...x, [k]: v } : x));
+                const upd = (k: string, v: unknown) => setMsgCfgs(cs => cs.map((x, j) => j === i ? { ...x, [k]: v } : x));
                 const params: string[] = Array.isArray(c.parametros) ? c.parametros : [];
                 const rotulo = c.etapa === "ENTREVISTA GESTOR" ? "ENTREVISTA GESTOR (segunda entrevista — opcional)" : c.etapa;
                 return (
@@ -2598,7 +2618,7 @@ Isto não tem desfazer: o histórico e os candidatos ligados a ela vão junto.`)
                           : st === "PENDING" ? { bg: "#fef3c7", fg: "#b45309", txt: "em revisão na Meta" }
                           : st === "REJECTED" ? { bg: "#fee2e2", fg: "#b91c1c", txt: "reprovado na Meta" }
                           : { bg: "#f1f5f9", fg: "#64748b", txt: "não enviado à Meta" };
-                        return <span title={msgStatus[c.etapa]?.motivo || ""} style={{ fontSize: 10, fontWeight: 800, padding: "2px 8px", borderRadius: 20, background: cor.bg, color: cor.fg }}>{cor.txt}</span>;
+                        return <span title={String(msgStatus[c.etapa]?.motivo ?? "")} style={{ fontSize: 10, fontWeight: 800, padding: "2px 8px", borderRadius: 20, background: cor.bg, color: cor.fg }}>{cor.txt}</span>;
                       })()}
                       <label style={{ display: "inline-flex", alignItems: "center", gap: 6, cursor: "pointer", userSelect: "none" }}>
                         <input type="checkbox" checked={!!c.ativo} onChange={e => upd("ativo", e.target.checked)} style={{ width: 15, height: 15, cursor: "pointer" }} />
@@ -2857,7 +2877,7 @@ Isto não tem desfazer: o histórico e os candidatos ligados a ela vão junto.`)
 
               {/* Dados pessoais do formulário (o que existir em qualquer envio) */}
               {(() => {
-                const dg = (campo: string) => detalheEmp.itens.map((it: any) => it[campo]).find((v: any) => v || v === false);
+                const dg = (campo: string) => detalheEmp.itens.map((it) => it[campo]).find((v) => v || v === false);
                 const linhas = ([
                   ["Nascimento", dg("data_nascimento") ? fmtDt(dg("data_nascimento")) : null],
                   ["RG", dg("rg")],
@@ -2874,7 +2894,7 @@ Isto não tem desfazer: o histórico e os candidatos ligados a ela vão junto.`)
                   ["Estrangeiro", dg("estrangeiro")],
                   ["Cargos de interesse", dg("cargos_interesse")],
                   ["Experiências", [dg("experiencia_1"), dg("experiencia_2"), dg("experiencia_3")].filter(Boolean).join(" · ")],
-                ] as [string, any][]).filter(([, v]) => v || v === false);
+                ] as [string, ReactNode][]).filter(([, v]) => v || v === false);
                 if (!linhas.length) return null;
                 return (
                   <div>

@@ -29,7 +29,7 @@ import {
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { semCodigoFilial } from "@/lib/rh/colaboradoresUtils";
-import { chaveContrato, contratoEhAdministrativo } from "@/lib/recrutamento/vagaRegras";
+import { chaveContrato, contratoEhAdministrativo, setorDoCatalogo } from "@/lib/recrutamento/vagaRegras";
 import { usePostos } from "@/hooks/useSupCatalogo";
 import { solicitacaoEmAberto, type SolicitacaoEmAberto } from "@/lib/solicitacoes/duplicidade";
 
@@ -267,8 +267,10 @@ export default function SolicitarDemissao() {
     // Escritório = contrato ADM E ESTAGIÁRIOS (18/09/2026): marca sozinho e
     // trava; fora dele não dá pra marcar nem escolher setor — era por aí que
     // demissão de posto ia parar na Diretoria.
-    setEEscritorio(!!e && contratoEhAdministrativo(e.contrato || e.nomeFilial));
-    if (!(e && contratoEhAdministrativo(e.contrato || e.nomeFilial))) setSetor("");
+    const adm = !!e && contratoEhAdministrativo(e.contrato || e.nomeFilial);
+    setEEscritorio(adm);
+    // Setor puxado do cadastro (Setor_ERP → nome do catálogo); fica editável.
+    setSetor(adm ? setorDoCatalogo(setores, e?.setor) : "");
     if (e) {
       setForm((f) => ({
         ...f,
@@ -608,6 +610,12 @@ export default function SolicitarDemissao() {
                     </Label>
                     <p className="mb-2 mt-1 text-[12.5px] text-muted-foreground">
                       <b>Só selecione setor se quem vai ser desligado é do escritório.</b> É o setor que diz qual diretor aprova esta demissão.
+                      {colaborador?.setor && setorDoCatalogo(setores, colaborador.setor) && (
+                        <> <span className="font-semibold text-primary">Puxado do cadastro de {colaborador.nome.split(" ")[0]}: {setorDoCatalogo(setores, colaborador.setor)}</span> — pode trocar se estiver errado.</>
+                      )}
+                      {colaborador?.setor && !setorDoCatalogo(setores, colaborador.setor) && (
+                        <> O cadastro diz “{colaborador.setor}”, que não está na lista — escolha o setor certo.</>
+                      )}
                     </p>
                     <Select value={setor || "nenhum"} onValueChange={(v) => setSetor(v === "nenhum" ? "" : v)}>
                       <SelectTrigger className={"max-w-md" + (!setor ? " border-destructive" : "")}>

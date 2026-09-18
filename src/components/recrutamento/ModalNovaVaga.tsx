@@ -31,6 +31,7 @@ import { baseDaUrl, rotasSolicitacoes } from "@/lib/solicitacoes/rotas";
 import { supabase } from "@/integrations/supabase/client";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { useAuth } from "@/hooks/useAuth";
+import { useVinculoEmpregado } from "@/hooks/useVinculoEmpregado";
 import { usePermissoes } from "@/context/PermissoesContext";
 import { VinculoCatalogoVaga, type ListasCatalogo } from "@/components/recrutamento/VinculoCatalogoVaga";
 import { ESTADOS_BR, municipiosDe } from "@/data/municipios-brasil";
@@ -39,7 +40,7 @@ import {
   erroDaRecomendacao, recomendacaoParaBanco, cpfValido, soDigitos, maskCpf,
   cargoExigeCnh, aplicarReqCnh, REQ_CNH_TEXTO,
   rotuloReferencia, ajudaReferencia, mostraNomeReferencia, contratoDoEmpregado, rotuloContrato,
-  faltamCamposManuais, podeVagaAdministrativa, statusInicialVaga, contratoEhAdministrativo,
+  faltamCamposManuais, podeVagaAdministrativa, statusInicialVaga, contratoEhAdministrativo, setorDoCatalogo,
   substituidosComVagaViva, avisoSubstituidoPreso,
 } from "@/lib/recrutamento/vagaRegras";
 import { maskFone } from "@/lib/telefone";
@@ -59,6 +60,7 @@ type EmpregadoRef = {
   "Valor Salário"?: number | string | null;
   "% Insalubridade"?: number | string | null;
   Escala?: string | null;
+  Setor_ERP?: string | null;
 };
 
 const VAGA_RESET = {
@@ -250,7 +252,7 @@ export function ModalNovaVaga({ aberto, onFechar, onCriada, onToast, solicitacao
         }
         const { data } = await db
           .from("EMPREGADOS")
-          .select('"ID", "Nome", "Empresa", "Filial", "Nome Filial", "Título do Cargo", "Valor Salário", "% Insalubridade", "Escala"')
+          .select('"ID", "Nome", "Empresa", "Filial", "Nome Filial", "Título do Cargo", "Valor Salário", "% Insalubridade", "Escala", "Setor_ERP"')
           .eq("ID", vinculoDemissao.substituidoId)
           .maybeSingle();
         if (data) selecionarEmpregado(data, MOTIVO_SUBSTITUICAO, cts);
@@ -334,6 +336,15 @@ export function ModalNovaVaga({ aberto, onFechar, onCriada, onToast, solicitacao
     db.from("setor_catalogo").select("nome").order("nome")
       .then(({ data }: { data: { nome: string }[] | null }) => setSetoresCatalogo((data ?? []).map(r => r.nome).filter(Boolean)));
   }, []);
+  // Setor sugerido pro escritório: o de quem está pedindo (cadastro), quando
+  // a vaga ainda não tem setor — o substituído, se houver, entra em selecionarEmpregado.
+  const { empregado: euEmpregado } = useVinculoEmpregado();
+  const setorSugerido = setorDoCatalogo(setoresCatalogo, euEmpregado?.setor);
+  useEffect(() => {
+    if (ehAdministrativa && !vaga.setor && setorSugerido) setVaga(v => ({ ...v, setor: setorSugerido }));
+    if (!ehAdministrativa && vaga.setor) setVaga(v => ({ ...v, setor: "" }));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ehAdministrativa, setorSugerido]);
   const [empEscolhido, setEmpEscolhido] = useState<EmpregadoRef | null>(null);
 
   // Planilha de Custo pelo POSTO do catálogo (15/09/2026). Antes a consulta
@@ -387,6 +398,8 @@ export function ModalNovaVaga({ aberto, onFechar, onCriada, onToast, solicitacao
       beneficios: "",
       escala: emp["Escala"] ? String(emp["Escala"]) : v.escala,
       contrato: contratoRotulo || v.contrato,
+      // Escritório: setor do substituído (cadastro), senão o meu; dá pra trocar.
+      setor: contratoEhAdministrativo(contratoRotulo || v.contrato) ? (setorDoCatalogo(setoresCatalogo, emp["Setor_ERP"]) || setorDoCatalogo(setoresCatalogo, euEmpregado?.setor) || v.setor) : "",
       contrato_id: "", posto_id: "", funcao_id: "",
     }));
     setEmpSearch(mostraNomeReferencia(motivo) ? emp.Nome : "");
@@ -849,15 +862,6 @@ export function ModalNovaVaga({ aberto, onFechar, onCriada, onToast, solicitacao
             onListas={setCatListas}
             onFuncaoNome={vagaManual ? (nome => setVaga(x => ({ ...x, cargo: x.cargo || nome }))) : undefined}
             classeInput="nvg-fi" classeGrupo="nvg-fg" />
-          {/* Setor (16/09/2026): quem aprova a vaga administrativa. Desde 17/09 só
-              aparece com a caixa "administrativa" marcada — setor NÃO manda mais pra Diretoria. */}
-          {ehAdministrativa && <div className="nvg-fg">
-            <label>Setor <span style={{ color: "#64748b", fontWeight: 600 }}>— só na vaga administrativa: é o setor da Diretoria que aprova</span></label>
-            <select className="nvg-fi" value={vaga.setor} onChange={e => setVaga(v => ({ ...v, setor: e.target.value }))}>
-              <option value="">— Selecione o setor —</option>
-              {setoresCatalogo.map(s => <option key={s} value={s}>{s}</option>)}
-            </select>
-          </div>}
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
             <div className="nvg-fg">
               <label>Estado (UF) <span style={{ color: "#dc2626" }}>*</span></label>
@@ -875,20 +879,48 @@ export function ModalNovaVaga({ aberto, onFechar, onCriada, onToast, solicitacao
             </div>
           </div>
 
-          {(podeAdministrativa || contratoAdm) && (
-            <div className="nvg-fg" style={{ gridColumn: "1 / -1" }}>
-              <label style={{ display: "flex", alignItems: "flex-start", gap: 9, cursor: "pointer", background: ehAdministrativa ? "#f0f6ff" : "#fff", border: ehAdministrativa ? "1.5px solid #0f3171" : "1px solid #e2e8f0", borderRadius: 11, padding: "10px 13px", transition: "background .18s, border-color .18s" }}>
-                <input type="checkbox" checked={ehAdministrativa} disabled={contratoAdm} style={{ marginTop: 2, width: 15, height: 15, accentColor: "#0f3171", cursor: contratoAdm ? "not-allowed" : "pointer" }}
-                  onChange={e => setVaga(v => ({ ...v, administrativa: e.target.checked }))} />
-                <span>
-                  <span style={{ display: "block", fontSize: 14, fontWeight: 800, color: "#0f172a" }}>Vaga é administrativa?</span>
-                  <span style={{ display: "block", fontSize: 14, color: "#64748b", marginTop: 3, lineHeight: 1.45 }}>
-                    {contratoAdm ? <b style={{ color: "#0f3171" }}>Contrato ADM E ESTAGIÁRIOS: vaga administrativa automaticamente. </b> : null}Vaga do escritório. Só quem tem “Ver vaga administrativa?” enxerga, aprova ou reprova — os demais nem veem que ela existe.
+          {/* Vaga administrativa + setor (18/09/2026): igual à demissão — SÓ o
+              contrato ADM E ESTAGIÁRIOS é escritório, marca sozinho pelo contrato
+              (ninguém marca à mão), e SÓ vaga do escritório escolhe setor. O
+              setor vem do cadastro (substituído) ou do seu próprio setor, e
+              pode ser trocado. */}
+          <div className="nvg-fg" style={{ gridColumn: "1 / -1", border: ehAdministrativa ? "2px solid #0f3171" : "2px solid #e2e8f0", background: ehAdministrativa ? "#eef4ff" : "#f8fafc", borderRadius: 14, padding: "14px 16px" }}>
+            <div style={{ display: "flex", alignItems: "flex-start", gap: 10 }}>
+              <input type="checkbox" checked={ehAdministrativa} disabled style={{ marginTop: 3, width: 16, height: 16, accentColor: "#0f3171" }} />
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: 14.5, fontWeight: 800, color: "#0f172a", display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                  Vaga é administrativa?
+                  <span style={{ fontSize: 11, fontWeight: 900, textTransform: "uppercase", letterSpacing: ".4px", padding: "2px 9px", borderRadius: 999, background: ehAdministrativa ? "#0f3171" : "#e2e8f0", color: ehAdministrativa ? "#fff" : "#64748b" }}>
+                    {!vaga.contrato ? "escolha o contrato" : ehAdministrativa ? "sim — escritório" : "não — posto/contrato"}
                   </span>
-                </span>
-              </label>
+                </div>
+                <div style={{ fontSize: 13.5, color: "#334155", lineHeight: 1.5, marginTop: 6, display: "grid", gap: 3 }}>
+                  <div><b>Só é administrativa a vaga do contrato ADM E ESTAGIÁRIOS (escritório).</b> O sistema marca sozinho pelo contrato — não dá pra marcar à mão.</div>
+                  <div>Vaga de <b>posto</b> (limpeza, portaria, vigia, recepção…) <b>não</b> é administrativa: segue pelo Operacional / Analista, sem setor.</div>
+                  <div>Vaga do <b>escritório</b>: vai pra <b>Diretoria</b>, e você informa o <b>setor</b> abaixo — só quem aprova esse setor enxerga.</div>
+                </div>
+                {vaga.contrato && !ehAdministrativa && (
+                  <div style={{ marginTop: 8, fontSize: 13, fontWeight: 600, color: "#92400e", background: "#fffbeb", border: "1px solid #fde68a", borderRadius: 8, padding: "7px 10px" }}>
+                    Contrato <b>{vaga.contrato}</b> não é o do escritório → vaga de posto, aprovação do Operacional / Analista, sem setor.
+                  </div>
+                )}
+              </div>
             </div>
-          )}
+            {ehAdministrativa && (
+              <div style={{ marginTop: 12, borderTop: "1px solid #c7d7f5", paddingTop: 12 }}>
+                <label style={{ display: "block", fontSize: 12, fontWeight: 800, color: "#1e293b", textTransform: "uppercase", letterSpacing: ".4px", marginBottom: 4 }}>Setor da vaga do escritório <span style={{ color: "#dc2626" }}>*</span></label>
+                <div style={{ fontSize: 13, color: "#475569", marginBottom: 6 }}>
+                  <b>Só selecione setor se a vaga é do escritório.</b> É o setor que diz qual diretor aprova.
+                  {setorSugerido && vaga.setor === setorSugerido && <> <span style={{ color: "#0f3171", fontWeight: 700 }}>Puxado do cadastro: {setorSugerido}</span> — pode trocar se estiver errado.</>}
+                </div>
+                <select className="nvg-fi" value={vaga.setor} onChange={e => setVaga(v => ({ ...v, setor: e.target.value }))} style={{ borderColor: vaga.setor ? undefined : "#dc2626", maxWidth: 420 }}>
+                  <option value="">— Selecione o setor —</option>
+                  {setoresCatalogo.map(s => <option key={s} value={s}>{s}</option>)}
+                </select>
+                {!vaga.setor && <div style={{ fontSize: 11.5, color: "#b91c1c", fontWeight: 700, marginTop: 4 }}>Obrigatório: sem o setor a Diretoria não encontra a vaga.</div>}
+              </div>
+            )}
+          </div>
         </>)}
 
         {/* Step 2 */}

@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useMemo } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
+import type { SupabaseClient } from "@supabase/supabase-js";
 import { useAuth } from "@/hooks/useAuth";
 import { useFormPerms } from "@/hooks/useFormPerms";
 import { useVinculoEmpregado } from "@/hooks/useVinculoEmpregado";
@@ -14,19 +15,26 @@ import EmpregadoDetalheModal, { normNome, carregarVinculos, prewarmFichas, inval
 // respostas individuais e exportação CSV.
 // =====================================================================
 
+// Tabelas fora do types.ts gerado: mesmo padrão de comite-etica/db.ts.
+const sb = supabase as unknown as SupabaseClient;
+/** Valor de uma resposta: texto, número, lista, ou a linha da pergunta "colegas". */
+type Valor = unknown;
+/** Linha da pergunta "colegas". */
+interface LinhaColega { colaborador?: string | null; setor?: string | null; nota?: number | string | null; comentario?: string | null }
+
 interface Resposta {
   id: string; enviado_em: string;
   respondente_nome?: string | null; respondente_email?: string | null;
-  setor?: string | null; respondente_cadastro?: Record<string, any> | null;
+  setor?: string | null; respondente_cadastro?: Record<string, unknown> | null;
   duracao_seg?: number | null; criado_por?: string | null;
   anonimo?: boolean | null;   // enviada sem identificação (nada aqui aponta p/ quem respondeu)
-  itens: Record<string, any>;
+  itens: Record<string, unknown>;
 }
 
 // Linha da pergunta "colegas": {colaborador, setor, nota, comentario}.
-const ehLinhaColega = (v: any): boolean =>
+const ehLinhaColega = (v: Valor): v is LinhaColega =>
   !!v && typeof v === "object" && !Array.isArray(v) && "colaborador" in v;
-const textoLinhaColega = (l: any): string =>
+const textoLinhaColega = (l: LinhaColega): string =>
   [String(l?.colaborador ?? "").trim(), l?.setor ? `(${l.setor})` : "",
    l?.nota != null ? `nota ${l.nota}` : "", String(l?.comentario ?? "").trim()]
     .filter(Boolean).join(" · ");
@@ -56,7 +64,7 @@ export const nomeCabeEm = (curto: string, completo: string): boolean => {
  * respondeu (foi o que trocou TALIS por CASSIO no Feedback Guiado).
  */
 export function mapaIdentidades(
-  resps: { respondente_nome?: string | null; respondente_cadastro?: Record<string, any> | null; itens: Record<string, any> }[],
+  resps: { respondente_nome?: string | null; respondente_cadastro?: Record<string, unknown> | null; itens: Record<string, unknown> }[],
   perguntaNomeId: string | null,
   idConfirmada: boolean,
 ): Map<string, string> {
@@ -83,7 +91,7 @@ const CADASTRO_CAMPOS: { k: string; rotulo: string }[] = [
 const btn = (bg: string, c = "#fff", border = "none"): React.CSSProperties =>
   ({ padding: "6px 12px", borderRadius: 9, border, background: bg, color: c, fontSize: 12, fontWeight: 700, cursor: "pointer" });
 const card: React.CSSProperties = { background: "#fff", border: "1px solid #e2e8f0", borderRadius: 14, padding: "15px 17px", boxShadow: "0 8px 24px rgba(15,23,42,.06)" };
-const valorTexto = (v: any): string =>
+const valorTexto = (v: Valor): string =>
   v == null || v === "" ? "-"
   : Array.isArray(v) ? (v.length ? v.map(x => (ehLinhaColega(x) ? textoLinhaColega(x) : String(x))).join("; ") : "-")
   : ehLinhaColega(v) ? textoLinhaColega(v)
@@ -107,13 +115,13 @@ const selFiltro: React.CSSProperties = { width: "100%", border: "1px solid #e2e8
 // `podeAbrirFicha`: a pergunta declara que ali vai nome de gente, então o texto
 // abre a ficha mesmo sem casar com o cadastro - é de lá que se corrige o nome.
 interface Pessoa { ehPessoa: boolean; exibir: string; original: string; podeAbrirFicha?: boolean }
-type Resolver = (v: any) => Pessoa;
+type Resolver = (v: Valor) => Pessoa;
 
 // Só a pergunta de IDENTIFICAÇÃO traz gente na resposta. Em toda outra, o que
 // existe é alternativa ("Alto", "Muito comprometido") — tratar isso como nome
 // fazia alternativa virar link de ficha e, pior, casar com lixo do cadastro
 // (nomes de uma letra), trocando o rótulo da opção pelo nome de um empregado.
-const SEM_PESSOA = (v: any): Pessoa => { const t = valorTexto(v); return { ehPessoa: false, exibir: t, original: t }; };
+const SEM_PESSOA = (v: Valor): Pessoa => { const t = valorTexto(v); return { ehPessoa: false, exibir: t, original: t }; };
 
 // Qual resolvedor vale em cada pergunta:
 //   • a que diz QUEM respondeu → identidade da PRÓPRIA resposta. Quem envia
@@ -154,7 +162,7 @@ function NomeLink({ texto, resolve, onPessoa }: { texto: string; resolve: Resolv
 // ficha (é gente de verdade, vinda do cadastro); a nota vira estrelas e o
 // comentário fica embaixo, para o texto não brigar com a tabela.
 function BlocoColegas({ titulo, linhas, resolve, onPessoa }: {
-  titulo: string; linhas: any[]; resolve: Resolver; onPessoa: (n: string) => void;
+  titulo: string; linhas: LinhaColega[]; resolve: Resolver; onPessoa: (n: string) => void;
 }) {
   return (
     <div style={{ background: "#f8fafc", border: "1px solid #eef2f7", borderRadius: 10, padding: "9px 12px" }}>
@@ -178,7 +186,7 @@ function BlocoColegas({ titulo, linhas, resolve, onPessoa }: {
 }
 
 function BlocoResposta({ titulo, valor, resolve, onPessoa }: {
-  titulo: string; valor: any; resolve: Resolver; onPessoa: (n: string) => void;
+  titulo: string; valor: Valor; resolve: Resolver; onPessoa: (n: string) => void;
 }) {
   const itens = Array.isArray(valor) ? valor.filter(v => v != null && v !== "") : [];
   if (itens.length && itens.every(ehLinhaColega))
@@ -208,7 +216,7 @@ function BlocoResposta({ titulo, valor, resolve, onPessoa }: {
 // linha só com "(N respostas)". "Ver todos" abre as ocorrências mostrando QUEM
 // respondeu e quando - o texto é igual, o que muda é a origem.
 function GrupoValor({ texto, itens, resolve, resolveQuem, onPessoa, quem, onVerRespostas }: {
-  texto: string; itens: { v: any; r: Resposta }[];
+  texto: string; itens: { v: Valor; r: Resposta }[];
   resolve: Resolver; resolveQuem: Resolver; onPessoa: (n: string) => void; quem: (r: Resposta) => string;
   onVerRespostas: (nome: string) => void;
 }) {
@@ -321,14 +329,14 @@ export default function FormularioRespostas() {
   const load = useCallback(async () => {
     setLoading(true);
     const [fRes, rRes] = await Promise.all([
-      (supabase as any).from("CS_FORMULARIOS").select("*").eq("id", id).single(),
-      (supabase as any).from("CS_FORM_RESPOSTAS").select("*").eq("formulario_id", id).order("enviado_em", { ascending: false }),
+      sb.from("CS_FORMULARIOS").select("*").eq("id", id).single(),
+      sb.from("CS_FORM_RESPOSTAS").select("*").eq("formulario_id", id).order("enviado_em", { ascending: false }),
     ]);
     setLoading(false);
     if (fRes.error) { nav("/app/central-servicos/formularios"); return; }
     setForm(fRes.data);
     setPergsTodas(normalizaPerguntas(fRes.data.perguntas));
-    setResps((rRes.data ?? []).map((r: any) => ({ ...r, itens: r.itens ?? {} })));
+    setResps((rRes.data ?? []).map((r: Resposta) => ({ ...r, itens: r.itens ?? {} })));
   }, [id, nav]);
   useEffect(() => { load(); }, [load]);
 
@@ -356,7 +364,7 @@ export default function FormularioRespostas() {
   //
   // Isto vale p/ nome de TERCEIRO citado numa resposta. Quem RESPONDEU não
   // passa por aqui: a identidade vem carimbada na resposta (ver `identidades`).
-  const resolve = useCallback((v: any): Pessoa => {
+  const resolve = useCallback((v: Valor): Pessoa => {
     const original = v == null ? "" : String(v);
     const n = normNome(v);
     const vinculado = n ? vinculos.get(n) : undefined;
@@ -439,7 +447,7 @@ export default function FormularioRespostas() {
   //     Setor_ERP de quem respondeu, gravado em CS_FORM_RESPOSTAS.setor).
   const respsEscopo = useMemo(() => {
     if (!user) return [];
-    if (canNoForm(id, "ver_tudo") || (form && canCriarSetor((form as any).setor))) return resps;
+    if (canNoForm(id, "ver_tudo") || (form && canCriarSetor(form.setor))) return resps;
     return resps.filter(r =>
       (canNoForm(id, "ver_proprias") && (
         (!!r.criado_por && r.criado_por === user.id) ||
@@ -476,7 +484,7 @@ export default function FormularioRespostas() {
 
   const exportCsv = () => {
     if (!form) return;
-    const esc = (s: any) => `"${String(s ?? "").replace(/"/g, '""')}"`;
+    const esc = (s: unknown) => `"${String(s ?? "").replace(/"/g, '""')}"`;
     const cab = ["Enviado em", "Nome", "E-mail", ...pergs.map(p => p.titulo)];
     const linhas = respsFiltradas.map(r => [
       fmtDt(r.enviado_em), nomeRespondente(r), r.respondente_email ?? "",
@@ -492,7 +500,7 @@ export default function FormularioRespostas() {
 
   const excluirResp = async (r: Resposta) => {
     if (!confirm("Excluir esta resposta?")) return;
-    await (supabase as any).from("CS_FORM_RESPOSTAS").delete().eq("id", r.id);
+    await sb.from("CS_FORM_RESPOSTAS").delete().eq("id", r.id);
     invalidarFichas();   // a resposta some das participações da ficha
     load();
   };
@@ -573,7 +581,7 @@ export default function FormularioRespostas() {
                 </div>
                 <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
                   {pergs.map(p => {
-                    const anexo = r.itens[`${p.id}__anexo`];
+                    const anexo = String(r.itens[`${p.id}__anexo`] ?? "") || null;
                     return (
                       <div key={p.id} style={{ display: "flex", flexDirection: "column", gap: 4 }}>
                         <BlocoResposta titulo={p.titulo} valor={r.itens[p.id]} resolve={resolverDaPergunta(p, perguntaNomeId, resolveQuem, resolve)} onPessoa={setPessoa} />
@@ -607,7 +615,7 @@ export default function FormularioRespostas() {
         <div onClick={() => setDetalhe(null)} style={{ position: "fixed", inset: 0, zIndex: 900, background: "rgba(15,23,42,.5)", display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
           <div onClick={e => e.stopPropagation()} style={{ background: "#fff", borderRadius: 16, padding: 22, width: 520, maxWidth: "94vw", maxHeight: "88vh", overflowY: "auto", position: "relative" }}>
             <button onClick={() => setDetalhe(null)} style={{ position: "absolute", top: 14, right: 16, border: "none", background: "none", fontSize: 20, cursor: "pointer", color: "#94a3b8" }}>×</button>
-            <div style={{ fontSize: 16, fontWeight: 800, color: "#0f3171", marginBottom: 2 }}>👤 {detalhe.respondente_cadastro.nome || detalhe.respondente_nome || "Respondente"}</div>
+            <div style={{ fontSize: 16, fontWeight: 800, color: "#0f3171", marginBottom: 2 }}>👤 {String(detalhe.respondente_cadastro.nome ?? "") || detalhe.respondente_nome || "Respondente"}</div>
             <div style={{ fontSize: 12, color: "#94a3b8", marginBottom: 12 }}>Dados completos do cadastro no momento da resposta</div>
             <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 14 }}>
               <div style={{ background: "#eef6ff", border: "1px solid #dbeafe", borderRadius: 10, padding: "6px 11px", fontSize: 12 }}><span style={{ color: "#94a3b8", fontWeight: 700 }}>🕒 Respondido em: </span><span style={{ color: "#0f172a", fontWeight: 700 }}>{fmtDt(detalhe.enviado_em)}</span></div>
@@ -680,7 +688,7 @@ function ResumoPergunta({ p, i, resps, resolve, resolveQuem, onPessoa, quem, onV
   // Ocorrências com a resposta de origem (o valor sozinho perde "quem disse").
   // Arrays (caixas de seleção) viram uma ocorrência por item.
   const ocorrencias = useMemo(() => {
-    const out: { v: any; r: Resposta }[] = [];
+    const out: { v: Valor; r: Resposta }[] = [];
     resps.forEach(r => {
       const v = r.itens[p.id];
       if (v == null || v === "") return;
@@ -693,7 +701,7 @@ function ResumoPergunta({ p, i, resps, resolve, resolveQuem, onPessoa, quem, onV
   // vinculadas à mesma pessoa ("Iury", "Gerência Sistemas") juntam-se ao nome
   // canônico numa linha só — antes cada grafia virava uma linha duplicada.
   const grupos = useMemo(() => {
-    const m = new Map<string, { texto: string; itens: { v: any; r: Resposta }[] }>();
+    const m = new Map<string, { texto: string; itens: { v: Valor; r: Resposta }[] }>();
     ocorrencias.forEach(o => {
       const texto = valorTexto(o.v);
       const pess = resolve(texto);
@@ -736,7 +744,7 @@ function ResumoPergunta({ p, i, resps, resolve, resolveQuem, onPessoa, quem, onV
         chaves = []; for (let n = min; n <= max; n++) chaves.push(String(n));
       } else chaves = p.opcoes.length ? p.opcoes : Object.keys(cont);
       const media = p.tipo === "escala" && valores.length
-        ? (valores.reduce((s, v) => s + Number(v), 0) / valores.length).toFixed(1) : null;
+        ? (valores.reduce<number>((s, v) => s + Number(v), 0) / valores.length).toFixed(1) : null;
       return (
         <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
           {media && <div style={{ fontSize: 13, color: "#0f3171", fontWeight: 800 }}>Média: {media}</div>}
@@ -788,7 +796,7 @@ function ResumoColegas({ resps, pid, resolve, onPessoa, quem }: {
     const m = new Map<string, { nome: string; setores: Set<string>; n: number; notas: number[]; comentarios: { texto: string; quem: string }[] }>();
     resps.forEach(r => {
       const linhas = Array.isArray(r.itens?.[pid]) ? r.itens[pid] : [];
-      linhas.filter(ehLinhaColega).forEach((l: any) => {
+      linhas.filter(ehLinhaColega).forEach((l) => {
         const bruto = String(l.colaborador ?? "").trim();
         if (!bruto) return;
         const pess = resolve(bruto);
