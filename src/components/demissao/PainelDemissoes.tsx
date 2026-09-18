@@ -17,7 +17,8 @@ import {
   BUCKET, MOTIVO_DEVOLUCAO_MIN, MOTIVO_SEM_VAGA_MIN, STATUS_SST_AGENDADO, STATUS_SST_ASO_VALIDO, STATUS_SST_RECEBIDA, acaoDoSST,
   aprovarPedeMotivoSemVaga, temMotivoSemVaga,
   TABELA, TABELA_ANEXOS, corDoStatus, explicaStatus,
-  fmtData, fmtDataHora, fmtTamanho, hojeISO, linkDoLocalASO, normSetorDemissao, patchDevolucao, podeDevolver,
+  erroUltimaDataTrabalhada, limiteUltimaDataTrabalhada,
+  fmtData, fmtDataHora, fmtTamanho, linkDoLocalASO, normSetorDemissao, patchDevolucao, podeDevolver,
   resumoDevolucao, resumoDoASO, statusDaEtapa1, visivelNaEtapaDemissao,
   type AnexoDemissao, type EtapaQueDevolve, type SolicitacaoDemissao,
 } from "@/lib/demissao/solicitacao";
@@ -453,8 +454,9 @@ function DetalheSolicitacao({ solicitacao, etapa, quemSou, onFechar, onDecidir, 
   // Primeiro clique valida a data e abre a confirmação ("Confirma?"); o
   // segundo grava. A data vai junto pro SST (rh_ultima_data_trabalhada).
   const pedirConfirmacaoData = () => {
-    if (!ultimaData) { toast.error("Informe a última data trabalhada do colaborador antes de liberar."); return; }
-    if (ultimaData > hojeISO()) { toast.error("A última data trabalhada não pode ser no futuro."); return; }
+    // Pode ser futura — até 60 dias (o colaborador ainda cumprindo aviso).
+    const erro = erroUltimaDataTrabalhada(ultimaData);
+    if (erro) { toast.error(erro); return; }
     setConfirmandoData(true);
   };
   const liberarParaSST = async () => {
@@ -726,7 +728,7 @@ function DetalheSolicitacao({ solicitacao, etapa, quemSou, onFechar, onDecidir, 
               <Label htmlFor="ultima-data" className="text-[13px] font-bold uppercase tracking-wide text-amber-900">
                 Qual foi a última data trabalhada do colaborador? *
               </Label>
-              <Input id="ultima-data" type="date" className="mt-1 max-w-xs bg-white" max={hojeISO()}
+              <Input id="ultima-data" type="date" className="mt-1 max-w-xs bg-white" max={limiteUltimaDataTrabalhada()}
                 value={ultimaData} onChange={(e) => { setUltimaData(e.target.value); setConfirmandoData(false); }} />
               <p className="mt-1 text-xs text-amber-800">Essa data vai junto pro SST e aparece no card dele.</p>
             </div>

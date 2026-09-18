@@ -4,7 +4,7 @@ import {
   corDoStatus, explicaStatus, linkDoLocalASO, patchDevolucao,
   podeDevolver, resumoDevolucao, resumoDoASO,
   aprovarPedeMotivoSemVaga, faltaVagaDeReposicao, temMotivoSemVaga, podeCancelarDemissao,
-  podeCancelarDemissaoRH, caminhoAnexoCancelamento,
+  podeCancelarDemissaoRH, caminhoAnexoCancelamento, erroUltimaDataTrabalhada, limiteUltimaDataTrabalhada,
 } from "@/lib/demissao/solicitacao";
 
 // O ASO demissional marca data/hora/local do exame — os MESMOS campos do ASO
@@ -253,5 +253,23 @@ describe("podeCancelarDemissaoRH", () => {
   });
   it("o anexo do cancelamento vai na pasta da solicitação, com nome seguro e marcado", () => {
     expect(caminhoAnexoCancelamento(76, "pedido de reconsideração.pdf", 1000)).toBe("76/1000-cancelamento-pedido_de_reconsidera_o.pdf");
+  });
+});
+
+// Última data trabalhada (18/09/2026): pode ser futura, até 60 dias — o RH
+// libera pro SST com o colaborador ainda cumprindo aviso. Pra trás, livre.
+describe("última data trabalhada — janela de 60 dias à frente", () => {
+  it("o limite do calendário é hoje + 60", () => {
+    expect(limiteUltimaDataTrabalhada("2026-09-18")).toBe("2026-11-17");
+    expect(limiteUltimaDataTrabalhada("2026-12-20")).toBe("2027-02-18");
+  });
+  it("aceita hoje, futuro dentro da janela e qualquer data passada", () => {
+    expect(erroUltimaDataTrabalhada("2026-09-18", "2026-09-18")).toBeNull();
+    expect(erroUltimaDataTrabalhada("2026-11-17", "2026-09-18")).toBeNull();
+    expect(erroUltimaDataTrabalhada("2025-01-02", "2026-09-18")).toBeNull();
+  });
+  it("recusa vazio e além dos 60 dias, dizendo até quando pode", () => {
+    expect(erroUltimaDataTrabalhada("", "2026-09-18")).toContain("Informe");
+    expect(erroUltimaDataTrabalhada("2026-11-18", "2026-09-18")).toContain("17/11/2026");
   });
 });

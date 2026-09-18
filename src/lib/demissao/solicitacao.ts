@@ -407,6 +407,25 @@ export function fmtTamanho(bytes?: number | null): string {
 
 export const hojeISO = () => new Date().toISOString().slice(0, 10);
 
+// ── Última data trabalhada (RH → SST) ────────────────────────────────
+/**
+ * A última data trabalhada pode ser FUTURA (18/09/2026): o RH libera pro
+ * SST enquanto o colaborador ainda cumpre o aviso, então o limite é 60 dias
+ * pra frente — não "hoje". Pra trás não há limite (acerto atrasado acontece).
+ */
+export const ULTIMA_DATA_DIAS_A_FRENTE = 60;
+export function limiteUltimaDataTrabalhada(hoje = hojeISO()): string {
+  const d = new Date(`${hoje}T00:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + ULTIMA_DATA_DIAS_A_FRENTE);
+  return d.toISOString().slice(0, 10);
+}
+/** Mensagem de erro, ou null quando a data serve. */
+export function erroUltimaDataTrabalhada(data: string, hoje = hojeISO()): string | null {
+  if (!data) return "Informe a última data trabalhada do colaborador antes de liberar.";
+  if (data > limiteUltimaDataTrabalhada(hoje)) return `A última data trabalhada pode ser no máximo ${ULTIMA_DATA_DIAS_A_FRENTE} dias à frente (até ${fmtData(limiteUltimaDataTrabalhada(hoje))}).`;
+  return null;
+}
+
 // ── Devolução ────────────────────────────────────────────────────────
 
 /** As etapas que podem mandar a solicitação de volta para o Operacional. */
