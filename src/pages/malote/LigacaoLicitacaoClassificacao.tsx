@@ -7,8 +7,9 @@ import { SearchableMultiSelect } from "@/components/ui/searchable-multi-select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
-import { Plus, Pencil, Trash2, ArrowUpDown, Info, Briefcase, Building2 } from "lucide-react";
+import { Plus, Pencil, Trash2, ArrowUpDown, Info, Briefcase, Building2, Download } from "lucide-react";
 import { toast } from "sonner";
+import * as XLSX from "xlsx";
 import { cn } from "@/lib/utils";
 import {
   useLigacoesLicitacaoClassificacao,
@@ -848,5 +849,70 @@ export function LigacaoClassificacaoMaloteSection({ podeEditar }: { podeEditar: 
         </DialogContent>
       </Dialog>
     </Card>
+  );
+}
+
+// [SEM-CHAMADO] (pedido do usuário: "verificarmos as ligações presentes nas
+// configurações do malote, que geralmente a galera pede"): exporta as 3
+// seções de ligação (Licitação, Administrativo, Classificação↔Classificação)
+// num único Excel com 3 abas — as 3 já são carregadas nesta mesma aba
+// "Ligações" de Configurações do Malote, então é só reaproveitar os hooks.
+export function ExportarLigacoesMalote() {
+  const { data: licitacao = [] } = useLigacoesLicitacaoClassificacao();
+  const { data: administrativo = [] } = useLigacoesAdministrativoClassificacao();
+  const { data: classificacaoMalote = [] } = useLigacoesClassificacaoMalote();
+
+  function exportar() {
+    const wb = XLSX.utils.book_new();
+
+    const linhasLicitacao = licitacao.map((l) => ({
+      "Campo da Planilha de Custo": labelClassificacaoLicitacao(l.campo_planilha_custo),
+      "Classificação do Malote": l.classificacao_malote?.nome ?? "",
+    }));
+    XLSX.utils.book_append_sheet(
+      wb,
+      linhasLicitacao.length > 0
+        ? XLSX.utils.json_to_sheet(linhasLicitacao)
+        : XLSX.utils.aoa_to_sheet([["Campo da Planilha de Custo", "Classificação do Malote"]]),
+      "Licitação → Classificação",
+    );
+
+    const linhasAdministrativo = administrativo.map((l) => ({
+      "Classificação Administrativo": l.classificacao_administrativa?.nome ?? "",
+      "Classificação do Malote": l.classificacao_malote?.nome ?? "",
+    }));
+    XLSX.utils.book_append_sheet(
+      wb,
+      linhasAdministrativo.length > 0
+        ? XLSX.utils.json_to_sheet(linhasAdministrativo)
+        : XLSX.utils.aoa_to_sheet([["Classificação Administrativo", "Classificação do Malote"]]),
+      "Administrativo → Classif.",
+    );
+
+    const linhasClassificacaoMalote = classificacaoMalote.map((l) => ({
+      "Classificação (sem orçamento próprio)": l.classificacao_malote?.nome ?? "",
+      "Consome orçamento de": l.classificacao_malote_vinculada?.nome ?? "",
+    }));
+    XLSX.utils.book_append_sheet(
+      wb,
+      linhasClassificacaoMalote.length > 0
+        ? XLSX.utils.json_to_sheet(linhasClassificacaoMalote)
+        : XLSX.utils.aoa_to_sheet([["Classificação (sem orçamento próprio)", "Consome orçamento de"]]),
+      "Classificação → Classif.",
+    );
+
+    const preencher = (numero: number) => String(numero).padStart(2, "0");
+    const hoje = new Date();
+    XLSX.writeFile(
+      wb,
+      `ligacoes-malote-${hoje.getFullYear()}-${preencher(hoje.getMonth() + 1)}-${preencher(hoje.getDate())}.xlsx`,
+    );
+    toast.success("Planilha de ligações exportada.");
+  }
+
+  return (
+    <Button variant="outline" size="sm" onClick={exportar} className="gap-1.5">
+      <Download className="h-3.5 w-3.5" /> Exportar ligações
+    </Button>
   );
 }

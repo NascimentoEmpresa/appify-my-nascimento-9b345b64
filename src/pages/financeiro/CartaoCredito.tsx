@@ -367,7 +367,11 @@ export default function CartaoCredito() {
       lancamentos.filter((l) => {
         if (!l.forma_pagamento || !tiposCadastrados.has(l.forma_pagamento)) return false;
         const cartaoDoLancamento = cartaoPorTipoFormaPagamento.get(l.forma_pagamento);
-        if (competencia && l.competencia !== competencia) return false;
+        // SIS-2026-0464 (achado real): `l.competencia` vem do banco como
+        // "YYYY-MM-DD" (coluna date), mas `competencia` (estado do filtro,
+        // default mesAtualISO()) é "YYYY-MM" — comparar direto com !==
+        // nunca batia, a lista ficava sempre vazia independente do cartão.
+        if (competencia && l.competencia?.slice(0, 7) !== competencia) return false;
         if (filtroCartaoId && cartaoDoLancamento?.id !== filtroCartaoId) return false;
         if (filtroEmpresaId && l.empresa_id !== filtroEmpresaId) return false;
         if (filtroBancoId && cartaoDoLancamento?.banco_id !== filtroBancoId) return false;
