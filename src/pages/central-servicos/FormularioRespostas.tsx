@@ -518,9 +518,11 @@ export default function FormularioRespostas() {
         <button onClick={exportCsv} disabled={!respsFiltradas.length} style={btn(respsFiltradas.length ? "#16a34a" : "#94a3b8")}>⬇ Exportar CSV</button>
       </div>
 
-      {/* Só com resposta identificada: num formulário anônimo não há
-          respondente nem setor pra filtrar (18/09/2026). */}
-      {respsEscopo.some(r => !r.anonimo) && (
+      {/* Formulário que aceita resposta anônima não tem barra de filtros
+          (18/09/2026): não há respondente nem setor pra escolher — e mesmo
+          uma resposta identificada no meio das anônimas não justifica a
+          barra, que só confunde. Vale também quando todas vieram anônimas. */}
+      {!form?.permite_anonimo && respsEscopo.some(r => !r.anonimo) && (
         <FiltrosRespostas
           fResp={fResp} setFResp={setFResp} opcoesResp={opcoesResp}
           fSetor={fSetor} setFSetor={setFSetor} opcoesSetor={opcoesSetor}
