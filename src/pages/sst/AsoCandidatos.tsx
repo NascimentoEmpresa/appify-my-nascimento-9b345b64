@@ -3,7 +3,8 @@ import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
 import { usePermissoes } from "@/context/PermissoesContext";
 import { MapaPicker } from "@/components/sst/MapaPicker";
-import { CandidatoInfo, baixarCurriculoCand, Modal, Campo, Acoes, Toasts, btnStyle, PendToggle, EtapaChip, HistoricoCandidato } from "@/components/recrutamento/CandidatoInfo";
+import { baixarCurriculoCand, Modal, Campo, Acoes, Toasts, btnStyle, PendToggle, EtapaChip, HistoricoCandidato } from "@/components/recrutamento/CandidatoInfo";
+import { FichaAso } from "@/components/recrutamento/FichaAso";
 
 // =====================================================================
 // SST — Exame Médico (fila do Recrutamento)
@@ -139,7 +140,10 @@ export default function AsoCandidatos() {
               <div key={c.candidato_id} style={{ background: "#fff", border: "1px solid #e2e8f0", borderRadius: 14, overflow: "hidden", boxShadow: "0 8px 24px rgba(15,23,42,.06)" }}>
                 <div style={{ height: 3, background: "#f59e0b" }} />
                 <div style={{ padding: "14px 16px" }}>
-                  <CandidatoInfo cand={c} hideCurriculo />
+                  {/* Só o que o SST pediu pro ASO (chamado de 18/09/2026):
+                      15 dados, montados pelo banco; o que faltar, o
+                      Recrutamento preenche no kanban. */}
+                  <FichaAso candidatoId={c.candidato_id} />
                   {c.sst_agendado_em && (
                     <div style={{ marginTop: 8, fontSize: 12, color: "#15803d", background: "#ecfdf5", border: "1px solid #a7f3d0", borderRadius: 8, padding: "7px 10px" }}>
                       🗓 <b>Exame agendado:</b> {fmtD(c.sst_data_exame)}{c.sst_hora_exame ? ` às ${c.sst_hora_exame}` : ""}{c.sst_local_exame ? ` · ${c.sst_local_exame}` : ""}
