@@ -336,11 +336,6 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "anali
   // administrativa / com setor; a Diretoria só vê essas (dos setores dela).
   const noEscopo = useCallback(<T extends { administrativa?: boolean | null; setor?: string | null }>(rows: T[]) =>
     filtrarPorEscopo(rows, escopo, meusSetores), [escopo, meusSetores]);
-  // A LISTA da Diretoria em "Todas" (18/09/2026): tudo mesmo, sem o recorte
-  // administrativo — pra ver e filtrar qualquer solicitação. A fila
-  // "Aguardando você" e os KPIs continuam só com as administrativas.
-  const noEscopoLista = useCallback(<T extends { administrativa?: boolean | null; setor?: string | null }>(rows: T[]) =>
-    (escopo === "diretoria" && statusFilter === "") ? rows : filtrarPorEscopo(rows, escopo, meusSetores), [escopo, meusSetores, statusFilter]);
   // Etiquetar ("Confere", "Revisar"...) é de quem trabalha a fila: o
   // Recrutamento e o analista. São as mesmas portas que a RLS e o gatilho
   // sistema_recrutamento_guard já reconhecem como "gestor" — não existe
@@ -377,6 +372,11 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "anali
   // vinha da aba, que PRENDIA o status e impedia ele de rever o que ja tinha
   // aprovado.
   const [statusFilter, setStatusFilter] = useState(soEtapa1 ? STATUS_ETAPA1 : "");
+  // A LISTA da Diretoria em "Todas" (18/09/2026): tudo mesmo, sem o recorte
+  // administrativo — pra ver e filtrar qualquer solicitação. A fila
+  // "Aguardando você" e os KPIs continuam só com as administrativas.
+  const noEscopoLista = useCallback(<T extends { administrativa?: boolean | null; setor?: string | null }>(rows: T[]) =>
+    (escopo === "diretoria" && statusFilter === "") ? rows : filtrarPorEscopo(rows, escopo, meusSetores), [escopo, meusSetores, statusFilter]);
   const [contratoFiltro, setContratoFiltro]         = useState<string[]>([]);
   const [contratoCounts, setContratoCounts]         = useState<{ contrato: string; n: number }[]>([]);
   const [showContratoFiltro, setShowContratoFiltro] = useState(false);
