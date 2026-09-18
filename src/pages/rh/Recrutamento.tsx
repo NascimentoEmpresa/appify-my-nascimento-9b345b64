@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback, type MouseEvent as ReactMouseEvent } from "react";
+import { useState, useEffect, useRef, useCallback, type MouseEvent as ReactMouseEvent, type CSSProperties } from "react";
 import { useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
@@ -15,6 +15,7 @@ import {
 } from "@/lib/recrutamento/etiquetas";
 import { AvisoProcessos, processosDe, useProcessosDosCandidatos } from "@/components/recrutamento/AvisoProcessos";
 import { FichaAso } from "@/components/recrutamento/FichaAso";
+import { StatusSolicitacao } from "@/components/recrutamento/StatusSolicitacao";
 
 // ── Tipos ──────────────────────────────────────────────────────────
 interface Solicitacao {
@@ -390,6 +391,9 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "anali
   // Drawer
   const [drawerId, setDrawerId]       = useState<number | null>(null);
   const [drawerSol, setDrawerSol]     = useState<Solicitacao | null>(null);
+  // Botão "Status" de cada solicitação (18/09/2026): o cartão grande com a
+  // régua do fluxo e o histórico. Um só, pra solicitação clicada.
+  const [statusDe, setStatusDe]       = useState<Solicitacao | null>(null);
   const [msgs, setMsgs]               = useState<Mensagem[]>([]);
   const [chatInput, setChatInput]     = useState("");
   const [sendingMsg, setSendingMsg]   = useState(false);
@@ -1428,12 +1432,32 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "anali
     const style = document.createElement("style");
     style.id = "rec-styles";
     style.textContent = `
-      .rec-kpi{background:#fff;border:1px solid #e2e8f0;border-radius:16px;padding:14px 16px;box-shadow:0 8px 24px rgba(15,23,42,.06)}
-      .rec-badge{display:inline-flex;align-items:center;padding:2px 8px;border-radius:20px;font-size:10px;font-weight:700;white-space:nowrap}
-      .rec-table{width:100%;border-collapse:collapse}
-      .rec-table th{font-size:10px;font-weight:700;color:#94a3b8;text-transform:uppercase;letter-spacing:.7px;padding:10px 12px;border-bottom:1px solid #e2e8f0;text-align:left;background:#f8fafc}
-      .rec-table td{padding:11px 12px;border-bottom:1px solid #e2e8f0;font-size:12px;color:#475569;vertical-align:middle}
-      .rec-table tr:hover td{background:#f8fbff;cursor:pointer}
+      /* Visual (18/09/2026): hero azul, KPIs com barra e ícone, tabela com respiro. */
+      .rec-hero{position:relative;overflow:hidden;border-radius:24px;padding:24px 30px 20px;margin:18px 24px 0;background:linear-gradient(135deg,#0f3171 0%,#1d4ed8 60%,#2563eb 100%);color:#fff;box-shadow:0 22px 56px rgba(15,49,113,.26);flex-shrink:0}
+      .rec-hero::before{content:"";position:absolute;right:-70px;top:-90px;width:300px;height:300px;border-radius:50%;background:rgba(255,255,255,.07)}
+      .rec-hero::after{content:"";position:absolute;right:150px;bottom:-150px;width:240px;height:240px;border-radius:50%;background:rgba(255,255,255,.05)}
+      .rec-hero-in{position:relative;display:flex;justify-content:space-between;align-items:center;gap:16px;flex-wrap:wrap}
+      .rec-hero-eyebrow{font-size:11px;font-weight:800;letter-spacing:1.2px;text-transform:uppercase;opacity:.8}
+      .rec-hero h1{margin:4px 0 4px;font-size:26px;font-weight:900;letter-spacing:-.4px;line-height:1.1}
+      .rec-hero p{margin:0;font-size:13.5px;opacity:.9;max-width:720px;line-height:1.45}
+      .rec-hero-acoes{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+      .rec-hero-acoes button{font-family:inherit}
+      .rec-kpi{position:relative;background:#fff;border:1px solid #e2e8f0;border-radius:16px;padding:14px 14px 14px 18px;box-shadow:0 8px 24px rgba(15,23,42,.05);overflow:hidden;display:flex;align-items:center;gap:12px;transition:transform .15s,box-shadow .15s;min-width:0}
+      .rec-kpi:hover{transform:translateY(-2px);box-shadow:0 14px 30px rgba(15,23,42,.09)}
+      .rec-kpi::before{content:"";position:absolute;left:0;top:0;bottom:0;width:5px;background:var(--c,#0f3171)}
+      .rec-kpi-ic{width:40px;height:40px;border-radius:12px;display:grid;place-items:center;font-size:18px;background:color-mix(in srgb,var(--c,#0f3171) 12%,#fff);flex-shrink:0}
+      .rec-badge{display:inline-flex;align-items:center;gap:5px;padding:3px 10px;border-radius:20px;font-size:10.5px;font-weight:800;white-space:nowrap}
+      .rec-badge::before{content:"";width:6px;height:6px;border-radius:50%;background:currentColor;opacity:.7}
+      .rec-table{width:100%;border-collapse:separate;border-spacing:0}
+      .rec-table th{position:sticky;top:0;z-index:1;font-size:10.5px;font-weight:800;color:#64748b;text-transform:uppercase;letter-spacing:.6px;padding:12px 14px;border-bottom:1px solid #e2e8f0;text-align:left;background:#f8fafc}
+      .rec-table td{padding:12px 14px;border-bottom:1px solid #f1f5f9;font-size:12.5px;color:#475569;vertical-align:middle}
+      .rec-table tbody tr:nth-child(even) td{background:#fbfcfe}
+      .rec-table tr:hover td{background:#eef4ff;cursor:pointer}
+      .rec-btn-status{display:inline-flex;align-items:center;gap:6px;padding:6px 12px;border-radius:999px;border:1.5px solid #c7d7f5;background:#fff;color:#0f3171;font-size:11.5px;font-weight:800;cursor:pointer;font-family:inherit;white-space:nowrap;transition:.15s;box-shadow:0 4px 12px rgba(15,49,113,.08)}
+      .rec-btn-status:hover{background:#0f3171;color:#fff;border-color:#0f3171;transform:translateY(-1px);box-shadow:0 10px 22px rgba(15,49,113,.22)}
+      .rec-btn-status i{width:7px;height:7px;border-radius:50%;background:#2563eb;animation:rec-ping 1.8s ease-out infinite}
+      .rec-btn-status:hover i{background:#fff}
+      @keyframes rec-ping{0%{box-shadow:0 0 0 0 rgba(37,99,235,.5)}100%{box-shadow:0 0 0 8px transparent}}
       .rec-drawer-ov{position:fixed;inset:0;z-index:500;background:rgba(15,23,42,.42);backdrop-filter:blur(4px);display:flex;justify-content:flex-end}
       .rec-drawer{width:84%;max-width:960px;height:100%;background:#fff;border-left:1px solid #e2e8f0;display:flex;flex-direction:column;overflow:hidden;box-shadow:-20px 0 60px rgba(15,23,42,.18);animation:drIn .22s ease}
       @keyframes drIn{from{transform:translateX(40px);opacity:.4}to{transform:translateX(0);opacity:1}}
@@ -2012,27 +2036,35 @@ Isto não tem desfazer: o histórico e os candidatos ligados a ela vão junto.`)
     <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", background: "#f5f7fb" }}>
 
       {/* Topbar */}
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "16px 22px", margin: "18px 24px 0", border: "1px solid #e2e8f0", borderRadius: 18, background: "linear-gradient(135deg,#fff 0%,#f8fbff 100%)", boxShadow: "0 8px 24px rgba(15,23,42,.06)", flexShrink: 0, gap: 14, flexWrap: "wrap" }}>
-        <div style={{ fontSize: 19, fontWeight: 800, color: "#0f3171" }}>
-          {!soEtapa1 ? "🎯 Seleção e Recrutamento"
-            : escopo === "analista" ? "🎯 Gestão Recrutamento — aguardando o analista"
-            : escopo === "diretoria" ? "🎯 Gestão Recrutamento — aguardando a Diretoria"
-            : "🎯 Gestão Recrutamento — acompanhamento"}
+      <div className="rec-hero">
+        <div className="rec-hero-in">
+        <div>
+          <div className="rec-hero-eyebrow">{!soEtapa1 ? "Recursos Humanos · Recrutamento e Seleção" : escopo === "analista" ? "Licitações · Analistas" : escopo === "diretoria" ? "Diretoria · Vagas administrativas" : "Operacional · Acompanhamento"}</div>
+          <h1>
+            {!soEtapa1 ? "🎯 Seleção e Recrutamento"
+              : escopo === "analista" ? "🎯 Vagas aguardando o analista"
+              : escopo === "diretoria" ? "🎯 Vagas aguardando a Diretoria"
+              : "🎯 Gestão de Recrutamento"}
+          </h1>
+          <p>{!soEtapa1 ? "Solicitações de vaga, funil de candidatos e o botão Status em cada pedido: onde está, quem cuida e todo o histórico."
+            : escopo === "operacional" ? "Acompanhe cada pedido de vaga: quem aprovou, em que etapa está e a conversa com o Recrutamento."
+            : "Aprove ou reprove as solicitações da sua fila. O botão Status mostra o caminho completo de cada pedido."}</p>
         </div>
-        <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+        <div className="rec-hero-acoes">
           {/* Vale para os três escopos: o fluxo é o mesmo, muda só onde a
               pessoa entra nele. */}
           <ResumoDeFuncoes fluxo="vaga" />
           {podeRecrutar && (
-            <button onClick={copiarLinkPortal} title="Copia o link público (/vagas) para os candidatos escolherem a cidade e enviarem o currículo" style={{ display: "inline-flex", alignItems: "center", gap: 5, padding: "7px 14px", borderRadius: 10, border: "1px solid #f97316", background: "rgba(249,115,22,.10)", color: "#ea580c", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>
+            <button onClick={copiarLinkPortal} title="Copia o link público (/vagas) para os candidatos escolherem a cidade e enviarem o currículo" style={{ display: "inline-flex", alignItems: "center", gap: 5, padding: "10px 16px", borderRadius: 12, border: "1.5px solid rgba(255,255,255,.4)", background: "rgba(255,255,255,.14)", color: "#fff", fontSize: 12.5, fontWeight: 800, cursor: "pointer" }}>
               🔗 {portalCopiado ? "Link copiado!" : "Copiar link de candidatura"}
             </button>
           )}
           {canNovaVaga && (
-            <button onClick={abrirModalVaga} style={{ display: "inline-flex", alignItems: "center", gap: 5, padding: "7px 14px", borderRadius: 10, border: "none", background: "#0f3171", color: "#fff", fontSize: 12, fontWeight: 700, cursor: "pointer", boxShadow: "0 10px 22px rgba(15,49,113,.18)" }}>
+            <button onClick={abrirModalVaga} style={{ display: "inline-flex", alignItems: "center", gap: 5, padding: "11px 18px", borderRadius: 12, border: "none", background: "#fff", color: "#0f3171", fontSize: 13, fontWeight: 900, cursor: "pointer", boxShadow: "0 12px 28px rgba(0,0,0,.18)" }}>
               + Nova Solicitação
             </button>
           )}
+        </div>
         </div>
       </div>
 
@@ -2059,22 +2091,25 @@ Isto não tem desfazer: o histórico e os candidatos ligados a ela vão junto.`)
             ? [
               // A fila desta tela, e o destino de quem já passou por ela — é o
               // que o operacional pergunta ("aprovei quantas hoje?").
-              { label: "Aguardando você",  val: stats.pendentes,       color: "#f59e0b" },
-              { label: "Já aprovadas",     val: stats.ag_treinamentos, color: "#8b5cf6" },
-              { label: "Reprovadas",       val: stats.reprovadas,      color: "#dc2626" },
+              { label: "Aguardando você",  val: stats.pendentes,       color: "#f59e0b", icone: "🕒" },
+              { label: "Já aprovadas",     val: stats.ag_treinamentos, color: "#8b5cf6", icone: "✅" },
+              { label: "Reprovadas",       val: stats.reprovadas,      color: "#dc2626", icone: "⛔" },
             ]
             : [
               // "Pend. Operacional" não entra: essa fila é do módulo Operacional.
-              { label: "Total",            val: stats.total,           color: "#0f3171" },
-              { label: "Pend. Recrutamento",val: stats.ag_treinamentos, color: "#8b5cf6" },
-              { label: "Em Processo",      val: stats.em_processo,     color: "#3b82f6" },
-              { label: "Concluídas",       val: stats.contratados,     color: "#16a34a" },
-              { label: "Reprovadas",       val: stats.reprovadas,      color: "#dc2626" },
+              { label: "Total",            val: stats.total,           color: "#0f3171", icone: "🗂️" },
+              { label: "Pend. Recrutamento",val: stats.ag_treinamentos, color: "#8b5cf6", icone: "🎯" },
+              { label: "Em Processo",      val: stats.em_processo,     color: "#3b82f6", icone: "🔎" },
+              { label: "Concluídas",       val: stats.contratados,     color: "#16a34a", icone: "✅" },
+              { label: "Reprovadas",       val: stats.reprovadas,      color: "#dc2626", icone: "⛔" },
             ]
           ).map(k => (
-            <div key={k.label} className="rec-kpi">
-              <div style={{ fontSize: 10, color: "#94a3b8", textTransform: "uppercase", letterSpacing: ".7px", marginBottom: 6, fontWeight: 700 }}>{k.label}</div>
-              <div style={{ fontSize: 26, fontWeight: 800, color: k.color }}>{k.val}</div>
+            <div key={k.label} className="rec-kpi" style={{ "--c": k.color } as CSSProperties}>
+              <div className="rec-kpi-ic">{k.icone}</div>
+              <div>
+                <div style={{ fontSize: 10.5, color: "#94a3b8", textTransform: "uppercase", letterSpacing: ".6px", fontWeight: 800 }}>{k.label}</div>
+                <div style={{ fontSize: 24, fontWeight: 900, color: k.color, lineHeight: 1.15, marginTop: 2 }}>{k.val}</div>
+              </div>
             </div>
           ))}
         </div>
@@ -2198,7 +2233,7 @@ Isto não tem desfazer: o histórico e os candidatos ligados a ela vão junto.`)
                   <thead>
                     <tr>
                       <th>#</th><th>Contrato</th><th>Cargo</th><th>Cidade</th>
-                      <th>Status</th><th>Etiquetas</th><th>Urgência</th><th>Solicitante</th><th>Data</th>
+                      <th>Status</th><th>Etiquetas</th><th>Urgência</th><th>Solicitante</th><th>Data</th><th></th>
                     </tr>
                   </thead>
                   <tbody>
@@ -2213,6 +2248,9 @@ Isto não tem desfazer: o histórico e os candidatos ligados a ela vão junto.`)
                         <td>{item.grau_urgencia ? <span className={`rec-badge ${badgeUrgCls(item.grau_urgencia)}`}>{item.grau_urgencia.startsWith("Alta") ? "⚡ Alta" : item.grau_urgencia}</span> : "—"}</td>
                         <td>{item.solicitante_nome || "—"}</td>
                         <td style={{ color: "#94a3b8", fontSize: 11 }}>{fmtDt(item.created_at)}</td>
+                        <td onClick={e => e.stopPropagation()} style={{ textAlign: "right" }}>
+                          <button type="button" className="rec-btn-status" onClick={() => setStatusDe(item)} title="Onde está, quem cuida e todo o histórico"><i />Status</button>
+                        </td>
                       </tr>
                     ))}
                   </tbody>
@@ -2232,6 +2270,9 @@ Isto não tem desfazer: o histórico e os candidatos ligados a ela vão junto.`)
         )}
       </div>
 
+      {/* ── Cartão de Status (18/09/2026) ── */}
+      {statusDe && <StatusSolicitacao sol={statusDe} onClose={() => setStatusDe(null)} />}
+
       {/* ── Drawer Detalhe ── */}
       {drawerId && (
         <div className="rec-drawer-ov" onClick={e => { if (e.target === e.currentTarget) fecharDrawer(); }}>
@@ -2245,6 +2286,7 @@ Isto não tem desfazer: o histórico e os candidatos ligados a ela vão junto.`)
                 {drawerSol && renderEtiquetas(drawerSol)}
               </div>
               <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
+                {drawerSol && <button type="button" className="rec-btn-status" onClick={() => setStatusDe(drawerSol)}><i />Status</button>}
                 {drawerSol && renderActions(drawerSol)}
                 <button onClick={fecharDrawer} style={{ background: "none", border: "none", color: "#94a3b8", fontSize: 20, cursor: "pointer", padding: "4px 8px", lineHeight: 1 }}>✕</button>
               </div>
