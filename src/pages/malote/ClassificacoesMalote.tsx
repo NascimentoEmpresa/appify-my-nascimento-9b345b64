@@ -198,6 +198,11 @@ export default function ClassificacoesMalote() {
   const [massaSelecionadas, setMassaSelecionadas] = useState<Set<string>>(new Set());
   const [massaBusca, setMassaBusca] = useState("");
   const [massaAplicando, setMassaAplicando] = useState(false);
+  // Pedido do usuário (SIS-2026-0444, sessão): sem isso, marcar 130
+  // classificações uma a uma pra achar só as do Senilton "quebra" — filtra
+  // as candidatas por quem JÁ é aprovador (em qualquer nível 1/2/3) antes de
+  // oferecer a seleção, em vez de listar todas.
+  const [massaFiltroAprovadorId, setMassaFiltroAprovadorId] = useState("");
 
   const todosAprovadores = useMemo(
     () => [...aprovadores1, ...aprovadores2, ...aprovadores3],
@@ -253,6 +258,14 @@ export default function ClassificacoesMalote() {
     return classificacoes.filter((c) => {
       if (nomeAlvo && !semAcento(c.nome).includes(nomeAlvo)) return false;
       if (massaNivel === "lancador" && !c.requer_solicitacao) return false;
+      if (
+        massaFiltroAprovadorId &&
+        !c.aprovador1_user_ids.includes(massaFiltroAprovadorId) &&
+        !c.aprovador2_user_ids.includes(massaFiltroAprovadorId) &&
+        !c.aprovador3_user_ids.includes(massaFiltroAprovadorId)
+      ) {
+        return false;
+      }
       const jaEsta = c[massaChaveIds].includes(massaAprovadorId);
       if (massaAcao === "incluir") return !jaEsta;
       if (!jaEsta) return false;
@@ -262,7 +275,7 @@ export default function ClassificacoesMalote() {
       if (massaNivel !== "lancador" && esvaziariaAprovador1(c, massaNivel, false)) return false;
       return true;
     });
-  }, [classificacoes, massaAprovadorId, massaNivel, massaChaveIds, massaAcao, massaBusca]);
+  }, [classificacoes, massaAprovadorId, massaNivel, massaChaveIds, massaAcao, massaBusca, massaFiltroAprovadorId]);
 
   // Muda nível/ação => a lista de opções de Aprovador é outra (ver
   // massaOpcoesAprovador), então o aprovador selecionado antes pode nem
@@ -272,11 +285,11 @@ export default function ClassificacoesMalote() {
     setMassaAprovadorId("");
   }, [massaNivel, massaAcao]);
 
-  // Muda aprovador/nível/ação => a lista de candidatas muda inteira,
+  // Muda aprovador/nível/ação/filtro => a lista de candidatas muda inteira,
   // então qualquer seleção anterior deixa de fazer sentido.
   useEffect(() => {
     setMassaSelecionadas(new Set());
-  }, [massaAprovadorId, massaNivel, massaAcao]);
+  }, [massaAprovadorId, massaNivel, massaAcao, massaFiltroAprovadorId]);
 
   function alternarMassaSelecao(id: string) {
     setMassaSelecionadas((prev) => {
@@ -300,6 +313,7 @@ export default function ClassificacoesMalote() {
     setMassaAprovadorId("");
     setMassaSelecionadas(new Set());
     setMassaBusca("");
+    setMassaFiltroAprovadorId("");
   }
 
   // Monta o payload de save da classificação aplicando só a inclusão/
@@ -1237,6 +1251,23 @@ export default function ClassificacoesMalote() {
               <p className="text-xs text-muted-foreground">
                 Só aparecem classificações com "Requer solicitação" marcado — é aí que existe cotação a aprovar.
               </p>
+            )}
+
+            {massaAprovadorId && (
+              <div>
+                <Label className="text-xs">Filtrar por aprovador já existente (opcional)</Label>
+                <p className="text-xs text-muted-foreground mb-1">
+                  Ex.: mostrar só as classificações onde o Senilton já é aprovador, pra incluir a Fernanda só nelas.
+                </p>
+                <SearchableSelect
+                  value={massaFiltroAprovadorId}
+                  onChange={setMassaFiltroAprovadorId}
+                  options={opcoesBuscaAprovador}
+                  placeholder="Qualquer classificação"
+                  searchPlaceholder="Buscar aprovador..."
+                  allowClear
+                />
+              </div>
             )}
 
             {massaAprovadorId && (
