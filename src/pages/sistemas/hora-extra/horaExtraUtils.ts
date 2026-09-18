@@ -249,12 +249,13 @@ export function podeEditarHoraExtra(entrada: {
 }
 
 /**
- * Na etapa de liberação o gestor pode corrigir o ponto de outra pessoa antes
- * de aprovar. A ação `alterar` continua sendo a chave: a RPC também exige
- * `aprovar`, mas esse segundo requisito já é o que permite abrir a análise.
+ * Nas etapas de liberação e validação o gestor pode corrigir o ponto de outra
+ * pessoa antes de aprovar. A ação `alterar` continua sendo a chave: as RPCs
+ * também exigem `aprovar`, mas esse segundo requisito já é o que permite abrir
+ * a análise.
  */
 export function podeAlterarHorariosNaLiberacao(entrada: { status: string; podeAlterar: boolean }): boolean {
-  return entrada.podeAlterar && entrada.status === "aguardando_liberacao";
+  return entrada.podeAlterar && ["aguardando_liberacao", "aguardando_validacao"].includes(entrada.status);
 }
 
 /** Em que etapa o arquivo foi anexado, para a lista de anexos. */
