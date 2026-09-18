@@ -545,6 +545,62 @@ export function useMinhasDespesas() {
   });
 }
 
+// [SEM-CHAMADO] (Ruan, financeiro): relatório de TODAS as despesas do
+// Malote pra exportar quando quiser — diferente de useMinhasDespesas (só o
+// que a pessoa criou ou tem setor liberado), essa RPC ignora o recorte
+// normal, só liberada pra quem tem a permissão dedicada
+// 'malote_relatorio_despesas':'exportar' (ver migration 20260930000186).
+export interface LinhaRelatorioDespesaMalote {
+  id: string;
+  numero: string;
+  origem: OrigemDespesa;
+  status: StatusDespesa;
+  nome: string;
+  empresa: string | null;
+  classificacao: string | null;
+  contrato: string | null;
+  // SIS-2026-0464 (Ruan, financeiro): relatório agora tem 1 linha por linha
+  // de rateio da despesa (não mais 1 linha por despesa) — `id`/`numero`
+  // repetem pra todas as linhas de rateio da mesma despesa, e estas 4 colunas
+  // vêm da linha específica, não mais agregadas ("Rateio" sumiu, cada linha
+  // já mostra o contrato/fornecedor/integrante/valor dela).
+  rateio_ordem: number | null;
+  rateio_fornecedor: string | null;
+  rateio_integrante: string | null;
+  rateio_valor: number | null;
+  valor_total: number;
+  valor_aprovado: number | null;
+  forma_pagamento: string | null;
+  banco: string | null;
+  data_pagamento: string | null;
+  competencia: string | null;
+  parcelado: boolean;
+  numero_parcelas: number | null;
+  nivel_aprovacao_atual: 1 | 2 | 3 | null;
+  excecao: boolean;
+  justificativa_excecao: string | null;
+  motivo_ajuste: string | null;
+  pago_em: string | null;
+  pago_por: string | null;
+  conferido_em: string | null;
+  conferido_por: string | null;
+  created_at: string;
+  criado_por: string | null;
+  updated_at: string;
+}
+
+// Mutation em vez de query: é uma exportação sob demanda (botão), não um
+// dado pra manter em cache/re-renderizar a tela.
+export function useBuscarRelatorioDespesasMalote() {
+  return useMutation({
+    mutationFn: async () => {
+      const { data, error } = await (supabase as any).rpc("malote_despesa_relatorio_exportar");
+      if (error) throw error;
+      return (data ?? []) as LinhaRelatorioDespesaMalote[];
+    },
+  });
+}
+
 export function useDespesa(id: string | undefined) {
   return useQuery({
     queryKey: [DESPESA_KEY, id],
@@ -1539,6 +1595,48 @@ export function useClassificacaoIdsPorDespesaRateio(despesaIds: string[]) {
   });
 }
 
+// [SEM-CHAMADO] (achado real, SIS-2026-0464: DM-2026-0924 com Contrato
+// certo no rateio mas sumindo em Aprovações): as 3 queries "primeira linha
+// do rateio" abaixo buscavam tudo com `.in("despesa_id", despesaIds)` de
+// uma vez só, sem paginar — com centenas de despesas na tela (Aprovações
+// soma TODOS os status pros tiles, não só os pendentes), o total de linhas
+// de rateio passa fácil do teto padrão de 1000 linhas do PostgREST/Supabase,
+// e o resto é cortado em silêncio. Qual despesa sobra do corte é
+// praticamente aleatório (`ORDER BY ordem` sozinho não desempata as
+// milhares de linhas com ordem=0 de despesas diferentes) — por isso a
+// mesma despesa podia aparecer certa numa coluna (Empresa) e errada em
+// outra (Contrato), cada query cortando em um ponto diferente. Busca em
+// páginas de 1000 e junta tudo, ordenando por despesa_id+ordem pra manter
+// as linhas de cada despesa juntas e na ordem certa entre páginas.
+// [SEM-CHAMADO] (complemento, mesmo achado): mesmo paginando a RESPOSTA, o
+// `.in("despesa_id", despesaIds)` ainda manda TODOS os ids numa querystring
+// só (GET) — com 700+ despesas isso é ~26KB só de UUIDs, facilmente estoura
+// limite de tamanho de URL de proxy/servidor antes da query nem rodar
+// (falha silenciosa, sem toast — só um Map vazio no client). Quebra em
+// lotes de ids também, não só a resposta.
+async function buscarTodasLinhasRateio<T>(colunas: string, campoNaoNulo: string, despesaIds: string[]): Promise<T[]> {
+  const TAMANHO_LOTE_IDS = 150;
+  const TAMANHO_PAGINA = 1000;
+  const linhas: T[] = [];
+  for (let inicio = 0; inicio < despesaIds.length; inicio += TAMANHO_LOTE_IDS) {
+    const lote = despesaIds.slice(inicio, inicio + TAMANHO_LOTE_IDS);
+    for (let pagina = 0; ; pagina++) {
+      const { data, error } = await (supabase as any)
+        .from("malote_despesa_rateio_linha")
+        .select(colunas)
+        .in("despesa_id", lote)
+        .not(campoNaoNulo, "is", null)
+        .order("despesa_id")
+        .order("ordem")
+        .range(pagina * TAMANHO_PAGINA, pagina * TAMANHO_PAGINA + TAMANHO_PAGINA - 1);
+      if (error) throw error;
+      linhas.push(...((data ?? []) as T[]));
+      if (!data || data.length < TAMANHO_PAGINA) break;
+    }
+  }
+  return linhas;
+}
+
 // SIS-2026-0288 (Iury): coluna/filtro de "Empresa" em Pagamento Malote —
 // pra despesa de rateio multi-empresa (dimensão "Empresa" marcada em
 // RatearClassificacao.tsx), despesa.empresa_id é só o contexto de sessão
@@ -1553,15 +1651,13 @@ export function useEmpresaPrimeiraLinhaRateio(despesaIds: string[]) {
     enabled: despesaIds.length > 0,
     staleTime: 60_000,
     queryFn: async () => {
-      const { data, error } = await (supabase as any)
-        .from("malote_despesa_rateio_linha")
-        .select("despesa_id, empresa_id, ordem")
-        .in("despesa_id", despesaIds)
-        .not("empresa_id", "is", null)
-        .order("ordem");
-      if (error) throw error;
+      const linhas = await buscarTodasLinhasRateio<{ despesa_id: string; empresa_id: string; ordem: number }>(
+        "despesa_id, empresa_id, ordem",
+        "empresa_id",
+        despesaIds,
+      );
       const mapa = new Map<string, string>();
-      for (const r of (data ?? []) as { despesa_id: string; empresa_id: string; ordem: number }[]) {
+      for (const r of linhas) {
         // Linhas já vêm ordenadas por `ordem` — a primeira vista pra cada
         // despesa_id é a que fica (não sobrescreve se já tiver achado).
         if (!mapa.has(r.despesa_id)) mapa.set(r.despesa_id, r.empresa_id);
@@ -1584,15 +1680,13 @@ export function useClassificacaoPrimeiraLinhaRateio(despesaIds: string[]) {
     enabled: despesaIds.length > 0,
     staleTime: 60_000,
     queryFn: async () => {
-      const { data, error } = await (supabase as any)
-        .from("malote_despesa_rateio_linha")
-        .select("despesa_id, classificacao_id, ordem")
-        .in("despesa_id", despesaIds)
-        .not("classificacao_id", "is", null)
-        .order("ordem");
-      if (error) throw error;
+      const linhas = await buscarTodasLinhasRateio<{ despesa_id: string; classificacao_id: string; ordem: number }>(
+        "despesa_id, classificacao_id, ordem",
+        "classificacao_id",
+        despesaIds,
+      );
       const mapa = new Map<string, string>();
-      for (const r of (data ?? []) as { despesa_id: string; classificacao_id: string; ordem: number }[]) {
+      for (const r of linhas) {
         if (!mapa.has(r.despesa_id)) mapa.set(r.despesa_id, r.classificacao_id);
       }
       return mapa;
@@ -1614,15 +1708,13 @@ export function useContratoPrimeiraLinhaRateio(despesaIds: string[]) {
     enabled: despesaIds.length > 0,
     staleTime: 60_000,
     queryFn: async () => {
-      const { data, error } = await (supabase as any)
-        .from("malote_despesa_rateio_linha")
-        .select("despesa_id, contrato_id, ordem")
-        .in("despesa_id", despesaIds)
-        .not("contrato_id", "is", null)
-        .order("ordem");
-      if (error) throw error;
+      const linhas = await buscarTodasLinhasRateio<{ despesa_id: string; contrato_id: string; ordem: number }>(
+        "despesa_id, contrato_id, ordem",
+        "contrato_id",
+        despesaIds,
+      );
       const mapa = new Map<string, string>();
-      for (const r of (data ?? []) as { despesa_id: string; contrato_id: string; ordem: number }[]) {
+      for (const r of linhas) {
         if (!mapa.has(r.despesa_id)) mapa.set(r.despesa_id, r.contrato_id);
       }
       return mapa;

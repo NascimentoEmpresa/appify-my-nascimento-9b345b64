@@ -33,9 +33,11 @@ import {
   LigacaoAdministrativoClassificacaoSection,
   LigacaoClassificacaoMaloteSection,
   LigacaoSectionBanner,
+  ExportarLigacoesMalote,
 } from "./LigacaoLicitacaoClassificacao";
 import { AnalistasContratos } from "./AnalistasContratos";
 import { FormasPagamento } from "./FormasPagamento";
+import { RelatorioDespesasMaloteTab } from "./RelatorioDespesasMaloteTab";
 import { Briefcase, Building2, ArrowLeftRight } from "lucide-react";
 
 const DIAS_UTEIS_OPCOES = Array.from({ length: 15 }, (_, i) => i + 1);
@@ -45,6 +47,10 @@ const ANOS_IMPORTACAO = [ANO_ATUAL - 1, ANO_ATUAL, ANO_ATUAL + 1, ANO_ATUAL + 2]
 export default function Configuracoes() {
   const { can } = usePermissoes();
   const podeEditar = can("alterar", "malote", "malote_configuracoes");
+  // [SEM-CHAMADO] (Ruan, financeiro): permissão dedicada e separada da de
+  // Configurações — quem edita configurações do malote não necessariamente
+  // deve poder exportar todas as despesas do grupo, e vice-versa.
+  const podeExportarRelatorio = can("exportar", "malote", "malote_relatorio_despesas");
 
   const { data: config, isLoading } = useMaloteConfig();
   const salvar = useSalvarMaloteConfig();
@@ -90,6 +96,7 @@ export default function Configuracoes() {
           <TabsTrigger value="ligacoes">Ligação de Licitações e Classificações</TabsTrigger>
           <TabsTrigger value="analistas">Analistas de Contratos</TabsTrigger>
           <TabsTrigger value="formas-pagamento">Formas de Pagamento</TabsTrigger>
+          {podeExportarRelatorio && <TabsTrigger value="relatorios">Relatórios</TabsTrigger>}
         </TabsList>
 
         <TabsContent value="config" className="space-y-6 mt-4">
@@ -334,6 +341,9 @@ export default function Configuracoes() {
         </TabsContent>
 
         <TabsContent value="ligacoes" className="mt-4 space-y-4">
+          <div className="flex justify-end">
+            <ExportarLigacoesMalote />
+          </div>
           <div>
             <LigacaoSectionBanner
               titulo="Licitação → Classificação do Malote"
@@ -370,6 +380,12 @@ export default function Configuracoes() {
         <TabsContent value="formas-pagamento" className="mt-4">
           <FormasPagamento podeEditar={podeEditar} />
         </TabsContent>
+
+        {podeExportarRelatorio && (
+          <TabsContent value="relatorios" className="mt-4">
+            <RelatorioDespesasMaloteTab />
+          </TabsContent>
+        )}
       </Tabs>
     </div>
   );
