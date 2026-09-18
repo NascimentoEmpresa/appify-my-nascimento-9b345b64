@@ -194,6 +194,7 @@ function Secao({ id, eyebrow, titulo, sub, children, escuro = false, className =
 // ── Página ────────────────────────────────────────────────────────────────
 export default function Site() {
   const numeros = useNumeros();
+  const refClientes = useRevelar<HTMLElement>();
   // Barra de progresso da leitura (0..1), no topo da pagina.
   const [progresso, setProgresso] = useState(0);
   useEffect(() => {
@@ -358,10 +359,26 @@ export default function Site() {
       </Secao>
 
       {/* ── Clientes ── */}
-      <section id="clientes" className="st-sec st-clientes">
+      <section id="clientes" ref={refClientes} className="st-sec st-clientes">
         <div className="st-wrap st-sec-h">
           <span className="st-eyebrow">Quem confia</span>
           <h2>Instituições que <em>abrem a porta</em> todo dia com a gente.</h2>
+        </div>
+        {/* Selo da marca + números ao vivo entre o título e a esteira de clientes. */}
+        <div className="st-wrap st-confia st-rev">
+          <div className="st-confia-logo" aria-hidden="true">
+            <span className="st-confia-anel" /><span className="st-confia-anel st-confia-anel-2" />
+            <img src={arcoNascimento} alt="" />
+          </div>
+          <div className="st-confia-txt">
+            <strong>Gente da Nascimento dentro de {numeros.contratos} instituições públicas e privadas.</strong>
+            <span>{numeros.colaboradores.toLocaleString("pt-BR")}+ pessoas em campo neste mês, do campus ao hospital, da prefeitura ao tribunal.</span>
+          </div>
+          <div className="st-confia-pills">
+            <span><Building2 className="h-4 w-4" /> {numeros.contratos} contratos</span>
+            <span><Users className="h-4 w-4" /> {numeros.colaboradores.toLocaleString("pt-BR")}+ colaboradores</span>
+            <span><MapPin className="h-4 w-4" /> RS · SC · PR</span>
+          </div>
         </div>
         <div className="st-marquee" aria-label="Clientes">
           <div className="st-marquee-in">
@@ -652,6 +669,25 @@ function Estilos() {
     .st-marquee-in span { display: inline-flex; align-items: center; padding: 12px 20px; border-radius: 999px; background: #fff; border: 1px solid var(--borda);
                           font-family: 'Plus Jakarta Sans', Inter, sans-serif; font-weight: 800; font-size: 15px; color: var(--azul-ink); }
     @keyframes st-mq { from { transform: translateX(0); } to { transform: translateX(-50%); } }
+    /* ---- quem confia: selo + numeros ---- */
+    .st-confia { display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 22px; margin: 6px auto 30px; padding: 18px 22px; background: #fff; border: 1px solid var(--borda); border-radius: 22px; box-shadow: 0 18px 50px rgba(15,23,42,.06); }
+    .st-confia-logo { position: relative; width: 84px; height: 84px; display: grid; place-items: center; }
+    .st-confia-logo img { width: 54px; height: 54px; object-fit: contain; position: relative; z-index: 1; animation: st-float 6s ease-in-out infinite; }
+    .st-confia-anel { position: absolute; inset: 0; border-radius: 50%; border: 2px solid rgba(249,115,22,.35); animation: st-anel 3.2s ease-out infinite; }
+    .st-confia-anel-2 { animation-delay: 1.6s; }
+    @keyframes st-anel { 0% { transform: scale(.55); opacity: 0; } 30% { opacity: 1; } 100% { transform: scale(1.15); opacity: 0; } }
+    .st-confia-txt { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+    .st-confia-txt strong { font-size: clamp(16px, 1.8vw, 20px); font-weight: 800; color: var(--azul-ink); line-height: 1.25; }
+    .st-confia-txt span { font-size: 14px; color: var(--cinza); line-height: 1.5; }
+    .st-confia-pills { display: flex; flex-direction: column; gap: 6px; }
+    .st-confia-pills span { display: inline-flex; align-items: center; gap: 7px; font-size: 12.5px; font-weight: 800; color: var(--azul-ink); background: #fff7ed; border: 1px solid #fed7aa; border-radius: 999px; padding: 6px 12px; white-space: nowrap; transition: transform .2s, background .2s; }
+    .st-confia-pills span:hover { transform: translateX(4px); background: #ffedd5; }
+    .st-confia-pills svg { color: var(--laranja); }
+    @media (max-width: 860px) { .st-confia { grid-template-columns: auto 1fr; } .st-confia-pills { grid-column: 1 / -1; flex-direction: row; flex-wrap: wrap; } }
+    .st-marquee-in span::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--laranja); display: inline-block; margin-right: 8px; vertical-align: 1px; opacity: .8; }
+    .st-marquee-in span { display: inline-flex; align-items: center; }
+    .st-marquee + .st-marquee { margin-top: 12px; }
+
     /* ---- movimento (18/09/2026) ---- */
     .st-prog { position: fixed; top: 0; left: 0; height: 3px; width: 100%; background: linear-gradient(90deg, var(--laranja), #fdba74); z-index: 60; transform-origin: 0 50%; transition: transform .1s linear; box-shadow: 0 0 12px rgba(249,115,22,.6); }
     .st-hero-txt > * { opacity: 0; transform: translateY(22px); animation: st-up .8s cubic-bezier(.2,.8,.2,1) forwards; }
