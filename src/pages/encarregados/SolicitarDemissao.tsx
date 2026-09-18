@@ -15,6 +15,7 @@ import { PageHeader } from "@/components/layout/PageHeader";
 import { ResumoDeFuncoes } from "@/components/fluxos/ResumoDeFuncoes";
 import { BuscaColaborador, carregarEmpregadoEscolhido, type EmpregadoEscolhido } from "@/components/demissao/BuscaColaborador";
 import { ModalNovaVaga } from "@/components/recrutamento/ModalNovaVaga";
+import { AvisoCancelada, BotaoCancelarDemissao } from "@/components/demissao/CancelarDemissao";
 import {
   ACCEPT_ANEXO, BUCKET, MODELOS_AVISO, MOTIVOS_PEDIDO, MOTIVOS_SOLICITACAO,
   TABELA, TABELA_ANEXOS, TERMINOS_EXPERIENCIA,
@@ -791,11 +792,17 @@ export default function SolicitarDemissao() {
                   <FileText className="h-4 w-4 shrink-0 text-muted-foreground" />
                   <span className="font-medium">#{s.id} · {s.colaborador_nome}</span>
                   <span className="text-xs text-muted-foreground">{fmtData(s.criado_em)}</span>
-                  <Badge variant="outline" className={cn("ml-auto", corDoStatus(s.status))}>{s.status}</Badge>
+                  <span className="ml-auto flex items-center gap-2">
+                    {/* Reconsiderar (17/09/2026): cancela até o ASO ser agendado. */}
+                    <BotaoCancelarDemissao solicitacao={s} compacto onCancelada={() => { if (user?.email) carregarMinhas(user.email); }}
+                      avisar={(m, t) => (t === "err" ? toast.error(m) : t === "ok" ? toast.success(m) : toast.info(m))} />
+                    <Badge variant="outline" className={cn(corDoStatus(s.status))}>{s.status}</Badge>
+                  </span>
                   <p className="w-full text-xs text-muted-foreground">
                     {explicaStatus(s.status)}
                     {s.status === "Reprovada" && s.operacional_motivo ? ` Motivo: ${s.operacional_motivo}` : ""}
                   </p>
+                  {s.status === "Cancelada" && <div className="w-full"><AvisoCancelada solicitacao={s} /></div>}
                   {s.vaga_id ? (
                     <p className="w-full text-xs text-muted-foreground">🔗 Vaga de Substituição #{s.vaga_id}</p>
                   ) : faltaVagaDeReposicao(s) ? (

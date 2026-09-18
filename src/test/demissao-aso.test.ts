@@ -3,7 +3,7 @@ import {
   STATUS_FINAIS, STATUS_SST_AGENDADO, STATUS_SST_ASO_VALIDO, STATUS_SST_RECEBIDA, STATUS_TODOS, acaoDoSST,
   corDoStatus, explicaStatus, linkDoLocalASO, patchDevolucao,
   podeDevolver, resumoDevolucao, resumoDoASO,
-  aprovarPedeMotivoSemVaga, faltaVagaDeReposicao, temMotivoSemVaga,
+  aprovarPedeMotivoSemVaga, faltaVagaDeReposicao, temMotivoSemVaga, podeCancelarDemissao,
 } from "@/lib/demissao/solicitacao";
 
 // O ASO demissional marca data/hora/local do exame — os MESMOS campos do ASO
@@ -216,5 +216,22 @@ describe("aprovar sem vaga de substituição", () => {
     expect(faltaVagaDeReposicao({ ...presa, status: "Pendente RH", sem_vaga_motivo: "Posto fecha em outubro" })).toBe(false);
     expect(faltaVagaDeReposicao({ ...presa, sem_vaga_motivo: "curto" })).toBe(true);
     expect(faltaVagaDeReposicao({ ...presa, vaga_obrigatoria: false })).toBe(false);
+  });
+});
+
+// Cancelar (reconsiderar) pelo encarregado (17/09/2026): até o ASO ser
+// agendado; depois disso o exame já tem custo.
+describe("podeCancelarDemissao", () => {
+  it("cancela enquanto está em qualquer etapa antes do agendamento", () => {
+    for (const status of ["Pendente Operacional", "Pendente Diretoria", "Pendente RH", "Pendente SST", STATUS_SST_RECEBIDA]) {
+      expect(podeCancelarDemissao({ status }).ok).toBe(true);
+    }
+  });
+  it("ASO agendado ou válido: não cancela mais, e diz por quê", () => {
+    expect(podeCancelarDemissao({ status: STATUS_SST_AGENDADO })).toMatchObject({ ok: false, motivo: expect.stringContaining("já foi agendado") });
+    expect(podeCancelarDemissao({ status: STATUS_SST_ASO_VALIDO }).ok).toBe(false);
+  });
+  it("já encerrada (cancelada, reprovada, concluída): nada a cancelar", () => {
+    for (const status of ["Cancelada", "Reprovada", "Concluída"]) expect(podeCancelarDemissao({ status }).ok).toBe(false);
   });
 });

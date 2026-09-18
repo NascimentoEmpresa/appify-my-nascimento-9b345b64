@@ -71,6 +71,7 @@ import { ACESSO_ABERTO_SEM_PERMISSOES, rotaSempreLiberada } from "@/lib/acesso";
 import { useGradeAtivaCount } from "@/hooks/useGradeAtivaCount";
 import { useChamadosNotif } from "@/hooks/useChamadosNotif";
 import { useTrocaFuncaoNotif } from "@/hooks/useTrocaFuncaoNotif";
+import { useReembolsoNotif } from "@/hooks/useReembolsoNotif";
 import { Inbox, type LucideIcon } from "lucide-react";
 import { Target } from "lucide-react";
 import { GitBranch, GitMerge } from "lucide-react";
@@ -90,7 +91,7 @@ interface NavItem {
   icon: LucideIcon;
   badge?: string;
   // Bolinha de notificação (novidade). Resolvida em runtime pelo useChamadosNotif.
-  notif?: "meus" | "dev" | "troca_funcao";
+  notif?: "meus" | "dev" | "troca_funcao" | "reembolso";
   dot?: boolean;
 }
 interface NavGroup {
@@ -349,6 +350,10 @@ const financeiroModule: ModuleDef = {
       defaultOpen: true,
       items: [
         { label: "Conferência de Ponto", to: "/app/financeiro/conferencia-ponto", icon: ClipboardCheck },
+        // Espelho das rotas de Diárias do Operacional e de Encarregados
+        // (17/09/2026). Item próprio porque a permissão da sidebar é casada
+        // por rota — ver o comentário da rota em App.tsx.
+        { label: "Controle de Diárias", to: "/app/financeiro/diarias", icon: CalendarCheck2 },
       ],
     },
     {
@@ -698,7 +703,11 @@ const centralServicosModule: ModuleDef = {
         // botões do cabeçalho da própria tela de solicitar (que só aparecem
         // para quem tem a permissão). Menu de 3 itens para 2 que quase
         // ninguém abre só empurra o resto para baixo.
-        { label: "Solicitar Reembolso", to: "/app/central-servicos/reembolso", icon: Receipt },
+        // A bolinha acende para quem tem reembolso pendente na alçada
+        // (useReembolsoNotif). Fica neste item porque é o único do módulo
+        // no menu — a fila de aprovação é alcançada pelo botão do cabeçalho
+        // desta tela.
+        { label: "Solicitar Reembolso", to: "/app/central-servicos/reembolso", icon: Receipt, notif: "reembolso" },
         // O item precisa existir AQUI, não só em app_menu: esta lista é
         // estática e o cadastro no banco decide apenas se a pessoa enxerga o
         // que já está escrito nela. Criar a tela e a permissão sem esta linha
@@ -988,6 +997,8 @@ const diretoriaModule: ModuleDef = {
         // só aparecem aqui; aprovadas, seguem pro RH e pro Recrutamento.
         { label: "Solicitações de Demissão", to: "/app/diretoria/solicitacoes-demissao", icon: UserMinus },
         { label: "Gestão Recrutamento", to: "/app/diretoria/recrutamento", icon: Users2 },
+        // O mesmo Dashboard de Recrutamento do RH, com menu próprio (17/09/2026).
+        { label: "Dashboard de Recrutamento", to: "/app/diretoria/recrutamento-dashboard", icon: BarChart3 },
       ],
     },
   ],
@@ -1043,6 +1054,7 @@ export function Sidebar({ collapsed, mobileOpen = false, onMobileClose }: Sideba
   const { data: gradeAtivaCount } = useGradeAtivaCount(null, { todasEmpresas: true });
   const chamadosNotif = useChamadosNotif();
   const trocaFuncaoNotif = useTrocaFuncaoNotif();
+  const reembolsoNotif = useReembolsoNotif();
   // Contador das Novidades do Sistema: o mesmo número da bolinha do topo.
   const { naoLidasCount: novidadesNaoLidas } = useNovidades();
 
@@ -1096,6 +1108,7 @@ export function Sidebar({ collapsed, mobileOpen = false, onMobileClose }: Sideba
       item.notif === "meus" ? chamadosNotif.meus
       : item.notif === "dev" ? chamadosNotif.dev
       : item.notif === "troca_funcao" ? (trocaFuncaoNotif.porRota[item.to] ?? false)
+      : item.notif === "reembolso" ? reembolsoNotif.temPendente
       : false;
 
     // Ordem alfabética (pt-BR, ignorando acentos) em todos os níveis: módulos,
@@ -1117,7 +1130,7 @@ export function Sidebar({ collapsed, mobileOpen = false, onMobileClose }: Sideba
           .sort(porNome),
       }))
       .sort(porNome);
-  }, [allModules, canSee, gradeAtivaCount, chamadosNotif.meus, chamadosNotif.dev, trocaFuncaoNotif]);
+  }, [allModules, canSee, gradeAtivaCount, chamadosNotif.meus, chamadosNotif.dev, trocaFuncaoNotif, reembolsoNotif.temPendente]);
 
   // Módulo ativo = aquele cujo ITEM (link real) casa com a rota atual.
   // Detecção por basePath não serve porque o Licitações usa basePath "/app"

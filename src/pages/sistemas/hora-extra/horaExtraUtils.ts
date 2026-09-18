@@ -232,6 +232,22 @@ export function somenteHora(valor?: string | null): string {
   return valor ? valor.slice(0, 5) : "—";
 }
 
+/**
+ * Quem pode editar a solicitação: o próprio dono, com a ação "alterar", e
+ * somente enquanto a HE ainda não foi liberada. A reprovada entra na regra
+ * porque salvar de novo a devolve para a fila de liberação — antes o único
+ * caminho era excluir e digitar tudo outra vez.
+ */
+export function podeEditarHoraExtra(entrada: {
+  status: string;
+  ehDono: boolean;
+  podeAlterar: boolean;
+}): boolean {
+  return (
+    entrada.podeAlterar && entrada.ehDono && ["aguardando_liberacao", "reprovada"].includes(entrada.status)
+  );
+}
+
 /** Em que etapa o arquivo foi anexado, para a lista de anexos. */
 export function rotuloFaseAnexo(fase: string): string {
   return fase === "conclusao" ? "Conclusão" : "Solicitação";

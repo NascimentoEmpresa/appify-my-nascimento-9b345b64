@@ -7,7 +7,8 @@ import {
   useEventosReembolso, useItensReembolso, urlDoComprovante, type Reembolso,
 } from "@/hooks/useReembolso";
 import {
-  ROTULO_STATUS, avisoDeTeto, dataParaBR, fmtBRL, type StatusReembolso,
+  META_APROVACAO_HORAS, ROTULO_STATUS, atrasoNaAprovacao, avisoDePrazo, avisoDeTeto,
+  dataParaBR, fmtBRL, type StatusReembolso,
 } from "@/lib/reembolso/regras";
 import { useTiposReembolso } from "@/hooks/useReembolso";
 
@@ -52,7 +53,12 @@ export function ListaReembolsos({ lista, carregando, vazio, acoes, mostrarSolici
 
   return (
     <div className="space-y-3">
-      {lista.map((r) => (
+      {lista.map((r) => {
+        // Meta de 24h para decidir (17/09/2026): pendente há mais que isso
+        // ganha a marca. Só sinaliza — quem pediu não é punido pelo atraso
+        // de quem decide.
+        const atraso = atrasoNaAprovacao(r);
+        return (
         <Card key={r.id} className="overflow-hidden">
           <button
             type="button"
@@ -65,6 +71,13 @@ export function ListaReembolsos({ lista, carregando, vazio, acoes, mostrarSolici
                 <Badge variant="outline" className={COR_STATUS[r.status]}>
                   {ROTULO_STATUS[r.status]}
                 </Badge>
+                {atraso !== null && (
+                  <Badge variant="outline"
+                         className="border-rose-200 bg-rose-100 text-rose-800"
+                         title={`Aguardando decisão há ${atraso}h — a meta é ${META_APROVACAO_HORAS}h.`}>
+                    Atrasado · {atraso}h
+                  </Badge>
+                )}
               </p>
               <p className="truncate text-xs text-muted-foreground">
                 {mostrarSolicitante && r.solicitante_nome ? `${r.solicitante_nome} · ` : ""}
@@ -88,7 +101,8 @@ export function ListaReembolsos({ lista, carregando, vazio, acoes, mostrarSolici
             </div>
           )}
         </Card>
-      ))}
+        );
+      })}
     </div>
   );
 }
@@ -108,6 +122,16 @@ function Detalhe({ reembolso }: { reembolso: Reembolso }) {
    */
   const excedente = (codigo: string, centavos: number) =>
     avisoDeTeto(tipos.find((t) => t.codigo === codigo), centavos);
+
+  /**
+   * Prazo do tipo, avaliado em QUANDO a solicitação foi lançada
+   * (`created_at`), não hoje: solicitação lançada no prazo e parada na fila
+   * é atraso de quem aprova (badge "Atrasado" no cabeçalho), não de quem
+   * pediu.
+   */
+  const foraDoPrazo = (codigo: string) =>
+    avisoDePrazo(tipos.find((t) => t.codigo === codigo), reembolso.data_viagem,
+                 new Date(reembolso.created_at));
 
   /**
    * O bucket é privado, então o link é assinado na hora do clique e não na
@@ -142,6 +166,7 @@ function Detalhe({ reembolso }: { reembolso: Reembolso }) {
           <ul className="space-y-1">
             {itens.map((i) => {
               const acima = excedente(i.tipo_codigo, i.valor_centavos);
+              const prazo = foraDoPrazo(i.tipo_codigo);
               return (
                 <li key={i.id} className="flex flex-wrap items-center gap-2">
                   <span className="min-w-32">{nomeDoTipo(i.tipo_codigo)}</span>
@@ -151,6 +176,13 @@ function Detalhe({ reembolso }: { reembolso: Reembolso }) {
                            className="border-amber-200 bg-amber-100 text-amber-800"
                            title={acima}>
                       acima do teto
+                    </Badge>
+                  )}
+                  {prazo && (
+                    <Badge variant="outline"
+                           className="border-amber-200 bg-amber-100 text-amber-800"
+                           title={prazo}>
+                      fora do prazo
                     </Badge>
                   )}
                   <Button variant="link" size="sm" className="h-auto p-0"

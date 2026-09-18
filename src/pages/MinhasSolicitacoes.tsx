@@ -130,6 +130,7 @@ const VAGA_RESET = {
 
 import { DetalheSolicitacao, type TipoSolicitacao } from "./encarregados/DetalheSolicitacao";
 import { AVISO_REFAZER, podeRefazerFerias } from "@/lib/solicitacoes/feriasRefazer";
+import { BotaoCancelarDemissao } from "@/components/demissao/CancelarDemissao";
 
 // SISTEMA_SOLICITACOES_*, EMPREGADOS, CONTRATOS... não estão no types.ts
 // gerado; mesmo padrão de comite-etica/db.ts — a exceção fica num lugar só.
@@ -1059,6 +1060,11 @@ export default function MinhasSolicitacoes({ abrir, base = "encarregados" }: { a
                           📆 Alterar data
                         </button>
                       )}
+                      {/* Demissão (17/09/2026): reconsiderar — cancela até o ASO ser agendado. */}
+                      {s.tipo === "Demissão" && typeof s.id === "number" && (
+                        <BotaoCancelarDemissao compacto solicitacao={{ id: s.id, status: s.status, colaborador_nome: s.titulo.replace(/^Demissão — /, "") }}
+                          onCancelada={carregarMinhasSols} avisar={(m, t) => toast(m, t)} />
+                      )}
                       {/* Reler o que foi pedido e falar com quem está tratando.
                           A conversa é a MESMA que o outro lado enxerga — ver
                           encarregados/DetalheSolicitacao. */}
@@ -1273,15 +1279,15 @@ export default function MinhasSolicitacoes({ abrir, base = "encarregados" }: { a
                 onChange={v => setVaga(x => ({ ...x, ...v }))}
                 onListas={setCatListas}
                 classeInput="ini-fi" classeGrupo="ini-fg" />
-              {/* Setor (16/09/2026): com setor a vaga é administrativa e vai pra
-                  Diretoria aprovar antes de chegar ao Recrutamento. */}
-              <div className="ini-fg">
-                <label>Setor <span style={{ color: "#64748b", fontWeight: 600 }}>— opcional; com setor, a aprovação é da Diretoria</span></label>
+              {/* Setor (16/09/2026): quem aprova a vaga administrativa. Desde 17/09 só
+                  aparece com a caixa "administrativa" marcada — setor NÃO manda mais pra Diretoria. */}
+              {(podeAdministrativa && vaga.administrativa) && <div className="ini-fg">
+                <label>Setor <span style={{ color: "#64748b", fontWeight: 600 }}>— só na vaga administrativa: é o setor da Diretoria que aprova</span></label>
                 <select className="ini-fi" value={vaga.setor} onChange={e => setVaga(v => ({ ...v, setor: e.target.value }))}>
-                  <option value="">Sem setor (vaga de contrato)</option>
+                  <option value="">— Selecione o setor —</option>
                   {setoresCatalogo.map(s => <option key={s} value={s}>{s}</option>)}
                 </select>
-              </div>
+              </div>}
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
                 <div className="ini-fg">
                   <label>Estado (UF) <span style={{ color: "#dc2626" }}>*</span></label>
