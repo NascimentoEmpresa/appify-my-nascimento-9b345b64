@@ -351,6 +351,10 @@ const financeiroModule: ModuleDef = {
       defaultOpen: true,
       items: [
         { label: "Conferência de Ponto", to: "/app/financeiro/conferencia-ponto", icon: ClipboardCheck },
+        // Espelho das rotas de Diárias do Operacional e de Encarregados
+        // (17/09/2026). Item próprio porque a permissão da sidebar é casada
+        // por rota — ver o comentário da rota em App.tsx.
+        { label: "Controle de Diárias", to: "/app/financeiro/diarias", icon: CalendarCheck2 },
       ],
     },
     {

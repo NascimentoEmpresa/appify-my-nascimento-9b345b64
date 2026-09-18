@@ -33,7 +33,7 @@ describe("pacote padrão do toggle", () => {
   });
 });
 
-describe("Diárias — 'aprovar' não pega carona no toggle", () => {
+describe("Diárias — 'aprovar' e 'enviar_malote' não pegam carona no toggle", () => {
   it("ligar a tela do Operacional NÃO concede aprovar", () => {
     const concedidas = acoesGravadasPeloToggle("operacional_diarias", true);
     expect(concedidas).not.toContain("aprovar");
@@ -48,6 +48,12 @@ describe("Diárias — 'aprovar' não pega carona no toggle", () => {
     expect(acoesGravadasPeloToggle("encarregados_diarias", true)).not.toContain("aprovar");
   });
 
+  it("nenhuma das três portas concede enviar_malote ao ligar", () => {
+    for (const menu of ["operacional_diarias", "encarregados_diarias", "financeiro_diarias"]) {
+      expect(acoesGravadasPeloToggle(menu, true)).not.toContain("enviar_malote");
+    }
+  });
+
   it("DESLIGAR a tela revoga aprovar junto — a assimetria é de propósito", () => {
     // has_screen_access() responde pela ação pedida e não exige 'visualizar'
     // junto: um 'aprovar' allow=true esquecido continuaria valendo numa tela
@@ -57,6 +63,10 @@ describe("Diárias — 'aprovar' não pega carona no toggle", () => {
     expect(revogadas).toContain("visualizar");
   });
 
+  it("DESLIGAR também revoga enviar_malote", () => {
+    expect(acoesGravadasPeloToggle("financeiro_diarias", false)).toContain("enviar_malote");
+  });
+
   it("não revoga a mesma ação duas vezes", () => {
     const revogadas = acoesGravadasPeloToggle("operacional_diarias", false);
     expect(new Set(revogadas).size).toBe(revogadas.length);
@@ -64,10 +74,11 @@ describe("Diárias — 'aprovar' não pega carona no toggle", () => {
 });
 
 describe("catálogo de exceções", () => {
-  it("Diárias (as duas portas) e o Parecer Jurídico são as exceções hoje", () => {
+  it("Diárias (as três portas) e o Parecer Jurídico são as exceções hoje", () => {
     expect(Object.keys(ACOES_FORA_DO_TOGGLE).sort()).toEqual([
       "duvidas",
       "encarregados_diarias",
+      "financeiro_diarias",
       "operacional_diarias",
     ]);
   });

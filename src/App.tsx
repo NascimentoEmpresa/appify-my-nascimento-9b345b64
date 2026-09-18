@@ -570,6 +570,16 @@ const App = () => (
             <Route path="suprimentos/epis-admissoes" element={<EpisAdmissoes />} />
             <Route path="suprimentos/correio-declaracao" element={<CorreioDeclaracao />} />
             {/* Financeiro */}
+            {/* Controle de Diárias no Financeiro — a MESMA tela das outras
+                duas rotas, com porta própria. "Um espelho dessa rota de
+                diárias" (17/09/2026): mesma lista, mesmos status, mesmos dois
+                tipos. Rota e menu próprios pelo motivo já documentado na de
+                Encarregados: a sidebar casa permissão por ROTA, e um item do
+                Financeiro apontando para /app/operacional/diarias seria
+                governado por `operacional_diarias` — liberá-lo arrastaria o
+                módulo Operacional inteiro para a sidebar de quem só precisa
+                das diárias. Ver 20260930000155. */}
+            <Route path="financeiro/diarias" element={<ControleDiarias menuCodigo="financeiro_diarias" />} />
             <Route path="financeiro/contas-pagar" element={<ContasPagar />} />
             <Route path="financeiro/contas-receber" element={<ContasReceber />} />
             <Route path="cobrancas" element={<Cobrancas />} />
