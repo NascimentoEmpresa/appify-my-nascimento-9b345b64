@@ -70,13 +70,23 @@ export function useTiposReembolso() {
   return useQuery({
     queryKey: ["reembolso_tipos"],
     queryFn: async (): Promise<TipoReembolso[]> => {
-      const { data, error } = await sb
+      const colunas = "codigo, nome, valor_maximo_centavos, hora_inicio, hora_fim, ativo, ordem";
+      let { data, error } = await sb
         .from("CS_REEMBOLSO_TIPO")
-        .select("codigo, nome, valor_maximo_centavos, hora_inicio, hora_fim, ativo, ordem")
+        .select(`${colunas}, prazo_dias, prazo_bloqueia`)
         .order("ordem", { ascending: true });
+      // Banco ainda sem as colunas de prazo (20260930000185 não aplicada):
+      // lê o que existe, e o tipo vale como "sem prazo". Sem isto o catálogo
+      // inteiro sumiria da tela de solicitar até a migration rodar.
+      if (error && /column|schema cache/i.test(error.message)) {
+        ({ data, error } = await sb.from("CS_REEMBOLSO_TIPO").select(colunas)
+          .order("ordem", { ascending: true }));
+      }
       if (error) throw error;
       return (data ?? []).map((t: any) => ({
         ...t,
+        prazo_dias: t.prazo_dias ?? null,
+        prazo_bloqueia: !!t.prazo_bloqueia,
         // O banco devolve `time` como "11:00:00"; a tela e as regras trabalham
         // com "HH:MM" e comparam string em alguns lugares.
         hora_inicio: t.hora_inicio ? String(t.hora_inicio).slice(0, 5) : null,
@@ -97,6 +107,8 @@ export function useSalvarTipo() {
         valor_maximo_centavos: tipo.valor_maximo_centavos,
         hora_inicio: tipo.hora_inicio,
         hora_fim: tipo.hora_fim,
+        prazo_dias: tipo.prazo_dias,
+        prazo_bloqueia: tipo.prazo_bloqueia,
         ativo: tipo.ativo,
         ordem: tipo.ordem,
         atualizado_por: user?.id ?? null,
@@ -350,6 +362,9 @@ export function useDecidirReembolso() {
       qc.invalidateQueries({ queryKey: ["reembolsos"] });
       qc.invalidateQueries({ queryKey: ["reembolso_meus_stats"] });
       qc.invalidateQueries({ queryKey: ["reembolso_eventos"] });
+      // A bolinha da sidebar (useReembolsoNotif) apaga na hora, sem esperar
+      // a sonda de 60s.
+      qc.invalidateQueries({ queryKey: ["reembolso-notif"] });
     },
   });
 }
