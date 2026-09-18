@@ -4,6 +4,7 @@ import {
   corDoStatus, explicaStatus, linkDoLocalASO, patchDevolucao,
   podeDevolver, resumoDevolucao, resumoDoASO,
   aprovarPedeMotivoSemVaga, faltaVagaDeReposicao, temMotivoSemVaga, podeCancelarDemissao,
+  podeCancelarDemissaoRH, caminhoAnexoCancelamento,
 } from "@/lib/demissao/solicitacao";
 
 // O ASO demissional marca data/hora/local do exame — os MESMOS campos do ASO
@@ -233,5 +234,24 @@ describe("podeCancelarDemissao", () => {
   });
   it("já encerrada (cancelada, reprovada, concluída): nada a cancelar", () => {
     for (const status of ["Cancelada", "Reprovada", "Concluída"]) expect(podeCancelarDemissao({ status }).ok).toBe(false);
+  });
+});
+
+// Cancelar | Reconsideração pelo RH (18/09/2026): só na etapa dele.
+describe("podeCancelarDemissaoRH", () => {
+  it("Pendente RH: cancela", () => {
+    expect(podeCancelarDemissaoRH({ status: "Pendente RH" })).toEqual({ ok: true });
+  });
+  it("fora da etapa do RH (antes ou depois): não cancela e diz em que etapa está", () => {
+    for (const status of ["Pendente Operacional", "Pendente Diretoria", "Pendente SST", STATUS_SST_RECEBIDA]) {
+      expect(podeCancelarDemissaoRH({ status })).toMatchObject({ ok: false, motivo: expect.stringContaining(status) });
+    }
+  });
+  it("ASO agendado / já encerrada: a mesma resposta da regra geral", () => {
+    expect(podeCancelarDemissaoRH({ status: STATUS_SST_AGENDADO }).motivo).toBe(podeCancelarDemissao({ status: STATUS_SST_AGENDADO }).motivo);
+    expect(podeCancelarDemissaoRH({ status: "Cancelada" }).motivo).toBe(podeCancelarDemissao({ status: "Cancelada" }).motivo);
+  });
+  it("o anexo do cancelamento vai na pasta da solicitação, com nome seguro e marcado", () => {
+    expect(caminhoAnexoCancelamento(76, "pedido de reconsideração.pdf", 1000)).toBe("76/1000-cancelamento-pedido_de_reconsidera_o.pdf");
   });
 });

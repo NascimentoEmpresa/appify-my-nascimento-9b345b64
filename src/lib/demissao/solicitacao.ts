@@ -543,3 +543,21 @@ export function podeCancelarDemissao(s: Pick<SolicitacaoDemissao, "status">): { 
   if (s.status === "Concluída") return { ok: false, motivo: "Esta demissão já foi concluída." };
   return { ok: true };
 }
+
+// ── Cancelar (reconsideração) pelo RH ────────────────────────────────
+/**
+ * O RH cancela SÓ enquanto a solicitação está na etapa dele — Pendente RH
+ * (18/09/2026). Antes disso é do Operacional; depois, do SST (e o ASO pode
+ * já ter custo). A RPC demissao_cancelar repete a regra com
+ * has_screen_access('rh_demissoes','aprovar').
+ */
+export function podeCancelarDemissaoRH(s: Pick<SolicitacaoDemissao, "status">): { ok: boolean; motivo?: string } {
+  if (s.status === "Pendente RH") return { ok: true };
+  const geral = podeCancelarDemissao(s);
+  if (!geral.ok) return geral;
+  return { ok: false, motivo: `O RH só cancela a solicitação enquanto ela está Pendente RH (agora está ${s.status}).` };
+}
+
+/** Caminho no bucket demissoes-docs de um arquivo anexado ao cancelar. */
+export const caminhoAnexoCancelamento = (id: number, nome: string, agora = Date.now()): string =>
+  `${id}/${agora}-cancelamento-${nome.replace(/[^\w.-]+/g, "_")}`;

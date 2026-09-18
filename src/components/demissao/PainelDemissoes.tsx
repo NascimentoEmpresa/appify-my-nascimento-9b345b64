@@ -28,6 +28,7 @@ import {
 } from "lucide-react";
 import { ConversaSolicitacao } from "@/components/solicitacoes/ConversaSolicitacao";
 import { AvisoCancelada } from "@/components/demissao/CancelarDemissao";
+import { BlocoCancelarReconsideracaoRH } from "@/components/demissao/CancelarReconsideracaoRH";
 import { TABELA_APROVADOR_SETOR } from "@/components/admin/TrocaFuncaoSetoresUsuario";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
@@ -97,7 +98,9 @@ const STATUS_DA_ETAPA: Record<Etapa, string[]> = {
   sst: ["Pendente SST", STATUS_SST_RECEBIDA, STATUS_SST_AGENDADO, STATUS_SST_ASO_VALIDO],
   // O RH continua vendo o que despachou — a pergunta que mais chega depois de
   // liberar é "e aí, o SST agendou?".
-  rh: ["Pendente RH", "Pendente SST", STATUS_SST_RECEBIDA, STATUS_SST_AGENDADO, STATUS_SST_ASO_VALIDO],
+  // E as CANCELADAS (18/09/2026): desde que o próprio RH cancela por
+  // reconsideração, sumir da fila sem rastro parecia erro.
+  rh: ["Pendente RH", "Pendente SST", STATUS_SST_RECEBIDA, STATUS_SST_AGENDADO, STATUS_SST_ASO_VALIDO, "Cancelada"],
 };
 
 /**
@@ -336,18 +339,21 @@ export function PainelDemissoes({ etapa }: { etapa: Etapa }) {
       <DetalheSolicitacao
         solicitacao={aberta} etapa={etapa} quemSou={quemSou}
         onFechar={() => setAberta(null)} onDecidir={decidir}
+        onCancelada={() => { setAberta(null); carregar(); }}
       />
     </>
   );
 }
 
 // ── Detalhe + decisão ────────────────────────────────────────────────
-function DetalheSolicitacao({ solicitacao, etapa, quemSou, onFechar, onDecidir }: {
+function DetalheSolicitacao({ solicitacao, etapa, quemSou, onFechar, onDecidir, onCancelada }: {
   solicitacao: SolicitacaoDemissao | null;
   etapa: Etapa;
   quemSou: string;
   onFechar: () => void;
   onDecidir: (s: SolicitacaoDemissao, patch: Record<string, unknown>, aviso: string) => Promise<boolean>;
+  /** O RH cancelou por reconsideração (RPC, não patch): fecha e recarrega. */
+  onCancelada: () => void;
 }) {
   const [anexos, setAnexos] = useState<AnexoDemissao[]>([]);
   const [motivo, setMotivo] = useState("");
@@ -747,6 +753,13 @@ function DetalheSolicitacao({ solicitacao, etapa, quemSou, onFechar, onDecidir }
               </div>
             )}
           </div>
+        )}
+        {/* CANCELAR | RECONSIDERAÇÃO (18/09/2026): só em Pendente RH. Motivo
+            obrigatório, anexo opcional, duas confirmações — o bloco decide
+            sozinho se aparece (podeCancelarDemissaoRH). */}
+        {podeAgir && etapa === "rh" && (
+          <BlocoCancelarReconsideracaoRH solicitacao={s} onCancelada={onCancelada}
+            avisar={(msg, tipo) => (tipo === "err" ? toast.error(msg) : tipo === "ok" ? toast.success(msg) : toast.info(msg))} />
         )}
         {/* SST — os MESMOS campos do ASO de admissão (pages/sst/AsoCandidatos),
             inclusive o seletor no mapa: é a mesma ficha, na outra ponta. */}
