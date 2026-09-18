@@ -28,7 +28,7 @@ import {
 import { useClassificacoesOrcamentoAdmin } from "@/hooks/usePlanejamentoOrcamentario";
 import { avisoEnvioAoMalote, urlDespesaDoReembolso } from "@/lib/reembolso/vinculoMalote";
 import {
-  avisoDeTeto, competenciaDe, dataParaISO, descreveJanela, descreveTeto, fmtBRL,
+  avisoDePrazo, avisoDeTeto, competenciaDe, dataParaISO, descreveJanela, descreveTeto, fmtBRL,
   normalizaHora, podeLancar, podeEnviarAoMalote, tiposDisponiveis, totalEmCentavos,
   valorEmCentavos, type TipoReembolso,
 } from "@/lib/reembolso/regras";
@@ -201,7 +201,9 @@ export default function SolicitarReembolso() {
     for (const d of preenchidas) {
       const tipo = porCodigo.get(d.tipo_codigo);
       const centavos = valorEmCentavos(d.valor);
-      const veredito = podeLancar(tipo, centavos, saidaOk, chegadaOk);
+      // A data entra por causa do PRAZO do tipo (17/09/2026): só recusa se o
+      // tipo bloqueia; senão o item entra marcado "fora do prazo".
+      const veredito = podeLancar(tipo, centavos, saidaOk, chegadaOk, dataOk);
       if (!veredito.ok) return recusa(veredito.mensagem ?? "Despesa inválida.");
       if (!d.arquivo) {
         return recusa(`Falta o comprovante de ${tipo?.nome ?? d.tipo_codigo}.`);
@@ -403,11 +405,15 @@ export default function SolicitarReembolso() {
                     const tipo = porCodigo.get(d.tipo_codigo);
                     const centavos = valorEmCentavos(d.valor);
                     const veredito = d.tipo_codigo && d.valor
-                      ? podeLancar(tipo, centavos, saidaOk, chegadaOk)
+                      ? podeLancar(tipo, centavos, saidaOk, chegadaOk, dataOk)
                       : { ok: true };
                     // Aviso, não impedimento: o valor é o que a pessoa gastou,
                     // e quem decide sobre o excedente é o aprovador.
                     const aviso = avisoDeTeto(tipo, centavos);
+                    // Mesmo desenho para o prazo do tipo. Quando o tipo
+                    // BLOQUEIA, o veredito acima já recusou e este aviso
+                    // repetiria a mensagem — só mostra quando é só aviso.
+                    const avisoPrazo = tipo?.prazo_bloqueia ? null : avisoDePrazo(tipo, dataOk);
                     return (
                       <div key={i} className="grid gap-3 rounded-xl border p-3 sm:grid-cols-[1fr_140px_1fr_auto]">
                         <div className="space-y-1.5">
@@ -467,6 +473,13 @@ export default function SolicitarReembolso() {
                           <p className="flex items-start gap-1.5 rounded-lg bg-amber-50 p-2 text-xs text-amber-900 sm:col-span-4">
                             <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
                             {aviso}
+                          </p>
+                        )}
+
+                        {avisoPrazo && (
+                          <p className="flex items-start gap-1.5 rounded-lg bg-amber-50 p-2 text-xs text-amber-900 sm:col-span-4">
+                            <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                            {avisoPrazo}
                           </p>
                         )}
                       </div>

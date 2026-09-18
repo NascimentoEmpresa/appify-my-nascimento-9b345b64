@@ -4,6 +4,7 @@ import {
   cargoExigeCnh, aplicarReqCnh, motivoLabel, MOTIVO_EXPANSAO,
   GRAU_ALTA, GRAU_MEDIA, GRAU_BAIXA, REQ_CNH_TEXTO,
   contratoDoEmpregado, chaveContrato, rotuloContrato, rotuloReferencia, mostraNomeReferencia,
+  ehVagaAdministrativa, statusInicialVaga, STATUS_VAGA_DIRETORIA,
   MENU_VAGA_ADMINISTRATIVA, podeVagaAdministrativa, filtrarAdministrativas,
   vagaSeguraSubstituido, substituidosComVagaViva,
   podePreencherVagaManual, faltamCamposManuais,
@@ -288,5 +289,16 @@ describe("contrato do empregado — empresa e nome abreviado (17/09/2026)", () =
   it("chaveContrato desfaz abreviação, acento e pontuação", () => {
     expect(chaveContrato("GUAPORÉ LIMP SMED EMERGENCIAL - 063.2026")).toBe(chaveContrato("Guapore LIMPEZA SMED Emergencial 063/2026"));
     expect(chaveContrato("VERANOPÓLIS RECEP EMERGENCIAL - 151.2026")).toBe(chaveContrato("VERANOPOLIS RECEPCAO EMERGENCIAL - 151/2026"));
+  });
+});
+
+describe("vaga administrativa — só a caixa manda pra Diretoria (17/09/2026)", () => {
+  it("setor sozinho NÃO é administrativa (era o que mandava servente da UFRGS pra Diretoria)", () => {
+    expect(ehVagaAdministrativa({ administrativa: false, setor: "Operacional" })).toBe(false);
+    expect(statusInicialVaga(false, "Operacional")).toBe("Pendente Analista");
+  });
+  it("a caixa marcada é administrativa, com ou sem setor", () => {
+    expect(ehVagaAdministrativa({ administrativa: true, setor: null })).toBe(true);
+    expect(statusInicialVaga(true, "Financeiro")).toBe(STATUS_VAGA_DIRETORIA);
   });
 });
