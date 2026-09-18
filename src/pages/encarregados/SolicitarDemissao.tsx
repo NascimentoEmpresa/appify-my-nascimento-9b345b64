@@ -22,7 +22,6 @@ import {
   corDoStatus, emailValido, erroDoArquivo, explicaStatus, faltaVagaDeReposicao, fmtData, fmtTamanho,
   hojeISO, mascaraTelefone, statusInicialDemissao, telefoneCompleto, type SolicitacaoDemissao,
 } from "@/lib/demissao/solicitacao";
-import { localEhEscritorio } from "@/lib/trocaFuncao/solicitacao";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
   CheckCircle2, ChevronLeft, ChevronRight, FileText, Loader2, Lock, Paperclip, Trash2, UserMinus,
@@ -569,47 +568,59 @@ export default function SolicitarDemissao() {
                 <CampoTravado label="Cargo" valor={colaborador?.cargo ?? ""} escolhido={!!colaborador} />
               </div>
 
-              {/* Escritório / setor (16/09/2026): decide quem aprova. Escritório
-                  ou com setor → Diretoria; contrato sem setor → Operacional. */}
-              <div className="grid gap-4 sm:grid-cols-2">
-                <div className="rounded-lg border p-3">
-                  <div className="flex items-start gap-2.5">
-                    <Checkbox id="dem-escritorio" checked={eEscritorio} disabled className="mt-0.5" />
-                    <div className="space-y-1">
-                      <Label htmlFor="dem-escritorio" className="cursor-pointer font-medium">
-                        É do escritório administrativo
-                      </Label>
-                      <p className="text-xs text-muted-foreground">
-                        {eEscritorio
-                          ? "Contrato ADM E ESTAGIÁRIOS: marcado automaticamente — a aprovação é da Diretoria."
-                          : "Só o contrato ADM E ESTAGIÁRIOS é escritório. Colaborador de posto vai pro Operacional."}
-                      </p>
-                      {colaborador && !eEscritorio && localEhEscritorio(colaborador.posto || nomeContrato) && (
-                        <p className="text-xs font-medium text-amber-700 dark:text-amber-400">
-                          O posto diz “{colaborador.posto || nomeContrato}”, mas o contrato não é ADM E ESTAGIÁRIOS — segue pelo Operacional.
-                        </p>
-                      )}
+              {/* Escritório / setor (18/09/2026): SÓ colaborador do escritório
+                  (contrato ADM E ESTAGIÁRIOS) é "do escritório" e SÓ ele escolhe
+                  setor. Tudo automático pelo contrato — o encarregado não marca
+                  à mão. Quem não é do escritório vai pro Operacional, sem setor. */}
+              <div className={cn("rounded-xl border-2 p-4", eEscritorio ? "border-primary bg-primary/5" : "border-muted bg-muted/30")}>
+                <div className="flex items-start gap-3">
+                  <Checkbox id="dem-escritorio" checked={eEscritorio} disabled className="mt-1" />
+                  <div className="flex-1 space-y-2">
+                    <Label htmlFor="dem-escritorio" className="text-[15px] font-bold">
+                      É do escritório administrativo?{" "}
+                      <span className={cn("ml-1 rounded-full px-2 py-0.5 text-[11px] font-extrabold uppercase", eEscritorio ? "bg-primary text-white" : "bg-muted text-muted-foreground")}>
+                        {!colaborador ? "escolha o colaborador" : eEscritorio ? "sim — escritório" : "não — posto/contrato"}
+                      </span>
+                    </Label>
+                    <div className="space-y-1 text-[13px] leading-relaxed text-foreground/80">
+                      <p><b>Só é do escritório quem trabalha no contrato ADM E ESTAGIÁRIOS.</b> O sistema marca sozinho pelo contrato do colaborador — não dá pra marcar à mão.</p>
+                      <p>Colaborador de <b>posto</b> (limpeza, portaria, vigia, recepção…) <b>não</b> é do escritório: a demissão vai pro <b>Operacional</b>, sem setor.</p>
+                      <p>Colaborador do <b>escritório</b>: a demissão vai pra <b>Diretoria</b>, e você precisa informar o <b>setor</b> dele abaixo.</p>
                     </div>
+                    {colaborador && !eEscritorio && (
+                      <p className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-[12.5px] font-medium text-amber-800">
+                        {colaborador.nome} está no contrato <b>{nomeContrato || colaborador.contrato || "—"}</b>, que não é o do escritório → aprovação do <b>Operacional</b>, sem setor.
+                      </p>
+                    )}
+                    {colaborador && eEscritorio && (
+                      <p className="rounded-md border border-primary/30 bg-white px-3 py-2 text-[12.5px] font-medium text-primary">
+                        {colaborador.nome} é do escritório ({nomeContrato || colaborador.contrato}) → aprovação da <b>Diretoria</b>. Informe o setor.
+                      </p>
+                    )}
                   </div>
                 </div>
-                {/* Setor só no escritório (18/09/2026): setor sozinho mandava pra Diretoria. */}
-                {eEscritorio && <div>
-                  <Label>Setor <span className="text-destructive">*</span></Label>
-                  <Select value={setor || "nenhum"} onValueChange={(v) => setSetor(v === "nenhum" ? "" : v)}>
-                    <SelectTrigger className={"mt-1" + (eEscritorio && !setor ? " border-destructive" : "")}>
-                      <SelectValue placeholder="Não informar" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="nenhum">{eEscritorio ? "Selecione o setor" : "Não informar"}</SelectItem>
-                      {setores.map((s) => <SelectItem key={s} value={s}>{s}</SelectItem>)}
-                    </SelectContent>
-                  </Select>
-                  <p className={"mt-1 text-xs " + (eEscritorio && !setor ? "font-medium text-destructive" : "text-muted-foreground")}>
-                    {eEscritorio
-                      ? "Demissão do escritório: o setor é obrigatório — é por ele que a Diretoria acha o pedido."
-                      : "Com setor, a aprovação passa a ser da Diretoria (só de quem aprova esse setor)."}
-                  </p>
-                </div>}
+
+                {/* Setor: SÓ aparece pra colaborador do escritório. */}
+                {eEscritorio && (
+                  <div className="mt-4 border-t pt-4">
+                    <Label className="text-[14px] font-bold">
+                      Setor do colaborador do escritório <span className="text-destructive">*</span>
+                    </Label>
+                    <p className="mb-2 mt-1 text-[12.5px] text-muted-foreground">
+                      <b>Só selecione setor se quem vai ser desligado é do escritório.</b> É o setor que diz qual diretor aprova esta demissão.
+                    </p>
+                    <Select value={setor || "nenhum"} onValueChange={(v) => setSetor(v === "nenhum" ? "" : v)}>
+                      <SelectTrigger className={"max-w-md" + (!setor ? " border-destructive" : "")}>
+                        <SelectValue placeholder="Selecione o setor" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="nenhum">Selecione o setor</SelectItem>
+                        {setores.map((s) => <SelectItem key={s} value={s}>{s}</SelectItem>)}
+                      </SelectContent>
+                    </Select>
+                    {!setor && <p className="mt-1 text-xs font-medium text-destructive">Obrigatório: sem o setor a Diretoria não encontra o pedido.</p>}
+                  </div>
+                )}
               </div>
             </>
           )}
