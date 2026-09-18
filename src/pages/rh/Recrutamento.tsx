@@ -14,6 +14,7 @@ import {
   ETIQUETAS_RECRUTAMENTO, alternarEtiqueta, corDaEtiqueta, etiquetasValidas,
 } from "@/lib/recrutamento/etiquetas";
 import { AvisoProcessos, processosDe, useProcessosDosCandidatos } from "@/components/recrutamento/AvisoProcessos";
+import { FichaAso } from "@/components/recrutamento/FichaAso";
 
 // ── Tipos ──────────────────────────────────────────────────────────
 interface Solicitacao {
@@ -1899,6 +1900,12 @@ Isto não tem desfazer: o histórico e os candidatos ligados a ela vão junto.`)
                               </div>
                             )}
                             {etapa === "DOCUMENTAÇÃO" && (docsCount[c.id] ?? 0) > 0 && <div style={{ fontSize: 9.5, color: "#0e7490", marginTop: 4, fontWeight: 700 }}>📎 {docsCount[c.id]} documento{docsCount[c.id] > 1 ? "s" : ""}</div>}
+                            {/* Ficha do ASO (18/09/2026): a partir de APROVADO o
+                                Recrutamento vê o que o SST vai receber e completa
+                                o que o automático não achou (PIS, mãe, posto…). */}
+                            {["APROVADO", "DOCUMENTAÇÃO", ETAPA_SST_COMPRAS, "EXAME SST", "ADMISSÃO"].includes(etapa) && (
+                              <div style={{ marginTop: 6 }}><FichaAso candidatoId={c.id} compacto editar={podeRecrutar} /></div>
+                            )}
                             {etapa === "ADMISSÃO" && c.enviado_admissao_em && <div style={{ fontSize: 9.5, color: "#15803d", marginTop: 4, fontWeight: 700 }}>✓ Contratado — na Admissão (RH)</div>}
                             <div style={{ display: "flex", flexDirection: "column", gap: 5, marginTop: 10 }}>
                               {/* ENTREVISTA/GESTOR: roteiro de entrevista */}
