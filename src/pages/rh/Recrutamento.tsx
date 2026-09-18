@@ -336,6 +336,11 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "anali
   // administrativa / com setor; a Diretoria só vê essas (dos setores dela).
   const noEscopo = useCallback(<T extends { administrativa?: boolean | null; setor?: string | null }>(rows: T[]) =>
     filtrarPorEscopo(rows, escopo, meusSetores), [escopo, meusSetores]);
+  // A LISTA da Diretoria em "Todas" (18/09/2026): tudo mesmo, sem o recorte
+  // administrativo — pra ver e filtrar qualquer solicitação. A fila
+  // "Aguardando você" e os KPIs continuam só com as administrativas.
+  const noEscopoLista = useCallback(<T extends { administrativa?: boolean | null; setor?: string | null }>(rows: T[]) =>
+    (escopo === "diretoria" && statusFilter === "") ? rows : filtrarPorEscopo(rows, escopo, meusSetores), [escopo, meusSetores, statusFilter]);
   // Etiquetar ("Confere", "Revisar"...) é de quem trabalha a fila: o
   // Recrutamento e o analista. São as mesmas portas que a RLS e o gatilho
   // sistema_recrutamento_guard já reconhecem como "gestor" — não existe
@@ -559,7 +564,7 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "anali
     if (myReq !== listaReq.current) return;   // já saiu uma consulta mais nova: ignora esta
     setLoading(false);
     if (error) { toast("Erro ao carregar lista: " + error.message, "err"); return; }
-    setItems(noEscopo(filtrarAdministrativas(data ?? [], podeAdministrativa)));
+    setItems(noEscopoLista(filtrarAdministrativas(data ?? [], podeAdministrativa)));
     const ct = count ?? 0;
     setTotal(ct);
     setPages(Math.max(1, Math.ceil(ct / PER)));
@@ -2097,7 +2102,7 @@ Isto não tem desfazer: o histórico e os candidatos ligados a ela vão junto.`)
             ]
             : [
               // "Pend. Operacional" não entra: essa fila é do módulo Operacional.
-              { label: "Total",            val: stats.total,           color: "#0f3171", icone: "🗂️" },
+              { label: "Total de solicitações", val: stats.total,      color: "#0f3171", icone: "🗂️", sub: "cadastradas · o nº (#) de cada uma é sequência, não contagem" },
               { label: "Pend. Recrutamento",val: stats.ag_treinamentos, color: "#8b5cf6", icone: "🎯" },
               { label: "Em Processo",      val: stats.em_processo,     color: "#3b82f6", icone: "🔎" },
               { label: "Concluídas",       val: stats.contratados,     color: "#16a34a", icone: "✅" },
@@ -2109,6 +2114,7 @@ Isto não tem desfazer: o histórico e os candidatos ligados a ela vão junto.`)
               <div>
                 <div style={{ fontSize: 10.5, color: "#94a3b8", textTransform: "uppercase", letterSpacing: ".6px", fontWeight: 800 }}>{k.label}</div>
                 <div style={{ fontSize: 24, fontWeight: 900, color: k.color, lineHeight: 1.15, marginTop: 2 }}>{k.val}</div>
+                {"sub" in k && k.sub && <div style={{ fontSize: 10.5, color: "#64748b", marginTop: 2, lineHeight: 1.3 }}>{k.sub}</div>}
               </div>
             </div>
           ))}

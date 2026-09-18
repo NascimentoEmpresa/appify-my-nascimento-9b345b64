@@ -113,7 +113,7 @@ export default function RecrutamentoDashboard() {
   const solsF = useMemo(() => sols.filter(s =>
     noPeriodo(s)
     && passaNoFiltroContratos(s, "contrato", fContratos)
-    && (!fFase || fase(s.status) === fFase)
+    && (!fFase || (fFase.startsWith("status:") ? s.status === fFase.slice(7) : fase(s.status) === fFase))
     && (!fMotivo || (s.motivo_vaga || "") === fMotivo)
     && (!fUrgencia || (s.grau_urgencia || "") === fUrgencia)
     && (!busca || [s.cargo, s.contrato, s.cidade, s.solicitante_nome, String(s.id)].some(x => String(x ?? "").toLowerCase().includes(busca.toLowerCase())))
@@ -122,6 +122,13 @@ export default function RecrutamentoDashboard() {
   // Currículos: os das vagas no recorte + (sem recorte de contrato/fase) os do período.
   const cursF = useMemo(() => curs.filter(c => c.vaga_id ? idsF.has(c.vaga_id) : (fContratos.length === 0 && !fFase && !fMotivo && !fUrgencia && !busca && (periodo === "abertas" || periodo === "" || noPeriodo(c)))), [curs, idsF, fContratos, fFase, fMotivo, fUrgencia, busca, periodo]); // eslint-disable-line react-hooks/exhaustive-deps
   const filtrosAtivos = [fContratos.length ? 1 : 0, fFase, fMotivo, fUrgencia, busca].filter(Boolean).length;
+  // Contagem por fase e por status (no período, antes dos outros filtros) —
+  // é o que o seletor "fases / status" mostra ao lado de cada opção
+  // (18/09/2026: "todas as etapas pra selecionar, com os números delas").
+  const noPer = useMemo(() => sols.filter(noPeriodo), [sols, periodo]); // eslint-disable-line react-hooks/exhaustive-deps
+  const contPorFase = useMemo(() => { const m = new Map<string, number>(); for (const s of noPer) m.set(fase(s.status), (m.get(fase(s.status)) ?? 0) + 1); return m; }, [noPer]);
+  const contPorStatus = useMemo(() => { const m = new Map<string, number>(); for (const s of noPer) m.set(s.status, (m.get(s.status) ?? 0) + 1); return m; }, [noPer]);
+  const statusOrdenados = useMemo(() => [...contPorStatus.entries()].sort((a, b) => FASES.indexOf(fase(a[0])) - FASES.indexOf(fase(b[0])) || b[1] - a[1]), [contPorStatus]);
 
   // ── Vagas em aberto por contrato (o bloco do topo) ─────────────
   const porContrato = useMemo(() => {
@@ -279,13 +286,27 @@ export default function RecrutamentoDashboard() {
       <div className="rdb-filtros">
         <input className="rdb-fi" value={busca} onChange={e => setBusca(e.target.value)} placeholder="🔎 Cargo, contrato, cidade, solicitante ou nº…" style={{ minWidth: 280, flex: 1 }} />
         <FiltroContratos linhas={sols.filter(noPeriodo)} campo="contrato" selecionados={fContratos} onChange={setFContratos} />
-        <select className="rdb-fi" value={fFase} onChange={e => setFFase(e.target.value)}><option value="">Todas as fases</option>{FASES.map(f => <option key={f}>{f}</option>)}</select>
+        <select className="rdb-fi" value={fFase} onChange={e => setFFase(e.target.value)} style={{ maxWidth: 320 }}>
+          <option value="">Todas as fases e status · {noPer.length}</option>
+          <optgroup label="Fases">
+            {FASES.map(f => <option key={f} value={f}>{f} · {contPorFase.get(f) ?? 0}</option>)}
+          </optgroup>
+          <optgroup label="Status (cada etapa)">
+            {statusOrdenados.map(([st, n]) => <option key={st} value={"status:" + st}>{st} · {n}</option>)}
+          </optgroup>
+        </select>
         <select className="rdb-fi" value={fMotivo} onChange={e => setFMotivo(e.target.value)}><option value="">Todos os motivos</option>{motivos.map(m => <option key={m}>{m}</option>)}</select>
         <select className="rdb-fi" value={fUrgencia} onChange={e => setFUrgencia(e.target.value)}><option value="">Toda urgência</option>{urgencias.map(u => <option key={u}>{u}</option>)}</select>
         {filtrosAtivos > 0 && <button className="rdb-fi" onClick={() => { setFContratos([]); setFFase(""); setFMotivo(""); setFUrgencia(""); setBusca(""); }} style={{ borderColor: "#fecaca", color: "#b91c1c", cursor: "pointer", background: "#fff5f5" }}>✕ Limpar ({filtrosAtivos})</button>}
       </div>
 
       <div style={{ flex: 1, overflowY: "auto", padding: "16px 24px 28px" }}>
+        <svg width="0" height="0" style={{ position: "absolute" }} aria-hidden="true">
+          <defs>
+            <linearGradient id="rdb-grad-azul" x1="0" y1="0" x2="1" y2="0"><stop offset="0%" stopColor="#0f3171" /><stop offset="100%" stopColor="#3b82f6" /></linearGradient>
+            <linearGradient id="rdb-grad-laranja" x1="0" y1="0" x2="1" y2="0"><stop offset="0%" stopColor="#ea580c" /><stop offset="100%" stopColor="#fdba74" /></linearGradient>
+          </defs>
+        </svg>
         {loading ? (
           <div style={{ padding: "60px 20px", textAlign: "center", color: "#64748b" }}>Carregando indicadores...</div>
         ) : (<>
@@ -338,7 +359,7 @@ export default function RecrutamentoDashboard() {
                   <XAxis dataKey="nome" tick={{ fontSize: 10, fill: "#64748b" }} interval={0} />
                   <YAxis allowDecimals={false} tick={{ fontSize: 11, fill: "#64748b" }} />
                   <Tooltip />
-                  <Bar dataKey="qtd" name="Solicitações" radius={[6, 6, 0, 0]}>{statusData.map((d, i) => <Cell key={i} fill={d.cor} />)}</Bar>
+                  <Bar dataKey="qtd" name="Solicitações" radius={[8, 8, 0, 0]} isAnimationActive animationDuration={1100} animationEasing="ease-out">{statusData.map((d, i) => <Cell key={i} fill={d.cor} />)}</Bar>
                 </BarChart>
               </ResponsiveContainer>
             </Card>
@@ -347,7 +368,7 @@ export default function RecrutamentoDashboard() {
               {porMotivo.length === 0 ? <Vazio texto="Sem dados." /> : (
                 <ResponsiveContainer>
                   <PieChart>
-                    <Pie data={porMotivo} dataKey="qtd" nameKey="nome" cx="50%" cy="50%" innerRadius={50} outerRadius={90} label={e => e.qtd}>
+                    <Pie data={porMotivo} dataKey="qtd" nameKey="nome" cx="50%" cy="50%" innerRadius={55} outerRadius={92} paddingAngle={3} cornerRadius={6} label={e => e.qtd} isAnimationActive animationDuration={1200} animationEasing="ease-out">
                       {porMotivo.map((_, i) => <Cell key={i} fill={CORES[i % CORES.length]} />)}
                     </Pie>
                     <Legend /><Tooltip />
@@ -364,7 +385,7 @@ export default function RecrutamentoDashboard() {
                     <XAxis dataKey="nome" tick={{ fontSize: 10, fill: "#64748b" }} interval={0} />
                     <YAxis allowDecimals={false} tick={{ fontSize: 11, fill: "#64748b" }} />
                     <Tooltip />
-                    <Bar dataKey="qtd" name="Vagas" radius={[6, 6, 0, 0]}>{porUrgencia.map((d, i) => <Cell key={i} fill={/alta|urgente/i.test(d.nome) ? "#dc2626" : /m[eé]dia/i.test(d.nome) ? "#f59e0b" : "#16a34a"} />)}</Bar>
+                    <Bar dataKey="qtd" name="Vagas" radius={[8, 8, 0, 0]} isAnimationActive animationDuration={1100} animationEasing="ease-out">{porUrgencia.map((d, i) => <Cell key={i} fill={/alta|urgente/i.test(d.nome) ? "#dc2626" : /m[eé]dia/i.test(d.nome) ? "#f59e0b" : "#16a34a"} />)}</Bar>
                   </BarChart>
                 </ResponsiveContainer>
               )}
@@ -377,7 +398,7 @@ export default function RecrutamentoDashboard() {
                   <XAxis dataKey="nome" tick={{ fontSize: 10, fill: "#64748b" }} interval={0} />
                   <YAxis allowDecimals={false} tick={{ fontSize: 11, fill: "#64748b" }} />
                   <Tooltip />
-                  <Bar dataKey="qtd" name="Vagas" radius={[6, 6, 0, 0]}>{aging.map((d, i) => <Cell key={i} fill={["#16a34a", "#84cc16", "#f59e0b", "#f97316", "#dc2626"][i]} />)}</Bar>
+                  <Bar dataKey="qtd" name="Vagas" radius={[8, 8, 0, 0]} isAnimationActive animationDuration={1100} animationEasing="ease-out">{aging.map((d, i) => <Cell key={i} fill={["#16a34a", "#84cc16", "#f59e0b", "#f97316", "#dc2626"][i]} />)}</Bar>
                 </BarChart>
               </ResponsiveContainer>
             </Card>
@@ -390,7 +411,7 @@ export default function RecrutamentoDashboard() {
                     <XAxis type="number" allowDecimals={false} tick={{ fontSize: 11, fill: "#64748b" }} />
                     <YAxis type="category" dataKey="nome" width={160} tick={{ fontSize: 10, fill: "#475569" }} />
                     <Tooltip />
-                    <Bar dataKey="qtd" name="Vagas" fill="#0f3171" radius={[0, 6, 6, 0]} />
+                    <Bar dataKey="qtd" name="Vagas" fill="url(#rdb-grad-azul)" radius={[0, 8, 8, 0]} isAnimationActive animationDuration={1200} animationEasing="ease-out" />
                   </BarChart>
                 </ResponsiveContainer>
               )}
@@ -404,7 +425,7 @@ export default function RecrutamentoDashboard() {
                     <XAxis type="number" allowDecimals={false} tick={{ fontSize: 11, fill: "#64748b" }} />
                     <YAxis type="category" dataKey="nome" width={200} tick={{ fontSize: 9.5, fill: "#475569" }} />
                     <Tooltip />
-                    <Bar dataKey="qtd" name="Solicitações" fill="#2563eb" radius={[0, 6, 6, 0]} />
+                    <Bar dataKey="qtd" name="Solicitações" fill="url(#rdb-grad-azul)" radius={[0, 8, 8, 0]} isAnimationActive animationDuration={1200} animationEasing="ease-out" />
                   </BarChart>
                 </ResponsiveContainer>
               )}
@@ -417,7 +438,7 @@ export default function RecrutamentoDashboard() {
                   <XAxis dataKey="dia" tick={{ fontSize: 11, fill: "#64748b" }} />
                   <YAxis allowDecimals={false} tick={{ fontSize: 11, fill: "#64748b" }} />
                   <Tooltip />
-                  <Line type="monotone" dataKey="qtd" name="Currículos" stroke="#f97316" strokeWidth={2.5} dot={{ r: 3 }} />
+                  <Line type="monotone" dataKey="qtd" name="Currículos" stroke="#f97316" strokeWidth={3} dot={{ r: 3, strokeWidth: 2, fill: "#fff" }} activeDot={{ r: 6 }} isAnimationActive animationDuration={1400} animationEasing="ease-out" />
                 </LineChart>
               </ResponsiveContainer>
             </Card>
@@ -430,7 +451,7 @@ export default function RecrutamentoDashboard() {
                     <XAxis type="number" tick={{ fontSize: 11, fill: "#64748b" }} />
                     <YAxis type="category" dataKey="etapa" width={150} tick={{ fontSize: 9.5, fill: "#475569" }} />
                     <Tooltip />
-                    <Bar dataKey="dias" name="Dias (média)" fill="#0f3171" radius={[0, 6, 6, 0]} />
+                    <Bar dataKey="dias" name="Dias (média)" fill="url(#rdb-grad-azul)" radius={[0, 8, 8, 0]} isAnimationActive animationDuration={1200} animationEasing="ease-out" />
                   </BarChart>
                 </ResponsiveContainer>
               )}
@@ -444,7 +465,7 @@ export default function RecrutamentoDashboard() {
                     <XAxis type="number" allowDecimals={false} tick={{ fontSize: 11, fill: "#64748b" }} />
                     <YAxis type="category" dataKey="vaga" width={150} tick={{ fontSize: 9.5, fill: "#475569" }} />
                     <Tooltip />
-                    <Bar dataKey="qtd" name="Candidaturas" fill="#f97316" radius={[0, 6, 6, 0]} />
+                    <Bar dataKey="qtd" name="Candidaturas" fill="url(#rdb-grad-laranja)" radius={[0, 8, 8, 0]} isAnimationActive animationDuration={1200} animationEasing="ease-out" />
                   </BarChart>
                 </ResponsiveContainer>
               )}
@@ -458,7 +479,7 @@ export default function RecrutamentoDashboard() {
                     <XAxis type="number" allowDecimals={false} tick={{ fontSize: 11, fill: "#64748b" }} />
                     <YAxis type="category" dataKey="etapa" width={130} tick={{ fontSize: 9.5, fill: "#475569" }} />
                     <Tooltip />
-                    <Bar dataKey="qtd" name="Candidatos" radius={[0, 6, 6, 0]}>{etapaData.map((d, i) => <Cell key={i} fill={etapaCor[d.etapa] || "#0f3171"} />)}</Bar>
+                    <Bar dataKey="qtd" name="Candidatos" radius={[0, 8, 8, 0]} isAnimationActive animationDuration={1200} animationEasing="ease-out">{etapaData.map((d, i) => <Cell key={i} fill={etapaCor[d.etapa] || "#0f3171"} />)}</Bar>
                   </BarChart>
                 </ResponsiveContainer>
               )}

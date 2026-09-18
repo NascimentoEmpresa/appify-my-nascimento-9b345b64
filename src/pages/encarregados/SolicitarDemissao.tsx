@@ -30,7 +30,7 @@ import {
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { semCodigoFilial } from "@/lib/rh/colaboradoresUtils";
-import { chaveContrato } from "@/lib/recrutamento/vagaRegras";
+import { chaveContrato, contratoEhAdministrativo } from "@/lib/recrutamento/vagaRegras";
 import { usePostos } from "@/hooks/useSupCatalogo";
 import { solicitacaoEmAberto, type SolicitacaoEmAberto } from "@/lib/solicitacoes/duplicidade";
 
@@ -265,7 +265,11 @@ export default function SolicitarDemissao() {
     setColaborador(e);
     // Cadastro que diz ADMINISTRATIVO/ESCRITÓRIO no posto já vem marcado como
     // escritório — o encarregado pode desmarcar.
-    if (e && localEhEscritorio(e.posto)) setEEscritorio(true);
+    // Escritório = contrato ADM E ESTAGIÁRIOS (18/09/2026): marca sozinho e
+    // trava; fora dele não dá pra marcar nem escolher setor — era por aí que
+    // demissão de posto ia parar na Diretoria.
+    setEEscritorio(!!e && contratoEhAdministrativo(e.contrato || e.nomeFilial));
+    if (!(e && contratoEhAdministrativo(e.contrato || e.nomeFilial))) setSetor("");
     if (e) {
       setForm((f) => ({
         ...f,
@@ -570,25 +574,27 @@ export default function SolicitarDemissao() {
               <div className="grid gap-4 sm:grid-cols-2">
                 <div className="rounded-lg border p-3">
                   <div className="flex items-start gap-2.5">
-                    <Checkbox id="dem-escritorio" checked={eEscritorio}
-                              onCheckedChange={(v) => setEEscritorio(v === true)} className="mt-0.5" />
+                    <Checkbox id="dem-escritorio" checked={eEscritorio} disabled className="mt-0.5" />
                     <div className="space-y-1">
                       <Label htmlFor="dem-escritorio" className="cursor-pointer font-medium">
                         É do escritório administrativo
                       </Label>
                       <p className="text-xs text-muted-foreground">
-                        Marcado, a aprovação é da Diretoria. Desmarcado (e sem setor), é do Operacional.
+                        {eEscritorio
+                          ? "Contrato ADM E ESTAGIÁRIOS: marcado automaticamente — a aprovação é da Diretoria."
+                          : "Só o contrato ADM E ESTAGIÁRIOS é escritório. Colaborador de posto vai pro Operacional."}
                       </p>
                       {colaborador && !eEscritorio && localEhEscritorio(colaborador.posto || nomeContrato) && (
                         <p className="text-xs font-medium text-amber-700 dark:text-amber-400">
-                          O cadastro diz que {colaborador.nome} está em “{colaborador.posto || nomeContrato}” — parece escritório. Confira.
+                          O posto diz “{colaborador.posto || nomeContrato}”, mas o contrato não é ADM E ESTAGIÁRIOS — segue pelo Operacional.
                         </p>
                       )}
                     </div>
                   </div>
                 </div>
-                <div>
-                  <Label>Setor {eEscritorio ? <span className="text-destructive">*</span> : "(opcional)"}</Label>
+                {/* Setor só no escritório (18/09/2026): setor sozinho mandava pra Diretoria. */}
+                {eEscritorio && <div>
+                  <Label>Setor <span className="text-destructive">*</span></Label>
                   <Select value={setor || "nenhum"} onValueChange={(v) => setSetor(v === "nenhum" ? "" : v)}>
                     <SelectTrigger className={"mt-1" + (eEscritorio && !setor ? " border-destructive" : "")}>
                       <SelectValue placeholder="Não informar" />
@@ -603,7 +609,7 @@ export default function SolicitarDemissao() {
                       ? "Demissão do escritório: o setor é obrigatório — é por ele que a Diretoria acha o pedido."
                       : "Com setor, a aprovação passa a ser da Diretoria (só de quem aprova esse setor)."}
                   </p>
-                </div>
+                </div>}
               </div>
             </>
           )}
