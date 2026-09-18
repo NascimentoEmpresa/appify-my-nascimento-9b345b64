@@ -112,8 +112,10 @@ function useRpcHoraExtra(nome: string) {
 
 export const useSalvarHoraExtra = () => useRpcHoraExtra("hora_extra_salvar");
 export const useLiberarHoraExtra = () => useRpcHoraExtra("hora_extra_liberar");
+export const useLiberarHoraExtraComHorarios = () => useRpcHoraExtra("hora_extra_liberar_com_horarios");
 export const useConcluirHoraExtra = () => useRpcHoraExtra("hora_extra_concluir");
 export const useValidarHoraExtra = () => useRpcHoraExtra("hora_extra_validar");
+export const useValidarHoraExtraComHorarios = () => useRpcHoraExtra("hora_extra_validar_com_horarios");
 export const useExcluirHoraExtra = () => useRpcHoraExtra("hora_extra_excluir");
 export const useSalvarEscalaHoraExtra = () => useRpcHoraExtra("hora_extra_escala_salvar");
 export const useExcluirEscalaHoraExtra = () => useRpcHoraExtra("hora_extra_escala_excluir");

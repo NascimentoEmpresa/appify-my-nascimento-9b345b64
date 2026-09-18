@@ -31,7 +31,7 @@ import { motivoBloqueioEntrada } from "@/lib/suprimentos/entradaEstoque";
 import {
   PackagePlus, Search, AlertTriangle, Boxes, Undo2, Trash2, ShieldAlert, Plus, X, Tag,
   ClipboardCheck, History, ArrowDownToLine, ArrowUpFromLine, RotateCcw, Check, Coins,
-  PackageOpen, ClipboardList, Pencil, ShieldCheck, MapPin,
+  PackageOpen, ClipboardList, Pencil, ShieldCheck, MapPin, FileSpreadsheet,
   type LucideIcon,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -39,6 +39,9 @@ import { caAtendeLaudo } from "@/lib/sst/laudo";
 import { useAccessibleMenus } from "@/hooks/useAccessibleMenus";
 import { AcessoGate } from "@/components/auth/AcessoGate";
 import { useContagemRotativa } from "@/hooks/useSupSeparacao";
+import { montarLinhasExcelEstoque, nomeArquivoEstoque } from "@/lib/suprimentos/estoqueEtiquetasExcel";
+import { toast } from "sonner";
+import * as XLSX from "xlsx";
 
 // A tabela de laudos é nova e ainda não existe em types.ts (regra R8).
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -81,6 +84,7 @@ export default function EstoqueEtiquetas() {
   const [detalhe, setDetalhe] = useState<LinhaEstoque | null>(null);
   const [excluindo, setExcluindo] = useState<LinhaEstoque | null>(null);
   const [editando, setEditando] = useState<LinhaEstoque | null>(null);
+  const [exportando, setExportando] = useState<"completo" | "filtrado" | null>(null);
 
   const filtradas = useMemo(() => {
     const t = busca.trim().toLowerCase();
@@ -115,6 +119,31 @@ export default function EstoqueEtiquetas() {
     semCusto: linhas.filter((l) => l.disponivel > 0 && l.custo_unitario === 0).length,
   }), [linhas]);
 
+  const exportarExcel = (escopo: "completo" | "filtrado") => {
+    const dados = escopo === "completo" ? linhas : filtradas;
+    setExportando(escopo);
+    try {
+      const planilha = montarLinhasExcelEstoque(dados);
+      const aba = planilha.length > 0
+        ? XLSX.utils.json_to_sheet(planilha)
+        : XLSX.utils.aoa_to_sheet([["Código", "Material", "Tipo", "Almoxarifado", "Localização", "Tamanho", "Disponível", "Reservado", "Físico", "Consumido", "Estoque mínimo", "Custo unitário", "Valor total", "Entradas registradas", "Preço válido até", "Observações"]]);
+      if (aba["!ref"]) aba["!autofilter"] = { ref: aba["!ref"] };
+      aba["!cols"] = [
+        { wch: 16 }, { wch: 36 }, { wch: 20 }, { wch: 24 }, { wch: 16 }, { wch: 16 },
+        { wch: 14 }, { wch: 12 }, { wch: 12 }, { wch: 12 }, { wch: 16 }, { wch: 16 },
+        { wch: 16 }, { wch: 22 }, { wch: 18 }, { wch: 42 },
+      ];
+      const arquivo = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(arquivo, aba, "Estoque");
+      XLSX.writeFile(arquivo, nomeArquivoEstoque(escopo));
+      toast.success(`Planilha ${escopo === "completo" ? "completa" : "filtrada"} exportada com ${dados.length} material${dados.length === 1 ? "" : "is"}.`);
+    } catch (erro: unknown) {
+      toast.error(erro instanceof Error ? erro.message : "Não foi possível exportar a planilha.");
+    } finally {
+      setExportando(null);
+    }
+  };
+
   return (
     <div className="space-y-6">
       <PageHeader
@@ -135,6 +164,16 @@ export default function EstoqueEtiquetas() {
           // o que seria negado — falhar depois do clique é pior, porque a
           // pessoa não sabe se errou ou se o sistema quebrou.
           <>
+            <Button variant="outline" onClick={() => exportarExcel("completo")}
+                    disabled={linhas.length === 0 || exportando !== null}>
+              <FileSpreadsheet className="mr-2 h-4 w-4" />
+              {exportando === "completo" ? "Exportando…" : `Exportar tudo (${linhas.length})`}
+            </Button>
+            <Button variant="outline" onClick={() => exportarExcel("filtrado")}
+                    disabled={filtradas.length === 0 || exportando !== null}>
+              <FileSpreadsheet className="mr-2 h-4 w-4" />
+              {exportando === "filtrado" ? "Exportando…" : `Exportar filtrado (${filtradas.length})`}
+            </Button>
             {/* Consultar é de todo mundo. É o botão que o estoquista usa. */}
             <Button variant="outline"
                     onClick={() => { setAbaDaEntrada("consultar"); setEntradaAberta(true); }}>
