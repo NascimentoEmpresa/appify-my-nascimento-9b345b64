@@ -190,48 +190,99 @@ export default function RecrutamentoDashboard() {
   const etapaData = CAND_ETAPAS.map(e => ({ etapa: e, qtd: cursF.filter(c => c.etapa_processo === e).length })).filter(d => d.qtd > 0);
   const CORES = ["#0f3171", "#2563eb", "#0891b2", "#16a34a", "#eab308", "#ea580c", "#dc2626", "#9333ea", "#db2777", "#64748b"];
 
-  const Kpi = ({ label, val, color, sub }: { label: string; val: number | string; color: string; sub?: string }) => (
-    <div style={{ background: "#fff", border: "1px solid #e2e8f0", borderRadius: 16, padding: "14px 16px", boxShadow: "0 8px 24px rgba(15,23,42,.06)" }}>
-      <div style={{ fontSize: 11.5, color: "#64748b", textTransform: "uppercase", letterSpacing: ".6px", marginBottom: 4, fontWeight: 800 }}>{label}</div>
-      <div style={{ fontSize: 28, fontWeight: 900, color, lineHeight: 1.1 }}>{val}</div>
-      {sub && <div style={{ fontSize: 12, color: "#64748b", marginTop: 3 }}>{sub}</div>}
+  const Kpi = ({ label, val, color, sub, icone = "📊" }: { label: string; val: number | string; color: string; sub?: string; icone?: string }) => (
+    <div className="rdb-kpi" style={{ "--c": color } as CSSProperties}>
+      <div className="rdb-kpi-ic">{icone}</div>
+      <div style={{ minWidth: 0 }}>
+        <div className="rdb-kpi-l">{label}</div>
+        <div className="rdb-kpi-v">{val}</div>
+        {sub && <div className="rdb-kpi-s">{sub}</div>}
+      </div>
     </div>
   );
-  const Card = ({ title, children, h = 300, largo }: { title: string; children: ReactNode; h?: number; largo?: boolean }) => (
-    <div style={{ background: "#fff", border: "1px solid #e2e8f0", borderRadius: 18, padding: 18, boxShadow: "0 8px 24px rgba(15,23,42,.06)", gridColumn: largo ? "1 / -1" : undefined, minWidth: 0 }}>
-      <div style={{ fontSize: 14, fontWeight: 800, color: "#0f3171", marginBottom: 12 }}>{title}</div>
+  const Card = ({ title, children, h = 300, largo, sub }: { title: string; children: ReactNode; h?: number; largo?: boolean; sub?: string }) => (
+    <div className="rdb-card" style={{ gridColumn: largo ? "1 / -1" : undefined }}>
+      <div className="rdb-card-h"><div className="rdb-card-t">{title}</div>{sub && <div className="rdb-card-s">{sub}</div>}</div>
       <div style={{ width: "100%", height: h }}>{children}</div>
     </div>
   );
-  const sel: CSSProperties = { background: "#fff", border: "1.5px solid #94a3b8", borderRadius: 10, color: "#0f172a", fontSize: 13.5, fontWeight: 700, padding: "8px 12px", outline: "none", fontFamily: "inherit" };
+  const PERIODOS: [string, string][] = [["abertas", "📌 Em aberto hoje"], ["30", "30 dias"], ["90", "90 dias"], ["365", "12 meses"], ["", "Tudo"]];
 
   return (
     <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", background: "#f5f7fb" }}>
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 14, flexWrap: "wrap", padding: "16px 22px", margin: "18px 24px 0", border: "1px solid #e2e8f0", borderRadius: 18, background: "linear-gradient(135deg,#fff,#f8fbff)", boxShadow: "0 8px 24px rgba(15,23,42,.06)" }}>
-        <div>
-          <div style={{ fontSize: 20, fontWeight: 800, color: "#0f3171" }}>📊 Dashboard — Recrutamento e Seleção</div>
-          <div style={{ fontSize: 13, color: "#64748b", marginTop: 2 }}>Vagas em aberto por contrato, fases, candidaturas e tempo por etapa — tudo no recorte dos filtros.</div>
+      <style>{`
+        .rdb-hero{position:relative;overflow:hidden;border-radius:24px;padding:28px 32px 24px;margin:18px 24px 0;background:linear-gradient(135deg,#0f3171 0%,#1d4ed8 60%,#2563eb 100%);color:#fff;box-shadow:0 24px 60px rgba(15,49,113,.28)}
+        .rdb-hero::before{content:"";position:absolute;right:-60px;top:-80px;width:320px;height:320px;border-radius:50%;background:rgba(255,255,255,.07)}
+        .rdb-hero::after{content:"";position:absolute;right:160px;bottom:-150px;width:260px;height:260px;border-radius:50%;background:rgba(255,255,255,.05)}
+        .rdb-hero-in{position:relative;display:flex;justify-content:space-between;align-items:flex-start;gap:18px;flex-wrap:wrap}
+        .rdb-eyebrow{font-size:11.5px;font-weight:800;letter-spacing:1.2px;text-transform:uppercase;opacity:.8}
+        .rdb-hero h1{margin:5px 0 6px;font-size:30px;font-weight:900;letter-spacing:-.5px;line-height:1.1}
+        .rdb-hero p{margin:0;font-size:14px;opacity:.9;max-width:720px;line-height:1.5}
+        .rdb-seg{display:inline-flex;background:rgba(255,255,255,.14);border:1px solid rgba(255,255,255,.25);border-radius:999px;padding:4px;gap:3px;flex-wrap:wrap}
+        .rdb-seg button{border:none;border-radius:999px;padding:8px 14px;font-size:12.5px;font-weight:800;cursor:pointer;background:transparent;color:rgba(255,255,255,.85);font-family:inherit;transition:.15s;white-space:nowrap}
+        .rdb-seg button:hover{background:rgba(255,255,255,.12)}
+        .rdb-seg button.on{background:#fff;color:#0f3171;box-shadow:0 4px 12px rgba(0,0,0,.18)}
+        .rdb-seg select{border:none;border-radius:999px;padding:8px 12px;font-size:12.5px;font-weight:800;background:transparent;color:rgba(255,255,255,.85);font-family:inherit;cursor:pointer;outline:none}
+        .rdb-seg select.on{background:#fff;color:#0f3171}
+        .rdb-seg select option{color:#0f172a}
+        .rdb-pills{position:relative;display:flex;gap:8px;flex-wrap:wrap;margin-top:16px}
+        .rdb-pills span{background:rgba(255,255,255,.14);border:1px solid rgba(255,255,255,.25);border-radius:999px;padding:6px 13px;font-size:12.5px;font-weight:700}
+        .rdb-pills span b{font-weight:900}
+        .rdb-pills span.alerta{background:#fff;color:#b91c1c;border-color:#fff}
+        .rdb-filtros{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin:14px 24px 0;background:#fff;border:1px solid #e2e8f0;border-radius:16px;padding:12px 14px;box-shadow:0 8px 24px rgba(15,23,42,.05)}
+        .rdb-fi{height:42px;border:1.5px solid #cbd5e1;border-radius:12px;padding:0 12px;font-size:13.5px;font-weight:700;background:#fff;color:#0f172a;font-family:inherit;outline:none;box-sizing:border-box}
+        .rdb-fi:focus{border-color:#0f3171;box-shadow:0 0 0 4px rgba(15,49,113,.12)}
+        .rdb-fi::placeholder{color:#64748b;font-weight:500}
+        .rdb-kpi{position:relative;background:#fff;border:1px solid #e2e8f0;border-radius:16px;padding:14px 14px 14px 18px;box-shadow:0 8px 24px rgba(15,23,42,.05);display:flex;align-items:center;gap:12px;overflow:hidden;transition:transform .15s,box-shadow .15s;min-width:0}
+        .rdb-kpi:hover{transform:translateY(-2px);box-shadow:0 14px 30px rgba(15,23,42,.09)}
+        .rdb-kpi::before{content:"";position:absolute;left:0;top:0;bottom:0;width:5px;background:var(--c)}
+        .rdb-kpi-ic{width:40px;height:40px;border-radius:12px;display:grid;place-items:center;font-size:18px;background:color-mix(in srgb,var(--c) 12%,#fff);flex-shrink:0}
+        .rdb-kpi-l{font-size:10.5px;font-weight:800;color:#94a3b8;text-transform:uppercase;letter-spacing:.6px;line-height:1.2}
+        .rdb-kpi-v{font-size:24px;font-weight:900;color:var(--c);line-height:1.15;margin-top:2px}
+        .rdb-kpi-s{font-size:11px;color:#64748b;margin-top:2px}
+        .rdb-card{background:#fff;border:1px solid #e2e8f0;border-radius:18px;padding:18px;box-shadow:0 8px 24px rgba(15,23,42,.06);min-width:0}
+        .rdb-card-h{display:flex;justify-content:space-between;align-items:baseline;gap:10px;flex-wrap:wrap;margin-bottom:12px}
+        .rdb-card-t{font-size:14px;font-weight:800;color:#0f3171;display:flex;align-items:center;gap:8px}
+        .rdb-card-t::before{content:"";width:4px;height:16px;border-radius:2px;background:#0f3171}
+        .rdb-card-s{font-size:12px;color:#64748b}
+        .rdb-contrato{text-align:left;border:1.5px solid #e2e8f0;background:#fff;border-radius:16px;padding:14px 16px;cursor:pointer;font-family:inherit;display:flex;flex-direction:column;gap:7px;transition:transform .15s,box-shadow .15s,border-color .15s}
+        .rdb-contrato:hover{transform:translateY(-2px);box-shadow:0 14px 30px rgba(15,23,42,.1);border-color:#93c5fd}
+        .rdb-contrato.on{border-color:#0f3171;background:#eef4ff;box-shadow:0 0 0 3px rgba(15,49,113,.12)}
+      `}</style>
+
+      {/* ── Hero (18/09/2026): a mesma linguagem das centrais do Jurídico. ── */}
+      <div className="rdb-hero">
+        <div className="rdb-hero-in">
+          <div>
+            <div className="rdb-eyebrow">Recursos Humanos · Recrutamento e Seleção</div>
+            <h1>📊 Dashboard de Recrutamento</h1>
+            <p>Vagas em aberto por contrato, fases do funil, candidaturas e tempo por etapa. Tudo responde ao recorte de período e aos filtros abaixo.</p>
+          </div>
+          <div className="rdb-seg" title="Recorte de período">
+            {PERIODOS.map(([v, l]) => <button key={v || "tudo"} className={periodo === v ? "on" : ""} onClick={() => setPeriodo(v)}>{l}</button>)}
+            <select className={/^\d{4}-\d{2}$/.test(periodo) ? "on" : ""} value={/^\d{4}-\d{2}$/.test(periodo) ? periodo : "__"} onChange={e => { if (e.target.value !== "__") setPeriodo(e.target.value); }}>
+              <option value="__">Mês…</option>
+              {mesesOpc.map(m => <option key={m} value={m}>{rotuloPeriodo(m)}</option>)}
+            </select>
+          </div>
         </div>
-        <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-          <select value={periodo} onChange={e => setPeriodo(e.target.value)} style={sel}>
-            <option value="abertas">📌 Vagas em aberto hoje</option>
-            <option value="30">Últimos 30 dias</option>
-            <option value="90">Últimos 90 dias</option>
-            <option value="365">Últimos 12 meses</option>
-            {mesesOpc.map(m => <option key={m} value={m}>{rotuloPeriodo(m)}</option>)}
-            <option value="">Todo o período</option>
-          </select>
-          <FiltroContratos linhas={sols.filter(noPeriodo)} campo="contrato" selecionados={fContratos} onChange={setFContratos} />
+        <div className="rdb-pills">
+          <span>📌 <b>{totalAbertas}</b> vaga{totalAbertas === 1 ? "" : "s"} em aberto</span>
+          <span>⏳ <b>{aguardando}</b> aguardando aprovação</span>
+          <span>🔎 <b>{emProcesso}</b> em seleção</span>
+          {urgentes > 0 && <span className="alerta">🔥 <b>{urgentes}</b> urgente{urgentes === 1 ? "" : "s"}</span>}
+          <span>📥 <b>{curvSemana}</b> currículos em 7 dias</span>
         </div>
       </div>
 
       {/* Barra de filtros */}
-      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", margin: "10px 24px 0" }}>
-        <input value={busca} onChange={e => setBusca(e.target.value)} placeholder="🔎 Cargo, contrato, cidade, solicitante ou nº…" style={{ ...sel, fontWeight: 500, minWidth: 280, flex: 1 }} />
-        <select value={fFase} onChange={e => setFFase(e.target.value)} style={sel}><option value="">Todas as fases</option>{FASES.map(f => <option key={f}>{f}</option>)}</select>
-        <select value={fMotivo} onChange={e => setFMotivo(e.target.value)} style={sel}><option value="">Todos os motivos</option>{motivos.map(m => <option key={m}>{m}</option>)}</select>
-        <select value={fUrgencia} onChange={e => setFUrgencia(e.target.value)} style={sel}><option value="">Toda urgência</option>{urgencias.map(u => <option key={u}>{u}</option>)}</select>
-        {filtrosAtivos > 0 && <button onClick={() => { setFContratos([]); setFFase(""); setFMotivo(""); setFUrgencia(""); setBusca(""); }} style={{ ...sel, borderColor: "#fecaca", color: "#b91c1c", cursor: "pointer" }}>✕ Limpar filtros ({filtrosAtivos})</button>}
+      <div className="rdb-filtros">
+        <input className="rdb-fi" value={busca} onChange={e => setBusca(e.target.value)} placeholder="🔎 Cargo, contrato, cidade, solicitante ou nº…" style={{ minWidth: 280, flex: 1 }} />
+        <FiltroContratos linhas={sols.filter(noPeriodo)} campo="contrato" selecionados={fContratos} onChange={setFContratos} />
+        <select className="rdb-fi" value={fFase} onChange={e => setFFase(e.target.value)}><option value="">Todas as fases</option>{FASES.map(f => <option key={f}>{f}</option>)}</select>
+        <select className="rdb-fi" value={fMotivo} onChange={e => setFMotivo(e.target.value)}><option value="">Todos os motivos</option>{motivos.map(m => <option key={m}>{m}</option>)}</select>
+        <select className="rdb-fi" value={fUrgencia} onChange={e => setFUrgencia(e.target.value)}><option value="">Toda urgência</option>{urgencias.map(u => <option key={u}>{u}</option>)}</select>
+        {filtrosAtivos > 0 && <button className="rdb-fi" onClick={() => { setFContratos([]); setFFase(""); setFMotivo(""); setFUrgencia(""); setBusca(""); }} style={{ borderColor: "#fecaca", color: "#b91c1c", cursor: "pointer", background: "#fff5f5" }}>✕ Limpar ({filtrosAtivos})</button>}
       </div>
 
       <div style={{ flex: 1, overflowY: "auto", padding: "16px 24px 28px" }}>
@@ -239,9 +290,9 @@ export default function RecrutamentoDashboard() {
           <div style={{ padding: "60px 20px", textAlign: "center", color: "#64748b" }}>Carregando indicadores...</div>
         ) : (<>
           {/* ── Vagas em aberto por contrato ── */}
-          <div style={{ background: "#fff", border: "2px solid #0f3171", borderRadius: 18, padding: 18, boxShadow: "0 8px 24px rgba(15,23,42,.08)", marginBottom: 16 }}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 12, flexWrap: "wrap", marginBottom: 10 }}>
-              <div style={{ fontSize: 15, fontWeight: 900, color: "#0f3171" }}>📌 Vagas em aberto por contrato</div>
+          <div className="rdb-card" style={{ marginBottom: 16, borderColor: "#c7d2fe" }}>
+            <div className="rdb-card-h">
+              <div className="rdb-card-t">📌 Vagas em aberto por contrato</div>
               <div style={{ fontSize: 13, color: "#475569" }}><b style={{ color: "#0f172a", fontSize: 16 }}>{totalAbertas}</b> vaga{totalAbertas === 1 ? "" : "s"} em <b>{totalSolAbertas}</b> solicitaç{totalSolAbertas === 1 ? "ão" : "ões"}, em <b>{porContrato.length}</b> contrato{porContrato.length === 1 ? "" : "s"} · clique no contrato pra filtrar o painel</div>
             </div>
             {porContrato.length === 0 ? <div style={{ color: "#64748b", fontSize: 13.5, padding: 10 }}>Nenhuma vaga em aberto neste recorte.</div> : (
@@ -249,8 +300,7 @@ export default function RecrutamentoDashboard() {
                 {porContrato.map(c => {
                   const ativo = fContratos.length === 1 && fContratos[0] === c.contrato;
                   return (
-                    <button key={c.contrato} onClick={() => setFContratos(ativo ? [] : [c.contrato])}
-                      style={{ textAlign: "left", border: `1.5px solid ${ativo ? "#0f3171" : "#e2e8f0"}`, background: ativo ? "#eef4ff" : "#f8fafc", borderRadius: 14, padding: "12px 14px", cursor: "pointer", fontFamily: "inherit", display: "flex", flexDirection: "column", gap: 6 }}>
+                    <button key={c.contrato} onClick={() => setFContratos(ativo ? [] : [c.contrato])} className={"rdb-contrato" + (ativo ? " on" : "")}>
                       <div style={{ display: "flex", justifyContent: "space-between", gap: 8, alignItems: "flex-start" }}>
                         <div style={{ fontWeight: 800, color: "#0f172a", fontSize: 13.5, lineHeight: 1.25 }}>{c.contrato}</div>
                         <div style={{ fontSize: 26, fontWeight: 900, color: "#0f3171", lineHeight: 1 }}>{c.vagas}</div>
@@ -269,19 +319,19 @@ export default function RecrutamentoDashboard() {
           </div>
 
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(150px,1fr))", gap: 12, marginBottom: 18 }}>
-            <Kpi label="Solicitações" val={total} color="#0f3171" sub={rotuloPeriodo(periodo)} />
-            <Kpi label="Vagas em aberto" val={totalAbertas} color="#0f3171" sub={`${totalSolAbertas} solicitações`} />
-            <Kpi label="Aguardando aprovação" val={aguardando} color="#f59e0b" />
-            <Kpi label="Em seleção" val={emProcesso} color="#3b82f6" />
-            <Kpi label="Urgentes em aberto" val={urgentes} color="#dc2626" sub="vagas com urgência alta" />
-            <Kpi label="Contratadas" val={contratados} color="#16a34a" />
-            <Kpi label="Reprovadas/Canceladas" val={reprovadas} color="#dc2626" />
-            <Kpi label="Currículos hoje / 7 dias" val={`${curvHoje} / ${curvSemana}`} color="#f97316" />
-            <Kpi label="Banco de Talentos" val={geral} color="#8b5cf6" />
+            <Kpi icone="🗂️" label="Solicitações" val={total} color="#0f3171" sub={rotuloPeriodo(periodo)} />
+            <Kpi icone="📌" label="Vagas em aberto" val={totalAbertas} color="#0f3171" sub={`${totalSolAbertas} solicitações`} />
+            <Kpi icone="⏳" label="Aguardando aprovação" val={aguardando} color="#f59e0b" />
+            <Kpi icone="🔎" label="Em seleção" val={emProcesso} color="#3b82f6" />
+            <Kpi icone="🔥" label="Urgentes em aberto" val={urgentes} color="#dc2626" sub="vagas com urgência alta" />
+            <Kpi icone="✅" label="Contratadas" val={contratados} color="#16a34a" sub={periodo === "abertas" ? "só fora do recorte 'em aberto'" : undefined} />
+            <Kpi icone="⛔" label="Reprovadas/Canceladas" val={reprovadas} color="#dc2626" sub={periodo === "abertas" ? "só fora do recorte 'em aberto'" : undefined} />
+            <Kpi icone="📥" label="Currículos hoje / 7 dias" val={`${curvHoje} / ${curvSemana}`} color="#f97316" />
+            <Kpi icone="🌟" label="Banco de Talentos" val={geral} color="#8b5cf6" sub="candidaturas sem vaga" />
           </div>
 
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(380px,1fr))", gap: 16 }}>
-            <Card title="Solicitações por fase">
+            <Card title="Solicitações por fase" sub="onde cada pedido está">
               <ResponsiveContainer>
                 <BarChart data={statusData} margin={{ top: 6, right: 10, left: -18, bottom: 0 }}>
                   <CartesianGrid strokeDasharray="3 3" stroke="#eef2f7" />
@@ -293,7 +343,7 @@ export default function RecrutamentoDashboard() {
               </ResponsiveContainer>
             </Card>
 
-            <Card title="Vagas por motivo">
+            <Card title="Vagas por motivo" sub="admissão, substituição, aumento…">
               {porMotivo.length === 0 ? <Vazio texto="Sem dados." /> : (
                 <ResponsiveContainer>
                   <PieChart>
@@ -306,7 +356,7 @@ export default function RecrutamentoDashboard() {
               )}
             </Card>
 
-            <Card title="Vagas por urgência">
+            <Card title="Vagas por urgência" sub="grau marcado na abertura">
               {porUrgencia.length === 0 ? <Vazio texto="Sem dados." /> : (
                 <ResponsiveContainer>
                   <BarChart data={porUrgencia} margin={{ top: 6, right: 10, left: -18, bottom: 0 }}>
@@ -320,7 +370,7 @@ export default function RecrutamentoDashboard() {
               )}
             </Card>
 
-            <Card title="Tempo em aberto (vagas ainda abertas)">
+            <Card title="Tempo em aberto" sub="vagas ainda abertas, por faixa de dias">
               <ResponsiveContainer>
                 <BarChart data={aging} margin={{ top: 6, right: 10, left: -18, bottom: 0 }}>
                   <CartesianGrid strokeDasharray="3 3" stroke="#eef2f7" />
@@ -332,7 +382,7 @@ export default function RecrutamentoDashboard() {
               </ResponsiveContainer>
             </Card>
 
-            <Card title="Vagas por cargo (top 10)" h={Math.max(300, porCargo.length * 30)}>
+            <Card title="Vagas por cargo" sub="os 10 mais pedidos" h={Math.max(300, porCargo.length * 30)}>
               {porCargo.length === 0 ? <Vazio texto="Sem dados." /> : (
                 <ResponsiveContainer>
                   <BarChart data={porCargo} layout="vertical" margin={{ top: 6, right: 16, left: 20, bottom: 0 }}>
@@ -346,7 +396,7 @@ export default function RecrutamentoDashboard() {
               )}
             </Card>
 
-            <Card title="Solicitações por status (detalhado)" h={Math.max(300, porStatus.length * 28)}>
+            <Card title="Solicitações por status" sub="detalhado, etapa a etapa" h={Math.max(300, porStatus.length * 28)}>
               {porStatus.length === 0 ? <Vazio texto="Sem dados." /> : (
                 <ResponsiveContainer>
                   <BarChart data={porStatus} layout="vertical" margin={{ top: 6, right: 16, left: 20, bottom: 0 }}>
@@ -360,7 +410,7 @@ export default function RecrutamentoDashboard() {
               )}
             </Card>
 
-            <Card title={/^\d{4}-\d{2}$/.test(periodo) ? `Currículos recebidos — ${rotuloPeriodo(periodo)}` : periodo === "90" ? "Currículos recebidos — últimos 30 dias" : "Currículos recebidos — últimos 14 dias"}>
+            <Card title="Currículos recebidos" sub={/^\d{4}-\d{2}$/.test(periodo) ? rotuloPeriodo(periodo) : periodo === "90" ? "últimos 30 dias" : "últimos 14 dias"}>
               <ResponsiveContainer>
                 <LineChart data={dias14} margin={{ top: 6, right: 10, left: -18, bottom: 0 }}>
                   <CartesianGrid strokeDasharray="3 3" stroke="#eef2f7" />
@@ -372,7 +422,7 @@ export default function RecrutamentoDashboard() {
               </ResponsiveContainer>
             </Card>
 
-            <Card title="Tempo médio por etapa (dias)">
+            <Card title="Tempo médio por etapa" sub="dias que o candidato fica em cada fase">
               {tempos.length === 0 ? <Vazio texto="Ainda sem transições registradas." /> : (
                 <ResponsiveContainer>
                   <BarChart data={tempos} layout="vertical" margin={{ top: 6, right: 16, left: 20, bottom: 0 }}>
