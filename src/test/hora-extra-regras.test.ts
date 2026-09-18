@@ -13,6 +13,7 @@ import {
   mensagemErro,
   minutosJornada,
   minutosTrabalhados,
+  podeAlterarHorariosNaLiberacao,
   podeEditarHoraExtra,
   rotuloFaseAnexo,
   sobrepoe,
@@ -139,6 +140,14 @@ describe("regras de hora extra", () => {
     expect(podeEditarHoraExtra({ status: "reprovada", ehDono: false, podeAlterar: true })).toBe(false));
   it("não deixa editar sem a ação alterar", () =>
     expect(podeEditarHoraExtra({ status: "reprovada", ehDono: true, podeAlterar: false })).toBe(false));
+  it.each([
+    ["aguardando_liberacao", true, true],
+    ["aguardando_liberacao", false, false],
+    ["aguardando_validacao", true, false],
+    ["aprovada", true, false],
+  ])("só libera ajuste do ponto na análise quando tem alterar (%s, %s)", (status, podeAlterar, esperado) =>
+    expect(podeAlterarHorariosNaLiberacao({ status, podeAlterar })).toBe(esperado),
+  );
   it("detecta sobreposição", () => expect(sobrepoe("18:00", "21:00", "20:00", "22:00")).toBe(true));
   it("não acusa horários adjacentes", () => expect(sobrepoe("18:00", "20:00", "20:00", "22:00")).toBe(false));
   it("detecta sobreposição cruzando meia-noite", () => expect(sobrepoe("22:00", "02:00", "23:00", "01:00")).toBe(true));
