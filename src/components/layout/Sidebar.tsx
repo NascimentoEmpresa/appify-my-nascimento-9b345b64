@@ -71,6 +71,7 @@ import { ACESSO_ABERTO_SEM_PERMISSOES, rotaSempreLiberada } from "@/lib/acesso";
 import { useGradeAtivaCount } from "@/hooks/useGradeAtivaCount";
 import { useChamadosNotif } from "@/hooks/useChamadosNotif";
 import { useTrocaFuncaoNotif } from "@/hooks/useTrocaFuncaoNotif";
+import { useJuridicoNotif } from "@/hooks/useJuridicoNotif";
 import { useReembolsoNotif } from "@/hooks/useReembolsoNotif";
 import { Inbox, type LucideIcon } from "lucide-react";
 import { Target } from "lucide-react";
@@ -91,7 +92,7 @@ interface NavItem {
   icon: LucideIcon;
   badge?: string;
   // Bolinha de notificação (novidade). Resolvida em runtime pelo useChamadosNotif.
-  notif?: "meus" | "dev" | "troca_funcao" | "reembolso";
+  notif?: "meus" | "dev" | "troca_funcao" | "juridico" | "reembolso";
   dot?: boolean;
 }
 interface NavGroup {
@@ -814,7 +815,8 @@ const juridicoModule: ModuleDef = {
       label: "Gestão de Advertências",
       defaultOpen: true,
       items: [
-        { label: "Advertências", to: "/app/juridico/advertencias", icon: Gavel },
+        // Bolinha (SIS-2026-0434): fila de advertências pra aprovar/concluir — useJuridicoNotif.
+        { label: "Advertências", to: "/app/juridico/advertencias", icon: Gavel, notif: "juridico" },
       ],
     },
     {
@@ -835,13 +837,12 @@ const juridicoModule: ModuleDef = {
       label: "Conhecimento",
       defaultOpen: true,
       items: [
-        { label: "Parecer Jurídico", to: "/app/juridico/duvidas", icon: BookOpen },
+        // Bolinha (SIS-2026-0434): dúvidas pra aprovar/responder e complementos pendentes.
+        { label: "Parecer Jurídico", to: "/app/juridico/duvidas", icon: BookOpen, notif: "juridico" },
       ],
     },
   ],
 };
-
-
 
 // BI
 const biModule: ModuleDef = {
@@ -1054,6 +1055,7 @@ export function Sidebar({ collapsed, mobileOpen = false, onMobileClose }: Sideba
   const { data: gradeAtivaCount } = useGradeAtivaCount(null, { todasEmpresas: true });
   const chamadosNotif = useChamadosNotif();
   const trocaFuncaoNotif = useTrocaFuncaoNotif();
+  const juridicoNotif = useJuridicoNotif();
   const reembolsoNotif = useReembolsoNotif();
   // Contador das Novidades do Sistema: o mesmo número da bolinha do topo.
   const { naoLidasCount: novidadesNaoLidas } = useNovidades();
@@ -1108,9 +1110,10 @@ export function Sidebar({ collapsed, mobileOpen = false, onMobileClose }: Sideba
       item.notif === "meus" ? chamadosNotif.meus
       : item.notif === "dev" ? chamadosNotif.dev
       : item.notif === "troca_funcao" ? (trocaFuncaoNotif.porRota[item.to] ?? false)
+
+      : item.notif === "juridico" ? (juridicoNotif.porRota[item.to] ?? false)
       : item.notif === "reembolso" ? reembolsoNotif.temPendente
       : false;
-
     // Ordem alfabética (pt-BR, ignorando acentos) em todos os níveis: módulos,
     // grupos e itens (submódulos). Ajuste apenas visual.
     const porNome = (a: { label: string }, b: { label: string }) =>
@@ -1130,7 +1133,7 @@ export function Sidebar({ collapsed, mobileOpen = false, onMobileClose }: Sideba
           .sort(porNome),
       }))
       .sort(porNome);
-  }, [allModules, canSee, gradeAtivaCount, chamadosNotif.meus, chamadosNotif.dev, trocaFuncaoNotif, reembolsoNotif.temPendente]);
+  }, [allModules, canSee, gradeAtivaCount, chamadosNotif.meus, chamadosNotif.dev, trocaFuncaoNotif, juridicoNotif, reembolsoNotif.temPendente]);
 
   // Módulo ativo = aquele cujo ITEM (link real) casa com a rota atual.
   // Detecção por basePath não serve porque o Licitações usa basePath "/app"

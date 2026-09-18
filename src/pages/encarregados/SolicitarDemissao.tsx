@@ -77,15 +77,22 @@ const VAZIO = {
 };
 
 /** Campo preenchido pelo cadastro: aparece, explica de onde veio e não edita. */
-function CampoTravado({ label, valor }: { label: string; valor: string }) {
+function CampoTravado({ label, valor, escolhido }: { label: string; valor: string; escolhido?: boolean }) {
+  // Colaborador escolhido e o campo vazio = cadastro incompleto no Senior
+  // (18/09/2026): fica vermelho em vez de "escolha o colaborador", que
+  // escondia o problema — e a solicitação saía sem cargo.
+  const faltando = !!escolhido && !valor;
   return (
     <div>
       <Label className="flex items-center gap-1.5">
         {label}
         <Lock className="h-3 w-3 text-muted-foreground" aria-hidden />
       </Label>
-      <div className="mt-1 flex min-h-10 items-center rounded-md border bg-muted/50 px-3 py-2 text-sm">
-        {valor || <span className="text-muted-foreground">Escolha o colaborador para preencher</span>}
+      <div className={cn("mt-1 flex min-h-10 items-center rounded-md border px-3 py-2 text-sm",
+        faltando ? "border-destructive bg-destructive/5 font-semibold text-destructive" : "bg-muted/50")}>
+        {valor || (faltando
+          ? "Não consta no cadastro do Senior"
+          : <span className="text-muted-foreground">Escolha o colaborador para preencher</span>)}
       </div>
     </div>
   );
@@ -289,6 +296,10 @@ export default function SolicitarDemissao() {
       if (!form.data_solicitacao) return "Informe a data da solicitação.";
       if (!solicitante.nome || !solicitante.email) return "Não consegui identificar você. Recarregue a página.";
       if (!colaborador) return "Escolha o colaborador na lista.";
+      // Sem cargo no cadastro a solicitação chegava vazia no RH/SST
+      // (18/09/2026). O sync do Senior completa a ficha (mig 188); se ainda
+      // assim faltar, é o RH que corrige em Colaboradores.
+      if (!colaborador.cargo) return `O cadastro de ${colaborador.nome} está sem CARGO no Senior. Peça ao RH para completar a ficha antes de solicitar a demissão.`;
       if (duplicada) return duplicada.mensagem;
       if (temListaDePostos && !postoNome) return "Selecione o posto do colaborador.";
       // Escritório: o setor é obrigatório — é por ele que a Diretoria acha o pedido.
@@ -550,8 +561,8 @@ export default function SolicitarDemissao() {
                   <CampoTravado label="Posto do(a) colaborador(a)" valor={colaborador?.posto ?? ""} />
                 )}
                 <CampoTravado label="Contrato" valor={nomeContrato} />
-                <CampoTravado label="Escala que trabalha" valor={colaborador?.escala ?? ""} />
-                <CampoTravado label="Cargo" valor={colaborador?.cargo ?? ""} />
+                <CampoTravado label="Escala que trabalha" valor={colaborador?.escala ?? ""} escolhido={!!colaborador} />
+                <CampoTravado label="Cargo" valor={colaborador?.cargo ?? ""} escolhido={!!colaborador} />
               </div>
 
               {/* Escritório / setor (16/09/2026): decide quem aprova. Escritório

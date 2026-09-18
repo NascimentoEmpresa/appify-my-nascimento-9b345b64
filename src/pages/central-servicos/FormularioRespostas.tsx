@@ -518,7 +518,9 @@ export default function FormularioRespostas() {
         <button onClick={exportCsv} disabled={!respsFiltradas.length} style={btn(respsFiltradas.length ? "#16a34a" : "#94a3b8")}>⬇ Exportar CSV</button>
       </div>
 
-      {respsEscopo.length > 0 && (
+      {/* Só com resposta identificada: num formulário anônimo não há
+          respondente nem setor pra filtrar (18/09/2026). */}
+      {respsEscopo.some(r => !r.anonimo) && (
         <FiltrosRespostas
           fResp={fResp} setFResp={setFResp} opcoesResp={opcoesResp}
           fSetor={fSetor} setFSetor={setFSetor} opcoesSetor={opcoesSetor}

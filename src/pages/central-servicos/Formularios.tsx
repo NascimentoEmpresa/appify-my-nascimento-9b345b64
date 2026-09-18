@@ -50,6 +50,8 @@ export interface Formulario {
   // sem limite). Só vale para quem responde logado - link liberado não tem
   // identidade p/ contar o prazo.
   intervalo_horas?: number | null;
+  /** 1 resposta por mês civil — exclusivo com intervalo_horas (mig 189). */
+  intervalo_mensal?: boolean | null;
   deleted_at?: string | null;         // soft-delete: na lixeira quando != null
   deleted_por_nome?: string | null;   // quem moveu para a lixeira
 }
@@ -290,7 +292,7 @@ export default function Formularios() {
     // que se repete todo mês não deve perder as regras). Banco sem as colunas
     // novas: reenvia sem elas em vez de falhar a duplicação.
     let { error } = await (supabase as any).from("CS_FORMULARIOS")
-      .insert({ ...base, permite_anonimo: !!f.permite_anonimo, intervalo_horas: f.intervalo_horas ?? null })
+      .insert({ ...base, permite_anonimo: !!f.permite_anonimo, intervalo_horas: f.intervalo_horas ?? null, intervalo_mensal: !!f.intervalo_mensal })
       .select("id").single();
     if (error && /column|schema cache/i.test(error.message))
       ({ error } = await (supabase as any).from("CS_FORMULARIOS").insert(base).select("id").single());
@@ -475,7 +477,8 @@ export default function Formularios() {
                       </span>
                       <span>🗓 {f.inicia_em || f.encerra_em ? `${f.inicia_em ? "de " + fmtDt(f.inicia_em) : ""} ${f.encerra_em ? "até " + fmtDt(f.encerra_em) : ""}` : "sem prazo definido"}</span>
                       {f.permite_anonimo && <span title="O respondente escolhe enviar sem se identificar">🕶 Aceita resposta anônima</span>}
-                      {f.intervalo_horas != null && (
+                      {f.intervalo_mensal && <span title="Uma resposta por mês civil: respondeu dia 30, dia 1 pode de novo">⏱ <b style={{ color: "#0f172a" }}>1 resposta por mês</b></span>}
+                      {!f.intervalo_mensal && f.intervalo_horas != null && (
                         <span title="Intervalo mínimo entre duas respostas da mesma pessoa (só p/ quem responde logado)">
                           ⏱ 1 resposta a cada <b style={{ color: "#0f172a" }}>{f.intervalo_horas % 24 === 0 ? `${f.intervalo_horas / 24} dia(s)` : `${f.intervalo_horas} hora(s)`}</b>
                         </span>
