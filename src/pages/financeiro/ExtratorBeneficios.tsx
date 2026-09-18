@@ -58,6 +58,15 @@ export default function ExtratorBeneficios() {
   const [valorUnitario, setValorUnitario] = useState("25.42");
   const [periodo, setPeriodo] = useState("");
   const [arquivos, setArquivos] = useState<Record<string, File | null>>({});
+  // <input type="file"> não é controlável via props do React — limpar
+  // `arquivos` no state não limpa o nome do arquivo que o navegador continua
+  // mostrando no input. Isso enganava o usuário: trocar de Tomador (ou
+  // enviar com sucesso) parecia manter os arquivos escolhidos na tela, mas
+  // o estado interno já tinha zerado, e o "Gerar Planilha" acusava campo
+  // vazio mesmo com o nome do arquivo visível. Incrementar essa key força o
+  // React a remontar os inputs de arquivo, que aí sim voltam a ficar vazios
+  // de verdade.
+  const [geracaoFormulario, setGeracaoFormulario] = useState(0);
 
   function setArquivo(chave: string, file: File | null) {
     setArquivos((prev) => ({ ...prev, [chave]: file }));
@@ -66,6 +75,7 @@ export default function ExtratorBeneficios() {
   function limparFormulario() {
     setArquivos({});
     setPeriodo("");
+    setGeracaoFormulario((g) => g + 1);
   }
 
   async function enviar() {
@@ -166,18 +176,18 @@ export default function ExtratorBeneficios() {
             <div className="grid gap-4 sm:grid-cols-2">
               <div>
                 <Label>Base de Funcionários (Excel)</Label>
-                <Input type="file" accept=".xlsx,.xls" onChange={(e) => setArquivo("base", e.target.files?.[0] ?? null)} />
+                <Input key={`base-${geracaoFormulario}`} type="file" accept=".xlsx,.xls" onChange={(e) => setArquivo("base", e.target.files?.[0] ?? null)} />
               </div>
 
               {tomador === "ufrgs" && (
                 <>
                   <div>
                     <Label>PDF — Alimentação (VA)</Label>
-                    <Input type="file" accept=".pdf" onChange={(e) => setArquivo("va", e.target.files?.[0] ?? null)} />
+                    <Input key={`va-${geracaoFormulario}`} type="file" accept=".pdf" onChange={(e) => setArquivo("va", e.target.files?.[0] ?? null)} />
                   </div>
                   <div>
                     <Label>PDF — Transporte (VT)</Label>
-                    <Input type="file" accept=".pdf" onChange={(e) => setArquivo("vt", e.target.files?.[0] ?? null)} />
+                    <Input key={`vt-${geracaoFormulario}`} type="file" accept=".pdf" onChange={(e) => setArquivo("vt", e.target.files?.[0] ?? null)} />
                   </div>
                 </>
               )}
@@ -185,14 +195,14 @@ export default function ExtratorBeneficios() {
               {tomador === "tj" && (
                 <div>
                   <Label>PDF do Benefício</Label>
-                  <Input type="file" accept=".pdf" onChange={(e) => setArquivo("pdf", e.target.files?.[0] ?? null)} />
+                  <Input key={`pdf-${geracaoFormulario}`} type="file" accept=".pdf" onChange={(e) => setArquivo("pdf", e.target.files?.[0] ?? null)} />
                 </div>
               )}
 
               {(tomador === "samu" || tomador === "sms") && (
                 <div>
                   <Label>PDF do Ponto (Sênior)</Label>
-                  <Input type="file" accept=".pdf" onChange={(e) => setArquivo("ponto", e.target.files?.[0] ?? null)} />
+                  <Input key={`ponto-${geracaoFormulario}`} type="file" accept=".pdf" onChange={(e) => setArquivo("ponto", e.target.files?.[0] ?? null)} />
                 </div>
               )}
             </div>

@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
+import { novoUuid } from "@/lib/utils";
 
 // SIS-2026-0427: migração do Extrator/Gerador de Planilha VA e VT (app
 // Python desktop da Ana) pro ERP. Processamento pesado (leitura de PDF,
@@ -49,7 +50,11 @@ export function useJobsExtratorBeneficios() {
 }
 
 async function subirArquivo(tomador: TomadorBeneficio, jobId: string, chave: string, arquivo: File) {
-  const path = `${tomador}/${jobId}/${chave}-${arquivo.name}`;
+  // O nome vai sanitizado: acento e espaço no caminho do bucket viram erro
+  // de "Invalid key" no Storage, e nome de arquivo brasileiro tem os dois
+  // (mesmo padrão de useDiarias.ts/useDiariasUfrgs.ts).
+  const seguro = arquivo.name.normalize("NFD").replace(/[^\w.-]+/g, "_");
+  const path = `${tomador}/${jobId}/${chave}-${seguro}`;
   const { error } = await supabase.storage.from(BUCKET).upload(path, arquivo, { upsert: true });
   if (error) throw error;
   return path;
@@ -69,7 +74,7 @@ export function useUploadJobExtrator() {
       arquivos: Record<string, File>;
     }) => {
       const { data: userData } = await supabase.auth.getUser();
-      const jobId = crypto.randomUUID();
+      const jobId = novoUuid();
 
       const paths: Record<string, string> = {};
       for (const [chave, arquivo] of Object.entries(arquivos)) {
