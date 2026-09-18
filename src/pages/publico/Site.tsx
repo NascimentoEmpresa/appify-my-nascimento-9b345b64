@@ -82,10 +82,28 @@ const EMPRESAS = [
   { sigla: "Canaã", nome: "Escola de Ensino Canaã", texto: "O braço de formação do grupo: educação e qualificação para quem entra e para quem cresce dentro da operação." },
 ];
 
-const NUMEROS = [
-  { valor: 2227, sufixo: "+", rotulo: "colaboradores", texto: "Pessoas trabalhando hoje nas operações do grupo. Cada uma com cadastro, escala, uniforme e EPI." },
-  { valor: 58, sufixo: "", rotulo: "contratos ativos", texto: "Universidades federais, Tribunal de Justiça, Polícia Civil, hospitais universitários e dezenas de prefeituras." },
-  { valor: 4, sufixo: "", rotulo: "empresas do grupo", texto: "Nascimento, SN, NH e Canaã. Cada uma com a sua especialidade, todas com a mesma gestão." },
+// Números AO VIVO (18/09/2026): a RPC pública site_numeros (mig 192) devolve os
+// ATIVOS NO MÊS do dashboard de Colaboradores, os contratos ativos e as
+// empresas — a página é pública, então lê pelo anon. Se a rede falhar, fica
+// o último valor conhecido (abaixo), nunca zero.
+const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL as string;
+const SUPABASE_ANON = import.meta.env.VITE_SUPABASE_ANON_KEY as string;
+const NUMEROS_FALLBACK = { colaboradores: 2478, contratos: 62, empresas: 4 };
+type Numeros = typeof NUMEROS_FALLBACK;
+function useNumeros(): Numeros {
+  const [n, setN] = useState<Numeros>(NUMEROS_FALLBACK);
+  useEffect(() => {
+    fetch(SUPABASE_URL + "/rest/v1/rpc/site_numeros", { method: "POST", headers: { apikey: SUPABASE_ANON, Authorization: "Bearer " + SUPABASE_ANON, "Content-Type": "application/json" }, body: "{}" })
+      .then(r => r.ok ? r.json() : null)
+      .then(j => { if (j && j.colaboradores > 0) setN({ colaboradores: j.colaboradores, contratos: j.contratos || NUMEROS_FALLBACK.contratos, empresas: j.empresas || NUMEROS_FALLBACK.empresas }); })
+      .catch(() => {});
+  }, []);
+  return n;
+}
+const numerosDe = (n: Numeros) => [
+  { valor: n.colaboradores, sufixo: "+", rotulo: "colaboradores", texto: "Pessoas trabalhando neste mês nas operações do grupo. Cada uma com cadastro, escala, uniforme e EPI." },
+  { valor: n.contratos, sufixo: "", rotulo: "contratos ativos", texto: "Universidades federais, Tribunal de Justiça, Polícia Civil, hospitais universitários e dezenas de prefeituras." },
+  { valor: n.empresas, sufixo: "", rotulo: "empresas do grupo", texto: "Nascimento, SN, NH e Canaã. Cada uma com a sua especialidade, todas com a mesma gestão." },
   { valor: 3, sufixo: "", rotulo: "estados", texto: "Rio Grande do Sul, Santa Catarina e Paraná, da capital ao interior." },
 ];
 
@@ -175,6 +193,13 @@ function Secao({ id, eyebrow, titulo, sub, children, escuro = false, className =
 
 // ── Página ────────────────────────────────────────────────────────────────
 export default function Site() {
+  const numeros = useNumeros();
+  // Barra de progresso da leitura (0..1), no topo da pagina.
+  const [progresso, setProgresso] = useState(0);
+  useEffect(() => {
+    const f = () => { const h = document.documentElement; const max = h.scrollHeight - h.clientHeight; setProgresso(max > 0 ? Math.min(1, h.scrollTop / max) : 0); };
+    f(); window.addEventListener("scroll", f, { passive: true }); return () => window.removeEventListener("scroll", f);
+  }, []);
   const [menu, setMenu] = useState(false);
   const [rolou, setRolou] = useState(false);
   const [palavra, setPalavra] = useState(0);
@@ -204,6 +229,7 @@ export default function Site() {
       <Estilos />
 
       {/* ── Topo ── */}
+      <div className="st-prog" style={{ transform: `scaleX(${progresso})` }} aria-hidden="true" />
       <header className={`st-top ${rolou ? "st-top-rolou" : ""}`}>
         <div className="st-wrap st-top-in">
           <Logo />
@@ -230,6 +256,8 @@ export default function Site() {
 
       {/* ── Hero ── */}
       <section className="st-hero">
+        <span className="st-glow st-glow-a" aria-hidden="true" />
+        <span className="st-glow st-glow-b" aria-hidden="true" />
         <div className="st-hero-bg" aria-hidden="true">
           {PALAVRAS.map((p, i) => (
             <span key={p} className="st-hero-palavra" data-on={i === palavra ? "1" : "0"}>{p}</span>
@@ -254,8 +282,8 @@ export default function Site() {
               <Link to="/vagas" className="st-btn st-btn-branco st-btn-g"><Briefcase className="h-4 w-4" /> Ver vagas abertas</Link>
             </div>
             <div className="st-hero-selos">
-              <span><Users className="h-4 w-4" /> 2.200+ colaboradores</span>
-              <span><Building2 className="h-4 w-4" /> 58 contratos ativos</span>
+              <span><Users className="h-4 w-4" /> {numeros.colaboradores.toLocaleString("pt-BR")}+ colaboradores</span>
+              <span><Building2 className="h-4 w-4" /> {numeros.contratos} contratos ativos</span>
               <span><MapPin className="h-4 w-4" /> RS · SC · PR</span>
             </div>
           </div>
@@ -319,7 +347,7 @@ export default function Site() {
       <Secao id="numeros" eyebrow="Em números" escuro className="st-sec-laranja"
         titulo={<>Números que <em>se veem</em> em campo.</>}>
         <div className="st-grid st-grid-4">
-          {NUMEROS.map((n, i) => (
+          {numerosDe(numeros).map((n, i) => (
             <div key={n.rotulo} className="st-num st-rev" style={{ transitionDelay: `${i * 80}ms` }}>
               <strong><Contador valor={n.valor} sufixo={n.sufixo} /></strong>
               <span>{n.rotulo}</span>
@@ -624,7 +652,61 @@ function Estilos() {
     .st-marquee-in span { display: inline-flex; align-items: center; padding: 12px 20px; border-radius: 999px; background: #fff; border: 1px solid var(--borda);
                           font-family: 'Plus Jakarta Sans', Inter, sans-serif; font-weight: 800; font-size: 15px; color: var(--azul-ink); }
     @keyframes st-mq { from { transform: translateX(0); } to { transform: translateX(-50%); } }
-    @media (prefers-reduced-motion: reduce) { .st-marquee-in { animation: none; } .st-rev { transition: none; } }
+    /* ---- movimento (18/09/2026) ---- */
+    .st-prog { position: fixed; top: 0; left: 0; height: 3px; width: 100%; background: linear-gradient(90deg, var(--laranja), #fdba74); z-index: 60; transform-origin: 0 50%; transition: transform .1s linear; box-shadow: 0 0 12px rgba(249,115,22,.6); }
+    .st-hero-txt > * { opacity: 0; transform: translateY(22px); animation: st-up .8s cubic-bezier(.2,.8,.2,1) forwards; }
+    .st-hero-txt > :nth-child(1) { animation-delay: .05s } .st-hero-txt > :nth-child(2) { animation-delay: .18s }
+    .st-hero-txt > :nth-child(3) { animation-delay: .32s } .st-hero-txt > :nth-child(4) { animation-delay: .46s } .st-hero-txt > :nth-child(5) { animation-delay: .6s }
+    @keyframes st-up { to { opacity: 1; transform: none; } }
+    .st-hero { background-size: 200% 200%; animation: st-grad 18s ease-in-out infinite; }
+    @keyframes st-grad { 0%, 100% { background-position: 0% 0%; } 50% { background-position: 100% 100%; } }
+    .st-glow { position: absolute; border-radius: 50%; filter: blur(70px); opacity: .45; pointer-events: none; animation: st-drift 16s ease-in-out infinite; }
+    .st-glow-a { width: 420px; height: 420px; background: var(--laranja); right: -120px; top: -140px; }
+    .st-glow-b { width: 360px; height: 360px; background: #60a5fa; left: -140px; bottom: -160px; animation-delay: -8s; animation-duration: 22s; }
+    @keyframes st-drift { 0%, 100% { transform: translate(0,0) scale(1); } 33% { transform: translate(40px,30px) scale(1.08); } 66% { transform: translate(-30px,50px) scale(.94); } }
+    .st-hero-foto { opacity: 0; animation: st-foto 1.1s cubic-bezier(.2,.8,.2,1) .35s forwards, st-float 7s ease-in-out 1.5s infinite; transition: transform .5s cubic-bezier(.2,.8,.2,1), box-shadow .5s; }
+    @keyframes st-foto { from { opacity: 0; transform: rotate(4deg) translateY(30px) scale(.96); } to { opacity: 1; transform: rotate(1.5deg); } }
+    @keyframes st-float { 0%, 100% { translate: 0 0; } 50% { translate: 0 -10px; } }
+    .st-hero-foto:hover { transform: rotate(0deg) scale(1.02); box-shadow: 0 50px 110px rgba(0,0,0,.5); }
+    .st-hero-foto img { transition: transform 6s ease; }
+    .st-hero-foto:hover img { transform: scale(1.06); }
+    .st-hero-selos span { transition: transform .2s, color .2s; }
+    .st-hero-selos span:hover { transform: translateY(-2px); color: #fff; }
+    .st-hero-selos svg { animation: st-pulse 2.6s ease-in-out infinite; }
+    .st-hero-selos span:nth-child(2) svg { animation-delay: .8s } .st-hero-selos span:nth-child(3) svg { animation-delay: 1.6s }
+    @keyframes st-pulse { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.22); } }
+    .st-btn { position: relative; overflow: hidden; }
+    .st-btn::before { content: ""; position: absolute; top: 0; left: -80%; width: 50%; height: 100%; background: linear-gradient(110deg, transparent, rgba(255,255,255,.35), transparent); transform: skewX(-20deg); transition: left .6s ease; pointer-events: none; }
+    .st-btn:hover::before { left: 130%; }
+    .st-btn:hover { transform: translateY(-2px); }
+    .st-btn svg { transition: transform .25s; }
+    .st-btn:hover svg { transform: translateX(4px); }
+    .st-rev { transform: translateY(26px) scale(.98); filter: blur(4px); transition: opacity .7s ease, transform .7s cubic-bezier(.2,.8,.2,1), filter .7s ease; }
+    .st-sec[data-on="1"] .st-rev { filter: none; }
+    .st-sec-h { opacity: 0; transform: translateX(-24px); transition: opacity .7s ease, transform .7s cubic-bezier(.2,.8,.2,1); }
+    .st-sec[data-on="1"] .st-sec-h { opacity: 1; transform: none; }
+    .st-sec-h h2 em { background: linear-gradient(90deg, currentColor, currentColor) no-repeat 0 100% / 0% 3px; transition: background-size .9s cubic-bezier(.2,.8,.2,1) .5s; padding-bottom: 2px; }
+    .st-sec[data-on="1"] .st-sec-h h2 em { background-size: 100% 3px; }
+    .st-eyebrow::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--laranja); animation: st-dot 1.8s ease-in-out infinite; }
+    .st-sec-laranja .st-eyebrow::before, .st-eyebrow-claro::before { background: #fff; }
+    @keyframes st-dot { 0%, 100% { transform: scale(1); opacity: 1; } 50% { transform: scale(1.6); opacity: .55; } }
+    .st-card-ic { transition: transform .3s cubic-bezier(.2,.8,.2,1), background .3s, color .3s; }
+    .st-card:hover .st-card-ic { transform: translateY(-4px) rotate(-6deg); background: var(--laranja); color: #fff; }
+    .st-card h3 { transition: color .2s; } .st-card:hover h3 { color: var(--laranja); }
+    .st-num, .st-emp, .st-valor, .st-cta, .st-contato-card { transition: transform .3s cubic-bezier(.2,.8,.2,1), box-shadow .3s, border-color .3s; }
+    .st-num:hover, .st-emp:hover, .st-valor:hover, .st-cta:hover, .st-contato-card:hover { transform: translateY(-6px); box-shadow: 0 24px 50px rgba(15,23,42,.14); }
+    .st-num strong { display: inline-block; transition: transform .3s; } .st-num:hover strong { transform: scale(1.06); }
+    .st-marquee:hover .st-marquee-in { animation-play-state: paused; }
+    .st-marquee-in span { transition: transform .2s, box-shadow .2s, border-color .2s; }
+    .st-marquee-in span:hover { transform: translateY(-3px); border-color: #fed7aa; box-shadow: 0 10px 24px rgba(15,23,42,.08); }
+    .st-top { transition: background .3s, box-shadow .3s; }
+    .st-logo img, .st-logo svg { transition: transform .3s; } .st-logo:hover img, .st-logo:hover svg { transform: rotate(-8deg) scale(1.08); }
+    @media (prefers-reduced-motion: reduce) {
+      .st-marquee-in, .st-hero, .st-glow, .st-hero-foto, .st-hero-selos svg, .st-eyebrow::before, .st-hero-txt > * { animation: none; }
+      .st-hero-foto { opacity: 1; transform: rotate(1.5deg); }
+      .st-hero-txt > * { opacity: 1; transform: none; }
+      .st-rev, .st-sec-h, .st-btn, .st-card-ic { transition: none; filter: none; }
+    }
 
     /* ---- carreiras / contato ---- */
     .st-cta { display: flex; flex-direction: column; gap: 10px; padding: 28px; border-radius: 22px; background: var(--fundo); border: 1px solid var(--borda); color: var(--azul-ink); transition: .2s; }
