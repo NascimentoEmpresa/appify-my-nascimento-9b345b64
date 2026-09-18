@@ -492,3 +492,14 @@ export const rotuloContrato = (c: { Filial?: unknown; ["NOME CONTRATO"]?: unknow
   if (!nome) return cod;
   return cod && !/^\d+\s*-/.test(nome) ? `${cod} - ${nome}` : nome;
 };
+
+/**
+ * Contrato do ESCRITÓRIO — "ADM E ESTAGIARIOS" (1093 - ADM E ESTAGIARIOS - NH):
+ * vaga nele é administrativa por definição, então a caixa "Vaga é
+ * administrativa?" marca sozinha e trava (18/09/2026). Vale mesmo pra quem
+ * não tem a capacidade de marcar à mão — é o contrato que diz, não a pessoa.
+ */
+export const contratoEhAdministrativo = (contrato: unknown): boolean =>
+  /\bADM(INISTRATIV\w*)?\s*E\s*ESTAGI/.test(
+    String(contrato ?? "").normalize("NFD").replace(/[̀-ͯ]/g, "").toUpperCase(),
+  );

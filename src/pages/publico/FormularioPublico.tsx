@@ -19,7 +19,7 @@ interface Form {
   coleta_identificacao: boolean; imagem_capa_url?: string | null;
   pergunta_setor_id?: string | null; pergunta_nome_id?: string | null; setores_acesso?: string[] | null;
   seguranca?: "liberado" | "restrito"; exige_senha?: boolean;
-  permite_anonimo?: boolean; intervalo_horas?: number | null;
+  permite_anonimo?: boolean; intervalo_horas?: number | null; intervalo_mensal?: boolean | null;
 }
 /**
  * O `config` jsonb da pergunta. Cada tipo usa um punhado destas chaves e
@@ -673,7 +673,7 @@ export default function FormularioPublico() {
   const [anonimo, setAnonimo] = useState(false);   // escolha do respondente (só se o form permite)
   // Intervalo entre respostas (cs_form_prazo): quando já respondeu há pouco, a
   // tela explica quando libera - a trava de verdade é a policy de INSERT.
-  const [prazo, setPrazo] = useState<{ pode: boolean; proxima_em?: string | null; intervalo_horas?: number | null } | null>(null);
+  const [prazo, setPrazo] = useState<{ pode: boolean; proxima_em?: string | null; intervalo_horas?: number | null; intervalo_mensal?: boolean | null } | null>(null);
 
   // Upload de anexo do respondente (bucket cs-formularios; anon liberado pela
   // migration). Devolve a URL pública ou null (com aviso).
@@ -800,10 +800,11 @@ export default function FormularioPublico() {
   // Já respondeu e o formulário tem intervalo mínimo: mostra quando libera.
   if (prazo && prazo.pode === false) {
     const quando = prazo.proxima_em ? fmtDt(prazo.proxima_em) : "";
+    const regra = prazo.intervalo_mensal ? "uma resposta por mês" : `uma resposta a cada ${fmtIntervalo(prazo.intervalo_horas)}`;
     return <Aviso emoji="⏱" titulo="Você já respondeu este formulário"
       texto={quando
-        ? `Este formulário aceita uma resposta a cada ${fmtIntervalo(prazo.intervalo_horas)}. Você poderá responder de novo a partir de ${quando}.`
-        : `Este formulário aceita uma resposta a cada ${fmtIntervalo(prazo.intervalo_horas)}.`} />;
+        ? `Este formulário aceita ${regra}. Você poderá responder de novo a partir de ${quando}.`
+        : `Este formulário aceita ${regra}.`} />;
   }
   if (enviado) return <SuccessScreen />;
 

@@ -39,7 +39,7 @@ import {
   erroDaRecomendacao, recomendacaoParaBanco, cpfValido, soDigitos, maskCpf,
   cargoExigeCnh, aplicarReqCnh, REQ_CNH_TEXTO,
   rotuloReferencia, ajudaReferencia, mostraNomeReferencia, contratoDoEmpregado, rotuloContrato,
-  faltamCamposManuais, podeVagaAdministrativa, statusInicialVaga,
+  faltamCamposManuais, podeVagaAdministrativa, statusInicialVaga, contratoEhAdministrativo,
   substituidosComVagaViva, avisoSubstituidoPreso,
 } from "@/lib/recrutamento/vagaRegras";
 import { maskFone } from "@/lib/telefone";
@@ -134,6 +134,10 @@ export function ModalNovaVaga({ aberto, onFechar, onCriada, onToast, solicitacao
   const podeAdministrativa = podeVagaAdministrativa(can);
 
   const [vaga, setVaga] = useState({ ...VAGA_RESET });
+  // Contrato do escritório (ADM E ESTAGIÁRIOS) → administrativa sozinha e
+  // travada (18/09/2026); fora dele, só quem tem a capacidade marca à mão.
+  const contratoAdm = contratoEhAdministrativo(vaga.contrato);
+  const ehAdministrativa = contratoAdm || (podeAdministrativa && !!vaga.administrativa);
   const [vagaStep, setVagaStep] = useState(1);
   // Vaga do escritório preenchida à mão, sem colaborador de referência.
   const [vagaManual, setVagaManual] = useState(false);
@@ -550,7 +554,7 @@ export function ModalNovaVaga({ aberto, onFechar, onCriada, onToast, solicitacao
       grau_urgencia: prazo.grau ?? "",
       req_obrigatorios: aplicarReqCnh(vaga.req_obrigatorios, vaga.cargo),
       cnh_obrigatoria: !!cnhDoCargo,
-      administrativa: podeAdministrativa ? !!vaga.administrativa : false,
+      administrativa: ehAdministrativa,
       setor: vaga.setor || null,
       // Só a substituição grava o id: é ele que trava a pessoa numa vaga só.
       substituido_id: ehSubstituicao(vaga.motivo_vaga) ? substituidoId : null,
@@ -567,7 +571,7 @@ export function ModalNovaVaga({ aberto, onFechar, onCriada, onToast, solicitacao
     // "Pendente Analista" nem trocar o nome de quem pediu.
     if (!editando) {
       // Administrativa ou com setor → Diretoria (16/09/2026); o resto → analista.
-      payload.status = statusInicialVaga(podeAdministrativa ? !!vaga.administrativa : false, vaga.setor || null);
+      payload.status = statusInicialVaga(ehAdministrativa, vaga.setor || null);
       payload.solicitante_nome = user?.user_metadata?.nome ?? user?.email ?? "";
       payload.solicitante_cpf = user?.email ?? "";
     }
@@ -847,7 +851,7 @@ export function ModalNovaVaga({ aberto, onFechar, onCriada, onToast, solicitacao
             classeInput="nvg-fi" classeGrupo="nvg-fg" />
           {/* Setor (16/09/2026): quem aprova a vaga administrativa. Desde 17/09 só
               aparece com a caixa "administrativa" marcada — setor NÃO manda mais pra Diretoria. */}
-          {(podeAdministrativa && vaga.administrativa) && <div className="nvg-fg">
+          {ehAdministrativa && <div className="nvg-fg">
             <label>Setor <span style={{ color: "#64748b", fontWeight: 600 }}>— só na vaga administrativa: é o setor da Diretoria que aprova</span></label>
             <select className="nvg-fi" value={vaga.setor} onChange={e => setVaga(v => ({ ...v, setor: e.target.value }))}>
               <option value="">— Selecione o setor —</option>
@@ -871,15 +875,15 @@ export function ModalNovaVaga({ aberto, onFechar, onCriada, onToast, solicitacao
             </div>
           </div>
 
-          {podeAdministrativa && (
+          {(podeAdministrativa || contratoAdm) && (
             <div className="nvg-fg" style={{ gridColumn: "1 / -1" }}>
-              <label style={{ display: "flex", alignItems: "flex-start", gap: 9, cursor: "pointer", background: vaga.administrativa ? "#f0f6ff" : "#fff", border: vaga.administrativa ? "1.5px solid #0f3171" : "1px solid #e2e8f0", borderRadius: 11, padding: "10px 13px", transition: "background .18s, border-color .18s" }}>
-                <input type="checkbox" checked={!!vaga.administrativa} style={{ marginTop: 2, width: 15, height: 15, accentColor: "#0f3171", cursor: "pointer" }}
+              <label style={{ display: "flex", alignItems: "flex-start", gap: 9, cursor: "pointer", background: ehAdministrativa ? "#f0f6ff" : "#fff", border: ehAdministrativa ? "1.5px solid #0f3171" : "1px solid #e2e8f0", borderRadius: 11, padding: "10px 13px", transition: "background .18s, border-color .18s" }}>
+                <input type="checkbox" checked={ehAdministrativa} disabled={contratoAdm} style={{ marginTop: 2, width: 15, height: 15, accentColor: "#0f3171", cursor: contratoAdm ? "not-allowed" : "pointer" }}
                   onChange={e => setVaga(v => ({ ...v, administrativa: e.target.checked }))} />
                 <span>
                   <span style={{ display: "block", fontSize: 14, fontWeight: 800, color: "#0f172a" }}>Vaga é administrativa?</span>
                   <span style={{ display: "block", fontSize: 14, color: "#64748b", marginTop: 3, lineHeight: 1.45 }}>
-                    Vaga do escritório. Só quem tem “Ver vaga administrativa?” enxerga, aprova ou reprova — os demais nem veem que ela existe.
+                    {contratoAdm ? <b style={{ color: "#0f3171" }}>Contrato ADM E ESTAGIÁRIOS: vaga administrativa automaticamente. </b> : null}Vaga do escritório. Só quem tem “Ver vaga administrativa?” enxerga, aprova ou reprova — os demais nem veem que ela existe.
                   </span>
                 </span>
               </label>

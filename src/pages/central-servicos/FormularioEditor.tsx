@@ -211,34 +211,41 @@ function Anonimato({ form, mudaForm }: { form: Formulario; mudaForm: (p: Partial
 // "só pode responder 1x a cada N". Guarda em HORAS; a tela deixa escolher a
 // unidade. Vale só para quem responde logado (link liberado não tem
 // identidade p/ contar o prazo) - a trava está na policy de INSERT.
+// "Mês" é o mês CIVIL (mig 189): respondeu dia 30, dia 1 responde de novo —
+// diferente de "30 dias", que só liberaria dia 30 do mês seguinte.
 function Intervalo({ form, mudaForm }: { form: Formulario; mudaForm: (p: Partial<Formulario>) => void }) {
   const horas = form.intervalo_horas ?? null;
-  const on = horas != null;
-  const emDias = on && horas! % 24 === 0;
-  const [unidade, setUnidade] = useState<"horas" | "dias">(emDias ? "dias" : "horas");
-  const qtd = on ? (unidade === "dias" ? Math.max(1, Math.round(horas! / 24)) : horas!) : 1;
-  const aplica = (n: number, u: "horas" | "dias") =>
-    mudaForm({ intervalo_horas: Math.max(1, Math.round(n)) * (u === "dias" ? 24 : 1) });
+  const mensal = !!form.intervalo_mensal;
+  const on = mensal || horas != null;
+  const emDias = horas != null && horas % 24 === 0;
+  const [unidade, setUnidade] = useState<"horas" | "dias" | "mes">(mensal ? "mes" : emDias ? "dias" : "horas");
+  const qtd = unidade === "mes" ? 1 : horas != null ? (unidade === "dias" ? Math.max(1, Math.round(horas / 24)) : horas) : 1;
+  const aplica = (n: number, u: "horas" | "dias" | "mes") =>
+    u === "mes"
+      ? mudaForm({ intervalo_mensal: true, intervalo_horas: null })
+      : mudaForm({ intervalo_mensal: false, intervalo_horas: Math.max(1, Math.round(n)) * (u === "dias" ? 24 : 1) });
   return (
     <div style={{ border: "1px solid #e2e8f0", borderRadius: 12, padding: "10px 12px", background: on ? "rgba(15,49,113,.03)" : "#fff" }}>
       <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer" }}>
         <input type="checkbox" checked={on}
-          onChange={e => { if (e.target.checked) setUnidade("dias"); mudaForm({ intervalo_horas: e.target.checked ? 24 : null }); }}
+          onChange={e => { if (e.target.checked) setUnidade("dias"); mudaForm({ intervalo_horas: e.target.checked ? 24 : null, intervalo_mensal: false }); }}
           style={{ width: 15, height: 15, accentColor: "#0f3171" }} />
         <span style={{ fontSize: 12.5, fontWeight: 700, color: "#0f172a" }}>⏱ Limitar de quanto em quanto tempo a mesma pessoa pode responder</span>
       </label>
       {on && (
         <div style={{ display: "flex", alignItems: "center", gap: 7, marginTop: 8, flexWrap: "wrap" }}>
           <span style={{ fontSize: 12.5, color: "#334155", fontWeight: 600 }}>Pode responder 1 vez a cada</span>
-          <input type="number" min={1} value={qtd}
+          <input type="number" min={1} value={qtd} disabled={unidade === "mes"}
             onChange={e => aplica(Number(e.target.value || 1), unidade)}
             style={{ ...inp, width: 80, padding: "6px 8px" }} />
           <select value={unidade}
-            onChange={e => { const u = e.target.value as "horas" | "dias"; setUnidade(u); aplica(qtd, u); }}
+            onChange={e => { const u = e.target.value as "horas" | "dias" | "mes"; setUnidade(u); aplica(qtd, u); }}
             style={{ ...inp, padding: "6px 8px", fontWeight: 600 }}>
             <option value="horas">hora(s)</option>
             <option value="dias">dia(s)</option>
+            <option value="mes">mês (calendário)</option>
           </select>
+          {unidade === "mes" && <span style={{ fontSize: 11.5, color: "#64748b", fontWeight: 600 }}>— respondeu dia 30, dia 1 pode de novo</span>}
         </div>
       )}
       <div style={{ fontSize: 11, color: "#94a3b8", marginTop: 6, lineHeight: 1.5 }}>
@@ -398,7 +405,8 @@ export default function FormularioEditor() {
       // Liberado zera os filtros: não deixa restrição órfã no banco.
       setores_acesso: restrito ? (form.setores_acesso?.length ? form.setores_acesso : null) : null,
       permite_anonimo: !!form.permite_anonimo,
-      intervalo_horas: form.intervalo_horas ?? null,
+      intervalo_horas: form.intervalo_mensal ? null : (form.intervalo_horas ?? null),
+      intervalo_mensal: !!form.intervalo_mensal,
     };
     let { error: e1 } = await (supabase as any).from("CS_FORMULARIOS").update({ ...base, ...extra }).eq("id", form.id);
     if (e1 && /column|schema cache/i.test(e1.message)) ({ error: e1 } = await (supabase as any).from("CS_FORMULARIOS").update(base).eq("id", form.id));
