@@ -506,7 +506,13 @@ function TabelaRelatorioPr({
   aoConsultarPr: (i: number) => void;
   aoExcluir?: (i: number) => void;
 }) {
-  const totais = totalizarMetricasPr(linhas);
+  const totais = totalizarMetricasPr(
+    linhas.map(({ linhas_adicionadas, commits, arquivos_adicionados }) => ({
+      linhas_adicionadas,
+      commits,
+      arquivos_adicionados,
+    })),
+  );
   const totalChamados = new Set(linhas.filter((linha) => linha.chamado_id).map((linha) => linha.chamado_id)).size;
   const colunas = adicionais ? 6 : 5;
   return (
