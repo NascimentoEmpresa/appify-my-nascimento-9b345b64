@@ -17,6 +17,7 @@ import {
   formatarData,
   formatarDuracao,
   JORNADA_PADRAO_MIN,
+  jornadaParaCalculoHoraExtra,
   mensagemErro,
   podeAlterarHorariosNaLiberacao,
   somenteHora,
@@ -59,7 +60,12 @@ export default function DecisaoHoraExtraDialog({
   }, [aberto, pontoEntradaOriginal, pontoRetornoIntervaloOriginal, pontoSaidaIntervaloOriginal, pontoSaidaOriginal, solicitacaoId]);
   if (!dados) return null;
   const podeEditarHorarios = podeAlterarHorariosNaLiberacao({ status: dados.status, podeAlterar });
-  const calculo = calcularHoraExtra(horarios, dados.jornada_minutos ?? JORNADA_PADRAO_MIN);
+  const semIntervalo = Boolean(dados.sem_intervalo);
+  const jornadaCalculo = jornadaParaCalculoHoraExtra(
+    dados.jornada_minutos ?? JORNADA_PADRAO_MIN,
+    dados.seguir_escala ?? true,
+  );
+  const calculo = calcularHoraExtra(horarios, jornadaCalculo);
   const horariosAlterados = horarios.entrada !== pontoEntradaOriginal || horarios.saida_intervalo !== pontoSaidaIntervaloOriginal || horarios.retorno_intervalo !== pontoRetornoIntervaloOriginal || horarios.saida !== pontoSaidaOriginal;
   const processando = liberar.isPending || liberarComHorarios.isPending || validar.isPending || validarComHorarios.isPending;
   const decidir = async (aprovar: boolean) => {
@@ -93,7 +99,12 @@ export default function DecisaoHoraExtraDialog({
       toast.error(mensagemErro(e, "Não foi possível registrar a decisão."));
     }
   };
-  const mudarHorario = (campo: keyof typeof horarios, valor: string) => setHorarios((atual) => ({ ...atual, [campo]: valor }));
+  const mudarHorario = (campo: keyof typeof horarios, valor: string) =>
+    setHorarios((atual) =>
+      semIntervalo && campo === "entrada"
+        ? { ...atual, entrada: valor, saida_intervalo: valor, retorno_intervalo: valor }
+        : { ...atual, [campo]: valor },
+    );
   return (
     <Dialog open={aberto} onOpenChange={(v) => !v && aoFechar()}>
       <DialogContent className="max-h-[94vh] w-[calc(100vw-2rem)] max-w-4xl overflow-x-hidden overflow-y-auto">
@@ -131,10 +142,10 @@ export default function DecisaoHoraExtraDialog({
               <div className="mb-2 flex items-center gap-2 text-sm font-semibold text-[#07194b]"><Clock3 className="h-4 w-4 text-blue-700" />{conclusao ? "Horário de ponto efetivo" : "Horário de ponto do dia"}</div>
               <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
                 {[["Entrada", "entrada"], ["Saída (intervalo)", "saida_intervalo"], ["Retorno (intervalo)", "retorno_intervalo"], ["Saída", "saida"]].map(([rotulo, campo]) => (
-                  <label key={campo} className="min-w-0 text-xs text-slate-600">{rotulo}<Input type="time" value={horarios[campo as keyof typeof horarios]} onChange={(event) => mudarHorario(campo as keyof typeof horarios, event.target.value)} className="mt-1 bg-white font-semibold text-[#07194b]" /></label>
+                  <label key={campo} className="min-w-0 text-xs text-slate-600">{rotulo}<Input type="time" disabled={semIntervalo && ["saida_intervalo", "retorno_intervalo"].includes(campo)} value={horarios[campo as keyof typeof horarios]} onChange={(event) => mudarHorario(campo as keyof typeof horarios, event.target.value)} className="mt-1 bg-white font-semibold text-[#07194b]" /></label>
                 ))}
               </div>
-              <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-xs text-blue-800"><span>HE calculada automaticamente: <strong>{formatarDuracao(calculo.excedente, true)}</strong></span><span>Trabalhado no dia: {formatarDuracao(calculo.trabalhado, true)}</span></div>
+              <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-xs text-blue-800"><span>{jornadaCalculo ? "HE calculada automaticamente" : "Todo o período é HE"}: <strong>{formatarDuracao(calculo.excedente, true)}</strong></span><span>Trabalhado no dia: {formatarDuracao(calculo.trabalhado, true)}</span>{semIntervalo && <span>Sem intervalo</span>}</div>
             </div>
           ) : (
             <InfoItem icone={<Clock3 />} rotulo={conclusao ? "Horário de ponto efetivo" : "Horário de ponto do dia"} valor={conclusao ? [dados.ponto_entrada_real || dados.ponto_entrada, dados.ponto_saida_intervalo_real || dados.ponto_saida_intervalo, dados.ponto_retorno_intervalo_real || dados.ponto_retorno_intervalo, dados.ponto_saida_real || dados.ponto_saida].map((x) => x.slice(0, 5)).join(" | ") : [dados.ponto_entrada, dados.ponto_saida_intervalo, dados.ponto_retorno_intervalo, dados.ponto_saida].map((x) => x.slice(0, 5)).join(" | ")} />
@@ -144,7 +155,7 @@ export default function DecisaoHoraExtraDialog({
             rotulo="Quantidade de HE"
             valor={formatarDuracao(podeEditarHorarios ? calculo.excedente : (dados.total_real_min ?? dados.total_previsto_min), true)}
             detalhe={
-              dados.jornada_minutos
+              dados.seguir_escala !== false && dados.jornada_minutos
                 ? "Trabalhado " +
                   formatarDuracao(podeEditarHorarios ? calculo.trabalhado : (dados.trabalhado_real_min ?? dados.trabalhado_previsto_min ?? 0), true) +
                   " · jornada de " +

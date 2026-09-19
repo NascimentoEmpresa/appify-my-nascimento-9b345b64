@@ -22,6 +22,7 @@ const FORMULARIO_VAZIO = {
   retorno_intervalo: "13:00",
   saida: "17:18",
   padrao: false,
+  nao_aplicavel_fins_semana: false,
 };
 
 /**
@@ -46,6 +47,7 @@ export default function EscalasHoraExtraDialog({ aberto, aoFechar }: { aberto: b
       retorno_intervalo: somenteHora(escala.retorno_intervalo),
       saida: somenteHora(escala.saida),
       padrao: escala.padrao,
+      nao_aplicavel_fins_semana: escala.nao_aplicavel_fins_semana,
     });
   const gravar = async () => {
     if (!form.nome.trim()) {
@@ -106,12 +108,17 @@ export default function EscalasHoraExtraDialog({ aberto, aoFechar }: { aberto: b
                   <td className="p-3 font-semibold text-[#07194b]">
                     <div className="flex items-center gap-2">
                       {escala.nome}
-                      {escala.padrao && (
+                       {escala.padrao && (
                         <span className="inline-flex items-center gap-1 rounded bg-orange-100 px-2 py-0.5 text-[11px] text-orange-700">
                           <Star className="h-3 w-3" />
                           Padrão
                         </span>
-                      )}
+                       )}
+                       {escala.nao_aplicavel_fins_semana && (
+                         <span className="rounded bg-blue-100 px-2 py-0.5 text-[11px] text-blue-700">
+                           Fim de semana
+                         </span>
+                       )}
                     </div>
                   </td>
                   <td className="p-3 text-slate-600">
@@ -150,13 +157,21 @@ export default function EscalasHoraExtraDialog({ aberto, aoFechar }: { aberto: b
         <section className="rounded-lg border border-slate-200 bg-white p-4">
           <h3 className="mb-3 font-bold text-[#07194b]">{form.id ? "Editar escala" : "Nova escala"}</h3>
           <div className="grid gap-3 md:grid-cols-5">
-            <Campo rotulo="Nome da escala" obrigatorio className="md:col-span-5">
+            <Campo rotulo="Nome da escala" obrigatorio className="md:col-span-3">
               <Input
                 value={form.nome}
                 placeholder="Ex.: Administrativo 07:30 às 17:18"
                 onChange={(e) => alterar("nome", e.target.value)}
               />
             </Campo>
+            <label className="flex items-center gap-2 self-end pb-2 text-sm text-slate-700 md:col-span-2">
+              <input
+                type="checkbox"
+                checked={form.nao_aplicavel_fins_semana}
+                onChange={(e) => alterar("nao_aplicavel_fins_semana", e.target.checked)}
+              />
+              Não aplicável aos finais de semana
+            </label>
             <Campo rotulo="Entrada">
               <Input type="time" value={form.entrada} onChange={(e) => alterar("entrada", e.target.value)} />
             </Campo>

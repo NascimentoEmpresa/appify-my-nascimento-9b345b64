@@ -20,6 +20,8 @@ export interface EscalaHoraExtra extends PontoDia {
   minutos_jornada: number;
   padrao: boolean;
   ativo: boolean;
+  /** Quando marcada, a jornada desta escala pode ser ignorada aos sábados e domingos. */
+  nao_aplicavel_fins_semana: boolean;
 }
 
 export interface ChamadoHoraExtra {
@@ -71,6 +73,10 @@ export interface SolicitacaoHoraExtra {
   escala_id?: string | null;
   escala_nome?: string | null;
   jornada_minutos?: number | null;
+  /** No fim de semana elegível, define se a jornada da escala foi aplicada. */
+  seguir_escala?: boolean | null;
+  /** Sem intervalo, os dois registros intermediários representam a entrada. */
+  sem_intervalo?: boolean | null;
   trabalhado_previsto_min?: number | null;
   trabalhado_real_min?: number | null;
   he_inicio_previsto: string;

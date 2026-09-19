@@ -75,6 +75,43 @@ export function minutosTrabalhados(ponto: PontoDia): number {
   );
 }
 
+/** Sábado e domingo da data local, sem conversão UTC acidental. */
+export function ehFimDeSemana(data?: string | null): boolean {
+  if (!data) return false;
+  const dia = dataLocal(data).getDay();
+  return dia === 0 || dia === 6;
+}
+
+/**
+ * Só uma escala marcada para isso oferece a exceção no sábado ou domingo.
+ * Dias úteis sempre mantêm a jornada normal da escala.
+ */
+export function podeIgnorarEscalaNoFimDeSemana(
+  data: string | null | undefined,
+  escala?: Pick<EscalaHoraExtra, "nao_aplicavel_fins_semana"> | null,
+): boolean {
+  return ehFimDeSemana(data) && Boolean(escala?.nao_aplicavel_fins_semana);
+}
+
+/** No fim de semana sem escala, cada minuto efetivamente trabalhado é HE. */
+export function jornadaParaCalculoHoraExtra(jornada: number, seguirEscala = true): number {
+  return seguirEscala ? Math.max(0, jornada || 0) : 0;
+}
+
+/**
+ * O banco continua guardando os quatro pontos, inclusive no dia sem pausa.
+ * Neste caso os dois pontos intermediários recebem a própria entrada, o que
+ * faz o cálculo contar um único período contínuo de trabalho.
+ */
+export function normalizarPontoSemIntervalo<T extends PontoDia>(ponto: T, semIntervalo: boolean): T {
+  if (!semIntervalo) return ponto;
+  return {
+    ...ponto,
+    saida_intervalo: ponto.entrada,
+    retorno_intervalo: ponto.entrada,
+  };
+}
+
 export function minutosJornada(escala?: Pick<EscalaHoraExtra, keyof PontoDia> | null): number {
   return escala ? minutosTrabalhados(escala) : JORNADA_PADRAO_MIN;
 }

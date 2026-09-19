@@ -40,7 +40,7 @@ export default function DetalhesHoraExtraDialog({
           <Info
             rotulo="Jornada / trabalhado no dia"
             valor={
-              `${formatarDuracao(dados.jornada_minutos ?? 0, true)} / ` +
+              `${dados.seguir_escala === false ? "Todo o período é HE" : formatarDuracao(dados.jornada_minutos ?? 0, true)} / ` +
               formatarDuracao(dados.trabalhado_real_min ?? dados.trabalhado_previsto_min ?? 0, true)
             }
           />
@@ -71,13 +71,13 @@ export default function DetalhesHoraExtraDialog({
           <div className="grid grid-cols-4 gap-2 rounded-lg bg-slate-50 p-3 text-center text-xs">
             {[
               ["Entrada", dados.ponto_entrada_real || dados.ponto_entrada],
-              ["Saída", dados.ponto_saida_intervalo_real || dados.ponto_saida_intervalo],
-              ["Retorno", dados.ponto_retorno_intervalo_real || dados.ponto_retorno_intervalo],
+              [dados.sem_intervalo ? "Sem intervalo" : "Saída", dados.ponto_saida_intervalo_real || dados.ponto_saida_intervalo],
+              [dados.sem_intervalo ? "Sem intervalo" : "Retorno", dados.ponto_retorno_intervalo_real || dados.ponto_retorno_intervalo],
               ["Saída", dados.ponto_saida_real || dados.ponto_saida],
               ["Início da HE", dados.he_inicio_real || dados.he_inicio_previsto],
               ["Término da HE", dados.he_fim_real || dados.he_fim_previsto],
-            ].map(([r, v]) => (
-              <div key={`${r}-${v}`}>
+            ].map(([r, v], indice) => (
+              <div key={`${r}-${v}-${indice}`}>
                 <div className="text-slate-500">{r}</div>
                 <div className="mt-1 rounded border bg-white px-2 py-2 font-semibold">{somenteHora(v)}</div>
               </div>
