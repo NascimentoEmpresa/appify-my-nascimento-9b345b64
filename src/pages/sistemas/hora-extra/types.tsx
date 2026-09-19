@@ -35,6 +35,12 @@ export interface ChamadoHoraExtra {
   percentual_concluido: number | null;
   status_execucao: StatusExecucao | null;
   observacao?: string | null;
+  pr_numero?: number | null;
+  pr_url?: string | null;
+  pr_titulo?: string | null;
+  pr_linhas_adicionadas?: number | null;
+  pr_commits?: number | null;
+  pr_arquivos_adicionados?: number | null;
 }
 
 export interface AnexoHoraExtra {
