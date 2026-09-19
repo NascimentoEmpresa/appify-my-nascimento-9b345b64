@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { createPortal } from "react-dom";
+import { ComprovantesProcesso } from "@/components/juridico/ComprovantesProcesso";
 import { supabase } from "@/integrations/supabase/client";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { useAuth } from "@/hooks/useAuth";
@@ -423,6 +424,7 @@ export default function Processos({ view = "processos" }: { view?: "dashboard" |
 
   const [modal, setModal] = useState(false);
   const [editNumero, setEditNumero] = useState<string | null>(null);
+  const [editId, setEditId] = useState<number | null>(null);
   const [form, setForm] = useState(FORM_RESET());
   const [motivos, setMotivos] = useState<MotivoItem[]>([MOTIVO_RESET()]);
   const [valoresAParte, setValoresAParte] = useState<ValorAParte[]>([]);
@@ -637,9 +639,9 @@ export default function Processos({ view = "processos" }: { view?: "dashboard" |
   };
 
   // ── CRUD ───────────────────────────────────────────────────────
-  const abrirNovo = () => { setEditNumero(null); contratoManual.current = false; setForm(FORM_RESET()); setMotivos([MOTIVO_RESET()]); setValoresAParte([]); setAuds([]); setPropostas([]); setEmpBusca(""); setEmpResultados([]); setEmpSelKey(null); setModal(true); };
+  const abrirNovo = () => { setEditNumero(null); setEditId(null); contratoManual.current = false; setForm(FORM_RESET()); setMotivos([MOTIVO_RESET()]); setValoresAParte([]); setAuds([]); setPropostas([]); setEmpBusca(""); setEmpResultados([]); setEmpSelKey(null); setModal(true); };
   const abrirEditar = (p: Processo) => {
-    setEditNumero(p.numero_processo);
+    setEditNumero(p.numero_processo); setEditId(p.id);
     // Processo que já tem contrato salvo: a sugestão não pode sobrescrever o
     // que alguém escolheu antes. Sem contrato, volta a sugerir.
     contratoManual.current = !!String(p.contrato ?? "").trim();
@@ -790,11 +792,14 @@ export default function Processos({ view = "processos" }: { view?: "dashboard" |
   // Laranja no "pendente de documentação" porque ele é o único que cobra
   // AÇÃO de alguém — os outros três descrevem em que pé o processo está.
   const statusCor = (s: string) => s === "ARQUIVADO" ? { bg: "#f1f5f9", c: "#64748b" } : s === "INDEFINIDO" ? { bg: "#fef9c3", c: "#a16207" } : s === "PENDENTE DE ENVIO DE DOCUMENTAÇÃO" ? { bg: "#ffedd5", c: "#c2410c" } : { bg: "#fef3c7", c: "#b45309" };
-  const kpi = (label: string, valor: string | number, cor: string, sub?: string) => (
-    <div style={{ background: "#fff", border: "1px solid #e2e8f0", borderRadius: 14, padding: "14px 18px", flex: 1, minWidth: 165, boxShadow: "0 8px 24px rgba(15,23,42,.05)", borderTop: `3px solid ${cor}` }}>
-      <div style={{ fontSize: 10.5, fontWeight: 700, color: "#94a3b8", textTransform: "uppercase", letterSpacing: ".6px" }}>{label}</div>
-      <div style={{ fontSize: 21, fontWeight: 800, color: cor, marginTop: 3 }}>{valor}</div>
-      {sub && <div style={{ fontSize: 10.5, color: "#94a3b8", marginTop: 2 }}>{sub}</div>}
+  const kpi = (label: string, valor: string | number, cor: string, sub?: string, icone = "📁") => (
+    <div className="jpr-kpi" style={{ "--c": cor } as React.CSSProperties}>
+      <div className="jpr-kpi-ic">{icone}</div>
+      <div style={{ minWidth: 0 }}>
+        <div className="jpr-kpi-l">{label}</div>
+        <div className="jpr-kpi-v">{valor}</div>
+        {sub && <div className="jpr-kpi-s">{sub}</div>}
+      </div>
     </div>
   );
   const card: React.CSSProperties = { background: "#fff", border: "1px solid #e2e8f0", borderRadius: 14, padding: 18, boxShadow: "0 8px 24px rgba(15,23,42,.05)" };
@@ -855,7 +860,43 @@ export default function Processos({ view = "processos" }: { view?: "dashboard" |
         .jpr-form .jpr-vazio{font-size:12.5px;color:#94a3b8;padding:10px 12px;background:#f8fafc;border:1px dashed #e2e8f0;border-radius:10px}
         .jpr-grid2{display:grid;grid-template-columns:1fr 1fr;gap:10px}
         @media(max-width:760px){.jpr-grid2{grid-template-columns:1fr}}
-        .jpr-filtros{display:grid;grid-template-columns:repeat(4,1fr);gap:10px 12px}
+        .jpr-filtros{display:grid;grid-template-columns:repeat(4,1fr);gap:12px 14px}
+        /* Listagem (18/09/2026): hero azul, KPIs com ícone, tabela com respiro e hover. */
+        .jpr-hero{position:relative;overflow:hidden;border-radius:22px;padding:26px 30px 22px;margin:18px 24px 0;background:linear-gradient(135deg,#0f3171 0%,#1d4ed8 60%,#2563eb 100%);color:#fff;box-shadow:0 22px 50px rgba(15,49,113,.25)}
+        .jpr-hero::before{content:"";position:absolute;right:-70px;top:-90px;width:300px;height:300px;border-radius:50%;background:rgba(255,255,255,.07)}
+        .jpr-hero::after{content:"";position:absolute;right:140px;bottom:-140px;width:240px;height:240px;border-radius:50%;background:rgba(255,255,255,.05)}
+        .jpr-hero-in{position:relative;display:flex;justify-content:space-between;align-items:flex-start;gap:16px;flex-wrap:wrap}
+        .jpr-hero-eyebrow{font-size:11.5px;font-weight:800;letter-spacing:1.2px;text-transform:uppercase;opacity:.8}
+        .jpr-hero h1{margin:4px 0 6px;font-size:28px;font-weight:900;letter-spacing:-.4px;line-height:1.1}
+        .jpr-hero p{margin:0;font-size:13.5px;opacity:.9;max-width:720px;line-height:1.5}
+        .jpr-hero-pills{position:relative;display:flex;gap:8px;flex-wrap:wrap;margin-top:14px}
+        .jpr-hero-pills span{background:rgba(255,255,255,.14);border:1px solid rgba(255,255,255,.25);border-radius:999px;padding:5px 12px;font-size:12px;font-weight:700}
+        .jpr-hero-pills span b{font-weight:900}
+        .jpr-hero .jpr-btn{background:#fff;color:#0f3171;padding:12px 20px;font-size:13.5px;box-shadow:0 12px 28px rgba(0,0,0,.18);border-radius:12px}
+        .jpr-kpi{position:relative;background:#fff;border:1px solid #e2e8f0;border-radius:16px;padding:14px 16px 14px 18px;flex:1;min-width:190px;box-shadow:0 8px 24px rgba(15,23,42,.05);display:flex;align-items:center;gap:14px;overflow:hidden;transition:transform .15s,box-shadow .15s}
+        .jpr-kpi:hover{transform:translateY(-2px);box-shadow:0 14px 30px rgba(15,23,42,.09)}
+        .jpr-kpi::before{content:"";position:absolute;left:0;top:0;bottom:0;width:5px;background:var(--c)}
+        .jpr-kpi-ic{width:42px;height:42px;border-radius:12px;display:grid;place-items:center;font-size:19px;background:color-mix(in srgb,var(--c) 12%,#fff);flex-shrink:0}
+        .jpr-kpi-l{font-size:10.5px;font-weight:800;color:#94a3b8;text-transform:uppercase;letter-spacing:.6px}
+        .jpr-kpi-v{font-size:22px;font-weight:900;color:var(--c);line-height:1.15;margin-top:2px}
+        .jpr-kpi-s{font-size:10.5px;color:#94a3b8;margin-top:2px}
+        .jpr-chip{border:1.5px solid #e2e8f0;border-radius:999px;font-size:12px;font-weight:700;padding:5px 12px;cursor:pointer;background:#fff;color:#334155;display:inline-flex;align-items:center;gap:6px;font-family:inherit;transition:.15s}
+        .jpr-chip:hover{border-color:#0f3171}
+        .jpr-chip.on{background:#0f3171;color:#fff;border-color:#0f3171}
+        .jpr-chip small{font-weight:800;font-size:10.5px;background:rgba(15,23,42,.08);border-radius:999px;padding:1px 6px}
+        .jpr-chip.on small{background:rgba(255,255,255,.22)}
+        .jpr-tab{width:100%;border-collapse:separate;border-spacing:0;font-size:13px}
+        .jpr-tab thead th{position:sticky;top:0;z-index:1;background:#f8fafc;color:#64748b;font-size:11px;text-transform:uppercase;letter-spacing:.5px;text-align:left;padding:12px 14px;border-bottom:1px solid #e2e8f0}
+        .jpr-tab tbody td{padding:13px 14px;border-bottom:1px solid #f1f5f9;vertical-align:middle}
+        .jpr-tab tbody tr{transition:background .12s}
+        .jpr-tab tbody tr:nth-child(even){background:#fbfcfe}
+        .jpr-tab tbody tr:hover{background:#eef4ff}
+        .jpr-tab tbody tr:hover .jpr-acoes .jpr-btn{opacity:1}
+        .jpr-acoes .jpr-btn{opacity:.85;transition:opacity .12s,transform .12s}
+        .jpr-acoes .jpr-btn:hover{transform:translateY(-1px)}
+        .jpr-num{display:inline-flex;align-items:center;justify-content:center;min-width:34px;height:26px;padding:0 8px;border-radius:8px;background:#f1f5f9;color:#475569;font-weight:800;font-size:12px;font-variant-numeric:tabular-nums}
+        .jpr-st{display:inline-flex;align-items:center;gap:6px;font-size:11px;font-weight:800;padding:3px 10px;border-radius:20px;white-space:nowrap}
+        .jpr-st::before{content:"";width:6px;height:6px;border-radius:50%;background:currentColor;opacity:.75}
         @media(max-width:1100px){.jpr-filtros{grid-template-columns:repeat(2,1fr)}}
         @media(max-width:620px){.jpr-filtros{grid-template-columns:1fr}}
         .jpr-aud{border:1px solid #eef2f7;border-radius:10px;padding:10px;margin-bottom:8px;background:#fbfdff}
@@ -870,7 +911,25 @@ export default function Processos({ view = "processos" }: { view?: "dashboard" |
         .jaud-3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:7px;margin-top:7px}
       `}</style>
 
-      {/* Topbar */}
+      {/* Topbar. Na listagem (18/09/2026) é um hero, como as outras telas do Jurídico. */}
+      {view === "processos" ? (
+        <div className="jpr-hero">
+          <div className="jpr-hero-in">
+            <div>
+              <div className="jpr-hero-eyebrow">Jurídico · Processos</div>
+              <h1>⚖️ Processos trabalhistas</h1>
+              <p>Cadastro consolidado por número do processo: partes, motivos e valores, audiências, perícia e os comprovantes de pagamento que vêm do Malote.</p>
+            </div>
+            <button className="jpr-btn" onClick={abrirNovo}>+ Novo Processo</button>
+          </div>
+          <div className="jpr-hero-pills">
+            <span>📁 <b>{processos.length}</b> cadastrados</span>
+            <span>🟡 <b>{processos.filter(p => p.status === "EM ANDAMENTO").length}</b> em andamento</span>
+            <span>📦 <b>{processos.filter(p => p.status === "ARQUIVADO").length}</b> arquivados</span>
+            <span>💰 custo final <b>{moneyShort(filtrados.reduce((t, p) => t + custoTotal(p), 0))}</b> no recorte</span>
+          </div>
+        </div>
+      ) : (
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "16px 22px", margin: "18px 24px 0", border: "1px solid #e2e8f0", borderRadius: 16, background: "linear-gradient(135deg,#fff,#f8fbff)", boxShadow: "0 8px 24px rgba(15,23,42,.06)", gap: 12, flexWrap: "wrap" }}>
         <div style={{ fontSize: 18, fontWeight: 800, color: "#0f3171" }}>{TITULOS[view]}</div>
         {/* "+ Novo Processo" mora no cabeçalho da barra de filtros, junto de "Limpar filtros". */}
@@ -882,6 +941,7 @@ export default function Processos({ view = "processos" }: { view?: "dashboard" |
           </div>
         )}
       </div>
+      )}
 
       <div style={{ flex: 1, overflowY: "auto", padding: "18px 24px 28px" }}>
         {erro && <div style={{ background: "#fef2f2", border: "1px solid #fecaca", color: "#b91c1c", borderRadius: 12, padding: "10px 14px", fontSize: 12.5, marginBottom: 14 }}>Não foi possível carregar os processos: {erro}. Verifique se as tabelas foram migradas e o RLS aplicado (migration 20260622000015).</div>}
@@ -985,10 +1045,10 @@ export default function Processos({ view = "processos" }: { view?: "dashboard" |
           {/* ── PROCESSOS ── */}
           {view === "processos" && (<>
             <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginBottom: 16 }}>
-              {kpi("Processos cadastrados", processos.length, "#0f3171", "Base consolidada por número do processo")}
-              {kpi("Resultados filtrados", filtrados.length, "#2563eb", "Quantidade retornada com os filtros atuais")}
-              {kpi("Motivos no recorte", motivosNoRecorte, "#7c3aed", "Soma dos motivos vinculados aos processos exibidos")}
-              {kpi("Status predominante", statusPredominante, "#b45309", "Leitura rápida do conjunto filtrado")}
+              {kpi("Processos cadastrados", processos.length, "#0f3171", "Base consolidada por número do processo", "📁")}
+              {kpi("Resultados filtrados", filtrados.length, "#2563eb", "Quantidade retornada com os filtros atuais", "🔎")}
+              {kpi("Motivos no recorte", motivosNoRecorte, "#7c3aed", "Soma dos motivos vinculados aos processos exibidos", "🏷️")}
+              {kpi("Status predominante", statusPredominante, "#b45309", "Leitura rápida do conjunto filtrado", "📌")}
             </div>
             <div style={{ ...card, marginBottom: 16 }}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12, flexWrap: "wrap", marginBottom: 12 }}>
@@ -1000,6 +1060,12 @@ export default function Processos({ view = "processos" }: { view?: "dashboard" |
                   {filtrosAtivos > 0 && <button className="jpr-btn" onClick={limparProc} style={{ background: "#f1f5f9", color: "#475569" }}>Limpar filtros</button>}
                   <button className="jpr-btn" onClick={abrirNovo} style={{ background: "#0f3171", color: "#fff" }}>+ Novo Processo</button>
                 </div>
+              </div>
+              <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 12 }}>
+                <button type="button" className={"jpr-chip" + (fStatus === "" ? " on" : "")} onClick={() => setFStatus("")}>Todos <small>{processos.length}</small></button>
+                {STATUS_OPC.map(st => { const n = processos.filter(p => p.status === st).length; if (!n) return null; return (
+                  <button key={st} type="button" className={"jpr-chip" + (fStatus === st ? " on" : "")} onClick={() => setFStatus(fStatus === st ? "" : st)}>{STATUS_CURTO[st] ?? st} <small>{n}</small></button>
+                ); })}
               </div>
               <div className="jpr-filtros jpr-fg">
                 <div><label>Nº sequencial</label><input className="jpr-fi" inputMode="numeric" placeholder="Ex.: 12" value={fId} onChange={e => setFId(e.target.value.replace(/\D/g, ""))} /></div>
@@ -1033,24 +1099,24 @@ export default function Processos({ view = "processos" }: { view?: "dashboard" |
             </div>
             <div style={{ background: "#fff", border: "1px solid #e2e8f0", borderRadius: 14, overflow: "hidden", boxShadow: "0 8px 24px rgba(15,23,42,.05)" }}>
               {filtrados.length === 0 ? <div style={{ padding: 46, textAlign: "center", color: "#94a3b8" }}>Nenhum processo encontrado.</div> : (<>
-                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
-                  <thead><tr style={{ background: "#f8fafc", color: "#94a3b8", fontSize: 11, textTransform: "uppercase", letterSpacing: ".5px", textAlign: "left" }}>
-                    <th style={{ padding: "10px 14px", width: 58 }}>Nº</th>
-                    <th style={{ padding: "10px 14px" }}>Nº / Reclamante</th><th style={{ padding: "10px 14px" }}>Reclamada</th><th style={{ padding: "10px 14px" }}>Motivos</th>
-                    <th style={{ padding: "10px 14px", textAlign: "right" }}>Total pedido</th><th style={{ padding: "10px 14px", textAlign: "right" }}>Custo final</th><th style={{ padding: "10px 14px" }}>Status</th><th style={{ padding: "10px 14px", textAlign: "right" }}>Ações</th>
+                <table className="jpr-tab">
+                  <thead><tr>
+                    <th style={{ width: 58 }}>Nº</th>
+                    <th>Reclamante / Nº do processo</th><th>Reclamada</th><th>Motivos</th>
+                    <th style={{ textAlign: "right" }}>Total pedido</th><th style={{ textAlign: "right" }}>Custo final</th><th>Status</th><th style={{ textAlign: "right" }}>Ações</th>
                   </tr></thead>
                   <tbody>{visiveis.map(p => { const sc = statusCor(p.status); return (
-                    <tr key={p.numero_processo} style={{ borderTop: "1px solid #eef2f7" }}>
-                      <td style={{ padding: "10px 14px", fontWeight: 800, color: "#94a3b8", fontVariantNumeric: "tabular-nums" }}>{p.id_sequencial || "—"}</td>
-                      <td style={{ padding: "10px 14px" }}><div style={{ fontWeight: 700, color: "#0f172a" }}>{p.reclamante || "—"}</div><div style={{ fontSize: 11.5, color: "#94a3b8" }}>{p.numero_processo}{p.ano_processo ? ` · ${p.ano_processo}` : ""}</div></td>
-                      <td style={{ padding: "10px 14px", color: "#475569" }}>{p.reclamada || "—"}</td>
-                      <td style={{ padding: "10px 14px" }}><span style={{ fontSize: 11.5, color: "#0f172a" }}>{p.motivo_items[0]?.motivo || "—"}</span>{p.motivo_items.length > 1 && <span style={{ fontSize: 11, color: "#0f3171", fontWeight: 700 }}> +{p.motivo_items.length - 1}</span>}</td>
-                      <td style={{ padding: "10px 14px", textAlign: "right", color: "#475569" }}>{money(pedidosTotal(p))}</td>
-                      <td style={{ padding: "10px 14px", textAlign: "right", fontWeight: 700, color: "#0f172a" }}>{money(custoTotal(p))}</td>
-                      <td style={{ padding: "10px 14px" }}><span title={p.status} style={{ fontSize: 11, fontWeight: 800, padding: "2px 9px", borderRadius: 20, background: sc.bg, color: sc.c, whiteSpace: "nowrap" }}>{STATUS_CURTO[p.status] ?? p.status}</span></td>
-                      <td style={{ padding: "10px 14px", textAlign: "right", whiteSpace: "nowrap" }}>
-                        <button className="jpr-btn" onClick={() => abrirDetalhe(p)} style={{ background: "#eef4ff", color: "#0f3171", marginRight: 5 }}>Ver</button>
-                        <button className="jpr-btn" onClick={() => abrirEditar(p)} style={{ background: "#f1f5f9", color: "#475569", marginRight: 5 }}>Editar</button>
+                    <tr key={p.numero_processo}>
+                      <td><span className="jpr-num">{p.id_sequencial || "—"}</span></td>
+                      <td><div style={{ fontWeight: 800, color: "#0f172a", fontSize: 13.5 }}>{p.reclamante || "—"}</div><div style={{ fontSize: 11.5, color: "#64748b", fontVariantNumeric: "tabular-nums" }}>{p.numero_processo}{p.ano_processo ? ` · ${p.ano_processo}` : ""}{p.contrato ? <span style={{ color: "#94a3b8" }}> · {p.contrato}</span> : null}</div></td>
+                      <td style={{ color: "#334155", fontWeight: 600 }}>{p.reclamada || "—"}</td>
+                      <td><span style={{ fontSize: 12, color: "#0f172a" }}>{p.motivo_items[0]?.motivo || "—"}</span>{p.motivo_items.length > 1 && <span style={{ marginLeft: 6, fontSize: 10.5, color: "#0f3171", fontWeight: 800, background: "#eef4ff", borderRadius: 999, padding: "1px 7px" }}>+{p.motivo_items.length - 1}</span>}</td>
+                      <td style={{ textAlign: "right", color: "#475569", fontVariantNumeric: "tabular-nums" }}>{money(pedidosTotal(p))}</td>
+                      <td style={{ textAlign: "right", fontWeight: 800, color: custoTotal(p) > 0 ? "#0f172a" : "#94a3b8", fontVariantNumeric: "tabular-nums" }}>{money(custoTotal(p))}</td>
+                      <td><span className="jpr-st" title={p.status} style={{ background: sc.bg, color: sc.c }}>{STATUS_CURTO[p.status] ?? p.status}</span></td>
+                      <td className="jpr-acoes" style={{ textAlign: "right", whiteSpace: "nowrap" }}>
+                        <button className="jpr-btn" onClick={() => abrirDetalhe(p)} style={{ background: "#0f3171", color: "#fff", marginRight: 5 }}>Ver</button>
+                        <button className="jpr-btn" onClick={() => abrirEditar(p)} style={{ background: "#eef4ff", color: "#0f3171", marginRight: 5 }}>Editar</button>
                         <button className="jpr-btn" onClick={() => excluir(p)} style={{ background: "none", color: "#dc2626" }}>Excluir</button>
                       </td>
                     </tr>
@@ -1206,6 +1272,9 @@ export default function Processos({ view = "processos" }: { view?: "dashboard" |
                 </div>
               </div>
             </>)}
+            {/* Comprovantes de pagamento (18/09/2026): o que o Malote pagou
+                pra este processo, mais o que foi anexado à mão. */}
+            <ComprovantesProcesso processoId={sel.id} numeroProcesso={sel.numero_processo} toast={toast} />
             {sel.audiencias.length > 0 && (<>
               <div style={{ fontSize: 11, fontWeight: 800, color: "#0f3171", textTransform: "uppercase", letterSpacing: ".4px", marginBottom: 6 }}>Audiências</div>
               <div style={{ marginBottom: 14, display: "flex", flexDirection: "column", gap: 7 }}>{sel.audiencias.map((a, i) => (
@@ -1347,7 +1416,6 @@ export default function Processos({ view = "processos" }: { view?: "dashboard" |
               <div className="jpr-fg"><label>Houve acordo?</label><select className="jpr-fi" value={form.houve_acordo} onChange={e => setForm(v => ({ ...v, houve_acordo: e.target.value }))}><option>Não</option><option>Sim</option></select></div>
               {form.houve_acordo === "Sim" && <div className="jpr-fg"><label>Motivo do acordo</label><input className="jpr-fi" value={form.motivo_acordo} onChange={e => setForm(v => ({ ...v, motivo_acordo: e.target.value }))} placeholder="Ex.: Valor do acordo baixo" /></div>}
               <div className="jpr-fg"><label>Haverá perícia?</label><select className="jpr-fi" value={form.havera_pericia} onChange={e => setForm(v => ({ ...v, havera_pericia: e.target.value }))}><option>Não</option><option>Sim</option></select></div>
-              <div className="jpr-fg"><label>Motivo de outros custos</label><input className="jpr-fi" value={form.motivos_outros_custos} onChange={e => setForm(v => ({ ...v, motivos_outros_custos: e.target.value }))} placeholder="Ex.: Honorários" /></div>
             </div>
             </div>
 
@@ -1465,6 +1533,13 @@ export default function Processos({ view = "processos" }: { view?: "dashboard" |
               </>)}
             </div>
 
+            {editId != null && (
+              <div className="jpr-sec">
+                <div className="jpr-sec-h"><div className="jpr-sec-t">Comprovantes de pagamento</div></div>
+                <div className="jpr-sec-d">Vêm do Malote sozinhos quando a despesa cita o nº do processo. Vincule pelo nº da despesa ou anexe o arquivo quando não houver.</div>
+                <ComprovantesProcesso processoId={editId} numeroProcesso={editNumero ?? ""} toast={toast} />
+              </div>
+            )}
             <div className="jpr-sec">
             <div className="jpr-sec-h">
               <div className="jpr-sec-t">Motivos e valores</div>
@@ -1482,7 +1557,11 @@ export default function Processos({ view = "processos" }: { view?: "dashboard" |
                   <MotivoSelect value={m.motivo} options={motivosDistintos} onChange={v => setMotivo(i, { motivo: v })} />
                 </div>
                 <div className="jpr-grid3">
-                  {([["valor_pedidos", "Valor pedido"], ["valor_acordo", "Valor acordo"], ["valor_sentenca", "Valor sentença"], ["valor_final", "Valor final"], ["valor_outros_custos", "Outros custos"]] as const).map(([k, l]) => (
+                  {/* Só pedido, acordo e sentença (18/09/2026): "Outros custos"
+                      virou Valor à parte, e "Valor final" (fechamento à mão)
+                      saiu — o custo final é calculado. O que já estava gravado
+                      nessas colunas continua somando no custo final. */}
+                  {([["valor_pedidos", "Valor pedido"], ["valor_acordo", "Valor do acordo"], ["valor_sentenca", "Valor da sentença"]] as const).map(([k, l]) => (
                     <div key={k}><label className="jpr-lbl">{l}</label><MoedaInput value={m[k] || 0} onChange={n => setMotivo(i, { [k]: n } as Partial<MotivoItem>)} /></div>
                   ))}
                 </div>
