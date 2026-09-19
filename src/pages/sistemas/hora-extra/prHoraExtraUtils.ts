@@ -10,6 +10,12 @@ export interface MetricasPrHoraExtra {
   arquivos_adicionados: number;
 }
 
+export interface LinhaRelatorioPrHoraExtra {
+  pr_linhas_adicionadas?: number | null;
+  pr_commits?: number | null;
+  pr_arquivos_adicionados?: number | null;
+}
+
 /**
  * Aceita tanto o formato que as pessoas usam no GitHub (#624) quanto apenas
  * os algarismos. Não remove texto no meio: "PR 624" precisa ser corrigido
@@ -34,5 +40,15 @@ export function totalizarMetricasPr(linhas: Array<Partial<MetricasPrHoraExtra>>)
       arquivos_adicionados: total.arquivos_adicionados + Number(linha.arquivos_adicionados || 0),
     }),
     { linhas_adicionadas: 0, commits: 0, arquivos_adicionados: 0 },
+  );
+}
+
+export function totalizarLinhasRelatorioPr(linhas: LinhaRelatorioPrHoraExtra[]) {
+  return totalizarMetricasPr(
+    linhas.map(({ pr_linhas_adicionadas, pr_commits, pr_arquivos_adicionados }) => ({
+      linhas_adicionadas: pr_linhas_adicionadas ?? 0,
+      commits: pr_commits ?? 0,
+      arquivos_adicionados: pr_arquivos_adicionados ?? 0,
+    })),
   );
 }
