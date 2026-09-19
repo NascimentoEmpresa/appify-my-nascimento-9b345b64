@@ -18,7 +18,7 @@ const API_GITHUB = `https://api.github.com/repos/${REPOSITORIO}`;
 
 const cors = {
   "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, content-type",
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
   "Access-Control-Allow-Methods": "POST, OPTIONS",
 };
 const json = (body: unknown, status = 200) =>
@@ -36,27 +36,6 @@ function cabecalhosGithub() {
     "User-Agent": "erp-hora-extra",
     Authorization: `Bearer ${GITHUB_TOKEN}`,
   };
-}
-
-async function contarArquivosAdicionados(numeroPr: number, totalAlterados: number): Promise<number> {
-  let adicionados = 0;
-  for (let pagina = 1; pagina <= 30; pagina += 1) {
-    const resposta = await fetch(`${API_GITHUB}/pulls/${numeroPr}/files?per_page=100&page=${pagina}`, {
-      headers: cabecalhosGithub(),
-    });
-    if (!resposta.ok) throw new ErroGithub("Não foi possível consultar os arquivos da PR no GitHub.", resposta.status);
-
-    const arquivos: Array<{ status?: string }> = await resposta.json();
-    adicionados += arquivos.filter((arquivo) => arquivo.status === "added").length;
-    if (arquivos.length < 100) return adicionados;
-  }
-
-  // A API do GitHub limita esta rota a 3.000 arquivos. É preferível avisar
-  // que o relatório não pode ser fechado do que gravar um total incompleto.
-  if (totalAlterados > 3000) {
-    throw new ErroGithub("A PR tem arquivos demais para o GitHub calcular este relatório automaticamente.", 422);
-  }
-  return adicionados;
 }
 
 Deno.serve(async (req) => {
@@ -131,7 +110,9 @@ Deno.serve(async (req) => {
     const chamado = Array.isArray(chamados) ? chamados[0] : null;
     if (!chamado) return json({ error: `O chamado ${chamadoNoTitulo} não está disponível para esta HE.` }, 422);
 
-    const arquivosAdicionados = await contarArquivosAdicionados(pr.number, pr.changed_files);
+    // `changed_files` é o mesmo total exibido pelo GitHub na aba “Files changed”.
+    // O nome da coluna foi mantido por compatibilidade com os registros já criados.
+    const arquivosAlterados = pr.changed_files;
     // A confirmação fica fora do alcance do browser e será consumida pela RPC
     // de conclusão. Isso preserva as métricas consultadas no GitHub mesmo se
     // alguém alterar o payload da chamada no DevTools.
@@ -145,7 +126,7 @@ Deno.serve(async (req) => {
         chamado_id: chamado.id,
         pr_linhas_adicionadas: pr.additions,
         pr_commits: pr.commits,
-        pr_arquivos_adicionados: arquivosAdicionados,
+        pr_arquivos_adicionados: arquivosAlterados,
         created_at: new Date().toISOString(),
       },
       { onConflict: "solicitacao_id,pr_numero" },
@@ -161,7 +142,7 @@ Deno.serve(async (req) => {
         titulo: pr.title,
         linhas_adicionadas: pr.additions,
         commits: pr.commits,
-        arquivos_adicionados: arquivosAdicionados,
+        arquivos_adicionados: arquivosAlterados,
       },
       chamado,
     });

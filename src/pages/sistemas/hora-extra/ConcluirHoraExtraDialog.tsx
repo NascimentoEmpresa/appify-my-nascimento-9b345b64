@@ -23,7 +23,7 @@ import {
   validarConclusao,
 } from "./horaExtraUtils";
 import { Campo, DropzoneAnexos, SecaoForm, TotalHoras } from "./HoraExtraUI";
-import { normalizarNumeroPr, totalizarMetricasPr } from "./prHoraExtraUtils";
+import { normalizarNumeroPr, totalizarLinhasRelatorioPr } from "./prHoraExtraUtils";
 import type { ChamadoHoraExtra, SolicitacaoHoraExtra, StatusExecucao } from "./types";
 
 interface LinhaConclusao {
@@ -506,13 +506,7 @@ function TabelaRelatorioPr({
   aoConsultarPr: (i: number) => void;
   aoExcluir?: (i: number) => void;
 }) {
-  const totais = totalizarMetricasPr(
-    linhas.map(({ linhas_adicionadas, commits, arquivos_adicionados }) => ({
-      linhas_adicionadas,
-      commits,
-      arquivos_adicionados,
-    })),
-  );
+  const totais = totalizarLinhasRelatorioPr(linhas);
   const totalChamados = new Set(linhas.filter((linha) => linha.chamado_id).map((linha) => linha.chamado_id)).size;
   const colunas = adicionais ? 6 : 5;
   return (

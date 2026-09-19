@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   normalizarNumeroPr,
+  totalizarLinhasRelatorioPr,
   totalizarMetricasPr,
   urlPrHoraExtra,
 } from "@/pages/sistemas/hora-extra/prHoraExtraUtils";
@@ -31,5 +32,14 @@ describe("relatório de PRs da hora extra", () => {
         { linhas_adicionadas: 767, commits: 14, arquivos_adicionados: 14 },
       ]),
     ).toEqual({ linhas_adicionadas: 776, commits: 17, arquivos_adicionados: 15 });
+  });
+
+  it("soma as metricas carregadas nos campos de PR da linha", () => {
+    expect(
+      totalizarLinhasRelatorioPr([
+        { pr_linhas_adicionadas: 969, pr_commits: 3, pr_arquivos_adicionados: 4 },
+        { pr_linhas_adicionadas: 12, pr_commits: 1, pr_arquivos_adicionados: 2 },
+      ]),
+    ).toEqual({ linhas_adicionadas: 981, commits: 4, arquivos_adicionados: 6 });
   });
 });
