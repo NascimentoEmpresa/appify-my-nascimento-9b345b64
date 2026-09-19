@@ -18,8 +18,10 @@ import {
   formatarDuracao,
   formatarQuantidadeChamados,
   JORNADA_PADRAO_MIN,
+  jornadaParaCalculoHoraExtra,
   mediaConclusao,
   mensagemErro,
+  normalizarPontoSemIntervalo,
   validarConclusao,
 } from "./horaExtraUtils";
 import { Campo, DropzoneAnexos, SecaoForm, TotalHoras } from "./HoraExtraUI";
@@ -117,19 +119,35 @@ export default function ConcluirHoraExtraDialog({
     setPrsEmEdicao({});
   }, [aberto, solicitacao]);
   const jornada = solicitacao?.jornada_minutos ?? JORNADA_PADRAO_MIN;
-  const calculo = calcularHoraExtra(
+  const semIntervalo = Boolean(solicitacao?.sem_intervalo);
+  const jornadaCalculo = jornadaParaCalculoHoraExtra(jornada, solicitacao?.seguir_escala ?? true);
+  const ponto = normalizarPontoSemIntervalo(
     {
       entrada: horarios.ponto_entrada_real,
       saida_intervalo: horarios.ponto_saida_intervalo_real,
       retorno_intervalo: horarios.ponto_retorno_intervalo_real,
       saida: horarios.ponto_saida_real,
     },
-    jornada,
+    semIntervalo,
+  );
+  const calculo = calcularHoraExtra(
+    ponto,
+    jornadaCalculo,
   );
   const minutos = calculo.excedente;
   const media = mediaConclusao([...linhas, ...adicionais].map((l) => l.concluido));
   if (!solicitacao) return null;
-  const mudarHorario = (campo: keyof typeof horarios, valor: string) => setHorarios((a) => ({ ...a, [campo]: valor }));
+  const mudarHorario = (campo: keyof typeof horarios, valor: string) =>
+    setHorarios((atual) =>
+      semIntervalo && campo === "ponto_entrada_real"
+        ? {
+            ...atual,
+            ponto_entrada_real: valor,
+            ponto_saida_intervalo_real: valor,
+            ponto_retorno_intervalo_real: valor,
+          }
+        : { ...atual, [campo]: valor },
+    );
   const adicionarPr = () =>
     setAdicionais((xs) => [
       ...xs,
@@ -221,13 +239,8 @@ export default function ConcluirHoraExtraDialog({
   };
   const enviar = async () => {
     const erros = validarConclusao(
-      {
-        entrada: horarios.ponto_entrada_real,
-        saida_intervalo: horarios.ponto_saida_intervalo_real,
-        retorno_intervalo: horarios.ponto_retorno_intervalo_real,
-        saida: horarios.ponto_saida_real,
-      },
-      jornada,
+      ponto,
+      jornadaCalculo,
     );
     if (erros.length) {
       erros.forEach((erro) => toast.error(erro));
@@ -251,6 +264,8 @@ export default function ConcluirHoraExtraDialog({
         p: {
           id: solicitacao.id,
           ...horarios,
+          ponto_saida_intervalo_real: ponto.saida_intervalo,
+          ponto_retorno_intervalo_real: ponto.retorno_intervalo,
           he_inicio_real: calculo.inicio,
           he_fim_real: calculo.fim,
           resumo_conclusao: resumo,
@@ -288,9 +303,9 @@ export default function ConcluirHoraExtraDialog({
       toast.error(mensagemErro(e, "Não foi possível concluir a HE."));
     }
   };
-  const inputHora = (rotulo: string, campo: keyof typeof horarios) => (
+  const inputHora = (rotulo: string, campo: keyof typeof horarios, desabilitado = false) => (
     <Campo rotulo={rotulo}>
-      <Input type="time" value={horarios[campo]} onChange={(e) => mudarHorario(campo, e.target.value)} />
+      <Input type="time" disabled={desabilitado} value={horarios[campo]} onChange={(e) => mudarHorario(campo, e.target.value)} />
     </Campo>
   );
   return (
@@ -348,13 +363,20 @@ export default function ConcluirHoraExtraDialog({
                 <div className="grid gap-3 lg:grid-cols-[1.4fr_.9fr_.55fr]">
                   <div className="grid grid-cols-2 gap-3 rounded-lg bg-slate-50 p-3 md:grid-cols-4">
                     {inputHora("Entrada", "ponto_entrada_real")}
-                    {inputHora("Saída (intervalo)", "ponto_saida_intervalo_real")}
-                    {inputHora("Retorno (intervalo)", "ponto_retorno_intervalo_real")}
+                    {inputHora("Saída (intervalo)", "ponto_saida_intervalo_real", semIntervalo)}
+                    {inputHora("Retorno (intervalo)", "ponto_retorno_intervalo_real", semIntervalo)}
                     {inputHora("Saída", "ponto_saida_real")}
+                    {semIntervalo && (
+                      <p className="col-span-2 text-xs font-medium text-blue-700 md:col-span-4">
+                        Sem intervalo neste dia.
+                      </p>
+                    )}
                   </div>
                   <div className="grid grid-cols-2 gap-3 rounded-lg bg-blue-50 p-3">
                     <div className="col-span-2 text-xs font-semibold text-blue-700">
-                      Horário da HE (calculado pela escala de {formatarDuracao(jornada, true)})
+                      {jornadaCalculo
+                        ? `Horário da HE (calculado pela escala de ${formatarDuracao(jornada, true)})`
+                        : "Horário da HE (todo o período trabalhado)"}
                     </div>
                     <Campo rotulo="Início real">
                       <Input readOnly value={calculo.excedente ? calculo.inicio : "—"} className="bg-white" />
@@ -454,7 +476,11 @@ export default function ConcluirHoraExtraDialog({
                 <ul className="list-disc space-y-2 pl-5">
                   <li>Informe os horários exatamente como registrados no seu ponto.</li>
                   <li>
-                    A hora extra é <strong>calculada</strong>: conta só o tempo que passar da jornada da escala.
+                    {jornadaCalculo ? (
+                      <>A hora extra é <strong>calculada</strong>: conta só o tempo que passar da jornada da escala.</>
+                    ) : (
+                      <>Neste fim de semana, <strong>todo o período trabalhado</strong> conta como hora extra.</>
+                    )}
                   </li>
                   <li>Digite a PR no formato <strong>#624</strong> para preencher suas métricas automaticamente.</li>
                   <li>O título da PR precisa começar pelo ID do chamado, como <strong>SIS-2026-0459:</strong>.</li>

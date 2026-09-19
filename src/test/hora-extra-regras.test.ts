@@ -4,17 +4,21 @@ import {
   conclusaoExibicao,
   dataLocalISO,
   diaSemana,
+  ehFimDeSemana,
   formatarData,
   formatarDataHora,
   formatarDuracao,
+  jornadaParaCalculoHoraExtra,
   limitarPercentual,
   linhasExcel,
   mediaConclusao,
   mensagemErro,
   minutosJornada,
   minutosTrabalhados,
+  normalizarPontoSemIntervalo,
   podeAlterarHorariosNaLiberacao,
   podeEditarHoraExtra,
+  podeIgnorarEscalaNoFimDeSemana,
   rotuloFaseAnexo,
   sobrepoe,
   statusExecucaoPorPercentual,
@@ -39,6 +43,26 @@ describe("regras de hora extra", () => {
     expect(
       minutosJornada({ entrada: "08:00", saida_intervalo: "12:00", retorno_intervalo: "14:00", saida: "18:00" }),
     ).toBe(480));
+  it("identifica sábado e domingo sem depender de UTC", () => {
+    expect(ehFimDeSemana("2026-09-19")).toBe(true);
+    expect(ehFimDeSemana("2026-09-20")).toBe(true);
+    expect(ehFimDeSemana("2026-09-21")).toBe(false);
+  });
+  it("oferece a exceção somente para uma escala marcada no fim de semana", () => {
+    expect(podeIgnorarEscalaNoFimDeSemana("2026-09-19", { nao_aplicavel_fins_semana: true })).toBe(true);
+    expect(podeIgnorarEscalaNoFimDeSemana("2026-09-19", { nao_aplicavel_fins_semana: false })).toBe(false);
+    expect(podeIgnorarEscalaNoFimDeSemana("2026-09-21", { nao_aplicavel_fins_semana: true })).toBe(false);
+  });
+  it("considera todo o período como HE quando a escala não é seguida no fim de semana", () => {
+    const ponto = normalizarPontoSemIntervalo(
+      { entrada: "08:00", saida_intervalo: "12:00", retorno_intervalo: "13:00", saida: "12:00" },
+      true,
+    );
+    const calculo = calcularHoraExtra(ponto, jornadaParaCalculoHoraExtra(JORNADA, false));
+    expect(calculo.trabalhado).toBe(240);
+    expect(calculo.excedente).toBe(240);
+    expect(calculo.inicio).toBe("08:00");
+  });
   it("conta 1h42 de HE em 08:00-12:00-13:00-19:30", () => {
     const calculo = calcularHoraExtra(
       { entrada: "08:00", saida_intervalo: "12:00", retorno_intervalo: "13:00", saida: "19:30" },
