@@ -5,8 +5,8 @@ import {
 } from "@/lib/menusOcultosGerenciamento";
 
 describe("menus ocultos do gerenciamento de acesso", () => {
-  it("mantém exatamente as 15 rotas aposentadas fora do catálogo", () => {
-    expect(ROTAS_OCULTAS_GERENCIAMENTO.size).toBe(15);
+  it("mantém exatamente as 14 rotas aposentadas fora do catálogo", () => {
+    expect(ROTAS_OCULTAS_GERENCIAMENTO.size).toBe(14);
     for (const rota of ROTAS_OCULTAS_GERENCIAMENTO) {
       expect(rotaVisivelNoGerenciamento(rota)).toBe(false);
     }

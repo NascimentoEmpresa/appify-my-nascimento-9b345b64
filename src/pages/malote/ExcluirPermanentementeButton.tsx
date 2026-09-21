@@ -21,14 +21,21 @@ interface ExcluirPermanentementeButtonProps {
   despesaId: string;
   numero: string;
   menu: "malote_despesa_visualizar" | "malote_solicitacao_visualizar";
-  voltarPara: string;
+  // [SEM-CHAMADO] (achado do usuário: só dava pra excluir permanentemente
+  // de dentro da própria despesa, nunca de dentro da Lixeira do Fluxo de
+  // Caixa — onde o item já está, depois de "Mover para a lixeira"): com
+  // `onSuccess`, o botão fica na tela atual (ex. atualiza uma lista) em vez
+  // de navegar. `voltarPara` continua sendo o padrão pra quem já estava na
+  // própria tela da despesa.
+  voltarPara?: string;
+  onSuccess?: () => void;
 }
 
 // SIS-2026-0194: exclusão PERMANENTE (não é cancelamento) — pra limpar
 // dados de teste, restrita ao Administrador Geral via gerenciamento de
 // acesso. Pede o número do item digitado de novo como confirmação extra,
 // já que não tem volta.
-export function ExcluirPermanentementeButton({ despesaId, numero, menu, voltarPara }: ExcluirPermanentementeButtonProps) {
+export function ExcluirPermanentementeButton({ despesaId, numero, menu, voltarPara, onSuccess }: ExcluirPermanentementeButtonProps) {
   const { can } = usePermissoes();
   const navigate = useNavigate();
   const excluir = useExcluirPermanentemente();
@@ -43,7 +50,8 @@ export function ExcluirPermanentementeButton({ despesaId, numero, menu, voltarPa
     try {
       await excluir.mutateAsync(despesaId);
       toast.success("Excluído permanentemente.");
-      navigate(voltarPara);
+      if (onSuccess) onSuccess();
+      else if (voltarPara) navigate(voltarPara);
     } catch (e: any) {
       toast.error(e.message ?? "Erro ao excluir.");
     } finally {

@@ -664,7 +664,7 @@ const treinamentosModule: ModuleDef = {
       defaultOpen: true,
       items: [
         { label: "Visualizar alunos", to: "/app/treinamentos/alunos", icon: Users },
-        { label: "Adicionar novo", to: "/app/treinamentos/alunos/novo", icon: UserPlus },
+        { label: "Gerenciar alunos", to: "/app/treinamentos/alunos/novo", icon: UserCog },
         { label: "Importar alunos", to: "/app/treinamentos/alunos/importar", icon: Upload },
         { label: "Tags", to: "/app/treinamentos/alunos/tags", icon: Tags },
       ],

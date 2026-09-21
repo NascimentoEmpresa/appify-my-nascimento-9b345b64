@@ -177,9 +177,20 @@ function NoEtapa({
   );
 }
 
-export function FluxoAprovacaoVisual({ despesa, eventos }: { despesa: MaloteDespesaRow; eventos: DespesaEvento[] }) {
-  const nivel2 = aprovadoresDoNivel(despesa, 2).length > 0;
-  const nivel3 = aprovadoresDoNivel(despesa, 3).length > 0;
+export function FluxoAprovacaoVisual({
+  despesa,
+  eventos,
+  fluxoEspecial,
+}: {
+  despesa: MaloteDespesaRow;
+  eventos: DespesaEvento[];
+  // SIS-2026-0439: Fluxo Especial (forma de pagamento com aprovador único
+  // fixo) sempre finaliza em N1 — o diagrama não pode mostrar Nível 2/3
+  // como "próxima etapa" quando eles nunca vão ser alcançados de verdade.
+  fluxoEspecial?: boolean;
+}) {
+  const nivel2 = !fluxoEspecial && aprovadoresDoNivel(despesa, 2).length > 0;
+  const nivel3 = !fluxoEspecial && aprovadoresDoNivel(despesa, 3).length > 0;
 
   // Template canônico do fluxo inteiro — sempre mostra todas as etapas
   // mapeadas (Solicitação → Cotação → Despesa → Pagamento), independente
