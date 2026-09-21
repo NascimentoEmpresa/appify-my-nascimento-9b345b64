@@ -63,6 +63,21 @@ const FASES: GradeFase[] = [
   "Revogado",
 ];
 
+// SIS-2026-0463: empresa é neutra nos primeiros status; obrigatória a partir de
+// "Em Andamento" (a Capa/Contrato nascem daí pra frente e exigem empresa).
+const FASES_EXIGEM_EMPRESA = new Set<GradeFase>(["Em Andamento", "Finalizada"]);
+const SEM_EMPRESA = "__sem_empresa__";
+
+// Rótulo em cima de cada filtro — antes eram só selects "Todos..." sem dizer o que eram.
+function FiltroCampo({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <div className="space-y-1">
+      <label className="block text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">{label}</label>
+      {children}
+    </div>
+  );
+}
+
 const FASE_COLOR: Record<GradeFase, string> = {
   "À Iniciar":       "bg-blue-500/15 text-blue-700 border-blue-300/50",
   "Iniciado":        "bg-sky-500/15 text-sky-700 border-sky-300/50",
@@ -101,13 +116,11 @@ export default function Pipeline() {
   const canAlterar = can("alterar", "licitacoes", "pipeline");
   const canExcluir = can("excluir", "licitacoes", "pipeline");
 
-  // SIS-2026-0359: modo "todas as empresas" — leitura consolidada das ganhas do
-  // grupo (Lucas/gerente). Escrita continua por empresa ativa, então nesse modo
-  // a tela fica read-only (ver escritaBloqueada abaixo).
-  const [todasEmpresas, setTodasEmpresas] = useState(false);
-  const escritaBloqueada = todasEmpresas;
-
-  const { data: items = [], isLoading, error } = useGrade(empresaAtivaId ?? null, { todasEmpresas });
+  // SIS-2026-0359/0463: a Grade lista TODAS as empresas do grupo (o seletor
+  // global foi removido; somos responsáveis por todo o grupo). Como a empresa
+  // virou campo explícito de cada item (SIS-2026-0309), editar cross-empresa é
+  // seguro. O recorte por empresa vira um filtro de tela (empresaFiltro).
+  const { data: items = [], isLoading, error } = useGrade(empresaAtivaId ?? null, { todasEmpresas: true });
   // SIS-2026-0309: empresa é campo explícito no formulário (GradeSheet),
   // não mais herdada do seletor global.
   const insert = useGradeInsert();
@@ -123,6 +136,7 @@ export default function Pipeline() {
   const [busca, setBusca] = useState("");
   const [responsavelFiltro, setResponsavelFiltro] = useState<string>("Todos");
   const [posicaoFiltro, setPosicaoFiltro] = useState<string>("Todas");
+  const [empresaFiltro, setEmpresaFiltro] = useState<string>("Todas"); // "Todas" | id | SEM_EMPRESA
   const [soGanhos, setSoGanhos] = useState(false);
 
   // lista de responsáveis únicos para o filtro
@@ -150,7 +164,14 @@ export default function Pipeline() {
     return m;
   }, [empresas]);
 
-  // Totais das ganhas do conjunto atual (respeita o modo todas-empresas)
+  // Recorte por empresa (filtro de tela). "Todas" = grupo inteiro.
+  const escopoItems = useMemo(() => {
+    if (empresaFiltro === "Todas") return items;
+    if (empresaFiltro === SEM_EMPRESA) return items.filter((i) => !i.empresa_id);
+    return items.filter((i) => i.empresa_id === empresaFiltro);
+  }, [items, empresaFiltro]);
+
+  // Totais das ganhas do recorte de empresa selecionado
   const totaisGanhos = useMemo(() => {
     const parse = (v: string | null) => {
       if (!v) return 0;
@@ -158,13 +179,13 @@ export default function Pipeline() {
       const n = s.includes(",") ? parseFloat(s.replace(/\./g, "").replace(",", ".")) : parseFloat(s);
       return isNaN(n) ? 0 : n;
     };
-    const ganhos = items.filter((i) => i.fase === "Finalizada" && i.posicao === 1);
+    const ganhos = escopoItems.filter((i) => i.fase === "Finalizada" && i.posicao === 1);
     return {
       qtd: ganhos.length,
       valor: ganhos.reduce((s, i) => s + parse(i.valor_global), 0),
       pessoas: ganhos.reduce((s, i) => s + (i.qtd_pessoas ?? 0), 0),
     };
-  }, [items]);
+  }, [escopoItems]);
 
   // modais
   const [sheetOpen, setSheetOpen] = useState(false);
@@ -174,18 +195,18 @@ export default function Pipeline() {
   const [promoverTarget, setPromoverTarget] = useState<GradeItem | null>(null);
   const [importOpen, setImportOpen] = useState(false);
 
-  // stats
+  // stats (refletem o recorte de empresa selecionado)
   const stats = useMemo(() => {
     const map: Record<GradeFase, number> = {
       "À Iniciar": 0, "Iniciado": 0, "Em Andamento": 0, "Finalizada": 0,
       "Não Participado": 0, "Suspenso": 0, "Revogado": 0,
     };
-    items.forEach((i) => { if (i.fase in map) map[i.fase]++; });
+    escopoItems.forEach((i) => { if (i.fase in map) map[i.fase]++; });
     return map;
-  }, [items]);
+  }, [escopoItems]);
 
   const filtered = useMemo(() => {
-    let list = [...items];
+    let list = [...escopoItems];
 
     if (soGanhos) {
       list = list.filter((i) => i.fase === "Finalizada" && i.posicao === 1);
@@ -230,7 +251,7 @@ export default function Pipeline() {
     }
 
     return list;
-  }, [items, faseAtiva, mesAtivo, anoAtivo, busca, responsavelFiltro, posicaoFiltro]);
+  }, [escopoItems, faseAtiva, mesAtivo, anoAtivo, busca, responsavelFiltro, posicaoFiltro, soGanhos]);
 
   function openNew() {
     setEditing(null);
@@ -249,7 +270,7 @@ export default function Pipeline() {
         breadcrumb={["Licitações", "Grade de Licitações"]}
         subtitle="Pré-análise de editais — acompanhe cada oportunidade antes da Capa de Edital."
         actions={
-          canIncluir && !escritaBloqueada ? (
+          canIncluir ? (
             <div className="flex gap-2">
               <Button size="sm" variant="outline" onClick={() => setImportOpen(true)} className="gap-2">
                 <Upload className="h-4 w-4" /> Importar Excel
@@ -292,7 +313,7 @@ export default function Pipeline() {
           <span className="h-2 w-2 rounded-full bg-emerald-500" />
           Ganhos
           <span className="ml-1 font-bold tabular-nums">
-            {items.filter((i) => i.fase === "Finalizada" && i.posicao === 1).length}
+            {escopoItems.filter((i) => i.fase === "Finalizada" && i.posicao === 1).length}
           </span>
         </button>
         {(faseAtiva !== "Todas" || soGanhos) && (
@@ -303,28 +324,17 @@ export default function Pipeline() {
             Todas
           </button>
         )}
-
-        {/* SIS-2026-0359: toggle "Todas as empresas" (leitura consolidada do grupo) */}
-        <button
-          onClick={() => setTodasEmpresas((v) => !v)}
-          className={cn(
-            "ml-auto inline-flex items-center gap-2 rounded-lg border px-3 py-2 text-xs font-medium transition",
-            todasEmpresas
-              ? "border-primary bg-primary/10 text-primary"
-              : "border-border bg-card text-muted-foreground hover:bg-secondary"
-          )}
-          title="Ver licitações de todas as empresas do grupo (somente leitura)"
-        >
-          <Building2 className="h-3.5 w-3.5" />
-          {todasEmpresas ? "Todas as empresas" : "Só empresa ativa"}
-        </button>
       </div>
 
-      {/* Aviso do modo consolidado + totais das ganhas do grupo */}
-      {todasEmpresas && (
-        <div className="flex flex-wrap items-center gap-x-6 gap-y-2 rounded-lg border border-primary/30 bg-primary/5 px-4 py-2.5 text-xs">
+      {/* SIS-2026-0463: totais do recorte de empresa selecionado */}
+      <div className="flex flex-wrap items-center gap-x-6 gap-y-2 rounded-lg border border-primary/30 bg-primary/5 px-4 py-2.5 text-xs">
           <span className="inline-flex items-center gap-1.5 font-medium text-primary">
-            <Building2 className="h-3.5 w-3.5" /> Grupo (todas as empresas) · somente leitura
+            <Building2 className="h-3.5 w-3.5" />
+            {empresaFiltro === "Todas"
+              ? "Grupo (todas as empresas)"
+              : empresaFiltro === SEM_EMPRESA
+                ? "Sem empresa (neutro)"
+                : (empresaNome.get(empresaFiltro) ?? "Empresa")}
           </span>
           <span className="text-muted-foreground">
             Ganhas: <strong className="tabular-nums text-foreground">{totaisGanhos.qtd}</strong>
@@ -336,73 +346,85 @@ export default function Pipeline() {
             Pessoas: <strong className="tabular-nums text-foreground">{totaisGanhos.pessoas}</strong>
           </span>
         </div>
-      )}
 
-      {/* Filtros rápidos */}
-      <div className="card-elevated flex flex-wrap items-center gap-3 p-3">
-        <Input
-          placeholder="Buscar edital, objeto, cidade…"
-          value={busca}
-          onChange={(e) => setBusca(e.target.value)}
-          className="h-9 max-w-xs"
-        />
-        <Select
-          value={mesAtivo !== null ? String(mesAtivo) : "_"}
-          onValueChange={(v) => setMesAtivo(v === "_" ? null : Number(v))}
-        >
-          <SelectTrigger className="h-9 w-[130px]">
-            <SelectValue placeholder="Mês" />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="_">Todos os meses</SelectItem>
-            {MESES.map((m, i) => (
-              <SelectItem key={i} value={String(i)}>{m}</SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-        <Select
-          value={anoAtivo !== null ? String(anoAtivo) : "_"}
-          onValueChange={(v) => setAnoAtivo(v === "_" ? null : Number(v))}
-        >
-          <SelectTrigger className="h-9 w-[100px]">
-            <SelectValue placeholder="Ano" />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="_">Todos</SelectItem>
-            {ANOS.map((a) => (
-              <SelectItem key={a} value={String(a)}>{a}</SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
+      {/* Filtros rápidos — cada um rotulado (SIS-2026-0463) */}
+      <div className="card-elevated flex flex-wrap items-end gap-3 p-3">
+        <FiltroCampo label="Buscar">
+          <Input
+            placeholder="Edital, objeto, cidade…"
+            value={busca}
+            onChange={(e) => setBusca(e.target.value)}
+            className="h-9 w-56"
+          />
+        </FiltroCampo>
 
-        {/* Filtro por responsável */}
-        {responsaveis.length > 0 && (
-          <Select value={responsavelFiltro} onValueChange={setResponsavelFiltro}>
-            <SelectTrigger className="h-9 w-[160px]">
-              <SelectValue placeholder="Responsável" />
-            </SelectTrigger>
+        <FiltroCampo label="Empresa">
+          <Select value={empresaFiltro} onValueChange={setEmpresaFiltro}>
+            <SelectTrigger className="h-9 w-[190px]"><SelectValue /></SelectTrigger>
             <SelectContent>
-              <SelectItem value="Todos">Todos</SelectItem>
-              {responsaveis.map((r) => (
-                <SelectItem key={r} value={r}>{r}</SelectItem>
+              <SelectItem value="Todas">Todas as empresas</SelectItem>
+              {empresas.map((e) => <SelectItem key={e.id} value={e.id}>{e.razao}</SelectItem>)}
+              <SelectItem value={SEM_EMPRESA}>Sem empresa (neutro)</SelectItem>
+            </SelectContent>
+          </Select>
+        </FiltroCampo>
+
+        <FiltroCampo label="Mês de abertura">
+          <Select
+            value={mesAtivo !== null ? String(mesAtivo) : "_"}
+            onValueChange={(v) => setMesAtivo(v === "_" ? null : Number(v))}
+          >
+            <SelectTrigger className="h-9 w-[130px]"><SelectValue /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="_">Todos os meses</SelectItem>
+              {MESES.map((m, i) => (
+                <SelectItem key={i} value={String(i)}>{m}</SelectItem>
               ))}
             </SelectContent>
           </Select>
+        </FiltroCampo>
+
+        <FiltroCampo label="Ano de abertura">
+          <Select
+            value={anoAtivo !== null ? String(anoAtivo) : "_"}
+            onValueChange={(v) => setAnoAtivo(v === "_" ? null : Number(v))}
+          >
+            <SelectTrigger className="h-9 w-[110px]"><SelectValue /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="_">Todos os anos</SelectItem>
+              {ANOS.map((a) => (
+                <SelectItem key={a} value={String(a)}>{a}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </FiltroCampo>
+
+        {responsaveis.length > 0 && (
+          <FiltroCampo label="Responsável">
+            <Select value={responsavelFiltro} onValueChange={setResponsavelFiltro}>
+              <SelectTrigger className="h-9 w-[170px]"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="Todos">Todos os responsáveis</SelectItem>
+                {responsaveis.map((r) => (
+                  <SelectItem key={r} value={r}>{r}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </FiltroCampo>
         )}
 
-        {/* Filtro por posição (colocação pós-lance) */}
         {posicoes.length > 0 && (
-          <Select value={posicaoFiltro} onValueChange={setPosicaoFiltro}>
-            <SelectTrigger className="h-9 w-[130px]">
-              <SelectValue placeholder="Posição" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="Todas">Todas as posições</SelectItem>
-              {posicoes.map((p) => (
-                <SelectItem key={p} value={String(p)}>{p}º lugar</SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+          <FiltroCampo label="Posição (pós-lance)">
+            <Select value={posicaoFiltro} onValueChange={setPosicaoFiltro}>
+              <SelectTrigger className="h-9 w-[140px]"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="Todas">Todas as posições</SelectItem>
+                {posicoes.map((p) => (
+                  <SelectItem key={p} value={String(p)}>{p}º lugar</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </FiltroCampo>
         )}
       </div>
 
@@ -461,9 +483,9 @@ export default function Pipeline() {
             <GradeCard
               key={item.id}
               item={item}
-              empresaLabel={todasEmpresas ? empresaNome.get(item.empresa_id) : undefined}
-              canAlterar={canAlterar && !escritaBloqueada}
-              canExcluir={canExcluir && !escritaBloqueada}
+              empresaLabel={item.empresa_id ? (empresaNome.get(item.empresa_id) ?? "Empresa") : "Sem empresa"}
+              canAlterar={canAlterar}
+              canExcluir={canExcluir}
               onEdit={() => openEdit(item)}
               onView={() => setViewItem(item)}
               onDelete={() => setDeleteTarget(item)}
@@ -984,7 +1006,7 @@ function GradeSheet({
     if (!open) return;
     if (editing) {
       setF({
-        empresa_id: editing.empresa_id,
+        empresa_id: editing.empresa_id ?? "",
         edital: editing.edital ?? "",
         fase: editing.fase,
         responsavel: editing.responsavel ?? "",
@@ -1015,12 +1037,12 @@ function GradeSheet({
       alert("Qtd. Pessoas é obrigatório.");
       return;
     }
-    if (!f.empresa_id) {
-      alert("Selecione a empresa.");
+    if (FASES_EXIGEM_EMPRESA.has(f.fase) && !f.empresa_id) {
+      alert(`Defina a empresa para a fase "${f.fase}".`);
       return;
     }
     onSave({
-      empresa_id: f.empresa_id,
+      empresa_id: f.empresa_id || null,
       edital: f.edital || null,
       fase: f.fase,
       responsavel: f.responsavel || null,
@@ -1064,14 +1086,19 @@ function GradeSheet({
               Contrato); acertar aqui evita a classe inteira de erro do bug
               real do contrato CEITEC. */}
           <div className="space-y-1">
-            <Label className="text-xs">Empresa <span className="text-destructive">*</span></Label>
+            <Label className="text-xs">
+              Empresa
+              {FASES_EXIGEM_EMPRESA.has(f.fase)
+                ? <span className="text-destructive"> *</span>
+                : <span className="text-muted-foreground"> — opcional até "Em Andamento"</span>}
+            </Label>
             <Select
-              value={f.empresa_id}
-              onValueChange={(v) => setF((p) => ({ ...p, empresa_id: v }))}
-              disabled={!!editing}
+              value={f.empresa_id || SEM_EMPRESA}
+              onValueChange={(v) => setF((p) => ({ ...p, empresa_id: v === SEM_EMPRESA ? "" : v }))}
             >
               <SelectTrigger className="h-9"><SelectValue placeholder="Selecione a empresa..." /></SelectTrigger>
               <SelectContent>
+                <SelectItem value={SEM_EMPRESA}>— Sem empresa (neutro) —</SelectItem>
                 {empresas.map((e) => <SelectItem key={e.id} value={e.id}>{e.razao}</SelectItem>)}
               </SelectContent>
             </Select>

@@ -36,6 +36,9 @@ interface FormState {
   // opcional (vazio = continua sendo o solicitante, comportamento de hoje).
   lancadorDespesaUserIds: string[];
   lancadorDespesaNomes: string[];
+  // SIS-2026-0443: só faz sentido junto de requerSolicitacao — mesma regra
+  // de "limpa se desmarcar" já aplicada a aprovadorSolicitacao/lancador.
+  toleranciaVariacaoCotacaoPct: string;
   tipo: TipoClassificacaoOrcamento | null;
   // SIS-2026-0335 (Iury): "existe a possibilidade de ter mais de um
   // aprovador de setor diferente" — vira lista, mesmo padrão de
@@ -67,6 +70,7 @@ const VAZIO: FormState = {
   aprovadorSolicitacaoNome: null,
   lancadorDespesaUserIds: [],
   lancadorDespesaNomes: [],
+  toleranciaVariacaoCotacaoPct: "",
   tipo: null,
   setorResponsavel: [],
   aprovador1UserIds: [],
@@ -94,6 +98,7 @@ function paraFormState(c: ClassificacaoOrcamento): FormState {
     aprovadorSolicitacaoNome: c.aprovador_solicitacao_nome,
     lancadorDespesaUserIds: c.lancador_despesa_user_ids,
     lancadorDespesaNomes: c.lancador_despesa_nomes,
+    toleranciaVariacaoCotacaoPct: c.tolerancia_variacao_cotacao_pct != null ? String(c.tolerancia_variacao_cotacao_pct) : "",
     tipo: c.tipo,
     setorResponsavel: c.setor_responsavel ?? [],
     aprovador1UserIds: c.aprovador1_user_ids,
@@ -356,6 +361,7 @@ export default function ClassificacoesMalote() {
       aprovador3_limite_pct: c.aprovador3_limite_pct,
       aprovador3_sem_limite: c.aprovador3_sem_limite,
       limite_justificativa_pct: c.limite_justificativa_pct,
+      tolerancia_variacao_cotacao_pct: c.tolerancia_variacao_cotacao_pct,
     };
   }
 
@@ -541,6 +547,7 @@ export default function ClassificacoesMalote() {
       aprovador3_limite_pct: c.aprovador3_limite_pct,
       aprovador3_sem_limite: c.aprovador3_sem_limite,
       limite_justificativa_pct: c.limite_justificativa_pct,
+      tolerancia_variacao_cotacao_pct: c.tolerancia_variacao_cotacao_pct,
     };
   }
 
@@ -625,6 +632,11 @@ export default function ClassificacoesMalote() {
       toast.error("Informe um limite para justificativa válido.");
       return;
     }
+    const toleranciaVariacaoCotacao = parsePct(editando.toleranciaVariacaoCotacaoPct);
+    if (editando.toleranciaVariacaoCotacaoPct.trim() && (toleranciaVariacaoCotacao === null || toleranciaVariacaoCotacao < 0)) {
+      toast.error("Informe uma tolerância de variação da cotação válida.");
+      return;
+    }
 
     const payload = {
       id: editando.id,
@@ -640,6 +652,7 @@ export default function ClassificacoesMalote() {
       // limpa, mesmo padrão do Aprovador da solicitação acima.
       lancador_despesa_user_ids: editando.requerSolicitacao ? editando.lancadorDespesaUserIds : [],
       lancador_despesa_nomes: editando.requerSolicitacao ? editando.lancadorDespesaNomes : [],
+      tolerancia_variacao_cotacao_pct: editando.requerSolicitacao ? toleranciaVariacaoCotacao : null,
       aprovador1_user_ids: editando.aprovador1UserIds,
       aprovador1_nomes: editando.aprovador1Nomes,
       aprovador1_limite_pct: limite1,
@@ -933,6 +946,24 @@ export default function ClassificacoesMalote() {
                     options={opcoesLancadorDespesa}
                     placeholder="Buscar lançador..."
                     searchPlaceholder="Buscar lançador..."
+                  />
+                </div>
+              )}
+              {editando?.requerSolicitacao && (
+                <div className="pl-6 max-w-[260px]">
+                  <Label>Tolerância de variação da cotação (%)</Label>
+                  <p className="text-xs text-muted-foreground mb-1">
+                    Se o valor lançado na despesa não subir mais que esse % sobre o valor aprovado na cotação, e o
+                    contrato do Rateio não mudar, a despesa pula direto para "Aguardando pagamento" — sem passar por
+                    N1/N2 (já foi aprovada na cotação). Deixe vazio para manter o fluxo normal sempre.
+                  </p>
+                  <Input
+                    type="number"
+                    min={0}
+                    step="0.01"
+                    placeholder="Ex.: 15,00"
+                    value={editando?.toleranciaVariacaoCotacaoPct ?? ""}
+                    onChange={(e) => setEditando((v) => (v ? { ...v, toleranciaVariacaoCotacaoPct: e.target.value } : v))}
                   />
                 </div>
               )}
