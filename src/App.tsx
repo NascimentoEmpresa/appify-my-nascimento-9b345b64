@@ -1,3 +1,4 @@
+import { Suspense, lazy } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
 import { Toaster as Sonner } from "@/components/ui/sonner";
@@ -86,6 +87,9 @@ import CatalogoAprovacoes from "./pages/suprimentos/CatalogoAprovacoes";
 import PedidosMateriais from "./pages/suprimentos/PedidosMateriais";
 import RetiradaPedido from "./pages/suprimentos/RetiradaPedido";
 import EstoqueEtiquetas from "./pages/suprimentos/EstoqueEtiquetas";
+// Única tela carregada sob demanda: ela arrasta o three.js junto, e não faz
+// sentido pesar no carregamento de quem nunca abre o mapa 3D.
+const EstoqueMapa = lazy(() => import("./pages/suprimentos/EstoqueMapa"));
 import SeparacaoMateriais from "./pages/suprimentos/SeparacaoMateriais";
 import Patrimonio from "./pages/suprimentos/Patrimonio";
 import PainelManutencoes from "./pages/suprimentos/PainelManutencoes";
@@ -583,6 +587,7 @@ const App = () => (
             <Route path="suprimentos/retirada/:ref" element={<RetiradaPedido />} />
             <Route path="suprimentos/separacao" element={<SeparacaoMateriais />} />
             <Route path="suprimentos/estoque-etiquetas" element={<EstoqueEtiquetas />} />
+            <Route path="suprimentos/estoque-mapa" element={<Suspense fallback={null}><EstoqueMapa /></Suspense>} />
             <Route path="suprimentos/patrimonio" element={<Patrimonio />} />
             <Route path="suprimentos/manutencao" element={<PainelManutencoes />} />
             <Route path="suprimentos/epis-admissoes" element={<EpisAdmissoes />} />
