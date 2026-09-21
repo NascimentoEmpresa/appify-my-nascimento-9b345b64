@@ -3,7 +3,10 @@
 > **Documento de trabalho e de passagem de bastão.**
 > Se a sessão do Claude acabar, entregue este arquivo ao Codex e peça para
 > continuar a partir da primeira fase com status `PENDENTE`.
-> Atualizado a cada etapa concluída. Última atualização: **21/09/2026 15:05**.
+> Atualizado a cada etapa concluída. Última atualização: **21/09/2026 17:35**.
+>
+> **Estado atual: Fases 1 e 2 concluídas e commitadas. Próxima: Fase 3.**
+> Nada foi mergeado na `main` — portanto **nada disto está em produção ainda**.
 
 ---
 
@@ -263,12 +266,34 @@ Resposta à segunda pergunta do gerente. Sugestão de inclusão no `CLAUDE.md` e
 
 | Fase | Status | Commit | Quando | Observação |
 |---|---|---|---|---|
-| Baseline (testes + build) | **OK** | — | 21/09 16:55 | 6 testes já falhavam ANTES — ver seção 7 |
-| 1 — staleTime global | PENDENTE | — | — | |
-| 2 — pollings | PENDENTE | — | — | |
-| 3 — debounce | PENDENTE | — | — | |
-| 4 — N+1 Malote | PENDENTE | — | — | |
-| 5 — paginação | PENDENTE | — | — | |
+| Baseline (testes + build) | **OK** | — | 21/09 16:55 | ver seção 7 e o aviso abaixo |
+| 1 — staleTime global | ✅ **CONCLUÍDA** | `94fb7709` | 21/09 17:1x | `src/App.tsx`, 24 inserções, só 2 linhas de código |
+| 2 — pollings | ✅ **CONCLUÍDA** | `77b4e880` | 21/09 17:2x | 3 arquivos, 3 linhas de código (60s → 180s) |
+| 3 — debounce | ⬜ **PENDENTE — COMECE AQUI** | — | — | |
+| 4 — N+1 Malote | ⬜ PENDENTE | — | — | |
+| 5 — paginação | ⬜ PENDENTE | — | — | |
+
+### ⚠️ Aviso importante para quem continuar
+
+**Há outra sessão editando esta mesma árvore de trabalho.** Durante a Fase 1,
+`src/test/enderecoEstoque.test.ts` foi modificado por terceiros às 16:58, entre
+o meu baseline (16:55) e a minha verificação — o resultado dos testes mudou de
+"6 failed | 1284 passed" para "0 failed | 1297 passed" **sem relação com esta
+otimização**.
+
+Consequências práticas:
+
+1. **Refaça o baseline** (`npm run test`) antes de começar a sua fase, em vez de
+   confiar no número da seção 7. Compare contra o SEU baseline, não contra o meu.
+2. **Nunca use `git add .` nem `git commit -a`.** Há um refactor do mapa 3D em
+   andamento na árvore (`src/components/suprimentos/mapa3d/*`,
+   `src/hooks/useSupEstoqueMapa.ts`, `src/lib/suprimentos/enderecoEstoque.ts`,
+   mais uma migration `2026093000200_sup_estoque_mapa_corredor_coluna.sql`) que
+   **não é deste trabalho**.
+3. Commite **por caminho explícito**: `git commit -F msg.txt -- <arquivo1> <arquivo2>`.
+   Eu commitei com `git add` uma vez e arrastei junto uma exclusão de arquivo que
+   já estava no stage de outra pessoa (`mapa3d/Estantes.tsx`); precisei desfazer
+   com `git reset --soft HEAD~1` e refazer por caminho. Não repita esse erro.
 
 ---
 
