@@ -84,8 +84,15 @@ export function Topbar({ onToggleSidebar, onOpenMobile }: { onToggleSidebar: () 
     enabled: !!user?.id,
     // SIS-2026-0332: o sininho só atualizava no foco da aba. Com as
     // notificações do Malote (aprovação/pagamento) o usuário fica parado
-    // na mesma tela esperando — sonda a cada 60s pra elas aparecerem.
-    refetchInterval: 60_000,
+    // na mesma tela esperando — sonda pra elas aparecerem.
+    //
+    // 21/09/2026: era 60s. A Topbar está em TODA tela de TODO usuário logado,
+    // então este intervalo é carga fixa multiplicada por quem estiver online,
+    // o dia inteiro, mesmo sem ninguém mexer em nada. Depois do reinício do
+    // Postgres por esgotamento de conexões, passou para 180s: é bolinha de
+    // aviso, não dado transacional, e quem AGE na notificação continua vendo
+    // o resultado na hora, porque a mutation invalida a query.
+    refetchInterval: 180_000,
     queryFn: async () => {
       const { data, error } = await supabase
         .from("notificacoes" as any)

@@ -1,24 +1,30 @@
 import { describe, expect, it } from "vitest";
 import {
-  ALTURA_RODAPE_M,
-  alturaModulo,
-  caixoteOculto,
+  acharColuna,
+  alturaColuna,
+  alturaTravessa,
+  caixoteExiste,
   centroCaixote,
-  enderecoCabeNoModulo,
+  formatarColunaLinha,
   formatarEndereco,
-  larguraModulo,
+  linhaOculta,
   localParaMundo,
   parseEndereco,
+  pontoDaPlaquinha,
   pontoDeOlhar,
-  type ModuloMapa,
+  posicaoDaProximaColuna,
+  proximoIndice,
+  type ColunaMapa,
+  type CorredorMapa,
 } from "@/lib/suprimentos/enderecoEstoque";
 
 /**
  * Os casos aqui NÃO são inventados: são os formatos realmente encontrados nas
- * 747 fichas com endereço preenchido, medidos no banco de produção em
+ * fichas com endereço preenchido, medidos no banco de produção em
  * 21/09/2026, e cada resultado esperado foi conferido rodando a função gêmea
- * `sup_loc_parse` num Postgres 18 (717 válidos / 30 sujos). Se este teste e o
- * SQL discordarem, a busca acha um item que o desenho não acende.
+ * `sup_loc_parse` num Postgres 18 (717 válidos / 30 sujos, paridade linha a
+ * linha sem divergência). Se este teste e o SQL discordarem, a busca acha um
+ * item que o desenho não acende.
  */
 describe("parseEndereco — as duas notações do galpão", () => {
   it("lê a notação do legado, com hífen (471 das 747 fichas)", () => {
@@ -37,15 +43,11 @@ describe("parseEndereco — as duas notações do galpão", () => {
   });
 
   it("ancora o material que ocupa mais de um vão no primeiro deles", () => {
-    // 'G-04-05-06/02' e 'G-03-01/02/03' existem de verdade (3 fichas): o
-    // material está espalhado por vãos vizinhos. O desenho acende o primeiro,
-    // e o texto original continua guardando o resto.
     expect(parseEndereco("G-04-05-06/02")).toEqual({ rua: "G", nivel: 4, coluna: 5 });
     expect(parseEndereco("G-03-01/02/03")).toEqual({ rua: "G", nivel: 3, coluna: 1 });
   });
 
   it("trata zero como 'não sei', não como endereço", () => {
-    // 14 fichas vieram assim do legado.
     expect(parseEndereco("0-00-00")).toBeNull();
     expect(parseEndereco("00.00")).toBeNull();
   });
@@ -58,7 +60,7 @@ describe("parseEndereco — as duas notações do galpão", () => {
     expect(parseEndereco(undefined)).toBeNull();
   });
 
-  it("escreve de volta no formato com hífen, que é o que a RPC grava", () => {
+  it("grava no formato com hífen, que é o que a RPC escreve", () => {
     expect(formatarEndereco({ rua: "A", nivel: 3, coluna: 10 })).toBe("A-03-10");
     expect(formatarEndereco({ rua: "Z", nivel: 10, coluna: 24 })).toBe("Z-10-24");
   });
@@ -70,66 +72,122 @@ describe("parseEndereco — as duas notações do galpão", () => {
   });
 });
 
-const estanteA: ModuloMapa = {
-  id: "m-a", codigo: "A", nome: "Estante A — parede do fundo",
+describe("leitura em coluna:linha", () => {
+  /**
+   * O pedido foi "tudo padrão coluna:linha". O banco continua com 'A-03-10';
+   * quem inverte para a leitura é esta função — e a ordem importa: 10:3 é
+   * coluna 10, linha 3, NÃO linha 10.
+   */
+  it("mostra coluna primeiro, linha depois", () => {
+    expect(formatarColunaLinha({ rua: "A", nivel: 3, coluna: 10 })).toBe("10:3");
+    expect(formatarColunaLinha({ rua: "A", nivel: 3, coluna: 10 }, true)).toBe("A · 10:3");
+  });
+
+  it("não confunde os dois números quando são parecidos", () => {
+    const e = parseEndereco("B-06-11")!;
+    expect(formatarColunaLinha(e)).toBe("11:6");
+    expect(formatarEndereco(e)).toBe("B-06-11");
+  });
+});
+
+const coluna: ColunaMapa = {
+  id: "k1", corredor_id: "c1", indice: 10,
   pos_x: 2, pos_z: 0.05, rotacao_graus: 0,
-  colunas: 15, niveis: 5,
-  largura_vao_m: 0.45, altura_nivel_m: 0.48, profundidade_m: 0.55,
-  caixotes_ocultos: [{ nivel: 1, coluna: 7 }], ordem: 1, ativo: true,
+  largura_m: 0.42, profundidade_m: 0.58,
+  altura_linha_m: 0.42, altura_base_m: 0.09,
+  linhas: 6, linhas_ocultas: [2], ativo: true,
 };
 
-describe("geometria da estante", () => {
-  it("mede a estante pela grade de caixotes", () => {
-    expect(larguraModulo(estanteA)).toBeCloseTo(6.75, 5);
-    expect(alturaModulo(estanteA)).toBeCloseTo(ALTURA_RODAPE_M + 2.4, 5);
+const corredor: CorredorMapa = {
+  id: "c1", codigo: "A", nome: "Corredor A", ordem: 1, ativo: true,
+  colunas: [coluna, { ...coluna, id: "k2", indice: 11, pos_x: 2.42 }],
+};
+
+describe("geometria da coluna", () => {
+  it("mede a coluna pelas linhas que ela tem", () => {
+    expect(alturaColuna(coluna)).toBeCloseTo(0.09 + 6 * 0.42, 5);
   });
 
-  it("põe o caixote (1,1) no canto de baixo à esquerda", () => {
-    const p = centroCaixote(estanteA, 1, 1);
-    expect(p.x).toBeCloseTo(2 + 0.225, 5);
-    expect(p.y).toBeCloseTo(ALTURA_RODAPE_M + 0.24, 5);
-    expect(p.z).toBeCloseTo(0.05 + 0.275, 5);
+  it("dá à travessa um terço da altura da linha — é o que faz o vão ser mais largo que alto", () => {
+    expect(alturaTravessa(coluna)).toBeCloseTo(0.42 * 0.33, 5);
+    // O vão que sobra tem de ser menor que a largura, como nas fotos.
+    const vaoLivre = coluna.altura_linha_m - alturaTravessa(coluna);
+    expect(vaoLivre).toBeLessThan(coluna.largura_m);
   });
 
-  it("sobe o nível e anda a coluna na direção certa", () => {
-    const baixo = centroCaixote(estanteA, 1, 1);
-    const cima = centroCaixote(estanteA, 2, 1);
-    const direita = centroCaixote(estanteA, 1, 2);
-    expect(cima.y - baixo.y).toBeCloseTo(0.48, 5);
-    expect(direita.x - baixo.x).toBeCloseTo(0.45, 5);
+  it("põe a linha 1 embaixo e sobe a partir dela", () => {
+    const baixo = centroCaixote(coluna, 1);
+    const cima = centroCaixote(coluna, 2);
+    expect(baixo.y).toBeCloseTo(0.09 + 0.21, 5);
+    expect(cima.y - baixo.y).toBeCloseTo(0.42, 5);
+    expect(baixo.x).toBeCloseTo(2 + 0.21, 5);
   });
 
-  it("gira em torno do canto traseiro-esquerdo, como o seed da migration assume", () => {
-    // 90° = encostada na parede esquerda olhando para dentro: a largura passa
-    // a correr para o fundo (-Z) e a profundidade para dentro do salão (+X).
-    const naParede: ModuloMapa = { ...estanteA, rotacao_graus: 90, pos_x: 0.05, pos_z: 10.5 };
-    const larguraLocal = localParaMundo(naParede, { x: 1, y: 0, z: 0 });
-    expect(larguraLocal.x).toBeCloseTo(0.05, 5);
-    expect(larguraLocal.z).toBeCloseTo(9.5, 5);
-
-    const profundidadeLocal = localParaMundo(naParede, { x: 0, y: 0, z: 1 });
-    expect(profundidadeLocal.x).toBeCloseTo(1.05, 5);
-    expect(profundidadeLocal.z).toBeCloseTo(10.5, 5);
+  it("gira em torno do canto traseiro-esquerdo", () => {
+    const naParede: ColunaMapa = { ...coluna, rotacao_graus: 90, pos_x: 0.05, pos_z: 10.5 };
+    const larg = localParaMundo(naParede, { x: 1, y: 0, z: 0 });
+    expect(larg.x).toBeCloseTo(0.05, 5);
+    expect(larg.z).toBeCloseTo(9.5, 5);
+    const prof = localParaMundo(naParede, { x: 0, y: 0, z: 1 });
+    expect(prof.x).toBeCloseTo(1.05, 5);
+    expect(prof.z).toBeCloseTo(10.5, 5);
   });
 
   it("para a câmera na frente do caixote, não dentro dele", () => {
-    const olhar = pontoDeOlhar(estanteA, 3, 5, 1.9);
-    const centro = centroCaixote(estanteA, 3, 5);
+    const olhar = pontoDeOlhar(coluna, 3, 1.05);
+    const centro = centroCaixote(coluna, 3);
     expect(olhar.y).toBeCloseTo(centro.y, 5);
-    // Estante virada para a frente do salão: a câmera fica mais para a frente.
-    expect(olhar.z).toBeGreaterThan(centro.z);
-    expect(olhar.z - centro.z).toBeCloseTo(0.55 / 2 + 1.9, 5);
+    expect(olhar.z - centro.z).toBeCloseTo(0.58 / 2 + 1.05, 5);
   });
 
-  it("sabe qual vão não existe na parede", () => {
-    expect(caixoteOculto(estanteA, 1, 7)).toBe(true);
-    expect(caixoteOculto(estanteA, 1, 6)).toBe(false);
+  it("recua pouco, porque o corredor é estreito", () => {
+    // Corredor de ~1,10 m: recuar mais enfiaria a câmera na prateleira de trás.
+    const centro = centroCaixote(coluna, 3);
+    const padrao = pontoDeOlhar(coluna, 3);
+    expect(padrao.z - centro.z).toBeLessThan(1.4);
   });
 
-  it("acusa endereço que não cabe na estante desenhada", () => {
-    expect(enderecoCabeNoModulo(estanteA, { rua: "A", nivel: 5, coluna: 15 })).toBe(true);
-    // Estante A tem 5 níveis: nível 6 existe no papel, não no desenho ainda.
-    expect(enderecoCabeNoModulo(estanteA, { rua: "A", nivel: 6, coluna: 1 })).toBe(false);
-    expect(enderecoCabeNoModulo(estanteA, { rua: "A", nivel: 1, coluna: 16 })).toBe(false);
+  it("põe a plaquinha na travessa, embaixo do vão", () => {
+    const pl = pontoDaPlaquinha(coluna, 1);
+    const centro = centroCaixote(coluna, 1);
+    expect(pl.y).toBeLessThan(centro.y);
+    expect(pl.z).toBeGreaterThan(centro.z);
+  });
+});
+
+describe("vãos que não existem", () => {
+  it("sabe qual linha está tapada", () => {
+    expect(linhaOculta(coluna, 2)).toBe(true);
+    expect(linhaOculta(coluna, 3)).toBe(false);
+  });
+
+  it("tapar uma linha do meio não mexe na numeração das outras", () => {
+    expect(caixoteExiste(coluna, 1)).toBe(true);
+    expect(caixoteExiste(coluna, 2)).toBe(false);
+    expect(caixoteExiste(coluna, 3)).toBe(true);
+    expect(caixoteExiste(coluna, 7)).toBe(false); // passa das 6 linhas
+  });
+});
+
+describe("montar a prateleira", () => {
+  it("acha a coluna do endereço pelo índice, não pela ordem", () => {
+    expect(acharColuna(corredor, { rua: "A", nivel: 3, coluna: 11 })?.id).toBe("k2");
+    expect(acharColuna(corredor, { rua: "A", nivel: 3, coluna: 99 })).toBeNull();
+    expect(acharColuna(undefined, { rua: "A", nivel: 1, coluna: 1 })).toBeNull();
+  });
+
+  it("numera a coluna nova depois da maior, sem reaproveitar buraco", () => {
+    // Reaproveitar o índice de uma coluna apagada daria à nova o endereço dos
+    // itens que estavam na antiga.
+    expect(proximoIndice(corredor)).toBe(12);
+    const comBuraco: CorredorMapa = { ...corredor, colunas: [corredor.colunas[1]] };
+    expect(proximoIndice(comBuraco)).toBe(12);
+  });
+
+  it("encosta a coluna nova na última, na direção em que ela aponta", () => {
+    expect(posicaoDaProximaColuna(coluna)).toEqual({ pos_x: 2.42, pos_z: 0.05 });
+    // Virada para a parede direita, a prateleira cresce no outro eixo.
+    expect(posicaoDaProximaColuna({ ...coluna, rotacao_graus: 270, pos_x: 11.95, pos_z: 1.2 }))
+      .toEqual({ pos_x: 11.95, pos_z: 1.62 });
   });
 });

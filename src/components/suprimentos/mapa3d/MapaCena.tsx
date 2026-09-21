@@ -4,11 +4,11 @@ import { OrbitControls, SoftShadows } from "@react-three/drei";
 import * as THREE from "three";
 import { RectAreaLightUniformsLib } from "three/examples/jsm/lights/RectAreaLightUniformsLib.js";
 import { Galpao } from "./Galpao";
-import { Estantes, type CaixoteRef } from "./Estantes";
+import { Corredores, type CaixoteRef } from "./Corredores";
 import { CameraCinematica, type Voo } from "./CameraCinematica";
 import { MEDIDAS } from "./cena";
-import type { ModuloMapa } from "@/lib/suprimentos/enderecoEstoque";
-import type { CaixoteOcupado, LayoutMapa } from "@/hooks/useSupEstoqueMapa";
+import type { CorredorMapa } from "@/lib/suprimentos/enderecoEstoque";
+import type { CaixoteOcupado, LayoutMapa, MarcoMapa } from "@/hooks/useSupEstoqueMapa";
 
 /**
  * A cena inteira do mapa 3D.
@@ -22,11 +22,12 @@ RectAreaLightUniformsLib.init();
 
 interface Props {
   layout: LayoutMapa;
-  modulos: ModuloMapa[];
+  corredores: CorredorMapa[];
+  marcos: MarcoMapa[];
   porCaixote: Map<string, CaixoteOcupado>;
   destaque: CaixoteRef | null;
   selecionado: CaixoteRef | null;
-  moduloEmEdicao: string | null;
+  colunaEmEdicao: string | null;
   voo: Voo | null;
   onClicarCaixote: (c: CaixoteRef) => void;
   onClicarVazio: () => void;
@@ -34,8 +35,8 @@ interface Props {
 }
 
 export function MapaCena({
-  layout, modulos, porCaixote, destaque, selecionado,
-  moduloEmEdicao, voo, onClicarCaixote, onClicarVazio, aoPousar,
+  layout, corredores, marcos, porCaixote, destaque, selecionado,
+  colunaEmEdicao, voo, onClicarCaixote, onClicarVazio, aoPousar,
 }: Props) {
   const controles = useRef<any>(null);
 
@@ -44,14 +45,14 @@ export function MapaCena({
       shadows
       dpr={[1, 1.8]}
       gl={{ antialias: true, powerPreference: "high-performance" }}
-      camera={{ fov: 55, near: 0.05, far: 120 }}
+      camera={{ fov: 58, near: 0.05, far: 120 }}
       onPointerMissed={onClicarVazio}
       onCreated={({ gl, scene }) => {
         gl.toneMapping = THREE.ACESFilmicToneMapping;
         gl.toneMappingExposure = 1.05;
         scene.background = new THREE.Color("#e9e7e2");
         // Névoa levíssima: dá profundidade ao corredor comprido sem lavar a
-        // imagem. Começa depois das estantes mais próximas.
+        // imagem. Começa depois das prateleiras mais próximas.
         scene.fog = new THREE.Fog("#e9e7e2", 14, 42);
       }}
     >
@@ -81,18 +82,23 @@ export function MapaCena({
       />
 
       <Suspense fallback={null}>
-        <Galpao layout={layout} />
-        <Estantes
-          modulos={modulos}
+        <Galpao layout={layout} marcos={marcos} />
+        <Corredores
+          corredores={corredores}
           porCaixote={porCaixote}
           destaque={destaque}
           selecionado={selecionado}
-          moduloEmEdicao={moduloEmEdicao}
+          colunaEmEdicao={colunaEmEdicao}
           onClicarCaixote={onClicarCaixote}
         />
       </Suspense>
 
-      <CameraCinematica voo={voo} controles={controles} peDireito={layout.pe_direito_m} aoPousar={aoPousar} />
+      <CameraCinematica
+        voo={voo}
+        controles={controles}
+        peDireito={layout.pe_direito_m}
+        aoPousar={aoPousar}
+      />
 
       <OrbitControls
         ref={controles}
@@ -100,7 +106,7 @@ export function MapaCena({
         enablePan
         enableDamping
         dampingFactor={0.08}
-        minDistance={0.6}
+        minDistance={0.45}
         maxDistance={Math.max(layout.largura_m, layout.profundidade_m) * 1.6}
         // Não deixa a câmera ir para debaixo do piso nem virar de cabeça
         // para baixo — o galpão só existe acima do chão.
@@ -113,7 +119,7 @@ export function MapaCena({
 
 /**
  * Onde a câmera nasce: sentada na bancada, olhando para dentro do salão. É o
- * mesmo enquadramento do segundo vídeo, e é o começo do voo.
+ * mesmo enquadramento das fotos, e é o começo do voo.
  */
 function PosicaoInicial({
   layout, controles,
@@ -128,13 +134,9 @@ function PosicaoInicial({
     jaPosicionou.current = true;
     const c = controles.current;
     if (!c) return;
-    const camera = c.object as THREE.PerspectiveCamera;
-    camera.position.set(
-      layout.mesa_x + MEDIDAS.mesaLargura / 2,
-      MEDIDAS.olhoSentado,
-      layout.mesa_z - 0.3,
-    );
-    c.target.set(layout.largura_m / 2, 1.3, layout.profundidade_m * 0.35);
+    const pv = pontoDeVistaMesa(layout);
+    (c.object as THREE.PerspectiveCamera).position.set(pv.posicao.x, pv.posicao.y, pv.posicao.z);
+    c.target.set(pv.alvo.x, pv.alvo.y, pv.alvo.z);
     c.update();
   });
 
@@ -143,17 +145,19 @@ function PosicaoInicial({
 
 /** Posição da câmera "sentado na bancada" — usada também pelo botão de voltar. */
 export function pontoDeVistaMesa(layout: LayoutMapa) {
+  // A bancada fica no fundo do salão e olha para dentro; a câmera senta nela
+  // e mira no meio da profundidade, que é onde os corredores começam.
+  const rot = (layout.mesa_rotacao * Math.PI) / 180;
+  const meioX = layout.mesa_x + (layout.mesa_largura_m / 2) * Math.cos(rot);
+  const meioZ = layout.mesa_z - (layout.mesa_largura_m / 2) * Math.sin(rot);
+
   return {
     posicao: {
-      x: layout.mesa_x + MEDIDAS.mesaLargura / 2,
+      x: Math.min(Math.max(meioX, 0.4), layout.largura_m - 0.4),
       y: MEDIDAS.olhoSentado,
-      z: layout.mesa_z - 0.3,
+      z: Math.min(Math.max(meioZ + 0.9, 0.4), layout.profundidade_m - 0.3),
     },
-    alvo: {
-      x: layout.largura_m / 2,
-      y: 1.3,
-      z: layout.profundidade_m * 0.35,
-    },
+    alvo: { x: layout.largura_m / 2, y: 1.35, z: layout.profundidade_m * 0.35 },
   };
 }
 
