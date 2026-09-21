@@ -105,7 +105,7 @@ Quem continuar este trabalho **deve respeitar estas regras**:
 | R1 | **Nenhuma migration, nenhum DDL, nenhuma alteração de schema.** | Qualquer `ALTER`/`DROP`/`CREATE POLICY` em tabela com tráfego pode travar a tabela. Todo o trabalho é **frontend**. |
 | R2 | **Nenhuma alteração de dado em produção.** | Nada de `UPDATE`/`DELETE`. |
 | R3 | **Uma fase por commit.** | Se algo der errado, `git revert` de um commit desfaz só aquela fase. |
-| R4 | **Não mexer no bloco `retry`/`retryDelay` do `QueryClient`.** | É defesa deliberada contra o bug de "JWT expired" (ver comentário em `src/App.tsx:275-283`). Mexer nele reabre um bug de produção conhecido. |
+| R4 | **Não alterar o CAMINHO DE AUTH do `retry`/`retryDelay`** (as 5 tentativas de 2s para `isAuthExpiredError`). | É defesa deliberada contra o bug de "JWT expired" (ver comentário em `src/App.tsx`). Mexer nele reabre um bug de produção conhecido. **Atualizada na Fase 6:** a regra dizia "não mexer no bloco inteiro"; a Fase 6 acrescentou um caminho NOVO para erro de sobrecarga, deixando o de auth byte-idêntico. Acrescentar caminho ao lado é permitido; alterar o de auth, não. |
 | R5 | **Branch `eduardo`. Nunca criar branch nova.** | Regra R8 do projeto, verificada pelo CI (`.github/REGRAS-PR.md`). |
 | R6 | **`npm run test`, `npm run build` E o typecheck antes de cada commit.** | Baseline na seção 7. Veja o alerta sobre o typecheck logo abaixo — **build verde não significa tipos corretos**. |
 | R7 | **Não desligar o Realtime sem autorização explícita.** | Libera 7 conexões, mas remove um recurso em uso. É decisão do gerente, não técnica. |
