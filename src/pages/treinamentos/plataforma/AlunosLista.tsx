@@ -179,7 +179,7 @@ export default function AlunosLista() {
               <button className="sec" onClick={() => setMassaAberta(true)}><Users className="h-4 w-4" /> Ações em massa{selecionados.size > 0 ? ` (${selecionados.size})` : ""}</button>
             </AcessoGate>
             <AcessoGate menu={MENU.alunosNovo} acao="visualizar">
-              <Link to="/app/treinamentos/alunos/novo"><UserPlus className="h-4 w-4" /> Adicionar aluno</Link>
+              <Link to="/app/treinamentos/alunos/novo"><UserPlus className="h-4 w-4" /> Gerenciar alunos</Link>
             </AcessoGate>
           </>}
         />
@@ -230,8 +230,8 @@ export default function AlunosLista() {
         </div>
 
         {isLoading ? <TrnCarregando texto="Carregando alunos…" /> : alunos.length === 0 ? (
-          <TrnVazio titulo="Nenhum aluno ainda" texto="Cadastre um a um ou importe a planilha do membox."
-                    acao={<div className="flex gap-2"><Button asChild><Link to="/app/treinamentos/alunos/novo">Adicionar aluno</Link></Button><Button asChild variant="outline"><Link to="/app/treinamentos/alunos/importar">Importar alunos</Link></Button></div>} />
+          <TrnVazio titulo="Nenhum aluno ainda" texto="Os alunos são os colaboradores do cadastro — sincronize em Gerenciar alunos, ou importe a planilha do membox."
+                    acao={<div className="flex gap-2"><Button asChild><Link to="/app/treinamentos/alunos/novo">Gerenciar alunos</Link></Button><Button asChild variant="outline"><Link to="/app/treinamentos/alunos/importar">Importar alunos</Link></Button></div>} />
         ) : (
           <div className="trn-card overflow-hidden p-0">
             <div className="overflow-x-auto">

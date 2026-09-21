@@ -47,7 +47,7 @@ export default function TreinamentosDashboard() {
           texto="Alunos, cursos, conclusões e engajamento da plataforma de treinamentos do Grupo — o que o membox mostrava na Home, agora dentro do ERP."
           pilulas={d ? [`${d.cursos_publicados} curso(s) publicado(s)`, `${d.alunos_ativos} aluno(s) ativo(s)`, `${d.certificados} certificado(s)`] : undefined}
           acoes={<>
-            <Link to="/app/treinamentos/alunos/novo"><UserPlus className="h-4 w-4" /> Adicionar aluno</Link>
+            <Link to="/app/treinamentos/alunos/novo"><UserPlus className="h-4 w-4" /> Gerenciar alunos</Link>
             <Link to="/app/treinamentos/alunos/importar" className="sec"><Upload className="h-4 w-4" /> Importar</Link>
             <Link to="/app/treinamentos/comunicacao/notificacoes" className="sec"><Bell className="h-4 w-4" /> Notificar</Link>
           </>}
