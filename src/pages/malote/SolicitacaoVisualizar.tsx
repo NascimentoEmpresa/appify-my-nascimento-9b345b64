@@ -18,6 +18,7 @@ import {
   useDespesa,
   useSalvarDespesa,
   useCancelarDespesa,
+  useExcluirDespesaSoft,
   useEmpresasGrupo,
   useContratosAtivos,
   useAprovarSolicitacaoInicial,
@@ -41,7 +42,7 @@ import { useLigacoesClassificacaoMalote, mapaClassificacaoVinculada, classificac
 import { anoMesAtual } from "@/hooks/usePlanilhaCusto";
 import { AnexosField } from "./AnexosField";
 import { ComprasPassadas } from "@/components/malote/ComprasPassadas";
-import { ExcluirPermanentementeButton } from "./ExcluirPermanentementeButton";
+import { usePermissoes } from "@/context/PermissoesContext";
 
 function fmtMoney(n: number | null | undefined): string {
   if (n == null) return "—";
@@ -74,6 +75,8 @@ export default function SolicitacaoVisualizar() {
   const { data: contratos = [] } = useContratosAtivos();
   const salvar = useSalvarDespesa();
   const cancelar = useCancelarDespesa();
+  const moverParaLixeira = useExcluirDespesaSoft();
+  const { can } = usePermissoes();
   const aprovarInicial = useAprovarSolicitacaoInicial();
   const reprovarInicial = useReprovarSolicitacaoInicial();
   const aprovarCotacaoMut = useAprovarCotacao();
@@ -329,6 +332,21 @@ export default function SolicitacaoVisualizar() {
     }
   }
 
+  // [SEM-CHAMADO] (mesmo achado do DespesaVisualizar.tsx): Excluir
+  // Permanentemente exige o item já estar na lixeira, mas só a Lixeira do
+  // Fluxo de Caixa tinha botão pra mover pra lá. Soft-delete é reversível
+  // (Restaurar na Lixeira), por isso confirmação simples.
+  async function handleMoverParaLixeira() {
+    if (!confirm(`Mover ${despesa!.numero} para a lixeira? Pode ser restaurada depois, pela Lixeira do Fluxo de Caixa.`)) return;
+    try {
+      await moverParaLixeira.mutateAsync(despesa!.id);
+      toast.success("Movida para a lixeira.");
+      navigate("/app/malote/meus-itens");
+    } catch (e: any) {
+      toast.error(e.message ?? "Erro ao mover para a lixeira.");
+    }
+  }
+
   return (
     <div className="space-y-6 p-6">
       <PageHeader
@@ -338,12 +356,17 @@ export default function SolicitacaoVisualizar() {
         breadcrumb={["Malote", "Solicitação", "Visualizar"]}
         actions={
           <div className="flex items-center gap-2">
-            <ExcluirPermanentementeButton
-              despesaId={despesa.id}
-              numero={despesa.numero}
-              menu="malote_solicitacao_visualizar"
-              voltarPara="/app/malote/meus-itens"
-            />
+            {!despesa.deleted_at && can("excluir", "malote", "malote_solicitacao_visualizar") && (
+              <Button
+                variant="outline"
+                size="sm"
+                className="text-destructive border-destructive hover:bg-destructive/10 gap-1.5"
+                onClick={handleMoverParaLixeira}
+                disabled={moverParaLixeira.isPending}
+              >
+                <Trash2 className="h-3.5 w-3.5" /> {moverParaLixeira.isPending ? "Movendo..." : "Mover para a lixeira"}
+              </Button>
+            )}
             <Button variant="outline" onClick={() => navigate(-1)}>
               <ArrowLeft className="h-4 w-4 mr-2" /> Voltar
             </Button>

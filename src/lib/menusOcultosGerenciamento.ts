@@ -10,7 +10,6 @@
 export const ROTAS_OCULTAS_GERENCIAMENTO: ReadonlySet<string> = new Set([
   "/app/financeiro/capital-giro",
   "/app/financeiro/conciliacao-fluxo-caixa",
-  "/app/financeiro/conta-garantida",
   "/app/financeiro/contas-pagar",
   "/app/financeiro/contas-receber",
   "/app/financeiro/contas-bancarias",

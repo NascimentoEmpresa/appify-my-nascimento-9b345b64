@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -6,10 +6,12 @@ import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Switch } from "@/components/ui/switch";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { SearchableSelect } from "@/components/ui/searchable-select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { CreditCard, Settings, Pencil, Plus, Trash2, ChevronLeft, ChevronRight } from "lucide-react";
+import { CreditCard, Settings, Pencil, Plus, Trash2, ChevronLeft, ChevronRight, X } from "lucide-react";
 import { toast } from "sonner";
+import { cn } from "@/lib/utils";
 import {
   useFormasPagamento,
   useSalvarFormaPagamento,
@@ -18,7 +20,9 @@ import {
   useCriarTipoFormaPagamento,
   useAtualizarStatusTipoFormaPagamento,
   useExcluirTipoFormaPagamento,
+  FluxoAprovacaoFormaPagamento,
 } from "@/hooks/useMaloteFormaPagamento";
+import { useAprovadoresDisponiveis } from "@/hooks/usePlanejamentoOrcamentario";
 
 const PAGE_SIZE = 10;
 
@@ -28,6 +32,7 @@ const PAGE_SIZE = 10;
 export function FormasPagamento({ podeEditar }: { podeEditar: boolean }) {
   const { data: formas = [], isLoading } = useFormasPagamento();
   const { data: tipos = [] } = useTiposFormaPagamento();
+  const { data: aprovadoresDisponiveis = [] } = useAprovadoresDisponiveis();
   const salvar = useSalvarFormaPagamento();
   const excluir = useExcluirFormaPagamento();
 
@@ -35,8 +40,19 @@ export function FormasPagamento({ podeEditar }: { podeEditar: boolean }) {
   const [nome, setNome] = useState("");
   const [tipo, setTipo] = useState("");
   const [ativo, setAtivo] = useState("true");
+  // SIS-2026-0439 (Iury): compra no cartão já foi feita na hora — "Fluxo
+  // Especial" pula o N1→N2→N3 da Classificação e vai direto pro aprovador
+  // único definido aqui, que ao aprovar já manda pra Aguardando Pagamento.
+  const [fluxoAprovacao, setFluxoAprovacao] = useState<FluxoAprovacaoFormaPagamento>("normal");
+  const [aprovadorEspecialUserId, setAprovadorEspecialUserId] = useState<string | null>(null);
   const [pagina, setPagina] = useState(1);
   const [gerenciarTiposAberto, setGerenciarTiposAberto] = useState(false);
+
+  const opcoesAprovador = useMemo(
+    () => aprovadoresDisponiveis.map((a) => ({ value: a.id, label: a.nome })),
+    [aprovadoresDisponiveis]
+  );
+  const nomeAprovadorPorId = useMemo(() => new Map(aprovadoresDisponiveis.map((a) => [a.id, a.nome])), [aprovadoresDisponiveis]);
 
   const tiposAtivos = useMemo(() => tipos.filter((t) => t.ativo), [tipos]);
   const totalPaginas = Math.max(1, Math.ceil(formas.length / PAGE_SIZE));
@@ -47,13 +63,26 @@ export function FormasPagamento({ podeEditar }: { podeEditar: boolean }) {
     setNome("");
     setTipo("");
     setAtivo("true");
+    setFluxoAprovacao("normal");
+    setAprovadorEspecialUserId(null);
   }
+
+  // [SEM-CHAMADO] (achado do usuário testando o Fluxo Especial): clicar no
+  // lápis carregava os dados no formulário lá no topo, mas sem nenhum sinal
+  // visual — quem clicasse não percebia que algo tinha mudado, sobretudo
+  // com a tabela grande e o formulário fora da tela. Agora rola até o
+  // formulário e ele ganha destaque (borda + banner "Editando: <nome>")
+  // enquanto editandoId estiver setado.
+  const formularioRef = useRef<HTMLDivElement>(null);
 
   function abrirEditar(f: (typeof formas)[number]) {
     setEditandoId(f.id);
     setNome(f.nome);
     setTipo(f.tipo);
     setAtivo(String(f.ativo));
+    setFluxoAprovacao(f.fluxo_aprovacao);
+    setAprovadorEspecialUserId(f.aprovador_especial_user_id);
+    formularioRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
   }
 
   async function handleSalvar() {
@@ -65,8 +94,19 @@ export function FormasPagamento({ podeEditar }: { podeEditar: boolean }) {
       toast.error("Selecione o tipo.");
       return;
     }
+    if (fluxoAprovacao === "especial" && !aprovadorEspecialUserId) {
+      toast.error("Selecione o aprovador do Fluxo Especial.");
+      return;
+    }
     try {
-      await salvar.mutateAsync({ id: editandoId ?? undefined, nome, tipo, ativo: ativo === "true" });
+      await salvar.mutateAsync({
+        id: editandoId ?? undefined,
+        nome,
+        tipo,
+        ativo: ativo === "true",
+        fluxo_aprovacao: fluxoAprovacao,
+        aprovador_especial_user_id: fluxoAprovacao === "especial" ? aprovadorEspecialUserId : null,
+      });
       toast.success(editandoId ? "Forma de pagamento atualizada." : "Forma de pagamento cadastrada.");
       limparForm();
     } catch (e: any) {
@@ -86,19 +126,30 @@ export function FormasPagamento({ podeEditar }: { podeEditar: boolean }) {
 
   return (
     <div className="space-y-4">
-      <Card>
+      <Card ref={formularioRef} className={cn(editandoId && "border-primary ring-1 ring-primary")}>
         <CardHeader className="flex flex-row items-start justify-between gap-3">
           <div className="flex items-start gap-2.5">
             <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-blue-100 text-blue-600 dark:bg-blue-950/40 dark:text-blue-400">
               <CreditCard className="h-4.5 w-4.5" />
             </span>
             <div>
-              <CardTitle className="text-base">Formas de Pagamento</CardTitle>
-              <CardDescription>Cadastre e gerencie as formas de pagamento utilizadas nas despesas.</CardDescription>
+              <CardTitle className="text-base">
+                {editandoId ? `Editando: ${formas.find((f) => f.id === editandoId)?.nome ?? ""}` : "Formas de Pagamento"}
+              </CardTitle>
+              <CardDescription>
+                {editandoId
+                  ? "Altere os campos abaixo e clique em Salvar, ou cancele para voltar ao cadastro."
+                  : "Cadastre e gerencie as formas de pagamento utilizadas nas despesas."}
+              </CardDescription>
             </div>
           </div>
+          {editandoId && (
+            <Button type="button" variant="ghost" size="icon" className="h-7 w-7" onClick={limparForm} title="Cancelar edição">
+              <X className="h-4 w-4" />
+            </Button>
+          )}
         </CardHeader>
-        <CardContent className="grid grid-cols-1 sm:grid-cols-[1fr_1fr_auto_auto] gap-3 items-end">
+        <CardContent className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-[1fr_1fr_1fr_1fr_auto_auto] gap-3 items-end">
           <div>
             <Label className="text-xs">Nome da Forma de Pagamento *</Label>
             <Input placeholder="Digite o nome da forma de pagamento" value={nome} onChange={(e) => setNome(e.target.value)} disabled={!podeEditar} />
@@ -128,6 +179,27 @@ export function FormasPagamento({ podeEditar }: { podeEditar: boolean }) {
               </SelectContent>
             </Select>
           </div>
+          <div>
+            <Label className="text-xs">Fluxo de Aprovação</Label>
+            <Select value={fluxoAprovacao} onValueChange={(v) => setFluxoAprovacao(v as FluxoAprovacaoFormaPagamento)} disabled={!podeEditar}>
+              <SelectTrigger><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="normal">Fluxo Normal</SelectItem>
+                <SelectItem value="especial">Fluxo Especial</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+          <div>
+            <Label className="text-xs">Aprovador {fluxoAprovacao === "especial" && "*"}</Label>
+            <SearchableSelect
+              value={aprovadorEspecialUserId ?? "none"}
+              onChange={(v) => setAprovadorEspecialUserId(v === "none" ? null : v)}
+              options={[{ value: "none", label: "—" }, ...opcoesAprovador]}
+              placeholder="Selecione o aprovador"
+              searchPlaceholder="Buscar aprovador..."
+              disabled={!podeEditar || fluxoAprovacao !== "especial"}
+            />
+          </div>
           <div className="w-32">
             <Label className="text-xs">Status *</Label>
             <Select value={ativo} onValueChange={setAtivo} disabled={!podeEditar}>
@@ -148,6 +220,12 @@ export function FormasPagamento({ podeEditar }: { podeEditar: boolean }) {
           )}
         </CardContent>
       </Card>
+      {fluxoAprovacao === "especial" && (
+        <p className="-mt-2 px-1 text-xs text-muted-foreground">
+          Fluxo Especial: a despesa lançada com esta forma de pagamento pula o fluxo N1→N2→N3 da Classificação — quando o
+          aprovador definido acima aprovar, ela já vai direto para "Aguardando pagamento".
+        </p>
+      )}
 
       <Card>
         <CardContent className="pt-6">
@@ -157,6 +235,8 @@ export function FormasPagamento({ podeEditar }: { podeEditar: boolean }) {
                 <TableRow>
                   <TableHead>Nome da Forma de Pagamento</TableHead>
                   <TableHead>Tipo</TableHead>
+                  <TableHead>Fluxo de Aprovação</TableHead>
+                  <TableHead>Aprovador</TableHead>
                   <TableHead>Status</TableHead>
                   {podeEditar && <TableHead className="text-right">Ações</TableHead>}
                 </TableRow>
@@ -164,18 +244,30 @@ export function FormasPagamento({ podeEditar }: { podeEditar: boolean }) {
               <TableBody>
                 {isLoading && (
                   <TableRow>
-                    <TableCell colSpan={4} className="text-center text-muted-foreground py-6">Carregando...</TableCell>
+                    <TableCell colSpan={6} className="text-center text-muted-foreground py-6">Carregando...</TableCell>
                   </TableRow>
                 )}
                 {!isLoading && formas.length === 0 && (
                   <TableRow>
-                    <TableCell colSpan={4} className="text-center text-muted-foreground py-6">Nenhuma forma de pagamento cadastrada ainda.</TableCell>
+                    <TableCell colSpan={6} className="text-center text-muted-foreground py-6">Nenhuma forma de pagamento cadastrada ainda.</TableCell>
                   </TableRow>
                 )}
                 {formasPagina.map((f) => (
                   <TableRow key={f.id}>
                     <TableCell className="font-medium">{f.nome}</TableCell>
                     <TableCell>{f.tipo}</TableCell>
+                    <TableCell>
+                      <Badge
+                        className={
+                          f.fluxo_aprovacao === "especial"
+                            ? "bg-amber-100 text-amber-800 dark:bg-amber-950/40 dark:text-amber-400"
+                            : "bg-blue-100 text-blue-800 dark:bg-blue-950/40 dark:text-blue-400"
+                        }
+                      >
+                        {f.fluxo_aprovacao === "especial" ? "Fluxo Especial" : "Fluxo Normal"}
+                      </Badge>
+                    </TableCell>
+                    <TableCell>{f.aprovador_especial_user_id ? nomeAprovadorPorId.get(f.aprovador_especial_user_id) ?? "—" : "—"}</TableCell>
                     <TableCell>
                       <Badge className={f.ativo ? "bg-emerald-100 text-emerald-800" : "bg-muted text-muted-foreground"}>
                         {f.ativo ? "Ativo" : "Inativo"}
