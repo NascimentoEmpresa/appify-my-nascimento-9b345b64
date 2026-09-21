@@ -3,10 +3,14 @@
 > **Documento de trabalho e de passagem de bastão.**
 > Se a sessão do Claude acabar, entregue este arquivo ao Codex e peça para
 > continuar a partir da primeira fase com status `PENDENTE`.
-> Atualizado a cada etapa concluída. Última atualização: **21/09/2026 17:35**.
+> Atualizado a cada etapa concluída. Última atualização: **21/09/2026 18:40**.
 >
-> **Estado atual: Fases 1 e 2 concluídas e commitadas. Próxima: Fase 3.**
+> **Estado atual: Fases 1, 2, 3 e 4 concluídas e commitadas. Falta só a Fase 5.**
 > Nada foi mergeado na `main` — portanto **nada disto está em produção ainda**.
+>
+> **Para o Codex:** comece pela seção 2 (restrições), depois seção 6 (progresso),
+> e execute a **Fase 5**, que é a única pendente. Ela é a maior e a mais
+> arriscada — leia o aviso de "uma tela por commit" antes de começar.
 
 ---
 
@@ -39,8 +43,30 @@ Quem continuar este trabalho **deve respeitar estas regras**:
 | R3 | **Uma fase por commit.** | Se algo der errado, `git revert` de um commit desfaz só aquela fase. |
 | R4 | **Não mexer no bloco `retry`/`retryDelay` do `QueryClient`.** | É defesa deliberada contra o bug de "JWT expired" (ver comentário em `src/App.tsx:275-283`). Mexer nele reabre um bug de produção conhecido. |
 | R5 | **Branch `eduardo`. Nunca criar branch nova.** | Regra R8 do projeto, verificada pelo CI (`.github/REGRAS-PR.md`). |
-| R6 | **`npm run test` e `npm run build` antes de cada commit.** | Baseline registrado na seção 7. |
+| R6 | **`npm run test`, `npm run build` E o typecheck antes de cada commit.** | Baseline na seção 7. Veja o alerta sobre o typecheck logo abaixo — **build verde não significa tipos corretos**. |
 | R7 | **Não desligar o Realtime sem autorização explícita.** | Libera 7 conexões, mas remove um recurso em uso. É decisão do gerente, não técnica. |
+
+### ⚠️ O `npm run build` NÃO checa tipos
+
+O `vite build` usa esbuild, que apenas transpila — **build verde não prova que
+os tipos estão corretos**. Na Fase 4 eu introduzi um erro de tipo real
+(`Property 'despesa_id' does not exist on type 'RateioLinha'`) e o build passou
+normalmente nas duas vezes. Só o typecheck pegou.
+
+E o typecheck só funciona com o projeto explícito — sem `-p tsconfig.app.json`
+ele compila zero arquivos e sempre passa:
+
+```bash
+npx tsc --noEmit -p tsconfig.app.json
+```
+
+**Baseline: 54 erros**, todos pré-existentes e fora do escopo deste trabalho.
+O critério é: continuar em 54 e **nenhum erro nos arquivos que você tocou**.
+Filtre assim:
+
+```bash
+npx tsc --noEmit -p tsconfig.app.json 2>&1 | grep "error TS" | grep -iE "<seus|arquivos|aqui>"
+```
 
 ### O que NÃO é garantido (sendo honesto)
 
@@ -269,9 +295,24 @@ Resposta à segunda pergunta do gerente. Sugestão de inclusão no `CLAUDE.md` e
 | Baseline (testes + build) | **OK** | — | 21/09 16:55 | ver seção 7 e o aviso abaixo |
 | 1 — staleTime global | ✅ **CONCLUÍDA** | `94fb7709` | 21/09 17:1x | `src/App.tsx`, 24 inserções, só 2 linhas de código |
 | 2 — pollings | ✅ **CONCLUÍDA** | `77b4e880` | 21/09 17:2x | 3 arquivos, 3 linhas de código (60s → 180s) |
-| 3 — debounce | ⬜ **PENDENTE — COMECE AQUI** | — | — | |
-| 4 — N+1 Malote | ⬜ PENDENTE | — | — | |
-| 5 — paginação | ⬜ PENDENTE | — | — | |
+| 3 — debounce | ✅ **CONCLUÍDA** | `e069f86a` | 21/09 18:0x | novo `useDebounce` + 4 hooks de busca |
+| 4 — N+1 Malote | ✅ **CONCLUÍDA** | `f36c6832` | 21/09 18:3x | `useRateioLinhasEParcelasEmLote`, mudança aditiva |
+| 5 — paginação | ⬜ **PENDENTE — COMECE AQUI** | — | — | a maior e a mais arriscada; ver seção 4 |
+
+### O que as 4 fases concluídas atacam
+
+| Fonte de carga | Antes | Depois |
+|---|---|---|
+| Consultas refeitas à toa (remontagem de componente, volta pra aba) | ~404 queries com `staleTime: 0` | 30s de cache |
+| Pollings em toda tela de todo usuário | 3 × a cada 60s | 3 × a cada 180s (**⅓ da carga**) |
+| Busca por digitação | 1 consulta **por tecla** | 1 consulta por palavra |
+| Badge do Malote (N+1) | **~13 consultas/segundo**, 25.894 em 33 min | 2 consultas por lista |
+
+Nenhuma dessas mudanças altera dado, schema, policy ou comportamento de
+aprovação. Todas são reversíveis com `git revert` do commit da fase.
+
+**Importante:** o efeito só aparece em produção após merge na `main` e deploy.
+Até lá o banco continua exatamente como estava.
 
 ### ⚠️ Aviso importante para quem continuar
 
