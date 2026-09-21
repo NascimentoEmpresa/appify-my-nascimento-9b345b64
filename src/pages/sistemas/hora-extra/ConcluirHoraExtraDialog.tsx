@@ -311,7 +311,7 @@ export default function ConcluirHoraExtraDialog({
   return (
     <>
       <Dialog open={aberto} onOpenChange={(v) => !v && aoFechar()}>
-        <DialogContent className="max-h-[96vh] max-w-[1180px] overflow-y-auto p-0">
+        <DialogContent className="w-[calc(100vw-2rem)] max-h-[96vh] max-w-[1500px] overflow-y-auto p-0">
           <DialogHeader className="border-b px-7 py-4">
             <div className="flex items-center gap-4">
               <span
