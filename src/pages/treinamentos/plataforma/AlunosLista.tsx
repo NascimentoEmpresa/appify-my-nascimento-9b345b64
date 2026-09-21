@@ -14,7 +14,8 @@ import { Textarea } from "@/components/ui/textarea";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { useTrnAcaoMassa, useTrnAlunos, useTrnCursos, useTrnExcluirAluno, useTrnTags } from "@/hooks/useTreinamentosPlataforma";
+import { useQuery } from "@tanstack/react-query";
+import { rpcTodasAsLinhas, useTrnAcaoMassa, useTrnAlunos, useTrnCursos, useTrnExcluirAluno, useTrnTags } from "@/hooks/useTreinamentosPlataforma";
 import { MENU, ROTULO_STATUS_ALUNO, type AlunoLista, type StatusAluno } from "./tipos";
 import { Paginacao, StatusAlunoBadge, TagChips, TrnCarregando, TrnEstilo, TrnHero, TrnVazio, fmtData, fmtDataHora, usePaginacao } from "./ui";
 
@@ -123,34 +124,76 @@ export default function AlunosLista() {
   };
 
   // ── Ações em massa ────────────────────────────────────────────────
+  // Recortes (21/09/2026): além de tag / selecionados / todos, dá pra pegar
+  // um CONTRATO inteiro (um ou vários, só quem está Trabalhando ou todo
+  // mundo) e por status de aluno — "cadastrar um contrato inteiro em alguns
+  // cursos". E as ações de curso aceitam VÁRIOS cursos de uma vez (a RPC
+  // roda uma vez por curso). O contrato/status de cada aluno vem da
+  // trn_alunos_gerenciar (espelho do cadastro), lida só quando o modal abre.
   const [massaAberta, setMassaAberta] = useState(false);
-  const [mFiltro, setMFiltro] = useState<"tag" | "selecionados" | "todos">("tag");
+  const [mFiltro, setMFiltro] = useState<"tag" | "selecionados" | "todos" | "contrato" | "status">("tag");
   const [mTag, setMTag] = useState("");
+  const [mContratos, setMContratos] = useState<string[]>([]);
+  const [mSoAtivos, setMSoAtivos] = useState(true);
+  const [mStatus, setMStatus] = useState<"ativo" | "inativo" | "bloqueado" | "pendente">("ativo");
   const [mAcao, setMAcao] = useState("");
   const [mParam, setMParam] = useState("");
+  const [mCursos, setMCursos] = useState<string[]>([]);
+  const [mBuscaContrato, setMBuscaContrato] = useState("");
   const acaoDef = ACOES_MASSA.find((a) => a.v === mAcao);
+
+  const { data: cadastro = [] } = useQuery({
+    queryKey: ["trn-alunos-gerenciar"],
+    enabled: massaAberta,
+    queryFn: () => rpcTodasAsLinhas<{ id: string; contrato: string | null; status: string; situacao: string | null }>("trn_alunos_gerenciar"),
+  });
+  const contratosDoCadastro = useMemo(() => {
+    const m = new Map<string, { total: number; ativos: number }>();
+    for (const a of cadastro) {
+      if (!a.contrato) continue;
+      const x = m.get(a.contrato) ?? { total: 0, ativos: 0 };
+      x.total++; if (a.status === "ativo") x.ativos++;
+      m.set(a.contrato, x);
+    }
+    return [...m.entries()].map(([nome, n]) => ({ nome, ...n })).sort((x, y) => x.nome.localeCompare(y.nome, "pt-BR"));
+  }, [cadastro]);
+  /** Os alunos que o recorte alcança — mostrado antes de aplicar. */
+  const alvoRecorte = useMemo<string[] | null>(() => {
+    if (mFiltro === "selecionados") return [...selecionados];
+    if (mFiltro === "contrato") return cadastro.filter((a) => a.contrato && mContratos.includes(a.contrato) && (!mSoAtivos || a.status === "ativo")).map((a) => a.id);
+    if (mFiltro === "status") return cadastro.filter((a) => a.status === mStatus).map((a) => a.id);
+    return null; // tag e todos: a RPC resolve
+  }, [mFiltro, selecionados, cadastro, mContratos, mSoAtivos, mStatus]);
+  const acaoDeCurso = acaoDef?.param === "curso";
 
   const aplicarMassa = async () => {
     if (!mAcao) return toast.error("Escolha a ação.");
     if (mFiltro === "tag" && !mTag) return toast.error("Escolha a tag.");
     if (mFiltro === "selecionados" && selecionados.size === 0) return toast.error("Selecione alunos na lista.");
-    if (acaoDef?.param && !mParam.trim()) return toast.error("Preencha o parâmetro da ação.");
+    if (mFiltro === "contrato" && mContratos.length === 0) return toast.error("Escolha pelo menos um contrato.");
+    if (alvoRecorte && alvoRecorte.length === 0) return toast.error("Nenhum aluno nesse recorte.");
+    if (acaoDeCurso && mCursos.length === 0) return toast.error("Escolha pelo menos um curso.");
+    if (acaoDef?.param && !acaoDeCurso && !mParam.trim()) return toast.error("Preencha o parâmetro da ação.");
     const param: Record<string, unknown> = {};
-    if (acaoDef?.param === "curso") param.curso_id = mParam;
     if (acaoDef?.param === "tag") param.tag_id = mParam;
     if (acaoDef?.param === "texto") param.texto = mParam;
     if (acaoDef?.param === "data") param.data = mParam;
     if (acaoDef?.param === "dias") param.dias = Number(mParam);
     if (acaoDef?.perigo && !window.confirm("Excluir DE VEZ os alunos do recorte? Não dá para desfazer.")) return;
     try {
-      const r = await massa.mutateAsync({
-        acao: mAcao,
-        alunos: mFiltro === "selecionados" ? [...selecionados] : undefined,
-        tag: mFiltro === "tag" ? mTag : null,
-        param,
-      });
-      toast.success(`${acaoDef?.rotulo}: ${r.afetados} registro(s) alterado(s) em ${r.alvo} aluno(s).`);
-      setMassaAberta(false); setSelecionados(new Set()); setMAcao(""); setMParam("");
+      const base = { acao: mAcao, alunos: alvoRecorte ?? undefined, tag: mFiltro === "tag" ? mTag : null };
+      let afetados = 0, alvo = 0;
+      if (acaoDeCurso) {
+        for (const cursoId of mCursos) {
+          const r = await massa.mutateAsync({ ...base, param: { curso_id: cursoId } });
+          afetados += Number(r.afetados ?? 0); alvo = Number(r.alvo ?? alvo);
+        }
+      } else {
+        const r = await massa.mutateAsync({ ...base, param });
+        afetados = Number(r.afetados ?? 0); alvo = Number(r.alvo ?? 0);
+      }
+      toast.success(`${acaoDef?.rotulo}: ${afetados} registro(s) alterado(s) em ${alvo} aluno(s)${acaoDeCurso && mCursos.length > 1 ? ` · ${mCursos.length} cursos` : ""}.`);
+      setMassaAberta(false); setSelecionados(new Set()); setMAcao(""); setMParam(""); setMCursos([]);
     } catch (e: any) { toast.error(e?.message ?? "Não deu para aplicar a ação."); }
   };
 
@@ -304,12 +347,50 @@ export default function AlunosLista() {
                 <Select value={mFiltro} onValueChange={(v) => setMFiltro(v as typeof mFiltro)}>
                   <SelectTrigger><SelectValue /></SelectTrigger>
                   <SelectContent>
+                    <SelectItem value="contrato">Contrato (todo o pessoal do contrato)</SelectItem>
+                    <SelectItem value="status">Status do aluno (ativos, inativos…)</SelectItem>
                     <SelectItem value="tag">Tag do aluno</SelectItem>
                     <SelectItem value="selecionados">Alunos selecionados na lista ({selecionados.size})</SelectItem>
                     <SelectItem value="todos">Todos os alunos da plataforma</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
+              {mFiltro === "contrato" && (
+                <div>
+                  <Label className="text-xs">Contratos (marque um ou vários)</Label>
+                  <Input className="mt-1" placeholder="Buscar contrato…" value={mBuscaContrato} onChange={(e) => setMBuscaContrato(e.target.value)} />
+                  <div className="mt-1 max-h-48 overflow-y-auto rounded-md border p-1">
+                    {contratosDoCadastro.length === 0 && <div className="p-2 text-xs text-muted-foreground">Carregando contratos…</div>}
+                    {contratosDoCadastro.filter((c) => !mBuscaContrato.trim() || c.nome.toLowerCase().includes(mBuscaContrato.trim().toLowerCase())).map((c) => {
+                      const on = mContratos.includes(c.nome);
+                      return (
+                        <label key={c.nome} className={`flex cursor-pointer items-center gap-2 rounded px-2 py-1 text-xs ${on ? "bg-primary/10" : "hover:bg-muted"}`}>
+                          <Checkbox checked={on} onCheckedChange={() => setMContratos((l) => on ? l.filter((x) => x !== c.nome) : [...l, c.nome])} />
+                          <span className="flex-1">{c.nome}</span>
+                          <span className="text-muted-foreground">{c.ativos} ativos · {c.total} total</span>
+                        </label>
+                      );
+                    })}
+                  </div>
+                  <label className="mt-2 flex items-center gap-2 text-xs">
+                    <Checkbox checked={mSoAtivos} onCheckedChange={(v) => setMSoAtivos(v === true)} /> Só quem está Trabalhando (ativos)
+                  </label>
+                </div>
+              )}
+              {mFiltro === "status" && (
+                <Select value={mStatus} onValueChange={(v) => setMStatus(v as typeof mStatus)}>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="ativo">Ativos (Trabalhando)</SelectItem>
+                    <SelectItem value="inativo">Inativos (afastados e demitidos)</SelectItem>
+                    <SelectItem value="bloqueado">Bloqueados</SelectItem>
+                    <SelectItem value="pendente">Pendentes</SelectItem>
+                  </SelectContent>
+                </Select>
+              )}
+              {alvoRecorte && (
+                <p className="text-xs text-muted-foreground">Recorte: <b>{alvoRecorte.length}</b> aluno(s).</p>
+              )}
               {mFiltro === "tag" && (
                 <div>
                   <Label className="text-xs">Selecione a tag que deseja filtrar os alunos</Label>
@@ -326,11 +407,22 @@ export default function AlunosLista() {
                   <SelectContent><SelectItem value="__">---</SelectItem>{ACOES_MASSA.map((a) => <SelectItem key={a.v} value={a.v} className={a.perigo ? "text-rose-600" : ""}>{a.rotulo}</SelectItem>)}</SelectContent>
                 </Select>
               </div>
-              {acaoDef?.param === "curso" && (
-                <Select value={mParam || "__"} onValueChange={(v) => setMParam(v === "__" ? "" : v)}>
-                  <SelectTrigger><SelectValue placeholder="Curso" /></SelectTrigger>
-                  <SelectContent><SelectItem value="__">Escolha o curso</SelectItem>{cursos.map((c) => <SelectItem key={c.id} value={c.id}>{c.nome}</SelectItem>)}</SelectContent>
-                </Select>
+              {acaoDeCurso && (
+                <div>
+                  <Label className="text-xs">Cursos (marque um ou vários)</Label>
+                  <div className="mt-1 max-h-48 overflow-y-auto rounded-md border p-1">
+                    {cursos.length === 0 && <div className="p-2 text-xs text-muted-foreground">Nenhum curso cadastrado.</div>}
+                    {cursos.map((c) => {
+                      const on = mCursos.includes(c.id);
+                      return (
+                        <label key={c.id} className={`flex cursor-pointer items-center gap-2 rounded px-2 py-1 text-xs ${on ? "bg-primary/10" : "hover:bg-muted"}`}>
+                          <Checkbox checked={on} onCheckedChange={() => setMCursos((l) => on ? l.filter((x) => x !== c.id) : [...l, c.id])} />
+                          <span className="flex-1">{c.nome}{c.publicado ? "" : " (rascunho)"}</span>
+                        </label>
+                      );
+                    })}
+                  </div>
+                </div>
               )}
               {acaoDef?.param === "tag" && (
                 <Select value={mParam || "__"} onValueChange={(v) => setMParam(v === "__" ? "" : v)}>
