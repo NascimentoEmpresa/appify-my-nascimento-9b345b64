@@ -44,7 +44,12 @@ export type TipoEvento =
   // via banco (ajuste administrativo pontual, fora do fluxo normal de
   // aprovação) — distinto de 'aprovacao_nivel' pra deixar rastro de que
   // não foi um clique real de aprovar.
-  | "ajuste_administrativo";
+  | "ajuste_administrativo"
+  // SIS-2026-0443: despesa pulou N1/N2 na conversão da solicitação por
+  // estar dentro da tolerância de variação da cotação (e sem troca de
+  // contrato no Rateio) — distinto de 'aprovacao_nivel' pelo mesmo motivo
+  // de 'ajuste_administrativo': não foi um clique real de aprovar.
+  | "aprovacao_automatica_cotacao";
 
 // Status ainda dentro da fase "Solicitação" — item abre em modal.
 // A partir daqui em diante (pendente_aprovacao em diante) o item já é
@@ -1074,6 +1079,12 @@ export function useSalvarEdicaoPosAprovacao() {
 // de verdade: preenche os campos de despesa (pagamento/rateio/parcelas) na
 // MESMA linha (origem continua 'solicitacao') e entra no fluxo de
 // aprovação N1/N2/N3, que é 100% nosso a partir daqui — SIS-2026-0104.
+// SIS-2026-0443: depois de gravada em pendente_aprovacao/nível 1 (igual
+// sempre foi), tenta a aprovação automática por tolerância de cotação —
+// RPC decide server-side (lê Classificação.tolerancia_variacao_cotacao_pct
+// e compara com valor_aprovado_cotacao/contrato do Rateio) se promove
+// direto pra aguardando_pagamento. `aprovadoAutomaticamente` deixa o
+// chamador (PainelDespesaMalote) mostrar a mensagem certa.
 export function useConverterSolicitacaoEmDespesa() {
   const qc = useQueryClient();
   const salvar = useSalvarDespesa();
@@ -1085,7 +1096,12 @@ export function useConverterSolicitacaoEmDespesa() {
       });
       await (supabase as any).from("malote_despesa").update({ nivel_aprovacao_atual: 1 }).eq("id", despesaId);
       await registrarEventoDespesa(despesaId, "despesa_criada", "Despesa criada a partir da solicitação aprovada.");
-      return despesaId;
+      const { data: aprovadoAutomaticamente, error } = await (supabase as any).rpc(
+        "malote_finalizar_conversao_solicitacao",
+        { _despesa_id: despesaId },
+      );
+      if (error) throw error;
+      return { despesaId, aprovadoAutomaticamente: !!aprovadoAutomaticamente };
     },
     onSuccess: () => qc.invalidateQueries({ queryKey: [DESPESA_KEY] }),
   });
