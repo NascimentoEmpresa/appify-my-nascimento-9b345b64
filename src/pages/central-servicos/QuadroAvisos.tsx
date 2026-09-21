@@ -48,7 +48,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import { useNotificacoes } from "@/hooks/useNotificacoes";
-import { ImagemAviso } from "@/components/notificacoes/ImagemAviso";
+import { ConteudoAviso } from "@/components/notificacoes/ConteudoAviso";
 import {
   CATEGORIAS, FORM_VAZIO, erroDoFormulario, estaVigente, fmtDataHora, formDoAviso,
   panoramaDe, respostasComNome, type CienciaNotificacao, type Escolha,
@@ -82,6 +82,8 @@ export default function QuadroAvisos() {
   const [vendo, setVendo] = useState<Notificacao | null>(null);
   const [apagando, setApagando] = useState<Notificacao | null>(null);
   const [subindo, setSubindo] = useState(false);
+  // URL de imagem digitada (entra na lista com Enter) — 21/09/2026.
+  const [urlImagem, setUrlImagem] = useState("");
   /**
    * O painel de "quem respondeu o quê", dentro do Visualizar.
    *
@@ -199,10 +201,11 @@ export default function QuadroAvisos() {
       toast.error("A imagem passou de 5 MB. Reduza o arquivo e tente de novo.");
       return;
     }
+    if (form.imagens.length >= 10) { toast.error("No máximo 10 imagens por aviso."); return; }
     setSubindo(true);
     try {
       const url = await subirAnexo(arquivo);
-      setForm({ ...form, anexo_url: url, anexo_nome: arquivo.name });
+      setForm((f) => f ? { ...f, imagens: [...f.imagens, { url, nome: arquivo.name }] } : f);
       toast.success("Imagem enviada.");
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Não deu para enviar a imagem.");
@@ -572,50 +575,103 @@ export default function QuadroAvisos() {
                   Mesmo desenho da capa dos Links de BI: sobe o arquivo OU
                   cola uma URL. O campo de URL não é sobra — cartaz que já
                   está publicado em outro lugar não precisa de outra cópia. */}
+              {/* Várias imagens (21/09/2026): lista com miniatura, sobe arquivo
+                  OU cola URL, e o layout — passar pro lado ou todas de uma vez. */}
               <div>
-                <Label>Imagem do aviso</Label>
-                <div className="mt-1 flex flex-wrap items-center gap-3">
-                  <div className="h-16 w-28 shrink-0 overflow-hidden rounded-md border bg-muted">
-                    {form.anexo_url ? (
-                      <img src={form.anexo_url} alt="" className="h-full w-full object-cover" />
-                    ) : (
-                      <div className="flex h-full items-center justify-center text-muted-foreground">
-                        <ImageIcon className="h-5 w-5" />
+                <Label>Imagens do aviso {form.imagens.length > 0 && <span className="text-muted-foreground">({form.imagens.length}/10)</span>}</Label>
+                {form.imagens.length > 0 && (
+                  <div className="mt-1 flex flex-wrap gap-2">
+                    {form.imagens.map((im, k) => (
+                      <div key={k} className="relative h-20 w-32 overflow-hidden rounded-md border bg-muted">
+                        <img src={im.url} alt="" className="h-full w-full object-cover" />
+                        <span className="absolute left-1 top-1 rounded bg-background/90 px-1 text-[10px] font-semibold">{k + 1}</span>
+                        <div className="absolute bottom-1 right-1 flex gap-0.5">
+                          {k > 0 && (
+                            <button type="button" title="Mover pra esquerda"
+                              className="rounded bg-background/90 px-1 text-[10px] hover:bg-background"
+                              onClick={() => setForm({ ...form, imagens: form.imagens.map((x, j) => j === k - 1 ? form.imagens[k] : j === k ? form.imagens[k - 1] : x) })}>◀</button>
+                          )}
+                          <button type="button" title="Tirar"
+                            className="rounded bg-background/90 px-1 text-[10px] text-destructive hover:bg-background"
+                            onClick={() => setForm({ ...form, imagens: form.imagens.filter((_, j) => j !== k) })}>✕</button>
+                        </div>
                       </div>
-                    )}
+                    ))}
                   </div>
+                )}
+                <div className="mt-2 flex flex-wrap items-center gap-3">
+                  {form.imagens.length === 0 && (
+                    <div className="flex h-16 w-28 shrink-0 items-center justify-center rounded-md border bg-muted text-muted-foreground">
+                      <ImageIcon className="h-5 w-5" />
+                    </div>
+                  )}
                   <label className="cursor-pointer">
                     <input
                       type="file"
                       accept="image/png,image/jpeg,image/webp,image/gif"
                       className="hidden"
-                      disabled={subindo}
-                      onChange={(e) => escolherImagem(e.target.files?.[0])}
+                      disabled={subindo || form.imagens.length >= 10}
+                      onChange={(e) => { escolherImagem(e.target.files?.[0]); e.target.value = ""; }}
                     />
                     <span className="inline-flex items-center gap-2 rounded-md border px-3 py-2 text-sm hover:bg-muted">
                       {subindo ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
-                      Enviar imagem
+                      {form.imagens.length ? "Enviar mais uma" : "Enviar imagem"}
                     </span>
                   </label>
                   <Input
                     className="min-w-[200px] flex-1"
-                    placeholder="ou cole a URL de uma imagem"
-                    value={form.anexo_url}
-                    onChange={(e) => setForm({ ...form, anexo_url: e.target.value })}
+                    placeholder="ou cole a URL de uma imagem e aperte Enter"
+                    value={urlImagem}
+                    onChange={(e) => setUrlImagem(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key !== "Enter") return;
+                      e.preventDefault();
+                      const u = urlImagem.trim();
+                      if (!u) return;
+                      if (form.imagens.length >= 10) { toast.error("No máximo 10 imagens por aviso."); return; }
+                      setForm({ ...form, imagens: [...form.imagens, { url: u, nome: "" }] });
+                      setUrlImagem("");
+                    }}
                   />
-                  {form.anexo_url && (
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => setForm({ ...form, anexo_url: "", anexo_nome: "" })}
-                    >
-                      <X className="mr-1 h-3.5 w-3.5" /> Tirar
-                    </Button>
-                  )}
+                </div>
+                {form.imagens.length > 1 && (
+                  <div className="mt-2 flex flex-wrap items-center gap-2 text-sm">
+                    <span className="text-muted-foreground">Como mostrar:</span>
+                    {([["carrossel", "Passar pro lado (uma de cada vez)"], ["grade", "Todas de uma vez"]] as const).map(([v, t]) => (
+                      <button key={v} type="button" onClick={() => setForm({ ...form, imagens_layout: v })}
+                        className={cn("rounded-md border px-3 py-1 text-xs font-medium", form.imagens_layout === v ? "border-primary bg-primary/10 text-primary" : "hover:bg-muted")}>
+                        {t}
+                      </button>
+                    ))}
+                  </div>
+                )}
+                <p className="mt-1 text-xs text-muted-foreground">
+                  PNG, JPG, WEBP ou GIF, até 5 MB cada, até 10 imagens. Aparecem dentro do aviso, acima do texto; a primeira é a capa da lista.
+                </p>
+              </div>
+
+              {/* Links com nome (21/09/2026): viram botões clicáveis abaixo do
+                  texto. URL colada no meio do texto também vira link sozinha. */}
+              <div>
+                <Label>Links {form.links.length > 0 && <span className="text-muted-foreground">({form.links.length})</span>}</Label>
+                <div className="mt-1 space-y-2">
+                  {form.links.map((l, k) => (
+                    <div key={k} className="flex flex-wrap items-center gap-2">
+                      <Input className="w-full sm:w-56" placeholder="Nome do link (ex.: Abrir formulário)" value={l.rotulo}
+                        onChange={(e) => setForm({ ...form, links: form.links.map((x, j) => j === k ? { ...x, rotulo: e.target.value } : x) })} />
+                      <Input className="min-w-[200px] flex-1" placeholder="https://…" value={l.url}
+                        onChange={(e) => setForm({ ...form, links: form.links.map((x, j) => j === k ? { ...x, url: e.target.value } : x) })} />
+                      <Button variant="ghost" size="sm" onClick={() => setForm({ ...form, links: form.links.filter((_, j) => j !== k) })}>
+                        <X className="h-3.5 w-3.5" />
+                      </Button>
+                    </div>
+                  ))}
+                  <Button type="button" variant="outline" size="sm" onClick={() => setForm({ ...form, links: [...form.links, { rotulo: "", url: "" }] })}>
+                    <Plus className="mr-1 h-3.5 w-3.5" /> Adicionar link
+                  </Button>
                 </div>
                 <p className="mt-1 text-xs text-muted-foreground">
-                  PNG, JPG, WEBP ou GIF, até 5 MB. Aparece dentro do aviso, acima do texto.
-                  {form.anexo_nome ? ` Arquivo atual: ${form.anexo_nome}.` : ""}
+                  O nome é o que a pessoa vê no botão (em branco vira “Link”). Endereço colado no meio do texto também fica clicável.
                 </p>
               </div>
 
@@ -699,15 +755,7 @@ export default function QuadroAvisos() {
 
           {vendo && (
             <div className="space-y-4">
-              {vendo.anexo_url && (
-                <ImagemAviso
-                  url={vendo.anexo_url}
-                  nome={vendo.anexo_nome}
-                  prioridade
-                  className="aspect-video w-full"
-                />
-              )}
-              <p className="whitespace-pre-wrap text-sm leading-relaxed">{vendo.mensagem}</p>
+              <ConteudoAviso aviso={vendo} prioridade />
 
               <div className="rounded-lg border p-3 text-sm">
                 <div className="mb-2 font-semibold">Regras aplicadas</div>

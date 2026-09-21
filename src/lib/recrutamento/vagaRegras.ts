@@ -503,3 +503,16 @@ export const contratoEhAdministrativo = (contrato: unknown): boolean =>
   /\bADM(INISTRATIV\w*)?\s*E\s*ESTAGI/.test(
     String(contrato ?? "").normalize("NFD").replace(/[̀-ͯ]/g, "").toUpperCase(),
   );
+
+/**
+ * Setor do cadastro (EMPREGADOS."Setor_ERP", caixa alta: "SISTEMAS") casado
+ * com o nome do catálogo de setores ("Sistemas") — sem acento e sem caixa.
+ * Devolve o nome do catálogo (é o que a vaga/demissão gravam) ou "" quando
+ * não bate. Usado pra puxar o setor sozinho, deixando trocar (18/09/2026).
+ */
+export function setorDoCatalogo(catalogo: readonly string[], setorErp: unknown): string {
+  const norm = (s: unknown) => String(s ?? "").normalize("NFD").replace(/[̀-ͯ]/g, "").trim().toUpperCase();
+  const alvo = norm(setorErp);
+  if (!alvo) return "";
+  return catalogo.find(c => norm(c) === alvo) ?? "";
+}

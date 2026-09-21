@@ -362,7 +362,7 @@ export default function CentralDuvidas() {
             <button onClick={() => setAskModal(false)} style={{ position: "absolute", top: 14, right: 16, border: "none", background: "none", fontSize: 20, color: "#64748b", cursor: "pointer" }}>✕</button>
             <div style={{ fontSize: 20, fontWeight: 800, marginBottom: 4 }}>Nova dúvida ao Jurídico</div>
             <div style={{ fontSize: 13.5, color: "#64748b", marginBottom: 16 }}>Passa por aprovação e depois o Jurídico responde. A resposta fica pública na biblioteca (sem o nome de quem perguntou).</div>
-            <div className="oj-fg"><label>Assunto / título *</label><input className="oj-fi" value={ask.titulo} onChange={e => setAsk(v => ({ ...v, titulo: e.target.value }))} placeholder="Ex.: Prazo para resposta de notificação" /></div>
+            <div className="oj-fg"><label>Título do parecer *</label><input className="oj-fi" value={ask.titulo} onChange={e => setAsk(v => ({ ...v, titulo: e.target.value }))} placeholder="Ex.: Dúvida sobre…" /></div>
             <div className="oj-fg"><label>Categoria</label><select className="oj-fi" value={ask.categoria} onChange={e => setAsk(v => ({ ...v, categoria: e.target.value }))}><option value="">— Selecione —</option>{CATEGORIAS.map(c => <option key={c}>{c}</option>)}</select></div>
             <div className="oj-fg"><label>Sua dúvida *</label><textarea className="oj-fi" rows={5} value={ask.pergunta} onChange={e => setAsk(v => ({ ...v, pergunta: e.target.value }))} placeholder="Descreva a dúvida sobre processo, lei, contrato…" /></div>
             <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 6 }}>

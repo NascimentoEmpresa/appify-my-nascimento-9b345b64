@@ -158,6 +158,25 @@ import Processos from "./pages/juridico/Processos";
 import Advertencias from "./pages/juridico/Advertencias";
 import VerificacaoCandidatos from "./pages/juridico/VerificacaoCandidatos";
 import TreinamentosERP from "./pages/treinamentos/TreinamentosERP";
+// Plataforma de Treinamentos (porta do membox, 18/09/2026) — ver a migration
+// 20260930000190_treinamentos_plataforma.sql.
+import TreinamentosDashboard from "./pages/treinamentos/plataforma/Dashboard";
+import TrnAlunosLista from "./pages/treinamentos/plataforma/AlunosLista";
+import TrnAlunoForm from "./pages/treinamentos/plataforma/AlunoForm";
+import TrnAlunosGerenciar from "./pages/treinamentos/plataforma/AlunosGerenciar";
+import TrnAlunosImportar from "./pages/treinamentos/plataforma/AlunosImportar";
+import TrnAlunosTags from "./pages/treinamentos/plataforma/AlunosTags";
+import TrnCursosLista from "./pages/treinamentos/plataforma/CursosLista";
+import TrnCursoForm from "./pages/treinamentos/plataforma/CursoForm";
+import TrnCursoDetalhe from "./pages/treinamentos/plataforma/CursoDetalhe";
+import TrnAulaForm from "./pages/treinamentos/plataforma/AulaForm";
+import TrnComentarios from "./pages/treinamentos/plataforma/Comentarios";
+import TrnCategorias from "./pages/treinamentos/plataforma/Categorias";
+import TrnCertificados from "./pages/treinamentos/plataforma/Certificados";
+import TrnCertificadoVisualizar from "./pages/treinamentos/plataforma/CertificadoVisualizar";
+import TrnAvisos from "./pages/treinamentos/plataforma/Avisos";
+import TrnNotificacoes from "./pages/treinamentos/plataforma/Notificacoes";
+import TrnCalendario from "./pages/treinamentos/plataforma/Calendario";
 import SolicitarTrocaFuncao from "./pages/encarregados/SolicitarTrocaFuncao";
 import OperacionalTrocaFuncao from "./pages/operacional/TrocaFuncao";
 // Licitações › Analistas Validações — a primeira porta dos três fluxos.
@@ -653,8 +672,33 @@ const App = () => (
             <Route path="juridico/candidatos" element={<VerificacaoCandidatos />} />
             <Route path="juridico/duvidas" element={<CentralDuvidas />} />
             {/* Treinamentos */}
-            <Route path="treinamentos" element={<Navigate to="/app/treinamentos/erp" replace />} />
+            {/* Plataforma de Treinamentos (18/09/2026). "/app/treinamentos" era
+                um redirect para /erp; virou o Dashboard do módulo — o
+                Treinamentos ERP continua em /erp, intacto. As rotas com
+                :id caem no menu da lista pelo prefixo mais longo
+                (matchMenuCode); "novo"/"importar"/"tags"/"comentarios"/
+                "categorias"/"certificados" têm menu próprio, como no membox. */}
+            <Route path="treinamentos" element={<TreinamentosDashboard />} />
             <Route path="treinamentos/erp" element={<TreinamentosERP escopo="encarregados" />} />
+            <Route path="treinamentos/alunos" element={<TrnAlunosLista />} />
+            {/* "Adicionar novo" virou "Gerenciar" (21/09/2026): aluno é colaborador
+                e entra pela admissão. A rota ficou pra não zerar a permissão. */}
+            <Route path="treinamentos/alunos/novo" element={<TrnAlunosGerenciar />} />
+            <Route path="treinamentos/alunos/importar" element={<TrnAlunosImportar />} />
+            <Route path="treinamentos/alunos/tags" element={<TrnAlunosTags />} />
+            <Route path="treinamentos/alunos/:id" element={<TrnAlunoForm />} />
+            <Route path="treinamentos/cursos" element={<TrnCursosLista />} />
+            <Route path="treinamentos/cursos/novo" element={<TrnCursoForm />} />
+            <Route path="treinamentos/cursos/comentarios" element={<TrnComentarios />} />
+            <Route path="treinamentos/cursos/categorias" element={<TrnCategorias />} />
+            <Route path="treinamentos/cursos/certificados" element={<TrnCertificados />} />
+            <Route path="treinamentos/cursos/:id" element={<TrnCursoDetalhe />} />
+            <Route path="treinamentos/cursos/:id/editar" element={<TrnCursoForm />} />
+            <Route path="treinamentos/cursos/:id/aulas/:aulaId" element={<TrnAulaForm />} />
+            <Route path="treinamentos/alunos/certificado/:id" element={<TrnCertificadoVisualizar />} />
+            <Route path="treinamentos/comunicacao/avisos" element={<TrnAvisos />} />
+            <Route path="treinamentos/comunicacao/notificacoes" element={<TrnNotificacoes />} />
+            <Route path="treinamentos/comunicacao/calendario" element={<TrnCalendario />} />
             {/* Licitações › Analistas Validações — a PRIMEIRA porta dos três
                 fluxos (02/09/2026). Antes a etapa 1 era do Operacional, que
                 ficou só com o acompanhamento. */}

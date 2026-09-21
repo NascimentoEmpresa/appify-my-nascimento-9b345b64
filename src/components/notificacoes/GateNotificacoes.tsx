@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { AlertCircle, Loader2, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { ImagemAviso } from "@/components/notificacoes/ImagemAviso";
+import { ConteudoAviso } from "@/components/notificacoes/ConteudoAviso";
 import { useNotificacoes } from "@/hooks/useNotificacoes";
 import { fmtDataHora, type Escolha } from "@/lib/notificacoes";
 import { toast } from "sonner";
@@ -101,29 +101,9 @@ export function GateNotificacoes() {
               isso o aviso abria sem imagem nenhuma, o texto subia no lugar
               dela, e num aviso que bloqueia a tela a pessoa respondia antes de
               o cartaz aparecer — foi o "a imagem não aparece" de 10/09/2026. */}
-          {atual.anexo_url && (
-            <div className="mb-3">
-              <ImagemAviso
-                url={atual.anexo_url}
-                nome={atual.anexo_nome}
-                prioridade
-                className="aspect-video w-full"
-              />
-              {/* Cartaz costuma ter texto miúdo, e aqui ele cabe em pouco mais
-                  de 400px de largura. Quem precisa ler abre em tamanho real. */}
-              <a
-                href={atual.anexo_url}
-                target="_blank"
-                rel="noreferrer"
-                className="mt-1 inline-block text-xs text-muted-foreground underline underline-offset-2"
-              >
-                Ver imagem em tamanho real
-              </a>
-            </div>
-          )}
-          {/* `whitespace-pre-wrap`: quem escreve o aviso usa parágrafo e
-              lista, e sem isto tudo virava um bloco único de texto. */}
-          <p className="whitespace-pre-wrap text-sm leading-relaxed">{atual.mensagem}</p>
+          {/* Imagens (carrossel/grade), texto com URLs clicáveis e os links
+              com nome — o mesmo bloco do Quadro e do Início (ConteudoAviso). */}
+          <ConteudoAviso aviso={atual} prioridade />
         </div>
 
         <div className="flex flex-col gap-2 border-t px-5 py-4 sm:flex-row sm:justify-end">

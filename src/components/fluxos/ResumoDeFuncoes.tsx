@@ -24,6 +24,7 @@ export function ResumoDeFuncoes({
   fluxo: codigos,
   variant = "outline",
   size = "sm",
+  className,
 }: {
   /**
    * Um código, ou vários. Vários só nas telas-hub, onde a pessoa lida com
@@ -33,6 +34,8 @@ export function ResumoDeFuncoes({
   fluxo: string | string[];
   variant?: "outline" | "ghost" | "secondary";
   size?: "sm" | "default";
+  /** Pra caber num fundo escuro (hero azul): passe cores próprias. */
+  className?: string;
 }) {
   const lista = (Array.isArray(codigos) ? codigos : [codigos])
     .map(fluxoPorCodigo)
@@ -48,7 +51,7 @@ export function ResumoDeFuncoes({
 
   return (
     <>
-      <Button variant={variant} size={size} onClick={() => setAberto(true)}>
+      <Button variant={variant} size={size} className={className} onClick={() => setAberto(true)}>
         <BookOpen className="mr-2 h-4 w-4" /> Resumo de Funções
       </Button>
 

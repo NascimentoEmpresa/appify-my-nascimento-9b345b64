@@ -80,6 +80,7 @@ import { MessageSquare } from "lucide-react";
 import { Banknote } from "lucide-react";
 import { TrendingDown } from "lucide-react";
 import { Megaphone, ExternalLink } from "lucide-react";
+import { Award, CalendarDays, FolderTree, Tags, Upload, Users } from "lucide-react";
 import { CreditCard } from "lucide-react";
 import { Network } from "lucide-react";
 import { useNovidades } from "@/hooks/useNovidades";
@@ -635,6 +636,60 @@ const encarregadosModule: ModuleDef = {
   ],
 };
 
+// Treinamentos — a plataforma de cursos (porta do membox, 18/09/2026).
+// Volta a ser módulo próprio: com Dashboard, Alunos, Cursos e Comunicação
+// ele sustenta um bloco no menu. O "Treinamentos ERP" (cards de vídeo/prova)
+// continua onde estava — Encarregados e Central de Serviços —, não entra
+// aqui de novo. Um item por tela, um menu por item (app_menu), como no membox.
+const treinamentosModule: ModuleDef = {
+  id: "treinamentos",
+  label: "Treinamentos",
+  description: "Plataforma de cursos, alunos e comunicação",
+  icon: GraduationCap,
+  basePath: "/app/treinamentos",
+  status: "active",
+  headerLink: "/app/treinamentos",
+  groups: [
+    {
+      label: "Dashboard",
+      defaultOpen: true,
+      items: [
+        { label: "Dashboard", to: "/app/treinamentos", icon: LayoutDashboard },
+      ],
+    },
+    {
+      label: "Alunos",
+      defaultOpen: true,
+      items: [
+        { label: "Visualizar alunos", to: "/app/treinamentos/alunos", icon: Users },
+        { label: "Gerenciar alunos", to: "/app/treinamentos/alunos/novo", icon: UserCog },
+        { label: "Importar alunos", to: "/app/treinamentos/alunos/importar", icon: Upload },
+        { label: "Tags", to: "/app/treinamentos/alunos/tags", icon: Tags },
+      ],
+    },
+    {
+      label: "Cursos",
+      defaultOpen: true,
+      items: [
+        { label: "Visualizar cursos", to: "/app/treinamentos/cursos", icon: BookOpen },
+        { label: "Adicionar novo", to: "/app/treinamentos/cursos/novo", icon: PlusCircle },
+        { label: "Comentários", to: "/app/treinamentos/cursos/comentarios", icon: MessageSquare },
+        { label: "Categorias", to: "/app/treinamentos/cursos/categorias", icon: FolderTree },
+        { label: "Certificados", to: "/app/treinamentos/cursos/certificados", icon: Award },
+      ],
+    },
+    {
+      label: "Comunicação",
+      defaultOpen: true,
+      items: [
+        { label: "Avisos", to: "/app/treinamentos/comunicacao/avisos", icon: Megaphone },
+        { label: "Notificações", to: "/app/treinamentos/comunicacao/notificacoes", icon: Bell },
+        { label: "Calendário", to: "/app/treinamentos/comunicacao/calendario", icon: CalendarDays },
+      ],
+    },
+  ],
+};
+
 // Sistemas — demandas de sistemas (kanban de 13 etapas, acesso livre)
 const sistemasModule: ModuleDef = {
   id: "sistemas",
@@ -1023,6 +1078,7 @@ const erpModules: ModuleDef[] = [
   sstModule,
   centralServicosModule,
   comiteEticaModule,
+  treinamentosModule,
   whatsappModule,
   biModule,
 ];

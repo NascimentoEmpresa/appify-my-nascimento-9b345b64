@@ -78,7 +78,7 @@ const ROTULO: Record<string, string> = {
   quantidade_vagas: "Quantidade de vagas", motivo_vaga: "Motivo da vaga",
   nome_substituido: "Substituindo", data_inicio_prevista: "Início previsto",
   grau_urgencia: "Urgência", escala: "Escala", horario: "Horário",
-  salario: "Salário", beneficios: "Benefícios", local_exato: "Local exato",
+  salario: "Salário", beneficios: "Benefícios", local_exato: "Posto de trabalho",
   insalubridade_recebe: "Insalubridade", req_obrigatorios: "Requisitos obrigatórios",
   req_desejaveis: "Requisitos desejáveis", exp_minima: "Experiência mínima",
   alta_rotatividade: "Alta rotatividade", observacao_importante: "Observação",

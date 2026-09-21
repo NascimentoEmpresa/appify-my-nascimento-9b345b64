@@ -82,6 +82,12 @@ verify_jwt = false
 [functions.chamado-concluir-pr]
 verify_jwt = false
 
+# Consulta de PR pelo modal de Hora Extra. O gateway exige o JWT do usuário e
+# a function ainda confere a sessão e se ele é o dono da HE antes de usar o
+# GITHUB_TOKEN mantido como secret no Supabase.
+[functions.hora-extra-pr-info]
+verify_jwt = true
+
 # Chamada tanto pelo front-end (usuário logado, JWT da Supabase) quanto pela
 # chamado-concluir-pr, que roda a partir do CI e não tem sessão. Por isso o
 # gateway não exige JWT: quem valida é a própria função, que aceita só duas

@@ -8,6 +8,18 @@ import type {
   StatsHoraExtra,
 } from "@/pages/sistemas/hora-extra/types";
 
+export interface InformacoesPrHoraExtra {
+  pr: {
+    numero: number;
+    url: string;
+    titulo: string;
+    linhas_adicionadas: number;
+    commits: number;
+    arquivos_adicionados: number;
+  };
+  chamado: ChamadoDisponivel;
+}
+
 // Os tipos gerados serão atualizados somente depois da aplicação da migration.
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const db = supabase as any;
@@ -112,11 +124,34 @@ function useRpcHoraExtra(nome: string) {
 
 export const useSalvarHoraExtra = () => useRpcHoraExtra("hora_extra_salvar");
 export const useLiberarHoraExtra = () => useRpcHoraExtra("hora_extra_liberar");
+export const useLiberarHoraExtraComHorarios = () => useRpcHoraExtra("hora_extra_liberar_com_horarios");
 export const useConcluirHoraExtra = () => useRpcHoraExtra("hora_extra_concluir");
 export const useValidarHoraExtra = () => useRpcHoraExtra("hora_extra_validar");
+export const useValidarHoraExtraComHorarios = () => useRpcHoraExtra("hora_extra_validar_com_horarios");
 export const useExcluirHoraExtra = () => useRpcHoraExtra("hora_extra_excluir");
 export const useSalvarEscalaHoraExtra = () => useRpcHoraExtra("hora_extra_escala_salvar");
 export const useExcluirEscalaHoraExtra = () => useRpcHoraExtra("hora_extra_escala_excluir");
+
+/**
+ * Consulta a PR pelo servidor para que o token do GitHub nunca vá para o
+ * navegador. A Edge Function também valida se o chamado que aparece no título
+ * pode ser usado na solicitação de HE que está sendo concluída.
+ */
+export async function buscarInformacoesPrHoraExtra(
+  solicitacaoId: string,
+  numeroPr: number,
+): Promise<InformacoesPrHoraExtra> {
+  const { data, error } = await supabase.functions.invoke("hora-extra-pr-info", {
+    body: { solicitacao_id: solicitacaoId, pr_numero: numeroPr },
+  });
+  if (error) {
+    const resposta = (error as { context?: Response }).context;
+    const corpo = resposta ? await resposta.json().catch(() => null) : null;
+    throw new Error(corpo?.error || error.message);
+  }
+  if (!data?.pr || !data?.chamado) throw new Error("A consulta da PR retornou dados incompletos.");
+  return data as InformacoesPrHoraExtra;
+}
 
 /**
  * Sobe cada arquivo e grava a linha em HORA_EXTRA_ANEXO. Devolve as falhas já
