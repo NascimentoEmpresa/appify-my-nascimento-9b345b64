@@ -148,7 +148,7 @@ export default function ConcluirHoraExtraDialog({
           }
         : { ...atual, [campo]: valor },
     );
-  const adicionarPr = () =>
+  const adicionarChamado = () =>
     setAdicionais((xs) => [
       ...xs,
       {
@@ -237,6 +237,20 @@ export default function ConcluirHoraExtraDialog({
       setPrsCarregando((atual) => ({ ...atual, [linha.chave]: false }));
     }
   };
+  const grupoDaLinha = (chave: string): { grupo: "originais" | "adicionais"; indice: number } | null => {
+    const indiceOriginal = linhas.findIndex((linha) => linha.chave === chave);
+    if (indiceOriginal >= 0) return { grupo: "originais", indice: indiceOriginal };
+    const indiceAdicional = adicionais.findIndex((linha) => linha.chave === chave);
+    return indiceAdicional >= 0 ? { grupo: "adicionais", indice: indiceAdicional } : null;
+  };
+  const atualizarTextoPrPorChave = (chave: string, pr_texto: string) => {
+    const linha = grupoDaLinha(chave);
+    if (linha) atualizarTextoPr(linha.grupo, linha.indice, pr_texto);
+  };
+  const consultarPrPorChave = (chave: string) => {
+    const linha = grupoDaLinha(chave);
+    if (linha) void consultarPr(linha.grupo, linha.indice);
+  };
   const enviar = async () => {
     const erros = validarConclusao(
       ponto,
@@ -311,7 +325,7 @@ export default function ConcluirHoraExtraDialog({
   return (
     <>
       <Dialog open={aberto} onOpenChange={(v) => !v && aoFechar()}>
-        <DialogContent className="max-h-[96vh] max-w-[1180px] overflow-y-auto p-0">
+        <DialogContent className="w-[calc(100vw-2rem)] max-h-[96vh] max-w-[1500px] overflow-y-auto p-0">
           <DialogHeader className="border-b px-7 py-4">
             <div className="flex items-center gap-4">
               <span
@@ -394,38 +408,22 @@ export default function ConcluirHoraExtraDialog({
                 icone={<UsersRound className="h-5 w-5" />}
               >
                 <TabelaRelatorioPr
-                  linhas={linhas}
-                  adicionais={false}
+                  linhas={[...linhas, ...adicionais]}
                   prsCarregando={prsCarregando}
                   prsEmEdicao={prsEmEdicao}
                   aoEditarPr={(chave) => setPrsEmEdicao((atual) => ({ ...atual, [chave]: true }))}
-                  aoAlterarTextoPr={(i, valor) => atualizarTextoPr("originais", i, valor)}
-                  aoConsultarPr={(i) => void consultarPr("originais", i)}
-                />
-              </SecaoForm>
-              <SecaoForm
-                titulo="4. Chamados adicionais (realizados durante a HE)"
-                subtitulo="Adicione a PR: o chamado é identificado no título da PR e incluído automaticamente no relatório."
-                icone={<UsersRound className="h-5 w-5" />}
-              >
-                <TabelaRelatorioPr
-                  linhas={adicionais}
-                  adicionais
-                  prsCarregando={prsCarregando}
-                  prsEmEdicao={prsEmEdicao}
-                  aoEditarPr={(chave) => setPrsEmEdicao((atual) => ({ ...atual, [chave]: true }))}
-                  aoAlterarTextoPr={(i, valor) => atualizarTextoPr("adicionais", i, valor)}
-                  aoConsultarPr={(i) => void consultarPr("adicionais", i)}
-                  aoExcluir={(i) => setAdicionais((xs) => xs.filter((_, j) => j !== i))}
+                  aoAlterarTextoPr={atualizarTextoPrPorChave}
+                  aoConsultarPr={consultarPrPorChave}
+                  aoExcluir={(chave) => setAdicionais((xs) => xs.filter((linha) => linha.chave !== chave))}
                 />
                 <div className="mt-3 text-right">
-                  <Button variant="outline" onClick={adicionarPr}>
-                    + &nbsp; Adicionar PR
+                  <Button type="button" variant="outline" onClick={adicionarChamado}>
+                    + &nbsp; Adicionar Chamado
                   </Button>
                 </div>
               </SecaoForm>
               <SecaoForm
-                titulo="5. Resumo e observações"
+                titulo="4. Resumo e observações"
                 subtitulo={
                   "Descreva aqui um resumo do que foi realizado durante a hora extra " + "e se houve algum impedimento."
                 }
@@ -434,7 +432,7 @@ export default function ConcluirHoraExtraDialog({
                 <Textarea maxLength={1000} rows={3} value={resumo} onChange={(e) => setResumo(e.target.value)} />
                 <div className="mt-1 text-right text-xs text-slate-500">{resumo.length}/1000</div>
               </SecaoForm>
-              <SecaoForm titulo="6. Anexos (opcional)" icone={<FileText className="h-5 w-5" />}>
+              <SecaoForm titulo="5. Anexos (opcional)" icone={<FileText className="h-5 w-5" />}>
                 <DropzoneAnexos
                   arquivos={arquivos}
                   setArquivos={setArquivos}
@@ -515,7 +513,6 @@ function Resumo({ rotulo, valor }: { rotulo: string; valor: string }) {
 }
 function TabelaRelatorioPr({
   linhas,
-  adicionais,
   prsCarregando,
   prsEmEdicao,
   aoEditarPr,
@@ -524,17 +521,17 @@ function TabelaRelatorioPr({
   aoExcluir,
 }: {
   linhas: LinhaConclusao[];
-  adicionais: boolean;
   prsCarregando: Record<string, boolean>;
   prsEmEdicao: Record<string, boolean>;
   aoEditarPr: (chave: string) => void;
-  aoAlterarTextoPr: (i: number, valor: string) => void;
-  aoConsultarPr: (i: number) => void;
-  aoExcluir?: (i: number) => void;
+  aoAlterarTextoPr: (chave: string, valor: string) => void;
+  aoConsultarPr: (chave: string) => void;
+  aoExcluir?: (chave: string) => void;
 }) {
   const totais = totalizarLinhasRelatorioPr(linhas);
   const totalChamados = new Set(linhas.filter((linha) => linha.chamado_id).map((linha) => linha.chamado_id)).size;
-  const colunas = adicionais ? 6 : 5;
+  const temChamadosAdicionais = linhas.some((linha) => linha.adicional);
+  const colunas = temChamadosAdicionais ? 6 : 5;
   return (
     <div className="overflow-x-auto rounded-lg border">
       <table className="w-full min-w-[860px] text-xs">
@@ -547,11 +544,11 @@ function TabelaRelatorioPr({
             <th className="p-2 text-center" title="Somente arquivos novos adicionados pela PR">
               Arquivos alterados
             </th>
-            {adicionais && <th className="p-2 text-center">Ações</th>}
+            {temChamadosAdicionais && <th className="p-2 text-center">Ações</th>}
           </tr>
         </thead>
         <tbody>
-          {linhas.map((l, i) => (
+          {linhas.map((l) => (
             <tr key={l.chave} className="border-t align-middle">
               <td className="p-2">
                 {l.pr_url && !prsEmEdicao[l.chave] ? (
@@ -581,12 +578,12 @@ function TabelaRelatorioPr({
                   <div className="relative min-w-28">
                     <Input
                       value={l.pr_texto}
-                      onChange={(e) => aoAlterarTextoPr(i, e.target.value)}
-                      onBlur={() => l.pr_texto.trim() && aoConsultarPr(i)}
+                      onChange={(e) => aoAlterarTextoPr(l.chave, e.target.value)}
+                      onBlur={() => l.pr_texto.trim() && aoConsultarPr(l.chave)}
                       onKeyDown={(e) => {
                         if (e.key === "Enter") {
                           e.preventDefault();
-                          aoConsultarPr(i);
+                          aoConsultarPr(l.chave);
                         }
                       }}
                       placeholder="#624"
@@ -619,11 +616,18 @@ function TabelaRelatorioPr({
               <td className="p-2 text-center font-medium tabular-nums">
                 {l.pr_url ? l.pr_arquivos_adicionados ?? 0 : "—"}
               </td>
-              {adicionais && (
+              {temChamadosAdicionais && (
                 <td className="p-2 text-center">
-                  <Button size="icon" variant="outline" onClick={() => aoExcluir?.(i)} aria-label="Remover PR adicional">
-                    <Trash2 className="h-4 w-4" />
-                  </Button>
+                  {l.adicional && (
+                    <Button
+                      size="icon"
+                      variant="outline"
+                      onClick={() => aoExcluir?.(l.chave)}
+                      aria-label="Remover chamado adicional"
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </Button>
+                  )}
                 </td>
               )}
             </tr>
@@ -631,7 +635,7 @@ function TabelaRelatorioPr({
           {!linhas.length && (
             <tr>
               <td colSpan={colunas} className="p-5 text-center text-slate-500">
-                {adicionais ? "Nenhuma PR adicional." : "Nenhum chamado na solicitação."}
+                Nenhum chamado na solicitação.
               </td>
             </tr>
           )}
@@ -643,7 +647,7 @@ function TabelaRelatorioPr({
             <td className="p-2 text-center tabular-nums">{totais.commits.toLocaleString("pt-BR")}</td>
             <td className="p-2">{totalChamados} {totalChamados === 1 ? "chamado" : "chamados"}</td>
             <td className="p-2 text-center tabular-nums">{totais.arquivos_adicionados.toLocaleString("pt-BR")}</td>
-            {adicionais && <td />}
+            {temChamadosAdicionais && <td />}
           </tr>
         </tfoot>
       </table>
