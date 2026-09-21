@@ -39,7 +39,12 @@ export type TipoEvento =
   | "despesa_reprovada"
   | "cancelamento"
   | "exclusao"
-  | "restauracao";
+  | "restauracao"
+  // SIS-2026-0467-b (Iury): despesa empurrada manualmente pra outro status
+  // via banco (ajuste administrativo pontual, fora do fluxo normal de
+  // aprovação) — distinto de 'aprovacao_nivel' pra deixar rastro de que
+  // não foi um clique real de aprovar.
+  | "ajuste_administrativo";
 
 // Status ainda dentro da fase "Solicitação" — item abre em modal.
 // A partir daqui em diante (pendente_aprovacao em diante) o item já é
