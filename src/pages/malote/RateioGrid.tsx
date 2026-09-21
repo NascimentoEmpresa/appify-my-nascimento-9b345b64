@@ -8,6 +8,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { SearchableSelect } from "@/components/ui/searchable-select";
+import { SearchableMultiSelect } from "@/components/ui/searchable-multi-select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { CheckCircle2, ChevronLeft, ChevronRight, Eye, Pencil, Plus, Trash2, XCircle } from "lucide-react";
 import { toast } from "sonner";
@@ -120,11 +121,12 @@ interface RateioGridProps {
   // se isso força reenvio é DespesaVisualizar.tsx (rateioMudouValor), não
   // esta grade.
   apenasValorEEmpresa?: boolean;
-  // SIS-2026-0457: mostra o aviso de que Fornecedor ou Integrante é
-  // obrigatório em cada linha — só quem valida isso no submit (hoje,
-  // PainelDespesaMalote) passa true. RatearClassificacao/DespesaVisualizar
-  // não exigem isso, então não mostram o aviso.
-  exigirFornecedorOuIntegrante?: boolean;
+  // SIS-2026-0467 (substitui o SIS-2026-0457): mostra o aviso de que
+  // Fornecedor é sempre obrigatório em cada linha — só quem valida isso no
+  // submit (hoje, PainelDespesaMalote) passa true. RatearClassificacao/
+  // DespesaVisualizar não exigem isso, então não mostram o aviso.
+  // Integrante segue opcional independente disto.
+  exigirFornecedor?: boolean;
 }
 
 export function RateioGrid({
@@ -154,7 +156,7 @@ export function RateioGrid({
   podeJustificarComoAprovador,
   souSolicitante,
   apenasValorEEmpresa,
-  exigirFornecedorOuIntegrante,
+  exigirFornecedor,
 }: RateioGridProps) {
   const { data: empresas = [] } = useEmpresasGrupo();
   const { data: contratos = [] } = useContratosAtivos();
@@ -175,6 +177,7 @@ export function RateioGrid({
   // apenasValorEEmpresa (ver comentário na prop) — combinado com `disabled`
   // via `disabled || travarEstrutura` em cada controle que não é Valor/Empresa.
   const travarEstrutura = !!apenasValorEEmpresa;
+  const mostrarSelecao = !disabled && !travarEstrutura;
 
   // SIS-2026-0261: índice da parcela sendo pré-visualizada (0 = parcela 1,
   // o padrão de sempre). Só existe navegação quando `parcelas` tem mais de
@@ -301,6 +304,33 @@ export function RateioGrid({
 
   function removerLinha(idx: number) {
     onChange(linhas.filter((_, i) => i !== idx));
+    setLinhasSelecionadas((sel) => {
+      const novo = new Set(Array.from(sel).filter((i) => i !== idx).map((i) => (i > idx ? i - 1 : i)));
+      return novo;
+    });
+  }
+
+  // SIS-2026-0467 (Iury): "opção de exclusão de linhas em massa" — útil
+  // depois de usar "Ratear entre os contratos ativos" e sobrar contrato que
+  // não interessa nesta despesa, sem precisar excluir um por um.
+  const [linhasSelecionadas, setLinhasSelecionadas] = useState<Set<number>>(new Set());
+
+  function alternarSelecaoLinha(idx: number, marcado: boolean) {
+    setLinhasSelecionadas((sel) => {
+      const novo = new Set(sel);
+      if (marcado) novo.add(idx);
+      else novo.delete(idx);
+      return novo;
+    });
+  }
+
+  function alternarSelecaoTodas(marcado: boolean) {
+    setLinhasSelecionadas(marcado ? new Set(linhas.map((_, i) => i)) : new Set());
+  }
+
+  function excluirLinhasSelecionadas() {
+    onChange(linhas.filter((_, i) => !linhasSelecionadas.has(i)));
+    setLinhasSelecionadas(new Set());
   }
 
   function atualizarLinha(idx: number, patch: Partial<RateioLinha>) {
@@ -328,6 +358,44 @@ export function RateioGrid({
         valor: i === linhas.length - 1 ? Number((valorTotal - valorCada * (linhas.length - 1)).toFixed(2)) : valorCada,
       }))
     );
+  }
+
+  // SIS-2026-0467 (Iury): "colocar uma opção para ratear entre todos os
+  // contratos ativos" — atalho pra quando a Classificação exige Contrato
+  // (colunaContratoAtiva) e o rateio precisa cobrir TODOS os contratos
+  // ativos do grupo, não só alguns escolhidos à mão. Substitui as linhas
+  // atuais (decisão confirmada com o usuário) por 1 linha por contrato
+  // ativo, com % ou valor igual — Fornecedor/Integrante de cada linha
+  // continuam em branco, a preencher manualmente depois.
+  // SIS-2026-0467 (complemento, pedido do Iury): o "todos" pode ser restrito
+  // a uma ou mais empresas — multi-select ao lado do botão, vazio ([]) é o
+  // padrão e significa "todas as empresas", igual ao comportamento original.
+  const [empresasFiltroContratosAtivos, setEmpresasFiltroContratosAtivos] = useState<string[]>([]);
+  const contratosAtivos = useMemo(
+    () => contratos.filter((c) => c.status === "ativo" && (empresasFiltroContratosAtivos.length === 0 || empresasFiltroContratosAtivos.includes(c.empresa_id))),
+    [contratos, empresasFiltroContratosAtivos]
+  );
+
+  function ratearEntreContratosAtivos() {
+    if (contratosAtivos.length === 0) {
+      toast.error("Nenhum contrato ativo encontrado para esta(s) empresa(s).");
+      return;
+    }
+    const percentualCada = Number((100 / contratosAtivos.length).toFixed(3));
+    const valorCada = Number((valorTotal / contratosAtivos.length).toFixed(2));
+    onChange(
+      contratosAtivos.map((c, i) => ({
+        classificacao_id: mostrarClassificacao ? "" : undefined,
+        empresa_id: c.empresa_id,
+        contrato_id: c.id,
+        fornecedor_id: null,
+        integrante_empregado_id: null,
+        percentual: percentualCada,
+        valor: i === contratosAtivos.length - 1 ? Number((valorTotal - valorCada * (contratosAtivos.length - 1)).toFixed(2)) : valorCada,
+        ordem: i,
+      }))
+    );
+    setLinhasSelecionadas(new Set());
   }
 
   return (
@@ -360,17 +428,17 @@ export function RateioGrid({
               </label>
             )}
             <label className="flex items-center gap-1.5 text-sm cursor-pointer">
-              <Checkbox checked={dimensoes.fornecedor} onCheckedChange={(c) => atualizarDimensao("fornecedor", c === true)} disabled={disabled || travarEstrutura} />
-              Fornecedor{!exigirFornecedorOuIntegrante && " (opcional)"}
+              <Checkbox checked={dimensoes.fornecedor} onCheckedChange={(c) => atualizarDimensao("fornecedor", c === true)} disabled={disabled || travarEstrutura || exigirFornecedor} />
+              Fornecedor{!exigirFornecedor && " (opcional)"}
             </label>
             <label className="flex items-center gap-1.5 text-sm cursor-pointer">
               <Checkbox checked={dimensoes.integrante} onCheckedChange={(c) => atualizarDimensao("integrante", c === true)} disabled={disabled || travarEstrutura} />
-              Integrante{!exigirFornecedorOuIntegrante && " (opcional)"}
+              Integrante (opcional)
             </label>
           </div>
-          {exigirFornecedorOuIntegrante && (
+          {exigirFornecedor && (
             <p className="mt-1.5 text-xs text-muted-foreground">
-              Marque Fornecedor e/ou Integrante — pelo menos um dos dois precisa ser informado em cada linha do rateio.
+              Fornecedor é obrigatório em cada linha do rateio.
             </p>
           )}
         </div>
@@ -446,16 +514,23 @@ export function RateioGrid({
         <Table>
           <TableHeader>
             <TableRow>
+              {mostrarSelecao && (
+                <TableHead className="w-8">
+                  <Checkbox
+                    checked={linhas.length > 0 && linhasSelecionadas.size === linhas.length}
+                    onCheckedChange={(c) => alternarSelecaoTodas(c === true)}
+                    disabled={linhas.length === 0}
+                  />
+                </TableHead>
+              )}
               {mostrarClassificacao && <TableHead>Classificação *</TableHead>}
               {mostrarColunaEmpresa && <TableHead>Empresa {colunaContratoAtiva && !dimensoes.empresa ? "" : "*"}</TableHead>}
               {mostrarColunaContrato && <TableHead>Contrato {colunaContratoAtiva ? "*" : "(opcional)"}</TableHead>}
               <TableHead>{ratearPor === "percentual" ? "% Rateio *" : "Valor (R$) *"}</TableHead>
               {dimensoes.fornecedor && (
-                <TableHead>Fornecedor{!exigirFornecedorOuIntegrante && " (opcional)"}</TableHead>
+                <TableHead>Fornecedor{!exigirFornecedor && " (opcional)"}</TableHead>
               )}
-              {dimensoes.integrante && (
-                <TableHead>Integrante{!exigirFornecedorOuIntegrante && " (opcional)"}</TableHead>
-              )}
+              {dimensoes.integrante && <TableHead>Integrante (opcional)</TableHead>}
               {mostrarColunasOrcamento && mostrarValorParcela1 && (
                 <TableHead className="text-center">Valor da parcela {parcelaSelecionada?.numero_parcela ?? 1}</TableHead>
               )}
@@ -477,6 +552,7 @@ export function RateioGrid({
                 <TableCell
                   colSpan={
                     2 +
+                    Number(mostrarSelecao) +
                     Number(mostrarColunaEmpresa) +
                     Number(mostrarColunaContrato) +
                     Number(dimensoes.fornecedor) +
@@ -493,6 +569,14 @@ export function RateioGrid({
             )}
             {linhas.map((linha, idx) => (
               <TableRow key={idx}>
+                {mostrarSelecao && (
+                  <TableCell>
+                    <Checkbox
+                      checked={linhasSelecionadas.has(idx)}
+                      onCheckedChange={(c) => alternarSelecaoLinha(idx, c === true)}
+                    />
+                  </TableCell>
+                )}
                 {mostrarClassificacao && (
                   <TableCell>
                     <Select
@@ -783,10 +867,33 @@ export function RateioGrid({
         </Dialog>
       )}
 
-      {!disabled && !travarEstrutura && (
-        <Button type="button" variant="outline" size="sm" onClick={adicionarLinha} disabled={nenhumaDimensao} className="gap-1.5">
-          <Plus className="h-3.5 w-3.5" /> Adicionar linha
-        </Button>
+      {mostrarSelecao && (
+        <div className="flex flex-wrap gap-2">
+          <Button type="button" variant="outline" size="sm" onClick={adicionarLinha} disabled={nenhumaDimensao} className="gap-1.5">
+            <Plus className="h-3.5 w-3.5" /> Adicionar linha
+          </Button>
+          {linhasSelecionadas.size > 0 && (
+            <Button type="button" variant="outline" size="sm" onClick={excluirLinhasSelecionadas} className="gap-1.5 text-destructive hover:text-destructive">
+              <Trash2 className="h-3.5 w-3.5" /> Excluir selecionadas ({linhasSelecionadas.size})
+            </Button>
+          )}
+          {colunaContratoAtiva && (
+            <div className="flex items-center gap-1.5">
+              <SearchableMultiSelect
+                value={empresasFiltroContratosAtivos}
+                onChange={setEmpresasFiltroContratosAtivos}
+                options={empresas.map((e) => ({ value: e.id, label: e.nome }))}
+                placeholder="Todas as empresas"
+                searchPlaceholder="Buscar empresa..."
+                className="w-56"
+                maxBadges={2}
+              />
+              <Button type="button" variant="outline" size="sm" onClick={ratearEntreContratosAtivos} className="gap-1.5">
+                <Plus className="h-3.5 w-3.5" /> Ratear entre os contratos ativos
+              </Button>
+            </div>
+          )}
+        </div>
       )}
 
       <div className="flex flex-wrap items-center justify-between gap-x-6 gap-y-1">

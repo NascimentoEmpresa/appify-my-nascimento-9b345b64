@@ -38,6 +38,7 @@ import { cn } from "@/lib/utils";
 import { caAtendeLaudo } from "@/lib/sst/laudo";
 import { useAccessibleMenus } from "@/hooks/useAccessibleMenus";
 import { AcessoGate } from "@/components/auth/AcessoGate";
+import { BotaoVer3D } from "@/components/suprimentos/BotaoVer3D";
 import { useContagemRotativa } from "@/hooks/useSupSeparacao";
 import { montarLinhasExcelEstoque, nomeArquivoEstoque } from "@/lib/suprimentos/estoqueEtiquetasExcel";
 import { toast } from "sonner";
@@ -316,6 +317,7 @@ export default function EstoqueEtiquetas() {
                           <span className="mt-0.5 flex items-center gap-1 text-[11px]">
                             <MapPin className="h-3 w-3 shrink-0" />
                             <span className="font-mono">{l.localizacao}</span>
+                            <BotaoVer3D itemEstoqueId={l.item_estoque_id} localizacao={l.localizacao} />
                           </span>
                         )}
                       </TableCell>
@@ -1785,6 +1787,7 @@ function DialogDetalhe({ linha, onFechar }: { linha: LinhaEstoque | null; onFech
               {linha?.localizacao && (
                 <Badge variant="secondary" className="gap-1 font-mono text-[11px]">
                   <MapPin className="h-3 w-3" /> {linha.localizacao}
+                  <BotaoVer3D itemEstoqueId={linha.item_estoque_id} localizacao={linha.localizacao} />
                 </Badge>
               )}
               {(linha?.consumido ?? 0) > 0 && (

@@ -34,6 +34,7 @@ import {
   useContratosAtivos,
   useEmpresasGrupo,
   useAprovarDespesa,
+  useExcluirDespesaSoft,
   useSolicitarAjusteDespesa,
   useReprovarDespesa,
   usePodePagarMalote,
@@ -68,7 +69,7 @@ import { useOrcadoClassificacao, useOrcadoClassificacaoMultiMes } from "@/hooks/
 import { useMaloteConfig, usePrazoNormalInclusao, useSouGerenteFinanceiroMalote, exigeJustificativaPorConferenciaAtrasada } from "@/hooks/useMaloteConfig";
 import { useClassificacoesOrcamentoAdmin } from "@/hooks/usePlanejamentoOrcamentario";
 import { AnexosField } from "./AnexosField";
-import { useTiposFormaPagamento } from "@/hooks/useMaloteFormaPagamento";
+import { useFormasPagamento } from "@/hooks/useMaloteFormaPagamento";
 import { useCartaoBancos, urlLogoCartao } from "@/hooks/useMaloteCartaoCredito";
 import { BancoBadge } from "@/components/financeiro/BancoBadge";
 import { useUtilizadoOrcamento } from "@/hooks/useUtilizadoOrcamento";
@@ -78,7 +79,7 @@ import { RateioGrid, DimensoesRateio } from "./RateioGrid";
 import { RateioAprovadorTable } from "./RateioAprovadorTable";
 import { RateioParceladoTable } from "./RateioParceladoTable";
 import { FluxoAprovacaoVisual } from "./FluxoAprovacaoVisual";
-import { ExcluirPermanentementeButton } from "./ExcluirPermanentementeButton";
+import { usePermissoes } from "@/context/PermissoesContext";
 import { DiaPagamentoPicker } from "./DiaPagamentoPicker";
 import { ExcecaoDiaBloqueadoField } from "./ExcecaoDiaBloqueadoField";
 import { montarCombosAlcada, encontrarComboQueEstouraAlcada, rescalarRateioPorTotal } from "./orcamentoUtils";
@@ -204,6 +205,7 @@ const EVENTO_LABEL: Record<TipoEvento, string> = {
   cancelamento: "Cancelada",
   exclusao: "Movida para a lixeira",
   restauracao: "Restaurada da lixeira",
+  ajuste_administrativo: "Ajuste administrativo (movida manualmente via banco)",
 };
 
 function LinhaHistorico({ evento, criadoPor }: { evento: DespesaEvento; criadoPor: string }) {
@@ -305,6 +307,15 @@ export default function DespesaVisualizar() {
   const { data: eventos = [] } = useDespesaEventos(id);
   const { data: solicitanteNome } = useNomeUsuario(data?.despesa?.created_by);
   const { data: pagoPorNome } = useNomeUsuario(data?.despesa?.pago_por);
+  // SIS-2026-0439: catálogo de formas de pagamento, subido pro topo do
+  // componente (era carregado só depois do guard `if (!despesa) return`)
+  // porque agora também precisamos dele aqui, pra resolver o nome do
+  // aprovador especial exibido no banner "Aguardando aprovação".
+  const { data: formasPagamentoCatalogo = [] } = useFormasPagamento();
+  const { data: nomeAprovadorEspecial } = useNomeUsuario(
+    formasPagamentoCatalogo.find((f) => f.nome === data?.despesa?.forma_pagamento && f.fluxo_aprovacao === "especial")
+      ?.aprovador_especial_user_id ?? undefined
+  );
   const { data: contratos = [] } = useContratosAtivos();
   // DM-2026-0268: só pra nomear a Empresa no resumo de histórico
   // (resumoAlteracoesRateio) quando o solicitante corrige a Empresa de uma
@@ -316,6 +327,8 @@ export default function DespesaVisualizar() {
   const atualizarDatasParcelas = useAtualizarDatasParcelas();
   const atualizarValoresParcelas = useAtualizarValoresParcelas();
   const aprovar = useAprovarDespesa();
+  const moverParaLixeira = useExcluirDespesaSoft();
+  const { can } = usePermissoes();
   const solicitarAjuste = useSolicitarAjusteDespesa();
   const reprovar = useReprovarDespesa();
   const { data: podePagarMalote } = usePodePagarMalote();
@@ -347,6 +360,10 @@ export default function DespesaVisualizar() {
   const [comentario, setComentario] = useState("");
   const [formaPagamento, setFormaPagamento] = useState("");
   const [informacoesPagamento, setInformacoesPagamento] = useState("");
+  // SIS-2026-0439: só usado/exigido no Fluxo Especial — quem aprova (ex.
+  // Calita) muitas vezes só repassa uma autorização que já veio de outra
+  // pessoa por fora do sistema.
+  const [autorizadorNome, setAutorizadorNome] = useState("");
   const [dataPagamento, setDataPagamento] = useState("");
   const [excecao, setExcecao] = useState(false);
   const [justificativaExcecao, setJustificativaExcecao] = useState("");
@@ -429,7 +446,9 @@ export default function DespesaVisualizar() {
   );
   // SIS-2026-0221: "Forma de pagamento" vem do catálogo cadastrável em
   // Configurações do Malote → Formas de Pagamento, não mais de um enum fixo.
-  const { data: tiposFormaPagamento = [] } = useTiposFormaPagamento();
+  // SIS-2026-0439: trocado do catálogo de Tipo (genérico) pro catálogo
+  // nomeado de Forma de Pagamento (`formasPagamentoCatalogo` carregado no
+  // topo do componente) — é ali que mora o Fluxo Especial.
   // SIS-2026-0307: Banco do dialog de pagamento vem do mesmo catálogo do
   // Cartão de Crédito (malote_cartao_banco) — não cria catálogo novo.
   const { data: bancos = [] } = useCartaoBancos();
@@ -458,6 +477,7 @@ export default function DespesaVisualizar() {
     setJustificativa(despesa.justificativa_aprovacao ?? "");
     setFormaPagamento(despesa.forma_pagamento ?? "");
     setInformacoesPagamento(despesa.informacoes_pagamento ?? "");
+    setAutorizadorNome(despesa.autorizador_nome ?? "");
     setDataPagamento(despesa.data_pagamento ?? "");
     setExcecao(despesa.excecao);
     setJustificativaExcecao(despesa.justificativa_excecao ?? "");
@@ -481,21 +501,29 @@ export default function DespesaVisualizar() {
   const bloqueado = STATUS_TERMINAIS.includes(despesa.status);
   const podeAgir = !bloqueado;
 
-  // SIS-2026-0221: o valor já gravado pode não estar mais entre os Tipos
-  // ativos (renomeado/desativado depois) — inclui ele mesmo assim na lista
+  // SIS-2026-0221: o valor já gravado pode não estar mais entre as formas
+  // ativas (renomeada/desativada depois) — inclui ela mesmo assim na lista
   // pra não "sumir" o dado já salvo ao abrir a tela.
-  const tiposFormaPagamentoAtivos = tiposFormaPagamento.filter((t) => t.ativo);
+  const formasPagamentoAtivas = formasPagamentoCatalogo.filter((f) => f.ativo);
   const opcoesFormaPagamento =
-    formaPagamento && !tiposFormaPagamentoAtivos.some((t) => t.nome === formaPagamento)
-      ? [...tiposFormaPagamentoAtivos, { nome: formaPagamento, ativo: false }]
-      : tiposFormaPagamentoAtivos;
+    formaPagamento && !formasPagamentoAtivas.some((f) => f.nome === formaPagamento)
+      ? [...formasPagamentoAtivas, { nome: formaPagamento, ativo: false }]
+      : formasPagamentoAtivas;
 
   // SIS-2026-0307: mesmo padrão acima, só que pro Select "Forma de
   // pagamento" do dialog de pagamento (estado próprio, formaPagamentoConfirmada).
   const opcoesFormaPagamentoConfirmada =
-    formaPagamentoConfirmada && !tiposFormaPagamentoAtivos.some((t) => t.nome === formaPagamentoConfirmada)
-      ? [...tiposFormaPagamentoAtivos, { nome: formaPagamentoConfirmada, ativo: false }]
-      : tiposFormaPagamentoAtivos;
+    formaPagamentoConfirmada && !formasPagamentoAtivas.some((f) => f.nome === formaPagamentoConfirmada)
+      ? [...formasPagamentoAtivas, { nome: formaPagamentoConfirmada, ativo: false }]
+      : formasPagamentoAtivas;
+
+  // SIS-2026-0439: despesa lançada com uma forma de pagamento em Fluxo
+  // Especial (ex. Cartão Sicredi) pula o N1→N2→N3 da Classificação — um
+  // aprovador único fixo aprova e ela já vai direto pra Aguardando
+  // Pagamento. `despesa.forma_pagamento` (a gravada na criação) é quem
+  // decide isso, não o valor em edição no Select acima (que o próprio
+  // aprovador pode trocar nesta tela antes de confirmar).
+  const formaPagamentoEspecial = formasPagamentoCatalogo.find((f) => f.nome === despesa.forma_pagamento && f.fluxo_aprovacao === "especial");
 
   // SIS-2026-0307: Banco (catálogo do Cartão de Crédito) — mesma ideia de
   // sempre incluir o valor já selecionado, mesmo que tenha sido
@@ -529,8 +557,11 @@ export default function DespesaVisualizar() {
   const souAprovadorNivelAtual =
     despesa.status === "pendente_aprovacao" &&
     despesa.nivel_aprovacao_atual != null &&
-    (souAprovadorDoNivel(despesa, despesa.nivel_aprovacao_atual, user?.id) || souGerenteFinanceiroDestaExcecao);
-  const configurado = souAprovadorConfigurado(despesa, user?.id) || souGerenteFinanceiroDestaExcecao;
+    (souAprovadorDoNivel(despesa, despesa.nivel_aprovacao_atual, user?.id, formaPagamentoEspecial) || souGerenteFinanceiroDestaExcecao);
+  // SIS-2026-0439: souAprovadorConfigurado (sem nível) ainda não conhece o
+  // Fluxo Especial — checa à parte.
+  const souAprovadorEspecial = !!formaPagamentoEspecial && formaPagamentoEspecial.aprovador_especial_user_id === user?.id;
+  const configurado = souAprovadorEspecial || souAprovadorConfigurado(despesa, user?.id) || souGerenteFinanceiroDestaExcecao;
   // SIS-2026-0361 (complemento, achado do Iury na prática): despesa com
   // data de pagamento anterior a hoje não pode ser aprovada (nem como
   // exceção) — só resta Solicitar ajuste ou Reprovar. Cobre despesa lançada
@@ -823,7 +854,10 @@ export default function DespesaVisualizar() {
   // então "próximo nível existe" vale mesmo com o array vazio). O RPC
   // malote_aprovar_despesa reforça essa mesma regra no banco.
   const escalaObrigatoriaPorExcecao = despesa.nivel_aprovacao_atual === 1 && despesa.excecao;
-  const proximoNivelConfigurado = escalaObrigatoriaPorExcecao || (proximoNivelExiste && !dentroDaAlcada);
+  // SIS-2026-0439: Fluxo Especial nunca escala — o RPC já ignora esse
+  // parâmetro nesse caso, mas o client precisa refletir o mesmo resultado
+  // (senão o toast/mensagem de sucesso mentiria "enviado pro próximo nível").
+  const proximoNivelConfigurado = !formaPagamentoEspecial && (escalaObrigatoriaPorExcecao || (proximoNivelExiste && !dentroDaAlcada));
 
   // Pagamento Malote (SIS-2026-0160) — elegibilidade resolvida só pelo
   // gerenciamento de acesso (usePodePagarMalote), não por linha da despesa.
@@ -841,6 +875,12 @@ export default function DespesaVisualizar() {
     // o orçado de CADA parcela/contrato do Rateio, não só do mês principal.
     if (orcadoCarregando || orcadoMultiMesCarregando) return "Aguarde o orçamento terminar de carregar antes de aprovar.";
     if (!formaPagamento) return "Selecione a forma de pagamento.";
+    // SIS-2026-0439: Fluxo Especial (ex. Cartão Sicredi) — quem clica
+    // Aprovar aqui muitas vezes só repassa uma autorização que já veio de
+    // outra pessoa por fora do sistema; registra quem autorizou de fato.
+    if (formaPagamentoEspecial && !autorizadorNome.trim()) {
+      return "Informe quem autorizou esta compra.";
+    }
     // SIS-2026-0264: "Informações de pagamento" só é obrigatório quando a
     // despesa NÃO foi lançada como "pagamento só por anexo" — esse flag não
     // é persistido à parte, então o jeito de saber aqui (aprovador) é o
@@ -880,6 +920,24 @@ export default function DespesaVisualizar() {
     return null;
   }
 
+  // [SEM-CHAMADO] (achado do usuário testando despesa de teste): o RPC de
+  // exclusão permanente já exigia o item estar antes na lixeira
+  // (20260930000163), mas a única tela com botão pra mover pra lá era a
+  // Lixeira do Fluxo de Caixa (financeiro) — quem estava aqui na própria
+  // despesa (Malote) não tinha como. Soft-delete é reversível (tem
+  // "Restaurar" na Lixeira), por isso confirmação simples, não o dialog com
+  // digitação de número do Excluir Permanentemente.
+  async function handleMoverParaLixeira() {
+    if (!confirm(`Mover ${despesa!.numero} para a lixeira? Pode ser restaurada depois, pela Lixeira do Fluxo de Caixa.`)) return;
+    try {
+      await moverParaLixeira.mutateAsync(despesa!.id);
+      toast.success("Movida para a lixeira.");
+      navigate("/app/malote/meus-itens");
+    } catch (e: any) {
+      toast.error(e.message ?? "Erro ao mover para a lixeira.");
+    }
+  }
+
   async function handleAprovar() {
     const erro = validarAcaoAprovador();
     if (erro) {
@@ -899,6 +957,7 @@ export default function DespesaVisualizar() {
         data_pagamento: dataPagamento,
         competencia,
         rateio_snapshot: calcularRateioSnapshot(),
+        autorizador_nome: formaPagamentoEspecial ? autorizadorNome.trim() : null,
       });
       toast.success(
         proximoNivelConfigurado
@@ -1378,12 +1437,17 @@ export default function DespesaVisualizar() {
         breadcrumb={["Malote", "Despesa", "Visualizar"]}
         actions={
           <div className="flex items-center gap-2">
-            <ExcluirPermanentementeButton
-              despesaId={despesa.id}
-              numero={despesa.numero}
-              menu="malote_despesa_visualizar"
-              voltarPara="/app/malote/meus-itens"
-            />
+            {!despesa.deleted_at && can("excluir", "malote", "malote_despesa_visualizar") && (
+              <Button
+                variant="outline"
+                size="sm"
+                className="text-destructive border-destructive hover:bg-destructive/10 gap-1.5"
+                onClick={handleMoverParaLixeira}
+                disabled={moverParaLixeira.isPending}
+              >
+                <Trash2 className="h-3.5 w-3.5" /> {moverParaLixeira.isPending ? "Movendo..." : "Mover para a lixeira"}
+              </Button>
+            )}
             <Button variant="outline" onClick={() => navigate(-1)}>
               <ArrowLeft className="h-4 w-4 mr-2" /> Voltar
             </Button>
@@ -1653,8 +1717,13 @@ export default function DespesaVisualizar() {
                 <p className="text-amber-800/80 dark:text-amber-300/80">
                   Aguardando aprovação do <span className="font-medium">Nível {despesa.nivel_aprovacao_atual}</span>:{" "}
                   <span className="font-medium">
-                    {nomesAprovadoresDoNivel(despesa, despesa.nivel_aprovacao_atual).join(", ") || "nenhum aprovador configurado"}
+                    {formaPagamentoEspecial
+                      ? nomeAprovadorEspecial ?? "aprovador do Fluxo Especial"
+                      : nomesAprovadoresDoNivel(despesa, despesa.nivel_aprovacao_atual).join(", ") || "nenhum aprovador configurado"}
                   </span>
+                  {formaPagamentoEspecial && (
+                    <> (Fluxo Especial — {formaPagamentoEspecial.nome})</>
+                  )}
                   {despesa.excecao && despesa.nivel_aprovacao_atual !== 1 && (
                     <> (a Gerente Financeiro também pode aprovar/reprovar, por ser exceção)</>
                   )}
@@ -1663,7 +1732,7 @@ export default function DespesaVisualizar() {
               </div>
             )}
             <div className="flex-1 overflow-y-auto pr-1">
-              <FluxoAprovacaoVisual despesa={despesa} eventos={eventos} />
+              <FluxoAprovacaoVisual despesa={despesa} eventos={eventos} fluxoEspecial={!!formaPagamentoEspecial} />
             </div>
           </CardContent>
         </Card>
@@ -1911,6 +1980,23 @@ export default function DespesaVisualizar() {
               </Label>
               <Input value={justificativa} onChange={(e) => setJustificativa(e.target.value)} disabled={!podeEditarJustificativaAprovacao} />
             </div>
+            {formaPagamentoEspecial && (
+              <div>
+                <Label>
+                  Quem autorizou esta compra? *
+                  <span className="text-xs text-muted-foreground font-normal">
+                    {" "}
+                    (Fluxo Especial — {formaPagamentoEspecial.nome})
+                  </span>
+                </Label>
+                <Input
+                  value={autorizadorNome}
+                  onChange={(e) => setAutorizadorNome(e.target.value)}
+                  placeholder="Nome de quem autorizou a compra"
+                  disabled={!podeEditarJustificativaAprovacao}
+                />
+              </div>
+            )}
             <div className={cn(!dadosDespesaPagamentoEditaveis && "opacity-60")}>
               <Label>Forma de pagamento</Label>
               <Select value={formaPagamento} onValueChange={setFormaPagamento} disabled={!dadosDespesaPagamentoEditaveis}>

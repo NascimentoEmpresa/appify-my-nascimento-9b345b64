@@ -33,6 +33,7 @@ import {
   MaloteDespesaRow,
   TipoSolicitacao,
 } from "@/hooks/useMaloteDespesa";
+import { useFormasPagamento } from "@/hooks/useMaloteFormaPagamento";
 import { useClassificacoesOrcamentoAdmin } from "@/hooks/usePlanejamentoOrcamentario";
 import { useMinhasDespesasComJustificativaPendente } from "@/hooks/useMaloteJustificativaAnalista";
 import { useEstadoPersistido } from "@/hooks/useEstadoPersistido";
@@ -244,6 +245,19 @@ export default function Aprovacoes({ base = "/app/malote" }: { base?: string } =
     return nomesAprovadorNivel(despesa, nivel, classificacaoIdsRateio?.get(despesa.id), classificacaoPorId);
   }
 
+  // SIS-2026-0439: despesa lançada com forma de pagamento em Fluxo Especial
+  // (ex. Cartão Sicredi) tem aprovador fixo definido ali, não na
+  // Classificação — souAprovadorDoNivel precisa dessa linha pra checar certo.
+  const { data: formasPagamentoCatalogo = [] } = useFormasPagamento();
+  const formaEspecialPorNome = useMemo(
+    () => new Map(formasPagamentoCatalogo.filter((f) => f.fluxo_aprovacao === "especial").map((f) => [f.nome, f])),
+    [formasPagamentoCatalogo]
+  );
+  function souAprovadorPendente(d: MaloteDespesaRow): boolean {
+    if (d.nivel_aprovacao_atual == null) return false;
+    return souAprovadorDoNivel(d, d.nivel_aprovacao_atual, user?.id, formaEspecialPorNome.get(d.forma_pagamento ?? ""));
+  }
+
   // SIS-2026-0285 (Iury): filtro de data puxava só de "Última atualização" —
   // agora tem os dois períodos, independentes (E lógico quando os dois
   // estão preenchidos), cada um com o próprio combobox de range + "Hoje".
@@ -372,7 +386,7 @@ export default function Aprovacoes({ base = "/app/malote" }: { base?: string } =
       // — os dois são status pendente_aprovacao, só o "sou eu o aprovador"
       // muda (ver comentário do estado escopoAprovacaoPendente).
       if (status === "pendente_aprovacao" && escopoAprovacaoPendente) {
-        const souAprovadorAtual = d.nivel_aprovacao_atual != null && souAprovadorDoNivel(d, d.nivel_aprovacao_atual, user?.id);
+        const souAprovadorAtual = souAprovadorPendente(d);
         if (escopoAprovacaoPendente === "minhas" && !souAprovadorAtual) return false;
         if (escopoAprovacaoPendente === "outras" && souAprovadorAtual) return false;
       }
@@ -388,9 +402,9 @@ export default function Aprovacoes({ base = "/app/malote" }: { base?: string } =
       // agir (aprovadorNomes completo), só este filtro específico restringe.
       if (nivelAprovacao === 2 && aprovadorN2 && aprovadorNomes(d, 2)[0] !== aprovadorN2) return false;
       if (somenteMinhas) {
-        const souAprovadorPendente = d.status === "pendente_aprovacao" && d.nivel_aprovacao_atual != null && souAprovadorDoNivel(d, d.nivel_aprovacao_atual, user?.id);
+        const euSouAprovadorPendente = d.status === "pendente_aprovacao" && souAprovadorPendente(d);
         const minhaJustificativaPendente = minhasDespesasJustificativaPendente.has(d.id);
-        if (!souAprovadorPendente && !minhaJustificativaPendente) return false;
+        if (!euSouAprovadorPendente && !minhaJustificativaPendente) return false;
       }
       if (tipo && d.tipo !== tipo) return false;
       if (classificacao && d.classificacao?.nome !== classificacao) return false;
@@ -526,14 +540,14 @@ export default function Aprovacoes({ base = "/app/malote" }: { base?: string } =
   }
 
   const minhasPendentes = itensComFiltrosDoPainel.filter(
-    ({ despesa: d }) => d.status === "pendente_aprovacao" && d.nivel_aprovacao_atual != null && souAprovadorDoNivel(d, d.nivel_aprovacao_atual, user?.id)
+    ({ despesa: d }) => d.status === "pendente_aprovacao" && souAprovadorPendente(d)
   ).length;
   const outrasPendentes = contar("pendente_aprovacao") - minhasPendentes;
   // SIS-2026-0283: contagem do botão "Minhas" — diferente do tile acima
   // (que é só aprovação), soma também as despesas com justificativa
   // pendente de mim, sem contar a mesma despesa duas vezes.
   const minhasNoFiltro = new Set([
-    ...itensComFiltrosDoPainel.filter(({ despesa: d }) => d.status === "pendente_aprovacao" && d.nivel_aprovacao_atual != null && souAprovadorDoNivel(d, d.nivel_aprovacao_atual, user?.id)).map((i) => i.despesa.id),
+    ...itensComFiltrosDoPainel.filter(({ despesa: d }) => d.status === "pendente_aprovacao" && souAprovadorPendente(d)).map((i) => i.despesa.id),
     ...minhasDespesasJustificativaPendente,
   ]).size;
 

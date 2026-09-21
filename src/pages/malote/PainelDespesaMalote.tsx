@@ -28,7 +28,7 @@ import {
   uploadAnexosMalote,
 } from "@/hooks/useMaloteDespesa";
 import { useMaloteConfig, usePrazoNormalInclusao, horaAtualPassouDe } from "@/hooks/useMaloteConfig";
-import { useTiposFormaPagamento } from "@/hooks/useMaloteFormaPagamento";
+import { useFormasPagamento } from "@/hooks/useMaloteFormaPagamento";
 import { TipoClassificacaoOrcamento } from "@/hooks/usePlanejamentoOrcamentario";
 import { cn } from "@/lib/utils";
 import { vincularContaAoMalote, PARAM_ORIGEM } from "@/pages/juridico/patrimonio/vinculoMalote";
@@ -170,7 +170,9 @@ export function PainelDespesaMalote({
   // SIS-2026-0264: marcado significa que o próprio anexo é a informação de
   // pagamento. Nesse caso o texto fica opcional e o arquivo, obrigatório.
   const [pagamentoSoAnexo, setPagamentoSoAnexo] = useState(false);
-  const [dimensoes, setDimensoes] = useState<DimensoesRateio>({ empresa: false, contrato: false, fornecedor: false, integrante: false });
+  // SIS-2026-0467: Fornecedor é sempre obrigatório no Rateio desta tela —
+  // já nasce marcado (RateioGrid trava o checkbox pra não deixar desmarcar).
+  const [dimensoes, setDimensoes] = useState<DimensoesRateio>({ empresa: false, contrato: false, fornecedor: true, integrante: false });
   const [ratearPor, setRatearPor] = useState<"percentual" | "valor">("percentual");
   const [linhasRateio, setLinhasRateio] = useState<RateioLinha[]>([]);
   const [parcelado, setParcelado] = useState<"nao" | "sim">("nao");
@@ -228,8 +230,13 @@ export function PainelDespesaMalote({
     })();
   }, [reembolsoOrigem]);
   const { data: maloteConfig } = useMaloteConfig();
-  const { data: tiposFormaPagamento = [] } = useTiposFormaPagamento();
-  const tiposFormaPagamentoAtivos = useMemo(() => tiposFormaPagamento.filter((t) => t.ativo), [tiposFormaPagamento]);
+  // SIS-2026-0439: trocado do catálogo genérico de Tipo ("Cartão", "PIX"...)
+  // pro catálogo nomeado de Forma de Pagamento ("Cartão Sicredi 119 - Final
+  // 2719"...) — o Fluxo Especial (aprovador único, pula N1→N2→N3) é
+  // configurado por forma nomeada, não por tipo, então o solicitante
+  // precisa conseguir escolher a forma específica na hora de lançar.
+  const { data: formasPagamento = [] } = useFormasPagamento();
+  const formasPagamentoAtivas = useMemo(() => formasPagamento.filter((f) => f.ativo), [formasPagamento]);
 
   const totalRateado = useMemo(() => linhasRateio.reduce((s, l) => s + (Number(l.valor) || 0), 0), [linhasRateio]);
   const { data: prazoNormal } = usePrazoNormalInclusao();
@@ -291,16 +298,15 @@ export function PainelDespesaMalote({
     if (paraEnviar) {
       if (linhasRateio.length === 0) return "Adicione ao menos uma linha de rateio.";
       if (Math.abs(totalRateado - Number(totalMes)) > 0.01) return "O total do rateio deve ser igual ao Total do mês.";
-      // SIS-2026-0457: pelo menos um dos dois (Fornecedor OU Integrante) em
-      // CADA linha do rateio — o usuário escolhe qual marcar (dimensoes),
-      // mas depois de marcado precisa estar de fato preenchido, não só a
-      // coluna visível com "—". Checagem por linha, não só "existe alguma
-      // linha preenchida" — decisão confirmada com o usuário.
-      if (!dimensoes.fornecedor && !dimensoes.integrante) {
-        return "Marque \"Fornecedor\" ou \"Integrante\" no Rateio e informe pelo menos um deles em cada linha.";
+      // SIS-2026-0467 (substitui a regra do SIS-2026-0457): Fornecedor passa
+      // a ser sempre obrigatório em toda linha do rateio — Integrante
+      // continua uma dimensão à parte, opcional, sem relação de "ou" com
+      // Fornecedor (antes bastava um dos dois).
+      if (!dimensoes.fornecedor) {
+        return "Marque \"Fornecedor\" no Rateio e informe-o em cada linha.";
       }
-      if (linhasRateio.some((l) => !l.fornecedor_id && !l.integrante_empregado_id)) {
-        return "Informe o Fornecedor ou o Integrante em todas as linhas do rateio.";
+      if (linhasRateio.some((l) => !l.fornecedor_id)) {
+        return "Informe o Fornecedor em todas as linhas do rateio.";
       }
       if (parcelado === "sim") {
         if (!diaDesconto || !quantidadeParcelas) return "Informe o dia do desconto e a quantidade de parcelas.";
@@ -539,7 +545,7 @@ export function PainelDespesaMalote({
               <Select value={formaPagamento} onValueChange={setFormaPagamento} disabled={!ativo}>
                 <SelectTrigger><SelectValue placeholder="Selecione a forma" /></SelectTrigger>
                 <SelectContent>
-                  {tiposFormaPagamentoAtivos.map((t) => <SelectItem key={t.nome} value={t.nome}>{t.nome}</SelectItem>)}
+                  {formasPagamentoAtivas.map((f) => <SelectItem key={f.id} value={f.nome}>{f.nome}</SelectItem>)}
                 </SelectContent>
               </Select>
             </div>
@@ -572,7 +578,7 @@ export function PainelDespesaMalote({
               contratoPorClassificacao
               classificacaoTipoUnica={classificacaoTipo ?? null}
               mostrarResumoValorTotal
-              exigirFornecedorOuIntegrante
+              exigirFornecedor
             />
           </div>
 
