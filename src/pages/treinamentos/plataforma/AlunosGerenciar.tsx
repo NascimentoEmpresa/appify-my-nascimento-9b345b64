@@ -4,6 +4,7 @@ import { toast } from "sonner";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Building2, Mail, RefreshCw, Search, UserCheck, UserX, Users } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
+import { rpcTodasAsLinhas } from "@/hooks/useTreinamentosPlataforma";
 import { AcessoGate } from "@/components/auth/AcessoGate";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -43,11 +44,8 @@ export default function AlunosGerenciar() {
   const qc = useQueryClient();
   const { data: alunos = [], isLoading } = useQuery({
     queryKey: ["trn-alunos-gerenciar"],
-    queryFn: async (): Promise<AlunoGerenciar[]> => {
-      const { data, error } = await (supabase as any).rpc("trn_alunos_gerenciar");
-      if (error) throw error;
-      return (data ?? []) as AlunoGerenciar[];
-    },
+    // Em páginas de 1000: o PostgREST corta a resposta nesse tamanho.
+    queryFn: () => rpcTodasAsLinhas<AlunoGerenciar>("trn_alunos_gerenciar"),
   });
   const sincronizar = useMutation({
     mutationFn: async () => {
