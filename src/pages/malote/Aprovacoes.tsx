@@ -33,7 +33,7 @@ import {
   MaloteDespesaRow,
   TipoSolicitacao,
 } from "@/hooks/useMaloteDespesa";
-import { useFormasPagamento } from "@/hooks/useMaloteFormaPagamento";
+import { useFormasPagamento, MaloteFormaPagamento } from "@/hooks/useMaloteFormaPagamento";
 import { useClassificacoesOrcamentoAdmin } from "@/hooks/usePlanejamentoOrcamentario";
 import { useMinhasDespesasComJustificativaPendente } from "@/hooks/useMaloteJustificativaAnalista";
 import { useEstadoPersistido } from "@/hooks/useEstadoPersistido";
@@ -892,6 +892,7 @@ export default function Aprovacoes({ base = "/app/malote" }: { base?: string } =
                     nomeEmpresa={empresasMap.get(empresaIdResolvida(item.despesa) ?? "")}
                     nomeContrato={contratosMap.get(contratoIdResolvido(item.despesa) ?? "")}
                     aprovadorNomes={aprovadorNomes}
+                    formaEspecialPorNome={formaEspecialPorNome}
                     onAbrir={() => abrirItem(item.despesa)}
                   />
                 ))}
@@ -926,6 +927,7 @@ function LinhaItem({
   nomeEmpresa,
   nomeContrato,
   aprovadorNomes,
+  formaEspecialPorNome,
   onAbrir,
 }: {
   item: ItemLinhaMalote;
@@ -933,10 +935,19 @@ function LinhaItem({
   nomeEmpresa?: string;
   nomeContrato?: string;
   aprovadorNomes: (despesa: MaloteDespesaRow, nivel: 1 | 2 | 3) => string[];
+  formaEspecialPorNome: Map<string, MaloteFormaPagamento>;
   onAbrir: () => void;
 }) {
   const { despesa, parcela } = item;
   const { data: solicitanteNome } = useNomeUsuario(despesa.created_by);
+  // SIS-2026-0439 (achado do usuário, SD-2026-0042): este badge sempre
+  // mostrava o aprovador da Classificação (ex. Cassio), mesmo em Fluxo
+  // Especial (forma de pagamento com aprovador fixo, ex. Calita) — mesmo
+  // bug de exibição já corrigido em DespesaVisualizar.tsx/MeusItens.tsx,
+  // faltava aqui (a filtragem de "minhas pendentes" já sabia disso via
+  // souAprovadorPendente, só a exibição do nome no badge não).
+  const formaEspecial = formaEspecialPorNome.get(despesa.forma_pagamento ?? "");
+  const { data: nomeEspecial } = useNomeUsuario(formaEspecial?.aprovador_especial_user_id ?? undefined);
   const isSolicitacao = STATUS_FASE_SOLICITACAO.includes(despesa.status);
   const status = statusEfetivo(item);
   const valor = parcela ? parcela.valor : despesa.valor_total;
@@ -989,6 +1000,7 @@ function LinhaItem({
             <span className="flex items-center gap-1 text-xs font-bold">
               <User className="h-3 w-3" />
               {(() => {
+                if (formaEspecial) return nomeEspecial ? abreviarNome(nomeEspecial) : "Fluxo Especial";
                 // SIS-2026-0464 (pedido da Fernanda): no N2, mostrar só o
                 // titular (1º nome) no badge da linha — mesma regra do
                 // filtro (ver comentário em `filtrados`). Antes juntava
