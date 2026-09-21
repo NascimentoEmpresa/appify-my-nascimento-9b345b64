@@ -3,7 +3,7 @@
 > **Documento de trabalho e de passagem de bastão.**
 > Se a sessão do Claude acabar, entregue este arquivo ao Codex e peça para
 > continuar a partir da primeira fase com status `PENDENTE`.
-> Atualizado a cada etapa concluída. Última atualização: **21/09/2026 19:35**.
+> Atualizado a cada etapa concluída. Última atualização: **21/09/2026 20:05**.
 >
 > **Estado atual: Fases 1–4 e 6 concluídas; Fase 5 parcial.**
 > **LEIA A SEÇÃO 1.1 PRIMEIRO:** isto NÃO garante que o banco pare de cair, e lá está o porquê, com medição.
@@ -70,11 +70,18 @@ O que elas **não** fazem é impedir o teto de 57 conexões de ser atingido.
 
 ### O que realmente ataca a causa — em ordem de impacto
 
-**1. Desligar o Realtime — a única alavanca grande que está nas nossas mãos.**
-Libera até 7 das 57. A folga em dia normal sai de ~14 para ~21: **metade de
-margem a mais**. Custo: a lista de contratos no catálogo de compras deixa de
-atualizar sozinha e passa a atualizar ao recarregar a tela. É **um único hook**
-(`useSupCatalogo.ts:114`). Bloqueado pela regra R7 — **decisão do gerente.**
+**1. Desligar o Realtime.** ✅ **FEITO** em 21/09/2026, commit `9c9f6b63`,
+autorizado por Eduardo. Libera até 7 das 57: a folga em dia normal sai de ~14
+para ~21 — **50% mais margem**. Custo medido antes de decidir: 74 contratos,
+11 alterados em 30 dias; um contrato recém-criado no Licitações deixa de
+aparecer sozinho no seletor do Catálogo de Materiais e passa a aparecer ao
+voltar o foco para a aba (até 30s), ao trocar de tela ou no F5. Nenhuma outra
+tela usa Realtime.
+
+> **A CONFIRMAR APÓS O DEPLOY:** medir `pg_stat_activity` e verificar se as 7
+> conexões de realtime somem de vez. A correlação está medida (7 com a tela em
+> uso, 0 sem ninguém nela), a causa não está provada — a Supabase pode manter
+> parte delas independentemente. **Este é o primeiro item a checar em produção.**
 
 **2. Fase 6 — parar de insistir quando o banco está afogado.** ✅ Feita
 (commit abaixo). Não evita o estouro, mas evita que um estouro pequeno vire
@@ -108,7 +115,7 @@ Quem continuar este trabalho **deve respeitar estas regras**:
 | R4 | **Não alterar o CAMINHO DE AUTH do `retry`/`retryDelay`** (as 5 tentativas de 2s para `isAuthExpiredError`). | É defesa deliberada contra o bug de "JWT expired" (ver comentário em `src/App.tsx`). Mexer nele reabre um bug de produção conhecido. **Atualizada na Fase 6:** a regra dizia "não mexer no bloco inteiro"; a Fase 6 acrescentou um caminho NOVO para erro de sobrecarga, deixando o de auth byte-idêntico. Acrescentar caminho ao lado é permitido; alterar o de auth, não. |
 | R5 | **Branch `eduardo`. Nunca criar branch nova.** | Regra R8 do projeto, verificada pelo CI (`.github/REGRAS-PR.md`). |
 | R6 | **`npm run test`, `npm run build` E o typecheck antes de cada commit.** | Baseline na seção 7. Veja o alerta sobre o typecheck logo abaixo — **build verde não significa tipos corretos**. |
-| R7 | **Não desligar o Realtime sem autorização explícita.** | Libera 7 conexões, mas remove um recurso em uso. É decisão do gerente, não técnica. |
+| R7 | ~~Não desligar o Realtime sem autorização explícita.~~ **CUMPRIDA:** autorizada por Eduardo em 21/09/2026 e executada no commit `9c9f6b63`. A regra agora é a inversa: **não religar** Realtime em nenhuma tela sem entender que cada canal traz de volta o consumo de conexões. |
 
 ### ⚠️ O `npm run build` NÃO checa tipos
 
