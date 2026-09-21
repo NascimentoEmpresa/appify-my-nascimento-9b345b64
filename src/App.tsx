@@ -153,6 +153,7 @@ import Contabilidade from "./pages/Contabilidade";
 import Colaboradores from "./pages/rh/Colaboradores";
 import Recrutamento from "./pages/rh/Recrutamento";
 import Patrimonios from "./pages/juridico/Patrimonios";
+import JuridicoNotificacoes from "./pages/juridico/Notificacoes";
 import CentralDuvidas from "./pages/juridico/CentralDuvidas";
 import Processos from "./pages/juridico/Processos";
 import Advertencias from "./pages/juridico/Advertencias";
@@ -663,6 +664,8 @@ const App = () => (
             {/* Jurídico — Gestão Patrimonial */}
             <Route path="juridico" element={<Navigate to="/app/juridico/patrimonios" replace />} />
             <Route path="juridico/patrimonios" element={<Patrimonios />} />
+            {/* Controle de Notificações (21/09/2026): multas, glosas, notificações e defesas. */}
+            <Route path="juridico/notificacoes" element={<JuridicoNotificacoes />} />
             <Route path="juridico/processos/dashboard" element={<Processos view="dashboard" />} />
             <Route path="juridico/processos" element={<Processos view="processos" />} />
             <Route path="juridico/processos/audiencias" element={<Processos view="audiencias" />} />

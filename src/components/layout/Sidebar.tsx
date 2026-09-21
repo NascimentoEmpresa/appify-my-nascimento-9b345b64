@@ -9,6 +9,7 @@ import {
   Calculator,
   CheckCircle2,
   Gavel,
+  FileWarning,
   Trophy,
   FileCheck2,
   History,
@@ -872,6 +873,13 @@ const juridicoModule: ModuleDef = {
       items: [
         // Bolinha (SIS-2026-0434): fila de advertências pra aprovar/concluir — useJuridicoNotif.
         { label: "Advertências", to: "/app/juridico/advertencias", icon: Gavel, notif: "juridico" },
+      ],
+    },
+    {
+      label: "Multas e Notificações",
+      defaultOpen: true,
+      items: [
+        { label: "Controle de Notificações", to: "/app/juridico/notificacoes", icon: FileWarning },
       ],
     },
     {
