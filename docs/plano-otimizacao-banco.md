@@ -3,9 +3,10 @@
 > **Documento de trabalho e de passagem de bastão.**
 > Se a sessão do Claude acabar, entregue este arquivo ao Codex e peça para
 > continuar a partir da primeira fase com status `PENDENTE`.
-> Atualizado a cada etapa concluída. Última atualização: **21/09/2026 19:05**.
+> Atualizado a cada etapa concluída. Última atualização: **21/09/2026 19:35**.
 >
-> **Estado atual: Fases 1 a 4 concluídas. Fase 5 parcial — o escopo dela estava ERRADO e foi corrigido com medição do banco; leia o aviso na seção 4 antes de continuá-la.**
+> **Estado atual: Fases 1–4 e 6 concluídas; Fase 5 parcial.**
+> **LEIA A SEÇÃO 1.1 PRIMEIRO:** isto NÃO garante que o banco pare de cair, e lá está o porquê, com medição.
 > Nada foi mergeado na `main` — portanto **nada disto está em produção ainda**.
 >
 > **Para o Codex:** leia a seção 2 (restrições) e o AVISO DE CORREÇÃO DE ESCOPO
@@ -28,6 +29,69 @@ entram em fila, e a máquina de 1 GB reinicia.
 
 **A gerência vetou o upgrade de máquina (escala vertical).** Portanto todo o
 ganho tem de vir de *consumir menos*, e não de *ter mais*.
+
+---
+
+## 1.1. Isto impede o banco de cair de novo? — **NÃO, e é importante entender por quê**
+
+> Esta seção foi escrita em 21/09/2026, depois que a pergunta foi feita
+> diretamente: *"você tem certeza absoluta que o banco não vai mais cair?"*.
+> A resposta honesta é **não**, e esconder isso seria pior do que o problema.
+
+### A conta do que encheu as 57 vagas, linha por linha
+
+| Consumidor | No estouro (14:14) | As fases 1–5 mudam? |
+|---|---|---|
+| PostgREST | 21 | ❌ **Não.** Pool FIXO, definido pela Supabase conforme o tamanho da máquina |
+| Storage | **15** ← o gatilho | ❌ Não (a fase 6 ajuda um pouco) |
+| Realtime | 7 | ❌ Não — mas **dá para eliminar** |
+| Encanamento interno | 18 | ❌ Não. Fora do nosso controle |
+
+**Medição que prova o ponto principal:** às 19:22, com o sistema praticamente
+parado (**1 consulta ativa**), o PostgREST mantinha **as mesmas 21 conexões**
+de quando o banco estava afogado.
+
+**O pool do PostgREST não depende do volume de consultas.** Ele segura 21
+conexões tendo 1 consulta por segundo ou 70. Portanto **reduzir o número de
+consultas — que é tudo o que as fases 1 a 5 fazem — não reduz o número de
+conexões**, e foi o número de conexões que estourou.
+
+### Então as fases 1–5 serviram para quê?
+
+Elas são ganho real, só não são *este* ganho:
+
+- telas mais rápidas para quem usa;
+- menos CPU, menos memória e menos estouro para disco (o banco gerou 451 MB de
+  arquivos temporários em 33 minutos);
+- menos tempo com cada conexão ocupada, então menos fila quando houver aperto;
+- recuperação mais rápida depois de um pico.
+
+O que elas **não** fazem é impedir o teto de 57 conexões de ser atingido.
+
+### O que realmente ataca a causa — em ordem de impacto
+
+**1. Desligar o Realtime — a única alavanca grande que está nas nossas mãos.**
+Libera até 7 das 57. A folga em dia normal sai de ~14 para ~21: **metade de
+margem a mais**. Custo: a lista de contratos no catálogo de compras deixa de
+atualizar sozinha e passa a atualizar ao recarregar a tela. É **um único hook**
+(`useSupCatalogo.ts:114`). Bloqueado pela regra R7 — **decisão do gerente.**
+
+**2. Fase 6 — parar de insistir quando o banco está afogado.** ✅ Feita
+(commit abaixo). Não evita o estouro, mas evita que um estouro pequeno vire
+reinício. Ver a seção da Fase 6.
+
+**3. Subir a máquina.** Vetado pela gerência. Fica registrado que é a única
+solução que resolve de fato, porque os 21 do PostgREST e os ~18 de encanamento
+só mudam com o tamanho da instância.
+
+### A resposta honesta, em uma frase
+
+> Com as fases 1–6 o sistema fica mais rápido, mais leve e **muito menos
+> propenso a transformar um pico em reinício**. Mas se o Storage voltar a
+> saltar para 15 conexões num momento de pico, **o teto de 57 pode estourar de
+> novo** — e nenhuma das mudanças feitas até aqui impede isso.
+> Quem quiser reduzir esse risco de verdade escolhe entre **desligar o
+> Realtime** ou **subir a máquina**. Não há terceira opção no frontend.
 
 ---
 
@@ -240,6 +304,47 @@ As duas telas já calculam `despesaIdsTodos` (`MeusItens.tsx:173`,
 
 ---
 
+### FASE 6 — Parar de insistir quando o banco está afogado — ✅ `CONCLUÍDA`
+
+> **Esta fase não estava no plano original.** Ela apareceu ao investigar se as
+> fases 1–5 realmente previnem a queda (seção 1.1). É, de longe, a mais
+> importante de todas para a *gravidade* de um incidente futuro.
+
+**O problema:** o `retry` do `QueryClient` tratava dois casos — token vencido
+(5 tentativas) e **"todo o resto"** (3 tentativas, backoff 1s/2s/4s). Erro de
+banco afogado caía em "todo o resto".
+
+Então às 13:57, quando o Postgres começou a engasgar, **cada consulta que
+falhou foi repetida 3 vezes** — por todos os usuários conectados, em ~500
+pontos de `useQuery`. Aproximadamente **4× mais requisições em cima de um banco
+que já não dava conta**.
+
+Isso tem nome: **colapso por congestionamento**. A resposta automática do
+sistema à sobrecarga era gerar mais carga. É plausivelmente o que transformou
+um pico de conexões — que seria lentidão passageira — num **reinício do banco**.
+
+**O que foi feito:**
+
+- novo `src/lib/erroSobrecarga.ts` separa "afogado" (521/522/524, 503/504, 429,
+  `fetch` morto, pooler sem conexão) de "token vencido";
+- afogado ganha **uma única** nova tentativa, com atraso **sorteado entre 4s e
+  12s**. O sorteio é essencial: sem ele todos os navegadores voltam no mesmo
+  instante e batem em bloco outra vez;
+- a checagem de auth vem **sempre antes** — 401/403 é token vencido, não
+  sobrecarga. O caminho de auth ficou **byte-idêntico** ao de antes (R4
+  respeitada no que ela protegia).
+
+**Também nesta fase:** `ModalFotosComprovacao` assinava as fotos da entrega
+**uma a uma, em sequência**. Cada chamada ao Storage consome uma conexão do
+pool que ele mantém com o Postgres — e foi o Storage saltando de 1 para 15 que
+estourou o teto. Passou a usar `createSignedUrls` (lote).
+
+**Verificação:** 13 testes novos em `src/test/erroSobrecarga.test.ts` cobrindo
+inclusive a regra completa do retry como ela roda de verdade. Suíte em **1310
+passed** (era 1297).
+
+---
+
 ### FASE 5 — Consultas sobre tabelas grandes — `STATUS: PARCIAL`
 
 > ## ⚠️ CORREÇÃO DE ESCOPO — leia antes de trabalhar nesta fase
@@ -377,6 +482,7 @@ Resposta à segunda pergunta do gerente. Sugestão de inclusão no `CLAUDE.md` e
 | 2 — pollings | ✅ **CONCLUÍDA** | `77b4e880` | 21/09 17:2x | 3 arquivos, 3 linhas de código (60s → 180s) |
 | 3 — debounce | ✅ **CONCLUÍDA** | `e069f86a` | 21/09 18:0x | novo `useDebounce` + 4 hooks de busca |
 | 4 — N+1 Malote | ✅ **CONCLUÍDA** | `f36c6832` | 21/09 18:3x | `useRateioLinhasEParcelasEmLote`, mudança aditiva |
+| 6 — parar de insistir no afogamento | ✅ **CONCLUÍDA** | `bf80e168` | 21/09 19:3x | NÃO estava no plano; a mais importante para a gravidade |
 | 5 — tabelas grandes | 🟡 **PARCIAL** | `12f2a6e1` | 21/09 19:0x | escopo CORRIGIDO na seção 4 — leia o aviso; resta 1 item, bloqueado por R1 |
 
 ### O que as 4 fases concluídas atacam
