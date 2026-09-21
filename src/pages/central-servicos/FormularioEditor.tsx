@@ -300,10 +300,28 @@ export default function FormularioEditor() {
   useEffect(() => { load(); }, [load]);
 
   // Setores do cadastro (EMPREGADOS.Setor_ERP) - para "Acesso" e visibilidade por setor.
+  //
+  // 21/09/2026: isto puxava até 20.000 linhas de EMPREGADOS (`.limit(20000)`)
+  // só pra calcular o conjunto distinto no navegador com `new Set`. A RPC
+  // `listar_setores_empregados` faz o mesmo `SELECT DISTINCT btrim("Setor_ERP")`
+  // no banco e devolve algumas dezenas de linhas em vez de vinte mil — mesmo
+  // trabalho de leitura no servidor, uma fração do tráfego e da memória.
+  //
+  // De propósito NÃO usa o hook useSetoresEmpresa: aquele une o catálogo
+  // SETORES e dedupa por chave normalizada, mantendo a grafia do catálogo
+  // ("Jurídico"). Aqui o valor escolhido é gravado no formulário e depois
+  // comparado com EMPREGADOS.Setor_ERP ("JURIDICO") para decidir visibilidade
+  // — trocar a grafia arrebentaria essa comparação em silêncio.
+  //
+  // O `.sort()` no cliente foi mantido para preservar exatamente a mesma
+  // ordenação de antes (a RPC não ordena).
   useEffect(() => {
     (async () => {
-      const { data } = await (supabase as any).from("EMPREGADOS").select('"Setor_ERP"').limit(20000);
-      setSetoresErp([...new Set((data ?? []).map((r: any) => String(r["Setor_ERP"] ?? "").trim()).filter(Boolean))].sort() as string[]);
+      const { data } = await (supabase as any).rpc("listar_setores_empregados");
+      const setores = (data ?? [])
+        .map((r: any) => String(r.setor ?? "").trim())
+        .filter(Boolean) as string[];
+      setSetoresErp([...new Set(setores)].sort());
     })();
   }, []);
 

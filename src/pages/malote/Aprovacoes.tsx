@@ -21,6 +21,10 @@ import {
   useContratosAtivos,
   useClassificacaoIdsPorDespesaRateio,
   useEmpresaPrimeiraLinhaRateio,
+  useRateioLinhasEParcelasEmLote,
+  RATEIO_E_PARCELAS_VAZIO,
+  RateioLinha,
+  Parcela,
   useContratoPrimeiraLinhaRateio,
   nomesAprovadorNivel,
   souAprovadorDoNivel,
@@ -535,6 +539,23 @@ export default function Aprovacoes({ base = "/app/malote" }: { base?: string } =
   const paginaAtual = Math.min(pagina, totalPaginas);
   const visiveis = ordenados.slice((paginaAtual - 1) * PAGE_SIZE, paginaAtual * PAGE_SIZE);
 
+  // 21/09/2026: o JustificativaPendenteBadge dentro de cada LinhaItem fazia a
+  // própria consulta de rateio — uma por linha renderizada. Busca em lote, e o
+  // pedaço de cada despesa desce por prop até o badge.
+  //
+  // O lote é só sobre `visiveis` (a página atual), não sobre a lista inteira:
+  // não adianta buscar rateio de despesa que não está na tela.
+  const despesasVisiveisParaRateio = useMemo(
+    () =>
+      Array.from(
+        new Map(
+          visiveis.map((i) => [i.despesa.id, { id: i.despesa.id, parcelado: !!i.despesa.parcelado }]),
+        ).values(),
+      ),
+    [visiveis],
+  );
+  const { data: rateioPorDespesa } = useRateioLinhasEParcelasEmLote(despesasVisiveisParaRateio);
+
   function contar(s: StatusDespesa) {
     return itensComFiltrosDoPainel.filter((item) => statusEfetivo(item) === s).length;
   }
@@ -894,6 +915,7 @@ export default function Aprovacoes({ base = "/app/malote" }: { base?: string } =
                     aprovadorNomes={aprovadorNomes}
                     formaEspecialPorNome={formaEspecialPorNome}
                     onAbrir={() => abrirItem(item.despesa)}
+                    rateioEParcelas={rateioPorDespesa?.get(item.despesa.id) ?? RATEIO_E_PARCELAS_VAZIO}
                   />
                 ))}
               </TableBody>
@@ -929,6 +951,7 @@ function LinhaItem({
   aprovadorNomes,
   formaEspecialPorNome,
   onAbrir,
+  rateioEParcelas,
 }: {
   item: ItemLinhaMalote;
   empresaId?: string | null;
@@ -937,6 +960,9 @@ function LinhaItem({
   aprovadorNomes: (despesa: MaloteDespesaRow, nivel: 1 | 2 | 3) => string[];
   formaEspecialPorNome: Map<string, MaloteFormaPagamento>;
   onAbrir: () => void;
+  // 21/09/2026: vem do lote da tela (useRateioLinhasEParcelasEmLote) e é só
+  // repassado ao badge, pra ele não consultar o banco por conta própria.
+  rateioEParcelas?: { linhas: RateioLinha[]; parcelas: Parcela[] };
 }) {
   const { despesa, parcela } = item;
   const { data: solicitanteNome } = useNomeUsuario(despesa.created_by);
@@ -1028,7 +1054,7 @@ function LinhaItem({
           antes — círculo cheio com fundo âmbar, chama a atenção sem
           precisar de coluna de texto (só aparece quando há pendência). */}
       <TableCell className="px-2 text-center">
-        <JustificativaPendenteBadge despesa={despesa} parcela={parcela} variant="icon" />
+        <JustificativaPendenteBadge despesa={despesa} parcela={parcela} variant="icon" rateioEParcelas={rateioEParcelas} />
       </TableCell>
     </TableRow>
   );

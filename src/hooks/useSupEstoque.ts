@@ -1,4 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useDebounce } from "@/hooks/useDebounce";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 
@@ -401,10 +402,19 @@ export function useHistoricoPreco(supItemId: string | null) {
  * depender do comprador estar disponível para cotar.
  */
 export function usePrecosConsulta(busca: string) {
+  // 21/09/2026: era a busca mais cara do sistema — sem debounce, sem staleTime
+  // e sem piso de caracteres. Cada tecla digitada virava uma consulta nova e
+  // nenhuma resposta era reaproveitada, nem ao reabrir a mesma tela.
+  //
+  // O piso de caracteres NÃO foi adicionado aqui de propósito: PrecosMateriais
+  // abre com busca vazia e depende disso para listar todos os preços vigentes.
+  // Um `enabled: termo.length >= N` deixaria a tela vazia ao abrir.
+  const termo = useDebounce(busca.trim());
   return useQuery({
-    queryKey: ["sup_precos_consulta", busca],
+    queryKey: ["sup_precos_consulta", termo],
+    staleTime: 60_000,
     queryFn: async (): Promise<PrecoConsulta[]> => {
-      const { data, error } = await sb.rpc("sup_precos_consulta", { p_busca: busca || null });
+      const { data, error } = await sb.rpc("sup_precos_consulta", { p_busca: termo || null });
       if (error) throw error;
       return data ?? [];
     },
