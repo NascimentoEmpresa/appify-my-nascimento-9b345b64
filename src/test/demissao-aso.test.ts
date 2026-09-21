@@ -252,8 +252,8 @@ describe("podeCancelarDemissaoRH", () => {
       expect(podeCancelarDemissaoRH({ status })).toMatchObject({ ok: false, motivo: expect.stringContaining(status) });
     }
   });
-  it("ASO válido (SST concluiu) e já encerrada: não cancela", () => {
-    expect(podeCancelarDemissaoRH({ status: STATUS_SST_ASO_VALIDO }).ok).toBe(false);
+  it("ASO válido (verde) também cancela; já encerrada, não", () => {
+    expect(podeCancelarDemissaoRH({ status: STATUS_SST_ASO_VALIDO })).toEqual({ ok: true });
     expect(podeCancelarDemissaoRH({ status: "Cancelada" }).motivo).toBe(podeCancelarDemissao({ status: "Cancelada" }).motivo);
   });
   it("o anexo do cancelamento vai na pasta da solicitação, com nome seguro e marcado", () => {

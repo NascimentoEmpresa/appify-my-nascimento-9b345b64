@@ -34,7 +34,9 @@ import {
   STATUS_FASE_SOLICITACAO,
   souLancadorDespesa,
   classificacaoTemLancadorConfigurado,
+  useNomeUsuario,
 } from "@/hooks/useMaloteDespesa";
+import { useFormasPagamento, MaloteFormaPagamento } from "@/hooks/useMaloteFormaPagamento";
 import { ExcluirPermanentementeButton } from "./ExcluirPermanentementeButton";
 import { formatBRL } from "@/hooks/usePlanilhaCusto";
 import { useClassificacoesOrcamento } from "@/hooks/usePlanejamentoOrcamentario";
@@ -126,7 +128,19 @@ function itemMatchesChip(item: ItemLinhaMalote, chip: ChipKey): boolean {
   }
 }
 
-function AprovadorPendenteCell({ despesa }: { despesa: MaloteDespesaRow }) {
+// SIS-2026-0439 (achado do usuário, SD-2026-0042): esta célula mostrava
+// sempre o aprovador da Classificação (ex. Cassio), mesmo quando a despesa
+// está em Fluxo Especial (forma de pagamento com aprovador fixo, ex.
+// Calita) — mesmo bug de exibição já corrigido em DespesaVisualizar.tsx/
+// Aprovacoes.tsx, faltava aqui.
+function AprovadorPendenteCell({ despesa, formasPagamentoCatalogo }: { despesa: MaloteDespesaRow; formasPagamentoCatalogo: MaloteFormaPagamento[] }) {
+  const formaEspecial = formasPagamentoCatalogo.find(
+    (f) => f.nome === despesa.forma_pagamento && f.fluxo_aprovacao === "especial"
+  );
+  const { data: nomeEspecial } = useNomeUsuario(formaEspecial?.aprovador_especial_user_id ?? undefined);
+  if (despesa.status !== "pendente_aprovacao") return <span className="text-muted-foreground">—</span>;
+  if (formaEspecial) return <span>{nomeEspecial ?? "Aprovador do Fluxo Especial"}</span>;
+
   const nomes = aprovadoresPendentes(despesa);
   if (!nomes) return <span className="text-muted-foreground">—</span>;
   const label = nomes.length > 1 ? `${nomes[0]} +${nomes.length - 1}` : nomes[0];
@@ -146,6 +160,7 @@ export default function MeusItens() {
   const { user } = useAuth();
   const { can } = usePermissoes();
   const { data: itens = [], isLoading } = useMinhasDespesas();
+  const { data: formasPagamentoCatalogo = [] } = useFormasPagamento();
   // [SEM-CHAMADO] (achado do usuário): "Mover para a lixeira" só existia na
   // própria despesa, mas depois disso ela some de Meus Itens/Aprovações e
   // só reaparecia na Lixeira do Fluxo de Caixa (financeiro) — ninguém do
@@ -573,7 +588,7 @@ export default function MeusItens() {
                       </Badge>
                     </TableCell>
                     <TableCell className="text-sm">
-                      <AprovadorPendenteCell despesa={despesa} />
+                      <AprovadorPendenteCell despesa={despesa} formasPagamentoCatalogo={formasPagamentoCatalogo} />
                     </TableCell>
                     <TableCell>
                       {despesa.excecao ? <Badge variant="destructive">Sim</Badge> : <span className="text-muted-foreground text-sm">Não</span>}

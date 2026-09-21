@@ -2,7 +2,7 @@ import { useRef, useState } from "react";
 import type { CSSProperties } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { BUCKET, MOTIVO_CANCELAMENTO_MIN, STATUS_SST_AGENDADO, caminhoAnexoCancelamento, cancelarAvisaSST, podeCancelarDemissaoRH } from "@/lib/demissao/solicitacao";
+import { BUCKET, MOTIVO_CANCELAMENTO_MIN, STATUS_SST_AGENDADO, STATUS_SST_ASO_VALIDO, caminhoAnexoCancelamento, cancelarAvisaSST, podeCancelarDemissaoRH } from "@/lib/demissao/solicitacao";
 import { fmtTamanho } from "@/lib/solicitacoes/anexos";
 
 // =====================================================================
@@ -98,6 +98,7 @@ export function BlocoCancelarReconsideracaoRH({ solicitacao, onCancelada, avisar
   const nome = solicitacao.colaborador_nome ?? "—";
   const noSST = cancelarAvisaSST(solicitacao.status);
   const agendado = solicitacao.status === STATUS_SST_AGENDADO;
+  const asoValido = solicitacao.status === STATUS_SST_ASO_VALIDO;
   const solicitante = solicitacao.solicitante_nome;
 
   return (
@@ -108,6 +109,11 @@ export function BlocoCancelarReconsideracaoRH({ solicitacao, onCancelada, avisar
         <b>CANCELADA</b>, o motivo vai pro fio da conversa e {solicitante ? <b>{solicitante}</b> : "quem solicitou"} recebe um aviso.
         Não é devolver: não volta pra ninguém corrigir.
       </div>
+      {asoValido && (
+        <div style={{ fontSize: 13.5, fontWeight: 700, color: "#92400e", background: "#fffbeb", border: "1px solid #fde68a", borderRadius: 8, padding: "8px 10px" }}>
+          O SST já concluiu esta solicitação (ASO válido, sem exame demissional). Cancelar desfaz a demissão; não há agendamento a desmarcar, então o SST não é avisado.
+        </div>
+      )}
       {noSST && (
         <div style={{ fontSize: 13.5, fontWeight: 700, color: "#92400e", background: "#fffbeb", border: "1px solid #fde68a", borderRadius: 8, padding: "8px 10px" }}>
           A solicitação já está no SST ({solicitacao.status}). Ao cancelar, o SST recebe um aviso para{" "}
