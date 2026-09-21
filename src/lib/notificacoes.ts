@@ -42,6 +42,11 @@ export const CATEGORIAS = [
 ] as const;
 export type Categoria = (typeof CATEGORIAS)[number];
 
+/** Uma imagem do aviso (21/09/2026: o aviso pode ter várias). */
+export interface ImagemDoAviso { url: string; nome: string }
+/** Um link clicável do aviso, com o nome que quem escreveu escolheu. */
+export interface LinkDoAviso { rotulo: string; url: string }
+
 export interface Notificacao {
   id: number;
   titulo: string;
@@ -59,6 +64,12 @@ export interface Notificacao {
   expira_em: string | null;
   anexo_url: string | null;
   anexo_nome: string | null;
+  /** Todas as imagens, na ordem (21/09/2026). anexo_url/anexo_nome = a primeira. */
+  imagens?: ImagemDoAviso[] | null;
+  /** 'carrossel' (passa pro lado) | 'grade' (todas de uma vez). */
+  imagens_layout?: string | null;
+  /** Botões clicáveis abaixo do texto. */
+  links?: LinkDoAviso[] | null;
   /** Precisa confirmar que leu? Desligado, é mural: aparece na lista e pronto. */
   exigir_ciencia: boolean;
   /** Trava a tela até responder. Só faz sentido junto com exigir_ciencia. */
@@ -118,6 +129,11 @@ export interface FormNotificacao {
   anexo_url: string;
   /** Nome do arquivo que a pessoa subiu — a tela precisa de algo para mostrar. */
   anexo_nome: string;
+  /** Todas as imagens (21/09/2026). A primeira vira anexo_url/anexo_nome ao salvar. */
+  imagens: ImagemDoAviso[];
+  imagens_layout: "carrossel" | "grade";
+  /** Links com nome. */
+  links: LinkDoAviso[];
   /** Setores que recebem o aviso. Vazio + sem pessoas = todo mundo. */
   setores: string[];
   /** Pessoas que recebem, por id do profile. */
@@ -130,9 +146,22 @@ export interface FormNotificacao {
 /** Um aviso novo, em branco — o mesmo estado inicial em toda tela que cria. */
 export const FORM_VAZIO: FormNotificacao = {
   titulo: "", mensagem: "", publicado: true, categoria: "Comunicado", resumo: "",
-  expira_em: "", anexo_url: "", anexo_nome: "", setores: [], usuarios: [],
+  expira_em: "", anexo_url: "", anexo_nome: "", imagens: [], imagens_layout: "carrossel", links: [],
+  setores: [], usuarios: [],
   exigir_ciencia: true, bloquear_acesso: true, permitir_escolha: true,
 };
+
+/**
+ * As imagens de um aviso, sem depender de qual coluna foi preenchida: a
+ * lista nova quando existe; senão a capa antiga (anexo_url) como lista de um.
+ */
+export function imagensDoAviso(n: Pick<Notificacao, "anexo_url" | "anexo_nome" | "imagens">): ImagemDoAviso[] {
+  const lista = (Array.isArray(n.imagens) ? n.imagens : [])
+    .map((i) => ({ url: String(i?.url ?? "").trim(), nome: String(i?.nome ?? "") }))
+    .filter((i) => i.url);
+  if (lista.length) return lista;
+  return n.anexo_url ? [{ url: n.anexo_url, nome: n.anexo_nome ?? "" }] : [];
+}
 
 /**
  * Do banco para o formulário — o caminho de "Editar".
@@ -157,6 +186,9 @@ export function formDoAviso(
     expira_em: n.expira_em ? n.expira_em.slice(0, 10) : "",
     anexo_url: n.anexo_url ?? "",
     anexo_nome: n.anexo_nome ?? "",
+    imagens: imagensDoAviso(n),
+    imagens_layout: n.imagens_layout === "grade" ? "grade" : "carrossel",
+    links: (Array.isArray(n.links) ? n.links : []).map((l) => ({ rotulo: String(l?.rotulo ?? ""), url: String(l?.url ?? "") })),
     setores: meus.filter((a) => a.setor).map((a) => a.setor as string),
     usuarios: meus.filter((a) => a.user_id).map((a) => a.user_id as string),
     exigir_ciencia: n.exigir_ciencia,
@@ -173,6 +205,9 @@ export function erroDoFormulario(f: FormNotificacao): string | null {
   if (f.resumo.length > 300) return "O resumo passou de 300 caracteres.";
   if (f.mensagem.trim().length < 10) return "Escreva o conteúdo do aviso (mín. 10 caracteres).";
   if (f.mensagem.length > 5000) return "O conteúdo passou de 5000 caracteres.";
+  // Link sem endereço não leva a lugar nenhum; o nome pode ficar em branco (vira "Link").
+  if (f.links.some((l) => !l.url.trim())) return "Todo link precisa do endereço (URL). Tire o que ficou vazio.";
+  if (f.imagens.length > 10) return "No máximo 10 imagens por aviso.";
   // Travar a tela sem pedir ciência não quer dizer nada: não há o que
   // responder para destravar, e a pessoa ficaria presa num aviso sem botão.
   if (f.bloquear_acesso && !f.exigir_ciencia) {
