@@ -9,11 +9,19 @@ import { supabase } from "@/integrations/supabase/client";
 // "Tipo" é, por sua vez, outro catálogo editável (malote_tipo_forma_
 // pagamento, mesmo padrão de malote_tipo_bloqueio) — a pedido do Iury,
 // pra poder criar tipos novos sem precisar de migration.
+export type FluxoAprovacaoFormaPagamento = "normal" | "especial";
+
 export interface MaloteFormaPagamento {
   id: string;
   nome: string;
   tipo: string;
   ativo: boolean;
+  // SIS-2026-0439 (Iury): compra no cartão já foi feita na hora — não
+  // precisa do fluxo N1→N2→N3 da Classificação, só de UM aprovador fixo
+  // antes de ir pro financeiro pagar. Configurado por forma de pagamento
+  // nomeada (ex. "Cartão Sicredi 119 - Final 2719"), não pelo tipo genérico.
+  fluxo_aprovacao: FluxoAprovacaoFormaPagamento;
+  aprovador_especial_user_id: string | null;
 }
 
 const KEY = "malote_forma_pagamento";
@@ -76,7 +84,10 @@ export function useFormasPagamento() {
   return useQuery({
     queryKey: [KEY],
     queryFn: async () => {
-      const { data, error } = await (supabase as any).from("malote_forma_pagamento").select("id, nome, tipo, ativo").order("nome");
+      const { data, error } = await (supabase as any)
+        .from("malote_forma_pagamento")
+        .select("id, nome, tipo, ativo, fluxo_aprovacao, aprovador_especial_user_id")
+        .order("nome");
       if (error) throw error;
       return (data ?? []) as MaloteFormaPagamento[];
     },
@@ -88,6 +99,8 @@ interface SalvarFormaPagamentoInput {
   nome: string;
   tipo: string;
   ativo: boolean;
+  fluxo_aprovacao: FluxoAprovacaoFormaPagamento;
+  aprovador_especial_user_id: string | null;
 }
 
 export function useSalvarFormaPagamento() {

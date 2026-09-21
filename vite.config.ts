@@ -57,6 +57,9 @@ export default defineConfig(({ mode }) => {
             "vendor-pdf": ["jspdf", "jspdf-autotable"],
             "vendor-graficos": ["recharts"],
             "vendor-react": ["react", "react-dom", "react-router-dom"],
+            // Mapa 3D do Estoque (SIS-2026-0442): ~700 kB que só quem abre
+            // a tela precisa. Fica fora do pacote principal.
+            "vendor-3d": ["three", "@react-three/fiber", "@react-three/drei"],
           },
         },
       },

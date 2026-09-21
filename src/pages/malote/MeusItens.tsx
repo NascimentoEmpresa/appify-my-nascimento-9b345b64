@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { Card, CardContent } from "@/components/ui/card";
@@ -13,16 +13,20 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { SearchableSelect } from "@/components/ui/searchable-select";
 import { DateRangeFilter } from "@/components/ui/date-range-filter";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import { Download, Plus, ListChecks, Search, X } from "lucide-react";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Download, Plus, ListChecks, Search, X, Trash2, RotateCcw } from "lucide-react";
 import * as XLSX from "xlsx";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/hooks/useAuth";
+import { usePermissoes } from "@/context/PermissoesContext";
 import {
   useMinhasDespesas,
   useContratosAtivos,
   useEmpresasGrupo,
   useEmpresaPrimeiraLinhaRateio,
+  useDespesasLixeira,
+  useRestaurarDespesa,
   MaloteDespesaRow,
   ItemLinhaMalote,
   STATUS_LABEL,
@@ -31,6 +35,8 @@ import {
   souLancadorDespesa,
   classificacaoTemLancadorConfigurado,
 } from "@/hooks/useMaloteDespesa";
+import { ExcluirPermanentementeButton } from "./ExcluirPermanentementeButton";
+import { formatBRL } from "@/hooks/usePlanilhaCusto";
 import { useClassificacoesOrcamento } from "@/hooks/usePlanejamentoOrcamentario";
 import { useOrdenacaoTabela } from "@/hooks/useOrdenacaoTabela";
 import { useEstadoPersistido } from "@/hooks/useEstadoPersistido";
@@ -138,7 +144,25 @@ function AprovadorPendenteCell({ despesa }: { despesa: MaloteDespesaRow }) {
 export default function MeusItens() {
   const navigate = useNavigate();
   const { user } = useAuth();
+  const { can } = usePermissoes();
   const { data: itens = [], isLoading } = useMinhasDespesas();
+  // [SEM-CHAMADO] (achado do usuário): "Mover para a lixeira" só existia na
+  // própria despesa, mas depois disso ela some de Meus Itens/Aprovações e
+  // só reaparecia na Lixeira do Fluxo de Caixa (financeiro) — ninguém do
+  // Malote deveria precisar ir até lá só pra terminar uma exclusão. Lixeira
+  // própria aqui, mesmo padrão (Restaurar + Excluir permanentemente).
+  const [lixeiraAberta, setLixeiraAberta] = useState(false);
+  const podeVerLixeira = can("excluir", "malote", "malote_despesa_visualizar") || can("excluir", "malote", "malote_solicitacao_visualizar");
+  const { data: despesasLixeira = [] } = useDespesasLixeira();
+  const restaurarDespesa = useRestaurarDespesa();
+  async function handleRestaurar(id: string) {
+    try {
+      await restaurarDespesa.mutateAsync(id);
+      toast.success("Restaurado.");
+    } catch (e: any) {
+      toast.error(e.message ?? "Erro ao restaurar.");
+    }
+  }
   const { data: classificacoes = [] } = useClassificacoesOrcamento();
   const { data: contratos = [] } = useContratosAtivos();
   const { data: empresas = [] } = useEmpresasGrupo();
@@ -348,9 +372,46 @@ export default function MeusItens() {
                 <Plus className="h-4 w-4 mr-2" /> Criar Despesa
               </Link>
             </Button>
+            {podeVerLixeira && (
+              <Button variant="outline" onClick={() => setLixeiraAberta(true)} className="gap-1.5">
+                <Trash2 className="h-4 w-4" /> Lixeira{despesasLixeira.length > 0 && ` (${despesasLixeira.length})`}
+              </Button>
+            )}
           </div>
         }
       />
+
+      <Dialog open={lixeiraAberta} onOpenChange={setLixeiraAberta}>
+        <DialogContent className="max-w-2xl max-h-[80vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Lixeira do Malote</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-1.5">
+            {despesasLixeira.length === 0 && (
+              <p className="text-sm text-muted-foreground py-6 text-center">A lixeira está vazia.</p>
+            )}
+            {despesasLixeira.map((d) => (
+              <div key={d.id} className="flex items-center justify-between gap-2 rounded-md border border-border px-3 py-2 text-sm">
+                <div className="min-w-0">
+                  <p className="font-mono text-xs text-muted-foreground">{d.numero}</p>
+                  <p className="truncate">{d.nome}</p>
+                </div>
+                <div className="flex items-center gap-2 shrink-0">
+                  <span className="font-medium">{formatBRL(d.valor_total)}</span>
+                  <Button variant="outline" size="sm" className="gap-1.5" onClick={() => handleRestaurar(d.id)} disabled={restaurarDespesa.isPending}>
+                    <RotateCcw className="h-3.5 w-3.5" /> Restaurar
+                  </Button>
+                  <ExcluirPermanentementeButton
+                    despesaId={d.id}
+                    numero={d.numero}
+                    menu={d.origem === "solicitacao" ? "malote_solicitacao_visualizar" : "malote_despesa_visualizar"}
+                  />
+                </div>
+              </div>
+            ))}
+          </div>
+        </DialogContent>
+      </Dialog>
 
       <Card>
         <CardContent className="p-4 space-y-3">

@@ -57,6 +57,7 @@ import {
   Shirt,
   Truck,
   Boxes,
+  Move3d,
   FileClock,
   Car,
   Package,
@@ -275,6 +276,7 @@ const suprimentosModule: ModuleDef = {
         // o protocolo quando a etiqueta não lê.
         { label: "Retirada para Entrega", to: "/app/suprimentos/retirada", icon: Car },
         { label: "Estoque & Etiquetas", to: "/app/suprimentos/estoque-etiquetas", icon: Boxes },
+        { label: "Mapa 3D do Estoque", to: "/app/suprimentos/estoque-mapa", icon: Move3d },
         { label: "Declaração de Conteúdo", to: "/app/suprimentos/correio-declaracao", icon: FileText },
         { label: "Cotações do Malote", to: "/app/suprimentos/cotacoes-malote", icon: FileClock },
         { label: "Pedidos de Compra", to: "/app/suprimentos/pedidos-compra", icon: ShoppingCart },

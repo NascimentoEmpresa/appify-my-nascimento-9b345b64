@@ -19,6 +19,8 @@
  * e confirma que levou — ver src/pages/suprimentos/RetiradaPedido.tsx.
  */
 
+import { calcularEnvioItens, type EtiquetaParaEnvio, type ItemParaEnvio } from "./envioItens";
+
 export type TamanhoEtiqueta = "PADRAO" | "COMPACTO";
 
 export interface DadosEtiqueta {
@@ -31,12 +33,12 @@ export interface DadosEtiqueta {
   funcao_nome: string;
   contrato_nome: string;
   posto_nome: string;
-  itens: Array<{
-    nome_item: string;
-    tamanho: string | null;
-    quantidade: number;
-    litros: string | null;
-  }>;
+  /**
+   * TODAS as linhas do pedido, não só as de uma situação. A separação entre
+   * enviado e pendente é feita em `textoItens`, a partir das etiquetas — se
+   * o filtro acontecesse aqui, a etiqueta voltaria a sair com meio pedido.
+   */
+  itens: ItemParaEnvio[];
   /**
    * PNG (data URL) do QR code de retirada. Vem pronto de fora porque a
    * geração é assíncrona e esta função monta HTML de forma síncrona — é o
@@ -66,15 +68,25 @@ export function escaparHtml(valor: string) {
     .replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 }
 
-/** Uma linha de item, no formato que o almoxarifado já lê hoje. */
-export function linhaItem(i: DadosEtiqueta["itens"][number]) {
+/**
+ * Uma linha de item, no formato que o almoxarifado já lê hoje.
+ *
+ * `quantidade` é parâmetro porque na etiqueta a mesma linha aparece com
+ * números diferentes conforme a seção: no despacho parcial, 1 em ENVIADOS e
+ * 1 em PENDENTES para um item pedido 2 vezes. Sem isso as duas seções
+ * repetiriam a quantidade pedida e somariam o dobro do pedido.
+ */
+export function linhaItem(i: DadosEtiqueta["itens"][number], quantidade: number = i.quantidade) {
   const detalhes = [
     i.tamanho ? `Tam. ${i.tamanho}` : null,
     i.litros ? `${i.litros} L` : null,
-    `Qtd. ${i.quantidade}`,
+    `Qtd. ${quantidade}`,
   ].filter(Boolean).join(" — ");
   return `• ${i.nome_item} — ${detalhes}`;
 }
+
+export const TITULO_ENVIADOS = "ITENS ENVIADOS:";
+export const TITULO_PENDENTES = "ITENS PENDENTES DE ENVIO:";
 
 /**
  * Texto livre que a tela oferece pronto para edição.
@@ -82,10 +94,29 @@ export function linhaItem(i: DadosEtiqueta["itens"][number]) {
  * Só os itens: o resto da etiqueta é montado a partir dos campos do pedido e
  * não passa por aqui, para ninguém conseguir imprimir uma etiqueta cujo
  * protocolo não bate com o pedido de onde ela saiu.
+ *
+ * Sai SEMPRE o pedido inteiro, em duas seções — ENVIADOS e PENDENTES DE
+ * ENVIO. A etiqueta imprimia uma lista só, e quem separava o volume não
+ * tinha como saber, pela etiqueta colada na caixa, o que já tinha ido e o que
+ * ainda faltava: precisava voltar ao sistema. A divisão é a mesma dos botões
+ * "Enviados"/"Pendentes envio" do card (calcularEnvioItens, por QUANTIDADE),
+ * para os dois lugares nunca discordarem.
+ *
+ * Seção vazia é OMITIDA — título sem linha embaixo faz o conferente procurar
+ * o que não existe. Sem etiqueta nenhuma baixada, o pedido inteiro é pendente
+ * e sai uma seção só.
  */
-export function textoItens(dados: DadosEtiqueta) {
-  const linhas = dados.itens.map(linhaItem);
-  return linhas.length ? `ITENS:\n${linhas.join("\n")}` : "";
+export function textoItens(dados: DadosEtiqueta, etiquetas: EtiquetaParaEnvio[] = []) {
+  const linhas = calcularEnvioItens(dados.itens, etiquetas);
+  const enviados = linhas.filter((l) => l.enviada > 0).map((l) => linhaItem(l, l.enviada));
+  const pendentes = linhas.filter((l) => l.pendente > 0).map((l) => linhaItem(l, l.pendente));
+
+  const secoes = [
+    enviados.length ? `${TITULO_ENVIADOS}\n${enviados.join("\n")}` : "",
+    pendentes.length ? `${TITULO_PENDENTES}\n${pendentes.join("\n")}` : "",
+  ].filter(Boolean);
+
+  return secoes.join("\n\n");
 }
 
 function campo(rotulo: string, valor: string | null | undefined) {
