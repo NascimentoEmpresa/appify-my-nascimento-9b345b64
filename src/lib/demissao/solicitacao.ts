@@ -569,7 +569,9 @@ export function podeCancelarDemissao(s: Pick<SolicitacaoDemissao, "status">): { 
  * (21/09/2026) — Pendente SST, recebida e até com o ASO já agendado. A
  * reconsideração costuma chegar depois que o RH liberou; cancelando no SST,
  * a RPC avisa quem cuida do ASO Demissional para desmarcar o exame (mig 198).
- * "ASO válido" fica fora: o SST já concluiu, não há agendamento a desfazer.
+ * "ASO válido" (o verde) também cancela desde a mig 200 — a reconsideração
+ * pode chegar depois do SST concluir; aí não há exame a desmarcar e o SST
+ * não é avisado (cancelarAvisaSST continua só com os três de cima).
  * Antes do RH é do Operacional/Diretoria. A RPC demissao_cancelar repete a
  * regra com has_screen_access('rh_demissoes','aprovar').
  */
@@ -577,8 +579,7 @@ export const STATUS_RH_CANCELA_NO_SST: string[] = ["Pendente SST", STATUS_SST_RE
 /** O cancelamento do RH, nesse status, vai gerar aviso pro SST desmarcar o ASO? */
 export const cancelarAvisaSST = (status: string) => STATUS_RH_CANCELA_NO_SST.includes(status);
 export function podeCancelarDemissaoRH(s: Pick<SolicitacaoDemissao, "status">): { ok: boolean; motivo?: string } {
-  if (s.status === "Pendente RH" || cancelarAvisaSST(s.status)) return { ok: true };
-  if (s.status === STATUS_SST_ASO_VALIDO) return { ok: false, motivo: "O SST já concluiu esta solicitação (ASO válido) — não há mais o que cancelar." };
+  if (s.status === "Pendente RH" || cancelarAvisaSST(s.status) || s.status === STATUS_SST_ASO_VALIDO) return { ok: true };
   const geral = podeCancelarDemissao(s);
   if (!geral.ok) return geral;
   return { ok: false, motivo: `O RH cancela a partir do Pendente RH (agora está ${s.status}).` };
